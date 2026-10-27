@@ -18,13 +18,16 @@ from pathlib import Path
 import capstone
 import lief
 
+from verify_x86_memory_address import memory_address
+
 SUFFIXES = ('b', 'w', 'd', 'q', 'ps', 'pd')
 ELEMENTS = (1, 2, 4, 8, 4, 8)
 TRIPLES = ('x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'x86_64-apple-darwin')
 
 
-def cases():
-    return list(itertools.product((16, 32, 64), range(6), (0, 0x64, 0x65), range(3)))
+def cases(bits=64):
+    prefixes = (0, 0x64, 0x65, 0x100) if bits == 64 else (0, 0x64, 0x65)
+    return list(itertools.product((16, 32, 64), range(6), prefixes, range(3)))
 
 
 def run(command):
@@ -38,9 +41,11 @@ def decode(code, mode):
     cs = capstone.Cs(capstone.CS_ARCH_X86, mode)
     result, at = [], 0
     while at < len(code):
-        start, prefix = at, 0
+        start, prefix, address_override = at, 0, False
         while at < len(code) and code[at] in (0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65, 0x67):
-            if code[at] != 0x67:
+            if code[at] == 0x67:
+                address_override = True
+            else:
                 prefix = code[at]
             at += 1
         if at + 6 <= len(code) and code[at] == 0x62:
@@ -50,8 +55,9 @@ def decode(code, mode):
             # requires the exact native-memory instruction and repetition count.
             if ((p0 & 7) == 2 and (p1 & 3) == 1 and modrm >> 6 != 3
                     and op in (0x62, 0x63, 0x88, 0x89, 0x8a, 0x8b)):
-                base = (modrm & 7) | ((~p0 & 0x20) >> 2)
-                assert modrm >> 6 == 0 and base in (0, 1, 2, 3), (start, 'DS-default base changed')
+                assert not address_override, (start, 'native pointer width changed')
+                end, stack, _, _, _ = memory_address(
+                    code, at + 6, p0, modrm, 64 if mode == capstone.CS_MODE_64 else 32)
                 assert (p1 & 0x78) == 0x78 and (p2 & 0x18) == 8
                 assert p2 & 7, 'native mask was replaced with k0'
                 ll = p2 >> 5 & 3
@@ -60,8 +66,8 @@ def decode(code, mode):
                 expand = op in (0x62, 0x88, 0x89)
                 zero = bool(p2 & 0x80)
                 assert expand or not zero
-                result.append((16 << ll, kind, prefix, 2 if zero else 1 if expand else 0))
-                at += 6
+                result.append((16 << ll, kind, prefix | (0x100 if stack else 0), 2 if zero else 1 if expand else 0))
+                at = end
                 continue
         insn = next(cs.disasm(code[start:], start, count=1), None)
         assert insn, (start, code[start:start + 16].hex())
@@ -96,7 +102,7 @@ def recorder(source, *, mask_bits=64, calls_expected=2):
     # Erase only ISA attributes, then substitute instrumented interfaces. The
     # actual generated expression, types, byte copies and uses stay unchanged.
     source = re.sub(r'__attribute__\(\(target\("[^"\n]*"\)\)\)', '', source)
-    head = '#include <stdint.h>\n#include <string.h>\n#include <stdlib.h>\n#define __NEVERC_X86_COMPRESS_EXPAND__ 1\n'
+    head = '#include <stdint.h>\n#include <string.h>\n#include <stdlib.h>\n#define __NEVERC_X86_COMPRESS_EXPAND__ 1\n#define __NEVERC_X86_NATIVE_MEMORY_STACK_REFERENCE__ 1\n'
     head += f'#define EXPECTED_CALLS {calls_expected}\n'
     head += '''static unsigned expected_bytes, expected_kind, expected_prefix, expected_mode, calls;
 static uint64_t expected_mask;
@@ -204,7 +210,7 @@ def main():
     reports, recorders = [], []
     for arch, bits in (('x64', 64), ('x86', 32)):
         for obj in args.exports.glob(arch + '-*.o'):
-            reports.append(audit(obj, cases(), bits))
+            reports.append(audit(obj, cases(bits), bits))
         for opt, triple in itertools.product(('O0', 'O2'), TRIPLES):
             target = triple if bits == 64 else triple.replace('x86_64', 'i386')
             ir = args.exports / (arch + '.ll')
@@ -214,7 +220,7 @@ def main():
                 run([args.llc.parent / 'opt', '-passes=default<O2>', '-S', ir, '-o', selected])
             obj = args.keep / f'{arch}-{opt}-{target}.o'
             run([args.llc, '-mtriple=' + target, '-' + opt, '-verify-machineinstrs', '-filetype=obj', selected, '-o', obj])
-            reports.append(audit(obj, cases(), bits))
+            reports.append(audit(obj, cases(bits), bits))
             for route, compiler, dialect in itertools.product(('high', 'llvm'), (args.clang, args.neverc), ('att', 'intel')):
                 if compiler == args.neverc and bits == 32:
                     continue
@@ -224,7 +230,7 @@ def main():
                 if compiler == args.neverc:
                     cmd += ['-fno-builtin-mimalloc', '-mllvm', '-verify-machineinstrs']
                 run(cmd)
-                reports.append(audit(output, cases(), bits))
+                reports.append(audit(output, cases(bits), bits))
             print({'arch': arch, 'optimization': opt, 'triple': target, 'objects': len(reports)}, flush=True)
     for route in ('high', 'llvm'):
         source = args.keep / f'{route}-recorder.c'

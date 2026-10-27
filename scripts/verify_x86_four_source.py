@@ -17,13 +17,16 @@ from pathlib import Path
 import capstone
 import lief
 
+from verify_x86_memory_address import memory_address
+
 NAMES = ('v4fmaddps', 'v4fnmaddps', 'v4fmaddss', 'v4fnmaddss', 'vp4dpwssd', 'vp4dpwssds')
 OPCODES = (0x9a, 0xaa, 0x9b, 0xab, 0x52, 0x53)
 TRIPLES = ('x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'x86_64-apple-darwin')
 
 
-def cases():
-    return list(itertools.product(range(6), (0, 0x64, 0x65), range(2)))
+def cases(bits=64):
+    prefixes = (0, 0x64, 0x65, 0x100) if bits == 64 else (0, 0x64, 0x65)
+    return list(itertools.product(range(6), prefixes, range(2)))
 
 
 def run(command):
@@ -51,13 +54,12 @@ def decode(code, bits):
                 assert p1 & 0x84 == 4 and not p2 & 0x10, (start, 'reserved encoding')
                 source = ((~p1 >> 3) & 15) | ((~p2 & 8) << 1)
                 assert source == 4, (start, 'unaligned or wrong source block', source)
-                base = (modrm & 7) | ((~p0 & 0x20) >> 2)
-                assert modrm >> 6 == 0 and base in (0, 1, 2, 3), (start, 'DS-default memory changed')
+                end, stack, _, _, _ = memory_address(code, at + 6, p0, modrm, bits)
                 assert p2 & 7, (start, 'native mask replaced by k0')
                 kind = OPCODES.index(opcode)
                 assert (p2 >> 5 & 3) == (0 if kind in (2, 3) else 2)
-                result.append((kind, prefix, int(bool(p2 & 0x80))))
-                at += 6
+                result.append((kind, prefix | (0x100 if stack else 0), int(bool(p2 & 0x80))))
+                at = end
                 continue
         insn = next(cs.disasm(code[start:], start, count=1), None)
         assert insn, (start, code[start:start + 16].hex())
@@ -94,6 +96,7 @@ def recorder(source, calls_expected=2):
 #include <stdlib.h>
 #include <string.h>
 #define __NEVERC_X86_FOUR_SOURCE__ 1
+#define __NEVERC_X86_NATIVE_MEMORY_STACK_REFERENCE__ 1
 static unsigned kind_expected, prefix_expected, zero_expected, calls;
 static uint16_t mask_expected;
 static unsigned char input[320];
@@ -170,7 +173,7 @@ def main():
     reports, recorders = [], []
     for arch, bits in (('x64', 64), ('x86', 32)):
         for obj in args.exports.glob(arch + '-*.o'):
-            reports.append(audit(obj, cases(), bits))
+            reports.append(audit(obj, cases(bits), bits))
         for opt, triple in itertools.product(('O0', 'O2'), TRIPLES):
             target = triple if bits == 64 else triple.replace('x86_64', 'i386')
             selected = args.exports / (arch + '.ll')
@@ -179,7 +182,7 @@ def main():
                 run([args.llc.parent / 'opt', '-passes=default<O2>', '-S', args.exports / (arch + '.ll'), '-o', selected])
             obj = args.keep / f'{arch}-{opt}-{target}.o'
             run([args.llc, '-mtriple=' + target, '-' + opt, '-verify-machineinstrs', '-filetype=obj', selected, '-o', obj])
-            reports.append(audit(obj, cases(), bits))
+            reports.append(audit(obj, cases(bits), bits))
             for route, compiler, dialect in itertools.product(('high', 'llvm'), (args.clang, args.neverc), ('att', 'intel')):
                 if compiler == args.neverc and bits == 32:
                     continue
@@ -189,7 +192,7 @@ def main():
                 if compiler == args.neverc:
                     cmd += ['-fno-builtin-mimalloc', '-mllvm', '-verify-machineinstrs']
                 run(cmd)
-                reports.append(audit(output, cases(), bits))
+                reports.append(audit(output, cases(bits), bits))
             print({'arch': arch, 'optimization': opt, 'triple': target, 'objects': len(reports)}, flush=True)
     for pipeline, route in itertools.product((False, True), ('high', 'llvm')):
         source = args.keep / f'{"pipeline" if pipeline else "wrapper"}-{route}-recorder.c'

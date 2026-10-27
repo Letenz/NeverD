@@ -16,6 +16,7 @@
 
 namespace neverd::worker {
 class ComparisonService;
+class LineageService;
 class ProjectLock;
 class ProjectHistory;
 class Contributions;
@@ -115,6 +116,7 @@ private:
   Json executeImpl(const std::string &operation, const Json &payload,
                    EncodedPayload *encoded);
   std::unique_ptr<ComparisonService> comparison_;
+  std::unique_ptr<LineageService> lineage_;
   std::function<bool()> cancelled_;
   neverd_session_t session_ = nullptr;
   std::unique_ptr<ProjectLock> lock_;

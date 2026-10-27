@@ -272,6 +272,15 @@ inline constexpr uint64_t kEffectPollWork = 1024;
 // Persisted comparisons
 //===----------------------------------------------------------------------===//
 
+/// Caller-adjustable admission for offline version graphs. These bound source
+/// bytes and graph records, not allocator overhead or the saved reader's work.
+inline constexpr uint64_t kDefaultLineageSourceBytes = 256ull << 20;
+inline constexpr uint32_t kDefaultLineageNodes = 1u << 20;
+inline constexpr uint32_t kDefaultLineageEdges = 4u << 20;
+inline constexpr uint64_t kDefaultLineageWork = 8 * kDefaultLineageSourceBytes;
+/// Bounded projections fit the worker transport; source exports use files.
+inline constexpr uint64_t kMaxLineagePageBytes = 8ull << 20;
+
 /// Largest saved comparison read back, in bytes.
 inline constexpr uint64_t kMaxSavedComparisonBytes = 1ull << 31;
 /// Cooperative file/C-string admission and progress; not a report size limit.

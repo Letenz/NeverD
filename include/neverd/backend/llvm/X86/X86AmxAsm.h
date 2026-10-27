@@ -13,13 +13,15 @@
 #ifndef NEVERD_BACKEND_LLVM_X86_X86AMXASM_H
 #define NEVERD_BACKEND_LLVM_X86_X86AMXASM_H
 
+#include "neverd/backend/llvm/X86/X86MemoryAddressAsm.h"
 #include "neverd/ir/intrinsics/X86/X86AmxState.h"
 
 #include <optional>
 #include <string>
 #include <vector>
 namespace neverd {
-inline constexpr const char *X86AmxAsmMarker = "# neverd AMX v1 ";
+inline constexpr const char *X86AmxAsmMarker = "# neverd AMX v2 ";
+inline constexpr const char *X86AmxLegacyAsmMarker = "# neverd AMX v1 ";
 struct X86AmxAsm {
   std::string Text;
   std::string Constraints;
@@ -29,19 +31,25 @@ struct X86AmxAsm {
   bool Row = false;
   bool Memory = false;
 };
-inline std::optional<X86AmxAsm> x86AmxAsm(uint32_t D,
-                                          NdMemoryAddressSpace Space) {
-  if (!x86AmxDescriptorIsValid(D) || !isKnownMemoryAddressSpace(Space))
+inline std::optional<X86AmxAsm>
+x86AmxAsm(uint32_t D, NdMemoryAddressSpace Space, bool Legacy = false) {
+  if (!x86AmxDescriptorIsValid(D) || !x86AmxAddressIsValid(D, Space) ||
+      (Legacy && (D & X86AmxVersionMask) != X86AmxLegacyStateVersion))
     return {};
   const auto K = x86AmxOperation(D);
-  if ((!x86AmxIsMemory(K) || (D & X86AmxStackSegment)) &&
-      Space != NdMemoryAddressSpace::Default)
-    return {};
   X86AmxAsm P;
   P.Row = x86AmxIsRow(K);
   P.Memory = x86AmxIsMemory(K);
-  P.Text = std::string(X86AmxAsmMarker) + std::to_string(D) + " " +
+  P.Text = std::string(Legacy ? X86AmxLegacyAsmMarker : X86AmxAsmMarker) +
+           std::to_string(D) + " " +
            std::to_string(static_cast<unsigned>(Space)) + "\n\t";
+  const bool Stack = D & X86AmxStackReference;
+  if (Stack) {
+    // Use a real stack-default base without replacing the compiler's RBP.
+    // Arithmetic stays inside the owned window and performs no extra access.
+    P.Text += "movq ${0:q}, %rdx\n\tsubq %rbp, %rdx\n\t";
+    P.Clobbers = {"rdx", "flags"};
+  }
   if (D & X86AmxEvexMemory)
     P.Text += "{evex} ";
   P.Text += X86AmxMnemonics[unsigned(K)];
@@ -54,14 +62,16 @@ inline std::optional<X86AmxAsm> x86AmxAsm(uint32_t D,
                          : D & X86AmxStackSegment               ? "%ss:"
                                                                 : "%ds:";
     const bool Addr32 = D & X86AmxAddress32;
-    std::string Address =
-        std::string(Segment) + (Addr32 ? "(${0:k}" : "(${0:q}");
+    std::string Address = std::string(Segment) + (Stack    ? "(%rbp,%rdx"
+                                                  : Addr32 ? "(${0:k}"
+                                                           : "(${0:q}");
     P.InputBytes.push_back(Addr32 ? 4 : 8);
-    P.InputConstraints.push_back("r");
+    P.InputConstraints.push_back(
+        Legacy ? "r" : x86MemoryAddressAsm(Addr32 ? 32 : 64).LLVMConstraint);
     if (x86AmxIsTileMemory(K)) {
       Address += Addr32 ? ",${1:k}" : ",${1:q}";
       P.InputBytes.push_back(Addr32 ? 4 : 8);
-      P.InputConstraints.push_back("r");
+      P.InputConstraints.push_back(Legacy ? "r" : "{cx}");
     }
     Address += ')';
     if (K == X86AmxOp::Store)

@@ -58,7 +58,8 @@ private:
   QDoubleSpinBox *Threshold;
   QSpinBox *Timeout, *FlowFunctions;
   QTableView *FunctionTable, *InstructionTable;
-  QLabel *Summary, *Status, *Evidence, *FunctionTitle;
+  QLabel *Summary, *Status, *FunctionTitle;
+  QPlainTextEdit *Evidence;
   ComparisonSourceView *Source;
   QPushButton *Start, *Cancel, *Save, *Reopen, *Undo, *Redo, *Confirm, *Unmatch,
       *Remap, *Counterpart, *Regions, *DataFlow, *Impact, *RetryDetail,

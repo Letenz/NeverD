@@ -39,6 +39,20 @@ class WordOracleTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 self.equivalent(rows[2], expected, width)
 
+    def test_residue_subgroups_keep_every_multiplier_and_parity(self):
+        for width in (8, 32, 64):
+            rows = bench.residue_subgroup_corpus(width, 54)
+            self.assertEqual(len(rows), 54)
+            self.assertEqual(rows, bench.residue_subgroup_corpus(width, 54))
+            scale = 3 << (width - 4)
+            expected = (f"x+y+z+w+{scale}*z*(z+3)*(x&1)"
+                        "*(x^(y<<2))*((x+4)^(y<<2))")
+            self.equivalent(rows[9], expected, width)
+            with self.assertRaises(AssertionError):
+                self.equivalent(rows[9], expected.replace("*(z+3)", ""), width)
+            with self.assertRaises(AssertionError):
+                self.equivalent(rows[11], expected, width)
+
     def test_oracle_checks_products_beyond_python_recursion_depth(self):
         row = bench.residue_quotient_corpus(32, 72)[-1]
         self.equivalent(row, row)

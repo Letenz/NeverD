@@ -164,6 +164,19 @@ if(BUILD_TESTING)
   endif()
   find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
   if(NEVERD_WORKER_REAL_ENGINE_TESTS)
+    qt_add_executable(neverd-gui-lineage-tests tests/LineageTests.cpp)
+    target_link_libraries(neverd-gui-lineage-tests PRIVATE neverd_gui_app Qt6::Test)
+    target_compile_definitions(neverd-gui-lineage-tests PRIVATE
+      TEST_LINEAGE_WORKER="$<TARGET_FILE:neverd-worker>")
+    if(NEVERD_TRANSLATIONS)
+      qt_add_resources(neverd-gui-lineage-tests "lineage_test_translations" PREFIX /i18n
+        BASE "${CMAKE_CURRENT_BINARY_DIR}" FILES ${NEVERD_QM_FILES})
+    endif()
+    add_dependencies(neverd-gui-lineage-tests neverd-worker)
+    set_target_properties(neverd-gui-lineage-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+    add_test(NAME NeverDGuiLineage COMMAND neverd-gui-lineage-tests)
+    set_tests_properties(NeverDGuiLineage PROPERTIES
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 180 LABELS "NeverDBinaryDiff")
     qt_add_executable(neverd-gui-comparison-tests tests/ComparisonTests.cpp)
     target_link_libraries(neverd-gui-comparison-tests PRIVATE neverd_gui_app Qt6::Test)
     target_compile_definitions(neverd-gui-comparison-tests PRIVATE

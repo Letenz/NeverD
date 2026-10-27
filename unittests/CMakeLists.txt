@@ -117,6 +117,7 @@ target_include_directories(NeverDGraphCyclesTests PRIVATE
 
 add_neverd_unittest(NeverDBinaryDiffTests
   BinaryDiffTests.cpp
+  BinaryDiffLineageTests.cpp
   BinaryDiffDataFlowTests.cpp
   BinaryDiffLLVMDataFlowTests.cpp
   BinaryDiffParameterViewTests.cpp
@@ -335,6 +336,12 @@ if(TARGET neverd_shared)
     LINK_LIBS neverd_shared LLVMSupport
   )
   target_include_directories(NeverDBinaryDiffSDKTests PRIVATE
+    "${CMAKE_SOURCE_DIR}/include" ${LLVM_INCLUDE_DIRS})
+  add_neverd_unittest(NeverDBinaryDiffLineageSDKTests
+    BinaryDiffLineageSDKTests.cpp
+    LINK_LIBS neverd_shared LLVMSupport
+  )
+  target_include_directories(NeverDBinaryDiffLineageSDKTests PRIVATE
     "${CMAKE_SOURCE_DIR}/include" ${LLVM_INCLUDE_DIRS})
   add_neverd_unittest(NeverDDyldCacheCAPITests
     DyldCacheCAPITests.cpp

@@ -19,6 +19,7 @@
 
 #include <atomic>
 #include <functional>
+#include <map>
 #include <optional>
 #include <set>
 #include <utility>
@@ -69,6 +70,14 @@ struct CodeInterval {
 
 /// The widest such stretch around \p Addr.
 CodeInterval codeIntervalAround(const BinaryImage &Img, va_t Addr);
+
+/// Tail targets of linked x64 PE adapters whose complete unwind record and
+/// entire instruction sequence prove a restored caller frame. Only existing
+/// entries may supply this evidence; targets still need ordinary verification.
+std::map<va_t, va_t>
+checkedUnwindTailTargetsX64(const BinaryImage &Img,
+                            const std::set<va_t> &Entries,
+                            const Cancellation *Control = nullptr);
 
 /// The step a sweep of [..., \p End) of \p Seg takes at \p Cur, or nothing
 /// where the segment's bytes end.  A sweep is these steps from its start, so

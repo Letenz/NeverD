@@ -229,17 +229,52 @@ QDialog *visibleDialog(const QString &name = {}) {
   return nullptr;
 }
 
+bool privateWayland() {
+  return QGuiApplication::platformName().startsWith(QLatin1String("wayland")) &&
+         qEnvironmentVariableIsSet("NEVERD_TEST_GNOME_POINTER");
+}
+
+// Only the disposable compositor runner grants this capability. Never ask the
+// user's ordinary desktop to activate windows or create input devices.
+bool privateShell(const QString &script) {
+  QProcess process;
+  process.start(QStringLiteral("gdbus"),
+                {QStringLiteral("call"), QStringLiteral("--session"),
+                 QStringLiteral("--dest"), QStringLiteral("org.gnome.Shell"),
+                 QStringLiteral("--object-path"),
+                 QStringLiteral("/org/gnome/Shell"), QStringLiteral("--method"),
+                 QStringLiteral("org.gnome.Shell.Eval"), script});
+  return process.waitForFinished(OpenTimeoutMs) && process.exitCode() == 0 &&
+         process.readAllStandardOutput().startsWith("(true,");
+}
+
 bool activateTestWindow(QWidget *window) {
   // Qt can report a transient family as active before native keyboard focus
   // reaches this particular window. A dialog's pending activation can also
   // supersede a single request. Keep requesting within the ordinary test
   // deadline, and require both observations before sending keyboard input.
-  const bool active = QTest::qWaitFor([window] {
+  QString nativeActivation;
+  if (privateWayland()) {
+    const auto title = QJsonDocument(QJsonArray{window->windowTitle()})
+                           .toJson(QJsonDocument::Compact);
+    nativeActivation =
+        QStringLiteral(
+            "Main.overview.hide(); const w = global.get_window_actors()"
+            ".map(a => a.meta_window).find(w => w.get_pid() === %1 && "
+            "w.get_title() === %2); if (w) Main.activateWindow(w);")
+            .arg(QCoreApplication::applicationPid())
+            .arg(QString::fromUtf8(title.mid(1, title.size() - 2)));
+  }
+  const bool active = QTest::qWaitFor([window, &nativeActivation] {
     if (window->isActiveWindow() &&
         QGuiApplication::focusWindow() == window->windowHandle())
       return true;
-    window->raise();
-    window->activateWindow();
+    if (!nativeActivation.isEmpty())
+      privateShell(nativeActivation);
+    else {
+      window->raise();
+      window->activateWindow();
+    }
     return false;
   });
   if (!active)
@@ -3719,8 +3754,8 @@ private slots:
     assembly->navigate(Base + 0x1a0);
     QTRY_COMPARE(assembly->currentFunction(),
                  std::optional<Address>(Base + 0x1a0));
-    bench.window->activateWindow();
-    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    originDock->setAsCurrentTab();
+    QVERIFY(activateTestWindow(origin->window()));
     auto *code = origin->text();
     const int row = scenario == "call-token" ? 1 : 0;
     code->setCursorLine(row);
@@ -3766,15 +3801,13 @@ private slots:
         if (list->model().addressAt(i) == Base + 0x163) {
           chooser.stop();
           // Browsing elsewhere must not redirect acceptance to that pane.
-          bench.window->activateWindow();
-          QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
           otherDock->setAsCurrentTab();
           QTRY_VERIFY(other->isVisible());
+          QVERIFY(activateTestWindow(other->window()));
           other->text()->setFocus();
           QTRY_VERIFY(other->text()->hasFocus());
           QVERIFY(dialog->isVisible());
-          dialog->activateWindow();
-          QVERIFY(QTest::qWaitForWindowActive(dialog));
+          QVERIFY(activateTestWindow(dialog));
           list->table()->setFocus();
           QTRY_VERIFY(list->table()->hasFocus());
           chosen = true;
@@ -5168,8 +5201,7 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     auto *assembly = bench.window->disassembly();
     const Address function = Base + 0x140, other = Base + 0x180;
-    bench.window->activateWindow();
-    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    QVERIFY(activateTestWindow(bench.window.get()));
     assembly->navigate(function + 9);
     assembly->focusContent();
     // Tab during a listing jump also waits for the correct function to land.
@@ -5183,7 +5215,7 @@ private slots:
     QCOMPARE(code->commentTarget()->value("line").toInt(), 550);
     QVERIFY(code->preludeFolded());
     QVERIFY(code->verticalScrollBar()->value() > 256);
-    QVERIFY(code->hasFocus());
+    QTRY_VERIFY(code->hasFocus());
 
     // Reuse the complete function without a decompile and expand just the
     // target operation; the declaration prelude stays folded.
@@ -5216,7 +5248,7 @@ private slots:
     QTRY_VERIFY(!code->loading() && code->function() == other);
     QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
     QCOMPARE(code->commentTarget()->value("line").toInt(), 550);
-    QVERIFY(code->hasFocus());
+    QTRY_VERIFY(code->hasFocus());
 
     // Missing mappings are reported without guessing a nearby source row.
     assembly->navigate(other + 5);
@@ -5231,9 +5263,13 @@ private slots:
 
     // Two code panes can display the same representation. Reverse Tab must
     // return to the actual pane used, rather than the default source dock.
+    const auto originalVersion = code->documentVersion();
     bench.action(ActionId::ViewLowIR)->trigger();
     auto *second = bench.codeView(QStringLiteral("low"));
     QVERIFY(second && second != view);
+    QTRY_VERIFY(!view->isVisible());
+    QCOMPARE(code->documentVersion(), originalVersion);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
     second->setRepresentation(QStringLiteral("source"));
     QTRY_VERIFY(!second->text()->loading());
     second->text()->setFocus();
@@ -5250,6 +5286,17 @@ private slots:
              std::optional<Address>(function + 9));
     QCOMPARE(code->function(), std::optional<Address>(other));
     QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
+    // Returning to the retained tab keeps the secondary instruction mapping,
+    // including a reverse Tab to assembly, without reloading the document.
+    auto *originalDock = bench.dockFor(view);
+    QVERIFY(originalDock);
+    originalDock->setAsCurrentTab();
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    QCOMPARE(code->documentVersion(), originalVersion);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
+    QTest::keyClick(code, Qt::Key_Tab);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(other + 9));
   }
 
   void pseudocodeNamesAndCommentsEditTheirSource_data() {
@@ -9362,6 +9409,19 @@ private slots:
                        settingsDirectory_.path());
     configureDocking();
     WindowFrame::frameDialogs(*qApp);
+    if (privateWayland()) {
+      QTRY_VERIFY_WITH_TIMEOUT(
+          privateShell(QStringLiteral("if (Main.layoutManager._startingUp) "
+                                      "throw Error('desktop starting');")),
+          NativeOpenTimeoutMs);
+      QVERIFY(privateShell(QStringLiteral(
+          "global.neverdWorkbenchPointer = "
+          "imports.gi.Clutter.get_default_backend().get_default_seat()"
+          ".create_virtual_device(imports.gi.Clutter.InputDeviceType.POINTER_"
+          "DEVICE); global.neverdWorkbenchPointer.notify_absolute_motion("
+          "imports.gi.GLib.get_monotonic_time(), global.stage.width / 2, "
+          "global.stage.height / 2); Main.overview.hide();")));
+    }
   }
 
   void windowChromeLeavesRoomToType() {

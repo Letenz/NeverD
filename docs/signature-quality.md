@@ -103,8 +103,8 @@ callers cannot start a chain without a complete ordinary root.
 Only requested executable entries without a settled candidate are eligible.
 An incoming candidate with complete coverage and the ordinary fixed-byte floor
 can extend a rooted chain. Each round visits only its new frontier, up to
-`MaxIncomingRounds` in `lib/sigs/ReferenceCheckLimits.def`; short bodies do not
-extend it. A previously named target cannot form a new edge back into the
+`MaxIncomingRounds` in `lib/sigs/ReferenceCheckLimits.def`. A short body needs
+the independent callee proof described below before it can extend the chain. A previously named target cannot form a new edge back into the
 chain, so unrooted cycles cannot bootstrap it. Every generation checks its own
 outgoing references with the same resolver against the frozen prior
 result from before incoming inference: contradictions reject it, and missing
@@ -115,6 +115,35 @@ validated incoming names at one target are retained as candidate aliases. Only
 names actually requested by those callers participate; matching bytes do not
 import additional nominal names from the source pattern. This adds suggestions, never
 independent identity evidence or automatic names.
+A short incoming body can also extend its rooted chain when every source
+variant agrees on a direct call or branch to a separately established ordinary
+callee. A short `!refs` root must already be confirmed and additionally have a
+complete `!caller` source refinement; independently pruned clauses cannot stand
+in for that source. The independent callee must have a settled exact linkage
+name, complete coverage, the ordinary fixed-byte floor and no overlapping body
+bytes with the parent. Ambiguous, partial, contextual and newly inferred callees
+cannot supply this proof. In particular, old nominal rows at an address resolved
+by an incoming round do not become independent evidence. Missing source fields
+and alternatives at the supporting site refuse the extension. The existing
+frozen outgoing validation and round budget still apply. An independent-body
+index is constructed only if a short request needs it, once per caller pass.
+No descendant can repair its parent's evidence or start an unrooted cycle.
+
+A separate finite code-address fingerprint can identify two short functions
+together in linked x64 PE. Its parent needs an existing complete `!refs` hit
+and matching unpruned `!caller` source records that unanimously state one
+canonical RIP-relative LEA to the leaf. Apart from that exact four-byte field,
+both complete bodies must be literal bytes, with no CRC span or additional
+wildcards; the leaf has no outgoing references. Each body is below the
+ordinary fixed-byte floor, but their disjoint combined bytes must meet it.
+Both addresses must already be requested executable function entries. All
+matching source/leaf variants must agree on their complete extents and edge.
+Competing joint identities, overlapping bodies, cycles and contradictions with
+frozen names refuse the pair. This is a bounded two-body fingerprint, not
+recursive confirmation through guessed names. The ordinary floor, rooted
+caller-chain rules and candidate-only identity policy remain in force.
+Source templates stay in the name index; no extra global byte scan is needed.
+
 `neverd-sigmaker --caller-context` emits these records, including short bodies.
 Generation and matching share the canonical x64 LEA field check. When the
 preceding byte could be an instruction prefix, a bounded Capstone walk from
@@ -153,7 +182,7 @@ The continuation reuses the existing name index and round limit; an early
 query check avoids settlement work for data consumers without relevant
 callees. Every round reads the same frozen data bindings and post-data
 candidates. Neither the parent nor any descendant can create another data
-binding or trigger another data pass. Short data getters cannot extend a chain,
+binding or trigger another data pass. Short data getters without an independent ordinary callee cannot extend a chain,
 and all new names remain candidates rather than automatic identities.
 
 An ordinary caller's ambiguous request can also wait for these frozen data
@@ -224,8 +253,8 @@ names/locations leave the binding unknown. The full memory operand must fit
 one readable nonexecuting mapping and, when present, one corresponding section;
 zero-filled storage is valid. A candidate cannot supply its own only anchor.
 After incoming inference, pending data candidates receive one validation pass
-against frozen bindings and candidates. They cannot confirm each other or
-extend a chain. This remains candidate evidence, never automatic naming or
+against frozen bindings and candidates. They cannot confirm each other; only
+the independently anchored caller rules above can extend their code references. This remains candidate evidence, never automatic naming or
 source-type identity. The data pass is skipped without pending hits and uses
 the indexed source-anchor names rather than another image scan. Only requested
 addresses and source anchors are grouped; frozen reference validation indexes

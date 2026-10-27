@@ -20,7 +20,15 @@ inline constexpr const char X86CompactCompilerDispatch[] =
     "__NEVERC_X86_COMPRESS_EXPAND__ >= 1\n"
     "#define NEVERD_X86_COMPACT(native, ...) native\n"
     "#else\n#define NEVERD_X86_COMPACT(native, ...) "
-    "__VA_ARGS__\n#endif\n#endif\n";
+    "__VA_ARGS__\n#endif\n#endif\n"
+    "#ifndef NEVERD_X86_COMPACT_STACK\n"
+    "#if defined(__NEVERC_X86_COMPRESS_EXPAND__) && "
+    "__NEVERC_X86_COMPRESS_EXPAND__ >= 1 && "
+    "defined(__NEVERC_X86_NATIVE_MEMORY_STACK_REFERENCE__) && "
+    "__NEVERC_X86_NATIVE_MEMORY_STACK_REFERENCE__ >= 1\n"
+    "#define NEVERD_X86_COMPACT_STACK(native, ...) native\n"
+    "#else\n#define NEVERD_X86_COMPACT_STACK(native, ...) __VA_ARGS__\n"
+    "#endif\n#endif\n";
 X86CompactPlan x86CompactHighPlan(Arch A, const HighExpr &E);
 std::vector<std::string> x86CompactSourceFeatures(const X86CompactPlan &P);
 std::optional<X86CompactPlan> x86CompactCallPlan(Arch A,

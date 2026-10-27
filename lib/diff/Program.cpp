@@ -20,6 +20,24 @@
 
 namespace neverd::diff {
 
+std::string programAnalysisIdentity(const ProgramIdentity &I) {
+  std::string Out = "neverd.bindiff.analysis-v1:";
+  llvm::raw_string_ostream OS(Out);
+  const auto Field = [&](llvm::StringRef Text) {
+    OS << Text.size() << ':' << Text;
+  };
+  for (const auto *Text :
+       {&I.SHA256, &I.ProjectInputName, &I.ProjectStateSHA256, &I.Format,
+        &I.Architecture, &I.ABI, &I.Normalization, &I.Revision, &I.Endian,
+        &I.Analysis})
+    Field(*Text);
+  Field(std::to_string(I.Bits));
+  Field(std::to_string(I.ImageBase));
+  Field(std::to_string(I.EntryPoint));
+  Field(I.DiscoveryComplete ? "1" : "0");
+  return Out;
+}
+
 uint64_t Program::instructionCount(const Function &F) const {
   uint64_t Count = 0;
   for (const Block &B : blocks(F))

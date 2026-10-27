@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_BACKEND_LLVM_X86_X86COMPRESSEXPANDNATIVE_H
 #define NEVERD_BACKEND_LLVM_X86_X86COMPRESSEXPANDNATIVE_H
+#include "neverd/backend/llvm/X86/X86NativeMemoryAddress.h"
 #include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
 
 #include <algorithm>
@@ -54,39 +55,32 @@ struct X86CompactPlan {
     }
     return R;
   }
-  std::string segment() const {
-    switch (Prefix) {
-    case 0x26:
-      return "es";
-    case 0x2e:
-      return "cs";
-    case 0x36:
-      return "ss";
-    case 0x3e:
-      return "ds";
-    case 0x64:
-      return "fs";
-    case 0x65:
-      return "gs";
-    default:
-      return "";
-    }
-  }
+  bool stackReference() const { return x86NativeMemoryIsStack(Prefix); }
+  bool hasSegmentPrefix() const { return x86NativeMemoryPrefix(Prefix) != 0; }
+  std::string segment() const { return x86NativeMemorySegment(Prefix); }
   std::string assembly() const {
-    const auto Segment = Prefix ? "%" + segment() + ":" : "";
+    const auto Segment = hasSegmentPrefix() ? "%" + segment() + ":" : "";
+    const auto Address = stackReference() ? "(%rbp,%rdx)"
+                         : Expand         ? "($1)"
+                                          : "($0)";
+    const auto Setup = stackReference()
+                           ? std::string("movq ${") + (Expand ? "1" : "0") +
+                                 ":q}, %rdx\nsubq %rbp, %rdx\n"
+                           : "";
     return std::string(X86CompactAsmMarker) + std::to_string(Expand) + " " +
            std::to_string(Bytes) + " " + std::to_string(Kind) + " " +
-           std::to_string(Zero) + " " + std::to_string(Prefix) + "\n" +
+           std::to_string(Zero) + " " + std::to_string(Prefix) + "\n" + Setup +
            mnemonic() + " " +
-           (Expand ? Segment + "($1), $0 {$2}" + (Zero ? " {z}" : "")
-                   : "$2, " + Segment + "($0) {$1}");
+           (Expand ? Segment + Address + ", $0 {$2}" + (Zero ? " {z}" : "")
+                   : "$2, " + Segment + Address + " {$1}");
   }
   // AX cannot be a reserved frame, realignment or PIC base. Keep the old BX
   // spelling readable for owned IR emitted before this carrier correction.
   std::string constraints(bool LegacyBX = false) const {
     const std::string Base = LegacyBX ? "{bx}" : "{ax}";
-    return Expand ? "=v," + Base + ",^Yk,0,~{memory}"
-                  : Base + ",^Yk,v,~{memory}";
+    const auto Clobbers =
+        stackReference() ? ",~{rdx},~{flags},~{memory}" : ",~{memory}";
+    return (Expand ? "=v," + Base + ",^Yk,0" : Base + ",^Yk,v") + Clobbers;
   }
 };
 inline std::optional<X86CompactPlan> x86CompactPlan(bool Expand, unsigned Bytes,
@@ -94,9 +88,7 @@ inline std::optional<X86CompactPlan> x86CompactPlan(bool Expand, unsigned Bytes,
                                                     unsigned Zero,
                                                     unsigned Prefix) {
   if ((Bytes != 16 && Bytes != 32 && Bytes != 64) || Kind >= 6 || Zero > 1 ||
-      (!Expand && Zero) ||
-      (Prefix && Prefix != 0x26 && Prefix != 0x2e && Prefix != 0x36 &&
-       Prefix != 0x3e && Prefix != 0x64 && Prefix != 0x65))
+      (!Expand && Zero) || !x86NativeMemoryControlIsValid(Prefix))
     return {};
   return X86CompactPlan{Expand, Bytes, Kind, bool(Zero), Prefix};
 }

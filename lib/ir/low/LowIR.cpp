@@ -22,6 +22,7 @@
 #include "llvm/Support/Errc.h"
 
 #include <algorithm>
+#include <iterator>
 #include <limits>
 
 namespace neverd {
@@ -61,6 +62,8 @@ bool isKnownTargetMode(LowInstructionTargetMode Mode) {
 }
 
 llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
+  if (Op.NumInputs > std::size(Op.Inputs))
+    return invalid(kLowOperationInputOverflow);
   if (!isKnownMemoryAddressSpace(Op.MemoryAddressSpace))
     return invalid("LowOp has an unknown memory address space");
   const bool HasExplicitAddressSpace =

@@ -76,10 +76,12 @@ struct PatternModule {
   /// become a candidate or support another candidate. This is a NeverD
   /// extension; older readers must reject it, not ignore the requirement.
   bool RequireReferences : 1 = false;
-  /// `!caller`: indexed by expected linkage name only. A complete, strong,
-  /// settled caller must unanimously name this target at a reference site.
-  /// A supported complete, strong body can extend a rooted incoming chain;
-  /// its descendants never confirm its outgoing references.
+  /// `!caller`: indexed by expected linkage name only. An anchored complete
+  /// caller must unanimously name this target at a reference site. A short
+  /// caller additionally needs an independent ordinary callee; descendants
+  /// never confirm their ancestors or supply that independent evidence.
+  /// Complete literal bodies may also participate in a checked two-body x64
+  /// code-address fingerprint; neither body alone supplies its identity.
   bool RequireCaller : 1 = false;
   /// `!vtable`: source-owned primary COFF x64 table metadata, never a
   /// function-byte claim. PublicNames names the table; References names its
@@ -162,10 +164,12 @@ struct StoredModule {
   uint16_t CRC16 = 0;
   uint8_t CRCLen = 0;
   bool RequireReferences : 1 = false;
-  /// `!caller`: indexed by expected linkage name only. A complete, strong,
-  /// settled caller must unanimously name this target at a reference site.
-  /// A supported complete, strong body can extend a rooted incoming chain;
-  /// its descendants never confirm its outgoing references.
+  /// `!caller`: indexed by expected linkage name only. An anchored complete
+  /// caller must unanimously name this target at a reference site. A short
+  /// caller additionally needs an independent ordinary callee; descendants
+  /// never confirm their ancestors or supply that independent evidence.
+  /// Complete literal bodies may also participate in a checked two-body x64
+  /// code-address fingerprint; neither body alone supplies its identity.
   bool RequireCaller : 1 = false;
   /// `!vtable`: source-owned primary COFF x64 table metadata, never a
   /// function-byte claim. PublicNames names the table; References names its

@@ -805,6 +805,13 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
         if (isMedRawEnvironmentRequirement(Op))
           llvm::report_fatal_error(
               "raw environment requirement has no LLVM runtime contract");
+        if (Op.Opcode == NdOp::INTRINSIC && !Op.Inputs.empty() &&
+            Op.Inputs[0].isConst() &&
+            isAArch64WritebackMemoryIntrinsic(
+                static_cast<Intrinsic>(Op.Inputs[0].ConstVal)) &&
+            (TheArch != Arch::AArch64 ||
+             !aarch64WritebackMemoryMedShapeIsValid(Op)))
+          throw std::runtime_error(kWritebackMalformed);
         if (Op.Opcode == NdOp::INTRINSIC && !hasValidMedIntrinsicId(Op))
           llvm::report_fatal_error(
               "intrinsic has an invalid intrinsic ID shape");
@@ -839,9 +846,6 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
               throw std::runtime_error(Reason);
           }
           if (isAArch64WritebackMemoryIntrinsic(Id)) {
-            if (TheArch != Arch::AArch64 ||
-                !aarch64WritebackMemoryMedShapeIsValid(Op))
-              throw std::runtime_error(kWritebackMalformed);
             const auto Instruction = *aarch64WritebackMemoryInstruction(
                 Op.Inputs[kWritebackWordOperand + 1].ConstVal);
             if (Instruction.stackBase())

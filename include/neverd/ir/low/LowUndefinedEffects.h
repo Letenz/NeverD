@@ -12,15 +12,23 @@
 
 #include "llvm/ADT/ArrayRef.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace neverd {
+#define NEVERD_LOW_UNDEFINED_VALUE(Name, Value)                                \
+  inline constexpr size_t Name = Value;
+#define NEVERD_LOW_UNDEFINED_TEXT(Name, Value)                                 \
+  inline constexpr char Name[] = Value;
+#include "neverd/ir/low/LowUndefinedEffects.def"
 
 /// Bind a sidecar to the exact operation span, including provenance and source
-/// coordinates. This detects stale reuse; it does not authenticate ISA facts.
+/// coordinates. Six-slot spans retain the v1 identity when extension slots
+/// are default; extended operands or stored extension bits select v2. This
+/// detects stale reuse; it does not authenticate ISA facts.
 std::string lowUndefinedOperationDigest(llvm::ArrayRef<LowOp> Ops);
 
 /// Completeness of the architecture's description of newly arbitrary result

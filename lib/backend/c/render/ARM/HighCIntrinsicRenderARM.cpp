@@ -15,6 +15,7 @@
 #include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
 #include "neverd/backend/c/render/AArch64/AArch64SVECPAC.h"
+#include "neverd/backend/c/render/AArch64/AArch64StructureMemoryC.h"
 #include "neverd/backend/c/render/AArch64/AArch64WritebackMemoryC.h"
 #include "neverd/backend/c/render/ARM/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -758,6 +759,32 @@ renderARMMultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
                      std::function<std::string(const HighExpr &)> ExprFn,
                      std::function<std::string(const MedVar &)> VarFn,
                      IsAliveFn IsAlive) {
+  if (const auto Op = aarch64StructureOperation(IID); Op && Op->Load) {
+    if (!aarch64WritebackMemoryOutputsAreValid(
+            IID, Outputs, [](const MedVar &V) { return V.Size; }) ||
+        std::any_of(Operands.begin(), Operands.end(),
+                    [](const auto &V) { return !V || !V->Type; }) ||
+        !aarch64StructureShapeIsValid(
+            IID, Operands.size(), 0,
+            [&](unsigned I) { return Operands[I]->Type->Size; },
+            [&](unsigned I) -> std::optional<uint64_t> {
+              return Operands[I]->Kind == ExprKind::Const
+                         ? std::optional<uint64_t>(Operands[I]->ConstVal)
+                         : std::nullopt;
+            }))
+      throw std::invalid_argument(kWritebackMalformed);
+    const auto I = *aarch64StructureMemoryInstruction(
+        Operands[kWritebackWordOperand]->ConstVal);
+    std::vector<std::string> Data, Names;
+    for (unsigned N = kStructureDataOperand; N < Operands.size(); ++N)
+      Data.push_back(ExprFn(*Operands[N]));
+    for (const auto &Output : Outputs)
+      Names.push_back(!IsAlive || IsAlive(Output) ? VarFn(Output)
+                                                  : std::string());
+    return aarch64StructureMemoryC(I, ExprFn(*Operands[0]),
+                                   ExprFn(*Operands[kStructureIndexOperand]),
+                                   Data, Names);
+  }
   if (isAArch64WritebackAuxiliaryLoad(IID)) {
     if (Operands.size() != kWritebackLoadOperands ||
         !aarch64WritebackMemoryOutputsAreValid(
@@ -875,6 +902,20 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
                                Value)
                      .str()
                : Value;
+  }
+  if (const auto Op = aarch64StructureOperation(Id)) {
+    if (Op->Load || Ops.size() != OperandBytes.size() ||
+        !aarch64StructureShapeIsValid(
+            Id, Ops.size(), ResultBytes,
+            [&](unsigned I) { return OperandBytes[I]; },
+            [&](unsigned I) { return constantOperand(Ops[I]); }))
+      throw std::invalid_argument(kWritebackMalformed);
+    const auto I = *aarch64StructureMemoryInstruction(
+        *constantOperand(Ops[kWritebackWordOperand]));
+    std::vector<std::string> Data(Ops.begin() + kStructureDataOperand,
+                                  Ops.end());
+    return aarch64StructureMemoryC(I, Ops[0], Ops[kStructureIndexOperand],
+                                   Data);
   }
   if (isAArch64WritebackMemoryIntrinsic(Id)) {
     const unsigned Count = aarch64WritebackMemoryOperandCount(Id);
