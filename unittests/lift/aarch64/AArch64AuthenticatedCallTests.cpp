@@ -52,7 +52,7 @@ MedFunc function(unsigned Key, bool Zero, unsigned Arguments,
                  bool Raw = false) {
   MedFunc Function;
   Function.Name = kFunction;
-  Function.Entry = 0x1000;
+  Function.Entry = kEntryAddress;
   Function.ReturnType = NdType::makeInt(kPointerBytes);
   for (unsigned I = 0; I < Arguments + 2; ++I) {
     MedVar Parameter;
@@ -66,7 +66,7 @@ MedFunc function(unsigned Key, bool Zero, unsigned Arguments,
   MedOp Authentication;
   Authentication.Opcode = NdOp::INTRINSIC;
   Authentication.Output.Kind = MedVar::Temp;
-  Authentication.Output.Id = 64;
+  Authentication.Output.Id = kAuthenticationTemporaryId;
   Authentication.Output.Size = kPointerBytes;
   Authentication.addInput(
       MedVar::makeConst(static_cast<uint64_t>(Intrinsic::A64_AuthBranch), 4));
@@ -79,7 +79,7 @@ MedFunc function(unsigned Key, bool Zero, unsigned Arguments,
   Call.Output.Kind = MedVar::Reg;
   Call.Output.TheArch = Arch::AArch64;
   Call.Output.RegOff = a64reg::X0;
-  Call.Output.Id = 65;
+  Call.Output.Id = kCallResultId;
   Call.Output.SSAVer = 1;
   Call.Output.Size = kPointerBytes;
   Call.addInput(Raw ? Function.Params[0] : Authentication.Output);
@@ -471,7 +471,7 @@ TEST(AArch64AuthenticatedCall, OriginalLinkRegisterOperandsSurviveTheNewLink) {
                            kRestoreFrame,
                            kReturn};
     Segment Text;
-    Text.VA = 0x1000;
+    Text.VA = kEntryAddress;
     Text.Size = Text.FileSz = Words.size() * sizeof(uint32_t);
     Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
     Text.Data.resize(Text.Size);
@@ -481,7 +481,7 @@ TEST(AArch64AuthenticatedCall, OriginalLinkRegisterOperandsSurviveTheNewLink) {
     Decoder Decoder;
     ASSERT_TRUE(Decoder.init(Arch::AArch64));
     Decoder.setStrict(true);
-    auto Low = CFGBuilder().build(Image, Decoder, 0x1000, kFunction);
+    auto Low = CFGBuilder().build(Image, Decoder, kEntryAddress, kFunction);
     auto Function =
         LowToMedConverter().convert(Low, Arch::AArch64, BinaryFormat::ELF);
     const auto Calls = findAArch64AuthenticatedCalls(Function);
