@@ -3368,6 +3368,17 @@ hashing, retaining complete-key equality and the same storage/work accounts.
 Native sample guards index contiguous variable-ID windows directly. Sparse
 windows retain compact maps, and both paths preserve the same referenced-input
 order and random stream. Numeric node-order comparisons stay inside the sort.
+When two sums retain identical complete addends, the sample guard cancels those
+addends in the shared modular ring before compiling residual evaluation plans.
+It still draws assignments for the original variable union, including wide
+inputs used only by canceled terms, so every validation point remains unchanged.
+Only node identity authorizes cancellation; differing coefficients or operand
+widths do not. Residual plans retain arbitrary-width internal evaluation.
+A literal plus a complemented atom uses the full-width affine identity
+`C + ~X = (C - 1) - X` without constructing polynomial tables. Its scalar work
+and emitted storage remain charged. The deep and region solvers share the
+same minimum-reading predicate, including constant-minus-variable forms;
+an all-ones offset still permits the cheaper complement spelling.
 General operators retain the shared APInt semantics in a separate call, keeping
 their operand construction and cleanup out of the native evaluator's hot frame.
 The compact two-word hash key uses one 64-bit bucket mix, without hashing its
@@ -3618,6 +3629,9 @@ proved trailing zeros in those factors and their joint product can reduce the
 precision needed for the group. The joint proof stops at the first possibly
 nonzero bit. Large products project their observed words before counting the
 input domain, so invisible high subtrees do not consume a second traversal.
+Products spanning the complete observed domain also normalize their factors
+once. Each operand needs only the bits still observable after the other
+factors' proved trailing zeros; the projection cache includes that precision.
 Neutral low-word constants bypass reconstruction of identity operations.
 Small products can group by parity alone after affine synthesis, retaining
 multiple independently valued residual words. A complete count must still
@@ -3641,13 +3655,16 @@ that bit's correction may itself depend on the inputs. Addition, XOR, constant
 masks and products propagate the correction with complete identities. Products
 remove only proved trailing zeros and retain every normalized parity term;
 one-bit products keep an opaque identity because cross terms can survive.
+Exact XOR representatives flatten nested XORs and combine literal residues,
+including those exposed by a shifted child, without discarding corrections.
 An odd pair shares a square of its lower word and one exact highest-bit
 correction. Collecting the squares permits recursion at one fewer bit. Every
 unpaired factor and every correction remains in the result. At the outermost
-level of an odd-sized source block, unpaired full words can remain outside
-the paired square and its correction. The original full factor count still
-proves the other parity branch zero; recursive squares retain all their own
-factors. Even blocks and projected groups keep their joint reconstruction. Degree-block
+level of an odd-sized source block or a partial even block with nonlinear
+factors, unpaired full words can remain outside the paired square and its
+correction. The original full factor count still proves the other parity
+branch zero; recursive squares retain all their own factors. Other even
+blocks and projected groups keep their joint reconstruction. Degree-block
 admission only orders this search; it never establishes a pair or oddness.
 Pairing indexes are constructed only for an admitted search and are confined
 to its active odd assumption, avoiding setup in ordinary low-word searches.
@@ -3660,6 +3677,12 @@ can search past a failed positional probe without repeatedly materializing
 upper carries. Partial factor blocks retain complete probes, preserving their
 existing work headroom. These rules remain in the shared symbolic owner used
 by CLI and GUI source optimization.
+Complete blocks and odd residual blocks combine two-bit correction columns
+before constructing their carry graph. Literal corrections sum directly modulo
+four; repeated or complementary variable bits cancel or move to the next
+column through the existing exact word adder. Partial even blocks preserve
+streaming accumulation so unfinished proofs leave the established headroom
+for child rewrites. Both strategies retain the same cumulative resource limits.
 Boolean polynomial reconstruction can factor shared cofactors across groups
 with disjoint remaining variables. Exact symmetric differences retain every
 unmatched term. Larger decision graphs try this construction before expanding
@@ -3672,7 +3695,10 @@ are request-local; storage refusals retry when a larger allowance is available.
 The deep walk keeps original opaque inputs and changed original products
 eligible. Their rewrites propagate through the canonical builder without
 repeated analysis of the emitted reading. Independent linear tails
-finish before walking a generated product reading. A concrete nonzero
+finish before walking a generated product reading. When only one high-degree
+product is present, its independent linear tail finishes before the optional
+product proof; multiple high-degree products retain their joint search order.
+A concrete nonzero
 witness may reject further zero-proof attempts but never authorizes a rewrite.
 All-odd assignments retain their cheap parity path. If they fail, bounded
 native-width evaluations can count trailing zeros in even factors at complete
@@ -3711,6 +3737,11 @@ operand order, arbitrary-width semantics or the solver's work charges.
 Native evaluation starts associative folds with their two guaranteed operands
 and reuses already truncated literals, avoiding empty reductions and repeated
 constant masking in the sampling loop.
+Symbolic text parsing collects a same-width multiplication chain once its
+prefix contains two nonconstant factors. It materializes that prefix before
+any width change or other operator, preserving intermediate modular overflow,
+left associativity and earlier single-shift/coefficient folds. Long products
+therefore avoid retaining a separate expression for every growing prefix.
 HighC lowers a zero-extended sub-byte extract as a masked native-word operation
 with the exact extraction offset. The fragment is never materialized as a byte
 for signed extension, which would change its sign bit. Other unsupported

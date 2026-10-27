@@ -1895,6 +1895,12 @@ build-release/bin/NeverDSymSynthAffineTests
 build-release/bin/NeverDSolverTests
 ```
 
+`PermanentConjunctPreparation` keeps wide equality fixtures above the expression
+builder's bounded constant scan. Exact and one-short work limits must still
+exercise the preparation walk, and extracting an entailed bit must not bypass
+the original predicate's encoding width limit. A separate folded-equality case
+checks the canonical one-bit cost, satisfiability and contradictory assumption.
+
 `NeverDSymSynthQuadraticTests` checks oracle reconstruction of squares and
 pairwise products, full-width coefficients, the noninvertible diagonal, opaque
 typed inputs, narrow wrapping, nonlinear rejection and budget/proof refusal.
@@ -2270,6 +2276,17 @@ blocks of degree 15/23/31 retain unpaired source words and low-bit disturbances.
 Tests exhaust all three six-bit inputs for a degree-15 block, check complete
 8–257-bit words and retain every factor under short work/storage allowances.
 A degree-23 machine-code fixture executes all six source routes at O0/O2.
+Reassociated complemented blocks check XOR identity reuse with independent
+8–257-bit arithmetic and an exhaustive three-input six-bit oracle. Degree-192
+mixed products at both mask precisions must preserve their independent linear
+tail even when the product search cannot finish within 65,536 work units.
+Complete expression comparisons must retain the old results' cost and budget
+completion across complemented blocks, partial even blocks and permutations.
+Correction-column regressions require degree-65 mixed products to finish under
+the existing 65,536-work allowance at native widths, while degree-48 partial
+even products retain their independent child reductions. Natural, bit-flipped
+and complemented inputs, reversed construction and one-factor parity changes
+are checked against independent complete-word arithmetic through 257 bits.
 Quadratic carry-count tests retain both observed correction bits without
 dividing by a noninvertible word. They compare complete products with
 independent APInt arithmetic through 257 bits and Z3 proofs at 8/16/32/64 bits.
@@ -7359,6 +7376,10 @@ including all operators, deterministic assignments, and unused wide inputs.
 Contiguous input windows starting at zero or after unused wide variables must
 retain the same random stream and agree with the independent AP evaluator at
 1–257 bits. Sparse windows keep their existing compact lookup coverage.
+Common-addend checks compare degree-256 products and differing coefficients
+against complete AP evaluation. Inputs used only by canceled terms must still
+consume their original random words, including 65–257-bit inputs and sparse
+variable IDs; surviving plans retain their internal wide arithmetic.
 Candidate quality
 comparisons across scoring revisions must recount both outputs with the same
 metric; the SDK's version-specific size counters are diagnostic only.
@@ -7372,6 +7393,13 @@ nodes, exact/short work and table storage, all Boolean corners and independent
 `SymMBAMinimumTests` checks proved binary-leaf minima with only traversal work,
 exhausts cheaper functions at small widths, and covers wide words, resource
 refusals and related or opaque inputs that still require full simplification.
+`SymMBAArithmetic.LiteralComplementUsesACompleteAffineReading` checks direct
+full-width affine derivation, division-by-zero atoms, short budgets and storage
+refusal through 257 bits. Region tests require a proved minimal affine reading
+to stop at the arithmetic pass's work count while retaining complement recovery.
+`SymParse` checks bounded retained nodes for 256-factor chains, independent
+wide product values, mixed-width overflow boundaries, division/remainder order,
+single-shift folds and malformed trailing operators.
 
 Build the symbolic engine, LLVM safety guards, HighIR bridge tests, and source
 roundtrips together when changing shared bitvector simplification:

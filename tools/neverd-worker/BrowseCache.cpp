@@ -13,10 +13,17 @@
 #include "ResourceLimits.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <vector>
+
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
 
 namespace neverd::worker {
 namespace fs = std::filesystem;
@@ -96,6 +103,29 @@ const std::string &runtimeIdentity() {
                  std::to_string(size.QuadPart);
           return BrowseCache::digest(key);
         }
+      }
+#else
+      // Hashing the engine library costs about half a second at the first
+      // browse request of every worker, the first paint this cache serves.
+      // As on Windows, bind the cache to the file's identity: a replacement
+      // has another inode, and rewriting it in place changes its ctime.
+      struct stat info{};
+      if (::stat(path.c_str(), &info) == 0) {
+#ifdef __APPLE__
+        const auto &changed = info.st_ctimespec;
+        const auto &written = info.st_mtimespec;
+#else
+        const auto &changed = info.st_ctim;
+        const auto &written = info.st_mtim;
+#endif
+        std::string key;
+        for (const auto value :
+             {std::int64_t(info.st_dev), std::int64_t(info.st_ino),
+              std::int64_t(info.st_size), std::int64_t(changed.tv_sec),
+              std::int64_t(changed.tv_nsec), std::int64_t(written.tv_sec),
+              std::int64_t(written.tv_nsec)})
+          key += std::to_string(value) + ":";
+        return BrowseCache::digest(key);
       }
 #endif
       return BrowseCache::digest(readFile(path));
@@ -251,11 +281,28 @@ void BrowseCache::flush() noexcept {
 void BrowseCache::prune() {
   std::vector<fs::directory_entry> files;
   std::uintmax_t total = 0;
-  for (const auto &file : fs::directory_iterator(folder_))
-    if (file.is_regular_file() && file.path().extension() == ".ndbc") {
+  const auto staleBefore =
+      fs::file_time_type::clock::now() -
+      std::chrono::seconds(
+          ::neverd::limits::worker::kBrowseCacheStaleTemporarySeconds);
+  for (const auto &file : fs::directory_iterator(folder_)) {
+    if (!file.is_regular_file())
+      continue;
+    // A writer stopped between writing and publishing an entry. Its temporary
+    // file is neither readable nor counted, so nothing else would remove it.
+    if (file.path().filename().string().find(".ndbc.tmp-") !=
+        std::string::npos) {
+      std::error_code error;
+      const auto written = file.last_write_time(error);
+      if (!error && written < staleBefore)
+        fs::remove(file.path(), error);
+      continue;
+    }
+    if (file.path().extension() == ".ndbc") {
       files.push_back(file);
       total += file.file_size();
     }
+  }
   if (total <= ::neverd::limits::worker::kBrowseCacheMaxBytes)
     return;
   std::sort(files.begin(), files.end(), [](const auto &a, const auto &b) {
