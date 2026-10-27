@@ -3550,8 +3550,10 @@ The shared frame tests separately exercise native edge gestures.
 window on every platform: Minimize must keep the application responsive and
 File > Quick start must restore the same window at its previous size.
 `quickStartRestoresFromTheDock` runs the real startup and in-workbench paths on
-Cocoa, clicks Minimize, waits for AppKit's minimized state, then sends the native
-application-reopen event used by Dock clicks. It requires restoration without
+Cocoa, waits for both window focus and application activation before clicking
+Minimize, waits for AppKit's minimized state, then sends the native
+application-reopen event used by Dock clicks. Direct widget clicks bypass
+Cocoa's activation before native input. It requires restoration without
 calling `showNormal()` and checks that no application-modal session remains.
 `quickStartReusesItsWindowAndClosesWithTheWorkbench` checks the asynchronous
 greeting, single-window ownership, Go, and destruction before a choice.

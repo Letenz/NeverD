@@ -8152,6 +8152,10 @@ private slots:
       auto *dialog = visibleQuickStart();
       QVERIFY(dialog);
       const auto close = qScopeGuard([&] { dialog->close(); });
+      QVERIFY(activateTestWindow(dialog));
+      // A direct widget click bypasses Cocoa's activation before native input.
+      // Settle the first activation before testing a later Dock reopen.
+      QTRY_COMPARE(QGuiApplication::applicationState(), Qt::ApplicationActive);
       auto *minimize = dialog->findChild<QAbstractButton *>("minimizeButton");
       QVERIFY(minimize && minimize->isVisible());
       const auto size = dialog->size();
