@@ -141,6 +141,37 @@ std::optional<uint64_t> referenceId(const Reference &R, const Program &P,
   return Map.PrimaryToSecondary[*Target];
 }
 
+/// Unknown operands must not conceal an independently known retargeting.
+/// This linear walk is used for aligned rows, not the alignment's DP cells.
+bool knownAddressDifference(const Program &P, const Instruction &X,
+                            const Program &S, const Instruction &Y,
+                            const Correspondence &Map) {
+  const auto A = P.addressReferences(X), B = S.addressReferences(Y);
+  size_t I = 0, J = 0;
+  while (I < A.size() || J < B.size()) {
+    if (J == B.size() || (I < A.size() && A[I].Operand < B[J].Operand)) {
+      if (!Y.HasUnresolvedData)
+        return true;
+      ++I;
+    } else if (I == A.size() || B[J].Operand < A[I].Operand) {
+      if (!X.HasUnresolvedData)
+        return true;
+      ++J;
+    } else {
+      if (A[I].Kind != ReferenceKind::UnresolvedData &&
+          B[J].Kind != ReferenceKind::UnresolvedData) {
+        const auto Left = referenceId({A[I].Kind, A[I].Key, 0}, P, true, Map);
+        const auto Right = referenceId({B[J].Kind, B[J].Key, 0}, S, false, Map);
+        if (Left && Right && (A[I].Kind != B[J].Kind || Left != Right))
+          return true;
+      }
+      ++I;
+      ++J;
+    }
+  }
+  return false;
+}
+
 void computeKeys(Side &S, bool Primary, const Correspondence &Map) {
   S.poll();
   S.Out = edgeAdjacency(S.P, S.F, false);
@@ -177,15 +208,22 @@ void computeKeys(Side &S, bool Primary, const Correspondence &Map) {
       S.poll();
       Bytes.add(S.P.bytes(I));
       Body.add(I.Shape);
-      if (I.FunctionAddressCount) {
+      if (I.AddressReferenceCount || I.Callee != NoIndex) {
         StableHash Addresses;
         bool Known = true;
-        for (const auto &Address : S.P.functionAddresses(I)) {
+        for (const auto &Address : S.P.addressReferences(I)) {
+          if (Address.Kind != ReferenceKind::Function)
+            continue;
           const auto Target = referenceId(
-              {ReferenceKind::Function, Address.Address, B}, S.P, Primary, Map);
+              {ReferenceKind::Function, Address.Key, B}, S.P, Primary, Map);
           Known &= Target.has_value();
           if (Target)
             Addresses.add(Address.Operand).add(*Target);
+        }
+        if (I.Callee != NoIndex) {
+          const uint32_t Target = callId(I, Primary, Map);
+          Known &= Target != NoIndex;
+          Addresses.add(NoIndex).add(Target);
         }
         S.AddressKeys[&I] =
             Known ? std::optional<uint64_t>(Addresses.value()) : std::nullopt;
@@ -580,13 +618,15 @@ void BlockMatcher::run() {
 /// Aligns the instructions of two paired blocks.
 class Aligner {
 public:
-  Aligner(const Side &A, const Side &B) : A(A), B(B) {}
+  Aligner(const Side &A, const Side &B, const Correspondence &Map)
+      : A(A), B(B), Map(Map) {}
 
   void align(uint32_t XBlock, uint32_t YBlock, std::vector<DeltaRow> &Rows);
 
 private:
   const Side &A;
   const Side &B;
+  const Correspondence &Map;
   std::vector<uint32_t> Score;
   using InstructionPairs = std::vector<std::pair<uint32_t, uint32_t>>;
 
@@ -618,12 +658,24 @@ private:
     return 0;
   }
   RowKind kind(const Instruction &X, const Instruction &Y) const {
-    if (sameShape(X, Y))
-      return X.Size == Y.Size && llvm::equal(A.P.bytes(X), B.P.bytes(Y))
-                 ? RowKind::Identical
-                 : RowKind::Moved;
-    if (X.Skeleton == Y.Skeleton && sameAddresses(X, Y))
-      return RowKind::Constant;
+    const bool Unknown =
+        !A.addressKey(X) || !B.addressKey(Y) ||
+        ((X.HasUnresolvedData || Y.HasUnresolvedData) && X.Shape != Y.Shape);
+    const auto Callee = callId(X, true, Map);
+    const bool DifferentCall =
+        Callee != NoIndex && Y.Callee != NoIndex && Callee != Y.Callee;
+    const bool DifferentReference = knownAddressDifference(A.P, X, B.P, Y, Map);
+    if (Unknown && X.AddressIndependentShape == Y.AddressIndependentShape &&
+        !DifferentCall && !DifferentReference)
+      return RowKind::Uncertain;
+    if (!DifferentCall && !DifferentReference) {
+      if (sameShape(X, Y))
+        return X.Size == Y.Size && llvm::equal(A.P.bytes(X), B.P.bytes(Y))
+                   ? RowKind::Identical
+                   : RowKind::Moved;
+      if (X.Skeleton == Y.Skeleton && sameAddresses(X, Y))
+        return RowKind::Constant;
+    }
     if (A.mnemonic(X) == B.mnemonic(Y))
       return RowKind::Operand;
     return RowKind::Replaced;
@@ -929,7 +981,7 @@ FunctionDelta compareFunctionsWithKeys(const Program &Primary, uint32_t PF,
           After[Previous].push_back(Y);
       }
     }
-    Aligner Align(A, B);
+    Aligner Align(A, B, Map);
     const auto Inserted = [&](uint32_t Y) {
       const uint32_t Base = B.firstInstruction(Y);
       for (uint32_t I = 0; I < B.Keys[Y].Count; ++I)
@@ -946,6 +998,14 @@ FunctionDelta compareFunctionsWithKeys(const Program &Primary, uint32_t PF,
             D.Rows.begin() + First, D.Rows.end(), [](const DeltaRow &R) {
               return R.Kind == RowKind::Identical || R.Kind == RowKind::Moved;
             });
+        D.Blocks[P].Uncertain =
+            !D.Blocks[P].Unchanged &&
+            std::all_of(D.Rows.begin() + First, D.Rows.end(),
+                        [](const DeltaRow &R) {
+                          return R.Kind == RowKind::Identical ||
+                                 R.Kind == RowKind::Moved ||
+                                 R.Kind == RowKind::Uncertain;
+                        });
       } else {
         const uint32_t Base = A.firstInstruction(X);
         for (uint32_t I = 0; I < A.Keys[X].Count; ++I)
@@ -966,6 +1026,9 @@ FunctionDelta compareFunctionsWithKeys(const Program &Primary, uint32_t PF,
     for (const DeltaRow &R : D.Rows) {
       A.poll();
       switch (R.Kind) {
+      case RowKind::Uncertain:
+        D.ReferenceComparisonComplete = false;
+        break;
       case RowKind::Identical:
         ++D.EqualInstructions;
         break;
@@ -974,15 +1037,15 @@ FunctionDelta compareFunctionsWithKeys(const Program &Primary, uint32_t PF,
         C |= ChangeBytes | ChangeRelocation;
         break;
       case RowKind::Constant:
-        C |= ChangeBytes | ChangeConstants;
+        C |= ChangeConstants;
         break;
       case RowKind::Operand:
-        C |= ChangeBytes | ChangeOperands;
+        C |= ChangeOperands;
         break;
       case RowKind::Replaced:
       case RowKind::Inserted:
       case RowKind::Deleted:
-        C |= ChangeBytes | ChangeInstructions;
+        C |= ChangeInstructions;
         break;
       }
       const Instruction *X =
@@ -992,17 +1055,32 @@ FunctionDelta compareFunctionsWithKeys(const Program &Primary, uint32_t PF,
                                  : nullptr;
       if (X && Y)
         ++Aligned;
-      if ((X && X->UnresolvedCallee) || (Y && Y->UnresolvedCallee))
-        C |= ChangeCalls;
+      if (!X || !Y || !llvm::equal(Primary.bytes(*X), Secondary.bytes(*Y)))
+        C |= ChangeBytes;
+      if (X && Y &&
+          (!A.addressKey(*X) || !B.addressKey(*Y) ||
+           ((X->HasUnresolvedData || Y->HasUnresolvedData) &&
+            X->Shape != Y->Shape)))
+        D.ReferenceComparisonComplete = false;
+      if (X && Y && knownAddressDifference(Primary, *X, Secondary, *Y, Map))
+        C |= ChangeReferences;
+      const bool UnknownCall =
+          (X && X->UnresolvedCallee) || (Y && Y->UnresolvedCallee);
+      if (UnknownCall)
+        D.ReferenceComparisonComplete = false;
       const bool XCalls = X && X->Callee != NoIndex;
       const bool YCalls = Y && Y->Callee != NoIndex;
-      if (XCalls != YCalls) {
+      if (!UnknownCall && XCalls != YCalls) {
         // A call that only one side makes, unless the other side's
         // instruction is not on this row at all and is a call elsewhere.
         if ((X && Y) || (XCalls && !Y) || (YCalls && !X))
           C |= ChangeCalls;
-      } else if (XCalls && YCalls && callId(*X, true, Map) != Y->Callee) {
-        C |= ChangeCalls;
+      } else if (!UnknownCall && XCalls && YCalls) {
+        const auto Target = callId(*X, true, Map);
+        if (Target == NoIndex)
+          D.ReferenceComparisonComplete = false;
+        else if (Target != Y->Callee)
+          C |= ChangeCalls;
       }
     }
     if (D.Blocks.size() != A.F.BlockCount || D.Blocks.size() != B.F.BlockCount)
@@ -1023,29 +1101,47 @@ FunctionDelta compareFunctionsWithKeys(const Program &Primary, uint32_t PF,
     if (A.F.EntryBlock != NoIndex && B.F.EntryBlock != NoIndex) {
       const uint32_t P = D.PrimaryBlockPair[A.F.EntryBlock];
       if (P == NoIndex || D.Blocks[P].Secondary != B.F.EntryBlock ||
-          !D.Blocks[P].Unchanged)
+          (!D.Blocks[P].Unchanged && !D.Blocks[P].Uncertain))
         C |= ChangeEntry;
     } else if ((A.F.EntryBlock == NoIndex) != (B.F.EntryBlock == NoIndex)) {
       C |= ChangeEntry;
     }
     {
+      struct ReferenceKeys {
+        std::vector<std::pair<ReferenceKind, uint64_t>> Other;
+        std::vector<uint64_t> Functions, UnknownData;
+        bool FunctionGap = false;
+      };
       const auto Named = [&](const Program &P, const Function &F,
-                             bool IsPrimary)
-          -> std::optional<std::vector<std::pair<ReferenceKind, uint64_t>>> {
-        std::vector<std::pair<ReferenceKind, uint64_t>> Out;
+                             bool IsPrimary) {
+        ReferenceKeys Out;
         for (const Reference &R : P.references(F))
           if (R.Kind != ReferenceKind::Constant) {
+            if (R.Kind == ReferenceKind::UnresolvedData) {
+              Out.UnknownData.push_back(R.Key);
+              continue;
+            }
             const auto Key = referenceId(R, P, IsPrimary, Map);
             if (!Key)
-              return {};
-            Out.emplace_back(R.Kind, *Key);
+              Out.FunctionGap = true;
+            else if (R.Kind == ReferenceKind::Function)
+              Out.Functions.push_back(*Key);
+            else
+              Out.Other.emplace_back(R.Kind, *Key);
           }
-        llvm::sort(Out);
+        llvm::sort(Out.Other);
+        llvm::sort(Out.Functions);
+        llvm::sort(Out.UnknownData);
         return Out;
       };
       const auto X = Named(Primary, A.F, true),
                  Y = Named(Secondary, B.F, false);
-      if (!X || !Y || X != Y)
+      const bool DataGap = X.UnknownData != Y.UnknownData;
+      const bool FunctionGap = X.FunctionGap || Y.FunctionGap;
+      if (DataGap || FunctionGap)
+        D.ReferenceComparisonComplete = false;
+      if (!DataGap &&
+          (X.Other != Y.Other || (!FunctionGap && X.Functions != Y.Functions)))
         C |= ChangeReferences;
     }
 
@@ -1067,7 +1163,7 @@ FunctionDelta compareFunctionsWithKeys(const Program &Primary, uint32_t PF,
     double Similarity = limits::diff::kSimilarityInstructionWeight * Insns +
                         limits::diff::kSimilarityBlockWeight * Blocks +
                         limits::diff::kSimilarityEdgeWeight * Edges;
-    if (C & ~MovementChanges)
+    if ((C & ~MovementChanges) || !D.ReferenceComparisonComplete)
       Similarity = std::min(Similarity, limits::diff::kMaxChangedSimilarity);
     else
       Similarity = 1;
@@ -1080,6 +1176,7 @@ FunctionDelta compareFunctionsWithKeys(const Program &Primary, uint32_t PF,
     D.State = Stop.State;
     D.ComputationComplete = false;
     D.AnalysisComplete = false;
+    D.ReferenceComparisonComplete = false;
     return D;
   }
 }

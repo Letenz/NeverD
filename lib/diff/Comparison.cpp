@@ -104,11 +104,26 @@ void measure(FunctionMatch &M, const FunctionDelta &D) {
   M.Measured = true;
   M.IdentityOnly = D.IdentityOnly;
   M.AnalysisComplete = D.AnalysisComplete;
+  M.ReferenceComparisonComplete = D.ReferenceComparisonComplete;
   M.Similarity = D.Similarity;
   M.Changes = D.Changes;
   M.MatchedBlocks = static_cast<uint32_t>(D.Blocks.size());
   M.MatchedEdges = D.MatchedEdges;
   M.EqualInstructions = D.EqualInstructions;
+}
+
+llvm::StringRef changeState(const FunctionMatch &M) {
+  if (!M.Measured)
+    return "unmeasured";
+  if (M.IdentityOnly)
+    return "identity_only";
+  if (M.Changes & ~MovementChanges)
+    return "changed";
+  if (!M.AnalysisComplete)
+    return "incomplete";
+  if (!M.ReferenceComparisonComplete)
+    return "uncertain";
+  return "unchanged";
 }
 
 namespace {
@@ -1360,10 +1375,10 @@ void reindex(ComparisonResult &R, size_t PrimaryCount, size_t SecondaryCount,
   }
 }
 
-/// The functions of \p P with a call to one of \p Callees.
-std::vector<uint32_t> callersOf(const Program &P,
-                                const llvm::DenseSet<uint32_t> &Callees,
-                                const ComparisonControl &Control) {
+/// Functions whose call or address evidence depends on one of \p Callees.
+std::vector<uint32_t> dependentsOf(const Program &P,
+                                   const llvm::DenseSet<uint32_t> &Callees,
+                                   const ComparisonControl &Control) {
   std::vector<uint32_t> Out;
   for (uint32_t F = 0; F < P.Functions.size(); ++F) {
     Control.check();
@@ -1377,6 +1392,16 @@ std::vector<uint32_t> callersOf(const Program &P,
       if (Calls)
         break;
     }
+    if (!Calls)
+      for (const auto &Ref : P.references(P.Functions[F])) {
+        Control.check();
+        if (Ref.Kind == ReferenceKind::Function)
+          if (const auto Target = P.functionAt(Ref.Key);
+              Target && Callees.contains(*Target)) {
+            Calls = true;
+            break;
+          }
+      }
     if (Calls)
       Out.push_back(F);
   }
@@ -1485,7 +1510,7 @@ applyOverrideInPlace(ComparisonResult &R, const Program &Primary,
       });
     }
     reindex(R, Primary.Functions.size(), Secondary.Functions.size(), Control);
-    // The new pair, and every pair calling a function whose counterpart
+    // The new pair, and every pair referencing a function whose counterpart
     // changed, measure again.
     const std::vector<uint64_t> PK = mnemonicKeys(Primary, Control),
                                 SK = mnemonicKeys(Secondary, Control);
@@ -1497,10 +1522,10 @@ applyOverrideInPlace(ComparisonResult &R, const Program &Primary,
       SMap[M.Secondary] = M.Primary;
     }
     llvm::DenseSet<uint32_t> Again;
-    for (uint32_t F : callersOf(Primary, ChangedP, Control))
+    for (uint32_t F : dependentsOf(Primary, ChangedP, Control))
       if (R.PrimaryMatch[F] != NoIndex)
         Again.insert(R.PrimaryMatch[F]);
-    for (uint32_t F : callersOf(Secondary, ChangedS, Control))
+    for (uint32_t F : dependentsOf(Secondary, ChangedS, Control))
       if (R.SecondaryMatch[F] != NoIndex)
         Again.insert(R.SecondaryMatch[F]);
     if (E.Added)

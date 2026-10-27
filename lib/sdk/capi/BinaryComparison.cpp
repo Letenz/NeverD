@@ -42,11 +42,13 @@ struct ReadInstruction {
   std::string Operands;
   uint64_t Shape = 0;
   uint64_t Skeleton = 0;
+  uint64_t AddressIndependentShape = 0;
+  bool HasUnresolvedData = false;
   diff::InstructionFlow Flow = diff::InstructionFlow::None;
   std::optional<uint64_t> Target;
   std::optional<uint64_t> Callee;
   std::vector<std::pair<ReferenceKind, uint64_t>> References;
-  std::vector<FunctionAddress> FunctionAddresses;
+  std::vector<AddressReference> AddressReferences;
 };
 
 struct AddressKeys {
@@ -127,7 +129,7 @@ bool readAArch64Operands(
     llvm::function_ref<void(uint64_t)> Both,
     llvm::function_ref<void(uint64_t)> Scalar,
     llvm::function_ref<void(uint64_t, bool, unsigned)> Address,
-    llvm::function_ref<void(uint64_t)> AddressFragment) {
+    llvm::function_ref<void(uint64_t, unsigned)> AddressFragment) {
   const cs_aarch64 &A = I.Raw->detail->aarch64;
   Both(A.cc);
   Both(A.update_flags);
@@ -163,7 +165,7 @@ bool readAArch64Operands(
       else if (I.Id == AARCH64_INS_ADRP && N == 1 && A.op_count == 2) {
         // ADRP materializes an address fragment. Keep the actual image page;
         // no object identity or ADRP+ADD pairing follows from this operand.
-        AddressFragment(static_cast<uint64_t>(O.imm));
+        AddressFragment(static_cast<uint64_t>(O.imm), N);
       } else
         Scalar(static_cast<uint64_t>(O.imm));
       break;
@@ -269,14 +271,17 @@ ReadInstruction readInstruction(const BinaryImage &Image,
     if (Key.first != ReferenceKind::Function)
       R.References.push_back(Key);
   }
-  StableHash Shape, Skeleton;
+  StableHash Shape, Skeleton, AddressIndependentShape;
   Shape.add(R.Mnemonic);
   Skeleton.add(R.Mnemonic);
+  AddressIndependentShape.add(R.Mnemonic);
   const auto Both = [&](uint64_t Value) {
     Shape.add(Value);
     Skeleton.add(Value);
+    AddressIndependentShape.add(Value);
   };
   const auto Address = [&](uint64_t Value, bool Transfer, unsigned Operand) {
+    AddressIndependentShape.add(hashText("address_operand")).add(Transfer);
     uint64_t Key = 0;
     if (Transfer && R.Callee && Keys.Functions.contains(Value))
       Key = hashText("callee");
@@ -288,25 +293,29 @@ ReadInstruction readInstruction(const BinaryImage &Image,
       Key = hashText("callee"); // Compared through function correspondence.
     else {
       const auto Ref = Keys.reference(Value);
-      Both(static_cast<uint64_t>(Ref.first));
+      R.AddressReferences.push_back({Ref.second, Operand, Ref.first});
+      Shape.add(static_cast<uint64_t>(Ref.first));
+      Skeleton.add(static_cast<uint64_t>(Ref.first));
       if (Ref.first == ReferenceKind::Function) {
-        R.FunctionAddresses.push_back({Value, Operand});
         Key = hashText("function_address"); // Compared through correspondence.
       } else if (Ref.first == ReferenceKind::UnresolvedData) {
         R.References.push_back(Ref);
         Shape.add(Ref.second);
         Skeleton.add(hashText("unresolved_address"));
+        R.HasUnresolvedData = true;
         return;
       } else {
         R.References.push_back(Ref);
         Key = Ref.second;
       }
     }
-    Both(Key);
+    Shape.add(Key);
+    Skeleton.add(Key);
   };
   const auto Scalar = [&](uint64_t Value) {
     Shape.add(Value);
     Skeleton.add(0);
+    AddressIndependentShape.add(Value);
     R.References.emplace_back(ReferenceKind::Constant, Value);
   };
   const auto Relocs = instructionRelocations(Image, I);
@@ -318,12 +327,15 @@ ReadInstruction readInstruction(const BinaryImage &Image,
     return {};
   };
   if (Image.Arch == Arch::AArch64) {
-    const auto AddressFragment = [&](uint64_t Value) {
+    const auto AddressFragment = [&](uint64_t Value, unsigned Operand) {
       Both(hashText("aarch64_image_page"));
       Shape.add(Keys.unresolved(Value));
       Skeleton.add(0);
       R.References.emplace_back(ReferenceKind::UnresolvedData,
                                 Keys.unresolved(Value));
+      R.AddressReferences.push_back(
+          {Keys.unresolved(Value), Operand, ReferenceKind::UnresolvedData});
+      R.HasUnresolvedData = true;
     };
     if (!readAArch64Operands(I, Flow, Both, Scalar, Address, AddressFragment))
       R.Flow = diff::InstructionFlow::Unknown;
@@ -381,6 +393,7 @@ ReadInstruction readInstruction(const BinaryImage &Image,
         R.Flow = diff::InstructionFlow::Unknown;
         Shape.add(R.Bytes);
         Skeleton.add(R.Bytes);
+        AddressIndependentShape.add(R.Bytes);
         break;
       }
     }
@@ -388,9 +401,11 @@ ReadInstruction readInstruction(const BinaryImage &Image,
   if (R.Flow == diff::InstructionFlow::Unknown) {
     Shape.add(R.Bytes);
     Skeleton.add(R.Bytes);
+    AddressIndependentShape.add(R.Bytes);
   }
   R.Shape = Shape.value();
   R.Skeleton = Skeleton.value();
+  R.AddressIndependentShape = AddressIndependentShape.value();
   return R;
 }
 
@@ -450,7 +465,8 @@ void appendFunction(ProgramBuilder &Builder, const FuncInfo &F,
     }
     Builder.addInstruction(R.Address, R.Bytes, R.Mnemonic, R.Shape, R.Skeleton,
                            R.Flow, R.Callee, R.Operands, R.Target,
-                           R.FunctionAddresses);
+                           R.AddressReferences, R.AddressIndependentShape,
+                           R.HasUnresolvedData);
     for (const auto &[Kind, Key] : R.References)
       Builder.addReference(Kind, Key, Block);
   }
@@ -575,12 +591,15 @@ std::string revision(const Program &P) {
         Word(I.Address);
         Word(I.Shape);
         Word(I.Skeleton);
+        Word(I.AddressIndependentShape);
+        Word(I.HasUnresolvedData);
         Word(I.Callee);
         Word(I.UnresolvedCallee);
-        Word(I.FunctionAddressCount);
-        for (const auto &Address : P.functionAddresses(I)) {
-          Word(Address.Address);
+        Word(I.AddressReferenceCount);
+        for (const auto &Address : P.addressReferences(I)) {
+          Word(Address.Key);
           Word(Address.Operand);
+          Word(static_cast<unsigned>(Address.Kind));
         }
         Word(static_cast<unsigned>(I.Flow));
         Text(P.mnemonic(I));
@@ -678,7 +697,7 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
     Identity.ABI += ":macho-subtype:" + llvm::utohexstr(S.Img.MachOCPUSubtype);
   Identity.Normalization =
       (AArch64 ? NativeAArch64Normalization : NativeX86Normalization).str();
-  Identity.Analysis = std::string(VersionString) + ":sdk-native-decode-v3:" +
+  Identity.Analysis = std::string(VersionString) + ":sdk-native-decode-v4:" +
                       (Options.Discover ? "discover" : "known-functions");
   if (S.PackedProject)
     Identity.Analysis += ":nddb-v1:" + S.PackedProject->StateSHA256;
@@ -775,8 +794,8 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
                   sizeof(ReadInstruction) + sizeof(Instruction) +
                   R.Bytes.size() * 2 + R.Mnemonic.size() +
                   R.Operands.size() * 2 +
-                  R.FunctionAddresses.size() *
-                      (sizeof(FunctionAddress) * 2 + sizeof(Reference)) +
+                  R.AddressReferences.size() *
+                      (sizeof(AddressReference) * 2 + sizeof(Reference)) +
                   R.References.size() *
                       (sizeof(Reference) +
                        sizeof(std::pair<ReferenceKind, uint64_t>));

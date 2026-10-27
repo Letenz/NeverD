@@ -293,6 +293,8 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
       return Theme::instance().color(ColorRole::DiffAdded);
     if (K == "deleted")
       return Theme::instance().color(ColorRole::DiffRemoved);
+    if (K == "uncertain")
+      return Theme::instance().color(ColorRole::SecondaryText);
     if (K != "identical" && K != "moved")
       return Theme::instance().color(ColorRole::DiffChanged);
   }
@@ -607,6 +609,10 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
     case 5:
       if (E["identity_only"].toBool())
         return tr("Identity only");
+      if (E["change_state"] == QJsonValue("uncertain"))
+        return tr("Uncertain");
+      if (E["change_state"] == QJsonValue("changed"))
+        return tr("Changed");
       if (!E.isEmpty() && !E["measured"].toBool())
         return tr("Unmeasured");
       if (R["incomplete"].toBool() ||
@@ -628,6 +634,8 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
     case 2:
       return code(A);
     case 3:
+      if (K == "uncertain")
+        return tr("Uncertain");
       return K;
     case 4:
       return code(B);

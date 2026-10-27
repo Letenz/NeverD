@@ -1372,13 +1372,13 @@ after link-order changes; a producer's literal numeric suffix remains intact.
 The SDK adapter separately owns presentation names under the extraction memory
 allowance. Bounded function projections use them for display, search and sort;
 the matcher, snapshot hash and saved evidence consume only the original name.
-The `sdk-native-decode-v3`
+The `sdk-native-decode-v4`
 extraction identity distinguishes this evidence contract from older snapshots;
 saved historical reports remain readable without rewriting their evidence.
 
-Native operand profile v2 retains function-address occurrences in `Program` by
-instruction and operand, including repeated uses. `Features` indexes their
-target functions once; exact body keys and `FunctionDelta` compare those targets
+Native operand profile v3 retains address-reference occurrences in `Program` by
+instruction and operand, including repeated uses and known string/data identities.
+`Features` indexes function targets once; exact body keys and `FunctionDelta` compare those targets
 through current correspondence. A function-wide target set cannot establish
 unchanged operands when callback uses are swapped. Address-taking references
 remain separate from calls. Conditional transfers to another function keep
@@ -1389,6 +1389,17 @@ unchanged call. Unnamed data addresses bind the input SHA, effective base-relati
 segment mapping, shared-cache image/backing-file identity and effective overlays
 or analysis sections. A reused RVA across different inputs or raw slices is
 not object identity; a pure image-base relocation preserves the namespace.
+
+Operand profile v3 also retains an address-independent instruction shape that
+keeps scalar values. `FunctionDelta` uses it only to distinguish unknown reference
+identity from a known operand difference. It cannot establish equality. Known
+retargeting and string/data changes in one operand remain visible alongside
+another unresolved operand. An identity that becomes unknown is not a known change.
+The shared delta/match owns `ReferenceComparisonComplete` separately from decoded
+body coverage. Rows and blocks retain uncertainty; API counts, filters, CLI,
+Qt and lineage consume that contract. Mapping edits remeasure call and address
+dependents together. Schema 4 preserves the reference-coverage fact and rejects
+missing fields; historical schemas cannot manufacture a complete reference claim.
 
 Matcher version 6 treats unique weak features and call-context proposals as
 candidates for measured competition. Context eligibility accumulates separately

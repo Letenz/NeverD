@@ -286,10 +286,11 @@ ProgramFeatures computeFeatures(const Program &P,
           Mnemonics.add(Mnemonic);
           Prime *= oddFactor(Mnemonic);
           Skeletons.push_back(I.Skeleton);
-          for (const auto &Address : P.functionAddresses(I))
-            Out.AddressSites.push_back(
-                {P.functionAt(Address.Address).value_or(NoIndex),
-                 Out.Instructions, Address.Operand});
+          for (const auto &Address : P.addressReferences(I))
+            if (Address.Kind == ReferenceKind::Function)
+              Out.AddressSites.push_back(
+                  {P.functionAt(Address.Key).value_or(NoIndex),
+                   Out.Instructions, Address.Operand});
           if (I.Callee != NoIndex)
             Out.AddressSites.push_back({I.Callee, Out.Instructions, NoIndex});
           Out.UnresolvedCallee |= I.UnresolvedCallee;

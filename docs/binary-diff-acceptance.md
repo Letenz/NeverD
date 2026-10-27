@@ -11,14 +11,14 @@ were understood.
 
 | Requirement | Implemented evidence | Remaining acceptance work |
 | --- | --- | --- |
-| Reproducible same-ISA native comparison | Shared `lib/diff`, input/analysis identities, strict saved binding, x86/x64 and AArch64 readers, ambiguous candidate inventories, exact weighted large-block alignment, caller-selected candidate measurement and conservative call-position anchors without a size cutoff | Broader linked-application, real-world stripped and duplicate-heavy corpora; measured error rates |
+| Reproducible same-ISA native comparison | Shared `lib/diff`, input/analysis identities, strict saved binding, x86/x64 and AArch64 readers, ambiguous candidate inventories, exact weighted large-block alignment, caller-selected candidate measurement, conservative call-position anchors, and separate observed changes/reference uncertainty | Additional ISA/format and compiler/transformation qualification; adjudication of unlabelled real-program mappings |
 | CLI and GUI workflow | C ABI and Qt-free worker; bounded pages, CFG/source inspection, edits and undo/redo, save/reopen, input/restore/query/edit cancellation, NDDB project inputs | Continue scenario-based usability and large-input latency qualification; support advanced areas below through the same surfaces |
 | A: transformations and regional matching | Native instruction-run and finite SSA region hypotheses; split/merge/clone/inline/outline/tail evidence; qualified loop progress profiles through v7 | Broad CFG/dataflow transformations and cross-module movement; independent compiler, LTO, PGO and obfuscation qualification; explicit qualified cross-ISA profiles |
 | B: security-fix triage and review | Local change observations, native call-path context, bounded import-effect context, input-bound analyst cases/history and references | Ranked security-fix datasets, interprocedural parameter/return/alias effects, path feasibility, automated patch/backport/revert evidence and reviewer report qualification |
 | C: optional semantic validation | Bounded pure scalar-return profile with explicit models, budgets, non-success outcomes and native provenance | Additional memory/call/loop profiles, precondition and coverage qualification; no general equivalence or vulnerability-elimination claim |
 | D: version and branch lineage | Offline snapshot graph, direct/indirect/parallel/cyclic associations, grouped conflicts, exact-byte reuse, report-local assessments, CLI/Python/GUI persistence, release aliases with declared chronology/parents, focused integration coverage, and a reproducible synthetic scale harness | Broader integration failure follow-up, package-wide graphs, automated patch/backport/revert evidence and large real-corpus quality/latency; annotation application remains #99 |
 | E: software/game packages | Native loaders, module resources and a separate qualified offline web-package behavior comparison exist | One package manifest workflow routing native/managed/metadata/script/config/resource changes, repacking distinctions, qualified Unity/Unreal/Godot adapters and unknown/encrypted coverage |
-| F: competitive qualification | Owned native/compiler regressions, pinned local diagnostic runs, a [reusable fixture generator and mapping evaluator](binary-diff-benchmarks.md) for NeverD, BinDiff, Diaphora and Ghidra exports, and automated fresh-input pipelines for all four tools with completion and input-identity checks | Licensed real-world ground truth, qualified common-input and end-to-end tracks, held-out corpora, broader runtime/profile qualification, per-category quality/resource metrics, frozen numeric gates and statistical evidence |
+| F: competitive qualification | Owned native/compiler regressions, pinned local diagnostic runs, a [source-derived stripped-release corpus builder, mapping evaluator and frozen numeric qualification runner](binary-diff-benchmarks.md), and automated fresh-input pipelines for NeverD, BinDiff, Diaphora and Ghidra with completion and input-identity checks | Qualified common-input comparisons, held-out competitive patch/triage and game-update datasets, broader runtime/profile qualification, per-category metrics and statistical evidence |
 
 Each advanced area remains required. An absent native finding is not evidence
 that a patch is absent, and an analyst's patch-present assessment is not a
@@ -39,6 +39,25 @@ separate. These diagnostic runs do not close F's real-corpus, fairness,
 performance or statistical acceptance requirements.
 
 ## Verification record boundaries
+
+Matcher version 7 and saved schema 4 distinguish decoded-body coverage from
+reference-comparison coverage. Unknown call/data identities cannot manufacture
+observed operand, call or reference changes. Per-operand evidence retains known
+function, string and named data/import changes beside unknown identities. Mapping
+edits remeasure address dependents as well as callers, with shared undo/redo and
+saved-binding validation. CLI/API filters and Qt show uncertainty explicitly;
+an uncertain pair cannot be normalized unchanged. These are evidence and workflow
+contracts, not whole-program equivalence or patch-presence proofs.
+
+Real-release truth is deliberately partial: unique source-unit/linkage-name
+DWARF bodies are independently collected before stripping matcher inputs.
+Clones, aliases and ambiguous source identities stay outside that labelled
+denominator. Pairs with two unlabelled endpoints remain unscored. Frozen numeric
+qualification binds the entire case inventory, inputs, candidate, harness,
+thread count and process-wait deadlines. Missing/failed cases contribute zero
+to macro F1; replay reevaluates native evidence instead of trusting aggregate
+scores. Hashes preserve the evidence, without authenticating timestamps or
+establishing statistical independence.
 
 Correspondence edits now stage changes before publication and propagate
 cooperative cancellation through affected-function measurement. Native controls

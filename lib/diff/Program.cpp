@@ -22,6 +22,7 @@ namespace neverd::diff {
 
 bool isNativeX86Normalization(llvm::StringRef Profile) {
   return Profile == "native-x86-operands-v1" ||
+         Profile == "native-x86-operands-v2" ||
          Profile == NativeX86Normalization;
 }
 
@@ -139,14 +140,18 @@ Program::validate(const ComparisonControl &Control) const {
       return Fail("a call names an unknown function", I);
     if (Insn.UnresolvedCallee && Insn.Callee != NoIndex)
       return Fail("a call is both resolved and unresolved", I);
-    if (uint64_t(Insn.FirstFunctionAddress) + Insn.FunctionAddressCount >
-        FunctionAddresses.size())
-      return Fail("an instruction's function addresses lie outside the program",
+    if (uint64_t(Insn.FirstAddressReference) + Insn.AddressReferenceCount >
+        AddressReferences.size())
+      return Fail("an instruction's address references lie outside the program",
                   I);
-    const auto Addresses = functionAddresses(Insn);
+    const auto Addresses = addressReferences(Insn);
     for (size_t J = 1; J < Addresses.size(); ++J)
       if (Addresses[J - 1].Operand >= Addresses[J].Operand)
-        return Fail("function address operands are not in ascending order", I);
+        return Fail("address reference operands are not in ascending order", I);
+    for (const auto &Address : Addresses)
+      if (Address.Kind == ReferenceKind::Constant ||
+          Address.Kind > ReferenceKind::UnresolvedData)
+        return Fail("an address operand has an invalid reference kind", I);
   }
   return std::nullopt;
 }
@@ -221,23 +226,26 @@ void ProgramBuilder::addInstruction(
     uint64_t Address, llvm::ArrayRef<uint8_t> Bytes, llvm::StringRef Mnemonic,
     uint64_t Shape, uint64_t Skeleton, InstructionFlow Flow,
     std::optional<uint64_t> CallTarget, llvm::StringRef Operands,
-    std::optional<uint64_t> Target, llvm::ArrayRef<FunctionAddress> Addresses) {
+    std::optional<uint64_t> Target, llvm::ArrayRef<AddressReference> Addresses,
+    std::optional<uint64_t> AddressIndependentShape, bool HasUnresolvedData) {
   Instruction I;
   I.Address = Address;
   I.Operands = Operands.str();
   I.Target = Target;
   I.Shape = Shape;
   I.Skeleton = Skeleton;
+  I.AddressIndependentShape = AddressIndependentShape.value_or(Shape);
+  I.HasUnresolvedData = HasUnresolvedData;
   I.CodeOffset = static_cast<uint32_t>(P.Code.size());
   I.Size = static_cast<uint8_t>(Bytes.size());
   I.Flow = Flow;
   I.UnresolvedCallee = Flow == InstructionFlow::Call;
-  I.FirstFunctionAddress = static_cast<uint32_t>(P.FunctionAddresses.size());
-  I.FunctionAddressCount = static_cast<uint32_t>(Addresses.size());
-  P.FunctionAddresses.insert(P.FunctionAddresses.end(), Addresses.begin(),
+  I.FirstAddressReference = static_cast<uint32_t>(P.AddressReferences.size());
+  I.AddressReferenceCount = static_cast<uint32_t>(Addresses.size());
+  P.AddressReferences.insert(P.AddressReferences.end(), Addresses.begin(),
                              Addresses.end());
   for (const auto &A : Addresses)
-    addReference(ReferenceKind::Function, A.Address,
+    addReference(A.Kind, A.Key,
                  static_cast<uint32_t>(P.Blocks.size()) - 1 -
                      P.Functions.back().FirstBlock);
   auto [It, Inserted] = MnemonicIds.try_emplace(

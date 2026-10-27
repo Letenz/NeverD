@@ -3006,6 +3006,19 @@ chain checks propagation beyond global refinement rounds. Candidate competition
 retains a more similar original body when its diagnostic string and call
 position move to a new helper.
 
+Reference-uncertainty controls distinguish unchanged raw code from known operand
+changes, retain a known retargeting beside an unknown address operand, and keep
+unknown targets out of native change observations. Native SDK controls exercise
+uncertain/changed filters, required schema-4 coverage, forged saved facts, and
+address-dependent remeasurement through mapping edits, undo/redo and restore.
+The real Qt comparison test checks the Uncertain state, evidence, instruction
+rows, filtering and save/reopen, with optional light/dark captures via
+`NEVERD_DIFF_SCREENSHOTS`.
+Compiled x64 ELF controls place an unresolved store destination and a relocated
+string pointer in the same instruction. Both directions preserve a known string
+change, abstain for string-to-unknown identity, and survive save/reopen with
+identical instruction bytes. Core controls also cover named data/import identities.
+
 Call-context regressions retain exact score ties at zero ambiguity margin,
 refuse contradictory repeated-call assignments and competing anchor positions,
 preserve unresolved call holes, and keep independent consistent pairs. Context

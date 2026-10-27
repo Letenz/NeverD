@@ -464,6 +464,27 @@ TEST_F(BinaryDiffSDK,
                   ->getObject("evidence")
                   ->getBoolean("normalized_unchanged"),
               true);
+    const auto Decision = render(
+        llvm::json::Object{{"kind", "unmatch"},
+                           {"primary", Reverse ? "0x1030" : "0x1020"},
+                           {"secondary", Reverse ? "0x1020" : "0x1030"}});
+    ASSERT_EQ(neverd_comparison_override_json(C, Decision.c_str()), 1);
+    const auto CheckHolder = [&](bool Uncertain) {
+      const auto Page = parsed(neverd_comparison_function_json(C, 0, 0x1040));
+      const auto *E = Page.getAsObject()->getObject("evidence");
+      EXPECT_EQ(E->getBoolean("reference_comparison_complete"), !Uncertain);
+      EXPECT_EQ(E->getBoolean("normalized_unchanged"), !Uncertain);
+      EXPECT_EQ(E->getString("change_state"),
+                Uncertain ? "uncertain" : "unchanged");
+    };
+    CheckHolder(true);
+    const auto Saved = take(neverd_comparison_export_json(C));
+    ASSERT_EQ(neverd_comparison_undo(C), 1);
+    CheckHolder(false);
+    ASSERT_EQ(neverd_comparison_redo(C), 1);
+    CheckHolder(true);
+    ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+    CheckHolder(true);
   }
   const auto Changed = input(Image(true, true));
   const auto C = compare(
@@ -733,6 +754,50 @@ TEST_F(BinaryDiffSDK, UnknownDataAtTheSameRVAIsNotCrossInputIdentity) {
   Check(Same, false);
 }
 
+TEST_F(BinaryDiffSDK,
+       ReferenceGapsRemainUncertainThroughFiltersAndPersistence) {
+  std::vector<uint8_t> Bytes(24, 0);
+  const uint8_t Load[]{0x8b, 0x05, 0x0a, 0, 0, 0, 0xc3};
+  std::copy(std::begin(Load), std::end(Load), Bytes.begin());
+  Bytes[16] = 17;
+  const auto A = input(Bytes);
+  Bytes[23] = 29; // Unrelated input data changes the identity scope, not code.
+  const auto B = input(Bytes);
+  const auto C = compare(A, B);
+  const auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+  const auto *E = Detail.getAsObject()->getObject("evidence");
+  ASSERT_TRUE(E) << render(Detail);
+  EXPECT_EQ(E->getString("change_state"), "uncertain");
+  EXPECT_EQ(E->getBoolean("analysis_complete"), true);
+  EXPECT_EQ(E->getBoolean("reference_comparison_complete"), false);
+  EXPECT_EQ(E->getBoolean("normalized_unchanged"), false);
+  EXPECT_TRUE(E->getArray("changes")->empty());
+  const auto Summary = parsed(neverd_comparison_summary_json(C));
+  const auto *Counts = Summary.getAsObject()->getObject("counts");
+  EXPECT_EQ(Counts->getInteger("changed"), 0);
+  EXPECT_EQ(Counts->getInteger("normalized_unchanged"), 0);
+  EXPECT_EQ(Counts->getInteger("uncertain_without_observed_change"), 1);
+  for (const auto &[Kind, Expected] :
+       {std::pair{"changed", 0}, std::pair{"uncertain", 1}}) {
+    const auto Query = render(llvm::json::Object{{"kind", Kind}});
+    const auto Rows =
+        parsed(neverd_comparison_functions_json(C, Query.c_str()));
+    EXPECT_EQ(Rows.getAsObject()->getInteger("total"), Expected);
+  }
+  const auto Saved = take(neverd_comparison_export_json(C));
+  auto JSON = llvm::json::parse(Saved);
+  ASSERT_TRUE(bool(JSON));
+  EXPECT_EQ(JSON->getAsObject()->getInteger("schema_version"), 4);
+  ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  auto *M = JSON->getAsObject()->getArray("matches")->front().getAsObject();
+  (*M)["reference_comparison_complete"] = true;
+  EXPECT_EQ(neverd_comparison_restore_json(C, render(*JSON).c_str()), 0);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  M->erase("reference_comparison_complete");
+  EXPECT_EQ(neverd_comparison_restore_json(C, render(*JSON).c_str()), 0);
+}
+
 TEST_F(BinaryDiffSDK, AnalysisSectionsBindDataOutsideTheFunctionInventory) {
   auto A = input(body());
   auto B = input(body());
@@ -927,7 +992,7 @@ TEST_F(BinaryDiffSDK, AArch64ProfilesPreservePlacementAndOriginalInstructions) {
   ASSERT_TRUE(Primary);
   EXPECT_EQ(Primary->getString("architecture"), "aarch64");
   EXPECT_EQ(Primary->getInteger("bits"), 64);
-  EXPECT_EQ(Primary->getString("normalization"), "native-aarch64-operands-v2");
+  EXPECT_EQ(Primary->getString("normalization"), "native-aarch64-operands-v3");
   auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1000));
   const auto *Evidence = Detail.getAsObject()->getObject("evidence");
   ASSERT_TRUE(Evidence) << render(Detail);
@@ -2488,7 +2553,7 @@ TEST_F(BinaryDiffSDK, LongNativeCallContextSurvivesReorderingAndRestore) {
   const auto Saved = take(neverd_comparison_export_json(C));
   const auto Document = parsed(neverd_comparison_export_json(C));
   ASSERT_TRUE(Document.getAsObject());
-  EXPECT_EQ(Document.getAsObject()->getInteger("matcher_version"), 6);
+  EXPECT_EQ(Document.getAsObject()->getInteger("matcher_version"), 7);
   const auto *Matches = Document.getAsObject()->getArray("matches");
   ASSERT_TRUE(Matches);
   const std::map<std::string, std::string> Expected = {{"0x3000", "0xa010"},
