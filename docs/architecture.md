@@ -11080,6 +11080,16 @@ the LowIR return output. Unspecified bytes keep the configured preservation or
 havoc behavior. This provides no ABI or OS contract by itself; the provider
 must establish each result and the complete memory contract.
 
+`SymCallEffect::MemoryAfter` optionally supplies the complete available memory
+at return, using the existing `SymState::MemoryKnowledge` contract. It replaces
+the whole-memory policy before ordered explicit writes. Missing bytes start a
+fresh unknown epoch, while supplied facts can retain caller inputs or encode
+conditional results. Admission and overlap checks remain in `SymState`; an
+invalid snapshot leaves the execution state unchanged. The call target is
+captured from the pre-call state, including memory operands. Normal alias
+invalidation still applies to subsequent writes. This opt-in path stages a
+state copy for atomic admission; ordinary calls do not copy the state.
+
 `ByteMemoryForwardingPass` in `lib/pass/ir/simplify/common` reconstructs complete integer loads from the last writer of each byte in a fixed byte alloca, within one basic block. It accepts byte-multiple widths from 8 to 128 bits and exact in-object constant GEPs under the target byte order. Unknown calls, unknown writes and ordered memory clear the facts. The pipeline runs it between SROA passes after existing private-address recovery, preserving original stores. Instruction scans, address walks, tracked bytes, replacement uses and generated IR have finite limits. The default introduces no snapshots; explicit `AllowStoreSnapshots` freezes a value once at its store and shares that value with all fragments. This optional LLVM refinement does not certify native definedness or recover a function signature.
 
 Byte forwarding and backward overwrite analysis retain byte facts across normally returning intrinsics only when LLVM reports no memory access or other side effects, with no operand bundles or convergent contract. The calls and their results remain in place. This applies to both alloca and numeric memory; ordinary calls remain barriers even with `memory(none)`. It adds no alias separation, private-memory assumption or cross-block relation.
