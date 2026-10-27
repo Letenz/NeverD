@@ -15312,12 +15312,23 @@ execution or a full guest exception-state contract.
 `SourceCallReturnReads.*` in `NeverDMedPrologueSavesTests` covers old constant
 contents, complete and partial later stores, separated slots, earlier loads,
 physical calls versus synthetic tail calls, joins, loop-carried observations,
-missing SPs, malformed graphs and exhausted budgets. `SourceStackSpills`
+missing SPs, malformed graphs and exhausted budgets. It also covers the
+deferral of return-slot loads to the settled observation proof, each deferred
+load leaving the backward proof once while the rest stay proved. The proof
+cases are GCC's pop cleanup, explicit and returned uses, unread copies and
+byte views, other versions and other variables of the register, call records,
+published summary operands, unsettled calls, a bounded callee's arguments and
+the positions past them, preserved registers, register-pair results, joins,
+removed loads, exceptional edges, complete and partial overwrites, and the
+proof's budget. `SourceStackSpills`
 variants 4 and 7 in `NeverDWin64CallContractTests` require the same explicit
 return-slot diagnostic in HighC and LLVMC across COFF/ELF/Mach-O with source
 optimization on and off. Variant 8 supplies a complete later store and executes
 both generated C routes at O0/O2 with an independent provider. Native CALL
 continuation materialization remains a separate source-ABI requirement.
+`SessionCAPITest.DecompileFunctionsNamesARefusedSelectedFunction` checks that
+a unit of selected functions names the one this proof refuses and defines the
+other, while that function alone still fails with the diagnostic.
 
 `MedSEHEstablisherFrame.CallBeforeStackRestoreKeepsHandlerFrameLive` checks
 direct and indirect CALLs whose only SP use precedes an explicit restore at an

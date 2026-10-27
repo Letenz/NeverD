@@ -1904,7 +1904,8 @@ cl::opt<bool> DecompileCallees(
     "callees",
     cl::desc("With --func, also decompile every function it calls, directly "
              "or not, into one C file; imports and library functions stay "
-             "declarations"),
+             "declarations, and a callee that is not decompiled is named in "
+             "a note at the top"),
     cl::sub(DecompileCmd));
 
 //===----------------------------------------------------------------------===//
