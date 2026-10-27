@@ -14,6 +14,13 @@ joins), and `NeverDSessionFunctionDiscoveryTests` (completed discovery,
 refuted guesses and explicit user identities). Replaced-PC and recursive
 fixtures execute both C routes at O0/O2 with independent callbacks or return
 values; malformed return-slot and arbitrary-write controls remain refused.
+Discarded internal calls must retain the parent's exact stack and physical
+return slot before either a RET or a tail transfer. The owner tests cover
+under-restoration, over-restoration and parent-PC overwrites on x86/x64 under
+COFF, ELF and Mach-O, while allowing writes to discarded internal slots.
+Both source routes refuse the negative controls; restored x64 callbacks
+execute with independent argument/result checks at O0/O2. A synthetic tail
+CALL cannot supply a real callee's stack effects to the pre-transfer proof.
 
 `NeverDSourceEntryBindingTests` runs source ABI, typed call, runtime entry and
 incoming stack binding regressions without the full mobile fixture inventory.

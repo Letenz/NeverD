@@ -450,6 +450,95 @@ TEST(OwnInteriorCall, OnlyDeclaredSingleFunctionRecordsBoundTheBody) {
 constexpr Platform Darwin64 = {Arch::X64, BinaryFormat::MachO,
                                ExceptionEncoding::DwarfFDE, Entry};
 
+void expectSourceRefused(const BinaryImage &Img) {
+  for (bool LLVM : {false, true})
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << LLVM << '/' << NoOpt);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.OnlyFunctionEntries = {Img.Entry};
+      Options.SourceProjection = true;
+      Options.LiftMode = LLVM;
+      Options.NoOpt = NoOpt;
+      auto Result = Pipeline().run(Img, Context, Options);
+      ASSERT_EQ(Result.FunctionAudits.size(), 1u);
+      const auto &Audit = Result.FunctionAudits.front();
+      EXPECT_EQ(Audit.Disposition,
+                PipelineFunctionDisposition::RejectedIncomplete);
+      EXPECT_FALSE(Audit.UnprovenReturns.empty());
+      EXPECT_FALSE(Audit.HasLLVMDefinition);
+      EXPECT_TRUE(Result.HighFuncs.empty());
+    }
+}
+
+TEST(OwnInteriorCall, IndirectTailMustRestoreTheParentsStack) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386})
+    for (uint8_t Restore : {0, 32, 40}) {
+      const bool Restored = Restore == 32;
+      SCOPED_TRACE(::testing::Message()
+                   << int(P.TheArch) << '/' << int(P.Format) << '/'
+                   << int(Restore));
+      std::vector<uint8_t> Code;
+      if (P.TheArch == Arch::X64)
+        Code.push_back(0x48);
+      // Allocate a frame, call the next label, then discard that internal PC.
+      Code.insert(Code.end(), {0x83, 0xec, 32, 0xe8, 1, 0, 0, 0, 0xcc, 0x58});
+      if (Restore) {
+        if (P.TheArch == Arch::X64)
+          Code.push_back(0x48);
+        Code.insert(Code.end(), {0x83, 0xc4, Restore});
+      }
+      // A callback can receive the parent's PC only after its frame is gone.
+      // The CALL + RETURN used to represent this JMP must not lose that fact.
+      const va_t Tail = P.Entry + Code.size();
+      Code.insert(Code.end(), {0xff, 0xe1}); // jmp ecx/rcx
+      auto Img = makeImage(std::move(Code), P);
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Img));
+      CFGBuilder Builder;
+      const auto Low = Builder.build(Img, Dec, P.Entry, "tail_frame");
+      EXPECT_EQ(Low.hasCompleteLiftCoverage(), Restored);
+      EXPECT_EQ(Low.UnprovenReturnAddresses,
+                Restored ? std::vector<va_t>{} : std::vector<va_t>{Tail});
+      if (!Restored)
+        expectSourceRefused(Img);
+    }
+}
+
+TEST(OwnInteriorCall, DiscardedCallMustRetainTheParentsReturnPC) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386})
+    for (bool Tail : {false, true})
+      for (bool OverwriteParent : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << int(P.TheArch) << '/' << int(P.Format) << '/' << Tail
+                     << '/' << OverwriteParent);
+        const uint8_t Width = P.TheArch == Arch::X64 ? 8 : 4;
+        // Overwriting the discarded internal PC is harmless; overwriting
+        // the parent's PC cannot become an ordinary return or callback.
+        std::vector<uint8_t> Code{
+            0xe8, 1,    0,    0,    0,
+            0xcc, 0xc7, 0x44, 0x24, uint8_t(OverwriteParent ? Width : 0),
+            0,    0,    0,    0};
+        if (P.TheArch == Arch::X64)
+          Code.push_back(0x48);
+        Code.insert(Code.end(), {0x83, 0xc4, Width});
+        if (Tail)
+          Code.insert(Code.end(), {0xff, 0xe1}); // jmp ecx/rcx
+        else
+          Code.insert(Code.end(), {0xb8, 7, 0, 0, 0, 0xc3}); // mov eax,7; ret
+        auto Img = makeImage(std::move(Code), P);
+        Decoder Dec;
+        ASSERT_TRUE(Dec.init(Img));
+        CFGBuilder Builder;
+        const auto Low = Builder.build(Img, Dec, P.Entry, "parent_pc");
+        EXPECT_EQ(Low.hasCompleteLiftCoverage(), !OverwriteParent);
+        EXPECT_EQ(Low.UnprovenReturnAddresses.empty(), !OverwriteParent);
+        if (OverwriteParent)
+          expectSourceRefused(Img);
+      }
+}
+
 Lifted liftOwnReturnBody(const Platform &P, llvm::ArrayRef<uint8_t> Body) {
   std::vector<uint8_t> Code = {0xe8, 0x0b, 0, 0, 0, 0xc3};
   Code.resize(0x10, 0xcc);
@@ -468,17 +557,19 @@ TEST(OwnInteriorCall, OverwrittenReturnSlotCannotProveAnOrdinaryReturn) {
   }
 }
 
-TEST(OwnInteriorCall, ReplacedPCIsAnIndirectTailTransferOnBothSourceRoutes) {
+void checkRecoveredTailSource(bool DiscardFrame) {
   for (const auto &P : {Win64, SysV64, Darwin64})
     for (bool LLVM : {false, true})
       for (bool NoOpt : {false, true}) {
         SCOPED_TRACE(::testing::Message()
                      << int(P.Format) << '/' << LLVM << '/' << NoOpt);
-        // mov rax,first argument; call setup; int3; setup: mov [rsp],rax; ret
-        // The popped PC is the callback, and the callback sees the parent's
-        // original stack. The internal continuation is never executed.
+        // Both a replaced-PC RET and a JMP after discarding a frame must
+        // pass the original parent's stack and the same callback arguments.
         const uint8_t Input = P.Format == BinaryFormat::COFF ? 0xc8 : 0xf8;
-        std::vector<uint8_t> Code{0x48, 0x89, Input, 0xe8, 1, 0, 0, 0, 0xcc};
+        std::vector<uint8_t> Code{0x48, 0x89, Input};
+        if (DiscardFrame)
+          Code.insert(Code.end(), {0x48, 0x83, 0xec, 32}); // sub rsp,32
+        Code.insert(Code.end(), {0xe8, 1, 0, 0, 0, 0xcc});
         const std::vector<uint8_t> Setup =
             P.Format == BinaryFormat::COFF
                 ? std::vector<uint8_t>{0xb9, 17,   0,    0,    0,    0x48,
@@ -488,7 +579,12 @@ TEST(OwnInteriorCall, ReplacedPCIsAnIndirectTailTransferOnBothSourceRoutes) {
                                        0x83, 0xc6, 1,    0x48, 0x83, 0xc2,
                                        2,    0x48, 0x83, 0xc1, 3};
         Code.insert(Code.end(), Setup.begin(), Setup.end());
-        Code.insert(Code.end(), {0x48, 0x89, 0x04, 0x24, 0xc3});
+        if (DiscardFrame)
+          Code.insert(Code.end(), {0x48, 0x83, 0xc4, 40, 0xff,
+                                   0xe0}); // add rsp,40; jmp rax
+        else
+          Code.insert(Code.end(),
+                      {0x48, 0x89, 0x04, 0x24, 0xc3}); // mov [rsp],rax; ret
         auto Img = makeImage(std::move(Code), P);
         llvm::LLVMContext Context;
         PipelineOptions Options;
@@ -516,7 +612,10 @@ TEST(OwnInteriorCall, ReplacedPCIsAnIndirectTailTransferOnBothSourceRoutes) {
         } else
           ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Stream, COptions));
         EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
-        compileAndRun(Source + R"C(
+        const char *CallbackValue =
+            DiscardFrame ? "#define CALLBACK_VALUE ((void *)&callback)\n"
+                         : "#define CALLBACK_VALUE ((uintptr_t)&callback)\n";
+        compileAndRun(Source + CallbackValue + R"C(
 static unsigned calls;
 static uint64_t callback(uint64_t first, uint64_t a, uint64_t b, uint64_t c) {
   ++calls;
@@ -525,13 +624,21 @@ static uint64_t callback(uint64_t first, uint64_t a, uint64_t b, uint64_t c) {
 int main(void) {
   for (unsigned i = 0; i != 256; ++i) {
     uint64_t expected = ((i + 18) ^ (3 * i + 2)) - (uint64_t)(5 * i + 3);
-    if ((uint64_t)sub_140001000((uintptr_t)&callback, i, 3*i, 5*i) != expected)
+    if ((uint64_t)sub_140001000(CALLBACK_VALUE, i, 3*i, 5*i) != expected)
       return 1;
   }
   return calls != 256;
 }
 )C");
       }
+}
+
+TEST(OwnInteriorCall, ReplacedPCIsAnIndirectTailTransferOnBothSourceRoutes) {
+  checkRecoveredTailSource(false);
+}
+
+TEST(OwnInteriorCall, RestoredParentStackReachesTheCallbackOnBothSourceRoutes) {
+  checkRecoveredTailSource(true);
 }
 
 TEST(OwnInteriorCall, ReplacedPCDoesNotRepairParentCorruptionOrAnExtraFrame) {

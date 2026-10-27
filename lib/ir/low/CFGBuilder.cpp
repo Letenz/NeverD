@@ -898,7 +898,6 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
         Verdict.TailReturns.insert(Address);
     }
 
-  std::vector<bool> ReachedByAny(N, false);
   std::set<va_t> NonlocalReturns;
   for (const auto &[Target, Sites] : OwnInteriorCallSites) {
     auto TargetBlock = BlockAt.find(Target);
@@ -950,8 +949,6 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
         ReplayedReturns.insert(Address);
     const std::vector<bool> Reached =
         Reach(TargetBlock->second, ReplayedReturns);
-    for (size_t B = 0; B < N; ++B)
-      ReachedByAny[B] = ReachedByAny[B] || Reached[B];
     std::vector<std::optional<StackOffsetState>> FromSlot(N);
     FromSlot[TargetBlock->second] = *Seed;
     solveStackOffsets(M, Func, FromSlot, ReplayedReturns);
@@ -1108,7 +1105,6 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
         }
       }
       if (Valid) {
-        NonlocalReturns.insert(DiscardingSites.begin(), DiscardingSites.end());
         const OwnInteriorReturn Return{Target, *Sites.begin(), Continuation};
         for (const auto &[Address, Block] : ConsumingSites) {
           const auto [It, New] = Verdict.Returns.emplace(Address, Return);
@@ -1120,11 +1116,15 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
     }
     if (Unproven)
       NoteUnproven(*Unproven);
-    else if (ConsumesSlot && !Discards)
-      Verdict.Subroutines.insert(Target);
+    else {
+      NonlocalReturns.insert(DiscardingSites.begin(), DiscardingSites.end());
+      if (ConsumesSlot && !Discards)
+        Verdict.Subroutines.insert(Target);
+    }
   }
 
-  // Abandoning an internal PC does not authorize an arbitrary outer RET.
+  // Abandoning an internal PC does not authorize an arbitrary outer RET or
+  // tail transfer, even when every exit discards the internal slot.
   // The parent's physical PC must still occupy the entry slot and survive
   // every reaching write. This is independent of the internal-slot proof:
   // a write disjoint from that slot can corrupt the parent instead.
@@ -1134,6 +1134,15 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
     for (size_t B = 0; B < N; ++B) {
       StackOffsetState S = FromEntry[B] ? *FromEntry[B] : StackOffsetState{};
       for (const LowOp &Op : Func.Blocks[B].Ops) {
+        if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+            NonlocalReturns.count(Op.Addr)) {
+          const auto Insn = Insns.find(Op.Addr);
+          // The CALL in a JMP's CALL + RETURN representation does not execute
+          // before the transfer. Check the physical PC and stack at entry to
+          // the target, before a real callee could write or pop arguments.
+          if (Insn != Insns.end() && Insn->second.IsCall && Insn->second.IsRet)
+            continue;
+        }
         if (Op.Opcode == NdOp::RETURN && NonlocalReturns.count(Op.Addr) &&
             !Verdict.Returns.count(Op.Addr)) {
           const auto SP = S.find(StackPointerKey);
@@ -1169,27 +1178,6 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
     }
   }
 
-  // Whatever the targets do with their own slots, a return they lead to
-  // below the entry stack pointer pops something this function pushed.
-  for (size_t B = 0; B < N && !Verdict.Unproven; ++B) {
-    if (!ReachedByAny[B] || !FromEntry[B])
-      continue;
-    StackOffsetState S = *FromEntry[B];
-    for (const LowOp &Op : Func.Blocks[B].Ops) {
-      if (Op.Opcode == NdOp::RETURN) {
-        if (Verdict.Returns.count(Op.Addr) ||
-            Verdict.TailReturns.count(Op.Addr) || EndsInNoReturnTail(Op))
-          continue;
-        auto SP = S.find(StackPointerKey);
-        if (SP != S.end() && SP->second.Base == 0 && SP->second.Hi < 0) {
-          NoteUnproven(Op.Addr);
-          break;
-        }
-        continue;
-      }
-      transferStackOffsets(M, Op, S);
-    }
-  }
   return Verdict;
 }
 
