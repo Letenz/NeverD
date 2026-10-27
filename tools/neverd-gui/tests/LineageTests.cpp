@@ -231,6 +231,110 @@ private slots:
     QCOMPARE(Errors.size(), 0);
   }
 
+  void retainedRealCorpusWorkflow() {
+    const auto Corpus = qEnvironmentVariable("NEVERD_LINEAGE_REAL_COLLECTION");
+    if (Corpus.isEmpty())
+      QSKIP("Set NEVERD_LINEAGE_REAL_COLLECTION to a retained real-program "
+            "collection.");
+    const auto Document = QJsonDocument::fromJson(read(Corpus)).object();
+    const auto Sources = Document["reports"].toArray();
+    QVERIFY(!Sources.isEmpty());
+    QHash<QString, int> Inventories;
+    int ExpectedEdges = 0, LargestInventory = 0;
+    QString TargetHash, TargetAddress;
+    for (const auto &Text : Sources) {
+      const auto Report =
+          QJsonDocument::fromJson(Text.toString().toUtf8()).object();
+      const auto Matches = Report["matches"].toArray();
+      ExpectedEdges += Matches.size();
+      for (const auto *Side : {"primary", "secondary"}) {
+        const auto Hash = Report[Side].toObject()["sha256"].toString();
+        const auto Count =
+            Report["functions"].toObject()[Side].toArray().size();
+        QVERIFY(!Hash.isEmpty());
+        if (Inventories.contains(Hash))
+          QCOMPARE(Inventories[Hash], Count);
+        Inventories[Hash] = Count;
+        if (Count > LargestInventory && !Matches.isEmpty()) {
+          LargestInventory = Count;
+          TargetHash = Hash;
+          TargetAddress = Matches[0].toObject()[Side].toString();
+        }
+      }
+    }
+    QVERIFY(!TargetAddress.isEmpty());
+    LineageDialog View(TEST_LINEAGE_WORKER);
+    View.setAttribute(Qt::WA_DeleteOnClose, false);
+    View.resize(1180, 780);
+    View.show();
+    auto &Session = View.session();
+    QSignalSpy Errors(&Session, &LineageSession::failed);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    Session.load({{"path", Corpus}});
+    auto *Versions = View.findChild<LineagePageView *>("lineageVersions");
+    auto *Functions = View.findChild<LineagePageView *>("lineageFunctions");
+    auto *Edges = View.findChild<LineagePageView *>("lineageTraceEdges");
+    auto *Trace = View.findChild<QPushButton *>("lineageTrace");
+    auto *Search = View.findChild<QLineEdit *>("lineageSearch");
+    QVERIFY(Versions && Functions && Edges && Trace && Search);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() &&
+                                 Versions->rows().size() == Inventories.size(),
+                             Timeout);
+    QCOMPARE(Errors.size(), 0);
+    QCOMPARE(Session.summary()["edges"].toInt(), ExpectedEdges);
+    QCOMPARE(Session.summary()["reports"].toInt(), Sources.size());
+    int TargetRow = -1;
+    for (int I = 0; I != Versions->rows().size(); ++I)
+      if (Versions->rows()[I].toObject()["sha256"].toString() == TargetHash)
+        TargetRow = I;
+    QVERIFY(TargetRow >= 0);
+    Versions->table()->selectRow(TargetRow);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && !Functions->rows().isEmpty(),
+                             Timeout);
+    auto *Next = Functions->findChild<QToolButton *>("lineageNextPage");
+    QVERIFY(Next && Next->isEnabled());
+    const auto First = Functions->rows()[0].toObject()["address"];
+    Next->click();
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && !Functions->rows().isEmpty() &&
+                                 Functions->rows()[0].toObject()["address"] !=
+                                     First,
+                             Timeout);
+    Search->setText(TargetAddress);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Functions->rows().size() == 1,
+                             Timeout);
+    QCOMPARE(Functions->selected()["address"].toString(), TargetAddress);
+    Trace->click();
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && !Edges->rows().isEmpty(),
+                             Timeout);
+    View.findChild<QTabWidget *>("lineageTraceTabs")->setCurrentIndex(1);
+    const auto Revision = Session.revision();
+    const auto OriginalMode = Theme::instance().mode();
+    const auto RestoreTheme =
+        qScopeGuard([&] { Theme::instance().setMode(OriginalMode); });
+    if (const auto Captures =
+            qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
+        !Captures.isEmpty()) {
+      QVERIFY(QDir().mkpath(Captures));
+      for (auto Mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
+        Theme::instance().setMode(Mode);
+        QTest::qWait(60);
+        QVERIFY(View.grab().save(Captures + "/real-corpus-" +
+                                 Theme::modeName(Mode) + ".png"));
+      }
+    }
+    const auto Saved = Directory.filePath("real-corpus.ndlineage");
+    QSignalSpy Saves(&Session, &LineageSession::saved);
+    Session.save(Saved);
+    QTRY_COMPARE_WITH_TIMEOUT(Saves.size(), 1, Timeout);
+    QCOMPARE(QJsonDocument::fromJson(read(Saved)).object(), Document);
+    Session.load({{"path", Saved}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() &&
+                                 Versions->rows().size() == Inventories.size(),
+                             Timeout);
+    QCOMPARE(Session.revision(), Revision);
+    QCOMPARE(Errors.size(), 0);
+  }
+
   void localizedWorkspace_data() {
     QTest::addColumn<QString>("Locale");
     for (const auto &Language : languages())

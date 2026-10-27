@@ -3155,6 +3155,17 @@ the disposable compositor. The native gesture case explicitly skips with the
 offscreen platform. These tests do not qualify fresh native authentication or
 automated patch presence.
 
+`referenceUncertaintySurvivesLineageTrace` checks that original uncertain
+reference evidence remains visible in English and Chinese through a real worker,
+trace selection and save/reopen. For retained real-program collections, set
+`NEVERD_LINEAGE_REAL_COLLECTION` to a canonical `.ndlineage` document and run
+`retainedRealCorpusWorkflow` in the same private Wayland session. It checks
+reported counts against the source documents, pages the largest function
+inventory, traces an accepted pair and preserves the embedded original reports
+through save/reopen. Supply a collection with multiple function pages; an unset
+path explicitly skips this opt-in check. Matching quality needs its separate
+source-truth qualification.
+
 Release regressions separately cover multiple release identities sharing one
 snapshot, forks/merges, all 64 forward DAGs on four records, valid Gregorian UTC
 dates, ancestor date contradictions across undated records and malformed or
