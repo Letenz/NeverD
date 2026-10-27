@@ -1691,6 +1691,57 @@ void recoverCallAbi(
         return relStackOff(Func, TRI, Address, CallSpOffsets, 0, &DefSites);
       };
 
+      // A call-site split (including an EH boundary) does not clobber the
+      // dedicated result register. Find one reaching setup and reuse it for
+      // both the variadic decision and the final hidden argument. A join
+      // needs its SSA PHI; choosing one predecessor would change the buffer.
+      std::vector<const MedBlock *> ResultSetupPredecessors;
+      const auto [ResultPointer,
+                  FrameResult] = [&]() -> std::pair<MedVar, bool> {
+        const uint64_t IRR = TRI.indirectResultReg();
+        if (!IRR || !BlockIds.unique())
+          return {};
+        const MedBlock *Setup = &Blk;
+        size_t End = OI;
+        std::set<int> Seen;
+        while (Setup && Seen.insert(Setup->Id).second) {
+          for (size_t J = End; J > 0; --J) {
+            const auto &Prev = Setup->Ops[J - 1];
+            if (isAbiRecoveryBarrier(Prev))
+              return {};
+            if (Prev.Output.Kind == MedVar::Reg && Prev.Output.RegOff == IRR &&
+                Prev.Output.Size) {
+              if (Prev.Output.Size != TRI.PointerSize)
+                return {};
+              return {Prev.Output,
+                      derivesFromFrameReg(*Setup, TRI, Prev.Output) ||
+                          entryStackOffset(Func, Prev.Output, TheArch,
+                                           Img ? Img->abiFormat()
+                                               : BinaryFormat::Unknown)
+                              .has_value()};
+            }
+          }
+          if (!Setup->ExceptionalPreds.empty())
+            return {};
+          for (const PhiNode &Phi : Setup->Phis)
+            if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == IRR &&
+                Phi.Output.Size == TRI.PointerSize)
+              return {Phi.Output, entryStackOffset(Func, Phi.Output, TheArch,
+                                                   Img ? Img->abiFormat()
+                                                       : BinaryFormat::Unknown)
+                                      .has_value()};
+          if (Setup->Preds.size() != 1)
+            return {};
+          Setup = BlockIds.first(Setup->Preds.front());
+          if (Setup) {
+            End = Setup->Ops.size();
+            ResultSetupPredecessors.push_back(Setup);
+          }
+        }
+        return {};
+      }();
+      const bool IndirectSretSetup = CI.IsIndirect && FrameResult;
+
       AbiCallContext Ctx{Func,
                          Blk,
                          static_cast<int>(OI),
@@ -1826,21 +1877,37 @@ void recoverCallAbi(
       for (const auto &Promoted : PromoteParams)
         PromotedBefore.insert(Promoted.first);
       bool Arg0FromInBlock = FoundMask[0];
-      if (IntRegArgsApply)
-        if (const auto *Setup = authenticatedTailSetup(Blk, Op, BlockIds))
-          for (int J = static_cast<int>(Setup->Ops.size()) - 1; J >= 0; --J) {
-            const auto &Prev = Setup->Ops[J];
+      if (IntRegArgsApply) {
+        const auto CollectSetup = [&](const MedBlock &Setup,
+                                      bool ForwardCallResult) {
+          for (int J = static_cast<int>(Setup.Ops.size()) - 1; J >= 0; --J) {
+            const auto &Prev = Setup.Ops[J];
+            const bool Barrier = isAbiRecoveryBarrier(Prev);
+            if (Barrier && !ForwardCallResult)
+              break;
             if (Prev.Output.Kind == MedVar::Reg && Prev.Output.Size) {
               const int K = regToIntArgIdx(Prev.Output.RegOff);
               if (K >= 0 && K < MaxArgs && !FoundMask[K]) {
                 Found[K] =
-                    argRegSourceValueInBlock(*Setup, J, TRI, IntegerLayout);
+                    argRegSourceValueInBlock(Setup, J, TRI, IntegerLayout);
                 FoundMask[K] = true;
               }
             }
-            if (isAbiRecoveryBarrier(Prev))
+            if (Barrier)
               break;
           }
+        };
+        // The authenticated tail proof also preserves a prior call result
+        // forwarded to the authenticated target (return fp(target(x))).
+        if (const auto *Setup = authenticatedTailSetup(Blk, Op, BlockIds))
+          CollectSetup(*Setup, true);
+        // The result-buffer setup proves the call's setup continues across
+        // these unambiguous splits. Keep the accompanying ordinary arguments
+        // too; otherwise the recovered result pointer would become arg0.
+        if (CI.IsIndirect && FrameResult)
+          for (const MedBlock *Setup : ResultSetupPredecessors)
+            CollectSetup(*Setup, false);
+      }
       if ((!CI.IsIndirect || UseExternalArity || UseVariableArity ||
            HeaderVariadic) &&
           IntRegArgsApply)
@@ -3010,53 +3077,6 @@ void recoverCallAbi(
         if (!HeaderVariadic && CalleeArgs > 0 && CalleeArgs < AssembleEnd)
           AssembleEnd = CalleeArgs;
       }
-      // A call-site split (including an EH boundary) does not clobber the
-      // dedicated result register. Find one reaching setup and reuse it for
-      // both the variadic decision and the final hidden argument. A join
-      // needs its SSA PHI; choosing one predecessor would change the buffer.
-      const auto [ResultPointer,
-                  FrameResult] = [&]() -> std::pair<MedVar, bool> {
-        const uint64_t IRR = TRI.indirectResultReg();
-        if (!IRR || !BlockIds.unique())
-          return {};
-        const MedBlock *Setup = &Blk;
-        size_t End = OI;
-        std::set<int> Seen;
-        while (Setup && Seen.insert(Setup->Id).second) {
-          for (size_t J = End; J > 0; --J) {
-            const auto &Prev = Setup->Ops[J - 1];
-            if (isAbiRecoveryBarrier(Prev))
-              return {};
-            if (Prev.Output.Kind == MedVar::Reg && Prev.Output.RegOff == IRR &&
-                Prev.Output.Size) {
-              if (Prev.Output.Size != TRI.PointerSize)
-                return {};
-              return {Prev.Output,
-                      derivesFromFrameReg(*Setup, TRI, Prev.Output) ||
-                          entryStackOffset(Func, Prev.Output, TheArch,
-                                           Img ? Img->abiFormat()
-                                               : BinaryFormat::Unknown)
-                              .has_value()};
-            }
-          }
-          if (!Setup->ExceptionalPreds.empty())
-            return {};
-          for (const PhiNode &Phi : Setup->Phis)
-            if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == IRR &&
-                Phi.Output.Size == TRI.PointerSize)
-              return {Phi.Output, entryStackOffset(Func, Phi.Output, TheArch,
-                                                   Img ? Img->abiFormat()
-                                                       : BinaryFormat::Unknown)
-                                      .has_value()};
-          if (Setup->Preds.size() != 1)
-            return {};
-          Setup = BlockIds.first(Setup->Preds.front());
-          if (Setup)
-            End = Setup->Ops.size();
-        }
-        return {};
-      }();
-      const bool IndirectSretSetup = CI.IsIndirect && FrameResult;
       std::vector<MedVar> IntPart, StackPart;
       // The register slot each of IntPart's arguments was found in.
       std::vector<int> IntPartSlots;
@@ -3322,13 +3342,18 @@ void recoverCallAbi(
         auto SIt = CalleeHasSret->find(CI.TargetAddr);
         DirectSret = SIt != CalleeHasSret->end() && SIt->second;
       }
-      if (ResultPointer.Size &&
+      if (TRI.indirectResultReg() &&
           (DirectSret || (IndirectSretSetup && !HeaderVariadic))) {
         // Surplus ordinary-register guesses cannot push the result pointer
         // past the callee's declared arity and make emission drop it.
         if (CalleeArgs >= 0 && static_cast<int>(CI.Args.size()) > CalleeArgs)
           CI.Args.resize(CalleeArgs);
-        CI.Args.push_back(ResultPointer);
+        // A declared result contract still consumes this position when the
+        // machine value is unavailable. Omitting it would hide the missing
+        // output storage and shift the recovered signature.
+        CI.Args.push_back(ResultPointer.Size ? ResultPointer
+                                             : MedVar::makeUnspecified(
+                                                   TRI.PointerSize, TheArch));
       }
 
       if (HeaderVariadic)

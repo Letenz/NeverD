@@ -2080,7 +2080,11 @@ __attribute__((noinline)) word dispatch_after_call(word (*fn)(word), word x) {
         const auto High =
             MedToHighConverter().convert(NonLeafMed, Arch::AArch64);
         ASSERT_TRUE(HighCEmitter().emit({High}, HighOS, Options));
-        EXPECT_NE(HighC.find("__builtin_return_address(0)"), std::string::npos);
+        EXPECT_NE(HighC.find("branch-protection=pac-ret+b-key"),
+                  std::string::npos);
+        // Only return protection is an attribute. Authentication of the
+        // callback pointer remains an explicit operation.
+        EXPECT_NE(HighC.find("__builtin_ptrauth_auth"), std::string::npos);
         EXPECT_EQ(HighC.find("unknown register"), std::string::npos);
         compileArm64eC(LowC);
         compileArm64eC(HighC);

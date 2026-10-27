@@ -477,6 +477,9 @@ TEST(ItaniumHandlerBodies, ConditionalCleanupSharesOnlyTheWholeContinuation) {
     std::vector<HighStmt> Early;
     Early.push_back(statement(call("early_dtor", kDtor + 16, {}, true)));
     Early.push_back(Shared(DifferentArgument ? 2 : 1));
+    // Tail duplication can assign the jump PC to the copied statement;
+    // the call itself retains the occurrence that owns its EH coverage.
+    Early.back().Addr = kPad + 4;
     Early.push_back(resume(exception()));
     std::vector<HighStmt> Pad;
     Pad.push_back(branch(equals(use(1), 0), std::move(Early)));

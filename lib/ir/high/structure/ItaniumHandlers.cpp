@@ -1129,10 +1129,17 @@ const char *makeHandler(std::vector<HighStmt> &Body, bool CatchAll,
 bool sameCleanupStatement(const HighStmt &A, const HighStmt &B,
                           unsigned Depth = 0) {
   if (Depth > ::neverd::limits::ir::kItaniumHandlersRewriteDepthLimit ||
-      A.Kind != B.Kind || A.Addr != B.Addr)
+      A.Kind != B.Kind)
     return false;
-  if (A.Kind == StmtKind::Call)
-    return A.CallExpr && B.CallExpr && A.CallExpr->structuralEq(*B.CallExpr);
+  if (A.Kind == StmtKind::Call) {
+    // A duplicated tail may take the jump's statement address. Its call
+    // occurrence, which owns exception coverage, keeps the original PC.
+    return A.CallExpr && B.CallExpr &&
+           (A.CallExpr->CallSiteAddr || B.CallExpr->CallSiteAddr
+                ? A.CallExpr->CallSiteAddr == B.CallExpr->CallSiteAddr
+                : A.Addr == B.Addr) &&
+           A.CallExpr->structuralEq(*B.CallExpr);
+  }
   if ((A.Kind != StmtKind::If && A.Kind != StmtKind::IfElse) || !A.Cond ||
       !B.Cond || !A.Cond->structuralEq(*B.Cond))
     return false;

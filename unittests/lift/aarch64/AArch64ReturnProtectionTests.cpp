@@ -12,6 +12,7 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/Support/raw_ostream.h"
@@ -110,5 +111,41 @@ TEST(AArch64ReturnProtection, OtherTargetsCannotDiscardThePolicy) {
   EXPECT_THROW(source({0xd503237f, 0xd28000e0, 0xd65f0fff}, BinaryFormat::ELF,
                       Arch::X64),
                std::invalid_argument);
+}
+
+TEST(AArch64ReturnProtection, MalformedRecipesCannotDisappearBeforeValidation) {
+  MedFunc Function;
+  Function.Entry = 0x1000;
+  Function.Blocks.emplace_back();
+  MedVar LR;
+  LR.Kind = MedVar::Reg;
+  LR.TheArch = Arch::AArch64;
+  LR.Id = 1;
+  LR.RegOff = a64reg::X30;
+  LR.Size = 8;
+  MedVar SP = LR;
+  SP.Id = 2;
+  SP.RegOff = a64reg::SP;
+  MedOp Sign;
+  Sign.Opcode = NdOp::INTRINSIC;
+  Sign.Output = LR;
+  Sign.Output.SSAVer = 1;
+  Sign.addInput(MedVar::makeConst(static_cast<uint64_t>(Intrinsic::Pacia), 8));
+  Sign.addInput(LR);
+  Sign.addInput(SP);
+  MedOp Auth = Sign;
+  Auth.Output.SSAVer = 2;
+  Auth.Inputs[0].ConstVal = static_cast<uint64_t>(Intrinsic::Autia);
+  Auth.Inputs[1] = Sign.Output;
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(Auth.Output);
+  Function.Blocks.front().Ops = {Sign, Auth, Return};
+  ASSERT_TRUE(findAArch64ReturnProtection(Function, BinaryFormat::ELF));
+  for (size_t Index : {0u, 1u}) {
+    auto Broken = Function;
+    Broken.Blocks.front().Ops[Index].Inputs[2].Size = 4;
+    EXPECT_FALSE(findAArch64ReturnProtection(Broken, BinaryFormat::ELF));
+  }
 }
 } // namespace

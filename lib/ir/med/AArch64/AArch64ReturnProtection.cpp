@@ -7,6 +7,7 @@
 #include "neverd/ir/med/AArch64/AArch64ReturnProtection.h"
 
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/lift/AArch64/AArch64Regs.h"
@@ -43,7 +44,7 @@ findAArch64ReturnProtection(const MedFunc &Func, BinaryFormat Format) {
       continue;
     if ((intrinsic(Op) == Intrinsic::Pacia ||
          intrinsic(Op) == Intrinsic::Pacib) &&
-        Op.NumInputs == 3 && Op.Output.Size == 8 && Op.Inputs[1].Size == 8 &&
+        aarch64PAuthMedShapeIsValid(Op) &&
         isEntryLiveInValue(Func, Op.Inputs[1], a64reg::X30))
       Sign = &Op;
     break;
@@ -121,12 +122,11 @@ findAArch64ReturnProtection(const MedFunc &Func, BinaryFormat Format) {
     const bool Branch = Id == Intrinsic::A64_AuthBranch;
     const Intrinsic Expected =
         Result.Protection.BKey ? Intrinsic::Autib : Intrinsic::Autia;
-    if (Auth->Output.Size != 8 ||
-        (Branch ? Auth->NumInputs != 4 || !Auth->Inputs[2].isConst() ||
-                      Auth->Inputs[2].ConstVal != (Result.Protection.BKey
-                                                       ? kAArch64PAuthKeyIB
-                                                       : kAArch64PAuthKeyIA)
-                : Id != Expected || Auth->NumInputs != 3) ||
+    if (!aarch64PAuthMedShapeIsValid(*Auth) ||
+        (Branch ? Auth->Inputs[2].ConstVal != (Result.Protection.BKey
+                                                   ? kAArch64PAuthKeyIB
+                                                   : kAArch64PAuthKeyIA)
+                : Id != Expected) ||
         Offset(Auth->Inputs[Branch ? 3 : 2]) != 0)
       return std::nullopt;
     Result.Operations.insert(Auth);

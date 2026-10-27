@@ -3337,6 +3337,22 @@ TEST(MedABIPass, IndirectResultSetupStopsAtClobbersAndAmbiguousJoins) {
   }
 }
 
+TEST(MedABIPass, MissingDeclaredResultStorageRemainsAnExplicitArgument) {
+  CallStackProofCase C(Arch::AArch64);
+  const auto Arg0 = reg(30, 1, 8, C.TRI.IntParamRegs[0], C.A);
+  C.block().Ops.push_back(unary(NdOp::COPY, Arg0, C.constant(7)));
+  C.call();
+  std::map<va_t, int> Registers{{C.Callee, 1}}, Total{{C.Callee, 1}};
+  std::map<va_t, bool> Sret{{C.Callee, true}};
+  recoverCallAbi(C.F, C.A, {{C.Callee, "declared_sret"}}, nullptr, &Registers,
+                 &Total, nullptr, nullptr, nullptr, &Sret);
+  ASSERT_EQ(C.F.CallInfos.size(), 1U);
+  const auto &Args = C.F.CallInfos.front().Args;
+  ASSERT_EQ(Args.size(), 2U);
+  EXPECT_EQ(Args.back().Kind, MedVar::Unspecified);
+  EXPECT_EQ(Args.back().Size, 8U);
+}
+
 TEST(MedABIPass, CallStackOffsetArithmeticRejectsOverflow) {
   // The fourth overflow edge (cross-predecessor target addition) is checked
   // in DarwinPredecessorSlotsRequireKnownCallStack mode2, including its
