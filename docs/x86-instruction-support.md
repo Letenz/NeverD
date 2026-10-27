@@ -139,7 +139,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | SYSENTER, SYSEXIT/SYSEXITQ, SYSRET/SYSRETQ, RSM | Complete register, privilege, segment and SMM continuation state. Integrated `c464c93243` supplies terminal analysis intrinsics for SYSRET/SYSEXIT with explicit target state; their named no-return calls do not implement native restoration. SYSENTER and RSM remain refused. |
 | BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
 | XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation. Prefixed LOCK operations, implicit-lock XCHG and XRELEASE MOV stores are explicitly refused before ordinary memory lowering; native transactional completion remains missing. |
-| XBEGIN and full RTM regions | Original abort target, register/memory checkpoint, nesting and rollback continuation. A C `_xbegin()` status result cannot substitute for the decoded instruction. Strict/permissive lifting and legacy IR admission explicitly refuse that incomplete representation. |
+| XBEGIN and full RTM regions | Integrated `38e833bf89` adds a two-exit rel32 lift with the original fallback and conditional EAX update. rel16 remains refused. Full register/memory checkpoint, nesting, fallback faults and hardware rollback remain unqualified; a status result alone does not establish these contracts. |
 | Remaining compact-memory address forms | Native LLVM and both C routes retain long-mode RSP/RBP stack-reference provenance independently of DS overrides, alongside DS/FS/GS data addresses. In i386, SS-default stack bases and explicit CS/ES/SS segments remain refused; an explicit DS override is supported. Physical AVX-512 fault execution remains unqualified. |
 | Remaining four-source address forms and hardware qualification | Native lowering uses explicit SSA sources and the same long-mode stack-reference contract as compact memory. i386 non-DS/FS/GS segments and physical AVX512_4FMAPS/AVX512_4VNNIW execution/exception behavior still require qualification. Legacy implicit-bank IDs remain guarded at native output. |
 | Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Long-mode default-stack memory retains an explicit provenance control. i386 non-DS segments still require an owned segment contract; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
@@ -202,10 +202,10 @@ x86/x64, without fabricating an unknown transaction state. Native LLVM, HighC
 and LLVM-to-C compile across ELF/COFF/Mach-O at O0/O2; the x64 C routes also
 compile with NeverC's standard transaction headers. LLVM IR carries `+rtm`
 and both C routes use `_xtest`. This qualification does not execute physical
-RTM regions. XBEGIN remains refused because its original abort target and
-complete checkpoint are absent; the previous status-only lowering could
-lose both the abort branch and the successful path's EAX value. These
-instruction contracts follow the
+RTM regions. The later `38e833bf89` integration restores XBEGIN rel32
+admission with an explicit abort branch and preserves the successful path's
+EAX value; rel16 remains refused. Full checkpoint, nesting, fallback faults
+and native rollback still require qualification. These instruction contracts follow the
 [Intel XBEGIN/XTEST reference](https://cdrdv2-public.intel.com/874247/334569-090-sdm-vol-2d.pdf).
 
 XABORT now retains its exact constant byte through the shared system-state
@@ -2469,7 +2469,10 @@ FEMMS, a successful operation establishes only its destination payload,
 never the other seven payloads merely because the tags become valid.
 
 The pinned r6 and current native SDK each pass all 116 tests in the new suite
-and four adjacent suites. The new suite includes 110,592 register/prefix/route
+and four adjacent suites at `00dad5a56d`. After integrating the exact remote
+`0c7bbba9fa`, code commit `d0559ca48e` passes 85 focused checks per SDK,
+including the affected stack, nonlocal-control and x87 call/root paths; its
+1,920 newly generated objects repeat the QEMU results below. The new suite includes 110,592 register/prefix/route
 checks, 32,256 memory-address checks, malformed-detail and selector rejection,
 native feature preflight and FEMMS provenance. Each SDK exports 960 objects:
 24 operations, four source forms, default/NoOpt pipelines and LLVM/HighC/LLVMC

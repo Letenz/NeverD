@@ -910,8 +910,9 @@ NeverC for x64; compilation does not qualify hardware rollback.
 The source checks also require the `rtm` attribute when a legacy LLVM inline
 assembly call becomes `_xabort`. A dword memory result fixes the return width
 in the immediate-byte fixtures; constant-return inference is not their oracle.
-The nonlocal-control suite also refuses decoded and legacy-IR XBEGIN forms
-whose original abort target and checkpoint are absent.
+The nonlocal-control suite now checks the integrated rel32 XBEGIN
+two-exit lift and its original abort target. rel16 remains refused; these
+checks do not qualify full transactional checkpoint or native rollback.
 `NeverDX86LegacyAdmissionTests` separately covers incomplete far-pointer
 segment loads and unowned forms of 24 3DNow! operations. Its 76 and 384 valid instruction forms
 run through full, lightweight and lift decoding in strict/permissive modes.
