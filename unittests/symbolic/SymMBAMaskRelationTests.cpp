@@ -17,6 +17,52 @@
 using namespace neverd;
 using namespace neverd::symbolic;
 
+TEST(SymMBAMaskRelation, ComplementedOffsetAddress) {
+  for (unsigned Width : {8u, 32u, 64u, 65u, 128u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto X = C.mkVar("x", Width);
+    auto K = C.mkConst(Width, 0x093F959E2FCF0961);
+    auto D = C.mkConst(Width, 0x4329F7B47E4D590C);
+    for (unsigned Mask : {1u, 8u, 0x55u, 0x80u}) {
+      SCOPED_TRACE(Mask);
+      auto M = C.mkConst(Width, Mask);
+      auto P = C.mkSub(C.mkXor(X, K), D);
+      auto Q = C.mkAdd(C.mkXor(X, C.mkNot(K)), D);
+      auto Root = C.mkAdd(C.mkOr(M, P), C.mkAnd(M, C.mkSub(M, C.mkAnd(M, Q))));
+      auto Result = simplifyMBADeep(C, Root);
+      EXPECT_EQ(Result.Expr, C.mkAdd(P, M)) << C.toString(Result.Expr);
+      EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+    }
+  }
+}
+
+TEST(SymMBAMaskRelation, OffsetMaskNeighborsAndBudgetsKeepExactValues) {
+  for (unsigned Work : {0u, 1u, 16u, 64u, 256u, 65536u})
+    for (unsigned Delta : {0u, 1u, 8u}) {
+      SymContext C;
+      auto X = C.mkVar("x", 8);
+      auto P = C.mkSub(C.mkXor(X, C.mkConst(8, 0x31)), C.mkConst(8, 0x6c));
+      auto Q =
+          C.mkAdd(C.mkXor(X, C.mkConst(8, 0xce)), C.mkConst(8, 0x6c + Delta));
+      auto Root = C.mkAdd(
+          C.mkOr(P, C.mkConst(8, 0x55)),
+          C.mkAnd(C.mkConst(8, 0x55),
+                  C.mkSub(C.mkConst(8, 0x55), C.mkAnd(Q, C.mkConst(8, 0x55)))));
+      MBAOptions Options;
+      Options.MaxWork = Work;
+      auto Result = simplifyMBADeep(C, Root, Options);
+      EXPECT_LE(Result.Work, Work);
+      for (unsigned Input = 0; Input < 256; ++Input) {
+        const unsigned A = (Input ^ 0x31) - 0x6c;
+        const unsigned B = (Input ^ 0xce) + 0x6c + Delta;
+        const unsigned Expected =
+            ((A | 0x55) + (0x55 & (0x55 - (B & 0x55)))) & 255;
+        EXPECT_EQ(C.evalU64(Result.Expr, {Input}), Expected);
+      }
+    }
+}
+
 namespace {
 
 std::pair<SymRef, SymRef> maskedComplement(SymContext &C, unsigned Width,

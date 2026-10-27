@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare complete worker patch-page requests against explicit binary snapshots.
+"""Compare complete worker patch inventory requests against explicit binary snapshots.
 
 Both snapshots contain bin/neverd-worker and bin/libneverd.so. Alternating
 A/B and B/A samples include snapshot acquisition, projection, serialization
@@ -26,7 +26,7 @@ spec.loader.exec_module(paired)
 bench = paired.bench
 
 
-def run_case(host, snapshots, count, samples):
+def run_case(host, snapshots, count, samples, include_ranges=False):
     with tempfile.TemporaryDirectory(prefix="neverd-patch-pages-") as directory, ExitStack() as stack:
         clients, clocks, fixtures = {}, {}, {}
         for name, snapshot in snapshots.items():
@@ -51,9 +51,12 @@ def run_case(host, snapshots, count, samples):
             assert opened["status"] == "ok", opened
             clients[name], clocks[name] = client, paired.process_clock(client.process.pid)
         results = []
-        pages = (("first", 0, 128), ("middle", count // 2, 128),
-                 ("tail", count - 1, 128), ("empty", count, 128), ("zero", 0, 0))
+        pages = [("first", 0, 128), ("middle", count // 2, 128),
+                 ("tail", count - 1, 128), ("empty", count, 128), ("zero", 0, 0)]
+        if include_ranges:
+            pages.append(("ranges", None, None))
         for label, offset, limit in pages:
+            request = {"ranges_only": True} if label == "ranges" else {"offset": offset, "limit": limit}
             values = {name: {"cpu": [], "wall": []} for name in snapshots}
             output_hashes = {}
             for sample in range(-1, samples):
@@ -64,13 +67,18 @@ def run_case(host, snapshots, count, samples):
                     path, original, sidecar, text, timestamp, expected = fixtures[name]
                     clock = clocks[name]
                     cpu_start, wall_start = clock(), time.perf_counter_ns()
-                    reply = clients[name].call("patches", {"offset": offset, "limit": limit})
+                    reply = clients[name].call("patches", request)
                     wall = (time.perf_counter_ns() - wall_start) / 1e6
                     cpu = clock() - cpu_start
                     assert reply["status"] == "ok", reply
-                    items = expected[offset:offset + limit]
-                    assert reply["payload"] == {"items": items, "total": count, "offset": offset,
-                                                "complete": offset + len(items) >= count}, reply
+                    if label == "ranges":
+                        items = [{"address": row["va"], "size": row["size"]} for row in expected]
+                        wanted = {"items": items, "total": count, "complete": True}
+                    else:
+                        items = expected[offset:offset + limit]
+                        wanted = {"items": items, "total": count, "offset": offset,
+                                  "complete": offset + len(items) >= count}
+                    assert reply["payload"] == wanted, reply
                     output_hashes[name] = hashlib.sha256(json.dumps(
                         reply["payload"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
                     assert sidecar.read_bytes() == text and sidecar.stat().st_mtime_ns == timestamp
@@ -94,7 +102,7 @@ def run_case(host, snapshots, count, samples):
                          "fixture_sha256": {name: {"input": bench.digest(fixture[0]),
                                                    "sidecar": bench.digest(fixture[2])}
                                             for name, fixture in fixtures.items()},
-                         "scope": "Worker startup, SDK load and all checked page requests"}
+                         "scope": "Worker startup, SDK load and all checked inventory requests"}
 
 
 def main():
@@ -103,6 +111,8 @@ def main():
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--rows", type=int, nargs="+", default=[64, 8192, 32768])
     parser.add_argument("--samples", type=int, default=20)
+    parser.add_argument("--include-ranges", action="store_true",
+                        help="also measure complete unpaged ranges_only responses")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if sys.platform != "linux" or not __debug__ or min(args.rows + [args.samples]) <= 0:
@@ -113,6 +123,7 @@ def main():
     report = {"platform": platform.platform(), "load_average": os.getloadavg(),
               "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
               "cpu_affinity": sorted(os.sched_getaffinity(0)), "samples": args.samples,
+              "include_ranges": args.include_ranges,
               "benchmark_sha256": bench.digest(__file__),
               "snapshots": {name: {"path": str(path), "sha256": {
                   binary: bench.digest(path / "bin" / binary)
@@ -120,7 +131,7 @@ def main():
                   for name, path in snapshots.items()}, "results": [], "memory": []}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     for count in args.rows:
-        results, memory = run_case(host, snapshots, count, args.samples)
+        results, memory = run_case(host, snapshots, count, args.samples, args.include_ranges)
         report["results"].extend(results)
         report["memory"].append(memory)
         args.output.write_text(json.dumps(report, indent=2) + "\n")

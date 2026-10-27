@@ -2475,4 +2475,99 @@ TEST(HighSourceExpressions, UnspellableCallbackPrototypeKeepsUntypedCall) {
   EXPECT_EQ(Source.find("(*t20)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("(int32_t (*)())"), std::string::npos) << Source;
 }
+TEST(HighSourceExpressions, GuardAndCallShareTheComputedTarget) {
+  MedFunc Med;
+  Med.Entry = 0x1000;
+  Med.Name = "shared_target";
+  Med.CC = CallingConv::Win64;
+  Med.ReturnType = NdType::makeInt(8, false);
+  auto P0 = parameter(0, NdType::makeInt(8, false), Arch::X64)->Var;
+  auto P1 = parameter(1, NdType::makeInt(4, false), Arch::X64)->Var;
+  Med.Params = {P0, P1};
+  const auto Value = [](int Id, unsigned Bytes) {
+    MedVar V;
+    V.Kind = MedVar::Temp;
+    V.Id = Id;
+    V.SSAVer = 1;
+    V.Size = Bytes;
+    V.TheArch = Arch::X64;
+    return V;
+  };
+  const auto Op = [](NdOp Code, MedVar Output,
+                     std::initializer_list<MedVar> Inputs) {
+    MedOp O;
+    O.Opcode = Code;
+    O.Output = Output;
+    for (const auto &V : Inputs)
+      O.addInput(V);
+    return O;
+  };
+  const auto Return = [&](MedVar Result, int Block) {
+    auto RAX = Value(20 + Block, 8);
+    RAX.Kind = MedVar::Reg;
+    RAX.RegOff = x86reg::RAX;
+    return std::vector<MedOp>{Op(NdOp::COPY, RAX, {Result}),
+                              Op(NdOp::RETURN, {}, {RAX})};
+  };
+  MedBlock Entry, Call, Empty;
+  Entry.Id = 0;
+  Entry.StartAddr = 0x1000;
+  Entry.Succs = {2, 1};
+  Entry.Ops = {
+      Op(NdOp::INT_XOR, Value(2, 4), {P1, MedVar::makeConst(0x55, 4)}),
+      Op(NdOp::INT_ZEXT, Value(3, 8), {Value(2, 4)}),
+      Op(NdOp::INT_ADD, Value(4, 8), {P0, Value(3, 8)}),
+      Op(NdOp::INT_EQUAL, Value(5, 1), {Value(4, 8), MedVar::makeConst(0, 8)}),
+      Op(NdOp::COND_BR, {}, {MedVar::makeConst(0x1020, 8), Value(5, 1)})};
+  Call.Id = 1;
+  Call.StartAddr = 0x1010;
+  Call.Preds = {0};
+  Call.Ops = {Op(NdOp::INDIR_CALL, Value(6, 8), {Value(4, 8), Value(4, 8)})};
+  Call.Ops[0].ExactArguments = true;
+  Call.Ops[0].CallSiteId = 1;
+  Call.Ops[0].CalleeRegisterArgs = 1;
+  auto Tail = Return(Value(6, 8), 1);
+  Call.Ops.insert(Call.Ops.end(), Tail.begin(), Tail.end());
+  Empty.Id = 2;
+  Empty.StartAddr = 0x1020;
+  Empty.Preds = {0};
+  Empty.Ops = Return(MedVar::makeConst(0, 8), 2);
+  Med.Blocks = {Entry, Call, Empty};
+  for (auto &B : Med.Blocks) {
+    B.EndAddr = B.StartAddr + B.Ops.size();
+    for (size_t I = 0; I < B.Ops.size(); ++I)
+      B.Ops[I].Addr = B.StartAddr + I;
+  }
+  MedCallInfo Info;
+  Info.BlockId = 1;
+  Info.OpIdx = 0;
+  Info.IsIndirect = true;
+  Info.Args = {Value(4, 8)};
+  Med.CallInfos.push_back(Info);
+  auto F = MedToHighConverter().convert(Med, Arch::X64);
+  std::string Text;
+  llvm::raw_string_ostream Out(Text);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options));
+  const auto Xor = Text.find("0x55");
+  ASSERT_NE(Xor, std::string::npos) << Text;
+  EXPECT_EQ(Text.find("0x55", Xor + 1), std::string::npos) << Text;
+  EXPECT_EQ(Text.find("__builtin_bit_cast"), std::string::npos) << Text;
+  Text += R"(
+static uint64_t actual(uint64_t target) { return target^0x123; }
+int main(void) {
+  uint32_t words[]={0,0x55,UINT32_MAX,UINT32_C(0x80000000)};
+  uint64_t address=(uint64_t)(uintptr_t)&actual;
+  for (unsigned i=0;i<4;++i) {
+    uint64_t offset=(uint64_t)(words[i]^0x55u);
+    if (shared_target(address-offset,words[i])!=(address^0x123)) return 1;
+    if (shared_target(0-offset,words[i])) return 2;
+  }
+  return 0;
+}
+)";
+  compileAndRun(Text);
+}
+
 } // namespace

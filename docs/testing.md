@@ -4625,11 +4625,15 @@ replacements retain the previous item or operand format. Run it with
 presentation operations.
 `NeverDWorkerFormat` also spells ARM and AArch64 formats with the decoder's
 `#`, counts their operands across register lists, shifts and floating
-constants, and takes an immediate's width from its first register.
-`SessionCAPITest.OperandEnumsNameAArch64Immediates` checks that an AArch64
-enumerator names only a decoded immediate and keeps its `#` in
-`display_op_str`; `armOperandsCountAsTheWorkerDoes` checks that the listing's
-operand under the cursor is the worker's across braces and brackets.
+constants, and takes an immediate's width from its first register or a
+64-bit vector element. It checks that a shifted immediate names no member and
+that a structure offset lands the data an exclusive store, swap, pair or
+register list moves. `SessionCAPITest.OperandEnumsNameAArch64Immediates`
+checks that an AArch64 enumerator names only a decoded immediate and keeps its
+`#` in `display_op_str`; `OperandEnumsNameWholeARMVectorImmediates` that a
+`vmov.i64` immediate keeps all 64 bits. `armOperandsCountAsTheWorkerDoes`
+checks that the listing's operand under the cursor is the worker's across
+braces and brackets.
 
 `NeverDWorkerImmediatesRegister` checks decoded immediate search and register
 queries through the real SDK/worker and, when available, CLI. It covers search
@@ -9660,6 +9664,23 @@ The genuine WDK `driver_kmdf_pnp.c` file modes cover filter-default, explicit en
 Legacy cancellation tests retain the API continuation across cancellation, nested cleanup and final destruction; Ex still returns cancellation without callback delivery for an already canceled request. `KernelFrameworkRequestAccessorTests.cpp` and `KernelRequestMDLTests.cpp` check shared 64-bit Information, completion-time length validation, originating queue/IRP identity, NULL WDF file handles, retained-handle getter results, buffered MDL caching and first-direction ByteCount, direct descriptor identity and deferred mapping, completion retirement and rejected WDM-completion bypass. Genuine control-fixture modes L, M, D and C exercise legacy cancellation, buffered MDL/information, direct READ/WRITE MDLs and accessors after completion in normal/active-CFG images.
 
 ## Test layout
+
+`NeverDSymbolicPredicateTests` checks Boolean, extension and conditional-tag
+equality together with sign-network recovery, known bits and subword views.
+Run it alongside `NeverDSymbolicIntegerIntrinsicTests` when changing predicate
+construction: the execution suite also checks byte-sized sign/overflow flags
+passing through Boolean and integer operations. One-bit literal comparisons
+must recover the original predicate without traversing its expression DAG;
+wider integer comparisons must keep their full value domain.
+
+`NeverDSymbolicCallEffectTests` checks explicit call register results and path
+exploration: multiple outputs, pre-call values, return-output precedence,
+overlapping writes in both byte orders, ordinary memory havoc, malformed-range
+refusal without state changes, and successor discovery from a summarized
+register result. `NeverDSymbolicIntegerIntrinsicTests` supplies the affected
+execution, scalar-state and store-preservation regressions. These targets test
+the generic effect mechanism; they do not certify an external function's ABI
+or operating-system behavior.
 
 For optional independent bitvector oracles, configure `NEVERD_ENABLE_Z3=ON`
 and run `NeverDSolverTests`; see [solver validation](solver.md) for the
@@ -15231,6 +15252,12 @@ alternating CPU/wall samples, frozen binary hashes and SDK-mapping checks. Its
 independent sidecar-derived oracle checks every returned field, total, offset,
 completion and file bytes/timestamps. Run the mock/native patch suites for empty
 inventories, page limits and invalid bounds, including an older JSON-only SDK.
+The `--include-ranges` option adds complete unpaged range responses to the same
+byte, payload, timestamp and memory oracles. Native SDK adapter tests also keep
+large row/range JSON strings alive across queries, edits and session destruction,
+checking exact compact bytes for high addresses, empty results and short tails.
+Mock and native worker checks assert complete range payloads, including totals,
+repeated queries, empty results and read-only replicas.
 
 `tools/neverd-bench/patch-paired.py --worker-history` compares complete CLI
 commands and durable worker commit/undo/redo against two explicit binary
@@ -15739,3 +15766,11 @@ unwind qualification.
 ## Selected callable checks
 
 `Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` combines address-only output with integer, pointer, floating and void providers. `AddressOnlyCallbackConvertsToItsKnownParameterType` executes a typed callback. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` combines separately selected callers and pointer-reading callees, and compares whole-unit output with cold/warm cache use. The x64/ARM64 PE, ELF and Mach-O input models compile and execute generated C at O0/O2 with UBSan. This validates host source execution, not native execution on every target platform. Run the call-contract, pointer-projection, source-ABI and callee-cache owners after changing this boundary.
+
+`SymMBAMaskRelation.ComplementedOffsetAddress` covers exact complementary
+offsets under arbitrary selected masks at 8–257 bits.
+`OffsetMaskNeighborsAndBudgetsKeepExactValues` exhausts byte inputs against
+independent arithmetic, including unequal offsets and incomplete budgets.
+Run `NeverDSymMBAMaskRelationTests` and the broader `NeverDSymbolicTests`.
+
+The focused NeverDCOFFExceptionModelTests target runs exception model and decoder regressions, including unsorted duplicate directory starts, long/cyclic chains, terminal frame mismatches and addresses near the VA limit. Build it with scripts/build.py and pair its CTest label with NeverDCOFFExceptionV2Tests when changing x64 unwind directory processing.
