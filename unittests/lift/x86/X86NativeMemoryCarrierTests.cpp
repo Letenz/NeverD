@@ -111,7 +111,8 @@ TEST(X86NativeMemoryCarrier,
                 ASSERT_EQ(Size, Bytes.size());
                 const bool SegmentBase = Prefix == 0x64 || Prefix == 0x65;
                 const bool StackBase = Base == 4 || Base == 5;
-                const bool Valid = A == Arch::X64 || SegmentBase ||
+                const bool Compact = Family[2] != 0x5f;
+                const bool Valid = A == Arch::X64 || Compact || SegmentBase ||
                                    Prefix == 0x3e || (!Prefix && !StackBase);
                 std::vector<LowOp> Ops;
                 if (!Valid) {

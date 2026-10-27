@@ -44,13 +44,18 @@ std::string expression(const X86FourSourcePlan &P,
                      " __attribute__((vector_size(" + Bytes + "))); " + V +
                      " " + Acc + " = {0}, " + Src + "[4] = {{0}}; ";
   if (Use.Accumulator)
-    Text += "__auto_type " + T + "_old = (" + Args[1] +
-            "); __builtin_memcpy(&" + Acc + ", &" + T + "_old, " + Bytes +
-            "); ";
+    Text +=
+        (Packed
+             ? "unsigned _BitInt(" + std::to_string(P.Control.bytes() * 8) + ")"
+             : "__auto_type") +
+        std::string(" ") + T + "_old = (" + Args[1] + "); __builtin_memcpy(&" +
+        Acc + ", &" + T + "_old, " + Bytes + "); ";
   if (Use.Sources) {
     if (Packed) {
       const auto Input = T + "_packed";
-      Text += "__auto_type " + Input + " = (" + Args[2] + "); ";
+      Text += "unsigned _BitInt(" +
+              std::to_string(P.Control.sourceBytes() * X86FourSourceCount * 8) +
+              ") " + Input + " = (" + Args[2] + "); ";
       for (unsigned I = 0; I < X86FourSourceCount; ++I)
         Text += "__builtin_memcpy(&" + Src + "[" + std::to_string(I) +
                 "], (const unsigned char *)&" + Input + " + " +

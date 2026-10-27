@@ -1145,7 +1145,7 @@ void HighCWriter::writeFunction(const HighFunc &Func) {
     return;
   }
   if (EmitFunctionWrapper)
-    OS << x86NativeFunctionPreamble(Func);
+    OS << x86NativeFunctionPreamble(Func, Opts.TheArch);
   writeFunctionProjection(Func);
 }
 
