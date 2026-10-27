@@ -7430,6 +7430,11 @@ LLVM-to-C through the CLI, without depending on a platform linker.
 and three formats, equal and conflicting predecessor values, scalar/fragment
 collisions, uninitialized arms, loop backedges, cache output identity, every
 small-fixture budget boundary, changed roots and shared failure clearing.
+Wide internal address containers preserve an exact full guest pointer only
+when its value fits without discarded bits; shifted slices, non-fitting
+addresses, scalars and address fragments remain negative controls on x86 and
+ARM under all three formats. The linked i386 ELF matrix exercises that rule
+with real decoder output and independent case-label offsets.
 Scoped address discovery and its legacy-fold wrapper must preserve every
 budget boundary, completion state and address across all four architectures
 and three formats. New scopes revalidate changed instructions; roots are

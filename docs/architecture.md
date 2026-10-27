@@ -2504,7 +2504,11 @@ data among the code, an index table, not a code address
 (`instructionRelocations`, `addFixedImageDisplacement`). The pointer-wide
 jump table beside it stays a code address.
 The jump-table resolver shares complete guest-address COPY/ZEXT tracing across
-ordinary, unscaled and two-level loads. Linked PE32 compact switches may name
+ordinary, unscaled and two-level loads. Resolver lane projection retains an
+existing exact address when a wider internal container supplies the complete
+guest pointer with no changed bits. Partial lanes, non-fitting values and
+scalar/fragment provenance do not receive address authority. Linked PE32
+compact switches may name
 both bases by absolute displacements. Their immutable index bytes still need
 a bounded selector, a complete relocated target run and disjoint decoded code.
 LLVM may omit the exact authenticated index read only when all its value uses
