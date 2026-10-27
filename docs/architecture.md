@@ -7027,6 +7027,10 @@ source view and does not fabricate a returned X0. The shared source return
 contract also applies known runtime prototypes to definitions, and recognizes
 fully parsed Itanium construction/destruction names as void on generic x86 ELF
 and AArch64 ELF. ARM32 and Apple ARM64 keep their different machine contracts.
+The runtime no-return table includes Android bionic's `__libc_init`, whose
+[public startup declaration](https://android.googlesource.com/platform/bionic/+/main/libc/bionic/libc_init_common.h)
+never returns. Its similarly named initialization helpers remain ordinary
+calls; neither their prefix nor a void return type makes them terminal.
 
 Initial default x64 construction can also reconstruct a complete `LowFunc`
 from this inventory when the full metadata payload was retained. Machine
