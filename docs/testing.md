@@ -15198,3 +15198,15 @@ export; the existing immediate/register profiles still require their original
 GPR controls. The native fault and model normal-return qualifications do not
 establish an arm64e/x1 reconstructed call/frame/unwind ABI, asynchronous unwind,
 MTE, overflowing addresses or native Apple CPA2 execution.
+
+
+The [raw-SP qualification record](evidence/arm64e-raw-sp-memory-2026-10-27.json)
+contains the exact 28-test export, all 135 generated artifact hashes, 60 model
+executions with 63,160 case runs and 153,880 complete comparisons, and 135 native
+fault executions observing 7,895 SP-alignment faults. All 216 actual model C
+projection compile commands retain Wall/Wextra/Werror and fno-strict-aliasing.
+The related eight-label CTest run registered 1,374 cases: 1,367 passed, seven
+explicitly skipped and none failed, under each case's unchanged timeout.
+The C execution checker used system Apple Clang after independently observing
+Homebrew Clang 22 link stalls; the NeverSight LLVM backend stayed at r6. The
+record retains both compiler controls and the unqualified signed-unwind probe.

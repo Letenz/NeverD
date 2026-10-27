@@ -755,6 +755,11 @@ The machine table owns the complete assembly and constraints; inverse LLVM-to-C
 admission rejects changed SP fields, missing restoration and missing clobbers.
 Image-backed or synthesized SP, nonparameter SSA bases and the reconstructed
 frame/call/unwind ABI remain refused by the shared memory source-base policy.
+The [raw-SP primitive record](evidence/arm64e-raw-sp-memory-2026-10-27.json)
+binds 1,579 independent words to 60 official Arm model executions at EL1/EL0,
+with SA/SA0 enabled, and 7,895 native alignment faults through five actual output
+routes. It does not qualify automatic SP source-frame reconstruction or signed
+native exception unwinding.
 
 Both source routes and LLVM validate the complete contract before source-only
 filtering. A discarded result retains the memory instruction. Exact image-base
