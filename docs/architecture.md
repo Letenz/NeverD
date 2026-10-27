@@ -3705,6 +3705,13 @@ native-width evaluations can count trailing zeros in even factors at complete
 input assignments. Their sum must be below the observed width. Evaluation
 reuses the ordinary word evaluator, keeps correlated inputs consistent, and
 shares the existing witness work and storage allowance.
+When a prefix attempt has completed every coefficient map, its witness reuses
+those maps for parity evaluation. Even coefficients need no atom traversal;
+odd coefficients still evaluate each original atom at the same concrete input.
+The observed width remains the original product's width after its scale,
+including when individual factors have already supplied fixed zeros. This
+avoids rereading invisible high expressions without widening the witness budget
+or treating independently assigned opaque atoms as valid inputs.
 Native scalar affine coordinates retain their cheap complete-map path; the
 extra projected read is reserved for wrappers, nonlinear monomials and wide
 coefficients, avoiding duplicated searches on ordinary nonzero residuals.

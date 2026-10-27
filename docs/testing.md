@@ -2139,6 +2139,11 @@ and modular shifts. Check it with
 work allowance, exhaustive low-six-bit carry inputs, wide words through 257
 bits, nearby parity changes and budget refusal. Degree-48/65/96 near misses
 require recovery when a concrete nonzero product includes even factors.
+`CompletedPrefixesRetainBudgetForLargeNonzeroProducts` adds 56 degree-256
+variants across 8–257-bit words, both complement forms, reversed construction
+and one-factor parity changes. Native complete blocks must finish below the
+same 65,536-work limit with a compact output. Independent full-width products
+check boundary and seeded assignments with the sampling guard disabled.
 Concrete nonzero witnesses
 only stop futile zero searches; they never authorize a rewrite. Use
 `--family complemented-carry-product --count 108` for 432 degree-48–256 cases

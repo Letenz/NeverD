@@ -197,7 +197,8 @@ bool proveAtResiduePrecisions(size_t Count, unsigned MaxBits, unsigned Needed,
 // the exact trailing zeros of even factors at a few complete assignments.
 // Correlated subexpressions always see the same actual input values.
 bool hasNonzeroProductWitness(SymContext &Ctx, llvm::ArrayRef<SymRef> Factors,
-                              Resources &Res, unsigned Needed) {
+                              Resources &Res, unsigned Needed,
+                              llvm::ArrayRef<Factor> Prefixes = {}) {
   std::map<uint32_t, std::optional<bool>> Values;
   size_t Work = 0;
   uint64_t VariableValue = 1;
@@ -276,12 +277,45 @@ bool hasNonzeroProductWitness(SymContext &Ctx, llvm::ArrayRef<SymRef> Factors,
       Values.emplace(R.index(), Result);
     return Result;
   };
+  // Completed coefficient maps already describe the original factors at
+  // their proved precision. Evaluate just their parity at the same concrete
+  // input assignment, rather than walking the discarded high expressions.
+  // An opaque atom still needs its actual value; independent atom choices
+  // would not be a witness for correlated factors.
+  auto Parity = [&](size_t I) -> std::optional<bool> {
+    if (Prefixes.empty())
+      return Read(Read, Factors[I], 0);
+    if (Work >= limits::kMaxResidueWitnessWork || !Res.charge(1))
+      return std::nullopt;
+    ++Work;
+    const auto &F = Prefixes[I];
+    bool Value = F.Offset[0];
+    for (const auto &[Atom, Coeff] : F.Terms) {
+      if (Work >= limits::kMaxResidueWitnessWork || !Res.charge(1))
+        return std::nullopt;
+      ++Work;
+      if (!Coeff[0])
+        continue;
+      bool Term = true;
+      for (auto Id : Atom) {
+        const auto Bit = Read(Read, SymRef(Id), 0);
+        if (!Bit)
+          return std::nullopt;
+        if (!*Bit) {
+          Term = false;
+          break;
+        }
+      }
+      Value ^= Term;
+    }
+    return Value;
+  };
   for (bool Input : {true, false}) {
     VariableValue = Input;
     Values.clear();
     bool AllOdd = true;
-    for (auto F : Factors) {
-      auto V = Read(Read, F, 0);
+    for (size_t I = 0; I < Factors.size(); ++I) {
+      auto V = Parity(I);
       if (!V || !*V || Res.Failed) {
         AllOdd = false;
         break;
@@ -325,14 +359,14 @@ bool hasNonzeroProductWitness(SymContext &Ctx, llvm::ArrayRef<SymRef> Factors,
     Values.clear();
     unsigned TotalZeros = 0;
     bool Complete = true;
-    for (auto F : Factors) {
-      auto V = Read(Read, F, 0);
+    for (size_t I = 0; I < Factors.size(); ++I) {
+      auto V = Parity(I);
       if (!V || Res.Failed) {
         Complete = false;
         break;
       }
       if (!*V) {
-        auto Zeros = ZerosAt(F);
+        auto Zeros = ZerosAt(Factors[I]);
         if (!Zeros || *Zeros >= Needed - TotalZeros) {
           Complete = false;
           break;
@@ -1976,12 +2010,15 @@ static SymRef foldProjectedProductResiduesImpl(SymContext &Ctx, SymRef Root,
   // the useful congruence. This estimate only orders attempts: every rewrite
   // still requires complete coefficient maps and an exact residue bound.
   PrefixConstants Prefixes{Ctx, Res, {}};
-  auto Prove = [&](unsigned Bits, unsigned Needed) {
+  bool WitnessChecked = false;
+  bool Nonzero = false;
+  auto Prove = [&](unsigned Bits) {
     if (!Bits || !Res.charge(Operands.size(), Operands.size() * sizeof(Factor)))
       return false;
     std::vector<Factor> Factors;
     Factors.reserve(Operands.size());
     unsigned Available = Bits;
+    unsigned Remaining = Needed;
     for (auto R : Operands) {
       if (!Res.scalar(1))
         return false;
@@ -2018,24 +2055,28 @@ static SymRef foldProjectedProductResiduesImpl(SymContext &Ctx, SymRef Root,
             !SetValuation())
           return false;
       }
-      if (F.Zeros >= Needed)
+      if (F.Zeros >= Remaining)
         return true;
-      Needed -= F.Zeros;
+      Remaining -= F.Zeros;
       // A zero prefix guarantees only Bits zeros, not a zero full-width factor.
       if (!F.FixedValuation)
         Available = std::min(Available, F.Offset.getBitWidth() - F.Zeros);
       Factors.push_back(std::move(F));
     }
-    return proveAffineResidues(Factors, Available, Needed, Res);
+    const bool Zero = proveAffineResidues(Factors, Available, Remaining, Res);
+    if (!Zero && !WitnessChecked && !Res.Failed &&
+        Needed <= limits::kMaxAffineResidueTableBits) {
+      WitnessChecked = true;
+      Nonzero = hasNonzeroProductWitness(Ctx, Operands, Res, Needed, Factors);
+    }
+    return Zero;
   };
   // Failed precision attempts share the same cumulative resource account;
   // the cache only contains completed queries keyed by their exact width.
-  bool WitnessChecked = false;
-  bool Nonzero = false;
   if (proveAtResiduePrecisions(
           Operands.size(), MaxBits, Needed, Res,
           [&](unsigned Bits) {
-            if (Prove(Bits, Needed))
+            if (Prove(Bits))
               return true;
             if (!WitnessChecked && !Res.Failed &&
                 Needed <= limits::kMaxAffineResidueTableBits) {
