@@ -185,5 +185,113 @@
     "Fallback canonical-address and segment-limit fault continuation",
     "Physical RTM execution",
     "Other x86 instruction/state gaps in docs/x86-instruction-support.md"
-  ]
+  ],
+  "integration": {
+    "neverd_fixed_code": "f43d711955283bb9feda4fc2bd06ccd442b5361e",
+    "remote_exact_sha": "5c216c638c401806902552c4e337c045097ca49e",
+    "capstone": "991f4d6214c3c599bb84e8a6490ae034d819641e",
+    "capstone_update_origin": "Concurrent dev commit a772929df06d4bbac5461d93fb124eb57bc6e827, preserved during integration",
+    "qualification": {
+      "pinned": {
+        "tests": 38,
+        "reports": [
+          {
+            "path": "integrated-pinned-NeverDX86NonlocalControlTests.xml",
+            "sha256": "81fe46a1da7b6e79c95aaa264450b3f73430c482ae2cf1f532d8415299c130b9",
+            "tests": 4,
+            "failures": 0,
+            "errors": 0,
+            "disabled": 0,
+            "skipped": 0
+          },
+          {
+            "path": "integrated-pinned-NeverDX86SystemStateTests.xml",
+            "sha256": "be8a5467dd5a3b760b67a5b704113f874baf604aa51428eb30e9ef8e7dbd4bb0",
+            "tests": 29,
+            "failures": 0,
+            "errors": 0,
+            "disabled": 0,
+            "skipped": 0
+          },
+          {
+            "path": "integrated-pinned-NeverDX86TransactionBeginTests.xml",
+            "sha256": "7b66e0e981d2fb05c20a90fa5d88c3bc2c106a93fa446902486e05e337a3b5ad",
+            "tests": 5,
+            "failures": 0,
+            "errors": 0,
+            "disabled": 0,
+            "skipped": 0
+          }
+        ],
+        "build": {
+          "path": "integrated-pinned-build.log",
+          "sha256": "06ce6844fc419e90692fb181fcab34e6ff32adde5a1a52bd891cf8f017adda1b"
+        },
+        "commands": {
+          "path": "integrated-pinned-commands.json",
+          "sha256": "beb494b8a6f5034eb49ee403aa66c59ce9617d117400763a21eb77891f03e960"
+        },
+        "native_and_c_objects": 120,
+        "object_inventory": {
+          "path": "integrated-pinned-objects.json",
+          "sha256": "ec94a45f91345b16b3b7f4377a1611657b5a4e942e16ca2ee8b54e10c6cebc2c"
+        },
+        "neverc_objects": 48,
+        "neverc": {
+          "path": "integrated-pinned-neverc/qualification.json",
+          "sha256": "88ebd81872b051350eaf7410bb4dd9b5c88a9bb631ba40977a3639542d743c6e"
+        }
+      },
+      "native": {
+        "tests": 38,
+        "reports": [
+          {
+            "path": "integrated-native-NeverDX86NonlocalControlTests.xml",
+            "sha256": "c9c60e9f39dddcdf3169c6cd989c321c3c2038ca695995b7f26dad5569e81031",
+            "tests": 4,
+            "failures": 0,
+            "errors": 0,
+            "disabled": 0,
+            "skipped": 0
+          },
+          {
+            "path": "integrated-native-NeverDX86SystemStateTests.xml",
+            "sha256": "c631b3180aa5646f99c6ef50eef1e950f335fc2018263fb855862248c5d0f321",
+            "tests": 29,
+            "failures": 0,
+            "errors": 0,
+            "disabled": 0,
+            "skipped": 0
+          },
+          {
+            "path": "integrated-native-NeverDX86TransactionBeginTests.xml",
+            "sha256": "4a506e5700ad2397d8bbecc89bd7a5ff41a1f273ec1ce5be989839270836c989",
+            "tests": 5,
+            "failures": 0,
+            "errors": 0,
+            "disabled": 0,
+            "skipped": 0
+          }
+        ],
+        "build": {
+          "path": "integrated-native-build.log",
+          "sha256": "852e633cf9f564ce46694a8d05df766365d04e04cf216dec8c13326afb44ff42"
+        },
+        "commands": {
+          "path": "integrated-native-commands.json",
+          "sha256": "da5c70b02a5434906f1015a68a06d1b78c823185a86b26c48da8782246fbce71"
+        },
+        "native_and_c_objects": 120,
+        "object_inventory": {
+          "path": "integrated-native-objects.json",
+          "sha256": "d8dcd837403b1d1096ee1682939845b9afa4bfad0ac44a409024079afcb08e94"
+        },
+        "neverc_objects": 48,
+        "neverc": {
+          "path": "integrated-native-neverc/qualification.json",
+          "sha256": "c143105304a9d74e8b91aa2def879ea7facd8712ed6f67fb1e46766f6185b671"
+        }
+      }
+    }
+  }
 }

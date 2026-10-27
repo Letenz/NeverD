@@ -2517,7 +2517,9 @@ completions. Full CFG tests retain a backward rel16 abort target reachable
 only from XBEGIN. Each SDK produces 120 native/C objects across i386/x64,
 ELF/COFF/Mach-O, default/NoOpt and both C routes at O0/O2. NeverC additionally
 compiles 48 x64 objects per SDK using its real intrinsic headers. Every object
-contains one XBEGIN and one XEND. See the
+contains one XBEGIN and one XEND. Integrated commit `f43d711955` repeats
+all 38 tests and 168 objects per SDK against the concurrent dev Capstone
+update `991f4d6214`; its existing immediate-sign bug remains normalized. See the
 [qualification record](evidence/x86-xbegin-rel16-2026-10-27.json).
 
 These checks establish signed fallback admission and the existing two-exit
