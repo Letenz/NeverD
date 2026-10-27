@@ -310,7 +310,7 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
     if (K == "deleted")
       return Theme::instance().color(ColorRole::DiffRemoved);
     if (K == "uncertain")
-      return Theme::instance().color(ColorRole::SecondaryText);
+      return Theme::instance().chrome(QStringLiteral("SecondaryText"));
     if (K != "identical" && K != "moved")
       return Theme::instance().color(ColorRole::DiffChanged);
   }
