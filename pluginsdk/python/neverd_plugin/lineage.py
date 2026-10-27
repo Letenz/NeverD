@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Any
+from typing import Any, Literal, cast, overload
 
 from . import abi
 from .api import NeverDError
@@ -43,7 +43,9 @@ class Lineage:
         for name in ("create", "destroy", "cancel", "status_json", "last_error",
                      "load_json", "summary_json", "query_json", "export_json", "report_json"):
             self._host.function("neverd_lineage_" + name)
-        self._handle = abi.LineageHandle(self._host.call("neverd_lineage_create"))
+        self._handle = abi.LineageHandle(
+            cast(int | None, self._host.call("neverd_lineage_create"))
+        )
         if not self._handle.value:
             raise NeverDError("cannot allocate lineage handle")
 
@@ -82,7 +84,15 @@ class Lineage:
             text = self._host.owned_string("neverd_lineage_status_json", self._require())
         if text is None:
             raise NeverDError("cannot read lineage status")
-        return json.loads(text)
+        return cast(dict[str, Any], json.loads(text))
+
+    @overload
+    def _call(self, name: str, *args: object, progress: Progress | None = None,
+              callback: bool = False, integer: Literal[False] = False) -> str: ...
+
+    @overload
+    def _call(self, name: str, *args: object, progress: Progress | None = None,
+              callback: bool = False, integer: Literal[True]) -> int: ...
 
     def _call(self, name: str, *args: object, progress: Progress | None = None,
               callback: bool = False, integer: bool = False) -> str | int:
@@ -105,9 +115,15 @@ class Lineage:
         try:
             cb = abi.LineageProgressCallback(notify) if progress else abi.LineageProgressCallback()
             tail = (cb, None) if callback else ()
-            result = (self._host.call if integer else self._host.owned_string)(
-                "neverd_lineage_" + name, handle, *args, *tail,
-            )
+            result: str | int | None
+            if integer:
+                result = cast(int, self._host.call(
+                    "neverd_lineage_" + name, handle, *args, *tail,
+                ))
+            else:
+                result = self._host.owned_string(
+                    "neverd_lineage_" + name, handle, *args, *tail,
+                )
             if errors:
                 raise errors[0]
             if result is None or (integer and not result):
@@ -137,7 +153,7 @@ class Lineage:
                           "reports": list(reports)}, options=options, progress=progress)
 
     def summary(self) -> dict[str, Any]:
-        return json.loads(self._call("summary_json"))
+        return cast(dict[str, Any], json.loads(self._call("summary_json")))
 
     def edit_releases(self, edit: Mapping[str, Any], *,
                       options: Mapping[str, Any] | None = None,
@@ -160,8 +176,10 @@ class Lineage:
               progress: Progress | None = None, **options: Any) -> dict[str, Any]:
         if revision is None:
             revision = self.summary()["revision"]
-        return json.loads(self._call("query_json", _json({**options, "kind": kind,
-                          "revision": revision}), progress=progress, callback=True))
+        return cast(dict[str, Any], json.loads(self._call(
+            "query_json", _json({**options, "kind": kind, "revision": revision}),
+            progress=progress, callback=True,
+        )))
 
     def pages(self, kind: str, **options: Any) -> Iterator[dict[str, Any]]:
         """Walk pages with one frozen revision; concurrent replacement refuses."""
@@ -182,3 +200,4 @@ class Lineage:
     def report(self, report_id: str, *, progress: Progress | None = None) -> str:
         """Return the exact retained report, including its original formatting."""
         return self._call("report_json", _text(report_id), progress=progress, callback=True)
+
