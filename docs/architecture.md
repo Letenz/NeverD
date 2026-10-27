@@ -6433,6 +6433,16 @@ value is dead in every feasible context. Calls, loads, and stores keep their
 observable behavior; source labels survive removal. Adjacent byte slices of
 the same local are simplified in HighIR before this analysis, preserving their
 result type. This identity does not merge independent loads or calls.
+Repeated single-bit tests also share a fact: `x & 2` and `(x >> 1) & 1`
+observe the same original bit when their integer widths agree. Narrowing,
+promoted byte operands and sign-extension bits do not establish this identity.
+Dead-copy liveness can pass through an Itanium try whose handlers each consist
+of one nonreturning call. Every local observed by such a handler stays live
+for this analysis, including definitions inside the try. Locals read along
+out-of-line landing-pad paths receive the same protection because their
+unwinder entry is implicit. Returning or more complex handlers still require
+an exception flow proof; the method/export definite-assignment validator does
+not gain exception support from this liveness-only admission.
 Iterative HighIR cleanup treats an inline candidate as progress only after the
 shared stability proof admits it and a use is replaced. Expression simplification
 reports both replacements and in-place changes to shared nodes. With candidates

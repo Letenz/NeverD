@@ -7697,6 +7697,16 @@ their multiplicity without expanding every path, and substitution reaches a
 unique read after an unrelated shared subgraph. Folding preserves its depth
 limit and rejects effects even after a large pure prefix.
 
+`HighControlFlowSemantics.RepeatedBitGuardsKeepOnlyObservedPhiInputs` compares
+masked and shifted bit tests across a loop with an independent interpreter.
+`BitGuardsDoNotBorrowDifferentOrChangedBits` retains unknown inputs for different
+bits, rewritten or escaped operands, narrowed results and sign-extension bits.
+`TerminalCatchKeepsAllItsObservedDefinitions` permits liveness through terminal
+Itanium catches while preserving every handler-observed local; returning
+handlers and native-only noreturn flags refuse. The method validator remains
+conservative. `OutOfLinePadsKeepTheirImplicitEntryValues` checks that a pad's
+implicit unwinder entry cannot make its reaching definition disappear.
+
 `HighControlFlowSemantics.IndependentEntriesSurviveRepeatedDeadCodeCleanup`
 checks that 32 independent entries remain executable after their first copies
 fold away during MedIR-to-HighIR conversion. An independent interpreter enters
