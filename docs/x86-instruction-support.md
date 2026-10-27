@@ -2558,6 +2558,11 @@ full-source recorder runs (half sanitized Clang, half NeverC), and another
 checks pass 90 compact and 522 four-source objects per SDK, plus 8 compact and
 16 four-source source-recording runs.
 
+Integrated commit `946d55f48f` repeats all 57 tests, 270 i386 objects and 432
+full-source runs per SDK after the concurrent MedIR propagation and Capstone
+updates. All 804 C/LLVM exports per SDK used by the compact/four-source native
+interface matrices are byte-identical to the already qualified exports.
+
 The [qualification record](evidence/x86-compact-segments-2026-10-27.json)
 records both SDKs, generated objects, source recorders and the ASan
 counterexample. NeverC's native frontend remains x64-only; i386 native objects
