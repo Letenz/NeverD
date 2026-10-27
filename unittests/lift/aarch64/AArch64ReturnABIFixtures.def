@@ -18,6 +18,8 @@ A64_RETURN_ABI_TEXT(kProtectedFunction, "protected_return")
 A64_RETURN_ABI_TEXT(kSigningScope, "sign-return-address")
 A64_RETURN_ABI_TEXT(kSigningKey, "sign-return-address-key")
 A64_RETURN_ABI_TEXT(kSigningAll, "all")
+A64_RETURN_ABI_TEXT(kArm64eUnwindDiagnostic,
+                    "arm64e unwind requires an IB return-signing policy")
 A64_RETURN_ABI_TEXT(kSigningNonLeaf, "non-leaf")
 A64_RETURN_ABI_TEXT(kSigningAKey, "a_key")
 A64_RETURN_ABI_TEXT(kSigningBKey, "b_key")

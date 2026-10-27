@@ -30,4 +30,8 @@ NEVERD_A64_RETURN_LLVM_TEXT(
     kReturnSigningPCSourceUnsupported,
     "PC-dependent return signing requires its source ABI contract")
 
+NEVERD_A64_RETURN_LLVM_TEXT(
+    kReturnSigningArm64eUnwindUnsupported,
+    "codegen: arm64e unwind requires an IB return-signing policy\n")
+
 #undef NEVERD_A64_RETURN_LLVM_TEXT

@@ -494,6 +494,35 @@ TEST(AArch64ReturnProtection, CompiledFramesDescribeTheirActualSigningPC) {
       }
 }
 
+TEST(AArch64ReturnProtection, Arm64eCannotInventAnAKeyUnwindConvention) {
+  const auto Function = decodedFunction(
+      {kReturnSignA, kReturnSeven, kAuthenticatedReturnA}, BinaryFormat::ELF);
+  for (bool Leaf : {false, true})
+    for (bool ExplicitKey : {false, true}) {
+      llvm::LLVMContext Context;
+      auto Module = MedLLVMEmitter().emit({Function}, Context, kReturnModule,
+                                          Arch::AArch64);
+      ASSERT_TRUE(Module);
+      auto *Native = Module->getFunction(kProtectedFunction);
+      ASSERT_NE(Native, nullptr);
+      Native->addFnAttr(kSigningScope, Leaf ? kSigningAll : kSigningNonLeaf);
+      if (!ExplicitKey)
+        Native->removeFnAttr(kSigningKey);
+      testing::internal::CaptureStderr();
+      const auto Object = Codegen().compile(*Module, Arch::AArch64,
+                                            BinaryFormat::MachO, kArm64eTriple);
+      llvm::mc_rewrite::RewriteOptions Options;
+      const auto Rewrite = Codegen().compileForRewrite(
+          *Module, Arch::AArch64, Options, BinaryFormat::MachO, kArm64eTriple);
+      const auto Diagnostic = testing::internal::GetCapturedStderr();
+      EXPECT_FALSE(Object.Success);
+      EXPECT_TRUE(Object.ObjectData.empty());
+      EXPECT_FALSE(Rewrite.ImageValid);
+      EXPECT_NE(Diagnostic.find(kArm64eUnwindDiagnostic), std::string::npos)
+          << Diagnostic;
+    }
+}
+
 TEST(AArch64ReturnProtection, LLVMCRejectsLostOrMalformedSigningPolicy) {
   const auto Function = decodedFunction(
       {kReturnSignA, kReturnSeven, kAuthenticatedReturnA}, BinaryFormat::ELF);

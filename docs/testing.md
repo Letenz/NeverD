@@ -547,8 +547,11 @@ skips; after the baseline toolchain probe passes, fixture failures fail the test
 and LLVMC policy retention. ELF A/B and arm64e Mach-O B objects must contain
 the expected PAC/return words and CFI signing transitions at their actual
 instruction offsets, with the appropriate explicit or implicit key. Malformed
-or unsupported source policies reject before output. These are object/metadata
-checks, not native Darwin signed exception unwinding.
+or unsupported source policies reject before output.
+`Arm64eCannotInventAnAKeyUnwindConvention` checks explicit/default A keys and
+leaf/non-leaf scope at both object and rewrite entry points; each fails clearly
+instead of emitting an arm64e CIE with the wrong implicit key. These are
+object/metadata checks, not native Darwin signed exception unwinding.
 
 `NeverDAArch64AuthenticatedCallTests` checks private call pairing, both keys,
 zero/dynamic discriminators, one/ten integer arguments, old LR operands,

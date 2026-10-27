@@ -551,7 +551,10 @@ an explicit signing scope, key, PAuth feature and asynchronous unwind table.
 The backend signs its own entry SP and LR and emits the corresponding CFI;
 it does not authenticate a fabricated original LR against a synthetic frame.
 LLVMC retains that policy when projecting LLVM functions to C. A different output
-architecture cannot silently drop it. Native Swift emission rejects this
+architecture cannot silently drop it. Both native object and rewrite compilation
+refuse an A-key signed-frame policy for an arm64e Mach-O target: its implicit
+IB unwind ABI cannot describe that override. ELF A/B and ordinary ARM64
+Mach-O retain their own target conventions. Native Swift emission rejects this
 attribute until Swift has a corresponding source contract. Ordinary pointer
 authentication, observable signed values, mismatched modifiers/keys and
 incomplete recipes remain explicit. This includes Clang's arm64e tail-call

@@ -17,6 +17,7 @@
 
 #define DEBUG_TYPE "neverd-codegen"
 #include "neverd/ArchSupport.h"
+#include "neverd/backend/llvm/AArch64/LLVMAArch64ReturnProtection.h"
 #include "neverd/backend/llvm/X86/LLVMX86StackEffects.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/loader/MachO/DyldCacheLoad.h"
@@ -147,6 +148,31 @@ detectTargetFeatures(llvm::Module &Mod, Arch TheArch) {
   default:
     return {"", ""};
   }
+}
+
+static bool supportsAArch64ReturnUnwind(const llvm::Module &Module,
+                                        const llvm::Triple &Triple) {
+  if (!Triple.isArm64e() || !Triple.isOSBinFormatMachO())
+    return true;
+  for (const auto &Function : Module) {
+    // The configured LLVM fork gives ptrauth-returns priority over explicit
+    // scope/key attributes and selects the Darwin non-leaf IB convention.
+    if (Function.isDeclaration() ||
+        Function.hasFnAttribute(kReturnSigningArm64eAttribute))
+      continue;
+    const auto Scope = Function.getFnAttribute(kReturnSigningScopeAttribute)
+                           .getValueAsString();
+    if (Scope != kReturnSigningAll && Scope != kReturnSigningNonLeaf)
+      continue;
+    if (Function.getFnAttribute(kReturnSigningKeyAttribute)
+            .getValueAsString() == kReturnSigningBKey)
+      continue;
+    // Mach-O omits the B-key CIE augmentation; arm64e's implicit return ABI
+    // cannot describe an A-key override, even with valid PAC/CFI instructions.
+    llvm::WithColor::error() << kReturnSigningArm64eUnwindUnsupported;
+    return false;
+  }
+  return true;
 }
 
 static bool isARMv7KTriple(const llvm::Triple &Triple) {
@@ -333,6 +359,8 @@ CodegenResult Codegen::compile(llvm::Module &Mod, Arch TargetArch,
   llvm::Triple TT(TargetTriple.empty() ? llvm::StringRef(TripleStr)
                                        : TargetTriple);
   if (!tripleMatchesTarget(TT, TargetArch, ObjectFormat))
+    return Result;
+  if (!supportsAArch64ReturnUnwind(Mod, TT))
     return Result;
   Mod.setTargetTriple(TT);
 
@@ -570,6 +598,10 @@ llvm::mc_rewrite::RewriteResult Codegen::compileForRewrite(
     llvm::WithColor::error()
         << "codegen: target triple '" << TripleName
         << "' does not match the requested architecture and object format\n";
+    Result.ImageValid = false;
+    return Result;
+  }
+  if (!supportsAArch64ReturnUnwind(Mod, TT)) {
     Result.ImageValid = false;
     return Result;
   }
