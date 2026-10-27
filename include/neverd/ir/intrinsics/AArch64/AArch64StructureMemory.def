@@ -71,6 +71,19 @@ NEVERD_A64_STRUCTURE_TEXT(kStructureLaneLoadAsm,
                           "// neverd.structure.lane.load\n\t.inst ${0:c}")
 NEVERD_A64_STRUCTURE_TEXT(kStructureStoreAsm,
                           "// neverd.structure.store\n\t.inst ${0:c}")
+NEVERD_A64_STRUCTURE_TEXT(
+    kStructureLoadSPAsm,
+    "// neverd.structure.load.sp\n\tmov x14, sp\n\tmov sp, x16\n\t"
+    ".inst ${0:c}\n\tmov x16, sp\n\tmov sp, x14")
+NEVERD_A64_STRUCTURE_TEXT(
+    kStructureLaneLoadSPAsm,
+    "// neverd.structure.lane.load.sp\n\tmov x14, sp\n\tmov sp, x16\n\t"
+    ".inst ${0:c}\n\tmov x16, sp\n\tmov sp, x14")
+NEVERD_A64_STRUCTURE_TEXT(
+    kStructureStoreSPAsm,
+    "// neverd.structure.store.sp\n\tmov x14, sp\n\tmov sp, x16\n\t"
+    ".inst ${0:c}\n\tmov x16, sp\n\tmov sp, x14")
+NEVERD_A64_STRUCTURE_TEXT(kStructureSPConstraintEnd, "i,~{x14},~{memory}")
 NEVERD_A64_STRUCTURE_TEXT(kStructureAsmImmediate, "${0:c}")
 NEVERD_A64_STRUCTURE_TEXT(kStructureAsmOperand, "${{{0}:c}")
 NEVERD_A64_STRUCTURE_TEXT(kStructureVectorOutputConstraint, "=&{{v{0}},")

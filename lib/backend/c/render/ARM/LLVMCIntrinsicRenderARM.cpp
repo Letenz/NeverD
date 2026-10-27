@@ -198,7 +198,7 @@ validatedAArch64WritebackMemoryCall(Arch TheArch, const llvm::CallInst &Call) {
             kAddressMemoryPointerBits) ||
         !Call.getArgOperand(1)->getType()->isIntegerTy(
             kAddressMemoryPointerBits) ||
-        I->base() != kAddressMemoryScratchBase ||
+        (!I->stackBase() && I->base() != kAddressMemoryScratchBase) ||
         I->destination() != kStructureScratchVector ||
         (I->hasRegisterIndex() && I->index() != kStructureScratchIndex))
       throw std::invalid_argument(kWritebackMalformed);
@@ -213,17 +213,21 @@ validatedAArch64WritebackMemoryCall(Arch TheArch, const llvm::CallInst &Call) {
     }
     return AArch64WritebackMemoryInstruction{I->Word};
   }
-  const bool Pair = Text == kPairLoadAsm || Text == kPairStoreAsm ||
-                    Text == kPairVectorLoadAsm || Text == kPairVectorStoreAsm;
-  if (!Pair && Text != kWritebackLoadAsm && Text != kWritebackStoreAsm &&
-      Text != kWritebackVectorLoadAsm && Text != kWritebackVectorStoreAsm)
+  const auto *Machine =
+      std::find_if(std::begin(AArch64WritebackMemoryMachines),
+                   std::end(AArch64WritebackMemoryMachines),
+                   [&](const auto &M) { return Text == M.Asm; });
+  if (Machine == std::end(AArch64WritebackMemoryMachines)) {
+    if (llvm::any_of(AArch64WritebackMemoryMachines, [&](const auto &M) {
+          return llvm::StringRef(Text).starts_with(
+              llvm::StringRef(M.Asm).split('\n').first);
+        }))
+      throw std::invalid_argument(kWritebackMalformed);
     return std::nullopt;
-  const bool Vector = Text == kWritebackVectorLoadAsm ||
-                      Text == kWritebackVectorStoreAsm ||
-                      Text == kPairVectorLoadAsm || Text == kPairVectorStoreAsm;
-  const bool Load = Text == kWritebackLoadAsm ||
-                    Text == kWritebackVectorLoadAsm || Text == kPairLoadAsm ||
-                    Text == kPairVectorLoadAsm;
+  }
+  const bool Pair = Machine->Pair;
+  const bool Vector = Machine->Vector;
+  const bool Load = Machine->Load;
   const auto MatchesVector = [](llvm::Type *Type) {
     const auto *V = llvm::dyn_cast<llvm::FixedVectorType>(Type);
     return V &&
@@ -248,17 +252,9 @@ validatedAArch64WritebackMemoryCall(Arch TheArch, const llvm::CallInst &Call) {
                               : Result->getElementType(I)->isIntegerTy(
                                     kAddressMemoryPointerBits);
   }
-  const char *Constraints =
-      Pair ? (Vector ? (Load ? kPairVectorLoadConstraints
-                             : kPairVectorStoreConstraints)
-                     : (Load ? kPairLoadConstraints : kPairStoreConstraints))
-           : (Vector ? (Load ? kWritebackVectorLoadConstraints
-                             : kWritebackVectorStoreConstraints)
-                     : (Load ? kWritebackLoadConstraints
-                             : kWritebackStoreConstraints));
   if (TheArch != Arch::AArch64 || !ResultValid ||
-      Asm->getConstraintString() != Constraints || !Asm->hasSideEffects() ||
-      Asm->isAlignStack() || Asm->canThrow() ||
+      Asm->getConstraintString() != Machine->Constraints ||
+      !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
       Asm->getDialect() != llvm::InlineAsm::AD_ATT ||
       Call.arg_size() != Count || Call.getFunctionType()->isVarArg() ||
       Call.getNumOperandBundles() ||
@@ -286,7 +282,9 @@ validatedAArch64WritebackMemoryCall(Arch TheArch, const llvm::CallInst &Call) {
   if (!Instruction || Instruction->isLoad() != Load ||
       Instruction->isVector() != Vector || Instruction->isPair() != Pair ||
       (Pair && Instruction->secondDestination() != kPairSecondScratch) ||
-      Instruction->base() != kAddressMemoryScratchBase ||
+      Instruction->stackBase() != Machine->StackBase ||
+      (!Instruction->stackBase() &&
+       Instruction->base() != kAddressMemoryScratchBase) ||
       Instruction->destination() != kAddressMemoryScratchValue)
     throw std::invalid_argument(kWritebackMalformed);
   return Instruction;
