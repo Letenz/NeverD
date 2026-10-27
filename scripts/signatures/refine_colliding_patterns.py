@@ -3,7 +3,7 @@
 
 This is an offline refinement of existing records, not a source-name recognizer.
 It does not read evaluation labels or invent aliases. A conflicting complete
-body needs all distinguishing references, or becomes an incoming-only query.
+body needs sufficient distinguishing references, or becomes an incoming-only query.
 An incomplete conflicting record cannot supply either proof and is omitted.
 """
 
@@ -20,9 +20,11 @@ import sys
 
 try:
     from . import build_msvc_signatures as builder
+    from . import refine_pattern_metadata as metadata
     from . import supplement_patterns as supplement
 except ImportError:
     import build_msvc_signatures as builder
+    import refine_pattern_metadata as metadata
     import supplement_patterns as supplement
 
 
@@ -78,6 +80,64 @@ def refine(existing: Path, evidence: list[Path], output: Path, machine: str) -> 
             by_crc[shape.crc_len, shape.crc, len(shape.lead)].append(key)
 
     coverage = {}
+
+    def covered_keys(row):
+        if row.key not in coverage:
+            shape = builder.Shape.of(row.key)
+            if shape.crc_len:
+                nearby = by_crc[shape.crc_len, shape.crc, len(shape.lead)]
+            else:
+                prefix = shape.stated_prefix()
+                nearby = [key for _, key in ordered[
+                    bisect_left(leads, prefix):bisect_right(leads, prefix + "~")]]
+                # A source can encode the rest in its tail, or end at a
+                # shorter RET before our padding. Its leading field is
+                # then a prefix of ours, outside the forward range.
+                for end in range(2, len(prefix), 2):
+                    nearby.extend(by_lead[prefix[:end]])
+            coverage[row.key] = [key for key in nearby
+                                 if shape.covered_by(shapes[key]) or
+                                 shape.padding_collision_with(shapes[key], machine=machine)]
+        return coverage[row.key]
+
+    def raw_rivals(row):
+        return [other for key in covered_keys(row) for other in by_key[key]
+                if builder.another_routine(row.names, other.names)]
+
+    def represented(library, other):
+        return any(set(loaded.names).intersection(other.names)
+                   and loaded.refs == other.refs
+                   and loaded.data_sites == other.data_sites
+                   and loaded.local_sites == other.local_sites
+                   for loaded in known[library, other.key])
+
+    def incoming_declaration(row):
+        variants = [other for other in by_key[row.key]
+                    if set(row.names).intersection(other.names)]
+        common = builder.common_refs([row, *variants])
+        words = common.with_refs(common.refs, require=False).text.split()
+        words.insert(4, "!caller")
+        return " ".join(words)
+
+    def clause_cost(row):
+        independent = all(row.reference_kind(offset) == 0 and
+                          metadata.immutable_reference(name) for offset, name in row.refs)
+        return (not independent, len(row.refs), row.refs)
+
+    # Constrain the entire loaded byte cohort together. Dropping just one
+    # alternative would turn another formerly disputed name into a preferred
+    # suggestion even though no new evidence supports that survivor.
+    affected = set()
+    for path, lines in documents.items():
+        library = library_name(path)
+        for text in lines:
+            row = builder.parse_line(text)
+            if row is None or row.require_caller or row.is_vtable or row.is_load_config:
+                continue
+            if (library, row.key) not in affected and any(
+                    not represented(library, other) for other in raw_rivals(row)):
+                affected.add((library, row.key))
+
     changed = {}
     additions = defaultdict(list)
     actions = []
@@ -89,31 +149,13 @@ def refine(existing: Path, evidence: list[Path], output: Path, machine: str) -> 
             if row is None or row.require_caller or row.is_vtable or row.is_load_config:
                 kept.append(text)
                 continue
-            if row.key not in coverage:
-                shape = builder.Shape.of(row.key)
-                if shape.crc_len:
-                    nearby = by_crc[shape.crc_len, shape.crc, len(shape.lead)]
-                else:
-                    prefix = shape.stated_prefix()
-                    nearby = [key for _, key in ordered[
-                        bisect_left(leads, prefix):bisect_right(leads, prefix + "~")]]
-                    # A source can encode the rest in its tail, or end at a
-                    # shorter RET before our padding. Its leading field is
-                    # then a prefix of ours, outside the forward range.
-                    for end in range(2, len(prefix), 2):
-                        nearby.extend(by_lead[prefix[:end]])
-                coverage[row.key] = [key for key in nearby
-                                     if shape.covered_by(shapes[key]) or
-                                     shape.padding_collision_with(shapes[key], machine=machine)]
-            all_rivals = [other for key in coverage[row.key] for other in by_key[key]
-                          if builder.another_routine(row.names, other.names)]
-            rivals = [other for other in all_rivals
-                      if not any(set(loaded.names).intersection(other.names)
-                                  and loaded.refs == other.refs
-                                  and loaded.data_sites == other.data_sites
-                                  and loaded.local_sites == other.local_sites
-                                  for loaded in known[library, other.key])]
-            if not rivals:
+            if (library, row.key) not in affected:
+                kept.append(text)
+                continue
+            all_rivals = raw_rivals(row)
+            all_rivals.extend(other for other in known[library, row.key]
+                              if builder.another_routine(row.names, other.names))
+            if not all_rivals:
                 kept.append(text)
                 continue
             complete = builder.Shape.of(row.key).fully_verified()
@@ -122,7 +164,7 @@ def refine(existing: Path, evidence: list[Path], output: Path, machine: str) -> 
                     kept.append(text)
                     continue
                 action, token = "required", "!refs"
-            elif not row.require_references and complete and all(name.startswith(":0000 ") for name in row.names):
+            elif complete and all(name.startswith(":0000 ") for name in row.names):
                 action, token = "caller", "!caller"
             else:
                 action, token = "omitted", None
@@ -131,28 +173,26 @@ def refine(existing: Path, evidence: list[Path], output: Path, machine: str) -> 
                 required = row.with_refs(row.refs, require=True)
                 clauses = [variant for variant in supplement.reference_variants(required)[1:]
                            if all(builder.distinguished([variant, other]) for other in all_rivals)]
-                native_rows = [clause.text for clause in clauses] if clauses else [required.text]
+                # One sufficient clause replaces one global byte record. Do
+                # not multiply long bodies for every independently sufficient
+                # site. Prefer image metadata, fewer alternatives, then source
+                # field order. Metadata does not depend on another byte guess.
+                selected = min(clauses, key=clause_cost) if clauses else required
+                native_rows = [selected.text]
                 # A pruned clause cannot declare its omitted outgoing edges.
                 # Retain a separate complete source query, intersecting fields
                 # across all raw same-name versions before incoming expansion.
                 if clauses and all(name.startswith(":0000 ") for name in row.names):
-                    variants = [other for other in by_key[row.key]
-                                if set(row.names).intersection(other.names)]
-                    source_row = builder.common_refs([row, *variants])
-                    words = source_row.text.split()
-                    words.insert(4, "!caller")
-                    native_rows.append(" ".join(words))
+                    native_rows.append(incoming_declaration(row))
             elif token:
-                words = row.text.split()
-                words.insert(4, token)
-                native_rows = [" ".join(words)]
+                native_rows = [incoming_declaration(row)]
             for native in native_rows:
                 builder.parse_line(native)
                 additions[path.with_suffix(".npat").name].append(native)
             actions.append({"file": path.name, "line": number, "pattern": row.text,
-                            "action": action, "rival_count": len(rivals),
+                            "action": action, "rival_count": len(all_rivals),
                             "replacement_records": len(native_rows),
-                            "rival_example": rivals[0].text})
+                            "rival_example": all_rivals[0].text})
         changed[path.name] = kept
     for name, rows in additions.items():
         lines = [line for line in changed.get(name, []) if line.strip() != "---"]
@@ -168,7 +208,7 @@ def refine(existing: Path, evidence: list[Path], output: Path, machine: str) -> 
     for name, lines in changed.items():
         (output / name).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     return {"schema_version": 1, "machine": machine,
-            "scope": "Previously unrepresented source claims; same-library byte cohorts with identical typed references remain intact. Contradicted required claims are omitted.",
+            "scope": "Previously unrepresented source claims constrain entire same-library byte cohorts together. Complete contradicted claims retain incoming queries; incomplete claims are omitted.",
             "inputs": [describe(path) for path in paths],
             "evidence": [describe(path) for path in evidence],
             "outputs": [describe(path) for path in sorted(output.iterdir())],

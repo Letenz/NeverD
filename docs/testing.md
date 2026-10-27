@@ -6806,8 +6806,10 @@ existing mandatory-reference claims to survive new raw sources, including a
 known rival name with changed references. The generation and supplement
 suites also check byte coverage across leading/tail encodings and require every
 mandatory reference claim to survive hidden CRC counterexamples. Refinement
-cases retain alternatives in sufficient single-site clauses, jointly necessary
-fields and complete incoming declarations with source-version consensus.
+cases retain alternatives in the selected sufficient single-site clause,
+jointly necessary fields and complete incoming declarations with source-version
+consensus. They also constrain cohorts together across numbered parts, so
+withholding one member cannot leave an unqualified survivor.
 Source-driven refinement still requires held-out CLI accuracy and performance qualification;
 these unit tests do not establish source identity for a matching body.
 

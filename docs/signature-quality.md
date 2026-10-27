@@ -326,9 +326,13 @@ when its machine is ARM. Other architectures do not inherit that rule.
 counterclaims to existing ordinary records. A complete conflicting record gains
 mandatory references only when they distinguish every new rival; otherwise it
 becomes an incoming-only query. Incomplete conflicting records are omitted.
-Each independently sufficient single-site clause is checked against every raw
-rival, including already represented ones. Alternatives at one site stay
-together. If several sites are jointly necessary, the full clause stays.
+Each proposed single-site clause is checked against every raw rival and the
+existing byte cohort. The refiner retains one sufficient clause, preferring
+image-owned import/RTTI metadata, then fewer alternatives and source field
+order; alternatives at one site stay together. This replaces one global byte
+record with at most one, avoiding a copy
+of the whole body for every sufficient site. If several sites are jointly
+necessary, the full clause stays.
 Pruned clauses retain a separate complete incoming declaration, intersecting
 outgoing fields across raw same-name versions. Unrelated unresolved calls need
 not block a distinguishing clause, and omitted fields cannot be used as if the
@@ -337,8 +341,12 @@ Existing same-library byte cohorts remain intact across numbered parts only
 when their typed references also agree with the raw claim. A known name with
 different references or a claim in an independently selected library cannot
 hide a new counterexample. Existing required-reference records undergo the
-same audit; newly indistinguishable ones are omitted. The refiner adds no names
+same audit; newly indistinguishable complete ones retain incoming queries.
+The refiner adds no names
 or aliases and preserves incoming queries and metadata constraints.
+When one member needs refinement, the whole loaded byte cohort is rechecked
+together across numbered parts. Removing an alternative cannot leave an
+unqualified survivor that newly appears unique.
 Its report records actions and input/output hashes. A withheld candidate is an
 abstention, not a recovered function. Publish coverage losses and gains alongside
 error changes, and keep the independent identity gate unchanged.
