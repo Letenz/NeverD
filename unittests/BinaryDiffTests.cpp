@@ -1116,6 +1116,60 @@ TEST(BinaryDiff, ChangedBodiesPairBySimilarityWhenStripped) {
   EXPECT_LT(M.Similarity, 1.0);
 }
 
+TEST(BinaryDiff, SharedGraphFeaturesRecoverCandidatesBeyondCommonSketches) {
+  // Every function has the same instruction skeleton. Its sketch bucket is
+  // deliberately too common, and the complete corpus exceeds exhaustive
+  // admission. A small mnemonic/CFG group must still propose its alternatives.
+  for (bool Duplicates : {false, true}) {
+    std::vector<Fn> Before, After;
+    for (unsigned Shape = 0; Shape != 65; ++Shape)
+      for (unsigned Variant = 0; Variant != 4; ++Variant) {
+        Fn F;
+        F.Name =
+            "family_" + std::to_string(Shape) + "_" + std::to_string(Variant);
+        F.Source = NameSource::Generated;
+        const unsigned Value = 200000 + Shape * 100 +
+                               (Duplicates && Variant == 1 ? 0 : Variant) * 20;
+        const unsigned Blocks = Shape + 3;
+        for (unsigned Block = 0; Block != Blocks; ++Block) {
+          F.Blocks.push_back(
+              {{"mov", "r0, " + std::to_string(Value + Block)},
+               {"xor", "r1, " + std::to_string(Value + Block + 8)},
+               {Block + 1 == Blocks ? "ret" : "jmp", "",
+                Block + 1 == Blocks ? InstructionFlow::Return
+                                    : InstructionFlow::Jump}});
+          if (Block + 1 != Blocks)
+            F.Edges.emplace_back(Block, Block + 1, EdgeKind::Jump);
+        }
+        Before.push_back(F);
+        F.Blocks.back()[1].Operands =
+            "r1, " + std::to_string(Value + Blocks + 8);
+        After.push_back(std::move(F));
+      }
+    std::vector<size_t> Layout;
+    for (size_t I = After.size(); I != 0; --I)
+      Layout.push_back(I - 1);
+    const auto A = build(Before, 0x400000), B = build(After, 0x800000, Layout);
+    for (bool Reverse : {false, true}) {
+      const auto &P = Reverse ? B : A, &S = Reverse ? A : B;
+      ComparisonSettings Settings;
+      Settings.UseNames = false;
+      const auto R = compare(P, S, Settings);
+      ASSERT_EQ(R.Matches.size(), Duplicates ? 130U : 260U);
+      for (unsigned Shape = 0; Shape != 65; ++Shape)
+        for (unsigned Variant = 0; Variant != 4; ++Variant) {
+          const auto Name =
+              "family_" + std::to_string(Shape) + "_" + std::to_string(Variant);
+          SCOPED_TRACE(Name);
+          if (Duplicates && Variant < 2)
+            EXPECT_EQ(R.matchOfPrimary(indexOf(P, Name)), nullptr);
+          else
+            EXPECT_EQ(counterpart(R, P, S, Name), Name);
+        }
+    }
+  }
+}
+
 TEST(BinaryDiff, MovedStringEvidenceDoesNotConsumeTheSimilarBody) {
   Fn Old;
   Old.Name = "original";

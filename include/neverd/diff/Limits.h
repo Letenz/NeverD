@@ -66,10 +66,10 @@ inline constexpr unsigned kDefaultMaxCandidates = 16;
 /// Ceiling a caller may raise kDefaultMaxCandidates to.
 inline constexpr unsigned kMaxCandidates = 256;
 /// Most unmatched pairs the approximate stage scores all of; beyond it,
-/// only sketch buckets and neighbors propose candidates.
+/// only informative feature buckets and neighbors propose candidates.
 inline constexpr size_t kMaxExhaustiveCandidatePairs = 1u << 16;
-/// Most functions one sketch bucket or matched neighborhood may hold before
-/// it is dropped as uninformative (a shingle or callee most functions share).
+/// Most functions one sketch/mnemonic-CFG bucket or matched neighborhood may
+/// hold before it is dropped as uninformative (a feature most functions share).
 inline constexpr size_t kMaxSketchBucket = 64;
 /// Least similarity an approximate pairing needs by default.
 inline constexpr double kDefaultMinimumSimilarity = 0.55;

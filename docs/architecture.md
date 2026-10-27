@@ -1478,6 +1478,13 @@ proposal. Their mapped-context agreement is checked again at admission.
 Call and address-reference neighbors share the growing propagation worklist,
 so an anchored address chain does not require one global pass per link.
 
+Matcher version 9 also admits bounded shared mnemonic/CFG groups into the same
+measured competition. A common instruction sketch cannot hide a smaller graph
+group's alternatives. These shared keys propose candidates only; existing
+measurement allowances, similarity gates and rival checks still decide whether
+a pair is accepted. Direction, layout and duplicate-body controls exercise this
+path above the exhaustive candidate limit.
+
 `programAnalysisIdentity` in `Program` supplies a versioned, length-delimited identity
 encoding shared by binding and offline lineage. Only the caller's path is
 excluded; the historical analyst-review digest format remains unchanged.

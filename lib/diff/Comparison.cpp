@@ -346,9 +346,8 @@ uint64_t Matcher::featureKey(FunctionStep Step, uint32_t Function,
   if (!Key || (Step != FunctionStep::ExactBytes &&
                Step != FunctionStep::NormalizedBody))
     return Key;
-  if (F.UnresolvedCallee ||
-      (Step == FunctionStep::ExactBytes &&
-       (F.UnresolvedData || F.AddressEncodings)))
+  if (F.UnresolvedCallee || (Step == FunctionStep::ExactBytes &&
+                             (F.UnresolvedData || F.AddressEncodings)))
     return 0;
   const auto Targets = Features.Referents.of(Function);
   if (Targets.size() != F.FunctionReferences)
@@ -682,7 +681,7 @@ void Matcher::settle(size_t From) {
 unsigned Matcher::approximate() {
   if (!Settings.Approximate && FeatureCandidates.empty())
     return 0;
-  // Candidates: functions sharing a sketch band, and the unmatched
+  // Candidates: bounded sketch and mnemonic/CFG groups, and the unmatched
   // neighbors of corresponding functions.
   std::vector<uint32_t> Ps, Ss;
   for (uint32_t I = 0; I < P.Functions.size(); ++I)
@@ -707,16 +706,28 @@ unsigned Matcher::approximate() {
       uint32_t Function;
     };
     std::vector<Entry> Entries;
-    for (unsigned Band = 0; Band < SketchBands; ++Band) {
+    Entries.reserve(Ps.size() + Ss.size());
+    // A common instruction sketch can still contain small, discriminating
+    // mnemonic/CFG groups. Admit those alternatives before choosing a weak
+    // feature proposal; shared graph keys never establish a match by
+    // themselves.
+    for (unsigned Bucket = 0; Bucket <= SketchBands; ++Bucket) {
       if (stopNow())
         return 0;
       Entries.clear();
+      const auto Append = [&](uint32_t Function, bool Secondary) {
+        const auto &F = (Secondary ? SF : PF).Functions[Function];
+        if (Bucket < SketchBands) {
+          if (F.Sketched)
+            Entries.push_back({sketchBand(F, Bucket), Secondary, Function});
+        } else if (const uint64_t K = featureKey(
+                       FunctionStep::MnemonicsAndGraph, Function, Secondary))
+          Entries.push_back({K, Secondary, Function});
+      };
       for (uint32_t A : Ps)
-        if (PF.Functions[A].Sketched)
-          Entries.push_back({sketchBand(PF.Functions[A], Band), 0, A});
+        Append(A, false);
       for (uint32_t B : Ss)
-        if (SF.Functions[B].Sketched)
-          Entries.push_back({sketchBand(SF.Functions[B], Band), 1, B});
+        Append(B, true);
       llvm::sort(Entries, [](const Entry &L, const Entry &R) {
         return std::tie(L.Key, L.Side, L.Function) <
                std::tie(R.Key, R.Side, R.Function);
