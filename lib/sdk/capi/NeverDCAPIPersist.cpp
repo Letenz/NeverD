@@ -1401,26 +1401,24 @@ int neverd_operand_format_set(neverd_session_t Sess, neverd_va_t Addr,
       return -1;
     }
     if (Format->Base == "enum") {
+      // An enumerator stands for an immediate the decoder types, as the
+      // operand the client counted spells it.
       const auto *Seg = S->Img.getSegmentFor(Addr);
       Decoder Dec;
       DecodedInsn Insn{};
-      if (!Seg || (S->Img.Arch != Arch::X64 && S->Img.Arch != Arch::X86) ||
-          Addr - Seg->VA >= Seg->Data.size() || !Dec.init(S->Img) ||
-          !Dec.selectMode(S->Img, Addr) ||
-          !Dec.decodeOne(
+      std::optional<NativeImmediate> Selected;
+      if (Seg && Addr - Seg->VA < Seg->Data.size() && Dec.init(S->Img) &&
+          Dec.selectMode(S->Img, Addr) &&
+          Dec.decodeOne(
               Seg->Data.data() + (Addr - Seg->VA),
               std::min<size_t>(16, Seg->Data.size() - (Addr - Seg->VA)), Addr,
-              Insn) ||
-          !Insn.Raw || !Insn.Raw->detail) {
-        S->setError("Select an actual decoded x86 immediate operand");
-        return -1;
-      }
-      const auto Facts = describeNativeOperands(Dec, Insn, S->Img.Arch, false);
-      auto Selected = std::find_if(
-          Facts.Immediates.begin(), Facts.Immediates.end(),
-          [&](const auto &I) { return I.Operand == unsigned(Operand); });
-      if (Selected == Facts.Immediates.end()) {
-        S->setError("Select an actual decoded x86 immediate operand");
+              Insn) &&
+          Insn.Raw && Insn.Raw->detail)
+        Selected = nativeImmediateAt(
+            describeNativeOperands(Dec, Insn, S->Img.Arch, false), Insn,
+            S->Img.Arch, unsigned(Operand));
+      if (!Selected) {
+        S->setError("Select an actual decoded immediate operand");
         return -1;
       }
       const auto Value = "0x" + llvm::utohexstr(Selected->Value);

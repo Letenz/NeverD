@@ -4934,8 +4934,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       throw Error("unsaved_changes", "Save or reload staged annotations "
                                      "before formatting an operand");
     if (!listing().showsNumberFormats())
-      throw Error("unsupported",
-                  "Operand types are shown for x86 instructions only");
+      throw Error("unsupported", "Operand types are shown for x86, ARM and "
+                                 "AArch64 instructions only");
     // Formats belong to the instruction that starts at the address, and
     // change its operands that are numbers: the one asked for if it is one,
     // else the last.  A structure offset also changes a displacement from a

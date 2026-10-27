@@ -14,6 +14,13 @@ joins), and `NeverDSessionFunctionDiscoveryTests` (completed discovery,
 refuted guesses and explicit user identities). Replaced-PC and recursive
 fixtures execute both C routes at O0/O2 with independent callbacks or return
 values; malformed return-slot and arbitrary-write controls remain refused.
+Discarded internal calls must retain the parent's exact stack and physical
+return slot before either a RET or a tail transfer. The owner tests cover
+under-restoration, over-restoration and parent-PC overwrites on x86/x64 under
+COFF, ELF and Mach-O, while allowing writes to discarded internal slots.
+Both source routes refuse the negative controls; restored x64 callbacks
+execute with independent argument/result checks at O0/O2. A synthetic tail
+CALL cannot supply a real callee's stack effects to the pre-transfer proof.
 
 `NeverDSourceEntryBindingTests` runs source ABI, typed call, runtime entry and
 incoming stack binding regressions without the full mobile fixture inventory.
@@ -343,9 +350,29 @@ produce verified LLVM for a valid function and reset the diagnostic count.
 `NeverDAArch64ReturnProtectionTests` exercises decoded leaf and saved-LR
 recipes for ELF, Mach-O and COFF, including key/leaf attributes, preserved
 return values, observable signatures, wrong modifiers, incomplete recipes
-and rejection by a different output architecture. Malformed-width cases
+and rejection by a different output architecture. Conditional prologues,
+unused LR PHIs, address-taken landing labels, versioned entry copies, declared
+no-return calls and classified direct/indirect tail transfers cover source
+projection across control-flow joins. Negative cases retain signed or
+authenticated values consumed as return values/call arguments, overlapping
+saved-word writes, uninitialized reload paths, clobbered LR, unrestored SP
+and unresolved local dispatch with an active frame. Malformed-width cases
 start from the real lowering path, then corrupt the PAC or AUT modifier;
 source projection must not hide these invalid operations.
+
+`JTE_AArch64.SeparatePredecessorGuardsProveTheJoinedSelector` covers two
+independently guarded incoming paths to one compact byte table, with no
+single dominating range check. Scalar comparison literals propose only a
+finite envelope; the existing all-path selector proof must certify every
+coordinate before publishing the table. The companion negative cases remove
+one guard, overwrite a guarded value, or leave the full-width index's high
+bits unconstrained. The positive case verifies LLVM, excludes the adjacent
+poison slot and refuses recovery with an exhausted proof budget.
+`ResolverGuardPredicates.IdenticalIncomingValuesKeepTheirJoinEvidence`
+also checks x86, x64, ARM32 and AArch64: deduplicating equal incoming values
+must retain the real predecessor-join provenance, while warm/cold caches
+agree at the exact proof budget and one unit below it. Logical predicate
+unions and straight-line guarded values still cannot claim join ownership.
 
 `NeverDArm64eAnalysisTests` covers Apple arm64e static analysis independently
 of the disabled-key CPU tests in `NeverDAArch64PAuthTests`. It checks both
@@ -4596,6 +4623,13 @@ Numeric cases include leading zeros, signed/unsigned bounds and overflow. Invali
 replacements retain the previous item or operand format. Run it with
 `NeverDWorkerDataPresentation` and `NeverDWorkerFormat` when changing these
 presentation operations.
+`NeverDWorkerFormat` also spells ARM and AArch64 formats with the decoder's
+`#`, counts their operands across register lists, shifts and floating
+constants, and takes an immediate's width from its first register.
+`SessionCAPITest.OperandEnumsNameAArch64Immediates` checks that an AArch64
+enumerator names only a decoded immediate and keeps its `#` in
+`display_op_str`; `armOperandsCountAsTheWorkerDoes` checks that the listing's
+operand under the cursor is the worker's across braces and brackets.
 
 `NeverDWorkerImmediatesRegister` checks decoded immediate search and register
 queries through the real SDK/worker and, when available, CLI. It covers search
@@ -13000,6 +13034,11 @@ measured separately; ordinary execution excludes setup and verification. The
 two-CPU workload includes the intervening public API calls and checks. These are
 checked-execution microbenchmarks, not full OS throughput or cross-ISA comparisons.
 Explicit HVF requires an ARM64 macOS host; Unicorn must be enabled for its comparison.
+The default contract is `checked`; `--contract checked-user` exercises EL0 with
+user-accessible code and RAM. The optional `--wide-loop` adds a 16 KiB arithmetic
+loop body plus loop control, checking the result and all 65,570 retired
+instructions. Its larger instruction working set complements the default small
+loops without changing their inventory.
 
 ```bash
 cmake --build build-cpu --target neverd-cpu-bench --parallel 4
@@ -13019,12 +13058,19 @@ python3 scripts/benchmark_cpu.py \
 ```
 
 The driver alternates process order, warms each workload, verifies the complete
-sample inventory, records binary hashes, labels, load and raw samples, and refuses
-to overwrite evidence. Both backends default to HVF; use `--baseline-backend unicorn`
+sample inventory and hashes every non-timing result field except the separately
+validated backend identity. A mismatch fails the comparison. It records binary
+hashes, labels, load, raw samples and whole-process wall time, plus child user and
+system CPU time where Python's `resource` module is available, and refuses to
+overwrite evidence. The driver accepts the same `--contract` and `--wide-loop`
+options; both executables must support the requested configuration. Both backends
+default to HVF; use `--baseline-backend unicorn`
 to compare the same candidate binary's software and native transports. Source labels
 are caller-supplied; retain compiler/configuration details alongside the results.
 Avoid running builds or other tests while measuring. Report spread and paired
 results; one host and these workloads do not establish a universal ranking.
+`python3 -m unittest scripts.tests.test_benchmark_cpu` checks requested contracts,
+optional workload inventories, instruction counts and non-timing comparisons.
 
 Native entry counting is a separate opt-in diagnostic. It adds instrumentation
 overhead, so discard its elapsed times. The count includes startup probes.
@@ -13179,6 +13225,13 @@ Memory-file reads cover empty ranges at the user limit and original-count signed
 `NeverDLowInstructionBoundaryTests` runs the LowIR instruction-provenance suite independently of the aggregate lift fixtures. `BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame` checks both aligned ADD and post-indexed LDP stack releases, including a link-register restore performed in the caller; the original RET X30 and shared entry remain independently represented. `BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership` rejects another return register, BR X30, missing or unaligned release, narrow restores, interior entries, fixups, writable or ambiguous mappings, relocatable input and another format. Decoding a shared tail does not prove a native ABI: missing caller saves or allocation still fail the existing frame proof.
 
 `NeverDOwnInteriorCallTests` covers direct x86 and x86-64 calls to a label inside the caller's own unwind range, under a Microsoft x64 `.pdata` entry, a System V x86-64 DWARF FDE and an i386 DWARF FDE. A call made only for the return address it pushes is lifted as a push and a jump, and the emitted C for the straight and looped x86-64 cases runs at `-O0` and `-O2` under AddressSanitizer and undefined-behavior traps. A target whose returns pop that call's own return address stays an ordinary call; a return after a stack switch or below the entry stack pointer is refused. A range recovered from an i386 registration chain does not bound the body, so its call stays a call.
+
+The same owner checks packed-flag and MXCSR reads across internal calls. Their
+read intrinsics preserve PC ownership, while every explicit stack store still
+needs a disjointness proof on PE/ELF/Mach-O x64 and ELF i386. Malformed shapes,
+integer-register outputs, segment overrides and flag writes cannot borrow that
+read contract. Both x64 source routes execute 256 carry inputs and four MXCSR
+rounding states, with pipeline optimization on/off and C compilation at O0/O2.
 
 Return-slot checks reject overlapping, unknown, atomic and opaque-callee writes before treating a target as an ordinary subroutine. PE, ELF and Mach-O cases cover partial-width PC corruption and i386 widened memory addresses. Private writes, discarded return addresses and terminating branches remain valid.
 

@@ -1246,6 +1246,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
       MOp.MemoryAddressSpace = LOp.MemoryAddressSpace;
       MOp.Addr = LOp.Addr;
       MOp.OriginSeq = LOp.Seq;
+      MOp.IsTailCall = TailCall && (MOp.Opcode == NdOp::CALL ||
+                                    MOp.Opcode == NdOp::INDIR_CALL ||
+                                    MOp.Opcode == NdOp::RETURN);
       if (MOp.Opcode == NdOp::CALL || MOp.Opcode == NdOp::INDIR_CALL) {
         MOp.CallSiteId = NextCallSiteId++;
         if (BoundaryIndex < LB.InstructionBoundaries.size()) {

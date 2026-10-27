@@ -368,6 +368,10 @@ ordinary preserved registers; unknown calls, memory writes or stack offsets
 cannot supply that proof. COFF stack-probe allocation recovery similarly uses
 the decoded subtraction and unwind-prologue boundary, sharing the decoded
 callee register-effect authority across frame analyses.
+Checked packed-flag and MXCSR reads use the shared x86 frame-effect authority
+and cannot by themselves invalidate a saved PC. PUSHF's lowered stack store
+and STMXCSR's four-byte memory intrinsic each require the ordinary return-slot
+proof; neither obtains private-storage authority from the state read.
 
 LLVM-to-C assigns split Windows protected ranges to blocks independently of
 LLVM block order. Shared handlers remain outside protected scopes, normal-edge
@@ -519,8 +523,19 @@ rows. Checked emulation reuses only the unchanged disabled-key HINT subset.
 `AArch64PAuthC.def` owns the C syntax shared by both projections;
 `AArch64ReturnProtection` proves the source-only return-signing recipe: an
 entry LR signed with entry SP, matching authentication at every normal return,
-and, when saved, a private frame slot with no other consumers. HighIR records
-the key and leaf policy and omits only the proved recipe operations. HighC/C++
+and, when saved, a dominating private frame slot with no observable consumers.
+The proof follows conditional prologues, LR copies/PHIs and frame reloads;
+unused transport PHIs do not make the signature observable. Address-taken
+labels and landing pads retain their invocation's entry frame. Ordinary exits
+must restore SP, unsigned early returns must not cross a signing operation,
+and declared no-return calls retain the signing policy. Native tail-transfer
+provenance passes from LowIR into `MedOp::IsTailCall`; an adjacent CALL/RETURN
+pair alone is not evidence. Tail exits that may return require a restored SP
+and authenticated LR; a declared no-return tail needs no epilogue. Synthetic
+tail calls do not make a physical leaf non-leaf. An unresolved indirect
+branch keeps its diagnostic and cannot hide an active frame's incomplete
+recipe. HighIR records the key and leaf policy and omits
+only the proved recipe operations. HighC/C++
 express it with `target("branch-protection=pac-ret[+leaf][+b-key]")`; HighIR
 dumps and the Rust/Go views retain the policy as metadata. A different output
 architecture cannot silently drop it. Native Swift emission rejects this
@@ -5565,6 +5580,12 @@ Exact guard-occurrence queries use the expanded CFG value-reconstruction depth
 limit. Guard syntax collection and materialization keep their separate, smaller
 expression limit. This lets a shallow guard cross a longer predecessor graph
 without treating depth exhaustion as a completed proof or skipping replay.
+When separate predecessor arms guard one selector, scalar comparison literals
+can propose a finite envelope even though no single guard dominates the load.
+The joined-domain query must prove every incoming value and a dense prefix;
+the proposal supplies no table capacity or range authority. Equal incoming
+values keep their real predecessor-join provenance after deduplication, only
+for that query mode. Predicate disjunctions and SELECTs cannot manufacture it.
 A guard operand reloaded from memory may nominate the nearest literal STORE
 in its block. The shared value resolver must prove that exact literal reaches
 the exact operand use before guard materialization accepts it. Lexical
@@ -9021,6 +9042,8 @@ complete installs, and every step still captures the complete output packet.
 
 Serial checked ARM64 steps reuse Unicorn's one-instruction translation only
 after comparing all four executable bytes with a bounded transport cache.
+`execution_limits::UnicornInstructionCacheEntries` owns its 4,096-entry retention
+bound, covering larger instruction working sets without changing admission.
 Host and guest writes through any alias are therefore visible without relying
 on mapping generations as code-write epochs. Address-space identity, mapping
 generation and transport relocation invalidate the recorded identities; errors,

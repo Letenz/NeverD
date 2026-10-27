@@ -367,9 +367,8 @@ TEST_F(IndirectTailFrame, ExclusiveReleaseCallsItsVirtualSlotInEveryRoute) {
       continue;
     // The early return hands back the object the caller passed.
     EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
-    const auto Compiled =
-        exec(NEVERD_TEST_CLANG, {"-target", "aarch64-linux-gnu",
-                                 "-fsyntax-only", "-w", File.string()});
+    const auto Compiled = checkHighCClangSyntax(
+        File, {"-target", "aarch64-linux-gnu", "-ffreestanding", "-nostdlibinc"});
     EXPECT_TRUE(Compiled.ok()) << Compiled.err << "\n" << Source;
   }
 }

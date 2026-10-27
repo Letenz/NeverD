@@ -440,6 +440,30 @@ struct ResolverGraphCacheTestAccess {
       B.BlockStarts.erase(0x200);
       B.BlockStarts.erase(0x201);
     }
+    if (Variant == 8) {
+      // Two independent arms apply identical guards. Numerical deduplication
+      // must preserve the actual predecessor join for finite-domain queries.
+      B.CurrentFuncEntry = 0x80;
+      B.PersistentCFGRoots = {0x80};
+      B.BlockStarts.insert(0x80);
+      B.BlockStarts.insert(0x81);
+      Emit(0x80, NdOp::COND_BR, {},
+           {NdVar::cst(0x200, PointerSize), NdVar::reg(24, 1)});
+      B.Insns.at(0x80).IsBranch = B.Insns.at(0x80).IsCond = true;
+      B.Insns.at(0x80).BranchTarget = 0x200;
+      Emit(0x81, NdOp::BRANCH, {}, {NdVar::cst(0x100, PointerSize)});
+      B.Insns.at(0x81).IsBranch = true;
+      B.Insns.at(0x81).BranchTarget = 0x100;
+      B.Insns.at(0x200) = B.Insns.at(0x100);
+      B.Insns.at(0x200).Addr = 0x200;
+      for (auto &Op : B.Insns.at(0x200).Ops)
+        Op.Addr = 0x200;
+      B.Insns.erase(0x201);
+      Emit(0x201, NdOp::BRANCH, {}, {NdVar::cst(0x101, PointerSize)});
+      B.Insns.at(0x201).IsBranch = true;
+      B.Insns.at(0x201).BranchTarget = 0x101;
+      Dispatch.JumpTableTargets = {0x300};
+    }
     Query Q;
     Q.Candidate = WideIndex;
     Q.UseAddr = 0x101;
@@ -4040,6 +4064,32 @@ TEST(ResolverGuardPredicates, GuardedBoundsDoNotClaimFiniteJoinOwnership) {
     ASSERT_TRUE(Large.Complete);
     EXPECT_EQ(Large.Values, (std::vector<bool>{true}));
     EXPECT_EQ(Large.Masks, (std::vector<uint64_t>{0}));
+  }
+}
+
+TEST(ResolverGuardPredicates, IdenticalIncomingValuesKeepTheirJoinEvidence) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Target));
+    auto Image = image();
+    Image.Arch = Target;
+    Image.Bits = Target == Arch::X64 || Target == Arch::AArch64
+                     ? Bitness::Bits64
+                     : Bitness::Bits32;
+    CFGBuilder Warm;
+    const auto Q = Access::seedJoinedGuard(Warm, Image, 8);
+    const auto Answer =
+        Access::batch(Warm, {Q}, kGuardedBoundBudget, 0, 0, true, true, true);
+    ASSERT_TRUE(Answer.Complete);
+    EXPECT_EQ(Answer.Values, (std::vector<bool>{true}));
+    EXPECT_EQ(Answer.Masks, (std::vector<uint64_t>{7}));
+    const size_t Work = kGuardedBoundBudget - Answer.Remaining;
+    ASSERT_GT(Work, 0u);
+    for (size_t Budget : {size_t{0}, Work - 1, Work, Work + 1}) {
+      CFGBuilder Cold;
+      Access::seedJoinedGuard(Cold, Image, 8);
+      EXPECT_EQ(Access::batch(Warm, {Q}, Budget, 0, 0, true, true, true),
+                Access::batch(Cold, {Q}, Budget, 0, 0, true, true, true));
+    }
   }
 }
 

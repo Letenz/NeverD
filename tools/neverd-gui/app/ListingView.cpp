@@ -676,8 +676,8 @@ std::optional<int> ListingView::currentOperand() const {
   const auto *line = cursorLine();
   if (!line)
     return std::nullopt;
-  // The operands follow the mnemonic; a comma outside brackets starts the
-  // next one.
+  // The operands follow the mnemonic; a comma outside brackets, braces and
+  // parentheses starts the next one, as the worker counts them (`{r4, lr}`).
   bool operands = false;
   int depth = 0, index = 0;
   std::optional<int> under;
@@ -696,9 +696,12 @@ std::optional<int> ListingView::currentOperand() const {
       under = index;
     if (role == ListingRole::Punctuation)
       for (const QChar c : line->styled.text.mid(span.start, span.length)) {
-        if (c == QLatin1Char('['))
+        if (c == QLatin1Char('[') || c == QLatin1Char('{') ||
+            c == QLatin1Char('('))
           ++depth;
-        else if (c == QLatin1Char(']'))
+        else if ((c == QLatin1Char(']') || c == QLatin1Char('}') ||
+                  c == QLatin1Char(')')) &&
+                 depth > 0)
           --depth;
         else if (c == QLatin1Char(',') && depth == 0)
           ++index;

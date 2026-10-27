@@ -46,12 +46,14 @@
 #include "SessionTestAccess.h"
 #include "SetTypeDialog.h"
 #include "SettingsKeys.h"
+#include "StyledText.h"
 #include "SymbolTablePromptDialog.h"
 #include "Theme.h"
 #include "TitleBar.h"
 #include "TypeLibrariesView.h"
 #include "TypePickerDialog.h"
 #include "WindowFrame.h"
+#include "WorkerCodes.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
@@ -1679,6 +1681,37 @@ private slots:
       QVERIFY(synchronize && !synchronize->isChecked());
       synchronize->trigger();
     });
+  }
+
+  void armOperandsCountAsTheWorkerDoes() {
+    // Commas inside a register list or a memory operand separate no
+    // operands: the operand the cursor is on is the one the worker formats.
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "operand-count.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *listing = bench.window->disassembly()->listing();
+    QTRY_VERIFY(ListingViewTestAccess::settled(*listing));
+    ListingView::Line line;
+    line.kind = QStringLiteral("insn");
+    line.styled.text = QStringLiteral("ld1 {v0.16b, v1.16b}, [x0], #32");
+    const QString punctuation = QStringLiteral("{}[](),");
+    for (int i = 0; i < line.styled.text.size(); ++i) {
+      const auto role = i < 3 ? ListingRole::Mnemonic
+                        : punctuation.contains(line.styled.text.at(i))
+                            ? ListingRole::Punctuation
+                            : ListingRole::Plain;
+      line.styled.spans.append(StyledSpan{i, 1, int(role), std::nullopt});
+    }
+    const auto operandAt = [&](const QString &part) {
+      ListingViewTestAccess::showOnly(*listing, line,
+                                      int(line.styled.text.indexOf(part)));
+      return listing->currentOperand();
+    };
+    QCOMPARE(operandAt(QStringLiteral("v1")), std::optional<int>(0));
+    QCOMPARE(operandAt(QStringLiteral("x0")), std::optional<int>(1));
+    QCOMPARE(operandAt(QStringLiteral("#32")), std::optional<int>(2));
   }
 
   void floatingWindowsKeepMouseHistory() {
