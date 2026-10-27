@@ -1839,7 +1839,16 @@ holds no bytes, such as Rust's `()` or `PhantomData`, lies nowhere and is
 left out, and C defines no record of none: it declares one. A Go func value,
 a subroutine type of a pointer's size, is the address of its closure: a
 pointer to its function, whose one result Go lists as a parameter marked
-`DW_AT_variable_parameter`, or an untyped address for several results. A
+`DW_AT_variable_parameter`, or an untyped address for several results. Older
+Go writers instead append unmarked pointers to the results. For an anonymous
+function type, its recorded Go signature gives the input and result counts;
+the importer checks those counts against the parameter DIEs and removes
+exactly the result pointers' extra indirection. Input pointers remain inputs.
+Nested types and quoted struct tags stay together when reading the signature.
+An unmarked named function type without that signature keeps an untyped
+closure address, since its input and result pointers cannot be distinguished.
+Incomplete signatures, mismatched counts and non-pointer legacy results are
+reported through the normal skipped-type diagnostics. A
 name members share, as Go's blank fields `_` do, is numbered past the first
 (`_1`), and the member's comment keeps it. A record DWARF describes in a way
 local types do not hold, such as a virtual base, is left out with the reason

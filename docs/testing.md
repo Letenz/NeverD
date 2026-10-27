@@ -4540,6 +4540,16 @@ and Go renderers. The fixture's source says how to rebuild the
 `local_types.exe` and `local_types.pdb` pair with clang-cl and lld-link.
 `NeverDSessionCAPITests` reads the same fixture through the C API.
 
+`DWARFTypeImportGo.ReadsGosStructuresAndFuncValues` builds a real Go program
+with the selected `NEVERD_TEST_GO` compiler (or `go` on PATH). It checks both
+legacy unmarked result pointers and current marked results, including input
+and result pointers, multiple results, nested function types, quoted struct
+tags and variadics. Run it with both an older and a current Go toolchain when
+changing that boundary. The other `DWARFTypeImportGo` cases read small DWARF
+sections without a compiler: they preserve input pointers and an ambiguous
+named type's closure address, and reject malformed signatures, inconsistent
+parameter counts and legacy results that are not pointers.
+
 Its Android import cases check that both C views use `<pthread.h>` without
 redeclaring the header's anonymous typedefs. User-declared `read` cases retain
 their argument count, header selection and linking name across saved-project
