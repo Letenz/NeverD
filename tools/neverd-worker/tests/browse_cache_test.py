@@ -133,11 +133,63 @@ def run(worker):
         rows, edited_warm = browse(worker, path, read_only=True)
         assert "user_entry" in "\n".join(row["text"] for row in rows[0])
 
+        # Comments are part of the identity as well. Once the function table
+        # has read the identity, the first page after a new comment must not
+        # come from the old namespace, nor be stored there with the comment.
+        request = {"address": hex(ENTRY), "before": 0, "after": 35}
+        with Client(worker) as client:
+            ok(client, "open", {"path": str(path), "analysis": False})
+            ok(client, "listing", request)
+        with Client(worker) as client:
+            ok(client, "open", {"path": str(path), "analysis": False})
+            ok(client, "functions")
+            ok(client, "annotation_set", {"address": hex(ENTRY), "text": "cached note"})
+            noted = ok(client, "listing", request)
+            assert "cached note" in "\n".join(row["text"] for row in noted["lines"]), noted
+            deadline = time.monotonic() + 5
+            while ok(client, "metadata")["browse_cache"]["pending"]:
+                assert time.monotonic() < deadline
+                time.sleep(.3)  # Leave the executor its idle write window.
+            ok(client, "undo")
+        rows, _ = browse(worker, path, read_only=True)
+        assert "cached note" not in "\n".join(row["text"] for row in rows[0]), rows[0]
+
         # Explicit opt-out bypasses both cache reads and writes.
         count = len(list(folder.glob("*.ndbc")))
         rows, disabled = browse(worker, path, browse_cache=False)
         assert not disabled["enabled"] and disabled["hits"] == disabled["writes"] == 0, disabled
         assert len(list(folder.glob("*.ndbc"))) == count
+
+        # A writer stopped between writing and publishing leaves a temporary
+        # entry. The next flush removes an old one and keeps a current one.
+        stale = folder / ("0" * 64 + ".ndbc.tmp-1-0")
+        fresh = folder / ("1" * 64 + ".ndbc.tmp-2-0")
+        for file in (stale, fresh):
+            file.write_bytes(b"partial")
+        old = time.time() - 24 * 3600
+        os.utime(stale, (old, old))
+        with Client(worker) as client:
+            ok(client, "open", {"path": str(path), "analysis": False})
+            ok(client, "listing", {"address": hex(BODY), "before": 3, "after": 17})
+        assert not stale.exists() and fresh.exists()
+        fresh.unlink()
+
+        # Whole-program analysis is part of the identity: a document read
+        # before it must not answer after it, even with the same function count.
+        analyzed = Path(directory) / "analyzed.dll"
+        analyzed.write_bytes(fixture())
+        with Client(worker) as client:
+            ok(client, "open", {"path": str(analyzed), "analysis": False})
+            ok(client, "overview", {"buckets": 100})
+        with Client(worker) as client:
+            ok(client, "open", {"path": str(analyzed), "analysis": False})
+            ok(client, "overview", {"buckets": 100})
+            before = ok(client, "metadata")["browse_cache"]
+            assert before["hits"] == 1, before
+            ok(client, "analyze")
+            ok(client, "overview", {"buckets": 100})
+            after = ok(client, "metadata")["browse_cache"]
+            assert after["hits"] == before["hits"], (before, after)
 
         # Replacing the image in a live worker retires the old listing's
         # deferred producers. Each project must keep its own names and facts.
@@ -174,7 +226,7 @@ def run(worker):
                 if state["diagnostic"]:
                     break
             assert state["diagnostic"] and state["writes"] == 0, state
-    print("Browse cache: fresh-process hits, identical facts, byte identity, read-only, damage, edits and opt-out passed")
+    print("Browse cache: fresh-process hits, identical facts, byte identity, read-only, damage, edits, comments, analysis, stale temporaries and opt-out passed")
 
 
 if __name__ == "__main__":

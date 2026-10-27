@@ -920,6 +920,10 @@ Json Engine::functionGraph(std::uint64_t address) {
 void Engine::commentsChanged() {
   forgetNamedViews();
   graphs_.clear();
+  // Cached pages contain comments; a page rendered now must not be stored or
+  // found under the identity read before this edit.
+  if (listing_)
+    listing_->commentsChanged();
   textKey_.clear();
   textCache_.clear();
   textLines_.clear();
@@ -2046,6 +2050,10 @@ Json Engine::browseCacheIdentity() {
   // A writer's completed facts are also usable by a read-only consumer.
   identity["open"] = loadOptions() ? backendJson(loadOptions().json(session_))
                                    : Json::object();
+  // Whole-program analysis changes function rows and frames without always
+  // changing the function count those documents are checked against. Every
+  // change of this flag invalidates the listing, which reads it again.
+  identity["analyzed"] = analyzed_;
   Json shared = Json::object();
   const auto project = projectJson();
   const auto folder = utf8Path(project.at("folder").get<std::string>());

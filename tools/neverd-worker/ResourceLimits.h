@@ -94,6 +94,9 @@ inline constexpr std::size_t kListingDecodeCacheFunctions = 512;
 inline constexpr std::size_t kBrowseCacheMaxEntryBytes = 32 * 1024 * 1024;
 inline constexpr std::size_t kBrowseCacheMaxBytes = 128 * 1024 * 1024;
 inline constexpr std::size_t kBrowseCacheMaxPendingEntries = 16;
+/// A temporary browse cache entry at least this old was left by a writer that
+/// stopped before publishing it. One atomic entry write ends well before this.
+inline constexpr std::int64_t kBrowseCacheStaleTemporarySeconds = 10 * 60;
 /// Nearby entries considered for an otherwise unowned navigation address.
 /// Only a recovered instruction, never proximity, establishes ownership.
 inline constexpr std::size_t kListingOwnerSearchFunctions = 16;

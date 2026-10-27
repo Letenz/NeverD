@@ -4674,6 +4674,8 @@ void Listing::namesChanged() {
   ++impl_->generation;
 }
 
+void Listing::commentsChanged() { impl_->cache.invalidate(); }
+
 void Listing::reloadNumberFormats() {
   impl_->cache.invalidate();
   impl_->dataElementTypes.clear();

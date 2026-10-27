@@ -88,6 +88,9 @@ public:
   /// Names or the user's data items changed: the next query reads them again
   /// without scanning strings or reading imports and exports again.
   void namesChanged();
+  /// Comments changed. Rendering reads them live, but they are part of the
+  /// browse cache identity, so cached documents start a new namespace.
+  void commentsChanged();
   /// Whether instruction lines show the user's operand formats.
   bool showsNumberFormats();
   /// Whether operands read as the ARM family spells them (`[x0, #8]`)
