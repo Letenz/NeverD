@@ -100,11 +100,10 @@ TEST(X86NonlocalControl, RawTransitionsCannotBecomeReturnsOrSyscalls) {
                       : D.decodeOne(Bytes.data(), Bytes.size(), kEntry,
                                     Instruction);
         };
-        // SYSENTER and RSM take their target from an MSR or SMRAM, and the
-        // 16-bit XBEGIN truncates its fallback: nothing names the
-        // continuation, so nothing is published.
-        for (const auto &Bytes : std::vector<std::vector<uint8_t>>{
-                 {0x0f, 0x34}, {0x0f, 0xaa}, {0x66, 0xc7, 0xf8, 0, 0}}) {
+        // SYSENTER and RSM take their target from an MSR or SMRAM:
+        // nothing names the continuation, so nothing is published.
+        for (const auto &Bytes :
+             std::vector<std::vector<uint8_t>>{{0x0f, 0x34}, {0x0f, 0xaa}}) {
           SCOPED_TRACE(testing::Message() << unsigned(Target) << Strict << Fast
                                           << unsigned(Bytes[1]));
           DecodedInsn Instruction{};
@@ -123,6 +122,7 @@ TEST(X86NonlocalControl, RawTransitionsCannotBecomeReturnsOrSyscalls) {
             {0xcb},
             {0xca, 8, 0},
             {0x66, 0xcf},
+            {0x66, 0xc7, 0xf8, 0, 0},
             {0xc7, 0xf8, 0, 0, 0, 0},
             {0xc7, 0xf8, 0xfa, 0xff, 0xff, 0xff}};
         if (Target == Arch::X64)
