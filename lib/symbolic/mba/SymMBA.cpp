@@ -161,6 +161,29 @@ SymRef projectBitWindow(SymContext &Ctx, SymRef Source, unsigned Low,
   return Original();
 }
 
+SymRef foldLiteralXorEquality(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                              size_t &Storage) {
+  if (Ctx.op(Root) != SymOp::Eq)
+    return Root;
+  for (unsigned I = 0; I != 2; ++I) {
+    auto Literal = Ctx.operand(Root, I), Sum = Ctx.operand(Root, 1 - I);
+    if (Ctx.isConst(Literal) && Ctx.op(Sum) == SymOp::Xor &&
+        Ctx.isConst(Ctx.operand(Sum, 0))) {
+      auto Inputs = Ctx.operands(Sum).drop_front();
+      const size_t Words = (Ctx.width(Sum) - 1) / 64 + 1;
+      if (Inputs.size() > Storage / (2 * sizeof(SymRef)) ||
+          !Budget.consume(2 + Words + Inputs.size()))
+        return Root;
+      Storage -= Inputs.size() * 2 * sizeof(SymRef);
+      auto Value =
+          Ctx.constValue(Literal) ^ Ctx.constValue(Ctx.operand(Sum, 0));
+      llvm::SmallVector<SymRef, 8> Owned(Inputs);
+      return Ctx.mkEq(Ctx.mkXor(Owned), Ctx.mkConst(Value));
+    }
+  }
+  return Root;
+}
+
 SymRef foldObservedWindow(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                           size_t &Storage) {
   if (Budget.exhausted() || !Budget.canConsume(1) || Storage < 128)
@@ -1540,6 +1563,7 @@ MBAResult detail::MBADeepSimplifier::run(SymContext &Ctx, SymRef E,
       Remember(Index, Rebuilt, false);
       continue;
     }
+    Rebuilt = foldLiteralXorEquality(Ctx, Rebuilt, Budget, RefinementStorage);
     Rebuilt = foldObservedWindow(Ctx, Rebuilt, Budget, RefinementStorage);
     Rebuilt = foldKnownBits(Ctx, Rebuilt, Known, Budget, RefinementStorage);
     Rebuilt = foldConditionalControls(Ctx, Rebuilt, Budget, RefinementStorage);
