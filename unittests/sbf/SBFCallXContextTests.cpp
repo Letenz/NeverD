@@ -172,6 +172,9 @@ void checkSummaryReferences(const CallXContextReport &Report) {
     if (Edge.CalleeSummaryID)
       EXPECT_TRUE(IDs.contains(*Edge.CalleeSummaryID));
   }
+  for (const auto &Expression : Report.InputExpressions)
+    if (Expression.MemoryGuard)
+      EXPECT_LT(*Expression.MemoryGuard, Report.InputMemoryGuards.size());
 }
 
 TEST(SBFCallXContexts, JoinsEveryFiniteCalleeReturnAndMemoryOutcome) {
@@ -215,7 +218,7 @@ TEST(SBFCallXContexts, JoinsEveryFiniteCalleeReturnAndMemoryOutcome) {
           }
         EXPECT_TRUE(CompleteSet);
         const auto JSON = callXContextReportJSON(*Program, *Report);
-        EXPECT_EQ(JSON.getInteger("schema"), 5);
+        EXPECT_EQ(JSON.getInteger("schema"), 6);
         EXPECT_EQ(JSON.getInteger("callx_sites_with_proven_context"), 1);
         EXPECT_EQ(JSON.getInteger("callx_sites_with_proven_target_set_context"),
                   1);
@@ -1426,6 +1429,148 @@ TEST(SBFCallXContexts, GenericTargetInputsComposeLoadedReturns) {
       EXPECT_EQ(Raw->Status, ExecutionStatus::Returned) << Raw->Error;
       EXPECT_EQ(Raw->ReturnValue, 200u + Count - 1);
     }
+}
+
+TEST(SBFCallXContexts, UnknownWriteEffectsHaveOrderIndependentEquality) {
+  using namespace callx_detail;
+  auto Program = analyze(test::makeImage({encode(Opcode::EXIT)}, {}));
+  ASSERT_TRUE(static_cast<bool>(Program))
+      << llvm::toString(Program.takeError());
+  const RegisterValue FrameField{RegisterValue::Kind::StackAddress,
+                                 kRegisterCount, -8};
+  MemoryEffects Before, After;
+  Before.addWrite(FrameField, 8, *Program);
+  Before.addWrite({}, 8, *Program);
+  After.addWrite({}, 8, *Program);
+  After.addWrite(FrameField, 8, *Program);
+  EXPECT_EQ(Before, After);
+  Before.include(After, symbolicInputs(), *Program);
+  EXPECT_EQ(Before, After);
+  for (const auto &Effects : {Before, After}) {
+    ScratchState Scratch;
+    Scratch.Values.write(kInputStart, {RegisterValue::Kind::Constant, 7, 0});
+    EXPECT_FALSE(Effects.invalidate(Scratch, {}, *Program));
+    EXPECT_TRUE(Scratch.empty());
+  }
+}
+
+TEST(SBFCallXContexts, GenericLoadedReturnsCheckRebasedWriteFootprints) {
+  enum class Write { LeafFrame, WrapperFrame, BoundPointer, UnknownPointer };
+  for (unsigned Depth : {1u, 2u, 4u})
+    for (Write Writes : {Write::LeafFrame, Write::WrapperFrame,
+                         Write::BoundPointer, Write::UnknownPointer})
+      for (bool Aliases : {false, true}) {
+        SCOPED_TRACE(::testing::Message() << "depth=" << Depth << ", write="
+                                          << static_cast<unsigned>(Writes)
+                                          << ", aliases=" << Aliases);
+        const size_t Count = kCallXContextSpecializationsPerEntry + 2;
+        const auto Stride = automaticFrameStride(Version::V3, SBFVMConfig{});
+        const auto Frame = initialFramePointer(Version::V3, SBFVMConfig{});
+        const int32_t Offset =
+            Aliases && (Writes == Write::LeafFrame ||
+                        Writes == Write::WrapperFrame)
+                ? static_cast<int32_t>(
+                      Stride * (Writes == Write::LeafFrame ? Depth + 1 : 1)) -
+                      8
+                : -8;
+        std::vector<test::EncodedInstruction> Text;
+        std::vector<size_t> Calls, Literals;
+        const auto Input = test::loadImm64(8, kInputStart);
+        Text.insert(Text.end(), Input.begin(), Input.end());
+        for (size_t I = 0; I < Count; ++I) {
+          Text.push_back(encode(Opcode::MOV64_REG, 1, 10));
+          Text.push_back(encode(Opcode::ADD64_IMM, 1, 0, 0, Offset));
+          Literals.push_back(Text.size());
+          const auto Target = test::loadImm64(3, 0);
+          Text.insert(Text.end(), Target.begin(), Target.end());
+          Text.push_back(encode(Opcode::ST_DW_REG, 1, 3));
+          if (Writes == Write::BoundPointer) {
+            Text.push_back(encode(Opcode::MOV64_REG, 4, 1));
+            if (!Aliases)
+              Text.push_back(encode(Opcode::ADD64_IMM, 4, 0, 0, -8));
+          } else {
+            Text.push_back(encode(Opcode::LD_DW_REG, 4, 8));
+          }
+          Text.push_back(encode(Opcode::MOV64_IMM, 9, 0, 0, I));
+          Calls.push_back(Text.size());
+          Text.push_back({});
+        }
+        Text.push_back(encode(Opcode::EXIT));
+        const size_t Leaf = Text.size();
+        if (Writes == Write::LeafFrame)
+          Text.push_back(encode(Opcode::ST_DW_IMM, 10, 0, -8));
+        if (Writes == Write::UnknownPointer || Writes == Write::BoundPointer)
+          Text.push_back(encode(Opcode::ST_DW_IMM, 4));
+        Text.push_back(encode(Opcode::LD_DW_REG, 0, 1));
+        Text.push_back(encode(Opcode::EXIT));
+        size_t Callee = Leaf;
+        for (unsigned I = 1; I < Depth; ++I) {
+          const size_t Entry = Text.size();
+          Text.push_back(encode(Opcode::CALL_IMM, 0, 1, 0,
+                                static_cast<int32_t>(Callee) - Entry - 1));
+          Text.push_back(encode(Opcode::EXIT));
+          Callee = Entry;
+        }
+        const size_t Wrapper = Text.size();
+        Text.push_back(encode(Opcode::MOV64_REG, 8, 9));
+        if (Writes == Write::WrapperFrame)
+          Text.push_back(encode(Opcode::ST_DW_IMM, 10, 0, -8));
+        const size_t HelperCall = Text.size();
+        Text.push_back(encode(Opcode::CALL_IMM, 0, 1, 0,
+                              static_cast<int32_t>(Callee) - HelperCall - 1));
+        const size_t CallX = Text.size();
+        Text.push_back(encode(Opcode::CALL_REG, 0));
+        Text.push_back(encode(Opcode::EXIT));
+        const size_t Targets = Text.size();
+        for (size_t I = 0; I < Count; ++I) {
+          Text.push_back(encode(Opcode::MOV64_IMM, 0, 0, 0, 300 + I));
+          Text.push_back(encode(Opcode::EXIT));
+          const auto Target =
+              test::loadImm64(3, kBytecodeStart + (Targets + I * 2) * 8);
+          std::copy(Target.begin(), Target.end(), Text.begin() + Literals[I]);
+          Text[Calls[I]] =
+              encode(Opcode::CALL_IMM, 0, 1, 0, Wrapper - Calls[I] - 1);
+        }
+        auto Program = analyze(test::makeImage(Text, {}));
+        ASSERT_TRUE(static_cast<bool>(Program))
+            << llvm::toString(Program.takeError());
+        auto Report = recoverCallXContexts(*Program);
+        ASSERT_TRUE(static_cast<bool>(Report))
+            << llvm::toString(Report.takeError());
+        for (size_t I = kCallXContextSpecializationsPerEntry; I < Count; ++I) {
+          const auto Site = std::find_if(
+              Report->Contexts.begin(), Report->Contexts.end(),
+              [&](const auto &Site) {
+                return !Site.EntryPrefixOnly && Site.CallerSlot == Calls[I] &&
+                       Site.CallXSlot == CallX &&
+                       Site.InputGeneralization ==
+                           CallXInputGeneralization::SpecializationLimit;
+              });
+          ASSERT_NE(Site, Report->Contexts.end());
+          const bool Available = !Aliases && Writes != Write::UnknownPointer;
+          EXPECT_EQ(Site->TargetSlot.has_value(), Available);
+          if (Available)
+            EXPECT_EQ(Site->TargetSlot, Targets + I * 2);
+        }
+        checkSummaryReferences(*Report);
+        ExecutionEnvironment Environment;
+        std::vector<uint8_t> InputBytes(16);
+        llvm::support::endian::write64le(
+            InputBytes.data(), Writes == Write::UnknownPointer && Aliases
+                                   ? Frame - 8
+                                   : kInputStart + 8);
+        Environment.Memory.push_back(
+            {kInputStart, InputBytes, true, "explicit write address"});
+        auto Raw = executeRaw(*Program, std::move(Environment));
+        ASSERT_TRUE(static_cast<bool>(Raw)) << llvm::toString(Raw.takeError());
+        if (Aliases) {
+          EXPECT_EQ(Raw->Status, ExecutionStatus::Faulted);
+          EXPECT_EQ(Raw->Fault, FaultCode::UnknownIndirectCall);
+        } else {
+          EXPECT_EQ(Raw->Status, ExecutionStatus::Returned) << Raw->Error;
+          EXPECT_EQ(Raw->ReturnValue, 300u + Count - 1);
+        }
+      }
 }
 
 TEST(SBFCallXContexts, GenericTargetInputsKeepCompleteAlternatives) {

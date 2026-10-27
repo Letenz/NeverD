@@ -87,6 +87,9 @@ struct CallXInputExpression {
   RegisterValue Constant;
   std::optional<size_t> Input;
   size_t InstructionSlot = 0;
+  /// Optional conservative writes preceding this read, relative to the
+  /// expression's entry. Evaluate the load only after invalidating them.
+  std::optional<size_t> MemoryGuard;
   std::vector<size_t> Alternatives;
   /// Upper bound on the steps in one instantiated proof.
   size_t Depth = 1;
@@ -159,6 +162,13 @@ struct CallXMemoryWrite {
   uint64_t Size = 0;
 };
 
+/// Input-memory facts a deferred load must discard before reading. This is
+/// a may-write footprint, never a claim that formal pointers cannot alias.
+struct CallXInputMemoryGuard {
+  bool WritesCalleeFrames = false;
+  std::vector<CallXMemoryWrite> Writes;
+};
+
 struct CallXFunctionSummary {
   size_t ID = 0;
   size_t EntrySlot = 0;
@@ -211,6 +221,7 @@ struct CallXContextReport {
   size_t SkippedNonCallXRootSpecializations = 0;
   size_t SkippedConstantBranchSuccessors = 0;
   std::vector<CallXInputExpression> InputExpressions;
+  std::vector<CallXInputMemoryGuard> InputMemoryGuards;
   size_t InstantiatedTargetInputExpressions = 0;
 };
 
