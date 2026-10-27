@@ -9,6 +9,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
 #include "neverd/ir/intrinsics/X86/X86RepState.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowIR.h"
@@ -5162,12 +5163,23 @@ TEST(LowInstructionBoundary, AArch64AddressDisplacementsCarryScalarProvenance) {
   for (const Case &Test : Cases) {
     const std::vector<LowOp> Ops = liftAArch64Instruction(Test.Bytes);
     bool SawScalarDisplacement = false;
-    for (const LowOp &Op : Ops)
+    for (const LowOp &Op : Ops) {
+      if (lowAArch64AddressMemoryShapeIsValid(Op)) {
+        // Conservative architecture-only lifting retains the complete word.
+        // Its encoded displacement is scalar metadata, not an image address.
+        const auto &Word = Op.Inputs[kAddressMemoryWordOperand + 1];
+        const auto Memory = *aarch64AddressMemoryInstruction(Word.Offset);
+        EXPECT_EQ(Word.Offset, readLE<uint32_t>(Test.Bytes.data()));
+        EXPECT_EQ(Word.Provenance, ConstantAddressProvenance::Scalar);
+        EXPECT_EQ(Memory.addressOffset(0), Test.Displacement);
+        SawScalarDisplacement = true;
+      }
       for (uint8_t I = 0; I < Op.NumInputs; ++I)
         SawScalarDisplacement |=
             Op.Inputs[I].isConst() &&
             Op.Inputs[I].Offset == Test.Displacement &&
             Op.Inputs[I].Provenance == ConstantAddressProvenance::Scalar;
+    }
     EXPECT_TRUE(SawScalarDisplacement);
   }
 }

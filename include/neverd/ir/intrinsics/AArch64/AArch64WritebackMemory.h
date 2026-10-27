@@ -172,8 +172,8 @@ struct AArch64WritebackMemoryInstruction {
     return (Word >> kAddressMemoryBaseShift) & kAddressMemoryRegisterMask;
   }
   bool stackBase() const { return base() == kAddressMemoryRegisterMask; }
-  const char *sourceBaseFailure(bool HasImage, bool IsParameter) const {
-    return aarch64MemorySourceBaseFailure(stackBase(), HasImage, IsParameter);
+  const char *sourceBaseFailure(bool HasImage, bool HasRawSP) const {
+    return aarch64MemorySourceBaseFailure(stackBase(), HasImage, HasRawSP);
   }
   const AArch64WritebackMemoryMachine &machine() const {
     return *std::find_if(std::begin(AArch64WritebackMemoryMachines),

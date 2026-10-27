@@ -32,9 +32,9 @@ namespace neverd {
 /// A raw SP parameter supplies its alignment/tag bits only without an image;
 /// a relocated address or a synthetic frame is not that environment.
 inline const char *aarch64MemorySourceBaseFailure(bool StackBase, bool HasImage,
-                                                  bool IsParameter) {
-  return StackBase && (HasImage || !IsParameter) ? kAddressMemorySPUnsupported
-                                                 : nullptr;
+                                                  bool HasRawSP) {
+  return StackBase && (HasImage || !HasRawSP) ? kAddressMemorySPUnsupported
+                                              : nullptr;
 }
 
 /// A sufficient finite proof, independent of CPTA and CPACHECK controls.
@@ -213,8 +213,8 @@ struct AArch64AddressMemoryInstruction {
                : kAddressMemoryRegisterMask;
   }
   bool stackBase() const { return base() == kAddressMemoryRegisterMask; }
-  const char *sourceBaseFailure(bool HasImage, bool IsParameter) const {
-    return aarch64MemorySourceBaseFailure(stackBase(), HasImage, IsParameter);
+  const char *sourceBaseFailure(bool HasImage, bool HasRawSP) const {
+    return aarch64MemorySourceBaseFailure(stackBase(), HasImage, HasRawSP);
   }
   unsigned indexShift() const {
     return hasRegisterIndex() && (Word & kAddressMemoryScaleMask)

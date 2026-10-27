@@ -46,6 +46,16 @@ struct AArch64PAuthLoadInstruction {
     return (Word >> kPAuthLoadBaseShift) & kPAuthLoadRegisterMask;
   }
   bool stackBase() const { return base() == kPAuthLoadRegisterMask; }
+  const char *sourceBaseFailure(bool HasImage, bool HasRawSP) const {
+    return stackBase() && (HasImage || !HasRawSP) ? kPAuthLoadSPUnsupported
+                                                  : nullptr;
+  }
+  const char *llvmAsm() const {
+    return stackBase() ? kPAuthLoadSPAsm : kPAuthLoadAsm;
+  }
+  const char *llvmConstraints() const {
+    return stackBase() ? kPAuthLoadSPConstraints : kPAuthLoadConstraints;
+  }
   bool writeback() const { return Word & kPAuthLoadWritebackMask; }
   int64_t displacement() const {
     const bool Negative = (Word >> kPAuthLoadSignShift) & 1U;
@@ -57,7 +67,8 @@ struct AArch64PAuthLoadInstruction {
   }
   uint32_t scratchWord() const {
     return (Word & ~kPAuthLoadRegistersMask) | kPAuthLoadScratchValue |
-           (kPAuthLoadScratchBase << kPAuthLoadBaseShift);
+           ((stackBase() ? kPAuthLoadRegisterMask : kPAuthLoadScratchBase)
+            << kPAuthLoadBaseShift);
   }
 };
 

@@ -239,8 +239,7 @@ void MedToHighConverter::lowerCall(HighFunc &Func, const MedBlock &CurBlock,
 
 void MedToHighConverter::lowerIntrinsic(HighFunc &Func,
                                         const MedBlock &CurBlock,
-                                        const MedOp &CurOp, size_t OpIdx,
-                                        std::set<size_t> &IntrinsicSkip) {
+                                        const MedOp &CurOp, size_t OpIdx) {
   Intrinsic IID = Intrinsic::None;
   if (CurOp.NumInputs >= 1 && CurOp.Inputs[0].isConst())
     IID = static_cast<Intrinsic>(CurOp.Inputs[0].ConstVal);
@@ -274,10 +273,8 @@ void MedToHighConverter::lowerIntrinsic(HighFunc &Func,
     for (const MedIntrinsicOutputBinding &Binding :
          collectMedIntrinsicOutputBindings(CurBlock, OpIdx, NumOut)) {
       CoOutputs.push_back(Binding.Source);
-      // COPY only forwards the pending value.  Sub-register normalization
-      // still feeds later stores and returns and must be lowered normally.
-      if (Binding.IsCopy)
-        IntrinsicSkip.insert(Binding.OpIndex);
+      // The intrinsic defines Source. Its following COPY defines another
+      // value and must be lowered before ordinary source copy propagation.
     }
     CallExpr->IntrinsicOutputs = std::move(CoOutputs);
   }

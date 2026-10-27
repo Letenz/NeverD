@@ -674,11 +674,8 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
     const CompareTreeSwitch *Tree =
         TreeIt == TreeAt.end() ? nullptr : TreeIt->second;
     size_t BlkBodyStart = Func.Body.size();
-    std::set<size_t> IntrinsicSkip;
     const size_t OpEnd = CurBlock.Ops.size() - (Tree ? 1 : 0);
     for (size_t OpIdx = 0; OpIdx < OpEnd; ++OpIdx) {
-      if (IntrinsicSkip.count(OpIdx))
-        continue;
       auto &CurOp = CurBlock.Ops[OpIdx];
       if (ReturnProtectionOps.count(&CurOp))
         continue;
@@ -696,7 +693,7 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
         lowerCall(Func, CurBlock, CurOp);
         break;
       case NdOp::INTRINSIC:
-        lowerIntrinsic(Func, CurBlock, CurOp, OpIdx, IntrinsicSkip);
+        lowerIntrinsic(Func, CurBlock, CurOp, OpIdx);
         break;
       case NdOp::INDIR_CALL:
         lowerCallInd(Func, CurBlock, CurOp);

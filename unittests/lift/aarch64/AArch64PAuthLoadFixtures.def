@@ -30,12 +30,19 @@ NEVERD_PAUTH_LOAD_CASE(0xf8a0053f, A64_Ldrab, 31, 9, 0, false, 0xf8a00611,
                        false)
 NEVERD_PAUTH_LOAD_CASE(0xf87ffd5f, A64_Ldraa, 31, 10, -8, true, 0xf87ffe11,
                        false)
-NEVERD_PAUTH_LOAD_CASE(0xf82007eb, A64_Ldraa, 11, 31, 0, false, 0xf8200611,
-                       false)
-NEVERD_PAUTH_LOAD_CASE(0xf8a02fec, A64_Ldrab, 12, 31, 16, true, 0xf8a02e11,
-                       false)
-NEVERD_PAUTH_LOAD_CASE(0xf8201fff, A64_Ldraa, 31, 31, 8, true, 0xf8201e11,
-                       false)
+NEVERD_PAUTH_LOAD_CASE(0xf82007eb, A64_Ldraa, 11, 31, 0, false, 0xf82007f1,
+                       true)
+NEVERD_PAUTH_LOAD_CASE(0xf8a02fec, A64_Ldrab, 12, 31, 16, true, 0xf8a02ff1,
+                       true)
+NEVERD_PAUTH_LOAD_CASE(0xf8201fff, A64_Ldraa, 31, 31, 8, true, 0xf8201ff1, true)
+NEVERD_PAUTH_LOAD_CASE(0xf86007ea, A64_Ldraa, 10, 31, -4096, false, 0xf86007f1,
+                       true)
+NEVERD_PAUTH_LOAD_CASE(0xf8bff7ea, A64_Ldrab, 10, 31, 4088, false, 0xf8bff7f1,
+                       true)
+NEVERD_PAUTH_LOAD_CASE(0xf87fefea, A64_Ldraa, 10, 31, -16, true, 0xf87feff1,
+                       true)
+NEVERD_PAUTH_LOAD_CASE(0xf8a007ea, A64_Ldrab, 10, 31, 0, false, 0xf8a007f1,
+                       true)
 NEVERD_PAUTH_LOAD_VALUE(unsigned, kZeroRegister, 31)
 NEVERD_PAUTH_LOAD_VALUE(unsigned, kScalarBytes, 8)
 NEVERD_PAUTH_LOAD_VALUE(unsigned, kPairBytes, 16)
@@ -59,6 +66,9 @@ NEVERD_PAUTH_LOAD_TEXT(kObject, "combined-load.o")
 NEVERD_PAUTH_LOAD_TEXT(kUnknown, "unknown_intrinsic")
 NEVERD_PAUTH_LOAD_TEXT(kAsmPrefix, ".inst")
 NEVERD_PAUTH_LOAD_TEXT(kMemoryClobber, "~{memory}")
+NEVERD_PAUTH_LOAD_TEXT(kSPScratchClobber, ",~{x14}")
+NEVERD_PAUTH_LOAD_TEXT(kSPCapture, "mov x16, sp")
+NEVERD_PAUTH_LOAD_TEXT(kSPRestore, "mov sp, x14")
 NEVERD_PAUTH_LOAD_TEXT(kBaseExpression, "__base + __loaded + __load_pair")
 NEVERD_PAUTH_LOAD_TEXT(kResultName, "result")
 NEVERD_PAUTH_LOAD_TEXT(kCapturedSource,
