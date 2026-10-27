@@ -543,6 +543,35 @@ legacy PC signing and absolute state CFI, including DWARF fallback binding.
 The tests execute no fixture code. Missing Apple arm64e tools are explicit
 skips; after the baseline toolchain probe passes, fixture failures fail the test.
 
+`NeverDAArch64ReturnProtectionTests` also verifies compiler-owned LLVM frames
+and LLVMC policy retention. ELF A/B and arm64e Mach-O B objects must contain
+the expected PAC/return words and CFI signing transitions at their actual
+instruction offsets, with the appropriate explicit or implicit key. Malformed
+or unsupported source policies reject before output.
+`Arm64eCannotInventAnAKeyUnwindConvention` checks explicit/default A keys and
+leaf/non-leaf scope at both object and rewrite entry points; each fails clearly
+instead of emitting an arm64e CIE with the wrong implicit key. These are
+object/metadata checks, not native Darwin signed exception unwinding.
+
+`NeverDAArch64AuthenticatedCallTests` checks private call pairing, both keys,
+zero/dynamic discriminators, one/ten integer arguments, old LR operands,
+observable/memory/dead-call counterexamples and malformed LLVM bundles.
+Recompiled HighC/LLVMC at O0/O2 must preserve the complete key/discriminator
+composition; a legitimate intermediate `ptrauth.resign` is checked rather
+than mistaken for an arbitrary IA/0 call. Both sources also compile through
+the configured LLVM backend to ELF. Set
+`NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR` to retain the nine sample groups and all
+five object routes. Compiler IR identifiers are normalized for reproducible
+exports. The compiler checks do not prove that the host enables instruction
+authentication. The controlled model evidence distinguishes correct integer
+calling/rejection behavior from the C O0 diagnostic-syndrome differences;
+neither establishes the complete Apple image, FP/aggregate/variadic call or
+native signed-unwind ABI.
+The [2026-10-28 call/return receipt](evidence/arm64e-call-and-return-abi-2026-10-28.json)
+binds the actual model inputs and all 116 current export hashes to their source
+revisions. It records the complete rebuilt test inventory, separate X64 compiler
+control, original timeout failures and unchanged-limit serial repeats.
+
 `NeverDLanguageEHTests` checks the unified signing query's image/function
 provenance, exact PCs, source scopes and bounded CIE lookup.
 `NeverDUnwindFrameCAPITests` loads independent Mach-O fixtures through the
@@ -4733,6 +4762,9 @@ JSON on a generated DLL, including embedded chain rows, borrowed v1 records,
 early-stop cursors and invalid callback admission. It also checks that a
 bounded entry's direct forwarder can refer to an unlisted destination without
 registering that destination or resurrecting a deleted function identity.
+`pluginsdk/python/tests/test_metadata_integration.py` reuses the generated DLL
+through the official `HostAPI` declarations, checking owned text and hashes,
+borrowed ctypes fields, complete paginated rows and early-stop cursors.
 The PE listing fixture checks `complete_anchor_item` with a one-line budget:
 the first reply includes the actual selected instruction and its header.
 After changing viewport demand, run the GUI controller's
@@ -7420,6 +7452,14 @@ formula at `-O0` and `-O2`, preserving the high-bit remainder and toggle/cache
 isolation.
 
 ## Modular MBA simplification
+
+`SymExpr.ZeroExtendedUnsignedRemaindersUseTheirNarrowOperands` checks
+zero-extended unsigned remainder operands at equal and different widths through
+257 bits. The remainder is computed at their common narrow width and then
+extended, including the total bitvector case `x % 0 = x`. Exhaustive byte pairs
+and independent APInt oracles cover zero divisors and wide carriers. Negative
+controls retain unknown numerator/divisor high bits and the original-width
+all-ones result of unsigned division by zero.
 
 `SymMBAMaskRelation.*OrMaskSubtraction*` and
 `SubtractsAnEntireKnownOrMaskWithoutBorrow` check the exact modular identity
@@ -15358,7 +15398,10 @@ services and ART loading are not covered.
 in `NeverDBytePatchTests`. The real SDK cases in
 `test_byte_patch_integration.py` check empty/unloaded snapshots, all byte values,
 high addresses, split runs, JSON parity, and ownership across edits, reloads and
-session destruction. They also rewrite and truncate a large input after an edit,
+session destruction. Metadata-only range snapshots also cover repeated queries,
+complete inventories and reverse virtual-address mappings in file-offset order;
+C and ctypes checks fix their pointer signatures, field offsets and strides.
+They also rewrite and truncate a large input after an edit,
 then check that exports retain the session's original bytes plus its overlay.
 The worker mock intentionally omits snapshot exports to
 exercise JSON fallback; run the native patch suite with both current and older

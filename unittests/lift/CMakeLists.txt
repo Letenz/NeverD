@@ -2441,8 +2441,18 @@ add_neverd_unittest(NeverDMedPrologueSavesTests
 )
 add_neverd_unittest(NeverDAArch64ReturnProtectionTests
   aarch64/AArch64ReturnProtectionTests.cpp
-  LINK_COMPONENTS BackendC IRHigh IRMed IRLow Decode Lift Loader
+  LINK_COMPONENTS BackendC BackendLLVM CodeGen IRHigh IRMed IRLow Decode Lift Loader
 )
+add_neverd_unittest(NeverDAArch64AuthenticatedCallTests
+  aarch64/AArch64AuthenticatedCallTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM CodeGen IRHigh IRMed IRLow Decode Lift Loader
+)
+target_compile_definitions(NeverDAArch64AuthenticatedCallTests PRIVATE
+  NEVERD_ARM64E_TEST_HEADERS="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/arm64e")
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDAArch64AuthenticatedCallTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
 add_neverd_unittest(NeverDCallRegisterUnreadTests
   core/CallRegisterUnreadTests.cpp
   LINK_COMPONENTS IRLow

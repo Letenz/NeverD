@@ -27,6 +27,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighFlowOracle.h"
 #include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/ir/med/AArch64/AArch64AuthenticatedCall.h"
 #include "neverd/ir/med/AArch64/AArch64SVEState.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
@@ -1423,6 +1424,13 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
                          ? sourceABIParameters(*Med.SourceTypeHint)
                          : std::vector<SourceABIParameter>{};
   HighFunc Func;
+  AArch64AuthenticatedCalls.clear();
+  AArch64CallAuthentications.clear();
+  if (TheArch == Arch::AArch64)
+    for (const auto &Call : findAArch64AuthenticatedCalls(Med)) {
+      AArch64AuthenticatedCalls.try_emplace(Call.Call, Call.Authentication);
+      AArch64CallAuthentications.insert(Call.Authentication);
+    }
   ReturnProtectionOps.clear();
   if (TheArch == Arch::AArch64)
     if (auto Projection = findAArch64ReturnProtection(

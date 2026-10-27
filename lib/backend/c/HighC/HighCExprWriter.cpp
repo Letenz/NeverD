@@ -33,6 +33,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/c/render/AArch64/AArch64AddressMemoryC.h"
+#include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PointerC.h"
 #include "neverd/backend/c/render/AArch64/AArch64WritebackMemoryC.h"
@@ -2404,11 +2405,15 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   // callable in C when it is typed as a function pointer.
   if (E.IsIndirectCall && E.IndirectTarget &&
       (Name.empty() || Name == "indirect" || Name == "indirect_call" ||
-       E.IndirectParamIdx >= 0)) {
+       E.IndirectParamIdx >= 0 ||
+       E.IndirectTarget->IntrinsicId == Intrinsic::A64_AuthBranch)) {
     const TypeRef ReturnType = callResultType(E);
     Name =
         indirectCalleeStr(*E.IndirectTarget, ReturnType ? ReturnType : E.Type,
                           indirectCallFunctionType(E));
+    if (Opts.TheArch == Arch::AArch64 &&
+        E.IndirectTarget->IntrinsicId != Intrinsic::A64_AuthBranch)
+      Name = aarch64PAuthRawCalleeC(Name);
   }
 
   // A callee defined in this file has a prototype: convert between pointer
@@ -5912,6 +5917,17 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
                                                 : NdType::makeVoid(),
                                      "(*)()")) +
       ")";
+  if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::A64_AuthBranch) {
+    if (E.Operands.size() != 3 || !E.Operands[0] || !E.Operands[1] ||
+        !E.Operands[2] || E.Operands[1]->Kind != ExprKind::Const ||
+        E.Operands[1]->ConstVal > kAArch64PAuthKeyIB ||
+        Opts.TheArch != Arch::AArch64)
+      throw std::invalid_argument(kAArch64PAuthMalformedCall);
+    return aarch64PAuthAuthenticatedCalleeC(
+        llvm::StringRef(CalleeType).drop_front().drop_back(),
+        exprStr(*E.Operands[0]), exprStr(*E.Operands[1]),
+        exprStr(*E.Operands[2]));
+  }
   if (FunctionType)
     if (auto Pointer =
             implicitPointerConversion(E, NdType::makePtr(FunctionType)))

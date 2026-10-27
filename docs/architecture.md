@@ -552,7 +552,7 @@ authenticated transfer encodings, keys and emission contracts. The fast and
 Capstone classifiers, lifter, intrinsic metadata and emitters consume those
 rows. Checked emulation reuses only the unchanged disabled-key HINT subset.
 `AArch64PAuthC.def` owns the C syntax shared by both projections;
-`AArch64ReturnProtection` proves the source-only return-signing recipe: an
+`AArch64ReturnProtection` proves the compiler-owned return-signing recipe: an
 entry LR signed with entry SP, matching authentication at every normal return,
 and, when saved, a dominating private frame slot with no observable consumers.
 The proof follows conditional prologues, LR copies/PHIs and frame reloads;
@@ -568,14 +568,47 @@ branch keeps its diagnostic and cannot hide an active frame's incomplete
 recipe. HighIR records the key and leaf policy and omits
 only the proved recipe operations. HighC/C++
 express it with `target("branch-protection=pac-ret[+leaf][+b-key]")`; HighIR
-dumps and the Rust/Go views retain the policy as metadata. A different output
-architecture cannot silently drop it. Native Swift emission rejects this
+dumps and the Rust/Go views retain the policy as metadata. LLVM uses the same
+proof, suppresses only its private operations/PHIs, and gives the new function
+an explicit signing scope, key, PAuth feature and asynchronous unwind table.
+The backend signs its own entry SP and LR and emits the corresponding CFI;
+it does not authenticate a fabricated original LR against a synthetic frame.
+LLVMC retains that policy when projecting LLVM functions to C. A different output
+architecture cannot silently drop it. Both native object and rewrite compilation
+refuse an A-key signed-frame policy for an arm64e Mach-O target: its implicit
+IB unwind ABI cannot describe that override. ELF A/B and ordinary ARM64
+Mach-O retain their own target conventions. Native Swift emission rejects this
 attribute until Swift has a corresponding source contract. Ordinary pointer
 authentication, observable signed values, mismatched modifiers/keys and
 incomplete recipes remain explicit. This includes Clang's arm64e tail-call
 sequence that inspects the authenticated LR and traps on failure before
-authenticating the callback pointer. LowIR, MedIR and the LLVM execution
-projection retain the original authentication operations.
+authenticating the callback pointer. LowIR and MedIR retain the original
+authentication operations. Unproved LLVM operations remain explicit.
+
+`AArch64AuthenticatedCall` separately proves a single-use authenticated
+temporary consumed by an indirect call in the same block. Only scalar copies
+may intervene; memory reads/writes, control flow, other calls, operand
+redefinitions, extra uses, dead calls and mutable non-SSA functions cannot
+absorb the authentication. LLVM attaches the original key/discriminator to
+the call's `ptrauth` operand bundle, preserving the signed input even when LR
+supplied an original operand. Both C projections use auth-and-resign to the
+compiler's default function-pointer schema. A resolved display name cannot
+replace that authenticated target, and exact LLVM call prototypes remain
+exact. Ordinary raw indirect calls use a feature-gated signing bridge so an
+arm64e C compiler does not impose its default authentication on a raw BLR.
+Clang O0 can retain an intermediate resign and produce a different invalid-PAC
+diagnostic from the original branch; this is not exact exception-syndrome
+equivalence. Model rejection evidence compares exception classes; complete ESR
+and exact fault-PC equality remain unqualified. Whole-image arm64e rebuilding
+still requires the separate
+authenticated storage, relocation and signed-unwind ABI contract.
+
+The DWARF reader keeps an image-derived arm64e return ABI flag separate from
+the encoded CIE augmentation. Classic arm64e and arm64e.x1 select IB even when
+the CIE has no explicit `B`; ELF and ordinary ARM64 retain their existing
+default. Static signing queries reuse that fact without inventing a signed
+state or rewriting the original augmentation. Layout-growth comparisons retain
+the flag, and callback copying cannot treat an arm64e CIE as an ordinary frame.
 `MachOArm64e.def` owns chained format strides, pointer fields and diagnostics.
 `MachOArm64eFixups` owns the pointer-word decoder and signing-recipe publication
 shared by modern chained fixups and the original arm64e threaded bind format.
@@ -1277,6 +1310,13 @@ the requested row window. The owning SDK snapshot still contains the full
 inventory; total counts and completion come from that snapshot, including empty
 and zero-limit pages. Older SDKs retain the complete JSON parser and move only
 the selected rows into the response. History admission still requests all rows.
+Range-only requests use a separate owned SDK snapshot of address/size pairs,
+without copying original/current bytes or encoding and reparsing an intermediate
+JSON inventory. Range ordering still comes from the admitted overlay's file
+offsets, including nonmonotonic virtual addresses. The worker resolves range
+acquisition and release together, builds the existing response shape and retains
+the JSON range/row fallbacks for older SDKs. These snapshots are per-request
+storage and do not retain another session cache.
 Their shared writer reuses hexadecimal scratch storage and emits only
 formatter-produced hex directly; general strings retain JSON escaping and
 external input retains its existing validation.
@@ -11275,6 +11315,12 @@ decode attempts share its generated 64-bit helper across table widths, with
 unchanged readers, feature gates and attempt order. MIPS register-list
 metadata maps expanded operands back to the list, base and displacement
 descriptors; signed MicroMIPS offsets are scaled without negative shifts.
+
+For x86 text and detail, immediate-size metadata is generated directly from
+the original rows into an opcode-indexed table. Full and reduced builds use
+their own instruction numbering; absent IDs retain zero operand and encoded
+sizes. The generator freshness check and exhaustive metadata test cover both
+numberings without changing instruction decoding or legality.
 
 The shared assembly stream combines terminator detection with bounded token
 copying. Sources that may alias the stream retain length-first copying, with

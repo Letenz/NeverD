@@ -62,6 +62,23 @@ struct BytePatchSnapshot : neverd_byte_patch_snapshot_v1 {
   }
 };
 
+struct BytePatchRangeSnapshot : neverd_byte_patch_range_snapshot_v1 {
+  std::vector<neverd_byte_patch_range_v1> Ranges;
+
+  explicit BytePatchRangeSnapshot(const patch::PatchOverlay &Overlay)
+      : neverd_byte_patch_range_snapshot_v1{} {
+    if (Overlay.empty())
+      return;
+    // The overlay owns admission and file-offset ordering. Range readers do
+    // not need a second copy of either original or current patch bytes.
+    Ranges.reserve(Overlay.rows().size());
+    for (const auto &[Offset, Row] : Overlay.rows())
+      Ranges.push_back({Row.Address, Row.size()});
+    range_count = Ranges.size();
+    ranges = Ranges.data();
+  }
+};
+
 llvm::Error invalid(const llvm::Twine &Message) {
   return llvm::make_error<llvm::StringError>(Message,
                                              llvm::inconvertibleErrorCode());
@@ -261,6 +278,28 @@ neverd_byte_patches_snapshot_v1(neverd_session_t Sess) {
 void neverd_byte_patch_snapshot_free_v1(
     const neverd_byte_patch_snapshot_v1 *Snapshot) {
   delete static_cast<const BytePatchSnapshot *>(Snapshot);
+}
+const neverd_byte_patch_range_snapshot_v1 *
+neverd_byte_patch_ranges_snapshot_v1(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("byte patch range snapshot requires a loaded session");
+    return nullptr;
+  }
+  try {
+    return new BytePatchRangeSnapshot(S->BytePatches);
+  } catch (const std::exception &Error) {
+    S->setError(std::string("byte patch range snapshot failed: ") +
+                Error.what());
+    return nullptr;
+  }
+}
+void neverd_byte_patch_range_snapshot_free_v1(
+    const neverd_byte_patch_range_snapshot_v1 *Snapshot) {
+  delete static_cast<const BytePatchRangeSnapshot *>(Snapshot);
 }
 const char *neverd_byte_patch_ranges_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
