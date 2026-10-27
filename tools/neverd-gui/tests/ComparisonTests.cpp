@@ -226,6 +226,101 @@ private slots:
              QString("Uncertain"));
     QCOMPARE(Failures.size(), 0);
   }
+  void retainedRealCorpusReview() {
+    const auto ReportPath = qEnvironmentVariable("NEVERD_DIFF_REAL_REPORT");
+    const auto ObservationsPath =
+        qEnvironmentVariable("NEVERD_DIFF_REAL_OBSERVATIONS");
+    if (ReportPath.isEmpty() && ObservationsPath.isEmpty())
+      QSKIP("Set NEVERD_DIFF_REAL_REPORT and NEVERD_DIFF_REAL_OBSERVATIONS "
+            "to a retained comparison and its complete CLI change query.");
+    QFile ReportFile(ReportPath), ObservationsFile(ObservationsPath);
+    QVERIFY(ReportFile.open(QIODevice::ReadOnly));
+    QVERIFY(ObservationsFile.open(QIODevice::ReadOnly));
+    const auto Report = QJsonDocument::fromJson(ReportFile.readAll()).object();
+    const auto Expected =
+        QJsonDocument::fromJson(ObservationsFile.readAll()).object();
+    QCOMPARE(Report["state"].toString(), QString("complete"));
+    QCOMPARE(Expected["schema"].toString(),
+             QString("neverd.bindiff.observations"));
+    QCOMPARE(Expected["offset"].toInt(-1), 0);
+    QVERIFY(Expected["next_offset"].isNull());
+    const auto ExpectedRows = Expected["rows"].toArray();
+    QVERIFY(!ExpectedRows.isEmpty());
+    const auto Address = Expected["primary"].toObject()["address"].toString();
+    QVERIFY(!Address.isEmpty());
+    for (const auto *Side : {"primary", "secondary"})
+      QCOMPARE(Expected[QString(Side) + "_sha256"],
+               Report[Side].toObject()["sha256"]);
+
+    ComparisonDialog View(TEST_COMPARISON_WORKER);
+    View.setAttribute(Qt::WA_DeleteOnClose, false);
+    View.resize(1280, 800);
+    View.show();
+    auto &Session = View.session();
+    QSignalSpy Failures(&Session, &ComparisonSession::failed);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    Session.start({{"path", Report["primary"].toObject()["path"]}},
+                  {{"path", Report["secondary"].toObject()["path"]}}, {},
+                  ReportPath);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && !Session.revision().isEmpty(),
+                             Timeout);
+    QCOMPARE(Failures.size(), 0);
+    QCOMPARE(Session.summary()["coverage"], Report["coverage"]);
+    const auto Revision = Session.revision();
+    View.findChild<QLineEdit *>("comparisonSearch")->setText(Address);
+    auto *Functions = View.findChild<QTableView *>("comparisonFunctions");
+    QTRY_COMPARE_WITH_TIMEOUT(Functions->model()->rowCount(), 1, Timeout);
+    Functions->setCurrentIndex(Functions->model()->index(0, 0));
+    auto *Open = View.findChild<QPushButton *>("comparisonChangesReview");
+    QTRY_VERIFY_WITH_TIMEOUT(Open->isEnabled(), Timeout);
+    Open->click();
+    auto *Changes = View.findChild<ComparisonChangesDialog *>();
+    QVERIFY(Changes);
+    auto *Table = Changes->findChild<QTableView *>("changesTable");
+    auto *Rows = qobject_cast<ComparisonModel *>(Table->model());
+    QSignalSpy QueryFailures(Rows, &ComparisonModel::failed);
+    QJsonObject Page;
+    connect(Rows, &ComparisonModel::pageReady, this,
+            [&](const QJsonObject &Value) { Page = Value; });
+    QTRY_COMPARE_WITH_TIMEOUT(Rows->rowCount(), ExpectedRows.size(), Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(!Page.isEmpty(), Timeout);
+    for (const auto *Field :
+         {"primary_sha256", "secondary_sha256", "pairing",
+          "native_analysis_complete", "reference_comparison_complete",
+          "primary_gaps", "secondary_gaps", "semantic_validation",
+          "security_inference", "fix_presence"})
+      QCOMPARE(Page[Field], Expected[Field]);
+    for (int I = 0; I != ExpectedRows.size(); ++I) {
+      QTRY_VERIFY_WITH_TIMEOUT(!Rows->row(I).isEmpty(), Timeout);
+      QCOMPARE(Rows->row(I), ExpectedRows[I].toObject());
+    }
+    QCOMPARE(QueryFailures.size(), 0);
+    const auto PreviousMode = Theme::instance().mode();
+    const auto RestoreTheme =
+        qScopeGuard([&] { Theme::instance().setMode(PreviousMode); });
+    if (const auto Captures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
+        !Captures.isEmpty()) {
+      QVERIFY(QDir().mkpath(Captures));
+      for (auto Mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
+        Theme::instance().setMode(Mode);
+        QTest::qWait(60);
+        QVERIFY(Changes->grab().save(Captures + "/real-corpus-changes-" +
+                                     Theme::modeName(Mode) + ".png"));
+      }
+    }
+    Changes->close();
+    const auto Saved = Directory.filePath("real-corpus.nddiff");
+    Session.command("comparison_save", {{"path", Saved}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QFile SavedFile(Saved);
+    QVERIFY(SavedFile.open(QIODevice::ReadOnly));
+    QCOMPARE(QJsonDocument::fromJson(SavedFile.readAll()).object(), Report);
+    Session.command("comparison_restore", {{"path", Saved}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QCOMPARE(Session.revision(), Revision);
+    QCOMPARE(Session.summary()["coverage"], Report["coverage"]);
+    QCOMPARE(Failures.size(), 0);
+  }
   void optimizedSSASelectionShowsPluralNativeOrigins() {
     const auto A = Directory.filePath("optimized-ssa-before.bin");
     const auto B = Directory.filePath("optimized-ssa-after.bin");

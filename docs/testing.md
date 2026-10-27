@@ -3166,6 +3166,16 @@ through save/reopen. Supply a collection with multiple function pages; an unset
 path explicitly skips this opt-in check. Matching quality needs its separate
 source-truth qualification.
 
+`retainedRealCorpusReview` checks a real saved comparison against a complete
+CLI `--changes-function` page. Set `NEVERD_DIFF_REAL_REPORT` to the `.nddiff`
+report and `NEVERD_DIFF_REAL_OBSERVATIONS` to that query's JSON output, retaining
+the original input paths. The real worker restores the report, filters its
+function, opens change review, checks every observation and coverage boundary,
+captures both themes and saves/reopens the same report. Run at both desktop
+scales with `NEVERD_DIFF_SCREENSHOTS`; absent inputs explicitly skip the case.
+This verifies CLI/desktop parity, independently of source-truth localization
+or security-priority accuracy.
+
 Release regressions separately cover multiple release identities sharing one
 snapshot, forks/merges, all 64 forward DAGs on four records, valid Gregorian UTC
 dates, ancestor date contradictions across undated records and malformed or

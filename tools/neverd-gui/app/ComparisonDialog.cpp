@@ -454,6 +454,7 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
   Filters->addWidget(Kind, 1);
   InventoryLayout->addLayout(Filters);
   Search = new QLineEdit(Inventory);
+  Search->setObjectName("comparisonSearch");
   Search->setPlaceholderText(tr("Filter by name or address"));
   Search->setAccessibleName(tr("Filter functions"));
   InventoryLayout->addWidget(Search);
