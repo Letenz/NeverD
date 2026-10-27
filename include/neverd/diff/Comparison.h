@@ -104,6 +104,7 @@ struct ComparisonSettings {
   double MinimumSimilarity = limits::diff::kDefaultMinimumSimilarity;
   double MinimumContextSimilarity =
       limits::diff::kDefaultMinimumContextSimilarity;
+  /// Required lead over alternatives; exact score ties remain undecided at 0.
   double AmbiguityMargin = limits::diff::kDefaultAmbiguityMargin;
   unsigned MaxCandidates = limits::diff::kDefaultMaxCandidates;
   RegionSettings Regions;

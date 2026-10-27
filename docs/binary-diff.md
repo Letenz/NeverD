@@ -125,7 +125,7 @@ Changed comparison revisions invalidate the picker until it is reopened.
 | --- | --- |
 | `profile` | `native-same-isa-v1` (default), `native-x86-v1` or `native-aarch64-v1` |
 | `discover`, `use_names`, `approximate` | Enable discovery, stated names, approximate candidates |
-| `min_similarity`, `min_context_similarity`, `ambiguity_margin` | Heuristic thresholds in `[0,1]` |
+| `min_similarity`, `min_context_similarity`, `ambiguity_margin` | Heuristic thresholds in `[0,1]`; exact score ties stay undecided even with zero ambiguity margin |
 | `max_candidates` | Best quick-scored candidates per unmatched function proposed for exact measurement (default 16, maximum 256); proposals from both sides are combined |
 | `max_instructions`, `max_functions`, `max_memory_bytes` | Snapshot extraction allowances |
 | `timeout_ms` | Comparison deadline; zero disables it |
@@ -1035,12 +1035,31 @@ that allowance to four. Raising it can recover candidates whose sketch score is
 lower than structurally misleading alternatives. Candidate generation remains
 bounded, and a larger allowance does not guarantee that every true pair enters
 the candidate set. The ambiguity margin and one-to-one pairing rules still apply.
+A zero ambiguity margin admits any positive score lead; it does not break exact
+ties by function address or candidate order.
 
-Matcher version 3 identifies these matching and measurement changes. Fresh binding recomputes
-saved measurements: older reports with agreeing measurements can reopen with a
-version warning, while obsolete scores or tallies are refused without replacing
-the current result. Use the offline report workflow to inspect preserved old
-evidence, or compare the original binaries again to obtain current alignment.
+Call-position context uses only anchors shared by every longest alignment of
+already corresponding callees. Repeated calls with competing anchor positions
+remain uncertain. Between these anchors, equally sized intervals may propose
+new pairs when all call targets are known and unmatched. All occurrences must
+propose a consistent one-to-one relationship before the similarity threshold
+can accept a pair. Unresolved calls retain their positions and prevent this
+positional inference across their interval; they are not invented call-graph
+edges. Other matching features can still resolve those functions.
+
+There is no 1,024-call cutoff. Large call sequences retain exact anchor selection
+with linear score frontiers and bounded dense tables; identical known-call
+sequences have a linear fast path. General differing sequences can still take
+quadratic time and honor comparison cancellation/deadlines. Call positions are
+heuristic structural evidence, not a proof of behavioral correspondence.
+
+Matcher version 4 identifies the call-context and exact-tie corrections; version
+3 introduced the instruction alignment and candidate-allowance changes above.
+Fresh binding recomputes saved measurements: older reports with agreeing
+measurements can reopen with a version warning, while obsolete scores or tallies
+are refused without replacing the current result. Reopening preserves the
+saved pair choices; run a new comparison to obtain current matching decisions.
+Use the offline report workflow to inspect preserved old evidence.
 
 Duplicate names and indistinguishable bodies remain explicit ambiguities.
 Address-generated labels do not anchor matches, even after native function
