@@ -86,7 +86,8 @@ enum LibraryOperation {
   MapPut,
   MapContainsKey,
   MapRemove,
-  MapClear
+  MapClear,
+  StatLoggerTime
 };
 struct LibraryMethod {
   const char *Class, *Name, *Signature;

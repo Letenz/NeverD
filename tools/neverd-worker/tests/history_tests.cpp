@@ -480,6 +480,91 @@ void normalization() {
   state["annotations"].push_back({{"addr", "0xa"}, {"text", "duplicate"}});
   rejects([&] { ProjectHistory::normalizedState(state); }, "history_invalid");
 }
+void commandEncodingAndBranches() {
+  Fixture fixture;
+  auto store = fixture.open();
+  auto state = initial(store);
+  Json commands = Json::array();
+  auto stage = [&](std::string value) {
+    Json command{{"kind", "annotation"},
+                 {"address", "0x1000"},
+                 {"before", state["annotations"][0]["text"]},
+                 {"after", value},
+                 {"extra", {{"number", -0.0}, {"quoted\"key", "\b\f中文"}}}};
+    store.stage(command);
+    commands.push_back(command);
+    command["extra"] = "caller mutation";
+    state["annotations"][0]["text"] = std::move(value);
+  };
+  auto verify = [&] {
+    store.persist(state);
+    Json header{{"schema_version", 1},
+                {"source_sha256", std::string(64, '0')},
+                {"engine_version", "fixture"},
+                {"cursor", commands.size()},
+                {"commands", commands}};
+    auto expected = header.dump();
+    expected.pop_back();
+    expected += ",\"state\":" + store.committedState().dump() + "}";
+    check(text(fixture.path(files::File::History)) == expected,
+          "Command reuse changed serialized history bytes");
+  };
+  stage("quoted\"\\\n中文");
+  stage("second\tcommand");
+  verify();
+  // Reopened commands encode lazily and must retain unknown fields and floats.
+  store = fixture.open();
+  const auto checkpoint = store;
+  store.advance(false);
+  state["annotations"][0]["text"] = commands.back()["before"];
+  commands.erase(commands.end() - 1);
+  stage("replacement redo branch");
+  verify();
+  check(checkpoint.next(false).at("after") == "second\tcommand" &&
+            store.next(false).at("after") == "replacement redo branch",
+        "Staging mutated a checkpoint's shared command");
+  auto returned = store.next(false);
+  returned["after"] = "returned value mutation";
+  check(store.next(false).at("after") == "replacement redo branch",
+        "Returned command was a mutable alias");
+}
+void commandBudgetCountsEncodedBytes() {
+  Fixture fixture;
+  auto store = fixture.open();
+  Json command{{"kind", "annotation"},
+               {"address", "0x1000"},
+               {"before", "before"},
+               {"after", "after"},
+               {"extra", ""}};
+  const auto limit = neverd::limits::worker::kProjectHistoryMaxHistoryBytes / 2;
+  command["extra"] = std::string(limit - 2 - command.dump().size(), 'x');
+  check(Json::array({command}).dump().size() == limit,
+        "Command byte-boundary fixture is not exact");
+  store.stage(command);
+  check(store.next(false) == command, "Exact-budget command was discarded");
+  const auto checkpoint = store;
+  command["extra"].get_ref<std::string &>() += 'x';
+  store.stage(command);
+  rejects([&] { store.next(false); }, "history_empty");
+  check(
+      checkpoint.next(false).at("extra").get_ref<const std::string &>().size() +
+              1 ==
+          command.at("extra").get_ref<const std::string &>().size(),
+      "Budget eviction mutated another checkpoint");
+  command["extra"] = "escaped\"\\\n";
+  for (std::size_t i = 0;
+       i < neverd::limits::worker::kProjectHistoryStageCommandsSizeLimit + 2;
+       ++i) {
+    command["sequence"] = i;
+    store.stage(command);
+  }
+  store.persist(store.committedState());
+  const auto document = Json::parse(text(fixture.path(files::File::History)));
+  check(document.at("commands").size() ==
+                neverd::limits::worker::kProjectHistoryStageCommandsSizeLimit &&
+            document.at("commands").front().at("sequence") == 2,
+        "Cached command byte accounting changed count-budget eviction");
+}
 void budgetBeforePublication() {
   Fixture fixture;
   auto store = fixture.open();
@@ -541,6 +626,8 @@ int main() {
     changedRowsStillRequireAdmission();
     lossyValuesCannotPublishSnapshots();
     normalization();
+    commandEncodingAndBranches();
+    commandBudgetCountsEncodedBytes();
     budgetBeforePublication();
     journalBudgetBeforePublication();
     std::cout << "Unchanged sidecars, every write failure boundary, retries, "

@@ -1210,6 +1210,16 @@ window used to route branch arrows. Revision and navigation fences still apply.
 
 Patch persistence reads typed, owning rows directly from a validated SIMD JSON tape when `NEVERD_ENABLE_SIMDJSON` is enabled. The LLVM reader remains available when acceleration is disabled or the input is outside the SIMD parser’s domain. Both readers share field admission and resource limits, including the existing last-duplicate-key and integer-only size rules; no borrowed parser strings escape. Overlay replay still validates every row against the immutable input.
 
+`ProjectHistory` retains admitted commands as immutable shared values. Strict
+JSON encodings are computed when a write needs them and reused for byte-budget
+accounting and document assembly; rollback checkpoints do not copy command
+payloads. Pending sidecar writes and the next committed snapshot share the same
+owned text. Complete history/journal sizes are reserved before assembly, while
+all publication limits, external-byte comparisons and durable write ordering
+remain in their existing owners. The typed patch-row adapter counts the exact
+compact representation of its canonical fields without materializing a second
+JSON string; older SDK inventories retain the generic serializer path.
+
 Source previews retain the live session’s load options, analysis policy, user metadata and an owning snapshot of signature evidence. Instruction display limits never limit full-range validation; truncated previews report this explicitly. Thumb edits must cover the complete IT block when removing its predicate.
 
 ## Structural comparison ownership
@@ -1845,7 +1855,16 @@ holds no bytes, such as Rust's `()` or `PhantomData`, lies nowhere and is
 left out, and C defines no record of none: it declares one. A Go func value,
 a subroutine type of a pointer's size, is the address of its closure: a
 pointer to its function, whose one result Go lists as a parameter marked
-`DW_AT_variable_parameter`, or an untyped address for several results. A
+`DW_AT_variable_parameter`, or an untyped address for several results. Older
+Go writers instead append unmarked pointers to the results. For an anonymous
+function type, its recorded Go signature gives the input and result counts;
+the importer checks those counts against the parameter DIEs and removes
+exactly the result pointers' extra indirection. Input pointers remain inputs.
+Nested types and quoted struct tags stay together when reading the signature.
+An unmarked named function type without that signature keeps an untyped
+closure address, since its input and result pointers cannot be distinguished.
+Incomplete signatures, mismatched counts and non-pointer legacy results are
+reported through the normal skipped-type diagnostics. A
 name members share, as Go's blank fields `_` do, is numbered past the first
 (`_1`), and the member's comment keeps it. A record DWARF describes in a way
 local types do not hold, such as a virtual base, is left out with the reason
@@ -12518,6 +12537,8 @@ the [native getter](https://android.googlesource.com/platform/frameworks/base/+/
 and [integer conversion](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/base/include/android-base/parseint.h).
 
 `dalvik::Heap` is the single retained Java object/array owner for JNI and DEX.
+Its zero-filled array allocator supplies element widths, reference storage and
+budget accounting to DEX allocation, JNI array creation and framework arrays.
 Its bounded identities are separate from native reference handles and guest
 addresses. JNI borrows, object arrays and DEX array instructions all refer to the
 same storage; no import/export copy of the heap occurs at a method boundary.
@@ -12527,6 +12548,19 @@ budget/stop mapping. Weak object-array edges and integer field identities avoid
 host ownership cycles while the heap retains objects until workload teardown.
 Java reference assignability, including array covariance, has one shared owner.
 Uninitialized construction and unsupported constructor escape fail explicitly.
+
+The API 28 `com.android.internal.util.StatLogger` constructor uses these arrays
+and the existing elapsed-realtime service. It retains the lock, private fields,
+seven independent zero arrays and the caller's labels array identity. Lock
+creation and the next-tick clock read precede the null-label exception, matching
+the field-initializer order; budget/service stops retain completed field writes
+without reporting a completed constructor. `getTime` converts the same boot
+clock to microseconds and needs no application snapshot. The modeled class is
+boot-owned and cannot be replaced by supplied Android DEX. This follows the
+[API 28 StatLogger contract](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/com/android/internal/util/StatLogger.java).
+Statistics updates, logging and dumps remain unsupported. These prerequisites
+do not establish ServiceManager's process cache or Java Binder identities;
+its unmodeled initialization boundary remains explicit.
 
 `dalvik::Library` is the single implementation of the bounded UTF-16 String,
 Object, Class and Throwable value methods called by JNI and DEX. Heap owns

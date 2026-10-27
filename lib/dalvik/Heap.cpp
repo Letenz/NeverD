@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "neverd/dalvik/Heap.h"
 
+#include <cassert>
+
 namespace neverd::mobile::dalvik {
 Heap::Heap(uint64_t byte_limit, uint32_t object_limit)
     : limit(byte_limit), count_limit(object_limit) {}
@@ -22,6 +24,30 @@ std::shared_ptr<Object> Heap::allocate(Object::Kind kind, std::string_view name,
   object->Bytes.resize(bytes);
   objects.push_back(object);
   used += bytes + extra + overhead;
+  return object;
+}
+std::shared_ptr<Object> Heap::allocateArray(std::string_view type,
+                                            uint32_t length) {
+  assert(type.starts_with('[') && length <= INT32_MAX);
+  const auto component = type.substr(1);
+  const bool refs = referenceType(component);
+  assert(refs || (component.size() == 1 &&
+                  std::string_view("ZBCSIJFD").find(component[0]) !=
+                      std::string_view::npos));
+  const unsigned width = refs ? sizeof(std::weak_ptr<Object>)
+                         : component == "J" || component == "D" ? 8
+                         : component == "I" || component == "F" ? 4
+                         : component == "C" || component == "S" ? 2
+                                                                : 1;
+  const uint64_t bytes = uint64_t(length) * width;
+  auto object = allocate(refs ? Object::ObjectArray : Object::PrimitiveArray,
+                         type, refs ? 0 : bytes, refs ? bytes : 0);
+  if (object) {
+    object->Length = length;
+    object->ElementSize = width;
+    if (refs)
+      object->Elements.resize(length);
+  }
   return object;
 }
 std::shared_ptr<Object> Heap::get(uint64_t id) const {

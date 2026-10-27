@@ -328,6 +328,9 @@ static const LibraryMethod Methods[] = {
     {"java/util/Map", "remove", "(Ljava/lang/Object;)Ljava/lang/Object;",
      MapRemove},
     {"java/util/Map", "clear", "()V", MapClear},
+    {"com/android/internal/util/StatLogger", "<init>", "([Ljava/lang/String;)V",
+     Construct},
+    {"com/android/internal/util/StatLogger", "getTime", "()J", StatLoggerTime},
 };
 
 struct LibraryStop {
@@ -449,9 +452,11 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
         M.Op == MessageQueueNext || M.Op == MessageCallback ||
         M.Op == MessageTarget || M.Op == UptimeMillis ||
         M.Op == ElapsedRealtime || M.Op == ElapsedRealtimeNanos ||
-        M.Op == PropertyInt ||
+        M.Op == PropertyInt || M.Op == StatLoggerTime ||
         (M.Op == Construct &&
-         std::string_view(M.Class) == "android/os/Handler")) {
+         (std::string_view(M.Class) == "android/os/Handler" ||
+          std::string_view(M.Class) ==
+              "com/android/internal/util/StatLogger"))) {
       if (!program || !framework)
         return {ExecutionStop::Unsupported,
                 0,

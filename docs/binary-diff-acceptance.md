@@ -18,7 +18,7 @@ were understood.
 | C: optional semantic validation | Bounded pure scalar-return profile with explicit models, budgets, non-success outcomes and native provenance | Additional memory/call/loop profiles, precondition and coverage qualification; no general equivalence or vulnerability-elimination claim |
 | D: version and branch lineage | Offline snapshot graph, direct/indirect/parallel/cyclic associations, grouped conflicts, exact-byte reuse, report-local assessments, CLI/Python/GUI persistence, release aliases with declared chronology/parents, focused integration coverage, and a reproducible synthetic scale harness | Broader integration failure follow-up, package-wide graphs, automated patch/backport/revert evidence and large real-corpus quality/latency; annotation application remains #99 |
 | E: software/game packages | Native loaders, module resources and a separate qualified offline web-package behavior comparison exist | One package manifest workflow routing native/managed/metadata/script/config/resource changes, repacking distinctions, qualified Unity/Unreal/Godot adapters and unknown/encrypted coverage |
-| F: competitive qualification | Owned native/compiler regressions, pinned local diagnostic runs, a [reusable fixture generator and mapping evaluator](binary-diff-benchmarks.md) for NeverD, BinDiff, Diaphora and Ghidra exports, and automated fresh IDA/BinExport/BinDiff execution | Automated Ghidra/Diaphora invocation/export, licensed real-world ground truth, qualified common-input and end-to-end tracks, held-out corpora, per-category quality/resource metrics, frozen numeric gates and statistical evidence |
+| F: competitive qualification | Owned native/compiler regressions, pinned local diagnostic runs, a [reusable fixture generator and mapping evaluator](binary-diff-benchmarks.md) for NeverD, BinDiff, Diaphora and Ghidra exports, and automated fresh-input pipelines for all four tools with completion and input-identity checks | Licensed real-world ground truth, qualified common-input and end-to-end tracks, held-out corpora, broader runtime/profile qualification, per-category quality/resource metrics, frozen numeric gates and statistical evidence |
 
 Each advanced area remains required. An absent native finding is not evidence
 that a patch is absent, and an analyst's patch-present assessment is not a
@@ -26,7 +26,29 @@ machine proof that a vulnerability has been eliminated. Ambiguous and unsupporte
 results must remain inspectable; adding profiles must not silently broaden the
 meaning of an existing proof.
 
+The external-runner increment was exercised on all three owned ELF diagnostic
+cases with Ghidra 12.1.3, IDA 9.4/BinDiff 8 and Diaphora tag 3.5.0, including a
+separate Diaphora assembly-only profile. All twelve case pipelines completed;
+scored mismatches remain retained evidence. New adapter checks cover native
+input/direction binding, partial exports, false-success exits, cancellation,
+analysis timeouts, source archiving and replay after moving retained databases.
+The first Diaphora adapter attempt rejected its native MD5 BLOB representation;
+the corrected reader admits both that representation and hexadecimal text while
+still rejecting wrong input identities. Its initial failed receipts remain
+separate. These diagnostic runs do not close F's real-corpus, fairness,
+performance or statistical acceptance requirements.
+
 ## Verification record boundaries
+
+The SBF Rust warning failure described below has a focused repair: the monolithic
+and structured generators borrow their private register bank as partitioned
+handlers already do. The original failure was reproduced, and an isolated
+relink against frozen `fd59ee8336` archives passed all 20 emitter checks and both
+C/Rust source differential tests, with no skips. Four added terminal-slot cases
+cover scalar writes, successful/faulting division and syscall effects. The Rust
+differential compiled and executed 104 generated modules with `-D warnings`.
+This closes that reproduced failure at the frozen boundary; it does not replace
+the earlier full-suite receipt or qualify subsequent upstream SBF changes.
 
 The v7 input-expression progress increment was locally qualified at
 `7ae9cbf363e11944cb365cdfd49d50312014f067`: 1,427 selected CTests passed,

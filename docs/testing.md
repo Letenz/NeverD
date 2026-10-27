@@ -1486,6 +1486,17 @@ references across detach, compare native properties and reject mutated/unmapped
 property records. Run full Dalvik, Android JNI/thread/callback and Android
 property suites after changing these owners. Tests remain offline and do not
 claim full HashMap/ART, property callback or ServiceManager initialization.
+`AndroidStatLoggerTest.*` checks API 28 metadata, boot-loader ownership, private
+field state, constructor ordering, distinct zero arrays, retained labels, DEX
+construction and microsecond time. Missing/invalid clocks, null labels and
+resource stops retain their distinct outcomes. `AndroidArrayTest.*` checks
+primitive/reference widths, zero initialization and exact storage budgets.
+`AndroidJNI.StatLogger*` uses independent AArch64 callers in ordinary, va_list
+and jvalue-array forms, reads and mutates arrays through JNI, retains labels
+across detach and compares constructor/getTime observations with Linux boot
+clock reads. Run full Dalvik, JNI/thread/callback and Linux clock suites for
+these shared owners. Tests are offline; they do not execute ART or claim
+ServiceManager cache/Binder initialization or StatLogger reporting support.
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
 typed/JSON admission, DEX catch and shared message access, terminal instruction
@@ -2787,6 +2798,11 @@ is unexecuted coverage, not a pass for that target.
 The SBF source differential suite additionally needs `rustc`; it executes both
 generated C and generated Rust. Treat a missing compiler skip as missing
 backend evidence, not as semantic success.
+Its terminal-slot cases retain successful and faulting loads, stores, scalar
+register writes, division and syscall effects before execution overrun. Both
+dispatcher layouts compile with warnings as errors and execute against the raw
+interpreter. The Rust register view borrows its private bank in both layouts,
+including programs whose final register writes cannot be read by a successor.
 
 The native source dialect suite also uses `rustc` and `go` from `PATH`, or
 `NEVERD_TEST_RUSTC` and `NEVERD_TEST_GO`. On Windows, its Rust executable
@@ -4543,6 +4559,16 @@ lists (each nesting must flatten back exactly), the PDB import against
 and Go renderers. The fixture's source says how to rebuild the
 `local_types.exe` and `local_types.pdb` pair with clang-cl and lld-link.
 `NeverDSessionCAPITests` reads the same fixture through the C API.
+
+`DWARFTypeImportGo.ReadsGosStructuresAndFuncValues` builds a real Go program
+with the selected `NEVERD_TEST_GO` compiler (or `go` on PATH). It checks both
+legacy unmarked result pointers and current marked results, including input
+and result pointers, multiple results, nested function types, quoted struct
+tags and variadics. Run it with both an older and a current Go toolchain when
+changing that boundary. The other `DWARFTypeImportGo` cases read small DWARF
+sections without a compiler: they preserve input pointers and an ambiguous
+named type's closure address, and reject malformed signatures, inconsistent
+parameter counts and legacy results that are not pointers.
 
 Its Android import cases check that both C views use `<pthread.h>` without
 redeclaring the header's anonymous typedefs. User-declared `read` cases retain
@@ -14800,6 +14826,19 @@ snapshots. `tools/neverd-bench/patch-payload.py` covers a large merged row, with
 alternating SDK JSON/CLI samples and independent original/current-byte checks.
 Both record native CPU/wall samples and binary hashes; keep machine-local
 reports outside tracked source and avoid overlapping builds with timed runs.
+
+`tools/neverd-bench/patch-command-history.py --baseline BEFORE --candidate AFTER`
+adds repeated edits with large retained commands. It populates history before
+alternating timed commit/undo/redo pairs, verifies live bytes, sidecars, exports
+and unchanged input outside timing, and records affinity and peak worker RSS.
+Use `--payload-bytes` and `--warmup-commands` to distinguish payload size from
+history length; ordinary sparse-row runs do not qualify this workload.
+
+`NeverDWorkerHistory` checks exact command byte/count limits, immutable rollback
+checkpoints, redo replacement, returned-value ownership and byte-exact document
+encoding after reopen. `NeverDWorkerNativePatch` accepts an exact patch-state
+budget and rejects a one-byte excess without changing live or persisted bytes;
+run it with both typed-snapshot and legacy JSON-only SDKs for adapter changes.
 
 `NeverDGuiPatchKeys` routes all second keys through `QWindow` shortcut dispatch, including pending menus, cancellation and editor typing. `NeverDGuiNativePatchKeys` checks real SDK bytes, Hex and floating windows, undo/redo and restoration. Run the same executable under X11 to exercise native popup routing.
 

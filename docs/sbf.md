@@ -682,6 +682,11 @@ The partitioned Rust loop advances the default PC once before dispatch, with
 an extra slot advance for LDDW. Branches, calls and returns replace that default;
 a region handoff retains the original dispatch PC. This removes a repeated
 fallthrough assignment from each ordinary arm while keeping every raw entry.
+Monolithic and structured Rust use the same borrowed register view as those
+partition handlers. The private bank retains each VM write, including a final
+load or arithmetic result immediately before execution overrun; host effects
+and faults still occur in their original order. These terminal programs remain
+compilable with warnings treated as errors.
 
 The syscall database includes logging, memory, PDA, SHA-256/Keccak/Blake3,
 Poseidon, secp256k1, curve and alt-bn128 operations, big modular exponentiation,
