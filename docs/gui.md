@@ -445,13 +445,13 @@ global's `neverd.image` line names the symbol as the listing does
 double-clicking it goes to the function. A name an image spells with control
 characters, and that no scheme reads, is never copied into a comment.
 
-**Pseudocode** reads in the language the function was written in: a Rust
-function as Rust, a Go function as Go and any other as C. The choice is made
+**Pseudocode** reads in the language the function was written in: a C++
+function as C++, a Rust function as Rust, a Go function as Go and any other as C. The choice is made
 for each function, from its symbol, and for a function without one from the
 language the image was built in; the window says when it is not C
-(`Pseudocode-A (Rust)`). A program with Rust or Go code also offers **C** in
-the window's menu, to read every function as C; a C or C++ program's
-Pseudocode is C, so its menu offers no other language. The Rust and Go views
+(`Pseudocode-A (C++)` or `Pseudocode-A (Rust)`). A program with C++, Rust or Go
+code also offers **C** in the window's menu, to read every function as C; a
+C-only program does not need that duplicate choice. The Rust and Go views
 spell exactly what the C says. Each conversion C makes on its own is written out (`a as u32 + b as u32`,
 `uint32(a) + uint32(b)`), conditions compare with zero (`v != 0`,
 `!p.is_null()`, `p != nil`), memory is read and written through a pointer made
