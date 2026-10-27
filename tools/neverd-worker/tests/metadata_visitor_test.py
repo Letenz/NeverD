@@ -39,6 +39,8 @@ def run(path):
         lib.neverd_metadata_items_json.restype = C.c_void_p
         lib.neverd_function_presentation_json.argtypes = [C.c_void_p, C.c_ulonglong]
         lib.neverd_function_presentation_json.restype = C.c_void_p
+        lib.neverd_sha256_hex.argtypes = [C.c_char_p, C.c_size_t]
+        lib.neverd_sha256_hex.restype = C.c_void_p
         lib.neverd_func_count.argtypes = [C.c_void_p]
         lib.neverd_func_find_by_addr.argtypes = [C.c_void_p, C.c_ulonglong]
         lib.neverd_func_delete.argtypes = [C.c_void_p, C.c_ulonglong]
@@ -76,6 +78,15 @@ def run(path):
 
         session = lib.neverd_session_create()
         try:
+            import hashlib
+            for data in (b"", b"abc", bytes(range(256))):
+                pointer = lib.neverd_sha256_hex(data, len(data))
+                assert pointer
+                try:
+                    assert C.string_at(pointer).decode() == hashlib.sha256(data).hexdigest()
+                finally:
+                    lib.neverd_free_string(pointer)
+            assert not lib.neverd_sha256_hex(None, 1)
             cursor = C.c_ulonglong()
             assert lib.neverd_visit_metadata_items(session, 0, 2, collect, 123, C.byref(cursor)) == -1
             with tempfile.TemporaryDirectory(prefix="neverd-metadata-visitor-") as temporary:

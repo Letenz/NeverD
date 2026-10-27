@@ -15760,3 +15760,9 @@ After changing viewport demand, run the GUI controller's
 `listingRefreshKeepsItsContextAndArrows`,
 `listingKeepsRowsWhenTheirGenerationIsPublished` and
 `initialNavigationOverviewDoesNotWaitForRefreshDebounce` cases.
+
+`NeverDWorkerBrowseCache` opens a generated DLL in separate worker processes and
+checks actual persistent hits and identical listing facts. It also exercises
+same-size/same-mtime input changes, type/user edits, read-only and disabled
+operation, corrupted/truncated cache files, and unwritable cache storage. No
+timing threshold substitutes for these correctness checks.

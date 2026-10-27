@@ -33,6 +33,7 @@
 #include "neverd/sdk/Limits.h"
 #include "neverd/support/FilePath.h"
 #include "neverd/support/ProjectFiles.h"
+#include "neverd/support/SHA256.h"
 #include "neverd/support/StringScan.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -1169,6 +1170,12 @@ int neverd_project_record(neverd_session_t Sess) {
 const char *neverd_session_input_sha256(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   return dupStr(S->Loaded ? inputSha256(*S) : std::string());
+}
+
+const char *neverd_sha256_hex(const unsigned char *Data, size_t Size) {
+  if (!Data && Size)
+    return nullptr;
+  return dupStr(llvm::toHex(neverd::sha256({Data, Size}), true));
 }
 
 const char *neverd_dashboard_json(neverd_session_t Sess) {

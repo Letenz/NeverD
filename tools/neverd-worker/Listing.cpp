@@ -1,5 +1,6 @@
 #include "Listing.h"
 
+#include "BrowseCache.h"
 #include "Config.h"
 #include "EngineSymbols.h"
 #include "OperandFormatDetail.h"
@@ -588,6 +589,10 @@ struct Listing::Impl {
   std::set<std::uint64_t> runtimeEntries;
 
   bool built = false;
+  bool initialCatalog = true;
+  bool initialPage = true;
+  BrowseCache cache;
+  std::string inventoryKey;
   int builtFunctionCount = -1;
   /// The names, or the user's items, changed since the listing was built:
   /// the next query reads them again over what the build scanned.
@@ -794,7 +799,9 @@ struct Listing::Impl {
     macho = format.find("Mach") != std::string::npos;
     buildRegions();
     buildMetadata();
+    const bool initialFunctions = initialCatalog && !discovered;
     buildFunctions(count);
+    buildInventoryKey();
     buildNames(/*Rescan=*/true);
     buildDataBoundaries();
     decoded.clear();
@@ -804,7 +811,24 @@ struct Listing::Impl {
     maxRecoveredInstructionSize = 0;
     alignCache.clear();
     applyDisplayNames();
+    if (initialFunctions && cache.writable())
+      cache.defer("initial-functions-" + std::to_string(count),
+                  [this, catalog = functions] {
+                    const auto bytes = Json::to_cbor(functionTable(catalog));
+                    return std::string(bytes.begin(), bytes.end());
+                  });
     discoveryListingPending = false;
+  }
+
+  void buildInventoryKey() {
+    std::string inventory;
+    for (const auto &function : functions) {
+      for (const auto value :
+           {function.entry, function.size, function.chunkOf.value_or(0)})
+        for (unsigned byte = 0; byte < 8; ++byte)
+          inventory.push_back(static_cast<char>(value >> (byte * 8)));
+    }
+    inventoryKey = BrowseCache::digest(inventory);
   }
 
   /// Read the names and the user's items again over what the last build
@@ -814,6 +838,7 @@ struct Listing::Impl {
     namesStale = false;
     ++generation;
     buildFunctions(count);
+    buildInventoryKey();
     buildNames(/*Rescan=*/false);
     buildDataBoundaries();
     decoded.clear();
@@ -863,6 +888,54 @@ struct Listing::Impl {
     metadataBoundaries.clear();
     metadataReferences.clear();
     metadataRoles.clear();
+    if (const auto saved = cache.read("metadata")) {
+      try {
+        const auto document = Json::from_cbor(*saved, true, false);
+        if (document.is_array() && document.size() == 2 &&
+            document.at(0).is_array() && document.at(1).is_binary()) {
+          const auto &layouts = document.at(0);
+          const auto &bytes = document.at(1).get_binary();
+          std::vector<MetadataItem> templates;
+          for (const auto &layout : layouts) {
+            MetadataItem item;
+            item.type = layout.at(0).get<std::string>();
+            item.size = layout.at(1).get<std::uint64_t>();
+            for (const auto &field : layout.at(2))
+              item.fields.push_back({field.at(0).get<std::uint64_t>(),
+                                     field.at(1).get<std::uint64_t>(), 0,
+                                     field.at(2).get<std::string>(),
+                                     field.at(3).get<std::string>()});
+            templates.push_back(std::move(item));
+          }
+          std::size_t cursor = 0;
+          const auto number = [&]() {
+            if (bytes.size() - cursor < 8)
+              throw Error("cache_invalid", "Truncated metadata cache row");
+            std::uint64_t value = 0;
+            for (unsigned i = 0; i < 8; ++i)
+              value |= std::uint64_t(bytes[cursor++]) << (i * 8);
+            return value;
+          };
+          while (cursor < bytes.size()) {
+            const auto address = number();
+            auto item = templates.at(number());
+            item.address = address;
+            for (auto &field : item.fields)
+              field.target = number();
+            addMetadata(std::move(item));
+          }
+          finishMetadata();
+          return;
+        }
+        throw Error("cache_invalid", "Invalid metadata cache document");
+      } catch (const std::exception &error) {
+        cache.reject(error.what());
+        metadataItems.clear();
+        metadataBoundaries.clear();
+        metadataReferences.clear();
+        metadataRoles.clear();
+      }
+    }
     if (!metadataVisit && !metadataQuery)
       return;
     for (std::optional<std::uint64_t> cursor = 0; cursor;) {
@@ -927,6 +1000,32 @@ struct Listing::Impl {
         cursor = jsonAddress(page.at("next_address"));
     }
     finishMetadata();
+    cache.defer("metadata", [this] {
+      Json layouts = Json::array();
+      std::map<std::string, std::uint64_t> known;
+      std::vector<std::uint8_t> bytes;
+      const auto number = [&](std::uint64_t value) {
+        for (unsigned i = 0; i < 8; ++i)
+          bytes.push_back(static_cast<std::uint8_t>(value >> (i * 8)));
+      };
+      for (const auto &item : metadataItems) {
+        Json fields = Json::array();
+        for (const auto &field : item.fields)
+          fields.push_back({field.offset, field.size, field.name, field.role});
+        Json layout = {item.type, item.size, std::move(fields)};
+        const auto [found, added] =
+            known.try_emplace(layout.dump(), layouts.size());
+        if (added)
+          layouts.push_back(std::move(layout));
+        number(item.address);
+        number(found->second);
+        for (const auto &field : item.fields)
+          number(field.target);
+      }
+      const auto encoded =
+          Json::to_cbor(Json::array({layouts, Json::binary(bytes)}));
+      return std::string(encoded.begin(), encoded.end());
+    });
   }
 
   void finishMetadata() {
@@ -1304,15 +1403,49 @@ struct Listing::Impl {
   void buildFunctions(int count) {
     functions.clear();
     functions.reserve(std::max(count, 0));
-    for (int index = 0; index < count; ++index) {
-      Function function;
-      function.entry = neverd_func_entry(session, index);
-      function.size = static_cast<std::uint64_t>(
-          std::max(0, neverd_func_size(session, index)));
-      function.name = takeString(neverd_func_name(session, index));
-      function.engineName = function.name;
-      functions.push_back(std::move(function));
+    const bool cachedCatalog = initialCatalog && !discovered;
+    initialCatalog = false;
+    const auto key = "catalog-" + std::to_string(count);
+    const auto saved = cachedCatalog ? cache.read(key) : std::nullopt;
+    Json catalog = saved ? Json::from_cbor(*saved, true, false) : Json();
+    bool restored = false;
+    if (saved) {
+      try {
+        if (!catalog.is_array() ||
+            catalog.size() != static_cast<std::size_t>(count))
+          throw Error("cache_invalid", "Invalid function catalog cache");
+        for (const auto &row : catalog) {
+          Function function;
+          function.entry = row.at(0).get<std::uint64_t>();
+          function.size = row.at(1).get<std::uint64_t>();
+          function.engineName = function.name = row.at(2).get<std::string>();
+          functions.push_back(std::move(function));
+        }
+        restored = true;
+      } catch (const std::exception &error) {
+        cache.reject(error.what());
+        functions.clear();
+      }
     }
+    if (!restored) {
+      for (int index = 0; index < count; ++index) {
+        Function function;
+        function.entry = neverd_func_entry(session, index);
+        function.size = static_cast<std::uint64_t>(
+            std::max(0, neverd_func_size(session, index)));
+        function.name = takeString(neverd_func_name(session, index));
+        function.engineName = function.name;
+        functions.push_back(std::move(function));
+      }
+    }
+    if (cachedCatalog && !restored && cache.writable())
+      cache.defer(key, [catalog = functions] {
+        Json rows = Json::array();
+        for (const auto &function : catalog)
+          rows.push_back({function.entry, function.size, function.engineName});
+        const auto bytes = Json::to_cbor(rows);
+        return std::string(bytes.begin(), bytes.end());
+      });
     std::stable_sort(
         functions.begin(), functions.end(),
         [](const Function &a, const Function &b) { return a.entry < b.entry; });
@@ -2070,7 +2203,14 @@ struct Listing::Impl {
     const auto policy = stackFrames.find(owner);
     const auto options =
         policy == stackFrames.end() ? "{}" : policy->second.dump();
-    const auto flow = takeJson(inspect(session, owner, options.c_str()));
+    const auto flow = cache.query(
+        "frame-" + inventoryKey + "-" + std::to_string(owner) + "-" + options,
+        [&] { return takeJson(inspect(session, owner, options.c_str())); },
+        [](const Json &value) {
+          return value.is_object() && value.value("valid", false) &&
+                 value.contains("instructions") &&
+                 value.at("instructions").is_array();
+        });
     if (flow.is_null())
       return false;
     const auto &rows = flow.at("instructions");
@@ -2365,10 +2505,22 @@ struct Listing::Impl {
       cursor = 0; // A continuation may precede its function's entry.
       std::optional<std::uint64_t> previousAddress;
       for (;;) {
-        const auto page = takeJson(functionDisasm(
-            session, entry, cursor,
-            ::neverd::limits::worker::kListingMaxDecodeChunk,
-            NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK | NEVERD_DISASM_OPERANDS));
+        const auto page = cache.query(
+            "disasm-" + inventoryKey + "-" + std::to_string(entry) + "-" +
+                std::to_string(cursor),
+            [&] {
+              return takeJson(functionDisasm(
+                  session, entry, cursor,
+                  ::neverd::limits::worker::kListingMaxDecodeChunk,
+                  NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK |
+                      NEVERD_DISASM_OPERANDS));
+            },
+            [](const Json &value) {
+              return value.is_object() && value.value("lift_complete", false) &&
+                     value.contains("instructions") &&
+                     value.at("instructions").is_array() &&
+                     value.contains("next_address");
+            });
         if (page.is_null()) {
           const auto reason = takeString(neverd_last_error(session));
           if (previousAddress)
@@ -4486,7 +4638,19 @@ struct Listing::Impl {
 
 Listing::Listing(neverd_session_t session)
     : impl_(std::make_unique<Impl>(session)) {}
-Listing::~Listing() = default;
+Listing::~Listing() { impl_->cache.flush(); }
+
+void Listing::configureCache(std::filesystem::path folder,
+                             std::function<Json()> identity, bool writable,
+                             AtomicWriter writer) {
+  impl_->cache.configure(std::move(folder), std::move(identity), writable,
+                         writer);
+}
+
+bool Listing::cachePending() const { return impl_->cache.pending(); }
+void Listing::flushCacheOne() { impl_->cache.flushOne(); }
+void Listing::flushCache() { impl_->cache.flush(); }
+Json Listing::cacheStats() const { return impl_->cache.stats(); }
 
 void Listing::setStackFrames(const Json &rows, const std::string &imageHash) {
   impl_->stackFrames.clear();
@@ -4498,17 +4662,20 @@ void Listing::setStackFrames(const Json &rows, const std::string &imageHash) {
 }
 
 void Listing::invalidate() {
+  impl_->cache.invalidate();
   impl_->built = false;
   impl_->metadataBuilt = false;
   ++impl_->generation;
 }
 
 void Listing::namesChanged() {
+  impl_->cache.invalidate();
   impl_->namesStale = true;
   ++impl_->generation;
 }
 
 void Listing::reloadNumberFormats() {
+  impl_->cache.invalidate();
   impl_->dataElementTypes.clear();
   // A listing that is not built yet reads them as it builds.
   if (impl_->built)
@@ -4681,6 +4848,32 @@ Json Listing::indexState() const {
 
 Json Listing::page(const Json &payload) {
   auto &d = *impl_;
+  const bool initial = std::exchange(d.initialPage, false) && !d.discovered &&
+                       d.decoded.empty() && d.recoveredReferences.empty();
+  // Reuse the first bounded structured viewport before reconstructing the
+  // whole browsing index. Later queries use the live listing. Only a page
+  // produced from the untouched loader catalog is eligible for this shortcut.
+  if (!initial)
+    return uncachedPage(payload);
+  const auto count = neverd_func_count(d.session);
+  auto result = d.cache.query(
+      "initial-page-" + std::to_string(count) + "-" + payload.dump(),
+      [&] { return uncachedPage(payload); },
+      [&](const Json &page) {
+        return !d.discovered && neverd_func_count(d.session) == count &&
+               page.is_object() && page.contains("lines") &&
+               page.at("lines").is_array() && page.contains("anchor") &&
+               page.at("anchor").is_number_integer() &&
+               page.contains("at_start") && page.at("at_start").is_boolean() &&
+               page.contains("at_end") && page.at("at_end").is_boolean();
+      });
+  result["generation"] = std::to_string(d.generation);
+  result["index"] = indexState();
+  return result;
+}
+
+Json Listing::uncachedPage(const Json &payload) {
+  auto &d = *impl_;
   d.build();
   if (d.regions.empty())
     return {{"lines", Json::array()},
@@ -4810,6 +5003,24 @@ Json Listing::page(const Json &payload) {
 }
 
 Json Listing::overview(const Json &payload) {
+  auto &d = *impl_;
+  if (d.discovered || !d.decoded.empty() || !d.recoveredReferences.empty())
+    return uncachedOverview(payload);
+  const auto count = neverd_func_count(d.session);
+  auto result = d.cache.query(
+      "initial-overview-" + std::to_string(count) + "-" + payload.dump(),
+      [&] { return uncachedOverview(payload); },
+      [&](const Json &value) {
+        return !d.discovered && neverd_func_count(d.session) == count &&
+               value.is_object() && value.contains("regions") &&
+               value.at("regions").is_array() && value.contains("buckets") &&
+               value.at("buckets").is_string();
+      });
+  result["generation"] = std::to_string(d.generation);
+  return result;
+}
+
+Json Listing::uncachedOverview(const Json &payload) {
   auto &d = *impl_;
   d.build();
   const auto buckets = std::max<std::size_t>(
@@ -5348,6 +5559,28 @@ Json Listing::blockLines(std::uint64_t start, std::uint64_t end) {
 }
 
 const Json &Listing::functionRows() {
+  auto &d = *impl_;
+  if (d.built || d.discovered)
+    return uncachedFunctionRows();
+  const auto count = neverd_func_count(d.session);
+  if (!d.functionRowsCache.is_null() &&
+      d.functionRowsGeneration == d.generation &&
+      d.functionRowsCache.size() == static_cast<std::size_t>(count))
+    return d.functionRowsCache;
+  auto rows = d.cache.query(
+      "initial-functions-" + std::to_string(count),
+      [&] { return Json(uncachedFunctionRows()); },
+      [&](const Json &value) {
+        return !d.discovered && neverd_func_count(d.session) == count &&
+               value.is_array() &&
+               value.size() == static_cast<std::size_t>(count);
+      });
+  d.functionRowsCache = std::move(rows);
+  d.functionRowsGeneration = d.generation;
+  return d.functionRowsCache;
+}
+
+const Json &Listing::uncachedFunctionRows() {
   auto &d = *impl_;
   d.build();
   if (d.functionRowsGeneration != d.generation ||
