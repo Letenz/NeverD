@@ -205,7 +205,12 @@ private:
 
 } // namespace
 
-bool foldDuplicateTerminalContinuations(HighFunc &Func) {
+bool foldDuplicateTerminalContinuations(HighFunc &Func, const MedFunc *Med) {
+  // A matched arm is deleted. The unwinder can enter a catch continuation or
+  // landing pad inside it without any goto, and its calls may belong to a
+  // different unwind state than the tail's; neither is visible here.
+  if (hasExceptionFlow(Func, Med))
+    return false;
   Counts AllNames;
   std::set<va_t> Targets;
   walkStmts(Func.Body, [&](const HighStmt &S) {

@@ -2639,6 +2639,45 @@ TEST(HighSourceExpressions, CommonTerminalTailMatchesRuntimeIndirectTargets) {
   }
 }
 
+TEST(HighSourceExpressions, CommonTerminalTailKeepsExceptionEntries) {
+  // The unwinder enters a catch continuation, landing pad or dispatcher entry
+  // without a goto. Folding the arm that holds one would delete that entry.
+  constexpr va_t Entry = 0x1040;
+  for (unsigned Variant = 0; Variant != 3; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = duplicatedContinuation();
+    F.Body.front().Body.front().Addr = Entry;
+    MedFunc Med;
+    if (Variant == 0) {
+      HighEHClause Catch;
+      Catch.Kind = HighEHClauseKind::CxxCatch;
+      Catch.HandlerVA = 0x5000;
+      Catch.ContinuationVAs = {Entry};
+      HighStmt Try;
+      Try.Kind = StmtKind::CxxTry;
+      Try.EHIsReducible = false;
+      Try.EHClauses = {Catch};
+      Try.EHClauseBodies = {{}};
+      F.Body.insert(F.Body.begin(), Try);
+    } else if (Variant == 1) {
+      F.ExceptionMetadata = ExceptionFunction{};
+      F.ExceptionMetadata->PersonalityVA = 0x9000;
+    } else {
+      MedBlock Pad;
+      Pad.StartAddr = Entry;
+      Pad.ExceptionalPreds.emplace_back();
+      Med.Blocks.push_back(std::move(Pad));
+    }
+    EXPECT_FALSE(foldDuplicateTerminalContinuations(F, &Med));
+    bool Kept = false;
+    walkStmts(F.Body, [&](const HighStmt &S) { Kept |= S.Addr == Entry; });
+    EXPECT_TRUE(Kept);
+  }
+  auto Plain = duplicatedContinuation();
+  MedFunc Med;
+  EXPECT_TRUE(foldDuplicateTerminalContinuations(Plain, &Med));
+}
+
 TEST(HighSourceExpressions, TypedIndirectCallUsesTheCapturedRuntimeTarget) {
   class CalleeTypes : public NullDebugContext {
   public:

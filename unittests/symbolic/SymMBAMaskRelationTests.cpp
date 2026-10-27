@@ -63,7 +63,124 @@ TEST(SymMBAMaskRelation, OffsetMaskNeighborsAndBudgetsKeepExactValues) {
     }
 }
 
+TEST(SymMBAMaskRelation, MaskedSumsFinishTheirRetainedWords) {
+  for (unsigned Width : {8u, 32u, 64u, 128u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width),
+         Z = C.mkVar("z", Width);
+    auto Sum =
+        C.mkAdd(C.mkXor(X, Y), C.mkMul(C.mkConst(Width, 2), C.mkAnd(X, Y)));
+    auto M = C.mkConst(Width, 0x5a);
+    // The root identity keeps W verbatim; W itself is an obfuscated x+y.
+    auto Masked = simplifyMBADeep(C, C.mkAdd(C.mkOr(M, Sum), C.mkAnd(M, Sum)));
+    EXPECT_EQ(Masked.Expr, C.mkAdd({M, X, Y})) << C.toString(Masked.Expr);
+    EXPECT_EQ(Masked.Evidence, MBAEvidence::Derivation);
+    auto Shared =
+        simplifyMBADeep(C, C.mkAdd(C.mkAnd(Sum, Z), C.mkAnd(Sum, C.mkNot(Z))));
+    EXPECT_EQ(Shared.Expr, C.mkAdd(X, Y)) << C.toString(Shared.Expr);
+    EXPECT_EQ(Shared.Evidence, MBAEvidence::Derivation);
+  }
+  for (unsigned Work : {0u, 1u, 16u, 64u, 256u, 65536u}) {
+    SCOPED_TRACE(Work);
+    SymContext C;
+    auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+    auto Sum = C.mkAdd(C.mkXor(X, Y), C.mkMul(C.mkConst(8, 2), C.mkAnd(X, Y)));
+    auto M = C.mkConst(8, 0x5a);
+    MBAOptions Options;
+    Options.MaxWork = Work;
+    auto Result =
+        simplifyMBADeep(C, C.mkAdd(C.mkOr(M, Sum), C.mkAnd(M, Sum)), Options);
+    EXPECT_LE(Result.Work, Work);
+    for (unsigned A = 0; A != 256; ++A)
+      for (unsigned B = 0; B != 256; ++B)
+        ASSERT_EQ(C.evalU64(Result.Expr, {A, B}), (0x5a + A + B) & 255);
+  }
+}
+
 namespace {
+
+TEST(SymMBAMaskRelation, SubtractsAnEntireKnownOrMaskWithoutBorrow) {
+  std::mt19937_64 Random(0x6f72737562747261);
+  for (unsigned Width : {1u, 7u, 8u, 16u, 32u, 64u, 65u, 128u, 257u}) {
+    SCOPED_TRACE(Width);
+    for (unsigned Sample = 0; Sample != 12; ++Sample) {
+      SymContext C;
+      auto X = C.mkVar("x", Width);
+      llvm::APInt Mask(Width, 0);
+      for (unsigned Bit = 0; Bit < Width; Bit += 64)
+        Mask |= llvm::APInt(Width, Random()).shl(Bit);
+      if (Sample == 0)
+        Mask.clearAllBits();
+      if (Sample == 1)
+        Mask.setAllBits();
+      if (Sample == 2)
+        Mask = llvm::APInt(Width, 0x28f0);
+      auto Literal = C.mkConst(Mask);
+      auto Difference = C.mkSub(C.mkOr(Literal, X), Literal);
+      auto Input = C.mkAdd(Literal, C.mkOr(X, Difference));
+      auto Expected = C.mkAdd(Literal, X);
+      MBAOptions Options;
+      Options.VerifySamples = 0;
+      auto Result = simplifyMBADeep(C, Input, Options);
+      EXPECT_LE(C.readabilityCost(Result.Expr), C.readabilityCost(Expected))
+          << C.toString(Result.Expr);
+      if (Sample == 2 && Width >= 16)
+        EXPECT_EQ(Result.Expr, Expected) << C.toString(Result.Expr);
+      for (unsigned Value = 0; Value != 16; ++Value) {
+        llvm::APInt Word(Width, 0);
+        for (unsigned Bit = 0; Bit < Width; Bit += 64)
+          Word |= llvm::APInt(Width, Random()).shl(Bit);
+        const llvm::APInt Values[] = {Word};
+        EXPECT_EQ(C.eval(Result.Expr, Values), Mask + Word);
+      }
+    }
+  }
+}
+
+TEST(SymMBAMaskRelation, OrMaskSubtractionChecksEveryByteAndNearbyLiteral) {
+  for (unsigned Mask = 0; Mask != 256; ++Mask) {
+    SCOPED_TRACE(Mask);
+    for (unsigned Delta : {0u, 1u}) {
+      SymContext C;
+      auto X = C.mkVar("x", 8);
+      auto Literal = C.mkConst(8, Mask);
+      auto Input = C.mkSub(C.mkOr(X, Literal), C.mkConst(8, Mask + Delta));
+      auto Result = simplifyMBADeep(C, Input);
+      bool Differs = false;
+      for (unsigned Word = 0; Word != 256; ++Word) {
+        const uint64_t Values[] = {Word};
+        auto Oracle = uint8_t((Word | Mask) - (Mask + Delta));
+        ASSERT_EQ(C.evalU64(Result.Expr, Values), Oracle);
+        Differs |= Oracle != uint8_t(Word & ~Mask);
+      }
+      EXPECT_EQ(Differs, Delta != 0);
+      if (Delta == 0)
+        EXPECT_EQ(Result.Expr, C.mkAnd(X, C.mkConst(8, ~Mask)));
+    }
+  }
+}
+
+TEST(SymMBAMaskRelation, OrMaskSubtractionRetainsOtherWordsAndWorkLimits) {
+  for (size_t Work :
+       {size_t(0), size_t(1), size_t(16), size_t(256), size_t(65536)}) {
+    SCOPED_TRACE(Work);
+    SymContext C;
+    auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+    auto Input =
+        C.mkSub(C.mkOr({C.mkConst(8, 0x39), X, Y}), C.mkConst(8, 0x39));
+    MBAOptions Options;
+    Options.MaxWork = Work;
+    auto Result = simplifyMBADeep(C, Input, Options);
+    EXPECT_LE(Result.Work, Work);
+    for (unsigned A = 0; A != 256; ++A)
+      for (unsigned B = 0; B != 256; ++B) {
+        const uint64_t Values[] = {A, B};
+        ASSERT_EQ(C.evalU64(Result.Expr, Values),
+                  uint8_t((A | B | 0x39) - 0x39));
+      }
+  }
+}
 
 std::pair<SymRef, SymRef> maskedComplement(SymContext &C, unsigned Width,
                                            bool NearMiss = false,

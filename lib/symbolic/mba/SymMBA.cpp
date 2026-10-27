@@ -213,9 +213,11 @@ SymRef foldObservedWindow(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
         auto Bit =
             projectBitWindow(Ctx, Source, Mask.logBase2(), 1, Budget, Storage);
         // ~(K|x) observes only ~K. Read that window directly rather than
-        // requiring a whole-word De Morgan rewrite before projection.
-        return Ctx.mkMul(Ctx.mkConst(Mask),
-                         Ctx.mkZExt(Ctx.mkNot(Bit), Ctx.width(Root)));
+        // requiring a whole-word De Morgan rewrite before projection. An
+        // unreduced window would only spell each input again as an extract.
+        auto Window = Ctx.mkMul(Ctx.mkConst(Mask),
+                                Ctx.mkZExt(Ctx.mkNot(Bit), Ctx.width(Root)));
+        return doesNotGrow(Ctx, Window, Root) ? Window : Root;
       }
     }
   }
@@ -252,7 +254,13 @@ SymRef foldObservedWindow(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
     auto Part = projectBitWindow(Ctx, Source, Bit, 1, Budget, Storage);
     if (Part == Ctx.mkExtract(Source, Bit, 1))
       return Root;
-    return Ctx.mkMul(Ctx.mkConst(Mask), Ctx.mkZExt(Part, Ctx.width(Root)));
+    auto Window =
+        Ctx.mkMul(Ctx.mkConst(Mask), Ctx.mkZExt(Part, Ctx.width(Root)));
+    // A flattened mask has no single source word. Its window is useful only
+    // when it drops lanes; otherwise it spells every input again as an extract.
+    if (Ctx.numOperands(Root) > 2 && !doesNotGrow(Ctx, Window, Root))
+      return Root;
+    return Window;
   }
   // A shifted low mask is also an explicit observed window. Keep ordinary
   // masked arithmetic in its original region: narrowing every internal mask
@@ -692,32 +700,6 @@ SymRef solveMasked(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   return Rebuilt;
 }
 
-// These forms already meet a three-node, one-operation reading bound. Two
-// independent variables both need a leaf; a nontrivial constant transform is
-// neither a literal, a variable, its complement nor its negation (the only
-// cheaper same-width forms). Reject the coefficients and masks that can be
-// one of those forms. Only actual variables establish this bound: opaque
-// arithmetic inputs can be related and still need the complete region solver.
-bool isMinimalBinaryLeafExpression(const SymContext &Ctx, SymRef E,
-                                   const MBAOptions &Opts) {
-  const SymOp Op = Ctx.op(E);
-  if ((Op != SymOp::Add && Op != SymOp::Mul && Op != SymOp::And &&
-       Op != SymOp::Or && Op != SymOp::Xor) ||
-      Ctx.numOperands(E) != 2 || (Op == SymOp::Add && Ctx.width(E) <= 1))
-    return false;
-  SymRef A = Ctx.operand(E, 0), B = Ctx.operand(E, 1);
-  const unsigned MaxAtoms = resolveLimits(Opts).MaxAtoms;
-  if (Ctx.isVar(A) && Ctx.isVar(B))
-    return A != B && MaxAtoms >= 2;
-  if (Ctx.isVar(A))
-    std::swap(A, B);
-  if (!Ctx.isConst(A) || !Ctx.isVar(B) || MaxAtoms < 1 || Ctx.isConstZero(A))
-    return false;
-  if (Op == SymOp::Mul)
-    return !Ctx.constValue(A).isOne() && !Ctx.isConstOnes(A);
-  return Op == SymOp::Add || !Ctx.isConstOnes(A);
-}
-
 SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
                                const MBAOptions &Opts, WorkBudget &Budget,
                                SolveReport &Rep);
@@ -992,8 +974,19 @@ SymRef foldComplementaryAdd(SymContext &Ctx, SymRef R) {
       return R;
     }
   }
-  if (!A.isValid() || !B.isValid())
+  if (!A.isValid())
     return R;
+  if (!B.isValid()) {
+    if (Ctx.op(A) != SymOp::Or || !Ctx.isConst(Ctx.operand(A, 0)))
+      return R;
+    const auto Mask = Ctx.constValue(Ctx.operand(A, 0));
+    if (Offset != -Mask)
+      return R;
+    // Every bit in Mask is already set, so subtracting it cannot borrow.
+    // Keep the other OR operands intact and clear exactly those known bits.
+    llvm::SmallVector<SymRef, 8> Rest(Ctx.operands(A).drop_front());
+    return Ctx.mkAnd(Ctx.mkConst(~Mask), Ctx.mkOr(Rest));
+  }
   if (isBitwiseComplement(Ctx, A, B))
     return Ctx.mkConst(Offset - llvm::APInt(Ctx.width(R), 1));
   SymRef Partitioned = foldPartitionedMaskSum(Ctx, A, B, Offset);
@@ -1024,9 +1017,14 @@ SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
       return E;
     }
   }
-  if (!A.isValid() || !B.isValid())
+  if (!A.isValid())
     return E;
-  const SymOp AOp = Ctx.op(A), BOp = Ctx.op(B);
+  const SymOp AOp = Ctx.op(A);
+  const bool LiteralOr =
+      !B.isValid() && AOp == SymOp::Or && Ctx.isConst(Ctx.operand(A, 0));
+  if (!B.isValid() && !LiteralOr)
+    return E;
+  const SymOp BOp = B.isValid() ? Ctx.op(B) : SymOp::Const;
   const bool BitwiseTypes = (AOp == SymOp::Xor && BOp == SymOp::Xor) ||
                             (AOp == SymOp::Or && BOp == SymOp::And) ||
                             (AOp == SymOp::And && BOp == SymOp::Or);
@@ -1067,11 +1065,11 @@ SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
       }
     }
   }
-  if (!isDirectComplement(Ctx, A, B) && !BitwisePair && !SharedPartition &&
-      !MaskedDifferencePair)
+  if (!(B.isValid() && isDirectComplement(Ctx, A, B)) && !BitwisePair &&
+      !SharedPartition && !MaskedDifferencePair && !LiteralOr)
     return E;
 
-  // The pair is a plausible complement. Bound the linear matcher and its
+  // This is a possible complement or literal-mask difference. Bound its
   // scratch before considering it, including on the deep walk's first visit.
   const size_t Nodes = Ctx.dagSize(E);
   if (Nodes > Opts.MaxTableBytes / 64 ||
@@ -1169,7 +1167,8 @@ namespace {
 SymRef simplifyLinearTail(
     SymContext &Ctx, SymRef Root, const MBAOptions &Opts, WorkBudget &Budget,
     SolveReport &Rep,
-    size_t MinDegree = detail::limits::kMinLinearTailProductDegree) {
+    size_t MinDegree = detail::limits::kMinLinearTailProductDegree,
+    bool SingleProductOnly = false) {
   if (Ctx.op(Root) != SymOp::Add ||
       Ctx.numOperands(Root) > detail::limits::kMaxLinearTailTerms ||
       Budget.exhausted())
@@ -1197,6 +1196,7 @@ SymRef simplifyLinearTail(
     }
   }
   if (Higher < detail::limits::kMinLinearTailProducts ||
+      (SingleProductOnly && Higher != 1) ||
       LinearCount < detail::limits::kMinLinearTailSummands)
     return Root;
   const size_t Count = Ctx.numOperands(Root);
@@ -1425,15 +1425,33 @@ MBAResult detail::MBADeepSimplifier::run(SymContext &Ctx, SymRef E,
   SolveReport FastRep;
   if (SymRef Fast = tryFastComplementarySum(Ctx, E, Opts, Budget, FastRep);
       Fast != E) {
-    Result.Expr = Fast;
-    Result.SizeAfter = readingCost(Ctx, Fast);
+    // The complement is read from the root's original words, and the rewrite
+    // keeps them verbatim: (M|W)+(M&W) becomes M+W with W still obfuscated.
+    // Finish every root rewrite here, then walk the retained words under the
+    // same allowance. The nested request finds no root rewrite left, so it
+    // does not recurse again.
+    for (SymRef Next; (Next = tryFastComplementarySum(Ctx, Fast, Opts, Budget,
+                                                      FastRep)) != Fast;)
+      Fast = Next;
+    MBAOptions Inner = Opts;
+    Inner.MaxWork = Budget.unlimited()
+                        ? Opts.MaxWork
+                        : Opts.MaxWork - (Budget.used() - WorkStart);
+    const MBAResult Words = run(Ctx, Fast, Inner, Cache, Budget);
+    Result.Expr = Words.Expr;
+    Result.SizeAfter = readingCost(Ctx, Words.Expr);
     Result.Changed = true;
+    Result.NumAtoms = Words.NumAtoms;
     Result.Outcome = MBAOutcome::Rewritten;
-    Result.Evidence = MBAEvidence::Derivation;
+    Result.Evidence = Words.Evidence == MBAEvidence::Samples
+                          ? MBAEvidence::Samples
+                          : MBAEvidence::Derivation;
     Result.Work = Budget.used() - WorkStart;
-    if (Cache.Rewrites.size() < Cache.Capacity &&
-        readingScore(Ctx, Fast) < readingScore(Ctx, E))
-      Cache.Rewrites.try_emplace(E.index(), Fast);
+    if (Result.Evidence == MBAEvidence::Derivation &&
+        Words.Outcome != MBAOutcome::BudgetExhausted && !Budget.exhausted() &&
+        Cache.Rewrites.size() < Cache.Capacity &&
+        readingScore(Ctx, Words.Expr) < readingScore(Ctx, E))
+      Cache.Rewrites.try_emplace(E.index(), Words.Expr);
     return Result;
   }
 
@@ -1531,8 +1549,16 @@ MBAResult detail::MBADeepSimplifier::run(SymContext &Ctx, SymRef E,
   SolveReport WholeRep;
   size_t ValuationStorage = Opts.MaxTableBytes;
   const size_t ResidueAttempts = Budget.MultipleResidueAttempts;
-  SymRef Prepared = foldProductValuations(Ctx, E, Budget, ValuationStorage);
-  if (Budget.MultipleResidueAttempts != ResidueAttempts &&
+  // With only one high-degree product, preserve its independent linear tail
+  // before an incomplete proof can spend the allowance. Multiple high-degree
+  // products retain their joint arithmetic search first.
+  const auto EarlyTail =
+      simplifyLinearTail(Ctx, E, Opts, Budget, WholeRep,
+                         detail::limits::kMinLinearTailProductDegree,
+                         /*SingleProductOnly=*/true);
+  SymRef Prepared =
+      foldProductValuations(Ctx, EarlyTail, Budget, ValuationStorage);
+  if (EarlyTail == E && Budget.MultipleResidueAttempts != ResidueAttempts &&
       !Budget.exhausted()) {
     // Retain the cheap linear tail before walking a newly synthesized product
     // reading. Its generated bit selectors may no longer expose the original
@@ -1848,8 +1874,14 @@ MBAResult detail::MBADeepSimplifier::run(SymContext &Ctx, SymRef E,
   }
   if (Out != E && Ctx.width(Out) == 1 &&
       (isPredicate(Ctx.op(Out)) || isBitwise(Ctx.op(Out))) &&
-      !Budget.exhausted())
-    Out = finishLocalReadings(Ctx, Out, Budget, RefinementStorage);
+      !Budget.exhausted()) {
+    // The local pass re-projects every node without measuring it again. A
+    // longer reading would stay in the answer or fail the final size gate
+    // and discard the shortened words found by the walk.
+    SymRef Finished = finishLocalReadings(Ctx, Out, Budget, RefinementStorage);
+    if (doesNotGrow(Ctx, Finished, Out))
+      Out = Finished;
+  }
   Result.Work = Budget.used() - WorkStart;
 
   // A locally shorter child can make the composed spelling longer. Retain
