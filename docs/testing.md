@@ -3253,6 +3253,19 @@ must reproduce its original ordering, memberships and coverage. Native SDK and
 worker cases consume the last candidates, check invalidated inventories, and
 reopen the edited report through the strict reader, including actual worker
 file save and restart.
+Overlapping-candidate regressions use an independently specified six-cycle:
+all six measured alternatives must survive, and the other three pairs must
+stay absent under direction and layout changes. Another case combines exact
+duplicates with a changed function competing for the same candidates. Native
+SDK, worker and real Qt picker cases check both directions, paging, edits and
+reopen. A separate old-library control reproduces stale inventories after
+redo; the repaired workflow checks caller detail, observations and inventory
+against the first application of the same edit.
+Duplicate-heavy inventory timing controls compare a fixed 200-row page at
+8,192 and 32,768 functions. Single-group rows must reuse normalized members,
+while the SDK's saved-order control checks canonical previews/pages without
+rewriting retained group evidence. Keep timing receipts outside correctness
+assertions; wall-clock thresholds depend on the runner.
 The CLI regression sends SIGINT during each input's actual hashing phase,
 requires exit 3 with empty result output, preserves an existing saved report,
 then runs an ordinary comparison again. Child SIGINT delivery is tested on
@@ -7009,7 +7022,7 @@ framed process and isolation from native-session revisions using a C++ client.
 
 `scripts.tests.test_collision_refinement` checks unpruned source admission,
 same-library cohorts across parts, independently selected release conflicts,
-opaque CRC spans, shorter Thumb return bodies, incomplete-record refusal and
+opaque CRC spans, shorter Thumb return bodies, incomplete-record refusal, CRC-bearing return padding and
 preservation of aliases, incoming queries and metadata. They also require
 existing mandatory-reference claims to survive new raw sources, including a
 known rival name with changed references. The generation and supplement
@@ -7017,7 +7030,9 @@ suites also check byte coverage across leading/tail encodings and require every
 mandatory reference claim to survive hidden CRC counterexamples. Refinement
 cases retain alternatives in the selected sufficient single-site clause,
 jointly necessary fields and complete incoming declarations with source-version
-consensus. They also constrain cohorts together across numbered parts, so
+consensus. Existing required clauses additionally need their own complete raw
+source witness and independently sufficient image metadata; missing witnesses,
+call-only proofs and loaded required rivals retain the necessary constraints. They also constrain cohorts together across numbered parts, so
 withholding one member cannot leave an unqualified survivor.
 Source-driven refinement still requires held-out CLI accuracy and performance qualification;
 these unit tests do not establish source identity for a matching body.
@@ -7052,7 +7067,7 @@ bodies for contextual patterns. The Python supplement tests retain short and
 discarded counterclaims across independently selected packs.
 `SignatureDBCallerContext.*` checks incoming support, full-body disagreement,
 entry scope, complete alternatives, variant consensus, and refusal of weak,
-partial, ambiguous, required or contradicted initial anchors. Rooted chains
+partial, ambiguous, unrooted required or contradicted initial anchors. Rooted chains
 exercise both input orders, independent frozen validation, weak intermediate
 bodies, unrooted cycles and the depth budget. Cache tests run pieces in reverse
 order and reject invalid caller offsets and CRC coverage without depending on
@@ -7061,6 +7076,9 @@ ordinary callee plus a rooted incoming body or a confirmed required root,
 reversed entries and records, changed-buffer reuse, missing/weak/partial or
 ambiguous callees, incomplete source variants and absent roots. A nominal body
 settled by an earlier incoming round cannot masquerade as an independent anchor.
+Long required-parent cases reuse the same independent ordinary-callee proof,
+including reversed records and entries, changed-buffer withdrawal, missing or
+incomplete source declarations, ambiguous/weak/partial callees and entry scope.
 `SignatureDBCodePairs.*` checks complete x64 code-address fingerprints across
 two short bodies: reversed input order, live-byte changes, missing required or
 unpruned source records, insufficient combined bytes, source/leaf alternatives,

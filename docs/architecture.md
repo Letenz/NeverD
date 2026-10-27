@@ -1351,13 +1351,22 @@ removes groups exhausted on either side before rebuilding coverage and lookup
 indices. The override effect retains changed and removed groups at their
 original indices; undo merges them back in order without rematching functions.
 Persisted groups therefore always have candidates on both sides.
+Similarity alternatives are retained as overlapping stars, each backed by the
+measured near-best candidates of one endpoint. Combining both endpoints' rivals
+into a Cartesian group would invent pairs; removing an already-grouped endpoint
+would lose other candidates. Exact groups cover only their own edges. The
+legacy single-group lookup remains a coverage marker, not a candidate iterator.
 The C API's `functions_json` inventory projects the same accepted mappings and
 retained ambiguity groups. `ambiguous_with` binds an opposite-side function to
-the full group's target-side inventory, with ordinary search/sort/paging; it
-does not run another matcher or promote a candidate. Mapping edits and restore
-invalidate that inventory cache. CLI and the Qt counterpart picker consume this
-projection; the picker keeps bounded pages and invalidates its selection when
-the worker's comparison revision changes.
+the union of its groups' target-side members, with ordinary search/sort/paging;
+it does not run another matcher or promote a candidate. A cached membership
+index normalizes each group's members once. Single-group rows share those
+members; overlapping groups form a union for the requested row. Cache storage
+follows group membership, without expanding full Cartesian candidate sets.
+Pairing, undo, redo and restore share invalidation of mapping-dependent
+inventory, candidate, delta, source and observation caches. CLI and the Qt
+counterpart picker consume this projection; the picker keeps bounded pages and
+invalidates its selection when the worker's comparison revision changes.
 `ComparisonJSON` owns strict saved-report validation and transactional binding.
 Its optional `ComparisonControl` carries cooperative cancellation/deadlines
 through record readers, graph/native/region validators and measurement workers.
@@ -11018,8 +11027,11 @@ operand terminals that share the full decoder's bounded readers and legality
 checks. Its prefix classifier and terminal selection avoid repeated dispatch;
 unsupported operand shapes retain ordinary decoding. ARM, AArch64 and RISC-V
 also use generated descriptor flags to skip operand postprocessing only when
-the owning traversal would perform no writes. These optimizations reside in
-the Capstone `next` fork and are selected through the submodule revision.
+the owning traversal would perform no writes. Their feature-query bodies are
+visible at decoder and printer call sites, allowing constant feature numbers
+to fold into mode-bit checks. The inline and external definitions share one
+body and retain the existing mode policy. These optimizations reside in the
+Capstone `next` fork and are selected through the submodule revision.
 NeverD's existing architecture-specific metadata corrections and fallback
 decoders remain authoritative after the Capstone call. The native batch API
 is available in the fork; this `dev` integration uses the existing iterator

@@ -1299,6 +1299,71 @@ private slots:
                 ->text()
                 .contains("comparison changed"));
     QCOMPARE(Failures.count(), 0);
+
+    // A six-cycle of measured alternatives must reach the picker as six
+    // edges, without losing an overlap or inventing cross-pairs.
+    const auto CycleInput = [&](const QString &Name, bool Secondary) {
+      const QList<QByteArray> Operations =
+          Secondary ? QList<QByteArray>{"01c831c8", "29c809c8", "21c80fafc1"}
+                    : QList<QByteArray>{"01c829c8", "31c821c8", "09c80fafc1"};
+      QByteArray Data;
+      for (const auto &Ops : Operations) {
+        const auto Code = QByteArray::fromHex("b807000000" + Ops + "c3");
+        Data += Code + QByteArray(16 - Code.size(), char(0xcc));
+      }
+      const auto Path = Directory.filePath(Name);
+      if (!write(Path, Data))
+        return QJsonObject{};
+      return Input(Path, Secondary ? "0x8000" : "0x1000");
+    };
+    ComparisonDialog OverlapView(TEST_COMPARISON_WORKER);
+    auto &OverlapSession = OverlapView.session();
+    QSignalSpy OverlapFailures(&OverlapSession, &ComparisonSession::failed);
+    OverlapView.show();
+    QTRY_VERIFY_WITH_TIMEOUT(OverlapSession.ready(), Timeout);
+    const auto CyclePrimary = CycleInput("cycle-before.bin", false);
+    const auto CycleSecondary = CycleInput("cycle-after.bin", true);
+    QVERIFY(!CyclePrimary.isEmpty() && !CycleSecondary.isEmpty());
+    OverlapSession.start(CyclePrimary, CycleSecondary,
+                         {{"use_names", false},
+                          {"min_similarity", 0.8},
+                          {"ambiguity_margin", 0}});
+    QTRY_VERIFY_WITH_TIMEOUT(!OverlapSession.busy() &&
+                                 !OverlapSession.revision().isEmpty(),
+                             Timeout);
+    ComparisonCounterpartDialog Choice(OverlapSession, "primary", "0x1010", {},
+                                       &OverlapView);
+    Choice.show();
+    auto *Choices = Choice.findChild<QTableView *>("counterpartFunctions");
+    auto *ChoiceModel = qobject_cast<ComparisonModel *>(Choices->model());
+    QTRY_COMPARE_WITH_TIMEOUT(ChoiceModel->rowCount(), 2, Timeout);
+    QTRY_COMPARE_WITH_TIMEOUT(ChoiceModel->row(0)["address"].toString(),
+                              QString("0x8000"), Timeout);
+    QTRY_COMPARE_WITH_TIMEOUT(ChoiceModel->row(1)["address"].toString(),
+                              QString("0x8020"), Timeout);
+    Choices->selectRow(1);
+    auto *Choose = Choice.findChild<QPushButton *>("counterpartPair");
+    QTRY_VERIFY(Choose->isEnabled());
+    const auto BeforeChoice = OverlapSession.revision();
+    QTest::mouseClick(Choose, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!OverlapSession.busy() &&
+                                 OverlapSession.revision() != BeforeChoice,
+                             Timeout);
+    OverlapSession.command("comparison_undo");
+    QTRY_VERIFY_WITH_TIMEOUT(!OverlapSession.busy(), Timeout);
+    ComparisonCounterpartDialog ReverseChoice(OverlapSession, "secondary",
+                                              "0x8020", {}, &OverlapView);
+    ReverseChoice.show();
+    auto *ReverseChoices =
+        ReverseChoice.findChild<QTableView *>("counterpartFunctions");
+    auto *ReverseChoiceModel =
+        qobject_cast<ComparisonModel *>(ReverseChoices->model());
+    QTRY_COMPARE_WITH_TIMEOUT(ReverseChoiceModel->rowCount(), 2, Timeout);
+    QTRY_COMPARE_WITH_TIMEOUT(ReverseChoiceModel->row(0)["address"].toString(),
+                              QString("0x1010"), Timeout);
+    QTRY_COMPARE_WITH_TIMEOUT(ReverseChoiceModel->row(1)["address"].toString(),
+                              QString("0x1020"), Timeout);
+    QCOMPARE(OverlapFailures.count(), 0);
   }
   void scalarValidationShowsAssumptionsAndClearsStaleResults() {
     const auto A = Directory.filePath("scalar-before.bin");

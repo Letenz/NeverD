@@ -234,7 +234,10 @@ Supply unpruned `!evidence` records and a fresh output directory. The report mus
 be a new file outside that directory. Complete conflicting records move to
 mandatory-reference or incoming-only native records with the same library stem;
 incomplete conflicting records are omitted. Existing mandatory-reference claims
-become incoming-only queries when a new source defeats their complete context.
+become incoming-only queries when a new source defeats their complete context. Existing
+mandatory fields can be reduced only with an exact unpruned source witness and
+a sufficient import/RTTI clause that also distinguishes loaded required rivals.
+The report labels these changes `reduced`; call-only constraints remain intact.
 Same-library cohorts with
 identical typed references, incoming queries and metadata remain intact. The
 tool never invents names or aliases. It writes pattern files only: update the
@@ -242,9 +245,11 @@ affected source manifests with the report and qualified output hashes before pub
 parsing, report lost/gained correct candidates as well as errors, and measure
 the changed packs with the same consumer and input entries on both sides.
 Proposed single-site clauses preserve alternatives and are audited against all
-raw rivals and the existing byte cohort. One is retained, preferring independent
-import/RTTI metadata, then fewer alternatives and the earliest source field,
-to bound global byte-index work.
+raw rivals and the existing byte cohort. An independently sufficient import/RTTI
+clause may be retained, preferring fewer alternatives and the earliest source
+field. Call-only conditions keep all original sites because the callee name may
+itself be an ambiguous byte claim. Each old record still contributes at most
+one global pattern, bounding byte-index work.
 The whole loaded cohort is constrained together, preventing a newly unique
 unqualified survivor. Separate complete incoming declarations
 retain only outgoing fields shared across raw source versions; a pruned clause
