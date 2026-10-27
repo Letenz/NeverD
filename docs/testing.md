@@ -14048,7 +14048,12 @@ MSVC's nested -O0 levels with empty arms, and
 `HighCLeftOutTryTailKeepsTheLabelAJumpLandsOn` keeps the label that switch
 cases leave a try body for. `HighCSEHFilterIsNamedAsTheFunctionListNamesIt`
 names a filter by its function symbol over a `.text` section symbol, and by
-an export. `StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
+an export. `HighCSEHHandlerArmReadsItsOwnSecondArgument` covers the xcpt4
+termination handler that guards its own `__try`: its second argument, the
+parent's establisher frame, keeps its name in the `__except` arm. A setjmp
+provider executes the HighC output at O0/O2, and both paths must reach the
+parent's slot; an attached C++ catch body still names the printed function's
+`var_m8`. `StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
 `unittests/loader/fixtures/mingw_sections.exe` (its Makefile rebuilds it with
 MinGW-w64 GCC): GNU ld's section symbols stay as bounds that name nothing, its
 `.file` record is dropped, and a static function's own record names it.
@@ -15206,7 +15211,7 @@ cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86Lega
 ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
 ```
 
-`NeverDSymConditionalStoreTests` covers conditional effects on current bytes across independent roots, 128-bit writes, both byte orders, partial overlaps, symbolic relative wrapping and absolute memory. It checks own-bank neighbors, current versus historical facts, post-write unknown epochs, unsupported inputs, and exact versus one-short budgets. Executor cases cover STORE with existing segment-base handling, strict CMPXCHG success/failure and delayed Old publication, refusal havoc, and other operations leaving the policy Invalid. Ordinary store and preservation defaults retain their existing behavior. These tests validate bounded memory semantics; they do not certify access permissions or complete program recovery.
+`NeverDSymConditionalStoreTests` covers bounded byte effects across absolute and symbolic banks, both byte orders, overlap, wrapping, unknown epochs and exact budgets. Executor tests cover STORE, scalar atomic ADD/XCHG/CMPXCHG, aliased address/value/output registers, delayed Old publication, malformed shapes and refusal havoc. `SymStorePreservation` checks the same atomic write path with explicit frame preservation and exact versus one-short budgets. Ordinary execution without a descriptor retains its existing behavior; these checks do not certify access permissions or whole-program recovery.
 
 ## Runtime module resources and persistent buffers
 
