@@ -1059,6 +1059,27 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
 // Parameter type inference
 //===----------------------------------------------------------------------===//
 
+bool visitOriginalMemoryPointerInputs(
+    const MedOp &Op, llvm::function_ref<void(const MedVar &)> Record) {
+  if (!hasValidMedIntrinsicId(Op) ||
+      !isAArch64AddressMemoryIntrinsic(
+          static_cast<Intrinsic>(Op.Inputs[0].ConstVal)))
+    return false;
+  if (aarch64AddressMemoryMedShapeIsValid(Op)) {
+    const auto Instruction = *aarch64AddressMemoryInstruction(
+        Op.Inputs[kAddressMemoryWordOperand + 1].ConstVal);
+    if (!Instruction.stackBase())
+      Record(Op.Inputs[kAddressMemoryBaseOperand + 1]);
+    // As with an ordinary additive address, either full-width word may carry
+    // the incoming pointer. This is source type inference only: the original
+    // instruction still owns address evaluation. A narrowed or scaled index
+    // is an offset and does not establish a pointer parameter.
+    if (Instruction.usesFullWidthIndex() && !Instruction.indexShift())
+      Record(Op.Inputs[kAddressMemoryIndexOperand + 1]);
+  }
+  return true;
+}
+
 static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
   std::map<std::pair<int, int>, const MedOp *> DefMap;
   for (const auto &Blk : Func.Blocks)
@@ -1118,6 +1139,10 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
   };
   for (const auto &Blk : Func.Blocks) {
     for (const auto &Op : Blk.Ops) {
+      if (visitOriginalMemoryPointerInputs(Op, [&](const MedVar &Address) {
+            recordAddressLiveIns(Address, PtrParameters);
+          }))
+        continue;
       if (Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::INDIR_CALL) {
         if (Op.NumInputs >= 1)
           if (auto Index = parameterIndex(Op.Inputs[0]))

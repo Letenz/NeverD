@@ -10,9 +10,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/DataAccessWidths.h"
-#include "neverd/Limits.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
-#include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
@@ -61,6 +59,7 @@
 #include "llvm/TargetParser/Triple.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cstring>
 #include <filesystem>
 #include <functional>
@@ -44088,12 +44087,8 @@ TEST(HighCPointerAddresses, OddWideIntegerSlicePrintsBitInt) {
   EXPECT_EQ(typeToC(NdType::makeInt(28, false)), "unsigned _BitInt(224)");
   EXPECT_EQ(typeToC(NdType::makeInt(32, false)), "uint256_t");
   EXPECT_EQ(typeToC(NdType::makeInt(65, false)), "unsigned _BitInt(520)");
-  EXPECT_EQ(typeToC(NdType::makeInt(limits::kMaxCSourceIntegerBytes, false)),
-            "unsigned _BitInt(" +
-                std::to_string(limits::kMaxCSourceIntegerBytes * 8) + ")");
-  EXPECT_THROW(
-      typeToC(NdType::makeInt(limits::kMaxCSourceIntegerBytes + 1, false)),
-      std::invalid_argument);
+  EXPECT_EQ(typeToC(NdType::makeInt(256, false)), "unsigned _BitInt(2048)");
+  EXPECT_THROW(typeToC(NdType::makeInt(257, false)), std::invalid_argument);
 }
 
 // Caller keeps RDX live across a direct call, as MSVC /LTCG does when the
@@ -45311,6 +45306,9 @@ TEST(HighCPointerAddresses, InterruptFlagChangesDoNotClobberRax) {
 }
 
 TEST(HighCPointerAddresses, DirectionFlagIsClearOnEntry) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP() << "the generated x64 intrinsics require an x64 compiler host";
+#endif
   // The entry ABI supplies DF=0. Execute both source routes, including an
   // overlapping forward copy whose repeated byte differs from memmove.
   constexpr va_t Entry = 0x140001000;
@@ -45351,6 +45349,9 @@ int main(void) {
 }
 
 TEST(HighCPointerAddresses, FlatRepeatedFillsAndCopiesRetainMachineCompletion) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP() << "the generated x64 intrinsics require an x64 compiler host";
+#endif
   // Initializing the source makes the result independent of the host stack.
   // An overlapping forward copy must read bytes that earlier iterations wrote.
   constexpr va_t Entry = 0x140001000;
@@ -47554,6 +47555,9 @@ void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected,
 }
 
 TEST(HighCPointerAddresses, AnX87ValueRoundsToTheDoubleItIsStoredAs) {
+#if (!defined(__x86_64__) && !defined(_M_X64)) || LDBL_MANT_DIG != 64
+  GTEST_SKIP() << "typed x87 execution requires x64 and an 80-bit long double";
+#endif
   // fld1 / fldpi load the extended format and fstp qword rounds it to a
   // double: the C converts through `long double`, not to an unknown value.
   for (const auto &[Load, Expected] :
@@ -47567,6 +47571,9 @@ TEST(HighCPointerAddresses, AnX87ValueRoundsToTheDoubleItIsStoredAs) {
 }
 
 TEST(HighCPointerAddresses, X87ArithmeticComputesInLongDouble) {
+#if (!defined(__x86_64__) && !defined(_M_X64)) || LDBL_MANT_DIG != 64
+  GTEST_SKIP() << "typed x87 execution requires x64 and an 80-bit long double";
+#endif
   expectX87Result({0xd9, 0xe8,                   // fld1
                    0xd9, 0xe8,                   // fld1
                    0xde, 0xc1,                   // faddp st(1), st
@@ -47577,6 +47584,9 @@ TEST(HighCPointerAddresses, X87ArithmeticComputesInLongDouble) {
 }
 
 TEST(HighCPointerAddresses, AnX87StoreWritesItsTenBytes) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP() << "the generated x64 intrinsics require an x64 compiler host";
+#endif
   // The extended value fills ten bytes; the qword after it survives, and
   // the stored exponent word reads back.  A store of a whole C object of
   // 12 or 16 bytes would overwrite the neighbor.  The value comes straight
@@ -47594,6 +47604,9 @@ TEST(HighCPointerAddresses, AnX87StoreWritesItsTenBytes) {
 }
 
 TEST(HighCPointerAddresses, AScalarFloatArgumentIsADoubleParameter) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP() << "the generated x64 intrinsics require an x64 compiler host";
+#endif
   // Win64 `double f(double x) { return x + x; }`: xmm0's low lane is the
   // argument.  A `double` parameter takes it in xmm0, as the machine did;
   // an `__int128` would take two integer registers instead.
@@ -47610,6 +47623,9 @@ TEST(HighCPointerAddresses, AScalarFloatArgumentIsADoubleParameter) {
 }
 
 TEST(HighCPointerAddresses, AnIntegerConvertedIntoXMM0IsNoParameter) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP() << "the generated x64 intrinsics require an x64 compiler host";
+#endif
   // Win64 `double f(int a, double b) { return a * b; }`: `cvtsi2sd xmm0,
   // ecx` writes the result's low lane over an xmm0 that holds no argument,
   // and xmm1 is the second, a double.
@@ -47751,6 +47767,9 @@ TEST(HighCPointerAddresses, CallResultsTakeNoFileScopeName) {
 }
 
 TEST(HighCPointerAddresses, RecordsNamedLikeFunctionsAreSpelledByTheirTags) {
+#if !defined(__GLIBC__)
+  GTEST_SKIP() << "the generated declarations require glibc headers";
+#endif
   // glibc's stat64() and statx() take records of their own names, which no
   // typedef can declare beside the functions: C spells their tags, in the
   // signatures and in the casts alike.
@@ -47880,6 +47899,9 @@ struct FILEFUNC_LIKE {
 }
 
 TEST(HighCPointerAddresses, TrapsUseTheBuiltinsTheirHeadersDeclare) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP() << "the generated x64 intrinsics require an x64 compiler host";
+#endif
   // ud2 and int3 are Microsoft's __ud2 and __debugbreak only where the unit
   // includes <intrin.h>; elsewhere they are the GNU builtins.
   for (const BinaryFormat Format : {BinaryFormat::ELF, BinaryFormat::COFF}) {
@@ -48499,6 +48521,9 @@ TEST(HighCPointerAddresses, FunctionPointersOfAnotherSpellingPassCast) {
 }
 
 TEST(HighCPointerAddresses, GnuToolchainsReadCpuidThroughCpuidH) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP() << "the generated x64 intrinsics require an x64 compiler host";
+#endif
   // CPUID's leaf is EAX and its sub-leaf ECX.  GCC and Clang spell it with
   // <cpuid.h>'s macros; MSVC's __cpuid(int[4], leaf) declares nothing there,
   // and gzip called it undeclared 14 times.
@@ -48536,6 +48561,9 @@ TEST(HighCPointerAddresses, GnuToolchainsReadCpuidThroughCpuidH) {
 }
 
 TEST(HighCPointerAddresses, GnuLibrariesHeadersDeclareTheirExtensions) {
+#if !defined(__GLIBC__)
+  GTEST_SKIP() << "the generated declarations require glibc headers";
+#endif
   // NeverD reads the GNU C Library's headers with _GNU_SOURCE, which sed's
   // and less's calls of strverscmp, memrchr and the GNU regex routines
   // need: the unit defines it before its includes.
@@ -48650,6 +48678,9 @@ TEST(HighCPointerAddresses, ImageObjectsTakeAssignedValuesAsTheyAreDeclared) {
 }
 
 TEST(HighCPointerAddresses, UnderscoredHeaderRoutinesTakeTheirStreams) {
+#if !defined(__GLIBC__)
+  GTEST_SKIP() << "the generated declarations require glibc headers";
+#endif
   // <stdio_ext.h> declares __fwriting(FILE *), whose stream an integer the
   // machine holds it in converts to.  The table's row names the routine
   // with its underscores, which the lookup stripped from the call's name
@@ -48670,6 +48701,9 @@ TEST(HighCPointerAddresses, UnderscoredHeaderRoutinesTakeTheirStreams) {
 }
 
 TEST(HighCPointerAddresses, GnuProgramObjectsAreTheHeaders) {
+#if !defined(__GLIBC__)
+  GTEST_SKIP() << "the generated declarations require glibc headers";
+#endif
   // 187 Debian programs reach __environ's environ and 398 copy
   // program_invocation_short_name, which <unistd.h> and <errno.h> declare
   // under _GNU_SOURCE, as the unit defines it: it declares neither beside
@@ -49372,6 +49406,9 @@ TEST(HighCPointerAddresses, SocketAddressesPassAsVoidPointers) {
 }
 
 TEST(HighCPointerAddresses, LargeFileComparatorsTakeTheirOwnRecords) {
+#if !defined(__GLIBC__)
+  GTEST_SKIP() << "the generated declarations require glibc headers";
+#endif
   // A program built for large files calls scandir64, whose comparison the
   // header types with struct dirent64 where scandir's takes struct dirent:
   // the argument converts to scandir64's own type, which C accepts.
@@ -49497,6 +49534,9 @@ TEST(HighCPointerAddresses, NarrowObjectsPassedAsPointersStayIntegers) {
 }
 
 TEST(HighCPointerAddresses, AlignedAccessesInRelocatedWordsKeepTheirResidue) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP() << "the generated x64 intrinsics require an x64 compiler host";
+#endif
   // sort reads a table that holds a relocated pointer with a 16-byte access
   // 8 bytes into it, which the image aligns: the table starts 8 bytes past
   // a 16-byte boundary, and C laid its words out from one, so no unit was
@@ -49542,6 +49582,9 @@ TEST(HighCPointerAddresses, AlignedAccessesInRelocatedWordsKeepTheirResidue) {
 }
 
 TEST(HighCPointerAddresses, HeaderRecordsNamedLikeTheirFunctionsKeepTags) {
+#if !defined(__GLIBC__)
+  GTEST_SKIP() << "the generated declarations require glibc headers";
+#endif
   // sort fills a struct sysinfo through sysinfo(), which <sys/sysinfo.h>
   // declares beside it: the definitions list the name among their ordinary
   // identifiers, so the unit spells the record by its tag and declares no
@@ -49577,6 +49620,9 @@ TEST(HighCPointerAddresses, HeaderRecordsNamedLikeTheirFunctionsKeepTags) {
 }
 
 TEST(HighCPointerAddresses, AlignedReadsOfAStringAlignItsArray) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP() << "the generated x64 intrinsics require an x64 compiler host";
+#endif
   // make and patch read a string constant with an aligned access, whose
   // guard masked the literal: `("$(-*-eval-flags-" & 15)` is no C, and a
   // literal is no object C aligns as the image does.  The string is its

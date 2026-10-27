@@ -148,10 +148,6 @@
         <translation>Aktuelle Adresse umbenennen</translation>
     </message>
     <message>
-        <source>Enter &amp;comment...</source>
-        <translation>&amp;Kommentar eingeben...</translation>
-    </message>
-    <message>
         <source>Comment the current address</source>
         <translation>Aktuelle Adresse kommentieren</translation>
     </message>
@@ -1260,12 +1256,24 @@
         <translation>Den bedingten Sprung unbedingt ausführen</translation>
     </message>
     <message>
+        <source>Trace functions and inspect conflicting evidence across saved comparisons</source>
+        <translation>Funktionen verfolgen und widersprüchliche Belege aus gespeicherten Vergleichen prüfen</translation>
+    </message>
+    <message>
+        <source>Version comparison &amp;graph…</source>
+        <translation>Versionsvergleichs&amp;graph…</translation>
+    </message>
+    <message>
         <source>Add analysis section...</source>
         <translation>Analyseabschnitt hinzufügen...</translation>
     </message>
     <message>
         <source>Map new code or data into this analysis</source>
         <translation>Neuen Code oder neue Daten in diese Analyse abbilden</translation>
+    </message>
+    <message>
+        <source>Enter &amp;comment...</source>
+        <translation>&amp;Kommentar eingeben...</translation>
     </message>
 </context>
 <context>
@@ -3257,10 +3265,6 @@ Nachher:
         <translation>Durchsuchen…</translation>
     </message>
     <message>
-        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>Wählen Sie eine Datei von 1 Byte bis %1, eine hexadezimale Adresse und einen Abschnittsnamen. Eine Funktion benötigt einen Namen und Ausführungsrechte.</translation>
-    </message>
-    <message>
         <source>Define a function covering these bytes</source>
         <translation>Eine Funktion über diese Bytes definieren</translation>
     </message>
@@ -3291,6 +3295,10 @@ Nachher:
     <message>
         <source>Virtual address:</source>
         <translation>Virtuelle Adresse:</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>Wählen Sie eine Datei von 1 Byte bis %1, eine hexadezimale Adresse und einen Abschnittsnamen. Eine Funktion benötigt einen Namen und Ausführungsrechte.</translation>
     </message>
 </context>
 <context>
@@ -3486,10 +3494,6 @@ Nachher:
         <translation>Eingabedatei neu geladen</translation>
     </message>
     <message>
-        <source>Project changes saved</source>
-        <translation>Projektänderungen gespeichert</translation>
-    </message>
-    <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
         <translation>Die Änderung wurde für eine nicht mehr geöffnete Sitzung vorbereitet und daher nicht angewendet.</translation>
     </message>
@@ -3675,6 +3679,10 @@ Nachher:
     <message>
         <source>Rewritten function at %1 saved to %2</source>
         <translation>Neu geschriebene Funktion bei %1 in %2 gespeichert</translation>
+    </message>
+    <message>
+        <source>Project changes saved</source>
+        <translation>Projektänderungen gespeichert</translation>
     </message>
 </context>
 <context>
@@ -6759,6 +6767,16 @@ Abdeckung: %7</translation>
         <source>Optimized SSA with expression-bound loop analysis</source>
         <translation>Optimierte SSA mit schleifenbegrenzenden Ausdrücken</translation>
     </message>
+    <message>
+        <source>
+
+Primary name: %1
+Secondary name: %2</source>
+        <translation>
+
+Primärer Name: %1
+Sekundärer Name: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7742,6 +7760,14 @@ Jede Verwendung eines projizierten Parameters liest dieselben unteren Bits. Das 
     <message>
         <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
         <translation>Jede Verwendung dieses Parameters liest dieselben unteren Bits; die ursprüngliche Bitbreite und native Position bleiben erhalten.</translation>
+    </message>
+    <message>
+        <source>%1 (analyzed name: %2)</source>
+        <translation>%1 (analysierter Name: %2)</translation>
+    </message>
+    <message>
+        <source>Counterpart: %1</source>
+        <translation>Zugeordnete Funktion: %1</translation>
     </message>
 </context>
 <context>
@@ -8877,6 +8903,913 @@ Sekundäre SHA-256: %3
     <message>
         <source>The analysis changed. Reopen this editor before compiling.</source>
         <translation>Die Analyse wurde geändert. Öffnen Sie diesen Editor vor dem Kompilieren erneut.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageDialog</name>
+    <message>
+        <source> · unsaved</source>
+        <translation> · ungespeichert</translation>
+    </message>
+    <message>
+        <source>%1 snapshots · %2 source comparisons · %3 functions · %4 conflict groups · %5 incomplete reports%6</source>
+        <translation>%1 Momentaufnahmen · %2 Quellvergleiche · %3 Funktionen · %4 Konfliktgruppen · %5 unvollständige Berichte%6</translation>
+    </message>
+    <message>
+        <source>&amp;Add comparisons…</source>
+        <translation>Vergleiche &amp;hinzufügen…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>&amp;Zweig</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>&amp;Bezeichnung</translation>
+    </message>
+    <message>
+        <source>&amp;Open graph…</source>
+        <translation>Graph &amp;öffnen…</translation>
+    </message>
+    <message>
+        <source>&amp;Save graph…</source>
+        <translation>Graph &amp;speichern…</translation>
+    </message>
+    <message>
+        <source>&amp;Trace selected function</source>
+        <translation>Ausgewählte Funktion &amp;verfolgen</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons</source>
+        <translation>Gespeicherte Vergleiche hinzufügen</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons between releases to trace functions, inspect conflicting paths and review the original evidence.</source>
+        <translation>Fügen Sie gespeicherte Vergleiche zwischen Versionen hinzu, um Funktionen zu verfolgen, widersprüchliche Pfade zu prüfen und die ursprünglichen Belege einzusehen.</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>Adresse</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>Mehrdeutig</translation>
+    </message>
+    <message>
+        <source>Ambiguous candidates</source>
+        <translation>Mehrdeutige Kandidaten</translation>
+    </message>
+    <message>
+        <source>Analyzed snapshots</source>
+        <translation>Analysierte Momentaufnahmen</translation>
+    </message>
+    <message>
+        <source>Anchor</source>
+        <translation>Anker</translation>
+    </message>
+    <message>
+        <source>Anchors</source>
+        <translation>Anker</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>Bewertung</translation>
+    </message>
+    <message>
+        <source>Assessment history</source>
+        <translation>Bewertungsverlauf</translation>
+    </message>
+    <message>
+        <source>Assessments</source>
+        <translation>Bewertungen</translation>
+    </message>
+    <message>
+        <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
+        <translation>Zuordnungen stammen aus gespeicherten Berichten. Versionsreihenfolge und Patch-Vorhandensein werden nicht abgeleitet.</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>Autor</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>Zweig</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Abbrechen</translation>
+    </message>
+    <message>
+        <source>Candidates are not accepted associations. Both sides retain every listed candidate.</source>
+        <translation>Kandidaten sind keine akzeptierten Zuordnungen. Beide Seiten behalten alle aufgeführten Kandidaten.</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>Fall</translation>
+    </message>
+    <message>
+        <source>Changes</source>
+        <translation>Änderungen</translation>
+    </message>
+    <message>
+        <source>Checking saved evidence…</source>
+        <translation>Gespeicherte Belege werden geprüft…</translation>
+    </message>
+    <message>
+        <source>Conflict</source>
+        <translation>Konflikt</translation>
+    </message>
+    <message>
+        <source>Conflicting function associations</source>
+        <translation>Widersprüchliche Funktionszuordnungen</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>Konflikte</translation>
+    </message>
+    <message>
+        <source>Deadline (milliseconds, 0: none)</source>
+        <translation>Zeitlimit (Millisekunden, 0: keines)</translation>
+    </message>
+    <message>
+        <source>Decision</source>
+        <translation>Entscheidung</translation>
+    </message>
+    <message>
+        <source>Decision history</source>
+        <translation>Entscheidungsverlauf</translation>
+    </message>
+    <message>
+        <source>Diagram of the current source-report page; layout does not indicate release order.</source>
+        <translation>Diagramm der aktuellen Quellberichtseite; die Anordnung zeigt keine Versionsreihenfolge.</translation>
+    </message>
+    <message>
+        <source>Direct evidence</source>
+        <translation>Direkte Belege</translation>
+    </message>
+    <message>
+        <source>Distance</source>
+        <translation>Distanz</translation>
+    </message>
+    <message>
+        <source>Distance counts report links. It is not a confidence score. Double-click a conflict to inspect its members.</source>
+        <translation>Die Distanz zählt Berichtsverknüpfungen. Sie ist kein Konfidenzwert. Doppelklicken Sie auf einen Konflikt, um seine Mitglieder zu prüfen.</translation>
+    </message>
+    <message>
+        <source>Edge</source>
+        <translation>Kante</translation>
+    </message>
+    <message>
+        <source>Edit &amp;label / branch…</source>
+        <translation>&amp;Bezeichnung / Zweig bearbeiten…</translation>
+    </message>
+    <message>
+        <source>Enter a value from %1 to %2 for the highlighted field.</source>
+        <translation>Geben Sie für das markierte Feld einen Wert von %1 bis %2 ein.</translation>
+    </message>
+    <message>
+        <source>Event</source>
+        <translation>Ereignis</translation>
+    </message>
+    <message>
+        <source>Explanation</source>
+        <translation>Erklärung</translation>
+    </message>
+    <message>
+        <source>Export original comparison</source>
+        <translation>Ursprünglichen Vergleich exportieren</translation>
+    </message>
+    <message>
+        <source>Export original report…</source>
+        <translation>Ursprünglichen Bericht exportieren…</translation>
+    </message>
+    <message>
+        <source>Find a function by name or address</source>
+        <translation>Funktion nach Name oder Adresse suchen</translation>
+    </message>
+    <message>
+        <source>Fit</source>
+        <translation>Einpassen</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>Funktion</translation>
+    </message>
+    <message>
+        <source>Function filter</source>
+        <translation>Funktionsfilter</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>Funktionen</translation>
+    </message>
+    <message>
+        <source>Functions &amp; witnesses</source>
+        <translation>Funktionen und Pfadbelege</translation>
+    </message>
+    <message>
+        <source>Functions in %1</source>
+        <translation>Funktionen in %1</translation>
+    </message>
+    <message>
+        <source>Graph / sources</source>
+        <translation>Graph / Quellen</translation>
+    </message>
+    <message>
+        <source>Group</source>
+        <translation>Gruppe</translation>
+    </message>
+    <message>
+        <source>Hypothesis</source>
+        <translation>Hypothese</translation>
+    </message>
+    <message>
+        <source>Incomplete</source>
+        <translation>Unvollständig</translation>
+    </message>
+    <message>
+        <source>Inspect conflict &amp;members…</source>
+        <translation>Konflikt&amp;mitglieder prüfen…</translation>
+    </message>
+    <message>
+        <source>Inspect source &amp;evidence…</source>
+        <translation>Quell&amp;belege prüfen…</translation>
+    </message>
+    <message>
+        <source>Instructions</source>
+        <translation>Anweisungen</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>Art</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Bezeichnung</translation>
+    </message>
+    <message>
+        <source>Latest</source>
+        <translation>Neueste</translation>
+    </message>
+    <message>
+        <source>Latest manual assessments stay attached to their original report and function pair. They do not establish a patch verdict in other snapshots.</source>
+        <translation>Die neuesten manuellen Bewertungen bleiben ihrem ursprünglichen Bericht und Funktionspaar zugeordnet. Sie begründen kein Patch-Urteil für andere Momentaufnahmen.</translation>
+    </message>
+    <message>
+        <source>Matches</source>
+        <translation>Zuordnungen</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>Felder</translation>
+    </message>
+    <message>
+        <source>Method</source>
+        <translation>Methode</translation>
+    </message>
+    <message>
+        <source>Multiple functions from one snapshot, or an explicitly rejected pair reached through other reports, remain visible as conflicting evidence.</source>
+        <translation>Mehrere Funktionen einer Momentaufnahme oder ein ausdrücklich abgelehntes, über andere Berichte verbundenes Paar bleiben als widersprüchliche Belege sichtbar.</translation>
+    </message>
+    <message>
+        <source>Native regions</source>
+        <translation>Native Regionen</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff)</source>
+        <translation>NeverD-Vergleich (*.nddiff)</translation>
+    </message>
+    <message>
+        <source>NeverD comparisons (*.nddiff);;All files (*)</source>
+        <translation>NeverD-Vergleiche (*.nddiff);;Alle Dateien (*)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage)</source>
+        <translation>NeverD-Versionsgraphen (*.ndlineage)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage);;All files (*)</source>
+        <translation>NeverD-Versionsgraphen (*.ndlineage);;Alle Dateien (*)</translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation>Knoten</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation>Notiz</translation>
+    </message>
+    <message>
+        <source>Note: %1
+Reference: %2
+Primary: %3  Secondary: %4
+Supersedes: %5</source>
+        <translation>Notiz: %1
+Verweis: %2
+Primär: %3  Sekundär: %4
+Ersetzt: %5</translation>
+    </message>
+    <message>
+        <source>Open control frontier</source>
+        <translation>Offene Kontrollflussgrenze</translation>
+    </message>
+    <message>
+        <source>Open version comparison graph</source>
+        <translation>Versionsvergleichsgraph öffnen</translation>
+    </message>
+    <message>
+        <source>Original assessment note and reference</source>
+        <translation>Ursprüngliche Bewertungsnotiz und Verweis</translation>
+    </message>
+    <message>
+        <source>Original comparison evidence</source>
+        <translation>Ursprüngliche Vergleichsbelege</translation>
+    </message>
+    <message>
+        <source>Original region anchors</source>
+        <translation>Ursprüngliche Regionsanker</translation>
+    </message>
+    <message>
+        <source>Pair active</source>
+        <translation>Paar aktiv</translation>
+    </message>
+    <message>
+        <source>Predecessor</source>
+        <translation>Vorgänger</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>Primär</translation>
+    </message>
+    <message>
+        <source>Primary candidates</source>
+        <translation>Primäre Kandidaten</translation>
+    </message>
+    <message>
+        <source>Primary function</source>
+        <translation>Primäre Funktion</translation>
+    </message>
+    <message>
+        <source>Primary function index</source>
+        <translation>Primärer Funktionsindex</translation>
+    </message>
+    <message>
+        <source>Primary instructions</source>
+        <translation>Primäre Anweisungen</translation>
+    </message>
+    <message>
+        <source>Primary node</source>
+        <translation>Primärer Knoten</translation>
+    </message>
+    <message>
+        <source>Primary snapshot</source>
+        <translation>Primäre Momentaufnahme</translation>
+    </message>
+    <message>
+        <source>Processing work allowance</source>
+        <translation>Verarbeitungsbudget</translation>
+    </message>
+    <message>
+        <source>Reading saved evidence…</source>
+        <translation>Gespeicherte Belege werden gelesen…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>Bereit</translation>
+    </message>
+    <message>
+        <source>Replacement accounts for the current collection, its trace and the candidate. A limit stops the operation and preserves the current graph. Report text allowance is not a process-memory limit.</source>
+        <translation>Beim Ersetzen werden die aktuelle Sammlung, ihre Verfolgung und der Kandidat berücksichtigt. Ein Limit stoppt den Vorgang und erhält den aktuellen Graphen. Das Berichtstextbudget begrenzt nicht den Prozessspeicher.</translation>
+    </message>
+    <message>
+        <source>Report</source>
+        <translation>Bericht</translation>
+    </message>
+    <message>
+        <source>Report and history warnings</source>
+        <translation>Berichts- und Verlaufswarnungen</translation>
+    </message>
+    <message>
+        <source>Report text and labels (bytes)</source>
+        <translation>Berichtstext und Bezeichnungen (Bytes)</translation>
+    </message>
+    <message>
+        <source>Resource settings will apply to subsequent loads and queries.</source>
+        <translation>Die Ressourceneinstellungen gelten für nachfolgende Ladevorgänge und Abfragen.</translation>
+    </message>
+    <message>
+        <source>Resource settings…</source>
+        <translation>Ressourceneinstellungen…</translation>
+    </message>
+    <message>
+        <source>SSA nodes</source>
+        <translation>SSA-Knoten</translation>
+    </message>
+    <message>
+        <source>SSA regions</source>
+        <translation>SSA-Regionen</translation>
+    </message>
+    <message>
+        <source>Save current graph?</source>
+        <translation>Aktuellen Graphen speichern?</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before closing?</source>
+        <translation>Aktuellen Graphen und die Bezeichnungen der Momentaufnahmen vor dem Schließen speichern?</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before opening another graph?</source>
+        <translation>Aktuellen Graphen und die Bezeichnungen der Momentaufnahmen vor dem Öffnen eines anderen Graphen speichern?</translation>
+    </message>
+    <message>
+        <source>Save version comparison graph</source>
+        <translation>Versionsvergleichsgraph speichern</translation>
+    </message>
+    <message>
+        <source>Save version graph?</source>
+        <translation>Versionsgraph speichern?</translation>
+    </message>
+    <message>
+        <source>Saved region evidence is not an accepted function association. Copy a row to inspect all retained fields; export the source for complete SSA node mappings.</source>
+        <translation>Gespeicherte Regionsbelege sind keine akzeptierte Funktionszuordnung. Kopieren Sie eine Zeile, um alle gespeicherten Felder zu prüfen; exportieren Sie den Quellbericht für vollständige SSA-Knotenzuordnungen.</translation>
+    </message>
+    <message>
+        <source>Saving evidence…</source>
+        <translation>Belege werden gespeichert…</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>Sekundär</translation>
+    </message>
+    <message>
+        <source>Secondary candidates</source>
+        <translation>Sekundäre Kandidaten</translation>
+    </message>
+    <message>
+        <source>Secondary function</source>
+        <translation>Sekundäre Funktion</translation>
+    </message>
+    <message>
+        <source>Secondary function index</source>
+        <translation>Sekundärer Funktionsindex</translation>
+    </message>
+    <message>
+        <source>Secondary instructions</source>
+        <translation>Sekundäre Anweisungen</translation>
+    </message>
+    <message>
+        <source>Secondary node</source>
+        <translation>Sekundärer Knoten</translation>
+    </message>
+    <message>
+        <source>Secondary snapshot</source>
+        <translation>Sekundäre Momentaufnahme</translation>
+    </message>
+    <message>
+        <source>Select a snapshot to browse all retained functions.</source>
+        <translation>Wählen Sie eine Momentaufnahme, um alle gespeicherten Funktionen zu durchsuchen.</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>Größe</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>Momentaufnahme</translation>
+    </message>
+    <message>
+        <source>Snapshot label and branch</source>
+        <translation>Bezeichnung und Zweig der Momentaufnahme</translation>
+    </message>
+    <message>
+        <source>Source report</source>
+        <translation>Quellbericht</translation>
+    </message>
+    <message>
+        <source>Source report: %1
+Ambiguities and manual decisions remain report-local. Region hypotheses retain their original coordinates; full records remain in the exported report.</source>
+        <translation>Quellbericht: %1
+Mehrdeutigkeiten und manuelle Entscheidungen gelten nur im jeweiligen Bericht. Regionshypothesen behalten ihre ursprünglichen Koordinaten; vollständige Datensätze verbleiben im exportierten Bericht.</translation>
+    </message>
+    <message>
+        <source>Starting version graph worker…</source>
+        <translation>Versionsgraph-Prozess wird gestartet…</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>Status</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>Wird gestoppt…</translation>
+    </message>
+    <message>
+        <source>These labels describe your analysis. They do not assert release ancestry.</source>
+        <translation>Diese Bezeichnungen beschreiben Ihre Analyse. Sie behaupten keine Versionsabstammung.</translation>
+    </message>
+    <message>
+        <source>These members remain in conflict. No counterpart or patch assessment is selected automatically. Activate a member to trace its evidence.</source>
+        <translation>Diese Mitglieder bleiben im Konflikt. Weder Gegenstück noch Patch-Bewertung werden automatisch ausgewählt. Aktivieren Sie ein Mitglied, um seine Belege zu verfolgen.</translation>
+    </message>
+    <message>
+        <source>Trace</source>
+        <translation>Verfolgen</translation>
+    </message>
+    <message>
+        <source>Trace a function to see every reachable association and its shortest-path witness.</source>
+        <translation>Verfolgen Sie eine Funktion, um alle erreichbaren Zuordnungen und ihre kürzesten Pfadbelege zu sehen.</translation>
+    </message>
+    <message>
+        <source>Trace from %1 in %2</source>
+        <translation>Verfolgung ab %1 in %2</translation>
+    </message>
+    <message>
+        <source>Tracing function associations…</source>
+        <translation>Funktionszuordnungen werden verfolgt…</translation>
+    </message>
+    <message>
+        <source>Unresolved candidates</source>
+        <translation>Ungeklärte Kandidaten</translation>
+    </message>
+    <message>
+        <source>Version comparison graph</source>
+        <translation>Versionsvergleichsgraph</translation>
+    </message>
+    <message>
+        <source>Version graph resource settings</source>
+        <translation>Ressourceneinstellungen des Versionsgraphen</translation>
+    </message>
+    <message>
+        <source>Warnings</source>
+        <translation>Warnungen</translation>
+    </message>
+    <message>
+        <source>Witness edge</source>
+        <translation>Belegkante</translation>
+    </message>
+    <message>
+        <source>Zoom in</source>
+        <translation>Vergrößern</translation>
+    </message>
+    <message>
+        <source>Zoom out</source>
+        <translation>Verkleinern</translation>
+    </message>
+    <message>
+        <source>Association and parent link records</source>
+        <translation>Zuordnungs- und Elternverknüpfungsdatensätze</translation>
+    </message>
+    <message>
+        <source>Function and release records</source>
+        <translation>Funktions- und Release-Datensätze</translation>
+    </message>
+    <message>
+        <source>Releases</source>
+        <translation>Releases</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageGraph</name>
+    <message>
+        <source>Source report: %1
+Comparison direction: %2 → %3</source>
+        <translation>Quellbericht: %1
+Vergleichsrichtung: %2 → %3</translation>
+    </message>
+    <message>
+        <source>Version comparison diagram for the current report page</source>
+        <translation>Versionsvergleichsdiagramm für die aktuelle Berichtseite</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineagePageView</name>
+    <message>
+        <source> Try fewer rows or adjust Resource settings.</source>
+        <translation> Versuchen Sie weniger Zeilen oder ändern Sie die Ressourceneinstellungen.</translation>
+    </message>
+    <message>
+        <source>%1 — previous page retained</source>
+        <translation>%1 — vorherige Seite bleibt erhalten</translation>
+    </message>
+    <message>
+        <source>%1–%2 of %3</source>
+        <translation>%1–%2 von %3</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>Abgebrochen</translation>
+    </message>
+    <message>
+        <source>Candidate fix</source>
+        <translation>Mögliche Korrektur</translation>
+    </message>
+    <message>
+        <source>Choose a collection to begin.</source>
+        <translation>Wählen Sie zunächst eine Sammlung.</translation>
+    </message>
+    <message>
+        <source>Complete</source>
+        <translation>Vollständig</translation>
+    </message>
+    <message>
+        <source>Confirm</source>
+        <translation>Bestätigen</translation>
+    </message>
+    <message>
+        <source>Conflicting counterparts</source>
+        <translation>Widersprüchliche Gegenstücke</translation>
+    </message>
+    <message>
+        <source>Copy full value</source>
+        <translation>Vollständigen Wert kopieren</translation>
+    </message>
+    <message>
+        <source>Copy row evidence</source>
+        <translation>Zeilenbelege kopieren</translation>
+    </message>
+    <message>
+        <source>Deadline reached</source>
+        <translation>Zeitlimit erreicht</translation>
+    </message>
+    <message>
+        <source>Inconclusive</source>
+        <translation>Ohne eindeutiges Ergebnis</translation>
+    </message>
+    <message>
+        <source>Investigating</source>
+        <translation>In Untersuchung</translation>
+    </message>
+    <message>
+        <source>Loading evidence…</source>
+        <translation>Belege werden geladen…</translation>
+    </message>
+    <message>
+        <source>Match</source>
+        <translation>Zuordnen</translation>
+    </message>
+    <message>
+        <source>Next page</source>
+        <translation>Nächste Seite</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>Nein</translation>
+    </message>
+    <message>
+        <source>Partial patch</source>
+        <translation>Teilweiser Patch</translation>
+    </message>
+    <message>
+        <source>Patch absent</source>
+        <translation>Patch fehlt</translation>
+    </message>
+    <message>
+        <source>Patch present</source>
+        <translation>Patch vorhanden</translation>
+    </message>
+    <message>
+        <source>Previous page</source>
+        <translation>Vorherige Seite</translation>
+    </message>
+    <message>
+        <source>Refresh page</source>
+        <translation>Seite aktualisieren</translation>
+    </message>
+    <message>
+        <source>Rejected pair connected</source>
+        <translation>Abgelehntes Paar verbunden</translation>
+    </message>
+    <message>
+        <source>Relevant change</source>
+        <translation>Relevante Änderung</translation>
+    </message>
+    <message>
+        <source>Resource limit reached</source>
+        <translation>Ressourcenlimit erreicht</translation>
+    </message>
+    <message>
+        <source>Reverted patch</source>
+        <translation>Zurückgenommener Patch</translation>
+    </message>
+    <message>
+        <source>Rows per page</source>
+        <translation>Zeilen pro Seite</translation>
+    </message>
+    <message>
+        <source>Rows per page. Reduce this value if a page exceeds its byte allowance.</source>
+        <translation>Zeilen pro Seite. Verringern Sie diesen Wert, wenn eine Seite ihr Bytebudget überschreitet.</translation>
+    </message>
+    <message>
+        <source>Rows: </source>
+        <translation>Zeilen: </translation>
+    </message>
+    <message>
+        <source>Select evidence to view.</source>
+        <translation>Wählen Sie die anzuzeigenden Belege.</translation>
+    </message>
+    <message>
+        <source>The graph changed. Refresh this page.</source>
+        <translation>Der Graph wurde geändert. Aktualisieren Sie diese Seite.</translation>
+    </message>
+    <message>
+        <source>Unmatch</source>
+        <translation>Zuordnung aufheben</translation>
+    </message>
+    <message>
+        <source>Unrelated change</source>
+        <translation>Unabhängige Änderung</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>Ja</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageSession</name>
+    <message>
+        <source>
+Your previous graph is still available.</source>
+        <translation>
+Ihr vorheriger Graph ist weiterhin verfügbar.</translation>
+    </message>
+    <message>
+        <source>Loading stopped. You can retry.</source>
+        <translation>Laden gestoppt. Sie können es erneut versuchen.</translation>
+    </message>
+    <message>
+        <source>Saved %1</source>
+        <translation>%1 gespeichert</translation>
+    </message>
+    <message>
+        <source>The worker could not acknowledge cancellation.</source>
+        <translation>Der Prozess konnte den Abbruch nicht bestätigen.</translation>
+    </message>
+    <message>
+        <source>This worker does not support version comparison graphs.</source>
+        <translation>Dieser Prozess unterstützt keine Versionsvergleichsgraphen.</translation>
+    </message>
+    <message>
+        <source>Version graph loaded.</source>
+        <translation>Versionsgraph geladen.</translation>
+    </message>
+    <message>
+        <source>Version graph worker is unavailable or stopping.</source>
+        <translation>Der Versionsgraph-Prozess ist nicht verfügbar oder wird gestoppt.</translation>
+    </message>
+    <message>
+        <source>Version graph worker: %1</source>
+        <translation>Versionsgraph-Prozess: %1</translation>
+    </message>
+    <message>
+        <source>The version graph file is not valid UTF-8 JSON. Check the file and try again.</source>
+        <translation>Die Versionsgraph-Datei enthält kein gültiges UTF-8-JSON. Prüfen Sie die Datei und versuchen Sie es erneut.</translation>
+    </message>
+    <message>
+        <source>Release metadata saved in the current graph.</source>
+        <translation>Release-Metadaten im aktuellen Graphen gespeichert.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageReleaseView</name>
+    <message>
+        <source>%1 releases · %2 declared parent links. Dates and ancestry are your declarations; patch presence is not inferred.</source>
+        <translation>%1 Releases · %2 deklarierte Elternverknüpfungen. Datum und Abstammung beruhen auf Ihren Angaben; das Vorhandensein eines Patches wird nicht abgeleitet.</translation>
+    </message>
+    <message>
+        <source>&amp;Add release…</source>
+        <translation>Release &amp;hinzufügen…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>&amp;Zweig</translation>
+    </message>
+    <message>
+        <source>&amp;Edit release…</source>
+        <translation>Release &amp;bearbeiten…</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>&amp;Bezeichnung</translation>
+    </message>
+    <message>
+        <source>Add parent…</source>
+        <translation>Elternrelease hinzufügen…</translation>
+    </message>
+    <message>
+        <source>Add release</source>
+        <translation>Release hinzufügen</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>Zweig</translation>
+    </message>
+    <message>
+        <source>Children</source>
+        <translation>Nachfolger</translation>
+    </message>
+    <message>
+        <source>Choose analyzed snapshot</source>
+        <translation>Analysierten Snapshot wählen</translation>
+    </message>
+    <message>
+        <source>Choose parent release</source>
+        <translation>Elternrelease wählen</translation>
+    </message>
+    <message>
+        <source>Choose…</source>
+        <translation>Auswählen…</translation>
+    </message>
+    <message>
+        <source>Declared children</source>
+        <translation>Deklarierte Nachfolger</translation>
+    </message>
+    <message>
+        <source>Declared parents</source>
+        <translation>Deklarierte Elternreleases</translation>
+    </message>
+    <message>
+        <source>Edit release</source>
+        <translation>Release bearbeiten</translation>
+    </message>
+    <message>
+        <source>Find a release or branch</source>
+        <translation>Release oder Zweig suchen</translation>
+    </message>
+    <message>
+        <source>ID</source>
+        <translation>ID</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Bezeichnung</translation>
+    </message>
+    <message>
+        <source>Open snapshot</source>
+        <translation>Snapshot öffnen</translation>
+    </message>
+    <message>
+        <source>Parents</source>
+        <translation>Elternreleases</translation>
+    </message>
+    <message>
+        <source>Publication time is known (UTC)</source>
+        <translation>Veröffentlichungszeit bekannt (UTC)</translation>
+    </message>
+    <message>
+        <source>Published (UTC)</source>
+        <translation>Veröffentlicht (UTC)</translation>
+    </message>
+    <message>
+        <source>Release</source>
+        <translation>Release</translation>
+    </message>
+    <message>
+        <source>Release ID</source>
+        <translation>Release-ID</translation>
+    </message>
+    <message>
+        <source>Release filter</source>
+        <translation>Release-Filter</translation>
+    </message>
+    <message>
+        <source>Remove %1 from this graph? Its snapshot and saved comparisons remain available.</source>
+        <translation>%1 aus diesem Graphen entfernen? Der Snapshot und gespeicherte Vergleiche bleiben verfügbar.</translation>
+    </message>
+    <message>
+        <source>Remove parent link</source>
+        <translation>Elternverknüpfung entfernen</translation>
+    </message>
+    <message>
+        <source>Remove release?</source>
+        <translation>Release entfernen?</translation>
+    </message>
+    <message>
+        <source>Remove release…</source>
+        <translation>Release entfernen…</translation>
+    </message>
+    <message>
+        <source>Remove this release's parent links from its children before deleting it.</source>
+        <translation>Entfernen Sie vor dem Löschen die Verknüpfungen, die dieses Release als Elternrelease seiner Nachfolger angeben.</translation>
+    </message>
+    <message>
+        <source>Select a release to inspect its declared parents and children.</source>
+        <translation>Wählen Sie ein Release, um seine deklarierten Eltern und Nachfolger zu prüfen.</translation>
+    </message>
+    <message>
+        <source>Selected release: %1 · %2</source>
+        <translation>Ausgewähltes Release: %1 · %2</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>Momentaufnahme</translation>
+    </message>
+    <message>
+        <source>This engine does not support release timelines.</source>
+        <translation>Diese Engine unterstützt keine Release-Zeitachsen.</translation>
+    </message>
+    <message>
+        <source>Timeline</source>
+        <translation>Zeitachse</translation>
     </message>
 </context>
 </TS>

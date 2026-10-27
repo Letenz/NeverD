@@ -34,6 +34,7 @@
 #define NEVERD_SYMBOLIC_SYMEXPR_H
 
 #include "neverd/Common.h"
+#include "neverd/symbolic/Limits.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -43,6 +44,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Endian.h"
 
+#include <array>
 #include <compare>
 #include <cstdint>
 #include <map>
@@ -466,6 +468,10 @@ private:
   /// Intern a node, returning an existing ref when an identical node exists.
   SymRef intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
                 uint64_t Aux);
+  /// Append only after the complete identity lookup failed. A null head means
+  /// the hash has no table entry yet; existing heads retain collision chains.
+  SymRef appendInterned(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
+                        uint64_t Aux, uint64_t Hash, SymRef *Head);
   void recordVariableName(llvm::StringRef Name, uint32_t Id);
 
   /// Split \p R into a coefficient and a base so that `R == Coeff * Base`.
@@ -509,9 +515,21 @@ private:
   uint32_t LowWordProjectionInsertions = 0;
 
   /// Hash of a node's identity to the first node carrying that hash. Full
-  /// identity checks follow the context-owned collision links below. The split
-  /// halves keep every 64-bit hash outside DenseMap's reserved key pairs.
-  llvm::DenseMap<std::pair<uint64_t, uint32_t>, SymRef> InternTable;
+  /// identity checks follow the context-owned collision links below. Both
+  /// halves fit in 32 bits, keeping the key and head in three words.
+  using InternKey = std::pair<uint32_t, uint32_t>;
+  struct InternKeyInfo : llvm::DenseMapInfo<InternKey> {
+    static unsigned getHashValue(const InternKey &Key) {
+      // The pair stores one complete hash, not two independent identities.
+      // Mix it once for bucket selection while retaining the compact key.
+      return llvm::DenseMapInfo<uint64_t>::getHashValue(
+          (uint64_t(Key.first) << 32) | Key.second);
+    }
+  };
+  llvm::DenseMap<InternKey, SymRef, InternKeyInfo> InternTable;
+  /// The two reserved key pairs have ordinary context-owned collision heads,
+  /// so every complete 64-bit hash remains representable.
+  std::array<SymRef, 2> ReservedInternHeads;
   /// One next link per node avoids a separately managed vector in each bucket.
   /// Invalid refs terminate a chain; copying a context retains all links.
   std::vector<SymRef> InternNext;
@@ -637,11 +655,13 @@ private:
 
   const SymContext &Ctx;
   SymRef Root;
-  std::vector<Step> Steps;
+  llvm::SmallVector<Step, limits::symbolic::kSymEvalPlanInlineSteps> Steps;
   /// Concatenated operand slot lists, indexed by Step::FirstArg.
-  std::vector<uint32_t> ArgSlots;
-  std::vector<uint32_t> Vars;
-  std::vector<uint64_t> ScratchU64;
+  llvm::SmallVector<uint32_t, limits::symbolic::kSymEvalPlanInlineOperands>
+      ArgSlots;
+  llvm::SmallVector<uint32_t, limits::symbolic::kSymEvalPlanInlineSteps> Vars;
+  llvm::SmallVector<uint64_t, limits::symbolic::kSymEvalPlanInlineSteps>
+      ScratchU64;
   std::vector<llvm::APInt> ScratchAP;
   uint32_t RootSlot = 0;
   bool FitsU64 = true;

@@ -734,6 +734,7 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
       Result.Enumerations.push_back(Name);
   }
   Result.Types = Embedded.Types;
+  Result.HeaderTypes = Embedded.HeaderTypes;
   llvm::append_range(Result.DeclaredTypes, Embedded.DeclaredTypes);
   Result.HeaderTypedefs = Embedded.HeaderTypedefs;
   return Result;

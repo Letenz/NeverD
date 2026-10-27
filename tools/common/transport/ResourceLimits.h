@@ -27,6 +27,7 @@ inline constexpr std::size_t kJsonMax = 4096;
 
 // tools/common/transport/Json.cpp
 inline constexpr int kJsonParseJsonDepthLimit = 64;
+inline constexpr std::size_t kJsonRetainedParserBytes = 64 * 1024;
 
 } // namespace neverd::limits::transport
 

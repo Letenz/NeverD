@@ -419,7 +419,7 @@
       },
       {
         "owner": "binary-diff",
-        "reason": "Structural comparison and bounded scalar validation are qualified separately in docs/binary-diff.md and docs/testing.md; these declarations do not extend the focused semantic capability claims in this ledger.",
+        "reason": "Structural comparison, bounded scalar validation and offline snapshot associations are qualified separately in docs/binary-diff.md, docs/binary-diff-lineage.md and docs/testing.md; these declarations do not extend the focused semantic capability claims in this ledger or establish release ancestry or patch presence.",
         "names": [
           "neverd_comparison_cancel",
           "neverd_comparison_create",
@@ -452,7 +452,18 @@
           "neverd_comparison_status_json",
           "neverd_comparison_summary_json",
           "neverd_comparison_undo",
-          "neverd_comparison_validate_inputs"
+          "neverd_comparison_validate_inputs",
+          "neverd_lineage_cancel",
+          "neverd_lineage_create",
+          "neverd_lineage_destroy",
+          "neverd_lineage_edit_releases_json",
+          "neverd_lineage_export_json",
+          "neverd_lineage_last_error",
+          "neverd_lineage_load_json",
+          "neverd_lineage_query_json",
+          "neverd_lineage_report_json",
+          "neverd_lineage_status_json",
+          "neverd_lineage_summary_json"
         ]
       }
     ],
@@ -1595,7 +1606,7 @@
       },
       {
         "owner": "binary-diff",
-        "reason": "Structural comparison and bounded scalar validation are qualified separately in docs/binary-diff.md and docs/testing.md; these declarations do not extend the focused semantic capability claims in this ledger.",
+        "reason": "Structural comparison, bounded scalar validation and offline snapshot associations are qualified separately in docs/binary-diff.md, docs/binary-diff-lineage.md and docs/testing.md; these declarations do not extend the focused semantic capability claims in this ledger or establish release ancestry or patch presence.",
         "names": [
           "neverd diff --ambiguous-with",
           "neverd diff --changes-context",
@@ -1664,7 +1675,26 @@
           "neverd diff --validate-function",
           "neverd diff --validation-max-instructions",
           "neverd diff --validation-max-work",
-          "neverd diff --validation-side"
+          "neverd diff --validation-side",
+          "neverd lineage",
+          "neverd lineage --address",
+          "neverd lineage --export-report",
+          "neverd lineage --history",
+          "neverd lineage --index",
+          "neverd lineage --json",
+          "neverd lineage --limit",
+          "neverd lineage --list",
+          "neverd lineage --offset",
+          "neverd lineage --options",
+          "neverd lineage --query",
+          "neverd lineage --release",
+          "neverd lineage --release-edit",
+          "neverd lineage --reopen",
+          "neverd lineage --report",
+          "neverd lineage --save",
+          "neverd lineage --search",
+          "neverd lineage --snapshot",
+          "neverd lineage --source"
         ]
       }
     ],
@@ -1879,7 +1909,7 @@
       },
       {
         "owner": "binary-diff",
-        "reason": "Structural comparison and bounded scalar validation are qualified separately in docs/binary-diff.md and docs/testing.md; these declarations do not extend the focused semantic capability claims in this ledger.",
+        "reason": "Structural comparison, bounded scalar validation and offline snapshot associations are qualified separately in docs/binary-diff.md, docs/binary-diff-lineage.md and docs/testing.md; these declarations do not extend the focused semantic capability claims in this ledger or establish release ancestry or patch presence.",
         "names": [
           "neverd_comparison_dataflow_json",
           "neverd_comparison_export_json",
@@ -1903,7 +1933,14 @@
           "neverd_comparison_source_difference_json",
           "neverd_comparison_source_page_json",
           "neverd_comparison_status_json",
-          "neverd_comparison_summary_json"
+          "neverd_comparison_summary_json",
+          "neverd_lineage_edit_releases_json",
+          "neverd_lineage_export_json",
+          "neverd_lineage_load_json",
+          "neverd_lineage_query_json",
+          "neverd_lineage_report_json",
+          "neverd_lineage_status_json",
+          "neverd_lineage_summary_json"
         ]
       }
     ],
@@ -2003,6 +2040,23 @@
           "Session.xrefs_to",
           "SimplifyResult.saved",
           "SynthesisResult.saved"
+        ]
+      },
+      {
+        "owner": "binary-diff",
+        "reason": "Structural comparison, bounded scalar validation and offline snapshot associations are qualified separately in docs/binary-diff.md, docs/binary-diff-lineage.md and docs/testing.md; these declarations do not extend the focused semantic capability claims in this ledger or establish release ancestry or patch presence.",
+        "names": [
+          "Lineage.cancel",
+          "Lineage.close",
+          "Lineage.edit_releases",
+          "Lineage.export",
+          "Lineage.load",
+          "Lineage.load_reports",
+          "Lineage.pages",
+          "Lineage.query",
+          "Lineage.report",
+          "Lineage.status",
+          "Lineage.summary"
         ]
       }
     ]
@@ -2318,6 +2372,28 @@
             "windows"
           ],
           "runner": "gtest"
+        },
+        {
+          "runner": "python-unittest",
+          "target": "NeverDPythonSDKUnitTests",
+          "source": "pluginsdk/python/tests/test_byte_patch_integration.py",
+          "filter": "BytePatchIntegrationTests.test_snapshot_distinguishes_unloaded_and_empty_sessions",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "python-unittest",
+          "target": "NeverDPythonSDKUnitTests",
+          "source": "pluginsdk/python/tests/test_byte_patch_integration.py",
+          "filter": "BytePatchIntegrationTests.test_snapshots_own_rows_across_edits_reloads_and_session_destruction",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {
@@ -2328,12 +2404,14 @@
           "neverd_byte_patch_preview",
           "neverd_byte_patch_ranges_json",
           "neverd_byte_patch_revert",
+          "neverd_byte_patch_snapshot_free_v1",
           "neverd_byte_patch_source_preview_json",
           "neverd_byte_patch_source_target_json",
           "neverd_byte_patches_export",
           "neverd_byte_patches_json",
           "neverd_byte_patches_load",
           "neverd_byte_patches_save",
+          "neverd_byte_patches_snapshot_v1",
           "neverd_source_patch_context_json"
         ],
         "python": [

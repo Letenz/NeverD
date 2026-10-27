@@ -34,7 +34,10 @@ llvm::Value *MedLLVMEmitter::emitX86AmxState(const MedOp &Op,
   // Older pinned SDKs retain the exact owned assembly implementation below.
   const auto ID =
       llvm::Intrinsic::lookupIntrinsicID("llvm.x86." + x86AmxNativeSuffix(D));
-  if (llvm::Intrinsic::lookupIntrinsicID("llvm.x86.ldtilecfg.address") && ID) {
+  const bool NativeAddress =
+      !(D & X86AmxStackReference) || x86NativeStackMemoryIsAvailable();
+  if (NativeAddress &&
+      llvm::Intrinsic::lookupIntrinsicID("llvm.x86.ldtilecfg.address") && ID) {
     auto *Function = B.GetInsertBlock()->getParent();
     std::string Features =
         Function->getFnAttribute("target-features").getValueAsString().str();

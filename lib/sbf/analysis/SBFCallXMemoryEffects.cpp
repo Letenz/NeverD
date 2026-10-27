@@ -20,6 +20,8 @@
 #include <algorithm>
 #include <bit>
 #include <limits>
+#include <optional>
+#include <utility>
 
 namespace neverd::sbf::callx_detail {
 
@@ -48,6 +50,34 @@ RegisterValue substituteOrigin(const RegisterValue &Origin,
   Add.Semantics.WritesDestination = true;
   applyRegisterTransfer(Add, Value, Program.ExecutableImage);
   return Value[0];
+}
+
+ProvenValueSet
+substituteOrigins(const ProvenValueSet &Origins,
+                  const std::array<ProvenValueSet, kRegisterCount> &Entry,
+                  const SBFProgram &Program) {
+  std::optional<ProvenValueSet> Result;
+  for (const auto &Origin : Origins.values()) {
+    std::optional<ProvenValueSet> Substituted;
+    if (Origin.ValueKind == RegisterValue::Kind::Constant) {
+      Substituted = Origin;
+    } else if (Origin.ValueKind == RegisterValue::Kind::StackAddress) {
+      for (const auto &Value : Entry[Origin.Value - 1].values()) {
+        RegisterState Actual{};
+        Actual[Origin.Value - 1] = Value;
+        const auto Alternative = substituteOrigin(Origin, Actual, Program);
+        if (!Substituted)
+          Substituted = Alternative;
+        else
+          Substituted->join(Alternative);
+      }
+    }
+    if (!Result)
+      Result = Substituted.value_or(ProvenValueSet{});
+    else
+      Result->join(Substituted.value_or(ProvenValueSet{}));
+  }
+  return Result.value_or(ProvenValueSet{});
 }
 
 void MemoryEffects::addWrite(RegisterValue Address, uint64_t Size,
@@ -177,6 +207,152 @@ bool MemoryEffects::invalidate(
     }
   }
   return true;
+}
+
+void MemoryPostconditions::invalidate(const RegisterValue &Address,
+                                      uint64_t Size) {
+  const bool Absolute = Address.ValueKind == RegisterValue::Kind::Constant;
+  int64_t End = 0;
+  if ((Absolute &&
+       Size > std::numeric_limits<uint64_t>::max() - Address.Value) ||
+      (!Absolute &&
+       (Address.ValueKind != RegisterValue::Kind::StackAddress ||
+        Size > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ||
+        llvm::AddOverflow(Address.Offset, static_cast<int64_t>(Size), End)))) {
+    clear();
+    return;
+  }
+  std::erase_if(Values, [&](const auto &Cell) {
+    const auto &[Kind, Base, Offset] = Cell.first;
+    // Independent formal names prove no separation of the actual pointers.
+    if (Kind != Address.ValueKind)
+      return true;
+    if (Absolute)
+      return Base < Address.Value + Size &&
+             Address.Value < Base + sizeof(uint64_t);
+    return Base != Address.Value ||
+           (Offset < End &&
+            Address.Offset < Offset + static_cast<int64_t>(sizeof(uint64_t)));
+  });
+}
+
+void MemoryPostconditions::store(const RegisterValue &Address, uint64_t Size,
+                                 const ProvenValueSet &Value) {
+  invalidate(Address, Size);
+  int64_t End;
+  if (Size == sizeof(uint64_t) &&
+      ((Address.ValueKind == RegisterValue::Kind::StackAddress &&
+        !llvm::AddOverflow(Address.Offset, static_cast<int64_t>(Size), End)) ||
+       (Address.ValueKind == RegisterValue::Kind::Constant &&
+        isScratchRange(Address.Value, Size))) &&
+      !Value.unknown() &&
+      std::all_of(Value.values().begin(), Value.values().end(),
+                  [](const auto &Alternative) {
+                    return Alternative.ValueKind ==
+                               RegisterValue::Kind::Constant ||
+                           Alternative.ValueKind ==
+                               RegisterValue::Kind::StackAddress;
+                  }))
+    Values[{Address.ValueKind, Address.Value, Address.Offset}] = Value;
+}
+
+ProvenValueSet MemoryPostconditions::read(const RegisterValue &Address) const {
+  const auto Found =
+      Values.find({Address.ValueKind, Address.Value, Address.Offset});
+  return Found == Values.end() ? ProvenValueSet{} : Found->second;
+}
+
+void MemoryPostconditions::meet(const MemoryPostconditions &Other) {
+  for (auto It = Values.begin(); It != Values.end();) {
+    const auto Found = Other.Values.find(It->first);
+    if (Found != Other.Values.end())
+      It->second.join(Found->second);
+    if (Found == Other.Values.end() || It->second.unknown())
+      It = Values.erase(It);
+    else
+      ++It;
+  }
+}
+
+void MemoryPostconditions::invalidate(const MemoryEffects &Effects,
+                                      const RegisterState &Entry,
+                                      const SBFProgram &Program) {
+  if (Effects.Unknown || Effects.WritesFrames) {
+    clear();
+    return;
+  }
+  for (const auto &Write : Effects.Writes)
+    invalidate(substituteOrigin(Write.Address, Entry, Program), Write.Size);
+}
+
+void MemoryPostconditions::include(
+    const MemoryPostconditions &Callee,
+    const std::array<ProvenValueSet, kRegisterCount> &Entry,
+    const SBFProgram &Program) {
+  for (const auto &[Cell, Value] : Callee.Values) {
+    const auto &[Kind, Base, Offset] = Cell;
+    const RegisterValue Address{Kind, Base, Offset};
+    store(substituteOrigins(Address, Entry, Program).singleton(),
+          sizeof(uint64_t), substituteOrigins(Value, Entry, Program));
+  }
+}
+
+size_t MemoryPostconditions::apply(
+    ScratchState &Scratch,
+    const std::array<ProvenValueSet, kRegisterCount> &Entry,
+    const SBFProgram &Program) const {
+  MedInstruction Store;
+  Store.Op = Operation::Store;
+  Store.Form = OperandForm::StoreReg;
+  Store.Dst = 0;
+  Store.Src = 1;
+  Store.Width = Store.Semantics.MemoryWidth = kDoubleWordBitWidth;
+  size_t Applied = 0;
+  for (const auto &[Cell, Value] : Values) {
+    const auto &[Kind, Base, Offset] = Cell;
+    const auto Address =
+        substituteOrigins(RegisterValue{Kind, Base, Offset}, Entry, Program)
+            .singleton();
+    const auto Stored = substituteOrigins(Value, Entry, Program);
+    if (Address.ValueKind == RegisterValue::Kind::Unknown || Stored.unknown())
+      continue;
+    std::optional<ScratchState> Output;
+    for (const auto &Alternative : Stored.values()) {
+      MachineState State;
+      State.Scratch = Scratch;
+      State.Registers[Store.Dst] = Address;
+      State.Registers[Store.Src] = Alternative;
+      // Reuse the store owner for scratch-range checks, coordinate aliasing,
+      // pointer tags and byte serialization after substituting real inputs.
+      applyTransfer(Store, State, Program.ExecutableImage,
+                    ScratchLoadPolicy::ProvenValues);
+      if (!Output)
+        Output = std::move(State.Scratch);
+      else {
+        Output->Memory.meet(State.Scratch.Memory);
+        Output->Values.joinValues(State.Scratch.Values);
+      }
+    }
+    Scratch = std::move(*Output);
+    const auto Number = effectiveAddress(Address, 0);
+    if (Number &&
+        !Scratch.Values
+             .readValues(*Number,
+                         Address.ValueKind == RegisterValue::Kind::StackAddress
+                             ? MemoryCoordinate::FrameRelative
+                             : MemoryCoordinate::Absolute)
+             .unknown())
+      ++Applied;
+  }
+  return Applied;
+}
+
+uint64_t MemoryPostconditions::retainedByteEstimate() const {
+  uint64_t Allocated = 0;
+  for (const auto &[Cell, Value] : Values)
+    Allocated += Value.allocatedBytes();
+  return Allocated + Values.size() * (sizeof(decltype(Values)::value_type) +
+                                      4 * sizeof(void *));
 }
 
 } // namespace neverd::sbf::callx_detail

@@ -38,6 +38,7 @@
 #include <bit>
 #include <climits>
 #include <deque>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -1634,7 +1635,7 @@ class Checker {
         fail(Status::BudgetExceeded, "original operation budget exhausted");
       NativeInputOperations += Insn.Ops.size();
       for (const auto &Op : Insn.Ops)
-        if (Op.NumInputs > 6)
+        if (Op.NumInputs > std::size(Op.Inputs))
           fail(Status::Invalid, "operand capacity exceeded");
       for (const auto &Op : Insn.Ops) {
         checkScratch(Op.Output);
@@ -2532,7 +2533,7 @@ class Checker {
           if (isLowRawEnvironmentRequirement(Op))
             fail(Status::Unsupported,
                  "raw environment requirement has no static proof contract");
-          if (Op.NumInputs > 6)
+          if (Op.NumInputs > std::size(Op.Inputs))
             fail(Status::Invalid, "operand capacity exceeded");
         }
         for (const auto &Op : B.Ops) {
@@ -2754,8 +2755,9 @@ public:
           checkTemporary(V, Defined);
         };
         for (const auto &Op : C.Expressions) {
-          if (Op.NumInputs > 6 || !Op.Output.isTemp() || !scalar(Op.Output) ||
-              Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE ||
+          if (Op.NumInputs > std::size(Op.Inputs) || !Op.Output.isTemp() ||
+              !scalar(Op.Output) || Op.Opcode == NdOp::LOAD ||
+              Op.Opcode == NdOp::STORE ||
               Op.MemoryOrdering != NdMemoryOrdering::None ||
               Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
               !supportedShape(Op))
@@ -3327,7 +3329,7 @@ public:
           };
           for (const auto &B : Refinement->Candidate.Blocks)
             for (const auto &Op : B.Ops) {
-              if (Op.NumInputs > 6)
+              if (Op.NumInputs > std::size(Op.Inputs))
                 fail(Status::Invalid, "candidate operand capacity exceeded");
               if (Op.Output.Size)
                 Seed(Op.Output);
@@ -3713,7 +3715,7 @@ bool prepareCandidateRecords(
     }
     Operations += B.Ops.size();
     for (const auto &Op : B.Ops)
-      if (Op.NumInputs > 6) {
+      if (Op.NumInputs > std::size(Op.Inputs)) {
         Session.Statistics.Diagnostic = "candidate operand capacity exceeded";
         return false;
       }

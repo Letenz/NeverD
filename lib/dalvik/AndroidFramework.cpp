@@ -370,6 +370,9 @@ void Program::addAndroidFramework() {
          "android/content/pm/PackageItemInfo"},
         {"android/content/pm/PackageInfo", "java/lang/Object"},
         {"android/os/Parcelable", "java/lang/Object"},
+        {"android/os/ServiceManager", "java/lang/Object"},
+        {"android/os/SystemClock", "java/lang/Object"},
+        {"android/os/SystemProperties", "java/lang/Object"},
         {"android/os/Handler", "java/lang/Object"},
         {"android/os/Looper", "java/lang/Object"},
         {"android/os/MessageQueue", "java/lang/Object"},
@@ -388,6 +391,9 @@ void Program::addAndroidFramework() {
         {"java/io/Serializable", "java/lang/Object"},
         {"java/lang/Cloneable", "java/lang/Object"},
         {"java/util/Locale", "java/lang/Object"},
+        {"java/util/Map", "java/lang/Object"},
+        {"java/util/AbstractMap", "java/lang/Object"},
+        {"java/util/HashMap", "java/util/AbstractMap"},
         {"java/lang/Comparable", "java/lang/Object"},
         {"java/lang/CharSequence", "java/lang/Object"},
         {"java/lang/Appendable", "java/lang/Object"},
@@ -404,7 +410,8 @@ void Program::addAndroidFramework() {
     type.name = "L" + std::string(name) + ";";
     type.superclass = "L" + std::string(base) + ";";
     type.access = {"public"};
-    if (std::string_view(name) == "java/net/URLConnection" ||
+    if (std::string_view(name) == "java/util/AbstractMap" ||
+        std::string_view(name) == "java/net/URLConnection" ||
         std::string_view(name) == "android/content/Context" ||
         std::string_view(name) == "android/content/ContentResolver" ||
         std::string_view(name) == "android/content/pm/PackageManager" ||
@@ -417,6 +424,8 @@ void Program::addAndroidFramework() {
         std::string_view(name) == "java/lang/StringBuilder" ||
         std::string_view(name) == "java/util/Locale" ||
         std::string_view(name) == "java/net/URL" ||
+        std::string_view(name) == "android/os/ServiceManager" ||
+        std::string_view(name) == "android/os/SystemClock" ||
         std::string_view(name) == "android/os/Looper" ||
         std::string_view(name) == "android/os/MessageQueue" ||
         std::string_view(name) == "android/os/Message" ||
@@ -429,7 +438,8 @@ void Program::addAndroidFramework() {
             "android/app/ContextImpl$ApplicationContentResolver" ||
         std::string_view(name) == "java/lang/BootClassLoader")
       type.access.erase("public");
-    if (std::string_view(name) == "android/content/ComponentCallbacks" ||
+    if (std::string_view(name) == "java/util/Map" ||
+        std::string_view(name) == "android/content/ComponentCallbacks" ||
         std::string_view(name) == "android/os/Parcelable" ||
         std::string_view(name) == "android/provider/BaseColumns" ||
         std::string_view(name) == "android/content/ComponentCallbacks2" ||
@@ -452,6 +462,11 @@ void Program::addAndroidFramework() {
       type.interfaces = {"Ljava/io/Serializable;", "Ljava/lang/Comparable;"};
     if (std::string_view(name) == "java/net/URL")
       type.interfaces = {"Ljava/io/Serializable;"};
+    if (std::string_view(name) == "java/util/AbstractMap")
+      type.interfaces = {"Ljava/util/Map;"};
+    if (std::string_view(name) == "java/util/HashMap")
+      type.interfaces = {"Ljava/util/Map;", "Ljava/lang/Cloneable;",
+                         "Ljava/io/Serializable;"};
     if (std::string_view(name) == "java/util/Locale")
       type.interfaces = {"Ljava/lang/Cloneable;", "Ljava/io/Serializable;"};
     if (std::string_view(name) == "java/lang/AbstractStringBuilder")
@@ -566,6 +581,8 @@ void Program::addAndroidFramework() {
       }
     }
     auto [entry, inserted] = classes.emplace(type.name, std::move(type));
+    if (inserted && std::string_view(name) == "android/os/ServiceManager")
+      unmodeled_initializers.insert(&entry->second);
     if (inserted &&
         (std::string_view(name) == "android/app/ActivityThread" ||
          std::string_view(name) == "android/content/pm/PackageItemInfo" ||
@@ -1074,15 +1091,9 @@ ExecutionResult AndroidFramework::post(Heap &heap, const Program &program,
     message->Fields.at(member("sendingUid", "I")) = UINT32_MAX;
     message->Fields.at(member("callback", "Ljava/lang/Runnable;")) = callback;
     tick();
-    if (!services.uptime_milliseconds)
-      fail(ExecutionStop::Unsupported,
-           "Android uptime service is not supplied");
-    auto time = services.uptime_milliseconds();
+    auto time = readClock(UptimeMillis);
     if (time.stop != ExecutionStop::Returned)
       return time;
-    if (time.value > INT64_MAX)
-      fail(ExecutionStop::Unsupported,
-           "Android uptime is outside the modeled range");
     auto handler = heap.get(receiver);
     if (auto reason = program.unsupportedClass(objectDescriptor(*handler)))
       fail(ExecutionStop::Unsupported, reason->c_str());
@@ -1203,15 +1214,9 @@ ExecutionResult AndroidFramework::nextMessage(Heap &heap,
   };
   try {
     tick();
-    if (!services.uptime_milliseconds)
-      fail(ExecutionStop::Unsupported,
-           "Android uptime service is not supplied");
-    auto time = services.uptime_milliseconds();
+    auto time = readClock(UptimeMillis);
     if (time.stop != ExecutionStop::Returned)
       return time;
-    if (time.value > INT64_MAX)
-      fail(ExecutionStop::Unsupported,
-           "Android uptime is outside the modeled range");
     const auto *next = field("next", "Landroid/os/Message;");
     const auto *when = field("when", "J");
     const auto *target = field("target", "Landroid/os/Handler;");
@@ -1303,11 +1308,58 @@ AndroidFramework::definingLoader(std::string_view type,
   return std::nullopt;
 }
 
+ExecutionResult AndroidFramework::readClock(LibraryOperation operation) {
+  const bool uptime = operation == UptimeMillis;
+  const auto &service = uptime ? services.uptime_milliseconds
+                               : services.elapsed_realtime_nanoseconds;
+  if (!service)
+    return {ExecutionStop::Unsupported,
+            0,
+            {},
+            uptime ? "Android uptime service is not supplied"
+                   : "Android elapsed realtime service is not supplied"};
+  auto result = service();
+  if (result.stop != ExecutionStop::Returned)
+    return result;
+  if (result.value > INT64_MAX)
+    return {ExecutionStop::Unsupported,
+            0,
+            {},
+            uptime ? "Android uptime is outside the modeled range"
+                   : "Android elapsed realtime is outside the modeled range"};
+  if (operation == ElapsedRealtime)
+    result.value /= 1000000;
+  return result;
+}
+
 ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
                                           const LibraryMethod &method,
                                           uint64_t receiver,
                                           std::span<const uint64_t> arguments,
                                           const AdmitInstruction &admit) {
+  if (method.Op == UptimeMillis || method.Op == ElapsedRealtime ||
+      method.Op == ElapsedRealtimeNanos)
+    return readClock(method.Op);
+  if (method.Op == PropertyInt) {
+    const auto key = heap.get(arguments[0]);
+    if (!key)
+      return {ExecutionStop::Thrown, 0, "java/lang/NullPointerException",
+              "null Android system property key"};
+    if (!services.property_integer)
+      return {ExecutionStop::Unsupported,
+              0,
+              {},
+              "Android property integer service is not supplied"};
+    for (size_t i = 0; i < key->Bytes.size(); i += 2) {
+      const auto stop = admit();
+      if (stop != ExecutionStop::Returned)
+        return {stop, 0, {}, "Android property key work budget exhausted"};
+    }
+    const auto bytes = artStringUTF8(key->Bytes);
+    const std::string name(bytes.begin(), bytes.end());
+    return services.property_integer(
+        name, std::bit_cast<int32_t>(uint32_t(arguments[1])));
+  }
   if (method.Op == ThreadInstrumentation)
     return instrumentationValue(heap, receiver, {}, admit);
   if (method.Op == HandlerPost)

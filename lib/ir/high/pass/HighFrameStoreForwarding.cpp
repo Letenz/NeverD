@@ -1511,8 +1511,16 @@ bool forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture,
           *Root = Region.Body[Count].Val;
           return;
         }
+        // A no-op must retain the call's instruction navigation identity.
+        if (std::equal(Inputs.begin(), Inputs.end(),
+                       Region.Body.begin() + Count,
+                       [](const ExprPtr *Input, const HighStmt &Read) {
+                         return *Input == Read.Val;
+                       }))
+          return;
         // Expressions can be shared by source-map observations or other
-        // statements. Rebuild the call instead of mutating its shared node.
+        // statements. Rebuild only changed calls instead of mutating their
+        // shared node; unchanged calls retain their observed identity.
         auto Rebuilt = std::make_shared<HighExpr>(**Root);
         size_t I = Count;
         for (auto &Operand : Rebuilt->Operands)

@@ -30,6 +30,7 @@ set(NEVERD_SDK_SOURCES
     capi/ComparisonScalarValidation.cpp
     capi/ComparisonSource.cpp
     capi/NeverDCAPIDiff.cpp
+    capi/NeverDCAPILineage.cpp
     capi/ProgramMain.cpp
     capi/ImageStrings.cpp
     capi/LLVMFunctionView.cpp

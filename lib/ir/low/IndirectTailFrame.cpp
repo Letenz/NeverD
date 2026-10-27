@@ -227,14 +227,14 @@ class TailFrameGuard {
                 std::set<va_t> *Candidates = nullptr) {
     va_t Instruction = InvalidVA;
     for (const LowOp &Op : Block.Ops) {
-      if (!charge(1) || Op.NumInputs > 6)
+      if (!charge(1) || Op.NumInputs > std::size(Op.Inputs))
         return false;
       if (Op.Addr != Instruction) {
         if (!forgetTemps(State))
           return false;
         Instruction = Op.Addr;
       }
-      FrameWord Inputs[6];
+      FrameWord Inputs[kLowOperationInputs];
       FrameWord Result;
       for (unsigned I = 0; I < Op.NumInputs; ++I) {
         if (!read(State, Op.Inputs[I], Inputs[I]))

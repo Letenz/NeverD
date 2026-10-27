@@ -23,6 +23,7 @@
 #include "neverd/symbolic/SymExpr.h"
 
 #include "llvm/ADT/Twine.h"
+#include "llvm/Support/Compiler.h"
 
 #include <algorithm>
 #include <cassert>
@@ -136,10 +137,18 @@ SymRef SymContext::intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
   for (SymRef R : Ops)
     H = mixHash(H, R.index());
 
-  // Split the full hash across both fields. A constant second field biases
-  // DenseMap's pair mixer; the upper half also cannot equal a 64-bit sentinel.
-  auto &Head = InternTable[{H >> 32, uint32_t(H)}];
-  for (auto Cand = Head; Cand; Cand = InternNext[Cand.index()]) {
+  // Keep both halves of the hash without padding the upper half to 64 bits.
+  // Reserved keys still use the same complete identity checks and owned links.
+  const InternKey Key{uint32_t(H >> 32), uint32_t(H)};
+  SymRef *Head = nullptr;
+  if (Key == llvm::DenseMapInfo<InternKey>::getEmptyKey())
+    Head = &ReservedInternHeads[0];
+  else if (Key == llvm::DenseMapInfo<InternKey>::getTombstoneKey())
+    Head = &ReservedInternHeads[1];
+  else if (auto It = InternTable.find(Key); It != InternTable.end())
+    Head = &It->second;
+  for (auto Cand = Head ? *Head : SymRef(); Cand;
+       Cand = InternNext[Cand.index()]) {
     const SymNode &N = Nodes[Cand.index()];
     if (N.Op != Op || N.Width != Width || N.Aux != Aux ||
         N.NumOperands != Ops.size())
@@ -155,6 +164,18 @@ SymRef SymContext::intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
       return Cand;
   }
 
+  return appendInterned(Op, Width, Ops, Aux, H, Head);
+}
+
+// Most builder calls reuse existing nodes. Keep vector growth and table
+// insertion out of the lookup's stack frame and register-save requirements.
+LLVM_ATTRIBUTE_NOINLINE
+SymRef SymContext::appendInterned(SymOp Op, uint32_t Width,
+                                  llvm::ArrayRef<SymRef> Ops, uint64_t Aux,
+                                  uint64_t Hash, SymRef *Head) {
+  if (!Head)
+    Head = &InternTable[InternKey{uint32_t(Hash >> 32), uint32_t(Hash)}];
+
   SymNode N;
   N.Op = Op;
   N.Width = Width;
@@ -165,9 +186,9 @@ SymRef SymContext::intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
 
   auto Index = static_cast<uint32_t>(Nodes.size());
   Nodes.push_back(N);
-  InternNext.push_back(Head);
-  Head = SymRef(Index);
-  return Head;
+  InternNext.push_back(*Head);
+  *Head = SymRef(Index);
+  return *Head;
 }
 
 llvm::APInt SymContext::maskToWidth(const llvm::APInt &V,

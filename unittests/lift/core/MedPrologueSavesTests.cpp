@@ -1237,6 +1237,53 @@ TEST(SourceCallReturnReads, ALaterCallCanReachTheNextLoopIteration) {
   EXPECT_FALSE(validateSourceCallReturnReads(Func, callSlotImage(), Error));
 }
 
+TEST(SourceCallReturnReads, BalancedLoopCallsSeparateOnlyProvenLocalBytes) {
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (bool Drifts : {false, true})
+      for (int Slot : {8, -8, -24}) {
+        SCOPED_TRACE(testing::Message() << static_cast<int>(Format) << ":"
+                                        << Drifts << ":" << Slot);
+        auto Func = observedCallSlot();
+        auto Image = callSlotImage();
+        Image.Format = Format;
+        Image.Segments[0].Data[16] = 0xe8;
+        Image.Segments[0].Data[24] = 0xe8;
+        auto &Entry = Func.Blocks[0];
+        auto Load = Entry.Ops[5];
+        Load.Addr = 0x1008;
+        auto Call = Entry.Ops[4];
+        Call.Addr = 0x1010;
+        auto RestoredCall = Call;
+        RestoredCall.Addr = 0x1018;
+        RestoredCall.Output = temp(23);
+        Entry.Ops.resize(4);
+        Entry.Ops[2] =
+            op(NdOp::INT_ADD, temp(20), {sp(1), MedVar::makeConst(Slot, 8)});
+        Entry.Succs = {1};
+        MedBlock Loop;
+        Loop.Id = 1;
+        Loop.StartAddr = 0x1008;
+        Loop.Preds = {0, 1};
+        Loop.Succs = {1};
+        PhiNode Stack;
+        Stack.Output = sp(2);
+        Stack.Args = {{0, sp(1)}, {1, sp(4)}};
+        Loop.Phis.push_back(std::move(Stack));
+        Loop.Ops = {Load,
+                    op(NdOp::INT_SUB, sp(3), {sp(2), MedVar::makeConst(16, 8)}),
+                    Call,
+                    op(NdOp::INT_ADD, sp(4),
+                       {sp(3), MedVar::makeConst(Drifts ? 24 : 16, 8)}),
+                    RestoredCall};
+        Func.Blocks.push_back(std::move(Loop));
+        std::string Error;
+        EXPECT_EQ(validateSourceCallReturnReads(Func, Image, Error),
+                  !Drifts && Slot == 8)
+            << Error;
+      }
+}
+
 TEST(SourceCallReturnReads,
      MissingStackAndMalformedGraphsDoNotGrantSeparation) {
   auto Func = observedCallSlot();

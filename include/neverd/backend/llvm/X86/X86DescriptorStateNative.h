@@ -10,6 +10,7 @@
 #ifndef NEVERD_BACKEND_LLVM_X86_X86DESCRIPTORSTATENATIVE_H
 #define NEVERD_BACKEND_LLVM_X86_X86DESCRIPTORSTATENATIVE_H
 
+#include "neverd/backend/llvm/X86/X86MemoryAddressAsm.h"
 #include "neverd/ir/intrinsics/X86/X86DescriptorState.h"
 
 #include <optional>
@@ -137,7 +138,8 @@ inline std::optional<X86DescriptorStateNative> x86DescriptorStateNative(
   if (P.ResultBytes)
     P.Constraints = P.Verify ? "=q," : "=r,";
   if (P.OperandBytes) {
-    P.InputConstraint = Address ? "{bx}" : "r";
+    P.InputConstraint =
+        Address ? x86MemoryAddressAsm(Address->Bits).LLVMConstraint : "r";
     P.Constraints += P.InputConstraint + ",";
   }
   P.Constraints += P.Verify ? "~{flags},~{memory}" : "~{memory}";

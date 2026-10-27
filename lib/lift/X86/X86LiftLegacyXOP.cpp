@@ -424,14 +424,16 @@ bool liftLegacyXOP(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       break;
     }
 
-    if (!x86NativeDsAddressIsValid(L.targetArch(), X86, Memory))
+    if (!x86NativeSibAddressIsValid(L.targetArch(), X86, Memory))
       return false;
     const auto Kind = InsnId == X86_INS_VP4DPWSSD ? X86FourSourceKind::DPWSSD
                                                   : X86FourSourceKind::DPWSSDS;
-    const X86FourSourceControl C{Kind, ZeroMask};
+    const bool Stack = x86NativeAddressIsStack(L.targetArch(), X86, Memory);
+    const X86FourSourceControl C{Kind, ZeroMask, Stack};
     const auto Sources = x86FourSourceSnapshot(S, SourceBase, C);
-    const auto Control =
-        static_cast<unsigned>(Kind) | (ZeroMask ? X86FourSourceZero : 0);
+    const auto Control = static_cast<unsigned>(Kind) |
+                         (ZeroMask ? X86FourSourceZero : 0) |
+                         (Stack ? X86FourSourceStackReference : 0);
     const NdVar OldDestination = L.operandRead(S, Destination);
     if (!S.emitMemoryIntrinsic(
             Intrinsic::X86FourSourceMemory, Memory,

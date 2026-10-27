@@ -527,13 +527,137 @@ bool NdOpEmulator::stepImpl(const LowOp &Op, llvm::ArrayRef<LowOp> Following) {
       if (!knownOperandBytes(Base, 0, Base.Size))
         return false;
       const uint64_t OriginalBase = readOperand(Base);
-      const auto Updated =
-          Instruction.adjustment().controlIndependentAddress(OriginalBase, 0);
-      if (!Updated || !Instruction.controlIndependentSpan(OriginalBase, 0))
+      uint64_t Index = 0;
+      if (Instruction.isStructure() && Instruction.hasRegisterIndex()) {
+        const auto &Input = Op.Inputs[kStructureIndexOperand + 1];
+        if (!knownOperandBytes(Input, 0, Input.Size))
+          return false;
+        Index = readOperand(Input);
+      }
+      const auto Updated = Instruction.completedBase(OriginalBase, Index);
+      const auto Access = Instruction.accessAddress(OriginalBase);
+      if (!Updated || !Access ||
+          !Instruction.controlIndependentSpan(OriginalBase, Index))
         return false;
-      const uint64_t Address = Instruction.preIndex() ? *Updated : OriginalBase;
+      const uint64_t Address = *Access;
+      if (Instruction.isStructure()) {
+        const auto Structure = Instruction.structure();
+        std::vector<std::vector<uint8_t>> Values(
+            Structure.vectors(),
+            std::vector<uint8_t>(kAddressMemoryVectorBytes, 0));
+        if (!Structure.isLoad() || Structure.laneLoad())
+          for (unsigned I = 0; I != Values.size(); ++I) {
+            const auto &Input = Op.Inputs[kStructureDataOperand + I + 1];
+            if (!knownOperandBytes(Input, 0, Input.Size))
+              return false;
+            Values[I] = readOperandBytes(Input);
+          }
+        const auto Outputs = Structure.isLoad()
+                                 ? lowAArch64WritebackOutputs(Op, Following)
+                                 : std::optional<std::vector<NdVar>>{};
+        if (Structure.isLoad() && !Outputs)
+          return false;
+        std::vector<uint8_t> Bytes(Structure.totalAccessBytes());
+        if (Structure.isLoad()) {
+          const auto Loaded = loadMemoryBytes(Address, Bytes.size());
+          if (!Loaded)
+            return false;
+          Bytes = *Loaded;
+        } else {
+          for (unsigned I = 0; I != Bytes.size(); ++I) {
+            const auto *Mapped = Img.getSegmentFor(Address + I);
+            if (!Mapped || !Mapped->isWritable() || Address + I < Mapped->VA ||
+                Address + I - Mapped->VA >= Mapped->Size)
+              return false;
+          }
+        }
+        for (unsigned I = 0; I != Bytes.size() / Structure.ElementBytes; ++I) {
+          auto Data = Values[Structure.memoryVector(I)].begin() +
+                      Structure.memoryVectorByte(I);
+          auto Memory = Bytes.begin() + I * Structure.ElementBytes;
+          if (Structure.isLoad())
+            std::copy_n(Memory, Structure.ElementBytes, Data);
+          else
+            std::copy_n(Data, Structure.ElementBytes, Memory);
+        }
+        std::array<uint8_t, kAddressMemoryPointerBytes> CompletedBase;
+        writeLE<uint64_t>(CompletedBase.data(), *Updated);
+        if (!Structure.isLoad()) {
+          if (!storeMemoryBytes(Address, Bytes))
+            return false;
+          writeOutputBytes(Op.Output, CompletedBase);
+          return true;
+        }
+        if (Structure.Replicate)
+          for (auto &Value : Values)
+            for (unsigned I = Structure.ElementBytes;
+                 I < Structure.vectorBytes(); I += Structure.ElementBytes)
+              std::copy_n(Value.begin(), Structure.ElementBytes,
+                          Value.begin() + I);
+        for (unsigned I = 0; I != Values.size(); ++I)
+          writeOutputBytes((*Outputs)[I], Values[I]);
+        writeOutputBytes((*Outputs)[Values.size()], CompletedBase);
+        if (CollectLoads &&
+            static_cast<int>(LoadLog.size()) < limits::kMaxLoadRecords)
+          LoadLog.push_back({Address, static_cast<uint16_t>(Bytes.size())});
+        return true;
+      }
+      if (Instruction.isPair()) {
+        if (Instruction.isLoad()) {
+          const auto Outputs = lowAArch64WritebackOutputs(Op, Following);
+          if (!Outputs)
+            return false;
+          const auto Bytes =
+              loadMemoryBytes(Address, Instruction.totalAccessBytes());
+          if (!Bytes)
+            return false;
+          for (unsigned I = 0; I != kPairValues; ++I) {
+            const unsigned Begin = I * Instruction.accessBytes();
+            const auto First = Bytes->begin() + Begin;
+            const auto Last = First + Instruction.accessBytes();
+            std::vector<uint8_t> Value(
+                (*Outputs)[I].Size,
+                Instruction.operation().Signed &&
+                        (*(Last - 1) & kWritebackByteSignBit)
+                    ? kWritebackByteMask
+                    : 0);
+            std::copy(First, Last, Value.begin());
+            writeOutputBytes((*Outputs)[I], Value);
+          }
+          std::array<uint8_t, kAddressMemoryPointerBytes> CompletedBase;
+          writeLE<uint64_t>(CompletedBase.data(), *Updated);
+          writeOutputBytes((*Outputs)[kPairBaseIndex], CompletedBase);
+          if (CollectLoads &&
+              static_cast<int>(LoadLog.size()) < limits::kMaxLoadRecords)
+            LoadLog.push_back({Address, static_cast<uint16_t>(
+                                            Instruction.totalAccessBytes())});
+          return true;
+        }
+        const auto &First = Op.Inputs[kWritebackDataOperand + 1];
+        const auto &Second = Op.Inputs[kPairSecondDataOperand + 1];
+        if (!knownOperandBytes(First, 0, First.Size) ||
+            !knownOperandBytes(Second, 0, Second.Size))
+          return false;
+        for (unsigned I = 0; I != Instruction.totalAccessBytes(); ++I) {
+          const auto *Mapped = Img.getSegmentFor(Address + I);
+          if (!Mapped || !Mapped->isWritable() || Address + I < Mapped->VA ||
+              Address + I - Mapped->VA >= Mapped->Size)
+            return false;
+        }
+        auto Bytes = readOperandBytes(First);
+        Bytes.resize(Instruction.accessBytes());
+        const auto Next = readOperandBytes(Second);
+        Bytes.insert(Bytes.end(), Next.begin(),
+                     Next.begin() + Instruction.accessBytes());
+        if (!storeMemoryBytes(Address, Bytes))
+          return false;
+        std::array<uint8_t, kAddressMemoryPointerBytes> CompletedBase;
+        writeLE<uint64_t>(CompletedBase.data(), *Updated);
+        writeOutputBytes(Op.Output, CompletedBase);
+        return true;
+      }
       if (Instruction.isVector() && Instruction.isLoad()) {
-        const auto Outputs = lowAArch64VectorWritebackOutputs(Op, Following);
+        const auto Outputs = lowAArch64WritebackOutputs(Op, Following);
         if (!Outputs)
           return false;
         const auto Bytes = loadMemoryBytes(Address, Instruction.accessBytes());
@@ -601,7 +725,11 @@ bool NdOpEmulator::stepImpl(const LowOp &Op, llvm::ArrayRef<LowOp> Following) {
           Op.Inputs[kAddressMemoryWordOperand + 1].Offset);
       const auto Address = Instruction->controlIndependentAddress(
           readOperand(Base), readOperand(Index));
-      if (!Address)
+      // Without the original alignment controls, an ordered unaligned access
+      // may fault. Do not publish bytes or a result from the finite snapshot.
+      if (!Address ||
+          (isAArch64OrderedUnscaledMemoryEncoding(Instruction->Word) &&
+           *Address % Instruction->accessBytes()))
         return false;
       if (!Instruction->isLoad()) {
         const auto &Data = Op.Inputs[kAddressMemoryDataOperand + 1];

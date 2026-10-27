@@ -29,11 +29,30 @@
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
 namespace neverd::sigs {
+
+std::optional<uint64_t> localDataReferenceBase(const BinaryImage &Img,
+                                               uint64_t Target,
+                                               const LocalDataAnchor &Anchor) {
+  const int64_t Delta = Anchor.Delta;
+  if ((Delta > 0 && Target < uint64_t(Delta)) ||
+      (Delta < 0 && Target > InvalidVA - uint64_t(-Delta)))
+    return std::nullopt;
+  const uint64_t Base = Target - Delta;
+  auto SameRegion = [&](const auto &Regions) {
+    return llvm::any_of(Regions, [&](const auto &Region) {
+      return Base >= Region.VA && Base - Region.VA < Region.Size &&
+             Target >= Region.VA && Target - Region.VA < Region.Size;
+    });
+  };
+  if (!SameRegion(Img.Segments) ||
+      (!Img.Sections.empty() && !SameRegion(Img.Sections)))
+    return std::nullopt;
+  return Base;
+}
 
 std::optional<uint64_t> dataReferenceTarget(const BinaryImage &Img,
                                             uint64_t Start, uint32_t Offset,
@@ -94,16 +113,22 @@ std::optional<uint64_t> dataReferenceTarget(const BinaryImage &Img,
   return Target;
 }
 
-void SignatureDB::applyDataContext(const BinaryImage &Img,
-                                   llvm::ArrayRef<uint64_t> Entries,
-                                   llvm::ArrayRef<SignatureMatcher::Hit> Hits) {
-  if (Hits.empty() || Matches.empty() || !Img.isCOFF() ||
-      Img.Arch != Arch::X64 || Img.IsRelocatable)
+void SignatureDB::applyDataContext(
+    const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
+    llvm::ArrayRef<SignatureMatcher::Hit> Hits,
+    llvm::ArrayRef<DeferredCaller> DeferredCallers) {
+  if ((Hits.empty() && DeferredCallers.empty()) || Matches.empty() ||
+      !Img.isCOFF() || Img.Arch != Arch::X64 || Img.IsRelocatable)
     return;
   // Only pending addresses and source-anchor names need settlement. Retain
   // every competing claim at those addresses without sorting or allocating
   // names for unrelated functions in a large image.
-  std::unordered_set<std::string_view> AnchorNames;
+  // Most image names are unrelated long template spellings. Compare lengths
+  // before text so a small anchor set need not hash every byte of every name.
+  auto ByLength = [](std::string_view A, std::string_view B) {
+    return A.size() != B.size() ? A.size() < B.size() : A < B;
+  };
+  std::set<std::string_view, decltype(ByLength)> AnchorNames(ByLength);
   for (size_t Module : index().dataAnchorModules())
     for (const StoredName &Name : Modules[Module].publicNames())
       AnchorNames.insert(Name.Name);
@@ -135,7 +160,7 @@ void SignatureDB::applyDataContext(const BinaryImage &Img,
       continue;
     Pending.push_back(Hit);
   }
-  if (Pending.empty())
+  if (Pending.empty() && DeferredCallers.empty())
     return;
 
   const size_t Frozen = Matches.size();
@@ -251,7 +276,8 @@ void SignatureDB::applyDataContext(const BinaryImage &Img,
         const auto Anchor = localDataAnchor(Name);
         // The source relation belongs to this exact independent operand.
         // Other uses of the same local object cannot establish the binding.
-        if (Anchor->Name != Names.at(Address) || Anchor->Offset != Offset)
+        if (Anchor->Delta || Anchor->Name != Names.at(Address) ||
+            Anchor->Offset != Offset)
           continue;
       }
       // An explicit old code reference at this field cannot become data.
@@ -286,9 +312,19 @@ void SignatureDB::applyDataContext(const BinaryImage &Img,
     return;
   for (const auto &Hit : Pending)
     appendModuleMatches(Hit.Address, Hit.Module);
-  // Exactly one pass. Newly admitted candidates cannot confirm one another,
-  // request more callers or retroactively establish their own data bindings.
+  // Exactly one data pass. Newly admitted candidates cannot confirm one
+  // another or retroactively establish their own data bindings.
   checkReferences(Img, Entries, {}, Frozen, Frozen, &Bindings);
+  // An unrelated binding cannot resolve a prior query. Avoid reconstructing
+  // its frozen caller index when none of its actual operands acquired evidence.
+  std::vector<uint64_t> Revisit;
+  for (const DeferredCaller &Caller : DeferredCallers)
+    if (Bindings.contains(Caller.DataTarget))
+      Revisit.push_back(Caller.Parent);
+  llvm::sort(Revisit);
+  Revisit.erase(std::unique(Revisit.begin(), Revisit.end()), Revisit.end());
+  if (Matches.size() != Frozen || !Revisit.empty())
+    applyCallerContext(Img, Entries, Frozen, &Bindings, Revisit);
 }
 
 } // namespace neverd::sigs

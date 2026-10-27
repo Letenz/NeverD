@@ -87,8 +87,8 @@ public:
         Define(Op.Output);
         if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
             Op.Inputs[0].isConst() &&
-            Op.Inputs[0].ConstVal ==
-                static_cast<uint64_t>(Intrinsic::A64_VectorLoadWriteback) &&
+            isAArch64WritebackAuxiliaryLoad(
+                static_cast<Intrinsic>(Op.Inputs[0].ConstVal)) &&
             aarch64WritebackMemoryMedShapeIsValid(Op))
           for (const auto &Output : Op.IntrinsicOutputs)
             Define(Output);
@@ -233,7 +233,7 @@ public:
         Definitions[varKey(Statement.Dst->Var)].push_back(
             {&Statement, Statement.Val.get()});
       const auto DefineOutputs = [&](const ExprPtr &Value) {
-        if (Value && Value->IntrinsicId == Intrinsic::A64_VectorLoadWriteback &&
+        if (Value && isAArch64WritebackAuxiliaryLoad(Value->IntrinsicId) &&
             aarch64WritebackMemoryHighShapeIsValid(*Value))
           for (const auto &Output : Value->IntrinsicOutputs)
             Definitions[varKey(Output)].push_back({&Statement, Value.get()});
@@ -326,8 +326,8 @@ public:
             const auto It = Definitions.find(varKey(Value->Var));
             if (It != Definitions.end())
               for (const auto &Definition : It->second) {
-                if (Definition.second->IntrinsicId ==
-                        Intrinsic::A64_VectorLoadWriteback &&
+                if (isAArch64WritebackAuxiliaryLoad(
+                        Definition.second->IntrinsicId) &&
                     (!Current.second ||
                      !dominates(*Definition.first, *Current.second)))
                   return Step::Unsupported;

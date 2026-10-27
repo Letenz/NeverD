@@ -125,7 +125,7 @@ TEST(X86AMXLLVMGuard, NativeBankShapesAreCheckedBeforeEmission) {
       Op.Inputs[2].ConstVal = unsigned(X86AmxOp::Release);
       break;
     case 2:
-      Op.Inputs[2].ConstVal |= 1u << 25;
+      Op.Inputs[2].ConstVal |= 1u << 26;
       break;
     case 3:
       Op.Inputs[2].ConstVal |= X86AmxEvexMemory;

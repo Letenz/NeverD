@@ -22,6 +22,7 @@
 #include "llvm/Support/Errc.h"
 
 #include <algorithm>
+#include <iterator>
 #include <limits>
 
 namespace neverd {
@@ -61,6 +62,8 @@ bool isKnownTargetMode(LowInstructionTargetMode Mode) {
 }
 
 llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
+  if (Op.NumInputs > std::size(Op.Inputs))
+    return invalid(kLowOperationInputOverflow);
   if (!isKnownMemoryAddressSpace(Op.MemoryAddressSpace))
     return invalid("LowOp has an unknown memory address space");
   const bool HasExplicitAddressSpace =
@@ -571,10 +574,10 @@ llvm::Error validateLowInstructionBoundaries(
         return Error;
       if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
           Op.Inputs[0].isConst() &&
-          Op.Inputs[0].Offset ==
-              static_cast<uint64_t>(Intrinsic::A64_VectorLoadWriteback)) {
+          isAArch64WritebackAuxiliaryLoad(
+              static_cast<Intrinsic>(Op.Inputs[0].Offset))) {
         const auto Following = Ops->drop_front(&Op - Ops->data() + 1);
-        if (!lowAArch64VectorWritebackOutputs(Op, Following))
+        if (!lowAArch64WritebackOutputs(Op, Following))
           return invalid(kWritebackMalformed);
       }
     }

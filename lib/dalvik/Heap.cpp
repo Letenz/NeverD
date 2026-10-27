@@ -38,6 +38,19 @@ bool Heap::replaceBytes(Object &object, std::vector<uint8_t> bytes) {
   object.Length = object.Bytes.size() / 2;
   return true;
 }
+bool Heap::replaceMapEntries(Object &object,
+                             std::vector<Object::MapEntry> entries) {
+  const size_t previous = object.MapEntries ? object.MapEntries->size() : 0;
+  const uint64_t growth =
+      entries.size() > previous
+          ? (entries.size() - previous) * sizeof(Object::MapEntry)
+          : 0;
+  if (growth > limit - used)
+    return false;
+  used += growth; // No model reclamation, including after remove/clear.
+  object.MapEntries = std::move(entries);
+  return true;
+}
 std::shared_ptr<Object> Heap::classObject(std::string_view name) {
   auto key = std::string(name);
   if (auto it = classes.find(key); it != classes.end())
@@ -117,6 +130,39 @@ std::vector<uint8_t> javaStringBytes(std::string_view text) {
     unit(c);
   }
   return bytes;
+}
+std::vector<uint8_t> artStringUTF8(std::span<const uint8_t> UTF16) {
+  std::vector<uint8_t> Out;
+  for (size_t I = 0; I < UTF16.size(); I += 2) {
+    const uint16_t Value = uint16_t(UTF16[I] | uint16_t(UTF16[I + 1]) << 8);
+    // ART's JNI encoding uses four bytes for a complete surrogate pair;
+    // isolated surrogate units still retain their three-byte representation.
+    if (Value >= 0xd800 && Value < 0xdc00 && I + 2 < UTF16.size()) {
+      const uint16_t Next =
+          uint16_t(UTF16[I + 2] | uint16_t(UTF16[I + 3]) << 8);
+      if (Next >= 0xdc00 && Next <= 0xdfff) {
+        const uint32_t Scalar =
+            0x10000 + ((Value - 0xd800) << 10) + (Next - 0xdc00);
+        Out.push_back(0xf0 | (Scalar >> 18));
+        Out.push_back(0x80 | ((Scalar >> 12) & 63));
+        Out.push_back(0x80 | ((Scalar >> 6) & 63));
+        Out.push_back(0x80 | (Scalar & 63));
+        I += 2;
+        continue;
+      }
+    }
+    if (Value && Value < 0x80) {
+      Out.push_back(Value);
+    } else if (Value < 0x800) {
+      Out.push_back(0xc0 | (Value >> 6));
+      Out.push_back(0x80 | (Value & 63));
+    } else {
+      Out.push_back(0xe0 | (Value >> 12));
+      Out.push_back(0x80 | ((Value >> 6) & 63));
+      Out.push_back(0x80 | (Value & 63));
+    }
+  }
+  return Out;
 }
 bool platformClass(std::string_view name) {
   constexpr std::string_view names[] = {

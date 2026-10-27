@@ -284,6 +284,24 @@ void addSyntheticCases(std::vector<DifferentialCase> &Cases) {
   Add("source-regions-retain-call-frame-registers",
       analyzeProgram(Version::V3, RegionCalls));
 
+  // LDDW crosses the region boundary in both directions through this loop.
+  // Its continuation remains a raw entry that traps, never a fallthrough step.
+  std::vector<test::EncodedInstruction> RegionWide{
+      encode(Opcode::MOV64_IMM, 6, 0, 0, 2)};
+  while (RegionWide.size() + 1 < kMaximumDispatcherRegionSlots)
+    RegionWide.push_back(encode(Opcode::MOV64_REG, 7, 7));
+  const size_t WideSlot = RegionWide.size();
+  const auto WideValue = encodeLDDW(7, UINT64_C(0xabcdef0181234567));
+  RegionWide.insert(RegionWide.end(), WideValue.begin(), WideValue.end());
+  RegionWide.push_back(encode(Opcode::ADD64_REG, 0, 7));
+  RegionWide.push_back(encode(Opcode::SUB64_IMM, 6, 0, 0, 1));
+  RegionWide.push_back(
+      encode(Opcode::JNE64_IMM, 6, 0,
+             static_cast<int16_t>(WideSlot - RegionWide.size() - 1), 0));
+  RegionWide.push_back(encode(Opcode::EXIT));
+  Add("source-region-wide-fallthrough-and-backedge",
+      analyzeProgram(Version::V0, RegionWide));
+
   ExecutionEnvironment InstructionDataEnvironment;
   InstructionDataEnvironment.InstructionData = UINT64_C(0x500000040);
   Add("instruction-data-register",
@@ -398,6 +416,38 @@ void addSyntheticCases(std::vector<DifferentialCase> &Cases) {
       std::move(CollisionFaultEnvironment),
       {{CollisionKey, FaultCode::MemoryAccess}});
 
+  // The combined legacy-dispatch/frame helper must stop at the host fault
+  // before checking depth or changing any saved frame state.
+  auto CollisionDepth = analyzeProgram(
+      Version::V0,
+      {encode(Opcode::MOV64_IMM, 1, 0, 0, 41),
+       encode(Opcode::CALL_IMM, 0, 0, 0, 2),
+       encode(Opcode::ADD64_IMM, 0, 0, 0, 1), encode(Opcode::EXIT),
+       encode(Opcode::MOV64_IMM, 0, 0, 0, 7), encode(Opcode::EXIT)});
+  ASSERT_TRUE(static_cast<bool>(CollisionDepth))
+      << llvm::toString(CollisionDepth.takeError());
+  CollisionDepth->Config.MaxCallDepth = 1;
+  ExecutionEnvironment CollisionDepthEnvironment;
+  CollisionDepthEnvironment.HostSyscall =
+      [CollisionKey](uint32_t Hash,
+                     const SyscallArguments &) -> SyscallOutcome {
+    return Hash == CollisionKey ? SyscallOutcome::fault(FaultCode::MemoryAccess)
+                                : SyscallOutcome::unregistered();
+  };
+  Cases.push_back({"legacy-host-fault-before-call-depth",
+                   std::move(*CollisionDepth),
+                   std::move(CollisionDepthEnvironment),
+                   {{CollisionKey, FaultCode::MemoryAccess}}});
+
+  auto CallXDepth =
+      analyzeProgram(Version::V3, {encode(Opcode::CALL_REG, kReturnRegister),
+                                   encode(Opcode::EXIT)});
+  ASSERT_TRUE(static_cast<bool>(CallXDepth))
+      << llvm::toString(CallXDepth.takeError());
+  CallXDepth->Config.MaxCallDepth = 1;
+  Cases.push_back(
+      {"callx-depth-before-target-validation", std::move(*CallXDepth), {}});
+
   const auto ContinuationTarget =
       encodeLDDW(2, kBytecodeStart + kInstructionSize);
   Add("entrypoint-continuation",
@@ -445,6 +495,15 @@ void addSyntheticCases(std::vector<DifferentialCase> &Cases) {
 
   AnalyzeOptions Relaxed;
   Relaxed.Strict = false;
+  auto TerminalCall = analyzeProgram(
+      Version::V3,
+      {encode(Opcode::EXIT), encode(Opcode::CALL_IMM, 0, 1, 0, -2)}, Relaxed,
+      1);
+  ASSERT_TRUE(static_cast<bool>(TerminalCall))
+      << llvm::toString(TerminalCall.takeError());
+  TerminalCall->Config.MaxCallDepth = 1;
+  Cases.push_back(
+      {"terminal-call-depth-before-overrun", std::move(*TerminalCall), {}});
   Add("faulted-load-stops-before-following-host-call",
       analyzeProgram(Version::V3, {encode(Opcode::LD_DW_REG, 0, 1),
                                    encode(Opcode::CALL_IMM, 0, 0, 0,

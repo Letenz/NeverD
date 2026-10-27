@@ -58,9 +58,10 @@ std::string expression(const X86APXAtomicPlan &P,
               Offset + ")\" : ";
   if (P.compare())
     Fallback += "\"+" + Register + "\"(" + Temporary + ")";
-  Fallback += " : \"b\"(" + Address + "), \"" + Register + "\"((" + Word +
-              ")(" + Args.back() + ")) : " + (P.compare() ? "\"cc\", " : "") +
-              "\"memory\"); ";
+  Fallback +=
+      std::string(" : \"") + x86MemoryAddressAsm(P.AddressBits).GNUConstraint +
+      "\"(" + Address + "), \"" + Register + "\"((" + Word + ")(" +
+      Args.back() + ")) : " + (P.compare() ? "\"cc\", " : "") + "\"memory\"); ";
   Fallback += P.compare() ? Temporary + "; })" : "(void)0; })";
   return std::string(P.legacy() ? "NEVERD_X86_LEGACY_ATOMIC("
                                 : "NEVERD_X86_APX_ATOMIC(") +
@@ -121,7 +122,8 @@ x86APXAtomicCallPlan(Arch A, const llvm::CallInst &Call) {
     if (Named)
       P = x86APXAtomicPlan(Named->Id, Named->Bytes, Bits, Prefix, Condition, A);
     if (!P || Asm->getAsmString() != P->assembly() ||
-        Asm->getConstraintString() != P->constraints() ||
+        (Asm->getConstraintString() != P->constraints() &&
+         Asm->getConstraintString() != P->constraints(true)) ||
         !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
         Asm->getDialect() != llvm::InlineAsm::AD_ATT ||
         Call.arg_size() != P->arguments() ||

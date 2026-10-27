@@ -1051,6 +1051,13 @@ returns EDEADLK, and detached or already claimed targets return EINVAL.
 If no thread is runnable, an admitted sleep can advance virtual time to its
 deadline. With no such deadline, outstanding join, once, mutex or semaphore
 waits produce an explicit unsupported stop.
+Returning from a child start routine uses the same completion path as
+`pthread_exit`, including its pointer result, JNI cleanup and join/detach
+retirement. It does not require the initial SP: no guest caller resumes on
+that terminal stack. With scheduling enabled, the selected entry still
+requires its prepared return SP; native callbacks always require their saved
+caller SP. This terminal behavior does not relax ordinary guest-call ABI
+requirements or reconstruct Bionic's private startup frame.
 `pthread_exit` returns its pointer to a joiner; raw `SYS_exit` terminates only
 the current thread and leaves its pthread result zero. When the last thread
 exits without an entry return, its low eight status bits become the workload
@@ -1221,12 +1228,38 @@ API 28 execution profile. Supplied DEX still cannot replace platform classes.
 No application context, registration, service reply or SDK-private cache is
 created by this projection.
 
+### Android system clocks
+
+JNI and DEX share the API 28 `SystemClock.uptimeMillis()`,
+`elapsedRealtime()` and `elapsedRealtimeNanos()` methods. Uptime reads explicit
+Linux `CLOCK_MONOTONIC` input (ID 1); elapsed realtime reads `CLOCK_BOOTTIME`
+(ID 7), including its independent epoch. The shared Linux clock owner accounts
+native and Java instruction work and optional idle advancement once. These
+methods require no application snapshot or host clock.
+
+Both elapsed methods read the same nanosecond service; the millisecond method
+truncates after reading it. As in API 28's
+[native SystemClock implementation](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/libutils/SystemClock.cpp),
+all three conversions pass through signed nanoseconds. Missing clock input,
+negative time and values beyond the nonnegative signed-nanosecond range stop
+explicitly. No clock substitutes for another. Handler posting and MessageQueue
+reads reuse the same uptime service and validation. Other `SystemClock` methods
+remain unmodeled.
+
 ### Class lookup and native registration
 
 API 28 `FindClass` resolves a class without executing `<clinit>`. Native
 registration also does not initialize it. These boundaries follow
 [ART JNI](https://android.googlesource.com/platform/art/+/android-9.0.0_r1/runtime/jni_internal.cc)
 and [ClassLinker](https://android.googlesource.com/platform/art/+/android-9.0.0_r1/runtime/class_linker.cc).
+
+The shared Android hierarchy includes the public final `android.os.ServiceManager`
+class with `java.lang.Object` as its superclass. Class identity, assignability
+and reference-array queries do not initialize it. Its static initializer remains
+unmodeled: active uses, including JNI method/field ID lookup and `AllocObject`,
+stop at the shared Dalvik initialization boundary before changing its class
+state. No service registry, cache, Binder identity or method result is inferred.
+This type metadata does not admit other unknown Android classes.
 
 Unknown classes remain explicit stops. A workload may supply
 `android.jni_class_lookup_failures`, mapping exact slash-separated, non-array

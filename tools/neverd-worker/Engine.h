@@ -16,6 +16,7 @@
 
 namespace neverd::worker {
 class ComparisonService;
+class LineageService;
 class ProjectLock;
 class ProjectHistory;
 class Contributions;
@@ -115,6 +116,7 @@ private:
   Json executeImpl(const std::string &operation, const Json &payload,
                    EncodedPayload *encoded);
   std::unique_ptr<ComparisonService> comparison_;
+  std::unique_ptr<LineageService> lineage_;
   std::function<bool()> cancelled_;
   neverd_session_t session_ = nullptr;
   std::unique_ptr<ProjectLock> lock_;
@@ -246,7 +248,7 @@ private:
   LoadProgressSink loadProgress_;
   void invalidate();
   /// Read every user-edit sidecar into the Session; false when one fails.
-  bool reloadUserState();
+  bool reloadUserState(bool bytePatchesChanged = false);
   /// Whether the local types file holds other declarations than the
   /// Session's: git, another tool or a person changed it.
   bool localTypesChanged();
@@ -285,7 +287,9 @@ private:
   /// The user's data items as rows; none from an older engine.
   Json dataItemRows() const;
   Json bytePatchRows() const;
-  bool reloadBytePatches();
+  /// A committed patch command already proves invalidation is necessary;
+  /// ordinary reloads must discover changes from the before/after inventories.
+  bool reloadBytePatches(bool knownChanged = false);
   Json patchOperation(const std::string &Operation, const Json &Payload);
   /// Read the operand formats sidecar: true when it loaded or the engine
   /// keeps no operand formats.  Changed formats show in the listing.

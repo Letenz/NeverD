@@ -236,7 +236,7 @@ TEST(X86PreservedState, NonStrictFailedAndOtherModeLiftsClearEvidence) {
   EXPECT_EQ(F, LowInstructionPreservedState{});
   F = Good;
   D.setStrict(true);
-  D.liftToLow({}, Ops, {}, {}, nullptr, &F);
+  EXPECT_THROW(D.liftToLow({}, Ops, {}, {}, nullptr, &F), UnliftedInstruction);
   EXPECT_EQ(F, LowInstructionPreservedState{});
   ASSERT_TRUE(D.init(Arch::X86));
   ASSERT_EQ(D.decodeOneForLift(Bytes, 2, 0x1000, I), 2);

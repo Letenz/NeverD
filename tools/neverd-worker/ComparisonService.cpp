@@ -442,7 +442,10 @@ Json ComparisonService::execute(const std::string &Operation, const Json &P,
       if (Notify)
         Notify("restore:settings", 0, 0, "");
       checkCancelled(Cancelled);
-      const auto Document = parseJson(Saved, MaxBackendBytes);
+      // The report was admitted by the saved-file reader. Its settings are
+      // local input, not an IPC/backend reply subject to the smaller reply
+      // allowance.
+      const auto Document = parseJson(Saved, limits::kMaxSavedComparisonBytes);
       checkCancelled(Cancelled);
       if (!Document.contains("settings") ||
           !Document.at("settings").is_object() || !Settings.is_object())

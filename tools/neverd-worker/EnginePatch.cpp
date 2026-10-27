@@ -16,7 +16,10 @@
 #include "neverd/sdk/NeverDCAPIBytePatch.h"
 #include "neverd/sdk/NeverDCAPIPatch.h"
 
-#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace neverd::worker {
 namespace {
@@ -30,6 +33,8 @@ struct PatchFunctions {
   decltype(&neverd_byte_patch_context_json) context;
   // Older SDKs still provide complete rows; retain their patch capability.
   decltype(&neverd_byte_patch_ranges_json) ranges;
+  decltype(&neverd_byte_patches_snapshot_v1) snapshot;
+  decltype(&neverd_byte_patch_snapshot_free_v1) freeSnapshot;
   explicit operator bool() const {
     return preview && apply && revert && rows && load && exportFile && context;
   }
@@ -51,8 +56,22 @@ const PatchFunctions &patches() {
       engineSymbol<decltype(&neverd_byte_patch_context_json)>(
           "neverd_byte_patch_context_json"),
       engineSymbol<decltype(&neverd_byte_patch_ranges_json)>(
-          "neverd_byte_patch_ranges_json")};
+          "neverd_byte_patch_ranges_json"),
+      engineSymbol<decltype(&neverd_byte_patches_snapshot_v1)>(
+          "neverd_byte_patches_snapshot_v1"),
+      engineSymbol<decltype(&neverd_byte_patch_snapshot_free_v1)>(
+          "neverd_byte_patch_snapshot_free_v1")};
   return F;
+}
+
+std::string patchBytesHex(const uint8_t *Bytes, size_t Size) {
+  constexpr char Digits[] = "0123456789abcdef";
+  std::string Text(Size * 2, '\0');
+  for (size_t I = 0; I < Size; ++I) {
+    Text[I * 2] = Digits[Bytes[I] >> 4];
+    Text[I * 2 + 1] = Digits[Bytes[I] & 15];
+  }
+  return Text;
 }
 } // namespace
 bool Engine::keepsBytePatches() { return bool(patches()); }
@@ -71,15 +90,40 @@ bool Engine::provesSourcePatches() {
 }
 
 Json Engine::bytePatchRows() const {
-  return patches() ? backendJson(patches().rows(session_)) : Json::array();
+  const auto &F = patches();
+  if (!F)
+    return Json::array();
+  if (!F.snapshot || !F.freeSnapshot)
+    return backendJson(F.rows(session_));
+
+  std::unique_ptr<const neverd_byte_patch_snapshot_v1, decltype(F.freeSnapshot)>
+      Snapshot(F.snapshot(session_), F.freeSnapshot);
+  if (!Snapshot)
+    throw Error("engine_error", error());
+  Json::array_t Rows;
+  Rows.reserve(Snapshot->row_count);
+  for (size_t I = 0; I < Snapshot->row_count; ++I) {
+    const auto &Row = Snapshot->rows[I];
+    const auto Offset = hexAddress(Row.file_offset);
+    Json::object_t Item;
+    Item.emplace("addr", Offset);
+    Item.emplace("current", patchBytesHex(Row.current, Row.size));
+    Item.emplace("file_off", Offset);
+    Item.emplace("kind", Row.kind);
+    Item.emplace("original", patchBytesHex(Row.original, Row.size));
+    Item.emplace("size", Row.size);
+    Item.emplace("va", hexAddress(Row.address));
+    Rows.emplace_back(std::move(Item));
+  }
+  return Json(std::move(Rows));
 }
-bool Engine::reloadBytePatches() {
+bool Engine::reloadBytePatches(bool knownChanged) {
   if (!patches())
     return true;
-  const auto Before = bytePatchRows();
+  const auto Before = knownChanged ? Json() : bytePatchRows();
   if (patches().load(session_) != 0)
     return false;
-  if (Before != bytePatchRows())
+  if (knownChanged || Before != bytePatchRows())
     functionsChanged();
   return true;
 }
@@ -299,7 +343,10 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
     return backendJson(Raw);
   }
   auto &Store = history();
-  auto State = Store.committedState();
+  Json State = Json::object();
+  for (const auto &[Table, Rows] : Store.committedState().items())
+    if (Table != "patches")
+      State[Table] = Rows;
   Json Result;
   if (Operation == "patch_revert") {
     Json Ranges =
@@ -328,12 +375,6 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
       throw Error("patch_refused", error());
     Result = backendJson(Raw);
   }
-  // The committed and replacement tables outlive this diff. Copy only rows
-  // that actually changed into the command, not both complete overlays.
-  std::map<uint64_t, std::pair<const Json *, const Json *>> Changes;
-  for (const auto &Row : Store.committedState().at("patches"))
-    Changes[parseAddress(Row.at("addr").get_ref<const std::string &>())].first =
-        &Row;
   State["patches"] = bytePatchRows();
   if (State["patches"].dump().size() >
       ::neverd::limits::worker::kPatchStateBytes) {
@@ -342,14 +383,29 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
     throw Error("patch_limit", "Patch history exceeds the worker transport "
                                "budget; use the SDK for larger overlays");
   }
-  for (const auto &Row : State.at("patches"))
-    Changes[parseAddress(Row.at("addr").get_ref<const std::string &>())]
-        .second = &Row;
+  // Committed history and SDK overlays are ordered by file offset. Merge
+  // their rows directly; only changed rows enter the owning history command.
+  const auto &OldRows = Store.committedState().at("patches");
+  const auto &NewRows = State.at("patches");
+  auto Old = OldRows.begin(), New = NewRows.begin();
   Json Command;
   const Json Missing;
-  for (const auto &[At, Sides] : Changes) {
-    const auto &Before = Sides.first ? *Sides.first : Missing;
-    const auto &After = Sides.second ? *Sides.second : Missing;
+  while (Old != OldRows.end() || New != NewRows.end()) {
+    const auto OldAt =
+        Old != OldRows.end()
+            ? parseAddress(Old->at("addr").get_ref<const std::string &>())
+            : 0;
+    const auto NewAt =
+        New != NewRows.end()
+            ? parseAddress(New->at("addr").get_ref<const std::string &>())
+            : 0;
+    const bool TakeOld =
+        Old != OldRows.end() && (New == NewRows.end() || OldAt <= NewAt);
+    const bool TakeNew =
+        New != NewRows.end() && (Old == OldRows.end() || NewAt <= OldAt);
+    const auto At = TakeOld ? OldAt : NewAt;
+    const auto &Before = TakeOld ? *Old++ : Missing;
+    const auto &After = TakeNew ? *New++ : Missing;
     if (Before == After)
       continue;
     Json Change{
@@ -367,7 +423,7 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
   const auto Checkpoint = Store;
   try {
     Store.stage(std::move(Command));
-    Store.persist(State);
+    Store.persist(std::move(State));
   } catch (...) {
     Store = Checkpoint;
     (void)patches().load(session_);
@@ -376,9 +432,8 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
   }
   // This edit always invalidates analysis below; no before/after JSON
   // comparison is needed just to acknowledge its persisted SDK overlay.
-  if (patches().load(session_) != 0)
+  if (!reloadBytePatches(true))
     throw Error("reload_failed", error());
-  functionsChanged();
   ++revision_;
   Result["saved"] = true;
   Result["revision"] = revision();

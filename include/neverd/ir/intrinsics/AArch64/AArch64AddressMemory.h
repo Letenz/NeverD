@@ -29,6 +29,31 @@ namespace neverd {
   inline constexpr char Name[] = Text;
 #include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.def"
 
+/// A sufficient finite proof, independent of CPTA and CPACHECK controls.
+/// This grants no mapping, tagging, alignment or fault permission.
+inline std::optional<uint64_t>
+aarch64ControlIndependentAddress(uint64_t Base, uint64_t Offset,
+                                 unsigned AccessBytes) {
+  const uint64_t Address = Base + Offset;
+  const bool PreviousDetection = bool(Base & kAddressMemorySignBit) !=
+                                 bool(Base & kAddressMemoryPoisonBit);
+  const bool Detected =
+      ((Address ^ Base) & kAddressMemoryTagMask) || PreviousDetection;
+  const uint64_t Checked =
+      (Address & ~(kAddressMemoryPreservedMask | kAddressMemoryPoisonBit)) |
+      (Base & kAddressMemoryPreservedMask) |
+      (Base & kAddressMemorySignBit ? 0 : kAddressMemoryPoisonBit);
+  if (Detected && Address != Checked)
+    return std::nullopt;
+  constexpr uint64_t Region =
+      kAddressMemoryPreservedMask | kAddressMemoryPoisonBit;
+  const uint64_t LastByte = AccessBytes - 1;
+  if (Address > std::numeric_limits<uint64_t>::max() - LastByte ||
+      ((Address ^ (Address + LastByte)) & Region))
+    return std::nullopt;
+  return Address;
+}
+
 struct AArch64AddressMemoryMachine {
   bool StackBase;
   bool Vector;
@@ -150,6 +175,7 @@ struct AArch64AddressMemoryInstruction {
     return isAArch64AddressVectorIntrinsic(operation().Id);
   }
   unsigned accessBytes() const { return operation().AccessBytes; }
+  unsigned totalAccessBytes() const { return accessBytes(); }
   bool hasRegisterIndex() const {
     return operation().Mode == AArch64AddressMemoryMode::Register;
   }
@@ -217,24 +243,8 @@ struct AArch64AddressMemoryInstruction {
     if (!aarch64AddressMemoryOperation(Word) || stackBase() ||
         (index() == kAddressMemoryRegisterMask && Index))
       return std::nullopt;
-    const uint64_t Address = Base + addressOffset(Index);
-    const bool PreviousDetection = bool(Base & kAddressMemorySignBit) !=
-                                   bool(Base & kAddressMemoryPoisonBit);
-    const bool Detected =
-        ((Address ^ Base) & kAddressMemoryTagMask) || PreviousDetection;
-    const uint64_t Checked =
-        (Address & ~(kAddressMemoryPreservedMask | kAddressMemoryPoisonBit)) |
-        (Base & kAddressMemoryPreservedMask) |
-        (Base & kAddressMemorySignBit ? 0 : kAddressMemoryPoisonBit);
-    if (Detected && Address != Checked)
-      return std::nullopt;
-    constexpr uint64_t Region =
-        kAddressMemoryPreservedMask | kAddressMemoryPoisonBit;
-    const uint64_t LastByte = accessBytes() - 1;
-    if (Address > std::numeric_limits<uint64_t>::max() - LastByte ||
-        ((Address ^ (Address + LastByte)) & Region))
-      return std::nullopt;
-    return Address;
+    return aarch64ControlIndependentAddress(Base, addressOffset(Index),
+                                            accessBytes());
   }
   /// A sufficient proof for every nonnegative raw index in [0, MaximumIndex].
   /// Monotonic addition must remain in one preserved-address region through
@@ -307,6 +317,14 @@ aarch64AddressMemoryInstruction(uint64_t Word) {
   if (!aarch64AddressMemoryOperation(Word))
     return std::nullopt;
   return AArch64AddressMemoryInstruction{static_cast<uint32_t>(Word)};
+}
+
+/// Includes unallocated size/opcode combinations, which must not fall back to
+/// a mnemonic-based legacy handler with guessed access semantics.
+inline bool isAArch64OrderedUnscaledMemoryEncoding(uint32_t Word) {
+  const uint32_t Class = Word & kAddressMemoryOrderedClassMask;
+  return Class == kAddressMemoryOrderedGPRClass ||
+         Class == kAddressMemoryOrderedVectorClass;
 }
 
 inline bool aarch64AddressMemoryShapeIsValid(

@@ -79,17 +79,28 @@ std::string expression(const X86FourSourcePlan &P,
     Fallback += "register " + V + " " + T + "_r" + std::to_string(I) +
                 " __asm__(\"" + P.sourceRegister(I) + "\") = " + Src + "[" +
                 std::to_string(I) + "]; ";
-  const auto Segment = P.Prefix ? std::string("%%") + P.segment() + ":" : "";
-  const auto IntelSegment = P.Prefix ? std::string(P.segment()) + ":" : "";
+  const auto Segment =
+      P.hasSegmentPrefix() ? std::string("%%") + P.segment() + ":" : "";
+  const auto IntelSegment =
+      P.hasSegmentPrefix() ? std::string(P.segment()) + ":" : "";
   const auto Suffix = std::string(" %{%2%}") + (P.Control.Zero ? " %{z%}" : "");
-  Fallback += std::string("__asm__ __volatile__(\"") + P.Control.mnemonic() +
-              " {" + Segment + "(%1), %3, %0" + Suffix + "|%0" + Suffix +
-              ", %3, " + IntelSegment + "[%1]}\" : \"+v\"(" + Acc +
-              ") : \"b\"(" + Address + "), \"Yk\"((uint16_t)(" + Mask + "))";
+  const auto Setup = P.stackReference() ? "mov{q %q1, %%rdx| rdx, %q1}\\n\\t"
+                                          "sub{q %%rbp, %%rdx| rdx, rbp}\\n\\t"
+                                        : "";
+  const auto AttMem = P.stackReference() ? "(%%rbp,%%rdx)" : "(%1)";
+  const auto IntelMem = P.stackReference() ? "[rbp+rdx]" : "[%1]";
+  Fallback += std::string("__asm__ __volatile__(\"") + Setup +
+              P.Control.mnemonic() + " {" + Segment + AttMem + ", %3, %0" +
+              Suffix + "|%0" + Suffix + ", %3, " + IntelSegment + IntelMem +
+              "}\" : \"+v\"(" + Acc + ") : \"a\"(" + Address +
+              "), \"Yk\"((uint16_t)(" + Mask + "))";
   for (unsigned I = 0; I < X86FourSourceCount; ++I)
     Fallback += ", \"v\"(" + T + "_r" + std::to_string(I) + ")";
-  Fallback += " : \"memory\"); })";
-  Text += "NEVERD_X86_FOUR_SOURCE(" + Native + ", " + Fallback + "); ";
+  Fallback += std::string(" : \"memory\"") +
+              (P.stackReference() ? ", \"rdx\", \"cc\"" : "") + "); })";
+  Text += std::string(P.stackReference() ? "NEVERD_X86_FOUR_SOURCE_STACK("
+                                         : "NEVERD_X86_FOUR_SOURCE(") +
+          Native + ", " + Fallback + "); ";
   if (Live)
     Text += Type + " " + T + "_result; __builtin_memcpy(&" + T + "_result, &" +
             Acc + ", " + Bytes + "); " + T + "_result; ";
@@ -124,10 +135,11 @@ X86FourSourcePlan x86FourSourceHighPlan(Arch A, const HighExpr &E) {
   if ((A != Arch::X86 && A != Arch::X64) || !x86FourSourceShapeIsValid(S))
     throw std::invalid_argument(X86FourSourceMalformed);
   const auto C = *x86FourSourceControl(*S.Control);
-  const auto Prefix = E.MemoryAddressSpace == NdMemoryAddressSpace::X86FS ? 0x64
-                      : E.MemoryAddressSpace == NdMemoryAddressSpace::X86GS
-                          ? 0x65
-                          : 0;
+  const auto Prefix =
+      (E.MemoryAddressSpace == NdMemoryAddressSpace::X86FS   ? 0x64
+       : E.MemoryAddressSpace == NdMemoryAddressSpace::X86GS ? 0x65
+                                                             : 0) |
+      (C.StackReference ? X86NativeStackReference : 0);
   return *x86FourSourcePlan(static_cast<unsigned>(C.Kind), C.Zero, Prefix);
 }
 
@@ -164,7 +176,9 @@ x86FourSourceCallPlan(Arch A, const llvm::CallInst &Call) {
       throw std::invalid_argument(X86FourSourceMalformed);
     P = x86FourSourcePlan(Kind, Zero, Prefix);
     if (!P || Asm->getAsmString() != P->assembly() ||
-        Asm->getConstraintString() != P->constraints() ||
+        (Asm->getConstraintString() != P->constraints() &&
+         (P->stackReference() ||
+          Asm->getConstraintString() != P->constraints(true))) ||
         !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
         Asm->getDialect() != llvm::InlineAsm::AD_ATT || Call.arg_size() != 7 ||
         Call.getFunctionType() != Asm->getFunctionType())
@@ -174,6 +188,7 @@ x86FourSourceCallPlan(Arch A, const llvm::CallInst &Call) {
   const auto *V = llvm::FixedVectorType::get(
       llvm::Type::getInt32Ty(Call.getContext()), P->Control.bytes() / 4);
   if ((A != Arch::X86 && A != Arch::X64) ||
+      (P->stackReference() && A != Arch::X64) ||
       Call.getFunctionType()->isVarArg() || Call.getNumOperandBundles() ||
       Call.doesNotReturn() || Call.hasFnAttr(llvm::Attribute::NoSync) ||
       Call.getMemoryEffects() != llvm::MemoryEffects::unknown() ||

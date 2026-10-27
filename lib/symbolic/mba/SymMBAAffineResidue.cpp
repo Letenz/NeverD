@@ -191,21 +191,28 @@ bool proveAtResiduePrecisions(size_t Count, unsigned MaxBits, unsigned Needed,
 }
 
 // One concrete input is sufficient to reject a zero identity, never to grant
-// a replacement. Evaluate parity with every actual variable set to one; do
-// not assign independent values to correlated opaque subexpressions.
+// a replacement. Evaluate parity with every actual variable set to one, then
+// zero; never assign independent values to correlated opaque subexpressions.
 bool hasOddProductWitness(SymContext &Ctx, llvm::ArrayRef<SymRef> Factors,
                           Resources &Res) {
   std::map<uint32_t, std::optional<bool>> Values;
   size_t Work = 0;
+  bool VariableValue = true;
   auto Read = [&](auto &&Self, SymRef R,
                   unsigned Depth) -> std::optional<bool> {
     if (Work >= limits::kMaxResidueWitnessWork ||
         Depth >= limits::kMaxAffineResidueDepth || !Res.charge(1))
       return std::nullopt;
     ++Work;
+    const auto Op = Ctx.op(R);
+    // Native literals and assigned input leaves need neither an APInt copy
+    // nor a map entry. Their parity is already stored inline.
+    if (Op == SymOp::Var)
+      return VariableValue;
+    if (Ctx.isConst(R) && Ctx.width(R) <= std::numeric_limits<uint64_t>::digits)
+      return bool(Ctx.node(R).Aux & 1);
     if (auto It = Values.find(R.index()); It != Values.end())
       return It->second;
-    const auto Op = Ctx.op(R);
     auto Evaluate = [&]() -> std::optional<bool> {
       if (Ctx.isConst(R)) {
         const size_t Words = (size_t(Ctx.width(R)) - 1) / 64 + 1;
@@ -215,8 +222,6 @@ bool hasOddProductWitness(SymContext &Ctx, llvm::ArrayRef<SymRef> Factors,
         Work += Words;
         return Ctx.constValue(R)[0];
       }
-      if (Op == SymOp::Var)
-        return true;
       if (Op == SymOp::ZExt || Op == SymOp::SExt ||
           (Op == SymOp::Extract && !Ctx.node(R).Aux))
         return Self(Self, Ctx.operand(R, 0), Depth + 1);
@@ -238,6 +243,16 @@ bool hasOddProductWitness(SymContext &Ctx, llvm::ArrayRef<SymRef> Factors,
           Op != SymOp::Or && Op != SymOp::Xor)
         return std::nullopt;
       const bool Conjunction = Op == SymOp::Mul || Op == SymOp::And;
+      if (Ctx.numOperands(R) == 2 && Ctx.isConst(Ctx.operand(R, 0)) &&
+          Ctx.width(R) <= std::numeric_limits<uint64_t>::digits) {
+        const bool Bit = Ctx.node(Ctx.operand(R, 0)).Aux & 1;
+        if ((Conjunction && !Bit) || (Op == SymOp::Or && Bit))
+          return Bit;
+        auto Value = Self(Self, Ctx.operand(R, 1), Depth + 1);
+        if (Value && Bit && (Op == SymOp::Add || Op == SymOp::Xor))
+          *Value = !*Value;
+        return Value;
+      }
       std::optional<bool> Result = Conjunction;
       for (auto Child : Ctx.operands(R)) {
         auto V = Self(Self, Child, Depth + 1);
@@ -258,12 +273,23 @@ bool hasOddProductWitness(SymContext &Ctx, llvm::ArrayRef<SymRef> Factors,
       Values.emplace(R.index(), Result);
     return Result;
   };
-  for (auto F : Factors) {
-    auto V = Read(Read, F, 0);
-    if (!V || !*V || Res.Failed)
+  for (bool Input : {true, false}) {
+    VariableValue = Input;
+    Values.clear();
+    bool AllOdd = true;
+    for (auto F : Factors) {
+      auto V = Read(Read, F, 0);
+      if (!V || !*V || Res.Failed) {
+        AllOdd = false;
+        break;
+      }
+    }
+    if (AllOdd)
+      return true;
+    if (Res.Failed || Work >= limits::kMaxResidueWitnessWork)
       return false;
   }
-  return true;
+  return false;
 }
 
 // Retain partial facts while computing a prefix. Unknown bits are always zero
@@ -294,13 +320,20 @@ struct PrefixConstants {
   PrefixValue infer(SymRef R, unsigned Bits, unsigned Depth = 0) {
     if (!Res.charge(1))
       return {};
+    const auto Op = Ctx.op(R);
+    // These leaf facts need no recursive inference or cache entry. Reading
+    // the already-normalized native literal also avoids an APInt copy for
+    // every first prefix query; a free variable contributes no known bits.
+    if (Op == SymOp::Var)
+      return {};
+    const uint64_t Mask = (uint64_t(1) << Bits) - 1;
+    if (Op == SymOp::Const && Ctx.width(R) <= 64)
+      return {Ctx.node(R).Aux & Mask, Mask};
     auto Key = std::make_pair(R.index(), Bits);
     if (auto It = Values.find(Key); It != Values.end())
       return It->second;
     if (Depth >= limits::kMaxAffineResidueDepth)
       return {};
-    const uint64_t Mask = (uint64_t(1) << Bits) - 1;
-    const auto Op = Ctx.op(R);
     auto Evaluate = [&]() -> PrefixValue {
       if (Ctx.isConst(R)) {
         const size_t Words = (size_t(Ctx.width(R)) - 1) / 64 + 1;
@@ -1977,22 +2010,35 @@ static SymRef foldResidualProductResiduesImpl(SymContext &Ctx, SymRef Root,
                                               size_t &Storage,
                                               bool &StorageLimited) {
   if (Budget.exhausted() || Ctx.op(Root) != SymOp::Mul ||
-      Ctx.numOperands(Root) < limits::kMinResidueProductFactors ||
-      Ctx.numOperands(Root) > limits::kMaxResidueProductFactors)
+      Ctx.numOperands(Root) < limits::kMinResidueProductFactors)
     return Root;
   const unsigned Width = Ctx.width(Root);
-  llvm::SmallVector<SymRef, 16> Inputs(Ctx.operands(Root));
-  auto Operands = llvm::ArrayRef<SymRef>(Inputs);
+  const auto First = Ctx.operand(Root, 0);
+  const bool HasScale = Ctx.isConst(First);
   const size_t SourceWords = (size_t(Width) - 1) / 64 + 1;
   Resources Res{Budget, Storage, 1, SourceWords};
   Res.StorageLimited = &StorageLimited;
   unsigned Needed = Width;
-  if (Ctx.isConst(Operands.front())) {
+  if (HasScale) {
     if (!Res.scalar(SourceWords))
       return Root;
-    Needed -= Ctx.constValue(Operands.front()).countr_zero();
-    Operands = Operands.drop_front();
+    Needed -= Ctx.constValue(First).countr_zero();
   }
+  if (Ctx.numOperands(Root) > limits::kMaxResidueProductFactors) {
+    const size_t Factors = Ctx.numOperands(Root) - HasScale;
+    // Large products do not enter affine expansion. The bounded low-word
+    // proof can isolate a dominant prefix group while retaining unmatched
+    // factors. Its internal views coalesce repeated residues.
+    if (!Needed || Needed > limits::kMaxAffineResidueTableBits ||
+        Factors <= Needed)
+      return Root;
+    ++Budget.MultipleResidueAttempts;
+    return foldResidueDecisions(Ctx, Root, Budget, Storage, true,
+                                limits::kMaxMultipleResidueWork,
+                                &StorageLimited);
+  }
+  llvm::SmallVector<SymRef, 16> Inputs(Ctx.operands(Root));
+  auto Operands = llvm::ArrayRef<SymRef>(Inputs).drop_front(HasScale);
   PrefixConstants Prefixes{Ctx, Res, {}};
   SymRef Best = Root;
   bool DecisionAttempted = false;
@@ -2026,6 +2072,23 @@ static SymRef foldResidualProductResiduesImpl(SymContext &Ctx, SymRef Root,
           Ctx, Root, Factors, Operands, Scale, Bits, Needed, Res,
           DecisionAttempted, DecisionResult, DecisionRequested,
           IncompatibleBase, DecisionComplete);
+      if (IncompatibleBase && !DecisionAttempted && Operands.size() > Needed &&
+          (Operands.size() - 1) % residueUnitPeriod(Needed) <= 1) {
+        // A different affine coordinate can still multiply a parity group
+        // whose even branch vanishes. Complete unit periods and their next
+        // exponents have cheap power readings. This is only a search hint;
+        // the bounded proof retains every unmatched word.
+        DecisionAttempted = DecisionRequested = true;
+        if (!Res.OptionalStart) {
+          Res.OptionalStart = Res.Budget.used();
+          ++Res.Budget.MultipleResidueAttempts;
+        }
+        const auto Exact = foldResidueDecisions(
+            Ctx, Root, Res.Budget, Res.Storage, true, Res.optionalRemaining(),
+            Res.StorageLimited, &DecisionComplete);
+        if (Exact != Root)
+          DecisionResult = Exact;
+      }
       if (DecisionResult &&
           readingScore(Ctx, DecisionResult) < readingScore(Ctx, Best))
         Best = DecisionResult;

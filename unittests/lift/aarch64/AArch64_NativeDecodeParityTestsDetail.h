@@ -17,6 +17,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/decode/AArch64/AArch64NativeDecode.h"
+#include "neverd/decode/Decoder.h"
 #include "neverd/lift/AArch64/AArch64Lifter.h"
 
 #include <algorithm>
@@ -30,6 +31,22 @@
 #include <vector>
 
 namespace neverd::a64_parity_test {
+
+#define PARITY_VALUE(Type, Name, Value) inline constexpr Type Name = Value;
+#define PARITY_TEXT(Name, Text) inline constexpr char Name[] = Text;
+#include "AArch64NativeDecodeParityFixtures.def"
+
+enum class LiftOutcome { DecodeRejected, LiftRejected, Lifted };
+
+/// Preserve a decoded instruction's explicit refusal. Other exceptions remain
+/// test failures, and a permissive NOP cannot match a rejected instruction.
+template <typename Lift> inline LiftOutcome liftOutcome(Lift &&PerformLift) {
+  try {
+    return PerformLift() ? LiftOutcome::Lifted : LiftOutcome::DecodeRejected;
+  } catch (const UnliftedInstruction &) {
+    return LiftOutcome::LiftRejected;
+  }
+}
 
 // LowOp equality restricted to the fields that define the lifted semantics:
 // opcode, output vnode, and the input vnodes.  (Addr is set from the insn
@@ -45,6 +62,22 @@ inline bool lowOpEq(const LowOp &A, const LowOp &B) {
     if (A.Inputs[I] != B.Inputs[I])
       return false;
   return true;
+}
+
+inline bool matchingLifts(LiftOutcome Capstone, const std::vector<LowOp> &CsOps,
+                          LiftOutcome Native,
+                          const std::vector<LowOp> &NatOps) {
+  return Capstone == Native && CsOps.size() == NatOps.size() &&
+         std::equal(CsOps.begin(), CsOps.end(), NatOps.begin(), lowOpEq);
+}
+
+inline std::string outcomeMismatch(uint32_t Word, va_t Address,
+                                   LiftOutcome Capstone, LiftOutcome Native) {
+  char Buffer[kParityOutcomeDiagnosticBytes];
+  std::snprintf(Buffer, sizeof(Buffer), kParityOutcomeMismatch, Word,
+                static_cast<unsigned long long>(Address),
+                static_cast<unsigned>(Capstone), static_cast<unsigned>(Native));
+  return Buffer;
 }
 
 inline std::string vnStr(const NdVar &V) {
@@ -137,7 +170,8 @@ inline std::string checkOne(const Oracle &O, uint32_t Word, va_t Addr) {
     return ""; // declined -> nothing to prove (capstone handles it)
 
   std::vector<LowOp> CsOps;
-  if (!O.lift(Word, Addr, CsOps)) {
+  const auto Capstone = liftOutcome([&] { return O.lift(Word, Addr, CsOps); });
+  if (Capstone == LiftOutcome::DecodeRejected) {
     char Buf[96];
     std::snprintf(Buf, sizeof(Buf),
                   "STRICT-SUBSET VIOLATION: native accepted w=0x%08X but "
@@ -146,10 +180,14 @@ inline std::string checkOne(const Oracle &O, uint32_t Word, va_t Addr) {
     return Buf;
   }
   std::vector<LowOp> NatOps;
-  nativeLift(Word, Addr, NI, NatOps);
+  const auto Native = liftOutcome([&] {
+    nativeLift(Word, Addr, NI, NatOps);
+    return true;
+  });
+  if (Capstone != Native)
+    return outcomeMismatch(Word, Addr, Capstone, Native);
 
-  if (NatOps.size() != CsOps.size() ||
-      !std::equal(NatOps.begin(), NatOps.end(), CsOps.begin(), lowOpEq)) {
+  if (!matchingLifts(Capstone, CsOps, Native, NatOps)) {
     char Buf[128];
     std::snprintf(Buf, sizeof(Buf),
                   "LIFT MISMATCH w=0x%08X va=0x%llx id=%u\n--- capstone ---\n",
@@ -202,7 +240,8 @@ inline std::string checkOneReuse(const Oracle &O, cs_insn &NI, cs_detail &ND,
   if (!a64native::tryDecode(Word, Addr, NI, ND))
     return "";
   std::vector<LowOp> CsOps;
-  if (!O.lift(Word, Addr, CsOps)) {
+  const auto Capstone = liftOutcome([&] { return O.lift(Word, Addr, CsOps); });
+  if (Capstone == LiftOutcome::DecodeRejected) {
     char Buf[96];
     std::snprintf(Buf, sizeof(Buf),
                   "STRICT-SUBSET VIOLATION (reuse): native accepted w=0x%08X "
@@ -211,9 +250,13 @@ inline std::string checkOneReuse(const Oracle &O, cs_insn &NI, cs_detail &ND,
     return Buf;
   }
   std::vector<LowOp> NatOps;
-  nativeLift(Word, Addr, NI, NatOps);
-  if (NatOps.size() != CsOps.size() ||
-      !std::equal(NatOps.begin(), NatOps.end(), CsOps.begin(), lowOpEq)) {
+  const auto Native = liftOutcome([&] {
+    nativeLift(Word, Addr, NI, NatOps);
+    return true;
+  });
+  if (Capstone != Native)
+    return outcomeMismatch(Word, Addr, Capstone, Native);
+  if (!matchingLifts(Capstone, CsOps, Native, NatOps)) {
     char Buf[128];
     std::snprintf(Buf, sizeof(Buf),
                   "REUSED-BUFFER STALE-OPERAND LEAK w=0x%08X id=%u\n"

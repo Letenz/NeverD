@@ -1062,7 +1062,10 @@ TEST(Win64CallContract, ImmutableNoReturnSlotsEndBothSourcePaths) {
       EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
       const std::string Oracle = R"(
 extern _Noreturn void _Exit(int);
-_Noreturn uint64_t stop_provider(void) __asm__("abort");
+#define SYMBOL_PREFIX_(prefix) #prefix
+#define SYMBOL_PREFIX(prefix) SYMBOL_PREFIX_(prefix)
+_Noreturn uint64_t stop_provider(void)
+    __asm__(SYMBOL_PREFIX(__USER_LABEL_PREFIX__) "abort");
 _Noreturn uint64_t stop_provider(void) { _Exit(0); }
 int main(void) {
   if (loaded_noreturn(0) != 37) return 1;
@@ -1141,6 +1144,15 @@ TEST(Win64CallContract, RelocatedCallbacksBindTheFinalExternalIdentifier) {
           LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions,
                                      nullptr, &Image)
                : HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+      // LLVM-C's ordinary C declaration and its raw address alias denote the
+      // same foreign symbol. Pin the former when the host adds a prefix.
+      // HighC already gives the callback its alias; its shared stem can name
+      // the data object instead.
+      const std::string NativeDeclaration =
+          LLVM && std::string(TargetName) == "callback_target"
+              ? "#include <stdint.h>\nuint64_t callback_target(void) "
+                "__asm__(\"callback_target\");\n"
+              : "";
       std::string Oracle = R"(
 uint64_t callback_provider(void) __asm__("callback.target");
 uint64_t callback_provider(void) { return 37; }
@@ -1153,7 +1165,7 @@ int main(void) {
       Oracle.replace(Oracle.find(Label), Label.size(), TargetName);
       for (llvm::StringRef Level : {"-O0", "-O2"})
         source_call_execution_test::compileAndRun(
-            Source + Oracle,
+            NativeDeclaration + Source + Oracle,
             {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
     }
   }
@@ -1458,7 +1470,10 @@ TEST(Win64CallContract, BoundedCalleeReadDoesNotExposeAdjacentUnknownBytes) {
           std::string Oracle;
           if (OmitCallee)
             Oracle = R"(
-uint64_t read_provider(uint64_t address) __asm__("bounded_reader");
+#define SYMBOL_PREFIX_(prefix) #prefix
+#define SYMBOL_PREFIX(prefix) SYMBOL_PREFIX_(prefix)
+uint64_t read_provider(uint64_t address)
+    __asm__(SYMBOL_PREFIX(__USER_LABEL_PREFIX__) "bounded_reader");
 uint64_t read_provider(uint64_t address) {
   return *(uint32_t *)(uintptr_t)address;
 }
@@ -5112,6 +5127,9 @@ BinaryImage registerQueryImage(unsigned Mutation = 0) {
 }
 
 TEST(CallExitRegisters, PureRegisterLeafKeepsDynamicExtraResults) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP() << "native CPUID execution requires an x64 host";
+#endif
   for (BinaryFormat Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
     for (unsigned Mutation : {0u, 9u, 10u}) {

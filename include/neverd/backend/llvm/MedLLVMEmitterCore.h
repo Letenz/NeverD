@@ -39,6 +39,7 @@
 #ifndef NEVERD_BACKEND_LLVM_MEDLLVMEMITTERCORE_H
 #define NEVERD_BACKEND_LLVM_MEDLLVMEMITTERCORE_H
 #include "neverd/backend/llvm/MedLLVMEmitterState.h"
+#include "neverd/ir/OperationLimits.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedIR.h"
@@ -2478,7 +2479,7 @@ private:
   void propagateToSubRegs(uint64_t RegOff, uint16_t WriteSize, llvm::Value *Val,
                           llvm::IRBuilder<> &Builder);
 
-  llvm::Value *PendingIntrinsicOutputs[4] = {};
+  llvm::Value *PendingIntrinsicOutputs[kIntrinsicOperationOutputs] = {};
   unsigned PendingIntrinsicCount = 0;
   /// Status sampled inside an FPREM/FPREM1 or BCD asm call. Only the
   /// immediately following synthetic X87ReadStatus in the same LLVM block may
