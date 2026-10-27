@@ -749,16 +749,15 @@ TEST_F(AndroidFrameworkTest, ServiceManagerInitializationIsNotAnEmptyBody) {
                             : state.allocate("Landroid/os/ServiceManager;",
                                              mode == 1, Admit, 65536);
     EXPECT_EQ(result.stop, ExecutionStop::Unsupported);
-    EXPECT_EQ(
-        result.diagnostic,
-        "Landroid/os/ServiceManager;: class initialization is not modeled");
+    EXPECT_EQ(result.diagnostic,
+              "Android property integer service is not supplied");
     EXPECT_EQ(result.value, 0u);
     EXPECT_TRUE(result.exception.empty());
     EXPECT_TRUE(state.snapshot().terminal);
     for (const auto &row : state.snapshot().classes)
       if (row.descriptor == "Landroid/os/ServiceManager;") {
         EXPECT_EQ(row.initialization,
-                  JavaClassState::Initialization::NotStarted);
+                  JavaClassState::Initialization::Initializing);
         EXPECT_EQ(row.class_object, 0u);
       }
   }

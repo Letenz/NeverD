@@ -12558,9 +12558,9 @@ without reporting a completed constructor. `getTime` converts the same boot
 clock to microseconds and needs no application snapshot. The modeled class is
 boot-owned and cannot be replaced by supplied Android DEX. This follows the
 [API 28 StatLogger contract](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/com/android/internal/util/StatLogger.java).
-Statistics updates, logging and dumps remain unsupported. These prerequisites
-do not establish ServiceManager's process cache or Java Binder identities;
-its unmodeled initialization boundary remains explicit.
+Statistics updates, logging and dumps remain unsupported. ServiceManager's
+initializer reuses these operations; its separately supplied cache and Binder
+state are described below.
 
 `dalvik::Library` is the single implementation of the bounded UTF-16 String,
 Object, Class and Throwable value methods called by JNI and DEX. Heap owns
@@ -12599,7 +12599,7 @@ The contract follows the public API 28
 and its abstract base; no implementation bodies are incorporated.
 
 The same Library/Heap owners provide HashMap's default constructor, `size`,
-`isEmpty`, `get`, `put`, `containsKey`, `remove` and `clear`, including calls
+`isEmpty`, `get`, `put`, `containsKey`, `remove`, `clear` and `putAll`, including calls
 through the Map interface. Each constructed object retains independent entries
 with exact UTF-16 String or null keys and arbitrary reference/null values.
 Equal Strings replace a value without replacing its key; HashMap hash collisions
@@ -12610,8 +12610,47 @@ subclass behavior and custom key hashCode/equals execution are unsupported;
 Map equality, hashing and rendering do not fall back to Object identity.
 The public contract follows API 28
 [HashMap](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/util/HashMap.java).
-These prerequisites do not establish ServiceManager's process cache or Binder
-state; its unmodeled-initializer guard remains in force.
+`putAll` copies known HashMap entries through the same `put` operation, retaining
+value references and handling self-copy without aliasing the entry container.
+
+`AndroidServiceManager.cpp` owns the API 28 ServiceManager initializer and
+explicit Java service state. Runtime retains class preparation, initialization
+ownership, erroneous state and terminal failures, including the HashMap,
+SystemProperties and StatLogger dependencies. Static library calls from DEX,
+JNI method/field lookup and the direct Runtime library entry use that owner.
+The initializer retains static fields and reads all four property settings;
+slow thresholds multiply as Java int before widening to long. Budget or service
+failures retain completed writes without reporting initialization complete.
+
+The optional `application_snapshot.service_manager` supplies the initial cache,
+ServiceManagerProxy and context Binder independently. Missing state is unknown,
+not an empty cache or null manager. Initial cache entries use shared HashMap
+String/null key semantics and heap reference values. Positive Binder keys name
+retained Java BinderProxy identities, not native handles, kernel endpoints,
+liveness observations or RPC replies. Repeated keys across cache and manager
+references preserve one object; blocking-warning state can independently be
+unknown. `getService` and `checkService` return nonnull cache hits unchanged;
+null entries take the miss path. `initServiceCache` checks actual cache size
+before `putAll`; an empty installation is repeatable. Guest writes retain their
+ordinary Java effects, including casts and null exceptions.
+
+`Binder.allowBlocking` updates the retained proxy's warning flag;
+`BinderProxy.queryLocalInterface` returns null, and an admitted
+ServiceManagerProxy retains its `mRemote` field. Cache misses preserve the
+getService timing read and manager/context acquisition order, then stop at
+unmodeled Binder transactions. JNI remains a handle/ABI adapter. Linux Binder
+continues to own native device/transaction state; this Java projection cannot
+translate its keys into those handles. Local/custom Binder behavior, native
+object translation, Parcel RPC, statistics/logging and add/list service calls
+remain unsupported. The volatile warning field is admitted by shared framework
+field identity; supplied DEX volatile fields retain their existing guard.
+Observed Java state reports cache identity/completeness, retained entries,
+manager/logger identities and proxy warning states without manufacturing
+missing values. Contracts follow API 28
+[ServiceManager](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/ServiceManager.java),
+[ServiceManagerNative](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/ServiceManagerNative.java)
+and [Binder](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/Binder.java).
+See [application runtime inputs](android-application-runtime.md) for the schema.
 
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
@@ -13062,3 +13101,9 @@ Shared MedIR flag folding keeps both subtraction operands, including `A-A`. A se
 Integer conditions comparing one SSA value with itself become boolean constants before source emission. This includes subtraction overflow; unspecified operands remain explicit.
 
 Captured HFA call targets use the same checked source signature as record argument and result reconstruction. The prototype keeps the original callable value and the complete record types, including flattened register groups and stack arguments.
+
+## Selected callable declarations
+
+HighC represents an address-only function symbol without a known signature as a linker-labelled byte alias. The address supplies no guessed return type; typed callback arguments retain their declared function-pointer conversion and source navigation retains the original symbol and address. Source LLVM requests the existing bounded omitted-callee reader even when an arity summary is complete. It retains fixed x64/ARM64 machine-word integer/pointer declarations only when recovery leaves the carriers and types unchanged. Explicit source contracts keep precedence; bodies, exception contracts and native lifting permissions are not supplied. The memo distinguishes source-type reads and retains the same declaration decision on warm recovery.
+
+Known exception metadata rejects a source-only declaration before its body is read; ordinary signature reads remain unchanged.

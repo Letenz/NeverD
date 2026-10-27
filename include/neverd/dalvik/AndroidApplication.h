@@ -162,6 +162,29 @@ struct AndroidApplicationSnapshot {
   // Message.obtain's process-wide pool. Only an explicitly empty pool can
   // allocate a fresh Message; false preserves an unmodeled nonempty pool.
   std::optional<bool> initial_message_pool_empty;
+  // Java-side state at the workload boundary, independent of attachment.
+  // Proxy keys identify retained Java objects, NOT kernel handles or peers.
+  // No transaction response, liveness or native Binder ownership is implied.
+  struct ServiceManager {
+    struct BinderProxy {
+      uint32_t key = 0;
+      std::optional<bool> warn_on_blocking;
+    };
+    std::vector<BinderProxy> binder_proxies;
+    struct CacheEntry {
+      std::optional<std::string> name;
+      // Null is a cached null; a positive key refers to binder_proxies.
+      std::optional<uint32_t> binder;
+    };
+    // Absent is unknown; an empty vector is an explicitly empty whole cache.
+    std::optional<std::vector<CacheEntry>> cache;
+    // Absent is unknown, inner null is known null. A key in manager_proxy
+    // declares a ServiceManagerProxy retaining that BinderProxy; context_object
+    // is the independently observed BinderInternal.getContextObject result.
+    std::optional<std::optional<uint32_t>> manager_proxy;
+    std::optional<std::optional<uint32_t>> context_object;
+  };
+  std::optional<ServiceManager> service_manager;
   // An explicitly installed custom URLStreamHandler, supplied as initial host
   // state. Its openConnection always throws a fresh IOException with this
   // retained message. This is not the default HTTP handler or a network policy.
@@ -191,5 +214,6 @@ void validateAndroidPackageInfoQueries(const AndroidApplicationSnapshot &input);
 void validateAndroidDefaultLocale(const AndroidApplicationSnapshot &input);
 void validateAndroidClassLoaderPaths(const AndroidApplicationSnapshot &input);
 void validateAndroidMessageQueue(const AndroidApplicationSnapshot &input);
+void validateAndroidServiceManager(const AndroidApplicationSnapshot &input);
 void validateAndroidURLHandlers(const AndroidApplicationSnapshot &input);
 } // namespace neverd::mobile::dalvik

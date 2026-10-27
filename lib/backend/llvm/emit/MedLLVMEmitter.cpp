@@ -1245,7 +1245,10 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   EmittedFuncNames.clear();
   FuncNames.clear();
   PEImportCNames = Img ? peImportCNames(*Img) : std::set<std::string>{};
-  for (const MedFunc &F : Funcs) {
+  const auto Declarations = PreserveUnknownSourceValues
+                                ? SourceCalleeDeclarations
+                                : llvm::ArrayRef<MedFunc>{};
+  const auto NameFunction = [&](const MedFunc &F) {
     std::string EmittedName = F.Name;
     auto Personality = NativePersonalityNames.find(F.Entry);
     llvm::StringRef SourceName(F.Name);
@@ -1282,6 +1285,17 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
       EmittedName = std::move(*Shadow);
     EmittedFuncNames[F.Entry] = EmittedName;
     FuncNames[F.Entry] = std::move(EmittedName);
+  };
+  for (const MedFunc &Function : Funcs)
+    NameFunction(Function);
+  std::map<va_t, const MedFunc *> OmittedDeclarations;
+  for (const MedFunc &Declaration : Declarations) {
+    if (!Declaration.Blocks.empty())
+      throw std::invalid_argument("source callee declaration has a body");
+    if (EmittedFuncNames.count(Declaration.Entry))
+      continue;
+    NameFunction(Declaration);
+    OmittedDeclarations.emplace(Declaration.Entry, &Declaration);
   }
   for (auto &[Addr, Name] : Imports)
     FuncNames[Addr] = llvm_name::fromObjectSymbol(Name, Fmt).str();
@@ -1357,6 +1371,10 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     if (!Merged.empty())
       EmittedFuncCodeRanges[Func.Entry] = std::move(Merged);
   }
+  // Definitions selected for this module own their types. Omitted declarations
+  // supply no implementation, interior-code range or exception contract.
+  for (const auto &[Entry, Declaration] : OmittedDeclarations)
+    declareFunc(*Declaration);
   initializeCxxContinuationPlans(Funcs, BodyMask);
 
   DirectCallArgumentCounts.clear();

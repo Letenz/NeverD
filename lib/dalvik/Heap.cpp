@@ -206,6 +206,7 @@ bool platformClass(std::string_view name) {
       "java/lang/ArithmeticException",
       "java/lang/NullPointerException",
       "java/lang/IllegalArgumentException",
+      "java/lang/IllegalStateException",
       "java/lang/IndexOutOfBoundsException",
       "java/lang/ArrayIndexOutOfBoundsException",
       "java/lang/StringIndexOutOfBoundsException",
