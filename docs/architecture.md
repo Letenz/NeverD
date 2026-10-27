@@ -1129,9 +1129,17 @@ including equivalent formatting, merge-conflict and foreign-edit checks. A row
 can reuse admission only when both its values and JSON types match the validated
 row. Non-finite numbers, binary values and invalid UTF-8 are refused before
 publication so the snapshot and its serialized representation cannot diverge.
+After changed rows pass admission, an unchanged canonical address sequence
+retains the snapshot's ordering, uniqueness and ordered-table positions. A
+changed address or row count takes the full ordering and duplicate checks.
 
 History publication encodes the target state once and composes the history and
 recovery journal from serializer-produced JSON and retained committed text.
+It retains byte ranges for encoded tables and formats those ranges for sidecar
+files without traversing their objects again. The formatter consumes only
+serializer-produced compact JSON and preserves scalar spelling, string escapes
+and the existing file layout. Ordered tables still omit synthetic addresses;
+ordinary typed sidecar writes retain their direct serializer.
 Loading a snapshot retains validated history-file bytes and defers journal
 encoding until a save needs it. Before embedding a loaded document, publication
 parses and serializes it, so a top-level BOM cannot enter nested JSON. Merely
