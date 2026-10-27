@@ -128,6 +128,12 @@ Python objects. The metadata-only `neverd_byte_patch_ranges_snapshot_v1` has
 address and size, with the same independent lifetime and file-offset ordering.
 `Session.byte_patch_ranges` keeps its existing JSON-compatible return values.
 
+The low-level ABI also declares `neverd_function_presentation_json`,
+`neverd_metadata_items_json` and `neverd_sha256_hex` as owned strings.
+`neverd_visit_metadata_items` uses `MetadataVisitorV1`; its item, field and string
+pointers are borrowed only during the callback. Copy any retained facts there;
+the callback must not throw, block or reenter the session.
+
 ### Bounded symbolic path exploration
 
 For native LowIR functions, `session.symbolic_explore` returns typed path

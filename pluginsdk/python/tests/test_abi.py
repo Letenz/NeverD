@@ -16,6 +16,34 @@ from scripts.check_python_plugin_sdk import (
 
 
 class ABIInventoryTests(unittest.TestCase):
+    def test_metadata_visitor_preserves_borrowed_layout_and_callback(self) -> None:
+        from neverd_plugin import abi
+
+        self.assertEqual(
+            abi.MetadataVisitorV1._argtypes_,
+            (ctypes.c_void_p, ctypes.POINTER(abi.NeverDMetadataItemV1)),
+        )
+        self.assertIs(abi.MetadataVisitorV1._restype_, ctypes.c_int)
+        self.assertIs(
+            abi.FUNCTION_SPECS["neverd_visit_metadata_items"].argtypes[3],
+            abi.MetadataVisitorV1,
+        )
+        for name in ("neverd_metadata_items_json",
+                     "neverd_function_presentation_json", "neverd_sha256_hex"):
+            self.assertIs(abi.FUNCTION_SPECS[name].ownership,
+                          abi.Ownership.OWNED_STRING)
+            self.assertIs(abi.FUNCTION_SPECS[name].restype, ctypes.c_void_p)
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            for native, fields in (
+                (abi.NeverDMetadataFieldV1,
+                 ("struct_size", "offset", "size", "target", "name", "role")),
+                (abi.NeverDMetadataItemV1,
+                 ("struct_size", "address", "size", "type", "fields", "field_count")),
+            ):
+                self.assertEqual(ctypes.sizeof(native), 48)
+                for index, field in enumerate(fields):
+                    self.assertEqual(getattr(native, field).offset, index * 8)
+
     def test_byte_patch_snapshot_preserves_native_pointer_and_frozen_layout(self) -> None:
         from neverd_plugin import abi
 

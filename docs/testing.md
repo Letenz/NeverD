@@ -4684,6 +4684,9 @@ JSON on a generated DLL, including embedded chain rows, borrowed v1 records,
 early-stop cursors and invalid callback admission. It also checks that a
 bounded entry's direct forwarder can refer to an unlisted destination without
 registering that destination or resurrecting a deleted function identity.
+`pluginsdk/python/tests/test_metadata_integration.py` reuses the generated DLL
+through the official `HostAPI` declarations, checking owned text and hashes,
+borrowed ctypes fields, complete paginated rows and early-stop cursors.
 The PE listing fixture checks `complete_anchor_item` with a one-line budget:
 the first reply includes the actual selected instruction and its header.
 After changing viewport demand, run the GUI controller's
