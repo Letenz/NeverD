@@ -13,13 +13,16 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/decode/Limits.h"
+#include "neverd/decode/X86/X86TransactionEncoding.h"
 #include "neverd/ir/X86/X87Context.h"
 #include "neverd/lift/X86/X86Lifter.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include "capstone/capstone.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <iterator>
 #include <mutex>
@@ -194,6 +197,31 @@ Decoder::getX86ScalarOperandOccurrence() const {
 void Decoder::fixupX86DecodeMetadata(cs_insn *I) const {
   fixupX86MpxDetail(I);
   fixupX86DisplacementDetail(I);
+  // The pinned Capstone sign-extends XBEGIN using the address size in i386,
+  // not the encoded immediate size. Normalize only that known decoder
+  // representation before CFG consumers or lifting see the fallback.
+  if (TargetArch != Arch::X86 || !Detail || !Text || !I || !I->detail ||
+      I->id != X86_INS_XBEGIN)
+    return;
+  const auto E =
+      x86TransactionBeginEncoding({I->bytes, I->size}, I->address, false);
+  auto &X = I->detail->x86;
+  if (!E || !x86TransactionBeginDetailMatches(X, *E, false))
+    return;
+  const auto *Immediate = I->bytes + E->OpcodeOffset + 2;
+  uint64_t Raw = E->ImmediateBytes == 2 ? readLE<uint16_t>(Immediate)
+                                        : readLE<uint32_t>(Immediate);
+  // Reproduce the decoder's sign-bit extension, not a truncation: with
+  // addr16 and a clear bit 15, the upper half of a rel32 stays present.
+  if (X.addr_size == 2 && (Raw & 0x8000))
+    Raw |= ~UINT64_C(0xffff);
+  const auto Legacy = (I->address + I->size + Raw) & UINT32_MAX;
+  if (uint64_t(X.operands[0].imm) != E->Target &&
+      uint64_t(X.operands[0].imm) == Legacy) {
+    X.operands[0].imm = E->Target;
+    std::snprintf(I->op_str, sizeof(I->op_str), "0x%llx",
+                  static_cast<unsigned long long>(E->Target));
+  }
 }
 
 void Decoder::fixupX86DisplacementDetail(cs_insn *I) const {
