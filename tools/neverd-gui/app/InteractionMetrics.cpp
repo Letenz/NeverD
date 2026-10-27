@@ -363,12 +363,22 @@ InteractionMetrics::Step InteractionMetrics::graphStep(const char *name) {
 
 InteractionMetrics::Step InteractionMetrics::pseudocodeStep(const char *name) {
   return [this, name](Done done) {
-    // F5 opens the pseudocode window on the current function.
-    if (auto *action =
-            window_.findChild<QAction *>(QStringLiteral("ViewPseudocode")))
-      action->trigger();
-    QTimer::singleShot(0, this,
-                       [this, name, done] { measurePseudocode(name, done); });
+    const auto open = [this, name, done] {
+      // F5 opens the pseudocode window on the current function.
+      if (auto *action =
+              window_.findChild<QAction *>(QStringLiteral("ViewPseudocode")))
+        action->trigger();
+      QTimer::singleShot(0, this,
+                         [this, name, done] { measurePseudocode(name, done); });
+    };
+    // Leaving the graph starts a listing jump. F5 itself defers until that
+    // jump lands, so its window cannot be measured on the next timer yet.
+    auto *listing = window_.disassembly()->listing();
+    if (listing->jumpPending())
+      connect(listing, &ListingView::jumpSettled, this, open,
+              Qt::SingleShotConnection);
+    else
+      open();
   };
 }
 

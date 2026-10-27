@@ -151,6 +151,12 @@ struct InteractionMetricsTestAccess {
     metrics.samples_ = {address};
     metrics.measurePseudocode("pseudocode", std::move(done));
   }
+  static void openPseudocode(InteractionMetrics &metrics, Address address,
+                             std::function<void()> done) {
+    metrics.started_ = true;
+    metrics.samples_ = {address};
+    metrics.pseudocodeStep("pseudocode")(std::move(done));
+  }
   static QJsonObject pseudocodeResult(const InteractionMetrics &metrics) {
     return metrics.phases_.value("pseudocode").toObject();
   }
@@ -10740,6 +10746,32 @@ private slots:
                              OpenTimeoutMs);
     QCOMPARE(bench.session.metadata().value("function_count").toInt(), 600);
     QCOMPARE(InteractionMetricsTestAccess::functionCount(metrics), 601);
+  }
+
+  void pseudocodeMeasurementWaitsForThePendingListingJump() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("source-cache.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.analysisComplete(), OpenTimeoutMs);
+    QVERIFY(!bench.codeView("source"));
+    auto *listing = bench.window->disassembly()->listing();
+    listing->jumpTo(Base + 16);
+    QVERIFY(listing->jumpPending());
+    InteractionMetrics metrics(*bench.window, bench.session,
+                               directory.filePath("interactions.json"),
+                               NativeOpenTimeoutMs, nullptr);
+    bool done = false;
+    InteractionMetricsTestAccess::openPseudocode(metrics, Base + 16,
+                                                 [&] { done = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(done, OpenTimeoutMs);
+    const auto result = InteractionMetricsTestAccess::pseudocodeResult(metrics);
+    QCOMPARE(result.value("samples").toInt(), 1);
+    QCOMPARE(result.value("missed").toInt(), 0);
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    QVERIFY(view->text()->complete());
+    QCOMPARE(view->text()->function(), std::optional<Address>(Base + 16));
   }
 
   void pseudocodeMeasurementRequiresTheRequestedCompleteDocument_data() {
