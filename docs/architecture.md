@@ -3360,6 +3360,12 @@ hashing, retaining complete-key equality and the same storage/work accounts.
 Native sample guards index contiguous variable-ID windows directly. Sparse
 windows retain compact maps, and both paths preserve the same referenced-input
 order and random stream. Numeric node-order comparisons stay inside the sort.
+When two sums retain identical complete addends, the sample guard cancels those
+addends in the shared modular ring before compiling residual evaluation plans.
+It still draws assignments for the original variable union, including wide
+inputs used only by canceled terms, so every validation point remains unchanged.
+Only node identity authorizes cancellation; differing coefficients or operand
+widths do not. Residual plans retain arbitrary-width internal evaluation.
 General operators retain the shared APInt semantics in a separate call, keeping
 their operand construction and cleanup out of the native evaluator's hot frame.
 The compact two-word hash key uses one 64-bit bucket mix, without hashing its

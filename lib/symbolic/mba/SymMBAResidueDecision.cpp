@@ -573,11 +573,19 @@ class LowWordDecisions {
   unsigned knownZeros(SymRef R, unsigned Depth = 0) {
     if (!charge() || Depth >= limits::kMaxResidueDecisionDepth)
       return 0;
+    const auto Op = Ctx.op(R);
+    // These exact leaves require neither a cached fact nor an APInt reading.
+    // Wide constants retain their accounted limb traversal below.
+    if (Op == SymOp::Var)
+      return 0;
+    if (Op == SymOp::Const &&
+        Ctx.width(R) <= std::numeric_limits<uint64_t>::digits)
+      return std::min({Ctx.width(R), limits::kMaxAffineResidueTableBits,
+                       unsigned(std::countr_zero(Ctx.node(R).Aux))});
     if (auto It = Zeros.find(R.index()); It != Zeros.end())
       return It->second;
     const unsigned Ceiling =
         std::min(Ctx.width(R), limits::kMaxAffineResidueTableBits);
-    const auto Op = Ctx.op(R);
     unsigned Result = 0;
     if (Ctx.isConst(R)) {
       const auto Value = literal(R);
