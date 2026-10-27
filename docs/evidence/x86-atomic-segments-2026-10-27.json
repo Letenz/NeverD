@@ -459,7 +459,7 @@
     "instruction_effects": "Original native RAO operation owns relaxed ordering, alignment/WB checks and arithmetic-flag preservation."
   },
   "oracle": {
-    "source": "tests/verify-apx-atomic-completion.py (retained NeverC qualification checkout)",
+    "source": "Local-only diagnostic oracle: verify-apx-atomic-completion.py (not distributed)",
     "packages": {
       "capstone": "5.0.7",
       "lief": "1.0.0-d05b3499b",
