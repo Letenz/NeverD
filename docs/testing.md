@@ -2879,6 +2879,21 @@ prebuilt-LLVM guidance.
 
 ## Structural binary comparison
 
+Call-context regressions retain exact score ties at zero ambiguity margin,
+refuse contradictory repeated-call assignments and competing anchor positions,
+preserve unresolved call holes, and keep independent consistent pairs. Context
+still resolves reordered duplicate callees after 1,200 and 70,000 known calls.
+An independent enumeration checks all 14,641 pairs of sequences of length zero
+through four over two callee identities and unresolved positions. A separate
+full prefix/suffix oracle enumerates viable LCS ranks for large and highly
+unequal inputs, in both directions, without tracing extreme paths. A 600,000-to-1
+case, cancellation/deadline stops and retry cover the storage/stop boundaries.
+The native x86 SDK fixture checks a 1,202-call caller, reordered identical
+helpers, full/paged details and byte-exact save/reopen. The native ambiguity
+inventory fixture exercises zero margin through paging, manual pairing,
+undo/redo and restore. These qualify structural matching behavior, not general
+function equivalence or arbitrary call reordering.
+
 Long native instruction-alignment regressions reproduce a 6,001-instruction
 body with 72 inserted instructions beyond the old dense-table threshold, in
 both directions. An independent forward edit-cost oracle checks large repeated

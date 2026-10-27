@@ -1320,6 +1320,14 @@ unchanged; projection schema versions are independent of the v2 document.
 `lib/diff` owns the immutable comparison model, normalization-independent matching,
 block/instruction deltas, correspondence overrides and versioned persistence.
 It depends on neutral decoded snapshots rather than Session, Qt or GUI objects.
+Its private `CallAlignment` owner finds mandatory call-position anchors by
+intersecting the two extreme optimal LCS paths. Dense tables and linear-frontier
+decomposition preserve that contract at every sequence size; opposite tie rules
+include alternatives that skip an equal call. `Comparison` verifies all proposed
+callee occurrences before admitting positional pairs, and retains exact
+similarity ties even at zero ambiguity margin. `Features` keeps unresolved calls
+as `NoIndex` positions while excluding them from graph edges and import sets.
+These are shared matching rules, independent of transport and UI.
 The C API's `functions_json` inventory projects the same accepted mappings and
 retained ambiguity groups. `ambiguous_with` binds an opposite-side function to
 the full group's target-side inventory, with ordinary search/sort/paging; it
