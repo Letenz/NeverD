@@ -3005,6 +3005,10 @@ AArch64, with separate rebase and retarget controls. A 512-function address
 chain checks propagation beyond global refinement rounds. Candidate competition
 retains a more similar original body when its diagnostic string and call
 position move to a new helper.
+`RelativeCallBytesCannotIdentifyDuplicateWrappers` independently reorders equal
+wrappers around a known callee in both directions. Encoded call displacements
+must not select a source identity. The native SDK counterpart decodes real x64
+calls, retains both ambiguous wrappers and preserves them through save/reopen.
 
 Reference-uncertainty controls distinguish unchanged raw code from known operand
 changes, retain a known retargeting beside an unknown address operand, and keep

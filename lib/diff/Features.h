@@ -70,6 +70,9 @@ struct FunctionFeatures {
   /// NoIndex as operand denotes a transfer, separate from explicit operands.
   std::vector<AddressSite> AddressSites;
   uint32_t FunctionReferences = 0;
+  /// Raw address encodings vary with layout and cannot identify duplicate
+  /// normalized bodies, even when their referenced objects correspond.
+  bool AddressEncodings = false;
   bool UnresolvedData = false;
   bool UnresolvedCallee = false;
   /// Whether the sketch holds anything.

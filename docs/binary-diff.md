@@ -58,6 +58,12 @@ address role is established. Illegal or unsupported instructions retain their
 original bytes with incomplete analysis. AArch64 matching does not broaden the
 separately qualified x86 scalar-validation and import-effect proof profiles.
 
+Matcher version 8 uses normalized identity for bodies containing address
+encodings. Reused relative call or data-reference bytes cannot distinguish two
+otherwise identical wrappers after layout changes. Their original bytes remain
+inspectable; separate normalized features, names and call context can still
+establish correspondence, while indistinguishable candidates remain ambiguous.
+
 ## Command line
 
 ```sh

@@ -411,6 +411,46 @@ TEST_F(BinaryDiffSDK, FunctionNameProvenanceSurvivesReorderingAndRenames) {
     }
 }
 
+TEST_F(BinaryDiffSDK, RelativeCallBytesKeepDuplicateWrappersAmbiguous) {
+  std::vector<uint8_t> Bytes(64, 0xcc);
+  const auto Target = body(7);
+  std::copy(Target.begin(), Target.end(), Bytes.begin());
+  for (const unsigned Entry : {16U, 32U}) {
+    Bytes[Entry] = 0xe8;
+    const uint32_t Displacement = uint32_t(-int32_t(Entry + 5));
+    for (unsigned I = 0; I != 4; ++I)
+      Bytes[Entry + 1 + I] = uint8_t(Displacement >> (I * 8));
+    Bytes[Entry + 5] = 0xc3;
+  }
+  const auto A = input(Bytes);
+  Bytes.back() = 0;
+  const auto B = input(Bytes, 0x8000);
+  for (const auto &[Session, Base] :
+       {std::pair{A, 0x1000U}, std::pair{B, 0x8000U}})
+    for (unsigned Offset : {16U, 32U})
+      ASSERT_EQ(neverd_func_create(Session, Base + Offset), 0);
+  for (bool Reverse : {false, true}) {
+    const auto C = compare(Reverse ? B : A, Reverse ? A : B,
+                           R"({"discover":false,"use_names":false})");
+    const auto Saved = take(neverd_comparison_export_json(C));
+    auto Report = llvm::json::parse(Saved);
+    ASSERT_TRUE(bool(Report));
+    const auto *Root = Report->getAsObject();
+    ASSERT_TRUE(Root);
+    const auto *Matches = Root->getArray("matches");
+    ASSERT_TRUE(Matches);
+    ASSERT_EQ(Matches->size(), 1U) << Saved;
+    const auto *Coverage = Root->getObject("coverage");
+    ASSERT_TRUE(Coverage);
+    for (const auto *Side : {"primary", "secondary"}) {
+      ASSERT_TRUE(Coverage->getObject(Side));
+      EXPECT_EQ(Coverage->getObject(Side)->getInteger("ambiguous"), 2);
+    }
+    ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  }
+}
+
 TEST_F(BinaryDiffSDK,
        FunctionPointersUseCorrespondenceInsteadOfReusedAddresses) {
   const auto Image = [&](bool Reordered, bool Retarget) {

@@ -389,6 +389,27 @@ TEST(BinaryDiff, ZeroAmbiguityMarginStillPreservesExactTies) {
   }
 }
 
+TEST(BinaryDiff, RelativeCallBytesCannotIdentifyDuplicateWrappers) {
+  Fn Target = leaf("target", 91);
+  Fn A = caller("wrapper_a", 7, {"target"});
+  Fn B = A;
+  B.Name = "wrapper_b";
+  A.Source = B.Source = NameSource::Generated;
+  const Program P = build({Target, A, B}, 0x400000);
+  // Reordering swaps which indistinguishable wrapper has the same encoded
+  // relative displacement. That is layout evidence, not source identity.
+  const Program S = build({Target, A, B}, 0x500000, {0, 2, 1});
+  for (const auto &[Left, Right] : {std::pair(&P, &S), std::pair(&S, &P)}) {
+    const auto R = compare(*Left, *Right, {});
+    SCOPED_TRACE(saved(R, *Left, *Right));
+    EXPECT_EQ(counterpart(R, *Left, *Right, "target"), "target");
+    EXPECT_EQ(R.matchOfPrimary(indexOf(*Left, "wrapper_a")), nullptr);
+    EXPECT_EQ(R.matchOfPrimary(indexOf(*Left, "wrapper_b")), nullptr);
+    EXPECT_EQ(R.PrimaryCoverage.Ambiguous, 2U);
+    EXPECT_EQ(R.SecondaryCoverage.Ambiguous, 2U);
+  }
+}
+
 TEST(BinaryDiff, OverlappingSimilarityTiesKeepOnlyMeasuredAlternatives) {
   const auto F = [](const char *Name, const char *First, const char *Second) {
     Fn Out;

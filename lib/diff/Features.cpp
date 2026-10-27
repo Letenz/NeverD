@@ -286,6 +286,9 @@ ProgramFeatures computeFeatures(const Program &P,
           Mnemonics.add(Mnemonic);
           Prime *= oddFactor(Mnemonic);
           Skeletons.push_back(I.Skeleton);
+          Out.AddressEncodings |=
+              I.Target.has_value() || I.Callee != NoIndex ||
+              I.AddressReferenceCount != 0;
           for (const auto &Address : P.addressReferences(I))
             if (Address.Kind == ReferenceKind::Function)
               Out.AddressSites.push_back(

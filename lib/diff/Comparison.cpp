@@ -347,7 +347,8 @@ uint64_t Matcher::featureKey(FunctionStep Step, uint32_t Function,
                Step != FunctionStep::NormalizedBody))
     return Key;
   if (F.UnresolvedCallee ||
-      (Step == FunctionStep::ExactBytes && F.UnresolvedData))
+      (Step == FunctionStep::ExactBytes &&
+       (F.UnresolvedData || F.AddressEncodings)))
     return 0;
   const auto Targets = Features.Referents.of(Function);
   if (Targets.size() != F.FunctionReferences)
