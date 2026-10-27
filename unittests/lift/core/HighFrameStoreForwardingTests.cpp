@@ -2382,6 +2382,158 @@ TEST(HighSourceExpressions, CallbackDeclaratorsBorrowIncompleteRecords) {
                 declarationToC(Callback, "visit") +
                 ";\nint main(void) { return visit!=0; }\n");
 }
+HighFunc duplicatedContinuation() {
+  const auto A = Arch::X64;
+  const auto T = NdType::makeInt(8, false);
+  const auto P = NdType::makePtr(T);
+  HighFunc F;
+  F.Name = "shared_continuation";
+  F.ReturnType = T;
+  F.Params = {{"arg0", P}, {"arg1", T}};
+  auto Tail = [&](unsigned Id) {
+    auto Word = temporary(Id, T, A);
+    auto Result = temporary(Id + 1, T, A);
+    auto Finish = HighExpr::makeCall("finish", 0x3000, {Word});
+    Finish->Type = T;
+    Finish->CallSiteAddr = Id;
+    HighStmt Guard;
+    Guard.Kind = StmtKind::If;
+    Guard.Cond = Word;
+    Guard.Body = {assign(Result, Finish), returning(Result)};
+    return std::vector<HighStmt>{
+        assign(Word, HighExpr::makeLoad(parameter(0, P, A), T)), Guard,
+        returning(HighExpr::makeConst(0, 8))};
+  };
+  HighStmt Branch;
+  Branch.Kind = StmtKind::If;
+  Branch.Addr = 0x1000;
+  Branch.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(1, T, A),
+                                    HighExpr::makeConst(1, 8));
+  Branch.Body = Tail(20);
+  auto Prepared = temporary(10, T, A);
+  auto Prepare = HighExpr::makeCall("prepare", 0x2000, {parameter(0, P, A)});
+  Prepare->Type = T;
+  Prepare->CallSiteAddr = 0x1004;
+  HighStmt Failed;
+  Failed.Kind = StmtKind::If;
+  Failed.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, Prepared);
+  Failed.Body = {returning(HighExpr::makeConst(0, 8))};
+  F.Body = {Branch, assign(Prepared, Prepare), Failed};
+  auto Last = Tail(30);
+  F.Body.insert(F.Body.end(), Last.begin(), Last.end());
+  return F;
+}
+
+TEST(HighSourceExpressions, CommonTerminalTailReadsAfterTheOptionalCall) {
+  auto F = duplicatedContinuation();
+  std::string Source;
+  for (bool Folded : {false, true}) {
+    F.Name = Folded ? "after_tail" : "before_tail";
+    if (Folded) {
+      ASSERT_TRUE(foldDuplicateTerminalContinuations(F));
+      ASSERT_EQ(F.Body.size(), 4u);
+      ASSERT_EQ(F.Body.front().Body.size(), 2u);
+      const auto &Prepare = F.Body.front().Body.front().Val;
+      ASSERT_EQ(Prepare->Kind, ExprKind::Call);
+      EXPECT_EQ(Prepare->CallSiteAddr, 0x1004u);
+      EXPECT_FALSE(foldDuplicateTerminalContinuations(F));
+    }
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options));
+  }
+  Source += R"(
+static unsigned prepares, finishes, gate;
+static uint64_t replacement;
+int64_t prepare(uintptr_t address) {
+  ++prepares; *(uint64_t *)address=replacement; return gate;
+}
+int64_t finish(uint64_t word) { ++finishes; return (int64_t)(word+3); }
+int main(void) {
+  uint64_t seeds[]={0,1,UINT64_MAX,UINT64_C(0x100000000)};
+  for (unsigned reason=0;reason<4;++reason)
+    for (gate=0;gate<2;++gate)
+      for (unsigned i=0;i<4;++i)
+        for (unsigned j=0;j<4;++j) {
+          uint64_t word=seeds[i]; replacement=seeds[j];
+          prepares=finishes=0;
+          uint64_t expected=before_tail(&word,reason);
+          unsigned p=prepares, f=finishes;
+          word=seeds[i]; prepares=finishes=0;
+          if (after_tail(&word,reason)!=expected || prepares!=p || finishes!=f)
+            return 1;
+          if (prepares!=(reason==1) || word!=(reason==1?replacement:seeds[i]))
+            return 2;
+        }
+  return 0;
+}
+)";
+  compileAndRun(Source);
+}
+
+TEST(HighSourceExpressions, CommonTerminalTailRequiresExactEffectsAndNames) {
+  for (unsigned Variant = 0; Variant != 8; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = duplicatedContinuation();
+    auto &Arm = F.Body.front().Body;
+    if (Variant == 0)
+      Arm[0].Val->MemoryOrdering = NdMemoryOrdering::Acquire;
+    else if (Variant == 1)
+      Arm[1].Body[0].Val->CallAddr = 0x4000;
+    else if (Variant == 2)
+      Arm[1].Body[0].Val->Operands[0] = HighExpr::makeConst(7, 8);
+    else if (Variant == 3)
+      F.Body.insert(F.Body.begin(),
+                    store(HighExpr::makeConst(0x9000, 8), Arm[0].Dst));
+    else if (Variant == 4) {
+      HighStmt Jump;
+      Jump.Kind = StmtKind::Goto;
+      Jump.GotoTarget = Arm[0].Addr = 0x1040;
+      F.Body.insert(F.Body.begin(), Jump);
+    } else if (Variant == 5)
+      Arm[1].Body[0].Val->Kind = ExprKind::Undef;
+    else if (Variant == 6) {
+      Arm[0].Dst->Var.Kind = MedVar::Reg;
+    } else {
+      HighStmt Try;
+      Try.Kind = StmtKind::SEHTry;
+      Try.Body = std::move(Arm);
+      Arm = {Try};
+    }
+    foldDuplicateTerminalContinuations(F);
+    // A separate common `return 0` may still fold. This differing outer
+    // continuation must retain its original condition and arm.
+    bool Preserved = false;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      if (S.Addr == 0x1000 && S.Cond)
+        Preserved = S.Cond->Op == NdOp::INT_NOTEQUAL;
+    });
+    EXPECT_TRUE(Preserved);
+  }
+}
+
+TEST(HighSourceExpressions, CommonTerminalTailMatchesRuntimeIndirectTargets) {
+  for (bool DifferentTarget : {false, true}) {
+    auto F = duplicatedContinuation();
+    const auto T = NdType::makeInt(8, false);
+    F.Params.push_back({"arg2", T});
+    const auto A = F.Body.front().Body[1].Body[0].Val;
+    const auto B = F.Body[F.Body.size() - 2].Body[0].Val;
+    for (const auto &Call : {A, B}) {
+      Call->CallTarget = "indirect";
+      Call->IsIndirectCall = true;
+      Call->CallAddr = Call->CallSiteAddr;
+      Call->IndirectTarget = parameter(2, T, Arch::X64);
+    }
+    if (DifferentTarget)
+      B->IndirectTarget = parameter(1, T, Arch::X64);
+    foldDuplicateTerminalContinuations(F);
+    EXPECT_EQ(F.Body.front().Cond->Op,
+              DifferentTarget ? NdOp::INT_NOTEQUAL : NdOp::INT_EQUAL);
+  }
+}
+
 TEST(HighSourceExpressions, TypedIndirectCallUsesTheCapturedRuntimeTarget) {
   class CalleeTypes : public NullDebugContext {
   public:
