@@ -1763,10 +1763,10 @@ cl::opt<unsigned long long>
                 cl::init(0), cl::sub(DiffCmd));
 cl::opt<std::string> DiffList(
     "list",
-    cl::desc(
-        "Page all/matched/changed/ambiguous/unmatched functions, regions or "
-        "region-anchors, dataflow, flow-regions, flow-region-anchors or "
-        "reviews"),
+    cl::desc("Page all/matched/changed/uncertain/ambiguous/unmatched "
+             "functions, regions or "
+             "region-anchors, dataflow, flow-regions, flow-region-anchors or "
+             "reviews"),
     cl::sub(DiffCmd));
 cl::opt<unsigned> DiffOffset("offset", cl::desc("Inventory page offset"),
                              cl::init(0), cl::sub(DiffCmd));

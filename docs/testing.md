@@ -3076,6 +3076,31 @@ prebuilt-LLVM guidance.
 
 ## Structural binary comparison
 
+Native identity controls cover function pointers, operand order/multiplicity,
+reused call bytes after reordering, raw-file slices and filtered target lists.
+Conditional external transfers are checked in both directions on x64 and
+AArch64, with separate rebase and retarget controls. A 512-function address
+chain checks propagation beyond global refinement rounds. Candidate competition
+retains a more similar original body when its diagnostic string and call
+position move to a new helper.
+`RelativeCallBytesCannotIdentifyDuplicateWrappers` independently reorders equal
+wrappers around a known callee in both directions. Encoded call displacements
+must not select a source identity. The native SDK counterpart decodes real x64
+calls, retains both ambiguous wrappers and preserves them through save/reopen.
+
+Reference-uncertainty controls distinguish unchanged raw code from known operand
+changes, retain a known retargeting beside an unknown address operand, and keep
+unknown targets out of native change observations. Native SDK controls exercise
+uncertain/changed filters, required schema-4 coverage, forged saved facts, and
+address-dependent remeasurement through mapping edits, undo/redo and restore.
+The real Qt comparison test checks the Uncertain state, evidence, instruction
+rows, filtering and save/reopen, with optional light/dark captures via
+`NEVERD_DIFF_SCREENSHOTS`.
+Compiled x64 ELF controls place an unresolved store destination and a relocated
+string pointer in the same instruction. Both directions preserve a known string
+change, abstain for string-to-unknown identity, and survive save/reopen with
+identical instruction bytes. Core controls also cover named data/import identities.
+
 Call-context regressions retain exact score ties at zero ambiguity margin,
 refuse contradictory repeated-call assignments and competing anchor positions,
 preserve unresolved call holes, and keep independent consistent pairs. Context
@@ -3211,6 +3236,27 @@ graph-to-table navigation and original evidence copy. Run the same binary with
 the disposable compositor. The native gesture case explicitly skips with the
 offscreen platform. These tests do not qualify fresh native authentication or
 automated patch presence.
+
+`referenceUncertaintySurvivesLineageTrace` checks that original uncertain
+reference evidence remains visible in English and Chinese through a real worker,
+trace selection and save/reopen. For retained real-program collections, set
+`NEVERD_LINEAGE_REAL_COLLECTION` to a canonical `.ndlineage` document and run
+`retainedRealCorpusWorkflow` in the same private Wayland session. It checks
+reported counts against the source documents, pages the largest function
+inventory, traces an accepted pair and preserves the embedded original reports
+through save/reopen. Supply a collection with multiple function pages; an unset
+path explicitly skips this opt-in check. Matching quality needs its separate
+source-truth qualification.
+
+`retainedRealCorpusReview` checks a real saved comparison against a complete
+CLI `--changes-function` page. Set `NEVERD_DIFF_REAL_REPORT` to the `.nddiff`
+report and `NEVERD_DIFF_REAL_OBSERVATIONS` to that query's JSON output, retaining
+the original input paths. The real worker restores the report, filters its
+function, opens change review, checks every observation and coverage boundary,
+captures both themes and saves/reopens the same report. Run at both desktop
+scales with `NEVERD_DIFF_SCREENSHOTS`; absent inputs explicitly skip the case.
+This verifies CLI/desktop parity, independently of source-truth localization
+or security-priority accuracy.
 
 Release regressions separately cover multiple release identities sharing one
 snapshot, forks/merges, all 64 forward DAGs on four records, valid Gregorian UTC
@@ -3463,6 +3509,19 @@ options and stale revisions. The Qt case checks aligned row counts, highlights,
 instruction navigation, synchronized scroll and independent-source fallback.
 These checks establish exact textual alignment and inspection contracts, not
 semantic equivalence or unique statement correspondence.
+Native SDK address controls cover reordered functions, chained function pointers,
+swapped address uses and changed multiplicity, caller-only snapshots, unknown
+data reused at the same RVA, raw slices of one file, pure rebasing and data-only
+overlays. Core controls retain weak-feature competition without approximation
+and ensure additional evidence cannot suppress existing call-context eligibility.
+Benchmark adapter tests cover partial-truth denominators, complete matching with
+incomplete native bodies, malformed reports, native graph inventories and
+resource receipts. Linux corpus tests compile real DWARF-4 ELF fixtures and
+exercise alias/overlap exclusions and strip invariants; they require the pinned
+optional `scripts/requirements-binary-diff-bench.txt` dependency. Missing GCC,
+binutils or pyelftools is an explicit skip, not corpus qualification. See
+[real-corpus reproduction](binary-diff-benchmarks.md#real-source-releases-with-partial-truth).
+
 AArch64 SDK comparison cases distinguish operand modifiers and scalar changes
 from page-aligned placement, retain >4 GiB and negative literal references, and
 exercise TBZ bit-index/target collisions and partial-page ADRP movement. Profile
@@ -15548,6 +15607,19 @@ checkpoints, redo replacement, returned-value ownership and byte-exact document
 encoding after reopen. `NeverDWorkerNativePatch` accepts an exact patch-state
 budget and rejects a one-byte excess without changing live or persisted bytes;
 run it with both typed-snapshot and legacy JSON-only SDKs for adapter changes.
+
+Protocol tests compare generated-array output byte for byte with the ordinary
+serializer, including sorted/escaped keys, controls, Unicode, numeric extremes,
+empty inventories, exact encoded/frame limits, invalid UTF-8 replacement and
+producer failures. The same checks exercise the scalar parser configuration.
+Borrowed and disposable envelopes must produce identical encoded wire bytes;
+failed disposable framing retains all non-payload error-response metadata.
+Shared WebMCP protocol tests retain strict UTF-8 and escaped-output budgets.
+Compare `Engine::execute` DOM output and `executeResponse` encoded output for
+native snapshots, and run complete worker ranges against both older SDK paths.
+Native range checks cover empty, small and streamed inventories around the
+encoding crossover, with short and high unsigned addresses and unchanged
+input/sidecar bytes across repeated queries.
 
 Protocol tests compare preencoded sidecar layout with the original generic
 pretty serializer and literal LLVM control-escape fixtures, including nested

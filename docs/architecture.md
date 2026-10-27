@@ -1391,6 +1391,20 @@ window used to route branch arrows. Revision and navigation fences still apply.
 <!-- i18n-section: interactive-patch-ownership -->
 ## Interactive patch ownership
 
+The shared transport owns bounded JSON output through the existing nlohmann
+serializer's output adapter. Every append checks the same encoded-byte limit.
+Typed generated arrays encode one borrowed row synchronously in sorted object
+key order, without a whole-array DOM or retained producer. Range responses keep
+the SDK metadata snapshot alive through encoding. Small inventories keep one
+DOM encoding with their envelope; the crossover lives in worker resource
+limits. DOM callers and older SDKs retain their existing paths.
+`EncodedJson` accepts typed values only and keeps
+worker UTF-8 replacement behavior. Framing still accounts for the complete
+response envelope; shared ordinary JSON output retains strict UTF-8 errors.
+Disposable worker envelopes preserve non-payload metadata for error responses.
+After admission, framing reserves its known final size and copies encoded
+payloads directly into the prefixed frame.
+
 `lib/patch` owns byte admission, LLVM MC encoding, the immutable input snapshot, canonical overlay runs and exclusive export. The SDK proves source targets against exact emitted C, canonical LowIR occurrences and decoded operands; a navigation anchor alone does not authorize an edit. The worker journals optional `patches.json` rows with ordinary undo/redo and invalidates analysis after edits. Signature names read original bytes; patched routines lose identity-derived library effects. GUI, CLI and Python share these APIs. Whole-function replacement still uses `neverd_patch_source` and requires exporting and reopening any byte overlay first.
 
 Patch persistence reads typed, owning rows directly from a validated SIMD JSON tape when `NEVERD_ENABLE_SIMDJSON` is enabled. The LLVM reader remains available when acceleration is disabled or the input is outside the SIMD parser’s domain. Both readers share field admission and resource limits, including the existing last-duplicate-key and integer-only size rules; no borrowed parser strings escape. Overlay replay still validates every row against the immutable input.
@@ -1435,9 +1449,55 @@ after link-order changes; a producer's literal numeric suffix remains intact.
 The SDK adapter separately owns presentation names under the extraction memory
 allowance. Bounded function projections use them for display, search and sort;
 the matcher, snapshot hash and saved evidence consume only the original name.
-The `sdk-native-decode-v2`
+The `sdk-native-decode-v4`
 extraction identity distinguishes this evidence contract from older snapshots;
 saved historical reports remain readable without rewriting their evidence.
+
+Native operand profile v3 retains address-reference occurrences in `Program` by
+instruction and operand, including repeated uses and known string/data identities.
+`Features` indexes function targets once; exact body keys and `FunctionDelta` compare those targets
+through current correspondence. A function-wide target set cannot establish
+unchanged operands when callback uses are swapped. Address-taking references
+remain separate from calls. Conditional transfers to another function keep
+both their modeled target and local fallthrough; they do not normalize to a
+missing CFG edge. Transfers to targets omitted by a filtered snapshot
+retain `UnresolvedCallee`; inspection cannot turn two missing callees into an
+unchanged call. Unnamed data addresses bind the input SHA, effective base-relative
+segment mapping, shared-cache image/backing-file identity and effective overlays
+or analysis sections. A reused RVA across different inputs or raw slices is
+not object identity; a pure image-base relocation preserves the namespace.
+
+Operand profile v3 also retains an address-independent instruction shape that
+keeps scalar values. `FunctionDelta` uses it only to distinguish unknown reference
+identity from a known operand difference. It cannot establish equality. Known
+retargeting and string/data changes in one operand remain visible alongside
+another unresolved operand. An identity that becomes unknown is not a known change.
+The shared delta/match owns `ReferenceComparisonComplete` separately from decoded
+body coverage. Rows and blocks retain uncertainty; API counts, filters, CLI,
+Qt and lineage consume that contract. Mapping edits remeasure call and address
+dependents together. Schema 4 preserves the reference-coverage fact and rejects
+missing fields; historical schemas cannot manufacture a complete reference claim.
+
+Matcher version 6 treats unique weak features and call-context proposals as
+candidates for measured competition. Context eligibility accumulates separately
+from the first displayed evidence step. The lower context threshold requires
+complete agreement among already mapped neighbors. Disabling approximate
+acceptance retains feature-backed competition and uncertainty, rather than
+accepting a moved string set before measuring a competing original body. Wide
+matched neighborhoods use the existing informative-bucket admission bound before
+materializing pairs; explicit feature proposals remain measured outside the
+quick-score allowance. Consistent call positions distinguish equally measured
+bodies, but cannot override stronger body evidence or another positional
+proposal. Their mapped-context agreement is checked again at admission.
+Call and address-reference neighbors share the growing propagation worklist,
+so an anchored address chain does not require one global pass per link.
+
+Matcher version 9 also admits bounded shared mnemonic/CFG groups into the same
+measured competition. A common instruction sketch cannot hide a smaller graph
+group's alternatives. These shared keys propose candidates only; existing
+measurement allowances, similarity gates and rival checks still decide whether
+a pair is accepted. Direction, layout and duplicate-body controls exercise this
+path above the exhaustive candidate limit.
 
 `programAnalysisIdentity` in `Program` supplies a versioned, length-delimited identity
 encoding shared by binding and offline lineage. Only the caller's path is
