@@ -18,7 +18,6 @@
 #include "neverd/symbolic/Limits.h"
 
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Compiler.h"
@@ -52,27 +51,23 @@ struct Decision {
   bool operator==(const Decision &) const = default;
 };
 
-struct DecisionInfo {
-  static Decision getEmptyKey() { return {UINT64_MAX, 0, 0}; }
-  static Decision getTombstoneKey() { return {UINT64_MAX - 1, 0, 0}; }
-  static bool isEqual(const Decision &A, const Decision &B) { return A == B; }
-  static unsigned getHashValue(const Decision &D) {
-    // Input identity, observed bit and ordering flag fit beside both bounded
-    // edges. Mix once; the table still compares the complete original key.
-    constexpr unsigned EdgeBits =
-        std::bit_width(2 * limits::kMaxResidueDecisionNodes - 1);
-    constexpr unsigned BitBits =
-        std::bit_width(limits::kMaxAffineResidueTableBits - 1);
-    static_assert(32 + BitBits + 1 + 2 * EdgeBits <= 64);
-    const uint64_t Input =
-        (D.Variable & ~SecondaryWord) | ((D.Variable >> 63) << (32 + BitBits));
-    return llvm::DenseMapInfo<uint64_t>::getHashValue(
-        (Input << (2 * EdgeBits)) | (uint64_t(D.Low) << EdgeBits) | D.High);
-  }
-};
+// Input identity, observed bit and ordering flag fit beside both bounded
+// edges. Store this complete key, not only its hash: exact equality is kept
+// while the unique table needs two machine words per bucket instead of three.
+uint64_t decisionKey(const Decision &D) {
+  constexpr unsigned EdgeBits =
+      std::bit_width(2 * limits::kMaxResidueDecisionNodes - 1);
+  constexpr unsigned BitBits =
+      std::bit_width(limits::kMaxAffineResidueTableBits - 1);
+  static_assert(32 + BitBits + 1 + 2 * EdgeBits < 64);
+  const uint64_t Input =
+      (D.Variable & ~SecondaryWord) | ((D.Variable >> 63) << (32 + BitBits));
+  return (Input << (2 * EdgeBits)) | (uint64_t(D.Low) << EdgeBits) | D.High;
+}
 
 class LowWordDecisions {
   using Bits = llvm::SmallVector<uint32_t, 8>;
+  using Polynomial = llvm::SmallVector<uint64_t, 8>;
   enum Operation : uint64_t { And, Or, Xor };
   static unsigned variableBit(uint64_t Variable) {
     return unsigned((Variable & ~SecondaryWord) >> 32);
@@ -92,30 +87,18 @@ class LowWordDecisions {
   // The low edge bit denotes complement. Negation never duplicates a graph;
   // zero and one are the two edges of the single terminal node.
   std::vector<Decision> Nodes{{UINT64_MAX, 0, 0}};
-  llvm::DenseMap<Decision, uint32_t, DecisionInfo> Unique;
+  llvm::DenseMap<uint64_t, uint32_t> Unique;
   llvm::DenseMap<uint64_t, uint32_t> Applied;
-  struct CarryKey {
-    uint32_t A, B, C;
-    bool operator==(const CarryKey &) const = default;
-  };
-  struct CarryInfo {
-    static CarryKey getEmptyKey() { return {UINT32_MAX, 0, 0}; }
-    static CarryKey getTombstoneKey() { return {UINT32_MAX - 1, 0, 0}; }
-    static bool isEqual(const CarryKey &A, const CarryKey &B) { return A == B; }
-    static unsigned getHashValue(const CarryKey &K) {
-      // Every edge is a bounded node index plus its complement bit. Pack
-      // the three complete edges before mixing, retaining the full key and
-      // equality check without three separate integer hash operations.
-      constexpr unsigned EdgeBits =
-          std::bit_width(2 * limits::kMaxResidueDecisionNodes - 1);
-      static_assert(3 * EdgeBits <= 64);
-      return llvm::DenseMapInfo<uint64_t>::getHashValue(
-          (uint64_t(K.A) << (2 * EdgeBits)) | (uint64_t(K.B) << EdgeBits) |
-          K.C);
-    }
-  };
-  llvm::DenseMap<CarryKey, std::pair<uint32_t, uint32_t>, CarryInfo> Adders;
-  llvm::DenseMap<CarryKey, uint32_t, CarryInfo> Parities;
+  // Retain all three bounded edges in one exact key, including complements.
+  // High bits remain unused, so no valid key aliases a dense-map sentinel.
+  static uint64_t carryKey(uint32_t A, uint32_t B, uint32_t C) {
+    constexpr unsigned EdgeBits =
+        std::bit_width(2 * limits::kMaxResidueDecisionNodes - 1);
+    static_assert(3 * EdgeBits < 64);
+    return (uint64_t(A) << (2 * EdgeBits)) | (uint64_t(B) << EdgeBits) | C;
+  }
+  llvm::DenseMap<uint64_t, std::pair<uint32_t, uint32_t>> Adders;
+  llvm::DenseMap<uint64_t, uint32_t> Parities;
   std::unordered_map<uint64_t, Bits> Words;
   std::unordered_map<uint32_t, unsigned> Zeros;
   struct WordOperation {
@@ -196,17 +179,17 @@ class LowWordDecisions {
   // Existing decisions need neither arena growth nor its saved registers.
   // Keep admission and allocation together after the complete identity miss.
   LLVM_ATTRIBUTE_NOINLINE
-  uint32_t appendNode(Decision D, uint32_t Complement) {
+  uint32_t appendNode(Decision D, uint32_t Complement, uint64_t Key) {
     if (Nodes.size() >= limits::kMaxResidueDecisionNodes ||
-        !charge(1,
-                2 * sizeof(Decision) + sizeof(uint32_t) + 6 * sizeof(void *)) ||
+        !charge(1, sizeof(Decision) + sizeof(Key) + sizeof(uint32_t) +
+                       6 * sizeof(void *)) ||
         !reserveEntry(Unique)) {
       Failed = true;
       return 0;
     }
     const auto Id = uint32_t(Nodes.size() << 1);
     Nodes.push_back(D);
-    Unique.try_emplace(D, Id);
+    Unique.try_emplace(Key, Id);
     return Id ^ Complement;
   }
 
@@ -219,9 +202,10 @@ class LowWordDecisions {
     Low ^= Complement;
     High ^= Complement;
     const Decision D{Variable, Low, High};
-    if (auto It = Unique.find(D); It != Unique.end())
+    const auto Key = decisionKey(D);
+    if (auto It = Unique.find(Key); It != Unique.end())
       return It->second ^ Complement;
-    return appendNode(D, Complement);
+    return appendNode(D, Complement, Key);
   }
 
   // Only a missing application needs a recursive frontier and cache insertion.
@@ -374,10 +358,36 @@ class LowWordDecisions {
     return Result;
   }
 
+  LLVM_ATTRIBUTE_NOINLINE
+  std::pair<uint32_t, uint32_t> expandAdder(uint32_t A, uint32_t B, uint32_t C,
+                                            unsigned Depth, uint64_t Key,
+                                            uint32_t Complement) {
+    if (Depth >= limits::kMaxResidueDecisionDepth) {
+      Failed = true;
+      return {};
+    }
+    const auto DA = decision(A), DB = decision(B), DC = decision(C);
+    const auto V = std::min({DA.Variable, DB.Variable, DC.Variable});
+    const auto L =
+        fullAdder(DA.Variable == V ? DA.Low : A, DB.Variable == V ? DB.Low : B,
+                  DC.Variable == V ? DC.Low : C, Depth + 1);
+    const auto H = fullAdder(DA.Variable == V ? DA.High : A,
+                             DB.Variable == V ? DB.High : B,
+                             DC.Variable == V ? DC.High : C, Depth + 1);
+    const std::pair<uint32_t, uint32_t> R{node(V, L.first, H.first),
+                                          node(V, L.second, H.second)};
+    if (!charge(1, sizeof(Key) + sizeof(R) + 4 * sizeof(void *)) ||
+        !reserveEntry(Adders))
+      return {};
+    Adders.try_emplace(Key, R);
+    return {R.first ^ Complement, R.second ^ Complement};
+  }
+
   // Recurse over the common decision frontier once for both output bits.
   // The sum and majority are both self-dual: complementing all three inputs
   // complements both results. One normalized cache entry therefore shares
   // their traversal without retaining an intermediate two-input XOR graph.
+  // Cache hits never enter the recursive allocation frame.
   std::pair<uint32_t, uint32_t> fullAdder(uint32_t A, uint32_t B, uint32_t C,
                                           unsigned Depth = 0) {
     if (!charge())
@@ -406,28 +416,33 @@ class LowWordDecisions {
     A ^= Complement;
     B ^= Complement;
     C ^= Complement;
-    const CarryKey Key{A, B, C};
+    const auto Key = carryKey(A, B, C);
     if (auto It = Adders.find(Key); It != Adders.end())
       return {It->second.first ^ Complement, It->second.second ^ Complement};
+    return expandAdder(A, B, C, Depth, Key, Complement);
+  }
+
+  LLVM_ATTRIBUTE_NOINLINE
+  uint32_t expandParity(uint32_t A, uint32_t B, uint32_t C, unsigned Depth,
+                        uint64_t Key, uint32_t Complement) {
     if (Depth >= limits::kMaxResidueDecisionDepth) {
       Failed = true;
-      return {};
+      return 0;
     }
     const auto DA = decision(A), DB = decision(B), DC = decision(C);
     const auto V = std::min({DA.Variable, DB.Variable, DC.Variable});
     const auto L =
-        fullAdder(DA.Variable == V ? DA.Low : A, DB.Variable == V ? DB.Low : B,
-                  DC.Variable == V ? DC.Low : C, Depth + 1);
-    const auto H = fullAdder(DA.Variable == V ? DA.High : A,
-                             DB.Variable == V ? DB.High : B,
-                             DC.Variable == V ? DC.High : C, Depth + 1);
-    const std::pair<uint32_t, uint32_t> R{node(V, L.first, H.first),
-                                          node(V, L.second, H.second)};
-    if (!charge(1, sizeof(CarryKey) + sizeof(R) + 4 * sizeof(void *)) ||
-        !reserveEntry(Adders))
-      return {};
-    Adders.try_emplace(Key, R);
-    return {R.first ^ Complement, R.second ^ Complement};
+        parity(DA.Variable == V ? DA.Low : A, DB.Variable == V ? DB.Low : B,
+               DC.Variable == V ? DC.Low : C, Depth + 1);
+    const auto H =
+        parity(DA.Variable == V ? DA.High : A, DB.Variable == V ? DB.High : B,
+               DC.Variable == V ? DC.High : C, Depth + 1);
+    const auto R = node(V, L, H);
+    if (!charge(1, sizeof(Key) + sizeof(uint32_t) + 4 * sizeof(void *)) ||
+        !reserveEntry(Parities))
+      return 0;
+    Parities.try_emplace(Key, R);
+    return R ^ Complement;
   }
 
   // A final column needs only parity. Normalize each input complement into
@@ -453,27 +468,10 @@ class LowWordDecisions {
       std::swap(A, B);
     if (!A)
       return apply(Xor, B, C) ^ Complement;
-    const CarryKey Key{A, B, C};
+    const auto Key = carryKey(A, B, C);
     if (auto It = Parities.find(Key); It != Parities.end())
       return It->second ^ Complement;
-    if (Depth >= limits::kMaxResidueDecisionDepth) {
-      Failed = true;
-      return 0;
-    }
-    const auto DA = decision(A), DB = decision(B), DC = decision(C);
-    const auto V = std::min({DA.Variable, DB.Variable, DC.Variable});
-    const auto L =
-        parity(DA.Variable == V ? DA.Low : A, DB.Variable == V ? DB.Low : B,
-               DC.Variable == V ? DC.Low : C, Depth + 1);
-    const auto H =
-        parity(DA.Variable == V ? DA.High : A, DB.Variable == V ? DB.High : B,
-               DC.Variable == V ? DC.High : C, Depth + 1);
-    const auto R = node(V, L, H);
-    if (!charge(1, sizeof(CarryKey) + sizeof(uint32_t) + 4 * sizeof(void *)) ||
-        !reserveEntry(Parities))
-      return 0;
-    Parities.try_emplace(Key, R);
-    return R ^ Complement;
+    return expandParity(A, B, C, Depth, Key, Complement);
   }
 
   Bits add(const Bits &A, const Bits &B) {
@@ -1119,6 +1117,62 @@ class LowWordDecisions {
                 apply(Xor, MixedParity, apply(And, K[0], HighParity))));
     }
     return Result;
+  }
+
+  LLVM_ATTRIBUTE_NOINLINE
+  llvm::SmallVector<unsigned, 16>
+  countPolynomialFrequencies(const Polynomial &P, unsigned NumVars) {
+    llvm::SmallVector<unsigned, 16> Counts;
+    if (!charge(NumVars, NumVars * sizeof(unsigned)))
+      return {};
+    Counts.resize(NumVars, 0);
+    if (P.size() > 2 * NumVars) {
+      // Count all variable incidences together. Each bit position is
+      // an independent counter; carry-save columns combine three masks
+      // without a per-variable scan of every monomial.
+      constexpr unsigned Levels =
+          std::bit_width(limits::kMaxResidueDecisionPolynomialTerms);
+      if (!charge(Levels, Levels * (2 * sizeof(uint64_t) + 1)))
+        return {};
+      std::array<std::array<uint64_t, 2>, Levels> Columns{};
+      std::array<unsigned char, Levels> Occupied{};
+      for (auto Term : P) {
+        for (unsigned Level = 0; Term; ++Level) {
+          if (!charge())
+            return {};
+          auto &Column = Columns[Level];
+          auto &Count = Occupied[Level];
+          if (Count < 2) {
+            Column[Count++] = Term;
+            break;
+          }
+          const uint64_t Different = Column[0] ^ Column[1];
+          const uint64_t Carry = (Column[0] & Column[1]) | (Different & Term);
+          Column[0] = Different ^ Term;
+          Count = 1;
+          Term = Carry;
+        }
+      }
+      for (unsigned Level = 0; Level < Levels; ++Level)
+        for (unsigned I = 0; I < Occupied[Level]; ++I) {
+          auto Term = Columns[Level][I];
+          while (Term) {
+            if (!charge())
+              return {};
+            Counts[std::countr_zero(Term)] += 1u << Level;
+            Term &= Term - 1;
+          }
+        }
+    } else {
+      for (auto Term : P)
+        while (Term) {
+          if (!charge())
+            return {};
+          ++Counts[std::countr_zero(Term)];
+          Term &= Term - 1;
+        }
+    }
+    return Counts;
   }
 
   Bits product(llvm::ArrayRef<SymRef> Factors, unsigned Observed,
@@ -2534,7 +2588,6 @@ public:
       }
       return Fallback;
     };
-    using Polynomial = llvm::SmallVector<uint64_t, 8>;
     std::map<uint64_t, unsigned> PolynomialVariables;
     std::unordered_map<uint32_t, Polynomial> Polynomials;
     auto ReadPolynomial = [&](auto &&Self, uint32_t Id) -> const Polynomial * {
@@ -2722,16 +2775,9 @@ public:
         llvm::SmallVector<unsigned, 16> CountedFrequencies;
         llvm::ArrayRef<unsigned> Frequencies = KnownFrequencies;
         if (Frequencies.empty()) {
-          if (!charge(Basis.size(), Basis.size() * sizeof(unsigned)))
+          CountedFrequencies = countPolynomialFrequencies(P, Basis.size());
+          if (Failed)
             return {};
-          CountedFrequencies.resize(Basis.size(), 0);
-          for (auto Term : P)
-            while (Term) {
-              if (!charge())
-                return {};
-              ++CountedFrequencies[std::countr_zero(Term)];
-              Term &= Term - 1;
-            }
           Frequencies = CountedFrequencies;
         }
         const auto Best =
@@ -2773,25 +2819,30 @@ public:
             // P=A XOR i*B XOR j*C XOR i*j*D. With t=i XOR j this is
             // A XOR t*B XOR j*(B XOR C XOR D) XOR t*j*D. Fixed-variable
             // projections preserve order, so both differences are linear.
-            const auto DifferenceSize = Groups[1].size() + Groups[3].size();
-            if (!charge(DifferenceSize,
-                        sizeof(Polynomial) +
-                            2 * DifferenceSize * sizeof(uint64_t)))
-              return {};
-            Polynomial Difference;
-            Difference.reserve(DifferenceSize);
-            std::set_symmetric_difference(Groups[1].begin(), Groups[1].end(),
-                                          Groups[3].begin(), Groups[3].end(),
-                                          std::back_inserter(Difference));
-            const auto CombinedSize = Difference.size() + Groups[2].size();
+            const size_t CombinedSize =
+                Groups[1].size() + Groups[2].size() + Groups[3].size();
             if (!charge(CombinedSize, sizeof(Polynomial) +
                                           2 * CombinedSize * sizeof(uint64_t)))
               return {};
             Polynomial Combined;
             Combined.reserve(CombinedSize);
-            std::set_symmetric_difference(Difference.begin(), Difference.end(),
-                                          Groups[2].begin(), Groups[2].end(),
-                                          std::back_inserter(Combined));
+            std::array<size_t, 3> Position{};
+            for (size_t Remaining = CombinedSize; Remaining;) {
+              uint64_t Term = UINT64_MAX;
+              for (unsigned I = 0; I < 3; ++I)
+                if (Position[I] < Groups[I + 1].size())
+                  Term = std::min(Term, Groups[I + 1][Position[I]]);
+              bool Odd = false;
+              for (unsigned I = 0; I < 3; ++I)
+                if (Position[I] < Groups[I + 1].size() &&
+                    Groups[I + 1][Position[I]] == Term) {
+                  ++Position[I];
+                  --Remaining;
+                  Odd = !Odd;
+                }
+              if (Odd)
+                Combined.push_back(Term);
+            }
             // Demand a reduction in both one-variable cofactors, rather
             // than accepting a small advantage from their frequency order.
             if (Combined.size() < Groups[1].size() &&
@@ -2827,24 +2878,18 @@ public:
               // The new polynomial changes only j*C into j*Combined.
               // Update the existing counts instead of rescanning every
               // unchanged term in the transformed root.
-              for (auto Term : Groups[2]) {
-                Term |= JBit;
-                while (Term) {
-                  if (!charge())
-                    return {};
-                  --CoordinateFrequencies[std::countr_zero(Term)];
-                  Term &= Term - 1;
-                }
+              const auto Removed =
+                  countPolynomialFrequencies(Groups[2], Basis.size());
+              const auto Added =
+                  countPolynomialFrequencies(Combined, Basis.size());
+              if (Failed || !charge(Frequencies.size()))
+                return {};
+              for (unsigned I = 0; I < Frequencies.size(); ++I) {
+                CoordinateFrequencies[I] -= Removed[I];
+                CoordinateFrequencies[I] += Added[I];
               }
-              for (auto Term : Combined) {
-                Term |= JBit;
-                while (Term) {
-                  if (!charge())
-                    return {};
-                  ++CoordinateFrequencies[std::countr_zero(Term)];
-                  Term &= Term - 1;
-                }
-              }
+              CoordinateFrequencies[First] -= Groups[2].size();
+              CoordinateFrequencies[First] += Combined.size();
               llvm::SmallVector<SymRef, 16> CoordinateInputs(Basis);
               CoordinateInputs[Second] = Ctx.mkXor(Basis[Second], Basis[First]);
               // Polynomial keys only identify expressions within one basis.
@@ -3007,7 +3052,22 @@ public:
             return Value;
           }
         }
-        auto A = Self(Self, Low, Basis, Cache, false);
+        llvm::SmallVector<unsigned, 16> LowFrequencies, HighFrequencies;
+        // These two lookups are additional work; each child still pays its
+        // polynomial visit at the recursive entry, even on a cache hit.
+        if (!Low.empty() && !charge(2))
+          return {};
+        if (!Low.empty() && !Cache.contains(Low) && !Cache.contains(High)) {
+          LowFrequencies = countPolynomialFrequencies(Low, Basis.size());
+          if (Failed || !charge(Frequencies.size(),
+                                Frequencies.size() * sizeof(unsigned)))
+            return {};
+          HighFrequencies.assign(Frequencies.begin(), Frequencies.end());
+          for (unsigned I = 0; I < Frequencies.size(); ++I)
+            HighFrequencies[I] -= LowFrequencies[I];
+          HighFrequencies[Variable] = 0;
+        }
+        auto A = Self(Self, Low, Basis, Cache, false, LowFrequencies);
         SymRef B;
         if (TryCoordinate && Low.empty()) {
           // All terms contain this common factor. Its removal changes only
@@ -3021,7 +3081,7 @@ public:
           HighFrequencies[Variable] = 0;
           B = Self(Self, High, Basis, Cache, true, HighFrequencies);
         } else {
-          B = Self(Self, High, Basis, Cache, false);
+          B = Self(Self, High, Basis, Cache, false, HighFrequencies);
         }
         if (!A || !B || !charge(3, 3 * (sizeof(SymNode) + 4 * sizeof(SymRef))))
           return {};

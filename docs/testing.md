@@ -2219,6 +2219,10 @@ partial blocks must reduce their cost by at least half below 32,768 work units.
 An independent multiplication oracle exhausts all 262,144 relevant low-word
 assignments for one complemented product. Keep the existing 9,500-work complete
 block regression alongside these tests to protect its structural path.
+`DenseFrequenciesFinishWidePartialProducts` checks degree-62 partial products
+at 8/64/65/128 bits against independent complete-word multiplication. The
+non-native cases must finish below 60,000 work units with output cost at most
+286, protecting dense reconstruction headroom without increasing its budget.
 `PreparedParityPrefixesKeepTheirProductAndContext` checks that a completed
 prefix reduces the next reader's work at 8/64/257 bits, without changing its
 values. A different product, the same handle in another context, zero scratch
@@ -7402,6 +7406,12 @@ Common-addend checks compare degree-256 products and differing coefficients
 against complete AP evaluation. Inputs used only by canceled terms must still
 consume their original random words, including 65–257-bit inputs and sparse
 variable IDs; surviving plans retain their internal wide arithmetic.
+Common-product checks retain modular zero divisors, repeated factors and
+compensating additive tails. They compare factored checks against complete AP
+evaluation through 257 bits, including unused wide inputs and narrow outputs
+with wide division intermediates. `WideConstantSlotsSurviveInterruptedInputLookup`
+reuses one plan after its first input callback throws, then checks zero,
+all-ones and high-bit assignments against independent arithmetic.
 Candidate quality
 comparisons across scoring revisions must recount both outputs with the same
 metric; the SDK's version-specific size counters are diagnostic only.

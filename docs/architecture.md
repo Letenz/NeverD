@@ -3363,8 +3363,11 @@ Low-word decision proofs capture the smaller of their local and remaining
 request allowances. Each operation admits and counts the same work locally;
 every exit commits that count, including refusals. The completed-reading memo
 receives the committed request budget before it admits its own work.
-Decision and carry caches combine their bounded input and edge fields before
-hashing, retaining complete-key equality and the same storage/work accounts.
+Decision and carry caches pack their bounded input and edge fields into exact
+64-bit keys. Their complete identities remain distinct from reserved map keys;
+bucket and entry storage reflect the compact representation, with unchanged
+work and node limits. Carry-cache hits stay outside the recursive allocation
+frame; only missing identities construct new decision frontiers.
 Native sample guards index contiguous variable-ID windows directly. Sparse
 windows retain compact maps, and both paths preserve the same referenced-input
 order and random stream. Numeric node-order comparisons stay inside the sort.
@@ -3374,6 +3377,13 @@ It still draws assignments for the original variable union, including wide
 inputs used only by canceled terms, so every validation point remains unchanged.
 Only node identity authorizes cancellation; differing coefficients or operand
 widths do not. Residual plans retain arbitrary-width internal evaluation.
+For products with identical factors, the guard evaluates the two residual
+products first, then multiplies their difference by the complete common product.
+It never cancels a common factor: modular zero divisors must retain their exact
+effect. An additive tail participates in the same modular equation. This path
+requires one large product on each side; multiple products retain their shared
+evaluation DAG. Original input assignments and wide intermediate operations
+remain unchanged, and common factors are evaluated only when needed.
 A literal plus a complemented atom uses the full-width affine identity
 `C + ~X = (C - 1) - X` without constructing polynomial tables. Its scalar work
 and emitted storage remain charged. The deep and region solvers share the
@@ -3696,6 +3706,12 @@ their branches into printed trees, and a completed polynomial is factored only
 once. A finished word search over real free variables is reused for its
 algebraically identical cofactor reconstruction; opaque inputs and incomplete
 searches retain the alternative. Completion does not assert global minimality.
+Dense polynomial variable frequencies use parallel carry-save counters over
+monomial bit masks. Ordinary child cofactors share one exact count and derive
+the other by subtraction. Coordinate changes merge their three ordered XOR
+groups directly and update only changed frequencies. Sparse forms retain their
+per-variable count, and every count, scratch allocation and merge spends the
+existing request allowance.
 Optional refinement retains the last completed candidate. Completed attempts
 are request-local; storage refusals retry when a larger allowance is available.
 The deep walk keeps original opaque inputs and changed original products
@@ -3756,6 +3772,10 @@ operand order, arbitrary-width semantics or the solver's work charges.
 Native evaluation starts associative folds with their two guaranteed operands
 and reuses already truncated literals, avoiding empty reductions and repeated
 constant masking in the sampling loop.
+Arbitrary-width plans read prior operand slots directly through the shared
+operator evaluator, avoiding temporary copies of wide integers at every step.
+They initialize immutable constant slots before any external input callback,
+so an interrupted lookup leaves the plan reusable on its next evaluation.
 Symbolic text parsing collects a same-width multiplication chain once its
 prefix contains two nonconstant factors. It materializes that prefix before
 any width change or other operator, preserving intermediate modular overflow,

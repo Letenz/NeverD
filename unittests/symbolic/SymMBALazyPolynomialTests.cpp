@@ -528,6 +528,21 @@ TEST(SymMBALazyPolynomial, FusedArithmeticFinishesDegree64CarryProducts) {
     }
 }
 
+TEST(SymMBALazyPolynomial, DenseFrequenciesFinishWidePartialProducts) {
+  for (unsigned Width : {8u, 64u, 65u, 128u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto F = denseCarryFixture(Ctx, Width, 4, 62, 7, false, true);
+    MBAOptions Options;
+    Options.MaxWork = 65536;
+    const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+    EXPECT_LT(Result.Work, 60000u);
+    EXPECT_LE(Result.SizeAfter, 286u);
+    EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+    checkFullWidthOracle(Ctx, F, Result.Expr);
+  }
+}
+
 TEST(SymMBALazyPolynomial, ExhaustsDegree64CarryLowWords) {
   for (unsigned HighBits : {2u, 3u}) {
     SCOPED_TRACE(HighBits);

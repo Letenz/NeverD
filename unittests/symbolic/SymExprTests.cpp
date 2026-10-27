@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1234,6 +1235,31 @@ TEST(SymExpr, NativeAssociativeEvaluationMatchesFullWidthArithmetic) {
           EXPECT_EQ(Plan.eval(Wide), Expected);
         }
       }
+    }
+  }
+}
+
+TEST(SymExpr, WideConstantSlotsSurviveInterruptedInputLookup) {
+  for (unsigned Width : {8u, 64u, 65u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto X = Ctx.mkVar("x", Width);
+    const auto Literal =
+        llvm::APInt(Width, 7) | llvm::APInt::getOneBitSet(Width, Width - 3);
+    const auto Root = Ctx.mkAdd(X, Ctx.mkConst(Literal));
+    SymEvalPlan Plan(Ctx, Root);
+    EXPECT_THROW(Plan.evalWith([](uint32_t) -> const llvm::APInt * {
+      throw std::runtime_error("interrupted lookup");
+    }),
+                 std::runtime_error);
+    for (const auto &Value : {llvm::APInt(Width, 5), llvm::APInt(Width, 0),
+                              llvm::APInt::getAllOnes(Width),
+                              llvm::APInt::getOneBitSet(Width, Width - 1)}) {
+      const auto Actual = Plan.evalWith([&](uint32_t Id) {
+        EXPECT_EQ(Id, Ctx.varId(X));
+        return &Value;
+      });
+      ASSERT_EQ(Actual, Value + Literal);
     }
   }
 }

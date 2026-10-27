@@ -275,40 +275,11 @@ llvm::APInt SymEvalPlan::eval(llvm::ArrayRef<llvm::APInt> VarVals) {
   });
 }
 
-llvm::APInt SymEvalPlan::evalWith(
-    llvm::function_ref<const llvm::APInt *(uint32_t)> Lookup) {
-  // Native-width measurements never use APInt scratch. Allocate it only
-  // when this entry point is called, retaining it for subsequent evaluations.
-  if (ScratchAP.empty())
-    ScratchAP.resize(Steps.size());
-  for (size_t I = 0; I < Steps.size(); ++I) {
-    const Step &St = Steps[I];
-    const uint32_t *A = ArgSlots.data() + St.FirstArg;
+namespace {
 
-    if (St.Op == SymOp::Const) {
-      ScratchAP[I] = Ctx.constValue(St.Node);
-      continue;
-    }
-    if (St.Op == SymOp::Var) {
-      const llvm::APInt *V = Lookup(static_cast<uint32_t>(St.Aux));
-      ScratchAP[I] =
-          V ? (V->getBitWidth() == St.Width ? *V : V->zextOrTrunc(St.Width))
-            : llvm::APInt(St.Width, 0);
-      continue;
-    }
-
-    llvm::SmallVector<llvm::APInt, 4> APArgs;
-    APArgs.reserve(St.NumArgs);
-    for (uint32_t K = 0; K < St.NumArgs; ++K)
-      APArgs.push_back(ScratchAP[A[K]]);
-    ScratchAP[I] = evalNodeAP(Ctx, St.Node, APArgs);
-  }
-
-  return Steps.empty() ? llvm::APInt(Ctx.width(Root), 0) : ScratchAP[RootSlot];
-}
-
-llvm::APInt evalNodeAP(const SymContext &Ctx, SymRef R,
-                       llvm::ArrayRef<llvm::APInt> Args) {
+template <typename GetArgument>
+llvm::APInt evalNodeAPImpl(const SymContext &Ctx, SymRef R, size_t NumArgs,
+                           GetArgument &&Arg) {
   const SymNode &N = Ctx.node(R);
   uint32_t W = N.Width;
 
@@ -319,98 +290,143 @@ llvm::APInt evalNodeAP(const SymContext &Ctx, SymRef R,
     return llvm::APInt(W, 0);
   case SymOp::Add: {
     llvm::APInt Acc(W, 0);
-    for (const auto &A : Args)
-      Acc += A;
+    for (size_t I = 0; I < NumArgs; ++I)
+      Acc += Arg(I);
     return Acc;
   }
   case SymOp::Mul: {
     llvm::APInt Acc(W, 1);
-    for (const auto &A : Args)
-      Acc *= A;
+    for (size_t I = 0; I < NumArgs; ++I)
+      Acc *= Arg(I);
     return Acc;
   }
   case SymOp::And: {
     llvm::APInt Acc = llvm::APInt::getAllOnes(W);
-    for (const auto &A : Args)
-      Acc &= A;
+    for (size_t I = 0; I < NumArgs; ++I)
+      Acc &= Arg(I);
     return Acc;
   }
   case SymOp::Or: {
     llvm::APInt Acc(W, 0);
-    for (const auto &A : Args)
-      Acc |= A;
+    for (size_t I = 0; I < NumArgs; ++I)
+      Acc |= Arg(I);
     return Acc;
   }
   case SymOp::Xor: {
     llvm::APInt Acc(W, 0);
-    for (const auto &A : Args)
-      Acc ^= A;
+    for (size_t I = 0; I < NumArgs; ++I)
+      Acc ^= Arg(I);
     return Acc;
   }
   case SymOp::Not:
-    return ~Args[0];
+    return ~Arg(0);
   case SymOp::Shl:
-    return Args[1].uge(W) ? llvm::APInt(W, 0)
-                          : Args[0].shl(Args[1].getZExtValue());
+    return Arg(1).uge(W) ? llvm::APInt(W, 0)
+                         : Arg(0).shl(Arg(1).getZExtValue());
   case SymOp::LShr:
-    return Args[1].uge(W) ? llvm::APInt(W, 0)
-                          : Args[0].lshr(Args[1].getZExtValue());
+    return Arg(1).uge(W) ? llvm::APInt(W, 0)
+                         : Arg(0).lshr(Arg(1).getZExtValue());
   case SymOp::AShr:
-    if (Args[1].uge(W))
-      return Args[0].isNegative() ? llvm::APInt::getAllOnes(W)
-                                  : llvm::APInt(W, 0);
-    return Args[0].ashr(Args[1].getZExtValue());
+    if (Arg(1).uge(W))
+      return Arg(0).isNegative() ? llvm::APInt::getAllOnes(W)
+                                 : llvm::APInt(W, 0);
+    return Arg(0).ashr(Arg(1).getZExtValue());
   case SymOp::UDiv:
-    return Args[1].isZero() ? llvm::APInt::getAllOnes(W)
-                            : Args[0].udiv(Args[1]);
+    return Arg(1).isZero() ? llvm::APInt::getAllOnes(W) : Arg(0).udiv(Arg(1));
   case SymOp::SDiv:
-    if (Args[1].isZero())
-      return Args[0].isNonNegative() ? llvm::APInt::getAllOnes(W)
-                                     : llvm::APInt(W, 1);
-    if (Args[0].isMinSignedValue() && Args[1].isAllOnes())
-      return Args[0];
-    return Args[0].sdiv(Args[1]);
+    if (Arg(1).isZero())
+      return Arg(0).isNonNegative() ? llvm::APInt::getAllOnes(W)
+                                    : llvm::APInt(W, 1);
+    if (Arg(0).isMinSignedValue() && Arg(1).isAllOnes())
+      return Arg(0);
+    return Arg(0).sdiv(Arg(1));
   case SymOp::URem:
-    return Args[1].isZero() ? Args[0] : Args[0].urem(Args[1]);
+    return Arg(1).isZero() ? Arg(0) : Arg(0).urem(Arg(1));
   case SymOp::SRem:
-    if (Args[1].isZero())
-      return Args[0];
-    if (Args[0].isMinSignedValue() && Args[1].isAllOnes())
+    if (Arg(1).isZero())
+      return Arg(0);
+    if (Arg(0).isMinSignedValue() && Arg(1).isAllOnes())
       return llvm::APInt(W, 0);
-    return Args[0].srem(Args[1]);
+    return Arg(0).srem(Arg(1));
   case SymOp::Rol:
-    return Args[0].rotl(Args[1].urem(W));
+    return Arg(0).rotl(Arg(1).urem(W));
   case SymOp::Ror:
-    return Args[0].rotr(Args[1].urem(W));
+    return Arg(0).rotr(Arg(1).urem(W));
   case SymOp::Extract:
-    return Args[0].extractBits(W, static_cast<uint32_t>(N.Aux));
+    return Arg(0).extractBits(W, static_cast<uint32_t>(N.Aux));
   case SymOp::Concat: {
     llvm::APInt Acc(W, 0);
     uint32_t Shift = W;
-    for (const auto &A : Args) {
+    for (size_t I = 0; I < NumArgs; ++I) {
+      const auto &A = Arg(I);
       Shift -= A.getBitWidth();
       Acc |= A.zext(W).shl(Shift);
     }
     return Acc;
   }
   case SymOp::ZExt:
-    return Args[0].zext(W);
+    return Arg(0).zext(W);
   case SymOp::SExt:
-    return Args[0].sext(W);
+    return Arg(0).sext(W);
   case SymOp::Ite:
-    return Args[0].isZero() ? Args[2] : Args[1];
+    return Arg(0).isZero() ? Arg(2) : Arg(1);
   case SymOp::Eq:
-    return llvm::APInt(1, Args[0] == Args[1]);
+    return llvm::APInt(1, Arg(0) == Arg(1));
   case SymOp::Ult:
-    return llvm::APInt(1, Args[0].ult(Args[1]));
+    return llvm::APInt(1, Arg(0).ult(Arg(1)));
   case SymOp::Ule:
-    return llvm::APInt(1, Args[0].ule(Args[1]));
+    return llvm::APInt(1, Arg(0).ule(Arg(1)));
   case SymOp::Slt:
-    return llvm::APInt(1, Args[0].slt(Args[1]));
+    return llvm::APInt(1, Arg(0).slt(Arg(1)));
   case SymOp::Sle:
-    return llvm::APInt(1, Args[0].sle(Args[1]));
+    return llvm::APInt(1, Arg(0).sle(Arg(1)));
   }
   llvm_unreachable("unhandled SymOp in evalNodeAP");
+}
+} // namespace
+
+llvm::APInt SymEvalPlan::evalWith(
+    llvm::function_ref<const llvm::APInt *(uint32_t)> Lookup) {
+  // Native-width measurements never use APInt scratch. Allocate it only
+  // when this entry point is called, retaining it for subsequent evaluations.
+  if (ScratchAP.empty()) {
+    ScratchAP.resize(Steps.size());
+    // Complete immutable slots before invoking an external input lookup.
+    // A lookup may throw; the same plan must remain usable on the next call.
+    for (size_t I = 0; I < Steps.size(); ++I)
+      if (Steps[I].Op == SymOp::Const)
+        ScratchAP[I] = Ctx.constValue(Steps[I].Node);
+  }
+  for (size_t I = 0; I < Steps.size(); ++I) {
+    const Step &St = Steps[I];
+    const uint32_t *A = ArgSlots.data() + St.FirstArg;
+
+    if (St.Op == SymOp::Const)
+      continue;
+    if (St.Op == SymOp::Var) {
+      const llvm::APInt *V = Lookup(static_cast<uint32_t>(St.Aux));
+      ScratchAP[I] =
+          V ? (V->getBitWidth() == St.Width ? *V : V->zextOrTrunc(St.Width))
+            : llvm::APInt(St.Width, 0);
+      continue;
+    }
+
+    // Every operand precedes this output slot. Read it directly through
+    // the shared operator evaluator instead of copying wide APInts into a
+    // temporary argument vector for every step and validation assignment.
+    ScratchAP[I] = evalNodeAPImpl(
+        Ctx, St.Node, St.NumArgs,
+        [&](size_t K) -> const llvm::APInt & { return ScratchAP[A[K]]; });
+  }
+
+  return Steps.empty() ? llvm::APInt(Ctx.width(Root), 0) : ScratchAP[RootSlot];
+}
+
+llvm::APInt evalNodeAP(const SymContext &Ctx, SymRef R,
+                       llvm::ArrayRef<llvm::APInt> Args) {
+  return evalNodeAPImpl(
+      Ctx, R, Args.size(),
+      [&](size_t I) -> const llvm::APInt & { return Args[I]; });
 }
 
 } // namespace neverd::symbolic
