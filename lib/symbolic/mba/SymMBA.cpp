@@ -1169,7 +1169,8 @@ namespace {
 SymRef simplifyLinearTail(
     SymContext &Ctx, SymRef Root, const MBAOptions &Opts, WorkBudget &Budget,
     SolveReport &Rep,
-    size_t MinDegree = detail::limits::kMinLinearTailProductDegree) {
+    size_t MinDegree = detail::limits::kMinLinearTailProductDegree,
+    bool SingleProductOnly = false) {
   if (Ctx.op(Root) != SymOp::Add ||
       Ctx.numOperands(Root) > detail::limits::kMaxLinearTailTerms ||
       Budget.exhausted())
@@ -1197,6 +1198,7 @@ SymRef simplifyLinearTail(
     }
   }
   if (Higher < detail::limits::kMinLinearTailProducts ||
+      (SingleProductOnly && Higher != 1) ||
       LinearCount < detail::limits::kMinLinearTailSummands)
     return Root;
   const size_t Count = Ctx.numOperands(Root);
@@ -1531,8 +1533,16 @@ MBAResult detail::MBADeepSimplifier::run(SymContext &Ctx, SymRef E,
   SolveReport WholeRep;
   size_t ValuationStorage = Opts.MaxTableBytes;
   const size_t ResidueAttempts = Budget.MultipleResidueAttempts;
-  SymRef Prepared = foldProductValuations(Ctx, E, Budget, ValuationStorage);
-  if (Budget.MultipleResidueAttempts != ResidueAttempts &&
+  // With only one high-degree product, preserve its independent linear tail
+  // before an incomplete proof can spend the allowance. Multiple high-degree
+  // products retain their joint arithmetic search first.
+  const auto EarlyTail =
+      simplifyLinearTail(Ctx, E, Opts, Budget, WholeRep,
+                         detail::limits::kMinLinearTailProductDegree,
+                         /*SingleProductOnly=*/true);
+  SymRef Prepared =
+      foldProductValuations(Ctx, EarlyTail, Budget, ValuationStorage);
+  if (EarlyTail == E && Budget.MultipleResidueAttempts != ResidueAttempts &&
       !Budget.exhausted()) {
     // Retain the cheap linear tail before walking a newly synthesized product
     // reading. Its generated bit selectors may no longer expose the original

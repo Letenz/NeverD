@@ -619,13 +619,14 @@ class LowWordDecisions {
   // replaced by one of them. Normalize ring and bitwise operations recursively
   // so high constants do not give identical low words distinct outer nodes.
   SymRef projectLowWord(SymRef R, unsigned Count,
-                        std::unordered_map<uint32_t, SymRef> &Cache,
+                        std::unordered_map<uint64_t, SymRef> &Cache,
                         unsigned Depth = 0) {
     if (!charge() || Depth >= limits::kMaxResidueDecisionDepth) {
       Failed = true;
       return R;
     }
-    if (auto It = Cache.find(R.index()); It != Cache.end())
+    const uint64_t Key = (uint64_t(R.index()) << 8) | Count;
+    if (auto It = Cache.find(Key); It != Cache.end())
       return It->second;
     const auto Op = Ctx.op(R);
     auto Result = R;
@@ -646,14 +647,36 @@ class LowWordDecisions {
       if (!charge(N, N * sizeof(SymRef)))
         return R;
       llvm::SmallVector<SymRef, 8> Operands(Ctx.operands(R));
+      // A product does not observe bits above Count minus the other factors'
+      // proved zeros. Normalize each operand at that exact precision, so
+      // repeated source offsets share the complete projected product too.
+      unsigned TotalZeros = 0;
+      if (Op == SymOp::Mul) {
+        for (auto Child : Operands)
+          TotalZeros = std::min(Count, TotalZeros + knownZeros(Child));
+        if (Failed)
+          return R;
+        if (TotalZeros == Count) {
+          const size_t Limbs = (size_t(Ctx.width(R)) - 1) / 64 + 1;
+          if (!charge(Limbs, sizeof(SymNode) + Limbs * sizeof(uint64_t) +
+                                 sizeof(uint64_t) + sizeof(SymRef) +
+                                 4 * sizeof(void *)))
+            return R;
+          Result = Ctx.mkZero(Ctx.width(R));
+          Cache.emplace(Key, Result);
+          return Result;
+        }
+      }
       bool Changed = false;
       size_t Expanded = 0, Out = 0;
       for (auto Child : Operands) {
+        const unsigned Precision =
+            Op == SymOp::Mul ? Count - TotalZeros + knownZeros(Child) : Count;
         if (Ctx.isConst(Child) && Op != SymOp::Not) {
           const auto Value = literal(Child);
           if (!Value)
             return R;
-          const auto Low = Value->getLoBits(Count).getZExtValue();
+          const auto Low = Value->getLoBits(Precision).getZExtValue();
           // Remove neutral residues before allocating their projected nodes
           // and reconstructing an operation that would return its sole child.
           if (((Op == SymOp::Add || Op == SymOp::Or || Op == SymOp::Xor) &&
@@ -664,7 +687,8 @@ class LowWordDecisions {
             continue;
           }
         }
-        const auto Projected = projectLowWord(Child, Count, Cache, Depth + 1);
+        const auto Projected =
+            projectLowWord(Child, Precision, Cache, Depth + 1);
         if (Failed)
           return R;
         Changed |= Child != Projected;
@@ -690,8 +714,8 @@ class LowWordDecisions {
                                     : Ctx.mkNot(Operands.front());
       }
     }
-    if (charge(1, sizeof(uint32_t) + sizeof(SymRef) + 4 * sizeof(void *)))
-      Cache.emplace(R.index(), Result);
+    if (charge(1, sizeof(uint64_t) + sizeof(SymRef) + 4 * sizeof(void *)))
+      Cache.emplace(Key, Result);
     return Result;
   }
 
@@ -1254,12 +1278,14 @@ class LowWordDecisions {
   };
   struct WidePairingState {
     std::unordered_map<SignatureKey, uint32_t, SignatureHash> Ids;
+    std::vector<const SignatureKey *> Keys;
     std::unordered_map<uint64_t, WideSignature> Words;
   };
   // Ordinary low-word searches do not need this state. Construct it only
   // after pairing admission, and keep it within the active odd assumption.
   struct PairingState {
     std::unordered_map<SignatureKey, uint32_t, SignatureHash> Ids;
+    std::vector<const SignatureKey *> Keys;
     std::unordered_map<uint64_t, ResidueSignature> Words;
     std::unique_ptr<WidePairingState> Wide;
   };
@@ -1273,9 +1299,39 @@ class LowWordDecisions {
     if (!charge(1, sizeof(SignatureKey) + sizeof(uint32_t) +
                        Key.size() * sizeof(uint64_t) + 6 * sizeof(void *)))
       return 0;
+    if (State.Keys.size() == State.Keys.capacity()) {
+      const size_t Capacity = std::max(size_t(1), 2 * State.Keys.capacity());
+      if (!charge(1, Capacity * sizeof(const SignatureKey *)))
+        return 0;
+      State.Keys.reserve(Capacity);
+    }
     const auto Identity = uint32_t(State.Ids.size() + 1);
-    State.Ids.emplace(std::move(Key), Identity);
+    const auto It = State.Ids.emplace(std::move(Key), Identity).first;
+    // Unordered-map rehash preserves references to these immutable keys.
+    State.Keys.push_back(&It->first);
     return Identity;
+  }
+
+  template <typename SignatureState>
+  bool appendSignatureXor(SignatureState &State, SignatureKey &Children,
+                          uint64_t &Literal, unsigned Count, uint32_t Child) {
+    // The enclosing operand visit is already charged. Only expansion adds
+    // entries and sorting work. A shifted child can expose a formerly nested
+    // XOR; flatten its exact representative, keeping its correction separate.
+    const auto &Key = *State.Keys[Child - 1];
+    if (Key[1] == Count && !Key[0]) {
+      Literal ^= Key[2];
+    } else if (Key[1] == Count && Key[0] == uint64_t(SymOp::Xor) + 1) {
+      const size_t Size = Key.size() - 3;
+      if (!charge(Size * (1 + std::bit_width(Children.size() + Size)),
+                  2 * Size * sizeof(uint64_t)))
+        return false;
+      Literal ^= Key[2];
+      Children.append(Key.begin() + 3, Key.end());
+    } else {
+      Children.push_back(Child);
+    }
+    return true;
   }
 
   // Recursive low-word construction can grow the context operand pool.
@@ -1321,8 +1377,16 @@ class LowWordDecisions {
             Literal ^= Low;
         } else {
           const auto Value = residueSignature(State, Child, Count, Depth + 1);
+          if (Failed)
+            return {};
           Flip = apply(Xor, Flip, Value.Flip);
-          Children.push_back(Value.Identity);
+          if (Op == SymOp::Xor) {
+            if (!appendSignatureXor(State, Children, Literal, Count,
+                                    Value.Identity))
+              return {};
+          } else {
+            Children.push_back(Value.Identity);
+          }
         }
       }
       Flip = apply(Xor, Flip, bool(Literal & Top));
@@ -1564,7 +1628,13 @@ class LowWordDecisions {
               wideSignature<IdentityOnly>(State, Child, Count, Depth + 1);
           if (Failed)
             return {};
-          Children.push_back(Value.Identity);
+          if (Op == SymOp::Xor) {
+            if (!appendSignatureXor(State, Children, Literal, Count,
+                                    Value.Identity))
+              return {};
+          } else {
+            Children.push_back(Value.Identity);
+          }
           Values.push_back(Value);
         }
       }
@@ -1846,8 +1916,13 @@ public:
     RootWidth = Width;
     const bool ProjectFactors =
         Ctx.numOperands(Root) > limits::kMaxResidueProductFactors;
+    // Once a product spans an entire observed residue domain, repeated
+    // low-word views can outnumber the complete domain. Normalize their
+    // complete trees once so outer expressions share the same cached proof.
+    const bool NormalizeFactors =
+        ProjectFactors || Ctx.numOperands(Root) > (size_t(1) << Observed);
     llvm::SmallVector<SymRef, 16> Factors;
-    if (ProjectFactors) {
+    if (NormalizeFactors) {
       // Fund both retained operand vectors before projecting. Domain admission
       // needs only the exact observed views, not a second traversal of high
       // subtrees whose values are already proved invisible to this product.
@@ -1855,7 +1930,7 @@ public:
                   2 * Ctx.numOperands(Root) * sizeof(SymRef)))
         return Root;
       Factors.assign(Ctx.operands(Root).begin(), Ctx.operands(Root).end());
-      std::unordered_map<uint32_t, SymRef> Projections;
+      std::unordered_map<uint64_t, SymRef> Projections;
       for (auto &Factor : Factors) {
         if (Ctx.isConst(Factor))
           continue;
@@ -1872,8 +1947,9 @@ public:
     // Refuse broad domains before constructing decisions. This is only a
     // search admission rule; opaque words still retain all their possible bits.
     std::unordered_set<uint32_t> Seen, Inputs;
+    bool HasNonlinearFactor = false;
     llvm::SmallVector<SymRef, 16> Pending;
-    if (ProjectFactors)
+    if (NormalizeFactors)
       Pending.append(Factors.begin(), Factors.end());
     else
       Pending.push_back(Root);
@@ -1883,6 +1959,9 @@ public:
         return Root;
       if (!Seen.insert(R.index()).second || Ctx.isConst(R))
         continue;
+      HasNonlinearFactor |=
+          R != Root && Ctx.op(R) == SymOp::Mul &&
+          Ctx.numOperands(R) - unsigned(Ctx.isConst(Ctx.operand(R, 0))) > 1;
       const bool Transparent = transparent(R, std::min(Observed, Ctx.width(R)));
       if (!Transparent) {
         if (Inputs.insert(R.index()).second &&
@@ -1894,7 +1973,7 @@ public:
         return Root;
       Pending.append(Ctx.operands(R).begin(), Ctx.operands(R).end());
     }
-    if (!ProjectFactors)
+    if (!NormalizeFactors)
       Factors.assign(Ctx.operands(Root).begin(), Ctx.operands(Root).end());
     Bits Product(Observed, 0);
     Product.front() = 1;
@@ -2192,12 +2271,13 @@ public:
           Wide = A.Identity == Other.Identity;
         }
       }
-      // An odd-sized source block necessarily leaves unpaired factors.
-      // Keep those full words outside the square proof. The original parity
-      // scan already proved the complete product zero on the other branch.
-      // Projected groups and even blocks retain their joint reconstruction.
+      // An odd block leaves unmatched complete words. A partial even block
+      // can do so too; retain nonlinear residual words instead of expanding
+      // another mixed product after the pair proof. The original parity scan
+      // already proved the complete product zero on the other branch.
       auto *Unpaired = !ProjectFactors && RetainedFactors.empty() &&
-                               (Nonconstants.size() & 1)
+                               ((Nonconstants.size() & 1) ||
+                                (!FullBlock && HasNonlinearFactor))
                            ? &RetainedFactors
                            : nullptr;
       Product = Wide

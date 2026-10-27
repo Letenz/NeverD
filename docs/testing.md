@@ -2268,6 +2268,12 @@ blocks of degree 15/23/31 retain unpaired source words and low-bit disturbances.
 Tests exhaust all three six-bit inputs for a degree-15 block, check complete
 8–257-bit words and retain every factor under short work/storage allowances.
 A degree-23 machine-code fixture executes all six source routes at O0/O2.
+Reassociated complemented blocks check XOR identity reuse with independent
+8–257-bit arithmetic and an exhaustive three-input six-bit oracle. Degree-192
+mixed products at both mask precisions must preserve their independent linear
+tail even when the product search cannot finish within 65,536 work units.
+Complete expression comparisons must retain the old results' cost and budget
+completion across complemented blocks, partial even blocks and permutations.
 Quadratic carry-count tests retain both observed correction bits without
 dividing by a noninvertible word. They compare complete products with
 independent APInt arithmetic through 257 bits and Z3 proofs at 8/16/32/64 bits.
