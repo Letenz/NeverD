@@ -63,6 +63,36 @@ TEST_P(AndroidJNI, VMThreadAttachmentAndVersions) {
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
   EXPECT_EQ(R.ReturnValue, 0u);
 }
+TEST_P(AndroidJNI, StatLoggerUsesSharedClockArraysAndRetainedLabels) {
+  Options.LinuxTime.emplace().Clocks = {{7, {50, 987654321}}};
+  for (unsigned advance : {0u, 31u}) {
+    Options.LinuxTime->NanosecondsPerInstruction = advance;
+    for (unsigned mode : {0u, 1u}) {
+      Options.Android->Arguments = {mode};
+      auto result = run("jni_stat_logger");
+      ASSERT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+      EXPECT_EQ(result.ReturnValue, 0u);
+    }
+  }
+}
+TEST_P(AndroidJNI, StatLoggerReadsBootClockBeforeNullLabelsException) {
+  Options.Android->Arguments = {1};
+  auto missing = run("jni_stat_logger");
+  EXPECT_EQ(missing.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(missing.Diagnostic.find("no explicit linux_time input"),
+            std::string::npos);
+  Options.LinuxTime.emplace().Clocks = {{1, {10, 0}}};
+  auto wrong_clock = run("jni_stat_logger");
+  EXPECT_EQ(wrong_clock.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(wrong_clock.Diagnostic.find("no explicit linux_time input"),
+            std::string::npos);
+}
+TEST_P(AndroidJNI, StatLoggerDoesNotInventLoggingOrStatisticsUpdates) {
+  Options.Android->Arguments = {2};
+  auto result = run("jni_stat_logger");
+  EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(result.Diagnostic.find("unmodeled Java method"), std::string::npos);
+}
 TEST_P(AndroidJNI, HashMapRetainsStringNullAndReferenceValuesAcrossDetach) {
   auto result = run("jni_hash_map");
   EXPECT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;

@@ -28,6 +28,7 @@
 #include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86/X86AmxState.h"
+#include "neverd/ir/intrinsics/X86/X86AtomicMemory.h"
 #include "neverd/ir/intrinsics/X86/X86BoundedLeaf.h"
 #include "neverd/ir/intrinsics/X86/X86DescriptorState.h"
 #include "neverd/ir/intrinsics/X86/X86RepState.h"
@@ -711,12 +712,16 @@ apxAtomicMedShape(const MedOp &Op, Arch TargetArch = Arch::Unknown) {
       SameArch = false;
   };
   ObserveArch(Op.Output);
-  for (uint8_t I = 1; I < Op.NumInputs && I < 5; ++I)
+  for (uint8_t I = 1; I < Op.NumInputs && I < Op.Inputs.size(); ++I)
     ObserveArch(Op.Inputs[I]);
 
+  const auto ControlIndex = x86AtomicAddressControlIndex(
+      Op.NumInputs ? static_cast<Intrinsic>(Op.Inputs[0].ConstVal)
+                   : Intrinsic::None);
   return {
       .TargetArch = TargetArch,
       .MemoryOrdering = Op.MemoryOrdering,
+      .MemoryAddressSpace = Op.MemoryAddressSpace,
       .NumInputs = Op.NumInputs,
       .IntrinsicIdIsConst =
           SameArch && Op.NumInputs > 0 && Op.Inputs[0].isConst(),
@@ -735,6 +740,14 @@ apxAtomicMedShape(const MedOp &Op, Arch TargetArch = Arch::Unknown) {
       .ConditionIsConst = Op.NumInputs > 4 && Op.Inputs[4].isConst(),
       .Condition = Op.NumInputs > 4 ? Op.Inputs[4].ConstVal : UINT64_C(0),
       .ConditionSize = Op.NumInputs > 4 ? Op.Inputs[4].Size : uint16_t{0},
+      .AddressControlIsConst =
+          Op.NumInputs > ControlIndex && Op.Inputs[ControlIndex].isConst() &&
+          !isAddressProvenance(Op.Inputs[ControlIndex].Provenance),
+      .AddressControl =
+          Op.NumInputs > ControlIndex ? Op.Inputs[ControlIndex].ConstVal : 0,
+      .AddressControlSize = Op.NumInputs > ControlIndex
+                                ? Op.Inputs[ControlIndex].Size
+                                : uint16_t{0},
   };
 }
 

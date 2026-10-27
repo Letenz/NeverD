@@ -40,6 +40,16 @@ performance or statistical acceptance requirements.
 
 ## Verification record boundaries
 
+The SBF Rust warning failure described below has a focused repair: the monolithic
+and structured generators borrow their private register bank as partitioned
+handlers already do. The original failure was reproduced, and an isolated
+relink against frozen `fd59ee8336` archives passed all 20 emitter checks and both
+C/Rust source differential tests, with no skips. Four added terminal-slot cases
+cover scalar writes, successful/faulting division and syscall effects. The Rust
+differential compiled and executed 104 generated modules with `-D warnings`.
+This closes that reproduced failure at the frozen boundary; it does not replace
+the earlier full-suite receipt or qualify subsequent upstream SBF changes.
+
 The v7 input-expression progress increment was locally qualified at
 `7ae9cbf363e11944cb365cdfd49d50312014f067`: 1,427 selected CTests passed,
 four optional/environment-dependent tests skipped, 527 compiler comparisons,

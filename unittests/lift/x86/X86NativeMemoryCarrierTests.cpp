@@ -47,6 +47,8 @@ enum class MemoryFamily {
   Descriptor,
   Query,
   Atomic,
+  AtomicStack,
+  CompareStack,
   CompactStack,
   FourSourceStack
 };
@@ -153,17 +155,20 @@ TEST(X86NativeMemoryCarrier, RealignedDynamicFramesRetainAddressProvenance) {
     for (const auto Family :
          {MemoryFamily::Compact, MemoryFamily::FourSource,
           MemoryFamily::Descriptor, MemoryFamily::Query, MemoryFamily::Atomic,
-          MemoryFamily::CompactStack, MemoryFamily::FourSourceStack})
+          MemoryFamily::CompactStack, MemoryFamily::FourSourceStack,
+          MemoryFamily::AtomicStack, MemoryFamily::CompareStack})
       for (bool Narrow : {false, true}) {
         const bool FourSource = Family == MemoryFamily::FourSource ||
                                 Family == MemoryFamily::FourSourceStack;
         const bool Compact = Family == MemoryFamily::Compact ||
                              Family == MemoryFamily::CompactStack;
         const bool Stack = Family == MemoryFamily::CompactStack ||
-                           Family == MemoryFamily::FourSourceStack;
+                           Family == MemoryFamily::FourSourceStack ||
+                           Family == MemoryFamily::AtomicStack ||
+                           Family == MemoryFamily::CompareStack;
         if (Stack && A != Arch::X64)
           continue;
-        if (Narrow && (FourSource || Compact))
+        if (Narrow && (FourSource || Compact || Stack))
           continue;
         const unsigned WordBits = A == Arch::X64 ? 64 : 32;
         const unsigned AddressBits = Narrow ? WordBits / 2 : WordBits;
@@ -233,11 +238,18 @@ TEST(X86NativeMemoryCarrier, RealignedDynamicFramesRetainAddressProvenance) {
               Return =
                   llvm::StructType::get(C, {B.getInt32Ty(), B.getInt8Ty()});
             } else {
-              const auto P = *x86APXAtomicPlan(Intrinsic::X86LegacyRaoAdd, 4,
-                                               AddressBits, 0, 0, A);
+              const auto P = *x86APXAtomicPlan(
+                  Family == MemoryFamily::CompareStack
+                      ? Intrinsic::X86LegacyCmpccXadd
+                      : Intrinsic::X86LegacyRaoAdd,
+                  4, AddressBits, Stack ? X86NativeStackReference : 0, 0, A);
               Assembly = P.assembly();
               Constraints = P.constraints();
               Mnemonic = P.mnemonic();
+              if (P.compare()) {
+                Return = B.getInt32Ty();
+                Args.push_back(B.getInt32(11));
+              }
               Args.push_back(B.getInt32(7));
             }
           }

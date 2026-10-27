@@ -286,7 +286,7 @@ private:
   bool reloadDataItems();
   /// The user's data items as rows; none from an older engine.
   Json dataItemRows() const;
-  Json bytePatchRows() const;
+  Json bytePatchRows(std::size_t *encodedSize = nullptr) const;
   /// A committed patch command already proves invalidation is necessary;
   /// ordinary reloads must discover changes from the before/after inventories.
   bool reloadBytePatches(bool knownChanged = false);

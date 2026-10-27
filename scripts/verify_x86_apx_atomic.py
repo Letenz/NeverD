@@ -10,6 +10,7 @@ import argparse
 import importlib.util
 import itertools
 import json
+import re
 from pathlib import Path
 import sys
 
@@ -60,7 +61,7 @@ def qualify_pipeline(oracle, obj, case, windows, legacy=False):
         uc.reg_write(reg("EFLAGS"), 0x202)
         uc.emu_start(oracle.CODE + start, stop, count=10000)
         assert uc.reg_read(reg("RIP")) == oracle.CODE + at, (obj, "missing atomic boundary")
-        assert uc.reg_read(reg(oracle.GPRS[insn["base"]])) == offset
+        assert oracle.effective_offset(uc, insn) == offset
         assert uc.reg_read(reg(oracle.GPRS[insn["add"]])) & mask == add & mask
         if case["operation"] == "cmpccxadd":
             assert uc.reg_read(reg(oracle.GPRS[insn["compare"]])) & mask == cmp
@@ -77,6 +78,38 @@ def qualify_pipeline(oracle, obj, case, windows, legacy=False):
     return len(olds)
 
 
+def realigned_source(source, functions):
+    """Add checked dynamic-frame storage to the generated wrapper corpus.
+
+    This deliberately accepts the exported straight-line fixture signatures,
+    not arbitrary C. Its single return retains the original oracle result and
+    additionally checks both ends of a realigned local and a dynamic alloca.
+    """
+    local = "neverd_atomic_frame"
+    assert local not in source
+    pattern = r"(uint64_t apx_\d+\([^)]*\)\s*\{)"
+    definitions = list(re.finditer(pattern, source))
+    assert len(definitions) == functions, (len(definitions), functions)
+    for definition in reversed(definitions):
+        arguments = definition[0].split("(", 1)[1].split(")", 1)[0].split(",")
+        count = arguments[1].strip().split()[-1]
+        setup = (f"\nvolatile uint64_t {local}[16] __attribute__((aligned(64)));\n"
+                 f"volatile unsigned char *{local}_dynamic = __builtin_alloca(({count} & 255) + 65);\n"
+                 f"{local}[0] = UINT64_C(0x123456789abcdef0);\n"
+                 f"{local}[15] = UINT64_C(0xfedcba9876543210);\n"
+                 f"*{local}_dynamic = 0xa5;\n")
+        end = re.search(r"\breturn ([^;]+);", source[definition.end():])
+        assert end, definition[0]
+        first = definition.end() + end.start()
+        last = definition.end() + end.end()
+        result = (f"return ({end[1]}) ^ ({local}[0] ^ UINT64_C(0x123456789abcdef0))"
+                  f" ^ ({local}[15] ^ UINT64_C(0xfedcba9876543210))"
+                  f" ^ (*{local}_dynamic ^ 0xa5);")
+        source = source[:first] + result + source[last:]
+        source = source[:definition.end()] + setup + source[definition.end():]
+    return source
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--exports", type=Path, required=True)
@@ -90,30 +123,40 @@ def main():
     parser.add_argument("--pipeline-only", action="store_true",
                         help="qualify decoded pipeline exports without repeating wrapper compilation")
     parser.add_argument("--legacy", action="store_true")
+    parser.add_argument("--frames-only", action="store_true",
+                        help="qualify C wrappers with realigned locals and dynamic alloca")
     args = parser.parse_args()
     spec = importlib.util.spec_from_file_location("apx_reference", args.oracle)
     oracle = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = oracle
     spec.loader.exec_module(oracle)
+    oracle.verify_memory_decoder()
+    oracle.verify_wrapper_decoder()
     args.keep.mkdir(parents=True, exist_ok=True)
-    matrix = [c for c in oracle.cases() if c[2] == 64 and c[3] in (0, 0x64, 0x65)]
+    matrix = [c for c in oracle.cases() if c[2] == 64 and c[3] in (0, 0x64, 0x65, 0x100)]
     reports = []
-    for name, triple in ([] if args.pipeline_only else zip(("elf", "coff", "macho"), oracle.TRIPLES)):
+    if args.frames_only:
+        assert not args.pipeline and not args.pipeline_only
+        for route in ("high", "llvm"):
+            original = (args.exports / f"atomic-{route}.c").read_text()
+            (args.keep / f"frame-{route}.c").write_text(realigned_source(original, len(matrix)))
+    for name, triple in ([] if args.pipeline_only or args.frames_only else zip(("elf", "coff", "macho"), oracle.TRIPLES)):
         obj = args.exports / ("atomic-" + name + ".o")
         reports.append({"route": "production-object", "triple": triple,
                         **oracle.qualify(obj, matrix, name == "coff", args.legacy)})
     for opt, triple in ([] if args.pipeline_only else itertools.product(("O0", "O2"), oracle.TRIPLES)):
         index = oracle.TRIPLES.index(triple)
-        ir = args.exports / "atomic.ll"
-        selected = ir
-        if opt == "O2":
-            selected = args.keep / ("atomic-" + str(index) + ".opt.ll")
-            oracle.run([args.llc.parent / "opt", "-passes=default<O2>", "-S", ir, "-o", selected])
-        obj = args.keep / f"llvm-{opt}-{index}.o"
-        oracle.run([args.llc, "-mtriple=" + triple, "-" + opt,
-                    "-verify-machineinstrs", "-filetype=obj", selected, "-o", obj])
-        reports.append({"route": "llvm", "optimization": opt, "triple": triple,
-                        **oracle.qualify(obj, matrix, index == 1, args.legacy)})
+        if not args.frames_only:
+            ir = args.exports / "atomic.ll"
+            selected = ir
+            if opt == "O2":
+                selected = args.keep / ("atomic-" + str(index) + ".opt.ll")
+                oracle.run([args.llc.parent / "opt", "-passes=default<O2>", "-S", ir, "-o", selected])
+            obj = args.keep / f"llvm-{opt}-{index}.o"
+            oracle.run([args.llc, "-mtriple=" + triple, "-" + opt,
+                        "-verify-machineinstrs", "-filetype=obj", selected, "-o", obj])
+            reports.append({"route": "llvm", "optimization": opt, "triple": triple,
+                            **oracle.qualify(obj, matrix, index == 1, args.legacy)})
         for route, compiler in itertools.product(("high", "llvm"), (args.clang, args.compiler, args.gcc)):
             gcc = compiler == args.gcc
             if gcc and index:
@@ -121,7 +164,10 @@ def main():
             output = args.keep / f"{route}-{compiler.name}-{opt}-{index}.o"
             command = [compiler, "-" + opt, "-ffreestanding", "-fno-stack-protector",
                        "-fno-lto", "-fno-function-sections", "-c",
-                       args.exports / f"atomic-{route}.c", "-o", output]
+                       (args.keep / f"frame-{route}.c" if args.frames_only
+                        else args.exports / f"atomic-{route}.c"), "-o", output]
+            if args.frames_only:
+                command.append("-mno-stack-arg-probe")
             if not gcc:
                 command += ["--target=" + triple]
             if compiler == args.compiler:
@@ -129,6 +175,18 @@ def main():
             oracle.run(command)
             reports.append({"route": route, "compiler": str(compiler), "optimization": opt,
                             "triple": triple, **oracle.qualify(output, matrix, index == 1, args.legacy)})
+            if args.frames_only and compiler == args.compiler:
+                ir = output.with_suffix(".ll")
+                bridge = list(command)
+                bridge[bridge.index("-c")] = "-S"
+                bridge[bridge.index("-o") + 1] = ir
+                oracle.run(bridge + ["-emit-llvm"])
+                assert " asm " not in ir.read_text(), "native C route fell back to assembly"
+                obj = output.with_suffix(".bridge.o")
+                oracle.run([args.llc, "-mtriple=" + triple, "-" + opt,
+                            "-verify-machineinstrs", "-filetype=obj", ir, "-o", obj])
+                reports.append({"route": route + "-bridge", "optimization": opt,
+                                "triple": triple, **oracle.qualify(obj, matrix, index == 1, args.legacy)})
         print({"optimization": opt, "triple": triple, "qualified_programs": len(reports)}, flush=True)
     pipeline, pipeline_checks, pipeline_objects = 0, 0, 0
     if not args.pipeline_only:
@@ -161,7 +219,7 @@ def main():
             if pipeline % 336 == 0:
                 print({"pipeline_source_compilations": pipeline, "pipeline_checks": pipeline_checks}, flush=True)
         print({"pipeline_source_compilations": pipeline}, flush=True)
-    report = {"programs": reports, "pipeline_source_compilations": pipeline,
+    report = {"realigned_frames": args.frames_only, "programs": reports, "pipeline_source_compilations": pipeline,
               "pipeline_production_objects": pipeline_objects,
               "pipeline_controlled_completions": pipeline_checks,
               "physical_atomicity_qualified": False}

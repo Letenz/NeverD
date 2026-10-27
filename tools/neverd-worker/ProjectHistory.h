@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <string_view>
+#include <vector>
 
 namespace neverd::worker {
 /// Replaces a file with the given text in one atomic step.
@@ -58,7 +59,8 @@ private:
   std::filesystem::file_time_type fileTime_;
   AtomicWriter writer_;
   std::function<void()> committed_;
-  Json commands_ = Json::array();
+  struct Command;
+  std::vector<std::shared_ptr<const Command>> commands_;
   struct Snapshot;
   // Copies used for rollback share only immutable, validated committed data.
   std::shared_ptr<const Snapshot> snapshot_;
@@ -68,6 +70,7 @@ private:
   std::size_t cursor_ = 0;
   Json diskState() const;
   std::shared_ptr<const Snapshot> readSnapshot(Json *document = nullptr) const;
+  std::size_t commandTextSize() const;
   std::string document(std::string_view encodedState) const;
   void recover();
 };

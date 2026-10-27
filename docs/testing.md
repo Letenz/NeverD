@@ -836,10 +836,10 @@ pointer field still returns the machine integer bits expected by its consumer.
 
 APX atomic qualification uses `NeverDX86APXAtomicSemanticTests` and
 `NeverDX86APXAtomicSourceTests`. The former owns decode/LowIR/concrete memory,
-condition, flag and failure-commit checks, including refusal of unrepresented
-64-bit default-stack fault semantics. The latter validates MedIR, native LLVM,
-owned assembly and both C routes; it exports 360 live/dead/repeated wrappers
-and 504 decoded pipeline cases when `NEVERD_APX_ATOMIC_EXPORT_DIR` is set.
+condition, flag and failure-commit checks, including explicit preservation of
+64-bit default-stack provenance and refusal of malformed address controls.
+The latter validates MedIR, native LLVM, owned assembly and both C routes;
+it exports 480 live/dead/repeated wrappers and 588 decoded pipeline cases when `NEVERD_APX_ATOMIC_EXPORT_DIR` is set.
 `scripts/verify_x86_apx_atomic.py` takes those exports, the full fork's `llc`,
 NeverC and its independent `tests/verify-apx-atomic-completion.py` oracle.
 It checks production objects and LLVM/Clang/NeverC/GCC wrappers across supported
@@ -847,14 +847,27 @@ formats and O0/O2. `--pipeline` additionally compiles both recovered C routes
 with Clang and NeverC, checking effective offsets, source operands, flags,
 return values and nonvolatile registers against the original instruction
 sequence. `--pipeline-only` reruns that stage without repeating the wrappers.
-These controlled completions do not qualify physical atomicity or hardware
-faults. `NeverDCodegenDiagnosticTests` requires an allocation error to reject
+`--frames-only` adds 64-byte-aligned volatile locals and dynamic allocations
+to the same exported C fixtures, checking their canaries through the return.
+It also feeds NeverC's native IR to the full LLVM backend. Stack probes are
+disabled only in this controlled fixture; return-SP and all ABI-saved GPRs
+must match the independent completion oracle.
+The oracle independently decodes stack-carrier SIB bytes, rejects malformed
+carriers, and checks effective addresses as RBP plus the allocated index.
+Its wrapper decoder resolves pure direct-jump aliases from identical-function
+folding, checks the native operation count for each entry, and rejects cyclic,
+indirect, interior or state-changing aliases. Runtime checks still require each
+entry to execute its exact live/dead/repeated transaction sequence.
+`X86NativeMemoryCarrier` also compiles RAO/CMPccXADD stack references in realigned
+dynamic frames across all three object formats. These controlled completions
+do not qualify physical atomicity or hardware faults.
+`NeverDCodegenDiagnosticTests` requires an allocation error to reject
 an otherwise parseable object, retaining the caller's diagnostic handler.
 
 `NeverDX86LegacyEncodingSourceTests` reuses the atomic boundary fixtures with
 the legacy RAO/VEX CMPccXADD inventory. Set `NEVERD_LEGACY_ATOMIC_EXPORT_DIR`
 and pass `--legacy` to `verify_x86_apx_atomic.py` for the x86-64 wrappers and
-504 decoded pipeline cases. Its i386 fixtures add 112 wrappers per format
+588 decoded pipeline cases. Its i386 fixtures add 112 wrappers per format
 and 144 decoded pipelines. `scripts/verify_x86_legacy_atomic_i386.py` checks
 their production/LLVM objects and Clang C output at O0/O2, including 16-bit
 effective addressing, all explicit segment controls, aliased ordinary
@@ -1477,6 +1490,17 @@ references across detach, compare native properties and reject mutated/unmapped
 property records. Run full Dalvik, Android JNI/thread/callback and Android
 property suites after changing these owners. Tests remain offline and do not
 claim full HashMap/ART, property callback or ServiceManager initialization.
+`AndroidStatLoggerTest.*` checks API 28 metadata, boot-loader ownership, private
+field state, constructor ordering, distinct zero arrays, retained labels, DEX
+construction and microsecond time. Missing/invalid clocks, null labels and
+resource stops retain their distinct outcomes. `AndroidArrayTest.*` checks
+primitive/reference widths, zero initialization and exact storage budgets.
+`AndroidJNI.StatLogger*` uses independent AArch64 callers in ordinary, va_list
+and jvalue-array forms, reads and mutates arrays through JNI, retains labels
+across detach and compares constructor/getTime observations with Linux boot
+clock reads. Run full Dalvik, JNI/thread/callback and Linux clock suites for
+these shared owners. Tests are offline; they do not execute ART or claim
+ServiceManager cache/Binder initialization or StatLogger reporting support.
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
 typed/JSON admission, DEX catch and shared message access, terminal instruction
@@ -2778,6 +2802,11 @@ is unexecuted coverage, not a pass for that target.
 The SBF source differential suite additionally needs `rustc`; it executes both
 generated C and generated Rust. Treat a missing compiler skip as missing
 backend evidence, not as semantic success.
+Its terminal-slot cases retain successful and faulting loads, stores, scalar
+register writes, division and syscall effects before execution overrun. Both
+dispatcher layouts compile with warnings as errors and execute against the raw
+interpreter. The Rust register view borrows its private bank in both layouts,
+including programs whose final register writes cannot be read by a successor.
 
 The native source dialect suite also uses `rustc` and `go` from `PATH`, or
 `NEVERD_TEST_RUSTC` and `NEVERD_TEST_GO`. On Windows, its Rust executable
@@ -14803,6 +14832,19 @@ snapshots. `tools/neverd-bench/patch-payload.py` covers a large merged row, with
 alternating SDK JSON/CLI samples and independent original/current-byte checks.
 Both record native CPU/wall samples and binary hashes; keep machine-local
 reports outside tracked source and avoid overlapping builds with timed runs.
+
+`tools/neverd-bench/patch-command-history.py --baseline BEFORE --candidate AFTER`
+adds repeated edits with large retained commands. It populates history before
+alternating timed commit/undo/redo pairs, verifies live bytes, sidecars, exports
+and unchanged input outside timing, and records affinity and peak worker RSS.
+Use `--payload-bytes` and `--warmup-commands` to distinguish payload size from
+history length; ordinary sparse-row runs do not qualify this workload.
+
+`NeverDWorkerHistory` checks exact command byte/count limits, immutable rollback
+checkpoints, redo replacement, returned-value ownership and byte-exact document
+encoding after reopen. `NeverDWorkerNativePatch` accepts an exact patch-state
+budget and rejects a one-byte excess without changing live or persisted bytes;
+run it with both typed-snapshot and legacy JSON-only SDKs for adapter changes.
 
 `NeverDGuiPatchKeys` routes all second keys through `QWindow` shortcut dispatch, including pending menus, cancellation and editor typing. `NeverDGuiNativePatchKeys` checks real SDK bytes, Hex and floating windows, undo/redo and restoration. Run the same executable under X11 to exercise native popup routing.
 
