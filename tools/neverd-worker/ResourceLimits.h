@@ -24,6 +24,8 @@
 #include <cstdint>
 
 namespace neverd::limits::worker {
+/// Intermediate updates to one load step; boundaries are always sent.
+inline constexpr int kLoadProgressIntervalMs = 50;
 inline constexpr std::size_t kPatchHexBytes =
     ::neverd::limits::patch::kMaxApplyBytes * 2;
 inline constexpr std::size_t kPatchStateBytes =
