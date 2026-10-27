@@ -1062,9 +1062,13 @@ TEST(Win64CallContract, ImmutableNoReturnSlotsEndBothSourcePaths) {
       EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
       const std::string Oracle = R"(
 extern _Noreturn void _Exit(int);
-/* The emitted address-only symbol retains the PE spelling on every host. */
-_Noreturn uint64_t stop_provider(void) __asm__("abort");
-_Noreturn uint64_t stop_provider(void) { _Exit(0); }
+/* A recognized libc call uses the host C name; an address-only target keeps
+   the PE symbol. Darwin needs both spellings because C names gain an _. */
+_Noreturn void abort(void) { _Exit(0); }
+#if defined(__APPLE__)
+_Noreturn void raw_stop_provider(void) __asm__("abort");
+_Noreturn void raw_stop_provider(void) { _Exit(0); }
+#endif
 int main(void) {
   if (loaded_noreturn(0) != 37) return 1;
   loaded_noreturn(1);
