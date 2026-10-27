@@ -2221,8 +2221,14 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   if (isX86SystemStateIntrinsic(E.IntrinsicId) ||
       E.IntrinsicId == Intrinsic::X86MsrAccess) {
     std::vector<std::string> Arguments;
-    for (const auto &Operand : E.Operands)
-      Arguments.push_back(Operand ? exprStr(*Operand) : "");
+    for (unsigned I = 0; I < E.Operands.size(); ++I) {
+      const auto &Operand = E.Operands[I];
+      Arguments.push_back(
+          !Operand ? ""
+          : isX86SystemStatePhysicalAddressArgument(E.IntrinsicId, I)
+              ? addrStr(*Operand, 0, false)
+              : exprStr(*Operand));
+    }
     return renderX86SystemStateExpression(Opts.TheArch, E, Arguments,
                                           Opts.Format == BinaryFormat::COFF,
                                           HasCIntrinsics);
@@ -3605,7 +3611,7 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
       return *Backing;
   }
   const HighExpr *Inner =
-      ProjectImageBacking ? peelIntegerViewOps(&E) : &intrinsicOperandExpr(E);
+      ProjectImageBacking ? &E : &intrinsicOperandExpr(E);
   if (!Inner)
     Inner = &E;
   if (Inner->Kind == ExprKind::BinOp &&
@@ -3665,7 +3671,11 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
           }
       }
       constexpr int AddPrec = 9;
-      std::string B = addrStr(*Base, AddPrec, ProjectImageBacking);
+      // Peeling identifies the base/offset pattern; the emitted base must keep
+      // its original truncation or extension before conversion to a pointer.
+      const HighExpr &BaseExpression =
+          Base == Lhs ? *Inner->Operands[0] : *Inner->Operands[1];
+      std::string B = addrStr(BaseExpression, AddPrec, ProjectImageBacking);
       TypeRef BaseTy = Base->Type;
       if ((Base->Kind == ExprKind::Var || Base->Kind == ExprKind::Phi))
         if (auto Declared = declaredParamType(Base->Var))
