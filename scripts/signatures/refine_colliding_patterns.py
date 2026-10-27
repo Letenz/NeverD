@@ -60,12 +60,14 @@ def refine(existing: Path, evidence: list[Path], output: Path, machine: str) -> 
 
     documents = {path: path.read_text(encoding="utf-8").splitlines() for path in paths}
     known = defaultdict(list)
+    loaded = defaultdict(list)
     for path, lines in documents.items():
         for text in lines:
             row = builder.parse_line(text)
-            if row and not (row.require_caller or row.require_references or
-                            row.is_vtable or row.is_load_config):
-                known[library_name(path), row.key].append(row)
+            if row and not (row.require_caller or row.is_vtable or row.is_load_config):
+                loaded[library_name(path), row.key].append(row)
+                if not row.require_references:
+                    known[library_name(path), row.key].append(row)
     by_key = defaultdict(list)
     for row in source.values():
         by_key[row.key].append(row)
@@ -153,14 +155,21 @@ def refine(existing: Path, evidence: list[Path], output: Path, machine: str) -> 
                 kept.append(text)
                 continue
             all_rivals = raw_rivals(row)
-            all_rivals.extend(other for other in known[library, row.key]
+            all_rivals.extend(other for other in loaded[library, row.key]
                               if builder.another_routine(row.names, other.names))
             if not all_rivals:
                 kept.append(text)
                 continue
             complete = builder.Shape.of(row.key).fully_verified()
             if complete and row.refs and all(builder.distinguished([row, other]) for other in all_rivals):
-                if row.require_references:
+                if row.require_references and not any(
+                        other.names == row.names and other.refs == row.refs
+                        and other.data_sites == row.data_sites
+                        and other.local_sites == row.local_sites
+                        for other in by_key[row.key]):
+                    # Existing mandatory fields may have been authored by a
+                    # different proof. Reduce them only with their own complete,
+                    # unpruned source declaration and every covered counterclaim.
                     kept.append(text)
                     continue
                 action, token = "required", "!refs"
@@ -178,6 +187,20 @@ def refine(existing: Path, evidence: list[Path], output: Path, machine: str) -> 
                 # site. Prefer image metadata, fewer alternatives, then source
                 # field order. Metadata does not depend on another byte guess.
                 selected = min(clauses, key=clause_cost) if clauses else required
+                if clause_cost(selected)[0]:
+                    # A callee name can itself be an ambiguous byte claim.
+                    # Selecting one such site can confirm a false survivor
+                    # while another variant needs an unavailable callee.
+                    # Only image-owned metadata permits removing other sites.
+                    selected = required
+                if row.require_references:
+                    if selected.refs == row.refs or clause_cost(selected)[0]:
+                        # An image-owned anchor supplies an independent proof.
+                        # Preserve existing call-only constraints, which may
+                        # encode graph decisions beyond this source audit.
+                        kept.append(text)
+                        continue
+                    action = "reduced"
                 native_rows = [selected.text]
                 # A pruned clause cannot declare its omitted outgoing edges.
                 # Retain a separate complete source query, intersecting fields
