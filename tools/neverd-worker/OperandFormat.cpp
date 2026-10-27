@@ -13,6 +13,40 @@
 
 namespace neverd::worker {
 namespace operand_format_detail {
+
+std::string binaryDigits(std::uint64_t value) {
+  std::string text;
+  for (std::uint64_t bit = std::uint64_t(1) << 63; bit; bit >>= 1)
+    if (!text.empty() || (value & bit))
+      text += value & bit ? '1' : '0';
+  return text.empty() ? std::string("0") : text;
+}
+
+std::optional<std::string> characterLiteral(std::uint64_t value) {
+  // Most significant byte first, as the characters read in the source.
+  std::string text;
+  for (int shift = 56; shift >= 0; shift -= 8) {
+    const auto byte = static_cast<unsigned char>(value >> shift);
+    if (!byte && text.empty())
+      continue;
+    if (byte < 0x20 || byte >= 0x7f || byte == '\'')
+      return std::nullopt;
+    text += static_cast<char>(byte);
+  }
+  if (text.empty())
+    return std::nullopt;
+  return "'" + text + "'";
+}
+
+} // namespace operand_format_detail
+
+namespace {
+using operand_format_detail::binaryDigits;
+using operand_format_detail::characterLiteral;
+using operand_format_detail::OperandTokens;
+using operand_format_detail::Token;
+using operand_format_detail::TokenKind;
+
 struct RegisterTable {
   std::unordered_set<std::string> x86, aarch64, arm;
 };
@@ -235,6 +269,8 @@ bool isLoneRegister(const std::vector<Token> &operand) {
          isRegisterName(OperandDialect::X86, operand.front().text);
 }
 
+/// The value of an operand that is a plain number, `5` or `-5`, unsigned in
+/// \p mask's width.
 std::optional<std::uint64_t> plainNumber(const OperandTokens &tokens,
                                          std::uint64_t mask) {
   if (tokens.size() == 1 && tokens[0].kind == TokenKind::Number &&
@@ -401,30 +437,6 @@ bool appendStructOffset(StyledText &out, const NumberFormat &format,
   if (open)
     out.append(")", ListingRole::Punctuation);
   return true;
-}
-
-std::string binaryDigits(std::uint64_t value) {
-  std::string text;
-  for (std::uint64_t bit = std::uint64_t(1) << 63; bit; bit >>= 1)
-    if (!text.empty() || (value & bit))
-      text += value & bit ? '1' : '0';
-  return text.empty() ? std::string("0") : text;
-}
-
-std::optional<std::string> characterLiteral(std::uint64_t value) {
-  // Most significant byte first, as the characters read in the source.
-  std::string text;
-  for (int shift = 56; shift >= 0; shift -= 8) {
-    const auto byte = static_cast<unsigned char>(value >> shift);
-    if (!byte && text.empty())
-      continue;
-    if (byte < 0x20 || byte >= 0x7f || byte == '\'')
-      return std::nullopt;
-    text += static_cast<char>(byte);
-  }
-  if (text.empty())
-    return std::nullopt;
-  return "'" + text + "'";
 }
 
 /// Appends \p value, a number \p bits wide, as \p format shows it; false
@@ -804,9 +816,14 @@ void formatGenericOperand(StyledText &out, const OperandTokens &tokens,
     }
   }
 }
-} // namespace operand_format_detail
+} // namespace
 
-using namespace operand_format_detail;
+using operand_format_detail::armDialect;
+using operand_format_detail::armImmediate;
+using operand_format_detail::armStructOperand;
+using operand_format_detail::ArmWidths;
+using operand_format_detail::armWidths;
+using operand_format_detail::formatArmOperand;
 
 bool showsNumberFormats(OperandDialect dialect) {
   // Other dialects keep the decoder's spelling.
@@ -1015,9 +1032,8 @@ StyledText formatOperands(std::string_view operands, const OperandFacts &facts,
                        facts.operandBits && index < facts.operandBits->size()
                            ? (*facts.operandBits)[index]
                            : 0);
-    else if (arm && format && !format->isDefault())
-      formatArmOperand(out, operand, facts, namer, format, widths);
-    else
+    else if (!arm || !format || format->isDefault() ||
+             !formatArmOperand(out, operand, facts, namer, *format, widths))
       formatGenericOperand(out, operand, facts, namer);
   }
   return out;
