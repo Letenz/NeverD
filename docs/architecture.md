@@ -5544,6 +5544,21 @@ newly reached backedge cannot reuse an entry-only domain. A complete
 single-consumer finite proof is not
 widened or vetoed by a weaker mask search. Module-wide storage mutation checks
 still run before source publication.
+A bounded readonly-lookup fallback explores known scalar byte states on the
+same rooted resolver graph. It preserves unknown entry inputs, architectural
+lanes, call clobbers and the address origin of loaded pointers. Unknown branches
+visit both successors; every reaching state must yield a bounded selector before
+publishing an envelope. The worklist must reach a fixed point: a budget cutoff
+never publishes the values seen so far. Only a dense zero-based envelope enters
+the ordinary table route, with the normal expanded-graph replay. Provisional
+group edges and recurrent dispatch observations cannot seed this proof.
+`ResolverFiniteState` caches immutable reads only within one query, using the
+loader's mapping, permission and fixup checks; graph-only result caches do not
+retain image-derived envelopes. ELF RELRO ranges use the loader's shared runtime
+immutability policy even when their outer load segment also contains writable
+data. Enum names, constructor examples and physical table boundaries alone do
+not establish the range of an arbitrary incoming object field.
+
 The specialized i386/ELF joint finite proof returns one owned result after every
 consumer replays its selector, LOAD address and target role on the restricted
 owner graph. It retains separate physical, preceding-phase and restricted edge
@@ -13419,6 +13434,11 @@ and source-bound sidecar persistence; GUI owns the dialog and view refreshes.
 Read-only batch views use `PipelineRunner::loadAnalysis` to retain additions
 for the same input. File rewriting retains the original file-backed load.
 See [analysis sections](analysis-sections.md).
+
+`LowScalarConstant` zero-extends narrower literal arithmetic operands at their
+encoded width before applying a wider operation. Register and temporary lookups
+retain their exact lane identities; a scalar immediate does not gain address
+provenance through this coercion.
 
 `LowScalarConstant` also recognizes fixed-width integer self-subtraction of the same register or instruction-local temporary. Branch recovery and call-site ABI checks share this constant-time identity, so an unknown incoming value can still establish a zero result. Different occurrences, memory operands and malformed widths remain unproved.
 
