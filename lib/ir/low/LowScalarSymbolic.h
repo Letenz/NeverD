@@ -1,5 +1,5 @@
-//===- LowScalarSymbolic.h - Shared symbolic integer semantics ---*- C++
-//-*-===//
+//===- LowScalarSymbolic.h - Integer semantics --------------*- C++ -*-===//
+//
 //
 // NeverD Decompiler
 //

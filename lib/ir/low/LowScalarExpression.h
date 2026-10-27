@@ -1,5 +1,5 @@
-//===- LowScalarExpression.h - Bounded scalar identities ---------*- C++
-//-*-===//
+//===- LowScalarExpression.h - Scalar identities ------------*- C++ -*-===//
+//
 //
 // NeverD Decompiler
 //
