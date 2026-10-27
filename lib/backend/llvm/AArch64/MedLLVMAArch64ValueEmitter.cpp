@@ -199,8 +199,6 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
       llvm::report_fatal_error(kWritebackMalformed);
     const auto Instruction = *aarch64WritebackMemoryInstruction(
         Op.Inputs[kWritebackWordOperand + 1].ConstVal);
-    if (Instruction.stackBase())
-      llvm::report_fatal_error(kWritebackSPUnsupported);
     const auto &BaseInput = Op.Inputs[kWritebackBaseOperand + 1];
     llvm::Value *Base = nullptr;
     if (Img) {
@@ -292,10 +290,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                     {Builder.getInt64Ty(), ValueType, ValueType,
                                      Builder.getInt32Ty()},
                                     false),
-            Instruction.isVector() ? kPairVectorStoreAsm : kPairStoreAsm,
-            Instruction.isVector() ? kPairVectorStoreConstraints
-                                   : kPairStoreConstraints,
-            true);
+            Instruction.machine().Asm, Instruction.machine().Constraints, true);
         return Builder.CreateCall(Asm,
                                   {Base, Data(First), Data(Second),
                                    Builder.getInt32(Instruction.scratchWord())},
@@ -306,10 +301,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
       auto *Asm = llvm::InlineAsm::get(
           llvm::FunctionType::get(
               ResultType, {Builder.getInt64Ty(), Builder.getInt32Ty()}, false),
-          Instruction.isVector() ? kPairVectorLoadAsm : kPairLoadAsm,
-          Instruction.isVector() ? kPairVectorLoadConstraints
-                                 : kPairLoadConstraints,
-          true);
+          Instruction.machine().Asm, Instruction.machine().Constraints, true);
       auto *Result = Builder.CreateCall(
           Asm, {Base, Builder.getInt32(Instruction.scratchWord())},
           kWritebackResult);
@@ -339,7 +331,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                 Builder.getInt64Ty(),
                 {Builder.getInt64Ty(), VectorType, Builder.getInt32Ty()},
                 false),
-            kWritebackVectorStoreAsm, kWritebackVectorStoreConstraints, true);
+            Instruction.machine().Asm, Instruction.machine().Constraints, true);
         return Builder.CreateCall(Asm,
                                   {Base,
                                    Builder.CreateBitCast(Data, VectorType),
@@ -351,7 +343,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
       auto *Asm = llvm::InlineAsm::get(
           llvm::FunctionType::get(
               ResultType, {Builder.getInt64Ty(), Builder.getInt32Ty()}, false),
-          kWritebackVectorLoadAsm, kWritebackVectorLoadConstraints, true);
+          Instruction.machine().Asm, Instruction.machine().Constraints, true);
       auto *Result = Builder.CreateCall(
           Asm, {Base, Builder.getInt32(Instruction.scratchWord())},
           kWritebackResult);
@@ -372,7 +364,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                   {Builder.getInt64Ty(), Builder.getInt64Ty(),
                                    Builder.getInt32Ty()},
                                   false),
-          kWritebackStoreAsm, kWritebackStoreConstraints, true);
+          Instruction.machine().Asm, Instruction.machine().Constraints, true);
       return Builder.CreateCall(
           Asm, {Base, Data, Builder.getInt32(Instruction.scratchWord())},
           kWritebackResult);
@@ -382,7 +374,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
     auto *Asm = llvm::InlineAsm::get(
         llvm::FunctionType::get(
             ResultType, {Builder.getInt64Ty(), Builder.getInt32Ty()}, false),
-        kWritebackLoadAsm, kWritebackLoadConstraints, true);
+        Instruction.machine().Asm, Instruction.machine().Constraints, true);
     auto *Result = Builder.CreateCall(
         Asm, {Base, Builder.getInt32(Instruction.scratchWord())},
         kWritebackResult);

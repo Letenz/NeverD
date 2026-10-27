@@ -111,6 +111,87 @@
         "AArch64StackAddressMemory.StackAssemblyRequiresTheLiteralSPAndClobber"
       ],
       "artifact_property": "cpta_register_memory_artifacts"
+    },
+    "sp-writeback": {
+      "cases": [
+        "AArch64StackWritebackMemory.SourceAdmissionAndInverseAssemblyKeepRawSP",
+        "AArch64StackWritebackMemory.BothCProjectionsAndLLVMExecuteEveryFamily"
+      ],
+      "artifact_property": "sp_writeback_memory_artifact_dir"
+    },
+    "sp-vector-writeback": {
+      "cases": [
+        "AArch64StackWritebackMemory.SourceAdmissionAndInverseAssemblyKeepRawSP",
+        "AArch64StackVectorWritebackMemory.BothCProjectionsAndLLVMExecuteEveryFamily"
+      ],
+      "artifact_property": "sp_vector_writeback_memory_artifact_dir"
+    },
+    "sp-pair": {
+      "cases": [
+        "AArch64StackWritebackMemory.SourceAdmissionAndInverseAssemblyKeepRawSP",
+        "AArch64StackPairMemory.BothCProjectionsAndLLVMExecuteEveryFamily"
+      ],
+      "artifact_property": "sp_pair_memory_artifact_dir"
+    },
+    "sp-neon": {
+      "cases": [
+        "AArch64StackWritebackMemory.SourceAdmissionAndInverseAssemblyKeepRawSP",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch0",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch1",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch2",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch3",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch4",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch5",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch6",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch7",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch8",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch9",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch10",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch11",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch12",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch13",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch14",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch15",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch16",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch17",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch18",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch19",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch20",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch21",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch22",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch23"
+      ],
+      "artifact_property": "sp_structure_memory_artifact_dir"
+    },
+    "sp-neon-tail": {
+      "cases": [
+        "AArch64StackWritebackMemory.SourceAdmissionAndInverseAssemblyKeepRawSP",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch0",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch1",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch2",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch3",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch4",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch5",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch6",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch7",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch8",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch9",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch10",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch11",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch12",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch13",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch14",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch15",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch16",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch17",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch18",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch19",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch20",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch21",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch22",
+        "AllBatches/AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack/Batch23"
+      ],
+      "artifact_property": "sp_structure_memory_artifact_dir"
     }
   },
   "revision_hex_length": 40,
@@ -151,6 +232,121 @@
       },
       "fault_observations": {
         "raw_sp_faults": 184,
+        "same_sp": true,
+        "sp_alignment_esr": true,
+        "memory_unchanged": true,
+        "stack_abi_qualified": false
+      }
+    },
+    "sp-writeback": {
+      "scope": "Native Apple arm64 explicit raw-SP sp-writeback primitives: all five actual generated C/Mach-O routes, exact fault SP, independent SP-alignment ESR, and every guarded memory byte unchanged before writeback. This is SP fault qualification without CPA2, reconstructed stack/call/unwind ABI, asynchronous unwind, tagging or arbitrary fault identity.",
+      "flags": [
+        "-DSP_TEST_EXTENDED_MEMORY=1",
+        "-DSP_TEST_CASES=raw_sp_cases",
+        "-DSP_TEST_CASE_COUNT=130",
+        "-DSP_TEST_EXISTING_CASES=immediate_cases",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fno-strict-aliasing"
+      ],
+      "test_reports": {
+        "stack": "sp-writeback"
+      },
+      "fault_observations": {
+        "raw_sp_faults": 130,
+        "same_sp": true,
+        "sp_alignment_esr": true,
+        "memory_unchanged": true,
+        "stack_abi_qualified": false
+      }
+    },
+    "sp-vector-writeback": {
+      "scope": "Native Apple arm64 explicit raw-SP sp-vector-writeback primitives: all five actual generated C/Mach-O routes, exact fault SP, independent SP-alignment ESR, and every guarded memory byte unchanged before writeback. This is SP fault qualification without CPA2, reconstructed stack/call/unwind ABI, asynchronous unwind, tagging or arbitrary fault identity.",
+      "flags": [
+        "-DSP_TEST_EXTENDED_MEMORY=1",
+        "-DSP_TEST_CASES=raw_sp_cases",
+        "-DSP_TEST_CASE_COUNT=100",
+        "-DSP_TEST_EXISTING_CASES=vwb_cases",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fno-strict-aliasing"
+      ],
+      "test_reports": {
+        "stack": "sp-vector-writeback"
+      },
+      "fault_observations": {
+        "raw_sp_faults": 100,
+        "same_sp": true,
+        "sp_alignment_esr": true,
+        "memory_unchanged": true,
+        "stack_abi_qualified": false
+      }
+    },
+    "sp-pair": {
+      "scope": "Native Apple arm64 explicit raw-SP sp-pair primitives: all five actual generated C/Mach-O routes, exact fault SP, independent SP-alignment ESR, and every guarded memory byte unchanged before writeback. This is SP fault qualification without CPA2, reconstructed stack/call/unwind ABI, asynchronous unwind, tagging or arbitrary fault identity.",
+      "flags": [
+        "-DSP_TEST_EXTENDED_MEMORY=1",
+        "-DSP_TEST_CASES=raw_sp_cases",
+        "-DSP_TEST_CASE_COUNT=215",
+        "-DSP_TEST_EXISTING_CASES=pair_cases",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fno-strict-aliasing"
+      ],
+      "test_reports": {
+        "stack": "sp-pair"
+      },
+      "fault_observations": {
+        "raw_sp_faults": 215,
+        "same_sp": true,
+        "sp_alignment_esr": true,
+        "memory_unchanged": true,
+        "stack_abi_qualified": false
+      }
+    },
+    "sp-neon": {
+      "scope": "Native Apple arm64 explicit raw-SP sp-neon primitives: all five actual generated C/Mach-O routes, exact fault SP, independent SP-alignment ESR, and every guarded memory byte unchanged before writeback. This is SP fault qualification without CPA2, reconstructed stack/call/unwind ABI, asynchronous unwind, tagging or arbitrary fault identity.",
+      "flags": [
+        "-DSP_TEST_EXTENDED_MEMORY=1",
+        "-DSP_TEST_CASES=raw_sp_cases",
+        "-DSP_TEST_CASE_COUNT=48",
+        "-DSP_TEST_EXISTING_CASES=structure_cases",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fno-strict-aliasing"
+      ],
+      "test_reports": {
+        "stack": "sp-neon"
+      },
+      "fault_observations": {
+        "raw_sp_faults": 48,
+        "same_sp": true,
+        "sp_alignment_esr": true,
+        "memory_unchanged": true,
+        "stack_abi_qualified": false
+      }
+    },
+    "sp-neon-tail": {
+      "scope": "Native Apple arm64 explicit raw-SP sp-neon-tail primitives: all five actual generated C/Mach-O routes, exact fault SP, independent SP-alignment ESR, and every guarded memory byte unchanged before writeback. This is SP fault qualification without CPA2, reconstructed stack/call/unwind ABI, asynchronous unwind, tagging or arbitrary fault identity.",
+      "flags": [
+        "-DSP_TEST_EXTENDED_MEMORY=1",
+        "-DSP_TEST_CASES=raw_sp_cases",
+        "-DSP_TEST_CASE_COUNT=30",
+        "-DSP_TEST_EXISTING_CASES=structure_cases",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fno-strict-aliasing"
+      ],
+      "test_reports": {
+        "stack": "sp-neon-tail"
+      },
+      "fault_observations": {
+        "raw_sp_faults": 30,
         "same_sp": true,
         "sp_alignment_esr": true,
         "memory_unchanged": true,

@@ -34,8 +34,6 @@ inline std::string aarch64StructureMemoryC(
       Data.size() != ((!I.isLoad() || I.laneLoad()) ? I.vectors() : 0) ||
       Outputs.size() != (I.isLoad() ? I.vectors() + 1 : 0))
     throw std::invalid_argument(kAddressMemoryMalformed);
-  if (I.base() == kAddressMemoryRegisterMask)
-    throw std::invalid_argument(kAddressMemorySPUnsupported);
   std::vector<llvm::StringRef> Used{Base, Index};
   for (const auto &D : Data)
     Used.push_back(D);
@@ -98,8 +96,9 @@ inline std::string aarch64StructureMemoryC(
   // '+' constraints are implicit and do not change the immediate's number.
   const unsigned Immediate =
       (I.isLoad() ? I.vectors() + 1 : 1) + 1 + (I.isLoad() ? 0 : I.vectors());
-  Result +=
-      llvm::formatv(kStructureCAsm, Immediate, Out, In, I.scratchWord()).str();
+  Result += llvm::formatv(I.stackBase() ? kStructureCSPAsm : kStructureCAsm,
+                          Immediate, Out, In, I.scratchWord())
+                .str();
   if (!I.isLoad())
     return Result +
            llvm::formatv(kStructureCExpressionClose, BaseRegister).str();

@@ -28,8 +28,12 @@ inline AArch64StructureMemoryAsm
 aarch64StructureMemoryAsm(const AArch64StructureMemoryInstruction &I) {
   const bool Data = !I.isLoad() || I.laneLoad();
   AArch64StructureMemoryAsm Asm{
-      I.isLoad() ? (I.laneLoad() ? kStructureLaneLoadAsm : kStructureLoadAsm)
-                 : kStructureStoreAsm,
+      I.stackBase() ? (I.isLoad() ? (I.laneLoad() ? kStructureLaneLoadSPAsm
+                                                  : kStructureLoadSPAsm)
+                                  : kStructureStoreSPAsm)
+                    : (I.isLoad() ? (I.laneLoad() ? kStructureLaneLoadAsm
+                                                  : kStructureLoadAsm)
+                                  : kStructureStoreAsm),
       {},
       kStructureDataOperand + (Data ? I.vectors() : 0),
       I.isLoad() ? I.vectors() + 1 : 1};
@@ -49,7 +53,8 @@ aarch64StructureMemoryAsm(const AArch64StructureMemoryInstruction &I) {
                              : llvm::formatv(kStructureVectorInputConstraint,
                                              kStructureScratchVector + N)
                                    .str();
-  Asm.Constraints += kStructureConstraintEnd;
+  Asm.Constraints +=
+      I.stackBase() ? kStructureSPConstraintEnd : kStructureConstraintEnd;
   Asm.Text.replace(
       Asm.Text.find(kStructureAsmImmediate), sizeof(kStructureAsmImmediate) - 1,
       llvm::formatv(kStructureAsmOperand, Asm.Outputs + Asm.Inputs - 1).str());

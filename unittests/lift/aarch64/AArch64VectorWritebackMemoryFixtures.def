@@ -135,8 +135,9 @@ VECTOR_WRITEBACK_TEXT(
     kVectorWritebackNativeLoad,
     "static struct vwb_result vwb_original_{0}(uint64_t input, vwb_bits data) "
     "{{\n  register vwb_vector value __asm__(\"v21\");\n  register uint64_t "
-    "base __asm__(\"x21\") = input;\n  __asm__ volatile(\".inst {1}\" : "
-    "\"=&w\"(value), \"+r\"(base) : : \"memory\");\n  union vwb_representation "
+    "base __asm__(\"x21\") = input;\n  __asm__ volatile(\"{2}.inst {1}{3}\" : "
+    "\"=&w\"(value), \"+r\"(base) : : {4}\"memory\");\n  union "
+    "vwb_representation "
     "bits = {{ .vector = value };\n  return (struct vwb_result){{ bits.bits, "
     "base };\n}\n")
 VECTOR_WRITEBACK_TEXT(
@@ -144,8 +145,8 @@ VECTOR_WRITEBACK_TEXT(
     "static struct vwb_result vwb_original_{0}(uint64_t input, vwb_bits data) "
     "{{\n  union vwb_representation given = {{ .bits = data };\n  register "
     "vwb_vector value __asm__(\"v21\") = given.vector;\n  register uint64_t "
-    "base __asm__(\"x21\") = input;\n  __asm__ volatile(\".inst {1}\" : "
-    "\"+r\"(base) : \"w\"(value) : \"memory\");\n  return (struct "
+    "base __asm__(\"x21\") = input;\n  __asm__ volatile(\"{2}.inst {1}{3}\" : "
+    "\"+r\"(base) : \"w\"(value) : {4}\"memory\");\n  return (struct "
     "vwb_result){{ data, base };\n}\n")
 VECTOR_WRITEBACK_TEXT(
     kVectorWritebackNativeCase,

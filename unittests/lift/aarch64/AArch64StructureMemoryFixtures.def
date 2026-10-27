@@ -2340,7 +2340,7 @@ STRUCTURE_MEMORY_TEXT(
     "for (unsigned i = 0; i < 64; ++i) input[i] = (unsigned char)(i * 37 + "
     "19); "
     "for (unsigned t = 0; t < 3; ++t) {{ "
-    "unsigned char a[256], b[256], actual[64], expected[64]; "
+    "_Alignas(16) unsigned char a[256], b[256], actual[64], expected[64]; "
     "for (unsigned i = 0; i < 256; ++i) a[i] = b[i] = (unsigned char)(i * 19 + "
     "37); "
     "memset(actual, 0xa5, 64); memset(expected, 0xa5, 64); "
@@ -2362,8 +2362,8 @@ STRUCTURE_MEMORY_TEXT(
     "register Vec d __asm__(\"v0\") = values[3]; "
     "register uint64_t x __asm__(\"x9\") = base; "
     "register uint64_t y __asm__(\"x10\") = delta; "
-    "__asm__ volatile(\".inst %c6\" : \"+w\"(a), \"+w\"(b), \"+w\"(c), "
-    "\"+w\"(d), \"+r\"(x) : \"r\"(y), \"i\"({1}) : \"memory\"); "
+    "__asm__ volatile(\"{3}.inst %c6{4}\" : \"+w\"(a), \"+w\"(b), \"+w\"(c), "
+    "\"+w\"(d), \"+r\"(x) : \"r\"(y), \"i\"({1}) : {5}\"memory\"); "
     "values[0] = a; values[1] = b; values[2] = c; values[3] = d; "
     "{2} return x; }\n")
 STRUCTURE_MEMORY_TEXT(kStructureTestCopyOutputs,

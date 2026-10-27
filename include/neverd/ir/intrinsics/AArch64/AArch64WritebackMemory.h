@@ -28,6 +28,23 @@ namespace neverd {
   inline constexpr char Name[] = Text;
 #include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.def"
 
+struct AArch64WritebackMemoryMachine {
+  bool StackBase;
+  bool Vector;
+  bool Pair;
+  bool Load;
+  const char *Asm;
+  const char *Constraints;
+};
+
+inline constexpr AArch64WritebackMemoryMachine
+    AArch64WritebackMemoryMachines[] = {
+#define NEVERD_A64_WRITEBACK_MACHINE(Stack, Vector, Pair, Load, Asm,           \
+                                     Constraints)                              \
+  {Stack, Vector, Pair, Load, Asm, Constraints},
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.def"
+};
+
 inline bool isAArch64PairMemoryIntrinsic(Intrinsic Id) {
   return Id == Intrinsic::A64_PairLoad || Id == Intrinsic::A64_PairStore ||
          Id == Intrinsic::A64_VectorPairLoad ||
@@ -155,6 +172,18 @@ struct AArch64WritebackMemoryInstruction {
     return (Word >> kAddressMemoryBaseShift) & kAddressMemoryRegisterMask;
   }
   bool stackBase() const { return base() == kAddressMemoryRegisterMask; }
+  const char *sourceBaseFailure(bool HasImage, bool IsParameter) const {
+    return aarch64MemorySourceBaseFailure(stackBase(), HasImage, IsParameter);
+  }
+  const AArch64WritebackMemoryMachine &machine() const {
+    return *std::find_if(std::begin(AArch64WritebackMemoryMachines),
+                         std::end(AArch64WritebackMemoryMachines),
+                         [&](const auto &M) {
+                           return M.StackBase == stackBase() &&
+                                  M.Vector == isVector() &&
+                                  M.Pair == isPair() && M.Load == isLoad();
+                         });
+  }
   bool hasRegisterIndex() const {
     return isStructure() && structure().hasRegisterIndex();
   }
@@ -235,7 +264,9 @@ struct AArch64WritebackMemoryInstruction {
     return (Word & ~(kAddressMemoryBaseDestinationMask | SecondMask)) |
            (isPair() ? kPairSecondScratch << kPairSecondShift : 0) |
            kAddressMemoryScratchValue |
-           (kAddressMemoryScratchBase << kAddressMemoryBaseShift);
+           ((stackBase() ? kAddressMemoryRegisterMask
+                         : kAddressMemoryScratchBase)
+            << kAddressMemoryBaseShift);
   }
 };
 

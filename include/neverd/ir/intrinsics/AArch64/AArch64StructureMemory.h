@@ -71,6 +71,7 @@ struct AArch64StructureMemoryInstruction {
   unsigned base() const {
     return (Word >> kAddressMemoryBaseShift) & kAddressMemoryRegisterMask;
   }
+  bool stackBase() const { return base() == kAddressMemoryRegisterMask; }
   unsigned destination() const { return Word & kAddressMemoryRegisterMask; }
   unsigned index() const {
     return (Word >> kStructureIndexShift) & kAddressMemoryRegisterMask;
@@ -97,7 +98,9 @@ struct AArch64StructureMemoryInstruction {
                                << kStructureIndexShift;
     return (Word & ~(kAddressMemoryBaseDestinationMask | IndexMask)) |
            kStructureScratchVector |
-           (kAddressMemoryScratchBase << kAddressMemoryBaseShift) |
+           ((stackBase() ? kAddressMemoryRegisterMask
+                         : kAddressMemoryScratchBase)
+            << kAddressMemoryBaseShift) |
            ((hasRegisterIndex() ? kStructureScratchIndex : index())
             << kStructureIndexShift);
   }

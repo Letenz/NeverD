@@ -15159,3 +15159,42 @@ or independence validation. `ExtendedOperandStorageRetainsUnsupportedEffectRefus
 in the specialization and independence suites distinguishes an unsupported
 eight-input effect from out-of-storage malformed input; neither may publish
 a replacement or proof. Opcode-specific arity checks remain in their owners.
+
+
+`AArch64StackWritebackMemory`, `AArch64StackVectorWritebackMemory`,
+`AArch64StackPairMemory` and the 24
+`AArch64StructureMemoryProjection.RawSPKeepsCompleteResultsAndHostStack`
+batches cover 1,579 literal SP variants of the independent MC inventories:
+130 scalar writeback, 100 SIMD writeback, 215 pair and 1,134 NEON structure
+samples. Both C routes execute at O0/O2; actual LLVM objects use the same
+integer bridges. Original-register native oracles borrow SP with X12, separately
+from the projections' X14 envelope. Complete values, completed SP and every
+neighboring byte are compared, including post-index deltas that leave SP
+misaligned after a successful access. Every incoming SP is sixteen-byte aligned.
+The shared admission case rejects image, constant and SSA/frame replacements
+before source filtering, and rejects assembly with a changed Rn, missing X14
+clobber or missing SP restoration.
+
+Set `NEVERD_ARM64E_SP_WRITEBACK_ARTIFACT_DIR`,
+`NEVERD_ARM64E_SP_VECTOR_WRITEBACK_ARTIFACT_DIR` and
+`NEVERD_ARM64E_SP_PAIR_ARTIFACT_DIR` to distinct roots. The existing
+`NEVERD_ARM64E_STRUCTURE_MEMORY_ARTIFACT_DIR` adds an SP root under `sp/`.
+The separate exports retain both ELF and Mach-O objects. Each scalar/SIMD/pair
+report must contain its execution test and the shared admission case; the NEON
+report contains that case and all 24 SP batches. The environment PR's
+`sp-writeback`, `sp-vector-writeback`, `sp-pair`, `sp-neon-group-0/1/2` and
+matching `el0-` profiles require their own exports, all four effective CPTA
+settings and actual SA (EL1) or SA0 (EL0) readback. EL0 also requires its exact
+hardware-saved execution origin.
+
+`scripts/verify_arm64e_sp_memory.py` adds `sp-writeback`, `sp-vector-writeback`,
+`sp-pair`, `sp-neon` and `sp-neon-tail` profiles for the exported raw-SP bridges.
+They use the existing alternate-signal-stack oracle at a mapped, eight-byte
+aligned SP that violates the sixteen-byte SP rule. Each generated route must
+fault with the exact raw SP, the independently declared SP-alignment exception
+class and all guarded memory bytes unchanged. The tail profile requires 30
+cases; other NEON batches require 48. These profiles need no separate GPR
+export; the existing immediate/register profiles still require their original
+GPR controls. The native fault and model normal-return qualifications do not
+establish an arm64e/x1 reconstructed call/frame/unwind ABI, asynchronous unwind,
+MTE, overflowing addresses or native Apple CPA2 execution.

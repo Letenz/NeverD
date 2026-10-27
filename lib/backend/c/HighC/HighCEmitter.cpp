@@ -4827,8 +4827,11 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
         throw std::invalid_argument(kWritebackMalformed);
       const auto Instruction = *aarch64WritebackMemoryInstruction(
           Expr->Operands[kWritebackWordOperand]->ConstVal);
-      if (Instruction.stackBase())
-        throw std::invalid_argument(kWritebackSPUnsupported);
+      const auto &Base = Expr->Operands[kWritebackBaseOperand];
+      if (const char *Reason = Instruction.sourceBaseFailure(
+              Opts.Image != nullptr,
+              Base->Kind == ExprKind::Var && Base->Var.Kind == MedVar::Param))
+        throw std::invalid_argument(Reason);
       if (Opts.Image &&
           !MemoryBases->supports(*Opts.Image, Instruction,
                                  *Expr->Operands[kWritebackBaseOperand],
