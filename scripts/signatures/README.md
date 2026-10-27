@@ -221,6 +221,26 @@ Verify the output with `neverd-sigmaker --verify`, then evaluate ordinary
 updating the submodule. Source-corpus collision checks do not establish
 universal uniqueness or replace held-out program evaluation.
 
+To constrain existing records after collecting additional raw source collisions:
+
+```sh
+python3 scripts/signatures/refine_colliding_patterns.py \
+  --existing signatures/pe/x86/64 --machine x64 \
+  --evidence raw/templates-release.pat --evidence raw/templates-debug.pat \
+  --output refined/ --report refinement.json
+```
+
+Supply unpruned `!evidence` records and a fresh output directory. The report must
+be a new file outside that directory. Complete conflicting records move to
+mandatory-reference or incoming-only native records with the same library stem;
+incomplete conflicting records are omitted. Existing mandatory-reference claims
+are omitted when a new source defeats their context. Same-library cohorts with
+identical typed references, incoming queries and metadata remain intact. The
+tool never invents names or aliases. It writes pattern files only: update the affected source manifests
+with the report and qualified output hashes before publication. Verify native
+parsing, report lost/gained correct candidates as well as errors, and measure
+the changed packs with the same consumer and input entries on both sides.
+
 For primary x64 COFF table context, generate separate unpruned declarations:
 
 ```sh

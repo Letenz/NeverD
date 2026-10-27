@@ -315,6 +315,26 @@ selector also treats a shorter complete RET body as a potential counterclaim
 to the same body followed only by INT3/NOP alignment: padding is not nominal
 identity evidence. It preserves all known counterclaims across independently
 compiled source drivers, including wrappers that compile identically.
+Byte coverage is compared at absolute function offsets, even when two records
+use different leading/tail splits. Wildcards can cover an opaque CRC region;
+fixed bytes cannot be proved by that region, and a required CRC still needs
+the same span and checksum. The offline collision refiner additionally handles
+explicit Thumb BX LR/POP.W-to-PC returns followed by halfword zero/NOP padding
+when its machine is ARM. Other architectures do not inherit that rule.
+
+`scripts/signatures/refine_colliding_patterns.py` applies newly collected raw
+counterclaims to existing ordinary records. A complete conflicting record gains
+mandatory references only when they distinguish every new rival; otherwise it
+becomes an incoming-only query. Incomplete conflicting records are omitted.
+Existing same-library byte cohorts remain intact across numbered parts only
+when their typed references also agree with the raw claim. A known name with
+different references or a claim in an independently selected library cannot
+hide a new counterexample. Existing required-reference records undergo the
+same audit; newly indistinguishable ones are omitted. The refiner adds no names
+or aliases and preserves incoming queries and metadata constraints.
+Its report records actions and input/output hashes. A withheld candidate is an
+abstention, not a recovered function. Publish coverage losses and gains alongside
+error changes, and keep the independent identity gate unchanged.
 
 `neverd_sig_matches_json` retains `name`, `aliases` and `confirmed` as candidate
 fields. Its `caller_confirmed` field identifies incoming reference support;
