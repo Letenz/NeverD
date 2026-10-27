@@ -2063,13 +2063,14 @@ static SymRef foldProjectedProductResiduesImpl(SymContext &Ctx, SymRef Root,
         Available = std::min(Available, F.Offset.getBitWidth() - F.Zeros);
       Factors.push_back(std::move(F));
     }
-    const bool Zero = proveAffineResidues(Factors, Available, Remaining, Res);
-    if (!Zero && !WitnessChecked && !Res.Failed &&
+    if (!WitnessChecked && !Res.Failed &&
         Needed <= limits::kMaxAffineResidueTableBits) {
       WitnessChecked = true;
       Nonzero = hasNonzeroProductWitness(Ctx, Operands, Res, Needed, Factors);
     }
-    return Zero;
+    if (Nonzero || Res.Failed)
+      return false;
+    return proveAffineResidues(Factors, Available, Remaining, Res);
   };
   // Failed precision attempts share the same cumulative resource account;
   // the cache only contains completed queries keyed by their exact width.
