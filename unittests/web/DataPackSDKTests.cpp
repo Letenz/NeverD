@@ -307,6 +307,14 @@ TEST_F(WebDataPackSDK, DecodedCacheLimitPreservesAlreadyPublishedBytes) {
 
 #ifdef NEVERD_WEB_TEST_CLI
 TEST_F(WebDataPackSDK, CLIUsesSharedConsumersWithAnUnusableExternalPATH) {
+  const auto Capabilities = take(neverd_web_capabilities_json());
+  const auto *Analyses = Capabilities.getAsObject()->getArray("analyses");
+  ASSERT_NE(Analyses, nullptr);
+  std::optional<bool> ArchiveAvailable;
+  for (const auto &Analysis : *Analyses)
+    if (field(Analysis, "kind") == "package_archive")
+      ArchiveAvailable = Analysis.getAsObject()->getBoolean("available");
+  ASSERT_TRUE(ArchiveAvailable.has_value());
   const auto B = pack({{7, gzipStored("const CANARY=1;")}});
   const auto Out = (Root / "out").string(), Err = (Root / "err").string();
   const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Out, Err};
@@ -328,11 +336,20 @@ TEST_F(WebDataPackSDK, CLIUsesSharedConsumersWithAnUnusableExternalPATH) {
       const std::vector<llvm::StringRef> Args(Owned.begin(), Owned.end());
       const auto Exit = llvm::sys::ExecuteAndWait(
           NEVERD_WEB_TEST_CLI, Args, llvm::ArrayRef(Env), Redirects, 30);
-      EXPECT_EQ(Exit, Source && !NEVERD_TEST_WEB_JAVASCRIPT ? 1 : 0);
+      const bool ArchiveOmitted = Archive && !*ArchiveAvailable;
+      EXPECT_EQ(Exit, ArchiveOmitted || (Source && !NEVERD_TEST_WEB_JAVASCRIPT)
+                          ? 1
+                          : 0);
       std::ifstream F(Out), Errors(Err);
       const std::string Text(std::istreambuf_iterator<char>(F), {});
       EXPECT_EQ(Text.find("CANARY"), std::string::npos);
-      EXPECT_NE(Text.find("extraction_id"), std::string::npos);
+      if (ArchiveOmitted) {
+        auto Parsed = llvm::json::parse(Text);
+        ASSERT_TRUE(bool(Parsed));
+        EXPECT_EQ(code(*Parsed), "package_archive_path_policy_unavailable");
+      } else {
+        EXPECT_NE(Text.find("extraction_id"), std::string::npos);
+      }
       EXPECT_EQ(std::string(std::istreambuf_iterator<char>(Errors), {}), "");
     }
   }
