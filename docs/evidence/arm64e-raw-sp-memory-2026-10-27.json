@@ -1,4 +1,5 @@
 {
+  "published_command_path_normalization": "Absolute checkout prefixes in published commands are rendered as <repository>/. Arguments, original artifact digests and recorded outcomes are otherwise unchanged.",
   "schema": 1,
   "date": "2026-10-27",
   "scope": "Explicit no-image external raw-SP parameters for GPR/SIMD single writeback, scalar/SIMD pair and baseline NEON structure memory. Full values, completed SP and all neighboring bytes. Normal and SP-alignment-fault primitive qualification only.",
@@ -7090,7 +7091,7 @@
       "command": [
         "ctest",
         "--test-dir",
-        "/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/arm64e-sp-call-evidence/current-registered-tests",
+        "<repository>/build-arm64e/arm64e-sp-call-evidence/current-registered-tests",
         "--build-config",
         "Release",
         "-E",
@@ -7099,7 +7100,7 @@
         "2",
         "--output-on-failure",
         "--output-junit",
-        "/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/arm64e-sp-call-evidence/integrated-regression.xml"
+        "<repository>/build-arm64e/arm64e-sp-call-evidence/integrated-regression.xml"
       ],
       "elapsed_seconds": 997.3357642089977,
       "exit_code": 0,
@@ -7157,10 +7158,10 @@
           "-Wextra",
           "-Werror",
           "-femit-dwarf-unwind=always",
-          "/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/arm64e-sp-call-evidence/signed-unwind-prototype/harness.cpp",
-          "/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/arm64e-sp-call-evidence/signed-unwind-prototype/a-key-control/frame-a.s",
+          "<repository>/build-arm64e/arm64e-sp-call-evidence/signed-unwind-prototype/harness.cpp",
+          "<repository>/build-arm64e/arm64e-sp-call-evidence/signed-unwind-prototype/a-key-control/frame-a.s",
           "-o",
-          "/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/arm64e-sp-call-evidence/signed-unwind-prototype/a-key-control/arm64-signed-a-O0"
+          "<repository>/build-arm64e/arm64e-sp-call-evidence/signed-unwind-prototype/a-key-control/arm64-signed-a-O0"
         ],
         "native_signed_unwind_qualified": false,
         "compile_returncode": 0,
@@ -7184,10 +7185,10 @@
           "-Wextra",
           "-Werror",
           "-femit-dwarf-unwind=always",
-          "/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/arm64e-sp-call-evidence/signed-unwind-prototype/harness.cpp",
-          "/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/arm64e-sp-call-evidence/signed-unwind-prototype/a-key-control/frame-a.s",
+          "<repository>/build-arm64e/arm64e-sp-call-evidence/signed-unwind-prototype/harness.cpp",
+          "<repository>/build-arm64e/arm64e-sp-call-evidence/signed-unwind-prototype/a-key-control/frame-a.s",
           "-o",
-          "/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/arm64e-sp-call-evidence/signed-unwind-prototype/a-key-control/arm64-signed-a-O2"
+          "<repository>/build-arm64e/arm64e-sp-call-evidence/signed-unwind-prototype/a-key-control/arm64-signed-a-O2"
         ],
         "native_signed_unwind_qualified": false,
         "compile_returncode": 0,
@@ -7214,14 +7215,14 @@
         "command": [
           "ctest",
           "--test-dir",
-          "/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/arm64e-sp-call-evidence/postmerge-support-tests",
+          "<repository>/build-arm64e/arm64e-sp-call-evidence/postmerge-support-tests",
           "--build-config",
           "Release",
           "--parallel",
           "2",
           "--output-on-failure",
           "--output-junit",
-          "/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/arm64e-sp-call-evidence/postmerge-support.xml"
+          "<repository>/build-arm64e/arm64e-sp-call-evidence/postmerge-support.xml"
         ],
         "registered": 737,
         "passed": 736,
@@ -7247,7 +7248,7 @@
         "command": [
           "ctest",
           "--test-dir",
-          "/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/arm64e-sp-call-evidence/current-registered-tests",
+          "<repository>/build-arm64e/arm64e-sp-call-evidence/current-registered-tests",
           "--build-config",
           "Release",
           "-R",
@@ -7256,7 +7257,7 @@
           "2",
           "--output-on-failure",
           "--output-junit",
-          "/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/arm64e-sp-call-evidence/postmerge-authentication.xml"
+          "<repository>/build-arm64e/arm64e-sp-call-evidence/postmerge-authentication.xml"
         ],
         "registered": 106,
         "passed": 103,
