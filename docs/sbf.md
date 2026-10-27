@@ -494,7 +494,15 @@ later write when the ABI preserves their carrier. Frame-input substitution uses
 the canonical call-frame stride. A complete substituted affine return origin is
 reused directly; only an otherwise unknown return needs expression-chain
 composition. This avoids charging repeated solver replays for a fact already
-supplied by the canonical origin transfer. Differing loaded roots and unsupported affine
+supplied by the canonical origin transfer. The existing input-dependency fixed
+point also identifies return carriers that are overwritten before use, across
+CFG successors and direct calls. Those calls keep their value/memory transfer
+without composing an unused return template. A following callee's use of r0
+still makes that carrier live. Block-entry joins project register values,
+origins and expression carriers through the same input mask, retaining the
+frame anchor. They retain scratch and stored postconditions; only a deferred
+read's preceding-write bookkeeping can be dropped when no future input-memory
+read is possible. Differing loaded roots and unsupported affine
 substitutions remain unknown. This composition supplies target templates; it
 does not specialize a generic callee's return or memory result with a target
 overlay.

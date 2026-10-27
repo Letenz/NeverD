@@ -409,6 +409,7 @@ private:
                                      kCallXContextSpecializationsPerEntry>>
       Specializations;
   std::vector<uint16_t> InputRegisters;
+  std::vector<bool> LiveCallReturns;
   std::vector<bool> ReadsMemory;
   std::vector<bool> ReachesCallX;
   size_t ProjectedRegisters = 0;
@@ -756,9 +757,12 @@ ContextState ContextFlow::genericInput() const {
 llvm::Error ContextFlow::computeInputDependencies() {
   const size_t Count = Program.Med.Blocks.size();
   InputRegisters.resize(Count);
+  LiveCallReturns.resize(Program.Low.Instructions.size(), true);
   ReadsMemory.resize(Count);
   ReachesCallX.resize(Count);
-  if (auto Error = retain(Count * (sizeof(uint16_t) + 2 * sizeof(bool))))
+  if (auto Error = retain(Count * (sizeof(uint16_t) + 2 * sizeof(bool)) +
+                          (LiveCallReturns.capacity() + kBitsPerByte - 1) /
+                              kBitsPerByte))
     return Error;
   // Direct call dependencies participate in the same monotone fixed point as
   // CFG successors. Unknown calls conservatively read every register/memory.
@@ -819,6 +823,9 @@ llvm::Error ContextFlow::computeInputDependencies() {
       ++DependencyVisits;
       CallInputs Callee;
       if (I->Call != CallKind::None) {
+        // Uses is the live-out mask at this call. The same fixed point includes
+        // CFG successors and direct callees that consume r0 as an input.
+        LiveCallReturns[I->Slot] = Uses & registerBit(kReturnRegister);
         if (I->Call == CallKind::Internal && I->CallTarget &&
             ByEntry.contains(*I->CallTarget) &&
             !(I->Dispatch == CallDispatchPolicy::LegacyRuntimeThenFunction &&
@@ -1838,8 +1845,9 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
           ? substituteOrigins(Callee->Return->Origins[0], OriginEntry, Program)
           : ProvenValueSet{};
   std::optional<size_t> ReturnExpression;
+  const bool NeedsReturnExpression = LiveCallReturns[Instruction.Slot];
   if (Context.Generic && Callee && Callee->Return && !Edge.LegacyRuntime &&
-      ReturnOrigins.unknown() &&
+      NeedsReturnExpression && ReturnOrigins.unknown() &&
       Callee->Return->InputExpressions[kReturnRegister]) {
     // Complete substituted origins already describe this return. Rebuilding
     // their instruction chain repeats work at every solver replay and can
@@ -1946,7 +1954,7 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
   if (Context.Generic) {
     for (unsigned R = 0; R < kFirstCalleeSavedRegister; ++R)
       State.InputExpressions[R].reset();
-    if (!ReturnExpression && !Edge.LegacyRuntime) {
+    if (NeedsReturnExpression && !ReturnExpression && !Edge.LegacyRuntime) {
       auto Expression = inputOriginExpression(State.Origins[kReturnRegister]);
       if (!Expression)
         return Expression.takeError();
@@ -2229,18 +2237,33 @@ ContextFlow::summarize(size_t Entry, const ContextState &Incoming, bool Generic,
   };
   const auto Enqueue = [&](size_t BlockID, const ContextState &Incoming,
                            uint16_t Defined) -> llvm::Error {
+    const auto ProjectInputs = [&](ContextState &State) {
+      const uint16_t Inputs =
+          InputRegisters[BlockID] | registerBit(kFramePointerRegister);
+      for (unsigned R = 0; R < kRegisterCount; ++R)
+        if (!(Inputs & registerBit(R))) {
+          State.Registers[R] = {};
+          State.Origins[R] = {};
+          State.InputExpressions[R].reset();
+        }
+      if (!ReadsMemory[BlockID])
+        State.InputWrites = {};
+    };
     auto It = States.find(BlockID);
     if (It == States.end()) {
-      const uint64_t Bytes = StateCharge(Incoming);
+      ContextState Input = Incoming;
+      ProjectInputs(Input);
+      const uint64_t Bytes = StateCharge(Input);
       if (auto Error = retain(Bytes))
         return Error;
       SolverBytes += Bytes;
-      States.emplace(BlockID, BlockState{Incoming, true, Defined});
+      States.emplace(BlockID, BlockState{std::move(Input), true, Defined});
       Worklist.push_back(BlockID);
       return llvm::Error::success();
     }
     ContextState Merged = It->second.Entry;
     Merged.join(Incoming, Program);
+    ProjectInputs(Merged);
     const uint16_t MergedDefinitions = It->second.DefinitelyWritten & Defined;
     if (Merged.Registers == It->second.Entry.Registers &&
         Merged.Scratch == It->second.Entry.Scratch &&
