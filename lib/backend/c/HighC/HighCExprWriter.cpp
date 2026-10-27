@@ -4330,6 +4330,13 @@ HighCWriter::exprStrAsTypedArg(const HighExpr &E, const TypeRef &Expected,
            Type->Pointee->Kind == NdTypeKind::Func;
   };
   if (FunctionPointer(Expected))
+    if (const HighExpr *Address = functionAddressArgument(E)) {
+      const auto &Target =
+          FunctionAddressNames.at(functionAddressKey(*Address));
+      if (!Target.Definition && FunctionAddressAliases.count(Target.Symbol))
+        return "(" + Parameter() + ")" + castOperand(Text);
+    }
+  if (FunctionPointer(Expected))
     if (const HighExpr *Value = unwrapIntegerView(&E);
         Value && (Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi))
       if (const TypeRef Held = declaredParamType(Value->Var);

@@ -19,6 +19,7 @@ from pathlib import Path
 from scripts.signatures.build_msvc_signatures import (
     Asset,
     BuildError,
+    Shape,
     fold,
     main,
     parse_line,
@@ -315,6 +316,45 @@ class OpeningTests(unittest.TestCase):
         short = f"{lead}.. 04 1A2B 002A :0000 ?f@@YAXXZ 4883C4205FC3"
         longer = f"{lead}.. 04 1A2B 0040 :0000 ?g@@YAXXZ 4883C4205FC3CCCC48895C24"
         self.assertEqual(self._settle(short, longer), [longer])
+
+    def test_wildcard_tail_covers_another_records_opaque_crc_span(self) -> None:
+        lead = self.PROLOGUE * 2
+        loose = f"{lead} 00 0000 002C :0000 loose {'..' * 8}AABBCCDD"
+        precise = f"{lead} 08 1234 002C :0000 precise AABBCCDD"
+        self.assertEqual(self._settle(loose, precise), [precise])
+        shape = Shape.of(parse_line(loose).key)
+        self.assertFalse(shape.covered_by(Shape.of(parse_line(
+            precise.replace('AABBCCDD', 'AABBCCDE')).key)))
+        fixed_in_crc = loose.replace('..' * 8, '01' + '..' * 7)
+        self.assertFalse(Shape.of(parse_line(fixed_in_crc).key).covered_by(
+            Shape.of(parse_line(precise).key)))
+        self.assertFalse(Shape.of(parse_line(precise).key).covered_by(shape))
+
+    def test_byte_assertions_keep_their_offsets_across_leading_tail_splits(self) -> None:
+        whole = Shape.of('AABBCCDD 00 0000 0004')
+        split = Shape.of('AABB 00 0000 0004 CCDD')
+        self.assertTrue(whole.covered_by(split))
+        self.assertTrue(split.covered_by(whole))
+        self.assertFalse(split.covered_by(Shape.of('AABB 00 0000 0004 CCEE')))
+        self.assertFalse(whole.covered_by(Shape.of('AABB 00 0000 0002')))
+        self.assertFalse(Shape.of('AABB 02 1234 0004').covered_by(
+            Shape.of('AA 02 1234 0004 DD')))
+
+    def test_thumb_return_padding_needs_the_explicit_machine_and_return(self) -> None:
+        for end in ('BDE8F88F', '7047'):
+            body = '2DE9F84F0DF1200B' + end
+            size = len(body) // 2
+            short = Shape.of(f'{body} 00 0000 {size:04X}')
+            for pad in ('0000', '00BF', '000000BF'):
+                padded = Shape.of(f'{body}{pad} 00 0000 {size + len(pad) // 2:04X}')
+                self.assertTrue(padded.padding_collision_with(short, machine='arm'))
+                self.assertFalse(padded.padding_collision_with(short, machine='x64'))
+                self.assertFalse(padded.padding_collision_with(short, machine='arm64'))
+            changed = Shape.of(f'{body}0120 00 0000 {size + 2:04X}')
+            self.assertFalse(changed.padding_collision_with(short, machine='arm'))
+        short = Shape.of('BDE8F80F 00 0000 0004')
+        self.assertFalse(Shape.of('BDE8F80F0000 00 0000 0006').padding_collision_with(
+            short, machine='arm'))
 
 
 class SplitTests(unittest.TestCase):

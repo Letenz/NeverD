@@ -197,6 +197,42 @@ TEST(LinuxClock, RawMonotonicIsFixedByDefaultAndNeverBorrowsMonotonic) {
   EXPECT_EQ(Missing.read(1, R)->Seconds, 10);
 }
 
+TEST(LinuxClock, BootTimeRequiresAnIndependentEpochAndKeepsItsSuspendOffset) {
+  std::optional<LinuxTimeOptions> Options{std::in_place};
+  Options->Clocks = {
+      {0, {100, 999999999}}, {1, {10, 999999999}}, {4, {30, 999999999}}};
+  linux_model::LinuxClock Clock(Options);
+  ProcessResult R{ProcessProfile::LinuxELF64,
+                  GuestArchitecture::AArch64,
+                  ExecutionBackendKind::Unicorn,
+                  {}};
+  ASSERT_FALSE(bool(linux_model::validateTimeOptions(*Options)));
+  EXPECT_FALSE(Clock.read(7, R));
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R.Diagnostic, "Linux clock 7 has no explicit linux_time input");
+
+  Options->Clocks.emplace(7, LinuxTimespec{50, 999999999});
+  ASSERT_FALSE(bool(linux_model::validateTimeOptions(*Options)));
+  ASSERT_TRUE(Clock.accountInstructions(1000, R));
+  EXPECT_EQ(Clock.elapsed(), 0u);
+  EXPECT_EQ(Clock.read(7, R)->Seconds, 50);
+  EXPECT_EQ(Clock.read(7, R)->Nanoseconds, 999999999);
+  Options->AdvanceOnIdle = true;
+  Options->NanosecondsPerInstruction = 3;
+  ASSERT_TRUE(Clock.accountInstructions(1, R));
+  ASSERT_TRUE(Clock.advanceTo(1000000005, R));
+  ASSERT_TRUE(Clock.accountInstructions(1, R));
+  EXPECT_EQ(Clock.elapsed(), 1000000005u);
+  EXPECT_EQ(Clock.read(7, R)->Seconds, 52);
+  EXPECT_EQ(Clock.read(7, R)->Nanoseconds, 4);
+  EXPECT_EQ(Clock.read(1, R)->Seconds, 12);
+  EXPECT_EQ(Clock.read(4, R)->Seconds, 32);
+  EXPECT_EQ(Clock.read(0, R)->Seconds, 102);
+  ASSERT_TRUE(Clock.accountInstructions(2, R));
+  EXPECT_EQ(Clock.read(7, R)->Nanoseconds, 7);
+  EXPECT_EQ(Clock.read(7, R)->Seconds - Clock.read(1, R)->Seconds, 40);
+}
+
 TEST(LinuxClock, RawMonotonicAdmissionDoesNotEnableOtherClockPolicies) {
   for (int ID : {3, 5, 6, 8, 9, 11}) {
     SCOPED_TRACE(ID);

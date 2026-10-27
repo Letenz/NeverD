@@ -1001,13 +1001,11 @@ bool liftSIMDMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
                            NdVar::cst(0, 8), NdVar::cst(S.Addr, 8)});
       break;
     }
-    S.emit(NdOp::NOP, {}, {});
-    break;
+    throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
   case X86_INS_FEMMS:
-    if (L.ownsX87Context())
-      throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
-    S.emit(NdOp::NOP, {}, {});
-    break;
+    // FEMMS additionally leaves the aliased register payloads undefined.
+    // Neither the typed stack nor the current context owns that transition.
+    throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
 
   default:
     return false;

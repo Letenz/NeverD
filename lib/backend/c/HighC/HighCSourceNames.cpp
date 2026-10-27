@@ -330,6 +330,10 @@ void HighCWriter::recordSourceNames(const std::vector<HighFunc> &Funcs) {
   for (const auto &[Identifier, Source] : ReferencedFunctionSymbols)
     if (!ByIdentifier.count(Identifier))
       Add(CSourceName::Kind::Function, Identifier, Source, std::nullopt);
+  for (const auto &[Address, Target] : FunctionAddressNames)
+    if (const auto Alias = FunctionAddressAliases.find(Target.Symbol);
+        !Target.Definition && Alias != FunctionAddressAliases.end())
+      Add(CSourceName::Kind::Function, Alias->second, Target.Symbol, Address);
   for (const auto &[Address, Object] : ImageObjects) {
     Add(CSourceName::Kind::Object, Object.Name, Object.Symbol, Address);
     if (Opts.SourceMap && Object.Type)

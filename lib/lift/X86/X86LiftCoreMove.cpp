@@ -339,7 +339,7 @@ bool liftCoreMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     // pointer; an owned context executes it in liftFPU.
     if (L.ownsX87Context())
       return false;
-    [[fallthrough]];
+    throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
   case X86_INS_NOP:
     S.emit(NdOp::NOP, {}, {});
     break;

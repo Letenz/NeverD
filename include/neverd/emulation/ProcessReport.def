@@ -334,6 +334,7 @@ NEVERD_PROCESS_REPORT_FIELD(DexImages, "dex_images")
 NEVERD_PROCESS_REPORT_FIELD(JNIClassLookupFailures, "jni_class_lookup_failures")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationSnapshot, "application_snapshot")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationDefaultLocale, "default_locale")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationServiceManager, "service_manager")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationURLFailureHandlers,
                             "url_open_failure_handlers")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationMainLooperPrepared,

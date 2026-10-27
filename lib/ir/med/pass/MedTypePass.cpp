@@ -1251,7 +1251,8 @@ struct SourceStackSeeds {
 std::optional<SourceStackSeeds>
 sourceStackSeeds(const MedFunc &Func, Arch Architecture,
                  const TargetRegInfo &TRI,
-                 const std::vector<SourceABIParameter> &Parameters) {
+                 const std::vector<SourceABIParameter> &Parameters,
+                 const std::optional<std::set<uint64_t>> &Observed) {
   SourceStackSeeds Seeds;
   if (Func.SourceParametersBound ||
       std::none_of(Parameters.begin(), Parameters.end(), [](const auto &P) {
@@ -1263,6 +1264,7 @@ sourceStackSeeds(const MedFunc &Func, Arch Architecture,
     return std::nullopt;
   std::optional<MedVar> Stack;
   bool Ambiguous = false;
+  bool MemoryObserved = !Func.CallInfos.empty();
   int MaximumId = 0;
   auto Visit = [&](const MedVar &Value) {
     if (!Value.isConst())
@@ -1274,6 +1276,7 @@ sourceStackSeeds(const MedFunc &Func, Arch Architecture,
     }
   };
   for (const auto &Block : Func.Blocks) {
+    MemoryObserved |= !Block.ExceptionalSuccs.empty();
     for (const auto &Phi : Block.Phis) {
       Visit(Phi.Output);
       for (const auto &[Pred, Value] : Phi.Args)
@@ -1282,6 +1285,26 @@ sourceStackSeeds(const MedFunc &Func, Arch Architecture,
         Visit(*Phi.ExceptionalEntry);
     }
     for (const auto &Op : Block.Ops) {
+      // A raw read can alias an incoming home even through another input.
+      // Calls, indirect transfers and unqualified intrinsics retain their
+      // memory initialization regardless of the explicit SP use proof.
+      MemoryObserved |=
+          Op.Opcode == NdOp::LOAD ||
+          (Op.Opcode == NdOp::STORE && !Op.PrologueSave) ||
+          Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
+          Op.Opcode == NdOp::ATOMIC_CMPXCHG || Op.Opcode == NdOp::CALL ||
+          Op.Opcode == NdOp::INDIR_CALL || Op.Opcode == NdOp::INDIR_BR ||
+          Op.MemoryOrdering != NdMemoryOrdering::None ||
+          Op.MemoryAddressSpace != NdMemoryAddressSpace::Default;
+      if (Op.Opcode == NdOp::INTRINSIC) {
+        const auto Id = Op.NumInputs && Op.Inputs[0].isConst()
+                            ? static_cast<Intrinsic>(Op.Inputs[0].ConstVal)
+                            : Intrinsic::None;
+        MemoryObserved |=
+            !Op.NumInputs || Op.Inputs[0].ConstVal != unsigned(Id) ||
+            isX86FPStateMemoryIntrinsic(Id) ||
+            !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op, Architecture));
+      }
       Visit(Op.Output);
       for (const auto &Output : Op.IntrinsicOutputs)
         Visit(Output);
@@ -1310,6 +1333,11 @@ sourceStackSeeds(const MedFunc &Func, Arch Architecture,
   // A body already expressed entirely through Param values has no remaining
   // entry-SP memory to initialize.
   if (!Stack)
+    return Seeds;
+  // Generic recovery may already have replaced every incoming stack read
+  // with a Param. With no remaining memory observer or escaping SP, emitting
+  // stores here would invent a source dependency on the physical stack.
+  if (!MemoryObserved && Observed && !Observed->count(TRI.StackPointer))
     return Seeds;
 
   // A declaration initializes only its own bytes. In particular, a raw
@@ -1603,7 +1631,7 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
     Func.SourceTypeHint.reset();
     return;
   }
-  auto Seeds = sourceStackSeeds(Func, TheArch, TRI, Parameters);
+  auto Seeds = sourceStackSeeds(Func, TheArch, TRI, Parameters, Observed);
   if (!Seeds) {
     Func.SourceTypeHint.reset();
     return;

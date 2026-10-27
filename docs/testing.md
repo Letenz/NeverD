@@ -1,5 +1,7 @@
 **Languages**: [English](testing.md) | [简体中文](zh-CN/testing.md) | [繁體中文](zh-TW/testing.md) | [日本語](ja/testing.md) | [한국어](ko/testing.md) | [Français](fr/testing.md) | [Deutsch](de/testing.md) | [Español](es/testing.md) | [Italiano](it/testing.md) | [Русский](ru/testing.md) | [العربية](ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` runs x64/ARM64 Mach-O integer, floating and mixed stack carriers through the source pipeline. `IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` keeps entry storage for memory reads, calls, escaping stack addresses and opaque or memory intrinsics. Pure value paths use declared parameters without inventing physical SP writes; register FP state effects remain. The macOS mobile matrix independently compiles and executes recovered Swift; successful emission alone is not execution evidence.
+
 `NeverDLLVMCValueTests` compiles and executes a recast variadic call against a separate Windows x64 ABI callee at O0/O2, with preserved LLVM types enabled and disabled. Native x64 hosts verify the floating value through the callee’s variadic argument reader; other architectures explicitly skip that execution.
 
 [← Documentation Index](README.md)
@@ -1501,6 +1503,34 @@ across detach and compares constructor/getTime observations with Linux boot
 clock reads. Run full Dalvik, JNI/thread/callback and Linux clock suites for
 these shared owners. Tests are offline; they do not execute ART or claim
 ServiceManager cache/Binder initialization or StatLogger reporting support.
+`NeverDDalvikTests` includes `AndroidServiceManagerTest.*` for initializer
+property/clock ordering, Java int-to-long threshold overflow, dependency class
+state, DEX/static-library entry consistency, unknown versus empty caches,
+retained Binder aliases, null/cast exceptions, repeatable empty cache installs,
+context proxy acquisition and terminal/error propagation. HashMap `putAll`
+regressions cover overlaps, null keys, self-copy and independent entry storage.
+The framework volatile-field exception is checked against an ordinary supplied
+DEX volatile field to keep ownership explicit.
+
+`NeverDAndroidNativeTests` includes `*AndroidJNI.ServiceManager*` for JNI method
+and field lookup, normal/varargs/array calls, exception identity, detach/reattach,
+cache aliases and explicit missing-state/RPC stops across fixture optimization,
+relocation packing and available CPU backends. `NeverDLinuxProcessTests` covers
+strict shared JSON admission and Java-state report identities under
+`ProcessReport.AndroidServiceManager*` and `ProcessReport.JavaServiceManager*`.
+Public request rejection cases share `ProcessReportCases.def`; these checks do
+not require a live Binder service, device, private workload or network access.
+
+`AndroidJNI.ServiceManagerLoggerRetainsIndependentBootEpochAcrossIdle` compares
+initializer timing with native boot-clock reads, retains the logger and its
+next tick across idle waits, and checks independent monotonic/raw epochs with
+and without instruction advancement. Active-use failures also supply other
+valid clocks to prove that missing BOOTTIME is not silently filled in.
+`LinuxClock.BootTimeRequiresAnIndependentEpochAndKeepsItsSuspendOffset` checks
+explicit admission, fixed observations, nanosecond carry, shared idle/instruction
+advancement and preservation of the declared epoch difference. These are
+model regressions, not device suspension measurements.
+
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
 typed/JSON admission, DEX catch and shared message access, terminal instruction
@@ -6795,6 +6825,21 @@ enabled, `NeverDWorkerWeb` in `build-release/tools/neverd-worker` checks the rea
 framed process and isolation from native-session revisions using a C++ client.
 
 ## Library recognition
+
+`scripts.tests.test_collision_refinement` checks unpruned source admission,
+same-library cohorts across parts, independently selected release conflicts,
+opaque CRC spans, shorter Thumb return bodies, incomplete-record refusal and
+preservation of aliases, incoming queries and metadata. They also require
+existing mandatory-reference claims to survive new raw sources, including a
+known rival name with changed references. The generation and supplement
+suites also check byte coverage across leading/tail encodings and require every
+mandatory reference claim to survive hidden CRC counterexamples. Refinement
+cases retain alternatives in the selected sufficient single-site clause,
+jointly necessary fields and complete incoming declarations with source-version
+consensus. They also constrain cohorts together across numbered parts, so
+withholding one member cannot leave an unqualified survivor.
+Source-driven refinement still requires held-out CLI accuracy and performance qualification;
+these unit tests do not establish source identity for a matching body.
 
 `PEFunctionAddresses.*` checks stackless x64 PE leaves, ownership and instruction boundaries, rejected prefixes and narrower operands, callable exits, cancellation and identical results with 1/2/4/16 workers. Signature tests cover all 16 conditional rel32 forms in both directions, explicit entry scope and source relocation constraints. Python supplement tests require each single-site clause to distinguish every raw counterclaim, preserving alternatives and jointly necessary sites without duplicating existing claims.
 
@@ -15213,3 +15258,7 @@ or independence validation. `ExtendedOperandStorageRetainsUnsupportedEffectRefus
 in the specialization and independence suites distinguishes an unsupported
 eight-input effect from out-of-storage malformed input; neither may publish
 a replacement or proof. Opcode-specific arity checks remain in their owners.
+
+## Selected callable checks
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` combines address-only output with integer, pointer, floating and void providers. `AddressOnlyCallbackConvertsToItsKnownParameterType` executes a typed callback. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` combines separately selected callers and pointer-reading callees, and compares whole-unit output with cold/warm cache use. The x64/ARM64 PE, ELF and Mach-O input models compile and execute generated C at O0/O2 with UBSan. This validates host source execution, not native execution on every target platform. Run the call-contract, pointer-projection, source-ABI and callee-cache owners after changing this boundary.

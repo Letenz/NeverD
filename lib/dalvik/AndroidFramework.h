@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <span>
@@ -33,6 +34,9 @@ public:
   ExecutionResult field(Heap &heap, const Field &field, uint64_t receiver,
                         std::optional<uint64_t> write,
                         const AdmitInstruction &admit);
+  ExecutionResult initializeServiceManager(
+      Heap &heap, const Program &program, const AdmitInstruction &admit,
+      const std::function<ExecutionResult(std::string_view)> &initialize);
   // Library owns URL values and selects the already-validated scheme.
   ExecutionResult openURL(Heap &heap, std::string_view scheme,
                           const AdmitInstruction &admit);
@@ -41,6 +45,18 @@ public:
   definingLoader(std::string_view type, const Program &program) const;
 
 private:
+  ExecutionResult serviceManager(Heap &heap, const Program &program,
+                                 const LibraryMethod &method, uint64_t receiver,
+                                 std::span<const uint64_t> arguments,
+                                 const AdmitInstruction &admit);
+  ExecutionResult binderProxy(Heap &heap, uint32_t key,
+                              const AdmitInstruction &admit);
+  ExecutionResult serviceProxy(Heap &heap, const Program &program,
+                               uint64_t binder, const AdmitInstruction &admit);
+  std::map<const Field *, std::optional<uint64_t>> service_fields;
+  std::map<uint32_t, uint32_t> binder_identities;
+  std::map<uint32_t, std::optional<bool>> binder_warnings;
+  bool service_manager_initialized = false;
   ExecutionResult readClock(LibraryOperation operation);
   ExecutionResult nextMessage(Heap &heap, const Program &program,
                               uint64_t receiver, const AdmitInstruction &admit);

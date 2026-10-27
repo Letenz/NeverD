@@ -121,7 +121,7 @@ continues to reject reserved bits, invalid addressing forms and prefixes.
 | FDIVP | ST(i),ST(0) | DE | F8–FF | 0 | true | portable-value-projection |
 | FLD | ST(i) | D9 | C0–C7 | 0 | true | portable-value-projection |
 | FXCH | ST(i) | D9 | C8–CF | 0 | true | portable-value-projection |
-| FNOP | implicit | D9 | D0 | 0 | true | state-only |
+| FNOP | implicit | D9 | D0 | 0 | false | owned-only-state |
 | FCHS | implicit | D9 | E0 | 0 | true | portable-exact-value-projection |
 | FABS | implicit | D9 | E1 | 0 | true | portable-exact-value-projection |
 | FTST | implicit | D9 | E4 | 0 | true | portable-value-projection |
@@ -173,7 +173,7 @@ continues to reject reserved bits, invalid addressing forms and prefixes.
 | FUCOMP | ST(i) | DD | E8–EF | 0 | true | portable-value-projection |
 | FFREEP | ST(i) | DF | C0–C7 | 0 | true | state-only |
 | WAIT | implicit | 9B | 00 | 0 | true | portable-state-only |
-| EMMS | MMX aliases | 0F | 77 | 0 | true | state-only |
+| EMMS | MMX aliases | 0F | 77 | 0 | false | owned-only-state |
 
 Unlisted/reserved and legacy FSTPNCE/FSETPM/FDISI/FENI forms remain
 unsupported by this inventory; recognition elsewhere is not admission.
@@ -301,6 +301,28 @@ unknown or unsupported until separately qualified.
 | portable-value-projection | owned-context | symbolic | none | false | ? | ? |
 | portable-value-projection | owned-context | checked-refinement | none | false | ? | ? |
 | portable-value-projection | owned-context | translation | native-x86 | false | U | U |
+| owned-only-state | typed-stack | lift | none | false | U | U |
+| owned-only-state | typed-stack | ir-analysis | none | false | U | U |
+| owned-only-state | typed-stack | llvm | native-x86 | false | U | U |
+| owned-only-state | typed-stack | high-c | native-x86 | false | U | U |
+| owned-only-state | typed-stack | llvm-c | native-x86 | false | U | U |
+| owned-only-state | typed-stack | concrete | native-x86 | false | U | U |
+| owned-only-state | typed-stack | concrete | portable | false | U | U |
+| owned-only-state | typed-stack | concrete | native-reference | false | U | U |
+| owned-only-state | typed-stack | symbolic | none | false | U | U |
+| owned-only-state | typed-stack | checked-refinement | none | false | U | U |
+| owned-only-state | typed-stack | translation | native-x86 | false | U | U |
+| owned-only-state | owned-context | lift | none | true | ? | ? |
+| owned-only-state | owned-context | ir-analysis | none | true | ? | ? |
+| owned-only-state | owned-context | llvm | native-x86 | true | ? | ? |
+| owned-only-state | owned-context | high-c | native-x86 | true | ? | ? |
+| owned-only-state | owned-context | llvm-c | native-x86 | true | ? | ? |
+| owned-only-state | owned-context | concrete | native-x86 | true | ? | ? |
+| owned-only-state | owned-context | concrete | portable | false | U | U |
+| owned-only-state | owned-context | concrete | native-reference | true | ? | ? |
+| owned-only-state | owned-context | symbolic | none | false | ? | ? |
+| owned-only-state | owned-context | checked-refinement | none | false | ? | ? |
+| owned-only-state | owned-context | translation | native-x86 | false | U | U |
 | exact-value-projection | typed-stack | lift | none | true | ? | ? |
 | exact-value-projection | typed-stack | ir-analysis | none | true | ? | ? |
 | exact-value-projection | typed-stack | llvm | native-x86 | true | E | ? |
@@ -432,6 +454,16 @@ qualification; scoped execution observations are recorded separately.
 | portable-value-projection | concrete | arm64 | true | E | ? | admitted-portable-instruction-slice; excluded-effects-refuse |
 | portable-value-projection | translation | x86-64 | false | U | U | portable-translation-requires-linux-aarch64 |
 | portable-value-projection | translation | arm64 | true | E | ? | explicit-portable-x87-translation-v1; excluded-effects-refuse |
+| owned-only-state | llvm | x86-64 | false | U | U | instruction-outside-portable-runtime-profile |
+| owned-only-state | llvm | arm64 | false | U | U | instruction-outside-portable-runtime-profile |
+| owned-only-state | high-c | x86-64 | false | U | U | instruction-outside-portable-runtime-profile |
+| owned-only-state | high-c | arm64 | false | U | U | instruction-outside-portable-runtime-profile |
+| owned-only-state | llvm-c | x86-64 | false | U | U | instruction-outside-portable-runtime-profile |
+| owned-only-state | llvm-c | arm64 | false | U | U | instruction-outside-portable-runtime-profile |
+| owned-only-state | concrete | x86-64 | false | U | U | instruction-outside-portable-profile |
+| owned-only-state | concrete | arm64 | false | U | U | instruction-outside-portable-profile |
+| owned-only-state | translation | x86-64 | false | U | U | portable-translation-requires-linux-aarch64 |
+| owned-only-state | translation | arm64 | false | U | U | instruction-outside-portable-runtime-profile |
 | exact-value-projection | llvm | x86-64 | false | U | U | instruction-outside-portable-runtime-profile |
 | exact-value-projection | llvm | arm64 | false | U | U | instruction-outside-portable-runtime-profile |
 | exact-value-projection | high-c | x86-64 | false | U | U | instruction-outside-portable-runtime-profile |

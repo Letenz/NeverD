@@ -32,8 +32,9 @@ struct Object {
   struct MapEntry {
     uint32_t Key, Value;
   };
-  // Presence distinguishes a constructed HashMap from raw AllocObject storage.
-  // Entries use workload identities, permitting null values and cycles.
+  // Known HashMap contents. Raw AllocObject and an existing process map with
+  // unsupplied contents remain unknown. Entries retain workload identities,
+  // permitting null values and cycles.
   std::optional<std::vector<MapEntry>> MapEntries;
 };
 class Heap {

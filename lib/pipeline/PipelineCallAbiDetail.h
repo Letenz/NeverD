@@ -148,6 +148,9 @@ struct OmittedCalleeMemo {
     size_t Parameters = 0;
     bool IsVariadic = false;
     bool SourceParametersBound = false;
+    /// Recovery retained every carrier and type of the conversion's signature.
+    /// A warm selection must not publish a declaration a cold one rejected.
+    bool PreservesDeclaration = false;
     int RegisterArity = 0;
     int TotalArity = 0;
     std::vector<uint64_t> IntegerArgumentRegisters;
@@ -301,6 +304,11 @@ private:
   uint64_t Clock = 0;
 };
 
+/// Carry the complete input facts read by call-signature recovery into a new
+/// projection. Derived bodies and memo ownership remain the caller's choice.
+void copyCallSignatureFacts(const PipelineResult &Source,
+                            PipelineResult &Destination);
+
 /// Recover every call's arguments in \p Result, and the parameters each
 /// forwarder passes straight through, from the setup its caller writes
 /// before the call (recoverCallAbi).  Each callee's recovered signature
@@ -311,7 +319,8 @@ private:
 /// fixed point first, so the order of the functions does not matter.  Reads
 /// the types the functions have already been given (inferMedTypes).
 void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
-                          const std::map<va_t, std::string> &AllFuncNames);
+                          const std::map<va_t, std::string> &AllFuncNames,
+                          bool SourceDeclarations = false);
 
 /// Read the signature bodies of \p Functions into
 /// \p Summaries.CalleeSignatureMemo as a restricted run under \p Summaries'

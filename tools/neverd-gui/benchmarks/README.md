@@ -53,8 +53,12 @@ input with temporary settings on one private xcb display. IDA uses a temporary
 The installed desktop handlers and user databases are untouched.
 
 Interaction report schema 2 adds `link_addresses` and `link_functions`: eight
-passes over up to 24 functions already visited by the jump phases. Both tools
-run the same address and URI sequence. NeverD measures parsing and its normal
+passes over up to 24 functions already visited by the jump phases. Sampling
+waits for completed discovery and reads the current function catalog;
+open-time loader guesses are not benchmark targets. Pseudocode samples require
+the requested document to complete and remain current through its paint. A
+cancelled previous request or a painted error page is not successful source.
+Both tools run the same address and URI sequence. NeverD measures parsing and its normal
 `MainWindow::openLink`; IDA measures `open_ida_link` through IDAPython. Each sample
 checks the destination cursor and ends on the event-loop turn after the actual
 disassembly viewport paints. Both request a viewport update even if the target

@@ -4770,7 +4770,7 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     return false;
 
   bool ResultLive = !Call.getType()->isVoidTy();
-  if (ResultLive && InferredVoid)
+  if (ResultLive && ReturnsNoValue)
     ResultLive = isCallResultLive(Analysis, &Call);
 
   if (llvm::StringRef(AsmStr).starts_with(X86RepAsmMarker)) {
@@ -5583,7 +5583,7 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
     // The invoke and its unwind edge remain observable even when only dead
     // register copies consume its result. Do not invent a C assignment then.
     ResultLive = valueFeedsPrintedUse(&Call);
-  } else if (ResultLive && InferredVoid) {
+  } else if (ResultLive && ReturnsNoValue) {
     if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Call))
       ResultLive = isCallResultLive(Analysis, CI);
   }
@@ -7951,6 +7951,16 @@ void LLVMCWriter::writeReturn(llvm::ReturnInst &Ret, int Indent) {
   emitIndent(Indent);
   if (InferredVoid) {
     OS << "return;\n";
+    return;
+  }
+  if (ReturnsNoValue && Ret.getReturnValue()) {
+    // Preserving a function type does not introduce a demand for the
+    // undefined machine return register. Only its unused ABI carrier needs
+    // a value; calls and other effects in the discarded chain stay live.
+    OS << "return "
+       << valueStr(
+              llvm::Constant::getNullValue(Ret.getFunction()->getReturnType()))
+       << ";\n";
     return;
   }
   if (auto *RV = Ret.getReturnValue()) {

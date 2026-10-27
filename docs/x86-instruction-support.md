@@ -129,6 +129,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | --- | --- |
 | LDS, LES, LSS, LFS, LGS | Coupled GPR/segment-selector completion, hidden descriptor state and fault ordering. The former ordinary load/COPY approximation is now explicitly refused in both strict and permissive lifting. |
 | 3DNow! arithmetic, comparison, conversion and rearrangement operations | Packed-lane results, instruction-specific floating-point rules and MMX/x87 state. The 24 former COPY/scalar-FLOAT approximations now fail explicitly; decoder recognition remains available. |
+| Unowned FNOP/EMMS and FEMMS | FNOP's waiting behavior and EMMS's tag transition require an owned x87 context; their typed/unowned paths now refuse rather than emit NOP. Owned x64 FNOP/EMMS retain native context steps. FEMMS also invalidates all retained MMX/x87 payloads; that NeverD context transition remains missing, although both compiler backends now expose the native intrinsic. |
 | VMRUN | Complete guest/host transition, including guest-modified unsaved GPRs and floating/vector state, plus the VM-exit continuation. |
 | SKINIT | Machine reinitialization and nonlocal control transfer. |
 | GETSEC transferring or unproved leaves | Measured-environment entry/exit and a complete-machine-state continuation. Leaves 0 and 6..8 now use the bounded contract below when natural-width AX is proven constant. |
@@ -2318,3 +2319,53 @@ six ELF/COFF/Mach-O profiles check native instruction selection and no assembly
 or unresolved helper calls. NeverC qualification uses its supported x86-64
 target. Source availability does not update the released LLVM SDK: that release
 and NeverD's production pin remain pending the context/continuation gaps above.
+
+## Native FEMMS and MMX text-IR compatibility
+
+The [LLVM fork](https://github.com/NeverSight/llvm-project/commit/f963558944a686f2c6d2dfb8311011fb6749c530)
+now implements `llvm.x86.mmx.femms` with the original opcode and all sixteen
+MMX/x87 implicit register definitions. Conservative effects retain repeated
+calls and surrounding memory operations. The same update accepts legacy
+`3dnow`/`3dnowa` annotations and upgrades textual `x86_mmx` to `<1 x i64>`,
+matching the existing bitcode upgrade. The new tests and MMX neighbors pass
+26 lit cases, including i386/x64 and O0/O2 lowering.
+
+[NeverC](https://github.com/NeverSight/NeverC/commit/211be3b22fec81588952a25d6de95362258ad96f)
+already exposed `__builtin_ia32_femms`; new frontend and descriptor tests
+verify its native identity, repeated effects and complete clobber bank.
+Its independent `tests/verify-mmx-state.py` checks twelve ELF/COFF/Mach-O
+objects at O0/O2, both directly and through the full LLVM fork. Across 432
+controlled completions, it checks live MMX values against adversarial FEMMS
+payloads, realigned/dynamic frames, memory ordering and callee-saved registers.
+These are compiler-transport checks, not physical FEMMS or exception tests.
+
+Both backends now treat EMMS/FEMMS as machine scheduling boundaries. The
+physical clobber list alone did not constrain virtual MMX values before
+register allocation: O2 moved arithmetic or integer extraction after the
+final reset, recreating nonempty x87 tags. All six O2 objects failed the
+strengthened empty-tag postcondition before the fix; all twelve now pass.
+Both final reset instructions also have frontend and LLVM codegen regressions.
+In a separate host experiment, substituting EMMS only for the unavailable
+FEMMS boundaries changed the final EMMS cleanup's abridged tag from 255 to 0.
+That diagnostic establishes the cleanup counterexample, not FEMMS execution.
+
+NeverD's admission tests cover FNOP, EMMS and FEMMS through three decoder
+routes, strict/permissive lifting and x86/x64 with segment/address prefixes.
+Missing state ownership now fails without changing the supplied LowIR output.
+The x87 capability inventory agrees with that boundary. This does not close
+the remaining NeverD FEMMS or 3DNow state contracts listed above.
+
+The extended x87 call tests also exposed a C projection error: preserving an
+LLVM signature incorrectly demanded a no-value callee's unknown return
+register. LLVMC now keeps the settled return contract independently of its
+printed signature. Effects still execute; only an explicitly unused ABI
+carrier is zero initialized. Demanded unknown machine state still fails.
+Discarded return chains use the shared dead-value eligibility gate, retaining
+atomic updates, volatile reads, calls and control-flow effects.
+
+After integration with `85211ac969`, the six affected NeverD test targets pass
+277 cases with the full LLVM SDK. The pinned r6 SDK passes 274 and explicitly
+skips three newer native virtualization/descriptor cases. The
+[qualification record](evidence/x86-mmx-state-2026-10-26.json) retains source
+commits, report hashes, counterexamples and both SDKs' generated artifacts.
+The production LLVM release pin and submodule remain unchanged.

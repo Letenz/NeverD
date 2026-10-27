@@ -59,6 +59,84 @@ llvm::Expected<int32_t> integer32(const llvm::json::Value &Value,
     return invalid(Name);
   return *Integer;
 }
+llvm::Expected<mobile::dalvik::AndroidApplicationSnapshot::ServiceManager>
+serviceManager(const llvm::json::Value &Value) {
+  using State = mobile::dalvik::AndroidApplicationSnapshot::ServiceManager;
+  const auto *Object = Value.getAsObject();
+  if (!Object)
+    return invalid(field::ApplicationServiceManager);
+  State Result;
+  auto Key = [](const llvm::json::Value &Value)
+      -> llvm::Expected<std::optional<uint32_t>> {
+    if (Value.kind() == llvm::json::Value::Null)
+      return std::optional<uint32_t>{};
+    auto Number = process_json::integer<uint32_t>(Value);
+    if (!Number)
+      return invalid(field::ApplicationServiceManager);
+    return std::optional<uint32_t>(*Number);
+  };
+  for (const auto &[Name, Value] : *Object) {
+    if (Name == "binder_proxies") {
+      const auto *Array = Value.getAsArray();
+      if (!Array ||
+          Array->size() > ::neverd::limits::dalvik::kMaxAndroidBinderProxies)
+        return invalid(field::ApplicationServiceManager);
+      for (const auto &Value : *Array) {
+        const auto *Proxy = Value.getAsObject();
+        if (!Proxy || !Proxy->get("key"))
+          return invalid(field::ApplicationServiceManager);
+        auto Number = Key(*Proxy->get("key"));
+        if (!Number)
+          return Number.takeError();
+        if (!*Number)
+          return invalid(field::ApplicationServiceManager);
+        State::BinderProxy Entry;
+        Entry.key = **Number;
+        for (const auto &[Name, Value] : *Proxy) {
+          if (Name == "key")
+            continue;
+          if (Name != "warn_on_blocking" || !Value.getAsBoolean())
+            return invalid(field::ApplicationServiceManager);
+          Entry.warn_on_blocking = *Value.getAsBoolean();
+        }
+        Result.binder_proxies.push_back(std::move(Entry));
+      }
+    } else if (Name == "cache") {
+      const auto *Array = Value.getAsArray();
+      if (!Array ||
+          Array->size() >
+              ::neverd::limits::dalvik::kMaxAndroidServiceCacheEntries)
+        return invalid(field::ApplicationServiceManager);
+      auto &Cache = Result.cache.emplace();
+      for (const auto &Value : *Array) {
+        const auto *Pair = Value.getAsObject();
+        if (!Pair || Pair->size() != 2 || !Pair->get("name") ||
+            !Pair->get("binder"))
+          return invalid(field::ApplicationServiceManager);
+        State::CacheEntry Entry;
+        const auto &Name = *Pair->get("name");
+        if (auto Text = Name.getAsString())
+          Entry.name = Text->str();
+        else if (Name.kind() != llvm::json::Value::Null)
+          return invalid(field::ApplicationServiceManager);
+        auto Binder = Key(*Pair->get("binder"));
+        if (!Binder)
+          return Binder.takeError();
+        Entry.binder = *Binder;
+        Cache.push_back(std::move(Entry));
+      }
+    } else if (Name == "manager_proxy" || Name == "context_object") {
+      auto Binder = Key(Value);
+      if (!Binder)
+        return Binder.takeError();
+      (Name == "manager_proxy" ? Result.manager_proxy : Result.context_object)
+          .emplace(*Binder);
+    } else {
+      return invalid(field::ApplicationServiceManager);
+    }
+  }
+  return Result;
+}
 llvm::Expected<mobile::dalvik::AndroidApplicationSnapshot::ApplicationInfo>
 applicationInfo(const llvm::json::Value &Value) {
   const auto *Info = Value.getAsObject();
@@ -401,7 +479,13 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       mobile::dalvik::AndroidApplicationSnapshot Snapshot;
       bool HasPhase = false;
       for (const auto &[Key, Value] : *Input) {
-        if (Key == field::ApplicationURLFailureHandlers) {
+        if (Key == field::ApplicationServiceManager) {
+          auto State = serviceManager(Value);
+          if (!State)
+            return State.takeError();
+          Snapshot.service_manager = std::move(*State);
+          continue;
+        } else if (Key == field::ApplicationURLFailureHandlers) {
           const auto *Handlers = Value.getAsArray();
           if (!Handlers ||
               Handlers->size() >
@@ -699,6 +783,11 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         mobile::dalvik::validateAndroidMessageQueue(Snapshot);
       } catch (const mobile::Error &) {
         return invalid(field::ApplicationSnapshot);
+      }
+      try {
+        mobile::dalvik::validateAndroidServiceManager(Snapshot);
+      } catch (const mobile::Error &) {
+        return invalid(field::ApplicationServiceManager);
       }
       try {
         mobile::dalvik::validateAndroidURLHandlers(Snapshot);
@@ -1099,6 +1188,29 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
                              {"blocked", Queue.blocked},
                              {"complete", Queue.complete},
                              {"messages", std::move(Messages)}};
+    }
+    if (F.service_manager) {
+      const auto &State = *F.service_manager;
+      llvm::json::Array Entries, Proxies;
+      for (const auto &Entry : State.entries)
+        Entries.push_back(llvm::json::Object{{"name", bits(Entry.name)},
+                                             {"binder", bits(Entry.binder)}});
+      for (const auto &Proxy : State.binder_proxies)
+        Proxies.push_back(llvm::json::Object{
+            {"key", Proxy.key},
+            {"identity", bits(Proxy.identity)},
+            {"warn_on_blocking",
+             Proxy.warn_on_blocking ? llvm::json::Value(*Proxy.warn_on_blocking)
+                                    : nullptr}});
+      Framework[field::ApplicationServiceManager] = llvm::json::Object{
+          {"initialized", State.initialized},
+          {"cache", bits(State.cache)},
+          {"cache_known", State.cache_known},
+          {"entries", std::move(Entries)},
+          {"stat_logger", bits(State.stat_logger)},
+          {"manager",
+           State.manager ? llvm::json::Value(bits(*State.manager)) : nullptr},
+          {"binder_proxies", std::move(Proxies)}};
     }
     llvm::json::Array Classes;
     for (const auto &C : State.classes)

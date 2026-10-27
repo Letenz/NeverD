@@ -1791,6 +1791,109 @@ int jni_dex_class_pair(const char *first, const char *last) {
   CHECK(!C(vm, int, 5));
   return 0;
 }
+static Ref service_get_v(Handle e, Ref type, Ref method, ...) {
+  __builtin_va_list args;
+  __builtin_va_start(args, method);
+  Ref result = C(e, Ref, 115, type, method, args);
+  __builtin_va_end(args);
+  return result;
+}
+int jni_service_manager_cache(unsigned mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/os/ServiceManager");
+  Ref get = C(e, Ref, 113, type, "getService",
+              "(Ljava/lang/String;)Landroid/os/IBinder;");
+  Ref check = C(e, Ref, 113, type, "checkService",
+                "(Ljava/lang/String;)Landroid/os/IBinder;");
+  CHECK(get && check);
+  Ref alpha = C(e, Ref, 167, "alpha");
+  Ref first = C(e, Ref, 114, type, get, alpha);
+  if (mode)
+    return (int)first; // Missing-state/RPC cases stop at the original call.
+  CHECK(first);
+  Ref beta = C(e, Ref, 167, "beta");
+  CHECK(same_ref(e, first, service_get_v(e, type, get, beta)));
+  U64 arguments[] = {beta};
+  CHECK(same_ref(e, first, C(e, Ref, 116, type, check, arguments)));
+  Ref proxy = C(e, Ref, 6, "android/os/BinderProxy");
+  Ref warning = C(e, Ref, 94, proxy, "mWarnOnBlocking", "Z");
+  CHECK(warning && C(e, U8, 96, first, warning));
+  Ref binder = C(e, Ref, 6, "android/os/Binder");
+  Ref allow = C(e, Ref, 113, binder, "allowBlocking",
+                "(Landroid/os/IBinder;)Landroid/os/IBinder;");
+  CHECK(same_ref(e, first, C(e, Ref, 114, binder, allow, first)));
+  CHECK(!C(e, U8, 96, first, warning));
+  Ref ibinder = C(e, Ref, 6, "android/os/IBinder");
+  Ref local = C(e, Ref, 33, ibinder, "queryLocalInterface",
+                "(Ljava/lang/String;)Landroid/os/IInterface;");
+  CHECK(!C(e, Ref, 34, first, local, (Ref)0));
+  Ref install = C(e, Ref, 113, type, "initServiceCache", "(Ljava/util/Map;)V");
+  C(e, void, 141, type, install, (Ref)0);
+  Ref thrown = C(e, Ref, 15);
+  CHECK(thrown);
+  C(e, void, 17);
+  Ref illegal = C(e, Ref, 6, "java/lang/IllegalStateException");
+  CHECK(C(e, U8, 32, thrown, illegal));
+  Ref global = C(e, Ref, 21, first);
+  CHECK(!C(vm, int, 5));
+  e = attach();
+  CHECK(e);
+  type = C(e, Ref, 6, "android/os/ServiceManager");
+  alpha = C(e, Ref, 167, "alpha");
+  CHECK(same_ref(e, global, C(e, Ref, 114, type, get, alpha)));
+  C(e, void, 22, global);
+  CHECK(!C(e, U8, 228));
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
+int jni_service_manager_clock(unsigned advancing) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/os/ServiceManager");
+  CHECK(type);
+  struct ClockTime before, after;
+  CHECK(!clock_gettime(7, &before));
+  Ref logger_field = C(e, Ref, 144, type, "sStatLogger",
+                       "Lcom/android/internal/util/StatLogger;");
+  CHECK(logger_field);
+  Ref logger = C(e, Ref, 145, type, logger_field);
+  CHECK(!clock_gettime(7, &after));
+  Ref logger_type = C(e, Ref, 6, "com/android/internal/util/StatLogger");
+  Ref next_field = C(e, Ref, 94, logger_type, "mNextTickTime", "J");
+  CHECK(logger && next_field);
+  U64 next = C(e, U64, 101, logger, next_field);
+  CHECK((U64)before.seconds * 1000 + before.nanoseconds / 1000000 + 1000 <=
+            next &&
+        next <= (U64)after.seconds * 1000 + after.nanoseconds / 1000000 + 1000);
+  if (!advancing)
+    CHECK(next == 51987);
+
+  // Idling advances the shared clock, but does not reconstruct the logger or
+  // its deadline on another active use of the initialized class.
+  CHECK(!usleep(2500));
+  Ref repeated = C(e, Ref, 144, type, "sStatLogger",
+                   "Lcom/android/internal/util/StatLogger;");
+  CHECK(same_ref(e, logger, C(e, Ref, 145, type, repeated)));
+  CHECK(C(e, U64, 101, logger, next_field) == next);
+  Ref clock_type = C(e, Ref, 6, "android/os/SystemClock");
+  Ref elapsed = C(e, Ref, 113, clock_type, "elapsedRealtime", "()J");
+  CHECK(clock_type && elapsed);
+  CHECK(!clock_gettime(7, &before));
+  U64 now = C(e, U64, 132, clock_type, elapsed);
+  CHECK(!clock_gettime(7, &after));
+  CHECK((U64)before.seconds * 1000 + before.nanoseconds / 1000000 <= now &&
+        now <= (U64)after.seconds * 1000 + after.nanoseconds / 1000000);
+  if (!advancing) {
+    CHECK(now == 50990);
+    CHECK(!clock_gettime(1, &after));
+    CHECK(after.seconds == 10 && after.nanoseconds == 125956789);
+    CHECK(!clock_gettime(4, &after));
+    CHECK(after.seconds == 30 && after.nanoseconds == 502500000);
+  }
+  CHECK(!C(e, U8, 228));
+  return C(vm, int, 5);
+}
 int jni_service_manager_metadata(unsigned mode) {
   Handle e = attach();
   CHECK(e);
