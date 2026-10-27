@@ -9639,6 +9639,23 @@ Legacy cancellation tests retain the API continuation across cancellation, neste
 
 ## Test layout
 
+`NeverDSymbolicPredicateTests` checks Boolean, extension and conditional-tag
+equality together with sign-network recovery, known bits and subword views.
+Run it alongside `NeverDSymbolicIntegerIntrinsicTests` when changing predicate
+construction: the execution suite also checks byte-sized sign/overflow flags
+passing through Boolean and integer operations. One-bit literal comparisons
+must recover the original predicate without traversing its expression DAG;
+wider integer comparisons must keep their full value domain.
+
+`NeverDSymbolicCallEffectTests` checks explicit call register results and path
+exploration: multiple outputs, pre-call values, return-output precedence,
+overlapping writes in both byte orders, ordinary memory havoc, malformed-range
+refusal without state changes, and successor discovery from a summarized
+register result. `NeverDSymbolicIntegerIntrinsicTests` supplies the affected
+execution, scalar-state and store-preservation regressions. These targets test
+the generic effect mechanism; they do not certify an external function's ABI
+or operating-system behavior.
+
 For optional independent bitvector oracles, configure `NEVERD_ENABLE_Z3=ON`
 and run `NeverDSolverTests`; see [solver validation](solver.md) for the
 cross-backend benchmark and replayable query export. Validate an OFF build too
@@ -15723,3 +15740,11 @@ unwind qualification.
 ## Selected callable checks
 
 `Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` combines address-only output with integer, pointer, floating and void providers. `AddressOnlyCallbackConvertsToItsKnownParameterType` executes a typed callback. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` combines separately selected callers and pointer-reading callees, and compares whole-unit output with cold/warm cache use. The x64/ARM64 PE, ELF and Mach-O input models compile and execute generated C at O0/O2 with UBSan. This validates host source execution, not native execution on every target platform. Run the call-contract, pointer-projection, source-ABI and callee-cache owners after changing this boundary.
+
+`SymMBAMaskRelation.ComplementedOffsetAddress` covers exact complementary
+offsets under arbitrary selected masks at 8–257 bits.
+`OffsetMaskNeighborsAndBudgetsKeepExactValues` exhausts byte inputs against
+independent arithmetic, including unequal offsets and incomplete budgets.
+Run `NeverDSymMBAMaskRelationTests` and the broader `NeverDSymbolicTests`.
+
+The focused NeverDCOFFExceptionModelTests target runs exception model and decoder regressions, including unsorted duplicate directory starts, long/cyclic chains, terminal frame mismatches and addresses near the VA limit. Build it with scripts/build.py and pair its CTest label with NeverDCOFFExceptionV2Tests when changing x64 unwind directory processing.
