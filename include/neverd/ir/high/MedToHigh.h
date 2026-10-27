@@ -22,7 +22,9 @@
 #include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 #include <functional>
 #include <map>
@@ -630,6 +632,8 @@ private:
   void anchorDispatcherEntries(HighFunc &Func) const;
   const MedFunc *CurMed = nullptr;
   std::set<const MedOp *> ReturnProtectionOps;
+  llvm::DenseMap<const MedOp *, const MedOp *> AArch64AuthenticatedCalls;
+  llvm::SmallPtrSet<const MedOp *, 8> AArch64CallAuthentications;
   /// Entry-relative stack slots CurMed loads anywhere or whose address
   /// escapes; such a slot is a local, not an outgoing argument (cached per
   /// function).

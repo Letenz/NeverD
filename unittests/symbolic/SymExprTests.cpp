@@ -1337,6 +1337,75 @@ TEST(SymExpr, U64ArithmeticShiftByZeroKeepsTheWholeWord) {
   EXPECT_EQ(Plan.evalU64(Vars), 0x8000000000000001ull);
 }
 
+TEST(SymExpr, ZeroExtendedUnsignedRemaindersUseTheirNarrowOperands) {
+  std::mt19937_64 Random(0x7a65787472656d);
+  for (auto [Left, Right] : {std::pair{1u, 1u},
+                             {4u, 8u},
+                             {8u, 4u},
+                             {16u, 32u},
+                             {32u, 16u},
+                             {64u, 64u},
+                             {65u, 128u},
+                             {257u, 129u}}) {
+    SCOPED_TRACE(::testing::Message() << Left << ':' << Right);
+    const auto Inner = std::max(Left, Right);
+    const auto Outer = 2 * Inner;
+    SymContext C;
+    auto X = C.mkVar("x", Left), Y = C.mkVar("y", Right);
+    auto R = C.mkURem(C.mkZExt(X, Outer), C.mkZExt(Y, Outer));
+    EXPECT_EQ(
+        R, C.mkZExt(C.mkURem(C.mkZExt(X, Inner), C.mkZExt(Y, Inner)), Outer));
+    EXPECT_EQ(C.mkExtract(R, 0, Inner),
+              C.mkURem(C.mkZExt(X, Inner), C.mkZExt(Y, Inner)));
+    SymEvalPlan Plan(C, R);
+    for (unsigned Sample = 0; Sample != 128; ++Sample) {
+      llvm::APInt A(Left, 0), B(Right, 0);
+      for (unsigned Bit = 0; Bit < Left; Bit += 64)
+        A |= llvm::APInt(Left, Random()).shl(Bit);
+      for (unsigned Bit = 0; Bit < Right; Bit += 64)
+        B |= llvm::APInt(Right, Random()).shl(Bit);
+      if (Sample == 0)
+        B.clearAllBits();
+      auto N = A.zextOrTrunc(Inner), D = B.zextOrTrunc(Inner);
+      const auto Oracle = D.isZero() ? N : N.urem(D);
+      const llvm::APInt Values[] = {A, B};
+      EXPECT_EQ(Plan.eval(Values), Oracle.zext(Outer));
+    }
+  }
+}
+
+TEST(SymExpr, ZeroExtendedRemaindersCoverEveryBytePairIncludingZero) {
+  SymContext C;
+  auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+  auto R = C.mkURem(C.mkZExt(X, 16), C.mkZExt(Y, 16));
+  SymEvalPlan Plan(C, R);
+  for (unsigned A = 0; A != 256; ++A)
+    for (unsigned B = 0; B != 256; ++B) {
+      const llvm::APInt Values[] = {llvm::APInt(8, A), llvm::APInt(8, B)};
+      const auto Oracle = B ? A % B : A;
+      ASSERT_EQ(Plan.eval(Values), llvm::APInt(16, Oracle));
+    }
+}
+
+TEST(SymExpr, RemainderNarrowingKeepsUnknownHighBitsAndWideDivideByZero) {
+  SymContext C;
+  auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+  auto Wide = C.mkVar("wide", 16);
+  auto HighNumerator = C.mkURem(Wide, C.mkZExt(Y, 16));
+  auto HighDivisor = C.mkURem(C.mkZExt(X, 16), Wide);
+  EXPECT_EQ(C.op(HighNumerator), SymOp::URem);
+  EXPECT_EQ(C.op(HighDivisor), SymOp::URem);
+  const llvm::APInt Values[] = {llvm::APInt(8, 255), llvm::APInt(8, 127),
+                                llvm::APInt(16, 257)};
+  EXPECT_EQ(C.eval(HighNumerator, Values), llvm::APInt(16, 3));
+  EXPECT_EQ(C.eval(HighDivisor, Values), llvm::APInt(16, 255));
+  auto Quotient = C.mkUDiv(C.mkZExt(X, 16), C.mkZExt(Y, 16));
+  const llvm::APInt Zero[] = {llvm::APInt(8, 255), llvm::APInt(8, 0),
+                              llvm::APInt(16, 0)};
+  EXPECT_EQ(C.eval(Quotient, Zero), llvm::APInt::getAllOnes(16));
+  EXPECT_NE(Quotient, C.mkZExt(C.mkUDiv(X, Y), 16));
+}
+
 TEST(SymExpr, DivisionAndRemainderFollowTheBitvectorTheory) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", W32);

@@ -21,6 +21,7 @@
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
+#include "neverd/backend/c/render/AArch64/AArch64ReturnProtectionC.h"
 #include "neverd/backend/c/render/AArch64/AArch64SVEVectorState.h"
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -6308,11 +6309,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     if (Opts.TheArch == Arch::AArch64 && Func.ReturnProtection) {
       if (!TargetFeatures.empty())
         TargetFeatures += ",";
-      TargetFeatures += "branch-protection=pac-ret";
-      if (Func.ReturnProtection->Leaf)
-        TargetFeatures += "+leaf";
-      if (Func.ReturnProtection->BKey)
-        TargetFeatures += "+b-key";
+      TargetFeatures += aarch64ReturnProtectionCTarget(*Func.ReturnProtection);
     }
     if (!TargetFeatures.empty())
       OS << "__attribute__((target(\"" << TargetFeatures << "\")))\n";
