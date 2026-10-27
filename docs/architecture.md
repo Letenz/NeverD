@@ -175,15 +175,21 @@ materializes generic atomic RMW results at their original statement, so a
 single-use snapshot cannot delay the transaction across a later load or call.
 
 `X86APXAtomic.h` owns the APX and legacy atomic native API names, operand widths,
-condition/segment controls and exact assembly fallback. The existing
-`ApxAtomicIntrinsicShape` owns LowIR/MedIR/HighIR admission. LLVM and both C
+condition/segment controls and exact assembly fallback.
+`ir/intrinsics/X86/X86AtomicMemory.h` owns the shared
+`ApxAtomicIntrinsicShape` for LowIR/MedIR/HighIR admission. LLVM and both C
 routes preserve the original legacy/VEX/EVEX RAO-INT or CMPccXADD transaction,
 including dead results and false-condition write-back; no ordinary load/store expansion is
 permitted. Normalized offsets retain DS/FS/GS selection, with address-size
-wrapping performed by the existing effective-address owner. Default-stack
-RSP/RBP accesses with 64-bit addressing remain refused unless FS/GS overrides
-the segment: the normalized offset cannot yet retain their distinct #SS fault
-class. `Codegen` treats LLVM error diagnostics as compilation failures and
+wrapping performed by the existing effective-address owner. Long-mode
+RSP/RBP addresses additionally carry a checked final byte (`1`) after their
+ordinary operands. This preserves their stack-reference fault class when
+normalization erases the original base register. The extension is invalid
+on i386 or with FS/GS; R12/R13 and address32 stay data references. Existing
+ordinary forms retain their original arity. Native output maps the marker to
+`X86NativeStackReference`, and the owned assembly computes an RBP-relative
+index in RDX without replacing the frame pointer. LLVM and C capability gates
+select this native API only when the compiler supports stack references. `Codegen` treats LLVM error diagnostics as compilation failures and
 does not publish the parseable but incomplete objects LLVM can leave behind.
 Legacy RAO also supports i386; normalized addresses remain eight bytes while
 the native i386 carrier is four bytes. A complete narrow absolute displacement

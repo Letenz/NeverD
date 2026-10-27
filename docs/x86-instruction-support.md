@@ -141,7 +141,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | XBEGIN and full RTM regions | Original abort target, register/memory checkpoint, nesting and rollback continuation. A C `_xbegin()` status result cannot substitute for the decoded instruction. Strict/permissive lifting and legacy IR admission explicitly refuse that incomplete representation. |
 | Remaining compact-memory address forms | Native LLVM and both C routes retain long-mode RSP/RBP stack-reference provenance independently of DS overrides, alongside DS/FS/GS data addresses. In i386, SS-default stack bases and explicit CS/ES/SS segments remain refused; an explicit DS override is supported. Physical AVX-512 fault execution remains unqualified. |
 | Remaining four-source address forms and hardware qualification | Native lowering uses explicit SSA sources and the same long-mode stack-reference contract as compact memory. i386 non-DS/FS/GS segments and physical AVX512_4FMAPS/AVX512_4VNNIW execution/exception behavior still require qualification. Legacy implicit-bank IDs remain guarded at native output. |
-| Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Default-stack memory and i386 non-DS segments still require preserved segment-fault provenance; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
+| Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Long-mode default-stack memory retains an explicit provenance control. i386 non-DS segments still require an owned segment contract; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
 | AMX tile row-memory with addr64 SP/BP bases | Its SIB index is the architectural stride and cannot also carry the configuration API's offset relative to RBP. These forms fail before LowIR effects unless FS/GS selects the segment. LDTILECFG/STTILECFG use the independent version-2 stack-reference contract below. |
 | VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
 
@@ -1984,9 +1984,20 @@ checks the same 48 signatures, alongside 76 passing frontend tests. This
 does not change the production SDK pin or qualify physical atomicity.
 
 The remaining row above is deliberately narrower than full RAO/CMPccXADD
-support. Legacy RAO and VEX CMPccXADD are covered below. Unoverridden
-RSP/RBP bases with 64-bit addressing need explicit stack-fault provenance;
-ignored CS/DS/ES/SS prefixes cannot restore it after normalization. See
+support. Legacy RAO and VEX CMPccXADD are covered below. RSP/RBP bases with
+64-bit addressing now retain an explicit stack-reference control through
+LowIR/MedIR/HighIR. It maps to the fork's `0x100` native memory bit; ignored
+CS/DS/ES/SS prefixes cannot replace that independent provenance. Address32,
+R12/R13 and FS/GS retain ordinary data-reference forms. The optional final
+byte is checked at every IR boundary; invalid widths, values, address
+provenance, i386 mode and FS/GS combinations fail before memory or results
+are committed. The semantic contract lives in `X86/X86AtomicMemory.h`.
+
+The native stack carrier leaves RBP unchanged and uses RBP plus a calculated
+index. Older SDK and ordinary C compiler output use the same instruction
+through owned assembly, with RDX/flags clobbers covering the address setup.
+Native C dispatch additionally requires
+`__NEVERC_X86_NATIVE_MEMORY_STACK_REFERENCE__ >= 1`. See
 [Intel's canonical-address rule, section 3.3.7.1](https://www.intel.com/content/dam/support/us/en/documents/processors/pentium4/sb/25366521.pdf)
 and [APX revision 9 exception tables](https://kib.kiev.ua/x86docs/Intel/APX/355828-009.pdf).
 The concrete executor still restricts atomic accesses to aligned ordinary
@@ -2023,9 +2034,9 @@ an uninitialized input cannot become an accidental transaction with zero.
 Direct native APIs expose all segment controls. Normalized lifter addresses
 currently admit DS-default/DS override and FS/GS forms on i386; implicit
 SS stack bases and explicit CS/ES/SS forms are refused. x86-64 default-stack
-RSP/RBP accesses with 64-bit addressing remain refused without FS/GS.
-These guards preserve the outstanding segment-fault distinction rather than
-emitting an instruction with a different fault class. Hardware atomicity,
+RSP/RBP accesses with 64-bit addressing use the explicit stack-reference
+contract described above; FS/GS and address32 retain their data-reference form.
+The remaining i386 guard preserves the outstanding segment-fault distinction. Hardware atomicity,
 write-back memory-type behavior and fault ordering remain unqualified.
 
 The standalone LLVM, NeverC and NeverC-IR-to-LLVM matrices each pass 10,080

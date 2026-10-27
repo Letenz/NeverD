@@ -738,6 +738,14 @@ TEST(X86APXAtomic, StackControlValidationPrecedesMemoryAndResults) {
       auto Converted = LowToMedConverter().convert(
           makeSingleInstructionFunction(Op), Arch::X64);
       EXPECT_TRUE(verifyMedFunc(Converted, "valid-stack-atomic"));
+      auto Image = makeImage(
+          0x4800, 8, SegmentFlags::Readable | SegmentFlags::Writable, 19);
+      NdOpEmulator Completed(Image);
+      Completed.setStrictMode(true);
+      ASSERT_TRUE(Completed.step(Op));
+      EXPECT_EQ(probeMemory(Completed, 0x4800, Width), 22u);
+      if (Compare)
+        EXPECT_EQ(Completed.getRegister(kAtomicOutputTemp), 19u);
       for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
         LowOp Bad = Op;
         auto &Control = Bad.Inputs[Bad.NumInputs - 1];
@@ -1759,6 +1767,64 @@ TEST(X86APXAtomic, SegmentBaseParticipatesInNaturalAlignment) {
   EXPECT_TRUE(Emulator.getLoadRecords().empty());
   EXPECT_EQ(probeMemory(Emulator, Target, 8), Old);
   EXPECT_FALSE(Emulator.skips().any());
+}
+
+TEST(X86LegacyAtomic, StackAddressControlsFollowModeWidthAndSegment) {
+  constexpr Intrinsic Ids[] = {
+      Intrinsic::X86LegacyRaoAdd, Intrinsic::X86LegacyRaoAnd,
+      Intrinsic::X86LegacyRaoOr, Intrinsic::X86LegacyRaoXor,
+      Intrinsic::X86LegacyCmpccXadd};
+  constexpr uint8_t Mandatory[] = {0, 0x66, 0xf2, 0xf3};
+  for (Arch A : {Arch::X86, Arch::X64})
+    for (unsigned Width : {4u, 8u})
+      for (bool Narrow : {false, true})
+        for (unsigned Base : {4u, 5u, 12u, 13u})
+          for (uint8_t Segment : {0, 0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65})
+            for (unsigned Kind = 0; Kind != 5; ++Kind) {
+              const bool Compare = Kind == 4;
+              if (A == Arch::X86 && (Width == 8 || Base >= 8 || Compare))
+                continue;
+              const bool Address16 = A == Arch::X86 && Narrow;
+              const bool StackBase = Address16 || Base < 8;
+              const bool TLS = Segment == 0x64 || Segment == 0x65;
+              const bool Refused = A == Arch::X86 && !TLS && Segment != 0x3e;
+              const bool Stack = A == Arch::X64 && !Narrow && StackBase && !TLS;
+              std::vector<uint8_t> Bytes;
+              if (Narrow)
+                Bytes.push_back(0x67);
+              if (Segment)
+                Bytes.push_back(Segment);
+              if (Compare) {
+                Bytes.insert(Bytes.end(),
+                             {0xc4, uint8_t(Base >= 8 ? 0xc2 : 0xe2),
+                              uint8_t(0x69 | (Width == 8 ? 0x80 : 0)), 0xe4});
+              } else {
+                if (Mandatory[Kind])
+                  Bytes.push_back(Mandatory[Kind]);
+                if (Width == 8 || Base >= 8)
+                  Bytes.push_back(0x40 | (Width == 8 ? 8 : 0) |
+                                  (Base >= 8 ? 1 : 0));
+                Bytes.insert(Bytes.end(), {0x0f, 0x38, 0xfc});
+              }
+              Bytes.push_back(Address16 ? 0x4a
+                                        : 0x4c); // BP+SI / SIB; source RCX
+              if (!Address16)
+                Bytes.push_back(0x10 | (Base & 7)); // index RDX, scale one
+              Bytes.push_back(0);
+              SCOPED_TRACE(testing::PrintToString(Bytes));
+              if (Refused) {
+                expectDecodeOrLiftRejected(Bytes, A);
+                continue;
+              }
+              const auto Lifted = liftX64(Bytes, A);
+              const auto *Atomic = findIntrinsic(Lifted.Ops, Ids[Kind]);
+              ASSERT_NE(Atomic, nullptr);
+              const auto Shape = apxAtomicLowShape(*Atomic, A);
+              EXPECT_TRUE(intrinsicApxAtomicShapeIsValid(Ids[Kind], Shape));
+              EXPECT_EQ(Shape.stackReference(), Stack);
+              EXPECT_EQ(Atomic->NumInputs,
+                        x86AtomicAddressControlIndex(Ids[Kind]) + Stack);
+            }
 }
 
 TEST(X86LegacyAtomic, RaoPreservesOperationWidthAddressWrappingAndFlags) {

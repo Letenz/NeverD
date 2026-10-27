@@ -836,10 +836,10 @@ pointer field still returns the machine integer bits expected by its consumer.
 
 APX atomic qualification uses `NeverDX86APXAtomicSemanticTests` and
 `NeverDX86APXAtomicSourceTests`. The former owns decode/LowIR/concrete memory,
-condition, flag and failure-commit checks, including refusal of unrepresented
-64-bit default-stack fault semantics. The latter validates MedIR, native LLVM,
-owned assembly and both C routes; it exports 360 live/dead/repeated wrappers
-and 504 decoded pipeline cases when `NEVERD_APX_ATOMIC_EXPORT_DIR` is set.
+condition, flag and failure-commit checks, including explicit preservation of
+64-bit default-stack provenance and refusal of malformed address controls.
+The latter validates MedIR, native LLVM, owned assembly and both C routes;
+it exports 480 live/dead/repeated wrappers and 588 decoded pipeline cases when `NEVERD_APX_ATOMIC_EXPORT_DIR` is set.
 `scripts/verify_x86_apx_atomic.py` takes those exports, the full fork's `llc`,
 NeverC and its independent `tests/verify-apx-atomic-completion.py` oracle.
 It checks production objects and LLVM/Clang/NeverC/GCC wrappers across supported
@@ -847,14 +847,23 @@ formats and O0/O2. `--pipeline` additionally compiles both recovered C routes
 with Clang and NeverC, checking effective offsets, source operands, flags,
 return values and nonvolatile registers against the original instruction
 sequence. `--pipeline-only` reruns that stage without repeating the wrappers.
-These controlled completions do not qualify physical atomicity or hardware
-faults. `NeverDCodegenDiagnosticTests` requires an allocation error to reject
+`--frames-only` adds 64-byte-aligned volatile locals and dynamic allocations
+to the same exported C fixtures, checking their canaries through the return.
+It also feeds NeverC's native IR to the full LLVM backend. Stack probes are
+disabled only in this controlled fixture; return-SP and all ABI-saved GPRs
+must match the independent completion oracle.
+The oracle independently decodes stack-carrier SIB bytes, rejects malformed
+carriers, and checks effective addresses as RBP plus the allocated index.
+`X86NativeMemoryCarrier` also compiles RAO/CMPccXADD stack references in realigned
+dynamic frames across all three object formats. These controlled completions
+do not qualify physical atomicity or hardware faults.
+`NeverDCodegenDiagnosticTests` requires an allocation error to reject
 an otherwise parseable object, retaining the caller's diagnostic handler.
 
 `NeverDX86LegacyEncodingSourceTests` reuses the atomic boundary fixtures with
 the legacy RAO/VEX CMPccXADD inventory. Set `NEVERD_LEGACY_ATOMIC_EXPORT_DIR`
 and pass `--legacy` to `verify_x86_apx_atomic.py` for the x86-64 wrappers and
-504 decoded pipeline cases. Its i386 fixtures add 112 wrappers per format
+588 decoded pipeline cases. Its i386 fixtures add 112 wrappers per format
 and 144 decoded pipelines. `scripts/verify_x86_legacy_atomic_i386.py` checks
 their production/LLVM objects and Clang C output at O0/O2, including 16-bit
 effective addressing, all explicit segment controls, aliased ordinary

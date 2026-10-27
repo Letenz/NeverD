@@ -379,8 +379,13 @@ TEST(X86APXAtomicSource, StackAddressControlsAreCheckedAcrossOutputRoutes) {
         EXPECT_FALSE(
             intrinsicApxAtomicShapeIsValid(Id, apxAtomicMedShape(Op, A)));
         llvm::LLVMContext Context;
-        EXPECT_THROW(MedLLVMEmitter().emit({F}, Context, "invalid-stack", A),
-                     std::invalid_argument);
+        // Address escape preflight reports this refusal through a null module
+        // before native shape admission can throw.
+        if (Mutation == 4)
+          EXPECT_FALSE(MedLLVMEmitter().emit({F}, Context, "invalid-stack", A));
+        else
+          EXPECT_THROW(MedLLVMEmitter().emit({F}, Context, "invalid-stack", A),
+                       std::invalid_argument);
       }
       for (unsigned Prefix : {0x100u, 0x126u, 0x12eu, 0x136u, 0x13eu}) {
         const auto Stack = x86APXAtomicPlan(Id, Bytes, 64, Prefix);
