@@ -415,6 +415,30 @@ class HistoryAllowance:
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
+        path="docs/evidence/arm64e-raw-sp-memory-2026-10-27.json",
+        rule="private-path",
+        commits=frozenset({
+            "85900e61461ed155a102148df6cddb682f7834b4",
+            "ec76b47c855209573e6e6a6f972af2c7c5749311",
+        }),
+        line="",
+        reason=(
+            "Reviewed removal of developer checkout prefixes from six arm64e "
+            "skipped-case outputs, including the identical cherry-pick. Only "
+            "exact deleted line digests in these cleanup commits are covered. "
+            "Test outcomes, timings and artifact hashes are unchanged; current "
+            "and future private paths remain findings."
+        ),
+        line_sha256=frozenset({
+            "0595402c250fe956e45823809ba272953422559436c8ca711148d49bb6b6f58f",
+            "2245215fc74effce3d47cbd2f87ecd822e22e8741215e103155ff9f0ef93452d",
+            "697a5b27da22d738d44e4cef7dd7f903dc8e7f30085d4271894ef998f60284b0",
+            "6b1c07f536c8584bd39145bbd7f7fbd315742348b10b8f9fc1ff90e273d47953",
+            "bb7f915de1f2a18f191a40ffb4f5292a5e401394ecd987dff4809e49adb3fa22",
+            "d29c8ee4b68292d61a4ba827d10f0c39bd431a2d22b78ecba997172a536bf08c",
+        }),
+    ),
+    HistoryAllowance(
         path="docs/evidence/patch-scaling-2026-10-25.json",
         rule="private-path",
         commits=frozenset({

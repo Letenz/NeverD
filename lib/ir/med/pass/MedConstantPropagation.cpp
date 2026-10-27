@@ -14,6 +14,7 @@
 #include "neverd/ir/med/MedIR.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -42,7 +43,7 @@ enum class Knowledge { Pending, Constant, Varying };
 struct ConstantNode {
   MedVar Output;
   std::vector<MedVar> Inputs;
-  std::vector<ConstantNode *> Users;
+  llvm::SmallVector<ConstantNode *, 1> Users;
   Knowledge State = Knowledge::Pending;
   MedVar Value;
   bool Queued = false;
