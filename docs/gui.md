@@ -1283,7 +1283,8 @@ picks, as IDA's keys do: **Hexadecimal** (Q), **Decimal** (H), **Binary** (B),
 **Character** (R, `'ABCD'` when every byte is printable), **Offset** (O, the
 name of the address the number points at), **Change sign** (`_`, the two's
 complement with a minus) and **Bitwise negate** (`~`); **Number** (`#`) goes
-back to the listing's own choice. The number under the cursor changes; with
+back to the listing's own choice. Right-clicking an instruction offers the same
+forms under **Operand type**. The number under the cursor changes; with
 the cursor elsewhere on the line, the line's last number does, and a line
 without one is refused. Only x86 instructions show operand types so far. A form
 the value cannot take, such as characters for unprintable bytes or an offset to

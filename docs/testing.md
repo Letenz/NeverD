@@ -3894,6 +3894,9 @@ overview and chooser panes, and preserves already open floating panes.
 to the main window even when its previous tab group and disassembly are floating.
 `floatingAnalysisMenusStayWithTheirView` checks popup ownership and native
 transient parenting for floating text, graph, pseudocode and IR views.
+`disassemblyMenuOffersTheLinesEdits` checks that the text and graph menus offer
+stack variables, the SP correction and the operand forms on an instruction,
+and array and alignment on a data item, while pseudocode offers none of them.
 `floatingCommandDialogsStayWithTheirView` checks search, calculator input and
 results, options and other command dialogs against their floating owner.
 `analysisBrowsersStayInteractive` covers ordinary xrefs, address and location
