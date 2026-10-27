@@ -18,6 +18,24 @@ def ok(client, operation, payload=None):
     return result["payload"]
 
 
+def patch_pages(worker, expected):
+    total = len(expected)
+    for offset, limit in ((0, 0), (0, 1), (1, 1), (0, 512),
+                          (max(0, total - 1), 512), (total, 128), (total + 1, 128)):
+        items = expected[offset:offset + limit]
+        page = ok(worker, "patches", {"offset": offset, "limit": limit})
+        assert page == {"items": items, "total": total, "offset": offset,
+                        "complete": offset + len(items) >= total}, page
+        assert all(row["address"] == row["va"] for row in page["items"])
+    for payload, code in (({"offset": -1}, "invalid_request"),
+                           ({"offset": "1"}, "invalid_request"),
+                           ({"limit": -1}, "invalid_request"),
+                           ({"limit": 513}, "budget_exceeded")):
+        refused = worker.call("patches", payload)
+        assert refused["status"] != "ok" and refused["error"]["code"] == code, refused
+    assert ok(worker, "patches")["items"] == expected
+
+
 def run(executable, real=False):
     data, entry = two_routine_elf() if real else (bytes(range(16)), 0xffff800012340000)
     at = entry + 1
@@ -39,6 +57,7 @@ def run(executable, real=False):
             plan = ok(worker, "patch_preview", request)
             assert plan["original"] == original and plan["current"] == "2a", plan
             assert ok(worker, "patches")["total"] == 0
+            patch_pages(worker, [])
             request["expected"] = original
             ok(worker, "patch_apply", request)
             assert ok(worker, "bytes", {"address": hex(at), "size": 1})["data"] == "2a"
@@ -77,6 +96,10 @@ def run(executable, real=False):
             assert binary.read_bytes() == data
             ok(worker, "patch_apply", {"address": hex(at + 2), "kind": "bytes", "bytes": "55"})
             rows = ok(worker, "patches")["items"]
+            patch_file, = Path(directory).rglob("patches.json")
+            patch_text, patch_time = patch_file.read_bytes(), patch_file.stat().st_mtime_ns
+            patch_pages(worker, rows)
+            assert patch_file.read_bytes() == patch_text and patch_file.stat().st_mtime_ns == patch_time
             ok(worker, "patch_revert", {"address": hex(at), "ranges": [{"address": row["va"], "size": row["size"]} for row in rows]})
             assert ok(worker, "patches")["total"] == 0
             assert ok(worker, "patches", {"ranges_only": True})["items"] == []

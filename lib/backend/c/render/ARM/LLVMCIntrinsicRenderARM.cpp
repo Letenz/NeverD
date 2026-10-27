@@ -391,13 +391,23 @@ renderAArch64PAuthLoadCall(Arch TheArch, const llvm::CallInst &Call,
                            const std::string &ResultName, bool ResultLive,
                            const std::vector<std::string> &Args) {
   const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
-  if (!Asm || Asm->getAsmString() != kPAuthLoadAsm)
+  if (!Asm || (Asm->getAsmString() != kPAuthLoadAsm &&
+               !Asm->getAsmString().starts_with(kPAuthLoadSPPrefix)))
     return std::nullopt;
+  const bool StackBase = Asm->getAsmString() == kPAuthLoadSPAsm;
   const auto *Result = llvm::dyn_cast<llvm::StructType>(Call.getType());
   if (TheArch != Arch::AArch64 ||
-      Asm->getConstraintString() != kPAuthLoadConstraints ||
-      !Asm->hasSideEffects() || Call.arg_size() != kPAuthLoadOperandCount ||
-      Args.size() != kPAuthLoadOperandCount || !Result ||
+      Asm->getAsmString() != (StackBase ? kPAuthLoadSPAsm : kPAuthLoadAsm) ||
+      Asm->getConstraintString() !=
+          (StackBase ? kPAuthLoadSPConstraints : kPAuthLoadConstraints) ||
+      !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
+      Asm->getDialect() != llvm::InlineAsm::AD_ATT ||
+      Call.getFunctionType()->isVarArg() || Call.getNumOperandBundles() ||
+      Call.getCallingConv() != llvm::CallingConv::C || Call.doesNotReturn() ||
+      Call.hasFnAttr(llvm::Attribute::Speculatable) ||
+      Call.getMemoryEffects() != llvm::MemoryEffects::unknown() ||
+      Call.arg_size() != kPAuthLoadOperandCount ||
+      Args.size() != kPAuthLoadOperandCount || !Result || Result->isPacked() ||
       Result->getNumElements() != kPAuthLoadOperandCount ||
       !Result->getElementType(kPAuthLoadValueIndex)
            ->isIntegerTy(kPAuthLoadPointerBits) ||
@@ -410,7 +420,8 @@ renderAArch64PAuthLoadCall(Arch TheArch, const llvm::CallInst &Call,
   const auto *Word = llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(1));
   const auto Instruction =
       Word ? aarch64PAuthLoadInstruction(Word->getZExtValue()) : std::nullopt;
-  if (!Instruction || Instruction->base() != kPAuthLoadScratchBase ||
+  if (!Instruction || Instruction->stackBase() != StackBase ||
+      (!StackBase && Instruction->base() != kPAuthLoadScratchBase) ||
       Instruction->destination() != kPAuthLoadScratchValue)
     throw std::invalid_argument(kPAuthLoadMalformed);
   const auto Value = aarch64PAuthLoadC(*Instruction, Args[0]);

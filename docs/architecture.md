@@ -610,11 +610,23 @@ base, unchanged without writeback. LLVM and both C projections execute one
 original-family instruction with a memory clobber. In particular, standalone
 `AUTDA`/`AUTDB` followed by a load is not equivalent when `FEAT_FPAC` is enabled
 without `FEAT_FPACCOMBINE`. Dead results still retain memory and failure effects.
-SP-origin forms remain representable for analysis but execution projections
-reject them: replacing SP with a GPR would lose `CheckSPAlignment` and the
-original memory-tag-checking contract. Constrained-unpredictable writeback
-register overlap is rejected. This does not grant an ABI/native replacement
-proof. The operation follows Arm's [LDRA and Auth pseudocode](https://documentation-service.arm.com/documentation/ddi0602/2025-09?lang=en&rev=1).
+Explicit no-image SP projections require a complete raw-SP source proof.
+They save host SP in X14, install the raw value, execute the combined load with
+literal Rn=31, capture completed SP in X16 and restore host SP on success.
+Offset addressing preserves the original signed SP; writeback publishes the
+authenticated updated base. LLVM-to-C requires that exact assembly, constraints
+and complete memory effects. Image or synthesized frame values remain refused.
+Constrained-unpredictable writeback register overlap is rejected. This does
+not grant a reconstructed call/frame/unwind ABI or asynchronous-unwind proof. The operation follows Arm's [LDRA and Auth pseudocode](https://documentation-service.arm.com/documentation/ddi0602/2025-09?lang=en&rev=1).
+
+The [SP flow and authenticated-fault record](evidence/arm64e-sp-flow-and-pauth-faults-2026-10-27.json)
+qualifies these combined SP primitives at EL1/EL0 in the official model with
+baseline PAC, FPAC and FPACCOMBINE. Valid signed misalignment and invalid PAC,
+separately and together, retain the original word's exception order, raw SP,
+hardware origin and complete guarded-memory effects. The recovery wrapper is
+test machinery; it supplies no generated call or unwind ABI. Automatic original
+memory lifting marks the retained instruction word as scalar metadata, so image
+relocation cannot reinterpret its encoded displacement as an address.
 
 Scalar FEAT_CPA `ADDPT`, `SUBPT`, `MADDPT` and `MSUBPT` retain checked-pointer
 operations rather than ordinary integer arithmetic. `AArch64CPA.def` owns
@@ -695,9 +707,12 @@ memory/frame model. The x1 selection follows Apple's
 which introduces CPA2; a classic arm64e header alone does not select this
 checked-memory source contract.
 Reusing a decoder for a different image refreshes this selection even when its
-architecture and instruction mode are unchanged. Literal
-SP immediates retain the existing frame path; that path does not qualify the
-original SP environment under CPA2. An opaque access through a proven entry-SP
+architecture and instruction mode are unchanged. Architecture-only and x1
+lifting retain literal-SP immediate, scalar/SIMD writeback, pair and NEON words
+under the same original-memory policy as GPRs. Ordered SP accesses retain their
+original RCpc/release word for every image subtype. Ordinary nonordered accesses
+in image-configured AArch64 and classic arm64e keep their frame path. Original
+SP words do not qualify a reconstructed source frame under CPA2. An opaque access through a proven entry-SP
 alias also fails image-backed lowering until its stack/call ABI is qualified;
 a nominal footprint cannot justify forwarding or omitting stack arguments.
 Runtime GPR values remain in runtime
@@ -787,13 +802,27 @@ the host SP in X14, installs X16, executes the original SP instruction, captures
 the completed SP in X16 and restores the host SP before publishing results.
 The machine table owns the complete assembly and constraints; inverse LLVM-to-C
 admission rejects changed SP fields, missing restoration and missing clobbers.
-Image-backed or synthesized SP, nonparameter SSA bases and the reconstructed
-frame/call/unwind ABI remain refused by the shared memory source-base policy.
+The shared source-base proof follows complete copies, all SELECT/PHI arms and
+the completed-base result of an original SP operation back to explicit runtime
+parameters. Every dependency must reach a parameter; an uninitialized cycle
+cannot borrow another arm's permission. HighIR uses every reaching definition
+at the exact use, including initialized loop backedges, and refuses address-taken
+variables. Loaded data, the wrong result half, narrowing, constants, image or
+synthesized frames cannot acquire that proof. The reconstructed frame/call/unwind
+ABI remains refused by the shared memory source-base policy.
 The [raw-SP primitive record](evidence/arm64e-raw-sp-memory-2026-10-27.json)
 binds 1,579 independent words to 60 official Arm model executions at EL1/EL0,
 with SA/SA0 enabled, and 7,895 native alignment faults through five actual output
 routes. It does not qualify automatic SP source-frame reconstruction or signed
 native exception unwinding.
+
+The intrinsic defines its typed auxiliary SSA outputs. A following COPY still
+defines its own destination; HighIR lowers that COPY before ordinary copy
+propagation, matching LLVM instead of silently skipping result transport.
+HighC liveness treats auxiliary results of both call and assignment statements
+as definitions. It omits unused result assignments while retaining the original
+instruction and every live Var/PHI result, so discarded fields need no warning
+suppression in strict C builds.
 
 Both source routes and LLVM validate the complete contract before source-only
 filtering. A discarded result retains the memory instruction. Exact image-base
@@ -1192,6 +1221,11 @@ It resolves acquisition and release together and retains JSON compatibility with
 older SDKs. Snapshot storage survives session edits and destruction; the overlay
 still owns all admission, ordering and kind decisions. CLI JSON and sidecar
 formats remain unchanged.
+Paged worker inventories construct JSON and presentation addresses only for
+the requested row window. The owning SDK snapshot still contains the full
+inventory; total counts and completion come from that snapshot, including empty
+and zero-limit pages. Older SDKs retain the complete JSON parser and move only
+the selected rows into the response. History admission still requests all rows.
 Their shared writer reuses hexadecimal scratch storage and emits only
 formatter-produced hex directly; general strings retain JSON escaping and
 external input retains its existing validation.

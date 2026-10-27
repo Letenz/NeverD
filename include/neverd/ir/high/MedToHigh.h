@@ -530,8 +530,7 @@ private:
   void lowerStore(HighFunc &Func, const MedOp &CurOp);
   void lowerCall(HighFunc &Func, const MedBlock &CurBlock, const MedOp &CurOp);
   void lowerIntrinsic(HighFunc &Func, const MedBlock &CurBlock,
-                      const MedOp &CurOp, size_t OpIdx,
-                      std::set<size_t> &IntrinsicSkip);
+                      const MedOp &CurOp, size_t OpIdx);
   void lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
                     const MedOp &CurOp);
   void lowerCBranch(HighFunc &Func, const MedOp &CurOp);

@@ -43,6 +43,12 @@ NEVERD_A64_PAUTH_LOAD_VALUE(unsigned, kPAuthLoadScratchValue, 17)
 NEVERD_A64_PAUTH_LOAD_TEXT(kPAuthLoadAsm, ".inst ${3:c}")
 NEVERD_A64_PAUTH_LOAD_TEXT(kPAuthLoadConstraints,
                            "=&{x17},={x16},1,i,~{memory}")
+NEVERD_A64_PAUTH_LOAD_TEXT(
+    kPAuthLoadSPAsm, "// neverd.pauth.load.sp\n\tmov x14, sp\n\tmov sp, x16\n\t"
+                     ".inst ${3:c}\n\tmov x16, sp\n\tmov sp, x14")
+NEVERD_A64_PAUTH_LOAD_TEXT(kPAuthLoadSPConstraints,
+                           "=&{x17},={x16},1,i,~{x14},~{memory}")
+NEVERD_A64_PAUTH_LOAD_TEXT(kPAuthLoadSPPrefix, "// neverd.pauth.load.sp")
 NEVERD_A64_PAUTH_LOAD_TEXT(kPAuthLoadResult, "pauth.load")
 NEVERD_A64_PAUTH_LOAD_TEXT(kPAuthLoadMalformed,
                            "malformed AArch64 combined authenticated load")

@@ -15142,6 +15142,13 @@ Run the real SDK patch/replica path under ASan as well as the JSON-only mock:
 analysis-section metadata returned by the SDK must remain owned while its
 `sections` subarray is traversed during snapshot construction.
 
+`tools/neverd-bench/patch-pages.py --baseline BEFORE --candidate AFTER` compares
+complete first, middle, tail, empty and zero-limit patch-page requests with
+alternating CPU/wall samples, frozen binary hashes and SDK-mapping checks. Its
+independent sidecar-derived oracle checks every returned field, total, offset,
+completion and file bytes/timestamps. Run the mock/native patch suites for empty
+inventories, page limits and invalid bounds, including an older JSON-only SDK.
+
 `tools/neverd-bench/patch-paired.py --worker-history` compares complete CLI
 commands and durable worker commit/undo/redo against two explicit binary
 snapshots. `tools/neverd-bench/patch-payload.py` covers a large merged row, with
@@ -15588,6 +15595,63 @@ the record excludes those from the current-build acceptance count.
 The C execution checker used system Apple Clang after independently observing
 Homebrew Clang 22 link stalls; the NeverSight LLVM backend stayed at r6. The
 record retains both compiler controls and the unqualified signed-unwind probe.
+
+`AArch64RawSPLifting.*` checks 1,871 independent literal-SP words through both
+decoders, strict/permissive mode and architecture-only/x1 policy. Its ordered
+control covers all three Mach-O AArch64 subtypes. `AArch64RawSPProvenance.*`
+checks complete parameter roots, copied/completed bases, all PHI/SELECT arms,
+exceptional entries, initialized and uninitialized cycles, mutable source joins
+and exact uses, and indirect overwrites through a parameter's address.
+
+`AArch64RawSPFlow.CompletedBasesExecuteThroughEveryMemoryFamily` executes twenty
+sequences spanning every scalar, SIMD, pair and NEON writeback identity. A copied
+completed SP feeds a second original SP load. Its GPR control exercises the same
+auxiliary transports and PHI reads. `AArch64StackPAuthLoad` executes seven SP
+LDRAA/B samples, including both keys, offset/writeback, discarded destinations
+and signed displacement boundaries. Both C routes compile and execute at O0/O2
+with Wall/Wextra/Werror and fno-strict-aliasing; actual NeverSight LLVM Mach-O
+objects execute through the same bridges. Every buffer byte is compared. Local
+ordinary-arm64 data keys are disabled, so these native runs alone do not qualify
+active authentication.
+
+Set `NEVERD_ARM64E_SP_FLOW_ARTIFACT_DIR` and
+`NEVERD_ARM64E_SP_PAUTH_ARTIFACT_DIR` to separate roots. Each exports unchanged
+HighC/LLVMC, the independent original-word harness, LLVM ELF/Mach-O, and IR
+diagnostics. The environment PR's `sp-flow`/`el0-sp-flow` and
+`sp-pauth`/`el0-sp-pauth` profiles require their complete named source tests and
+export, all four effective CPTA settings, real SA/SA0 readback and exact EL0
+origin. PAuth additionally requires actual capability, distinct data-key
+readback, EnDA/EnDB readback and changed signature bits for both keys. Their
+successful-access scope does not cover invalid-PAC fault ordering, asynchronous
+unwind, MTE, overflow or a reconstructed image ABI.
+
+The separate `sp-pauth-faults`, `fpac-sp-pauth-faults` and
+`fpac-combine-sp-pauth-faults` profiles, with their `el0-` variants, consume the
+same exports. They require real model feature configuration and architecture
+level readback, active A/B data keys, aligned normal-completion controls and 21
+fault comparisons under every CPTA setting. Original words and generated code
+must agree on complete ESR, raw signed SP, hardware exception origin and exact
+fault instruction, with every memory byte unchanged. The paired PAC/SP stimuli
+distinguish standalone authentication from the original combined instruction.
+
+The [2026-10-27 SP flow and PAuth fault record](evidence/arm64e-sp-flow-and-pauth-faults-2026-10-27.json)
+binds 50 official-model guest executions, 2,520 fault comparisons and the live
+GPR-substitution negative control to the tested source and environment commits.
+The twelve-target regression covers 1,726 cases: 1,714 pass after a single
+original-timeout repeat and twelve explicitly skip. The first full run's one
+timeout is retained; its isolated repeat completes in 29 seconds without a
+deadline change. Four existing wide-integer fixtures explicitly emit x64 and
+use a matching Clang target and Rosetta execution; other AArch64 C checks use
+the system compiler. All 135 earlier raw-SP exports remain byte-identical,
+preserving their separately recorded model and native-fault evidence without
+claiming those old executions were repeated.
+
+The retained native signed-unwind controls now include compiler-generated
+`branch-protection=pac-ret` and `pac-ret+b-key` frames. Unsigned O0/O2 controls
+complete backtraces and C++ exception destruction; signed controls terminate
+with an uncaught exception at both levels. They reproduce the boundary without
+handwritten frame CFI and are unavailable coverage, not passing NeverD signed
+unwind qualification.
 
 ## Selected callable checks
 
