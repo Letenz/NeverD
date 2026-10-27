@@ -154,7 +154,15 @@ bool NdOpEmulator::executeX87Context(const LowOp &Op) {
     publishX87ContextRegisters();
     return true;
   }
-  if (!X87PortableMode && (State[4] & ~X87PayloadKnown) && !Initialize)
+  if (Spec->ThreeDNow) {
+    const auto Packed =
+        x86ThreeDNowInstruction(x87ContextThreeDNowOpcode(Selector));
+    const unsigned Reads =
+        (Packed->ReadsDestination ? 1U << ((ModRM >> 3) & 7) : 0) |
+        ((Selector & X87ContextMemory) ? 0 : 1U << (ModRM & 7));
+    if (Reads & ~X87PayloadKnown)
+      return false;
+  } else if (!X87PortableMode && (State[4] & ~X87PayloadKnown) && !Initialize)
     return false;
   // FNSAVE stores every register's retained bits, empty ones included.
   if ((Selector & X87ContextMemory) && Escape == 0xdd && (ModRM >> 3) == 6 &&
@@ -163,7 +171,11 @@ bool NdOpEmulator::executeX87Context(const LowOp &Op) {
   if (!(Selector & X87ContextMemory) && Escape == 0xd9 && ModRM == 0xe5 &&
       !(X87PayloadKnown & (1u << ((SW >> 11) & 7))))
     return false;
-  const bool Approximate = x87InstructionIsProcessorDependent(Selector);
+  // 3DNow floating results, approximation accuracy and exceptional input
+  // domains are processor-specific. Only an explicit native reference run
+  // may observe them; strict or portable analysis never invents a value.
+  const bool Approximate =
+      Spec->ThreeDNow || x87InstructionIsProcessorDependent(Selector);
   if (Approximate && (StrictMode || !X87NativeReferenceMode))
     return false;
   if (X87PortableMode) {
@@ -255,6 +267,8 @@ bool NdOpEmulator::executeX87Context(const LowOp &Op) {
     LoadLog.push_back({*Address, static_cast<uint16_t>(Spec->MemoryBytes)});
   if (X87PortableMode)
     X87PayloadKnown = PayloadKnown;
+  else if (Spec->ThreeDNow)
+    X87PayloadKnown |= 1U << ((ModRM >> 3) & 7);
   else if ((Selector & X87ContextMemory) && Escape == 0xdd && ModRM == 0x20)
     X87PayloadKnown = 0xff;
   else if (!Initialize &&
