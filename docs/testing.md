@@ -4666,6 +4666,30 @@ recovery, lost storage, invalid options and output preservation. Build `neverd`,
 `neverd-worker` and `NeverDSourceStackFrameTests`, then run
 `ctest --test-dir build-release -R 'SourceStackFrame|Worker.*StackFrame' --output-on-failure`.
 
+### PE listing facts
+
+`NeverDWorkerPEListingFacts` uses a generated DLL to check the shared automatic
+SP/FP facts in the listing: noncanonical allocation, moved frame aliases and
+alias clobbers. It checks the DLL entry's three physical parameter locations,
+pure forwarders versus adjusted-argument wrappers, runtime-function and chain
+RVA field references, exclusive end boundaries, padding grouping, and user item
+precedence. Run it with `NeverDWorkerStackFrame`, `NeverDWorkerPEBrowse`,
+`NeverDWorkerNativeMakeCode`, `NeverDWorkerLocalTypes` and the discovery-ready
+tests after changing these shared SDK/listing boundaries.
+
+`NeverDMetadataVisitor` compares the native metadata visitor with paginated
+JSON on a generated DLL, including embedded chain rows, borrowed v1 records,
+early-stop cursors and invalid callback admission. It also checks that a
+bounded entry's direct forwarder can refer to an unlisted destination without
+registering that destination or resurrecting a deleted function identity.
+The PE listing fixture checks `complete_anchor_item` with a one-line budget:
+the first reply includes the actual selected instruction and its header.
+After changing viewport demand, run the GUI controller's
+`listingFirstContentPaintWaitsForCurrentRows`,
+`listingRefreshKeepsItsContextAndArrows`,
+`listingKeepsRowsWhenTheirGenerationIsPublished` and
+`initialNavigationOverviewDoesNotWaitForRefreshDebounce` cases.
+
 ## Source dialects and DWARF ingestion
 
 `IsNoReturnTarget.*` checks cached/live lookup parity for exact IAT precedence,
