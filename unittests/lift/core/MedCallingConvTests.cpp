@@ -3484,8 +3484,8 @@ TEST(MedABIPass, X86CdeclSparseStackArgumentsKeepTheirBankAndOrder) {
           const MedVar EntrySP = reg(10, 0, 4, TRI.StackPointer, TheArch);
           addLiveIn(Block, EntrySP);
           const MedVar CallSP = temp(20, 0, 4, TheArch);
-          Block.Ops.push_back(binary(NdOp::INT_SUB, CallSP, EntrySP,
-                                     MedVar::makeConst(12, 4)));
+          Block.Ops.push_back(
+              binary(NdOp::INT_SUB, CallSP, EntrySP, MedVar::makeConst(12, 4)));
           Block.Ops.push_back(unary(
               NdOp::COPY, reg(10, 1, 4, TRI.StackPointer, TheArch), CallSP));
           const MedVar FPValue = reg(40, 1, 8, x86reg::XMM0, TheArch);
@@ -3498,8 +3498,8 @@ TEST(MedABIPass, X86CdeclSparseStackArgumentsKeepTheirBankAndOrder) {
             const MedVar Address = temp(21 + I, 0, 4, TheArch);
             Block.Ops.push_back(binary(NdOp::INT_ADD, Address, CallSP,
                                        MedVar::makeConst(I * 4, 4)));
-            Block.Ops.push_back(binary(
-                NdOp::STORE, {}, Address, MedVar::makeConst(11 + I * 11, 4)));
+            Block.Ops.push_back(binary(NdOp::STORE, {}, Address,
+                                       MedVar::makeConst(11 + I * 11, 4)));
           }
           MedOp Call;
           Call.Opcode = NdOp::CALL;
