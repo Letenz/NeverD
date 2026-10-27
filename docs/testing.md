@@ -4878,6 +4878,9 @@ stub's routine by its name, `HighCPointerAddresses.TrapsUseTheBuiltinsTheirHeade
 spells x86 traps for ELF and COFF, and
 `AAPCS64CallContract.PLTEntriesPassArgumentsOnAsTheirCLibraryDeclares` declares
 bionic's ptrace request an int.
+`CSymbolNames.ACallToTheFirstOfSameNamedDefinitionsTakesItsPrototype` gives a
+call to the first of two same-named definitions only that definition's
+parameters.
 `HighCStoreForwarding.ALandingPadStoresTheExceptionTheUnwinderHandsIt` keeps a
 landing pad's store of `eh_exception` after a call that returns and one that
 does not. `TypeRender.UnitsTakeTheSystemsOwnTypesFromItsHeaders` takes glibc's
