@@ -1282,6 +1282,20 @@ unavailable, retaining the compiler's actual intrinsic headers and emitted bodie
 The existing concrete enqueue tests independently cover retry, unchanged memory,
 source/header/portal fault order and missing CPL/PASID state.
 
+`NeverDX86SkinitTests` checks strict SKINIT decode/operand admission, native
+nonreturning output and both C routes on x86/x64 ELF, COFF and Mach-O. It also
+checks the complete unknown-memory/termination contract and refusal to invent
+CPU reset state. Linux x64 source probes replace launch with a nonreturning
+recorder before execution: eight ASan/UBSan caller-input observations retain
+an image-valued physical integer, and eight UBSan runs use a high-bit address
+to check ordinary DS loading and physical input together. Preprocessed source
+and caller bodies are checked to contain no launch before host execution.
+Run the shared integer-width and pointer-address suites after changing this
+address/parameter boundary. The retained source snapshots, report hashes and
+independent LLVM/NeverC instruction-boundary checks are in the
+[SKINIT evidence](evidence/x86-skinit-2026-10-27.json). They do not qualify
+successful secure launch, attestation, processor reset or physical faults.
+
 `X86SegmentedBlock.*` and `X86SegmentedBlockSource.*` additionally cover i386
 MOVDIR64B/ENQCMD/ENQCMDS with explicit source segments and implicit ES. The
 matrix compiles every source segment and both address widths for ELF/COFF/Mach-O.
