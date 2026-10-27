@@ -14,6 +14,7 @@ add_neverd_component_library(NeverDBackendC
   HighC/HighCEmitter.cpp
   HighC/HighCExprBinOp.cpp
   HighC/HighCExprWriter.cpp
+  HighC/X86/HighCNativeMemory.cpp
   HighC/X86/HighCX87Context.cpp
   HighC/X86/HighCPortableX87.cpp
   HighC/HighCSourceCalls.cpp

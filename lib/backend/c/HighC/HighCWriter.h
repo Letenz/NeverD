@@ -782,6 +782,8 @@ public:
   /// Peel zext/trunc around a named scalar or field load for x86 intrinsic
   /// snippets. Keep wraps on add/sub/mul.
   std::string intrinsicOperandStr(const HighExpr &E);
+  const HighExpr &intrinsicOperandExpr(const HighExpr &E) const;
+  std::vector<std::string> x86NativeMemoryArguments(const HighExpr &E);
   /// Cast / zext / `SUBBYTES` 0 of a Var/Phi. Not add/sub/mul, Call, or Load.
   bool isIntegerViewOfScalar(const HighExpr &E) const;
   /// Where \p Bits come from, under views that keep at least the bytes of
