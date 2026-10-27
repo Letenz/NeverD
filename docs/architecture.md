@@ -6838,6 +6838,22 @@ whatever a pair returner left (`return add64(...)`) is no pair returner
 without such a caller: `return (int)(long long)x;` leaves
 `__aeabi_f2lz`'s high half in r1 the same way.
 
+Selected ARM64 source analysis confirms caller-observed integer-pair results
+against omitted local callee bodies through the existing signature reader and
+memo. It uses the same return-field proof as selected definitions: every
+return must supply each field, with calls, partial writes and explicitly unknown
+last writes preventing an older write from supplying it. A preserved argument
+may still be a field. Only observed candidates are read under the existing
+callee-count and operation bounds; support bodies are not emitted. Conflicting
+shapes and explicit source or user declarations do not gain inferred fields.
+Integer fields occupy complete ABI words even when a caller reads a narrow view.
+The image and current call-summary reads own cached conversions, so changing the
+selection or warming the cache cannot supply a missing second result. HighC
+externs retain the complete recovered call-result width, and source LLVM cannot
+replace that result with a cached scalar callee declaration. A wide assignment
+alone does not widen a scalar call. Omitted floating aggregates still require
+their separate HFA declaration contract.
+
 `TargetRegInfo::floatingParamRegs(format)` owns the default ABI's floating
 argument bank. Entry recovery, outgoing call recovery, module propagation and
 LLVM emission use the same query. Win64 has four positional floating slots
