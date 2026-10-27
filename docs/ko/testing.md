@@ -2028,6 +2028,8 @@ Linux 네이티브 검증은 `HighSwiftEmitter` 전체도 실행하여 레지스
 
 `SymAtomicCmpxchg.*`와 `InterpreterSpecialization.AtomicCmpxchg*`는 전체 바이트 효과, 두 바이트 순서, 이전 값 출처, 입출력 별칭, 네이티브 반환 셀, 병합을 가로지르는 아핀 스필 무효화, 순서 지정 연산의 발생 유지, 엄격한 허용과 정확한/부족한 예산을 다룹니다. 독립 바이트 오라클은 순차 값 의미론만 모델링합니다. 소스 래핑 대조군은 초기화되고 구조적으로 유효한 그래프에 대해 순서 지정 메모리 경계의 거부를 요구합니다. 독립 LowIR 대조군은 완전한 sidecar도 결합하며 인증서가 없어야 합니다. 네이티브 바이너리 증명은 LOCK CMPXCHG의 아키텍처 미정의 출력 감사가 완전하지 않아 더 이른 단계에서 거부될 수 있습니다. raw 영수증 검사는 순서, 주소 공간과 새 값 피연산자를 결합합니다. 지원을 선언하기 전에 소유 테스트 모음을 실행해야 합니다. 테스트 정의만으로 실행 증거가 되지는 않습니다.
 
+`InterpreterSpecialization.AtomicUpdates*`는 ADD/XCHG의 모든 스칼라 폭과 두 바이트 순서, 이전 값 출력 겹침, 네이티브 반환 범위, 값이 바뀌지 않는 연산 유지, 노드 간 이전·새 메모리 출처, 명시적 실행 영역 거부, 프레임 보존의 정확한 예산과 부족한 예산을 검사합니다. 전체 인터프리터 특수화, 조건부 저장, 원자 기호 테스트와 함께 실행합니다. 바이트 오라클은 순차 값만 모델링합니다.
+
 `InterpreterSpecialization.WideIntegerConcat*`는 두 바이트 순서, 상하위 워드, 상수 입력, 겹치는 출력, 상위 워드 제어, 잘못된 형태, 정확한／부족한 예산, 알 수 없는 메모리 출처 보존을 검사합니다. 엄격히 디코딩한 `PSHUFD`의 256개 선택값과 동일／다른 목적지를 독립적인 더블워드 인덱스로 대조합니다. `BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery`는 네이티브 증명과 두 소스 배치의 거부를 유지합니다.
 
 `InterpreterSpecialization.Timestamp*`는 독립 값/상태 오라클로 전체 표본, 상위 절반 초기화, 독립/반복 읽기, 레지스터/플래그/메모리/세그먼트 기준 주소 보존, 정확한/부족한 예산, 잘못된 묶음과 알 수 없는 주소 출처를 검사합니다. `BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery`는 raw 완료와 네이티브 증명/소스 배치 거부를 확인합니다. 기존 `X86_64_Intrinsics` 시계 사례는 소스 출력과 단일 읽기의 전체 비트를 검사하며 `DriverTimestamp`는 Unicorn/KVM/WHP 공통 시계 정책, 상태 보존, 예산, 오버플로를 별도로 검사합니다. 플랫폼 건너뛰기는 해당 백엔드 실행을 입증하지 않습니다.
