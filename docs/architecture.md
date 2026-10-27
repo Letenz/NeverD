@@ -619,6 +619,15 @@ and complete memory effects. Image or synthesized frame values remain refused.
 Constrained-unpredictable writeback register overlap is rejected. This does
 not grant a reconstructed call/frame/unwind ABI or asynchronous-unwind proof. The operation follows Arm's [LDRA and Auth pseudocode](https://documentation-service.arm.com/documentation/ddi0602/2025-09?lang=en&rev=1).
 
+The [SP flow and authenticated-fault record](evidence/arm64e-sp-flow-and-pauth-faults-2026-10-27.json)
+qualifies these combined SP primitives at EL1/EL0 in the official model with
+baseline PAC, FPAC and FPACCOMBINE. Valid signed misalignment and invalid PAC,
+separately and together, retain the original word's exception order, raw SP,
+hardware origin and complete guarded-memory effects. The recovery wrapper is
+test machinery; it supplies no generated call or unwind ABI. Automatic original
+memory lifting marks the retained instruction word as scalar metadata, so image
+relocation cannot reinterpret its encoded displacement as an address.
+
 Scalar FEAT_CPA `ADDPT`, `SUBPT`, `MADDPT` and `MSUBPT` retain checked-pointer
 operations rather than ordinary integer arithmetic. `AArch64CPA.def` owns
 their encodings, operand widths and LLVM contracts; `AArch64CPAC.def` owns

@@ -15577,6 +15577,27 @@ readback, EnDA/EnDB readback and changed signature bits for both keys. Their
 successful-access scope does not cover invalid-PAC fault ordering, asynchronous
 unwind, MTE, overflow or a reconstructed image ABI.
 
+The separate `sp-pauth-faults`, `fpac-sp-pauth-faults` and
+`fpac-combine-sp-pauth-faults` profiles, with their `el0-` variants, consume the
+same exports. They require real model feature configuration and architecture
+level readback, active A/B data keys, aligned normal-completion controls and 21
+fault comparisons under every CPTA setting. Original words and generated code
+must agree on complete ESR, raw signed SP, hardware exception origin and exact
+fault instruction, with every memory byte unchanged. The paired PAC/SP stimuli
+distinguish standalone authentication from the original combined instruction.
+
+The [2026-10-27 SP flow and PAuth fault record](evidence/arm64e-sp-flow-and-pauth-faults-2026-10-27.json)
+binds 50 official-model guest executions, 2,520 fault comparisons and the live
+GPR-substitution negative control to the tested source and environment commits.
+The twelve-target regression covers 1,726 cases: 1,714 pass after a single
+original-timeout repeat and twelve explicitly skip. The first full run's one
+timeout is retained; its isolated repeat completes in 29 seconds without a
+deadline change. Four existing wide-integer fixtures explicitly emit x64 and
+use a matching Clang target and Rosetta execution; other AArch64 C checks use
+the system compiler. All 135 earlier raw-SP exports remain byte-identical,
+preserving their separately recorded model and native-fault evidence without
+claiming those old executions were repeated.
+
 The retained native signed-unwind controls now include compiler-generated
 `branch-protection=pac-ret` and `pac-ret+b-key` frames. Unsigned O0/O2 controls
 complete backtraces and C++ exception destruction; signed controls terminate
