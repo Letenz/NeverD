@@ -23,6 +23,49 @@ using namespace neverd;
 
 namespace {
 
+std::vector<uint8_t> scalarIdentityBranch(Arch Architecture) {
+  // ((x | y) + (x & y)) - x - y + target is target for every word.
+  // The inputs remain unknown; no observed argument supplies this identity.
+  std::vector<uint8_t> Bytes;
+  if (Architecture == Arch::AArch64)
+    Bytes = {0x02, 0x00, 0x01, 0xaa,  // orr x2,x0,x1
+             0x03, 0x00, 0x01, 0x8a,  // and x3,x0,x1
+             0x42, 0x00, 0x03, 0x8b,  // add x2,x2,x3
+             0x42, 0x00, 0x00, 0xcb,  // sub x2,x2,x0
+             0x42, 0x00, 0x01, 0xcb,  // sub x2,x2,x1
+             0x04, 0x10, 0x82, 0xd2,  // mov x4,0x1080
+             0x42, 0x00, 0x04, 0x8b,  // add x2,x2,x4
+             0x40, 0x00, 0x1f, 0xd6}; // br x2
+  else if (Architecture == Arch::X64)
+    Bytes = {0x48, 0x89, 0xf8,             // mov rax,rdi
+             0x48, 0x09, 0xf0,             // or rax,rsi
+             0x48, 0x89, 0xfa,             // mov rdx,rdi
+             0x48, 0x21, 0xf2,             // and rdx,rsi
+             0x48, 0x01, 0xd0,             // add rax,rdx
+             0x48, 0x29, 0xf8,             // sub rax,rdi
+             0x48, 0x29, 0xf0,             // sub rax,rsi
+             0xba, 0x80, 0x10, 0x00, 0x00, // mov edx,0x1080
+             0x48, 0x01, 0xd0,             // add rax,rdx
+             0xff, 0xe0};                  // jmp rax
+  else
+    Bytes = {0x89, 0xf8,                   // mov eax,edi
+             0x09, 0xf0,                   // or eax,esi
+             0x89, 0xfa,                   // mov edx,edi
+             0x21, 0xf2,                   // and edx,esi
+             0x01, 0xd0,                   // add eax,edx
+             0x29, 0xf8,                   // sub eax,edi
+             0x29, 0xf0,                   // sub eax,esi
+             0xba, 0x80, 0x10, 0x00, 0x00, // mov edx,0x1080
+             0x01, 0xd0,                   // add eax,edx
+             0xff, 0xe0};                  // jmp eax
+  Bytes.resize(0x80, 0xcc);
+  if (Architecture == Arch::AArch64)
+    Bytes.insert(Bytes.end(), {0x60, 0x05, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6});
+  else
+    Bytes.insert(Bytes.end(), {0xb8, 43, 0, 0, 0, 0xc3});
+  return Bytes;
+}
+
 BinaryImage image(std::vector<uint8_t> Bytes, Arch Architecture,
                   BinaryFormat Format) {
   BinaryImage Image;
@@ -59,6 +102,42 @@ LowFunc build(std::vector<uint8_t> Bytes, Arch Architecture = Arch::X64,
               BinaryFormat Format = BinaryFormat::ELF, va_t Entry = 0x1000,
               const std::set<va_t> &Entries = {}) {
   return build(image(std::move(Bytes), Architecture, Format), Entry, Entries);
+}
+
+TEST(ConstantBranch, SymbolicScalarIdentitiesRecoverLocalEdges) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::AArch64})
+    for (auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(::testing::Message()
+                   << unsigned(Architecture) << ':' << unsigned(Format));
+      const auto Function =
+          build(scalarIdentityBranch(Architecture), Architecture, Format);
+      ASSERT_FALSE(Function.Blocks.empty());
+      EXPECT_EQ(Function.Blocks.front().Succs.size(), 1u);
+      bool Local = false;
+      for (const auto &Block : Function.Blocks)
+        for (const auto &Op : Block.Ops)
+          Local |= Op.Opcode == NdOp::BRANCH && Op.NumInputs == 1 &&
+                   Op.Inputs[0].isConst() && Op.Inputs[0].Offset == 0x1080;
+      EXPECT_TRUE(Local);
+    }
+}
+
+TEST(ConstantBranch, SimilarScalarExpressionsKeepTheirInputDependence) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::AArch64}) {
+    auto Bytes = scalarIdentityBranch(Architecture);
+    // Replace AND by XOR. Zero-filled or sample inputs could still suggest
+    // the same target, but the complete expression no longer is constant.
+    if (Architecture == Arch::AArch64)
+      Bytes[7] = 0xca;
+    else
+      Bytes[Architecture == Arch::X64 ? 10 : 6] = 0x31;
+    const auto Function = build(std::move(Bytes), Architecture);
+    for (const auto &Block : Function.Blocks)
+      for (const auto &Op : Block.Ops)
+        EXPECT_FALSE(Op.Opcode == NdOp::BRANCH && Op.NumInputs == 1 &&
+                     Op.Inputs[0].isConst() && Op.Inputs[0].Offset == 0x1080);
+  }
 }
 
 BinaryImage scalarLoadImage(Arch Architecture, BinaryFormat Format) {
