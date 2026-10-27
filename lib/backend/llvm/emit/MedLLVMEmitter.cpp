@@ -848,8 +848,10 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
           if (isAArch64WritebackMemoryIntrinsic(Id)) {
             const auto Instruction = *aarch64WritebackMemoryInstruction(
                 Op.Inputs[kWritebackWordOperand + 1].ConstVal);
-            if (Instruction.stackBase())
-              throw std::runtime_error(kWritebackSPUnsupported);
+            if (const char *Reason = Instruction.sourceBaseFailure(
+                    Img_ != nullptr,
+                    Op.Inputs[kWritebackBaseOperand + 1].Kind == MedVar::Param))
+              throw std::runtime_error(Reason);
             if (Img_ &&
                 !MemoryBases->supports(*Img_, Instruction,
                                        Op.Inputs[kWritebackBaseOperand + 1]))

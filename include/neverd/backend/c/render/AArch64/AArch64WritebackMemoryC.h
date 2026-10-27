@@ -27,6 +27,17 @@ namespace neverd {
   inline constexpr char Name[] = Text;
 #include "neverd/backend/c/render/AArch64/AArch64WritebackMemoryC.def"
 
+inline const char *
+aarch64WritebackMemoryCAsm(const AArch64WritebackMemoryInstruction &I) {
+  return I.isPair() ? (I.stackBase() ? kPairCSPAsm : kPairCAsm)
+                    : (I.stackBase() ? kWritebackCSPAsm : kWritebackCAsm);
+}
+
+inline const char *
+aarch64WritebackMemoryCClobbers(const AArch64WritebackMemoryInstruction &I) {
+  return I.stackBase() ? kAddressMemorySPCClobbers : kAddressMemoryCClobbers;
+}
+
 inline std::string aarch64PairMemoryCStatement(
     const AArch64WritebackMemoryInstruction &Instruction, llvm::StringRef Base,
     const std::array<std::string, kPairBaseIndex + 1> &Outputs,
@@ -34,8 +45,6 @@ inline std::string aarch64PairMemoryCStatement(
   if (!aarch64WritebackMemoryInstruction(Instruction.Word) ||
       !Instruction.isPair() || !Instruction.isLoad())
     throw std::invalid_argument(kWritebackMalformed);
-  if (Instruction.stackBase())
-    throw std::invalid_argument(kWritebackSPUnsupported);
   const auto First =
       aarch64PAuthTemporary(kWritebackCValue, {Base, Outputs[0], Outputs[1],
                                                Outputs[kPairBaseIndex]});
@@ -64,7 +73,9 @@ inline std::string aarch64PairMemoryCStatement(
   return llvm::formatv(Instruction.isVector() ? kPairVectorLoadCStatement
                                               : kPairLoadCStatement,
                        First, Second, Updated, Input, Base,
-                       Instruction.scratchWord(), Assignments)
+                       Instruction.scratchWord(), Assignments,
+                       aarch64WritebackMemoryCAsm(Instruction),
+                       aarch64WritebackMemoryCClobbers(Instruction))
       .str();
 }
 
@@ -76,8 +87,6 @@ aarch64PairStoreMemoryC(const AArch64WritebackMemoryInstruction &Instruction,
       !Instruction.isPair() || Instruction.isLoad() || FirstData.empty() ||
       SecondData.empty())
     throw std::invalid_argument(kWritebackMalformed);
-  if (Instruction.stackBase())
-    throw std::invalid_argument(kWritebackSPUnsupported);
   const auto First =
       aarch64PAuthTemporary(kWritebackCValue, {Base, FirstData, SecondData});
   const auto Second =
@@ -98,11 +107,15 @@ aarch64PairStoreMemoryC(const AArch64WritebackMemoryInstruction &Instruction,
                FirstInput, SecondInput, Base, FirstData, SecondData,
                Instruction.scratchWord(),
                llvm::formatv(kAddressVectorFromBitsC, FirstInput).str(),
-               llvm::formatv(kAddressVectorFromBitsC, SecondInput).str())
+               llvm::formatv(kAddressVectorFromBitsC, SecondInput).str(),
+               aarch64WritebackMemoryCAsm(Instruction),
+               aarch64WritebackMemoryCClobbers(Instruction))
         .str();
   return llvm::formatv(kPairStoreCExpression, First, Second, Updated, Input,
                        FirstInput, SecondInput, Base, FirstData, SecondData,
-                       Instruction.scratchWord())
+                       Instruction.scratchWord(),
+                       aarch64WritebackMemoryCAsm(Instruction),
+                       aarch64WritebackMemoryCClobbers(Instruction))
       .str();
 }
 
@@ -112,8 +125,6 @@ aarch64WritebackMemoryC(const AArch64WritebackMemoryInstruction &Instruction,
   if (!aarch64WritebackMemoryInstruction(Instruction.Word) ||
       Instruction.isLoad() != Data.empty())
     throw std::invalid_argument(kWritebackMalformed);
-  if (Instruction.stackBase())
-    throw std::invalid_argument(kWritebackSPUnsupported);
   const auto ValueName = aarch64PAuthTemporary(kWritebackCValue, {Base, Data});
   const auto BaseName =
       aarch64PAuthTemporary(kWritebackCBase, {Base, Data, ValueName});
@@ -121,7 +132,9 @@ aarch64WritebackMemoryC(const AArch64WritebackMemoryInstruction &Instruction,
     throw std::invalid_argument(kWritebackMalformed);
   if (Instruction.isLoad())
     return llvm::formatv(kWritebackLoadCExpression, ValueName, BaseName, Base,
-                         Instruction.scratchWord())
+                         Instruction.scratchWord(),
+                         aarch64WritebackMemoryCAsm(Instruction),
+                         aarch64WritebackMemoryCClobbers(Instruction))
         .str();
   const auto BaseInput =
       aarch64PAuthTemporary(kWritebackCBase, {Base, Data, ValueName, BaseName});
@@ -131,10 +144,14 @@ aarch64WritebackMemoryC(const AArch64WritebackMemoryInstruction &Instruction,
     return llvm::formatv(
                kWritebackVectorStoreCExpression, ValueName, BaseName, Base,
                Instruction.scratchWord(), BaseInput, DataInput, Data,
-               llvm::formatv(kAddressVectorFromBitsC, DataInput).str())
+               llvm::formatv(kAddressVectorFromBitsC, DataInput).str(),
+               aarch64WritebackMemoryCAsm(Instruction),
+               aarch64WritebackMemoryCClobbers(Instruction))
         .str();
   return llvm::formatv(kWritebackStoreCExpression, ValueName, BaseName, Base,
-                       Instruction.scratchWord(), BaseInput, DataInput, Data)
+                       Instruction.scratchWord(), BaseInput, DataInput, Data,
+                       aarch64WritebackMemoryCAsm(Instruction),
+                       aarch64WritebackMemoryCClobbers(Instruction))
       .str();
 }
 
@@ -145,8 +162,6 @@ inline std::string aarch64VectorWritebackMemoryCStatement(
   if (!aarch64WritebackMemoryInstruction(Instruction.Word) ||
       !Instruction.isVector() || !Instruction.isLoad())
     throw std::invalid_argument(kWritebackMalformed);
-  if (Instruction.stackBase())
-    throw std::invalid_argument(kWritebackSPUnsupported);
   const auto Value =
       aarch64PAuthTemporary(kWritebackCValue, {Base, ValueOutput, BaseOutput});
   const auto Updated = aarch64PAuthTemporary(
@@ -165,7 +180,9 @@ inline std::string aarch64VectorWritebackMemoryCStatement(
     Assignments +=
         llvm::formatv(kWritebackCAssignment, BaseOutput, Updated).str();
   return llvm::formatv(kWritebackVectorLoadCStatement, Value, Updated, Base,
-                       Instruction.scratchWord(), Input, Assignments)
+                       Instruction.scratchWord(), Input, Assignments,
+                       aarch64WritebackMemoryCAsm(Instruction),
+                       aarch64WritebackMemoryCClobbers(Instruction))
       .str();
 }
 
