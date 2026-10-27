@@ -4194,6 +4194,10 @@ ends the copy. A conditional cleanup that resumes the same exception is
 proved from the exception state at that branch's entry and ends with `throw;`.
 Its destructors and their order remain; an unrelated resume value or an
 observable use of the unwinder's state keeps the original pad explicit.
+HighC keeps the function's own parameters, pre-try locals and returned values
+in these clauses. They are not MSVC C++ funclets: a second parameter is not
+an establisher-frame pointer, a store before a return is not a hidden parent
+result, and a value defined outside the catch is still its return value.
 A complete duplicated cleanup continuation can fall through to its shared
 tail; matching only its last destructor would run intervening cleanups twice.
 A pad that only cleans up, which every call site reaching it enters with no
@@ -12433,8 +12437,10 @@ has on entry to every protected block when no protected operation writes it,
 and an unknown value otherwise (`MedSSA`). A termination handler's `__except`
 arm thus keeps the RBP its prologue copied from RDX. HighC rebases `rdx + k`
 into the printed function's frame only in a clause body of a function without
-an SEH scope table, where `attachCxxFuncletBodies` places catch and cleanup
-funclets; an SEH function's clause bodies are its own code.
+an SEH scope table or Itanium LSDA, where `attachCxxFuncletBodies` places catch
+and cleanup funclets. `exceptionClausesUseFunctionFrame` owns this distinction
+for parameter, return and stored-result rendering; SEH and Itanium clause
+bodies are the function's own code.
 
 Ordinary internal returns preserve both the callee PC and the parent entry PC. The same reaching-write proof checks both coordinates; writes into known allocated parent storage remain allowed.
 

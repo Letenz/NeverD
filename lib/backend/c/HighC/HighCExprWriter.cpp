@@ -8343,19 +8343,22 @@ bool HighCWriter::isIncomingParamReuseAssign(const HighStmt &Stmt) const {
   return true;
 }
 
+bool HighCWriter::exceptionClausesUseFunctionFrame() const {
+  return CurrentFunc && CurrentFunc->ExceptionMetadata &&
+         (CurrentFunc->ExceptionMetadata->Itanium ||
+          CurrentFunc->ExceptionMetadata->SEH);
+}
+
 bool HighCWriter::isCatchFuncletParentFrame(const MedVar &V) const {
-  if (!CurrentFunc || Opts.TheArch != Arch::X64)
+  if (!CurrentFunc || Opts.TheArch != Arch::X64 ||
+      exceptionClausesUseFunctionFrame())
     return false;
   if (V.Kind != MedVar::Param || V.Id != 1)
     return false;
   // Inside a catch body, rdx is always the establisher frame, even when the
-  // parent also has an rdx argument. attachCxxFuncletBodies puts such a body
-  // only in a C++ try. A function with an SEH scope table has none: its clause
-  // bodies are its own code, where Param 1 is its own second argument. A
-  // termination handler's is its parent's frame, not one this function has.
-  const bool OwnClauseBodies =
-      CurrentFunc->ExceptionMetadata && CurrentFunc->ExceptionMetadata->SEH;
-  if (InEHClauseBody && !OwnClauseBodies)
+  // parent also has an rdx argument. Itanium and SEH clauses were excluded
+  // above: their Param 1 is the printed function's own second argument.
+  if (InEHClauseBody)
     return true;
   // Whole-function walks (local decls) do not set InEHClauseBody. A Param 1
   // the parent does not own is the attached funclet frame pointer.
@@ -8364,7 +8367,7 @@ bool HighCWriter::isCatchFuncletParentFrame(const MedVar &V) const {
 
 const HighExpr *
 HighCWriter::parentFrameStoredValue(const HighStmt &Stmt) const {
-  if (!InEHClauseBody)
+  if (!InEHClauseBody || exceptionClausesUseFunctionFrame())
     return nullptr;
   const HighExpr *Addr = nullptr;
   const HighExpr *Val = nullptr;
@@ -8857,7 +8860,8 @@ bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
     return HideEHRuntimeMemory && Space == NdMemoryAddressSpace::X86FS;
   };
   auto IsForeignFuncletParam = [&](const HighExpr &E) {
-    if (!InEHClauseBody || !CurrentFunc || !isParamCopy(E))
+    if (!InEHClauseBody || !CurrentFunc ||
+        exceptionClausesUseFunctionFrame() || !isParamCopy(E))
       return false;
     const HighExpr *Src = unwrapIntegerView(&E);
     if (!Src)

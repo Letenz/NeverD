@@ -14232,6 +14232,10 @@ from headers, typedefs included, and from the runtime tables.
 mingw-w64 headers declare, its own, the runtime's and the C library's.
 
 `NeverDItaniumHandlerTests` spells Itanium landing pads as C++ handlers.
+`AHandlerKeepsTheFunctionsIncomingValues` compiles and runs the emitted C++
+at O0/O2 with real throws: a catch returns an incoming parameter or a value
+computed before the try, or loads through the function's second parameter.
+The latter must not become an uninitialized MSVC funclet-frame slot.
 `ItaniumHandlerBodies.ACleanupOnlyPadBecomesACatchAllThatRethrows` prints a
 pad that only cleans up as `try { … } catch (...) { cleanup; throw; }` and
 keeps it labelled in C. `ACleanupScopeHoldsNoCallItsPadDoesNotCover` keeps a
