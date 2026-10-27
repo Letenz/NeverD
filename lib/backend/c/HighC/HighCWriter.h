@@ -985,6 +985,9 @@ public:
   /// x64 catch funclets receive the parent frame in rdx (`Param` id 1). After
   /// attach that param is not the parent's rdx argument.
   bool isCatchFuncletParentFrame(const MedVar &V) const;
+  /// Itanium landing pads and SEH scope bodies run in the printed function;
+  /// attached MSVC C++ funclets have their own parameters and return ABI.
+  bool exceptionClausesUseFunctionFrame() const;
   bool isRegistrationEstablisherFrame(const MedVar &V) const;
   const HighExpr *parentFrameStoredValue(const HighStmt &Stmt) const;
   std::optional<std::string> copyForwardSource(const HighExpr &E) const;

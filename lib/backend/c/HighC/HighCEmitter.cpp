@@ -4936,6 +4936,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
       for (HighFunc &Func : Working) {
         attachCxxObjectActionCalls(Func, Opts.TheArch);
         attachItaniumHandlerBodies(Func);
+        if (Func.StructuredExceptionRegions)
+          eliminateHighDeadPhiCopies(Func);
       }
     }
     const bool Prepared = Opts.Image && Opts.Image == PreparedImage;
