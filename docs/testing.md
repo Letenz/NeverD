@@ -4730,6 +4730,9 @@ JSON on a generated DLL, including embedded chain rows, borrowed v1 records,
 early-stop cursors and invalid callback admission. It also checks that a
 bounded entry's direct forwarder can refer to an unlisted destination without
 registering that destination or resurrecting a deleted function identity.
+`pluginsdk/python/tests/test_metadata_integration.py` reuses the generated DLL
+through the official `HostAPI` declarations, checking owned text and hashes,
+borrowed ctypes fields, complete paginated rows and early-stop cursors.
 The PE listing fixture checks `complete_anchor_item` with a one-line budget:
 the first reply includes the actual selected instruction and its header.
 After changing viewport demand, run the GUI controller's
@@ -15363,7 +15366,10 @@ services and ART loading are not covered.
 in `NeverDBytePatchTests`. The real SDK cases in
 `test_byte_patch_integration.py` check empty/unloaded snapshots, all byte values,
 high addresses, split runs, JSON parity, and ownership across edits, reloads and
-session destruction. They also rewrite and truncate a large input after an edit,
+session destruction. Metadata-only range snapshots also cover repeated queries,
+complete inventories and reverse virtual-address mappings in file-offset order;
+C and ctypes checks fix their pointer signatures, field offsets and strides.
+They also rewrite and truncate a large input after an edit,
 then check that exports retain the session's original bytes plus its overlay.
 The worker mock intentionally omits snapshot exports to
 exercise JSON fallback; run the native patch suite with both current and older
