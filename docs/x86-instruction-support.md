@@ -128,7 +128,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | Instructions or family | Missing contract |
 | --- | --- |
 | LDS, LES, LSS, LFS, LGS | Coupled GPR/segment-selector completion, hidden descriptor state and fault ordering. The former ordinary load/COPY approximation is now explicitly refused in both strict and permissive lifting. |
-| 3DNow! arithmetic, comparison, conversion and rearrangement operations | Packed-lane results, instruction-specific floating-point rules and MMX/x87 state. The 24 former COPY/scalar-FLOAT approximations now fail explicitly; decoder recognition remains available. |
+| 3DNow! arithmetic, comparison, conversion and rearrangement operations | NeverD still needs an owned MMX/x87 transition and fault contract for these 24 instructions. LLVM and NeverC now provide native packed-value interfaces, qualified below. The former COPY/scalar-FLOAT substitutes remain explicit refusals; decoder recognition remains available. |
 | Unowned FNOP/EMMS/FEMMS | Waiting behavior and tag/payload transitions require an owned x87 context. Owned x64 paths now retain all three instructions, including FEMMS payload invalidation; typed/unowned and i386 paths still refuse rather than emit NOP. The explicit portable x87 profile does not admit MMX resets. |
 | VMRUN | Complete guest/host transition, including guest-modified unsaved GPRs and floating/vector state, plus the VM-exit continuation. |
 | SKINIT | Machine reinitialization and nonlocal control transfer. |
@@ -2388,7 +2388,12 @@ both strictness modes and both reset instructions, plus refusal, feature
 preflight and ten compiled output objects. The focused legacy, capability,
 x87 conversion/fault and reset suites cover 108 distinct tests per SDK.
 After integrating `fc0dc696c9`, these suites plus the affected constant-branch
-suite pass 134/134 on each SDK (268 total).
+suite pass 134/134 on each SDK (268 total). The published code at
+`d516633d27` additionally incorporates the later shared ABI and FP-stack-home
+updates: all six focused suites pass 340/340 per SDK (680 total), with no
+skips. Its twenty newly generated FEMMS objects also pass the QEMU checks
+below. These results identify that fixed code commit independently of later
+concurrent changes on `dev`.
 The native-evaluator feature test verifies clean refusal on this host, whose
 CPUID does not advertise 3DNow; it supplies no physical FEMMS result.
 
