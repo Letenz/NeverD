@@ -3808,9 +3808,20 @@ on the left, code on the right and output across the bottom. It checks both
 themes, docked and floating origins, restoring the previous layout and window
 state, unchanged data, data addresses outside functions, and ordinary command
 input. After closing the focus workspace, the main close button still highlights
-on hover and returns to its normal color when the pointer leaves. Keys enter
+on hover and returns to its normal color when the pointer leaves. Cocoa hover
+uses posted native motion and requires `CGPreflightPostEventAccess()`; when
+permission is absent, the layout and both close paths still run, then the case
+reports the unavailable hover coverage as a skip. Offscreen retains the Qt
+pointer-event checks. Keys enter
 through `QWindow` so forwarding to the focused widget cannot
 silently reset the sequence.
+
+`LibraryCodeViewTests` checks that generated frame and complete exception-detail
+folds preserve full-text copy and exact source-row navigation, keep cleanup
+statements visible, and leave warnings expanded. The workbench frame-record
+test exercises default folding, search expansion, refresh state and member
+navigation in both themes. Run it on Cocoa and offscreen; optional captures
+use `NEVERD_SHORTCUT_CAPTURES` with the existing fractional-scale runs.
 `focusFunctionsSidebarTogglesAndNavigates` checks the initially folded function
 list, triangle clicks, unchanged analysis geometry, single-click navigation in
 both analysis panes, filtering, popup ownership, and cleanup. Hovering and moving
