@@ -139,7 +139,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | SYSENTER, SYSEXIT/SYSEXITQ, SYSRET/SYSRETQ, RSM | Complete register, privilege, segment and SMM continuation state. Integrated `c464c93243` supplies terminal analysis intrinsics for SYSRET/SYSEXIT with explicit target state; their named no-return calls do not implement native restoration. SYSENTER and RSM remain refused. |
 | BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
 | XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation. Prefixed LOCK operations, implicit-lock XCHG and XRELEASE MOV stores are explicitly refused before ordinary memory lowering; native transactional completion remains missing. |
-| XBEGIN and full RTM regions | Integrated `38e833bf89` adds a two-exit rel32 lift with the original fallback and conditional EAX update. rel16 remains refused. Full register/memory checkpoint, nesting, fallback faults and hardware rollback remain unqualified; a status result alone does not establish these contracts. |
+| XBEGIN and full RTM regions | The two-exit lift retains rel16 and rel32 fallbacks at the full code width, with conditional EAX updates. The pinned decoder's i386 displacement-sign errors are normalized before CFG discovery. Full register/memory checkpoint, nesting, fallback faults and hardware rollback remain unqualified; a status result alone does not establish these contracts. |
 | Remaining compact-memory address forms | Native LLVM and both C routes retain long-mode RSP/RBP stack-reference provenance independently of DS overrides, alongside DS/FS/GS data addresses. In i386, SS-default stack bases and explicit CS/ES/SS segments remain refused; an explicit DS override is supported. Physical AVX-512 fault execution remains unqualified. |
 | Remaining four-source address forms and hardware qualification | Native lowering uses explicit SSA sources and the same long-mode stack-reference contract as compact memory. i386 non-DS/FS/GS segments and physical AVX512_4FMAPS/AVX512_4VNNIW execution/exception behavior still require qualification. Legacy implicit-bank IDs remain guarded at native output. |
 | Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Long-mode default-stack memory retains an explicit provenance control. i386 non-DS segments still require an owned segment contract; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
@@ -204,7 +204,7 @@ compile with NeverC's standard transaction headers. LLVM IR carries `+rtm`
 and both C routes use `_xtest`. This qualification does not execute physical
 RTM regions. The later `38e833bf89` integration restores XBEGIN rel32
 admission with an explicit abort branch and preserves the successful path's
-EAX value; rel16 remains refused. Full checkpoint, nesting, fallback faults
+EAX value. The subsequent rel16 completion is documented below. Full checkpoint, nesting, fallback faults
 and native rollback still require qualification. These instruction contracts follow the
 [Intel XBEGIN/XTEST reference](https://cdrdv2-public.intel.com/874247/334569-090-sdm-vol-2d.pdf).
 
@@ -2497,3 +2497,31 @@ explicit model-gap options retain separate unqualified counts. See the
 versions, reports, object inventories and counterexamples. Typed/unowned and
 i386 3DNow remain explicit refusals. The LLVM release, SDK pin and submodule
 revisions are unchanged.
+
+
+## Signed XBEGIN fallback completion
+
+XBEGIN now admits rel16 as well as rel32 on i386 and x64. The shared
+`decode/X86/X86TransactionEncoding.h` reads the signed displacement and
+retains the full code-width target, including REX.W override and prefix-order
+rules. The [Intel XBEGIN specification](https://cdrdv2-public.intel.com/874247/334569-090-sdm-vol-2d.pdf)
+does not truncate a rel16 fallback to 16 bits. Decoder normalization corrects
+two authenticated Capstone representations: negative rel16 under i386 addr32,
+and rel32 under i386 addr16. Contradictory bytes/detail still fail before
+publishing any LowIR effects.
+
+At `ed6a2adc27`, both the pinned r6 and current native SDK pass 38 tests each.
+Each run covers 1,572,864 exhaustive rel16 decoder/lifter checks, 1,656
+prefix/sign/wrap checks, 96 malformed-detail refusals and 16 controlled status
+completions. Full CFG tests retain a backward rel16 abort target reachable
+only from XBEGIN. Each SDK produces 120 native/C objects across i386/x64,
+ELF/COFF/Mach-O, default/NoOpt and both C routes at O0/O2. NeverC additionally
+compiles 48 x64 objects per SDK using its real intrinsic headers. Every object
+contains one XBEGIN and one XEND. See the
+[qualification record](evidence/x86-xbegin-rel16-2026-10-27.json).
+
+These checks establish signed fallback admission and the existing two-exit
+completion contract. They do not execute physical RTM or qualify checkpoint,
+nesting, fallback-address faults or complete rollback. LLVM already supplies
+`llvm.x86.xbegin` and NeverC `_xbegin`; this change requires no new compiler
+intrinsic, LLVM release or SDK pin.

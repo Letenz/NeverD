@@ -1,0 +1,189 @@
+{
+  "scope": "XBEGIN rel16 and rel32 full-code-width signed fallback ownership",
+  "goal_complete": false,
+  "sources": {
+    "neverd_fixed_code": "ed6a2adc27dab02b00369681d53ba42a92e7edbf",
+    "neverd_base": "e2bdee2a541ad353f9909bfe2e8d601cec31240e",
+    "llvm": "cf2bde2743795897aef1f1f3712a9fd40a19252d",
+    "neverc": "880d1e96ff48f41c5069c6d8f9839eaa8f37d64a",
+    "production_sdk": "neverd-llvm-v23.0.0-r6",
+    "production_sdk_commit": "06788fb19109851e6a6b9f109a2b8027a606f0c6",
+    "production_llvm_gitlink": "03270359c2ed8f6806533d3832a947bf883a6f69",
+    "qualified_capstone": "88f3e3966565fb9383cd4fbb20c051c9aa22f309",
+    "llvm_release_and_pins_changed": false
+  },
+  "artifact_root": "/mnt/data/neverd-x86-xbegin-rel16",
+  "validation": {
+    "pinned": {
+      "tests": 38,
+      "reports": [
+        {
+          "path": "committed-pinned-NeverDX86NonlocalControlTests.xml",
+          "sha256": "7dabf950f25a658d0cda166a0caf7f4d70247f46fca181ce803bc4d11279eb07",
+          "tests": 4,
+          "failures": 0,
+          "errors": 0,
+          "disabled": 0,
+          "skipped": 0
+        },
+        {
+          "path": "committed-pinned-NeverDX86SystemStateTests.xml",
+          "sha256": "31f5e436e40cf0562ad8860a2047aac90343f6609c094fcb6e2781659fd2f978",
+          "tests": 29,
+          "failures": 0,
+          "errors": 0,
+          "disabled": 0,
+          "skipped": 0
+        },
+        {
+          "path": "committed-pinned-NeverDX86TransactionBeginTests.xml",
+          "sha256": "e20f14b4de5fc16b785428dd658bc7dba2bafe745c536499ded34e17f70ce671",
+          "tests": 5,
+          "failures": 0,
+          "errors": 0,
+          "disabled": 0,
+          "skipped": 0
+        }
+      ],
+      "build": {
+        "path": "committed-pinned-build.log",
+        "sha256": "a91c0b8b460e313fb3f22c36eed6575f5656a9708236b49e99f9c6b44b9d20e8"
+      },
+      "commands": {
+        "path": "committed-pinned-commands.json",
+        "sha256": "b0bd30cee1739d9a5cffd1730cadf263d64d073458626cb8ea7273bc7e55b644"
+      },
+      "native_and_c_objects": 120,
+      "object_inventory": {
+        "path": "committed-pinned-objects.json",
+        "sha256": "80eb486581103c66de19c951977aebf10aadee45c642ad8437e238892a53b767"
+      },
+      "neverc_objects": 48,
+      "neverc": {
+        "path": "committed-pinned-neverc/qualification.json",
+        "sha256": "d1c82f3dfa4ee4e599a52a024b4f9a1fe22f0c87249cf2c1d605a9e672cbb085"
+      }
+    },
+    "native": {
+      "tests": 38,
+      "reports": [
+        {
+          "path": "committed-native-NeverDX86NonlocalControlTests.xml",
+          "sha256": "b798975dbbacfd9a14962670913914cf90a1915f72aa5c75066d133a874eb1fc",
+          "tests": 4,
+          "failures": 0,
+          "errors": 0,
+          "disabled": 0,
+          "skipped": 0
+        },
+        {
+          "path": "committed-native-NeverDX86SystemStateTests.xml",
+          "sha256": "f6cf7a2c22b68a2bbfa655ec493195ee560ed6cf596f2a27707ac2db77b072f1",
+          "tests": 29,
+          "failures": 0,
+          "errors": 0,
+          "disabled": 0,
+          "skipped": 0
+        },
+        {
+          "path": "committed-native-NeverDX86TransactionBeginTests.xml",
+          "sha256": "5889258b8575476bf3391fe1ed31535016974d4f7b0062aca2d1efdfae3e2446",
+          "tests": 5,
+          "failures": 0,
+          "errors": 0,
+          "disabled": 0,
+          "skipped": 0
+        }
+      ],
+      "build": {
+        "path": "committed-native-build.log",
+        "sha256": "6bb512cf4d5e7d8d11f441b992c426247b0d8d255ddd5da794bf1a4745910bbe"
+      },
+      "commands": {
+        "path": "committed-native-commands.json",
+        "sha256": "e96f2029d37542c232f294ec83c4bbfa3857609e809d1cf9eca33ff60c7073d4"
+      },
+      "native_and_c_objects": 120,
+      "object_inventory": {
+        "path": "committed-native-objects.json",
+        "sha256": "e1c22bcdb0b7c432ef99426e27d7ae751a855e9cd53d808cba603c6d90dd8446"
+      },
+      "neverc_objects": 48,
+      "neverc": {
+        "path": "committed-native-neverc/qualification.json",
+        "sha256": "0f47f68d051de616332272321517491285d2c0caaa540f5afa6b82d85d80a807"
+      }
+    }
+  },
+  "admission_per_sdk": {
+    "all_rel16_decoder_lift_checks": 1572864,
+    "prefix_wrap_decoder_lift_checks": 1656,
+    "contradictory_detail_refusals": 96,
+    "controlled_status_completions": 16,
+    "decoder_routes": [
+      "full",
+      "lightweight",
+      "lift"
+    ],
+    "architectures": [
+      "i386",
+      "x64"
+    ]
+  },
+  "emission": {
+    "source_profiles": 24,
+    "formats": [
+      "ELF",
+      "COFF",
+      "Mach-O"
+    ],
+    "forms": [
+      "rel16 backward fallback only discovered from abort edge",
+      "rel32 forward fallback"
+    ],
+    "pipelines": [
+      "default",
+      "NoOpt"
+    ],
+    "routes": [
+      "LLVM object",
+      "HighC O0",
+      "HighC O2",
+      "LLVMC O0",
+      "LLVMC O2"
+    ],
+    "neverc_architecture": "x64",
+    "neverc_uses_real_intrinsic_headers": true,
+    "objects_disassembled_for_one_xbegin_and_one_xend": true,
+    "physical_rtm_execution": false
+  },
+  "counterexamples": [
+    {
+      "bytes": "66 c7 f8 fb ff",
+      "address": "0x12345000",
+      "decoded_before": "0x12355000",
+      "correct": "0x12345000",
+      "cause": "i386 addr32 zero-extends a negative rel16 displacement"
+    },
+    {
+      "bytes": "67 c7 f8 00 80 00 00",
+      "address": "0x10000",
+      "decoded_before": "0x8007",
+      "correct": "0x18007",
+      "cause": "i386 addr16 sign-extends rel32 from bit 15"
+    }
+  ],
+  "semantics": {
+    "reference": "https://cdrdv2-public.intel.com/874247/334569-090-sdm-vol-2d.pdf",
+    "section": "XBEGIN, PDF pages 30-32, Intel SDM Volume 2D revision 090",
+    "target_rule": "Sign-extend the encoded displacement and add the next instruction pointer at code width; rel16 does not truncate the fallback to 16 bits.",
+    "decoder_normalization": "Accept only authenticated XBEGIN metadata and the exact known Capstone representation; contradictory detail refuses before effects.",
+    "completion": "Abort publishes EAX and zero-extends RAX in long mode; successful start retains incoming EAX/RAX. Flags remain unchanged in controlled completions."
+  },
+  "remaining": [
+    "RTM checkpoint, nesting and complete register/memory rollback",
+    "Fallback canonical-address and segment-limit fault continuation",
+    "Physical RTM execution",
+    "Other x86 instruction/state gaps in docs/x86-instruction-support.md"
+  ]
+}

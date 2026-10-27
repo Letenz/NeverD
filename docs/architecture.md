@@ -479,6 +479,16 @@ This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
 
+`decode/X86/X86TransactionEncoding.h` owns the raw XBEGIN prefix, immediate
+width and signed fallback calculation shared by decoder normalization and
+lifting. A rel16 displacement retains a full 32/64-bit code target; address
+size cannot change its sign extension. The pinned decoder's i386 forms that
+use address size for extension are normalized once, before CFG discovery.
+Only the authenticated legacy representation is corrected; contradictory
+instruction detail still fails before LowIR effects. The two exits retain the
+original fallback and update EAX only after an abort. This transport does not
+supply a complete machine checkpoint or qualify hardware rollback.
+
 ## Apple arm64e analysis
 
 The Mach-O loader retains the CPU subtype, including its ABI capability bits,
