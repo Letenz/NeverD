@@ -15132,6 +15132,13 @@ Run the real SDK patch/replica path under ASan as well as the JSON-only mock:
 analysis-section metadata returned by the SDK must remain owned while its
 `sections` subarray is traversed during snapshot construction.
 
+`tools/neverd-bench/patch-pages.py --baseline BEFORE --candidate AFTER` compares
+complete first, middle, tail, empty and zero-limit patch-page requests with
+alternating CPU/wall samples, frozen binary hashes and SDK-mapping checks. Its
+independent sidecar-derived oracle checks every returned field, total, offset,
+completion and file bytes/timestamps. Run the mock/native patch suites for empty
+inventories, page limits and invalid bounds, including an older JSON-only SDK.
+
 `tools/neverd-bench/patch-paired.py --worker-history` compares complete CLI
 commands and durable worker commit/undo/redo against two explicit binary
 snapshots. `tools/neverd-bench/patch-payload.py` covers a large merged row, with

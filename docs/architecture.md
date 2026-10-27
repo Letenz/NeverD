@@ -1192,6 +1192,11 @@ It resolves acquisition and release together and retains JSON compatibility with
 older SDKs. Snapshot storage survives session edits and destruction; the overlay
 still owns all admission, ordering and kind decisions. CLI JSON and sidecar
 formats remain unchanged.
+Paged worker inventories construct JSON and presentation addresses only for
+the requested row window. The owning SDK snapshot still contains the full
+inventory; total counts and completion come from that snapshot, including empty
+and zero-limit pages. Older SDKs retain the complete JSON parser and move only
+the selected rows into the response. History admission still requests all rows.
 Their shared writer reuses hexadecimal scratch storage and emits only
 formatter-produced hex directly; general strings retain JSON escaping and
 external input retains its existing validation.
