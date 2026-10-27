@@ -83,7 +83,19 @@
       "included_in_acceptance": false,
       "reason": "The root CTest label selection also includes a previously built NeverDLiftTests executable; current acceptance counts only the eight explicitly rebuilt targets."
     },
-    "identity_binding": "JUnit registration order exactly matches every inventory name; executable ownership comes from the corresponding inventory command, including duplicate names."
+    "identity_binding": "JUnit registration order exactly matches every inventory name; executable ownership comes from the corresponding inventory command, including duplicate names.",
+    "raw_sp_repeat": {
+      "source_head": "f5cec9c0f41a576e6f4690316ba1093cc3d69e47",
+      "binary_sha256": "8a73617ab84b3e2ad943dcce607080d4818d7b86de5f67ffa86f8c7fc34f8ed5",
+      "registered_tests": 28,
+      "exit_code": 0,
+      "elapsed_seconds": 209.49164704199939,
+      "execution_receipt_sha256": "a0199df712c1b43b25b1083ef4f9104241fb3dac1e89ef400292222cf68d80ee",
+      "qualified_generator_revision": "54d3a8fed8c28c524668384f8e4ce0042ef57cd5",
+      "identical_artifacts": 135,
+      "all_artifacts_identical": true,
+      "scope": "All 135 generated C, LLVM ELF/Mach-O objects and harness files match the inputs used by the qualified model and native fault executions."
+    }
   },
   "qualification": {
     "generator_revision": "54d3a8fed8c28c524668384f8e4ce0042ef57cd5",
