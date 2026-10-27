@@ -48,6 +48,22 @@ QString names(const QJsonArray &Functions) {
 ComparisonModel::ComparisonModel(ComparisonSession &S, Kind K, QObject *Parent)
     : QAbstractTableModel(Parent), Session(S), Type(K),
       Pages(::neverd::limits::gui::kComparisonCachedPages) {}
+QString ComparisonModel::changeStateText(const QString &State) {
+  if (State == "unmeasured")
+    return tr("Unmeasured");
+  if (State == "identity_only")
+    return tr("Identity only");
+  if (State == "changed")
+    return tr("Changed");
+  if (State == "incomplete")
+    return tr("Incomplete");
+  if (State == "uncertain")
+    return tr("Uncertain");
+  if (State == "unchanged")
+    return tr("Unchanged");
+  return State;
+}
+
 QString ComparisonModel::functionNamesText(const QJsonObject &Function) {
   const auto Display = Function["name"].toString();
   const auto Analyzed = Function["evidence_name"].toString();
@@ -607,12 +623,10 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
     case 4:
       return E.isEmpty() ? QString() : number(E["confidence"].toDouble());
     case 5:
+      if (const auto State = E["change_state"].toString(); !State.isEmpty())
+        return changeStateText(State);
       if (E["identity_only"].toBool())
         return tr("Identity only");
-      if (E["change_state"] == QJsonValue("uncertain"))
-        return tr("Uncertain");
-      if (E["change_state"] == QJsonValue("changed"))
-        return tr("Changed");
       if (!E.isEmpty() && !E["measured"].toBool())
         return tr("Unmeasured");
       if (R["incomplete"].toBool() ||

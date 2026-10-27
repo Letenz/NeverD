@@ -136,6 +136,101 @@ private slots:
     }
   }
 
+  void referenceUncertaintySurvivesLineageTrace_data() {
+    QTest::addColumn<QString>("Locale");
+    QTest::newRow("English") << QString("en");
+    QTest::newRow("Chinese") << QString("zh-CN");
+  }
+
+  void referenceUncertaintySurvivesLineageTrace() {
+    QFETCH(QString, Locale);
+    applyLanguage(Locale);
+    const auto RestoreLanguage = qScopeGuard([] { applyLanguage("en"); });
+    ComparisonSession Source(TEST_LINEAGE_WORKER, this);
+    QSignalSpy SourceErrors(&Source, &ComparisonSession::failed);
+    QTRY_VERIFY_WITH_TIMEOUT(Source.ready(), Timeout);
+    QList<QJsonObject> Inputs;
+    for (int I = 0; I != 2; ++I) {
+      const auto Path = Directory.filePath(QString("uncertain-%1.raw").arg(I));
+      QByteArray Bytes(24, '\0');
+      Bytes.replace(0, 7, QByteArray::fromHex("8b050a000000c3"));
+      Bytes[16] = 17;
+      Bytes[23] = char(I);
+      QVERIFY(write(Path, Bytes));
+      Inputs.append({{"path", Path},
+                     {"load_options", QJsonObject{{"loader", "binary"},
+                                                  {"processor", "x86_64"},
+                                                  {"platform", "sysv"},
+                                                  {"base", "0x1000"}}}});
+    }
+    Source.start(Inputs[0], Inputs[1]);
+    QTRY_VERIFY_WITH_TIMEOUT(!Source.busy() && !Source.revision().isEmpty(),
+                             Timeout);
+    QCOMPARE(SourceErrors.size(), 0);
+    const auto Report = Directory.filePath("uncertain-lineage.nddiff");
+    bool Saved = false;
+    Source.request(
+        "comparison_save", {{"path", Report}}, this,
+        [&](const QJsonObject &R) { Saved = R["status"] == QJsonValue("ok"); });
+    QTRY_VERIFY_WITH_TIMEOUT(Saved, Timeout);
+    LineageDialog View(TEST_LINEAGE_WORKER);
+    View.setAttribute(Qt::WA_DeleteOnClose, false);
+    View.resize(1180, 780);
+    View.show();
+    auto &Session = View.session();
+    QSignalSpy Errors(&Session, &LineageSession::failed);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    Session.load({{"reports", QJsonArray{Report}}});
+    auto *Functions = View.findChild<LineagePageView *>("lineageFunctions");
+    auto *Edges = View.findChild<LineagePageView *>("lineageTraceEdges");
+    auto *Trace = View.findChild<QPushButton *>("lineageTrace");
+    auto *TraceTabs = View.findChild<QTabWidget *>("lineageTraceTabs");
+    QVERIFY(Functions && Edges && Trace && TraceTabs);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Functions->rows().size() == 1,
+                             Timeout);
+    Trace->click();
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Edges->rows().size() == 1,
+                             Timeout);
+    TraceTabs->setCurrentIndex(1);
+    const auto Expected = QCoreApplication::translate(
+        "neverd::gui::ComparisonModel", "Uncertain");
+    if (Locale == "zh-CN")
+      QCOMPARE(Expected, QString::fromUtf8("不确定"));
+    const auto Evidence = Edges->selected();
+    QCOMPARE(Evidence["change_state"].toString(), QString("uncertain"));
+    QVERIFY(Evidence["changes"].toArray().isEmpty());
+    QVERIFY(Evidence["analysis_complete"].toBool());
+    QVERIFY(!Evidence["reference_comparison_complete"].toBool());
+    QCOMPARE(Edges->table()->model()->index(0, 1).data().toString(), Expected);
+    const auto PreviousMode = Theme::instance().mode();
+    const auto RestoreTheme =
+        qScopeGuard([&] { Theme::instance().setMode(PreviousMode); });
+    if (const auto Captures =
+            qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
+        !Captures.isEmpty()) {
+      QVERIFY(QDir().mkpath(Captures));
+      for (auto Mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
+        Theme::instance().setMode(Mode);
+        QTest::qWait(60);
+        QVERIFY(View.grab().save(Captures + "/uncertain-" + Locale + '-' +
+                                 Theme::modeName(Mode) + ".png"));
+      }
+    }
+    const auto Collection = Directory.filePath("uncertain.ndlineage");
+    QSignalSpy Saves(&Session, &LineageSession::saved);
+    Session.save(Collection);
+    QTRY_COMPARE_WITH_TIMEOUT(Saves.size(), 1, Timeout);
+    Session.load({{"path", Collection}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Functions->rows().size() == 1,
+                             Timeout);
+    Trace->click();
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Edges->rows().size() == 1,
+                             Timeout);
+    QCOMPARE(Edges->selected(), Evidence);
+    QCOMPARE(Edges->table()->model()->index(0, 1).data().toString(), Expected);
+    QCOMPARE(Errors.size(), 0);
+  }
+
   void localizedWorkspace_data() {
     QTest::addColumn<QString>("Locale");
     for (const auto &Language : languages())
