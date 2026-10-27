@@ -1521,6 +1521,16 @@ strict shared JSON admission and Java-state report identities under
 Public request rejection cases share `ProcessReportCases.def`; these checks do
 not require a live Binder service, device, private workload or network access.
 
+`AndroidJNI.ServiceManagerLoggerRetainsIndependentBootEpochAcrossIdle` compares
+initializer timing with native boot-clock reads, retains the logger and its
+next tick across idle waits, and checks independent monotonic/raw epochs with
+and without instruction advancement. Active-use failures also supply other
+valid clocks to prove that missing BOOTTIME is not silently filled in.
+`LinuxClock.BootTimeRequiresAnIndependentEpochAndKeepsItsSuspendOffset` checks
+explicit admission, fixed observations, nanosecond carry, shared idle/instruction
+advancement and preservation of the declared epoch difference. These are
+model regressions, not device suspension measurements.
+
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
 typed/JSON admission, DEX catch and shared message access, terminal instruction

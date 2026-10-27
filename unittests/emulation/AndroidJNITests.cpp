@@ -1240,6 +1240,27 @@ TEST_P(AndroidJNI, ServiceManagerActiveUsesInitializeOnceWithSharedTime) {
     EXPECT_FALSE(result.JavaState->framework.service_manager->cache_known);
   }
 }
+TEST_P(AndroidJNI, ServiceManagerLoggerRetainsIndependentBootEpochAcrossIdle) {
+  Options.LinuxTime.emplace().Clocks = {
+      {1, {10, 123456789}}, {4, {30, 500000000}}, {7, {50, 987654321}}};
+  Options.LinuxTime->AdvanceOnIdle = true;
+  Options.Android->ObserveJavaState = true;
+  for (unsigned advance : {0u, 31u}) {
+    Options.LinuxTime->NanosecondsPerInstruction = advance;
+    Options.Android->Arguments = {advance};
+    auto result = run("jni_service_manager_clock");
+    ASSERT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+    EXPECT_EQ(result.ReturnValue, 0u);
+    ASSERT_TRUE(result.JavaState);
+    EXPECT_FALSE(result.JavaState->terminal);
+    ASSERT_TRUE(result.JavaState->framework.service_manager);
+    const auto &state = *result.JavaState->framework.service_manager;
+    EXPECT_TRUE(state.initialized);
+    EXPECT_NE(state.stat_logger, 0u);
+    EXPECT_FALSE(state.cache_known);
+    EXPECT_FALSE(state.manager);
+  }
+}
 TEST_P(AndroidJNI, ServiceManagerMetadataDoesNotInitializeTheClass) {
   Options.Android->ObserveJavaState = true;
   auto R = run("jni_service_manager_metadata");
@@ -1261,22 +1282,28 @@ TEST_P(AndroidJNI, ServiceManagerMetadataDoesNotInitializeTheClass) {
 TEST_P(AndroidJNI, ServiceManagerActiveUsesRequireElapsedRealtime) {
   Options.Android->ObserveJavaState = true;
   const char *Calls[] = {"JNIEnv.113", "JNIEnv.144", "JNIEnv.33", "JNIEnv.27"};
-  for (unsigned Mode = 1; Mode != 5; ++Mode) {
-    SCOPED_TRACE(Mode);
-    Options.Android->Arguments = {Mode};
-    auto R = run("jni_service_manager_metadata");
-    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
-    EXPECT_NE(R.Diagnostic.find("no explicit linux_time input"),
-              std::string::npos);
-    ASSERT_FALSE(R.NativeCalls.empty());
-    EXPECT_EQ(R.NativeCalls.back().Name, Calls[Mode - 1]);
-    EXPECT_FALSE(R.NativeCalls.back().Result);
-    ASSERT_TRUE(R.JavaState);
-    EXPECT_TRUE(R.JavaState->terminal);
-    for (const auto &C : R.JavaState->classes)
-      if (C.descriptor == "Landroid/os/ServiceManager;")
-        EXPECT_EQ(C.initialization,
-                  mobile::dalvik::JavaClassState::Initialization::Initializing);
+  for (bool supplied : {false, true}) {
+    SCOPED_TRACE(supplied);
+    if (supplied)
+      Options.LinuxTime.emplace().Clocks = {
+          {0, {100, 0}}, {1, {10, 123456789}}, {4, {30, 500000000}}};
+    for (unsigned Mode = 1; Mode != 5; ++Mode) {
+      SCOPED_TRACE(Mode);
+      Options.Android->Arguments = {Mode};
+      auto R = run("jni_service_manager_metadata");
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+      EXPECT_EQ(R.Diagnostic, "Linux clock 7 has no explicit linux_time input");
+      ASSERT_FALSE(R.NativeCalls.empty());
+      EXPECT_EQ(R.NativeCalls.back().Name, Calls[Mode - 1]);
+      EXPECT_FALSE(R.NativeCalls.back().Result);
+      ASSERT_TRUE(R.JavaState);
+      EXPECT_TRUE(R.JavaState->terminal);
+      for (const auto &C : R.JavaState->classes)
+        if (C.descriptor == "Landroid/os/ServiceManager;")
+          EXPECT_EQ(
+              C.initialization,
+              mobile::dalvik::JavaClassState::Initialization::Initializing);
+    }
   }
 }
 TEST_P(AndroidJNI, ExplicitClassLookupFailuresPreserveExceptionsAndUnknowns) {
