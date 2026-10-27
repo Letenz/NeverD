@@ -2225,3 +2225,5 @@ HFA インポートスロットのテストは厳密な C プロトタイプを�
 メモリ事後条件の変更時には、保持値、条件付き結果、新しい未知状態、呼び出し前のターゲット、不正入力の拒否を確認する `NeverDSymbolicCallEffectTests`、`NeverDSymbolicIntegerIntrinsicTests`、`NeverDSymMemoryKnowledgeTests` を実行してください。
 
 `NeverDSymbolicCallEffectTests` は両分岐、先行する呼び出し効果、繰り返し呼び出し、経路合流後の完全な条件を提供者が受け取ることも検査します。矛盾した効果は後続の操作と提供者呼び出しを停止します。これはソルバーを使わない探索回帰であり、外部 API 契約の検証ではありません。
+
+`X86LegacyAtomic.LockedArithmetic*` は x86/x64 の幅、独立した算術フラグ、入力レジスタとキャリーの保持、符号付き即値、非整列の隣接バイト、読み取り専用・部分マッピング、FS/GS、ロックなしの対照を検証します。未対応のロック付き演算を通常のストアに変換しません。`InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` は四種類の命令の特化と、順序付きメモリの証明拒否を確認します。
