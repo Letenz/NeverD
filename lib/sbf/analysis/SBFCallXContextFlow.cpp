@@ -348,6 +348,9 @@ private:
   llvm::Expected<size_t> inputExpression(CallXInputExpression Expression);
   llvm::Expected<std::optional<size_t>>
   inputOriginExpression(const ProvenValueSet &Origins);
+  llvm::Expected<std::optional<size_t>> composeReturnExpression(
+      size_t Expression, const ContextState &State,
+      const std::array<ProvenValueSet, kRegisterCount> &OriginEntry);
   llvm::Error transferInputExpression(const MedInstruction &Instruction,
                                       ContextState &State);
   llvm::Error instantiateTargetInputs(FunctionContext &Caller,
@@ -413,7 +416,7 @@ private:
   size_t SkippedConstantBranchSuccessors = 0;
   size_t RootGeneration = 0;
   using ExpressionKey = std::tuple<CallXInputExpressionKind, size_t, uint64_t,
-                                   int64_t, std::vector<size_t>>;
+                                   int64_t, Opcode, std::vector<size_t>>;
   std::map<ExpressionKey, size_t> ExpressionIndex;
   std::vector<CallXInputExpression> InputExpressions;
   size_t InstantiatedTargetInputExpressions = 0;
@@ -866,18 +869,33 @@ ContextFlow::inputExpression(CallXInputExpression Expression) {
   ExpressionKey Key;
   switch (Expression.Kind) {
   case CallXInputExpressionKind::InputRegister:
-    Key = {Expression.Kind, Expression.Register, 0, Expression.Offset, {}};
+    Key = {Expression.Kind,   Expression.Register, 0,
+           Expression.Offset, Opcode::Unknown,     {}};
     break;
   case CallXInputExpressionKind::Constant:
-    Key = {Expression.Kind, 0, Expression.Constant.Value, 0, {}};
+    Key = {Expression.Kind, 0, Expression.Constant.Value, 0,
+           Opcode::Unknown, {}};
     break;
-  case CallXInputExpressionKind::Instruction:
-    Key = {
-        Expression.Kind, *Expression.Input, Expression.InstructionSlot, 0, {}};
+  case CallXInputExpressionKind::Instruction: {
+    const auto &Instruction = *Index.find(Expression.InstructionSlot);
+    // These unary nodes bind the value independently of its physical carrier.
+    // The fixed program version gives SourceOpcode one normalized transfer;
+    // a PC or register rename does not change that transfer. Loads refer only
+    // to the preserved entry-memory snapshot, never to a later memory epoch.
+    const bool Load = Instruction.Op == Operation::Load;
+    Key = {Expression.Kind,
+           *Expression.Input,
+           Load ? 0
+                : normalizeImmediate(Instruction.Immediate,
+                                     Instruction.Semantics.Immediate),
+           Load ? Instruction.Offset : 0,
+           Instruction.SourceOpcode,
+           {}};
     Expression.Depth = InputExpressions[*Expression.Input].Depth + 1;
     break;
+  }
   case CallXInputExpressionKind::InputAlternatives:
-    Key = {Expression.Kind, 0, 0, 0, Expression.Alternatives};
+    Key = {Expression.Kind, 0, 0, 0, Opcode::Unknown, Expression.Alternatives};
     Expression.Depth = Expression.Alternatives.size() + 1;
     break;
   }
@@ -933,6 +951,107 @@ ContextFlow::inputOriginExpression(const ProvenValueSet &Origins) {
   if (!ID)
     return ID.takeError();
   return std::optional<size_t>{*ID};
+}
+
+llvm::Expected<std::optional<size_t>> ContextFlow::composeReturnExpression(
+    size_t Expression, const ContextState &State,
+    const std::array<ProvenValueSet, kRegisterCount> &OriginEntry) {
+  const size_t Depth = InputExpressions[Expression].Depth;
+  const uint64_t Bytes = Depth * sizeof(size_t) +
+                         3 * kCallXContextValueAlternatives *
+                             kCallXContextValueAlternatives * sizeof(size_t);
+  if (auto Error = retain(Bytes))
+    return std::move(Error);
+  const auto Release = llvm::scope_exit([&] { RetainedBytes -= Bytes; });
+  std::vector<size_t> Chain;
+  Chain.reserve(Depth);
+  while (InputExpressions[Expression].Input) {
+    if (auto Error = visit())
+      return std::move(Error);
+    const auto &Node = InputExpressions[Expression];
+    if (Index.find(Node.InstructionSlot)->Op == Operation::Load &&
+        !State.EntryMemoryUnchanged)
+      return std::optional<size_t>{};
+    Chain.push_back(Expression);
+    Expression = *Node.Input;
+  }
+  const auto RebaseLeaf =
+      [&](size_t ID) -> llvm::Expected<std::optional<size_t>> {
+    if (auto Error = visit())
+      return std::move(Error);
+    const auto &Node = InputExpressions[ID];
+    if (Node.Kind == CallXInputExpressionKind::Constant)
+      return std::optional<size_t>{ID};
+    if (Node.Offset == 0 && Node.Register != kFramePointerRegister &&
+        State.InputExpressions[Node.Register])
+      return State.InputExpressions[Node.Register];
+    const auto Origins = substituteOrigins(
+        ProvenValueSet(RegisterValue{RegisterValue::Kind::StackAddress,
+                                     Node.Register + 1, Node.Offset}),
+        OriginEntry, Program);
+    return inputOriginExpression(Origins);
+  };
+  std::optional<size_t> Result;
+  // The union format still contains only affine leaves. A substitution may
+  // collapse to one arbitrary expression, but differing loaded roots do not
+  // become a new, unbounded expression graph.
+  if (InputExpressions[Expression].Kind ==
+      CallXInputExpressionKind::InputAlternatives) {
+    const auto Leaves = InputExpressions[Expression].Alternatives;
+    std::vector<size_t> Rebased;
+    for (size_t Leaf : Leaves) {
+      auto ID = RebaseLeaf(Leaf);
+      if (!ID)
+        return ID.takeError();
+      if (!*ID)
+        return std::optional<size_t>{};
+      Rebased.push_back(**ID);
+    }
+    std::sort(Rebased.begin(), Rebased.end());
+    Rebased.erase(std::unique(Rebased.begin(), Rebased.end()), Rebased.end());
+    if (Rebased.size() == 1) {
+      Result = Rebased.front();
+    } else {
+      std::vector<size_t> Affine;
+      for (size_t ID : Rebased) {
+        const auto &Node = InputExpressions[ID];
+        if (Node.Kind == CallXInputExpressionKind::Instruction)
+          return std::optional<size_t>{};
+        if (Node.Kind == CallXInputExpressionKind::InputAlternatives)
+          Affine.insert(Affine.end(), Node.Alternatives.begin(),
+                        Node.Alternatives.end());
+        else
+          Affine.push_back(ID);
+      }
+      std::sort(Affine.begin(), Affine.end());
+      Affine.erase(std::unique(Affine.begin(), Affine.end()), Affine.end());
+      if (Affine.size() > kCallXContextValueAlternatives)
+        return std::optional<size_t>{};
+      CallXInputExpression Union;
+      Union.Kind = CallXInputExpressionKind::InputAlternatives;
+      Union.Alternatives = std::move(Affine);
+      auto ID = inputExpression(std::move(Union));
+      if (!ID)
+        return ID.takeError();
+      Result = *ID;
+    }
+  } else {
+    auto ID = RebaseLeaf(Expression);
+    if (!ID)
+      return ID.takeError();
+    Result = *ID;
+  }
+  if (!Result)
+    return Result;
+  for (auto It = Chain.rbegin(); It != Chain.rend(); ++It) {
+    auto Node = InputExpressions[*It];
+    Node.Input = Result;
+    auto ID = inputExpression(std::move(Node));
+    if (!ID)
+      return ID.takeError();
+    Result = *ID;
+  }
+  return Result;
 }
 
 llvm::Error
@@ -1580,6 +1699,15 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
   ContextState ValueEntry;
   ValueEntry.Registers = State.Registers;
   pushAbstractFrame(ValueEntry, Program);
+  std::optional<size_t> ReturnExpression;
+  if (Context.Generic && Callee && Callee->Return && !Edge.LegacyRuntime &&
+      Callee->Return->InputExpressions[kReturnRegister]) {
+    auto Expression = composeReturnExpression(
+        *Callee->Return->InputExpressions[kReturnRegister], State, OriginEntry);
+    if (!Expression)
+      return Expression.takeError();
+    ReturnExpression = *Expression;
+  }
   if (Collect) {
     if (!Callee || Edge.LegacyRuntime)
       Context.Effects.Unknown = true;
@@ -1592,7 +1720,7 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
   ScratchState PreservedOrigins = State.OriginScratch;
   const bool PreserveInput =
       Callee && Callee->PreservesMemory && !Edge.LegacyRuntime;
-  if (Context.Generic && ReachesCallX[Context.EntryBlock] && !PreserveInput)
+  if (Context.Generic && !PreserveInput)
     State.EntryMemoryUnchanged = false;
   const bool EquivalentLeaf = Edge.InputGeneralization ==
                               CallXInputGeneralization::EquivalentGenericInputs;
@@ -1672,6 +1800,17 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
     State.OriginScratch = std::move(PreservedOrigins);
     State.Postconditions = std::move(PreservedPostconditions);
   }
+  if (Context.Generic) {
+    for (unsigned R = 0; R < kFirstCalleeSavedRegister; ++R)
+      State.InputExpressions[R].reset();
+    if (!ReturnExpression && !Edge.LegacyRuntime) {
+      auto Expression = inputOriginExpression(State.Origins[kReturnRegister]);
+      if (!Expression)
+        return Expression.takeError();
+      ReturnExpression = *Expression;
+    }
+    State.InputExpressions[kReturnRegister] = ReturnExpression;
+  }
   return true;
 }
 
@@ -1748,20 +1887,6 @@ llvm::Expected<bool> ContextFlow::replay(FunctionContext &Context,
       Defined |= Dependencies.Writes;
       if (!*Continues)
         return false;
-      if (Context.Generic && ReachesCallX[Context.EntryBlock]) {
-        for (unsigned R = 0; R < kFirstCalleeSavedRegister; ++R)
-          State.InputExpressions[R].reset();
-        const auto Origin = State.Origins[kReturnRegister].singleton();
-        if (Origin.ValueKind == RegisterValue::Kind::StackAddress) {
-          CallXInputExpression Expression;
-          Expression.Register = Origin.Value - 1;
-          Expression.Offset = Origin.Offset;
-          auto ID = inputExpression(Expression);
-          if (!ID)
-            return ID.takeError();
-          State.InputExpressions[kReturnRegister] = *ID;
-        }
-      }
       if (Collect)
         for (unsigned R = 0; R < kFirstCalleeSavedRegister; ++R) {
           Missing[R] = {};
@@ -1789,7 +1914,7 @@ llvm::Expected<bool> ContextFlow::replay(FunctionContext &Context,
         Context.Effects.addWrite(Address, Instruction->Width / kBitsPerByte,
                                  Program);
       }
-      if (Context.Generic && ReachesCallX[Context.EntryBlock])
+      if (Context.Generic)
         if (auto Error = transferInputExpression(*Instruction, State))
           return std::move(Error);
       transfer(*Instruction, State, Collect ? &Missing : nullptr);
@@ -1817,7 +1942,7 @@ ContextFlow::summarize(size_t Entry, const ContextState &Incoming, bool Generic,
   Input.Postconditions.clear();
   Input.InputExpressions = {};
   Input.EntryMemoryUnchanged = true;
-  if (Generic && ReachesCallX[Entry])
+  if (Generic)
     for (unsigned R = 0; R < kRegisterCount; ++R) {
       CallXInputExpression Expression;
       Expression.Register = R;
@@ -2295,6 +2420,7 @@ llvm::Expected<CallXContextReport> ContextFlow::run() {
     if (Context->Return) {
       Summary.ReturnValue = Context->Return->Registers[0].singleton();
       Summary.ReturnAlternatives = Context->Return->Registers[0];
+      Summary.ReturnValueExpression = Context->Return->InputExpressions[0];
       const auto Origin = Context->Return->Origins[0].singleton();
       if (Origin.ValueKind == RegisterValue::Kind::StackAddress)
         Summary.ReturnInputExpression = std::make_pair(
@@ -2342,7 +2468,8 @@ llvm::Expected<CallXContextReport> ContextFlow::run() {
     Summary.MinimumDepth = Depth[Context->ID];
     ReturnInputElements += Summary.ReturnInputAlternatives.size();
     // Charge the added public metadata while the private summaries still live.
-    if (auto Error = retain(sizeof(Summary.ReturnInputAlternatives) +
+    if (auto Error = retain(sizeof(Summary.ReturnValueExpression) +
+                            sizeof(Summary.ReturnInputAlternatives) +
                             Summary.ReturnInputAlternatives.capacity() *
                                 sizeof(CallXInputExpression)))
       return std::move(Error);

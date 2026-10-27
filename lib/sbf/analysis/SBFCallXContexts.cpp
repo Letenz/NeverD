@@ -380,7 +380,7 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
       InputExpressions.push_back(
           llvm::json::Object{{"callx_slot", static_cast<int64_t>(Slot)},
                              {"expression", static_cast<int64_t>(ID)}});
-    Summaries.push_back(llvm::json::Object{
+    llvm::json::Object Row{
         {"summary_id", static_cast<int64_t>(Summary.ID)},
         {"entry_slot", static_cast<int64_t>(Summary.EntrySlot)},
         {"recognized_entry_root", Summary.IsRoot},
@@ -410,7 +410,11 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
         {"output_scratch_words",
          static_cast<int64_t>(Summary.OutputScratchWords)},
         {"output_parameterized_words",
-         static_cast<int64_t>(Summary.OutputParameterizedWords)}});
+         static_cast<int64_t>(Summary.OutputParameterizedWords)}};
+    if (Summary.ReturnValueExpression)
+      Row["return_value_expression"] =
+          static_cast<int64_t>(*Summary.ReturnValueExpression);
+    Summaries.push_back(std::move(Row));
   }
   llvm::json::Array Edges;
   for (const auto &Edge : Report.SummaryEdges) {

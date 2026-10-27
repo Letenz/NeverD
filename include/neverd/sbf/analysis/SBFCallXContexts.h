@@ -78,6 +78,8 @@ enum class CallXInputExpressionKind : uint8_t {
 
 /// Report-local entry-input expressions. Instruction nodes refer to the
 /// program's normalized transfer, not a second set of opcode semantics.
+/// Equivalent unary transfers share one representative instruction slot;
+/// that slot describes the transfer, not a dynamically executed path.
 struct CallXInputExpression {
   CallXInputExpressionKind Kind = CallXInputExpressionKind::InputRegister;
   unsigned Register = 0;
@@ -168,6 +170,8 @@ struct CallXFunctionSummary {
   std::vector<std::pair<unsigned, ProvenValueSet>> InputAlternatives;
   RegisterValue ReturnValue;
   ProvenValueSet ReturnAlternatives;
+  /// Generic return carrier, relative to this summary's entry memory/inputs.
+  std::optional<size_t> ReturnValueExpression;
   std::optional<std::pair<unsigned, int64_t>> ReturnInputExpression;
   /// Complete finite affine entry-input/constant origins, when non-singleton.
   /// These are inline expressions, not frame coordinates or DAG references.

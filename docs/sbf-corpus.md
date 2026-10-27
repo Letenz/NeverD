@@ -103,6 +103,14 @@ from its own parameters and entry-memory snapshot. Such rows retain their
 generic-summary and budget reason and carry the separate
 `instantiated_generic_summary_inputs` scope and input/load witnesses. The
 generic return/memory result and four-specialization limit remain in force.
+Equivalent unary transfers share an expression across instruction positions
+and physical carriers when their version-qualified opcode, normalized operand
+and input agree. Reported slots identify representative transfers, not an
+executed branch. Differing offsets, operations and unpreserved entry-memory
+loads do not acquire equality from this rule.
+Generic helper returns expose `return_value_expression` and can compose into
+their generic caller's target template. Introduced loads still require the
+same preserved entry-memory snapshot, including across nested helper calls.
 Full finite target proofs from this path do not by themselves establish
 complete candidate-callee summaries or execution coverage. Expression nodes
 and proof steps consume the existing output, retained-state and work budgets.

@@ -467,13 +467,30 @@ remain unchanged.
 Generic summaries can retain a CALLX carrier as an expression of entry
 parameters and full-width loads from entry memory. Copies, supported normalized
 affine operations and canonical return-input expressions compose those values
-across basic blocks. Loaded expressions meet by exact identity at joins;
+across basic blocks. Unary expressions share identity when their input,
+version-qualified opcode and normalized operand agree, including loads of the
+same full-width entry-memory field in different blocks or physical registers.
+Joins therefore retain equivalent field chains from different branches.
+Reported instruction slots are representative transfers, not an execution
+trace or proof that a particular branch ran. Loaded expressions meet by that
+canonical identity at joins;
 complete affine parameter origins can rebuild an input union before a common
 load or at CALLX. Other differing or unsupported expressions become unknown. A new entry-memory load
 is available only while every reaching path has preserved that memory. Stores
 and potentially writing calls invalidate that guarantee, including a change
 that leaves all register values equal. A value captured before a write remains
 available in a carrier that survives the canonical ABI.
+
+Generic summaries also record `return_value_expression` for a return carrier
+derived from entry parameters and memory, including helpers that contain no
+CALLX. A generic caller can substitute that return template into its own
+expression. New loads require the caller's entry-memory snapshot to remain
+unchanged before the call; values already loaded by a callee survive a later
+write when the ABI preserves their carrier. Frame-input substitution uses the
+canonical call-frame stride. Differing loaded roots and unsupported affine
+substitutions remain unknown. This composition supplies target templates; it
+does not specialize a generic callee's return or memory result with a target
+overlay.
 
 When an actual caller uses a completed generic summary, its pre-call parameters
 and scratch can instantiate such a target expression after the frame push.
