@@ -57,6 +57,10 @@ private:
   std::map<uint32_t, uint32_t> binder_identities;
   std::map<uint32_t, std::optional<bool>> binder_warnings;
   bool service_manager_initialized = false;
+  ExecutionResult recordStatistic(Heap &heap, const Program &program,
+                                  uint64_t receiver, int32_t event,
+                                  uint64_t start,
+                                  const AdmitInstruction &admit);
   ExecutionResult readClock(LibraryOperation operation);
   ExecutionResult nextMessage(Heap &heap, const Program &program,
                               uint64_t receiver, const AdmitInstruction &admit);

@@ -54,7 +54,7 @@ int jni_stat_logger(unsigned mode) {
   Ref time = C(e, Ref, 33, type, "getTime", "()J");
   CHECK(type && init && time);
   if (mode == 2)
-    return C(e, Ref, 33, type, "logDurationStat", "(IJ)J");
+    return !C(e, Ref, 33, type, "logDurationStat", "(IJ)J");
   if (mode == 1) {
     CHECK(!C(e, Ref, 28, type, init, (Ref)0));
     Ref exception = C(e, Ref, 15);
@@ -140,6 +140,43 @@ int jni_stat_logger(unsigned mode) {
   C(e, void, 22, saved_logger);
   C(e, void, 22, saved_labels);
   CHECK(!C(e, int, 228));
+  return C(vm, int, 5);
+}
+int jni_stat_logger_record(void) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "com/android/internal/util/StatLogger");
+  Ref init = C(e, Ref, 33, type, "<init>", "([Ljava/lang/String;)V");
+  Ref time = C(e, Ref, 33, type, "getTime", "()J");
+  Ref record = C(e, Ref, 33, type, "logDurationStat", "(IJ)J");
+  Ref string = C(e, Ref, 6, "java/lang/String");
+  Ref labels = C(e, Ref, 172, 2, string, (Ref)0);
+  Ref logger = C(e, Ref, 28, type, init, labels);
+  CHECK(type && init && time && record && labels && logger);
+  U64 start = C(e, U64, 52, logger, time) - 100;
+  CHECK(C(e, U64, 52, logger, record, 1, start) == 100);
+  CHECK(stat_logger_time_v(e, logger, record, 1, start) == 100);
+  U64 args[] = {1, start};
+  CHECK(C(e, U64, 54, logger, record, args) == 100);
+  const char *fields[] = {"mCountStats",        "mCallsPerSecond",
+                          "mMaxCallsPerSecond", "mDurationStats",
+                          "mDurationPerSecond", "mMaxDurationPerSecond",
+                          "mMaxDurationStats"};
+  for (unsigned i = 0; i != 7; ++i) {
+    Ref field = C(e, Ref, 94, type, fields[i], i < 3 ? "[I" : "[J");
+    Ref array = C(e, Ref, 95, logger, field);
+    CHECK(field && array);
+    if (i < 3) {
+      int values[2] = {-1, -1};
+      C(e, void, 203, array, 0, 2, values);
+      CHECK(!values[0] && values[1] == (i == 2 ? 0 : 3));
+    } else {
+      U64 values[2] = {~0ULL, ~0ULL};
+      C(e, void, 204, array, 0, 2, values);
+      CHECK(!values[0] && values[1] == (i == 5 ? 0 : i == 6 ? 100 : 300));
+    }
+  }
+  CHECK(!C(e, U8, 228));
   return C(vm, int, 5);
 }
 static Ref map_get_v(Handle e, Ref map, Ref method, ...) {
@@ -1846,6 +1883,46 @@ int jni_service_manager_cache(unsigned mode) {
   CHECK(!C(e, U8, 228));
   CHECK(!C(vm, int, 5));
   return 0;
+}
+int jni_service_manager_rpc(void) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/os/ServiceManager");
+  Ref get = C(e, Ref, 113, type, "getService",
+              "(Ljava/lang/String;)Landroid/os/IBinder;");
+  Ref check = C(e, Ref, 113, type, "checkService",
+                "(Ljava/lang/String;)Landroid/os/IBinder;");
+  CHECK(type && get && check);
+  Ref alpha = C(e, Ref, 167, "alpha");
+  Ref first = C(e, Ref, 114, type, get, alpha);
+  CHECK(first);
+  CHECK(same_ref(e, first, service_get_v(e, type, get, alpha)));
+  U64 args[] = {alpha};
+  CHECK(same_ref(e, first, C(e, Ref, 116, type, check, args)));
+  Ref missing = C(e, Ref, 167, "missing");
+  CHECK(!C(e, Ref, 114, type, get, missing));
+  CHECK(!C(e, Ref, 114, type, check, (Ref)0));
+  Ref calls = C(e, Ref, 144, type, "sGetServiceAccumulatedCallCount", "I");
+  CHECK(calls && C(e, int, 150, type, calls) == 3);
+  Ref cache_field = C(e, Ref, 144, type, "sCache", "Ljava/util/HashMap;");
+  Ref cache = C(e, Ref, 145, type, cache_field);
+  Ref map_type = C(e, Ref, 6, "java/util/HashMap");
+  Ref size = C(e, Ref, 33, map_type, "size", "()I");
+  CHECK(cache && size && !C(e, int, 49, cache, size));
+  Ref proxy = C(e, Ref, 6, "android/os/BinderProxy");
+  Ref warning = C(e, Ref, 94, proxy, "mWarnOnBlocking", "Z");
+  CHECK(warning && !C(e, U8, 96, first, warning));
+  Ref saved = C(e, Ref, 21, first);
+  CHECK(!C(vm, int, 5));
+  e = attach();
+  CHECK(e);
+  type = C(e, Ref, 6, "android/os/ServiceManager");
+  alpha = C(e, Ref, 167, "alpha");
+  CHECK(same_ref(e, saved, C(e, Ref, 114, type, get, alpha)));
+  CHECK(C(e, int, 150, type, calls) == 4);
+  C(e, void, 22, saved);
+  CHECK(!C(e, U8, 228));
+  return C(vm, int, 5);
 }
 int jni_service_manager_clock(unsigned advancing) {
   Handle e = attach();

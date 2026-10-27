@@ -41,6 +41,7 @@ inline constexpr uint32_t kMaxQueuedMessages = 1024;
 inline constexpr uint32_t kMaxAndroidServiceCacheEntries = 256;
 inline constexpr uint32_t kMaxAndroidBinderProxies = 256;
 inline constexpr uint32_t kMaxAndroidServiceNameBytes = 4096;
+inline constexpr uint32_t kMaxAndroidServiceLookupResults = 256;
 inline constexpr uint32_t kMaxJavaURLCodeUnits = 4096;
 inline constexpr uint32_t kMaxAndroidURLFailureHandlers = 2;
 inline constexpr uint32_t kMaxAndroidURLHandlerMessageBytes = 4096;

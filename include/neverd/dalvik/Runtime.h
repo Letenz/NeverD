@@ -58,6 +58,8 @@ struct RuntimeServices {
   std::function<ExecutionResult()> elapsed_realtime_nanoseconds;
   // ART JNI key bytes and caller default -> Java int bits (zero extended).
   std::function<ExecutionResult(std::string_view, int32_t)> property_integer;
+  // Process.myUid Java int bits from the shared OS identity owner.
+  std::function<ExecutionResult()> process_uid;
 };
 class Program {
 public:
