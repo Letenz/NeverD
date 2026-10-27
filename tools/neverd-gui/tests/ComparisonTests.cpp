@@ -1874,6 +1874,98 @@ private slots:
     Dialog.close();
   }
 
+  void cancellingMappingEditKeepsSelectionAndRedo() {
+    const auto Input = Directory.filePath("edit-alignment.bin");
+    const auto OtherInput = Directory.filePath("edit-alignment-other.bin");
+    const auto Add = QByteArray::fromHex("83c001").repeated(3000);
+    const auto Xor = QByteArray::fromHex("83f003").repeated(3000);
+    QVERIFY(write(Input,
+                  QByteArray::fromHex("b807000000") + Add + Xor + char(0xc3)));
+    QVERIFY(write(OtherInput,
+                  QByteArray::fromHex("b808000000") + Xor + Add + char(0xc3)));
+    ComparisonDialog Dialog(TEST_COMPARISON_WORKER);
+    auto &Session = Dialog.session();
+    Dialog.show();
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    QSignalSpy Failures(&Session, &ComparisonSession::failed);
+    const QJsonObject Binary{
+        {"path", Input},
+        {"load_options", QJsonObject{{"loader", "binary"},
+                                     {"processor", "x86_64"},
+                                     {"platform", "sysv"},
+                                     {"base", "0x1000"}}}};
+    auto Secondary = Binary;
+    Secondary["path"] = OtherInput;
+    Session.start(Binary, Secondary, {{"discover", false}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QCOMPARE(Failures.count(), 0);
+    Session.command(
+        "comparison_override",
+        {{"kind", "unmatch"}, {"primary", "0x1000"}, {"secondary", "0x1000"}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    const QJsonObject Decision{
+        {"kind", "match"}, {"primary", "0x1000"}, {"secondary", "0x1000"}};
+    Session.command("comparison_override", Decision);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    Session.command("comparison_undo");
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QVERIFY(Session.summary()["can_redo"].toBool());
+    auto *Functions = Dialog.findChild<QTableView *>("comparisonFunctions");
+    QTRY_COMPARE_WITH_TIMEOUT(Functions->model()->rowCount(), 1, Timeout);
+    Functions->setCurrentIndex(Functions->model()->index(0, 0));
+    auto *Instructions =
+        Dialog.findChild<QTableView *>("comparisonInstructions");
+    QTRY_VERIFY_WITH_TIMEOUT(Instructions->model()->rowCount() > 0, Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.cancellable(), Timeout);
+    const auto Before = Session.summary();
+    const auto Selection = Functions->currentIndex();
+    auto *Cancel = Dialog.findChild<QPushButton *>("comparisonCancel");
+    auto *Status = Dialog.findChild<QLabel *>("comparisonStatus");
+    int Ticks = 0;
+    QTimer Heartbeat;
+    connect(&Heartbeat, &QTimer::timeout, this, [&] { ++Ticks; });
+    Heartbeat.start(1);
+    bool Clicked = false, StillRunning = false;
+    const auto Connection = connect(
+        &Session, &ComparisonSession::progress, &Dialog, [&](const auto &P) {
+          if (Clicked || P["phase"] != QJsonValue("edit:measure"))
+            return;
+          QVERIFY(Status->text().contains("Updating affected functions"));
+          QVERIFY(Cancel->isEnabled());
+          Clicked = true;
+          QTest::mouseClick(Cancel, Qt::LeftButton);
+          StillRunning = Session.busy();
+        });
+    Session.command("comparison_override", Decision);
+    QTRY_VERIFY_WITH_TIMEOUT(Clicked && !Session.busy(), Timeout);
+    disconnect(Connection);
+    QVERIFY(StillRunning);
+    QVERIFY(Ticks > 0);
+    QCOMPARE(Failures.count(), 0);
+    QCOMPARE(Session.summary(), Before);
+    QCOMPARE(Functions->currentIndex(), Selection);
+    QVERIFY(Instructions->model()->rowCount() > 0);
+    QVERIFY(Status->text().contains("Edit stopped"));
+    QVERIFY(Status->text().contains("edit history"));
+    QVERIFY(Dialog.findChild<QPushButton *>("comparisonRedo")->isEnabled());
+    QVERIFY(!Cancel->isEnabled());
+    const auto Captures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
+    if (!Captures.isEmpty()) {
+      QDir().mkpath(Captures);
+      QVERIFY(Dialog.grab().save(Captures + "/edit-stopped.png"));
+    }
+    Session.command("comparison_redo");
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QVERIFY(Session.summary()["can_undo"].toBool());
+    QVERIFY(Session.operationMessage().isEmpty());
+    Session.command("comparison_override", Decision);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QCOMPARE(Failures.count(), 0);
+    QVERIFY(Session.summary()["edit_completed"].toBool());
+    QVERIFY(Session.revision() != Before["comparison_revision"].toString());
+    Dialog.close();
+  }
+
   void cancelButtonWaitsForActualStop() {
     const auto Path = Directory.filePath("large.bin");
     QVERIFY(write(Path, QByteArray(8 * 1024 * 1024, char(0x90)) + char(0xc3)));

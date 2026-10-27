@@ -1382,6 +1382,15 @@ second evidence validator or a separate persistence format. JSON DOM parsing,
 individual allocations/copies and whole-value equality are explicit indivisible
 checkpoints, so this remains cooperative cancellation rather than a deadline
 for every host operation.
+`Comparison` applies the same transaction boundary to correspondence edits:
+controlled apply/undo stage the result and undo effect, pass cancellation into
+caller remeasurement, and publish only after the final checkpoint. The C ABI
+reserves history capacity before core publication and commits history and
+cache invalidation only after core publication. Cancelled edits retain both
+history branches and existing views. Edit status is separate from the retained
+snapshot's completeness. Worker capabilities resolve each additive progress
+export independently, and Qt consumes those capabilities. Copies, sorting and
+final publication remain indivisible; cancellation has no hard latency bound.
 `DataFlow` adds bounded SSA neighborhoods and forward/backward slices over an
 immutable dependency graph. `MedDataFlow` is its read-only adapter from the
 pipeline's verified MedIR; it reuses the IR owner's entry-live-in classification,

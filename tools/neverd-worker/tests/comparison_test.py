@@ -222,7 +222,76 @@ def cancellable_restore(client, root, start):
         assert restored["state"] == state
         replaced = ok(client, "comparison_start", {**start, "restore_path": str(saved)})
         assert replaced["restore_completed"] and replaced["state"] == state
+        edited = ok(client, "comparison_override", {"kind": "confirm", "primary": address,
+                                                    "secondary": counterpart})
+        assert edited["edit_completed"] and edited["state"] == state, edited
+        assert edited["job"]["edit_state"] == "complete", edited
+        assert not edited["job"]["previous_result_retained"], edited
+        assert ok(client, "comparison_undo")["edit_completed"]
+        assert ok(client, "comparison_export") == historical
     ok(client, "comparison_start", start)
+
+
+def cancellable_edits(client, root):
+    """Stop real remeasurement and retain the old mapping, revision and redo."""
+    for operation in ("comparison_override", "comparison_undo", "comparison_redo"):
+        assert operation in client.hello["comparison_cancellable_operations"], client.hello
+    # Explicit entry functions with reordered native operations. Re-pairing
+    # needs real alignment without depending on discovery heuristics.
+    first = bytes.fromhex("b807000000") + bytes.fromhex("83c001") * 3000 + bytes.fromhex("83f003") * 3000 + b"\xc3"
+    second = bytes.fromhex("b808000000") + bytes.fromhex("83f003") * 3000 + bytes.fromhex("83c001") * 3000 + b"\xc3"
+    inputs = []
+    for code, base in ((first, 0x1000), (second, 0x8000)):
+        path = root / f"edit-alignment-{base}.bin"
+        path.write_bytes(code)
+        inputs.append({"path": str(path), "load_options": {
+            "loader": "binary", "processor": "x86_64", "platform": "sysv", "base": hex(base)}})
+    ok(client, "comparison_start", {"primary": inputs[0], "secondary": inputs[1],
+                                      "options": {"discover": False}})
+    decision = {"kind": "match", "primary": "0x1000", "secondary": "0x8000"}
+    ok(client, "comparison_override", {**decision, "kind": "unmatch"})
+    original = ok(client, "comparison_export")
+    assert not original["matches"], original["counts"]
+
+    def stop(operation, payload, can_redo):
+        rows = ok(client, "comparison_functions")
+        summary = ok(client, "comparison_summary")
+        request = client.send(operation, payload)
+        client.next(lambda m: m.get("request_id") == request and m.get("status") == "progress"
+                    and m.get("payload", {}).get("phase") == "edit:measure", timeout=30)
+        ack = ok(client, "cancel", {"request_id": request})
+        assert ack["accepted"] and not ack["requires_restart"], ack
+        stopped = client.response(request)
+        assert stopped["status"] == "error" and stopped["error"]["code"] == "cancelled", stopped
+        assert stopped["calculation_stopped"] and not stopped["completed_before_cancellation"], stopped
+        assert not stopped["partial_result_retained"], stopped
+        after = ok(client, "comparison_summary")
+        assert after["job"]["edit_state"] == "cancelled" and after["job"]["previous_result_retained"], after
+        assert after["comparison_revision"] == summary["comparison_revision"]
+        assert after["can_undo"] and after["can_redo"] == can_redo
+        # A failed follow-up must not inherit the previous edit's stop state.
+        refused = client.call("comparison_override", {})
+        assert refused["status"] == "error" and refused["error"]["code"] == "comparison_failed", refused
+        assert ok(client, "comparison_export") == original
+        assert ok(client, "comparison_functions") == rows
+
+    stop("comparison_override", decision, False)
+    edited = ok(client, "comparison_override", decision)
+    assert edited["edit_completed"] and edited["can_undo"], edited
+    document = ok(client, "comparison_export")
+    assert document != original
+    assert ok(client, "comparison_undo")["edit_completed"]
+    assert ok(client, "comparison_export") == original
+    stop("comparison_override", decision, True)
+    stop("comparison_redo", {}, True)
+    assert ok(client, "comparison_redo")["edit_completed"]
+    assert ok(client, "comparison_export") == document
+    saved = root / "edit-retry.nddiff"
+    ok(client, "comparison_save", {"path": str(saved)})
+    assert json.loads(saved.read_text()) == document
+    ok(client, "comparison_restore", {"path": str(saved)})
+    assert ok(client, "comparison_export") == document
+    print("Cancellable edits: stopped alignment, retained revision/history, retry and reopen passed")
 
 
 def aarch64_profiles(client, args, root, fixture):
@@ -859,6 +928,7 @@ def main():
                 assert ok(client, "comparison_functions") == retained_rows
                 print(f"{side} input loading stop and retained comparison: {time.monotonic() - load_stop_began:.3f}s")
             cancellable_restore(client, root, start)
+            cancellable_edits(client, root)
             retried = ok(client, "comparison_start", start)
             assert retried["state"] == "complete", retried
             # Actual cooperative cancellation: acknowledge request while work is running;

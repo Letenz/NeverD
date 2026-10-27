@@ -288,11 +288,22 @@ std::optional<std::string> applyOverride(ComparisonResult &Result,
                                          const Program &Secondary,
                                          const Override &O,
                                          OverrideEffect *Effect = nullptr);
+/// Transactional controlled edit. A stop throws ComparisonInterrupted and
+/// leaves Result and Effect unchanged. Progress ends before publication;
+/// copying the staged result is an indivisible checkpoint.
+std::optional<std::string>
+applyOverride(ComparisonResult &Result, const Program &Primary,
+              const Program &Secondary, const Override &O,
+              OverrideEffect *Effect, const ComparisonControl &Control);
 
 /// Undoes the last override applied to \p Result, which \p Effect
 /// describes.
 void revertOverride(ComparisonResult &Result, const Program &Primary,
                     const Program &Secondary, const OverrideEffect &Effect);
+/// Transactional controlled undo, with the same stop contract as applyOverride.
+void revertOverride(ComparisonResult &Result, const Program &Primary,
+                    const Program &Secondary, const OverrideEffect &Effect,
+                    const ComparisonControl &Control);
 
 /// Recomputes the coverage and program-level scores of \p Result from its
 /// matches.

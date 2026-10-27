@@ -3237,6 +3237,18 @@ must reproduce its original ordering, memberships and coverage. Native SDK and
 worker cases consume the last candidates, check invalidated inventories, and
 reopen the edited report through the strict reader, including actual worker
 file save and restart.
+Controlled-edit regressions cancel before staging, during mapping and caller
+remeasurement, and at the final publication checkpoint. Core results and output
+effects must stay unchanged, including expired deadlines and failed callbacks.
+The native SDK covers match/unmatch/confirm, undo and redo with primed views and
+both history branches. Python checks callback context/thread identity and retry.
+The real worker cancels reordered native instruction alignment and verifies
+unchanged revision, retained redo, successful retry and file reopen. The Qt
+`cancellingMappingEditKeepsSelectionAndRedo` workflow uses the real worker and
+checks responsive progress, selection, retained history and a non-error stopped
+message. Cancellation is cooperative; these checks assert outcomes rather than
+a hard latency deadline. Old-engine capability checks must retain ordinary edits
+while omitting only the unsupported progress exports from cancellation admission.
 Overlapping-candidate regressions use an independently specified six-cycle:
 all six measured alternatives must survive, and the other three pairs must
 stay absent under direction and layout changes. Another case combines exact

@@ -125,15 +125,21 @@ void ComparisonSession::command(const QString &Operation,
   const bool Restore =
       Operation == "comparison_restore" ||
       (Operation == "comparison_start" && Payload.contains("restore_path"));
+  const bool Edit = Operation == "comparison_override" ||
+                    Operation == "comparison_undo" ||
+                    Operation == "comparison_redo";
   request(
       Operation, Payload, this,
-      [this, Operation, Restore](const auto &Message) {
+      [this, Operation, Restore, Edit](const auto &Message) {
         Busy = false;
         if (Message["status"] != QJsonValue("ok")) {
           const auto Error = Message["error"].toObject();
-          if ((Operation == "comparison_start" || Restore) &&
+          if ((Operation == "comparison_start" || Restore || Edit) &&
               Error["code"] == QJsonValue("cancelled")) {
-            if (Restore)
+            if (Edit)
+              OperationMessage = tr("Edit stopped. Your previous comparison "
+                                    "and edit history are still available.");
+            else if (Restore)
               OperationMessage =
                   Summary.isEmpty() ? tr("Restore stopped. Ready to try again.")
                                     : tr("Restore stopped. Your previous "

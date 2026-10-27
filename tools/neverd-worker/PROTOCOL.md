@@ -305,6 +305,20 @@ terminal reply then reports `completed_before_cancellation:true`. A replacement
 handle remains disposable until the old session is swapped. Saved timeout
 settings do not become a deadline for restore validation.
 
+`comparison_override`, `comparison_undo` and `comparison_redo` are individually
+advertised as cancellable when the SDK exports their optional `*_with_progress`
+entry points. `edit:prepare`, `edit:mapping`, `edit:measure` and `edit:publish`
+report staging, correspondence changes, affected-function remeasurement and the
+last checkpoint before commit. Confirmation and undo do not remeasure functions.
+An acknowledged stop returns `error.code:"cancelled"`, retains both history
+branches and cached views, and leaves `comparison_revision` unchanged. SDK status
+and `job.edit_state` distinguish the edit outcome from the retained comparison's
+historical state; `previous_result_retained` describes an admitted stopped edit.
+Successful edits return `edit_completed:true` and advance the revision, even if
+a cancellation arrives after commit or the saved comparison's state was already
+`cancelled`. Old engines keep synchronous editing. Copies, sorting and final
+publication are indivisible checkpoints, not hard cancellation deadlines.
+
 Restart with `restore_path` reuses the saved comparison settings before fresh
 projection. Input load/discovery/filter settings must still match the snapshot.
 

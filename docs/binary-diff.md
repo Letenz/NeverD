@@ -165,6 +165,12 @@ the original groups and candidate lists; every intermediate edit can be saved
 and reopened.
 Pairing, undo and redo all invalidate correspondence-dependent inventories,
 instruction details, source alignment and change observations before inspection.
+With a current engine, pairing, confirmation, unpairing, undo and redo can be
+cancelled from the comparison window. Cancellation keeps the last committed
+result, selection and both history branches; retrying is safe. A cancelled new
+edit does not discard redo. Progress includes remeasurement of affected callers.
+Copies and publication are indivisible checkpoints, so stopping is cooperative.
+Older engines retain ordinary editing without advertising edit cancellation.
 
 | Exit | Meaning |
 | --- | --- |

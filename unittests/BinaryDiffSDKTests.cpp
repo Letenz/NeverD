@@ -1666,6 +1666,140 @@ TEST_F(BinaryDiffSDK, RedoRebuildsCallerDetailsObservationsAndInventory) {
   EXPECT_EQ(Views(), After);
 }
 
+TEST_F(BinaryDiffSDK, CancelledEditsKeepViewsAndBothHistoryBranches) {
+  std::vector<uint8_t> Bytes{0xe8, 0x0b, 0, 0, 0, 0xc3};
+  Bytes.resize(16, 0xcc);
+  const auto First = body(7), Second = body(8);
+  Bytes.insert(Bytes.end(), First.begin(), First.end());
+  Bytes.resize(32, 0xcc);
+  Bytes.insert(Bytes.end(), Second.begin(), Second.end());
+  const auto P = input(Bytes), S = input(Bytes, 0x8000);
+  struct StopContext {
+    neverd_comparison_t Handle;
+    std::string Phase;
+    uint64_t Minimum = 0;
+    bool Seen = false;
+    std::thread::id Caller = std::this_thread::get_id();
+    static void report(void *Context, const char *Phase,
+                       unsigned long long Done, unsigned long long) {
+      auto &Self = *static_cast<StopContext *>(Context);
+      EXPECT_EQ(std::this_thread::get_id(), Self.Caller);
+      const auto Status = parsed(neverd_comparison_status_json(Self.Handle));
+      EXPECT_EQ(Status.getAsObject()->getBoolean("running"), true);
+      EXPECT_EQ(Status.getAsObject()->getString("edit_state"), "running");
+      EXPECT_EQ(Status.getAsObject()->getBoolean("previous_result_retained"),
+                true);
+      if (Phase == Self.Phase && Done >= Self.Minimum) {
+        Self.Seen = true;
+        neverd_comparison_cancel(Self.Handle);
+      }
+    }
+  };
+  for (const auto *Kind : {"match", "unmatch", "confirm"}) {
+    SCOPED_TRACE(Kind);
+    const auto C = compare(P, S, R"({"discover":true})");
+    const auto Decision = render(llvm::json::Object{
+        {"kind", Kind},
+        {"primary", "0x1010"},
+        {"secondary", llvm::StringRef(Kind) == "match" ? "0x8020" : "0x8010"}});
+    const auto Views = [&] {
+      return std::vector<std::string>{
+          take(neverd_comparison_function_json(C, 0, 0x1000)),
+          take(neverd_comparison_observations_json(C,
+                                                   R"({"address":"0x1000"})")),
+          take(neverd_comparison_functions_json(C, R"({"kind":"changed"})"))};
+    };
+    const auto Original = take(neverd_comparison_export_json(C));
+    const auto OriginalViews = Views();
+    const auto CheckStop = [&](const StopContext &Stop,
+                               const std::string &Saved,
+                               const std::vector<std::string> &Cached,
+                               bool Undo, bool Redo) {
+      EXPECT_TRUE(Stop.Seen) << Stop.Phase;
+      const auto Status = parsed(neverd_comparison_status_json(C));
+      EXPECT_EQ(Status.getAsObject()->getString("edit_state"), "cancelled");
+      EXPECT_EQ(Status.getAsObject()->getBoolean("running"), false);
+      EXPECT_EQ(Status.getAsObject()->getBoolean("previous_result_retained"),
+                true);
+      EXPECT_EQ(Status.getAsObject()->getBoolean("partial_result_retained"),
+                false);
+      EXPECT_NE(take(neverd_comparison_last_error(C)).find("cancelled"),
+                std::string::npos);
+      EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+      EXPECT_EQ(Views(), Cached);
+      const auto Summary = parsed(neverd_comparison_summary_json(C));
+      EXPECT_EQ(Summary.getAsObject()->getBoolean("can_undo"), Undo);
+      EXPECT_EQ(Summary.getAsObject()->getBoolean("can_redo"), Redo);
+    };
+    std::vector<std::pair<std::string, uint64_t>> Stages{
+        {"edit:prepare", 0}, {"edit:mapping", 0}, {"edit:publish", 0}};
+    if (llvm::StringRef(Kind) != "confirm") {
+      Stages.emplace_back("edit:measure", 0);
+      Stages.emplace_back("edit:measure", 1);
+    }
+    for (const auto &[Phase, Minimum] : Stages) {
+      StopContext Stop{C, Phase, Minimum};
+      EXPECT_EQ(neverd_comparison_override_json_with_progress(
+                    C, Decision.c_str(), StopContext::report, &Stop),
+                0);
+      CheckStop(Stop, Original, OriginalViews, false, false);
+    }
+    // Cancellation is reset even without a subsequent query or callback.
+    StopContext Early{C, "edit:prepare"};
+    ASSERT_EQ(neverd_comparison_override_json_with_progress(
+                  C, Decision.c_str(), StopContext::report, &Early),
+              0);
+    EXPECT_EQ(neverd_comparison_override_json(C, "{}"), 0);
+    EXPECT_EQ(parsed(neverd_comparison_status_json(C))
+                  .getAsObject()
+                  ->getString("edit_state"),
+              "failed");
+    ASSERT_EQ(neverd_comparison_override_json_with_progress(
+                  C, Decision.c_str(), StopContext::report, &Early),
+              0);
+    EXPECT_EQ(neverd_comparison_redo(C), 0);
+    EXPECT_EQ(parsed(neverd_comparison_status_json(C))
+                  .getAsObject()
+                  ->getString("edit_state"),
+              "failed");
+    ASSERT_EQ(neverd_comparison_override_json_with_progress(
+                  C, Decision.c_str(), StopContext::report, &Early),
+              0);
+    ASSERT_EQ(neverd_comparison_override_json(C, Decision.c_str()), 1);
+    const auto Edited = take(neverd_comparison_export_json(C));
+    const auto EditedViews = Views();
+    ASSERT_NE(Edited, Original);
+    for (const auto *Phase : {"edit:prepare", "edit:mapping", "edit:publish"}) {
+      StopContext Stop{C, Phase};
+      EXPECT_EQ(
+          neverd_comparison_undo_with_progress(C, StopContext::report, &Stop),
+          0);
+      CheckStop(Stop, Edited, EditedViews, true, false);
+    }
+    ASSERT_EQ(neverd_comparison_undo(C), 1);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Original);
+    // A cancelled new edit must not discard the existing redo branch.
+    StopContext NewEdit{C, "edit:publish"};
+    EXPECT_EQ(neverd_comparison_override_json_with_progress(
+                  C, Decision.c_str(), StopContext::report, &NewEdit),
+              0);
+    CheckStop(NewEdit, Original, OriginalViews, false, true);
+    for (const auto &[Phase, Minimum] : Stages) {
+      StopContext Stop{C, Phase, Minimum};
+      EXPECT_EQ(
+          neverd_comparison_redo_with_progress(C, StopContext::report, &Stop),
+          0);
+      CheckStop(Stop, Original, OriginalViews, false, true);
+    }
+    ASSERT_EQ(neverd_comparison_redo(C), 1);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Edited);
+    EXPECT_EQ(Views(), EditedViews);
+    ASSERT_EQ(neverd_comparison_undo(C), 1);
+    EXPECT_EQ(neverd_comparison_undo(C), 0);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Original);
+  }
+}
+
 TEST_F(BinaryDiffSDK, ScalarValidationBindsNativeLiftsAndExplicitInputDomain) {
   const auto A = input({0x89, 0xf8, 0x83, 0xc0, 3, 0xc3});
   const auto B =
@@ -4212,5 +4346,28 @@ TEST_F(BinaryDiffSDK, RestoreCompletionIsIndependentOfTheSavedStopState) {
                   .getAsObject()
                   ->getString("state"),
               State);
+    const auto BeforeEdit = take(neverd_comparison_export_json(C));
+    const auto Stop = [](void *Context, const char *Phase, neverd_va_t,
+                         neverd_va_t) {
+      if (llvm::StringRef(Phase) == "edit:publish")
+        neverd_comparison_cancel(Context);
+    };
+    const char *Confirm =
+        R"({"kind":"confirm","primary":"0x1000","secondary":"0x8000"})";
+    ASSERT_EQ(
+        neverd_comparison_override_json_with_progress(C, Confirm, Stop, C), 0);
+    Status = parsed(neverd_comparison_status_json(C));
+    EXPECT_EQ(Status.getAsObject()->getString("edit_state"), "cancelled");
+    EXPECT_EQ(Status.getAsObject()->getBoolean("partial_result_retained"),
+              llvm::StringRef(State) != "complete");
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), BeforeEdit);
+    ASSERT_EQ(neverd_comparison_override_json(C, Confirm), 1);
+    Status = parsed(neverd_comparison_status_json(C));
+    EXPECT_EQ(Status.getAsObject()->getString("edit_state"), "complete");
+    EXPECT_EQ(Status.getAsObject()->getString("state"), State);
+    EXPECT_EQ(Status.getAsObject()->getBoolean("previous_result_retained"),
+              false);
+    ASSERT_EQ(neverd_comparison_undo(C), 1);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), BeforeEdit);
   }
 }

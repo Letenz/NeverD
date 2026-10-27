@@ -1222,19 +1222,23 @@ void summarize(ComparisonResult &R, const Program &Primary,
 namespace {
 
 /// Rebuilds a result's lookups after its matches or ambiguities change.
-void reindex(ComparisonResult &R, size_t PrimaryCount, size_t SecondaryCount) {
+void reindex(ComparisonResult &R, size_t PrimaryCount, size_t SecondaryCount,
+             const ComparisonControl &Control) {
+  Control.check();
   llvm::sort(R.Matches, [](const FunctionMatch &L, const FunctionMatch &M) {
     return L.Primary < M.Primary;
   });
   R.PrimaryMatch.assign(PrimaryCount, NoIndex);
   R.SecondaryMatch.assign(SecondaryCount, NoIndex);
   for (uint32_t I = 0; I < R.Matches.size(); ++I) {
+    Control.check();
     R.PrimaryMatch[R.Matches[I].Primary] = I;
     R.SecondaryMatch[R.Matches[I].Secondary] = I;
   }
   R.PrimaryAmbiguity.assign(PrimaryCount, NoIndex);
   R.SecondaryAmbiguity.assign(SecondaryCount, NoIndex);
   for (uint32_t I = 0; I < R.Ambiguities.size(); ++I) {
+    Control.check();
     for (uint32_t A : R.Ambiguities[I].Primary)
       R.PrimaryAmbiguity[A] = I;
     for (uint32_t B : R.Ambiguities[I].Secondary)
@@ -1244,9 +1248,11 @@ void reindex(ComparisonResult &R, size_t PrimaryCount, size_t SecondaryCount) {
 
 /// The functions of \p P with a call to one of \p Callees.
 std::vector<uint32_t> callersOf(const Program &P,
-                                const llvm::DenseSet<uint32_t> &Callees) {
+                                const llvm::DenseSet<uint32_t> &Callees,
+                                const ComparisonControl &Control) {
   std::vector<uint32_t> Out;
   for (uint32_t F = 0; F < P.Functions.size(); ++F) {
+    Control.check();
     bool Calls = false;
     for (const Block &B : P.blocks(P.Functions[F])) {
       for (const Instruction &I : P.instructions(B))
@@ -1263,13 +1269,10 @@ std::vector<uint32_t> callersOf(const Program &P,
   return Out;
 }
 
-} // namespace
-
-std::optional<std::string> applyOverride(ComparisonResult &R,
-                                         const Program &Primary,
-                                         const Program &Secondary,
-                                         const Override &O,
-                                         OverrideEffect *Effect) {
+std::optional<std::string>
+applyOverrideInPlace(ComparisonResult &R, const Program &Primary,
+                     const Program &Secondary, const Override &O,
+                     OverrideEffect &E, const ComparisonControl &Control) {
   const auto A = Primary.functionAt(O.Primary);
   const auto B = Secondary.functionAt(O.Secondary);
   if (!A)
@@ -1287,9 +1290,7 @@ std::optional<std::string> applyOverride(ComparisonResult &R,
       !Paired)
     return std::string("the two functions are not paired");
 
-  OverrideEffect Local;
-  OverrideEffect &E = Effect ? *Effect : Local;
-  E = OverrideEffect();
+  Control.report("mapping");
   E.Applied = O;
   llvm::DenseSet<uint32_t> ChangedP, ChangedS;
   const auto Dissolve = [&](uint32_t Index) {
@@ -1352,6 +1353,7 @@ std::optional<std::string> applyOverride(ComparisonResult &R,
     // Paired functions leave their ambiguities.
     if (E.Added) {
       for (uint32_t I = 0; I < R.Ambiguities.size(); ++I) {
+        Control.check();
         Ambiguity &Amb = R.Ambiguities[I];
         const bool HasA = llvm::is_contained(Amb.Primary, *A);
         const bool HasB = llvm::is_contained(Amb.Secondary, *B);
@@ -1368,46 +1370,54 @@ std::optional<std::string> applyOverride(ComparisonResult &R,
         return Amb.Primary.empty() || Amb.Secondary.empty();
       });
     }
-    reindex(R, Primary.Functions.size(), Secondary.Functions.size());
+    reindex(R, Primary.Functions.size(), Secondary.Functions.size(), Control);
     // The new pair, and every pair calling a function whose counterpart
     // changed, measure again.
-    const std::vector<uint64_t> PK = mnemonicKeys(Primary),
-                                SK = mnemonicKeys(Secondary);
+    const std::vector<uint64_t> PK = mnemonicKeys(Primary, Control),
+                                SK = mnemonicKeys(Secondary, Control);
     std::vector<uint32_t> PMap(Primary.Functions.size(), NoIndex),
         SMap(Secondary.Functions.size(), NoIndex);
     for (const FunctionMatch &M : R.Matches) {
+      Control.check();
       PMap[M.Primary] = M.Secondary;
       SMap[M.Secondary] = M.Primary;
     }
     llvm::DenseSet<uint32_t> Again;
-    for (uint32_t F : callersOf(Primary, ChangedP))
+    for (uint32_t F : callersOf(Primary, ChangedP, Control))
       if (R.PrimaryMatch[F] != NoIndex)
         Again.insert(R.PrimaryMatch[F]);
-    for (uint32_t F : callersOf(Secondary, ChangedS))
+    for (uint32_t F : callersOf(Secondary, ChangedS, Control))
       if (R.SecondaryMatch[F] != NoIndex)
         Again.insert(R.SecondaryMatch[F]);
     if (E.Added)
       Again.insert(R.PrimaryMatch[*A]);
     std::vector<uint32_t> Ordered(Again.begin(), Again.end());
     llvm::sort(Ordered);
-    for (uint32_t I : Ordered) {
+    for (size_t N = 0; N < Ordered.size(); ++N) {
+      Control.report("measure", N, Ordered.size());
+      const uint32_t I = Ordered[N];
       FunctionMatch &M = R.Matches[I];
       const bool IsNew = E.Added && M.Primary == *A;
       if (!IsNew)
         E.Remeasured.push_back(M);
       measure(M, compareFunctionsWithKeys(Primary, M.Primary, Secondary,
-                                          M.Secondary, {PMap, SMap}, PK, SK));
+                                          M.Secondary, {PMap, SMap}, PK, SK,
+                                          Control));
+      Control.check();
       if (IsNew)
         E.Added = M;
     }
+    Control.report("measure", Ordered.size(), Ordered.size());
   }
   R.Overrides.push_back(O);
   summarize(R, Primary, Secondary);
   return std::nullopt;
 }
 
-void revertOverride(ComparisonResult &R, const Program &Primary,
-                    const Program &Secondary, const OverrideEffect &E) {
+void revertOverrideInPlace(ComparisonResult &R, const Program &Primary,
+                           const Program &Secondary, const OverrideEffect &E,
+                           const ComparisonControl &Control) {
+  Control.report("mapping");
   if (E.Applied.Kind == OverrideKind::Confirm ||
       (E.Applied.Kind == OverrideKind::Match && E.Added &&
        E.Removed.size() == 1 && E.Removed[0].Primary == E.Added->Primary &&
@@ -1432,6 +1442,7 @@ void revertOverride(ComparisonResult &R, const Program &Primary,
       Restored.reserve(R.Ambiguities.size() + E.Ambiguities.size());
       size_t Current = 0;
       for (const auto &[Index, Before] : E.Ambiguities) {
+        Control.check();
         while (Restored.size() < Index)
           Restored.push_back(std::move(R.Ambiguities[Current++]));
         Restored.push_back(Before);
@@ -1447,7 +1458,7 @@ void revertOverride(ComparisonResult &R, const Program &Primary,
         Restored.push_back(std::move(R.Ambiguities[Current++]));
       R.Ambiguities = std::move(Restored);
     }
-    reindex(R, Primary.Functions.size(), Secondary.Functions.size());
+    reindex(R, Primary.Functions.size(), Secondary.Functions.size(), Control);
     for (const FunctionMatch &Before : E.Remeasured)
       if (const uint32_t I = R.PrimaryMatch[Before.Primary]; I != NoIndex)
         R.Matches[I] = Before;
@@ -1455,6 +1466,48 @@ void revertOverride(ComparisonResult &R, const Program &Primary,
   if (!R.Overrides.empty() && R.Overrides.back() == E.Applied)
     R.Overrides.pop_back();
   summarize(R, Primary, Secondary);
+}
+
+} // namespace
+
+std::optional<std::string> applyOverride(ComparisonResult &R,
+                                         const Program &Primary,
+                                         const Program &Secondary,
+                                         const Override &O,
+                                         OverrideEffect *Effect) {
+  return applyOverride(R, Primary, Secondary, O, Effect, {});
+}
+
+std::optional<std::string>
+applyOverride(ComparisonResult &R, const Program &Primary,
+              const Program &Secondary, const Override &O,
+              OverrideEffect *Effect, const ComparisonControl &Control) {
+  Control.report("prepare");
+  ComparisonResult Next = R;
+  OverrideEffect NextEffect;
+  if (auto Error = applyOverrideInPlace(Next, Primary, Secondary, O, NextEffect,
+                                        Control))
+    return Error;
+  Control.report("publish", 0, 1);
+  R = std::move(Next);
+  if (Effect)
+    *Effect = std::move(NextEffect);
+  return std::nullopt;
+}
+
+void revertOverride(ComparisonResult &R, const Program &Primary,
+                    const Program &Secondary, const OverrideEffect &E) {
+  revertOverride(R, Primary, Secondary, E, {});
+}
+
+void revertOverride(ComparisonResult &R, const Program &Primary,
+                    const Program &Secondary, const OverrideEffect &E,
+                    const ComparisonControl &Control) {
+  Control.report("prepare");
+  ComparisonResult Next = R;
+  revertOverrideInPlace(Next, Primary, Secondary, E, Control);
+  Control.report("publish", 0, 1);
+  R = std::move(Next);
 }
 
 } // namespace neverd::diff

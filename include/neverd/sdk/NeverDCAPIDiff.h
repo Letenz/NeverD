@@ -293,11 +293,28 @@ neverd_comparison_impact_json(neverd_comparison_t Comparison,
                               const char *Query);
 /// Override: {kind: match/unmatch/confirm, primary: "0x...", secondary:
 /// "0x..."}. Successful edits are undoable; a new edit discards the redo
-/// branch.
+/// branch. Every edit starts a fresh cancellation lifetime. An acknowledged
+/// stop preserves the result, history and cached views; status edit_state
+/// describes the operation independently of the saved comparison's state.
 NEVERD_API int neverd_comparison_override_json(neverd_comparison_t Comparison,
                                                const char *Override);
 NEVERD_API int neverd_comparison_undo(neverd_comparison_t Comparison);
 NEVERD_API int neverd_comparison_redo(neverd_comparison_t Comparison);
+/// Optional progress exports for cancellable edit clients. Progress runs on
+/// the coordinator thread and may cancel or read status. It ends before commit;
+/// do not destroy the handle or invoke other operations from the callback.
+/// Staging copies and final publication are indivisible checkpoints.
+NEVERD_API int neverd_comparison_override_json_with_progress(
+    neverd_comparison_t Comparison, const char *Override,
+    neverd_comparison_progress_t Progress, void *Context);
+NEVERD_API int
+neverd_comparison_undo_with_progress(neverd_comparison_t Comparison,
+                                     neverd_comparison_progress_t Progress,
+                                     void *Context);
+NEVERD_API int
+neverd_comparison_redo_with_progress(neverd_comparison_t Comparison,
+                                     neverd_comparison_progress_t Progress,
+                                     void *Context);
 /// Re-extract current inputs and check revision/content/direction against the
 /// snapshots. Returns 0 on stale or unsupported input; never silently rebinds.
 NEVERD_API int neverd_comparison_validate_inputs(neverd_comparison_t Comparison,

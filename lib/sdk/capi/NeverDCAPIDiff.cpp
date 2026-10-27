@@ -58,6 +58,9 @@ struct Comparison {
   std::string RestoreOutcome = "idle";
   bool RestorePreviousRetained = false;
   ComparisonState RestoreSnapshotState = ComparisonState::Complete;
+  std::string EditOutcome = "idle";
+  bool EditPreviousRetained = false;
+  ComparisonState EditSnapshotState = ComparisonState::Complete;
   uint64_t Done = 0, Total = 0;
   bool Published = false;
   Program Primary, Secondary;
@@ -537,6 +540,7 @@ const char *neverd_comparison_status_json(neverd_comparison_t C) {
   return guarded(C, [](Comparison &C) -> const char * {
     std::lock_guard Lock(C.StatusMutex);
     const bool Restore = llvm::StringRef(C.Phase).starts_with("restore:");
+    const bool Edit = llvm::StringRef(C.Phase).starts_with("edit:");
     return dupStr(jsonToString(llvm::json::Object{
         {"schema", "neverd.bindiff.status"},
         {"version", 1},
@@ -546,9 +550,13 @@ const char *neverd_comparison_status_json(neverd_comparison_t C) {
         {"partial_result_retained",
          C.Published &&
              (Restore ? C.RestoreSnapshotState != ComparisonState::Complete
+              : Edit  ? C.EditSnapshotState != ComparisonState::Complete
                       : C.Outcome != "complete")},
         {"restore_state", Restore ? C.RestoreOutcome : "idle"},
-        {"previous_result_retained", Restore && C.RestorePreviousRetained},
+        {"edit_state", Edit ? C.EditOutcome : "idle"},
+        {"previous_result_retained", Restore ? C.RestorePreviousRetained
+                                     : Edit  ? C.EditPreviousRetained
+                                             : false},
         {"result_available", C.Published},
         {"state", C.Outcome},
         {"phase", C.Phase},
@@ -2784,47 +2792,118 @@ const char *neverd_comparison_region_page_json(neverd_comparison_t Handle,
   });
 }
 
-int neverd_comparison_override_json(neverd_comparison_t Handle,
-                                    const char *Text) {
+namespace {
+enum class EditAction { Apply, Undo, Redo };
+
+int editComparison(neverd_comparison_t Handle, EditAction Action,
+                   const char *Text, neverd_comparison_progress_t Progress,
+                   void *Context) {
   return guarded(Handle, [&](Comparison &C) {
     auto Lock = ready(C);
-    auto V = json(Text);
-    require(V.getAsObject(), "override must be an object");
-    const auto O = overrideValue(*V.getAsObject());
-    OverrideEffect Effect;
-    if (auto Error =
-            applyOverride(C.Result, C.Primary, C.Secondary, O, &Effect))
-      throw std::runtime_error(*Error);
-    invalidateMappingViews(C);
-    C.Undo.push_back(std::move(Effect));
-    C.Redo.clear();
-    return 1;
+    {
+      std::lock_guard Status(C.StatusMutex);
+      C.Cancel = false;
+      C.Running = true;
+      C.Outcome = C.EditOutcome = "running";
+      C.Phase = "edit:prepare";
+      C.Done = C.Total = 0;
+      C.Error.clear();
+      C.EditPreviousRetained = true;
+      C.EditSnapshotState = C.Result.State;
+    }
+    auto Finished = llvm::scope_exit([&] {
+      std::lock_guard Status(C.StatusMutex);
+      C.Running = false;
+      if (C.EditOutcome == "running")
+        C.Outcome = C.EditOutcome = "failed";
+    });
+    ComparisonControl Control;
+    Control.Cancel = &C.Cancel;
+    Control.Progress = [&](llvm::StringRef Phase, uint64_t Done,
+                           uint64_t Total) {
+      const auto Name = "edit:" + Phase.str();
+      {
+        std::lock_guard Status(C.StatusMutex);
+        C.Phase = Name;
+        C.Done = Done;
+        C.Total = Total;
+      }
+      if (Progress)
+        Progress(Context, Name.c_str(), Done, Total);
+    };
+    try {
+      Override Decision;
+      if (Action == EditAction::Apply) {
+        auto V = json(Text);
+        require(V.getAsObject(), "override must be an object");
+        Decision = overrideValue(*V.getAsObject());
+      } else if (Action == EditAction::Undo) {
+        require(!C.Undo.empty(), "no comparison edit to undo");
+        C.Redo.reserve(C.Redo.size() + 1);
+      } else {
+        require(!C.Redo.empty(), "no comparison edit to redo");
+        Decision = C.Redo.back();
+      }
+      if (Action != EditAction::Undo)
+        C.Undo.reserve(C.Undo.size() + 1);
+      if (Action == EditAction::Undo) {
+        revertOverride(C.Result, C.Primary, C.Secondary, C.Undo.back(),
+                       Control);
+        C.Redo.push_back(C.Undo.back().Applied);
+        C.Undo.pop_back();
+      } else {
+        OverrideEffect Effect;
+        if (auto Error = applyOverride(C.Result, C.Primary, C.Secondary,
+                                       Decision, &Effect, Control))
+          throw std::runtime_error(*Error);
+        C.Undo.push_back(std::move(Effect));
+        if (Action == EditAction::Redo)
+          C.Redo.pop_back();
+        else
+          C.Redo.clear();
+      }
+      invalidateMappingViews(C);
+      std::lock_guard Status(C.StatusMutex);
+      C.Outcome = stateName(C.Result.State).str();
+      C.EditOutcome = "complete";
+      C.EditPreviousRetained = false;
+      C.Done = C.Total = 1;
+      return 1;
+    } catch (const ComparisonInterrupted &Stopped) {
+      std::lock_guard Status(C.StatusMutex);
+      C.Outcome = C.EditOutcome = stateName(Stopped.State).str();
+      C.Error = "comparison edit " + C.EditOutcome;
+      return 0;
+    }
   });
+}
+} // namespace
+
+int neverd_comparison_override_json(neverd_comparison_t Handle,
+                                    const char *Text) {
+  return neverd_comparison_override_json_with_progress(Handle, Text, nullptr,
+                                                       nullptr);
+}
+int neverd_comparison_override_json_with_progress(
+    neverd_comparison_t Handle, const char *Text,
+    neverd_comparison_progress_t Progress, void *Context) {
+  return editComparison(Handle, EditAction::Apply, Text, Progress, Context);
 }
 int neverd_comparison_undo(neverd_comparison_t Handle) {
-  return guarded(Handle, [](Comparison &C) {
-    auto Lock = ready(C);
-    require(!C.Undo.empty(), "no comparison edit to undo");
-    C.Redo.push_back(C.Undo.back().Applied);
-    revertOverride(C.Result, C.Primary, C.Secondary, C.Undo.back());
-    invalidateMappingViews(C);
-    C.Undo.pop_back();
-    return 1;
-  });
+  return neverd_comparison_undo_with_progress(Handle, nullptr, nullptr);
+}
+int neverd_comparison_undo_with_progress(neverd_comparison_t Handle,
+                                         neverd_comparison_progress_t Progress,
+                                         void *Context) {
+  return editComparison(Handle, EditAction::Undo, nullptr, Progress, Context);
 }
 int neverd_comparison_redo(neverd_comparison_t Handle) {
-  return guarded(Handle, [](Comparison &C) {
-    auto Lock = ready(C);
-    require(!C.Redo.empty(), "no comparison edit to redo");
-    OverrideEffect Effect;
-    if (auto Error = applyOverride(C.Result, C.Primary, C.Secondary,
-                                   C.Redo.back(), &Effect))
-      throw std::runtime_error(*Error);
-    invalidateMappingViews(C);
-    C.Undo.push_back(std::move(Effect));
-    C.Redo.pop_back();
-    return 1;
-  });
+  return neverd_comparison_redo_with_progress(Handle, nullptr, nullptr);
+}
+int neverd_comparison_redo_with_progress(neverd_comparison_t Handle,
+                                         neverd_comparison_progress_t Progress,
+                                         void *Context) {
+  return editComparison(Handle, EditAction::Redo, nullptr, Progress, Context);
 }
 int neverd_comparison_validate_inputs(neverd_comparison_t Handle,
                                       neverd_session_t A, neverd_session_t B) {
