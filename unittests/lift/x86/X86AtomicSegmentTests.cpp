@@ -266,7 +266,10 @@ TEST_F(X86AtomicSegmentSource, AllFourKindsKeepSegmentsAndRawOffsets) {
                                      uint8_t(RegisterAddress ? 0x10 : 0x15)});
           if (!RegisterAddress)
             Bytes.insert(Bytes.end(), {0, 0x40, 0, 0});
-          Bytes.insert(Bytes.end(), {0xa1, 0, 0x40, 0, 0, 0xc3});
+          if (RegisterAddress && !Parameter)
+            Bytes.insert(Bytes.end(), {0x8b, 0x00, 0xc3});
+          else
+            Bytes.insert(Bytes.end(), {0xa1, 0, 0x40, 0, 0, 0xc3});
           auto Image = segmentImage(Bytes, Format, "atomic_segment");
           ASSERT_NO_FATAL_FAILURE(checkPipelines(
               Image, NoOpt, Prefix, InsnIds[Kind], !Parameter,

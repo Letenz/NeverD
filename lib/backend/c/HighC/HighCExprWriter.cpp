@@ -64,6 +64,7 @@
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/IntegerLiterals.h"
 
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -7662,21 +7663,67 @@ bool HighCWriter::isCopyForwardDestination(const MedVar &V) const {
 }
 
 std::optional<va_t> HighCWriter::constAddress(const HighExpr &E) const {
-  const HighExpr *Cur = unwrapIntegerView(&E);
-  if (Cur && Cur->Kind == ExprKind::Const)
-    return Cur->ConstVal;
-  if (Cur && Cur->Kind == ExprKind::BinOp && Cur->Type &&
-      Cur->Type->Kind == NdTypeKind::Int && Cur->Type->Size <= 8 &&
-      Cur->Type->Size != 0 && Cur->Operands.size() == 2 &&
-      (Cur->Op == NdOp::INT_ADD || Cur->Op == NdOp::INT_SUB)) {
-    const auto Left = constAddress(*Cur->Operands[0]);
-    const auto Right = constAddress(*Cur->Operands[1]);
+  const auto ScalarBytes = [](const HighExpr &V) -> unsigned {
+    return V.Type &&
+                   (V.Type->Kind == NdTypeKind::Int ||
+                    V.Type->Kind == NdTypeKind::Ptr) &&
+                   V.Type->Size <= sizeof(va_t)
+               ? V.Type->Size
+               : 0;
+  };
+  const auto Bytes = ScalarBytes(E);
+  if (E.Kind == ExprKind::Const) {
+    if (!E.Type)
+      return E.ConstVal;
+    return Bytes ? std::optional<va_t>(
+                       llvm::APInt(Bytes * 8, E.ConstVal).getZExtValue())
+                 : std::nullopt;
+  }
+  // A view's source bits and extension determine its address value. Merely
+  // peeling sext/zext or a narrowing cast changes constant segment offsets.
+  if (Bytes && E.Operands.size() == 1 && E.Operands[0] &&
+      (E.Kind == ExprKind::Cast || E.Kind == ExprKind::BitCast ||
+       (E.Kind == ExprKind::UnaryOp &&
+        (E.Op == NdOp::INT_ZEXT || E.Op == NdOp::INT_SEXT)))) {
+    const auto &Source = *E.Operands[0];
+    const auto SourceBytes = ScalarBytes(Source);
+    if (!SourceBytes || (E.Kind == ExprKind::BitCast && Bytes != SourceBytes))
+      return std::nullopt;
+    if (const auto Value = constAddress(Source)) {
+      const bool Signed = E.Kind == ExprKind::UnaryOp
+                              ? E.Op == NdOp::INT_SEXT
+                              : E.Kind == ExprKind::Cast &&
+                                    Source.Type->Kind == NdTypeKind::Int &&
+                                    Source.Type->IsSigned;
+      const llvm::APInt Bits(SourceBytes * 8, *Value);
+      return (Signed ? Bits.sextOrTrunc(Bytes * 8)
+                     : Bits.zextOrTrunc(Bytes * 8))
+          .getZExtValue();
+    }
+    return std::nullopt;
+  }
+  if (Bytes && E.Kind == ExprKind::BinOp && E.Op == NdOp::SUBBYTES &&
+      E.Operands.size() == 2 && E.Operands[0] && E.Operands[1] &&
+      E.Operands[1]->Kind == ExprKind::Const) {
+    const auto SourceBytes = ScalarBytes(*E.Operands[0]);
+    const auto Offset = E.Operands[1]->ConstVal;
+    if (!SourceBytes || Offset >= SourceBytes || Bytes > SourceBytes - Offset)
+      return std::nullopt;
+    if (const auto Value = constAddress(*E.Operands[0]))
+      return llvm::APInt(SourceBytes * 8, *Value)
+          .lshr(Offset * 8)
+          .zextOrTrunc(Bytes * 8)
+          .getZExtValue();
+    return std::nullopt;
+  }
+  if (Bytes && E.Kind == ExprKind::BinOp && E.Type->Kind == NdTypeKind::Int &&
+      E.Operands.size() == 2 &&
+      (E.Op == NdOp::INT_ADD || E.Op == NdOp::INT_SUB)) {
+    const auto Left = constAddress(*E.Operands[0]);
+    const auto Right = constAddress(*E.Operands[1]);
     if (Left && Right) {
-      uint64_t Value =
-          Cur->Op == NdOp::INT_ADD ? *Left + *Right : *Left - *Right;
-      if (Cur->Type->Size < 8)
-        Value &= (uint64_t(1) << (Cur->Type->Size * 8)) - 1;
-      return Value;
+      const llvm::APInt L(Bytes * 8, *Left), R(Bytes * 8, *Right);
+      return (E.Op == NdOp::INT_ADD ? L + R : L - R).getZExtValue();
     }
   }
   return std::nullopt;
