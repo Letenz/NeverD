@@ -789,6 +789,37 @@ TEST_F(BytePatch, LateInvalidReplayPreservesEveryLiveImageCopy) {
   }
 }
 
+TEST_F(BytePatch, DuplicateReplayOffsetsPreserveLiveStateInEveryInputOrder) {
+  reset(std::vector<uint8_t>(128, 0xcc));
+  ASSERT_FALSE(Overlay.apply(Img, *Input, 0x1001, {0x91}, PatchKind::Bytes));
+  const auto BeforeRows = Overlay.rows();
+  const auto BeforeSegment = Img.Segments[0].Data;
+  const auto BeforeSections = Img.Sections[0].Data;
+  const auto BeforeOriginal = Img.BytePatchOriginal;
+  std::vector<PatchRow> InputRows;
+  for (uint64_t I = 0; I < 32; ++I)
+    InputRows.push_back(
+        {I * 2, 0x1000 + I * 2, {0xcc}, {0x90}, PatchKind::Bytes});
+  InputRows.back() = InputRows[InputRows.size() - 2];
+  for (unsigned Order = 0; Order < 3; ++Order) {
+    SCOPED_TRACE(Order);
+    auto Rows = InputRows;
+    if (Order == 1)
+      std::reverse(Rows.begin(), Rows.end());
+    else if (Order == 2)
+      std::rotate(Rows.begin(), Rows.begin() + 11, Rows.end());
+    auto Error = Overlay.replace(Img, *Input, std::move(Rows));
+    ASSERT_TRUE(bool(Error));
+    EXPECT_EQ(llvm::toString(std::move(Error)),
+              "patch rows overlap (row at 0x103c)");
+    EXPECT_EQ(Overlay.rows(), BeforeRows);
+    EXPECT_EQ(Overlay.bytes(), 1u);
+    EXPECT_EQ(Img.Segments[0].Data, BeforeSegment);
+    EXPECT_EQ(Img.Sections[0].Data, BeforeSections);
+    EXPECT_EQ(Img.BytePatchOriginal, BeforeOriginal);
+  }
+}
+
 TEST_F(BytePatch, MixedKindRowLimitKeepsLocalEditsCanonical) {
   constexpr auto Count = ::neverd::limits::patch::kMaxPatchRows;
   reset(std::vector<uint8_t>(Count, 0xcc));
