@@ -22,7 +22,7 @@
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
 #include "neverd/ir/med/MedStackAlignment.h"
-#include "neverd/ir/med/X86/X86CompactShape.h"
+#include "neverd/ir/med/X86/X86NativeMemory.h"
 
 #include <algorithm>
 #include <deque>
@@ -1166,7 +1166,7 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
         recordAddressLiveIns(*MemoryAddress,
                              Op.MemoryAddressSpace ==
                                          NdMemoryAddressSpace::Default &&
-                                     !x86CompactMedHasSegmentOffset(Op)
+                                     !x86NativeMemoryHasSegmentOffset(Op)
                                  ? PtrParameters
                                  : SegmentOffsetParameters);
       }

@@ -34,7 +34,8 @@ inline X86FourSourceShape x86FourSourceLowShape(const LowOp &Op,
     S.Sizes[I] = V.Size;
     S.Scalars[I] = V.isConst() || V.isReg() || V.isTemp();
   }
-  if (Op.NumInputs > 5 && Op.Inputs[5].isConst())
+  if (Op.NumInputs > 5 && Op.Inputs[5].isConst() &&
+      !isAddressProvenance(Op.Inputs[5].Provenance))
     S.Control = Op.Inputs[5].Offset;
   return S;
 }

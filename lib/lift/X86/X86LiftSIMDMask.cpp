@@ -222,15 +222,8 @@ bool liftEvexCompressExpandRegister(X86Lifter &L, X86Lifter::LiftState &S,
         return false;
     const NdMemoryAddressSpace AddressSpace =
         X86Lifter::LiftState::memoryAddressSpace(MemoryOperand);
-    unsigned Segment = 0;
-    if (L.targetArch() == Arch::X86) {
-      if (Encoding.SegmentPrefix == 0x26 || Encoding.SegmentPrefix == 0x2e ||
-          Encoding.SegmentPrefix == 0x36)
-        Segment = Encoding.SegmentPrefix;
-      else if (!Encoding.SegmentPrefix &&
-               isStackDefaultBase(MemoryOperand.mem.base))
-        Segment = 0x36;
-    }
+    const auto Segment = x86NativeI386Segment(
+        L.targetArch(), Encoding.SegmentPrefix, MemoryOperand);
     if (!Segment &&
         !x86NativeSibAddressIsValid(L.targetArch(), X86, MemoryOperand))
       return false;

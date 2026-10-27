@@ -424,7 +424,9 @@ bool liftLegacyXOP(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       break;
     }
 
-    if (!x86NativeSibAddressIsValid(L.targetArch(), X86, Memory))
+    const auto Segment =
+        x86NativeI386Segment(L.targetArch(), Encoding.SegmentPrefix, Memory);
+    if (!Segment && !x86NativeSibAddressIsValid(L.targetArch(), X86, Memory))
       return false;
     const auto Kind = InsnId == X86_INS_VP4DPWSSD ? X86FourSourceKind::DPWSSD
                                                   : X86FourSourceKind::DPWSSDS;
@@ -433,13 +435,15 @@ bool liftLegacyXOP(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     const auto Sources = x86FourSourceSnapshot(S, SourceBase, C);
     const auto Control = static_cast<unsigned>(Kind) |
                          (ZeroMask ? X86FourSourceZero : 0) |
-                         (Stack ? X86FourSourceStackReference : 0);
+                         (Stack ? X86FourSourceStackReference : 0) |
+                         (Segment << X86FourSourceSegmentShift);
     const NdVar OldDestination = L.operandRead(S, Destination);
-    if (!S.emitMemoryIntrinsic(
-            Intrinsic::X86FourSourceMemory, Memory,
-            {OldDestination, Sources, Mask, NdVar::cst(Control, 1)},
-            L.operandWrite(Destination)))
-      break;
+    const NdVar Address = S.computeEA(Memory, true, Segment != 0);
+    S.emitIntrinsic(Intrinsic::X86FourSourceMemory, L.operandWrite(Destination),
+                    {Address, OldDestination, Sources, Mask,
+                     NdVar::cst(Control, Segment ? 2 : 1)},
+                    NdMemoryOrdering::None,
+                    X86Lifter::LiftState::memoryAddressSpace(Memory));
     break;
   }
 

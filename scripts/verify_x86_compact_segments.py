@@ -61,21 +61,15 @@ def run(arguments, log):
         raise RuntimeError(f'{arguments}\n{result.stdout}\n{result.stderr}')
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--exports', required=True, type=Path)
-    parser.add_argument('--keep', required=True, type=Path)
-    parser.add_argument('--clang', default='clang')
-    parser.add_argument('--neverc', required=True)
-    args = parser.parse_args()
-    args.keep.mkdir(parents=True, exist_ok=True)
+def verify_sources(args, case_count, build_recorder,
+                   test_name='NativeAndBothCRoutesKeepSegmentsAndRawOffsets'):
     records = []
-    source_root = args.exports / 'NativeAndBothCRoutesKeepSegmentsAndRawOffsets'
-    for case in range(54):
+    source_root = args.exports / test_name
+    for case in range(case_count):
         for route in ('high', 'llvm-c'):
             original = source_root / str(case) / (route + '.c')
             source = args.keep / f'{case}-{route}.c'
-            source.write_text(recorder(original.read_text(), case))
+            source.write_text(build_recorder(original.read_text(), case))
             for compiler, name in ((args.clang, 'clang'), (args.neverc, 'neverc')):
                 for opt in ('O0', 'O2'):
                     stem = f'{case}-{route}-{name}-{opt}'
@@ -92,6 +86,18 @@ def main():
                                     'optimization': opt, 'sanitized': name == 'clang'})
         if (case + 1) % 6 == 0:
             print({'cases': case + 1, 'source_runs': len(records)}, flush=True)
+    return records
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--exports', required=True, type=Path)
+    parser.add_argument('--keep', required=True, type=Path)
+    parser.add_argument('--clang', default='clang')
+    parser.add_argument('--neverc', required=True)
+    args = parser.parse_args()
+    args.keep.mkdir(parents=True, exist_ok=True)
+    records = verify_sources(args, 54, recorder)
     packed = args.exports / 'NarrowLiteralsFillTheCompletePackedInput/0/packed-constants.c'
     for opt in ('O0', 'O2'):
         stem = 'packed-constants-neverc-' + opt

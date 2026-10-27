@@ -140,11 +140,7 @@ X86FourSourcePlan x86FourSourceHighPlan(Arch A, const HighExpr &E) {
   if ((A != Arch::X86 && A != Arch::X64) || !x86FourSourceShapeIsValid(S))
     throw std::invalid_argument(X86FourSourceMalformed);
   const auto C = *x86FourSourceControl(*S.Control);
-  const auto Prefix =
-      (E.MemoryAddressSpace == NdMemoryAddressSpace::X86FS   ? 0x64
-       : E.MemoryAddressSpace == NdMemoryAddressSpace::X86GS ? 0x65
-                                                             : 0) |
-      (C.StackReference ? X86NativeStackReference : 0);
+  const auto Prefix = x86FourSourceNativePrefix(C, E.MemoryAddressSpace);
   return *x86FourSourcePlan(static_cast<unsigned>(C.Kind), C.Zero, Prefix);
 }
 

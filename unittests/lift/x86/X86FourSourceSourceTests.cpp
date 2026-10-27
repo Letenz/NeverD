@@ -32,8 +32,10 @@ namespace {
 std::vector<X86FourSourcePlan> plans(Arch A = Arch::X64) {
   std::vector<X86FourSourcePlan> R;
   for (unsigned Kind = 0; Kind < 6; ++Kind)
-    for (unsigned Prefix : {0u, 0x64u, 0x65u, X86NativeStackReference})
-      if (A != Arch::X86 || !x86NativeMemoryIsStack(Prefix))
+    for (unsigned Prefix :
+         {0u, 0x64u, 0x65u, X86NativeStackReference, 0x26u, 0x2eu, 0x36u})
+      if ((A != Arch::X86 || !x86NativeMemoryIsStack(Prefix)) &&
+          (A == Arch::X86 || Prefix == 0 || Prefix >= 0x64))
         for (unsigned Zero : {0u, 1u})
           R.push_back(*x86FourSourcePlan(Kind, Zero, Prefix));
   return R;
@@ -41,7 +43,10 @@ std::vector<X86FourSourcePlan> plans(Arch A = Arch::X64) {
 unsigned control(const X86FourSourcePlan &P) {
   return static_cast<unsigned>(P.Control.Kind) |
          (P.Control.Zero ? X86FourSourceZero : 0) |
-         (P.stackReference() ? X86FourSourceStackReference : 0);
+         (P.stackReference() ? X86FourSourceStackReference : 0) |
+         ((P.Prefix == 0x26 || P.Prefix == 0x2e || P.Prefix == 0x36)
+              ? P.Prefix << X86FourSourceSegmentShift
+              : 0);
 }
 NdMemoryAddressSpace space(const X86FourSourcePlan &P) {
   return P.Prefix == 0x64   ? NdMemoryAddressSpace::X86FS
@@ -66,7 +71,7 @@ MedFunc med(const X86FourSourcePlan &P) {
   Op.addInput(MedVar::makeConst(0x87654321, P.Control.bytes()));
   Op.addInput(MedVar::makeConst(0xabcdef01, P.Control.sourceBytes() * 4));
   Op.addInput(MedVar::makeConst(0x55, P.Control.maskBytes()));
-  Op.addInput(MedVar::makeConst(control(P), 1));
+  Op.addInput(MedVar::makeConst(control(P), control(P) > UINT8_MAX ? 2 : 1));
   MedOp Ret;
   Ret.Opcode = NdOp::RETURN;
   MedBlock B;
@@ -86,11 +91,12 @@ ExprPtr high(const X86FourSourcePlan &P) {
   E->IntrinsicId = Intrinsic::X86FourSourceMemory;
   E->MemoryAddressSpace = space(P);
   E->Type = NdType::makeInt(P.Control.bytes(), false);
-  E->Operands = {HighExpr::makeVar(temporary(0, 8)),
-                 HighExpr::makeVar(temporary(1, P.Control.bytes())),
-                 HighExpr::makeVar(temporary(2, P.Control.sourceBytes() * 4)),
-                 HighExpr::makeVar(temporary(3, P.Control.maskBytes())),
-                 HighExpr::makeConst(control(P), 1)};
+  E->Operands = {
+      HighExpr::makeVar(temporary(0, 8)),
+      HighExpr::makeVar(temporary(1, P.Control.bytes())),
+      HighExpr::makeVar(temporary(2, P.Control.sourceBytes() * 4)),
+      HighExpr::makeVar(temporary(3, P.Control.maskBytes())),
+      HighExpr::makeConst(control(P), control(P) > UINT8_MAX ? 2 : 1)};
   return E;
 }
 void write(const std::string &Name, llvm::StringRef Text) {
