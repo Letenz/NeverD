@@ -2,6 +2,7 @@
 
 #include "Config.h"
 #include "EngineSymbols.h"
+#include "OperandFormatDetail.h"
 #include "References.h"
 #include "ResourceLimits.h"
 #include "StringReferences.h"
@@ -4080,6 +4081,11 @@ void Listing::reloadNumberFormats() {
 bool Listing::showsNumberFormats() {
   impl_->build();
   return neverd::worker::showsNumberFormats(impl_->dialect);
+}
+
+bool Listing::spellsArmOperands() {
+  impl_->build();
+  return operand_format_detail::armDialect(impl_->dialect);
 }
 
 std::optional<std::vector<bool>>

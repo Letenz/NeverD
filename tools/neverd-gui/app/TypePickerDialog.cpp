@@ -48,6 +48,14 @@ QString listingNumber(quint64 value) {
   return digits + QLatin1Char('h');
 }
 
+/// A number as an ARM-family listing writes it: decimal below ten, else
+/// lowercase hexadecimal after 0x.
+QString armListingNumber(quint64 value) {
+  if (value < 10)
+    return QString::number(value);
+  return QStringLiteral("0x") + QString::number(value, 16);
+}
+
 /// An offset as a member list writes it: +0x220, -0x10.
 QString offsetText(qint64 offset) {
   return (offset < 0 ? QStringLiteral("-0x") : QStringLiteral("+0x")) +
@@ -453,6 +461,8 @@ void TypePickerDialog::listed(const QJsonObject &payload, bool first) {
     answered_ = true;
     accesses_ = payload.value(QStringLiteral("accesses")).toArray();
     target_ = payload.value(QStringLiteral("target")).toObject();
+    armSyntax_ = payload.value(QStringLiteral("syntax")).toString() ==
+                 QLatin1String("arm");
     if (payload.contains(QStringLiteral("operand")))
       operand_ = payload.value(QStringLiteral("operand")).toInt();
     static_cast<CandidateDelegate *>(list_->itemDelegate())
@@ -480,9 +490,9 @@ void TypePickerDialog::listed(const QJsonObject &payload, bool first) {
     else if (target_.isEmpty())
       subject_->setText(
           tr("The number %1 as an offset into a structure or union.")
-              .arg(number < 0
-                       ? QLatin1Char('-') + listingNumber(quint64(-number))
-                       : listingNumber(quint64(number))));
+              .arg((number < 0 ? QStringLiteral("-") : QString()) +
+                   (armSyntax_ ? armListingNumber : listingNumber)(
+                       quint64(number < 0 ? -number : number))));
     else
       subject_->setText(
           tr("Types ranked by how the function's %n accesses through %1 land "
@@ -637,17 +647,25 @@ void TypePickerDialog::preview() {
                    tr("%n bytes", "",
                       int(fit.value(QStringLiteral("memberSize"))
                               .toInteger()))));
+      // As the listing will write the operand: `[rcx+(_T.List+8)]` in x86,
+      // `[x0, #_T.List+0x8]` in the ARM family.
       if (rest)
-        shown = QStringLiteral("(%1%2%3)")
-                    .arg(shown,
-                         rest < 0 ? QStringLiteral("-") : QStringLiteral("+"),
-                         listingNumber(quint64(rest < 0 ? -rest : rest)));
+        shown =
+            (armSyntax_ ? QStringLiteral("%1%2%3") : QStringLiteral("(%1%2%3)"))
+                .arg(shown,
+                     rest < 0 ? QStringLiteral("-") : QStringLiteral("+"),
+                     (armSyntax_ ? armListingNumber : listingNumber)(
+                         quint64(rest < 0 ? -rest : rest)));
       const QString base = target_.value(QStringLiteral("base")).toString();
-      expression_->setText(
-          target_.isEmpty()
-              ? shown
-              : QStringLiteral("[%1+%2]").arg(
-                    base.isEmpty() ? QStringLiteral("reg") : base, shown));
+      const QString reg = base.isEmpty() ? QStringLiteral("reg") : base;
+      if (armSyntax_)
+        expression_->setText(target_.isEmpty()
+                                 ? QLatin1Char('#') + shown
+                                 : QStringLiteral("[%1, #%2]").arg(reg, shown));
+      else
+        expression_->setText(target_.isEmpty()
+                                 ? shown
+                                 : QStringLiteral("[%1+%2]").arg(reg, shown));
     }
   }
   if (candidate.contains(QStringLiteral("shift"))) {

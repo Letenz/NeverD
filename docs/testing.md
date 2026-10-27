@@ -4625,11 +4625,15 @@ replacements retain the previous item or operand format. Run it with
 presentation operations.
 `NeverDWorkerFormat` also spells ARM and AArch64 formats with the decoder's
 `#`, counts their operands across register lists, shifts and floating
-constants, and takes an immediate's width from its first register.
-`SessionCAPITest.OperandEnumsNameAArch64Immediates` checks that an AArch64
-enumerator names only a decoded immediate and keeps its `#` in
-`display_op_str`; `armOperandsCountAsTheWorkerDoes` checks that the listing's
-operand under the cursor is the worker's across braces and brackets.
+constants, and takes an immediate's width from its first register or a
+64-bit vector element. It checks that a shifted immediate names no member and
+that a structure offset lands the data an exclusive store, swap, pair or
+register list moves. `SessionCAPITest.OperandEnumsNameAArch64Immediates`
+checks that an AArch64 enumerator names only a decoded immediate and keeps its
+`#` in `display_op_str`; `OperandEnumsNameWholeARMVectorImmediates` that a
+`vmov.i64` immediate keeps all 64 bits. `armOperandsCountAsTheWorkerDoes`
+checks that the listing's operand under the cursor is the worker's across
+braces and brackets.
 
 `NeverDWorkerImmediatesRegister` checks decoded immediate search and register
 queries through the real SDK/worker and, when available, CLI. It covers search

@@ -3649,6 +3649,9 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     }
     if (operand)
       result["operand"] = *operand;
+    // How the listing writes the operand the fit would change.
+    if (listing().spellsArmOperands())
+      result["syntax"] = "arm";
     return result;
   }
   if (operation == "type_libraries" || operation == "type_libraries_set") {

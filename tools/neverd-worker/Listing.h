@@ -80,6 +80,9 @@ public:
   void namesChanged();
   /// Whether instruction lines show the user's operand formats.
   bool showsNumberFormats();
+  /// Whether operands read as the ARM family spells them (`[x0, #8]`)
+  /// rather than as x86 listings do.
+  bool spellsArmOperands();
   /// Which operands of the instruction that starts at \p address a number
   /// format changes, by index; none when no instruction starts there.
   std::optional<std::vector<bool>> numberOperands(std::uint64_t address);
