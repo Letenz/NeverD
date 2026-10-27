@@ -14,6 +14,15 @@ symbol when one no longer matches.
   of the NeverSight forks in `third_party/forks.json`. Each build records the
   commits it used in `neverd-dependency-inputs.json`.
 
+## Measurement tools
+
+- `tools/neverd-bench/sigprof`: an `LD_PRELOAD` CPU-time stack sampler for
+  hosts without `perf`. Its `report.py` prints self and inclusive shares,
+  phases and serial wall time, and its `ab.py` runs paired comparisons.
+- `NEVERD_NATIVE_PHASES=1` prints each pipeline stage's elapsed time
+  (`lib/pipeline/Pipeline.cpp:136`).
+- The opt-in benchmark targets are listed in `SKILL.md` § Measuring.
+
 ## Libraries
 
 | Library | Option | Used by | Shape |
