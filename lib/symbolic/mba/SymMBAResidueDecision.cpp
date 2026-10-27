@@ -1793,6 +1793,7 @@ class LowWordDecisions {
   // AB=A^2+U*A*d. For N>=4, U^2 vanishes and every odd square is 1 mod 4:
   // all paired corrections add modulo 4, multiplied only by unpaired factors.
   // The product of representatives can be squared from N-1 observed bits.
+  template <bool BatchCorrections>
   Bits widePairedProduct(PairingState &State, llvm::ArrayRef<SymRef> Factors,
                          unsigned Count,
                          llvm::SmallVectorImpl<SymRef> *Retained = nullptr) {
@@ -1808,6 +1809,13 @@ class LowWordDecisions {
     std::map<uint32_t, std::pair<SymRef, WideSignature>> Unpaired;
     llvm::SmallVector<SymRef, 16> Pairs, Rest;
     Bits Correction(2, 0);
+    llvm::SmallVector<Bits, 16> Corrections;
+    unsigned LiteralCorrection = 0;
+    if constexpr (BatchCorrections) {
+      if (!charge(1, (Factors.size() / 2) * sizeof(Bits)))
+        return {};
+      Corrections.reserve(Factors.size() / 2);
+    }
     for (auto Factor : Factors) {
       auto S = wideSignature(*State.Wide, Factor, Count);
       if (Failed || !charge(1 + std::bit_width(Unpaired.size())))
@@ -1828,14 +1836,38 @@ class LowWordDecisions {
         if (Change[0])
           Change[1] =
               apply(Xor, Change[1], apply(And, Change[0], word(A, 2)[1]));
-        Correction = sumCorrection(Correction, Change);
+        if constexpr (BatchCorrections) {
+          if (!charge())
+            return {};
+          if (Change[0] <= 1 && Change[1] <= 1)
+            LiteralCorrection =
+                (LiteralCorrection + Change[0] + 2 * Change[1]) & 3;
+          else
+            Corrections.push_back(std::move(Change));
+        } else {
+          Correction = sumCorrection(Correction, Change);
+        }
         Pairs.push_back(A);
         Unpaired.erase(It);
       }
     }
     if (Pairs.empty())
       return product(Factors, Count);
-    auto Inner = widePairedProduct(State, Pairs, Count - 1);
+    if constexpr (BatchCorrections) {
+      // Combine all two-bit corrections before creating carry decisions.
+      // Equal/complementary columns cancel or carry exactly in sumWords.
+      if (LiteralCorrection) {
+        if (!charge())
+          return {};
+        Corrections.push_back({LiteralCorrection & 1, LiteralCorrection >> 1});
+      }
+      Correction = Corrections.empty()       ? Bits(2, 0)
+                   : Corrections.size() == 1 ? Corrections.front()
+                   : Corrections.size() == 2
+                       ? sumCorrection(Corrections[0], Corrections[1])
+                       : sumWords(Corrections, 2);
+    }
+    auto Inner = widePairedProduct<BatchCorrections>(State, Pairs, Count - 1);
     if (Failed || Inner.empty())
       return {};
     Inner.push_back(0);
@@ -2288,10 +2320,19 @@ public:
                                 (!FullBlock && HasNonlinearFactor))
                            ? &RetainedFactors
                            : nullptr;
-      Product = Wide
-                    ? widePairedProduct(State, Nonconstants, Observed, Unpaired)
-                : FullBlock ? pairedProduct(State, Nonconstants, Observed)
+      if (Wide) {
+        // Complete blocks and odd residual blocks combine their correction
+        // columns. Partial even blocks retain streaming work so an unfinished
+        // graph leaves the established allowance for ordinary child rewrites.
+        Product = FullBlock || (Nonconstants.size() & 1)
+                      ? widePairedProduct<true>(State, Nonconstants, Observed,
+                                                Unpaired)
+                      : widePairedProduct<false>(State, Nonconstants, Observed,
+                                                 Unpaired);
+      } else {
+        Product = FullBlock ? pairedProduct(State, Nonconstants, Observed)
                             : product(Factors, Observed);
+      }
     } else {
       Product =
           product(Factors, Observed,

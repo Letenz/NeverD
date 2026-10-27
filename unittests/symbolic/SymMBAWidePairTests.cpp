@@ -383,7 +383,8 @@ struct PartialFixture {
 
 PartialFixture partialFixture(SymContext &Ctx, unsigned Width, unsigned Degree,
                               bool Neighbor = false, unsigned Observed = 6,
-                              unsigned High = 2, unsigned Complement = 0) {
+                              unsigned High = 2, unsigned Complement = 0,
+                              bool ReverseConstruction = false) {
   auto X = Ctx.mkVar("x", Width);
   const auto Y = Ctx.mkVar("y", Width);
   const auto Z = Ctx.mkVar("z", Width);
@@ -393,7 +394,8 @@ PartialFixture partialFixture(SymContext &Ctx, unsigned Width, unsigned Degree,
   const auto ZMask = Ctx.mkConst(~llvm::APInt(Width, (1u << (High - 1)) - 1));
   llvm::SmallVector<SymRef, 32> Factors{
       Ctx.mkConst(llvm::APInt(Width, 3).shl(Width - Observed))};
-  for (unsigned I = 0; I < Degree; ++I) {
+  for (unsigned Step = 0; Step < Degree; ++Step) {
+    const unsigned I = ReverseConstruction ? Degree - 1 - Step : Step;
     auto A =
         Ctx.mkAdd(X, Ctx.mkConst(Width, 2 * I + unsigned(Neighbor && I == 0)));
     auto B = Ctx.mkAnd(Ctx.mkAdd(Y, Ctx.mkConst(Width, I)), Mask);
@@ -439,6 +441,59 @@ TEST(SymMBAWidePairs, UnfinishedProductsPreserveIndependentLinearTails) {
         ASSERT_EQ(Reduced.eval(Values), Expected);
       }
     }
+}
+
+TEST(SymMBAWidePairs,
+     BatchedCorrectionsKeepOddCompletionsAndEvenResidualQuality) {
+  std::mt19937_64 Random(0x434f525245435453);
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (unsigned Degree : {48u, 65u})
+      for (unsigned Complement : {0u, 1u, 2u})
+        for (bool Neighbor : {false, true}) {
+          SCOPED_TRACE(::testing::Message() << Width << ':' << Degree << ':'
+                                            << Complement << ':' << Neighbor);
+          SymContext Ctx;
+          const auto F =
+              partialFixture(Ctx, Width, Degree, Neighbor, Degree == 65 ? 7 : 8,
+                             2, Complement, Complement == 2);
+          const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+          const auto Z = Ctx.mkVar("z", Width), W = Ctx.mkVar("w", Width);
+          const auto Input =
+              Ctx.mkAdd({F.Input, Ctx.mkXor(X, Y),
+                         Ctx.mkMul(Ctx.mkConst(Width, 2), Ctx.mkAnd(X, Y)),
+                         Ctx.mkOr(Z, W), Ctx.mkAnd(Z, W)});
+          MBAOptions Options;
+          Options.MaxWork = 65536;
+          const auto Result = simplifyMBADeep(Ctx, Input, Options);
+          EXPECT_LE(Result.Work, Options.MaxWork);
+          EXPECT_LE(Result.SizeAfter, Result.SizeBefore);
+          EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+          if (!Neighbor && Width <= 64) {
+            if (Degree == 65) {
+              EXPECT_LT(Result.Work, Options.MaxWork);
+              EXPECT_LT(Result.SizeAfter, Result.SizeBefore / 4);
+            } else if (Complement == 2) {
+              // A refused partial-even proof must preserve enough of the
+              // shared allowance for the established independent rewrites.
+              EXPECT_LE(Result.SizeAfter + 19, Result.SizeBefore);
+            }
+          }
+          SymEvalPlan Reduced(Ctx, Result.Expr);
+          for (unsigned Trial = 0; Trial < 128; ++Trial) {
+            std::array<llvm::APInt, 4> Values;
+            for (auto &Value : Values) {
+              Value = llvm::APInt(Width, 0);
+              for (unsigned Bit = 0; Bit < Width; Bit += 64)
+                Value |= llvm::APInt(Width, Random()).shl(Bit);
+              if (Trial < 3)
+                Value = Trial == 1 ? llvm::APInt::getAllOnes(Width)
+                                   : llvm::APInt(Width, Trial == 2);
+            }
+            const auto Expected = F.oracle({Values[0], Values[1], Values[2]}) +
+                                  Values[0] + Values[1] + Values[2] + Values[3];
+            ASSERT_EQ(Reduced.eval(Values), Expected);
+          }
+        }
 }
 
 TEST(SymMBAWidePairs, ReassociatedComplementsRetainExactCorrections) {

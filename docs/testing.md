@@ -2280,6 +2280,11 @@ mixed products at both mask precisions must preserve their independent linear
 tail even when the product search cannot finish within 65,536 work units.
 Complete expression comparisons must retain the old results' cost and budget
 completion across complemented blocks, partial even blocks and permutations.
+Correction-column regressions require degree-65 mixed products to finish under
+the existing 65,536-work allowance at native widths, while degree-48 partial
+even products retain their independent child reductions. Natural, bit-flipped
+and complemented inputs, reversed construction and one-factor parity changes
+are checked against independent complete-word arithmetic through 257 bits.
 Quadratic carry-count tests retain both observed correction bits without
 dividing by a noninvertible word. They compare complete products with
 independent APInt arithmetic through 257 bits and Z3 proofs at 8/16/32/64 bits.

@@ -3669,6 +3669,12 @@ can search past a failed positional probe without repeatedly materializing
 upper carries. Partial factor blocks retain complete probes, preserving their
 existing work headroom. These rules remain in the shared symbolic owner used
 by CLI and GUI source optimization.
+Complete blocks and odd residual blocks combine two-bit correction columns
+before constructing their carry graph. Literal corrections sum directly modulo
+four; repeated or complementary variable bits cancel or move to the next
+column through the existing exact word adder. Partial even blocks preserve
+streaming accumulation so unfinished proofs leave the established headroom
+for child rewrites. Both strategies retain the same cumulative resource limits.
 Boolean polynomial reconstruction can factor shared cofactors across groups
 with disjoint remaining variables. Exact symmetric differences retain every
 unmatched term. Larger decision graphs try this construction before expanding
