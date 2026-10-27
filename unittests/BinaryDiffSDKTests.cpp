@@ -1507,6 +1507,142 @@ TEST_F(BinaryDiffSDK,
   }
 }
 
+TEST_F(BinaryDiffSDK, OverlappingCandidatesRemainExactThroughPagingAndEdits) {
+  const auto Input = [&](bool Secondary, bool Cycle) {
+    std::vector<uint8_t> Bytes(3 * 16, 0xcc);
+    const std::vector<std::vector<uint8_t>> Operations = {
+        {0x01, 0xc8}, {0x29, 0xc8}, {0x31, 0xc8},
+        {0x21, 0xc8}, {0x09, 0xc8}, {0x0f, 0xaf, 0xc1}};
+    const unsigned Pairs[2][3][2] = {{{0, 1}, {2, 3}, {4, 5}},
+                                     {{0, 2}, {1, 4}, {3, 5}}};
+    for (unsigned I = 0; I < 3; ++I) {
+      auto Code = body(!Secondary && I == 2 ? 8 : 7);
+      if (Cycle) {
+        // A common entry signature makes all authored boundaries discoverable.
+        Code = {0xb8, 7, 0, 0, 0};
+        for (unsigned Op : Pairs[Secondary][I])
+          Code.insert(Code.end(), Operations[Op].begin(), Operations[Op].end());
+        Code.push_back(0xc3);
+      }
+      std::copy(Code.begin(), Code.end(), Bytes.begin() + I * 16);
+    }
+    const auto S = input(Bytes, Secondary ? 0x8000 : 0x1000);
+    EXPECT_GE(neverd_session_discover_functions(S), 3u);
+    return S;
+  };
+  for (const bool Cycle : {false, true}) {
+    SCOPED_TRACE(Cycle);
+    const auto P = Input(false, Cycle), S = Input(true, Cycle);
+    const auto C = compare(
+        P, S,
+        Cycle
+            ? R"({"discover":false,"use_names":false,"min_similarity":0.8,"ambiguity_margin":0})"
+            : R"({"discover":false,"use_names":false,"min_similarity":0.5})");
+    const auto Query = [&](llvm::json::Object O) {
+      const auto Text = render(std::move(O));
+      return parsed(neverd_comparison_functions_json(C, Text.c_str()));
+    };
+    const auto Check = [&] {
+      for (const bool Secondary : {false, true}) {
+        const auto Side = Secondary ? "secondary" : "primary";
+        const std::array<const char *, 3> PAddresses = {"0x1000", "0x1010",
+                                                        "0x1020"};
+        const std::array<const char *, 3> SAddresses = {"0x8000", "0x8010",
+                                                        "0x8020"};
+        const auto &Sources = Secondary ? PAddresses : SAddresses;
+        const auto &Targets = Secondary ? SAddresses : PAddresses;
+        for (unsigned I = 0; I < 3; ++I) {
+          std::set<std::string> Expected;
+          for (unsigned J = 0; J < 3; ++J)
+            if (!Cycle || J != 2 - I)
+              Expected.insert(Targets[J]);
+          std::set<std::string> Actual;
+          for (unsigned Offset = 0; Offset < Expected.size(); ++Offset) {
+            const auto Page =
+                Query(llvm::json::Object{{"side", Side},
+                                         {"ambiguous_with", Sources[I]},
+                                         {"offset", Offset},
+                                         {"limit", 1}});
+            const auto *O = Page.getAsObject();
+            ASSERT_TRUE(O);
+            ASSERT_TRUE(O->getObject("ambiguity")) << render(Page);
+            ASSERT_TRUE(O->getObject("ambiguity")->getArray("steps"));
+            ASSERT_TRUE(O->getArray("items"));
+            EXPECT_EQ(O->getInteger("total"), Expected.size());
+            EXPECT_EQ(O->getObject("ambiguity")->getInteger("candidate_total"),
+                      Expected.size());
+            EXPECT_FALSE(O->getObject("ambiguity")->getArray("steps")->empty());
+            const auto &Rows = *O->getArray("items");
+            EXPECT_EQ(Rows.size(), 1u);
+            if (Rows.size() == 1)
+              Actual.insert(
+                  Rows.front().getAsObject()->getString("address")->str());
+          }
+          EXPECT_EQ(Actual, Expected);
+        }
+        auto Page =
+            Query(llvm::json::Object{{"side", Side}, {"kind", "ambiguous"}});
+        EXPECT_EQ(Page.getAsObject()->getInteger("total"), 3);
+        for (const auto &Row : *Page.getAsObject()->getArray("items")) {
+          const auto *O = Row.getAsObject();
+          EXPECT_EQ(O->getInteger("candidate_total"), Cycle ? 2 : 3);
+          EXPECT_TRUE(
+              O->getBoolean("candidate_preview_complete").value_or(false));
+          EXPECT_FALSE(O->getArray("candidate_steps")->empty());
+        }
+      }
+    };
+    Check();
+    const auto Saved = take(neverd_comparison_export_json(C));
+    ASSERT_EQ(
+        neverd_comparison_override_json(
+            C, R"({"kind":"match","primary":"0x1000","secondary":"0x8000"})"),
+        1);
+    const auto Edited =
+        render(Query(llvm::json::Object{{"kind", "ambiguous"}}));
+    ASSERT_EQ(neverd_comparison_undo(C), 1);
+    Check();
+    // Prime exactly the same inventory key before redo.
+    Query(llvm::json::Object{{"kind", "ambiguous"}});
+    ASSERT_EQ(neverd_comparison_redo(C), 1);
+    EXPECT_EQ(render(Query(llvm::json::Object{{"kind", "ambiguous"}})), Edited);
+    ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+    Check();
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  }
+}
+
+TEST_F(BinaryDiffSDK, RedoRebuildsCallerDetailsObservationsAndInventory) {
+  std::vector<uint8_t> Bytes{0xe8, 0x0b, 0, 0, 0, 0xc3};
+  Bytes.resize(16, 0xcc);
+  const auto First = body(7), Second = body(8);
+  Bytes.insert(Bytes.end(), First.begin(), First.end());
+  Bytes.resize(32, 0xcc);
+  Bytes.insert(Bytes.end(), Second.begin(), Second.end());
+  const auto P = input(Bytes), S = input(Bytes, 0x8000);
+  const auto C = compare(P, S, R"({"discover":true})");
+  const auto Views = [&] {
+    return std::vector<std::string>{
+        take(neverd_comparison_function_json(C, 0, 0x1000)),
+        take(neverd_comparison_observations_json(C, R"({"address":"0x1000"})")),
+        take(neverd_comparison_functions_json(C, R"({"kind":"changed"})"))};
+  };
+  const auto Before = Views();
+  for (const auto &View : Before)
+    ASSERT_FALSE(View.empty());
+  ASSERT_EQ(
+      neverd_comparison_override_json(
+          C, R"({"kind":"match","primary":"0x1010","secondary":"0x8020"})"),
+      1);
+  const auto After = Views();
+  for (size_t I = 0; I < Before.size(); ++I)
+    EXPECT_NE(Before[I], After[I]);
+  ASSERT_EQ(neverd_comparison_undo(C), 1);
+  EXPECT_EQ(Views(), Before);
+  ASSERT_EQ(neverd_comparison_redo(C), 1);
+  EXPECT_EQ(Views(), After);
+}
+
 TEST_F(BinaryDiffSDK, ScalarValidationBindsNativeLiftsAndExplicitInputDomain) {
   const auto A = input({0x89, 0xf8, 0x83, 0xc0, 3, 0xc3});
   const auto B =
@@ -1873,7 +2009,7 @@ TEST_F(BinaryDiffSDK, LongNativeCallContextSurvivesReorderingAndRestore) {
   const auto Saved = take(neverd_comparison_export_json(C));
   const auto Document = parsed(neverd_comparison_export_json(C));
   ASSERT_TRUE(Document.getAsObject());
-  EXPECT_EQ(Document.getAsObject()->getInteger("matcher_version"), 4);
+  EXPECT_EQ(Document.getAsObject()->getInteger("matcher_version"), 5);
   const auto *Matches = Document.getAsObject()->getArray("matches");
   ASSERT_TRUE(Matches);
   const std::map<std::string, std::string> Expected = {{"0x3000", "0xa010"},

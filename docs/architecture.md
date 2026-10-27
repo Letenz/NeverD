@@ -1333,12 +1333,19 @@ removes groups exhausted on either side before rebuilding coverage and lookup
 indices. The override effect retains changed and removed groups at their
 original indices; undo merges them back in order without rematching functions.
 Persisted groups therefore always have candidates on both sides.
+Similarity alternatives are retained as overlapping stars, each backed by the
+measured near-best candidates of one endpoint. Combining both endpoints' rivals
+into a Cartesian group would invent pairs; removing an already-grouped endpoint
+would lose other candidates. Exact groups cover only their own edges. The
+legacy single-group lookup remains a coverage marker, not a candidate iterator.
 The C API's `functions_json` inventory projects the same accepted mappings and
 retained ambiguity groups. `ambiguous_with` binds an opposite-side function to
-the full group's target-side inventory, with ordinary search/sort/paging; it
-does not run another matcher or promote a candidate. Mapping edits and restore
-invalidate that inventory cache. CLI and the Qt counterpart picker consume this
-projection; the picker keeps bounded pages and invalidates its selection when
+the union of its groups' target-side members, with ordinary search/sort/paging;
+it does not run another matcher or promote a candidate. A cached membership
+index avoids rescanning every group for every displayed function. Pairing, undo,
+redo and restore share invalidation of mapping-dependent inventory, candidate,
+delta, source and observation caches. CLI and the Qt counterpart picker consume
+this projection; the picker keeps bounded pages and invalidates its selection when
 the worker's comparison revision changes.
 `ComparisonJSON` owns strict saved-report validation and transactional binding.
 Its optional `ComparisonControl` carries cooperative cancellation/deadlines

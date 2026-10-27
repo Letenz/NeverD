@@ -3205,6 +3205,14 @@ must reproduce its original ordering, memberships and coverage. Native SDK and
 worker cases consume the last candidates, check invalidated inventories, and
 reopen the edited report through the strict reader, including actual worker
 file save and restart.
+Overlapping-candidate regressions use an independently specified six-cycle:
+all six measured alternatives must survive, and the other three pairs must
+stay absent under direction and layout changes. Another case combines exact
+duplicates with a changed function competing for the same candidates. Native
+SDK, worker and real Qt picker cases check both directions, paging, edits and
+reopen. A separate old-library control reproduces stale inventories after
+redo; the repaired workflow checks caller detail, observations and inventory
+against the first application of the same edit.
 The CLI regression sends SIGINT during each input's actual hashing phase,
 requires exit 3 with empty result output, preserves an existing saved report,
 then runs an ordinary comparison again. Child SIGINT delivery is tested on

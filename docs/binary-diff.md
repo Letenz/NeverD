@@ -105,8 +105,12 @@ copying the complete text.
 Continue with `--offset` using the response's `next_offset`. `ambiguous_with`
 always names a function on the opposite side; an absent source is an error,
 while a valid source with no retained ambiguity group returns an empty page.
-The `ambiguity` metadata identifies the source, group explanation and unfiltered
-candidate count. Search and sort apply to the returned candidate functions.
+The `ambiguity` metadata identifies the source, evidence steps, explanation and
+unfiltered candidate count. A function can belong to overlapping groups; this
+query returns the deduplicated union of its direct candidates. Sharing another
+function's candidate does not make two functions candidates for each other.
+Search and sort apply to the returned candidate functions. `ambiguity.steps`
+lists the supporting matching steps; inventory rows expose `candidate_steps`.
 The usual inventory's short `candidates` array remains a preview; it does not
 limit this query's total. These are the engine's retained hypotheses, not all
 possible correspondences or accepted matches.
@@ -159,6 +163,8 @@ is removed and any remaining functions become unmatched. Groups with candidates
 on both sides stay unresolved, including a single remaining pair. Undo restores
 the original groups and candidate lists; every intermediate edit can be saved
 and reopened.
+Pairing, undo and redo all invalidate correspondence-dependent inventories,
+instruction details, source alignment and change observations before inspection.
 
 | Exit | Meaning |
 | --- | --- |
