@@ -7453,6 +7453,19 @@ isolation.
 
 ## Modular MBA simplification
 
+`SymExpr.ScaledUnsignedProductSlicesUseOnlyTheirRequiredWidth` and
+`ScaledProductWindowsCoverEveryBytePairAndWideCarriers` check non-low windows
+of unsigned products through 257-bit operands. Zero-extended factors use their
+complete narrow product, preserving carries below the selected window. An inner
+power-of-two coefficient moves outside its extension only when its original
+width cannot wrap. Exhaustive byte pairs and independent integer/APInt oracles
+cover the resulting slices and zero-filled upper windows.
+`ProductWindowsKeepCoefficientsCarriesAndMultipleFactors` and
+`ProductWindowKeepsInnerOverflowAndSignedHighBits` retain wrapping inner
+products, signed high bits, non-power-of-two coefficients, windows below the
+combined shift and multiple factors. These constructor rules need no solver,
+sample-specific assumptions or new pass.
+
 `SymExpr.ZeroExtendedUnsignedRemaindersUseTheirNarrowOperands` checks
 zero-extended unsigned remainder operands at equal and different widths through
 257 bits. The remainder is computed at their common narrow width and then
