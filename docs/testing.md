@@ -14906,6 +14906,13 @@ encoding after reopen. `NeverDWorkerNativePatch` accepts an exact patch-state
 budget and rejects a one-byte excess without changing live or persisted bytes;
 run it with both typed-snapshot and legacy JSON-only SDKs for adapter changes.
 
+Protocol tests compare preencoded sidecar layout with the original generic
+pretty serializer and literal LLVM control-escape fixtures, including nested
+containers, quoted keys, Unicode and numeric extremes. History tests check exact
+compact state bytes, ordered-table address removal and unknown fields. Changed
+row contents still require admission; duplicate or moved addresses, changed
+counts and ordered-table gaps cannot reuse the committed order proof.
+
 `NeverDGuiPatchKeys` routes all second keys through `QWindow` shortcut dispatch, including pending menus, cancellation and editor typing. `NeverDGuiNativePatchKeys` checks real SDK bytes, Hex and floating windows, undo/redo and restoration. Run the same executable under X11 to exercise native popup routing.
 
 ```sh
