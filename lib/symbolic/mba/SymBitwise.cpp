@@ -332,7 +332,7 @@ std::vector<Implicant> primeImplicants(const TruthTable &Table,
                                        unsigned NumVars, size_t &Work,
                                        size_t Budget) {
   const auto Full = static_cast<uint32_t>((size_t(1) << NumVars) - 1);
-  std::vector<Implicant> Current;
+  llvm::SmallVector<Implicant, 16> Current;
   for (size_t K = 0, E = Table.entries(); K < E; ++K)
     if (Table.at(K))
       Current.push_back(Implicant{static_cast<uint32_t>(K), Full});
@@ -343,13 +343,15 @@ std::vector<Implicant> primeImplicants(const TruthTable &Table,
     if (Work > Budget)
       return {};
 
-    std::vector<char> Merged(Current.size(), 0);
-    std::vector<Implicant> Next;
-    llvm::DenseSet<std::pair<uint32_t, uint32_t>> Seen;
+    // Small cover rounds stay inline; larger tables retain ordinary growth.
+    // Deduplication keeps both complete 32-bit fields in one integer key.
+    llvm::SmallVector<char, 16> Merged(Current.size(), 0);
+    llvm::SmallVector<Implicant, 16> Next;
+    llvm::DenseSet<uint64_t> Seen;
     auto grow = [&](size_t I, size_t J, uint32_t Diff) {
       Merged[I] = Merged[J] = 1;
       Implicant Grown{Current[I].Value & ~Diff, Current[I].Care & ~Diff};
-      if (Seen.insert({Grown.Value, Grown.Care}).second)
+      if (Seen.insert((uint64_t(Grown.Care) << 32) | Grown.Value).second)
         Next.push_back(Grown);
     };
     // Every round removes exactly one cared bit. When indexing each term and

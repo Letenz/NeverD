@@ -2061,7 +2061,9 @@ and modular shifts. Check it with
 
 `SymMBAWitness.*` checks complemented degree-96/128 products at the unchanged
 work allowance, exhaustive low-six-bit carry inputs, wide words through 257
-bits, nearby parity changes and budget refusal. Concrete nonzero witnesses
+bits, nearby parity changes and budget refusal. Degree-48/65/96 near misses
+require recovery when a concrete nonzero product includes even factors.
+Concrete nonzero witnesses
 only stop futile zero searches; they never authorize a rewrite. Use
 `--family complemented-carry-product --count 108` for 432 degree-48–256 cases
 with complemented inputs, reversed factors and parity near misses. Keep all
@@ -2071,13 +2073,17 @@ routes at O0/O2.
 
 `SymMBAResiduePowers.*` checks modular power periods, even inputs, small
 exponents, independent multiplier parity and exact/short resource accounts.
+Small parity groups retain multiple residual words, and boundary cases with
+too few even factors must not discard the other branch.
 It uses complete-word multiplication through 257 bits and independent native
 width solver proofs. `--family residue-power --count 81` adds 324 degree-16–512
 cases, including immediate period neighbors and one-factor disturbances.
 These controls retain bounded refusals as results. The real CLI and worker
 source matrix also executes degree-16/64 groups with an independent multiplier
 through all six source routes at O0/O2. A degree-512 fixture also executes the
-large-product path through these same CLI and GUI-worker routes.
+large-product path through these same CLI and GUI-worker routes. A disturbed
+degree-128 fixture exercises the small parity-group path with an independent
+multiplier through the same six routes.
 
 Eligible products beyond affine expansion's 512-factor admission use bounded
 low-word representatives and multiplicity-weighted sums. Only ring and bitwise
@@ -2109,10 +2115,25 @@ Expression interning regressions retain deliberately colliding variable and
 literal identities, all-bit hash values, and references across table growth,
 context copies, assignment and moves. Full symbolic and source-route coverage
 checks the shared table underneath both CLI and GUI simplification.
+`LongOperandIdentityPreservesOrderAcrossGrowthAndCopies` covers 7/8/9/16/65
+operands, ordered concatenations, commutative sums and independent full-word
+evaluation after table growth and context copies.
 `SymExpr.NativeNormalizedResultsRetainWidthBoundaries` compares both native
-evaluation entry points against independent APInt arithmetic at 1/7/8/16/32/64
-bits. Unmasked inputs, wrapping sums and products, both conditional branches,
+evaluation entry points against independent APInt arithmetic at every width
+from 1 through 64 bits. Unmasked inputs, wrapping sums and products, both
+conditional branches,
 overshifts and remainder by zero preserve the normalized scratch-slot invariant.
+`NativeLiteralOverloadsKeepEveryWidthAndWordBoundary` checks literal identity,
+constant-only plans and unchanged step counts at every width from 1 through
+257 bits. Constant plans must not request variable values.
+`SymMBAWidePairs.SharedAllowancesPreserveDecisionWorkAndMemo` checks fresh and
+previously spent request budgets, local caps under unlimited requests, zero and
+short storage, exact completion boundaries and saturated unlimited accounting.
+Outputs, work, remaining storage and completed-reading memo admission agree.
+`Z3Solver.RepeatedProductsKeepAllFactorsAndCompleteInputModels` checks long
+factor runs around power-of-two boundaries at 1–257 bits, both full and scaled
+products. Independent complete-word multiplication and high-bit near misses
+check equality and retained input models.
 `SymMBA.DenseCoversKeepEveryCornerAndWholeWord` exhausts four-, six- and
 eight-input cover tables, including mixed literal polarities and an isolated
 negative corner. Independent bit-plane evaluation checks random complete words
@@ -2174,7 +2195,11 @@ parity. Independent APInt oracles cover 8–257-bit words; a separate 128-factor
 fixture retains variable corrections and has full-width Z3 proofs at
 8/16/32/64 bits. Short work/storage budgets check refusal without increasing
 production limits. The worker source test also executes both degree-128
-masked carry fixtures through the six CLI/worker routes at O0/O2.
+masked carry fixtures through the six CLI/worker routes at O0/O2. Odd partial
+blocks of degree 15/23/31 retain unpaired source words and low-bit disturbances.
+Tests exhaust all three six-bit inputs for a degree-15 block, check complete
+8–257-bit words and retain every factor under short work/storage allowances.
+A degree-23 machine-code fixture executes all six source routes at O0/O2.
 Quadratic carry-count tests retain both observed correction bits without
 dividing by a noninvertible word. They compare complete products with
 independent APInt arithmetic through 257 bits and Z3 proofs at 8/16/32/64 bits.
@@ -3910,7 +3935,9 @@ to the main window even when its previous tab group and disassembly are floating
 transient parenting for floating text, graph, pseudocode and IR views.
 `disassemblyMenuOffersTheLinesEdits` checks that the text and graph menus offer
 stack variables, the SP correction and the operand forms on an instruction,
-and array and alignment on a data item, while pseudocode offers none of them.
+and array and alignment on a data item. Pseudocode offers only its own
+function's stack variables and function edits, none of the disassembly's item
+definitions, and keeps that function after synchronization is turned off.
 `floatingCommandDialogsStayWithTheirView` checks search, calculator input and
 results, options and other command dialogs against their floating owner.
 `analysisBrowsersStayInteractive` covers ordinary xrefs, address and location
@@ -7172,6 +7199,9 @@ cost, one-bit and wide literals, shared-tree saturation, budgeted selection,
 and exhaustive three-bit equivalence with sampling disabled. `SymMBASample.*`
 compares narrow and arbitrary-width verification against the AP evaluator,
 including all operators, deterministic assignments, and unused wide inputs.
+Contiguous input windows starting at zero or after unused wide variables must
+retain the same random stream and agree with the independent AP evaluator at
+1–257 bits. Sparse windows keep their existing compact lookup coverage.
 Candidate quality
 comparisons across scoring revisions must recount both outputs with the same
 metric; the SDK's version-specific size counters are diagnostic only.

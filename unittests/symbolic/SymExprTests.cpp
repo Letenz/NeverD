@@ -42,6 +42,32 @@ TEST(SymExpr, InterningMakesStructuralEqualityAPointerCompare) {
   EXPECT_NE(Ctx.mkConst(W32, 7), Ctx.mkConst(8, 7));
 }
 
+TEST(SymExpr, NativeLiteralOverloadsKeepEveryWidthAndWordBoundary) {
+  SymContext Ctx;
+  std::mt19937_64 Random(0x6e6174697665636f);
+  for (unsigned Width = 1; Width <= 257; ++Width)
+    for (unsigned I = 0; I < 12; ++I) {
+      const auto Value = I == 0   ? uint64_t(0)
+                         : I == 1 ? ~uint64_t(0)
+                                  : Random();
+      const llvm::APInt Expected(Width, Value, false, true);
+      const auto Literal = Ctx.mkConst(Width, Value);
+      EXPECT_EQ(Ctx.constValue(Literal), Expected);
+      EXPECT_EQ(Literal, Ctx.mkConst(Expected));
+      SymEvalPlan Plan(Ctx, Literal);
+      EXPECT_EQ(Plan.numSteps(), 1u);
+      EXPECT_EQ(Plan.eval({}), Expected);
+      if (Width <= 64) {
+        EXPECT_EQ(Plan.evalU64({}), Expected.getZExtValue());
+        EXPECT_EQ(Plan.evalU64With([](uint32_t) {
+          ADD_FAILURE() << "a constant plan must not request an input";
+          return uint64_t(0);
+        }),
+                  Expected.getZExtValue());
+      }
+    }
+}
+
 TEST(SymExpr, InterningRetainsFullIdentityAcrossGrowthCopyAndMove) {
   SymContext Ctx;
   const auto X = Ctx.mkVar("x", 64);
@@ -116,6 +142,41 @@ TEST(SymExpr, CollisionChainsSurviveIndependentCopiesAndOwnerDestruction) {
       EXPECT_NE(Refs[I], Refs[J]);
   }
   EXPECT_EQ(Assigned.numNodes(), Before);
+}
+
+TEST(SymExpr, LongOperandIdentityPreservesOrderAcrossGrowthAndCopies) {
+  for (unsigned Count : {7u, 8u, 9u, 16u, 65u}) {
+    SCOPED_TRACE(Count);
+    SymContext Ctx;
+    llvm::SmallVector<SymRef, 16> Inputs;
+    for (unsigned I = 0; I < Count; ++I)
+      Inputs.push_back(Ctx.mkVar("byte" + std::to_string(I), 8));
+    const auto Forward = Ctx.mkConcat(Inputs);
+    const auto Sum = Ctx.mkAdd(Inputs);
+    llvm::SmallVector<SymRef, 16> Reversed(Inputs.rbegin(), Inputs.rend());
+    const auto Backward = Ctx.mkConcat(Reversed);
+    EXPECT_NE(Forward, Backward);
+    EXPECT_EQ(Ctx.mkAdd(Reversed), Sum);
+    for (unsigned I = 0; I < 2048; ++I)
+      Ctx.mkVar("growth" + std::to_string(I), 32);
+    auto Copy = Ctx;
+    auto Moved = std::move(Copy);
+    for (auto *Context : {&Ctx, &Moved}) {
+      const auto Before = Context->numNodes();
+      EXPECT_EQ(Context->mkConcat(Inputs), Forward);
+      EXPECT_EQ(Context->mkConcat(Reversed), Backward);
+      EXPECT_EQ(Context->mkAdd(Reversed), Sum);
+      EXPECT_EQ(Context->numNodes(), Before);
+      llvm::APInt Expected(8 * Count, 0);
+      llvm::SmallVector<llvm::APInt, 16> Values;
+      for (unsigned I = 0; I < Count; ++I) {
+        Expected = Expected.shl(8) | (I + 1);
+        Values.emplace_back(8, I + 1);
+      }
+      SymEvalPlan Plan(*Context, Forward);
+      EXPECT_EQ(Plan.eval(Values), Expected);
+    }
+  }
 }
 
 TEST(SymExpr, CommutativeOperandsAreSorted) {
@@ -1128,7 +1189,7 @@ TEST(SymExpr, EvaluationPlanReportsTheVariablesItReads) {
 
 TEST(SymExpr, NativeAssociativeEvaluationMatchesFullWidthArithmetic) {
   std::mt19937_64 Random(0x6e617279);
-  for (unsigned Width : {1u, 7u, 8u, 16u, 32u, 64u}) {
+  for (unsigned Width = 1; Width <= 64; ++Width) {
     for (unsigned Count : {2u, 3u, 8u, 33u}) {
       SCOPED_TRACE(::testing::Message()
                    << "width=" << Width << " operands=" << Count);
@@ -1219,7 +1280,7 @@ TEST(SymExpr, EvaluationPlanKeepsSharedInputsAfterContextGrowth) {
 
 TEST(SymExpr, NativeNormalizedResultsRetainWidthBoundaries) {
   std::mt19937_64 Random(0x6e6f726d616c);
-  for (unsigned Width : {1u, 7u, 8u, 16u, 32u, 64u}) {
+  for (unsigned Width = 1; Width <= 64; ++Width) {
     SCOPED_TRACE(Width);
     SymContext Ctx;
     const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
