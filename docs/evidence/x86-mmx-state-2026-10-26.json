@@ -269,5 +269,18 @@
     "NeverD owned FEMMS payload invalidation and all 24 3DNow value/state operations remain unsupported.",
     "The independent native completion oracle targets x86-64; i386 native FEMMS is covered by LLVM codegen tests.",
     "Three pinned-SDK cases skip because that older SDK lacks the required native virtualization/descriptor interfaces."
-  ]
+  ],
+  "publication_integration": {
+    "merge_commit": "8267b45636485b6b704fbed3855af9474a682fc4",
+    "additional_upstream": "df2f61c0f95a45909bde3923795223cafa9decfa",
+    "changed_paths": [
+      "docs/android-application-runtime.md",
+      "docs/testing.md",
+      "unittests/emulation/AndroidJNITests.cpp",
+      "unittests/emulation/LinuxClockTests.cpp",
+      "unittests/emulation/fixtures/android_jni.c"
+    ],
+    "qualified_production_and_test_inputs_unchanged": true,
+    "qualification_reference": "acf92edec4aa9148f89839e732a646d7ba472d22"
+  }
 }
