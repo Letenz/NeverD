@@ -9690,6 +9690,13 @@ execution, scalar-state and store-preservation regressions. These targets test
 the generic effect mechanism; they do not certify an external function's ABI
 or operating-system behavior.
 
+Call memory postcondition coverage includes preserved inputs across regions,
+conditional results in both byte orders, fresh unknown epochs, pre-call memory
+targets, ordinary alias invalidation and atomic malformed-knowledge refusal.
+The exploration test consumes a retained memory target to discover a successor.
+Run `NeverDSymMemoryKnowledgeTests` with the two execution targets when changing
+this boundary, so the underlying rebind and overlap validator is also checked.
+
 For optional independent bitvector oracles, configure `NEVERD_ENABLE_Z3=ON`
 and run `NeverDSolverTests`; see [solver validation](solver.md) for the
 cross-backend benchmark and replayable query export. Validate an OFF build too
