@@ -15738,3 +15738,25 @@ unwind qualification.
 ## Selected callable checks
 
 `Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` combines address-only output with integer, pointer, floating and void providers. `AddressOnlyCallbackConvertsToItsKnownParameterType` executes a typed callback. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` combines separately selected callers and pointer-reading callees, and compares whole-unit output with cold/warm cache use. The x64/ARM64 PE, ELF and Mach-O input models compile and execute generated C at O0/O2 with UBSan. This validates host source execution, not native execution on every target platform. Run the call-contract, pointer-projection, source-ABI and callee-cache owners after changing this boundary.
+
+`NeverDWorkerPEListingFacts` uses a generated DLL to check the shared automatic
+SP/FP facts in the listing: noncanonical allocation, moved frame aliases and
+alias clobbers. It checks the DLL entry's three physical parameter locations,
+pure forwarders versus adjusted-argument wrappers, runtime-function and chain
+RVA field references, exclusive end boundaries, padding grouping, and user item
+precedence. Run it with `NeverDWorkerStackFrame`, `NeverDWorkerPEBrowse`,
+`NeverDWorkerNativeMakeCode`, `NeverDWorkerLocalTypes` and the discovery-ready
+tests after changing these shared SDK/listing boundaries.
+
+`NeverDMetadataVisitor` compares the native metadata visitor with paginated
+JSON on a generated DLL, including embedded chain rows, borrowed v1 records,
+early-stop cursors and invalid callback admission. It also checks that a
+bounded entry's direct forwarder can refer to an unlisted destination without
+registering that destination or resurrecting a deleted function identity.
+The PE listing fixture checks `complete_anchor_item` with a one-line budget:
+the first reply includes the actual selected instruction and its header.
+After changing viewport demand, run the GUI controller's
+`listingFirstContentPaintWaitsForCurrentRows`,
+`listingRefreshKeepsItsContextAndArrows`,
+`listingKeepsRowsWhenTheirGenerationIsPublished` and
+`initialNavigationOverviewDoesNotWaitForRefreshDebounce` cases.

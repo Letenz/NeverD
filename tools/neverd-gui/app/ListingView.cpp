@@ -169,8 +169,12 @@ void ListingView::clear() {
 void ListingView::jumpTo(Address address) {
   scrollJump_.stop();
   pendingJump_ = address;
-  request(Fetch::Jump, address, 0, JumpContextBefore,
-          ::neverd::limits::gui::kListingViewPageLines);
+  // A new view needs its viewport before adjacent functions. Ordinary
+  // prefetch fills both margins after these current rows have arrived.
+  const bool firstPage = lines_.empty();
+  const int pageLines = ::neverd::limits::gui::kListingViewPageLines;
+  request(Fetch::Jump, address, 0, firstPage ? 0 : JumpContextBefore,
+          firstPage ? std::min(visibleLines(), pageLines) : pageLines);
 }
 
 bool ListingView::rowsCurrent() const {
@@ -278,6 +282,8 @@ void ListingView::request(Fetch kind, Address address, int sub, int before,
                       {"sub", sub},
                       {"before", before},
                       {"after", after}};
+  if (kind == Fetch::Jump && lines_.empty())
+    payload["complete_anchor_item"] = true;
   if (kind == Fetch::Jump || kind == Fetch::Refresh)
     payload["recover_address"] = hexAddress(cursor ? cursor->item : address);
   if (opcodeBytes_ > 0)
