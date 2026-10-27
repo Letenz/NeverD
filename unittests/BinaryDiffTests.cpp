@@ -1056,6 +1056,126 @@ TEST(BinaryDiff, OverridesKeepPairsOneToOneAndRevert) {
   EXPECT_EQ(Again.Overrides, Decisions);
 }
 
+TEST(BinaryDiff, ExhaustedAmbiguitiesStaySaveableAndRevertExactly) {
+  for (const auto [PCount, SCount] :
+       {std::pair(1u, 3u), std::pair(3u, 1u), std::pair(3u, 3u)}) {
+    SCOPED_TRACE(PCount);
+    SCOPED_TRACE(SCount);
+    const auto Copies = [](unsigned Count) {
+      std::vector<Fn> Fns;
+      for (unsigned I = 0; I < Count; ++I)
+        Fns.push_back(leaf("copy" + std::to_string(I), 7, 1));
+      return Fns;
+    };
+    const Program P = build(Copies(PCount), 0x400000);
+    const Program S = build(Copies(SCount), 0x800000);
+    ComparisonSettings Settings;
+    Settings.UseNames = false;
+    auto R = compare(P, S, Settings);
+    ASSERT_TRUE(R.Matches.empty());
+    ASSERT_EQ(R.Ambiguities.size(), 1u);
+    std::vector<OverrideEffect> Effects;
+    std::vector<std::string> States{savedWithoutTimings(R, P, S)};
+    const unsigned Pairs = std::min(PCount, SCount);
+    for (unsigned I = 0; I < Pairs; ++I) {
+      OverrideEffect E;
+      ASSERT_FALSE(applyOverride(
+          R, P, S,
+          {OverrideKind::Match, P.Functions[I].Address, S.Functions[I].Address},
+          &E));
+      Effects.push_back(std::move(E));
+      const bool HasCandidates = I + 1 < Pairs;
+      EXPECT_EQ(R.Ambiguities.size(), HasCandidates ? 1u : 0u);
+      EXPECT_EQ(R.PrimaryCoverage.Ambiguous,
+                HasCandidates ? PCount - I - 1 : 0u);
+      EXPECT_EQ(R.SecondaryCoverage.Ambiguous,
+                HasCandidates ? SCount - I - 1 : 0u);
+      EXPECT_EQ(R.PrimaryCoverage.Unmatched,
+                HasCandidates ? 0u : PCount - Pairs);
+      EXPECT_EQ(R.SecondaryCoverage.Unmatched,
+                HasCandidates ? 0u : SCount - Pairs);
+      States.push_back(savedWithoutTimings(R, P, S));
+      std::string Error;
+      const auto Read = readComparison(States.back(), Error);
+      ASSERT_TRUE(Read) << Error;
+      ComparisonResult Reopened;
+      ASSERT_FALSE(bindComparison(*Read, P, S, Reopened));
+      EXPECT_EQ(savedWithoutTimings(Reopened, P, S), States.back());
+    }
+    for (unsigned I = Pairs; I > 0; --I) {
+      revertOverride(R, P, S, Effects[I - 1]);
+      EXPECT_EQ(savedWithoutTimings(R, P, S), States[I - 1]);
+    }
+    for (unsigned I = 0; I < Pairs; ++I) {
+      ASSERT_FALSE(applyOverride(R, P, S, Effects[I].Applied));
+      EXPECT_EQ(savedWithoutTimings(R, P, S), States[I + 1]);
+    }
+  }
+}
+
+TEST(BinaryDiff, CrossGroupOverridesRestoreRemovedAndRetainedAmbiguities) {
+  std::vector<Fn> PFns, SFns;
+  for (unsigned Group = 0; Group < 4; ++Group)
+    for (unsigned Copy = 0; Copy < 2; ++Copy) {
+      const auto F =
+          leaf("group" + std::to_string(Group) + "_" + std::to_string(Copy),
+               Group + 1, Group + 1);
+      if (Group != 1 || Copy == 0)
+        PFns.push_back(F);
+      if (Group != 0 || Copy == 0)
+        SFns.push_back(F);
+    }
+  const Program P = build(PFns, 0x400000);
+  const Program S = build(SFns, 0x800000);
+  ComparisonSettings Settings;
+  Settings.UseNames = false;
+  auto R = compare(P, S, Settings);
+  ASSERT_TRUE(R.Matches.empty());
+  ASSERT_EQ(R.Ambiguities.size(), 4u);
+  // Each edit consumes a whole group and may also shrink a different group.
+  // The untouched fourth group must keep its original order and membership.
+  const std::pair<const char *, const char *> Pairs[] = {
+      {"group2_0", "group0_0"},
+      {"group1_0", "group2_0"},
+      {"group2_1", "group2_1"}};
+  std::vector<OverrideEffect> Effects;
+  std::vector<std::string> States{savedWithoutTimings(R, P, S)};
+  for (const auto &[A, B] : Pairs) {
+    OverrideEffect E;
+    ASSERT_FALSE(applyOverride(
+        R, P, S,
+        {OverrideKind::Match, named(P, A).Address, named(S, B).Address}, &E));
+    Effects.push_back(std::move(E));
+    EXPECT_EQ(R.Ambiguities.size(), 4u - Effects.size());
+    States.push_back(savedWithoutTimings(R, P, S));
+    std::string Error;
+    const auto Read = readComparison(States.back(), Error);
+    ASSERT_TRUE(Read) << Error;
+    ComparisonResult Reopened;
+    ASSERT_FALSE(bindComparison(*Read, P, S, Reopened));
+    EXPECT_EQ(savedWithoutTimings(Reopened, P, S), States.back());
+  }
+  for (size_t I = Effects.size(); I > 0; --I) {
+    revertOverride(R, P, S, Effects[I - 1]);
+    EXPECT_EQ(savedWithoutTimings(R, P, S), States[I - 1]);
+  }
+  for (size_t I = 0; I < Effects.size(); ++I) {
+    ASSERT_FALSE(applyOverride(R, P, S, Effects[I].Applied));
+    EXPECT_EQ(savedWithoutTimings(R, P, S), States[I + 1]);
+  }
+  for (size_t I = Effects.size(); I > 0; --I)
+    revertOverride(R, P, S, Effects[I - 1]);
+  // A single cross-group edit can exhaust both original groups at once.
+  OverrideEffect Both;
+  ASSERT_FALSE(applyOverride(R, P, S,
+                             {OverrideKind::Match, named(P, "group1_0").Address,
+                              named(S, "group0_0").Address},
+                             &Both));
+  EXPECT_EQ(R.Ambiguities.size(), 2u);
+  revertOverride(R, P, S, Both);
+  EXPECT_EQ(savedWithoutTimings(R, P, S), States.front());
+}
+
 TEST(BinaryDiff, StoppedComparisonsKeepWhatTheyHave) {
   const Program P = build(sample(), 0x400000);
   const Program S = build(sample(), 0x400000);

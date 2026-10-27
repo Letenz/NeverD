@@ -40,6 +40,13 @@ performance or statistical acceptance requirements.
 
 ## Verification record boundaries
 
+Manual correspondence edits retain valid two-sided ambiguity groups throughout
+save, reopen and undo/redo. Core regressions cover unequal candidate counts,
+cross-group edits and exact group restoration; native SDK and worker fixtures
+verify remaining-function classification, inventory invalidation and file
+reopen after the last candidate is consumed. These qualify editing and
+persistence, independently of matching accuracy or broader corpus coverage.
+
 Matcher version 4 preserves exact similarity ties at zero ambiguity margin and
 checks repeated call-position proposals before accepting pairs. It retains
 unresolved calls as positional uncertainty and uses only anchors shared by all

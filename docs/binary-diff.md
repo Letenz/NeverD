@@ -154,6 +154,11 @@ differ according to when the stop was observed.
 `match` replaces conflicting pairs, `unmatch` dissolves a pair, and `confirm`
 records an analyst's decision. The SDK and GUI support undo/redo. These actions
 change correspondence, not input bytes or project annotations.
+When a pairing consumes a group's last candidate on either side, that group
+is removed and any remaining functions become unmatched. Groups with candidates
+on both sides stay unresolved, including a single remaining pair. Undo restores
+the original groups and candidate lists; every intermediate edit can be saved
+and reopened.
 
 | Exit | Meaning |
 | --- | --- |

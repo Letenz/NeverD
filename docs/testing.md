@@ -3200,6 +3200,13 @@ uses authored raw bodies. The real Qt picker test uses 417 raw functions to
 cross the page boundary, then checks search, selection, address zero, displaced
 pairs, undo, cancellation and revision invalidation. These are UI and inventory
 contracts, not matching-quality or throughput measurements.
+The core override regressions exhaust equal and unequal ambiguity groups, mix
+removed and surviving groups across edits, and remove two groups in one edit.
+Every intermediate state must bind after serialization; consecutive undo/redo
+must reproduce its original ordering, memberships and coverage. Native SDK and
+worker cases consume the last candidates, check invalidated inventories, and
+reopen the edited report through the strict reader, including actual worker
+file save and restart.
 The CLI regression sends SIGINT during each input's actual hashing phase,
 requires exit 3 with empty result output, preserves an existing saved report,
 then runs an ordinary comparison again. Child SIGINT delivery is tested on
@@ -14992,13 +14999,17 @@ services and ART loading are not covered.
 
 `NeverDBytePatchTests`: overlay, relocation refusal, PC-relative assembly, PE signature/checksum. The same suite checks patch JSON ownership, decoded duplicate keys, legacy number spellings, malformed fields, and row/byte/input limits. With SIMD JSON enabled, `NeverDPatchJSONFallbackTests` compiles the same reader without acceleration and runs those reader contracts too. `NeverDWorkerPatch`: preview, stale input, undo/redo, batch revert, read-only replica, reopen, exclusive export.
 
+`NeverDBytePatchTests` also compares fragmented and shuffled replay against independent byte/kind oracles, retains adjacent-segment boundaries, rejects a bad late row without changing existing image copies, and verifies immutable input-view bounds and snapshot lifetime.
+
 `NeverDWorkerNativePatch` repeats this against the real SDK. `NeverDWorkerSourceBytePatch` verifies source proof, isolated preview, frame symbols and native C replacement on Linux.
 
 `BytePatchCAPIHeaderC.c` compiles the frozen snapshot layout and signatures as C
 in `NeverDBytePatchTests`. The real SDK cases in
 `test_byte_patch_integration.py` check empty/unloaded snapshots, all byte values,
 high addresses, split runs, JSON parity, and ownership across edits, reloads and
-session destruction. The worker mock intentionally omits snapshot exports to
+session destruction. They also rewrite and truncate a large input after an edit,
+then check that exports retain the session's original bytes plus its overlay.
+The worker mock intentionally omits snapshot exports to
 exercise JSON fallback; run the native patch suite with both current and older
 SDKs when changing this optional transport.
 
