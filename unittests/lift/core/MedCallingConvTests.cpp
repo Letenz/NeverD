@@ -4999,6 +4999,40 @@ TEST(MedTypePass, MergedFloatCallsRequireDefinedScalarBytes) {
     }
 }
 
+TEST(MedTypePass, FloatCallsDefineOnlyTheirDeclaredScalarWidth) {
+  for (uint16_t FirstWidth : {4, 8})
+    for (bool Reverse : {false, true})
+      for (bool SummaryOnly : {false, true}) {
+        SCOPED_TRACE(FirstWidth);
+        SCOPED_TRACE(Reverse);
+        SCOPED_TRACE(SummaryOnly);
+        MedFunc Func = xmm0JoinReturn(false);
+        auto &Phi = Func.Blocks[2].Phis.front();
+        const MedVar First = reg(1, 3, 16, x86reg::XMM0, Arch::X64);
+        std::map<va_t, uint16_t> Returns{{0x2000, FirstWidth}, {0x3000, 8}};
+        for (unsigned I = 0; I != 2; ++I) {
+          MedOp Call;
+          Call.Opcode = NdOp::CALL;
+          Call.Output = I == 0 ? First : Phi.Args.back().second;
+          Call.CalleeFloatReturnBytes = SummaryOnly ? 0
+                                        : I == 0    ? FirstWidth
+                                                    : 8;
+          Call.addInput(MedVar::makeConst(I == 0 ? 0x2000 : 0x3000, 8));
+          Func.Blocks[I].Ops = {Call};
+        }
+        Phi.Args.front().second = First;
+        if (Reverse)
+          std::reverse(Phi.Args.begin(), Phi.Args.end());
+        inferMedTypes(Func, Arch::X64, &Returns);
+        ASSERT_TRUE(Func.ReturnType);
+        // A scalar float call cannot supply the high bytes of a double
+        // merely because both results occupy a sixteen-byte XMM carrier.
+        EXPECT_EQ(Func.ReturnType->Kind == NdTypeKind::Float, FirstWidth == 8);
+        if (FirstWidth == 8)
+          EXPECT_EQ(Func.ReturnType->Size, 8u);
+      }
+}
+
 TEST(MedTypePass, FloatJoinsPropagateUnknownBytesAroundCycles) {
   for (bool Defined : {false, true})
     for (bool Reverse : {false, true}) {

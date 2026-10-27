@@ -540,6 +540,21 @@ static std::optional<uint16_t> definedMergedLowBytes(
   return std::nullopt;
 }
 
+/// Scalar bytes declared by a call that actually writes the FP return bank.
+static uint16_t
+declaredFloatCallBytes(const MedOp &Op, const TargetRegInfo &TRI,
+                       const std::map<va_t, uint16_t> *FloatReturns) {
+  if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
+      Op.Output.Kind != MedVar::Reg || Op.Output.RegOff != TRI.FPReturnReg)
+    return 0;
+  uint16_t Width = Op.CalleeFloatReturnBytes;
+  if (!Width && FloatReturns && Op.NumInputs && Op.Inputs[0].isConst())
+    if (const auto F = FloatReturns->find(Op.Inputs[0].ConstVal);
+        F != FloatReturns->end())
+      Width = F->second;
+  return Width <= Op.Output.Size ? Width : uint16_t{0};
+}
+
 /// Defined low bytes through register views and merges. Start at full width
 /// and propagate losses to a fixed point: caching a provisional DFS answer
 /// inside a PHI cycle can otherwise hide an undefined arm from a later return.
@@ -552,6 +567,8 @@ class DefinedLowBytes {
   const std::map<Key, const PhiNode *> &Phis;
   std::map<Key, const MedCallClobber *> Clobbers;
   std::map<Key, uint16_t> Bytes;
+  const TargetRegInfo &TRI;
+  const std::map<va_t, uint16_t> *FloatReturns;
 
   uint16_t evaluate(const MedVar &Value) const {
     const Key K{Value.Id, Value.SSAVer};
@@ -570,6 +587,8 @@ class DefinedLowBytes {
     if (It == Defs.end())
       return 0;
     const MedOp &Op = *It->second;
+    if (const uint16_t Width = declaredFloatCallBytes(Op, TRI, FloatReturns))
+      return Width;
     if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
         Op.Inputs[0].Size == Value.Size)
       return (*this)(Op.Inputs[0]);
@@ -601,8 +620,11 @@ class DefinedLowBytes {
 
 public:
   DefinedLowBytes(const MedFunc &Func, const std::map<Key, const MedOp *> &Defs,
-                  const std::map<Key, const PhiNode *> &Phis)
-      : Func(Func), Defs(Defs), Phis(Phis) {
+                  const std::map<Key, const PhiNode *> &Phis,
+                  const TargetRegInfo &TRI,
+                  const std::map<va_t, uint16_t> *FloatReturns)
+      : Func(Func), Defs(Defs), Phis(Phis), TRI(TRI),
+        FloatReturns(FloatReturns) {
     std::map<Key, MedVar> Values;
     std::map<Key, std::vector<Key>> Users;
     const auto Add = [&](const MedVar &V) {
@@ -720,7 +742,7 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
   std::optional<DefinedLowBytes> Defined;
   const auto DefinedBytes = [&](const MedVar &V) {
     if (!Defined)
-      Defined.emplace(Func, Defs, PhiDefs);
+      Defined.emplace(Func, Defs, PhiDefs, TRI, CalleeFloatReturns);
     return (*Defined)(V);
   };
 
@@ -742,20 +764,10 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
       for (const auto &[Pred, Input] : Phi.Args)
         FloatUse(Phi.Output, Input);
     for (const auto &Op : Block.Ops) {
-      uint16_t Width = 0;
-      if (isFloatProducer(Op.Opcode))
-        Width = Op.Output.Size;
-      if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
-          Op.Output.Kind == MedVar::Reg &&
-          Op.Output.RegOff == TRI.FPReturnReg) {
-        Width = Op.CalleeFloatReturnBytes;
-        if (!Width && CalleeFloatReturns && Op.NumInputs &&
-            Op.Inputs[0].isConst())
-          if (const auto Known =
-                  CalleeFloatReturns->find(Op.Inputs[0].ConstVal);
-              Known != CalleeFloatReturns->end())
-            Width = Known->second;
-      }
+      const uint16_t Width =
+          isFloatProducer(Op.Opcode)
+              ? Op.Output.Size
+              : declaredFloatCallBytes(Op, TRI, CalleeFloatReturns);
       if (Width && Width <= Op.Output.Size) {
         const ValueKey Key{Op.Output.Id, Op.Output.SSAVer};
         ForwardedFloat[Key] = Width;
@@ -1002,19 +1014,8 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
                                      : FloatWidth(Rit2->Output);
             if (!E && IsFPRegReturn)
               E = scalarFPLoadElemSize(Defs, Rit2->Output, 0);
-            if (!E && IsFPRegReturn &&
-                (Rit2->Opcode == NdOp::CALL ||
-                 Rit2->Opcode == NdOp::INDIR_CALL))
-              E = Rit2->CalleeFloatReturnBytes;
-            // A call whose callee returns its float in this register.
-            if (!E && IsFPRegReturn && CalleeFloatReturns &&
-                (Rit2->Opcode == NdOp::CALL ||
-                 Rit2->Opcode == NdOp::INDIR_CALL) &&
-                Rit2->NumInputs > 0 && Rit2->Inputs[0].isConst())
-              if (const auto Callee =
-                      CalleeFloatReturns->find(Rit2->Inputs[0].ConstVal);
-                  Callee != CalleeFloatReturns->end())
-                E = Callee->second;
+            if (!E && IsFPRegReturn)
+              E = declaredFloatCallBytes(*Rit2, TRI, CalleeFloatReturns);
             if (E) {
               FirstFloat = &*Rit2;
               FloatElem = E;
@@ -1052,16 +1053,19 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
             if (Phi.Output.Kind != MedVar::Reg ||
                 Phi.Output.RegOff != TRI.FPReturnReg)
               continue;
+            uint16_t CandidateWidth = 0;
             for (const auto &A : Phi.Args) {
               uint16_t E = FloatWidth(A.second);
               if (!E)
                 E = scalarFPLoadElemSize(Defs, A.second, 0);
-              if (E && DefinedBytes(Phi.Output) >= E) {
-                FloatElem = E;
-                FloatDist = 0;
-                FloatViaPhi = true;
-                break;
-              }
+              CandidateWidth = std::max(CandidateWidth, E);
+            }
+            // Do not choose a narrow arm merely because it appears first:
+            // a wider scalar candidate needs those bytes on every path.
+            if (CandidateWidth && DefinedBytes(Phi.Output) >= CandidateWidth) {
+              FloatElem = CandidateWidth;
+              FloatDist = 0;
+              FloatViaPhi = true;
             }
             if (FloatViaPhi)
               break;

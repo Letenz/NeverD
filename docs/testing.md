@@ -5735,6 +5735,8 @@ preserved call clobbers. `FloatJoinsPropagateUnknownBytesAroundCycles` checks
 both PHI input orders and multiple returns through a loop, with defined and
 undefined entry arms. Run the ABI suite alongside the x64 boolean-after-float
 call and AArch64 strtof/strtod execution tests when changing this admission.
+`FloatCallsDefineOnlyTheirDeclaredScalarWidth` checks mixed float/double
+carriers in both input orders, using both call-site and callee-summary types.
 The shared HighC host fixture reports native `-m32` execution unavailable on
 macOS, where a 64-bit build would truncate the kernels' addresses. Linux and
 Windows retain the actual 32-bit differential. Native x87 IR inputs use

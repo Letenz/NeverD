@@ -7004,7 +7004,9 @@ Floating return provenance survives transparent register views, selections and
 PHIs. Admission also checks the complete scalar width against the same defined
 low-byte analysis used for integer return widths. That analysis propagates lost
 bytes to a fixed point over indexed SSA users, including exceptional PHI entries
-and call-clobber preserved prefixes. A provisional answer from a PHI cycle is
+and call-clobber preserved prefixes. Floating calls define only their declared
+scalar bytes, even in a wider physical vector carrier; PHI input order cannot
+choose a smaller candidate to bypass the required width. A provisional answer from a PHI cycle is
 never a cached proof for another return. Narrow incoming parameters define only
 their own bytes; a stale floating result on one path cannot replace a boolean
 computed on every path.
