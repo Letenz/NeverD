@@ -2872,6 +2872,20 @@ prebuilt-LLVM guidance.
 
 ## Structural binary comparison
 
+Long native instruction-alignment regressions reproduce a 6,001-instruction
+body with 72 inserted instructions beyond the old dense-table threshold, in
+both directions. An independent forward edit-cost oracle checks large repeated
+and highly unequal inputs against the weighted divide-and-conquer result.
+A 100,000-instruction fixture retains all 99,990 unchanged instructions across
+ten constant edits, including full-width hash values that some integer hash
+containers reserve internally. Cancellation/deadline checks publish no partial rows
+or block annotations. Saved long-function measurements roundtrip and stale
+measurements fail transactionally. These checks concern weighted structural
+alignment, not semantic equivalence or unique instruction correspondence.
+A separate matching fixture places the real changed pair below four misleading
+sketch candidates on both sides. An allowance of four leaves it undecided;
+allowances of six, sixteen and 256 recover it while retaining ambiguous decoys.
+
 Saved-decision regressions reject an accepted pair that contradicts the final
 effective Unmatch in all historical completion states. A reverse-history oracle
 checks every five-event sequence over two pairs; remap, rejection clearing,
@@ -5378,6 +5392,13 @@ queries to retain both escaped homes, including distinct SSA versions and
 reversed block order. Run this owner and `NeverDI386CallContractTests` when
 changing CDECL stack-offset query reuse.
 
+`MedFPStackHomes.*` (in `NeverDFPParameterMaskTests`) checks propagation through
+overlapping incoming FP stack homes, independent adjacent components,
+unaligned seeds, forced memory homes and unresolved or malformed reads.
+Long chains retain the same homes in both block orders while querying each
+eligible address at most once. Run this owner and the calling-convention
+contract tests when changing the stack-home closure algorithm.
+
 `NeverDFPParameterMaskTests` runs the shared ABI suite and `FPParameterMask.*`.
 The mask controls retain live bytes, earlier stores, ambiguous definitions and
 unmasked return paths while discarding only fully cleared or replaced bytes.
@@ -7523,6 +7544,11 @@ LLVM-to-C through the CLI, without depending on a platform linker.
 and three formats, equal and conflicting predecessor values, scalar/fragment
 collisions, uninitialized arms, loop backedges, cache output identity, every
 small-fixture budget boundary, changed roots and shared failure clearing.
+Wide internal address containers preserve an exact full guest pointer only
+when its value fits without discarded bits; shifted slices, non-fitting
+addresses, scalars and address fragments remain negative controls on x86 and
+ARM under all three formats. The linked i386 ELF matrix exercises that rule
+with real decoder output and independent case-label offsets.
 Scoped address discovery and its legacy-fold wrapper must preserve every
 budget boundary, completion state and address across all four architectures
 and three formats. New scopes revalidate changed instructions; roots are
@@ -14909,6 +14935,13 @@ checkpoints, redo replacement, returned-value ownership and byte-exact document
 encoding after reopen. `NeverDWorkerNativePatch` accepts an exact patch-state
 budget and rejects a one-byte excess without changing live or persisted bytes;
 run it with both typed-snapshot and legacy JSON-only SDKs for adapter changes.
+
+Protocol tests compare preencoded sidecar layout with the original generic
+pretty serializer and literal LLVM control-escape fixtures, including nested
+containers, quoted keys, Unicode and numeric extremes. History tests check exact
+compact state bytes, ordered-table address removal and unknown fields. Changed
+row contents still require admission; duplicate or moved addresses, changed
+counts and ordered-table gaps cannot reuse the committed order proof.
 
 `NeverDGuiPatchKeys` routes all second keys through `QWindow` shortcut dispatch, including pending menus, cancellation and editor typing. `NeverDGuiNativePatchKeys` checks real SDK bytes, Hex and floating windows, undo/redo and restoration. Run the same executable under X11 to exercise native popup routing.
 

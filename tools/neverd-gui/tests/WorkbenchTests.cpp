@@ -63,11 +63,11 @@
 #include <QCompleter>
 #include <QContextMenuEvent>
 #include <QCryptographicHash>
+#include <QCursor>
 #include <QDateTime>
 #include <QDebug>
 #include <QDialogButtonBox>
 #include <QDir>
-#include <QCursor>
 #include <QDragEnterEvent>
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>

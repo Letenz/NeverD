@@ -1761,6 +1761,73 @@ TEST_F(BinaryDiffSDK,
                   .value_or(false));
 }
 
+TEST_F(BinaryDiffSDK, LongNativeInsertionsKeepFullPagedAndSavedEvidence) {
+  const auto Make = [](bool Insert) {
+    std::vector<uint8_t> Code;
+    const auto Add = [&](uint32_t Immediate) {
+      Code.push_back(0x05); // add eax, imm32
+      for (unsigned Shift = 0; Shift < 32; Shift += 8)
+        Code.push_back(uint8_t(Immediate >> Shift));
+    };
+    for (uint32_t I = 0; I < 6000; ++I) {
+      if (Insert && I == 1000)
+        for (unsigned J = 0; J < 40; ++J)
+          Add(0x1234567);
+      Add(0x800000 + I);
+    }
+    Code.push_back(0xc3);
+    return Code;
+  };
+  auto C = compare(input(Make(false)), input(Make(true)));
+  const auto Saved = take(neverd_comparison_export_json(C));
+  const auto Document = parsed(neverd_comparison_export_json(C));
+  const auto *Matches = Document.getAsObject()->getArray("matches");
+  ASSERT_TRUE(Matches);
+  ASSERT_EQ(Matches->size(), 1u);
+  ASSERT_EQ(Matches->front().getAsObject()->getInteger("equal_instructions"),
+            6001);
+  auto Full = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+  ASSERT_TRUE(Full.getAsObject());
+  EXPECT_TRUE(
+      Full.getAsObject()->getBoolean("computation_complete").value_or(false));
+  const auto *Rows = Full.getAsObject()->getArray("rows");
+  ASSERT_TRUE(Rows);
+  ASSERT_EQ(Rows->size(), 6041u);
+  unsigned Original = 0, Inserted = 0;
+  for (const auto &Row : *Rows) {
+    const auto *O = Row.getAsObject();
+    ASSERT_TRUE(O);
+    if (O->getString("kind") == "inserted") {
+      EXPECT_FALSE(O->getObject("primary"));
+      ASSERT_TRUE(O->getObject("secondary"));
+      ++Inserted;
+    } else {
+      EXPECT_EQ(O->getString("kind"), "identical");
+      ASSERT_TRUE(O->getObject("primary"));
+      ASSERT_TRUE(O->getObject("secondary"));
+      EXPECT_EQ(O->getObject("primary")->getString("bytes"),
+                O->getObject("secondary")->getString("bytes"));
+      ++Original;
+    }
+  }
+  EXPECT_EQ(Original, 6001u);
+  EXPECT_EQ(Inserted, 40u);
+  auto Page = parsed(neverd_comparison_function_page_json(
+      C, R"({"address":"0x1000","offset":980,"limit":80})"));
+  ASSERT_TRUE(Page.getAsObject());
+  EXPECT_EQ(Page.getAsObject()->getInteger("total"), 6041);
+  const auto *PageRows = Page.getAsObject()->getArray("rows");
+  ASSERT_TRUE(PageRows);
+  ASSERT_EQ(PageRows->size(), 80u);
+  for (size_t I = 0; I < PageRows->size(); ++I)
+    EXPECT_EQ((*PageRows)[I], (*Rows)[980 + I]);
+  ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1)
+      << take(neverd_comparison_last_error(C));
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  EXPECT_EQ(render(parsed(neverd_comparison_function_json(C, 0, 0x1000))),
+            render(Full));
+}
+
 TEST_F(BinaryDiffSDK, SameSizeImmediateEditIsNotHiddenBySimilarStructure) {
   auto C = compare(input(body()), input(body(9)),
                    "{\"discover\":false,\"use_names\":false}");
