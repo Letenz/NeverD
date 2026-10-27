@@ -3245,6 +3245,11 @@ SDK, worker and real Qt picker cases check both directions, paging, edits and
 reopen. A separate old-library control reproduces stale inventories after
 redo; the repaired workflow checks caller detail, observations and inventory
 against the first application of the same edit.
+Duplicate-heavy inventory timing controls compare a fixed 200-row page at
+8,192 and 32,768 functions. Single-group rows must reuse normalized members,
+while the SDK's saved-order control checks canonical previews/pages without
+rewriting retained group evidence. Keep timing receipts outside correctness
+assertions; wall-clock thresholds depend on the runner.
 The CLI regression sends SIGINT during each input's actual hashing phase,
 requires exit 3 with empty result output, preserves an existing saved report,
 then runs an ordinary comparison again. Child SIGINT delivery is tested on

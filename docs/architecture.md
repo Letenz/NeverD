@@ -1360,11 +1360,13 @@ The C API's `functions_json` inventory projects the same accepted mappings and
 retained ambiguity groups. `ambiguous_with` binds an opposite-side function to
 the union of its groups' target-side members, with ordinary search/sort/paging;
 it does not run another matcher or promote a candidate. A cached membership
-index avoids rescanning every group for every displayed function. Pairing, undo,
-redo and restore share invalidation of mapping-dependent inventory, candidate,
-delta, source and observation caches. CLI and the Qt counterpart picker consume
-this projection; the picker keeps bounded pages and invalidates its selection when
-the worker's comparison revision changes.
+index normalizes each group's members once. Single-group rows share those
+members; overlapping groups form a union for the requested row. Cache storage
+follows group membership, without expanding full Cartesian candidate sets.
+Pairing, undo, redo and restore share invalidation of mapping-dependent
+inventory, candidate, delta, source and observation caches. CLI and the Qt
+counterpart picker consume this projection; the picker keeps bounded pages and
+invalidates its selection when the worker's comparison revision changes.
 `ComparisonJSON` owns strict saved-report validation and transactional binding.
 Its optional `ComparisonControl` carries cooperative cancellation/deadlines
 through record readers, graph/native/region validators and measurement workers.

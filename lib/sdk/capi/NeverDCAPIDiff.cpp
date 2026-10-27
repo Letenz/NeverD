@@ -26,6 +26,7 @@
 #include "neverd/diff/RegionsJSON.h"
 #include "neverd/sdk/Limits.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -100,6 +101,7 @@ struct Comparison {
   std::string InventoryKey;
   std::vector<uint32_t> Inventory;
   struct AmbiguityIndex {
+    std::vector<Ambiguity> Groups;
     std::vector<std::vector<uint32_t>> Primary, Secondary;
   };
   std::optional<AmbiguityIndex> CachedAmbiguities;
@@ -120,8 +122,14 @@ void invalidateMappingViews(Comparison &C) {
 }
 
 struct CandidateSet {
-  std::vector<uint32_t> Functions;
+  // A single group shares normalized members; only overlaps need a union.
+  const std::vector<uint32_t> *GroupFunctions = nullptr;
+  std::vector<uint32_t> MergedFunctions;
   std::vector<FunctionStep> Steps;
+
+  llvm::ArrayRef<uint32_t> functions() const {
+    return GroupFunctions ? *GroupFunctions : MergedFunctions;
+  }
 
   std::string explanation() const {
     std::string Out;
@@ -143,10 +151,16 @@ struct CandidateSet {
 CandidateSet candidates(Comparison &C, bool Secondary, uint32_t Function) {
   if (!C.CachedAmbiguities) {
     Comparison::AmbiguityIndex Index;
+    Index.Groups = C.Result.Ambiguities;
     Index.Primary.resize(C.Primary.Functions.size());
     Index.Secondary.resize(C.Secondary.Functions.size());
-    for (uint32_t I = 0; I < C.Result.Ambiguities.size(); ++I) {
-      const auto &Group = C.Result.Ambiguities[I];
+    for (uint32_t I = 0; I < Index.Groups.size(); ++I) {
+      auto &Group = Index.Groups[I];
+      for (auto *Members : {&Group.Primary, &Group.Secondary}) {
+        llvm::sort(*Members);
+        Members->erase(std::unique(Members->begin(), Members->end()),
+                       Members->end());
+      }
       for (uint32_t A : Group.Primary)
         Index.Primary[A].push_back(I);
       for (uint32_t B : Group.Secondary)
@@ -156,16 +170,22 @@ CandidateSet candidates(Comparison &C, bool Secondary, uint32_t Function) {
   }
   const auto &Index = *C.CachedAmbiguities;
   CandidateSet Out;
-  for (uint32_t I :
-       Secondary ? Index.Secondary[Function] : Index.Primary[Function]) {
-    const auto &Group = C.Result.Ambiguities[I];
+  const auto &Groups =
+      Secondary ? Index.Secondary[Function] : Index.Primary[Function];
+  for (uint32_t I : Groups) {
+    const auto &Group = Index.Groups[I];
     const auto &Others = Secondary ? Group.Primary : Group.Secondary;
-    Out.Functions.insert(Out.Functions.end(), Others.begin(), Others.end());
+    if (Groups.size() == 1)
+      Out.GroupFunctions = &Others;
+    else
+      Out.MergedFunctions.insert(Out.MergedFunctions.end(), Others.begin(),
+                                 Others.end());
     Out.Steps.push_back(Group.Step);
   }
-  llvm::sort(Out.Functions);
-  Out.Functions.erase(std::unique(Out.Functions.begin(), Out.Functions.end()),
-                      Out.Functions.end());
+  llvm::sort(Out.MergedFunctions);
+  Out.MergedFunctions.erase(
+      std::unique(Out.MergedFunctions.begin(), Out.MergedFunctions.end()),
+      Out.MergedFunctions.end());
   llvm::sort(Out.Steps);
   Out.Steps.erase(std::unique(Out.Steps.begin(), Out.Steps.end()),
                   Out.Steps.end());
@@ -903,7 +923,7 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
         Order.push_back(I);
       };
       if (Source) {
-        for (const auto I : SourceCandidates.Functions)
+        for (const auto I : SourceCandidates.functions())
           Include(I);
       } else {
         for (uint32_t I = 0; I < P.Functions.size(); ++I)
@@ -956,7 +976,7 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
       if (Ambiguous) {
         const auto Alternatives = candidates(C, Secondary, I);
         llvm::json::Array Candidates;
-        const auto &Others = Alternatives.Functions;
+        const auto Others = Alternatives.functions();
         for (size_t N = 0;
              N <
              std::min<size_t>(Others.size(), diffLimits::kDefaultMaxCandidates);
@@ -985,8 +1005,8 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
       Out["ambiguity"] = llvm::json::Object{
           {"source_side", Secondary ? "primary" : "secondary"},
           {"source", function(C, Other, *Source)},
-          {"candidate_total", SourceCandidates.Functions.size()},
-          {"active", !SourceCandidates.Functions.empty()},
+          {"candidate_total", SourceCandidates.functions().size()},
+          {"active", !SourceCandidates.functions().empty()},
           {"explanation", SourceCandidates.explanation()},
           {"steps", SourceCandidates.stepsJSON()}};
     return dupStr(jsonToString(std::move(Out)));

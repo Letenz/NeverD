@@ -1425,6 +1425,29 @@ TEST_F(BinaryDiffSDK, AmbiguityInventoryPagesEveryRetainedCandidate) {
   EXPECT_EQ(render(Query(llvm::json::Object{{"side", "secondary"},
                                             {"ambiguous_with", "0x1010"}})),
             render(Original));
+  // Saved membership order is retained evidence; inventory previews and pages
+  // remain canonical even when a single group's members arrive out of order.
+  const auto Inventory = Query(llvm::json::Object{{"kind", "ambiguous"}});
+  auto Reordered = llvm::json::parse(Saved);
+  ASSERT_TRUE(bool(Reordered));
+  auto *Groups = Reordered->getAsObject()->getArray("ambiguities");
+  ASSERT_TRUE(Groups);
+  ASSERT_EQ(Groups->size(), 1u);
+  for (const auto Side : {"primary", "secondary"}) {
+    auto *Members = Groups->front().getAsObject()->getArray(Side);
+    ASSERT_TRUE(Members);
+    std::reverse(Members->begin(), Members->end());
+  }
+  const auto ReorderedText = render(*Reordered);
+  ASSERT_EQ(neverd_comparison_restore_json(C, ReorderedText.c_str()), 1);
+  EXPECT_EQ(render(Query(llvm::json::Object{{"kind", "ambiguous"}})),
+            render(Inventory));
+  EXPECT_EQ(render(Query(llvm::json::Object{{"side", "secondary"},
+                                            {"ambiguous_with", "0x1010"}})),
+            render(Original));
+  const auto Reexported = parsed(neverd_comparison_export_json(C));
+  EXPECT_EQ(render(*Reexported.getAsObject()->get("ambiguities")),
+            render(*Reordered->getAsObject()->get("ambiguities")));
 }
 
 TEST_F(BinaryDiffSDK,
