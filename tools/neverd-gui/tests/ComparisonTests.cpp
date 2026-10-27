@@ -317,7 +317,8 @@ private slots:
     QCOMPARE(QJsonDocument::fromJson(SavedFile.readAll()).object(), Report);
     Session.command("comparison_restore", {{"path", Saved}});
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
-    QCOMPARE(Session.revision(), Revision);
+    // Restore preserves the document but advances the live query generation.
+    QVERIFY(Session.revision() != Revision);
     QCOMPARE(Session.summary()["coverage"], Report["coverage"]);
     QCOMPARE(Failures.size(), 0);
   }
