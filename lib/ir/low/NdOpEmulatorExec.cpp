@@ -1333,6 +1333,10 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
     const auto Use = x86CompactOperandUse(LaneCount, Expand, Control.Zero,
                                           readOperand(Op.Inputs[2]));
     const uint64_t Mask = readOperand(Op.Inputs[2]) & Use.LaneMask;
+    // The concrete evaluator has no CS/ES/SS descriptor environment. A masked
+    // off access needs none; an active access must not become a DS load/store.
+    if (Use.Address && Control.SegmentPrefix)
+      return false;
     if (Use.Address && !Known(Op.Inputs[1]))
       return false;
     const auto Base = Use.Address

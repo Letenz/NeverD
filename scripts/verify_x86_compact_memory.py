@@ -26,7 +26,7 @@ TRIPLES = ('x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'x86_64-apple-d
 
 
 def cases(bits=64):
-    prefixes = (0, 0x64, 0x65, 0x100) if bits == 64 else (0, 0x64, 0x65)
+    prefixes = (0, 0x64, 0x65, 0x100) if bits == 64 else (0, 0x64, 0x65, 0x26, 0x2e, 0x36)
     return list(itertools.product((16, 32, 64), range(6), prefixes, range(3)))
 
 

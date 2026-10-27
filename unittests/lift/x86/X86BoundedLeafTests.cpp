@@ -586,7 +586,7 @@ TEST(X86BoundedLeaf, ExportCompleteStateForIndependentOracle) {
           E->IntrinsicOutputs.push_back(temporary(I, I == 4 ? 2 : Word));
         const auto Type = std::string(Word == 8 ? "uint64_t" : "uint32_t");
         std::string High = "#include <stdint.h>\n" +
-                           x86NativeFunctionPreamble(*Call->getFunction()) +
+                           x86NativeFunctionPreamble(*Call->getFunction(), A) +
                            "void probe(const " + Type + " *input, " + Type +
                            " *output) { output[0] = ";
         High += renderX86BoundedLeafExpression(

@@ -41,6 +41,10 @@
 namespace neverd::symbolic::detail {
 namespace {
 
+// A short prefix of a known parity input precedes the other words. Higher
+// bits return to interleaved order, keeping mixed-word carries bounded.
+constexpr uint64_t SecondaryWord = uint64_t(1) << 63;
+
 struct Decision {
   uint64_t Variable;
   uint32_t Low;
@@ -53,18 +57,23 @@ struct DecisionInfo {
   static Decision getTombstoneKey() { return {UINT64_MAX - 1, 0, 0}; }
   static bool isEqual(const Decision &A, const Decision &B) { return A == B; }
   static unsigned getHashValue(const Decision &D) {
-    return llvm::DenseMapInfo<std::pair<uint64_t, uint64_t>>::
-        getHashValuePiecewise(D.Variable, (uint64_t(D.Low) << 32) | D.High);
+    // Input identity, observed bit and ordering flag fit beside both bounded
+    // edges. Mix once; the table still compares the complete original key.
+    constexpr unsigned EdgeBits =
+        std::bit_width(2 * limits::kMaxResidueDecisionNodes - 1);
+    constexpr unsigned BitBits =
+        std::bit_width(limits::kMaxAffineResidueTableBits - 1);
+    static_assert(32 + BitBits + 1 + 2 * EdgeBits <= 64);
+    const uint64_t Input =
+        (D.Variable & ~SecondaryWord) | ((D.Variable >> 63) << (32 + BitBits));
+    return llvm::DenseMapInfo<uint64_t>::getHashValue(
+        (Input << (2 * EdgeBits)) | (uint64_t(D.Low) << EdgeBits) | D.High);
   }
 };
 
 class LowWordDecisions {
   using Bits = llvm::SmallVector<uint32_t, 8>;
   enum Operation : uint64_t { And, Or, Xor };
-  // A short prefix of a known parity input precedes the other words. Higher
-  // bits return to interleaved order, keeping mixed-word carries bounded.
-  static constexpr uint64_t SecondaryWord = uint64_t(1) << 63;
-
   static unsigned variableBit(uint64_t Variable) {
     return unsigned((Variable & ~SecondaryWord) >> 32);
   }
@@ -94,8 +103,15 @@ class LowWordDecisions {
     static CarryKey getTombstoneKey() { return {UINT32_MAX - 1, 0, 0}; }
     static bool isEqual(const CarryKey &A, const CarryKey &B) { return A == B; }
     static unsigned getHashValue(const CarryKey &K) {
-      return llvm::DenseMapInfo<std::pair<uint32_t, uint64_t>>::
-          getHashValuePiecewise(K.A, (uint64_t(K.B) << 32) | K.C);
+      // Every edge is a bounded node index plus its complement bit. Pack
+      // the three complete edges before mixing, retaining the full key and
+      // equality check without three separate integer hash operations.
+      constexpr unsigned EdgeBits =
+          std::bit_width(2 * limits::kMaxResidueDecisionNodes - 1);
+      static_assert(3 * EdgeBits <= 64);
+      return llvm::DenseMapInfo<uint64_t>::getHashValue(
+          (uint64_t(K.A) << (2 * EdgeBits)) | (uint64_t(K.B) << EdgeBits) |
+          K.C);
     }
   };
   llvm::DenseMap<CarryKey, std::pair<uint32_t, uint32_t>, CarryInfo> Adders;
@@ -121,15 +137,21 @@ class LowWordDecisions {
       return false;
     if (Bytes > Storage && StorageLimited)
       *StorageLimited = true;
-    if (Units > MaxWork - Work || Bytes > Storage ||
-        !Budget.canConsume(Units)) {
+    if (Units > MaxWork - Work || Bytes > Storage) {
       Failed = true;
       return false;
     }
     Work += Units;
-    Budget.consume(Units);
     Storage -= Bytes;
     return true;
+  }
+
+  // This owner alone spends its captured allowance. Commit the exact admitted
+  // work before another budget consumer runs and on every exit, including a
+  // refused proof. Node operations need only update the local counter.
+  void commitWork() {
+    Budget.consume(Work);
+    Work = 0;
   }
 
   // These maps never erase individual keys. Prepay the complete bucket
@@ -1694,7 +1716,8 @@ class LowWordDecisions {
   // all paired corrections add modulo 4, multiplied only by unpaired factors.
   // The product of representatives can be squared from N-1 observed bits.
   Bits widePairedProduct(PairingState &State, llvm::ArrayRef<SymRef> Factors,
-                         unsigned Count) {
+                         unsigned Count,
+                         llvm::SmallVectorImpl<SymRef> *Retained = nullptr) {
     if (Count < 4)
       return product(Factors, Count);
     if (!State.Wide) {
@@ -1741,6 +1764,12 @@ class LowWordDecisions {
     auto Result = calculate(SymOp::Mul, Inner, Inner);
     for (const auto &[Identity, Value] : Unpaired)
       Rest.push_back(Value.first);
+    if (Retained) {
+      if (!charge(Rest.size(), Rest.size() * sizeof(SymRef)))
+        return {};
+      Retained->append(Rest.begin(), Rest.end());
+      Rest.clear();
+    }
     auto Other = product(Rest, Count);
     if (Failed || Other.empty())
       return {};
@@ -1805,8 +1834,11 @@ public:
   LowWordDecisions(SymContext &Ctx, WorkBudget &Budget, size_t &Storage,
                    size_t MaxWork, bool *StorageLimited)
       : Ctx(Ctx), Budget(Budget), Storage(Storage),
-        MaxWork(std::min(MaxWork, limits::kMaxResidueDecisionWork)),
+        MaxWork(std::min(
+            {MaxWork, limits::kMaxResidueDecisionWork, Budget.available()})),
         StorageLimited(StorageLimited) {}
+
+  ~LowWordDecisions() { commitWork(); }
 
   SymRef simplify(SymRef Root, const llvm::APInt &Scale, unsigned Observed,
                   bool OddProductOnly, bool *Complete) {
@@ -1900,19 +1932,19 @@ public:
           }
           Common = Low;
         }
-      if (OddProductOnly && !Common && !Failed && Nonconstant > Observed &&
-          (Factors.size() > limits::kMaxResidueProductFactors ||
-           (Nonconstant - 1) % residueUnitPeriod(Observed) <= 1)) {
+      if (OddProductOnly && !Common && !Failed && Nonconstant > Observed) {
         // A dominant exact prefix supplies enough even factors to annihilate
         // the other branch. Keep every unmatched factor as a complete word;
         // bit-blasting their product can dwarf the proof of the group itself.
-        const unsigned Split = (Observed + 2) / 3;
+        // Small groups need only a shared parity, including multiple
+        // independent residuals. Large projected groups keep the stronger
+        // prefix that makes their coalesced power proof inexpensive.
+        const unsigned Split = ProjectFactors ? (Observed + 2) / 3 : 1;
         // Both complete scans are mandatory. Decline before starting them
         // when even their minimum work cannot fit, preserving the allowance
         // for simpler expressions elsewhere in the same region.
         const size_t ScanUnit = ProjectFactors ? 2 : 2 * (1 + Split);
-        if (Nonconstant > (MaxWork - Work) / ScanUnit ||
-            !Budget.canConsume(Nonconstant * ScanUnit))
+        if (Nonconstant > (MaxWork - Work) / ScanUnit)
           return Root;
         if (!charge(1, 2 * (sizeof(Bits) + Split * sizeof(uint32_t))))
           return Root;
@@ -1962,27 +1994,20 @@ public:
             Entry.Matches = Low == Prefix;
           }
         } else {
-          // Small products already visited affine synthesis. Preserve its
-          // cheap one-residual admission instead of spending the last work
-          // allowance scanning a new multi-residual domain.
-          std::array<Bits, 2> Prefixes;
-          std::array<size_t, 2> Counts{};
+          size_t Votes = 0;
           for (auto Factor : Factors) {
             if (Ctx.isConst(Factor))
               continue;
             const auto &Low = word(Factor, Split);
-            if (Failed || !charge(1 + 2 * Split))
+            if (Failed || !charge(1 + Split))
               return Root;
-            const size_t Group = !Counts[0] || Low == Prefixes[0] ? 0 : 1;
-            if (Counts[Group] && Low != Prefixes[Group])
-              return Root;
-            if (!Counts[Group])
-              Prefixes[Group] = Low;
-            ++Counts[Group];
-            if (Counts[0] > 1 && Counts[1] > 1)
-              return Root;
+            if (!Votes)
+              Prefix = Low;
+            if (Prefix == Low)
+              ++Votes;
+            else
+              --Votes;
           }
-          Prefix = Prefixes[Counts[1] > Counts[0]];
         }
         if (Prefix.front() <= 1)
           return Root;
@@ -2109,7 +2134,7 @@ public:
         WideBlock / limits::kResidueDecisionPartialPairingDivisor;
     const bool FullBlock =
         Nonconstant >= PairingBlock && !(Nonconstant % PairingBlock);
-    bool AllOdd = RetainedFactors.empty() && Assumption &&
+    bool AllOdd = (RetainedFactors.empty() || !ProjectFactors) && Assumption &&
                   Observed >= limits::kMinResidueDecisionPairingBits &&
                   (FullBlock || Nonconstant > WideProbeBlock);
     llvm::SmallVector<SymRef, 16> Nonconstants;
@@ -2167,7 +2192,16 @@ public:
           Wide = A.Identity == Other.Identity;
         }
       }
-      Product = Wide        ? widePairedProduct(State, Nonconstants, Observed)
+      // An odd-sized source block necessarily leaves unpaired factors.
+      // Keep those full words outside the square proof. The original parity
+      // scan already proved the complete product zero on the other branch.
+      // Projected groups and even blocks retain their joint reconstruction.
+      auto *Unpaired = !ProjectFactors && RetainedFactors.empty() &&
+                               (Nonconstants.size() & 1)
+                           ? &RetainedFactors
+                           : nullptr;
+      Product = Wide
+                    ? widePairedProduct(State, Nonconstants, Observed, Unpaired)
                 : FullBlock ? pairedProduct(State, Nonconstants, Observed)
                             : product(Factors, Observed);
     } else {
@@ -2306,8 +2340,7 @@ public:
                                     16 * sizeof(SymRef));
       if (Bytes > Storage && StorageLimited)
         *StorageLimited = true;
-      if (Units > MaxWork - Work || Bytes > Storage ||
-          !Budget.canConsume(Units))
+      if (Units > MaxWork - Work || Bytes > Storage)
         return Fallback;
       if (!charge(Units, Bytes))
         return Fallback;
@@ -2984,6 +3017,7 @@ public:
       *Complete = true;
     if (readingScore(Ctx, Result) >= readingScore(Ctx, Root))
       return Root;
+    commitWork();
     recordResidueReading(Ctx, FirstEmitted, Budget, Storage);
     return Result;
   }

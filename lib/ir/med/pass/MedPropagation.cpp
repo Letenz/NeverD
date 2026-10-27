@@ -35,7 +35,10 @@ void LowToMedConverter::propagate(MedFunc &Func) {
   auto keyOf = [](const MedVar &V) -> DefKey {
     return {static_cast<int>(V.Kind), V.Id, V.SSAVer};
   };
-  // Looked up and replaced by key, never walked.
+  // Output identities and operation storage stay unchanged below. Keep one
+  // index for both propagation loops; its pointers observe each rewrite's
+  // current opcode and inputs, including folds earlier in the same round.
+  // Duplicate definitions keep the last operation in traversal order.
   llvm::DenseMap<DefKey, const MedOp *> Defs;
 
   const unsigned PointerSize = getTargetRegInfo(TargetArch).PointerSize;
@@ -168,14 +171,6 @@ void LowToMedConverter::propagate(MedFunc &Func) {
   while (Changed &&
          Iters++ < ::neverd::limits::ir::kMaxMedFoldPropagationRounds) {
     Changed = false;
-    Defs.clear();
-    for (auto &Blk : Func.Blocks) {
-      for (auto &Op : Blk.Ops) {
-        if (Op.Output.Id >= 0 && Op.Output.Size > 0)
-          Defs[keyOf(Op.Output)] = &Op;
-      }
-    }
-
     for (auto &Blk : Func.Blocks) {
       for (auto &Op : Blk.Ops) {
         if (Op.NumInputs < 2)

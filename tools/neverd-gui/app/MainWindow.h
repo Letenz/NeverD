@@ -188,6 +188,10 @@ private:
   /// The code window receiving commands, including its open context menu.
   CodeView *focusedCodeView() const;
   std::optional<Address> currentFunction() const;
+  /// The function a command on a whole function acts on: the one a focused
+  /// code window shows, which can differ from the disassembly's, else the
+  /// disassembly's.
+  std::optional<Address> commandFunction() const;
   /// What Shift+F9 and Ctrl+Shift+F9 put on a call path: the function a
   /// focused code window shows, a list window's row, else the disassembly's
   /// location, which the Pathfinder takes as its function or import.

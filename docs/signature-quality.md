@@ -125,8 +125,9 @@ bytes with the parent. Ambiguous, partial, contextual and newly inferred callees
 cannot supply this proof. In particular, old nominal rows at an address resolved
 by an incoming round do not become independent evidence. Missing source fields
 and alternatives at the supporting site refuse the extension. The existing
-frozen outgoing validation and round budget still apply. An independent-body
-index is constructed only if a short request needs it, once per caller pass.
+frozen outgoing validation and round budget still apply. Independent-body
+checks reuse the frozen settlement address index. Body strength is evaluated
+only at requested targets, and the separate data frontier settles names lazily.
 No descendant can repair its parent's evidence or start an unrooted cycle.
 
 A separate finite code-address fingerprint can identify two short functions
@@ -172,6 +173,19 @@ appear in the results. Source references are intersected across raw versions,
 and supplement deduplication respects independently selected library packs.
 An ambiguous ordinary body does not cover an audited incoming-context record:
 the latter supplies the source ownership needed for a name-directed query.
+
+A long required-reference parent may also start an incoming chain when an
+independently settled ordinary callee supplies a complete, separate executable
+body. Like a short required root, it needs an unpruned source declaration;
+its selected required clause alone cannot establish omitted edges. All source
+variants must agree on the relevant sites. The ordinary callee is checked
+against the original frozen candidates, so a descendant cannot manufacture
+the evidence needed to support its ancestor. Missing or conflicting source
+records, weak or partial callees, overlapping bodies and changed bytes leave
+the child unresolved. This reuses the short-parent proof and name index. The
+initial settlement and frozen body checks share one sorted address index;
+missing names from that complete initial settlement do not trigger another
+settlement query.
 
 After the single frozen data pass, a newly confirmed data consumer may start
 a bounded incoming chain only with complete coverage and the ordinary
@@ -320,16 +334,21 @@ use different leading/tail splits. Wildcards can cover an opaque CRC region;
 fixed bytes cannot be proved by that region, and a required CRC still needs
 the same span and checksum. The offline collision refiner additionally handles
 explicit Thumb BX LR/POP.W-to-PC returns followed by halfword zero/NOP padding
-when its machine is ARM. Other architectures do not inherit that rule.
+when its machine is ARM. Other architectures do not inherit that rule. Equal CRC spans
+and checksums can precede these visible returns. The relation still rejects
+different CRC spans or values, opaque returns/padding and any nonpadding
+suffix; it never treats a checksum as the literal return bytes.
 
 `scripts/signatures/refine_colliding_patterns.py` applies newly collected raw
 counterclaims to existing ordinary records. A complete conflicting record gains
 mandatory references only when they distinguish every new rival; otherwise it
 becomes an incoming-only query. Incomplete conflicting records are omitted.
 Each proposed single-site clause is checked against every raw rival and the
-existing byte cohort. The refiner retains one sufficient clause, preferring
-image-owned import/RTTI metadata, then fewer alternatives and source field
-order; alternatives at one site stay together. This replaces one global byte
+existing byte cohort. The refiner retains one sufficient image-owned
+import/RTTI clause, preferring fewer alternatives and source field order;
+alternatives at one site stay together. Call-only conditions retain every
+original site: a callee name can itself be an ambiguous byte claim, so keeping
+only one call can create an unsupported survivor. This replaces one global byte
 record with at most one, avoiding a copy
 of the whole body for every sufficient site. If several sites are jointly
 necessary, the full clause stays.
@@ -341,7 +360,13 @@ Existing same-library byte cohorts remain intact across numbered parts only
 when their typed references also agree with the raw claim. A known name with
 different references or a claim in an independently selected library cannot
 hide a new counterexample. Existing required-reference records undergo the
-same audit; newly indistinguishable complete ones retain incoming queries.
+same audit; newly indistinguishable complete ones retain incoming queries. An existing
+mandatory clause can be reduced only when its exact names, bytes and typed
+references have a complete unpruned source witness, and the selected clause
+is an image-owned import/RTTI anchor that still distinguishes every covered
+counterclaim, including already loaded required claims. Existing call-only
+constraints remain unchanged. The full source declaration
+remains available for incoming queries; jointly necessary fields stay together.
 The refiner adds no names
 or aliases and preserves incoming queries and metadata constraints.
 When one member needs refinement, the whole loaded byte cohort is rechecked
