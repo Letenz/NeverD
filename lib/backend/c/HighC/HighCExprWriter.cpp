@@ -2868,6 +2868,14 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     // bits as its unsigned carrier, unless a prototype widens it.
     const TypeRef DefinedParam =
         Defined ? emittedParamTypeAt(*Defined, I) : nullptr;
+    // No prototype converts this argument to the machine word the IR carries.
+    // A bare -1 is an int; default argument promotions cannot make it a
+    // 64-bit all-ones value. Keep the complete expression, including any
+    // narrowing or zero/sign extension, before selecting its wide C carrier.
+    if (Imm && !PointerArgument && !DefinedParam &&
+        (!Prototype || I >= Prototype->ParamCount) && Op->Type &&
+        Op->Type->Kind == NdTypeKind::Int && Op->Type->Size > 4)
+      Arg = "(" + typeToC(Op->Type) + ")" + castOperand(exprStr(*Op));
     if (!Imm && !PointerArgument && Op->Type && Op->Type->Size >= 4 &&
         (!DefinedParam || (DefinedParam->Kind == NdTypeKind::Int &&
                            DefinedParam->Size <= Op->Type->Size)))
