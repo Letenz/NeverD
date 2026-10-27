@@ -68,16 +68,15 @@ void onProf(int, siginfo_t *, void *Context) {
   // The unwinder reports the interrupted instruction itself after the
   // handler and the signal trampoline; its callers follow.
   int First = -1;
-  for (int I = 0; I < Count && I < static_cast<int>(kSigprofHandlerFrames);
-       ++I)
+  for (int I = 0; I < Count && I < static_cast<int>(kSigprofHandlerFrames); ++I)
     if (reinterpret_cast<uint64_t>(Frames[I]) == PC) {
       First = I + 1;
       break;
     }
   if (First < 0)
     First = std::min(Count, 2);
-  const int Callers = std::min(Count - First,
-                               static_cast<int>(kSigprofMaxFrames) - 1);
+  const int Callers =
+      std::min(Count - First, static_cast<int>(kSigprofMaxFrames) - 1);
   const size_t Words = static_cast<size_t>(Callers) + 3;
   const size_t At = Used.fetch_add(Words);
   if (At + Words > kSigprofBufferWords) {
@@ -151,17 +150,16 @@ __attribute__((constructor)) void start() {
   std::snprintf(Prefix, sizeof Prefix, "%s", Out);
   const char *RateText = std::getenv("NEVERD_SIGPROF_HZ");
   const long Rate = RateText ? std::atol(RateText) : kSigprofDefaultHz;
-  void *Reserved =
-      mmap(nullptr, kSigprofBufferWords * sizeof(uint64_t),
-           PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
-           -1, 0);
+  void *Reserved = mmap(nullptr, kSigprofBufferWords * sizeof(uint64_t),
+                        PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
   if (Reserved == MAP_FAILED || Rate <= 0)
     return;
   Buffer = static_cast<uint64_t *>(Reserved);
   // Load the unwinder now; its first use may allocate.
   void *Warm[4];
   backtrace(Warm, static_cast<int>(std::size(Warm)));
-  struct sigaction Action {};
+  struct sigaction Action{};
   Action.sa_sigaction = onProf;
   Action.sa_flags = SA_SIGINFO | SA_RESTART;
   sigemptyset(&Action.sa_mask);

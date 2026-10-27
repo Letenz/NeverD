@@ -5,9 +5,9 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Operand text helpers the dialect formatters share: OperandFormat.cpp
-/// tokenizes and formats x86 and generic operands, OperandFormatARM.cpp the
-/// ARM family's.
+/// What the dialect formatters share: OperandFormat.cpp tokenizes operand
+/// text and formats x86 and generic operands, OperandFormatARM.cpp formats
+/// the ARM family's operands the user gives a number format.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -34,31 +34,17 @@ struct Token {
 /// Tokens of one operand, without surrounding spaces.
 using OperandTokens = std::vector<Token>;
 
-std::vector<Token> tokenize(std::string_view text);
-/// Operands of \p tokens: commas outside brackets, braces and parentheses
-/// separate them.
-std::vector<OperandTokens> splitOperands(const std::vector<Token> &tokens);
-/// The value of an operand that is a plain number, `5` or `-5`, unsigned in
-/// \p mask's width.
-std::optional<std::uint64_t> plainNumber(const OperandTokens &tokens,
-                                         std::uint64_t mask);
-std::string lower(std::string_view text);
-ListingRole identifierRole(OperandDialect dialect, std::string_view text);
-bool isTransfer(std::string_view flow);
 /// \p value as characters, most significant byte first (`'ABCD'`); none
 /// unless every byte but leading zeros prints.
 std::optional<std::string> characterLiteral(std::uint64_t value);
 /// The binary digits of \p value without leading zeros.
 std::string binaryDigits(std::uint64_t value);
-/// Operand text as the decoder spells it, with exact transfer targets and
-/// referenced locations named.
-void formatGenericOperand(StyledText &out, const OperandTokens &tokens,
-                          const OperandFacts &facts,
-                          const LocationNamer &namer);
 
 /// Whether \p dialect spells operands as the ARM family does: `#0x1a`,
 /// `[x20, #0x10]`, `{r4, lr}`.
-bool armDialect(OperandDialect dialect);
+inline bool armDialect(OperandDialect dialect) {
+  return dialect == OperandDialect::AArch64 || dialect == OperandDialect::ARM;
+}
 /// The value of an ARM-family immediate, `#5`, `#-5` or `#0x1a`, unsigned in
 /// \p mask's width; none for anything else, a floating constant included.
 std::optional<std::uint64_t> armImmediate(const OperandTokens &tokens,
@@ -74,11 +60,11 @@ struct ArmWidths {
 };
 ArmWidths armWidths(OperandDialect dialect, std::string_view mnemonic,
                     const std::vector<OperandTokens> &operands);
-/// Format an ARM-family operand as the user's \p format shows it; without
-/// one, or when the format cannot show it, as formatGenericOperand does.
-void formatArmOperand(StyledText &out, const OperandTokens &tokens,
+/// Appends an ARM-family operand as the user's \p format shows it; false,
+/// with nothing appended, when the format cannot show the operand.
+bool formatArmOperand(StyledText &out, const OperandTokens &tokens,
                       const OperandFacts &facts, const LocationNamer &namer,
-                      const NumberFormat *format, const ArmWidths &widths);
+                      const NumberFormat &format, const ArmWidths &widths);
 
 } // namespace neverd::worker::operand_format_detail
 

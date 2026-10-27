@@ -7,7 +7,7 @@
 /// \file
 /// The user's number formats in ARM, Thumb and AArch64 operands, spelled as
 /// the decoder spells those operands: an immediate `#0x1a`, a displacement
-/// `[x20, #0x10]`. An operand without a format keeps the generic spelling.
+/// `[x20, #0x10]`. OperandFormat.cpp spells every other operand.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -30,6 +30,13 @@ std::string armNumber(std::uint64_t value) {
       std::to_chars(digits.data(), digits.data() + digits.size(), value, 16)
           .ptr;
   return "0x" + std::string(digits.data(), end);
+}
+
+std::string lowercase(std::string_view text) {
+  std::string result(text);
+  for (char &c : result)
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return result;
 }
 
 bool isPunct(const Token &token, std::string_view text) {
@@ -55,7 +62,7 @@ std::optional<ArmAddress> armAddress(const OperandTokens &tokens,
       solid[1].kind != TokenKind::Identifier ||
       !isRegisterName(dialect, solid[1].text))
     return std::nullopt;
-  const auto base = lower(solid[1].text);
+  const auto base = lowercase(solid[1].text);
   if (base == "pc" || base == "r15")
     return std::nullopt;
   ArmAddress address{solid[1]};
@@ -283,10 +290,6 @@ bool appendArmNumber(StyledText &out, std::uint64_t value, unsigned bits,
 }
 } // namespace
 
-bool armDialect(OperandDialect dialect) {
-  return dialect == OperandDialect::AArch64 || dialect == OperandDialect::ARM;
-}
-
 std::optional<std::uint64_t> armImmediate(const OperandTokens &tokens,
                                           std::uint64_t mask) {
   if (tokens.empty() || !isPunct(tokens.front(), "#"))
@@ -319,7 +322,7 @@ ArmWidths armWidths(OperandDialect dialect, std::string_view mnemonic,
         --depth;
       else if (!depth && token.kind == TokenKind::Identifier &&
                isRegisterName(dialect, token.text)) {
-        first = lower(token.text);
+        first = lowercase(token.text);
         break;
       }
     }
@@ -335,7 +338,7 @@ ArmWidths armWidths(OperandDialect dialect, std::string_view mnemonic,
   // A load or store moves what its mnemonic's size says, else what its first
   // register holds; anything else only computes an address. The mnemonic
   // drops a width qualifier (`ldr.w`, `vldr.64`).
-  auto name = lower(mnemonic.substr(0, mnemonic.find('.')));
+  auto name = lowercase(mnemonic.substr(0, mnemonic.find('.')));
   const bool vector = dialect == OperandDialect::ARM && name.starts_with('v');
   if (!name.starts_with(vector ? "vld" : "ld") &&
       !name.starts_with(vector ? "vst" : "st"))
@@ -347,37 +350,33 @@ ArmWidths armWidths(OperandDialect dialect, std::string_view mnemonic,
   return widths;
 }
 
-void formatArmOperand(StyledText &out, const OperandTokens &tokens,
+bool formatArmOperand(StyledText &out, const OperandTokens &tokens,
                       const OperandFacts &facts, const LocationNamer &namer,
-                      const NumberFormat *format, const ArmWidths &widths) {
-  if (format && !format->isDefault()) {
-    // A structure offset the user gives a displacement from a register:
-    // `[x20, #_T.List.Flink]`, `[sp, #_T.Size]!`.
-    if (format->base == NumberBase::Struct && facts.structs)
-      if (const auto address = armAddress(tokens, facts.dialect)) {
-        StyledText member;
-        if (appendArmStructOffset(member, *format, address->displacement,
-                                  widths.accessBytes, *facts.structs)) {
-          out.append("[", ListingRole::Punctuation);
-          out.append(address->base.text, ListingRole::Register);
-          out.append(", ", ListingRole::Punctuation);
-          out.append("#", ListingRole::Number);
-          out.append(member);
-          out.append("]", ListingRole::Punctuation);
-          if (address->writeback)
-            out.append("!", ListingRole::Punctuation);
-          return;
-        }
+                      const NumberFormat &format, const ArmWidths &widths) {
+  // A structure offset the user gives a displacement from a register:
+  // `[x20, #_T.List.Flink]`, `[sp, #_T.Size]!`.
+  if (format.base == NumberBase::Struct && facts.structs)
+    if (const auto address = armAddress(tokens, facts.dialect)) {
+      StyledText member;
+      if (appendArmStructOffset(member, format, address->displacement,
+                                widths.accessBytes, *facts.structs)) {
+        out.append("[", ListingRole::Punctuation);
+        out.append(address->base.text, ListingRole::Register);
+        out.append(", ", ListingRole::Punctuation);
+        out.append("#", ListingRole::Number);
+        out.append(member);
+        out.append("]", ListingRole::Punctuation);
+        if (address->writeback)
+          out.append("!", ListingRole::Punctuation);
+        return true;
       }
-    const unsigned bits = widths.immediateBits ? widths.immediateBits : 64;
-    const std::uint64_t mask =
-        bits >= 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << bits) - 1;
-    if (const auto value = armImmediate(tokens, mask);
-        value && appendArmNumber(out, *value, bits, *format, namer,
-                                 facts.structs, facts.enums))
-      return;
-  }
-  formatGenericOperand(out, tokens, facts, namer);
+    }
+  const unsigned bits = widths.immediateBits ? widths.immediateBits : 64;
+  const std::uint64_t mask =
+      bits >= 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << bits) - 1;
+  const auto value = armImmediate(tokens, mask);
+  return value && appendArmNumber(out, *value, bits, format, namer,
+                                  facts.structs, facts.enums);
 }
 
 } // namespace neverd::worker::operand_format_detail
