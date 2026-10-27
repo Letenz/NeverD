@@ -1874,8 +1874,14 @@ MBAResult detail::MBADeepSimplifier::run(SymContext &Ctx, SymRef E,
   }
   if (Out != E && Ctx.width(Out) == 1 &&
       (isPredicate(Ctx.op(Out)) || isBitwise(Ctx.op(Out))) &&
-      !Budget.exhausted())
-    Out = finishLocalReadings(Ctx, Out, Budget, RefinementStorage);
+      !Budget.exhausted()) {
+    // The local pass re-projects every node without measuring it again. A
+    // longer reading would stay in the answer or fail the final size gate
+    // and discard the shortened words found by the walk.
+    SymRef Finished = finishLocalReadings(Ctx, Out, Budget, RefinementStorage);
+    if (doesNotGrow(Ctx, Finished, Out))
+      Out = Finished;
+  }
   Result.Work = Budget.used() - WorkStart;
 
   // A locally shorter child can make the composed spelling longer. Retain

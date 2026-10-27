@@ -153,6 +153,28 @@ TEST(SymMBAObservedWindow, UnreducedWindowsKeepTheirComplementedWord) {
   }
 }
 
+TEST(SymMBAObservedWindow, FinishedReadingsDoNotReplaceShorterWords) {
+  for (unsigned Width : {8u, 16u, 64u, 128u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto X = C.mkVar("x", Width);
+    auto P = C.mkVar("p", 1);
+    auto K = [&](uint64_t Value) { return C.mkConst(Width, Value); };
+    auto Flag = C.mkMul(K(32), C.mkZExt(P, Width));
+    // The comparison is finished locally after the walk. Its re-projected
+    // masked terms must not replace the shortened words beneath it.
+    auto Root =
+        C.mkSlt(Flag, C.mkAdd(C.mkOr(K(64), C.mkAdd(K(98), C.mkNot(X))),
+                              C.mkAnd(K(64), C.mkAdd(K(3), C.mkNot(X)))));
+    auto Result = simplifyMBADeep(C, Root);
+    EXPECT_EQ(Result.Expr,
+              C.mkSlt(Flag, C.mkAdd(C.mkOr(K(64), C.mkSub(K(97), X)),
+                                    C.mkAnd(K(64), C.mkSub(K(2), X)))))
+        << C.toString(Result.Expr);
+    EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+  }
+}
+
 TEST(SymMBAObservedWindow, SingleBitObservationKeepsArithmeticCarry) {
   SymContext C;
   auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);

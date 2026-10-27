@@ -7,8 +7,9 @@ flattened AND and complemented OR consumers. Exact constant cofactors recover
 one Boolean input through arithmetic tags. A bounded local completion visits
 new consumers exposed by region measurement under the original work and
 storage allowance, without repeating the whole MBA search. A flattened or
-complemented window is kept only when it is not longer than its input; a
-window that drops no lane would spell every input again as an extract.
+complemented window, and the finished reading itself, is kept only when it is
+not longer than its input; a window that drops no lane would spell every input
+again as an extract.
 
 ## Reproduction and validation
 
@@ -18,5 +19,6 @@ checks packed unrelated flags, flattened consumers and complemented masks.
 widths and independent-input counterexamples.
 `SymMBAObservedWindow.UnreducedWindowsKeepTheirComplementedWord` checks that
 such a window neither hides a complement from its consumer nor discards a
-shortened word beneath it. Run the observed-window, conditional-control and
-complete symbolic suites.
+shortened word beneath it. `FinishedReadingsDoNotReplaceShorterWords` checks the
+same for the finished comparison. Run the observed-window, conditional-control
+and complete symbolic suites.
