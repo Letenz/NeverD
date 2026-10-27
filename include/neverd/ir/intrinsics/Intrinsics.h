@@ -656,57 +656,6 @@ constexpr bool isX86AtomicIntrinsic(Intrinsic Id) {
   return isApxAtomicIntrinsic(x86AtomicSemanticId(Id));
 }
 
-/// Representation-neutral APX atomic operand facts.  LowIR and MedIR use
-/// different value kinds, so each caller classifies its own variables and
-/// passes only the semantic facts which the shared contract owns.  Unknown is
-/// accepted only where the containing IR has no target field; every known
-/// target must be x86-64, except the 32-bit legacy RAO form.
-struct ApxAtomicIntrinsicShape {
-  Arch TargetArch = Arch::Unknown;
-  NdMemoryOrdering MemoryOrdering = NdMemoryOrdering::None;
-  uint8_t NumInputs = 0;
-  bool IntrinsicIdIsConst = false;
-  uint16_t IntrinsicIdSize = 0;
-  bool OutputIsWritableScalar = false;
-  uint16_t OutputSize = 0;
-  bool AddressIsScalar = false;
-  uint16_t AddressSize = 0;
-  bool SourceIsScalar = false;
-  uint16_t SourceSize = 0;
-  bool CompareIsScalar = false;
-  uint16_t CompareSize = 0;
-  bool ConditionIsConst = false;
-  uint64_t Condition = 0;
-  uint16_t ConditionSize = 0;
-};
-
-constexpr bool
-intrinsicApxAtomicShapeIsValid(Intrinsic Id,
-                               const ApxAtomicIntrinsicShape &Shape) {
-  const bool I386 = isX86LegacyAtomicIntrinsic(Id) &&
-                    !isX86CmpccXaddIntrinsic(Id) && Shape.SourceSize == 4;
-  if (!isX86AtomicIntrinsic(Id) ||
-      (Shape.TargetArch != Arch::Unknown && Shape.TargetArch != Arch::X64 &&
-       !(Shape.TargetArch == Arch::X86 && I386)) ||
-      !Shape.IntrinsicIdIsConst || Shape.IntrinsicIdSize != 2 ||
-      !Shape.AddressIsScalar || Shape.AddressSize != 8)
-    return false;
-
-  if (!isX86CmpccXaddIntrinsic(Id))
-    return Shape.NumInputs == 3 && Shape.OutputSize == 0 &&
-           Shape.SourceIsScalar &&
-           (Shape.SourceSize == 4 || Shape.SourceSize == 8) &&
-           Shape.MemoryOrdering == NdMemoryOrdering::Relaxed;
-
-  return Shape.NumInputs == 5 && Shape.OutputIsWritableScalar &&
-         (Shape.OutputSize == 4 || Shape.OutputSize == 8) &&
-         Shape.SourceIsScalar && Shape.SourceSize == Shape.OutputSize &&
-         Shape.CompareIsScalar && Shape.CompareSize == Shape.OutputSize &&
-         Shape.ConditionIsConst && Shape.ConditionSize == 1 &&
-         Shape.Condition < 16 &&
-         Shape.MemoryOrdering == NdMemoryOrdering::SequentiallyConsistent;
-}
-
 /// Representation-neutral contract for architectural x86 translation-cache
 /// invalidation.  The descriptor remains an effective address: materializing
 /// an ordinary LowIR LOAD here would move its page fault ahead of the

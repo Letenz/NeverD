@@ -221,6 +221,35 @@ Verify the output with `neverd-sigmaker --verify`, then evaluate ordinary
 updating the submodule. Source-corpus collision checks do not establish
 universal uniqueness or replace held-out program evaluation.
 
+To constrain existing records after collecting additional raw source collisions:
+
+```sh
+python3 scripts/signatures/refine_colliding_patterns.py \
+  --existing signatures/pe/x86/64 --machine x64 \
+  --evidence raw/templates-release.pat --evidence raw/templates-debug.pat \
+  --output refined/ --report refinement.json
+```
+
+Supply unpruned `!evidence` records and a fresh output directory. The report must
+be a new file outside that directory. Complete conflicting records move to
+mandatory-reference or incoming-only native records with the same library stem;
+incomplete conflicting records are omitted. Existing mandatory-reference claims
+become incoming-only queries when a new source defeats their complete context.
+Same-library cohorts with
+identical typed references, incoming queries and metadata remain intact. The
+tool never invents names or aliases. It writes pattern files only: update the
+affected source manifests with the report and qualified output hashes before publication. Verify native
+parsing, report lost/gained correct candidates as well as errors, and measure
+the changed packs with the same consumer and input entries on both sides.
+Proposed single-site clauses preserve alternatives and are audited against all
+raw rivals and the existing byte cohort. One is retained, preferring independent
+import/RTTI metadata, then fewer alternatives and the earliest source field,
+to bound global byte-index work.
+The whole loaded cohort is constrained together, preventing a newly unique
+unqualified survivor. Separate complete incoming declarations
+retain only outgoing fields shared across raw source versions; a pruned clause
+does not supply omitted calls. Jointly necessary sites remain in a full clause.
+
 For primary x64 COFF table context, generate separate unpruned declarations:
 
 ```sh

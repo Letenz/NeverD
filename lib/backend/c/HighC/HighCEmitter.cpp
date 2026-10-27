@@ -1998,6 +1998,21 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // A function whose address the code takes is declared as a callee is.
   for (const std::string &Symbol : AddressTakenFunctions) {
     const std::string Identifier = functionIdentifier(Symbol);
+    if (!CallTargets.count(Identifier) &&
+        !SourceNativeSignatures.count(Identifier) &&
+        !DebugExternSigs.count(Identifier) && !prototypeForSymbol(Symbol) &&
+        !msvcCallee(Identifier, Opts.Format)) {
+      const std::string Alias = GlobalIdentifierAllocator.allocate(
+          "neverd_code_" + Identifier, "neverd_code");
+      FunctionAddressAliases.emplace(Symbol, Alias);
+      // An address identifies the symbol but says nothing about its result
+      // or parameters. An old-style int declaration can conflict with a
+      // separately emitted definition, even when no call reads its result.
+      OS << "extern unsigned char " << Alias << "[] __asm__(\"";
+      OS.write_escaped(Symbol);
+      OS << "\");\n";
+      continue;
+    }
     CallTargets.insert(Identifier);
     ExternalCallSources[Identifier].insert(Symbol);
   }
@@ -2575,6 +2590,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   ExternalDataNames.clear();
   ImportDataSlotReads.clear();
   FunctionAddressNames.clear();
+  FunctionAddressAliases.clear();
   AddressTakenFunctions.clear();
   AddressTakenDefinitions.clear();
   if (!Opts.Image)
@@ -4040,6 +4056,9 @@ void HighCWriter::noteFunctionAddress(va_t Addr,
 
 std::string HighCWriter::functionAddressIdentifier(
     const FunctionAddressTarget &Target) const {
+  if (const auto Alias = FunctionAddressAliases.find(Target.Symbol);
+      !Target.Definition && Alias != FunctionAddressAliases.end())
+    return Alias->second;
   return Target.Definition ? functionIdentifier(*Target.Definition)
                            : functionIdentifier(Target.Symbol);
 }
@@ -4827,8 +4846,11 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
         throw std::invalid_argument(kWritebackMalformed);
       const auto Instruction = *aarch64WritebackMemoryInstruction(
           Expr->Operands[kWritebackWordOperand]->ConstVal);
-      if (Instruction.stackBase())
-        throw std::invalid_argument(kWritebackSPUnsupported);
+      const auto &Base = Expr->Operands[kWritebackBaseOperand];
+      if (const char *Reason = Instruction.sourceBaseFailure(
+              Opts.Image != nullptr,
+              Base->Kind == ExprKind::Var && Base->Var.Kind == MedVar::Param))
+        throw std::invalid_argument(Reason);
       if (Opts.Image &&
           !MemoryBases->supports(*Opts.Image, Instruction,
                                  *Expr->Operands[kWritebackBaseOperand],

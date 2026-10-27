@@ -175,15 +175,21 @@ materializes generic atomic RMW results at their original statement, so a
 single-use snapshot cannot delay the transaction across a later load or call.
 
 `X86APXAtomic.h` owns the APX and legacy atomic native API names, operand widths,
-condition/segment controls and exact assembly fallback. The existing
-`ApxAtomicIntrinsicShape` owns LowIR/MedIR/HighIR admission. LLVM and both C
+condition/segment controls and exact assembly fallback.
+`ir/intrinsics/X86/X86AtomicMemory.h` owns the shared
+`ApxAtomicIntrinsicShape` for LowIR/MedIR/HighIR admission. LLVM and both C
 routes preserve the original legacy/VEX/EVEX RAO-INT or CMPccXADD transaction,
 including dead results and false-condition write-back; no ordinary load/store expansion is
 permitted. Normalized offsets retain DS/FS/GS selection, with address-size
-wrapping performed by the existing effective-address owner. Default-stack
-RSP/RBP accesses with 64-bit addressing remain refused unless FS/GS overrides
-the segment: the normalized offset cannot yet retain their distinct #SS fault
-class. `Codegen` treats LLVM error diagnostics as compilation failures and
+wrapping performed by the existing effective-address owner. Long-mode
+RSP/RBP addresses additionally carry a checked final byte (`1`) after their
+ordinary operands. This preserves their stack-reference fault class when
+normalization erases the original base register. The extension is invalid
+on i386 or with FS/GS; R12/R13 and address32 stay data references. Existing
+ordinary forms retain their original arity. Native output maps the marker to
+`X86NativeStackReference`, and the owned assembly computes an RBP-relative
+index in RDX without replacing the frame pointer. LLVM and C capability gates
+select this native API only when the compiler supports stack references. `Codegen` treats LLVM error diagnostics as compilation failures and
 does not publish the parseable but incomplete objects LLVM can leave behind.
 Legacy RAO also supports i386; normalized addresses remain eight bytes while
 the native i386 carrier is four bytes. A complete narrow absolute displacement
@@ -746,8 +752,20 @@ the base. The native instruction owns both the access and writeback, preserving
 pre/post ordering and access-EL `AddressAdd` behavior. No ordinary integer ADD
 reconstructs the base. Constrained-unpredictable base/data overlap is refused;
 XZR and SP have distinct encoded roles. Automatic image admission follows the
-same x1-only policy as single immediates; original-SP writeback execution still
-requires an unavailable SP alignment/tagging contract.
+same x1-only policy as single immediates. With no image, an explicit raw-SP
+parameter also supports GPR/SIMD single writeback, pairs and baseline NEON
+structure accesses. Their scratch words retain Rn=31. The native envelope saves
+the host SP in X14, installs X16, executes the original SP instruction, captures
+the completed SP in X16 and restores the host SP before publishing results.
+The machine table owns the complete assembly and constraints; inverse LLVM-to-C
+admission rejects changed SP fields, missing restoration and missing clobbers.
+Image-backed or synthesized SP, nonparameter SSA bases and the reconstructed
+frame/call/unwind ABI remain refused by the shared memory source-base policy.
+The [raw-SP primitive record](evidence/arm64e-raw-sp-memory-2026-10-27.json)
+binds 1,579 independent words to 60 official Arm model executions at EL1/EL0,
+with SA/SA0 enabled, and 7,895 native alignment faults through five actual output
+routes. It does not qualify automatic SP source-frame reconstruction or signed
+native exception unwinding.
 
 Both source routes and LLVM validate the complete contract before source-only
 filtering. A discarded result retains the memory instruction. Exact image-base
@@ -1056,6 +1074,15 @@ can supply bits, and pointer-width address candidates retain their separate
 relocation proof. Cold reads charge the image metadata inventory against the
 existing evidence budget; repeated reads cache successes and failures within
 one CFG build. An unaffordable read leaves arithmetic-only proofs usable.
+If ordinary constant propagation cannot resolve a target, a bounded,
+straight-block symbolic query may prove that its full-width scalar expression
+is constant for every input. `LowScalarSymbolic` shares integer semantics with
+the jump-table resolver; exact MBA derivations, register-byte identity and
+instruction-local temporary lifetime are required. Separate loads remain
+separate observations, and opaque effects clear register facts. The query
+charges the same function evidence budget and owns finite operation, node,
+atom and rewrite caps in `neverd/Limits.h`. It does not enable source-wide
+symbolic optimization or solver synthesis by default.
 Recovery revalidates the producer's basic block after discovering new paths.
 Lost or incomplete proofs retain the original indirect transfer. The native function
 disassembly API publishes these same instruction boundaries and targets; raw
@@ -1203,6 +1230,16 @@ window used to route branch arrows. Revision and navigation fences still apply.
 `lib/patch` owns byte admission, LLVM MC encoding, the immutable input snapshot, canonical overlay runs and exclusive export. The SDK proves source targets against exact emitted C, canonical LowIR occurrences and decoded operands; a navigation anchor alone does not authorize an edit. The worker journals optional `patches.json` rows with ordinary undo/redo and invalidates analysis after edits. Signature names read original bytes; patched routines lose identity-derived library effects. GUI, CLI and Python share these APIs. Whole-function replacement still uses `neverd_patch_source` and requires exporting and reopening any byte overlay first.
 
 Patch persistence reads typed, owning rows directly from a validated SIMD JSON tape when `NEVERD_ENABLE_SIMDJSON` is enabled. The LLVM reader remains available when acceleration is disabled or the input is outside the SIMD parser’s domain. Both readers share field admission and resource limits, including the existing last-duplicate-key and integer-only size rules; no borrowed parser strings escape. Overlay replay still validates every row against the immutable input.
+
+`ProjectHistory` retains admitted commands as immutable shared values. Strict
+JSON encodings are computed when a write needs them and reused for byte-budget
+accounting and document assembly; rollback checkpoints do not copy command
+payloads. Pending sidecar writes and the next committed snapshot share the same
+owned text. Complete history/journal sizes are reserved before assembly, while
+all publication limits, external-byte comparisons and durable write ordering
+remain in their existing owners. The typed patch-row adapter counts the exact
+compact representation of its canonical fields without materializing a second
+JSON string; older SDK inventories retain the generic serializer path.
 
 Source previews retain the live session’s load options, analysis policy, user metadata and an owning snapshot of signature evidence. Instruction display limits never limit full-range validation; truncated previews report this explicitly. Thumb edits must cover the complete IT block when removing its predicate.
 
@@ -2512,7 +2549,11 @@ data among the code, an index table, not a code address
 (`instructionRelocations`, `addFixedImageDisplacement`). The pointer-wide
 jump table beside it stays a code address.
 The jump-table resolver shares complete guest-address COPY/ZEXT tracing across
-ordinary, unscaled and two-level loads. Linked PE32 compact switches may name
+ordinary, unscaled and two-level loads. Resolver lane projection retains an
+existing exact address when a wider internal container supplies the complete
+guest pointer with no changed bits. Partial lanes, non-fitting values and
+scalar/fragment provenance do not receive address authority. Linked PE32
+compact switches may name
 both bases by absolute displacements. Their immutable index bytes still need
 a bounded selector, a complete relocated target run and disjoint decoded code.
 LLVM may omit the exact authenticated index read only when all its value uses
@@ -12529,6 +12570,8 @@ the [native getter](https://android.googlesource.com/platform/frameworks/base/+/
 and [integer conversion](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/base/include/android-base/parseint.h).
 
 `dalvik::Heap` is the single retained Java object/array owner for JNI and DEX.
+Its zero-filled array allocator supplies element widths, reference storage and
+budget accounting to DEX allocation, JNI array creation and framework arrays.
 Its bounded identities are separate from native reference handles and guest
 addresses. JNI borrows, object arrays and DEX array instructions all refer to the
 same storage; no import/export copy of the heap occurs at a method boundary.
@@ -12538,6 +12581,19 @@ budget/stop mapping. Weak object-array edges and integer field identities avoid
 host ownership cycles while the heap retains objects until workload teardown.
 Java reference assignability, including array covariance, has one shared owner.
 Uninitialized construction and unsupported constructor escape fail explicitly.
+
+The API 28 `com.android.internal.util.StatLogger` constructor uses these arrays
+and the existing elapsed-realtime service. It retains the lock, private fields,
+seven independent zero arrays and the caller's labels array identity. Lock
+creation and the next-tick clock read precede the null-label exception, matching
+the field-initializer order; budget/service stops retain completed field writes
+without reporting a completed constructor. `getTime` converts the same boot
+clock to microseconds and needs no application snapshot. The modeled class is
+boot-owned and cannot be replaced by supplied Android DEX. This follows the
+[API 28 StatLogger contract](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/com/android/internal/util/StatLogger.java).
+Statistics updates, logging and dumps remain unsupported. ServiceManager's
+initializer reuses these operations; its separately supplied cache and Binder
+state are described below.
 
 `dalvik::Library` is the single implementation of the bounded UTF-16 String,
 Object, Class and Throwable value methods called by JNI and DEX. Heap owns
@@ -12576,7 +12632,7 @@ The contract follows the public API 28
 and its abstract base; no implementation bodies are incorporated.
 
 The same Library/Heap owners provide HashMap's default constructor, `size`,
-`isEmpty`, `get`, `put`, `containsKey`, `remove` and `clear`, including calls
+`isEmpty`, `get`, `put`, `containsKey`, `remove`, `clear` and `putAll`, including calls
 through the Map interface. Each constructed object retains independent entries
 with exact UTF-16 String or null keys and arbitrary reference/null values.
 Equal Strings replace a value without replacing its key; HashMap hash collisions
@@ -12587,8 +12643,47 @@ subclass behavior and custom key hashCode/equals execution are unsupported;
 Map equality, hashing and rendering do not fall back to Object identity.
 The public contract follows API 28
 [HashMap](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/util/HashMap.java).
-These prerequisites do not establish ServiceManager's process cache or Binder
-state; its unmodeled-initializer guard remains in force.
+`putAll` copies known HashMap entries through the same `put` operation, retaining
+value references and handling self-copy without aliasing the entry container.
+
+`AndroidServiceManager.cpp` owns the API 28 ServiceManager initializer and
+explicit Java service state. Runtime retains class preparation, initialization
+ownership, erroneous state and terminal failures, including the HashMap,
+SystemProperties and StatLogger dependencies. Static library calls from DEX,
+JNI method/field lookup and the direct Runtime library entry use that owner.
+The initializer retains static fields and reads all four property settings;
+slow thresholds multiply as Java int before widening to long. Budget or service
+failures retain completed writes without reporting initialization complete.
+
+The optional `application_snapshot.service_manager` supplies the initial cache,
+ServiceManagerProxy and context Binder independently. Missing state is unknown,
+not an empty cache or null manager. Initial cache entries use shared HashMap
+String/null key semantics and heap reference values. Positive Binder keys name
+retained Java BinderProxy identities, not native handles, kernel endpoints,
+liveness observations or RPC replies. Repeated keys across cache and manager
+references preserve one object; blocking-warning state can independently be
+unknown. `getService` and `checkService` return nonnull cache hits unchanged;
+null entries take the miss path. `initServiceCache` checks actual cache size
+before `putAll`; an empty installation is repeatable. Guest writes retain their
+ordinary Java effects, including casts and null exceptions.
+
+`Binder.allowBlocking` updates the retained proxy's warning flag;
+`BinderProxy.queryLocalInterface` returns null, and an admitted
+ServiceManagerProxy retains its `mRemote` field. Cache misses preserve the
+getService timing read and manager/context acquisition order, then stop at
+unmodeled Binder transactions. JNI remains a handle/ABI adapter. Linux Binder
+continues to own native device/transaction state; this Java projection cannot
+translate its keys into those handles. Local/custom Binder behavior, native
+object translation, Parcel RPC, statistics/logging and add/list service calls
+remain unsupported. The volatile warning field is admitted by shared framework
+field identity; supplied DEX volatile fields retain their existing guard.
+Observed Java state reports cache identity/completeness, retained entries,
+manager/logger identities and proxy warning states without manufacturing
+missing values. Contracts follow API 28
+[ServiceManager](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/ServiceManager.java),
+[ServiceManagerNative](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/ServiceManagerNative.java)
+and [Binder](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/Binder.java).
+See [application runtime inputs](android-application-runtime.md) for the schema.
 
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
@@ -13039,3 +13134,9 @@ Shared MedIR flag folding keeps both subtraction operands, including `A-A`. A se
 Integer conditions comparing one SSA value with itself become boolean constants before source emission. This includes subtraction overflow; unspecified operands remain explicit.
 
 Captured HFA call targets use the same checked source signature as record argument and result reconstruction. The prototype keeps the original callable value and the complete record types, including flattened register groups and stack arguments.
+
+## Selected callable declarations
+
+HighC represents an address-only function symbol without a known signature as a linker-labelled byte alias. The address supplies no guessed return type; typed callback arguments retain their declared function-pointer conversion and source navigation retains the original symbol and address. Source LLVM requests the existing bounded omitted-callee reader even when an arity summary is complete. It retains fixed x64/ARM64 machine-word integer/pointer declarations only when recovery leaves the carriers and types unchanged. Explicit source contracts keep precedence; bodies, exception contracts and native lifting permissions are not supplied. The memo distinguishes source-type reads and retains the same declaration decision on warm recovery.
+
+Known exception metadata rejects a source-only declaration before its body is read; ordinary signature reads remain unchanged.

@@ -24,13 +24,21 @@
 
 namespace neverd::mobile::dalvik {
 namespace {
+constexpr auto StatLoggerType = "Lcom/android/internal/util/StatLogger;";
+// API 28 constructor allocation order; all arrays are independently retained.
+constexpr std::pair<const char *, const char *> StatLoggerArrays[] = {
+    {"mCountStats", "[I"},        {"mDurationStats", "[J"},
+    {"mCallsPerSecond", "[I"},    {"mMaxCallsPerSecond", "[I"},
+    {"mDurationPerSecond", "[J"}, {"mMaxDurationPerSecond", "[J"},
+    {"mMaxDurationStats", "[J"}};
 const std::string &
 classLookupName(const AndroidApplicationSnapshot::ClassLookupFailure &failure) {
   return failure.exact_query ? *failure.exact_query : failure.binary_name;
 }
 bool platformType(std::string_view type) {
   return type.starts_with("Ljava/") || type.starts_with("Ljavax/") ||
-         type.starts_with("Landroid/") || type.starts_with("Ldalvik/");
+         type.starts_with("Landroid/") || type.starts_with("Ldalvik/") ||
+         type == StatLoggerType;
 }
 void validateSettingsCacheValue(const AndroidApplicationSnapshot &input,
                                 const std::optional<std::string> &value,
@@ -371,8 +379,15 @@ void Program::addAndroidFramework() {
         {"android/content/pm/PackageInfo", "java/lang/Object"},
         {"android/os/Parcelable", "java/lang/Object"},
         {"android/os/ServiceManager", "java/lang/Object"},
+        {"android/os/IBinder", "java/lang/Object"},
+        {"android/os/IInterface", "java/lang/Object"},
+        {"android/os/IServiceManager", "java/lang/Object"},
+        {"android/os/Binder", "java/lang/Object"},
+        {"android/os/BinderProxy", "java/lang/Object"},
+        {"android/os/ServiceManagerProxy", "java/lang/Object"},
         {"android/os/SystemClock", "java/lang/Object"},
         {"android/os/SystemProperties", "java/lang/Object"},
+        {"com/android/internal/util/StatLogger", "java/lang/Object"},
         {"android/os/Handler", "java/lang/Object"},
         {"android/os/Looper", "java/lang/Object"},
         {"android/os/MessageQueue", "java/lang/Object"},
@@ -425,6 +440,7 @@ void Program::addAndroidFramework() {
         std::string_view(name) == "java/util/Locale" ||
         std::string_view(name) == "java/net/URL" ||
         std::string_view(name) == "android/os/ServiceManager" ||
+        std::string_view(name) == "android/os/BinderProxy" ||
         std::string_view(name) == "android/os/SystemClock" ||
         std::string_view(name) == "android/os/Looper" ||
         std::string_view(name) == "android/os/MessageQueue" ||
@@ -433,12 +449,17 @@ void Program::addAndroidFramework() {
             "android/app/ContextImpl$ApplicationContentResolver")
       type.access.insert("final");
     if (std::string_view(name) == "android/app/ContextImpl" ||
+        std::string_view(name) == "android/os/BinderProxy" ||
+        std::string_view(name) == "android/os/ServiceManagerProxy" ||
         std::string_view(name) == "java/lang/AbstractStringBuilder" ||
         std::string_view(name) ==
             "android/app/ContextImpl$ApplicationContentResolver" ||
         std::string_view(name) == "java/lang/BootClassLoader")
       type.access.erase("public");
-    if (std::string_view(name) == "java/util/Map" ||
+    if (std::string_view(name) == "android/os/IBinder" ||
+        std::string_view(name) == "android/os/IInterface" ||
+        std::string_view(name) == "android/os/IServiceManager" ||
+        std::string_view(name) == "java/util/Map" ||
         std::string_view(name) == "android/content/ComponentCallbacks" ||
         std::string_view(name) == "android/os/Parcelable" ||
         std::string_view(name) == "android/provider/BaseColumns" ||
@@ -476,6 +497,79 @@ void Program::addAndroidFramework() {
     if (std::string_view(name) == "android/provider/Settings$NameValueTable")
       type.interfaces = {"Landroid/provider/BaseColumns;"};
     type.source_id = "android-api28-framework";
+    if (std::string_view(name) == "android/os/Binder" ||
+        std::string_view(name) == "android/os/BinderProxy")
+      type.interfaces = {"Landroid/os/IBinder;"};
+    if (std::string_view(name) == "android/os/IServiceManager")
+      type.interfaces = {"Landroid/os/IInterface;"};
+    if (std::string_view(name) == "android/os/ServiceManagerProxy") {
+      type.interfaces = {"Landroid/os/IServiceManager;"};
+      Field field;
+      field.reference = {type.name, "mRemote", "Landroid/os/IBinder;"};
+      field.access = {"private"};
+      type.fields.push_back(std::move(field));
+    }
+    if (std::string_view(name) == "android/os/BinderProxy") {
+      Field field;
+      field.reference = {type.name, "mWarnOnBlocking", "Z"};
+      field.access = {"volatile"};
+      type.fields.push_back(std::move(field));
+    }
+    if (std::string_view(name) == "android/os/ServiceManager") {
+      auto field = [&](const char *name, const char *descriptor,
+                       bool final = false) {
+        Field entry;
+        entry.reference = {type.name, name, descriptor};
+        entry.access = {"private", "static"};
+        if (final)
+          entry.access.insert("final");
+        type.fields.push_back(std::move(entry));
+      };
+      field("TAG", "Ljava/lang/String;", true);
+      type.fields.back().value = std::string("ServiceManager");
+      field("sLock", "Ljava/lang/Object;", true);
+      field("sServiceManager", "Landroid/os/IServiceManager;");
+      field("sCache", "Ljava/util/HashMap;");
+      for (auto name : {"SLOW_LOG_INTERVAL_MS", "STATS_LOG_INTERVAL_MS"}) {
+        field(name, "I", true);
+        type.fields.back().value = int64_t(5000);
+      }
+      for (auto name : {"GET_SERVICE_SLOW_THRESHOLD_US_CORE",
+                        "GET_SERVICE_SLOW_THRESHOLD_US_NON_CORE"})
+        field(name, "J", true);
+      for (auto name : {"GET_SERVICE_LOG_EVERY_CALLS_CORE",
+                        "GET_SERVICE_LOG_EVERY_CALLS_NON_CORE"})
+        field(name, "I", true);
+      for (auto name :
+           {"sGetServiceAccumulatedUs", "sGetServiceAccumulatedCallCount"})
+        field(name, "I");
+      for (auto name : {"sLastStatsLogUptime", "sLastSlowLogUptime",
+                        "sLastSlowLogActualTime"})
+        field(name, "J");
+      field("sStatLogger", "Lcom/android/internal/util/StatLogger;", true);
+      type.fields.back().access.erase("private");
+      type.fields.back().access.insert("public");
+    }
+    if (type.name == StatLoggerType) {
+      auto field = [&](const char *field_name, const char *field_type,
+                       bool final = true) {
+        Field value;
+        value.reference = {type.name, field_name, field_type};
+        value.access = {"private"};
+        if (final)
+          value.access.insert("final");
+        type.fields.push_back(std::move(value));
+      };
+      field("TAG", "Ljava/lang/String;");
+      type.fields.back().access.insert("static");
+      type.fields.back().value = std::string("StatLogger");
+      field("mLock", "Ljava/lang/Object;");
+      field("SIZE", "I");
+      for (auto [field_name, field_type] : StatLoggerArrays)
+        field(field_name, field_type);
+      field("mNextTickTime", "J", false);
+      field("mLabels", "[Ljava/lang/String;");
+    }
     if (std::string_view(name) == "android/os/Message") {
       for (auto [field_name, field_type] :
            {std::pair{"what", "I"},
@@ -582,9 +676,11 @@ void Program::addAndroidFramework() {
     }
     auto [entry, inserted] = classes.emplace(type.name, std::move(type));
     if (inserted && std::string_view(name) == "android/os/ServiceManager")
-      unmodeled_initializers.insert(&entry->second);
+      android_framework_initializers.insert(&entry->second);
     if (inserted &&
-        (std::string_view(name) == "android/app/ActivityThread" ||
+        (std::string_view(name) == "android/os/ServiceManager" ||
+         std::string_view(name) == "android/os/BinderProxy" ||
+         std::string_view(name) == "android/app/ActivityThread" ||
          std::string_view(name) == "android/content/pm/PackageItemInfo" ||
          std::string_view(name) == "android/content/pm/ApplicationInfo" ||
          std::string_view(name) == "android/content/pm/PackageInfo"))
@@ -612,6 +708,7 @@ AndroidFramework::AndroidFramework(
   validateAndroidDefaultLocale(*snapshot);
   validateAndroidClassLoaderPaths(*snapshot);
   validateAndroidMessageQueue(*snapshot);
+  validateAndroidServiceManager(*snapshot);
   if (snapshot->initial_main_queue)
     main_queue_blocked = snapshot->initial_main_queue->blocked;
   validateAndroidURLHandlers(*snapshot);
@@ -686,16 +783,12 @@ ExecutionResult AndroidFramework::stringArrayValue(
     const AndroidApplicationSnapshot::ApplicationInfo::SplitSourceDirectories
         &values,
     const AdmitInstruction &admit) {
-  auto array = heap.allocate(Object::ObjectArray, "[Ljava/lang/String;", 0,
-                             values.size() * sizeof(std::weak_ptr<Object>));
+  auto array = heap.allocateArray("[Ljava/lang/String;", values.size());
   if (!array)
     return {ExecutionStop::HeapLimit,
             0,
             {},
             "Android framework storage budget exhausted"};
-  array->Length = values.size();
-  array->ElementSize = sizeof(std::weak_ptr<Object>);
-  array->Elements.resize(values.size());
   for (size_t i = 0; i != values.size(); ++i) {
     auto budget = admit();
     if (budget != ExecutionStop::Returned)
@@ -938,6 +1031,33 @@ ExecutionResult AndroidFramework::field(Heap &heap, const Field &field,
                                         std::optional<uint64_t> write,
                                         const AdmitInstruction &admit) {
   const auto &ref = field.reference;
+  if (ref.owner == "Landroid/os/ServiceManager;") {
+    auto &value = service_fields.at(&field);
+    if (write)
+      value = *write;
+    if (!value)
+      return {ExecutionStop::Unsupported,
+              0,
+              {},
+              "Android ServiceManager proxy state is not supplied"};
+    return {ExecutionStop::Returned, *value};
+  }
+  if (ref.owner == "Landroid/os/BinderProxy;") {
+    auto entry = binder_warnings.find(receiver);
+    if (entry == binder_warnings.end())
+      return {ExecutionStop::Unsupported,
+              0,
+              {},
+              "Android BinderProxy identity is not supplied"};
+    if (write)
+      entry->second = bool(*write);
+    if (!entry->second)
+      return {ExecutionStop::Unsupported,
+              0,
+              {},
+              "Android BinderProxy blocking warning state is not supplied"};
+    return {ExecutionStop::Returned, *entry->second};
+  }
   if (ref.owner == "Landroid/app/ActivityThread;" &&
       ref.name == "mInstrumentation" &&
       ref.type == "Landroid/app/Instrumentation;" &&
@@ -1000,6 +1120,26 @@ AndroidFrameworkState AndroidFramework::inspect(const Heap &heap,
   result.system_loader = system_loader;
   result.application_loader = app_loader;
   result.instrumentation = instrumentation;
+  if (!service_fields.empty() || !binder_identities.empty()) {
+    auto &state = result.service_manager.emplace();
+    state.initialized = service_manager_initialized;
+    for (const auto &[field, value] : service_fields) {
+      if (field->reference.name == "sServiceManager")
+        state.manager = value;
+      if (field->reference.name == "sStatLogger" && value)
+        state.stat_logger = *value;
+      if (field->reference.name == "sCache" && value) {
+        state.cache = *value;
+        const auto cache = heap.get(*value);
+        state.cache_known = !cache || cache->MapEntries.has_value();
+        if (cache && cache->MapEntries)
+          for (const auto &entry : *cache->MapEntries)
+            state.entries.push_back({entry.Key, entry.Value});
+      }
+    }
+    for (const auto &[key, id] : binder_identities)
+      state.binder_proxies.push_back({key, id, binder_warnings.at(id)});
+  }
   if (main_queue && snapshot->initial_main_queue) {
     auto &queue = result.main_message_queue.emplace();
     queue.identity = main_queue;
@@ -1337,9 +1477,19 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
                                           uint64_t receiver,
                                           std::span<const uint64_t> arguments,
                                           const AdmitInstruction &admit) {
+  if (method.Op == ServiceGet || method.Op == ServiceCheck ||
+      method.Op == ServiceInitCache || method.Op == BinderAllowBlocking ||
+      method.Op == BinderQueryLocalInterface || method.Op == ServiceAsBinder)
+    return serviceManager(heap, program, method, receiver, arguments, admit);
   if (method.Op == UptimeMillis || method.Op == ElapsedRealtime ||
       method.Op == ElapsedRealtimeNanos)
     return readClock(method.Op);
+  if (method.Op == StatLoggerTime) {
+    auto result = readClock(ElapsedRealtimeNanos);
+    if (result.stop == ExecutionStop::Returned)
+      result.value /= 1000;
+    return result;
+  }
   if (method.Op == PropertyInt) {
     const auto key = heap.get(arguments[0]);
     if (!key)
@@ -1414,6 +1564,67 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
     return value.value;
   };
   auto execute = [&]() -> uint64_t {
+    if (method.Op == Construct && std::string_view(method.Class) ==
+                                      "com/android/internal/util/StatLogger") {
+      const auto *type = program.findClass(StatLoggerType);
+      if (!type)
+        return unsupported("Android StatLogger declaration is not supplied");
+      auto logger = heap.get(receiver);
+      if (logger) {
+        if (logger->Type != Object::Instance ||
+            !program.assignable(objectDescriptor(*logger), StatLoggerType))
+          return stop(ExecutionStop::Invalid,
+                      "Android StatLogger receiver type mismatch");
+        if (logger->Initialized)
+          return stop(ExecutionStop::Invalid,
+                      "Android StatLogger receiver is already initialized");
+        for (const auto &entry : type->fields)
+          if (!entry.access.contains("static") &&
+              !logger->Fields.contains(&entry))
+            return stop(
+                ExecutionStop::Invalid,
+                "Android StatLogger receiver has invalid field storage");
+      } else {
+        tick();
+        const auto count = std::count_if(
+            type->fields.begin(), type->fields.end(),
+            [](const auto &entry) { return !entry.access.contains("static"); });
+        logger = heap.allocate(
+            Object::Instance, method.Class, 0,
+            count * ::neverd::limits::dalvik::kInstanceFieldStorageBytes);
+        ref(logger);
+        for (const auto &entry : type->fields)
+          if (!entry.access.contains("static"))
+            logger->Fields.emplace(&entry, 0);
+      }
+      auto field = [&](const char *name, const char *descriptor) -> uint64_t & {
+        return logger->Fields.at(
+            program.findField({StatLoggerType, name, descriptor}, false));
+      };
+      tick();
+      field("mLock", "Ljava/lang/Object;") =
+          ref(heap.allocate(Object::Instance, "java/lang/Object", 0));
+      tick();
+      auto time = readClock(ElapsedRealtime);
+      if (time.stop != ExecutionStop::Returned)
+        throw Stop{std::move(time)};
+      // readClock admits signed nanoseconds; conversion to milliseconds leaves
+      // room for the next-second offset without signed long overflow.
+      field("mNextTickTime", "J") = time.value + 1000;
+      auto labels = heap.get(arguments[0]);
+      if (!labels)
+        throw Stop{{ExecutionStop::Thrown, 0, "java/lang/NullPointerException",
+                    "StatLogger requires a nonnull labels array"}};
+      field("SIZE", "I") = labels->Length;
+      for (auto [name, descriptor] : StatLoggerArrays) {
+        tick();
+        field(name, descriptor) =
+            ref(heap.allocateArray(descriptor, labels->Length));
+      }
+      tick();
+      field("mLabels", "[Ljava/lang/String;") = labels->Identity;
+      return logger->Identity;
+    }
     if (method.Op == LooperQueue || method.Op == MessageCallback ||
         method.Op == MessageTarget) {
       const bool looper = method.Op == LooperQueue;

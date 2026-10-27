@@ -50,7 +50,7 @@ caller-context query and retains `output.callx-contexts.json` for every sample.
 It uses the same loader, execution profile, process isolation and request
 budgets. This query is not added to the default export kinds. Target evidence
 is conditional on the recorded summary/caller and recognized entry model;
-every site retains dynamic fallback. Schema 5 covers complete function CFGs,
+every site retains dynamic fallback. Schema 6 covers complete function CFGs,
 nested parameters, return values and typed scratch effects. It retains prior
 entry-prefix evidence under a separate scope and records generalized inputs,
 summary dependencies and resource/recursion barriers. It also records projected
@@ -83,8 +83,8 @@ from concrete `return_value_alternatives`; private formal origins are never
 serialized as VM addresses. Unknown and fifth alternatives still absorb the
 fact, and memory effects retain conservative alias handling. A generic CALLX
 can bind an `entry_input_alternatives` expression from those origins, including
-common full-width loads through selected pointers while entry memory remains
-unchanged;
+common full-width loads through selected pointers while the caller's memory
+facts survive all preceding writes;
 its proof includes every leaf and the final complete union, with the same
 four-value, work, retained-memory and output-element limits.
 
@@ -103,6 +103,21 @@ from its own parameters and entry-memory snapshot. Such rows retain their
 generic-summary and budget reason and carry the separate
 `instantiated_generic_summary_inputs` scope and input/load witnesses. The
 generic return/memory result and four-specialization limit remain in force.
+Equivalent unary transfers share an expression across instruction positions
+and physical carriers when their version-qualified opcode, normalized operand
+and input and memory guard agree. Reported slots identify representative
+transfers, not an
+executed branch. Differing offsets, operations and unpreserved entry-memory
+loads do not acquire equality from this rule.
+Generic helper returns expose `return_value_expression` and can compose into
+their generic caller's target template. Deferred loads retain representable
+preceding writes in `input_memory_guards`. Instantiation rebases those footprints
+to the actual caller and uses canonical memory-effect invalidation before
+reading its full-width facts, including across nested helper calls. Unknown
+write addresses, overlapping fields and uncertain absolute/frame relationships
+still invalidate facts; heap or account types imply no disjointness. Captured
+values can survive a later write when their carrier survives the ABI. Complete
+canonical loaded origins are reused before constructing a guarded expression.
 Full finite target proofs from this path do not by themselves establish
 complete candidate-callee summaries or execution coverage. Expression nodes
 and proof steps consume the existing output, retained-state and work budgets.
@@ -114,6 +129,43 @@ ownership determines grouping; shared tails and unowned ranges remain explicit.
 monolithic layout remains an opt-out used by source execution differential
 checks. This is a compiler scalability boundary, not a completed function source
 view or a business-logic recovery claim.
+
+### Lifinity-v1 concrete field trace
+
+An offline diagnostic now reaches slots 1960/1963 in the pinned, unpatched
+`lifinity-v1` binary (SHA-256
+`897a5b450f22dfa1fed6398e25fb5bfbaabc7d6bbc2ad2411cb840e7601af601`).
+Its aligned input has 11 distinct account keys, a 621-byte Amm record, a Config
+record, initialized token/mint records, matching packed Amm key fields and an
+authority PDA. The quantity arguments, reserve token amounts and mint supply
+are all one; decoded Amm field+0x250 is `10^18`. The earlier 605-byte Amm data
+failed deserialization. Packed
+field positions were checked against the actual decoder's byte movements.
+
+| Curve byte | Raw steps | Slot 1960 field | Loaded vtable | Slot 1963 target |
+| --- | ---: | --- | --- | --- |
+| 0 | 24,061 | `0x200006DC8` | `0x100087C68` | `0x100003EB8` (slot 1971) |
+| 1 | 24,063 | `0x200006DC8` | `0x100087CF8` | `0x100003EB8` (slot 1971) |
+
+Slot 22063 stores the vtable at `FP-568`; slots 22815..22817 pass the descriptor
+at `FP-576` to helper 1959. Slot 1960 loads its field+8, slot 1961 loads vtable
+word zero, and slot 1963 dispatches r2. The separate r1 value one is the object
+carrier, not the target address. In both runs, slots 22176..22179 follow the
+parent descriptor+96 through the boxed Amm/account record; slot 22188 updates
+the distinct heap address `0x300007DD0` from one to two. Slot 22973 is not
+executed by these two inputs. These finite observations do not establish
+nonaliasing on other paths.
+
+The diagnostic host supplies a zeroed 32-KiB heap, checked nonoverlapping memcpy
+and PDA derivation checked against solders 0.29.0. Logging returns zero, and
+three CPI calls explicitly return zero without token or account-state
+transitions. Both runs return zero under those synthetic effects. They are not
+mainnet transaction replay, business verification or static CALLX closure.
+Temporary host/test overlays are separate from the qualification worker.
+The retained input JSON hashes to
+`3d83dc29c262ad116ad64b41d5319e31ab84e3316ffcfc6e5abe04b257aee54f`;
+the trace JSON hashes to
+`273f6ed43cb4c79be99b19927eca0b8a15fd231f876f1c70338b15a1075522a5`.
 
 Rust's partition handlers share one non-generic table and borrow the existing
 v2 host as a trait object. The public generic v1/v2 entry points remain intact;

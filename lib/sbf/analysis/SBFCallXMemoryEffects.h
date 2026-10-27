@@ -37,6 +37,7 @@ substituteOrigins(const ProvenValueSet &Origins,
 struct MemoryWrite {
   RegisterValue Address;
   uint64_t Size;
+  bool operator==(const MemoryWrite &) const = default;
 };
 
 struct MemoryEffects {
@@ -46,10 +47,18 @@ struct MemoryEffects {
   // interval. Filling holes is conservative invalidation, never a must-write.
   std::vector<MemoryWrite> Writes;
 
+  bool operator==(const MemoryEffects &Other) const {
+    if (Unknown || Other.Unknown)
+      return Unknown == Other.Unknown;
+    return WritesFrames == Other.WritesFrames && Writes == Other.Writes;
+  }
+
   void addWrite(RegisterValue Address, uint64_t Size,
                 const SBFProgram &Program);
   void include(const MemoryEffects &Callee, const RegisterState &Entry,
                const SBFProgram &Program);
+  bool invalidatesEntryFrame(const RegisterValue &Address,
+                             const SBFProgram &Program) const;
   bool invalidate(ScratchState &Scratch,
                   const std::array<ProvenValueSet, kRegisterCount> &Entry,
                   const SBFProgram &Program) const;

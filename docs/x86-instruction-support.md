@@ -129,6 +129,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | --- | --- |
 | LDS, LES, LSS, LFS, LGS | Coupled GPR/segment-selector completion, hidden descriptor state and fault ordering. The former ordinary load/COPY approximation is now explicitly refused in both strict and permissive lifting. |
 | 3DNow! arithmetic, comparison, conversion and rearrangement operations | Packed-lane results, instruction-specific floating-point rules and MMX/x87 state. The 24 former COPY/scalar-FLOAT approximations now fail explicitly; decoder recognition remains available. |
+| Unowned FNOP/EMMS and FEMMS | FNOP's waiting behavior and EMMS's tag transition require an owned x87 context; their typed/unowned paths now refuse rather than emit NOP. Owned x64 FNOP/EMMS retain native context steps. FEMMS also invalidates all retained MMX/x87 payloads; that NeverD context transition remains missing, although both compiler backends now expose the native intrinsic. |
 | VMRUN | Complete guest/host transition, including guest-modified unsaved GPRs and floating/vector state, plus the VM-exit continuation. |
 | SKINIT | Machine reinitialization and nonlocal control transfer. |
 | GETSEC transferring or unproved leaves | Measured-environment entry/exit and a complete-machine-state continuation. Leaves 0 and 6..8 now use the bounded contract below when natural-width AX is proven constant. |
@@ -141,7 +142,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | XBEGIN and full RTM regions | Original abort target, register/memory checkpoint, nesting and rollback continuation. A C `_xbegin()` status result cannot substitute for the decoded instruction. Strict/permissive lifting and legacy IR admission explicitly refuse that incomplete representation. |
 | Remaining compact-memory address forms | Native LLVM and both C routes retain long-mode RSP/RBP stack-reference provenance independently of DS overrides, alongside DS/FS/GS data addresses. In i386, SS-default stack bases and explicit CS/ES/SS segments remain refused; an explicit DS override is supported. Physical AVX-512 fault execution remains unqualified. |
 | Remaining four-source address forms and hardware qualification | Native lowering uses explicit SSA sources and the same long-mode stack-reference contract as compact memory. i386 non-DS/FS/GS segments and physical AVX512_4FMAPS/AVX512_4VNNIW execution/exception behavior still require qualification. Legacy implicit-bank IDs remain guarded at native output. |
-| Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Default-stack memory and i386 non-DS segments still require preserved segment-fault provenance; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
+| Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Long-mode default-stack memory retains an explicit provenance control. i386 non-DS segments still require an owned segment contract; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
 | AMX tile row-memory with addr64 SP/BP bases | Its SIB index is the architectural stride and cannot also carry the configuration API's offset relative to RBP. These forms fail before LowIR effects unless FS/GS selects the segment. LDTILECFG/STTILECFG use the independent version-2 stack-reference contract below. |
 | VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
 
@@ -1984,9 +1985,20 @@ checks the same 48 signatures, alongside 76 passing frontend tests. This
 does not change the production SDK pin or qualify physical atomicity.
 
 The remaining row above is deliberately narrower than full RAO/CMPccXADD
-support. Legacy RAO and VEX CMPccXADD are covered below. Unoverridden
-RSP/RBP bases with 64-bit addressing need explicit stack-fault provenance;
-ignored CS/DS/ES/SS prefixes cannot restore it after normalization. See
+support. Legacy RAO and VEX CMPccXADD are covered below. RSP/RBP bases with
+64-bit addressing now retain an explicit stack-reference control through
+LowIR/MedIR/HighIR. It maps to the fork's `0x100` native memory bit; ignored
+CS/DS/ES/SS prefixes cannot replace that independent provenance. Address32,
+R12/R13 and FS/GS retain ordinary data-reference forms. The optional final
+byte is checked at every IR boundary; invalid widths, values, address
+provenance, i386 mode and FS/GS combinations fail before memory or results
+are committed. The semantic contract lives in `X86/X86AtomicMemory.h`.
+
+The native stack carrier leaves RBP unchanged and uses RBP plus a calculated
+index. Older SDK and ordinary C compiler output use the same instruction
+through owned assembly, with RDX/flags clobbers covering the address setup.
+Native C dispatch additionally requires
+`__NEVERC_X86_NATIVE_MEMORY_STACK_REFERENCE__ >= 1`. See
 [Intel's canonical-address rule, section 3.3.7.1](https://www.intel.com/content/dam/support/us/en/documents/processors/pentium4/sb/25366521.pdf)
 and [APX revision 9 exception tables](https://kib.kiev.ua/x86docs/Intel/APX/355828-009.pdf).
 The concrete executor still restricts atomic accesses to aligned ordinary
@@ -2023,9 +2035,9 @@ an uninitialized input cannot become an accidental transaction with zero.
 Direct native APIs expose all segment controls. Normalized lifter addresses
 currently admit DS-default/DS override and FS/GS forms on i386; implicit
 SS stack bases and explicit CS/ES/SS forms are refused. x86-64 default-stack
-RSP/RBP accesses with 64-bit addressing remain refused without FS/GS.
-These guards preserve the outstanding segment-fault distinction rather than
-emitting an instruction with a different fault class. Hardware atomicity,
+RSP/RBP accesses with 64-bit addressing use the explicit stack-reference
+contract described above; FS/GS and address32 retain their data-reference form.
+The remaining i386 guard preserves the outstanding segment-fault distinction. Hardware atomicity,
 write-back memory-type behavior and fault ordering remain unqualified.
 
 The standalone LLVM, NeverC and NeverC-IR-to-LLVM matrices each pass 10,080
@@ -2049,6 +2061,31 @@ objects, including 576 Clang compilations per SDK. The test loader validates
 ELF/COFF code relocations and Mach-O local section-difference pairs rather
 than executing unresolved object bytes. These results qualify operand
 transport, effects, flags and ABI preservation, not physical atomicity.
+
+### Atomic stack-reference qualification
+
+The stack-reference follow-up covers 2,240 APX and 672 legacy/VEX raw
+admission combinations. Each SDK passes 639 of 642 registered focused/shared
+tests; three Windows EH cases retain their missing-corpus skips. Both SDKs
+retain the 480-wrapper and 588-pipeline matrices for each encoding family.
+Per SDK and family, 37 ordinary wrapper programs pass 213,120 controlled
+completions, and 40 realigned/dynamic-frame programs pass 230,400. The latter
+check local canaries, exact return-SP and all ABI-saved GPRs, including
+NeverC-native IR recompiled by the full LLVM fork. GCC O2 may fold identical
+RAO wrappers into direct-jump aliases; the independent oracle validates their
+entry targets and still executes every wrapper independently.
+
+All 588 production pipeline objects pass 4,116 completions per SDK/family.
+The 1,176 C sources and 588 case records per family match across SDKs;
+their 4,704 Clang/NeverC compilations and 32,928 completions are reused only
+after that exact comparison. i386 requalification passes 741 objects and
+36,000 controlled completions per SDK. The expanded standalone toolchain
+matrix covers 82,080 functions, 984,960 controlled completions and 72 ATT/Intel
+assembly round trips across the two families and all three compiler routes.
+The [qualification record](evidence/x86-atomic-stack-reference-2026-10-26.json)
+binds these results to the source revisions and local artifact hashes.
+These results establish no physical atomicity, cache-coherence or hardware
+fault certificate. The production LLVM SDK and submodule pin remain unchanged.
 
 ## Native compact-memory qualification
 
@@ -2282,3 +2319,53 @@ six ELF/COFF/Mach-O profiles check native instruction selection and no assembly
 or unresolved helper calls. NeverC qualification uses its supported x86-64
 target. Source availability does not update the released LLVM SDK: that release
 and NeverD's production pin remain pending the context/continuation gaps above.
+
+## Native FEMMS and MMX text-IR compatibility
+
+The [LLVM fork](https://github.com/NeverSight/llvm-project/commit/f963558944a686f2c6d2dfb8311011fb6749c530)
+now implements `llvm.x86.mmx.femms` with the original opcode and all sixteen
+MMX/x87 implicit register definitions. Conservative effects retain repeated
+calls and surrounding memory operations. The same update accepts legacy
+`3dnow`/`3dnowa` annotations and upgrades textual `x86_mmx` to `<1 x i64>`,
+matching the existing bitcode upgrade. The new tests and MMX neighbors pass
+26 lit cases, including i386/x64 and O0/O2 lowering.
+
+[NeverC](https://github.com/NeverSight/NeverC/commit/211be3b22fec81588952a25d6de95362258ad96f)
+already exposed `__builtin_ia32_femms`; new frontend and descriptor tests
+verify its native identity, repeated effects and complete clobber bank.
+Its independent `tests/verify-mmx-state.py` checks twelve ELF/COFF/Mach-O
+objects at O0/O2, both directly and through the full LLVM fork. Across 432
+controlled completions, it checks live MMX values against adversarial FEMMS
+payloads, realigned/dynamic frames, memory ordering and callee-saved registers.
+These are compiler-transport checks, not physical FEMMS or exception tests.
+
+Both backends now treat EMMS/FEMMS as machine scheduling boundaries. The
+physical clobber list alone did not constrain virtual MMX values before
+register allocation: O2 moved arithmetic or integer extraction after the
+final reset, recreating nonempty x87 tags. All six O2 objects failed the
+strengthened empty-tag postcondition before the fix; all twelve now pass.
+Both final reset instructions also have frontend and LLVM codegen regressions.
+In a separate host experiment, substituting EMMS only for the unavailable
+FEMMS boundaries changed the final EMMS cleanup's abridged tag from 255 to 0.
+That diagnostic establishes the cleanup counterexample, not FEMMS execution.
+
+NeverD's admission tests cover FNOP, EMMS and FEMMS through three decoder
+routes, strict/permissive lifting and x86/x64 with segment/address prefixes.
+Missing state ownership now fails without changing the supplied LowIR output.
+The x87 capability inventory agrees with that boundary. This does not close
+the remaining NeverD FEMMS or 3DNow state contracts listed above.
+
+The extended x87 call tests also exposed a C projection error: preserving an
+LLVM signature incorrectly demanded a no-value callee's unknown return
+register. LLVMC now keeps the settled return contract independently of its
+printed signature. Effects still execute; only an explicitly unused ABI
+carrier is zero initialized. Demanded unknown machine state still fails.
+Discarded return chains use the shared dead-value eligibility gate, retaining
+atomic updates, volatile reads, calls and control-flow effects.
+
+After integration with `85211ac969`, the six affected NeverD test targets pass
+277 cases with the full LLVM SDK. The pinned r6 SDK passes 274 and explicitly
+skips three newer native virtualization/descriptor cases. The
+[qualification record](evidence/x86-mmx-state-2026-10-26.json) retains source
+commits, report hashes, counterexamples and both SDKs' generated artifacts.
+The production LLVM release pin and submodule remain unchanged.

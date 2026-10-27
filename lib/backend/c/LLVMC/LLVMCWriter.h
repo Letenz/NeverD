@@ -1103,6 +1103,9 @@ public:
   std::map<const llvm::AllocaInst *, TypeRef> AllocaTypes;
   std::map<const llvm::Value *, std::string> ValueTexts;
   std::map<const llvm::AllocaInst *, std::string> AllocaTexts;
+  /// The settled source contract does not observe the return carrier. This
+  /// remains true when the client preserves its non-void LLVM signature.
+  bool ReturnsNoValue = false;
   bool InferredVoid = false;
   int EHTryDepth = 0;
   bool EHWrapIsCxx = false;

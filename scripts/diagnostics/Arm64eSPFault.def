@@ -9,10 +9,15 @@
 #define SP_TEST_MEMORY_BYTES 66064
 #define SP_TEST_ALIGNMENT 16
 #define SP_TEST_BASE_OFFSET 264
+#ifndef SP_TEST_CASES
+#define SP_TEST_CASES immediate_cases
+#endif
+#ifndef SP_TEST_CASE_COUNT
 #if defined(SP_TEST_REGISTER_MEMORY)
 #define SP_TEST_CASE_COUNT 184
 #else
 #define SP_TEST_CASE_COUNT 177
+#endif
 #endif
 #define SP_TEST_CASE_COUNT_ERROR                                               \
   "SP oracle requires the complete memory inventory"

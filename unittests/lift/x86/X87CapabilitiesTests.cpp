@@ -210,6 +210,20 @@ TEST(X87Capabilities, StateTransportCannotClaimNumericalQualification) {
   }
 }
 
+TEST(X87Capabilities, FnopAndEmmsRequireOwnedStateForEveryConsumer) {
+  for (uint32_t Selector : {0xd0d9U, 0x770fU})
+    for (auto Mode : {X87SourceMode::I386, X87SourceMode::X64})
+      for (auto Consumer :
+           {X87Consumer::Lift, X87Consumer::Concrete, X87Consumer::LLVM,
+            X87Consumer::HighC, X87Consumer::LLVMC}) {
+        auto Q = query(Selector);
+        Q.SourceMode = Mode;
+        Q.StatePath = X87StatePath::TypedStack;
+        Q.Consumer = Consumer;
+        EXPECT_FALSE(queryX87Capability(Q).Implemented);
+      }
+}
+
 TEST(X87Capabilities, ProcessorDependentOperationsRemainExplicitlyOptIn) {
   const std::set<unsigned> Dependent = {0xf0, 0xf1, 0xf2, 0xf3, 0xf5,
                                         0xf8, 0xf9, 0xfb, 0xfe, 0xff};
@@ -320,14 +334,14 @@ TEST(X87Capabilities, FactoredReportNeverWidensAnIndividualInstruction) {
     uint32_t Representative = memory(0xd8, 0);
     if (!Form.TypedLift)
       Representative = Form.ValueClass == X87ValueClass::StateOnly
-                           ? 0xf6d9
+                           ? 0xd0d9
                            : memory(0xdf, 0x20);
     else if (Form.ValueClass == X87ValueClass::ExactValue)
       Representative = 0xe8d9;
     else if (Form.ValueClass == X87ValueClass::ProcessorDependent)
       Representative = 0xfed9;
     else if (Form.ValueClass == X87ValueClass::StateOnly)
-      Representative = 0xd0d9;
+      Representative = 0xf6d9;
     if (Form.PortableOperation != X87PortableOperation::None)
       Representative = Form.ValueClass == X87ValueClass::StateOnly    ? 0xe3db
                        : Form.ValueClass == X87ValueClass::ExactValue ? 0xe0d9
@@ -374,7 +388,7 @@ TEST(X87Capabilities, ReportPreservesEveryDimensionAndLabelsSourceEvidence) {
   ASSERT_NE(Root->getArray("source_paths"), nullptr);
   EXPECT_EQ(Root->getArray("source_paths")->size(), 12U);
   ASSERT_NE(Root->getArray("coverage"), nullptr);
-  EXPECT_EQ(Root->getArray("coverage")->size(), 3456U);
+  EXPECT_EQ(Root->getArray("coverage")->size(), 3888U);
   EXPECT_TRUE(Root->getString("evidence")->contains("not passing"));
   for (const auto &Row : *Root->getArray("coverage")) {
     const auto *Cell = Row.getAsObject();

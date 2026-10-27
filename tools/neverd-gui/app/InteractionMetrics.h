@@ -1,3 +1,12 @@
+//===- InteractionMetrics.h - Painted interaction measurements -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Observe production GUI navigation, source, graph and scrolling latency.
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "DeepLink.h"
@@ -32,6 +41,8 @@ protected:
   bool eventFilter(QObject *object, QEvent *event) override;
 
 private:
+  friend struct InteractionMetricsTestAccess;
+
   using Done = std::function<void()>;
   using Step = std::function<void(Done)>;
   struct Series {
@@ -42,6 +53,7 @@ private:
   };
 
   void begin();
+  void sampleFunctions(int count);
   void runSteps(QVector<Step> steps);
   Step scrollStep(const char *name, int direction);
   Step jumpStep(const char *name,
@@ -63,6 +75,9 @@ private:
   QJsonObject phases_;
   QPointer<QWidget> paintView_;
   Done paintThen_;
+  int functionCount_ = 0;
+  bool contentPainted_ = false;
+  bool started_ = false;
   bool finished_ = false;
 };
 

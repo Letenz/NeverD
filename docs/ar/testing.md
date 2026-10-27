@@ -1,5 +1,7 @@
 **اللغات**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](../ja/testing.md) | [한국어](../ko/testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](testing.md)
 
+يفحص `HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` معاملات المكدس الصحيحة والعائمة والمختلطة في Mach-O على x64/ARM64 عبر مسار توليد المصدر. ويحافظ `IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` على تخزين الدخول عند قراءة الذاكرة أو الاستدعاء أو خروج عناوين المكدس أو وجود intrinsic معتمة أو تستخدم الذاكرة. تستخدم مسارات القيم فقط المعاملات المعلنة دون إضافة كتابات عبر SP الفعلي، مع الحفاظ على تأثيرات حالة الفاصلة العائمة في السجلات. تجمع مصفوفة macOS المحمولة Swift المستعاد وتنفذه بصورة مستقلة؛ نجاح التوليد وحده ليس دليلاً على التنفيذ.
+
 يترجم `NeverDLLVMCValueTests` الاستدعاء متغير الوسائط المحوّل وينفذه مع دالة مستقلة تستخدم Windows x64 ABI عند O0/O2 وبوضعي حفظ الأنواع. يتحقق x64 الأصلي من القيمة عبر va_arg، وتتخطى المعماريات الأخرى التنفيذ صراحة.
 
 [← فهرس التوثيق](README.md)
@@ -2239,3 +2241,7 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 تنفذ المصفوفة أيضاً حالات مساواة وتجاوز سعة الطرح دون معاملات للدالة. لا تحتاج هذه الحالات إلى قيم سجلات واردة، ويجب ألا يضيف أي من مساري C فخاً للحالة المجهولة.
 
 تترجم اختبارات خانات استيراد HFA نماذج C الصارمة وتنفذ الوسيطات والنتائج الكاملة لتصريحات الترويسات والتصريحات المحلية. يغطي مسارا C سجلات float وdouble والاستدعاءات المتسلسلة والتنفيذ على AArch64.
+
+## اختبارات تصريحات الدوال المحددة
+
+يجمع `Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` العناوين مع تطبيقات تعيد أعداداً صحيحة أو مؤشرات أو قيماً عائمة أو void. ينفذ `AddressOnlyCallbackConvertsToItsKnownParameterType` استدعاءً عكسياً مكتوباً. يقارن `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` التحديد المنفصل والوحدة الكاملة والذاكرة المخبئية الباردة والدافئة. ينفذ C الناتج من نماذج x64/ARM64 لتنسيقات PE وELF وMach-O على المضيف مع O0/O2 وUBSan؛ ولا يثبت التنفيذ الأصلي على جميع المنصات. شغّل اختبارات عقود الاستدعاء وإسقاط المؤشرات وABI المصدر وذاكرة الدوال المستدعاة بعد تغيير هذه الحدود.

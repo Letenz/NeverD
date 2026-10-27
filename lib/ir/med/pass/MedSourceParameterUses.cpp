@@ -154,6 +154,10 @@ observedMedSourceEntryBytes(const MedFunc &Function,
   }
   for (const auto &Block : Function.Blocks)
     for (const auto &Op : Block.Ops) {
+      // Source stack preparation already proved these stores unobservable.
+      // Rooting their addresses would revive an otherwise unused entry SP.
+      if (Op.Opcode == NdOp::STORE && Op.PrologueSave)
+        continue;
       if (Op.Opcode == NdOp::RETURN) {
         if (Demand == SourceEntryDemand::EffectsOnly)
           continue;

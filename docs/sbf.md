@@ -467,13 +467,45 @@ remain unchanged.
 Generic summaries can retain a CALLX carrier as an expression of entry
 parameters and full-width loads from entry memory. Copies, supported normalized
 affine operations and canonical return-input expressions compose those values
-across basic blocks. Loaded expressions meet by exact identity at joins;
+across basic blocks. Unary expressions share identity when their input,
+version-qualified opcode, normalized operand and memory guard agree, including loads of the
+same full-width entry-memory field in different blocks or physical registers.
+Joins therefore retain equivalent field chains from different branches.
+Reported instruction slots are representative transfers, not an execution
+trace or proof that a particular branch ran. Loaded expressions meet by that
+canonical identity at joins;
 complete affine parameter origins can rebuild an input union before a common
-load or at CALLX. Other differing or unsupported expressions become unknown. A new entry-memory load
-is available only while every reaching path has preserved that memory. Stores
-and potentially writing calls invalidate that guarantee, including a change
-that leaves all register values equal. A value captured before a write remains
-available in a carrier that survives the canonical ABI.
+load or at CALLX. Other differing or unsupported expressions become unknown.
+A deferred load after a representable write retains an entry-relative may-write
+footprint. Instantiation substitutes the caller's actual arguments and frame,
+then uses the canonical memory-effect invalidation before reading its scratch
+facts. Overlap, an unbound write address and cross-coordinate uncertainty still
+remove the affected facts. Unknown effects prevent a new deferred load; no
+pointer is declared disjoint because it came from a heap or account type. A
+value captured before a write remains available in a carrier that survives the
+canonical ABI.
+
+Generic summaries also record `return_value_expression` for a return carrier
+derived from entry parameters and memory, including helpers that contain no
+CALLX. A generic caller can substitute that return template into its own
+expression. Loaded returns carry both the caller's preceding writes and the
+callee's rebased preceding writes. Values already loaded by a callee survive a
+later write when the ABI preserves their carrier. Frame-input substitution uses
+the canonical call-frame stride. A complete substituted affine return origin is
+reused directly; only an otherwise unknown return needs expression-chain
+composition. This avoids charging repeated solver replays for a fact already
+supplied by the canonical origin transfer. The existing input-dependency fixed
+point also identifies return carriers that are overwritten before use, across
+CFG successors and direct calls. Those calls keep their value/memory transfer
+without composing an unused return template. A following callee's use of r0
+still makes that carrier live. Block-entry joins project register values,
+origins and expression carriers through the same input mask, retaining the
+frame anchor. They retain scratch and stored postconditions; only a deferred
+read's preceding-write bookkeeping can be dropped when no future input-memory
+read is possible. Differing loaded roots and unsupported affine
+substitutions remain unknown. This composition supplies target templates; it
+does not specialize a generic callee's return or memory result with a target
+overlay.
 
 When an actual caller uses a completed generic summary, its pre-call parameters
 and scratch can instantiate such a target expression after the frame push.
@@ -496,8 +528,10 @@ callers can still demand return/memory specializations. Remaining roots retain
 ascending entry-slot order: eagerly specializing small unknown-input wrappers
 can consume all four cached variants before their concrete callers are analyzed.
 Completed cache hits remain usable after specialization work is exhausted.
-Schema 5 records input projection, bounded alternatives, return expressions, memory footprints,
-summary dependencies, barriers, cache reclamation and instruction work. Prior
+Schema 6 records input projection, bounded alternatives, return expressions,
+memory footprints,
+`input_memory_guards` referenced by deferred loads, summary dependencies,
+barriers, cache reclamation and instruction work. Prior
 independent entry-prefix proofs keep a distinct `evidence_scope`.
 
 `proven_target_set` evidence records complete sets of two to four literal

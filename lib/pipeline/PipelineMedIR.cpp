@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "PipelineCallAbiDetail.h"
 #include "PipelineIncomingStack.h"
 #include "PipelineLowIRDetail.h"
 #include "PipelineMedAudit.h"
@@ -453,32 +454,14 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
     Result.Error = "The original machine operations are unavailable";
     return Result;
   }
+  copyCallSignatureFacts(Original, Result);
 #define COPY_SOURCE_FACT(Field) Result.Field = Original.Field
-  COPY_SOURCE_FACT(CallArgumentSources);
   COPY_SOURCE_FACT(CallDispatchThunks);
-  COPY_SOURCE_FACT(CallEntryArgumentCounts);
-  COPY_SOURCE_FACT(CallEntryFloatingArguments);
-  COPY_SOURCE_FACT(CallEntryIntegerArguments);
-  COPY_SOURCE_FACT(CallEntryVariadicArguments);
-  COPY_SOURCE_FACT(OmittedCalleeVariadicArguments);
-  COPY_SOURCE_FACT(CallEntryReadGPRs);
-  COPY_SOURCE_FACT(CallUnreadGPRs);
-  COPY_SOURCE_FACT(CallEntryStackArgs);
   COPY_SOURCE_FACT(CallEntryStackPops);
-  COPY_SOURCE_FACT(CallEntryStackSlots);
-  COPY_SOURCE_FACT(CallMayWriteGPRs);
-  COPY_SOURCE_FACT(CallExitConstants);
   COPY_SOURCE_FACT(CallRegisterLeaves);
   COPY_SOURCE_FACT(CallVariadicFrom);
   COPY_SOURCE_FACT(FormattedCalls);
-  COPY_SOURCE_FACT(OmittedCalleeArgumentCounts);
-  COPY_SOURCE_FACT(OmittedCalleeFloatingArguments);
-  COPY_SOURCE_FACT(OmittedCalleeIntegerArguments);
-  COPY_SOURCE_FACT(OmittedCalleeStackArgs);
-  COPY_SOURCE_FACT(OmittedCalleeStackSlots);
   COPY_SOURCE_FACT(OmittedCallees);
-  COPY_SOURCE_FACT(CallPrototypeArguments);
-  COPY_SOURCE_FACT(CallUserPrototypes);
   COPY_SOURCE_FACT(CallFloatReturns);
 #undef COPY_SOURCE_FACT
   Result.Success = true;

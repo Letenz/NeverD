@@ -71,6 +71,25 @@ llvm::json::Object valueJSON(const RegisterValue &Value) {
   return Result;
 }
 
+llvm::json::Object memoryWriteJSON(const CallXMemoryWrite &Write) {
+  llvm::json::Object Row{{"offset", Write.Offset},
+                         {"bytes", static_cast<int64_t>(Write.Size)}};
+  switch (Write.Base) {
+  case CallXMemoryWriteBase::Absolute:
+    Row["base"] = "absolute";
+    Row["address"] = addressText(Write.Address);
+    break;
+  case CallXMemoryWriteBase::FramePointer:
+    Row["base"] = "entry_frame_pointer";
+    break;
+  case CallXMemoryWriteBase::InputRegister:
+    Row["base"] = "input_register";
+    Row["register"] = Write.Register;
+    break;
+  }
+  return Row;
+}
+
 llvm::json::Object inputExpressionJSON(const CallXInputExpression &Expression) {
   switch (Expression.Kind) {
   case CallXInputExpressionKind::InputRegister:
@@ -80,11 +99,15 @@ llvm::json::Object inputExpressionJSON(const CallXInputExpression &Expression) {
   case CallXInputExpressionKind::Constant:
     return llvm::json::Object{{"kind", "constant"},
                               {"value", valueJSON(Expression.Constant)}};
-  case CallXInputExpressionKind::Instruction:
-    return llvm::json::Object{
+  case CallXInputExpressionKind::Instruction: {
+    llvm::json::Object Row{
         {"kind", "normalized_instruction"},
         {"input", static_cast<int64_t>(*Expression.Input)},
         {"instruction_slot", static_cast<int64_t>(Expression.InstructionSlot)}};
+    if (Expression.MemoryGuard)
+      Row["memory_guard"] = static_cast<int64_t>(*Expression.MemoryGuard);
+    return Row;
+  }
   case CallXInputExpressionKind::InputAlternatives: {
     llvm::json::Array Inputs;
     for (size_t ID : Expression.Alternatives)
@@ -349,24 +372,8 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
       for (const auto &Value : Summary.ReturnAlternatives.values())
         Returns.push_back(valueJSON(Value));
     llvm::json::Array Writes;
-    for (const auto &Write : Summary.MemoryWrites) {
-      llvm::json::Object Row{{"offset", Write.Offset},
-                             {"bytes", static_cast<int64_t>(Write.Size)}};
-      switch (Write.Base) {
-      case CallXMemoryWriteBase::Absolute:
-        Row["base"] = "absolute";
-        Row["address"] = addressText(Write.Address);
-        break;
-      case CallXMemoryWriteBase::FramePointer:
-        Row["base"] = "entry_frame_pointer";
-        break;
-      case CallXMemoryWriteBase::InputRegister:
-        Row["base"] = "input_register";
-        Row["register"] = Write.Register;
-        break;
-      }
-      Writes.push_back(std::move(Row));
-    }
+    for (const auto &Write : Summary.MemoryWrites)
+      Writes.push_back(memoryWriteJSON(Write));
     llvm::json::Object Expression;
     if (Summary.ReturnInputExpression) {
       Expression["register"] = Summary.ReturnInputExpression->first;
@@ -380,7 +387,7 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
       InputExpressions.push_back(
           llvm::json::Object{{"callx_slot", static_cast<int64_t>(Slot)},
                              {"expression", static_cast<int64_t>(ID)}});
-    Summaries.push_back(llvm::json::Object{
+    llvm::json::Object Row{
         {"summary_id", static_cast<int64_t>(Summary.ID)},
         {"entry_slot", static_cast<int64_t>(Summary.EntrySlot)},
         {"recognized_entry_root", Summary.IsRoot},
@@ -410,7 +417,11 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
         {"output_scratch_words",
          static_cast<int64_t>(Summary.OutputScratchWords)},
         {"output_parameterized_words",
-         static_cast<int64_t>(Summary.OutputParameterizedWords)}});
+         static_cast<int64_t>(Summary.OutputParameterizedWords)}};
+    if (Summary.ReturnValueExpression)
+      Row["return_value_expression"] =
+          static_cast<int64_t>(*Summary.ReturnValueExpression);
+    Summaries.push_back(std::move(Row));
   }
   llvm::json::Array Edges;
   for (const auto &Edge : Report.SummaryEdges) {
@@ -439,8 +450,19 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
     Row["expression"] = static_cast<int64_t>(ID);
     Expressions.push_back(std::move(Row));
   }
+  llvm::json::Array Guards;
+  for (size_t ID = 0; ID < Report.InputMemoryGuards.size(); ++ID) {
+    const auto &Guard = Report.InputMemoryGuards[ID];
+    llvm::json::Array Writes;
+    for (const auto &Write : Guard.Writes)
+      Writes.push_back(memoryWriteJSON(Write));
+    Guards.push_back(llvm::json::Object{
+        {"memory_guard", static_cast<int64_t>(ID)},
+        {"may_write_callee_frames", Guard.WritesCalleeFrames},
+        {"may_write_intervals", std::move(Writes)}});
+  }
   return llvm::json::Object{
-      {"schema", 5},
+      {"schema", 6},
       {"scope", "context_keyed_whole_function_cfg_summaries"},
       {"caller_entry_assumption", "recognized_cfg_and_function_roots"},
       {"unknown_indirect_entries_are_not_closed", true},
@@ -490,6 +512,7 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
       {"instantiated_target_input_expressions",
        static_cast<int64_t>(Report.InstantiatedTargetInputExpressions)},
       {"target_input_expressions", std::move(Expressions)},
+      {"input_memory_guards", std::move(Guards)},
       {"projected_unused_register_facts",
        static_cast<int64_t>(Report.ProjectedRegisters)},
       {"projected_unread_scratch_snapshots",

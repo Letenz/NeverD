@@ -1,5 +1,7 @@
 **Langues**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](../ja/testing.md) | [한국어](../ko/testing.md) | [Français](testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` vérifie les arguments de pile entiers, flottants et mixtes des Mach-O x64/ARM64 dans le pipeline source. `IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` conserve le stockage initial pour les lectures mémoire, appels, adresses de pile échappées et intrinsèques opaques ou mémoire. Les chemins de valeurs utilisent les paramètres déclarés sans inventer des écritures dans le SP physique et conservent les effets d’état flottant des registres. La matrice mobile macOS compile et exécute indépendamment le Swift reconstruit ; une émission réussie ne prouve pas son exécution.
+
 `NeverDLLVMCValueTests` compile et exécute un appel variadique converti avec une fonction Windows x64 ABI séparée, à O0/O2 et avec les deux réglages de conservation des types. Le lecteur va_arg vérifie la valeur sur x64 natif ; les autres architectures ignorent explicitement cette exécution.
 
 [← Index de la documentation](README.md)
@@ -2328,3 +2330,7 @@ Cette régression worker couvre aussi dix-huit paramètres mixtes registre/pile,
 La matrice exécute aussi des cas sans argument d’égalité et de débordement de soustraction. Ils ne nécessitent aucune valeur de registre entrante et ne doivent acquérir aucun piège d’état inconnu dans les deux voies C.
 
 Les tests des entrées d’importation HFA compilent des prototypes C stricts et exécutent les arguments et résultats complets des déclarations locales et des en-têtes. Les deux voies C couvrent les structures float et double, les appels en chaîne et l’exécution AArch64.
+
+## Vérification des déclarations sélectionnées
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` combine les adresses avec des fournisseurs retournant entier, pointeur, flottant ou void. `AddressOnlyCallbackConvertsToItsKnownParameterType` exécute un callback typé. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` compare les sélections séparées, l’unité complète et les caches froid/chaud. Le C produit depuis les modèles x64/ARM64 PE, ELF et Mach-O est exécuté sur l’hôte à O0/O2 avec UBSan ; cela ne qualifie pas l’exécution native de toutes les cibles. Relancer les tests des contrats d’appel, projections de pointeurs, ABI source et cache des appelés.

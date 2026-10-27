@@ -7,6 +7,8 @@
 /// Recovers exact constant branch targets before tail-call conversion.
 /// Unknown live-ins, mutable loads and partial writes never invent facts.
 
+#include "LowScalarExpression.h"
+
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/loader/ReadOnlyBytes.h"
@@ -197,6 +199,20 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
         Complete = false;
         break;
       }
+      const auto Target = Targets.find(Terminator.Addr);
+      if (Target != Targets.end() && !Target->second)
+        for (size_t I = 0; I < Block.Ops.size(); ++I) {
+          const LowOp &Op = Block.Ops[I];
+          if (Op.Addr == Terminator.Addr && Op.NumInputs == 1 &&
+              (Op.Opcode == NdOp::INDIR_BR ||
+               (Op.Opcode == NdOp::BRANCH && Terminator.ScalarBranchInput))) {
+            Target->second = constantScalarExpression(
+                llvm::ArrayRef<LowOp>(Block.Ops).take_front(I),
+                Terminator.ScalarBranchInput.value_or(Op.Inputs[0]),
+                Terminator.Addr, RemainingWork);
+            break;
+          }
+        }
     }
     if (!Complete) {
       // No prefix of an incomplete proof can retain authority after new edges

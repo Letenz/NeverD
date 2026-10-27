@@ -23,6 +23,7 @@
 #include "GraphView.h"
 #include "HexView.h"
 #include "InstanceServer.h"
+#include "InteractionMetrics.h"
 #include "JumpDialog.h"
 #include "LinkDispatch.h"
 #include "LinkOpener.h"
@@ -62,6 +63,7 @@
 #include <QCompleter>
 #include <QContextMenuEvent>
 #include <QCryptographicHash>
+#include <QCursor>
 #include <QDateTime>
 #include <QDebug>
 #include <QDialogButtonBox>
@@ -130,6 +132,37 @@
 #include <memory>
 
 using namespace neverd::gui;
+
+namespace neverd::gui {
+/// Observe sampling and run one production measurement without exiting the
+/// test process or spending ten seconds in the independent scroll phases.
+struct InteractionMetricsTestAccess {
+  static bool started(const InteractionMetrics &metrics) {
+    return metrics.started_;
+  }
+  static int functionCount(const InteractionMetrics &metrics) {
+    return metrics.functionCount_;
+  }
+  static qsizetype samples(const InteractionMetrics &metrics) {
+    return metrics.samples_.size();
+  }
+  static void pseudocode(InteractionMetrics &metrics, Address address,
+                         std::function<void()> done) {
+    metrics.started_ = true;
+    metrics.samples_ = {address};
+    metrics.measurePseudocode("pseudocode", std::move(done));
+  }
+  static void openPseudocode(InteractionMetrics &metrics, Address address,
+                             std::function<void()> done) {
+    metrics.started_ = true;
+    metrics.samples_ = {address};
+    metrics.pseudocodeStep("pseudocode")(std::move(done));
+  }
+  static QJsonObject pseudocodeResult(const InteractionMetrics &metrics) {
+    return metrics.phases_.value("pseudocode").toObject();
+  }
+};
+} // namespace neverd::gui
 
 namespace {
 constexpr Address Base = 0xffff800012340000ULL;
@@ -709,14 +742,26 @@ private slots:
           return painted.pixelColor(close->mapTo(bar, QPoint(1, 1)) *
                                     painted.devicePixelRatio());
         };
-        QTest::mouseMove(
-            bench.window->windowHandle(),
-            close->mapTo(bench.window.get(), close->rect().center()));
+        QVERIFY(activateTestWindow(bench.window.get()));
+        const auto movePointer = [&](QPoint position) {
+#ifdef Q_OS_MACOS
+          // After closing the focus window, Cocoa needs a native enter/move
+          // for the restored window. A QWindow test event does not move the
+          // system pointer or establish that native tracking transition.
+          if (QGuiApplication::platformName() == QLatin1String("cocoa")) {
+            QCursor::setPos(bench.window->mapToGlobal(position));
+            return;
+          }
+#endif
+          QTest::mouseMove(bench.window->windowHandle(), position);
+        };
+        movePointer(bench.window->rect().center());
+        QTRY_VERIFY(!close->underMouse());
+        movePointer(close->mapTo(bench.window.get(), close->rect().center()));
         QTRY_VERIFY(close->underMouse());
         QCOMPARE(background(),
                  theme.chrome(QStringLiteral("WindowCloseHover")));
-        QTest::mouseMove(bench.window->windowHandle(),
-                         bench.window->rect().center());
+        movePointer(bench.window->rect().center());
         QTRY_VERIFY(!close->underMouse() && !close->isDown());
         QCOMPARE(background(), theme.chrome(QStringLiteral("TitleBar")));
       }
@@ -8152,6 +8197,10 @@ private slots:
       auto *dialog = visibleQuickStart();
       QVERIFY(dialog);
       const auto close = qScopeGuard([&] { dialog->close(); });
+      QVERIFY(activateTestWindow(dialog));
+      // A direct widget click bypasses Cocoa's activation before native input.
+      // Settle the first activation before testing a later Dock reopen.
+      QTRY_COMPARE(QGuiApplication::applicationState(), Qt::ApplicationActive);
       auto *minimize = dialog->findChild<QAbstractButton *>("minimizeButton");
       QVERIFY(minimize && minimize->isVisible());
       const auto size = dialog->size();
@@ -10673,6 +10722,114 @@ private slots:
     QSettings().setValue(settings::InstancesDisabled, false);
     QVERIFY2(server.start(), qPrintable(server.errorString()));
     QVERIFY(server.listening());
+  }
+
+  void interactionSamplingWaitsForTheCompletedFunctionCatalog() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("chooser-refresh.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.analysisComplete(), OpenTimeoutMs);
+    const auto background = bench.session.background();
+    const auto publish = [&](QString state, int count) {
+      auto next = background;
+      next["state"] = state;
+      next["functions"] = count;
+      SessionTestAccess::receive(
+          bench.session,
+          {{"type", "heartbeat"},
+           {"project_id", bench.session.queries().projectId()},
+           {"background_sequence",
+            SessionTestAccess::nextBackgroundSequence(bench.session)},
+           {"background", next}});
+    };
+    publish("building", 600);
+    QVERIFY(!bench.session.analysisComplete());
+    InteractionMetrics metrics(*bench.window, bench.session,
+                               directory.filePath("interactions.json"),
+                               NativeOpenTimeoutMs, nullptr);
+    emit bench.window->firstContentPainted();
+    bool delivered = false;
+    QTimer::singleShot(0, &metrics, [&] { delivered = true; });
+    QTRY_VERIFY(delivered);
+    QVERIFY(!InteractionMetricsTestAccess::started(metrics));
+    QCOMPARE(InteractionMetricsTestAccess::samples(metrics), 0);
+
+    // The completed catalog differs from open-time metadata. The worker's
+    // existing discovery fixture adds one identity when this marker appears.
+    QVERIFY(!writeFixture(directory, "chooser-refresh.bin.discover").isEmpty());
+    publish("ready", 601);
+    QTRY_VERIFY_WITH_TIMEOUT(InteractionMetricsTestAccess::samples(metrics) > 0,
+                             OpenTimeoutMs);
+    QCOMPARE(bench.session.metadata().value("function_count").toInt(), 600);
+    QCOMPARE(InteractionMetricsTestAccess::functionCount(metrics), 601);
+  }
+
+  void pseudocodeMeasurementWaitsForThePendingListingJump() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("source-cache.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.analysisComplete(), OpenTimeoutMs);
+    QVERIFY(!bench.codeView("source"));
+    auto *listing = bench.window->disassembly()->listing();
+    listing->jumpTo(Base + 16);
+    QVERIFY(listing->jumpPending());
+    InteractionMetrics metrics(*bench.window, bench.session,
+                               directory.filePath("interactions.json"),
+                               NativeOpenTimeoutMs, nullptr);
+    bool done = false;
+    InteractionMetricsTestAccess::openPseudocode(metrics, Base + 16,
+                                                 [&] { done = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(done, OpenTimeoutMs);
+    const auto result = InteractionMetricsTestAccess::pseudocodeResult(metrics);
+    QCOMPARE(result.value("samples").toInt(), 1);
+    QCOMPARE(result.value("missed").toInt(), 0);
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    QVERIFY(view->text()->complete());
+    QCOMPARE(view->text()->function(), std::optional<Address>(Base + 16));
+  }
+
+  void pseudocodeMeasurementRequiresTheRequestedCompleteDocument_data() {
+    QTest::addColumn<QString>("fixture");
+    QTest::addColumn<bool>("success");
+    QTest::newRow("complete-after-cancellation")
+        << QStringLiteral("source-export.bin") << true;
+    QTest::newRow("error-page-is-not-source")
+        << QStringLiteral("source-export-fail.bin") << false;
+  }
+
+  void pseudocodeMeasurementRequiresTheRequestedCompleteDocument() {
+    QFETCH(QString, fixture);
+    QFETCH(bool, success);
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(directory, fixture));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.analysisComplete(), OpenTimeoutMs);
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    view->showFunction(Base + 16);
+    QVERIFY(view->text()->loading());
+    InteractionMetrics metrics(*bench.window, bench.session,
+                               directory.filePath("interactions.json"),
+                               NativeOpenTimeoutMs, nullptr);
+    bool done = false;
+    InteractionMetricsTestAccess::pseudocode(metrics, Base + 16,
+                                             [&] { done = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(done, OpenTimeoutMs);
+    const auto result = InteractionMetricsTestAccess::pseudocodeResult(metrics);
+    QCOMPARE(result.value("samples").toInt(), success ? 1 : 0);
+    QCOMPARE(result.value("missed").toInt(), success ? 0 : 1);
+    QCOMPARE(view->text()->complete(), success);
+    QCOMPARE(view->text()->function(), std::optional<Address>(Base + 16));
+    const auto detail = result.value("detail").toArray();
+    QCOMPARE(detail.size(), 1);
+    QCOMPARE(detail[0].toObject().contains("ms"), success);
+    if (!success)
+      QVERIFY(detail[0].toObject().value("missed").toString().contains(
+          "fixture export preparation failed"));
   }
 
   void analysisCompletionDoesNotRequireAnUnsupportedReferenceIndex() {

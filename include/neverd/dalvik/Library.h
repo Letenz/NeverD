@@ -86,7 +86,15 @@ enum LibraryOperation {
   MapPut,
   MapContainsKey,
   MapRemove,
-  MapClear
+  MapClear,
+  StatLoggerTime,
+  MapPutAll,
+  ServiceGet,
+  ServiceCheck,
+  ServiceInitCache,
+  BinderAllowBlocking,
+  BinderQueryLocalInterface,
+  ServiceAsBinder
 };
 struct LibraryMethod {
   const char *Class, *Name, *Signature;

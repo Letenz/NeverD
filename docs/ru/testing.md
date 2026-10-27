@@ -1,5 +1,7 @@
 **Языки**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](../ja/testing.md) | [한국어](../ko/testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](testing.md) | [العربية](../ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` проверяет целочисленные, вещественные и смешанные стековые аргументы Mach-O x64/ARM64 в конвейере исходного кода. `IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` сохраняет входное хранилище при чтении памяти, вызовах, выходе адресов стека наружу и непрозрачных либо работающих с памятью intrinsic. Пути только со значениями используют объявленные параметры без лишних записей через физический SP и сохраняют эффекты состояния вещественных регистров. Мобильная матрица macOS независимо компилирует и выполняет восстановленный Swift; успешная генерация сама по себе не подтверждает выполнение.
+
 `NeverDLLVMCValueTests` компилирует и выполняет преобразованный вариативный вызов с отдельной функцией Windows x64 ABI при O0/O2 и обоих режимах сохранения типов. Нативный x64 проверяет значение через va_arg; другие архитектуры явно пропускают выполнение.
 
 [← Индекс документации](README.md)
@@ -2281,3 +2283,7 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 Матрица также выполняет проверки равенства и переполнения вычитания без аргументов. Им не нужны входные значения регистров, поэтому ни один из двух путей C не должен добавлять ловушку неизвестного состояния.
 
 Тесты слотов импорта HFA компилируют строгие прототипы C и исполняют полные аргументы и результаты для заголовочных и локальных объявлений. Оба пути C проверяют структуры float и double, цепочки вызовов и исполнение AArch64.
+
+## Проверки объявлений выбранных функций
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` объединяет адреса с реализациями, возвращающими целое, указатель, число с плавающей точкой или void. `AddressOnlyCallbackConvertsToItsKnownParameterType` исполняет типизированный callback. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` сравнивает отдельный выбор, весь модуль и холодный/прогретый кэш. C из моделей x64/ARM64 PE, ELF и Mach-O исполняется на хосте с O0/O2 и UBSan; это не проверка нативного исполнения на всех платформах. После изменения границы запускать тесты контрактов вызова, проекции указателей, исходного ABI и кэша вызываемых функций.

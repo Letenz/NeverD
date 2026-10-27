@@ -602,3 +602,53 @@ Implementation and synthetic programs are independently authored.
 Package query flags, version codes and target SDK fields use the shared signed
 32-bit JSON integer contract, including decimal strings. Input budgets are
 owned by the Dalvik limits header and reused by typed and JSON admission.
+
+## ServiceManager cache and Binder state
+
+The API 28 ServiceManager initializer uses shared system-property reads, heap
+arrays and elapsed realtime. It requires those runtime services even when only
+JNI method or field lookup triggers initialization. An Application phase does
+not establish the current service cache or manager proxy.
+
+The initializer constructs StatLogger, whose next tick is elapsed realtime in
+milliseconds plus one second. In the native profile this reads the explicit
+`linux_time.clocks` entry with `id: 7` (`CLOCK_BOOTTIME`) through the same
+LinuxClock used by native `clock_gettime`. Supplying realtime, monotonic or
+monotonic raw does not provide that observation. A missing boot clock stops
+initialization before the logger is published; successful initialization keeps
+one logger and its original next tick across later active uses and idle waits.
+
+The boot epoch is independent of the monotonic epoch. A supplied difference can
+represent prior suspension, but the model does not infer it. Declared wall
+clocks share instruction/idle advancement; there is no additional simulated
+system-suspend transition. Keep hypothetical boot epochs explicitly labeled as
+synthetic scenario inputs, separate from device observations. Supplying a clock
+does not establish service-cache contents or Binder state.
+
+The optional `application_snapshot.service_manager` object has four members:
+
+- `binder_proxies`: an array of `{ "key": 7, "warn_on_blocking": true }` records.
+  Keys are unique positive uint32 values identifying Java proxy objects only.
+  The optional warning flag is unknown when omitted. Keys are not kernel Binder
+  handles and never provide native peers, liveness or transaction responses.
+- `cache`: the complete initial array of `{ "name": "example", "binder": 7 }`
+  entries. Names can be String or null; Binder values can be a declared proxy
+  key or null. Names must be unique by Java UTF-16 value. An omitted cache is
+  unknown; `[]` is explicitly empty. A null value is a cache miss for lookup.
+- `manager_proxy`: a declared Binder key for the initial ServiceManagerProxy,
+  null for known uninitialized state, or omitted for unknown state.
+- `context_object`: the independently supplied BinderInternal context-object
+  result, as a declared Binder key, null, or omitted for unknown state.
+
+Limits are 256 cache entries, 256 proxy identities and 4096 UTF-8 bytes per
+service name. Typed inputs and JSON share validation. Referencing the same proxy
+key retains the same Java object across cached services and manager references.
+
+Cached lookups and `initServiceCache` operate on the shared mutable HashMap.
+An absent snapshot is never converted into a successful empty cache lookup.
+Cache misses require explicit manager/context state and stop before unmodeled
+Binder transactions; local Binder objects, native object translation and RPC
+responses remain outside this subset. With `observe_java_state`, the optional
+`java_state.framework.service_manager` report retains cache completeness,
+entry identities, manager/logger identities and proxy warning state. Report
+heap identities use hexadecimal strings; input proxy keys remain numeric keys.

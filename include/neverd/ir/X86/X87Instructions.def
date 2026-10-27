@@ -178,7 +178,7 @@ NEVERD_X87_FORM(FLD_reg, 0xd9, 0xc0, 0xc7, false, "FLD", "ST(i)", true,
                 ValueProjection, LoadRegister)
 NEVERD_X87_FORM(FXCH_reg, 0xd9, 0xc8, 0xcf, false, "FXCH", "ST(i)", true,
                 ValueProjection, Exchange)
-NEVERD_X87_FORM(FNOP_reg, 0xd9, 0xd0, 0xd0, false, "FNOP", "implicit", true,
+NEVERD_X87_FORM(FNOP_reg, 0xd9, 0xd0, 0xd0, false, "FNOP", "implicit", false,
                 StateOnly, None)
 NEVERD_X87_FORM(FCHS_reg, 0xd9, 0xe0, 0xe0, false, "FCHS", "implicit", true,
                 ExactValue, Negate)
@@ -282,5 +282,5 @@ NEVERD_X87_FORM(FFREEP, 0xdf, 0xc0, 0xc7, false, "FFREEP", "ST(i)", true,
                 StateOnly, None)
 NEVERD_X87_FORM(WAIT, 0x9b, 0x00, 0x00, false, "WAIT", "implicit", true,
                 StateOnly, Wait)
-NEVERD_X87_FORM(EMMS, 0x0f, 0x77, 0x77, false, "EMMS", "MMX aliases", true,
+NEVERD_X87_FORM(EMMS, 0x0f, 0x77, 0x77, false, "EMMS", "MMX aliases", false,
                 StateOnly, None)

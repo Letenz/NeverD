@@ -37,6 +37,11 @@ NEVERD_A64_STRUCTURE_C_TEXT(kStructureCIndexIn, "r")
 NEVERD_A64_STRUCTURE_C_TEXT(
     kStructureCAsm,
     "__asm__ volatile(\".inst %c{0}\" : {1} : {2}, \"i\"({3}) : \"memory\");\n")
+NEVERD_A64_STRUCTURE_C_TEXT(
+    kStructureCSPAsm,
+    "__asm__ volatile(\"mov x14, sp\\n\\tmov sp, x16\\n\\t.inst %c{0}\\n\\t"
+    "mov x16, sp\\n\\tmov sp, x14\" : {1} : {2}, \"i\"({3}) "
+    ": \"x14\", \"memory\");\n")
 NEVERD_A64_STRUCTURE_C_TEXT(kStructureCValueName, "__structure_value")
 NEVERD_A64_STRUCTURE_C_TEXT(kStructureCInputName, "__structure_input")
 NEVERD_A64_STRUCTURE_C_TEXT(kStructureCBaseName, "__structure_base")

@@ -29,6 +29,14 @@ namespace neverd {
   inline constexpr char Name[] = Text;
 #include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.def"
 
+/// A raw SP parameter supplies its alignment/tag bits only without an image;
+/// a relocated address or a synthetic frame is not that environment.
+inline const char *aarch64MemorySourceBaseFailure(bool StackBase, bool HasImage,
+                                                  bool IsParameter) {
+  return StackBase && (HasImage || !IsParameter) ? kAddressMemorySPUnsupported
+                                                 : nullptr;
+}
+
 /// A sufficient finite proof, independent of CPTA and CPACHECK controls.
 /// This grants no mapping, tagging, alignment or fault permission.
 inline std::optional<uint64_t>
@@ -205,12 +213,8 @@ struct AArch64AddressMemoryInstruction {
                : kAddressMemoryRegisterMask;
   }
   bool stackBase() const { return base() == kAddressMemoryRegisterMask; }
-  /// A raw SP parameter supplies its alignment/tag bits only without an image;
-  /// a relocated address or a synthetic frame is not that environment.
   const char *sourceBaseFailure(bool HasImage, bool IsParameter) const {
-    if (stackBase() && (HasImage || !IsParameter))
-      return kAddressMemorySPUnsupported;
-    return nullptr;
+    return aarch64MemorySourceBaseFailure(stackBase(), HasImage, IsParameter);
   }
   unsigned indexShift() const {
     return hasRegisterIndex() && (Word & kAddressMemoryScaleMask)

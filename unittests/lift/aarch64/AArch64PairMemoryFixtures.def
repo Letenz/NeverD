@@ -302,8 +302,8 @@ PAIR_MEMORY_TEXT(kPairTestNativeLoad,
                  "register {2} first __asm__(\"{3}21\");\n"
                  "register {2} second __asm__(\"{3}22\");\n"
                  "register uint64_t base __asm__(\"x20\") = input;\n"
-                 "__asm__ volatile(\".inst {1}\" : \"{4}\"(first), "
-                 "\"{4}\"(second), \"+r\"(base) : : \"memory\");\n"
+                 "__asm__ volatile(\"{7}.inst {1}{8}\" : \"{4}\"(first), "
+                 "\"{4}\"(second), \"+r\"(base) : : {9}\"memory\");\n"
                  "return (struct pair_result){{ {5}, {6}, base };\n}\n")
 PAIR_MEMORY_TEXT(kPairTestNativeStore,
                  "static struct pair_result pair_original_{0}(uint64_t input, "
@@ -311,8 +311,8 @@ PAIR_MEMORY_TEXT(kPairTestNativeStore,
                  "register {2} first __asm__(\"{3}21\") = {7};\n"
                  "register {2} second __asm__(\"{3}22\") = {8};\n"
                  "register uint64_t base __asm__(\"x20\") = input;\n"
-                 "__asm__ volatile(\".inst {1}\" : \"+r\"(base) : "
-                 "\"{4}\"(first), \"{4}\"(second) : \"memory\");\n"
+                 "__asm__ volatile(\"{9}.inst {1}{10}\" : \"+r\"(base) : "
+                 "\"{4}\"(first), \"{4}\"(second) : {11}\"memory\");\n"
                  "return (struct pair_result){{ {5}, {6}, base };\n}\n")
 PAIR_MEMORY_TEXT(kPairTestScalarBank, "x")
 PAIR_MEMORY_TEXT(kPairTestVectorBank, "v")

@@ -232,7 +232,8 @@ Pipeline::LLVMEmissionResult Pipeline::emitLLVMSharded(
     bool RecordSources, llvm::ArrayRef<sigs::LibraryRecognition> Recognitions,
     const DebugContext *Dbg, const SourceViewOptions &View,
     const std::set<va_t> *PrototypeArgumentCallees,
-    bool PreserveUnknownSourceValues) {
+    bool PreserveUnknownSourceValues,
+    llvm::ArrayRef<MedFunc> SourceCalleeDeclarations) {
   const size_t N = Funcs.size();
   NumThreads = std::max(
       1u, std::min<unsigned>(NumThreads, static_cast<unsigned>(N ? N : 1)));
@@ -244,6 +245,7 @@ Pipeline::LLVMEmissionResult Pipeline::emitLLVMSharded(
       Mask[I] = (ShardPlan.ShardOf[I] == S);
     MedLLVMEmitter Emitter;
     Emitter.setPreserveUnknownSourceValues(PreserveUnknownSourceValues);
+    Emitter.setSourceCalleeDeclarations(SourceCalleeDeclarations);
     Emitter.setDebugContext(Dbg);
     Emitter.setPrototypeArgumentCallees(PrototypeArgumentCallees);
     LLVMEmissionResult Result;

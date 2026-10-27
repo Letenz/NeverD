@@ -185,14 +185,16 @@ WRITEBACK_TEXT(kWritebackNativeStore,
                "(result - input != base - origin) return 1;\n")
 WRITEBACK_TEXT(
     kWritebackNativeCase,
-    "static int writeback_case_{0}(void) {{ uint8_t expected[1024], "
+    "static int writeback_case_{0}(void) {{ _Alignas(16) uint8_t "
+    "expected[1024], "
     "actual[1024]; for (unsigned i = 0; i != 1024; ++i) expected[i] = "
     "actual[i] = (uint8_t)(i * 37 + 129); uint64_t input = "
     "(uint64_t)(uintptr_t)(actual + 384), origin = "
     "(uint64_t)(uintptr_t)(expected + 384); register uint64_t base "
     "__asm__(\"x9\") = origin; register uint64_t value __asm__(\"x10\") = "
-    "0xfedcba9876543210ULL; __asm__ volatile(\".inst %c2\" : \"+r\"(value), "
-    "\"+r\"(base) : \"i\"({1}) : \"memory\"); {2} for (unsigned i = 0; i != "
+    "0xfedcba9876543210ULL; __asm__ volatile(\"{3}.inst %c2{4}\" : "
+    "\"+r\"(value), "
+    "\"+r\"(base) : \"i\"({1}) : {5}\"memory\"); {2} for (unsigned i = 0; i != "
     "1024; ++i) if (expected[i] != actual[i]) return 2; return 0; }\n")
 WRITEBACK_TEXT(kWritebackHarnessCase, "{{ writeback_case_{0} },\n")
 WRITEBACK_TEXT(kWritebackHarnessTail,
