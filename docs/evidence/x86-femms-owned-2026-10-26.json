@@ -589,5 +589,81 @@
     "The explicit portable x87 profile still refuses MMX resets.",
     "QEMU results compare native instructions within one processor model. They do not qualify physical 3DNow hardware, all input/CPU behaviors, or complete fault continuations.",
     "No final LLVM release, SDK pin or LLVM/Capstone submodule update is included."
+  ],
+  "publication_qualification": {
+    "source": "d516633d27c6d8d3729c36aa7dc8790cf6b8fa29",
+    "native": {
+      "file": "published-native-tests.xml",
+      "sha256": "88e8fd93447e5b0744f072a7d369484a1cfd6abbfd32fbfd20179498482295e3",
+      "tests": 340,
+      "failed": 0,
+      "skipped": 0
+    },
+    "pinned": {
+      "file": "published-pinned-tests.xml",
+      "sha256": "cdde710ef093546a95013e8efb5fdd3c1e97a03628f341953a9469711dcd8b34",
+      "tests": 340,
+      "failed": 0,
+      "skipped": 0
+    },
+    "qemu_owned_contexts": [
+      {
+        "sdk": "native",
+        "qualification": [
+          {
+            "optimization": "-O0",
+            "mode": 64,
+            "value_comparisons": 1600,
+            "owned_context_comparisons": 40
+          },
+          {
+            "optimization": "-O2",
+            "mode": 64,
+            "value_comparisons": 1600,
+            "owned_context_comparisons": 40
+          }
+        ],
+        "report_sha256": "f69d3d0969b074e3d6ac88fdaed1596a04dec936f13739dce41ebc1c693e8e75",
+        "objects": {
+          "files": 10,
+          "bytes": 26704,
+          "sha256": "62201f10b1243e97f449767a70d4dcf21943fe813d49e8ff0a15b63aae4f1197"
+        }
+      },
+      {
+        "sdk": "pinned",
+        "qualification": [
+          {
+            "optimization": "-O0",
+            "mode": 64,
+            "value_comparisons": 1600,
+            "owned_context_comparisons": 40
+          },
+          {
+            "optimization": "-O2",
+            "mode": 64,
+            "value_comparisons": 1600,
+            "owned_context_comparisons": 40
+          }
+        ],
+        "report_sha256": "f69d3d0969b074e3d6ac88fdaed1596a04dec936f13739dce41ebc1c693e8e75",
+        "objects": {
+          "files": 10,
+          "bytes": 26704,
+          "sha256": "fad044387b7a3084d43e7a73f175377e418f1e02535b3f3171e682f56e005401"
+        }
+      }
+    ]
+  },
+  "build_interruptions": [
+    {
+      "phase": "first pinned integration",
+      "exit_code": 143,
+      "reason": "External SIGTERM with no compiler diagnostic; no remaining build process; incremental restart passed 134 tests."
+    },
+    {
+      "phase": "a5d7ca05 attempted publication",
+      "reason": "Normal push rejected because dev advanced by a GUI documentation commit. Newly started builds intentionally interrupted; documentation-only merge d516633d27 pushed and fixed for qualification."
+    }
   ]
 }
