@@ -642,8 +642,7 @@ unsigned Matcher::approximate() {
     if (!Rejected.contains(K) && !namesConflict(A, B))
       Pairs.push_back({A, B, quickScore(A, B)});
   }
-  const unsigned Keep =
-      std::min(Settings.MaxCandidates, limits::kMeasuredCandidates);
+  const unsigned Keep = Settings.MaxCandidates;
   std::vector<uint8_t> Measure(Pairs.size(), 0);
   for (bool BySecondary : {false, true}) {
     std::vector<uint32_t> Index(Pairs.size());

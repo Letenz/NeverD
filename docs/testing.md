@@ -309,6 +309,13 @@ optimization and source projection. Neither a module nor source observations
 may escape a failed pipeline run. Reusing an emitter after refusal must still
 produce verified LLVM for a valid function and reset the diagnostic count.
 
+`NeverDAArch64ReturnProtectionTests` exercises decoded leaf and saved-LR
+recipes for ELF, Mach-O and COFF, including key/leaf attributes, preserved
+return values, observable signatures, wrong modifiers, incomplete recipes
+and rejection by a different output architecture. Malformed-width cases
+start from the real lowering path, then corrupt the PAC or AUT modifier;
+source projection must not hide these invalid operations.
+
 `NeverDArm64eAnalysisTests` covers Apple arm64e static analysis independently
 of the disabled-key CPU tests in `NeverDAArch64PAuthTests`. It checks both
 decoder routes for PAC/AUT/XPAC, implicit HINT operands, authenticated
@@ -1530,6 +1537,15 @@ valid clocks to prove that missing BOOTTIME is not silently filled in.
 explicit admission, fixed observations, nanosecond carry, shared idle/instruction
 advancement and preservation of the declared epoch difference. These are
 model regressions, not device suspension measurements.
+
+`AndroidServiceManagerTest.CacheHitsNeedNoManagerContextWarningOrAdditionalClockObservation`
+and `NullAndAbsentCacheEntriesRequireManagerStateBeforeContext` distinguish
+cache hits, empty caches and null-valued misses without inventing independent
+Binder observations. The JNI cache-mutation regression uses distinct equal
+String objects, all three static-call forms and removal through the shared
+HashMap before another lookup. `ProcessReport.AndroidServiceCacheDoesNotSupplyIndependentBinderState`
+checks the same independence at JSON admission. These checks use generic
+authored callers and no device service inventory or private workload input.
 
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
@@ -2863,6 +2879,20 @@ prebuilt-LLVM guidance.
 
 ## Structural binary comparison
 
+Long native instruction-alignment regressions reproduce a 6,001-instruction
+body with 72 inserted instructions beyond the old dense-table threshold, in
+both directions. An independent forward edit-cost oracle checks large repeated
+and highly unequal inputs against the weighted divide-and-conquer result.
+A 100,000-instruction fixture retains all 99,990 unchanged instructions across
+ten constant edits, including full-width hash values that some integer hash
+containers reserve internally. Cancellation/deadline checks publish no partial rows
+or block annotations. Saved long-function measurements roundtrip and stale
+measurements fail transactionally. These checks concern weighted structural
+alignment, not semantic equivalence or unique instruction correspondence.
+A separate matching fixture places the real changed pair below four misleading
+sketch candidates on both sides. An allowance of four leaves it undecided;
+allowances of six, sixteen and 256 recover it while retaining ambiguous decoys.
+
 Saved-decision regressions reject an accepted pair that contradicts the final
 effective Unmatch in all historical completion states. A reverse-history oracle
 checks every five-event sequence over two pairs; remap, rejection clearing,
@@ -3808,9 +3838,20 @@ on the left, code on the right and output across the bottom. It checks both
 themes, docked and floating origins, restoring the previous layout and window
 state, unchanged data, data addresses outside functions, and ordinary command
 input. After closing the focus workspace, the main close button still highlights
-on hover and returns to its normal color when the pointer leaves. Keys enter
+on hover and returns to its normal color when the pointer leaves. Cocoa hover
+uses posted native motion and requires `CGPreflightPostEventAccess()`; when
+permission is absent, the layout and both close paths still run, then the case
+reports the unavailable hover coverage as a skip. Offscreen retains the Qt
+pointer-event checks. Keys enter
 through `QWindow` so forwarding to the focused widget cannot
 silently reset the sequence.
+
+`LibraryCodeViewTests` checks that generated frame and complete exception-detail
+folds preserve full-text copy and exact source-row navigation, keep cleanup
+statements visible, and leave warnings expanded. The workbench frame-record
+test exercises default folding, search expansion, refresh state and member
+navigation in both themes. Run it on Cocoa and offscreen; optional captures
+use `NEVERD_SHORTCUT_CAPTURES` with the existing fractional-scale runs.
 `focusFunctionsSidebarTogglesAndNavigates` checks the initially folded function
 list, triangle clicks, unchanged analysis geometry, single-click navigation in
 both analysis panes, filtering, popup ownership, and cleanup. Hovering and moving
@@ -5368,6 +5409,13 @@ definition proves the forwarding. Its cyclic PHIs require independent root
 queries to retain both escaped homes, including distinct SSA versions and
 reversed block order. Run this owner and `NeverDI386CallContractTests` when
 changing CDECL stack-offset query reuse.
+
+`MedFPStackHomes.*` (in `NeverDFPParameterMaskTests`) checks propagation through
+overlapping incoming FP stack homes, independent adjacent components,
+unaligned seeds, forced memory homes and unresolved or malformed reads.
+Long chains retain the same homes in both block orders while querying each
+eligible address at most once. Run this owner and the calling-convention
+contract tests when changing the stack-home closure algorithm.
 
 `NeverDFPParameterMaskTests` runs the shared ABI suite and `FPParameterMask.*`.
 The mask controls retain live bytes, earlier stores, ambiguous definitions and
@@ -7531,6 +7579,11 @@ LLVM-to-C through the CLI, without depending on a platform linker.
 and three formats, equal and conflicting predecessor values, scalar/fragment
 collisions, uninitialized arms, loop backedges, cache output identity, every
 small-fixture budget boundary, changed roots and shared failure clearing.
+Wide internal address containers preserve an exact full guest pointer only
+when its value fits without discarded bits; shifted slices, non-fitting
+addresses, scalars and address fragments remain negative controls on x86 and
+ARM under all three formats. The linked i386 ELF matrix exercises that rule
+with real decoder output and independent case-label offsets.
 Scoped address discovery and its legacy-fold wrapper must preserve every
 budget boundary, completion state and address across all four architectures
 and three formats. New scopes revalidate changed instructions; roots are
@@ -14917,6 +14970,13 @@ checkpoints, redo replacement, returned-value ownership and byte-exact document
 encoding after reopen. `NeverDWorkerNativePatch` accepts an exact patch-state
 budget and rejects a one-byte excess without changing live or persisted bytes;
 run it with both typed-snapshot and legacy JSON-only SDKs for adapter changes.
+
+Protocol tests compare preencoded sidecar layout with the original generic
+pretty serializer and literal LLVM control-escape fixtures, including nested
+containers, quoted keys, Unicode and numeric extremes. History tests check exact
+compact state bytes, ordered-table address removal and unknown fields. Changed
+row contents still require admission; duplicate or moved addresses, changed
+counts and ordered-table gaps cannot reuse the committed order proof.
 
 `NeverDGuiPatchKeys` routes all second keys through `QWindow` shortcut dispatch, including pending menus, cancellation and editor typing. `NeverDGuiNativePatchKeys` checks real SDK bytes, Hex and floating windows, undo/redo and restoration. Run the same executable under X11 to exercise native popup routing.
 

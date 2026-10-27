@@ -25,9 +25,12 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <gtest/gtest.h>
 #include <map>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -429,6 +432,213 @@ TEST(BinaryDiff, DuplicateNamesAreNotCollapsed) {
   EXPECT_EQ(Dups, 2u);
 }
 
+TEST(BinaryDiff, LongInstructionAlignmentPreservesSparseInsertions) {
+  Fn Before = leaf("long_body", 41, 6000);
+  auto After = Before;
+  auto &Instructions = After.Blocks.front();
+  Instructions.insert(Instructions.begin() + 1000, 40, {"mov", "r3, 999999"});
+  Instructions.insert(Instructions.begin() + 4040, 32, {"add", "r2, 888888"});
+  const Program P = build({Before}, 0x400000);
+  const Program S = build({After}, 0x500000);
+  for (const bool Reverse : {false, true}) {
+    SCOPED_TRACE(Reverse);
+    const auto &A = Reverse ? S : P;
+    const auto &B = Reverse ? P : S;
+    const auto D = compareFunctions(A, 0, B, 0, {});
+    ASSERT_TRUE(D.ComputationComplete);
+    EXPECT_EQ(D.EqualInstructions, 6001u);
+    unsigned Inserted = 0, Deleted = 0, Other = 0;
+    uint32_t AI = 0, BI = 0;
+    for (const auto &Row : D.Rows) {
+      if (Row.Primary != NoIndex)
+        EXPECT_EQ(Row.Primary, AI++);
+      if (Row.Secondary != NoIndex)
+        EXPECT_EQ(Row.Secondary, BI++);
+      Inserted += Row.Kind == RowKind::Inserted;
+      Deleted += Row.Kind == RowKind::Deleted;
+      Other += Row.Kind != RowKind::Identical && Row.Kind != RowKind::Moved &&
+               Row.Kind != RowKind::Inserted && Row.Kind != RowKind::Deleted;
+    }
+    EXPECT_EQ(AI, A.Instructions.size());
+    EXPECT_EQ(BI, B.Instructions.size());
+    EXPECT_EQ(Inserted, Reverse ? 0u : 72u);
+    EXPECT_EQ(Deleted, Reverse ? 72u : 0u);
+    EXPECT_EQ(Other, 0u);
+  }
+}
+
+TEST(BinaryDiff, LargeInstructionAlignmentMatchesIndependentEditCost) {
+  std::mt19937 Random(0xD1FF6001);
+  for (const auto &[N, M] :
+       {std::pair{2100u, 2200u}, {4700u, 4600u}, {97u, 44000u}}) {
+    SCOPED_TRACE(N);
+    SCOPED_TRACE(M);
+    const auto Make = [&](unsigned Count) {
+      Fn F;
+      F.Name = "weighted";
+      F.Blocks.resize(1);
+      for (unsigned I = 0; I < Count; ++I) {
+        const char *Mnemonics[] = {"mov", "add", "sub", "xor", "or"};
+        F.Blocks[0].push_back(
+            {Mnemonics[Random() % 5], std::string(Random() % 2 ? "r" : "v") +
+                                          std::to_string(Random() % 3) + ", " +
+                                          std::to_string(Random() % 17)});
+      }
+      return F;
+    };
+    const Program P = build({Make(N)}, 0x400000);
+    const Program S = build({Make(M)}, 0x500000);
+    // Independent forward edit-cost oracle: gaps cost two, and replacing
+    // a row costs zero/one/two/four for shape/skeleton/mnemonic/no agreement.
+    // Production maximizes weights, decomposing large ranges at a middle row.
+    std::vector<uint32_t> Previous(M + 1), Current(M + 1);
+    for (size_t J = 0; J <= M; ++J)
+      Previous[J] = 2 * J;
+    for (size_t I = 1; I <= N; ++I) {
+      Current[0] = 2 * I;
+      const auto &X = P.Instructions[I - 1];
+      for (size_t J = 1; J <= M; ++J) {
+        const auto &Y = S.Instructions[J - 1];
+        const unsigned Cost =
+            X.Shape == Y.Shape                                   ? 0
+            : X.Skeleton == Y.Skeleton                           ? 1
+            : P.Mnemonics[X.Mnemonic] == S.Mnemonics[Y.Mnemonic] ? 2
+                                                                 : 4;
+        Current[J] = std::min(
+            {Previous[J] + 2, Current[J - 1] + 2, Previous[J - 1] + Cost});
+      }
+      std::swap(Previous, Current);
+    }
+    for (const bool Reverse : {false, true}) {
+      SCOPED_TRACE(Reverse);
+      const auto &A = Reverse ? S : P;
+      const auto &B = Reverse ? P : S;
+      const auto D = compareFunctions(A, 0, B, 0, {});
+      ASSERT_TRUE(D.ComputationComplete);
+      EXPECT_EQ(D.State, ComparisonState::Complete);
+      uint32_t AI = 0, BI = 0, Cost = 0;
+      for (const auto &Row : D.Rows) {
+        if (Row.Primary != NoIndex)
+          EXPECT_EQ(Row.Primary, AI++);
+        if (Row.Secondary != NoIndex)
+          EXPECT_EQ(Row.Secondary, BI++);
+        switch (Row.Kind) {
+        case RowKind::Identical:
+        case RowKind::Moved:
+          ASSERT_NE(Row.Primary, NoIndex);
+          ASSERT_NE(Row.Secondary, NoIndex);
+          EXPECT_EQ(A.Instructions[Row.Primary].Shape,
+                    B.Instructions[Row.Secondary].Shape);
+          break;
+        case RowKind::Constant:
+          ++Cost;
+          break;
+        case RowKind::Operand:
+        case RowKind::Inserted:
+        case RowKind::Deleted:
+          Cost += 2;
+          break;
+        case RowKind::Replaced:
+          Cost += 4;
+          break;
+        }
+      }
+      EXPECT_EQ(AI, A.Instructions.size());
+      EXPECT_EQ(BI, B.Instructions.size());
+      EXPECT_EQ(Cost, Previous.back());
+    }
+  }
+}
+
+TEST(BinaryDiff, LongConstantEditsRetainEveryUnchangedInstruction) {
+  Fn Before;
+  Before.Name = "constants";
+  Before.Blocks.resize(1);
+  for (unsigned I = 0; I < 100000; ++I)
+    Before.Blocks[0].push_back({"mov", "r0, " + std::to_string(100000 + I)});
+  auto After = Before;
+  for (unsigned I = 0; I < 100000; I += 10000)
+    After.Blocks[0][I].Operands = "r0, " + std::to_string(600000 + I);
+  Program P = build({Before}, 0x400000);
+  Program S = build({After}, 0x800000);
+  // Shape hashes cover the full nonzero uint64_t domain. These valid values
+  // must not be mistaken for a hash container's empty/tombstone sentinels.
+  for (auto *Input : {&P, &S}) {
+    Input->Instructions[1].Shape = UINT64_MAX;
+    Input->Instructions[2].Shape = UINT64_MAX - 1;
+    ASSERT_FALSE(Input->validate());
+  }
+  const auto D = compareFunctions(P, 0, S, 0, {});
+  ASSERT_TRUE(D.ComputationComplete);
+  ASSERT_EQ(D.Rows.size(), 100000u);
+  EXPECT_EQ(D.EqualInstructions, 99990u);
+  for (size_t I = 0; I < D.Rows.size(); ++I) {
+    EXPECT_EQ(D.Rows[I].Primary, I);
+    EXPECT_EQ(D.Rows[I].Secondary, I);
+    EXPECT_EQ(D.Rows[I].Kind,
+              I % 10000 ? RowKind::Identical : RowKind::Constant);
+  }
+}
+
+TEST(BinaryDiff, LongAlignmentStopsWithoutPublishingPartialRows) {
+  const Program P = build({leaf("long", 11, 40000)}, 0x400000);
+  const Program S = build({leaf("long", 91, 40000)}, 0x800000);
+  for (const bool Timed : {false, true}) {
+    SCOPED_TRACE(Timed);
+    std::atomic<bool> Cancel{false};
+    ComparisonControl Control;
+    if (Timed)
+      Control.Deadline =
+          std::chrono::steady_clock::now() + std::chrono::milliseconds(25);
+    else
+      Control.Cancel = &Cancel;
+    std::thread Stop([&] {
+      std::this_thread::sleep_for(std::chrono::milliseconds(25));
+      Cancel.store(true);
+    });
+    const auto D = compareFunctions(P, 0, S, 0, {}, Control);
+    Stop.join();
+    EXPECT_EQ(D.State,
+              Timed ? ComparisonState::TimedOut : ComparisonState::Cancelled);
+    EXPECT_FALSE(D.ComputationComplete);
+    EXPECT_FALSE(D.AnalysisComplete);
+    EXPECT_TRUE(D.Rows.empty());
+    EXPECT_TRUE(D.Blocks.empty());
+    EXPECT_EQ(D.EqualInstructions, 0u);
+  }
+}
+
+TEST(BinaryDiff, LongAlignmentMeasurementsRoundTripAndRefuseStaleScores) {
+  Fn Before = leaf("long_body", 41, 6000);
+  auto After = Before;
+  After.Blocks[0].insert(After.Blocks[0].begin() + 1000, 40,
+                         {"mov", "r3, 999999"});
+  const Program P = build({Before}, 0x400000);
+  const Program S = build({After}, 0x500000);
+  const auto R = compare(P, S, {});
+  ASSERT_EQ(R.Matches.size(), 1u);
+  EXPECT_EQ(R.Matches[0].EqualInstructions, 6001u);
+  std::string Error;
+  auto Read = readComparison(saved(R, P, S), Error);
+  ASSERT_TRUE(bool(Read)) << Error;
+  EXPECT_EQ(Read->MatcherVersion, 3u);
+  ComparisonResult Restored;
+  ASSERT_FALSE(bindComparison(*Read, P, S, Restored));
+  EXPECT_EQ(savedWithoutTimings(R, P, S), savedWithoutTimings(Restored, P, S));
+  // An older version with still-valid measurements may rebind with a warning.
+  Read->MatcherVersion = 2;
+  ASSERT_FALSE(bindComparison(*Read, P, S, Restored));
+  EXPECT_FALSE(Restored.Warnings.empty());
+  const auto Previous = savedWithoutTimings(Restored, P, S);
+  // Historical heuristics or tampering cannot authorize stale measurements.
+  --Read->Matches[0].Match.EqualInstructions;
+  BindFailure Kind;
+  const auto Failure = bindComparison(*Read, P, S, Restored, &Kind);
+  ASSERT_TRUE(Failure);
+  EXPECT_EQ(Kind, BindFailure::InvalidEvidence);
+  EXPECT_EQ(savedWithoutTimings(Restored, P, S), Previous);
+}
+
 TEST(BinaryDiff, SameSizeConstantEditStaysVisible) {
   std::vector<Fn> Old = sample(), New = sample();
   for (Fn &F : New)
@@ -518,6 +728,49 @@ TEST(BinaryDiff, ChangedBodiesPairBySimilarityWhenStripped) {
   const FunctionMatch &M = matchOf(R, P, "sub_leaf5");
   EXPECT_TRUE(M.Changes & ChangeInstructions) << changeLetters(M.Changes);
   EXPECT_LT(M.Similarity, 1.0);
+}
+
+TEST(BinaryDiff, CandidateAllowanceCanReachPastFourQuickScoreDistractors) {
+  const auto Make = [](std::string Name, unsigned Base, bool Mixed) {
+    Fn F;
+    F.Name = std::move(Name);
+    F.Blocks.resize(1);
+    for (unsigned I = 0; I < 6; ++I)
+      F.Blocks[0].push_back(
+          {"mov", std::string(Mixed && I % 3 == 1 ? "v0, " : "r0, ") +
+                      std::to_string(Base + I)});
+    F.Blocks[0].push_back({"ret", "", InstructionFlow::Return});
+    return F;
+  };
+  // Changing two operand families breaks all three-instruction sketch runs,
+  // while four original instructions and the return remain exact. Decoys
+  // retain the other side's skeleton sequence but change every constant.
+  std::vector<Fn> Left{Make("target", 100000, false)};
+  std::vector<Fn> Right{Make("target", 100000, true)};
+  for (unsigned I = 0; I < 5; ++I) {
+    Left.push_back(Make("left" + std::to_string(I), 300000 + 100 * I, true));
+    Right.push_back(Make("right" + std::to_string(I), 400000 + 100 * I, false));
+  }
+  const auto P = build(Left, 0x400000);
+  const auto S = build(Right, 0x500000);
+  ComparisonSettings Settings;
+  Settings.UseNames = false;
+  Settings.MaxCandidates = 4;
+  EXPECT_EQ(compare(P, S, Settings).secondaryOf(0), NoIndex);
+  for (const unsigned Allowance : {6u, 16u, 256u}) {
+    SCOPED_TRACE(Allowance);
+    Settings.MaxCandidates = Allowance;
+    const auto R = compare(P, S, Settings);
+    ASSERT_EQ(R.secondaryOf(0), 0u);
+    const auto *M = R.matchOfPrimary(0);
+    ASSERT_TRUE(M);
+    EXPECT_EQ(M->Step, FunctionStep::Similarity);
+    EXPECT_EQ(M->EqualInstructions, 5u);
+    EXPECT_TRUE(M->Changes & ChangeOperands);
+    // Indistinguishable distractors remain available for analyst review.
+    EXPECT_EQ(R.Matches.size(), 1u);
+    EXPECT_FALSE(R.Ambiguities.empty());
+  }
 }
 
 TEST(BinaryDiff, SimilarStructureWithOtherInstructionsIsNotIdentical) {

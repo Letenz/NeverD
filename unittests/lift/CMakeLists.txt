@@ -108,6 +108,7 @@ add_neverd_unittest(NeverDFPParameterMaskTests
   core/FPParameterMaskTests.cpp
   core/MedCallingConvTests.cpp
   core/MedCallingConvX86StackTests.cpp
+  core/MedFPStackHomeTests.cpp
   LINK_COMPONENTS Pipeline BackendLLVM BackendC)
 
 add_neverd_unittest(NeverDHighSwiftEmitterTests
@@ -470,6 +471,7 @@ add_neverd_unittest(NeverDLiftTests
   format/PointerRelocationBatchTests.cpp
   core/MedCallingConvTests.cpp
   core/MedCallingConvX86StackTests.cpp
+  core/MedFPStackHomeTests.cpp
   core/FPParameterMaskTests.cpp
   core/MedDceImplicitSpTests.cpp
   core/MedCallLeftoversTests.cpp
@@ -2396,6 +2398,10 @@ add_neverd_unittest(NeverDMedStackAlignmentTests
 add_neverd_unittest(NeverDMedPrologueSavesTests
   core/MedPrologueSavesTests.cpp
   LINK_COMPONENTS IRMed
+)
+add_neverd_unittest(NeverDAArch64ReturnProtectionTests
+  aarch64/AArch64ReturnProtectionTests.cpp
+  LINK_COMPONENTS BackendC IRHigh IRMed IRLow Decode Lift Loader
 )
 add_neverd_unittest(NeverDCallRegisterUnreadTests
   core/CallRegisterUnreadTests.cpp

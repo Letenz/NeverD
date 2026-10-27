@@ -126,7 +126,7 @@ Changed comparison revisions invalidate the picker until it is reopened.
 | `profile` | `native-same-isa-v1` (default), `native-x86-v1` or `native-aarch64-v1` |
 | `discover`, `use_names`, `approximate` | Enable discovery, stated names, approximate candidates |
 | `min_similarity`, `min_context_similarity`, `ambiguity_margin` | Heuristic thresholds in `[0,1]` |
-| `max_candidates` | Bounded candidates per unmatched function |
+| `max_candidates` | Best quick-scored candidates per unmatched function proposed for exact measurement (default 16, maximum 256); proposals from both sides are combined |
 | `max_instructions`, `max_functions`, `max_memory_bytes` | Snapshot extraction allowances |
 | `timeout_ms` | Comparison deadline; zero disables it |
 | `primary`, `secondary` | Optional `{begin,end,function}` filters |
@@ -1017,6 +1017,30 @@ with incomplete decoding is never reported as normalized unchanged. Ordinary
 scalar immediates remain meaningful even when their value happens to equal an
 image address. Only decoded control-flow operands, exact relocation fields and
 known address references receive address normalization.
+
+Instruction alignment uses the same weighted objective for small and large
+paired basic blocks: equal normalized instructions score 4, a shared skeleton
+with changed constants scores 3, and a shared mnemonic scores 2. Large blocks
+use exact divide-and-conquer alignment with linear score frontiers and bounded
+dense tables; crossing the table threshold no longer switches to a greedy
+approximation. Equal ends and provably optimal constant-change diagonals avoid
+quadratic work for those cases. General changed interiors can still require
+quadratic time; cancellation and query deadlines remain available. An optimal
+alignment is structural correspondence, and repeated instructions may admit
+several equally scoring alignments.
+
+The approximate function matcher honors the requested `max_candidates` allowance
+when selecting candidates for exact measurement; it no longer silently clamps
+that allowance to four. Raising it can recover candidates whose sketch score is
+lower than structurally misleading alternatives. Candidate generation remains
+bounded, and a larger allowance does not guarantee that every true pair enters
+the candidate set. The ambiguity margin and one-to-one pairing rules still apply.
+
+Matcher version 3 identifies these matching and measurement changes. Fresh binding recomputes
+saved measurements: older reports with agreeing measurements can reopen with a
+version warning, while obsolete scores or tallies are refused without replacing
+the current result. Use the offline report workflow to inspect preserved old
+evidence, or compare the original binaries again to obtain current alignment.
 
 Duplicate names and indistinguishable bodies remain explicit ambiguities.
 Address-generated labels do not anchor matches, even after native function

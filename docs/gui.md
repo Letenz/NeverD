@@ -486,6 +486,13 @@ and text search expand every fold hiding the target. Refreshing the same functio
 preserves block folds while its brace structure is unchanged. Braces in comments
 and quoted strings do not define folding ranges; incomplete source stays expanded.
 
+New source windows also collapse the generated `frame_*` layout and complete
+exception metadata with no fallback regions. Their headers remain visible;
+the same arrows, keyboard controls, search and navigation reveal every hidden
+line. Exception warnings and fallback details stay expanded. Refresh preserves
+the user's expanded or collapsed choice. These folds only change presentation:
+copying and exporting still include the exact layout and exception records.
+
 Strings are found by default in ASCII, UTF-8, UTF-16LE and UTF-32LE (the
 `wchar_t` of Linux and macOS), and C strings that are not UTF-8 in the common
 code pages: windows-1252, GBK, Big5, Shift-JIS and EUC-KR, all in one pass.

@@ -469,6 +469,11 @@ Big-endian Unicode can be annotated even when a host C literal cannot replace
 its bytes. LLVM C's source-variable inventory separately distinguishes scalar
 edit types from aggregate allocation extents; an array or record is never
 registered as an integer whose width is the whole allocation.
+Literal substitution uses the complete bounded string read window; the
+64-character presentation cap applies only to comments. Known C string
+parameters select byte strings before a generic wide-string probe, so a
+one-character string beside another literal remains readable. Relocated,
+writable or oversized storage keeps its original address expression.
 
 This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
@@ -502,6 +507,19 @@ authenticated transfer encodings, keys and emission contracts. The fast and
 Capstone classifiers, lifter, intrinsic metadata and emitters consume those
 rows. Checked emulation reuses only the unchanged disabled-key HINT subset.
 `AArch64PAuthC.def` owns the C syntax shared by both projections;
+`AArch64ReturnProtection` proves the source-only return-signing recipe: an
+entry LR signed with entry SP, matching authentication at every normal return,
+and, when saved, a private frame slot with no other consumers. HighIR records
+the key and leaf policy and omits only the proved recipe operations. HighC/C++
+express it with `target("branch-protection=pac-ret[+leaf][+b-key]")`; HighIR
+dumps and the Rust/Go views retain the policy as metadata. A different output
+architecture cannot silently drop it. Native Swift emission rejects this
+attribute until Swift has a corresponding source contract. Ordinary pointer
+authentication, observable signed values, mismatched modifiers/keys and
+incomplete recipes remain explicit. This includes Clang's arm64e tail-call
+sequence that inspects the authenticated LR and traps on failure before
+authenticating the callback pointer. LowIR, MedIR and the LLVM execution
+projection retain the original authentication operations.
 `MachOArm64e.def` owns chained format strides, pointer fields and diagnostics.
 `MachOArm64eFixups` owns the pointer-word decoder and signing-recipe publication
 shared by modern chained fixups and the original arm64e threaded bind format.
@@ -1129,9 +1147,17 @@ including equivalent formatting, merge-conflict and foreign-edit checks. A row
 can reuse admission only when both its values and JSON types match the validated
 row. Non-finite numbers, binary values and invalid UTF-8 are refused before
 publication so the snapshot and its serialized representation cannot diverge.
+After changed rows pass admission, an unchanged canonical address sequence
+retains the snapshot's ordering, uniqueness and ordered-table positions. A
+changed address or row count takes the full ordering and duplicate checks.
 
 History publication encodes the target state once and composes the history and
 recovery journal from serializer-produced JSON and retained committed text.
+It retains byte ranges for encoded tables and formats those ranges for sidecar
+files without traversing their objects again. The formatter consumes only
+serializer-produced compact JSON and preserves scalar spelling, string escapes
+and the existing file layout. Ordered tables still omit synthetic addresses;
+ordinary typed sidecar writes retain their direct serializer.
 Loading a snapshot retains validated history-file bytes and defers journal
 encoding until a save needs it. Before embedding a loaded document, publication
 parses and serializes it, so a top-level BOM cannot enter nested JSON. Merely
@@ -1686,6 +1712,14 @@ CFG views. Its stop state is separate from native body coverage; cancelled or
 timed-out deltas do not acquire unchanged rows or block annotations. The worker
 owns the advertised cooperative-operation list consumed by the GUI. Explicit
 refresh retries a stopped query; paging itself does not restart it.
+`lib/diff/FunctionDelta` owns the weighted native instruction alignment used by
+matching, measurements, pages and saved-evidence verification. Large ranges use
+Hirschberg decomposition of the same 4/3/2 recurrence as bounded dense leaves.
+Maximum-weight common ends and a multiset upper-bound check admit only optimal
+fast paths; no adapter supplies an alternate greedy alignment. Frontier storage
+is released before recursion, and shared cancellation/deadline checks discard
+partial delta rows. Matcher revisions identify changed measurements without
+weakening saved-evidence verification.
 `ComparisonSource` adapts the ordinary selected-function source page API to the
 comparison's exclusively owned input sessions. It reuses their loader, analysis
 settings, dialect admission, emitter cache and canonical instruction provenance.
@@ -2541,7 +2575,11 @@ data among the code, an index table, not a code address
 (`instructionRelocations`, `addFixedImageDisplacement`). The pointer-wide
 jump table beside it stays a code address.
 The jump-table resolver shares complete guest-address COPY/ZEXT tracing across
-ordinary, unscaled and two-level loads. Linked PE32 compact switches may name
+ordinary, unscaled and two-level loads. Resolver lane projection retains an
+existing exact address when a wider internal container supplies the complete
+guest pointer with no changed bits. Partial lanes, non-fitting values and
+scalar/fragment provenance do not receive address authority. Linked PE32
+compact switches may name
 both bases by absolute displacements. Their immutable index bytes still need
 a bounded selector, a complete relocated target run and disjoint decoded code.
 LLVM may omit the exact authenticated index read only when all its value uses
@@ -3843,8 +3881,14 @@ copies of the exception are followed through the frame (`ExceptionTrack`): to
 a slot it is spilled to, through a variable holding that slot's address, and,
 in a frame too large for an immediate offset, through a copy of the base
 clang keeps in a slot; a write that may change what such an address reads
-ends the copy. A pad that only
-cleans up, which every call site reaching it enters with no action, is such a
+ends the copy. A conditional cleanup that resumes the same exception is
+proved from the exception state at that branch's entry and ends with `throw;`.
+Its destructors and their order remain; an unrelated resume value or an
+observable use of the unwinder's state keeps the original pad explicit.
+A complete duplicated cleanup continuation can fall through to its shared
+tail; matching only its last destructor would run intervening cleanups twice.
+A pad that only cleans up, which every call site reaching it enters with no
+action, is such a
 scope around the calls of ordinary flow that its call sites cover. A call
 keeps the address of its call instruction (`HighExpr::CallSiteAddr`) when a
 tail is copied over a jump or into both arms of a branch, so the scopes hold
@@ -6519,6 +6563,14 @@ register (`add r0, pc; ldr r0, [r0]; blx r0`), and the C++ virtual-call rule
 that passes a two-load target's object finds none in a register that holds the
 target. HighIR's stack scan takes no prologue save for an indirect call either
 (`isIncomingRegisterSave`, shared with recovery).
+
+Dedicated indirect-result registers are separate from ordinary parameter
+registers. MedIR dead-code elimination keeps their reaching definitions at
+calls and tails until ABI recovery binds the hidden result argument. This
+includes AArch64 X8 setup in a predecessor block. Direct calls use the callee's
+result contract; an unknown indirect call requires frame-derived result
+storage. The same reaching value decides both argument recovery and whether
+Darwin's indirect-variadic heuristic applies.
 
 A caller-saved register holds, after a call, whatever that call left in it.
 Without a proved exit value, that residue alone supplies no evidence of an
