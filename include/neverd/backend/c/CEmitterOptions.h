@@ -88,6 +88,8 @@ struct CEmitterOptions {
   /// LLVMC clients with a complete source contract can retain the module's
   /// function types and request prototypes for definitions as well as imports.
   /// Disables inferred-void and debug-signature projections in that route.
+  /// A settled no-value contract still discards the machine return register;
+  /// a retained non-void signature uses a zero-initialized carrier instead.
   bool PreserveLLVMFunctionTypes = false;
   /// Spell ordinary scalar byte accesses through pointers, as
   /// ScalarPointers says. Ordered and unusual-width accesses retain their

@@ -6,6 +6,7 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/pass/LLVMC/LLVMCPasses.h"
@@ -145,6 +146,62 @@ TEST(LLVMCVoidAnalysis, ReturnsNoValueOnlyWhereMedIRSettledIt) {
   EXPECT_FALSE(neverd::analyzeVoidReturn(State, *Unmarked));
   neverd::llvm_value_provenance::markReturnsNoValue(*Discarded);
   EXPECT_TRUE(neverd::analyzeVoidReturn(State, *Discarded));
+}
+
+TEST(LLVMCVoidAnalysis, PreservedSignaturesKeepNoValueContractsAndEffects) {
+  for (bool PreserveTypes : {false, true}) {
+    SCOPED_TRACE(PreserveTypes);
+    llvm::LLVMContext Context;
+    llvm::Module Module("unused-return-carrier", Context);
+    auto *I64 = llvm::Type::getInt64Ty(Context);
+    auto *Pointer = llvm::PointerType::getUnqual(Context);
+    auto *Type = llvm::FunctionType::get(I64, {Pointer}, false);
+    auto Effect = Module.getOrInsertFunction("produce_effect", Type);
+    auto *Function = llvm::Function::Create(
+        Type, llvm::GlobalValue::ExternalLinkage, "no_value", Module);
+    llvm::IRBuilder<> Builder(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Call = Builder.CreateCall(Effect, {Function->getArg(0)});
+    auto *Unknown = neverd::llvm_source_unknown::create(Builder, I64);
+    Builder.CreateRet(Builder.CreateAdd(Call, Unknown));
+    neverd::llvm_value_provenance::markReturnsNoValue(*Function);
+
+    neverd::CEmitterOptions Options;
+    Options.PreserveLLVMFunctionTypes = PreserveTypes;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+    EXPECT_EQ(Source.find("unknown machine state"), std::string::npos)
+        << Source;
+    EXPECT_NE(
+        Source.find(PreserveTypes ? "uint64_t no_value(" : "void no_value("),
+        std::string::npos)
+        << Source;
+    for (const char *Level : {"-O0", "-O2"})
+      compileAndRun(Source + R"(
+uint64_t produce_effect(void *address) {
+  uint64_t *count = (uint64_t *)address;
+  return ++*count;
+}
+int main(void) {
+  uint64_t count = 0;
+  no_value(&count);
+  no_value(&count);
+  return count != 2;
+}
+)",
+                    {Level});
+
+    // Removing the settled contract makes the same return an observation.
+    // A preserved signature must not turn arbitrary unknown values into zero.
+    Function->setMetadata(
+        neverd::llvm_value_provenance::ReturnsNoValueAttachment, nullptr);
+    std::string Demanded;
+    llvm::raw_string_ostream DemandedOut(Demanded);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, DemandedOut, Options));
+    EXPECT_NE(Demanded.find("unknown machine state"), std::string::npos)
+        << Demanded;
+  }
 }
 
 TEST(LLVMCVoidAnalysis, FreezeMaterializesOneDefinedChoiceForEveryUseCount) {
