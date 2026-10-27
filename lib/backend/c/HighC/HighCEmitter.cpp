@@ -1708,6 +1708,7 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   bool NeedsBlockObject = false;
   bool NeedsBool = false;
   bool HasFloatingArithmetic = false;
+  bool NeedsAArch64RawCall = false;
   const auto CheckType = [&](const TypeRef &Type) {
     TypeRef Current = Type;
     while (Current && Current->Kind == NdTypeKind::Ptr)
@@ -1727,6 +1728,10 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
         Expr->Op == NdOp::FLOAT_ADD || Expr->Op == NdOp::FLOAT_SUB ||
         Expr->Op == NdOp::FLOAT_MULT || Expr->Op == NdOp::FLOAT_DIV;
     if (Expr->Kind == ExprKind::Call) {
+      NeedsAArch64RawCall |=
+          Expr->IsIndirectCall &&
+          (!Expr->IndirectTarget ||
+           Expr->IndirectTarget->IntrinsicId != Intrinsic::A64_AuthBranch);
       CheckType(knownCallReturnType(*Expr));
       if (Expr->SourceCallHint) {
         CheckType(Expr->SourceCallHint->Signature.ReturnType);
@@ -1761,6 +1766,8 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   };
   if (HasFloatingArithmetic)
     c_float::writeContractionPolicy(OS);
+  if (Opts.TheArch == Arch::AArch64 && NeedsAArch64RawCall)
+    OS << kAArch64PAuthCRawCallHeader;
   if (!Opts.EmitIncludes) {
     WriteInt128Spelling();
     if (NeedsBlockObject)

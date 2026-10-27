@@ -541,6 +541,28 @@ legacy PC signing and absolute state CFI, including DWARF fallback binding.
 The tests execute no fixture code. Missing Apple arm64e tools are explicit
 skips; after the baseline toolchain probe passes, fixture failures fail the test.
 
+`NeverDAArch64ReturnProtectionTests` also verifies compiler-owned LLVM frames
+and LLVMC policy retention. ELF A/B and arm64e Mach-O B objects must contain
+the expected PAC/return words and CFI signing transitions at their actual
+instruction offsets, with the appropriate explicit or implicit key. Malformed
+or unsupported source policies reject before output. These are object/metadata
+checks, not native Darwin signed exception unwinding.
+
+`NeverDAArch64AuthenticatedCallTests` checks private call pairing, both keys,
+zero/dynamic discriminators, one/ten integer arguments, old LR operands,
+observable/memory/dead-call counterexamples and malformed LLVM bundles.
+Recompiled HighC/LLVMC at O0/O2 must preserve the complete key/discriminator
+composition; a legitimate intermediate `ptrauth.resign` is checked rather
+than mistaken for an arbitrary IA/0 call. Both sources also compile through
+the configured LLVM backend to ELF. Set
+`NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR` to retain the nine sample groups and all
+five object routes. Compiler IR identifiers are normalized for reproducible
+exports. The compiler checks do not prove that the host enables instruction
+authentication. The controlled model evidence distinguishes correct integer
+calling/rejection behavior from the C O0 diagnostic-syndrome differences;
+neither establishes the complete Apple image, FP/aggregate/variadic call or
+native signed-unwind ABI.
+
 `NeverDLanguageEHTests` checks the unified signing query's image/function
 provenance, exact PCs, source scopes and bounded CIE lookup.
 `NeverDUnwindFrameCAPITests` loads independent Mach-O fixtures through the

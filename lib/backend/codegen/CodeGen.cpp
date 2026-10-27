@@ -103,6 +103,9 @@ static std::set<std::string> scanIntrinsicPatterns(llvm::Module &Mod) {
   for (auto &Fn : Mod)
     for (auto &BB : Fn)
       for (auto &Inst : BB) {
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst))
+          if (Call->getOperandBundle(kAArch64PAuthCallBundle))
+            Seen.insert(kAArch64PAuthLLVMIntrinsicPattern);
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
           if (auto *Callee = CI->getCalledFunction())
             Seen.insert(Callee->getName().str());
