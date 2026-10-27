@@ -4240,7 +4240,20 @@ const HighExpr *HighCWriter::floatBitsSource(const HighExpr &Bits,
 std::optional<std::string>
 HighCWriter::floatCallResultText(const HighExpr &Bits, const TypeRef &Float) {
   const HighExpr *Source = floatBitsSource(Bits, Float);
-  if (!Source || Source->Kind != ExprKind::Call)
+  if (!Source)
+    return std::nullopt;
+  // A stored call result may already be declared as float even though the
+  // IR still carries its register bits. Undoing those views reads the same
+  // local directly, without a float -> integer bits -> float round trip.
+  if (Source->Kind == ExprKind::Var || Source->Kind == ExprKind::Phi) {
+    const std::string Name = copyForwardName(varName(Source->Var));
+    if (const auto Declared = DeclaredCTypes.find(Name);
+        Declared != DeclaredCTypes.end() &&
+        equalSourceTypes(Declared->second, Float) &&
+        !DeferredUnknownFlags.count(Name))
+      return Name;
+  }
+  if (Source->Kind != ExprKind::Call)
     return std::nullopt;
   const TypeRef Return = knownCallReturnType(*Source);
   if (!Return || !equalSourceTypes(Return, Float))

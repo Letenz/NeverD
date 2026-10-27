@@ -196,6 +196,48 @@ TEST(ReturnContracts, TheRegisterAsTheFunctionEnteredItIsNoValue) {
       std::vector<bool>{true});
 }
 
+TEST(ReturnContracts, DefinitionsAndCallsUseTheSameRuntimePrototype) {
+  for (const char *Name : {"__cxa_end_catch", "_Unwind_Resume", "free"}) {
+    MedFunc Runtime = function(
+        CalleeEntry,
+        {block({operation(NdOp::COPY, rax(1), {MedVar::makeConst(7, 8)}),
+                returning(rax(1))})});
+    Runtime.Name = Name;
+    EXPECT_EQ(settle({Runtime}), std::vector<bool>{true}) << Name;
+  }
+  MedFunc Scalar = function(CalleeEntry, {block({seed(), returning(rax(0))})});
+  Scalar.Name = "malloc";
+  EXPECT_EQ(settle({Scalar}), std::vector<bool>{false});
+}
+
+TEST(ReturnContracts, ItaniumConstructionNamesRespectTheTargetABI) {
+  for (const char *Name :
+       {"_ZN1AC1Ev", "_ZN1AC2Ev", "_ZN1AD0Ev", "_ZN1AD1Ev", "_ZN1AD2Ev",
+        "_ZN1A2D1Ev", "_ZN1AD1Evjunk", "_Znot_mangled"})
+    for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::ARM})
+      for (BinaryFormat Format : {BinaryFormat::ELF, BinaryFormat::MachO}) {
+        BinaryImage Image;
+        Image.Arch = Architecture;
+        Image.Format = Format;
+        PipelineResult Result;
+        MedFunc Function = function(
+            CalleeEntry,
+            {block({operation(NdOp::COPY, rax(1), {MedVar::makeConst(7, 8)}),
+                    returning(rax(1))})});
+        Function.Name = Name;
+        Result.MedFuncs.push_back(std::move(Function));
+        // The declaration, rather than the chosen leftover register value,
+        // settles the ELF constructor/destructor contract.
+        settleReturnContracts(Image, Result, nullptr);
+        const bool Special = llvm::StringRef(Name).size() == 9;
+        EXPECT_EQ(Result.MedFuncs.front().ReturnsNoValue,
+                  Special && Format == BinaryFormat::ELF &&
+                      Architecture != Arch::ARM)
+            << Name << " " << static_cast<unsigned>(Architecture) << " "
+            << static_cast<unsigned>(Format);
+      }
+}
+
 TEST(ReturnContracts, TheResultOfACalleeThatReturnsNoneIsNoValue) {
   // tail_void: `jmp sink`, where sink hands back RAX as it entered.
   const MedFunc Sink =

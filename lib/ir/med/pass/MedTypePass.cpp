@@ -677,6 +677,76 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
       if (Phi.Output.Size > 0)
         PhiDefs[{Phi.Output.Id, Phi.Output.SSAVer}] = &Phi;
 
+  // A declared floating call can reach a shared return through register
+  // views and several PHIs. Index those transparent uses once: looking only
+  // in the return block loses strtof/strtod results selected against zero.
+  using ValueKey = std::pair<int, int>;
+  std::map<ValueKey, uint16_t> ForwardedFloat;
+  std::map<ValueKey, std::vector<std::pair<ValueKey, uint16_t>>> FloatUsers;
+  std::vector<ValueKey> FloatWork;
+  auto FloatUse = [&](const MedVar &Output, const MedVar &Input) {
+    if (!Output.Size || Input.isConst() || Input.Kind == MedVar::Unspecified)
+      return;
+    FloatUsers[{Input.Id, Input.SSAVer}].push_back(
+        {{Output.Id, Output.SSAVer}, std::min(Output.Size, Input.Size)});
+  };
+  for (const auto &Block : Func.Blocks) {
+    for (const auto &Phi : Block.Phis)
+      for (const auto &[Pred, Input] : Phi.Args)
+        FloatUse(Phi.Output, Input);
+    for (const auto &Op : Block.Ops) {
+      uint16_t Width = 0;
+      if (isFloatProducer(Op.Opcode))
+        Width = Op.Output.Size;
+      if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+          Op.Output.Kind == MedVar::Reg &&
+          Op.Output.RegOff == TRI.FPReturnReg) {
+        Width = Op.CalleeFloatReturnBytes;
+        if (!Width && CalleeFloatReturns && Op.NumInputs &&
+            Op.Inputs[0].isConst())
+          if (const auto Known =
+                  CalleeFloatReturns->find(Op.Inputs[0].ConstVal);
+              Known != CalleeFloatReturns->end())
+            Width = Known->second;
+      }
+      if (Width && Width <= Op.Output.Size) {
+        const ValueKey Key{Op.Output.Id, Op.Output.SSAVer};
+        ForwardedFloat[Key] = Width;
+        FloatWork.push_back(Key);
+      }
+      if ((Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT) &&
+          Op.NumInputs == 1)
+        FloatUse(Op.Output, Op.Inputs[0]);
+      else if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
+               Op.Inputs[1].isConst() && Op.Inputs[1].ConstVal == 0)
+        FloatUse(Op.Output, Op.Inputs[0]);
+      else if (Op.Opcode == NdOp::CONCAT && Op.NumInputs == 2)
+        FloatUse(Op.Output, Op.Inputs[1]);
+      else if (Op.Opcode == NdOp::SELECT && Op.NumInputs == 3) {
+        FloatUse(Op.Output, Op.Inputs[1]);
+        FloatUse(Op.Output, Op.Inputs[2]);
+      }
+    }
+  }
+  for (size_t I = 0; I != FloatWork.size(); ++I) {
+    const ValueKey Key = FloatWork[I];
+    const uint16_t Width = ForwardedFloat.at(Key);
+    if (const auto Readers = FloatUsers.find(Key); Readers != FloatUsers.end())
+      for (const auto &[User, Bytes] : Readers->second)
+        if (Width <= Bytes && ForwardedFloat[User] < Width) {
+          ForwardedFloat[User] = Width;
+          FloatWork.push_back(User);
+        }
+  }
+  auto FloatWidth = [&](const MedVar &Value) {
+    uint16_t Width = fpReturnElemSize(Defs, Value, 0);
+    if (!Value.isConst())
+      if (const auto Known = ForwardedFloat.find({Value.Id, Value.SSAVer});
+          Known != ForwardedFloat.end() && Known->second <= Value.Size)
+        Width = std::max(Width, Known->second);
+    return Width;
+  };
+
   // CFG construction owns the logical x87 top at every return. Its carrier
   // remains eighty bits, but a declared float/double call result or an IEEE
   // value extended into it needs only that source precision. Every return
@@ -882,7 +952,7 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
                 &*Rit2; // closest write, used by the constant fallback
           if (!FirstFloat) {
             uint16_t E = IsX87Return ? x87ReturnElemSize(Defs, Rit2->Output, 0)
-                                     : fpReturnElemSize(Defs, Rit2->Output, 0);
+                                     : FloatWidth(Rit2->Output);
             if (!E && IsFPRegReturn)
               E = scalarFPLoadElemSize(Defs, Rit2->Output, 0);
             if (!E && IsFPRegReturn &&
@@ -946,7 +1016,7 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
                             }))
               continue;
             for (const auto &A : Phi.Args) {
-              uint16_t E = fpReturnElemSize(Defs, A.second, 0);
+              uint16_t E = FloatWidth(A.second);
               if (!E)
                 E = scalarFPLoadElemSize(Defs, A.second, 0);
               if (E) {

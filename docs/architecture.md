@@ -4080,8 +4080,20 @@ keeps the address of its call instruction (`HighExpr::CallSiteAddr`) when a
 tail is copied over a jump or into both arms of a branch, so the scopes hold
 exactly the covered calls and no other; a call that stands for the equal calls
 of two branches keeps none (`withMergedCallSites`). A call of no single
-instruction, a jump into a scope, or a covered call in a handler's code keeps
-the pad in place. In C, every landing pad of the
+instruction or a covered call in a handler's code keeps the pad in place.
+A jump between protected calls splits the cleanup scope; a compound statement
+can split into its children only when its own condition makes no protected
+call. A jump that still enters a scope keeps the original pad.
+
+Machine exception edges retain their complete LSDA instruction ranges,
+including epilogues and non-call faults. The C++ projection separately snapshots
+full-width stack and callee-saved register values at the covered calls. Indexed
+reaching definitions and the shared affine frame proof can recover a cleanup's
+local address even when the machine range also includes restoration of the
+caller's frame pointer. These facts replace only PHI values, only after every
+landing pad has a complete structured source body. Arbitrary saved register
+values and partially converted exception regions retain their unknowns.
+In C, every landing pad of the
 call-site table keeps its label, so a pad that only runs cleanups is not read
 as dead code after a return. A pad stores the exception object and selector
 the unwinder hands it: HighC prints a store of an unread call result as the
@@ -6878,6 +6890,11 @@ may still be a field. Only observed candidates are read under the existing
 callee-count and operation bounds; support bodies are not emitted. Conflicting
 shapes and explicit source or user declarations do not gain inferred fields.
 Integer fields occupy complete ABI words even when a caller reads a narrow view.
+Reading only X1 can nominate an X0/X1 pair, including across a split call block;
+it still needs the same callee proof. Return-field checks follow every ordinary
+predecessor through shared epilogues and loops. A single indexed SSA dependency
+closure rejects values derived from unspecified inputs, missing definitions or
+unbound call clobbers, rather than accepting an arithmetic copy of unknown bits.
 The image and current call-summary reads own cached conversions, so changing the
 selection or warming the cache cannot supply a missing second result. HighC
 externs retain the complete recovered call-result width, and source LLVM cannot
@@ -6920,6 +6937,21 @@ registers, widths and classes; an argument is a pointer only if every format
 says so. Missing predecessors, partial writes, clobbering calls and exceptional
 entries discard incoming facts. Bodies with additional independent roots keep
 block-local format analysis, including when read from the callee cache.
+On AArch64 ELF, the same format contract places promoted scalar arguments in
+the independent integer and floating banks through `placeSourceParameters`.
+Writable or unsupported formats supply no contract. Darwin and Windows retain
+their distinct variadic policies. Register-only argument searches cross checked
+indexed memory operations without relaxing stack-slot alias barriers, and DCE
+keeps their reaching definitions through multiple predecessor blocks.
+
+Scalar floating return inference follows declared call results through complete
+low-byte views and PHI joins. A final integer result still takes precedence;
+merely computing a floating temporary does not change the return bank. An
+AAPCS64 result object passed through X8 is an explicit output buffer in the
+source view and does not fabricate a returned X0. The shared source return
+contract also applies known runtime prototypes to definitions, and recognizes
+fully parsed Itanium construction/destruction names as void on generic x86 ELF
+and AArch64 ELF. ARM32 and Apple ARM64 keep their different machine contracts.
 
 Initial default x64 construction can also reconstruct a complete `LowFunc`
 from this inventory when the full metadata payload was retained. Machine

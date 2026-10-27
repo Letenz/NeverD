@@ -756,7 +756,7 @@ TEST(ItaniumHandlerBodies, ABranchWhoseArmsCallThroughThePadIsOneScope) {
   EXPECT_EQ(scopeAfter(Source, S.End).Try, std::string::npos) << Source;
 }
 
-TEST(ItaniumHandlerBodies, AJumpIntoACleanupScopeKeepsThePad) {
+TEST(ItaniumHandlerBodies, AJumpBetweenProtectedCallsSplitsTheCleanupScope) {
   // if (v4) goto L_later;  v1 = risky();  L_later: v2 = risky2();
   // C++ jumps into no try block.
   HighStmt Jump;
@@ -771,9 +771,16 @@ TEST(ItaniumHandlerBodies, AJumpIntoACleanupScopeKeepsThePad) {
   const HighFunc Func = cleanupFunction(
       cleanupSites({{kCall, kPad}, {kLater, kPad}}), std::move(Body));
   const std::string Source = body(emit(Func));
-  EXPECT_EQ(Source.find("} catch (...) {"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("L_401040: /* landing pad"), std::string::npos)
-      << Source;
+  const Scope First = scopeAfter(Source);
+  ASSERT_NE(First.End, std::string::npos) << Source;
+  const Scope Second = scopeAfter(Source, First.End);
+  ASSERT_NE(Second.End, std::string::npos) << Source;
+  EXPECT_LT(Source.find("risky()"), First.Catch) << Source;
+  EXPECT_GT(Source.find("risky2()"), Second.Try) << Source;
+  EXPECT_LT(Source.find("risky2()"), Second.Catch) << Source;
+  EXPECT_GT(Source.find("L_401020:"), First.End) << Source;
+  EXPECT_EQ(Source.find("_Unwind_Resume"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("landing pad"), std::string::npos) << Source;
 }
 
 TEST(ItaniumHandlerBodies, ACoveredCallOnlyAJumpReachesKeepsThePad) {

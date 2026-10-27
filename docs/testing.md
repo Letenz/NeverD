@@ -24,6 +24,23 @@ CALL cannot supply a real callee's stack effects to the pre-transfer proof.
 
 `NeverDSourceEntryBindingTests` runs source ABI, typed call, runtime entry and
 incoming stack binding regressions without the full mobile fixture inventory.
+It also includes `SourceParameterPlacementTests`: AAPCS64 indirect objects use
+X8 without shifting ordinary parameters, while small HFAs and unknown record
+layouts keep their own rules. Return-field fixtures cover shared epilogues,
+loops, call clobbers, partial writes and transitively unspecified inputs.
+
+`NeverDAAPCS64CallContractTests` executes second-word-only integer-pair calls,
+register arguments across indexed stores and multiple predecessor blocks,
+immutable printf formats mixing integer and FP arguments, explicit X8 result
+buffers, and scalar FP call results through views and shared returns. Negative
+controls retain unsupported format/ABI combinations and genuine integer returns.
+Its C++ cleanup fixtures execute both normal and throwing paths when the LSDA
+range includes frame restoration, including a saved register carrying a local
+address; arbitrary saved values remain unknown. `NeverDItaniumHandlerTests`
+checks scope splitting around incoming jumps. `NeverDReturnContractTests`
+checks definition/call prototype agreement and target-specific Itanium
+constructor/destructor contracts.
+
 Its store tests distinguish a logical stack parameter from a call or intrinsic
 result with the same numeric id. `NeverDMedStackAlignmentTests` checks balanced
 push groups from every loop definition in both query orders; drifting loops
