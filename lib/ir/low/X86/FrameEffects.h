@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Shares checked floating-state effects between PE32 and Win64 frame proofs.
+/// Shares checked flag and floating-state effects across x86 frame proofs.
 
 #ifndef NEVERD_IR_LOW_X86_FRAMEEFFECTS_H
 #define NEVERD_IR_LOW_X86_FRAMEEFFECTS_H
@@ -16,7 +16,7 @@
 namespace neverd {
 
 /// These operations preserve integer-frame memory on their ordinary path.
-/// Their floating-point effects, memory reads and possible traps remain in IR.
+/// Their flag/FP effects, memory reads and possible traps remain in IR.
 inline bool isX86FramePreservingIntrinsic(const LowOp &Op, Arch Architecture) {
   if ((Architecture != Arch::X86 && Architecture != Arch::X64) ||
       Op.Opcode != NdOp::INTRINSIC || !Op.NumInputs ||
@@ -28,6 +28,12 @@ inline bool isX86FramePreservingIntrinsic(const LowOp &Op, Arch Architecture) {
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
   if (uint64_t(Id) != Op.Inputs[0].Offset)
     return false;
+  // PUSHF's intrinsic reads the packed flags only. Its architectural stack
+  // adjustment and store are separate LowIR operations with their own proof.
+  if (Id == Intrinsic::Pushf)
+    return Op.NumInputs == 1 && Op.Output.isTemp() &&
+           (Op.Output.Size == 2 ||
+            Op.Output.Size == (Architecture == Arch::X64 ? 8 : 4));
   // Use complete vector storage bounds, not a PE32 GPR-count threshold: R8
   // through R15 and APX registers are integer carriers on x64.
   const bool NonIntegerOutput =
@@ -58,6 +64,16 @@ inline bool isX86FramePreservingIntrinsic(const LowOp &Op, Arch Architecture) {
            Op.Inputs[1].Size == x86reg::FPURegSize &&
            Op.Inputs[2] == StatusWord;
   return Id == Intrinsic::X87Wait && Op.NumInputs == 1 && Op.Output == NdVar();
+}
+
+/// Reads that cannot change a saved integer PC. Unlike floating arithmetic
+/// and state writes, these need no exception-callback preservation receipt.
+/// Explicit stores belonging to PUSHF or STMXCSR are still checked separately.
+inline bool isX86FrameReadIntrinsic(const LowOp &Op, Arch Architecture) {
+  if (!isX86FramePreservingIntrinsic(Op, Architecture))
+    return false;
+  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  return Id == Intrinsic::Pushf || Id == Intrinsic::X86ReadMXCSR;
 }
 
 } // namespace neverd

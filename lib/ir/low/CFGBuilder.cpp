@@ -18,6 +18,7 @@
 #include "neverd/ir/low/CFGBuilder.h"
 
 #include "PrologueStackAllocation.h"
+#include "X86/FrameEffects.h"
 #include "X86/RegistrationSEHControl.h"
 
 #include "neverd/Limits.h"
@@ -432,9 +433,10 @@ void transferStackOffsets(const StackFrameModel &M, const LowOp &Op,
 /// preserve it. ABI register preservation does not bound a callee's stores.
 bool mayWriteOwnReturnSlot(const StackFrameModel &M, const LowOp &Op,
                            const StackOffsetState &State) {
-  if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
-      Op.Opcode == NdOp::INTRINSIC)
+  if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
     return true;
+  if (Op.Opcode == NdOp::INTRINSIC)
+    return !isX86FrameReadIntrinsic(Op, M.TRI->TheArch);
   if (Op.Opcode != NdOp::STORE && Op.Opcode != NdOp::ATOMIC_XCHG &&
       Op.Opcode != NdOp::ATOMIC_ADD && Op.Opcode != NdOp::ATOMIC_CMPXCHG)
     return false;

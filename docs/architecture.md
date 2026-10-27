@@ -368,6 +368,9 @@ ordinary preserved registers; unknown calls, memory writes or stack offsets
 cannot supply that proof. COFF stack-probe allocation recovery similarly uses
 the decoded subtraction and unwind-prologue boundary, sharing the decoded
 callee register-effect authority across frame analyses.
+Checked packed-flag and MXCSR reads use the shared x86 frame-effect authority
+and cannot by themselves invalidate a saved PC. PUSHF/STMXCSR stack stores
+remain separate effects, each requiring the ordinary return-slot proof.
 
 LLVM-to-C assigns split Windows protected ranges to blocks independently of
 LLVM block order. Shared handlers remain outside protected scopes, normal-edge
