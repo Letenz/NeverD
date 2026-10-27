@@ -1204,6 +1204,16 @@ window used to route branch arrows. Revision and navigation fences still apply.
 
 Patch persistence reads typed, owning rows directly from a validated SIMD JSON tape when `NEVERD_ENABLE_SIMDJSON` is enabled. The LLVM reader remains available when acceleration is disabled or the input is outside the SIMD parser’s domain. Both readers share field admission and resource limits, including the existing last-duplicate-key and integer-only size rules; no borrowed parser strings escape. Overlay replay still validates every row against the immutable input.
 
+`ProjectHistory` retains admitted commands as immutable shared values. Strict
+JSON encodings are computed when a write needs them and reused for byte-budget
+accounting and document assembly; rollback checkpoints do not copy command
+payloads. Pending sidecar writes and the next committed snapshot share the same
+owned text. Complete history/journal sizes are reserved before assembly, while
+all publication limits, external-byte comparisons and durable write ordering
+remain in their existing owners. The typed patch-row adapter counts the exact
+compact representation of its canonical fields without materializing a second
+JSON string; older SDK inventories retain the generic serializer path.
+
 Source previews retain the live session’s load options, analysis policy, user metadata and an owning snapshot of signature evidence. Instruction display limits never limit full-range validation; truncated previews report this explicitly. Thumb edits must cover the complete IT block when removing its predicate.
 
 ## Structural comparison ownership

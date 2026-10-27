@@ -14792,6 +14792,19 @@ alternating SDK JSON/CLI samples and independent original/current-byte checks.
 Both record native CPU/wall samples and binary hashes; keep machine-local
 reports outside tracked source and avoid overlapping builds with timed runs.
 
+`tools/neverd-bench/patch-command-history.py --baseline BEFORE --candidate AFTER`
+adds repeated edits with large retained commands. It populates history before
+alternating timed commit/undo/redo pairs, verifies live bytes, sidecars, exports
+and unchanged input outside timing, and records affinity and peak worker RSS.
+Use `--payload-bytes` and `--warmup-commands` to distinguish payload size from
+history length; ordinary sparse-row runs do not qualify this workload.
+
+`NeverDWorkerHistory` checks exact command byte/count limits, immutable rollback
+checkpoints, redo replacement, returned-value ownership and byte-exact document
+encoding after reopen. `NeverDWorkerNativePatch` accepts an exact patch-state
+budget and rejects a one-byte excess without changing live or persisted bytes;
+run it with both typed-snapshot and legacy JSON-only SDKs for adapter changes.
+
 `NeverDGuiPatchKeys` routes all second keys through `QWindow` shortcut dispatch, including pending menus, cancellation and editor typing. `NeverDGuiNativePatchKeys` checks real SDK bytes, Hex and floating windows, undo/redo and restoration. Run the same executable under X11 to exercise native popup routing.
 
 ```sh

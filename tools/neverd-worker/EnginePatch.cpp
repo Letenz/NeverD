@@ -16,6 +16,8 @@
 #include "neverd/sdk/NeverDCAPIBytePatch.h"
 #include "neverd/sdk/NeverDCAPIPatch.h"
 
+#include <charconv>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -73,6 +75,27 @@ std::string patchBytesHex(const uint8_t *Bytes, size_t Size) {
   }
   return Text;
 }
+
+// Only the canonical snapshot adapter constructs these members: keys, hex,
+// addresses and kind tokens need no JSON escaping, and size is unsigned.
+// Count the actual members so the transport budget needs no temporary dump.
+std::size_t patchRowJsonSize(const Json::object_t &Row) {
+  std::size_t Bytes = 2;
+  bool First = true;
+  for (const auto &[Key, Value] : Row) {
+    Bytes += Key.size() + 3 + (First ? 0 : 1);
+    First = false;
+    if (Value.is_string()) {
+      Bytes += Value.get_ref<const std::string &>().size() + 2;
+    } else {
+      char Digits[std::numeric_limits<Json::number_unsigned_t>::digits10 + 1];
+      const auto End = std::to_chars(Digits, Digits + sizeof Digits,
+                                     Value.get<Json::number_unsigned_t>());
+      Bytes += End.ptr - Digits;
+    }
+  }
+  return Bytes;
+}
 } // namespace
 bool Engine::keepsBytePatches() { return bool(patches()); }
 bool Engine::keepsSourcePatches() {
@@ -89,12 +112,18 @@ bool Engine::provesSourcePatches() {
              "neverd_byte_patch_source_preview_json");
 }
 
-Json Engine::bytePatchRows() const {
+Json Engine::bytePatchRows(std::size_t *encodedSize) const {
+  if (encodedSize)
+    *encodedSize = 2;
   const auto &F = patches();
   if (!F)
     return Json::array();
-  if (!F.snapshot || !F.freeSnapshot)
-    return backendJson(F.rows(session_));
+  if (!F.snapshot || !F.freeSnapshot) {
+    auto Rows = backendJson(F.rows(session_));
+    if (encodedSize)
+      *encodedSize = Rows.dump().size();
+    return Rows;
+  }
 
   std::unique_ptr<const neverd_byte_patch_snapshot_v1, decltype(F.freeSnapshot)>
       Snapshot(F.snapshot(session_), F.freeSnapshot);
@@ -113,6 +142,8 @@ Json Engine::bytePatchRows() const {
     Item.emplace("original", patchBytesHex(Row.original, Row.size));
     Item.emplace("size", Row.size);
     Item.emplace("va", hexAddress(Row.address));
+    if (encodedSize)
+      *encodedSize += patchRowJsonSize(Item) + (I ? 1 : 0);
     Rows.emplace_back(std::move(Item));
   }
   return Json(std::move(Rows));
@@ -375,9 +406,9 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
       throw Error("patch_refused", error());
     Result = backendJson(Raw);
   }
-  State["patches"] = bytePatchRows();
-  if (State["patches"].dump().size() >
-      ::neverd::limits::worker::kPatchStateBytes) {
+  std::size_t PatchStateBytes;
+  State["patches"] = bytePatchRows(&PatchStateBytes);
+  if (PatchStateBytes > ::neverd::limits::worker::kPatchStateBytes) {
     (void)patches().load(session_);
     functionsChanged();
     throw Error("patch_limit", "Patch history exceeds the worker transport "

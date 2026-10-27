@@ -170,8 +170,69 @@ def pe_export(executable):
     print("PE export, UTF-8 paths, exclusive output, unchanged input and temporary cleanup passed")
 
 
+def patch_budget_boundary(executable):
+    # Patch state reserves half the advertised frame allowance. Construct an
+    # exact compact-JSON boundary independently of the native size counter.
+    def compact(rows):
+        return json.dumps(rows, separators=(",", ":"), sort_keys=True).encode()
+
+    def fixture(limit):
+        for base in (0xffff800012340000, 0xfff800012340000):
+            for kind in ("bytes", "nop", "assemble"):
+                for size in range(limit // 4 - 256, limit // 4):
+                    offset = size + 16
+                    rows = [{"addr": "0x0", "file_off": "0x0", "va": hex(base),
+                             "size": size, "original": "", "current": "", "kind": kind},
+                            {"addr": hex(offset), "file_off": hex(offset), "va": hex(base + offset),
+                             "size": 1, "original": "cc", "current": "91", "kind": "bytes"}]
+                    if len(compact(rows)) + size * 4 == limit:
+                        rows[0].update(original="cc" * size, current="90" * size)
+                        assert len(compact(rows)) == limit
+                        return base, size, offset, rows
+        raise AssertionError("Could not construct exact patch budget boundary")
+
+    for excess in (0, 1):
+        with tempfile.TemporaryDirectory(prefix="neverd-patch-budget-") as directory:
+            root = Path(directory)
+            binary = root / "input.bin"
+            with Client(executable) as seed:
+                limit = seed.hello["max_frame_bytes"] // 2
+                base, size, offset, expected = fixture(limit + excess)
+                original = b"\xcc" * (size + 64)
+                binary.write_bytes(original)
+                options = {"path": str(binary), "loader": "binary", "processor": "x86_64",
+                           "base": hex(base), "analysis": False}
+                ok(seed, "open", options)
+                ok(seed, "patch_apply", {"address": hex(base), "kind": "bytes", "bytes": "90"})
+            sidecar, = root.rglob("patches.json")
+            history, = root.rglob("history.json")
+            history.unlink()
+            before = json.loads(compact(expected))
+            before[1]["current"] = "90"
+            before_text = compact(before)
+            sidecar.write_bytes(before_text)
+            with Client(executable) as worker:
+                ok(worker, "open", options)
+                reply = worker.call("patch_apply", {"address": hex(base + offset), "kind": "bytes",
+                                                     "bytes": "91", "expected": "90"})
+                if excess:
+                    assert reply["error"]["code"] == "patch_limit", reply
+                    assert sidecar.read_bytes() == before_text
+                    assert not history.exists() and not list(root.rglob("journal.json"))
+                else:
+                    assert reply["status"] == "ok" and reply["payload"]["saved"], reply
+                    assert json.loads(sidecar.read_bytes()) == expected
+                    assert len(compact(json.loads(sidecar.read_bytes()))) == limit
+                    ok(worker, "undo")
+                    assert json.loads(sidecar.read_bytes()) == before
+                assert ok(worker, "bytes", {"address": hex(base + offset), "size": 1})["data"] == "90"
+            assert binary.read_bytes() == original
+    print("exact patch budget accepted, one-byte excess refused, live and persisted rollback passed")
+
+
 if __name__ == "__main__":
     run(sys.argv[1], "--real" in sys.argv[2:])
     if "--real" in sys.argv[2:]:
         split_row_history(sys.argv[1])
         pe_export(sys.argv[1])
+        patch_budget_boundary(sys.argv[1])
