@@ -1844,8 +1844,17 @@ const HighFunc *HighCWriter::calledDefinition(const HighExpr &E) const {
   auto It = DefinedFuncs.find(E.CallTarget);
   if (It == DefinedFuncs.end() || !It->second)
     return nullptr;
-  return functionIdentifier(*It->second) == callIdentifier(E) ? It->second
-                                                              : nullptr;
+  const std::string Identifier = callIdentifier(E);
+  if (functionIdentifier(*It->second) == Identifier)
+    return It->second;
+  // The name holds one of the definitions that share it, such as the second
+  // of two static `helper`s; a call to another is the one that took the
+  // call's identifier at its address.
+  const auto Named = DefinedFunctionsByIdentifier.find(Identifier);
+  return Named != DefinedFunctionsByIdentifier.end() && Named->second &&
+                 Named->second->Entry && Named->second->Entry == E.CallAddr
+             ? Named->second
+             : nullptr;
 }
 
 bool HighCWriter::vaStartUnknownOperand(const HighExpr *Op) const {
