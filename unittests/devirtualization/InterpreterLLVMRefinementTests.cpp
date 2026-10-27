@@ -486,16 +486,8 @@ TEST(InterpreterLLVMRefinement, PreparationCannotRepairDanglingEntryEdges) {
 TEST(InterpreterLLVMRefinement, RawAtomicsStopBeforeLLVMProof) {
   // A valid raw native instruction reaches the machine-state model boundary.
   // Preparation precedes native checking in the composed API.
-  for (auto Opcode :
-       {NdOp::ATOMIC_CMPXCHG, NdOp::ATOMIC_ADD, NdOp::ATOMIC_XCHG}) {
-    Program P(Opcode == NdOp::ATOMIC_CMPXCHG
-                  ? std::initializer_list<uint8_t>{0xf0, 0x48, 0x0f, 0xb1, 0x54,
-                                                   0x24, 0xf8, 0xc3}
-              : Opcode == NdOp::ATOMIC_ADD
-                  ? std::initializer_list<uint8_t>{0xf0, 0x48, 0x0f, 0xc1, 0x54,
-                                                   0x24, 0xf8, 0xc3}
-                  : std::initializer_list<uint8_t>{0x48, 0x87, 0x54, 0x24, 0xf8,
-                                                   0xc3});
+  const auto Check = [](std::initializer_list<uint8_t> Bytes, NdOp Opcode) {
+    Program P(Bytes);
     P.Options.RequireRestoredFrameAtReturn = true;
     const auto R = P.recover();
     ASSERT_TRUE(R.complete()) << R.Diagnostic;
@@ -513,7 +505,14 @@ TEST(InterpreterLLVMRefinement, RawAtomicsStopBeforeLLVMProof) {
     EXPECT_FALSE(Proof.Native.Proof.Certificate);
     EXPECT_FALSE(Proof.LLVM.Certificate);
     EXPECT_EQ(Proof.Native.Proof.Operations, 0u);
-  }
+  };
+  Check({0xf0, 0x48, 0x0f, 0xb1, 0x54, 0x24, 0xf8, 0xc3}, NdOp::ATOMIC_CMPXCHG);
+  Check({0xf0, 0x48, 0x0f, 0xc1, 0x54, 0x24, 0xf8, 0xc3}, NdOp::ATOMIC_ADD);
+  Check({0x48, 0x87, 0x54, 0x24, 0xf8, 0xc3}, NdOp::ATOMIC_XCHG);
+  Check({0xf0, 0x48, 0x01, 0x54, 0x24, 0xf8, 0xc3}, NdOp::ATOMIC_ADD);
+  Check({0xf0, 0x48, 0x29, 0x54, 0x24, 0xf8, 0xc3}, NdOp::ATOMIC_ADD);
+  Check({0xf0, 0x48, 0xff, 0x44, 0x24, 0xf8, 0xc3}, NdOp::ATOMIC_ADD);
+  Check({0xf0, 0x48, 0xff, 0x4c, 0x24, 0xf8, 0xc3}, NdOp::ATOMIC_ADD);
 }
 
 } // namespace neverd::analysis::llvm_refinement_test

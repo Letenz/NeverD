@@ -2171,3 +2171,5 @@ HFA 匯入槽測試編譯嚴格的 C 原型，並對標頭宣告及本機宣告�
 呼叫後記憶體測試涵蓋保留值、條件結果、未知狀態更新、呼叫前目標與無效輸入拒絕。修改此邊界時，請一併執行 `NeverDSymbolicCallEffectTests`、`NeverDSymbolicIntegerIntrinsicTests` 與 `NeverDSymMemoryKnowledgeTests`。
 
 `NeverDSymbolicCallEffectTests` 也檢查提供者能取得兩個分支、先前呼叫效果、重複呼叫及合流後的完整路徑條件；矛盾效果會阻止後續操作及提供者呼叫。這是不依賴求解器的探索回歸，並非外部 API 契約驗證。
+
+`X86LegacyAtomic.LockedArithmetic*` 檢查 x86/x64 純量寬度、獨立算術旗標、來源暫存器與進位保留、有號立即數、未對齊鄰接位元組、唯讀及截斷映射、FS/GS 位址與無鎖對照。不支援的帶鎖核心運算不能發布一般儲存。`InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` 也檢查四種帶鎖算術的原始特化，並保留有序記憶體證明拒絕。

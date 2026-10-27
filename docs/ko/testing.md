@@ -2215,3 +2215,5 @@ HFA 임포트 슬롯 테스트는 엄격한 C 프로토타입을 컴파일하고
 메모리 사후 조건을 변경할 때는 보존 값, 조건부 결과, 새로운 미지 상태, 호출 전 대상 및 잘못된 입력 거부를 확인하는 `NeverDSymbolicCallEffectTests`, `NeverDSymbolicIntegerIntrinsicTests`, `NeverDSymMemoryKnowledgeTests`를 함께 실행합니다.
 
 `NeverDSymbolicCallEffectTests`는 양쪽 분기, 이전 호출 효과, 반복 호출 및 경로 병합 후의 전체 조건이 제공자에게 전달되는지도 검사합니다. 모순된 효과는 후속 연산과 제공자 호출을 중단합니다. 이는 솔버 없이 수행하는 탐색 회귀 검사이며 외부 API 계약 검증은 아닙니다.
+
+`X86LegacyAtomic.LockedArithmetic*`는 x86/x64 너비, 독립 산술 플래그, 원본 레지스터와 캐리 보존, 부호 있는 즉시 값, 비정렬 인접 바이트, 읽기 전용·잘린 매핑, FS/GS 및 잠금 없는 대조군을 검사합니다. 지원하지 않는 잠금 연산은 일반 저장을 게시할 수 없습니다. `InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof`는 네 가지 잠금 산술의 특화와 순서 메모리 증명 거부를 확인합니다.

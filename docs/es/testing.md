@@ -2326,3 +2326,5 @@ Las pruebas de entradas de importación HFA compilan prototipos C estrictos y ej
 Al modificar esta poscondición de memoria, ejecutar juntos `NeverDSymbolicCallEffectTests`, `NeverDSymbolicIntegerIntrinsicTests` y `NeverDSymMemoryKnowledgeTests`. Cubren valores conservados, resultados condicionales, nuevas épocas desconocidas, destinos previos a la llamada y rechazo de entradas inválidas.
 
 `NeverDSymbolicCallEffectTests` comprueba también las condiciones de ambas ramas, efectos anteriores, llamadas repetidas y la disyunción completa tras fusionar rutas. Un efecto contradictorio bloquea las operaciones y callbacks posteriores. Estas regresiones sin solver no validan contratos de API externas.
+
+`X86LegacyAtomic.LockedArithmetic*` comprueba anchos x86/x64, banderas independientes, registros fuente y acarreo, inmediatos con signo, bytes vecinos desalineados, mapeos truncados o de solo lectura, FS/GS y controles sin bloqueo. Las operaciones bloqueadas no admitidas no pueden producir escrituras ordinarias. `InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` verifica las cuatro formas y conserva el rechazo de pruebas para memoria ordenada.
