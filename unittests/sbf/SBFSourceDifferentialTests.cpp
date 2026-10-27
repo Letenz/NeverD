@@ -521,6 +521,19 @@ void addSyntheticCases(std::vector<DifferentialCase> &Cases) {
   Add("terminal-successful-load-overruns",
       analyzeProgram(Version::V3, {encode(Opcode::LD_DW_REG, 0, 1)}, Relaxed),
       std::move(TerminalMemory));
+  Add("terminal-register-write-overruns",
+      analyzeProgram(Version::V3, {encode(Opcode::MOV64_IMM, 0, 0, 0, 7)},
+                     Relaxed));
+  Add("terminal-division-fault-precedes-overrun",
+      analyzeProgram(Version::V2, {encode(Opcode::UDIV64_REG, 0, 0)}, Relaxed));
+  Add("terminal-successful-division-overruns",
+      analyzeProgram(Version::V2, {encode(Opcode::UDIV64_IMM, 0, 0, 0, 1)},
+                     Relaxed));
+  Add("terminal-syscall-effects-precede-overrun",
+      analyzeProgram(Version::V3,
+                     {encode(Opcode::CALL_IMM, 0, 0, 0,
+                             static_cast<int32_t>(Log64->Hash))},
+                     Relaxed));
   test::EncodedInstruction Unknown{};
   Unknown[kOpcodeOffset] = std::numeric_limits<uint8_t>::max();
   Add("malformed-unknown-opcode",

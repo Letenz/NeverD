@@ -1,5 +1,7 @@
 **Languages**: [English](testing.md) | [简体中文](zh-CN/testing.md) | [繁體中文](zh-TW/testing.md) | [日本語](ja/testing.md) | [한국어](ko/testing.md) | [Français](fr/testing.md) | [Deutsch](de/testing.md) | [Español](es/testing.md) | [Italiano](it/testing.md) | [Русский](ru/testing.md) | [العربية](ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` runs x64/ARM64 Mach-O integer, floating and mixed stack carriers through the source pipeline. `IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` keeps entry storage for memory reads, calls, escaping stack addresses and opaque or memory intrinsics. Pure value paths use declared parameters without inventing physical SP writes; register FP state effects remain. The macOS mobile matrix independently compiles and executes recovered Swift; successful emission alone is not execution evidence.
+
 `NeverDLLVMCValueTests` compiles and executes a recast variadic call against a separate Windows x64 ABI callee at O0/O2, with preserved LLVM types enabled and disabled. Native x64 hosts verify the floating value through the callee’s variadic argument reader; other architectures explicitly skip that execution.
 
 [← Documentation Index](README.md)
@@ -836,10 +838,10 @@ pointer field still returns the machine integer bits expected by its consumer.
 
 APX atomic qualification uses `NeverDX86APXAtomicSemanticTests` and
 `NeverDX86APXAtomicSourceTests`. The former owns decode/LowIR/concrete memory,
-condition, flag and failure-commit checks, including refusal of unrepresented
-64-bit default-stack fault semantics. The latter validates MedIR, native LLVM,
-owned assembly and both C routes; it exports 360 live/dead/repeated wrappers
-and 504 decoded pipeline cases when `NEVERD_APX_ATOMIC_EXPORT_DIR` is set.
+condition, flag and failure-commit checks, including explicit preservation of
+64-bit default-stack provenance and refusal of malformed address controls.
+The latter validates MedIR, native LLVM, owned assembly and both C routes;
+it exports 480 live/dead/repeated wrappers and 588 decoded pipeline cases when `NEVERD_APX_ATOMIC_EXPORT_DIR` is set.
 `scripts/verify_x86_apx_atomic.py` takes those exports, the full fork's `llc`,
 NeverC and its independent `tests/verify-apx-atomic-completion.py` oracle.
 It checks production objects and LLVM/Clang/NeverC/GCC wrappers across supported
@@ -847,14 +849,27 @@ formats and O0/O2. `--pipeline` additionally compiles both recovered C routes
 with Clang and NeverC, checking effective offsets, source operands, flags,
 return values and nonvolatile registers against the original instruction
 sequence. `--pipeline-only` reruns that stage without repeating the wrappers.
-These controlled completions do not qualify physical atomicity or hardware
-faults. `NeverDCodegenDiagnosticTests` requires an allocation error to reject
+`--frames-only` adds 64-byte-aligned volatile locals and dynamic allocations
+to the same exported C fixtures, checking their canaries through the return.
+It also feeds NeverC's native IR to the full LLVM backend. Stack probes are
+disabled only in this controlled fixture; return-SP and all ABI-saved GPRs
+must match the independent completion oracle.
+The oracle independently decodes stack-carrier SIB bytes, rejects malformed
+carriers, and checks effective addresses as RBP plus the allocated index.
+Its wrapper decoder resolves pure direct-jump aliases from identical-function
+folding, checks the native operation count for each entry, and rejects cyclic,
+indirect, interior or state-changing aliases. Runtime checks still require each
+entry to execute its exact live/dead/repeated transaction sequence.
+`X86NativeMemoryCarrier` also compiles RAO/CMPccXADD stack references in realigned
+dynamic frames across all three object formats. These controlled completions
+do not qualify physical atomicity or hardware faults.
+`NeverDCodegenDiagnosticTests` requires an allocation error to reject
 an otherwise parseable object, retaining the caller's diagnostic handler.
 
 `NeverDX86LegacyEncodingSourceTests` reuses the atomic boundary fixtures with
 the legacy RAO/VEX CMPccXADD inventory. Set `NEVERD_LEGACY_ATOMIC_EXPORT_DIR`
 and pass `--legacy` to `verify_x86_apx_atomic.py` for the x86-64 wrappers and
-504 decoded pipeline cases. Its i386 fixtures add 112 wrappers per format
+588 decoded pipeline cases. Its i386 fixtures add 112 wrappers per format
 and 144 decoded pipelines. `scripts/verify_x86_legacy_atomic_i386.py` checks
 their production/LLVM objects and Clang C output at O0/O2, including 16-bit
 effective addressing, all explicit segment controls, aliased ordinary
@@ -1477,6 +1492,35 @@ references across detach, compare native properties and reject mutated/unmapped
 property records. Run full Dalvik, Android JNI/thread/callback and Android
 property suites after changing these owners. Tests remain offline and do not
 claim full HashMap/ART, property callback or ServiceManager initialization.
+`AndroidStatLoggerTest.*` checks API 28 metadata, boot-loader ownership, private
+field state, constructor ordering, distinct zero arrays, retained labels, DEX
+construction and microsecond time. Missing/invalid clocks, null labels and
+resource stops retain their distinct outcomes. `AndroidArrayTest.*` checks
+primitive/reference widths, zero initialization and exact storage budgets.
+`AndroidJNI.StatLogger*` uses independent AArch64 callers in ordinary, va_list
+and jvalue-array forms, reads and mutates arrays through JNI, retains labels
+across detach and compares constructor/getTime observations with Linux boot
+clock reads. Run full Dalvik, JNI/thread/callback and Linux clock suites for
+these shared owners. Tests are offline; they do not execute ART or claim
+ServiceManager cache/Binder initialization or StatLogger reporting support.
+`NeverDDalvikTests` includes `AndroidServiceManagerTest.*` for initializer
+property/clock ordering, Java int-to-long threshold overflow, dependency class
+state, DEX/static-library entry consistency, unknown versus empty caches,
+retained Binder aliases, null/cast exceptions, repeatable empty cache installs,
+context proxy acquisition and terminal/error propagation. HashMap `putAll`
+regressions cover overlaps, null keys, self-copy and independent entry storage.
+The framework volatile-field exception is checked against an ordinary supplied
+DEX volatile field to keep ownership explicit.
+
+`NeverDAndroidNativeTests` includes `*AndroidJNI.ServiceManager*` for JNI method
+and field lookup, normal/varargs/array calls, exception identity, detach/reattach,
+cache aliases and explicit missing-state/RPC stops across fixture optimization,
+relocation packing and available CPU backends. `NeverDLinuxProcessTests` covers
+strict shared JSON admission and Java-state report identities under
+`ProcessReport.AndroidServiceManager*` and `ProcessReport.JavaServiceManager*`.
+Public request rejection cases share `ProcessReportCases.def`; these checks do
+not require a live Binder service, device, private workload or network access.
+
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
 typed/JSON admission, DEX catch and shared message access, terminal instruction
@@ -2803,6 +2847,11 @@ is unexecuted coverage, not a pass for that target.
 The SBF source differential suite additionally needs `rustc`; it executes both
 generated C and generated Rust. Treat a missing compiler skip as missing
 backend evidence, not as semantic success.
+Its terminal-slot cases retain successful and faulting loads, stores, scalar
+register writes, division and syscall effects before execution overrun. Both
+dispatcher layouts compile with warnings as errors and execute against the raw
+interpreter. The Rust register view borrows its private bank in both layouts,
+including programs whose final register writes cannot be read by a successor.
 
 The native source dialect suite also uses `rustc` and `go` from `PATH`, or
 `NEVERD_TEST_RUSTC` and `NEVERD_TEST_GO`. On Windows, its Rust executable
@@ -3575,8 +3624,10 @@ The shared frame tests separately exercise native edge gestures.
 window on every platform: Minimize must keep the application responsive and
 File > Quick start must restore the same window at its previous size.
 `quickStartRestoresFromTheDock` runs the real startup and in-workbench paths on
-Cocoa, clicks Minimize, waits for AppKit's minimized state, then sends the native
-application-reopen event used by Dock clicks. It requires restoration without
+Cocoa, waits for both window focus and application activation before clicking
+Minimize, waits for AppKit's minimized state, then sends the native
+application-reopen event used by Dock clicks. Direct widget clicks bypass
+Cocoa's activation before native input. It requires restoration without
 calling `showNormal()` and checks that no application-modal session remains.
 `quickStartReusesItsWindowAndClosesWithTheWorkbench` checks the asynchronous
 greeting, single-window ownership, Go, and destruction before a choice.
@@ -4559,6 +4610,16 @@ lists (each nesting must flatten back exactly), the PDB import against
 and Go renderers. The fixture's source says how to rebuild the
 `local_types.exe` and `local_types.pdb` pair with clang-cl and lld-link.
 `NeverDSessionCAPITests` reads the same fixture through the C API.
+
+`DWARFTypeImportGo.ReadsGosStructuresAndFuncValues` builds a real Go program
+with the selected `NEVERD_TEST_GO` compiler (or `go` on PATH). It checks both
+legacy unmarked result pointers and current marked results, including input
+and result pointers, multiple results, nested function types, quoted struct
+tags and variadics. Run it with both an older and a current Go toolchain when
+changing that boundary. The other `DWARFTypeImportGo` cases read small DWARF
+sections without a compiler: they preserve input pointers and an ambiguous
+named type's closure address, and reject malformed signatures, inconsistent
+parameter counts and legacy results that are not pointers.
 
 Its Android import cases check that both C views use `<pthread.h>` without
 redeclaring the header's anonymous typedefs. User-declared `read` cases retain
@@ -6779,6 +6840,21 @@ enabled, `NeverDWorkerWeb` in `build-release/tools/neverd-worker` checks the rea
 framed process and isolation from native-session revisions using a C++ client.
 
 ## Library recognition
+
+`scripts.tests.test_collision_refinement` checks unpruned source admission,
+same-library cohorts across parts, independently selected release conflicts,
+opaque CRC spans, shorter Thumb return bodies, incomplete-record refusal and
+preservation of aliases, incoming queries and metadata. They also require
+existing mandatory-reference claims to survive new raw sources, including a
+known rival name with changed references. The generation and supplement
+suites also check byte coverage across leading/tail encodings and require every
+mandatory reference claim to survive hidden CRC counterexamples. Refinement
+cases retain alternatives in the selected sufficient single-site clause,
+jointly necessary fields and complete incoming declarations with source-version
+consensus. They also constrain cohorts together across numbered parts, so
+withholding one member cannot leave an unqualified survivor.
+Source-driven refinement still requires held-out CLI accuracy and performance qualification;
+these unit tests do not establish source identity for a matching body.
 
 `PEFunctionAddresses.*` checks stackless x64 PE leaves, ownership and instruction boundaries, rejected prefixes and narrower operands, callable exits, cancellation and identical results with 1/2/4/16 workers. Signature tests cover all 16 conditional rel32 forms in both directions, explicit entry scope and source relocation constraints. Python supplement tests require each single-site clause to distinguish every raw counterclaim, preserving alternatives and jointly necessary sites without duplicating existing claims.
 
@@ -14817,6 +14893,19 @@ alternating SDK JSON/CLI samples and independent original/current-byte checks.
 Both record native CPU/wall samples and binary hashes; keep machine-local
 reports outside tracked source and avoid overlapping builds with timed runs.
 
+`tools/neverd-bench/patch-command-history.py --baseline BEFORE --candidate AFTER`
+adds repeated edits with large retained commands. It populates history before
+alternating timed commit/undo/redo pairs, verifies live bytes, sidecars, exports
+and unchanged input outside timing, and records affinity and peak worker RSS.
+Use `--payload-bytes` and `--warmup-commands` to distinguish payload size from
+history length; ordinary sparse-row runs do not qualify this workload.
+
+`NeverDWorkerHistory` checks exact command byte/count limits, immutable rollback
+checkpoints, redo replacement, returned-value ownership and byte-exact document
+encoding after reopen. `NeverDWorkerNativePatch` accepts an exact patch-state
+budget and rejects a one-byte excess without changing live or persisted bytes;
+run it with both typed-snapshot and legacy JSON-only SDKs for adapter changes.
+
 `NeverDGuiPatchKeys` routes all second keys through `QWindow` shortcut dispatch, including pending menus, cancellation and editor typing. `NeverDGuiNativePatchKeys` checks real SDK bytes, Hex and floating windows, undo/redo and restoration. Run the same executable under X11 to exercise native popup routing.
 
 ```sh
@@ -15184,3 +15273,7 @@ or independence validation. `ExtendedOperandStorageRetainsUnsupportedEffectRefus
 in the specialization and independence suites distinguishes an unsupported
 eight-input effect from out-of-storage malformed input; neither may publish
 a replacement or proof. Opcode-specific arity checks remain in their owners.
+
+## Selected callable checks
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` combines address-only output with integer, pointer, floating and void providers. `AddressOnlyCallbackConvertsToItsKnownParameterType` executes a typed callback. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` combines separately selected callers and pointer-reading callees, and compares whole-unit output with cold/warm cache use. The x64/ARM64 PE, ELF and Mach-O input models compile and execute generated C at O0/O2 with UBSan. This validates host source execution, not native execution on every target platform. Run the call-contract, pointer-projection, source-ABI and callee-cache owners after changing this boundary.

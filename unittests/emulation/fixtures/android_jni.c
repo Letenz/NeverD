@@ -32,6 +32,116 @@ static Handle attach(void) {
 static int same_ref(Handle e, Ref first, Ref second) {
   return C(e, int, 24, first, second);
 }
+static Ref stat_logger_new_v(Handle e, Ref type, Ref constructor, ...) {
+  __builtin_va_list args;
+  __builtin_va_start(args, constructor);
+  Ref result = C(e, Ref, 29, type, constructor, args);
+  __builtin_va_end(args);
+  return result;
+}
+static U64 stat_logger_time_v(Handle e, Ref logger, Ref method, ...) {
+  __builtin_va_list args;
+  __builtin_va_start(args, method);
+  U64 result = C(e, U64, 53, logger, method, args);
+  __builtin_va_end(args);
+  return result;
+}
+int jni_stat_logger(unsigned mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "com/android/internal/util/StatLogger");
+  Ref init = C(e, Ref, 33, type, "<init>", "([Ljava/lang/String;)V");
+  Ref time = C(e, Ref, 33, type, "getTime", "()J");
+  CHECK(type && init && time);
+  if (mode == 2)
+    return C(e, Ref, 33, type, "logDurationStat", "(IJ)J");
+  if (mode == 1) {
+    CHECK(!C(e, Ref, 28, type, init, (Ref)0));
+    Ref exception = C(e, Ref, 15);
+    C(e, void, 17);
+    Ref npe = C(e, Ref, 6, "java/lang/NullPointerException");
+    CHECK(exception && C(e, int, 32, exception, npe));
+    return C(vm, int, 5);
+  }
+  Ref string = C(e, Ref, 6, "java/lang/String");
+  Ref size = C(e, Ref, 94, type, "SIZE", "I");
+  Ref next = C(e, Ref, 94, type, "mNextTickTime", "J");
+  Ref lock_field = C(e, Ref, 94, type, "mLock", "Ljava/lang/Object;");
+  Ref labels_field = C(e, Ref, 94, type, "mLabels", "[Ljava/lang/String;");
+  const char *names[] = {"mCountStats",        "mDurationStats",
+                         "mCallsPerSecond",    "mMaxCallsPerSecond",
+                         "mDurationPerSecond", "mMaxDurationPerSecond",
+                         "mMaxDurationStats"};
+  Ref prior_lock = 0, identities[21];
+  unsigned count = 0;
+  Ref logger = 0, labels = 0;
+  for (unsigned form = 0; form != 3; ++form) {
+    const int length = form == 0 ? 0 : 2;
+    labels = C(e, Ref, 172, length, string, (Ref)0);
+    U64 args[] = {labels};
+    struct ClockTime before, after;
+    CHECK(!clock_gettime(7, &before));
+    logger = form == 0   ? C(e, Ref, 28, type, init, labels)
+             : form == 1 ? stat_logger_new_v(e, type, init, labels)
+                         : C(e, Ref, 30, type, init, args);
+    CHECK(!clock_gettime(7, &after));
+    CHECK(logger && C(e, int, 100, logger, size) == length);
+    U64 tick = C(e, U64, 101, logger, next);
+    CHECK((U64)before.seconds * 1000 + before.nanoseconds / 1000000 + 1000 <=
+              tick &&
+          tick <=
+              (U64)after.seconds * 1000 + after.nanoseconds / 1000000 + 1000);
+    Ref lock = C(e, Ref, 95, logger, lock_field);
+    CHECK(lock && !same_ref(e, lock, prior_lock));
+    prior_lock = lock;
+    CHECK(same_ref(e, C(e, Ref, 95, logger, labels_field), labels));
+    for (unsigned i = 0; i != 7; ++i) {
+      const int is_int = i == 0 || i == 2 || i == 3;
+      Ref field = C(e, Ref, 94, type, names[i], is_int ? "[I" : "[J");
+      Ref array = C(e, Ref, 95, logger, field);
+      CHECK(array && C(e, int, 171, array) == length);
+      for (unsigned j = 0; j != count; ++j)
+        CHECK(!same_ref(e, array, identities[j]));
+      identities[count++] = array;
+      if (is_int) {
+        int values[2] = {-1, -1};
+        C(e, void, 203, array, 0, length, values);
+        CHECK(!length || (!values[0] && !values[1]));
+        values[0] = 17;
+        C(e, void, 211, array, 0, length, values);
+      } else {
+        U64 values[2] = {~0ULL, ~0ULL};
+        C(e, void, 204, array, 0, length, values);
+        CHECK(!length || (!values[0] && !values[1]));
+        values[0] = 0x123456789abcdefULL;
+        C(e, void, 212, array, 0, length, values);
+      }
+      CHECK(same_ref(e, C(e, Ref, 95, logger, field), array));
+    }
+    CHECK(!clock_gettime(7, &before));
+    U64 micros = form == 0   ? C(e, U64, 52, logger, time)
+                 : form == 1 ? stat_logger_time_v(e, logger, time)
+                             : C(e, U64, 54, logger, time, (void *)0);
+    CHECK(!clock_gettime(7, &after));
+    CHECK((U64)before.seconds * 1000000 + before.nanoseconds / 1000 <= micros &&
+          micros <= (U64)after.seconds * 1000000 + after.nanoseconds / 1000);
+  }
+  Ref saved_logger = C(e, Ref, 21, logger),
+      saved_labels = C(e, Ref, 21, labels);
+  CHECK(!C(vm, int, 5));
+  e = attach();
+  CHECK(e);
+  Ref value = C(e, Ref, 167, "changed");
+  C(e, void, 174, saved_labels, 1, value);
+  Ref retained = C(e, Ref, 95, saved_logger, labels_field);
+  CHECK(same_ref(e, retained, saved_labels));
+  CHECK(same_ref(e, C(e, Ref, 173, retained, 1), value));
+  CHECK(!C(e, Ref, 173, retained, 0));
+  C(e, void, 22, saved_logger);
+  C(e, void, 22, saved_labels);
+  CHECK(!C(e, int, 228));
+  return C(vm, int, 5);
+}
 static Ref map_get_v(Handle e, Ref map, Ref method, ...) {
   __builtin_va_list args;
   __builtin_va_start(args, method);
@@ -1678,6 +1788,62 @@ int jni_dex_class_pair(const char *first, const char *last) {
   Ref b = C(e, Ref, 6, last);
   CHECK(a && b && !C(e, int, 24, a, b));
   CHECK(!C(e, int, 228));
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
+static Ref service_get_v(Handle e, Ref type, Ref method, ...) {
+  __builtin_va_list args;
+  __builtin_va_start(args, method);
+  Ref result = C(e, Ref, 115, type, method, args);
+  __builtin_va_end(args);
+  return result;
+}
+int jni_service_manager_cache(unsigned mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/os/ServiceManager");
+  Ref get = C(e, Ref, 113, type, "getService",
+              "(Ljava/lang/String;)Landroid/os/IBinder;");
+  Ref check = C(e, Ref, 113, type, "checkService",
+                "(Ljava/lang/String;)Landroid/os/IBinder;");
+  CHECK(get && check);
+  Ref alpha = C(e, Ref, 167, "alpha");
+  Ref first = C(e, Ref, 114, type, get, alpha);
+  if (mode)
+    return (int)first; // Missing-state/RPC cases stop at the original call.
+  CHECK(first);
+  Ref beta = C(e, Ref, 167, "beta");
+  CHECK(same_ref(e, first, service_get_v(e, type, get, beta)));
+  U64 arguments[] = {beta};
+  CHECK(same_ref(e, first, C(e, Ref, 116, type, check, arguments)));
+  Ref proxy = C(e, Ref, 6, "android/os/BinderProxy");
+  Ref warning = C(e, Ref, 94, proxy, "mWarnOnBlocking", "Z");
+  CHECK(warning && C(e, U8, 96, first, warning));
+  Ref binder = C(e, Ref, 6, "android/os/Binder");
+  Ref allow = C(e, Ref, 113, binder, "allowBlocking",
+                "(Landroid/os/IBinder;)Landroid/os/IBinder;");
+  CHECK(same_ref(e, first, C(e, Ref, 114, binder, allow, first)));
+  CHECK(!C(e, U8, 96, first, warning));
+  Ref ibinder = C(e, Ref, 6, "android/os/IBinder");
+  Ref local = C(e, Ref, 33, ibinder, "queryLocalInterface",
+                "(Ljava/lang/String;)Landroid/os/IInterface;");
+  CHECK(!C(e, Ref, 34, first, local, (Ref)0));
+  Ref install = C(e, Ref, 113, type, "initServiceCache", "(Ljava/util/Map;)V");
+  C(e, void, 141, type, install, (Ref)0);
+  Ref thrown = C(e, Ref, 15);
+  CHECK(thrown);
+  C(e, void, 17);
+  Ref illegal = C(e, Ref, 6, "java/lang/IllegalStateException");
+  CHECK(C(e, U8, 32, thrown, illegal));
+  Ref global = C(e, Ref, 21, first);
+  CHECK(!C(vm, int, 5));
+  e = attach();
+  CHECK(e);
+  type = C(e, Ref, 6, "android/os/ServiceManager");
+  alpha = C(e, Ref, 167, "alpha");
+  CHECK(same_ref(e, global, C(e, Ref, 114, type, get, alpha)));
+  C(e, void, 22, global);
+  CHECK(!C(e, U8, 228));
   CHECK(!C(vm, int, 5));
   return 0;
 }

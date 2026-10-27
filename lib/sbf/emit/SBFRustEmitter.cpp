@@ -331,12 +331,15 @@ llvm::Expected<std::string> emitRust(const SBFProgram &Program,
 
   // The loader hands the program the input buffer and, on a runtime that has
   // activated it, the instruction data. A callable that only takes the first
-  // cannot reproduce a program that reads the second.
+  // cannot reproduce a program that reads the second. Use the same borrowed
+  // register view as partitioned regions: VM writes remain explicit even when
+  // a terminal fault leaves their values unobservable to the caller.
   OS << "fn nd_program_impl<E: SbfEnvironmentV2>(env: &mut E, input: u64, "
         "instruction_data: u64) -> Result<u64, SbfErrorV2> "
         "{\n"
         "    let _ = &mut *env;\n"
-        "    let mut r = NdRegisters::default();\n";
+        "    let mut registers = NdRegisters::default();\n"
+        "    let r = &mut registers;\n";
   if (!Structured) {
     OS << "    let ";
     if (NeedsCallFrames)

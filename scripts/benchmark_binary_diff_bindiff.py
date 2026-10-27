@@ -11,62 +11,18 @@ import json
 import math
 import os
 from pathlib import Path
-import signal
-import shutil
 import sqlite3
-import subprocess
 import sys
-import time
 
 if __package__:
     from . import benchmark_binary_diff as bench
+    from .benchmark_binary_diff_external import DEFAULT_STAGE_TIMEOUT_SECONDS, archive_tools, stage
 else:
     import benchmark_binary_diff as bench
+    from benchmark_binary_diff_external import DEFAULT_STAGE_TIMEOUT_SECONDS, archive_tools, stage
 
 
-DEFAULT_STAGE_TIMEOUT_SECONDS = 600.0
 EXPORT_SCHEMA = "neverd.benchmark.binexport.v1"
-
-
-def stage(folder: Path, name: str, command: list[str], env: dict,
-          timeout: float) -> dict:
-    start = time.monotonic()
-    record = {"command": command, "exit": None, "error": None}
-    cancelled = False
-    with (folder / (name + ".log")).open("x") as log:
-        try:
-            process = subprocess.Popen(command, cwd=folder, env=env, stdout=log,
-                                       stderr=subprocess.STDOUT, start_new_session=True)
-            try:
-                record["exit"] = process.wait(timeout=timeout)
-            except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
-                # IDA and launcher descendants belong to this newly created group.
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait()
-                cancelled = isinstance(error, KeyboardInterrupt)
-                record["error"] = "cancelled" if cancelled else "timeout"
-        except OSError as error:
-            record["error"] = str(error)
-    record["wall_seconds"] = time.monotonic() - start
-    bench.save(folder / (name + ".json"), record)
-    if cancelled:
-        raise KeyboardInterrupt
-    return record
-
-
-def archive_tools(paths: list[Path], folder: Path) -> list[Path]:
-    folder.mkdir(exist_ok=False)
-    copies = []
-    for index, source in enumerate(paths):
-        copy = folder / f"{index:02d}-{source.name}"
-        shutil.copy2(source, copy)
-        bench.require(bench.digest(copy) == bench.digest(source),
-                      "tool archive does not match its source")
-        copies.append(copy)
-    return copies
 
 
 def checked_export(receipt: Path, exported: Path, source: Path) -> dict:
@@ -91,7 +47,7 @@ def run(args: argparse.Namespace) -> int:
     script = Path(__file__).resolve().parents[1] / "tools/neverd-bench/export_ida_bindiff.py"
     output = args.output_dir.resolve()
     tools = [executable, ida, plugin, config, script, Path(__file__).resolve(),
-             Path(bench.__file__).resolve()]
+             Path(bench.__file__).resolve(), Path(__file__).with_name("benchmark_binary_diff_external.py").resolve()]
     identities = {path: bench.digest(path) for path in tools}
     # Validate every input before starting an external process or creating results.
     inputs = [[bench.checked_artifact(case[side], corpus_path.parent)

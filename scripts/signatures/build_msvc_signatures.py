@@ -452,31 +452,48 @@ class Shape:
         NeverD's matcher compares a line only as far as its own length and
         accepts anything where the line has a wildcard, so such a routine
         matches this line wherever it is linked.  Only what the other line
-        states can be compared: a byte it leaves to a relocation, or covers by
-        a CRC of a different span, counts as a difference, so the check errs
-        toward keeping a line.
+        states can be compared. A wildcard also covers an opaque CRC byte;
+        fixed bytes need explicit matching bytes, and a required CRC needs
+        the same span and checksum. Different encodings of the leading/tail
+        split do not change the offsets at which those assertions apply.
         """
 
         if other.total < self.total:
             return False
-        lead_bytes = min(len(self.lead), 2 * self.total)
-        if not _states(self.lead[:lead_bytes], other.lead):
+        if self.crc_len and (len(self.lead) != len(other.lead) or
+                             self.crc_len != other.crc_len or self.crc != other.crc):
             return False
-        if len(self.lead) >= 2 * self.total:
-            # The whole routine fits in the leading pattern.
-            return True
-        if other.crc_len != self.crc_len or (self.crc_len and other.crc != self.crc):
-            return False
-        return _states(self.tail, other.tail)
+        if len(self.lead) == len(other.lead) and self.crc_len == other.crc_len:
+            return (_states(self.lead[:2 * self.total], other.lead) and
+                    _states(self.tail[:max(0, 2 * self.total - len(self.lead) - 2 * self.crc_len)],
+                            other.tail))
 
-    def padding_collision_with(self, other: "Shape") -> bool:
+        def states(pattern: str, start: int) -> bool:
+            for index in range(0, min(len(pattern), 2 * self.total - start), 2):
+                byte = pattern[index:index + 2]
+                if byte == "..":
+                    continue
+                offset = start + index
+                if offset < len(other.lead):
+                    actual = other.lead[offset:offset + 2]
+                else:
+                    offset -= len(other.lead) + 2 * other.crc_len
+                    actual = other.tail[offset:offset + 2] if offset >= 0 else ""
+                if actual != byte:
+                    return False
+            return True
+
+        return states(self.lead, 0) and states(self.tail, len(self.lead) + 2 * self.crc_len)
+
+    def padding_collision_with(self, other: "Shape", *, machine: str = "x86") -> bool:
         """A shorter complete body can acquire this line's return padding.
 
-        COFF section lengths can include x86 INT3/NOP alignment after RET.
+        COFF section lengths can include x86 INT3/NOP alignment after RET,
+        or halfword zero/NOP padding after a Thumb return.
         Such bytes cannot distinguish an otherwise identical shorter routine
         followed by that alignment in a linked image. This conservative
-        collision check claims no instruction semantics for other machines;
-        it only refuses to use the common byte suffix as nominal identity.
+        collision check only handles these explicit machine/return forms;
+        it refuses to use the common byte suffix as nominal identity.
         CRC spans and unknown suffix bytes stay outside this narrow check.
         """
         if other.total >= self.total or self.crc_len or other.crc_len or \
@@ -484,9 +501,18 @@ class Shape:
             return False
         own = (self.lead + self.tail)[:2 * self.total].upper()
         short = (other.lead + other.tail)[:2 * other.total].upper()
-        return short.endswith("C3") and _states(own[:len(short)], short) and all(
-            own[index:index + 2] in {"90", "CC"}
-            for index in range(len(short), len(own), 2))
+        if not _states(own[:len(short)], short):
+            return False
+        if machine in {"x86", "x64"}:
+            return short.endswith("C3") and all(
+                own[index:index + 2] in {"90", "CC"}
+                for index in range(len(short), len(own), 2))
+        if machine == "arm" and other.total % 2 == 0 and self.total % 2 == 0:
+            returns = short.endswith("7047") or re.search(r"BDE8[0-9A-F]{2}[89A-F][0-9A-F]$", short)
+            return bool(returns) and all(
+                own[index:index + 4] in {"0000", "00BF"}
+                for index in range(len(short), len(own), 4))
+        return False
 
 
 def _states(pattern: str, other: str) -> bool:
