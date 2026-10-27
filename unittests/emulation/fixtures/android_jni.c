@@ -1847,6 +1847,53 @@ int jni_service_manager_cache(unsigned mode) {
   CHECK(!C(vm, int, 5));
   return 0;
 }
+int jni_service_manager_clock(unsigned advancing) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/os/ServiceManager");
+  CHECK(type);
+  struct ClockTime before, after;
+  CHECK(!clock_gettime(7, &before));
+  Ref logger_field = C(e, Ref, 144, type, "sStatLogger",
+                       "Lcom/android/internal/util/StatLogger;");
+  CHECK(logger_field);
+  Ref logger = C(e, Ref, 145, type, logger_field);
+  CHECK(!clock_gettime(7, &after));
+  Ref logger_type = C(e, Ref, 6, "com/android/internal/util/StatLogger");
+  Ref next_field = C(e, Ref, 94, logger_type, "mNextTickTime", "J");
+  CHECK(logger && next_field);
+  U64 next = C(e, U64, 101, logger, next_field);
+  CHECK((U64)before.seconds * 1000 + before.nanoseconds / 1000000 + 1000 <=
+            next &&
+        next <= (U64)after.seconds * 1000 + after.nanoseconds / 1000000 + 1000);
+  if (!advancing)
+    CHECK(next == 51987);
+
+  // Idling advances the shared clock, but does not reconstruct the logger or
+  // its deadline on another active use of the initialized class.
+  CHECK(!usleep(2500));
+  Ref repeated = C(e, Ref, 144, type, "sStatLogger",
+                   "Lcom/android/internal/util/StatLogger;");
+  CHECK(same_ref(e, logger, C(e, Ref, 145, type, repeated)));
+  CHECK(C(e, U64, 101, logger, next_field) == next);
+  Ref clock_type = C(e, Ref, 6, "android/os/SystemClock");
+  Ref elapsed = C(e, Ref, 113, clock_type, "elapsedRealtime", "()J");
+  CHECK(clock_type && elapsed);
+  CHECK(!clock_gettime(7, &before));
+  U64 now = C(e, U64, 132, clock_type, elapsed);
+  CHECK(!clock_gettime(7, &after));
+  CHECK((U64)before.seconds * 1000 + before.nanoseconds / 1000000 <= now &&
+        now <= (U64)after.seconds * 1000 + after.nanoseconds / 1000000);
+  if (!advancing) {
+    CHECK(now == 50990);
+    CHECK(!clock_gettime(1, &after));
+    CHECK(after.seconds == 10 && after.nanoseconds == 125956789);
+    CHECK(!clock_gettime(4, &after));
+    CHECK(after.seconds == 30 && after.nanoseconds == 502500000);
+  }
+  CHECK(!C(e, U8, 228));
+  return C(vm, int, 5);
+}
 int jni_service_manager_metadata(unsigned mode) {
   Handle e = attach();
   CHECK(e);

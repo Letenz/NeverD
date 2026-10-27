@@ -610,6 +610,21 @@ arrays and elapsed realtime. It requires those runtime services even when only
 JNI method or field lookup triggers initialization. An Application phase does
 not establish the current service cache or manager proxy.
 
+The initializer constructs StatLogger, whose next tick is elapsed realtime in
+milliseconds plus one second. In the native profile this reads the explicit
+`linux_time.clocks` entry with `id: 7` (`CLOCK_BOOTTIME`) through the same
+LinuxClock used by native `clock_gettime`. Supplying realtime, monotonic or
+monotonic raw does not provide that observation. A missing boot clock stops
+initialization before the logger is published; successful initialization keeps
+one logger and its original next tick across later active uses and idle waits.
+
+The boot epoch is independent of the monotonic epoch. A supplied difference can
+represent prior suspension, but the model does not infer it. Declared wall
+clocks share instruction/idle advancement; there is no additional simulated
+system-suspend transition. Keep hypothetical boot epochs explicitly labeled as
+synthetic scenario inputs, separate from device observations. Supplying a clock
+does not establish service-cache contents or Binder state.
+
 The optional `application_snapshot.service_manager` object has four members:
 
 - `binder_proxies`: an array of `{ "key": 7, "warn_on_blocking": true }` records.
