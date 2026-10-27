@@ -95,6 +95,10 @@ void cleanupGuardBeforeSwitch(HighFunc &Func);
 void structureIfElse(HighFunc &Func, int MaxPasses,
                      const MedFunc *Med = nullptr);
 
+/// Negate one condition without reevaluating its operands. Equality trees
+/// retain readable comparisons; other expressions keep an explicit Boolean NOT.
+ExprPtr invertHighCond(ExprPtr Condition);
+
 } // namespace neverd
 
 #endif // NEVERD_IR_HIGH_STRUCTURE_HIGHCFSIMPLIFYDETAIL_H
