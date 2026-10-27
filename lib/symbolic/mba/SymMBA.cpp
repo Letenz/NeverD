@@ -1425,15 +1425,33 @@ MBAResult detail::MBADeepSimplifier::run(SymContext &Ctx, SymRef E,
   SolveReport FastRep;
   if (SymRef Fast = tryFastComplementarySum(Ctx, E, Opts, Budget, FastRep);
       Fast != E) {
-    Result.Expr = Fast;
-    Result.SizeAfter = readingCost(Ctx, Fast);
+    // The complement is read from the root's original words, and the rewrite
+    // keeps them verbatim: (M|W)+(M&W) becomes M+W with W still obfuscated.
+    // Finish every root rewrite here, then walk the retained words under the
+    // same allowance. The nested request finds no root rewrite left, so it
+    // does not recurse again.
+    for (SymRef Next; (Next = tryFastComplementarySum(Ctx, Fast, Opts, Budget,
+                                                      FastRep)) != Fast;)
+      Fast = Next;
+    MBAOptions Inner = Opts;
+    Inner.MaxWork = Budget.unlimited()
+                        ? Opts.MaxWork
+                        : Opts.MaxWork - (Budget.used() - WorkStart);
+    const MBAResult Words = run(Ctx, Fast, Inner, Cache, Budget);
+    Result.Expr = Words.Expr;
+    Result.SizeAfter = readingCost(Ctx, Words.Expr);
     Result.Changed = true;
+    Result.NumAtoms = Words.NumAtoms;
     Result.Outcome = MBAOutcome::Rewritten;
-    Result.Evidence = MBAEvidence::Derivation;
+    Result.Evidence = Words.Evidence == MBAEvidence::Samples
+                          ? MBAEvidence::Samples
+                          : MBAEvidence::Derivation;
     Result.Work = Budget.used() - WorkStart;
-    if (Cache.Rewrites.size() < Cache.Capacity &&
-        readingScore(Ctx, Fast) < readingScore(Ctx, E))
-      Cache.Rewrites.try_emplace(E.index(), Fast);
+    if (Result.Evidence == MBAEvidence::Derivation &&
+        Words.Outcome != MBAOutcome::BudgetExhausted && !Budget.exhausted() &&
+        Cache.Rewrites.size() < Cache.Capacity &&
+        readingScore(Ctx, Words.Expr) < readingScore(Ctx, E))
+      Cache.Rewrites.try_emplace(E.index(), Words.Expr);
     return Result;
   }
 

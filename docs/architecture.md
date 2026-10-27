@@ -13441,4 +13441,6 @@ Known exception metadata rejects a source-only declaration before its body is re
 The shared MBA mask partition owner retains complementary XOR words after
 opposite modular offsets. It can reduce `M-(M&Q)` without borrowing and combine
 it with the matching `M|P` when `Q=~P`. Offset differences are ignored only
-below a proved mask window; no runtime input value is assumed.
+below a proved mask window; no runtime input value is assumed. A root rewrite
+keeps its retained words verbatim, so the deep simplifier walks them under the
+same work allowance before returning.

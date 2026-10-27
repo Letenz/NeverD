@@ -63,6 +63,41 @@ TEST(SymMBAMaskRelation, OffsetMaskNeighborsAndBudgetsKeepExactValues) {
     }
 }
 
+TEST(SymMBAMaskRelation, MaskedSumsFinishTheirRetainedWords) {
+  for (unsigned Width : {8u, 32u, 64u, 128u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width),
+         Z = C.mkVar("z", Width);
+    auto Sum =
+        C.mkAdd(C.mkXor(X, Y), C.mkMul(C.mkConst(Width, 2), C.mkAnd(X, Y)));
+    auto M = C.mkConst(Width, 0x5a);
+    // The root identity keeps W verbatim; W itself is an obfuscated x+y.
+    auto Masked = simplifyMBADeep(C, C.mkAdd(C.mkOr(M, Sum), C.mkAnd(M, Sum)));
+    EXPECT_EQ(Masked.Expr, C.mkAdd({M, X, Y})) << C.toString(Masked.Expr);
+    EXPECT_EQ(Masked.Evidence, MBAEvidence::Derivation);
+    auto Shared =
+        simplifyMBADeep(C, C.mkAdd(C.mkAnd(Sum, Z), C.mkAnd(Sum, C.mkNot(Z))));
+    EXPECT_EQ(Shared.Expr, C.mkAdd(X, Y)) << C.toString(Shared.Expr);
+    EXPECT_EQ(Shared.Evidence, MBAEvidence::Derivation);
+  }
+  for (unsigned Work : {0u, 1u, 16u, 64u, 256u, 65536u}) {
+    SCOPED_TRACE(Work);
+    SymContext C;
+    auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+    auto Sum = C.mkAdd(C.mkXor(X, Y), C.mkMul(C.mkConst(8, 2), C.mkAnd(X, Y)));
+    auto M = C.mkConst(8, 0x5a);
+    MBAOptions Options;
+    Options.MaxWork = Work;
+    auto Result =
+        simplifyMBADeep(C, C.mkAdd(C.mkOr(M, Sum), C.mkAnd(M, Sum)), Options);
+    EXPECT_LE(Result.Work, Work);
+    for (unsigned A = 0; A != 256; ++A)
+      for (unsigned B = 0; B != 256; ++B)
+        ASSERT_EQ(C.evalU64(Result.Expr, {A, B}), (0x5a + A + B) & 255);
+  }
+}
+
 namespace {
 
 std::pair<SymRef, SymRef> maskedComplement(SymContext &C, unsigned Width,
