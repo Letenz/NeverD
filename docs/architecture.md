@@ -11091,6 +11091,15 @@ visible at decoder and printer call sites, allowing constant feature numbers
 to fold into mode-bit checks. The inline and external definitions share one
 body and retain the existing mode policy. These optimizations reside in the
 Capstone `next` fork and are selected through the submodule revision.
+
+ARM, AArch64, RISC-V, LoongArch, SPARC, PowerPC and MIPS derive direct C
+branches from the same generated decoder tables. The lowering preserves
+predicate order, operand callbacks, soft failures and incomplete-decode
+rollback. Encoded widths remain separate from helper input widths, including
+PowerPC prefixed instructions and NanoMIPS 48-bit words. MIPS register-list
+metadata maps expanded operands back to the list, base and displacement
+descriptors; signed MicroMIPS offsets are scaled without negative shifts.
+
 NeverD's existing architecture-specific metadata corrections and fallback
 decoders remain authoritative after the Capstone call. The native batch API
 is available in the fork; this `dev` integration uses the existing iterator
