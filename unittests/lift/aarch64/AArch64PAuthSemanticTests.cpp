@@ -1535,10 +1535,13 @@ TEST(AArch64PAuthSemantics,
   EXPECT_TRUE(LLVMCEmitter().emit(*Module, LowOS, Options));
   auto High = MedToHighConverter().convert(Med, Arch::AArch64);
   EXPECT_TRUE(HighCEmitter().emit({High}, HighOS, Options));
-  for (const std::string *C : {&LowC, &HighC}) {
-    EXPECT_NE(C->find("__builtin_ptrauth_auth"), std::string::npos) << *C;
-    compileArm64eC(*C);
-  }
+  EXPECT_NE(LowC.find("__builtin_ptrauth_auth"), std::string::npos) << LowC;
+  EXPECT_NE(HighC.find("branch-protection=pac-ret+leaf+b-key"),
+            std::string::npos)
+      << HighC;
+  EXPECT_EQ(HighC.find("__builtin_ptrauth_auth"), std::string::npos) << HighC;
+  compileArm64eC(LowC);
+  compileArm64eC(HighC);
 }
 
 TEST(AArch64PAuthSemantics, ExceptionReturnsNeverLoseAuthentication) {

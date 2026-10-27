@@ -2397,6 +2397,10 @@ add_neverd_unittest(NeverDMedPrologueSavesTests
   core/MedPrologueSavesTests.cpp
   LINK_COMPONENTS IRMed
 )
+add_neverd_unittest(NeverDAArch64ReturnProtectionTests
+  aarch64/AArch64ReturnProtectionTests.cpp
+  LINK_COMPONENTS BackendC IRHigh IRMed IRLow Decode Lift Loader
+)
 add_neverd_unittest(NeverDCallRegisterUnreadTests
   core/CallRegisterUnreadTests.cpp
   LINK_COMPONENTS IRLow

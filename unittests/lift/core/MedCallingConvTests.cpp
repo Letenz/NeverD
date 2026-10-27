@@ -3273,6 +3273,70 @@ TEST(MedABIPass, DirectSretUsesDeclaredCalleeContract) {
   EXPECT_EQ(Args[1].RegOff, Result.RegOff);
 }
 
+TEST(MedABIPass, IndirectResultSetupSurvivesCallSiteBlockSplits) {
+  for (bool Indirect : {false, true}) {
+    SCOPED_TRACE(Indirect);
+    CallStackProofCase C(Arch::AArch64);
+    const auto Arg0 = reg(30, 1, 8, C.TRI.IntParamRegs[0], C.A);
+    const auto Result = reg(40, 1, 8, C.TRI.indirectResultReg(), C.A);
+    C.block().Ops.push_back(unary(NdOp::COPY, Arg0, C.constant(7)));
+    C.block().Ops.push_back(
+        binary(NdOp::INT_ADD, Result, C.EntrySP, C.constant(32)));
+    C.block().Succs = {1};
+    C.F.Blocks.emplace_back();
+    C.block().Id = 1;
+    C.block().Preds = {0};
+    C.call(Indirect);
+    std::map<va_t, int> Registers{{C.Callee, 1}}, Total{{C.Callee, 1}};
+    std::map<va_t, bool> Sret{{C.Callee, true}};
+    recoverCallAbi(C.F, C.A, {{C.Callee, "result_callee"}}, nullptr, &Registers,
+                   &Total, nullptr, nullptr, nullptr, &Sret);
+    ASSERT_EQ(C.F.CallInfos.size(), 1U);
+    const auto &Args = C.F.CallInfos.front().Args;
+    ASSERT_EQ(Args.size(), 2U)
+        << "first operand id=" << (Args.empty() ? -1 : Args.front().Id)
+        << ", kind=" << (Args.empty() ? -1 : int(Args.front().Kind));
+    EXPECT_EQ(Args.back(), Result);
+    EXPECT_EQ(C.F.CallInfos.front().VarArgFixedCount, -1);
+  }
+}
+
+TEST(MedABIPass, IndirectResultSetupStopsAtClobbersAndAmbiguousJoins) {
+  for (unsigned Mode = 0; Mode < 3; ++Mode) {
+    SCOPED_TRACE(Mode);
+    CallStackProofCase C(Arch::AArch64);
+    const auto Result = reg(40, 1, 8, C.TRI.indirectResultReg(), C.A);
+    C.block().Ops.push_back(
+        binary(NdOp::INT_ADD, Result, C.EntrySP, C.constant(32)));
+    if (Mode == 0)
+      C.call();
+    if (Mode == 1) {
+      auto Scratch = Result;
+      Scratch.SSAVer = 2;
+      C.block().Ops.push_back(unary(NdOp::COPY, Scratch, C.constant(99)));
+    }
+    C.block().Succs = {2};
+    if (Mode == 2) {
+      C.F.Blocks.emplace_back();
+      C.block().Id = 1;
+      C.block().Succs = {2};
+    }
+    C.F.Blocks.emplace_back();
+    C.block().Id = 2;
+    C.block().Preds = Mode == 2 ? std::vector<int>{0, 1} : std::vector<int>{0};
+    const auto Arg0 = reg(30, 1, 8, C.TRI.IntParamRegs[0], C.A);
+    C.block().Ops.push_back(unary(NdOp::COPY, Arg0, C.constant(7)));
+    C.call(true);
+    recoverCallAbi(C.F, C.A, {});
+    ASSERT_FALSE(C.F.CallInfos.empty());
+    const auto &Call = C.F.CallInfos.back();
+    ASSERT_TRUE(Call.IsIndirect);
+    ASSERT_EQ(Call.Args.size(), 1U);
+    EXPECT_TRUE(Call.Args[0].isConst());
+    EXPECT_EQ(Call.Args[0].ConstVal, 7U);
+  }
+}
+
 TEST(MedABIPass, CallStackOffsetArithmeticRejectsOverflow) {
   // The fourth overflow edge (cross-predecessor target addition) is checked
   // in DarwinPredecessorSlotsRequireKnownCallStack mode2, including its
