@@ -7373,7 +7373,13 @@ the C renderer owns their native-builtin/checked-assembly projection. Numerical
 execution lives under `ir/low/X86/`, retaining the existing sequential FP and
 integer algorithms. Pure COPY/CONCAT transport cannot manufacture missing
 source bytes. Compact and four-source native functions share entry-unknown
-validation; their lifters share ordinary-SIB address admission. C scalar integer
+validation; their lifters share ordinary-SIB address admission and authenticated
+i386 segment selection in `lift/X86/X86NativeMemory.h`. Four-source controls
+also retain CS/ES/SS in a checked high byte, including implicit SS for SP/BP.
+`ir/med/X86/X86NativeMemory.h` owns the raw-offset role used by both MedIR and
+HighIR type inference for these families. Active accesses require native
+descriptor state; a zero mask suppresses that observation while scalar FMA
+still retains the accumulator's upper 96 bits. C scalar integer
 carriers accommodate the complete 256-byte source group, independently of the
 64-byte compiler vector limit. Legacy implicit-bank identities stay readable
 without acquiring an unproved native source-state contract.

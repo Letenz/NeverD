@@ -65,6 +65,10 @@ bool NdOpEmulator::executeX86FourSource(const LowOp &Op) {
     return false;
   const auto Use = x86FourSourceOperandUse(C, readOperand(Op.Inputs[4]));
   const auto Mask = readOperand(Op.Inputs[4]) & Use.LaneMask;
+  // Native execution owns CS/ES/SS descriptor state. A zero mask suppresses
+  // that observation; active accesses cannot use the ordinary DS image.
+  if (Use.Address && C.SegmentPrefix)
+    return false;
   if ((Use.Accumulator && !Known(Op.Inputs[2])) ||
       (Use.Address && (!Known(Op.Inputs[1]) || (!C.integer() && !MXCSRKnown))))
     return false;

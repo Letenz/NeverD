@@ -19,6 +19,14 @@
 #include <vector>
 
 namespace neverd {
+inline unsigned x86FourSourceNativePrefix(const X86FourSourceControl &C,
+                                          NdMemoryAddressSpace Space) {
+  return C.SegmentPrefix |
+         (Space == NdMemoryAddressSpace::X86FS   ? 0x64
+          : Space == NdMemoryAddressSpace::X86GS ? 0x65
+                                                 : 0) |
+         (C.StackReference ? X86NativeStackReference : 0);
+}
 inline constexpr std::string_view X86FourSourceAsmMarker =
     "# neverd.x86.four_source ";
 struct X86FourSourcePlan {

@@ -290,6 +290,21 @@ operand transport, not i386 hardware or descriptor faults. The ordinary compact
 wrapper matrix also includes all three new i386 segment prefixes. See the
 [qualification record](evidence/x86-compact-segments-2026-10-27.json).
 
+`NeverDX86FourSourceSegmentTests` applies the same i386 CS/ES/SS contract to
+V4FMADDPS/SS, V4FNMADDPS/SS and VP4DPWSSD/SSDS. It covers addr16/addr32,
+implicit SS, explicit DS/FS/GS overrides, merging/zeroing and all three decoder
+routes. Active accesses without descriptor state refuse before memory or MXCSR
+effects; masked scalar forms still preserve the accumulator's upper 96 bits.
+The shared `x86/X86NativeSegmentFixture.h` compiles 540 objects for these six
+kinds and 270 for compact memory, preserving raw offsets alongside ordinary DS
+image objects. Run `scripts/verify_x86_four_source_segments.py --exports DIR
+--keep CHECKS --neverc NEVERC` on the four-source artifact root for Clang
+ASan/UBSan and NeverC operand recorders. The two pipeline tests use distinct
+artifact names so a combined target run preserves both corpora. Also run
+`NeverDX86FourFMAExactTests` and `NeverDX86VP4DPWTests` for the numerical
+contracts; these source checks do not execute native four-source arithmetic.
+See the [qualification record](evidence/x86-four-source-segments-2026-10-27.json).
+
 `X86NativeMemoryCarrier.*` in `NeverDX86CompressExpandSourceTests` compiles owned
 compact/four-source, descriptor, query and atomic assembly in dynamically
 allocated, realigned frames for i386/x64 and ELF/COFF/Mach-O. Its 54 objects

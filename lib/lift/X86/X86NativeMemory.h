@@ -14,6 +14,17 @@
 #include "neverd/support/X86/X86Addressing.h"
 
 namespace neverd {
+/// Use the authenticated encoding prefix; an explicit override suppresses the
+/// implicit SS selection for SP/BP bases. DS/FS/GS use their existing carriers.
+inline unsigned x86NativeI386Segment(Arch A, unsigned Prefix,
+                                     const cs_x86_op &Memory) {
+  if (A != Arch::X86)
+    return 0;
+  if (Prefix == 0x26 || Prefix == 0x2e || Prefix == 0x36)
+    return Prefix;
+  return !Prefix && isStackDefaultBase(Memory.mem.base) ? 0x36 : 0;
+}
+
 inline bool x86NativeAddressIsStack(Arch A, const cs_x86 &X86,
                                     const cs_x86_op &Memory) {
   return A == Arch::X64 && X86.addr_size == 8 &&
