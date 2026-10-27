@@ -804,6 +804,7 @@ struct Listing::Impl {
     maxRecoveredInstructionSize = 0;
     alignCache.clear();
     applyDisplayNames();
+    discoveryListingPending = false;
   }
 
   /// Read the names and the user's items again over what the last build
