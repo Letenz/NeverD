@@ -6499,6 +6499,8 @@ and reject raw-export/execution options. See [resource profiles](web-datapack-pr
 The DataPack CLI check uses the advertised archive capability when ICU is
 omitted: direct packs remain available, while ZIP-wrapped selections must
 return `package_archive_path_policy_unavailable` before source analysis.
+Each command has separate redirect files so a shorter refusal cannot retain
+trailing bytes from a previous successful command.
 
 Select the fixed real inputs without running the applications:
 

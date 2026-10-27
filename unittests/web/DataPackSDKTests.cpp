@@ -317,8 +317,6 @@ TEST_F(WebDataPackSDK, CLIUsesSharedConsumersWithAnUnusableExternalPATH) {
       ArchiveAvailable = Analysis.getAsObject()->getBoolean("available");
   ASSERT_TRUE(ArchiveAvailable.has_value());
   const auto B = pack({{7, gzipStored("const CANARY=1;")}});
-  const auto Out = (Root / "out").string(), Err = (Root / "err").string();
-  const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Out, Err};
   const llvm::StringRef Env[] = {"PATH=/neverd-no-external-tools"};
   for (const bool Archive : {false, true}) {
     capture(Archive ? ZipFixture({{"app.pak", B, 0}}).Bytes : B);
@@ -326,6 +324,14 @@ TEST_F(WebDataPackSDK, CLIUsesSharedConsumersWithAnUnusableExternalPATH) {
       SCOPED_TRACE(::testing::Message()
                    << "archive=" << Archive << ", source=" << Source
                    << ", archive_available=" << *ArchiveAvailable);
+      // LLVM redirects do not truncate an existing file. Keep shorter refusal
+      // replies separate from the successful command's longer output.
+      const auto Case = std::string(Archive ? "archive" : "direct") +
+                        (Source ? "-source" : "-index");
+      const auto Out = (Root / ("out-" + Case)).string();
+      const auto Err = (Root / ("err-" + Case)).string();
+      const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Out,
+                                                          Err};
       std::vector<std::string> Owned{
           NEVERD_WEB_TEST_CLI, "web",
           Archive ? (Source ? "archive-pak-source" : "archive-pak")
