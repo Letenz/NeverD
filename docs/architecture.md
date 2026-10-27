@@ -2107,6 +2107,12 @@ record ABI does (`TypeLayout.h`):
   bitfields, and Go's unions, unaligned members and flexible arrays come
   back from their accessor methods.
 
+C/C++ tokens borrow ordinary spellings from the input. A parse-local arena
+holds spliced directive lines and decoded literals, shared by nested macro
+lexers. It outlives the parser, including tokens expanded before a macro is
+redefined or removed. Published types, prototypes and diagnostics own their
+strings; neither parsing entry point retains the input or arena.
+
 A library's record ABI (`RecordABIs.def`) says what its data model does not:
 whether bit-fields go as Microsoft's compilers or the Itanium ABI place them,
 how far a scalar aligns in a record, four for long long and double under
