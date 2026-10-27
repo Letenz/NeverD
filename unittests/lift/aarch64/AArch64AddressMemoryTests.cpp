@@ -3976,29 +3976,48 @@ MedFunc writebackFunction(const WritebackCase &Case, size_t Index) {
   return Function;
 }
 
-void executeWritebackFamilies(const BinaryImage *Image) {
+void executeWritebackFamilies(const BinaryImage *Image, bool Stack = false) {
   std::vector<MedFunc> Functions;
-  std::string Declarations, Replays, Entries;
+  std::string Declarations, Replays, Entries, Faults, FaultEntries;
   for (size_t I = 0; I != std::size(WritebackCases); ++I) {
-    const auto &Case = WritebackCases[I];
+    auto Case = WritebackCases[I];
+    if (Stack) {
+      Case.Word = (Case.Word & ~kStackBaseMask) | kStackBaseMask;
+      Case.Scratch = (Case.Scratch & ~kStackBaseMask) | kStackBaseMask;
+    }
     auto Function = writebackFunction(Case, I);
     ASSERT_TRUE(verifyMedFunc(Function, Function.Name.c_str()));
     Declarations += llvm::formatv(Case.Result ? kWritebackLoadDeclaration
                                               : kWritebackStoreDeclaration,
                                   Function.Name)
                         .str();
-    Replays += llvm::formatv(kWritebackNativeCase, I, Case.Word,
-                             llvm::formatv(Case.Result ? kWritebackNativeLoad
-                                                       : kWritebackNativeStore,
-                                           Function.Name)
-                                 .str())
-                   .str();
+    Replays +=
+        llvm::formatv(kWritebackNativeCase, I, Case.Word,
+                      llvm::formatv(Case.Result ? kWritebackNativeLoad
+                                                : kWritebackNativeStore,
+                                    Function.Name)
+                          .str(),
+                      Stack ? kStackOracleX9Before : kEmptyNativeArgument,
+                      Stack ? kStackOracleX9After : kEmptyNativeArgument,
+                      Stack ? kStackOracleClobbers : kEmptyNativeArgument)
+            .str();
     Entries += llvm::formatv(kWritebackHarnessCase, I).str();
+    if (Stack) {
+      Faults += llvm::formatv(kStackFaultWrapper, I, Function.Name,
+                              Case.Result ? kStackFaultLoadArguments
+                                          : kStackFaultStoreArguments)
+                    .str();
+      FaultEntries += llvm::formatv(kStackFaultEntry, I).str();
+    }
     Functions.push_back(std::move(Function));
   }
-  const auto Harness = std::string(kWritebackHarnessPrelude) + Declarations +
-                       Replays +
-                       llvm::formatv(kWritebackHarnessTail, Entries).str();
+  const auto Harness =
+      std::string(kWritebackHarnessPrelude) + Declarations + Replays +
+      (Stack ? std::string(kStackFaultBegin) + Faults +
+                   llvm::formatv(kStackFaultTable, FaultEntries).str() +
+                   kStackFaultEnd
+             : std::string()) +
+      llvm::formatv(kWritebackHarnessTail, Entries).str();
   llvm::LLVMContext Context;
   auto Module = MedLLVMEmitter().emit(Functions, Context, kName, Arch::AArch64,
                                       {}, Image);
@@ -4013,9 +4032,12 @@ void executeWritebackFamilies(const BinaryImage *Image) {
   Options.Image = Image;
   std::string ArtifactDirectory;
   if (!Image)
-    if (const char *Directory = std::getenv(kWritebackArtifactEnvironment)) {
+    if (const char *Directory =
+            std::getenv(Stack ? kStackWritebackArtifactEnvironment
+                              : kWritebackArtifactEnvironment)) {
       ArtifactDirectory = Directory;
-      ::testing::Test::RecordProperty(kWritebackArtifactProperty,
+      ::testing::Test::RecordProperty(Stack ? kStackWritebackArtifactProperty
+                                            : kWritebackArtifactProperty,
                                       ArtifactDirectory);
       ASSERT_FALSE(llvm::sys::fs::create_directories(ArtifactDirectory));
     }
@@ -4056,12 +4078,19 @@ void executeWritebackFamilies(const BinaryImage *Image) {
   const auto Object =
       Codegen().compile(*Module, Arch::AArch64, BinaryFormat::MachO);
   ASSERT_TRUE(Object.Success);
+  if (Stack)
+    Save(kImmediateMachOArtifact,
+         llvm::StringRef(
+             reinterpret_cast<const char *>(Object.ObjectData.data()),
+             Object.ObjectData.size()));
   const llvm::MemoryBufferRef Buffer(
       llvm::StringRef(reinterpret_cast<const char *>(Object.ObjectData.data()),
                       Object.ObjectData.size()),
       kObject);
   for (const auto &Case : WritebackCases)
-    inspectMemoryObject(Buffer, Case.Scratch);
+    inspectMemoryObject(Buffer, Stack ? (Case.Scratch & ~kStackBaseMask) |
+                                            kStackBaseMask
+                                      : Case.Scratch);
 #if defined(__APPLE__) && defined(__aarch64__)
   llvm::SmallString<kVectorPathStorage> ObjectPath;
   ASSERT_FALSE(llvm::sys::fs::createTemporaryFile(kTempPrefix, kOutputExtension,
@@ -4264,6 +4293,7 @@ TEST(AArch64WritebackMemory, MalformedContractsFailBeforeSourceFiltering) {
   Function.Blocks.front().Ops.front().Inputs[2].ConstVal = kWritebackStackLoad;
   ASSERT_TRUE(aarch64WritebackMemoryMedShapeIsValid(
       Function.Blocks.front().Ops.front()));
+  Function.Blocks.front().Ops.front().Inputs[1].Kind = MedVar::Temp;
   llvm::LLVMContext Context;
   EXPECT_THROW(MedLLVMEmitter().emit({Function}, Context, kName, Arch::AArch64),
                std::runtime_error);
@@ -4678,21 +4708,30 @@ MedFunc vectorWritebackFunction(const VectorWritebackCase &Case, size_t Index) {
   return Function;
 }
 
-void executeVectorWritebackFamilies(const BinaryImage *Image) {
+void executeVectorWritebackFamilies(const BinaryImage *Image,
+                                    bool Stack = false) {
   std::vector<MedFunc> Functions;
-  std::string Declarations, Replays, Entries;
+  std::string Declarations, Replays, Entries, Faults, FaultEntries;
   for (size_t I = 0; I != std::size(VectorWritebackCases); ++I) {
-    const auto &Case = VectorWritebackCases[I];
+    auto Case = VectorWritebackCases[I];
+    if (Stack) {
+      Case.Word = (Case.Word & ~kStackBaseMask) | kStackBaseMask;
+      Case.Scratch = (Case.Scratch & ~kStackBaseMask) | kStackBaseMask;
+    }
     auto Function = vectorWritebackFunction(Case, I);
     ASSERT_TRUE(verifyMedFunc(Function, Function.Name.c_str()));
     Declarations += llvm::formatv(Case.Load ? kVectorWritebackLoadDeclaration
                                             : kVectorWritebackStoreDeclaration,
                                   Function.Name)
                         .str();
-    const auto Native = llvm::formatv(Case.Load ? kVectorWritebackNativeLoad
-                                                : kVectorWritebackNativeStore,
-                                      I, Case.Word)
-                            .str();
+    const auto Native =
+        llvm::formatv(Case.Load ? kVectorWritebackNativeLoad
+                                : kVectorWritebackNativeStore,
+                      I, Case.Word,
+                      Stack ? kStackOracleX21Before : kEmptyNativeArgument,
+                      Stack ? kStackOracleX21After : kEmptyNativeArgument,
+                      Stack ? kStackOracleClobbers : kEmptyNativeArgument)
+            .str();
     const auto Call = llvm::formatv(Case.Load ? kVectorWritebackLoadCall
                                               : kVectorWritebackStoreCall,
                                     Function.Name)
@@ -4702,10 +4741,21 @@ void executeVectorWritebackFamilies(const BinaryImage *Image) {
                                int(Case.Pre), Case.Access, int(Case.Load), Call)
                      .str();
     Entries += llvm::formatv(kVectorWritebackHarnessEntry, I).str();
+    if (Stack) {
+      Faults += llvm::formatv(kStackFaultWrapper, I, Function.Name,
+                              Case.Load ? kStackFaultOutputArguments
+                                        : kStackFaultDataArguments)
+                    .str();
+      FaultEntries += llvm::formatv(kStackFaultEntry, I).str();
+    }
     Functions.push_back(std::move(Function));
   }
   const auto Harness =
       std::string(kVectorWritebackHarnessPrelude) + Declarations + Replays +
+      (Stack ? std::string(kStackFaultBegin) + Faults +
+                   llvm::formatv(kStackFaultTable, FaultEntries).str() +
+                   kStackFaultEnd
+             : std::string()) +
       llvm::formatv(kVectorWritebackHarnessTail, Entries).str();
   llvm::LLVMContext Context;
   auto Module = MedLLVMEmitter().emit(Functions, Context, kName, Arch::AArch64,
@@ -4720,10 +4770,13 @@ void executeVectorWritebackFamilies(const BinaryImage *Image) {
   std::string ArtifactDirectory;
   if (!Image)
     if (const char *Directory =
-            std::getenv(kVectorWritebackArtifactEnvironment)) {
+            std::getenv(Stack ? kStackVectorWritebackArtifactEnvironment
+                              : kVectorWritebackArtifactEnvironment)) {
       ArtifactDirectory = Directory;
-      ::testing::Test::RecordProperty(kVectorWritebackArtifactProperty,
-                                      ArtifactDirectory);
+      ::testing::Test::RecordProperty(
+          Stack ? kStackVectorWritebackArtifactProperty
+                : kVectorWritebackArtifactProperty,
+          ArtifactDirectory);
       ASSERT_FALSE(llvm::sys::fs::create_directories(ArtifactDirectory));
     }
   const auto Save = [&](llvm::StringRef Name, llvm::StringRef Data) {
@@ -4762,12 +4815,19 @@ void executeVectorWritebackFamilies(const BinaryImage *Image) {
   const auto Object =
       Codegen().compile(*Module, Arch::AArch64, BinaryFormat::MachO);
   ASSERT_TRUE(Object.Success);
+  if (Stack)
+    Save(kImmediateMachOArtifact,
+         llvm::StringRef(
+             reinterpret_cast<const char *>(Object.ObjectData.data()),
+             Object.ObjectData.size()));
   const llvm::MemoryBufferRef Buffer(
       llvm::StringRef(reinterpret_cast<const char *>(Object.ObjectData.data()),
                       Object.ObjectData.size()),
       kObject);
   for (const auto &Case : VectorWritebackCases)
-    inspectMemoryObject(Buffer, Case.Scratch);
+    inspectMemoryObject(Buffer, Stack ? (Case.Scratch & ~kStackBaseMask) |
+                                            kStackBaseMask
+                                      : Case.Scratch);
 #if defined(__APPLE__) && defined(__aarch64__)
   llvm::SmallString<kVectorPathStorage> ObjectPath;
   ASSERT_FALSE(llvm::sys::fs::createTemporaryFile(kTempPrefix, kOutputExtension,
@@ -4946,6 +5006,8 @@ TEST(AArch64VectorWritebackMemory, MalformedTuplesFailBeforeBodyFiltering) {
         (At->Word & ~kVectorWritebackBaseMask) | kVectorWritebackSPBase;
     ASSERT_TRUE(
         aarch64WritebackMemoryMedShapeIsValid(Stack.Blocks.front().Ops[Index]));
+    Stack.Blocks.front().Ops[Index].Inputs[kWritebackBaseOperand + 1].Kind =
+        MedVar::Temp;
     llvm::LLVMContext StackContext;
     EXPECT_THROW(
         MedLLVMEmitter().emit({Stack}, StackContext, kName, Arch::AArch64),
@@ -5679,11 +5741,15 @@ MedFunc pairMemoryFunction(const PairMemoryCase &Case, size_t Index) {
   return Function;
 }
 
-void executePairMemoryFamilies(const BinaryImage *Image) {
+void executePairMemoryFamilies(const BinaryImage *Image, bool Stack = false) {
   std::vector<MedFunc> Functions;
-  std::string Declarations, Replays, Entries;
+  std::string Declarations, Replays, Entries, Faults, FaultEntries;
   for (size_t I = 0; I != std::size(PairMemoryCases); ++I) {
-    const auto &Case = PairMemoryCases[I];
+    auto Case = PairMemoryCases[I];
+    if (Stack) {
+      Case.Word = (Case.Word & ~kStackBaseMask) | kStackBaseMask;
+      Case.Scratch = (Case.Scratch & ~kStackBaseMask) | kStackBaseMask;
+    }
     auto Function = pairMemoryFunction(Case, I);
     ASSERT_TRUE(verifyMedFunc(Function, Function.Name.c_str()));
     Declarations +=
@@ -5707,10 +5773,14 @@ void executePairMemoryFamilies(const BinaryImage *Image) {
         Case.Vector ? kPairTestSecondVectorBits : kPairTestSecondScalarBits;
     const auto Native = [&] {
       if (Case.Load)
-        return llvm::formatv(kPairTestNativeLoad, I, Case.Word, Type, Bank,
-                             Case.Vector ? kPairTestVectorOutputConstraint
-                                         : kPairTestScalarOutputConstraint,
-                             FirstBits, SecondBits)
+        return llvm::formatv(
+                   kPairTestNativeLoad, I, Case.Word, Type, Bank,
+                   Case.Vector ? kPairTestVectorOutputConstraint
+                               : kPairTestScalarOutputConstraint,
+                   FirstBits, SecondBits,
+                   Stack ? kStackOracleX20Before : kEmptyNativeArgument,
+                   Stack ? kStackOracleX20After : kEmptyNativeArgument,
+                   Stack ? kStackOracleClobbers : kEmptyNativeArgument)
             .str();
       return llvm::formatv(kPairTestNativeStore, I, Case.Word, Type, Bank,
                            Case.Vector ? kPairTestVectorInputConstraint
@@ -5719,7 +5789,10 @@ void executePairMemoryFamilies(const BinaryImage *Image) {
                            Case.Vector ? kPairTestFirstVectorInput
                                        : kPairTestFirstScalarInput,
                            Case.Vector ? kPairTestSecondVectorInput
-                                       : kPairTestSecondScalarInput)
+                                       : kPairTestSecondScalarInput,
+                           Stack ? kStackOracleX20Before : kEmptyNativeArgument,
+                           Stack ? kStackOracleX20After : kEmptyNativeArgument,
+                           Stack ? kStackOracleClobbers : kEmptyNativeArgument)
           .str();
     }();
     const bool Writeback =
@@ -5731,10 +5804,23 @@ void executePairMemoryFamilies(const BinaryImage *Image) {
                                int(Case.Signed), int(Writeback), Call)
                      .str();
     Entries += llvm::formatv(kPairTestEntry, I).str();
+    if (Stack) {
+      Faults += llvm::formatv(kStackFaultWrapper, I, Function.Name,
+                              Case.Load     ? kStackFaultOutputArguments
+                              : Case.Vector ? kStackFaultPairVectorArguments
+                                            : kStackFaultDataArguments)
+                    .str();
+      FaultEntries += llvm::formatv(kStackFaultEntry, I).str();
+    }
     Functions.push_back(std::move(Function));
   }
-  const auto Harness = std::string(kPairTestPrelude) + Declarations + Replays +
-                       llvm::formatv(kPairTestTail, Entries).str();
+  const auto Harness =
+      std::string(kPairTestPrelude) + Declarations + Replays +
+      (Stack ? std::string(kStackFaultBegin) + Faults +
+                   llvm::formatv(kStackFaultTable, FaultEntries).str() +
+                   kStackFaultEnd
+             : std::string()) +
+      llvm::formatv(kPairTestTail, Entries).str();
   llvm::LLVMContext Context;
   auto Module = MedLLVMEmitter().emit(Functions, Context, kName, Arch::AArch64,
                                       {}, Image);
@@ -5747,9 +5833,12 @@ void executePairMemoryFamilies(const BinaryImage *Image) {
   Options.Image = Image;
   std::string Directory;
   if (!Image)
-    if (const char *Path = std::getenv(kPairTestArtifactEnvironment)) {
+    if (const char *Path = std::getenv(Stack ? kStackPairArtifactEnvironment
+                                             : kPairTestArtifactEnvironment)) {
       Directory = Path;
-      ::testing::Test::RecordProperty(kPairTestArtifactProperty, Directory);
+      ::testing::Test::RecordProperty(Stack ? kStackPairArtifactProperty
+                                            : kPairTestArtifactProperty,
+                                      Directory);
       ASSERT_FALSE(llvm::sys::fs::create_directories(Directory));
     }
   const auto Save = [&](llvm::StringRef Name, llvm::StringRef Bytes) {
@@ -5788,12 +5877,19 @@ void executePairMemoryFamilies(const BinaryImage *Image) {
   const auto Object =
       Codegen().compile(*Module, Arch::AArch64, BinaryFormat::MachO);
   ASSERT_TRUE(Object.Success);
+  if (Stack)
+    Save(kImmediateMachOArtifact,
+         llvm::StringRef(
+             reinterpret_cast<const char *>(Object.ObjectData.data()),
+             Object.ObjectData.size()));
   const llvm::MemoryBufferRef Buffer(
       llvm::StringRef(reinterpret_cast<const char *>(Object.ObjectData.data()),
                       Object.ObjectData.size()),
       kObject);
   for (const auto &Case : PairMemoryCases)
-    inspectMemoryObject(Buffer, Case.Scratch);
+    inspectMemoryObject(Buffer, Stack ? (Case.Scratch & ~kStackBaseMask) |
+                                            kStackBaseMask
+                                      : Case.Scratch);
 #if defined(__APPLE__) && defined(__aarch64__)
   llvm::SmallString<kVectorPathStorage> ObjectPath;
   ASSERT_FALSE(llvm::sys::fs::createTemporaryFile(kTempPrefix, kOutputExtension,
@@ -5998,6 +6094,8 @@ TEST(AArch64PairMemory, MalformedResultsAndSecondOperandsFailBeforeFiltering) {
           .ConstVal |= kAddressMemoryRegisterMask << kAddressMemoryBaseShift;
       ASSERT_TRUE(aarch64WritebackMemoryMedShapeIsValid(
           Stack.Blocks.front().Ops[Index]));
+      Stack.Blocks.front().Ops[Index].Inputs[kWritebackBaseOperand + 1].Kind =
+          MedVar::Temp;
       llvm::LLVMContext StackContext;
       EXPECT_THROW(
           MedLLVMEmitter().emit({Stack}, StackContext, kName, Arch::AArch64),
@@ -7145,14 +7243,19 @@ MedFunc structureMemoryFunction(const StructureMemoryCase &Case, size_t Index) {
   return F;
 }
 
-void executeStructureMemoryFamilies(const BinaryImage *Image, size_t Begin) {
+void executeStructureMemoryFamilies(const BinaryImage *Image, size_t Begin,
+                                    bool Stack = false) {
   const auto End = std::min(Begin + kStructureTestBatchCases,
                             std::size(StructureMemoryCases));
   SCOPED_TRACE(Begin);
   std::vector<MedFunc> Functions;
-  std::string Declarations, Replays, Entries;
+  std::string Declarations, Replays, Entries, Faults, FaultEntries;
   for (size_t N = Begin; N != End; ++N) {
-    const auto &Case = StructureMemoryCases[N];
+    auto Case = StructureMemoryCases[N];
+    if (Stack) {
+      Case.Word = (Case.Word & ~kStackBaseMask) | kStackBaseMask;
+      Case.Scratch = (Case.Scratch & ~kStackBaseMask) | kStackBaseMask;
+    }
     const auto I = *aarch64StructureMemoryInstruction(Case.Word);
     auto F = structureMemoryFunction(Case, N);
     ASSERT_TRUE(verifyMedFunc(F, F.Name.c_str()));
@@ -7161,7 +7264,8 @@ void executeStructureMemoryFamilies(const BinaryImage *Image, size_t Begin) {
       Types += kStructureTestParameterType;
     Declarations +=
         llvm::formatv(kStructureTestDeclaration, F.Name, Types).str();
-    std::string Arguments = kStructureTestBaseArgument;
+    std::string Arguments =
+        Stack ? kStackStructureBaseArgument : kStructureTestBaseArgument;
     if (I.hasRegisterIndex())
       Arguments += kStructureTestIndexArgument;
     if (!I.isLoad() || I.laneLoad())
@@ -7174,17 +7278,40 @@ void executeStructureMemoryFamilies(const BinaryImage *Image, size_t Begin) {
                                        .str()
                                  : std::string();
     Replays +=
-        llvm::formatv(kStructureTestNativeFunction, N, Case.Word, Copy).str();
-    Replays +=
-        llvm::formatv(kStructureTestReplay, N,
-                      llvm::formatv(kStructureTestNativeCall, N).str(), Call)
+        llvm::formatv(kStructureTestNativeFunction, N, Case.Word, Copy,
+                      Stack ? kStackOracleX9Before : kEmptyNativeArgument,
+                      Stack ? kStackOracleX9After : kEmptyNativeArgument,
+                      Stack ? kStackOracleClobbers : kEmptyNativeArgument)
             .str();
+    Replays += llvm::formatv(kStructureTestReplay, N,
+                             llvm::formatv(Stack ? kStackStructureNativeCall
+                                                 : kStructureTestNativeCall,
+                                           N)
+                                 .str(),
+                             Call)
+                   .str();
     Entries += llvm::formatv(kStructureTestEntry, N).str();
+    if (Stack) {
+      std::string FaultArguments = kStackFaultStructureBase;
+      if (I.hasRegisterIndex())
+        FaultArguments += kStackFaultStructureIndex;
+      if (!I.isLoad() || I.laneLoad())
+        FaultArguments += kStackFaultStructureInput;
+      if (I.isLoad())
+        FaultArguments += kStackFaultStructureOutput;
+      Faults +=
+          llvm::formatv(kStackFaultWrapper, N, F.Name, FaultArguments).str();
+      FaultEntries += llvm::formatv(kStackFaultEntry, N).str();
+    }
     Functions.push_back(std::move(F));
   }
-  const auto Harness = std::string(kStructureTestPrefix) + Declarations +
-                       Replays +
-                       llvm::formatv(kStructureTestMain, Entries).str();
+  const auto Harness =
+      std::string(kStructureTestPrefix) + Declarations + Replays +
+      (Stack ? std::string(kStackFaultBegin) + Faults +
+                   llvm::formatv(kStackFaultTable, FaultEntries).str() +
+                   kStackFaultEnd
+             : std::string()) +
+      llvm::formatv(kStructureTestMain, Entries).str();
   llvm::LLVMContext C;
   auto Module =
       MedLLVMEmitter().emit(Functions, C, kName, Arch::AArch64, {}, Image);
@@ -7198,16 +7325,20 @@ void executeStructureMemoryFamilies(const BinaryImage *Image, size_t Begin) {
   std::string Directory;
   if (const char *Path = std::getenv(kStructureTestArtifactEnvironment)) {
     Directory = Path;
+    if (Stack)
+      Directory += kStackStructureDirectory;
     if (Image)
       Directory += kStructureTestImageDirectory;
     Directory += llvm::formatv(kStructureTestBatchDirectory, Begin).str();
     ASSERT_FALSE(llvm::sys::fs::create_directories(Directory));
     if (Begin == 0)
       ::testing::Test::RecordProperty(
-          Image ? kStructureTestImageArtifactProperty
-                : kStructureTestArtifactProperty,
+          Stack   ? kStackStructureArtifactProperty
+          : Image ? kStructureTestImageArtifactProperty
+                  : kStructureTestArtifactProperty,
           Image ? std::string(Path) + kStructureTestImageDirectory
-                : std::string(Path));
+                : std::string(Path) + (Stack ? kStackStructureDirectory
+                                             : kEmptyNativeArgument));
   }
   const auto Save = [&](llvm::StringRef Name, llvm::StringRef Bytes) {
     if (Directory.empty())
@@ -7246,12 +7377,20 @@ void executeStructureMemoryFamilies(const BinaryImage *Image, size_t Begin) {
   const auto Object =
       Codegen().compile(*Module, Arch::AArch64, BinaryFormat::MachO);
   ASSERT_TRUE(Object.Success);
+  if (Stack)
+    Save(kImmediateMachOArtifact,
+         llvm::StringRef(
+             reinterpret_cast<const char *>(Object.ObjectData.data()),
+             Object.ObjectData.size()));
   const llvm::MemoryBufferRef Buffer(
       llvm::StringRef(reinterpret_cast<const char *>(Object.ObjectData.data()),
                       Object.ObjectData.size()),
       kObject);
   for (size_t N = Begin; N != End; ++N)
-    inspectMemoryObject(Buffer, StructureMemoryCases[N].Scratch);
+    inspectMemoryObject(
+        Buffer, Stack ? (StructureMemoryCases[N].Scratch & ~kStackBaseMask) |
+                            kStackBaseMask
+                      : StructureMemoryCases[N].Scratch);
 #if defined(__APPLE__) && defined(__aarch64__)
   llvm::SmallString<kVectorPathStorage> ObjectPath;
   ASSERT_FALSE(llvm::sys::fs::createTemporaryFile(kTempPrefix, kOutputExtension,
@@ -7579,8 +7718,9 @@ TEST(AArch64StructureMemory, RawSPAndWrappingVectorRolesRemainExplicit) {
       if (aarch64WritebackMemoryMedShapeIsValid(Op))
         Op.Inputs[kWritebackWordOperand + 1].ConstVal = SPWord;
     llvm::LLVMContext C;
-    EXPECT_THROW(MedLLVMEmitter().emit({F}, C, kName, Arch::AArch64),
-                 std::runtime_error);
+    EXPECT_THROW(
+        MedLLVMEmitter().emit({F}, C, kName, Arch::AArch64, {}, &Image),
+        std::runtime_error);
   }
 }
 
@@ -7747,5 +7887,149 @@ TEST(AArch64StructureMemory, DiscardedCompleteResultsRetainOriginalEffects) {
                      [&](llvm::MemoryBufferRef Buffer) {
                        inspectMemoryObject(Buffer, Case.Scratch);
                      });
+  }
+}
+
+TEST(AArch64StackWritebackMemory, BothCProjectionsAndLLVMExecuteEveryFamily) {
+  executeWritebackFamilies(nullptr, true);
+}
+
+TEST(AArch64StackVectorWritebackMemory,
+     BothCProjectionsAndLLVMExecuteEveryFamily) {
+  executeVectorWritebackFamilies(nullptr, true);
+}
+
+TEST(AArch64StackPairMemory, BothCProjectionsAndLLVMExecuteEveryFamily) {
+  executePairMemoryFamilies(nullptr, true);
+}
+
+TEST_P(AArch64StructureMemoryProjection,
+       RawSPKeepsCompleteResultsAndHostStack) {
+  executeStructureMemoryFamilies(nullptr, GetParam(), true);
+}
+
+TEST(AArch64StackWritebackMemory, SourceAdmissionAndInverseAssemblyKeepRawSP) {
+  std::vector<MedFunc> Functions;
+  std::set<Intrinsic> Seen;
+  const auto Add = [&](MedFunc F) {
+    for (auto &B : F.Blocks)
+      for (auto &O : B.Ops)
+        if (aarch64WritebackMemoryMedShapeIsValid(O)) {
+          const auto Id = static_cast<Intrinsic>(O.Inputs[0].ConstVal);
+          if (!Seen.insert(Id).second)
+            return;
+          auto &Word = O.Inputs[kWritebackWordOperand + 1].ConstVal;
+          Word = (Word & ~kStackBaseMask) | kStackBaseMask;
+        }
+    Functions.push_back(std::move(F));
+  };
+  for (const auto &C : WritebackCases)
+    Add(writebackFunction(C, Functions.size()));
+  for (const auto &C : VectorWritebackCases)
+    Add(vectorWritebackFunction(C, Functions.size()));
+  for (const auto &C : PairMemoryCases)
+    Add(pairMemoryFunction(C, Functions.size()));
+  for (const auto &C : StructureMemoryCases)
+    Add(structureMemoryFunction(C, Functions.size()));
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::MachO;
+  for (const auto &F : Functions) {
+    SCOPED_TRACE(F.Name);
+    llvm::LLVMContext C;
+    auto Module = MedLLVMEmitter().emit({F}, C, kName, Arch::AArch64);
+    ASSERT_TRUE(Module);
+    ASSERT_FALSE(llvm::verifyModule(*Module));
+    for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+      llvm::LLVMContext MC;
+      auto M = MedLLVMEmitter().emit({F}, MC, kName, Arch::AArch64);
+      llvm::CallInst *Owned = nullptr;
+      for (auto &Fn : *M)
+        for (auto &B : Fn)
+          for (auto &O : B)
+            if (auto *Call = llvm::dyn_cast<llvm::CallInst>(&O))
+              if (validateAArch64WritebackMemoryCall(Arch::AArch64, *Call))
+                Owned = Call;
+      ASSERT_NE(Owned, nullptr);
+      const auto *Asm = llvm::cast<llvm::InlineAsm>(Owned->getCalledOperand());
+      EXPECT_NE(Asm->getAsmString().find(kStackCaptureSP), std::string::npos);
+      EXPECT_LT(Asm->getAsmString().find(kStackCaptureSP),
+                Asm->getAsmString().find(kStackRestoreSP));
+      auto Text = Asm->getAsmString().str();
+      auto Constraints = Asm->getConstraintString().str();
+      if (Mutation == 0) {
+        const auto At = Constraints.find(kStackClobberSP);
+        ASSERT_NE(At, std::string::npos);
+        Constraints.erase(At, sizeof(kStackClobberSP));
+      } else if (Mutation == 1) {
+        const auto At = Text.find(kStackRestoreSP);
+        ASSERT_NE(At, std::string::npos);
+        Text.erase(At, sizeof(kStackRestoreSP) - 1);
+      } else {
+        auto *Word = llvm::cast<llvm::ConstantInt>(
+            Owned->getArgOperand(Owned->arg_size() - 1));
+        Owned->setArgOperand(
+            Owned->arg_size() - 1,
+            llvm::ConstantInt::get(Word->getType(),
+                                   (Word->getZExtValue() & ~kStackBaseMask) |
+                                       kStackGeneralBaseBits));
+      }
+      Owned->setCalledOperand(llvm::InlineAsm::get(Asm->getFunctionType(), Text,
+                                                   Constraints, true));
+      ASSERT_FALSE(llvm::verifyModule(*M));
+      EXPECT_THROW(validateAArch64WritebackMemoryCall(Arch::AArch64, *Owned),
+                   std::invalid_argument);
+    }
+    for (auto Kind : {MedVar::Param, MedVar::Reg, MedVar::Temp, MedVar::Const})
+      for (bool WithImage : {false, true}) {
+        if (Kind == MedVar::Param && !WithImage)
+          continue;
+        auto Bad = F;
+        auto High = MedToHighConverter().convert(F, Arch::AArch64);
+        MedVar Base;
+        for (auto &B : Bad.Blocks)
+          for (auto &O : B.Ops)
+            if (aarch64WritebackMemoryMedShapeIsValid(O)) {
+              Base = O.Inputs[kWritebackBaseOperand + 1];
+              Base.Kind = Kind;
+              Base.RegOff = a64reg::SP;
+              Base.ConstVal = kEntry;
+              O.Inputs[kWritebackBaseOperand + 1] = Base;
+            }
+        const std::vector<char> Mask{0};
+        llvm::LLVMContext BC;
+        EXPECT_THROW(MedLLVMEmitter().emit({Bad}, BC, kName, Arch::AArch64, {},
+                                           WithImage ? &Image : nullptr,
+                                           BinaryFormat::MachO, false, &Mask),
+                     std::runtime_error);
+        std::function<void(const ExprPtr &)> Reject;
+        Reject = [&](const ExprPtr &E) {
+          if (!E)
+            return;
+          if (isAArch64WritebackMemoryIntrinsic(E->IntrinsicId))
+            E->Operands[kWritebackBaseOperand] =
+                Kind == MedVar::Const
+                    ? HighExpr::makeConst(kEntry, kScalarBytes)
+                    : HighExpr::makeVar(Base,
+                                        NdType::makeInt(kScalarBytes, false));
+          E->forEachChildExpr(Reject);
+        };
+        walkStmts(High.Body,
+                  [&](const HighStmt &S) { forEachExpr(S, Reject); });
+        HighStmt Branch;
+        Branch.Kind = StmtKind::If;
+        Branch.Cond = HighExpr::makeConst(0, 1);
+        Branch.Body = std::move(High.Body);
+        High.Body = {std::move(Branch)};
+        CEmitterOptions Options;
+        Options.TheArch = Arch::AArch64;
+        Options.Image = WithImage ? &Image : nullptr;
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        EXPECT_THROW(HighCEmitter().emit({High}, Out, Options),
+                     std::invalid_argument);
+        EXPECT_TRUE(Source.empty());
+      }
   }
 }

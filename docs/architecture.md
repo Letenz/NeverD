@@ -752,8 +752,20 @@ the base. The native instruction owns both the access and writeback, preserving
 pre/post ordering and access-EL `AddressAdd` behavior. No ordinary integer ADD
 reconstructs the base. Constrained-unpredictable base/data overlap is refused;
 XZR and SP have distinct encoded roles. Automatic image admission follows the
-same x1-only policy as single immediates; original-SP writeback execution still
-requires an unavailable SP alignment/tagging contract.
+same x1-only policy as single immediates. With no image, an explicit raw-SP
+parameter also supports GPR/SIMD single writeback, pairs and baseline NEON
+structure accesses. Their scratch words retain Rn=31. The native envelope saves
+the host SP in X14, installs X16, executes the original SP instruction, captures
+the completed SP in X16 and restores the host SP before publishing results.
+The machine table owns the complete assembly and constraints; inverse LLVM-to-C
+admission rejects changed SP fields, missing restoration and missing clobbers.
+Image-backed or synthesized SP, nonparameter SSA bases and the reconstructed
+frame/call/unwind ABI remain refused by the shared memory source-base policy.
+The [raw-SP primitive record](evidence/arm64e-raw-sp-memory-2026-10-27.json)
+binds 1,579 independent words to 60 official Arm model executions at EL1/EL0,
+with SA/SA0 enabled, and 7,895 native alignment faults through five actual output
+routes. It does not qualify automatic SP source-frame reconstruction or signed
+native exception unwinding.
 
 Both source routes and LLVM validate the complete contract before source-only
 filtering. A discarded result retains the memory instruction. Exact image-base
@@ -1062,6 +1074,15 @@ can supply bits, and pointer-width address candidates retain their separate
 relocation proof. Cold reads charge the image metadata inventory against the
 existing evidence budget; repeated reads cache successes and failures within
 one CFG build. An unaffordable read leaves arithmetic-only proofs usable.
+If ordinary constant propagation cannot resolve a target, a bounded,
+straight-block symbolic query may prove that its full-width scalar expression
+is constant for every input. `LowScalarSymbolic` shares integer semantics with
+the jump-table resolver; exact MBA derivations, register-byte identity and
+instruction-local temporary lifetime are required. Separate loads remain
+separate observations, and opaque effects clear register facts. The query
+charges the same function evidence budget and owns finite operation, node,
+atom and rewrite caps in `neverd/Limits.h`. It does not enable source-wide
+symbolic optimization or solver synthesis by default.
 Recovery revalidates the producer's basic block after discovering new paths.
 Lost or incomplete proofs retain the original indirect transfer. The native function
 disassembly API publishes these same instruction boundaries and targets; raw

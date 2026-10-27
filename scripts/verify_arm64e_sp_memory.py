@@ -62,9 +62,9 @@ def execute(command, directory, name, timeout, env):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stack-artifacts", required=True, type=Path)
-    parser.add_argument("--control-artifacts", required=True, type=Path)
+    parser.add_argument("--control-artifacts", type=Path)
     parser.add_argument("--stack-report", required=True, type=Path)
-    parser.add_argument("--control-report", required=True, type=Path)
+    parser.add_argument("--control-report", type=Path)
     parser.add_argument("--neverd-revision", required=True)
     parser.add_argument("--sdk", required=True, type=Path)
     parser.add_argument("--compiler", default=CONFIG["compiler"])
@@ -73,6 +73,9 @@ def main():
                         choices=CONFIG["profiles"])
     args = parser.parse_args()
     profile = CONFIG["profiles"][args.profile]
+    if ("control" in profile["test_reports"]
+            and (args.control_artifacts is None or args.control_report is None)):
+        parser.error(CONFIG["errors"]["report"])
     if [platform.system(), platform.machine()] != CONFIG["required_host"]:
         parser.error(CONFIG["errors"]["host"])
     if (len(args.neverd_revision) != CONFIG["revision_hex_length"] or
@@ -105,9 +108,10 @@ def main():
     save()
     execute([compiler, "--version"], output, "compiler-version",
             CONFIG["compile_timeout_seconds"], env)
-    for kind, artifacts, test_report in (
-            ("stack", args.stack_artifacts, args.stack_report),
-            ("control", args.control_artifacts, args.control_report)):
+    inputs_to_check = [("stack", args.stack_artifacts, args.stack_report)]
+    if "control" in profile["test_reports"]:
+        inputs_to_check.append(("control", args.control_artifacts, args.control_report))
+    for kind, artifacts, test_report in inputs_to_check:
         origin = validate_report(json.loads(test_report.read_text()),
                                  profile["test_reports"][kind])
         work = output / kind
