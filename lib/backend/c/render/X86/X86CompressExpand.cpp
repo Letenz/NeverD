@@ -24,7 +24,8 @@ namespace {
 std::string expression(const X86CompactPlan &P,
                        const std::vector<std::string> &Args,
                        const std::string &Type, bool Live,
-                       const X86CompactOperandUse &Use) {
+                       const X86CompactOperandUse &Use,
+                       const std::string &InputType) {
   if (Args.size() != 3 || (P.Expand && Live && Type.empty()))
     throw std::invalid_argument(X86CompactMalformed);
   std::string T = "neverd_compact";
@@ -39,7 +40,7 @@ std::string expression(const X86CompactPlan &P,
                       std::to_string(P.Bytes) + ")))";
   std::string Text = "({ ";
   if (Use.Data)
-    Text += "__auto_type " + Input + " = (" + Args[2] + "); " + Vector +
+    Text += InputType + " " + Input + " = (" + Args[2] + "); " + Vector +
             "; __builtin_memcpy(&" + V + ", &" + Input + ", " +
             std::to_string(P.Bytes) + "); ";
   else
@@ -125,11 +126,7 @@ X86CompactPlan x86CompactHighPlan(Arch A, const HighExpr &E) {
       !x86CompactShapeIsValid(E.IntrinsicId, S))
     throw std::invalid_argument(X86CompactMalformed);
   const auto C = *x86CompactControl(E.IntrinsicId, *S.Control);
-  const unsigned Prefix =
-      (E.MemoryAddressSpace == NdMemoryAddressSpace::X86FS   ? 0x64
-       : E.MemoryAddressSpace == NdMemoryAddressSpace::X86GS ? 0x65
-                                                             : 0) |
-      (C.StackReference ? X86NativeStackReference : 0);
+  const unsigned Prefix = x86CompactNativePrefix(C, E.MemoryAddressSpace);
   return *x86CompactPlan(E.IntrinsicId == Intrinsic::EVEXExpandLoad, S.Sizes[2],
                          C.Kind, C.Zero, Prefix);
 }
@@ -221,7 +218,10 @@ std::string renderX86CompactExpression(Arch A, const HighExpr &E,
   // compact instruction does not consume the resulting value.
   Use.Address |= !CanOmit(*E.Operands[0]);
   Use.Data |= !CanOmit(*E.Operands[2]);
-  return expression(P, {Args[0], Args[1], Args[2]}, Type, P.Expand, Use);
+  // A wide HighIR constant may print as an ordinary C integer literal. Its
+  // storage must still cover the complete packed input copied below.
+  return expression(P, {Args[0], Args[1], Args[2]}, Type, P.Expand, Use,
+                    "unsigned _BitInt(" + std::to_string(P.Bytes * 8) + ")");
 }
 std::optional<std::string> renderX86CompactCall(
     Arch A, const llvm::CallInst &Call, const std::vector<std::string> &Args,
@@ -243,6 +243,8 @@ std::optional<std::string> renderX86CompactCall(
   Use.Address |= !CanOmit(Call.getArgOperand(0));
   Use.Data |= !CanOmit(Call.getArgOperand(2));
   return (Live ? Result + " = " : "") +
-         expression(*P, {Args[0], Args[1], Args[2]}, Type, Live, Use) + ";\n";
+         expression(*P, {Args[0], Args[1], Args[2]}, Type, Live, Use,
+                    "__auto_type") +
+         ";\n";
 }
 } // namespace neverd

@@ -148,6 +148,51 @@ def split_row_history(executable):
     print("ordered patch inserts, split rows, batch removal and reopened undo/redo passed")
 
 
+def noncanonical_history_row(executable):
+    # Generic history retains unknown fields and permits a missing kind.
+    # Such a command can be persisted by undo even when the SDK refuses to
+    # load it. A later canonical edit must still be able to replace that row.
+    data, entry = two_routine_elf()
+    for missing_kind in (False, True):
+        with tempfile.TemporaryDirectory(prefix="neverd-patch-history-kind-") as directory:
+            binary = Path(directory) / "input.elf"
+            binary.write_bytes(data)
+            with Client(executable) as worker:
+                ok(worker, "open", {"path": str(binary), "analysis": False})
+                for byte in ("91", "92"):
+                    ok(worker, "patch_apply", {"address": hex(entry + 1),
+                                               "kind": "bytes", "bytes": byte})
+            history, = Path(directory).rglob("history.json")
+            document = json.loads(history.read_text())
+            before = document["commands"][-1]["before"]
+            before["extra"] = "retained history field"
+            if missing_kind:
+                before.pop("kind")
+                assert len(before) == 7
+            history.write_text(json.dumps(document))
+            with Client(executable) as worker:
+                ok(worker, "open", {"path": str(binary), "analysis": False})
+                undo = worker.call("undo")
+                if missing_kind:
+                    assert undo["status"] == "error" and undo["error"]["code"] == "reload_failed", undo
+                    assert undo["payload"]["saved"], undo
+                else:
+                    assert undo["status"] == "ok", undo
+                result = ok(worker, "patch_apply", {"address": hex(entry + 1),
+                                                      "kind": "bytes", "bytes": "93"})
+                assert result["saved"], result
+                sidecar, = Path(directory).rglob("patches.json")
+                row, = json.loads(sidecar.read_text())
+                assert set(row) == {"addr", "file_off", "va", "size", "original", "current", "kind"}
+                assert row["kind"] == "bytes" and row["current"] == "93", row
+                assert ok(worker, "bytes", {"address": hex(entry + 1), "size": 1})["data"] == "93"
+            with Client(executable) as worker:
+                ok(worker, "open", {"path": str(binary), "analysis": False})
+                assert ok(worker, "bytes", {"address": hex(entry + 1), "size": 1})["data"] == "93"
+            assert binary.read_bytes() == data
+    print("noncanonical history rows, optional kind, canonical replacement and reopen passed")
+
+
 def pe_export(executable):
     data = image()[0]
     with tempfile.TemporaryDirectory(prefix="neverd-pe-export-") as directory:
@@ -234,5 +279,6 @@ if __name__ == "__main__":
     run(sys.argv[1], "--real" in sys.argv[2:])
     if "--real" in sys.argv[2:]:
         split_row_history(sys.argv[1])
+        noncanonical_history_row(sys.argv[1])
         pe_export(sys.argv[1])
         patch_budget_boundary(sys.argv[1])

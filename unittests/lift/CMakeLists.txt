@@ -768,6 +768,13 @@ add_neverd_unittest(NeverDX86CompressExpandSourceTests
   x86/X86NativeMemoryCarrierTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 
+add_neverd_unittest(NeverDX86CompactSegmentTests
+  x86/X86CompactSegmentTests.cpp
+  x86/X86PackedSourceConstantsTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86CompactSegmentTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
 add_neverd_unittest(NeverDX86FourSourceSourceTests
   x86/X86FourSourceSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)

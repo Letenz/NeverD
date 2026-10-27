@@ -968,7 +968,7 @@ Json Engine::typeDeclarationRows() const {
 }
 bool Engine::reloadTypeDeclarations() {
   if (!declaresLocalTypes() || !history_ ||
-      typeDeclarationRows() == history_->committedState().at("types"))
+      typeDeclarationRows() == history_->committedTable("types"))
     return true;
   static const auto load =
       engineSymbol<SessionLoadFunction>("neverd_type_declarations_load");
@@ -1737,9 +1737,8 @@ ProjectHistory &Engine::history() {
          {"patches", bytePatchRows()},
          {"operands", operandFormatRows()},
          {"code_edits", codeEdits_},
-         {"types", declaresLocalTypes()
-                       ? typeDeclarationRows()
-                       : history_->committedState().at("types")}});
+         {"types", declaresLocalTypes() ? typeDeclarationRows()
+                                        : history_->committedTable("types")}});
   }
   return *history_;
 }
@@ -1997,8 +1996,8 @@ Json Engine::analysisSnapshot() {
     // The replica takes the additions' bytes from this reply, two hexadecimal
     // digits a byte: refuse what one frame cannot carry before encoding it.
     std::uint64_t bytes = 0;
-    for (const auto &section :
-         backendJson(query(session_, 0), true).at("sections"))
+    const auto sectionInfo = backendJson(query(session_, 0), true);
+    for (const auto &section : sectionInfo.at("sections"))
       bytes += section.at("size").get<std::uint64_t>();
     if (bytes > MaxFrameBytes / 2)
       throw Error("budget_exceeded", "Background analysis cannot carry " +
@@ -3239,39 +3238,55 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         throw Error("unsaved_changes",
                     "Save or reload staged annotations before undoing a "
                     "rename or a function edit");
-      // The rows the command changed go back to their values on this side.
-      auto state = store.committedState();
-      auto &rows = state[ProjectHistory::tableOfKind(
-          command.at("kind").get<std::string>())];
+      // Replay only the changed rows. Patch handles retain immutable values
+      // across checkpoints; other edits keep their existing JSON path.
       Json changes = command.value("rows", Json::array());
       changes.push_back(command);
-      for (const auto &change : changes) {
-        const auto at = parseAddress(change.at("address").get<std::string>());
-        // Committed tables are sorted. Replace in place so undo/redo does not
-        // turn a single changed row into a full erase scan and table sort.
-        const auto position = std::lower_bound(
-            rows.begin(), rows.end(), at, [](const Json &row, auto address) {
+      const auto replay = [&](auto &rows, auto key, auto own) {
+        for (const auto &change : changes) {
+          const auto at = parseAddress(change.at("address").get<std::string>());
+          const auto position = std::lower_bound(
+              rows.begin(), rows.end(), at, [&](const auto &row, auto address) {
+                return key(row) < address;
+              });
+          const bool present = position != rows.end() && key(*position) == at;
+          const auto &side = change.at(redo ? "after" : "before");
+          if (side.is_null()) {
+            if (present)
+              rows.erase(position);
+          } else if (present)
+            *position = own(side);
+          else
+            rows.insert(position, own(side));
+        }
+      };
+      const bool patch = command.at("kind") == "patch";
+      Json state;
+      ProjectHistory::PatchRows patches;
+      if (patch) {
+        patches = store.committedPatches();
+        replay(
+            patches, [](const auto &row) { return row->address(); },
+            ProjectHistory::patchRow);
+      } else {
+        state = store.committedState();
+        auto &rows = state[ProjectHistory::tableOfKind(
+            command.at("kind").get<std::string>())];
+        replay(
+            rows,
+            [](const Json &row) {
               return parseAddress(
-                         row.at("addr").get_ref<const std::string &>()) <
-                     address;
-            });
-        const bool present =
-            position != rows.end() &&
-            parseAddress(position->at("addr").get_ref<const std::string &>()) ==
-                at;
-        const auto &side = change.at(redo ? "after" : "before");
-        if (side.is_null()) {
-          if (present)
-            rows.erase(position);
-        } else if (present)
-          *position = side;
-        else
-          rows.insert(position, side);
+                  row.at("addr").get_ref<const std::string &>());
+            },
+            [](const Json &row) { return row; });
       }
       const auto checkpoint = store;
       store.advance(redo);
       try {
-        store.persist(std::move(state));
+        if (patch)
+          store.persistPatches(std::move(patches));
+        else
+          store.persist(std::move(state));
       } catch (...) {
         store = checkpoint;
         throw;

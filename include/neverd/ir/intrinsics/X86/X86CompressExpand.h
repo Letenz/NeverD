@@ -21,6 +21,9 @@ namespace neverd {
 inline constexpr unsigned X86CompactFloat = 0x10;
 inline constexpr unsigned X86CompactStackReference = 0x20;
 inline constexpr unsigned X86CompactZero = 0x80;
+// A two-byte control retains i386 CS/ES/SS offsets. Other controls keep their
+// existing byte layout, including long-mode stack-reference provenance.
+inline constexpr unsigned X86CompactSegmentShift = 8;
 inline constexpr const char *X86CompactMalformed =
     "invalid x86 compress/expand memory contract";
 constexpr bool isX86CompactMemory(Intrinsic Id) {
@@ -31,6 +34,7 @@ struct X86CompactControl {
   unsigned Kind;
   bool Zero;
   bool StackReference = false;
+  unsigned SegmentPrefix = 0;
 };
 struct X86CompactOperandUse {
   uint64_t LaneMask;
@@ -50,8 +54,11 @@ x86CompactOperandUse(unsigned Lanes, bool Expand, bool Zero,
 }
 constexpr std::optional<X86CompactControl> x86CompactControl(Intrinsic Id,
                                                              uint64_t C) {
-  if (!isX86CompactMemory(Id) || C > UINT8_MAX ||
-      (C &
+  const unsigned Segment = C >> X86CompactSegmentShift;
+  if (!isX86CompactMemory(Id) || C > UINT16_MAX ||
+      (Segment && Segment != 0x26 && Segment != 0x2e && Segment != 0x36) ||
+      (Segment && (C & X86CompactStackReference)) ||
+      ((C & UINT8_MAX) &
        ~(X86CompactFloat | X86CompactStackReference | X86CompactZero | 15u)) ||
       (Id == Intrinsic::EVEXCompressStore && (C & X86CompactZero)))
     return {};
@@ -68,7 +75,7 @@ constexpr std::optional<X86CompactControl> x86CompactControl(Intrinsic Id,
                            : Bytes == 4 ? 2u
                                         : 3u,
                            bool(C & X86CompactZero),
-                           bool(C & X86CompactStackReference)};
+                           bool(C & X86CompactStackReference), Segment};
 }
 struct X86CompactShape {
   Arch TargetArch = Arch::Unknown;
@@ -88,18 +95,23 @@ constexpr bool x86CompactShapeIsValid(Intrinsic Id, const X86CompactShape &S) {
        S.TargetArch != Arch::X86) ||
       S.MemoryOrdering != NdMemoryOrdering::None ||
       !isKnownMemoryAddressSpace(S.MemoryAddressSpace) || S.Arguments != 4 ||
-      S.Sizes[0] != 8 || !S.Sizes[1] || S.Sizes[1] > 8 || S.Sizes[3] != 1 ||
+      S.Sizes[0] != 8 || !S.Sizes[1] || S.Sizes[1] > 8 ||
       (S.Sizes[2] != 16 && S.Sizes[2] != 32 && S.Sizes[2] != 64))
+    return false;
+  const auto C = *x86CompactControl(Id, *S.Control);
+  if (S.Sizes[3] != (C.SegmentPrefix ? 2u : 1u) ||
+      (C.SegmentPrefix &&
+       ((S.TargetArch != Arch::Unknown && S.TargetArch != Arch::X86) ||
+        S.MemoryAddressSpace != NdMemoryAddressSpace::Default)))
     return false;
   for (bool Scalar : S.Scalars)
     if (!Scalar)
       return false;
-  if (x86CompactControl(Id, *S.Control)->StackReference &&
+  if (C.StackReference &&
       (S.TargetArch == Arch::X86 ||
        S.MemoryAddressSpace != NdMemoryAddressSpace::Default))
     return false;
-  if (S.Sizes[1] * 8 <
-      S.Sizes[2] / x86CompactControl(Id, *S.Control)->ElementBytes)
+  if (S.Sizes[1] * 8 < S.Sizes[2] / C.ElementBytes)
     return false;
   return Id == Intrinsic::EVEXExpandLoad
              ? S.WritableOutput && S.OutputSize == S.Sizes[2]
