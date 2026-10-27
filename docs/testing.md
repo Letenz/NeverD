@@ -7049,6 +7049,9 @@ cost, one-bit and wide literals, shared-tree saturation, budgeted selection,
 and exhaustive three-bit equivalence with sampling disabled. `SymMBASample.*`
 compares narrow and arbitrary-width verification against the AP evaluator,
 including all operators, deterministic assignments, and unused wide inputs.
+Contiguous input windows starting at zero or after unused wide variables must
+retain the same random stream and agree with the independent AP evaluator at
+1–257 bits. Sparse windows keep their existing compact lookup coverage.
 Candidate quality
 comparisons across scoring revisions must recount both outputs with the same
 metric; the SDK's version-specific size counters are diagnostic only.

@@ -3177,6 +3177,11 @@ Low-word decision proofs capture the smaller of their local and remaining
 request allowances. Each operation admits and counts the same work locally;
 every exit commits that count, including refusals. The completed-reading memo
 receives the committed request budget before it admits its own work.
+Decision and carry caches combine their bounded input and edge fields before
+hashing, retaining complete-key equality and the same storage/work accounts.
+Native sample guards index contiguous variable-ID windows directly. Sparse
+windows retain compact maps, and both paths preserve the same referenced-input
+order and random stream. Numeric node-order comparisons stay inside the sort.
 General operators retain the shared APInt semantics in a separate call, keeping
 their operand construction and cleanup out of the native evaluator's hot frame.
 The compact two-word hash key uses one 64-bit bucket mix, without hashing its
@@ -3192,6 +3197,9 @@ outside the small-recipe synthesis path. Terms remain ordered by value after
 each merge round, so only zero-to-one neighbor flips need lookup; the reverse
 pair was already visited. Prepared Boolean recipes keep their reconstruction
 memo inline, with ordinary growth for optional larger recipes.
+Small implicant rounds also keep their temporary term and merge vectors inline;
+larger rounds grow normally. Their deduplication keys retain both complete
+value/care fields, and discovery order and work admission remain unchanged.
 The shared exact MBA layer also recombines weighted literal AND/OR/XOR/NOT
 views of one opaque word. It constructs per-bit coefficients and a constant,
 then independently checks the pointwise grammar, constant difference and every

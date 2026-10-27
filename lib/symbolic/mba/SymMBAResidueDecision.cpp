@@ -41,6 +41,10 @@
 namespace neverd::symbolic::detail {
 namespace {
 
+// A short prefix of a known parity input precedes the other words. Higher
+// bits return to interleaved order, keeping mixed-word carries bounded.
+constexpr uint64_t SecondaryWord = uint64_t(1) << 63;
+
 struct Decision {
   uint64_t Variable;
   uint32_t Low;
@@ -53,18 +57,23 @@ struct DecisionInfo {
   static Decision getTombstoneKey() { return {UINT64_MAX - 1, 0, 0}; }
   static bool isEqual(const Decision &A, const Decision &B) { return A == B; }
   static unsigned getHashValue(const Decision &D) {
-    return llvm::DenseMapInfo<std::pair<uint64_t, uint64_t>>::
-        getHashValuePiecewise(D.Variable, (uint64_t(D.Low) << 32) | D.High);
+    // Input identity, observed bit and ordering flag fit beside both bounded
+    // edges. Mix once; the table still compares the complete original key.
+    constexpr unsigned EdgeBits =
+        std::bit_width(2 * limits::kMaxResidueDecisionNodes - 1);
+    constexpr unsigned BitBits =
+        std::bit_width(limits::kMaxAffineResidueTableBits - 1);
+    static_assert(32 + BitBits + 1 + 2 * EdgeBits <= 64);
+    const uint64_t Input =
+        (D.Variable & ~SecondaryWord) | ((D.Variable >> 63) << (32 + BitBits));
+    return llvm::DenseMapInfo<uint64_t>::getHashValue(
+        (Input << (2 * EdgeBits)) | (uint64_t(D.Low) << EdgeBits) | D.High);
   }
 };
 
 class LowWordDecisions {
   using Bits = llvm::SmallVector<uint32_t, 8>;
   enum Operation : uint64_t { And, Or, Xor };
-  // A short prefix of a known parity input precedes the other words. Higher
-  // bits return to interleaved order, keeping mixed-word carries bounded.
-  static constexpr uint64_t SecondaryWord = uint64_t(1) << 63;
-
   static unsigned variableBit(uint64_t Variable) {
     return unsigned((Variable & ~SecondaryWord) >> 32);
   }
@@ -94,8 +103,15 @@ class LowWordDecisions {
     static CarryKey getTombstoneKey() { return {UINT32_MAX - 1, 0, 0}; }
     static bool isEqual(const CarryKey &A, const CarryKey &B) { return A == B; }
     static unsigned getHashValue(const CarryKey &K) {
-      return llvm::DenseMapInfo<std::pair<uint32_t, uint64_t>>::
-          getHashValuePiecewise(K.A, (uint64_t(K.B) << 32) | K.C);
+      // Every edge is a bounded node index plus its complement bit. Pack
+      // the three complete edges before mixing, retaining the full key and
+      // equality check without three separate integer hash operations.
+      constexpr unsigned EdgeBits =
+          std::bit_width(2 * limits::kMaxResidueDecisionNodes - 1);
+      static_assert(3 * EdgeBits <= 64);
+      return llvm::DenseMapInfo<uint64_t>::getHashValue(
+          (uint64_t(K.A) << (2 * EdgeBits)) | (uint64_t(K.B) << EdgeBits) |
+          K.C);
     }
   };
   llvm::DenseMap<CarryKey, std::pair<uint32_t, uint32_t>, CarryInfo> Adders;

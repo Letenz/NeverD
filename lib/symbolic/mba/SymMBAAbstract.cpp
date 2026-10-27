@@ -601,7 +601,7 @@ bool affineOrder(const SymContext &Ctx, SymRef Root,
   }
   if (!Resources.order(Order.size()))
     return false;
-  llvm::sort(Order);
+  std::sort(Order.begin(), Order.end());
   return true;
 }
 
@@ -1087,7 +1087,8 @@ void collectReachableInOrder(const SymContext &Ctx, SymRef Root,
     for (SymRef C : Ctx.operands(R))
       Work.push_back(C);
   }
-  llvm::sort(Order);
+  // Inline the integer comparisons in this frequently rebuilt node order.
+  std::sort(Order.begin(), Order.end());
 }
 
 } // namespace
