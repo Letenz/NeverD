@@ -2368,6 +2368,111 @@ TEST(HighSourceExpressions,
     EXPECT_EQ(Source.find(" = arg0;"), std::string::npos) << Source;
   }
 }
+HighFunc guardedEncodedAddress(bool Equal = false) {
+  const auto T = NdType::makeInt(8, false);
+  const auto U32 = NdType::makeInt(4, false);
+  const auto Literal = [](uint64_t V) {
+    return HighExpr::makeConst(V, 8, ConstantAddressProvenance::Scalar);
+  };
+  auto Q = parameter(0, T, Arch::X64);
+  auto Bits = HighExpr::makeBinop(NdOp::INT_XOR, Q, Literal(0x27));
+  Bits->Type = T;
+  auto Address = HighExpr::makeBinop(NdOp::INT_ADD, Bits,
+                                     Literal(UINT64_C(0xffffffff00000000)));
+  Address->Type = T;
+  HighStmt Guard;
+  Guard.Kind = Equal ? StmtKind::IfElse : StmtKind::If;
+  Guard.Cond = HighExpr::makeBinop(Equal ? NdOp::INT_EQUAL : NdOp::INT_NOTEQUAL,
+                                   Q, Literal(UINT64_C(0x100000008) ^ 0x27));
+  const auto Read = returning(HighExpr::makeLoad(Address, U32));
+  if (Equal) {
+    Guard.Body = {returning(HighExpr::makeConst(0, 4))};
+    Guard.ElseBody = {Read};
+  } else {
+    Guard.Body = {Read};
+  }
+  HighFunc F;
+  F.Name = "guarded_address";
+  F.ReturnType = U32;
+  F.Params = {{"arg0", T}};
+  F.Body = {Guard, returning(HighExpr::makeConst(0, 4))};
+  return F;
+}
+
+TEST(HighSourceExpressions, GuardedAddressKeepsTheDecodedBaseAndFieldOffset) {
+  std::string Text;
+  for (bool Equal : {false, true}) {
+    auto F = guardedEncodedAddress(Equal);
+    for (bool Named : {false, true}) {
+      F.Name = std::string(Named ? "after_address" : "before_address") +
+               (Equal ? "_eq" : "_ne");
+      if (Named) {
+        ASSERT_TRUE(nameRepeatedValues(F));
+        ASSERT_EQ(F.Body.front().Kind, StmtKind::Assign);
+        EXPECT_TRUE(F.Body.front().KeepsName);
+        const auto &Guard = F.Body[1];
+        const auto &Arm = Equal ? Guard.ElseBody : Guard.Body;
+        const auto &Address = Arm.front().RetVal->Operands[0];
+        ASSERT_EQ(Address->Kind, ExprKind::BinOp);
+        ASSERT_EQ(Address->Operands.size(), 2u);
+        EXPECT_EQ(Address->Operands[1]->ConstVal, 8u);
+      }
+      llvm::raw_string_ostream Out(Text);
+      CEmitterOptions Options;
+      Options.TheArch = Arch::X64;
+      ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options));
+    }
+  }
+  Text += R"(
+int main(void) {
+  uint32_t words[]={0,UINT32_MAX,0x80000000u,0x12345678u,7,255,1,42};
+  for (unsigned i=0;i<6;++i) {
+    uint64_t q=((uint64_t)(uintptr_t)&words[i]+UINT64_C(0x100000008))^0x27;
+    if (before_address_ne(q)!=words[i+2] || after_address_ne(q)!=words[i+2] ||
+        before_address_eq(q)!=words[i+2] || after_address_eq(q)!=words[i+2])
+      return 1;
+  }
+  uint64_t null_q=UINT64_C(0x100000008)^0x27;
+  return before_address_ne(null_q) || after_address_ne(null_q) ||
+         before_address_eq(null_q) || after_address_eq(null_q);
+}
+)";
+  compileAndRun(Text);
+}
+
+TEST(HighSourceExpressions, GuardedAddressNeedsStableCompleteScalarBits) {
+  const auto T = NdType::makeInt(8, false);
+  for (unsigned Variant = 0; Variant != 6; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = guardedEncodedAddress();
+    auto &Guard = F.Body.front();
+    auto &Address = Guard.Body.front().RetVal->Operands[0];
+    if (Variant == 0) {
+      Guard.Body.insert(Guard.Body.begin(), assign(parameter(0, T, Arch::X64),
+                                                   HighExpr::makeConst(7, 8)));
+    } else if (Variant == 1) {
+      Address->Operands[0]->Operands[1]->ConstProvenance =
+          ConstantAddressProvenance::CodeAddress;
+    } else if (Variant == 2) {
+      auto Low = integerView(Address->Operands[0], NdType::makeInt(4, false));
+      auto Extended = HighExpr::makeUnary(NdOp::INT_ZEXT, Low);
+      Extended->Type = T;
+      Address->Operands[0] = Extended;
+    } else if (Variant == 3) {
+      Address->Operands[1] =
+          HighExpr::makeConst(8, 8, ConstantAddressProvenance::Scalar);
+    } else if (Variant == 4) {
+      F.Params.push_back({"arg1", T});
+      Address->Operands[0]->Operands[0] = parameter(1, T, Arch::X64);
+    } else {
+      HighStmt Jump;
+      Jump.Kind = StmtKind::Goto;
+      Jump.GotoTarget = Guard.Body.front().Addr = 0x1040;
+      F.Body.insert(F.Body.begin(), Jump);
+    }
+    EXPECT_FALSE(nameRepeatedValues(F));
+  }
+}
 TEST(HighSourceExpressions, CallbackDeclaratorsBorrowIncompleteRecords) {
   const auto Record = NdType::makeNamedRecord("Context", 24);
   const auto Pointer = NdType::makePtr(Record);
