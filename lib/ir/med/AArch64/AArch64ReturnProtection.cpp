@@ -368,7 +368,7 @@ public:
       bool Terminated = false;
       for (const auto &Op : Block.Ops) {
         if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
-            Op.IsTailCall) {
+            Op.IsTailCall && !Op.DoesNotReturn) {
           if (!restoredBefore(Op))
             return std::nullopt;
           Exit = Terminated = true;

@@ -526,10 +526,11 @@ labels and landing pads retain their invocation's entry frame. Ordinary exits
 must restore SP, unsigned early returns must not cross a signing operation,
 and declared no-return calls retain the signing policy. Native tail-transfer
 provenance passes from LowIR into `MedOp::IsTailCall`; an adjacent CALL/RETURN
-pair alone is not evidence. Tail exits require a restored SP and authenticated
-LR, and synthetic tail calls do not make a physical leaf non-leaf. An
-unresolved indirect branch keeps its diagnostic and cannot hide an active
-frame's incomplete recipe. HighIR records the key and leaf policy and omits
+pair alone is not evidence. Tail exits that may return require a restored SP
+and authenticated LR; a declared no-return tail needs no epilogue. Synthetic
+tail calls do not make a physical leaf non-leaf. An unresolved indirect
+branch keeps its diagnostic and cannot hide an active frame's incomplete
+recipe. HighIR records the key and leaf policy and omits
 only the proved recipe operations. HighC/C++
 express it with `target("branch-protection=pac-ret[+leaf][+b-key]")`; HighIR
 dumps and the Rust/Go views retain the policy as metadata. A different output

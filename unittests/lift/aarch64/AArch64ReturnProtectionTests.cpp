@@ -139,16 +139,26 @@ TEST(AArch64ReturnProtection, AuthenticatedDirectAndIndirectTailTransfers) {
 }
 
 TEST(AArch64ReturnProtection, ProvenNoReturnRetainsTheSigningPolicy) {
-  auto Med =
-      decodedFunction({0xd503233f, 0xa9bf7bfd, 0x9400003e}, BinaryFormat::ELF);
-  ASSERT_EQ(Med.Blocks.back().Ops.back().Opcode, NdOp::CALL);
-  // The decoder/runtime declaration owns this marker; a missing RET alone
-  // must never be taken as evidence that the call cannot return.
-  EXPECT_FALSE(findAArch64ReturnProtection(Med, BinaryFormat::ELF));
-  Med.Blocks.back().Ops.back().DoesNotReturn = true;
-  const auto Text = source(Med, BinaryFormat::ELF);
-  EXPECT_NE(Text.find("branch-protection=pac-ret"), std::string::npos) << Text;
-  EXPECT_EQ(Text.find("__pointer"), std::string::npos) << Text;
+  for (uint32_t Transfer : {0x9400003eu, 0x1400003eu}) {
+    auto Med =
+        decodedFunction({0xd503233f, 0xa9bf7bfd, Transfer}, BinaryFormat::ELF);
+    // The runtime declaration owns this marker; neither a missing RET nor a
+    // tail classification proves no-return. Once declared, BL and B can both
+    // terminate without an epilogue: the callee cannot return through LR.
+    EXPECT_FALSE(findAArch64ReturnProtection(Med, BinaryFormat::ELF));
+    unsigned Calls = 0;
+    for (auto &Block : Med.Blocks)
+      for (auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::CALL) {
+          Op.DoesNotReturn = true;
+          ++Calls;
+        }
+    ASSERT_EQ(Calls, 1u);
+    const auto Text = source(Med, BinaryFormat::ELF);
+    EXPECT_NE(Text.find("branch-protection=pac-ret"), std::string::npos)
+        << Text;
+    EXPECT_EQ(Text.find("__pointer"), std::string::npos) << Text;
+  }
 }
 
 TEST(AArch64ReturnProtection, UsedLinkPhiAndRecoveredArgumentStayExplicit) {
