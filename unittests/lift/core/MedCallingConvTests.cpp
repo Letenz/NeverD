@@ -3237,10 +3237,10 @@ TEST(MedABIPass, IndirectSretRequiresLatestFrameDerivedSetup) {
     EXPECT_EQ(Info.Args[0].ConstVal, 7U);
     EXPECT_EQ(Info.Args[0].Size, 8U);
     if (Sret) {
-      EXPECT_EQ(Info.Args[1].Kind, Result.Kind);
-      EXPECT_EQ(Info.Args[1].Id, Result.Id);
-      EXPECT_EQ(Info.Args[1].SSAVer, Result.SSAVer);
-      EXPECT_EQ(Info.Args[1].RegOff, Result.RegOff);
+      // Argument recovery forwards the value copied into X8, just as it
+      // forwards the ordinary argument's constant. The value, not the
+      // redundant register copy's SSA identity, is the result buffer.
+      EXPECT_EQ(Info.Args[1], Value);
     } else {
       ASSERT_TRUE(Info.Args[1].isConst());
       EXPECT_EQ(Info.Args[1].ConstVal, 42U);
@@ -3268,9 +3268,9 @@ TEST(MedABIPass, DirectSretUsesDeclaredCalleeContract) {
   ASSERT_TRUE(Args[0].isConst());
   EXPECT_EQ(Args[0].ConstVal, 7U);
   EXPECT_EQ(Args[0].Size, 8U);
-  EXPECT_EQ(Args[1].Id, Result.Id);
-  EXPECT_EQ(Args[1].SSAVer, Result.SSAVer);
-  EXPECT_EQ(Args[1].RegOff, Result.RegOff);
+  ASSERT_TRUE(Args[1].isConst());
+  EXPECT_EQ(Args[1].ConstVal, 0x9000U);
+  EXPECT_EQ(Args[1].Size, 8U);
 }
 
 TEST(MedABIPass, IndirectResultSetupSurvivesCallSiteBlockSplits) {
