@@ -18,6 +18,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymExploreCLIContractTests.cpp
   SymExploreTests.cpp
   SymExprTests.cpp
+  SymExprBooleanEqualityTests.cpp
   SymExprCancellationTests.cpp
   SymLowWordProjectionTests.cpp
   SymExprCompareTests.cpp
@@ -145,6 +146,18 @@ add_neverd_unittest(NeverDSymbolicIntegerIntrinsicTests
 add_neverd_unittest(NeverDSymbolicCallEffectTests
   SymCallEffectTests.cpp
   SymExploreTests.cpp
+  LINK_COMPONENTS Symbolic Solver
+)
+
+add_neverd_unittest(NeverDSymbolicPredicateTests
+  SymExprTests.cpp
+  SymExprBooleanEqualityTests.cpp
+  SymExprCompareTests.cpp
+  SymExprExtensionTests.cpp
+  SymExprExtensionEqualityTests.cpp
+  SymExprConditionalEqualityTests.cpp
+  SymKnownBitsTests.cpp
+  SymLowWordProjectionTests.cpp
   LINK_COMPONENTS Symbolic Solver
 )
 
