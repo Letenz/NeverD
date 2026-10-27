@@ -333,7 +333,10 @@ use different leading/tail splits. Wildcards can cover an opaque CRC region;
 fixed bytes cannot be proved by that region, and a required CRC still needs
 the same span and checksum. The offline collision refiner additionally handles
 explicit Thumb BX LR/POP.W-to-PC returns followed by halfword zero/NOP padding
-when its machine is ARM. Other architectures do not inherit that rule.
+when its machine is ARM. Other architectures do not inherit that rule. Equal CRC spans
+and checksums can precede these visible returns. The relation still rejects
+different CRC spans or values, opaque returns/padding and any nonpadding
+suffix; it never treats a checksum as the literal return bytes.
 
 `scripts/signatures/refine_colliding_patterns.py` applies newly collected raw
 counterclaims to existing ordinary records. A complete conflicting record gains

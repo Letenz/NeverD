@@ -6828,7 +6828,7 @@ framed process and isolation from native-session revisions using a C++ client.
 
 `scripts.tests.test_collision_refinement` checks unpruned source admission,
 same-library cohorts across parts, independently selected release conflicts,
-opaque CRC spans, shorter Thumb return bodies, incomplete-record refusal and
+opaque CRC spans, shorter Thumb return bodies, incomplete-record refusal, CRC-bearing return padding and
 preservation of aliases, incoming queries and metadata. They also require
 existing mandatory-reference claims to survive new raw sources, including a
 known rival name with changed references. The generation and supplement

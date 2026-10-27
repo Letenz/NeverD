@@ -207,6 +207,32 @@ class CollisionRefinementTests(unittest.TestCase):
         self.assertEqual(result["counts"], {})
         self.assertEqual((self.output / "runtime.npat").read_text(), line + "\n---\n")
 
+    def test_matching_crc_cannot_hide_a_shorter_return_body(self):
+        lead = "48894C24084883EC3848C7442420FEFFFFFF488B4C2440E8........90488B4C"
+        tail = "........904883C438C3"
+        line = lead + " 03 B68B 002E :0000 wrapper ^0018 throw ^0023 destroy " + tail + "CC"
+        source = lead + " 03 B68B 002D !evidence :0000 container ^0018 tidy ^0023 destroy " + tail
+        result = self.run_refinement({"runtime.pat": line}, source)
+        self.assertEqual(result["counts"], {"required": 1})
+        rows = [builder.parse_line(text) for text in
+                (self.output / "runtime.npat").read_text().splitlines()]
+        self.assertEqual([row.refs for row in rows if row and row.require_references],
+                         [((0x18, "throw"),)])
+
+    def test_crc_padding_requires_matching_spans_and_visible_return_and_padding(self):
+        long = builder.Shape.of("9090 02 1234 0007 C390CC")
+        short = builder.Shape.of("9090 02 1234 0005 C3")
+        self.assertTrue(long.padding_collision_with(short, machine="x64"))
+        for other in ["9090 02 4321 0005 C3", "90 03 1234 0005 C3",
+                      "9090 03 1234 0005", "9090 02 1234 0005 .."]:
+            self.assertFalse(long.padding_collision_with(builder.Shape.of(other), machine="x64"))
+        for other in ["9090 02 1234 0007 C3..CC", "9090 02 1234 0007 C301CC"]:
+            self.assertFalse(builder.Shape.of(other).padding_collision_with(short, machine="x64"))
+        self.assertFalse(long.padding_collision_with(short, machine="arm64"))
+        thumb = builder.Shape.of("0090 02 1234 0008 704700BF")
+        self.assertTrue(thumb.padding_collision_with(
+            builder.Shape.of("0090 02 1234 0006 7047"), machine="arm"))
+
     def test_thumb_padding_query_includes_shorter_literal_source_prefixes(self):
         body = "2DE9F84F0DF1200B93E8F0079047BDE8F88F"
         line = body + "0000 00 0000 0014 :0000 filter"
