@@ -26,11 +26,66 @@
 #include <cstdlib>
 #include <gtest/gtest.h>
 #include <initializer_list>
+#include <limits>
 
 using namespace neverd::types;
 using neverd::types::test::shapeOf;
 
 namespace {
+
+// A signed subrange in raw DWARF exercises boundary values without asking a
+// compiler to create an object of that size.
+llvm::StringMap<std::unique_ptr<llvm::MemoryBuffer>>
+arrayBoundSections(int64_t Lower, int64_t Upper) {
+  using namespace llvm::dwarf;
+  llvm::SmallString<128> Abbrev, Info;
+  llvm::raw_svector_ostream A(Abbrev), I(Info);
+  const auto abbrev = [&](unsigned Code, unsigned Tag, bool Children,
+                          std::initializer_list<unsigned> Attributes) {
+    llvm::encodeULEB128(Code, A);
+    llvm::encodeULEB128(Tag, A);
+    A << char(Children);
+    for (unsigned Attribute : Attributes)
+      llvm::encodeULEB128(Attribute, A);
+    A << char(0) << char(0);
+  };
+  abbrev(1, DW_TAG_compile_unit, true, {});
+  abbrev(2, DW_TAG_base_type, false,
+         {DW_AT_name, DW_FORM_string, DW_AT_encoding, DW_FORM_data1,
+          DW_AT_byte_size, DW_FORM_data1});
+  abbrev(3, DW_TAG_array_type, true, {DW_AT_type, DW_FORM_ref4});
+  abbrev(4, DW_TAG_subrange_type, false,
+         {DW_AT_lower_bound, DW_FORM_sdata, DW_AT_upper_bound, DW_FORM_sdata});
+  abbrev(5, DW_TAG_typedef, false,
+         {DW_AT_name, DW_FORM_string, DW_AT_type, DW_FORM_ref4});
+  A << char(0);
+  const auto u32 = [&](uint32_t Value) {
+    char Bytes[4];
+    llvm::support::endian::write32le(Bytes, Value);
+    I.write(Bytes, sizeof(Bytes));
+  };
+  u32(0);
+  I << char(4) << char(0);
+  u32(0);
+  I << char(8) << char(1);
+  const uint32_t ElementOffset = Info.size();
+  I << char(2) << "unsigned char" << char(0) << char(DW_ATE_unsigned_char)
+    << char(1);
+  const uint32_t ArrayOffset = Info.size();
+  I << char(3);
+  u32(ElementOffset);
+  I << char(4);
+  llvm::encodeSLEB128(Lower, I);
+  llvm::encodeSLEB128(Upper, I);
+  I << char(0) << char(5) << "BoundedArray" << char(0);
+  u32(ArrayOffset);
+  I << char(0);
+  llvm::support::endian::write32le(Info.data(), Info.size() - 4);
+  llvm::StringMap<std::unique_ptr<llvm::MemoryBuffer>> Sections;
+  Sections["debug_abbrev"] = llvm::MemoryBuffer::getMemBufferCopy(Abbrev);
+  Sections["debug_info"] = llvm::MemoryBuffer::getMemBufferCopy(Info);
+  return Sections;
+}
 
 /// A Go func value with unmarked parameters, as the legacy writer emits,
 /// or with explicit input markers.
@@ -565,3 +620,50 @@ TEST(DWARFTypeImportGo, ExplicitInputMarkersKeepANamedVoidFunction) {
   EXPECT_EQ(Function.Function->Params[0].Type->Kind, TypeExprKind::Pointer);
   EXPECT_EQ(Function.Function->Return->TheBuiltin, Builtin::Void);
 }
+
+TEST(DWARFTypeImportArray, CountsSignedBoundsWithoutOverflow) {
+  constexpr int64_t Min = std::numeric_limits<int64_t>::min();
+  constexpr int64_t Max = std::numeric_limits<int64_t>::max();
+  const struct {
+    int64_t Lower;
+    int64_t Upper;
+    std::optional<uint64_t> Count;
+  } Cases[] = {{0, 3, 4},
+               {-3, 2, 6},
+               {0, Max, uint64_t(1) << 63},
+               {Min, -1, uint64_t(1) << 63},
+               {Min, Max - 1, std::numeric_limits<uint64_t>::max()},
+               {Max, Max, 1},
+               {1, 0, std::nullopt}};
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Lower);
+    SCOPED_TRACE(Case.Upper);
+    auto Sections = arrayBoundSections(Case.Lower, Case.Upper);
+    auto Context = llvm::DWARFContext::create(Sections, 8, true);
+    DWARFTypeImportStats Stats;
+    auto Library = importDWARFTypes(*Context, DataModel::LP64, &Stats);
+    ASSERT_TRUE(static_cast<bool>(Library))
+        << llvm::toString(Library.takeError());
+    EXPECT_TRUE(Stats.Skipped.empty());
+    const LocalType *Array = (*Library)->find("BoundedArray");
+    ASSERT_NE(Array, nullptr);
+    ASSERT_TRUE(Array->Target);
+    ASSERT_EQ(Array->Target->Kind, TypeExprKind::Array);
+    EXPECT_EQ(Array->Target->Count, Case.Count);
+  }
+}
+
+TEST(DWARFTypeImportArray, RefusesAnUnrepresentableFullSignedRange) {
+  auto Sections = arrayBoundSections(std::numeric_limits<int64_t>::min(),
+                                     std::numeric_limits<int64_t>::max());
+  auto Context = llvm::DWARFContext::create(Sections, 8, true);
+  DWARFTypeImportStats Stats;
+  auto Library = importDWARFTypes(*Context, DataModel::LP64, &Stats);
+  ASSERT_TRUE(static_cast<bool>(Library))
+      << llvm::toString(Library.takeError());
+  EXPECT_EQ((*Library)->find("BoundedArray"), nullptr);
+  ASSERT_FALSE(Stats.Skipped.empty());
+  EXPECT_NE(Stats.Skipped.front().find("array bound range that exceeds 64 bits"),
+            std::string::npos);
+}
+
