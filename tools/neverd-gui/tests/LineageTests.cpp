@@ -1507,6 +1507,35 @@ private slots:
     if (Worker.isEmpty())
       QSKIP("Set NEVERD_LEGACY_LINEAGE_WORKER to a retained v1 worker or a "
             "current worker using the retained v1 engine");
+    // The retained engine must produce its own supported report schema.
+    // A current comparison may contain evidence that did not exist in v1.
+    ComparisonSession Source(Worker, this);
+    QSignalSpy SourceErrors(&Source, &ComparisonSession::failed);
+    QTRY_VERIFY_WITH_TIMEOUT(Source.ready(), Timeout);
+    QList<QJsonObject> Inputs;
+    for (int I = 1; I <= 3; ++I)
+      Inputs.append(
+          {{"path", Directory.filePath(QString("release-%1.raw").arg(I))},
+           {"load_options", QJsonObject{{"loader", "binary"},
+                                        {"processor", "x86_64"},
+                                        {"platform", "sysv"},
+                                        {"base", "0x1000"}}}});
+    QJsonArray LegacyReports;
+    for (auto Pair : {qMakePair(0, 1), qMakePair(1, 2), qMakePair(0, 2)}) {
+      Source.start(Inputs[Pair.first], Inputs[Pair.second]);
+      QTRY_VERIFY_WITH_TIMEOUT(!Source.busy() && !Source.revision().isEmpty(),
+                               Timeout);
+      QCOMPARE(SourceErrors.size(), 0);
+      const auto Path = Directory.filePath(
+          QString("legacy-%1-%2.nddiff").arg(Pair.first).arg(Pair.second));
+      bool Saved = false;
+      Source.request("comparison_save", {{"path", Path}}, this,
+                     [&](const QJsonObject &R) {
+                       Saved = R["status"] == QJsonValue("ok");
+                     });
+      QTRY_VERIFY_WITH_TIMEOUT(Saved, Timeout);
+      LegacyReports.append(Path);
+    }
     LineageDialog View(Worker);
     View.setAttribute(Qt::WA_DeleteOnClose, false);
     View.show();
@@ -1515,7 +1544,7 @@ private slots:
     QSignalSpy Saved(&Session, &LineageSession::saved);
     QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
     QVERIFY(!Session.releaseEditingSupported());
-    Session.load({{"reports", Reports}});
+    Session.load({{"reports", LegacyReports}});
     auto *Versions = View.findChild<LineagePageView *>("lineageVersions");
     auto *Functions = View.findChild<LineagePageView *>("lineageFunctions");
     auto *Tabs = View.findChild<QTabWidget *>("lineageTabs");
