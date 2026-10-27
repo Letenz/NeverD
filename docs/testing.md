@@ -4814,6 +4814,14 @@ and Go renderers. The fixture's source says how to rebuild the
 `local_types.exe` and `local_types.pdb` pair with clang-cl and lld-link.
 `NeverDSessionCAPITests` reads the same fixture through the C API.
 
+The C parser's spelling-lifetime tests cover line-spliced macros, redefinition
+and removal, named packing stacks, header and calling-convention pragmas,
+concatenated and escaped literals, and single-function declarations. They
+check published names after overwriting the caller's input, plus exact error
+text and macro invocation positions. `NeverDTypeParseTests` runs the same
+parser cases without loader/call-model dependencies, for focused ASan/UBSan
+checks of this storage boundary; these are not additional distinct cases.
+
 `DWARFTypeImportGo.ReadsGosStructuresAndFuncValues` builds a real Go program
 with the selected `NEVERD_TEST_GO` compiler (or `go` on PATH). It checks both
 legacy unmarked result pointers and current marked results, including input
