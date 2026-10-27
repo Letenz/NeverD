@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -677,8 +678,16 @@ private:
                   ? std::optional<int64_t>(
                         int64_t(Upper->getAsUnsignedConstant().value_or(0)))
                   : Upper->getAsSignedConstant();
-          if (High && *High >= Lower)
-            Count = uint64_t(*High - Lower + 1);
+          if (High && *High >= Lower) {
+            // Subtract unsigned representations: even ordered signed bounds
+            // can have a difference greater than INT64_MAX.
+            const uint64_t Span = uint64_t(*High) - uint64_t(Lower);
+            if (Span == std::numeric_limits<uint64_t>::max()) {
+              Why = Refusal{"an array bound range that exceeds 64 bits"};
+              return nullptr;
+            }
+            Count = Span + 1;
+          }
         }
       }
       Counts.push_back(Count);
