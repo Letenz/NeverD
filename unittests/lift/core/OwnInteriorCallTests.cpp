@@ -700,6 +700,41 @@ int main(void) {
 #endif
 }
 
+TEST(OwnInteriorCall, FrameReadStoreRequiresAnExactUnsegmentedAccess) {
+  for (Arch Architecture : {Arch::X86, Arch::X64}) {
+    LowOp Store;
+    Store.Opcode = NdOp::INTRINSIC;
+    Store.addInput(NdVar::cst(static_cast<unsigned>(Intrinsic::Stmxcsr), 2));
+    Store.addInput(NdVar::tmp(1, 8));
+    const auto Memory = x86FrameStateStore(Store, Architecture);
+    ASSERT_TRUE(Memory.Complete);
+    EXPECT_EQ(Memory.Address, &Store.Inputs[1]);
+    EXPECT_EQ(Memory.AccessSize, 4);
+    EXPECT_EQ(Memory.StoredValue, nullptr);
+    EXPECT_FALSE(x86FrameStateStore(Store, Arch::AArch64).Complete);
+    for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+      auto Changed = Store;
+      if (Mutation == 0)
+        Changed.Output = NdVar::tmp(2, 4);
+      if (Mutation == 1)
+        Changed.Inputs[1].Size = 4;
+      if (Mutation == 2)
+        Changed.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+      if (Mutation == 3)
+        Changed.Inputs[0].Size = 4;
+      if (Mutation == 4)
+        Changed.addInput(NdVar::cst(0, 4));
+      if (Mutation == 5)
+        Changed.Inputs[0] =
+            NdVar::cst(static_cast<unsigned>(Intrinsic::Ldmxcsr), 2);
+      if (Mutation == 6)
+        Changed.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      EXPECT_FALSE(x86FrameStateStore(Changed, Architecture).Complete)
+          << Mutation;
+    }
+  }
+}
+
 Lifted liftOwnReturnBody(const Platform &P, llvm::ArrayRef<uint8_t> Body) {
   std::vector<uint8_t> Code = {0xe8, 0x0b, 0, 0, 0, 0xc3};
   Code.resize(0x10, 0xcc);

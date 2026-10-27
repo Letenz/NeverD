@@ -435,12 +435,17 @@ bool mayWriteOwnReturnSlot(const StackFrameModel &M, const LowOp &Op,
                            const StackOffsetState &State) {
   if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
     return true;
-  if (Op.Opcode == NdOp::INTRINSIC)
-    return !isX86FrameReadIntrinsic(Op, M.TRI->TheArch);
-  if (Op.Opcode != NdOp::STORE && Op.Opcode != NdOp::ATOMIC_XCHG &&
-      Op.Opcode != NdOp::ATOMIC_ADD && Op.Opcode != NdOp::ATOMIC_CMPXCHG)
-    return false;
-  const auto Memory = lowMemoryOperands(Op);
+  LowMemoryOperandView Memory;
+  if (Op.Opcode == NdOp::INTRINSIC) {
+    if (isX86FrameReadIntrinsic(Op, M.TRI->TheArch))
+      return false;
+    Memory = x86FrameStateStore(Op, M.TRI->TheArch);
+  } else {
+    if (Op.Opcode != NdOp::STORE && Op.Opcode != NdOp::ATOMIC_XCHG &&
+        Op.Opcode != NdOp::ATOMIC_ADD && Op.Opcode != NdOp::ATOMIC_CMPXCHG)
+      return false;
+    Memory = lowMemoryOperands(Op);
+  }
   if (!Memory.Complete || !Memory.Address ||
       Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
       (Memory.Address->Size != M.Width &&

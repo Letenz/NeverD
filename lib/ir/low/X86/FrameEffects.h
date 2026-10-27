@@ -68,12 +68,36 @@ inline bool isX86FramePreservingIntrinsic(const LowOp &Op, Arch Architecture) {
 
 /// Reads that cannot change a saved integer PC. Unlike floating arithmetic
 /// and state writes, these need no exception-callback preservation receipt.
-/// Explicit stores belonging to PUSHF or STMXCSR are still checked separately.
+/// PUSHF's explicit stack store is still checked separately.
 inline bool isX86FrameReadIntrinsic(const LowOp &Op, Arch Architecture) {
   if (!isX86FramePreservingIntrinsic(Op, Architecture))
     return false;
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
   return Id == Intrinsic::Pushf || Id == Intrinsic::X86ReadMXCSR;
+}
+
+/// STMXCSR retains its single four-byte write as a memory intrinsic. Describe
+/// that access without claiming its destination is private or disjoint.
+inline LowMemoryOperandView x86FrameStateStore(const LowOp &Op,
+                                               Arch Architecture) {
+  if ((Architecture != Arch::X86 && Architecture != Arch::X64) ||
+      Op.Opcode != NdOp::INTRINSIC || Op.NumInputs != 2 ||
+      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+      Op.Inputs[0].Offset != static_cast<unsigned>(Intrinsic::Stmxcsr) ||
+      Op.Output != NdVar() ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      !(Op.Inputs[1].isReg() || Op.Inputs[1].isTemp() ||
+        Op.Inputs[1].isConst()) ||
+      !intrinsicMemoryAddressSpaceShapeIsValid(Intrinsic::Stmxcsr, Op.NumInputs,
+                                               Op.Output.Size,
+                                               Op.Inputs[1].Size, 0, 0))
+    return {};
+  LowMemoryOperandView Memory;
+  Memory.Address = &Op.Inputs[1];
+  Memory.AccessSize = sizeof(uint32_t);
+  Memory.Complete = true;
+  return Memory;
 }
 
 } // namespace neverd
