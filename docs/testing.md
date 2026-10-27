@@ -1,5 +1,7 @@
 **Languages**: [English](testing.md) | [简体中文](zh-CN/testing.md) | [繁體中文](zh-TW/testing.md) | [日本語](ja/testing.md) | [한국어](ko/testing.md) | [Français](fr/testing.md) | [Deutsch](de/testing.md) | [Español](es/testing.md) | [Italiano](it/testing.md) | [Русский](ru/testing.md) | [العربية](ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` runs x64/ARM64 Mach-O integer, floating and mixed stack carriers through the source pipeline. `IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` keeps entry storage for memory reads, calls, escaping stack addresses and opaque or memory intrinsics. Pure value paths use declared parameters without inventing physical SP writes; register FP state effects remain. The macOS mobile matrix independently compiles and executes recovered Swift; successful emission alone is not execution evidence.
+
 `NeverDLLVMCValueTests` compiles and executes a recast variadic call against a separate Windows x64 ABI callee at O0/O2, with preserved LLVM types enabled and disabled. Native x64 hosts verify the floating value through the callee’s variadic argument reader; other architectures explicitly skip that execution.
 
 [← Documentation Index](README.md)

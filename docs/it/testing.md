@@ -1,5 +1,7 @@
 **Lingue**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](../ja/testing.md) | [한국어](../ko/testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` verifica gli argomenti sullo stack interi, floating point e misti dei Mach-O x64/ARM64 nella pipeline sorgente. `IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` conserva la memoria iniziale in presenza di letture, chiamate, indirizzi dello stack che sfuggono e intrinseci opachi o di memoria. I percorsi di soli valori usano i parametri dichiarati senza inventare scritture tramite lo SP fisico e mantengono gli effetti dello stato floating point dei registri. La matrice mobile macOS compila ed esegue indipendentemente lo Swift ricostruito; la sola emissione riuscita non dimostra l’esecuzione.
+
 `NeverDLLVMCValueTests` compila ed esegue una chiamata variadica convertita con una funzione Windows x64 ABI separata, a O0/O2 e con entrambe le opzioni di conservazione dei tipi. x64 nativo verifica il valore con va_arg; le altre architetture saltano esplicitamente questa esecuzione.
 
 [← Indice della documentazione](README.md)

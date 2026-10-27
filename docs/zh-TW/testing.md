@@ -1,5 +1,7 @@
 **語言**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](testing.md) | [日本語](../ja/testing.md) | [한국어](../ko/testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` 透過原始碼管線檢查 x64/ARM64 Mach-O 的整數、浮點及混合堆疊參數。`IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` 確保記憶體讀取、呼叫、堆疊位址逸出，以及不透明或記憶體 intrinsic 仍保留入口儲存初始化。純值路徑直接使用宣告參數，不額外產生實體 SP 寫入，並保留暫存器浮點狀態效應。macOS 行動端矩陣獨立編譯並執行還原的 Swift；產生成功本身不代表執行驗證。
+
 `NeverDLLVMCValueTests` 在 O0/O2 及兩種 LLVM 型別保留設定下，與獨立的 Windows x64 ABI 函式編譯執行可變參數呼叫。原生 x64 以 va_arg 驗證浮點值；其他架構明確略過。
 
 [← 文件索引](README.md)

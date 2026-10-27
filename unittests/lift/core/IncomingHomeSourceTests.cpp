@@ -16,6 +16,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
@@ -950,6 +951,113 @@ TEST(IncomingHomeSource, EntryInitializationRetainsCallOccurrenceIndices) {
     ASSERT_TRUE(Function.SourceTypeHint);
     EXPECT_EQ(Function.CallInfos.front().OpIdx, static_cast<int>(Index));
     EXPECT_EQ(Block.Ops.size(), Size);
+  }
+}
+
+TEST(IncomingHomeSource, StackInitializationRequiresAbsenceOfAllObservers) {
+  enum class Observation {
+    None,
+    Read,
+    Call,
+    EscapingReturn,
+    Intrinsic,
+    RegisterFPState,
+    MemoryFPState,
+    Store
+  };
+  for (Arch Architecture : {Arch::X64, Arch::AArch64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    for (auto Case : {Observation::None, Observation::Read, Observation::Call,
+                      Observation::EscapingReturn, Observation::Intrinsic,
+                      Observation::RegisterFPState, Observation::MemoryFPState,
+                      Observation::Store}) {
+      if (Architecture != Arch::X64 && (Case == Observation::RegisterFPState ||
+                                        Case == Observation::MemoryFPState))
+        continue;
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(static_cast<unsigned>(Case));
+      MedFunc Function;
+      Function.Entry = Callee;
+      Function.SourceTypeHint = homeSignature(Architecture, false);
+      Function.Blocks.resize(1);
+      auto &Block = Function.Blocks.front();
+      Block.Id = 0;
+      Block.StartAddr = Callee;
+      MedVar Stack;
+      Stack.Kind = MedVar::Reg;
+      Stack.Id = 20;
+      Stack.TheArch = Architecture;
+      Stack.RegOff = TRI.StackPointer;
+      Stack.Size = TRI.PointerSize;
+      auto Op = [](NdOp Code, MedVar Output,
+                   std::initializer_list<MedVar> Inputs) {
+        MedOp Result;
+        Result.Opcode = Code;
+        Result.Output = Output;
+        for (const auto &Input : Inputs)
+          Result.addInput(Input);
+        return Result;
+      };
+      auto Temp = Stack;
+      Temp.Kind = MedVar::Temp;
+      Temp.Id = 21;
+      Temp.SSAVer = 1;
+      auto Returned = Stack;
+      Returned.Id = 22;
+      Returned.RegOff = TRI.IntReturnReg;
+      Returned.SSAVer = 1;
+      Block.Ops = {Op(NdOp::COPY, Stack, {Stack})};
+      auto Saved = Op(NdOp::STORE, {}, {Stack, MedVar::makeConst(0, 8)});
+      Saved.PrologueSave = true;
+      Block.Ops.push_back(Saved);
+      if (Case == Observation::Read)
+        Block.Ops.push_back(
+            Op(NdOp::LOAD, Temp, {MedVar::makeConst(0x2000, 8)}));
+      else if (Case == Observation::Call)
+        Block.Ops.push_back(Op(NdOp::CALL, {}, {MedVar::makeConst(Caller, 8)}));
+      else if (Case == Observation::Intrinsic)
+        Block.Ops.push_back(Op(
+            NdOp::INTRINSIC, Temp,
+            {MedVar::makeConst(static_cast<unsigned>(Intrinsic::Rdtsc), 2)}));
+      else if (Case == Observation::RegisterFPState ||
+               Case == Observation::MemoryFPState) {
+        Temp.Size = 4;
+        Block.Ops.push_back(
+            Op(NdOp::INTRINSIC, Temp,
+               {MedVar::makeConst(
+                   static_cast<unsigned>(Intrinsic::X86ReadMXCSR), 2)}));
+        auto Result = Temp;
+        Result.Id = 23;
+        Result.Size = 12;
+        if (Case == Observation::RegisterFPState)
+          Block.Ops.push_back(
+              Op(NdOp::INTRINSIC, Result,
+                 {MedVar::makeConst(
+                      static_cast<unsigned>(Intrinsic::X86FPAddState), 2),
+                  MedVar::makeConst(0, 8), MedVar::makeConst(0, 8), Temp}));
+        else
+          Block.Ops.push_back(Op(
+              NdOp::INTRINSIC, Result,
+              {MedVar::makeConst(
+                   static_cast<unsigned>(Intrinsic::X86FPArithMemoryState), 2),
+               MedVar::makeConst(0x2000, 8), MedVar::makeConst(24, 1),
+               MedVar::makeConst(0, 8), Temp}));
+      } else if (Case == Observation::Store)
+        Block.Ops.push_back(
+            Op(NdOp::STORE, {}, {MedVar::makeConst(0x2000, 8), Stack}));
+      Block.Ops.push_back(
+          Op(NdOp::COPY, Returned,
+             {Case == Observation::EscapingReturn ? Stack
+                                                  : MedVar::makeConst(1, 8)}));
+      Block.Ops.push_back(Op(NdOp::RETURN, {}, {Returned}));
+      const auto OriginalSize = Block.Ops.size();
+      inferMedTypes(Function, Architecture);
+      ASSERT_TRUE(Function.SourceParametersBound);
+      ASSERT_TRUE(Function.SourceTypeHint);
+      const bool NeedsStorage =
+          Case != Observation::None && Case != Observation::RegisterFPState;
+      EXPECT_EQ(Block.Ops.size() > OriginalSize, NeedsStorage);
+    }
   }
 }
 
