@@ -324,6 +324,7 @@ LinuxFiles::network(ServiceKind Kind, const ProcessServiceEvent &Event,
       return Reply(uint64_t(0) - C.ConnectErrno);
     }
     Socket->Connection = &C;
+    Socket->ConnectionIndex = NextConnection - 1;
     return Reply(0);
   }
   if (Kind == ServiceKind::ReceiveFrom)
@@ -422,8 +423,9 @@ LinuxFiles::transferSocket(OpenSocket &Socket, bool Send, uint64_t Address,
           llvm::formatv(
               "outgoing TCP bytes differ from the offline contract at "
               "stream offset {0} (buffer offset {1}): expected {2:x2}, "
-              "actual {3:x2}",
-              Position + Offset, Offset, *Difference.second, *Difference.first)
+              "actual {3:x2} (connection index {4})",
+              Position + Offset, Offset, *Difference.second, *Difference.first,
+              Socket.ConnectionIndex)
               .str();
       return unsupported(Result, Reason.c_str());
     }
