@@ -299,7 +299,10 @@ void ListingView::request(Fetch kind, Address address, int sub, int before,
         else if (kind == Fetch::After)
           fetchingAfter_ = false;
         emit session_.message(message, 1);
-      });
+      },
+      kind == Fetch::Jump || kind == Fetch::Refresh
+          ? QueryService::QuerySpec::Visible
+          : QueryService::QuerySpec::Normal);
 }
 
 void ListingView::accept(Fetch kind, const QJsonObject &payload, quint64 serial,
