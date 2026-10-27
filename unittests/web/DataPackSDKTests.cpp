@@ -323,6 +323,9 @@ TEST_F(WebDataPackSDK, CLIUsesSharedConsumersWithAnUnusableExternalPATH) {
   for (const bool Archive : {false, true}) {
     capture(Archive ? ZipFixture({{"app.pak", B, 0}}).Bytes : B);
     for (const bool Source : {false, true}) {
+      SCOPED_TRACE(::testing::Message()
+                   << "archive=" << Archive << ", source=" << Source
+                   << ", archive_available=" << *ArchiveAvailable);
       std::vector<std::string> Owned{
           NEVERD_WEB_TEST_CLI, "web",
           Archive ? (Source ? "archive-pak-source" : "archive-pak")
@@ -346,7 +349,7 @@ TEST_F(WebDataPackSDK, CLIUsesSharedConsumersWithAnUnusableExternalPATH) {
       EXPECT_EQ(Text.find("CANARY"), std::string::npos);
       if (ArchiveOmitted) {
         auto Parsed = llvm::json::parse(Text);
-        ASSERT_TRUE(bool(Parsed));
+        ASSERT_TRUE(bool(Parsed)) << Text;
         EXPECT_EQ(code(*Parsed), "package_archive_path_policy_unavailable");
       } else {
         EXPECT_NE(Text.find("extraction_id"), std::string::npos);
