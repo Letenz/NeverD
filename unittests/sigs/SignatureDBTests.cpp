@@ -1873,20 +1873,28 @@ TEST(SignatureDBCallerContext, WeakIncomingBodiesCannotExtendTheFrontier) {
 namespace {
 struct AnchoredShortCaller {
   neverd::BinaryImage Image = incomingCallerImage();
-  const std::string Body = "53E8........E8........5BC3 00 0000 000D";
+  const std::string Body;
   const std::string Source =
       Body + " !caller :0000 middle ^0002 anchor ^0007 callee\n";
   const std::string Anchor =
       "101112131415161718191A1B1C1D1EC3 00 0000 0010 :0000 anchor\n";
   std::vector<uint64_t> Entries = {0x1000, 0x1100, 0x1200, 0x1300};
 
-  AnchoredShortCaller() {
+  explicit AnchoredShortCaller(bool Long = false)
+      : Body(Long ? "53E8........E8........90909090909090909090909090909090"
+                    "5BC3 00 0000 001D"
+                  : "53E8........E8........5BC3 00 0000 000D") {
     auto &Code = Image.Segments.front();
     Code.Size = Code.FileSz = 0x400;
     Code.Data.resize(0x400, 0xcc);
     const uint8_t Middle[] = {0x53, 0xe8, 0xfa, 1, 0,    0,   0xe8,
                               0xf5, 0,    0,    0, 0x5b, 0xc3};
     std::copy(std::begin(Middle), std::end(Middle), Code.Data.begin() + 0x100);
+    if (Long) {
+      std::fill(Code.Data.begin() + 0x10b, Code.Data.begin() + 0x11b, 0x90);
+      Code.Data[0x11b] = 0x5b;
+      Code.Data[0x11c] = 0xc3;
+    }
     const uint8_t Leaf[] = {0xaa, 0xbb, 0xcc, 0xdd, 0xc3};
     std::copy(std::begin(Leaf), std::end(Leaf), Code.Data.begin() + 0x200);
     for (unsigned I = 0; I < 15; ++I)
@@ -2103,6 +2111,81 @@ TEST(SignatureDBCallerContext, IndependentOrdinaryCalleeSupportsShortCaller) {
   }
 }
 
+TEST(SignatureDBCallerContext,
+     IndependentOrdinaryCalleeSupportsRequiredCaller) {
+  for (bool Long : {false, true}) {
+    for (bool Reverse : {false, true}) {
+      SCOPED_TRACE(Long);
+      SCOPED_TRACE(Reverse);
+      AnchoredShortCaller F(Long);
+      const std::string Required =
+          F.Body + " !refs :0000 middle ^0002 anchor\n";
+      const std::string Patterns =
+          Reverse ? IncomingLeaf + F.Source + Required + F.Anchor
+                  : F.Anchor + Required + F.Source + IncomingLeaf;
+      if (Reverse)
+        std::reverse(F.Entries.begin(), F.Entries.end());
+      SignatureDB DB;
+      ASSERT_FALSE(DB.loadPatternText(Patterns, "required-caller"));
+      DB.apply(F.Image, F.Entries);
+      const auto Names = DB.buildCandidateNameMap();
+      ASSERT_EQ(Names.count(0x1200), 1u);
+      EXPECT_EQ(Names.at(0x1200), "callee");
+      EXPECT_TRUE(DB.buildNameMap().empty());
+      F.Image.Segments.front().Data[0x300] ^= 1;
+      DB.apply(F.Image, F.Entries);
+      EXPECT_EQ(DB.buildCandidateNameMap().count(0x1200), 0u);
+    }
+  }
+}
+
+TEST(SignatureDBCallerContext, RequiredCallerNeedsCompleteIndependentEvidence) {
+  for (unsigned Case = 0; Case != 10; ++Case) {
+    SCOPED_TRACE(Case);
+    AnchoredShortCaller F(true);
+    std::string Anchor = F.Anchor, Source = F.Source;
+    std::string Required = F.Body + " !refs :0000 middle ^0002 anchor\n";
+    switch (Case) {
+    case 0:
+      Anchor.clear();
+      break;
+    case 1:
+      Anchor += "101112131415161718191A1B1C1D1EC3 00 0000 0010 :0000 rival\n";
+      break;
+    case 2:
+      Anchor.replace(Anchor.find("0010"), 4, "0011");
+      break;
+    case 3:
+      Anchor = "1011121314 00 0000 0005 :0000 anchor\n";
+      break;
+    case 4:
+      Anchor.insert(Anchor.find(" :"), " !caller");
+      break;
+    case 5:
+      Source += F.Body + " !caller :0000 middle ^0007 callee\n";
+      break;
+    case 6:
+      Source += F.Body + " !caller :0000 middle ^0002 other ^0007 callee\n";
+      break;
+    case 7:
+      Source.clear();
+      break;
+    case 8:
+      Source = F.Body +
+               " !caller :0000 middle ^0002 anchor ^0002 other ^0007 callee\n";
+      break;
+    case 9:
+      F.Entries.erase(F.Entries.begin() + 2);
+      break;
+    }
+    SignatureDB DB;
+    ASSERT_FALSE(DB.loadPatternText(Required + Source + Anchor + IncomingLeaf,
+                                    "required-caller-negative"));
+    DB.apply(F.Image, F.Entries);
+    EXPECT_EQ(DB.buildCandidateNameMap().count(0x1200), 0u);
+  }
+}
+
 TEST(SignatureDBCallerContext, ShortCallerNeedsCompleteIndependentEvidence) {
   for (unsigned Case = 0; Case < 11; ++Case) {
     SCOPED_TRACE(Case);
@@ -2295,7 +2378,7 @@ TEST(SignatureDBCallerContext, OnlyAnEstablishedCallerCanRequestTheLeaf) {
 }
 
 TEST(SignatureDBCallerContext,
-     WeakPartialRequiredAndAmbiguousParentsCannotAnchor) {
+     WeakPartialUnrootedAndAmbiguousParentsCannotAnchor) {
   const std::string Strong = incomingCallerLine("parent", " ^0005 callee");
   std::string Partial = Strong;
   Partial.replace(Partial.find("001B"), 4, "001C");

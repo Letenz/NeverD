@@ -494,15 +494,19 @@ class Shape:
         followed by that alignment in a linked image. This conservative
         collision check only handles these explicit machine/return forms;
         it refuses to use the common byte suffix as nominal identity.
-        CRC spans and unknown suffix bytes stay outside this narrow check.
+        CRC assertions must agree at the same offsets; the return and added
+        padding must remain literal bytes outside those opaque spans.
         """
-        if other.total >= self.total or self.crc_len or other.crc_len or \
+        if other.total >= self.total or \
                 not self.fully_verified() or not other.fully_verified():
             return False
-        own = (self.lead + self.tail)[:2 * self.total].upper()
-        short = (other.lead + other.tail)[:2 * other.total].upper()
-        if not _states(own[:len(short)], short):
+        prefix = Shape(self.lead, self.crc_len, self.crc, other.total, self.tail)
+        if not prefix.fully_verified() or not prefix.covered_by(other):
             return False
+        # CRC bytes retain their own proof above. Mark them opaque here so
+        # they cannot masquerade as the visible return or alignment suffix.
+        own = (self.lead + ".." * self.crc_len + self.tail)[:2 * self.total].upper()
+        short = (other.lead + ".." * other.crc_len + other.tail)[:2 * other.total].upper()
         if machine in {"x86", "x64"}:
             return short.endswith("C3") and all(
                 own[index:index + 2] in {"90", "CC"}
