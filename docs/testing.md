@@ -4713,7 +4713,13 @@ checks that an AArch64 enumerator names only a decoded immediate and keeps its
 `#` in `display_op_str`; `OperandEnumsNameWholeARMVectorImmediates` that a
 `vmov.i64` immediate keeps all 64 bits. `armOperandsCountAsTheWorkerDoes`
 checks that the listing's operand under the cursor is the worker's across
-braces and brackets.
+braces and brackets. `NeverDWorkerFormat` also counts SBF immediates in their
+operation's width, keeps a call target and a byte swap's width as they are,
+and formats EVM PUSH data in its own width up to 256 bits;
+`SBFIntegrationTest.OperandEnumsNameImmediatesInTheirWidth` and
+`EVMIntegrationTest.OperandEnumsNamePushDataOfAtMost64Bits` check the SDK's
+admission and `display_op_str`, and `NeverDWorkerDataPresentation` shows the
+formats, an SBF structure offset and its picker access in the listing.
 
 `NeverDWorkerImmediatesRegister` checks decoded immediate search and register
 queries through the real SDK/worker and, when available, CLI. It covers search
