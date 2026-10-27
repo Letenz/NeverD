@@ -36,6 +36,7 @@ bool forwardPrivateFrameLoads(HighFunc &Function, Arch Architecture,
                               bool AcrossJoins);
 bool forwardBoundPrivateFrameCopies(HighFunc &Function, Arch Architecture);
 void simplifyExprSemantics(std::vector<HighStmt> &Statements);
+void structureIfElse(HighFunc &, int, const MedFunc *);
 bool simplifyAllExprs(std::vector<HighStmt> &Statements);
 } // namespace neverd
 
@@ -2771,6 +2772,80 @@ TEST(HighSourceExpressions, UnspellableCallbackPrototypeKeepsUntypedCall) {
   EXPECT_EQ(Source.find("(*t20)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("(int32_t (*)())"), std::string::npos) << Source;
 }
+TEST(HighSourceExpressions, PredicateCleanupKeepsDistinctIndirectCallEffects) {
+  const auto T = NdType::makeInt(8, false);
+  for (unsigned Variant = 0; Variant != 4; ++Variant) {
+    SCOPED_TRACE(Variant);
+    HighFunc F;
+    F.Entry = 0x1000;
+    F.Name = "kept_predicate_calls";
+    F.ReturnType = T;
+    F.Params = {{"arg0", T}, {"arg1", T}, {"arg2", T}};
+    auto First =
+        HighExpr::makeCall("indirect", 0x2000, {parameter(0, T, Arch::X64)});
+    First->Type = T;
+    First->CallSiteAddr = 0x1000;
+    First->IsIndirectCall = true;
+    First->IndirectTarget = parameter(1, T, Arch::X64);
+    auto Next = std::make_shared<HighExpr>(*First);
+    Next->CallSiteAddr = 0x1010;
+    Next->CallAddr = Variant == 0 ? 0x3000 : First->CallAddr;
+    Next->IndirectTarget = parameter(2, T, Arch::X64);
+    Next->Operands = {HighExpr::makeBinop(
+        NdOp::INT_ADD, parameter(0, T, Arch::X64), HighExpr::makeConst(1, 8))};
+    if (Variant == 2)
+      Next->CallSiteAddr = First->CallSiteAddr = 0;
+    if (Variant == 3)
+      Next->CallSiteAddr = First->CallSiteAddr;
+    HighStmt Inner;
+    Inner.Kind = StmtKind::If;
+    Inner.Addr = 0x1020;
+    Inner.Cond = parameter(0, T, Arch::X64);
+    Inner.Body = {returning(parameter(0, T, Arch::X64))};
+    HighStmt Outer;
+    Outer.Kind = StmtKind::If;
+    Outer.Addr = F.Entry;
+    Outer.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, First,
+                                     HighExpr::makeConst(UINT64_MAX, 8));
+    auto Effect = assign(temporary(20, T, Arch::X64), Next);
+    Effect.Addr = 0x1010;
+    Outer.Body = {Effect, Inner, returning(HighExpr::makeConst(0, 8))};
+    F.Body = {Outer, returning(HighExpr::makeConst(0, 8))};
+    MedFunc Med;
+    Med.CC = CallingConv::Win64;
+    structureIfElse(F, 10, &Med);
+    std::string Text;
+    llvm::raw_string_ostream Out(Text);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options));
+    Text += R"(
+static unsigned predicates, normal_calls, shared_calls;
+static uint64_t selected, observed;
+static uint64_t predicate(uint64_t value) { ++predicates; return selected; }
+static uint64_t normal(uint64_t value) { ++normal_calls; observed=value; return 7; }
+static uint64_t shared(uint64_t value) { ++shared_calls; observed=value; return selected; }
+int main(void) {
+  uint64_t choices[]={0,1,UINT64_MAX,UINT64_C(0x8000000000000000)};
+  for (unsigned i=0;i!=4;++i) for (unsigned value=0;value!=2;++value) {
+    selected=choices[i]; predicates=normal_calls=0; observed=0;
+    uint64_t result=kept_predicate_calls(value,(uintptr_t)&predicate,
+                                       (uintptr_t)&normal);
+    unsigned taken=selected!=UINT64_MAX;
+    if (result!=(taken?value:0) || predicates!=1 || normal_calls!=taken ||
+        observed!=(taken?value+1:0)) return 1;
+    shared_calls=0; observed=0;
+    result=kept_predicate_calls(value,(uintptr_t)&shared,(uintptr_t)&shared);
+    if (result!=(taken?value:0) || shared_calls!=1+taken ||
+        observed!=(taken?value+1:value)) return 2;
+  }
+  return 0;
+}
+)";
+    compileAndRun(Text);
+  }
+}
+
 TEST(HighSourceExpressions, GuardAndCallShareTheComputedTarget) {
   MedFunc Med;
   Med.Entry = 0x1000;

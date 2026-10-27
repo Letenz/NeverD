@@ -14736,6 +14736,8 @@ The native Linux qualification also runs the complete `HighSwiftEmitter` owner, 
 
 `SymAtomicCmpxchg.*` and `InterpreterSpecialization.AtomicCmpxchg*` cover complete byte effects, both byte orders, old-value provenance, input/output aliases, native return cells, affine-spill invalidation across joins, retained ordered occurrences, strict admission and exact/short budgets. The independent byte oracle models sequential values only. Source-wrapping controls require ordered-memory refusal for initialized, structurally valid graphs. Independent LowIR controls also bind complete sidecars and require no certificate. Native binary proofs may refuse earlier because LOCK CMPXCHG lacks a complete architecture-undefined-output audit. Raw-receipt checks bind ordering, address space and desired operands. Run the owning suites before claiming support; test definitions alone are not execution evidence.
 
+`InterpreterSpecialization.AtomicUpdates*` covers ADD/XCHG byte effects at every scalar width and both byte orders, overlapping old-value outputs, native return footprints, retained no-change operations, old/new memory provenance across nodes, explicit-domain refusal and exact/short frame-preservation budgets. Run with all interpreter-specialization, conditional-store and atomic symbolic tests; the byte oracle supplies sequential values only.
+
 `KernelObjectTests.cpp` checks known-ID lookup, type/access/mode failures, optional handle information, failed outputs without leaked references, unload, and retained identities across stack reuse. `DriverObjectTests.cpp` executes original `driver_objects.c` on available Unicorn/KVM/WHP/HVF backends, Legacy/CheckedX64, preferred/rebased images and cooperative/17-instruction scheduling. KVM/WHP outcomes are mandatory in `NativeDriverTests.def`; missing or skipped execution is a gap. These fixtures do not certify ACLs, general process exit or unimplemented object classes.
 
 `KernelDataExportTests.cpp` checks object identity, availability, thunk capacity, read-only/NX permissions, undeclared debugger bytes and recovery dependencies. `DriverDataExportTests.cpp` runs original `driver_data.c` with real DATA imports across available backends, both contracts and image bases, including unload and rejected writes/execution. Scenario, C ABI, CLI and Python tests cover strict debugger booleans and report transport. Native outcomes are required by `NativeDriverTests.def`; unavailable backends remain coverage gaps.
@@ -16146,3 +16148,16 @@ simplifies its obfuscated retained words, and stays exact under partial budgets.
 Run `NeverDSymMBAMaskRelationTests` and the broader `NeverDSymbolicTests`.
 
 The focused NeverDCOFFExceptionModelTests target runs exception model and decoder regressions, including unsorted duplicate directory starts, long/cyclic chains, terminal frame mismatches and addresses near the VA limit. Build it with scripts/build.py and pair its CTest label with NeverDCOFFExceptionV2Tests when changing x64 unwind directory processing.
+
+### Predicate cleanup and independent call effects
+
+`HighSourceExpressions.PredicateCleanupKeepsDistinctIndirectCallEffects`
+executes generated C at O0/O2 after HighIR conditional cleanup. A surrounding
+predicate call and an unused-result call before a nested conditional must
+retain their separate effects. Variants cover a shared display name, matching
+callee identities at different sites, missing sites, and changed targets or
+arguments at one site. Independent providers check call counts, arguments and
+both nested paths; a shared provider also verifies repeated actual invocations
+of one callee. Run `NeverDHighControlFlowTests`,
+`NeverDHighCStoreForwardingTests` and `NeverDWindowsEHSourceTests`. This is a
+HighIR structuring contract; it requires no external source interface.

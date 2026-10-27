@@ -1984,6 +1984,8 @@ Linux 原生驗收也執行完整的 `HighSwiftEmitter` 測試集，涵蓋暫存
 
 `SymAtomicCmpxchg.*` 與 `InterpreterSpecialization.AtomicCmpxchg*` 涵蓋完整位元組效果、兩種位元組順序、舊值來源、輸入輸出別名、原生返回單元、跨匯合點的仿射溢出儲存失效、有序操作發生次數的保留、嚴格接納及精確／不足預算。獨立位元組校驗器僅模擬循序值語義。原始碼包裝對照採用初始化完整、結構有效的圖，要求在有序記憶體邊界拒絕。獨立 LowIR 對照另綁定完整 sidecar，並要求不產生憑證。原生二進位證明可能更早拒絕，因為 LOCK CMPXCHG 尚缺完整的架構未定義輸出稽核。原始收據檢查繫結記憶體順序、位址空間及目標運算元。宣告支援前應執行所屬測試集；測試定義本身不是執行證據。
 
+`InterpreterSpecialization.AtomicUpdates*` 涵蓋 ADD/XCHG 的所有純量寬度與兩種位元組序、舊值輸出重疊、原生返回範圍、不改變值的操作保留、跨節點的新舊記憶體來源、明確域拒絕及框架保留的精確／不足預算。應與全部解譯器特化、條件儲存和原子符號測試一起執行；位元組校驗器僅提供循序值語義。
+
 `InterpreterSpecialization.WideIntegerConcat*` 涵蓋兩種位元組序、高低字、常數輸入、重疊輸出、高字控制、非法形狀、精確／不足預算及未知記憶體來源保留。嚴格解碼的 `PSHUFD` 以獨立雙字索引驗證全部 256 種選擇值及相同／不同目的暫存器。`BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` 保留原生證明與兩種原始碼配置的拒絕。
 
 `InterpreterSpecialization.Timestamp*` 以獨立值與狀態參考實作檢查完整讀數、高半部清零、獨立與重複讀取、暫存器／旗標／記憶體／區段基址保持、精確與不足預算、非法序列及未知位址來源。`BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` 檢查原始還原完成並保留原生證明與原始碼配置拒絕。現有 `X86_64_Intrinsics` 時間戳案例檢查原始碼產生與單次讀取的完整位元結果；`DriverTimestamp` 另行檢查 Unicorn/KVM/WHP 共用時鐘策略、狀態保持、預算及溢位。平台略過不代表該後端已執行。
