@@ -1183,8 +1183,11 @@ it does not produce two more complete inventories just to detect that change.
 Ordinary reloads still compare before and after.
 
 The SDK's versioned byte-patch snapshot copies canonical rows and raw bytes into
-independent owned storage. The worker builds its history DOM directly from those
-rows, avoiding a complete JSON serialization, parse and address normalization.
+independent owned storage. The worker compares these rows with independently
+owned, admitted history rows and shares unchanged row handles and their strict
+encodings. Only changed rows build a new DOM. Reuse requires the complete
+canonical seven-field representation, including numeric types and hex spelling;
+unknown fields cannot survive the adapter's canonical projection.
 It resolves acquisition and release together and retains JSON compatibility with
 older SDKs. Snapshot storage survives session edits and destruction; the overlay
 still owns all admission, ordering and kind decisions. CLI JSON and sidecar
@@ -1281,9 +1284,16 @@ accounting and document assembly; rollback checkpoints do not copy command
 payloads. Pending sidecar writes and the next committed snapshot share the same
 owned text. Complete history/journal sizes are reserved before assembly, while
 all publication limits, external-byte comparisons and durable write ordering
-remain in their existing owners. The typed patch-row adapter counts the exact
-compact representation of its canonical fields without materializing a second
-JSON string; older SDK inventories retain the generic serializer path.
+remain in their existing owners. Patch commits and undo/redo share admitted row
+values and unchanged non-patch tables through the same publication routine as
+generic state saves. Row handles retain neither SDK pointers nor entire previous
+snapshots or arrays. Sequence ordering and uniqueness are checked independently
+of row admission. Complete JSON views are materialized only for legacy callers;
+single-table reads do not construct the patch DOM. Generic saves own the supplied
+row representations anew: logical equality (including signed zero) can suppress
+a sidecar write but cannot authorize reuse of differently spelled JSON text.
+The transport budget counts cached strict row encodings, including extra fields
+and escaping from older SDK inventories, before considering a no-op.
 
 Source previews retain the live session’s load options, analysis policy, user metadata and an owning snapshot of signature evidence. Instruction display limits never limit full-range validation; truncated previews report this explicitly. Thumb edits must cover the complete IT block when removing its predicate.
 

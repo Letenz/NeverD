@@ -687,9 +687,258 @@ void journalBudgetBeforePublication() {
   check(fixture.open().committedState() == before,
         "Oversized journal changed the persisted sidecars");
 }
+
+Json patch(std::uint64_t offset, const char *bytes = "91") {
+  return {{"addr", hexAddress(offset)},
+          {"file_off", hexAddress(offset)},
+          {"va", hexAddress(0x1000 + offset)},
+          {"size", std::uint64_t(1)},
+          {"original", "90"},
+          {"current", bytes},
+          {"kind", "bytes"}};
+}
+Json historyDocument(const Json &state, const Json &commands = Json::array()) {
+  return {
+      {"schema_version", 1},         {"source_sha256", std::string(64, '0')},
+      {"engine_version", "fixture"}, {"cursor", commands.size()},
+      {"commands", commands},        {"state", state}};
+}
+void sharedPatchOwnership() {
+  Fixture fixture;
+  auto store = fixture.open();
+  auto state = initial(store);
+  auto supplied = patch(10);
+  supplied["addr"] = "0xA";
+  auto first = ProjectHistory::patchRow(supplied);
+  auto second = ProjectHistory::patchRow(patch(32));
+  supplied["current"] = "ff";
+  state["patches"] = Json::array({patch(10), patch(32)});
+  store.persistPatches({second, first});
+  check(store.committedState() == state &&
+            store.committedPatches()[0] == first &&
+            store.committedPatches()[1] == second,
+        "Shared rows lost ordering, admission or independent ownership");
+  check(text(fixture.path(files::File::History)) ==
+                historyDocument(state).dump() &&
+            text(fixture.path(files::File::Patches)) ==
+                state["patches"].dump(2) + '\n',
+        "Shared row encoding differs from the full JSON oracle");
+  {
+    const auto checkpoint = store;
+    const auto &retained = checkpoint.committedState();
+    const auto *types = &checkpoint.committedTable("types");
+    store.persistPatches({ProjectHistory::patchRow(patch(10, "92")), second});
+    check(retained == state && checkpoint.committedPatches()[0] == first &&
+              &store.committedTable("types") == types,
+          "Patch commit mutated a checkpoint or copied unchanged tables");
+    fixture.writer.clear();
+    rejects(
+        [&] {
+          auto stale = checkpoint;
+          stale.persistPatches({first});
+        },
+        "foreign_edits");
+    check(fixture.writer.calls.empty(),
+          "Stale handles overwrote a newer state");
+  }
+  // Retaining another unchanged row must not keep the obsolete whole table
+  // or snapshot alive. Each row owns only itself.
+  std::weak_ptr<const ProjectHistory::PatchRow> retired = first;
+  first.reset();
+  check(retired.expired(), "An unchanged row retained an obsolete generation");
+  state["patches"][0] = patch(10, "92");
+  auto generic = state;
+  generic["annotations"][0]["text"] = "generic edit";
+  store.persist(generic);
+  auto rows = store.committedPatches();
+  rows.erase(rows.begin());
+  rows.push_back(ProjectHistory::patchRow(patch(0)));
+  store.persistPatches(rows);
+  generic["patches"] = Json::array({patch(0), patch(32)});
+  check(store.committedState() == generic &&
+            fixture.open().committedState() == generic,
+        "Generic and patch-only edits lost each other's state");
+  fixture.writer.clear();
+  rejects([&] { store.persistPatches({second, second}); }, "history_invalid");
+  rejects([&] { store.persistPatches({nullptr}); }, "history_invalid");
+  check(fixture.writer.calls.empty(),
+        "Invalid handle sequence published files");
+}
+void sharedPatchRepresentation() {
+  Fixture fixture;
+  auto store = fixture.open();
+  auto state = store.committedState();
+  auto row = patch(0);
+  row["extra"] = {{"zero", -0.0}, {"escaped", "quote\"\\\n"}};
+  state["patches"] = Json::array({row});
+  store.persistPatches({ProjectHistory::patchRow(row)});
+  const auto original = text(fixture.path(files::File::Patches));
+  row["extra"]["zero"] = 0.0;
+  state["patches"][0] = row;
+  fixture.writer.clear();
+  // Value equality intentionally avoids a sidecar replacement, while the
+  // caller's new representation must reach the history document unchanged.
+  store.persist(state);
+  check(text(fixture.path(files::File::History)) ==
+                historyDocument(state).dump() &&
+            text(fixture.path(files::File::Patches)) == original,
+        "Logical equality reused an incorrectly encoded JSON representation");
+  check(fixture.writer.calls ==
+            std::vector<fs::path>{fixture.path(files::File::Journal),
+                                  fixture.path(files::File::History)},
+        "Equal pointer-different patch rows rewrote their sidecar");
+  store.persistPatches({ProjectHistory::patchRow(row)});
+  check(text(fixture.path(files::File::History)) ==
+            historyDocument(state).dump(),
+        "Patch-only encoding lost unknown members");
+  fixture.writer.clear();
+  for (auto invalid : {Json(1.0), Json(-1)}) {
+    auto changed = row;
+    changed["size"] = invalid;
+    rejects([&] { ProjectHistory::patchRow(changed); }, "invalid_request");
+  }
+  auto invalid = row;
+  invalid["current"] = "gg";
+  rejects([&] { ProjectHistory::patchRow(invalid); }, "history_invalid");
+  invalid = row;
+  invalid["extra"] = std::numeric_limits<double>::infinity();
+  rejects([&] { ProjectHistory::patchRow(invalid); }, "history_invalid");
+  invalid["extra"] = std::string(1, '\xff');
+  rejects([&] { store.persistPatches({ProjectHistory::patchRow(invalid)}); },
+          "history_invalid");
+  check(fixture.writer.calls.empty() && store.current(),
+        "Invalid shared row reached publication");
+}
+void sharedPatchFailureBoundaries() {
+  // Patch-only commits have journal, changed patch sidecar, and history writes.
+  for (std::size_t fail = 0; fail < 3; ++fail)
+    for (bool afterWrite : {false, true})
+      for (bool retry : {false, true}) {
+        Fixture fixture;
+        auto store = fixture.open();
+        auto before = initial(store);
+        const auto beforeHistory =
+            Json::parse(text(fixture.path(files::File::History)));
+        const auto row = patch(10);
+        auto after = before;
+        after["patches"] = Json::array({row});
+        const Json command{{"kind", "patch"},
+                           {"address", "0xa"},
+                           {"before", nullptr},
+                           {"after", row}};
+        store.stage(command);
+        fixture.writer.clear();
+        fixture.writer.failAt = fail;
+        fixture.writer.failAfter = afterWrite;
+        const ProjectHistory::PatchRows rows{ProjectHistory::patchRow(row)};
+        rejects([&] { store.persistPatches(rows); }, "injected_failure");
+        check(store.committedState() == before,
+              "Failed patch commit published its in-memory snapshot");
+        const bool published = fail != 0 || afterWrite;
+        if (published) {
+          const auto journal =
+              Json::parse(text(fixture.path(files::File::Journal)));
+          check(journal ==
+                    Json({{"schema_version", 1},
+                          {"source_sha256", std::string(64, '0')},
+                          {"before", before},
+                          {"before_history", beforeHistory},
+                          {"after", after},
+                          {"after_history",
+                           historyDocument(after, Json::array({command}))}}),
+                "Patch-only journal differs from complete JSON oracle");
+        }
+        fixture.writer.clear();
+        if (retry && !(fail == 0 && afterWrite)) {
+          store.persistPatches(rows);
+          check(store.committedState() == after && store.current(),
+                "Same-session patch retry failed");
+        } else if (retry) {
+          // A throwing journal writer did not return ownership to this store.
+          rejects([&] { store.persistPatches(rows); }, "recovery_required");
+        }
+        auto reopened = fixture.open();
+        check(reopened.committedState() ==
+                      (published || retry ? after : before) &&
+                  reopened.current() &&
+                  !ProjectHistory::recoveryPending(fixture.binary),
+              "Reopened patch recovery produced mixed or pending state");
+      }
+}
+void sharedPatchRetryAndForeignState() {
+  Fixture fixture;
+  auto store = fixture.open();
+  auto before = initial(store);
+  auto after = change(store, "interrupted generic");
+  fixture.writer.clear();
+  fixture.writer.failAt = 2;
+  rejects([&] { store.persist(after); }, "injected_failure");
+  fixture.writer.clear();
+  const auto sidecar = fixture.path(files::File::Patches);
+  writeFile(sidecar, Json::array({patch(7)}).dump());
+  rejects([&] { store.persistPatches({ProjectHistory::patchRow(patch(0))}); },
+          "foreign_edits");
+  check(fixture.writer.calls.empty(),
+        "Patch retry overwrote a foreign sidecar");
+  fs::remove(sidecar);
+  // A new request based on the old snapshot must keep its original other
+  // tables after recovering the failed generic write, just as persist(Json).
+  store.persistPatches({ProjectHistory::patchRow(patch(0))});
+  before["patches"] = Json::array({patch(0)});
+  check(store.committedState() == before &&
+            fixture.open().committedState() == before,
+        "Recovery silently substituted the requested non-patch tables");
+  const auto timestamp = fs::last_write_time(sidecar);
+  auto reformatted = Json::array({patch(0)}).dump(4) + '\n';
+  writeFile(sidecar, reformatted);
+  store.persistPatches(store.committedPatches());
+  check(text(sidecar) == reformatted,
+        "Equivalent external formatting was overwritten");
+  auto foreign = reformatted;
+  const auto at = foreign.find("91");
+  check(at != std::string::npos, "Foreign patch fixture missing bytes");
+  foreign.replace(at, 2, "92");
+  writeFile(sidecar, foreign);
+  fs::last_write_time(sidecar, timestamp);
+  fixture.writer.clear();
+  rejects([&] { store.persistPatches(store.committedPatches()); },
+          "foreign_edits");
+  check(fixture.writer.calls.empty() && text(sidecar) == foreign,
+        "Patch state check trusted file size or timestamp");
+}
+void sharedPatchBudgets() {
+  Fixture fixture;
+  auto store = fixture.open();
+  auto before = initial(store);
+  auto row = patch(0);
+  row["extra"] =
+      std::string(neverd::limits::worker::kProjectHistoryMaxHistoryBytes, 'x');
+  fixture.writer.clear();
+  rejects([&] { store.persistPatches({ProjectHistory::patchRow(row)}); },
+          "history_budget_exceeded");
+  check(fixture.writer.calls.empty() && store.committedState() == before,
+        "Oversized shared rows published files");
+  row["extra"] = std::string(
+      neverd::limits::worker::kProjectHistoryMaxJournalBytes / 4, 'a');
+  store.persistPatches({ProjectHistory::patchRow(row)});
+  const auto history = text(fixture.path(files::File::History));
+  fixture.writer.clear();
+  row["extra"].get_ref<std::string &>()[0] = 'b';
+  rejects([&] { store.persistPatches({ProjectHistory::patchRow(row)}); },
+          "history_budget_exceeded");
+  check(fixture.writer.calls.empty() &&
+            text(fixture.path(files::File::History)) == history &&
+            !ProjectHistory::recoveryPending(fixture.binary),
+        "Shared row journal budget published a partial transaction");
+}
 } // namespace
 int main() {
   try {
+    sharedPatchOwnership();
+    sharedPatchRepresentation();
+    sharedPatchFailureBoundaries();
+    sharedPatchRetryAndForeignState();
+    sharedPatchBudgets();
     unchangedFiles();
     failureBoundaries();
     retryAndConflict();
