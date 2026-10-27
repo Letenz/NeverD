@@ -50,6 +50,11 @@ std::array<Read, LibraryCount> &reads() {
   return All;
 }
 
+bool hasOrdinaryTypeName(const LocalType &Type) {
+  return Type.Kind == TypeKind::Typedef || Type.Kind == TypeKind::Function ||
+         Type.TypedefNamed;
+}
+
 /// The size \p Library gives the type named \p Name, as a member holds it.
 std::optional<uint64_t> sizeOfNamed(const TypeLibrary &Library,
                                     llvm::StringRef Name) {
@@ -205,10 +210,21 @@ HeaderMerge mergeHeaderTypes(TypeLibrary &Library, const TypeLibrary &Headers,
                              std::optional<HeaderLibrary> Provider) {
   HeaderMerge Merge;
   std::vector<std::string> Added;
+  llvm::StringSet<> Gone;
   for (const LocalType *Type : Headers.types()) {
     if (Library.find(Type->Name))
       continue;
     LocalType Copy = *Type;
+    if (Library.findPrototype(Type->Name) && hasOrdinaryTypeName(*Type)) {
+      if (Type->Kind == TypeKind::Typedef || Type->Kind == TypeKind::Function) {
+        Gone.insert(Type->Name);
+        Merge.Conflicts.push_back(Type->Name);
+        continue;
+      }
+      // Keep a record or enum tag, but not a same-named typedef that would
+      // redeclare the primary function in C's ordinary identifier namespace.
+      Copy.TypedefNamed = false;
+    }
     Copy.Origin = TypeOrigin::Header;
     // ntifs.h uses the opaque kernel prefix for these executive pointers;
     // wdm.h/ntddk.h also declare their executive names. A program PDB can
@@ -256,7 +272,6 @@ HeaderMerge mergeHeaderTypes(TypeLibrary &Library, const TypeLibrary &Headers,
   // one that holds a type the program sizes or aligns otherwise goes, as does
   // any type that names one gone.  A typedef has no layout of its own: it names
   // the program's type, as C binds it.
-  llvm::StringSet<> Gone;
   for (bool Changed = true; Changed;) {
     Changed = false;
     for (const std::string &Name : Added) {
@@ -264,23 +279,41 @@ HeaderMerge mergeHeaderTypes(TypeLibrary &Library, const TypeLibrary &Headers,
         continue;
       const LocalType *Type = Library.find(Name);
       const bool LaidOut = Type->Record && Type->Record->Defined;
+      bool Incompatible = false;
+      // A missing alias cannot be forward-declared, even through a pointer or
+      // callback. A rejected record's tag remains available below.
+      if (!Gone.empty())
+        for (const std::string &Held : mentionedTypeNames(*Type))
+          if (Gone.contains(Held)) {
+            const LocalType *Missing = Headers.find(Held);
+            if (Missing && (Missing->Kind == TypeKind::Typedef ||
+                            Missing->Kind == TypeKind::Function))
+              Incompatible = true;
+          }
       for (const std::string &Held : valueDependencyNames(*Type))
         if (Gone.contains(Held) ||
             (LaidOut &&
              (sizeOfNamed(Library, Held) != sizeOfNamed(Headers, Held) ||
               alignOfNamed(Library, Held) != alignOfNamed(Headers, Held)))) {
-          Gone.insert(Name);
-          Merge.Conflicts.push_back(Name);
-          Changed = true;
+          Incompatible = true;
           break;
         }
+      if (Incompatible) {
+        Gone.insert(Name);
+        Merge.Conflicts.push_back(Name);
+        Changed = true;
+      }
     }
   }
   // A record that goes stays declared: the types that point to it, which
   // need no layout of it, still name it.
+  Merge.Types = Added.size();
   for (const std::string &Name : Merge.Conflicts) {
     const LocalType *Type = Library.find(Name);
-    if (Type && Type->Record &&
+    if (!Type)
+      continue;
+    --Merge.Types;
+    if (Type->Record &&
         (Type->Kind == TypeKind::Struct || Type->Kind == TypeKind::Union)) {
       LocalType Declared = *Type;
       auto Record = std::make_shared<RecordDef>();
@@ -292,9 +325,13 @@ HeaderMerge mergeHeaderTypes(TypeLibrary &Library, const TypeLibrary &Headers,
     }
     Library.remove(Name);
   }
-  Merge.Types = Added.size() - Merge.Conflicts.size();
   for (const auto &Entry : Headers.prototypes())
     if (!Library.findPrototype(Entry.first())) {
+      // A primary typedef also owns the ordinary name. Struct/union/enum
+      // tags without a typedef may still coexist with a function of the name.
+      if (const LocalType *Type = Library.find(Entry.first());
+          Type && hasOrdinaryTypeName(*Type))
+        continue;
       LocalType Routine;
       Routine.Function = Entry.second;
       bool Compatible = true;
