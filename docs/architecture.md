@@ -160,15 +160,16 @@ MedIR owns the dependency from an old flag input to the returned flags; dead
 flags cannot invent a source parameter. Ordinary completion does not supply a
 complete guest exception or nonlocal continuation ABI.
 
-`X86AtomicExchange.h` owns the native memory XCHG widths, segments, assembly
-and operand constraints. The lifter emits one ordered `ATOMIC_XCHG`, with
-the old value committed to the register only after the memory operation.
-LLVM and both C routes retain a native exchange: an arbitrary decoded
-address does not justify LLVM's natural-alignment promise, and lowering an
-unaligned exchange through a library call changes the original transaction.
-The C renderer is shared by both routes; LLVMC validates owned assembly
-before normalization, including dead calls. This does not change generic
-LLVM atomics or non-x86 exchange emission.
+`X86AtomicRmw.h` owns native scalar XCHG and locked ADD widths, segments,
+assembly and operand constraints; the exchange header retains its existing
+entry point. LLVM and both C routes preserve one native XCHG or LOCK XADD,
+including unused old values. An arbitrary decoded address does not justify
+LLVM's natural-alignment promise, and an unaligned library-call expansion
+changes the original transaction. ADD declares its flags clobber. Both C
+routes share one renderer; LLVMC validates owned assembly before normalization,
+including dead calls. Generic LLVM atomics and non-x86 emission keep their
+existing contracts. Completion tests do not qualify contention or hardware
+fault behavior.
 The x86 scalar concrete emulator commits memory before publishing the old
 exchange value; unsupported exchanges still stop explicitly. LLVMC
 materializes generic atomic RMW results at their original statement, so a
