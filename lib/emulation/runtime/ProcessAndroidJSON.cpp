@@ -125,6 +125,42 @@ serviceManager(const llvm::json::Value &Value) {
         Entry.binder = *Binder;
         Cache.push_back(std::move(Entry));
       }
+    } else if (Name == "lookup_results") {
+      const auto *Array = Value.getAsArray();
+      if (!Array ||
+          Array->size() >
+              ::neverd::limits::dalvik::kMaxAndroidServiceLookupResults)
+        return invalid(field::ApplicationServiceManager);
+      for (const auto &Value : *Array) {
+        const auto *Query = Value.getAsObject();
+        if (!Query || Query->size() != 4 || !Query->get("operation") ||
+            !Query->get("manager") || !Query->get("name") ||
+            !Query->get("binder"))
+          return invalid(field::ApplicationServiceManager);
+        State::LookupResult Entry;
+        auto Operation = Query->getString("operation");
+        if (!Operation || (*Operation != "get" && *Operation != "check"))
+          return invalid(field::ApplicationServiceManager);
+        Entry.operation = *Operation == "get"
+                              ? State::LookupResult::Operation::Get
+                              : State::LookupResult::Operation::Check;
+        auto Manager = Key(*Query->get("manager"));
+        if (!Manager)
+          return Manager.takeError();
+        if (!*Manager)
+          return invalid(field::ApplicationServiceManager);
+        Entry.manager = **Manager;
+        const auto &Name = *Query->get("name");
+        if (auto Text = Name.getAsString())
+          Entry.name = Text->str();
+        else if (Name.kind() != llvm::json::Value::Null)
+          return invalid(field::ApplicationServiceManager);
+        auto Binder = Key(*Query->get("binder"));
+        if (!Binder)
+          return Binder.takeError();
+        Entry.binder = *Binder;
+        Result.lookup_results.push_back(std::move(Entry));
+      }
     } else if (Name == "manager_proxy" || Name == "context_object") {
       auto Binder = Key(Value);
       if (!Binder)

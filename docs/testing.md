@@ -1549,6 +1549,16 @@ HashMap before another lookup. `ProcessReport.AndroidServiceCacheDoesNotSupplyIn
 checks the same independence at JSON admission. These checks use generic
 authored callers and no device service inventory or private workload input.
 
+Service lookup regressions cover explicit positive/null replies, exact method,
+manager and Java String matching, retained aliases without cache insertion,
+shared UID thresholds, integer wrapping, and ordered failures at clock/UID/logging
+boundaries. The same queries run through DEX and authored AArch64 JNI callers.
+`AndroidStatLoggerTest.*` checks strict ticks, per-event isolation, signed duration,
+wrapping counters, mutable-array failures and budget stops; JNI tests read the
+updated shared arrays after normal, va_list and jvalue calls. JSON tests reject
+ambiguous or dangling replies and preserve unknown independent Binder state.
+These regressions require no device inventory or native Binder transport.
+
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
 typed/JSON admission, DEX catch and shared message access, terminal instruction

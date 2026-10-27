@@ -1246,6 +1246,52 @@ explicitly. No clock substitutes for another. Handler posting and MessageQueue
 reads reuse the same uptime service and validation. Other `SystemClock` methods
 remain unmodeled.
 
+### ServiceManager lookup results and duration statistics
+
+The API 28 [ServiceManager](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/ServiceManager.java)
+model shares cache, Binder identities and initialization across JNI and DEX.
+`android.application_snapshot.service_manager` admits `cache` entries with
+nullable `name` and `binder`, and `binder_proxies` with positive unique `key`
+and optional `warn_on_blocking`. Missing cache state is unknown; an explicit
+empty array is a known empty cache. Non-null cache hits return their retained
+identity without timing or changing the blocking flag. `initServiceCache`
+copies entries through the shared HashMap model.
+
+`manager_proxy` and `context_object` independently describe an existing
+ServiceManagerProxy and the BinderInternal context result. Each is an optional
+nullable Binder key. A known-null manager uses the explicit context Binder to
+construct and retain a proxy. Unknown state stops at the boundary that needs it.
+
+Cache misses may consume `lookup_results`, an array of at most 256 exact,
+stable, successful semantic replies. Each entry requires all four fields:
+
+```json
+{"operation":"get","manager":7,"name":"alpha","binder":8}
+```
+
+`operation` is `get` or `check`; `manager` names the declared Binder behind the
+proxy, and `name` is a Java String value or null. `binder` is a declared Binder
+key or explicit null. Names are limited to 4096 encoded bytes. Duplicate
+manager/method/name tuples, undeclared keys and malformed encodings are rejected
+by shared admission. Unlisted queries remain unsupported; they never establish
+service absence. These replies do not execute native Parcel/Binder transport,
+simulate latency, or insert values into the Java cache. Successful non-null
+results reuse the same Binder identities and apply `Binder.allowBlocking`.
+
+`getService` measures duration with the shared boot clock and updates the
+retained StatLogger arrays. It obtains UID through the shared Linux identity
+owner, applies API 28 core/app thresholds and Java integer wrapping, and reads
+uptime from the independent monotonic clock. `checkService` does not perform
+these statistics updates. Paths requiring EventLog output or RemoteException
+handling remain unsupported rather than fabricating logging or transport effects.
+
+[StatLogger](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/com/android/internal/util/StatLogger.java)
+`logDurationStat(int,long)` updates counts, total/max duration, and per-second
+statistics in the retained Java arrays. It preserves signed comparisons,
+wrapping arithmetic, the strict next-tick comparison, and partial effects before
+array/clock failures. Invalid event IDs stop at the unmodeled diagnostic-logging
+boundary. Dump/reporting methods and arbitrary platform logging remain unmodeled.
+
 ### Class lookup and native registration
 
 API 28 `FindClass` resolves a class without executing `<clinit>`. Native
@@ -1255,10 +1301,11 @@ and [ClassLinker](https://android.googlesource.com/platform/art/+/android-9.0.0_
 
 The shared Android hierarchy includes the public final `android.os.ServiceManager`
 class with `java.lang.Object` as its superclass. Class identity, assignability
-and reference-array queries do not initialize it. Its static initializer remains
-unmodeled: active uses, including JNI method/field ID lookup and `AllocObject`,
-stop at the shared Dalvik initialization boundary before changing its class
-state. No service registry, cache, Binder identity or method result is inferred.
+and reference-array queries do not initialize it. Active uses, including JNI
+method/field ID lookup and `AllocObject`, run its modeled API 28 initialization
+once through the shared Dalvik owner. Initialization reads property thresholds,
+constructs the shared HashMap and StatLogger, and retains class and field state.
+It requires explicit boot-clock input and does not infer a service registry.
 This type metadata does not admit other unknown Android classes.
 
 Unknown classes remain explicit stops. A workload may supply

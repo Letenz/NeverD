@@ -10,12 +10,16 @@
 
 #include "neverd/dalvik/Library.h"
 
+#include "llvm/Support/Endian.h"
+
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -138,8 +142,138 @@ TEST(AndroidStatLoggerTest, MetadataKeepsBootOwnershipAndFieldAccess) {
   replacement.name = Logger;
   EXPECT_THROW((Program({replacement}, Properties{})), Error);
   EXPECT_THROW((Program({replacement})), Error);
-  EXPECT_FALSE(
+  EXPECT_TRUE(
       libraryMethod({Logger, "logDurationStat", {"I", "J"}, "J"}, false));
+}
+
+struct Statistics {
+  Program program{{}, Properties{}};
+  std::shared_ptr<Heap> heap = std::make_shared<Heap>();
+  uint64_t now = 1000000000;
+  unsigned reads = 0, fail_read = 0;
+  RuntimeServices services;
+  std::unique_ptr<Runtime> runtime;
+  uint64_t logger = 0;
+  Statistics() {
+    services.elapsed_realtime_nanoseconds = [&] {
+      return ExecutionResult{++reads == fail_read ? ExecutionStop::Timeout
+                                                  : ExecutionStop::Returned,
+                             now};
+    };
+    runtime = std::make_unique<Runtime>(program, heap, std::nullopt, services);
+    const uint64_t args[] = {
+        heap->allocateArray("[Ljava/lang/String;", 2)->Identity};
+    const auto *method =
+        libraryMethod({Logger, "<init>", {"[Ljava/lang/String;"}, "V"}, false);
+    auto result = runtime->library(*method, 0, args, Admit);
+    EXPECT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    logger = result.value;
+  }
+  uint64_t &field(const char *name, const char *type) {
+    return heap->get(logger)->Fields.at(
+        program.findField({Logger, name, type}, false));
+  }
+  uint64_t element(const char *name, bool wide, unsigned index,
+                   std::optional<uint64_t> write = {}) {
+    auto array = heap->get(field(name, wide ? "[J" : "[I"));
+    auto *bytes = array->Bytes.data() + index * (wide ? 8 : 4);
+    if (write) {
+      if (wide)
+        llvm::support::endian::write64le(bytes, *write);
+      else
+        llvm::support::endian::write32le(bytes, uint32_t(*write));
+    }
+    return wide ? llvm::support::endian::read64le(bytes)
+                : llvm::support::endian::read32le(bytes);
+  }
+  ExecutionResult record(int32_t event, uint64_t start,
+                         const AdmitInstruction &admit = Admit) {
+    const uint64_t args[] = {uint32_t(event), start};
+    return runtime->library(
+        *libraryMethod({Logger, "logDurationStat", {"I", "J"}, "J"}, false),
+        logger, args, admit);
+  }
+};
+
+TEST(AndroidStatLoggerTest, DurationCountersTickStrictlyAndKeepOtherEvents) {
+  Statistics s;
+  for (auto [time, event, start, duration] :
+       {std::tuple{1500000000ULL, 0, 1499950ULL, 50ULL},
+        std::tuple{2000000000ULL, 1, 1999900ULL, 100ULL},
+        std::tuple{2001000000ULL, 0, 2000800ULL, 200ULL}}) {
+    s.now = time;
+    auto result = s.record(event, start);
+    ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    EXPECT_EQ(result.value, duration);
+    EXPECT_EQ(s.field("mNextTickTime", "J"), time > 2000000000 ? 3001u : 2000u);
+  }
+  EXPECT_EQ(s.element("mCountStats", false, 0), 2u);
+  EXPECT_EQ(s.element("mDurationStats", true, 0), 250u);
+  EXPECT_EQ(s.element("mMaxDurationStats", true, 0), 200u);
+  EXPECT_EQ(s.element("mMaxCallsPerSecond", false, 0), 1u);
+  EXPECT_EQ(s.element("mMaxDurationPerSecond", true, 0), 50u);
+  EXPECT_EQ(s.element("mCallsPerSecond", false, 0), 1u);
+  EXPECT_EQ(s.element("mDurationPerSecond", true, 0), 200u);
+  EXPECT_EQ(s.element("mCallsPerSecond", false, 1), 1u);
+  EXPECT_EQ(s.element("mDurationPerSecond", true, 1), 100u);
+  EXPECT_EQ(s.element("mMaxDurationPerSecond", true, 1), 0u);
+  s.element("mCountStats", false, 0, UINT32_MAX);
+  s.element("mDurationStats", true, 0, UINT64_MAX - 99);
+  ASSERT_EQ(s.record(0, 2000800).stop, ExecutionStop::Returned);
+  EXPECT_EQ(s.element("mCountStats", false, 0), 0u);
+  EXPECT_EQ(s.element("mDurationStats", true, 0), 100u);
+  auto negative = s.record(0, 2001005);
+  ASSERT_EQ(negative.stop, ExecutionStop::Returned);
+  EXPECT_EQ(negative.value, uint64_t(-5));
+  EXPECT_EQ(s.element("mDurationStats", true, 0), 95u);
+  EXPECT_EQ(s.element("mMaxDurationStats", true, 0), 200u);
+}
+
+TEST(AndroidStatLoggerTest, ArrayAndClockFailuresPreserveOrderedUpdates) {
+  for (unsigned mode = 0; mode != 4; ++mode) {
+    Statistics s;
+    if (mode == 0)
+      s.field("mLock", "Ljava/lang/Object;") = 0;
+    if (mode == 1)
+      s.field("mDurationStats", "[J") = 0;
+    if (mode == 2)
+      s.field("mDurationStats", "[J") =
+          s.heap->allocateArray("[J", 0)->Identity;
+    if (mode == 3)
+      s.fail_read = 3; // Constructor, duration, then the per-second clock.
+    auto result = s.record(0, 999975);
+    EXPECT_EQ(result.stop,
+              mode == 3 ? ExecutionStop::Timeout : ExecutionStop::Thrown);
+    if (mode != 3)
+      EXPECT_EQ(result.exception,
+                mode == 2 ? "java/lang/ArrayIndexOutOfBoundsException"
+                          : "java/lang/NullPointerException");
+    EXPECT_EQ(s.reads, mode == 0 ? 1u : mode == 3 ? 3u : 2u);
+    EXPECT_EQ(s.element("mCountStats", false, 0), mode ? 1u : 0u);
+    EXPECT_EQ(s.element("mCallsPerSecond", false, 0), 0u);
+    if (mode == 3) {
+      EXPECT_EQ(s.element("mDurationStats", true, 0), 25u);
+      EXPECT_EQ(s.element("mMaxDurationStats", true, 0), 25u);
+    }
+  }
+}
+
+TEST(AndroidStatLoggerTest, InvalidEventsAndWorkStopsRemainExplicit) {
+  for (int32_t event : {-1, 2}) {
+    Statistics s;
+    auto result = s.record(event, 0);
+    EXPECT_EQ(result.stop, ExecutionStop::Unsupported);
+    EXPECT_NE(result.diagnostic.find("invalid-event logging"),
+              std::string::npos);
+    EXPECT_EQ(s.reads, 2u);
+    EXPECT_EQ(s.element("mCountStats", false, 0), 0u);
+  }
+  Statistics s;
+  auto result = s.record(0, 0, [] { return ExecutionStop::InstructionLimit; });
+  EXPECT_EQ(result.stop, ExecutionStop::InstructionLimit);
+  EXPECT_EQ(s.reads, 1u);
+  EXPECT_EQ(s.element("mCountStats", false, 0), 0u);
+  EXPECT_TRUE(s.runtime->snapshot().terminal);
 }
 
 TEST(AndroidStatLoggerTest, NullLabelsPreserveLockClockAndExceptionOrder) {
