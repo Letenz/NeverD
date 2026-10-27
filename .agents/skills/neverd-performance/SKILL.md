@@ -14,8 +14,9 @@ description: >
 NeverD is semantics-first and must also be fast. A fast path computes exactly
 what the portable path computes, and every speed claim is measured.
 
-Basis: `origin/dev` 159588db82 (2026-10-27). `dev` moves quickly; re-check a
-path before relying on a line number.
+Basis: `origin/dev` 159588db82 for the inventory and 92b7f8dab1 for the
+profiles (2026-10-27). `dev` moves quickly; re-check a path before relying on
+a line number.
 
 - What exists today: [references/current-state.md](references/current-state.md)
 - What to do next, and what was rejected: [references/remaining-work.md](references/remaining-work.md)
@@ -84,6 +85,12 @@ This skill routes; these documents own the rules:
      `workerThreadCount()` and `NEVERD_THREADS`.
    - Nested batches are legal but drain on a fresh native stack, so avoid them
      on hot inner paths.
+   - Do not add whole-image or whole-selection work on the caller's thread.
+     Per-function work belongs inside the existing `parallelForEachWeighted`
+     batches. Interprocedural work needs a stated parallel plan, or a stated
+     reason it cannot have one. Half or more of a profiled run's wall time
+     already passes with one or two busy threads
+     (`references/remaining-work.md`).
 7. **Allocation.** Reserve when sizes are known, avoid per-element heap
    allocation in hot loops, and use a phase-scoped arena when lifetimes match
    (`std::pmr::monotonic_buffer_resource` in
@@ -118,8 +125,15 @@ This skill routes; these documents own the rules:
 
 ## Measuring
 
-1. **Profile first.** Run a sampling profiler on a warm Release run and record
-   the hotspot's share. Optimize what the profile shows.
+1. **Profile first.** Run a sampling profiler on a warm Release run and
+   optimize what the profile shows. Where `perf` is unavailable, use
+   `tools/neverd-bench/sigprof` (see its README); `NEVERD_NATIVE_PHASES=1`
+   prints each pipeline stage's elapsed time.
+   - Record the hotspot's CPU share **and** its serial wall share: the time,
+     by phase, during which at most two threads were busy (`report.py` prints
+     it).
+   - A phase with a small CPU share that runs on one thread can still take a
+     large part of the wall time on a many-core host.
 2. **Same-base A/B.** Build baseline and candidate from the same `origin/dev`
    commit. Use Release, the same compiler, the same dependency snapshot
    (`neverd-dependency-inputs.json`), the same allocator and the same
@@ -166,6 +180,7 @@ Push follow-up fixes when the merge regresses.
 
 - [ ] The profile names the hotspot; the A/B uses the same base; output hashes match.
 - [ ] No per-query scan or per-call rebuild inside loops over functions, blocks or calls.
+- [ ] No new whole-image or whole-selection work on the caller's thread; the serial wall share did not grow.
 - [ ] The scalar/portable path remains and is tested with acceleration off; SIMD covers every Highway target and inaccessible tails.
 - [ ] Every new threshold or budget lives in its owning limits definition, with a reason.
 - [ ] Output is identical across thread counts; hashed and parallel results are ordered before emission.

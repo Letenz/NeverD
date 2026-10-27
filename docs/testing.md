@@ -343,9 +343,29 @@ produce verified LLVM for a valid function and reset the diagnostic count.
 `NeverDAArch64ReturnProtectionTests` exercises decoded leaf and saved-LR
 recipes for ELF, Mach-O and COFF, including key/leaf attributes, preserved
 return values, observable signatures, wrong modifiers, incomplete recipes
-and rejection by a different output architecture. Malformed-width cases
+and rejection by a different output architecture. Conditional prologues,
+unused LR PHIs, address-taken landing labels, versioned entry copies, declared
+no-return calls and classified direct/indirect tail transfers cover source
+projection across control-flow joins. Negative cases retain signed or
+authenticated values consumed as return values/call arguments, overlapping
+saved-word writes, uninitialized reload paths, clobbered LR, unrestored SP
+and unresolved local dispatch with an active frame. Malformed-width cases
 start from the real lowering path, then corrupt the PAC or AUT modifier;
 source projection must not hide these invalid operations.
+
+`JTE_AArch64.SeparatePredecessorGuardsProveTheJoinedSelector` covers two
+independently guarded incoming paths to one compact byte table, with no
+single dominating range check. Scalar comparison literals propose only a
+finite envelope; the existing all-path selector proof must certify every
+coordinate before publishing the table. The companion negative cases remove
+one guard, overwrite a guarded value, or leave the full-width index's high
+bits unconstrained. The positive case verifies LLVM, excludes the adjacent
+poison slot and refuses recovery with an exhausted proof budget.
+`ResolverGuardPredicates.IdenticalIncomingValuesKeepTheirJoinEvidence`
+also checks x86, x64, ARM32 and AArch64: deduplicating equal incoming values
+must retain the real predecessor-join provenance, while warm/cold caches
+agree at the exact proof budget and one unit below it. Logical predicate
+unions and straight-line guarded values still cannot claim join ownership.
 
 `NeverDArm64eAnalysisTests` covers Apple arm64e static analysis independently
 of the disabled-key CPU tests in `NeverDAArch64PAuthTests`. It checks both
@@ -15147,7 +15167,11 @@ duplicate handles, generic/patch-only interleaving, unknown fields and signed-ze
 encoding. Patch-only commits cover every writer boundary before and after file
 replacement, same-session retry, reopened recovery, recovery followed by a newer
 request, equivalent foreign formatting, timestamp/size collisions, strict invalid
-values and full history/journal budgets. Keep full post-commit reloads inside
+values and full history/journal budgets. Cached row formatting is compared with
+the independent full sidecar serializer for nested values, all JSON control
+characters, literal escapes, Unicode, negative zero, deletions and empty arrays;
+an unchanged row's view remains stable across another row's edit.
+Keep full post-commit reloads inside
 commit/undo/redo timings and include first edit plus peak RSS when evaluating
 shared state; row-construction timings alone do not establish the benefit.
 Run the real SDK patch/replica path under ASan as well as the JSON-only mock:

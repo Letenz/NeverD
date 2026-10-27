@@ -809,6 +809,52 @@ void sharedPatchRepresentation() {
   check(fixture.writer.calls.empty() && store.current(),
         "Invalid shared row reached publication");
 }
+void sharedPatchSidecarLayout() {
+  Fixture fixture;
+  auto store = fixture.open();
+  std::string controls;
+  for (char c = 0; c < 32; ++c)
+    controls += c;
+  ProjectHistory::PatchRows rows;
+  auto expected = Json::array();
+  for (std::uint64_t offset : {0, 10, 32}) {
+    auto row = patch(offset);
+    row["extra"] = {
+        {"quote\"\\\b\f", controls},
+        {"nested",
+         Json::array({Json::object(), Json::array(), nullptr, false, -0.0, 1.5,
+                      1.0e30, Json{{"text", "literal \\b \\f /\t\n雪"}}})}};
+    if (offset == 0)
+      row.erase("kind");
+    rows.push_back(ProjectHistory::patchRow(row));
+    expected.push_back(row);
+  }
+  const auto verify = [&] {
+    check(text(fixture.path(files::File::Patches)) == sidecarText(expected),
+          "Shared patch formatting differs from the complete sidecar oracle");
+    check(fixture.open().committedState()["patches"] == expected,
+          "Formatted patch rows did not survive reopening");
+  };
+  store.persistPatches(rows);
+  verify();
+  const auto retained = rows.front()->sidecarRow();
+  const std::string retainedText(retained);
+  expected[1]["current"] = "92";
+  rows[1] = ProjectHistory::patchRow(expected[1]);
+  store.persistPatches(rows);
+  verify();
+  check(retained == retainedText &&
+            rows.front()->sidecarRow().data() == retained.data(),
+        "Another row's edit invalidated an immutable sidecar view");
+  rows.erase(rows.begin());
+  expected.erase(expected.begin());
+  store.persistPatches(rows);
+  verify();
+  rows.clear();
+  expected.clear();
+  store.persistPatches(rows);
+  verify();
+}
 void sharedPatchFailureBoundaries() {
   // Patch-only commits have journal, changed patch sidecar, and history writes.
   for (std::size_t fail = 0; fail < 3; ++fail)
@@ -936,6 +982,7 @@ int main() {
   try {
     sharedPatchOwnership();
     sharedPatchRepresentation();
+    sharedPatchSidecarLayout();
     sharedPatchFailureBoundaries();
     sharedPatchRetryAndForeignState();
     sharedPatchBudgets();

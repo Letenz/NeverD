@@ -109,11 +109,16 @@ bool matchesPatchBytes(const Json &Value, const uint8_t *Bytes, size_t Size) {
 bool matchesPatchRow(const Json &Value, const neverd_byte_patch_row_v1 &Row) {
   const auto Offset = hexAddress(Row.file_offset);
   const auto Kind = Value.find("kind");
-  return Value.size() == 7 && Kind != Value.end() && *Kind == Row.kind &&
+  // History admission owns these string types. Comparing their storage avoids
+  // constructing temporary JSON string values for every unchanged row.
+  return Value.size() == 7 && Kind != Value.end() &&
+         Kind->get_ref<const std::string &>() == Row.kind &&
          Value.at("size").is_number_unsigned() &&
          Value.at("size").get<Json::number_unsigned_t>() == Row.size &&
-         Value.at("addr") == Offset && Value.at("file_off") == Offset &&
-         Value.at("va") == hexAddress(Row.address) &&
+         Value.at("addr").get_ref<const std::string &>() == Offset &&
+         Value.at("file_off").get_ref<const std::string &>() == Offset &&
+         Value.at("va").get_ref<const std::string &>() ==
+             hexAddress(Row.address) &&
          matchesPatchBytes(Value.at("original"), Row.original, Row.size) &&
          matchesPatchBytes(Value.at("current"), Row.current, Row.size);
 }
