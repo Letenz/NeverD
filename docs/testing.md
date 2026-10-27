@@ -913,14 +913,15 @@ in the immediate-byte fixtures; constant-return inference is not their oracle.
 The nonlocal-control suite also refuses decoded and legacy-IR XBEGIN forms
 whose original abort target and checkpoint are absent.
 `NeverDX86LegacyAdmissionTests` separately covers incomplete far-pointer
-segment loads and 24 3DNow! operations. Its 76 and 384 valid instruction forms
+segment loads and unowned forms of 24 3DNow! operations. Its 76 and 384 valid instruction forms
 run through full, lightweight and lift decoding in strict/permissive modes.
 Each rejection must preserve the existing LowIR prefix without adding loads,
 register writes or placeholder effects. Ordinary loads and MMX arithmetic
 remain positive controls. This is admission qualification, not completed
-segment or 3DNow! semantics.
+segment or owned 3DNow! semantics. The owned context suite below independently
+qualifies the admitted x64 path.
 The pinned decoder corpus census shares these independent legacy encoding
-fixtures. Its 3DNow! samples are explicit refusals, not successful lift counts;
+fixtures. Its unowned 3DNow! samples are explicit refusals, not successful lift counts;
 unexpected refusals of other instruction IDs still fail the corpus test.
 Both source inventories reject incomplete address fragments in addresses
 and stored/comparator values. i386 decoded absolute-address fixtures also
@@ -5816,6 +5817,37 @@ separate QEMU execution of those objects and its coverage limits.
 python3 scripts/build.py build-release --target NeverDX87MMXStateTests --parallel 4
 ctest --test-dir build-release -L '^NeverDX87MMXStateTests$' --output-on-failure
 ```
+
+`NeverDX86ThreeDNowContextTests` covers all 24 owned x64 packed operations,
+every MMX register pairing, ignored prefixes and REX order, address width,
+segments and stack-reference provenance. It rejects contradictory decoder
+detail and selectors before effects, checks feature preflight without state
+mutation, and proves that FEMMS payload invalidation survives subsequent
+unary and binary operations. Its emission test exports 960 ELF objects across
+LLVM, HighC and LLVMC, both pipeline settings and C O0/O2.
+
+```sh
+python3 scripts/build.py build-release --target NeverDX86ThreeDNowContextTests \
+  NeverDX87MMXStateTests NeverDX86LegacyAdmissionTests NeverDX87CapabilityTests \
+  NeverDX86X87ConvertStateTests --parallel 4
+NEVERD_ISA_REGRESSION_ARTIFACT_DIR=/tmp/neverd-3dnow-objects \
+  build-release/bin/NeverDX86ThreeDNowContextTests
+python3 scripts/verify_x86_3dnow_context.py \
+  --artifacts /tmp/neverd-3dnow-objects --keep /tmp/neverd-3dnow-guest
+```
+
+Use a fresh artifact directory. The guest compares original instruction bytes
+against every object across all TOP/rounding settings, three tag patterns and
+selected inputs, then compares exception vectors, error codes and retained
+state. It also tests absent CPU features and an independent FWAIT #MF control.
+GNU binutils, Clang and `qemu-system-x86_64` are required. QEMU 10.2.2 lacks
+3DNow pending-#MF delivery and reports noncanonical RBP references as #GP
+instead of #SS; the command above deliberately fails on that model. Add
+`--allow-missing-mf --allow-stack-gp` to record those two categories as
+**unqualified**, separately from successful fault comparisons. The flags do
+not accept mismatched original/translated observations. No physical hardware
+or complete fault continuation is certified by this harness. See the
+[owned 3DNow evidence](evidence/x86-3dnow-owned-2026-10-27.json).
 
 `NeverDX87StackManagementTests` checks typed FDECSTP/FFREEP decoding across every
 TOP and register selector, malformed-operand refusal, both cleared tags and

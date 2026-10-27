@@ -128,7 +128,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | Instructions or family | Missing contract |
 | --- | --- |
 | LDS, LES, LSS, LFS, LGS | Coupled GPR/segment-selector completion, hidden descriptor state and fault ordering. The former ordinary load/COPY approximation is now explicitly refused in both strict and permissive lifting. |
-| 3DNow! arithmetic, comparison, conversion and rearrangement operations | NeverD still needs an owned MMX/x87 transition and fault contract for these 24 instructions. LLVM and NeverC now provide native packed-value interfaces, qualified below. The former COPY/scalar-FLOAT substitutes remain explicit refusals; decoder recognition remains available. |
+| Unowned and i386 3DNow! operations | All 24 operations now retain their original instruction inside the owned x64 MMX/x87 context, qualified below. Typed/unowned and i386 paths still require a state contract. Strict and portable concrete execution refuse processor-dependent values. Physical execution and pending-#MF/stack-#SS behavior remain unqualified. LLVM and NeverC provide the native packed-value interfaces. |
 | Unowned FNOP/EMMS/FEMMS | Waiting behavior and tag/payload transitions require an owned x87 context. Owned x64 paths now retain all three instructions, including FEMMS payload invalidation; typed/unowned and i386 paths still refuse rather than emit NOP. The explicit portable x87 profile does not admit MMX resets. |
 | VMRUN | Complete guest/host transition, including guest-modified unsaved GPRs and floating/vector state, plus the VM-exit continuation. |
 | SKINIT | Machine reinitialization and nonlocal control transfer. |
@@ -227,12 +227,13 @@ An additional audit reproduced two previously hidden false positives:
 `48 0f b4 07` (LFS) became an ordinary eight-byte load, and `0f 0f c1 94`
 (PFMIN) became a COPY of MM1 to MM0. The former loses the segment selector and
 descriptor transition; the latter loses both minimum comparisons. The
-related far-pointer loads and all 24 affected 3DNow! operations now refuse
-before appending LowIR effects. `NeverDX86LegacyAdmissionTests` covers 76
+related far-pointer loads and the unowned forms of all 24 affected 3DNow!
+operations refuse before appending LowIR effects. `NeverDX86LegacyAdmissionTests` covers 76
 far-pointer forms and 384 3DNow! forms, each through three decoder routes in
 strict and permissive mode (2,760 admission checks), plus ordinary-load/MMX
-positive controls. These are explicit remaining implementation gaps. 3DNow!
-completion must follow the packed-operation and state rules in
+positive controls. Owned x64 3DNow! support is qualified below; typed/unowned
+and i386 forms remain implementation gaps. Their completion must follow the
+packed-operation and state rules in
 [AMD APM volume 5](https://www.amd.com/content/dam/amd/en/documents/processor-tech-docs/programmer-references/26569.pdf),
 including its defined and undefined input domains.
 
@@ -2353,8 +2354,8 @@ NeverD's admission tests cover FNOP, EMMS and FEMMS through three decoder
 routes, strict/permissive lifting and x86/x64 with segment/address prefixes.
 Missing state ownership now fails without changing the supplied LowIR output.
 The x87 capability inventory agrees with that boundary. The owned x64 FEMMS
-completion is documented below; unowned contexts and 3DNow state contracts
-remain unsupported.
+completion and subsequent owned x64 3DNow state contract are documented below;
+unowned contexts remain unsupported.
 
 The extended x87 call tests also exposed a C projection error: preserving an
 LLVM signature incorrectly demanded a no-value callee's unknown return
@@ -2405,9 +2406,9 @@ empty tags, across all four rounding controls. This is processor-model
 execution, not physical hardware or complete exception-continuation coverage.
 See [the phase evidence](evidence/x86-femms-owned-2026-10-26.json).
 
-The production SDK pin and LLVM gitlink remain unchanged. The 24 NeverD
-3DNow value/state operations and the other remaining rows above are still
-separate work.
+The production SDK pin and LLVM gitlink remain unchanged. The subsequent
+owned 3DNow completion is recorded below; the other remaining rows still
+require separate work.
 
 ## Native 3DNow value interfaces
 
@@ -2441,7 +2442,55 @@ These interfaces preserve processor-specific reciprocal/refinement behavior
 within the same QEMU model. They do not qualify physical 3DNow hardware,
 every input/CPU result, or native exception continuations. Their packed value
 ABI does not replace NeverD's required owned MMX/x87 instruction-state
-contract. Those 24 NeverD operations still refuse explicitly. See the
+contract. The subsequent owned x64 completion is recorded below. See the
 [phase evidence](evidence/x86-femms-owned-2026-10-26.json) for exact source
 versions, test reports and artifact digests. No production release or SDK pin
 changes in this phase.
+
+## Owned x64 3DNow instruction state
+
+All 24 operations now use the owned x64 x87 context. The shared
+`X86ThreeDNow.def` inventory owns suffix bytes, source dependencies and the
+five enhanced-feature requirements. Lifting authenticates original bytes,
+Capstone detail, every MMX register, effective addresses and prefix order
+before publishing effects. Ignored operand-size/repeat prefixes do not invent
+an operand width; address-size and FS/GS retain their memory meaning.
+Long-mode RSP/RBP references carry a separate stack-reference bit. Native
+output preserves RBP and addresses the operand through RBP plus an adjusted
+index, retaining the instruction's stack-reference classification.
+
+LLVM, HighC and LLVMC execute the original instruction between context
+restore and save. There is no scalar floating substitute or ordinary load
+before the instruction. The operation preserves the x87 saved instruction
+pointer, data pointer and opcode. Concrete evaluation requires explicit
+native reference mode, known actual source payloads and the host CPUID bits;
+strict/portable modes and pending exceptions refuse without mutation. After
+FEMMS, a successful operation establishes only its destination payload,
+never the other seven payloads merely because the tags become valid.
+
+The pinned r6 and current native SDK each pass all 116 tests in the new suite
+and four adjacent suites. The new suite includes 110,592 register/prefix/route
+checks, 32,256 memory-address checks, malformed-detail and selector rejection,
+native feature preflight and FEMMS provenance. Each SDK exports 960 objects:
+24 operations, four source forms, default/NoOpt pipelines and LLVM/HighC/LLVMC
+projections, with C outputs compiled at O0/O2. HighC helpers name the original
+packed instruction and operands.
+
+The reproducible system-QEMU oracle compares those objects against independent
+original bytes. Per SDK it passes 368,640 full retained-state comparisons
+across TOP, tag patterns, rounding control and selected raw inputs, plus 4,080
+fault comparisons including absent-feature #UD and invalid memory. It observes
+CW, SW, abridged tags, FOP, FIP, FDP, all eight raw binary80 slots and memory
+canaries. These are QEMU 10.2.2 processor-model results, not physical hardware
+or a complete machine exception-continuation contract.
+
+Two model limitations remain explicit: original 3DNow instructions do not
+raise pending #MF in this QEMU version, although the independent FWAIT control
+does; noncanonical RBP references raise #GP instead of #SS. Per SDK, the
+1,440 pending-#MF and 240 stack-#SS differential cases are **unqualified**, not
+part of the passed fault count. The oracle fails by default on these cases;
+explicit model-gap options retain separate unqualified counts. See the
+[qualification record](evidence/x86-3dnow-owned-2026-10-27.json) for source
+versions, reports, object inventories and counterexamples. Typed/unowned and
+i386 3DNow remain explicit refusals. The LLVM release, SDK pin and submodule
+revisions are unchanged.

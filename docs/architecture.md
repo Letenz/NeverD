@@ -7191,6 +7191,18 @@ does not introduce another stack representation or qualify runtime TOP changes.
 
 For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X86/X87Context.h` owns encoding admission and `CFGBuilderX86Fpu` owns a function-local mutable context. It carries CW, SW, runtime TOP, abridged tags and all eight raw binary80 payloads. Entry and independent roots capture incoming state; ordinary edges publish before a root recaptures. Calls and extended-state save/restore export and refresh the context, including wrappers without local x87 instructions. Entry backedges keep their existing context. LLVM, HighC and LLVMC share this contract; HighC uses named helpers and fixed aligned storage. MMX bridges physical aliases; EMMS empties tags. The same selector contract admits FEMMS and marks its payload invalidation: concrete execution forgets every retained payload, while native context steps retain the original instruction. Context restore/step constraints declare both the MMX and x87 register banks. Concrete execution requires authenticated state and memory, refuses unknown effects, and admits implementation-dependent results only in explicit native reference mode. The static TOP/tag proofs described above remain the projection for x86-32 and for System V x64, whose long double parameters and st0 results stay typed values; `x87ContextOwnsStack` chooses the model per image and `BinaryImage::X87ContextOverride` selects either one explicitly. These x64 regressions do not certify every CPU, instruction, fault priority or source-level floating return ABI.
 
+The owned context also carries all 24 3DNow operations. `X86ThreeDNow.def`
+owns their suffix, source dependencies and enhanced-feature requirements;
+`X86LiftThreeDNow` authenticates the complete encoding before producing one
+context step. Its selector retains stack-reference provenance independently
+of FS/GS and uses the original-ModRM field for the suffix, since these
+instructions preserve FIP/FDP/FOP. LLVM and both C routes share the original
+instruction inside the context restore/step/save boundary. Concrete execution
+requires explicit native reference mode and CPUID support, retains unknown
+payload provenance after FEMMS, and establishes only the written destination.
+Typed/unowned and i386 projections remain explicit refusals; no duplicate
+scalar arithmetic model substitutes for the native operation.
+
 ## IR representations and routes
 
 `X86Virtualization.def` owns the implemented VMX/SVM operation inventory and
