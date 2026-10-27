@@ -201,6 +201,29 @@ immutable-data address owners as ordinary memory operations. Selected or
 recurrent immutable bases must retain relocation; segment-relative offsets
 and live-image storage bypass this process-image rebasing.
 
+i386 legacy RAO retains CS/ES/SS offsets, including implicit SS for SP/BP,
+through a distinct final-byte control (`0x26`, `0x2e`, `0x36`). The shared atomic
+shape excludes other modes, widths, encoding families and duplicate FS/GS
+selection. `ir/intrinsics/X86/X86NativeMemory.h` owns the segment-offset role
+for atomics, compact and four-source memory; the MedIR adapter keeps these
+offsets scalar in both type-inference routes. LLVM uses the raw-offset
+materializer, and LLVM/HighC share native-prefix composition. HighC's
+`HighC/X86/HighCNativeMemory.cpp` routes their address operands through the same
+raw-address renderer used by segmented loads/stores. A numeric image alias
+carried through a register must stay an offset at that use, while a neighboring
+ordinary DS load still materializes its image object. The raw-address and
+intrinsic-operand renderers share view selection, retaining zero/sign extension
+and narrow arithmetic before the final pointer conversion.
+Constant address evaluation applies each integer view at its declared width;
+sign extension, narrowing casts, bounded byte extraction and arithmetic wrap
+cannot be erased while finding a numeric address.
+Representation-neutral shapes may omit the target, but LLVM and HighC require
+a valid native `x86APXAtomicPlan` before accessing its fields. An unknown mode
+cannot select a default x86 encoding at either output boundary.
+Native instructions own segment checks and faults. Concrete execution refuses
+these accesses without a descriptor environment before reading or changing
+ordinary image memory; arithmetic flags and stored-value roles are unchanged.
+
 `X86NativeFeatures` owns C compiler capability selection and function target
 attributes for AMX, SGX, bounded SGX/SMX state and REP comparison flags. Instruction renderers report their required feature
 sets; the function writer emits one combined attribute for the native APIs in
@@ -529,7 +552,7 @@ authenticated transfer encodings, keys and emission contracts. The fast and
 Capstone classifiers, lifter, intrinsic metadata and emitters consume those
 rows. Checked emulation reuses only the unchanged disabled-key HINT subset.
 `AArch64PAuthC.def` owns the C syntax shared by both projections;
-`AArch64ReturnProtection` proves the source-only return-signing recipe: an
+`AArch64ReturnProtection` proves the compiler-owned return-signing recipe: an
 entry LR signed with entry SP, matching authentication at every normal return,
 and, when saved, a dominating private frame slot with no observable consumers.
 The proof follows conditional prologues, LR copies/PHIs and frame reloads;
@@ -545,14 +568,47 @@ branch keeps its diagnostic and cannot hide an active frame's incomplete
 recipe. HighIR records the key and leaf policy and omits
 only the proved recipe operations. HighC/C++
 express it with `target("branch-protection=pac-ret[+leaf][+b-key]")`; HighIR
-dumps and the Rust/Go views retain the policy as metadata. A different output
-architecture cannot silently drop it. Native Swift emission rejects this
+dumps and the Rust/Go views retain the policy as metadata. LLVM uses the same
+proof, suppresses only its private operations/PHIs, and gives the new function
+an explicit signing scope, key, PAuth feature and asynchronous unwind table.
+The backend signs its own entry SP and LR and emits the corresponding CFI;
+it does not authenticate a fabricated original LR against a synthetic frame.
+LLVMC retains that policy when projecting LLVM functions to C. A different output
+architecture cannot silently drop it. Both native object and rewrite compilation
+refuse an A-key signed-frame policy for an arm64e Mach-O target: its implicit
+IB unwind ABI cannot describe that override. ELF A/B and ordinary ARM64
+Mach-O retain their own target conventions. Native Swift emission rejects this
 attribute until Swift has a corresponding source contract. Ordinary pointer
 authentication, observable signed values, mismatched modifiers/keys and
 incomplete recipes remain explicit. This includes Clang's arm64e tail-call
 sequence that inspects the authenticated LR and traps on failure before
-authenticating the callback pointer. LowIR, MedIR and the LLVM execution
-projection retain the original authentication operations.
+authenticating the callback pointer. LowIR and MedIR retain the original
+authentication operations. Unproved LLVM operations remain explicit.
+
+`AArch64AuthenticatedCall` separately proves a single-use authenticated
+temporary consumed by an indirect call in the same block. Only scalar copies
+may intervene; memory reads/writes, control flow, other calls, operand
+redefinitions, extra uses, dead calls and mutable non-SSA functions cannot
+absorb the authentication. LLVM attaches the original key/discriminator to
+the call's `ptrauth` operand bundle, preserving the signed input even when LR
+supplied an original operand. Both C projections use auth-and-resign to the
+compiler's default function-pointer schema. A resolved display name cannot
+replace that authenticated target, and exact LLVM call prototypes remain
+exact. Ordinary raw indirect calls use a feature-gated signing bridge so an
+arm64e C compiler does not impose its default authentication on a raw BLR.
+Clang O0 can retain an intermediate resign and produce a different invalid-PAC
+diagnostic from the original branch; this is not exact exception-syndrome
+equivalence. Model rejection evidence compares exception classes; complete ESR
+and exact fault-PC equality remain unqualified. Whole-image arm64e rebuilding
+still requires the separate
+authenticated storage, relocation and signed-unwind ABI contract.
+
+The DWARF reader keeps an image-derived arm64e return ABI flag separate from
+the encoded CIE augmentation. Classic arm64e and arm64e.x1 select IB even when
+the CIE has no explicit `B`; ELF and ordinary ARM64 retain their existing
+default. Static signing queries reuse that fact without inventing a signed
+state or rewriting the original augmentation. Layout-growth comparisons retain
+the flag, and callback copying cannot treat an arm64e CIE as an ordinary frame.
 `MachOArm64e.def` owns chained format strides, pointer fields and diagnostics.
 `MachOArm64eFixups` owns the pointer-word decoder and signing-recipe publication
 shared by modern chained fixups and the original arm64e threaded bind format.
@@ -1254,6 +1310,13 @@ the requested row window. The owning SDK snapshot still contains the full
 inventory; total counts and completion come from that snapshot, including empty
 and zero-limit pages. Older SDKs retain the complete JSON parser and move only
 the selected rows into the response. History admission still requests all rows.
+Range-only requests use a separate owned SDK snapshot of address/size pairs,
+without copying original/current bytes or encoding and reparsing an intermediate
+JSON inventory. Range ordering still comes from the admitted overlay's file
+offsets, including nonmonotonic virtual addresses. The worker resolves range
+acquisition and release together, builds the existing response shape and retains
+the JSON range/row fallbacks for older SDKs. These snapshots are per-request
+storage and do not retain another session cache.
 Their shared writer reuses hexadecimal scratch storage and emits only
 formatter-produced hex directly; general strings retain JSON escaping and
 external input retains its existing validation.
@@ -5076,6 +5139,31 @@ validation. `Bun` owns the shared graph records, flags and module decoding;
 transport capability lists and extraction results use the same profile builder.
 Adding a target container does not change source semantics or imply native
 machine-code/bytecode decompilation.
+`BunProjectSource` owns development reconstruction literal relocation from
+recovery-parser syntax and complete reparse comparison. Recovery trees remain
+inadmissible to semantic consumers. `BunProjectRequire` separately uses a Large
+parse and the existing lexical/module owners to identify an unwritten named
+export initialized by `import.meta.require` and its exact imported call sites.
+Its immutable private results bind source hashes, bindings and syntax spans;
+the relocation owner rechecks every call against its current syntax tree.
+Neither owner changes the callee, module loading order or loader behavior.
+`BunProject` uses those plans, the shared Bun text decoder and exclusive
+fixed-name export writer to emit a candidate project with unresolved runtime
+references. One project-wide account bounds retained metadata records and
+UTF-16 strings before JSON insertion, independently of source/parser and
+output-file limits; callers can lower but cannot raise its hard ceilings.
+Its development driver never invokes a compiler or executes input;
+external build and behavior qualification remain separate from offline
+analysis and evidence export. In particular, relocation alone does not make
+a compiler include modules reached through runtime `import.meta.require`.
+`BunSemanticIndex` builds a separate private navigation export from an admitted
+extraction and the shared Large source, binding, module, navigation and feature
+owners. Exact original spellings and UTF-8 byte spans stay separate from
+inferred roles and bounded AST vocabulary cues. Original files, readable
+views and navigation pages have read-back hashes; fixed filenames and aggregate
+record, string and output limits apply before publication. A refused analysis
+never becomes an assertion that a feature is absent, and the index does not
+rename executable bindings or reconstruct erased TypeScript types.
 `BunSourceMap` owns serialized-map framing, coordinates, Zstd envelope preflight
 and decoded-content budgets. `compression/Zstd` only selects an in-process
 decoder and writes into bounded caller-owned output: LLVM Support first, then
@@ -7000,7 +7088,8 @@ the frame setup itself, `push ebp; mov ebp, esp` (55 8B EC or 55 89 E5): a
 byte 0x55 followed by any move opcode starts no function inside an
 instruction.
 
-A whole unit (`neverd_decompile_all`, in every language) begins with a
+A whole unit (`neverd_decompile_all`, in every language, or the unit of a
+selection `neverd_decompile_functions` writes) begins with a
 `/* neverd.not-decompiled: NAME at 0xENTRY: REASON */` line for each function
 the pipeline refused (`RejectedLowIR`, `RejectedIncomplete`,
 `RejectedUnwindlessNonLeaf`, `MedIRFailed`), where it would otherwise be
@@ -11199,6 +11288,8 @@ captured from the pre-call state, including memory operands. Normal alias
 invalidation still applies to subsequent writes. This opt-in path stages a
 state copy for atomic admission; ordinary calls do not copy the state.
 
+`SymCallOccurrence::PathConstraints` exposes the conjunction of conditions known immediately before a call, including earlier call effects and merged path disjunctions. The callback borrows the view; it must copy expression references if it retains them. An empty view means true. The provider must prove its contract over this entire domain; these conditions are not a feasibility, alias, lifetime or ABI certificate. Once an effect makes the path provably contradictory, exploration stops before the next operation or provider invocation.
+
 `ByteMemoryForwardingPass` in `lib/pass/ir/simplify/common` reconstructs complete integer loads from the last writer of each byte in a fixed byte alloca, within one basic block. It accepts byte-multiple widths from 8 to 128 bits and exact in-object constant GEPs under the target byte order. Unknown calls, unknown writes and ordered memory clear the facts. The pipeline runs it between SROA passes after existing private-address recovery, preserving original stores. Instruction scans, address walks, tracked bytes, replacement uses and generated IR have finite limits. The default introduces no snapshots; explicit `AllowStoreSnapshots` freezes a value once at its store and shares that value with all fragments. This optional LLVM refinement does not certify native definedness or recover a function signature.
 
 Byte forwarding and backward overwrite analysis retain byte facts across normally returning intrinsics only when LLVM reports no memory access or other side effects, with no operand bundles or convergent contract. The calls and their results remain in place. This applies to both alloca and numeric memory; ordinary calls remain barriers even with `memory(none)`. It adds no alias separation, private-memory assumption or cross-block relation.
@@ -11264,6 +11355,16 @@ decode attempts share its generated 64-bit helper across table widths, with
 unchanged readers, feature gates and attempt order. MIPS register-list
 metadata maps expanded operands back to the list, base and displacement
 descriptors; signed MicroMIPS offsets are scaled without negative shifts.
+
+For x86 text and detail, immediate-size metadata is generated directly from
+the original rows into an opcode-indexed table. Full and reduced builds use
+their own instruction numbering; absent IDs retain zero operand and encoded
+sizes. The generator freshness check and exhaustive metadata test cover both
+numberings without changing instruction decoding or legality.
+
+The shared assembly stream combines terminator detection with bounded token
+copying. Sources that may alias the stream retain length-first copying, with
+unchanged truncation, markup and closed-stream behavior.
 
 NeverD's existing architecture-specific metadata corrections and fallback
 decoders remain authoritative after the Capstone call. The native batch API
@@ -13345,15 +13446,45 @@ its nonnegative value is independent of sign or zero extension. Pointer
 provenance and negative narrow constants cannot certify a frame offset. The
 same proof supplies stack annotations and saved-register recovery.
 
-Shared source stack preparation rejects exact entry-relative loads reached by
+Shared source stack preparation finds exact entry-relative loads reached by
 an x86 CALL return-slot write that the reconstructed C frame does not contain.
 It reuses the ABI owner's current-SP walk and original call/jump encoding
 policy; a synthetic tail call supplies no push. Explicit later stores kill only
 the bytes they write on each incoming path. Unknown call positions, incomplete
 candidate graphs and exhausted observation budgets cannot grant separation.
-Both source routes receive the same conversion diagnostic before cleanup can
-forward an old constant. This guard neither materializes a relocatable return
-PC nor certifies unresolved addresses, callee memory effects or other targets.
+Each such load is recorded on its function, not refused at conversion. Whether
+the function observes the loaded value depends on call arguments and returns
+that only call ABI recovery settles. A GCC `pop` that discards an argument
+slot after a call reads such bytes into a register nothing uses.
+
+After that recovery, and before either source route's cleanup, the function
+is refused if the settled MedIR still observes the value. Copies, byte views
+and joins only move it. Other observers are an operation, a settled call
+argument, a call clobber or an exceptional entry naming it. While a register
+holds it, they include another variable over that register, a call without
+settled arguments that may read the register, and a RETURN that reads it. A
+direct call to a function of this run reads no argument register at or past
+that function's emitted integer arity — the parameters both C routes pass a
+defined callee, bounded by its recovered and declared parameters — so a
+register beyond them, such as the slot a GCC `pop` discards after a call to a
+one-argument free routine, is not passed. HighC gives a call the prototype
+of the definition that took the call's identifier at its address, also where
+definitions share a source name; LLVMC coerces the call to the callee's
+function type. A complete overwrite or a clobbering call ends the register's
+copy.
+Both routes report the same diagnostic, which names what observes the value.
+No pass between the two checks forwards a stored value into, or rewrites, such
+a load. This guard neither materializes a relocatable return PC nor certifies
+unresolved addresses, callee memory effects or other targets.
+
+A whole-image run leaves a refused function out and continues, and so does a
+unit of selected functions (`neverd_decompile_functions`, `--func --callees`),
+which is written as the whole program is (`OmitRefusedFunctions`). The audit
+records `med-ir-failed` with the diagnostic, which the unit names in a
+`neverd.not-decompiled` note. Any other run restricted to requested functions,
+such as a view of one function, still fails with the diagnostic, as does
+`--callees` when the function it names is refused. The lift and patch routes
+check again after this proof that every requested function was admitted.
 
 SSA liveness includes the implicit full-width SP read of a physical x86 CALL.
 This keeps an exception handler's frame live when its continuation calls before

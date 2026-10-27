@@ -795,6 +795,12 @@ add_neverd_unittest(NeverDX86APXAtomicSourceTests
   x86/X86APXAtomicSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 
+add_neverd_unittest(NeverDX86AtomicSegmentTests
+  x86/X86AtomicSegmentTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86AtomicSegmentTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
 add_neverd_unittest(NeverDX86LegacyEncodingSourceTests
   x86/X86APXAtomicSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
@@ -1956,6 +1962,12 @@ if(TARGET neverd)
 endif()
 
 # Keep C pointer and integer projection regressions independently runnable.
+add_neverd_unittest(NeverDHighCIntegerWidthTests
+  core/HighCIntegerWidthTests.cpp
+  LINK_COMPONENTS BackendC)
+target_compile_definitions(NeverDHighCIntegerWidthTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+
 add_neverd_unittest(NeverDCPointerProjectionTests
   core/HighCPointerAddressTests.cpp
   LINK_COMPONENTS Pipeline BackendC
@@ -2429,8 +2441,18 @@ add_neverd_unittest(NeverDMedPrologueSavesTests
 )
 add_neverd_unittest(NeverDAArch64ReturnProtectionTests
   aarch64/AArch64ReturnProtectionTests.cpp
-  LINK_COMPONENTS BackendC IRHigh IRMed IRLow Decode Lift Loader
+  LINK_COMPONENTS BackendC BackendLLVM CodeGen IRHigh IRMed IRLow Decode Lift Loader
 )
+add_neverd_unittest(NeverDAArch64AuthenticatedCallTests
+  aarch64/AArch64AuthenticatedCallTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM CodeGen IRHigh IRMed IRLow Decode Lift Loader
+)
+target_compile_definitions(NeverDAArch64AuthenticatedCallTests PRIVATE
+  NEVERD_ARM64E_TEST_HEADERS="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/arm64e")
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDAArch64AuthenticatedCallTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
 add_neverd_unittest(NeverDCallRegisterUnreadTests
   core/CallRegisterUnreadTests.cpp
   LINK_COMPONENTS IRLow
