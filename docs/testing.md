@@ -309,6 +309,13 @@ optimization and source projection. Neither a module nor source observations
 may escape a failed pipeline run. Reusing an emitter after refusal must still
 produce verified LLVM for a valid function and reset the diagnostic count.
 
+`NeverDAArch64ReturnProtectionTests` exercises decoded leaf and saved-LR
+recipes for ELF, Mach-O and COFF, including key/leaf attributes, preserved
+return values, observable signatures, wrong modifiers, incomplete recipes
+and rejection by a different output architecture. Malformed-width cases
+start from the real lowering path, then corrupt the PAC or AUT modifier;
+source projection must not hide these invalid operations.
+
 `NeverDArm64eAnalysisTests` covers Apple arm64e static analysis independently
 of the disabled-key CPU tests in `NeverDAArch64PAuthTests`. It checks both
 decoder routes for PAC/AUT/XPAC, implicit HINT operands, authenticated
@@ -903,17 +910,19 @@ NeverC for x64; compilation does not qualify hardware rollback.
 The source checks also require the `rtm` attribute when a legacy LLVM inline
 assembly call becomes `_xabort`. A dword memory result fixes the return width
 in the immediate-byte fixtures; constant-return inference is not their oracle.
-The nonlocal-control suite also refuses decoded and legacy-IR XBEGIN forms
-whose original abort target and checkpoint are absent.
+The nonlocal-control suite now checks the integrated rel32 XBEGIN
+two-exit lift and its original abort target. rel16 remains refused; these
+checks do not qualify full transactional checkpoint or native rollback.
 `NeverDX86LegacyAdmissionTests` separately covers incomplete far-pointer
-segment loads and 24 3DNow! operations. Its 76 and 384 valid instruction forms
+segment loads and unowned forms of 24 3DNow! operations. Its 76 and 384 valid instruction forms
 run through full, lightweight and lift decoding in strict/permissive modes.
 Each rejection must preserve the existing LowIR prefix without adding loads,
 register writes or placeholder effects. Ordinary loads and MMX arithmetic
 remain positive controls. This is admission qualification, not completed
-segment or 3DNow! semantics.
+segment or owned 3DNow! semantics. The owned context suite below independently
+qualifies the admitted x64 path.
 The pinned decoder corpus census shares these independent legacy encoding
-fixtures. Its 3DNow! samples are explicit refusals, not successful lift counts;
+fixtures. Its unowned 3DNow! samples are explicit refusals, not successful lift counts;
 unexpected refusals of other instruction IDs still fail the corpus test.
 Both source inventories reject incomplete address fragments in addresses
 and stored/comparator values. i386 decoded absolute-address fixtures also
@@ -2872,6 +2881,21 @@ prebuilt-LLVM guidance.
 
 ## Structural binary comparison
 
+Call-context regressions retain exact score ties at zero ambiguity margin,
+refuse contradictory repeated-call assignments and competing anchor positions,
+preserve unresolved call holes, and keep independent consistent pairs. Context
+still resolves reordered duplicate callees after 1,200 and 70,000 known calls.
+An independent enumeration checks all 14,641 pairs of sequences of length zero
+through four over two callee identities and unresolved positions. A separate
+full prefix/suffix oracle enumerates viable LCS ranks for large and highly
+unequal inputs, in both directions, without tracing extreme paths. A 600,000-to-1
+case, cancellation/deadline stops and retry cover the storage/stop boundaries.
+The native x86 SDK fixture checks a 1,202-call caller, reordered identical
+helpers, full/paged details and byte-exact save/reopen. The native ambiguity
+inventory fixture exercises zero margin through paging, manual pairing,
+undo/redo and restore. These qualify structural matching behavior, not general
+function equivalence or arbitrary call reordering.
+
 Long native instruction-alignment regressions reproduce a 6,001-instruction
 body with 72 inserted instructions beyond the old dense-table threshold, in
 both directions. An independent forward edit-cost oracle checks large repeated
@@ -3176,6 +3200,13 @@ uses authored raw bodies. The real Qt picker test uses 417 raw functions to
 cross the page boundary, then checks search, selection, address zero, displaced
 pairs, undo, cancellation and revision invalidation. These are UI and inventory
 contracts, not matching-quality or throughput measurements.
+The core override regressions exhaust equal and unequal ambiguity groups, mix
+removed and surviving groups across edits, and remove two groups in one edit.
+Every intermediate state must bind after serialization; consecutive undo/redo
+must reproduce its original ordering, memberships and coverage. Native SDK and
+worker cases consume the last candidates, check invalidated inventories, and
+reopen the edited report through the strict reader, including actual worker
+file save and restart.
 The CLI regression sends SIGINT during each input's actual hashing phase,
 requires exit 3 with empty result output, preserves an existing saved report,
 then runs an ordinary comparison again. Child SIGINT delivery is tested on
@@ -3831,9 +3862,20 @@ on the left, code on the right and output across the bottom. It checks both
 themes, docked and floating origins, restoring the previous layout and window
 state, unchanged data, data addresses outside functions, and ordinary command
 input. After closing the focus workspace, the main close button still highlights
-on hover and returns to its normal color when the pointer leaves. Keys enter
+on hover and returns to its normal color when the pointer leaves. Cocoa hover
+uses posted native motion and requires `CGPreflightPostEventAccess()`; when
+permission is absent, the layout and both close paths still run, then the case
+reports the unavailable hover coverage as a skip. Offscreen retains the Qt
+pointer-event checks. Keys enter
 through `QWindow` so forwarding to the focused widget cannot
 silently reset the sequence.
+
+`LibraryCodeViewTests` checks that generated frame and complete exception-detail
+folds preserve full-text copy and exact source-row navigation, keep cleanup
+statements visible, and leave warnings expanded. The workbench frame-record
+test exercises default folding, search expansion, refresh state and member
+navigation in both themes. Run it on Cocoa and offscreen; optional captures
+use `NEVERD_SHORTCUT_CAPTURES` with the existing fractional-scale runs.
 `focusFunctionsSidebarTogglesAndNavigates` checks the initially folded function
 list, triangle clicks, unchanged analysis geometry, single-click navigation in
 both analysis panes, filtering, popup ownership, and cleanup. Hovering and moving
@@ -3861,6 +3903,9 @@ overview and chooser panes, and preserves already open floating panes.
 to the main window even when its previous tab group and disassembly are floating.
 `floatingAnalysisMenusStayWithTheirView` checks popup ownership and native
 transient parenting for floating text, graph, pseudocode and IR views.
+`disassemblyMenuOffersTheLinesEdits` checks that the text and graph menus offer
+stack variables, the SP correction and the operand forms on an instruction,
+and array and alignment on a data item, while pseudocode offers none of them.
 `floatingCommandDialogsStayWithTheirView` checks search, calculator input and
 results, options and other command dialogs against their floating owner.
 `analysisBrowsersStayInteractive` covers ordinary xrefs, address and location
@@ -5766,6 +5811,54 @@ ctest --test-dir build-release \
 ```
 
 ## Owned x64 x87 context
+
+`NeverDX87MMXStateTests` checks the shared EMMS/FEMMS tag and payload
+provenance contract at every TOP, three tag patterns and both strictness
+modes. FEMMS must forget all retained payloads; subsequent MMX writes and
+x87 loads establish only their own slots. Eight consecutive FLD m80 loads
+also prove that every tag was cleared. Pending exceptions and unknown
+incoming state refuse without mutation. Native feature preflight may refuse
+on hosts without 3DNow. The emission regression decodes ten LLVM, HighC and
+LLVMC output objects to verify the original FEMMS opcode survives default
+and NoOpt pipelines and C O0/O2 compilation. See the
+[owned FEMMS evidence](evidence/x86-femms-owned-2026-10-26.json) for the
+separate QEMU execution of those objects and its coverage limits.
+
+```sh
+python3 scripts/build.py build-release --target NeverDX87MMXStateTests --parallel 4
+ctest --test-dir build-release -L '^NeverDX87MMXStateTests$' --output-on-failure
+```
+
+`NeverDX86ThreeDNowContextTests` covers all 24 owned x64 packed operations,
+every MMX register pairing, ignored prefixes and REX order, address width,
+segments and stack-reference provenance. It rejects contradictory decoder
+detail and selectors before effects, checks feature preflight without state
+mutation, and proves that FEMMS payload invalidation survives subsequent
+unary and binary operations. Its emission test exports 960 ELF objects across
+LLVM, HighC and LLVMC, both pipeline settings and C O0/O2.
+
+```sh
+python3 scripts/build.py build-release --target NeverDX86ThreeDNowContextTests \
+  NeverDX87MMXStateTests NeverDX86LegacyAdmissionTests NeverDX87CapabilityTests \
+  NeverDX86X87ConvertStateTests --parallel 4
+NEVERD_ISA_REGRESSION_ARTIFACT_DIR=/tmp/neverd-3dnow-objects \
+  build-release/bin/NeverDX86ThreeDNowContextTests
+python3 scripts/verify_x86_3dnow_context.py \
+  --artifacts /tmp/neverd-3dnow-objects --keep /tmp/neverd-3dnow-guest
+```
+
+Use a fresh artifact directory. The guest compares original instruction bytes
+against every object across all TOP/rounding settings, three tag patterns and
+selected inputs, then compares exception vectors, error codes and retained
+state. It also tests absent CPU features and an independent FWAIT #MF control.
+GNU binutils, Clang and `qemu-system-x86_64` are required. QEMU 10.2.2 lacks
+3DNow pending-#MF delivery and reports noncanonical RBP references as #GP
+instead of #SS; the command above deliberately fails on that model. Add
+`--allow-missing-mf --allow-stack-gp` to record those two categories as
+**unqualified**, separately from successful fault comparisons. The flags do
+not accept mismatched original/translated observations. No physical hardware
+or complete fault continuation is certified by this harness. See the
+[owned 3DNow evidence](evidence/x86-3dnow-owned-2026-10-27.json).
 
 `NeverDX87StackManagementTests` checks typed FDECSTP/FFREEP decoding across every
 TOP and register selector, malformed-operand refusal, both cleared tags and
@@ -14911,13 +15004,17 @@ services and ART loading are not covered.
 
 `NeverDBytePatchTests`: overlay, relocation refusal, PC-relative assembly, PE signature/checksum. The same suite checks patch JSON ownership, decoded duplicate keys, legacy number spellings, malformed fields, and row/byte/input limits. With SIMD JSON enabled, `NeverDPatchJSONFallbackTests` compiles the same reader without acceleration and runs those reader contracts too. `NeverDWorkerPatch`: preview, stale input, undo/redo, batch revert, read-only replica, reopen, exclusive export.
 
+`NeverDBytePatchTests` also compares fragmented and shuffled replay against independent byte/kind oracles, retains adjacent-segment boundaries, rejects a bad late row without changing existing image copies, and verifies immutable input-view bounds and snapshot lifetime.
+
 `NeverDWorkerNativePatch` repeats this against the real SDK. `NeverDWorkerSourceBytePatch` verifies source proof, isolated preview, frame symbols and native C replacement on Linux.
 
 `BytePatchCAPIHeaderC.c` compiles the frozen snapshot layout and signatures as C
 in `NeverDBytePatchTests`. The real SDK cases in
 `test_byte_patch_integration.py` check empty/unloaded snapshots, all byte values,
 high addresses, split runs, JSON parity, and ownership across edits, reloads and
-session destruction. The worker mock intentionally omits snapshot exports to
+session destruction. They also rewrite and truncate a large input after an edit,
+then check that exports retain the session's original bytes plus its overlay.
+The worker mock intentionally omits snapshot exports to
 exercise JSON fallback; run the native patch suite with both current and older
 SDKs when changing this optional transport.
 

@@ -2399,6 +2399,10 @@ add_neverd_unittest(NeverDMedPrologueSavesTests
   core/MedPrologueSavesTests.cpp
   LINK_COMPONENTS IRMed
 )
+add_neverd_unittest(NeverDAArch64ReturnProtectionTests
+  aarch64/AArch64ReturnProtectionTests.cpp
+  LINK_COMPONENTS BackendC IRHigh IRMed IRLow Decode Lift Loader
+)
 add_neverd_unittest(NeverDCallRegisterUnreadTests
   core/CallRegisterUnreadTests.cpp
   LINK_COMPONENTS IRLow
@@ -4784,6 +4788,18 @@ add_neverd_unittest(NeverDX86X87ConvertStateTests
   x86_64/X86_64_X87FaultTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86X87ConvertStateTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX86ThreeDNowContextTests
+  x86_64/X86ThreeDNowContextTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86ThreeDNowContextTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX87MMXStateTests
+  x86_64/X87MMXStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX87MMXStateTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
 
 add_neverd_unittest(NeverDX86ComiStateTests

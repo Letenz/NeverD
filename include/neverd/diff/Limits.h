@@ -77,10 +77,13 @@ inline constexpr double kDefaultMinimumSimilarity = 0.55;
 /// lower than the global threshold because its context already agrees.
 inline constexpr double kDefaultMinimumContextSimilarity = 0.35;
 /// How far the best candidate must lead the second before an approximate
-/// pairing is accepted; closer candidates stay ambiguous.
+/// pairing is accepted; closer candidates and exact ties stay ambiguous.
 inline constexpr double kDefaultAmbiguityMargin = 0.02;
 /// Rounds of caller/callee propagation after the global passes.
 inline constexpr unsigned kMaxPropagationRounds = 64;
+/// Dense storage threshold for call-sequence anchor alignment. Larger ranges
+/// retain exact optimal anchors using linear score frontiers.
+inline constexpr uint64_t kMaxCallAlignmentCells = 1u << 20;
 
 //===----------------------------------------------------------------------===//
 // Structural deltas
@@ -92,7 +95,7 @@ inline constexpr uint32_t kMinBlockHashInstructions = 2;
 /// Most cells retained in a dense instruction-alignment table. Larger ranges
 /// use exact weighted divide-and-conquer with linear score frontiers.
 inline constexpr uint64_t kMaxAlignmentCells = 1u << 22;
-/// Poll cancellation/deadlines at least this often inside score frontiers.
+/// Poll cancellation/deadlines at least this often in instruction/call scores.
 inline constexpr size_t kAlignmentPollCells = 1024;
 
 //===----------------------------------------------------------------------===//
