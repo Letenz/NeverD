@@ -2061,6 +2061,31 @@ ELF/COFF code relocations and Mach-O local section-difference pairs rather
 than executing unresolved object bytes. These results qualify operand
 transport, effects, flags and ABI preservation, not physical atomicity.
 
+### Atomic stack-reference qualification
+
+The stack-reference follow-up covers 2,240 APX and 672 legacy/VEX raw
+admission combinations. Each SDK passes 639 of 642 registered focused/shared
+tests; three Windows EH cases retain their missing-corpus skips. Both SDKs
+retain the 480-wrapper and 588-pipeline matrices for each encoding family.
+Per SDK and family, 37 ordinary wrapper programs pass 213,120 controlled
+completions, and 40 realigned/dynamic-frame programs pass 230,400. The latter
+check local canaries, exact return-SP and all ABI-saved GPRs, including
+NeverC-native IR recompiled by the full LLVM fork. GCC O2 may fold identical
+RAO wrappers into direct-jump aliases; the independent oracle validates their
+entry targets and still executes every wrapper independently.
+
+All 588 production pipeline objects pass 4,116 completions per SDK/family.
+The 1,176 C sources and 588 case records per family match across SDKs;
+their 4,704 Clang/NeverC compilations and 32,928 completions are reused only
+after that exact comparison. i386 requalification passes 741 objects and
+36,000 controlled completions per SDK. The expanded standalone toolchain
+matrix covers 82,080 functions, 984,960 controlled completions and 72 ATT/Intel
+assembly round trips across the two families and all three compiler routes.
+The [qualification record](evidence/x86-atomic-stack-reference-2026-10-26.json)
+binds these results to the source revisions and local artifact hashes.
+These results establish no physical atomicity, cache-coherence or hardware
+fault certificate. The production LLVM SDK and submodule pin remain unchanged.
+
 ## Native compact-memory qualification
 
 The twelve compress-store/expand-load families retain their original opcode

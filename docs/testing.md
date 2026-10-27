@@ -854,6 +854,10 @@ disabled only in this controlled fixture; return-SP and all ABI-saved GPRs
 must match the independent completion oracle.
 The oracle independently decodes stack-carrier SIB bytes, rejects malformed
 carriers, and checks effective addresses as RBP plus the allocated index.
+Its wrapper decoder resolves pure direct-jump aliases from identical-function
+folding, checks the native operation count for each entry, and rejects cyclic,
+indirect, interior or state-changing aliases. Runtime checks still require each
+entry to execute its exact live/dead/repeated transaction sequence.
 `X86NativeMemoryCarrier` also compiles RAO/CMPccXADD stack references in realigned
 dynamic frames across all three object formats. These controlled completions
 do not qualify physical atomicity or hardware faults.

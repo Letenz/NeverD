@@ -131,6 +131,7 @@ def main():
     sys.modules[spec.name] = oracle
     spec.loader.exec_module(oracle)
     oracle.verify_memory_decoder()
+    oracle.verify_wrapper_decoder()
     args.keep.mkdir(parents=True, exist_ok=True)
     matrix = [c for c in oracle.cases() if c[2] == 64 and c[3] in (0, 0x64, 0x65, 0x100)]
     reports = []
