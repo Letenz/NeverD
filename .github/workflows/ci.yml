@@ -243,6 +243,7 @@ jobs:
             scripts.tests.test_neverd_bench_harness \
             scripts.tests.test_benchmark_binary_diff \
             scripts.tests.test_benchmark_binary_diff_bindiff \
+            scripts.tests.test_benchmark_binary_diff_external \
             scripts.tests.test_radare2_cli_compare \
             scripts.tests.test_ida_source_order \
             scripts.tests.test_audit_evm_opcode_metadata \

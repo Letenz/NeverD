@@ -123,8 +123,59 @@ def score(expected: set[tuple[int, int]], observed: list[tuple[int, int]]) -> di
     }
 
 
+def checked_diaphora_export(receipt: Path, database: Path, source: Path) -> dict:
+    value = load(receipt)
+    require(value["schema"] == "neverd.benchmark.diaphora-export.v1" and
+            value["complete"] is True, "Diaphora export did not complete")
+    require(value["input_sha256"] == digest(source), "IDA analyzed a different input")
+    require(bool(value["ida_version"]) and bool(value["diaphora_version"]),
+            "Diaphora/IDA version is missing")
+    require(value["export_sha256"] == digest(database), "Diaphora export bytes changed")
+    with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)) as connection:
+        identities = connection.execute("SELECT md5sum FROM program").fetchall()
+        require(len(identities) == 1, "Diaphora export must contain one program")
+        identity = identities[0][0]
+        # IDA's native MD5 is a 16-byte BLOB in current Diaphora exports;
+        # older exports can store its hexadecimal spelling instead.
+        identity = identity.hex() if isinstance(identity, bytes) else identity
+        require(isinstance(identity, str) and identity.lower() == digest(source, "md5"),
+                "Diaphora native program identity differs")
+        require(connection.execute("SELECT value FROM version").fetchall() == [(value["diaphora_version"],)],
+                "Diaphora native export version differs")
+    return value
+
+
+def read_diaphora_native(path: Path, inputs: list[Path]) -> list[tuple[int, int]]:
+    receipt = load(path)
+    require(receipt["schema"] == "neverd.benchmark.diaphora-match.v1" and
+            receipt["complete"] is True, "Diaphora matching did not complete")
+    require(receipt["input_sha256"] == [digest(source) for source in inputs],
+            "Diaphora matching input direction differs")
+    exports = []
+    records = [receipt["result"]]
+    for side, source in zip(("primary", "secondary"), inputs):
+        record = receipt[side]
+        records.extend((record["database"], record["export_receipt"]))
+        database = checked_artifact(record["database"], path.parent)
+        declaration = checked_artifact(record["export_receipt"], path.parent)
+        exports.append(checked_diaphora_export(declaration, database, source))
+    require(all(value["diaphora_version"] == receipt["diaphora_version"] for value in exports),
+            "Diaphora matching and export versions differ")
+    result = checked_artifact(receipt["result"], path.parent)
+    with closing(sqlite3.connect(result.resolve().as_uri() + "?mode=ro", uri=True)) as database:
+        require(database.execute("SELECT main_db, diff_db, version FROM config").fetchall() ==
+                [(exports[0]["database_path"], exports[1]["database_path"], receipt["diaphora_version"])],
+                "Diaphora native comparison direction or version differs")
+    pairs = read_pairs("diaphora", result, inputs)
+    for record in records:
+        checked_artifact(record, path.parent)
+    return pairs
+
+
 def read_pairs(kind: str, path: Path, inputs: list[Path]) -> list[tuple[int, int]]:
     """Read selected function associations, never candidate or data matches."""
+    if kind == "diaphora-native":
+        return read_diaphora_native(path, inputs)
     if kind == "neverd":
         report = load(path)
         require(report["schema"] == "neverd.bindiff" and report["schema_version"] == 3,
@@ -199,7 +250,7 @@ def evaluate(corpus_path: Path, run_path: Path) -> dict:
         "corpus_sha256": digest(corpus_path), "run_sha256": digest(run_path),
         "evaluator_sha256": digest(Path(__file__)),
         "result_sha256": run["result"]["sha256"], "input_sha256": run["input_sha256"],
-        "input_binding": "native-and-receipt" if run["format"] in ("neverd", "bindiff", "ghidra-vt") else "receipt",
+        "input_binding": "native-and-receipt" if run["format"] in ("neverd", "bindiff", "ghidra-vt", "diaphora-native") else "receipt",
         "metrics": score(expected, pairs),
         "scope": "Owned development diagnostics; no held-out or timing qualification.",
         "metric_note": "A wrong pair can also miss a true pair; wrong and missed are not disjoint function counts.",
