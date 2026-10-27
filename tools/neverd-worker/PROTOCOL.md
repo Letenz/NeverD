@@ -58,7 +58,11 @@ Statuses are `ok`, `error`, `cancelled`, and `budget_exceeded`. Error responses
 include `error:{code,message}`. While a request loads an image, the worker may
 first send responses with the same `request_id` and `status:"progress"`, whose
 payload is `{phase,done,total,detail}`; they are not the request's result, and
-a client keeps waiting for one of the final statuses. Display messages are diagnostics; use stable
+a client keeps waiting for one of the final statuses. Step boundaries and changes
+of phase/detail are sent immediately. Intermediate values for the same step are
+coalesced to a 50 ms display interval; the SDK still checks cancellation at every
+checkpoint. Progress is not an event log, and consumers must not require every
+intermediate value. Display messages are diagnostics; use stable
 `code` values for localization. A successful empty page differs from errors,
 unsupported representations and analysis failures. Every VA is a `0x`-prefixed
 lowercase hexadecimal string, including VAs above 2^53. Revisions and project IDs are opaque
