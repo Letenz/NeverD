@@ -24,6 +24,23 @@ CALL cannot supply a real callee's stack effects to the pre-transfer proof.
 
 `NeverDSourceEntryBindingTests` runs source ABI, typed call, runtime entry and
 incoming stack binding regressions without the full mobile fixture inventory.
+It also includes `SourceParameterPlacementTests`: AAPCS64 indirect objects use
+X8 without shifting ordinary parameters, while small HFAs and unknown record
+layouts keep their own rules. Return-field fixtures cover shared epilogues,
+loops, call clobbers, partial writes and transitively unspecified inputs.
+
+`NeverDAAPCS64CallContractTests` executes second-word-only integer-pair calls,
+register arguments across indexed stores and multiple predecessor blocks,
+immutable printf formats mixing integer and FP arguments, explicit X8 result
+buffers, and scalar FP call results through views and shared returns. Negative
+controls retain unsupported format/ABI combinations and genuine integer returns.
+Its C++ cleanup fixtures execute both normal and throwing paths when the LSDA
+range includes frame restoration, including a saved register carrying a local
+address; arbitrary saved values remain unknown. `NeverDItaniumHandlerTests`
+checks scope splitting around incoming jumps. `NeverDReturnContractTests`
+checks definition/call prototype agreement and target-specific Itanium
+constructor/destructor contracts.
+
 Its store tests distinguish a logical stack parameter from a call or intrinsic
 result with the same numeric id. `NeverDMedStackAlignmentTests` checks balanced
 push groups from every loop definition in both query orders; drifting loops
@@ -5786,6 +5803,14 @@ They cover intermediate D0 transport, D16-D31 scratch registers and both arms
 of an FP return join. `NeverDARM32ObjectImmediateTests` runs the five ARM32 host C
 differentials separately; the Windows EH CI lane runs these cases with its
 Clang 18 toolchain, including NEON zip/mask shapes different from Clang 23.
+`MedTypePass.MergedFloatCallsRequireDefinedScalarBytes` checks copied and
+selected call results, exceptional entries, narrow parameters and partially
+preserved call clobbers. `FloatJoinsPropagateUnknownBytesAroundCycles` checks
+both PHI input orders and multiple returns through a loop, with defined and
+undefined entry arms. Run the ABI suite alongside the x64 boolean-after-float
+call and AArch64 strtof/strtod execution tests when changing this admission.
+`FloatCallsDefineOnlyTheirDeclaredScalarWidth` checks mixed float/double
+carriers in both input orders, using both call-site and callee-summary types.
 The shared HighC host fixture reports native `-m32` execution unavailable on
 macOS, where a 64-bit build would truncate the kernels' addresses. Linux and
 Windows retain the actual 32-bit differential. Native x87 IR inputs use
@@ -7546,6 +7571,15 @@ products, signed high bits, non-power-of-two coefficients, windows below the
 combined shift and multiple factors. These constructor rules need no solver,
 sample-specific assumptions or new pass.
 
+`ProductWindowsFactorZeroConcatenationLanes` also checks products whose scaled
+factors append literal zero bits with concatenation. The zero lanes move into
+the selected window's offset, while the complete remaining product retains
+all lower carries. `ZeroConcatProductWindowsKeepAllLowerCarries` covers every
+byte pair with different padding widths and independent APInt cases through
+257-bit inputs. `ZeroConcatFactoringPreservesNonzeroLanesAndInnerWrap` keeps
+nonzero low lanes, windows below the combined shift and truncated inner values.
+No scalar-only evaluator is used until the canonical expression fits 64 bits.
+
 `SymExpr.ZeroExtendedUnsignedRemaindersUseTheirNarrowOperands` checks
 zero-extended unsigned remainder operands at equal and different widths through
 257 bits. The remainder is computed at their common narrow width and then
@@ -7804,6 +7838,16 @@ condition folding on large shared expression graphs. Shared reads retain
 their multiplicity without expanding every path, and substitution reaches a
 unique read after an unrelated shared subgraph. Folding preserves its depth
 limit and rejects effects even after a large pure prefix.
+
+`HighControlFlowSemantics.RepeatedBitGuardsKeepOnlyObservedPhiInputs` compares
+masked and shifted bit tests across a loop with an independent interpreter.
+`BitGuardsDoNotBorrowDifferentOrChangedBits` retains unknown inputs for different
+bits, rewritten or escaped operands, narrowed results and sign-extension bits.
+`TerminalCatchKeepsAllItsObservedDefinitions` permits liveness through terminal
+Itanium catches while preserving every handler-observed local; returning
+handlers and native-only noreturn flags refuse. The method validator remains
+conservative. `OutOfLinePadsKeepTheirImplicitEntryValues` checks that a pad's
+implicit unwinder entry cannot make its reaching definition disappear.
 
 `HighControlFlowSemantics.IndependentEntriesSurviveRepeatedDeadCodeCleanup`
 checks that 32 independent entries remain executable after their first copies
@@ -14197,6 +14241,10 @@ from headers, typedefs included, and from the runtime tables.
 mingw-w64 headers declare, its own, the runtime's and the C library's.
 
 `NeverDItaniumHandlerTests` spells Itanium landing pads as C++ handlers.
+`AHandlerKeepsTheFunctionsIncomingValues` compiles and runs the emitted C++
+at O0/O2 with real throws: a catch returns an incoming parameter or a value
+computed before the try, or loads through the function's second parameter.
+The latter must not become an uninitialized MSVC funclet-frame slot.
 `ItaniumHandlerBodies.ACleanupOnlyPadBecomesACatchAllThatRethrows` prints a
 pad that only cleans up as `try { … } catch (...) { cleanup; throw; }` and
 keeps it labelled in C. `ACleanupScopeHoldsNoCallItsPadDoesNotCover` keeps a

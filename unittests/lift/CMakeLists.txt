@@ -1642,6 +1642,7 @@ add_neverd_unittest(NeverDSourceEntryBindingTests
   core/LowScalarConstantTests.cpp
   core/SourceFrameAnalysisTests.cpp
   core/SourceABITests.cpp
+  core/SourceParameterPlacementTests.cpp
   core/ObjCSourceTypeHintTests.cpp
   core/HighCSourceCallTests.cpp
   core/NativeSourceHintsTests.cpp
