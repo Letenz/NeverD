@@ -60,11 +60,15 @@ struct ArmWidths {
 };
 ArmWidths armWidths(OperandDialect dialect, std::string_view mnemonic,
                     const std::vector<OperandTokens> &operands);
-/// Appends an ARM-family operand as the user's \p format shows it; false,
-/// with nothing appended, when the format cannot show the operand.
+/// Whether \p tokens shift the operand before it (`lsl #12`).
+bool armShift(const OperandTokens &tokens);
+/// Appends an ARM-family operand as the user's \p format shows it, an
+/// immediate \p shifted by the next operand being only a field of its
+/// number; false, with nothing appended, when the format cannot show it.
 bool formatArmOperand(StyledText &out, const OperandTokens &tokens,
                       const OperandFacts &facts, const LocationNamer &namer,
-                      const NumberFormat &format, const ArmWidths &widths);
+                      const NumberFormat &format, const ArmWidths &widths,
+                      bool shifted);
 
 } // namespace neverd::worker::operand_format_detail
 

@@ -320,6 +320,10 @@ void SymState::write(SymSpace Space, uint64_t Offset, SymRef Value) {
   (void)writeBank(bank(Space), Offset, Value);
 }
 
+bool SymState::canWriteRegister(uint64_t Offset, SymRef Value) const {
+  return validBankWrite(*Ctx, {}, Offset, Value);
+}
+
 size_t SymState::numLiveBytes() const {
   size_t Total = Registers.Bytes.size() + Temporaries.Bytes.size() +
                  AbsoluteMemory.Bytes.size();

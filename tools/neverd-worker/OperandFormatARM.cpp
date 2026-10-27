@@ -132,9 +132,10 @@ unsigned registerBytes(OperandDialect dialect, std::string_view name) {
   }
 }
 
-/// The access size an ARM load or store mnemonic states, past its condition
-/// (`ldrbeq`, and `ldrhs` as `ldr` taken if higher or same): 1, 2 or 8
-/// bytes, or zero when its first register sets it.
+/// The access size an ARM load, store or swap mnemonic states, past its
+/// condition (`ldrbeq`, and `ldrhs` as `ldr` taken if higher or same): 1 or
+/// 2 bytes, or zero when its register sets it. A doubleword pair moves each
+/// register's 4 bytes, as an AArch64 pair counts each register.
 unsigned armMnemonicBytes(std::string_view mnemonic) {
   static constexpr std::string_view Conditions[] = {
       "eq", "ne", "cs", "hs", "cc", "lo", "mi", "pl", "vs",
@@ -146,13 +147,13 @@ unsigned armMnemonicBytes(std::string_view mnemonic) {
   static constexpr Sized Mnemonics[] = {
       {"ldr", 0},    {"str", 0},    {"ldrt", 0},   {"strt", 0},   {"ldrex", 0},
       {"strex", 0},  {"lda", 0},    {"stl", 0},    {"ldaex", 0},  {"stlex", 0},
-      {"vldr", 0},   {"vstr", 0},   {"ldrb", 1},   {"strb", 1},   {"ldrsb", 1},
-      {"ldrbt", 1},  {"strbt", 1},  {"ldrsbt", 1}, {"ldrexb", 1}, {"strexb", 1},
-      {"ldab", 1},   {"stlb", 1},   {"ldaexb", 1}, {"stlexb", 1}, {"ldrh", 2},
-      {"strh", 2},   {"ldrsh", 2},  {"ldrht", 2},  {"strht", 2},  {"ldrsht", 2},
-      {"ldrexh", 2}, {"strexh", 2}, {"ldah", 2},   {"stlh", 2},   {"ldaexh", 2},
-      {"stlexh", 2}, {"ldrd", 8},   {"strd", 8},   {"ldrexd", 8}, {"strexd", 8},
-      {"ldaexd", 8}, {"stlexd", 8}};
+      {"vldr", 0},   {"vstr", 0},   {"ldrd", 0},   {"strd", 0},   {"ldrexd", 0},
+      {"strexd", 0}, {"ldaexd", 0}, {"stlexd", 0}, {"swp", 0},    {"ldrb", 1},
+      {"strb", 1},   {"ldrsb", 1},  {"ldrbt", 1},  {"strbt", 1},  {"ldrsbt", 1},
+      {"ldrexb", 1}, {"strexb", 1}, {"ldab", 1},   {"stlb", 1},   {"ldaexb", 1},
+      {"stlexb", 1}, {"swpb", 1},   {"ldrh", 2},   {"strh", 2},   {"ldrsh", 2},
+      {"ldrht", 2},  {"strht", 2},  {"ldrsht", 2}, {"ldrexh", 2}, {"strexh", 2},
+      {"ldah", 2},   {"stlh", 2},   {"ldaexh", 2}, {"stlexh", 2}};
   const auto known = [&](std::string_view name) -> std::optional<unsigned> {
     for (const Sized &entry : Mnemonics)
       if (entry.mnemonic == name)
@@ -310,49 +311,95 @@ bool armStructOperand(const OperandTokens &tokens, OperandDialect dialect) {
 
 ArmWidths armWidths(OperandDialect dialect, std::string_view mnemonic,
                     const std::vector<OperandTokens> &operands) {
-  // The first register an operand states outside a memory operand's
-  // brackets, as the decoder lists register operands.
-  std::string first;
+  // The first two registers operands state outside a memory operand's
+  // brackets, as the decoder lists register operands, and whether the first
+  // lies in a register list.
+  std::vector<std::string> registers;
+  bool listed = false;
   for (const auto &operand : operands) {
-    int depth = 0;
+    int memory = 0, list = 0;
     for (const Token &token : operand) {
       if (isPunct(token, "["))
-        ++depth;
+        ++memory;
       else if (isPunct(token, "]"))
-        --depth;
-      else if (!depth && token.kind == TokenKind::Identifier &&
+        --memory;
+      else if (isPunct(token, "{"))
+        ++list;
+      else if (isPunct(token, "}"))
+        --list;
+      else if (!memory && registers.size() < 2 &&
+               token.kind == TokenKind::Identifier &&
                isRegisterName(dialect, token.text)) {
-        first = lowercase(token.text);
-        break;
+        if (registers.empty())
+          listed = list > 0;
+        registers.push_back(lowercase(token.text));
       }
     }
-    if (!first.empty())
-      break;
   }
+  const std::string first = registers.empty() ? std::string() : registers[0];
+  // The mnemonic and its qualifier: a vector element type (`vmov.i64`) or a
+  // width (`ldr.w`).
+  const auto dot = mnemonic.find('.');
+  const auto name = lowercase(mnemonic.substr(0, dot));
+  const auto qualifier = dot == std::string_view::npos
+                             ? std::string()
+                             : lowercase(mnemonic.substr(dot + 1));
   ArmWidths widths;
   // AArch64 counts an immediate in its first register's width, 32 bits for a
-  // `w` register and 64 otherwise, as its native operands do; ARM and Thumb
-  // in 32 bits.
-  widths.immediateBits =
-      dialect == OperandDialect::AArch64 && !first.starts_with('w') ? 64 : 32;
-  // A load or store moves what its mnemonic's size says, else what its first
-  // register holds; anything else only computes an address. The mnemonic
-  // drops a width qualifier (`ldr.w`, `vldr.64`).
-  auto name = lowercase(mnemonic.substr(0, mnemonic.find('.')));
+  // `w` register and 64 otherwise; ARM and Thumb in 32 bits, 64 for a 64-bit
+  // integer vector element. Their native operands count alike.
+  if (dialect == OperandDialect::AArch64)
+    widths.immediateBits = first.starts_with('w') ? 32 : 64;
+  else
+    widths.immediateBits =
+        qualifier == "i64" || qualifier == "s64" || qualifier == "u64" ? 64
+                                                                       : 32;
+  // A load, store, swap or compare-and-swap moves what its mnemonic's size
+  // says, else what its data register holds: the first register, but the
+  // second of an exclusive store, whose first takes its status. A register
+  // list's elements have no single size; anything else only computes an
+  // address.
   const bool vector = dialect == OperandDialect::ARM && name.starts_with('v');
-  if (!name.starts_with(vector ? "vld" : "ld") &&
-      !name.starts_with(vector ? "vst" : "st"))
+  const std::string_view access = std::string_view(name).substr(vector ? 1 : 0);
+  if (!access.starts_with("ld") && !access.starts_with("st") &&
+      !access.starts_with("swp") &&
+      !(dialect == OperandDialect::AArch64 && access.starts_with("cas")))
     return widths;
   const unsigned stated = dialect == OperandDialect::ARM
                               ? armMnemonicBytes(name)
                               : aarch64MnemonicBytes(name);
-  widths.accessBytes = stated ? stated : registerBytes(dialect, first);
+  if (stated) {
+    widths.accessBytes = stated;
+    return widths;
+  }
+  if (listed)
+    return widths;
+  const bool exclusiveStore =
+      dialect == OperandDialect::AArch64 &&
+      (name == "stxr" || name == "stlxr" || name == "stxp" || name == "stlxp");
+  widths.accessBytes = registerBytes(
+      dialect,
+      exclusiveStore ? (registers.size() > 1 ? registers[1] : "") : first);
   return widths;
+}
+
+bool armShift(const OperandTokens &tokens) {
+  if (tokens.empty() || tokens.front().kind != TokenKind::Identifier)
+    return false;
+  const auto name = lowercase(tokens.front().text);
+  return name == "lsl" || name == "lsr" || name == "asr" || name == "ror" ||
+         name == "msl";
 }
 
 bool formatArmOperand(StyledText &out, const OperandTokens &tokens,
                       const OperandFacts &facts, const LocationNamer &namer,
-                      const NumberFormat &format, const ArmWidths &widths) {
+                      const NumberFormat &format, const ArmWidths &widths,
+                      bool shifted) {
+  // A shifted immediate is a field of a larger number: no member or location
+  // stands for it.
+  if (shifted &&
+      (format.base == NumberBase::Struct || format.base == NumberBase::Offset))
+    return false;
   // A structure offset the user gives a displacement from a register:
   // `[x20, #_T.List.Flink]`, `[sp, #_T.Size]!`.
   if (format.base == NumberBase::Struct && facts.structs)
@@ -371,12 +418,19 @@ bool formatArmOperand(StyledText &out, const OperandTokens &tokens,
         return true;
       }
     }
-  const unsigned bits = widths.immediateBits ? widths.immediateBits : 64;
+  const auto whole = armImmediate(tokens, ~std::uint64_t(0));
+  if (!whole)
+    return false;
+  // The instruction's width, or wider when the immediate spells more bits,
+  // so that another base never changes the value.
+  unsigned bits = widths.immediateBits ? widths.immediateBits : 64;
+  if (bits < 64 && (*whole >> bits) != 0 &&
+      (*whole >> (bits - 1)) != (~std::uint64_t(0) >> (bits - 1)))
+    bits = 64;
   const std::uint64_t mask =
       bits >= 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << bits) - 1;
-  const auto value = armImmediate(tokens, mask);
-  return value && appendArmNumber(out, *value, bits, format, namer,
-                                  facts.structs, facts.enums);
+  return appendArmNumber(out, *whole & mask, bits, format, namer, facts.structs,
+                         facts.enums);
 }
 
 } // namespace neverd::worker::operand_format_detail

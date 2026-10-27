@@ -639,10 +639,9 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
         !facts.frameRegister.empty() && baseName == facts.frameRegister;
     const bool viaStack = facts.stackDepth && !facts.stackRegister.empty() &&
                           baseName == facts.stackRegister;
+    const auto depth = viaStack ? *facts.stackDepth : facts.frameDepth;
     if (facts.frame && (viaFrame || viaStack))
-      if (const auto slot =
-              (*facts.frame)(viaStack ? parsed.displacement - *facts.stackDepth
-                                      : parsed.displacement)) {
+      if (const auto slot = (*facts.frame)(parsed.displacement - depth)) {
         appendPrefix(slot->delta == 0 &&
                      sizeBits(sizeKeyword) == slot->size * 8);
         out.append("[", ListingRole::Punctuation);
@@ -651,10 +650,11 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
           out.append("+", ListingRole::Punctuation);
           appendIndex();
         }
-        if (viaStack && *facts.stackDepth) {
-          out.append("+", ListingRole::Punctuation);
-          out.append(x86Number(static_cast<std::uint64_t>(*facts.stackDepth)),
-                     ListingRole::Number);
+        if (depth) {
+          out.append(depth < 0 ? "-" : "+", ListingRole::Punctuation);
+          out.append(
+              x86Number(static_cast<std::uint64_t>(depth < 0 ? -depth : depth)),
+              ListingRole::Number);
         }
         out.append("+", ListingRole::Punctuation);
         out.append(slot->name, ListingRole::Plain);
@@ -820,6 +820,7 @@ void formatGenericOperand(StyledText &out, const OperandTokens &tokens,
 
 using operand_format_detail::armDialect;
 using operand_format_detail::armImmediate;
+using operand_format_detail::armShift;
 using operand_format_detail::armStructOperand;
 using operand_format_detail::ArmWidths;
 using operand_format_detail::armWidths;
@@ -845,10 +846,15 @@ std::vector<bool> formattableOperands(std::string_view operands,
 std::vector<bool> structOperands(std::string_view operands,
                                  OperandDialect dialect) {
   std::vector<bool> result;
-  for (const auto &operand : splitOperands(tokenize(operands))) {
+  const auto pieces = splitOperands(tokenize(operands));
+  for (std::size_t index = 0; index < pieces.size(); ++index) {
+    const auto &operand = pieces[index];
     bool fits = false;
     if (armDialect(dialect)) {
-      fits = armStructOperand(operand, dialect);
+      // A shifted immediate is a field of a larger number.
+      fits = armStructOperand(operand, dialect) &&
+             !(index + 1 < pieces.size() && armShift(pieces[index + 1]) &&
+               armImmediate(operand, ~std::uint64_t(0)));
     } else if (showsNumberFormats(dialect)) {
       const auto open =
           std::find_if(operand.begin(), operand.end(), [](const Token &t) {
@@ -1033,7 +1039,9 @@ StyledText formatOperands(std::string_view operands, const OperandFacts &facts,
                            ? (*facts.operandBits)[index]
                            : 0);
     else if (!arm || !format || format->isDefault() ||
-             !formatArmOperand(out, operand, facts, namer, *format, widths))
+             !formatArmOperand(out, operand, facts, namer, *format, widths,
+                               index + 1 < pieces.size() &&
+                                   armShift(pieces[index + 1])))
       formatGenericOperand(out, operand, facts, namer);
   }
   return out;
