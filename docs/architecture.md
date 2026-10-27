@@ -1239,6 +1239,14 @@ window used to route branch arrows. Revision and navigation fences still apply.
 
 Patch persistence reads typed, owning rows directly from a validated SIMD JSON tape when `NEVERD_ENABLE_SIMDJSON` is enabled. The LLVM reader remains available when acceleration is disabled or the input is outside the SIMD parser’s domain. Both readers share field admission and resource limits, including the existing last-duplicate-key and integer-only size rules; no borrowed parser strings escape. Overlay replay still validates every row against the immutable input.
 
+After full admission, an inventory with every byte changed and no mergeable
+neighbours keeps its owning canonical rows; other inventories use the existing
+complete normalization. `InputFile` captures owned file bytes so later writes or
+truncation cannot change the session's original patch input. Admission borrows
+bounded views of that immutable snapshot; callers needing independent mutable
+bytes still request an owning copy. Segment, relocation, overlap, original-byte
+and resource checks precede publication on both paths.
+
 `ProjectHistory` retains admitted commands as immutable shared values. Strict
 JSON encodings are computed when a write needs them and reused for byte-budget
 accounting and document assembly; rollback checkpoints do not copy command
