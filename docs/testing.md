@@ -15562,6 +15562,11 @@ services and ART loading are not covered.
 
 `NeverDBytePatchTests` also compares fragmented and shuffled replay against independent byte/kind oracles, retains adjacent-segment boundaries, rejects a bad late row without changing existing image copies, and verifies immutable input-view bounds and snapshot lifetime. Reverse virtual-address mappings, including high unsigned addresses, cover both replay indexes, partial reverts and exact exported bytes.
 
+Duplicate file offsets are rejected in ordered, reversed and rotated replay
+inputs, with the same diagnostic and every live overlay, image copy and original
+snapshot unchanged. Strictly increasing offsets may skip sorting; equal offsets
+retain the original sorting and validation order.
+
 Its serializer checks exact compact/indented bytes, every byte value, and
 hexadecimal address boundaries against an independent stream formatter. The
 address cases alternate short file offsets with high virtual addresses, cross
