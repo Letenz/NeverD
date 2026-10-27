@@ -21,6 +21,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <optional>
 
 namespace {
 using namespace neverd::web::datapack_test;

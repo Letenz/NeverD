@@ -6462,6 +6462,9 @@ one-row pages, source anchors, stored/deflate ZIP composition, explicit gzip,
 failed-publication atomicity, cache limits, revocation and exclusive export.
 CLI cases use an unusable external-tool PATH; worker/MCP compare the shared API
 and reject raw-export/execution options. See [resource profiles](web-datapack-profile.md).
+The DataPack CLI check uses the advertised archive capability when ICU is
+omitted: direct packs remain available, while ZIP-wrapped selections must
+return `package_archive_path_policy_unavailable` before source analysis.
 
 Select the fixed real inputs without running the applications:
 
