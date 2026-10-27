@@ -182,7 +182,7 @@ SymRef SymContext::intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
   uint64_t H = mixHash(0x1234567u, static_cast<uint64_t>(Op));
   H = mixHash(H, Width);
   H = mixHash(H, Aux);
-  if (Ops.size() >= 8)
+  if (Ops.size() >= limits::symbolic::kSymExprBlockHashMinOperands)
     return internLongOperands(Op, Width, Ops, Aux, H);
   for (SymRef R : Ops)
     H = mixHash(H, R.index());
