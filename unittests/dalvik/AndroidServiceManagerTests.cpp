@@ -10,6 +10,8 @@
 
 #include "neverd/dalvik/Library.h"
 
+#include "llvm/Support/Endian.h"
+
 #include <bit>
 #include <memory>
 #include <optional>
@@ -32,6 +34,9 @@ struct State {
   Program program{{}, std::map<std::string, std::string>{}};
   std::shared_ptr<Heap> heap = std::make_shared<Heap>();
   unsigned properties = 0, clocks = 0;
+  unsigned uid_reads = 0, uptime_reads = 0;
+  uint64_t uid = 10000, boot = 50987654321, step = 0, uptime = 2000;
+  ExecutionStop uid_stop = ExecutionStop::Returned;
   RuntimeServices services;
   std::unique_ptr<Runtime> runtime;
   explicit State(Snapshot input = emptyCache()) {
@@ -41,7 +46,17 @@ struct State {
     };
     services.elapsed_realtime_nanoseconds = [&] {
       ++clocks;
-      return ExecutionResult{ExecutionStop::Returned, 50987654321};
+      auto value = boot;
+      boot += step;
+      return ExecutionResult{ExecutionStop::Returned, value};
+    };
+    services.process_uid = [&] {
+      ++uid_reads;
+      return ExecutionResult{uid_stop, uid};
+    };
+    services.uptime_milliseconds = [&] {
+      ++uptime_reads;
+      return ExecutionResult{ExecutionStop::Returned, uptime};
     };
     runtime = std::make_unique<Runtime>(program, heap, input, services);
   }
@@ -67,6 +82,183 @@ struct State {
     return result.value;
   }
 };
+
+Snapshot lookupReplies() {
+  auto input = emptyCache();
+  auto &config = *input.service_manager;
+  config.binder_proxies = {{7, true}, {8, true}};
+  config.context_object.emplace(7);
+  using Query = ServiceState::LookupResult;
+  config.lookup_results = {{Query::Operation::Get, 7, "alpha", 8},
+                           {Query::Operation::Check, 7, "alpha", 8},
+                           {Query::Operation::Get, 7, "missing", {}},
+                           {Query::Operation::Check, 7, std::nullopt, {}}};
+  return input;
+}
+
+TEST(AndroidServiceManagerTest, ExplicitRepliesRetainAliasesWithoutCaching) {
+  State s(lookupReplies());
+  s.step = 25000;
+  const auto key = s.heap->literal("alpha")->Identity;
+  const auto first = s.lookup("getService", key);
+  ASSERT_EQ(first.stop, ExecutionStop::Returned) << first.diagnostic;
+  ASSERT_NE(first.value, 0u);
+  for (const auto *method : {"getService", "checkService"}) {
+    auto again = s.lookup(method, s.heap->literal("alpha")->Identity);
+    ASSERT_EQ(again.stop, ExecutionStop::Returned) << again.diagnostic;
+    EXPECT_EQ(again.value, first.value);
+  }
+  auto absent = s.lookup("getService", s.heap->literal("missing")->Identity);
+  ASSERT_EQ(absent.stop, ExecutionStop::Returned) << absent.diagnostic;
+  EXPECT_EQ(absent.value, 0u);
+  auto null_name = s.lookup("checkService", 0);
+  ASSERT_EQ(null_name.stop, ExecutionStop::Returned) << null_name.diagnostic;
+  EXPECT_EQ(null_name.value, 0u);
+  EXPECT_EQ(s.field("sGetServiceAccumulatedCallCount", "I"), 3u);
+  EXPECT_EQ(s.field("sGetServiceAccumulatedUs", "I"), 75u);
+  EXPECT_EQ(s.clocks, 10u); // Initialization and three timed lookups.
+  EXPECT_EQ(s.uid_reads, 3u);
+  EXPECT_EQ(s.uptime_reads, 3u);
+  const auto logger = s.heap->get(
+      s.field("sStatLogger", "Lcom/android/internal/util/StatLogger;"));
+  const auto count = s.heap->get(logger->Fields.at(s.program.findField(
+      {"Lcom/android/internal/util/StatLogger;", "mCountStats", "[I"}, false)));
+  EXPECT_EQ(llvm::support::endian::read32le(count->Bytes.data()), 3u);
+  const auto state = s.runtime->snapshot().framework.service_manager;
+  ASSERT_TRUE(state);
+  EXPECT_TRUE(state->entries.empty());
+  ASSERT_EQ(state->binder_proxies.size(), 2u);
+  for (const auto &proxy : state->binder_proxies)
+    EXPECT_EQ(proxy.warn_on_blocking, false);
+}
+
+TEST(AndroidServiceManagerTest, ReplyMatchingRequiresMethodManagerAndJavaName) {
+  for (unsigned mode = 0; mode != 4; ++mode) {
+    auto input = lookupReplies();
+    input.service_manager->lookup_results.resize(1);
+    auto &reply = input.service_manager->lookup_results[0];
+    if (mode == 1)
+      reply.operation = ServiceState::LookupResult::Operation::Check;
+    if (mode == 2)
+      reply.manager = 8;
+    if (mode == 3)
+      reply.name = std::nullopt;
+    if (!mode)
+      reply.name = std::string("a\0b", 3);
+    State s(input);
+    const auto key = s.heap->literal(std::string("a\0b", 3))->Identity;
+    auto result = s.lookup("getService", key);
+    EXPECT_EQ(result.stop,
+              mode ? ExecutionStop::Unsupported : ExecutionStop::Returned)
+        << result.diagnostic;
+    if (mode) {
+      EXPECT_NE(result.diagnostic.find("transaction result is not supplied"),
+                std::string::npos);
+      EXPECT_EQ(s.uid_reads, 0u);
+      EXPECT_TRUE(
+          s.runtime->snapshot().framework.service_manager->entries.empty());
+    }
+  }
+}
+
+TEST(AndroidServiceManagerTest, SharedUidSelectsCoreThresholdAndLogBoundary) {
+  for (uint64_t uid : {0u, 9999u, 10000u, 100999u, 110000u, UINT32_MAX}) {
+    State s(lookupReplies());
+    s.uid = uid;
+    s.step =
+        20000000; // 20 ms: above the core threshold, below the app threshold.
+    auto result = s.lookup("getService", s.heap->literal("alpha")->Identity);
+    const bool core = uid == 0 || uid == 9999 || uid == 100999;
+    EXPECT_EQ(result.stop,
+              core ? ExecutionStop::Unsupported : ExecutionStop::Returned)
+        << result.diagnostic;
+    if (core)
+      EXPECT_EQ(result.diagnostic,
+                "Android ServiceManager event logging is not modeled");
+    EXPECT_EQ(s.uid_reads, 1u);
+    EXPECT_EQ(s.uptime_reads, 1u);
+  }
+}
+
+TEST(AndroidServiceManagerTest, UidAndUptimeFailuresKeepEarlierStatistics) {
+  for (unsigned mode = 0; mode != 3; ++mode) {
+    auto input = lookupReplies();
+    State s(input);
+    if (mode == 0)
+      s.services.process_uid = {};
+    if (mode == 1)
+      s.uid_stop = ExecutionStop::Timeout;
+    if (mode == 2)
+      s.services.uptime_milliseconds = {};
+    s.runtime = std::make_unique<Runtime>(s.program, s.heap, input, s.services);
+    auto result = s.lookup("getService", s.heap->literal("alpha")->Identity);
+    EXPECT_EQ(result.stop,
+              mode == 1 ? ExecutionStop::Timeout : ExecutionStop::Unsupported);
+    const auto state = s.runtime->snapshot();
+    EXPECT_TRUE(state.terminal);
+    const auto logger =
+        s.heap->get(state.framework.service_manager->stat_logger);
+    auto counts = s.heap->get(logger->Fields.at(s.program.findField(
+        {"Lcom/android/internal/util/StatLogger;", "mCountStats", "[I"},
+        false)));
+    EXPECT_EQ(llvm::support::endian::read32le(counts->Bytes.data()), 1u);
+    EXPECT_EQ(s.clocks, 4u);
+    EXPECT_EQ(s.uid_reads, mode ? 1u : 0u);
+    EXPECT_EQ(s.uptime_reads, 0u);
+  }
+}
+
+TEST(AndroidServiceManagerTest, JavaIntWrappingAndStatsLogBoundaryAreRetained) {
+  for (bool logging : {false, true}) {
+    State s(lookupReplies());
+    ASSERT_EQ(s.runtime->initialize(Manager, Admit, 65536).stop,
+              ExecutionStop::Returned);
+    auto count = s.program.findField(
+        {Manager, "sGetServiceAccumulatedCallCount", "I"}, true);
+    ASSERT_NE(count, nullptr);
+    ASSERT_EQ(
+        s.runtime->field(*count, 0, logging ? 199u : UINT32_MAX, Admit, 65536)
+            .stop,
+        ExecutionStop::Returned);
+    s.uptime = logging ? 5000 : 2000;
+    if (!logging)
+      s.step = (uint64_t(UINT32_MAX) + 2) * 1000;
+    auto result = s.lookup("getService", s.heap->literal("alpha")->Identity);
+    EXPECT_EQ(result.stop,
+              logging ? ExecutionStop::Unsupported : ExecutionStop::Returned)
+        << result.diagnostic;
+    if (logging)
+      EXPECT_EQ(result.diagnostic,
+                "Android ServiceManager event logging is not modeled");
+    else {
+      EXPECT_EQ(s.field("sGetServiceAccumulatedCallCount", "I"), 0u);
+      EXPECT_EQ(s.field("sGetServiceAccumulatedUs", "I"), 1u);
+    }
+  }
+}
+
+TEST(AndroidServiceManagerTest, TypedRepliesRejectAmbiguityAndDanglingKeys) {
+  for (unsigned mode = 0; mode != 7; ++mode) {
+    auto input = lookupReplies();
+    auto &queries = input.service_manager->lookup_results;
+    auto &query = queries[0];
+    if (mode == 0)
+      query.manager = 0;
+    if (mode == 1)
+      query.binder = 9;
+    if (mode == 2)
+      query.operation = static_cast<ServiceState::LookupResult::Operation>(2);
+    if (mode == 3)
+      query.name = std::string(4097, 'x');
+    if (mode == 4)
+      query.name = std::string("\xff", 1);
+    if (mode == 5)
+      queries.push_back(query);
+    if (mode == 6)
+      queries.resize(257);
+    EXPECT_THROW(validateAndroidServiceManager(input), Error);
+  }
+}
 
 TEST(AndroidServiceManagerTest, CacheAndBinderMethodsHaveSharedDeclarations) {
   for (const auto &method : {MethodRef{"Landroid/os/ServiceManager;",
@@ -419,7 +611,8 @@ TEST(AndroidServiceManagerTest,
     EXPECT_THROW(Runtime runtime(program, {}, input), Error);
   }
 }
-TEST(AndroidServiceManagerTest, DexStaticCallUsesTheSameInitializerAndCache) {
+TEST(AndroidServiceManagerTest,
+     DexStaticCallUsesTheSameInitializerCacheAndReplies) {
   Class caller;
   caller.name = "Ltest/ServiceCaller;";
   caller.superclass = "Ljava/lang/Object;";
@@ -446,28 +639,32 @@ TEST(AndroidServiceManagerTest, DexStaticCallUsesTheSameInitializerAndCache) {
   method.instructions = {invoke, move, ret};
   caller.methods.push_back(method);
   Program program({caller}, std::map<std::string, std::string>{});
-  auto input = emptyCache();
-  input.service_manager->binder_proxies = {{7, {}}};
-  input.service_manager->cache =
-      std::vector<ServiceState::CacheEntry>{{"alpha", 7}};
-  State services;
-  auto heap = std::make_shared<Heap>();
-  Runtime runtime(program, heap, input, services.services);
-  const uint64_t args[] = {heap->literal("alpha")->Identity};
-  auto result = runtime.execute(*program.findMethod(method.reference, true),
-                                args, Admit, 65536);
-  ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
-  EXPECT_EQ(heap->get(result.value)->ClassName, "android/os/BinderProxy");
-  EXPECT_EQ(services.properties, 4u);
-  EXPECT_EQ(services.clocks, 1u);
-  ASSERT_TRUE(runtime.snapshot().framework.service_manager);
-  EXPECT_TRUE(runtime.snapshot().framework.service_manager->initialized);
-  const auto *library = libraryMethod(
-      {Manager, "getService", {"Ljava/lang/String;"}, "Landroid/os/IBinder;"},
-      true);
-  ASSERT_NE(library, nullptr);
-  EXPECT_EQ(runtime.library(*library, 0, args, Admit).value, result.value);
-  EXPECT_EQ(services.properties, 4u);
+  for (bool replies : {false, true}) {
+    auto input = replies ? lookupReplies() : emptyCache();
+    if (!replies) {
+      input.service_manager->binder_proxies = {{7, {}}};
+      input.service_manager->cache =
+          std::vector<ServiceState::CacheEntry>{{"alpha", 7}};
+    }
+    State services;
+    auto heap = std::make_shared<Heap>();
+    Runtime runtime(program, heap, input, services.services);
+    const uint64_t args[] = {heap->literal("alpha")->Identity};
+    auto result = runtime.execute(*program.findMethod(method.reference, true),
+                                  args, Admit, 65536);
+    ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    EXPECT_EQ(heap->get(result.value)->ClassName, "android/os/BinderProxy");
+    EXPECT_EQ(services.properties, 4u);
+    EXPECT_EQ(services.clocks, replies ? 4u : 1u);
+    ASSERT_TRUE(runtime.snapshot().framework.service_manager);
+    EXPECT_TRUE(runtime.snapshot().framework.service_manager->initialized);
+    const auto *library = libraryMethod(
+        {Manager, "getService", {"Ljava/lang/String;"}, "Landroid/os/IBinder;"},
+        true);
+    ASSERT_NE(library, nullptr);
+    EXPECT_EQ(runtime.library(*library, 0, args, Admit).value, result.value);
+    EXPECT_EQ(services.properties, 4u);
+  }
 }
 
 TEST(AndroidServiceManagerTest,

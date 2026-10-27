@@ -280,8 +280,8 @@ struct PipelineFunctionAudit {
   uint64_t LiftedInstructions = 0;
   std::vector<va_t> DecodeFailures;
   std::vector<va_t> UnsupportedInstructions;
-  /// Unsupported instructions that are returns which may pop a return address
-  /// the function pushed itself; see LowFunc::UnprovenReturnAddresses.
+  /// Returns or tail transfers with unproved physical return-address
+  /// ownership; see LowFunc::UnprovenReturnAddresses.
   std::vector<va_t> UnprovenReturns;
   std::vector<va_t> TruncatedPaths;
   bool HasLowIR = false;

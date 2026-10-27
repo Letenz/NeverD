@@ -20,6 +20,7 @@
 #include "AffineFrameState.h"
 #include "JumpTableResolverDetail.h"
 #include "ResolverDefinitionCache.h"
+#include "ResolverFiniteState.h"
 #include "ResolverLaneView.h"
 #include "ResolverMemoryDefinitionCache.h"
 #include "ResolverPendingWalks.h"
@@ -2637,7 +2638,8 @@ mergeResolverResults(llvm::ArrayRef<ResolverResult> Incoming,
                      std::string_view MergeRoot, bool IgnoreTransparentCycles,
                      const size_t *WorkBudget, ConsumeWorkFn &&ConsumeWork,
                      bool *AnalysisIncomplete,
-                     bool CompareAddressArithmetic = false) {
+                     bool CompareAddressArithmetic = false,
+                     bool RetainIdenticalPredecessorMerge = false) {
   bool WorkExhausted = false;
   auto consume = [&](size_t Amount = 1) {
     const bool Available = ConsumeWork(Amount);
@@ -2766,8 +2768,18 @@ mergeResolverResults(llvm::ArrayRef<ResolverResult> Incoming,
                   [&](const ResolverResult &R) {
                     return R.Kind == ResolverResultKind::Cycle ||
                            Same(Same, Common, R.Value, /*Depth=*/0);
-                  }))
+                  })) {
+    // Equal filtered values on two incoming edges still prove a real CFG
+    // join. Retain that provenance for joined-domain queries after numerical
+    // deduplication; a predicate union or a SELECT never requests this marker.
+    if (RetainIdenticalPredecessorMerge) {
+      if (!consume(2))
+        return resolverInvalid();
+      return resolverValue(
+          budgetedResolverMerge(Common->Size, MergeRoot, {Common}, consume));
+    }
     return resolverValue(Common);
+  }
   if (WorkExhausted)
     return resolverInvalid();
   if (MergeRoot.empty())
@@ -5395,6 +5407,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   // Pointer-named opaque values and merges have allocation-dependent lengths,
   // hence allocation-dependent evidence charges. Do not cache those batches.
   bool UsedPointerSymbol = false;
+  bool UsedImageContents = false;
   // Graph construction is only the first half of one evidence query.  Keep
   // charging the same candidate-local account while reconstructing frame,
   // memory and value state, and while matching/symbolizing the resulting DAG.
@@ -7524,15 +7537,20 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         Result = resolverInvalid();
       } else {
         ResolverRootKey MergeRoot;
-        Result = makeResolverRootKey(
-                     MergeRoot, "M",
-                     {B.Start, SlotBase, static_cast<uint64_t>(SlotOffset)},
-                     consumeEvidence, &EvidenceBudgetExhausted)
-                     ? mergeResolverResults(Incoming, MergeRoot.view(),
-                                            /*IgnoreTransparentCycles=*/true,
-                                            GraphWorkBudget, consumeEvidence,
-                                            &EvidenceBudgetExhausted)
-                     : resolverInvalid();
+        Result =
+            makeResolverRootKey(
+                MergeRoot, "M",
+                {B.Start, SlotBase, static_cast<uint64_t>(SlotOffset)},
+                consumeEvidence, &EvidenceBudgetExhausted)
+                ? mergeResolverResults(
+                      Incoming, MergeRoot.view(),
+                      /*IgnoreTransparentCycles=*/true, GraphWorkBudget,
+                      consumeEvidence, &EvidenceBudgetExhausted,
+                      /*CompareAddressArithmetic=*/false,
+                      ActiveValueQuery &&
+                          ActiveValueQuery->Relation ==
+                              JumpTableValueRelation::JoinedUnsignedFeasibleSet)
+                : resolverInvalid();
       }
     }
     if (Result.Kind != ResolverResultKind::Cycle)
@@ -8585,10 +8603,14 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                                 {B.Start, static_cast<unsigned>(Query.Space),
                                  Query.Container, Query.Begin},
                                 consumeEvidence, &EvidenceBudgetExhausted)
-                ? mergeResolverResults(Incoming, MergeRoot.view(),
-                                       /*IgnoreTransparentCycles=*/true,
-                                       GraphWorkBudget, consumeEvidence,
-                                       &EvidenceBudgetExhausted)
+                ? mergeResolverResults(
+                      Incoming, MergeRoot.view(),
+                      /*IgnoreTransparentCycles=*/true, GraphWorkBudget,
+                      consumeEvidence, &EvidenceBudgetExhausted,
+                      /*CompareAddressArithmetic=*/false,
+                      ActiveValueQuery &&
+                          ActiveValueQuery->Relation ==
+                              JumpTableValueRelation::JoinedUnsignedFeasibleSet)
                 : resolverInvalid();
       }
     }
@@ -9868,6 +9890,31 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       ++ResolverMemoGeneration;
     }
     MemoScalarConstantFoldMode = Query.FoldScalarConstantOps;
+    if (Query.Relation == JumpTableValueRelation::ReadonlyUnsignedEnvelope) {
+      // These facts also depend on immutable image contents. The ordinary
+      // batch cache authenticates graph facts only, so retain no such result.
+      UsedImageContents = true;
+      if (!consumeProofPointLookup()) {
+        markIncomplete(QueryIndex);
+        continue;
+      }
+      const auto Point = Graph.findPoint({Query.UseAddr, Query.UseSeq});
+      if (!Point || (UseGroupContext && GuardedGroupProofContext))
+        continue;
+      bool StateComplete = true;
+      const auto Mask = detail::readonlyScalarEnvelope(
+          Graph, *CurrentImg, Query.Candidate, *Point, Query.UnsignedUpperBound,
+          resolverConditionEdges, consumeEvidence, GraphWorkBudget,
+          StateComplete);
+      if (Mask && StateComplete) {
+        Results[QueryIndex] = true;
+        if (QueryUnsignedFeasibleMasks)
+          (*QueryUnsignedFeasibleMasks)[QueryIndex] = *Mask;
+      }
+      if (!StateComplete)
+        markIncomplete(QueryIndex);
+      continue;
+    }
     const bool JoinedFiniteSet =
         Query.Relation == JumpTableValueRelation::JoinedUnsignedFeasibleSet;
     const bool FiniteSet =
@@ -10492,7 +10539,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   const bool RepeatableRefusal =
       HasRepeatableRefusal && !NonRepeatableAnalysisIncomplete;
   if ((Complete || RepeatableRefusal) && !EvidenceBudgetExhausted &&
-      !SymbolBudgetExhausted && !UsedPointerSymbol && ReusedGraph)
+      !SymbolBudgetExhausted && !UsedPointerSymbol && !UsedImageContents &&
+      ReusedGraph)
     ReusedGraph->rememberValueBatch(
         *this, Queries, MaxResolverDepth, InitialMatchBudget, Complete, Results,
         QueryAnalysisComplete, QueryUnsignedFeasibleMasks,

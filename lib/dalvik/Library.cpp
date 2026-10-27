@@ -331,6 +331,8 @@ static const LibraryMethod Methods[] = {
     {"com/android/internal/util/StatLogger", "<init>", "([Ljava/lang/String;)V",
      Construct},
     {"com/android/internal/util/StatLogger", "getTime", "()J", StatLoggerTime},
+    {"com/android/internal/util/StatLogger", "logDurationStat", "(IJ)J",
+     StatLoggerRecord},
     {"java/util/HashMap", "putAll", "(Ljava/util/Map;)V", MapPutAll},
     {"java/util/Map", "putAll", "(Ljava/util/Map;)V", MapPutAll},
     {"android/os/ServiceManager", "getService",
@@ -471,7 +473,8 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
         M.Op == MessageQueueNext || M.Op == MessageCallback ||
         M.Op == MessageTarget || M.Op == UptimeMillis ||
         M.Op == ElapsedRealtime || M.Op == ElapsedRealtimeNanos ||
-        M.Op == PropertyInt || M.Op == StatLoggerTime || M.Op == ServiceGet ||
+        M.Op == PropertyInt || M.Op == StatLoggerTime ||
+        M.Op == StatLoggerRecord || M.Op == ServiceGet ||
         M.Op == ServiceCheck || M.Op == ServiceInitCache ||
         M.Op == BinderAllowBlocking || M.Op == BinderQueryLocalInterface ||
         M.Op == ServiceAsBinder ||

@@ -194,9 +194,12 @@ variables, unwind frame markers, `proc`/`endp`, `loc_` and `locret_` labels,
 data items, alignment and cross-reference comments, and the classic instruction
 spellings (`jz`, `retn`, `[rbp+var_30]`, sizes only where no operand implies
 them), with `segment:address` prefixes and optional opcode bytes (**Options →
-General**). Stack variables are named through the frame pointer and, in 64-bit
-code, through the stack pointer wherever every path agrees on its distance
-from the frame (`[rsp+48h+var_30]`); each is as wide as its widest access.
+General**). The x64 listing uses the shared LowIR stack analysis for each
+instruction's entry-SP and frame-pointer coordinates, including noncanonical
+prologues and recovered chunks. It names slots through either proven base
+(`var_s10`, `[rsp+48h+var_30]`); overwritten or conflicting frame aliases stay
+unformatted. Each slot is as wide as its widest observed access. Older engines
+and 32-bit code retain the existing bounded listing interpretation.
 A named object is as large as its symbol says (`stderr dq ?`), and data the
 code reads or writes is laid out as wide as those accesses, under the name its
 operands and the pseudocode use (`qword_A410 dq ?`, or `unk_` where the widths
@@ -204,7 +207,15 @@ differ); other unwritten bytes run as `db N dup(?)` up to the next item. Only a 
 maps to the linear address space. The arrow gutter draws branches, and clicking
 an identifier highlights every occurrence. Names the engine leaves generic take
 their classic forms in the listing, function list, jumps and source views:
-import thunks after their import and the entry point `start`. The engine names
+import thunks after their import and the entry point `start` (`DllEntryPoint`
+for a PE DLL). Pure direct forwarders carry a thunk attribute; a DLL entry's
+generic destination receives a related name, while stated and user names win.
+Available platform, header and user prototypes appear above the function
+without requiring decompilation. Checked x64 PE runtime-function records are
+shown as structures with navigable RVA fields and typed offset references;
+exclusive range ends remain boundaries. Repeated bytes in code gaps fold as
+`db N dup(value)` up to object, metadata, reference and user-item boundaries.
+Their grouping changes no bytes or unwind ranges. The engine names
 the function the entry passes the C runtime's start routine `main`, and its
 pseudocode defines it as the runtime calls it, `int main(int argc, char **argv,
 char **envp)`; a rename of the function still wins over that name.
@@ -1286,7 +1297,11 @@ complement with a minus) and **Bitwise negate** (`~`); **Number** (`#`) goes
 back to the listing's own choice. Right-clicking an instruction offers the same
 forms under **Operand type**. The number under the cursor changes; with
 the cursor elsewhere on the line, the line's last number does, and a line
-without one is refused. Only x86 instructions show operand types so far. A form
+without one is refused. x86, ARM, Thumb and AArch64 instructions show operand
+types; ARM-family immediates keep the decoder's `#` (`#0x1a`, `#-0x10`,
+`#0b11010`, `#'A'`, an enumerator as `#NAME`, a structure offset as
+`[x20, #_T.Size]`) and count in their first register's width, 32 bits for a
+`w` register. SBF and EVM listings keep the decoder's numbers. A form
 the value cannot take, such as characters for unprintable bytes or an offset to
 an address with no name, leaves the listing's number. Each change is one step
 of undo history and is kept in the project folder's `operands.json`, which the command

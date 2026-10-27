@@ -78,16 +78,17 @@ const TypeLibrary *headerLibrary(HeaderLibrary Library,
 struct HeaderMerge {
   size_t Types = 0;
   size_t Prototypes = 0;
-  /// The header types left out: each holds by value a type whose size or
-  /// alignment the program gives otherwise, so its layout would not hold, or
-  /// holds one left out.  A record left out stays declared, as the types that
-  /// point to it name it.
+  /// The header types left out: an alias conflicts with a primary function,
+  /// a required alias was removed, or a by-value dependency changed layout.
+  /// A record left out stays declared, as the types that point to it name it.
   std::vector<std::string> Conflicts;
 };
 
 /// Adds the types and prototypes of \p Headers that \p Library has none of
-/// the name of, as HeaderLibrary.h describes. Prototypes whose by-value
-/// layouts change or whose named dependencies were removed are omitted.
+/// the name of, as HeaderLibrary.h describes. Typedefs and function names
+/// share the ordinary C namespace; plain tags remain separate. Prototypes
+/// whose by-value layouts change or whose named dependencies were removed
+/// are omitted.
 /// A known Windows kernel provider can complete its opaque executive pointer
 /// aliases from matching program PDB records. Existing program aliases win.
 HeaderMerge

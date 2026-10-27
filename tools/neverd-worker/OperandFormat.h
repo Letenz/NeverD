@@ -130,6 +130,8 @@ struct OperandFacts {
   /// The variables of the function's frame and the frame register, when its
   /// prologue sets one up.
   std::string_view frameRegister;
+  /// Frame base minus this instruction's proven frame-register coordinate.
+  std::int64_t frameDepth = 0;
   const FrameNamer *frame = nullptr;
   /// The stack register and its distance below the frame's base at this
   /// instruction, when known: operands through it name frame variables too.
@@ -194,9 +196,10 @@ std::vector<bool> formattableOperands(std::string_view operands,
 std::vector<bool> structOperands(std::string_view operands,
                                  OperandDialect dialect);
 /// The number operand \p index of \p operands is, as written, a negative
-/// one with its sign; none when it is no plain number.
+/// one with its sign; none when it is no plain number of \p dialect.
 std::optional<std::int64_t> operandNumber(std::string_view operands,
-                                          std::size_t index);
+                                          std::size_t index,
+                                          OperandDialect dialect);
 
 /// Classify one identifier of operand text for \p dialect.
 bool isRegisterName(OperandDialect dialect, std::string_view name);

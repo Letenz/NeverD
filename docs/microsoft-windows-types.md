@@ -4,6 +4,15 @@ Windows x86, x64 and ARM64 user and kernel libraries can be generated from Micro
 SDK/WDK, with the bundled ReactOS, mingw-w64 and phnt declarations supplementing
 missing names. Microsoft's declarations win every name collision. Program debug
 types and explicit user types still take precedence over either system source.
+That priority also applies when a typedef and a function share a spelling:
+they occupy the same C namespace. A compatibility prototype cannot replace an
+official typedef, and a rejected alias cannot remain as a dangling pointer or
+callback dependency. Plain record tags may still coexist with function names.
+
+Microsoft's unqualified `__int8` retains plain `char` identity; explicitly
+signed and unsigned forms retain their distinct types. Regenerate libraries
+produced by an older parser before rebuilding: changing the parser does not
+repair an already-rendered `signed char` declaration in a stored library.
 
 Generate the libraries outside the repository using an already-built NeverD:
 

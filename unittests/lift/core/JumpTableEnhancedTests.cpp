@@ -10332,6 +10332,20 @@ TEST_F(JTE_AArch64, NarrowGuardRejectsChangedOrUnboundedLanes) {
       false);
 }
 
+TEST_F(JTE_AArch64, SeparatePredecessorGuardsProveTheJoinedSelector) {
+  verifyNarrowGuardLanes(fs::path(TEST_OBJ_DIR) /
+                             "test_jumptable_narrow_guard_a64.o",
+                         {"joined_guard"}, true);
+}
+
+TEST_F(JTE_AArch64, JoinedGuardsRejectUnboundedOrChangedIncomingPaths) {
+  verifyNarrowGuardLanes(fs::path(TEST_OBJ_DIR) /
+                             "test_jumptable_narrow_guard_a64.o",
+                         {"joined_guard_missing", "joined_guard_changed",
+                          "joined_guard_unextended"},
+                         false);
+}
+
 TEST_F(JTE_AArch64, FieldOffsetReloadSharesItsGuard) {
   verifyFieldOffsetReloads(indexIdentityA64Obj(), {"a64_field_offset_reload"},
                            true);

@@ -792,7 +792,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   // then reuse the same plan during emission.
   for (const auto &Func : Funcs) {
     std::optional<AArch64ImmediateMedBases> MemoryBases;
-    if (Img_ && TheArch == Arch::AArch64)
+    if (TheArch == Arch::AArch64)
       MemoryBases.emplace(Func);
     if (const char *Error = validateAArch64SVEState(Func, TheArch))
       throw std::runtime_error(Error);
@@ -840,9 +840,8 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
                 !MemoryBases->supports(*Img_, Instruction, Base))
               throw std::runtime_error(kAddressMemoryImmediateImageUnsupported);
             if (const char *Reason = Instruction.sourceBaseFailure(
-                    Img_ != nullptr,
-                    Op.Inputs[kAddressMemoryBaseOperand + 1].Kind ==
-                        MedVar::Param))
+                    Img_ != nullptr, Instruction.stackBase() && !Img_ &&
+                                         MemoryBases->supportsRawSP(Base)))
               throw std::runtime_error(Reason);
           }
           if (isAArch64WritebackMemoryIntrinsic(Id)) {
@@ -850,7 +849,9 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
                 Op.Inputs[kWritebackWordOperand + 1].ConstVal);
             if (const char *Reason = Instruction.sourceBaseFailure(
                     Img_ != nullptr,
-                    Op.Inputs[kWritebackBaseOperand + 1].Kind == MedVar::Param))
+                    Instruction.stackBase() && !Img_ &&
+                        MemoryBases->supportsRawSP(
+                            Op.Inputs[kWritebackBaseOperand + 1])))
               throw std::runtime_error(Reason);
             if (Img_ &&
                 !MemoryBases->supports(*Img_, Instruction,
@@ -861,8 +862,13 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
             if (TheArch != Arch::AArch64 ||
                 !aarch64PAuthLoadMedShapeIsValid(Op))
               throw std::runtime_error(kPAuthLoadMalformed);
-            if (aarch64PAuthLoadInstruction(Op.Inputs[2].ConstVal)->stackBase())
-              throw std::runtime_error(kPAuthLoadSPUnsupported);
+            const auto Instruction =
+                *aarch64PAuthLoadInstruction(Op.Inputs[2].ConstVal);
+            if (const char *Reason = Instruction.sourceBaseFailure(
+                    Img_ != nullptr,
+                    Instruction.stackBase() && !Img_ &&
+                        MemoryBases->supportsRawSP(Op.Inputs[1])))
+              throw std::runtime_error(Reason);
           }
           if (isPortableX87Intrinsic(Id) && &Func != PortableBody)
             throw std::invalid_argument(

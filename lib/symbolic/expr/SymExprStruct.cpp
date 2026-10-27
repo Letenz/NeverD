@@ -48,7 +48,8 @@ std::optional<int> compareConstantWithZExtMaximum(const SymContext &Ctx,
                                                   SymRef Extension,
                                                   SymRef Constant) {
   if (Ctx.op(Extension) != SymOp::ZExt || !Ctx.isConst(Constant) ||
-      (Ctx.width(Constant) - 1) / 64 + 1 > 64)
+      (Ctx.width(Constant) - 1) / 64 + 1 >
+          ::neverd::limits::symbolic::kSymExprExtensionCompareMaxWords)
     return std::nullopt;
   const unsigned Narrow = Ctx.width(Ctx.operand(Extension, 0));
   const llvm::APInt Value = Ctx.constValue(Constant);
@@ -518,6 +519,60 @@ SymRef SymContext::mkEq(SymRef A, SymRef B) {
     return mkTrue();
   if (isConst(A) && isConst(B))
     return constValue(A) == constValue(B) ? mkTrue() : mkFalse();
+  // Extension is injective. Recover the original comparison so a byte guard
+  // keeps the same identity after a register-width promotion. Inspect only
+  // extension roots, never traverse their potentially large source DAGs.
+  for (unsigned Step = 0;
+       Step != ::neverd::limits::symbolic::kSymExprExtensionEqualityMaxSteps;
+       ++Step) {
+    if (isConst(A))
+      std::swap(A, B);
+    const auto Op = op(A);
+    if (Op != SymOp::ZExt && Op != SymOp::SExt)
+      break;
+    const auto Inner = operand(A, 0);
+    const unsigned Narrow = width(Inner);
+    if (op(B) == Op && width(operand(B, 0)) == Narrow) {
+      A = Inner;
+      B = operand(B, 0);
+      continue;
+    }
+    if (!isConst(B) ||
+        (width(B) - 1) / 64 + 1 >
+            ::neverd::limits::symbolic::kSymExprExtensionCompareMaxWords)
+      break;
+    const llvm::APInt Value = constValue(B);
+    if (Op == SymOp::ZExt ? !Value.isIntN(Narrow) : !Value.isSignedIntN(Narrow))
+      return mkFalse();
+    A = Inner;
+    B = mkConst(Value.trunc(Narrow));
+  }
+  if (A == B)
+    return mkTrue();
+  // A one-bit value is already its truth predicate. Extension peeling can
+  // expose this case from a lifted byte-sized Boolean test against zero.
+  if (width(A) == 1) {
+    if (isConst(A))
+      return isConstZero(A) ? mkNot(B) : B;
+    if (isConst(B))
+      return isConstZero(B) ? mkNot(A) : A;
+  }
+  // A comparison of two constant tags selects the original condition (or
+  // its complement). Constants are interned at their exact width, so this
+  // needs only node identities, even for wide tags or a large condition DAG.
+  for (unsigned I = 0; I != 2; ++I) {
+    const auto Selected = I ? B : A, Literal = I ? A : B;
+    if (op(Selected) != SymOp::Ite || !isConst(Literal))
+      continue;
+    const auto T = operand(Selected, 1), E = operand(Selected, 2);
+    if (!isConst(T) || !isConst(E))
+      continue;
+    if (Literal == T)
+      return operand(Selected, 0);
+    if (Literal == E)
+      return mkNot(operand(Selected, 0));
+    return mkFalse();
+  }
   // Equality is commutative, so order the operands for canonicity.
   if (B < A)
     std::swap(A, B);

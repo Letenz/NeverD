@@ -872,6 +872,7 @@ void checkObject(llvm::MemoryBufferRef Buffer, uint32_t Expected) {
 
 void checkProjections(uint32_t Word, uint32_t Scratch, bool Discard) {
   const auto Function = function(Word, Discard);
+  const auto Instruction = *aarch64PAuthLoadInstruction(Word);
   ASSERT_TRUE(verifyMedFunc(Function, kName));
   for (bool Optimize : {false, true}) {
     llvm::LLVMContext Context;
@@ -888,8 +889,8 @@ void checkProjections(uint32_t Word, uint32_t Scratch, bool Discard) {
           const auto *Asm =
               llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand());
           ASSERT_TRUE(Asm);
-          EXPECT_EQ(Asm->getAsmString(), kPAuthLoadAsm);
-          EXPECT_EQ(Asm->getConstraintString(), kPAuthLoadConstraints);
+          EXPECT_EQ(Asm->getAsmString(), Instruction.llvmAsm());
+          EXPECT_EQ(Asm->getConstraintString(), Instruction.llvmConstraints());
           EXPECT_NE(Asm->getConstraintString().find(kMemoryClobber),
                     std::string::npos);
           EXPECT_TRUE(Asm->hasSideEffects());
@@ -1008,22 +1009,117 @@ TEST(AArch64PAuthLoadSemantics, DiscardedResultsRetainMemoryAndPACFailure) {
   checkProjections(kDeadB, kDeadScratchB, true);
 }
 
-TEST(AArch64PAuthLoadSemantics, SPProvenanceCannotBecomeGPRExecution) {
+TEST(AArch64PAuthLoadSemantics, SPAdmissionRequiresAnExternalMachineValue) {
   using namespace pauth_load_fixture;
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
   for (const auto &Case : Cases) {
     if (Case.Base != kZeroRegister)
       continue;
-    const auto Function = function(Case.Word);
-    EXPECT_TRUE(
-        aarch64PAuthLoadMedShapeIsValid(Function.Blocks.front().Ops.front()));
+    for (auto Kind : {MedVar::Param, MedVar::Reg, MedVar::Temp, MedVar::Const})
+      for (bool WithImage : {false, true}) {
+        if (Kind == MedVar::Param && !WithImage)
+          continue;
+        auto Function = function(Case.Word);
+        auto &Base = Function.Blocks.front().Ops.front().Inputs[1];
+        Base.Kind = Kind;
+        Base.RegOff = a64reg::SP;
+        Base.ConstVal = kEntry;
+        const std::vector<char> Mask{0};
+        llvm::LLVMContext Context;
+        EXPECT_THROW(MedLLVMEmitter().emit({Function}, Context, kName,
+                                           Arch::AArch64, {},
+                                           WithImage ? &Image : nullptr,
+                                           BinaryFormat::MachO, false, &Mask),
+                     std::runtime_error);
+        auto High =
+            MedToHighConverter().convert(function(Case.Word), Arch::AArch64);
+        std::function<void(const ExprPtr &)> Replace;
+        Replace = [&](const ExprPtr &Expression) {
+          if (!Expression)
+            return;
+          if (isAArch64PAuthLoadIntrinsic(Expression->IntrinsicId))
+            Expression->Operands[0] =
+                Kind == MedVar::Const
+                    ? HighExpr::makeConst(kEntry, kScalarBytes)
+                    : HighExpr::makeVar(Base,
+                                        NdType::makeInt(kScalarBytes, false));
+          Expression->forEachChildExpr(Replace);
+        };
+        walkStmts(High.Body,
+                  [&](const HighStmt &S) { forEachExpr(S, Replace); });
+        HighStmt Hidden;
+        Hidden.Kind = StmtKind::If;
+        Hidden.Cond = HighExpr::makeConst(0, kBooleanBytes);
+        Hidden.Body = std::move(High.Body);
+        High.Body = {std::move(Hidden)};
+        CEmitterOptions Options;
+        Options.TheArch = Arch::AArch64;
+        Options.Image = WithImage ? &Image : nullptr;
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        EXPECT_THROW(HighCEmitter().emit({High}, Out, Options),
+                     std::invalid_argument);
+        EXPECT_TRUE(Source.empty());
+      }
+  }
+}
+
+TEST(AArch64PAuthLoadSemantics, SPAdaptersRequireTheCompleteMachineEnvelope) {
+  using namespace pauth_load_fixture;
+  enum class Mutation {
+    ScratchClobber,
+    Capture,
+    Restore,
+    GeneralWord,
+    SideEffects,
+    ReadOnly,
+    AlignStack,
+    CanThrow,
+    IntelDialect
+  };
+  for (auto Change :
+       {Mutation::ScratchClobber, Mutation::Capture, Mutation::Restore,
+        Mutation::GeneralWord, Mutation::SideEffects, Mutation::ReadOnly,
+        Mutation::AlignStack, Mutation::CanThrow, Mutation::IntelDialect}) {
     llvm::LLVMContext Context;
-    EXPECT_THROW(
-        MedLLVMEmitter().emit({Function}, Context, kName, Arch::AArch64),
-        std::runtime_error);
-    bool HasIntrinsics = false;
-    EXPECT_THROW(renderARMIntrinsicCall(
-                     Case.Id, {kBaseExpression, std::to_string(Case.Word)},
-                     kPairBytes, HasIntrinsics, {kScalarBytes, kWordBytes}),
+    auto Module = MedLLVMEmitter().emit({function(kStackBase)}, Context, kName,
+                                        Arch::AArch64);
+    llvm::CallInst *Call = nullptr;
+    for (auto &Block : *Module->getFunction(kName))
+      for (auto &Op : Block)
+        if (auto *Candidate = llvm::dyn_cast<llvm::CallInst>(&Op))
+          Call = Candidate;
+    ASSERT_TRUE(Call);
+    const auto *Asm = llvm::cast<llvm::InlineAsm>(Call->getCalledOperand());
+    auto Text = Asm->getAsmString().str();
+    auto Constraints = Asm->getConstraintString().str();
+    if (Change == Mutation::ScratchClobber)
+      Constraints.erase(Constraints.find(kSPScratchClobber),
+                        sizeof(kSPScratchClobber) - 1);
+    if (Change == Mutation::Capture || Change == Mutation::Restore) {
+      const auto Part = Change == Mutation::Capture ? kSPCapture : kSPRestore;
+      Text.erase(Text.find(Part), std::char_traits<char>::length(Part));
+    }
+    if (Change == Mutation::GeneralWord)
+      Call->setArgOperand(
+          1, llvm::ConstantInt::get(Call->getArgOperand(1)->getType(),
+                                    kDeadScratchA));
+    if (Change == Mutation::ReadOnly)
+      Call->setMemoryEffects(llvm::MemoryEffects::readOnly());
+    Call->setCalledOperand(llvm::InlineAsm::get(
+        Asm->getFunctionType(), Text, Constraints,
+        Change != Mutation::SideEffects, Change == Mutation::AlignStack,
+        Change == Mutation::IntelDialect ? llvm::InlineAsm::AD_Intel
+                                         : llvm::InlineAsm::AD_ATT,
+        Change == Mutation::CanThrow));
+    const std::vector<std::string> Args = {
+        kBaseExpression,
+        std::to_string(aarch64PAuthLoadInstruction(kStackBase)->scratchWord())};
+    EXPECT_THROW(renderAArch64PAuthLoadCall(Arch::AArch64, *Call, kResultName,
+                                            true, Args),
                  std::invalid_argument);
   }
 }

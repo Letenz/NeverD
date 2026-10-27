@@ -5,7 +5,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// API 28 initialization and cached Binder identities, without RPC replies.
+/// API 28 initialization, cached Binder identities and explicit lookup replies.
 //===----------------------------------------------------------------------===//
 #include "AndroidFramework.h"
 
@@ -16,6 +16,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -84,6 +85,30 @@ void validateAndroidServiceManager(const AndroidApplicationSnapshot &input) {
         throw Error("Android service cache contains a duplicate Java key");
       binder(entry.binder);
     }
+  }
+  using Query = AndroidApplicationSnapshot::ServiceManager::LookupResult;
+  if (state.lookup_results.size() >
+      ::neverd::limits::dalvik::kMaxAndroidServiceLookupResults)
+    throw Error("Android service lookup results exceed their budget");
+  std::set<std::tuple<uint32_t, Query::Operation,
+                      std::optional<std::vector<uint8_t>>>>
+      queries;
+  for (const auto &query : state.lookup_results) {
+    if (query.operation != Query::Operation::Get &&
+        query.operation != Query::Operation::Check)
+      throw Error("invalid Android service lookup operation");
+    binder(query.manager);
+    binder(query.binder);
+    std::optional<std::vector<uint8_t>> name;
+    if (query.name) {
+      if (query.name->size() >
+          ::neverd::limits::dalvik::kMaxAndroidServiceNameBytes)
+        throw Error("Android service lookup name exceeds its budget");
+      name = javaStringBytes(*query.name);
+    }
+    if (!queries.emplace(query.manager, query.operation, std::move(name))
+             .second)
+      throw Error("Android service lookup results contain a duplicate query");
   }
 }
 
@@ -312,9 +337,13 @@ AndroidFramework::serviceManager(Heap &heap, const Program &program,
                 "ServiceManager cache value is not an IBinder"};
       return {ExecutionStop::Returned, cached};
     }
+    uint64_t start = 0;
+    const auto logger =
+        *field("sStatLogger", "Lcom/android/internal/util/StatLogger;");
     if (method.Op == ServiceGet)
-      call({"Lcom/android/internal/util/StatLogger;", "getTime", {}, "J"},
-           *field("sStatLogger", "Lcom/android/internal/util/StatLogger;"));
+      start =
+          call({"Lcom/android/internal/util/StatLogger;", "getTime", {}, "J"},
+               logger);
     auto &manager = field("sServiceManager", "Landroid/os/IServiceManager;");
     if (!manager)
       return unsupported("Android ServiceManager proxy state is not supplied");
@@ -339,8 +368,95 @@ AndroidFramework::serviceManager(Heap &heap, const Program &program,
                           0, args, admit, false, &program, this));
       manager = take(serviceProxy(heap, program, binder, admit));
     }
-    return unsupported(
-        "Android ServiceManager Binder transaction is not modeled");
+    const auto proxy = heap.get(*manager);
+    const auto *remoteField =
+        program.findField({Proxy, "mRemote", "Landroid/os/IBinder;"}, false);
+    if (proxy->ClassName != "android/os/ServiceManagerProxy" ||
+        !proxy->Fields.contains(remoteField))
+      return unsupported(
+          "Android service lookup requires ServiceManagerProxy state");
+    const uint64_t remote = proxy->Fields.at(remoteField);
+    const auto identity =
+        std::find_if(binder_identities.begin(), binder_identities.end(),
+                     [&](const auto &entry) { return entry.second == remote; });
+    if (identity == binder_identities.end())
+      return unsupported(
+          "Android service lookup Binder identity is not supplied");
+    using Query = AndroidApplicationSnapshot::ServiceManager::LookupResult;
+    const Query *matched = nullptr;
+    if (snapshot && snapshot->service_manager) {
+      const auto name = heap.get(arguments[0]);
+      for (const auto &query : snapshot->service_manager->lookup_results) {
+        tick(admit);
+        if (query.manager == identity->first &&
+            query.operation == (method.Op == ServiceGet
+                                    ? Query::Operation::Get
+                                    : Query::Operation::Check) &&
+            (name ? query.name && javaStringBytes(*query.name) == name->Bytes
+                  : !query.name)) {
+          matched = &query;
+          break;
+        }
+      }
+    }
+    if (!matched)
+      return unsupported(
+          "Android ServiceManager Binder transaction result is not supplied");
+    const uint64_t binder =
+        matched->binder ? take(binderProxy(heap, *matched->binder, admit)) : 0;
+    if (method.Op == ServiceGet) {
+      const uint32_t duration = call({"Lcom/android/internal/util/StatLogger;",
+                                      "logDurationStat",
+                                      {"I", "J"},
+                                      "J"},
+                                     logger, {0, start});
+      if (!services.process_uid)
+        return unsupported("Android process UID service is not supplied");
+      tick(admit);
+      const auto uid = take(services.process_uid());
+      if (uid > UINT32_MAX)
+        return unsupported("Android process UID exceeds its Java int carrier");
+      const bool core =
+          std::bit_cast<int32_t>(uint32_t(uid)) >= 0 && uid % 100000 < 10000;
+      const auto signedLong = [](uint64_t value) {
+        return std::bit_cast<int64_t>(value);
+      };
+      const int64_t time = std::bit_cast<int32_t>(duration);
+      const int64_t threshold =
+          signedLong(*field(core ? "GET_SERVICE_SLOW_THRESHOLD_US_CORE"
+                                 : "GET_SERVICE_SLOW_THRESHOLD_US_NON_CORE",
+                            "J"));
+      if (!*field("sLock", "Ljava/lang/Object;"))
+        return {ExecutionStop::Thrown, 0, "java/lang/NullPointerException",
+                "null Android service statistics lock"};
+      tick(admit);
+      auto &total = *field("sGetServiceAccumulatedUs", "I");
+      total = uint32_t(uint32_t(total) + duration);
+      auto &count = *field("sGetServiceAccumulatedCallCount", "I");
+      count = uint32_t(uint32_t(count) + 1);
+      const auto now = take(readClock(UptimeMillis));
+      const auto interval = std::bit_cast<int32_t>(
+          uint32_t(*field(core ? "GET_SERVICE_LOG_EVERY_CALLS_CORE"
+                               : "GET_SERVICE_LOG_EVERY_CALLS_NON_CORE",
+                          "I")));
+      if ((time >= threshold &&
+           (signedLong(now) >
+                signedLong(*field("sLastSlowLogUptime", "J") + 5000) ||
+            signedLong(*field("sLastSlowLogActualTime", "J")) < time)) ||
+          (std::bit_cast<int32_t>(uint32_t(count)) >= interval &&
+           signedLong(now) >=
+               signedLong(*field("sLastStatsLogUptime", "J") + 5000)))
+        return unsupported(
+            "Android ServiceManager event logging is not modeled");
+    }
+    const uint64_t args[] = {binder};
+    return executeLibrary(heap,
+                          *libraryMethod({"Landroid/os/Binder;",
+                                          "allowBlocking",
+                                          {"Landroid/os/IBinder;"},
+                                          "Landroid/os/IBinder;"},
+                                         true),
+                          0, args, admit, false, &program, this);
   } catch (Stop &stop) {
     return std::move(stop.result);
   }

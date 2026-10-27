@@ -88,11 +88,17 @@ TEST_P(AndroidJNI, StatLoggerReadsBootClockBeforeNullLabelsException) {
   EXPECT_NE(wrong_clock.Diagnostic.find("no explicit linux_time input"),
             std::string::npos);
 }
-TEST_P(AndroidJNI, StatLoggerDoesNotInventLoggingOrStatisticsUpdates) {
+TEST_P(AndroidJNI, StatLoggerMethodLookupNeedsNoClock) {
   Options.Android->Arguments = {2};
   auto result = run("jni_stat_logger");
-  EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService);
-  EXPECT_NE(result.Diagnostic.find("unmodeled Java method"), std::string::npos);
+  EXPECT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+  EXPECT_EQ(result.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, StatLoggerRecordsThroughAllCallFormsAndSharedArrays) {
+  Options.LinuxTime.emplace().Clocks = {{7, {50, 0}}};
+  auto result = run("jni_stat_logger_record");
+  EXPECT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+  EXPECT_EQ(result.ReturnValue, 0u);
 }
 TEST_P(AndroidJNI, HashMapRetainsStringNullAndReferenceValuesAcrossDetach) {
   auto result = run("jni_hash_map");
@@ -1251,6 +1257,33 @@ TEST_P(AndroidJNI, ServiceManagerMissingStateAndTransactionsStayExplicit) {
     EXPECT_TRUE(result.JavaState->framework.service_manager->initialized);
     EXPECT_TRUE(result.JavaState->terminal);
   }
+}
+TEST_P(AndroidJNI, ServiceManagerExplicitRepliesShareIdentityStatisticsAndUid) {
+  Options.LinuxTime.emplace().Clocks = {{1, {2, 0}}, {7, {50, 0}}};
+  Options.Android->ObserveJavaState = true;
+  auto &state =
+      Options.Android->Application.emplace().service_manager.emplace();
+  state.cache.emplace();
+  state.manager_proxy.emplace(std::nullopt);
+  state.context_object.emplace(7);
+  state.binder_proxies = {{7, true}, {8, true}};
+  using Query =
+      mobile::dalvik::AndroidApplicationSnapshot::ServiceManager::LookupResult;
+  state.lookup_results = {{Query::Operation::Get, 7, "alpha", 8},
+                          {Query::Operation::Check, 7, "alpha", 8},
+                          {Query::Operation::Get, 7, "missing", {}},
+                          {Query::Operation::Check, 7, std::nullopt, {}}};
+  auto result = run("jni_service_manager_rpc");
+  ASSERT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+  EXPECT_EQ(result.ReturnValue, 0u);
+  ASSERT_TRUE(result.JavaState);
+  ASSERT_TRUE(result.JavaState->framework.service_manager);
+  const auto &observed = *result.JavaState->framework.service_manager;
+  EXPECT_TRUE(observed.entries.empty());
+  EXPECT_TRUE(observed.manager);
+  ASSERT_EQ(observed.binder_proxies.size(), 2u);
+  for (const auto &binder : observed.binder_proxies)
+    EXPECT_EQ(binder.warn_on_blocking, false);
 }
 TEST_P(AndroidJNI, ServiceManagerActiveUsesInitializeOnceWithSharedTime) {
   Options.LinuxTime.emplace().Clocks = {{7, {50, 0}}};

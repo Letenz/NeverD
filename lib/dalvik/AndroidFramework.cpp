@@ -1490,6 +1490,10 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
       result.value /= 1000;
     return result;
   }
+  if (method.Op == StatLoggerRecord)
+    return recordStatistic(heap, program, receiver,
+                           std::bit_cast<int32_t>(uint32_t(arguments[0])),
+                           arguments[1], admit);
   if (method.Op == PropertyInt) {
     const auto key = heap.get(arguments[0]);
     if (!key)

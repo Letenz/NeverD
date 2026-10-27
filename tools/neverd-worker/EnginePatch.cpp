@@ -16,6 +16,8 @@
 #include "neverd/sdk/NeverDCAPIBytePatch.h"
 #include "neverd/sdk/NeverDCAPIPatch.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
@@ -107,11 +109,16 @@ bool matchesPatchBytes(const Json &Value, const uint8_t *Bytes, size_t Size) {
 bool matchesPatchRow(const Json &Value, const neverd_byte_patch_row_v1 &Row) {
   const auto Offset = hexAddress(Row.file_offset);
   const auto Kind = Value.find("kind");
-  return Value.size() == 7 && Kind != Value.end() && *Kind == Row.kind &&
+  // History admission owns these string types. Comparing their storage avoids
+  // constructing temporary JSON string values for every unchanged row.
+  return Value.size() == 7 && Kind != Value.end() &&
+         Kind->get_ref<const std::string &>() == Row.kind &&
          Value.at("size").is_number_unsigned() &&
          Value.at("size").get<Json::number_unsigned_t>() == Row.size &&
-         Value.at("addr") == Offset && Value.at("file_off") == Offset &&
-         Value.at("va") == hexAddress(Row.address) &&
+         Value.at("addr").get_ref<const std::string &>() == Offset &&
+         Value.at("file_off").get_ref<const std::string &>() == Offset &&
+         Value.at("va").get_ref<const std::string &>() ==
+             hexAddress(Row.address) &&
          matchesPatchBytes(Value.at("original"), Row.original, Row.size) &&
          matchesPatchBytes(Value.at("current"), Row.current, Row.size);
 }
@@ -253,32 +260,60 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
   if (!patches())
     throw Error("unsupported", "This engine does not support byte patches");
   if (Operation == "patches") {
-    if (P.value("ranges_only", false) && patches().ranges) {
-      auto Ranges = backendJson(patches().ranges(session_));
-      return {{"items", Ranges}, {"total", Ranges.size()}, {"complete", true}};
-    }
-    auto Rows = bytePatchRows();
-    for (auto &Row : Rows)
-      Row["address"] = Row.at("va");
+    const auto &F = patches();
     if (P.value("ranges_only", false)) {
+      if (F.ranges) {
+        auto Ranges = backendJson(F.ranges(session_));
+        const auto Total = Ranges.size();
+        return {
+            {"items", std::move(Ranges)}, {"total", Total}, {"complete", true}};
+      }
       Json Ranges = Json::array();
-      for (const auto &Row : Rows)
+      for (const auto &Row : bytePatchRows())
         Ranges.push_back({{"address", Row.at("va")}, {"size", Row.at("size")}});
-      return {{"items", Ranges}, {"total", Ranges.size()}, {"complete", true}};
+      const auto Total = Ranges.size();
+      return {
+          {"items", std::move(Ranges)}, {"total", Total}, {"complete", true}};
     }
     const auto Offset =
         sizeField(P, "offset", 0, ::neverd::limits::patch::kMaxPatchRows);
     const auto Limit = sizeField(
         P, "limit", ::neverd::limits::worker::kEnginePageLimitSizeFieldDefault,
         ::neverd::limits::worker::kEnginePageLimitSizeFieldMax);
-    Json Page = Json::array();
-    for (size_t I = std::min(Offset, Rows.size());
-         I < Rows.size() && Page.size() < Limit; ++I)
-      Page.push_back(Rows[I]);
-    return {{"items", Page},
-            {"total", Rows.size()},
+    Json::array_t Page;
+    std::size_t Total;
+    const auto Append = [&](Json Row) {
+      Row["address"] = Row.at("va");
+      Page.push_back(std::move(Row));
+    };
+    if (F.snapshot && F.freeSnapshot) {
+      std::unique_ptr<const neverd_byte_patch_snapshot_v1,
+                      decltype(F.freeSnapshot)>
+          Snapshot(F.snapshot(session_), F.freeSnapshot);
+      if (!Snapshot)
+        throw Error("engine_error", error());
+      Total = Snapshot->row_count;
+      const auto Begin = std::min(Offset, Total);
+      const auto Count = std::min(Limit, Total - Begin);
+      Page.reserve(Count);
+      // The owning SDK inventory is complete; only the requested rows need
+      // JSON objects and presentation addresses. Empty pages build no DOM.
+      for (std::size_t I = Begin; I < Begin + Count; ++I)
+        Append(patchRowJson(Snapshot->rows[I]));
+    } else {
+      auto Rows = bytePatchRows();
+      Total = Rows.size();
+      const auto Begin = std::min(Offset, Total);
+      const auto Count = std::min(Limit, Total - Begin);
+      Page.reserve(Count);
+      for (std::size_t I = Begin; I < Begin + Count; ++I)
+        Append(std::move(Rows[I]));
+    }
+    const bool Complete = Offset + Page.size() >= Total;
+    return {{"items", std::move(Page)},
+            {"total", Total},
             {"offset", Offset},
-            {"complete", Offset + Page.size() >= Rows.size()}};
+            {"complete", Complete}};
   }
   if (Operation == "patch_export") {
     const auto Output = stringField(P, "path");

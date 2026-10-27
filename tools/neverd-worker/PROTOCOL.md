@@ -58,7 +58,11 @@ Statuses are `ok`, `error`, `cancelled`, and `budget_exceeded`. Error responses
 include `error:{code,message}`. While a request loads an image, the worker may
 first send responses with the same `request_id` and `status:"progress"`, whose
 payload is `{phase,done,total,detail}`; they are not the request's result, and
-a client keeps waiting for one of the final statuses. Display messages are diagnostics; use stable
+a client keeps waiting for one of the final statuses. Step boundaries and changes
+of phase/detail are sent immediately. Intermediate values for the same step are
+coalesced to a 50 ms display interval; the SDK still checks cancellation at every
+checkpoint. Progress is not an event log, and consumers must not require every
+intermediate value. Display messages are diagnostics; use stable
 `code` values for localization. A successful empty page differs from errors,
 unsupported representations and analysis failures. Every VA is a `0x`-prefixed
 lowercase hexadecimal string, including VAs above 2^53. Revisions and project IDs are opaque
@@ -483,7 +487,9 @@ of the function through the same pointer, or with `parameter` and
 `function` those the function makes through its parameter of that position
 (as `function_type` lists it), from the register it arrives in.  `text` matches type names and their
 typedefs as an editor's quick open does, `Type.member` and `.member` member
-paths too.  It returns the SDK's `{accesses,target?,candidates,total}`; an
+paths too.  It returns the SDK's `{accesses,target?,candidates,total}`, with
+`syntax:"arm"` when the listing writes operands as the ARM family does
+(`[x0, #_T.Size]` rather than `[rcx+_T.Size]`); an
 instruction that reaches no memory through a pointer is a
 `local_types_failed` error.  It is listed in `capabilities` with
 `operand_struct` when the engine has it.
@@ -676,7 +682,7 @@ diagnostic; fixed-image authentication still requires its stricter evidence.
 | `function_edit` | `{address,attributes}`. Capability present only with an engine that keeps function edits. `attributes` states one key of `include/neverd/sdk/FunctionAttributes.def` or more: `noreturn`, `library`, `static` (true or false), `color` (`#RRGGBB`) and `type`, the function's C declaration as IDA's Y sets it, which the engine reads against the local types and refuses when it does not read or bind; null hands a key back to analysis. Commits the row (the project folder's `functions.json`) plus one history command and increments revision; a `type` drops only the decompiled text. Returns `{address,row,saved:true}`. Requires clean annotations and the writer lock. |
 | `function_type` | `{address,declaration?}` or `{address,parameter,type}`. Capability present when the engine gives functions declarations. Returns the SDK's `neverd_func_type_json`: the declaration the user edits (the stated one, else the signature the decompiler prints) with its parameters' `name`, `type` and `location` (`rcx`, `stack+0x28`); with `declaration`, that one read instead, its `problems` by line and column; with `parameter` and `type`, the declaration Convert to struct * would state, an `invalid_request` when the function's declaration or the type does not read. Reads only: state a declaration with `function_edit`. |
 | `item_define` | `{address,action,size?}`. Capability present only with an engine that keeps data items. `action:"code"` decodes native file-backed executable bytes from the exact address up to a basic block boundary or existing code, without creating a function. Calls fall through; branches, returns and unmodelled flow end the block. At most 256 instructions; invalid or truncated bytes, ambiguous modes, and overlaps with another typed item fail atomically. Stores one validated `kind:"code"` row per instruction, with its actual size. `"data"` makes the item a value of `size` 1, 2, 4 or 8 bytes, or without a size the next of byte, word, dword and qword after the current one; `"string"` makes the string that starts there an item, read with the `string_options` encodings; `"undefine"` shows the item's bytes as undefined bytes. Data/string edits are refused on automatic function instructions. Undefine hides an automatic or manually defined instruction without deleting its function; undo restores the prior item, and the override survives reopen. Manually defined code can also be replaced. Commits the items (the project folder's `items.json`) plus one history command, invalidates caches and increments revision. Returns `{address,kind,size,saved}`; code's size is the entire converted block. `saved:false` for already defined code or undefined bytes. Requires clean annotations and the writer lock. |
-| `operand_format` | `{address,operand?:0-7,action}`. Capability present only with an engine that keeps operand formats. The address must start an instruction whose listing shows formats (x86 so far; other dialects are `unsupported`). A format changes an operand that is a plain number: `operand` when it is one, otherwise (or without `operand`) the instruction's last number; an instruction without one is `invalid_request`. `action` is a base of `include/neverd/OperandFormats.def` (`number`, `hex`, `decimal`, `binary`, `char`, `offset`, `struct`; `number` also clears both flags), or `negate`/`invert` to toggle the sign change or the bitwise complement. `struct` (capability `operand_struct`) shows a structure offset, as IDA's T does, and takes `type`, a structure or union of the local types, and `delta?`, how many bytes into it the register points: it also changes a displacement from a base register, which it takes first when `operand` names none, and the listing shows `[rcx+_KTHREAD.Process]` or `[rcx+(_KAPC.Type-10h)]`, the number again where the type has no member; a structure offset changes neither sign nor bits. A type the program lacks is `invalid_request`. Commits the formats (the project folder's `operands.json`) plus one history command; listing lines show the change without the listing being built again. Increments revision and returns `{address,operand,format:{base,negate,invert,type?,delta?},saved}` with the operand that took the format, `saved:false` when nothing changed. Requires clean annotations and the writer lock. |
+| `operand_format` | `{address,operand?:0-7,action}`. Capability present only with an engine that keeps operand formats. The address must start an instruction whose listing shows formats (x86, ARM, Thumb and AArch64; other dialects are `unsupported`). Operands count by the commas outside brackets, braces and parentheses of the decoder's text; an ARM-family number is a `#` immediate, which keeps its `#`. A format changes an operand that is a plain number: `operand` when it is one, otherwise (or without `operand`) the instruction's last number; an instruction without one is `invalid_request`. `action` is a base of `include/neverd/OperandFormats.def` (`number`, `hex`, `decimal`, `binary`, `char`, `offset`, `struct`; `number` also clears both flags), or `negate`/`invert` to toggle the sign change or the bitwise complement. `struct` (capability `operand_struct`) shows a structure offset, as IDA's T does, and takes `type`, a structure or union of the local types, and `delta?`, how many bytes into it the register points: it also changes a displacement from a base register, which it takes first when `operand` names none, and the listing shows `[rcx+_KTHREAD.Process]` or `[rcx+(_KAPC.Type-10h)]` (`[x0, #_KTHREAD.Process]` on ARM), the number again where the type has no member; a structure offset changes neither sign nor bits. A type the program lacks is `invalid_request`. Commits the formats (the project folder's `operands.json`) plus one history command; listing lines show the change without the listing being built again. Increments revision and returns `{address,operand,format:{base,negate,invert,type?,delta?},saved}` with the operand that took the format, `saved:false` when nothing changed. Requires clean annotations and the writer lock. |
 | `reload` | Explicitly reloads the sidecars, discards staged annotations, clears dirty state, invalidates caches and increments revision. Returns metadata. |
 | `history` | Standard `offset/limit` page. Returns `{schema_version:1,items,total,cursor,offset,next_offset,complete,can_undo,can_redo,available,blocked_reason,source_sha256}`. Items contain `{kind:"annotation"|"rename"|"function"|"item"|"operand"|"code"|"types"|"patch",address,before,after,index,applied}`; a `types` item's address is the declaration's place in `types.json`. Hashing is lazy and runs on the Session execution thread; the existing dashboard API can require VM analysis. |
 | `undo` / `redo` | No payload. Annotation changes/cursor movement remain dirty until Save. Rename, function, item, operand, code, types and patch history changes require clean annotations and commit immediately. Return the history listing plus `{dirty,saved,address}`. All operations require the writer lock. |
@@ -1349,3 +1355,79 @@ are read/written locally with explicit aggregate admission, including files over
 replacement retains the prior collection; no partial new graph is published.
 Save closes its temporary file, checks cancellation, then renames once. A late
 cancel cannot relabel publication as stopped.
+
+## Listing analysis facts
+
+The listing consumes the shared `neverd_stack_frame_json` for automatic x64
+SP/FP coordinates as well as analyst policies. `frame_before` is the frame
+pointer's coordinate before an instruction; null means unknown. These facts
+come from the owning recovered LowIR function, including its distant chunks.
+  Coordinates never authorize execution or rewrite the original machine lift.
+
+`neverd_function_presentation_json` supplies a lightweight prototype and pure
+forwarder target without invoking decompilation. The PE DLL platform contract
+also feeds the ordinary decompiler debug context. User declarations and names
+keep their precedence; adjusted-argument wrappers are not pure forwarders.
+
+`neverd_metadata_items_json` publishes checked loader data objects in address
+order, currently AMD64 PE `RUNTIME_FUNCTION` records and embedded chain rows.
+The worker shows their RVA fields as links and merges their references into the
+ordinary index. Reference rows add `provenance:"metadata"` and
+`metadata_role:"range_begin"|"range_end"|"unwind_info"`; the source is the
+actual field address. A range-end reference does not create a function.
+Recovered instruction overlays retain these independent metadata references.
+User-defined items override automatic structure presentation.
+
+The worker prefers the optional `neverd_visit_metadata_items` C API to copy
+borrowed typed records directly, without JSON serialization or parsing. Its
+fallback uses metadata pages and the shared bounded JSON reader. Both SDK
+paths project the same loader facts. The worker keeps sorted record and
+boundary arrays; function discovery reuses this image metadata, while
+image/listing invalidation discards it.
+
+A proved forwarding entry reads its transfer instruction without preparing
+its callee's LowIR or stack frame. A direct jump outside a known function
+extent can establish this presentation even before the target is listed, if
+the instruction fits inside that extent and the ordinary independent-entry
+candidate check accepts the target. The query does not register the target.
+Plain DLL presentation can use the shared platform entry declaration without
+initializing compiler header types; explicit debug/type inputs retain their
+existing prototype resolution route.
+
+An empty GUI listing first requests its viewport. `listing` accepts optional
+`complete_anchor_item:true` to retain the selected item's instruction/data
+line together with its header, up to the ordinary page-line limit, even when
+`after` is smaller. Nonboolean values are refused. Ordinary prefetch then fills
+the surrounding context. A query with `before:0` does not decode a preceding
+function just to compute its start flag.
+
+Repeated gap bytes are grouped for display only, retaining their exact item
+extent and unexplored class. Groups stop at named/user items, reference targets
+and metadata boundaries, and each scan is bounded. Pure forwarding entries show
+their transfer instruction separately from trailing padding even when an
+original unwind record covers the larger span. Original unwind data stays
+unchanged.
+
+Browsing caches bind to the loaded input SHA-256, effective load/debug/signature
+inputs, user edits and type files, plus the linked engine and worker build
+identity. Windows uses the loaded files' volume/file identity, change time,
+write time and size; other platforms use their byte hashes. A changed or
+replaced runtime invalidates the local cache without hashing a large DLL on
+every Windows open. Input bytes always use their full SHA-256.
+They store function catalog, metadata, recovered instruction pages and stack
+frame query results. Initial function-table, navigation-overview and bounded
+viewport documents can be reused before reconstructing the live listing. These
+initial documents are produced from the untouched loader catalog, require the
+same function inventory and exact query parameters, and do not carry an old
+index's generation/progress into the new session. Later queries and discovery
+use live indexes. Caches do not restore executable engine objects or replace
+user state. An `open` payload can set `browse_cache:false` to bypass reuse and
+writes. `metadata.browse_cache` reports `enabled`, `hits`, `misses`, `writes`,
+`invalid`, `pending` and `diagnostic`. Writes run between requests or on clean
+shutdown, and read-only workers never write them. Malformed or incompatible
+entries fall back to the ordinary query; failed lifts are not cached as complete
+results. Cache budgets live in the worker's `ResourceLimits.h`. Removing this
+directory merely makes the next browsing requests cold; it is not needed to
+replay edits, and is not part of exported project state. The SDK still loads and
+validates the input on every open, and background discovery/reference indexing
+continues to use its normal live state.

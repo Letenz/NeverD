@@ -50,7 +50,7 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
               libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
-              xvfb xauth openbox xdotool
+              xvfb xauth openbox xdotool x11-utils
             # Qt's generic xcb startup error can name cursor support even when
             # another shared library is missing. Check the actual plugin before
             # spending a build on native tests that cannot start.
@@ -181,6 +181,7 @@ jobs:
               openbox > build-gui/ci-diagnostics/window-manager.txt 2>&1 &
               manager=$!
               trap "kill $manager 2>/dev/null || true" EXIT
+              python tools/neverd-gui/tests/wait_x11_window_manager.py "$manager" || exit $?
               QT_QPA_PLATFORM=xcb build-gui/bin/neverd-gui-docking-tests \
                 -o build-gui/ci-diagnostics/native-docking.txt,txt
             '
@@ -249,6 +250,26 @@ jobs:
           interaction_status=$?
           cat build-gui/ci-diagnostics/native-interactions.txt
           exit "$interaction_status"
+      - name: Repeat Cocoa focus restoration on manual qualification runs
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && runner.os == 'macOS' && steps.build_workbench.outcome == 'success' }}
+        shell: bash
+        run: |
+          status=0
+          for sample in 1 2 3 4 5; do
+            build-gui/bin/neverd-gui-tests focusModeGroupsViewsAndRestoresLayout \
+              -o "build-gui/ci-diagnostics/native-hover-$sample.txt,txt" \
+              -o "build-gui/ci-diagnostics/native-hover-$sample.xml,xml" || status=1
+            cat "build-gui/ci-diagnostics/native-hover-$sample.txt"
+          done
+          exit "$status"
+      - name: Retain repeated Cocoa hover diagnostics
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && runner.os == 'macOS' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-gui-macOS-hover-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build-gui/ci-diagnostics/native-hover-*
+          if-no-files-found: warn
+          retention-days: 7
       - name: Verify native Quick Start lifecycle
         if: ${{ !cancelled() && steps.build_workbench.outcome == 'success' }}
         shell: bash
@@ -271,6 +292,7 @@ jobs:
               openbox > build-gui/ci-diagnostics/quick-start-window-manager.txt 2>&1 &
               manager=$!
               trap "kill $manager 2>/dev/null || true" EXIT
+              python tools/neverd-gui/tests/wait_x11_window_manager.py "$manager" || exit $?
               QT_QPA_PLATFORM=xcb "$@"
             ' bash "${command[@]}"
           else

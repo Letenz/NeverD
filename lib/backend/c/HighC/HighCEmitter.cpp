@@ -1947,6 +1947,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // reads none.
   std::map<std::string, uint16_t> ResultBytes;
   std::map<std::string, TypeRef> FloatingResults;
+  std::set<std::string> PairIntegerResults;
   std::map<std::string, std::vector<uint16_t>> FloatingParameters;
   std::set<std::string> ConflictingFloatingParameters;
   const uint16_t RegisterBytes = pointerBytes(Opts.TheArch);
@@ -1957,6 +1958,12 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
         if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::None) {
           uint16_t &Bytes = ResultBytes[callIdentifier(E)];
+          // A recovered register-pair result is wider than one machine word.
+          // Its call type supplies the width; a wider destination alone only
+          // extends a scalar result and cannot establish a second register.
+          if (E.Type && E.Type->Kind == NdTypeKind::Int &&
+              E.Type->Size == 2 * RegisterBytes)
+            PairIntegerResults.insert(callIdentifier(E));
           if (E.Type && E.Type->Kind == NdTypeKind::Float) {
             auto [It, Inserted] =
                 FloatingResults.emplace(callIdentifier(E), E.Type);
@@ -2479,9 +2486,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         // A compiler runtime routine that returns a double word returns it
         // in the register pair (CompilerRuntimeDoubleWord.def): `__udivti3`'s
         // calls read RDX as its high half.
-        const bool DoubleWord = libc::returnsDoubleWord(
-            cNameOfSymbol(Symbol, Opts.Format, Opts.TheArch),
-            pointerBytes(Opts.TheArch));
+        const bool DoubleWord =
+            PairIntegerResults.count(Name) ||
+            libc::returnsDoubleWord(
+                cNameOfSymbol(Symbol, Opts.Format, Opts.TheArch),
+                pointerBytes(Opts.TheArch));
         const std::string Return =
             Floating != FloatingResults.end() ? typeToC(Floating->second)
             : DoubleWord
@@ -4837,7 +4846,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
         throw std::invalid_argument(kAddressMemoryImmediateImageUnsupported);
       if (const char *Reason = Instruction.sourceBaseFailure(
               Opts.Image != nullptr,
-              Base->Kind == ExprKind::Var && Base->Var.Kind == MedVar::Param))
+              Instruction.stackBase() && !Opts.Image &&
+                  MemoryBases->supportsRawSP(*Base, RequirementStatement)))
         throw std::invalid_argument(Reason);
     }
     if (isAArch64WritebackMemoryIntrinsic(Expr->IntrinsicId)) {
@@ -4849,7 +4859,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
       const auto &Base = Expr->Operands[kWritebackBaseOperand];
       if (const char *Reason = Instruction.sourceBaseFailure(
               Opts.Image != nullptr,
-              Base->Kind == ExprKind::Var && Base->Var.Kind == MedVar::Param))
+              Instruction.stackBase() && !Opts.Image &&
+                  MemoryBases->supportsRawSP(*Base, RequirementStatement)))
         throw std::invalid_argument(Reason);
       if (Opts.Image &&
           !MemoryBases->supports(*Opts.Image, Instruction,
@@ -4861,8 +4872,14 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
       if (Opts.TheArch != Arch::AArch64 ||
           !aarch64PAuthLoadHighShapeIsValid(*Expr))
         throw std::invalid_argument(kPAuthLoadMalformed);
-      if (aarch64PAuthLoadInstruction(Expr->Operands[1]->ConstVal)->stackBase())
-        throw std::invalid_argument(kPAuthLoadSPUnsupported);
+      const auto Instruction =
+          *aarch64PAuthLoadInstruction(Expr->Operands[1]->ConstVal);
+      if (const char *Reason = Instruction.sourceBaseFailure(
+              Opts.Image != nullptr,
+              Instruction.stackBase() && !Opts.Image &&
+                  MemoryBases->supportsRawSP(*Expr->Operands[0],
+                                             RequirementStatement)))
+        throw std::invalid_argument(Reason);
     }
     if (isAArch64ExceptionReturnIntrinsic(Expr->IntrinsicId))
       throw std::invalid_argument(kAArch64ExceptionReturnUnsupported);
@@ -4882,7 +4899,7 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
       throw std::invalid_argument(
           "AArch64 return protection requires AArch64 source emission");
     Seen.clear();
-    if (Opts.Image && Opts.TheArch == Arch::AArch64)
+    if (Opts.TheArch == Arch::AArch64)
       MemoryBases.emplace(Func);
     walkStmts(Func.Body, [&](const HighStmt &Stmt) {
       RequirementStatement = &Stmt;

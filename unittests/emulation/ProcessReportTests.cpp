@@ -2905,6 +2905,46 @@ TEST(ProcessReport, AndroidServiceManagerPreservesUnknownNullAndProxyKeys) {
     llvm::consumeError(parsed.takeError());
   }
 }
+TEST(ProcessReport, AndroidServiceLookupRepliesRequireExactExplicitQueries) {
+  auto wrap = [](std::string_view queries) {
+    return std::string(
+               R"({"android":{"jni":true,"application_snapshot":{"phase":"unattached","service_manager":{"binder_proxies":[{"key":7},{"key":8}],"lookup_results":)") +
+           std::string(queries) + "}}}}";
+  };
+  auto parsed = processOptionsFromJSON(wrap(
+      R"([{"operation":"get","manager":7,"name":"a\u0000b","binder":8},{"operation":"check","manager":7,"name":null,"binder":null}])"));
+  ASSERT_TRUE(bool(parsed)) << llvm::toString(parsed.takeError());
+  const auto &state = *parsed->Android->Application->service_manager;
+  ASSERT_EQ(state.lookup_results.size(), 2u);
+  EXPECT_EQ(state.lookup_results[0].manager, 7u);
+  EXPECT_EQ(state.lookup_results[0].name, std::string("a\0b", 3));
+  EXPECT_EQ(state.lookup_results[0].binder, 8u);
+  EXPECT_EQ(state.lookup_results[1].operation,
+            mobile::dalvik::AndroidApplicationSnapshot::ServiceManager::
+                LookupResult::Operation::Check);
+  EXPECT_FALSE(state.lookup_results[1].name);
+  EXPECT_FALSE(state.lookup_results[1].binder);
+  EXPECT_FALSE(state.cache);
+  EXPECT_FALSE(state.manager_proxy);
+  EXPECT_FALSE(state.context_object);
+  for (
+      const auto *queries :
+      {"null", "{}", "[null]", "[{}]",
+       R"([{"operation":"get","manager":7,"name":"alpha"}])",
+       R"([{"operation":"get","manager":7,"name":"alpha","binder":8,"extra":0}])",
+       R"([{"operation":"GET","manager":7,"name":"alpha","binder":8}])",
+       R"([{"operation":null,"manager":7,"name":"alpha","binder":8}])",
+       R"([{"operation":"get","manager":null,"name":"alpha","binder":8}])",
+       R"([{"operation":"get","manager":0,"name":"alpha","binder":8}])",
+       R"([{"operation":"get","manager":9,"name":"alpha","binder":8}])",
+       R"([{"operation":"get","manager":7,"name":true,"binder":8}])",
+       R"([{"operation":"get","manager":7,"name":"alpha","binder":9}])",
+       R"([{"operation":"get","manager":7,"name":"alpha","binder":null},{"operation":"get","manager":7,"name":"alpha","binder":8}])"}) {
+    auto rejected = processOptionsFromJSON(wrap(queries));
+    EXPECT_FALSE(bool(rejected)) << queries;
+    llvm::consumeError(rejected.takeError());
+  }
+}
 TEST(ProcessReport, AndroidServiceCacheDoesNotSupplyIndependentBinderState) {
   for (const char *cache : {"[]", R"([{"name":"alpha","binder":null}])",
                             R"([{"name":"alpha","binder":7}])"}) {

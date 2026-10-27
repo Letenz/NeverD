@@ -46,6 +46,12 @@ add_neverd_unittest(NeverDCOFFExceptionV2Tests
   eh/COFFExceptionV2Tests.cpp
   LINK_COMPONENTS Loader)
 
+add_neverd_unittest(NeverDCOFFExceptionModelTests
+  eh/COFFExceptionTests.cpp
+  LINK_COMPONENTS Loader)
+target_include_directories(NeverDCOFFExceptionModelTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/loader/COFF/unwind)
+
 add_neverd_unittest(NeverDDirectTailCallMetadataTests
   core/DirectTailCallMetadataTests.cpp
   LINK_COMPONENTS IRLow Lift
@@ -2094,6 +2100,7 @@ add_neverd_unittest(NeverDDyldSharedCacheTests
 
 add_neverd_unittest(NeverDArm64eAnalysisTests
   aarch64/AArch64AddressMemoryTests.cpp
+  aarch64/AArch64RawSPProvenanceTests.cpp
   aarch64/AArch64PAuthSemanticTests.cpp
   aarch64/AArch64_FastClassifyParityTests.cpp
   format/MachOArm64eTests.cpp
@@ -2102,6 +2109,8 @@ add_neverd_unittest(NeverDArm64eAnalysisTests
   NO_PRETTY_VALUES
   LINK_COMPONENTS BackendC BackendLLVM CodeGen Decode Lift Loader
 )
+target_include_directories(NeverDArm64eAnalysisTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/backend)
 target_compile_definitions(NeverDArm64eAnalysisTests PRIVATE
   NEVERD_ARM64E_TEST_HEADERS="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/arm64e")
 if(NEVERD_TEST_CLANG_EXECUTABLE)

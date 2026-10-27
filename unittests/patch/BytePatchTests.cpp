@@ -620,6 +620,79 @@ TEST_F(BytePatch, CanonicalReplayKeepsAdjacentSegmentsSeparate) {
   EXPECT_EQ(Img.Sections[0].Data, Original);
 }
 
+TEST_F(BytePatch, ReplayIndexesKeepNonmonotonicVirtualAddresses) {
+  reset(std::vector<uint8_t>(48, 0xcc));
+  Img.Segments.clear();
+  Img.Sections.clear();
+  constexpr va_t High = 0xffff800000002000ULL;
+  const std::pair<uint64_t, va_t> Mapping[] = {
+      {0, High}, {16, 0x1000}, {32, 0x9000}};
+  std::vector<PatchRow> Rows;
+  auto Expected = Original;
+  for (const auto &[Offset, Address] : Mapping) {
+    Segment Segment;
+    Segment.VA = Address;
+    Segment.FileOff = Offset;
+    Segment.Size = Segment.FileSz = 16;
+    Segment.Data.assign(16, 0xcc);
+    Segment.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Img.Segments.push_back(Segment);
+    Section Section;
+    Section.VA = Address;
+    Section.FileOff = Offset;
+    Section.Size = Section.FileSz = 16;
+    Section.Data = Segment.Data;
+    Section.Flags = Segment.Flags;
+    Img.Sections.push_back(Section);
+    const auto Byte = uint8_t(0x90 + Offset / 16);
+    Rows.push_back({Offset, Address, std::vector<uint8_t>(16, 0xcc),
+                    std::vector<uint8_t>(16, Byte), PatchKind::Bytes});
+    std::fill(Expected.begin() + Offset, Expected.begin() + Offset + 16, Byte);
+  }
+  std::reverse(Rows.begin(), Rows.end());
+  ASSERT_FALSE(Overlay.replace(Img, *Input, std::move(Rows)));
+  ASSERT_EQ(Overlay.rows().size(), 3u);
+  for (const auto &[Offset, Address] : Mapping) {
+    SCOPED_TRACE(Offset);
+    const auto Found = Overlay.rowsIn(Address + 4, 2);
+    ASSERT_EQ(Found.size(), 1u);
+    EXPECT_EQ(Found.front(), &Overlay.rows().at(Offset));
+    EXPECT_EQ(Found.front()->Address, Address);
+    EXPECT_EQ(Overlay.originalByte(Address + 4), 0xcc);
+    EXPECT_EQ(Img.Segments[Offset / 16].Data,
+              (std::vector<uint8_t>(Expected.begin() + Offset,
+                                    Expected.begin() + Offset + 16)));
+    EXPECT_EQ(Img.Sections[Offset / 16].Data, Img.Segments[Offset / 16].Data);
+  }
+  const auto All = Overlay.rowsIn(0, UINT64_MAX);
+  ASSERT_EQ(All.size(), 3u);
+  EXPECT_EQ(All[0]->FileOffset, 16u);
+  EXPECT_EQ(All[1]->FileOffset, 32u);
+  EXPECT_EQ(All[2]->FileOffset, 0u);
+  auto Reverted = Overlay.revert(Img, 0x1004, 3);
+  ASSERT_TRUE(bool(Reverted)) << llvm::toString(Reverted.takeError());
+  EXPECT_EQ(*Reverted, 3u);
+  EXPECT_FALSE(Overlay.changes(0x1004, 3));
+  EXPECT_EQ(Overlay.rows().at(16).size(), 4u);
+  EXPECT_EQ(Overlay.rows().at(23).size(), 9u);
+  std::fill(Expected.begin() + 20, Expected.begin() + 23, 0xcc);
+  const auto Output = Directory / "reversed-addresses.bin";
+  ASSERT_FALSE(exportPatches(Img, *Input, Overlay, Output));
+  std::ifstream Exported(Output, std::ios::binary);
+  EXPECT_EQ(
+      std::vector<uint8_t>((std::istreambuf_iterator<char>(Exported)), {}),
+      Expected);
+  std::ifstream Source(Path, std::ios::binary);
+  EXPECT_EQ(std::vector<uint8_t>((std::istreambuf_iterator<char>(Source)), {}),
+            Original);
+  Overlay.clear(Img);
+  EXPECT_TRUE(Overlay.empty());
+  for (const auto &Segment : Img.Segments)
+    EXPECT_EQ(Segment.Data, (std::vector<uint8_t>(16, 0xcc)));
+  for (const auto &Section : Img.Sections)
+    EXPECT_EQ(Section.Data, (std::vector<uint8_t>(16, 0xcc)));
+}
+
 TEST_F(BytePatch, LateInvalidReplayPreservesEveryLiveImageCopy) {
   reset(std::vector<uint8_t>(16, 0xcc));
   ASSERT_FALSE(Overlay.apply(Img, *Input, 0x1001, {0x91}, PatchKind::Bytes));

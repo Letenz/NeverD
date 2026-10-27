@@ -40,6 +40,9 @@ public:
     const Json &value() const { return value_; }
     std::uint64_t address() const { return address_; }
     const std::string &encoded() const;
+    /// Canonical sidecar row, including its indentation inside the array.
+    /// The view belongs to this immutable row, as does its compact encoding.
+    std::string_view sidecarRow() const;
 
   private:
     friend class ProjectHistory;
@@ -47,6 +50,7 @@ public:
     Json value_;
     std::uint64_t address_;
     mutable std::string text_;
+    mutable std::string sidecarText_;
   };
   using PatchRows = std::vector<std::shared_ptr<const PatchRow>>;
   static std::shared_ptr<const PatchRow> patchRow(Json row);

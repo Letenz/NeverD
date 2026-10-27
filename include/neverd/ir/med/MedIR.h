@@ -331,6 +331,12 @@ struct MedOp {
   /// control provenance: consumers must not infer it again from a mutable name.
   bool DoesNotReturn = false;
 
+  /// This CALL/INDIR_CALL or its paired RETURN comes from an independently
+  /// classified native tail transfer. It does not write the native link word.
+  /// Preserve the LowIR control provenance; a call followed by a return alone
+  /// is not sufficient evidence.
+  bool IsTailCall = false;
+
   void addInput(MedVar V) {
     if (NumInputs < 65) {
       if (NumInputs == Inputs.size())

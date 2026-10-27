@@ -169,8 +169,12 @@ void ListingView::clear() {
 void ListingView::jumpTo(Address address) {
   scrollJump_.stop();
   pendingJump_ = address;
-  request(Fetch::Jump, address, 0, JumpContextBefore,
-          ::neverd::limits::gui::kListingViewPageLines);
+  // A new view needs its viewport before adjacent functions. Ordinary
+  // prefetch fills both margins after these current rows have arrived.
+  const bool firstPage = lines_.empty();
+  const int pageLines = ::neverd::limits::gui::kListingViewPageLines;
+  request(Fetch::Jump, address, 0, firstPage ? 0 : JumpContextBefore,
+          firstPage ? std::min(visibleLines(), pageLines) : pageLines);
 }
 
 bool ListingView::rowsCurrent() const {
@@ -278,6 +282,8 @@ void ListingView::request(Fetch kind, Address address, int sub, int before,
                       {"sub", sub},
                       {"before", before},
                       {"after", after}};
+  if (kind == Fetch::Jump && lines_.empty())
+    payload["complete_anchor_item"] = true;
   if (kind == Fetch::Jump || kind == Fetch::Refresh)
     payload["recover_address"] = hexAddress(cursor ? cursor->item : address);
   if (opcodeBytes_ > 0)
@@ -299,7 +305,10 @@ void ListingView::request(Fetch kind, Address address, int sub, int before,
         else if (kind == Fetch::After)
           fetchingAfter_ = false;
         emit session_.message(message, 1);
-      });
+      },
+      kind == Fetch::Jump || kind == Fetch::Refresh
+          ? QueryService::QuerySpec::Visible
+          : QueryService::QuerySpec::Normal);
 }
 
 void ListingView::accept(Fetch kind, const QJsonObject &payload, quint64 serial,
@@ -676,8 +685,8 @@ std::optional<int> ListingView::currentOperand() const {
   const auto *line = cursorLine();
   if (!line)
     return std::nullopt;
-  // The operands follow the mnemonic; a comma outside brackets starts the
-  // next one.
+  // The operands follow the mnemonic; a comma outside brackets, braces and
+  // parentheses starts the next one, as the worker counts them (`{r4, lr}`).
   bool operands = false;
   int depth = 0, index = 0;
   std::optional<int> under;
@@ -696,9 +705,12 @@ std::optional<int> ListingView::currentOperand() const {
       under = index;
     if (role == ListingRole::Punctuation)
       for (const QChar c : line->styled.text.mid(span.start, span.length)) {
-        if (c == QLatin1Char('['))
+        if (c == QLatin1Char('[') || c == QLatin1Char('{') ||
+            c == QLatin1Char('('))
           ++depth;
-        else if (c == QLatin1Char(']'))
+        else if ((c == QLatin1Char(']') || c == QLatin1Char('}') ||
+                  c == QLatin1Char(')')) &&
+                 depth > 0)
           --depth;
         else if (c == QLatin1Char(',') && depth == 0)
           ++index;

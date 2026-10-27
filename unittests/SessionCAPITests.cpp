@@ -3164,6 +3164,73 @@ TEST_F(SessionCAPITest, OperandFormatsPersistByInstructionAndOperand) {
   neverd_session_destroy(DataSession);
 }
 
+TEST_F(SessionCAPITest, OperandEnumsNameAArch64Immediates) {
+  // mov w0, #7: the operand clients count second spells the immediate.
+  const auto Input = write("operands-arm64.elf", makeNativeELF(true));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Entry = neverd_session_entry_addr(Session);
+  auto Declared = llvm::json::parse(takeString(neverd_local_types_declare(
+      Session, "enum SEVENS { SEVEN = 7 };", nullptr)));
+  ASSERT_TRUE(static_cast<bool>(Declared))
+      << takeString(neverd_last_error(Session));
+  ASSERT_EQ(Declared->getAsObject()->getArray("problems")->size(), 0u);
+  // A register is no immediate.
+  EXPECT_EQ(neverd_operand_format_set(Session, Entry, 0,
+                                      R"({"base":"enum","type":"SEVENS"})"),
+            -1);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("immediate"),
+            std::string::npos);
+  ASSERT_EQ(neverd_operand_format_set(Session, Entry, 1,
+                                      R"({"base":"enum","type":"SEVENS"})"),
+            0)
+      << takeString(neverd_last_error(Session));
+  // The display names it with the immediate's `#`; the decoder's text stays.
+  const auto Rows = takeString(neverd_disasm_json(Session, Entry, 1));
+  EXPECT_NE(Rows.find(R"("display_op_str":"w0, #SEVEN")"), std::string::npos)
+      << Rows;
+  EXPECT_NE(Rows.find(R"("op_str":"w0, #7")"), std::string::npos) << Rows;
+}
+
+TEST_F(SessionCAPITest, OperandEnumsNameWholeARMVectorImmediates) {
+  // vmov.i64 d0, #0xff00ff00ff00ff00; bx lr: a 64-bit element's immediate is
+  // all of its bits, never its low half.
+  const auto Path =
+      write("vector.bin", std::string("\x3a\x0e\x82\xf3\x1e\xff\x2f\xe1", 8));
+  ASSERT_EQ(
+      neverd_session_set_load_options(
+          Session, R"({"loader":"binary","processor":"arm","base":"0x10000"})"),
+      0)
+      << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  auto Declared = llvm::json::parse(takeString(neverd_local_types_declare(
+      Session,
+      "enum NARROW { LOW = 0xff00ff00 };"
+      "enum WIDE : unsigned long long { PATTERN = 0xff00ff00ff00ff00ULL };",
+      nullptr)));
+  ASSERT_TRUE(static_cast<bool>(Declared))
+      << takeString(neverd_last_error(Session));
+  ASSERT_EQ(Declared->getAsObject()->getArray("problems")->size(), 0u);
+  // The low half's enumerator names nothing: the number stays whole.
+  ASSERT_EQ(neverd_operand_format_set(Session, 0x10000, 1,
+                                      R"({"base":"enum","type":"NARROW"})"),
+            0)
+      << takeString(neverd_last_error(Session));
+  auto Rows = takeString(neverd_disasm_json(Session, 0x10000, 1));
+  EXPECT_EQ(Rows.find("LOW"), std::string::npos) << Rows;
+  EXPECT_NE(Rows.find(R"("display_op_str":"d0, #0xFF00FF00FF00FF00")"),
+            std::string::npos)
+      << Rows;
+  ASSERT_EQ(neverd_operand_format_set(Session, 0x10000, 1,
+                                      R"({"base":"enum","type":"WIDE"})"),
+            0)
+      << takeString(neverd_last_error(Session));
+  Rows = takeString(neverd_disasm_json(Session, 0x10000, 1));
+  EXPECT_NE(Rows.find(R"("display_op_str":"d0, #PATTERN")"), std::string::npos)
+      << Rows;
+}
+
 TEST_F(SessionCAPITest, UserNamesNameDataInSymbolsAndC) {
   // lea rax, [rip + d] to the data, then ret: the code takes the address of
   // data no symbol names.

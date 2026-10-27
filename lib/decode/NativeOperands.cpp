@@ -79,4 +79,59 @@ NativeOperands describeNativeOperands(const Decoder &D, const DecodedInsn &I,
     Result.Registers.push_back(std::move(R));
   return Result;
 }
+
+std::optional<NativeImmediate> nativeImmediateAt(const NativeOperands &Operands,
+                                                 const DecodedInsn &I, Arch A,
+                                                 unsigned Index) {
+  switch (A) {
+  case Arch::X86:
+  case Arch::X64:
+    for (const NativeImmediate &Immediate : Operands.Immediates)
+      if (Immediate.Operand == Index)
+        return Immediate;
+    return std::nullopt;
+  case Arch::AArch64:
+  case Arch::ARM:
+    break;
+  default:
+    return std::nullopt;
+  }
+  if (!I.Raw)
+    return std::nullopt;
+  const std::string_view Text = I.Raw->op_str;
+  std::optional<std::string_view> Operand;
+  unsigned Depth = 0, Counted = 0;
+  size_t Start = 0;
+  for (size_t N = 0; N <= Text.size() && !Operand; ++N) {
+    const char C = N < Text.size() ? Text[N] : ',';
+    if (C == '[' || C == '{' || C == '(')
+      ++Depth;
+    else if ((C == ']' || C == '}' || C == ')') && Depth)
+      --Depth;
+    else if (C == ',' && !Depth) {
+      if (Counted++ == Index)
+        Operand = Text.substr(Start, N - Start);
+      Start = N + 1;
+    }
+  }
+  if (!Operand)
+    return std::nullopt;
+  while (!Operand->empty() && Operand->front() == ' ')
+    Operand->remove_prefix(1);
+  while (!Operand->empty() && Operand->back() == ' ')
+    Operand->remove_suffix(1);
+  const auto Value = native_operands_detail::armImmediateText(*Operand);
+  if (!Value)
+    return std::nullopt;
+  // The operand spells the decoder's value itself or its sign extension; a
+  // value wider than the immediate is another number.
+  for (const NativeImmediate &Immediate : Operands.Immediates) {
+    uint64_t Extended = Immediate.Value;
+    if (Immediate.Bits < 64 && (Immediate.Value >> (Immediate.Bits - 1)) & 1)
+      Extended |= UINT64_MAX << Immediate.Bits;
+    if (*Value == Immediate.Value || *Value == Extended)
+      return Immediate;
+  }
+  return std::nullopt;
+}
 } // namespace neverd

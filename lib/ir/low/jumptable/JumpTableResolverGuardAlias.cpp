@@ -23,6 +23,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/solver/BitVectorSolver.h"
 #include "neverd/symbolic/SymExpr.h"
 
@@ -1557,6 +1558,27 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
   }
 
   if (IndexGuards.empty()) {
+    // Separate predecessor arms can each guard the same selector without a
+    // single condition dominating the LOAD. Their literals only propose an
+    // envelope; the joined query below must still prove it on every path.
+    if (!GuardedGroupProofContext && !Info.IndexValueDefinedAtUse) {
+      for (const auto &[Addr, Insn] : Insns) {
+        if (!consumeCandidateEvidence())
+          return failIncomplete();
+        for (const LowOp &Op : Insn.Ops) {
+          if (!consumeCandidateEvidence())
+            return failIncomplete();
+          if (Op.Opcode != NdOp::INT_SUB && Op.Opcode != NdOp::INT_LESS &&
+              Op.Opcode != NdOp::INT_LESSEQUAL &&
+              Op.Opcode != NdOp::INT_SLESS && Op.Opcode != NdOp::INT_SLESSEQUAL)
+            continue;
+          for (unsigned I = 0; I < Op.NumInputs; ++I)
+            if (isGuardLiteral(Op.Inputs[I]) && Op.Inputs[I].Offset < 64)
+              ProposedJoinedBound =
+                  std::max(ProposedJoinedBound, Op.Inputs[I].Offset + 1);
+        }
+      }
+    }
     // A loop may check its initial and recurrent index separately. No one
     // dominating comparison then names the complete merged value. Reuse the
     // shared finite-domain proof over that exact use, including every current
@@ -1565,8 +1587,7 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
     // from table capacity or omit an unguarded incoming path.
     // Provisional group graphs keep their separate universal guard proof;
     // their hypothesized edges cannot seed an existential finite domain.
-    if (!GuardedGroupProofContext && SawControllingGuard &&
-        !Info.IndexValueDefinedAtUse &&
+    if (!GuardedGroupProofContext && !Info.IndexValueDefinedAtUse &&
         ProposedJoinedBound >= limits::kMinJumpTableEntries) {
       if (!consumeGuardBuildWork(12))
         return failIncomplete();
@@ -1584,6 +1605,39 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
           CertifiedEdgeOverrides);
       // The ordinary table representation requires a dense zero-based
       // prefix. Sparse domains keep their existing specialized owner.
+      if (Results.size() == 1 && Complete.size() == 1 && Complete[0] &&
+          Masks.size() == 1 && Results[0] && Masks[0] &&
+          (Masks[0] & (Masks[0] + 1)) == 0) {
+        const uint32_t Bound = std::bit_width(Masks[0]);
+        if (Bound >= limits::kMinJumpTableEntries) {
+          if (Info.MaxEntries == 0 || Bound < Info.MaxEntries)
+            Info.MaxEntries = Bound;
+          Info.IncompleteGuardDomain = false;
+          Info.SemanticGuardDomainAmbiguous = false;
+          return true;
+        }
+      }
+      if (Complete.size() != 1 || !Complete[0])
+        SawIncompleteProofQuery = true;
+    }
+    // A bounded lookup loop can read its selector from immutable records
+    // without comparing the selector itself. Explore exact scalar states on
+    // the same rooted graph; neither adjacent bytes nor a physical table run
+    // supplies its bound. Normal candidate replay rechecks newly found edges.
+    if (!GuardedGroupProofContext && !Info.IndexValueDefinedAtUse &&
+        CurrentImg && supportsImmutableImageReads(*CurrentImg)) {
+      JumpTableValueQuery Lookup;
+      Lookup.Candidate = Info.IndexValueAtUse;
+      Lookup.UseAddr = Info.IndexUseAddr;
+      Lookup.UseSeq = Info.IndexUseSeq;
+      Lookup.Relation = JumpTableValueRelation::ReadonlyUnsignedEnvelope;
+      Lookup.UnsignedUpperBound = 64;
+      std::vector<bool> Complete;
+      std::vector<uint64_t> Masks;
+      const auto Results = tableValuesMatchAtUses(
+          {Lookup}, nullptr, &Complete, InvalidVA, nullptr,
+          CandidateEvidenceBudget, 0, nullptr, &Masks, GuardValueDepth,
+          CertifiedEdgeOverrides);
       if (Results.size() == 1 && Complete.size() == 1 && Complete[0] &&
           Masks.size() == 1 && Results[0] && Masks[0] &&
           (Masks[0] & (Masks[0] + 1)) == 0) {

@@ -183,6 +183,16 @@ struct AndroidApplicationSnapshot {
     // is the independently observed BinderInternal.getContextObject result.
     std::optional<std::optional<uint32_t>> manager_proxy;
     std::optional<std::optional<uint32_t>> context_object;
+    // Stable, successful semantic RPC replies for exact manager/name/method
+    // queries. No missing entry implies absence. Binder keys retain the same
+    // Java identities as the cache; this does not model native Parcel I/O.
+    struct LookupResult {
+      enum class Operation { Get, Check } operation = Operation::Get;
+      uint32_t manager = 0;
+      std::optional<std::string> name;
+      std::optional<uint32_t> binder;
+    };
+    std::vector<LookupResult> lookup_results;
   };
   std::optional<ServiceManager> service_manager;
   // An explicitly installed custom URLStreamHandler, supplied as initial host

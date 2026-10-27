@@ -128,6 +128,18 @@ llvm::Error Bionic::initializeDex() {
       return ReadClock(linux_model::ClockBootTime, 1,
                        "Android boot time exceeds its range");
     };
+    Services.process_uid = [this] {
+      using mobile::dalvik::ExecutionResult;
+      using mobile::dalvik::ExecutionStop;
+      auto UID = kernelService(linux_model::ServiceKind::GetUID, {});
+      if (!UID)
+        return ExecutionResult{
+            ExecutionStop::Invalid, 0, {}, llvm::toString(UID.takeError())};
+      if (!*UID)
+        return ExecutionResult{
+            ExecutionStop::Unsupported, 0, {}, Result.Diagnostic};
+      return ExecutionResult{ExecutionStop::Returned, **UID};
+    };
     Services.property_integer = [this](std::string_view Key, int32_t Default) {
       using mobile::dalvik::ExecutionResult;
       using mobile::dalvik::ExecutionStop;

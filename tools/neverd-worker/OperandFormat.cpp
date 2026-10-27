@@ -1,5 +1,7 @@
 #include "OperandFormat.h"
 
+#include "OperandFormatDetail.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -10,7 +12,41 @@
 #include <unordered_set>
 
 namespace neverd::worker {
+namespace operand_format_detail {
+
+std::string binaryDigits(std::uint64_t value) {
+  std::string text;
+  for (std::uint64_t bit = std::uint64_t(1) << 63; bit; bit >>= 1)
+    if (!text.empty() || (value & bit))
+      text += value & bit ? '1' : '0';
+  return text.empty() ? std::string("0") : text;
+}
+
+std::optional<std::string> characterLiteral(std::uint64_t value) {
+  // Most significant byte first, as the characters read in the source.
+  std::string text;
+  for (int shift = 56; shift >= 0; shift -= 8) {
+    const auto byte = static_cast<unsigned char>(value >> shift);
+    if (!byte && text.empty())
+      continue;
+    if (byte < 0x20 || byte >= 0x7f || byte == '\'')
+      return std::nullopt;
+    text += static_cast<char>(byte);
+  }
+  if (text.empty())
+    return std::nullopt;
+  return "'" + text + "'";
+}
+
+} // namespace operand_format_detail
+
 namespace {
+using operand_format_detail::binaryDigits;
+using operand_format_detail::characterLiteral;
+using operand_format_detail::OperandTokens;
+using operand_format_detail::Token;
+using operand_format_detail::TokenKind;
+
 struct RegisterTable {
   std::unordered_set<std::string> x86, aarch64, arm;
 };
@@ -56,14 +92,6 @@ std::string lower(std::string_view text) {
                  [](unsigned char c) { return std::tolower(c); });
   return result;
 }
-
-enum class TokenKind : std::uint8_t { Identifier, Number, Punct, Space };
-struct Token {
-  TokenKind kind = TokenKind::Punct;
-  std::string_view text;
-  std::uint64_t value = 0;
-  bool valid = false;
-};
 
 std::vector<Token> tokenize(std::string_view text) {
   std::vector<Token> tokens;
@@ -240,9 +268,6 @@ bool isLoneRegister(const std::vector<Token> &operand) {
   return operand.size() == 1 && operand.front().kind == TokenKind::Identifier &&
          isRegisterName(OperandDialect::X86, operand.front().text);
 }
-
-/// Tokens of one operand, without surrounding spaces.
-using OperandTokens = std::vector<Token>;
 
 /// The value of an operand that is a plain number, `5` or `-5`, unsigned in
 /// \p mask's width.
@@ -445,24 +470,13 @@ bool appendFormattedNumber(StyledText &out, std::uint64_t value, unsigned bits,
     text = std::to_string(shown);
     break;
   case NumberBase::Binary:
-    for (std::uint64_t bit = std::uint64_t(1) << 63; bit; bit >>= 1)
-      if (!text.empty() || (shown & bit))
-        text += shown & bit ? '1' : '0';
-    text = (text.empty() ? std::string("0") : text) + "b";
+    text = binaryDigits(shown) + "b";
     break;
   case NumberBase::Char: {
-    // Most significant byte first, as the characters read in the source.
-    for (int shift = 56; shift >= 0; shift -= 8) {
-      const auto byte = static_cast<unsigned char>(shown >> shift);
-      if (!byte && text.empty())
-        continue;
-      if (byte < 0x20 || byte >= 0x7f || byte == '\'')
-        return false;
-      text += static_cast<char>(byte);
-    }
-    if (text.empty())
+    const auto characters = characterLiteral(shown);
+    if (!characters)
       return false;
-    text = "'" + text + "'";
+    text = *characters;
     break;
   }
   case NumberBase::Offset: {
@@ -625,10 +639,9 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
         !facts.frameRegister.empty() && baseName == facts.frameRegister;
     const bool viaStack = facts.stackDepth && !facts.stackRegister.empty() &&
                           baseName == facts.stackRegister;
+    const auto depth = viaStack ? *facts.stackDepth : facts.frameDepth;
     if (facts.frame && (viaFrame || viaStack))
-      if (const auto slot =
-              (*facts.frame)(viaStack ? parsed.displacement - *facts.stackDepth
-                                      : parsed.displacement)) {
+      if (const auto slot = (*facts.frame)(parsed.displacement - depth)) {
         appendPrefix(slot->delta == 0 &&
                      sizeBits(sizeKeyword) == slot->size * 8);
         out.append("[", ListingRole::Punctuation);
@@ -637,10 +650,11 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
           out.append("+", ListingRole::Punctuation);
           appendIndex();
         }
-        if (viaStack && *facts.stackDepth) {
-          out.append("+", ListingRole::Punctuation);
-          out.append(x86Number(static_cast<std::uint64_t>(*facts.stackDepth)),
-                     ListingRole::Number);
+        if (depth) {
+          out.append(depth < 0 ? "-" : "+", ListingRole::Punctuation);
+          out.append(
+              x86Number(static_cast<std::uint64_t>(depth < 0 ? -depth : depth)),
+              ListingRole::Number);
         }
         out.append("+", ListingRole::Punctuation);
         out.append(slot->name, ListingRole::Plain);
@@ -804,26 +818,44 @@ void formatGenericOperand(StyledText &out, const OperandTokens &tokens,
 }
 } // namespace
 
+using operand_format_detail::armDialect;
+using operand_format_detail::armImmediate;
+using operand_format_detail::armShift;
+using operand_format_detail::armStructOperand;
+using operand_format_detail::ArmWidths;
+using operand_format_detail::armWidths;
+using operand_format_detail::formatArmOperand;
+
 bool showsNumberFormats(OperandDialect dialect) {
-  // Only x86 operands apply number formats so far.
-  return dialect == OperandDialect::X86;
+  // Other dialects keep the decoder's spelling.
+  return dialect == OperandDialect::X86 || armDialect(dialect);
 }
 
 std::vector<bool> formattableOperands(std::string_view operands,
                                       OperandDialect dialect) {
   std::vector<bool> result;
+  const bool arm = armDialect(dialect);
   for (const auto &operand : splitOperands(tokenize(operands)))
     result.push_back(showsNumberFormats(dialect) &&
-                     plainNumber(operand, ~std::uint64_t(0)).has_value());
+                     (arm ? armImmediate(operand, ~std::uint64_t(0))
+                          : plainNumber(operand, ~std::uint64_t(0)))
+                         .has_value());
   return result;
 }
 
 std::vector<bool> structOperands(std::string_view operands,
                                  OperandDialect dialect) {
   std::vector<bool> result;
-  for (const auto &operand : splitOperands(tokenize(operands))) {
+  const auto pieces = splitOperands(tokenize(operands));
+  for (std::size_t index = 0; index < pieces.size(); ++index) {
+    const auto &operand = pieces[index];
     bool fits = false;
-    if (showsNumberFormats(dialect)) {
+    if (armDialect(dialect)) {
+      // A shifted immediate is a field of a larger number.
+      fits = armStructOperand(operand, dialect) &&
+             !(index + 1 < pieces.size() && armShift(pieces[index + 1]) &&
+               armImmediate(operand, ~std::uint64_t(0)));
+    } else if (showsNumberFormats(dialect)) {
       const auto open =
           std::find_if(operand.begin(), operand.end(), [](const Token &t) {
             return t.kind == TokenKind::Punct && t.text == "[";
@@ -850,11 +882,14 @@ std::vector<bool> structOperands(std::string_view operands,
 }
 
 std::optional<std::int64_t> operandNumber(std::string_view operands,
-                                          std::size_t index) {
+                                          std::size_t index,
+                                          OperandDialect dialect) {
   const auto pieces = splitOperands(tokenize(operands));
   if (index >= pieces.size())
     return std::nullopt;
-  const auto value = plainNumber(pieces[index], ~std::uint64_t(0));
+  const auto value = armDialect(dialect)
+                         ? armImmediate(pieces[index], ~std::uint64_t(0))
+                         : plainNumber(pieces[index], ~std::uint64_t(0));
   if (!value)
     return std::nullopt;
   return static_cast<std::int64_t>(*value);
@@ -981,6 +1016,11 @@ StyledText formatOperands(std::string_view operands, const OperandFacts &facts,
     if (!context.immediateBits && (forms & StackWidth))
       context.immediateBits = facts.wide ? 64 : 32;
   }
+  // The ARM family's widths matter only to an operand the user formats.
+  const bool arm = armDialect(facts.dialect);
+  ArmWidths widths;
+  if (arm && facts.numberFormats)
+    widths = armWidths(facts.dialect, facts.mnemonic, pieces);
   bool first = true;
   for (std::size_t index = 0; index < pieces.size(); ++index) {
     const auto &operand = pieces[index];
@@ -998,7 +1038,10 @@ StyledText formatOperands(std::string_view operands, const OperandFacts &facts,
                        facts.operandBits && index < facts.operandBits->size()
                            ? (*facts.operandBits)[index]
                            : 0);
-    else
+    else if (!arm || !format || format->isDefault() ||
+             !formatArmOperand(out, operand, facts, namer, *format, widths,
+                               index + 1 < pieces.size() &&
+                                   armShift(pieces[index + 1])))
       formatGenericOperand(out, operand, facts, namer);
   }
   return out;
