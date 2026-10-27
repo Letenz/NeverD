@@ -28,7 +28,8 @@ Alignment is an explicit padding span ending at the requested power-of-two
 boundary (2 bytes to one MiB). At an already aligned address it marks one full
 alignment unit. It changes the listing's interpretation, never the input bytes.
 
-Enum operands currently use the existing native x86/x64 operand formatter.
+Enum operands use the native x86/x64, ARM, Thumb and AArch64 operand
+formatters.
 The SDK validates an actual decoded immediate, its logical width and the enum's
 underlying width. Signed values retain their width; aliases choose the first
 declared exact member deterministically. Flags mode combines named single bits
@@ -73,7 +74,10 @@ only runs after all supplied declaration files parse successfully.
 `--enum` selects an exact enum member; `--flags` additionally combines single
 bits and preserves residual bits numerically. `--operand` uses the original
 decoded operand index, starting at zero, so the immediate of `imul r,r,imm` is
-operand 2 even when the GUI folds its text to `imul r,imm`.
+operand 2 even when the GUI folds its text to `imul r,imm`. ARM-family
+operands count like their text, by the commas outside brackets, braces and
+parentheses; the immediate is the one its `#value` spells, so
+`ld1 {v0.16b, v1.16b}, [x0], #32` has `#32` as operand 2.
 The display uses the same decoded operand width as SDK admission; a byte shift
 count does not take the width of its destination register.
 SDK/CLI disassembly preserves raw `op_str` and adds `display_op_str` when an

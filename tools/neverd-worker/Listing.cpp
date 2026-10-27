@@ -4128,7 +4128,7 @@ Listing::structOperand(std::uint64_t address, std::optional<std::size_t> asked,
       chosen = i;
   if (chosen && number)
     *number = *chosen < numbers.size() && numbers[*chosen]
-                  ? operandNumber(operands, *chosen)
+                  ? operandNumber(operands, *chosen, d.dialect)
                   : std::nullopt;
   return chosen;
 }
