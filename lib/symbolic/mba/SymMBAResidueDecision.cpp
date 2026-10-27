@@ -121,15 +121,21 @@ class LowWordDecisions {
       return false;
     if (Bytes > Storage && StorageLimited)
       *StorageLimited = true;
-    if (Units > MaxWork - Work || Bytes > Storage ||
-        !Budget.canConsume(Units)) {
+    if (Units > MaxWork - Work || Bytes > Storage) {
       Failed = true;
       return false;
     }
     Work += Units;
-    Budget.consume(Units);
     Storage -= Bytes;
     return true;
+  }
+
+  // This owner alone spends its captured allowance. Commit the exact admitted
+  // work before another budget consumer runs and on every exit, including a
+  // refused proof. Node operations need only update the local counter.
+  void commitWork() {
+    Budget.consume(Work);
+    Work = 0;
   }
 
   // These maps never erase individual keys. Prepay the complete bucket
@@ -1812,8 +1818,11 @@ public:
   LowWordDecisions(SymContext &Ctx, WorkBudget &Budget, size_t &Storage,
                    size_t MaxWork, bool *StorageLimited)
       : Ctx(Ctx), Budget(Budget), Storage(Storage),
-        MaxWork(std::min(MaxWork, limits::kMaxResidueDecisionWork)),
+        MaxWork(std::min(
+            {MaxWork, limits::kMaxResidueDecisionWork, Budget.available()})),
         StorageLimited(StorageLimited) {}
+
+  ~LowWordDecisions() { commitWork(); }
 
   SymRef simplify(SymRef Root, const llvm::APInt &Scale, unsigned Observed,
                   bool OddProductOnly, bool *Complete) {
@@ -1919,8 +1928,7 @@ public:
         // when even their minimum work cannot fit, preserving the allowance
         // for simpler expressions elsewhere in the same region.
         const size_t ScanUnit = ProjectFactors ? 2 : 2 * (1 + Split);
-        if (Nonconstant > (MaxWork - Work) / ScanUnit ||
-            !Budget.canConsume(Nonconstant * ScanUnit))
+        if (Nonconstant > (MaxWork - Work) / ScanUnit)
           return Root;
         if (!charge(1, 2 * (sizeof(Bits) + Split * sizeof(uint32_t))))
           return Root;
@@ -2316,8 +2324,7 @@ public:
                                     16 * sizeof(SymRef));
       if (Bytes > Storage && StorageLimited)
         *StorageLimited = true;
-      if (Units > MaxWork - Work || Bytes > Storage ||
-          !Budget.canConsume(Units))
+      if (Units > MaxWork - Work || Bytes > Storage)
         return Fallback;
       if (!charge(Units, Bytes))
         return Fallback;
@@ -2994,6 +3001,7 @@ public:
       *Complete = true;
     if (readingScore(Ctx, Result) >= readingScore(Ctx, Root))
       return Root;
+    commitWork();
     recordResidueReading(Ctx, FirstEmitted, Budget, Storage);
     return Result;
   }

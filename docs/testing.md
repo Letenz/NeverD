@@ -2028,10 +2028,25 @@ Expression interning regressions retain deliberately colliding variable and
 literal identities, all-bit hash values, and references across table growth,
 context copies, assignment and moves. Full symbolic and source-route coverage
 checks the shared table underneath both CLI and GUI simplification.
+`LongOperandIdentityPreservesOrderAcrossGrowthAndCopies` covers 7/8/9/16/65
+operands, ordered concatenations, commutative sums and independent full-word
+evaluation after table growth and context copies.
 `SymExpr.NativeNormalizedResultsRetainWidthBoundaries` compares both native
-evaluation entry points against independent APInt arithmetic at 1/7/8/16/32/64
-bits. Unmasked inputs, wrapping sums and products, both conditional branches,
+evaluation entry points against independent APInt arithmetic at every width
+from 1 through 64 bits. Unmasked inputs, wrapping sums and products, both
+conditional branches,
 overshifts and remainder by zero preserve the normalized scratch-slot invariant.
+`NativeLiteralOverloadsKeepEveryWidthAndWordBoundary` checks literal identity,
+constant-only plans and unchanged step counts at every width from 1 through
+257 bits. Constant plans must not request variable values.
+`SymMBAWidePairs.SharedAllowancesPreserveDecisionWorkAndMemo` checks fresh and
+previously spent request budgets, local caps under unlimited requests, zero and
+short storage, exact completion boundaries and saturated unlimited accounting.
+Outputs, work, remaining storage and completed-reading memo admission agree.
+`Z3Solver.RepeatedProductsKeepAllFactorsAndCompleteInputModels` checks long
+factor runs around power-of-two boundaries at 1–257 bits, both full and scaled
+products. Independent complete-word multiplication and high-bit near misses
+check equality and retained input models.
 `SymMBA.DenseCoversKeepEveryCornerAndWholeWord` exhausts four-, six- and
 eight-input cover tables, including mixed literal polarities and an isolated
 negative corner. Independent bit-plane evaluation checks random complete words

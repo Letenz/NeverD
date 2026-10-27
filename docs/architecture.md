@@ -3144,6 +3144,14 @@ only a missing complete identity reaches the allocation path. Native evaluation
 slots remain normalized to their declared widths, so operations that preserve
 that invariant do not mask their results again. External variable values and
 arithmetic that can introduce high bits still receive their width mask.
+Long operand sequences use the existing LLVM block hash for lookup instead of
+a serial combine per handle, retaining complete ordered-operand comparison.
+That external hash call stays outside the short lookup's stack frame.
+Native literal construction normalizes its inline value before interning.
+Low-word decision proofs capture the smaller of their local and remaining
+request allowances. Each operation admits and counts the same work locally;
+every exit commits that count, including refusals. The completed-reading memo
+receives the committed request budget before it admits its own work.
 General operators retain the shared APInt semantics in a separate call, keeping
 their operand construction and cleanup out of the native evaluator's hot frame.
 The compact two-word hash key uses one 64-bit bucket mix, without hashing its
@@ -10382,7 +10390,9 @@ external solver dependency. It translates the expression DAG directly and
 caches nodes within a solver session. Permanent assertions and per-check
 assumptions remain separate. Expression synthesis selects its proof backend
 through the existing verifier boundary; inconclusive results never authorize a
-rewrite. See [bitvector proof backends](solver.md) for build and validation.
+rewrite. Repeated product factors share squared powers in the solver encoding;
+the existing scaled-product quotient restores the complete output word.
+See [bitvector proof backends](solver.md) for build and validation.
 
 Shared symbolic expression builders recover comparisons from bounded
 highest-bit Boolean networks. They check an exact modular subtraction relation

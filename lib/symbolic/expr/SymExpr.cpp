@@ -24,10 +24,12 @@
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/Compiler.h"
+#include "llvm/Support/xxhash.h"
 
 #include <algorithm>
 #include <cassert>
 #include <limits>
+#include <type_traits>
 
 namespace neverd::symbolic {
 
@@ -127,16 +129,10 @@ SymContext::SymContext() {
 // Interning
 //===----------------------------------------------------------------------===//
 
-SymRef SymContext::intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
-                          uint64_t Aux) {
-  assert(Width > 0 && "a bitvector node must have a nonzero width");
-
-  uint64_t H = mixHash(0x1234567u, static_cast<uint64_t>(Op));
-  H = mixHash(H, Width);
-  H = mixHash(H, Aux);
-  for (SymRef R : Ops)
-    H = mixHash(H, R.index());
-
+LLVM_ATTRIBUTE_ALWAYS_INLINE
+SymRef SymContext::internHashed(SymOp Op, uint32_t Width,
+                                llvm::ArrayRef<SymRef> Ops, uint64_t Aux,
+                                uint64_t H) {
   // Keep both halves of the hash without padding the upper half to 64 bits.
   // Reserved keys still use the same complete identity checks and owned links.
   const InternKey Key{uint32_t(H >> 32), uint32_t(H)};
@@ -165,6 +161,32 @@ SymRef SymContext::intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
   }
 
   return appendInterned(Op, Width, Ops, Aux, H, Head);
+}
+
+// Long operand sequences need not serialize one hash combine per handle.
+// Keep this external hash call and its saved registers off the short path.
+LLVM_ATTRIBUTE_NOINLINE
+SymRef SymContext::internLongOperands(SymOp Op, uint32_t Width,
+                                      llvm::ArrayRef<SymRef> Ops, uint64_t Aux,
+                                      uint64_t H) {
+  static_assert(std::has_unique_object_representations_v<SymRef>);
+  H = mixHash(H,
+              llvm::xxh3_64bits(reinterpret_cast<const uint8_t *>(Ops.data()),
+                                Ops.size() * sizeof(SymRef)));
+  return internHashed(Op, Width, Ops, Aux, H);
+}
+
+SymRef SymContext::intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
+                          uint64_t Aux) {
+  assert(Width > 0 && "a bitvector node must have a nonzero width");
+  uint64_t H = mixHash(0x1234567u, static_cast<uint64_t>(Op));
+  H = mixHash(H, Width);
+  H = mixHash(H, Aux);
+  if (Ops.size() >= 8)
+    return internLongOperands(Op, Width, Ops, Aux, H);
+  for (SymRef R : Ops)
+    H = mixHash(H, R.index());
+  return internHashed(Op, Width, Ops, Aux, H);
 }
 
 // Most builder calls reuse existing nodes. Keep vector growth and table
@@ -219,11 +241,11 @@ SymRef SymContext::mkConst(const llvm::APInt &Val) {
 }
 
 SymRef SymContext::mkConst(uint32_t Width, uint64_t Val) {
-  // Every operation here is modulo 2^Width and a literal is no exception, so a
-  // value with bits above the width keeps only the ones that fit.  APInt's
-  // constructor does not do that on its own: left to itself it asserts in a
-  // debug build and stores the unreduced word in a release one, which would
-  // put a node in the table whose value disagrees with its own width.
+  // Normalize native literals directly into the inline identity payload.
+  if (Width && Width <= 64)
+    return intern(SymOp::Const, Width, {},
+                  Val & (~uint64_t(0) >> (64 - Width)));
+  // Wider values retain their ordinary arbitrary-precision pool identity.
   return mkConst(
       llvm::APInt(Width, Val, /*isSigned=*/false, /*implicitTrunc=*/true));
 }

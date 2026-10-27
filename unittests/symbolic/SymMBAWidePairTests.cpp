@@ -17,7 +17,9 @@
 #include "neverd/solver/Z3Solver.h"
 
 #include <array>
+#include <limits>
 #include <random>
+#include <tuple>
 #include <utility>
 
 using namespace neverd;
@@ -112,6 +114,63 @@ TEST(SymMBAWidePairs, CompletedParityProofKeepsReconstructionWithinBudget) {
       EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
     }
   }
+}
+
+TEST(SymMBAWidePairs, SharedAllowancesPreserveDecisionWorkAndMemo) {
+  constexpr size_t Unlimited = std::numeric_limits<size_t>::max();
+  auto Run = [](size_t Limit, size_t Previous, size_t LocalLimit, size_t Bytes,
+                bool Memo) {
+    SymContext Ctx;
+    const auto F = fixture(Ctx, 32, 3);
+    detail::WorkBudget Budget(Limit);
+    EXPECT_TRUE(Budget.consume(Previous));
+    if (Memo) {
+      Budget.MemoOwner = &Ctx;
+      Budget.MemoCapacity = 16;
+    }
+    bool Complete = false;
+    const auto Result = detail::foldResidueDecisions(
+        Ctx, F.Input, Budget, Bytes, true, LocalLimit, nullptr, &Complete);
+    SymEvalPlan Plan(Ctx, Result);
+    for (unsigned I : {0u, 1u, 7u, 127u, 255u}) {
+      const std::array Values{llvm::APInt(32, I), llvm::APInt(32, 3 * I),
+                              llvm::APInt(32, 7 * I)};
+      EXPECT_EQ(Plan.eval(Values), F.oracle(Values));
+    }
+    return std::tuple{Ctx.toString(Result),
+                      Budget.used() - Previous,
+                      Bytes,
+                      bool(Budget.Residues),
+                      Complete,
+                      Budget.exhausted()};
+  };
+  const auto Complete = Run(65536, 0, 65536, 1 << 24, true);
+  const auto Required = std::get<1>(Complete);
+  ASSERT_GT(Required, 1u);
+  ASSERT_LT(Required, 65536u);
+  EXPECT_TRUE(std::get<3>(Complete));
+  for (size_t Allowance :
+       {size_t(0), size_t(1), size_t(2), size_t(64), size_t(1024), Required - 1,
+        Required, Required + 1, size_t(65536)})
+    for (size_t Bytes : {size_t(0), size_t(256), size_t(1 << 24)})
+      for (bool Memo : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Allowance << ':' << Bytes << ':' << Memo);
+        // Previously consumed request work must leave exactly the same local
+        // proof, refusal, memo opportunity and remaining storage.
+        EXPECT_EQ(Run(Allowance, 0, 65536, Bytes, Memo),
+                  Run(Allowance + 37, 37, 65536, Bytes, Memo));
+        // An unlimited request still obeys the same local proof allowance.
+        EXPECT_EQ(Run(65536, 0, Allowance, Bytes, Memo),
+                  Run(Unlimited, 0, Allowance, Bytes, Memo));
+      }
+  const auto Saturated = Run(Unlimited, Unlimited - 1, 65536, 1 << 24, true);
+  EXPECT_EQ(std::get<0>(Saturated), std::get<0>(Complete));
+  EXPECT_EQ(std::get<1>(Saturated), 1u);
+  EXPECT_EQ(std::get<2>(Saturated), std::get<2>(Complete));
+  EXPECT_EQ(std::get<3>(Saturated), std::get<3>(Complete));
+  EXPECT_EQ(std::get<4>(Saturated), std::get<4>(Complete));
+  EXPECT_FALSE(std::get<5>(Saturated));
 }
 
 TEST(SymMBAWidePairs, StandaloneSelectorDoesNotProveOtherFactorsOdd) {
