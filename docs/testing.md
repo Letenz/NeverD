@@ -9639,6 +9639,14 @@ Legacy cancellation tests retain the API continuation across cancellation, neste
 
 ## Test layout
 
+`NeverDSymbolicPredicateTests` checks Boolean, extension and conditional-tag
+equality together with sign-network recovery, known bits and subword views.
+Run it alongside `NeverDSymbolicIntegerIntrinsicTests` when changing predicate
+construction: the execution suite also checks byte-sized sign/overflow flags
+passing through Boolean and integer operations. One-bit literal comparisons
+must recover the original predicate without traversing its expression DAG;
+wider integer comparisons must keep their full value domain.
+
 `NeverDSymbolicCallEffectTests` checks explicit call register results and path
 exploration: multiple outputs, pre-call values, return-output precedence,
 overlapping writes in both byte orders, ordinary memory havoc, malformed-range

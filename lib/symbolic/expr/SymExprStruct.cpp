@@ -549,6 +549,14 @@ SymRef SymContext::mkEq(SymRef A, SymRef B) {
   }
   if (A == B)
     return mkTrue();
+  // A one-bit value is already its truth predicate. Extension peeling can
+  // expose this case from a lifted byte-sized Boolean test against zero.
+  if (width(A) == 1) {
+    if (isConst(A))
+      return isConstZero(A) ? mkNot(B) : B;
+    if (isConst(B))
+      return isConstZero(B) ? mkNot(A) : A;
+  }
   // A comparison of two constant tags selects the original condition (or
   // its complement). Constants are interned at their exact width, so this
   // needs only node identities, even for wide tags or a large condition DAG.
