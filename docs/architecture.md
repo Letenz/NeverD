@@ -12856,9 +12856,13 @@ without reporting a completed constructor. `getTime` converts the same boot
 clock to microseconds and needs no application snapshot. The modeled class is
 boot-owned and cannot be replaced by supplied Android DEX. This follows the
 [API 28 StatLogger contract](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/com/android/internal/util/StatLogger.java).
-Statistics updates, logging and dumps remain unsupported. ServiceManager's
-initializer reuses these operations; its separately supplied cache and Binder
-state are described below.
+`logDurationStat` updates the retained arrays through shared heap and clock
+operations, preserving Java wrapping arithmetic, signed duration comparisons,
+the strict next-tick comparison and partial effects before failures. Invalid
+event IDs stop before unmodeled diagnostic logging. Logging and dump methods
+remain unsupported. ServiceManager reuses initialization and duration updates;
+its separately supplied cache, Binder state and lookup replies are described
+below.
 
 `dalvik::Library` is the single implementation of the bounded UTF-16 String,
 Object, Class and Throwable value methods called by JNI and DEX. Heap owns
@@ -12935,12 +12939,19 @@ ordinary Java effects, including casts and null exceptions.
 `Binder.allowBlocking` updates the retained proxy's warning flag;
 `BinderProxy.queryLocalInterface` returns null, and an admitted
 ServiceManagerProxy retains its `mRemote` field. Cache misses preserve the
-getService timing read and manager/context acquisition order, then stop at
-unmodeled Binder transactions. JNI remains a handle/ABI adapter. Linux Binder
-continues to own native device/transaction state; this Java projection cannot
-translate its keys into those handles. Local/custom Binder behavior, native
-object translation, Parcel RPC, statistics/logging and add/list service calls
-remain unsupported. The volatile warning field is admitted by shared framework
+getService timing read and manager/context acquisition order. Explicit
+`lookup_results` match the operation, manager Binder key and Java String/null
+name; successful semantic replies retain Binder identity without populating the
+cache. Missing replies remain unsupported, and an explicit null reply alone
+establishes service absence. `getService` updates StatLogger duration arrays,
+selects core/app thresholds through the shared Linux UID service, accumulates
+Java int counters and reads the independent monotonic uptime clock.
+`checkService` omits these statistics updates. JNI remains a handle/ABI adapter.
+Linux Binder continues to own native device/transaction state; this Java
+projection cannot translate its keys into those handles. Local/custom Binder
+behavior, native object translation, Parcel RPC, RemoteException handling,
+EventLog output and add/list service calls remain unsupported. The volatile
+warning field is admitted by shared framework
 field identity; supplied DEX volatile fields retain their existing guard.
 Observed Java state reports cache identity/completeness, retained entries,
 manager/logger identities and proxy warning states without manufacturing
