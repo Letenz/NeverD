@@ -165,12 +165,17 @@ bool simplifyIntegerSlices(llvm::Function &Function, unsigned WorkLimit) {
     if (auto *Slice = dyn_cast<TruncInst>(&I);
         Slice && !Slice->hasPoisonGeneratingFlags() &&
         Slice->getType()->isIntegerTy() &&
-        Slice->getSrcTy()->getIntegerBitWidth() <= 64)
+        Slice->getType()->getIntegerBitWidth() <=
+            ::neverd::limits::backend::kLLVMCIntegerSliceMaxBits)
       Slices.push_back(Slice);
   }
   bool Changed = false;
   for (auto *Slice : Slices) {
     Value *Root = Slice->getOperand(0);
+    // An opaque whole value already has the same narrow cast. Only these
+    // producers can expose a different source or discard unobserved bits.
+    if (!isa<BinaryOperator, CastInst, SelectInst, ConstantInt>(Root))
+      continue;
     const unsigned Width = Slice->getType()->getIntegerBitWidth();
     BitProjection Project(WorkLimit);
     Value *Source = nullptr;

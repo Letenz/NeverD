@@ -8180,7 +8180,8 @@ retain freeze, variable/oversized shifts, arithmetic, independent bit sources,
 poison, multi-bit masks and overly deep graphs; shared DAGs remain bounded.
 `IntegerSlicesFollowWideProducersWithoutObservingUpperState` executes narrow
 reads from the low and high portions of 64/80/128-bit payloads at O0/O2 with
-undefined-behavior traps, both with and without preserved LLVM types. Bytewise
+undefined-behavior traps, both with and without preserved LLVM types. Direct
+wide enclosing words and intermediate 64-bit casts use the same bounded proof. Bytewise
 oracles check the result; unrelated unknown register bits must not trap, and
 demanded unknown bits must retain their diagnostic. Caller IR stays unchanged.
 The native FILD and sign-operation owners also cover NoOpt LLVM C paths whose
