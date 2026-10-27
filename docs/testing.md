@@ -6836,7 +6836,9 @@ suites also check byte coverage across leading/tail encodings and require every
 mandatory reference claim to survive hidden CRC counterexamples. Refinement
 cases retain alternatives in the selected sufficient single-site clause,
 jointly necessary fields and complete incoming declarations with source-version
-consensus. They also constrain cohorts together across numbered parts, so
+consensus. Existing required clauses additionally need their own complete raw
+source witness and independently sufficient image metadata; missing witnesses,
+call-only proofs and loaded required rivals retain the necessary constraints. They also constrain cohorts together across numbered parts, so
 withholding one member cannot leave an unqualified survivor.
 Source-driven refinement still requires held-out CLI accuracy and performance qualification;
 these unit tests do not establish source identity for a matching body.
@@ -6871,7 +6873,7 @@ bodies for contextual patterns. The Python supplement tests retain short and
 discarded counterclaims across independently selected packs.
 `SignatureDBCallerContext.*` checks incoming support, full-body disagreement,
 entry scope, complete alternatives, variant consensus, and refusal of weak,
-partial, ambiguous, required or contradicted initial anchors. Rooted chains
+partial, ambiguous, unrooted required or contradicted initial anchors. Rooted chains
 exercise both input orders, independent frozen validation, weak intermediate
 bodies, unrooted cycles and the depth budget. Cache tests run pieces in reverse
 order and reject invalid caller offsets and CRC coverage without depending on
@@ -6880,6 +6882,9 @@ ordinary callee plus a rooted incoming body or a confirmed required root,
 reversed entries and records, changed-buffer reuse, missing/weak/partial or
 ambiguous callees, incomplete source variants and absent roots. A nominal body
 settled by an earlier incoming round cannot masquerade as an independent anchor.
+Long required-parent cases reuse the same independent ordinary-callee proof,
+including reversed records and entries, changed-buffer withdrawal, missing or
+incomplete source declarations, ambiguous/weak/partial callees and entry scope.
 `SignatureDBCodePairs.*` checks complete x64 code-address fingerprints across
 two short bodies: reversed input order, live-byte changes, missing required or
 unpruned source records, insufficient combined bytes, source/leaf alternatives,

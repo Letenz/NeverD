@@ -1302,19 +1302,29 @@ void SignatureDB::applyCallerContext(
   }
   std::unordered_map<uint64_t, std::string> Names;
   std::vector<std::pair<uint64_t, size_t>> FrozenCandidates;
-  if (Data) {
-    // A few data parents should not settle and copy every existing name.
-    // Index the frozen rows once; each visited address still considers all
-    // competing claims through the same settlement owner.
-    FrozenCandidates.reserve(Matches.size());
-    for (size_t I = 0; I < Matches.size(); ++I)
-      FrozenCandidates.emplace_back(Matches[I].Address, I);
-    // Keep sort keys contiguous instead of repeatedly loading addresses from
-    // the much larger candidate records during comparison and binary search.
-    llvm::sort(FrozenCandidates);
-  } else {
-    Names = buildCandidateNameMap();
+  // Share one contiguous address index between settlement and independent
+  // body checks. Rebuilding it after constructing the initial name map would
+  // sort every candidate twice whenever a required parent needs a proof.
+  FrozenCandidates.reserve(Matches.size());
+  for (size_t I = 0; I < Matches.size(); ++I)
+    FrozenCandidates.emplace_back(Matches[I].Address, I);
+  llvm::sort(FrozenCandidates);
+  if (!Data) {
+    Names.reserve(FrozenCandidates.size());
+    for (size_t First = 0; First < FrozenCandidates.size();) {
+      const uint64_t Address = FrozenCandidates[First].first;
+      llvm::SmallVector<const SigMatch *, 4> Claims;
+      size_t End = First;
+      while (End < FrozenCandidates.size() &&
+             FrozenCandidates[End].first == Address)
+        Claims.push_back(&Matches[FrozenCandidates[End++].second]);
+      if (const auto Routine = settle(Claims))
+        Names.emplace(Address, Routine->Name);
+      First = End;
+    }
   }
+  // The data frontier settles only the addresses it visits. The initial pass
+  // has already settled every frozen address, including unsuccessful queries.
   std::vector<uint64_t> SortedEntries;
   llvm::ArrayRef<uint64_t> Requested = Entries;
   if (!llvm::is_sorted(Entries)) {
@@ -1360,7 +1370,7 @@ void SignatureDB::applyCallerContextRound(
   const auto &Idx = index();
   auto FindName = [&](uint64_t Address) {
     auto Found = Names.find(Address);
-    if (Found != Names.end() || FrozenCandidates.empty())
+    if (Found != Names.end() || !Data)
       return Found;
     const auto Begin = llvm::lower_bound(
         FrozenCandidates, Address,
@@ -1399,13 +1409,14 @@ void SignatureDB::applyCallerContextRound(
   }
   for (size_t I = FirstParent; I < OriginalMatches; ++I)
     AddParent(I);
-  // Short bodies need a separately established ordinary callee as well as
-  // their existing incoming or required-reference evidence. A short required
-  // root additionally needs an unpruned source refinement, not a pruned clause.
-  std::unordered_map<uint64_t, bool> ShortParents;
+  // Short bodies and initial required-reference parents need a separately
+  // established ordinary callee. Required roots also need a complete source
+  // declaration: their selected clause cannot supply omitted outgoing edges.
+  // Incoming or data-supported long parents already have their own roots.
+  std::unordered_map<uint64_t, bool> IndependentParents;
   for (auto It = At.begin(); It != At.end();) {
     bool Anchored = true;
-    bool Short = false, NeedsSource = false;
+    bool NeedsBinding = false, NeedsSource = false;
     for (size_t &I : It->second) {
       if (MatchModules[I] == NoModule) {
         Anchored = false;
@@ -1417,23 +1428,24 @@ void SignatureDB::applyCallerContextRound(
       const StoredModule &Mod = Modules[I];
       const bool Weak = SignatureMatcher::fixedByteCount(Mod) <
                         SignatureMatcher::MinStatedBytes;
-      const bool Contextual = Confirmed && (Data || Weak);
       if (((Mod.RequireReferences || Mod.RequireCaller) && !Incoming &&
-           !(Contextual && Mod.RequireReferences)) ||
+           !(Confirmed && Mod.RequireReferences)) ||
           !SignatureMatcher::isFullyVerified(Mod) ||
-          (Weak && !Incoming && !(Contextual && Mod.RequireReferences)) ||
+          (Weak && !Incoming && !(Confirmed && Mod.RequireReferences)) ||
           llvm::any_of(Mod.publicNames(), [&](const StoredName &Public) {
             return Public.Name == Names.at(It->first) && Public.Offset != 0;
           })) {
         Anchored = false;
         break;
       }
-      Short |= Weak;
-      NeedsSource |= Weak && !Incoming;
+      const bool Independent =
+          Weak || (Mod.RequireReferences && !Incoming && !Data);
+      NeedsBinding |= Independent;
+      NeedsSource |= Independent && !Incoming;
     }
     if (Anchored) {
-      if (Short)
-        ShortParents.emplace(It->first, NeedsSource);
+      if (NeedsBinding)
+        IndependentParents.emplace(It->first, NeedsSource);
       ++It;
     } else {
       It = At.erase(It);
@@ -1450,7 +1462,7 @@ void SignatureDB::applyCallerContextRound(
     for (const auto &Candidate : Idx.callerModules(Modules, Name)) {
       const StoredModule &Mod = Modules[Candidate.Module];
       if (!Mod.RequireCaller ||
-          (!ShortParents.contains(Address) &&
+          (!IndependentParents.contains(Address) &&
            SignatureMatcher::fixedByteCount(Mod) <
                SignatureMatcher::MinStatedBytes) ||
           llvm::any_of(Proposals, [&](size_t I) {
@@ -1530,26 +1542,18 @@ void SignatureDB::applyCallerContextRound(
     if (Extra != Refined.end())
       for (size_t I : Proposals)
         Constrain(References, ReferencesOf(Modules[I]), /*AllowMissing=*/true);
-    if (const auto Short = ShortParents.find(Address);
-        Short != ShortParents.end()) {
-      if (References.empty() || (Short->second && Extra == Refined.end()))
+    if (const auto Parent = IndependentParents.find(Address);
+        Parent != IndependentParents.end()) {
+      if (References.empty() || (Parent->second && Extra == Refined.end()))
         continue;
       if (llvm::none_of(References, [&](const Reference &Ref) {
             return !Idx.callerModules(Modules, Ref.second).empty();
           }))
         continue;
-      // The address index is shared with frozen settlement. Build it only
-      // when a short caller needs independent evidence; inspect body strength
-      // only at the actual target, rather than for every frozen candidate.
-      if (!FrozenBodies) {
+      // Reuse the settlement index; inspect body strength only at an actual
+      // requested target rather than for every frozen candidate.
+      if (!FrozenBodies)
         FrozenBodies.emplace();
-        if (FrozenCandidates.empty()) {
-          FrozenCandidates.reserve(FrozenMatches);
-          for (size_t I = 0; I < FrozenMatches; ++I)
-            FrozenCandidates.emplace_back(Matches[I].Address, I);
-          llvm::sort(FrozenCandidates);
-        }
-      }
       uint32_t ParentLength = 0;
       for (size_t I : Proposals)
         ParentLength = std::max(ParentLength, Modules[I].TotalLen);

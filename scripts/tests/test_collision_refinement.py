@@ -143,6 +143,63 @@ class CollisionRefinementTests(unittest.TestCase):
         self.assertIn("!caller :0000 first ^0001 original", (self.output / "runtime.npat").read_text())
         self.assertNotIn("!refs", (self.output / "runtime.npat").read_text())
 
+    def test_existing_required_clause_can_use_independently_sufficient_metadata(self):
+        body = "E8........FF15........C3 00 0000 000C"
+        line = body + " !refs :0000 first ^0001 original ^0007 __imp_First"
+        witness = line.replace("!refs", "!evidence")
+        rival = body + " !evidence :0000 second ^0001 different ^0007 __imp_Second"
+        result = self.run_refinement({"runtime.npat": line}, witness + "\n" + rival)
+        rows = [builder.parse_line(text) for text in
+                (self.output / "runtime.npat").read_text().splitlines()]
+        rows = [row for row in rows if row]
+        self.assertEqual(result["counts"], {"reduced": 1})
+        self.assertEqual([row.refs for row in rows if row.require_references],
+                         [((7, "__imp_First"),)])
+        self.assertEqual([row.refs for row in rows if row.require_caller],
+                         [((1, "original"), (7, "__imp_First"))])
+
+    def test_existing_required_clause_needs_its_own_complete_source_witness(self):
+        body = "E8........FF15........C3 00 0000 000C"
+        line = body + " !refs :0000 first ^0001 original ^0007 __imp_First"
+        witness = body + " !evidence :0000 first ^0001 original"
+        rival = body + " !evidence :0000 second ^0001 different ^0007 __imp_Second"
+        result = self.run_refinement({"runtime.npat": line}, witness + "\n" + rival)
+        self.assertEqual(result["counts"], {})
+        self.assertEqual((self.output / "runtime.npat").read_text(), line + "\n---\n")
+
+    def test_required_reduction_preserves_other_loaded_required_claims(self):
+        body = "E8........FF15........C3 00 0000 000C"
+        line = body + " !refs :0000 first ^0001 original ^0007 __imp_First"
+        other = body + " !refs :0000 second ^0001 different ^0007 __imp_First"
+        witness = line.replace("!refs", "!evidence")
+        rival = body + " !evidence :0000 third ^0001 original ^0007 __imp_Second"
+        self.run_refinement({"runtime.npat": line + "\n" + other}, witness + "\n" + rival)
+        rows = [builder.parse_line(text) for text in
+                (self.output / "runtime.npat").read_text().splitlines()]
+        first = [row for row in rows if row and row.names == (":0000 first",)
+                 and row.require_references]
+        self.assertEqual([row.refs for row in first],
+                         [((1, "original"), (7, "__imp_First"))])
+
+    def test_existing_required_clause_keeps_call_only_constraints(self):
+        body = "E8........E8........C3 00 0000 000B"
+        line = body + " !refs :0000 first ^0001 original ^0006 shared"
+        witness = line.replace("!refs", "!evidence")
+        rival = body + " !evidence :0000 second ^0001 different ^0006 shared"
+        result = self.run_refinement({"runtime.npat": line}, witness + "\n" + rival)
+        self.assertEqual(result["counts"], {})
+        self.assertEqual((self.output / "runtime.npat").read_text(), line + "\n---\n")
+
+    def test_required_reduction_retains_a_jointly_necessary_site(self):
+        body = "E8........FF15........C3 00 0000 000C"
+        line = body + " !refs :0000 first ^0001 original ^0007 __imp_First"
+        witness = line.replace("!refs", "!evidence")
+        rivals = body + " !evidence :0000 second ^0001 original ^0007 __imp_Second\n"
+        rivals += body + " !evidence :0000 third ^0001 different ^0007 __imp_First"
+        result = self.run_refinement({"runtime.npat": line}, witness + "\n" + rivals)
+        self.assertEqual(result["counts"], {})
+        self.assertEqual((self.output / "runtime.npat").read_text(), line + "\n---\n")
+
     def test_existing_required_claim_survives_distinct_source_references(self):
         line = "E8........C3 00 0000 0006 !refs :0000 first ^0001 original"
         source = "E8........C3 00 0000 0006 !evidence :0000 second ^0001 different"

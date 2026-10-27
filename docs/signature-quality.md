@@ -173,6 +173,19 @@ and supplement deduplication respects independently selected library packs.
 An ambiguous ordinary body does not cover an audited incoming-context record:
 the latter supplies the source ownership needed for a name-directed query.
 
+A long required-reference parent may also start an incoming chain when an
+independently settled ordinary callee supplies a complete, separate executable
+body. Like a short required root, it needs an unpruned source declaration;
+its selected required clause alone cannot establish omitted edges. All source
+variants must agree on the relevant sites. The ordinary callee is checked
+against the original frozen candidates, so a descendant cannot manufacture
+the evidence needed to support its ancestor. Missing or conflicting source
+records, weak or partial callees, overlapping bodies and changed bytes leave
+the child unresolved. This reuses the short-parent proof and name index. The
+initial settlement and frozen body checks share one sorted address index;
+missing names from that complete initial settlement do not trigger another
+settlement query.
+
 After the single frozen data pass, a newly confirmed data consumer may start
 a bounded incoming chain only with complete coverage and the ordinary
 fixed-byte floor. Its code references must still agree across every matching
@@ -341,7 +354,13 @@ Existing same-library byte cohorts remain intact across numbered parts only
 when their typed references also agree with the raw claim. A known name with
 different references or a claim in an independently selected library cannot
 hide a new counterexample. Existing required-reference records undergo the
-same audit; newly indistinguishable complete ones retain incoming queries.
+same audit; newly indistinguishable complete ones retain incoming queries. An existing
+mandatory clause can be reduced only when its exact names, bytes and typed
+references have a complete unpruned source witness, and the selected clause
+is an image-owned import/RTTI anchor that still distinguishes every covered
+counterclaim, including already loaded required claims. Existing call-only
+constraints remain unchanged. The full source declaration
+remains available for incoming queries; jointly necessary fields stay together.
 The refiner adds no names
 or aliases and preserves incoming queries and metadata constraints.
 When one member needs refinement, the whole loaded byte cohort is rechecked
