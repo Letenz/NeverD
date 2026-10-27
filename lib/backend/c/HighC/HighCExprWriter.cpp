@@ -4246,7 +4246,20 @@ const HighExpr *HighCWriter::floatBitsSource(const HighExpr &Bits,
 std::optional<std::string>
 HighCWriter::floatCallResultText(const HighExpr &Bits, const TypeRef &Float) {
   const HighExpr *Source = floatBitsSource(Bits, Float);
-  if (!Source || Source->Kind != ExprKind::Call)
+  if (!Source)
+    return std::nullopt;
+  // A stored call result may already be declared as float even though the
+  // IR still carries its register bits. Undoing those views reads the same
+  // local directly, without a float -> integer bits -> float round trip.
+  if (Source->Kind == ExprKind::Var || Source->Kind == ExprKind::Phi) {
+    const std::string Name = copyForwardName(varName(Source->Var));
+    if (const auto Declared = DeclaredCTypes.find(Name);
+        Declared != DeclaredCTypes.end() &&
+        equalSourceTypes(Declared->second, Float) &&
+        !DeferredUnknownFlags.count(Name))
+      return Name;
+  }
+  if (Source->Kind != ExprKind::Call)
     return std::nullopt;
   const TypeRef Return = knownCallReturnType(*Source);
   if (!Return || !equalSourceTypes(Return, Float))
@@ -8330,13 +8343,21 @@ bool HighCWriter::isIncomingParamReuseAssign(const HighStmt &Stmt) const {
   return true;
 }
 
+bool HighCWriter::exceptionClausesUseFunctionFrame() const {
+  return CurrentFunc && CurrentFunc->ExceptionMetadata &&
+         (CurrentFunc->ExceptionMetadata->Itanium ||
+          CurrentFunc->ExceptionMetadata->SEH);
+}
+
 bool HighCWriter::isCatchFuncletParentFrame(const MedVar &V) const {
-  if (!CurrentFunc || Opts.TheArch != Arch::X64)
+  if (!CurrentFunc || Opts.TheArch != Arch::X64 ||
+      exceptionClausesUseFunctionFrame())
     return false;
   if (V.Kind != MedVar::Param || V.Id != 1)
     return false;
   // Inside a catch body, rdx is always the establisher frame, even when the
-  // parent also has an rdx argument.
+  // parent also has an rdx argument. Itanium and SEH clauses were excluded
+  // above: their Param 1 is the printed function's own second argument.
   if (InEHClauseBody)
     return true;
   // Whole-function walks (local decls) do not set InEHClauseBody. A Param 1
@@ -8346,7 +8367,7 @@ bool HighCWriter::isCatchFuncletParentFrame(const MedVar &V) const {
 
 const HighExpr *
 HighCWriter::parentFrameStoredValue(const HighStmt &Stmt) const {
-  if (!InEHClauseBody)
+  if (!InEHClauseBody || exceptionClausesUseFunctionFrame())
     return nullptr;
   const HighExpr *Addr = nullptr;
   const HighExpr *Val = nullptr;
@@ -8839,7 +8860,8 @@ bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
     return HideEHRuntimeMemory && Space == NdMemoryAddressSpace::X86FS;
   };
   auto IsForeignFuncletParam = [&](const HighExpr &E) {
-    if (!InEHClauseBody || !CurrentFunc || !isParamCopy(E))
+    if (!InEHClauseBody || !CurrentFunc ||
+        exceptionClausesUseFunctionFrame() || !isParamCopy(E))
       return false;
     const HighExpr *Src = unwrapIntegerView(&E);
     if (!Src)

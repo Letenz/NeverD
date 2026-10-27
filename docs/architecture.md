@@ -4194,6 +4194,10 @@ ends the copy. A conditional cleanup that resumes the same exception is
 proved from the exception state at that branch's entry and ends with `throw;`.
 Its destructors and their order remain; an unrelated resume value or an
 observable use of the unwinder's state keeps the original pad explicit.
+HighC keeps the function's own parameters, pre-try locals and returned values
+in these clauses. They are not MSVC C++ funclets: a second parameter is not
+an establisher-frame pointer, a store before a return is not a hidden parent
+result, and a value defined outside the catch is still its return value.
 A complete duplicated cleanup continuation can fall through to its shared
 tail; matching only its last destructor would run intervening cleanups twice.
 A pad that only cleans up, which every call site reaching it enters with no
@@ -4203,8 +4207,20 @@ keeps the address of its call instruction (`HighExpr::CallSiteAddr`) when a
 tail is copied over a jump or into both arms of a branch, so the scopes hold
 exactly the covered calls and no other; a call that stands for the equal calls
 of two branches keeps none (`withMergedCallSites`). A call of no single
-instruction, a jump into a scope, or a covered call in a handler's code keeps
-the pad in place. In C, every landing pad of the
+instruction or a covered call in a handler's code keeps the pad in place.
+A jump between protected calls splits the cleanup scope; a compound statement
+can split into its children only when its own condition makes no protected
+call. A jump that still enters a scope keeps the original pad.
+
+Machine exception edges retain their complete LSDA instruction ranges,
+including epilogues and non-call faults. The C++ projection separately snapshots
+full-width stack and callee-saved register values at the covered calls. Indexed
+reaching definitions and the shared affine frame proof can recover a cleanup's
+local address even when the machine range also includes restoration of the
+caller's frame pointer. These facts replace only PHI values, only after every
+landing pad has a complete structured source body. Arbitrary saved register
+values and partially converted exception regions retain their unknowns.
+In C, every landing pad of the
 call-site table keeps its label, so a pad that only runs cleanups is not read
 as dead code after a return. A pad stores the exception object and selector
 the unwinder hands it: HighC prints a store of an unread call result as the
@@ -6509,6 +6525,16 @@ value is dead in every feasible context. Calls, loads, and stores keep their
 observable behavior; source labels survive removal. Adjacent byte slices of
 the same local are simplified in HighIR before this analysis, preserving their
 result type. This identity does not merge independent loads or calls.
+Repeated single-bit tests also share a fact: `x & 2` and `(x >> 1) & 1`
+observe the same original bit when their integer widths agree. Narrowing,
+promoted byte operands and sign-extension bits do not establish this identity.
+Dead-copy liveness can pass through an Itanium try whose handlers each consist
+of one nonreturning call. Every local observed by such a handler stays live
+for this analysis, including definitions inside the try. Locals read along
+out-of-line landing-pad paths receive the same protection because their
+unwinder entry is implicit. Returning or more complex handlers still require
+an exception flow proof; the method/export definite-assignment validator does
+not gain exception support from this liveness-only admission.
 Iterative HighIR cleanup treats an inline candidate as progress only after the
 shared stability proof admits it and a use is replaced. Expression simplification
 reports both replacements and in-place changes to shared nodes. With candidates
@@ -7031,12 +7057,28 @@ may still be a field. Only observed candidates are read under the existing
 callee-count and operation bounds; support bodies are not emitted. Conflicting
 shapes and explicit source or user declarations do not gain inferred fields.
 Integer fields occupy complete ABI words even when a caller reads a narrow view.
+Reading only X1 can nominate an X0/X1 pair, including across a split call block;
+it still needs the same callee proof. Return-field checks follow every ordinary
+predecessor through shared epilogues and loops. A single indexed SSA dependency
+closure rejects values derived from unspecified inputs, missing definitions or
+unbound call clobbers, rather than accepting an arithmetic copy of unknown bits.
 The image and current call-summary reads own cached conversions, so changing the
 selection or warming the cache cannot supply a missing second result. HighC
 externs retain the complete recovered call-result width, and source LLVM cannot
 replace that result with a cached scalar callee declaration. A wide assignment
 alone does not widen a scalar call. Omitted floating aggregates still require
 their separate HFA declaration contract.
+
+Floating return provenance survives transparent register views, selections and
+PHIs. Admission also checks the complete scalar width against the same defined
+low-byte analysis used for integer return widths. That analysis propagates lost
+bytes to a fixed point over indexed SSA users, including exceptional PHI entries
+and call-clobber preserved prefixes. Floating calls define only their declared
+scalar bytes, even in a wider physical vector carrier; PHI input order cannot
+choose a smaller candidate to bypass the required width. A provisional answer from a PHI cycle is
+never a cached proof for another return. Narrow incoming parameters define only
+their own bytes; a stale floating result on one path cannot replace a boolean
+computed on every path.
 
 `TargetRegInfo::floatingParamRegs(format)` owns the default ABI's floating
 argument bank. Entry recovery, outgoing call recovery, module propagation and
@@ -7073,6 +7115,25 @@ registers, widths and classes; an argument is a pointer only if every format
 says so. Missing predecessors, partial writes, clobbering calls and exceptional
 entries discard incoming facts. Bodies with additional independent roots keep
 block-local format analysis, including when read from the callee cache.
+On AArch64 ELF, the same format contract places promoted scalar arguments in
+the independent integer and floating banks through `placeSourceParameters`.
+Writable or unsupported formats supply no contract. Darwin and Windows retain
+their distinct variadic policies. Register-only argument searches cross checked
+indexed memory operations without relaxing stack-slot alias barriers, and DCE
+keeps their reaching definitions through multiple predecessor blocks.
+
+Scalar floating return inference follows declared call results through complete
+low-byte views and PHI joins. A final integer result still takes precedence;
+merely computing a floating temporary does not change the return bank. An
+AAPCS64 result object passed through X8 is an explicit output buffer in the
+source view and does not fabricate a returned X0. The shared source return
+contract also applies known runtime prototypes to definitions, and recognizes
+fully parsed Itanium construction/destruction names as void on generic x86 ELF
+and AArch64 ELF. ARM32 and Apple ARM64 keep their different machine contracts.
+The runtime no-return table includes Android bionic's `__libc_init`, whose
+[public startup declaration](https://android.googlesource.com/platform/bionic/+/main/libc/bionic/libc_init_common.h)
+never returns. Its similarly named initialization helpers remain ordinary
+calls; neither their prefix nor a void return type makes them terminal.
 
 Initial default x64 construction can also reconstruct a complete `LowFunc`
 from this inventory when the full metadata payload was retained. Machine
@@ -12371,6 +12432,16 @@ Synchronous catches sample their retained throwing calls, so nonvolatile values
 come from the actual call rather than a neighbouring reindexed block. Missing
 source effects or throwing calls fail the conversion explicitly.
 
+An x64 SEH handler root gives each nonvolatile register the one SSA version it
+has on entry to every protected block when no protected operation writes it,
+and an unknown value otherwise (`MedSSA`). A termination handler's `__except`
+arm thus keeps the RBP its prologue copied from RDX. HighC rebases `rdx + k`
+into the printed function's frame only in a clause body of a function without
+an SEH scope table or Itanium LSDA, where `attachCxxFuncletBodies` places catch
+and cleanup funclets. `exceptionClausesUseFunctionFrame` owns this distinction
+for parameter, return and stored-result rendering; SEH and Itanium clause
+bodies are the function's own code.
+
 Ordinary internal returns preserve both the callee PC and the parent entry PC. The same reaching-write proof checks both coordinates; writes into known allocated parent storage remain allowed.
 
 The LLVM emitter reuses completed default-budget frame-slot queries only within the current immutable MedFunc. Entry-SP requirements and complete value identity partition the answers. A bound query keeps its own default budget, so its answer is reused only for the same bindings in the same order. A shared-budget walk reads the budget only to stop, and fails once the budget is spent: a walk that needs N nodes repeats under any budget of at least N and runs out, spending all of it, under a smaller one. Complete walks replay with their answer, nodes and cache hits; a walk that ran out records only that it needs more than its budget, and replays its running out for any budget no larger. The answer and the remaining budget are always those of a fresh walk; a replayed run-out does not reproduce the cache-hit counter. Feasible-edge rebuilds and module emission clear all three caches, and a query spanning a rebuild cannot publish its result.
@@ -13368,7 +13439,7 @@ reservation explicitly excludes unsupported concurrent operations.
 
 `X86LegacyVectorMoveAudit` admits legacy MOVSS/MOVSD register and unsegmented memory forms through the same raw-prefix, opcode, ModRM/SIB and decoder-detail checks as packed moves. XMM operands remain 16 bytes while memory operands are exactly 4 or 8 bytes. The existing scalar move owners merge register sources and zero the remaining low-128-bit destination bytes on memory loads, preserving higher vector bits. Complete emitted spans bind the undefined-output receipt. This does not admit string MOVSD, VEX/EVEX forms, segmented memory or an opaque-state preservation contract.
 
-`SymState::storeConditional` optionally applies one STORE or atomic write phase without a nonalias contract. It constructs byte-equality conditions for current materialized bytes in other absolute or 64-bit symbolic banks; the actual bank uses ordinary overlap handling. Missing bytes retain the write's new unknown epochs, and historical facts are never imported. Complete plan validation and work charges precede conditional expression construction and the single store. Owner refusal leaves state unchanged. `SymExec::stepWithConditionalStore` uses this only for STORE and strictly admitted scalar CMPXCHG, retaining existing refusal havoc and publishing Old only after success. Other operations leave the policy Invalid. This does not prove access validity or initial alias consistency, or guarantee inexpensive downstream solving.
+`SymState::storeConditional` optionally applies one STORE or atomic write phase without a nonalias contract. It constructs byte-equality conditions for current materialized bytes in other absolute or 64-bit symbolic banks; the actual bank uses ordinary overlap handling. Missing bytes retain the write's new unknown epochs, and historical facts are never imported. Complete plan validation and work charges precede conditional expression construction and the single store. Owner refusal leaves state unchanged. `SymExec::stepWithConditionalStore` applies this write phase to STORE and strictly admitted scalar ADD, XCHG and CMPXCHG atomics. Preservation descriptors use the same admission. Inputs are captured before overlapping outputs change, and Old is published only after the write commits. Refusal retains conservative havoc; other operations leave the policy Invalid. This proves neither access validity nor initial alias consistency and adds no concurrency model.
 
 ## Analyst call-site source contracts
 
