@@ -851,6 +851,103 @@ TEST(HeaderLibrary, SupplementsPreservePrimaryDeclarationsAndRejectChangedABI) {
   EXPECT_FALSE(Primary.find("Holder")->Record->Defined);
 }
 
+TEST(HeaderLibrary, PrimaryAliasesExcludeSupplementalFunctionNames) {
+  for (DataModel Model :
+       {DataModel::ILP32, DataModel::LLP64, DataModel::LP64}) {
+    TypeLibrary Primary(Model);
+    TypeLibrary Supplement(Model);
+    ASSERT_TRUE(parseCTypes(R"(
+      typedef char Check[1];
+      typedef int Callback(void);
+      typedef struct Named { int Value; } Named;
+      struct Tagged { int Value; };
+      union UnionTag { int Value; };
+      enum EnumTag { Value = 1 };
+    )",
+                            Primary)
+                    .ok());
+    ASSERT_TRUE(parseCTypes(R"(
+      void Check(int *);
+      void Callback(int *);
+      void Named(int *);
+      void Tagged(void);
+      void UnionTag(void);
+      void EnumTag(void);
+      void Missing(void);
+    )",
+                            Supplement)
+                    .ok());
+    const auto Merge = mergeHeaderTypes(Primary, Supplement);
+    EXPECT_EQ(Merge.Types, 0u);
+    EXPECT_EQ(Merge.Prototypes, 4u);
+    EXPECT_TRUE(Merge.Conflicts.empty());
+    for (const char *Name : {"Check", "Callback", "Named"}) {
+      EXPECT_NE(Primary.find(Name), nullptr) << Name;
+      EXPECT_EQ(Primary.findPrototype(Name), nullptr) << Name;
+    }
+    for (const char *Name : {"Tagged", "UnionTag", "EnumTag", "Missing"})
+      EXPECT_NE(Primary.findPrototype(Name), nullptr) << Name;
+  }
+}
+
+TEST(HeaderLibrary, PrimaryFunctionsExcludeAliasesAndTheirRequiredNames) {
+  for (DataModel Model :
+       {DataModel::ILP32, DataModel::LLP64, DataModel::LP64}) {
+    TypeLibrary Primary(Model);
+    TypeLibrary Supplement(Model);
+    ASSERT_TRUE(parseCTypes(R"(
+      int Existing(void);
+      void Callback(void);
+      void Tagged(void);
+      void Plain(void);
+    )",
+                            Primary)
+                    .ok());
+    ASSERT_TRUE(parseCTypes(R"(
+      typedef int Existing;
+      typedef int Callback(int);
+      typedef Existing *Indirect;
+      typedef void Signature(Indirect);
+      struct Holder { Indirect *Link; };
+      typedef struct Tagged { int Value; } Tagged;
+      struct Plain { int Value; };
+      void Dangling(Indirect);
+      void Ref(Callback *);
+      void TakeHolder(struct Holder *);
+      void TakeTag(struct Tagged *);
+      void TakePlain(struct Plain *);
+    )",
+                            Supplement)
+                    .ok());
+    const auto Merge = mergeHeaderTypes(Primary, Supplement);
+    EXPECT_EQ(Merge.Types, 2u);
+    EXPECT_EQ(Merge.Prototypes, 3u);
+    EXPECT_EQ(Merge.Conflicts,
+              (std::vector<std::string>{"Existing", "Callback", "Indirect",
+                                        "Signature", "Holder"}));
+    for (const char *Name : {"Existing", "Callback", "Indirect", "Signature"})
+      EXPECT_EQ(Primary.find(Name), nullptr) << Name;
+    ASSERT_NE(Primary.findPrototype("Existing"), nullptr);
+    EXPECT_EQ(Primary.findPrototype("Existing")->Return->TheBuiltin,
+              Builtin::Int);
+    EXPECT_EQ(Primary.findPrototype("Dangling"), nullptr);
+    EXPECT_EQ(Primary.findPrototype("Ref"), nullptr);
+    ASSERT_NE(Primary.find("Holder"), nullptr);
+    EXPECT_FALSE(Primary.find("Holder")->Record->Defined);
+    ASSERT_NE(Primary.find("Tagged"), nullptr);
+    EXPECT_FALSE(Primary.find("Tagged")->TypedefNamed);
+    for (const char *Name : {"TakeHolder", "TakeTag", "TakePlain"})
+      EXPECT_NE(Primary.findPrototype(Name), nullptr) << Name;
+    RenderOptions Options;
+    Options.Prototypes = true;
+    Options.Spelling = BuiltinSpelling::Keywords;
+    TypeLibrary Again(Model);
+    ASSERT_TRUE(parseCTypes(renderTypes(Primary, {}, Options), Again).ok());
+    EXPECT_EQ(Again.find("Existing"), nullptr);
+    EXPECT_EQ(Again.prototypes().size(), Primary.prototypes().size());
+  }
+}
+
 TEST(HeaderLibrary, ExecutivePointerAliasesUseTheProgramsPDBRecords) {
   for (const auto Id :
        {HeaderLibrary::WindowsKernelX86, HeaderLibrary::WindowsKernelX64,

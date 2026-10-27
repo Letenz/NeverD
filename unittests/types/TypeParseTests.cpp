@@ -282,6 +282,59 @@ TEST(TypeParse, ReadsMicrosoftsSizedIntegersAsIDAWritesThem) {
   EXPECT_EQ(builtinOf(4), Builtin::ULongLong);
 }
 
+TEST(TypeParse, MicrosoftSizedByteKeepsPlainCharIdentity) {
+  // A same-width signed substitute conflicts with the native ARM64 volatile
+  // byte intrinsics and changes compatibility with plain-char pointers.
+  constexpr llvm::StringLiteral Source = R"(
+    __int8 Plain(const volatile __int8 *Value);
+    signed __int8 Signed(const volatile signed __int8 *Value);
+    unsigned __int8 Unsigned(const volatile unsigned __int8 *Value);
+    void Store(volatile __int8 *Where, __int8 Value);
+  )";
+  for (DataModel Model :
+       {DataModel::ILP32, DataModel::LLP64, DataModel::LP64}) {
+    const TypeLibrary Library = parsed(Source, {}, Model);
+    const auto Check = [](const TypeLibrary &Types) {
+      for (auto [Name, Expected] : {std::pair{"Plain", Builtin::Char},
+                                    {"Signed", Builtin::SChar},
+                                    {"Unsigned", Builtin::UChar}}) {
+        const FunctionDef *Function = Types.findPrototype(Name);
+        ASSERT_NE(Function, nullptr);
+        ASSERT_TRUE(Function->Return);
+        EXPECT_EQ(Function->Return->TheBuiltin, Expected) << Name;
+        ASSERT_EQ(Function->Params.size(), 1u);
+        const auto &Pointer = Function->Params.front().Type;
+        ASSERT_TRUE(Pointer);
+        ASSERT_EQ(Pointer->Kind, TypeExprKind::Pointer);
+        ASSERT_TRUE(Pointer->Element);
+        EXPECT_EQ(Pointer->Element->TheBuiltin, Expected) << Name;
+        EXPECT_TRUE(Pointer->Element->Const);
+        EXPECT_TRUE(Pointer->Element->Volatile);
+      }
+      const FunctionDef *Store = Types.findPrototype("Store");
+      ASSERT_NE(Store, nullptr);
+      ASSERT_EQ(Store->Params.size(), 2u);
+      const auto &Pointer = Store->Params[0].Type;
+      ASSERT_TRUE(Pointer && Pointer->Element);
+      EXPECT_EQ(Pointer->Element->TheBuiltin, Builtin::Char);
+      EXPECT_FALSE(Pointer->Element->Const);
+      EXPECT_TRUE(Pointer->Element->Volatile);
+      EXPECT_EQ(Store->Params[1].Type->TheBuiltin, Builtin::Char);
+    };
+    Check(Library);
+    for (BuiltinSpelling Spelling :
+         {BuiltinSpelling::Keywords, BuiltinSpelling::Windows,
+          BuiltinSpelling::Portable}) {
+      RenderOptions Options;
+      Options.Prototypes = true;
+      Options.Spelling = Spelling;
+      const TypeLibrary Again =
+          parsed(renderTypes(Library, {}, Options), {}, Model);
+      Check(Again);
+    }
+  }
+}
+
 TEST(TypeParse, KeepsPackingAndDeclaredAlignment) {
   const TypeLibrary Library = parsed(R"(
     #pragma pack(push, 1)

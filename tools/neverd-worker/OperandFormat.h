@@ -194,9 +194,10 @@ std::vector<bool> formattableOperands(std::string_view operands,
 std::vector<bool> structOperands(std::string_view operands,
                                  OperandDialect dialect);
 /// The number operand \p index of \p operands is, as written, a negative
-/// one with its sign; none when it is no plain number.
+/// one with its sign; none when it is no plain number of \p dialect.
 std::optional<std::int64_t> operandNumber(std::string_view operands,
-                                          std::size_t index);
+                                          std::size_t index,
+                                          OperandDialect dialect);
 
 /// Classify one identifier of operand text for \p dialect.
 bool isRegisterName(OperandDialect dialect, std::string_view name);

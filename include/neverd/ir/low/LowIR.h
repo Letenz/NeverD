@@ -1469,9 +1469,10 @@ struct LowFunc {
   uint64_t LiftedInstructionCount = 0;
   std::vector<va_t> DecodeFailureAddresses;
   std::vector<va_t> UnsupportedInstructionAddresses;
-  /// The subset of UnsupportedInstructionAddresses that are returns which may
-  /// pop a return address this function pushed itself, after a call into its
-  /// own body (see CFGBuilder::rewriteOwnInteriorCall).
+  /// The subset of UnsupportedInstructionAddresses with unproved physical
+  /// return-address ownership after a call into this function's own body.
+  /// Includes returns and tail transfers with an invalid parent stack or PC
+  /// (see CFGBuilder::rewriteOwnInteriorCall).
   std::vector<va_t> UnprovenReturnAddresses;
   std::vector<va_t> TruncatedPathAddresses;
 
