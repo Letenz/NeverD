@@ -155,6 +155,24 @@ std::string sidecarContents(std::string_view table, const Json &rows) {
 }
 using SidecarWrites =
     std::vector<std::pair<fs::path, std::shared_ptr<const std::string>>>;
+std::string patchSidecarText(const ProjectHistory::PatchRows &rows) {
+  std::size_t size = std::string_view("[]\n").size();
+  for (const auto &row : rows)
+    size += row->sidecarRow().size() + std::string_view(",\n").size();
+  std::string text;
+  text.reserve(size);
+  text += '[';
+  bool first = true;
+  for (const auto &row : rows) {
+    text += first ? "\n" : ",\n";
+    first = false;
+    text += row->sidecarRow();
+  }
+  if (!rows.empty())
+    text += '\n';
+  text += "]\n";
+  return text;
+}
 // Encode once before publishing the journal. Validate every table's write
 // budget, including unchanged ones, so recovery can still materialize it.
 template <typename State>
@@ -164,7 +182,9 @@ SidecarWrites prepareSidecars(const fs::path &binary, const State &state,
   SidecarWrites writes;
 #define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
   {                                                                            \
-    auto text = encoded && !ordered(Table)                                     \
+    auto text = encoded && std::string_view(Table) == "patches"                \
+                    ? patchSidecarText(state.Patches)                          \
+                : encoded && !ordered(Table)                                   \
                     ? formatSidecarText(encoded->table(Table))                 \
                     : sidecarContents(Table, state.at(Table));                 \
     if (text.size() >                                                          \
@@ -574,6 +594,24 @@ const std::string &ProjectHistory::PatchRow::encoded() const {
   if (text_.empty())
     text_ = compactText(value_);
   return text_;
+}
+
+std::string_view ProjectHistory::PatchRow::sidecarRow() const {
+  if (sidecarText_.empty()) {
+    // Format a one-row array with the existing layout authority, then expose
+    // only the row. This retains nested indentation, scalar spelling and
+    // LLVM-compatible control escapes without a second sidecar formatter.
+    std::string array;
+    array.reserve(encoded().size() + std::string_view("[]").size());
+    array += '[';
+    array += encoded();
+    array += ']';
+    sidecarText_ = formatSidecarText(array);
+  }
+  constexpr std::string_view Prefix = "[\n", Suffix = "\n]\n";
+  return std::string_view(sidecarText_)
+      .substr(Prefix.size(),
+              sidecarText_.size() - Prefix.size() - Suffix.size());
 }
 
 std::shared_ptr<const ProjectHistory::PatchRow>

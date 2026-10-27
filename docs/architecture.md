@@ -1214,7 +1214,12 @@ Ordinary reloads still compare before and after.
 The SDK's versioned byte-patch snapshot copies canonical rows and raw bytes into
 independent owned storage. The worker compares these rows with independently
 owned, admitted history rows and shares unchanged row handles and their strict
-encodings. Only changed rows build a new DOM. Reuse requires the complete
+encodings. Each row also memoizes its sidecar layout through the existing
+formatter; publication joins these row spans and still checks the complete
+file's byte budget before any write. These derived strings belong only to the
+row and retire with it. Comparing the admitted strings borrows their storage
+instead of constructing temporary JSON values. Only changed rows build a new
+DOM. Reuse requires the complete
 canonical seven-field representation, including numeric types and hex spelling;
 unknown fields cannot survive the adapter's canonical projection.
 It resolves acquisition and release together and retains JSON compatibility with
