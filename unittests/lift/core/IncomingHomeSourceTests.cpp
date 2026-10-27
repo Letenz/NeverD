@@ -21,6 +21,7 @@
 #include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
 #include "neverd/ir/low/SourceFrameAnalysis.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -1042,6 +1043,10 @@ TEST(IncomingHomeSource, StackInitializationRequiresAbsenceOfAllObservers) {
                    static_cast<unsigned>(Intrinsic::X86FPArithMemoryState), 2),
                MedVar::makeConst(0x2000, 8), MedVar::makeConst(24, 1),
                MedVar::makeConst(0, 8), Temp}));
+        const auto &State = Block.Ops.back();
+        ASSERT_TRUE(x86FPStateShapeIsValid(
+            static_cast<Intrinsic>(State.Inputs[0].ConstVal),
+            x86FPStateMedShape(State, Architecture)));
       } else if (Case == Observation::Store)
         Block.Ops.push_back(
             Op(NdOp::STORE, {}, {MedVar::makeConst(0x2000, 8), Stack}));
