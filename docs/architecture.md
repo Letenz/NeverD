@@ -6194,6 +6194,11 @@ are opaque leaves. Width and polarity remain explicit, including narrow sign
 bits. Memoized queries, depth limits and a shared work budget bound the rewrite;
 an incomplete query establishes no replacement. This source-only normalization
 does not infer memory values, resolve calls or add recovery evidence.
+The same bit proof projects narrow integer slices through wider producers,
+including binary80 payloads. Unread enclosing register bits disappear before
+the C writer evaluates an unknown value; a demanded unknown bit remains
+explicit. This does not remove freeze or poison promises, discard full-word
+observers or enlarge the proof's work and depth allowances.
 Return-only joins select their PHI operands on the original incoming edges in
 that clone. The writer can then print an edge-owned `return` directly, avoiding
 a shared status temporary and jump label. This bounded normalization duplicates
@@ -7551,6 +7556,21 @@ routes share authenticated assembly and atomic status sampling. This contract
 does not introduce another stack representation or qualify runtime TOP changes.
 
 For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X86/X87Context.h` owns encoding admission and `CFGBuilderX86Fpu` owns a function-local mutable context. It carries CW, SW, runtime TOP, abridged tags and all eight raw binary80 payloads. Entry and independent roots capture incoming state; ordinary edges publish before a root recaptures. Calls and extended-state save/restore export and refresh the context, including wrappers without local x87 instructions. Entry backedges keep their existing context. LLVM, HighC and LLVMC share this contract; HighC uses named helpers and fixed aligned storage. MMX bridges physical aliases; EMMS empties tags. The same selector contract admits FEMMS and marks its payload invalidation: concrete execution forgets every retained payload, while native context steps retain the original instruction. Context restore/step constraints declare both the MMX and x87 register banks. Concrete execution requires authenticated state and memory, refuses unknown effects, and admits implementation-dependent results only in explicit native reference mode. The static TOP/tag proofs described above remain the projection for x86-32 and for System V x64, whose long double parameters and st0 results stay typed values; `x87ContextOwnsStack` chooses the model per image and `BinaryImage::X87ContextOverride` selects either one explicitly. These x64 regressions do not certify every CPU, instruction, fault priority or source-level floating return ABI.
+
+Context ownership is an existence proof over the callees. One definite
+context use remains required when a sibling call is unresolved or recursive;
+those unresolved edges alone cannot prove ownership or a net TOP effect.
+The bounded search stops once it finds a definite use. Without such a witness,
+incomplete traversal remains unknown. Default-function cache admission uses
+this same owner, so a raw cached wrapper cannot bypass context normalization.
+
+Omitted-callee signature reads use `CFGBuilder::buildCallSignatureProof`.
+A Win64 wrapper without local x87/MMX use can keep its decoded integer/XMM
+values for that read without expanding a descendant's context ownership.
+Local state observers retain full normalization, as do other ABIs with typed
+ST0 returns. The local-use predicate is shared with termination proofs.
+This reduced projection supplies signature evidence only; emitted definitions
+still require the ordinary context transport.
 
 The owned context also carries all 24 3DNow operations. `X86ThreeDNow.def`
 owns their suffix, source dependencies and enhanced-feature requirements;
