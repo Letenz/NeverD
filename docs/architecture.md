@@ -11135,11 +11135,12 @@ to fold into mode-bit checks. The inline and external definitions share one
 body and retain the existing mode policy. These optimizations reside in the
 Capstone `next` fork and are selected through the submodule revision.
 
-ARM, AArch64, RISC-V, LoongArch, SPARC, PowerPC and MIPS derive direct C
-branches from the same generated decoder tables. The lowering preserves
+ARM, AArch64, RISC-V, LoongArch, SPARC, PowerPC, MIPS and SystemZ derive
+direct C branches from the same generated decoder tables. The lowering preserves
 predicate order, operand callbacks, soft failures and incomplete-decode
 rollback. Encoded widths remain separate from helper input widths, including
-PowerPC prefixed instructions and NanoMIPS 48-bit words. MIPS register-list
+PowerPC prefixed instructions, NanoMIPS 48-bit words and SystemZ's shared
+64-bit helper input for its 16-, 32- and 48-bit encodings. MIPS register-list
 metadata maps expanded operands back to the list, base and displacement
 descriptors; signed MicroMIPS offsets are scaled without negative shifts.
 
