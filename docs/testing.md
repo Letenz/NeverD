@@ -15071,6 +15071,20 @@ The worker mock intentionally omits snapshot exports to
 exercise JSON fallback; run the native patch suite with both current and older
 SDKs when changing this optional transport.
 
+`NeverDWorkerHistory` compares shared patch publication with independent complete
+JSON and sidecar byte oracles. It checks ownership after caller mutation, retained
+checkpoint references, retirement of obsolete row generations, reordered and
+duplicate handles, generic/patch-only interleaving, unknown fields and signed-zero
+encoding. Patch-only commits cover every writer boundary before and after file
+replacement, same-session retry, reopened recovery, recovery followed by a newer
+request, equivalent foreign formatting, timestamp/size collisions, strict invalid
+values and full history/journal budgets. Keep full post-commit reloads inside
+commit/undo/redo timings and include first edit plus peak RSS when evaluating
+shared state; row-construction timings alone do not establish the benefit.
+Run the real SDK patch/replica path under ASan as well as the JSON-only mock:
+analysis-section metadata returned by the SDK must remain owned while its
+`sections` subarray is traversed during snapshot construction.
+
 `tools/neverd-bench/patch-paired.py --worker-history` compares complete CLI
 commands and durable worker commit/undo/redo against two explicit binary
 snapshots. `tools/neverd-bench/patch-payload.py` covers a large merged row, with

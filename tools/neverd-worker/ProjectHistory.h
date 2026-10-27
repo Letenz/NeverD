@@ -1,9 +1,25 @@
-#pragma once
+//===- ProjectHistory.h - Durable worker edit history --------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Immutable committed user state and journaled publication.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_TOOLS_NEVERD_WORKER_PROJECTHISTORY_H
+#define NEVERD_TOOLS_NEVERD_WORKER_PROJECTHISTORY_H
+
 #include "Protocol.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -16,11 +32,32 @@ using AtomicWriter = void (*)(const std::filesystem::path &,
 // pointers enter the store; recovery only replaces known user sidecar files.
 class ProjectHistory {
 public:
+  /// An independently owned, admitted row. Handles never retain an entire
+  /// previous snapshot or borrow the SDK's storage. Encoding is memoized on
+  /// the owning worker thread, as for immutable history commands.
+  class PatchRow {
+  public:
+    const Json &value() const { return value_; }
+    std::uint64_t address() const { return address_; }
+    const std::string &encoded() const;
+
+  private:
+    friend class ProjectHistory;
+    explicit PatchRow(Json normalized);
+    Json value_;
+    std::uint64_t address_;
+    mutable std::string text_;
+  };
+  using PatchRows = std::vector<std::shared_ptr<const PatchRow>>;
+  static std::shared_ptr<const PatchRow> patchRow(Json row);
+
   ProjectHistory(std::filesystem::path binary, std::string sourceHash,
                  std::string engineVersion, bool readOnly, AtomicWriter writer);
   static bool recoveryPending(const std::filesystem::path &binary);
   bool recovered() const { return recovered_; }
   const Json &committedState() const;
+  const Json &committedTable(const std::string &name) const;
+  const PatchRows &committedPatches() const;
   Json listing(std::size_t offset, std::size_t limit) const;
   /// Navigation/logging uses a patch row's virtual address, not its file key.
   static std::uint64_t displayAddress(const Json &command);
@@ -32,6 +69,9 @@ public:
   Json next(bool redo) const;
   void advance(bool redo);
   void persist(Json state);
+  /// Reuse admitted rows, retaining all other tables. Sequence ordering,
+  /// uniqueness, file checks and transaction budgets still apply.
+  void persistPatches(PatchRows rows);
   /// Called after each persist commits the project's files.
   void onCommit(std::function<void()> hook) { committed_ = std::move(hook); }
   void reset();
@@ -62,6 +102,7 @@ private:
   struct Command;
   std::vector<std::shared_ptr<const Command>> commands_;
   struct Snapshot;
+  struct State;
   // Copies used for rollback share only immutable, validated committed data.
   std::shared_ptr<const Snapshot> snapshot_;
   /// A journal this live history published before a failed sidecar write.
@@ -73,5 +114,8 @@ private:
   std::size_t commandTextSize() const;
   std::string document(std::string_view encodedState) const;
   void recover();
+  void persist(Json state, std::optional<PatchRows> patches);
 };
 } // namespace neverd::worker
+
+#endif // NEVERD_TOOLS_NEVERD_WORKER_PROJECTHISTORY_H
