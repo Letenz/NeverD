@@ -230,7 +230,7 @@ def read_pairs(kind: str, path: Path, inputs: list[Path]) -> list[tuple[int, int
         return read_diaphora_native(path, inputs)
     if kind == "neverd":
         report = load(path)
-        require(report["schema"] == "neverd.bindiff" and report["schema_version"] == 3,
+        require(report["schema"] == "neverd.bindiff" and report["schema_version"] in (3, 4),
                 "unsupported NeverD report schema")
         require(report["state"] == "complete", "NeverD comparison did not complete")
         for side, source in zip(("primary", "secondary"), inputs):
@@ -535,7 +535,11 @@ def run_neverd(args: argparse.Namespace) -> int:
     output.mkdir(parents=True, exist_ok=False)
     env = dict(os.environ, LD_LIBRARY_PATH=str(library.parent), NEVERD_THREADS=str(args.threads),
                DEBUGINFOD_URLS="")
-    version = subprocess.check_output([str(executable), "--version"], env=env, text=True, stderr=subprocess.STDOUT).strip()
+    version_stage = external.stage(output, "version", [str(executable), "--version"], env, args.timeout)
+    require(version_stage["error"] is None and version_stage["exit"] == 0,
+            "runtime version probe failed; see version.json")
+    version = (output / "version.log").read_text(encoding="utf-8").strip()
+    require(bool(version), "runtime version probe returned no version")
     runtime_files = (executable, library, Path(__file__).resolve(),
                      Path(binexport.__file__).resolve(), Path(external.__file__).resolve())
     runtime = [artifact(path, output) for path in runtime_files]
@@ -567,7 +571,8 @@ def run_neverd(args: argparse.Namespace) -> int:
         run = {"schema": RUN_SCHEMA, "case": case["id"], "format": "neverd", "track": "end-to-end",
                "runner_sha256": EVALUATOR_SHA256,
                "tool": {"name": "NeverD", "version": version}, "input_sha256": [item["sha256"] for item in (case["primary"], case["secondary"])],
-               "command": command, "configuration": {"threads": args.threads}, "exit": exit_code,
+               "command": command, "configuration": {"threads": args.threads,
+                                                        "stage_timeout_seconds": args.timeout}, "exit": exit_code,
                "wall_seconds": outcome["wall_seconds"], "resources": outcome["resources"],
                "completed": completed, "completion_scope": "function-mapping",
                "native_coverage": native.get("coverage") if native else None,

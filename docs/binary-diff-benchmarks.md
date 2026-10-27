@@ -187,7 +187,7 @@ python3 scripts/benchmark_binary_diff.py evaluate \
 
 | Format | Scored associations | Input binding |
 | --- | --- | --- |
-| `neverd` | `matches` in a complete `neverd.bindiff` schema 3 report | Native ordered SHA-256 plus receipt |
+| `neverd` | `matches` in a complete `neverd.bindiff` schema 3 or 4 report | Native ordered SHA-256 plus receipt |
 | `bindiff` | SQLite `function` rows; orientation comes from `metadata.file1/file2` | Native SHA-1 or SHA-256 plus receipt SHA-256 |
 | `diaphora-native` | Completed match receipt referencing SQLite `best`/`partial` rows and both exports | Native IDA SHA-256, native export MD5, ordered result configuration and retained export/result hashes |
 | `diaphora` | SQLite `results` rows in `best` or `partial`; hex addresses | Receipt; retained export databases belong in its artifacts |
@@ -290,6 +290,65 @@ not later edits to their source files. Preserve failed receipts when correcting
 an adapter; a new evaluation must bind the original native result, all original
 evidence and the new frozen evaluator. Completing native analysis, recovering
 valid scoring and passing a quality gate are distinct outcomes.
+
+## Freeze and check a numeric qualification
+
+[`benchmark_binary_diff_qualification.py`](../scripts/benchmark_binary_diff_qualification.py)
+binds a protocol, partial-truth corpus, candidate executable/library and harness
+before the run's output directory exists. Freeze the complete scripts directory
+before invoking it. The protocol uses schema
+`neverd.benchmark.diff.heldout-protocol.v1`, `track: end-to-end`, a written `scope`,
+the exact ordered `case_ids`, and these explicit gates and runtime settings:
+
+```json
+{
+  "gates": {
+    "minimum_labelled_pairs_per_case": 100,
+    "minimum_conditional_precision_per_case": 0.995,
+    "minimum_truth_recall_per_case": 0.9,
+    "minimum_macro_f1": 0.95,
+    "maximum_receipt_failures": 0,
+    "maximum_timeouts": 0
+  },
+  "runtime": {"threads": 1, "stage_timeout_seconds": 1200}
+}
+```
+
+Select the gates before inspecting qualification outcomes; the example is not
+a universal product-quality requirement. The current profile requires zero
+receipt failures and timeouts. It rejects missing/unknown gates, changed case
+inventories and undefined precision. The plan preserves hashes, not authenticated
+timestamps or proof that the dataset was never previously used for tuning.
+
+```bash
+python3 scripts/benchmark_binary_diff_qualification.py freeze \
+  --protocol benchmark-results/protocol.json \
+  --corpus benchmark-results/heldout/manifest.json \
+  --neverd /path/to/frozen/neverd --library /path/to/frozen/libneverd.so \
+  --plan benchmark-results/qualification-plan.json \
+  --output-dir benchmark-results/qualification-run
+python3 scripts/benchmark_binary_diff_qualification.py run \
+  --plan benchmark-results/qualification-plan.json
+python3 scripts/benchmark_binary_diff_qualification.py evaluate \
+  --plan benchmark-results/qualification-plan.json \
+  --output benchmark-results/qualification-replay.json
+```
+
+Every frozen case is reevaluated from its native report and input-bound run
+receipt. Missing, failed or timed-out cases remain failures and contribute zero
+to the macro-F1 numerator; they cannot disappear from its denominator. Aggregate
+score files cannot replace native evidence. The runtime version probe uses the
+same stage deadline and retains its receipt, including startup failures. Replay
+checks both stages against the frozen deadline. The deadline bounds the process
+wait; measured wall time also includes process startup, polling and cleanup.
+The output retains individual
+metrics, unscored denominators, failed receipts, macro F1 and the gates. Exit 0
+means those declared gates passed, 1 means qualification failed, 2 means the
+plan or invocation could not be admitted, and 130 means interruption. Replays
+write a new file. Existing plans, runs and evaluations are never overwritten.
+Passing covers only the written partial function-mapping scope; other advanced
+capabilities, unlabelled functions and competitive/statistical claims need their
+own evidence.
 
 ## Truth and metrics
 

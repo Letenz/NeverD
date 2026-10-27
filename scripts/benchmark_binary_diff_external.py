@@ -20,7 +20,8 @@ DEFAULT_STAGE_TIMEOUT_SECONDS = 600.0
 def stage(folder: Path, name: str, command: list[str], env: dict,
           timeout: float) -> dict:
     start = time.monotonic()
-    record = {"command": command, "exit": None, "error": None, "resources": None}
+    record = {"command": command, "exit": None, "error": None, "resources": None,
+              "timeout_seconds": timeout}
     timer = Path("/usr/bin/time")
     resource_path = folder / (name + ".resources")
     measured_command = command
