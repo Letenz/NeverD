@@ -549,16 +549,20 @@ void LowToMedConverter::eliminateFlags(MedFunc &Func) {
   // locally while a successor block still consumes it.  Computed once up front
   // (conservative: never removes a use, so it can only keep extra defs alive).
   UseBlockMap UseBlocks;
-  for (int B = 0; B < static_cast<int>(Func.Blocks.size()); ++B) {
-    for (auto &Op : Func.Blocks[B].Ops)
-      for (uint8_t K = 0; K < Op.NumInputs; ++K)
-        UseBlocks[Op.Inputs[K].display()].insert(B);
-    // A PHI reads each argument on its predecessor edge. Record the owning
-    // successor as a distinct use block so simplifying a predecessor branch
-    // cannot delete the flag definition before that edge copy consumes it.
-    for (const auto &Phi : Func.Blocks[B].Phis)
-      for (const auto &Argument : Phi.Args)
-        UseBlocks[Argument.second.display()].insert(B);
+  // A single block has no cross-block readers, even with a self-loop.
+  // markFlagChainDead still checks its remaining operation uses.
+  if (Func.Blocks.size() > 1) {
+    for (int B = 0; B < static_cast<int>(Func.Blocks.size()); ++B) {
+      for (auto &Op : Func.Blocks[B].Ops)
+        for (uint8_t K = 0; K < Op.NumInputs; ++K)
+          UseBlocks[Op.Inputs[K].display()].insert(B);
+      // A PHI reads each argument on its predecessor edge. Record the owning
+      // successor as a distinct use block so simplifying a predecessor branch
+      // cannot delete the flag definition before that edge copy consumes it.
+      for (const auto &Phi : Func.Blocks[B].Phis)
+        for (const auto &Argument : Phi.Args)
+          UseBlocks[Argument.second.display()].insert(B);
+    }
   }
 
   for (int BlkIdx = 0; BlkIdx < static_cast<int>(Func.Blocks.size());
