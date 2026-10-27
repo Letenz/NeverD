@@ -2799,6 +2799,20 @@ prebuilt-LLVM guidance.
 
 ## Structural binary comparison
 
+Long native instruction-alignment regressions reproduce a 6,001-instruction
+body with 72 inserted instructions beyond the old dense-table threshold, in
+both directions. An independent forward edit-cost oracle checks large repeated
+and highly unequal inputs against the weighted divide-and-conquer result.
+A 100,000-instruction fixture retains all 99,990 unchanged instructions across
+ten constant edits, including full-width hash values that some integer hash
+containers reserve internally. Cancellation/deadline checks publish no partial rows
+or block annotations. Saved long-function measurements roundtrip and stale
+measurements fail transactionally. These checks concern weighted structural
+alignment, not semantic equivalence or unique instruction correspondence.
+A separate matching fixture places the real changed pair below four misleading
+sketch candidates on both sides. An allowance of four leaves it undecided;
+allowances of six, sixteen and 256 recover it while retaining ambiguous decoys.
+
 Saved-decision regressions reject an accepted pair that contradicts the final
 effective Unmatch in all historical completion states. A reverse-history oracle
 checks every five-event sequence over two pairs; remap, rejection clearing,

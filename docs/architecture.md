@@ -1649,6 +1649,14 @@ CFG views. Its stop state is separate from native body coverage; cancelled or
 timed-out deltas do not acquire unchanged rows or block annotations. The worker
 owns the advertised cooperative-operation list consumed by the GUI. Explicit
 refresh retries a stopped query; paging itself does not restart it.
+`lib/diff/FunctionDelta` owns the weighted native instruction alignment used by
+matching, measurements, pages and saved-evidence verification. Large ranges use
+Hirschberg decomposition of the same 4/3/2 recurrence as bounded dense leaves.
+Maximum-weight common ends and a multiset upper-bound check admit only optimal
+fast paths; no adapter supplies an alternate greedy alignment. Frontier storage
+is released before recursion, and shared cancellation/deadline checks discard
+partial delta rows. Matcher revisions identify changed measurements without
+weakening saved-evidence verification.
 `ComparisonSource` adapts the ordinary selected-function source page API to the
 comparison's exclusively owned input sessions. It reuses their loader, analysis
 settings, dialect admission, emitter cache and canonical instruction provenance.
