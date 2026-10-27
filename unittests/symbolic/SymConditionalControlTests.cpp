@@ -73,6 +73,52 @@ TEST(SymConditionalControls, ArithmeticTagsRecoverThePredicate) {
   }
 }
 
+TEST(SymConditionalControls, LiteralXorEqualityUsesTheDecodedConstant) {
+  for (unsigned Width : {1u, 3u, 8u, 32u, 64u, 65u, 128u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+    auto Key = C.mkConst(Width, 0x093f959e2fcf0961);
+    auto Tag = C.mkConst(Width, 0x4329f7b47e4d590c);
+    for (auto Word : {X, C.mkXor(X, Y)}) {
+      auto Encoded = C.mkXor(Word, Key);
+      auto Root = C.mkEq(Encoded, Tag);
+      auto Decoded = C.mkXor(Key, Tag);
+      auto Want = Width == 1 ? (C.isConstZero(Decoded) ? C.mkNot(Word) : Word)
+                             : C.mkEq(Word, Decoded);
+      for (bool Negated : {false, true}) {
+        auto Input = Negated ? C.mkNot(Root) : Root;
+        auto Result = simplifyMBADeep(C, Input);
+        EXPECT_EQ(Result.Expr, Negated ? C.mkNot(Want) : Want)
+            << C.toString(Result.Expr);
+        for (unsigned I = 0; I != 256; ++I) {
+          llvm::APInt A(Width, I), B(Width, I * 37);
+          if (I & 128)
+            A.flipAllBits();
+          auto Value = Word == X ? A : A ^ B;
+          const bool Match = (Value ^ C.constValue(Key)) == C.constValue(Tag);
+          EXPECT_EQ(C.eval(Result.Expr, {A, B}),
+                    llvm::APInt(1, Negated ? !Match : Match));
+        }
+      }
+    }
+  }
+}
+
+TEST(SymConditionalControls, MaskedEqualityIsNotAnInvertibleXor) {
+  SymContext C;
+  auto X = C.mkVar("x", 8);
+  auto Mask = C.mkConst(8, 0x35), Tag = C.mkConst(8, 0x10);
+  for (auto Word : {C.mkAnd(X, Mask), C.mkOr(X, Mask)}) {
+    auto Root = C.mkEq(Word, Tag);
+    auto Result = simplifyMBADeep(C, Root);
+    for (unsigned Input = 0; Input != 256; ++Input) {
+      const auto Value = C.op(Word) == SymOp::And ? Input & 0x35 : Input | 0x35;
+      EXPECT_EQ(C.evalU64(Result.Expr, {Input}), uint64_t(Value == 0x10));
+    }
+  }
+}
+
 TEST(SymConditionalControls, PartialBudgetsMatchAnIndependentTruthTable) {
   SymContext C;
   auto P = C.mkVar("p", 1), Q = C.mkVar("q", 1);
