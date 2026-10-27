@@ -937,11 +937,14 @@ assertions vacuous. PHI copies retain the explicit unknown marker.
 `X86ImplicitAtomic.*` in `NeverDX86APXAtomicSemanticTests` checks memory XCHG
 widths, explicit/implicit locking, segments, register aliases, flags and
 commit-after-write behavior. The pointer projection suite's
-`MemoryExchangeReturnsItsSnapshotThroughBothRoutes` runs both C routes at
+`MemoryExchangeReturnsItsSnapshotThroughBothRoutes` and
+`MemoryAdditionReturnsItsSnapshotThroughBothRoutes` run both C routes at
 O0/O2 with UBSan, checking old values and every neighboring byte at aligned
 and unaligned offsets for all four x64 widths. `LLVMCIntrinsicSemantics.NativeExchange*`
-also compiles FS/GS forms, executes live/dead results and rejects changed
-owned assembly/type/effect contracts before normalization. These checks
+and `NativeAddition*` also compile FS/GS forms, execute live/dead results
+through original LLVM IR and emitted C, and reject changed owned
+assembly/type/effect contracts before normalization. The host must be x64;
+segment-relative forms are compiled without accessing host TLS. These checks
 exercise completion and source projection, not contention or hardware faults.
 `AtomicUpdatesKeepProgramOrderAcrossObservers` covers all ten emitted integer
 LLVM RMW operations with dead, single-use and repeated results, checking the
