@@ -12,7 +12,6 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
-#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/Support/raw_ostream.h"
@@ -25,8 +24,8 @@
 namespace {
 using namespace neverd;
 
-std::string source(std::initializer_list<uint32_t> Words, BinaryFormat Format,
-                   Arch OutputArchitecture = Arch::AArch64) {
+MedFunc decodedFunction(std::initializer_list<uint32_t> Words,
+                        BinaryFormat Format) {
   BinaryImage Image;
   Image.Arch = Arch::AArch64;
   Image.Format = Format;
@@ -50,7 +49,13 @@ std::string source(std::initializer_list<uint32_t> Words, BinaryFormat Format,
   Converter.setBinaryImage(&Image);
   auto Med = Converter.convert(Low, Image.Arch, Format);
   markSourceStackAccesses(Med, Image.Arch, Format);
-  auto High = MedToHighConverter().convert(Med, Image.Arch);
+  return Med;
+}
+
+std::string source(std::initializer_list<uint32_t> Words, BinaryFormat Format,
+                   Arch OutputArchitecture = Arch::AArch64) {
+  const auto Med = decodedFunction(Words, Format);
+  auto High = MedToHighConverter().convert(Med, Arch::AArch64);
   CEmitterOptions Options;
   Options.TheArch = OutputArchitecture;
   Options.Format = Format;
@@ -114,38 +119,20 @@ TEST(AArch64ReturnProtection, OtherTargetsCannotDiscardThePolicy) {
 }
 
 TEST(AArch64ReturnProtection, MalformedRecipesCannotDisappearBeforeValidation) {
-  MedFunc Function;
-  Function.Entry = 0x1000;
-  Function.Blocks.emplace_back();
-  MedVar LR;
-  LR.Kind = MedVar::Reg;
-  LR.TheArch = Arch::AArch64;
-  LR.Id = 1;
-  LR.RegOff = a64reg::X30;
-  LR.Size = 8;
-  MedVar SP = LR;
-  SP.Id = 2;
-  SP.RegOff = a64reg::SP;
-  MedOp Sign;
-  Sign.Opcode = NdOp::INTRINSIC;
-  Sign.Output = LR;
-  Sign.Output.SSAVer = 1;
-  Sign.addInput(MedVar::makeConst(static_cast<uint64_t>(Intrinsic::Pacia), 8));
-  Sign.addInput(LR);
-  Sign.addInput(SP);
-  MedOp Auth = Sign;
-  Auth.Output.SSAVer = 2;
-  Auth.Inputs[0].ConstVal = static_cast<uint64_t>(Intrinsic::Autia);
-  Auth.Inputs[1] = Sign.Output;
-  MedOp Return;
-  Return.Opcode = NdOp::RETURN;
-  Return.addInput(Auth.Output);
-  Function.Blocks.front().Ops = {Sign, Auth, Return};
+  // Use the owning lowering path for register identities and entry seeds.
+  // paciasp; autiasp; ret.
+  const auto Function =
+      decodedFunction({0xd503233f, 0xd50323bf, 0xd65f03c0}, BinaryFormat::ELF);
   ASSERT_TRUE(findAArch64ReturnProtection(Function, BinaryFormat::ELF));
-  for (size_t Index : {0u, 1u}) {
+  unsigned Checked = 0;
+  for (size_t Index = 0; Index < Function.Blocks.front().Ops.size(); ++Index) {
+    if (Function.Blocks.front().Ops[Index].Opcode != NdOp::INTRINSIC)
+      continue;
     auto Broken = Function;
     Broken.Blocks.front().Ops[Index].Inputs[2].Size = 4;
     EXPECT_FALSE(findAArch64ReturnProtection(Broken, BinaryFormat::ELF));
+    ++Checked;
   }
+  EXPECT_EQ(Checked, 2u);
 }
 } // namespace

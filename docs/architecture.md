@@ -515,9 +515,11 @@ express it with `target("branch-protection=pac-ret[+leaf][+b-key]")`; HighIR
 dumps and the Rust/Go views retain the policy as metadata. A different output
 architecture cannot silently drop it. Native Swift emission rejects this
 attribute until Swift has a corresponding source contract. Ordinary pointer
-authentication, observable signed values, mismatched modifiers/keys and incomplete recipes
-remain explicit. LowIR, MedIR and the LLVM execution projection retain the
-original authentication operations.
+authentication, observable signed values, mismatched modifiers/keys and
+incomplete recipes remain explicit. This includes Clang's arm64e tail-call
+sequence that inspects the authenticated LR and traps on failure before
+authenticating the callback pointer. LowIR, MedIR and the LLVM execution
+projection retain the original authentication operations.
 `MachOArm64e.def` owns chained format strides, pointer fields and diagnostics.
 `MachOArm64eFixups` owns the pointer-word decoder and signing-recipe publication
 shared by modern chained fixups and the original arm64e threaded bind format.

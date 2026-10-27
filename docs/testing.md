@@ -309,6 +309,13 @@ optimization and source projection. Neither a module nor source observations
 may escape a failed pipeline run. Reusing an emitter after refusal must still
 produce verified LLVM for a valid function and reset the diagnostic count.
 
+`NeverDAArch64ReturnProtectionTests` exercises decoded leaf and saved-LR
+recipes for ELF, Mach-O and COFF, including key/leaf attributes, preserved
+return values, observable signatures, wrong modifiers, incomplete recipes
+and rejection by a different output architecture. Malformed-width cases
+start from the real lowering path, then corrupt the PAC or AUT modifier;
+source projection must not hide these invalid operations.
+
 `NeverDArm64eAnalysisTests` covers Apple arm64e static analysis independently
 of the disabled-key CPU tests in `NeverDAArch64PAuthTests`. It checks both
 decoder routes for PAC/AUT/XPAC, implicit HINT operands, authenticated
