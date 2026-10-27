@@ -4837,7 +4837,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
         throw std::invalid_argument(kAddressMemoryImmediateImageUnsupported);
       if (const char *Reason = Instruction.sourceBaseFailure(
               Opts.Image != nullptr,
-              Base->Kind == ExprKind::Var && Base->Var.Kind == MedVar::Param))
+              Instruction.stackBase() && !Opts.Image &&
+                  MemoryBases->supportsRawSP(*Base, RequirementStatement)))
         throw std::invalid_argument(Reason);
     }
     if (isAArch64WritebackMemoryIntrinsic(Expr->IntrinsicId)) {
@@ -4849,7 +4850,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
       const auto &Base = Expr->Operands[kWritebackBaseOperand];
       if (const char *Reason = Instruction.sourceBaseFailure(
               Opts.Image != nullptr,
-              Base->Kind == ExprKind::Var && Base->Var.Kind == MedVar::Param))
+              Instruction.stackBase() && !Opts.Image &&
+                  MemoryBases->supportsRawSP(*Base, RequirementStatement)))
         throw std::invalid_argument(Reason);
       if (Opts.Image &&
           !MemoryBases->supports(*Opts.Image, Instruction,
@@ -4861,8 +4863,14 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
       if (Opts.TheArch != Arch::AArch64 ||
           !aarch64PAuthLoadHighShapeIsValid(*Expr))
         throw std::invalid_argument(kPAuthLoadMalformed);
-      if (aarch64PAuthLoadInstruction(Expr->Operands[1]->ConstVal)->stackBase())
-        throw std::invalid_argument(kPAuthLoadSPUnsupported);
+      const auto Instruction =
+          *aarch64PAuthLoadInstruction(Expr->Operands[1]->ConstVal);
+      if (const char *Reason = Instruction.sourceBaseFailure(
+              Opts.Image != nullptr,
+              Instruction.stackBase() && !Opts.Image &&
+                  MemoryBases->supportsRawSP(*Expr->Operands[0],
+                                             RequirementStatement)))
+        throw std::invalid_argument(Reason);
     }
     if (isAArch64ExceptionReturnIntrinsic(Expr->IntrinsicId))
       throw std::invalid_argument(kAArch64ExceptionReturnUnsupported);
@@ -4882,7 +4890,7 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
       throw std::invalid_argument(
           "AArch64 return protection requires AArch64 source emission");
     Seen.clear();
-    if (Opts.Image && Opts.TheArch == Arch::AArch64)
+    if (Opts.TheArch == Arch::AArch64)
       MemoryBases.emplace(Func);
     walkStmts(Func.Body, [&](const HighStmt &Stmt) {
       RequirementStatement = &Stmt;

@@ -13,6 +13,7 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/render/AArch64/AArch64AddressMemoryC.h"
+#include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
 #include "neverd/backend/c/render/AArch64/AArch64WritebackMemoryC.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
@@ -21,6 +22,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/SourceStackFrame.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/HighIRPrint.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/AArch64WritebackMemory.h"
 #include "neverd/ir/low/CFGBuilder.h"
@@ -377,7 +379,7 @@ void inspectMemoryObject(llvm::MemoryBufferRef Buffer, uint32_t Word) {
 void compileMemoryC(
     const std::string &Source, bool Execute,
     const std::function<void(llvm::MemoryBufferRef)> &Inspect = {},
-    llvm::StringRef ObjectPath = {}) {
+    llvm::StringRef ObjectPath = {}, bool Strict = false) {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -416,6 +418,9 @@ void compileMemoryC(
                                                SourcePath,
                                                kOutputFlag,
                                                OutputPath};
+    if (Strict)
+      Args.append({kStrictWall, kStrictExtra, kStrictError,
+                   kStrictUnusedParameter, kStrictAliasing});
     if (!Execute)
       Args.push_back(kCompileOnly);
     if (!ObjectPath.empty())
@@ -8032,4 +8037,455 @@ TEST(AArch64StackWritebackMemory, SourceAdmissionAndInverseAssemblyKeepRawSP) {
         EXPECT_TRUE(Source.empty());
       }
   }
+}
+
+namespace {
+#define RAW_SP_FLOW_VALUE(Type, Name, Value) inline constexpr Type Name = Value;
+#define RAW_SP_FLOW_TEXT(Name, Text) inline constexpr char Name[] = Text;
+#include "AArch64RawSPFlowFixtures.def"
+
+struct RawSPFlowCase {
+  uint32_t Word;
+  uint32_t Native;
+};
+
+std::vector<RawSPFlowCase> rawSPFlowCases(bool Stack = true) {
+  std::vector<RawSPFlowCase> Result;
+  std::set<Intrinsic> Seen;
+  const auto Add = [&](const auto &Case) {
+    const auto I = *aarch64WritebackMemoryInstruction(Case.Word);
+    if ((I.hasWriteback() && !I.hasRegisterIndex() &&
+         I.displacement() % kFlowAlignment) ||
+        !Seen.insert(I.id()).second)
+      return;
+    const auto Base = Stack ? kStackBaseMask : kStackGeneralBaseBits;
+    Result.push_back({(Case.Word & ~kStackBaseMask) | Base,
+                      (Case.Scratch & ~kStackBaseMask) | Base});
+  };
+  for (const auto &C : WritebackCases)
+    Add(C);
+  for (const auto &C : VectorWritebackCases)
+    Add(C);
+  for (const auto &C : PairMemoryCases)
+    Add(C);
+  for (const auto &C : StructureMemoryCases)
+    Add(C);
+  return Result;
+}
+
+MedFunc rawSPFlowFunction(uint32_t Word, size_t Index) {
+  const auto Instruction = *aarch64WritebackMemoryInstruction(Word);
+  const auto Id = Instruction.id();
+  MedFunc Function;
+  Function.Name = kFlowName + llvm::utostr(Index);
+  Function.Entry = kEntry + Index * kVectorFunctionStride;
+  Function.ReturnType = NdType::makeInt(kWritebackPairBytes, false);
+  Function.ReturnValueEvidence = MedReturnValueEvidence::ReturnsInteger;
+  MedVar Parameter;
+  Parameter.Kind = MedVar::Param;
+  Parameter.TheArch = Arch::AArch64;
+  Parameter.Id = 0;
+  Parameter.Size = kScalarBytes;
+  Parameter.RegOff = a64reg::X0;
+  Function.Params.push_back(Parameter);
+  Function.TypedParams.push_back({{}, NdType::makeInt(kScalarBytes, false)});
+  Function.Blocks.emplace_back();
+  auto &Block = Function.Blocks.front();
+  Block.Id = 0;
+  Block.StartAddr = Function.Entry;
+  int Next = 1;
+  const auto Temporary = [&](unsigned Bytes) {
+    MedVar Result;
+    Result.Kind = MedVar::Temp;
+    Result.TheArch = Arch::AArch64;
+    Result.Id = Next++;
+    Result.SSAVer = 1;
+    Result.Size = Bytes;
+    return Result;
+  };
+  MedOp Copy;
+  Copy.Opcode = NdOp::COPY;
+  Copy.Output = Temporary(kScalarBytes);
+  Copy.addInput(Parameter);
+  Block.Ops.push_back(Copy);
+  MedOp Access;
+  Access.Opcode = NdOp::INTRINSIC;
+  Access.addInput(MedVar::makeConst(static_cast<uint64_t>(Id), kIdBytes));
+  Access.addInput(Copy.Output);
+  Access.addInput(MedVar::makeConst(Word, kWordBytes));
+  if (Instruction.isStructure())
+    Access.addInput(MedVar::makeConst(
+        Instruction.hasRegisterIndex() ? kFlowAlignment : 0, kScalarBytes));
+  while (Access.NumInputs != aarch64WritebackMemoryOperandCount(Id) + 1)
+    Access.addInput(MedVar::makeConst(
+        0, Instruction.isVector() ? kAddressMemoryVectorBytes : kScalarBytes));
+  MedVar Completed;
+  if (isAArch64WritebackAuxiliaryLoad(Id)) {
+    Access.Output.Id = -1;
+    Access.Output.Size = 0;
+    const auto BaseIndex = aarch64WritebackBaseIndex(Id);
+    for (unsigned N = 0; N <= BaseIndex; ++N)
+      Access.IntrinsicOutputs.push_back(
+          Temporary(N == BaseIndex || Id == Intrinsic::A64_PairLoad
+                        ? kScalarBytes
+                        : kAddressMemoryVectorBytes));
+    Completed = Access.IntrinsicOutputs.back();
+  } else {
+    Access.Output =
+        Temporary(Instruction.isLoad() ? kWritebackPairBytes : kScalarBytes);
+    Completed = Access.Output;
+  }
+  Block.Ops.push_back(Access);
+  if (Id == Intrinsic::A64_LoadWriteback) {
+    MedOp Extract;
+    Extract.Opcode = NdOp::SUBBYTES;
+    Extract.Output = Temporary(kScalarBytes);
+    Extract.addInput(Access.Output);
+    Extract.addInput(MedVar::makeConst(kScalarBytes, kWordBytes));
+    Block.Ops.push_back(Extract);
+    Completed = Extract.Output;
+  }
+  Copy.Output = Temporary(kScalarBytes);
+  Copy.Inputs[0] = Completed;
+  Block.Ops.push_back(Copy);
+  MedOp Load;
+  Load.Opcode = NdOp::INTRINSIC;
+  Load.Output = Temporary(kScalarBytes);
+  Load.addInput(MedVar::makeConst(
+      static_cast<uint64_t>(Intrinsic::A64_LoadImmediate), kIdBytes));
+  Load.addInput(Copy.Output);
+  Load.addInput(MedVar::makeConst(0, kScalarBytes));
+  Load.addInput(MedVar::makeConst(Instruction.stackBase() ? kFlowSecondWord
+                                                          : kFlowSecondGPRWord,
+                                  kWordBytes));
+  Block.Ops.push_back(Load);
+  MedOp Pack;
+  Pack.Opcode = NdOp::CONCAT;
+  Pack.Output = Temporary(kWritebackPairBytes);
+  Pack.Output.Kind = MedVar::Reg;
+  Pack.Output.RegOff = a64reg::X0;
+  Pack.addInput(Copy.Output);
+  Pack.addInput(Load.Output);
+  Block.Ops.push_back(Pack);
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(Pack.Output);
+  Block.Ops.push_back(Return);
+  return Function;
+}
+
+void executeRawSPMemoryProjections(const std::vector<MedFunc> &Functions,
+                                   const std::string &Harness,
+                                   const char *Environment,
+                                   const char *Property,
+                                   bool PhiReads = false) {
+  llvm::LLVMContext Context;
+  auto Module = MedLLVMEmitter().emit(Functions, Context, kName, Arch::AArch64);
+  ASSERT_TRUE(Module);
+  ASSERT_FALSE(llvm::verifyModule(*Module));
+  optimizeMemory(*Module);
+  std::string ArtifactDirectory;
+  if (const char *Directory = std::getenv(Environment)) {
+    ArtifactDirectory = Directory;
+    ::testing::Test::RecordProperty(Property, ArtifactDirectory);
+    ASSERT_FALSE(llvm::sys::fs::create_directories(ArtifactDirectory));
+  }
+  const auto Save = [&](llvm::StringRef Name, llvm::StringRef Data) {
+    if (ArtifactDirectory.empty())
+      return;
+    llvm::SmallString<kVectorPathStorage> Path(ArtifactDirectory);
+    llvm::sys::path::append(Path, Name);
+    std::error_code Error;
+    llvm::raw_fd_ostream Out(Path, Error);
+    ASSERT_FALSE(Error);
+    Out << Data;
+  };
+  Save(kWritebackHarnessArtifact, Harness);
+  std::string IR;
+  llvm::raw_string_ostream IRStream(IR);
+  Module->print(IRStream, nullptr);
+  Save(kFlowModuleArtifact, IR);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  Options.Format = BinaryFormat::MachO;
+  for (bool LLVMRoute : {false, true}) {
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    if (LLVMRoute)
+      ASSERT_TRUE(LLVMCEmitter().emit(*Module, Out, Options));
+    else {
+      std::vector<HighFunc> High;
+      std::string HighIR;
+      for (const auto &F : Functions) {
+        auto Body = MedToHighConverter().convert(F, Arch::AArch64);
+        for (auto &P : Body.Params)
+          P.Type = NdType::makeInt(kScalarBytes, false);
+        if (PhiReads) {
+          std::function<void(const ExprPtr &)> Mark;
+          Mark = [&](const ExprPtr &E) {
+            if (!E)
+              return;
+            if (E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Temp)
+              E->Kind = ExprKind::Phi;
+            E->forEachChildExpr(Mark);
+          };
+          walkStmts(Body.Body,
+                    [&](const HighStmt &S) { forEachRhsExpr(S, Mark); });
+        }
+        HighIR += llvm::formatv(kFlowDumpFunction, F.Name).str();
+        for (const auto &Statement : Body.Body)
+          printHighStatementRows(Statement, 0,
+                                 [&](llvm::StringRef Row, const HighStmt *) {
+                                   HighIR += Row.str();
+                                 });
+        High.push_back(std::move(Body));
+      }
+      Save(kFlowHighIRArtifact, HighIR);
+      ASSERT_TRUE(HighCEmitter().emit(High, Out, Options));
+    }
+    Save(LLVMRoute ? kWritebackLLVMArtifact : kWritebackHighArtifact, Source);
+#if defined(__APPLE__) && defined(__aarch64__)
+    compileMemoryC(Source + Harness, true, {}, {}, true);
+#else
+    compileMemoryC(Source, false, {}, {}, true);
+#endif
+  }
+  for (auto Format : {BinaryFormat::MachO, BinaryFormat::ELF}) {
+    const auto Object = Codegen().compile(*Module, Arch::AArch64, Format);
+    ASSERT_TRUE(Object.Success);
+    Save(Format == BinaryFormat::ELF ? kWritebackObjectArtifact
+                                     : kImmediateMachOArtifact,
+         llvm::StringRef(
+             reinterpret_cast<const char *>(Object.ObjectData.data()),
+             Object.ObjectData.size()));
+#if defined(__APPLE__) && defined(__aarch64__)
+    if (Format != BinaryFormat::MachO)
+      continue;
+    llvm::SmallString<kVectorPathStorage> Path;
+    ASSERT_FALSE(llvm::sys::fs::createTemporaryFile(kTempPrefix,
+                                                    kOutputExtension, Path));
+    llvm::FileRemover Remove(Path);
+    std::error_code Error;
+    llvm::raw_fd_ostream Out(Path, Error);
+    ASSERT_FALSE(Error);
+    Out.write(reinterpret_cast<const char *>(Object.ObjectData.data()),
+              Object.ObjectData.size());
+    Out.close();
+    compileMemoryC(Harness, true, {}, Path, true);
+#endif
+  }
+}
+
+TEST(AArch64RawSPLifting, AutomaticCheckedMemoryRetainsEveryOriginalSPWord) {
+  std::vector<std::pair<uint32_t, bool>> Words;
+  const auto Add = [&](const auto &Cases, bool Writeback) {
+    for (const auto &C : Cases)
+      Words.push_back({(C.Word & ~kStackBaseMask) | kStackBaseMask, Writeback});
+  };
+  Add(ImmediateMemoryCases, false);
+  Add(OrderedMemoryCases, false);
+  Add(WritebackCases, true);
+  Add(VectorWritebackCases, true);
+  Add(PairMemoryCases, true);
+  Add(StructureMemoryCases, true);
+  ASSERT_EQ(Words.size(), kFlowAutomaticWords);
+  for (bool ArchitectureOnly : {false, true})
+    for (bool Fast : {false, true})
+      for (bool Strict : {false, true}) {
+        BinaryImage Image;
+        Image.Arch = Arch::AArch64;
+        Image.Bits = Bitness::Bits64;
+        Image.Format = BinaryFormat::MachO;
+        Image.MachOCPUSubtype = macho_loader::arm64e::kCPUSubtypeX1;
+        Decoder Decoder;
+        ASSERT_TRUE(ArchitectureOnly ? Decoder.init(Arch::AArch64)
+                                     : Decoder.init(Image));
+        Decoder.setStrict(Strict);
+        for (const auto &[Word, Writeback] : Words) {
+          SCOPED_TRACE(Word);
+          std::array<uint8_t, kWordBytes> Bytes;
+          writeLE<uint32_t>(Bytes.data(), Word);
+          DecodedInsn Insn;
+          ASSERT_EQ(Fast ? Decoder.decodeOneForLift(Bytes.data(), Bytes.size(),
+                                                    kEntry, Insn)
+                         : Decoder.decodeOne(Bytes.data(), Bytes.size(), kEntry,
+                                             Insn),
+                    kWordBytes);
+          std::vector<LowOp> Ops;
+          Decoder.liftToLow(Insn, Ops);
+          const auto Shape = Writeback ? lowAArch64WritebackMemoryShapeIsValid
+                                       : lowAArch64AddressMemoryShapeIsValid;
+          ASSERT_EQ(std::count_if(Ops.begin(), Ops.end(), Shape), 1);
+          const auto &Memory = *std::find_if(Ops.begin(), Ops.end(), Shape);
+          const auto Base =
+              Writeback ? kWritebackBaseOperand : kAddressMemoryBaseOperand;
+          const auto Encoding =
+              Writeback ? kWritebackWordOperand : kAddressMemoryWordOperand;
+          EXPECT_EQ(Memory.Inputs[Base + 1],
+                    NdVar::reg(a64reg::SP, kScalarBytes));
+          EXPECT_EQ(Memory.Inputs[Encoding + 1].Offset, Word);
+          EXPECT_FALSE(std::any_of(Ops.begin(), Ops.end(), [](const LowOp &O) {
+            return O.Opcode == NdOp::LOAD || O.Opcode == NdOp::STORE ||
+                   O.Opcode == NdOp::INT_ADD;
+          }));
+        }
+      }
+}
+
+} // namespace
+
+TEST(AArch64RawSPFlow, CompletedBasesExecuteThroughEveryMemoryFamily) {
+  const auto Cases = rawSPFlowCases();
+  ASSERT_EQ(Cases.size(), kFlowFamilyCount);
+  std::vector<MedFunc> Functions;
+  std::string Harness = kFlowPrelude, Entries;
+  for (size_t N = 0; N != Cases.size(); ++N) {
+    auto Function = rawSPFlowFunction(Cases[N].Word, N);
+    ASSERT_TRUE(verifyMedFunc(Function, Function.Name.c_str()));
+    Harness += llvm::formatv(kFlowDeclaration, Function.Name).str();
+    Harness +=
+        llvm::formatv(
+            kFlowNative, N, Cases[N].Native,
+            aarch64WritebackMemoryInstruction(Cases[N].Word)->hasRegisterIndex()
+                ? kFlowAlignment
+                : 0,
+            kFlowSPBefore, kFlowSecondWord, kFlowSPAfter)
+            .str();
+    Entries += llvm::formatv(kFlowEntry, Function.Name, N).str();
+    Functions.push_back(std::move(Function));
+  }
+  Harness += llvm::formatv(kFlowTail, Entries).str();
+  executeRawSPMemoryProjections(Functions, Harness, kFlowArtifactEnvironment,
+                                kFlowArtifactProperty);
+}
+
+TEST(AArch64RawSPFlow, GPRControlsRetainEveryAuxiliaryResultCopy) {
+  const auto Cases = rawSPFlowCases(false);
+  ASSERT_EQ(Cases.size(), kFlowFamilyCount);
+  std::vector<MedFunc> Functions;
+  std::string Harness = kFlowPrelude, Entries;
+  for (size_t N = 0; N != Cases.size(); ++N) {
+    auto Function = rawSPFlowFunction(Cases[N].Word, N);
+    ASSERT_TRUE(verifyMedFunc(Function, Function.Name.c_str()));
+    Harness += llvm::formatv(kFlowDeclaration, Function.Name).str();
+    Harness +=
+        llvm::formatv(
+            kFlowNative, N, Cases[N].Native,
+            aarch64WritebackMemoryInstruction(Cases[N].Word)->hasRegisterIndex()
+                ? kFlowAlignment
+                : 0,
+            kFlowGPRBefore, kFlowSecondGPRWord, kFlowGPRAfter)
+            .str();
+    Entries += llvm::formatv(kFlowEntry, Function.Name, N).str();
+    Functions.push_back(std::move(Function));
+  }
+  Harness += llvm::formatv(kFlowTail, Entries).str();
+  executeRawSPMemoryProjections(Functions, Harness, kEmptyNativeArgument,
+                                kFlowArtifactProperty, true);
+}
+
+TEST(AArch64RawSPLifting, OrderedSPAccessesNeverBecomeOrdinaryFrameMemory) {
+  for (auto Subtype :
+       {uint32_t(llvm::MachO::CPU_SUBTYPE_ARM64_ALL),
+        macho_loader::arm64e::kCPUSubtype, macho_loader::arm64e::kCPUSubtypeX1})
+    for (bool Fast : {false, true}) {
+      BinaryImage Image;
+      Image.Arch = Arch::AArch64;
+      Image.Bits = Bitness::Bits64;
+      Image.Format = BinaryFormat::MachO;
+      Image.MachOCPUSubtype = Subtype;
+      Decoder Decoder;
+      ASSERT_TRUE(Decoder.init(Image));
+      for (const auto &C : OrderedMemoryCases) {
+        const auto Word = (C.Word & ~kStackBaseMask) | kStackBaseMask;
+        std::array<uint8_t, kWordBytes> Bytes;
+        writeLE<uint32_t>(Bytes.data(), Word);
+        DecodedInsn Insn;
+        ASSERT_EQ(
+            Fast ? Decoder.decodeOneForLift(Bytes.data(), Bytes.size(), kEntry,
+                                            Insn)
+                 : Decoder.decodeOne(Bytes.data(), Bytes.size(), kEntry, Insn),
+            kWordBytes);
+        std::vector<LowOp> Ops;
+        Decoder.liftToLow(Insn, Ops);
+        const auto Memory = originalMemoryOperation(Ops);
+        ASSERT_TRUE(lowAArch64AddressMemoryShapeIsValid(Memory));
+        EXPECT_EQ(Memory.Inputs[kAddressMemoryBaseOperand + 1].Offset,
+                  a64reg::SP);
+        EXPECT_EQ(Memory.Inputs[kAddressMemoryWordOperand + 1].Offset, Word);
+      }
+    }
+}
+
+namespace {
+#define STACK_PAUTH_VALUE(Type, Name, Value) inline constexpr Type Name = Value;
+#define STACK_PAUTH_TEXT(Name, Text) inline constexpr char Name[] = Text;
+#include "AArch64StackPAuthLoadFixtures.def"
+struct StackPAuthCase {
+  uint32_t Word;
+  Intrinsic Id;
+  unsigned Base;
+  int64_t Offset;
+  bool Writeback;
+  uint32_t Scratch;
+};
+constexpr StackPAuthCase StackPAuthCases[] = {
+#define NEVERD_PAUTH_LOAD_CASE(Word, Id, Dst, Base, Offset, WB, Scratch,       \
+                               Compile)                                        \
+  {Word, Intrinsic::Id, Base, Offset, WB, Scratch},
+#include "AArch64PAuthLoadFixtures.def"
+};
+} // namespace
+
+TEST(AArch64StackPAuthLoad, BothCProjectionsAndLLVMExecuteCombinedSPAccesses) {
+  std::vector<MedFunc> Functions;
+  std::string Harness = kStackPAuthPrelude, Entries;
+  for (const auto &C : StackPAuthCases) {
+    if (C.Base != kZeroRegister)
+      continue;
+    const auto N = Functions.size();
+    MedFunc F;
+    F.Name = kStackPAuthName + llvm::utostr(N);
+    F.Entry = kEntry + N * kVectorFunctionStride;
+    F.ReturnType = NdType::makeInt(kWritebackPairBytes, false);
+    F.ReturnValueEvidence = MedReturnValueEvidence::ReturnsInteger;
+    MedVar Base;
+    Base.Kind = MedVar::Param;
+    Base.TheArch = Arch::AArch64;
+    Base.Id = 0;
+    Base.Size = kScalarBytes;
+    Base.RegOff = a64reg::X0;
+    F.Params = {Base};
+    F.TypedParams.push_back({{}, NdType::makeInt(kScalarBytes, false)});
+    MedOp Load;
+    Load.Opcode = NdOp::INTRINSIC;
+    Load.Output = Base;
+    Load.Output.Kind = MedVar::Reg;
+    Load.Output.RegOff = a64reg::X0;
+    Load.Output.Id = 1;
+    Load.Output.SSAVer = 1;
+    Load.Output.Size = kWritebackPairBytes;
+    Load.addInput(MedVar::makeConst(static_cast<uint64_t>(C.Id), kIdBytes));
+    Load.addInput(Base);
+    Load.addInput(MedVar::makeConst(C.Word, kWordBytes));
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.addInput(Load.Output);
+    F.Blocks.emplace_back();
+    F.Blocks.front().Id = 0;
+    F.Blocks.front().StartAddr = F.Entry;
+    F.Blocks.front().Ops = {Load, Return};
+    ASSERT_TRUE(verifyMedFunc(F, F.Name.c_str()));
+    Harness += llvm::formatv(kStackPAuthNative, F.Name, N, C.Scratch).str();
+    Entries += llvm::formatv(kStackPAuthEntry, F.Name, N,
+                             unsigned(C.Id == Intrinsic::A64_Ldrab),
+                             unsigned(C.Writeback), C.Offset)
+                   .str();
+    Functions.push_back(std::move(F));
+  }
+  ASSERT_EQ(Functions.size(), kStackPAuthCaseCount);
+  Harness += llvm::formatv(kStackPAuthTail, Entries).str();
+  executeRawSPMemoryProjections(Functions, Harness,
+                                kStackPAuthArtifactEnvironment,
+                                kStackPAuthArtifactProperty);
 }

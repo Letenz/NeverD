@@ -394,8 +394,6 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
       llvm::report_fatal_error(kPAuthLoadMalformed);
     const auto Instruction =
         *aarch64PAuthLoadInstruction(Op.Inputs[2].ConstVal);
-    if (Instruction.stackBase())
-      llvm::report_fatal_error(kPAuthLoadSPUnsupported);
     llvm::Value *Base = getVar(Op.Inputs[1], Builder);
     if (Base->getType()->isPointerTy())
       Base = Builder.CreatePtrToInt(Base, Builder.getInt64Ty());
@@ -404,7 +402,8 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
     auto *Asm = llvm::InlineAsm::get(
         llvm::FunctionType::get(
             ResultType, {Builder.getInt64Ty(), Builder.getInt32Ty()}, false),
-        kPAuthLoadAsm, kPAuthLoadConstraints, /*hasSideEffects=*/true);
+        Instruction.llvmAsm(), Instruction.llvmConstraints(),
+        /*hasSideEffects=*/true);
     llvm::Value *Result = Builder.CreateCall(
         Asm, {Base, Builder.getInt32(Instruction.scratchWord())},
         kPAuthLoadResult);

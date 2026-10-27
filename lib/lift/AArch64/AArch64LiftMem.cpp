@@ -37,166 +37,162 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
       const auto Instruction = aarch64WritebackMemoryInstruction(Word);
       if (!Instruction)
         throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
-      if (!Instruction->stackBase() || Instruction->isStructure()) {
-        const NdVar Base = NdVar::reg(
-            a64reg::X0 + Instruction->base() * kAddressMemoryPointerBytes,
-            kAddressMemoryPointerBytes);
-        const NdVar OriginalWord = NdVar::scalar(Word, kAddressMemoryWordBytes);
-        if (Instruction->isStructure()) {
-          const auto Structure = Instruction->structure();
-          const NdVar Index =
-              Structure.hasRegisterIndex()
-                  ? NdVar::reg(a64reg::X0 + Structure.index() *
-                                                kAddressMemoryPointerBytes,
-                               kAddressMemoryPointerBytes)
-                  : NdVar::scalar(0, kAddressMemoryPointerBytes);
-          std::vector<NdVar> Values;
-          if (Structure.isLoad())
-            for (unsigned I = 0; I != Structure.vectors(); ++I)
-              Values.push_back(S.makeTemp(kAddressMemoryVectorBytes));
-          const NdVar Updated = S.makeTemp(kAddressMemoryPointerBytes);
-          S.emitIntrinsic(Structure.id(),
-                          Structure.isLoad() ? S.makeTemp(0) : Updated,
-                          {Base, OriginalWord, Index});
-          if (!Structure.isLoad() || Structure.laneLoad())
-            for (unsigned I = 0; I != Structure.vectors(); ++I)
-              S.Ops.back().addInput(
-                  NdVar::reg(a64reg::V((Structure.destination() + I) &
-                                       kAddressMemoryRegisterMask),
-                             kAddressMemoryVectorBytes));
-          if (Structure.isLoad())
-            for (unsigned I = 0; I != Values.size(); ++I)
-              S.emit(NdOp::COPY,
-                     NdVar::reg(a64reg::V((Structure.destination() + I) &
-                                          kAddressMemoryRegisterMask),
-                                kAddressMemoryVectorBytes),
-                     {Values[I]});
-          S.emit(NdOp::COPY,
-                 Structure.hasWriteback()
-                     ? Base
-                     : S.makeTemp(kAddressMemoryPointerBytes),
-                 {Updated});
-          return true;
-        }
-        if (Instruction->isPair()) {
-          const unsigned ValueBytes = Instruction->isVector()
-                                          ? kAddressMemoryVectorBytes
-                                          : kAddressMemoryPointerBytes;
-          const auto Register = [&](unsigned Number) {
-            return Instruction->isVector()
-                       ? NdVar::reg(a64reg::V(Number), ValueBytes)
-                       : (Number == kAddressMemoryRegisterMask
-                              ? NdVar::scalar(0, ValueBytes)
-                              : NdVar::reg(a64reg::X0 + Number * ValueBytes,
-                                           ValueBytes));
-          };
-          const NdVar First = Register(Instruction->destination());
-          const NdVar Second = Register(Instruction->secondDestination());
-          const NdVar Updated = S.makeTemp(kAddressMemoryPointerBytes);
-          if (!Instruction->isLoad()) {
-            S.emitIntrinsic(Instruction->id(), Updated,
-                            {Base, OriginalWord, First, Second});
-          } else {
-            const NdVar FirstValue = S.makeTemp(ValueBytes);
-            const NdVar SecondValue = S.makeTemp(ValueBytes);
-            S.emitIntrinsic(Instruction->id(), S.makeTemp(0),
-                            {Base, OriginalWord});
-            const auto Commit = [&](NdVar Destination, NdVar Value) {
-              if (Destination.isConst()) {
-                S.emit(NdOp::COPY, S.makeTemp(ValueBytes), {Value});
-                return;
-              }
-              const unsigned NaturalBytes = Instruction->operation().Signed
-                                                ? ValueBytes
-                                                : Instruction->accessBytes();
-              if (NaturalBytes == ValueBytes) {
-                S.emit(NdOp::COPY, Destination, {Value});
-                return;
-              }
-              const NdVar Narrow = NdVar::reg(Destination.Offset, NaturalBytes);
-              S.emit(NdOp::SUBBYTES, Narrow,
-                     {Value, NdVar::scalar(0, kAddressMemoryWordBytes)});
-              S.emit(NdOp::INT_ZEXT, Destination, {Narrow});
-            };
-            Commit(First, FirstValue);
-            Commit(Second, SecondValue);
-          }
-          // Offset/non-temporal loads may overwrite their incoming base.
-          // Their unchanged base result is transported without a register
-          // write.
-          S.emit(NdOp::COPY,
-                 Instruction->hasWriteback()
-                     ? Base
-                     : S.makeTemp(kAddressMemoryPointerBytes),
-                 {Updated});
-          return true;
-        }
-        if (Instruction->isVector()) {
-          const NdVar Vector = NdVar::reg(a64reg::V(Instruction->destination()),
-                                          kAddressMemoryVectorBytes);
-          if (!Instruction->isLoad()) {
-            const NdVar Updated = S.makeTemp(kAddressMemoryPointerBytes);
-            S.emitIntrinsic(Instruction->id(), Updated,
-                            {Base, OriginalWord, Vector});
-            S.emit(NdOp::COPY, Base, {Updated});
-            return true;
-          }
-          const NdVar Value = S.makeTemp(kAddressMemoryVectorBytes);
-          const NdVar Updated = S.makeTemp(kAddressMemoryPointerBytes);
-          S.emitIntrinsic(Instruction->id(), S.makeTemp(0),
-                          {Base, OriginalWord});
-          const NdVar Narrow =
-              NdVar::reg(Vector.Offset, Instruction->accessBytes());
-          S.emit(NdOp::SUBBYTES, Narrow,
-                 {Value, NdVar::scalar(0, kAddressMemoryWordBytes)});
-          if (Narrow.Size < Vector.Size)
-            S.emit(NdOp::INT_ZEXT, Vector, {Narrow});
-          S.emit(NdOp::COPY, Base, {Updated});
-          return true;
-        }
-        if (!Instruction->isLoad()) {
-          const NdVar Data =
-              Instruction->destination() == kAddressMemoryRegisterMask
-                  ? NdVar::scalar(0, kAddressMemoryPointerBytes)
-                  : NdVar::reg(a64reg::X0 + Instruction->destination() *
-                                                kAddressMemoryPointerBytes,
-                               kAddressMemoryPointerBytes);
-          const NdVar Updated = S.makeTemp(kAddressMemoryPointerBytes);
-          S.emitIntrinsic(Instruction->id(), Updated,
-                          {Base, OriginalWord, Data});
-          S.emit(NdOp::COPY, Base, {Updated});
-          return true;
-        }
-        const NdVar Pair = S.makeTemp(kWritebackPairBytes);
-        S.emitIntrinsic(Instruction->id(), Pair, {Base, OriginalWord});
-        if (Instruction->destination() != kAddressMemoryRegisterMask) {
-          const NdVar Destination =
-              NdVar::reg(a64reg::X0 + Instruction->destination() *
-                                          kAddressMemoryPointerBytes,
-                         Instruction->operation().ResultBytes);
-          S.emit(NdOp::SUBBYTES, Destination,
-                 {Pair, NdVar::scalar(0, kAddressMemoryWordBytes)});
-          if (Destination.Size < kAddressMemoryPointerBytes)
-            S.emit(NdOp::INT_ZEXT,
-                   NdVar::reg(Destination.Offset, kAddressMemoryPointerBytes),
-                   {Destination});
-        }
-        S.emit(NdOp::SUBBYTES, Base,
-               {Pair, NdVar::scalar(kAddressMemoryPointerBytes,
-                                    kAddressMemoryWordBytes)});
+      const NdVar Base = NdVar::reg(
+          Instruction->stackBase()
+              ? a64reg::SP
+              : a64reg::X0 + Instruction->base() * kAddressMemoryPointerBytes,
+          kAddressMemoryPointerBytes);
+      const NdVar OriginalWord = NdVar::scalar(Word, kAddressMemoryWordBytes);
+      if (Instruction->isStructure()) {
+        const auto Structure = Instruction->structure();
+        const NdVar Index =
+            Structure.hasRegisterIndex()
+                ? NdVar::reg(a64reg::X0 +
+                                 Structure.index() * kAddressMemoryPointerBytes,
+                             kAddressMemoryPointerBytes)
+                : NdVar::scalar(0, kAddressMemoryPointerBytes);
+        std::vector<NdVar> Values;
+        if (Structure.isLoad())
+          for (unsigned I = 0; I != Structure.vectors(); ++I)
+            Values.push_back(S.makeTemp(kAddressMemoryVectorBytes));
+        const NdVar Updated = S.makeTemp(kAddressMemoryPointerBytes);
+        S.emitIntrinsic(Structure.id(),
+                        Structure.isLoad() ? S.makeTemp(0) : Updated,
+                        {Base, OriginalWord, Index});
+        if (!Structure.isLoad() || Structure.laneLoad())
+          for (unsigned I = 0; I != Structure.vectors(); ++I)
+            S.Ops.back().addInput(
+                NdVar::reg(a64reg::V((Structure.destination() + I) &
+                                     kAddressMemoryRegisterMask),
+                           kAddressMemoryVectorBytes));
+        if (Structure.isLoad())
+          for (unsigned I = 0; I != Values.size(); ++I)
+            S.emit(NdOp::COPY,
+                   NdVar::reg(a64reg::V((Structure.destination() + I) &
+                                        kAddressMemoryRegisterMask),
+                              kAddressMemoryVectorBytes),
+                   {Values[I]});
+        S.emit(NdOp::COPY,
+               Structure.hasWriteback()
+                   ? Base
+                   : S.makeTemp(kAddressMemoryPointerBytes),
+               {Updated});
         return true;
       }
+      if (Instruction->isPair()) {
+        const unsigned ValueBytes = Instruction->isVector()
+                                        ? kAddressMemoryVectorBytes
+                                        : kAddressMemoryPointerBytes;
+        const auto Register = [&](unsigned Number) {
+          return Instruction->isVector()
+                     ? NdVar::reg(a64reg::V(Number), ValueBytes)
+                     : (Number == kAddressMemoryRegisterMask
+                            ? NdVar::scalar(0, ValueBytes)
+                            : NdVar::reg(a64reg::X0 + Number * ValueBytes,
+                                         ValueBytes));
+        };
+        const NdVar First = Register(Instruction->destination());
+        const NdVar Second = Register(Instruction->secondDestination());
+        const NdVar Updated = S.makeTemp(kAddressMemoryPointerBytes);
+        if (!Instruction->isLoad()) {
+          S.emitIntrinsic(Instruction->id(), Updated,
+                          {Base, OriginalWord, First, Second});
+        } else {
+          const NdVar FirstValue = S.makeTemp(ValueBytes);
+          const NdVar SecondValue = S.makeTemp(ValueBytes);
+          S.emitIntrinsic(Instruction->id(), S.makeTemp(0),
+                          {Base, OriginalWord});
+          const auto Commit = [&](NdVar Destination, NdVar Value) {
+            if (Destination.isConst()) {
+              S.emit(NdOp::COPY, S.makeTemp(ValueBytes), {Value});
+              return;
+            }
+            const unsigned NaturalBytes = Instruction->operation().Signed
+                                              ? ValueBytes
+                                              : Instruction->accessBytes();
+            if (NaturalBytes == ValueBytes) {
+              S.emit(NdOp::COPY, Destination, {Value});
+              return;
+            }
+            const NdVar Narrow = NdVar::reg(Destination.Offset, NaturalBytes);
+            S.emit(NdOp::SUBBYTES, Narrow,
+                   {Value, NdVar::scalar(0, kAddressMemoryWordBytes)});
+            S.emit(NdOp::INT_ZEXT, Destination, {Narrow});
+          };
+          Commit(First, FirstValue);
+          Commit(Second, SecondValue);
+        }
+        // Offset/non-temporal loads may overwrite their incoming base.
+        // Their unchanged base result is transported without a register
+        // write.
+        S.emit(NdOp::COPY,
+               Instruction->hasWriteback()
+                   ? Base
+                   : S.makeTemp(kAddressMemoryPointerBytes),
+               {Updated});
+        return true;
+      }
+      if (Instruction->isVector()) {
+        const NdVar Vector = NdVar::reg(a64reg::V(Instruction->destination()),
+                                        kAddressMemoryVectorBytes);
+        if (!Instruction->isLoad()) {
+          const NdVar Updated = S.makeTemp(kAddressMemoryPointerBytes);
+          S.emitIntrinsic(Instruction->id(), Updated,
+                          {Base, OriginalWord, Vector});
+          S.emit(NdOp::COPY, Base, {Updated});
+          return true;
+        }
+        const NdVar Value = S.makeTemp(kAddressMemoryVectorBytes);
+        const NdVar Updated = S.makeTemp(kAddressMemoryPointerBytes);
+        S.emitIntrinsic(Instruction->id(), S.makeTemp(0), {Base, OriginalWord});
+        const NdVar Narrow =
+            NdVar::reg(Vector.Offset, Instruction->accessBytes());
+        S.emit(NdOp::SUBBYTES, Narrow,
+               {Value, NdVar::scalar(0, kAddressMemoryWordBytes)});
+        if (Narrow.Size < Vector.Size)
+          S.emit(NdOp::INT_ZEXT, Vector, {Narrow});
+        S.emit(NdOp::COPY, Base, {Updated});
+        return true;
+      }
+      if (!Instruction->isLoad()) {
+        const NdVar Data =
+            Instruction->destination() == kAddressMemoryRegisterMask
+                ? NdVar::scalar(0, kAddressMemoryPointerBytes)
+                : NdVar::reg(a64reg::X0 + Instruction->destination() *
+                                              kAddressMemoryPointerBytes,
+                             kAddressMemoryPointerBytes);
+        const NdVar Updated = S.makeTemp(kAddressMemoryPointerBytes);
+        S.emitIntrinsic(Instruction->id(), Updated, {Base, OriginalWord, Data});
+        S.emit(NdOp::COPY, Base, {Updated});
+        return true;
+      }
+      const NdVar Pair = S.makeTemp(kWritebackPairBytes);
+      S.emitIntrinsic(Instruction->id(), Pair, {Base, OriginalWord});
+      if (Instruction->destination() != kAddressMemoryRegisterMask) {
+        const NdVar Destination =
+            NdVar::reg(a64reg::X0 + Instruction->destination() *
+                                        kAddressMemoryPointerBytes,
+                       Instruction->operation().ResultBytes);
+        S.emit(NdOp::SUBBYTES, Destination,
+               {Pair, NdVar::scalar(0, kAddressMemoryWordBytes)});
+        if (Destination.Size < kAddressMemoryPointerBytes)
+          S.emit(NdOp::INT_ZEXT,
+                 NdVar::reg(Destination.Offset, kAddressMemoryPointerBytes),
+                 {Destination});
+      }
+      S.emit(NdOp::SUBBYTES, Base,
+             {Pair, NdVar::scalar(kAddressMemoryPointerBytes,
+                                  kAddressMemoryWordBytes)});
+      return true;
     }
-    // Ordered GPR-based accesses retain RCpc/release ordering for every image
-    // subtype. Immediate SP accesses still belong to the frame model until
-    // that model can supply the original architectural SP environment.
+    // Preserve original SP operands under the same checked-memory policy as
+    // GPRs. Ordered accesses retain RCpc/release semantics for every image
+    // subtype; a source frame cannot supply their architectural environment.
     if (const auto Instruction =
             aarch64AddressMemoryInstruction(readLE<uint32_t>(Insn->bytes));
         Instruction &&
-        (Instruction->hasRegisterIndex() ||
-         (!Instruction->stackBase() &&
-          (PreserveImmediateMemory ||
-           isAArch64OrderedUnscaledMemoryEncoding(Instruction->Word))))) {
+        (Instruction->hasRegisterIndex() || PreserveImmediateMemory ||
+         isAArch64OrderedUnscaledMemoryEncoding(Instruction->Word))) {
       // Preserve the raw index: the machine instruction owns its scale and
       // AddressAdd's access-EL check. Reading inputs before publishing
       // the result also retains source/destination aliases.
