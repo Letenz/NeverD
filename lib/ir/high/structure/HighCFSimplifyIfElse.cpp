@@ -2588,18 +2588,22 @@ static bool stmtTreeUsesVar(const HighStmt &S, const MedVar &V) {
   return false;
 }
 
-static bool exprHasSameCall(const HighExpr *E, va_t Addr,
-                            const std::string &Target) {
+static bool exprHasCallOccurrence(const HighExpr *E, const HighExpr &Call) {
   if (!E)
     return false;
-  if (E->Kind == ExprKind::Call &&
-      ((Addr && E->CallAddr == Addr) ||
-       (!Target.empty() && E->CallTarget == Target)))
+  // A callee name or address identifies an implementation, not an execution.
+  // Only a copy of this exact instruction can replace the saved call effect.
+  // Merged/synthetic calls without a site retain their independent effects.
+  if (E->Kind == ExprKind::Call && Call.CallSiteAddr &&
+      Call.CallSiteAddr != InvalidVA && E->CallSiteAddr == Call.CallSiteAddr &&
+      E->structuralEq(Call))
     return true;
-  for (const auto &Op : E->Operands)
-    if (exprHasSameCall(Op.get(), Addr, Target))
-      return true;
-  return false;
+  bool Found = false;
+  E->forEachChildExpr([&](const ExprPtr &Child) {
+    if (!Found)
+      Found = exprHasCallOccurrence(Child.get(), Call);
+  });
+  return Found;
 }
 
 static bool isPredicateOrLoadAssign(const HighStmt &S, const ExprPtr &Pred) {
@@ -2609,8 +2613,7 @@ static bool isPredicateOrLoadAssign(const HighStmt &S, const ExprPtr &Pred) {
     return false;
   if (Val->Kind == ExprKind::Load)
     return true;
-  return Val->Kind == ExprKind::Call &&
-         exprHasSameCall(Pred.get(), Val->CallAddr, Val->CallTarget);
+  return Val->Kind == ExprKind::Call && exprHasCallOccurrence(Pred.get(), *Val);
 }
 
 /// Marks the prefix assignments Body[0, End) folded into \p Pred that no
@@ -2736,8 +2739,7 @@ static bool dropUnusedTrailingAssigns(std::vector<HighStmt> &Body, size_t End,
     --I;
     // A jump that enters a copied predicate call still runs it.
     if (Body[I].Kind == StmtKind::Call && Body[I].CallExpr &&
-        exprHasSameCall(Pred.get(), Body[I].CallExpr->CallAddr,
-                        Body[I].CallExpr->CallTarget) &&
+        exprHasCallOccurrence(Pred.get(), *Body[I].CallExpr) &&
         !isFunctionJumpTarget(Body[I].Addr, Body)) {
       Body.erase(Body.begin() + static_cast<long>(I));
       Changed = true;
@@ -2753,8 +2755,7 @@ static bool dropUnusedTrailingAssigns(std::vector<HighStmt> &Body, size_t End,
       break;
     }
     const bool PredCall =
-        Val->Kind == ExprKind::Call &&
-        exprHasSameCall(Pred.get(), Val->CallAddr, Val->CallTarget);
+        Val->Kind == ExprKind::Call && exprHasCallOccurrence(Pred.get(), *Val);
     const bool IsLoad = Val->Kind == ExprKind::Load;
     // Only a predicate call or a load can be dropped; other values keep their
     // assignment whether or not anything reads it.
