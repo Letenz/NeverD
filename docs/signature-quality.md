@@ -343,9 +343,11 @@ counterclaims to existing ordinary records. A complete conflicting record gains
 mandatory references only when they distinguish every new rival; otherwise it
 becomes an incoming-only query. Incomplete conflicting records are omitted.
 Each proposed single-site clause is checked against every raw rival and the
-existing byte cohort. The refiner retains one sufficient clause, preferring
-image-owned import/RTTI metadata, then fewer alternatives and source field
-order; alternatives at one site stay together. This replaces one global byte
+existing byte cohort. The refiner retains one sufficient image-owned
+import/RTTI clause, preferring fewer alternatives and source field order;
+alternatives at one site stay together. Call-only conditions retain every
+original site: a callee name can itself be an ambiguous byte claim, so keeping
+only one call can create an unsupported survivor. This replaces one global byte
 record with at most one, avoiding a copy
 of the whole body for every sufficient site. If several sites are jointly
 necessary, the full clause stays.

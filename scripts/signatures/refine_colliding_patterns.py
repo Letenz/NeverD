@@ -187,6 +187,12 @@ def refine(existing: Path, evidence: list[Path], output: Path, machine: str) -> 
                 # site. Prefer image metadata, fewer alternatives, then source
                 # field order. Metadata does not depend on another byte guess.
                 selected = min(clauses, key=clause_cost) if clauses else required
+                if clause_cost(selected)[0]:
+                    # A callee name can itself be an ambiguous byte claim.
+                    # Selecting one such site can confirm a false survivor
+                    # while another variant needs an unavailable callee.
+                    # Only image-owned metadata permits removing other sites.
+                    selected = required
                 if row.require_references:
                     if selected.refs == row.refs or clause_cost(selected)[0]:
                         # An image-owned anchor supplies an independent proof.

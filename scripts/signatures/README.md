@@ -245,9 +245,11 @@ affected source manifests with the report and qualified output hashes before pub
 parsing, report lost/gained correct candidates as well as errors, and measure
 the changed packs with the same consumer and input entries on both sides.
 Proposed single-site clauses preserve alternatives and are audited against all
-raw rivals and the existing byte cohort. One is retained, preferring independent
-import/RTTI metadata, then fewer alternatives and the earliest source field,
-to bound global byte-index work.
+raw rivals and the existing byte cohort. An independently sufficient import/RTTI
+clause may be retained, preferring fewer alternatives and the earliest source
+field. Call-only conditions keep all original sites because the callee name may
+itself be an ambiguous byte claim. Each old record still contributes at most
+one global pattern, bounding byte-index work.
 The whole loaded cohort is constrained together, preventing a newly unique
 unqualified survivor. Separate complete incoming declarations
 retain only outgoing fields shared across raw source versions; a pruned clause

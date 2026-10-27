@@ -43,18 +43,19 @@ class CollisionRefinementTests(unittest.TestCase):
         self.assertEqual(result["counts"], {"required": 1})
         self.assertIn("!refs :0000 first ^0001 original", (self.output / "runtime.npat").read_text())
 
-    def test_unrelated_reference_does_not_become_mandatory(self):
+    def test_call_only_clause_keeps_other_source_references(self):
         body = "E8........E8........C3 00 0000 000B"
         line = body + " :0000 first ^0001 identity ^0006 shared"
         source = body + " !evidence :0000 second ^0001 different ^0006 shared"
         self.run_refinement({"runtime.pat": line}, source)
         rows = [builder.parse_line(text) for text in (self.output / "runtime.npat").read_text().splitlines()]
         rows = [row for row in rows if row]
-        self.assertEqual([row.refs for row in rows if row.require_references], [((1, "identity"),)])
+        self.assertEqual([row.refs for row in rows if row.require_references],
+                         [((1, "identity"), (6, "shared"))])
         self.assertEqual([row.refs for row in rows if row.require_caller],
                          [((1, "identity"), (6, "shared"))])
 
-    def test_one_lowest_cost_clause_and_complete_source_consensus(self):
+    def test_call_clause_and_incoming_source_consensus_remain_separate(self):
         body = "E8........E8........C3 00 0000 000B"
         line = body + " :0000 first ^0001 first_a ^0001 first_b ^0006 original"
         source = body + " !evidence :0000 second ^0001 other ^0006 different\n"
@@ -63,7 +64,7 @@ class CollisionRefinementTests(unittest.TestCase):
         rows = [builder.parse_line(text) for text in (self.output / "runtime.npat").read_text().splitlines()]
         rows = [row for row in rows if row]
         self.assertEqual([row.refs for row in rows if row.require_references],
-                         [((6, "original"),)])
+                         [((1, "first_a"), (1, "first_b"), (6, "original"))])
         self.assertEqual([row.refs for row in rows if row.require_caller],
                          [((1, "first_a"), (1, "first_b"))])
 
@@ -74,7 +75,7 @@ class CollisionRefinementTests(unittest.TestCase):
         self.run_refinement({"runtime.pat": line}, source)
         rows = [builder.parse_line(text) for text in (self.output / "runtime.npat").read_text().splitlines()]
         self.assertEqual([row.refs for row in rows if row and row.require_references],
-                         [((1, "first_a"), (1, "first_b"))])
+                         [((1, "first_a"), (1, "first_b"), (6, "shared"))])
 
     def test_sufficient_image_metadata_precedes_a_callee_candidate(self):
         body = "E8........FF15........C3 00 0000 000C"
@@ -217,7 +218,7 @@ class CollisionRefinementTests(unittest.TestCase):
         rows = [builder.parse_line(text) for text in
                 (self.output / "runtime.npat").read_text().splitlines()]
         self.assertEqual([row.refs for row in rows if row and row.require_references],
-                         [((0x18, "throw"),)])
+                         [((0x18, "throw"), (0x23, "destroy"))])
 
     def test_crc_padding_requires_matching_spans_and_visible_return_and_padding(self):
         long = builder.Shape.of("9090 02 1234 0007 C390CC")
