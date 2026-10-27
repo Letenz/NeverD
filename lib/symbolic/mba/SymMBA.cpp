@@ -260,17 +260,6 @@ SymRef foldKnownBits(SymContext &Ctx, SymRef Root, SymKnownBits &Known,
 SymRef foldConditionalControls(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                                size_t &Storage) {
   auto Op = Ctx.op(Root);
-  if (Op == SymOp::Eq) {
-    for (unsigned I = 0; I < 2; ++I) {
-      auto Value = Ctx.operand(Root, I), Literal = Ctx.operand(Root, 1 - I);
-      if (Ctx.op(Value) != SymOp::Ite || !Ctx.isConst(Literal))
-        continue;
-      auto T = Ctx.operand(Value, 1), E = Ctx.operand(Value, 2);
-      if (Ctx.isConst(T) && Ctx.isConst(E) && Budget.consume(3))
-        return Ctx.mkIte(Ctx.operand(Value, 0), Ctx.mkEq(T, Literal),
-                         Ctx.mkEq(E, Literal));
-    }
-  }
   if (Op != SymOp::Ite || Budget.exhausted() || Storage < 128)
     return Root;
   auto Condition = Ctx.operand(Root, 0);

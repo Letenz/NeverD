@@ -20,8 +20,10 @@ add_neverd_unittest(NeverDSymbolicTests
   SymExprCancellationTests.cpp
   SymLowWordProjectionTests.cpp
   SymExprCompareTests.cpp
+  SymExprConditionalEqualityTests.cpp
   SymExprComplementTests.cpp
   SymExprExtensionTests.cpp
+  SymExprExtensionEqualityTests.cpp
   SymExprMaskTests.cpp
   SymKnownBitsTests.cpp
   SymMBAAffineResidualTests.cpp
