@@ -1679,12 +1679,22 @@ throughout one CFG build. `NeverDReadOnlyBytesTests` checks scalar width,
 relocation identity and cold-read budget boundaries. `LowScalarConstant.*`
 in `NeverDSEHRuntimeMemoryTests` compares unary arithmetic and sign extension
 with concrete LowIR execution.
+`ScalarControlExpression.*` adds exact, bounded bitvector identity proofs at
+8/16/32/64 bits. The native branch matrix covers x86/x64/AArch64 under ELF,
+COFF and Mach-O, and a similar nonconstant expression must retain its input
+dependence. Partial register writes, calls, opaque effects, separate memory
+reads, instruction-local temporary reuse, malformed records and exhausted
+budgets cannot publish an edge. The shared symbolic integer translator also
+serves jump-table proofs; run `NeverDJumpTableTests` and
+`NeverDLowInstructionBoundaryTests` when changing it.
 
 `NeverDWorkerScalarBranchValues` checks cold listing navigation, references and
-both C routes for readonly loads, NOT, NEG and sign-extended target offsets.
+both C routes for readonly loads, NOT, NEG, sign-extended target offsets and
+four mixed Boolean/arithmetic identities over unknown scalar inputs.
 Independent native ELF x64 fixtures return a known result past an overlapping
 unreachable E9. HighC and LLVMC execute against that result at O0/O2 with UBSan;
-the native test is skipped on other hosts.
+144 independent input pairs include zero, all ones, sign and alternating bits.
+The native test is skipped on other hosts.
 
 `NeverDWorkerConstantBranch` also checks cold expression resolution and literal
 GUI listing jumps into forward and backward fragments, both C routes, retained

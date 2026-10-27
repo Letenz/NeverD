@@ -3,6 +3,7 @@
 import ctypes
 from pathlib import Path
 import platform
+import re
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,11 @@ ret
 .section .note.GNU-stack,"",@progbits
 """
 
+IDENTITY_OFFSET = ".byte 0x48,0x81,0xc1\n.long .Ldone-.Lorigin"
+INPUTS = (0, 1, 2, 3, 7, 255, 256, 0x5555555555555555,
+          0xaaaaaaaaaaaaaaaa, 0x7fffffffffffffff, 0x8000000000000000,
+          0xffffffffffffffff)
+
 CASES = (
     ("load", "mov ecx,DWORD PTR[rip+.Ldelta]", 19),
     ("not", ".byte 0xb9\n.long ~(.Ldone-.Lorigin)\nnot ecx", 20),
@@ -43,6 +49,14 @@ CASES = (
     ("self-sub", "sub ecx,ecx\n.byte 0x81,0xc1\n.long .Ldone-.Lorigin", 21),
     ("self-sub-flags", "sub rcx,rcx\njc .Lbad\n.byte 0xb9\n.long .Ldone-.Lorigin", 23),
     ("self-cmp-flags", "cmp rcx,rcx\njnz .Lbad\n.byte 0xb9\n.long .Ldone-.Lorigin", 23),
+    ("or-and", "mov rcx,rdi\nor rcx,rsi\nmov rdx,rdi\nand rdx,rsi\n"
+     "add rcx,rdx\nsub rcx,rdi\nsub rcx,rsi\n" + IDENTITY_OFFSET, 41),
+    ("xor-and", "mov rcx,rdi\nxor rcx,rsi\nmov rdx,rdi\nand rdx,rsi\n"
+     "shl rdx,1\nadd rcx,rdx\nsub rcx,rdi\nsub rcx,rsi\n" + IDENTITY_OFFSET, 44),
+    ("or-not", "mov rcx,rdi\nnot rcx\nand rcx,rsi\nmov rdx,rdi\nor rdx,rsi\n"
+     "sub rdx,rcx\nmov rcx,rdx\nsub rcx,rdi\n" + IDENTITY_OFFSET, 44),
+    ("mask-add", "mov rcx,rdi\nand rcx,0x55555555\nmov rdx,rdi\nand rdx,-1431655766\n"
+     "add rcx,rdx\nsub rcx,rdi\n" + IDENTITY_OFFSET, 46),
 )
 
 
@@ -96,7 +110,18 @@ def run(worker, compiler):
                                 "offset": 0, "limit": 2048})
                     assert source["complete"], source
                     unit = area / (route + ".c")
-                    unit.write_text(source["text"] + "\nint main(void) { return dispatch_probe() != 66; }\n")
+                    definition = re.search(r"\bdispatch_probe\(([^)]*)\)\s*\{", source["text"])
+                    assert definition, source
+                    parameters = definition.group(1).strip()
+                    count = 0 if parameters in ("", "void") else len(parameters.split(","))
+                    assert count <= 2, (name, route, parameters)
+                    arguments = ", ".join(("a", "b")[:count])
+                    unit.write_text(source["text"] + "\nstatic uint64_t inputs[] = {" +
+                                    ",".join(hex(value) + "ULL" for value in INPUTS) + "};\n" +
+                                    "int main(void) { for (unsigned i=0;i<sizeof(inputs)/sizeof(inputs[0]);++i) "
+                                    "for (unsigned j=0;j<sizeof(inputs)/sizeof(inputs[0]);++j) { "
+                                    "uint64_t a=inputs[i],b=inputs[j]; if (dispatch_probe(" +
+                                    arguments + ") != 66) return 1; } return 0; }\n")
                     for optimization in ("-O0", "-O2"):
                         executable = area / (route + optimization)
                         subprocess.run([compiler, "-std=gnu11", optimization, "-fno-strict-aliasing",
@@ -111,8 +136,10 @@ if __name__ == "__main__":
     if sys.argv[1] == "--native":
         library = ctypes.CDLL(sys.argv[2])
         function = library.dispatch_probe
-        function.argtypes = []
+        function.argtypes = [ctypes.c_uint64, ctypes.c_uint64]
         function.restype = ctypes.c_uint64
-        assert function() == 66
+        for left in INPUTS:
+            for right in INPUTS:
+                assert function(left, right) == 66
     else:
         raise SystemExit(run(sys.argv[1], sys.argv[2]))
