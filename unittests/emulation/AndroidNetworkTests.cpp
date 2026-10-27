@@ -419,20 +419,46 @@ TEST_P(AndroidNetwork, OutgoingMismatchReportsStreamAndBufferOffsets) {
           Offset == 1
               ? "outgoing TCP bytes differ from the offline contract at "
                 "stream offset 1 (buffer offset 1): expected 0x00, actual "
-                "0xff"
+                "0xff (connection index 0)"
           : Offset == 3
               ? "outgoing TCP bytes differ from the offline contract at "
                 "stream offset 3 (buffer offset 1): expected 0x00, actual "
-                "0x13"
+                "0x13 (connection index 0)"
               : "outgoing TCP bytes differ from the offline contract at "
                 "stream offset 4 (buffer offset 0): expected 0x00, actual "
-                "0x7f");
+                "0x7f (connection index 0)");
       if (Offset > 1)
         EXPECT_EQ(word(R, 2), 2u);
       if (Offset > 3)
         EXPECT_EQ(word(R, 3), 2u);
       Bytes[Offset] = Original;
     }
+  }
+}
+TEST_P(AndroidNetwork, MismatchKeepsConnectionIdentityAcrossFDReuse) {
+  Options.Android->ObserveMemoryOnFailure = true;
+  auto Stream = Options.LinuxNetwork->Connections.front();
+  Stream.ExpectedSend = {0, 0};
+  auto Failure = Stream;
+  Failure.ConnectErrno = 111;
+  Failure.ExpectedSend.clear();
+  Failure.Receive.clear();
+  Failure.ReceiveEOF = false;
+  Options.LinuxNetwork->Connections = {Failure, Stream, Stream};
+  for (unsigned Mode : {0, 1, 2, 3}) {
+    SCOPED_TRACE(Mode);
+    auto R = run("network_stream_identity", Mode);
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(word(R, 0), 1u);
+    EXPECT_EQ(word(R, 1), 1u);
+    EXPECT_EQ(R.Diagnostic,
+              Mode < 2
+                  ? "outgoing TCP bytes differ from the offline contract at "
+                    "stream offset 1 (buffer offset 1): expected 0x00, actual "
+                    "0xff (connection index 1)"
+                  : "outgoing TCP bytes differ from the offline contract at "
+                    "stream offset 1 (buffer offset 1): expected 0x00, actual "
+                    "0xff (connection index 2)");
   }
 }
 TEST_P(AndroidNetwork, DynamicResolverUsesTheSameOwner) {

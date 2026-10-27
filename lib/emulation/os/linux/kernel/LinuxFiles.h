@@ -133,6 +133,8 @@ private:
   struct OpenSocket {
     uint32_t Family, Flags;
     const LinuxStreamConnection *Connection = nullptr;
+    // Ordinal of the bound input contract, valid only with Connection.
+    size_t ConnectionIndex = 0;
     const LinuxDatagramConnection *Datagram = nullptr;
     uint64_t Sent = 0, Received = 0;
     size_t ReceiveEvent = 0;

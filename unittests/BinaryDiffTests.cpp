@@ -31,6 +31,7 @@
 #include <gtest/gtest.h>
 #include <map>
 #include <random>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -377,6 +378,80 @@ TEST(BinaryDiff, ZeroAmbiguityMarginStillPreservesExactTies) {
     EXPECT_TRUE(R.Matches.empty());
     EXPECT_EQ(R.PrimaryCoverage.Ambiguous, 3u);
     EXPECT_EQ(R.SecondaryCoverage.Ambiguous, 3u);
+  }
+}
+
+TEST(BinaryDiff, OverlappingSimilarityTiesKeepOnlyMeasuredAlternatives) {
+  const auto F = [](const char *Name, const char *First, const char *Second) {
+    Fn Out;
+    Out.Name = Name;
+    Out.Blocks = {{{First, "r0, r1"}, {Second, "r0, r1"}, {"ret", ""}}};
+    return Out;
+  };
+  const std::vector<Fn> PFns = {F("a", "add", "sub"), F("b", "xor", "and"),
+                                F("c", "or", "imul")};
+  const std::vector<Fn> SFns = {F("x", "add", "xor"), F("y", "sub", "or"),
+                                F("z", "and", "imul")};
+  const std::set<std::pair<std::string, std::string>> Expected = {
+      {"a", "x"}, {"a", "y"}, {"b", "x"}, {"b", "z"}, {"c", "y"}, {"c", "z"}};
+  ComparisonSettings Settings;
+  Settings.UseNames = false;
+  Settings.MinimumSimilarity = 0.7;
+  Settings.AmbiguityMargin = 0;
+  for (const bool Reverse : {false, true})
+    for (const auto &Layout :
+         {std::vector<size_t>{0, 1, 2}, std::vector<size_t>{2, 0, 1}}) {
+      const Program P = build(Reverse ? SFns : PFns, 0x400000, Layout);
+      const Program S = build(Reverse ? PFns : SFns, 0x800000);
+      const auto Key = [&](uint32_t A, uint32_t B) {
+        const auto Pair = std::pair(P.Functions[A].Name, S.Functions[B].Name);
+        return Reverse ? std::pair(Pair.second, Pair.first) : Pair;
+      };
+      // The independently specified six-cycle has no diagonal cross-pairs.
+      for (uint32_t A = 0; A < P.Functions.size(); ++A)
+        for (uint32_t B = 0; B < S.Functions.size(); ++B)
+          EXPECT_EQ(compareFunctions(P, A, S, B, {}).Similarity >=
+                        Settings.MinimumSimilarity,
+                    Expected.contains(Key(A, B)));
+      const auto R = compare(P, S, Settings);
+      EXPECT_TRUE(R.Matches.empty());
+      EXPECT_EQ(R.PrimaryCoverage.Ambiguous, 3u);
+      EXPECT_EQ(R.SecondaryCoverage.Ambiguous, 3u);
+      std::set<std::pair<std::string, std::string>> Actual;
+      for (const auto &Group : R.Ambiguities)
+        for (uint32_t A : Group.Primary)
+          for (uint32_t B : Group.Secondary)
+            Actual.insert(Key(A, B));
+      EXPECT_EQ(Actual, Expected);
+      std::string Error;
+      const auto Read = readComparison(saved(R, P, S), Error);
+      ASSERT_TRUE(Read) << Error;
+      ComparisonResult Reopened;
+      ASSERT_FALSE(bindComparison(*Read, P, S, Reopened));
+      EXPECT_EQ(savedWithoutTimings(Reopened, P, S),
+                savedWithoutTimings(R, P, S));
+    }
+}
+
+TEST(BinaryDiff, ExactGroupsDoNotHideOtherMeasuredCandidates) {
+  std::vector<Fn> PFns = {leaf("a", 7, 1), leaf("b", 7, 1), leaf("c", 8, 1)};
+  std::vector<Fn> SFns = {leaf("x", 7, 1), leaf("y", 7, 1), leaf("z", 7, 1)};
+  ComparisonSettings Settings;
+  Settings.UseNames = false;
+  Settings.MinimumSimilarity = 0.5;
+  for (const bool Reverse : {false, true}) {
+    const Program P = build(Reverse ? SFns : PFns, 0x400000);
+    const Program S = build(Reverse ? PFns : SFns, 0x800000);
+    const auto R = compare(P, S, Settings);
+    EXPECT_TRUE(R.Matches.empty());
+    EXPECT_EQ(R.PrimaryCoverage.Ambiguous, 3u);
+    EXPECT_EQ(R.SecondaryCoverage.Ambiguous, 3u);
+    std::set<std::pair<uint32_t, uint32_t>> Candidates;
+    for (const auto &Group : R.Ambiguities)
+      for (uint32_t A : Group.Primary)
+        for (uint32_t B : Group.Secondary)
+          Candidates.emplace(A, B);
+    EXPECT_EQ(Candidates.size(), 9u);
   }
 }
 
@@ -746,7 +821,7 @@ TEST(BinaryDiff, LongAlignmentMeasurementsRoundTripAndRefuseStaleScores) {
   std::string Error;
   auto Read = readComparison(saved(R, P, S), Error);
   ASSERT_TRUE(bool(Read)) << Error;
-  EXPECT_EQ(Read->MatcherVersion, 4u);
+  EXPECT_EQ(Read->MatcherVersion, 5u);
   ComparisonResult Restored;
   ASSERT_FALSE(bindComparison(*Read, P, S, Restored));
   EXPECT_EQ(savedWithoutTimings(R, P, S), savedWithoutTimings(Restored, P, S));

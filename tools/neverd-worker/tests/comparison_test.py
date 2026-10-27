@@ -120,6 +120,54 @@ def exhausted_ambiguities(client, root):
     print("Resolved ambiguities: unequal sides, last pair, undo/redo and file reopen passed")
 
 
+def overlapping_candidates(client, root):
+    """Candidate edges survive overlap, paging, edits and persisted binding."""
+    operations = (("01c829c8", "31c821c8", "09c80fafc1"),
+                  ("01c831c8", "29c809c8", "21c80fafc1"))
+    inputs = []
+    for side, base, rows in zip(("primary", "secondary"), (0x1000, 0x8000), operations):
+        path = root / f"overlap-{side}.bin"
+        bodies = [bytes.fromhex("b807000000" + row + "c3") for row in rows]
+        path.write_bytes(b"".join(body.ljust(16, b"\xcc") for body in bodies))
+        inputs.append({"path": str(path), "load_options": {
+            "loader": "binary", "processor": "x86_64", "platform": "sysv", "base": hex(base)}})
+    start = {"primary": inputs[0], "secondary": inputs[1],
+             "options": {"use_names": False, "min_similarity": 0.8, "ambiguity_margin": 0}}
+    ok(client, "comparison_start", start)
+    for side, source_base, target_base in (("secondary", 0x1000, 0x8000),
+                                           ("primary", 0x8000, 0x1000)):
+        for source in range(3):
+            expected = [hex(target_base + target * 16) for target in range(3)
+                        if target != 2 - source]
+            actual = []
+            for offset in range(2):
+                page = ok(client, "comparison_functions", {
+                    "side": side, "ambiguous_with": hex(source_base + source * 16),
+                    "offset": offset, "limit": 1})
+                assert page["total"] == page["ambiguity"]["candidate_total"] == 2, page
+                assert page["ambiguity"]["steps"] == ["similarity"], page
+                actual.extend(row["address"] for row in page["items"])
+            assert actual == expected, (actual, expected)
+    query = {"kind": "ambiguous"}
+    before = ok(client, "comparison_functions", query)["items"]
+    ok(client, "comparison_override", {
+        "kind": "match", "primary": "0x1010", "secondary": "0x8020"})
+    after = ok(client, "comparison_functions", query)["items"]
+    assert len(before) == 3 and len(after) == 2
+    ok(client, "comparison_undo")
+    assert ok(client, "comparison_functions", query)["items"] == before
+    ok(client, "comparison_redo")
+    assert ok(client, "comparison_functions", query)["items"] == after
+    document = ok(client, "comparison_export")
+    saved = root / "overlapping-candidates.nddiff"
+    ok(client, "comparison_save", {"path": str(saved)})
+    assert json.loads(saved.read_text()) == document
+    ok(client, "comparison_start", {**start, "restore_path": str(saved)})
+    assert ok(client, "comparison_export") == document
+    assert ok(client, "comparison_functions", query)["items"] == after
+    print("Overlapping candidates: exact six-cycle, two-sided paging, redo and file reopen passed")
+
+
 def cancellable_restore(client, root, start):
     """The restored result is transactional across read, bind and replacement."""
     original = ok(client, "comparison_start", start)
@@ -569,6 +617,7 @@ def main():
             assert client.call("comparison_functions")["error"]["code"] == "comparison_not_loaded"
             ambiguity_pages(client, root)
             exhausted_ambiguities(client, root)
+            overlapping_candidates(client, root)
             aarch64_profiles(client, args, root, fixture)
             optimized_ssa_profiles(client, args, root, fixture)
             parameter_views(client, args, root, fixture)

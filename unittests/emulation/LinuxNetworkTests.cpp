@@ -117,7 +117,8 @@ TEST_P(LinuxNetwork, FailedAdmissionDoesNotConsumeConnectionOrStream) {
   EXPECT_FALSE(call(ServiceKind::SendTo, FD, Base + 64, 3));
   EXPECT_EQ(Report.Diagnostic,
             "outgoing TCP bytes differ from the offline contract at stream "
-            "offset 0 (buffer offset 0): expected 0x01, actual 0xff");
+            "offset 0 (buffer offset 0): expected 0x01, actual 0xff "
+            "(connection index 0)");
   const uint8_t Right[] = {1, 2, 3};
   llvm::cantFail(cpu().write(Base + 64, Right));
   EXPECT_EQ(call(ServiceKind::Write, FD, Base + 64, 3), 2u);
@@ -149,10 +150,10 @@ TEST_P(LinuxNetwork, MismatchOffsetsUseSharedCursorWithoutConsumingPrefix) {
               Prefix == 1
                   ? "outgoing TCP bytes differ from the offline contract at "
                     "stream offset 2 (buffer offset 1): expected 0x03, actual "
-                    "0xff"
+                    "0xff (connection index 0)"
                   : "outgoing TCP bytes differ from the offline contract at "
                     "stream offset 2 (buffer offset 0): expected 0x03, actual "
-                    "0xff");
+                    "0xff (connection index 1)");
     const uint8_t Right[] = {1, 2, 3};
     llvm::cantFail(cpu().write(Base + 64, Right));
     EXPECT_EQ(call(ServiceKind::Write, FD, Base + 64 + Prefix, 3 - Prefix),
@@ -160,6 +161,54 @@ TEST_P(LinuxNetwork, MismatchOffsetsUseSharedCursorWithoutConsumingPrefix) {
     EXPECT_EQ(call(ServiceKind::Close, FD), 0u);
     EXPECT_EQ(call(ServiceKind::Close, Alias), 0u);
   }
+}
+TEST_P(LinuxNetwork, MismatchConnectionIdentitySurvivesAliasesAndFDReuse) {
+  auto Failure = Options.LinuxNetwork->Connections.front();
+  Failure.ConnectErrno = 111;
+  Failure.ExpectedSend.clear();
+  Failure.Receive.clear();
+  Failure.ReceiveEOF = false;
+  Options.LinuxNetwork->Connections.insert(
+      Options.LinuxNetwork->Connections.begin(), Failure);
+  const auto Failed = open();
+  ASSERT_EQ(call(ServiceKind::Connect, Failed, Base, 16), uint64_t(-111));
+  ASSERT_EQ(call(ServiceKind::Close, Failed), 0u);
+  const auto First = open();
+  ASSERT_EQ(First, Failed);
+  auto WrongPeer = Failure.Peer;
+  ++WrongPeer[3];
+  llvm::cantFail(cpu().write(Base, WrongPeer));
+  EXPECT_FALSE(call(ServiceKind::Connect, First, Base, 16));
+  llvm::cantFail(cpu().write(Base, Failure.Peer));
+  ASSERT_EQ(call(ServiceKind::Connect, First, Base, 16), 0u);
+  EXPECT_EQ(call(ServiceKind::Connect, First, Base, 16), uint64_t(-106));
+  const auto Alias = call(ServiceKind::Dup, First).value();
+  ASSERT_EQ(call(ServiceKind::Close, First), 0u);
+  const auto Reused = open();
+  ASSERT_EQ(Reused, First);
+  ASSERT_EQ(call(ServiceKind::Connect, Reused, Base, 16), 0u);
+  const uint8_t Wrong[] = {1, 0xff, 3};
+  llvm::cantFail(cpu().write(Base + 64, Wrong));
+  EXPECT_FALSE(call(ServiceKind::Write, Alias, Base + 64, 3));
+  EXPECT_EQ(Report.Diagnostic,
+            "outgoing TCP bytes differ from the offline contract at stream "
+            "offset 1 (buffer offset 1): expected 0x02, actual 0xff "
+            "(connection index 1)");
+  EXPECT_FALSE(call(ServiceKind::SendTo, Reused, Base + 64, 3));
+  EXPECT_EQ(Report.Diagnostic,
+            "outgoing TCP bytes differ from the offline contract at stream "
+            "offset 1 (buffer offset 1): expected 0x02, actual 0xff "
+            "(connection index 2)");
+  ASSERT_EQ(call(ServiceKind::Dup3, Alias, Reused, 0), Reused);
+  ASSERT_EQ(call(ServiceKind::Write, Reused, Base + 64, 1), 1u);
+  EXPECT_FALSE(call(ServiceKind::SendTo, Alias, Base + 65, 2));
+  EXPECT_EQ(Report.Diagnostic,
+            "outgoing TCP bytes differ from the offline contract at stream "
+            "offset 1 (buffer offset 0): expected 0x02, actual 0xff "
+            "(connection index 1)");
+  const uint8_t Right[] = {2, 3};
+  llvm::cantFail(cpu().write(Base + 65, Right));
+  EXPECT_EQ(call(ServiceKind::Write, Reused, Base + 65, 2), 2u);
 }
 TEST_P(LinuxNetwork, SharedCursorsReplacementAndFDReuseKeepOneOwner) {
   const auto FD = open(), Other = open();

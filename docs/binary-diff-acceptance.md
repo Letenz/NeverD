@@ -40,6 +40,16 @@ performance or statistical acceptance requirements.
 
 ## Verification record boundaries
 
+Matcher version 5 preserves measured overlapping candidate relationships
+without constructing unsupported cross-pairs. Direction/layout controls use a
+six-edge oracle, and an exact-plus-similarity case checks that earlier exact
+groups cannot hide another function's measured alternatives. Native candidate
+inventories merge incident groups with deduplication and expose their evidence
+steps. Mapping edits, undo and redo share cache invalidation. Saved comparison
+schema 3 is unchanged; saved group membership is retained when reopening.
+These are candidate-evidence and editing guarantees, not broader matching or
+semantic-equivalence qualification.
+
 Manual correspondence edits retain valid two-sided ambiguity groups throughout
 save, reopen and undo/redo. Core regressions cover unequal candidate counts,
 cross-group edits and exact group restoration; native SDK and worker fixtures

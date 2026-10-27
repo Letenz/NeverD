@@ -16,8 +16,6 @@
 #include "neverd/sdk/NeverDCAPIBytePatch.h"
 #include "neverd/sdk/NeverDCAPIPatch.h"
 
-#include <charconv>
-#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -76,25 +74,46 @@ std::string patchBytesHex(const uint8_t *Bytes, size_t Size) {
   return Text;
 }
 
-// Only the canonical snapshot adapter constructs these members: keys, hex,
-// addresses and kind tokens need no JSON escaping, and size is unsigned.
-// Count the actual members so the transport budget needs no temporary dump.
-std::size_t patchRowJsonSize(const Json::object_t &Row) {
-  std::size_t Bytes = 2;
-  bool First = true;
-  for (const auto &[Key, Value] : Row) {
-    Bytes += Key.size() + 3 + (First ? 0 : 1);
-    First = false;
-    if (Value.is_string()) {
-      Bytes += Value.get_ref<const std::string &>().size() + 2;
-    } else {
-      char Digits[std::numeric_limits<Json::number_unsigned_t>::digits10 + 1];
-      const auto End = std::to_chars(Digits, Digits + sizeof Digits,
-                                     Value.get<Json::number_unsigned_t>());
-      Bytes += End.ptr - Digits;
-    }
-  }
-  return Bytes;
+Json patchRowJson(const neverd_byte_patch_row_v1 &Row) {
+  const auto Offset = hexAddress(Row.file_offset);
+  Json::object_t Item;
+  Item.emplace("addr", Offset);
+  Item.emplace("current", patchBytesHex(Row.current, Row.size));
+  Item.emplace("file_off", Offset);
+  Item.emplace("kind", Row.kind);
+  Item.emplace("original", patchBytesHex(Row.original, Row.size));
+  Item.emplace("size", Row.size);
+  Item.emplace("va", hexAddress(Row.address));
+  return Json(std::move(Item));
+}
+
+bool matchesPatchBytes(const Json &Value, const uint8_t *Bytes, size_t Size) {
+  if (!Value.is_string())
+    return false;
+  const auto &Text = Value.get_ref<const std::string &>();
+  if (Text.size() != Size * 2)
+    return false;
+  constexpr char Digits[] = "0123456789abcdef";
+  for (size_t I = 0; I < Size; ++I)
+    if (Text[I * 2] != Digits[Bytes[I] >> 4] ||
+        Text[I * 2 + 1] != Digits[Bytes[I] & 15])
+      return false;
+  return true;
+}
+
+// Match the adapter's complete representation, not just byte semantics.
+// Unknown fields, uppercase hex and alternative numeric types must not
+// survive a canonical SDK snapshot conversion through handle reuse.
+bool matchesPatchRow(const Json &Value, const neverd_byte_patch_row_v1 &Row) {
+  const auto Offset = hexAddress(Row.file_offset);
+  const auto Kind = Value.find("kind");
+  return Value.size() == 7 && Kind != Value.end() && *Kind == Row.kind &&
+         Value.at("size").is_number_unsigned() &&
+         Value.at("size").get<Json::number_unsigned_t>() == Row.size &&
+         Value.at("addr") == Offset && Value.at("file_off") == Offset &&
+         Value.at("va") == hexAddress(Row.address) &&
+         matchesPatchBytes(Value.at("original"), Row.original, Row.size) &&
+         matchesPatchBytes(Value.at("current"), Row.current, Row.size);
 }
 } // namespace
 bool Engine::keepsBytePatches() { return bool(patches()); }
@@ -112,18 +131,12 @@ bool Engine::provesSourcePatches() {
              "neverd_byte_patch_source_preview_json");
 }
 
-Json Engine::bytePatchRows(std::size_t *encodedSize) const {
-  if (encodedSize)
-    *encodedSize = 2;
+Json Engine::bytePatchRows() const {
   const auto &F = patches();
   if (!F)
     return Json::array();
-  if (!F.snapshot || !F.freeSnapshot) {
-    auto Rows = backendJson(F.rows(session_));
-    if (encodedSize)
-      *encodedSize = Rows.dump().size();
-    return Rows;
-  }
+  if (!F.snapshot || !F.freeSnapshot)
+    return backendJson(F.rows(session_));
 
   std::unique_ptr<const neverd_byte_patch_snapshot_v1, decltype(F.freeSnapshot)>
       Snapshot(F.snapshot(session_), F.freeSnapshot);
@@ -131,21 +144,8 @@ Json Engine::bytePatchRows(std::size_t *encodedSize) const {
     throw Error("engine_error", error());
   Json::array_t Rows;
   Rows.reserve(Snapshot->row_count);
-  for (size_t I = 0; I < Snapshot->row_count; ++I) {
-    const auto &Row = Snapshot->rows[I];
-    const auto Offset = hexAddress(Row.file_offset);
-    Json::object_t Item;
-    Item.emplace("addr", Offset);
-    Item.emplace("current", patchBytesHex(Row.current, Row.size));
-    Item.emplace("file_off", Offset);
-    Item.emplace("kind", Row.kind);
-    Item.emplace("original", patchBytesHex(Row.original, Row.size));
-    Item.emplace("size", Row.size);
-    Item.emplace("va", hexAddress(Row.address));
-    if (encodedSize)
-      *encodedSize += patchRowJsonSize(Item) + (I ? 1 : 0);
-    Rows.emplace_back(std::move(Item));
-  }
+  for (size_t I = 0; I < Snapshot->row_count; ++I)
+    Rows.emplace_back(patchRowJson(Snapshot->rows[I]));
   return Json(std::move(Rows));
 }
 bool Engine::reloadBytePatches(bool knownChanged) {
@@ -374,10 +374,6 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
     return backendJson(Raw);
   }
   auto &Store = history();
-  Json State = Json::object();
-  for (const auto &[Table, Rows] : Store.committedState().items())
-    if (Table != "patches")
-      State[Table] = Rows;
   Json Result;
   if (Operation == "patch_revert") {
     Json Ranges =
@@ -406,37 +402,67 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
       throw Error("patch_refused", error());
     Result = backendJson(Raw);
   }
-  std::size_t PatchStateBytes;
-  State["patches"] = bytePatchRows(&PatchStateBytes);
-  if (PatchStateBytes > ::neverd::limits::worker::kPatchStateBytes) {
+  const auto &OldRows = Store.committedPatches();
+  ProjectHistory::PatchRows NewRows;
+  try {
+    const auto &F = patches();
+    if (F.snapshot && F.freeSnapshot) {
+      std::unique_ptr<const neverd_byte_patch_snapshot_v1,
+                      decltype(F.freeSnapshot)>
+          Snapshot(F.snapshot(session_), F.freeSnapshot);
+      if (!Snapshot)
+        throw Error("engine_error", error());
+      NewRows.reserve(Snapshot->row_count);
+      auto Old = OldRows.begin();
+      for (size_t I = 0; I < Snapshot->row_count; ++I) {
+        const auto &Row = Snapshot->rows[I];
+        while (Old != OldRows.end() && (*Old)->address() < Row.file_offset)
+          ++Old;
+        if (Old != OldRows.end() && (*Old)->address() == Row.file_offset &&
+            matchesPatchRow((*Old)->value(), Row))
+          NewRows.push_back(*Old);
+        else
+          NewRows.push_back(ProjectHistory::patchRow(patchRowJson(Row)));
+      }
+    } else {
+      // The older JSON ABI can include extra fields and escaped strings.
+      auto Rows = bytePatchRows();
+      NewRows.reserve(Rows.size());
+      for (auto &Row : Rows)
+        NewRows.push_back(ProjectHistory::patchRow(std::move(Row)));
+    }
+    std::size_t PatchStateBytes = 2;
+    for (const auto &Row : NewRows)
+      PatchStateBytes += Row->encoded().size();
+    if (!NewRows.empty())
+      PatchStateBytes += NewRows.size() - 1;
+    if (PatchStateBytes > ::neverd::limits::worker::kPatchStateBytes)
+      throw Error("patch_limit", "Patch history exceeds the worker transport "
+                                 "budget; use the SDK for larger overlays");
+  } catch (...) {
     (void)patches().load(session_);
     functionsChanged();
-    throw Error("patch_limit", "Patch history exceeds the worker transport "
-                               "budget; use the SDK for larger overlays");
+    throw;
   }
-  // Committed history and SDK overlays are ordered by file offset. Merge
-  // their rows directly; only changed rows enter the owning history command.
-  const auto &OldRows = Store.committedState().at("patches");
-  const auto &NewRows = State.at("patches");
-  auto Old = OldRows.begin(), New = NewRows.begin();
+  // Only changed owning rows enter the command. Reused handles also avoid
+  // comparing all seven JSON fields a second time.
+  auto Old = OldRows.cbegin(), New = NewRows.cbegin();
   Json Command;
   const Json Missing;
   while (Old != OldRows.end() || New != NewRows.end()) {
-    const auto OldAt =
-        Old != OldRows.end()
-            ? parseAddress(Old->at("addr").get_ref<const std::string &>())
-            : 0;
-    const auto NewAt =
-        New != NewRows.end()
-            ? parseAddress(New->at("addr").get_ref<const std::string &>())
-            : 0;
+    const auto OldAt = Old != OldRows.end() ? (*Old)->address() : 0;
+    const auto NewAt = New != NewRows.end() ? (*New)->address() : 0;
     const bool TakeOld =
         Old != OldRows.end() && (New == NewRows.end() || OldAt <= NewAt);
     const bool TakeNew =
         New != NewRows.end() && (Old == OldRows.end() || NewAt <= OldAt);
     const auto At = TakeOld ? OldAt : NewAt;
-    const auto &Before = TakeOld ? *Old++ : Missing;
-    const auto &After = TakeNew ? *New++ : Missing;
+    const auto BeforeRow = TakeOld ? *Old++ : nullptr;
+    const auto AfterRow = TakeNew ? *New++ : nullptr;
+    if (BeforeRow == AfterRow)
+      continue;
+    const auto &Before = BeforeRow ? BeforeRow->value() : Missing;
+    const auto &After = AfterRow ? AfterRow->value() : Missing;
     if (Before == After)
       continue;
     Json Change{
@@ -454,7 +480,7 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
   const auto Checkpoint = Store;
   try {
     Store.stage(std::move(Command));
-    Store.persist(std::move(State));
+    Store.persistPatches(std::move(NewRows));
   } catch (...) {
     Store = Checkpoint;
     (void)patches().load(session_);

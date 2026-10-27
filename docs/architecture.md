@@ -479,6 +479,16 @@ This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
 
+`decode/X86/X86TransactionEncoding.h` owns the raw XBEGIN prefix, immediate
+width and signed fallback calculation shared by decoder normalization and
+lifting. A rel16 displacement retains a full 32/64-bit code target; address
+size cannot change its sign extension. The pinned decoder's i386 forms that
+use address size for extension are normalized once, before CFG discovery.
+Only the authenticated legacy representation is corrected; contradictory
+instruction detail still fails before LowIR effects. The two exits retain the
+original fallback and update EAX only after an abort. This transport does not
+supply a complete machine checkpoint or qualify hardware rollback.
+
 ## Apple arm64e analysis
 
 The Mach-O loader retains the CPU subtype, including its ABI capability bits,
@@ -1193,8 +1203,11 @@ it does not produce two more complete inventories just to detect that change.
 Ordinary reloads still compare before and after.
 
 The SDK's versioned byte-patch snapshot copies canonical rows and raw bytes into
-independent owned storage. The worker builds its history DOM directly from those
-rows, avoiding a complete JSON serialization, parse and address normalization.
+independent owned storage. The worker compares these rows with independently
+owned, admitted history rows and shares unchanged row handles and their strict
+encodings. Only changed rows build a new DOM. Reuse requires the complete
+canonical seven-field representation, including numeric types and hex spelling;
+unknown fields cannot survive the adapter's canonical projection.
 It resolves acquisition and release together and retains JSON compatibility with
 older SDKs. Snapshot storage survives session edits and destruction; the overlay
 still owns all admission, ordering and kind decisions. CLI JSON and sidecar
@@ -1291,9 +1304,16 @@ accounting and document assembly; rollback checkpoints do not copy command
 payloads. Pending sidecar writes and the next committed snapshot share the same
 owned text. Complete history/journal sizes are reserved before assembly, while
 all publication limits, external-byte comparisons and durable write ordering
-remain in their existing owners. The typed patch-row adapter counts the exact
-compact representation of its canonical fields without materializing a second
-JSON string; older SDK inventories retain the generic serializer path.
+remain in their existing owners. Patch commits and undo/redo share admitted row
+values and unchanged non-patch tables through the same publication routine as
+generic state saves. Row handles retain neither SDK pointers nor entire previous
+snapshots or arrays. Sequence ordering and uniqueness are checked independently
+of row admission. Complete JSON views are materialized only for legacy callers;
+single-table reads do not construct the patch DOM. Generic saves own the supplied
+row representations anew: logical equality (including signed zero) can suppress
+a sidecar write but cannot authorize reuse of differently spelled JSON text.
+The transport budget counts cached strict row encodings, including extra fields
+and escaping from older SDK inventories, before considering a no-op.
 
 Source previews retain the live session’s load options, analysis policy, user metadata and an owning snapshot of signature evidence. Instruction display limits never limit full-range validation; truncated previews report this explicitly. Thumb edits must cover the complete IT block when removing its predicate.
 
@@ -1361,13 +1381,22 @@ removes groups exhausted on either side before rebuilding coverage and lookup
 indices. The override effect retains changed and removed groups at their
 original indices; undo merges them back in order without rematching functions.
 Persisted groups therefore always have candidates on both sides.
+Similarity alternatives are retained as overlapping stars, each backed by the
+measured near-best candidates of one endpoint. Combining both endpoints' rivals
+into a Cartesian group would invent pairs; removing an already-grouped endpoint
+would lose other candidates. Exact groups cover only their own edges. The
+legacy single-group lookup remains a coverage marker, not a candidate iterator.
 The C API's `functions_json` inventory projects the same accepted mappings and
 retained ambiguity groups. `ambiguous_with` binds an opposite-side function to
-the full group's target-side inventory, with ordinary search/sort/paging; it
-does not run another matcher or promote a candidate. Mapping edits and restore
-invalidate that inventory cache. CLI and the Qt counterpart picker consume this
-projection; the picker keeps bounded pages and invalidates its selection when
-the worker's comparison revision changes.
+the union of its groups' target-side members, with ordinary search/sort/paging;
+it does not run another matcher or promote a candidate. A cached membership
+index normalizes each group's members once. Single-group rows share those
+members; overlapping groups form a union for the requested row. Cache storage
+follows group membership, without expanding full Cartesian candidate sets.
+Pairing, undo, redo and restore share invalidation of mapping-dependent
+inventory, candidate, delta, source and observation caches. CLI and the Qt
+counterpart picker consume this projection; the picker keeps bounded pages and
+invalidates its selection when the worker's comparison revision changes.
 `ComparisonJSON` owns strict saved-report validation and transactional binding.
 Its optional `ComparisonControl` carries cooperative cancellation/deadlines
 through record readers, graph/native/region validators and measurement workers.
@@ -3269,6 +3298,19 @@ only a missing complete identity reaches the allocation path. Native evaluation
 slots remain normalized to their declared widths, so operations that preserve
 that invariant do not mask their results again. External variable values and
 arithmetic that can introduce high bits still receive their width mask.
+Long operand sequences use the existing LLVM block hash for lookup instead of
+a serial combine per handle, retaining complete ordered-operand comparison.
+That external hash call stays outside the short lookup's stack frame.
+Native literal construction normalizes its inline value before interning.
+Low-word decision proofs capture the smaller of their local and remaining
+request allowances. Each operation admits and counts the same work locally;
+every exit commits that count, including refusals. The completed-reading memo
+receives the committed request budget before it admits its own work.
+Decision and carry caches combine their bounded input and edge fields before
+hashing, retaining complete-key equality and the same storage/work accounts.
+Native sample guards index contiguous variable-ID windows directly. Sparse
+windows retain compact maps, and both paths preserve the same referenced-input
+order and random stream. Numeric node-order comparisons stay inside the sort.
 General operators retain the shared APInt semantics in a separate call, keeping
 their operand construction and cleanup out of the native evaluator's hot frame.
 The compact two-word hash key uses one 64-bit bucket mix, without hashing its
@@ -3284,6 +3326,9 @@ outside the small-recipe synthesis path. Terms remain ordered by value after
 each merge round, so only zero-to-one neighbor flips need lookup; the reverse
 pair was already visited. Prepared Boolean recipes keep their reconstruction
 memo inline, with ordinary growth for optional larger recipes.
+Small implicant rounds also keep their temporary term and merge vectors inline;
+larger rounds grow normally. Their deduplication keys retain both complete
+value/care fields, and discovery order and work admission remain unchanged.
 The shared exact MBA layer also recombines weighted literal AND/OR/XOR/NOT
 views of one opaque word. It constructs per-bit coefficients and a constant,
 then independently checks the pointwise grammar, constant difference and every
@@ -3517,8 +3562,11 @@ precision needed for the group. The joint proof stops at the first possibly
 nonzero bit. Large products project their observed words before counting the
 input domain, so invisible high subtrees do not consume a second traversal.
 Neutral low-word constants bypass reconstruction of identity operations.
-Small products retain their cheap single-residual admission after affine
-synthesis, and unaffordable mandatory scans decline before consuming their work.
+Small products can group by parity alone after affine synthesis, retaining
+multiple independently valued residual words. A complete count must still
+prove the other branch zero; a majority by itself does not suffice. Large
+projected groups keep their stronger shared prefix for coalesced powers.
+Unaffordable mandatory scans decline before consuming their work.
 The complete group result may reuse a representative word only after all
 observed decision bits agree. Reconstruction restores both the selector and
 every retained factor. This avoids expanding an independent multiplication into
@@ -3538,7 +3586,11 @@ remove only proved trailing zeros and retain every normalized parity term;
 one-bit products keep an opaque identity because cross terms can survive.
 An odd pair shares a square of its lower word and one exact highest-bit
 correction. Collecting the squares permits recursion at one fewer bit. Every
-unpaired factor and every correction remains in the result. Degree-block
+unpaired factor and every correction remains in the result. At the outermost
+level of an odd-sized source block, unpaired full words can remain outside
+the paired square and its correction. The original full factor count still
+proves the other parity branch zero; recursive squares retain all their own
+factors. Even blocks and projected groups keep their joint reconstruction. Degree-block
 admission only orders this search; it never establishes a pair or oddness.
 Pairing indexes are constructed only for an admitted search and are confined
 to its active odd assumption, avoiding setup in ordinary low-word searches.
@@ -3563,8 +3615,13 @@ are request-local; storage refusals retry when a larger allowance is available.
 The deep walk keeps original opaque inputs and changed original products
 eligible. Their rewrites propagate through the canonical builder without
 repeated analysis of the emitted reading. Independent linear tails
-finish before walking a generated product reading. A concrete odd-input
+finish before walking a generated product reading. A concrete nonzero
 witness may reject further zero-proof attempts but never authorizes a rewrite.
+All-odd assignments retain their cheap parity path. If they fail, bounded
+native-width evaluations can count trailing zeros in even factors at complete
+input assignments. Their sum must be below the observed width. Evaluation
+reuses the ordinary word evaluator, keeps correlated inputs consistent, and
+shares the existing witness work and storage allowance.
 Native scalar affine coordinates retain their cheap complete-map path; the
 extra projected read is reserved for wrappers, nonlinear monomials and wide
 coefficients, avoiding duplicated searches on ordinary nonzero residuals.
@@ -7299,8 +7356,25 @@ The control separately retains long-mode stack-default address provenance.
 SDK capability check shared with AMX. Native LLVM and NeverC use that control;
 older SDKs and ordinary C retain RBP as the SIB base and compute the offset in
 RDX without changing RBP. An explicit DS override does not erase RSP/RBP stack
-provenance; FS/GS and address-size-32 operands do not acquire it. i386 SS-default
-and explicit non-DS/FS/GS segments remain refused.
+provenance; FS/GS and address-size-32 operands do not acquire it. i386 segments
+use the separate compact control described below.
+
+`X86CompressExpand.h` retains i386 CS/ES/SS offsets in a two-byte control,
+with the architectural prefix in the high byte. The one-byte DS/FS/GS and
+long-mode stack-reference forms keep their existing layout. Known target modes,
+control size, address space and stack provenance must agree. The lifter retains
+implicit SS for SP/BP bases and performs effective-address wrapping before
+native transport. LLVM reuses the raw segment-offset materializer; MedIR and
+HighIR type inference do not promote these offsets into process pointers.
+Native instructions own descriptor checks and faults. Concrete execution
+refuses active accesses without a descriptor environment; zero-mask suppression
+still avoids observing the address or segment. Both C feature scans consume the
+emitter's actual architecture instead of assuming x64.
+
+Packed HighIR inputs in compact and four-source C projection have explicit
+integer storage at their complete declared widths. A narrow printed literal
+such as zero cannot create a four-byte temporary followed by a wider memcpy.
+LLVM-to-C's already typed vector inputs retain their vector storage.
 
 `X86FourSource.h` owns the explicit four-source memory shape and observation
 rules. The lifter snapshots independent register inputs into one packed SSA
@@ -10521,7 +10595,9 @@ external solver dependency. It translates the expression DAG directly and
 caches nodes within a solver session. Permanent assertions and per-check
 assumptions remain separate. Expression synthesis selects its proof backend
 through the existing verifier boundary; inconclusive results never authorize a
-rewrite. See [bitvector proof backends](solver.md) for build and validation.
+rewrite. Repeated product factors share squared powers in the solver encoding;
+the existing scaled-product quotient restores the complete output word.
+See [bitvector proof backends](solver.md) for build and validation.
 
 Shared symbolic expression builders recover comparisons from bounded
 highest-bit Boolean networks. They check an exact modular subtraction relation
@@ -10975,6 +11051,21 @@ lifting decode routes consume that result, including REX2 forms. Illegal
 encodings fail decoding even when strict lifting is disabled. UD1 remains an
 explicit invalid-opcode intrinsic; its encoded operands do not imply an
 ordinary memory access.
+
+With text and detail disabled, Capstone's native iterator uses generated
+operand terminals that share the full decoder's bounded readers and legality
+checks. Its prefix classifier and terminal selection avoid repeated dispatch;
+unsupported operand shapes retain ordinary decoding. ARM, AArch64 and RISC-V
+also use generated descriptor flags to skip operand postprocessing only when
+the owning traversal would perform no writes. Their feature-query bodies are
+visible at decoder and printer call sites, allowing constant feature numbers
+to fold into mode-bit checks. The inline and external definitions share one
+body and retain the existing mode policy. These optimizations reside in the
+Capstone `next` fork and are selected through the submodule revision.
+NeverD's existing architecture-specific metadata corrections and fallback
+decoders remain authoritative after the Capstone call. The native batch API
+is available in the fork; this `dev` integration uses the existing iterator
+call sites and does not enable the experimental iced adapter.
 
 `Decoder` and every architecture lifter start in strict mode. If Capstone can
 decode an instruction but the selected lifter has no implementation, the
