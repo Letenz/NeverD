@@ -1403,3 +1403,27 @@ and metadata boundaries, and each scan is bounded. Pure forwarding entries show
 their transfer instruction separately from trailing padding even when an
 original unwind record covers the larger span. Original unwind data stays
 unchanged.
+
+Browsing caches bind to the loaded input SHA-256, effective load/debug/signature
+inputs, user edits and type files, plus the linked engine and worker build
+identity. Windows uses the loaded files' volume/file identity, change time,
+write time and size; other platforms use their byte hashes. A changed or
+replaced runtime invalidates the local cache without hashing a large DLL on
+every Windows open. Input bytes always use their full SHA-256.
+They store function catalog, metadata, recovered instruction pages and stack
+frame query results. Initial function-table, navigation-overview and bounded
+viewport documents can be reused before reconstructing the live listing. These
+initial documents are produced from the untouched loader catalog, require the
+same function inventory and exact query parameters, and do not carry an old
+index's generation/progress into the new session. Later queries and discovery
+use live indexes. Caches do not restore executable engine objects or replace
+user state. An `open` payload can set `browse_cache:false` to bypass reuse and
+writes. `metadata.browse_cache` reports `enabled`, `hits`, `misses`, `writes`,
+`invalid`, `pending` and `diagnostic`. Writes run between requests or on clean
+shutdown, and read-only workers never write them. Malformed or incompatible
+entries fall back to the ordinary query; failed lifts are not cached as complete
+results. Cache budgets live in the worker's `ResourceLimits.h`. Removing this
+directory merely makes the next browsing requests cold; it is not needed to
+replay edits, and is not part of exported project state. The SDK still loads and
+validates the input on every open, and background discovery/reference indexing
+continues to use its normal live state.

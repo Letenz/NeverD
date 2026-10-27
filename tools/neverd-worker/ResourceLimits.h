@@ -88,6 +88,10 @@ inline constexpr std::size_t kListingMaxOpcodeBytes = 12;
 inline constexpr std::size_t kListingMaxDecodeChunk = 2048;
 inline constexpr std::size_t kListingFirstUnsizedChunk = 64;
 inline constexpr std::size_t kListingDecodeCacheFunctions = 512;
+/// Disposable, per-project browsing cache. Writes happen in idle time.
+inline constexpr std::size_t kBrowseCacheMaxEntryBytes = 32 * 1024 * 1024;
+inline constexpr std::size_t kBrowseCacheMaxBytes = 128 * 1024 * 1024;
+inline constexpr std::size_t kBrowseCacheMaxPendingEntries = 16;
 /// Nearby entries considered for an otherwise unowned navigation address.
 /// Only a recovered instruction, never proximity, establishes ownership.
 inline constexpr std::size_t kListingOwnerSearchFunctions = 16;
