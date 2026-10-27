@@ -140,7 +140,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
 | XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation. Prefixed LOCK operations, implicit-lock XCHG and XRELEASE MOV stores are explicitly refused before ordinary memory lowering; native transactional completion remains missing. |
 | XBEGIN and full RTM regions | The two-exit lift retains rel16 and rel32 fallbacks at the full code width, with conditional EAX updates. The pinned decoder's i386 displacement-sign errors are normalized before CFG discovery. Full register/memory checkpoint, nesting, fallback faults and hardware rollback remain unqualified; a status result alone does not establish these contracts. |
-| Remaining compact-memory address forms | Native LLVM and both C routes retain long-mode RSP/RBP stack-reference provenance independently of DS overrides, alongside DS/FS/GS data addresses. In i386, SS-default stack bases and explicit CS/ES/SS segments remain refused; an explicit DS override is supported. Physical AVX-512 fault execution remains unqualified. |
+| Remaining compact-memory descriptor/fault execution | Native LLVM and both C routes retain long-mode stack references and i386 CS/ES/SS offsets, including implicit SS for SP/BP bases, alongside DS/FS/GS. Concrete i386 CS/ES/SS accesses still require a descriptor environment; zero-mask suppression remains available. Physical AVX-512 and descriptor-fault execution remain unqualified. |
 | Remaining four-source address forms and hardware qualification | Native lowering uses explicit SSA sources and the same long-mode stack-reference contract as compact memory. i386 non-DS/FS/GS segments and physical AVX512_4FMAPS/AVX512_4VNNIW execution/exception behavior still require qualification. Legacy implicit-bank IDs remain guarded at native output. |
 | Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Long-mode default-stack memory retains an explicit provenance control. i386 non-DS segments still require an owned segment contract; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
 | AMX tile row-memory with addr64 SP/BP bases | Its SIB index is the architectural stride and cannot also carry the configuration API's offset relative to RBP. These forms fail before LowIR effects unless FS/GS selects the segment. LDTILECFG/STTILECFG use the independent version-2 stack-reference contract below. |
@@ -2121,7 +2121,7 @@ references. A long-mode stack reference uses native control `0x100` when the
 SDK/compiler advertises that capability. Its owned assembly fallback computes
 the address relative to unchanged RBP in RDX, retains RBP as the SIB base and
 declares RDX/flags/memory clobbers. FS/GS, addr32 and R12/R13 data defaults remain
-separate. The remaining i386 segment limitations are listed above. The full
+separate. The i386 CS/ES/SS completion below extends this transport. The full
 LLVM and NeverD matrices include i386; NeverC's builtin frontend remains x86-64 only.
 
 Concrete execution refuses unknown active masks, addresses and source/prior
@@ -2139,7 +2139,7 @@ partial-store fault model is a software projection; hardware partial-fault
 completion has not been independently qualified.
 `NeverDX86CompressExpandSourceTests` checks shared contracts, altered native
 and assembly effects, unknown-entry rejection, 216 x64 wrapper/pipeline variants
-and 162 i386 wrappers with explicit address/mask/vector input setup and observable
+and 324 i386 wrappers with explicit address/mask/vector input setup and observable
 load results. Their `KMOVW` setup also checks that a narrowing machine `COPY`
 survives Med-to-High expression substitution. The shared conversion retains
 that byte slice; an executable regression covers i386, x86-64 and AArch64.
@@ -2527,3 +2527,41 @@ completion contract. They do not execute physical RTM or qualify checkpoint,
 nesting, fallback-address faults or complete rollback. LLVM already supplies
 `llvm.x86.xbegin` and NeverC `_xbegin`; this change requires no new compiler
 intrinsic, LLVM release or SDK pin.
+
+
+## i386 compact segments and packed C storage
+
+All twelve compact-memory families now retain i386 CS/ES/SS prefixes and
+implicit SS for SP/BP addresses. A checked two-byte control carries the segment
+through LowIR, MedIR and HighIR; LLVM and both C routes reuse the existing
+native compiler interfaces. Address arithmetic wraps at its original width,
+and segment offsets never become relocated process pointers. The existing
+one-byte contracts and long-mode stack-reference behavior remain valid.
+Concrete execution refuses active accesses without a descriptor environment;
+a zero mask still suppresses address/segment observations as specified by
+[Intel's E4 exception conditions](https://cdrdv2-public.intel.com/836199/361050-intel-avx10.2-spec.pdf).
+Physical descriptor faults and AVX-512 execution remain unqualified.
+
+The new full-source fixtures exposed a C storage bug: `__auto_type input = 0`
+allocated only four bytes before a 16-byte packed copy. ASan reproduced the
+out-of-bounds read. Compact and four-source HighC projection now declare the
+complete packed integer width, including the four-source packed bundle;
+LLVM-to-C retains its already typed vector inputs. The regression executes
+126 constant-input cases per optimization level, covering all compact kinds
+and widths and all six four-source kinds.
+
+At `69ce43af7f`, both pinned r6 and current native SDKs pass 57 tests each,
+including 13,608 decoder/lifter checks and 270 i386 native/C objects per SDK.
+Each SDK also passes 252 packed-input comparisons under ASan/UBSan, 432
+full-source recorder runs (half sanitized Clang, half NeverC), and another
+252 packed-input comparisons with NeverC. The external native-interface
+checks pass 90 compact and 522 four-source objects per SDK, plus 8 compact and
+16 four-source source-recording runs.
+
+The [qualification record](evidence/x86-compact-segments-2026-10-27.json)
+records both SDKs, generated objects, source recorders and the ASan
+counterexample. NeverC's native frontend remains x64-only; i386 native objects
+are produced by LLVM and ordinary Clang. NeverC also checks the exported i386
+C's operand transport through explicitly substituted x64 recorders. This is
+source transport evidence, not i386 instruction execution. No LLVM release or
+SDK pin changes are needed for these existing compiler interfaces.
