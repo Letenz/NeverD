@@ -392,6 +392,35 @@ void withCodeMenu(CodeText *code, const std::function<void(QMenu *)> &use) {
   }
 }
 
+/// As withCodeMenu, for a right click on \p assembly's text or graph.
+void withAssemblyMenu(DisassemblyView *assembly,
+                      const std::function<void(QMenu *)> &use) {
+  const QPointer<QWidget> window = assembly->window();
+  QTimer probe;
+  QObject::connect(&probe, &QTimer::timeout, &probe, [&] {
+    auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+    if (!menu)
+      return;
+    probe.stop();
+    use(menu);
+    menu->close();
+  });
+  probe.start(5);
+  QWidget *surface = assembly->graphMode()
+                         ? static_cast<QWidget *>(assembly->graph())
+                         : assembly->listing()->viewport();
+  const QPoint point(40, 40);
+  QContextMenuEvent context(QContextMenuEvent::Mouse, point,
+                            surface->mapToGlobal(point));
+  QApplication::sendEvent(surface, &context);
+  if (window && window->isVisible() &&
+      (!QApplication::activeWindow() ||
+       QApplication::activeWindow() == window)) {
+    window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(window));
+  }
+}
+
 class LoadDialogAcceptor {
 public:
   LoadDialogAcceptor() {
@@ -1498,6 +1527,103 @@ private slots:
     if (viewKind == QLatin1String("listing"))
       QTRY_VERIFY(renameSeen);
     QVERIFY(dock->isFloating());
+  }
+
+  void disassemblyMenuOffersTheLinesEdits() {
+    // An instruction of a function offers the function's stack variables,
+    // the SP the instruction leaves and its operand's forms; a data item its
+    // array and alignment. A pseudocode window offers none of them.
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "line-edits.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    QTRY_VERIFY(assembly->currentAddress().has_value());
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    const auto offers = [&](QMenu *menu, ActionId id) {
+      return menu->actions().contains(bench.action(id));
+    };
+    const auto checkInstruction = [&](QMenu *menu) {
+      QVERIFY(offers(menu, ActionId::EditStackFrame));
+      QVERIFY(offers(menu, ActionId::EditStackPointer));
+      QVERIFY(!offers(menu, ActionId::EditMakeArray));
+      QVERIFY(!offers(menu, ActionId::EditMakeAlignment));
+      auto *forms = menu->findChild<QMenu *>(QStringLiteral("operandTypeMenu"));
+      QVERIFY(forms);
+      const auto operand = forms->actions();
+      for (const auto id :
+           {ActionId::EditOperandNumber, ActionId::EditOperandHex,
+            ActionId::EditOperandDecimal, ActionId::EditOperandBinary,
+            ActionId::EditOperandChar, ActionId::EditOperandOffset,
+            ActionId::EditOperandEnum, ActionId::EditOperandNegate,
+            ActionId::EditOperandInvert, ActionId::EditStackOperand})
+        QVERIFY(operand.contains(bench.action(id)));
+      // The structure offset keeps its own entry.
+      QVERIFY(offers(menu, ActionId::EditOperandStruct));
+      QVERIFY(!operand.contains(bench.action(ActionId::EditOperandStruct)));
+    };
+    const Address function = Base + 0x140;
+    assembly->navigate(function);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(function));
+    assembly->focusContent();
+    QTRY_VERIFY(assembly->listing()->hasFocus());
+    QTRY_VERIFY(assembly->onInstruction());
+    bool shown = false;
+    withAssemblyMenu(assembly, [&](QMenu *menu) {
+      shown = true;
+      checkInstruction(menu);
+    });
+    QVERIFY(shown);
+    assembly->setGraphMode(true);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(function));
+    QTRY_VERIFY(assembly->onInstruction());
+    shown = false;
+    withAssemblyMenu(assembly, [&](QMenu *menu) {
+      shown = true;
+      checkInstruction(menu);
+    });
+    QVERIFY(shown);
+    assembly->setGraphMode(false);
+
+    // A pointer of the read-only data section.
+    const Address slot = Base + 0x3000;
+    assembly->navigate(slot);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(slot));
+    QTRY_VERIFY(assembly->onData());
+    assembly->focusContent();
+    QTRY_VERIFY(assembly->listing()->hasFocus());
+    shown = false;
+    withAssemblyMenu(assembly, [&](QMenu *menu) {
+      shown = true;
+      QVERIFY(offers(menu, ActionId::EditMakeArray));
+      QVERIFY(offers(menu, ActionId::EditMakeAlignment));
+      QVERIFY(!offers(menu, ActionId::EditStackFrame));
+      QVERIFY(!offers(menu, ActionId::EditStackPointer));
+      QVERIFY(!menu->findChild<QMenu *>(QStringLiteral("operandTypeMenu")));
+    });
+    QVERIFY(shown);
+
+    // Its function can differ from the disassembly's, which these edit.
+    assembly->navigate(function);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(function));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    QTRY_VERIFY(!view->text()->loading() && view->text()->lineCount());
+    view->text()->setFocus();
+    QTRY_VERIFY(view->text()->hasFocus());
+    shown = false;
+    withCodeMenu(view->text(), [&](QMenu *menu) {
+      shown = true;
+      for (const auto id :
+           {ActionId::EditStackFrame, ActionId::EditStackPointer,
+            ActionId::EditMakeArray, ActionId::EditMakeAlignment})
+        QVERIFY(!offers(menu, id));
+      QVERIFY(!menu->findChild<QMenu *>(QStringLiteral("operandTypeMenu")));
+    });
+    QVERIFY(shown);
   }
 
   void floatingWindowsKeepMouseHistory() {

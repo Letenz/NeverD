@@ -1257,6 +1257,14 @@ window used to route branch arrows. Revision and navigation fences still apply.
 
 Patch persistence reads typed, owning rows directly from a validated SIMD JSON tape when `NEVERD_ENABLE_SIMDJSON` is enabled. The LLVM reader remains available when acceleration is disabled or the input is outside the SIMD parser’s domain. Both readers share field admission and resource limits, including the existing last-duplicate-key and integer-only size rules; no borrowed parser strings escape. Overlay replay still validates every row against the immutable input.
 
+After full admission, an inventory with every byte changed and no mergeable
+neighbours keeps its owning canonical rows; other inventories use the existing
+complete normalization. `InputFile` captures owned file bytes so later writes or
+truncation cannot change the session's original patch input. Admission borrows
+bounded views of that immutable snapshot; callers needing independent mutable
+bytes still request an owning copy. Segment, relocation, overlap, original-byte
+and resource checks precede publication on both paths.
+
 `ProjectHistory` retains admitted commands as immutable shared values. Strict
 JSON encodings are computed when a write needs them and reused for byte-budget
 accounting and document assembly; rollback checkpoints do not copy command
@@ -1320,6 +1328,19 @@ unchanged; projection schema versions are independent of the v2 document.
 `lib/diff` owns the immutable comparison model, normalization-independent matching,
 block/instruction deltas, correspondence overrides and versioned persistence.
 It depends on neutral decoded snapshots rather than Session, Qt or GUI objects.
+Its private `CallAlignment` owner finds mandatory call-position anchors by
+intersecting the two extreme optimal LCS paths. Dense tables and linear-frontier
+decomposition preserve that contract at every sequence size; opposite tie rules
+include alternatives that skip an equal call. `Comparison` verifies all proposed
+callee occurrences before admitting positional pairs, and retains exact
+similarity ties even at zero ambiguity margin. `Features` keeps unresolved calls
+as `NoIndex` positions while excluding them from graph edges and import sets.
+These are shared matching rules, independent of transport and UI.
+The same core owns ambiguity changes during manual correspondence edits. It
+removes groups exhausted on either side before rebuilding coverage and lookup
+indices. The override effect retains changed and removed groups at their
+original indices; undo merges them back in order without rematching functions.
+Persisted groups therefore always have candidates on both sides.
 The C API's `functions_json` inventory projects the same accepted mappings and
 retained ambiguity groups. `ambiguous_with` binds an opposite-side function to
 the full group's target-side inventory, with ordinary search/sort/paging; it
@@ -7181,7 +7202,19 @@ finite/range/masked guards before committing a static push. LLVM and both C
 routes share authenticated assembly and atomic status sampling. This contract
 does not introduce another stack representation or qualify runtime TOP changes.
 
-For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X87Context.h` owns encoding admission and `CFGBuilderX86Fpu` owns a function-local mutable context. It carries CW, SW, runtime TOP, abridged tags and all eight raw binary80 payloads. Entry and independent roots capture incoming state; ordinary edges publish before a root recaptures. Calls and extended-state save/restore export and refresh the context, including wrappers without local x87 instructions. Entry backedges keep their existing context. LLVM, HighC and LLVMC share this contract; HighC uses named helpers and fixed aligned storage. MMX bridges physical aliases; EMMS empties tags. Concrete execution requires authenticated state and memory, refuses unknown effects, and admits implementation-dependent results only in explicit native reference mode. The static TOP/tag proofs described above remain the projection for x86-32 and for System V x64, whose long double parameters and st0 results stay typed values; `x87ContextOwnsStack` chooses the model per image and `BinaryImage::X87ContextOverride` selects either one explicitly. These x64 regressions do not certify every CPU, instruction, fault priority or source-level floating return ABI.
+For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X86/X87Context.h` owns encoding admission and `CFGBuilderX86Fpu` owns a function-local mutable context. It carries CW, SW, runtime TOP, abridged tags and all eight raw binary80 payloads. Entry and independent roots capture incoming state; ordinary edges publish before a root recaptures. Calls and extended-state save/restore export and refresh the context, including wrappers without local x87 instructions. Entry backedges keep their existing context. LLVM, HighC and LLVMC share this contract; HighC uses named helpers and fixed aligned storage. MMX bridges physical aliases; EMMS empties tags. The same selector contract admits FEMMS and marks its payload invalidation: concrete execution forgets every retained payload, while native context steps retain the original instruction. Context restore/step constraints declare both the MMX and x87 register banks. Concrete execution requires authenticated state and memory, refuses unknown effects, and admits implementation-dependent results only in explicit native reference mode. The static TOP/tag proofs described above remain the projection for x86-32 and for System V x64, whose long double parameters and st0 results stay typed values; `x87ContextOwnsStack` chooses the model per image and `BinaryImage::X87ContextOverride` selects either one explicitly. These x64 regressions do not certify every CPU, instruction, fault priority or source-level floating return ABI.
+
+The owned context also carries all 24 3DNow operations. `X86ThreeDNow.def`
+owns their suffix, source dependencies and enhanced-feature requirements;
+`X86LiftThreeDNow` authenticates the complete encoding before producing one
+context step. Its selector retains stack-reference provenance independently
+of FS/GS and uses the original-ModRM field for the suffix, since these
+instructions preserve FIP/FDP/FOP. LLVM and both C routes share the original
+instruction inside the context restore/step/save boundary. Concrete execution
+requires explicit native reference mode and CPUID support, retains unknown
+payload provenance after FEMMS, and establishes only the written destination.
+Typed/unowned and i386 projections remain explicit refusals; no duplicate
+scalar arithmetic model substitutes for the native operation.
 
 ## IR representations and routes
 
