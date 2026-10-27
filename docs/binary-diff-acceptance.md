@@ -14,9 +14,9 @@ were understood.
 | Reproducible same-ISA native comparison | Shared `lib/diff`, input/analysis identities, strict saved binding, x86/x64 and AArch64 readers, ambiguous candidate inventories, exact weighted large-block alignment, caller-selected candidate measurement, conservative call-position anchors, and separate observed changes/reference uncertainty | Additional ISA/format and compiler/transformation qualification; adjudication of unlabelled real-program mappings |
 | CLI and GUI workflow | C ABI and Qt-free worker; bounded pages, CFG/source inspection, edits and undo/redo, save/reopen, input/restore/query/edit cancellation, NDDB project inputs | Continue scenario-based usability and large-input latency qualification; support advanced areas below through the same surfaces |
 | A: transformations and regional matching | Native instruction-run and finite SSA region hypotheses; split/merge/clone/inline/outline/tail evidence; qualified loop progress profiles through v7 | Broad CFG/dataflow transformations and cross-module movement; independent compiler, LTO, PGO and obfuscation qualification; explicit qualified cross-ISA profiles |
-| B: security-fix triage and review | Local change observations, native call-path context, bounded import-effect context, input-bound analyst cases/history and references | Ranked security-fix datasets, interprocedural parameter/return/alias effects, path feasibility, automated patch/backport/revert evidence and reviewer report qualification |
+| B: security-fix triage and review | Local change observations, native call-path context, bounded import-effect context, input-bound analyst cases/history and references, and source-line localization of a public curl fix | Ranked security-fix datasets, interprocedural parameter/return/alias effects, path feasibility, automated patch/backport/revert evidence and reviewer report qualification |
 | C: optional semantic validation | Bounded pure scalar-return profile with explicit models, budgets, non-success outcomes and native provenance | Additional memory/call/loop profiles, precondition and coverage qualification; no general equivalence or vulnerability-elimination claim |
-| D: version and branch lineage | Offline snapshot graph, direct/indirect/parallel/cyclic associations, grouped conflicts, exact-byte reuse, report-local assessments, CLI/Python/GUI persistence, release aliases with declared chronology/parents, focused integration coverage, and a reproducible synthetic scale harness | Broader integration failure follow-up, package-wide graphs, automated patch/backport/revert evidence and large real-corpus quality/latency; annotation application remains #99 |
+| D: version and branch lineage | Offline snapshot graph, direct/indirect/parallel/cyclic associations, grouped conflicts, exact-byte reuse, report-local assessments, CLI/Python/GUI persistence, release aliases with declared chronology/parents, real release-report integration, and a reproducible synthetic scale harness | Package-wide graphs, automated patch/backport/revert evidence and broader real-corpus quality/latency; annotation application remains #99 |
 | E: software/game packages | Native loaders, module resources and a separate qualified offline web-package behavior comparison exist | One package manifest workflow routing native/managed/metadata/script/config/resource changes, repacking distinctions, qualified Unity/Unreal/Godot adapters and unknown/encrypted coverage |
 | F: competitive qualification | Owned native/compiler regressions, pinned local diagnostic runs, a [source-derived stripped-release corpus builder, mapping evaluator and frozen numeric qualification runner](binary-diff-benchmarks.md), and automated fresh-input pipelines for NeverD, BinDiff, Diaphora and Ghidra with completion and input-identity checks | Qualified common-input comparisons, held-out competitive patch/triage and game-update datasets, broader runtime/profile qualification, per-category metrics and statistical evidence |
 
@@ -39,6 +39,36 @@ separate. These diagnostic runs do not close F's real-corpus, fairness,
 performance or statistical acceptance requirements.
 
 ## Verification record boundaries
+
+Matcher version 9 adds bounded mnemonic/CFG candidate groups when instruction
+sketches are too common. Direction/layout controls above the exhaustive-pair
+limit recover distinct bodies while retaining true duplicates as ambiguous.
+The same change corrects two crossed OpenSSL cleanup-function associations in
+the consumed development corpus. Version 8 separately prevents relative
+call/address bytes from identifying otherwise indistinguishable wrappers.
+These changes retain measured competition and its existing acceptance gates.
+
+The original frozen zstd/OpenSSL release qualification failed its recall and
+macro-F1 gates. That failure remains retained; later runs on those projects are
+development evidence. A separately declared Git 2.45.1–2.45.2 and libarchive
+3.7.3–3.7.4 cohort passed the unchanged numeric gates with the frozen matcher-9
+source `35082c6df70277fdd106d2831c72c1309b0bb3e8`; independent replay also passed.
+The scope is x64 ELF, GCC/Clang O2 and partial unique source-body correspondence.
+Git's GNU C11 compatibility amendment preceded truth preparation and comparison.
+Unlabelled mappings remain unscored. This does not close the failed original
+cohort or qualify other advanced areas, common-input fairness or superiority.
+
+Retained SQLite, curl and FFmpeg reports also exercise a seven-snapshot offline
+collection: all association edges are checked against their source reports,
+three-release SQLite traces are checked against partial source identities,
+and cancellation, release edits and exact-byte save/reopen preserve evidence.
+The curl CVE-2023-38545 source-line locations overlap changed native rows and
+review observations on both sides. Its incomplete bodies/reference evidence
+remain explicit; localization does not establish patch presence or safety.
+Default native-run analysis still fails to cover both members of two OpenSSL
+X509 body migrations. Large FFmpeg Diaphora attempts remain incomplete and
+unscored despite completed BinDiff and Ghidra pipelines. Raw inputs, failures,
+scores and resource observations remain local, outside this acceptance ledger.
 
 Matcher version 7 and saved schema 4 distinguish decoded-body coverage from
 reference-comparison coverage. Unknown call/data identities cannot manufacture
