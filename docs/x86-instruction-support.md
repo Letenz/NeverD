@@ -2360,3 +2360,12 @@ LLVM signature incorrectly demanded a no-value callee's unknown return
 register. LLVMC now keeps the settled return contract independently of its
 printed signature. Effects still execute; only an explicitly unused ABI
 carrier is zero initialized. Demanded unknown machine state still fails.
+Discarded return chains use the shared dead-value eligibility gate, retaining
+atomic updates, volatile reads, calls and control-flow effects.
+
+After integration with `85211ac969`, the six affected NeverD test targets pass
+277 cases with the full LLVM SDK. The pinned r6 SDK passes 274 and explicitly
+skips three newer native virtualization/descriptor cases. The
+[qualification record](evidence/x86-mmx-state-2026-10-26.json) retains source
+commits, report hashes, counterexamples and both SDKs' generated artifacts.
+The production LLVM release pin and submodule remain unchanged.
