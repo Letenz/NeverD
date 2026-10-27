@@ -293,12 +293,12 @@ private slots:
                              Timeout);
     auto *Next = Functions->findChild<QToolButton *>("lineageNextPage");
     QVERIFY(Next && Next->isEnabled());
-    const auto First = Functions->rows()[0].toObject()["address"];
+    const auto First = Functions->rows()[0].toObject()["address"].toString();
     Next->click();
-    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && !Functions->rows().isEmpty() &&
-                                 Functions->rows()[0].toObject()["address"] !=
-                                     First,
-                             Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !Session.busy() && !Functions->rows().isEmpty() &&
+            Functions->rows()[0].toObject()["address"].toString() != First,
+        Timeout);
     Search->setText(TargetAddress);
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Functions->rows().size() == 1,
                              Timeout);
