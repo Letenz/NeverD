@@ -1893,6 +1893,12 @@ build-release/bin/NeverDSymSynthAffineTests
 build-release/bin/NeverDSolverTests
 ```
 
+`PermanentConjunctPreparation` keeps wide equality fixtures above the expression
+builder's bounded constant scan. Exact and one-short work limits must still
+exercise the preparation walk, and extracting an entailed bit must not bypass
+the original predicate's encoding width limit. A separate folded-equality case
+checks the canonical one-bit cost, satisfiability and contradictory assumption.
+
 `NeverDSymSynthQuadraticTests` checks oracle reconstruction of squares and
 pairwise products, full-width coefficients, the noninvertible diagonal, opaque
 typed inputs, narrow wrapping, nonlinear rejection and budget/proof refusal.
