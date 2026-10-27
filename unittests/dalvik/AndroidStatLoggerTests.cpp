@@ -10,8 +10,14 @@
 
 #include "neverd/dalvik/Library.h"
 
-#include <array>
+#include <cstdint>
+#include <map>
+#include <memory>
 #include <set>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace neverd::mobile::dalvik {
 namespace {
@@ -79,17 +85,22 @@ TEST(AndroidStatLoggerTest,
   Program program({}, Properties{});
   auto heap = std::make_shared<Heap>();
   RuntimeServices services;
-  services.elapsed_realtime_nanoseconds = [] {
-    return ExecutionResult{ExecutionStop::Returned, 98765432101};
+  uint64_t nanoseconds = 0;
+  services.elapsed_realtime_nanoseconds = [&] {
+    return ExecutionResult{ExecutionStop::Returned, nanoseconds};
   };
   Runtime runtime(program, heap, {}, services);
   const auto *method = libraryMethod({Logger, "getTime", {}, "J"}, false);
   ASSERT_NE(method, nullptr);
   auto raw = runtime.allocate(Logger, true, Admit, 65536);
   ASSERT_EQ(raw.stop, ExecutionStop::Returned) << raw.diagnostic;
-  auto result = runtime.library(*method, raw.value, {}, Admit);
-  ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
-  EXPECT_EQ(result.value, 98765432u);
+  for (uint64_t value : {0ULL, 999ULL, 1000ULL, 98765432101ULL,
+                         static_cast<unsigned long long>(INT64_MAX)}) {
+    nanoseconds = value;
+    auto result = runtime.library(*method, raw.value, {}, Admit);
+    ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    EXPECT_EQ(result.value, value / 1000);
+  }
 }
 
 TEST(AndroidStatLoggerTest, MetadataKeepsBootOwnershipAndFieldAccess) {
@@ -126,6 +137,7 @@ TEST(AndroidStatLoggerTest, MetadataKeepsBootOwnershipAndFieldAccess) {
   Class replacement;
   replacement.name = Logger;
   EXPECT_THROW((Program({replacement}, Properties{})), Error);
+  EXPECT_THROW((Program({replacement})), Error);
   EXPECT_FALSE(
       libraryMethod({Logger, "logDurationStat", {"I", "J"}, "J"}, false));
 }

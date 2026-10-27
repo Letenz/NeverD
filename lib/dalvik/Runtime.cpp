@@ -1279,8 +1279,7 @@ Program::Program(
     if (item.name.starts_with("Ljava/") || item.name.starts_with("Ljavax/") ||
         item.name.starts_with("Landroid/") ||
         item.name.starts_with("Ldalvik/") ||
-        (android_properties &&
-         item.name == "Lcom/android/internal/util/StatLogger;"))
+        item.name == "Lcom/android/internal/util/StatLogger;")
       throw Error("DEX cannot replace platform classes");
     auto name = item.name;
     auto [entry, inserted] = classes.emplace(std::move(name), std::move(item));
