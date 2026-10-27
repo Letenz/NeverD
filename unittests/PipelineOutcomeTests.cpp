@@ -33,9 +33,12 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <initializer_list>
+#include <iterator>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -1595,6 +1598,110 @@ TEST(PipelineOutcome, AnalystCallDeclarationsRequireExplicitSourceProjection) {
   EXPECT_FALSE(validateResolvedLLVMCallSignatures(Module));
   EXPECT_FALSE(testing::internal::GetCapturedStderr().empty());
   EXPECT_EQ(Call->arg_size(), 1u);
+}
+
+TEST(PipelineOutcome, OmittedPointerDeclarationsStayInSourceModules) {
+  ScopedThreadCount Threads(2);
+  constexpr va_t Target = 0x1100;
+  for (unsigned Count : {1u, 8u}) {
+    SCOPED_TRACE(Count);
+    BinaryImage Image;
+    Image.Arch = Arch::X64;
+    Image.Bits = Bitness::Bits64;
+    Image.Format = BinaryFormat::ELF;
+    Image.Entry = 0x1000;
+    Segment Text;
+    Text.Name = ".text";
+    Text.VA = Image.Entry;
+    Text.Size = 0x104;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.resize(Text.Size, 0xcc);
+    std::set<va_t> Entries;
+    for (unsigned I = 0; I != Count; ++I) {
+      const va_t Entry = Image.Entry + I * 0x20;
+      std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 8, 0xe8};
+      const uint32_t Displacement = Target - (Entry + 9);
+      for (unsigned Byte = 0; Byte != 4; ++Byte)
+        Code.push_back(Displacement >> (Byte * 8));
+      Code.insert(Code.end(), {0x48, 0x83, 0xc4, 8, 0xc3});
+      std::copy(Code.begin(), Code.end(),
+                Text.Data.begin() + (Entry - Text.VA));
+      auto Function = Symbol::makeFunc(Entry);
+      Function.Name = "forward_pointer_" + std::to_string(I);
+      Image.Symbols.push_back(std::move(Function));
+      Entries.insert(Entry);
+    }
+    const uint8_t Read[] = {0x48, 0x8b, 0x07, 0xc3}; // mov rax,[rdi]; ret
+    std::copy(std::begin(Read), std::end(Read), Text.Data.begin() + 0x100);
+    Image.Segments.push_back(std::move(Text));
+    auto Function = Symbol::makeFunc(Target);
+    Function.Name = "read_pointer";
+    Image.Symbols.push_back(std::move(Function));
+    for (bool HasException : {false, true}) {
+      SCOPED_TRACE(HasException);
+      if (HasException) {
+        ExceptionFunction Exception;
+        Exception.CodeRange = {Target, Target + sizeof(Read)};
+        Exception.Encoding = ExceptionEncoding::DwarfFDE;
+        Exception.Personality = ExceptionPersonality::None;
+        Exception.ParseStatus = ExceptionParseStatus::Complete;
+        Image.ExceptionMetadata.Functions.push_back(std::move(Exception));
+        Image.ExceptionMetadata.rebuildIndex();
+      }
+      PipelineAnalysisCache Cache;
+      // Reuse the same image cache across native, source and patch requests.
+      // Eight callers also exercise linked LLVM shards with one shared callee.
+      for (const auto [Source, Patch] : {std::pair{false, false},
+                                         {true, false},
+                                         {true, true},
+                                         {true, false}}) {
+        SCOPED_TRACE(Source);
+        SCOPED_TRACE(Patch);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.AnalysisCache = &Cache;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = Entries;
+        Options.MedAnalysisOnly = true;
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        Options.MedAnalysisOnly = false;
+        Options.LiftMode = true;
+        Options.SourceProjection = Source;
+        Options.PatchMode = Patch;
+        ASSERT_TRUE(PipelineTestPeer::runLift(Image, Context, Options, Result))
+            << Result.Error;
+        ASSERT_TRUE(Result.LlvmModule);
+        EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+        // An exception-bearing body is outside the declaration contract. Its
+        // existing zero-stack summary must avoid a redundant signature lift.
+        if (HasException) {
+          ASSERT_TRUE(Result.OmittedCallees);
+          EXPECT_TRUE(Result.OmittedCallees->Bodies.empty());
+        }
+        for (unsigned I = 0; I != Count; ++I) {
+          auto *Caller = Result.LlvmModule->getFunction("forward_pointer_" +
+                                                        std::to_string(I));
+          ASSERT_TRUE(Caller);
+          unsigned Calls = 0;
+          for (const auto &Block : *Caller)
+            for (const auto &Instruction : Block)
+              if (const auto *Call =
+                      llvm::dyn_cast<llvm::CallBase>(&Instruction);
+                  Call && Call->getCalledFunction() &&
+                  !Call->getCalledFunction()->isIntrinsic()) {
+                const auto *Callee = Call->getCalledFunction();
+                ASSERT_TRUE(Callee->isDeclaration());
+                ASSERT_EQ(Callee->arg_size(), 1u);
+                EXPECT_EQ(Callee->getArg(0)->getType()->isPointerTy(),
+                          Source && !Patch && !HasException);
+                ++Calls;
+              }
+          EXPECT_EQ(Calls, 1u);
+        }
+      }
+    }
+  }
 }
 
 TEST(PipelineOutcome, ResolvedCallsPlaceNarrowStackValuesInTheirSlots) {

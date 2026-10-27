@@ -1,5 +1,7 @@
 **语言**: [English](../testing.md) | [简体中文](testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](../ja/testing.md) | [한국어](../ko/testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` 通过源码流水线检查 x64/ARM64 Mach-O 的整数、浮点及混合栈参数。`IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` 确保内存读取、调用、栈地址逃逸以及不透明或内存 intrinsic 仍保留入口存储初始化。纯值路径直接使用声明的参数，不额外生成物理 SP 写入，并保留寄存器浮点状态效应。macOS 移动端矩阵独立编译并执行恢复的 Swift；生成成功本身不代表执行验证。
+
 `NeverDLLVMCValueTests` 在 O0/O2、保留 LLVM 类型开关两种状态下，把转换后的可变参数调用与独立的 Windows x64 ABI 被调函数一起编译执行。原生 x64 通过 va_arg 验证浮点值；其他架构明确跳过此执行。
 
 [← 文档索引](README.md)
@@ -2178,3 +2180,7 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 自身比较矩阵还执行无参数的相等及减法溢出案例。这些案例不需要任何传入寄存器值，两条 C 路线都不能额外生成未知状态陷阱。
 
 HFA 导入槽测试编译严格的 C 原型，并对头文件声明和本地声明执行完整参数及返回值验证。两条 C 路线覆盖 float、double 结构体、连续调用和 AArch64 执行。
+
+## 选定函数声明检查
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` 将地址输出分别与整数、指针、浮点和 void 返回的实现拼接；`AddressOnlyCallbackConvertsToItsKnownParameterType` 执行带类型的回调。`SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` 拼接分别选择的调用者和读取指针的被调函数，对比整单元及冷、热缓存输出。x64/ARM64 的 PE、ELF、Mach-O 输入模型生成的 C 在主机上以 O0/O2 和 UBSan 编译执行。这不代表所有目标平台的原生执行已验证。修改此边界后运行调用契约、指针投影、源码 ABI 和被调函数缓存相关测试。
