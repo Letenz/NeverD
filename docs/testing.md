@@ -7389,6 +7389,16 @@ isolation.
 
 ## Modular MBA simplification
 
+`SymMBAMaskRelation.*OrMaskSubtraction*` and
+`SubtractsAnEntireKnownOrMaskWithoutBorrow` check the exact modular identity
+`(C | X) - C = X & ~C`, including absorption by an enclosing OR. The ordinary
+MBA matcher handles both the standalone sum and nested occurrences within its
+existing work and table-storage limits. Tests cover every byte input and mask,
+nearby unequal subtraction literals, multiple independent OR operands and
+arbitrary-precision masks through 257 bits. Quality checks disable sampled
+verification and use independent integer/APInt oracles; exhausted work retains
+the original semantics.
+
 `SymSimplifyFinite.*` covers complete two-valued slices at widths from 8 to 512 bits, shared-use profitability, every supported poison-generating annotation, independent volatile reads and freezes, explicit undef/poison, deep iterative traversal, budgets and the obfuscation stamp. Original and simplified IR execute against an independent oracle over every byte input and randomized full-width inputs at O0/O2. Translation-object tests require distinct cache identities for distinct finite-value budgets.
 
 Merge-domain tests cover nested selects, diamond PHIs and copy cycles at 8–512 bits; conflicting backedges, undefined conditions, unanchored components, independent PHI/freeze observations and retained flagged producers; and exact node, edge and work boundaries. O0/O2 runtime oracles exhaust every byte-input pair and vary full-width operands for selections, joins and bounded state loops.
