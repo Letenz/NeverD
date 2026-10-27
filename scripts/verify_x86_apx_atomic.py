@@ -60,7 +60,7 @@ def qualify_pipeline(oracle, obj, case, windows, legacy=False):
         uc.reg_write(reg("EFLAGS"), 0x202)
         uc.emu_start(oracle.CODE + start, stop, count=10000)
         assert uc.reg_read(reg("RIP")) == oracle.CODE + at, (obj, "missing atomic boundary")
-        assert uc.reg_read(reg(oracle.GPRS[insn["base"]])) == offset
+        assert oracle.effective_offset(uc, insn) == offset
         assert uc.reg_read(reg(oracle.GPRS[insn["add"]])) & mask == add & mask
         if case["operation"] == "cmpccxadd":
             assert uc.reg_read(reg(oracle.GPRS[insn["compare"]])) & mask == cmp
@@ -95,8 +95,9 @@ def main():
     oracle = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = oracle
     spec.loader.exec_module(oracle)
+    oracle.verify_memory_decoder()
     args.keep.mkdir(parents=True, exist_ok=True)
-    matrix = [c for c in oracle.cases() if c[2] == 64 and c[3] in (0, 0x64, 0x65)]
+    matrix = [c for c in oracle.cases() if c[2] == 64 and c[3] in (0, 0x64, 0x65, 0x100)]
     reports = []
     for name, triple in ([] if args.pipeline_only else zip(("elf", "coff", "macho"), oracle.TRIPLES)):
         obj = args.exports / ("atomic-" + name + ".o")

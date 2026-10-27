@@ -33,6 +33,22 @@ inline constexpr const char X86APXAtomicCompilerDispatch[] =
     "#define NEVERD_X86_LEGACY_ATOMIC(native, ...) native\n"
     "#else\n"
     "#define NEVERD_X86_LEGACY_ATOMIC(native, ...) __VA_ARGS__\n"
+    "#endif\n#endif\n"
+    "#ifndef NEVERD_X86_APX_ATOMIC_STACK\n"
+    "#if defined(__NEVERC_X86_NATIVE_MEMORY_STACK_REFERENCE__) && "
+    "__NEVERC_X86_NATIVE_MEMORY_STACK_REFERENCE__ >= 1\n"
+    "#define NEVERD_X86_APX_ATOMIC_STACK(native, ...) "
+    "NEVERD_X86_APX_ATOMIC(native, __VA_ARGS__)\n"
+    "#else\n"
+    "#define NEVERD_X86_APX_ATOMIC_STACK(native, ...) __VA_ARGS__\n"
+    "#endif\n#endif\n"
+    "#ifndef NEVERD_X86_LEGACY_ATOMIC_STACK\n"
+    "#if defined(__NEVERC_X86_NATIVE_MEMORY_STACK_REFERENCE__) && "
+    "__NEVERC_X86_NATIVE_MEMORY_STACK_REFERENCE__ >= 1\n"
+    "#define NEVERD_X86_LEGACY_ATOMIC_STACK(native, ...) "
+    "NEVERD_X86_LEGACY_ATOMIC(native, __VA_ARGS__)\n"
+    "#else\n"
+    "#define NEVERD_X86_LEGACY_ATOMIC_STACK(native, ...) __VA_ARGS__\n"
     "#endif\n#endif\n";
 
 std::optional<X86APXAtomicPlan>

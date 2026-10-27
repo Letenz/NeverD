@@ -53,7 +53,7 @@ struct Case {
 std::vector<Case> cases() {
   std::vector<Case> Cases;
   for (unsigned Bytes : {4u, 8u})
-    for (unsigned Segment : {0u, 0x64u, 0x65u})
+    for (unsigned Segment : {0u, 0x64u, 0x65u, X86NativeStackReference})
       for (auto Id : AtomicInventory)
         for (unsigned CC = 0; CC < (isX86CmpccXaddIntrinsic(Id) ? 16u : 1u);
              ++CC)
@@ -85,6 +85,8 @@ ExprPtr high(const X86APXAtomicPlan &P) {
     E->Operands.push_back(HighExpr::makeVar(temporary(1, P.Bytes)));
     E->Operands.push_back(HighExpr::makeConst(P.Condition, 1));
   }
+  if (P.stackReference())
+    E->Operands.push_back(HighExpr::makeConst(X86AtomicStackReference, 1));
   return E;
 }
 std::string highExpression(const HighExpr &E, Arch A = Arch::X64) {
@@ -164,6 +166,8 @@ MedFunc med(const X86APXAtomicPlan &P) {
     Op.addInput(MedVar::makeConst(0x12345678abcdef01ull, P.Bytes));
     Op.addInput(MedVar::makeConst(P.Condition, 1));
   }
+  if (P.stackReference())
+    Op.addInput(MedVar::makeConst(X86AtomicStackReference, 1));
   MedOp Return;
   Return.Opcode = NdOp::RETURN;
   if (P.compare())
@@ -331,6 +335,77 @@ TEST(X86APXAtomicSource, SourceRoutesValidateContractsBeforePrinting) {
   }
 }
 
+TEST(X86APXAtomicSource, StackAddressControlsAreCheckedAcrossOutputRoutes) {
+  for (auto Id : AtomicInventory)
+    for (unsigned Bytes : {4u, 8u}) {
+      const auto P = *x86APXAtomicPlan(Id, Bytes, 64, X86NativeStackReference);
+      const unsigned Control = x86AtomicAddressControlIndex(Id);
+      for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+        SCOPED_TRACE(P.name() + "/" + std::to_string(Mutation));
+        auto E = high(P);
+        auto F = med(P);
+        auto &Op = F.Blocks[0].Ops[0];
+        auto &HighControl = E->Operands[Control - 1];
+        auto &MedControl = Op.Inputs[Control];
+        Arch A = Arch::X64;
+        switch (Mutation) {
+        case 0:
+        case 1:
+          HighControl->ConstVal = MedControl.ConstVal = Mutation ? 2 : 0;
+          break;
+        case 2:
+          HighControl->Type = NdType::makeInt(2, false);
+          MedControl.Size = 2;
+          break;
+        case 3:
+          HighControl = HighExpr::makeVar(temporary(10, 1));
+          MedControl = temporary(10, 1);
+          break;
+        case 4:
+          HighControl->ConstProvenance = MedControl.Provenance =
+              ConstantAddressProvenance::Address;
+          break;
+        case 5:
+        case 6:
+          E->MemoryAddressSpace = Op.MemoryAddressSpace =
+              Mutation == 5 ? NdMemoryAddressSpace::X86FS
+                            : NdMemoryAddressSpace::X86GS;
+          break;
+        case 7:
+          A = Arch::X86;
+          break;
+        }
+        EXPECT_THROW(highExpression(*E, A), std::invalid_argument);
+        EXPECT_FALSE(
+            intrinsicApxAtomicShapeIsValid(Id, apxAtomicMedShape(Op, A)));
+        llvm::LLVMContext Context;
+        EXPECT_THROW(MedLLVMEmitter().emit({F}, Context, "invalid-stack", A),
+                     std::invalid_argument);
+      }
+      for (unsigned Prefix : {0x100u, 0x126u, 0x12eu, 0x136u, 0x13eu}) {
+        const auto Stack = x86APXAtomicPlan(Id, Bytes, 64, Prefix);
+        ASSERT_TRUE(Stack);
+        EXPECT_FALSE(x86APXAtomicPlan(Id, Bytes, 32, Prefix));
+        // The obsolete BX carrier never owned stack-reference assembly.
+        llvm::LLVMContext Context;
+        llvm::Module M("stack-constraints", Context);
+        auto *F = wrapper(M, {*Stack, 0}, 0, false);
+        for (auto &I : F->getEntryBlock())
+          if (auto *Call = llvm::dyn_cast<llvm::CallInst>(&I)) {
+            EXPECT_TRUE(x86APXAtomicCallPlan(Arch::X64, *Call));
+            auto *Asm = llvm::cast<llvm::InlineAsm>(Call->getCalledOperand());
+            Call->setCalledOperand(
+                llvm::InlineAsm::get(Asm->getFunctionType(), Stack->assembly(),
+                                     Stack->constraints(true), true));
+            EXPECT_THROW(x86APXAtomicCallPlan(Arch::X64, *Call),
+                         std::invalid_argument);
+          }
+      }
+      for (unsigned Prefix : {0x164u, 0x165u, 0x200u})
+        EXPECT_FALSE(x86APXAtomicPlan(Id, Bytes, 64, Prefix));
+    }
+}
+
 TEST(X86APXAtomicSource, IncompleteAddressesAndStoredValuesRemainRejected) {
   for (auto Id : AtomicInventory) {
     const auto P = *x86APXAtomicPlan(Id, 4, 64, 0);
@@ -476,7 +551,9 @@ TEST(X86APXAtomicSource, ExportsLiveDeadAndRepeatedTransactions) {
   for (unsigned Index = 0; Index < Cases.size(); ++Index) {
     const auto &C = Cases[Index];
     const auto &P = C.Plan;
-    const bool Native = llvm::Intrinsic::lookupIntrinsicID(P.llvmName()) != 0;
+    const bool Native =
+        llvm::Intrinsic::lookupIntrinsicID(P.llvmName()) != 0 &&
+        (!P.stackReference() || x86NativeStackMemoryIsAvailable());
     wrapper(M, C, Index, Native);
     auto E = high(P);
     High += "uint64_t apx_" + std::to_string(Index) +
@@ -545,6 +622,8 @@ TEST(X86APXAtomicSource, PublicPipelineKeepsFlagsAddressesAndNativeMemory) {
         continue;
       for (bool Address32 : {false, true})
         for (bool NoOpt : {false, true}) {
+          if (Address32 && P.stackReference())
+            continue;
           SCOPED_TRACE(P.name() + "/" + std::to_string(P.Condition) + "/" +
                        std::to_string(P.SegmentPrefix) + "/" +
                        std::to_string(Address32) + "/" + std::to_string(NoOpt) +
@@ -555,14 +634,19 @@ TEST(X86APXAtomicSource, PublicPipelineKeepsFlagsAddressesAndNativeMemory) {
             for (unsigned I = 0; I != 8; ++I)
               Bytes.push_back(uint8_t(Value >> (8 * I)));
           };
+          if (P.stackReference())
+            Bytes.push_back(0x55); // preserve the entry frame pointer
           Immediate(0xb9, 0x8765432100000208ull);        // RCX: source offset
           Immediate(0xb8, 0x0123456789abcdefull);        // RAX: comparator
           Immediate(0xba, 0xfedcba9876543210ull);        // RDX: addend
+          if (P.stackReference())
+            Bytes.insert(Bytes.end(), {0x48, 0x89, 0xcd}); // RBP = RCX
           Bytes.insert(Bytes.end(), {0x48, 0x39, 0xd0}); // incoming flags
           if (Address32)
             Bytes.push_back(0x67);
-          if (P.SegmentPrefix)
-            Bytes.push_back(P.SegmentPrefix);
+          if (x86NativeMemoryPrefix(P.SegmentPrefix))
+            Bytes.push_back(x86NativeMemoryPrefix(P.SegmentPrefix));
+          const uint8_t ModRM = P.stackReference() ? 0x45 : 0x01;
           unsigned PP = x86AtomicSemanticId(P.Id) == Intrinsic::ApxRaoAnd   ? 1
                         : x86AtomicSemanticId(P.Id) == Intrinsic::ApxRaoOr  ? 3
                         : x86AtomicSemanticId(P.Id) == Intrinsic::ApxRaoXor ? 2
@@ -572,7 +656,7 @@ TEST(X86APXAtomicSource, PublicPipelineKeepsFlagsAddressesAndNativeMemory) {
               Bytes.insert(Bytes.end(),
                            {0xc4, 0xe2,
                             uint8_t((P.Bytes == 8 ? 0x80 : 0) | 0x69),
-                            uint8_t(0xe0 | P.Condition), 0x01});
+                            uint8_t(0xe0 | P.Condition), ModRM});
             } else {
               const unsigned Prefix = PP == 1   ? 0x66
                                       : PP == 3 ? 0xf2
@@ -582,7 +666,8 @@ TEST(X86APXAtomicSource, PublicPipelineKeepsFlagsAddressesAndNativeMemory) {
                 Bytes.push_back(Prefix);
               if (P.Bytes == 8)
                 Bytes.push_back(0x48);
-              Bytes.insert(Bytes.end(), {0x0f, 0x38, 0xfc, 0x11});
+              Bytes.insert(Bytes.end(),
+                           {0x0f, 0x38, 0xfc, uint8_t(ModRM | 0x10)});
             }
           } else {
             Bytes.insert(Bytes.end(),
@@ -591,8 +676,10 @@ TEST(X86APXAtomicSource, PublicPipelineKeepsFlagsAddressesAndNativeMemory) {
                                   (P.compare() ? 0x6d : 0x7c | PP)),
                           0x08,
                           uint8_t(P.compare() ? 0xe0 | P.Condition : 0xfc),
-                          uint8_t(P.compare() ? 0x01 : 0x11)});
+                          uint8_t(ModRM | (P.compare() ? 0 : 0x10))});
           }
+          if (P.stackReference())
+            Bytes.insert(Bytes.end(), {0, 0x5d}); // disp8(0); restore RBP
           Bytes.insert(Bytes.end(),
                        {0x9f, 0x0f, 0x90, 0xc0, 0x0f, 0xb7, 0xc0, 0xc3});
           BinaryImage Image;
@@ -656,7 +743,7 @@ TEST(X86APXAtomicSource, PublicPipelineKeepsFlagsAddressesAndNativeMemory) {
           ++Index;
         }
     }
-  EXPECT_EQ(Index, 504u);
+  EXPECT_EQ(Index, 588u);
 }
 
 #ifdef NEVERD_TEST_LEGACY_ATOMIC

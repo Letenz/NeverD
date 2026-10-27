@@ -697,31 +697,89 @@ TEST(X86APXAtomic, LiftUsesMemoryOwningAtomicIntrinsics) {
   }
 }
 
-TEST(X86APXAtomic, StackDefault64AddressNeedsExplicitFaultOwnership) {
+TEST(X86APXAtomic, StackDefault64AddressRetainsExplicitFaultOwnership) {
   for (unsigned Width : {4u, 8u})
-    for (unsigned Base : {4u, 5u}) {
-      for (uint8_t Prefix : {0, 0x26, 0x2e, 0x36, 0x3e}) {
-        auto Rao = encodeRao(RaoOperation::Add, Width, 26, Base);
-        auto Cmp = encodeCmpccXadd(4, Width, 26, 17, Base);
-        if (Prefix) {
-          Rao.insert(Rao.begin(), Prefix);
-          Cmp.insert(Cmp.begin(), Prefix);
+    for (unsigned Base : {4u, 5u, 12u, 13u})
+      for (bool Address32 : {false, true})
+        for (uint8_t Prefix : {0, 0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65}) {
+          const bool Stack =
+              !Address32 && Base < 8 && Prefix != 0x64 && Prefix != 0x65;
+          const auto Check = [&](std::vector<uint8_t> Bytes, Intrinsic Id) {
+            if (Prefix)
+              Bytes.insert(Bytes.begin(), Prefix);
+            const auto Lifted = liftX64(Bytes);
+            const auto *Atomic = findIntrinsic(Lifted.Ops, Id);
+            ASSERT_NE(Atomic, nullptr);
+            const auto Shape = apxAtomicLowShape(*Atomic, Arch::X64);
+            EXPECT_TRUE(intrinsicApxAtomicShapeIsValid(Id, Shape));
+            EXPECT_EQ(Shape.stackReference(), Stack);
+            EXPECT_EQ(Atomic->NumInputs,
+                      x86AtomicAddressControlIndex(Id) + Stack);
+          };
+          for (auto Op : {RaoOperation::Add, RaoOperation::And,
+                          RaoOperation::Or, RaoOperation::Xor})
+            Check(encodeRao(Op, Width, 26, Base, 14, Address32),
+                  raoIntrinsic(Op));
+          for (unsigned CC = 0; CC != 16; ++CC)
+            Check(encodeCmpccXadd(CC, Width, 26, 17, Base, 14, Address32),
+                  Intrinsic::ApxCmpccXadd);
         }
-        expectDecodeOrLiftRejected(Rao);
-        expectDecodeOrLiftRejected(Cmp);
+}
+
+TEST(X86APXAtomic, StackControlValidationPrecedesMemoryAndResults) {
+  for (bool Compare : {false, true})
+    for (unsigned Width : {4u, 8u}) {
+      const auto Id = Compare ? Intrinsic::ApxCmpccXadd : Intrinsic::ApxRaoAdd;
+      LowOp Op = Compare ? makeCmpIntrinsic(Width, 0x4800, 3, 7, 5)
+                         : makeRaoIntrinsic(Id, Width, 0x4800, 3);
+      Op.addInput(NdVar::scalar(X86AtomicStackReference, 1));
+      EXPECT_TRUE(
+          lowValidationError(makeSingleInstructionFunction(Op)).empty());
+      auto Converted = LowToMedConverter().convert(
+          makeSingleInstructionFunction(Op), Arch::X64);
+      EXPECT_TRUE(verifyMedFunc(Converted, "valid-stack-atomic"));
+      for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+        LowOp Bad = Op;
+        auto &Control = Bad.Inputs[Bad.NumInputs - 1];
+        switch (Mutation) {
+        case 0:
+          Control.Offset = 0;
+          break;
+        case 1:
+          Control.Offset = 2;
+          break;
+        case 2:
+          Control.Size = 2;
+          break;
+        case 3:
+          Control = NdVar::tmp(kProbeTemp, 1);
+          break;
+        case 4:
+          Control.Provenance = ConstantAddressProvenance::Address;
+          break;
+        case 5:
+          Bad.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+          break;
+        case 6:
+          Bad.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+          break;
+        case 7:
+          Bad.NumInputs = 2;
+          break;
+        }
+        EXPECT_FALSE(
+            lowValidationError(makeSingleInstructionFunction(Bad)).empty());
+        BinaryImage Image = makeImage(
+            0x4800, 8, SegmentFlags::Readable | SegmentFlags::Writable, 19);
+        NdOpEmulator Emulator(Image);
+        Emulator.setStrictMode(true);
+        Emulator.setLoadCollect(true);
+        Emulator.setRegister(kAtomicOutputTemp, 23);
+        EXPECT_FALSE(Emulator.step(Bad));
+        EXPECT_EQ(Emulator.getRegister(kAtomicOutputTemp), 23u);
+        EXPECT_TRUE(Emulator.getLoadRecords().empty());
+        EXPECT_EQ(probeMemory(Emulator, 0x4800, 8), 19u);
       }
-      for (auto Segment :
-           {SegmentOverride::None, SegmentOverride::FS, SegmentOverride::GS})
-        for (bool Address32 : {false, true}) {
-          if (!Address32 && Segment == SegmentOverride::None)
-            continue;
-          const auto Rao = liftX64(encodeRao(RaoOperation::Add, Width, 26, Base,
-                                             14, Address32, Segment));
-          const auto Cmp = liftX64(
-              encodeCmpccXadd(4, Width, 26, 17, Base, 14, Address32, Segment));
-          EXPECT_NE(findIntrinsic(Rao.Ops, Intrinsic::ApxRaoAdd), nullptr);
-          EXPECT_NE(findIntrinsic(Cmp.Ops, Intrinsic::ApxCmpccXadd), nullptr);
-        }
     }
 }
 

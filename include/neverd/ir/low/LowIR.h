@@ -20,6 +20,7 @@
 #include "neverd/ir/X86/X86ShadowStack.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86/X86AmxState.h"
+#include "neverd/ir/intrinsics/X86/X86AtomicMemory.h"
 #include "neverd/ir/intrinsics/X86/X86BoundedLeaf.h"
 #include "neverd/ir/intrinsics/X86/X86RepState.h"
 #include "neverd/ir/intrinsics/X86/X86Sgx.h"
@@ -351,9 +352,13 @@ inline ApxAtomicIntrinsicShape apxAtomicLowShape(const LowOp &Op,
   const auto IsScalar = [](const NdVar &Value) {
     return Value.isConst() || Value.isReg() || Value.isTemp();
   };
+  const auto ControlIndex = x86AtomicAddressControlIndex(
+      Op.NumInputs ? static_cast<Intrinsic>(Op.Inputs[0].Offset)
+                   : Intrinsic::None);
   return {
       .TargetArch = TargetArch,
       .MemoryOrdering = Op.MemoryOrdering,
+      .MemoryAddressSpace = Op.MemoryAddressSpace,
       .NumInputs = Op.NumInputs,
       .IntrinsicIdIsConst = Op.NumInputs > 0 && Op.Inputs[0].isConst(),
       .IntrinsicIdSize = Op.NumInputs > 0 ? Op.Inputs[0].Size : uint16_t{0},
@@ -368,6 +373,14 @@ inline ApxAtomicIntrinsicShape apxAtomicLowShape(const LowOp &Op,
       .ConditionIsConst = Op.NumInputs > 4 && Op.Inputs[4].isConst(),
       .Condition = Op.NumInputs > 4 ? Op.Inputs[4].Offset : 0,
       .ConditionSize = Op.NumInputs > 4 ? Op.Inputs[4].Size : uint16_t{0},
+      .AddressControlIsConst =
+          Op.NumInputs > ControlIndex && Op.Inputs[ControlIndex].isConst() &&
+          !isAddressProvenance(Op.Inputs[ControlIndex].Provenance),
+      .AddressControl =
+          Op.NumInputs > ControlIndex ? Op.Inputs[ControlIndex].Offset : 0,
+      .AddressControlSize = Op.NumInputs > ControlIndex
+                                ? Op.Inputs[ControlIndex].Size
+                                : uint16_t{0},
   };
 }
 
