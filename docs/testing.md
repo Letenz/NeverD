@@ -1531,6 +1531,15 @@ explicit admission, fixed observations, nanosecond carry, shared idle/instructio
 advancement and preservation of the declared epoch difference. These are
 model regressions, not device suspension measurements.
 
+`AndroidServiceManagerTest.CacheHitsNeedNoManagerContextWarningOrAdditionalClockObservation`
+and `NullAndAbsentCacheEntriesRequireManagerStateBeforeContext` distinguish
+cache hits, empty caches and null-valued misses without inventing independent
+Binder observations. The JNI cache-mutation regression uses distinct equal
+String objects, all three static-call forms and removal through the shared
+HashMap before another lookup. `ProcessReport.AndroidServiceCacheDoesNotSupplyIndependentBinderState`
+checks the same independence at JSON admission. These checks use generic
+authored callers and no device service inventory or private workload input.
+
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
 typed/JSON admission, DEX catch and shared message access, terminal instruction
