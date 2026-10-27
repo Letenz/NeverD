@@ -315,6 +315,41 @@ selector also treats a shorter complete RET body as a potential counterclaim
 to the same body followed only by INT3/NOP alignment: padding is not nominal
 identity evidence. It preserves all known counterclaims across independently
 compiled source drivers, including wrappers that compile identically.
+Byte coverage is compared at absolute function offsets, even when two records
+use different leading/tail splits. Wildcards can cover an opaque CRC region;
+fixed bytes cannot be proved by that region, and a required CRC still needs
+the same span and checksum. The offline collision refiner additionally handles
+explicit Thumb BX LR/POP.W-to-PC returns followed by halfword zero/NOP padding
+when its machine is ARM. Other architectures do not inherit that rule.
+
+`scripts/signatures/refine_colliding_patterns.py` applies newly collected raw
+counterclaims to existing ordinary records. A complete conflicting record gains
+mandatory references only when they distinguish every new rival; otherwise it
+becomes an incoming-only query. Incomplete conflicting records are omitted.
+Each proposed single-site clause is checked against every raw rival and the
+existing byte cohort. The refiner retains one sufficient clause, preferring
+image-owned import/RTTI metadata, then fewer alternatives and source field
+order; alternatives at one site stay together. This replaces one global byte
+record with at most one, avoiding a copy
+of the whole body for every sufficient site. If several sites are jointly
+necessary, the full clause stays.
+Pruned clauses retain a separate complete incoming declaration, intersecting
+outgoing fields across raw same-name versions. Unrelated unresolved calls need
+not block a distinguishing clause, and omitted fields cannot be used as if the
+pruned clause declared them.
+Existing same-library byte cohorts remain intact across numbered parts only
+when their typed references also agree with the raw claim. A known name with
+different references or a claim in an independently selected library cannot
+hide a new counterexample. Existing required-reference records undergo the
+same audit; newly indistinguishable complete ones retain incoming queries.
+The refiner adds no names
+or aliases and preserves incoming queries and metadata constraints.
+When one member needs refinement, the whole loaded byte cohort is rechecked
+together across numbered parts. Removing an alternative cannot leave an
+unqualified survivor that newly appears unique.
+Its report records actions and input/output hashes. A withheld candidate is an
+abstention, not a recovered function. Publish coverage losses and gains alongside
+error changes, and keep the independent identity gate unchanged.
 
 `neverd_sig_matches_json` retains `name`, `aliases` and `confirmed` as candidate
 fields. Its `caller_confirmed` field identifies incoming reference support;
