@@ -9,6 +9,7 @@ and transport. Fixtures and complete response/file oracles are outside timing.
 from contextlib import ExitStack
 import argparse
 import ctypes
+import hashlib
 import importlib.util
 import json
 import os
@@ -54,6 +55,7 @@ def run_case(host, snapshots, count, samples):
                  ("tail", count - 1, 128), ("empty", count, 128), ("zero", 0, 0))
         for label, offset, limit in pages:
             values = {name: {"cpu": [], "wall": []} for name in snapshots}
+            output_hashes = {}
             for sample in range(-1, samples):
                 names = list(snapshots)
                 if sample % 2:
@@ -69,12 +71,16 @@ def run_case(host, snapshots, count, samples):
                     items = expected[offset:offset + limit]
                     assert reply["payload"] == {"items": items, "total": count, "offset": offset,
                                                 "complete": offset + len(items) >= count}, reply
+                    output_hashes[name] = hashlib.sha256(json.dumps(
+                        reply["payload"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
                     assert sidecar.read_bytes() == text and sidecar.stat().st_mtime_ns == timestamp
                     assert path.read_bytes() == original
                     if sample >= 0:
                         values[name]["cpu"].append(cpu)
                         values[name]["wall"].append(wall)
+            assert len(set(output_hashes.values())) == 1, output_hashes
             results.append({"rows": count, "page": label, "offset": offset, "limit": limit,
+                            "output_sha256": output_hashes,
                             "variants": {name: {metric: bench.summary(data)
                                                  for metric, data in metrics.items()}
                                          for name, metrics in values.items()}})
@@ -85,6 +91,9 @@ def run_case(host, snapshots, count, samples):
                             if ":" in line for key, value in [line.split(":", 1)]
                             if key in ("VmRSS", "VmHWM")}
         return results, {"rows": count, "kib": memory,
+                         "fixture_sha256": {name: {"input": bench.digest(fixture[0]),
+                                                   "sidecar": bench.digest(fixture[2])}
+                                            for name, fixture in fixtures.items()},
                          "scope": "Worker startup, SDK load and all checked page requests"}
 
 
