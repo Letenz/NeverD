@@ -449,6 +449,69 @@ int main() {
     check(formatOperands("r0, #7", facts, none).text() == "r0, #SEVEN" &&
               width == 32,
           "an ARM enumerator lost its width");
+
+    // A 64-bit vector element keeps all of its immediate's bits, and an
+    // immediate no width holds counts wider rather than lose bits.
+    expectFormat({"vmov.i64", "d16, #0xffffffff00000000", "",
+                  "d16, #0xffffffff00000000", true, at(1, hexadecimal), arm});
+    expectFormat({"vmov.i64", "d0, #0xff00ff00ff00ff00", "",
+                  "d0, #18374966859414961920", true, at(1, decimal), arm});
+    expectFormat({"vmov.i64", "d0, #0xff", "", "d0, #~0xffffffffffffff00", true,
+                  at(1, invert), arm});
+    expectFormat({"vmov.i32", "q0, #0x100000000", "", "q0, #4294967296", true,
+                  at(1, decimal), arm});
+    // A shifted immediate is a field of a larger number: it takes a base but
+    // names no member.
+    expectFormat({"add", "x0, x1, #0x18, lsl #12", "", "x0, x1, #24, lsl #12",
+                  true, at(2, decimal), aarch64});
+    expectFormat({"add", "x0, x1, #0x18, lsl #12", "", "x0, x1, #0x18, lsl #12",
+                  true, member(2), aarch64});
+    check(structOperands("x0, x1, #0x18, lsl #12", aarch64) ==
+              std::vector<bool>{false, false, false, false},
+          "a shifted immediate takes a structure offset");
+
+    // A structure offset lands an access as wide as the data a load, store,
+    // swap or compare-and-swap moves.
+    std::vector<unsigned> asked;
+    const StructNamer sizes = [&](std::string_view, std::int64_t,
+                                  unsigned bytes) {
+      asked.push_back(bytes);
+      return std::optional<StructLanding>(StructLanding{"Field", 0});
+    };
+    const auto access = [&](OperandDialect dialect, std::string_view mnemonic,
+                            std::string_view operands, std::size_t operand) {
+      OperandFacts accessFacts;
+      accessFacts.dialect = dialect;
+      accessFacts.mnemonic = mnemonic;
+      accessFacts.structs = &sizes;
+      const auto formats = member(operand);
+      accessFacts.numberFormats = &formats;
+      asked.clear();
+      formatOperands(operands, accessFacts, none);
+      return asked.empty() ? -1 : int(asked.front());
+    };
+    check(access(aarch64, "ldr", "x8, [x20, #0x10]", 1) == 8,
+          "a load lost its register's width");
+    check(access(aarch64, "stxr", "w8, x9, [x10]", 2) == 8 &&
+              access(aarch64, "stlxp", "w8, x9, x11, [x10]", 3) == 8,
+          "an exclusive store took its status register's width");
+    check(access(aarch64, "stxrb", "w8, w9, [x10]", 2) == 1,
+          "an exclusive byte store lost its size");
+    check(access(aarch64, "swp", "x9, x8, [x10]", 2) == 8 &&
+              access(aarch64, "casal", "x9, x8, [x10]", 2) == 8 &&
+              access(aarch64, "casb", "w9, w8, [x10]", 2) == 1,
+          "a swap or compare-and-swap lost its width");
+    check(access(aarch64, "ldp", "w0, w1, [x2, #8]", 2) == 4 &&
+              access(arm, "ldrd", "r0, r1, [r2, #8]", 2) == 4,
+          "a pair counts other than one register");
+    check(access(arm, "ldrhs", "r0, [r1, #4]", 1) == 4 &&
+              access(arm, "ldrhhs", "r0, [r1, #4]", 1) == 2,
+          "a condition was taken for a size");
+    check(access(arm, "vld1.8", "{d0, d1}, [r0]", 1) == 0 &&
+              access(aarch64, "ld1", "{v0.16b}, [x0]", 1) == 0,
+          "a register list was given one register's size");
+    check(access(aarch64, "add", "x0, x0, #0x18", 2) == 0,
+          "an address computation was taken for an access");
   }
   return 0;
 }
