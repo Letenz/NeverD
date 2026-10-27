@@ -245,6 +245,14 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/pe_browse_test.py"
                 "$<TARGET_FILE:neverd-worker>")
       set_tests_properties(NeverDWorkerPEBrowse PROPERTIES TIMEOUT 60)
+      add_test(NAME NeverDWorkerPEListingFacts
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/pe_listing_facts_test.py"
+                "$<TARGET_FILE:neverd-worker>")
+      set_tests_properties(NeverDWorkerPEListingFacts PROPERTIES TIMEOUT 120)
+      add_test(NAME NeverDMetadataVisitor
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/metadata_visitor_test.py"
+                "$<TARGET_FILE:neverd_shared>")
+      set_tests_properties(NeverDMetadataVisitor PROPERTIES TIMEOUT 60)
       add_test(NAME NeverDWorkerPDBLoad
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/pdb_load_test.py"
                 "$<TARGET_FILE:neverd-worker>")

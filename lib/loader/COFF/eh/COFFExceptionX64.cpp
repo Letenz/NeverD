@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -759,6 +760,49 @@ void unwind_detail::decodeX64ExceptionFunctionInto(
       F.NativeUnwindBytes.assign(Native, Native + NativeSize);
   }
   return;
+}
+
+std::vector<BinaryImage::COFFPDataRecord>
+x64RuntimeFunctionRecords(const BinaryImage &Img) {
+  std::map<uint32_t, BinaryImage::COFFPDataRecord> Records;
+  if (Img.Format != BinaryFormat::COFF || Img.Arch != Arch::X64)
+    return {};
+  const auto Add = [&](uint32_t RVA) {
+    if (!RVA || RVA > InvalidVA - Img.Base)
+      return;
+    const auto *Bytes = Img.readVA(Img.Base + RVA, 12);
+    if (!Bytes)
+      return;
+    const auto Begin = readLE<uint32_t>(Bytes);
+    const auto End = readLE<uint32_t>(Bytes + 4);
+    const auto Unwind = readLE<uint32_t>(Bytes + 8);
+    if (Begin >= End || End > InvalidVA - Img.Base ||
+        Unwind > InvalidVA - Img.Base ||
+        !Img.isCodeRange(Img.Base + Begin, End - Begin) ||
+        !Img.readVA(Img.Base + Unwind, 4))
+      return;
+    Records.try_emplace(RVA,
+                        BinaryImage::COFFPDataRecord{Begin, End, Unwind, RVA});
+  };
+  for (const auto &Row : Img.COFFPDataRecords)
+    Add(Row.RecordRVA);
+  for (const auto &F : Img.ExceptionMetadata.Functions) {
+    if (F.Encoding != ExceptionEncoding::X64UnwindV1 &&
+        F.Encoding != ExceptionEncoding::X64UnwindV2 &&
+        F.Encoding != ExceptionEncoding::X64UnwindV3)
+      continue;
+    Add(F.RuntimeFunctionRVA);
+    if (F.ChainedPrimaryRange && F.NativeUnwindBytes.size() >= 12) {
+      const auto Offset = F.NativeUnwindBytes.size() - 12;
+      if (Offset <= UINT32_MAX - F.UnwindInfoRVA)
+        Add(F.UnwindInfoRVA + static_cast<uint32_t>(Offset));
+    }
+  }
+  std::vector<BinaryImage::COFFPDataRecord> Result;
+  Result.reserve(Records.size());
+  for (const auto &[Address, Record] : Records)
+    Result.push_back(Record);
+  return Result;
 }
 
 } // namespace neverd::coff_loader

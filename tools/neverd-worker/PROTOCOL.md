@@ -1351,3 +1351,55 @@ are read/written locally with explicit aggregate admission, including files over
 replacement retains the prior collection; no partial new graph is published.
 Save closes its temporary file, checks cancellation, then renames once. A late
 cancel cannot relabel publication as stopped.
+
+## Listing analysis facts
+
+The listing consumes the shared `neverd_stack_frame_json` for automatic x64
+SP/FP coordinates as well as analyst policies. `frame_before` is the frame
+pointer's coordinate before an instruction; null means unknown. These facts
+come from the owning recovered LowIR function, including its distant chunks.
+  Coordinates never authorize execution or rewrite the original machine lift.
+
+`neverd_function_presentation_json` supplies a lightweight prototype and pure
+forwarder target without invoking decompilation. The PE DLL platform contract
+also feeds the ordinary decompiler debug context. User declarations and names
+keep their precedence; adjusted-argument wrappers are not pure forwarders.
+
+`neverd_metadata_items_json` publishes checked loader data objects in address
+order, currently AMD64 PE `RUNTIME_FUNCTION` records and embedded chain rows.
+The worker shows their RVA fields as links and merges their references into the
+ordinary index. Reference rows add `provenance:"metadata"` and
+`metadata_role:"range_begin"|"range_end"|"unwind_info"`; the source is the
+actual field address. A range-end reference does not create a function.
+Recovered instruction overlays retain these independent metadata references.
+User-defined items override automatic structure presentation.
+
+The worker prefers the optional `neverd_visit_metadata_items` C API to copy
+borrowed typed records directly, without JSON serialization or parsing. Its
+fallback uses metadata pages and the shared bounded JSON reader. Both SDK
+paths project the same loader facts. The worker keeps sorted record and
+boundary arrays; function discovery reuses this image metadata, while
+image/listing invalidation discards it.
+
+A proved forwarding entry reads its transfer instruction without preparing
+its callee's LowIR or stack frame. A direct jump outside a known function
+extent can establish this presentation even before the target is listed, if
+the instruction fits inside that extent and the ordinary independent-entry
+candidate check accepts the target. The query does not register the target.
+Plain DLL presentation can use the shared platform entry declaration without
+initializing compiler header types; explicit debug/type inputs retain their
+existing prototype resolution route.
+
+An empty GUI listing first requests its viewport. `listing` accepts optional
+`complete_anchor_item:true` to retain the selected item's instruction/data
+line together with its header, up to the ordinary page-line limit, even when
+`after` is smaller. Nonboolean values are refused. Ordinary prefetch then fills
+the surrounding context. A query with `before:0` does not decode a preceding
+function just to compute its start flag.
+
+Repeated gap bytes are grouped for display only, retaining their exact item
+extent and unexplored class. Groups stop at named/user items, reference targets
+and metadata boundaries, and each scan is bounded. Pure forwarding entries show
+their transfer instruction separately from trailing padding even when an
+original unwind record covers the larger span. Original unwind data stays
+unchanged.

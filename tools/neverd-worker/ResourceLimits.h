@@ -99,6 +99,10 @@ inline constexpr std::uint64_t kListingMaxAlignment = 0x1000;
 // Classic listings name padding by the alignment of its end, up to this or the
 // smallest power of two longer than the padding.
 inline constexpr std::uint64_t kListingClassicAlignmentLimit = 0x20;
+/// Bound one repeat-run scan and keep its address-relative page identity
+/// stable.
+inline constexpr std::uint64_t kListingMaxRepeatBytes = 0x1000;
+inline constexpr std::uint64_t kListingMinRepeatBytes = 4;
 inline constexpr std::size_t kListingMaxOverviewBuckets = 16384;
 inline constexpr int kListingOverviewSamples = 4;
 inline constexpr int kListingStringScanMinimum =
