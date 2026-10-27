@@ -26,7 +26,8 @@ llvm::Value *MedLLVMEmitter::emitX86APXAtomic(const MedOp &Op, Intrinsic Id,
   if (!intrinsicApxAtomicShapeIsValid(Id, S) || !Prefix)
     throw std::invalid_argument("invalid APX atomic operand/output contract");
   const auto P = *x86APXAtomicPlan(
-      Id, S.SourceSize, TargetArch == Arch::X86 ? 32 : 64, *Prefix,
+      Id, S.SourceSize, TargetArch == Arch::X86 ? 32 : 64,
+      *Prefix | (S.stackReference() ? X86NativeStackReference : 0),
       isX86CmpccXaddIntrinsic(Id) ? S.Condition : 0, TargetArch);
   auto *Address = resolveAtomicMemoryPtr(
       Op.Inputs[1], P.Bytes, sizeToType(P.Bytes), B, Op.MemoryAddressSpace);
@@ -41,7 +42,8 @@ llvm::Value *MedLLVMEmitter::emitX86APXAtomic(const MedOp &Op, Intrinsic Id,
   if (P.compare())
     Append(3); // Native compare/add order differs from normalized LowIR.
   Append(2);
-  if (const auto IID = llvm::Intrinsic::lookupIntrinsicID(P.llvmName())) {
+  if (const auto IID = llvm::Intrinsic::lookupIntrinsicID(P.llvmName());
+      IID && (!P.stackReference() || x86NativeStackMemoryIsAvailable())) {
     if (P.compare())
       Args.push_back(B.getInt32(P.Condition));
     Args.push_back(B.getInt32(P.AddressBits));

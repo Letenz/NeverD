@@ -11,7 +11,8 @@
 #define NEVERD_BACKEND_LLVM_X86_X86APXATOMIC_H
 
 #include "neverd/backend/llvm/X86/X86MemoryAddressAsm.h"
-#include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/backend/llvm/X86/X86NativeMemoryAddress.h"
+#include "neverd/ir/intrinsics/X86/X86AtomicMemory.h"
 
 #include <array>
 #include <optional>
@@ -87,42 +88,35 @@ struct X86APXAtomicPlan {
     return compare() ? "cmp" + std::string(Conditions[Condition]) + "xadd"
                      : operation();
   }
-  std::string segment() const {
-    switch (SegmentPrefix) {
-    case 0x26:
-      return "es";
-    case 0x2e:
-      return "cs";
-    case 0x36:
-      return "ss";
-    case 0x3e:
-      return "ds";
-    case 0x64:
-      return "fs";
-    case 0x65:
-      return "gs";
-    default:
-      return "";
-    }
-  }
+  bool stackReference() const { return x86NativeMemoryIsStack(SegmentPrefix); }
+  std::string segment() const { return x86NativeMemorySegment(SegmentPrefix); }
   std::string assembly() const {
     const auto Prefix = segment().empty() ? "" : "%" + segment() + ":";
     const auto Address = AddressBits == 16   ? (compare() ? "${1:w}" : "${0:w}")
                          : AddressBits == 32 ? (compare() ? "${1:k}" : "${0:k}")
                                              : (compare() ? "$1" : "$0");
+    const auto Setup = stackReference()
+                           ? std::string("movq ${") + (compare() ? "1" : "0") +
+                                 ":q}, %rdx\nsubq %rbp, %rdx\n"
+                           : "";
+    const auto Memory = stackReference() ? std::string("(%rbp,%rdx)")
+                                         : "(" + std::string(Address) + ")";
     return std::string(X86APXAtomicAsmMarker) + name() + " " +
            std::to_string(AddressBits) + " " + std::to_string(SegmentPrefix) +
-           " " + std::to_string(Condition) + "\n" + encoding() + mnemonic() +
-           " " + (compare() ? "$3, $0, " : "$1, ") + Prefix + "(" + Address +
-           ")";
+           " " + std::to_string(Condition) + "\n" + Setup + encoding() +
+           mnemonic() + " " + (compare() ? "$3, $0, " : "$1, ") + Prefix +
+           Memory;
   }
   std::string constraints(bool LegacyBX = false) const {
     const std::string Base =
         LegacyBX ? "{bx}" : x86MemoryAddressAsm(AddressBits).LLVMConstraint;
     const std::string Register = legacy() ? "R" : "r";
-    return compare() ? "=" + Register + "," + Base + ",0," + Register +
-                           ",~{flags},~{memory}"
-                     : Base + "," + Register + ",~{memory}";
+    const auto Clobbers = stackReference() ? ",~{rdx},~{flags},~{memory}"
+                          : compare()      ? ",~{flags},~{memory}"
+                                           : ",~{memory}";
+    return (compare() ? "=" + Register + "," + Base + ",0," + Register
+                      : Base + "," + Register) +
+           Clobbers;
   }
 };
 
@@ -139,19 +133,11 @@ x86APXAtomicPlan(Intrinsic Id, unsigned Bytes, unsigned AddressBits,
       Condition >= X86APXConditionCount ||
       (!isX86CmpccXaddIntrinsic(Id) && Condition))
     return std::nullopt;
-  switch (SegmentPrefix) {
-  case 0:
-  case 0x26:
-  case 0x2e:
-  case 0x36:
-  case 0x3e:
-  case 0x64:
-  case 0x65:
-    return X86APXAtomicPlan{Id,        Bytes, AddressBits, SegmentPrefix,
-                            Condition, A};
-  default:
+  if (!x86NativeMemoryControlIsValid(SegmentPrefix) ||
+      (x86NativeMemoryIsStack(SegmentPrefix) &&
+       (A != Arch::X64 || AddressBits != 64)))
     return std::nullopt;
-  }
+  return X86APXAtomicPlan{Id, Bytes, AddressBits, SegmentPrefix, Condition, A};
 }
 
 inline std::optional<unsigned> x86APXSegmentPrefix(NdMemoryAddressSpace Space) {
