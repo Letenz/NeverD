@@ -5383,6 +5383,13 @@ queries to retain both escaped homes, including distinct SSA versions and
 reversed block order. Run this owner and `NeverDI386CallContractTests` when
 changing CDECL stack-offset query reuse.
 
+`MedFPStackHomes.*` (in `NeverDFPParameterMaskTests`) checks propagation through
+overlapping incoming FP stack homes, independent adjacent components,
+unaligned seeds, forced memory homes and unresolved or malformed reads.
+Long chains retain the same homes in both block orders while querying each
+eligible address at most once. Run this owner and the calling-convention
+contract tests when changing the stack-home closure algorithm.
+
 `NeverDFPParameterMaskTests` runs the shared ABI suite and `FPParameterMask.*`.
 The mask controls retain live bytes, earlier stores, ambiguous definitions and
 unmasked return paths while discarding only fully cleared or replaced bytes.
