@@ -41,7 +41,10 @@ public:
 
   std::optional<BitValue> get(Value *V, unsigned Bit, unsigned Depth = 0) {
     auto *Type = dyn_cast<IntegerType>(V->getType());
-    if (!Type || Type->getBitWidth() > 64 || Bit >= Type->getBitWidth())
+    // The demanded slice is narrow, but its producer can be an x87 i80
+    // payload or another wide integer. Follow that bit without inspecting
+    // unrelated bits; the same query and depth allowances bound the walk.
+    if (!Type || Bit >= Type->getBitWidth())
       return std::nullopt;
     auto Key = std::make_pair(V, Bit);
     if (auto It = Cache.find(Key); It != Cache.end())
