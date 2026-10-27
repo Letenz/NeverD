@@ -1699,9 +1699,17 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
   ContextState ValueEntry;
   ValueEntry.Registers = State.Registers;
   pushAbstractFrame(ValueEntry, Program);
+  const auto ReturnOrigins =
+      Callee && Callee->Return && !Edge.LegacyRuntime
+          ? substituteOrigins(Callee->Return->Origins[0], OriginEntry, Program)
+          : ProvenValueSet{};
   std::optional<size_t> ReturnExpression;
   if (Context.Generic && Callee && Callee->Return && !Edge.LegacyRuntime &&
+      ReturnOrigins.unknown() &&
       Callee->Return->InputExpressions[kReturnRegister]) {
+    // Complete substituted origins already describe this return. Rebuilding
+    // their instruction chain repeats work at every solver replay and can
+    // consume the fixed budget before unrelated caller proofs are reached.
     auto Expression = composeReturnExpression(
         *Callee->Return->InputExpressions[kReturnRegister], State, OriginEntry);
     if (!Expression)
@@ -1793,10 +1801,7 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
             break;
           }
     }
-    State.Origins[0] = Edge.LegacyRuntime
-                           ? ProvenValueSet{}
-                           : substituteOrigins(Callee->Return->Origins[0],
-                                               OriginEntry, Program);
+    State.Origins[0] = ReturnOrigins;
     State.OriginScratch = std::move(PreservedOrigins);
     State.Postconditions = std::move(PreservedPostconditions);
   }

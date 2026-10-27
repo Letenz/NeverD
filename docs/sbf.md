@@ -487,7 +487,10 @@ CALLX. A generic caller can substitute that return template into its own
 expression. New loads require the caller's entry-memory snapshot to remain
 unchanged before the call; values already loaded by a callee survive a later
 write when the ABI preserves their carrier. Frame-input substitution uses the
-canonical call-frame stride. Differing loaded roots and unsupported affine
+canonical call-frame stride. A complete substituted affine return origin is
+reused directly; only an otherwise unknown return needs expression-chain
+composition. This avoids charging repeated solver replays for a fact already
+supplied by the canonical origin transfer. Differing loaded roots and unsupported affine
 substitutions remain unknown. This composition supplies target templates; it
 does not specialize a generic callee's return or memory result with a target
 overlay.
