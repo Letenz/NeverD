@@ -14,6 +14,7 @@
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/MedTypePass.h"
+#include "neverd/ir/med/X86/X86NativeMemory.h"
 
 #include <functional>
 #include <set>
@@ -240,7 +241,9 @@ std::set<uint64_t> detectPtrParamRegs(const MedFunc &Med) {
         MemoryAddress = &Op.Inputs[1];
       if (MemoryAddress) {
         recordAddressRegs(*MemoryAddress,
-                          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default
+                          Op.MemoryAddressSpace ==
+                                      NdMemoryAddressSpace::Default &&
+                                  !x86NativeMemoryHasSegmentOffset(Op)
                               ? PtrRegs
                               : SegmentOffsetRegs);
       }
@@ -290,7 +293,8 @@ std::set<int> detectPtrParamIds(const MedFunc &Med) {
                    static_cast<Intrinsic>(Op.Inputs[0].ConstVal)))
         MemoryAddress = &Op.Inputs[1];
       if (MemoryAddress &&
-          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          !x86NativeMemoryHasSegmentOffset(Op))
         recordAddressParams(*MemoryAddress);
     }
   }

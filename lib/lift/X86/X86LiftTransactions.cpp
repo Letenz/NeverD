@@ -12,9 +12,9 @@
 #include "X86LiftDetail.h"
 
 #include "neverd/decode/Decoder.h"
+#include "neverd/decode/X86/X86TransactionEncoding.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86/X86Lifter.h"
-#include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
 
 #include <cstdint>
@@ -24,8 +24,14 @@ namespace {
 
 bool validTransactionEncoding(const cs_insn *Insn, const cs_x86 &X,
                               bool Mode64) {
-  // XBEGIN is C7 F8 with a rel32 fallback; the others are three opcode bytes.
-  const unsigned Body = Insn->id == X86_INS_XBEGIN ? 6 : 3;
+  if (Insn->id == X86_INS_XBEGIN) {
+    const auto E = x86TransactionBeginEncoding({Insn->bytes, Insn->size},
+                                               Insn->address, Mode64);
+    return Insn->detail && E &&
+           x86TransactionBeginDetailMatches(X, *E, Mode64) &&
+           uint64_t(X.operands[0].imm) == E->Target;
+  }
+  const unsigned Body = 3;
   if (!Insn->detail || Insn->size < Body ||
       Insn->size > x86::kMaxInstructionLen)
     return false;
@@ -57,21 +63,6 @@ bool validTransactionEncoding(const cs_insn *Insn, const cs_x86 &X,
       X.encoding.disp_size || X.encoding.disp_offset ||
       X.addr_size != (Mode64 ? (Prefix[3] ? 4 : 8) : (Prefix[3] ? 2 : 4)))
     return false;
-  if (Insn->id == X86_INS_XBEGIN) {
-    // The 16-bit operand size truncates the fallback address; only the
-    // rel32 form names its continuation exactly.
-    if (Prefix[2] || X.op_count != 1 || X.operands[0].type != X86_OP_IMM ||
-        X.opcode[0] != 0xc7 || X.opcode[1] || X.modrm != 0xf8 ||
-        X.encoding.modrm_offset != Offset + 1 || X.encoding.imm_size != 4 ||
-        X.encoding.imm_offset != Offset + 2 || Insn->bytes[Offset] != 0xc7 ||
-        Insn->bytes[Offset + 1] != 0xf8)
-      return false;
-    const auto Rel =
-        static_cast<int32_t>(readLE<uint32_t>(Insn->bytes + Offset + 2));
-    const uint64_t Mask = Mode64 ? UINT64_MAX : UINT32_MAX;
-    return (uint64_t(X.operands[0].imm) & Mask) ==
-           ((Insn->address + Insn->size + uint64_t(int64_t(Rel))) & Mask);
-  }
   if (Insn->id == X86_INS_XABORT) {
     if (X.op_count != 1 || X.operands[0].type != X86_OP_IMM ||
         (X.operands[0].size != 1 && X.operands[0].size != 2 &&

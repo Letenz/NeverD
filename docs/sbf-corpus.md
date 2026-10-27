@@ -118,6 +118,10 @@ write addresses, overlapping fields and uncertain absolute/frame relationships
 still invalidate facts; heap or account types imply no disjointness. Captured
 values can survive a later write when their carrier survives the ABI. Complete
 canonical loaded origins are reused before constructing a guarded expression.
+Complete scratch spills and reloads can retain a captured loaded expression
+across blocks. They use canonical full-width and alias invalidation; partial
+overwrites and unknown writes still lose it. System calls clobber r0-r5
+expression carriers even when their memory effects preserve scratch.
 Full finite target proofs from this path do not by themselves establish
 complete candidate-callee summaries or execution coverage. Expression nodes
 and proof steps consume the existing output, retained-state and work budgets.
@@ -169,6 +173,25 @@ reach `per_entry_specialization_limit`. These are separate precision limits;
 report the edge reasons alongside missing field/register facts. A finite
 nonoverlapping trace cannot authorize a heap/stack NoAlias assumption or
 remove the dynamic fallback.
+
+The complete store trace also links the separate pointer chain used by 22188:
+the parent descriptor+96 names the boxed Amm, its first word names an account
+record, and record+8 names a separately allocated header. Slot 49845 stores
+that header pointer in the record, and 49770 initializes its first word to one
+before 22188 increments it to two. The copies into the boxed record and parent
+descriptor are included in the byte-write audit. This identifies the observed
+source without treating a source-language type as an alias proof.
+
+The separate `withdraw_all_token_types` path needs a 12-account envelope:
+the LP source, reserve tokens, mint and destination tokens have different
+positions, and a fee token account is required. Its key must match the packed
+Amm field at input bytes 318..349; merely adding an initialized token record
+returns `IncorrectFeeAccount` before the later CALLX. With those roles and
+nonzero quantities bound, both curve inputs run through
+22973 → 23890 → 1960 → 1963 → 1971. Slot 22955 writes the vtable at
+`0x200006DB8`, while 22973 increments the distinct header at `0x300007DA0`.
+These observations extend the finite diagnostic paths, not the static query's
+all-path alias proof.
 
 The diagnostic host supplies a zeroed 32-KiB heap, checked nonoverlapping memcpy
 and PDA derivation checked against solders 0.29.0. Logging returns zero, and

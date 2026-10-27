@@ -111,14 +111,7 @@ TEST(X86NativeMemoryCarrier,
                 ASSERT_EQ(Size, Bytes.size());
                 const bool SegmentBase = Prefix == 0x64 || Prefix == 0x65;
                 const bool StackBase = Base == 4 || Base == 5;
-                const bool Valid = A == Arch::X64 || SegmentBase ||
-                                   Prefix == 0x3e || (!Prefix && !StackBase);
                 std::vector<LowOp> Ops;
-                if (!Valid) {
-                  EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
-                  EXPECT_TRUE(Ops.empty());
-                  continue;
-                }
                 ASSERT_NO_THROW(D.liftToLow(I, Ops));
                 const auto Found =
                     std::find_if(Ops.begin(), Ops.end(), [](const LowOp &Op) {
@@ -131,17 +124,27 @@ TEST(X86NativeMemoryCarrier,
                 ASSERT_NE(Found, Ops.end());
                 const auto Id = Intrinsic(Found->Inputs[0].Offset);
                 bool Stack;
+                unsigned Segment;
                 if (isX86CompactMemory(Id)) {
                   const auto C = x86CompactControl(Id, Found->Inputs[4].Offset);
                   ASSERT_TRUE(C);
                   Stack = C->StackReference;
+                  Segment = C->SegmentPrefix;
                 } else {
                   const auto C = x86FourSourceControl(Found->Inputs[5].Offset);
                   ASSERT_TRUE(C);
                   Stack = C->StackReference;
+                  Segment = C->SegmentPrefix;
                 }
                 EXPECT_EQ(Stack, A == Arch::X64 && !Narrow && StackBase &&
                                      !SegmentBase);
+                const auto ExpectedSegment =
+                    A != Arch::X86 ? 0u
+                    : Prefix == 0x26 || Prefix == 0x2e || Prefix == 0x36
+                        ? Prefix
+                    : !Prefix && StackBase ? 0x36u
+                                           : 0u;
+                EXPECT_EQ(Segment, ExpectedSegment);
                 EXPECT_EQ(Found->MemoryAddressSpace,
                           Prefix == 0x64   ? NdMemoryAddressSpace::X86FS
                           : Prefix == 0x65 ? NdMemoryAddressSpace::X86GS

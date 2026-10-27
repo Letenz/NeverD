@@ -274,6 +274,37 @@ four-source arithmetic. Pair these with `NeverDX86FourFMAExactTests`,
 unknown-value regressions. Hardware AVX512_4FMAPS/AVX512_4VNNIW behavior remains
 unqualified on hosts without those capabilities.
 
+`NeverDX86CompactSegmentTests` checks i386 CS/ES/SS and implicit-stack
+compact memory, all twelve opcode families, all vector widths, addr16/addr32,
+three decoder routes and both lift policies. It rejects mixed control/mode/
+segment contracts and verifies concrete refusal before an active access when
+no descriptor context exists. Its full pipelines compile 270 objects across
+ELF/COFF/Mach-O, default/NoOpt and LLVM/HighC/LLVMC routes. Absolute segment
+offsets deliberately alias an ordinary DS object; stack parameters remain
+scalar offsets. `X86PackedSourceConstants` additionally executes 126 compact
+and four-source constant-input cases at O0/O2 under ASan/UBSan.
+Set `NEVERD_ISA_REGRESSION_ARTIFACT_DIR`, then run
+`scripts/verify_x86_compact_segments.py --exports DIR --keep CHECKS --neverc NEVERC`
+for both C routes with Clang and NeverC at O0/O2. These host x64 recorders verify
+operand transport, not i386 hardware or descriptor faults. The ordinary compact
+wrapper matrix also includes all three new i386 segment prefixes. See the
+[qualification record](evidence/x86-compact-segments-2026-10-27.json).
+
+`NeverDX86FourSourceSegmentTests` applies the same i386 CS/ES/SS contract to
+V4FMADDPS/SS, V4FNMADDPS/SS and VP4DPWSSD/SSDS. It covers addr16/addr32,
+implicit SS, explicit DS/FS/GS overrides, merging/zeroing and all three decoder
+routes. Active accesses without descriptor state refuse before memory or MXCSR
+effects; masked scalar forms still preserve the accumulator's upper 96 bits.
+The shared `x86/X86NativeSegmentFixture.h` compiles 540 objects for these six
+kinds and 270 for compact memory, preserving raw offsets alongside ordinary DS
+image objects. Run `scripts/verify_x86_four_source_segments.py --exports DIR
+--keep CHECKS --neverc NEVERC` on the four-source artifact root for Clang
+ASan/UBSan and NeverC operand recorders. The two pipeline tests use distinct
+artifact names so a combined target run preserves both corpora. Also run
+`NeverDX86FourFMAExactTests` and `NeverDX86VP4DPWTests` for the numerical
+contracts; these source checks do not execute native four-source arithmetic.
+See the [qualification record](evidence/x86-four-source-segments-2026-10-27.json).
+
 `X86NativeMemoryCarrier.*` in `NeverDX86CompressExpandSourceTests` compiles owned
 compact/four-source, descriptor, query and atomic assembly in dynamically
 allocated, realigned frames for i386/x64 and ELF/COFF/Mach-O. Its 54 objects
@@ -910,9 +941,14 @@ NeverC for x64; compilation does not qualify hardware rollback.
 The source checks also require the `rtm` attribute when a legacy LLVM inline
 assembly call becomes `_xabort`. A dword memory result fixes the return width
 in the immediate-byte fixtures; constant-return inference is not their oracle.
-The nonlocal-control suite now checks the integrated rel32 XBEGIN
-two-exit lift and its original abort target. rel16 remains refused; these
-checks do not qualify full transactional checkpoint or native rollback.
+The nonlocal-control suite checks both rel16 and rel32 XBEGIN two-exit
+lifting. `NeverDX86TransactionBeginTests` additionally exhausts all 65,536
+rel16 fields through full/light/lift decoding, both strictness settings and
+address widths, and checks rel32 prefix/wrap cases, malformed details and
+controlled status completions. Its i386/x64 ELF/COFF/Mach-O source regions
+retain forward and backward abort edges through LLVM and both C routes,
+default/NoOpt and C O0/O2. These checks do not qualify full transactional
+checkpoint or native rollback. See the [XBEGIN evidence](evidence/x86-xbegin-rel16-2026-10-27.json).
 `NeverDX86LegacyAdmissionTests` separately covers incomplete far-pointer
 segment loads and unowned forms of 24 3DNow! operations. Its 76 and 384 valid instruction forms
 run through full, lightweight and lift decoding in strict/permissive modes.
@@ -3242,6 +3278,19 @@ must reproduce its original ordering, memberships and coverage. Native SDK and
 worker cases consume the last candidates, check invalidated inventories, and
 reopen the edited report through the strict reader, including actual worker
 file save and restart.
+Overlapping-candidate regressions use an independently specified six-cycle:
+all six measured alternatives must survive, and the other three pairs must
+stay absent under direction and layout changes. Another case combines exact
+duplicates with a changed function competing for the same candidates. Native
+SDK, worker and real Qt picker cases check both directions, paging, edits and
+reopen. A separate old-library control reproduces stale inventories after
+redo; the repaired workflow checks caller detail, observations and inventory
+against the first application of the same edit.
+Duplicate-heavy inventory timing controls compare a fixed 200-row page at
+8,192 and 32,768 functions. Single-group rows must reuse normalized members,
+while the SDK's saved-order control checks canonical previews/pages without
+rewriting retained group evidence. Keep timing receipts outside correctness
+assertions; wall-clock thresholds depend on the runner.
 The CLI regression sends SIGINT during each input's actual hashing phase,
 requires exit 3 with empty result output, preserves an existing saved report,
 then runs an ordinary comparison again. Child SIGINT delivery is tested on
@@ -6998,7 +7047,7 @@ framed process and isolation from native-session revisions using a C++ client.
 
 `scripts.tests.test_collision_refinement` checks unpruned source admission,
 same-library cohorts across parts, independently selected release conflicts,
-opaque CRC spans, shorter Thumb return bodies, incomplete-record refusal and
+opaque CRC spans, shorter Thumb return bodies, incomplete-record refusal, CRC-bearing return padding and
 preservation of aliases, incoming queries and metadata. They also require
 existing mandatory-reference claims to survive new raw sources, including a
 known rival name with changed references. The generation and supplement
@@ -7006,7 +7055,9 @@ suites also check byte coverage across leading/tail encodings and require every
 mandatory reference claim to survive hidden CRC counterexamples. Refinement
 cases retain alternatives in the selected sufficient single-site clause,
 jointly necessary fields and complete incoming declarations with source-version
-consensus. They also constrain cohorts together across numbered parts, so
+consensus. Existing required clauses additionally need their own complete raw
+source witness and independently sufficient image metadata; missing witnesses,
+call-only proofs and loaded required rivals retain the necessary constraints. They also constrain cohorts together across numbered parts, so
 withholding one member cannot leave an unqualified survivor.
 Source-driven refinement still requires held-out CLI accuracy and performance qualification;
 these unit tests do not establish source identity for a matching body.
@@ -7041,7 +7092,7 @@ bodies for contextual patterns. The Python supplement tests retain short and
 discarded counterclaims across independently selected packs.
 `SignatureDBCallerContext.*` checks incoming support, full-body disagreement,
 entry scope, complete alternatives, variant consensus, and refusal of weak,
-partial, ambiguous, required or contradicted initial anchors. Rooted chains
+partial, ambiguous, unrooted required or contradicted initial anchors. Rooted chains
 exercise both input orders, independent frozen validation, weak intermediate
 bodies, unrooted cycles and the depth budget. Cache tests run pieces in reverse
 order and reject invalid caller offsets and CRC coverage without depending on
@@ -7050,6 +7101,9 @@ ordinary callee plus a rooted incoming body or a confirmed required root,
 reversed entries and records, changed-buffer reuse, missing/weak/partial or
 ambiguous callees, incomplete source variants and absent roots. A nominal body
 settled by an earlier incoming round cannot masquerade as an independent anchor.
+Long required-parent cases reuse the same independent ordinary-callee proof,
+including reversed records and entries, changed-buffer withdrawal, missing or
+incomplete source declarations, ambiguous/weak/partial callees and entry scope.
 `SignatureDBCodePairs.*` checks complete x64 code-address fingerprints across
 two short bodies: reversed input order, live-byte changes, missing required or
 unpruned source records, insufficient combined bytes, source/leaf alternatives,
@@ -15057,6 +15111,20 @@ then check that exports retain the session's original bytes plus its overlay.
 The worker mock intentionally omits snapshot exports to
 exercise JSON fallback; run the native patch suite with both current and older
 SDKs when changing this optional transport.
+
+`NeverDWorkerHistory` compares shared patch publication with independent complete
+JSON and sidecar byte oracles. It checks ownership after caller mutation, retained
+checkpoint references, retirement of obsolete row generations, reordered and
+duplicate handles, generic/patch-only interleaving, unknown fields and signed-zero
+encoding. Patch-only commits cover every writer boundary before and after file
+replacement, same-session retry, reopened recovery, recovery followed by a newer
+request, equivalent foreign formatting, timestamp/size collisions, strict invalid
+values and full history/journal budgets. Keep full post-commit reloads inside
+commit/undo/redo timings and include first edit plus peak RSS when evaluating
+shared state; row-construction timings alone do not establish the benefit.
+Run the real SDK patch/replica path under ASan as well as the JSON-only mock:
+analysis-section metadata returned by the SDK must remain owned while its
+`sections` subarray is traversed during snapshot construction.
 
 `tools/neverd-bench/patch-paired.py --worker-history` compares complete CLI
 commands and durable worker commit/undo/redo against two explicit binary

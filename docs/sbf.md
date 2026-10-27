@@ -485,6 +485,17 @@ pointer is declared disjoint because it came from a heap or account type. A
 value captured before a write remains available in a carrier that survives the
 canonical ABI.
 
+Full-width spills also retain that captured expression at a proven scratch
+cell, using the shared typed-cell store and invalidation rules. A matching
+full-width reload can restore it across basic blocks. Partial overwrites,
+unknown destinations, differing expressions at joins and uncertain memory
+effects discard it. These private expression IDs never enter the VM value or
+descriptor-byte lanes. A memory-preserving syscall still clobbers expression
+carriers r0-r5 through the canonical ABI; preserving memory cannot preserve
+its old register result. Function summaries invalidate caller spills through
+their existing write effects. Callee-created spill IDs are not copied into a
+caller's differently bound expression state.
+
 Generic summaries also record `return_value_expression` for a return carrier
 derived from entry parameters and memory, including helpers that contain no
 CALLX. A generic caller can substitute that return template into its own
@@ -521,6 +532,15 @@ output, retained-state and instruction-work budgets. The instantiation counter
 counts computations, including solver contexts that may later be reclaimed.
 These target proofs do not create candidate-callee summary edges, establish
 that every candidate was summarized, or close unknown runtime callers.
+
+Generic callers can also supply their locally proven parameters and full-width
+scratch fields. Before publishing such a target, a caller-seeded replay selects
+only known CFG successors up to the first call. Unknown branch outcomes,
+repeated blocks and an earlier call prevent publication for a later site;
+locally known arguments cannot authorize a callee branch they make impossible.
+The replay uses the canonical value and branch transfers and charges its
+instructions and temporary state to the existing query budgets. It neither
+allocates another specialization nor changes the generic return/memory result.
 
 All generic roots remain available, but standalone specialization is skipped
 when the static CFG/direct-call graph cannot reach an unresolved CALLX; actual

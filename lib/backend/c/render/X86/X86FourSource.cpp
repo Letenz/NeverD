@@ -44,13 +44,18 @@ std::string expression(const X86FourSourcePlan &P,
                      " __attribute__((vector_size(" + Bytes + "))); " + V +
                      " " + Acc + " = {0}, " + Src + "[4] = {{0}}; ";
   if (Use.Accumulator)
-    Text += "__auto_type " + T + "_old = (" + Args[1] +
-            "); __builtin_memcpy(&" + Acc + ", &" + T + "_old, " + Bytes +
-            "); ";
+    Text +=
+        (Packed
+             ? "unsigned _BitInt(" + std::to_string(P.Control.bytes() * 8) + ")"
+             : "__auto_type") +
+        std::string(" ") + T + "_old = (" + Args[1] + "); __builtin_memcpy(&" +
+        Acc + ", &" + T + "_old, " + Bytes + "); ";
   if (Use.Sources) {
     if (Packed) {
       const auto Input = T + "_packed";
-      Text += "__auto_type " + Input + " = (" + Args[2] + "); ";
+      Text += "unsigned _BitInt(" +
+              std::to_string(P.Control.sourceBytes() * X86FourSourceCount * 8) +
+              ") " + Input + " = (" + Args[2] + "); ";
       for (unsigned I = 0; I < X86FourSourceCount; ++I)
         Text += "__builtin_memcpy(&" + Src + "[" + std::to_string(I) +
                 "], (const unsigned char *)&" + Input + " + " +
@@ -135,11 +140,7 @@ X86FourSourcePlan x86FourSourceHighPlan(Arch A, const HighExpr &E) {
   if ((A != Arch::X86 && A != Arch::X64) || !x86FourSourceShapeIsValid(S))
     throw std::invalid_argument(X86FourSourceMalformed);
   const auto C = *x86FourSourceControl(*S.Control);
-  const auto Prefix =
-      (E.MemoryAddressSpace == NdMemoryAddressSpace::X86FS   ? 0x64
-       : E.MemoryAddressSpace == NdMemoryAddressSpace::X86GS ? 0x65
-                                                             : 0) |
-      (C.StackReference ? X86NativeStackReference : 0);
+  const auto Prefix = x86FourSourceNativePrefix(C, E.MemoryAddressSpace);
   return *x86FourSourcePlan(static_cast<unsigned>(C.Kind), C.Zero, Prefix);
 }
 

@@ -222,29 +222,35 @@ bool liftEvexCompressExpandRegister(X86Lifter &L, X86Lifter::LiftState &S,
         return false;
     const NdMemoryAddressSpace AddressSpace =
         X86Lifter::LiftState::memoryAddressSpace(MemoryOperand);
-    if (!x86NativeSibAddressIsValid(L.targetArch(), X86, MemoryOperand))
+    const auto Segment = x86NativeI386Segment(
+        L.targetArch(), Encoding.SegmentPrefix, MemoryOperand);
+    if (!Segment &&
+        !x86NativeSibAddressIsValid(L.targetArch(), X86, MemoryOperand))
       return false;
-    const NdVar Address = S.computeEA(MemoryOperand);
+    const NdVar Address = S.computeEA(MemoryOperand, true, Segment != 0);
+    const unsigned ControlBytes = Segment ? 2 : 1;
     const unsigned Kind =
         ((Opcode == 0x88 || Opcode == 0x8a) ? X86CompactFloat : 0) |
         (x86NativeAddressIsStack(L.targetArch(), X86, MemoryOperand)
              ? X86CompactStackReference
-             : 0);
+             : 0) |
+        (Segment << X86CompactSegmentShift);
     if (Compress) {
       const NdVar Source = L.operandRead(S, VectorOperand);
       S.emitIntrinsic(
           Intrinsic::EVEXCompressStore, {},
-          {Address, Mask, Source, NdVar::cst(ElementSize | Kind, 1)},
+          {Address, Mask, Source, NdVar::cst(ElementSize | Kind, ControlBytes)},
           NdMemoryOrdering::None, AddressSpace);
     } else {
       const NdVar OldDestination = L.operandRead(S, VectorOperand);
       const NdVar Destination = L.operandWrite(VectorOperand);
-      const uint8_t Control = static_cast<uint8_t>(
+      const unsigned Control =
           ElementSize | Kind |
-          (HasMask && X86.operands[1].avx_zero_opmask ? 0x80 : 0));
-      S.emitIntrinsic(Intrinsic::EVEXExpandLoad, Destination,
-                      {Address, Mask, OldDestination, NdVar::cst(Control, 1)},
-                      NdMemoryOrdering::None, AddressSpace);
+          (HasMask && X86.operands[1].avx_zero_opmask ? X86CompactZero : 0);
+      S.emitIntrinsic(
+          Intrinsic::EVEXExpandLoad, Destination,
+          {Address, Mask, OldDestination, NdVar::cst(Control, ControlBytes)},
+          NdMemoryOrdering::None, AddressSpace);
     }
     return true;
   }

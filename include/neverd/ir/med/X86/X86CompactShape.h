@@ -29,7 +29,8 @@ inline X86CompactShape x86CompactMedShape(const MedOp &Op,
     S.Sizes[I] = V.Size;
     S.Scalars[I] = isMedIntrinsicScalarInput(V) || V.Kind == MedVar::Param;
   }
-  if (Op.NumInputs > 4 && Op.Inputs.size() > 4 && Op.Inputs[4].isConst())
+  if (Op.NumInputs > 4 && Op.Inputs.size() > 4 && Op.Inputs[4].isConst() &&
+      !isAddressProvenance(Op.Inputs[4].Provenance))
     S.Control = Op.Inputs[4].ConstVal;
   S.ValidId &= Op.IntrinsicOutputs.empty();
   const auto Observe = [&](const MedVar &V) {

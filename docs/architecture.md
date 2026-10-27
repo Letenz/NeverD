@@ -479,6 +479,16 @@ This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
 
+`decode/X86/X86TransactionEncoding.h` owns the raw XBEGIN prefix, immediate
+width and signed fallback calculation shared by decoder normalization and
+lifting. A rel16 displacement retains a full 32/64-bit code target; address
+size cannot change its sign extension. The pinned decoder's i386 forms that
+use address size for extension are normalized once, before CFG discovery.
+Only the authenticated legacy representation is corrected; contradictory
+instruction detail still fails before LowIR effects. The two exits retain the
+original fallback and update EAX only after an abort. This transport does not
+supply a complete machine checkpoint or qualify hardware rollback.
+
 ## Apple arm64e analysis
 
 The Mach-O loader retains the CPU subtype, including its ABI capability bits,
@@ -1173,8 +1183,11 @@ it does not produce two more complete inventories just to detect that change.
 Ordinary reloads still compare before and after.
 
 The SDK's versioned byte-patch snapshot copies canonical rows and raw bytes into
-independent owned storage. The worker builds its history DOM directly from those
-rows, avoiding a complete JSON serialization, parse and address normalization.
+independent owned storage. The worker compares these rows with independently
+owned, admitted history rows and shares unchanged row handles and their strict
+encodings. Only changed rows build a new DOM. Reuse requires the complete
+canonical seven-field representation, including numeric types and hex spelling;
+unknown fields cannot survive the adapter's canonical projection.
 It resolves acquisition and release together and retains JSON compatibility with
 older SDKs. Snapshot storage survives session edits and destruction; the overlay
 still owns all admission, ordering and kind decisions. CLI JSON and sidecar
@@ -1271,9 +1284,16 @@ accounting and document assembly; rollback checkpoints do not copy command
 payloads. Pending sidecar writes and the next committed snapshot share the same
 owned text. Complete history/journal sizes are reserved before assembly, while
 all publication limits, external-byte comparisons and durable write ordering
-remain in their existing owners. The typed patch-row adapter counts the exact
-compact representation of its canonical fields without materializing a second
-JSON string; older SDK inventories retain the generic serializer path.
+remain in their existing owners. Patch commits and undo/redo share admitted row
+values and unchanged non-patch tables through the same publication routine as
+generic state saves. Row handles retain neither SDK pointers nor entire previous
+snapshots or arrays. Sequence ordering and uniqueness are checked independently
+of row admission. Complete JSON views are materialized only for legacy callers;
+single-table reads do not construct the patch DOM. Generic saves own the supplied
+row representations anew: logical equality (including signed zero) can suppress
+a sidecar write but cannot authorize reuse of differently spelled JSON text.
+The transport budget counts cached strict row encodings, including extra fields
+and escaping from older SDK inventories, before considering a no-op.
 
 Source previews retain the live session’s load options, analysis policy, user metadata and an owning snapshot of signature evidence. Instruction display limits never limit full-range validation; truncated previews report this explicitly. Thumb edits must cover the complete IT block when removing its predicate.
 
@@ -1341,13 +1361,22 @@ removes groups exhausted on either side before rebuilding coverage and lookup
 indices. The override effect retains changed and removed groups at their
 original indices; undo merges them back in order without rematching functions.
 Persisted groups therefore always have candidates on both sides.
+Similarity alternatives are retained as overlapping stars, each backed by the
+measured near-best candidates of one endpoint. Combining both endpoints' rivals
+into a Cartesian group would invent pairs; removing an already-grouped endpoint
+would lose other candidates. Exact groups cover only their own edges. The
+legacy single-group lookup remains a coverage marker, not a candidate iterator.
 The C API's `functions_json` inventory projects the same accepted mappings and
 retained ambiguity groups. `ambiguous_with` binds an opposite-side function to
-the full group's target-side inventory, with ordinary search/sort/paging; it
-does not run another matcher or promote a candidate. Mapping edits and restore
-invalidate that inventory cache. CLI and the Qt counterpart picker consume this
-projection; the picker keeps bounded pages and invalidates its selection when
-the worker's comparison revision changes.
+the union of its groups' target-side members, with ordinary search/sort/paging;
+it does not run another matcher or promote a candidate. A cached membership
+index normalizes each group's members once. Single-group rows share those
+members; overlapping groups form a union for the requested row. Cache storage
+follows group membership, without expanding full Cartesian candidate sets.
+Pairing, undo, redo and restore share invalidation of mapping-dependent
+inventory, candidate, delta, source and observation caches. CLI and the Qt
+counterpart picker consume this projection; the picker keeps bounded pages and
+invalidates its selection when the worker's comparison revision changes.
 `ComparisonJSON` owns strict saved-report validation and transactional binding.
 Its optional `ComparisonControl` carries cooperative cancellation/deadlines
 through record readers, graph/native/region validators and measurement workers.
@@ -7307,8 +7336,25 @@ The control separately retains long-mode stack-default address provenance.
 SDK capability check shared with AMX. Native LLVM and NeverC use that control;
 older SDKs and ordinary C retain RBP as the SIB base and compute the offset in
 RDX without changing RBP. An explicit DS override does not erase RSP/RBP stack
-provenance; FS/GS and address-size-32 operands do not acquire it. i386 SS-default
-and explicit non-DS/FS/GS segments remain refused.
+provenance; FS/GS and address-size-32 operands do not acquire it. i386 segments
+use the separate compact control described below.
+
+`X86CompressExpand.h` retains i386 CS/ES/SS offsets in a two-byte control,
+with the architectural prefix in the high byte. The one-byte DS/FS/GS and
+long-mode stack-reference forms keep their existing layout. Known target modes,
+control size, address space and stack provenance must agree. The lifter retains
+implicit SS for SP/BP bases and performs effective-address wrapping before
+native transport. LLVM reuses the raw segment-offset materializer; MedIR and
+HighIR type inference do not promote these offsets into process pointers.
+Native instructions own descriptor checks and faults. Concrete execution
+refuses active accesses without a descriptor environment; zero-mask suppression
+still avoids observing the address or segment. Both C feature scans consume the
+emitter's actual architecture instead of assuming x64.
+
+Packed HighIR inputs in compact and four-source C projection have explicit
+integer storage at their complete declared widths. A narrow printed literal
+such as zero cannot create a four-byte temporary followed by a wider memcpy.
+LLVM-to-C's already typed vector inputs retain their vector storage.
 
 `X86FourSource.h` owns the explicit four-source memory shape and observation
 rules. The lifter snapshots independent register inputs into one packed SSA
@@ -7318,7 +7364,13 @@ the C renderer owns their native-builtin/checked-assembly projection. Numerical
 execution lives under `ir/low/X86/`, retaining the existing sequential FP and
 integer algorithms. Pure COPY/CONCAT transport cannot manufacture missing
 source bytes. Compact and four-source native functions share entry-unknown
-validation; their lifters share ordinary-SIB address admission. C scalar integer
+validation; their lifters share ordinary-SIB address admission and authenticated
+i386 segment selection in `lift/X86/X86NativeMemory.h`. Four-source controls
+also retain CS/ES/SS in a checked high byte, including implicit SS for SP/BP.
+`ir/med/X86/X86NativeMemory.h` owns the raw-offset role used by both MedIR and
+HighIR type inference for these families. Active accesses require native
+descriptor state; a zero mask suppresses that observation while scalar FMA
+still retains the accumulator's upper 96 bits. C scalar integer
 carriers accommodate the complete 256-byte source group, independently of the
 64-byte compiler vector limit. Legacy implicit-bank identities stay readable
 without acquiring an unproved native source-state contract.
@@ -10991,8 +11043,11 @@ operand terminals that share the full decoder's bounded readers and legality
 checks. Its prefix classifier and terminal selection avoid repeated dispatch;
 unsupported operand shapes retain ordinary decoding. ARM, AArch64 and RISC-V
 also use generated descriptor flags to skip operand postprocessing only when
-the owning traversal would perform no writes. These optimizations reside in
-the Capstone `next` fork and are selected through the submodule revision.
+the owning traversal would perform no writes. Their feature-query bodies are
+visible at decoder and printer call sites, allowing constant feature numbers
+to fold into mode-bit checks. The inline and external definitions share one
+body and retain the existing mode policy. These optimizations reside in the
+Capstone `next` fork and are selected through the submodule revision.
 NeverD's existing architecture-specific metadata corrections and fallback
 decoders remain authoritative after the Capstone call. The native batch API
 is available in the fork; this `dev` integration uses the existing iterator

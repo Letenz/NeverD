@@ -30,7 +30,8 @@ inline X86FourSourceShape x86FourSourceMedShape(const MedOp &Op,
     S.Sizes[I] = V.Size;
     S.Scalars[I] = isMedIntrinsicScalarInput(V) || V.Kind == MedVar::Param;
   }
-  if (Op.NumInputs > 5 && Op.Inputs.size() > 5 && Op.Inputs[5].isConst())
+  if (Op.NumInputs > 5 && Op.Inputs.size() > 5 && Op.Inputs[5].isConst() &&
+      !isAddressProvenance(Op.Inputs[5].Provenance))
     S.Control = Op.Inputs[5].ConstVal;
   S.ValidId &= Op.IntrinsicOutputs.empty();
   const auto Observe = [&](const MedVar &V) {
