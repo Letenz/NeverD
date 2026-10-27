@@ -14,6 +14,13 @@ joins), and `NeverDSessionFunctionDiscoveryTests` (completed discovery,
 refuted guesses and explicit user identities). Replaced-PC and recursive
 fixtures execute both C routes at O0/O2 with independent callbacks or return
 values; malformed return-slot and arbitrary-write controls remain refused.
+Discarded internal calls must retain the parent's exact stack and physical
+return slot before either a RET or a tail transfer. The owner tests cover
+under-restoration, over-restoration and parent-PC overwrites on x86/x64 under
+COFF, ELF and Mach-O, while allowing writes to discarded internal slots.
+Both source routes refuse the negative controls; restored x64 callbacks
+execute with independent argument/result checks at O0/O2. A synthetic tail
+CALL cannot supply a real callee's stack effects to the pre-transfer proof.
 
 `NeverDSourceEntryBindingTests` runs source ABI, typed call, runtime entry and
 incoming stack binding regressions without the full mobile fixture inventory.
@@ -13206,6 +13213,13 @@ Memory-file reads cover empty ranges at the user limit and original-count signed
 `NeverDLowInstructionBoundaryTests` runs the LowIR instruction-provenance suite independently of the aggregate lift fixtures. `BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame` checks both aligned ADD and post-indexed LDP stack releases, including a link-register restore performed in the caller; the original RET X30 and shared entry remain independently represented. `BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership` rejects another return register, BR X30, missing or unaligned release, narrow restores, interior entries, fixups, writable or ambiguous mappings, relocatable input and another format. Decoding a shared tail does not prove a native ABI: missing caller saves or allocation still fail the existing frame proof.
 
 `NeverDOwnInteriorCallTests` covers direct x86 and x86-64 calls to a label inside the caller's own unwind range, under a Microsoft x64 `.pdata` entry, a System V x86-64 DWARF FDE and an i386 DWARF FDE. A call made only for the return address it pushes is lifted as a push and a jump, and the emitted C for the straight and looped x86-64 cases runs at `-O0` and `-O2` under AddressSanitizer and undefined-behavior traps. A target whose returns pop that call's own return address stays an ordinary call; a return after a stack switch or below the entry stack pointer is refused. A range recovered from an i386 registration chain does not bound the body, so its call stays a call.
+
+The same owner checks packed-flag and MXCSR reads across internal calls. Their
+read intrinsics preserve PC ownership, while every explicit stack store still
+needs a disjointness proof on PE/ELF/Mach-O x64 and ELF i386. Malformed shapes,
+integer-register outputs, segment overrides and flag writes cannot borrow that
+read contract. Both x64 source routes execute 256 carry inputs and four MXCSR
+rounding states, with pipeline optimization on/off and C compilation at O0/O2.
 
 Return-slot checks reject overlapping, unknown, atomic and opaque-callee writes before treating a target as an ordinary subroutine. PE, ELF and Mach-O cases cover partial-width PC corruption and i386 widened memory addresses. Private writes, discarded return addresses and terminating branches remain valid.
 
