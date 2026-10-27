@@ -171,9 +171,11 @@ wrapping counters, bypassed or repeated updates, additional entries, signed
 guards and overflowing displacements reject it. Exact-offset queries remain
 unknown for a changing recurrence.
 `NeverDMedPrologueSavesTests` checks that only
-disjoint CALL return-slot ranges are admitted, and that sparse stack definitions
-and nonmemory prefixes fit the existing analysis budget. Partial byte overwrites,
-loop backedges and exceptional prefixes retain their negative controls. Run both
+disjoint CALL return-slot ranges are admitted, and that sparse stack definitions,
+nonmemory prefixes and many distinct slots read across a long block chain fit
+the existing analysis budget; a slot that misses its rewrite names its load.
+Partial byte overwrites, loop backedges and exceptional prefixes retain their
+negative controls. Run both
 C route contract suites after changing this proof.
 
 `COFFExceptionIR.LLVMCMixedHandlersKeepUnwindOnlyCleanup` covers independent

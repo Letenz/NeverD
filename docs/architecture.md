@@ -333,8 +333,16 @@ offset arithmetic can separate their CALL return slots from fixed frame loads
 without inventing an exact stack address. Identity copies join the same PHI
 component. Every component needs an outside origin; an unrelated unseeded cycle
 remains unknown. The return-slot reader
-canonicalizes nonmemory operation prefixes before sharing completed byte
-histories, and charges graph work only when that graph is traversed.
+splits the observed bytes wherever a store, a CALL slot or a load begins or
+ends, and moves every such interval backward together, one 64-interval word at
+a time, to a fixed point over event prefixes; its work grows with blocks and
+words rather than with each observed byte. A refusal names a load that the
+CALL write reaches. Graph work is charged only when that graph is traversed.
+The reader first lets every CALL without an exact slot write any byte; when
+the loads stay separated even then, it skips the costlier slot bounds
+(registration replay, offset ranges, SEH handler bounds and upper bounds),
+which can only narrow those writes. That attempt has its own allowance, so a
+refusal or exhaustion there leaves the bounded proof its whole budget.
 The omitted-callee reader also visits scalar direct calls carrying a proven
 private-frame address. Existing operation and extra-lift budgets still bound
 those bodies; an arity-only summary cannot stand in for their pointer effects.
