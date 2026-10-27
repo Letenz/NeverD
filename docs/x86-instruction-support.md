@@ -129,7 +129,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | --- | --- |
 | LDS, LES, LSS, LFS, LGS | Coupled GPR/segment-selector completion, hidden descriptor state and fault ordering. The former ordinary load/COPY approximation is now explicitly refused in both strict and permissive lifting. |
 | 3DNow! arithmetic, comparison, conversion and rearrangement operations | Packed-lane results, instruction-specific floating-point rules and MMX/x87 state. The 24 former COPY/scalar-FLOAT approximations now fail explicitly; decoder recognition remains available. |
-| Unowned FNOP/EMMS and FEMMS | FNOP's waiting behavior and EMMS's tag transition require an owned x87 context; their typed/unowned paths now refuse rather than emit NOP. Owned x64 FNOP/EMMS retain native context steps. FEMMS also invalidates all retained MMX/x87 payloads; that NeverD context transition remains missing, although both compiler backends now expose the native intrinsic. |
+| Unowned FNOP/EMMS/FEMMS | Waiting behavior and tag/payload transitions require an owned x87 context. Owned x64 paths now retain all three instructions, including FEMMS payload invalidation; typed/unowned and i386 paths still refuse rather than emit NOP. The explicit portable x87 profile does not admit MMX resets. |
 | VMRUN | Complete guest/host transition, including guest-modified unsaved GPRs and floating/vector state, plus the VM-exit continuation. |
 | SKINIT | Machine reinitialization and nonlocal control transfer. |
 | GETSEC transferring or unproved leaves | Measured-environment entry/exit and a complete-machine-state continuation. Leaves 0 and 6..8 now use the bounded contract below when natural-width AX is proven constant. |
@@ -2352,8 +2352,9 @@ That diagnostic establishes the cleanup counterexample, not FEMMS execution.
 NeverD's admission tests cover FNOP, EMMS and FEMMS through three decoder
 routes, strict/permissive lifting and x86/x64 with segment/address prefixes.
 Missing state ownership now fails without changing the supplied LowIR output.
-The x87 capability inventory agrees with that boundary. This does not close
-the remaining NeverD FEMMS or 3DNow state contracts listed above.
+The x87 capability inventory agrees with that boundary. The owned x64 FEMMS
+completion is documented below; unowned contexts and 3DNow state contracts
+remain unsupported.
 
 The extended x87 call tests also exposed a C projection error: preserving an
 LLVM signature incorrectly demanded a no-value callee's unknown return
@@ -2369,3 +2370,65 @@ skips three newer native virtualization/descriptor cases. The
 [qualification record](evidence/x86-mmx-state-2026-10-26.json) retains source
 commits, report hashes, counterexamples and both SDKs' generated artifacts.
 The production LLVM release pin and submodule remain unchanged.
+
+
+## Owned FEMMS completion
+
+The shared x87 selector contract now admits `0F 0E`. Its concrete transition
+clears all tags and all payload provenance, preserving the defined control,
+status and saved environment. Waiting exceptions and unknown incoming state
+refuse before mutation. MMX writes establish only the written physical slot;
+all eight must be known before exporting a complete raw snapshot. Native
+LLVM, HighC and LLVMC keep FEMMS within the existing context step. Restore and
+step constraints now name MM0–MM7 as well as ST0–ST7: LLVM does not model them
+as overlapping physical registers.
+
+`NeverDX87MMXStateTests` checks all eight TOP values, three tag patterns,
+both strictness modes and both reset instructions, plus refusal, feature
+preflight and ten compiled output objects. The focused legacy, capability,
+x87 conversion/fault and reset suites pass 107 tests on each SDK (214 total).
+The native-evaluator feature test verifies clean refusal on this host, whose
+CPUID does not advertise 3DNow; it supplies no physical FEMMS result.
+
+The joint compiler oracle
+[`verify-3dnow-values.py`](https://github.com/NeverSight/NeverC/blob/dev/tests/verify-3dnow-values.py)
+also executes the twenty saved NeverD objects in QEMU TCG. Each object's
+MOVQ/FEMMS/FLD1/FSTP path must store binary64 one, keep input/canaries and leave
+empty tags, across all four rounding controls. This is processor-model
+execution, not physical hardware or complete exception-continuation coverage.
+See [the phase evidence](evidence/x86-femms-owned-2026-10-26.json).
+
+The production SDK pin and LLVM gitlink remain unchanged. The 24 NeverD
+3DNow value/state operations and the other remaining rows above are still
+separate work.
+
+## Native 3DNow value interfaces
+
+The [LLVM fork](https://github.com/NeverSight/llvm-project/commit/cf2bde2743795897aef1f1f3712a9fd40a19252d)
+now restores all 24 `llvm.x86.3dnow.*` / `llvm.x86.3dnowa.*` packed value
+intrinsics, register and foldable-memory instruction patterns, and MMX type
+legalization. Without the final legalization mapping, the new `<1 x i64>`
+carriers crashed instruction selection; the recorded regression reproduces
+that failure and passes after the fix. The 48-function codegen regression
+covers i386/x64, O0/O2, default O2 IR optimization, and x64 ELF/COFF/Mach-O.
+It and the adjacent MMX/FEMMS tests pass 27 lit cases.
+
+[NeverC](https://github.com/NeverSight/NeverC/commit/b6739629fd373018a59d6b859b5ee919eabaeb15)
+already had 25 builtin spellings for these 24 operations, including the two
+PSWAPD vector types. New frontend tests verify all spellings through IR and
+both assembly dialects in three object formats. Its shared QEMU oracle checks
+50 register/memory wrappers against independently encoded original
+instructions, with eight input pairs and four x87 rounding controls. Five
+O0/O2 routes pass 16,000 value/state/canary comparisons: direct NeverC,
+full LLVM i386 and x64, NeverC text IR to LLVM, and NeverC bitcode to LLVM.
+The observed states include control, status and empty final tags; the oracle
+does not depend on substituting scalar floating-point arithmetic.
+
+These interfaces preserve processor-specific reciprocal/refinement behavior
+within the same QEMU model. They do not qualify physical 3DNow hardware,
+every input/CPU result, or native exception continuations. Their packed value
+ABI does not replace NeverD's required owned MMX/x87 instruction-state
+contract. Those 24 NeverD operations still refuse explicitly. See the
+[phase evidence](evidence/x86-femms-owned-2026-10-26.json) for exact source
+versions, test reports and artifact digests. No production release or SDK pin
+changes in this phase.

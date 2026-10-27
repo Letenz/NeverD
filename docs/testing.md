@@ -5727,6 +5727,23 @@ ctest --test-dir build-release \
 
 ## Owned x64 x87 context
 
+`NeverDX87MMXStateTests` checks the shared EMMS/FEMMS tag and payload
+provenance contract at every TOP, three tag patterns and both strictness
+modes. FEMMS must forget all retained payloads; subsequent MMX writes and
+x87 loads establish only their own slots. Eight consecutive FLD m80 loads
+also prove that every tag was cleared. Pending exceptions and unknown
+incoming state refuse without mutation. Native feature preflight may refuse
+on hosts without 3DNow. The emission regression decodes ten LLVM, HighC and
+LLVMC output objects to verify the original FEMMS opcode survives default
+and NoOpt pipelines and C O0/O2 compilation. See the
+[owned FEMMS evidence](evidence/x86-femms-owned-2026-10-26.json) for the
+separate QEMU execution of those objects and its coverage limits.
+
+```sh
+python3 scripts/build.py build-release --target NeverDX87MMXStateTests --parallel 4
+ctest --test-dir build-release -L '^NeverDX87MMXStateTests$' --output-on-failure
+```
+
 `NeverDX87StackManagementTests` checks typed FDECSTP/FFREEP decoding across every
 TOP and register selector, malformed-operand refusal, both cleared tags and
 unknown-payload counterexamples across ELF/COFF/Mach-O. Its Linux x86 native
