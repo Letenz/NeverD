@@ -3366,6 +3366,11 @@ It still draws assignments for the original variable union, including wide
 inputs used only by canceled terms, so every validation point remains unchanged.
 Only node identity authorizes cancellation; differing coefficients or operand
 widths do not. Residual plans retain arbitrary-width internal evaluation.
+A literal plus a complemented atom uses the full-width affine identity
+`C + ~X = (C - 1) - X` without constructing polynomial tables. Its scalar work
+and emitted storage remain charged. The deep and region solvers share the
+same minimum-reading predicate, including constant-minus-variable forms;
+an all-ones offset still permits the cheaper complement spelling.
 General operators retain the shared APInt semantics in a separate call, keeping
 their operand construction and cleanup out of the native evaluator's hot frame.
 The compact two-word hash key uses one 64-bit bucket mix, without hashing its
@@ -3718,6 +3723,11 @@ operand order, arbitrary-width semantics or the solver's work charges.
 Native evaluation starts associative folds with their two guaranteed operands
 and reuses already truncated literals, avoiding empty reductions and repeated
 constant masking in the sampling loop.
+Symbolic text parsing collects a same-width multiplication chain once its
+prefix contains two nonconstant factors. It materializes that prefix before
+any width change or other operator, preserving intermediate modular overflow,
+left associativity and earlier single-shift/coefficient folds. Long products
+therefore avoid retaining a separate expression for every growing prefix.
 HighC lowers a zero-extended sub-byte extract as a masked native-word operation
 with the exact extraction offset. The fragment is never materialized as a byte
 for signed extension, which would change its sign bit. Other unsupported

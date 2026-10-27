@@ -7329,6 +7329,10 @@ including all operators, deterministic assignments, and unused wide inputs.
 Contiguous input windows starting at zero or after unused wide variables must
 retain the same random stream and agree with the independent AP evaluator at
 1–257 bits. Sparse windows keep their existing compact lookup coverage.
+Common-addend checks compare degree-256 products and differing coefficients
+against complete AP evaluation. Inputs used only by canceled terms must still
+consume their original random words, including 65–257-bit inputs and sparse
+variable IDs; surviving plans retain their internal wide arithmetic.
 Candidate quality
 comparisons across scoring revisions must recount both outputs with the same
 metric; the SDK's version-specific size counters are diagnostic only.
@@ -7342,6 +7346,13 @@ nodes, exact/short work and table storage, all Boolean corners and independent
 `SymMBAMinimumTests` checks proved binary-leaf minima with only traversal work,
 exhausts cheaper functions at small widths, and covers wide words, resource
 refusals and related or opaque inputs that still require full simplification.
+`SymMBAArithmetic.LiteralComplementUsesACompleteAffineReading` checks direct
+full-width affine derivation, division-by-zero atoms, short budgets and storage
+refusal through 257 bits. Region tests require a proved minimal affine reading
+to stop at the arithmetic pass's work count while retaining complement recovery.
+`SymParse` checks bounded retained nodes for 256-factor chains, independent
+wide product values, mixed-width overflow boundaries, division/remainder order,
+single-shift folds and malformed trailing operators.
 
 Build the symbolic engine, LLVM safety guards, HighIR bridge tests, and source
 roundtrips together when changing shared bitvector simplification:
