@@ -7546,6 +7546,15 @@ products, signed high bits, non-power-of-two coefficients, windows below the
 combined shift and multiple factors. These constructor rules need no solver,
 sample-specific assumptions or new pass.
 
+`ProductWindowsFactorZeroConcatenationLanes` also checks products whose scaled
+factors append literal zero bits with concatenation. The zero lanes move into
+the selected window's offset, while the complete remaining product retains
+all lower carries. `ZeroConcatProductWindowsKeepAllLowerCarries` covers every
+byte pair with different padding widths and independent APInt cases through
+257-bit inputs. `ZeroConcatFactoringPreservesNonzeroLanesAndInnerWrap` keeps
+nonzero low lanes, windows below the combined shift and truncated inner values.
+No scalar-only evaluator is used until the canonical expression fits 64 bits.
+
 `SymExpr.ZeroExtendedUnsignedRemaindersUseTheirNarrowOperands` checks
 zero-extended unsigned remainder operands at equal and different widths through
 257 bits. The remainder is computed at their common narrow width and then
