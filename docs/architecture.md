@@ -519,8 +519,18 @@ rows. Checked emulation reuses only the unchanged disabled-key HINT subset.
 `AArch64PAuthC.def` owns the C syntax shared by both projections;
 `AArch64ReturnProtection` proves the source-only return-signing recipe: an
 entry LR signed with entry SP, matching authentication at every normal return,
-and, when saved, a private frame slot with no other consumers. HighIR records
-the key and leaf policy and omits only the proved recipe operations. HighC/C++
+and, when saved, a dominating private frame slot with no observable consumers.
+The proof follows conditional prologues, LR copies/PHIs and frame reloads;
+unused transport PHIs do not make the signature observable. Address-taken
+labels and landing pads retain their invocation's entry frame. Ordinary exits
+must restore SP, unsigned early returns must not cross a signing operation,
+and declared no-return calls retain the signing policy. Native tail-transfer
+provenance passes from LowIR into `MedOp::IsTailCall`; an adjacent CALL/RETURN
+pair alone is not evidence. Tail exits require a restored SP and authenticated
+LR, and synthetic tail calls do not make a physical leaf non-leaf. An
+unresolved indirect branch keeps its diagnostic and cannot hide an active
+frame's incomplete recipe. HighIR records the key and leaf policy and omits
+only the proved recipe operations. HighC/C++
 express it with `target("branch-protection=pac-ret[+leaf][+b-key]")`; HighIR
 dumps and the Rust/Go views retain the policy as metadata. A different output
 architecture cannot silently drop it. Native Swift emission rejects this
@@ -5565,6 +5575,12 @@ Exact guard-occurrence queries use the expanded CFG value-reconstruction depth
 limit. Guard syntax collection and materialization keep their separate, smaller
 expression limit. This lets a shallow guard cross a longer predecessor graph
 without treating depth exhaustion as a completed proof or skipping replay.
+When separate predecessor arms guard one selector, scalar comparison literals
+can propose a finite envelope even though no single guard dominates the load.
+The joined-domain query must prove every incoming value and a dense prefix;
+the proposal supplies no table capacity or range authority. Equal incoming
+values keep their real predecessor-join provenance after deduplication, only
+for that query mode. Predicate disjunctions and SELECTs cannot manufacture it.
 A guard operand reloaded from memory may nominate the nearest literal STORE
 in its block. The shared value resolver must prove that exact literal reaches
 the exact operand use before guard materialization accepts it. Lexical

@@ -232,6 +232,10 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
           Op.Opcode != NdOp::INDIR_CALL)
         Err("no-return marker is attached to a non-call operation", Blk.Id,
             Op.Addr);
+      if (Op.IsTailCall && Op.Opcode != NdOp::CALL &&
+          Op.Opcode != NdOp::INDIR_CALL && Op.Opcode != NdOp::RETURN)
+        Err("tail-transfer marker is attached to a non-transfer operation",
+            Blk.Id, Op.Addr);
       if (Op.RegistrationRoot != MedOp::RegistrationRootKind::None) {
         if (!hasValidRegistrationRootShape(Op))
           Err("registration runtime root has an invalid carrier", Blk.Id,

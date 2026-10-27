@@ -1557,6 +1557,27 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
   }
 
   if (IndexGuards.empty()) {
+    // Separate predecessor arms can each guard the same selector without a
+    // single condition dominating the LOAD. Their literals only propose an
+    // envelope; the joined query below must still prove it on every path.
+    if (!GuardedGroupProofContext && !Info.IndexValueDefinedAtUse) {
+      for (const auto &[Addr, Insn] : Insns) {
+        if (!consumeCandidateEvidence())
+          return failIncomplete();
+        for (const LowOp &Op : Insn.Ops) {
+          if (!consumeCandidateEvidence())
+            return failIncomplete();
+          if (Op.Opcode != NdOp::INT_SUB && Op.Opcode != NdOp::INT_LESS &&
+              Op.Opcode != NdOp::INT_LESSEQUAL &&
+              Op.Opcode != NdOp::INT_SLESS && Op.Opcode != NdOp::INT_SLESSEQUAL)
+            continue;
+          for (unsigned I = 0; I < Op.NumInputs; ++I)
+            if (isGuardLiteral(Op.Inputs[I]) && Op.Inputs[I].Offset < 64)
+              ProposedJoinedBound =
+                  std::max(ProposedJoinedBound, Op.Inputs[I].Offset + 1);
+        }
+      }
+    }
     // A loop may check its initial and recurrent index separately. No one
     // dominating comparison then names the complete merged value. Reuse the
     // shared finite-domain proof over that exact use, including every current
@@ -1565,8 +1586,7 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
     // from table capacity or omit an unguarded incoming path.
     // Provisional group graphs keep their separate universal guard proof;
     // their hypothesized edges cannot seed an existential finite domain.
-    if (!GuardedGroupProofContext && SawControllingGuard &&
-        !Info.IndexValueDefinedAtUse &&
+    if (!GuardedGroupProofContext && !Info.IndexValueDefinedAtUse &&
         ProposedJoinedBound >= limits::kMinJumpTableEntries) {
       if (!consumeGuardBuildWork(12))
         return failIncomplete();

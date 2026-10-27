@@ -2637,7 +2637,8 @@ mergeResolverResults(llvm::ArrayRef<ResolverResult> Incoming,
                      std::string_view MergeRoot, bool IgnoreTransparentCycles,
                      const size_t *WorkBudget, ConsumeWorkFn &&ConsumeWork,
                      bool *AnalysisIncomplete,
-                     bool CompareAddressArithmetic = false) {
+                     bool CompareAddressArithmetic = false,
+                     bool RetainIdenticalPredecessorMerge = false) {
   bool WorkExhausted = false;
   auto consume = [&](size_t Amount = 1) {
     const bool Available = ConsumeWork(Amount);
@@ -2766,8 +2767,18 @@ mergeResolverResults(llvm::ArrayRef<ResolverResult> Incoming,
                   [&](const ResolverResult &R) {
                     return R.Kind == ResolverResultKind::Cycle ||
                            Same(Same, Common, R.Value, /*Depth=*/0);
-                  }))
+                  })) {
+    // Equal filtered values on two incoming edges still prove a real CFG
+    // join. Retain that provenance for joined-domain queries after numerical
+    // deduplication; a predicate union or a SELECT never requests this marker.
+    if (RetainIdenticalPredecessorMerge) {
+      if (!consume(2))
+        return resolverInvalid();
+      return resolverValue(
+          budgetedResolverMerge(Common->Size, MergeRoot, {Common}, consume));
+    }
     return resolverValue(Common);
+  }
   if (WorkExhausted)
     return resolverInvalid();
   if (MergeRoot.empty())
@@ -7524,15 +7535,20 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         Result = resolverInvalid();
       } else {
         ResolverRootKey MergeRoot;
-        Result = makeResolverRootKey(
-                     MergeRoot, "M",
-                     {B.Start, SlotBase, static_cast<uint64_t>(SlotOffset)},
-                     consumeEvidence, &EvidenceBudgetExhausted)
-                     ? mergeResolverResults(Incoming, MergeRoot.view(),
-                                            /*IgnoreTransparentCycles=*/true,
-                                            GraphWorkBudget, consumeEvidence,
-                                            &EvidenceBudgetExhausted)
-                     : resolverInvalid();
+        Result =
+            makeResolverRootKey(
+                MergeRoot, "M",
+                {B.Start, SlotBase, static_cast<uint64_t>(SlotOffset)},
+                consumeEvidence, &EvidenceBudgetExhausted)
+                ? mergeResolverResults(
+                      Incoming, MergeRoot.view(),
+                      /*IgnoreTransparentCycles=*/true, GraphWorkBudget,
+                      consumeEvidence, &EvidenceBudgetExhausted,
+                      /*CompareAddressArithmetic=*/false,
+                      ActiveValueQuery &&
+                          ActiveValueQuery->Relation ==
+                              JumpTableValueRelation::JoinedUnsignedFeasibleSet)
+                : resolverInvalid();
       }
     }
     if (Result.Kind != ResolverResultKind::Cycle)
@@ -8585,10 +8601,14 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                                 {B.Start, static_cast<unsigned>(Query.Space),
                                  Query.Container, Query.Begin},
                                 consumeEvidence, &EvidenceBudgetExhausted)
-                ? mergeResolverResults(Incoming, MergeRoot.view(),
-                                       /*IgnoreTransparentCycles=*/true,
-                                       GraphWorkBudget, consumeEvidence,
-                                       &EvidenceBudgetExhausted)
+                ? mergeResolverResults(
+                      Incoming, MergeRoot.view(),
+                      /*IgnoreTransparentCycles=*/true, GraphWorkBudget,
+                      consumeEvidence, &EvidenceBudgetExhausted,
+                      /*CompareAddressArithmetic=*/false,
+                      ActiveValueQuery &&
+                          ActiveValueQuery->Relation ==
+                              JumpTableValueRelation::JoinedUnsignedFeasibleSet)
                 : resolverInvalid();
       }
     }
