@@ -45,6 +45,9 @@ public:
   // Java VM's allocation failure or collection policy. extra accounts for maps.
   std::shared_ptr<Object> allocate(Object::Kind kind, std::string_view name,
                                    uint64_t bytes, uint64_t extra = 0);
+  // Callers validate the canonical array descriptor and nonnegative Java
+  // length. Allocates zero primitive bytes or null reference elements.
+  std::shared_ptr<Object> allocateArray(std::string_view type, uint32_t length);
   std::shared_ptr<Object> get(uint64_t identity) const;
   bool replaceBytes(Object &object, std::vector<uint8_t> bytes);
   bool replaceMapEntries(Object &object, std::vector<Object::MapEntry> entries);

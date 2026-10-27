@@ -317,20 +317,9 @@ struct Runtime::State::Engine {
     if (!refs && !integral(component))
       fail(ExecutionStop::Unsupported,
            "floating array execution is unsupported");
-    unsigned size = refs               ? sizeof(std::weak_ptr<Object>)
-                    : component == "J" ? 8
-                    : component == "I" ? 4
-                    : component == "C" || component == "S" ? 2
-                                                           : 1;
-    auto value = state.heap->allocate(
-        refs ? Object::ObjectArray : Object::PrimitiveArray, type,
-        refs ? 0 : uint64_t(length) * size, refs ? uint64_t(length) * size : 0);
+    auto value = state.heap->allocateArray(type, length);
     if (!value)
       fail(ExecutionStop::HeapLimit, "Java array storage budget exhausted");
-    value->Length = length;
-    value->ElementSize = size;
-    if (refs)
-      value->Elements.resize(length);
     return value;
   }
   uint64_t arrayValue(Object &array, uint32_t index,
@@ -1288,7 +1277,10 @@ Program::Program(
     std::optional<std::map<std::string, std::string>> android_properties) {
   for (auto &item : declarations) {
     if (item.name.starts_with("Ljava/") || item.name.starts_with("Ljavax/") ||
-        item.name.starts_with("Landroid/") || item.name.starts_with("Ldalvik/"))
+        item.name.starts_with("Landroid/") ||
+        item.name.starts_with("Ldalvik/") ||
+        (android_properties &&
+         item.name == "Lcom/android/internal/util/StatLogger;"))
       throw Error("DEX cannot replace platform classes");
     auto name = item.name;
     auto [entry, inserted] = classes.emplace(std::move(name), std::move(item));

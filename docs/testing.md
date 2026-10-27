@@ -1421,6 +1421,17 @@ references across detach, compare native properties and reject mutated/unmapped
 property records. Run full Dalvik, Android JNI/thread/callback and Android
 property suites after changing these owners. Tests remain offline and do not
 claim full HashMap/ART, property callback or ServiceManager initialization.
+`AndroidStatLoggerTest.*` checks API 28 metadata, boot-loader ownership, private
+field state, constructor ordering, distinct zero arrays, retained labels, DEX
+construction and microsecond time. Missing/invalid clocks, null labels and
+resource stops retain their distinct outcomes. `AndroidArrayTest.*` checks
+primitive/reference widths, zero initialization and exact storage budgets.
+`AndroidJNI.StatLogger*` uses independent AArch64 callers in ordinary, va_list
+and jvalue-array forms, reads and mutates arrays through JNI, retains labels
+across detach and compares constructor/getTime observations with Linux boot
+clock reads. Run full Dalvik, JNI/thread/callback and Linux clock suites for
+these shared owners. Tests are offline; they do not execute ART or claim
+ServiceManager cache/Binder initialization or StatLogger reporting support.
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
 typed/JSON admission, DEX catch and shared message access, terminal instruction

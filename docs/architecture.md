@@ -12290,6 +12290,8 @@ the [native getter](https://android.googlesource.com/platform/frameworks/base/+/
 and [integer conversion](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/base/include/android-base/parseint.h).
 
 `dalvik::Heap` is the single retained Java object/array owner for JNI and DEX.
+Its zero-filled array allocator supplies element widths, reference storage and
+budget accounting to DEX allocation, JNI array creation and framework arrays.
 Its bounded identities are separate from native reference handles and guest
 addresses. JNI borrows, object arrays and DEX array instructions all refer to the
 same storage; no import/export copy of the heap occurs at a method boundary.
@@ -12299,6 +12301,19 @@ budget/stop mapping. Weak object-array edges and integer field identities avoid
 host ownership cycles while the heap retains objects until workload teardown.
 Java reference assignability, including array covariance, has one shared owner.
 Uninitialized construction and unsupported constructor escape fail explicitly.
+
+The API 28 `com.android.internal.util.StatLogger` constructor uses these arrays
+and the existing elapsed-realtime service. It retains the lock, private fields,
+seven independent zero arrays and the caller's labels array identity. Lock
+creation and the next-tick clock read precede the null-label exception, matching
+the field-initializer order; budget/service stops retain completed field writes
+without reporting a completed constructor. `getTime` converts the same boot
+clock to microseconds and needs no application snapshot. The modeled class is
+boot-owned and cannot be replaced by supplied Android DEX. This follows the
+[API 28 StatLogger contract](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/com/android/internal/util/StatLogger.java).
+Statistics updates, logging and dumps remain unsupported. These prerequisites
+do not establish ServiceManager's process cache or Java Binder identities;
+its unmodeled initialization boundary remains explicit.
 
 `dalvik::Library` is the single implementation of the bounded UTF-16 String,
 Object, Class and Throwable value methods called by JNI and DEX. Heap owns

@@ -24,13 +24,21 @@
 
 namespace neverd::mobile::dalvik {
 namespace {
+constexpr auto StatLoggerType = "Lcom/android/internal/util/StatLogger;";
+// API 28 constructor allocation order; all arrays are independently retained.
+constexpr std::pair<const char *, const char *> StatLoggerArrays[] = {
+    {"mCountStats", "[I"},        {"mDurationStats", "[J"},
+    {"mCallsPerSecond", "[I"},    {"mMaxCallsPerSecond", "[I"},
+    {"mDurationPerSecond", "[J"}, {"mMaxDurationPerSecond", "[J"},
+    {"mMaxDurationStats", "[J"}};
 const std::string &
 classLookupName(const AndroidApplicationSnapshot::ClassLookupFailure &failure) {
   return failure.exact_query ? *failure.exact_query : failure.binary_name;
 }
 bool platformType(std::string_view type) {
   return type.starts_with("Ljava/") || type.starts_with("Ljavax/") ||
-         type.starts_with("Landroid/") || type.starts_with("Ldalvik/");
+         type.starts_with("Landroid/") || type.starts_with("Ldalvik/") ||
+         type == StatLoggerType;
 }
 void validateSettingsCacheValue(const AndroidApplicationSnapshot &input,
                                 const std::optional<std::string> &value,
@@ -373,6 +381,7 @@ void Program::addAndroidFramework() {
         {"android/os/ServiceManager", "java/lang/Object"},
         {"android/os/SystemClock", "java/lang/Object"},
         {"android/os/SystemProperties", "java/lang/Object"},
+        {"com/android/internal/util/StatLogger", "java/lang/Object"},
         {"android/os/Handler", "java/lang/Object"},
         {"android/os/Looper", "java/lang/Object"},
         {"android/os/MessageQueue", "java/lang/Object"},
@@ -476,6 +485,26 @@ void Program::addAndroidFramework() {
     if (std::string_view(name) == "android/provider/Settings$NameValueTable")
       type.interfaces = {"Landroid/provider/BaseColumns;"};
     type.source_id = "android-api28-framework";
+    if (type.name == StatLoggerType) {
+      auto field = [&](const char *field_name, const char *field_type,
+                       bool final = true) {
+        Field value;
+        value.reference = {type.name, field_name, field_type};
+        value.access = {"private"};
+        if (final)
+          value.access.insert("final");
+        type.fields.push_back(std::move(value));
+      };
+      field("TAG", "Ljava/lang/String;");
+      type.fields.back().access.insert("static");
+      type.fields.back().value = std::string("StatLogger");
+      field("mLock", "Ljava/lang/Object;");
+      field("SIZE", "I");
+      for (auto [field_name, field_type] : StatLoggerArrays)
+        field(field_name, field_type);
+      field("mNextTickTime", "J", false);
+      field("mLabels", "[Ljava/lang/String;");
+    }
     if (std::string_view(name) == "android/os/Message") {
       for (auto [field_name, field_type] :
            {std::pair{"what", "I"},
@@ -686,16 +715,12 @@ ExecutionResult AndroidFramework::stringArrayValue(
     const AndroidApplicationSnapshot::ApplicationInfo::SplitSourceDirectories
         &values,
     const AdmitInstruction &admit) {
-  auto array = heap.allocate(Object::ObjectArray, "[Ljava/lang/String;", 0,
-                             values.size() * sizeof(std::weak_ptr<Object>));
+  auto array = heap.allocateArray("[Ljava/lang/String;", values.size());
   if (!array)
     return {ExecutionStop::HeapLimit,
             0,
             {},
             "Android framework storage budget exhausted"};
-  array->Length = values.size();
-  array->ElementSize = sizeof(std::weak_ptr<Object>);
-  array->Elements.resize(values.size());
   for (size_t i = 0; i != values.size(); ++i) {
     auto budget = admit();
     if (budget != ExecutionStop::Returned)
@@ -1340,6 +1365,12 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
   if (method.Op == UptimeMillis || method.Op == ElapsedRealtime ||
       method.Op == ElapsedRealtimeNanos)
     return readClock(method.Op);
+  if (method.Op == StatLoggerTime) {
+    auto result = readClock(ElapsedRealtimeNanos);
+    if (result.stop == ExecutionStop::Returned)
+      result.value /= 1000;
+    return result;
+  }
   if (method.Op == PropertyInt) {
     const auto key = heap.get(arguments[0]);
     if (!key)
@@ -1414,6 +1445,67 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
     return value.value;
   };
   auto execute = [&]() -> uint64_t {
+    if (method.Op == Construct && std::string_view(method.Class) ==
+                                      "com/android/internal/util/StatLogger") {
+      const auto *type = program.findClass(StatLoggerType);
+      if (!type)
+        return unsupported("Android StatLogger declaration is not supplied");
+      auto logger = heap.get(receiver);
+      if (logger) {
+        if (logger->Type != Object::Instance ||
+            !program.assignable(objectDescriptor(*logger), StatLoggerType))
+          return stop(ExecutionStop::Invalid,
+                      "Android StatLogger receiver type mismatch");
+        if (logger->Initialized)
+          return stop(ExecutionStop::Invalid,
+                      "Android StatLogger receiver is already initialized");
+        for (const auto &entry : type->fields)
+          if (!entry.access.contains("static") &&
+              !logger->Fields.contains(&entry))
+            return stop(
+                ExecutionStop::Invalid,
+                "Android StatLogger receiver has invalid field storage");
+      } else {
+        tick();
+        const auto count = std::count_if(
+            type->fields.begin(), type->fields.end(),
+            [](const auto &entry) { return !entry.access.contains("static"); });
+        logger = heap.allocate(
+            Object::Instance, method.Class, 0,
+            count * ::neverd::limits::dalvik::kInstanceFieldStorageBytes);
+        ref(logger);
+        for (const auto &entry : type->fields)
+          if (!entry.access.contains("static"))
+            logger->Fields.emplace(&entry, 0);
+      }
+      auto field = [&](const char *name, const char *descriptor) -> uint64_t & {
+        return logger->Fields.at(
+            program.findField({StatLoggerType, name, descriptor}, false));
+      };
+      tick();
+      field("mLock", "Ljava/lang/Object;") =
+          ref(heap.allocate(Object::Instance, "java/lang/Object", 0));
+      tick();
+      auto time = readClock(ElapsedRealtime);
+      if (time.stop != ExecutionStop::Returned)
+        throw Stop{std::move(time)};
+      // readClock admits signed nanoseconds; conversion to milliseconds leaves
+      // room for the next-second offset without signed long overflow.
+      field("mNextTickTime", "J") = time.value + 1000;
+      auto labels = heap.get(arguments[0]);
+      if (!labels)
+        throw Stop{{ExecutionStop::Thrown, 0, "java/lang/NullPointerException",
+                    "StatLogger requires a nonnull labels array"}};
+      field("SIZE", "I") = labels->Length;
+      for (auto [name, descriptor] : StatLoggerArrays) {
+        tick();
+        field(name, descriptor) =
+            ref(heap.allocateArray(descriptor, labels->Length));
+      }
+      tick();
+      field("mLabels", "[Ljava/lang/String;") = labels->Identity;
+      return logger->Identity;
+    }
     if (method.Op == LooperQueue || method.Op == MessageCallback ||
         method.Op == MessageTarget) {
       const bool looper = method.Op == LooperQueue;
