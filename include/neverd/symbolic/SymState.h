@@ -169,6 +169,10 @@ public:
   /// fail closed without mutating the state.
   void write(SymSpace Space, uint64_t Offset, SymRef Value);
 
+  /// Whether this whole-byte value fits a register-bank write. Admission only:
+  /// no bytes are materialized and no expressions are constructed.
+  bool canWriteRegister(uint64_t Offset, SymRef Value) const;
+
   //===--------------------------------------------------------------------===//
   // Memory
   //===--------------------------------------------------------------------===//
