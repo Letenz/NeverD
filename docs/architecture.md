@@ -10956,6 +10956,18 @@ encodings fail decoding even when strict lifting is disabled. UD1 remains an
 explicit invalid-opcode intrinsic; its encoded operands do not imply an
 ordinary memory access.
 
+With text and detail disabled, Capstone's native iterator uses generated
+operand terminals that share the full decoder's bounded readers and legality
+checks. Its prefix classifier and terminal selection avoid repeated dispatch;
+unsupported operand shapes retain ordinary decoding. ARM, AArch64 and RISC-V
+also use generated descriptor flags to skip operand postprocessing only when
+the owning traversal would perform no writes. These optimizations reside in
+the Capstone `next` fork and are selected through the submodule revision.
+NeverD's existing architecture-specific metadata corrections and fallback
+decoders remain authoritative after the Capstone call. The native batch API
+is available in the fork; this `dev` integration uses the existing iterator
+call sites and does not enable the experimental iced adapter.
+
 `Decoder` and every architecture lifter start in strict mode. If Capstone can
 decode an instruction but the selected lifter has no implementation, the
 lifter throws `UnliftedInstruction`. The exception records the instruction
