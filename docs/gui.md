@@ -1286,7 +1286,11 @@ complement with a minus) and **Bitwise negate** (`~`); **Number** (`#`) goes
 back to the listing's own choice. Right-clicking an instruction offers the same
 forms under **Operand type**. The number under the cursor changes; with
 the cursor elsewhere on the line, the line's last number does, and a line
-without one is refused. Only x86 instructions show operand types so far. A form
+without one is refused. x86, ARM, Thumb and AArch64 instructions show operand
+types; ARM-family immediates keep the decoder's `#` (`#0x1a`, `#-0x10`,
+`#0b11010`, `#'A'`, an enumerator as `#NAME`, a structure offset as
+`[x20, #_T.Size]`) and count in their first register's width, 32 bits for a
+`w` register. SBF and EVM listings keep the decoder's numbers. A form
 the value cannot take, such as characters for unprintable bytes or an offset to
 an address with no name, leaves the listing's number. Each change is one step
 of undo history and is kept in the project folder's `operands.json`, which the command

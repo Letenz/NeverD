@@ -44,35 +44,41 @@ namespace {
 std::string displayOperands(Session &S, const Decoder &D,
                             const DecodedInsn &I) {
   const std::string Raw = I.Raw ? I.Raw->op_str : "";
+  // An instruction without an enumerator keeps the decoder's text as is.
   const auto At = S.OperandFormats.find(I.Addr);
   if (At == S.OperandFormats.end() ||
-      (S.Img.Arch != Arch::X64 && S.Img.Arch != Arch::X86))
+      llvm::none_of(At->second, [](const auto &Entry) {
+        return Entry.second.Base == "enum";
+      }))
     return Raw;
+  // Operands as clients count them: commas outside brackets, braces and
+  // parentheses separate them.
   std::vector<std::string> Parts;
   size_t Start = 0;
   int Depth = 0;
   for (size_t N = 0; N <= Raw.size(); ++N) {
-    if (N < Raw.size() && Raw[N] == '[')
+    const char C = N < Raw.size() ? Raw[N] : '\0';
+    if (C == '[' || C == '{' || C == '(')
       ++Depth;
-    if (N < Raw.size() && Raw[N] == ']')
+    else if ((C == ']' || C == '}' || C == ')') && Depth > 0)
       --Depth;
-    if (N == Raw.size() || (Raw[N] == ',' && Depth == 0)) {
+    if (N == Raw.size() || (C == ',' && Depth == 0)) {
       Parts.push_back(llvm::StringRef(Raw).slice(Start, N).trim().str());
       Start = N + 1;
     }
   }
   const auto Facts = describeNativeOperands(D, I, S.Img.Arch, false);
   bool Changed = false;
-  for (const auto &O : Facts.Immediates) {
-    const auto Format = At->second.find(O.Operand);
-    if (Format == At->second.end() || Format->second.Base != "enum" ||
-        O.Operand >= Parts.size())
+  for (const auto &[Index, Format] : At->second) {
+    if (Format.Base != "enum" || Index >= Parts.size())
+      continue;
+    const auto O = nativeImmediateAt(Facts, I, S.Img.Arch, Index);
+    if (!O)
       continue;
     const auto Previous = S.LastError;
-    const auto Value = "0x" + llvm::utohexstr(O.Value);
-    const char *Text =
-        neverd_enum_value_json(&S, Format->second.Type.c_str(), Value.c_str(),
-                               O.Bits, Format->second.Delta != 0);
+    const auto Value = "0x" + llvm::utohexstr(O->Value);
+    const char *Text = neverd_enum_value_json(
+        &S, Format.Type.c_str(), Value.c_str(), O->Bits, Format.Delta != 0);
     S.LastError = Previous;
     if (!Text)
       continue;
@@ -84,7 +90,10 @@ std::string displayOperands(Session &S, const Decoder &D,
     }
     const auto *Object = Parsed->getAsObject();
     if (const auto Name = Object ? Object->getString("text") : std::nullopt) {
-      Parts[O.Operand] = Name->str();
+      // An ARM-family immediate keeps its `#`.
+      Parts[Index] =
+          (llvm::StringRef(Parts[Index]).starts_with("#") ? "#" : "") +
+          Name->str();
       Changed = true;
     }
   }

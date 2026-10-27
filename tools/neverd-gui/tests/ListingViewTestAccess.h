@@ -34,6 +34,12 @@ struct ListingViewTestAccess {
     const auto &line = view.lines_.back();
     return {line.item, line.sub};
   }
+  /// Shows only \p line, with the cursor at \p column of it.
+  static void showOnly(ListingView &view, ListingView::Line line, int column) {
+    view.lines_.assign(1, std::move(line));
+    view.cursorLine_ = 0;
+    view.cursorColumn_ = column;
+  }
   static QImage arrows(ListingView &view) {
     QImage image(view.arrowsWidth_, view.viewport()->height(),
                  QImage::Format_ARGB32_Premultiplied);
