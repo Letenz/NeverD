@@ -1601,7 +1601,7 @@ static bool isEqNeTree(const HighExpr *E) {
   return isEqNeTree(E->Operands[0].get()) && isEqNeTree(E->Operands[1].get());
 }
 
-static ExprPtr invertHighCond(ExprPtr C) {
+ExprPtr invertHighCond(ExprPtr C) {
   if (!C)
     return C;
   const HighExpr *P = peelCond(C.get());
