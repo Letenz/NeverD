@@ -6,6 +6,7 @@
 /// \file
 /// Independently authored constant branches with unreachable decode decoys.
 
+#include "../../../lib/ir/low/LowScalarExpression.h"
 #include "gtest/gtest.h"
 
 #include "neverd/Limits.h"
@@ -16,6 +17,7 @@
 
 #include "llvm/Support/Error.h"
 
+#include <initializer_list>
 #include <set>
 #include <vector>
 
@@ -137,6 +139,115 @@ TEST(ConstantBranch, SimilarScalarExpressionsKeepTheirInputDependence) {
       for (const auto &Op : Block.Ops)
         EXPECT_FALSE(Op.Opcode == NdOp::BRANCH && Op.NumInputs == 1 &&
                      Op.Inputs[0].isConst() && Op.Inputs[0].Offset == 0x1080);
+  }
+}
+
+std::vector<LowOp> scalarIdentity(unsigned Bytes, unsigned Form) {
+  std::vector<LowOp> Ops;
+  const auto X = NdVar::reg(0, Bytes), Y = NdVar::reg(8, Bytes);
+  const auto A = NdVar::reg(16, Bytes), B = NdVar::reg(24, Bytes);
+  const auto Put = [&](NdOp Opcode, NdVar Output,
+                       std::initializer_list<NdVar> Inputs) {
+    LowOp Op;
+    Op.Opcode = Opcode;
+    Op.Output = Output;
+    Op.Addr = 0x1000 + Ops.size();
+    for (auto Input : Inputs)
+      Op.addInput(Input);
+    Ops.push_back(Op);
+  };
+  if (Form == 2) {
+    Put(NdOp::INT_NOT, B, {X});
+    Put(NdOp::INT_AND, B, {B, Y});
+    Put(NdOp::INT_OR, A, {X, Y});
+    Put(NdOp::INT_SUB, A, {A, B});
+  } else if (Form == 3) {
+    Put(NdOp::INT_AND, A, {X, NdVar::scalar(0x5555555555555555, Bytes)});
+    Put(NdOp::INT_AND, B, {X, NdVar::scalar(0xaaaaaaaaaaaaaaaa, Bytes)});
+    Put(NdOp::INT_ADD, A, {A, B});
+  } else {
+    Put(Form == 0 ? NdOp::INT_OR : NdOp::INT_XOR, A, {X, Y});
+    Put(NdOp::INT_AND, B, {X, Y});
+    if (Form == 1)
+      Put(NdOp::INT_MULT, B, {B, NdVar::scalar(2, Bytes)});
+    Put(NdOp::INT_ADD, A, {A, B});
+    Put(NdOp::INT_SUB, A, {A, Y});
+  }
+  Put(NdOp::INT_SUB, A, {A, X});
+  Put(NdOp::INT_ADD, A, {A, NdVar::scalar(0x80, Bytes)});
+  return Ops;
+}
+
+TEST(ScalarControlExpression, IdentitiesUseEveryBitOfTheirOwnWidth) {
+  for (unsigned Bytes : {1, 2, 4, 8})
+    for (unsigned Form = 0; Form != 4; ++Form) {
+      SCOPED_TRACE(::testing::Message() << Bytes << ':' << Form);
+      const auto Ops = scalarIdentity(Bytes, Form);
+      size_t Work = limits::kMaxScalarBranchEvidenceWork;
+      EXPECT_EQ(
+          constantScalarExpression(Ops, NdVar::reg(16, Bytes), 0x2000, Work),
+          0x80u);
+      EXPECT_LT(Work, limits::kMaxScalarBranchEvidenceWork);
+    }
+}
+
+TEST(ScalarControlExpression, WritesCallsAndMemoryReadsRetainTheirIdentities) {
+  for (unsigned Change = 0; Change != 5; ++Change) {
+    SCOPED_TRACE(Change);
+    auto Ops = scalarIdentity(8, 0);
+    LowOp Barrier;
+    Barrier.Addr = 0x1800;
+    if (Change == 0) {
+      Barrier.Opcode = NdOp::COPY;
+      Barrier.Output = NdVar::reg(0, 1);
+      Barrier.addInput(NdVar::scalar(7, 1));
+    } else if (Change == 1 || Change == 2) {
+      Barrier.Opcode = Change == 1 ? NdOp::CALL : NdOp::INTRINSIC;
+      Barrier.Output = NdVar::reg(32, 8);
+      Barrier.addInput(NdVar::scalar(0x3000, 8));
+    } else {
+      Barrier.Opcode = NdOp::LOAD;
+      Barrier.Output = NdVar::reg(0, 8);
+      Barrier.addInput(NdVar::scalar(0x3000, 8));
+      if (Change == 4)
+        Barrier.MemoryOrdering = NdMemoryOrdering::Acquire;
+      Ops.insert(Ops.begin(), Barrier);
+    }
+    Ops.insert(Ops.end() - 2, Barrier);
+    size_t Work = limits::kMaxScalarBranchEvidenceWork;
+    EXPECT_FALSE(
+        constantScalarExpression(Ops, NdVar::reg(16, 8), 0x2000, Work));
+  }
+}
+
+TEST(ScalarControlExpression, TemporariesCannotCrossInstructionBoundaries) {
+  LowOp Set;
+  Set.Opcode = NdOp::COPY;
+  Set.Addr = 0x1000;
+  Set.Output = NdVar::tmp(1, 8);
+  Set.addInput(NdVar::scalar(0x1080, 8));
+  for (va_t Query : {0x1000, 0x1001}) {
+    size_t Work = limits::kMaxScalarBranchEvidenceWork;
+    EXPECT_EQ(constantScalarExpression({Set}, Set.Output, Query, Work),
+              Query == Set.Addr ? std::optional<uint64_t>{0x1080}
+                                : std::nullopt);
+  }
+}
+
+TEST(ScalarControlExpression, MalformedAndUnaffordableQueriesPublishNothing) {
+  for (unsigned Change = 0; Change != 4; ++Change) {
+    auto Ops = scalarIdentity(8, 0);
+    size_t Work = limits::kMaxScalarBranchEvidenceWork;
+    if (Change == 0)
+      Work = 0;
+    else if (Change == 1)
+      Ops.resize(limits::kMaxScalarBranchSymbolicOperations + 1);
+    else if (Change == 2)
+      Ops.front().NumInputs = std::size(Ops.front().Inputs) + 1;
+    else
+      Ops.front().Inputs[0].Size = 4;
+    EXPECT_FALSE(
+        constantScalarExpression(Ops, NdVar::reg(16, 8), 0x2000, Work));
   }
 }
 
