@@ -3930,7 +3930,9 @@ to the main window even when its previous tab group and disassembly are floating
 transient parenting for floating text, graph, pseudocode and IR views.
 `disassemblyMenuOffersTheLinesEdits` checks that the text and graph menus offer
 stack variables, the SP correction and the operand forms on an instruction,
-and array and alignment on a data item, while pseudocode offers none of them.
+and array and alignment on a data item. Pseudocode offers only its own
+function's stack variables and function edits, none of the disassembly's item
+definitions, and keeps that function after synchronization is turned off.
 `floatingCommandDialogsStayWithTheirView` checks search, calculator input and
 results, options and other command dialogs against their floating owner.
 `analysisBrowsersStayInteractive` covers ordinary xrefs, address and location
