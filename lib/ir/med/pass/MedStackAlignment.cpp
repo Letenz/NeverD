@@ -262,21 +262,37 @@ public:
       if (Nodes.count(K))
         continue;
       Node &N = Nodes[K];
-      if (const auto Exact = resolve(Current, 0)) {
-        N.Bound = *Exact;
+      const auto Found = Definitions.find(K);
+      ValueDefinition *Definition =
+          Found == Definitions.end() ? nullptr : &Found->second;
+      if (Definition && Definition->Ambiguous)
+        return std::nullopt;
+      // Only the entry stack pointer and proven seeds have an offset of their
+      // own. Every other value is reached through the graph, so a join many
+      // ways share is visited once instead of proved again for each way in.
+      if (!OnlySeededRoots && Current.Kind == MedVar::Reg &&
+          Current.RegOff == TRI.StackPointer &&
+          (authenticatedEntryLiveIn(Current, Definition) ||
+           (FollowJoins && Current.SSAVer == 0 &&
+            (!Definition || !Definition->Op)))) {
+        N.Bound = 0;
         N.Exact = true;
         continue;
       }
-      const auto Found = Definitions.find(K);
-      if (Found == Definitions.end() || Found->second.Ambiguous)
+      if (!Definition)
         return std::nullopt;
-      const ValueDefinition &Definition = Found->second;
-      if (Definition.ProvenRange) {
+      if (Definition->ProvenOffset && Definition->Op &&
+          sameOccurrence(Definition->Op->Output, Current)) {
+        N.Bound = Definition->ProvenOffset;
+        N.Exact = true;
+        continue;
+      }
+      if (Definition->ProvenRange) {
         const MedVar &Output =
-            Definition.Op ? Definition.Op->Output : Definition.Join->Output;
+            Definition->Op ? Definition->Op->Output : Definition->Join->Output;
         if (!sameOccurrence(Output, Current))
           return std::nullopt;
-        N.Bound = Definition.ProvenRange->Max;
+        N.Bound = Definition->ProvenRange->Max;
         N.Exact = true;
         continue;
       }
@@ -284,8 +300,8 @@ public:
         N.In.push_back({key(From), Delta});
         Work.push_back(From);
       };
-      if (Definition.Join) {
-        const PhiNode &Phi = *Definition.Join;
+      if (Definition->Join) {
+        const PhiNode &Phi = *Definition->Join;
         if (!sameOccurrence(Phi.Output, Current) || Phi.Args.empty() ||
             Phi.ExceptionalEntry)
           return std::nullopt;
@@ -293,13 +309,21 @@ public:
           Follow(Arg, 0);
         continue;
       }
-      const MedOp *Op = Definition.Op;
+      const MedOp *Op = Definition->Op;
       if (!Op || !sameOccurrence(Op->Output, Current) || Op->Dead ||
           Op->MemoryOrdering != NdMemoryOrdering::None ||
           Op->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
-          !Op->IntrinsicOutputs.empty() ||
-          Op->RegistrationRoot != MedOp::RegistrationRootKind::None)
+          !Op->IntrinsicOutputs.empty())
         return std::nullopt;
+      // A registration root names its own frame coordinate.
+      if (Op->RegistrationRoot != MedOp::RegistrationRootKind::None) {
+        const auto Exact = resolve(Current, 0);
+        if (!Exact)
+          return std::nullopt;
+        N.Bound = *Exact;
+        N.Exact = true;
+        continue;
+      }
       if (Op->Opcode == NdOp::COPY && Op->NumInputs == 1) {
         Follow(Op->Inputs[0], 0);
         continue;

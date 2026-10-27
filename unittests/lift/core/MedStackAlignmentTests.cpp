@@ -1449,6 +1449,10 @@ TEST(MedStackAlignment, SharedJoinsKeepThePerQueryWorkLimit) {
           EXPECT_EQ(entryStackOffset(Func, Values[I], Architecture, Format),
                     Expected[I]);
       }
+      // An upper bound visits each shared join once, so the values the exact
+      // proof leaves to its work limit still have one.
+      EXPECT_EQ(entryStackOffsetUpperBounds(Func, Values, Architecture, Format),
+                std::vector<std::optional<int64_t>>(Values.size(), 0));
     }
   }
 }
