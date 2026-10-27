@@ -567,6 +567,10 @@ authentication. The controlled model evidence distinguishes correct integer
 calling/rejection behavior from the C O0 diagnostic-syndrome differences;
 neither establishes the complete Apple image, FP/aggregate/variadic call or
 native signed-unwind ABI.
+The [2026-10-28 call/return receipt](evidence/arm64e-call-and-return-abi-2026-10-28.json)
+binds the actual model inputs and all 116 current export hashes to their source
+revisions. It records the complete rebuilt test inventory, separate X64 compiler
+control, original timeout failures and unchanged-limit serial repeats.
 
 `NeverDLanguageEHTests` checks the unified signing query's image/function
 provenance, exact PCs, source scopes and bounded CIE lookup.

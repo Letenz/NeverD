@@ -575,7 +575,9 @@ exact. Ordinary raw indirect calls use a feature-gated signing bridge so an
 arm64e C compiler does not impose its default authentication on a raw BLR.
 Clang O0 can retain an intermediate resign and produce a different invalid-PAC
 diagnostic from the original branch; this is not exact exception-syndrome
-equivalence. Whole-image arm64e rebuilding still requires the separate
+equivalence. Model rejection evidence compares exception classes; complete ESR
+and exact fault-PC equality remain unqualified. Whole-image arm64e rebuilding
+still requires the separate
 authenticated storage, relocation and signed-unwind ABI contract.
 
 The DWARF reader keeps an image-derived arm64e return ABI flag separate from
