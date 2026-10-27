@@ -465,6 +465,71 @@ TEST(SymMBAWidePairs, ExhaustsNarrowProductSignaturesAndCorrections) {
       }
 }
 
+TEST(SymMBAWidePairs, PreparedParityPrefixesKeepTheirProductAndContext) {
+  auto Run = [](unsigned Width, bool Prepare) {
+    SymContext Ctx;
+    const auto F = partialFixture(Ctx, Width, 96, false, 6, 3, 1);
+    detail::WorkBudget Budget(1 << 20);
+    Budget.MemoOwner = &Ctx;
+    Budget.MemoCapacity = 16;
+    size_t Storage = 1 << 24;
+    if (Prepare)
+      EXPECT_EQ(
+          detail::foldProjectedProductResidues(Ctx, F.Input, Budget, Storage),
+          F.Input);
+    const auto Before = Budget.used();
+    const auto Result =
+        detail::foldResidualProductResidues(Ctx, F.Input, Budget, Storage);
+    const auto Work = Budget.used() - Before;
+    EXPECT_NE(Result, F.Input);
+    SymEvalPlan Plan(Ctx, Result);
+    for (unsigned I = 0; I < 128; ++I) {
+      const std::array V{llvm::APInt(Width, I), llvm::APInt(Width, 3 * I),
+                         llvm::APInt(Width, 7 * I)};
+      EXPECT_EQ(Plan.eval(V), F.oracle(V));
+    }
+    return std::pair{Work, detail::readingCost(Ctx, Result)};
+  };
+  for (unsigned Width : {8u, 64u, 257u}) {
+    SCOPED_TRACE(Width);
+    const auto Cold = Run(Width, false), Prepared = Run(Width, true);
+    EXPECT_LT(Prepared.first, Cold.first);
+    EXPECT_LE(Prepared.second, Cold.second);
+  }
+  for (unsigned Kind = 0; Kind < 4; ++Kind) {
+    SCOPED_TRACE(Kind);
+    SymContext Ctx, Other;
+    const auto F = partialFixture(Ctx, 64, 96, false, 6, 3, 1);
+    detail::WorkBudget Budget(1 << 20);
+    Budget.MemoOwner = &Ctx;
+    Budget.MemoCapacity = 16;
+    size_t Storage = 1 << 24;
+    EXPECT_EQ(
+        detail::foldProjectedProductResidues(Ctx, F.Input, Budget, Storage),
+        F.Input);
+    auto &Target = Kind == 1 ? Other : Ctx;
+    const auto G = Kind < 2 ? partialFixture(Target, Kind == 1 ? 32 : 64, 96,
+                                             Kind == 0, 6, 3, 1)
+                            : F;
+    if (Kind == 1)
+      ASSERT_EQ(G.Input.index(), F.Input.index());
+    if (Kind == 2)
+      Storage = 0;
+    if (Kind == 3)
+      EXPECT_TRUE(Budget.consume(Budget.available()));
+    const auto Result =
+        detail::foldResidualProductResidues(Target, G.Input, Budget, Storage);
+    if (Kind >= 2)
+      EXPECT_EQ(Result, G.Input);
+    SymEvalPlan Plan(Target, Result);
+    for (unsigned I = 0; I < 128; ++I) {
+      const std::array V{llvm::APInt(G.Width, I), llvm::APInt(G.Width, 3 * I),
+                         llvm::APInt(G.Width, 7 * I)};
+      EXPECT_EQ(Plan.eval(V), G.oracle(V));
+    }
+  }
+}
+
 TEST(SymMBAWidePairs, UnfinishedProductsPreserveIndependentLinearTails) {
   std::mt19937_64 Random(0x4c494e4541525441);
   for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 257u})

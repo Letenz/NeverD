@@ -2150,7 +2150,9 @@ only stop futile zero searches; they never authorize a rewrite. Use
 with complemented inputs, reversed factors and parity near misses. Keep all
 earlier corpora as performance and output-cost controls. The CLI and GUI worker
 source tests execute both degree-96 witness fixtures through all six source
-routes at O0/O2.
+routes at O0/O2. They also execute the degree-256 witness and degree-23 narrow
+nonlinear partial block through the CLI and GUI worker routes, checking compact
+source shapes against independent complete-width multiplication at O0/O2.
 
 `SymMBAResiduePowers.*` checks modular power periods, even inputs, small
 exponents, independent multiplier parity and exact/short resource accounts.
@@ -2217,6 +2219,15 @@ partial blocks must reduce their cost by at least half below 32,768 work units.
 An independent multiplication oracle exhausts all 262,144 relevant low-word
 assignments for one complemented product. Keep the existing 9,500-work complete
 block regression alongside these tests to protect its structural path.
+`PreparedParityPrefixesKeepTheirProductAndContext` checks that a completed
+prefix reduces the next reader's work at 8/64/257 bits, without changing its
+values. A different product, the same handle in another context, zero scratch
+storage and an exhausted request must retain their own semantics.
+The `narrow-product-cross-terms` benchmark family (`--count 36`) adds
+degree-23–126 partial blocks with 6–8 observed bits and deeper masked products.
+Every complement/order variant has a neighboring input with one factor's
+parity changed; the oracle must distinguish each pair. The generator also
+supports 65/128/257-bit words for SDK and CLI diagnostic runs.
 `Z3Solver.RepeatedProductsKeepAllFactorsAndCompleteInputModels` checks long
 factor runs around power-of-two boundaries at 1–257 bits, both full and scaled
 products. Independent complete-word multiplication and high-bit near misses

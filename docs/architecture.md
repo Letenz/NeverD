@@ -3718,6 +3718,12 @@ The observed width remains the original product's width after its scale,
 including when individual factors have already supplied fixed zeros. This
 avoids rereading invisible high expressions without widening the witness budget
 or treating independently assigned opaque atoms as valid inputs.
+If every map has the same one-bit precision and no factor lost a fixed zero,
+the request memo can move that complete preparation to the residual reader.
+It retains at most one pending product, keyed by the exact root and owning
+context. The existing storage charge follows the moved maps; consuming them
+removes the pending entry. Other roots, contexts and precisions read their own
+coefficients, and incomplete or storage-limited preparations are not reused.
 Native scalar affine coordinates retain their cheap complete-map path; the
 extra projected read is reserved for wrappers, nonlinear monomials and wide
 coefficients, avoiding duplicated searches on ordinary nonzero residuals.

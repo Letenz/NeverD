@@ -31,16 +31,6 @@
 
 namespace neverd::symbolic::detail {
 
-struct ResidueMemo {
-  struct Attempt {
-    SymRef Result;
-    size_t AvailableStorage;
-    bool Multiple;
-  };
-  std::map<std::pair<uint32_t, bool>, Attempt> Attempts;
-  std::vector<std::pair<uint32_t, uint32_t>> Generated;
-};
-
 namespace {
 
 using Atom = std::vector<uint32_t>;
@@ -52,6 +42,25 @@ struct Factor {
   unsigned Zeros = 0;
   bool FixedValuation = false;
 };
+
+} // namespace
+
+struct ResidueMemo {
+  struct Attempt {
+    SymRef Result;
+    size_t AvailableStorage;
+    bool Multiple;
+  };
+  struct ParityPrefix {
+    SymRef Root;
+    std::vector<Factor> Factors;
+  };
+  std::map<std::pair<uint32_t, bool>, Attempt> Attempts;
+  std::vector<std::pair<uint32_t, uint32_t>> Generated;
+  std::optional<ParityPrefix> PreparedParity;
+};
+
+namespace {
 
 // Retry a storage-limited attempt when more storage becomes available. Other
 // completed attempts are reusable across callers' scratch allowances. A
@@ -2068,6 +2077,23 @@ static SymRef foldProjectedProductResiduesImpl(SymContext &Ctx, SymRef Root,
       WitnessChecked = true;
       Nonzero = hasNonzeroProductWitness(Ctx, Operands, Res, Needed, Factors);
     }
+    if (Nonzero && Bits == 1 && Remaining == Needed &&
+        Budget.MemoOwner == &Ctx && Budget.MemoCapacity) {
+      // These complete parity maps are the next residual reader's first
+      // precision. No factor was widened or stripped of fixed zeros. Move
+      // their already charged storage across that boundary, retaining only
+      // one pending product in this request's context-owned memo.
+      const size_t Bytes =
+          Budget.Residues ? 0 : sizeof(ResidueMemo) + 2 * sizeof(void *);
+      if (Bytes <= Storage && Budget.canConsume(1)) {
+        Budget.consume();
+        Storage -= Bytes;
+        if (!Budget.Residues)
+          Budget.Residues = std::make_shared<ResidueMemo>();
+        Budget.Residues->PreparedParity =
+            ResidueMemo::ParityPrefix{Root, std::move(Factors)};
+      }
+    }
     if (Nonzero || Res.Failed)
       return false;
     return proveAffineResidues(Factors, Available, Remaining, Res);
@@ -2148,20 +2174,29 @@ static SymRef foldResidualProductResiduesImpl(SymContext &Ctx, SymRef Root,
                            ? Ctx.constValue(Inputs.front())
                            : llvm::APInt(Width, 1);
     for (unsigned Bits = 1; Bits <= Needed && !Res.Failed; ++Bits) {
-      if (!Res.charge(Operands.size(), Operands.size() * sizeof(Factor)))
-        break;
       std::vector<Factor> Factors;
-      Factors.reserve(Operands.size());
       bool Complete = true;
-      for (auto R : Operands) {
-        Factor F{{}, llvm::APInt(Bits, 0)};
-        size_t Edges = 0;
-        if (!readFactor(Ctx, R, llvm::APInt(Bits, 1), F, Res, Edges, 0,
-                        &Prefixes)) {
-          Complete = false;
+      if (Bits == 1 && Budget.MemoOwner == &Ctx && Budget.Residues &&
+          Budget.Residues->PreparedParity &&
+          Budget.Residues->PreparedParity->Root == Root) {
+        if (!Res.charge(1))
           break;
+        Factors = std::move(Budget.Residues->PreparedParity->Factors);
+        Budget.Residues->PreparedParity.reset();
+      } else {
+        if (!Res.charge(Operands.size(), Operands.size() * sizeof(Factor)))
+          break;
+        Factors.reserve(Operands.size());
+        for (auto R : Operands) {
+          Factor F{{}, llvm::APInt(Bits, 0)};
+          size_t Edges = 0;
+          if (!readFactor(Ctx, R, llvm::APInt(Bits, 1), F, Res, Edges, 0,
+                          &Prefixes)) {
+            Complete = false;
+            break;
+          }
+          Factors.push_back(std::move(F));
         }
-        Factors.push_back(std::move(F));
       }
       if (!Complete)
         break;
