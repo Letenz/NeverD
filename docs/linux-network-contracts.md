@@ -71,7 +71,11 @@ An outgoing TCP mismatch identifies the first differing byte by its absolute
 stream offset and its offset in the current buffer, with expected and actual
 byte values. Only the admitted short-transfer window is compared; a matching
 prefix within a failed window is not consumed. Descriptor aliases report
-offsets using their shared stream cursor.
+offsets using their shared stream cursor. The diagnostic also identifies the
+zero-based index in `linux_network.connections`. This index belongs to the
+bound open description, so aliases retain it and a reused FD can refer to a
+different index. Declared failed connection attempts occupy indices; rejected
+peer or memory admission does not consume one.
 Socket seek returns ESPIPE. `setsockopt`/`getsockopt` share SO_RCVTIMEO and
 SO_SNDTIMEO state across aliases, accepting whole seconds up to one day;
 negative seconds retain immediate-timeout state. Fractional timeouts stop

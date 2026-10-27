@@ -14637,6 +14637,11 @@ including an unmatched suffix beyond the current transfer window and retry
 without consuming a matching prefix. Android's
 `OutgoingMismatchReportsStreamAndBufferOffsets` checks named sends, writes and
 variadic raw sends through the original C fixture on each available backend.
+`MismatchConnectionIdentitySurvivesAliasesAndFDReuse` checks the bound contract
+index after a declared failure, rejected admission, another connection, FD reuse
+and `dup3` replacement, including unchanged cursors after mismatches. Android's
+`MismatchKeepsConnectionIdentityAcrossFDReuse` exercises the same owner through
+named sends and variadic raw writes at O0/O2 with all relocation variants.
 
 The network fixtures also exercise TCP failure followed by connected UDP,
 IPv4/IPv6, named/raw/dynamic calls, FD reuse, packet truncation, peek, empty
