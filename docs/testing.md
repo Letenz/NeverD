@@ -15744,3 +15744,5 @@ offsets under arbitrary selected masks at 8–257 bits.
 `OffsetMaskNeighborsAndBudgetsKeepExactValues` exhausts byte inputs against
 independent arithmetic, including unequal offsets and incomplete budgets.
 Run `NeverDSymMBAMaskRelationTests` and the broader `NeverDSymbolicTests`.
+
+The focused NeverDCOFFExceptionModelTests target runs exception model and decoder regressions, including unsorted duplicate directory starts, long/cyclic chains, terminal frame mismatches and addresses near the VA limit. Build it with scripts/build.py and pair its CTest label with NeverDCOFFExceptionV2Tests when changing x64 unwind directory processing.
