@@ -67,6 +67,7 @@ struct Fn {
   std::vector<std::vector<Op>> Blocks;
   std::vector<std::tuple<uint32_t, uint32_t, EdgeKind>> Edges;
   std::vector<std::string> Strings;
+  std::vector<std::string> AddressTargets;
 };
 
 constexpr uint64_t OpSize = 6;
@@ -137,7 +138,12 @@ Program build(const std::vector<Fn> &Fns, uint64_t Base,
         }
         for (unsigned K = 0; K < 4; ++K)
           Bytes[2 + K] = uint8_t(Payload >> (8 * K));
-        B.addInstruction(PC, Bytes, O.Mnemonic, Shape, Skel, O.Flow, Target);
+        std::vector<FunctionAddress> Addresses;
+        if (PC == At)
+          for (uint32_t N = 0; N < F.AddressTargets.size(); ++N)
+            Addresses.push_back({Address.lookup(F.AddressTargets[N]), N});
+        B.addInstruction(PC, Bytes, O.Mnemonic, Shape, Skel, O.Flow, Target, {},
+                         {}, Addresses);
         PC += OpSize;
       }
       for (const std::string &S : F.Strings)
@@ -522,22 +528,30 @@ TEST(BinaryDiff, RepeatedAnchorChoicesDoNotInventCalleePairs) {
 }
 
 TEST(BinaryDiff, UnresolvedCallsKeepTheirPositionAndUncertainty) {
-  std::vector<Fn> PFns = {leaf("a", 7, 1), leaf("b", 7, 1),
-                          caller("dispatch", 120, {"a", "b"})};
-  std::vector<Fn> SFns = {leaf("x", 7, 1), leaf("y", 7, 1),
-                          caller("dispatch", 120, {"x", "y"})};
-  PFns[2].Blocks[1].insert(PFns[2].Blocks[1].begin() + 3,
-                           {"call", "rax", InstructionFlow::Call});
-  for (auto *Fns : {&PFns, &SFns})
-    for (unsigned I = 0; I < 2; ++I)
-      (*Fns)[I].Source = NameSource::Generated;
-  const Program P = build(PFns, 0x400000);
-  const Program S = build(SFns, 0x500000);
-  for (const auto &[A, B] : {std::pair(&P, &S), std::pair(&S, &P)}) {
-    const auto R = compare(*A, *B, {});
-    EXPECT_EQ(R.Matches.size(), 1u);
-    EXPECT_EQ(R.PrimaryCoverage.Ambiguous, 2u);
-    EXPECT_EQ(R.SecondaryCoverage.Ambiguous, 2u);
+  for (InstructionFlow Flow :
+       {InstructionFlow::Call, InstructionFlow::IndirectCall,
+        InstructionFlow::Jump, InstructionFlow::Branch}) {
+    std::vector<Fn> PFns = {leaf("a", 7, 1), leaf("b", 7, 1),
+                            caller("dispatch", 120, {"a", "b"})};
+    std::vector<Fn> SFns = {leaf("x", 7, 1), leaf("y", 7, 1),
+                            caller("dispatch", 120, {"x", "y"})};
+    PFns[2].Blocks[1].insert(
+        PFns[2].Blocks[1].begin() + 3,
+        {"transfer", "rax", Flow,
+         Flow == InstructionFlow::Jump || Flow == InstructionFlow::Branch
+             ? "omitted_target"
+             : ""});
+    for (auto *Fns : {&PFns, &SFns})
+      for (unsigned I = 0; I < 2; ++I)
+        (*Fns)[I].Source = NameSource::Generated;
+    const Program P = build(PFns, 0x400000);
+    const Program S = build(SFns, 0x500000);
+    for (const auto &[A, B] : {std::pair(&P, &S), std::pair(&S, &P)}) {
+      const auto R = compare(*A, *B, {});
+      EXPECT_EQ(R.Matches.size(), 1u);
+      EXPECT_EQ(R.PrimaryCoverage.Ambiguous, 2u);
+      EXPECT_EQ(R.SecondaryCoverage.Ambiguous, 2u);
+    }
   }
 }
 
@@ -822,7 +836,7 @@ TEST(BinaryDiff, LongAlignmentMeasurementsRoundTripAndRefuseStaleScores) {
   std::string Error;
   auto Read = readComparison(saved(R, P, S), Error);
   ASSERT_TRUE(bool(Read)) << Error;
-  EXPECT_EQ(Read->MatcherVersion, 5u);
+  EXPECT_EQ(Read->MatcherVersion, MatcherVersion);
   ComparisonResult Restored;
   ASSERT_FALSE(bindComparison(*Read, P, S, Restored));
   EXPECT_EQ(savedWithoutTimings(R, P, S), savedWithoutTimings(Restored, P, S));
@@ -929,6 +943,173 @@ TEST(BinaryDiff, ChangedBodiesPairBySimilarityWhenStripped) {
   const FunctionMatch &M = matchOf(R, P, "sub_leaf5");
   EXPECT_TRUE(M.Changes & ChangeInstructions) << changeLetters(M.Changes);
   EXPECT_LT(M.Similarity, 1.0);
+}
+
+TEST(BinaryDiff, MovedStringEvidenceDoesNotConsumeTheSimilarBody) {
+  Fn Old;
+  Old.Name = "original";
+  Old.Source = NameSource::Generated;
+  Old.Strings = {"one diagnostic shared with a newly extracted helper"};
+  Old.Blocks.resize(1);
+  for (unsigned I = 0; I != 12; ++I)
+    Old.Blocks[0].push_back(
+        {I % 2 ? "xor" : "add", "r0, " + std::to_string(I + 10)});
+  Old.Blocks[0].push_back({"ret", "", InstructionFlow::Return});
+  Fn Same = Old;
+  Same.Name = "changed_original";
+  Same.Strings.clear();
+  Same.Blocks[0].insert(Same.Blocks[0].begin() + 5, {"sub", "r0, 99"});
+  Fn Helper;
+  Helper.Name = "new_helper";
+  Helper.Source = NameSource::Generated;
+  Helper.Strings = Old.Strings;
+  Helper.Blocks = {
+      {{"div", "r6, r7"}, {"neg", "r8"}, {"ret", "", InstructionFlow::Return}}};
+  for (bool WithCallSite : {false, true})
+    for (bool Reverse : {false, true}) {
+      std::vector<Fn> Before{Old}, After{Helper, Same};
+      if (WithCallSite) {
+        Before.push_back(caller("dispatch", 200, {"original"}));
+        After.push_back(caller("dispatch", 200, {"new_helper"}));
+      }
+      const Program A = build(Before, 0x400000);
+      const Program B = build(After, 0x500000);
+      const Program &P = Reverse ? B : A, &S = Reverse ? A : B;
+      const auto R = compare(P, S, {});
+      EXPECT_EQ(counterpart(R, P, S, Reverse ? "changed_original" : "original"),
+                Reverse ? "original" : "changed_original");
+      EXPECT_EQ(R.Matches.size(), WithCallSite ? 2U : 1U);
+      ComparisonSettings Exact;
+      Exact.Approximate = false;
+      const auto Uncorroborated = compare(P, S, Exact);
+      for (const auto &Match : Uncorroborated.Matches)
+        EXPECT_NE((Reverse ? P : S)
+                      .Functions[Reverse ? Match.Primary : Match.Secondary]
+                      .Name,
+                  "new_helper");
+    }
+}
+
+TEST(BinaryDiff, CallGraphDegreeCannotOverrideContradictingImportTargets) {
+  Fn ReadImport, SeekImport;
+  ReadImport.Name = "read";
+  SeekImport.Name = "seek";
+  ReadImport.Traits = SeekImport.Traits = TraitImport;
+  Fn A;
+  A.Name = "wrapper_a";
+  A.Source = NameSource::Generated;
+  A.Blocks = {{{"push", "r1"},
+               {"call", "read", InstructionFlow::Call, "read"},
+               {"ret", "", InstructionFlow::Return}}};
+  Fn B = A;
+  B.Name = "wrapper_b";
+  B.Blocks[0][0] = {"mov", "r1, r2"};
+  B.Blocks[0][1] = {"call", "seek", InstructionFlow::Call, "seek"};
+  ComparisonSettings Settings;
+  Settings.Approximate = false;
+  const Program P = build({ReadImport, SeekImport, A}, 0x400000);
+  const Program S = build({ReadImport, SeekImport, B}, 0x500000);
+  const auto R = compare(P, S, Settings);
+  EXPECT_EQ(R.Matches.size(), 2U);
+  EXPECT_EQ(R.matchOfPrimary(indexOf(P, "wrapper_a")), nullptr);
+}
+
+TEST(BinaryDiff, ExactReferenceCandidatesStillCompeteWithoutApproximation) {
+  Fn A = leaf("old", 12);
+  A.Source = NameSource::Generated;
+  A.Strings = {"unique input format diagnostic"};
+  Fn B = A;
+  B.Name = "new";
+  B.Blocks[0].insert(B.Blocks[0].begin() + 2, {"sub", "r0, 99"});
+  const Program P = build({A}, 0x400000), S = build({B}, 0x500000);
+  ComparisonSettings Settings;
+  Settings.Approximate = false;
+  const auto R = compare(P, S, Settings);
+  ASSERT_EQ(R.Matches.size(), 1U);
+  EXPECT_EQ(R.Matches[0].Step, FunctionStep::StringReferences);
+  EXPECT_LT(R.Matches[0].Similarity, 1.0);
+}
+
+TEST(BinaryDiff, AdditionalWeakEvidenceCannotSuppressMatchingCallContext) {
+  Fn A = leaf("candidate", 17), B = leaf("candidate", 19);
+  A.Source = B.Source = NameSource::Generated;
+  B.Blocks[0].insert(B.Blocks[0].begin(), {"div", "r6, r7"});
+  Fn Anchor;
+  Anchor.Name = "anchor";
+  Anchor.Blocks = {{{"call", "candidate", InstructionFlow::Call, "candidate"},
+                    {"ret", "", InstructionFlow::Return}}};
+  ComparisonSettings Settings;
+  Settings.Approximate = false;
+  Settings.MinimumSimilarity = 0.99;
+  Settings.MinimumContextSimilarity = 0.01;
+  for (bool AdditionalEvidence : {false, true}) {
+    if (AdditionalEvidence)
+      A.Strings = B.Strings = {"shared diagnostic"};
+    const Program P = build({Anchor, A}, 0x400000);
+    const Program S = build({Anchor, B}, 0x500000);
+    const auto R = compare(P, S, Settings);
+    ASSERT_EQ(R.Matches.size(), 2U);
+    EXPECT_EQ(counterpart(R, P, S, "candidate"), "candidate");
+  }
+}
+
+TEST(BinaryDiff,
+     FunctionAddressReferencesFollowReorderedTargetsAndChainedAnchors) {
+  Fn A = leaf("target_a", 101), B = leaf("target_b", 201);
+  Fn X = leaf("pointer_a", 301), Y = X;
+  Y.Name = "pointer_b";
+  X.AddressTargets = {"target_a"};
+  Y.AddressTargets = {"target_b"};
+  Fn U = leaf("holder_a", 401), V = U;
+  V.Name = "holder_b";
+  U.AddressTargets = {"pointer_a"};
+  V.AddressTargets = {"pointer_b"};
+  for (Fn *F : {&A, &B, &X, &Y, &U, &V})
+    F->Source = NameSource::Generated;
+  const Program P = build({A, B, X, Y, U, V}, 0x400000);
+  const Program S = build({V, Y, B, U, X, A}, 0x500000);
+  for (bool Reverse : {false, true}) {
+    const Program &Before = Reverse ? S : P, &After = Reverse ? P : S;
+    const auto R = compare(Before, After, {});
+    ASSERT_EQ(R.Matches.size(), 6U);
+    for (const auto &M : R.Matches) {
+      EXPECT_EQ(Before.Functions[M.Primary].Name,
+                After.Functions[M.Secondary].Name);
+      EXPECT_FALSE(M.Changes & ChangeReferences);
+    }
+  }
+  // Without target correspondence, even identical native addresses do not
+  // establish reference identity in two different programs.
+  const auto Unknown = compareFunctions(P, indexOf(P, "pointer_a"), S,
+                                        indexOf(S, "pointer_b"), {});
+  EXPECT_TRUE(Unknown.Changes & ChangeReferences);
+  EXPECT_LT(Unknown.Similarity, 1.0);
+}
+
+TEST(BinaryDiff, FunctionAddressChainsPropagateBeyondGlobalPassRounds) {
+  std::vector<Fn> Functions{leaf("anchor", 101)};
+  for (unsigned I = 1; I < 512; ++I) {
+    Fn F = leaf("pointer_" + std::to_string(I), 301);
+    F.AddressTargets = {Functions.back().Name};
+    Functions.push_back(std::move(F));
+  }
+  for (Fn &F : Functions)
+    F.Source = NameSource::Generated;
+  std::vector<size_t> Reversed;
+  for (size_t I = Functions.size(); I != 0; --I)
+    Reversed.push_back(I - 1);
+  const Program P = build(Functions, 0x400000);
+  const Program S = build(Functions, 0x500000, Reversed);
+  ComparisonSettings Settings;
+  Settings.Approximate = false;
+  for (bool Reverse : {false, true}) {
+    const Program &Before = Reverse ? S : P, &After = Reverse ? P : S;
+    const auto R = compare(Before, After, Settings);
+    ASSERT_EQ(R.Matches.size(), Functions.size());
+    for (const auto &M : R.Matches)
+      EXPECT_EQ(Before.Functions[M.Primary].Name,
+                After.Functions[M.Secondary].Name);
+  }
 }
 
 TEST(BinaryDiff, CandidateAllowanceCanReachPastFourQuickScoreDistractors) {

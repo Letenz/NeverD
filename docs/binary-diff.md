@@ -1038,6 +1038,16 @@ scalar immediates remain meaningful even when their value happens to equal an
 image address. Only decoded control-flow operands, exact relocation fields and
 known address references receive address normalization.
 
+Native operand profile v2 compares function-address uses at their instruction
+and operand positions through the current function mapping. Swapping callback
+uses or changing their multiplicity remains visible. Strong body matching also
+requires corresponding modeled callees, so identical relative-call bytes cannot
+silently swap wrapper identities after layout changes. Conditional transfers
+to another function also retain the target and fallthrough. Unknown or filtered
+targets retain uncertainty. Unnamed data references are scoped to the input's
+effective mapping and overlays; matching RVAs in different binaries or raw
+slices do not establish the same data object. Pure rebasing preserves this scope.
+
 Instruction alignment uses the same weighted objective for small and large
 paired basic blocks: equal normalized instructions score 4, a shared skeleton
 with changed constants scores 3, and a shared mnemonic scores 2. Large blocks
@@ -1088,7 +1098,8 @@ named `sub_1234` remains eligible, as do names admitted by recognition. Display
 renames do not replace those names or change native snapshot revisions. Numeric
 suffixes added to distinguish equal names in the listing do not manufacture
 unique name evidence; literal suffixes in the original symbols remain intact. The
-`sdk-native-decode-v2` extraction identity records this contract; historical
+`sdk-native-decode-v3` extraction identity records this contract and the v2
+address-evidence profile described in the architecture guide; historical
 reports keep their original evidence and require a new comparison for fresh
 binding under the revised extraction profile.
 Use the [offline report workflow](binary-diff-lineage.md#open-a-report-from-an-older-analysis-profile)

@@ -225,12 +225,28 @@ private:
   llvm::DenseSet<uint64_t> PrimaryNames;
   llvm::DenseSet<uint64_t> SecondaryNames;
   std::vector<Tie> NearTies;
+  struct CandidateEvidence {
+    FunctionStep Step;
+    bool FromContext = false;
+    bool ContextEligible = false;
+    bool CallSite = false;
+  };
+  llvm::DenseMap<uint64_t, CandidateEvidence> FeatureCandidates;
   Clock::time_point PhaseStart;
   std::string Phase;
   bool Stopped = false;
 
   static uint64_t pairKey(uint32_t A, uint32_t B) {
     return (uint64_t(A) << 32) | B;
+  }
+  void propose(uint32_t A, uint32_t B, FunctionStep Step, bool FromContext) {
+    auto [It, Inserted] =
+        FeatureCandidates.try_emplace(pairKey(A, B), CandidateEvidence{Step});
+    (void)Inserted;
+    It->second.FromContext |= FromContext;
+    It->second.ContextEligible |=
+        Step == FunctionStep::CallSite || Step == FunctionStep::Neighborhood;
+    It->second.CallSite |= Step == FunctionStep::CallSite;
   }
   bool stopNow() {
     if (Stopped)
@@ -293,6 +309,8 @@ private:
   void context(uint32_t A, uint32_t B, bool Loose);
   void callSites(uint32_t A, uint32_t B);
   unsigned approximate();
+  uint64_t featureKey(FunctionStep Step, uint32_t Function,
+                      bool Secondary) const;
   double contextAgreement(uint32_t A, uint32_t B) const;
   double quickScore(uint32_t A, uint32_t B) const;
   FunctionDelta delta(uint32_t A, uint32_t B) const;
@@ -302,6 +320,48 @@ private:
   void collectAmbiguities();
   void finish();
 };
+
+uint64_t Matcher::featureKey(FunctionStep Step, uint32_t Function,
+                             bool Secondary) const {
+  const auto &Features = Secondary ? SF : PF;
+  const auto &Program = Secondary ? S : P;
+  const auto &F = Features.Functions[Function];
+  const uint64_t Key =
+      stepKey(Step, F, Program.Functions[Function], Settings.UseNames);
+  if (!Key || (Step != FunctionStep::ExactBytes &&
+               Step != FunctionStep::NormalizedBody))
+    return Key;
+  if (F.UnresolvedCallee ||
+      (Step == FunctionStep::ExactBytes && F.UnresolvedData))
+    return 0;
+  const auto Targets = Features.Referents.of(Function);
+  if (Targets.size() != F.FunctionReferences)
+    return 0; // A filtered snapshot omitted at least one target.
+  if (F.AddressSites.empty())
+    return F.FunctionReferences ? 0 : Key;
+  StableHash References;
+  for (const auto &Site : F.AddressSites) {
+    if (Site.Target == NoIndex)
+      return 0;
+    References.add(Site.Instruction).add(Site.Operand);
+    // A reference to the function being compared is intrinsic. Other targets
+    // need independent correspondence before a body key is strong evidence.
+    if (Site.Target == Function) {
+      References.add("self");
+      continue;
+    }
+    const uint32_t Mapped =
+        Secondary ? SMatch[Site.Target] : PMatch[Site.Target];
+    if (Mapped == NoIndex)
+      return 0;
+    References.add("mapped").add(Secondary ? Site.Target : Mapped);
+  }
+  return StableHash()
+      .add(Key)
+      .add(References.value())
+      .add(F.AddressSites.size())
+      .value();
+}
 
 unsigned Matcher::drill(llvm::ArrayRef<uint32_t> Ps,
                         llvm::ArrayRef<uint32_t> Ss, size_t FirstStep,
@@ -320,13 +380,11 @@ unsigned Matcher::drill(llvm::ArrayRef<uint32_t> Ps,
     Entries.clear();
     for (uint32_t A : Ps)
       if (PMatch[A] == NoIndex)
-        if (const uint64_t Key = stepKey(Step, PF.Functions[A], P.Functions[A],
-                                         Settings.UseNames))
+        if (const uint64_t Key = featureKey(Step, A, false))
           Entries.push_back({Key, 0, A});
     for (uint32_t B : Ss)
       if (SMatch[B] == NoIndex)
-        if (const uint64_t Key = stepKey(Step, SF.Functions[B], S.Functions[B],
-                                         Settings.UseNames))
+        if (const uint64_t Key = featureKey(Step, B, true))
           Entries.push_back({Key, 1, B});
     if (Entries.empty())
       continue;
@@ -345,6 +403,20 @@ unsigned Matcher::drill(llvm::ArrayRef<uint32_t> Ps,
       if (GroupP.empty() || GroupS.empty())
         continue;
       if (GroupP.size() == 1 && GroupS.size() == 1) {
+        // Reference sets and graph degree propose candidates. Code moved into
+        // a new helper can inherit the old strings/imports; compare competing
+        // bodies before consuming either endpoint, even when this key is
+        // unique.
+        if (Step != FunctionStep::SymbolName &&
+            Step != FunctionStep::ExactBytes &&
+            Step != FunctionStep::NormalizedBody) {
+          const uint32_t A = GroupP[0], B = GroupS[0];
+          if (Step == FunctionStep::CallGraphPosition &&
+              contextAgreement(A, B) == 0)
+            continue;
+          propose(A, B, Step, FromContext);
+          continue;
+        }
         Paired += pair(GroupP[0], GroupS[0], Step, FromContext);
         continue;
       }
@@ -426,9 +498,11 @@ std::vector<uint32_t> Matcher::unmatchedNeighbors(const ProgramFeatures &F,
 
 double Matcher::contextAgreement(uint32_t A, uint32_t B) const {
   unsigned MatchedA = 0, MatchedB = 0, Agree = 0;
-  for (bool Calls : {true, false}) {
-    const auto AN = Calls ? PF.Callees.of(A) : PF.Callers.of(A);
-    const auto BN = Calls ? SF.Callees.of(B) : SF.Callers.of(B);
+  for (const auto &[AG, BG] : {std::pair{&PF.Callees, &SF.Callees},
+                               {&PF.Callers, &SF.Callers},
+                               {&PF.Referents, &SF.Referents},
+                               {&PF.Referrers, &SF.Referrers}}) {
+    const auto AN = AG->of(A), BN = BG->of(B);
     for (uint32_t N : AN)
       if (PMatch[N] != NoIndex) {
         ++MatchedA;
@@ -535,21 +609,17 @@ void Matcher::callSites(uint32_t A, uint32_t B) {
         !S.Functions[D].hasBody() || Rejected.contains(pairKey(C, D)) ||
         namesConflict(C, D))
       continue;
-    const auto Delta = delta(C, D);
-    if (stopNow())
-      return;
-    if (Delta.ComputationComplete &&
-        Delta.Similarity >= Settings.MinimumContextSimilarity)
-      pair(C, D, FunctionStep::CallSite, true);
+    propose(C, D, FunctionStep::CallSite, true);
   }
 }
 
 void Matcher::context(uint32_t A, uint32_t B, bool Loose) {
-  for (bool Calls : {true, false}) {
-    const Adjacency &AG = Calls ? PF.Callees : PF.Callers;
-    const Adjacency &BG = Calls ? SF.Callees : SF.Callers;
-    auto As = unmatchedNeighbors(PF, AG, A, 0);
-    auto Bs = unmatchedNeighbors(SF, BG, B, 1);
+  for (const auto &[AG, BG] : {std::pair{&PF.Callees, &SF.Callees},
+                               {&PF.Callers, &SF.Callers},
+                               {&PF.Referents, &SF.Referents},
+                               {&PF.Referrers, &SF.Referrers}}) {
+    auto As = unmatchedNeighbors(PF, *AG, A, 0);
+    auto Bs = unmatchedNeighbors(SF, *BG, B, 1);
     if (As.empty() || Bs.empty())
       continue;
     drill(As, Bs, 0, true, 0);
@@ -557,21 +627,16 @@ void Matcher::context(uint32_t A, uint32_t B, bool Loose) {
       continue;
     // Weaker context once no exact feature is left to pair by: the place
     // of a call, and a single remaining neighbor on both sides.
-    if (Calls)
+    if (AG == &PF.Callees)
       callSites(A, B);
     if (stopNow())
       return;
-    As = unmatchedNeighbors(PF, AG, A, 0);
-    Bs = unmatchedNeighbors(SF, BG, B, 1);
+    As = unmatchedNeighbors(PF, *AG, A, 0);
+    Bs = unmatchedNeighbors(SF, *BG, B, 1);
     if (As.size() == 1 && Bs.size() == 1 &&
         !Rejected.contains(pairKey(As[0], Bs[0])) &&
         !namesConflict(As[0], Bs[0])) {
-      const auto Delta = delta(As[0], Bs[0]);
-      if (stopNow())
-        return;
-      if (Delta.ComputationComplete &&
-          Delta.Similarity >= Settings.MinimumContextSimilarity)
-        pair(As[0], Bs[0], FunctionStep::Neighborhood, true);
+      propose(As[0], Bs[0], FunctionStep::Neighborhood, true);
     }
   }
 }
@@ -599,6 +664,8 @@ void Matcher::settle(size_t From) {
 }
 
 unsigned Matcher::approximate() {
+  if (!Settings.Approximate && FeatureCandidates.empty())
+    return 0;
   // Candidates: functions sharing a sketch band, and the unmatched
   // neighbors of corresponding functions.
   std::vector<uint32_t> Ps, Ss;
@@ -611,6 +678,12 @@ unsigned Matcher::approximate() {
   if (Ps.empty() || Ss.empty())
     return 0;
   std::vector<uint64_t> Candidates;
+  for (const auto &[Key, Evidence] : FeatureCandidates) {
+    (void)Evidence;
+    if (PMatch[uint32_t(Key >> 32)] == NoIndex &&
+        SMatch[uint32_t(Key)] == NoIndex)
+      Candidates.push_back(Key);
+  }
   {
     struct Entry {
       uint64_t Key;
@@ -619,6 +692,8 @@ unsigned Matcher::approximate() {
     };
     std::vector<Entry> Entries;
     for (unsigned Band = 0; Band < SketchBands; ++Band) {
+      if (stopNow())
+        return 0;
       Entries.clear();
       for (uint32_t A : Ps)
         if (PF.Functions[A].Sketched)
@@ -631,6 +706,8 @@ unsigned Matcher::approximate() {
                std::tie(R.Key, R.Side, R.Function);
       });
       for (size_t I = 0; I < Entries.size();) {
+        if (stopNow())
+          return 0;
         size_t J = I;
         while (J < Entries.size() && Entries[J].Key == Entries[I].Key)
           ++J;
@@ -643,18 +720,23 @@ unsigned Matcher::approximate() {
         I = J;
       }
     }
-    for (uint32_t A : Ps)
-      for (bool Calls : {true, false}) {
-        const Adjacency &AG = Calls ? PF.Callers : PF.Callees;
-        const Adjacency &BG = Calls ? SF.Callees : SF.Callers;
-        for (uint32_t N : AG.of(A)) {
-          const uint32_t Counterpart = PMatch[N];
-          if (Counterpart == NoIndex)
-            continue;
-          for (uint32_t B : BG.of(Counterpart))
-            if (SMatch[B] == NoIndex && S.Functions[B].hasBody())
-              Candidates.push_back(pairKey(A, B));
-        }
+    // A widely shared callee (for example malloc) is no more discriminating
+    // than a common sketch bucket. Expand each matched neighborhood once and
+    // apply the same admission bound before its Cartesian product exists.
+    for (const auto &Matched : Order)
+      for (const auto &[AG, BG] : {std::pair{&PF.Callees, &SF.Callees},
+                                   {&PF.Callers, &SF.Callers},
+                                   {&PF.Referents, &SF.Referents},
+                                   {&PF.Referrers, &SF.Referrers}}) {
+        if (stopNow())
+          return 0;
+        const auto As = unmatchedNeighbors(PF, *AG, Matched.Primary, 0);
+        const auto Bs = unmatchedNeighbors(SF, *BG, Matched.Secondary, 1);
+        if (As.size() + Bs.size() <= limits::kMaxSketchBucket)
+          for (uint32_t A : As)
+            for (uint32_t B : Bs)
+              if (P.Functions[A].hasBody() && S.Functions[B].hasBody())
+                Candidates.push_back(pairKey(A, B));
       }
   }
   if (uint64_t(Ps.size()) * Ss.size() <= limits::kMaxExhaustiveCandidatePairs)
@@ -674,16 +756,26 @@ unsigned Matcher::approximate() {
     uint32_t B;
     double Quick;
     double Exact = -1;
+    bool CallSiteHint = false;
   };
   std::vector<Scored> Pairs;
   Pairs.reserve(Candidates.size());
   for (uint64_t K : Candidates) {
+    if (stopNow())
+      return 0;
     const uint32_t A = uint32_t(K >> 32), B = uint32_t(K);
-    if (!Rejected.contains(K) && !namesConflict(A, B))
-      Pairs.push_back({A, B, quickScore(A, B)});
+    if (!Rejected.contains(K) && !namesConflict(A, B)) {
+      const auto Feature = FeatureCandidates.find(K);
+      const bool CallSite = Feature != FeatureCandidates.end() &&
+                            Feature->second.CallSite &&
+                            contextAgreement(A, B) == 1;
+      Pairs.push_back({A, B, quickScore(A, B), -1, CallSite});
+    }
   }
   const unsigned Keep = Settings.MaxCandidates;
   std::vector<uint8_t> Measure(Pairs.size(), 0);
+  for (size_t I = 0; I < Pairs.size(); ++I)
+    Measure[I] = FeatureCandidates.contains(pairKey(Pairs[I].A, Pairs[I].B));
   for (bool BySecondary : {false, true}) {
     std::vector<uint32_t> Index(Pairs.size());
     std::iota(Index.begin(), Index.end(), 0);
@@ -723,8 +815,8 @@ unsigned Matcher::approximate() {
   std::vector<uint32_t> Ranked = ToMeasure;
   llvm::sort(Ranked, [&](uint32_t L, uint32_t R) {
     const Scored &X = Pairs[L], &Y = Pairs[R];
-    return std::make_tuple(-X.Exact, -X.Quick, X.A, X.B) <
-           std::make_tuple(-Y.Exact, -Y.Quick, Y.A, Y.B);
+    return std::make_tuple(-X.Exact, !X.CallSiteHint, -X.Quick, X.A, X.B) <
+           std::make_tuple(-Y.Exact, !Y.CallSiteHint, -Y.Quick, Y.A, Y.B);
   });
   llvm::DenseMap<uint32_t, std::vector<uint32_t>> ByA, ByB;
   for (uint32_t I : Ranked) {
@@ -735,26 +827,47 @@ unsigned Matcher::approximate() {
   unsigned Paired = 0;
   for (uint32_t I : Ranked) {
     const Scored &Pair = Pairs[I];
-    if (Pair.Exact < Settings.MinimumSimilarity)
-      break;
+    const auto Feature = FeatureCandidates.find(pairKey(Pair.A, Pair.B));
+    if (!Settings.Approximate && Feature == FeatureCandidates.end())
+      continue;
+    // A positional or lone-neighbor proposal earns the lower context
+    // threshold only when every already mapped neighbor agrees. A local
+    // position cannot overrule contradicting context elsewhere in the graph.
+    const bool Context =
+        Feature != FeatureCandidates.end() && Feature->second.ContextEligible;
+    const double Minimum = Context && contextAgreement(Pair.A, Pair.B) == 1
+                               ? Settings.MinimumContextSimilarity
+                               : Settings.MinimumSimilarity;
+    if (Pair.Exact < Minimum)
+      continue;
     if (PMatch[Pair.A] != NoIndex || SMatch[Pair.B] != NoIndex ||
         UndecidedA.contains(Pair.A) || UndecidedB.contains(Pair.B))
       continue;
-    // Another open candidate of either function nearly as similar leaves
-    // the choice to the analyst.
+    // A consistent call position can distinguish equal measured bodies.
+    // It cannot overrule a more similar body or another positional proposal.
+    const auto ConsistentPosition = [&](const Scored &Candidate) {
+      const auto It = FeatureCandidates.find(pairKey(Candidate.A, Candidate.B));
+      return It != FeatureCandidates.end() && It->second.CallSite &&
+             contextAgreement(Candidate.A, Candidate.B) == 1;
+    };
+    // Earlier admissions in this round may change the mapped neighborhood.
+    // The sorting hint must not preserve a now-contradictory call position.
+    const bool Positioned = ConsistentPosition(Pair);
+    const auto Rival = [&](const Scored &Other) {
+      if (Other.Exact == Pair.Exact && Positioned && !ConsistentPosition(Other))
+        return false;
+      return Other.Exact >= Pair.Exact ||
+             Pair.Exact - Other.Exact < Settings.AmbiguityMargin;
+    };
     std::vector<uint32_t> RivalsOfA, RivalsOfB;
     for (uint32_t Other : ByA[Pair.A]) {
       const Scored &O = Pairs[Other];
-      if (Other != I && SMatch[O.B] == NoIndex &&
-          (O.Exact >= Pair.Exact ||
-           Pair.Exact - O.Exact < Settings.AmbiguityMargin))
+      if (Other != I && SMatch[O.B] == NoIndex && Rival(O))
         RivalsOfA.push_back(O.B);
     }
     for (uint32_t Other : ByB[Pair.B]) {
       const Scored &O = Pairs[Other];
-      if (Other != I && PMatch[O.A] == NoIndex &&
-          (O.Exact >= Pair.Exact ||
-           Pair.Exact - O.Exact < Settings.AmbiguityMargin))
+      if (Other != I && PMatch[O.A] == NoIndex && Rival(O))
         RivalsOfB.push_back(O.A);
     }
     if (!RivalsOfA.empty() || !RivalsOfB.empty()) {
@@ -766,7 +879,11 @@ unsigned Matcher::approximate() {
         UndecidedB.insert(B);
       continue;
     }
-    Paired += pair(Pair.A, Pair.B, FunctionStep::Similarity, false);
+    Paired +=
+        pair(Pair.A, Pair.B,
+             Feature == FeatureCandidates.end() ? FunctionStep::Similarity
+                                                : Feature->second.Step,
+             Feature != FeatureCandidates.end() && Feature->second.FromContext);
   }
   // Retain every endpoint's near-best remaining alternatives, including
   // endpoints already deferred by another tie. Each group is a star: combining
@@ -854,13 +971,11 @@ void Matcher::collectAmbiguities() {
     std::vector<Entry> Entries;
     for (uint32_t A = 0; A < P.Functions.size(); ++A)
       if (PMatch[A] == NoIndex && InPrimary[A] == NoIndex)
-        if (const uint64_t K = stepKey(Step, PF.Functions[A], P.Functions[A],
-                                       Settings.UseNames))
+        if (const uint64_t K = featureKey(Step, A, false))
           Entries.push_back({K, 0, A});
     for (uint32_t B = 0; B < S.Functions.size(); ++B)
       if (SMatch[B] == NoIndex && InSecondary[B] == NoIndex)
-        if (const uint64_t K = stepKey(Step, SF.Functions[B], S.Functions[B],
-                                       Settings.UseNames))
+        if (const uint64_t K = featureKey(Step, B, true))
           Entries.push_back({K, 1, B});
     llvm::sort(Entries, [](const Entry &L, const Entry &R) {
       return std::tie(L.Key, L.Side, L.Function) <
@@ -873,14 +988,22 @@ void Matcher::collectAmbiguities() {
         (Entries[J].Side == 0 ? T.Primary : T.Secondary)
             .push_back(Entries[J].Function);
       I = J;
-      // A lone pair left here was refused by an override.
+      // Retain a deferred singleton's evidence as well as shared-key groups.
+      // Rejected overrides must not reappear as suggestions.
+      const bool Deferred =
+          T.Primary.size() == 1 && T.Secondary.size() == 1 &&
+          FeatureCandidates.contains(pairKey(T.Primary[0], T.Secondary[0])) &&
+          !Rejected.contains(pairKey(T.Primary[0], T.Secondary[0]));
       if (!T.Primary.empty() && !T.Secondary.empty() &&
-          T.Primary.size() + T.Secondary.size() > 2)
+          (T.Primary.size() + T.Secondary.size() > 2 || Deferred))
         Record(std::move(T), true);
     }
   }
   for (Tie &T : NearTies)
     Record(std::move(T), false);
+  for (const auto &[Key, Feature] : FeatureCandidates)
+    if (!Rejected.contains(Key))
+      Record({Feature.Step, {uint32_t(Key >> 32)}, {uint32_t(Key)}}, false);
   const auto Key = [](const Ambiguity &A) {
     return std::tie(A.Primary, A.Secondary, A.Step);
   };
@@ -1040,32 +1163,23 @@ void Matcher::run(llvm::ArrayRef<Override> Overrides) {
     if (SF.Functions[I].Name)
       SecondaryNames.insert(SF.Functions[I].Name);
 
-  // Unique features over all functions and among the callers and callees
-  // of every pair, until neither pairs anything more; only then the weaker
-  // context of call sites and lone neighbors, and similarity last.
+  // Unique features over all functions and among the call/address neighbors
+  // of every pair, until neither pairs anything more. Resolve measured body
+  // candidates before weaker lone-neighbor context can consume their endpoints.
   beginPhase("exact");
   matchImports();
   settle(0);
-  beginPhase("context");
+  beginPhase("approximate");
   for (unsigned Round = 0; Round < limits::kMaxPropagationRounds && !stopNow();
        ++Round) {
     const size_t Before = Order.size();
+    // Context only proposes; every proposal competes with measured body
+    // candidates before any endpoint is consumed. This also preserves exact
+    // feature matching when sketch-only approximation is disabled.
     propagate(0, true);
-    if (Order.size() == Before)
+    if (!approximate() && Order.size() == Before)
       break;
     settle(Before);
-  }
-  if (Settings.Approximate && !stopNow()) {
-    beginPhase("approximate");
-    for (unsigned Round = 0;
-         Round < limits::kMaxPropagationRounds && !stopNow(); ++Round) {
-      const size_t Before = Order.size();
-      if (!approximate())
-        break;
-      settle(Before);
-      propagate(Before, true);
-      settle(Before);
-    }
   }
   beginPhase("ambiguities");
   collectAmbiguities();

@@ -62,6 +62,13 @@ enum class InstructionFlow : uint8_t {
   Unknown,
 };
 
+/// One address-taking operand. Occurrences retain position and multiplicity;
+/// a function-wide target set cannot distinguish swapped callback arguments.
+struct FunctionAddress {
+  uint64_t Address = 0;
+  uint32_t Operand = 0;
+};
+
 /// One decoded instruction.
 struct Instruction {
   uint64_t Address = 0;
@@ -80,6 +87,10 @@ struct Instruction {
   /// slot, as an index into Program::Functions, or NoIndex. Consumers use this
   /// admitted relation rather than inferring callees again from opcode kind.
   uint32_t Callee = NoIndex;
+  /// A modeled transfer whose target was omitted from this snapshot.
+  bool UnresolvedCallee = false;
+  uint32_t FirstFunctionAddress = 0;
+  uint32_t FunctionAddressCount = 0;
   /// Index into Program::Mnemonics.
   uint16_t Mnemonic = 0;
   uint8_t Size = 0;
@@ -186,6 +197,13 @@ enum class ReferenceKind : uint8_t {
   Constant,
   /// A named data object or import; the key hashes its name.
   Data,
+  /// A known native function address. The key is its entry address, not a
+  /// call edge. A filtered snapshot may omit that function's body.
+  Function,
+  /// An address whose object identity is unknown. Its key is scoped to the
+  /// exact input/analysis identity; equal RVAs in different inputs are not
+  /// evidence that the referenced objects correspond.
+  UnresolvedData,
 };
 
 /// One distinct thing a function's instructions refer to.
@@ -226,6 +244,13 @@ struct ProgramIdentity {
   bool DiscoveryComplete = true;
 };
 
+inline constexpr llvm::StringLiteral NativeX86Normalization =
+    "native-x86-operands-v2";
+inline constexpr llvm::StringLiteral NativeAArch64Normalization =
+    "native-aarch64-operands-v2";
+/// Both revisions preserve scalar operands; v2 changes address evidence.
+bool isNativeX86Normalization(llvm::StringRef Profile);
+
 /// Versioned, length-delimited identity of an analyzed snapshot. Preserves
 /// exact field bytes and excludes only the caller's path. This is an encoding,
 /// not a digest or authentication of the input or its analysis.
@@ -242,6 +267,7 @@ struct Program {
   std::vector<Edge> Edges;
   std::vector<Instruction> Instructions;
   std::vector<Reference> References;
+  std::vector<FunctionAddress> FunctionAddresses;
   /// The bytes of every instruction, at Instruction::CodeOffset.
   std::vector<uint8_t> Code;
   /// Distinct mnemonics, by Instruction::Mnemonic.
@@ -264,6 +290,11 @@ struct Program {
   }
   llvm::ArrayRef<uint8_t> bytes(const Instruction &I) const {
     return llvm::ArrayRef(Code).slice(I.CodeOffset, I.Size);
+  }
+  llvm::ArrayRef<FunctionAddress>
+  functionAddresses(const Instruction &I) const {
+    return llvm::ArrayRef(FunctionAddresses)
+        .slice(I.FirstFunctionAddress, I.FunctionAddressCount);
   }
   llvm::StringRef mnemonic(const Instruction &I) const {
     return I.Mnemonic < Mnemonics.size()
@@ -303,7 +334,8 @@ public:
                       uint64_t Skeleton, InstructionFlow Flow,
                       std::optional<uint64_t> CallTarget = std::nullopt,
                       llvm::StringRef Operands = {},
-                      std::optional<uint64_t> Target = std::nullopt);
+                      std::optional<uint64_t> Target = std::nullopt,
+                      llvm::ArrayRef<FunctionAddress> FunctionAddresses = {});
   void addEdge(uint32_t From, uint32_t To, EdgeKind Kind);
   /// Records a reference of the current function's block \p Block; a
   /// repeated reference is kept once.

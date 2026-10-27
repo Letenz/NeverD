@@ -2942,6 +2942,14 @@ prebuilt-LLVM guidance.
 
 ## Structural binary comparison
 
+Native identity controls cover function pointers, operand order/multiplicity,
+reused call bytes after reordering, raw-file slices and filtered target lists.
+Conditional external transfers are checked in both directions on x64 and
+AArch64, with separate rebase and retarget controls. A 512-function address
+chain checks propagation beyond global refinement rounds. Candidate competition
+retains a more similar original body when its diagnostic string and call
+position move to a new helper.
+
 Call-context regressions retain exact score ties at zero ambiguity margin,
 refuse contradictory repeated-call assignments and competing anchor positions,
 preserve unresolved call holes, and keep independent consistent pairs. Context
@@ -3329,6 +3337,19 @@ options and stale revisions. The Qt case checks aligned row counts, highlights,
 instruction navigation, synchronized scroll and independent-source fallback.
 These checks establish exact textual alignment and inspection contracts, not
 semantic equivalence or unique statement correspondence.
+Native SDK address controls cover reordered functions, chained function pointers,
+swapped address uses and changed multiplicity, caller-only snapshots, unknown
+data reused at the same RVA, raw slices of one file, pure rebasing and data-only
+overlays. Core controls retain weak-feature competition without approximation
+and ensure additional evidence cannot suppress existing call-context eligibility.
+Benchmark adapter tests cover partial-truth denominators, complete matching with
+incomplete native bodies, malformed reports, native graph inventories and
+resource receipts. Linux corpus tests compile real DWARF-4 ELF fixtures and
+exercise alias/overlap exclusions and strip invariants; they require the pinned
+optional `scripts/requirements-binary-diff-bench.txt` dependency. Missing GCC,
+binutils or pyelftools is an explicit skip, not corpus qualification. See
+[real-corpus reproduction](binary-diff-benchmarks.md#real-source-releases-with-partial-truth).
+
 AArch64 SDK comparison cases distinguish operand modifiers and scalar changes
 from page-aligned placement, retain >4 GiB and negative literal references, and
 exercise TBZ bit-index/target collisions and partial-page ADRP movement. Profile

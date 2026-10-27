@@ -1310,9 +1310,37 @@ after link-order changes; a producer's literal numeric suffix remains intact.
 The SDK adapter separately owns presentation names under the extraction memory
 allowance. Bounded function projections use them for display, search and sort;
 the matcher, snapshot hash and saved evidence consume only the original name.
-The `sdk-native-decode-v2`
+The `sdk-native-decode-v3`
 extraction identity distinguishes this evidence contract from older snapshots;
 saved historical reports remain readable without rewriting their evidence.
+
+Native operand profile v2 retains function-address occurrences in `Program` by
+instruction and operand, including repeated uses. `Features` indexes their
+target functions once; exact body keys and `FunctionDelta` compare those targets
+through current correspondence. A function-wide target set cannot establish
+unchanged operands when callback uses are swapped. Address-taking references
+remain separate from calls. Conditional transfers to another function keep
+both their modeled target and local fallthrough; they do not normalize to a
+missing CFG edge. Transfers to targets omitted by a filtered snapshot
+retain `UnresolvedCallee`; inspection cannot turn two missing callees into an
+unchanged call. Unnamed data addresses bind the input SHA, effective base-relative
+segment mapping, shared-cache image/backing-file identity and effective overlays
+or analysis sections. A reused RVA across different inputs or raw slices is
+not object identity; a pure image-base relocation preserves the namespace.
+
+Matcher version 6 treats unique weak features and call-context proposals as
+candidates for measured competition. Context eligibility accumulates separately
+from the first displayed evidence step. The lower context threshold requires
+complete agreement among already mapped neighbors. Disabling approximate
+acceptance retains feature-backed competition and uncertainty, rather than
+accepting a moved string set before measuring a competing original body. Wide
+matched neighborhoods use the existing informative-bucket admission bound before
+materializing pairs; explicit feature proposals remain measured outside the
+quick-score allowance. Consistent call positions distinguish equally measured
+bodies, but cannot override stronger body evidence or another positional
+proposal. Their mapped-context agreement is checked again at admission.
+Call and address-reference neighbors share the growing propagation worklist,
+so an anchored address chain does not require one global pass per link.
 
 `programAnalysisIdentity` in `Program` supplies a versioned, length-delimited identity
 encoding shared by binding and offline lineage. Only the caller's path is
