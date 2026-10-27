@@ -60,6 +60,16 @@ namespace neverd::gui {
 namespace {
 namespace limits = ::neverd::limits::gui;
 QString progressLabel(const QString &Phase) {
+  if (Phase.startsWith("edit:")) {
+    const char *Label =
+        QT_TRANSLATE_NOOP("ComparisonDialog", "Preparing comparison edit");
+    if (Phase == "edit:measure")
+      Label =
+          QT_TRANSLATE_NOOP("ComparisonDialog", "Updating affected functions");
+    else if (Phase == "edit:publish")
+      Label = QT_TRANSLATE_NOOP("ComparisonDialog", "Applying comparison edit");
+    return QCoreApplication::translate("ComparisonDialog", Label);
+  }
   if (Phase.startsWith("restore:")) {
     const char *Label =
         QT_TRANSLATE_NOOP("ComparisonDialog", "Checking saved evidence");

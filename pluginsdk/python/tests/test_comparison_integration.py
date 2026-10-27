@@ -136,6 +136,58 @@ class ComparisonIntegrationTests(unittest.TestCase):
             comparison, saved.encode(), abi.ComparisonProgressCallback(), None), 1)
         self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), saved)
 
+    def test_edit_callbacks_preserve_context_history_and_retry(self) -> None:
+        from neverd_plugin import abi
+
+        left, right = self.session(), self.session()
+        for handle in (left, right):
+            self.assertEqual(self.host.call("neverd_session_load", handle,
+                                            str(self.binary).encode()), 1)
+        comparison = self.comparison()
+        self.assertEqual(self.host.call("neverd_comparison_run", comparison,
+            left, right, b'{"discover":false}', abi.ComparisonProgressCallback(), None), 1)
+        decision = b'{"kind":"confirm","primary":"0x1000","secondary":"0x1000"}'
+        original = self.host.owned_string("neverd_comparison_export_json", comparison)
+        context = ctypes.c_void_p(0x12345678)
+        caller = threading.get_ident()
+
+        def stopped(action, arguments, saved, can_undo, can_redo):
+            observations = []
+
+            def report(user, phase, done, total):
+                status = json.loads(self.host.owned_string("neverd_comparison_status_json", comparison))
+                observations.append((user, phase, threading.get_ident(), status["edit_state"]))
+                if phase == b"edit:publish":
+                    self.host.call("neverd_comparison_cancel", comparison)
+
+            callback = abi.ComparisonProgressCallback(report)
+            self.assertEqual(self.host.call(f"neverd_comparison_{action}_with_progress",
+                comparison, *arguments, callback, context), 0)
+            self.assertTrue(any(row[1] == b"edit:publish" for row in observations))
+            self.assertTrue(all(row[0] == context.value and row[2] == caller and row[3] == "running"
+                                for row in observations))
+            status = json.loads(self.host.owned_string("neverd_comparison_status_json", comparison))
+            self.assertEqual(status["edit_state"], "cancelled")
+            self.assertTrue(status["previous_result_retained"])
+            self.assertFalse(status["partial_result_retained"])
+            self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), saved)
+            summary = json.loads(self.host.owned_string("neverd_comparison_summary_json", comparison))
+            self.assertEqual((summary["can_undo"], summary["can_redo"]), (can_undo, can_redo))
+
+        stopped("override_json", (decision,), original, False, False)
+        self.assertEqual(self.host.call("neverd_comparison_override_json_with_progress", comparison,
+            decision, abi.ComparisonProgressCallback(), None), 1)
+        edited = self.host.owned_string("neverd_comparison_export_json", comparison)
+        self.assertNotEqual(edited, original)
+        stopped("undo", (), edited, True, False)
+        self.assertEqual(self.host.call("neverd_comparison_undo_with_progress", comparison,
+            abi.ComparisonProgressCallback(), None), 1)
+        stopped("override_json", (decision,), original, False, True)
+        stopped("redo", (), original, False, True)
+        self.assertEqual(self.host.call("neverd_comparison_redo_with_progress", comparison,
+            abi.ComparisonProgressCallback(), None), 1)
+        self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), edited)
+
     def test_cancellation_callbacks_preserve_retry_and_context(self) -> None:
         from neverd_plugin import abi
 

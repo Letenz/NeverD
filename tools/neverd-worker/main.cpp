@@ -552,6 +552,7 @@ void executeLoop(State &state, Transport &transport) {
           const bool ComparisonPartial =
               ComparisonOperation && result.contains("payload") &&
               !result["payload"].value("restore_completed", false) &&
+              !result["payload"].value("edit_completed", false) &&
               result["payload"].value("state", std::string()) == "cancelled";
           const bool ComparisonStopped =
               ComparisonPartial ||

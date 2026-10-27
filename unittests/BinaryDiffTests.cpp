@@ -32,6 +32,7 @@
 #include <map>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1821,6 +1822,107 @@ TEST(BinaryDiff, RegionClaimsRequireUniqueSeedsAndConnectedMembership) {
   Forged = R;
   Forged.Hypotheses.pop_back();
   EXPECT_TRUE(validateRegions(Forged, Settings, P, P));
+}
+
+TEST(BinaryDiff, EditsStopTransactionallyBeforePublishingResultsOrEffects) {
+  const auto P = build(sample(), 0x400000);
+  const auto S = build(sample(), 0x800000);
+  auto R = compare(P, S, {});
+  const auto Original = saved(R, P, S);
+  const Override Decision{OverrideKind::Match, named(P, "leaf1").Address,
+                          named(S, "leaf2").Address};
+  OverrideEffect Effect;
+  ASSERT_FALSE(applyOverride(R, P, S, Decision, &Effect));
+  ASSERT_FALSE(Effect.Remeasured.empty());
+  const auto Edited = R;
+  revertOverride(R, P, S, Effect);
+  ASSERT_EQ(saved(R, P, S), Original);
+  std::atomic<bool> Cancel = false;
+  ComparisonControl Control;
+  Control.Cancel = &Cancel;
+  const auto Caller = std::this_thread::get_id();
+  for (const auto &[Stage, Minimum] :
+       std::vector<std::pair<std::string, uint64_t>>{{"prepare", 0},
+                                                     {"mapping", 0},
+                                                     {"measure", 0},
+                                                     {"measure", 1},
+                                                     {"publish", 0}}) {
+    SCOPED_TRACE(Stage + ":" + std::to_string(Minimum));
+    Cancel = false;
+    bool Seen = false;
+    Control.Progress = [&](llvm::StringRef Phase, uint64_t Done, uint64_t) {
+      EXPECT_EQ(std::this_thread::get_id(), Caller);
+      if (Phase == Stage && Done >= Minimum) {
+        Seen = true;
+        Cancel = true;
+      }
+    };
+    EXPECT_THROW(applyOverride(R, P, S, Decision, &Effect, Control),
+                 ComparisonInterrupted);
+    EXPECT_TRUE(Seen);
+    EXPECT_EQ(saved(R, P, S), Original);
+    // The caller's existing undo effect must still restore its own edit.
+    auto CheckEffect = Edited;
+    revertOverride(CheckEffect, P, S, Effect);
+    EXPECT_EQ(saved(CheckEffect, P, S), Original);
+  }
+  Cancel = false;
+  Control.Progress = {};
+  Control.Deadline = std::chrono::steady_clock::now();
+  try {
+    (void)applyOverride(R, P, S, Decision, &Effect, Control);
+    FAIL() << "Expired edit deadline was ignored";
+  } catch (const ComparisonInterrupted &Stopped) {
+    EXPECT_EQ(Stopped.State, ComparisonState::TimedOut);
+  }
+  EXPECT_EQ(saved(R, P, S), Original);
+  Control.Deadline.reset();
+  ASSERT_FALSE(applyOverride(R, P, S, Decision, &Effect, Control));
+  EXPECT_EQ(saved(R, P, S), saved(Edited, P, S));
+  for (const auto *Stage : {"prepare", "mapping", "publish"}) {
+    SCOPED_TRACE(Stage);
+    Cancel = false;
+    bool Seen = false;
+    Control.Progress = [&](llvm::StringRef Phase, uint64_t, uint64_t) {
+      if (Phase == Stage) {
+        Seen = true;
+        Cancel = true;
+      }
+    };
+    EXPECT_THROW(revertOverride(R, P, S, Effect, Control),
+                 ComparisonInterrupted);
+    EXPECT_TRUE(Seen);
+    EXPECT_EQ(saved(R, P, S), saved(Edited, P, S));
+  }
+  Cancel = false;
+  Control.Progress = {};
+  revertOverride(R, P, S, Effect, Control);
+  EXPECT_EQ(saved(R, P, S), Original);
+}
+
+TEST(BinaryDiff,
+     CancelledPairingKeepsAmbiguitiesAndFailedCallbacksKeepHistory) {
+  const auto P = build({leaf("first", 7, 8), leaf("second", 7, 8)}, 0x1000);
+  const auto S = build({leaf("first", 7, 8), leaf("second", 7, 8)}, 0x8000);
+  ComparisonSettings Settings;
+  Settings.UseNames = false;
+  auto R = compare(P, S, Settings);
+  ASSERT_FALSE(R.Ambiguities.empty());
+  const auto Before = saved(R, P, S);
+  OverrideEffect Effect;
+  ComparisonControl Control;
+  Control.Progress = [](llvm::StringRef Phase, uint64_t, uint64_t) {
+    if (Phase == "publish")
+      throw std::runtime_error("host callback failed");
+  };
+  EXPECT_THROW(applyOverride(R, P, S,
+                             {OverrideKind::Match, named(P, "first").Address,
+                              named(S, "second").Address},
+                             &Effect, Control),
+               std::runtime_error);
+  EXPECT_EQ(saved(R, P, S), Before);
+  EXPECT_FALSE(Effect.Added);
+  EXPECT_TRUE(Effect.Ambiguities.empty());
 }
 
 TEST(BinaryDiff, SavedRestoreStopsTransactionallyAndKeepsHistoricalStates) {

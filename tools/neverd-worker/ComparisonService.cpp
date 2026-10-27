@@ -67,8 +67,11 @@ struct API {
   ENTRY(reviews_json);
   ENTRY(review_record_json);
   ENTRY(override_json);
+  ENTRY(override_json_with_progress);
   ENTRY(undo);
+  ENTRY(undo_with_progress);
   ENTRY(redo);
+  ENTRY(redo_with_progress);
   ENTRY(validate_inputs);
 #undef ENTRY
   explicit operator bool() const {
@@ -402,6 +405,10 @@ bool ComparisonService::cancellable(std::string_view Operation) {
   if (!supported() ||
       (Operation == "comparison_restore" &&
        !api().restore_json_with_progress) ||
+      (Operation == "comparison_override" &&
+       !api().override_json_with_progress) ||
+      (Operation == "comparison_undo" && !api().undo_with_progress) ||
+      (Operation == "comparison_redo" && !api().redo_with_progress) ||
       (Operation == "comparison_source_page" && !sourceSupported()) ||
       (Operation == "comparison_source_difference" &&
        !sourceDifferenceSupported()))
@@ -630,12 +637,33 @@ Json ComparisonService::execute(const std::string &Operation, const Json &P,
     restoreSaved(S.Handle, Saved, Notify, Cancelled);
   } else if (Operation == "comparison_review_record") {
     S.check(api().review_record_json(S.Handle, Payload.dump().c_str()));
-  } else if (Operation == "comparison_override") {
-    S.check(api().override_json(S.Handle, Payload.dump().c_str()));
-  } else if (Operation == "comparison_undo" || Operation == "comparison_redo") {
-    fields(Payload, {});
-    S.check(
-        (Operation == "comparison_undo" ? api().undo : api().redo)(S.Handle));
+  } else if (Operation == "comparison_override" ||
+             Operation == "comparison_undo" || Operation == "comparison_redo") {
+    ComparisonProgress Forward{S.Handle, Notify, Cancelled};
+    int OK;
+    if (Operation == "comparison_override") {
+      const auto Text = Payload.dump();
+      OK = api().override_json_with_progress
+               ? api().override_json_with_progress(S.Handle, Text.c_str(),
+                                                   ComparisonProgress::report,
+                                                   &Forward)
+               : api().override_json(S.Handle, Text.c_str());
+    } else {
+      fields(Payload, {});
+      const bool Undo = Operation == "comparison_undo";
+      const auto Controlled =
+          Undo ? api().undo_with_progress : api().redo_with_progress;
+      OK = Controlled
+               ? Controlled(S.Handle, ComparisonProgress::report, &Forward)
+               : (Undo ? api().undo : api().redo)(S.Handle);
+    }
+    if (!OK) {
+      const auto Status = parseJson(take(api().status_json(S.Handle)));
+      S.check(OK, Status.value("edit_state", std::string()) == "cancelled"
+                      ? "cancelled"
+                      : "comparison_failed");
+    }
+    // A successful edit is committed; a later stop cannot hide its revision.
   } else if (Operation == "comparison_validate") {
     fields(Payload, {});
     auto Primary = load(S.Primary, "primary", Notify, Cancelled);
@@ -651,6 +679,9 @@ Json ComparisonService::execute(const std::string &Operation, const Json &P,
   auto Out = S.summary();
   if (Operation == "comparison_restore")
     Out["restore_completed"] = true;
+  else if (Operation == "comparison_override" ||
+           Operation == "comparison_undo" || Operation == "comparison_redo")
+    Out["edit_completed"] = true;
   return Out;
 }
 } // namespace neverd::worker

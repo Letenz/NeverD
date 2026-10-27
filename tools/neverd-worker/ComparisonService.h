@@ -43,7 +43,8 @@ public:
       "comparison_cfg_viewport", "comparison_cfg_focus",
       "comparison_observations", "comparison_scalar_validation",
       "comparison_source_page",  "comparison_source_difference",
-      "comparison_restore"};
+      "comparison_restore",      "comparison_override",
+      "comparison_undo",         "comparison_redo"};
   static bool cancellable(std::string_view Operation);
   Json execute(const std::string &Operation, const Json &Payload,
                const Progress &Notify, const Cancellation &Cancelled);

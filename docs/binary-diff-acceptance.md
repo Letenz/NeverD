@@ -12,7 +12,7 @@ were understood.
 | Requirement | Implemented evidence | Remaining acceptance work |
 | --- | --- | --- |
 | Reproducible same-ISA native comparison | Shared `lib/diff`, input/analysis identities, strict saved binding, x86/x64 and AArch64 readers, ambiguous candidate inventories, exact weighted large-block alignment, caller-selected candidate measurement and conservative call-position anchors without a size cutoff | Broader linked-application, real-world stripped and duplicate-heavy corpora; measured error rates |
-| CLI and GUI workflow | C ABI and Qt-free worker; bounded pages, CFG/source inspection, edits and undo/redo, save/reopen, input/restore/query cancellation, NDDB project inputs | Continue scenario-based usability and large-input latency qualification; support advanced areas below through the same surfaces |
+| CLI and GUI workflow | C ABI and Qt-free worker; bounded pages, CFG/source inspection, edits and undo/redo, save/reopen, input/restore/query/edit cancellation, NDDB project inputs | Continue scenario-based usability and large-input latency qualification; support advanced areas below through the same surfaces |
 | A: transformations and regional matching | Native instruction-run and finite SSA region hypotheses; split/merge/clone/inline/outline/tail evidence; qualified loop progress profiles through v7 | Broad CFG/dataflow transformations and cross-module movement; independent compiler, LTO, PGO and obfuscation qualification; explicit qualified cross-ISA profiles |
 | B: security-fix triage and review | Local change observations, native call-path context, bounded import-effect context, input-bound analyst cases/history and references | Ranked security-fix datasets, interprocedural parameter/return/alias effects, path feasibility, automated patch/backport/revert evidence and reviewer report qualification |
 | C: optional semantic validation | Bounded pure scalar-return profile with explicit models, budgets, non-success outcomes and native provenance | Additional memory/call/loop profiles, precondition and coverage qualification; no general equivalence or vulnerability-elimination claim |
@@ -39,6 +39,18 @@ separate. These diagnostic runs do not close F's real-corpus, fairness,
 performance or statistical acceptance requirements.
 
 ## Verification record boundaries
+
+Correspondence edits now stage changes before publication and propagate
+cooperative cancellation through affected-function measurement. Native controls
+cover match/unmatch/confirm, undo/redo, unchanged cached views and both history
+branches, callback failures, expired deadlines and historical stopped reports.
+Worker and real Qt workflows cancel native alignment, retain revision/selection,
+retry and save/reopen; POSIX CLI controls stop editing and output writes without
+overwriting saved results. Python checks callback ownership and older-engine optional
+exports. A failed request after cancellation reports its own failure rather than
+inheriting the earlier stop. Successful edits keep a separate completion marker
+from the saved snapshot's state. Copies, sorting and final publication remain
+indivisible, so these guarantees do not establish a hard cancellation latency.
 
 Matcher version 5 preserves measured overlapping candidate relationships
 without constructing unsupported cross-pairs. Direction/layout controls use a
