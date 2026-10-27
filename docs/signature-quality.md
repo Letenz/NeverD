@@ -129,6 +129,21 @@ frozen outgoing validation and round budget still apply. An independent-body
 index is constructed only if a short request needs it, once per caller pass.
 No descendant can repair its parent's evidence or start an unrooted cycle.
 
+A separate finite code-address fingerprint can identify two short functions
+together in linked x64 PE. Its parent needs an existing complete `!refs` hit
+and matching unpruned `!caller` source records that unanimously state one
+canonical RIP-relative LEA to the leaf. Apart from that exact four-byte field,
+both complete bodies must be literal bytes, with no CRC span or additional
+wildcards; the leaf has no outgoing references. Each body is below the
+ordinary fixed-byte floor, but their disjoint combined bytes must meet it.
+Both addresses must already be requested executable function entries. All
+matching source/leaf variants must agree on their complete extents and edge.
+Competing joint identities, overlapping bodies, cycles and contradictions with
+frozen names refuse the pair. This is a bounded two-body fingerprint, not
+recursive confirmation through guessed names. The ordinary floor, rooted
+caller-chain rules and candidate-only identity policy remain in force.
+Source templates stay in the name index; no extra global byte scan is needed.
+
 `neverd-sigmaker --caller-context` emits these records, including short bodies.
 Generation and matching share the canonical x64 LEA field check. When the
 preceding byte could be an instruction prefix, a bounded Capstone walk from

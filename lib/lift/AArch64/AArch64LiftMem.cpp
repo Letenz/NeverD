@@ -30,15 +30,54 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
     if (isAArch64OrderedUnscaledMemoryEncoding(Word) &&
         !aarch64AddressMemoryInstruction(Word))
       throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
+    if (isAArch64StructureMemoryEncoding(Word) &&
+        !aarch64StructureMemoryInstruction(Word))
+      throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
     if (PreserveImmediateMemory && aarch64WritebackMemoryOperation(Word)) {
       const auto Instruction = aarch64WritebackMemoryInstruction(Word);
       if (!Instruction)
         throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
-      if (!Instruction->stackBase()) {
+      if (!Instruction->stackBase() || Instruction->isStructure()) {
         const NdVar Base = NdVar::reg(
             a64reg::X0 + Instruction->base() * kAddressMemoryPointerBytes,
             kAddressMemoryPointerBytes);
         const NdVar OriginalWord = NdVar::scalar(Word, kAddressMemoryWordBytes);
+        if (Instruction->isStructure()) {
+          const auto Structure = Instruction->structure();
+          const NdVar Index =
+              Structure.hasRegisterIndex()
+                  ? NdVar::reg(a64reg::X0 + Structure.index() *
+                                                kAddressMemoryPointerBytes,
+                               kAddressMemoryPointerBytes)
+                  : NdVar::scalar(0, kAddressMemoryPointerBytes);
+          std::vector<NdVar> Values;
+          if (Structure.isLoad())
+            for (unsigned I = 0; I != Structure.vectors(); ++I)
+              Values.push_back(S.makeTemp(kAddressMemoryVectorBytes));
+          const NdVar Updated = S.makeTemp(kAddressMemoryPointerBytes);
+          S.emitIntrinsic(Structure.id(),
+                          Structure.isLoad() ? S.makeTemp(0) : Updated,
+                          {Base, OriginalWord, Index});
+          if (!Structure.isLoad() || Structure.laneLoad())
+            for (unsigned I = 0; I != Structure.vectors(); ++I)
+              S.Ops.back().addInput(
+                  NdVar::reg(a64reg::V((Structure.destination() + I) &
+                                       kAddressMemoryRegisterMask),
+                             kAddressMemoryVectorBytes));
+          if (Structure.isLoad())
+            for (unsigned I = 0; I != Values.size(); ++I)
+              S.emit(NdOp::COPY,
+                     NdVar::reg(a64reg::V((Structure.destination() + I) &
+                                          kAddressMemoryRegisterMask),
+                                kAddressMemoryVectorBytes),
+                     {Values[I]});
+          S.emit(NdOp::COPY,
+                 Structure.hasWriteback()
+                     ? Base
+                     : S.makeTemp(kAddressMemoryPointerBytes),
+                 {Updated});
+          return true;
+        }
         if (Instruction->isPair()) {
           const unsigned ValueBytes = Instruction->isVector()
                                           ? kAddressMemoryVectorBytes

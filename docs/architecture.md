@@ -813,6 +813,37 @@ report, exact source/object hashes and environment revision are pinned in
 [SIMD evidence](evidence/arm64e-vector-writeback-memory-2026-10-26.json).
 This remains a bounded Normal WB, nonoverflow explicit-IR qualification.
 
+Baseline AdvSIMD structure memory uses the same original-instruction contract.
+The shared structure decoder owns LD1–LD4/ST1–ST4 multiple and lane layouts,
+LD1R–LD4R replication, consecutive register lists with V31-to-V0 wrapping,
+Q=0 upper clearing, lane retention and immediate/register post-index roles.
+The lifter and native CPU memory-effects query reuse that decoder. Stores
+consume every complete vector; lane loads also consume the old vectors. Loads
+publish one complete 128-bit result per register and the completed base through
+private typed results. LLVM and both C projections execute one rebound original
+instruction. Finite tracing requires the complete footprint and every consumed
+value before publishing results or writes.
+
+Four-vector operations require eight LowIR inputs and five private intrinsic
+results. The shared representation limits live in `OperationLimits.def`;
+construction rejects excess inputs. Existing six-slot undefined-operation
+identities retain their v1 bytes when extension slots are default. Extended
+operands or stored extension bits select a separate v2 digest domain, including
+all eight slots. This does not extend the public native vector calling ABI.
+For x1 SP-based structure memory, analysis retains the original SP and nominal
+footprint. Image source conversion and execution reject the unsupported stack
+environment. Fixed-image bases using register post-index remain outside the
+materialization proof.
+
+The [structure-memory record](evidence/arm64e-structure-memory-2026-10-27.json)
+pins 1,134 independent samples, 58 completed source/projection tests and all
+60 official Arm model guest executions. Explicit and image-context integer
+bridges cover EL1 and EL0 through both C projections at O0/O2 and the actual
+LLVM ELF objects, under all four CPTA/CPTA0 settings. The matrix performs
+90,720 sample calls and 272,160 positive/negative/zero delta comparisons.
+Generated C uses its declared plain-pointer alias contract; compiler warnings,
+the 45-second model deadline and the 2 MiB mapping remain unchanged.
+
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
 identity. Automatic x1 GPR single-immediate lifting and initialized-image
@@ -820,8 +851,8 @@ rebasing have the bounded qualification above. GPR single pre/post-index
 writeback has separate explicit-IR, automatic-lifting and image regression
 coverage; SIMD single pre/post-index accesses have separate explicit-IR,
 automatic-lifting and image regressions. Pair accesses have separate explicit-IR,
-automatic-lifting, nominal-frame and image regressions. Other ordinary-memory families, including ordered unscaled accesses and NEON
-structures/lane/post-index forms, original-SP stack/call projection and Apple native
+automatic-lifting, nominal-frame and image regressions. Original-SP stack/call
+projection, fixed-image register post-index relocation and Apple native
 execution with CPTA enabled remain unqualified. Controlled Arm model execution
 qualifies the declared explicit-IR exports separately from an automatically
 lifted whole image. Native half and whole-vector C entry/return ABI and DWARF vector
@@ -2344,7 +2375,14 @@ callee must meet the ordinary fixed-byte floor. Short required roots need a
 complete source refinement; pruned clauses cannot supply omitted calls. The
 callee evidence is built lazily once and excludes addresses settled by earlier
 incoming rounds. Short bodies without that independent proof and unrooted
-cycles cannot extend inference. Both forms
+cycles cannot extend inference. A separate linked-x64-PE rule may identify a
+finite code-address pair: a complete short `!refs` parent, matching unanimous
+unpruned `!caller` source, and a fully literal short leaf at its one canonical
+LEA target. Only the exact rel32 field is wildcarded; the disjoint complete
+bodies together meet the ordinary fixed-byte floor. Both entries must already
+exist. Competing pairs, outgoing leaf dependencies, overlapping code owners and
+conflicts with frozen names refuse this joint fingerprint. Pair results cannot
+bootstrap other pairs or supply independent ordinary anchors. Both forms
 remain candidate evidence under the same identity boundary. The shared name
 index reuses complete native `!refs` and `!caller` bodies; ordinary nominal
 claims are not opted into incoming inference merely by loading them. Source
@@ -3101,11 +3139,26 @@ separate allocation for each distinct node hash. Reserved key pairs use
 separate context-owned heads, so every 64-bit hash remains representable. Colliding
 hashes still compare the complete operator, width, auxiliary value and operand
 sequence; context copies and moves own their complete tables and node arenas.
+Existing-node lookup stays separate from table insertion and arena growth;
+only a missing complete identity reaches the allocation path. Native evaluation
+slots remain normalized to their declared widths, so operations that preserve
+that invariant do not mask their results again. External variable values and
+arithmetic that can introduce high bits still receive their width mask.
+General operators retain the shared APInt semantics in a separate call, keeping
+their operand construction and cleanup out of the native evaluator's hot frame.
 The compact two-word hash key uses one 64-bit bucket mix, without hashing its
 halves independently. Sum construction collects small coefficient maps in
 inline storage and sorts completed entries by base-node index before rebuilding.
 Larger sums retain hashed lookup; cancellation, recollection and canonical node
 order are unchanged.
+Dense implicant rounds look up exact one-bit neighbors when that requires
+fewer probes than a complete pair scan. Neighbors retain the original index
+order before merging, preserving prime discovery and greedy-cover tie order.
+The existing quadratic work admission remains unchanged; merge storage stays
+outside the small-recipe synthesis path. Terms remain ordered by value after
+each merge round, so only zero-to-one neighbor flips need lookup; the reverse
+pair was already visited. Prepared Boolean recipes keep their reconstruction
+memo inline, with ordinary growth for optional larger recipes.
 The shared exact MBA layer also recombines weighted literal AND/OR/XOR/NOT
 views of one opaque word. It constructs per-bit coefficients and a constant,
 then independently checks the pointwise grammar, constant difference and every
@@ -3322,6 +3375,33 @@ low prefix before the remaining interleaved bits. Dense decision and carry
 caches prepay their bucket growth. Immutable word views avoid repeated copies
 and are discarded when the assumption changes; polynomial views remain valid
 throughout reconstruction.
+Decision identity hits and terminal Boolean operations return before entering
+the allocation and recursive expansion helpers. Cache misses alone need those
+larger stack frames. Lookup, depth admission, charging and insertion keep their
+original order, including failure paths.
+Application keys place their operation tag in the unused high bit of the
+low edge word, so the integer hash distinguishes AND and XOR for identical
+operands. Full edge identity and the existing node bound remain authoritative.
+A dominant exact low prefix may be proved separately from unmatched product
+factors. A majority vote, weighted by exact projected-word multiplicities,
+only nominates the prefix; complete decision equality and the exact factor
+count must prove that its even branch vanishes. Every
+unmatched factor remains a complete original word. Under the selected branch,
+proved trailing zeros in those factors and their joint product can reduce the
+precision needed for the group. The joint proof stops at the first possibly
+nonzero bit. Large products project their observed words before counting the
+input domain, so invisible high subtrees do not consume a second traversal.
+Neutral low-word constants bypass reconstruction of identity operations.
+Small products retain their cheap single-residual admission after affine
+synthesis, and unaffordable mandatory scans decline before consuming their work.
+The complete group result may reuse a representative word only after all
+observed decision bits agree. Reconstruction restores both the selector and
+every retained factor. This avoids expanding an independent multiplication into
+Boolean carries, including at unit-period neighbors and with low-bit disturbances.
+These searches retain the existing cumulative work and storage bounds.
+Native literal prefix facts use the already-normalized stored value, and free
+variables supply no known bits. These leaves need neither a recursive walk nor
+a prefix-cache entry; wide literals retain their accounted APInt path.
 Ordinary HighIR expression cleanup also uses an iterative operand walk, keeping
 its large local-rewrite frame off nested worker stacks. Operand order, shared
 node visitation and ordered-memory guards remain unchanged.
@@ -6576,6 +6656,18 @@ register_tm_clones`) is the usual case: in a stripped image nothing else names
 the target, whose body the forwarder would otherwise absorb. A target between
 the forwarder and the next entry is the forwarder's own code, such as a loop
 entered at its test, and stays inside it.
+
+Linked x64 PE adapters can also establish a leaf tail entry when a complete
+primary v1/v2 unwind record describes one stack allocation and the entire
+recorded body proves that frame is restored before its final direct jump.
+The bounded proof accepts canonical matching `sub/add rsp, imm`, direct calls
+to existing entries with Win64 home space/alignment, and register moves into
+volatile integer registers. Other instructions, non-returning calls, frame
+pointers, chained/fragmented frames and incomplete records do not supply this
+evidence. Executable ownership must cover the whole source interval. The
+target must lie outside it and outside another known range's interior, and
+pass the shared entry and callable-exit checks. The metadata is visited once;
+this adds no whole-image byte sweep or signature-created function entries.
 
 At a validated source-call boundary, an exact integer constant zero may supply
 a pointer parameter even when the machine expression uses a narrower integer

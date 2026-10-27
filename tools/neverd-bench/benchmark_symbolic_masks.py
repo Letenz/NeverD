@@ -1018,6 +1018,35 @@ def residue_quotient_corpus(width, count):
     return rows
 
 
+def residue_subgroup_corpus(width, count):
+    """Degree-511–1026 groups with multiple independent residual factors.
+
+    Off-period counts, two disturbed low prefixes, complemented bases and
+    nested high offsets retain all original factors in the modular oracle.
+    """
+    rows = []
+    for index in range(count):
+        kind = index % 54
+        degree = (511, 514, 767, 770, 1023, 1026)[kind // 9]
+        observed = (4, 6, 8)[kind % 9 // 3]
+        split = (observed + 2) // 3
+        mode = kind % 3
+        base = ("x", "(~x)", "(x^1)")[mode]
+        factors = []
+        for i in range(degree):
+            disturbance = (int(i == 0) + 2 * int(i == degree - 1)) if mode == 2 else 0
+            value = f"(({base}+{(i << split) + disturbance})^(y<<{split}))"
+            if mode == 1:
+                value = f"(({value}+{(2*i+1) << observed})^{(3*i+1) << observed})"
+            factors.append(value)
+        if mode:
+            factors.reverse()
+        residual = "((z+3)^(y&7))" if mode == 2 else "(z+3)"
+        rows.append(f"({3 << (width-observed)}*z*{residual}*{'*'.join(factors)})"
+                    "+(x^y)+2*(x&y)+(z|w)+(z&w)")
+    return rows
+
+
 def sparse_linear_mixed_degree_corpus(width, count):
     """Degree-4–18 products with disjoint constant, linear and perturbed tails.
 
@@ -1214,7 +1243,7 @@ def main():
                  "residue-product", "affine-residue", "prefix-residue", "residue-frontier",
                  "distributed-prefix", "multiple-residual", "carry-product",
                  "permuted-carry-product", "complemented-carry-product",
-                 "residue-power", "residue-quotient",
+                 "residue-power", "residue-quotient", "residue-subgroup",
                  "sparse-linear-mixed-degree"),
         default="complement",
     )
@@ -1257,6 +1286,7 @@ def main():
                 "complemented-carry-product": complemented_carry_product_corpus,
                 "residue-power": residue_power_corpus,
                 "residue-quotient": residue_quotient_corpus,
+                "residue-subgroup": residue_subgroup_corpus,
                 "sparse-linear-mixed-degree": sparse_linear_mixed_degree_corpus,
             }[args.family]
             expressions = generate(width, args.count)

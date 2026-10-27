@@ -13,6 +13,7 @@
 #define NEVERD_IR_INTRINSICS_AARCH64_AARCH64WRITEBACKMEMORY_H
 
 #include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64StructureMemory.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -34,7 +35,8 @@ inline bool isAArch64PairMemoryIntrinsic(Intrinsic Id) {
 }
 
 inline bool isAArch64WritebackMemoryIntrinsic(Intrinsic Id) {
-  return Id == Intrinsic::A64_LoadWriteback ||
+  return aarch64StructureOperation(Id).has_value() ||
+         Id == Intrinsic::A64_LoadWriteback ||
          Id == Intrinsic::A64_StoreWriteback ||
          Id == Intrinsic::A64_VectorLoadWriteback ||
          Id == Intrinsic::A64_VectorStoreWriteback ||
@@ -42,22 +44,30 @@ inline bool isAArch64WritebackMemoryIntrinsic(Intrinsic Id) {
 }
 
 inline bool isAArch64WritebackStoreIntrinsic(Intrinsic Id) {
+  if (const auto Op = aarch64StructureOperation(Id))
+    return !Op->Load;
   return Id == Intrinsic::A64_StoreWriteback ||
          Id == Intrinsic::A64_VectorStoreWriteback ||
          Id == Intrinsic::A64_PairStore || Id == Intrinsic::A64_VectorPairStore;
 }
 
 inline bool isAArch64WritebackAuxiliaryLoad(Intrinsic Id) {
+  if (const auto Op = aarch64StructureOperation(Id))
+    return Op->Load;
   return Id == Intrinsic::A64_VectorLoadWriteback ||
          Id == Intrinsic::A64_PairLoad || Id == Intrinsic::A64_VectorPairLoad;
 }
 
 inline unsigned aarch64WritebackBaseIndex(Intrinsic Id) {
+  if (const auto Op = aarch64StructureOperation(Id))
+    return Op->Vectors;
   return isAArch64PairMemoryIntrinsic(Id) ? kPairBaseIndex
                                           : kWritebackBaseIndex;
 }
 
 inline unsigned aarch64WritebackMemoryOperandCount(Intrinsic Id) {
+  if (const auto Op = aarch64StructureOperation(Id))
+    return kStructureDataOperand + (Op->Load && !Op->Lane ? 0 : Op->Vectors);
   if (!isAArch64WritebackStoreIntrinsic(Id))
     return kWritebackLoadOperands;
   return isAArch64PairMemoryIntrinsic(Id) ? kPairStoreOperands
@@ -77,6 +87,10 @@ inline std::optional<AArch64WritebackMemoryOperation>
 aarch64WritebackMemoryOperation(uint64_t Word) {
   if (Word > std::numeric_limits<uint32_t>::max())
     return std::nullopt;
+  if (const auto Structure = aarch64StructureMemoryInstruction(Word))
+    return AArch64WritebackMemoryOperation{
+        Structure->isLoad(), Structure->ElementBytes,
+        Structure->isLoad() ? kAddressMemoryVectorBytes : 0, true};
   switch (Word & kPairOpcodeMask) {
 #define NEVERD_A64_PAIR_ENCODING(Encoding, Load, Access, Vector, Signed)       \
   case Encoding:                                                               \
@@ -116,7 +130,11 @@ struct AArch64WritebackMemoryInstruction {
   bool isLoad() const { return operation().Load; }
   bool isVector() const { return operation().Vector; }
   bool isPair() const { return operation().Pair; }
+  bool isStructure() const { return isAArch64StructureMemoryEncoding(Word); }
+  auto structure() const { return *aarch64StructureMemoryInstruction(Word); }
   Intrinsic id() const {
+    if (isStructure())
+      return structure().id();
     if (isPair())
       return isVector() ? (isLoad() ? Intrinsic::A64_VectorPairLoad
                                     : Intrinsic::A64_VectorPairStore)
@@ -137,20 +155,32 @@ struct AArch64WritebackMemoryInstruction {
     return (Word >> kAddressMemoryBaseShift) & kAddressMemoryRegisterMask;
   }
   bool stackBase() const { return base() == kAddressMemoryRegisterMask; }
-  bool hasRegisterIndex() const { return false; }
-  bool hasWriteback() const { return !isPair() || (Word & kPairWritebackBit); }
+  bool hasRegisterIndex() const {
+    return isStructure() && structure().hasRegisterIndex();
+  }
+  bool hasWriteback() const {
+    return isStructure() ? structure().hasWriteback()
+                         : (!isPair() || (Word & kPairWritebackBit));
+  }
   bool preIndex() const {
+    if (isStructure())
+      return false;
     return isPair() ? bool(Word & kPairPreIndexBit)
                     : bool(Word & kWritebackPreIndexBit);
   }
-  bool offsetAccess() const { return !hasWriteback() || preIndex(); }
+  bool offsetAccess() const {
+    return !isStructure() && (!hasWriteback() || preIndex());
+  }
   unsigned totalAccessBytes() const {
-    return accessBytes() * (isPair() ? kPairValues : 1);
+    return isStructure() ? structure().totalAccessBytes()
+                         : accessBytes() * (isPair() ? kPairValues : 1);
   }
   AArch64AddressMemoryInstruction adjustment() const {
     return {Word & ~kWritebackModeMask};
   }
   uint64_t displacement() const {
+    if (isStructure())
+      return structure().hasWriteback() ? totalAccessBytes() : 0;
     if (!isPair())
       return adjustment().addressOffset(0);
     uint64_t Immediate = (Word >> kPairImmediateShift) & kPairImmediateMask;
@@ -158,11 +188,13 @@ struct AArch64WritebackMemoryInstruction {
       Immediate |= ~uint64_t(kPairImmediateMask);
     return Immediate * accessBytes();
   }
-  std::optional<uint64_t> completedBase(uint64_t Base) const {
+  std::optional<uint64_t> completedBase(uint64_t Base,
+                                        uint64_t Index = 0) const {
     if (stackBase())
       return std::nullopt;
     return aarch64ControlIndependentAddress(
-        Base, hasWriteback() ? displacement() : 0, 1);
+        Base,
+        hasWriteback() ? (hasRegisterIndex() ? Index : displacement()) : 0, 1);
   }
   std::optional<uint64_t> accessAddress(uint64_t Base) const {
     if (stackBase())
@@ -175,10 +207,11 @@ struct AArch64WritebackMemoryInstruction {
   /// from the machine instruction. A post-index access need not dereference
   /// its outgoing base, but that base must remain within the materialization.
   std::optional<AArch64AddressMemorySpan>
-  controlIndependentSpan(uint64_t Base, uint64_t MaximumIndex) const {
-    if (!aarch64WritebackMemoryOperation(Word) || MaximumIndex)
+  controlIndependentSpan(uint64_t Base, uint64_t Index) const {
+    if (!aarch64WritebackMemoryOperation(Word) ||
+        (!hasRegisterIndex() && Index))
       return std::nullopt;
-    const auto Updated = completedBase(Base);
+    const auto Updated = completedBase(Base, Index);
     const auto Address = accessAddress(Base);
     if (!Updated || !Address)
       return std::nullopt;
@@ -195,6 +228,8 @@ struct AArch64WritebackMemoryInstruction {
     return AArch64AddressMemorySpan{Begin, End - Begin};
   }
   uint32_t scratchWord() const {
+    if (isStructure())
+      return structure().scratchWord();
     const uint32_t SecondMask =
         isPair() ? kAddressMemoryRegisterMask << kPairSecondShift : 0;
     return (Word & ~(kAddressMemoryBaseDestinationMask | SecondMask)) |
@@ -228,8 +263,8 @@ inline bool aarch64WritebackMemoryShapeIsValid(
     unsigned WordBytes, std::optional<uint64_t> Word, unsigned DataBytes = 0,
     std::optional<uint64_t> Data = std::nullopt, unsigned SecondBytes = 0,
     std::optional<uint64_t> Second = std::nullopt) {
-  if (!isAArch64WritebackMemoryIntrinsic(Id) || !Word ||
-      NumInputs != aarch64WritebackMemoryOperandCount(Id) + 1 ||
+  if (aarch64StructureOperation(Id) || !isAArch64WritebackMemoryIntrinsic(Id) ||
+      !Word || NumInputs != aarch64WritebackMemoryOperandCount(Id) + 1 ||
       BaseBytes != kAddressMemoryPointerBytes ||
       WordBytes != kAddressMemoryWordBytes)
     return false;

@@ -1,5 +1,6 @@
 """Independent truth, result-admission and tool-format regression checks."""
 import argparse
+from contextlib import closing
 import copy
 import json
 from pathlib import Path
@@ -207,14 +208,14 @@ class ArtifactTests(unittest.TestCase):
 
     def test_diaphora_uses_hex_and_excludes_unreliable_and_multimatch(self):
         path = self.root / "result.diaphora"
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute("CREATE TABLE results (type TEXT, address TEXT, address2 TEXT)")
             db.executemany("INSERT INTO results VALUES (?, ?, ?)", [
                 ("best", "001000", "002000"), ("partial", "001010", "002010"),
                 ("unreliable", "001100", "002100"), ("multimatch", "001200", "002200"),
             ])
         self.assertEqual(bench.read_pairs("diaphora", path, self.inputs), [(4096, 8192), (4112, 8208)])
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute("INSERT INTO results VALUES ('new category', '0', '0')")
         with self.assertRaisesRegex(ValueError, "unknown Diaphora"):
             bench.read_pairs("diaphora", path, self.inputs)
@@ -238,7 +239,7 @@ class ArtifactTests(unittest.TestCase):
 
     def test_bindiff_uses_metadata_orientation_and_unsigned_addresses(self):
         path = self.root / "result.BinDiff"
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute("CREATE TABLE metadata (file1 INT, file2 INT)")
             db.execute("CREATE TABLE file (id INT, hash TEXT)")
             db.execute("CREATE TABLE function (address1 BIGINT, address2 BIGINT)")

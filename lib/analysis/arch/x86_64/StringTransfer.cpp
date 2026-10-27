@@ -11,6 +11,7 @@
 #include "llvm/Support/Errc.h"
 
 #include <algorithm>
+#include <iterator>
 
 namespace neverd::analysis::detail {
 namespace {
@@ -116,7 +117,8 @@ lowerStringTransfer(const LowOp &Op, uint64_t Count, bool Backward,
   if (!Scan(Op.Output))
     return invalid("repeated memory transfer temporary is out of range");
   for (const auto &Original : InstructionOps) {
-    if (Original.NumInputs > 6 || !Scan(Original.Output))
+    if (Original.NumInputs > std::size(Original.Inputs) ||
+        !Scan(Original.Output))
       return invalid("invalid repeated memory transfer instruction operands");
     for (unsigned I = 0; I < Original.NumInputs; ++I)
       if (!Scan(Original.Inputs[I]))
