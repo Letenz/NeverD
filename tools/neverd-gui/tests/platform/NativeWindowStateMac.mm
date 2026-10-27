@@ -16,6 +16,7 @@
 #include <QGuiApplication>
 #include <QTest>
 #include <QWidget>
+#include <cstdint>
 
 namespace neverd::gui::test {
 
@@ -37,9 +38,36 @@ bool moveNativePointer(QPoint Position) {
       kCGMouseButtonLeft);
   if (!Event)
     return false;
+  // Posting is asynchronous. A predicate such as !underMouse() can already
+  // be true before this move reaches AppKit, letting the next move overtake
+  // the native enter/leave transition the test intends to observe.
+  bool Delivered = false;
+  bool *Completion = &Delivered;
+  const auto Token =
+      static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(Completion));
+  CGEventSetIntegerValueField(Event, kCGEventSourceUserData, Token);
+  id Monitor = [NSEvent
+      addLocalMonitorForEventsMatchingMask:NSEventMaskMouseMoved
+                                   handler:^NSEvent *(NSEvent *NativeEvent) {
+                                     if (NativeEvent.CGEvent &&
+                                         CGEventGetIntegerValueField(
+                                             NativeEvent.CGEvent,
+                                             kCGEventSourceUserData) == Token)
+                                       *Completion = true;
+                                     return NativeEvent;
+                                   }];
+  if (!Monitor) {
+    CFRelease(Event);
+    return false;
+  }
   CGEventPost(kCGHIDEventTap, Event);
   CFRelease(Event);
-  return true;
+  const bool Result = QTest::qWaitFor([&] { return Delivered; });
+  [NSEvent removeMonitor:Monitor];
+  if (!Result)
+    qWarning("AppKit did not dispatch the pointer move to (%d, %d)",
+             Position.x(), Position.y());
+  return Result;
 }
 
 bool reopenNativeApplication() {
