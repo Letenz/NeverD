@@ -37,6 +37,8 @@ struct PatchFunctions {
   decltype(&neverd_byte_patch_ranges_json) ranges;
   decltype(&neverd_byte_patches_snapshot_v1) snapshot;
   decltype(&neverd_byte_patch_snapshot_free_v1) freeSnapshot;
+  decltype(&neverd_byte_patch_ranges_snapshot_v1) rangeSnapshot;
+  decltype(&neverd_byte_patch_range_snapshot_free_v1) freeRangeSnapshot;
   explicit operator bool() const {
     return preview && apply && revert && rows && load && exportFile && context;
   }
@@ -62,7 +64,11 @@ const PatchFunctions &patches() {
       engineSymbol<decltype(&neverd_byte_patches_snapshot_v1)>(
           "neverd_byte_patches_snapshot_v1"),
       engineSymbol<decltype(&neverd_byte_patch_snapshot_free_v1)>(
-          "neverd_byte_patch_snapshot_free_v1")};
+          "neverd_byte_patch_snapshot_free_v1"),
+      engineSymbol<decltype(&neverd_byte_patch_ranges_snapshot_v1)>(
+          "neverd_byte_patch_ranges_snapshot_v1"),
+      engineSymbol<decltype(&neverd_byte_patch_range_snapshot_free_v1)>(
+          "neverd_byte_patch_range_snapshot_free_v1")};
   return F;
 }
 
@@ -262,6 +268,25 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
   if (Operation == "patches") {
     const auto &F = patches();
     if (P.value("ranges_only", false)) {
+      if (F.rangeSnapshot && F.freeRangeSnapshot) {
+        std::unique_ptr<const neverd_byte_patch_range_snapshot_v1,
+                        decltype(F.freeRangeSnapshot)>
+            Snapshot(F.rangeSnapshot(session_), F.freeRangeSnapshot);
+        if (!Snapshot)
+          throw Error("engine_error", error());
+        Json::array_t Ranges;
+        Ranges.reserve(Snapshot->range_count);
+        for (size_t I = 0; I < Snapshot->range_count; ++I) {
+          const auto &Range = Snapshot->ranges[I];
+          Json::object_t Item;
+          Item.emplace("address", hexAddress(Range.address));
+          Item.emplace("size", Range.size);
+          Ranges.emplace_back(std::move(Item));
+        }
+        return {{"items", std::move(Ranges)},
+                {"total", Snapshot->range_count},
+                {"complete", true}};
+      }
       if (F.ranges) {
         auto Ranges = backendJson(F.ranges(session_));
         const auto Total = Ranges.size();

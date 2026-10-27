@@ -126,7 +126,9 @@ llvm::Value *MedLLVMEmitter::resolveAtomicMemoryPtr(
 
 void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
                             int BlockId, int OpIdx) {
-  if (Op.Dead || SuppressedTableAddressOps.count({BlockId, OpIdx}))
+  if (Op.Dead || SuppressedTableAddressOps.count({BlockId, OpIdx}) ||
+      AArch64ReturnProtectionOps.contains(&Op) ||
+      AArch64CallAuthentications.contains(&Op))
     return;
 
   const bool IsSyntheticX87StatusRead =

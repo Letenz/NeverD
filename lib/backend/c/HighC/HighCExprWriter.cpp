@@ -33,6 +33,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/c/render/AArch64/AArch64AddressMemoryC.h"
+#include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PointerC.h"
 #include "neverd/backend/c/render/AArch64/AArch64WritebackMemoryC.h"
@@ -64,6 +65,7 @@
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/IntegerLiterals.h"
 
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -2099,29 +2101,15 @@ std::string HighCWriter::resolveCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
-  if (E.IntrinsicId == Intrinsic::X86FourSourceMemory) {
-    std::vector<std::string> Args;
-    for (const auto &V : E.Operands) {
-      if (!V)
-        throw std::invalid_argument(X86FourSourceMalformed);
-      Args.push_back(intrinsicOperandStr(*V));
-    }
-    return renderX86FourSourceExpression(Opts.TheArch, E, Args,
-                                         typeToC(E.Type));
-  }
-  if (isX86CompactMemory(E.IntrinsicId)) {
-    std::vector<std::string> Args;
-    for (const auto &V : E.Operands) {
-      if (!V)
-        throw std::invalid_argument(X86CompactMalformed);
-      Args.push_back(intrinsicOperandStr(*V));
-    }
-    return renderX86CompactExpression(Opts.TheArch, E, Args, typeToC(E.Type));
-  }
+  if (E.IntrinsicId == Intrinsic::X86FourSourceMemory)
+    return renderX86FourSourceExpression(
+        Opts.TheArch, E, x86NativeMemoryArguments(E), typeToC(E.Type));
+  if (isX86CompactMemory(E.IntrinsicId))
+    return renderX86CompactExpression(
+        Opts.TheArch, E, x86NativeMemoryArguments(E), typeToC(E.Type));
   if (isX86AtomicIntrinsic(E.IntrinsicId))
-    return renderX86APXAtomicExpression(
-        Opts.TheArch, E,
-        [this](const HighExpr &V) { return intrinsicOperandStr(V); });
+    return renderX86APXAtomicExpression(Opts.TheArch, E,
+                                        x86NativeMemoryArguments(E));
   if (isPortableX87Intrinsic(E.IntrinsicId))
     return renderPortableX87Call(E);
   if (x87ValueInfo(E.IntrinsicId) &&
@@ -2417,11 +2405,15 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   // callable in C when it is typed as a function pointer.
   if (E.IsIndirectCall && E.IndirectTarget &&
       (Name.empty() || Name == "indirect" || Name == "indirect_call" ||
-       E.IndirectParamIdx >= 0)) {
+       E.IndirectParamIdx >= 0 ||
+       E.IndirectTarget->IntrinsicId == Intrinsic::A64_AuthBranch)) {
     const TypeRef ReturnType = callResultType(E);
     Name =
         indirectCalleeStr(*E.IndirectTarget, ReturnType ? ReturnType : E.Type,
                           indirectCallFunctionType(E));
+    if (Opts.TheArch == Arch::AArch64 &&
+        E.IndirectTarget->IntrinsicId != Intrinsic::A64_AuthBranch)
+      Name = aarch64PAuthRawCalleeC(Name);
   }
 
   // A callee defined in this file has a prototype: convert between pointer
@@ -3545,9 +3537,13 @@ bool HighCWriter::knownVoidCall(const HighExpr &E) const {
 }
 
 std::string HighCWriter::intrinsicOperandStr(const HighExpr &E) {
+  return exprStr(intrinsicOperandExpr(E));
+}
+
+const HighExpr &HighCWriter::intrinsicOperandExpr(const HighExpr &E) const {
   const HighExpr *P = peelIntegerViewOps(&E);
   if (!P)
-    return exprStr(E);
+    return E;
   // A view wider than its source extends it, with zeros or its sign.  The
   // source's text says so only where C's own conversion to the wide type
   // extends the same way: zeros for an unsigned source, its sign for a
@@ -3565,12 +3561,12 @@ std::string HighCWriter::intrinsicOperandStr(const HighExpr &E) {
     const bool SourceSigned =
         P->Type->Kind == NdTypeKind::Int && P->Type->IsSigned;
     if ((Zero && Sign) || (Zero && SourceSigned) || (Sign && !SourceSigned))
-      return exprStr(E);
+      return E;
   }
   if (P->Kind == ExprKind::Var || P->Kind == ExprKind::Phi ||
       P->Kind == ExprKind::Const || P->Kind == ExprKind::Load)
-    return exprStr(*P);
-  return exprStr(E);
+    return *P;
+  return E;
 }
 
 const HighExpr *HighCWriter::peelIntegerViewOps(const HighExpr *E) const {
@@ -3599,7 +3595,7 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
   if (ProjectImageBacking && ProjectFrameAliasesIntoStorage)
     if (const auto Disp = certifiedFrameStorageDisplacement(E))
       return frameRecordAddress(*Disp);
-  if (E.Kind == ExprKind::Const)
+  if (ProjectImageBacking && E.Kind == ExprKind::Const)
     if (auto Anchored = anchoredOwnerAddress(E))
       return *Anchored;
   if (auto VA = constAddress(E)) {
@@ -3608,7 +3604,8 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
     if (auto Backing = imageBackingAddress(*VA))
       return *Backing;
   }
-  const HighExpr *Inner = peelIntegerViewOps(&E);
+  const HighExpr *Inner =
+      ProjectImageBacking ? peelIntegerViewOps(&E) : &intrinsicOperandExpr(E);
   if (!Inner)
     Inner = &E;
   if (Inner->Kind == ExprKind::BinOp &&
@@ -3634,7 +3631,7 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
       // A displacement anchored before its owner's section is that object's
       // address less the distance, which the integer base adds to, whatever
       // object lies at the displacement itself.
-      if (!Minus)
+      if (ProjectImageBacking && !Minus)
         if (auto Anchored = anchoredOwnerAddress(*Off)) {
           constexpr int AddPrec = 9;
           std::string B = addrStr(*Base, AddPrec, ProjectImageBacking);
@@ -5920,6 +5917,17 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
                                                 : NdType::makeVoid(),
                                      "(*)()")) +
       ")";
+  if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::A64_AuthBranch) {
+    if (E.Operands.size() != 3 || !E.Operands[0] || !E.Operands[1] ||
+        !E.Operands[2] || E.Operands[1]->Kind != ExprKind::Const ||
+        E.Operands[1]->ConstVal > kAArch64PAuthKeyIB ||
+        Opts.TheArch != Arch::AArch64)
+      throw std::invalid_argument(kAArch64PAuthMalformedCall);
+    return aarch64PAuthAuthenticatedCalleeC(
+        llvm::StringRef(CalleeType).drop_front().drop_back(),
+        exprStr(*E.Operands[0]), exprStr(*E.Operands[1]),
+        exprStr(*E.Operands[2]));
+  }
   if (FunctionType)
     if (auto Pointer =
             implicitPointerConversion(E, NdType::makePtr(FunctionType)))
@@ -7671,21 +7679,67 @@ bool HighCWriter::isCopyForwardDestination(const MedVar &V) const {
 }
 
 std::optional<va_t> HighCWriter::constAddress(const HighExpr &E) const {
-  const HighExpr *Cur = unwrapIntegerView(&E);
-  if (Cur && Cur->Kind == ExprKind::Const)
-    return Cur->ConstVal;
-  if (Cur && Cur->Kind == ExprKind::BinOp && Cur->Type &&
-      Cur->Type->Kind == NdTypeKind::Int && Cur->Type->Size <= 8 &&
-      Cur->Type->Size != 0 && Cur->Operands.size() == 2 &&
-      (Cur->Op == NdOp::INT_ADD || Cur->Op == NdOp::INT_SUB)) {
-    const auto Left = constAddress(*Cur->Operands[0]);
-    const auto Right = constAddress(*Cur->Operands[1]);
+  const auto ScalarBytes = [](const HighExpr &V) -> unsigned {
+    return V.Type &&
+                   (V.Type->Kind == NdTypeKind::Int ||
+                    V.Type->Kind == NdTypeKind::Ptr) &&
+                   V.Type->Size <= sizeof(va_t)
+               ? V.Type->Size
+               : 0;
+  };
+  const auto Bytes = ScalarBytes(E);
+  if (E.Kind == ExprKind::Const) {
+    if (!E.Type)
+      return E.ConstVal;
+    return Bytes ? std::optional<va_t>(
+                       llvm::APInt(Bytes * 8, E.ConstVal).getZExtValue())
+                 : std::nullopt;
+  }
+  // A view's source bits and extension determine its address value. Merely
+  // peeling sext/zext or a narrowing cast changes constant segment offsets.
+  if (Bytes && E.Operands.size() == 1 && E.Operands[0] &&
+      (E.Kind == ExprKind::Cast || E.Kind == ExprKind::BitCast ||
+       (E.Kind == ExprKind::UnaryOp &&
+        (E.Op == NdOp::INT_ZEXT || E.Op == NdOp::INT_SEXT)))) {
+    const auto &Source = *E.Operands[0];
+    const auto SourceBytes = ScalarBytes(Source);
+    if (!SourceBytes || (E.Kind == ExprKind::BitCast && Bytes != SourceBytes))
+      return std::nullopt;
+    if (const auto Value = constAddress(Source)) {
+      const bool Signed = E.Kind == ExprKind::UnaryOp
+                              ? E.Op == NdOp::INT_SEXT
+                              : E.Kind == ExprKind::Cast &&
+                                    Source.Type->Kind == NdTypeKind::Int &&
+                                    Source.Type->IsSigned;
+      const llvm::APInt Bits(SourceBytes * 8, *Value);
+      return (Signed ? Bits.sextOrTrunc(Bytes * 8)
+                     : Bits.zextOrTrunc(Bytes * 8))
+          .getZExtValue();
+    }
+    return std::nullopt;
+  }
+  if (Bytes && E.Kind == ExprKind::BinOp && E.Op == NdOp::SUBBYTES &&
+      E.Operands.size() == 2 && E.Operands[0] && E.Operands[1] &&
+      E.Operands[1]->Kind == ExprKind::Const) {
+    const auto SourceBytes = ScalarBytes(*E.Operands[0]);
+    const auto Offset = E.Operands[1]->ConstVal;
+    if (!SourceBytes || Offset >= SourceBytes || Bytes > SourceBytes - Offset)
+      return std::nullopt;
+    if (const auto Value = constAddress(*E.Operands[0]))
+      return llvm::APInt(SourceBytes * 8, *Value)
+          .lshr(Offset * 8)
+          .zextOrTrunc(Bytes * 8)
+          .getZExtValue();
+    return std::nullopt;
+  }
+  if (Bytes && E.Kind == ExprKind::BinOp && E.Type->Kind == NdTypeKind::Int &&
+      E.Operands.size() == 2 &&
+      (E.Op == NdOp::INT_ADD || E.Op == NdOp::INT_SUB)) {
+    const auto Left = constAddress(*E.Operands[0]);
+    const auto Right = constAddress(*E.Operands[1]);
     if (Left && Right) {
-      uint64_t Value =
-          Cur->Op == NdOp::INT_ADD ? *Left + *Right : *Left - *Right;
-      if (Cur->Type->Size < 8)
-        Value &= (uint64_t(1) << (Cur->Type->Size * 8)) - 1;
-      return Value;
+      const llvm::APInt L(Bytes * 8, *Left), R(Bytes * 8, *Right);
+      return (E.Op == NdOp::INT_ADD ? L + R : L - R).getZExtValue();
     }
   }
   return std::nullopt;

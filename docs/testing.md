@@ -543,6 +543,35 @@ legacy PC signing and absolute state CFI, including DWARF fallback binding.
 The tests execute no fixture code. Missing Apple arm64e tools are explicit
 skips; after the baseline toolchain probe passes, fixture failures fail the test.
 
+`NeverDAArch64ReturnProtectionTests` also verifies compiler-owned LLVM frames
+and LLVMC policy retention. ELF A/B and arm64e Mach-O B objects must contain
+the expected PAC/return words and CFI signing transitions at their actual
+instruction offsets, with the appropriate explicit or implicit key. Malformed
+or unsupported source policies reject before output.
+`Arm64eCannotInventAnAKeyUnwindConvention` checks explicit/default A keys and
+leaf/non-leaf scope at both object and rewrite entry points; each fails clearly
+instead of emitting an arm64e CIE with the wrong implicit key. These are
+object/metadata checks, not native Darwin signed exception unwinding.
+
+`NeverDAArch64AuthenticatedCallTests` checks private call pairing, both keys,
+zero/dynamic discriminators, one/ten integer arguments, old LR operands,
+observable/memory/dead-call counterexamples and malformed LLVM bundles.
+Recompiled HighC/LLVMC at O0/O2 must preserve the complete key/discriminator
+composition; a legitimate intermediate `ptrauth.resign` is checked rather
+than mistaken for an arbitrary IA/0 call. Both sources also compile through
+the configured LLVM backend to ELF. Set
+`NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR` to retain the nine sample groups and all
+five object routes. Compiler IR identifiers are normalized for reproducible
+exports. The compiler checks do not prove that the host enables instruction
+authentication. The controlled model evidence distinguishes correct integer
+calling/rejection behavior from the C O0 diagnostic-syndrome differences;
+neither establishes the complete Apple image, FP/aggregate/variadic call or
+native signed-unwind ABI.
+The [2026-10-28 call/return receipt](evidence/arm64e-call-and-return-abi-2026-10-28.json)
+binds the actual model inputs and all 116 current export hashes to their source
+revisions. It records the complete rebuilt test inventory, separate X64 compiler
+control, original timeout failures and unchanged-limit serial repeats.
+
 `NeverDLanguageEHTests` checks the unified signing query's image/function
 provenance, exact PCs, source scopes and bounded CIE lookup.
 `NeverDUnwindFrameCAPITests` loads independent Mach-O fixtures through the
@@ -908,7 +937,10 @@ APX atomic qualification uses `NeverDX86APXAtomicSemanticTests` and
 condition, flag and failure-commit checks, including explicit preservation of
 64-bit default-stack provenance and refusal of malformed address controls.
 The latter validates MedIR, native LLVM, owned assembly and both C routes;
-it exports 480 live/dead/repeated wrappers and 588 decoded pipeline cases when `NEVERD_APX_ATOMIC_EXPORT_DIR` is set.
+unknown targets must refuse through the shared native plan in both LLVM and
+HighC, while representation-neutral shape readers retain their unknown-target
+contract. It exports 480 live/dead/repeated wrappers and 588 decoded pipeline
+cases when `NEVERD_APX_ATOMIC_EXPORT_DIR` is set.
 `scripts/verify_x86_apx_atomic.py` takes those exports, the full fork's `llc`,
 NeverC and its independent `tests/verify-apx-atomic-completion.py` oracle.
 It checks production objects and LLVM/Clang/NeverC/GCC wrappers across supported
@@ -937,12 +969,41 @@ an otherwise parseable object, retaining the caller's diagnostic handler.
 the legacy RAO/VEX CMPccXADD inventory. Set `NEVERD_LEGACY_ATOMIC_EXPORT_DIR`
 and pass `--legacy` to `verify_x86_apx_atomic.py` for the x86-64 wrappers and
 588 decoded pipeline cases. Its i386 fixtures add 112 wrappers per format
-and 144 decoded pipelines. `scripts/verify_x86_legacy_atomic_i386.py` checks
+and 288 decoded pipelines, including CS/ES/SS.
+`scripts/verify_x86_legacy_atomic_i386.py` checks
 their production/LLVM objects and Clang C output at O0/O2, including 16-bit
 effective addressing, all explicit segment controls, aliased ordinary
 memory, repeated transactions, cdecl preservation and returned flags.
 Its Mach-O test loader retains literal-pool layout and validates local
 section-difference relocation pairs before controlled execution.
+
+`NeverDX86AtomicSegmentTests` covers all four i386 legacy RAO operations,
+addr16/addr32 wrapping, implicit SS, explicit segment overrides and all three
+decoder routes under strict/permissive lifting. Malformed control/mode/address-
+space combinations refuse. With otherwise known inputs and mapped memory,
+concrete CS/ES/SS access refuses before reading or storing. The shared native
+segment fixture compiles 360 LLVM/HighC/LLVMC objects across ELF/COFF/Mach-O
+and default/NoOpt pipelines, keeping raw segment offsets beside an ordinary DS
+object with the same numeric address. Absolute displacements and constants
+transported through EAX must both stay numeric; the compact and four-source
+segment fixtures retain matching register-transport cases. The constant EAX
+cases also read the ordinary DS object through that same register. Run
+`scripts/verify_x86_atomic_segments.py --exports DIR --keep CHECKS --neverc NEVERC` after setting
+`NEVERD_ISA_REGRESSION_ARTIFACT_DIR` to verify exported C operand transport
+with Clang ASan/UBSan and NeverC. These x64 recorder runs do not qualify an i386
+NeverC ABI or descriptor faults. Pair this target with the APX semantic/source,
+legacy source and compact/four-source segment targets.
+
+`NeverDHighCIntegerWidthTests` runs the integer projection suite independently.
+`SegmentOffsetsPreserveIntegerExtensions` sets a Linux x64 subprocess's GS base
+so a specified 16/32-bit signed/unsigned parameter, after zero/sign extension,
+must address one known volatile word. Constant operands, wrapping addition,
+low-byte extraction and narrowing casts retain the same value contract. Twenty
+generated ordinary GS loads execute at O0/O2, for 40 comparisons; this catches
+a stripped extension even when an i386 pointer cast would hide the error on a
+32-bit host. The two PIE executables use a static word with canonical-address
+headroom independently of stack ASLR. The hardware GS test skips explicitly on
+other platforms. The suite also retains the overlapping image-backing regression.
 
 The atomic semantic suite checks legacy/VEX raw-detail disagreement,
 address wrapping, every CMPccXADD condition and unknown-input refusal.
@@ -4711,7 +4772,13 @@ checks that an AArch64 enumerator names only a decoded immediate and keeps its
 `#` in `display_op_str`; `OperandEnumsNameWholeARMVectorImmediates` that a
 `vmov.i64` immediate keeps all 64 bits. `armOperandsCountAsTheWorkerDoes`
 checks that the listing's operand under the cursor is the worker's across
-braces and brackets.
+braces and brackets. `NeverDWorkerFormat` also counts SBF immediates in their
+operation's width, keeps a call target and a byte swap's width as they are,
+and formats EVM PUSH data in its own width up to 256 bits;
+`SBFIntegrationTest.OperandEnumsNameImmediatesInTheirWidth` and
+`EVMIntegrationTest.OperandEnumsNamePushDataOfAtMost64Bits` check the SDK's
+admission and `display_op_str`, and `NeverDWorkerDataPresentation` shows the
+formats, an SBF structure offset and its picker access in the listing.
 
 `NeverDWorkerImmediatesRegister` checks decoded immediate search and register
 queries through the real SDK/worker and, when available, CLI. It covers search
@@ -4760,6 +4827,9 @@ JSON on a generated DLL, including embedded chain rows, borrowed v1 records,
 early-stop cursors and invalid callback admission. It also checks that a
 bounded entry's direct forwarder can refer to an unlisted destination without
 registering that destination or resurrecting a deleted function identity.
+`pluginsdk/python/tests/test_metadata_integration.py` reuses the generated DLL
+through the official `HostAPI` declarations, checking owned text and hashes,
+borrowed ctypes fields, complete paginated rows and early-stop cursors.
 The PE listing fixture checks `complete_anchor_item` with a one-line budget:
 the first reply includes the actual selected instruction and its header.
 After changing viewport demand, run the GUI controller's
@@ -6531,6 +6601,28 @@ The same target compares static scalar, pointer, array and packed-record alignme
 
 ## Offline web analysis
 
+`WebBunProjectSource.*` checks parser-confirmed module literal relocation and
+unchanged syntax, unsupported requests and unresolved runtime paths.
+`WebBunProjectRequire.*` checks exact imported require aliases against the
+shared lexical/module owners, including writes, shadows, optional/spread
+calls, dynamic scope, source changes and private proof construction.
+`WebBunProject.*` checks fixed filenames, preserved source/asset bytes, shared
+text decoding, exclusive output, aggregate record/string budgets and complete
+diagnostic/readable-source accounting. `WebLargeSource` checks that module
+inventory uses the same explicit Large work profile as bindings/navigation;
+Recovery models remain rejected. The optional development target
+`neverd-web-bun-project` exports a reconstruction candidate from one admitted
+Bun executable; it does not build or run it. Build and isolated runtime
+receipts are separate acceptance evidence, never implied by an export passing.
+
+`WebBunSemanticIndex.*` checks private names and source coordinates, shared
+module/feature evidence, rejection of comment/substring false matches, exact
+UTF-16 names, bounded partial refusals and read-back-bound navigation output.
+The optional `neverd-web-bun-semantic-index` development driver takes an admitted
+Bun executable and a new output directory. Its inferred role labels and
+captured-name links do not establish runtime API identity or original project
+structure; no target code is executed.
+
 `WebWindowsHost.*` qualifies native Windows x64 local NTFS capture, junction
 and alternate-stream refusal, replacement, Unicode identity, private unlinked
 spools, concurrent range reads and export/rollback ownership. The required
@@ -6550,6 +6642,11 @@ one-row pages, source anchors, stored/deflate ZIP composition, explicit gzip,
 failed-publication atomicity, cache limits, revocation and exclusive export.
 CLI cases use an unusable external-tool PATH; worker/MCP compare the shared API
 and reject raw-export/execution options. See [resource profiles](web-datapack-profile.md).
+The DataPack CLI check uses the advertised archive capability when ICU is
+omitted: direct packs remain available, while ZIP-wrapped selections must
+return `package_archive_path_policy_unavailable` before source analysis.
+Each command has separate redirect files so a shorter refusal cannot retain
+trailing bytes from a previous successful command.
 
 Select the fixed real inputs without running the applications:
 
@@ -6910,6 +7007,10 @@ all admitted units must complete the inventory. See the
 [file navigation profile](web-configuration-file-profile.md).
 `WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
 recovery without raising interactive budgets and invalid-source refusal.
+The private `neverd-web-source-model` evidence fixture accepts a final
+`export-budget-mib` argument from 1 through 1024 (default 256). This bounds
+serialized-model accounting only; parser and binding limits stay unchanged.
+Invalid budgets and exhausted exports refuse before creating an output directory.
 `WebReadableExportSDK.*` checks immutable input deletion, exact original and
 readable hashes, explicit source goals, invalid syntax/encoding without fake
 source, stale/unknown/oversize refusal before writes, 9 MiB chunked selection,
@@ -7416,6 +7517,43 @@ formula at `-O0` and `-O2`, preserving the high-bit remainder and toggle/cache
 isolation.
 
 ## Modular MBA simplification
+
+`SymExpr.ScaledUnsignedProductSlicesUseOnlyTheirRequiredWidth` and
+`ScaledProductWindowsCoverEveryBytePairAndWideCarriers` check non-low windows
+of unsigned products through 257-bit operands. Zero-extended factors use their
+complete narrow product, preserving carries below the selected window. An inner
+power-of-two coefficient moves outside its extension only when its original
+width cannot wrap. Exhaustive byte pairs and independent integer/APInt oracles
+cover the resulting slices and zero-filled upper windows.
+`ProductWindowsKeepCoefficientsCarriesAndMultipleFactors` and
+`ProductWindowKeepsInnerOverflowAndSignedHighBits` retain wrapping inner
+products, signed high bits, non-power-of-two coefficients, windows below the
+combined shift and multiple factors. These constructor rules need no solver,
+sample-specific assumptions or new pass.
+
+`SymExpr.ZeroExtendedUnsignedRemaindersUseTheirNarrowOperands` checks
+zero-extended unsigned remainder operands at equal and different widths through
+257 bits. The remainder is computed at their common narrow width and then
+extended, including the total bitvector case `x % 0 = x`. Exhaustive byte pairs
+and independent APInt oracles cover zero divisors and wide carriers. Negative
+controls retain unknown numerator/divisor high bits and the original-width
+all-ones result of unsigned division by zero.
+
+`SymMBAMaskRelation.*OrMaskSubtraction*` and
+`SubtractsAnEntireKnownOrMaskWithoutBorrow` check the exact modular identity
+`(C | X) - C = X & ~C`, including absorption by an enclosing OR. The ordinary
+MBA matcher handles both the standalone sum and nested occurrences within its
+existing work and table-storage limits. Tests cover every byte input and mask,
+nearby unequal subtraction literals, multiple independent OR operands and
+arbitrary-precision masks through 257 bits. Quality checks disable sampled
+verification and use independent integer/APInt oracles; exhausted work retains
+the original semantics.
+
+The MBA source execution fixtures use `neverd::test::executableSuffix()` for
+their recompiled host programs. This keeps Clang's output path and the executed
+path identical on Windows while retaining extensionless POSIX programs. The
+relocation-mode, Thumb-only, explicit mixed-mode and native five-input families
+cover this path through both C routes at O0/O2.
 
 `SymSimplifyFinite.*` covers complete two-valued slices at widths from 8 to 512 bits, shared-use profitability, every supported poison-generating annotation, independent volatile reads and freezes, explicit undef/poison, deep iterative traversal, budgets and the obfuscation stamp. Original and simplified IR execute against an independent oracle over every byte input and randomized full-width inputs at O0/O2. Translation-object tests require distinct cache identities for distinct finite-value budgets.
 
@@ -9793,6 +9931,8 @@ targets, ordinary alias invalidation and atomic malformed-knowledge refusal.
 The exploration test consumes a retained memory target to discover a successor.
 Run `NeverDSymMemoryKnowledgeTests` with the two execution targets when changing
 this boundary, so the underlying rebind and overlap validator is also checked.
+
+`NeverDSymbolicCallEffectTests` also checks that providers receive pre-call conditions from both branch arms, earlier call effects and repeated invocations, and the complete disjunction after path merging. A contradictory effect stops subsequent operations and provider calls. These are solver-free exploration regressions, not validation of any external API contract.
 
 For optional independent bitvector oracles, configure `NEVERD_ENABLE_Z3=ON`
 and run `NeverDSolverTests`; see [solver validation](solver.md) for the
@@ -15336,7 +15476,10 @@ services and ART loading are not covered.
 in `NeverDBytePatchTests`. The real SDK cases in
 `test_byte_patch_integration.py` check empty/unloaded snapshots, all byte values,
 high addresses, split runs, JSON parity, and ownership across edits, reloads and
-session destruction. They also rewrite and truncate a large input after an edit,
+session destruction. Metadata-only range snapshots also cover repeated queries,
+complete inventories and reverse virtual-address mappings in file-offset order;
+C and ctypes checks fix their pointer signatures, field offsets and strides.
+They also rewrite and truncate a large input after an edit,
 then check that exports retain the session's original bytes plus its overlay.
 The worker mock intentionally omits snapshot exports to
 exercise JSON fallback; run the native patch suite with both current and older

@@ -256,11 +256,10 @@ SymRef foldObservedWindow(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
       return Root;
     auto Window =
         Ctx.mkMul(Ctx.mkConst(Mask), Ctx.mkZExt(Part, Ctx.width(Root)));
-    // A flattened mask has no single source word. Its window is useful only
-    // when it drops lanes; otherwise it spells every input again as an extract.
-    if (Ctx.numOperands(Root) > 2 && !doesNotGrow(Ctx, Window, Root))
-      return Root;
-    return Window;
+    // A window is useful only when it drops lanes. A longer one spells every
+    // input again as an extract and hides the mask from the exact known-bits
+    // fold that follows: 8192 & (4*q + p) is zero, but its window is not.
+    return doesNotGrow(Ctx, Window, Root) ? Window : Root;
   }
   // A shifted low mask is also an explicit observed window. Keep ordinary
   // masked arithmetic in its original region: narrowing every internal mask
@@ -974,8 +973,19 @@ SymRef foldComplementaryAdd(SymContext &Ctx, SymRef R) {
       return R;
     }
   }
-  if (!A.isValid() || !B.isValid())
+  if (!A.isValid())
     return R;
+  if (!B.isValid()) {
+    if (Ctx.op(A) != SymOp::Or || !Ctx.isConst(Ctx.operand(A, 0)))
+      return R;
+    const auto Mask = Ctx.constValue(Ctx.operand(A, 0));
+    if (Offset != -Mask)
+      return R;
+    // Every bit in Mask is already set, so subtracting it cannot borrow.
+    // Keep the other OR operands intact and clear exactly those known bits.
+    llvm::SmallVector<SymRef, 8> Rest(Ctx.operands(A).drop_front());
+    return Ctx.mkAnd(Ctx.mkConst(~Mask), Ctx.mkOr(Rest));
+  }
   if (isBitwiseComplement(Ctx, A, B))
     return Ctx.mkConst(Offset - llvm::APInt(Ctx.width(R), 1));
   SymRef Partitioned = foldPartitionedMaskSum(Ctx, A, B, Offset);
@@ -1006,9 +1016,14 @@ SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
       return E;
     }
   }
-  if (!A.isValid() || !B.isValid())
+  if (!A.isValid())
     return E;
-  const SymOp AOp = Ctx.op(A), BOp = Ctx.op(B);
+  const SymOp AOp = Ctx.op(A);
+  const bool LiteralOr =
+      !B.isValid() && AOp == SymOp::Or && Ctx.isConst(Ctx.operand(A, 0));
+  if (!B.isValid() && !LiteralOr)
+    return E;
+  const SymOp BOp = B.isValid() ? Ctx.op(B) : SymOp::Const;
   const bool BitwiseTypes = (AOp == SymOp::Xor && BOp == SymOp::Xor) ||
                             (AOp == SymOp::Or && BOp == SymOp::And) ||
                             (AOp == SymOp::And && BOp == SymOp::Or);
@@ -1049,11 +1064,11 @@ SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
       }
     }
   }
-  if (!isDirectComplement(Ctx, A, B) && !BitwisePair && !SharedPartition &&
-      !MaskedDifferencePair)
+  if (!(B.isValid() && isDirectComplement(Ctx, A, B)) && !BitwisePair &&
+      !SharedPartition && !MaskedDifferencePair && !LiteralOr)
     return E;
 
-  // The pair is a plausible complement. Bound the linear matcher and its
+  // This is a possible complement or literal-mask difference. Bound its
   // scratch before considering it, including on the deep walk's first visit.
   const size_t Nodes = Ctx.dagSize(E);
   if (Nodes > Opts.MaxTableBytes / 64 ||
