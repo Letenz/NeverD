@@ -11293,6 +11293,12 @@ unchanged readers, feature gates and attempt order. MIPS register-list
 metadata maps expanded operands back to the list, base and displacement
 descriptors; signed MicroMIPS offsets are scaled without negative shifts.
 
+For x86 text and detail, immediate-size metadata is generated directly from
+the original rows into an opcode-indexed table. Full and reduced builds use
+their own instruction numbering; absent IDs retain zero operand and encoded
+sizes. The generator freshness check and exhaustive metadata test cover both
+numberings without changing instruction decoding or legality.
+
 The shared assembly stream combines terminator detection with bounded token
 copying. Sources that may alias the stream retain length-first copying, with
 unchanged truncation, markup and closed-stream behavior.
