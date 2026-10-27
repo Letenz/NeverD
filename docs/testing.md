@@ -14013,7 +14013,12 @@ MSVC's nested -O0 levels with empty arms, and
 `HighCLeftOutTryTailKeepsTheLabelAJumpLandsOn` keeps the label that switch
 cases leave a try body for. `HighCSEHFilterIsNamedAsTheFunctionListNamesIt`
 names a filter by its function symbol over a `.text` section symbol, and by
-an export. `StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
+an export. `HighCSEHHandlerArmReadsItsOwnSecondArgument` covers the xcpt4
+termination handler that guards its own `__try`: its second argument, the
+parent's establisher frame, keeps its name in the `__except` arm. A setjmp
+provider executes the HighC output at O0/O2, and both paths must reach the
+parent's slot; an attached C++ catch body still names the printed function's
+`var_m8`. `StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
 `unittests/loader/fixtures/mingw_sections.exe` (its Makefile rebuilds it with
 MinGW-w64 GCC): GNU ld's section symbols stay as bounds that name nothing, its
 `.file` record is dropped, and a static function's own record names it.

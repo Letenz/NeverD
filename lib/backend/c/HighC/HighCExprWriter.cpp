@@ -8336,8 +8336,13 @@ bool HighCWriter::isCatchFuncletParentFrame(const MedVar &V) const {
   if (V.Kind != MedVar::Param || V.Id != 1)
     return false;
   // Inside a catch body, rdx is always the establisher frame, even when the
-  // parent also has an rdx argument.
-  if (InEHClauseBody)
+  // parent also has an rdx argument. attachCxxFuncletBodies puts such a body
+  // only in a C++ try. A function with an SEH scope table has none: its clause
+  // bodies are its own code, where Param 1 is its own second argument. A
+  // termination handler's is its parent's frame, not one this function has.
+  const bool OwnClauseBodies =
+      CurrentFunc->ExceptionMetadata && CurrentFunc->ExceptionMetadata->SEH;
+  if (InEHClauseBody && !OwnClauseBodies)
     return true;
   // Whole-function walks (local decls) do not set InEHClauseBody. A Param 1
   // the parent does not own is the attached funclet frame pointer.

@@ -12371,6 +12371,14 @@ Synchronous catches sample their retained throwing calls, so nonvolatile values
 come from the actual call rather than a neighbouring reindexed block. Missing
 source effects or throwing calls fail the conversion explicitly.
 
+An x64 SEH handler root gives each nonvolatile register the one SSA version it
+has on entry to every protected block when no protected operation writes it,
+and an unknown value otherwise (`MedSSA`). A termination handler's `__except`
+arm thus keeps the RBP its prologue copied from RDX. HighC rebases `rdx + k`
+into the printed function's frame only in a clause body of a function without
+an SEH scope table, where `attachCxxFuncletBodies` places catch and cleanup
+funclets; an SEH function's clause bodies are its own code.
+
 Ordinary internal returns preserve both the callee PC and the parent entry PC. The same reaching-write proof checks both coordinates; writes into known allocated parent storage remain allowed.
 
 The LLVM emitter reuses completed default-budget frame-slot queries only within the current immutable MedFunc. Entry-SP requirements and complete value identity partition the answers. A bound query keeps its own default budget, so its answer is reused only for the same bindings in the same order. A shared-budget walk reads the budget only to stop, and fails once the budget is spent: a walk that needs N nodes repeats under any budget of at least N and runs out, spending all of it, under a smaller one. Complete walks replay with their answer, nodes and cache hits; a walk that ran out records only that it needs more than its budget, and replays its running out for any budget no larger. The answer and the remaining budget are always those of a fresh walk; a replayed run-out does not reproduce the cache-hit counter. Feasible-edge rebuilds and module emission clear all three caches, and a query spanning a rebuild cannot publish its result.
