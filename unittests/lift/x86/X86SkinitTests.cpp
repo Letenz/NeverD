@@ -378,7 +378,7 @@ TEST_F(X86SkinitSource, PhysicalInputAndTerminalCFGSurviveEveryOutputRoute) {
           retain(
               "profile.json",
               llvm::formatv(
-                  "{{\"arch\":{0},\"format\":{1},\"kind\":{2},\"no_opt\":{3}}}",
+                  "{{\"arch\":{0},\"format\":{1},\"kind\":{2},\"no_opt\":{3}}",
                   unsigned(A), unsigned(Format), Kind, NoOpt)
                   .str());
           for (unsigned Route = 0; Route < 3; ++Route) {
