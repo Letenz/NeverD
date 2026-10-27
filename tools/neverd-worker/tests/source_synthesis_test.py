@@ -414,6 +414,12 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
             if not kind.endswith("neighbor"):
                 assert code.count("*") <= 3, text
+        elif kind.startswith("carry-product-partial-"):
+            # Partial blocks keep complete unpaired words. Their original
+            # degree-N product has two multiplications per factor; require
+            # less than half that chain, then execute its full-word oracle.
+            code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
+            assert code.count("*") < int(kind.rsplit("-", 1)[1]), text
         elif kind.startswith("carry-product-"):
             # Keep the proved bit selectors, including higher-bit shifts,
             # while eliminating the original long multiplication chain.
