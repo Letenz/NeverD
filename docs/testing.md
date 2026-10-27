@@ -7152,6 +7152,16 @@ these unit tests do not establish source identity for a matching body.
 
 `PEFunctionAddresses.*` checks stackless x64 PE leaves, ownership and instruction boundaries, rejected prefixes and narrower operands, callable exits, cancellation and identical results with 1/2/4/16 workers. Signature tests cover all 16 conditional rel32 forms in both directions, explicit entry scope and source relocation constraints. Python supplement tests require each single-site clause to distinguish every raw counterclaim, preserving alternatives and jointly necessary sites without duplicating existing claims.
 
+`SignatureCodeLayoutContext.*` checks complete nonsplittable source layouts,
+independent ordinary roots, unchanged name admission, shared zero-filled data,
+requested entries, input order, contradictions, operand/owner failures and
+transactional reapplication. `CodeLayoutEvidence.*` verifies native source
+coordinates and explicit refusal of COMDAT, mutable, unsupported, overlapping
+or conflicting source ownership. Cache tests validate the same structural
+contract after mapping. `python3 -m unittest scripts.tests.test_code_layout_selection`
+checks separate nominal counterclaims, exact deduplication, source coordinates
+and output preservation after native verification failure.
+
 `PatternGeneratorCOFF.*` checks aliases at one source address, equal bytes at
 different addresses, recursion through aliases, canonical indirect import
 relocations, and unsupported prefixed/truncated forms. `SignatureDBReferences.*`
