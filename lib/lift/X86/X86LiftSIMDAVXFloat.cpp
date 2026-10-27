@@ -2523,7 +2523,9 @@ bool liftSIMDAVXFloat(X86Lifter &L, X86Lifter::LiftState &S,
         return false;
       Mask = NdVar::reg(Info.Offset, MaskSize);
     }
-    if (!x86NativeSibAddressIsValid(L.targetArch(), X86, Memory))
+    const auto Segment =
+        x86NativeI386Segment(L.targetArch(), Encoding.SegmentPrefix, Memory);
+    if (!Segment && !x86NativeSibAddressIsValid(L.targetArch(), X86, Memory))
       return false;
     const auto Kind = Scalar ? (Negative ? X86FourSourceKind::FNMAddSS
                                          : X86FourSourceKind::FMAddSS)
@@ -2533,18 +2535,19 @@ bool liftSIMDAVXFloat(X86Lifter &L, X86Lifter::LiftState &S,
     const bool Stack = x86NativeAddressIsStack(L.targetArch(), X86, Memory);
     const X86FourSourceControl C{Kind, Zero, Stack};
     const auto Sources = x86FourSourceSnapshot(S, GroupBase, C);
-    const uint8_t Control = static_cast<uint8_t>(
-        static_cast<unsigned>(Kind) | (Zero ? X86FourSourceZero : 0) |
-        (Stack ? X86FourSourceStackReference : 0));
+    const unsigned Control = static_cast<unsigned>(Kind) |
+                             (Zero ? X86FourSourceZero : 0) |
+                             (Stack ? X86FourSourceStackReference : 0) |
+                             (Segment << X86FourSourceSegmentShift);
     const NdVar OldDestination = L.operandRead(S, Destination);
     const NdVar ArchitecturalOut = L.operandWrite(Destination);
     const NdVar Out = Scalar ? S.makeTemp(16) : ArchitecturalOut;
-    const NdVar Address = S.computeEA(Memory);
-    S.emitIntrinsic(
-        Intrinsic::X86FourSourceMemory, Out,
-        {Address, OldDestination, Sources, Mask, NdVar::cst(Control, 1)},
-        NdMemoryOrdering::None,
-        X86Lifter::LiftState::memoryAddressSpace(Memory));
+    const NdVar Address = S.computeEA(Memory, true, Segment != 0);
+    S.emitIntrinsic(Intrinsic::X86FourSourceMemory, Out,
+                    {Address, OldDestination, Sources, Mask,
+                     NdVar::cst(Control, Segment ? 2 : 1)},
+                    NdMemoryOrdering::None,
+                    X86Lifter::LiftState::memoryAddressSpace(Memory));
     if (Scalar) {
       NdVar Full = S.makeTemp(64);
       S.emit(NdOp::CONCAT, Full, {NdVar::cst(0, 48), Out});

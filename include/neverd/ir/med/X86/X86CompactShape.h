@@ -47,16 +47,5 @@ inline X86CompactShape x86CompactMedShape(const MedOp &Op,
   return S;
 }
 
-/// Type inference must not turn an i386 segment offset into a process pointer.
-inline bool x86CompactMedHasSegmentOffset(const MedOp &Op) {
-  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs != 5 ||
-      Op.Inputs.size() < 5 || !Op.Inputs[0].isConst() ||
-      !Op.Inputs[4].isConst())
-    return false;
-  const auto C = x86CompactControl(Intrinsic(Op.Inputs[0].ConstVal),
-                                   Op.Inputs[4].ConstVal);
-  return C && C->SegmentPrefix;
-}
-
 } // namespace neverd
 #endif // NEVERD_IR_MED_X86_X86COMPACTSHAPE_H

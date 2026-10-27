@@ -27,6 +27,7 @@ enum class X86FourSourceKind : uint8_t {
 inline constexpr unsigned X86FourSourceCount = 4;
 inline constexpr unsigned X86FourSourceZero = 0x80;
 inline constexpr unsigned X86FourSourceStackReference = 0x20;
+inline constexpr unsigned X86FourSourceSegmentShift = 8;
 inline constexpr const char *X86FourSourceMalformed =
     "invalid x86 four-source memory contract";
 
@@ -34,6 +35,7 @@ struct X86FourSourceControl {
   X86FourSourceKind Kind;
   bool Zero;
   bool StackReference = false;
+  unsigned SegmentPrefix = 0;
   constexpr bool scalar() const {
     return Kind == X86FourSourceKind::FMAddSS ||
            Kind == X86FourSourceKind::FNMAddSS;
@@ -53,13 +55,17 @@ struct X86FourSourceControl {
   }
 };
 constexpr std::optional<X86FourSourceControl> x86FourSourceControl(uint64_t C) {
-  const auto Kind =
-      C & ~uint64_t(X86FourSourceZero | X86FourSourceStackReference);
-  if (Kind > static_cast<unsigned>(X86FourSourceKind::DPWSSDS))
+  const unsigned Segment = C >> X86FourSourceSegmentShift;
+  const auto Kind = (C & UINT8_MAX) &
+                    ~uint64_t(X86FourSourceZero | X86FourSourceStackReference);
+  if (C > UINT16_MAX ||
+      (Segment && Segment != 0x26 && Segment != 0x2e && Segment != 0x36) ||
+      (Segment && (C & X86FourSourceStackReference)) ||
+      Kind > static_cast<unsigned>(X86FourSourceKind::DPWSSDS))
     return {};
   return X86FourSourceControl{static_cast<X86FourSourceKind>(Kind),
                               bool(C & X86FourSourceZero),
-                              bool(C & X86FourSourceStackReference)};
+                              bool(C & X86FourSourceStackReference), Segment};
 }
 struct X86FourSourceOperandUse {
   uint64_t LaneMask;
@@ -97,13 +103,17 @@ constexpr bool x86FourSourceShapeIsValid(const X86FourSourceShape &S) {
       !S.WritableOutput)
     return false;
   const auto C = *x86FourSourceControl(*S.Control);
+  if (C.SegmentPrefix &&
+      ((S.TargetArch != Arch::Unknown && S.TargetArch != Arch::X86) ||
+       S.MemoryAddressSpace != NdMemoryAddressSpace::Default))
+    return false;
   if (C.StackReference &&
       (S.TargetArch == Arch::X86 ||
        S.MemoryAddressSpace != NdMemoryAddressSpace::Default))
     return false;
   if (S.OutputSize != C.bytes() || S.Sizes[0] != 8 || S.Sizes[1] != C.bytes() ||
       S.Sizes[2] != X86FourSourceCount * C.sourceBytes() ||
-      S.Sizes[3] != C.maskBytes() || S.Sizes[4] != 1)
+      S.Sizes[3] != C.maskBytes() || S.Sizes[4] != (C.SegmentPrefix ? 2u : 1u))
     return false;
   for (bool Scalar : S.Scalars)
     if (!Scalar)

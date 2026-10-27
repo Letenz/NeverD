@@ -24,11 +24,7 @@ llvm::Value *MedLLVMEmitter::emitX86FourSource(const MedOp &Op,
       !x86FourSourceShapeIsValid(S))
     throw std::invalid_argument(X86FourSourceMalformed);
   const auto C = *x86FourSourceControl(*S.Control);
-  const unsigned Prefix =
-      (S.MemoryAddressSpace == NdMemoryAddressSpace::X86FS   ? 0x64
-       : S.MemoryAddressSpace == NdMemoryAddressSpace::X86GS ? 0x65
-                                                             : 0) |
-      (C.StackReference ? X86NativeStackReference : 0);
+  const unsigned Prefix = x86FourSourceNativePrefix(C, S.MemoryAddressSpace);
   const auto P =
       *x86FourSourcePlan(static_cast<unsigned>(C.Kind), C.Zero, Prefix);
   auto *F = B.GetInsertBlock()->getParent();
@@ -37,10 +33,16 @@ llvm::Value *MedLLVMEmitter::emitX86FourSource(const MedOp &Op,
     Features += (Features.empty() ? "+" : ",+") + Name;
   F->addFnAttr("target-features", Features);
   const auto Use = x86FourSourceOperandUse(C, traceSSAConst(Op.Inputs[4]));
-  llvm::Value *Address =
-      Use.Address ? resolveAtomicMemoryPtr(Op.Inputs[1], 1, B.getInt8Ty(), B,
-                                           S.MemoryAddressSpace)
-                  : llvm::ConstantPointerNull::get(B.getPtrTy());
+  llvm::Value *Address = llvm::ConstantPointerNull::get(B.getPtrTy());
+  if (Use.Address) {
+    if (C.SegmentPrefix) {
+      auto *Offset = B.CreateZExtOrTrunc(getRawSegmentOffset(Op.Inputs[1], B),
+                                         B.getInt32Ty());
+      Address = B.CreateIntToPtr(Offset, B.getPtrTy());
+    } else
+      Address = resolveAtomicMemoryPtr(Op.Inputs[1], 1, B.getInt8Ty(), B,
+                                       S.MemoryAddressSpace);
+  }
   if (Address->getType()->getPointerAddressSpace()) {
     auto *Word = B.getIntNTy(TargetArch == Arch::X64 ? 64 : 32);
     Address = B.CreateIntToPtr(B.CreatePtrToInt(Address, Word), B.getPtrTy());

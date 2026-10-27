@@ -779,6 +779,12 @@ add_neverd_unittest(NeverDX86FourSourceSourceTests
   x86/X86FourSourceSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 
+add_neverd_unittest(NeverDX86FourSourceSegmentTests
+  x86/X86FourSourceSegmentTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86FourSourceSegmentTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
 add_neverd_unittest(NeverDX86APXAtomicSourceTests
   x86/X86APXAtomicSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
