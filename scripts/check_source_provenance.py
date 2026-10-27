@@ -415,6 +415,25 @@ class HistoryAllowance:
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
+        path="docs/evidence/x86-atomic-segments-2026-10-27.json",
+        rule="private-path",
+        commits=frozenset({
+            "b961f875158f1ab303339ca0cad08ac8300a3085",
+            "038d6dea6ba70c4485a91a51dff2accd1c0c8dd3",
+        }),
+        line="",
+        reason=(
+            "Reviewed removal of the local RAO verification script path in "
+            "two independently published cleanup commits. Only this exact "
+            "deleted line digest is covered; the current document identifies "
+            "the local-only oracle without a machine path. Current and future "
+            "private paths remain findings."
+        ),
+        line_sha256=frozenset({
+            "d826a809d43af9633a38c2c60bdaaa6af67f8cc9790c6bdb3d04b98a84049157",
+        }),
+    ),
+    HistoryAllowance(
         path="docs/evidence/arm64e-raw-sp-memory-2026-10-27.json",
         rule="private-path",
         commits=frozenset({
