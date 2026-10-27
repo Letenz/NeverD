@@ -15,6 +15,7 @@ relevant symbols with `rg -n`, then read the surrounding section.
 | Configure/build or change dependencies | [Build profiles](CONTRIBUTING.md#choose-a-build-profile) and [dependency refresh behavior](CONTRIBUTING.md#process-allocator) |
 | Choose tests, targets, labels, or fixtures | [Test layout](docs/testing.md#test-layout) and [incremental CTest workflow](docs/testing.md#incremental-ctest-workflow) |
 | Change C/C++ code, headers, limits, or defaults | [Code style](CONTRIBUTING.md#code-style), including header layout and policy ownership |
+| Change a hot path, container, index, parallel loop, cache or threshold; claim or review a speedup | [Performance skill](.agents/skills/neverd-performance/SKILL.md) |
 | Change CLI behavior or usage | [CLI usage](README.md#cli) |
 | Change GUI, SDK/plugins, or another subsystem | The matching guide in the [documentation index](docs/README.md) |
 | Prepare a PR, reuse external code, or update documentation | [Contributing](CONTRIBUTING.md) and [attribution](ATTRIBUTION.md) |
