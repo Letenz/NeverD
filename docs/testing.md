@@ -16145,3 +16145,16 @@ Run `NeverDSymMBAMaskRelationTests` and the broader `NeverDSymbolicTests`.
 The focused NeverDCOFFExceptionModelTests target runs exception model and decoder regressions, including unsorted duplicate directory starts, long/cyclic chains, terminal frame mismatches and addresses near the VA limit. Build it with scripts/build.py and pair its CTest label with NeverDCOFFExceptionV2Tests when changing x64 unwind directory processing.
 
 `X86LegacyAtomic.LockedArithmetic*` checks x86/x64 scalar widths, independent arithmetic flags, preserved source registers and carry, signed immediates, unaligned neighboring bytes, read-only and truncated mappings, FS/GS addresses and unlocked controls. Unsupported locked core operations cannot publish plain stores. `InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` also checks all four locked arithmetic forms through raw specialization and retains ordered-memory proof refusal.
+
+### Predicate cleanup and independent call effects
+
+`HighSourceExpressions.PredicateCleanupKeepsDistinctIndirectCallEffects`
+executes generated C at O0/O2 after HighIR conditional cleanup. A surrounding
+predicate call and an unused-result call before a nested conditional must
+retain their separate effects. Variants cover a shared display name, matching
+callee identities at different sites, missing sites, and changed targets or
+arguments at one site. Independent providers check call counts, arguments and
+both nested paths; a shared provider also verifies repeated actual invocations
+of one callee. Run `NeverDHighControlFlowTests`,
+`NeverDHighCStoreForwardingTests` and `NeverDWindowsEHSourceTests`. This is a
+HighIR structuring contract; it requires no external source interface.
