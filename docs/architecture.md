@@ -469,6 +469,11 @@ Big-endian Unicode can be annotated even when a host C literal cannot replace
 its bytes. LLVM C's source-variable inventory separately distinguishes scalar
 edit types from aggregate allocation extents; an array or record is never
 registered as an integer whose width is the whole allocation.
+Literal substitution uses the complete bounded string read window; the
+64-character presentation cap applies only to comments. Known C string
+parameters select byte strings before a generic wide-string probe, so a
+one-character string beside another literal remains readable. Relocated,
+writable or oversized storage keeps its original address expression.
 
 This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
@@ -502,6 +507,19 @@ authenticated transfer encodings, keys and emission contracts. The fast and
 Capstone classifiers, lifter, intrinsic metadata and emitters consume those
 rows. Checked emulation reuses only the unchanged disabled-key HINT subset.
 `AArch64PAuthC.def` owns the C syntax shared by both projections;
+`AArch64ReturnProtection` proves the source-only return-signing recipe: an
+entry LR signed with entry SP, matching authentication at every normal return,
+and, when saved, a private frame slot with no other consumers. HighIR records
+the key and leaf policy and omits only the proved recipe operations. HighC/C++
+express it with `target("branch-protection=pac-ret[+leaf][+b-key]")`; HighIR
+dumps and the Rust/Go views retain the policy as metadata. A different output
+architecture cannot silently drop it. Native Swift emission rejects this
+attribute until Swift has a corresponding source contract. Ordinary pointer
+authentication, observable signed values, mismatched modifiers/keys and
+incomplete recipes remain explicit. This includes Clang's arm64e tail-call
+sequence that inspects the authenticated LR and traps on failure before
+authenticating the callback pointer. LowIR, MedIR and the LLVM execution
+projection retain the original authentication operations.
 `MachOArm64e.def` owns chained format strides, pointer fields and diagnostics.
 `MachOArm64eFixups` owns the pointer-word decoder and signing-recipe publication
 shared by modern chained fixups and the original arm64e threaded bind format.
@@ -3871,8 +3889,14 @@ copies of the exception are followed through the frame (`ExceptionTrack`): to
 a slot it is spilled to, through a variable holding that slot's address, and,
 in a frame too large for an immediate offset, through a copy of the base
 clang keeps in a slot; a write that may change what such an address reads
-ends the copy. A pad that only
-cleans up, which every call site reaching it enters with no action, is such a
+ends the copy. A conditional cleanup that resumes the same exception is
+proved from the exception state at that branch's entry and ends with `throw;`.
+Its destructors and their order remain; an unrelated resume value or an
+observable use of the unwinder's state keeps the original pad explicit.
+A complete duplicated cleanup continuation can fall through to its shared
+tail; matching only its last destructor would run intervening cleanups twice.
+A pad that only cleans up, which every call site reaching it enters with no
+action, is such a
 scope around the calls of ordinary flow that its call sites cover. A call
 keeps the address of its call instruction (`HighExpr::CallSiteAddr`) when a
 tail is copied over a jump or into both arms of a branch, so the scopes hold
@@ -6548,6 +6572,14 @@ that passes a two-load target's object finds none in a register that holds the
 target. HighIR's stack scan takes no prologue save for an indirect call either
 (`isIncomingRegisterSave`, shared with recovery).
 
+Dedicated indirect-result registers are separate from ordinary parameter
+registers. MedIR dead-code elimination keeps their reaching definitions at
+calls and tails until ABI recovery binds the hidden result argument. This
+includes AArch64 X8 setup in a predecessor block. Direct calls use the callee's
+result contract; an unknown indirect call requires frame-derived result
+storage. The same reaching value decides both argument recovery and whether
+Darwin's indirect-variadic heuristic applies.
+
 A caller-saved register holds, after a call, whatever that call left in it.
 Without a proved exit value, that residue alone supplies no evidence of an
 additional source argument. `ValuesLeftByCalls`
@@ -7157,7 +7189,7 @@ finite/range/masked guards before committing a static push. LLVM and both C
 routes share authenticated assembly and atomic status sampling. This contract
 does not introduce another stack representation or qualify runtime TOP changes.
 
-For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X87Context.h` owns encoding admission and `CFGBuilderX86Fpu` owns a function-local mutable context. It carries CW, SW, runtime TOP, abridged tags and all eight raw binary80 payloads. Entry and independent roots capture incoming state; ordinary edges publish before a root recaptures. Calls and extended-state save/restore export and refresh the context, including wrappers without local x87 instructions. Entry backedges keep their existing context. LLVM, HighC and LLVMC share this contract; HighC uses named helpers and fixed aligned storage. MMX bridges physical aliases; EMMS empties tags. Concrete execution requires authenticated state and memory, refuses unknown effects, and admits implementation-dependent results only in explicit native reference mode. The static TOP/tag proofs described above remain the projection for x86-32 and for System V x64, whose long double parameters and st0 results stay typed values; `x87ContextOwnsStack` chooses the model per image and `BinaryImage::X87ContextOverride` selects either one explicitly. These x64 regressions do not certify every CPU, instruction, fault priority or source-level floating return ABI.
+For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X86/X87Context.h` owns encoding admission and `CFGBuilderX86Fpu` owns a function-local mutable context. It carries CW, SW, runtime TOP, abridged tags and all eight raw binary80 payloads. Entry and independent roots capture incoming state; ordinary edges publish before a root recaptures. Calls and extended-state save/restore export and refresh the context, including wrappers without local x87 instructions. Entry backedges keep their existing context. LLVM, HighC and LLVMC share this contract; HighC uses named helpers and fixed aligned storage. MMX bridges physical aliases; EMMS empties tags. The same selector contract admits FEMMS and marks its payload invalidation: concrete execution forgets every retained payload, while native context steps retain the original instruction. Context restore/step constraints declare both the MMX and x87 register banks. Concrete execution requires authenticated state and memory, refuses unknown effects, and admits implementation-dependent results only in explicit native reference mode. The static TOP/tag proofs described above remain the projection for x86-32 and for System V x64, whose long double parameters and st0 results stay typed values; `x87ContextOwnsStack` chooses the model per image and `BinaryImage::X87ContextOverride` selects either one explicitly. These x64 regressions do not certify every CPU, instruction, fault priority or source-level floating return ABI.
 
 ## IR representations and routes
 

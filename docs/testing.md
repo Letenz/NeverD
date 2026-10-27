@@ -309,6 +309,13 @@ optimization and source projection. Neither a module nor source observations
 may escape a failed pipeline run. Reusing an emitter after refusal must still
 produce verified LLVM for a valid function and reset the diagnostic count.
 
+`NeverDAArch64ReturnProtectionTests` exercises decoded leaf and saved-LR
+recipes for ELF, Mach-O and COFF, including key/leaf attributes, preserved
+return values, observable signatures, wrong modifiers, incomplete recipes
+and rejection by a different output architecture. Malformed-width cases
+start from the real lowering path, then corrupt the PAC or AUT modifier;
+source projection must not hide these invalid operations.
+
 `NeverDArm64eAnalysisTests` covers Apple arm64e static analysis independently
 of the disabled-key CPU tests in `NeverDAArch64PAuthTests`. It checks both
 decoder routes for PAC/AUT/XPAC, implicit HINT operands, authenticated
@@ -1530,6 +1537,15 @@ valid clocks to prove that missing BOOTTIME is not silently filled in.
 explicit admission, fixed observations, nanosecond carry, shared idle/instruction
 advancement and preservation of the declared epoch difference. These are
 model regressions, not device suspension measurements.
+
+`AndroidServiceManagerTest.CacheHitsNeedNoManagerContextWarningOrAdditionalClockObservation`
+and `NullAndAbsentCacheEntriesRequireManagerStateBeforeContext` distinguish
+cache hits, empty caches and null-valued misses without inventing independent
+Binder observations. The JNI cache-mutation regression uses distinct equal
+String objects, all three static-call forms and removal through the shared
+HashMap before another lookup. `ProcessReport.AndroidServiceCacheDoesNotSupplyIndependentBinderState`
+checks the same independence at JSON admission. These checks use generic
+authored callers and no device service inventory or private workload input.
 
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
@@ -3837,9 +3853,20 @@ on the left, code on the right and output across the bottom. It checks both
 themes, docked and floating origins, restoring the previous layout and window
 state, unchanged data, data addresses outside functions, and ordinary command
 input. After closing the focus workspace, the main close button still highlights
-on hover and returns to its normal color when the pointer leaves. Keys enter
+on hover and returns to its normal color when the pointer leaves. Cocoa hover
+uses posted native motion and requires `CGPreflightPostEventAccess()`; when
+permission is absent, the layout and both close paths still run, then the case
+reports the unavailable hover coverage as a skip. Offscreen retains the Qt
+pointer-event checks. Keys enter
 through `QWindow` so forwarding to the focused widget cannot
 silently reset the sequence.
+
+`LibraryCodeViewTests` checks that generated frame and complete exception-detail
+folds preserve full-text copy and exact source-row navigation, keep cleanup
+statements visible, and leave warnings expanded. The workbench frame-record
+test exercises default folding, search expansion, refresh state and member
+navigation in both themes. Run it on Cocoa and offscreen; optional captures
+use `NEVERD_SHORTCUT_CAPTURES` with the existing fractional-scale runs.
 `focusFunctionsSidebarTogglesAndNavigates` checks the initially folded function
 list, triangle clicks, unchanged analysis geometry, single-click navigation in
 both analysis panes, filtering, popup ownership, and cleanup. Hovering and moving
@@ -5398,6 +5425,13 @@ queries to retain both escaped homes, including distinct SSA versions and
 reversed block order. Run this owner and `NeverDI386CallContractTests` when
 changing CDECL stack-offset query reuse.
 
+`MedFPStackHomes.*` (in `NeverDFPParameterMaskTests`) checks propagation through
+overlapping incoming FP stack homes, independent adjacent components,
+unaligned seeds, forced memory homes and unresolved or malformed reads.
+Long chains retain the same homes in both block orders while querying each
+eligible address at most once. Run this owner and the calling-convention
+contract tests when changing the stack-home closure algorithm.
+
 `NeverDFPParameterMaskTests` runs the shared ABI suite and `FPParameterMask.*`.
 The mask controls retain live bytes, earlier stores, ambiguous definitions and
 unmasked return paths while discarding only fully cleared or replaced bytes.
@@ -5765,6 +5799,23 @@ ctest --test-dir build-release \
 ```
 
 ## Owned x64 x87 context
+
+`NeverDX87MMXStateTests` checks the shared EMMS/FEMMS tag and payload
+provenance contract at every TOP, three tag patterns and both strictness
+modes. FEMMS must forget all retained payloads; subsequent MMX writes and
+x87 loads establish only their own slots. Eight consecutive FLD m80 loads
+also prove that every tag was cleared. Pending exceptions and unknown
+incoming state refuse without mutation. Native feature preflight may refuse
+on hosts without 3DNow. The emission regression decodes ten LLVM, HighC and
+LLVMC output objects to verify the original FEMMS opcode survives default
+and NoOpt pipelines and C O0/O2 compilation. See the
+[owned FEMMS evidence](evidence/x86-femms-owned-2026-10-26.json) for the
+separate QEMU execution of those objects and its coverage limits.
+
+```sh
+python3 scripts/build.py build-release --target NeverDX87MMXStateTests --parallel 4
+ctest --test-dir build-release -L '^NeverDX87MMXStateTests$' --output-on-failure
+```
 
 `NeverDX87StackManagementTests` checks typed FDECSTP/FFREEP decoding across every
 TOP and register selector, malformed-operand refusal, both cleared tags and
