@@ -160,15 +160,16 @@ MedIR owns the dependency from an old flag input to the returned flags; dead
 flags cannot invent a source parameter. Ordinary completion does not supply a
 complete guest exception or nonlocal continuation ABI.
 
-`X86AtomicExchange.h` owns the native memory XCHG widths, segments, assembly
-and operand constraints. The lifter emits one ordered `ATOMIC_XCHG`, with
-the old value committed to the register only after the memory operation.
-LLVM and both C routes retain a native exchange: an arbitrary decoded
-address does not justify LLVM's natural-alignment promise, and lowering an
-unaligned exchange through a library call changes the original transaction.
-The C renderer is shared by both routes; LLVMC validates owned assembly
-before normalization, including dead calls. This does not change generic
-LLVM atomics or non-x86 exchange emission.
+`X86AtomicRmw.h` owns native scalar XCHG and locked ADD widths, segments,
+assembly and operand constraints; the exchange header retains its existing
+entry point. LLVM and both C routes preserve one native XCHG or LOCK XADD,
+including unused old values. An arbitrary decoded address does not justify
+LLVM's natural-alignment promise, and an unaligned library-call expansion
+changes the original transaction. ADD declares its flags clobber. Both C
+routes share one renderer; LLVMC validates owned assembly before normalization,
+including dead calls. Generic LLVM atomics and non-x86 emission keep their
+existing contracts. Completion tests do not qualify contention or hardware
+fault behavior.
 The x86 scalar concrete emulator commits memory before publishing the old
 exchange value; unsupported exchanges still stop explicitly. LLVMC
 materializes generic atomic RMW results at their original statement, so a
@@ -7665,10 +7666,24 @@ loads/stores. SVM operands retain address width and INVLPGA's ASID. These are
 opaque processor-state effects, never assumed-success values. Generated code
 emits the actual instruction with its compiler memory/flag constraints; host
 execution still requires its architectural privilege and machine state.
-VMLAUNCH/VMRESUME model the ordinary fallthrough on failed entry. VMRUN and
-SKINIT remain explicitly rejected: the former requires unsaved guest GPR/FPU
-state ownership and the latter nonlocal machine reinitialization. The strict
+VMLAUNCH/VMRESUME model the ordinary fallthrough on failed entry. VMRUN
+remains explicitly rejected because it requires unsaved guest GPR/FPU state
+ownership and a VM-exit continuation. SKINIT instead uses an explicit
+nonreturning secure-loader launch: its original EAX bits are a physical i32
+address, and no old register/flag/stack ABI continuation is invented. The strict
 scalar emulator refuses the new virtualization effects without a state provider.
+
+SKINIT shares the system-state operand inventory and the architectural
+termination owner. Native LLVM emits `llvm.x86.skinit(i32)` when available; the
+legacy SDK fallback owns the same real instruction and nonreturning contract.
+Both C routes select NeverC's native builtin when available. Physical-input
+dependencies are classified once in `ir/med/X86/X86NativeMemory.h`: MedIR and
+the HighIR entry and post-structure type passes use those facts to retain the
+integer parameter ABI beside ordinary memory uses. HighC also retains complete
+integer views before converting process addresses to pointers. The scalar
+emulator refuses launch before reading memory or changing state. See the
+[SKINIT qualification](x86-instruction-support.md#native-secure-loader-launch).
+
 The reference contracts are Intel's
 [SDM](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
 and AMD's [AMD64 architecture manuals](https://www.amd.com/en/search/documentation/hub.html).

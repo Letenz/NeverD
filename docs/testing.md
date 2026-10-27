@@ -937,11 +937,14 @@ assertions vacuous. PHI copies retain the explicit unknown marker.
 `X86ImplicitAtomic.*` in `NeverDX86APXAtomicSemanticTests` checks memory XCHG
 widths, explicit/implicit locking, segments, register aliases, flags and
 commit-after-write behavior. The pointer projection suite's
-`MemoryExchangeReturnsItsSnapshotThroughBothRoutes` runs both C routes at
+`MemoryExchangeReturnsItsSnapshotThroughBothRoutes` and
+`MemoryAdditionReturnsItsSnapshotThroughBothRoutes` run both C routes at
 O0/O2 with UBSan, checking old values and every neighboring byte at aligned
 and unaligned offsets for all four x64 widths. `LLVMCIntrinsicSemantics.NativeExchange*`
-also compiles FS/GS forms, executes live/dead results and rejects changed
-owned assembly/type/effect contracts before normalization. These checks
+and `NativeAddition*` also compile FS/GS forms, execute live/dead results
+through original LLVM IR and emitted C, and reject changed owned
+assembly/type/effect contracts before normalization. The host must be x64;
+segment-relative forms are compiled without accessing host TLS. These checks
 exercise completion and source projection, not contention or hardware faults.
 `AtomicUpdatesKeepProgramOrderAcrossObservers` covers all ten emitted integer
 LLVM RMW operations with dead, single-use and repeated results, checking the
@@ -1281,6 +1284,20 @@ The fixture supplies standard memory prototypes when target CRT headers are
 unavailable, retaining the compiler's actual intrinsic headers and emitted bodies.
 The existing concrete enqueue tests independently cover retry, unchanged memory,
 source/header/portal fault order and missing CPL/PASID state.
+
+`NeverDX86SkinitTests` checks strict SKINIT decode/operand admission, native
+nonreturning output and both C routes on x86/x64 ELF, COFF and Mach-O. It also
+checks the complete unknown-memory/termination contract and refusal to invent
+CPU reset state. Linux x64 source probes replace launch with a nonreturning
+recorder before execution: eight ASan/UBSan caller-input observations retain
+an image-valued physical integer, and eight UBSan runs use a high-bit address
+to check ordinary DS loading and physical input together. Preprocessed source
+and caller bodies are checked to contain no launch before host execution.
+Run the shared integer-width and pointer-address suites after changing this
+address/parameter boundary. The retained source snapshots, report hashes and
+independent LLVM/NeverC instruction-boundary checks are in the
+[SKINIT evidence](evidence/x86-skinit-2026-10-27.json). They do not qualify
+successful secure launch, attestation, processor reset or physical faults.
 
 `X86SegmentedBlock.*` and `X86SegmentedBlockSource.*` additionally cover i386
 MOVDIR64B/ENQCMD/ENQCMDS with explicit source segments and implicit ES. The
