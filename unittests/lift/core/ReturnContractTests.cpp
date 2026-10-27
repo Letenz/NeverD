@@ -551,7 +551,8 @@ TEST(ReturnContracts, AWrapperOfADestructorReturnsNoValue) {
 
 TEST(ReturnContracts, ACallToARoutineDeclaredVoidHandsBackNoValue) {
   // A thunk that jumps to _set_app_type hands back what that routine, void
-  // by its prototype, left in RAX, whatever its body seems to return.
+  // by its prototype, left in RAX, whatever its body seems to return. The
+  // definition has the same contract and cannot expose that scratch value.
   MedFunc Routine = function(
       CalleeEntry,
       {block({seed(), operation(NdOp::COPY, rax(1), {MedVar::makeConst(7, 8)}),
@@ -560,7 +561,7 @@ TEST(ReturnContracts, ACallToARoutineDeclaredVoidHandsBackNoValue) {
   const MedFunc Thunk = function(
       CallerEntry, {block({callTo(CalleeEntry, 1), returning(rax(1))})});
   EXPECT_EQ(settle({std::move(Routine), Thunk}, BinaryFormat::COFF),
-            (std::vector<bool>{false, true}));
+            (std::vector<bool>{true, true}));
 }
 
 TEST(ReturnContracts, AStubOfAVoidImportReturnsNoValue) {

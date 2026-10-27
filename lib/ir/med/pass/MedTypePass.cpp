@@ -477,31 +477,26 @@ intRetEffWidth(const std::map<std::pair<int, int>, const MedOp *> &Defs,
   return intRetEffWidthRec(Defs, PhiDefs, V, Depth, Memo);
 }
 
-/// True when \p V overlaps a register a parameter arrives in.
-static bool overlapsParameterRegister(const MedFunc &Func, const MedVar &V) {
+/// Contiguous low bytes supplied by an incoming register parameter. A
+/// four-byte FP parameter cannot define the upper half of an eight-byte view.
+static uint16_t parameterRegisterPrefix(const MedFunc &Func, const MedVar &V) {
+  uint16_t Prefix = 0;
   for (const MedVar &P : Func.Params)
     if ((P.Kind == MedVar::Param || P.Kind == MedVar::Reg) &&
-        P.RegOff != kNoParamReg && P.Size != 0 &&
-        P.RegOff < V.RegOff + V.Size && V.RegOff < P.RegOff + P.Size)
-      return true;
-  return false;
+        P.RegOff != kNoParamReg && P.RegOff <= V.RegOff &&
+        V.RegOff - P.RegOff < P.Size)
+      Prefix = std::max(Prefix, static_cast<uint16_t>(std::min<uint64_t>(
+                                    V.Size, P.Size - (V.RegOff - P.RegOff))));
+  return Prefix;
 }
-
-static uint16_t definedLowBytesRec(
-    const std::map<std::pair<int, int>, const MedOp *> &Defs,
-    const std::map<std::pair<int, int>, const PhiNode *> &PhiDefs,
-    const MedFunc &Func, const MedVar &V, int Depth,
-    std::map<std::pair<int, int>, uint16_t> &Memo);
 
 /// The defined low bytes of an x86 sub-register write merged into its wide
 /// register, `Wide = (Old & ~LowMask) | Narrow` with Narrow zero above the
 /// low bytes the mask clears: the low bytes come from Narrow and the rest
 /// from Old.  nullopt for any other definition.
 static std::optional<uint16_t> definedMergedLowBytes(
-    const std::map<std::pair<int, int>, const MedOp *> &Defs,
-    const std::map<std::pair<int, int>, const PhiNode *> &PhiDefs,
-    const MedFunc &Func, const MedOp &D, uint16_t Size, int Depth,
-    std::map<std::pair<int, int>, uint16_t> &Memo) {
+    const std::map<std::pair<int, int>, const MedOp *> &Defs, const MedOp &D,
+    uint16_t Size, llvm::function_ref<uint16_t(const MedVar &)> DefinedBytes) {
   if (D.Opcode != NdOp::INT_OR || D.NumInputs != 2 || Size == 0 || Size > 8)
     return std::nullopt;
   const uint64_t SizeMask =
@@ -535,113 +530,158 @@ static std::optional<uint16_t> definedMergedLowBytes(
       if (ExtIt == Defs.end() || ExtIt->second->Opcode != NdOp::INT_ZEXT ||
           ExtIt->second->NumInputs != 1 || ExtIt->second->Inputs[0].Size > Low)
         continue;
-      const MedVar &Source = ExtIt->second->Inputs[0];
-      const uint16_t SourceDefined =
-          definedLowBytesRec(Defs, PhiDefs, Func, Source, Depth + 1, Memo);
-      NarrowDefined = SourceDefined < Source.Size ? SourceDefined : Low;
+      NarrowDefined = std::min(DefinedBytes(Narrow), Low);
     }
     if (NarrowDefined < Low)
       return NarrowDefined;
-    const uint16_t OldDefined =
-        definedLowBytesRec(Defs, PhiDefs, Func, And.Inputs[0], Depth + 1, Memo);
+    const uint16_t OldDefined = DefinedBytes(And.Inputs[0]);
     return OldDefined > Low ? std::min(OldDefined, Size) : Low;
   }
   return std::nullopt;
 }
 
-/// Low bytes of \p V this function defines on every path.  The bytes above
-/// them come from the entry value of a register that is not a parameter, so
-/// the caller never gave them a meaning: after `mov al, 1; ret` only AL of RAX
-/// is defined.  So do the bytes a call leaves in a register it clobbers, the
-/// callee's scratch: after `call strcmp; setne dl`, only DL of RDX is.
-/// Anything else counts as fully defined.
-static uint16_t definedLowBytesRec(
-    const std::map<std::pair<int, int>, const MedOp *> &Defs,
-    const std::map<std::pair<int, int>, const PhiNode *> &PhiDefs,
-    const MedFunc &Func, const MedVar &V, int Depth,
-    std::map<std::pair<int, int>, uint16_t> &Memo) {
-  if (V.Size == 0 || V.isConst() ||
-      Depth > ::neverd::limits::ir::kMedTypePassDefinedLowBytesRecDepthLimit)
-    return V.Size;
-  const std::pair<int, int> Key{V.Id, V.SSAVer};
-  // The value a register enters with: version 0 with no definition of its
-  // own, or the entry copy of it.  A register that is not live in takes
-  // version 0 at its first definition too.
-  if (V.Kind == MedVar::Reg && V.SSAVer == 0 && !PhiDefs.count(Key)) {
-    auto OpIt = Defs.find(Key);
-    const bool EntryCopy = OpIt != Defs.end() &&
-                           OpIt->second->Opcode == NdOp::COPY &&
-                           OpIt->second->NumInputs == 1 &&
-                           OpIt->second->Inputs[0].Kind == MedVar::Reg &&
-                           OpIt->second->Inputs[0].Id == V.Id &&
-                           OpIt->second->Inputs[0].SSAVer == 0;
-    if (OpIt == Defs.end() || EntryCopy)
-      return overlapsParameterRegister(Func, V) ? V.Size : 0;
-  }
-  if (auto It = Memo.find(Key); It != Memo.end())
-    return It->second;
-  for (const MedCallClobber &Clobber : Func.CallClobbers)
-    if (Clobber.Value == V) {
-      Memo[Key] = 0;
-      const uint16_t Preserved =
-          Clobber.PreservedPrefixSize
-              ? std::min(Clobber.PreservedPrefixSize,
-                         definedLowBytesRec(Defs, PhiDefs, Func,
-                                            Clobber.PreservedInput, Depth + 1,
-                                            Memo))
-              : 0;
-      Memo[Key] = Preserved;
-      return Preserved;
+/// Defined low bytes through register views and merges. Start at full width
+/// and propagate losses to a fixed point: caching a provisional DFS answer
+/// inside a PHI cycle can otherwise hide an undefined arm from a later return.
+/// Arithmetic and loads retain their ordinary result widths; this tracks
+/// incoming and call-clobbered bytes, not general value/poison analysis.
+class DefinedLowBytes {
+  using Key = std::pair<int, int>;
+  const MedFunc &Func;
+  const std::map<Key, const MedOp *> &Defs;
+  const std::map<Key, const PhiNode *> &Phis;
+  std::map<Key, const MedCallClobber *> Clobbers;
+  std::map<Key, uint16_t> Bytes;
+
+  uint16_t evaluate(const MedVar &Value) const {
+    const Key K{Value.Id, Value.SSAVer};
+    if (const auto C = Clobbers.find(K); C != Clobbers.end())
+      return std::min(C->second->PreservedPrefixSize,
+                      (*this)(C->second->PreservedInput));
+    if (const auto P = Phis.find(K); P != Phis.end()) {
+      uint16_t Result = Value.Size;
+      for (const auto &[Pred, Input] : P->second->Args)
+        Result = std::min(Result, (*this)(Input));
+      if (P->second->ExceptionalEntry)
+        Result = std::min(Result, (*this)(*P->second->ExceptionalEntry));
+      return Result;
     }
-  // A PHI cycle defines what its other arms define.
-  Memo[Key] = V.Size;
-  uint16_t Result = V.Size;
-  if (auto OpIt = Defs.find(Key); OpIt != Defs.end()) {
-    const MedOp &D = *OpIt->second;
-    if (D.Opcode == NdOp::COPY && D.NumInputs == 1 &&
-        D.Inputs[0].Size == V.Size) {
-      Result =
-          definedLowBytesRec(Defs, PhiDefs, Func, D.Inputs[0], Depth + 1, Memo);
-    } else if (D.Opcode == NdOp::INT_ZEXT && D.NumInputs == 1 &&
-               D.Inputs[0].Size < V.Size) {
-      // The zeros above a fully defined value are defined, and nothing
-      // above one that is not: `mov eax, r14d` after r14d took a `bool`.
-      const uint16_t InputDefined =
-          definedLowBytesRec(Defs, PhiDefs, Func, D.Inputs[0], Depth + 1, Memo);
-      Result = InputDefined < D.Inputs[0].Size ? InputDefined : V.Size;
-    } else if (D.Opcode == NdOp::CONCAT && D.NumInputs == 2 &&
-               D.Inputs[0].Size + D.Inputs[1].Size == V.Size) {
-      const MedVar &Hi = D.Inputs[0];
-      const MedVar &Lo = D.Inputs[1];
-      const uint16_t LoDefined =
-          definedLowBytesRec(Defs, PhiDefs, Func, Lo, Depth + 1, Memo);
-      Result = LoDefined < Lo.Size
-                   ? LoDefined
-                   : Lo.Size + definedLowBytesRec(Defs, PhiDefs, Func, Hi,
-                                                  Depth + 1, Memo);
-    } else if (D.Opcode == NdOp::SUBBYTES && D.NumInputs == 2 &&
-               D.Inputs[1].isConst()) {
-      const uint64_t Offset = D.Inputs[1].ConstVal;
-      const uint16_t SourceDefined =
-          definedLowBytesRec(Defs, PhiDefs, Func, D.Inputs[0], Depth + 1, Memo);
-      Result = SourceDefined > Offset
-                   ? static_cast<uint16_t>(
-                         std::min<uint64_t>(SourceDefined - Offset, V.Size))
-                   : 0;
+    const auto It = Defs.find(K);
+    if (It == Defs.end())
+      return 0;
+    const MedOp &Op = *It->second;
+    if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+        Op.Inputs[0].Size == Value.Size)
+      return (*this)(Op.Inputs[0]);
+    if (Op.Opcode == NdOp::INT_ZEXT && Op.NumInputs == 1 &&
+        Op.Inputs[0].Size < Value.Size) {
+      const uint16_t Low = (*this)(Op.Inputs[0]);
+      return Low < Op.Inputs[0].Size ? Low : Value.Size;
     }
-  } else if (auto PhiIt = PhiDefs.find(Key); PhiIt != PhiDefs.end()) {
-    for (const auto &Arg : PhiIt->second->Args)
-      Result =
-          std::min(Result, definedLowBytesRec(Defs, PhiDefs, Func, Arg.second,
-                                              Depth + 1, Memo));
+    if (Op.Opcode == NdOp::CONCAT && Op.NumInputs == 2 &&
+        Op.Inputs[0].Size + Op.Inputs[1].Size == Value.Size) {
+      const uint16_t Low = (*this)(Op.Inputs[1]);
+      return Low < Op.Inputs[1].Size ? Low : Low + (*this)(Op.Inputs[0]);
+    }
+    if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
+        Op.Inputs[1].isConst()) {
+      const uint16_t Input = (*this)(Op.Inputs[0]);
+      const uint64_t Offset = Op.Inputs[1].ConstVal;
+      return Input > Offset ? static_cast<uint16_t>(std::min<uint64_t>(
+                                  Input - Offset, Value.Size))
+                            : 0;
+    }
+    if (Op.Opcode == NdOp::SELECT && Op.NumInputs == 3)
+      return std::min((*this)(Op.Inputs[1]), (*this)(Op.Inputs[2]));
+    if (const auto Merged = definedMergedLowBytes(
+            Defs, Op, Value.Size, [&](const MedVar &V) { return (*this)(V); }))
+      return *Merged;
+    return Value.Size;
   }
-  if (auto OpIt = Defs.find(Key); OpIt != Defs.end())
-    if (std::optional<uint16_t> Merged = definedMergedLowBytes(
-            Defs, PhiDefs, Func, *OpIt->second, V.Size, Depth, Memo))
-      Result = *Merged;
-  Memo[Key] = Result;
-  return Result;
-}
+
+public:
+  DefinedLowBytes(const MedFunc &Func, const std::map<Key, const MedOp *> &Defs,
+                  const std::map<Key, const PhiNode *> &Phis)
+      : Func(Func), Defs(Defs), Phis(Phis) {
+    std::map<Key, MedVar> Values;
+    std::map<Key, std::vector<Key>> Users;
+    const auto Add = [&](const MedVar &V) {
+      const Key K{V.Id, V.SSAVer};
+      Values[K] = V;
+      Bytes[K] = V.Size;
+    };
+    const auto Use = [&](const MedVar &Output, const MedVar &Input) {
+      if (!Input.isConst() && Input.Kind != MedVar::Unspecified)
+        Users[{Input.Id, Input.SSAVer}].push_back({Output.Id, Output.SSAVer});
+    };
+    for (const auto &[K, Op] : Defs) {
+      Add(Op->Output);
+      for (uint8_t I = 0; I != Op->NumInputs; ++I)
+        Use(Op->Output, Op->Inputs[I]);
+      // A partial register write observes the original wide value behind
+      // its AND mask, whose ordinary arithmetic width is itself complete.
+      if (Op->Opcode == NdOp::INT_OR && Op->NumInputs == 2)
+        for (const MedVar &Input : {Op->Inputs[0], Op->Inputs[1]})
+          if (!Input.isConst())
+            if (const auto Mask = Defs.find({Input.Id, Input.SSAVer});
+                Mask != Defs.end() && Mask->second->Opcode == NdOp::INT_AND &&
+                Mask->second->NumInputs == 2)
+              Use(Op->Output, Mask->second->Inputs[0]);
+    }
+    for (const auto &[K, Phi] : Phis) {
+      Add(Phi->Output);
+      for (const auto &[Pred, Input] : Phi->Args)
+        Use(Phi->Output, Input);
+      if (Phi->ExceptionalEntry)
+        Use(Phi->Output, *Phi->ExceptionalEntry);
+    }
+    for (const MedCallClobber &Clobber : Func.CallClobbers) {
+      Clobbers[{Clobber.Value.Id, Clobber.Value.SSAVer}] = &Clobber;
+      Add(Clobber.Value);
+      if (Clobber.PreservedPrefixSize)
+        Use(Clobber.Value, Clobber.PreservedInput);
+    }
+    std::deque<Key> Work;
+    std::set<Key> Pending;
+    for (const auto &[K, V] : Values) {
+      Work.push_back(K);
+      Pending.insert(K);
+    }
+    while (!Work.empty()) {
+      const Key K = Work.front();
+      Work.pop_front();
+      Pending.erase(K);
+      const uint16_t Next = evaluate(Values.at(K));
+      if (Next >= Bytes.at(K))
+        continue;
+      Bytes[K] = Next;
+      if (const auto U = Users.find(K); U != Users.end())
+        for (const Key &User : U->second)
+          if (Pending.insert(User).second)
+            Work.push_back(User);
+    }
+  }
+
+  uint16_t operator()(const MedVar &V) const {
+    if (V.isConst() || V.Kind == MedVar::Param)
+      return V.Size;
+    if (V.Kind == MedVar::Unspecified)
+      return 0;
+    const Key K{V.Id, V.SSAVer};
+    if (V.Kind == MedVar::Reg && V.SSAVer == 0 && !Phis.count(K)) {
+      const auto Op = Defs.find(K);
+      const bool EntryCopy =
+          Op != Defs.end() && Op->second->Opcode == NdOp::COPY &&
+          Op->second->NumInputs == 1 &&
+          Op->second->Inputs[0].Kind == MedVar::Reg &&
+          Op->second->Inputs[0].Id == V.Id && Op->second->Inputs[0].SSAVer == 0;
+      if (Op == Defs.end() || EntryCopy)
+        return parameterRegisterPrefix(Func, V);
+    }
+    const auto It = Bytes.find(K);
+    return It == Bytes.end() ? 0 : std::min(V.Size, It->second);
+  }
+};
 
 static TypeRef
 inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
@@ -676,6 +716,13 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
     for (const auto &Phi : Blk.Phis)
       if (Phi.Output.Size > 0)
         PhiDefs[{Phi.Output.Id, Phi.Output.SSAVer}] = &Phi;
+
+  std::optional<DefinedLowBytes> Defined;
+  const auto DefinedBytes = [&](const MedVar &V) {
+    if (!Defined)
+      Defined.emplace(Func, Defs, PhiDefs);
+    return (*Defined)(V);
+  };
 
   // A declared floating call can reach a shared return through register
   // views and several PHIs. Index those transparent uses once: looking only
@@ -744,7 +791,7 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
       if (const auto Known = ForwardedFloat.find({Value.Id, Value.SSAVer});
           Known != ForwardedFloat.end() && Known->second <= Value.Size)
         Width = std::max(Width, Known->second);
-    return Width;
+    return Width && DefinedBytes(Value) >= Width ? Width : uint16_t{0};
   };
 
   // CFG construction owns the logical x87 top at every return. Its carrier
@@ -1005,21 +1052,11 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
             if (Phi.Output.Kind != MedVar::Reg ||
                 Phi.Output.RegOff != TRI.FPReturnReg)
               continue;
-            // A path that leaves the register's undefined entry value (it is
-            // no parameter to pass through) returns no FP result; that is a
-            // vector copy through XMM0, not a `double` defined on every path.
-            if (std::any_of(Phi.Args.begin(), Phi.Args.end(),
-                            [&](const auto &A) {
-                              return A.second.Kind == MedVar::Reg &&
-                                     A.second.SSAVer == 0 &&
-                                     !overlapsParameterRegister(Func, A.second);
-                            }))
-              continue;
             for (const auto &A : Phi.Args) {
               uint16_t E = FloatWidth(A.second);
               if (!E)
                 E = scalarFPLoadElemSize(Defs, A.second, 0);
-              if (E) {
+              if (E && DefinedBytes(Phi.Output) >= E) {
                 FloatElem = E;
                 FloatDist = 0;
                 FloatViaPhi = true;
@@ -1102,15 +1139,13 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
   // A path that defines only the low bytes of the result over an undefined
   // entry value (`mov al, 1; ret`) bounds it: the declared type is no wider
   // than what every path defines, as a compiler returning `bool` guarantees.
-  std::map<std::pair<int, int>, uint16_t> DefinedMemo;
   uint16_t DefinedCap = 0;
   for (const auto &Blk : Func.Blocks)
     for (const auto &Op : Blk.Ops) {
       if (Op.Opcode != NdOp::RETURN || Op.NumInputs == 0 ||
           Op.Inputs[0].isConst() || Op.Inputs[0].Size == 0)
         continue;
-      const uint16_t Defined =
-          definedLowBytesRec(Defs, PhiDefs, Func, Op.Inputs[0], 0, DefinedMemo);
+      const uint16_t Defined = DefinedBytes(Op.Inputs[0]);
       if (Defined != 0 && Defined < Op.Inputs[0].Size)
         DefinedCap = DefinedCap ? std::min(DefinedCap, Defined) : Defined;
     }

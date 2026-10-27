@@ -5729,6 +5729,12 @@ They cover intermediate D0 transport, D16-D31 scratch registers and both arms
 of an FP return join. `NeverDARM32ObjectImmediateTests` runs the five ARM32 host C
 differentials separately; the Windows EH CI lane runs these cases with its
 Clang 18 toolchain, including NEON zip/mask shapes different from Clang 23.
+`MedTypePass.MergedFloatCallsRequireDefinedScalarBytes` checks copied and
+selected call results, exceptional entries, narrow parameters and partially
+preserved call clobbers. `FloatJoinsPropagateUnknownBytesAroundCycles` checks
+both PHI input orders and multiple returns through a loop, with defined and
+undefined entry arms. Run the ABI suite alongside the x64 boolean-after-float
+call and AArch64 strtof/strtod execution tests when changing this admission.
 The shared HighC host fixture reports native `-m32` execution unavailable on
 macOS, where a 64-bit build would truncate the kernels' addresses. Linux and
 Windows retain the actual 32-bit differential. Native x87 IR inputs use

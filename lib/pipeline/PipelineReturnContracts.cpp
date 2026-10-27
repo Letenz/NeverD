@@ -358,8 +358,8 @@ private:
 
   /// Whether \p Func's declaration says it returns nothing, as the C
   /// writers read it: a bound source signature, else debug information, else
-  /// the MSVC rule that a destructor returns nothing.  None when nothing
-  /// declares it.
+  /// the target ABI/runtime prototype of an unpatched definition. None when
+  /// nothing declares it.
   std::optional<bool> declaredNoValue(const MedFunc &Func) const {
     if (Func.SourceTypeHint && Func.SourceTypeHint->ReturnType)
       return Func.SourceTypeHint->ReturnType->Kind == NdTypeKind::Void;

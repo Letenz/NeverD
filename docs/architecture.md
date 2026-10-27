@@ -7000,6 +7000,15 @@ replace that result with a cached scalar callee declaration. A wide assignment
 alone does not widen a scalar call. Omitted floating aggregates still require
 their separate HFA declaration contract.
 
+Floating return provenance survives transparent register views, selections and
+PHIs. Admission also checks the complete scalar width against the same defined
+low-byte analysis used for integer return widths. That analysis propagates lost
+bytes to a fixed point over indexed SSA users, including exceptional PHI entries
+and call-clobber preserved prefixes. A provisional answer from a PHI cycle is
+never a cached proof for another return. Narrow incoming parameters define only
+their own bytes; a stale floating result on one path cannot replace a boolean
+computed on every path.
+
 `TargetRegInfo::floatingParamRegs(format)` owns the default ABI's floating
 argument bank. Entry recovery, outgoing call recovery, module propagation and
 LLVM emission use the same query. Win64 has four positional floating slots
