@@ -160,6 +160,16 @@ private slots:
     const auto Path = createdFunctionFixture(
         Directory,
         QByteArray::fromHex("554889e5b80b0000005dc3") + QByteArray(96, '\0'));
+    QVERIFY(!Path.isEmpty());
+    if (Kind == "alignment") {
+      // This dialog edits a chosen data item. A byte row gives the chosen
+      // address a stable boundary inside the automatically grouped padding.
+      QFile Item(Path + ".neverd/items.json");
+      const QByteArray Boundary =
+          R"json([{"addr":"0x4000a0","kind":"byte","size":1}])json";
+      QVERIFY(Item.open(QIODevice::WriteOnly));
+      QCOMPARE(Item.write(Boundary), Boundary.size());
+    }
     Session Session(QString::fromLocal8Bit(TEST_REAL_WORKER));
     McpConnectionManager Mcp;
     GuiSessionBroker Broker;
