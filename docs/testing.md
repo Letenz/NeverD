@@ -2778,6 +2778,11 @@ is unexecuted coverage, not a pass for that target.
 The SBF source differential suite additionally needs `rustc`; it executes both
 generated C and generated Rust. Treat a missing compiler skip as missing
 backend evidence, not as semantic success.
+Its terminal-slot cases retain successful and faulting loads, stores, scalar
+register writes, division and syscall effects before execution overrun. Both
+dispatcher layouts compile with warnings as errors and execute against the raw
+interpreter. The Rust register view borrows its private bank in both layouts,
+including programs whose final register writes cannot be read by a successor.
 
 The native source dialect suite also uses `rustc` and `go` from `PATH`, or
 `NEVERD_TEST_RUSTC` and `NEVERD_TEST_GO`. On Windows, its Rust executable
