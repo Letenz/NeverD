@@ -674,11 +674,13 @@ llvm::Error PatchOverlay::replace(BinaryImage &Img, const InputFile &Input,
     OriginalImage = std::make_shared<BinaryImage>(Img);
   clear(Img);
   Img.BytePatchOriginal = std::move(OriginalImage);
+  // File offsets are sorted; virtual addresses often follow that order.
+  // End hints retain normal map insertion when the virtual order differs.
   for (auto &Run : Runs) {
     writeImageBytes(Img, Run.Address, Run.Current);
     Bytes += Run.size();
-    ByAddress[Run.Address] = Run.FileOffset;
-    Rows.emplace(Run.FileOffset, std::move(Run));
+    ByAddress.insert_or_assign(ByAddress.end(), Run.Address, Run.FileOffset);
+    Rows.emplace_hint(Rows.end(), Run.FileOffset, std::move(Run));
   }
   publishRanges(Img, *this);
   return llvm::Error::success();
