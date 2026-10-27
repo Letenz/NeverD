@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../ResourceLimits.h"
+
 #include <QHash>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -57,7 +59,7 @@ private:
     QByteArray eventId;
     QByteArray pendingEventId;
     QString requestId;
-    int retryMs = 1000;
+    int retryMs = ::neverd::limits::gui::kMcpConnectionManagerRetryMs;
     int reconnects = 0;
     bool completed = false;
     bool hasPendingEventId = false;

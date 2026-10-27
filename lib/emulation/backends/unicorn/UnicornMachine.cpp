@@ -7,6 +7,7 @@
 #include "../../arch/x86_64/X64Exception.h"
 #include "../../arch/x86_64/X64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"
+#include "../../core/ExecutionLimits.h"
 #include "../MachineFactories.h"
 #include "UnicornArchitecture.h"
 #include "UnicornMemory.h"
@@ -91,7 +92,8 @@ public:
     return llvm::Error::success();
   }
   llvm::Error run(uint64_t PC, size_t Count = 1,
-                  const MachineRunControl *Control = nullptr) {
+                  const MachineRunControl *Control = nullptr,
+                  bool FixedAArch64Step = false) {
     ActiveControl = Control;
     Cancelled = false;
     auto Release = llvm::scope_exit([&] { ActiveControl = nullptr; });
@@ -99,11 +101,30 @@ public:
       Cancelled = true;
       return diagnostic::interrupted(diagnostic::UnicornRun, *Control);
     }
-    // Host backing writes bypass Unicorn's code-write invalidation. Discard
-    // translated blocks before entering so aliases and self-modifying code
-    // observe current authoritative bytes.
-    if (auto E = check(uc_ctl_flush_tb(Engine)))
-      return E;
+    // Host backing writes bypass Unicorn's code-write invalidation. A checked
+    // step can execute only the instruction at PC: invalidating its first
+    // byte retires every block covering that entry, including an instruction
+    // whose operands cross into another physical page. A fixed-width checked
+    // ARM64 step may retain that block only after revalidating all its bytes.
+    // Direct runs and multi-instruction maintenance can visit other cached
+    // entries and still need a full flush. Avoid wrapping the exclusive end.
+    auto Bytes = checkedBytes(PC, Count, FixedAArch64Step);
+    auto &Cached = Instructions[(PC >> 2) % Instructions.size()];
+    const bool Reuse =
+        Bytes && Cached.Valid && Cached.PC == PC && Cached.Bytes == *Bytes;
+    bool Completed = false;
+    auto RetireOnFailure = llvm::scope_exit([&] {
+      if (!Completed)
+        clearInstructions();
+    });
+    if (!Reuse) {
+      const auto CacheStatus =
+          Count == 1 && PC != std::numeric_limits<uint64_t>::max()
+              ? uc_ctl_remove_cache(Engine, PC, PC + 1)
+              : uc_ctl_flush_tb(Engine);
+      if (auto E = check(CacheStatus))
+        return E;
+    }
     if (interrupted()) {
       Cancelled = true;
       return diagnostic::interrupted(diagnostic::UnicornRun, *Control);
@@ -115,11 +136,65 @@ public:
       return check(Status);
     if (interrupted())
       return diagnostic::interrupted(diagnostic::UnicornRun, *Control);
+    if (Bytes)
+      Cached = {PC, *Bytes, true};
+    Completed = true;
     return llvm::Error::success();
   }
   bool entryCancelled() const { return Cancelled; }
 
 private:
+  // The pinned Unicorn bounded-step mode translates exactly one instruction.
+  // Only aligned AArch64 instructions have this fixed four-byte footprint.
+  // Re-read authoritative executable RAM under the checked execution lease;
+  // a host/guest alias write cannot be hidden by an unchanged mapping epoch.
+  // This is transport reuse, never instruction admission or decoded semantics.
+  using InstructionBytes = std::array<uint8_t, 4>;
+  struct Instruction {
+    uint64_t PC = 0;
+    InstructionBytes Bytes{};
+    bool Valid = false;
+  };
+  std::array<Instruction, execution_limits::UnicornInstructionCacheEntries>
+      Instructions{};
+  std::weak_ptr<AddressSpace> InstructionSpace;
+  uint64_t InstructionGeneration = 0, InstructionTransport = 0;
+  bool InstructionsActive = false;
+  void clearInstructions() {
+    if (!InstructionsActive)
+      return;
+    Instructions.fill({});
+    InstructionSpace.reset();
+    InstructionsActive = false;
+  }
+  std::optional<InstructionBytes> checkedBytes(uint64_t PC, size_t Count,
+                                               bool FixedAArch64Step) {
+    // Parallel execution can release the physical lease during transport.
+    // Maintenance/direct runs and staged device operands keep full retirement.
+    if (!FixedAArch64Step || Count != 1 || (PC & 3) ||
+        PC > std::numeric_limits<uint64_t>::max() - 3 ||
+        Memory.parallelEnabled() || Memory.deviceOperand()) {
+      clearInstructions();
+      return std::nullopt;
+    }
+    if (InstructionSpace.lock() != Memory.addressSpace() ||
+        InstructionGeneration != Memory.mappingGeneration() ||
+        InstructionTransport != Memory.transportPhysical(0)) {
+      clearInstructions();
+      InstructionSpace = Memory.addressSpace();
+      InstructionGeneration = Memory.mappingGeneration();
+      InstructionTransport = Memory.transportPhysical(0);
+    }
+    InstructionsActive = true;
+    InstructionBytes Bytes;
+    if (auto E = Memory.read(PC, Bytes, Execute)) {
+      // Admission and transport still own the failure and its original PC.
+      llvm::consumeError(std::move(E));
+      clearInstructions();
+      return std::nullopt;
+    }
+    return Bytes;
+  }
   // The synchronous engine call owns this borrow. Checked entries use a
   // one-instruction block; direct entries check at every translated block.
   const MachineRunControl *ActiveControl = nullptr;
@@ -418,12 +493,61 @@ private:
 #define NEVERD_X64_REGISTER(Name, Decoder, Backend)                            \
   case X64Register::Name:                                                      \
     return Backend;
-#include "neverd/emulation/X64Registers.def"
+#include "neverd/emulation/arch/x86_64/X64Registers.def"
 #undef NEVERD_X64_REGISTER
     default:
       return UC_X86_REG_INVALID;
     }
   }
+};
+/// Borrow a complete register packet for one transport call. IDs and storage
+/// pointers come from the same inventory; architectural width normalization
+/// remains owned by the shared AArch64 state helpers.
+class AArch64RegisterPacket {
+public:
+  explicit AArch64RegisterPacket(AArch64MachineState &State) {
+    unsigned Next = 0;
+#define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
+  NEVERD_SCALAR_##Arch(Name)
+#define NEVERD_SCALAR_X64(Name)
+#define NEVERD_SCALAR_AArch64(Name)                                            \
+  Values[Next++] = &State.reg(AArch64Register::Name);
+#define NEVERD_VECTOR_REGISTER(Arch, Index, Backend) NEVERD_VECTOR_##Arch(Index)
+#define NEVERD_VECTOR_X64(Index)
+#define NEVERD_VECTOR_AArch64(Index)                                           \
+  Values[Next++] = State.Vectors[Index].data();
+#include "neverd/emulation/Registers.def"
+#undef NEVERD_VECTOR_AArch64
+#undef NEVERD_VECTOR_X64
+#undef NEVERD_VECTOR_REGISTER
+#undef NEVERD_SCALAR_AArch64
+#undef NEVERD_SCALAR_X64
+#undef NEVERD_SCALAR_REGISTER
+  }
+  llvm::Error write(uc_engine *Engine) {
+    return check(uc_reg_write_batch(Engine, IDs, Values.data(), Values.size()));
+  }
+  llvm::Error read(uc_engine *Engine) {
+    return check(uc_reg_read_batch(Engine, IDs, Values.data(), Values.size()));
+  }
+
+private:
+  static constexpr int IDs[] = {
+#define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
+  NEVERD_ID_##Arch(Backend)
+#define NEVERD_VECTOR_REGISTER(Arch, Index, Backend) NEVERD_ID_##Arch(Backend)
+#define NEVERD_ID_X64(Backend)
+#define NEVERD_ID_AArch64(Backend) Backend,
+#include "neverd/emulation/Registers.def"
+#undef NEVERD_ID_AArch64
+#undef NEVERD_ID_X64
+#undef NEVERD_VECTOR_REGISTER
+#undef NEVERD_SCALAR_REGISTER
+  };
+  static_assert(std::size(IDs) ==
+                std::tuple_size_v<decltype(AArch64MachineState::Registers)> +
+                    std::tuple_size_v<decltype(AArch64MachineState::Vectors)>);
+  std::array<void *, std::size(IDs)> Values{};
 };
 class UnicornAArch64Machine final : public AArch64Machine {
 public:
@@ -433,11 +557,18 @@ public:
   llvm::Error step(AArch64MachineState &State,
                    MachineRunControl Control) override {
     Control = Control.forNativeStep();
-    if (auto E = CPU.synchronize())
+    if (auto E = CPU.synchronize()) {
+      UserSpace.reset();
       return E;
-    const bool UserReady = UserSpace.lock() == CPU.Memory.addressSpace() &&
+    }
+    const auto PreviousSpace = UserSpace.lock();
+    const bool UserReady = PreviousSpace &&
+                           PreviousSpace == CPU.Memory.addressSpace() &&
                            UserGeneration == CPU.Memory.mappingGeneration() &&
                            UserTransportBase == CPU.Memory.transportPhysical(0);
+    const bool RegistersReady = UserReady &&
+                                LastCapture.Registers == State.Registers &&
+                                LastCapture.Vectors == State.Vectors;
     // A failed step may leave the engine in a partially installed state.
     // Reuse EL0 only after a complete, successful capture on this mapping.
     UserSpace.reset();
@@ -478,41 +609,22 @@ public:
                            &Control))
         return E;
     }
-#define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
-  NEVERD_REGISTER_##Arch(Name, Backend)
-#define NEVERD_REGISTER_X64(Name, Backend)
-#define NEVERD_REGISTER_AArch64(Name, Backend)                                 \
-  if (auto E = check(uc_reg_write(CPU.Engine, Backend,                         \
-                                  &State.reg(AArch64Register::Name))))         \
-    return E;
-#include "neverd/emulation/Registers.def"
-#undef NEVERD_SCALAR_REGISTER
-#undef NEVERD_REGISTER_X64
-#undef NEVERD_REGISTER_AArch64
-    for (unsigned Index = 0; Index < State.Vectors.size(); ++Index)
-      if (auto E = check(uc_reg_write(CPU.Engine, UC_ARM64_REG_Q0 + Index,
-                                      State.Vectors[Index].data())))
+    // Only an identical, fully captured packet on the same established EL0
+    // mapping can reuse engine registers. Callbacks, thread switches and other
+    // input changes still install the entire packet before guest entry.
+    if (!RegistersReady)
+      if (auto E = AArch64RegisterPacket(State).write(CPU.Engine))
         return E;
-    if (auto E = CPU.run(State.reg(AArch64Register::PC), 1, &Control))
+    if (auto E = CPU.run(State.reg(AArch64Register::PC), 1, &Control, true))
       return E;
-    auto Next = State;
-    if (auto E = captureAArch64State(
-            Next,
-            [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
-              uint64_t Value = 0;
-              if (auto E = check(
-                      uc_reg_read(CPU.Engine, registerID(Register), &Value)))
-                return E;
-              return Value;
-            },
-            [&](unsigned Index) -> llvm::Expected<RegisterValue> {
-              RegisterValue Value{};
-              if (auto E = check(uc_reg_read(
-                      CPU.Engine, UC_ARM64_REG_Q0 + Index, Value.data())))
-                return E;
-              return Value;
-            }))
+    // The engine may write only a narrow register or fail after a prefix.
+    // Zero the private packet and publish nothing until every read succeeds.
+    AArch64MachineState Captured;
+    if (auto E = AArch64RegisterPacket(Captured).read(CPU.Engine))
       return E;
+    auto Next = Captured;
+    Next.UserMode = State.UserMode;
+    normalizeAArch64State(Next);
     uint64_t Mode = 0;
     if (CPU.UserMode) {
       if (auto E = check(uc_reg_read(CPU.Engine, UC_ARM64_REG_PSTATE, &Mode)))
@@ -525,29 +637,16 @@ public:
       UserSpace = CPU.Memory.addressSpace();
       UserGeneration = CPU.Memory.mappingGeneration();
       UserTransportBase = CPU.Memory.transportPhysical(0);
+      LastCapture = Captured;
     }
     State = Next;
     return llvm::Error::success();
   }
 
 private:
+  AArch64MachineState LastCapture;
   std::weak_ptr<AddressSpace> UserSpace;
   uint64_t UserGeneration = 0, UserTransportBase = 0;
-  static int registerID(AArch64Register Register) {
-    switch (Register) {
-#define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
-  NEVERD_REGISTER_##Arch(Name, Backend)
-#define NEVERD_REGISTER_X64(Name, Backend)
-#define NEVERD_REGISTER_AArch64(Name, Backend)                                 \
-  case AArch64Register::Name:                                                  \
-    return Backend;
-#include "neverd/emulation/Registers.def"
-#undef NEVERD_REGISTER_AArch64
-#undef NEVERD_REGISTER_X64
-#undef NEVERD_SCALAR_REGISTER
-    }
-    return UC_ARM64_REG_INVALID;
-  }
 };
 } // namespace
 llvm::Expected<std::unique_ptr<X64Machine>>

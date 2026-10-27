@@ -8,7 +8,7 @@
 
 #include "neverd/analysis/BinaryInterpreterSpecialization.h"
 #include "neverd/decode/Decoder.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -1142,15 +1142,12 @@ TEST(OriginalBinaryUndefinedIndependence,
      UnreachableTrapRetainsBytesAndMissingEffects) {
   // xor eax,eax; jne trap; ret; trap. No bytes follow the trap, so inventing
   // a resumption edge would fail even though the original branch is untaken.
-  for (bool InvalidOpcode : {false, true}) {
-    SCOPED_TRACE(InvalidOpcode);
-    Program P({0x31, 0xc0, 0x75, 1, 0xc3, 0xcc});
-    if (InvalidOpcode) {
-      P.Image.Segments[0].Data.back() = 0x0f;
-      P.Image.Segments[0].Data.push_back(0x0b);
-      ++P.Image.Segments[0].Size;
-      ++P.Image.Segments[0].FileSz;
-    }
+  const std::initializer_list<uint8_t> Encodings[] = {
+      {0xcc}, {0xf1}, {0xcd, 0x03}, {0x0f, 0x0b}};
+  for (const auto Bytes : Encodings) {
+    SCOPED_TRACE(unsigned(*Bytes.begin()));
+    Program P({0x31, 0xc0, 0x75, 1, 0xc3});
+    P.append(Bytes);
     const auto R = P.recover();
     ASSERT_TRUE(R.Independence.proved()) << R.Independence.Proof.Diagnostic;
     EXPECT_TRUE(R.Recovery.complete()) << R.Recovery.Diagnostic;
@@ -1160,9 +1157,11 @@ TEST(OriginalBinaryUndefinedIndependence,
     });
     ASSERT_NE(It, Insns.end());
     EXPECT_EQ(It->Origin.Address, Entry + 5);
-    EXPECT_EQ(It->NativeBytes, InvalidOpcode
-                                   ? (std::vector<uint8_t>{0x0f, 0x0b})
-                                   : (std::vector<uint8_t>{0xcc}));
+    EXPECT_EQ(It->NativeBytes, std::vector<uint8_t>(Bytes));
+    EXPECT_EQ(
+        hasLowInstructionControlFlag(It->Origin.ControlFlags,
+                                     LowInstructionControlFlag::Resumable),
+        *Bytes.begin() != 0x0f);
     EXPECT_EQ(It->UndefinedEffects.Coverage, LowUndefinedCoverage::Missing);
     EXPECT_EQ(It->UndefinedEffects.OperationDigest,
               lowUndefinedOperationDigest(It->Ops));
@@ -1190,12 +1189,20 @@ TEST(OriginalBinaryUndefinedIndependence,
      FeasibleTrapCannotPublishAnyCompletedSibling) {
   // jc trap; ret; int3. An ordinary input can select either path. A completed
   // return cannot authorize the sibling exception path under this contract.
-  Program Branch({0x72, 1, 0xc3, 0xcc});
-  expectRefusal(Branch, Status::ContractViolation);
-  Program Direct({0xcc});
-  expectRefusal(Direct, Status::ContractViolation);
-  Program InvalidOpcode({0x0f, 0x0b});
-  expectRefusal(InvalidOpcode, Status::ContractViolation);
+  const std::initializer_list<uint8_t> Encodings[] = {
+      {0xcc}, {0xf1}, {0xcd, 0x03}, {0x0f, 0x0b}};
+  for (const auto Bytes : Encodings) {
+    SCOPED_TRACE(unsigned(*Bytes.begin()));
+    Program Branch({0x72, 1, 0xc3});
+    Branch.append(Bytes);
+    expectRefusal(Branch, Status::ContractViolation);
+    Program Direct(Bytes);
+    expectRefusal(Direct, Status::ContractViolation);
+    const auto OrdinaryTrap =
+        specializeBinaryInterpreter(Direct.Image, Entry, Direct.Options);
+    EXPECT_FALSE(OrdinaryTrap.complete());
+    EXPECT_EQ(OrdinaryTrap.Status, SpecializationStatus::Unsupported);
+  }
   // call helper; int3; helper: ret. The actual continuation is reached.
   Program Call({0xe8, 1, 0, 0, 0, 0xcc, 0xc3});
   expectRefusal(Call, Status::ContractViolation);
@@ -1204,10 +1211,6 @@ TEST(OriginalBinaryUndefinedIndependence,
   Program Indirect(
       {0x83, 0xe0, 1, 0x48, 5, 0x0b, 0x10, 0, 0, 0xff, 0xe0, 0xc3, 0xcc});
   expectRefusal(Indirect, Status::ContractViolation);
-  const auto OrdinaryTrap =
-      specializeBinaryInterpreter(Direct.Image, Entry, Direct.Options);
-  EXPECT_FALSE(OrdinaryTrap.complete());
-  EXPECT_EQ(OrdinaryTrap.Status, SpecializationStatus::Unsupported);
 }
 
 TEST(OriginalBinaryUndefinedIndependence,
@@ -1893,13 +1896,13 @@ TEST(OriginalBinaryUndefinedIndependence,
 
 TEST(OriginalBinaryUndefinedIndependence,
      DisabledShadowStackRejectsNoncanonicalProjections) {
-  for (const std::vector<uint8_t> Bytes : {
-           std::vector<uint8_t>{0xf0, 0xf3, 0x0f, 0x1e, 0xc8},
-           std::vector<uint8_t>{0xf3, 0xf0, 0x0f, 0x1e, 0xc8},
-           std::vector<uint8_t>{0xf3, 0xf3, 0x0f, 0x1e, 0xc8},
-           std::vector<uint8_t>{0x66, 0xf3, 0x0f, 0x1e, 0xc8},
-           std::vector<uint8_t>{0xf3, 0x44, 0x0f, 0x1e, 0xc8},
-           std::vector<uint8_t>{0xf3, 0xf3, 0x48, 0x0f, 0xae, 0xe8}}) {
+  for (const std::vector<uint8_t> Bytes :
+       {std::vector<uint8_t>{0xf0, 0xf3, 0x0f, 0x1e, 0xc8},
+        std::vector<uint8_t>{0xf3, 0xf0, 0x0f, 0x1e, 0xc8},
+        std::vector<uint8_t>{0xf3, 0xf3, 0x0f, 0x1e, 0xc8},
+        std::vector<uint8_t>{0x66, 0xf3, 0x0f, 0x1e, 0xc8},
+        std::vector<uint8_t>{0xf3, 0x44, 0x0f, 0x1e, 0xc8},
+        std::vector<uint8_t>{0xf3, 0xf3, 0x48, 0x0f, 0xae, 0xe8}}) {
     Program P({});
     for (uint8_t Byte : Bytes)
       P.append({Byte});
@@ -2377,6 +2380,60 @@ TEST(OriginalBinaryUndefinedIndependence,
   P.append({0x66, 0x0f, 0xef, 0xf6, 0xc3}); // second: PXOR XMM6,XMM6; RET.
   Limits.MaxIndirectTargets = 2;
   expectRefusal(P, Status::Unsupported, Limits);
+}
+
+#include "KernelInterruptFlagTests.inc"
+
+TEST(OriginalBinaryUndefinedIndependence,
+     FrameExclusionsRequireMatchingProofDomain) {
+  Program P({0xb8, 17, 0, 0, 0, 0xc3});
+  P.Options.EntryFrameBounds = SpecializationEntryFrameBounds{-32, 8};
+  P.Options.EntryFrameBounds->ExcludedAddressRanges = {{0x8000, 0x8100}};
+  P.Options.ProveStoreFrameSeparation = true;
+  expectRefusal(P, Status::Invalid);
+  P.Contract.Frame->ExcludedAddressRanges = {{0x8000, 0x8100}};
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  const auto Recovered = P.recover();
+  ASSERT_TRUE(Recovered.Recovery.complete()) << Recovered.Recovery.Diagnostic;
+  ++P.Options.EntryFrameBounds->ExcludedAddressRanges[0].End;
+  expectRefusal(P, Status::Invalid);
+  ++P.Contract.Frame->ExcludedAddressRanges[0].End;
+  const auto Changed = P.check();
+  ASSERT_TRUE(Changed.proved()) << Changed.Proof.Diagnostic;
+  EXPECT_NE(Good.Certificate->InputDigest, Changed.Certificate->InputDigest);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     OrdinaryReadTracePreservesNativeMemoryInputs) {
+  // mov rax,[rcx]; ret. The pointer may alias the accessible frame.
+  Program P({0x48, 0x8b, 0x01, 0xc3});
+  P.flagsProfile();
+  EXPECT_FALSE(P.check().proved());
+  P.Contract.ExternalReads = LowIRExternalReadModel::OrderedOrdinaryRAMV1;
+  P.Contract.NativePreservedState = LowIRNativePreservationRequirement{};
+  const auto Independence = P.check();
+  ASSERT_TRUE(Independence.proved()) << Independence.Proof.Diagnostic;
+  ASSERT_TRUE(Independence.Certificate);
+  EXPECT_EQ(Independence.Certificate->LowIR.Contract.ExternalReads,
+            LowIRExternalReadModel::OrderedOrdinaryRAMV1);
+  const auto Recovered = specializeBinaryInterpreter(P.Image, Entry, P.Options);
+  ASSERT_TRUE(Recovered.complete()) << Recovered.Diagnostic;
+  P.Contract.NativePreservedState->Quantifier =
+      LowIRNativePreservationQuantifier::SelectedWitness;
+  const auto Relation = checkBinaryLowIRRefinement(
+      P.Image, Entry, P.Options, Recovered.Residual, P.Contract);
+  EXPECT_TRUE(Relation.proved()) << Relation.Proof.Diagnostic;
+  Program Changed({0x48, 0x8b, 0x02, 0xc3}); // mov rax,[rdx]; ret.
+  Changed.flagsProfile();
+  const auto Wrong =
+      specializeBinaryInterpreter(Changed.Image, Entry, Changed.Options);
+  ASSERT_TRUE(Wrong.complete()) << Wrong.Diagnostic;
+  const auto Different = checkBinaryLowIRRefinement(P.Image, Entry, P.Options,
+                                                    Wrong.Residual, P.Contract);
+  EXPECT_EQ(Different.Proof.Status, LowIRRefinementStatus::Different)
+      << Different.Proof.Diagnostic;
+  EXPECT_FALSE(Different.Certificate);
 }
 
 } // namespace

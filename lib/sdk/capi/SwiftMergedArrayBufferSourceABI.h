@@ -8,6 +8,7 @@
 
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/BranchEncoding.h"
 
 #include "llvm/Support/Endian.h"
@@ -25,11 +26,11 @@ inline bool declaration(const BinaryImage &Image, va_t Entry,
   if (!Name.starts_with("$s"))
     return false;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {

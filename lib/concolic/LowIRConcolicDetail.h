@@ -12,15 +12,17 @@ namespace neverd::concolic::detail {
 struct ModelProjection {
   ConcolicProjectionReason Reason = ConcolicProjectionReason::None;
   std::vector<symbolic::SymConcreteRegister> Seed;
+  std::vector<symbolic::SymConcreteMemory> MemorySeed;
 };
 
 /// Private seam: production uses this only after SAT. Tests can manufacture
 /// malformed provenance/model pairs that a well-formed LowIR trace cannot.
 ModelProjection
-projectRegisterModel(const symbolic::SymContext &Ctx, symbolic::SymRef Query,
-                     const solver::BitVectorModel &Model,
-                     llvm::ArrayRef<symbolic::SymConcreteRegister> Baseline,
-                     llvm::endianness Order);
+projectInputModel(const symbolic::SymContext &Ctx, symbolic::SymRef Query,
+                  const solver::BitVectorModel &Model,
+                  llvm::ArrayRef<symbolic::SymConcreteRegister> Baseline,
+                  llvm::endianness Order,
+                  llvm::ArrayRef<symbolic::SymConcreteMemory> Memory = {});
 
 /// Context-free replay comparison, separated so every rejection stays typed.
 ConcolicReplayReason
@@ -38,7 +40,8 @@ struct CandidatePublication {
 CandidatePublication
 publishReplayVerifiedSeed(std::vector<LowIRConcolicCandidate> &Published,
                           std::vector<symbolic::SymConcreteRegister> Seed,
-                          unsigned MaxCandidates);
+                          unsigned MaxCandidates,
+                          std::vector<symbolic::SymConcreteMemory> Memory = {});
 
 ConcolicFlipStatus classifyPrefixEncodingFailure(solver::BlastError Error);
 

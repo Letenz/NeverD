@@ -1,5 +1,7 @@
 **اللغات**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](CONTRIBUTING.md)
 
+<!-- i18n-source: af6c34901bacab00e5d1ed68b031f0a48a3ff64ac85ee208695647ec935b9790 -->
+
 # المساهمة في NeverD
 
 NeverD مشروع لتحليل الملفات الثنائية يضع الدلالات أولًا. تكون المساهمة
@@ -16,17 +18,20 @@ NeverD مشروع لتحليل الملفات الثنائية يضع الدلا
 [دليل الاختبارات](testing.md) لاختيار المجموعة، وراجع
 [خارطة الطريق](roadmap.md) للعمل المخطط على المنتج.
 
+<!-- i18n-section: prerequisites -->
 ## المتطلبات
 
 - Git مع دعم الوحدات الفرعية المتكررة
 - CMake 3.20 أو أحدث
 - Ninja
 - مترجم يدعم C++20
+- CPython 3.10+ مع ملفات التطوير للتضمين عند تفعيل إضافات Python
 - Clang وLLD ‏(`ld.lld` و`lld-link`) لمجموعة fixtures الكاملة متعددة الأهداف
 
 توفر الوحدات الفرعية المتكررة فرعي LLVM وCapstone الخاصين بـ NeverD، وUnicorn،
 وبيانات التواقيع. لا تستبدلها بإصدارات نظام عشوائية عند التحقق من تغيير.
 
+<!-- i18n-section: clone -->
 ## الاستنساخ والتهيئة
 
 يُدمج التطوير في `dev`، وهو أيضًا الفرع الافتراضي للمستودع. استنسخه مع جميع
@@ -46,6 +51,7 @@ git submodule sync --recursive
 git submodule update --init --recursive
 ```
 
+<!-- i18n-section: build -->
 ## اختيار ملف البناء
 
 | الملف | الاستخدام | السلوك المهم |
@@ -60,7 +66,7 @@ git submodule update --init --recursive
 cmake -S . -B build-release -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=ON
-cmake --build build-release --parallel
+python scripts/build.py build-release --parallel
 ```
 
 يبني الإعداد الافتراضي `third_party/llvm-project` كتبعية مدمجة. يستغرق البناء
@@ -74,12 +80,84 @@ cmake --build build-release --parallel
 cmake -S . -B build-debug -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
   -DBUILD_TESTING=ON
-cmake --build build-debug --parallel
+python scripts/build.py build-debug --parallel
 ```
 
 لا تنشر أبدًا إنتاجية decode أو lift من بناء Debug. استخدم Release للمعايير،
 أو RelWithDebInfo عندما يحتاج التحليل إلى الرموز.
 
+<!-- i18n-section: allocator -->
+### مخصّص ذاكرة العملية
+
+تفعّل أبنية Linux وmacOS وWindows MSVC/clang-cl الخيار `NEVERD_ENABLE_MIMALLOC` افتراضيًا.
+تستخدم الأدوات وعامل التحليل والاختبارات المنشأة بمساعد CMake المشترك الفرع الافتراضي
+لفرع mimalloc الخاص بـ NeverSight، وفق نموذج مخصّص المضيف في NeverC. يُضمّن مرة واحدة
+في كل ملف تنفيذي على Unix. يستخدم Windows مكتبة mimalloc DLL و`mimalloc-redirect*.dll`
+بالمعمارية نفسها لإعادة توجيه تخصيص CRT الديناميكي، بما فيه libneverd والإضافات الأصلية.
+توضع المكتبتان بجانب الملفات التنفيذية وتُثبّتان في `bin`؛ وزّعهما معًا. يتطلب Windows
+الخيار `/MD` أو `/MDd`؛ عطّل mimalloc مع CRT ثابت. لا تفرض مكتبة SDK مخصّصًا على التطبيق
+المضيف. استخدم بناء ARM64 أصليًا على Windows ARM64؛ لا تستطيع DLL بمعمارية x64 إعادة
+توجيه CRT من نوع ARM64EC المستخدم لمحاكاة x64. يحتفظ MinGW بمخصّص النظام. راجع
+[متطلبات Windows في المصدر](https://github.com/NeverSight/mimalloc/blob/main3/bin/readme.md).
+
+استخدم `-DNEVERD_ENABLE_MIMALLOC=OFF` لخط أساس النظام أو مخصّص خارجي. يعطّل الخيار القديم
+`NEVERD_WORKER_MIMALLOC=OFF` العامل وحده. يعطّل CMake استخدام mimalloc مع مطهّرات address
+وthread وmemory وleak، بما فيها أعلام المترجم والرابط المجمّعة والخاصة بكل تهيئة.
+يبقى UBSan وحده متوافقًا. إذا أضيف المطهّر بأعلام خاصة بالهدف فقط، اضبط الخيار OFF صراحةً.
+يتيح Windows المقارنة دون إعادة بناء عبر `MIMALLOC_DISABLE_REDIRECT=1`؛ ويعرض
+`MIMALLOC_VERBOSE=1` حالة التفعيل.
+
+تحدّث نقطة البناء المدعومة `python scripts/build.py BUILD_DIR` الفروع الخمسة الخاصة
+بـ NeverSight من فروعها البعيدة الافتراضية قبل كل بناء. هي وحدات Git فرعية في `third_party`
+مثل Capstone وUnicorn. يحل السكربت أسماء الفروع الفعلية ويحدّث الوحدات الخمس ويصدّر
+المصادر المثبتة في commits إلى `BUILD_DIR/third_party/<library>/<commit>/src`.
+توقف التعديلات المحلية غير المثبتة أو المتباعدة البناء دون الكتابة فوقها؛ وكذلك أخطاء الشبكة.
+يُقفل دليل البناء أثناء التحديث وإعادة التهيئة والترجمة وتبقى اللقطة حتى الاستدعاء التالي؛
+لذلك تتبنّى الأبنية التزايدية أيضًا commits جديدة.
+
+يسجّل `neverd-dependency-inputs.json` مدخلات التهيئة والـ commit وبصمة SHA-256 للتصدير،
+ويرافق المنتجات المثبتة لكنه لا يصادق على الملف الثنائي. يسجّل `neverd-build-receipt.json`
+النجاح أو الفشل للأهداف والتهيئة المطلوبة فقط؛ تحتفظ CI بكليهما. يرفض التثبيت الأبنية
+الفاشلة والمدخلات المتغيرة والتهيئات غير المبنية؛ تبني CI للمنتج كل أهداف التثبيت قبل اختباره.
+قد يتغير الخط الرئيسي بين التشغيلات؛ قارن commits قبل اعتبار تشغيلات المنصات تأهيلًا واحدًا.
+يفحص `cmake --build` المباشر حداثة اللقطة ويرفض القديمة؛ استخدم مدخل Python لتحديثها.
+تحافظ إعادة التوليد التلقائية فيه على اللقطة نفسها. تتاح تجاوزات
+`FETCHCONTENT_SOURCE_DIR_NEVERD_*` للـ fixtures المحلية المعزولة لكن مدخل الخط الرئيسي يرفضها.
+تحتاج المولدات متعددة التهيئات إلى `--config` صريح. ابنِ أهداف الترجمة عبر المدخل ثم نفّذ
+الاختبارات و`cmake --install` منفصلين؛ يُرفض الهدف المباشر `install` قبل الترجمة.
+
+راجع [التحقق من المخصّص](../testing.md#allocator-validation) للاختبارات الأولية ومقارنة الأداء.
+
+<!-- i18n-section: acceleration -->
+### مكتبات التسريع
+
+تفعّل الأبنية العادية مسح البايتات Highway والتحقق من UTF-8 عبر simdutf وتحليل النقل عبر
+simdjson وجدولة المسار عبر oneTBB، مع الاحتفاظ بمخصّص العملية. يحتفظ JSON بـ DOM والتسلسل
+من nlohmann. تُنسخ الإطارات الصحيحة المكوّنة من أعداد صحيحة فقط من شريط SIMD؛ تحتفظ
+الكسور والصفر السالب بالتحويل الأصلي. تستخدم المدخلات خارج نطاق simdjson مسار القبول
+الأصلي، ويحتفظ النص الخارجي غير الصالح بتهريبات تحفظ البايتات. تأتي المكتبات وmimalloc
+من فروع NeverSight المسجلة في `third_party/forks.json`؛ إصلاحات التوافق في الفروع الافتراضية.
+ينسخ البناء التراخيص الحالية ويسجّل commits الدقيقة ولا يثبّت هذه التبعيات الخمس على إصدارات قديمة.
+
+تكون `NEVERD_ENABLE_HIGHWAY` و`NEVERD_ENABLE_SIMDUTF` و`NEVERD_ENABLE_SIMDJSON`
+و`NEVERD_ENABLE_TBB` على `ON` افتراضيًا، ويمكن ضبط كل منها على `OFF` للمقارنة. تحتفظ
+oneTBB بالعمال بين الدفعات وتفحص مكدسات 8 MiB، ولا تبني أو تحمّل `tbbmalloc` أو وكيله.
+يعيد المستدعون ذوو المكدس الكبير استخدام المساحة المتاحة، ويحصل الصغار على منسّق أصلي.
+يجب أن تستخدم المضيفات التي تنفذ fork بعد أول استخدام أو تفرغ SDK ديناميكيًا خط الخيوط
+الأصلية `NEVERD_ENABLE_TBB=OFF`؛ لا تدعم المجدولة المحتفظ بها دورات الحياة هذه. تُربط
+oneTBB ربطًا ساكنًا داخل النواة المشتركة، وتبقى رموزها خاصة بتلك النواة. تستخدم استدعاءات
+مكوّنات CLI وطلبات عامل GUI المجدولة نفسها؛ ولا تُوزّع أي DLL أو مكتبة مشتركة لـ TBB.
+تختار الأهداف المرتبطة بـ `neverd_shared` المجدولة المشتركة تلقائيًا. أما العملاء الذين
+يصلون إلى SDK عبر هدف آخر ويربطون أيضًا أرشيفات المكوّنات، فيجب أن يستخدموا
+`neverd_use_shared_task_scheduler` على هدفهم النهائي. تحتفظ أدوات المكوّنات المستقلة
+ببيئة التشغيل الخاصة بها.
+يمنع هذا التكامل المقيّد تعدد مجدولات NeverD داخل عملية واحدة؛ وما زال المشروع الأصلي يصف
+[أبنية oneTBB الساكنة](https://uxlfoundation.github.io/oneTBB/main/intro/static_linking.html)
+بأنها غير مدعومة وينصح بعدم استخدامها للأغراض العامة.
+
+راجع [التحقق من التسريع](../testing.md#acceleration-libraries) للاختبارات الأصلية والمقارنات وحدود التوافق.
+
+<!-- i18n-section: prebuilt-llvm -->
 ### LLVM جاهز على macOS
 
 يمكن للمساهمين على Apple Silicon تجنب بناء فرع LLVM محليًا:
@@ -89,7 +167,7 @@ cmake -S . -B build-release -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=ON \
   -DNEVERD_LLVM_PREBUILT=ON
-cmake --build build-release --parallel
+python scripts/build.py build-release --parallel
 ```
 
 ينزّل CMake حزمة الإصدار المضبوطة في المستودع، ويتحقق من SHA-256، ثم يعيد
@@ -99,6 +177,12 @@ LLVM المحلي الافتراضي. توثّق الخيارات المتقدم
 `NEVERD_LLVM_PREBUILT_TAG`، وعنوان المرآة، ودليل الذاكرة المؤقتة، والمجموع
 الصريح في `cmake/NeverDLLVMPrebuilt.cmake`.
 
+تُنشر إصلاحات LLVM في [فرع LLVM الخاص بـ NeverSight](https://github.com/NeverSight/llvm-project).
+سجل الإصلاحات وادمجها هناك، ثم حدّث مراجعة الوحدة الفرعية LLVM في NeverD.
+يترجم البناء المتكامل هذا المصدر مباشرة؛ لا تضف ملفات رقع LLVM أو نسخ مصدر معدلة في دليل بناء NeverD.
+يجب إعادة بناء الحزم المسبقة من الفرع المصحح للتحقق من السلوك نفسه.
+
+<!-- i18n-section: workflow -->
 ## سير الفروع وطلبات السحب
 
 ابدأ من `dev` محدّث وأنشئ فرع موضوع محددًا:
@@ -113,29 +197,138 @@ git switch -c docs/contributor-guide
 المراجعة: غرض واحد مترابط، دون مخرجات بناء مولدة أو تنسيق غير متعلق، ودون
 تغيير مراجعات الوحدات الفرعية إلا إذا كانت جزءًا من المقترح.
 
+<!-- i18n-section: code-style -->
 ## نمط الشفرة
 
-تتبع C وC++ أعراف LLVM، ويمثل `.clang-format` مرجع التنسيق في المستودع.
-نسّق الملفات التي عدلتها فقط:
+تتبع C/C++ معايير [LLVM Coding Standards](https://llvm.org/docs/CodingStandards.html).
+يمثل [`.clang-format`](../../.clang-format) مرجع التنسيق، و[`.editorconfig`](../../.editorconfig)
+مرجع الترميز ونهايات الأسطر والمسافات. يحدد `CMakeLists.txt` إصدار C++، وليس دليل النمط
+الخارجي. نسّق الملفات المعدلة:
 
 ```bash
 clang-format -i path/to/changed.cpp path/to/changed.h
 git diff --check
 ```
 
-لا تعد تنسيق المستودع كله لإصلاح محدد. اتبع أنماط التسمية والتقسيم المحيطة،
-وأبق السلوك الخاص بالمنصة عند حد loader/lifter/backend المناسب، ولا تعرض أنواع
-C++ الداخلية عبر SDK بلغة C الخالصة.
+تستخدم CI الإصدار المثبت في [`scripts/check_clang_format.py`](../../scripts/check_clang_format.py)؛
+استخدمه لإعادة النتائج. لا يتحقق المنسق من ملكية الترويسات أو القيم الحرفية للسياسات.
+لا تعد تنسيق المستودع كله لإصلاح محلي. اتبع التسمية والتقسيم المحيطين، وأبق سلوك المنصة
+عند حدود loader/lifter/backend، ولا تكشف أنواع C++ الداخلية عبر SDK بلغة C الخالصة.
 
-يجب أن يكون Markdown موجزًا وقابلًا للتحقق من المصدر. استخدم روابط نسبية
-لملفات المستودع، وحدّث التوثيق في طلب السحب نفسه عندما يتغير سلوك CLI أو API
-العامة أو ادعاءات الدعم أو خيارات البناء أو أوامر الاختبار.
+<!-- i18n-section: headers -->
+### تنظيم الملفات والترويسات
 
+- تبدأ ملفات C++ الجديدة بلافتة LLVM للاسم والغرض، و`NeverD Decompiler` ووصف Doxygen
+  `\file`، كما في `lib/debug/PDBLoader.cpp`. احتفظ بإشعارات الحقوق والتراخيص.
+- استخدم ترويسات `.h` مكتفية ذاتيًا وتبعيات صريحة؛ تضمّن ملفات التنفيذ واجهتها أولًا.
+  يرتب `.clang-format` البقية: الخاصة المجاورة ثم العامة `neverd/` ثم LLVM/Capstone بين
+  اقتباسين ثم الأقواس الزاوية. لا تعتمد على ترتيب عرضي أو تضمين انتقالي.
+- تستخدم الترويسات الجديدة حارسًا مشتقًا من المسار `NEVERD_..._H`؛ مثل
+  `NEVERD_SDK_LIMITS_H` للمسار `neverd/sdk/Limits.h`. ضمّن ما يكفي من أدلة المكوّنات
+  الخاصة والأدوات لتجنب التصادم، واذكر الاسم عند `#endif`. طبّق النمط عند توحيد ترويسة
+  موجودة صراحةً، واترك الترويسات غير المعنية دون تغيير.
+- ضع الواجهات المشتركة في `include/neverd/<component>/` والخاصة قرب مصادرها في `lib/`
+  أو `tools/`. الموقع لا يعني API عامة مستقرة لـ C SDK. اجعل التبعيات بلا دورات والنماذج/
+  القرّاء الأساسيين مستقلين عن الجلسات والنقل. ضع الخوارزميات في مكوّنها دون تكرار دلالات
+  CLI/SDK/worker. راجع [العمارة](architecture.md).
+- استخدم نطاق الأسماء المالك وأسماء واضحة: الأنواع والحقول الجديدة `UpperCamelCase`،
+  الدوال `lowerCamelCase` وثوابت السياسات `kUpperCamelCase`. احفظ أسماء الواجهات القائمة
+  وعقود C/Python وأعراف STL. لا تضف `using namespace` على نطاق كامل إلى الترويسات.
+- تحتفظ جداول التضمين المتكرر المقصود بصيغة `.def`/`.inc` وتوثّق عقد الماكرو؛ ليست
+  واجهات `.h` مستقلة ولا تُضاف حراس تمنع تكرار التوسيع. عدّل الترويسات المولدة عبر مولّدها.
+
+مثال ترويسة سياسة مستقلة:
+
+```cpp
+//===- Limits.h - SDK resource limits and defaults ------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// SDK request bounds, retained-state limits and default work budgets.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_SDK_LIMITS_H
+#define NEVERD_SDK_LIMITS_H
+
+#include <cstdint>
+
+namespace neverd::sdk {
+
+/// Traversal ceiling for a function without a recorded instruction extent.
+inline constexpr uint64_t kMaxUnsizedInstructions = 65536;
+
+} // namespace neverd::sdk
+
+#endif // NEVERD_SDK_LIMITS_H
+```
+
+<!-- i18n-section: policy -->
+### ملكية الحدود والقيم الافتراضية والتهيئة
+
+استخدم `ResourceLimits.h` في أدلة الأدوات المضافة مباشرةً إلى مسار البحث عن الترويسات. في نظام ملفات لا يميّز بين حالة الأحرف، قد يحجب ملف `Limits.h` المحلي ترويسة النظام `<limits.h>`.
+
+لكل سياسة تعريف مرجعي واحد في ترويسة الحدود/التهيئة لنظامها الفرعي حتى مع مستدعٍ واحد.
+يشمل سقوف الإدخال/الإخراج وحدود الاستدعاء الذاتي والرسوم البيانية وميزانيات العمل والتكرارات والعتبات الاستدلالية
+والذاكرة المؤقتة والصفحات والدفعات وإعادة المحاولة والمهل. يشمل `constexpr` والماكرو
+والمقارنات الحرفية و`min`/`clamp` ومهيئات الحقول والمنشئات والمعاملات الافتراضية.
+
+اختر المرجع القائم أولًا:
+
+| المالك | موقع التعريف |
+| --- | --- |
+| النواة/المسار المشترك | [`include/neverd/Limits.h`](../../include/neverd/Limits.h) |
+| SDK | [`include/neverd/sdk/Limits.h`](../../include/neverd/sdk/Limits.h) |
+| Web | [`include/neverd/web/Limits.h`](../../include/neverd/web/Limits.h) أو التعريف المتخصص القائم |
+| مكوّن مكتبة آخر | الترويسة/الجدول القائم وإلا `Limits.h` متخصص في الطبقة المالكة |
+| CLI أو worker أو GUI فقط | `ResourceLimits.h` أو `Config.h` محلي للأداة؛ لا تعتمد النواة عليه |
+| إعدادات يختارها المستدعي | النموذج المالك `Config.h` أو `*Options.h` أو `*Configuration.h` |
+
+أبق الترويسات خفيفة ومجمّعة حسب الغرض. أعد استخدام `*Limits.def` أو جدول التهيئة مع
+عرض C++ مكتفٍ ذاتيًا. لا تكرر السياسة بين `Limits.h` و`Constants.h` و`Config.h`؛ لا تضع
+سياسة النواة في SDK/الأدوات، ولا تجمع سياسات الوحدات غير المرتبطة في `Limits.h` الجذري.
+
+استخدم `inline constexpr` محدد النوع لقيم C++ العددية في النطاق القائم (`neverd::limits`،
+`neverd::sdk`). سمّ الغرض والوحدة، مثل `kMaxSourceBytes` و`kDefaultPageRows` و
+`kRetryDelayMilliseconds`؛ اشرح الصفر والقيم الحارسة والحدود غير المعتادة. افصل الافتراضي
+عن الحد الأقصى الصلب عند اختلاف المعنى. قد يملك نموذج الخيارات القيمة الافتراضية؛ يستخدم
+المستهلكون النموذج أو مصنع الافتراضيات أو الثابت نفسه. اشتق القيم المرتبطة دون تكرار الأرقام.
+
+تعيد المهايئات والتحقق من التخزين وCLI/GUI/worker وروابط Python/MCP استخدام المرجع نفسه،
+كذلك حدود المخطط والتشخيصات الرقمية. اشتق القيم بين اللغات من جدول أو روابط مولدة؛ وإلا
+أضف فحص انحراف. احفظ توافق C الخالص. للمعاينة/الصفحة الأكثر تشددًا اسم ومالك مستقلان؛
+تساوي الأرقام لا يثبت وحدة السياسة.
+
+تبقى تخطيطات الملفات الثنائية وثوابت ABI/البروتوكول/التعليمات ومجالات الأعداد وتكاليف
+خوارزمية الإثبات المحددة في نماذجها الدلالية. مهيئات الحالة والفهارس وتلميحات التخصيص
+ومدخلات الاختبار المستقلة ليست سياسات تلقائيًا. لا تستبدل الحد المتوقع المستقل بثابت التنفيذ المراد اختباره.
+
+راجع التعريفات والاستخدامات الحرفية، بما فيها الحراس متعددة الأسطر والحلقات والماكرو
+والافتراضيات والمؤقتات والروابط. تحقق من معنى ومالك كل سياسة تمسها؛ بحث `Max*` وحده
+لا يكفي. يحفظ التجميع الأنواع والقيم واتجاه المقارنات والقيم الحارسة وسلوك النفاد/الأخطاء.
+افصل تغييرات السياسة وشغّل [الاختبارات المتأثرة](testing.md).
+
+<!-- i18n-section: artifacts -->
+### التوثيق والنواتج المحلية
+
+اجعل Markdown موجزًا وقابلًا للتحقق من المصدر، بروابط داخلية نسبية. حدّث التوثيق في PR
+نفسه عند تغيير CLI/API أو الدعم أو خيارات البناء أو أوامر الاختبار. زامن كل لغات هذا الدليل؛
+راجع الترجمة قبل تحديث SHA-256 الخاص بـ `i18n-source`. احفظ الأقسام والأمثلة وAPI/الخيارات
+ووجهات الروابط، وشغّل `python3 scripts/check_docs_i18n.py` لفحص الروابط والتطابق.
+
+ضع تقارير الأداء المحلية والتتبعات الخام وملخصات الزمن في أدلة build أو benchmark-results
+المتجاهلة. ثبّت أدوات قياس قابلة لإعادة الاستخدام واختبارات انحدار، لا تقارير الجهاز أو الجداول المنسوخة.
+
+<!-- i18n-section: tests -->
 ## تشغيل الاختبارات
 
 شغّل كل الاختبارات المسجلة عبر الهدف التجميعي:
 
 ```bash
+python scripts/build.py build-release --parallel
 cmake --build build-release --target check-neverd
 ```
 
@@ -146,7 +339,7 @@ cmake --build build-release --target check-neverd
 cmake --build build-release --target check-neverd-semantic
 
 # Lifter/loader/format binary only
-cmake --build build-release --target NeverDLiftTests --parallel 4
+python scripts/build.py build-release --target NeverDLiftTests --parallel 4
 ctest --test-dir build-release --build-config Release \
   -L '^NeverDLiftTests$' --output-on-failure --parallel 4
 ```
@@ -156,6 +349,26 @@ ctest --test-dir build-release --build-config Release \
 إذا جرى تخطي هدف لغياب مترجم عابر أو linker، فأبلغ عن القيد؛ ولا تصف المسار
 الذي لم يُنفّذ بأنه ناجح.
 
+<!-- i18n-section: python-sdk -->
+### SDK إضافات Python
+
+لتغييرات SDK شغّل اختبارات Python الخالصة وفحوص الانحراف قبل اختبارات المهايئات الأصلية:
+
+```bash
+PYTHONPATH=pluginsdk/python python3 -m unittest discover \
+  -s pluginsdk/python/tests -v
+python3 -m mypy --config-file pluginsdk/python/pyproject.toml \
+  pluginsdk/python/neverd_plugin
+PYTHONPATH=pluginsdk/python python3 scripts/check_python_plugin_sdk.py
+python scripts/build.py build-release --target \
+  NeverDPluginRuntimeTests NeverDPythonRuntimeTests NeverDPythonPluginTests
+ctest --test-dir build-release -R 'NeverD(Python|Plugin)' --output-on-failure
+```
+
+إعلانات C العامة وتواقيع Python ABI وإصدارات الحزمة/CMake وسياسة سير التسليم عقد مراجعة
+واحد؛ حدّثها في التغيير نفسه. راجع [دليل إضافات Python](python-plugins.md).
+
+<!-- i18n-section: review -->
 ## قائمة مراجعة طلب السحب
 
 قبل طلب المراجعة:
@@ -169,6 +382,8 @@ ctest --test-dir build-release --build-config Release \
   مخمّنة أو `NOP`.
 - أضف تغطية دلالية لتغييرات السلوك، لا لقطات IR نصية فقط.
 - أبق التنظيف غير المتعلق، والملفات المولدة، وآثار البناء المحلية خارج الفرق.
+- راجع [قواعد الترويسات وملكية السياسات](#نمط-الشفرة)، والحراس/الافتراضيات الرقمية وانحراف
+  الروابط؛ نجاح التنسيق وحده غير كافٍ.
 - حدّث التوثيق العام وتوثيق المساهمين عندما يتغير السلوك أو الدعم أو الخيارات
   أو الأوامر أو ملكية الاختبارات.
 

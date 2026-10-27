@@ -15,6 +15,8 @@
 #include "JsonReader.h"
 #include "PathPolicy.h"
 
+#include "neverd/web/Limits.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/SHA256.h"
@@ -91,7 +93,7 @@ Integrity integrity(const llvm::json::Object &O, uint64_t Size) {
   const auto *Blocks = Meta->getArray("blocks");
   if (!Hash || !BlockSize || *BlockSize <= 0 ||
       *BlockSize > int64_t(MaxBlobReadBytes) || !Blocks ||
-      Blocks->size() > 10000 ||
+      Blocks->size() > ::neverd::limits::web::kAsarIntegrityBlocksSizeLimit ||
       Blocks->size() != Size / uint64_t(*BlockSize) + 1)
     throw Error("asar_invalid_integrity");
   I.Hash = digestText(*Hash);
@@ -131,7 +133,8 @@ struct Reader {
         throw Error("asar_member_budget_exceeded");
       const auto Path =
           Parent.empty() ? Name : std::string(Parent) + '/' + Name;
-      if (Path.size() > 4096 || Path.size() > MaxAsarPathBytes - PathBytes)
+      if (Path.size() > ::neverd::limits::web::kAsarDirectoryPathSizeLimit ||
+          Path.size() > MaxAsarPathBytes - PathBytes)
         throw Error("asar_path_budget_exceeded");
       PathBytes += Path.size();
       const auto *O = Files.getObject(Name);

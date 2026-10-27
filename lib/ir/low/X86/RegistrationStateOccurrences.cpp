@@ -4,10 +4,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../LowInstructionSlice.h"
 #include "RegistrationStateSolver.h"
 
 #include "neverd/Limits.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include <algorithm>
 #include <utility>
@@ -26,6 +27,17 @@ void RegistrationStateSolver::collectOccurrences() {
                .emplace(Boundary.Address, std::make_pair(Block.Id, Boundary))
                .second)
         CompleteChainOperations = false;
+      // A supplied operation slice remains evidence even if a corrupted
+      // address would clear instruction-local frame facts before its store.
+      // Address-only legacy observations do not claim operation ownership.
+      if (Boundary.OpCount) {
+        if (!charge(Boundary.OpCount))
+          break;
+        if (!detail::checkedInstructionOperations(Block, Boundary)) {
+          InvalidBlocks[Index.at(Block.Id)] = true;
+          CompleteChainOperations = false;
+        }
+      }
     }
     for (const LowOp &Op : Block.Ops) {
       if (!charge(1))

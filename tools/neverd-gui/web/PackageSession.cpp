@@ -12,16 +12,13 @@
 
 #include "PackageSession.h"
 
+#include "../ResourceLimits.h"
+
 #include <QJsonDocument>
 #include <QSet>
 
 namespace neverd::gui::web {
 namespace {
-constexpr qsizetype MaxInventoryRows = 4096;
-constexpr qsizetype MaxFindingRows = 8192;
-constexpr qsizetype MaxMetadataBytes = 16 * 1024 * 1024;
-constexpr int RequestTimeoutMs = 120000;
-constexpr int PageSize = 128;
 
 bool hasOperation(const QJsonObject &Capabilities, const QString &Name) {
   for (const auto &V : Capabilities["operations"].toArray())
@@ -34,7 +31,7 @@ bool hasOperation(const QJsonObject &Capabilities, const QString &Name) {
 PackageSession::PackageSession(const QString &WorkerPath, QObject *Parent)
     : QObject(Parent) {
   Deadline.setSingleShot(true);
-  Deadline.setInterval(RequestTimeoutMs);
+  Deadline.setInterval(::neverd::limits::gui::kPackageSessionRequestTimeoutMs);
   connect(&Deadline, &QTimer::timeout, this, [this] {
     Client.stop();
     failure(QStringLiteral("web_request_timeout"));
@@ -154,8 +151,10 @@ void PackageSession::commitPreview() {
             Artifacts = {};
             Members = {};
             clearAssessment();
-            pages(QStringLiteral("web_artifacts"), {}, MaxInventoryRows,
-                  MaxMetadataBytes, [this](auto Rows) {
+            pages(QStringLiteral("web_artifacts"), {},
+                  ::neverd::limits::gui::kPackageSessionMaxInventoryRows,
+                  ::neverd::limits::gui::kPackageSessionMaxMetadataBytes,
+                  [this](auto Rows) {
                     Artifacts = std::move(Rows);
                     emit artifactsReady();
                   });
@@ -172,8 +171,10 @@ void PackageSession::extractArchive(const QString &ArtifactID,
           {{"artifact_id", ArtifactID}, {"format", Format}},
           [this](const auto &Result) {
             pages(QStringLiteral("web_package_archive_records"),
-                  {{"archive_id", Result["archive_id"]}}, MaxInventoryRows,
-                  MaxMetadataBytes, [this](auto Rows) {
+                  {{"archive_id", Result["archive_id"]}},
+                  ::neverd::limits::gui::kPackageSessionMaxInventoryRows,
+                  ::neverd::limits::gui::kPackageSessionMaxMetadataBytes,
+                  [this](auto Rows) {
                     Members = std::move(Rows);
                     emit membersReady();
                   });
@@ -236,7 +237,9 @@ void PackageSession::refreshAssessment() {
       {"package_assessment_id", Assessment["package_assessment_id"]},
       {"review_head", Assessment["review_head_id"]}};
   pages(QStringLiteral("web_package_assessment_findings"), Query,
-        MaxFindingRows, MaxMetadataBytes, [this, Query](auto Rows) {
+        ::neverd::limits::gui::kPackageSessionMaxFindingRows,
+        ::neverd::limits::gui::kPackageSessionMaxMetadataBytes,
+        [this, Query](auto Rows) {
           if (Rows.size() != Assessment["finding_count"].toInteger(-1)) {
             failure(QStringLiteral("invalid_web_page_count"));
             return;
@@ -315,58 +318,59 @@ void PackageSession::page(const QString &Operation, QJsonObject Query,
                           std::function<void(QJsonArray)> Done) {
   auto Payload = Query;
   Payload["offset"] = Offset;
-  Payload["limit"] = PageSize;
-  request(
-      Operation, Payload,
-      [this, Operation, Query, Offset, Rows = std::move(Rows), Bytes, Maximum,
-       ByteLimit, Done = std::move(Done)](const auto &Result) mutable {
-        const auto Items = Result["items"].toArray();
-        const auto Charge =
-            QJsonDocument(Items).toJson(QJsonDocument::Compact).size();
-        if (!Result["items"].isArray() ||
-            Result["offset"].toInteger(-1) != Offset ||
-            Result["revision"].toString() != Revision ||
-            Items.size() > PageSize || Items.size() > Maximum - Rows.size() ||
-            Charge > ByteLimit - Bytes ||
-            (Query.contains("review_head") &&
-             (Result["review_head_id"] != Query["review_head"] ||
-              Result["package_assessment_id"] !=
-                  Query["package_assessment_id"]))) {
-          failure(QStringLiteral("invalid_web_page"));
-          return;
-        }
-        for (const auto &Item : Items)
-          Rows.append(Item);
-        bool Complete = Result["page_complete"] == QJsonValue(true);
-        if (Operation == u"web_package_archive_records") {
-          const auto Total = Result["total"].toInteger(-1);
-          if (Result["archive_id"] != Query["archive_id"] || Total < 0 ||
-              Total > Maximum || Offset + Items.size() > Total) {
-            failure(QStringLiteral("invalid_web_archive_page"));
-            return;
-          }
-          Complete = Offset + Items.size() == Total;
-        } else if (Result["page_complete"] != QJsonValue(true) &&
-                   Result["page_complete"] != QJsonValue(false)) {
-          failure(QStringLiteral("invalid_web_page"));
-          return;
-        }
-        if (Complete) {
-          if (!Result["next_offset"].isNull()) {
-            failure(QStringLiteral("invalid_web_page"));
-            return;
-          }
-          Done(std::move(Rows));
-          return;
-        }
-        if (Items.isEmpty() ||
-            Result["next_offset"].toInteger(-1) != Offset + Items.size()) {
-          failure(QStringLiteral("invalid_web_page"));
-          return;
-        }
-        page(Operation, Query, Offset + Items.size(), std::move(Rows),
-             Bytes + Charge, Maximum, ByteLimit, std::move(Done));
-      });
+  Payload["limit"] = ::neverd::limits::gui::kPackageSessionPageSize;
+  request(Operation, Payload,
+          [this, Operation, Query, Offset, Rows = std::move(Rows), Bytes,
+           Maximum, ByteLimit,
+           Done = std::move(Done)](const auto &Result) mutable {
+            const auto Items = Result["items"].toArray();
+            const auto Charge =
+                QJsonDocument(Items).toJson(QJsonDocument::Compact).size();
+            if (!Result["items"].isArray() ||
+                Result["offset"].toInteger(-1) != Offset ||
+                Result["revision"].toString() != Revision ||
+                Items.size() > ::neverd::limits::gui::kPackageSessionPageSize ||
+                Items.size() > Maximum - Rows.size() ||
+                Charge > ByteLimit - Bytes ||
+                (Query.contains("review_head") &&
+                 (Result["review_head_id"] != Query["review_head"] ||
+                  Result["package_assessment_id"] !=
+                      Query["package_assessment_id"]))) {
+              failure(QStringLiteral("invalid_web_page"));
+              return;
+            }
+            for (const auto &Item : Items)
+              Rows.append(Item);
+            bool Complete = Result["page_complete"] == QJsonValue(true);
+            if (Operation == u"web_package_archive_records") {
+              const auto Total = Result["total"].toInteger(-1);
+              if (Result["archive_id"] != Query["archive_id"] || Total < 0 ||
+                  Total > Maximum || Offset + Items.size() > Total) {
+                failure(QStringLiteral("invalid_web_archive_page"));
+                return;
+              }
+              Complete = Offset + Items.size() == Total;
+            } else if (Result["page_complete"] != QJsonValue(true) &&
+                       Result["page_complete"] != QJsonValue(false)) {
+              failure(QStringLiteral("invalid_web_page"));
+              return;
+            }
+            if (Complete) {
+              if (!Result["next_offset"].isNull()) {
+                failure(QStringLiteral("invalid_web_page"));
+                return;
+              }
+              Done(std::move(Rows));
+              return;
+            }
+            if (Items.isEmpty() ||
+                Result["next_offset"].toInteger(-1) != Offset + Items.size()) {
+              failure(QStringLiteral("invalid_web_page"));
+              return;
+            }
+            page(Operation, Query, Offset + Items.size(), std::move(Rows),
+                 Bytes + Charge, Maximum, ByteLimit, std::move(Done));
+          });
 }
 
 void PackageSession::cancel() {

@@ -13,7 +13,13 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "AArch64SVEPredicate.h"
+
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/backend/llvm/MedLLVMInstructionText.h"
+#include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
+#include "neverd/ir/intrinsics/IntrinsicTermination.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-aarch64-sideeffect"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -29,24 +35,27 @@ namespace neverd {
 // Memory barriers (DMB, DSB, ISB)
 //===----------------------------------------------------------------------===//
 
-bool MedLLVMEmitter::emitAArch64Barrier(const MedOp & /*Op*/, Intrinsic IC,
+bool MedLLVMEmitter::emitAArch64Barrier(const MedOp &Op, Intrinsic IC,
                                         llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
   switch (IC) {
   case I::Dmb:
-    Builder.CreateFence(llvm::AtomicOrdering::SequentiallyConsistent);
+    // The strongest fence orders what any DMB option does; the option is
+    // the text it carries (`dmb ishld`).
+    markInstructionText(
+        *Builder.CreateFence(llvm::AtomicOrdering::SequentiallyConsistent), Op,
+        IC);
     return true;
-  case I::Dsb: {
-    auto *VoidTy = llvm::Type::getVoidTy(*Ctx);
-    auto *AsmFnTy = llvm::FunctionType::get(VoidTy, {}, false);
-    auto *IA = llvm::InlineAsm::get(AsmFnTy, "dsb ish", "~{memory}", true);
-    Builder.CreateCall(IA, {});
-    return true;
-  }
+  case I::Dsb:
   case I::Isb: {
+    // A DSB or ISB runs with its own option: `dsb sy` waits for more than
+    // `dsb ish` does.  A lift that kept none ran the inner-shareable one.
+    std::string Text = intrinsicInstructionText(IC, instructionOperand(Op));
+    if (Text.empty())
+      Text = IC == I::Dsb ? "dsb ish" : "isb";
     auto *VoidTy = llvm::Type::getVoidTy(*Ctx);
     auto *AsmFnTy = llvm::FunctionType::get(VoidTy, {}, false);
-    auto *IA = llvm::InlineAsm::get(AsmFnTy, "isb", "~{memory}", true);
+    auto *IA = llvm::InlineAsm::get(AsmFnTy, Text, "~{memory}", true);
     Builder.CreateCall(IA, {});
     return true;
   }
@@ -92,13 +101,16 @@ bool MedLLVMEmitter::emitAArch64Exception(const MedOp &Op, Intrinsic IC,
   using I = Intrinsic;
   switch (IC) {
   case I::Brk:
-  case I::Hlt_A64: {
-    // These instructions raise a synchronous exception and do not have an
-    // architectural fallthrough path.  Use the noreturn trap intrinsic rather
-    // than debugtrap; EH lowering removes the CFG's conservative fallthrough
-    // edge after block emission, once any edge-copy bookkeeping is complete.
-    Builder.CreateIntrinsic(llvm::Type::getVoidTy(*Ctx), llvm::Intrinsic::trap,
-                            {});
+  case I::Hlt_A64:
+  case I::Udf_A64: {
+    // A compiler debug break resumes without defining X0. Fatal traps retain
+    // noreturn emission; all IR stages use the same instruction-code policy.
+    const auto Kind = intrinsicNeverReturns(IC, instructionOperand(Op))
+                          ? llvm::Intrinsic::trap
+                          : llvm::Intrinsic::debugtrap;
+    markInstructionText(
+        *Builder.CreateIntrinsic(llvm::Type::getVoidTy(*Ctx), Kind, {}), Op,
+        IC);
     return true;
   }
   case I::Svc:
@@ -112,7 +124,11 @@ bool MedLLVMEmitter::emitAArch64Exception(const MedOp &Op, Intrinsic IC,
           Imm = Op.Inputs[K].ConstVal;
           break;
         }
-      std::string AsmStr = std::string(Mn) + " #" + std::to_string(Imm);
+      // The instruction with its code (`udf #0xFE`); a supervisor call keeps
+      // the decimal number it has always printed.
+      std::string AsmStr = intrinsicInstructionText(IC, Imm);
+      if (AsmStr.empty())
+        AsmStr = std::string(Mn) + " #" + std::to_string(Imm);
       auto *VoidTy = llvm::Type::getVoidTy(*Ctx);
       auto *AsmFnTy = llvm::FunctionType::get(VoidTy, {}, false);
       auto *IA = llvm::InlineAsm::get(AsmFnTy, AsmStr, "~{memory}", true);
@@ -137,17 +153,42 @@ bool MedLLVMEmitter::emitAArch64Exception(const MedOp &Op, Intrinsic IC,
 
 bool MedLLVMEmitter::emitAArch64Sideeffect(const MedOp &Op, Intrinsic IC,
                                            llvm::IRBuilder<> &Builder) {
+  if (isAArch64AddressStoreIntrinsic(IC)) {
+    // Original memory shares one validated machine contract. A void store
+    // must reach it before the generic dispatcher refuses unknown effects.
+    (void)emitAArch64IntrinsicValue(Op, IC, Builder);
+    return true;
+  }
+  // An MSR, or a SYS operation (DC, IC, AT, TLBI), the lift kept the field
+  // of runs as itself, with its register operand; it writes no register.
+  if (Op.Output.Size == 0 && (Op.NumInputs == 2 || Op.NumInputs == 3) &&
+      Op.Inputs[1].isConst()) {
+    const bool HasRegister = Op.NumInputs == 3;
+    const std::string Asm = aarch64SystemInstructionAsm(
+        IC, Op.Inputs[1].ConstVal, /*HasOutput=*/false, HasRegister);
+    if (!Asm.empty()) {
+      llvm::SmallVector<llvm::Value *, 1> Arguments;
+      if (HasRegister)
+        Arguments.push_back(Builder.CreateZExtOrTrunc(
+            getVar(Op.Inputs[2], Builder), Builder.getInt64Ty()));
+      auto *Type = llvm::FunctionType::get(
+          Builder.getVoidTy(),
+          HasRegister ? llvm::ArrayRef<llvm::Type *>(Builder.getInt64Ty())
+                      : llvm::ArrayRef<llvm::Type *>(),
+          false);
+      Builder.CreateCall(
+          llvm::InlineAsm::get(Type, Asm,
+                               HasRegister ? "r,~{memory}" : "~{memory}",
+                               /*hasSideEffects=*/true),
+          Arguments);
+      return true;
+    }
+  }
   if (IC == Intrinsic::A64_SveSt1 || IC == Intrinsic::A64_SveStnt1) {
-    if (Op.NumInputs < 6 || !Op.Inputs[4].isConst() || !Op.Inputs[5].isConst())
-      return true;
-    const unsigned LaneBytes = static_cast<unsigned>(Op.Inputs[4].ConstVal);
-    const unsigned StoreBytes = static_cast<unsigned>(Op.Inputs[5].ConstVal);
-    if ((LaneBytes != 1 && LaneBytes != 2 && LaneBytes != 4 &&
-         LaneBytes != 8) ||
-        (StoreBytes != 1 && StoreBytes != 2 && StoreBytes != 4 &&
-         StoreBytes != 8) ||
-        StoreBytes > LaneBytes)
-      return true;
+    if (!aarch64VectorMedShapeIsValid(Op))
+      llvm::report_fatal_error(aarch64_sve::kMalformedVector);
+    const unsigned LaneBytes = Op.Inputs[4].ConstVal;
+    const unsigned StoreBytes = Op.Inputs[5].ConstVal;
 
     const unsigned MinLanes = 16 / LaneBytes;
     auto *PredTy =
@@ -167,7 +208,9 @@ bool MedLLVMEmitter::emitAArch64Sideeffect(const MedOp &Op, Intrinsic IC,
       return Builder.CreateLoad(ScalableTy, Slot, Name);
     };
 
-    llvm::Value *Pred = stateToScalable(Op.Inputs[1], PredTy, "sve.store.pred");
+    llvm::Value *Pred = stateToScalable(
+        Op.Inputs[1], aarch64_sve::svboolType(*Ctx), "sve.store.pred");
+    Pred = aarch64_sve::fromSVBool(Builder, Pred, PredTy);
     llvm::Value *Value =
         stateToScalable(Op.Inputs[2], SourceTy, "sve.store.value");
     if (SourceTy != StoreTy)

@@ -8,8 +8,9 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 
 #include "llvm/ADT/StringRef.h"
@@ -47,14 +48,16 @@ class RegisterTrace {
   using Key = std::tuple<int, size_t, va_t, VnodeSpace, uint64_t, uint16_t>;
   std::map<Key, std::optional<Definition>> Memo;
   std::set<Key> Active;
-  size_t Budget = 16384;
+  size_t Budget = ::neverd::limits::loader::kSwiftVirtualCallsBudget;
   bool Valid = true;
 
   std::optional<Definition> resolveAt(const LowBlock &Block, const NdVar &Value,
                                       size_t Before, va_t UseAddress,
                                       unsigned Depth) {
-    if (!Valid || !Budget || Depth > 64 || Value.Size != 8 ||
-        Before > Block.Ops.size())
+    if (!Valid || !Budget ||
+        Depth >
+            ::neverd::limits::loader::kSwiftVirtualCallsResolveAtDepthLimit ||
+        Value.Size != 8 || Before > Block.Ops.size())
       return std::nullopt;
     --Budget;
     if (Value.isConst())
@@ -125,15 +128,24 @@ public:
   RegisterTrace(const BinaryImage &Image, const LowFunc &Function,
                 const LowBlock &Block)
       : Image(Image), Function(Function), StartBlock(Block) {
-    if (Function.Blocks.empty() || Function.Blocks.size() > 256) {
+    if (Function.Blocks.empty() ||
+        Function.Blocks.size() >
+            ::neverd::limits::loader::
+                kSwiftVirtualCallsRegisterTraceFunctionBlocksSizeLimit) {
       Valid = false;
       return;
     }
     size_t Operations = 0, Entries = 0;
     std::set<va_t> Starts;
     for (const auto &B : Function.Blocks) {
-      if (B.Ops.size() > 32768 - Operations || B.Preds.size() > 256 ||
-          B.Succs.size() > 256 || !Blocks.emplace(B.Id, &B).second ||
+      if (B.Ops.size() >
+              ::neverd::limits::loader::kMaxSwiftVirtualTraceOperations -
+                  Operations ||
+          B.Preds.size() > ::neverd::limits::loader::
+                               kSwiftVirtualCallsRegisterTraceBPredsSizeLimit ||
+          B.Succs.size() > ::neverd::limits::loader::
+                               kSwiftVirtualCallsRegisterTraceBSuccsSizeLimit ||
+          !Blocks.emplace(B.Id, &B).second ||
           !Starts.insert(B.StartAddr).second) {
         Valid = false;
         return;
@@ -505,7 +517,7 @@ canonicalNativeSelfCall(const BinaryImage &Image, va_t Entry, va_t CallSite,
   const auto Declaration =
       swiftMangledObjCObjectPairVoidMethodDeclaration(Image, Entry);
   if (!Declaration || !CallSite || CallSite % 4 || !Class || Slot < 80 ||
-      Slot > 4096 || Slot % 8)
+      Slot > ::neverd::limits::loader::kMaxSwiftVirtualSlotOffset || Slot % 8)
     return std::nullopt;
   const auto Import = darwinRuntimeImport(Image, IsaMaskImport);
   const auto Bind = Image.DyldBindSlots.find(IsaMaskImport);
@@ -546,15 +558,22 @@ canonicalNativeSelfCall(const BinaryImage &Image, va_t Entry, va_t CallSite,
 std::map<va_t, SourceCallTypeHint> nativeSelfCalls(const BinaryImage &Image,
                                                    const LowFunc &Function) {
   std::map<va_t, SourceCallTypeHint> Result;
-  if (!Function.hasCompleteLiftCoverage() || Function.Blocks.size() > 256 ||
-      Function.DecodedInstructionCount > 4096)
+  if (!Function.hasCompleteLiftCoverage() ||
+      Function.Blocks.size() >
+          ::neverd::limits::loader::
+              kSwiftVirtualCallsNativeSelfCallsFunctionBlocksSizeLimit ||
+      Function.DecodedInstructionCount >
+          ::neverd::limits::loader::
+              kSwiftVirtualCallsNativeSelfCallsFunctionDecodedInstructionCountLimit)
     return Result;
   size_t Candidates = 0;
   for (const auto &Block : Function.Blocks)
     for (const auto &Op : Block.Ops)
       Candidates += Op.Opcode == NdOp::INDIR_CALL && Op.NumInputs == 1 &&
                     Op.Inputs[0] == NdVar::reg(a64reg::X8, 8);
-  if (!Candidates || Candidates > 64)
+  if (!Candidates || Candidates >
+                         ::neverd::limits::loader::
+                             kSwiftVirtualCallsNativeSelfCallsCandidatesLimit)
     return Result;
   const auto Declaration =
       swiftMangledObjCObjectPairVoidMethodDeclaration(Image, Function.Entry);
@@ -616,7 +635,8 @@ std::map<va_t, SourceCallTypeHint> nativeSelfCalls(const BinaryImage &Image,
       if (!Match)
         continue;
       if (!MachineChecked) {
-        size_t Budget = 1U << 18;
+        size_t Budget =
+            ::neverd::limits::loader::kSwiftVirtualCallsNativeSelfCallsBudget;
         if (!immutableNativeFrameMachineMatches(Image, Function, Budget))
           return {};
         MachineChecked = true;
@@ -667,7 +687,9 @@ buildSwiftVirtualCallHints(const BinaryImage &Image, const LowFunc &Function) {
     return Result;
   Result = nativeSelfCalls(Image, Function);
   if (!Result.empty() || Function.Blocks.size() != 1 ||
-      Function.Blocks[0].Ops.size() > 2048)
+      Function.Blocks[0].Ops.size() >
+          ::neverd::limits::loader::
+              kSwiftVirtualCallsBuildSwiftVirtualCallHintsFunctionBlocks0OpsSizeLimit)
     return Result;
   const auto &Block = Function.Blocks[0];
   if (Block.StartAddr != Function.Entry || !Block.Preds.empty())

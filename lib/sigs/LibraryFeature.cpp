@@ -7,6 +7,7 @@
 #include "neverd/sigs/LibraryFeature.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/sigs/Limits.h"
 #include "neverd/sigs/PatternParser.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -26,9 +27,6 @@ using namespace neverd::sigs;
 
 namespace {
 
-constexpr size_t MaxFileBytes = 8 * 1024 * 1024;
-constexpr size_t MaxRules = 256;
-constexpr size_t MaxNodes = 128;
 using Object = llvm::json::Object;
 using Value = llvm::json::Value;
 
@@ -38,8 +36,10 @@ std::string digest(llvm::StringRef Text) {
 }
 
 bool identifier(llvm::StringRef Text) {
-  return !Text.empty() && Text.size() <= 128 && llvm::isLower(Text.front()) &&
-         llvm::all_of(Text, [](char C) {
+  return !Text.empty() &&
+         Text.size() <=
+             ::neverd::limits::sigs::kLibraryFeatureIdentifierTextSizeLimit &&
+         llvm::isLower(Text.front()) && llvm::all_of(Text, [](char C) {
            return llvm::isLower(C) || llvm::isDigit(C) || C == '_' ||
                   C == '.' || C == '-';
          });
@@ -66,7 +66,10 @@ public:
 
   std::string string(const Object *O, llvm::StringRef Key) {
     auto S = O ? O->getString(Key) : std::nullopt;
-    require(S && !S->empty() && S->size() <= 16384 && !S->contains('\0'),
+    require(S && !S->empty() &&
+                S->size() <=
+                    ::neverd::limits::sigs::kLibraryFeatureStringSSizeLimit &&
+                !S->contains('\0'),
             "missing or invalid string: " + Key.str());
     return S ? S->str() : std::string();
   }
@@ -105,14 +108,16 @@ public:
     require(R == Root.end() && P != Resolved.end(),
             "feature reference escapes its root");
     const auto Size = std::filesystem::file_size(Resolved, EC);
-    require(!EC && Size <= MaxFileBytes, "feature file exceeds byte budget");
+    require(!EC && Size <= ::neverd::limits::sigs::kLibraryFeatureMaxFileBytes,
+            "feature file exceeds byte budget");
     if (!Error.empty())
       return {};
     auto Buffer = llvm::MemoryBuffer::getFile(Resolved.string(), false);
     require(static_cast<bool>(Buffer), "cannot read feature file");
     if (!Buffer)
       return {};
-    require((*Buffer)->getBufferSize() <= MaxFileBytes,
+    require((*Buffer)->getBufferSize() <=
+                ::neverd::limits::sigs::kLibraryFeatureMaxFileBytes,
             "feature file exceeds byte budget");
     return Error.empty() ? (*Buffer)->getBuffer().str() : std::string();
   }
@@ -134,7 +139,8 @@ public:
     std::string Text = read(Root / Path);
     require(digest(Text) == Hash, "feature digest mismatch: " + Relative);
     if (O->get("size"))
-      require(integer(O, "size", 0, MaxFileBytes) ==
+      require(integer(O, "size", 0,
+                      ::neverd::limits::sigs::kLibraryFeatureMaxFileBytes) ==
                   static_cast<int64_t>(Text.size()),
               "feature size mismatch: " + Relative);
     return Text;
@@ -157,7 +163,9 @@ public:
     for (size_t I = 0; I < Text.size() && Error.empty(); ++I) {
       if (Text[I] == '{' || Text[I] == '[') {
         Keys.emplace_back();
-        require(Keys.size() <= 64, "feature JSON nesting budget exceeded");
+        require(Keys.size() <=
+                    ::neverd::limits::sigs::kLibraryFeatureJsonKeysSizeLimit,
+                "feature JSON nesting budget exceeded");
       } else if (Text[I] == '}' || Text[I] == ']') {
         Keys.pop_back();
       } else if (Text[I] == '"') {
@@ -196,7 +204,9 @@ bool comparison(LibraryFeatureOp Op) {
 void expression(Reader &R, const Object *Pattern, LibraryFeatureRule &Rule) {
   R.keys(Pattern, {"nodes", "result"});
   const auto *Nodes = Pattern ? Pattern->getArray("nodes") : nullptr;
-  R.require(Nodes && !Nodes->empty() && Nodes->size() <= MaxNodes,
+  R.require(Nodes && !Nodes->empty() &&
+                Nodes->size() <=
+                    ::neverd::limits::sigs::kLibraryFeatureMaxNodes,
             "invalid expression node count");
   if (!Nodes || !R.Error.empty())
     return;
@@ -406,7 +416,9 @@ bool operation(llvm::StringRef Family, llvm::StringRef Name) {
 
 void readRules(Reader &R, const Object *Pack, LibraryFeaturePack &Out) {
   const auto *Rules = Pack ? Pack->getArray("rules") : nullptr;
-  R.require(Rules && !Rules->empty() && Rules->size() <= MaxRules,
+  R.require(Rules && !Rules->empty() &&
+                Rules->size() <=
+                    ::neverd::limits::sigs::kLibraryFeatureMaxRules,
             "invalid library rule count");
   if (!Rules || !R.Error.empty())
     return;
@@ -490,7 +502,10 @@ void readRules(Reader &R, const Object *Pack, LibraryFeaturePack &Out) {
     std::set<std::string> WitnessScopes;
     for (llvm::StringRef Category : {"positive", "negative"}) {
       const auto *Witnesses = O->getArray(Category);
-      R.require(Witnesses && !Witnesses->empty() && Witnesses->size() <= 256,
+      R.require(Witnesses && !Witnesses->empty() &&
+                    Witnesses->size() <=
+                        ::neverd::limits::sigs::
+                            kLibraryFeatureReadRulesWitnessesSizeLimit,
                 "missing or excessive rule witnesses");
       if (!Witnesses)
         continue;
@@ -595,8 +610,12 @@ neverd::sigs::readLibraryFeaturePack(const std::filesystem::path &Path) {
                 Verification->getBoolean("consumer_verified").has_value(),
             "feature pack lacks producer verification");
   const Object *Layouts = Profile ? Profile->getObject("layouts") : nullptr;
-  R.require(Layouts && !Layouts->empty() && Layouts->size() <= 64,
-            "invalid layout count");
+  R.require(
+      Layouts && !Layouts->empty() &&
+          Layouts->size() <=
+              ::neverd::limits::sigs::
+                  kLibraryFeatureNeverdSigsReadLibraryFeaturePackLayoutsSizeLimit,
+      "invalid layout count");
   if (Layouts)
     for (const auto &KV : *Layouts) {
       const Object *L = KV.second.getAsObject();
@@ -614,7 +633,11 @@ neverd::sigs::readLibraryFeaturePack(const std::filesystem::path &Path) {
       if (L->get("element_bits"))
         Layout.ElementBits = R.integer(L, "element_bits", 8, 64);
       if (const auto *Derived = L->getArray("known_derived_receivers")) {
-        R.require(Derived->size() <= 64, "too many derived receivers");
+        R.require(
+            Derived->size() <=
+                ::neverd::limits::sigs::
+                    kLibraryFeatureNeverdSigsReadLibraryFeaturePackDerivedSizeLimit,
+            "too many derived receivers");
         for (const Value &D : *Derived) {
           const Object *DO = D.getAsObject();
           R.keys(DO, {"type", "base_offset"});

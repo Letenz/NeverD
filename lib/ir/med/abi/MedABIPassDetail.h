@@ -24,8 +24,14 @@
 #define NEVERD_IR_MED_MEDABIPASSDETAIL_H
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 
 #include <cstdint>
@@ -34,16 +40,36 @@
 #include <set>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace neverd {
 
 struct BinaryImage;
 
-/// Whether an operation prevents recovering an earlier ABI value. Explicit
-/// numerical/MXCSR effects do not call a callee or write argument storage.
-/// Unknown intrinsic effects retain the conservative boundary.
+/// Whether an operation prevents recovering an earlier ABI value: where it
+/// ends a later call's argument setup (endsCallArgumentSetup), as call
+/// argument collection in MedToHigh has it too.
 bool isAbiRecoveryBarrier(const MedOp &Op);
+
+/// Recover the sole ECX argument of an exact, source-checked PE32 cookie call.
+/// Incidental register values and inferred callee signatures do not extend it.
+bool recoverI386RegistrationCookieCall(const MedFunc &Func,
+                                       const MedBlock &Block, size_t CallIndex,
+                                       const TargetRegInfo &TRI,
+                                       MedCallInfo &Info);
+
+/// Physical pre-call SP definitions, using the shared ABI recovery walk.
+/// Source clients charge all walks to one budget and prove entry offsets
+/// separately. Missing or ambiguous bases provide no stack location.
+std::map<const MedOp *, MedVar> sourceCallStackPointers(const MedFunc &Func,
+                                                        Arch Architecture,
+                                                        size_t &Remaining);
+/// Also publishes each block's incoming physical SP under the same fixed
+/// point; absent entries have no unique reaching definition.
+std::map<const MedOp *, MedVar>
+sourceCallStackPointers(const MedFunc &Func, Arch Architecture,
+                        size_t &Remaining, std::map<int, MedVar> &BlockEntries);
 
 struct AbiSpillContext {
   const MedFunc &Func;
@@ -57,6 +83,36 @@ struct AbiSpillContext {
 
 /// One call's argument recovery in recoverCallAbi, as the steps of its
 /// calling convention's AbiCallPolicy see it.
+/// The blocks of one function by id, for a pass that adds or removes no
+/// blocks while it uses the index; operations and PHIs may change.
+class MedBlockIdIndex {
+public:
+  explicit MedBlockIdIndex(const MedFunc &Func) {
+    for (const MedBlock &Block : Func.Blocks) {
+      if (!First.emplace(Block.Id, &Block).second)
+        Unique = false;
+      Last[Block.Id] = &Block;
+    }
+  }
+  /// Whether no two blocks share an id.
+  bool unique() const { return Unique; }
+  /// The first block with \p Id, or null.
+  const MedBlock *first(int Id) const {
+    const auto It = First.find(Id);
+    return It == First.end() ? nullptr : It->second;
+  }
+  /// The last block with \p Id, or null.
+  const MedBlock *last(int Id) const {
+    const auto It = Last.find(Id);
+    return It == Last.end() ? nullptr : It->second;
+  }
+
+private:
+  std::map<int, const MedBlock *> First;
+  std::map<int, const MedBlock *> Last;
+  bool Unique = true;
+};
+
 struct AbiCallContext {
   const MedFunc &Func;
   const MedBlock &Blk;
@@ -75,14 +131,26 @@ struct AbiCallContext {
   int MaxArgs = 0;
   /// The offset of a stack address from the stack pointer at the call.
   llvm::function_ref<std::optional<int64_t>(const MedVar &)> CallStackOffset;
+  /// Func's blocks by id, when the caller keeps them; null builds them.
+  const MedBlockIdIndex *Blocks = nullptr;
 };
 
-/// Whether \p V, stored to the stack, is a prologue's save of a register's
-/// incoming value: a callee-saved register's, or the return address the link
-/// register holds (`push {r11, lr}`, `stp x29, x30`).  It passes no argument.
-inline bool isIncomingRegisterSave(const TargetRegInfo &TRI, const MedVar &V) {
-  return V.Kind == MedVar::Reg && V.SSAVer == 0 &&
-         (TRI.isCalleeSaveReg(V.RegOff) || TRI.isLinkRegister(V.RegOff));
+/// The incoming value of a scratch register that carries no argument is
+/// undefined where the convention says so: storing it, as an alignment
+/// `push rax` does, passes nothing (HighIR's CallArgCollection applies the same
+/// rule).
+inline bool isUndefinedIncomingScratch(const TargetRegInfo &TRI, Arch TheArch,
+                                       const CallArgumentConvention *Convention,
+                                       llvm::ArrayRef<uint64_t> ArgRegs,
+                                       const MedVar &V) {
+  if (!Convention || !Convention->UndefinedIncomingScratchRegisters ||
+      V.Kind != MedVar::Reg || V.SSAVer != 0 || TRI.isStackPointer(V.RegOff) ||
+      TRI.isCalleeSaveReg(V.RegOff) || TRI.isLinkRegister(V.RegOff))
+    return false;
+  const std::optional<unsigned> Family = gprFamilyOf(TheArch, V.RegOff);
+  return Family && llvm::none_of(ArgRegs, [&](uint64_t Reg) {
+           return gprFamilyOf(TheArch, Reg) == Family;
+         });
 }
 
 /// Outgoing scalar stores that agree along every predecessor path
@@ -151,12 +219,66 @@ std::optional<MedVar> vtableCallObject(const MedBlock &Blk, int CallIdx,
 // Stack-pointer offset tracing
 //===----------------------------------------------------------------------===//
 
+/// Where a value is defined: its one operation or PHI anywhere in the
+/// function, or Ambiguous when more than one defines it.
+struct MedDefSite {
+  const MedBlock *Block = nullptr;
+  const MedOp *Op = nullptr;
+  const PhiNode *Phi = nullptr;
+  bool Ambiguous = false;
+};
+
+/// The definition site of each value of a function, as a scan of the whole
+/// function finds it, indexed on first use. Adding or moving operations or
+/// PHIs requires invalidate().
+class MedDefSiteIndex {
+public:
+  explicit MedDefSiteIndex(const MedFunc &Func) : Func(Func) {}
+  MedDefSite find(const MedVar &V);
+  void invalidate() {
+    Sites.clear();
+    StackDeltas.clear();
+    Built = false;
+  }
+
+  /// A stackPtrDelta answer that no depth cap shaped: the offset, and how
+  /// many levels below the value its walk went.  A query at a depth where
+  /// that walk stays under the cap gets the same answer, so an answer serves
+  /// every query for as long as the definitions do.
+  struct StackDelta {
+    std::optional<int64_t> Delta;
+    int Height = 0;
+  };
+  const StackDelta *stackDelta(const MedVar &V, uint64_t StackPointer) const {
+    const auto It = StackDeltas.find({key(V), StackPointer});
+    return It == StackDeltas.end() ? nullptr : &It->second;
+  }
+  void rememberStackDelta(const MedVar &V, uint64_t StackPointer,
+                          StackDelta Answer) {
+    StackDeltas.try_emplace(StackDeltaKey{key(V), StackPointer}, Answer);
+  }
+
+private:
+  using Identity = std::tuple<int, int, int, uint64_t>;
+  using StackDeltaKey = std::pair<Identity, uint64_t>;
+  static Identity key(const MedVar &V) {
+    return {static_cast<int>(V.Kind), V.Id, V.SSAVer, V.RegOff};
+  }
+
+  const MedFunc &Func;
+  llvm::DenseMap<Identity, MedDefSite> Sites;
+  llvm::DenseMap<StackDeltaKey, StackDelta> StackDeltas;
+  bool Built = false;
+};
+
 /// Offset of \p V relative to the function-entry stack pointer, following the
 /// SP definition chain through constant add/sub decrements and width casts.
-/// nullopt when \p V does not derive from the SP.
-std::optional<int64_t> stackPtrDelta(const MedFunc &Func,
-                                     const TargetRegInfo &TRI, const MedVar &V,
-                                     int Depth = 0);
+/// nullopt when \p V does not derive from the SP. \p Defs, when given, must
+/// index \p Func.
+std::optional<int64_t>
+stackPtrDelta(const MedFunc &Func, const TargetRegInfo &TRI, const MedVar &V,
+              int Depth = 0, MedDefSiteIndex *Defs = nullptr,
+              BinaryFormat Format = BinaryFormat::Unknown);
 
 /// Whether \p V is, or derives from (through copies, width casts and a constant
 /// add/sub), a frame register -- the stack OR frame pointer.
@@ -172,30 +294,28 @@ using SpOffsetKey = std::tuple<int, int, uint64_t>;
 /// delta is unavailable.
 void buildCallSpOffsets(const MedFunc &Func, const TargetRegInfo &TRI,
                         const MedVar &V, int64_t Off,
-                        std::map<SpOffsetKey, int64_t> &Map, int Depth);
+                        std::map<SpOffsetKey, int64_t> &Map, int Depth,
+                        MedDefSiteIndex *Defs = nullptr);
 
 /// Offset of store-address \p V above the call SP, resolved against the call
 /// SP's offset map.  nullopt when the address is not stack-pointer derived.
 std::optional<int64_t> relStackOff(const MedFunc &Func,
                                    const TargetRegInfo &TRI, const MedVar &V,
                                    const std::map<SpOffsetKey, int64_t> &Map,
-                                   int Depth);
+                                   int Depth, MedDefSiteIndex *Defs = nullptr);
 
 //===----------------------------------------------------------------------===//
 // Argument-register recovery
 //===----------------------------------------------------------------------===//
 
+class RelocationSymbolIndex;
+
 /// Name of the callee reached by the branch relocation at \p InsnAddr (for a
 /// relocatable object whose direct-call target operand is a placeholder), or an
-/// empty string when no such relocation exists.
-std::string relocCalleeName(const BinaryImage &Img, va_t InsnAddr);
-
-/// The value an argument-register-defining op at index \p J contributes to its
-/// slot, resolving a low-half sub-register sync to the paired full-width write
-/// so a wide (pointer/struct) argument keeps its high bits.
-MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
-                                const TargetRegInfo &TRI,
-                                const IntegerArgumentLayout &Layout);
+/// empty string when no such relocation exists.  \p Index, when given, indexes
+/// \p Img's relocations.
+std::string relocCalleeName(const BinaryImage &Img, va_t InsnAddr,
+                            const RelocationSymbolIndex *Index = nullptr);
 
 /// Select the authoritative PHI for integer argument slot \p ArgIdx in
 /// \p Block.  A PHI with a value on every function-entry edge wins over an
@@ -207,17 +327,38 @@ const PhiNode *selectAuthoritativeArgPhi(const MedFunc &Func,
                                          const TargetRegInfo &TRI, int ArgIdx,
                                          const IntegerArgumentLayout &Layout);
 
+/// The authoritative PHI for integer argument slot \p ArgIdx in \p Block
+/// (selectAuthoritativeArgPhi), where it still holds the register at the op
+/// \p CallIdx: no op before it in the block writes the register, and none is
+/// a call that may change it (callClobbersRegister under \p Format), whose
+/// leftover the register holds instead.
+const PhiNode *argPhiReachingCall(const MedFunc &Func, const MedBlock &Block,
+                                  int CallIdx, const TargetRegInfo &TRI,
+                                  int ArgIdx,
+                                  const IntegerArgumentLayout &Layout,
+                                  BinaryFormat Format);
+
 /// Value reaching argument register \p ArgIdx at the call in block \p BlockId,
 /// found by walking the CFG backwards into predecessor blocks (nearest write,
 /// then a block PHI, then -- when \p AllowUnknownLiveIn -- an incoming
 /// parameter live-in).  \p FromLiveIn, when non-null, is set true if the value
 /// came from the live-in fallback.  nullopt when the register is never set on
 /// any path to the call.
+///
+/// A call that may change the register (callClobbersRegister under
+/// \p Format) ends a path as a write does, and so does an exception
+/// handler's entry, where the unwinder leaves the register unspecified.
+/// Where every path ends so, the value is what the calls left there
+/// (valueLeftByCall), which no parameter carries.  \p CallIdx, when not
+/// negative, is the call's index in its block: the block's operations
+/// before it are searched first.
 std::optional<MedVar>
 findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
                    int BlockId, int ArgIdx, const IntegerArgumentLayout &Layout,
                    bool AllowUnknownLiveIn = false, bool *FromLiveIn = nullptr,
-                   bool *FoundDef = nullptr);
+                   bool *FoundDef = nullptr, int CallIdx = -1,
+                   BinaryFormat Format = BinaryFormat::Unknown,
+                   const MedBlockIdIndex *Blocks = nullptr);
 
 /// Unique predecessor's `if (p)` / `if (!p)` pointer.  After an intervening
 /// Win64 thiscall clobbers rcx. The callee this is the guarded table, not

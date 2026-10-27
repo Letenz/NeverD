@@ -12,6 +12,7 @@
 // APIs are implemented in LibCNames.cpp and LibCCallTraits.cpp respectively.
 
 #include "neverd/Common.h"
+#include "neverd/libc/LibCVariant.h"
 
 #include <array>
 #include <cstdint>
@@ -170,21 +171,27 @@ inline constexpr std::string_view kWinapiMarker = "WINAPI ";
 /// format \p Format, or null.
 const LibCPrototype *libcPrototype(std::string_view Name, BinaryFormat Format);
 
-/// Whether the routine C name \p Name links to in an image of object format
-/// \p Format returns a value, as its C declaration says: the prototype above
-/// or, for a routine a C library header declares, the declared result
-/// (LibCReturnKinds.inc).  Unknown for a routine neither declares.
+/// Whether the routine C name \p Name links to in a program of C library
+/// \p Variant returns a value, as its C declaration says: the prototype
+/// above or, for a routine a C library header declares, the declared result
+/// (LibCReturnKinds.inc, LibCVariants.def).  Unknown for a routine neither
+/// declares.
 std::optional<bool> libcReturnsValue(std::string_view Name,
-                                     BinaryFormat Format);
+                                     LibCVariant Variant);
 
 /// The C library header that declares the data object C name \p Name
 /// (LibCDataObjects.def): "stdio.h" for `stdout`; null for any other name.
 const char *headerOfDataObject(std::string_view Name);
 
+/// The C type the header that declares data object \p Name declares it with
+/// (LibCDataObjects.def): "FILE *" for `stdout`; null for any other name.
+const char *typeOfDataObject(std::string_view Name);
+
 /// Whether the compiler runtime routine C name \p Name returns a double-word
-/// integer in a register pair (CompilerRuntimeDoubleWord.def): `__udivdi3`
-/// on a 32-bit target.
-bool returnsDoubleWord(std::string_view Name);
+/// integer in a register pair on a target of \p WordBytes registers
+/// (CompilerRuntimeDoubleWord.def): `__udivdi3` on a 32-bit target, and
+/// `__udivti3` on a 64-bit one.
+bool returnsDoubleWord(std::string_view Name, unsigned WordBytes);
 
 /// The fixed argument arity of a known NON-variadic libc function (e.g. fputs
 /// -> {2,0}, sqrt -> {0,1}), used to bound the heuristic argument recovery for
@@ -192,7 +199,8 @@ bool returnsDoubleWord(std::string_view Name);
 /// for an unknown function, a variadic function (use varArgFixedCount instead),
 /// or a function whose arity is intentionally not modelled (mixed int/FP forms
 /// like ldexp/frexp).  Name must have its leading underscores already stripped.
-std::optional<LibCArity> libcArity(std::string_view Name);
+/// \p Variant is the C library whose declaration is meant (LibCVariants.def).
+std::optional<LibCArity> libcArity(std::string_view Name, LibCVariant Variant);
 
 /// A Windows kernel routine's documented parameters
 /// (WindowsKernelRoutines.inc): the bytes the Win64 ABI passes for each, in
@@ -213,18 +221,23 @@ bool isIndirectCallDispatchThunk(std::string_view Name);
 /// The fixed arity for a symbol name as it appears in an object or executable.
 /// This preserves platform-decorated spellings whose leading underscores are
 /// semantically significant before falling back to the canonical registry.
-std::optional<LibCArity> libcArityForSymbol(std::string_view Name);
+std::optional<LibCArity> libcArityForSymbol(std::string_view Name,
+                                            LibCVariant Variant);
 
 /// True if Name is a known libc/POSIX library function.
 bool isKnownFunction(std::string_view Name);
 
 /// Returns e.g. "stdlib.h", or nullptr if not a known libc function.
+/// The routine the GNU C Library's large-file routine \p Name is the
+/// 64-bit-offset variant of (`open64` of `open`), which takes and returns
+/// alike (LibCLargeFile.def); empty for any other name.
+std::string_view largeFileRoutine(std::string_view Name);
 const char *headerFor(std::string_view Name);
 
-/// If Name is a known variadic C function (printf, fprintf, etc.),
-/// returns the number of fixed parameters before the '...'. Returns 0
-/// if the function is not variadic.
-unsigned varArgFixedCount(std::string_view Name);
+/// If Name is a known variadic C function (printf, fprintf, etc.) of C
+/// library \p Variant, returns the number of fixed parameters before the
+/// '...'. Returns 0 if the function is not variadic.
+unsigned varArgFixedCount(std::string_view Name, LibCVariant Variant);
 
 /// A printf-family routine (LibCPrintfFormats.inc): its return type and the
 /// C types of its fixed parameters, the last of which is the format whose
@@ -266,11 +279,32 @@ struct LibCVariadicForward {
   uint8_t Count = 0;
   std::string_view Type;
   bool Environment = false;
+  /// The only object format whose C libraries declare the routine
+  /// variadic, or Unknown for every format's: for ELF, Linux's (variadicIn).
+  BinaryFormat Format = BinaryFormat::Unknown;
 };
 
 /// How a function passes its arguments on to the variadic routine C name
 /// \p Name links to, or null when C cannot.
 const LibCVariadicForward *libcVariadicForward(std::string_view Name);
+
+/// The position of the va_list parameter of the routine C name \p Name links
+/// to, where it is the va_list form of a variadic one: 2 for
+/// `vfprintf(FILE *, const char *, va_list)`.  Empty for any other routine.
+std::optional<unsigned> vaListParameter(std::string_view Name);
+
+/// Whether a program of C library \p Variant declares \p Forward's routine
+/// variadic: every C library does where the row names no format, and where
+/// it names ELF, Linux's do (GNU, musl and bionic), as Linux's ptrace
+/// takes its address and datum variadic and FreeBSD's fixed.
+bool variadicIn(const LibCVariadicForward &Forward, LibCVariant Variant);
+
+/// The C type of fixed parameter \p Index of \p Forward's routine as the
+/// headers of C library \p Variant declare it (LibCVariants.def): the GNU C
+/// Library's ptrace takes its request as an enumeration, bionic's and musl's
+/// as an int.
+std::string_view forwardFixedType(const LibCVariadicForward &Forward,
+                                  size_t Index, LibCVariant Variant);
 
 /// ABI category of one fixed parameter in a known variadic function.  Pointer
 /// parameters must be symbolized before code generation; integer parameters
@@ -285,9 +319,10 @@ enum class VarArgFixedParamKind {
 };
 
 /// Return the ABI category of fixed parameter \p Index for a known variadic
-/// libc/POSIX function.  Names may retain platform-leading underscores.
-VarArgFixedParamKind varArgFixedParamKind(std::string_view Name,
-                                          unsigned Index);
+/// libc/POSIX function of C library \p Variant.  Names may retain
+/// platform-leading underscores.
+VarArgFixedParamKind varArgFixedParamKind(std::string_view Name, unsigned Index,
+                                          LibCVariant Variant);
 
 /// True if Name is a known va_list-consuming function: the v-prefixed printf /
 /// scanf family (vprintf, vfprintf, vsnprintf, vscanf, ...) and their fortified
@@ -303,15 +338,18 @@ bool isVaListConsumer(std::string_view Name);
 bool isCStringParameter(std::string_view Name, unsigned Index);
 
 /// The C type of parameter \p Index of the standard C or POSIX function
-/// \p Name when it takes a function (`qsort`'s comparison), or nullopt.
-/// Leading underscores are ignored.
+/// \p Name of C library \p Variant when it takes a function (`qsort`'s
+/// comparison), or nullopt.  Leading underscores are ignored.
 std::optional<std::string_view> functionPointerParameter(std::string_view Name,
-                                                         unsigned Index);
+                                                         unsigned Index,
+                                                         LibCVariant Variant);
 
 /// Whether parameter \p Index of the standard C or POSIX function \p Name
-/// takes an object pointer (`memcpy`'s destination, `fputs`'s stream), which
-/// C does not convert an integer to.  Leading underscores are ignored.
-bool isObjectPointerParameter(std::string_view Name, unsigned Index);
+/// of C library \p Variant takes an object pointer (`memcpy`'s destination,
+/// `fputs`'s stream), which C does not convert an integer to.  Leading
+/// underscores are ignored.
+bool isObjectPointerParameter(std::string_view Name, unsigned Index,
+                              LibCVariant Variant);
 
 /// What a compiler stack-probe helper does (StackProbeRoutines.inc).
 enum class StackProbeEffect : uint8_t {
@@ -337,12 +375,14 @@ std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
 /// must stop exploring rather than fall through and swallow them (a leaf `bl
 /// _longjmp` would otherwise absorb the whole function laid out after it).
 /// Leading platform underscores (the Mach-O `_` prefix) are stripped
-/// internally.
+/// internally.  Rust standard library routines declared to return `!` (a
+/// panic, abort or exit) are known by their demangled path.
 bool isNoReturnFunction(std::string_view Name);
 
 /// True if \p Target resolves through \p Img to a known no-return import
-/// veneer or statically linked function symbol.  This is the image-aware
-/// counterpart of isNoReturnFunction() shared by discovery and CFG recovery.
+/// veneer, or to a function the image exports or a symbol names so.  This is
+/// the image-aware counterpart of isNoReturnFunction() shared by discovery
+/// and CFG recovery.
 bool isNoReturnTarget(const BinaryImage &Img, va_t Target);
 
 /// Exact no-return name lookup for one operation on an unchanged image.
@@ -352,9 +392,13 @@ public:
   /// Names a function address that a restricted (`--func`) load has not
   /// ingested, such as a PDB public loaded on demand.
   using NameResolver = std::function<std::optional<std::string>(va_t)>;
+  /// Whether the routine of a name never returns by a declaration the
+  /// tables do not hold, such as a header library's `_Noreturn` prototype.
+  using DeclaredNoReturn = std::function<bool(llvm::StringRef)>;
 
   explicit NoReturnTargetIndex(const BinaryImage &Img,
-                               NameResolver ResolveName = {});
+                               NameResolver ResolveName = {},
+                               DeclaredNoReturn Declared = {});
   bool contains(const BinaryImage &Img, va_t Target) const;
   /// Drop demand-loaded name answers between sequential runs of the same
   /// immutable image. All querying workers must have joined first.
@@ -363,11 +407,13 @@ public:
 private:
   const BinaryImage *Image;
   std::set<va_t> Targets;
+  std::set<va_t> ImportAddresses;
   /// A restricted load skips the whole-image symbol walk.  Its targets are
   /// answered one at a time, the same way, and remembered: CFG workers
   /// share one index.
   bool SymbolsIndexed = true;
   NameResolver ResolveName;
+  DeclaredNoReturn Declared;
   mutable std::mutex LazyMutex;
   mutable std::map<va_t, bool> LazyAnswers;
 };

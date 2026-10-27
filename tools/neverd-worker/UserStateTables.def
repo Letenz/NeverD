@@ -1,20 +1,33 @@
 // User edits the worker records, persists and can undo.
 //
-// NEVERD_USER_STATE_TABLE(Table, Kind, Suffix, Optional): the table of edits in
+// NEVERD_USER_STATE_TABLE(Table, Kind, File, Optional): the table of edits in
 // the history state, the history command kind that changes one of its rows,
-// the sidecar beside the input that holds it, and whether the table came after
-// the first history schema, so that a state without it holds none of its edits.
+// the project file that holds it (neverd/support/ProjectFiles.def), and
+// whether the table came after the first history schema: a history that
+// predates it recorded none of its edits, and takes the file as it is.
 // Annotation commands carry the text before and after; the other kinds carry
 // the row, or null for none.  Append new tables at the end, optional.
+//
+// NEVERD_USER_STATE_ORDERED(Table): a table its file holds as a list in the
+// order made, without addresses, as types.json holds the user's type
+// declarations: a row's address is its place in the list, which the history
+// gives it as it reads the file and takes away as it writes it.  Each
+// command adds the row after the last, which undo takes away again.
 
 #ifndef NEVERD_USER_STATE_TABLE
-#define NEVERD_USER_STATE_TABLE(Table, Kind, Suffix, Optional)
+#define NEVERD_USER_STATE_TABLE(Table, Kind, File, Optional)
 #endif
-NEVERD_USER_STATE_TABLE("annotations", "annotation", ".neverd-annotations.json",
-                        false)
-NEVERD_USER_STATE_TABLE("renames", "rename", ".neverd-renames.json", false)
-NEVERD_USER_STATE_TABLE("functions", "function", ".neverd-functions.json", true)
-NEVERD_USER_STATE_TABLE("items", "item", ".neverd-items.json", true)
-NEVERD_USER_STATE_TABLE("operands", "operand", ".neverd-operands.json", true)
-NEVERD_USER_STATE_TABLE("code_edits", "code", ".neverd-code.json", true)
+#ifndef NEVERD_USER_STATE_ORDERED
+#define NEVERD_USER_STATE_ORDERED(Table)
+#endif
+NEVERD_USER_STATE_TABLE("annotations", "annotation", Annotations, false)
+NEVERD_USER_STATE_TABLE("renames", "rename", Renames, false)
+NEVERD_USER_STATE_TABLE("functions", "function", Functions, true)
+NEVERD_USER_STATE_TABLE("items", "item", Items, true)
+NEVERD_USER_STATE_TABLE("operands", "operand", Operands, true)
+NEVERD_USER_STATE_TABLE("code_edits", "code", Code, true)
+NEVERD_USER_STATE_TABLE("types", "types", Types, true)
+NEVERD_USER_STATE_ORDERED("types")
+NEVERD_USER_STATE_TABLE("patches", "patch", Patches, true)
 #undef NEVERD_USER_STATE_TABLE
+#undef NEVERD_USER_STATE_ORDERED

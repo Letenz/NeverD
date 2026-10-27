@@ -7,11 +7,62 @@
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
-#include "neverd/lift/X86PreservedState.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/lift/X86/X86PreservedState.h"
 
 using namespace neverd;
 
 namespace {
+
+TEST(X86PreservedState, InterruptControlsKeepSeparateNativeAudits) {
+  for (Arch Architecture : {Arch::X86, Arch::X64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Architecture));
+    Decoder D;
+    ASSERT_TRUE(D.init(Architecture));
+    for (uint8_t Opcode : {uint8_t{0xfa}, uint8_t{0xfb}}) {
+      SCOPED_TRACE(static_cast<unsigned>(Opcode));
+      const std::vector<uint8_t> Bytes{Opcode};
+      DecodedInsn I{};
+      ASSERT_EQ(D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I), 1);
+      std::vector<LowOp> Plain, UndefinedOps, PreservedOps;
+      D.liftToLow(I, Plain);
+      ASSERT_EQ(Plain.size(), 1U);
+      EXPECT_EQ(Plain.front().Opcode, NdOp::INTRINSIC);
+      EXPECT_EQ(Plain.front().Output.Size, 0U);
+      ASSERT_EQ(Plain.front().NumInputs, 1U);
+      EXPECT_EQ(
+          Plain.front().Inputs[0],
+          NdVar::cst(static_cast<uint64_t>(Opcode == 0xfa ? Intrinsic::Cli
+                                                          : Intrinsic::Sti),
+                     2));
+
+      LowInstructionUndefinedEffects Undefined;
+      D.liftToLow(I, UndefinedOps, {}, {}, &Undefined);
+      EXPECT_EQ(Undefined.Coverage, LowUndefinedCoverage::Complete);
+      EXPECT_TRUE(Undefined.Effects.empty());
+      EXPECT_EQ(Undefined.OperationDigest, lowUndefinedOperationDigest(Plain));
+
+      LowInstructionPreservedState Preserved;
+      D.liftToLow(I, PreservedOps, {}, {}, nullptr, &Preserved);
+      if (Architecture == Arch::X86) {
+        // The existing opaque-bank evidence contract is x64-only.
+        EXPECT_EQ(Preserved, LowInstructionPreservedState{});
+        EXPECT_EQ(lowUndefinedOperationDigest(PreservedOps),
+                  lowUndefinedOperationDigest(Plain));
+        continue;
+      }
+      EXPECT_EQ(Preserved.Audit, LowPreservedStateAudit::LegacyIntegerV1);
+      EXPECT_EQ(Preserved.Architecture, Architecture);
+      EXPECT_EQ(lowUndefinedOperationDigest(PreservedOps),
+                lowUndefinedOperationDigest(Plain));
+      LowInstructionBoundary B;
+      B.Address = 0x1000;
+      B.Size = Bytes.size();
+      B.OpCount = PreservedOps.size();
+      EXPECT_TRUE(matchesLowPreservedState(Preserved, B, Bytes, PreservedOps));
+    }
+  }
+}
 
 TEST(X86PreservedState, FreshScalarFormsPreserveTheClosedBanks) {
   const std::vector<std::vector<uint8_t>> Cases = {
@@ -185,7 +236,7 @@ TEST(X86PreservedState, NonStrictFailedAndOtherModeLiftsClearEvidence) {
   EXPECT_EQ(F, LowInstructionPreservedState{});
   F = Good;
   D.setStrict(true);
-  D.liftToLow({}, Ops, {}, {}, nullptr, &F);
+  EXPECT_THROW(D.liftToLow({}, Ops, {}, {}, nullptr, &F), UnliftedInstruction);
   EXPECT_EQ(F, LowInstructionPreservedState{});
   ASSERT_TRUE(D.init(Arch::X86));
   ASSERT_EQ(D.decodeOneForLift(Bytes, 2, 0x1000, I), 2);

@@ -4,13 +4,16 @@
 #include "AnalysisService.h"
 #include "EngineClient.h"
 #include "QueryService.h"
+#include "UnwindInfoWords.h"
 
+#include <QFileSystemWatcher>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
 #include <QPointer>
 #include <QSet>
+#include <QTimer>
 #include <functional>
 #include <optional>
 
@@ -21,6 +24,7 @@ struct LoadOptions {
   /// Read the debug information that belongs to the input.
   bool debugInfo = true;
   /// Analyze in idle time: function discovery and the reference index.
+  /// Expensive function views are prepared in separate analysis sessions.
   bool analysis = true;
   /// The loader the user chose for a file that names no format itself:
   /// "evm" for EVM bytecode, or "binary" as the fields below place it; empty
@@ -40,18 +44,33 @@ struct LoadOptions {
   /// {"mode":"none"} for a PE the user opened without the PDB it names.
   QJsonObject pdb;
   /// {"mode":"none"} when the user declined the DWARF of an ELF or Mach-O
-  /// image; empty reads it.
+  /// image, or a DWARF file chosen for it with its file stamp; empty reads
+  /// the one the image has.
   QJsonObject dwarf;
+  /// {"mode":"none"} when the user declined the linker MAP beside the input,
+  /// or a MAP file chosen for it with its mode ("checked", or "unchecked"
+  /// for one of another build) and file stamp; empty reads the one beside
+  /// it when no PDB or DWARF describes the image.
+  QJsonObject map;
+  /// The MAP beside the input the user agreed to load, which the open reads
+  /// only when it holds against the image as loaded; empty otherwise.  The
+  /// project does not keep it.
+  QString acceptedMap;
   /// {"mode":"none"} when the user declined the image's static symbol table,
   /// which loads it as if stripped; empty reads it.
   QJsonObject symbols;
 };
+
+struct SessionTestAccess;
 
 /// The project's writable worker and a bounded read-only analysis pool.
 /// Browsing and edits keep the owner dispatcher while expensive views use a
 /// verified replica. Save/Discard/Cancel transitions belong to the owner.
 class Session final : public QObject {
   Q_OBJECT
+  // Same-build test seam (tests/SessionTestAccess.h).
+  friend struct SessionTestAccess;
+
 public:
   explicit Session(QString workerPath, QObject *parent = nullptr);
   ~Session() override;
@@ -65,11 +84,29 @@ public:
   }
 
   bool connected() const { return connected_; }
+  bool reportsUnwindFrames() const {
+    return capabilities_.contains(QLatin1String(unwind_info::kOperation));
+  }
+  bool reportsX87Capabilities() const {
+    return capabilities_.contains(QStringLiteral("x87_capabilities"));
+  }
   /// The configured NeverD worker, also used by separate offline workbenches.
   QString workerPath() const { return workerPath_; }
   bool loaded() const { return loaded_; }
   bool opening() const { return opening_; }
-  bool dirty() const { return dirty_ || pendingWrites_ > 0; }
+  /// Whether quitting or opening another file must ask first: edits are
+  /// staged or in flight, or a database the user opened lacks its edits.
+  bool dirty() const {
+    return dirty_ || pendingWrites_ > 0 ||
+           (openedFromDatabase_ && databaseDirty_);
+  }
+  /// Whether the user opened a NeverD database, which saving writes back.
+  /// A binary's project is the files beside it, which its edits update.
+  bool openedFromDatabase() const { return openedFromDatabase_; }
+  /// Whether the database the user opened lacks edits made since.
+  bool databaseOutOfDate() const {
+    return openedFromDatabase_ && databaseDirty_;
+  }
   bool readOnly() const { return metadata_.value("read_only").toBool(); }
   /// The input the worker analyzes (a database's unpacked copy).
   QString filePath() const { return filePath_; }
@@ -102,6 +139,8 @@ public:
   /// Background reference-index state from the latest heartbeat.
   const QJsonObject &background() const { return background_; }
   bool indexReady() const;
+  /// Navigation analysis is complete even if reference indexing is unsupported.
+  bool analysisComplete() const;
   /// Changes whenever listing text can change without a revision change.
   QString generation() const { return generation_; }
   /// Requests are queued or the background index is still building.
@@ -120,6 +159,22 @@ public:
   bool loadsPdbFiles() const {
     return capabilities_.contains(QStringLiteral("pdb_load"));
   }
+  /// Whether the worker lists the program's local types (local_types,
+  /// local_type, local_types_source).
+  bool listsLocalTypes() const {
+    return capabilities_.contains(QStringLiteral("local_types"));
+  }
+  /// Whether the worker adds and removes local types (local_types_declare,
+  /// local_types_forget).
+  bool declaresLocalTypes() const {
+    return capabilities_.contains(QStringLiteral("local_types_declare"));
+  }
+  /// Whether the worker lists the type libraries and takes the user's
+  /// choice of them (type_libraries, type_libraries_set).
+  bool choosesTypeLibraries() const {
+    return capabilities_.contains(QStringLiteral("type_libraries")) &&
+           capabilities_.contains(QStringLiteral("type_libraries_set"));
+  }
   /// Whether the worker finds the PDB a PE names before opening it
   /// (pdb_reference), and opens a PE without it.
   bool findsPdbFiles() const {
@@ -135,7 +190,33 @@ public:
   bool findsSymbolTables() const {
     return capabilities_.contains(QStringLiteral("symbol_table_reference"));
   }
+  /// Whether the worker finds the linker MAP beside an input before opening
+  /// it (map_reference), and opens the image without it.
+  bool findsMapFiles() const {
+    return capabilities_.contains(QStringLiteral("map_reference"));
+  }
+  /// Whether the worker loads a MAP file into the open image (map_inspect,
+  /// map_load).
+  bool loadsMapFiles() const {
+    return capabilities_.contains(QStringLiteral("map_load"));
+  }
+  /// Whether the worker loads a DWARF file into the open image (dwarf_load).
+  bool loadsDwarfFiles() const {
+    return capabilities_.contains(QStringLiteral("dwarf_load"));
+  }
+  /// Whether the worker finds the call paths between functions
+  /// (call_paths), which the Pathfinder lists.
+  bool findsCallPaths() const {
+    return capabilities_.contains(QStringLiteral("call_paths"));
+  }
   void loadPdb(const QJsonObject &selection);
+  /// Remember declining a missing PDB for subsequent opens and reloads.
+  void declinePdb();
+  /// Load the MAP file \p selection names ({path,mode,stamp}) into the open
+  /// image, after its PDB or DWARF, whose names outrank the MAP's.
+  void loadMap(const QJsonObject &selection);
+  /// Load the DWARF file \p selection names ({path}) into the open image.
+  void loadDwarf(const QJsonObject &selection);
   void closeFile();
   /// Read the input file again through a fresh worker, as IDA's "Reload the
   /// input file": its bytes as they are now, with the saved names, comments
@@ -159,10 +240,21 @@ public:
 
   // Edits.  \p epoch is the session the user aimed at, when an edit was
   // prepared across a dialog or other asynchronous step.
-  /// Commit staged edits and pack the project into its database.
+  /// Commit staged edits beside the binary, and write a database the user
+  /// opened back.
   void save();
-  /// Update only the workbench state of an existing database.
+  /// Commit staged edits and pack the project, its binary included, into
+  /// the database \p path: one file to keep or send.
+  void packDatabase(const QString &path);
+  /// Remember where the user is: in the database the user opened, or in a
+  /// file of the user's own beside a binary.
   void saveDatabaseState();
+  /// Keep \p rows as the project's bookmarks, shared with it beside the
+  /// binary.
+  void saveBookmarks(const QJsonArray &rows);
+  /// Take the project's files as they are on disk now, after git, another
+  /// tool or a person changed them.  It runs by itself when they change.
+  void syncProject();
   /// Whether the worker's engine keeps function edits.
   bool keepsFunctionEdits() const {
     return capabilities_.contains(QStringLiteral("function_create"));
@@ -177,13 +269,52 @@ public:
   /// else the instruction's last number.  Commits at once, like a rename.
   void formatOperand(Address address, std::optional<int> operand,
                      const QString &action, std::optional<quint64> epoch = {});
+  /// Whether the worker's engine shows structure offsets of local types
+  /// and ranks the types by the code's accesses (local_types_fit).
+  bool showsStructOffsets() const {
+    return capabilities_.contains(QStringLiteral("operand_struct"));
+  }
+  /// Whether the worker's engine gives a function the user's C
+  /// declaration, as IDA's Y does (function_type, function_edit's "type").
+  bool typesFunctions() const {
+    return capabilities_.contains(QStringLiteral("function_type"));
+  }
+  /// Whether it also ranks the local types a parameter points at by the
+  /// code's accesses, as Convert to struct * offers them.
+  bool convertsParameters() const {
+    return typesFunctions() &&
+           capabilities_.contains(QStringLiteral("local_types_fit"));
+  }
+  /// Show the operand of the instruction at \p address as a member of the
+  /// local type \p type, the register \p delta bytes into it, and the
+  /// same in each instruction of \p others: one step of the history for up
+  /// to 64 instructions.  Commits at once, like a rename.
+  void formatOperandStruct(Address address, std::optional<int> operand,
+                           const QString &type, qint64 delta,
+                           const QStringList &others,
+                           std::optional<quint64> epoch = {});
   /// Whether the worker's engine keeps the user's data items.
   bool keepsDataItems() const {
     return capabilities_.contains(QStringLiteral("item_define"));
   }
+  bool hasBytePatch(Address address, Address size = 1) const;
+  bool hasBytePatches() const { return !patchRanges_.isEmpty(); }
+  void refreshBytePatches();
+  bool keepsBytePatches() const {
+    return capabilities_.contains(QStringLiteral("patch_apply"));
+  }
+  bool keepsSourcePatches() const {
+    return capabilities_.contains(QStringLiteral("source_patch"));
+  }
+  void editBytePatch(
+      const QString &operation, const QJsonObject &request, quint64 epoch,
+      std::function<void()> done = {},
+      std::function<void(const QString &, const QString &)> failed = {});
   /// Define the item at \p address: \p action "data" makes a value, the
   /// next size each time; "string" the string that starts there; "undefine"
   /// shows the item's bytes as bytes.  Each commits at once, like a rename.
+  void editDataPresentation(const QString &operation,
+                            const QJsonObject &request, quint64 epoch);
   void defineItem(Address address, const QString &action,
                   std::optional<quint64> epoch = {});
   /// Start a function at \p address, or stop treating the function at
@@ -199,9 +330,14 @@ public:
   /// hand it back to analysis.  Commits at once, like a rename.
   void editFunction(Address entry, const QJsonObject &attributes,
                     std::optional<quint64> epoch = {});
+  /// Name \p function \p name; \p then runs once the rename is made, never
+  /// when the worker refuses the name.
   void rename(Address function, const QString &name,
-              std::optional<quint64> epoch = {});
+              std::optional<quint64> epoch = {},
+              std::function<void()> then = {});
   void editCode(const QJsonObject &edit, quint64 epoch);
+  /// Prepare and validate the owner's source while the name dialog is open.
+  void prepareCodeName(const QJsonObject &edit, quint64 epoch);
   void setComment(Address address, const QString &text,
                   std::optional<quint64> epoch = {});
   void undo();
@@ -232,6 +368,30 @@ public:
                                     const QJsonObject &payload, QObject *owner,
                                     Reply done, Failure failed = {});
 
+  void produceBinary(const QString &operation, const QJsonObject &payload,
+                     QObject *owner, Reply done, Failure failed = {});
+
+  /// Extend the active image and refresh its revision and dependent views.
+  void addAnalysisSection(const QJsonObject &description, Reply done = {},
+                          Failure failed = {});
+  void removeAnalysisSection(const QString &name, Reply done = {},
+                             Failure failed = {});
+
+  // Local types.
+  /// Adds the types \p source declares in \p language (c, cpp, rust or go)
+  /// to the program's local types; \p done has the types declared or the
+  /// problems, each at its line and column.
+  void declareTypes(const QString &language, const QString &source, Reply done,
+                    Failure failed = {});
+  /// Removes the local types \p names; \p done has the types removed and
+  /// those that still name one.
+  void forgetTypes(const QStringList &names, Reply done, Failure failed = {});
+  /// Joins the type libraries \p added beyond the image's own and leaves
+  /// out the image's \p removed, the whole choice, which the project keeps;
+  /// \p done has the libraries as type_libraries lists them.
+  void setTypeLibraries(const QStringList &added, const QStringList &removed,
+                        Reply done, Failure failed = {});
+
   // MCP bridge.
   void externalQuery(const QString &id, const QString &operation,
                      const QJsonObject &payload, const QString &revision);
@@ -240,6 +400,7 @@ public:
   QJsonObject selection() const { return selection_; }
 
 signals:
+  void bytePatchesChanged();
   void stateChanged();
   void opened();
   void unloaded();
@@ -264,6 +425,8 @@ signals:
   void contributionResult(const QJsonObject &result);
   /// The worker searches strings with new options; string views reload.
   void stringOptionsChanged();
+  /// The workbench's own project file \p suffix changed on disk.
+  void projectFileChanged(const QString &suffix);
 
 private:
   /// The operations the worker offers (its hello).
@@ -272,15 +435,28 @@ private:
   void command(const QString &operation, const QJsonObject &payload,
                Callback done, Failure failed = {});
   void receive(const QJsonObject &message);
+  void applyBackgroundSnapshot(const QJsonObject &snapshot);
   void startWorker();
   void openPending();
   void sendOpen(const QString &requested, const QString &path,
                 const QString &database,
-                const QHash<QString, QByteArray> &state, LoadOptions options);
-  void packDatabase();
+                const QHash<QString, QByteArray> &state, LoadOptions options,
+                bool recoveredEdits);
+  /// Pack the project into the database \p path.
+  void writeDatabase(const QString &path);
+  /// Keep the debug files chosen for the input with the project, beside it.
+  /// \p loadedNow is a file the user loaded into the open project, which
+  /// a database the user opened then lacks.
+  void recordDebugChoices(bool loadedNow);
   void requestTransition(const QString &action);
   void finishTransition();
   void refreshHistory();
+  /// Watch the project's files beside the input for changes on disk.
+  void watchProject();
+  QFileSystemWatcher projectWatcher_;
+  QTimer projectSync_;
+  /// Each project file's content when the workbench last looked at it.
+  QHash<QString, QByteArray> projectFiles_;
   void refreshContributions();
   /// Send the remembered string options, if any; \p announce reports them.
   void applyStringOptions(bool announce);
@@ -293,10 +469,13 @@ private:
   void resetState();
   void setError(const QString &text);
   void reportPdb(const QJsonObject &result);
+  /// Say which MAP files \p debug, an open's or load's debug_info, read.
+  void reportMaps(const QJsonObject &debug);
   /// Whether an edit aimed at \p epoch may be applied now.
   bool acceptsEdit(std::optional<quint64> epoch);
 
   EngineClient client_;
+  QVector<std::pair<Address, Address>> patchRanges_;
   QueryService queries_;
   AnalysisPool analysis_;
   QObject reads_, external_;
@@ -312,12 +491,16 @@ private:
   QHash<QString, QByteArray> databaseState_;
   std::function<QHash<QString, QByteArray>()> stateProvider_;
   QString generation_;
+  std::optional<quint64> BackgroundSequence;
   qint64 functionCount_ = -1;
   QJsonObject metadata_, background_, history_, selection_;
   QJsonArray contributions_;
   quint64 sessionEpoch_ = 0;
   int pendingWrites_ = 0;
   bool connected_ = false, loaded_ = false, opening_ = false, dirty_ = false;
+  /// The project is a database the user opened, and edits since it was
+  /// last written are only in its unpacked files.
+  bool openedFromDatabase_ = false, databaseDirty_ = false;
   bool transitionReady_ = false, restartPending_ = false, starting_ = false;
 };
 

@@ -11,6 +11,8 @@
 
 #include "Protocol.h"
 
+#include "ResourceLimits.h"
+
 #include <charconv>
 
 namespace neverd::worker {
@@ -43,16 +45,27 @@ void validateRequest(const Json &request) {
       *version != 1)
     throw Error("incompatible_protocol",
                 "This worker requires protocol major version 1");
-  if (stringField(request, "request_id", {}, 128).empty())
+  if (stringField(
+          request, "request_id", {},
+          ::neverd::limits::worker::kProtocolValidateRequestIdStringFieldMax)
+          .empty())
     throw Error("invalid_request", "A nonempty request_id string is required");
-  if (stringField(request, "operation", {}, 64).empty())
+  if (stringField(request, "operation", {},
+                  ::neverd::limits::worker::
+                      kProtocolValidateRequestOperationStringFieldMax)
+          .empty())
     throw Error("invalid_request", "An operation string is required");
   if (request.contains("payload") && !request["payload"].is_object())
     throw Error("invalid_request", "payload must be an object");
   if (request.contains("expected_revision"))
-    (void)stringField(request, "expected_revision", {}, 32);
+    (void)stringField(
+        request, "expected_revision", {},
+        ::neverd::limits::worker::
+            kProtocolValidateRequestExpectedRevisionStringFieldMax);
   if (request.contains("project_id"))
-    (void)stringField(request, "project_id", {}, 128);
+    (void)stringField(request, "project_id", {},
+                      ::neverd::limits::worker::
+                          kProtocolValidateRequestProjectIdStringFieldMax);
 }
 
 std::uint32_t frameSize(const unsigned char *header) {
@@ -64,9 +77,110 @@ std::uint32_t frameSize(const unsigned char *header) {
   return size;
 }
 
-std::string frame(const Json &message) {
-  const std::string body =
-      message.dump(-1, ' ', false, Json::error_handler_t::replace);
+EncodedJson::EncodedJson(const Json &value)
+    : text_(value.dump(-1, ' ', false, Json::error_handler_t::replace)) {}
+
+std::string sidecarText(const Json &value) {
+  std::string dumped =
+      value.dump(2, ' ', false, Json::error_handler_t::replace);
+  // LLVM's JSON writes a backspace and a form feed as \u0008 and \u000c,
+  // where nlohmann writes \b and \f.
+  auto escape = dumped.find('\\');
+  if (escape == std::string::npos) {
+    dumped += '\n';
+    return dumped;
+  }
+  std::string text;
+  text.reserve(dumped.size() + 1);
+  std::size_t start = 0;
+  // Serializer output has backslashes only inside strings. Consume each
+  // complete escape so a literal backslash followed by b/f stays literal.
+  for (; escape != std::string::npos; escape = dumped.find('\\', start)) {
+    text.append(dumped, start, escape - start);
+    const char escaped = dumped[escape + 1];
+    if (escaped == 'b' || escaped == 'f')
+      text += escaped == 'b' ? "\\u0008" : "\\u000c";
+    else
+      text.append(dumped, escape, 2);
+    start = escape + 2;
+  }
+  text.append(dumped, start, dumped.size() - start);
+  text += '\n';
+  return text;
+}
+
+std::string formatSidecarText(std::string_view encoded) {
+  std::string text;
+  text.reserve(encoded.size() + encoded.size() / 2);
+  std::size_t indent = 0;
+  const auto newline = [&] {
+    text += '\n';
+    text.append(indent, ' ');
+  };
+  for (std::size_t i = 0; i < encoded.size(); ++i) {
+    const char c = encoded[i];
+    switch (c) {
+    case '"': {
+      // Copy string spans together. Bound each escape search by the next
+      // quote so many short strings never rescan the remaining document.
+      auto start = i, cursor = i + 1;
+      auto quote = encoded.find('"', cursor);
+      for (;;) {
+        auto escape = encoded.substr(cursor, quote - cursor).find('\\');
+        if (escape == std::string_view::npos) {
+          text.append(encoded.substr(start, quote + 1 - start));
+          i = quote;
+          break;
+        }
+        escape += cursor;
+        const char escaped = encoded[escape + 1];
+        // LLVM spells these controls with Unicode escapes. Consume whole
+        // escapes so a literal backslash followed by b/f stays literal.
+        if (escaped == 'b' || escaped == 'f') {
+          text.append(encoded.substr(start, escape - start));
+          text += escaped == 'b' ? "\\u0008" : "\\u000c";
+          start = escape + 2;
+        }
+        cursor = escape + 2;
+        if (cursor > quote)
+          quote = encoded.find('"', cursor);
+      }
+      break;
+    }
+    case '[':
+    case '{':
+      text += c;
+      if (encoded[i + 1] == (c == '[' ? ']' : '}'))
+        text += encoded[++i];
+      else {
+        indent += 2;
+        newline();
+      }
+      break;
+    case ']':
+    case '}':
+      indent -= 2;
+      newline();
+      text += c;
+      break;
+    case ',':
+      text += c;
+      newline();
+      break;
+    case ':':
+      text += ": ";
+      break;
+    default:
+      text += c;
+      break;
+    }
+  }
+  text += '\n';
+  return text;
+}
+
+namespace {
+std::string frameBody(const std::string &body) {
   if (body.size() > MaxFrameBytes)
     throw Error("budget_exceeded",
                 "Response exceeds the 8 MiB transport budget");
@@ -76,5 +190,31 @@ std::string frame(const Json &message) {
     result[i] = static_cast<char>(size >> (24 - 8 * i));
   result += body;
   return result;
+}
+} // namespace
+
+std::string frame(const Json &message) {
+  return frameBody(
+      message.dump(-1, ' ', false, Json::error_handler_t::replace));
+}
+
+std::string frame(const Json &message, const EncodedJson &payload) {
+  if (!message.is_object())
+    throw Error("invalid_request", "A response envelope must be an object");
+  Json envelope = message;
+  envelope.erase("payload");
+  std::string body =
+      envelope.dump(-1, ' ', false, Json::error_handler_t::replace);
+  body.pop_back();
+  if (!envelope.empty())
+    body += ',';
+  body += "\"payload\":";
+  if (body.size() >= MaxFrameBytes ||
+      payload.text().size() >= MaxFrameBytes - body.size())
+    throw Error("budget_exceeded",
+                "Response exceeds the 8 MiB transport budget");
+  body += payload.text();
+  body += '}';
+  return frameBody(body);
 }
 } // namespace neverd::worker

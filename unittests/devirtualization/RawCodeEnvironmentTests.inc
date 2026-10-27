@@ -61,6 +61,7 @@ struct RawByteOracle {
   using Key = std::pair<VnodeSpace, uint64_t>;
   std::map<Key, uint8_t> Registers;
   std::map<va_t, uint8_t> Memory;
+  std::optional<uint64_t> NextPC;
   bool Valid = true;
   std::string Diagnostic;
 
@@ -112,6 +113,8 @@ struct RawByteOracle {
               !lowRawEnvironmentRequirementShapeIsValid(Op))
             return false;
           break;
+        case NdOp::NOP:
+          break;
         case NdOp::COPY:
         case NdOp::INT_ZEXT:
           write(Op.Output, read(Op.Inputs[0]));
@@ -122,6 +125,17 @@ struct RawByteOracle {
         case NdOp::INT_SUB:
           write(Op.Output, read(Op.Inputs[0]) - read(Op.Inputs[1]));
           break;
+        case NdOp::INT_MULT:
+          write(Op.Output, read(Op.Inputs[0]) * read(Op.Inputs[1]));
+          break;
+        case NdOp::INT_LEFT: {
+          const uint64_t Value = read(Op.Inputs[0]);
+          const uint64_t Count = read(Op.Inputs[1]);
+          if (!Valid)
+            return false;
+          write(Op.Output, Count < Op.Inputs[0].Size * 8 ? Value << Count : 0);
+          break;
+        }
         case NdOp::INT_AND:
           write(Op.Output, read(Op.Inputs[0]) & read(Op.Inputs[1]));
           break;
@@ -130,6 +144,16 @@ struct RawByteOracle {
           break;
         case NdOp::INT_XOR:
           write(Op.Output, read(Op.Inputs[0]) ^ read(Op.Inputs[1]));
+          break;
+        case NdOp::INT_NOT:
+          write(Op.Output, ~read(Op.Inputs[0]));
+          break;
+        case NdOp::BOOL_NOT:
+          write(Op.Output, read(Op.Inputs[0]) == 0);
+          break;
+        case NdOp::SELECT:
+          write(Op.Output,
+                read(Op.Inputs[0]) ? read(Op.Inputs[1]) : read(Op.Inputs[2]));
           break;
         case NdOp::INT_EQUAL:
         case NdOp::INT_NOTEQUAL:
@@ -182,6 +206,16 @@ struct RawByteOracle {
           }
           break;
         }
+        case NdOp::COND_BR: {
+          const auto Target = read(Op.Inputs[0]);
+          const bool Taken = read(Op.Inputs[1]) != 0;
+          for (int Id : B.Succs)
+            if ((F.Blocks.at(Id).StartAddr == Target) == Taken)
+              Next = Id;
+          if (Next < 0)
+            return false;
+          break;
+        }
         case NdOp::BRANCH: {
           const auto Target = read(Op.Inputs[0]);
           for (int Id : B.Succs)
@@ -192,6 +226,9 @@ struct RawByteOracle {
           break;
         }
         case NdOp::RETURN:
+          return Valid;
+        case NdOp::INDIR_BR:
+          NextPC = read(Op.Inputs[0]);
           return Valid;
         default:
           return false;
@@ -510,6 +547,43 @@ TEST_F(PEFixedImageTest,
     ReadOracle.write(NdVar::reg(x86reg::RSP, 8), 0x800000);
     ASSERT_TRUE(ReadOracle.run(Read, O)) << ReadOracle.Diagnostic;
     EXPECT_EQ(ReadOracle.read(NdVar::reg(x86reg::RAX, 8)), 0x0123456789abcdefu);
+  }
+}
+
+TEST_F(PEFixedImageTest, RawCodeReceiptBindsFrameExclusions) {
+  auto Loaded = load(returningImportFixture());
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  Options = returningRawOptions(0x400000);
+  Options.EntryFrameBounds = SpecializationEntryFrameBounds{-128, 8};
+  Options.EntryFrameBounds->ExcludedAddressRanges = {{0x8000, 0x8100}};
+  Options.ProveStoreFrameSeparation = true;
+  const auto Good =
+      specializeBinaryInterpreter(*Loaded, Base + 0x1000, Options);
+  ASSERT_TRUE(Good.complete()) << Good.Diagnostic;
+  for (unsigned Case = 0; Case != 5; ++Case) {
+    SCOPED_TRACE(Case);
+    auto O = Options;
+    auto &Ranges = O.EntryFrameBounds->ExcludedAddressRanges;
+    switch (Case) {
+    case 0:
+      O.ProveStoreFrameSeparation = false;
+      break;
+    case 1:
+      ++Ranges[0].Begin;
+      break;
+    case 2:
+      ++Ranges[0].End;
+      break;
+    case 3:
+      Ranges.clear();
+      break;
+    case 4:
+      Ranges.push_back({0x9000, 0x9100});
+      break;
+    }
+    auto Error = validateSpecializationRawEnvironment(Good, O);
+    EXPECT_TRUE(bool(Error));
+    llvm::consumeError(std::move(Error));
   }
 }
 
@@ -1238,3 +1312,56 @@ TEST_F(PEFixedImageTest, RawCodeFrameNormalizationCannotDropBusinessInput) {
     EXPECT_FALSE(R.RawEnvironment);
   }
 }
+
+TEST_F(PEFixedImageTest, RawCodeCmpxchgReceiptBindsOrdering) {
+  constexpr va_t Address = 0x400000;
+  auto O = rawOptions(Address);
+  // LOCK CMPXCHG qword ptr [rsp-8],rdx; RET. Use the existing complete fixed
+  // image plus an owned supplemental code declaration, not a forged receipt.
+  O.X64CodeRegions[0].Bytes = {0xf0, 0x48, 0x0f, 0xb1, 0x54, 0x24, 0xf8, 0xc3};
+  ASSERT_FALSE(O.ExternalStoresPreserveEntryReturnSlot);
+  const auto Good = specializeBinaryInterpreter(Image, Address, O);
+  ASSERT_TRUE(Good.complete()) << Good.Diagnostic;
+  ASSERT_TRUE(Good.RawEnvironment);
+  ASSERT_TRUE(Good.RawEnvironment->Domain);
+  EXPECT_FALSE(Good.RawEnvironment->Domain->Declaration
+                   .ExternalStoresPreserveEntryReturnSlot);
+  auto Valid = validateSpecializationRawEnvironment(Good, O);
+  ASSERT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Good;
+    unsigned Atomics = 0;
+    for (auto &B : Changed.Residual.Blocks)
+      for (auto &Op : B.Ops)
+        if (Op.Opcode == NdOp::ATOMIC_CMPXCHG) {
+          ++Atomics;
+          ASSERT_EQ(Op.NumInputs, 3u);
+          ASSERT_EQ(Op.Inputs[2].Size, 8u);
+          ASSERT_EQ(Op.MemoryOrdering,
+                    NdMemoryOrdering::SequentiallyConsistent);
+          ASSERT_EQ(Op.MemoryAddressSpace, NdMemoryAddressSpace::Default);
+          if (Mutation == 0)
+            Op.MemoryOrdering = NdMemoryOrdering::Relaxed;
+          else if (Mutation == 1)
+            Op.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+          else
+            Op.Inputs[2] = NdVar::scalar(0x12345678, 8);
+        }
+    ASSERT_EQ(Atomics, 1u);
+    auto Error = validateSpecializationRawEnvironment(Changed, O);
+    ASSERT_TRUE(bool(Error));
+    EXPECT_NE(
+        llvm::toString(std::move(Error)).find("graph differs from its receipt"),
+        std::string::npos);
+  }
+  auto Copy = Good;
+  auto ValidCopy = validateSpecializationRawEnvironment(Copy, O);
+  EXPECT_FALSE(bool(ValidCopy)) << llvm::toString(std::move(ValidCopy));
+}
+
+#include "MachineExitEnvironmentTests.inc"
+#include "WideImmutableImageTests.inc"
+
+// Entry-object fixtures reuse the machine-exit byte oracle above.
+#include "EntryObjectEnvironmentTests.inc"

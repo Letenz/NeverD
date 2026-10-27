@@ -1,0 +1,48 @@
+//===- MapAutomaticNames.def - Names made up from an address ---*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The prefixes a disassembler gives the names it makes up from an address,
+/// IDA's "dummy names" (`sub_140001000`, `algn_14000109D`), which a MAP it
+/// writes may list beside the names the program states.  Such a name says no
+/// more than its address, so a MAP's name of this form at that address is
+/// left out.  Define the macro before including this file.
+///
+///   NEVERD_MAP_AUTOMATIC_NAME_PREFIX(Prefix)
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_MAP_AUTOMATIC_NAME_PREFIX
+#define NEVERD_MAP_AUTOMATIC_NAME_PREFIX(Prefix)
+#endif
+
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("sub_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("loc_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("locret_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("algn_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("jpt_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("def_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("off_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("seg_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("asc_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("stru_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("unk_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("byte_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("byte3_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("word_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("dword_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("fword_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("qword_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("tbyte_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("xmmword_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("ymmword_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("zmmword_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("flt_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("dbl_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("packreal_")
+NEVERD_MAP_AUTOMATIC_NAME_PREFIX("custdata_")
+
+#undef NEVERD_MAP_AUTOMATIC_NAME_PREFIX

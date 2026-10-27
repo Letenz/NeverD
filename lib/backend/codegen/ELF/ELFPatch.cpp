@@ -25,6 +25,7 @@
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/DwarfEH.h"
+#include "neverd/support/TargetCodegenInfo.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
@@ -158,6 +159,59 @@ planExecSegment(bool Is64, uint64_t MaxVA, uint64_t BinarySize,
   return Plan;
 }
 
+llvm::Expected<std::vector<TextLayout>> collectSourceTrampolineRegions(
+    llvm::ArrayRef<uint8_t> Binary, const BinaryImage &Image,
+    const std::map<std::string, uint64_t> &OriginalVAs) {
+  auto Reject = [](const llvm::Twine &Detail) {
+    return llvm::createStringError(llvm::errc::invalid_argument,
+                                   "elf source entry: " + Detail);
+  };
+  std::vector<ELFPhdrFields> Loads;
+  forEachELFPhdr(Binary.data(), Binary.size(),
+                 [&](const ELFPhdrFields &F, const uint8_t *, bool) {
+                   if (F.Type == llvm::ELF::PT_LOAD)
+                     Loads.push_back(F);
+                 });
+  std::vector<TextLayout> Regions;
+  for (const auto &[Name, Entry] : OriginalVAs) {
+    const auto Mode = Image.instructionModeAt(Entry);
+    const uint64_t Width =
+        Mode ? getTargetCodegenInfo(Image.Arch, *Mode).trampolineSize() : 0;
+    if (!Width || !Image.hasAuthenticatedFunctionEntryAt(Entry) ||
+        Entry > UINT64_MAX - Width)
+      return Reject("source entry has no checked instruction-mode contract");
+    const ELFPhdrFields *Owner = nullptr;
+    for (const auto &Load : Loads) {
+      if (Load.MemSz && Load.VAddr > Entry && Load.VAddr - Entry < Width)
+        return Reject("source entry crosses another load segment's mapping");
+      if (Entry >= Load.VAddr && Entry - Load.VAddr < Load.MemSz) {
+        if (Owner || !(Load.Flags & llvm::ELF::PF_X) ||
+            Entry - Load.VAddr > Load.FileSz ||
+            Width > Load.FileSz - (Entry - Load.VAddr))
+          return Reject("source entry has ambiguous or non-executable storage");
+        Owner = &Load;
+      }
+    }
+    if (!Owner)
+      return Reject("source entry has no file-backed executable owner");
+    const uint64_t Delta = Entry - Owner->VAddr;
+    if (Delta > UINT64_MAX - Owner->Offset ||
+        !rangeInBounds(Owner->Offset + Delta, Width, Binary.size()))
+      return Reject("source entry file range is invalid");
+    const uint64_t Offset = Owner->Offset + Delta;
+    for (const auto &Load : Loads)
+      if (&Load != Owner && Load.FileSz &&
+          (Offset >= Load.Offset ? Offset - Load.Offset < Load.FileSz
+                                 : Load.Offset - Offset < Width))
+        return Reject("source entry aliases another load segment's storage");
+    const uint8_t *Source = Image.readVA(Entry, Width);
+    if (!Source || !std::equal(Source, Source + Width, Binary.begin() + Offset))
+      return Reject("source entry bytes changed after analysis");
+    Regions.push_back({Offset, Entry, Width});
+  }
+  return Regions;
+}
+
 bool hasValidELFIdentity(llvm::ArrayRef<uint8_t> Data) {
   return Data.size() >= llvm::ELF::EI_NIDENT &&
          (Data[llvm::ELF::EI_CLASS] == llvm::ELF::ELFCLASS32 ||
@@ -282,7 +336,8 @@ uint64_t ELFPatcher::appendExecSegment(std::vector<uint8_t> &Binary,
 uint64_t ELFPatcher::appendPatchSegments(std::vector<uint8_t> &Binary,
                                          llvm::ArrayRef<uint8_t> Code,
                                          Arch TargetArch,
-                                         std::optional<uint64_t> WritableVA) {
+                                         std::optional<uint64_t> WritableVA,
+                                         bool Executable) {
   PatchLayout Layout;
   if (!parseLayout(Binary, Layout))
     return 0;
@@ -330,7 +385,7 @@ uint64_t ELFPatcher::appendPatchSegments(std::vector<uint8_t> &Binary,
   uint8_t NewPhdr[sizeof(llvm::object::ELF64LE::Phdr)] = {};
   ELFPhdrFields NewPF;
   NewPF.Type = llvm::ELF::PT_LOAD;
-  NewPF.Flags = llvm::ELF::PF_R | llvm::ELF::PF_X;
+  NewPF.Flags = llvm::ELF::PF_R | (Executable ? llvm::ELF::PF_X : 0);
   NewPF.Offset = Plan->SegmentFileOffset;
   NewPF.VAddr = Plan->SegmentVA;
   NewPF.PAddr = Plan->SegmentVA;
@@ -775,10 +830,17 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
 
         size_t TrampCount = 0;
         if (HasExactSourcePlan) {
-          if (!TrampolinePlan.OriginalVAs.empty())
-            TrampCount = installTrampolines(
-                Binary, Img.SymbolAddrs, Layout.TextVA, Layout.TextSize,
-                Layout.TextFileOff, /*ImageBase=*/0, TargetArch, CachedMode,
+          auto Regions = collectSourceTrampolineRegions(
+              Binary, *CachedImage, TrampolinePlan.OriginalVAs);
+          if (!Regions) {
+            llvm::WithColor::error()
+                << llvm::toString(Regions.takeError()) << '\n';
+            return false;
+          }
+          for (const auto &Region : *Regions)
+            TrampCount += installTrampolines(
+                Binary, Img.SymbolAddrs, Region.SectionVA, Region.SectionSize,
+                Region.SectionFileoff, /*ImageBase=*/0, TargetArch, CachedMode,
                 CachedSymbols, CachedCodeRanges, TrampolineExports,
                 /*PatchedOriginalEntries=*/nullptr,
                 /*PatchedEntryMappings=*/nullptr, &InstalledFunctions,

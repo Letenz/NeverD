@@ -1,0 +1,37 @@
+//===- ExecutionRun.def - Persistent workload states --------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_RUN_STATE
+NEVERD_RUN_STATE(Ready, "ready")
+NEVERD_RUN_STATE(Running, "running")
+NEVERD_RUN_STATE(Paused, "paused")
+NEVERD_RUN_STATE(AwaitingResource, "awaiting_resource")
+NEVERD_RUN_STATE(Completed, "completed")
+NEVERD_RUN_STATE(Failed, "failed")
+#endif
+#ifdef NEVERD_RUN_REASON
+NEVERD_RUN_REASON(Created, "created")
+NEVERD_RUN_REASON(Resumed, "resumed")
+NEVERD_RUN_REASON(Stage, "stage")
+NEVERD_RUN_REASON(UserPause, "user_pause")
+NEVERD_RUN_REASON(Quantum, "quantum")
+NEVERD_RUN_REASON(Resource, "resource")
+NEVERD_RUN_REASON(ResourceSupplied, "resource_supplied")
+NEVERD_RUN_REASON(InvocationStarted, "invocation_started")
+NEVERD_RUN_REASON(InvocationComplete, "invocation_complete")
+NEVERD_RUN_REASON(Completed, "completed")
+NEVERD_RUN_REASON(GuestFailure, "guest_failure")
+NEVERD_RUN_REASON(EnvironmentFailure, "environment_failure")
+NEVERD_RUN_REASON(InstructionLimit, "instruction_limit")
+NEVERD_RUN_REASON(EventLimit, "event_limit")
+NEVERD_RUN_REASON(Timeout, "timeout")
+#endif
+#ifdef NEVERD_ENVIRONMENT_ACTION
+NEVERD_ENVIRONMENT_ACTION(RunCPU, "run_cpu")
+NEVERD_ENVIRONMENT_ACTION(StageBoundary, "stage_boundary")
+NEVERD_ENVIRONMENT_ACTION(AwaitingResource, "awaiting_resource")
+NEVERD_ENVIRONMENT_ACTION(Completed, "completed")
+NEVERD_ENVIRONMENT_ACTION(Failed, "failed")
+#endif

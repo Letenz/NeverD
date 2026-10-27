@@ -9,21 +9,52 @@
 #include "RegistrationABIPrivate.h"
 #include "RegistrationCRTFrame.h"
 #include "RegistrationJumpRuntime.h"
+#include "RegistrationSEHPrivateCall.h"
 #include "RegistrationStateSolver.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/ScopeExit.h"
 
+#include <algorithm>
+
 namespace neverd::registration_state {
+
+namespace {
+struct SEHCookieInputs {
+  va_t CookieVA = 0;
+  va_t CheckVA = 0;
+};
+
+// Authenticate image identities here. The state solver remains responsible
+// for initialization, slot separation and the live cookie at each transfer.
+SEHCookieInputs getSEHCookieInputs(const BinaryImage &Image,
+                                   const ExceptionFunction &EH) {
+  SEHCookieInputs Inputs;
+  if (EH.Personality != ExceptionPersonality::ExceptHandler4 ||
+      !EH.Registration)
+    return Inputs;
+  if (Image.DynInfo.SecurityCookieRVA && Image.Base <= UINT32_MAX - 3 &&
+      Image.DynInfo.SecurityCookieRVA <= UINT32_MAX - 3 - Image.Base)
+    Inputs.CookieVA = Image.Base + Image.DynInfo.SecurityCookieRVA;
+  if (EH.Registration->GSCookieOffset != -2)
+    if (auto Check =
+            coff_loader::getCheckedX86EH4CookieCheck(Image, EH.PersonalityVA);
+        Check &&
+        coff_loader::hasCheckedX86CookieCheckSuccessPath(Image, *Check))
+      Inputs.CheckVA = *Check;
+  return Inputs;
+}
+} // namespace
 
 std::optional<BoundCalleeEffect>
 proveBoundSEHCallee(const BinaryImage &Image, const LowOp &Op,
                     const FrameState &Parent, size_t &Work,
-                    const std::map<int32_t, EH3JumpCapture> *Captures) {
+                    const std::map<int32_t, SEHJumpCapture> *Captures) {
   if (Op.Opcode != NdOp::CALL || Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
       Op.Inputs[0].Size != 4)
     return std::nullopt;
@@ -31,7 +62,8 @@ proveBoundSEHCallee(const BinaryImage &Image, const LowOp &Op,
   const auto *EH = Image.ExceptionMetadata.findFunction(Target);
   if (!EH || !EH->Registration || EH->Cxx || EH->Registration->RealignedFrame ||
       EH->CodeRange.Begin != Target ||
-      EH->Personality != ExceptionPersonality::ExceptHandler3)
+      (EH->Personality != ExceptionPersonality::ExceptHandler3 &&
+       EH->Personality != ExceptionPersonality::ExceptHandler4))
     return std::nullopt;
   if (!registration_abi::chargeCalleeWork(Work, 5))
     return std::nullopt;
@@ -48,7 +80,10 @@ proveBoundSEHCallee(const BinaryImage &Image, const LowOp &Op,
   ConditionalFrame Inputs;
   Inputs.Work = Work;
   auto AccountWork = llvm::scope_exit([&] { Work = Inputs.Work; });
-  for (int32_t Arg = 8; Arg <= 128; Arg += 4) {
+  for (int32_t Arg = 8;
+       Arg <= ::neverd::limits::ir::
+                  kRegistrationConditionalCalleeProveBoundSEHCalleeArgLimit;
+       Arg += 4) {
     const auto Cell = Parent.Cells.find(*SP + Arg - 8);
     if (Cell == Parent.Cells.end())
       continue;
@@ -63,7 +98,7 @@ proveBoundSEHCallee(const BinaryImage &Image, const LowOp &Op,
     if (Captures)
       if (const auto Capture = Captures->find(*Value.Offset);
           Capture != Captures->end() &&
-          hasEH3JumpCapture(Parent, Capture->second)) {
+          hasSEHJumpCapture(Parent, Capture->second)) {
         FrameValue Buffer;
         Buffer.MayBeFrame = true;
         Buffer.JumpCapture = Capture->second.Call;
@@ -103,7 +138,8 @@ proveBoundSEHCallee(const BinaryImage &Image, const LowOp &Op,
   RegistrationCallCalleeIndex Index(Image, &Inputs.Work);
   CFGBuilder Builder;
   Builder.setRegistrationCalleeIndex(&Index);
-  const auto Function = Builder.build(Image, Dec, Target, "bound-seh-callee");
+  const auto Function =
+      Builder.buildIntegerFrameProof(Image, Dec, Target, "bound-seh-callee");
   if (!Function.hasCompleteLiftCoverage() ||
       !registration_abi::chargeDecodedCallee(Inputs.Work, Function))
     return std::nullopt;
@@ -123,7 +159,7 @@ proveBoundSEHCallee(const BinaryImage &Image, const LowOp &Op,
   const auto Controls = Index.sehControlContracts(Function);
   if (!Stacks || !Unwinds || !Controls)
     return std::nullopt;
-  EH3JumpRuntime Jumps;
+  SEHJumpRuntime Jumps;
   for (const auto &Imported : Image.Imports)
     if (checkedJumpRuntime(Image, Imported.IATAddr, true) ||
         isCheckedControlFPSlot(Image, Imported.IATAddr) ||
@@ -141,15 +177,23 @@ proveBoundSEHCallee(const BinaryImage &Image, const LowOp &Op,
   Jumps.ControlFP = [&](const LowOp &Op, size_t &Used) {
     return isCheckedControlFPCall(Image, Op, Used);
   };
-  RegistrationStateSolver Solver(Function, 0, 0, nullptr, nullptr, &*Stacks,
-                                 &*Unwinds, &*Controls, &Inputs, nullptr,
-                                 &Jumps);
+  Jumps.ImageMemory = [&](va_t Address, uint16_t Width, bool Write,
+                          size_t &Used) {
+    return registration_abi::hasSEHCallbackImageMemory(Image, Address, Width,
+                                                       Write, Used);
+  };
+  const auto Cookies = getSEHCookieInputs(Image, *EH);
+  RegistrationStateSolver Solver(Function, Cookies.CookieVA, Cookies.CheckVA,
+                                 nullptr, nullptr, &*Stacks, &*Unwinds,
+                                 &*Controls, &Inputs, nullptr, &Jumps);
   const auto States = Solver.run();
   if (!registration_abi::chargeCalleeWork(Inputs.Work, Solver.workUsed()))
     return std::nullopt;
   if (!States.Complete || !States.CallbackStatesComplete ||
       !States.RegistrationLifetimeComplete || !States.ChainOperationsComplete ||
-      !Inputs.Complete)
+      !Inputs.Complete ||
+      (EH->Personality == ExceptionPersonality::ExceptHandler4 &&
+       !States.SecurityCookiesComplete))
     return std::nullopt;
   // Filter/finally returns belong to runtime invocations. They cannot prove
   // an ordinary returning call when the helper's own epilogue does not return.
@@ -208,22 +252,41 @@ proveBoundSEHCallee(const BinaryImage &Image, const LowOp &Op,
 namespace neverd {
 using namespace registration_state;
 
+namespace {
+// Active analyzeCheckedX86SEHStates calls on this thread. Bound SEH calls are
+// checked only by analyses nested less deeply than the limit.
+thread_local unsigned SEHStateAnalysisDepth = 0;
+} // namespace
+
+unsigned x86SEHStateAnalysisLevel() {
+  return std::min(SEHStateAnalysisDepth,
+                  ::neverd::limits::ir::
+                      kRegistrationConditionalCalleeMaxBoundCallCheckDepth);
+}
+
 RegistrationStateAnalysis analyzeCheckedX86SEHStates(
     const BinaryImage &Image, const LowFunc &Function,
     const std::vector<RegistrationCalleeStackContract> *Stacks,
     const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
     const std::vector<RegistrationSEHControlContract> *Controls,
     RegistrationCallCalleeIndex *Index) {
-  static thread_local unsigned Depth = 0;
-  const bool CheckBoundCalls = Depth < 4;
+  unsigned &Depth = SEHStateAnalysisDepth;
+  const bool CheckBoundCalls =
+      Depth < ::neverd::limits::ir::
+                  kRegistrationConditionalCalleeMaxBoundCallCheckDepth;
   ++Depth;
   auto RestoreDepth = llvm::scope_exit([&] { --Depth; });
   BoundCalleeProver Prove =
       [&](const LowOp &Op, const FrameState &State, size_t &Work,
-          const std::map<int32_t, EH3JumpCapture> &Captures) {
+          const std::map<int32_t, SEHJumpCapture> &Captures) {
         return proveBoundSEHCallee(Image, Op, State, Work, &Captures);
       };
-  EH3JumpRuntime Jumps;
+  SEHPrivateCallProof PrivateCalls(Image, Function);
+  SEHJumpRuntime Jumps;
+  if (CheckBoundCalls)
+    Jumps.PrivateCall = [&](const LowOp &Op, size_t &Work) {
+      return PrivateCalls.preservesFrame(Op, Work);
+    };
   for (const auto &Imported : Image.Imports)
     if (checkedJumpRuntime(Image, Imported.IATAddr, true) ||
         isCheckedControlFPSlot(Image, Imported.IATAddr) ||
@@ -232,7 +295,7 @@ RegistrationStateAnalysis analyzeCheckedX86SEHStates(
       Jumps.ImportSlots.insert(Imported.IATAddr);
   Jumps.Capture = [&](const LowOp &Op, const FrameState &State, bool Installed,
                       size_t &Work) {
-    return prepareEH3JumpCapture(Image, Function, Op, State, Installed, Work);
+    return prepareSEHJumpCapture(Image, Function, Op, State, Installed, Work);
   };
   Jumps.Resume = [&](const LowOp &Op, size_t &Work) {
     const auto Binding = checkedJumpRuntimeCall(Image, Function, Op, Work);
@@ -245,8 +308,18 @@ RegistrationStateAnalysis analyzeCheckedX86SEHStates(
   Jumps.ControlFP = [&](const LowOp &Op, size_t &Work) {
     return isCheckedControlFPCall(Image, Op, Work);
   };
-  RegistrationStateSolver Solver(Function, 0, 0, nullptr, nullptr, Stacks,
-                                 LocalUnwinds, Controls, nullptr,
+  Jumps.ImageMemory = [&](va_t Address, uint16_t Width, bool Write,
+                          size_t &Work) {
+    return registration_abi::hasSEHCallbackImageMemory(Image, Address, Width,
+                                                       Write, Work);
+  };
+  const auto Cookies =
+      Function.ExceptionMetadata
+          ? getSEHCookieInputs(Image, *Function.ExceptionMetadata)
+          : SEHCookieInputs{};
+  RegistrationStateSolver Solver(Function, Cookies.CookieVA, Cookies.CheckVA,
+                                 nullptr, nullptr, Stacks, LocalUnwinds,
+                                 Controls, nullptr,
                                  CheckBoundCalls ? &Prove : nullptr, &Jumps);
   auto States = Solver.run();
   if (Index && !Index->chargeStateWork(Solver.workUsed())) {
@@ -259,6 +332,8 @@ RegistrationStateAnalysis analyzeCheckedX86SEHStates(
     States.SEHJumpResumptions.clear();
     States.SEHJumpCapturesComplete = false;
     States.SEHJumpCaptures.clear();
+    States.SEHStateStoresComplete = false;
+    States.SEHStateStores.clear();
     States.SEHBoundCallsComplete = false;
     States.SEHBoundCalls.clear();
     States.SEHExceptionAccesses.clear();

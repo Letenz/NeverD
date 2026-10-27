@@ -25,10 +25,12 @@
 
 #include "KernelException.h"
 #include "KernelWaits.h"
+#include "WindowsKernelLayout.h"
 
 #include "neverd/emulation/GuestMemory.h"
 
 #include "llvm/ADT/StringMap.h"
+#include "llvm/Support/Endian.h"
 
 #include <algorithm>
 #include <limits>
@@ -111,7 +113,8 @@ llvm::Error KernelDispatcher::canRelease(uint64_t Address,
   return llvm::Error::success();
 }
 
-llvm::Error KernelDispatcher::initialize(uint64_t Address, Object State) {
+llvm::Error KernelDispatcher::initialize(uint64_t Address, Object State,
+                                         llvm::ArrayRef<uint8_t> InitialBytes) {
   if (!Address || Address % dispatcher::ObjectAlignment ||
       !validRange(Address, State.Size))
     return dispatcherError("invalid or misaligned dispatcher object range");
@@ -126,14 +129,49 @@ llvm::Error KernelDispatcher::initialize(uint64_t Address, Object State) {
       return E;
   if (auto E = Validate(Address, State.Size, true))
     return E;
-  // The bytes are reserved opaque storage, not a serialization of model state.
-  if (auto E = Memory.write(Address, std::vector<uint8_t>(State.Size)))
+  // Ordinary dispatcher bytes remain opaque; a compound object initializer
+  // may supply its verified layout without creating another event owner.
+  std::vector<uint8_t> Bytes(State.Size);
+  if (!InitialBytes.empty()) {
+    if (InitialBytes.size() != State.Size)
+      return dispatcherError(
+          "dispatcher initializer has the wrong byte extent");
+    Bytes.assign(InitialBytes.begin(), InitialBytes.end());
+  }
+  if (auto E = Memory.write(Address, Bytes))
     return E;
   if (Existing != Objects.end() && Existing->second.Type == Kind::Timer &&
       Existing->second.HasSchedule)
     if (auto E = Scheduler.forgetTimer(Address))
       return E;
   Objects.insert_or_assign(Address, std::move(State));
+  return llvm::Error::success();
+}
+
+llvm::Error KernelDispatcher::initializeFastMutexEvent(uint64_t Address) {
+  std::vector<uint8_t> Bytes(dispatcher::EventSize);
+  if (auto E = Memory.read(Address, Bytes))
+    return E;
+  llvm::support::endian::write16le(Bytes.data(), 1);
+  Bytes[windows::EventHeaderSizeOffset] = dispatcher::EventSize / 4;
+  llvm::support::endian::write32le(
+      Bytes.data() + windows::EventSignalStateOffset, 0);
+  const uint64_t Head = Address + windows::EventWaitListOffset;
+  llvm::support::endian::write64le(Bytes.data() + windows::EventWaitListOffset,
+                                   Head);
+  llvm::support::endian::write64le(
+      Bytes.data() + windows::EventWaitListOffset + 8, Head);
+  Object State{Kind::Event, dispatcher::EventSize};
+  State.Synchronization = true;
+  return initialize(Address, std::move(State), Bytes);
+}
+
+llvm::Error KernelDispatcher::validateFastMutexEvent(uint64_t Address) const {
+  const auto It = Objects.find(Address);
+  if (It == Objects.end() || It->second.Type != Kind::Event ||
+      !It->second.Synchronization || It->second.Signaled)
+    return dispatcherError(
+        "fast mutex requires an initialized nonsignaled synchronization event");
   return llvm::Error::success();
 }
 
@@ -262,12 +300,14 @@ bool KernelDispatcher::waitLockOwnedByThread(uint64_t Thread) const {
   });
 }
 
-bool KernelDispatcher::ownsMutex(uint64_t ThreadKey) const {
+bool KernelDispatcher::ownsMutex(uint64_t ThreadKey,
+                                 uint64_t ReleasingAddress) const {
   if (!ThreadKey)
     return false;
   for (const auto &[Address, State] : Objects)
     if (State.Type == Kind::Mutex && State.MutexDepth &&
-        State.MutexOwner == ThreadKey)
+        State.MutexOwner == ThreadKey &&
+        (Address != ReleasingAddress || State.MutexDepth > 1))
       return true;
   return false;
 }

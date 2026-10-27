@@ -19,6 +19,8 @@
 #ifndef NEVERD_PASS_IR_OBF_INSTSUBSTITUTIONPASS_H
 #define NEVERD_PASS_IR_OBF_INSTSUBSTITUTIONPASS_H
 
+#include "neverd/pass/Limits.h"
+
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 
@@ -26,7 +28,10 @@ namespace neverd {
 
 /// Replaces integer add/sub/and/or/xor with equivalent instruction sequences.
 struct InstSubstitutionPass : public llvm::PassInfoMixin<InstSubstitutionPass> {
-  explicit InstSubstitutionPass(unsigned Rounds = 1) : Rounds(Rounds) {}
+  explicit InstSubstitutionPass(
+      unsigned Rounds =
+          ::neverd::limits::pass::kDefaultInstructionSubstitutionRounds)
+      : Rounds(Rounds) {}
 
   llvm::PreservedAnalyses run(llvm::Module &M,
                               llvm::ModuleAnalysisManager &MAM);
@@ -35,7 +40,10 @@ struct InstSubstitutionPass : public llvm::PassInfoMixin<InstSubstitutionPass> {
   /// (mirrors HelloWorldPass::inject): callers in a different image than
   /// libneverd can apply the transform without AnalysisKey ODR violations.
   /// Returns the number of instructions that were substituted.
-  static unsigned inject(llvm::Module &M, unsigned Rounds = 1);
+  static unsigned
+  inject(llvm::Module &M,
+         unsigned Rounds =
+             ::neverd::limits::pass::kDefaultInstructionSubstitutionRounds);
 
   unsigned Rounds;
 };

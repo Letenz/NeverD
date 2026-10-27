@@ -23,6 +23,7 @@ struct ELFSourceRelocationTable {
   uint64_t SizeTagOffset = 0;
   uint64_t SectionHeaderOffset = 0;
   bool Is64 = true;
+  std::vector<uint8_t> ExpectedBytes;
 };
 
 struct ELFSourcePointerRelocation {
@@ -53,6 +54,11 @@ prepareELFSourceRelocations(const BinaryImage &Original,
 /// header after its PT_LOAD has been installed. Failure preserves Binary.
 llvm::Error installELFSourceRelocations(std::vector<uint8_t> &Binary,
                                         const ELFSourceRelocationTable &Table);
+
+/// Re-read authoritative dynamic tags and every old/new writer before
+/// publication.
+llvm::Error verifyELFSourceRelocations(const BinaryImage &Image,
+                                       const ELFSourceRelocationTable &Table);
 
 } // namespace neverd
 

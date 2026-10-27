@@ -6,10 +6,11 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/high/HighIR.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinImportVeneer.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/BranchEncoding.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -118,7 +119,10 @@ objcSynchronizedSourceRegion(const BinaryImage &Image, const HighFunc &Function,
 // call. The complete lifetime proof still checks its control flow and writes.
 inline bool objcSynchronizedNonCallGap(const BinaryImage &Image, va_t Begin,
                                        va_t End) {
-  if (Image.Arch != Arch::AArch64 || Begin >= End || End - Begin > 16384 ||
+  if (Image.Arch != Arch::AArch64 || Begin >= End ||
+      End - Begin >
+          ::neverd::sdk::
+              kObjCSynchronizedSourceObjcSynchronizedNonCallGapEndBeginLimit ||
       (Begin | End) % 4)
     return false;
   Decoder Decoder;
@@ -147,8 +151,12 @@ objcSynchronizedInterleavedRanges(const BinaryImage &Image,
     return std::nullopt;
   const auto &EH = *Function.ExceptionMetadata;
   const auto &Sites = EH.Itanium->CallSites;
-  if (Sites.size() < 3 || Sites.size() > 129 || Sites.front().LandingPadVA ||
-      Sites.back().LandingPadVA || EH.CodeRange.End < 20 ||
+  if (Sites.size() < 3 ||
+      Sites.size() >
+          ::neverd::sdk::
+              kObjCSynchronizedSourceObjcSynchronizedInterleavedRangesSitesSizeLimit ||
+      Sites.front().LandingPadVA || Sites.back().LandingPadVA ||
+      EH.CodeRange.End < 20 ||
       Sites.front().GuardedRange.Begin != Function.Entry)
     return std::nullopt;
   const va_t Cleanup = EH.CodeRange.End - 20;
@@ -429,7 +437,9 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
       Region->Begin < Function.Entry + 8 || Region->Landing < 20 ||
       Region->End > Region->Landing - 20 || Region->Begin > Region->End ||
       (Function.Entry | Region->Begin | Region->End | Region->Landing) % 4 ||
-      Region->End - Function.Entry > 16384)
+      Region->End - Function.Entry >
+          ::neverd::sdk::
+              kObjCSynchronizedSourceProveObjCSynchronizedRegisterReceiverCleanupRegionEndFunctionEntryLimit)
     return std::nullopt;
   const auto Word = [&](va_t Address) {
     return objcSynchronizedWord(Image, Address);
@@ -440,9 +450,13 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
   // LSDA ranges begin at potentially throwing instructions. Clang may put
   // straight-line non-call preparation between the enter and that range.
   va_t EnterCall = 0;
-  for (va_t Address = Region->Begin - 4;
-       Address >= Function.Entry + 4 && Region->Begin - Address <= 32;
-       Address -= 4) {
+  for (
+      va_t Address = Region->Begin - 4;
+      Address >= Function.Entry + 4 &&
+      Region->Begin - Address <=
+          ::neverd::sdk::
+              kObjCSynchronizedSourceProveObjCSynchronizedRegisterReceiverCleanupRegionBeginAddressLimit;
+      Address -= 4) {
     if (HasCall(Address, "_objc_sync_enter")) {
       EnterCall = Address;
       break;
@@ -765,7 +779,10 @@ inline bool objcSynchronizedNormalSuffixValid(const BinaryImage &Image,
                                               va_t Entry, va_t Begin,
                                               va_t Landing,
                                               uint8_t LandingPadPrelude = 0) {
-  if (Begin < Entry || Begin >= Landing || Landing - Entry > 16384 ||
+  if (Begin < Entry || Begin >= Landing ||
+      Landing - Entry >
+          ::neverd::sdk::
+              kObjCSynchronizedSourceObjcSynchronizedNormalSuffixValidLandingEntryLimit ||
       (LandingPadPrelude != 0 && LandingPadPrelude != 4) ||
       Landing > InvalidVA - 20 - LandingPadPrelude || (Begin | Landing) % 4)
     return false;
@@ -833,7 +850,9 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
   if (!Regions || Function.Entry > InvalidVA - 8 ||
       Regions->front().Begin < Function.Entry + 8 ||
       Regions->back().End > Regions->front().Landing ||
-      Regions->front().Landing - Function.Entry > 16384)
+      Regions->front().Landing - Function.Entry >
+          ::neverd::sdk::
+              kObjCSynchronizedSourceProveObjCSynchronizedInterleavedCleanupRegionsFrontLandingFunctionEntryLimit)
     return std::nullopt;
   const va_t Landing = Regions->front().Landing;
   const uint8_t Prelude = Regions->front().LandingPadPrelude;
@@ -845,9 +864,13 @@ proveObjCSynchronizedInterleavedCleanup(const BinaryImage &Image,
     return objcSynchronizedCallIs(Image, Address, Name);
   };
   va_t EnterCall = 0;
-  for (va_t Address = Regions->front().Begin - 4;
-       Address >= Function.Entry + 4 && Regions->front().Begin - Address <= 128;
-       Address -= 4)
+  for (
+      va_t Address = Regions->front().Begin - 4;
+      Address >= Function.Entry + 4 &&
+      Regions->front().Begin - Address <=
+          ::neverd::sdk::
+              kObjCSynchronizedSourceProveObjCSynchronizedInterleavedCleanupRegionsFrontBeginAddressLimit;
+      Address -= 4)
     if (HasCall(Address, "_objc_sync_enter")) {
       EnterCall = Address;
       break;
@@ -1011,7 +1034,10 @@ proveObjCSynchronizedSequentialCleanup(const BinaryImage &Image,
   const va_t Landing = Regions->front().Landing;
   const uint8_t Prelude = Regions->front().LandingPadPrelude;
   const va_t Cleanup = Landing + Prelude;
-  if (Landing <= Function.Entry || Landing - Function.Entry > 16384)
+  if (Landing <= Function.Entry ||
+      Landing - Function.Entry >
+          ::neverd::sdk::
+              kObjCSynchronizedSourceProveObjCSynchronizedSequentialCleanupLandingFunctionEntryLimit)
     return std::nullopt;
   const auto Word = [&](va_t Address) {
     return objcSynchronizedWord(Image, Address);
@@ -1237,14 +1263,20 @@ proveObjCSynchronizedSplitResumeCleanup(const BinaryImage &Image,
       EH.ObjC->Runtime != ObjCRuntimeKind::AppleNonFragile ||
       EH.ObjC->UsesFragileSetjmp || EH.ObjC->UsesMSVCTables ||
       (Function.Entry | EH.CodeRange.End) % 4 ||
-      EH.Itanium->CallSites.empty() || EH.Itanium->CallSites.size() > 129)
+      EH.Itanium->CallSites.empty() ||
+      EH.Itanium->CallSites.size() >
+          ::neverd::sdk::
+              kObjCSynchronizedSourceProveObjCSynchronizedSplitResumeCleanupEHItaniumCallSitesSizeLimit)
     return std::nullopt;
   va_t Landing = InvalidVA;
   for (const auto &Site : EH.Itanium->CallSites)
     if (Site.LandingPadVA)
       Landing = std::min(Landing, Site.LandingPadVA);
   if (Landing <= Function.Entry || Landing >= EH.CodeRange.End ||
-      Landing - Function.Entry > 16384 || Landing % 4)
+      Landing - Function.Entry >
+          ::neverd::sdk::
+              kObjCSynchronizedSourceProveObjCSynchronizedSplitResumeCleanupLandingFunctionEntryLimit ||
+      Landing % 4)
     return std::nullopt;
   const va_t PadBytes = EH.CodeRange.End - Landing;
   if (PadBytes != 28 && PadBytes != 32 && PadBytes != 36)
@@ -1734,7 +1766,7 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
   std::vector<HighStmt *> Pending;
   for (auto It = Body.begin(); It != Marker; ++It)
     Pending.push_back(&*It);
-  size_t Budget = 4096;
+  size_t Budget = kSourceValueWork;
   std::optional<MedVar> SavedReceiver;
   std::vector<va_t> NormalCalls;
   while (!Pending.empty()) {
@@ -1762,7 +1794,7 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
           std::find(NormalCalls.begin(), NormalCalls.end(), S->Addr) !=
               NormalCalls.end())
         return false;
-      size_t Budget = 128;
+      size_t Budget = kSourceSliceWork;
       const auto Receiver =
           objcUnwindScalarSlice(Call->Operands[0], {}, false, Budget);
       if (!Receiver || Receiver->Offset || Receiver->Bytes != 8)
@@ -1823,7 +1855,7 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
            E->MemoryAddressSpace == NdMemoryAddressSpace::Default;
   };
   const auto Exception = [&](const ExprPtr &E) {
-    size_t Budget = 128;
+    size_t Budget = kSourceSliceWork;
     const auto Slice = objcUnwindScalarSlice(E, Exceptions, true, Budget);
     return Slice && !Slice->Offset && Slice->Bytes == 8;
   };
@@ -1859,7 +1891,7 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
     if (S.Kind == StmtKind::Assign && Variable(S.Dst) &&
         (S.Dst->Var.Kind == MedVar::Temp || S.Dst->Var.Kind == MedVar::Reg) &&
         S.Dst->Var.Size <= 8) {
-      size_t Budget = 128;
+      size_t Budget = kSourceSliceWork;
       const auto Slice = objcUnwindScalarSlice(S.Val, Exceptions, true, Budget);
       if (Slice && Slice->Bytes == S.Dst->Var.Size) {
         std::erase_if(Exceptions, [&](const auto &Copy) {
@@ -1877,7 +1909,7 @@ inline bool omitProvenObjCSynchronizedSplitResumeTail(
         Call->Operands.size() != 1)
       return false;
     const auto &Argument = Call->Operands.front();
-    size_t ReceiverBudget = 128;
+    size_t ReceiverBudget = kSourceSliceWork;
     const auto Receiver =
         objcUnwindScalarSlice(Argument, {}, false, ReceiverBudget);
     if (Call->CallAddr == Proof.LandingPadExitTarget &&
@@ -1930,7 +1962,7 @@ omitProvenObjCSynchronizedLandingPad(HighFunc &Function,
   std::vector<std::pair<const HighStmt *, bool>> Pending;
   for (const auto &Statement : Function.Body)
     Pending.emplace_back(&Statement, false);
-  size_t Budget = 4096;
+  size_t Budget = kSourceValueWork;
   while (!Pending.empty()) {
     if (!Budget--)
       return false;
@@ -1970,7 +2002,7 @@ omitProvenObjCSynchronizedLandingPad(HighFunc &Function,
     if (It->Addr == Cleanup + 16 && Call && Call->Kind == ExprKind::Call &&
         Call->CallAddr == Proof.ResumeTarget) {
       if (Proof.PrivateFrame) {
-        size_t Budget = 128;
+        size_t Budget = kSourceSliceWork;
         const auto Exception =
             Call->Operands.size() == 1
                 ? objcUnwindScalarSlice(Call->Operands[0], {}, true, Budget)
@@ -2020,7 +2052,13 @@ objcSynchronizedSavedLocalArgument(llvm::StringRef Source, size_t Call,
   const size_t Begin = Call + Name.size();
   unsigned Depth = 0;
   size_t End = Begin;
-  for (; End < Source.size() && End - Begin < 128; ++End) {
+  for (
+      ;
+      End < Source.size() &&
+      End - Begin <
+          ::neverd::sdk::
+              kObjCSynchronizedSourceObjcSynchronizedSavedLocalArgumentEndBeginLimit;
+      ++End) {
     const char Character = Source[End];
     if (Character == '(')
       ++Depth;
@@ -2032,7 +2070,8 @@ objcSynchronizedSavedLocalArgument(llvm::StringRef Source, size_t Call,
                Character == '"' || Character == '\'')
       return std::nullopt;
   }
-  if (End == Source.size() || End - Begin >= 128)
+  if (End == Source.size() ||
+      End - Begin >= ::neverd::sdk::kMaxSynchronizedSourceTokenBytes)
     return std::nullopt;
   const llvm::StringRef Argument = Source.slice(Begin, End);
   const llvm::StringRef Prefix = "(void*)(uintptr_t)(";
@@ -2072,7 +2111,10 @@ objcSynchronizedSourceBody(llvm::StringRef Source,
     return (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') ||
            (C >= '0' && C <= '9') || C == '_';
   };
-  const size_t Limit = std::min<size_t>(Source.size(), 16 * 1024 * 1024);
+  const size_t Limit = std::min<size_t>(
+      Source.size(),
+      ::neverd::sdk::
+          kObjCSynchronizedSourceObjcSynchronizedSourceBodyLimitMinArgument2);
   for (size_t I = 0; I < Limit; ++I) {
     const char C = Source[I];
     const char Next = I + 1 < Limit ? Source[I + 1] : 0;
@@ -2184,7 +2226,9 @@ objcSynchronizedSuspendRuntimeCalls(llvm::StringRef Source, size_t Begin,
     for (size_t At = Source.find(Call, Begin);
          At != std::string::npos && At < End;
          At = Source.find(Call, At + Call.size())) {
-      if (++Count > 256)
+      if (++Count >
+          ::neverd::sdk::
+              kObjCSynchronizedSourceObjcSynchronizedSuspendRuntimeCallsCountLimit)
         return std::nullopt;
       const size_t Line = Source.rfind('\n', At);
       if (Line == std::string::npos)
@@ -2268,7 +2312,9 @@ inline bool objcSynchronizedUnlockReturns(llvm::StringRef Source, size_t Exit,
                                           size_t NextExit) {
   const size_t End = Source.find(';', Exit);
   if (End == std::string::npos || End >= NextExit || NextExit > Source.size() ||
-      NextExit - End > 16 * 1024 * 1024)
+      NextExit - End >
+          ::neverd::sdk::
+              kObjCSynchronizedSourceObjcSynchronizedUnlockReturnsNextExitEndLimit)
     return false;
   enum class Lexical { Normal, String, Character, LineComment, BlockComment };
   Lexical State = Lexical::Normal;
@@ -2360,13 +2406,22 @@ addObjCSynchronizedSequentialCleanup(llvm::StringRef Source,
                                      llvm::StringRef FunctionName = {}) {
   const auto &Lifetimes = Proof.Lifetimes;
   const bool Flow = !Proof.NormalEnterCalls.empty();
-  if ((!Flow && (Lifetimes.size() < 2 || Lifetimes.size() > 16 ||
-                 Proof.EnterCall != Lifetimes.front().EnterCall ||
-                 Proof.ExitCall != Lifetimes.back().ExitCall)) ||
+  if ((!Flow &&
+       (Lifetimes.size() < 2 ||
+        Lifetimes.size() >
+            ::neverd::sdk::
+                kObjCSynchronizedSourceAddObjCSynchronizedSequentialCleanupLifetimesSizeLimit ||
+        Proof.EnterCall != Lifetimes.front().EnterCall ||
+        Proof.ExitCall != Lifetimes.back().ExitCall)) ||
       (Flow &&
        (!Lifetimes.empty() || !Proof.SplitResumeTail ||
-        Proof.NormalEnterCalls.size() > 8 || Proof.NormalExitCalls.empty() ||
-        Proof.NormalExitCalls.size() > 16 ||
+        Proof.NormalEnterCalls.size() >
+            ::neverd::sdk::
+                kObjCSynchronizedSourceAddObjCSynchronizedSequentialCleanupProofNormalEnterCallsSizeLimit ||
+        Proof.NormalExitCalls.empty() ||
+        Proof.NormalExitCalls.size() >
+            ::neverd::sdk::
+                kObjCSynchronizedSourceAddObjCSynchronizedSequentialCleanupProofNormalExitCallsSizeLimit ||
         Proof.EnterCall != Proof.NormalEnterCalls.front() ||
         Proof.ExitCall != Proof.NormalExitCalls.back())) ||
       Proof.GuardStopCall != Proof.ExitCall || !Proof.ResumeTarget ||
@@ -2538,7 +2593,9 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
   std::vector<size_t> Exits;
   for (size_t At = Exit; At != std::string::npos;
        At = Scoped.find(ExitName, At + 1)) {
-    if (Exits.size() == 256)
+    if (Exits.size() ==
+        ::neverd::sdk::
+            kObjCSynchronizedSourceAddObjCSynchronizedReceiverCleanupExitsSizeLimit)
       return std::nullopt;
     Exits.push_back(At);
   }

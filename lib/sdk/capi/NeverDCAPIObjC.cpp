@@ -38,6 +38,7 @@
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/loader/ObjC/ObjCMetadataJSON.h"
 #include "neverd/loader/ObjC/ObjCMethods.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -107,7 +108,9 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     SwiftOnceSourcePlan OncePlan;
     std::set<va_t> OnceRoots;
     std::set<va_t> OnceCallOnlyTargets;
-    for (unsigned Depth = 0; Depth < 16; ++Depth) {
+    for (unsigned Depth = 0;
+         Depth < ::neverd::sdk::kNeverDCAPIObjCObjcMethodsJSONDepthLimit;
+         ++Depth) {
       bool WitnessChanged = false;
       for (const auto &Function : Result.HighFuncs) {
         const auto Hint =

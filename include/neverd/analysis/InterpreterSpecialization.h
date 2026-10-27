@@ -51,6 +51,28 @@ struct SpecializationTerminalImport {
   bool operator==(const SpecializationTerminalImport &) const = default;
 };
 
+enum class SpecializationX64MachineExitKind : uint8_t {
+  Call,
+  Jump,
+  Return,
+  Trap
+};
+
+/// An explicit end of a machine region, after this exact native transfer.
+/// The residual retains its real target and physical stack effects. No callee,
+/// continuation, ordinary return ABI or whole-function coverage is implied.
+/// A Trap exit ends the region at a declared resumable trap (INT3/INT1): the
+/// trap effect is retained and control leaves the region to an unmodeled
+/// external continuation (the native exception mechanism). No target, callee,
+/// return ABI or continuation is implied.
+struct SpecializationX64MachineExit {
+  uint32_t Version = 1;
+  va_t Address = 0;
+  SpecializationX64MachineExitKind Kind =
+      SpecializationX64MachineExitKind::Return;
+  bool operator==(const SpecializationX64MachineExit &) const = default;
+};
+
 /// Caller-owned original x64 code at a runtime address. The complete range is
 /// executable, readable, nonfaulting and immutable across every possible writer
 /// for the whole supported execution. This is an explicit environment domain,
@@ -119,6 +141,24 @@ struct SpecializationImmutableRead {
   std::string Evidence;
 };
 
+/// Architecture-owned meaning of one complete scalar query instruction.
+/// Selectors contain every modeled input; results are defined environment
+/// inputs, independent between occurrences. Bindings zero-extend a result to
+/// its scalar destination, including instruction-local output carriers. The
+/// original query remains observable; this does not make its effects ignorable
+/// or establish any state preservation outside the separate native audits.
+struct SpecializationScalarQuery {
+  struct Binding {
+    NdVar Destination;
+    uint16_t Result = 0;
+  };
+  std::string Identity;
+  uint32_t SemanticsVersion = 0;
+  std::vector<NdVar> Selectors;
+  std::vector<uint16_t> ResultBits;
+  std::vector<Binding> Bindings;
+};
+
 class SpecializationProvider {
 public:
   virtual ~SpecializationProvider() = default;
@@ -132,6 +172,13 @@ public:
   instruction(SpecializationCursor Cursor) = 0;
   virtual std::optional<SpecializationImmutableRead>
   immutableRead(va_t Address, uint16_t Bytes) {
+    return std::nullopt;
+  }
+  /// Describe only complete, supported LowIR query bundles. Candidate labels
+  /// are not native-byte evidence. Native decoding and effect/preservation
+  /// audits remain separate obligations on original instructions.
+  virtual std::optional<SpecializationScalarQuery>
+  scalarQuery(llvm::ArrayRef<LowOp> Operations) {
     return std::nullopt;
   }
 };
@@ -148,10 +195,29 @@ struct SpecializationFrameSlot {
   uint16_t Bytes = 0;
 };
 
+struct SpecializationFrameExclusion {
+  /// Absolute, nonempty, nonwrapping half-open range [Begin, End).
+  uint64_t Begin = 0;
+  uint64_t End = 0;
+};
+
 struct SpecializationEntryFrameBounds {
   /// Caller-declared, nonempty, nonwrapping entry-relative range [Begin, End).
-  /// This constrains only the physical entry root; it grants no accessibility,
-  /// initialization or nonalias evidence for memory operations.
+  /// This constrains the physical entry root; it grants no accessibility or
+  /// initialization evidence for memory operations.
+  int64_t Begin = 0;
+  int64_t End = 0;
+  /// Explicit environment preconditions: the whole frame misses each absolute
+  /// range. Never inferred from observations, address provenance or file bytes.
+  /// Duplicate and overlapping exclusions are valid redundant constraints.
+  std::vector<SpecializationFrameExclusion> ExcludedAddressRanges;
+};
+
+struct SpecializationEntryObject {
+  /// Complete physical entry register holding this object's arbitrary root.
+  symbolic::SymRegisterRange Register;
+  /// Nonempty, nonwrapping half-open range relative to that entry value.
+  /// This grants no accessibility, initialization or loaded-pointer facts.
   int64_t Begin = 0;
   int64_t End = 0;
 };
@@ -164,18 +230,39 @@ struct SpecializationOptions {
   /// scalar-to-16-byte integer extensions, one-byte equality results and
   /// constant byte slices back to scalars. These retain their full width;
   /// scalar native-proof and source interfaces keep their own value contracts.
+  /// The same sequential nonfaulting raw domain admits default-space CMPXCHG
+  /// with a 64-bit address, 1/2/4/8-byte values and sequential consistency.
+  /// Its complete ordered operation remains in the residual; source wrapping
+  /// and independent native/LLVM proofs still reject ordered memory.
   bool ExplicitMachineState = false;
   /// Optional execution-profile certificates; neither is valid without the
   /// explicit machine-state interface. The binary provider owns their use.
   bool NormalNonfaultingExecution = false;
   bool X64CetDisabled = false;
   /// Retain scalar FS/GS reads with arbitrary 64-bit long-mode bases, fixed
-  /// throughout supported execution. Requires ExplicitMachineState and
+  /// throughout supported execution unless X64LegacyGSState is declared.
+  /// Requires ExplicitMachineState and
   /// NormalNonfaultingExecution. Bases may alias each other, the frame or any
   /// other address; this grants no operating-system layout or nonalias facts.
   /// Only the raw residual API supports this environment contract. V1 source
   /// wrapping and native proof APIs do not have authenticated base inputs.
   bool X64SegmentedReads = false;
+  /// Retain ordinary scalar FS/GS stores with a 64-bit offset and arbitrary
+  /// long-mode bases, fixed unless X64LegacyGSState is declared. Requires
+  /// explicit nonfaulting machine state.
+  /// Full linear addresses may alias any memory, including live return cells;
+  /// offset provenance grants no frame or separation fact. This raw-residual
+  /// contract is independent of X64SegmentedReads. Source and native proof
+  /// interfaces without authenticated base inputs refuse it.
+  bool X64SegmentedWrites = false;
+  /// Raw-only SWAPGS state under KernelX64NoFaultV1, explicit nonfaulting
+  /// machine state and little-endian x64. The caller declares CR4.FRED = 0
+  /// throughout execution. Active GS.base and IA32_KERNEL_GS_BASE are arbitrary
+  /// 64-bit inputs; only modeled SWAPGS exchanges them. FS stays fixed. These
+  /// inputs may alias any memory; no observed base or separation is inferred.
+  /// Segmented accesses still require their separate read/write options.
+  /// Source and native proof interfaces without this state contract refuse it.
+  bool X64LegacyGSState = false;
   /// Retain CR8 reads/writes with a symbolic four-bit task-priority state.
   /// Requires explicit nonfaulting machine state and KernelX64NoFaultV1.
   /// Every retained memory access must be ordinary memory without device side
@@ -184,17 +271,30 @@ struct SpecializationOptions {
   /// This raw-residual contract supplies no scheduling, native proof or source
   /// ABI. Possible reserved-bit writes are refused rather than truncated.
   bool X64CR8State = false;
+  /// Raw-only MXCSR loads and scalar state reads/writes under explicit
+  /// nonfaulting machine state. The caller declares the CPU's writable mask:
+  /// 0xffbf without DAZ, or 0xffff with DAZ. Entry state is arbitrary within
+  /// that mask, never a default control word. Every load/write must prove its
+  /// reserved bits clear. Memory stores and other floating-point operations
+  /// remain unsupported; source and native proofs lack this state contract.
+  std::optional<uint32_t> X64MXCSRMask;
   /// Raw-only environment domain: these exact ordinary named PE imports have
   /// stable loader bindings, and their callees neither return nor reenter this
   /// residual graph via unwind, callbacks, context restoration or other means.
-  /// No return value, side effect or pointer value is assumed. Requires explicit
-  /// nonfaulting CET-disabled x64 state. Only canonical RIP-relative memory
-  /// calls are admitted. Static import names alone do not prove this contract.
-  /// Consumers must retain and validate ExternalExits with the raw residual;
-  /// native proof and source interfaces reject even unused declarations.
+  /// No return value, side effect or pointer value is assumed. Requires
+  /// explicit nonfaulting CET-disabled x64 state. Only canonical RIP-relative
+  /// memory calls are admitted. Static import names alone do not prove this
+  /// contract. Consumers must retain and validate ExternalExits with the raw
+  /// residual; native proof and source interfaces reject even unused
+  /// declarations.
   std::vector<SpecializationTerminalImport> X64TerminalImports;
+  /// Explicit raw-region boundaries. Requires the raw environment receipt and
+  /// excludes RequireRestoredFrameAtReturn and X64TerminalImports. All other
+  /// transfers retain their ordinary exhaustive-analysis obligations.
+  std::vector<SpecializationX64MachineExit> X64MachineExits;
   /// Raw-only supplemental code domain. Requires explicit nonfaulting,
-  /// CET-disabled x64 state and a restored eight-byte entry RSP root. The
+  /// CET-disabled x64 state and an eight-byte entry RSP root. Ordinary domains
+  /// require restored returns; X64MachineExits declares machine regions. The
   /// binary adapter requires a complete fixed primary PE and disjoint ranges,
   /// including its unmapped holes. It uses exactly the supplied preconditions,
   /// without inserting the ordinary adapter's implicit external-store domain.
@@ -228,6 +328,14 @@ struct SpecializationOptions {
   /// Requires FrameBaseRegister. Native proof APIs require the same bounds in
   /// their explicit frame contract. Absence keeps the full modular root domain.
   std::optional<SpecializationEntryFrameBounds> EntryFrameBounds;
+  /// Explicit raw-domain preconditions: each complete object range misses
+  /// EntryFrameBounds. The entry pointer remains symbolic. Objects may alias
+  /// each other, and their roots may equal the frame root when the declared
+  /// ranges are disjoint. No store exemption is implied: enable
+  /// ProveStoreFrameSeparation to prove each complete access independently.
+  /// Requires distinct complete x64 GPRs, excluding the frame register and
+  /// overlapping EntryConstants. Ordinary source/native consumers refuse.
+  std::vector<SpecializationEntryObject> EntryFrameExcludedObjects;
   /// Optional congruence domain for the entry frame root. Requires explicit
   /// machine state and an RSP FrameBaseRegister. Raw residual consumers enforce
   /// it; machine source rejects other roots before guest effects. Native proof
@@ -243,24 +351,37 @@ struct SpecializationOptions {
   /// and uncertified return dispatch remain unsupported.
   bool RequireRestoredFrameAtReturn = false;
   /// Opt in to additional solver queries proving that an unknown-origin
-  /// STORE's complete extent misses the entry return slot. Also preserve live
-  /// native return cells across non-frame, 64-bit-address stores only when
-  /// each complete cell is proved disjoint under the current path. This is a
-  /// precision strategy, not a nonalias assumption. Requires an active
-  /// restored-frame check. Unsafe provenance and all unproved memory alias
-  /// invalidation remain; proofs and preservation share global budgets.
-  /// Disabled by default so existing strategies keep their costs.
+  /// memory write's complete extent misses the entry return slot. Also preserve
+  /// live native return cells, saved frame addresses and current scalar frame
+  /// values across non-frame, 64-bit-address stores only when each complete
+  /// cell is proved disjoint under the current path. This is a precision
+  /// strategy, not a nonalias assumption. Requires an active restored-frame
+  /// check. Unsafe provenance and all unproved memory alias invalidation
+  /// remain; proofs and preservation share global budgets. Includes the
+  /// complete CMPXCHG write phase, even when comparison fails. Disabled by
+  /// default so existing strategies keep their costs.
   bool ProveStoreReturnSlotSeparation = false;
+  /// Prove each complete non-frame write disjoint from EntryFrameBounds under
+  /// the current path and explicit frame domain before preserving its bytes.
+  /// Requires a frame root and bounds. This grants no external provenance or
+  /// unchecked store exemption. Unknown proofs fail closed; unproved writes
+  /// retain normal alias invalidation. Applies to the complete CMPXCHG phase.
+  /// Also prove separation of currently materialized absolute-memory cells
+  /// from symbolic writes. Preserved constants can cross nodes by intersection;
+  /// no initial memory value or global nonalias premise is introduced.
+  bool ProveStoreFrameSeparation = false;
   /// Explicit source-ABI precondition: every external-origin store target
   /// range, including computed external addresses, is disjoint from the entry
   /// control slot. Frame-derived or unknown-origin addresses are never
   /// exempted by this precondition.
+  /// Applies to the full CMPXCHG write phase, including comparison failure.
   bool ExternalStoresPreserveEntryReturnSlot = false;
   /// Unchecked source precondition: every external-origin STORE's entire
   /// extent is disjoint from EntryFrameBounds. Requires explicit machine state
   /// and an RSP frame root. This does not constrain external LOADs or aliasing
   /// between external pointers. Frame-derived/unknown-origin stores retain
   /// normal alias invalidation. Native proof APIs currently reject this domain.
+  /// Includes the complete CMPXCHG write phase, even when comparison fails.
   bool ExternalStoresDisjointEntryFrame = false;
   /// Physical-register preconditions supplied by the caller, not values
   /// inferred from a run. Instruction-local lifter temporaries are not ABI
@@ -330,17 +451,23 @@ struct SpecializationOptions {
   uint32_t MaxChainedVisitsPerDestination = 0;
 
   /// Optional exact MBA fallback for incomplete frame-offset proofs. Zero
-  /// disables it. Each attempt charges input-prefix nodes, operand edges and
-  /// constant limbs plus MBA measurement units to MaxOperations as well as
-  /// this ceiling. Internal traversals, rebuilding and sample defect guards
-  /// are not separately metered; this is not a wall-time or peak-memory bound.
-  /// MaxSymbolicNodes is checked again before publishing any offset theorem.
-  /// A changed exact expression may retry the ordinary frame proof once under
-  /// the original predicate and cumulative solver-query limit.
+  /// disables it. Each attempt charges uncached readability-prefix nodes,
+  /// operand edges and constant limbs plus MBA measurement units to both
+  /// MaxOperations and this ceiling. Internal traversals, rebuilding and sample
+  /// defect guards are not separately metered; this is not a wall-time or
+  /// peak-memory bound. MaxSymbolicNodes is checked again before publishing any
+  /// offset theorem. A changed exact expression may retry the ordinary frame
+  /// proof once under the original predicate and cumulative solver-query limit.
   uint64_t MaxFrameOffsetNormalizationWorkPerProof = 0;
 
+  /// Native recovery contract, independent of the build host. X64 retains
+  /// the existing API default. Targets without an adapter fail explicitly;
+  /// changing this field alone does not enable native recovery for that ISA.
+  Arch Architecture = Arch::X64;
+
   bool hasRawEnvironment() const {
-    return !X64CodeRegions.empty() || !X64ImportBindings.empty();
+    return !X64CodeRegions.empty() || !X64ImportBindings.empty() ||
+           !X64MachineExits.empty() || !EntryFrameExcludedObjects.empty();
   }
 
   uint32_t chainedVisitLimit() const {
@@ -391,10 +518,13 @@ struct SpecializationReadWitness {
   std::string Evidence;
 };
 
-/// A physical CALL expanded to target evaluation, capture, stack decrement,
-/// original return-address STORE, and an opaque external INDIR_BR. No ordinary
-/// successor or callee state summary is implied. Original is retained because
-/// synthetic residual labels cannot supply the physical return address.
+/// An exact native transfer or trap ending the declared analysis region. A
+/// terminal import retains its physical CALL; MachineExit additionally admits
+/// declared CALL/JMP/RET and resumable trap boundaries. Transfers retain the
+/// actual next PC and physical stack effects in the final INDIR_BR span. A
+/// trap retains its authenticated final intrinsic without a continuation
+/// contract. No ordinary successor or callee state summary is implied.
+/// Synthetic residual labels never supply native return addresses.
 struct SpecializationExternalExit {
   uint32_t Version = 1;
   va_t ResidualAddress = 0;
@@ -406,11 +536,17 @@ struct SpecializationExternalExit {
   /// Integrity binding for identity, domain, original evidence and occurrence.
   /// This does not authenticate a changed image or the live loader binding.
   std::string IdentityDigest;
+  /// Present only for an explicitly declared raw machine-region boundary.
+  /// The original need not be an import or a CALL. This is a machine transfer,
+  /// never a callee-effect summary or an implicit ordinary function return.
+  std::optional<SpecializationX64MachineExit> MachineExit;
 };
 
 struct SpecializationResult {
   SpecializationStatus Status = SpecializationStatus::InvalidInput;
-  /// Populated only on Complete. Incomplete exploration is never a replacement.
+  /// Populated only on Complete, within the declared domain and boundaries.
+  /// Explicit machine regions do not imply whole-function reconstruction.
+  /// Incomplete exploration is never a replacement.
   LowFunc Residual;
   std::vector<SpecializationOrigin> Origins;
   std::vector<SpecializationReadWitness> Reads;
@@ -433,11 +569,14 @@ struct SpecializationResult {
   bool complete() const { return Status == SpecializationStatus::Complete; }
 };
 
-/// Validate every remaining indirect transfer against its complete exit
+/// Validate every declared external transfer or trap against its complete exit
 /// receipt and the explicit domain. Stripping or altering a receipt invalidates
 /// this interface; the LowFunc alone is not an ordinary call-free function.
-/// As with the provider itself, the fixed-image evidence is trusted input here;
-/// this does not reopen the image or authenticate its current runtime binding.
+/// Raw machine regions additionally require
+/// validateSpecializationRawEnvironment; this exit-only check does not
+/// authenticate their full graph or entry marker. As with the provider itself,
+/// the fixed-image evidence is trusted input here; this does not reopen the
+/// image or authenticate its current runtime binding.
 llvm::Error
 validateSpecializationExternalExits(const SpecializationResult &Result,
                                     const SpecializationOptions &Options);
@@ -466,9 +605,9 @@ validateSpecializationRawEnvironment(const SpecializationResult &Result,
 /// prior definitions for every modelled flag unless ExplicitMachineState
 /// supplies their incoming values. Guest cursors retain all 64 address bits;
 /// InvalidVA remains a sentinel. Synthetic labels identify clones in a checked
-/// range disjoint from explored native instruction extents and the entry anchor.
-/// Only CFG identities are renamed, never runtime data or native return words.
-/// NativeInstruction preserves provenance without copying stale address-
+/// range disjoint from explored native instruction extents and the entry
+/// anchor. Only CFG identities are renamed, never runtime data or native return
+/// words. NativeInstruction preserves provenance without copying stale address-
 /// occurrence certificates.
 SpecializationResult
 specializeInterpreter(SpecializationProvider &Provider,

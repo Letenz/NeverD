@@ -11,6 +11,8 @@
 
 #include "neverd/libc/LibCNames.h"
 
+#include "LibCVariantRows.h"
+
 #include "neverd/libc/LibCAssert.h"
 #include "neverd/libc/LibCComplex.h"
 #include "neverd/libc/LibCCtype.h"
@@ -22,6 +24,7 @@
 #include "neverd/libc/LibCFnmatch.h"
 #include "neverd/libc/LibCFortify.h"
 #include "neverd/libc/LibCGetopt.h"
+#include "neverd/libc/LibCGrp.h"
 #include "neverd/libc/LibCInttypes.h"
 #include "neverd/libc/LibCLanginfo.h"
 #include "neverd/libc/LibCLibintl.h"
@@ -32,10 +35,14 @@
 #include "neverd/libc/LibCObjC.h"
 #include "neverd/libc/LibCPoll.h"
 #include "neverd/libc/LibCPthread.h"
+#include "neverd/libc/LibCPwd.h"
 #include "neverd/libc/LibCRegex.h"
+#include "neverd/libc/LibCResult.h"
 #include "neverd/libc/LibCSched.h"
 #include "neverd/libc/LibCSearch.h"
+#include "neverd/libc/LibCSemaphore.h"
 #include "neverd/libc/LibCSetjmp.h"
+#include "neverd/libc/LibCShadow.h"
 #include "neverd/libc/LibCSignal.h"
 #include "neverd/libc/LibCSpawn.h"
 #include "neverd/libc/LibCStartup.h"
@@ -63,6 +70,7 @@
 #include "neverd/libc/sys/LibCIpc.h"
 #include "neverd/libc/sys/LibCMman.h"
 #include "neverd/libc/sys/LibCPrctl.h"
+#include "neverd/libc/sys/LibCPtrace.h"
 #include "neverd/libc/sys/LibCRandom.h"
 #include "neverd/libc/sys/LibCResource.h"
 #include "neverd/libc/sys/LibCSelect.h"
@@ -135,9 +143,13 @@ struct Registry {
     registerFunctions(All, ToHeader, kObjCFunctions, kObjCHeader);
     registerFunctions(All, ToHeader, kPollFunctions, kPollHeader);
     registerFunctions(All, ToHeader, kPthreadFunctions, kPthreadHeader);
+    registerFunctions(All, ToHeader, kPwdFunctions, kPwdHeader);
+    registerFunctions(All, ToHeader, kGrpFunctions, kGrpHeader);
+    registerFunctions(All, ToHeader, kShadowFunctions, kShadowHeader);
     registerFunctions(All, ToHeader, kRegexFunctions, kRegexHeader);
     registerFunctions(All, ToHeader, kSchedFunctions, kSchedHeader);
     registerFunctions(All, ToHeader, kSearchFunctions, kSearchHeader);
+    registerFunctions(All, ToHeader, kSemaphoreFunctions, kSemaphoreHeader);
     registerFunctions(All, ToHeader, kSpawnFunctions, kSpawnHeader);
     registerFunctions(All, ToHeader, kStringsFunctions, kStringsHeader);
     registerFunctions(All, ToHeader, kTermiosFunctions, kTermiosHeader);
@@ -151,6 +163,7 @@ struct Registry {
     registerFunctions(All, ToHeader, kSysIpcFunctions, kSysIpcHeader);
     registerFunctions(All, ToHeader, kSysMmanFunctions, kSysMmanHeader);
     registerFunctions(All, ToHeader, kSysPrctlFunctions, kSysPrctlHeader);
+    registerFunctions(All, ToHeader, kSysPtraceFunctions, kSysPtraceHeader);
     registerFunctions(All, ToHeader, kSysRandomFunctions, kSysRandomHeader);
     registerFunctions(All, ToHeader, kSysResourceFunctions, kSysResourceHeader);
     registerFunctions(All, ToHeader, kSysSelectFunctions, kSysSelectHeader);
@@ -163,6 +176,14 @@ struct Registry {
     registerFunctions(All, ToHeader, kSysUioFunctions, kSysUioHeader);
     registerFunctions(All, ToHeader, kSysUtsnameFunctions, kSysUtsnameHeader);
     registerFunctions(All, ToHeader, kSysWaitFunctions, kSysWaitHeader);
+    // A large-file routine is its routine's header's (LibCLargeFile.def).
+#define NEVERD_LIBC_LARGE_FILE(NAME, ROUTINE)                                  \
+  if (const auto Base = ToHeader.find(ROUTINE); Base != ToHeader.end()) {      \
+    std::string Header = Base->second;                                         \
+    All.insert(NAME);                                                          \
+    ToHeader.emplace(NAME, std::move(Header));                                 \
+  }
+#include "neverd/libc/LibCLargeFile.def"
   }
 };
 
@@ -201,6 +222,7 @@ void registerPrototypeArity(
 // anything absent is left to the heuristic scans unchanged.
 struct ArityRegistry {
   std::unordered_map<std::string_view, LibCArity> Map;
+  std::unordered_set<std::string_view> NativeComplex;
 
   ArityRegistry() {
     registerArity(Map, kStdioArity);
@@ -211,6 +233,8 @@ struct ArityRegistry {
     registerArity(Map, kUnistdArity);
     registerArity(Map, kMathArity);
     registerArity(Map, kComplexArity);
+    for (const auto &Entry : kComplexArity)
+      NativeComplex.insert(Entry.Name);
     registerArity(Map, kTimeArity);
     registerArity(Map, kExceptionRuntimeArity);
     registerArity(Map, kSetjmpArity);
@@ -226,9 +250,13 @@ struct ArityRegistry {
     registerArity(Map, kNlTypesArity);
     registerArity(Map, kPollArity);
     registerArity(Map, kPthreadArity);
+    registerArity(Map, kPwdArity);
+    registerArity(Map, kGrpArity);
+    registerArity(Map, kShadowArity);
     registerArity(Map, kRegexArity);
     registerArity(Map, kSchedArity);
     registerArity(Map, kSearchArity);
+    registerArity(Map, kSemaphoreArity);
     registerArity(Map, kSignalArity);
     registerArity(Map, kSpawnArity);
     registerArity(Map, kTermiosArity);
@@ -300,6 +328,16 @@ const PrototypeRegistry &getPrototypeRegistry() {
 
 } // anonymous namespace
 
+std::string_view largeFileRoutine(std::string_view Name) {
+  static const std::unordered_map<std::string_view, std::string_view> Routines =
+      {
+#define NEVERD_LIBC_LARGE_FILE(NAME, ROUTINE) {NAME, ROUTINE},
+#include "neverd/libc/LibCLargeFile.def"
+      };
+  const auto It = Routines.find(Name);
+  return It == Routines.end() ? std::string_view() : It->second;
+}
+
 bool isKnownFunction(std::string_view Name) {
   return getRegistry().All.count(std::string(Name)) > 0;
 }
@@ -312,8 +350,22 @@ const char *headerFor(std::string_view Name) {
   return It->second.c_str();
 }
 
-std::optional<LibCArity> libcArity(std::string_view Name) {
-  const auto &Map = getArityRegistry().Map;
+std::optional<LibCArity> libcArity(std::string_view Name, LibCVariant Variant) {
+  Name = routineOfSymbol(Name, Variant);
+  if (Variant != LibCVariant::GNU) {
+    if (std::optional<LibCArity> Arity = variant_rows::arity(Name, Variant))
+      return Arity;
+    // A routine variadic there takes no fixed arguments alone.
+    if (variant_rows::variadic(Name, Variant))
+      return std::nullopt;
+  }
+  const auto &Registry = getArityRegistry();
+  // Microsoft's complex.h uses _Dcomplex/_Fcomplex records, whose carrier
+  // depends on the target ABI. The native _Complex FP-register shorthand
+  // cannot describe them; their full header types own call classification.
+  if (Variant == LibCVariant::Windows && Registry.NativeComplex.count(Name))
+    return std::nullopt;
+  const auto &Map = Registry.Map;
   auto It = Map.find(Name);
   if (It == Map.end())
     return std::nullopt;
@@ -332,40 +384,71 @@ const LibCPrototype *libcPrototype(std::string_view Name, BinaryFormat Format) {
              : nullptr;
 }
 
-std::optional<bool> libcReturnsValue(std::string_view Name,
-                                     BinaryFormat Format) {
+std::optional<LibCResult> libcResult(std::string_view Name,
+                                     LibCVariant Variant) {
+  // A large-file routine returns what its routine does.
+  if (const std::string_view Routine = largeFileRoutine(Name); !Routine.empty())
+    return libcResult(Routine, Variant);
+  Name = routineOfSymbol(Name, Variant);
+  // A Windows C runtime's own prototypes are COFF's (LibCPrototype::Format).
+  const BinaryFormat Format = Variant == LibCVariant::Windows
+                                  ? BinaryFormat::COFF
+                                  : BinaryFormat::Unknown;
   if (const LibCPrototype *Prototype = libcPrototype(Name, Format))
-    return Prototype->Return != "void";
-  enum class ReturnKind { Void, Value };
-  static const std::unordered_map<std::string_view, ReturnKind> Kinds = {
-#define NEVERD_LIBC_RETURN_KIND(NAME, KIND) {NAME, ReturnKind::KIND},
+    return Prototype->Return == "void"        ? LibCResult::Void
+           : isPointerType(Prototype->Return) ? LibCResult::Pointer
+                                              : LibCResult::Value;
+  if (const std::optional<LibCResult> Result =
+          variant_rows::result(Name, Variant))
+    return Result;
+  static const std::unordered_map<std::string_view, LibCResult> Kinds = {
+#define NEVERD_LIBC_RETURN_KIND(NAME, KIND) {NAME, LibCResult::KIND},
 #include "neverd/libc/LibCReturnKinds.inc"
 #undef NEVERD_LIBC_RETURN_KIND
   };
   const auto It = Kinds.find(Name);
   if (It == Kinds.end())
     return std::nullopt;
-  return It->second == ReturnKind::Value;
+  return It->second;
+}
+
+std::optional<bool> libcReturnsValue(std::string_view Name,
+                                     LibCVariant Variant) {
+  const std::optional<LibCResult> Result = libcResult(Name, Variant);
+  if (!Result)
+    return std::nullopt;
+  return *Result != LibCResult::Void;
 }
 
 const char *headerOfDataObject(std::string_view Name) {
   static const std::unordered_map<std::string_view, const char *> Headers = {
-#define NEVERD_LIBC_DATA_OBJECT(NAME, HEADER) {NAME, HEADER},
+#define NEVERD_LIBC_DATA_OBJECT(NAME, HEADER, TYPE) {NAME, HEADER},
 #include "neverd/libc/LibCDataObjects.def"
   };
   const auto It = Headers.find(Name);
   return It == Headers.end() ? nullptr : It->second;
 }
 
-bool returnsDoubleWord(std::string_view Name) {
-  static const std::unordered_set<std::string_view> Names = {
-#define NEVERD_DOUBLE_WORD_RESULT(NAME) NAME,
-#include "neverd/libc/CompilerRuntimeDoubleWord.def"
+const char *typeOfDataObject(std::string_view Name) {
+  static const std::unordered_map<std::string_view, const char *> Types = {
+#define NEVERD_LIBC_DATA_OBJECT(NAME, HEADER, TYPE) {NAME, TYPE},
+#include "neverd/libc/LibCDataObjects.def"
   };
-  return Names.count(Name) != 0;
+  const auto It = Types.find(Name);
+  return It == Types.end() ? nullptr : It->second;
 }
 
-std::optional<LibCArity> libcArityForSymbol(std::string_view Name) {
+bool returnsDoubleWord(std::string_view Name, unsigned WordBytes) {
+  static const std::unordered_map<std::string_view, unsigned> Words = {
+#define NEVERD_DOUBLE_WORD_RESULT(NAME, WORD_BYTES) {NAME, WORD_BYTES},
+#include "neverd/libc/CompilerRuntimeDoubleWord.def"
+  };
+  const auto It = Words.find(Name);
+  return It != Words.end() && It->second == WordBytes;
+}
+
+std::optional<LibCArity> libcArityForSymbol(std::string_view Name,
+                                            LibCVariant Variant) {
   // Mach-O prepends one underscore to the C identifier `__error`, producing
   // `___error`.  Do not normalize it to `error`: GNU error(3) is a distinct
   // variadic function, while Darwin __error(void) takes no arguments.
@@ -373,7 +456,7 @@ std::optional<LibCArity> libcArityForSymbol(std::string_view Name) {
     return LibCArity{};
   while (!Name.empty() && Name.front() == '_')
     Name.remove_prefix(1);
-  return libcArity(Name);
+  return libcArity(Name, Variant);
 }
 
 } // namespace neverd::libc

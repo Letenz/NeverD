@@ -24,6 +24,7 @@
 #include "../pass/HighFlowGraph.h"
 
 #include "neverd/Common.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/LanguageRuntime.h"
 
@@ -54,10 +55,6 @@ void note(const char *Why, va_t Where) {
     std::fprintf(stderr, "itanium-handlers 0x%llx: %s\n",
                  static_cast<unsigned long long>(Where), Why);
 }
-
-/// Statements a pad may run before this gives up on it: a pad is a few
-/// blocks, and copying it once per clause stays well within this.
-constexpr unsigned kMaxPadStatements = 4096;
 
 using Position = std::pair<const std::vector<HighStmt> *, size_t>;
 
@@ -97,7 +94,9 @@ bool endsPath(const HighStmt &S) {
 
 /// \p E with integer views peeled: the selector is compared through them.
 const HighExpr *peelViews(const HighExpr *E) {
-  for (unsigned Depth = 0; E && Depth < 8; ++Depth) {
+  for (unsigned Depth = 0;
+       E && Depth < ::neverd::limits::ir::kItaniumHandlersPeelViewsDepthLimit;
+       ++Depth) {
     const bool View = !E->Operands.empty() && E->Operands[0] &&
                       (E->Kind == ExprKind::Cast ||
                        (E->Kind == ExprKind::UnaryOp &&
@@ -120,7 +119,10 @@ bool isVariable(const HighExpr *E) {
 /// \p E as a base and a constant displacement from it.
 std::pair<const HighExpr *, int64_t> baseAndOffset(const HighExpr *E) {
   int64_t Offset = 0;
-  for (unsigned Depth = 0; E && Depth < 8; ++Depth) {
+  for (unsigned Depth = 0;
+       E &&
+       Depth < ::neverd::limits::ir::kItaniumHandlersBaseAndOffsetDepthLimit;
+       ++Depth) {
     E = peelViews(E);
     if (!E || E->Kind != ExprKind::BinOp || E->Operands.size() != 2 ||
         (E->Op != NdOp::INT_ADD && E->Op != NdOp::INT_SUB))
@@ -308,7 +310,7 @@ private:
   /// The value of \p E on this run when it depends on nothing but constants
   /// and the selector.
   std::optional<int64_t> evaluate(const HighExpr *E, unsigned Depth = 0) {
-    if (!E || Depth > 16)
+    if (!E || Depth > ::neverd::limits::ir::kItaniumHandlersEvaluateDepthLimit)
       return std::nullopt;
     if (isSelector(E))
       return Selector;
@@ -361,7 +363,7 @@ private:
 
   /// \p E with the selector's copies spelled as the selector's value.
   ExprPtr rewrite(const ExprPtr &E, unsigned Depth = 0) {
-    if (!E || Depth > 64)
+    if (!E || Depth > ::neverd::limits::ir::kItaniumHandlersRewriteDepthLimit)
       return E;
     if ((isVariable(E.get()) || E->Kind == ExprKind::Load) &&
         isSelector(E.get())) {
@@ -464,7 +466,7 @@ private:
                 std::vector<HighStmt> &Out, bool Structured) {
     for (size_t J = I; J < L.size(); ++J) {
       const HighStmt &S = L[J];
-      if (++Steps > kMaxPadStatements) {
+      if (++Steps > ::neverd::limits::ir::kItaniumHandlersMaxPadStatements) {
         fail("pad too long");
         return true;
       }
@@ -636,7 +638,8 @@ const HighExpr *runtimeCall(const HighStmt &S, llvm::StringRef Routine) {
 }
 
 bool readsVariable(const HighExpr *E, const MedVar &V, unsigned Depth = 0) {
-  if (!E || Depth > 64)
+  if (!E ||
+      Depth > ::neverd::limits::ir::kItaniumHandlersReadsVariableDepthLimit)
     return false;
   if (isVariable(E) && E->Var == V)
     return true;
@@ -648,7 +651,9 @@ bool readsVariable(const HighExpr *E, const MedVar &V, unsigned Depth = 0) {
 }
 
 bool readsExceptionState(const HighExpr *E, unsigned Depth = 0) {
-  if (!E || Depth > 64)
+  if (!E ||
+      Depth >
+          ::neverd::limits::ir::kItaniumHandlersReadsExceptionStateDepthLimit)
     return false;
   if (isVariable(E) &&
       (E->Var.Kind == MedVar::EHException || E->Var.Kind == MedVar::EHSelector))
@@ -656,6 +661,23 @@ bool readsExceptionState(const HighExpr *E, unsigned Depth = 0) {
   bool Reads = false;
   E->forEachChildExpr([&](const ExprPtr &Child) {
     Reads = Reads || readsExceptionState(Child.get(), Depth + 1);
+  });
+  return Reads;
+}
+
+/// Whether \p E reads memory that a write of \p Bytes at \p Address may
+/// change.
+bool readsMemoryAt(const HighExpr *E, const HighExpr &Address, uint16_t Bytes,
+                   unsigned Depth = 0) {
+  if (!E ||
+      Depth > ::neverd::limits::ir::kItaniumHandlersReadsMemoryAtDepthLimit)
+    return false;
+  if (E->Kind == ExprKind::Load && !E->Operands.empty() && E->Operands[0] &&
+      !apart(*E->Operands[0], bytesOf(E), Address, Bytes))
+    return true;
+  bool Reads = false;
+  E->forEachChildExpr([&](const ExprPtr &Child) {
+    Reads = Reads || readsMemoryAt(Child.get(), Address, Bytes, Depth + 1);
   });
   return Reads;
 }
@@ -675,11 +697,93 @@ struct ExceptionTrack {
   std::vector<MedVar> Copies;
   SlotCopies Slots;
   std::vector<const HighExpr *> SpilledTo;
+  /// Variables holding the address of a slot the object was spilled to, as
+  /// clang computes one in a frame too large for an immediate offset.
+  std::vector<std::pair<MedVar, const HighExpr *>> SlotAddresses;
+  /// Variables holding a copy of a base, another variable or what a frame
+  /// slot holds, plus a displacement, with the statement that copied it:
+  /// clang reaches the far slots of a frame too large for an immediate
+  /// offset from a base it keeps in a slot, and reloads the object through
+  /// a copy of that base.
+  struct BaseCopy {
+    MedVar Var;
+    const HighExpr *Value = nullptr;
+    size_t Index = 0;
+  };
+  std::vector<BaseCopy> BaseCopies;
+  /// Slots the object was spilled to through such a copy, by the base it
+  /// copied and the displacement: the copy may be gone when the object is
+  /// read back through another.
+  struct BaseSpill {
+    const HighExpr *Base = nullptr;
+    int64_t Offset = 0;
+    uint16_t Bytes = 0;
+  };
+  std::vector<BaseSpill> BaseSpills;
 
-  bool isException(const HighExpr *E) const {
+  /// \p Address as a base and a displacement, the base taken through the
+  /// variable it copies (BaseCopies), one level deep; \p Through names the
+  /// copy's statement.
+  std::pair<const HighExpr *, int64_t>
+  copiedAddress(const HighExpr *Address,
+                std::optional<size_t> *Through = nullptr) const {
+    const auto [Base, Offset] = baseAndOffset(Address);
+    if (isVariable(Base))
+      for (const BaseCopy &Copy : BaseCopies)
+        if (Copy.Var == Base->Var) {
+          const auto [Inner, InnerOffset] = baseAndOffset(Copy.Value);
+          if (Through)
+            *Through = Copy.Index;
+          return {Inner, InnerOffset + Offset};
+        }
+    return {Base, Offset};
+  }
+
+  /// Whether \p E is the object or a copy of it; \p Through collects the
+  /// statements copying a base the copy was read through.
+  bool isException(const HighExpr *E,
+                   std::set<size_t> *Through = nullptr) const {
     if (Slots.holds(E))
       return true;
     E = peelViews(E);
+    if (E && E->Kind == ExprKind::Load && !E->Operands.empty() &&
+        isVariable(E->Operands[0].get()))
+      for (const auto &[Var, Address] : SlotAddresses)
+        if (Var == E->Operands[0]->Var &&
+            llvm::any_of(Slots.Slots, [&](const auto &Slot) {
+              return Slot.second == bytesOf(E) &&
+                     Slot.first->structuralEq(*Address);
+            }))
+          return true;
+    if (E && E->Kind == ExprKind::Load && !E->Operands.empty() &&
+        E->Operands[0]) {
+      std::optional<size_t> Copy;
+      const auto Read = copiedAddress(E->Operands[0].get(), &Copy);
+      const HighExpr *Base = Read.first;
+      const int64_t Offset = Read.second;
+      const uint16_t Bytes = bytesOf(E);
+      auto Same = [&](const HighExpr *SlotBase, int64_t SlotOffset,
+                      uint16_t SlotBytes) {
+        return Base && SlotBase && SlotBytes == Bytes && SlotOffset == Offset &&
+               SlotBase->structuralEq(*Base);
+      };
+      const bool Found =
+          (Copy && llvm::any_of(Slots.Slots,
+                                [&](const auto &Slot) {
+                                  const auto [SlotBase, SlotOffset] =
+                                      baseAndOffset(Slot.first);
+                                  return Same(SlotBase, SlotOffset,
+                                              Slot.second);
+                                })) ||
+          llvm::any_of(BaseSpills, [&](const BaseSpill &Spill) {
+            return Same(Spill.Base, Spill.Offset, Spill.Bytes);
+          });
+      if (Found) {
+        if (Through && Copy)
+          Through->insert(*Copy);
+        return true;
+      }
+    }
     return isVariable(E) && (E->Var.Kind == MedVar::EHException ||
                              llvm::is_contained(Copies, E->Var));
   }
@@ -687,26 +791,89 @@ struct ExceptionTrack {
   /// Follow \p Body's statements before \p End; which only copy the object.
   std::vector<bool> scan(const std::vector<HighStmt> &Body, size_t End) {
     std::vector<bool> Copying(Body.size(), false);
+    // The statements copying a base the object was read through.
+    std::set<size_t> Through;
     for (size_t I = 0; I < End && I < Body.size(); ++I) {
       const HighStmt &S = Body[I];
       if (const auto Write = memoryWrite(S)) {
-        const bool Spill = isException(Write->second);
-        Slots.write(*Write->first, bytesOf(Write->second));
+        const bool Spill = isException(Write->second, &Through);
+        const uint16_t Bytes = bytesOf(Write->second);
+        std::optional<size_t> SpillCopy;
+        const auto Written = copiedAddress(Write->first, &SpillCopy);
+        const HighExpr *WriteBase = Written.first;
+        const int64_t WriteOffset = Written.second;
+        Slots.write(*Write->first, Bytes);
+        // A slot or a copy whose address reads what the write may change no
+        // longer names what it did, nor does a slot it may overlap.
+        llvm::erase_if(Slots.Slots, [&](const auto &Slot) {
+          return readsMemoryAt(Slot.first, *Write->first, Bytes);
+        });
+        llvm::erase_if(BaseCopies, [&](const BaseCopy &Copy) {
+          return readsMemoryAt(Copy.Value, *Write->first, Bytes);
+        });
+        llvm::erase_if(BaseSpills, [&](const BaseSpill &Known) {
+          const bool Apart = WriteBase &&
+                             Known.Base->structuralEq(*WriteBase) &&
+                             (WriteOffset + Bytes <= Known.Offset ||
+                              Known.Offset + Known.Bytes <= WriteOffset);
+          return !Apart || readsMemoryAt(Known.Base, *Write->first, Bytes);
+        });
         if (Spill) {
-          Slots.Slots.push_back({Write->first, bytesOf(Write->second)});
+          Slots.Slots.push_back({Write->first, Bytes});
           SpilledTo.push_back(Write->first);
+          if (SpillCopy && WriteBase) {
+            BaseSpills.push_back({WriteBase, WriteOffset, Bytes});
+            Through.insert(*SpillCopy);
+          }
           Copying[I] = true;
         }
         continue;
       }
       // The spill slots are the compiler's temporaries, as for the selector.
       if (S.Kind == StmtKind::Assign && S.Dst && isVariable(S.Dst.get())) {
-        llvm::erase(Copies, S.Dst->Var);
-        if (isException(S.Val.get())) {
-          Copies.push_back(S.Dst->Var);
+        const MedVar Var = S.Dst->Var;
+        llvm::erase(Copies, Var);
+        llvm::erase_if(SlotAddresses,
+                       [&](const auto &Known) { return Known.first == Var; });
+        // A copy holds what its variable held when it was made.
+        llvm::erase_if(BaseCopies, [&](const BaseCopy &Copy) {
+          return Copy.Var == Var || readsVariable(Copy.Value, Var);
+        });
+        llvm::erase_if(BaseSpills, [&](const BaseSpill &Known) {
+          return readsVariable(Known.Base, Var);
+        });
+        if (isException(S.Val.get(), &Through)) {
+          Copies.push_back(Var);
           Copying[I] = true;
+        } else if (S.Val) {
+          for (const auto &Slot : Slots.Slots)
+            if (Slot.first->structuralEq(*S.Val)) {
+              SlotAddresses.push_back({Var, Slot.first});
+              Copying[I] = true;
+              break;
+            }
+          if (const HighExpr *Base = baseAndOffset(S.Val.get()).first;
+              !Copying[I] && Base &&
+              (isVariable(Base) || Base->Kind == ExprKind::Load))
+            BaseCopies.push_back({Var, S.Val.get(), I});
         }
       }
+    }
+    // A base copied only to reach the object goes with the reads of it.
+    for (const size_t Index : Through) {
+      const MedVar Var = Body[Index].Dst->Var;
+      bool Read = false;
+      for (size_t J = 0; J < Body.size() && !Read; ++J) {
+        if (J == Index || (J < End && Copying[J]))
+          continue;
+        walkStmts(std::vector<HighStmt>{Body[J]}, [&](const HighStmt &N) {
+          forEachStatementExpr(N, [&](const HighExpr *E) {
+            Read = Read || readsVariable(E, Var);
+          });
+        });
+      }
+      if (!Read)
+        Copying[Index] = true;
     }
     return Copying;
   }
@@ -718,7 +885,8 @@ struct ExceptionTrack {
   bool readBy(const std::vector<HighStmt> &Stmts) const {
     std::function<bool(const HighExpr *, unsigned)> ReadsSpill =
         [&](const HighExpr *E, unsigned Depth) {
-          if (!E || Depth > 64)
+          if (!E || Depth > ::neverd::limits::ir::
+                                kItaniumHandlersReadByReadsSpillDepthLimit)
             return false;
           if (E->Kind == ExprKind::Load && !E->Operands.empty() &&
               E->Operands[0] &&
@@ -726,11 +894,32 @@ struct ExceptionTrack {
                 const HighExpr *SlotBase = baseAndOffset(Slot).first;
                 const HighExpr *ReadBase =
                     baseAndOffset(E->Operands[0].get()).first;
-                return SlotBase && ReadBase &&
-                       SlotBase->structuralEq(*ReadBase) &&
-                       !apart(*Slot, 8, *E->Operands[0], bytesOf(E));
+                if (SlotBase && ReadBase && SlotBase->structuralEq(*ReadBase) &&
+                    !apart(*Slot, 8, *E->Operands[0], bytesOf(E)))
+                  return true;
+                // A read through a copy of the slot's base.
+                const auto [CopyBase, CopyOffset] =
+                    copiedAddress(E->Operands[0].get());
+                const int64_t SlotOffset = baseAndOffset(Slot).second;
+                return SlotBase && CopyBase &&
+                       SlotBase->structuralEq(*CopyBase) &&
+                       CopyOffset < SlotOffset + 8 &&
+                       SlotOffset < CopyOffset + bytesOf(E);
               }))
             return true;
+          if (E->Kind == ExprKind::Load && !E->Operands.empty() &&
+              E->Operands[0]) {
+            const auto Read = copiedAddress(E->Operands[0].get());
+            const HighExpr *ReadBase = Read.first;
+            const int64_t ReadOffset = Read.second;
+            if (ReadBase &&
+                llvm::any_of(BaseSpills, [&](const BaseSpill &Known) {
+                  return Known.Base->structuralEq(*ReadBase) &&
+                         ReadOffset < Known.Offset + Known.Bytes &&
+                         Known.Offset < ReadOffset + bytesOf(E);
+                }))
+              return true;
+          }
           bool Found = false;
           E->forEachChildExpr([&](const ExprPtr &C) {
             Found = Found || ReadsSpill(C.get(), Depth + 1);
@@ -746,6 +935,10 @@ struct ExceptionTrack {
                 llvm::any_of(Copies,
                              [&](const MedVar &Copy) {
                                return readsVariable(E, Copy);
+                             }) ||
+                llvm::any_of(SlotAddresses,
+                             [&](const auto &Known) {
+                               return readsVariable(E, Known.first);
                              }) ||
                 (E != S.Dst.get() && ReadsSpill(E, 0));
       });
@@ -930,24 +1123,92 @@ const char *makeHandler(std::vector<HighStmt> &Body, bool CatchAll,
   return nullptr;
 }
 
+/// Cleanup continuations copied into conditional arms can share their
+/// original calls. Match complete continuations, not just a trailing call:
+/// otherwise falling through would run an intervening destructor twice.
+bool sameCleanupStatement(const HighStmt &A, const HighStmt &B,
+                          unsigned Depth = 0) {
+  if (Depth > ::neverd::limits::ir::kItaniumHandlersRewriteDepthLimit ||
+      A.Kind != B.Kind)
+    return false;
+  if (A.Kind == StmtKind::Call) {
+    // A duplicated tail may take the jump's statement address. Its call
+    // occurrence, which owns exception coverage, keeps the original PC.
+    return A.CallExpr && B.CallExpr &&
+           (A.CallExpr->CallSiteAddr || B.CallExpr->CallSiteAddr
+                ? A.CallExpr->CallSiteAddr == B.CallExpr->CallSiteAddr
+                : A.Addr == B.Addr) &&
+           A.CallExpr->structuralEq(*B.CallExpr);
+  }
+  if ((A.Kind != StmtKind::If && A.Kind != StmtKind::IfElse) || !A.Cond ||
+      !B.Cond || !A.Cond->structuralEq(*B.Cond))
+    return false;
+  const auto Same = [&](const HighStmt &L, const HighStmt &R) {
+    return sameCleanupStatement(L, R, Depth + 1);
+  };
+  return std::equal(A.Body.begin(), A.Body.end(), B.Body.begin(), B.Body.end(),
+                    Same) &&
+         std::equal(A.ElseBody.begin(), A.ElseBody.end(), B.ElseBody.begin(),
+                    B.ElseBody.end(), Same);
+}
+
 /// Spell \p Body, the run of a pad that no clause matched, as cleanups: the
 /// statements before \p PrefixEnd, which the pad runs whatever the selector,
 /// into \p Prefix and the rest into \p Rest.  The `_Unwind_Resume` that
-/// ends the run is the rethrow a C++ cleanup ends with; the pad's copies of
-/// the exception and the selector go.
+/// ends the run, or ARM EHABI's `__cxa_end_cleanup`, which resumes the
+/// exception the runtime is propagating, is the rethrow a C++ cleanup ends
+/// with; the pad's copies of the exception and the selector go.
 const char *makeCleanup(std::vector<HighStmt> &Body,
                         const std::set<size_t> &SelectorWrites,
                         size_t PrefixEnd, std::vector<HighStmt> &Prefix,
-                        std::vector<HighStmt> &Rest) {
+                        std::vector<HighStmt> &Rest, ExceptionTrack Track = {},
+                        unsigned Depth = 0) {
+  if (Depth > ::neverd::limits::ir::kItaniumHandlersRewriteDepthLimit)
+    return "the cleanup branches too deeply";
   dropAt(Body, SelectorWrites, PrefixEnd);
   if (Body.empty())
     return "the cleanup run is empty";
   const HighExpr *Resume = runtimeCall(Body.back(), "_Unwind_Resume");
-  if (!Resume || Resume->Operands.size() != 1)
+  const HighExpr *EndCleanup = runtimeCall(Body.back(), "__cxa_end_cleanup");
+  if ((!Resume || Resume->Operands.size() != 1) &&
+      (!EndCleanup || !EndCleanup->Operands.empty()))
     return "the cleanup run does not end resuming the unwind";
-  ExceptionTrack Track;
+  // A conditional destructor can finish unwinding before the common tail.
+  // Prove each such branch against the exception state at its entry, remove
+  // its transport copies and spell its terminal resume as a rethrow. A
+  // branch that falls through keeps its original statements and state.
+  for (size_t I = 0; I + 1 < Body.size(); ++I) {
+    HighStmt &Stmt = Body[I];
+    if (Stmt.Kind != StmtKind::If && Stmt.Kind != StmtKind::IfElse)
+      continue;
+    for (auto *Branch : {&Stmt.Body, &Stmt.ElseBody}) {
+      if (Branch->empty() ||
+          (!runtimeCall(Branch->back(), "_Unwind_Resume") &&
+           !runtimeCall(Branch->back(), "__cxa_end_cleanup")))
+        continue;
+      ExceptionTrack Incoming = Track;
+      Incoming.scan(Body, I);
+      // Base-copy indices belong to the enclosing list, not this branch.
+      // Retain the exception values and spill facts; unfamiliar base-copy
+      // reloads in the branch deliberately remain unprojected.
+      Incoming.BaseCopies.clear();
+      std::vector<HighStmt> Unused, Projected;
+      const va_t ResumeAt = Branch->back().Addr;
+      if (const char *Why = makeCleanup(*Branch, {}, 0, Unused, Projected,
+                                        std::move(Incoming), Depth + 1))
+        return Why;
+      HighStmt Rethrow;
+      Rethrow.Kind = StmtKind::Call;
+      Rethrow.Addr = ResumeAt;
+      Rethrow.CallExpr = HighExpr::makeCall("__cxa_rethrow", 0, {});
+      Rethrow.CallExpr->Type = NdType::makeVoid();
+      Rethrow.CallExpr->DoesNotReturn = true;
+      Projected.push_back(std::move(Rethrow));
+      *Branch = std::move(Projected);
+    }
+  }
   const std::vector<bool> Copying = Track.scan(Body, Body.size() - 1);
-  if (!Track.isException(Resume->Operands[0].get()))
+  if (Resume && !Track.isException(Resume->Operands[0].get()))
     return "the cleanup resumes something other than the pad's exception";
   for (size_t I = 0; I + 1 < Body.size(); ++I) {
     if (Copying[I])
@@ -959,6 +1220,24 @@ const char *makeCleanup(std::vector<HighStmt> &Body,
   }
   if (Track.readBy(Prefix) || Track.readBy(Rest))
     return "the cleanup reads the unwinder's state";
+  // The final rethrow is implicit in Rest. A branch whose whole remaining
+  // continuation is already here can fall through to it exactly once.
+  for (size_t I = Rest.size(); I > 0; --I) {
+    HighStmt &Stmt = Rest[I - 1];
+    if (Stmt.Kind != StmtKind::If && Stmt.Kind != StmtKind::IfElse)
+      continue;
+    const size_t TailSize = Rest.size() - I;
+    for (auto *Arm : {&Stmt.Body, &Stmt.ElseBody}) {
+      if (Arm->size() <= TailSize || !runtimeCall(Arm->back(), "__cxa_rethrow"))
+        continue;
+      const size_t Cut = Arm->size() - TailSize - 1;
+      if (std::equal(Rest.begin() + I, Rest.end(), Arm->begin() + Cut,
+                     [](const HighStmt &A, const HighStmt &B) {
+                       return sameCleanupStatement(A, B);
+                     }))
+        Arm->resize(Cut);
+    }
+  }
   return nullptr;
 }
 
@@ -976,7 +1255,9 @@ void dropSelectorSpills(std::vector<HighStmt> &Body,
   bool Read = false;
   std::function<void(const HighExpr *, unsigned)> Visit = [&](const HighExpr *E,
                                                               unsigned Depth) {
-    if (!E || Read || Depth > 64)
+    if (!E || Read ||
+        Depth > ::neverd::limits::ir::
+                    kItaniumHandlersDropSelectorSpillsVisitDepthLimit)
       return;
     if (E->Kind == ExprKind::Load && !E->Operands.empty() && E->Operands[0]) {
       const HighExpr *Base = baseAndOffset(E->Operands[0].get()).first;
@@ -1112,22 +1393,334 @@ bool hasItaniumCxxRegions(const HighFunc &Func) {
          Func.ExceptionMetadata->Itanium->IsCallSiteAddressForm;
 }
 
-/// Remove the statements of \p Stmts in \p Gone, children with their parent.
+/// The landing pads that only clean up: every call site that reaches one
+/// enters it with selector 0, so it runs the destructors of the objects the
+/// throw leaves behind and resumes the unwind, whatever was thrown.
+std::vector<va_t> cleanupOnlyPads(const ItaniumEHInfo &LSDA) {
+  std::set<va_t> Pads;
+  for (const ItaniumCallSite &Site : LSDA.CallSites)
+    if (Site.LandingPadVA && Site.GuardedRange.isValid())
+      Pads.insert(Site.LandingPadVA);
+  std::vector<va_t> Cleanups;
+  for (va_t Pad : Pads)
+    if (padSelectors(LSDA, Pad) == std::set<int64_t>{0})
+      Cleanups.push_back(Pad);
+  return Cleanups;
+}
+
+/// Call \p Fn with the call instruction of each call \p E makes, intrinsics
+/// and the compiler builtins this spells operations as (`__builtin_alloca`)
+/// aside: none raises a C++ exception.  A call no instruction makes, or one
+/// too deep to reach, passes 0.
+void forEachCallSite(const HighExpr *E, llvm::function_ref<void(va_t)> Fn,
+                     unsigned Depth = 0) {
+  if (!E)
+    return;
+  if (Depth > ::neverd::limits::ir::kItaniumHandlersForEachCallSiteDepthLimit) {
+    Fn(0);
+    return;
+  }
+  if (E->Kind == ExprKind::Call && E->IntrinsicId == Intrinsic::None &&
+      !llvm::StringRef(E->CallTarget).starts_with("__builtin_"))
+    Fn(E->CallSiteAddr);
+  E->forEachChildExpr([&](const ExprPtr &Child) {
+    forEachCallSite(Child.get(), Fn, Depth + 1);
+  });
+}
+
+/// The runs of statements the scopes of one cleanup-only landing pad wrap.
+/// Together they hold every call of the function's ordinary flow that the
+/// pad's call sites cover, and no call they do not cover: the C++ handler of
+/// the scope would run the cleanups for that call too.  Statements that make
+/// no call may go either way, as they cannot raise.  Code only the unwinder
+/// runs is no part of a scope; a call there that the merged call-site ranges
+/// happen to cover runs while another exception is unwinding.  A handler, and
+/// the code it goes on to once it caught the exception, run as ordinary code:
+/// a call there that the pad covers keeps the pad in place.
+class CleanupScopes {
+public:
+  struct Run {
+    const HighStmt *First = nullptr;
+    const HighStmt *Last = nullptr;
+  };
+  std::vector<Run> Runs;
+  /// Why no runs were found.
+  const char *Reason = nullptr;
+
+  /// \p Handlers holds the nodes of the code catch pads run.
+  CleanupScopes(const HighFlowGraph &G, const std::set<size_t> &Normal,
+                const std::set<size_t> &Handlers, const ItaniumEHInfo &LSDA,
+                va_t Pad)
+      : G(G), Normal(Normal), Handlers(Handlers), LSDA(LSDA), Pad(Pad) {}
+
+  /// Find the runs of \p Body.
+  bool find(const std::vector<HighStmt> &Body) {
+    walkStmts(Body, [&](const HighStmt &S) {
+      if (!Handlers.count(nodeOf(S)))
+        return;
+      forEachStatementExpr(S, [&](const HighExpr *E) {
+        forEachCallSite(E, [&](va_t Site) {
+          if (!Site || padAt(LSDA, Site) == Pad)
+            fail("a handler makes a call the pad may cover");
+        });
+      });
+    });
+    if (!Failed)
+      cover(Body);
+    if (!Failed && Runs.empty())
+      fail("no call of ordinary flow reaches the pad");
+    // Every covered call of ordinary flow sits in a run.  The walk passes
+    // over a statement only the unwinder enters, which may still hold one a
+    // jump reaches.
+    if (!Failed) {
+      std::set<const HighStmt *> Wrapped;
+      std::function<void(const HighStmt &)> Mark = [&](const HighStmt &S) {
+        Wrapped.insert(&S);
+        for (const auto *List : {&S.Body, &S.ElseBody, &S.DefaultBody})
+          for (const HighStmt &Child : *List)
+            Mark(Child);
+        for (const SwitchCase &Case : S.Cases)
+          for (const HighStmt &Child : Case.Body)
+            Mark(Child);
+        for (const auto &Clause : S.EHClauseBodies)
+          for (const HighStmt &Child : Clause)
+            Mark(Child);
+      };
+      // A run's statements are neighbours in one list.
+      for (const Run &R : Runs)
+        for (const HighStmt *S = R.First; S <= R.Last; ++S)
+          Mark(*S);
+      walkStmts(Body, [&](const HighStmt &S) {
+        if (Failed || !Normal.count(nodeOf(S)) || Wrapped.count(&S))
+          return;
+        forEachStatementExpr(S, [&](const HighExpr *E) {
+          forEachCallSite(E, [&](va_t Site) {
+            if (Site && padAt(LSDA, Site) == Pad)
+              fail("a covered call lies outside every scope");
+          });
+        });
+      });
+    }
+    return !Failed;
+  }
+
+private:
+  struct Calls {
+    /// A call the pad's call sites cover.
+    bool Covered = false;
+    /// A call they do not cover, or code a scope may not hold.
+    bool Other = false;
+  };
+
+  const HighFlowGraph &G;
+  const std::set<size_t> &Normal;
+  const std::set<size_t> &Handlers;
+  const ItaniumEHInfo &LSDA;
+  const va_t Pad;
+  std::map<const HighStmt *, Calls> Memo;
+  bool Failed = false;
+
+  void fail(const char *Why) {
+    if (!Failed)
+      Reason = Why;
+    Failed = true;
+  }
+
+  size_t nodeOf(const HighStmt &S) const {
+    const auto It = G.NodeOf.find(&S);
+    return It == G.NodeOf.end() ? 0 : It->second;
+  }
+
+  Calls classify(const HighStmt &S) {
+    if (const auto It = Memo.find(&S); It != Memo.end())
+      return It->second;
+    Calls C;
+    if (!Normal.count(nodeOf(S))) {
+      C.Other = true;
+      return Memo[&S] = C;
+    }
+    // A copy of a call keeps its instruction, whatever address its statement
+    // took; a call that stands for two instructions keeps none
+    // (withMergedCallSites).
+    forEachStatementExpr(S, [&](const HighExpr *E) {
+      forEachCallSite(E, [&](va_t Site) {
+        if (!Site)
+          fail("a call has no call instruction of its own");
+        else if (padAt(LSDA, Site) == Pad)
+          C.Covered = true;
+        else
+          C.Other = true;
+      });
+    });
+    const bool OwnCovered = C.Covered;
+    auto Add = [&](const std::vector<HighStmt> &List) {
+      for (const HighStmt &Child : List) {
+        const Calls Inner = classify(Child);
+        C.Covered |= Inner.Covered;
+        C.Other |= Inner.Other;
+      }
+    };
+    Add(S.Body);
+    Add(S.ElseBody);
+    for (const SwitchCase &Case : S.Cases)
+      Add(Case.Body);
+    Add(S.DefaultBody);
+    for (const auto &Clause : S.EHClauseBodies)
+      Add(Clause);
+    // A covered call of the statement's own, a condition's say, goes into a
+    // scope only with all of the statement.
+    if (OwnCovered && C.Other)
+      fail("a statement makes calls of the pad and calls of another");
+    return Memo[&S] = C;
+  }
+
+  /// Cover the calls of \p L: a run for each stretch of statements whose
+  /// calls the pad's call sites all cover, and the statements that make both
+  /// kinds of call looked into.
+  void cover(const std::vector<HighStmt> &L) {
+    std::optional<size_t> Open;
+    size_t Last = 0;
+    auto Close = [&] {
+      if (Open)
+        close(L, *Open, Last);
+      Open.reset();
+    };
+    for (size_t I = 0; I < L.size() && !Failed; ++I) {
+      const HighStmt &S = L[I];
+      const Calls C = classify(S);
+      if (C.Covered && !C.Other) {
+        if (!Open)
+          Open = I;
+        Last = I;
+        continue;
+      }
+      if (!C.Covered && !C.Other)
+        continue;
+      Close();
+      if (!C.Covered)
+        continue;
+      cover(S.Body);
+      cover(S.ElseBody);
+      for (const SwitchCase &Case : S.Cases)
+        cover(Case.Body);
+      cover(S.DefaultBody);
+      for (const auto &Clause : S.EHClauseBodies)
+        cover(Clause);
+    }
+    if (!Failed)
+      Close();
+  }
+
+  /// Make \p L's statements from \p Begin to \p End a run, unless a jump
+  /// enters them below the first: C++ jumps into no try block.
+  void close(const std::vector<HighStmt> &L, size_t Begin, size_t End) {
+    std::set<size_t> Inside;
+    std::function<void(const HighStmt &)> Add = [&](const HighStmt &S) {
+      Inside.insert(nodeOf(S));
+      for (const auto *List : {&S.Body, &S.ElseBody, &S.DefaultBody})
+        for (const HighStmt &Child : *List)
+          Add(Child);
+      for (const SwitchCase &Case : S.Cases)
+        for (const HighStmt &Child : Case.Body)
+          Add(Child);
+      for (const auto &Clause : S.EHClauseBodies)
+        for (const HighStmt &Child : Clause)
+          Add(Child);
+    };
+    for (size_t I = Begin; I <= End; ++I)
+      Add(L[I]);
+    // A do-while is entered at its body, as its label is.
+    const HighStmt *Top = &L[Begin];
+    while (Top->Kind == StmtKind::DoWhile && !Top->Body.empty())
+      Top = &Top->Body.front();
+    const size_t Entry = nodeOf(*Top);
+    for (size_t N = 0; N < G.Nodes.size(); ++N) {
+      if (Inside.count(N))
+        continue;
+      for (size_t Next : G.Nodes[N].Successors)
+        if (Next != Entry && Inside.count(Next)) {
+          fail("a jump enters the scope below its first statement");
+          return;
+        }
+    }
+    Runs.push_back({&L[Begin], &L[End]});
+  }
+};
+
+/// The cleanup scopes of one landing pad that only cleans up.
+struct CleanupPlan {
+  va_t Pad = 0;
+  ExceptionAddressRange Range;
+  std::vector<HighStmt> Actions;
+  std::vector<CleanupScopes::Run> Runs;
+};
+
+/// The cleanup scope that opens at a statement: the last statement it holds
+/// and the plan it belongs to.
+struct ScopeOpening {
+  const HighStmt *Last = nullptr;
+  const CleanupPlan *Plan = nullptr;
+};
+
 void removeStatements(std::vector<HighStmt> &Stmts,
-                      const std::set<const HighStmt *> &Gone) {
+                      const std::set<const HighStmt *> &Gone,
+                      const std::map<const HighStmt *, ScopeOpening> &Opens);
+
+void removeNestedStatements(
+    HighStmt &S, const std::set<const HighStmt *> &Gone,
+    const std::map<const HighStmt *, ScopeOpening> &Opens) {
+  removeStatements(S.Body, Gone, Opens);
+  removeStatements(S.ElseBody, Gone, Opens);
+  for (SwitchCase &C : S.Cases)
+    removeStatements(C.Body, Gone, Opens);
+  removeStatements(S.DefaultBody, Gone, Opens);
+  for (auto &Clause : S.EHClauseBodies)
+    removeStatements(Clause, Gone, Opens);
+}
+
+/// Remove the statements of \p Stmts in \p Gone, children with their parent,
+/// and wrap each run of \p Opens in its cleanup scope: a C++ try whose
+/// catch-all handler runs the pad's cleanups and rethrows.
+void removeStatements(std::vector<HighStmt> &Stmts,
+                      const std::set<const HighStmt *> &Gone,
+                      const std::map<const HighStmt *, ScopeOpening> &Opens) {
   std::vector<HighStmt> Kept;
   Kept.reserve(Stmts.size());
-  for (HighStmt &S : Stmts) {
+  for (size_t I = 0; I < Stmts.size(); ++I) {
+    HighStmt &S = Stmts[I];
     if (Gone.count(&S))
       continue;
-    removeStatements(S.Body, Gone);
-    removeStatements(S.ElseBody, Gone);
-    for (SwitchCase &C : S.Cases)
-      removeStatements(C.Body, Gone);
-    removeStatements(S.DefaultBody, Gone);
-    for (auto &Clause : S.EHClauseBodies)
-      removeStatements(Clause, Gone);
-    Kept.push_back(std::move(S));
+    const auto Open = Opens.find(&S);
+    if (Open == Opens.end()) {
+      removeNestedStatements(S, Gone, Opens);
+      Kept.push_back(std::move(S));
+      continue;
+    }
+    const CleanupPlan &Plan = *Open->second.Plan;
+    HighStmt Scope;
+    Scope.Kind = StmtKind::ItaniumTry;
+    // The scope opens where its first statement is, so a label there is the
+    // scope's.
+    Scope.Addr = S.Addr;
+    Scope.EHRange = Plan.Range;
+    Scope.EHIsReducible = true;
+    HighEHClause Clause;
+    Clause.Kind = HighEHClauseKind::CxxCleanup;
+    Clause.HandlerVA = Plan.Pad;
+    Clause.LandingPadVAs = {Plan.Pad};
+    Scope.EHClauses = {std::move(Clause)};
+    Scope.EHClauseBodies = {Plan.Actions};
+    for (; I < Stmts.size(); ++I) {
+      HighStmt &Held = Stmts[I];
+      const bool IsLast = &Held == Open->second.Last;
+      if (!Gone.count(&Held)) {
+        removeNestedStatements(Held, Gone, Opens);
+        Scope.Body.push_back(std::move(Held));
+      }
+      if (IsLast)
+        break;
+    }
+    Kept.push_back(std::move(Scope));
   }
   Stmts = std::move(Kept);
 }
@@ -1137,14 +1730,16 @@ void removeStatements(std::vector<HighStmt> &Stmts,
 void attachItaniumHandlerBodies(HighFunc &Func) {
   if (!hasItaniumCxxRegions(Func))
     return;
-  splitRegionsByPad(Func.Body, *Func.ExceptionMetadata->Itanium);
+  const ItaniumEHInfo &LSDA = *Func.ExceptionMetadata->Itanium;
+  splitRegionsByPad(Func.Body, LSDA);
   std::vector<HighStmt *> Regions;
   walkStmts(Func.Body, [&](HighStmt &S) {
     if (S.Kind == StmtKind::ItaniumTry && S.EHIsReducible &&
         !S.EHClauses.empty())
       Regions.push_back(&S);
   });
-  if (Regions.empty())
+  const std::vector<va_t> CleanupPads = cleanupOnlyPads(LSDA);
+  if (Regions.empty() && CleanupPads.empty())
     return;
   const HighFlowGraph G(Func.Body, endsPath);
   if (!G.Complete)
@@ -1277,7 +1872,72 @@ void attachItaniumHandlerBodies(HighFunc &Func) {
     DroppedPads.insert(Dropped.begin(), Dropped.end());
     Done.push_back(std::move(P));
   }
-  if (Done.empty())
+  // A pad that only cleans up is a scope of its own around the calls that
+  // reach it: `try { … } catch (...) { cleanups; throw; }`, as an MSVC
+  // object's unwind action reads.
+  std::vector<CleanupPlan> Cleanups;
+  Cleanups.reserve(CleanupPads.size());
+  std::vector<va_t> CleanupPadsKept;
+  // The code the other pads run: handlers, and what they continue to.
+  std::set<size_t> Handlers;
+  if (!CleanupPads.empty())
+    for (const ItaniumCallSite &Site : LSDA.CallSites) {
+      if (!Site.LandingPadVA ||
+          llvm::is_contained(CleanupPads, Site.LandingPadVA))
+        continue;
+      const auto Entry = G.LabelAt.find(Site.LandingPadVA);
+      if (Entry == G.LabelAt.end())
+        continue;
+      std::vector<size_t> Work{Entry->second};
+      while (!Work.empty()) {
+        const size_t N = Work.back();
+        Work.pop_back();
+        if (N == 0 || Normal.count(N) || !Handlers.insert(N).second)
+          continue;
+        Work.insert(Work.end(), G.Nodes[N].Successors.begin(),
+                    G.Nodes[N].Successors.end());
+      }
+    }
+  for (va_t Pad : CleanupPads) {
+    const char *Why = nullptr;
+    const auto Entry = G.LabelAt.find(Pad);
+    if (Entry == G.LabelAt.end() || Normal.count(Entry->second))
+      Why = "landing pad is no label of its own";
+    const std::vector<HighStmt> NoTry;
+    PadRun Run(G, Normal, Positions, NoTry, VoidFunction, 0);
+    std::optional<std::vector<HighStmt>> Body;
+    if (!Why && !(Body = Run.run(Entry->second)))
+      Why = Run.Reason;
+    CleanupPlan Plan;
+    Plan.Pad = Pad;
+    std::vector<HighStmt> Prefix;
+    if (!Why)
+      Why = makeCleanup(*Body, Run.SelectorWrites, 0, Prefix, Plan.Actions);
+    // A pad that runs nothing but the resume is no cleanup at all.
+    CleanupScopes Scopes(G, Normal, Handlers, LSDA, Pad);
+    if (!Why && !Plan.Actions.empty() && !Scopes.find(Func.Body))
+      Why = Scopes.Reason;
+    if (Why) {
+      note(Why, Pad);
+      CleanupPadsKept.push_back(Pad);
+      continue;
+    }
+    for (const ItaniumCallSite &Site : LSDA.CallSites)
+      if (Site.LandingPadVA == Pad && Site.GuardedRange.isValid())
+        Plan.Range =
+            Plan.Range.isValid()
+                ? ExceptionAddressRange{std::min(Plan.Range.Begin,
+                                                 Site.GuardedRange.Begin),
+                                        std::max(Plan.Range.End,
+                                                 Site.GuardedRange.End)}
+                : Site.GuardedRange;
+    if (!Plan.Actions.empty())
+      Plan.Runs = std::move(Scopes.Runs);
+    Consumed.insert(Run.Copied.begin(), Run.Copied.end());
+    DroppedPads.insert(Run.DroppedPads.begin(), Run.DroppedPads.end());
+    Cleanups.push_back(std::move(Plan));
+  }
+  if (Done.empty() && Cleanups.empty())
     return;
   // The pads of the regions the handlers no longer spell run nothing else.
   auto PadCode = [&](va_t Pad, llvm::function_ref<void(const HighStmt *)> Fn) {
@@ -1298,6 +1958,14 @@ void attachItaniumHandlerBodies(HighFunc &Func) {
   };
   for (va_t Pad : DroppedPads)
     PadCode(Pad, [&](const HighStmt *S) { Consumed.insert(S); });
+  // A cleanup pad left in place keeps the code it reaches, unless the run of
+  // a pad spelled above took its entry along: its code then goes on as that
+  // pad's tail.
+  for (va_t Pad : CleanupPadsKept)
+    if (const auto Entry = G.LabelAt.find(Pad);
+        Entry != G.LabelAt.end() &&
+        !Consumed.count(G.Nodes[Entry->second].Statement))
+      KeptPads.insert(Pad);
   // Pad code a region left alone still reaches stays where it is.
   for (va_t Kept : KeptPads)
     PadCode(Kept, [&](const HighStmt *S) { Consumed.erase(S); });
@@ -1358,7 +2026,13 @@ void attachItaniumHandlerBodies(HighFunc &Func) {
       *P.Region = std::move(Region);
     }
   }
-  removeStatements(Func.Body, Gone);
+  // The runs of the cleanup scopes hold no region's statements, which keep
+  // their places above, and no pad code.
+  std::map<const HighStmt *, ScopeOpening> Opens;
+  for (const CleanupPlan &Plan : Cleanups)
+    for (const CleanupScopes::Run &Run : Plan.Runs)
+      Opens[Run.First] = {Run.Last, &Plan};
+  removeStatements(Func.Body, Gone, Opens);
 }
 
 } // namespace neverd

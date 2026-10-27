@@ -13,14 +13,20 @@
 
 #include "neverd/ir/med/MedTypePass.h"
 
+#include "neverd/ir/FloatingCallArguments.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
+#include "neverd/ir/med/MedStackAlignment.h"
+#include "neverd/ir/med/X86/X86NativeMemory.h"
 
 #include <algorithm>
 #include <deque>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -61,7 +67,8 @@ static bool isFloatCompare(NdOp Opc) {
 static uint16_t
 fpReturnElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
                  const MedVar &V, int Depth) {
-  if (Depth > 16 || V.Kind == MedVar::Const)
+  if (Depth > ::neverd::limits::ir::kMedTypePassFpReturnElemSizeDepthLimit ||
+      V.Kind == MedVar::Const)
     return 0;
   auto It = Defs.find({V.Id, V.SSAVer});
   if (It == Defs.end())
@@ -74,7 +81,10 @@ fpReturnElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
     uint64_t Offset = 0;
     const unsigned Bytes = V.Size;
     bool CompleteSpan = true;
-    for (unsigned Step = 0; Step < 16 && !Carrier->isConst(); ++Step) {
+    for (unsigned Step = 0;
+         Step < ::neverd::limits::ir::kMedTypePassFpReturnElemSizeStepLimit &&
+         !Carrier->isConst();
+         ++Step) {
       const auto Producer = Defs.find({Carrier->Id, Carrier->SSAVer});
       if (Producer == Defs.end())
         break;
@@ -186,13 +196,18 @@ fpReturnElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
 static uint16_t
 scalarFPLoadElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
                      const MedVar &V, int Depth) {
-  if (Depth > 16 || V.Kind == MedVar::Const)
+  if (Depth >
+          ::neverd::limits::ir::kMedTypePassScalarFPLoadElemSizeDepthLimit ||
+      V.Kind == MedVar::Const)
     return 0;
   auto It = Defs.find({V.Id, V.SSAVer});
   if (It == Defs.end())
     return 0;
   const MedOp *Def = It->second;
-  if (Def->Opcode == NdOp::LOAD)
+  if (Def->Opcode == NdOp::LOAD ||
+      (aarch64AddressLoadMedShapeIsValid(*Def) &&
+       isAArch64AddressVectorIntrinsic(
+           static_cast<Intrinsic>(Def->Inputs[0].ConstVal))))
     return Def->Output.Size == 4 ? 4 : (Def->Output.Size == 8 ? 8 : 0);
   // A bare sub-register view (offset 0) / widen / copy of a scalar load; a
   // non-zero SUBBYTES offset or a CONCAT is vector-lane assembly — stop.
@@ -212,12 +227,18 @@ scalarFPLoadElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
 static uint16_t
 x87ReturnElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
                   const MedVar &V, int Depth) {
-  if (Depth > 16 || V.isConst())
+  if (Depth > ::neverd::limits::ir::kMedTypePassX87ReturnElemSizeDepthLimit ||
+      V.isConst())
     return 0;
   auto It = Defs.find({V.Id, V.SSAVer});
   if (It == Defs.end())
     return 0;
   const MedOp *Def = It->second;
+  if ((Def->Opcode == NdOp::CALL || Def->Opcode == NdOp::INDIR_CALL) &&
+      Def->Output.Size == 10 && Def->ScalarCallSignature &&
+      Def->CalleeFloatReturnBytes == Def->ScalarCallSignature->ReturnBytes &&
+      (Def->CalleeFloatReturnBytes == 4 || Def->CalleeFloatReturnBytes == 8))
+    return Def->CalleeFloatReturnBytes;
   if (Def->Opcode == NdOp::FLOAT_FLOAT2FLOAT && Def->NumInputs >= 1 &&
       Def->Output.Size > 8 &&
       (Def->Inputs[0].Size == 4 || Def->Inputs[0].Size == 8))
@@ -228,6 +249,36 @@ x87ReturnElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
       return Elem;
   uint16_t Elem = fpReturnElemSize(Defs, V, 0);
   return Elem ? Elem : scalarFPLoadElemSize(Defs, V, 0);
+}
+
+// Unlike the legacy register-shape heuristic above, narrowing an explicitly
+// normalized x87 return requires exact IEEE provenance. Raw byte slices,
+// arithmetic and unresolved joins must keep all eighty architectural bits.
+static uint16_t
+exactX87SourceWidth(const std::map<std::pair<int, int>, const MedOp *> &Defs,
+                    const MedVar &V, int Depth) {
+  if (Depth > limits::ir::kMedTypePassX87ReturnElemSizeDepthLimit ||
+      V.isConst() || V.Size != 10)
+    return 0;
+  const auto It = Defs.find({V.Id, V.SSAVer});
+  if (It == Defs.end())
+    return 0;
+  const MedOp &Def = *It->second;
+  if (Def.Output.Size != V.Size)
+    return 0;
+  if ((Def.Opcode == NdOp::CALL || Def.Opcode == NdOp::INDIR_CALL) &&
+      Def.ScalarCallSignature && !Def.ScalarCallSignature->ReturnElements &&
+      Def.CalleeFloatReturnBytes == Def.ScalarCallSignature->ReturnBytes &&
+      (Def.CalleeFloatReturnBytes == 4 || Def.CalleeFloatReturnBytes == 8))
+    return Def.CalleeFloatReturnBytes;
+  if (Def.Opcode == NdOp::FLOAT_FLOAT2FLOAT && Def.NumInputs == 1 &&
+      (Def.Inputs[0].Size == 4 || Def.Inputs[0].Size == 8))
+    return Def.Inputs[0].Size;
+  if ((Def.Opcode == NdOp::COPY && Def.NumInputs == 1) ||
+      (Def.Opcode == NdOp::SUBBYTES && Def.NumInputs == 2 &&
+       Def.Inputs[1].isConst() && Def.Inputs[1].ConstVal == 0))
+    return exactX87SourceWidth(Defs, Def.Inputs[0], Depth + 1);
+  return 0;
 }
 
 // LowIR represents `fstp st(0)` as a COPY between two SSA versions of the
@@ -276,7 +327,8 @@ isReturnRegRestore(const std::map<std::pair<int, int>, const MedOp *> &Defs,
                    const MedBlock &Block, const MedOp &Op,
                    const TargetRegInfo &TRI) {
   auto isStackPtr = [&](MedVar A) {
-    for (int D = 0; D < 8; ++D) {
+    for (int D = 0; D < ::neverd::limits::ir::kMedTypePassIsStackPtrDLimit;
+         ++D) {
       if (A.Kind == MedVar::Reg && A.RegOff == TRI.StackPointer)
         return true;
       auto It = Defs.find({A.Id, A.SSAVer});
@@ -293,7 +345,10 @@ isReturnRegRestore(const std::map<std::pair<int, int>, const MedOp *> &Defs,
     return false;
   };
   const MedOp *Cur = &Op;
-  for (int Depth = 0; Depth < 8 && Cur; ++Depth) {
+  for (int Depth = 0;
+       Depth < ::neverd::limits::ir::kMedTypePassIsReturnRegRestoreDepthLimit &&
+       Cur;
+       ++Depth) {
     if (Cur->Opcode == NdOp::LOAD) {
       if (Cur->NumInputs < 1)
         return false;
@@ -308,7 +363,8 @@ isReturnRegRestore(const std::map<std::pair<int, int>, const MedOp *> &Defs,
       // integer-register write as a restore; an ordinary frame-slot load has no
       // such proof and remains a genuine integer result.
       auto isPopAdvance = [&](MedVar V) {
-        for (int D = 0; D < 8; ++D) {
+        for (int D = 0;
+             D < ::neverd::limits::ir::kMedTypePassIsPopAdvanceDLimit; ++D) {
           auto It = Defs.find({V.Id, V.SSAVer});
           if (It == Defs.end())
             return false;
@@ -385,7 +441,8 @@ intRetEffWidthRec(const std::map<std::pair<int, int>, const MedOp *> &Defs,
                   const std::map<std::pair<int, int>, const PhiNode *> &PhiDefs,
                   const MedVar &V, int Depth,
                   std::map<std::tuple<int, int, int>, uint16_t> &Memo) {
-  if (Depth > 8 || V.isConst())
+  if (Depth > ::neverd::limits::ir::kMedTypePassIntRetEffWidthRecDepthLimit ||
+      V.isConst())
     return V.Size;
   auto OpIt = Defs.find({V.Id, V.SSAVer});
   if (OpIt != Defs.end()) {
@@ -495,13 +552,16 @@ static std::optional<uint16_t> definedMergedLowBytes(
 /// Low bytes of \p V this function defines on every path.  The bytes above
 /// them come from the entry value of a register that is not a parameter, so
 /// the caller never gave them a meaning: after `mov al, 1; ret` only AL of RAX
-/// is defined.  Anything else counts as fully defined.
+/// is defined.  So do the bytes a call leaves in a register it clobbers, the
+/// callee's scratch: after `call strcmp; setne dl`, only DL of RDX is.
+/// Anything else counts as fully defined.
 static uint16_t definedLowBytesRec(
     const std::map<std::pair<int, int>, const MedOp *> &Defs,
     const std::map<std::pair<int, int>, const PhiNode *> &PhiDefs,
     const MedFunc &Func, const MedVar &V, int Depth,
     std::map<std::pair<int, int>, uint16_t> &Memo) {
-  if (V.Size == 0 || V.isConst() || Depth > 16)
+  if (V.Size == 0 || V.isConst() ||
+      Depth > ::neverd::limits::ir::kMedTypePassDefinedLowBytesRecDepthLimit)
     return V.Size;
   const std::pair<int, int> Key{V.Id, V.SSAVer};
   // The value a register enters with: version 0 with no definition of its
@@ -520,6 +580,19 @@ static uint16_t definedLowBytesRec(
   }
   if (auto It = Memo.find(Key); It != Memo.end())
     return It->second;
+  for (const MedCallClobber &Clobber : Func.CallClobbers)
+    if (Clobber.Value == V) {
+      Memo[Key] = 0;
+      const uint16_t Preserved =
+          Clobber.PreservedPrefixSize
+              ? std::min(Clobber.PreservedPrefixSize,
+                         definedLowBytesRec(Defs, PhiDefs, Func,
+                                            Clobber.PreservedInput, Depth + 1,
+                                            Memo))
+              : 0;
+      Memo[Key] = Preserved;
+      return Preserved;
+    }
   // A PHI cycle defines what its other arms define.
   Memo[Key] = V.Size;
   uint16_t Result = V.Size;
@@ -529,6 +602,13 @@ static uint16_t definedLowBytesRec(
         D.Inputs[0].Size == V.Size) {
       Result =
           definedLowBytesRec(Defs, PhiDefs, Func, D.Inputs[0], Depth + 1, Memo);
+    } else if (D.Opcode == NdOp::INT_ZEXT && D.NumInputs == 1 &&
+               D.Inputs[0].Size < V.Size) {
+      // The zeros above a fully defined value are defined, and nothing
+      // above one that is not: `mov eax, r14d` after r14d took a `bool`.
+      const uint16_t InputDefined =
+          definedLowBytesRec(Defs, PhiDefs, Func, D.Inputs[0], Depth + 1, Memo);
+      Result = InputDefined < D.Inputs[0].Size ? InputDefined : V.Size;
     } else if (D.Opcode == NdOp::CONCAT && D.NumInputs == 2 &&
                D.Inputs[0].Size + D.Inputs[1].Size == V.Size) {
       const MedVar &Hi = D.Inputs[0];
@@ -571,15 +651,6 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
   DefinedReturnBytes = 0;
   uint16_t DefaultSize = TRI.PointerSize > 0 ? TRI.PointerSize : 4;
 
-  // CFG construction can prove the exact logical x87 top at every return.
-  // Its explicit operand is the returned value, including across calls and
-  // joins; do not rediscover a different physical slot by backward scanning.
-  if (Func.ExplicitX87ReturnValue) {
-    ReturnViaX87 = true;
-    DefinedReturnBytes = 10;
-    return NdType::makeFloat(10);
-  }
-
   // The epilogue register-restore filter below applies to x86/x86-64: a `pop`
   // into the integer return register right before `ret` is a stack-cleanup /
   // PIC-base restore (i386 `pop eax` for the GOT base, x86-64 `pop rax` undoing
@@ -606,6 +677,27 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
       if (Phi.Output.Size > 0)
         PhiDefs[{Phi.Output.Id, Phi.Output.SSAVer}] = &Phi;
 
+  // CFG construction owns the logical x87 top at every return. Its carrier
+  // remains eighty bits, but a declared float/double call result or an IEEE
+  // value extended into it needs only that source precision. Every return
+  // must agree; arithmetic, unknown values and unresolved PHIs retain fp80.
+  if (Func.ExplicitX87ReturnValue) {
+    ReturnViaX87 = true;
+    DefinedReturnBytes = 10;
+    uint16_t Bytes = 0;
+    for (const auto &Block : Func.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::RETURN) {
+          const uint16_t Width =
+              Op.NumInputs == 1 ? exactX87SourceWidth(Defs, Op.Inputs[0], 0)
+                                : 0;
+          if (Width != 4 && Width != 8)
+            return NdType::makeFloat(10);
+          Bytes = std::max(Bytes, Width);
+        }
+    return NdType::makeFloat(Bytes ? Bytes : 10);
+  }
+
   // Aggregate across *every* RETURN, not just the first: a function with an
   // early `return arg` (no return-register write — the FP argument is passed
   // straight through in XMM0/D0) and a separate computed `return expr` path
@@ -621,7 +713,9 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
   // The value \p V is a view of: through copies, extensions and the low
   // slice of a wider register.
   auto ViewRoot = [&](MedVar V) {
-    for (int D = 0; D < 16 && !V.isConst(); ++D) {
+    for (int D = 0;
+         D < ::neverd::limits::ir::kMedTypePassViewRootDLimit && !V.isConst();
+         ++D) {
       const auto It = Defs.find({V.Id, V.SSAVer});
       if (It == Defs.end())
         break;
@@ -648,7 +742,10 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
       if (Op.Opcode != NdOp::COND_BR || Op.NumInputs < 2)
         continue;
       std::vector<MedVar> Pending{Op.Inputs[1]};
-      for (int Steps = 0; !Pending.empty() && Steps < 16; ++Steps) {
+      for (int Steps = 0;
+           !Pending.empty() &&
+           Steps < ::neverd::limits::ir::kMedTypePassInferReturnTypeStepsLimit;
+           ++Steps) {
         const MedVar V = Pending.back();
         Pending.pop_back();
         if (V.isConst())
@@ -735,8 +832,10 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
       for (int Hops = 0;; ++Hops) {
         if (ScanFrom == ScanBlk->Ops.rend()) {
           const bool Found = IntDist >= 0 || FPRegWriteOp || FirstFloat;
-          if (Found || Hops >= 4 || !ScanBlk->Phis.empty() ||
-              ScanBlk->Preds.size() != 1 || !ScanBlk->ExceptionalPreds.empty())
+          if (Found ||
+              Hops >= ::neverd::limits::ir::kMaxTypeInferencePredecessorHops ||
+              !ScanBlk->Phis.empty() || ScanBlk->Preds.size() != 1 ||
+              !ScanBlk->ExceptionalPreds.empty())
             break;
           const int Pred = ScanBlk->Preds.front();
           if (Pred < 0 || Pred >= static_cast<int>(Func.Blocks.size()) ||
@@ -774,7 +873,8 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
             TRI.hasFPReturnReg() && Rit2->Output.RegOff == TRI.FPReturnReg;
         // The x87 TOP rotates, so the physical slot carrying the logical ST0
         // return may be any ST0..ST7 register after stack fixup.
-        const bool IsX87Return = TRI.isX87ReturnReg(Rit2->Output.RegOff) &&
+        const bool IsX87Return = !Func.ConsumesX87Argument &&
+                                 TRI.isX87ReturnReg(Rit2->Output.RegOff) &&
                                  !isX87StackSelfCopy(*Rit2, TRI);
         if (IsFPRegReturn || IsX87Return) {
           if (IsFPRegReturn && !FPRegWriteOp)
@@ -785,6 +885,10 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
                                      : fpReturnElemSize(Defs, Rit2->Output, 0);
             if (!E && IsFPRegReturn)
               E = scalarFPLoadElemSize(Defs, Rit2->Output, 0);
+            if (!E && IsFPRegReturn &&
+                (Rit2->Opcode == NdOp::CALL ||
+                 Rit2->Opcode == NdOp::INDIR_CALL))
+              E = Rit2->CalleeFloatReturnBytes;
             // A call whose callee returns its float in this register.
             if (!E && IsFPRegReturn && CalleeFloatReturns &&
                 (Rit2->Opcode == NdOp::CALL ||
@@ -956,6 +1060,27 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
 // Parameter type inference
 //===----------------------------------------------------------------------===//
 
+bool visitOriginalMemoryPointerInputs(
+    const MedOp &Op, llvm::function_ref<void(const MedVar &)> Record) {
+  if (!hasValidMedIntrinsicId(Op) ||
+      !isAArch64AddressMemoryIntrinsic(
+          static_cast<Intrinsic>(Op.Inputs[0].ConstVal)))
+    return false;
+  if (aarch64AddressMemoryMedShapeIsValid(Op)) {
+    const auto Instruction = *aarch64AddressMemoryInstruction(
+        Op.Inputs[kAddressMemoryWordOperand + 1].ConstVal);
+    if (!Instruction.stackBase())
+      Record(Op.Inputs[kAddressMemoryBaseOperand + 1]);
+    // As with an ordinary additive address, either full-width word may carry
+    // the incoming pointer. This is source type inference only: the original
+    // instruction still owns address evaluation. A narrowed or scaled index
+    // is an offset and does not establish a pointer parameter.
+    if (Instruction.usesFullWidthIndex() && !Instruction.indexShift())
+      Record(Op.Inputs[kAddressMemoryIndexOperand + 1]);
+  }
+  return true;
+}
+
 static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
   std::map<std::pair<int, int>, const MedOp *> DefMap;
   for (const auto &Blk : Func.Blocks)
@@ -1015,6 +1140,10 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
   };
   for (const auto &Blk : Func.Blocks) {
     for (const auto &Op : Blk.Ops) {
+      if (visitOriginalMemoryPointerInputs(Op, [&](const MedVar &Address) {
+            recordAddressLiveIns(Address, PtrParameters);
+          }))
+        continue;
       if (Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::INDIR_CALL) {
         if (Op.NumInputs >= 1)
           if (auto Index = parameterIndex(Op.Inputs[0]))
@@ -1036,7 +1165,8 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
       if (MemoryAddress) {
         recordAddressLiveIns(*MemoryAddress,
                              Op.MemoryAddressSpace ==
-                                     NdMemoryAddressSpace::Default
+                                         NdMemoryAddressSpace::Default &&
+                                     !x86NativeMemoryHasSegmentOffset(Op)
                                  ? PtrParameters
                                  : SegmentOffsetParameters);
       }
@@ -1108,6 +1238,199 @@ static void inferLocalTypes(MedFunc &Func) {
 // Entry point
 //===----------------------------------------------------------------------===//
 
+namespace {
+struct SourceStackSeeds {
+  size_t Position = 0;
+  int64_t Headroom = 0;
+  int MaximumId = 0;
+  std::vector<MedOp> Operations;
+};
+
+// A declared incoming stack value also initializes the bytes reached through
+// entry SP. Binding only generic Param uses leaves raw LOADs disconnected from
+// that value. Publish ordinary MedIR stores once, so both source backends and
+// later alias-aware passes observe the same initialization and later writes.
+std::optional<SourceStackSeeds>
+sourceStackSeeds(const MedFunc &Func, Arch Architecture,
+                 const TargetRegInfo &TRI,
+                 const std::vector<SourceABIParameter> &Parameters,
+                 const std::optional<std::set<uint64_t>> &Observed) {
+  SourceStackSeeds Seeds;
+  if (Func.SourceParametersBound ||
+      std::none_of(Parameters.begin(), Parameters.end(), [](const auto &P) {
+        return P.Location.Kind == SourceABICarrierKind::Stack;
+      }))
+    return Seeds;
+  if (Func.SkippedSSA || Func.Blocks.empty() ||
+      !Func.Blocks.front().Preds.empty())
+    return std::nullopt;
+  std::optional<MedVar> Stack;
+  bool Ambiguous = false;
+  bool MemoryObserved = !Func.CallInfos.empty();
+  int MaximumId = 0;
+  auto Visit = [&](const MedVar &Value) {
+    if (!Value.isConst())
+      MaximumId = std::max(MaximumId, Value.Id);
+    if (Value.Kind == MedVar::Reg && Value.RegOff == TRI.StackPointer &&
+        Value.Size == TRI.PointerSize && Value.SSAVer == 0) {
+      Ambiguous |= Stack && *Stack != Value;
+      Stack = Value;
+    }
+  };
+  for (const auto &Block : Func.Blocks) {
+    MemoryObserved |= !Block.ExceptionalSuccs.empty();
+    for (const auto &Phi : Block.Phis) {
+      Visit(Phi.Output);
+      for (const auto &[Pred, Value] : Phi.Args)
+        Visit(Value);
+      if (Phi.ExceptionalEntry)
+        Visit(*Phi.ExceptionalEntry);
+    }
+    for (const auto &Op : Block.Ops) {
+      // A raw read can alias an incoming home even through another input.
+      // Calls, indirect transfers and unqualified intrinsics retain their
+      // memory initialization regardless of the explicit SP use proof.
+      MemoryObserved |=
+          Op.Opcode == NdOp::LOAD ||
+          (Op.Opcode == NdOp::STORE && !Op.PrologueSave) ||
+          Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
+          Op.Opcode == NdOp::ATOMIC_CMPXCHG || Op.Opcode == NdOp::CALL ||
+          Op.Opcode == NdOp::INDIR_CALL || Op.Opcode == NdOp::INDIR_BR ||
+          Op.MemoryOrdering != NdMemoryOrdering::None ||
+          Op.MemoryAddressSpace != NdMemoryAddressSpace::Default;
+      if (Op.Opcode == NdOp::INTRINSIC) {
+        const auto Id = Op.NumInputs && Op.Inputs[0].isConst()
+                            ? static_cast<Intrinsic>(Op.Inputs[0].ConstVal)
+                            : Intrinsic::None;
+        MemoryObserved |=
+            !Op.NumInputs || Op.Inputs[0].ConstVal != unsigned(Id) ||
+            isX86FPStateMemoryIntrinsic(Id) ||
+            !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op, Architecture));
+      }
+      Visit(Op.Output);
+      for (const auto &Output : Op.IntrinsicOutputs)
+        Visit(Output);
+      for (unsigned I = 0; I < Op.NumInputs; ++I)
+        Visit(Op.Inputs[I]);
+    }
+  }
+  for (const auto &Call : Func.CallInfos)
+    for (const auto &Argument : Call.Args)
+      Visit(Argument);
+  for (const auto &Clobber : Func.CallClobbers) {
+    Visit(Clobber.Value);
+    Visit(Clobber.PreservedInput);
+  }
+  if (Ambiguous ||
+      Parameters.size() >
+          static_cast<size_t>(std::numeric_limits<int>::max() - MaximumId))
+    return std::nullopt;
+  Seeds.MaximumId = MaximumId;
+  for (const auto &Op : Func.Blocks.front().Ops) {
+    if (Op.Opcode != NdOp::COPY || Op.NumInputs != 1 ||
+        Op.Output != Op.Inputs[0])
+      break;
+    ++Seeds.Position;
+  }
+  // A body already expressed entirely through Param values has no remaining
+  // entry-SP memory to initialize.
+  if (!Stack)
+    return Seeds;
+  // Generic recovery may already have replaced every incoming stack read
+  // with a Param. With no remaining memory observer or escaping SP, emitting
+  // stores here would invent a source dependency on the physical stack.
+  if (!MemoryObserved && Observed && !Observed->count(TRI.StackPointer))
+    return Seeds;
+
+  // A declaration initializes only its own bytes. In particular, a raw
+  // eight-byte home read cannot be supplied by a four-byte parameter and
+  // uninitialized padding. Generic Param slices are checked by the binder;
+  // check the corresponding raw memory views through the shared stack proof.
+  std::vector<std::pair<int64_t, int64_t>> Ranges;
+  for (const auto &Parameter : Parameters) {
+    const auto &Location = Parameter.Location;
+    if (Location.Kind == SourceABICarrierKind::Stack)
+      Ranges.emplace_back(Location.EntryStackOffset,
+                          Location.EntryStackOffset + Location.ValueBytes);
+  }
+  std::sort(Ranges.begin(), Ranges.end());
+  size_t RangeCount = 0;
+  for (const auto Range : Ranges) {
+    if (RangeCount && Ranges[RangeCount - 1].second >= Range.first)
+      Ranges[RangeCount - 1].second =
+          std::max(Ranges[RangeCount - 1].second, Range.second);
+    else
+      Ranges[RangeCount++] = Range;
+  }
+  Ranges.resize(RangeCount);
+  std::vector<MedVar> Loads{*Stack};
+  std::vector<uint16_t> Widths{0};
+  for (const auto &Block : Func.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1 && Op.Output.Size &&
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+        Loads.push_back(Op.Inputs[0]);
+        Widths.push_back(Op.Output.Size);
+      }
+  // This binder has no loader format; do not add format-specific alignment
+  // assumptions to the address proof.
+  const auto Offsets = entryStackOffsets(Func, Loads, Architecture,
+                                         BinaryFormat::Unknown, Func.EntryKind);
+  // Authenticate the entry value before publishing stores through it. Merely
+  // seeing an SSA-zero register at SP does not establish the entry seed.
+  if (Offsets.empty() || Offsets.front() != 0)
+    return std::nullopt;
+  for (size_t I = 1; I < Offsets.size(); ++I) {
+    if (!Offsets[I])
+      continue;
+    const int64_t Begin = *Offsets[I];
+    if (Begin > std::numeric_limits<int64_t>::max() - Widths[I])
+      return std::nullopt;
+    const int64_t End = Begin + Widths[I];
+    const auto Range = std::lower_bound(
+        Ranges.begin(), Ranges.end(), Begin,
+        [](const auto &Span, int64_t Offset) { return Span.second <= Offset; });
+    if (Range == Ranges.end() || Range->first >= End)
+      continue;
+    if (Range->first > Begin || Range->second < End)
+      return std::nullopt;
+  }
+  for (size_t I = 0; I < Parameters.size(); ++I) {
+    const auto &Location = Parameters[I].Location;
+    if (Location.Kind != SourceABICarrierKind::Stack)
+      continue;
+    MedVar Parameter;
+    Parameter.Kind = MedVar::Param;
+    Parameter.TheArch = Architecture;
+    Parameter.Id = static_cast<int>(I);
+    Parameter.RegOff = kNoParamReg;
+    Parameter.Size = Location.ValueBytes;
+    MedOp Address;
+    Address.Opcode = NdOp::INT_ADD;
+    Address.Addr = Func.Entry;
+    Address.Output.Kind = MedVar::Temp;
+    Address.Output.TheArch = Architecture;
+    Address.Output.Id = ++Seeds.MaximumId;
+    Address.Output.SSAVer = 1;
+    Address.Output.Size = TRI.PointerSize;
+    Address.addInput(*Stack);
+    Address.addInput(MedVar::makeConst(Location.EntryStackOffset,
+                                       TRI.PointerSize,
+                                       ConstantAddressProvenance::Scalar));
+    MedOp Store;
+    Store.Opcode = NdOp::STORE;
+    Store.Addr = Func.Entry;
+    Store.addInput(Address.Output);
+    Store.addInput(Parameter);
+    Seeds.Headroom = std::max(Seeds.Headroom,
+                              Location.EntryStackOffset + Location.ValueBytes);
+    Seeds.Operations.push_back(std::move(Address));
+    Seeds.Operations.push_back(std::move(Store));
+  }
+  return Seeds;
+}
+} // namespace
+
 void inferMedTypes(MedFunc &Func, Arch TheArch,
                    const std::map<va_t, uint16_t> *CalleeFloatReturns) {
   const auto &TRI = getTargetRegInfo(TheArch);
@@ -1166,6 +1489,7 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
     uint8_t Input;
     MedVar Parameter;
     std::optional<uint64_t> SliceOffset;
+    uint16_t PrefixBytes = 0;
   };
   std::vector<Rewrite> Rewrites;
   bool Valid = true;
@@ -1191,8 +1515,9 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
         if (Old.Kind != MedVar::Param && !EntryRegister)
           continue;
         if (Func.SourceParametersBound) {
-          Valid &=
-              Old.Id >= 0 && static_cast<size_t>(Old.Id) < Parameters.size();
+          if (Old.Kind == MedVar::Param)
+            Valid &=
+                Old.Id >= 0 && static_cast<size_t>(Old.Id) < Parameters.size();
           continue;
         }
         int Index = -1;
@@ -1230,6 +1555,7 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
                                : L.RegisterOffset;
         Parameter.Size = L.ValueBytes;
         std::optional<uint64_t> SliceOffset;
+        uint16_t PrefixBytes = 0;
         if (Slice)
           SliceOffset = static_cast<uint64_t>(Offset - L.EntryStackOffset);
         else if (Bytes != L.ValueBytes) {
@@ -1238,15 +1564,20 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
           // this pass has no operation in which to insert its byte slice.
           if (EntryRegister && Bytes < L.ValueBytes)
             continue;
-          // A simple COPY can preserve a narrower low slice; a wider read or
-          // a whole-slot arithmetic use cannot manufacture padding bytes.
-          if (EntryRegister || K != 0 || Op.Opcode != NdOp::COPY ||
-              Op.NumInputs != 1)
-            Valid = false;
-          else
+          if (!EntryRegister && K == 0 && Op.Opcode == NdOp::COPY &&
+              Op.NumInputs == 1)
             SliceOffset = 0;
+          else if (!EntryRegister && L.Kind == SourceABICarrierKind::Stack &&
+                   Offset == L.EntryStackOffset && Bytes < L.ValueBytes &&
+                   Parameters[Index].Type->Kind == NdTypeKind::Int)
+            // Generic stack recovery can retain differently sized Param
+            // operands for the same slot. Keep the consumer's original width
+            // through an explicit slice, including sign/zero extensions.
+            PrefixBytes = Bytes;
+          else
+            Valid = false;
         }
-        Rewrites.push_back({&Op, K, Parameter, SliceOffset});
+        Rewrites.push_back({&Op, K, Parameter, SliceOffset, PrefixBytes});
       }
     }
     for (const auto &Phi : Block.Phis)
@@ -1302,6 +1633,49 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
     Func.SourceTypeHint.reset();
     return;
   }
+  auto Seeds = sourceStackSeeds(Func, TheArch, TRI, Parameters, Observed);
+  if (!Seeds) {
+    Func.SourceTypeHint.reset();
+    return;
+  }
+  // Parameters are immutable source values. One pure entry slice per width
+  // serves every matching use without inserting instructions into each block
+  // or changing a sign extension into a whole-carrier operation.
+  std::map<std::pair<int, uint16_t>, MedVar> Prefixes;
+  for (auto &R : Rewrites) {
+    if (!R.PrefixBytes)
+      continue;
+    const auto Key = std::pair{R.Parameter.Id, R.PrefixBytes};
+    auto Found = Prefixes.find(Key);
+    if (Found == Prefixes.end()) {
+      if (Seeds->MaximumId == std::numeric_limits<int>::max()) {
+        Func.SourceTypeHint.reset();
+        return;
+      }
+      MedOp Slice;
+      Slice.Opcode = NdOp::SUBBYTES;
+      Slice.Addr = Func.Entry;
+      Slice.Output.Kind = MedVar::Temp;
+      Slice.Output.TheArch = TheArch;
+      Slice.Output.Id = ++Seeds->MaximumId;
+      Slice.Output.SSAVer = 1;
+      Slice.Output.Size = R.PrefixBytes;
+      Slice.addInput(R.Parameter);
+      Slice.addInput(MedVar::makeConst(0, TRI.PointerSize,
+                                       ConstantAddressProvenance::Scalar));
+      Found = Prefixes.emplace(Key, Slice.Output).first;
+      Seeds->Operations.push_back(std::move(Slice));
+    }
+    R.Parameter = Found->second;
+  }
+  for (const auto &Call : Func.CallInfos)
+    if (Call.BlockId == Func.Blocks.front().Id && Call.OpIdx >= 0 &&
+        static_cast<size_t>(Call.OpIdx) >= Seeds->Position &&
+        Seeds->Operations.size() >
+            static_cast<size_t>(std::numeric_limits<int>::max() - Call.OpIdx)) {
+      Func.SourceTypeHint.reset();
+      return;
+    }
   std::vector<MedVar> BoundParams;
   std::vector<MedTypedParam> BoundTypes;
   for (size_t I = 0; I < Parameters.size(); ++I) {
@@ -1347,6 +1721,16 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
   Func.SourceTypeHint = std::move(Hint);
   Func.SourceParametersBound = true;
   Func.FPReturnViaX87 = false;
+  if (!Seeds->Operations.empty()) {
+    auto &Entry = Func.Blocks.front().Ops;
+    Entry.insert(Entry.begin() + Seeds->Position, Seeds->Operations.begin(),
+                 Seeds->Operations.end());
+    for (auto &Call : Func.CallInfos)
+      if (Call.BlockId == Func.Blocks.front().Id && Call.OpIdx >= 0 &&
+          static_cast<size_t>(Call.OpIdx) >= Seeds->Position)
+        Call.OpIdx += static_cast<int>(Seeds->Operations.size());
+    Func.FrameHeadroom = std::max(Func.FrameHeadroom, Seeds->Headroom);
+  }
 }
 
 void propagateForwardedPointerParams(std::vector<MedFunc> &Funcs,

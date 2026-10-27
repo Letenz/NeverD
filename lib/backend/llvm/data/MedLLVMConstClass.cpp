@@ -21,6 +21,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 
@@ -109,7 +110,8 @@ bool MedLLVMEmitter::constIsWritableRunEndPointer(uint64_t Val) const {
   auto reachesSegBase = [&](const MedVar &Start) {
     std::vector<MedVar> Work{Start};
     std::set<std::tuple<int, int, int>> Seen;
-    int Budget = 512;
+    int Budget =
+        ::neverd::limits::backend::kMedLLVMConstClassReachesSegBaseBudget;
     while (!Work.empty() && Budget-- > 0) {
       MedVar Cur = Work.back();
       Work.pop_back();
@@ -296,7 +298,7 @@ bool MedLLVMEmitter::mayBeWritableSelectPeerCycleFree(uint64_t Val) const {
   auto reaches = [&](const MedVar &Start, auto &&Pred, bool AllowBitwise) {
     std::vector<MedVar> Work{Start};
     std::set<std::tuple<int, int, int>> Seen;
-    int Budget = 256;
+    int Budget = ::neverd::limits::backend::kWritableSelectPeerCycleWork;
     while (!Work.empty() && Budget-- > 0) {
       MedVar Cur = Work.back();
       Work.pop_back();
@@ -404,7 +406,7 @@ bool MedLLVMEmitter::symbolizesSelectPeer(uint64_t Val) const {
   auto reaches = [&](const MedVar &Start, auto &&Pred) {
     std::vector<MedVar> Work{Start};
     std::set<std::tuple<int, int, int>> Seen;
-    int Budget = 256;
+    int Budget = ::neverd::limits::backend::kSymbolizedSelectPeerWork;
     while (!Work.empty() && Budget-- > 0) {
       MedVar Cur = Work.back();
       Work.pop_back();
@@ -485,7 +487,8 @@ bool MedLLVMEmitter::symbolizesSelectPeer(uint64_t Val) const {
   auto reachesBitwise = [&](const MedVar &Start, auto &&Pred) {
     std::vector<MedVar> Work{Start};
     std::set<std::tuple<int, int, int>> Seen;
-    int Budget = 256;
+    int Budget =
+        ::neverd::limits::backend::kMedLLVMConstClassReachesBitwiseBudget;
     while (!Work.empty() && Budget-- > 0) {
       MedVar Cur = Work.back();
       Work.pop_back();

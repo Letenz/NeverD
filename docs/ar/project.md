@@ -1,6 +1,6 @@
 **اللغات**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](project.md)
 
-<!-- i18n-source: 93151a7aad0a03cb94dfc975d040357c0d8cc63c2db3d921bcde771c87d09e09 -->
+<!-- i18n-source: 063226dd86688a1fb9f6d9741898c67d850f4398e9c652507a75f3b01d47ab90 -->
 
 <div align="center" dir="rtl">
 
@@ -200,7 +200,7 @@ cmake --build build
 ```bash
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DNEVERD_LLVM_PREBUILT=ON \
-  -DNEVERD_LLVM_PREBUILT_TAG=neverd-llvm-v23.0.0-r4
+  -DNEVERD_LLVM_PREBUILT_TAG=neverd-llvm-v23.0.0-r6
 cmake --build build
 ```
 
@@ -216,19 +216,19 @@ cmake --build build
 
 يُفحَص كل أرشيف مقابل البصمة المثبتة في `cmake/NeverDLLVMPrebuilt.cmake`، أو ملف `.sha256` المنشور للوسوم التي لا تصفها القيم المثبتة، قبل استخراجه تحت `~/.cache/neverd-llvm/<tag>/<arch>/` أو المسار المحدد بواسطة `NEVERD_LLVM_PREBUILT_CACHE_DIR`. ويجب أن يذكر `BUILDINFO.txt` في الحزمة الافتراضية التزام الوحدة الفرعية LLVM نفسه تمامًا. تستخدم إصدارات macOS/Linux أداة ccache، وتستخدم إصدارات Windows clang-cl أداة sccache مع مخبأ GitHub Actions. تسرّع هذه المخابئ إعادة البناء فقط ولا تُنشر كملفات إصدار.
 
-مراجعة الحزمة الافتراضية هي `neverd-llvm-v23.0.0-r4`. يشكّل وسم Git وهدف الإصدار والتزام المصدر وبصمات الأرشيفات الثلاثة مرجع مصدر ذا إصدار غير قابل للتغيير. تنتقل أدلة البناء التي تحتفظ بالوسم الأساسي القديم أو `neverd-llvm-v23.0.0-r1` أو `neverd-llvm-v23.0.0-r2` أو `neverd-llvm-v23.0.0-r3` تلقائيًا إلى `r4` ما لم تُحدّد قيمة `NEVERD_LLVM_PREBUILT_SHA256` صراحة. يعمل `Prebuilt LLVM Audit` عند push وpull request وكل ست ساعات، ويستدعي `scripts/audit_prebuilt_llvm_release.py` لمقارنة المرجع بإصدار GitHub الحالي وكل ملف تحقق منشور.
+مراجعة الحزمة الافتراضية هي `neverd-llvm-v23.0.0-r6`. يشكّل وسم Git وهدف الإصدار والتزام المصدر وبصمات الأرشيفات الثلاثة مرجع مصدر ذا إصدار غير قابل للتغيير. تنتقل أدلة البناء التي تحتفظ بالوسم الأساسي القديم أو `neverd-llvm-v23.0.0-r1` أو `neverd-llvm-v23.0.0-r2` أو `neverd-llvm-v23.0.0-r3` أو `neverd-llvm-v23.0.0-r4` أو `neverd-llvm-v23.0.0-r5` تلقائيًا إلى `r6` ما لم تُحدّد قيمة `NEVERD_LLVM_PREBUILT_SHA256` صراحة. يعمل `Prebuilt LLVM Audit` عند push وpull request وكل ست ساعات، ويستدعي `scripts/audit_prebuilt_llvm_release.py` لمقارنة المرجع بإصدار GitHub الحالي وكل ملف تحقق منشور.
 
-إذا تغيّر تفرع LLVM بينما لا يزال LLVM يعلن `23.0.0`، فانشر مراجعة الحزمة التالية `neverd-llvm-v23.0.0-r5` ثم `-r6`، بدل الكتابة فوق إصدار موجود أو اختراع إصدار LLVM باسم `23.0.1`:
+إذا تغيّر تفرع LLVM بينما لا يزال LLVM يعلن `23.0.0`، فانشر مراجعة الحزمة التالية `neverd-llvm-v23.0.0-r7` ثم `-r8`، بدل الكتابة فوق إصدار موجود أو اختراع إصدار LLVM باسم `23.0.1`:
 
 ```bash
 gh workflow run neverd-release.yml \
   --repo NeverSight/llvm-project \
   --ref main \
-  -f release_tag=neverd-llvm-v23.0.0-r5 \
+  -f release_tag=neverd-llvm-v23.0.0-r7 \
   -f overwrite_existing_assets=false
 ```
 
-بعد نجاح سير العمل، حدّث الوسم الافتراضي والالتزام المثبت والبصمات الثلاثة معًا في `cmake/NeverDLLVMPrebuilt.cmake`. تستخدم كل مراجعة للحزمة دليل تخزين مؤقت خاصًا بها؛ توجد المراجعة الافتراضية الحالية تحت `.cache/neverd-llvm/neverd-llvm-v23.0.0-r4`. ويفشل الأرشيف القديم أو المعاد نشره قبل الاستخراج. يقتصر `overwrite_existing_assets` على الاستعادة التاريخية ويبقى معطّلًا في سير المراجعات المعتاد.
+بعد نجاح سير العمل، حدّث الوسم الافتراضي والالتزام المثبت والبصمات الثلاثة معًا في `cmake/NeverDLLVMPrebuilt.cmake`. تستخدم كل مراجعة للحزمة دليل تخزين مؤقت خاصًا بها؛ توجد المراجعة الافتراضية الحالية تحت `.cache/neverd-llvm/neverd-llvm-v23.0.0-r6`. ويفشل الأرشيف القديم أو المعاد نشره قبل الاستخراج. يقتصر `overwrite_existing_assets` على الاستعادة التاريخية ويبقى معطّلًا في سير المراجعات المعتاد.
 
 **المخرجات**
 

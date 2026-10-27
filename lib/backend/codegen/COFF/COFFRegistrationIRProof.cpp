@@ -5,8 +5,16 @@
 //===----------------------------------------------------------------------===//
 #include "COFFRegistrationIRProof.h"
 
+#include "COFFRegistrationCopyEdges.h"
+#include "COFFRegistrationCopySlots.h"
+#include "COFFRegistrationSEHParentExit.h"
+#include "COFFRegistrationSEHRegisters.h"
+#include "COFFRegistrationSEHStateDispatch.h"
+
 #include "neverd/Limits.h"
-#include "neverd/backend/llvm/X86RegistrationSEHControl.h"
+#include "neverd/backend/llvm/X86/X86RegistrationSEHControl.h"
+#include "neverd/ir/med/X86/X86RegistrationSEHRegisters.h"
+#include "neverd/ir/med/X86/X86RegistrationSEHStateStore.h"
 
 #include "llvm/IR/CFG.h"
 namespace neverd::coff_registration {
@@ -24,21 +32,32 @@ bool matchesSourceOperation(const llvm::Instruction &I, va_t Owner,
 llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
     const llvm::Function &Parent, const MedFunc &Source,
     const std::map<CallbackKey, const llvm::Function *> &Callbacks,
-    llvm::ArrayRef<const llvm::Function *> Functions, bool ReachedCxxSource) {
+    llvm::ArrayRef<const llvm::Function *> Functions, bool ReachedCxxSource,
+    const RegistrationSEHParentExitContract *ParentExits) {
   using Key = std::pair<va_t, int>;
   struct Event {
     Key Identity;
     uint8_t Kind;
+    const MedOp *Register = nullptr;
   };
   std::map<int, const MedBlock *> Blocks;
   std::map<int, std::vector<Event>> Expected;
   std::map<int, const llvm::Function *> Owners;
   std::map<int, va_t> FinallyReturns;
+  std::optional<std::vector<X86RegistrationSEHStateStoreBinding>> StateStores;
+  std::map<Key, const X86RegistrationSEHStateStoreBinding *> DynamicStores;
   if (!ReachedCxxSource) {
     auto Returns = getX86RegistrationSEHReturnBlocks(Source);
     if (!Returns)
       return rejectIR("source finally return has no checked CALL continuation");
     FinallyReturns = std::move(*Returns);
+    StateStores = getX86RegistrationSEHStateStores(Source);
+    if (!StateStores)
+      return rejectIR("source state stores have no complete result domain");
+    for (const auto &Store : *StateStores)
+      if (Store.TargetLevels.size() > 1)
+        DynamicStores.emplace(Key{Store.Source->Address, Store.Source->OpSeq},
+                              &Store);
   }
   size_t Work = 0;
   auto Charge = [&](size_t Amount = 1) {
@@ -85,6 +104,13 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
                                  Op.Addr, Op.OriginSeq)
                          ? 3
                          : 2)});
+      else if (x86_registration::isSEHRegisterIntrinsic(Op)) {
+        if (!x86_registration::hasValidSEHRegisterShape(Op))
+          return rejectIR("source register exchange is malformed");
+        Expected[Id].push_back({{Op.Addr, int(Op.Inputs[4].ConstVal)},
+                                uint8_t(4 + Op.Inputs[1].ConstVal),
+                                &Op});
+      }
       if (ReachedCxxSource && Source.RegistrationStates) {
         const auto *Effect =
             Source.RegistrationStates->callFrameEffect(Op.Addr, Op.OriginSeq);
@@ -116,8 +142,9 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
         return rejectIR(
             "callback source execution replay exceeds its work budget");
       Owners[Id] = Function;
-      Pending.insert(Pending.end(), Blocks.at(Id)->Succs.begin(),
-                     Blocks.at(Id)->Succs.end());
+      if (!ParentExits || !ParentExits->Transfers.count(Id))
+        Pending.insert(Pending.end(), Blocks.at(Id)->Succs.begin(),
+                       Blocks.at(Id)->Succs.end());
     }
   }
   std::map<int, SourceSegment> Segments;
@@ -134,6 +161,9 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
         if (!Charge())
           return rejectIR("source execution closure exceeds its work budget");
         if (I.getMetadata(windows_eh_md::RegistrationOperationAttachment))
+          Events.insert(&I);
+        if (I.getMetadata(windows_eh_md::RegistrationRegisterAttachment) &&
+            !llvm::isa<llvm::AllocaInst>(I))
           Events.insert(&I);
         const auto *MD =
             I.getMetadata(windows_eh_md::RegistrationBlockAttachment);
@@ -178,6 +208,14 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
       }
   if (Segments.size() != Blocks.size())
     return rejectIR("source execution segment set is incomplete");
+  RegistrationCopySlots CopySlots;
+  if (!ReachedCxxSource && !Callbacks.empty()) {
+    std::vector<const llvm::Function *> Outlined;
+    for (const auto &[Key, Function] : Callbacks)
+      Outlined.push_back(Function);
+    if (!CopySlots.build(Parent, Outlined, Work))
+      return rejectIR("callback copy storage has no closed recovery graph");
+  }
   std::set<const llvm::Instruction *> SeenEvents;
   for (const auto &[Id, Segment] : Segments) {
     if (!Segment.Enter || !Segment.Exit)
@@ -186,6 +224,7 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
           llvm::Twine(Id));
     const llvm::Instruction *I = next(*Segment.Enter);
     std::set<const llvm::BasicBlock *> SeenParts;
+    std::map<const llvm::SwitchInst *, const llvm::Instruction *> Dispatches;
     size_t EventIndex = 0;
     const bool TerminalExit = ReachedCxxSource &&
                               llvm::isa<llvm::CallBase>(Segment.Exit) &&
@@ -199,6 +238,16 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
            I->getMetadata(windows_eh_md::RegistrationBlockAttachment)))
         return rejectIR(
             "source execution segment crosses another source block");
+      if (I->getMetadata(windows_eh_md::RegistrationRegisterAttachment)) {
+        const auto &SourceEvents = Expected[Id];
+        if (EventIndex >= SourceEvents.size() ||
+            !SourceEvents[EventIndex].Register ||
+            !matchesSEHRegisterExchange(*I, *SourceEvents[EventIndex].Register,
+                                        Source.Entry) ||
+            !SeenEvents.insert(I).second)
+          return rejectIR("finally register exchange changed its source order");
+        ++EventIndex;
+      }
       if (const auto *MD =
               I->getMetadata(windows_eh_md::RegistrationOperationAttachment)) {
         auto Address = metadataInteger(*MD, 1, 64);
@@ -230,10 +279,29 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
           return rejectIR("source memory or call changed its execution segment "
                           "or occurrence order");
         ++EventIndex;
+        const auto Dynamic = DynamicStores.find(Key{*Address, int(*Seq)});
+        if (Store && Dynamic != DynamicStores.end()) {
+          auto Sequence = bindSEHCallbackStateSequence(*Store, *Dynamic->second,
+                                                       Source, Parent);
+          if (!Sequence)
+            return Sequence.takeError();
+          if (!Sequence->Dispatch || !Sequence->Resume ||
+              !Dispatches.emplace(Sequence->Dispatch, Sequence->Resume).second)
+            return rejectIR("callback state selection has no unique path");
+        }
       }
       if (I == Segment.Exit)
         break;
       if (I->isTerminator()) {
+        const auto Dispatch =
+            Dispatches.find(llvm::dyn_cast<llvm::SwitchInst>(I));
+        if (Dispatch != Dispatches.end()) {
+          if (Owners.at(Id) == &Parent ||
+              !SeenParts.insert(I->getParent()).second)
+            return rejectIR("callback state selection leaves its source block");
+          I = Dispatch->second;
+          continue;
+        }
         const auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(I);
         if (!Invoke || Owners.at(Id) != &Parent ||
             !SeenParts.insert(I->getParent()).second ||
@@ -248,24 +316,38 @@ llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
       return rejectIR(
           "source execution segment has an incomplete operation set");
     if (Owners.at(Id) != &Parent) {
-      if (Segment.Enter->getParent() != Segment.Exit->getParent())
+      if (Segment.Enter->getParent() != Segment.Exit->getParent() &&
+          Dispatches.empty())
         return rejectIR("callback source execution segment was split");
       std::set<const llvm::BasicBlock *> ExpectedSuccessors, ActualSuccessors;
-      for (int Successor : Blocks.at(Id)->Succs) {
-        auto It = Segments.find(Successor);
-        if (It == Segments.end() || !It->second.Enter ||
-            Owners.at(Successor) != Owners.at(Id))
-          return rejectIR("callback edge leaves its source execution closure");
-        ExpectedSuccessors.insert(It->second.Enter->getParent());
-      }
+      if (ParentExits && ParentExits->Transfers.count(Id))
+        ExpectedSuccessors.insert(ParentExits->Transfers.at(Id).Block);
+      else
+        for (int Successor : Blocks.at(Id)->Succs) {
+          auto It = Segments.find(Successor);
+          if (It == Segments.end() || !It->second.Enter ||
+              Owners.at(Successor) != Owners.at(Id))
+            return rejectIR(
+                "callback edge leaves its source execution closure");
+          ExpectedSuccessors.insert(It->second.Enter->getParent());
+        }
       const auto *Term = Segment.Exit->getParent()->getTerminator();
       const auto &Operations = Blocks.at(Id)->Ops;
       const bool SourceReturn =
           !Operations.empty() && Operations.back().Opcode == NdOp::RETURN;
       if (SourceReturn != llvm::isa<llvm::ReturnInst>(Term))
         return rejectIR("callback return changed its source execution exit");
-      for (unsigned Index = 0; Index < Term->getNumSuccessors(); ++Index)
-        ActualSuccessors.insert(Term->getSuccessor(Index));
+      for (unsigned Index = 0; Index < Term->getNumSuccessors(); ++Index) {
+        const auto *Next = Term->getSuccessor(Index);
+        if (!ExpectedSuccessors.count(Next)) {
+          Next = registrationCopyDestination(*Term->getParent(), *Next,
+                                             ExpectedSuccessors, Work,
+                                             !ReachedCxxSource, &CopySlots);
+          if (!Next)
+            return rejectIR("callback edge gained unproved copy instructions");
+        }
+        ActualSuccessors.insert(Next);
+      }
       if (ExpectedSuccessors != ActualSuccessors)
         return rejectIR(
             "callback normal flow changed its source execution graph");

@@ -336,7 +336,7 @@ TEST_F(KernelPoFxAPI, CurrentThreadIdentityFollowsTheCallerAcrossNestedFrames) {
   reject(Model->validateGuestAccess(Object + profile::ProcessTokenSize - 1, 1,
                                     false),
          "opaque thread");
-  reject(Model->call("ObfDereferenceObject", {Object}), "referenced thread");
+  reject(Model->call("ObfDereferenceObject", {Object}), "referenced object");
   Model->enterExecution(0);
   reject(Model->currentThreadObject(), "active execution");
 }

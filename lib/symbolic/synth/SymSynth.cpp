@@ -18,10 +18,10 @@
 /// so it is asked of the concrete form and not of the body: a candidate that
 /// mentions one hidden subterm twice is short as a body and long as an answer.
 ///
-/// The searches run in order of what they promise.  Enumeration goes first
-/// because when it finds something, that something is the shortest expression
-/// the grammar holds.  The sampler runs only on its failure, and its answer
-/// carries no such claim — which is why the result says which one produced it.
+/// Terminal enumeration runs first, followed by a bounded affine proposal and
+/// the composite grammar search. The sampler runs only on their failure.
+/// Affine fitting and sampling do not establish a grammar minimum; the result
+/// identifies these paths separately.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -95,37 +95,44 @@ SynthResult synthesizeImpl(SymContext &Ctx, SymRef E, const SynthOptions &Opts,
   Result.SizeAfter = Result.SizeBefore;
 
   SynthProblem Problem;
-  switch (buildProblem(Ctx, E, Opts, Problem)) {
-  case ProblemStatus::Trivial:
-    return Result;
-  case ProblemStatus::TooManyLeaves:
-    Result.NumLeaves = static_cast<unsigned>(Problem.Leaves.size());
-    Result.Outcome = SynthOutcome::TooManyInputs;
-    return Result;
-  case ProblemStatus::Ready:
-    break;
-  }
+  const ProblemStatus Status = buildProblem(Ctx, E, Opts, Problem);
   Result.NumLeaves = static_cast<unsigned>(Problem.Leaves.size());
-
-  const OpSemantics Sem(Ctx, Problem.Width);
-  Checker Check = makeChecker(Ctx, Problem, Opts);
+  if (Status != ProblemStatus::Ready &&
+      (!Problem.HasNarrowInputs || !Opts.UseAffineFitting ||
+       Opts.MaxCost < 2)) {
+    if (Status == ProblemStatus::TooManyLeaves)
+      Result.Outcome = SynthOutcome::TooManyInputs;
+    return Result;
+  }
   SearchEffort Effort(Opts.MaxWork);
-
-  SearchOutcome Found = enumerateShortest(Ctx, Problem, Opts, Sem, Effort,
-                                          Check, Verify, Result.ProofQueries);
+  SearchOutcome Found;
   bool FromSampler = false;
-  if (!Found.Candidate.isValid() && !Found.StopForProof &&
-      Opts.UseStochasticFallback) {
-    SearchOutcome Sampled = searchStochastically(
-        Ctx, Problem, Opts, Sem, Effort, Check, Verify, Result.ProofQueries);
-    Sampled.SawRefuted |= Found.SawRefuted;
-    Sampled.SawProofIncomplete |= Found.SawProofIncomplete;
-    Sampled.StopForProof |= Found.StopForProof;
-    Found = Sampled;
-    FromSampler = Found.Candidate.isValid();
+  if (Status == ProblemStatus::Ready) {
+    const OpSemantics Sem(Ctx, Problem.Width);
+    Checker Check = makeChecker(Ctx, Problem, Opts);
+    Found = enumerateShortest(Ctx, Problem, Opts, Sem, Effort, Check, Verify,
+                              Result.ProofQueries);
+    if (!Found.Candidate.isValid() && !Found.StopForProof &&
+        Opts.UseStochasticFallback) {
+      SearchOutcome Sampled = searchStochastically(
+          Ctx, Problem, Opts, Sem, Effort, Check, Verify, Result.ProofQueries);
+      Sampled.SawRefuted |= Found.SawRefuted;
+      Sampled.SawProofIncomplete |= Found.SawProofIncomplete;
+      Sampled.StopForProof |= Found.StopForProof;
+      Sampled.SawBudgetExhausted |= Found.SawBudgetExhausted;
+      Found = Sampled;
+      FromSampler = Found.Candidate.isValid();
+    }
+  } else {
+    // A conversion at the root can hide the entire expression from the
+    // grammar, while its complete typed semantics still admits an affine fit.
+    Found =
+        fitTypedAffine(Ctx, Problem, Opts, Effort, Verify, Result.ProofQueries);
   }
 
   Result.Work = Effort.used();
+  if (Found.NumLeaves)
+    Result.NumLeaves = Found.NumLeaves;
   if (!Found.Candidate.isValid()) {
     if (Found.StopForProof) {
       Result.Outcome = SynthOutcome::ProofIncomplete;
@@ -135,7 +142,7 @@ SynthResult synthesizeImpl(SymContext &Ctx, SymRef E, const SynthOptions &Opts,
     // Running out of budget with candidates left unbuilt is the one refusal
     // that says nothing about the expression, so it outranks a refutation,
     // which in turn outranks having searched and found nothing.
-    if (Effort.empty())
+    if (Effort.empty() || Found.SawBudgetExhausted)
       Result.Outcome = SynthOutcome::BudgetExhausted;
     else if (Found.SawProofIncomplete) {
       Result.Outcome = SynthOutcome::ProofIncomplete;
@@ -143,14 +150,18 @@ SynthResult synthesizeImpl(SymContext &Ctx, SymRef E, const SynthOptions &Opts,
     } else if (Found.SawRefuted) {
       Result.Outcome = SynthOutcome::Counterexample;
       Result.Verification = SynthVerification::Different;
-    } else
+    } else if (Status == ProblemStatus::TooManyLeaves ||
+               (Status != ProblemStatus::Ready &&
+                Result.NumLeaves > Opts.MaxLeaves))
+      Result.Outcome = SynthOutcome::TooManyInputs;
+    else if (Status == ProblemStatus::Ready)
       Result.Outcome = SynthOutcome::AlreadyShortest;
     return Result;
   }
 
-  // Exact by substitution: the candidate was accepted over inputs that stand
-  // for these subterms and range over everything they could be, so putting the
-  // subterms back cannot make it disagree.
+  // Grammar candidates were proved over independent opaque inputs, so exact
+  // substitution restores them. Typed candidates were checked against E itself
+  // and contain original inputs, never these newly-created placeholders.
   const SymRef Concrete = Ctx.substitute(Found.Candidate, Problem.Hidden);
   const SymReadability Score = Ctx.readability(Concrete);
   Result.Verification = Found.Evidence == SynthEvidence::Verifier
@@ -168,6 +179,8 @@ SynthResult synthesizeImpl(SymContext &Ctx, SymRef E, const SynthOptions &Opts,
   Result.Outcome = SynthOutcome::Synthesized;
   Result.Evidence = Found.Evidence;
   Result.FromSampler = FromSampler;
+  Result.FromAffine = Found.FromAffine;
+  Result.FromQuadratic = Found.FromQuadratic;
   return Result;
 }
 

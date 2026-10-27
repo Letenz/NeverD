@@ -116,6 +116,17 @@ struct SolverOptions {
   /// wants the answer turns it off and skips a walk of the variable table.
   bool BuildModel = true;
 
+  /// Finite proof allowance for an optional source-expression rewrite.
+  /// Exhaustion is Unknown and cannot authorize a replacement.
+  static SolverOptions sourceView() {
+    SolverOptions Options;
+    Options.Sat.MaxConflicts = 20000;
+    Options.Sat.MaxPropagations = uint64_t(1) << 22;
+    Options.Sat.MaxWatchVisits = uint64_t(1) << 24;
+    Options.Blast.MaxGates = size_t(1) << 18;
+    return Options;
+  }
+
   /// Remove caller-imposed SAT search and bit-blasting ceilings.
   ///
   /// Zero has that meaning for both constituent policies.  This does not

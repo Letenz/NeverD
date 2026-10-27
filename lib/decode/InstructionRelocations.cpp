@@ -40,17 +40,26 @@ InstructionRelocations instructionRelocations(const BinaryImage &Img,
             if (Img.getPointerSize() == 4)
               TargetVA = static_cast<uint32_t>(TargetVA);
           }
+          // A loader-anchored i386 table base lies before its owner whether a
+          // GOTOFF or an absolute operand encodes it.
           const bool OwnerMatches =
-              It->second.Kind == RelocatedAddressFieldKind::I386ELFGOTOFF
+              It->second.Kind == RelocatedAddressFieldKind::I386ELFGOTOFF ||
+                      Img.RodataAnchorSeg.count(TargetVA)
                   ? Img.relocatedI386GOTOFFTargetBelongsToOwner(
                         TargetVA, It->second.TargetOwnerVA)
                   : Img.relocatedTargetBelongsToOwner(TargetVA,
                                                       It->second.TargetOwnerVA);
           if (!OwnerMatches)
             continue;
+          ConstantAddressProvenance FieldProvenance = Provenance;
+          if (FieldProvenance == ConstantAddressProvenance::CodeAddress &&
+              (Img.Arch == Arch::X86 || Img.Arch == Arch::X64) &&
+              instruction_relocations_detail::isX86NarrowMemoryDisplacement(
+                  Img, DI, It->first))
+            FieldProvenance = ConstantAddressProvenance::DataAddress;
           RelocatedOperands.push_back(RelocatedAddressOperand{
               It->first, It->second.EncodedValue, TargetVA, It->second.Width,
-              Provenance, It->second.TargetOwnerVA,
+              FieldProvenance, It->second.TargetOwnerVA,
               It->second.PCRelativeFromInstructionEnd});
         }
       };
@@ -73,6 +82,17 @@ InstructionRelocations instructionRelocations(const BinaryImage &Img,
     break;
   }
   return Result;
+}
+
+std::optional<unsigned> maxAdjacentRelocatedFields(Arch A, unsigned Width) {
+  switch (A) {
+  case Arch::X86:
+  case Arch::X64:
+    return instruction_relocations_detail::maxAdjacentX86RelocatedFields(A,
+                                                                         Width);
+  default:
+    return std::nullopt;
+  }
 }
 
 } // namespace neverd

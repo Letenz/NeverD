@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Common.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/object/SectionNames.h"
@@ -107,7 +108,8 @@ bool MedLLVMEmitter::reloadsSymbolizedWritablePtr(const MedVar &AddrVar) const {
   // pointer advances, so they are not descended.
   std::set<std::tuple<int, int, int>> Seen;
   std::vector<MedVar> Work{AddrVar};
-  int Budget = 256;
+  int Budget = ::neverd::limits::backend::
+      kMedLLVMSymbolizedPtrMedLLVMEmitterReloadsSymbolizedWritablePtrBudget;
   while (!Work.empty() && Budget-- > 0) {
     MedVar Cur = Work.back();
     Work.pop_back();
@@ -165,7 +167,8 @@ bool MedLLVMEmitter::addrHasSymbolizedSegConst(const MedVar &AddrVar,
   using WorkItem = std::pair<MedVar, bool>; // value, direct PHI constant
   std::set<std::tuple<int, int, int, bool>> Seen;
   std::vector<WorkItem> Work{{AddrVar, false}};
-  int Budget = 256;
+  int Budget = ::neverd::limits::backend::
+      kMedLLVMSymbolizedPtrMedLLVMEmitterAddrHasSymbolizedSegConstBudget;
   while (!Work.empty() && Budget-- > 0) {
     auto [Cur, DirectPhiConstant] = Work.back();
     Work.pop_back();
@@ -360,6 +363,17 @@ llvm::Value *MedLLVMEmitter::tryResolvePointerArg(const MedVar &AddrVar,
     rejectEscapingAddressFragment(AddrVar, "a call argument");
     return nullptr;
   }
+  // In an original-image view, pointer values refer to the provider's
+  // runtime storage, not to independently reconstructed table mirrors. The
+  // constant materializer and PHI edges own the single image coordinate
+  // model; do not reinterpret a live value using file contents here.
+  if (usesOriginalImageStorage()) {
+    llvm::Value *Value = getVar(AddrVar, Builder);
+    if (!Value || Value->getType()->isPointerTy())
+      return Value;
+    return Builder.CreateIntToPtr(Value, llvm::PointerType::getUnqual(*Ctx),
+                                  "image.pointer");
+  }
   // Scalar, fragment, and mixed explicit occurrences must never fall through
   // to value-global heuristics.  Unlike Address, they carry no complete data-
   // pointer relation for this consumer to own.
@@ -374,6 +388,17 @@ llvm::Value *MedLLVMEmitter::tryResolvePointerArg(const MedVar &AddrVar,
         return P;
     return nullptr;
   }
+  // Integer call carriers do not themselves prove pointer intent. Match
+  // getVar's low-address policy before entering the address-context resolvers:
+  // section-less images may map small literals into readable header bytes.
+  // A declared pointer parameter, an exact address producer, or the existing
+  // loader-backed constant policy still permits genuine low-address pointers.
+  if (!FailClosed && !Occurrence.hasExplicitProvenance())
+    if (auto Constant = traceSSAConst(AddrVar);
+        Constant && *Constant < limits::kMinGlobalDataAddr &&
+        !getVarHasDirectDataSymbolizationIntent(*Constant, AddrVar.Size) &&
+        !symbolizesWritableRelocPtr(*Constant, AddrVar.Size))
+      return nullptr;
   // A flat pointer-valued SELECT must be validated as one unit before creating
   // any globals: every non-null leaf has to be a mapped data address.  This
   // two-pass shape prevents a rejected code/scalar arm from leaving behind a
@@ -424,7 +449,9 @@ llvm::Value *MedLLVMEmitter::tryResolvePointerArg(const MedVar &AddrVar,
       };
       std::function<bool(const MedVar &, int)> isDataTree =
           [&](const MedVar &V, int Depth) -> bool {
-        if (Depth > 16)
+        if (Depth >
+            ::neverd::limits::backend::
+                kMedLLVMSymbolizedPtrMedLLVMEmitterTryResolvePointerArgIsDataTreeDepthLimit)
           return false;
         if (!V.isConst())
           if (const MedOp *Def = lookupDef(V);
@@ -446,7 +473,9 @@ llvm::Value *MedLLVMEmitter::tryResolvePointerArg(const MedVar &AddrVar,
       if (isDataTree(AddrVar, 0)) {
         std::function<llvm::Value *(const MedVar &, int)> buildDataTree =
             [&](const MedVar &V, int Depth) -> llvm::Value * {
-          if (Depth > 16)
+          if (Depth >
+              ::neverd::limits::backend::
+                  kMedLLVMSymbolizedPtrMedLLVMEmitterTryResolvePointerArgBuildDataTreeDepthLimit)
             return nullptr;
           if (!V.isConst())
             if (const MedOp *Def = lookupDef(V);

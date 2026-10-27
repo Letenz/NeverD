@@ -4,6 +4,7 @@
 
 #include "TranslationCacheIdentity.h"
 
+#include "neverd/translate/Limits.h"
 #include "neverd/translate/RuntimeABI.h"
 #include "neverd/translate/RuntimeHelpers.h"
 #include "neverd/translate/RuntimeSymbolRegistry.h"
@@ -648,7 +649,8 @@ void runCombinedOptimization(llvm::Module &Module, llvm::TargetMachine &Machine,
 /// Drop optimizer-inferred assumptions at the sealed generated-code boundary
 /// and express the runtime registry as direct, non-interposable symbols.  This
 /// only weakens optimization facts; it does not rewrite values or control flow.
-void sealCodeGenerationIR(llvm::Module &Module) {
+void sealCodeGenerationIR(llvm::Module &Module,
+                          TranslationRuntimeProfileV1 Profile) {
   for (llvm::Function &Function : Module) {
     if (Function.isIntrinsic()) {
       // The default optimization pipeline may infer declaration attributes
@@ -664,7 +666,7 @@ void sealCodeGenerationIR(llvm::Module &Module) {
       Function.setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::None);
       Function.setDSOLocal(true);
       if (Function.isDeclaration() &&
-          findRuntimeABIHelperSignatureV1(Function.getName()))
+          findRuntimeABIHelperSignatureV1(Function.getName(), Profile))
         Function.setVisibility(llvm::GlobalValue::HiddenVisibility);
     }
     if (Function.isDeclaration())
@@ -754,7 +756,8 @@ TranslationSemanticPolicyV1 TranslationSemanticPolicyV1::bounded() {
   TranslationSemanticPolicyV1 Policy;
   Policy.Simplify = SymSimplifyOptions();
   Policy.Simplify.Provider = ProofProvider::BuiltInSolver;
-  Policy.MaxRounds = 8;
+  Policy.MaxRounds = ::neverd::limits::translate::
+      kTranslationObjectCompilerTranslationSemanticPolicyV1BoundedMaxRounds;
   return Policy;
 }
 
@@ -793,7 +796,7 @@ compileTranslationObjectWithTargetV1(const llvm::Module &Module,
                    "target machine was not created from this request");
 
   llvm::Expected<RuntimeSymbolRegistryV1> RuntimeRegistry =
-      RuntimeSymbolRegistryV1::create();
+      RuntimeSymbolRegistryV1::create(Options.RuntimeProfile);
   if (!RuntimeRegistry)
     return failure(
         TranslationObjectCompilerErrorCode::RuntimeRegistryUnavailable,
@@ -809,7 +812,7 @@ compileTranslationObjectWithTargetV1(const llvm::Module &Module,
 
   if (llvm::Error Error = verifyRuntimeTranslationIRV1(
           Module, HostTriple, HostDataLayout, Canonical->StateSize,
-          Canonical->StateSlots))
+          Canonical->StateSlots, Options.RuntimeProfile))
     return failure(
         TranslationObjectCompilerErrorCode::InputIRVerificationFailed,
         std::move(Error));
@@ -839,10 +842,10 @@ compileTranslationObjectWithTargetV1(const llvm::Module &Module,
     break;
   }
 
-  sealCodeGenerationIR(*Working);
+  sealCodeGenerationIR(*Working, Options.RuntimeProfile);
   if (llvm::Error Error = verifyRuntimeTranslationIRV1(
           *Working, HostTriple, HostDataLayout, Canonical->StateSize,
-          Canonical->StateSlots))
+          Canonical->StateSlots, Options.RuntimeProfile))
     return failure(
         TranslationObjectCompilerErrorCode::FinalIRVerificationFailed,
         std::move(Error));
@@ -883,7 +886,8 @@ compileTranslationObjectWithTargetV1(const llvm::Module &Module,
   return TranslationObjectArtifactV1(
       std::move(*Object), Target.hostTarget(), SemanticReport, LLVMPipelineRan,
       std::move(*BlockSymbols), std::move(RuntimeSymbols),
-      RuntimeRegistry->identity().str(), RequestCacheKey, ArtifactCacheKey);
+      RuntimeRegistry->identity().str(), RequestCacheKey, ArtifactCacheKey,
+      Options.RuntimeProfile, Options.CodeInvalidation);
 }
 
 llvm::Expected<TranslationObjectArtifactV1>

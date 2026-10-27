@@ -6,6 +6,8 @@
 
 #include "DomainCoverage.h"
 
+#include "neverd/analysis/Limits.h"
+
 #include <algorithm>
 #include <map>
 #include <vector>
@@ -34,8 +36,12 @@ DomainCoverageProof proveCoverageFromDomainFacts(
   if (!Charge() || !Boolean(Predicate) || !Boolean(Domain) ||
       !Boolean(Coverage))
     return Finish(false);
-  if ((Ctx.op(Domain) == SymOp::And && Ctx.numOperands(Domain) > 64) ||
-      (Ctx.op(Coverage) == SymOp::Or && Ctx.numOperands(Coverage) > 8))
+  if ((Ctx.op(Domain) == SymOp::And &&
+       Ctx.numOperands(Domain) >
+           ::neverd::limits::analysis::kMaxCoverageConjunctionTerms) ||
+      (Ctx.op(Coverage) == SymOp::Or &&
+       Ctx.numOperands(Coverage) >
+           ::neverd::limits::analysis::kMaxCoverageArms))
     return Finish(false);
   ValidateNodes();
   const auto Expected = Ctx.mkAnd(Domain, Ctx.mkNot(Coverage));
@@ -53,7 +59,9 @@ DomainCoverageProof proveCoverageFromDomainFacts(
   };
   const auto DomainTerms = Terms(Domain, SymOp::And);
   const auto Arms = Terms(Coverage, SymOp::Or);
-  if (DomainTerms.size() > 64 || Arms.size() > 8)
+  if (DomainTerms.size() >
+          ::neverd::limits::analysis::kMaxCoverageConjunctionTerms ||
+      Arms.size() > ::neverd::limits::analysis::kMaxCoverageArms)
     return Finish(false);
   for (auto Factor : DomainTerms)
     if (!Charge() || !Boolean(Factor))
@@ -63,10 +71,13 @@ DomainCoverageProof proveCoverageFromDomainFacts(
   for (auto Arm : Arms) {
     if (!Charge() || !Boolean(Arm))
       return Finish(false);
-    if (Ctx.op(Arm) == SymOp::And && Ctx.numOperands(Arm) > 64)
+    if (Ctx.op(Arm) == SymOp::And &&
+        Ctx.numOperands(Arm) >
+            ::neverd::limits::analysis::kMaxCoverageConjunctionTerms)
       return Finish(false);
     const auto Factors = Terms(Arm, SymOp::And);
-    if (Factors.size() > 64)
+    if (Factors.size() >
+        ::neverd::limits::analysis::kMaxCoverageConjunctionTerms)
       return Finish(false);
     std::vector<SymRef> Kept;
     for (auto Factor : Factors) {
@@ -90,7 +101,8 @@ DomainCoverageProof proveCoverageFromDomainFacts(
         Seen |= Factor == Previous;
       }
       if (!Seen) {
-        if (Unique.size() == 64)
+        if (Unique.size() ==
+            ::neverd::limits::analysis::kMaxCoverageResidualGuards)
           return Finish(false);
         Unique.push_back(Factor);
       }
@@ -183,7 +195,9 @@ PartitionedCoverageResult provePartitionedCoverage(
     return Result;
   std::vector<SymRef> Source;
   if (Ctx.op(Coverage) == SymOp::Or) {
-    if (Ctx.numOperands(Coverage) > 8 || !Charge(Ctx.numOperands(Coverage)))
+    if (Ctx.numOperands(Coverage) >
+            ::neverd::limits::analysis::kMaxCoverageArms ||
+        !Charge(Ctx.numOperands(Coverage)))
       return Result;
     Source.assign(Ctx.operands(Coverage).begin(), Ctx.operands(Coverage).end());
   } else
@@ -194,7 +208,9 @@ PartitionedCoverageResult provePartitionedCoverage(
       return Result;
     FactorList Factors;
     if (Ctx.op(Root) == SymOp::And) {
-      if (Ctx.numOperands(Root) > 64 || !Charge(Ctx.numOperands(Root)))
+      if (Ctx.numOperands(Root) >
+              ::neverd::limits::analysis::kMaxCoverageConjunctionTerms ||
+          !Charge(Ctx.numOperands(Root)))
         return Result;
       Factors.assign(Ctx.operands(Root).begin(), Ctx.operands(Root).end());
     } else
@@ -266,7 +282,9 @@ PartitionedCoverageResult provePartitionedCoverage(
   const auto Visit = [&](auto &&Self, SymRef D, const Arms &Current,
                          unsigned Depth) -> bool {
     Result.MaximumDepth = std::max(Result.MaximumDepth, Depth);
-    if (!Charge() || Current.empty() || Current.size() > 8 || Depth >= 8)
+    if (!Charge() || Current.empty() || Current.size() > 8 ||
+        Depth >= ::neverd::limits::analysis::
+                     kDomainCoverageProvePartitionedCoverageVisitDepthLimit)
       return false;
     if (Current.size() == 1) {
       ++Result.Leaves;

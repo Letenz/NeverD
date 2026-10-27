@@ -74,6 +74,45 @@ TEST(X86EncodingAccuracy, InvalidLockAndMovCsRejectedByEveryDecodeRoute) {
           }
 }
 
+TEST(X86EncodingAccuracy, DecodersAfterOneWithoutDetailOrTextDecodeInFull) {
+  // mov rax, [rcx+8] / mov eax, [ecx+8]
+  const uint8_t Bytes64[] = {0x48, 0x8b, 0x41, 0x08};
+  const uint8_t Bytes32[] = {0x8b, 0x41, 0x08};
+  for (Arch Target : {Arch::X86, Arch::X64}) {
+    const uint8_t *Bytes = Target == Arch::X64 ? Bytes64 : Bytes32;
+    const size_t Size = Target == Arch::X64 ? sizeof(Bytes64) : sizeof(Bytes32);
+    // Decoders that turn detail and text off and close, as a lightweight
+    // scan's do, leave nothing a later decoder sees.
+    for (int Round = 0; Round < 3; ++Round) {
+      {
+        Decoder Light;
+        ASSERT_TRUE(Light.init(Target));
+        Light.setDetail(false);
+        Light.setText(false);
+        DecodedInsn Instruction;
+        ASSERT_EQ(Light.decodeOneLight(Bytes, Size, 0x1000, Instruction),
+                  static_cast<int>(Size));
+      }
+      Decoder Full;
+      ASSERT_TRUE(Full.init(Target));
+      DecodedInsn Instruction;
+      ASSERT_EQ(Full.decodeOne(Bytes, Size, 0x1000, Instruction),
+                static_cast<int>(Size));
+      EXPECT_STREQ(Instruction.Raw->mnemonic, "mov");
+      EXPECT_STREQ(Instruction.Raw->op_str, Target == Arch::X64
+                                                ? "rax, qword ptr [rcx + 8]"
+                                                : "eax, dword ptr [ecx + 8]");
+      ASSERT_NE(Instruction.Raw->detail, nullptr);
+      ASSERT_EQ(Instruction.Raw->detail->x86.op_count, 2);
+      EXPECT_EQ(Instruction.Raw->detail->x86.operands[1].type, X86_OP_MEM);
+      EXPECT_EQ(Instruction.Raw->detail->x86.operands[1].mem.disp, 8);
+      std::vector<LowOp> Ops;
+      Full.liftToLow(Instruction, Ops);
+      EXPECT_FALSE(Ops.empty());
+    }
+  }
+}
+
 TEST(X86EncodingAccuracy, LegalMemoryLockAndSegmentMovesStillLift) {
   const std::vector<std::vector<uint8_t>> Valid = {{0xf0, 0x31, 0x02},
                                                    {0xf2, 0xf0, 0x31, 0x02},

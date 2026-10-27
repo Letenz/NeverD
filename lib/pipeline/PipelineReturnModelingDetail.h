@@ -13,18 +13,34 @@
 #ifndef NEVERD_LIB_PIPELINE_PIPELINERETURNMODELINGDETAIL_H
 #define NEVERD_LIB_PIPELINE_PIPELINERETURNMODELINGDETAIL_H
 
+#include "PipelineSourceStackAccesses.h"
+
+#include "neverd/Common.h"
+
 #include <cstdint>
+#include <map>
 
 namespace neverd {
 
 struct BinaryImage;
+struct MedFunc;
+struct MedOp;
 struct PipelineResult;
 class DebugContext;
+
+/// The function of this module that a forwarding call \p Call enters: its
+/// direct target, or this image's own routine that an import's stub or slot
+/// reaches (importOwnRoutine), which sets \p ThroughImport.  Null for another
+/// module's routine and for the stub that reaches one.
+MedFunc *forwardingCallee(const BinaryImage &Img, const PipelineResult &Result,
+                          const std::map<va_t, MedFunc *> &ByEntry,
+                          const MedOp &Call, bool *ThroughImport = nullptr);
 
 /// Widen every callee that returns a 64-bit integer in a register pair to an
 /// i64 return, and remodel the call sites (including loop-carried i64
 /// accumulators) so both halves flow through.  32-bit targets only.
-void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result);
+void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result,
+                         MedStackProjection StackProjection);
 
 /// Learn each callee's multi-register return shape from its direct callers'
 /// field-extract remodeling and re-type the callee to match.  64-bit targets.
@@ -63,6 +79,10 @@ void recoverStructReturnFromBody(const BinaryImage &Img, PipelineResult &Result,
 /// op reads.  AArch64 only.
 void materializeKnownStructReturnCallSites(const BinaryImage &Img,
                                            PipelineResult &Result);
+
+/// Bind declared scalar floating results to their physical return register,
+/// and propagate the resulting types through forwarding calls in both routes.
+void bindFloatCallResults(const BinaryImage &Img, PipelineResult &Result);
 
 /// Settle which functions return no value a caller could rely on
 /// (MedFunc::ReturnsNoValue), once for both C backends.

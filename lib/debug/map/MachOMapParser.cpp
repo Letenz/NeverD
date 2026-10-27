@@ -31,7 +31,8 @@
 namespace neverd {
 
 void parseMachOMap(llvm::StringRef Content,
-                   std::map<va_t, FunctionSym> &Functions) {
+                   std::map<va_t, FunctionSym> &Functions,
+                   std::vector<MapSection> *Sections) {
   enum class Section { None, ObjectFiles, Sections, Symbols, Dead };
   Section CurSection = Section::None;
 
@@ -88,8 +89,12 @@ void parseMachOMap(llvm::StringRef Content,
       unsigned long long Addr, Size;
       if (AddrStr.getAsInteger(0, Addr) || SizeStr.getAsInteger(0, Size))
         continue;
+      if (Sections)
+        Sections->push_back(
+            MapSection{Segment.str(), SecName.str(), Addr, Size});
 
-      bool IsCode = section_names::isMachOExecutableMapSection(Segment, SecName);
+      bool IsCode =
+          section_names::isMachOExecutableMapSection(Segment, SecName);
       if (IsCode) {
         MachOSectionRange SR;
         SR.Addr = static_cast<va_t>(Addr);

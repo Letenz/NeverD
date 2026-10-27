@@ -12,7 +12,13 @@ add_neverd_component_library(NeverDIRLowValidation
   X86/SEHFrameFormat.cpp
   Windows/SEHScalarFormat.cpp
   Windows/SEHImageFormat.cpp
-  X87PartialRemainder.cpp
+  X86/X87PartialRemainder.cpp
+  X86/X87Arithmetic.cpp
+  X86/X87PortableContext.cpp
+  X86/X87Capabilities.cpp
+  X86/X87PortableABI.cpp
+  X86/X86MpxContext.cpp
+  X86/X86MpxMemory.cpp
 
   LINK_COMPONENTS
   Digest
@@ -24,6 +30,7 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateConditional.cpp
   X86/RegistrationConditionalNative.cpp
   X86/RegistrationStateBoundCall.cpp
+  X86/RegistrationStatePrivateCall.cpp
   X86/RegistrationStateCallArguments.cpp
   X86/RegistrationStateInitializer.cpp
   X86/RegistrationStateCxx.cpp
@@ -34,10 +41,22 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateContracts.cpp
   X86/RegistrationStateCookies.cpp
   X86/RegistrationStateDispatch.cpp
+  X86/RegistrationStateSEHDispatch.cpp
+  X86/RegistrationStateSEHDispatchWork.cpp
+  X86/RegistrationStateSnapshot.cpp
   X86/RegistrationStateFinallyCall.cpp
+  X86/RegistrationStateSEHCall.cpp
   X86/RegistrationStateSEHExit.cpp
+  X86/RegistrationStateSEHEpilogue.cpp
+  X86/RegistrationStateSEHParentExit.cpp
+  X86/RegistrationStateSEHParentOwnership.cpp
   X86/RegistrationStateSEHException.cpp
   X86/RegistrationStateLocalUnwind.cpp
+  X86/RegistrationStateLocalUnwindReceipt.cpp
+  X86/RegistrationStateTryLevel.cpp
+  X86/RegistrationUnwindFrame.cpp
+  X86/RegistrationJumpContinuation.cpp
+  X86/RegistrationUnwindJump.cpp
   X86/RegistrationStateJump.cpp
   X86/RegistrationStateBorrowedJump.cpp
   X86/RegistrationStateNestedFinally.cpp
@@ -47,13 +66,21 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateOrder.cpp
   X86/RegistrationStateRealignment.cpp
   X86/RegistrationStateInstallation.cpp
+  X86/RegistrationStatePrologue.cpp
+  X86/RegistrationStateEpilogue.cpp
   X86/RegistrationStateResult.cpp
   X86/RegistrationStateSearch.cpp
   X86/RegistrationStateThrow.cpp
+  X86/RegistrationStateBranch.cpp
   X86/RegistrationStateTransfer.cpp
+  X86/RegistrationStateFilter.cpp
   X86/RegistrationStateUnwind.cpp
+  X86/RegistrationCallbackGraph.cpp
   X86/RegistrationFinallyFrame.cpp
+  X86/RegistrationNestedFinallyFrame.cpp
+  X86/RegistrationFilterFrame.cpp
   X86/RegistrationFrame.cpp
+  X86/RegistrationFrameScalar.cpp
   X86/RegistrationFrameMemory.cpp
   X86/RegistrationFrameCallback.cpp
   X86/RegistrationFrameSEHException.cpp
@@ -66,20 +93,33 @@ add_neverd_component_library(NeverDIRRegistrationState
 
 add_neverd_component_library(NeverDIRLow
   CFGBuilder.cpp
+  CFGBuilderCallRegisters.cpp
+  PrologueStackAllocation.cpp
+  X86/RegistrationCxxState.cpp
   CFGBuilderBlocks.cpp
+  X86/CFGBuilderX86BoundedLeaf.cpp
+  AArch64/CFGBuilderAArch64PAuth.cpp
   CFGBuilderException.cpp
   CFGBuilderInsn.cpp
-  CFGBuilderX86Fpu.cpp
-  CFGBuilderX86GetPc.cpp
+  CFGBuilderScalarBranch.cpp
+  LowScalarExpression.cpp
+  LowScalarSymbolic.cpp
+  X86/CFGBuilderX86Fpu.cpp
+  X86/CFGBuilderX86GetPc.cpp
+  X86/CFGBuilderX86PLT.cpp
   CallRegisterEffects.cpp
+  CallRegisterUnread.cpp
   CircleRange.cpp
   FuncDetector.cpp
-  FuncDetectorX86.cpp
-  FuncDetectorARM.cpp
-  FuncDetectorAArch64.cpp
+  X86/FuncDetectorX86.cpp
+  ARM/FuncDetectorARM.cpp
+  AArch64/FuncDetectorAArch64.cpp
   GuardedZeroSelect.cpp
   IndirectTailFrame.cpp
   X86/RegistrationCalleeABI.cpp
+  X86/RegistrationLocalUnwind.cpp
+  X86/RegistrationLocalUnwindCall.cpp
+  X86/RegistrationCallbackImage.cpp
   X86/RegistrationCFG.cpp
   X86/RegistrationCleanupABI.cpp
   X86/RegistrationCleanupFrame.cpp
@@ -96,35 +136,42 @@ add_neverd_component_library(NeverDIRLow
   X86/RegistrationCalleeFrame.cpp
   X86/RegistrationConditionalCall.cpp
   X86/RegistrationConditionalCallee.cpp
+  X86/RegistrationSEHPrivateCall.cpp
+  X86/RegistrationSourceCall.cpp
   X86/RegistrationJumpRuntime.cpp
   X86/RegistrationCRTFrame.cpp
   X86/RegistrationJumpCapture.cpp
+  X86/RegistrationJumpEH4.cpp
   X86/RegistrationCalleeIndex.cpp
   X86/RegistrationCalleeStack.cpp
   X86/RegistrationSEHControl.cpp
+  X86/RegistrationSEHCallNext.cpp
+  X86/RegistrationSEHParentEpilogue.cpp
   X86/RegistrationCallerABI.cpp
+  X86/RegistrationSharedCall.cpp
   X86/RegistrationEntryABI.cpp
   NdOpEmulator.cpp
   NdOpEmulatorExec.cpp
+  X86/X86FourSource.cpp
   NdOpEmulatorFloatConvert.cpp
-  NdOpEmulatorX86FPArith.cpp
-  NdOpEmulatorX86FPConvert.cpp
-  NdOpEmulatorX86FPRoundTransform.cpp
-  NdOpEmulatorX86FPExtract.cpp
-  NdOpEmulatorX86FPRange.cpp
-  NdOpEmulatorX86FPFixup.cpp
-  NdOpEmulatorX86FPScale.cpp
-  NdOpEmulatorX86FPCompare.cpp
-  NdOpEmulatorX87.cpp
-  NdOpEmulatorX87Context.cpp
-  X87NativeContext.cpp
+  X86/NdOpEmulatorX86FPArith.cpp
+  X86/NdOpEmulatorX86FPConvert.cpp
+  X86/NdOpEmulatorX86FPRoundTransform.cpp
+  X86/NdOpEmulatorX86FPExtract.cpp
+  X86/NdOpEmulatorX86FPRange.cpp
+  X86/NdOpEmulatorX86FPFixup.cpp
+  X86/NdOpEmulatorX86FPScale.cpp
+  X86/NdOpEmulatorX86FPCompare.cpp
+  X86/NdOpEmulatorX87.cpp
+  X86/NdOpEmulatorX87Context.cpp
+  X86/X87NativeContext.cpp
   PlatformEvidence.cpp
-  X86ApproxReference.c
-  X86ApproxReference28.c
+  X86/X86ApproxReference.c
+  X86/X86ApproxReference28.c
   jumptable/JumpTableResolver.cpp
   jumptable/JumpTableProofState.cpp
   jumptable/JumpTableResolverGroup.cpp
-  jumptable/JumpTableResolverARM.cpp
+  jumptable/ARM/JumpTableResolverARM.cpp
   jumptable/JumpTableResolverBounds.cpp
   jumptable/JumpTableResolverEmu.cpp
   jumptable/JumpTableResolverExtract.cpp
@@ -155,11 +202,11 @@ add_neverd_component_library(NeverDIRLow
 # The public approximation reference uses deliberate C pointer type-punning,
 # and its documented intermediate rounding assumes separate operations.
 if(MSVC)
-  set_source_files_properties(X86ApproxReference.c X86ApproxReference28.c
+  set_source_files_properties(X86/X86ApproxReference.c X86/X86ApproxReference28.c
     PROPERTIES
     COMPILE_OPTIONS "/fp:strict")
 else()
-  set_source_files_properties(X86ApproxReference.c X86ApproxReference28.c
+  set_source_files_properties(X86/X86ApproxReference.c X86/X86ApproxReference28.c
     PROPERTIES
     COMPILE_OPTIONS "-fno-strict-aliasing;-ffp-contract=off")
 endif()

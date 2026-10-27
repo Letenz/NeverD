@@ -1,5 +1,6 @@
 #pragma once
 #include "Protocol.h"
+#include "ResourceLimits.h"
 
 #include "neverd/sdk/NeverDCAPISession.h"
 
@@ -10,9 +11,12 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace neverd::worker {
+class ComparisonService;
+class LineageService;
 class ProjectLock;
 class ProjectHistory;
 class Contributions;
@@ -24,22 +28,39 @@ public:
   ~Engine();
   Engine(const Engine &) = delete;
   Engine &operator=(const Engine &) = delete;
+  using EncodedPayload = std::shared_ptr<const EncodedJson>;
+  struct Reply {
+    Json value;
+    EncodedPayload encoded;
+  };
   Json execute(const std::string &operation, const Json &payload);
+  /// The transport uses encoded when present; other operations return value.
+  Reply executeResponse(const std::string &operation, const Json &payload);
   using LoadProgressSink =
       std::function<void(const char *Phase, std::uint64_t Done,
                          std::uint64_t Total, const char *Detail)>;
   void setLoadProgressSink(LoadProgressSink Sink) {
     loadProgress_ = std::move(Sink);
   }
+  /// The active request owns this thread-safe cancellation probe.
+  void setCancellationProbe(std::function<bool()> Probe) {
+    cancelled_ = std::move(Probe);
+  }
+  static bool comparesBinaries();
   std::string revision() const { return std::to_string(revision_); }
   std::string projectId() const { return projectId_; }
   bool analyzed() const { return analyzed_; }
   /// Background work (the reference index) runs between requests.
   bool hasIdleWork() const;
-  void idleStep();
+  bool idleStep();
   /// {state, done, total, generation} for heartbeats; null before a load.
   Json backgroundState() const;
   static std::string version();
+  /// Whether the engine exposes its static x87 support matrix, independently
+  /// of binary loading, host probing or execution.
+  static bool reportsX87Capabilities();
+  /// Whether the engine can query unwind metadata at an exact address.
+  static bool reportsUnwindFrames();
   /// Whether the engine keeps function edits (function_create/_delete).
   static bool keepsFunctionEdits();
   /// Whether the engine keeps what the user states of a function
@@ -47,11 +68,28 @@ public:
   static bool statesFunctionAttributes();
   /// Whether the engine keeps the user's data items.
   static bool keepsDataItems();
+  static bool keepsBytePatches();
+  static bool keepsSourcePatches();
+  static bool provesSourcePatches();
   /// Whether the engine keeps how the user shows operands' numbers.
   static bool keepsOperandFormats();
   /// Whether the engine lists the ways it can load a file (identify).
   static bool identifiesFiles();
   static bool loadsPdbFiles();
+  /// Whether the engine lists the program's local types (local_types,
+  /// local_type, local_types_source).
+  static bool listsLocalTypes();
+  /// Whether the engine adds declared types (local_types_declare).
+  static bool declaresLocalTypes();
+  /// Whether the engine lists the type libraries and takes the user's
+  /// choice of them (type_libraries, type_libraries_set).
+  static bool choosesTypeLibraries();
+  /// Whether the engine ranks local types by the code's accesses through a
+  /// pointer (local_types_fit) and names structure offsets by them.
+  static bool fitsLocalTypes();
+  /// Whether the engine gives a function the user's C declaration, as IDA's
+  /// Y does (function_type, and "type" in function_edit).
+  static bool typesFunctions();
   /// Whether the engine finds the PDB a PE names before opening it, and
   /// opens a PE without it.
   static bool findsPdbFiles();
@@ -61,8 +99,25 @@ public:
   /// Whether the engine finds an image's static symbol table before opening
   /// it, and opens the image as if stripped.
   static bool findsSymbolTables();
+  /// Whether the engine finds the linker MAP beside an input before opening
+  /// it, and opens the image without it.
+  static bool findsMapFiles();
+  /// Whether the engine loads a chosen MAP file into an open image
+  /// (map_inspect, map_load).
+  static bool loadsMapFiles();
+  /// Whether the engine loads a chosen DWARF file into an open image
+  /// (dwarf_load).
+  static bool loadsDwarfFiles();
+  /// Whether the engine finds call paths and call trees (call_paths,
+  /// call_tree).
+  static bool findsCallPaths();
 
 private:
+  Json executeImpl(const std::string &operation, const Json &payload,
+                   EncodedPayload *encoded);
+  std::unique_ptr<ComparisonService> comparison_;
+  std::unique_ptr<LineageService> lineage_;
+  std::function<bool()> cancelled_;
   neverd_session_t session_ = nullptr;
   std::unique_ptr<ProjectLock> lock_;
   std::unique_ptr<ProjectHistory> history_;
@@ -75,7 +130,8 @@ private:
   /// The graphs shown last, the newest first: returning to one neither
   /// analyzes its function again nor lays it out.
   std::list<LaidOutGraph> graphs_;
-  static constexpr std::size_t MaxGraphs = 64;
+  static constexpr std::size_t MaxGraphs =
+      ::neverd::limits::worker::kEngineMaxGraphs;
   std::unique_ptr<Listing> listing_;
   // The function whose restricted pipeline the session currently holds.
   std::optional<std::uint64_t> preparedFunction_;
@@ -83,8 +139,12 @@ private:
   std::string projectId_;
   Json openOptions_, signatureInputs_ = Json::array();
   Json pdbInput_ = nullptr, pdbDisplayNames_ = Json::array();
-  /// {"mode":"none"} when the user declined the image's DWARF, else null.
+  /// {"mode":"none"} when the user declined the image's DWARF, the file
+  /// chosen for it as {"path","stamp"}, else null.
   Json dwarfInput_ = nullptr;
+  /// {"mode":"none"} when the user declined the MAP beside the input, the
+  /// MAP file chosen for it as {"path","mode","stamp"}, else null.
+  Json mapInput_ = nullptr;
   /// {"mode":"none"} when the user declined the image's static symbol
   /// table, else null.
   Json symbolsInput_ = nullptr;
@@ -92,6 +152,10 @@ private:
   /// committed sidecars before any expensive operation is admitted.
   Json analysisSnapshot();
   Json restoreAnalysis(const Json &snapshot);
+  Json updateAnalysisNames(const Json &snapshot);
+  Json restoredSnapshot_;
+  Json restoredDebugInputs_ = Json::array();
+  void localNamesChanged();
   Json userState() const;
   Json codeEdits_ = Json::array();
   void reloadCodeEdits();
@@ -100,10 +164,31 @@ private:
   std::string inputHash() const;
   bool analyzed_ = false;
   bool dirty_ = false;
+  /// An analysis-section edit no save has written yet. Project files synced
+  /// from elsewhere replace the comments, not these edits.
+  bool sectionsDirty_ = false;
   bool readOnly_ = false;
   /// Whether idle time analyzes the open file: function discovery and the
   /// reference index.  A cross-reference request still builds the index.
   bool backgroundAnalysis_ = true;
+  /// Only clients coordinating analysis-replica memory opt in to SDK snapshots.
+  bool steppedDiscovery_ = false;
+  /// Whether idle time then prepares each function's analysis
+  /// (neverd_warm_functions_json), so that its first decompile reuses it.
+  /// Any change to the project starts over: the engine may have dropped it.
+  bool warmFunctions_ = false;
+  enum class WarmState { Off, Pending, Running, Complete, Full, Unavailable };
+  WarmState warmState_ = WarmState::Off;
+  std::uint64_t warmCursor_ = 0;
+  std::size_t warmPrepared_ = 0;
+  /// Whether the engine refused a function for lack of room.  The pass goes
+  /// on to the last function: each page still leaves the answers a
+  /// decompile reads of calls to its functions.
+  bool warmFull_ = false;
+  std::string warmError_;
+  void restartWarming();
+  void warmStep();
+  Json warmJson() const;
   std::uintmax_t loadedSize_ = 0;
   std::filesystem::file_time_type loadedTime_;
   /// neverd_strings_ex_json options as JSON text, empty for the defaults; a
@@ -116,22 +201,46 @@ private:
   /// another function may replace the restricted pipeline while this survives.
   struct NamedView {
     std::string key;
+    std::string sourceKey;
+    // Retain the exact undecorated document in wire form. A second parsed
+    // row tree can exceed the cache budget before the displayed one does.
+    std::string original;
     Json value;
     std::vector<std::size_t> lines;
+    // Decide once after decoration. Older engines may return unsorted rows
+    // or overlapping name spans; those retain their original order while
+    // filtering cached numeric bounds.
+    bool orderedRows = false, orderedReferences = false;
+    bool orderedSourceNames = false, orderedCodeNames = false;
+    std::vector<std::pair<std::size_t, std::size_t>> rowBounds, referenceBounds,
+        sourceNameBounds, codeNameBounds;
     std::size_t bytes = 0;
+    // Pages share this document's exact identity and invalidation lifetime.
+    // Their byte allowance is part of the document cache's existing limit.
+    struct EncodedPage {
+      std::size_t start, end;
+      EncodedPayload value;
+      std::size_t bytes;
+    };
+    mutable std::list<EncodedPage> pages;
+    mutable std::size_t pageBytes = 0;
   };
   /// Newest first, bounded by retained bytes as well as document count.
   std::list<std::shared_ptr<const NamedView>> namedViews_;
-  std::size_t namedViewBytes_ = 0;
+  std::size_t namedViewBytes_ = 0, encodedPageBytes_ = 0;
   std::uint64_t namedViewsRevision_ = 0, namedViewsListingGeneration_ = 0;
   void forgetNamedViews();
+  void forgetEncodedPages();
   std::shared_ptr<const NamedView>
   namedView(std::uint64_t address, const std::string &representation,
-            const Json &options = Json::object());
+            const Json &options = Json::object(),
+            const Json *variableEdits = nullptr,
+            const Json *callTypes = nullptr, const Json *stackFrame = nullptr);
   std::optional<Json> namedViewPage(std::uint64_t address,
                                     const std::string &representation,
                                     std::size_t offset, std::size_t limit,
-                                    const Json &options = Json::object());
+                                    const Json &options = Json::object(),
+                                    EncodedPayload *encoded = nullptr);
   /// Function-list order (indices into Listing::functionRows) for the last
   /// filter, sort and listing generation.
   std::string functionOrderKey_;
@@ -139,7 +248,34 @@ private:
   LoadProgressSink loadProgress_;
   void invalidate();
   /// Read every user-edit sidecar into the Session; false when one fails.
-  bool reloadUserState();
+  bool reloadUserState(bool bytePatchesChanged = false);
+  /// Whether the local types file holds other declarations than the
+  /// Session's: git, another tool or a person changed it.
+  bool localTypesChanged();
+  /// The session's libraries.json.
+  std::filesystem::path typeLibrariesPath() const;
+  /// libraries.json's choice of type libraries, {"added","removed"}, empty
+  /// lists without the file, or none for a file that does not parse.
+  std::optional<Json> typeLibrariesOnDisk();
+  /// Whether libraries.json says another choice of type libraries than it
+  /// held when the engine last read or wrote it.
+  bool typeLibrariesChanged();
+  /// libraries.json as the engine last read or wrote it, null where it did
+  /// not parse.  Comparing the file with it reads no types, as asking the
+  /// engine for its choice would.
+  Json typeLibraryChoice_ = nullptr;
+  /// The Session's type declarations as the history's rows, each at its
+  /// place in the order made; none from an engine that keeps none.
+  Json typeDeclarationRows() const;
+  /// Read the type declarations again where the history's differ from the
+  /// Session's: true when they agree or loaded.  Changed declarations let
+  /// the analysis go, as declaring does.
+  bool reloadTypeDeclarations();
+  /// Record which build of the input the project's files describe, after
+  /// the worker wrote one of them.
+  void recordProject();
+  /// neverd_project_json, or null from an older engine.
+  Json projectJson() const;
   /// Read the function edits sidecar: true when it loaded or the engine keeps
   /// no function edits.  A changed function list restarts its analysis.
   bool reloadFunctionEdits();
@@ -150,6 +286,11 @@ private:
   bool reloadDataItems();
   /// The user's data items as rows; none from an older engine.
   Json dataItemRows() const;
+  Json bytePatchRows() const;
+  /// A committed patch command already proves invalidation is necessary;
+  /// ordinary reloads must discover changes from the before/after inventories.
+  bool reloadBytePatches(bool knownChanged = false);
+  Json patchOperation(const std::string &Operation, const Json &Payload);
   /// Read the operand formats sidecar: true when it loaded or the engine
   /// keeps no operand formats.  Changed formats show in the listing.
   bool reloadOperandFormats();
@@ -164,6 +305,10 @@ private:
   /// A comment changed.  The listing reads comments as it formats lines, so
   /// only views that keep formatted text drop it.
   void commentsChanged();
+  /// A known entry's index, or the index of its bounded recovered owner.
+  int functionIndex(std::uint64_t address);
+  /// A known entry, its recovered owner, or the still-unowned address.
+  std::uint64_t functionEntry(std::uint64_t address);
   /// The control flow graph of the function at \p address, in the engine's
   /// cfg JSON shape.
   Json functionGraph(std::uint64_t address);
@@ -173,6 +318,12 @@ private:
   void requireLoaded() const;
   void requireWriter() const;
   void analyze();
+  /// Analyze a VM image first, as the queries of its function list need.
+  void analyzeBeforeFunctionQueries();
+  /// The function (or -1) and address a name resolves to: a function's own
+  /// name, or a name the listing shows.
+  std::optional<std::pair<int, std::uint64_t>>
+  resolvedName(const std::string &name);
   /// Run the session's restricted single-function pipeline for \p address
   /// unless whole-image analysis already covers it.
   void prepareFunction(std::uint64_t address,
@@ -180,6 +331,10 @@ private:
   Listing &listing();
   ProjectHistory &history();
   Json metadata() const;
+  void loadAnalysisSections(neverd_session_t session,
+                            const std::filesystem::path &path);
+  void saveAnalysisSections();
+  void changedAnalysisSections();
   std::string error() const;
   Json backendJson(const char *owned, bool checkError = false) const;
 };

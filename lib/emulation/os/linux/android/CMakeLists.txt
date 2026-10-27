@@ -1,14 +1,30 @@
 add_neverd_component_library(NeverDEmulationAndroid
   AndroidImage.cpp
   AndroidBionic.cpp
+  AndroidResolver.cpp
   AndroidCallbacks.cpp
   AndroidAllocation.cpp
+  AndroidLog.cpp
   AndroidDlfcn.cpp
   AndroidKernelCalls.cpp
   AndroidMemoryCalls.cpp
   AndroidOnce.cpp
   AndroidQueries.cpp
+  AndroidAuxv.cpp
+  AndroidEnvironment.cpp
+  AndroidCalendar.cpp
+  AndroidRandom.cpp
   AndroidProperties.cpp
+  AndroidJNI.cpp
+  AndroidJNIObjects.cpp
+  AndroidJNIRegistration.cpp
+  AndroidJNINativeCalls.cpp
+  AndroidJavaLibrary.cpp
+  AndroidJNIStrings.cpp
+  AndroidJNIArrays.cpp
+  AndroidJNIMethods.cpp
+  AndroidJNIFields.cpp
+  AndroidDex.cpp
   AndroidSignals.cpp
   AndroidStdio.cpp
   AndroidStdioRead.cpp
@@ -19,6 +35,7 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidFormatting.cpp
   AndroidScanning.cpp
   AndroidMutex.cpp
+  AndroidSemaphore.cpp
   AndroidThreadAttributes.cpp
   AndroidThreads.cpp
   AndroidThreadWaits.cpp
@@ -26,7 +43,8 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidMemory.cpp
   AndroidFinalizers.cpp
   AndroidNative.cpp
-  LINK_COMPONENTS Loader EmulationRuntime EmulationImage EmulationABI EmulationLinuxKernel
+  AndroidObservation.cpp
+  LINK_COMPONENTS Dalvik Loader EmulationRuntime EmulationImage EmulationABI EmulationLinuxKernel
   LLVM_COMPONENTS Support)
 if(WIN32)
   target_compile_definitions(NeverDEmulationAndroid PRIVATE NOMINMAX)

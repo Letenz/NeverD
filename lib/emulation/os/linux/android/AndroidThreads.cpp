@@ -87,8 +87,13 @@ llvm::Error GuestThreads::validateTLS() {
 llvm::Error GuestThreads::retire(size_t Index) {
   auto &T = Threads[Index];
   if (T.MappingSize) {
-    if (auto E = CPU.addressSpace()->unmap(T.MappingBase, T.MappingSize))
-      return E;
+    auto Removed =
+        Kernel.handle(linux_model::ServiceKind::Munmap,
+                      {0, 0, {T.MappingBase, T.MappingSize}, {}}, &T.Kernel);
+    if (!Removed)
+      return Removed.takeError();
+    if (!*Removed || **Removed != 0)
+      return failure("guest thread mappings could not be retired");
     T.MappingSize = 0;
   }
   T.Context.reset();
@@ -100,6 +105,11 @@ llvm::Error GuestThreads::finish(uint64_t Value, uint32_t ExitStatus) {
   current().Report.Finished = true;
   current().Report.ReturnValue = Value;
   current().Kernel.Exit.reset();
+  Signals.retire(id());
+  // A joinable userspace handle can survive the nonleader kernel task.
+  // Keep the entry/leader record consistent with the retained proc zombie.
+  if (!isEntry())
+    PriorityState.exit(id());
   if (current().Report.Detached)
     return retire(Current);
   return llvm::Error::success();
@@ -108,7 +118,8 @@ std::optional<size_t> GuestThreads::nextRunnable() const {
   for (size_t Offset = 1; Offset <= Threads.size(); ++Offset) {
     size_t Candidate = (Current + Offset) % Threads.size();
     const auto &T = Threads[Candidate];
-    if (!T.Report.Finished && (!T.Waiting || ready(*T.Waiting)))
+    if (!T.Report.Finished &&
+        (!T.Waiting || ready(*T.Waiting) || Signals.ready(T.Kernel.ID)))
       return Candidate;
   }
   return std::nullopt;
@@ -150,6 +161,17 @@ llvm::Expected<bool> GuestThreads::schedule(Bionic &LibC) {
       return std::move(E);
     if (!current().Waiting)
       return true;
+    if (Signals.ready(id())) {
+      const auto Delivery = Signals.prepare(id(), Result);
+      if (!Delivery)
+        return false;
+      if (!ready(*current().Waiting)) {
+        if (Delivery->Signal)
+          return interruptWait(Delivery->Action);
+        // Ignored pending signals do not complete or interrupt this wait.
+        continue;
+      }
+    }
     auto Resumed = resumeWait(LibC);
     if (!Resumed)
       return Resumed.takeError();
@@ -176,12 +198,49 @@ llvm::Expected<bool> GuestThreads::schedule(Bionic &LibC) {
   }
   return false;
 }
+std::vector<linux_model::ProcTask> GuestThreads::procTasks() const {
+  std::vector<linux_model::ProcTask> Tasks;
+  for (size_t I = 0; I < Threads.size(); ++I) {
+    const auto &T = Threads[I];
+    if (I && T.Report.Finished)
+      continue;
+    Tasks.push_back({uint32_t(T.Report.ID), T.Report.Finished ? 'Z'
+                                            : T.Waiting && !ready(*T.Waiting) &&
+                                                    !Signals.ready(T.Kernel.ID)
+                                                ? 'S'
+                                                : 'R'});
+  }
+  return Tasks;
+}
+std::vector<NativeThreadCPUState> GuestThreads::observeCPUStates() const {
+  std::vector<NativeThreadCPUState> States;
+  for (size_t I = 0; I < Threads.size(); ++I) {
+    const auto &Thread = Threads[I];
+    if (Thread.Report.Finished)
+      continue;
+    auto &Snapshot = States.emplace_back();
+    Snapshot.Current = I == Current;
+    auto &State = Snapshot.State;
+    State.ThreadID = Thread.Kernel.ID;
+    auto Registers = Snapshot.Current ? CPU.readRegisters()
+                                      : CPU.readRegisters(*Thread.Context);
+    if (Registers)
+      State.Registers = std::move(*Registers);
+    else
+      State.Diagnostic = llvm::toString(Registers.takeError());
+  }
+  return States;
+}
 void GuestThreads::report() {
   if (!enabled())
     return;
   for (const auto &T : Threads) {
     auto Snapshot = T.Report;
     Snapshot.Waiting = T.Waiting.has_value();
+    if (Result.Stop == ProcessStopReason::Signaled && !Snapshot.Finished) {
+      Snapshot.TerminationSignal = Result.TerminationSignal;
+      Snapshot.Waiting = false;
+    }
     Result.NativeThreads.push_back(Snapshot);
   }
 }

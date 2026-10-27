@@ -1,5 +1,6 @@
 #include "GnomeWindowEdges.h"
 
+#include "../Config.h"
 #include "GnomeModalDialogs.h"
 
 #include <QGuiApplication>
@@ -10,8 +11,6 @@
 namespace neverd::gui::gnome {
 namespace {
 constexpr char WaylandPlatform[] = "wayland";
-/// How far inside an edge a press still resizes the window.
-constexpr int EdgeWidth = 4;
 /// Larger than any screen, and far enough below QWIDGETSIZE_MAX to stay below
 /// it once scaled to device pixels and grown by Qt's frame.
 constexpr int BoundedExtent = QWIDGETSIZE_MAX / 8;
@@ -59,11 +58,13 @@ private:
     Qt::Edges edges;
     if (window_.windowState() & (Qt::WindowMaximized | Qt::WindowFullScreen))
       return edges;
-    if (at.x() < EdgeWidth)
+    if (at.x() < ::neverd::limits::gui_config::kGnomeWindowEdgesEdgeWidth)
       edges |= Qt::LeftEdge;
-    if (at.x() >= window_.width() - EdgeWidth)
+    if (at.x() >= window_.width() -
+                      ::neverd::limits::gui_config::kGnomeWindowEdgesEdgeWidth)
       edges |= Qt::RightEdge;
-    if (at.y() >= window_.height() - EdgeWidth)
+    if (at.y() >= window_.height() -
+                      ::neverd::limits::gui_config::kGnomeWindowEdgesEdgeWidth)
       edges |= Qt::BottomEdge;
     return edges;
   }

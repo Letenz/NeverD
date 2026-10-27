@@ -6,10 +6,16 @@
 
 #include "../../../lib/backend/codegen/COFF/COFFSourceCallSymbols.h"
 #include "RegistrationCxxContinuationTestUtils.h"
+#include "RegistrationNativeEmitterTestPeer.h"
+#include "RegistrationSEHCopyIRMutations.h"
 #include "RegistrationSEHDynamicScopeTestUtils.h"
 #include "RegistrationSEHExceptionNativeTestUtils.h"
+#include "RegistrationSEHFinallyIRMutations.h"
 #include "RegistrationSEHJumpNativeTestUtils.h"
 #include "RegistrationSEHNullAccessTestUtils.h"
+#include "RegistrationSEHParentExitIRMutations.h"
+#include "RegistrationSEHRegisterIRMutations.h"
+#include "RegistrationSEHStateDispatchTestUtils.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -57,42 +63,6 @@
 #include <algorithm>
 #include <cstdlib>
 #include <set>
-
-namespace neverd {
-class MedLLVMEmitterTestPeer {
-public:
-  static void prepare(MedLLVMEmitter &E, llvm::Module &M, llvm::Function &F,
-                      const MedFunc &Source, llvm::AllocaInst &Frame) {
-    E.Ctx = &M.getContext();
-    E.Mod = &M;
-    E.TargetArch = Arch::X86;
-    E.TargetFormat = BinaryFormat::COFF;
-    E.CurFunc = &F;
-    E.CurMedFunc = &Source;
-    E.FrameAlloca = &Frame;
-    E.FrameEntrySPOffset = 64;
-  }
-  static void chain(MedLLVMEmitter &E, llvm::Instruction &I, va_t Address,
-                    int Seq) {
-    E.RegistrationChainIR.emplace(std::make_pair(Address, Seq), &I);
-  }
-  static void call(MedLLVMEmitter &E, llvm::CallInst &I, va_t Address) {
-    E.CallSiteAddrs.emplace(&I, Address);
-    I.setMetadata(language_eh_md::InternalSourceCallAttachment,
-                  llvm::MDNode::get(
-                      I.getContext(),
-                      {llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
-                          llvm::Type::getInt64Ty(I.getContext()), Address))}));
-  }
-  static void forgetCall(MedLLVMEmitter &E, llvm::CallInst &I) {
-    E.CallSiteAddrs.erase(&I);
-  }
-  static bool lower(MedLLVMEmitter &E, const MedFunc &Source, llvm::Function &F,
-                    const std::map<int, llvm::BasicBlock *> &Blocks) {
-    return E.emitNativeX86RegistrationSEH(Source, F, Blocks);
-  }
-};
-} // namespace neverd
 
 namespace {
 using namespace neverd;
@@ -1850,7 +1820,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
                    << llvm::format_hex(State.Range.Begin, 10)
                    << " unknown=" << State.Unknown
                    << " callback=" << State.CallbackOnly << " levels=";
-      for (auto Level : State.Levels)
+      for (auto Level : State.levels())
         llvm::errs() << Level << ',';
       llvm::errs() << '\n';
     }
@@ -1880,6 +1850,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   if (Error)
     Module->print(llvm::errs(), nullptr);
   ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+  registration_test::checkSEHStateDispatchEdits(*Parent, Med, EH, Image);
   if (!Low.RegistrationStates->SEHExceptionAccesses.empty())
     registration_test::checkSEHExceptionEdits(*Parent, EH, Image,
                                               *Low.RegistrationStates);
@@ -1896,9 +1867,14 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
                RegistrationSEHBoundCall::Kind::PreservedHelper;
       }))
     registration_test::checkSEHRuntimeEdits(*Parent, EH, Image);
+  registration_test::checkSEHCopyEdits(*Parent, EH, Image);
+  registration_test::checkSEHFinallyEdits(*Parent, EH, Image);
+  registration_test::checkSEHParentExitEdits(*Parent, EH, Image);
+  registration_test::checkSEHRegisterEdits(*Parent, EH, Image);
   registration_test::checkSEHNullReadEdits(*Parent, Med, EH, Image);
+  registration_test::checkDynamicSEHCallEdits(*Parent, EH, Image);
   if (llvm::any_of(Low.RegistrationStates->Blocks, [](const auto &B) {
-        return !B.CallbackOnly && B.Levels.size() > 1;
+        return !B.CallbackOnly && B.levels().size() > 1;
       }))
     registration_test::checkDynamicSEHScopeEdits(*Parent, EH, Image);
   auto RejectMutation = [&](llvm::StringRef Label, auto Mutate,
@@ -1914,33 +1890,39 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
     const auto Message = llvm::toString(std::move(Failure));
     EXPECT_NE(Message.find(Diagnostic.str()), std::string::npos) << Message;
   };
-  if (!Low.RegistrationStates->SEHInvocationExits.empty())
+  if (llvm::any_of(
+          Low.RegistrationStates->SEHInvocationExits, [](const auto &Exit) {
+            return Exit.Exit ==
+                       RegistrationSEHInvocationExit::Kind::NearReturn &&
+                   Exit.CallVA;
+          }))
     RejectMutation(
         "an ordinary finally invocation must return to its caller",
         [](llvm::Function &F) {
-          for (auto &Block : F)
-            for (auto &I : Block) {
-              auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
-              if (!Call ||
-                  !I.getMetadata(
-                      windows_eh_md::RegistrationFinallyCallAttachment))
-                continue;
-              for (auto &CallbackBlock : *Call->getCalledFunction())
-                if (auto *Return = llvm::dyn_cast<llvm::ReturnInst>(
-                        CallbackBlock.getTerminator())) {
-                  new llvm::UnreachableInst(F.getContext(),
-                                            Return->getIterator());
-                  Return->eraseFromParent();
-                  return true;
-                }
-            }
+          for (auto &Owner : *F.getParent())
+            for (auto &Block : Owner)
+              for (auto &I : Block) {
+                auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
+                if (!Call ||
+                    !I.getMetadata(
+                        windows_eh_md::RegistrationFinallyCallAttachment))
+                  continue;
+                for (auto &CallbackBlock : *Call->getCalledFunction())
+                  if (auto *Return = llvm::dyn_cast<llvm::ReturnInst>(
+                          CallbackBlock.getTerminator())) {
+                    new llvm::UnreachableInst(F.getContext(),
+                                              Return->getIterator());
+                    Return->eraseFromParent();
+                    return true;
+                  }
+              }
           return false;
         },
         "callback return changed its source execution exit");
   RejectMutation(
       "edited LLVM cannot overwrite either registration scope format",
       [&](llvm::Function &F) {
-        llvm::IRBuilder<> B(F.getEntryBlock().getTerminator());
+        llvm::IRBuilder<> B(registration_test::sourceSetupMutationPoint(F));
         const std::string Name =
             "__nd_data_" + llvm::utohexstr(EH.Registration->ScopeTableVA);
         auto *Target = F.getParent()->getNamedGlobal(Name);
@@ -1981,7 +1963,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
             auto *Cookie = F.getParent()->getNamedGlobal("__security_cookie");
             if (!Cookie)
               return false;
-            llvm::IRBuilder<> B(F.getEntryBlock().getTerminator());
+            llvm::IRBuilder<> B(registration_test::sourceSetupMutationPoint(F));
             llvm::Value *Target = Cookie;
             if (Table)
               Target = new llvm::GlobalVariable(
@@ -2064,7 +2046,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   RejectMutation(
       "unmarked image memory read cannot bypass source occurrence checks",
       [](llvm::Function &F) {
-        llvm::IRBuilder<> B(F.getEntryBlock().getTerminator());
+        llvm::IRBuilder<> B(registration_test::sourceSetupMutationPoint(F));
         auto *Global =
             new llvm::GlobalVariable(*F.getParent(), B.getInt32Ty(), false,
                                      llvm::GlobalValue::ExternalLinkage,
@@ -2077,7 +2059,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
     RejectMutation(
         "unindexed image memory operation cannot launder a caller address",
         [Atomic](llvm::Function &F) {
-          llvm::IRBuilder<> B(F.getEntryBlock().getTerminator());
+          llvm::IRBuilder<> B(registration_test::sourceSetupMutationPoint(F));
           auto *Global = new llvm::GlobalVariable(
               *F.getParent(), B.getInt32Ty(), false,
               llvm::GlobalValue::ExternalLinkage, nullptr,
@@ -2137,7 +2119,9 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
                 }
             return false;
           },
-          Mutation == 0 ? "no recovered callback" : "normal parent-frame ABI");
+          Mutation == 0   ? "no recovered callback"
+          : Mutation == 2 ? "unproved LLVM escape or access"
+                          : "normal parent-frame ABI");
   bool HasIncomingFrame = false;
   unsigned IncomingLoadCount = 0;
   for (const auto &F : *Module)
@@ -2244,8 +2228,9 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
         return false;
       },
       "stack cleanup ABI");
-  if (EH.Registration->Scopes.size() > 1 &&
-      !EH.Registration->Scopes.back().IsFinally)
+  if (llvm::any_of(EH.Registration->Scopes, [](const auto &Scope) {
+        return !Scope.IsFinally && Scope.EnclosingLevel >= 0;
+      }))
     RejectMutation(
         "nested handler bypasses outer scope entry",
         [](llvm::Function &F) {
@@ -2367,7 +2352,8 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
         for (auto &Block : F)
           for (auto &I : Block) {
             auto *Head = llvm::dyn_cast<llvm::LoadInst>(&I);
-            if (!Head || Head->getPointerAddressSpace() != 257)
+            if (!Head || Head->getPointerAddressSpace() != 257 ||
+                !llvm::isa_and_nonnull<llvm::IntToPtrInst>(Head->getNextNode()))
               continue;
             auto *Pointer = Head->getNextNode();
             auto *Previous = Pointer ? Pointer->getNextNode() : nullptr;
@@ -2426,46 +2412,54 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           return false;
         },
         ScopeEnd ? "unanchored SEH scope state change" : "unanchored call");
-  RejectMutation(
-      "missing callback runtime root identity",
-      [](llvm::Function &F) {
-        for (auto &Helper : *F.getParent())
-          for (auto &Block : Helper)
-            for (auto &I : Block)
-              if (I.getMetadata(windows_eh_md::RegistrationRootAttachment)) {
-                I.setMetadata(windows_eh_md::RegistrationRootAttachment,
-                              nullptr);
-                return true;
-              }
-        return false;
-      },
-      "runtime root set");
-  for (bool Redirect : {false, true})
+  bool HasCallbackRoot = false;
+  for (const auto &Helper : *Module)
+    for (const auto &Block : Helper)
+      for (const auto &I : Block)
+        HasCallbackRoot |=
+            I.getMetadata(windows_eh_md::RegistrationRootAttachment) != nullptr;
+  if (HasCallbackRoot) {
     RejectMutation(
-        Redirect ? "redirected callback root" : "late callback root",
-        [Redirect](llvm::Function &F) {
+        "missing callback runtime root identity",
+        [](llvm::Function &F) {
           for (auto &Helper : *F.getParent())
             for (auto &Block : Helper)
-              for (auto &I : Block) {
-                auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
-                if (!Store || !Store->getMetadata(
-                                  windows_eh_md::RegistrationRootAttachment))
-                  continue;
-                if (Redirect) {
-                  llvm::IRBuilder<> B(
-                      &*Helper.getEntryBlock().getFirstInsertionPt());
-                  Store->setOperand(1, B.CreateAlloca(B.getInt32Ty()));
+              for (auto &I : Block)
+                if (I.getMetadata(windows_eh_md::RegistrationRootAttachment)) {
+                  I.setMetadata(windows_eh_md::RegistrationRootAttachment,
+                                nullptr);
                   return true;
                 }
-                for (auto *User : Store->getPointerOperand()->users())
-                  if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(User)) {
-                    Store->moveAfter(Load);
-                    return true;
-                  }
-              }
           return false;
         },
-        Redirect ? "unused storage" : "dominate");
+        "runtime root set");
+    for (bool Redirect : {false, true})
+      RejectMutation(
+          Redirect ? "redirected callback root" : "late callback root",
+          [Redirect](llvm::Function &F) {
+            for (auto &Helper : *F.getParent())
+              for (auto &Block : Helper)
+                for (auto &I : Block) {
+                  auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
+                  if (!Store || !Store->getMetadata(
+                                    windows_eh_md::RegistrationRootAttachment))
+                    continue;
+                  if (Redirect) {
+                    llvm::IRBuilder<> B(
+                        &*Helper.getEntryBlock().getFirstInsertionPt());
+                    Store->setOperand(1, B.CreateAlloca(B.getInt32Ty()));
+                    return true;
+                  }
+                  for (auto *User : Store->getPointerOperand()->users())
+                    if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(User)) {
+                      Store->moveAfter(Load);
+                      return true;
+                    }
+                }
+            return false;
+          },
+          Redirect ? "unused storage" : "dominate");
+  }
   if (llvm::any_of(EH.Registration->Scopes,
                    [](const auto &Scope) { return !Scope.IsFinally; }))
     RejectMutation(
@@ -2494,6 +2488,8 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
           return false;
         },
         "unproved LLVM escape or access");
+  // This added backedge also changes the authenticated callback exit. Source
+  // execution closure now runs before the physical frame/escape proof.
   RejectMutation(
       "callback spill overwritten on a self-loop backedge",
       [](llvm::Function &F) {
@@ -2565,7 +2561,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
         }
         return false;
       },
-      "unproved LLVM escape or access");
+      "source execution");
   for (bool WideGEP : {false, true})
     RejectMutation(
         WideGEP ? "inbounds wide-index overflow" : "nonnegative frame cast",
@@ -3081,7 +3077,7 @@ TEST(WindowsRegistrationNative, ResolvesOnlyTheAuthenticatedEH4RuntimeSymbols) {
   Image.DynInfo.SecurityCookieRVA = 0x3000;
   Segment Text;
   Text.VA = 0x401000;
-  Text.Size = 192;
+  Text.Size = Text.FileSz = 192;
   Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
   Text.Data.assign(Text.Size, 0xcc);
   const uint8_t Wrapper[] = {
@@ -3096,6 +3092,11 @@ TEST(WindowsRegistrationNative, ResolvesOnlyTheAuthenticatedEH4RuntimeSymbols) {
                            0x00, 0x75, 0x10, 0xc3};
   std::copy(std::begin(Check), std::end(Check), Text.Data.begin() + 128);
   std::copy(std::begin(Check), std::end(Check), Text.Data.begin() + 160);
+  Section TextSection;
+  TextSection.VA = Text.VA;
+  TextSection.Size = TextSection.FileSz = Text.Size;
+  TextSection.Flags = Text.Flags;
+  Image.Sections.push_back(TextSection);
   Image.Segments.push_back(Text);
   Segment Data;
   Data.VA = 0x403000;
@@ -3201,6 +3202,124 @@ TEST(WindowsRegistrationNative, NormalFinallyRequiresAnUnobservedSourceResult) {
 }
 
 TEST(WindowsRegistrationNative,
+     NestedFinallyDiscardsOnlyPreflightedResultClones) {
+  for (bool Observe : {false, true}) {
+    SCOPED_TRACE(Observe);
+    RegistrationNativeFixture F;
+    auto &EH = *F.Source.ExceptionMetadata;
+    auto &Chain = *EH.Registration;
+    auto &States = *F.Source.RegistrationStates;
+    EH.CodeRange.End = 0x1050;
+    Chain.Scopes = {{-1, 0, 0x1020, true}, {0, 0, 0x1040, true}};
+    Chain.TryLevelStores.front().Level = 1;
+    States.Blocks[1].ExplicitLevels = {1};
+    States.Blocks[2].CanDispatch = true;
+    F.Source.Blocks[2].EndAddr = States.Blocks[2].Range.End = 0x1025;
+    auto AddBlock = [&](int Id, va_t Begin, va_t End, llvm::StringRef Name) {
+      MedBlock Source;
+      Source.Id = Id;
+      Source.StartAddr = Begin;
+      Source.EndAddr = End;
+      F.Source.Blocks.push_back(Source);
+      States.Blocks.push_back({Id, {Begin, End}, {-1}, false, true, true});
+      auto *Block = llvm::BasicBlock::Create(F.Context, Name, F.Parent);
+      F.Blocks.emplace(Id, Block);
+      return Block;
+    };
+    auto *Inner = AddBlock(4, 0x1040, 0x1041, "inner.finally");
+    auto *Again = AddBlock(5, 0x1025, 0x102a, "outer.again");
+    auto *Done = AddBlock(6, 0x102a, 0x1030, "outer.return");
+    F.Source.Blocks[2].Succs = {5};
+    F.Source.Blocks[5].Succs = {6};
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = 0x1040;
+    Return.OriginSeq = 0;
+    F.Source.Blocks[4].Ops.push_back(Return);
+    llvm::IRBuilder<> B(Inner);
+    B.CreateRet(B.getInt32(0));
+    B.SetInsertPoint(Done);
+    B.CreateRet(B.getInt32(0));
+    F.Filter->getTerminator()->eraseFromParent();
+    B.SetInsertPoint(F.Filter);
+    B.CreateBr(Again);
+    B.SetInsertPoint(Again);
+    B.CreateBr(Done);
+    llvm::IRBuilder<> Entry(F.Entry->getTerminator());
+    auto *Slot = Entry.CreateAlloca(B.getInt32Ty(), nullptr, "nested.result");
+    auto *Copy = Entry.CreateAlloca(B.getInt32Ty(), nullptr, "nested.copy");
+    auto Callee =
+        F.Module.getOrInsertFunction("nested.finally", B.getInt64Ty());
+    for (int Id : {2, 5}) {
+      auto &Block = F.Source.Blocks[Id];
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Addr = Block.StartAddr;
+      Call.OriginSeq = 0;
+      Call.NumInputs = 1;
+      Call.Inputs[0] = MedVar::makeConst(0x1040, 4);
+      Block.Ops.push_back(Call);
+      RegistrationSEHInvocationExit Exit;
+      Exit.EntryVA = 0x1040;
+      Exit.CallVA = Call.Addr;
+      Exit.Address = 0x1040;
+      Exit.EndAddress = 0x1041;
+      Exit.OpSeq = 0;
+      Exit.TargetVA = Block.EndAddr;
+      States.SEHInvocationExits.push_back(Exit);
+      B.SetInsertPoint(F.Blocks.at(Id)->getTerminator());
+      auto *Invocation = B.CreateCall(Callee);
+      MedLLVMEmitterTestPeer::call(F.Emitter, *Invocation, Call.Addr);
+      B.CreateStore(B.CreateTrunc(Invocation, B.getInt32Ty()), Slot);
+    }
+    B.SetInsertPoint(&F.Filter->front());
+    B.CreateStore(B.getInt32(73), Copy);
+    B.SetInsertPoint(Again->getTerminator());
+    // Both calls share this unused result chain. Outlining recovers the slots
+    // from the parent; only the exact checked definitions may be discarded.
+    auto *Read = B.CreateLoad(B.getInt32Ty(), Slot);
+    Read->setVolatile(Observe);
+    B.CreateStore(B.CreateZExt(Read, B.getInt64Ty()),
+                  Entry.CreateAlloca(B.getInt64Ty()));
+    B.CreateStore(Read, Copy);
+    const auto Before = F.print();
+    ASSERT_EQ(F.lower(), !Observe) << F.print();
+    if (Observe) {
+      EXPECT_EQ(F.print(), Before);
+      continue;
+    }
+    EXPECT_FALSE(llvm::verifyModule(F.Module, &llvm::errs()));
+    auto *Outer = F.Module.getFunction("guarded.registration.callback.0");
+    auto *OutlinedInner =
+        F.Module.getFunction("guarded.registration.callback.1");
+    ASSERT_TRUE(Outer);
+    ASSERT_TRUE(OutlinedInner);
+    unsigned Calls = 0, RetainedStores = 0;
+    for (const auto &Block : *Outer)
+      for (const auto &I : Block) {
+        if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I)) {
+          const auto *Value =
+              llvm::dyn_cast<llvm::ConstantInt>(Store->getValueOperand());
+          ASSERT_TRUE(Value);
+          EXPECT_TRUE(Value->equalsInt(73));
+          ++RetainedStores;
+        }
+        EXPECT_FALSE(llvm::isa<llvm::LoadInst>(I));
+        if (!I.getMetadata(windows_eh_md::RegistrationFinallyCallAttachment))
+          continue;
+        const auto *Call = llvm::cast<llvm::CallInst>(&I);
+        EXPECT_EQ(Call->getCalledFunction(), OutlinedInner);
+        EXPECT_EQ(Call->getArgOperand(1), Outer->getArg(1));
+        EXPECT_TRUE(
+            llvm::cast<llvm::ConstantInt>(Call->getArgOperand(0))->isZero());
+        ++Calls;
+      }
+    EXPECT_EQ(Calls, 2u);
+    EXPECT_EQ(RetainedStores, 1u);
+  }
+}
+
+TEST(WindowsRegistrationNative,
      RejectsAnUnauthenticatedFSOccurrenceAtomically) {
   RegistrationNativeFixture F;
   llvm::IRBuilder<> B(F.Try->getTerminator());
@@ -3254,7 +3373,7 @@ TEST(WindowsRegistrationNative, JumpCapturesRequireAReplacementBufferReceipt) {
     RegistrationNativeFixture F;
     auto &States = *F.Source.RegistrationStates;
     if (Mutation == 0)
-      States.HasEH3JumpCaptures = true;
+      States.HasSEHJumpCaptures = true;
     if (Mutation == 1)
       States.SEHJumpResumptionsComplete = false;
     if (Mutation == 2)
@@ -3654,7 +3773,7 @@ TEST(WindowsRegistrationNative, AuthenticatesEveryEH4CookieFrameOffset) {
   F.Source.RegistrationStates->SecurityCookiesComplete = true;
   F.Source.RegistrationStates->SecurityCookieVA = 0x2500;
   for (auto &State : F.Source.RegistrationStates->Blocks)
-    for (auto &Level : State.Levels)
+    for (auto &Level : State.ExplicitLevels)
       if (Level == -1)
         Level = -2;
   ASSERT_TRUE(F.lower());
@@ -3698,7 +3817,7 @@ TEST(WindowsRegistrationNative, EH4GSUsesTheCompilerCookieAndFastcallChecker) {
   F.Source.RegistrationStates->SecurityCookiesComplete = true;
   F.Source.RegistrationStates->SecurityCookieVA = 0x2500;
   for (auto &State : F.Source.RegistrationStates->Blocks)
-    for (auto &Level : State.Levels)
+    for (auto &Level : State.ExplicitLevels)
       if (Level == -1)
         Level = -2;
   ASSERT_TRUE(F.lower());
@@ -3723,7 +3842,7 @@ TEST(WindowsRegistrationNative, BindsGeneratedParentsToTheSourceScopeGraph) {
   EH.CodeRange.End = 0x1050;
   EH.Registration->Scopes.push_back({0, 0x1020, 0x1040, false});
   EH.Registration->TryLevelStores.front().Level = 1;
-  F.Source.RegistrationStates->Blocks[1].Levels = {1};
+  F.Source.RegistrationStates->Blocks[1].ExplicitLevels = {1};
   F.Source.RegistrationStates->Blocks.push_back(
       {4, {0x1040, 0x1050}, {0}, false, false, true});
   MedBlock Handler;
@@ -3754,6 +3873,52 @@ TEST(WindowsRegistrationNative, BindsGeneratedParentsToTheSourceScopeGraph) {
   ASSERT_TRUE(bool(Altered));
   EXPECT_NE(llvm::toString(std::move(Altered)).find("source scope graph"),
             std::string::npos);
+}
+
+TEST(WindowsRegistrationNative, NonlocalUnwindPreservesSiblingStateOrder) {
+  RegistrationNativeFixture F;
+  auto &EH = *F.Source.ExceptionMetadata;
+  EH.CodeRange.End = 0x1050;
+  // Siblings can share their filter and handler. Their enclosing graph does
+  // not constrain their relative order, but the CRT's saved numeric bound does.
+  EH.Registration->Scopes.push_back(EH.Registration->Scopes.front());
+  MedBlock Active;
+  Active.Id = 4;
+  Active.StartAddr = 0x1040;
+  Active.EndAddr = 0x1050;
+  F.Source.Blocks.push_back(Active);
+  F.Source.RegistrationStates->Blocks.push_back(
+      {4, {0x1040, 0x1050}, {1}, false, false, true});
+  auto *Sibling = llvm::BasicBlock::Create(F.Context, "sibling", F.Parent);
+  llvm::IRBuilder<>(Sibling).CreateBr(F.Try);
+  F.Entry->getTerminator()->setSuccessor(0, Sibling);
+  F.Blocks.emplace(4, Sibling);
+  ASSERT_TRUE(F.lower());
+  auto Compiled = compileFixture(F);
+  ASSERT_TRUE(Compiled.Success);
+  ASSERT_EQ(Compiled.WinEHSemanticRecords.size(), 2u);
+  // Simulate a producer which permutes these otherwise equivalent rows. Every
+  // physical field and fixup stays valid, and the whole source graph is intact.
+  for (auto &Row : Compiled.WinEHSemanticRecords) {
+    auto Token = windows_eh_semantics::getSEHScopeSemanticToken(
+        EH, Arch::X86, 1 - Row.GeneratedState);
+    ASSERT_TRUE(Token);
+    Row.Token = *Token;
+  }
+  auto Valid = validateCOFFRegistrationSemanticRows(*F.Parent, EH, Compiled);
+  ASSERT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+  llvm::IRBuilder<> B(F.Parent->getEntryBlock().getTerminator());
+  auto Capture = F.Module.getOrInsertFunction(
+      "_setjmp3", llvm::FunctionType::get(
+                      B.getInt32Ty(), {B.getPtrTy(), B.getInt32Ty()}, true));
+  B.CreateCall(Capture,
+               {llvm::ConstantPointerNull::get(B.getPtrTy()), B.getInt32(0)});
+  ASSERT_FALSE(llvm::verifyModule(F.Module, &llvm::errs()));
+  auto Error = validateCOFFRegistrationSemanticRows(*F.Parent, EH, Compiled);
+  ASSERT_TRUE(bool(Error));
+  EXPECT_NE(
+      llvm::toString(std::move(Error)).find("nonlocal unwind state order"),
+      std::string::npos);
 }
 
 TEST(WindowsRegistrationNative, CompilerOwnsTheFinallyTableTarget) {

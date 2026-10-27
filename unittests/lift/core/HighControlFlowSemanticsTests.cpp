@@ -1,7 +1,9 @@
 #include "../../../lib/ir/high/lower/CompareTreeSwitch.h"
+#include "../../../lib/ir/high/lower/VariadicStackArguments.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/ir/SourceCallABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceFlow.h"
@@ -47,6 +49,95 @@ void eliminateUnusedValues(std::vector<HighStmt> &);
 void narrowUnreadRegisterBytes(HighFunc &, Arch Architecture = Arch::Unknown);
 } // namespace neverd
 using namespace neverd;
+
+TEST(HighControlFlowSemantics, Win64SourceCallsKeepTheirDeclaredCarrierWidths) {
+  // A whole-register scan sees RCX after a write to ECX. The source binding
+  // reads only the bytes its declaration names, including narrow fixed
+  // parameters. Replacing that operand with the whole scan loses its ABI.
+  for (const auto Kind :
+       {SourceCallTypeHint::Kind::Analyst, SourceCallTypeHint::Kind::Native})
+    for (uint16_t Bytes : {1, 2, 4, 8}) {
+      SCOPED_TRACE(static_cast<int>(Kind));
+      SCOPED_TRACE(Bytes);
+      const auto &TRI = getTargetRegInfo(Arch::X64);
+      const uint64_t RCX =
+          TRI.integerArgumentLayout(BinaryFormat::COFF).Registers[0];
+      MedVar Whole;
+      Whole.Kind = MedVar::Reg;
+      Whole.TheArch = Arch::X64;
+      Whole.Id = 1;
+      Whole.RegOff = RCX;
+      Whole.Size = 8;
+      Whole.SSAVer = 1;
+      MedVar Narrow = Whole;
+      Narrow.Id = 2;
+      Narrow.Size = Bytes;
+      MedVar Result = Whole;
+      Result.Id = 3;
+      Result.RegOff = TRI.IntReturnReg;
+
+      auto Hint = std::make_shared<SourceCallTypeHint>();
+      Hint->CallKind = SourceCallTypeHint::Kind::Analyst;
+      Hint->TargetAddress = 0x2000;
+      Hint->AnalystSite =
+          SourceCallOccurrenceKey{0x1008, 2, NdOp::CALL, 0x2000};
+      Hint->Signature.ReturnType = NdType::makeInt(8);
+      Hint->Signature.Parameters = {{"value", NdType::makeInt(Bytes)}};
+      std::string Diagnostic;
+      ASSERT_TRUE(assignAnalystCallABI(*Hint, Arch::X64, BinaryFormat::COFF,
+                                       Diagnostic))
+          << Diagnostic;
+      Hint->CallKind = Kind;
+
+      auto Op = [](NdOp Code, va_t Address, MedVar Output,
+                   std::initializer_list<MedVar> Inputs) {
+        MedOp O;
+        O.Opcode = Code;
+        O.Addr = Address;
+        O.Output = Output;
+        for (const auto &Input : Inputs)
+          O.addInput(Input);
+        return O;
+      };
+      const auto Value = MedVar::makeConst(7, 8);
+      MedBlock Block;
+      Block.Id = 0;
+      Block.StartAddr = 0x1000;
+      Block.EndAddr = 0x1010;
+      Block.Ops = {
+          Op(NdOp::COPY, 0x1000, Whole, {Value}),
+          Op(NdOp::SUBBYTES, 0x1004, Narrow, {Value, MedVar::makeConst(0, 4)}),
+          Op(NdOp::CALL, 0x1008, Result,
+             {MedVar::makeConst(0x2000, 8), Narrow}),
+          Op(NdOp::RETURN, 0x100c, {}, {Result})};
+      Block.Ops[1].OriginSeq = -1;
+      Block.Ops[2].SourceCallHint = Hint;
+      MedFunc Med;
+      Med.Entry = Block.StartAddr;
+      Med.Name = "typed_win64_call";
+      Med.ReturnType = Hint->Signature.ReturnType;
+      Med.Blocks = {Block};
+      BinaryImage Image;
+      Image.Arch = Arch::X64;
+      Image.Format = BinaryFormat::COFF;
+      MedToHighConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto High = Converter.convert(Med, Arch::X64);
+      unsigned Calls = 0;
+      walkStmts(High.Body, [&](const HighStmt &Statement) {
+        forEachExpr(Statement, [&](const ExprPtr &Expression) {
+          if (!Expression || Expression->Kind != ExprKind::Call ||
+              Expression->CallAddr != Hint->TargetAddress)
+            return;
+          ++Calls;
+          ASSERT_EQ(Expression->Operands.size(), 1u);
+          ASSERT_TRUE(Expression->Operands[0]->Type);
+          EXPECT_EQ(Expression->Operands[0]->Type->Size, Bytes);
+        });
+      });
+      EXPECT_EQ(Calls, 1u);
+    }
+}
 
 TEST(HighControlFlowSemantics, CalleeNameSnapshotKeepsLookupPrecedence) {
   BinaryImage Img;
@@ -192,6 +283,10 @@ std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition,
         return A * B;
       case NdOp::INT_AND:
         return A & B;
+      case NdOp::INT_OR:
+        return A | B;
+      case NdOp::INT_XOR:
+        return A ^ B;
       case NdOp::INT_EQUAL:
         return uint64_t(A == B);
       case NdOp::INT_NOTEQUAL:
@@ -596,6 +691,32 @@ TEST(HighControlFlowSemantics, BooleanEqualitySurvivesDominatingScalarCopies) {
   const auto Report = analyzeHighSourceFlow(F, true);
   EXPECT_TRUE(Report.Complete);
   EXPECT_TRUE(Report.Items.empty());
+}
+
+TEST(HighControlFlowSemantics, EntrySelectorsAreKnownBeforeGuardRefinement) {
+  // The parameter is read only by a switch, so branch predicates never
+  // register it. Refining the later boolean guards still queries its writes.
+  for (bool ReassignCopy : {false, true}) {
+    SCOPED_TRACE(ReassignCopy);
+    auto F = copiedBooleanEquality(ReassignCopy);
+    MedVar Parameter;
+    Parameter.Kind = MedVar::Param;
+    Parameter.Id = 0;
+    Parameter.Size = 8;
+    HighStmt Switch;
+    Switch.Kind = StmtKind::Switch;
+    Switch.Addr = 0x100;
+    Switch.SwitchExpr = HighExpr::makeVar(Parameter);
+    Switch.Cases.push_back({0, {assign(0x104, 20, 1)}});
+    F.Body.insert(F.Body.begin(), std::move(Switch));
+
+    const auto Report = analyzeHighSourceFlow(F, true);
+    ASSERT_TRUE(Report.Complete);
+    EXPECT_EQ(Report.Items.empty(), !ReassignCopy);
+    if (!ReassignCopy)
+      for (uint64_t Input : {uint64_t{0}, uint64_t{1}, UINT64_MAX})
+        EXPECT_EQ(execute(F, Input), 0u);
+  }
 }
 
 TEST(HighControlFlowSemantics,
@@ -1156,6 +1277,367 @@ TEST(HighControlFlowSemantics, SwitchAbsorbsTheRangeCheckItsDefaultRepeats) {
     EXPECT_EQ(execute(Jumping, Inputs[I]), Expected[I]) << Inputs[I];
 }
 
+TEST(HighControlFlowSemantics, DefaultWordIdentitiesPreserveBitsWithoutSearch) {
+  for (unsigned Bytes : {1u, 2u, 4u, 8u})
+    for (bool Signed : {false, true})
+      for (NdOp Outer :
+           {NdOp::INT_AND, NdOp::INT_OR, NdOp::INT_XOR, NdOp::INT_SUB})
+        for (bool Nested : {false, true}) {
+          if (Nested && Outer != NdOp::INT_AND && Outer != NdOp::INT_OR)
+            continue;
+          SCOPED_TRACE(testing::Message() << Bytes << ':' << Signed << ':'
+                                          << int(Outer) << ':' << Nested);
+          auto X = local(0);
+          X->Var.Size = Bytes;
+          X->Type = NdType::makeInt(Bytes, Signed);
+          auto Y = HighExpr::makeConst(0xA5, Bytes);
+          Y->Type = X->Type;
+          ExprPtr Other = X;
+          if (Nested) {
+            Other = HighExpr::makeBinop(
+                Outer == NdOp::INT_AND ? NdOp::INT_OR : NdOp::INT_AND, Y, X);
+            Other->Type = X->Type;
+          }
+          auto Root = HighExpr::makeBinop(Outer, Other, X);
+          Root->Type = X->Type;
+          HighFunc F;
+          F.Body = {result(0, Root)};
+          const uint64_t Mask =
+              Bytes == 8 ? UINT64_MAX : (uint64_t(1) << (Bytes * 8)) - 1;
+          const std::vector<uint64_t> Inputs = {
+              0, 1, Mask, Mask >> 1, UINT64_C(0xABCD0123EF457689) & Mask};
+          std::vector<std::optional<uint64_t>> Expected;
+          for (auto Input : Inputs)
+            Expected.push_back(execute(F, Input));
+          EXPECT_TRUE(simplifyAllExprs(F.Body));
+          EXPECT_TRUE(F.Body[0].RetVal->Kind == ExprKind::Var ||
+                      F.Body[0].RetVal->Kind == ExprKind::Const);
+          for (size_t I = 0; I < Inputs.size(); ++I)
+            EXPECT_EQ(execute(F, Inputs[I]), Expected[I]);
+        }
+}
+
+TEST(HighControlFlowSemantics,
+     DefaultMixedWordIdentitiesPreserveModularResults) {
+  for (unsigned Bytes : {1u, 2u, 4u, 8u})
+    for (bool Sum : {false, true})
+      for (bool Reversed : {false, true}) {
+        SCOPED_TRACE(testing::Message()
+                     << Bytes << ':' << Sum << ':' << Reversed);
+        const uint64_t Mask =
+            Bytes == 8 ? UINT64_MAX : (uint64_t(1) << (Bytes * 8)) - 1;
+        for (uint64_t Constant :
+             {uint64_t(0), uint64_t(0xA5), Mask, Mask >> 1}) {
+          auto X = local(0);
+          X->Var.Size = Bytes;
+          X->Type = NdType::makeInt(Bytes, false);
+          auto Y = HighExpr::makeConst(Constant, Bytes);
+          Y->Type = X->Type;
+          auto A = HighExpr::makeBinop(NdOp::INT_OR, X, Y);
+          auto B =
+              HighExpr::makeBinop(Sum ? NdOp::INT_AND : NdOp::INT_XOR, Y, X);
+          A->Type = B->Type = X->Type;
+          auto Root = HighExpr::makeBinop(Sum ? NdOp::INT_ADD : NdOp::INT_AND,
+                                          Reversed ? B : A, Reversed ? A : B);
+          Root->Type = X->Type;
+          HighFunc F;
+          F.Body = {result(0, Root)};
+          EXPECT_TRUE(simplifyAllExprs(F.Body));
+          // An inner AND by zero may fold before the paired identity runs.
+          if (Constant)
+            EXPECT_EQ(F.Body[0].RetVal->Op,
+                      Sum ? NdOp::INT_ADD : NdOp::INT_XOR);
+          for (uint64_t Input = 0; Input < 256; ++Input) {
+            const uint64_t XValue =
+                (Input * UINT64_C(0x0101010101010101)) & Mask;
+            const uint64_t Expected =
+                Sum ? XValue + Constant : XValue ^ Constant;
+            ASSERT_TRUE(execute(F, XValue).has_value());
+            EXPECT_EQ(*execute(F, XValue) & Mask, Expected & Mask);
+          }
+        }
+      }
+}
+
+TEST(HighControlFlowSemantics, WordIdentitiesKeepObservationsAndWidths) {
+  for (unsigned Case = 0; Case < 6; ++Case) {
+    SCOPED_TRACE(Case);
+    ExprPtr X = local(0);
+    X->Type = NdType::makeInt(8, false);
+    if (Case == 0)
+      X = HighExpr::makeLoad(X, NdType::makeInt(8, false));
+    if (Case == 1) {
+      X = HighExpr::makeCall("observe", 0x4000, {X});
+      X->Type = NdType::makeInt(8, false);
+    }
+    if (Case == 4)
+      X = HighExpr::makeUndef(8);
+    if (Case == 5) {
+      X = HighExpr::makeBinop(NdOp::INT_ADD, X, HighExpr::makeUndef(8));
+      X->Type = NdType::makeInt(8, false);
+    }
+    ExprPtr Y = X;
+    if (Case == 2) {
+      Y = std::make_shared<HighExpr>(*X);
+      Y->Type = NdType::makeInt(4, false);
+      Y->Var.Size = 4;
+    }
+    auto Root = HighExpr::makeBinop(NdOp::INT_AND, X, Y);
+    Root->Type = NdType::makeInt(8, false);
+    if (Case == 3)
+      Root->MemoryOrdering = NdMemoryOrdering::Acquire;
+    HighFunc F;
+    F.Body = {result(0, Root)};
+    simplifyAllExprs(F.Body);
+    EXPECT_EQ(F.Body[0].RetVal->Op, NdOp::INT_AND);
+  }
+}
+
+TEST(HighControlFlowSemantics, WordAbsorptionSeesThroughSameWidthCasts) {
+  for (unsigned Bytes : {1u, 2u, 4u, 8u})
+    for (bool Signed : {false, true})
+      for (NdOp Outer : {NdOp::INT_AND, NdOp::INT_OR})
+        for (bool ReverseOuter : {false, true})
+          for (bool ReverseInner : {false, true}) {
+            SCOPED_TRACE(testing::Message()
+                         << Bytes << ':' << Signed << ':' << int(Outer) << ':'
+                         << ReverseOuter << ':' << ReverseInner);
+            auto X = local(0);
+            X->Var.Size = Bytes;
+            X->Type = NdType::makeInt(Bytes, Signed);
+            const auto Cast = [&](ExprPtr Value, bool ToSigned) {
+              auto View = std::make_shared<HighExpr>();
+              View->Kind = ExprKind::Cast;
+              View->Type = View->CastTo = NdType::makeInt(Bytes, ToSigned);
+              View->Operands = {std::move(Value)};
+              return View;
+            };
+            auto Y = HighExpr::makeBinop(NdOp::INT_ADD, X, X);
+            Y->Type = X->Type;
+            auto Inner = HighExpr::makeBinop(
+                Outer == NdOp::INT_AND ? NdOp::INT_OR : NdOp::INT_AND,
+                ReverseInner ? Y : Cast(X, !Signed),
+                ReverseInner ? Cast(X, !Signed) : Y);
+            Inner->Type = X->Type;
+            auto Nested = Cast(Cast(Inner, !Signed), Signed);
+            auto Root = HighExpr::makeBinop(Outer, ReverseOuter ? X : Nested,
+                                            ReverseOuter ? Nested : X);
+            Root->Type = X->Type;
+            HighFunc F;
+            F.Body = {result(0, Root)};
+            EXPECT_TRUE(simplifyAllExprs(F.Body));
+            auto Value = F.Body[0].RetVal;
+            while (Value->Kind == ExprKind::Cast)
+              Value = Value->Operands.at(0);
+            EXPECT_EQ(Value->Kind, ExprKind::Var) << F.Body[0].RetVal->str();
+            EXPECT_EQ(F.Body[0].RetVal->Type->Size, Bytes);
+            EXPECT_EQ(F.Body[0].RetVal->Type->IsSigned, Signed);
+            const uint64_t Mask =
+                Bytes == 8 ? UINT64_MAX : (uint64_t(1) << (Bytes * 8)) - 1;
+            for (uint64_t Input : {uint64_t(0), uint64_t(1), Mask, Mask >> 1,
+                                   UINT64_C(0xABCD0123EF457689) & Mask})
+              EXPECT_EQ(execute(F, Input), Input);
+          }
+}
+
+TEST(HighControlFlowSemantics, CastAbsorptionKeepsWidthChangesAndObservations) {
+  for (unsigned Mode = 0; Mode < 6; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto X = local(0);
+    X->Type = NdType::makeInt(8, false);
+    ExprPtr Observed = X;
+    if (Mode == 1)
+      Observed = HighExpr::makeLoad(X, X->Type);
+    if (Mode == 2) {
+      Observed = HighExpr::makeCall("observe", 0x4000, {X});
+      Observed->Type = X->Type;
+    }
+    if (Mode == 3)
+      Observed = HighExpr::makeUndef(8);
+    auto Inner = HighExpr::makeBinop(NdOp::INT_AND, Observed, X);
+    Inner->Type = X->Type;
+    auto View = std::make_shared<HighExpr>();
+    View->Kind = ExprKind::Cast;
+    View->Type = View->CastTo = NdType::makeInt(Mode == 0 ? 4 : 8, true);
+    View->Operands = {Inner};
+    if (Mode == 4)
+      View->MemoryOrdering = NdMemoryOrdering::Acquire;
+    if (Mode == 5)
+      View->CastTo = NdType::makePtr(X->Type);
+    auto Root = HighExpr::makeBinop(NdOp::INT_OR, View, X);
+    Root->Type = X->Type;
+    HighFunc F;
+    F.Body = {result(0, Root)};
+    simplifyAllExprs(F.Body);
+    EXPECT_EQ(F.Body[0].RetVal->Kind, ExprKind::BinOp);
+    EXPECT_EQ(F.Body[0].RetVal->Op, NdOp::INT_OR);
+  }
+}
+
+TEST(HighControlFlowSemantics, WordOffsetsCombineAtTheirDeclaredWidth) {
+  for (unsigned Bytes : {1u, 2u, 4u, 8u})
+    for (bool Signed : {false, true})
+      for (bool SubtractInner : {false, true})
+        for (bool SubtractOuter : {false, true})
+          for (bool ReverseAddends : {false, true}) {
+            SCOPED_TRACE(testing::Message()
+                         << Bytes << ':' << Signed << ':' << SubtractInner
+                         << ':' << SubtractOuter << ':' << ReverseAddends);
+            const uint64_t Mask =
+                Bytes == 8 ? UINT64_MAX : (uint64_t(1) << (Bytes * 8)) - 1;
+            auto X = local(0);
+            X->Var.Size = Bytes;
+            X->Type = NdType::makeInt(Bytes, Signed);
+            const auto Constant = [&](uint64_t Value) {
+              auto C = HighExpr::makeConst(Value & Mask, Bytes,
+                                           ConstantAddressProvenance::Scalar);
+              C->Type = X->Type;
+              return C;
+            };
+            const uint64_t A = Mask - 7, B = 19;
+            auto Inner = HighExpr::makeBinop(
+                SubtractInner ? NdOp::INT_SUB : NdOp::INT_ADD,
+                ReverseAddends && !SubtractInner ? Constant(A) : X,
+                ReverseAddends && !SubtractInner ? X : Constant(A));
+            Inner->Type = X->Type;
+            auto View = std::make_shared<HighExpr>();
+            View->Kind = ExprKind::Cast;
+            View->Type = View->CastTo = NdType::makeInt(Bytes, !Signed);
+            View->Operands = {Inner};
+            auto Root = HighExpr::makeBinop(
+                SubtractOuter ? NdOp::INT_SUB : NdOp::INT_ADD,
+                ReverseAddends && !SubtractOuter ? Constant(B) : View,
+                ReverseAddends && !SubtractOuter ? View : Constant(B));
+            Root->Type = X->Type;
+            HighFunc F;
+            F.Body = {result(0, Root)};
+            EXPECT_TRUE(simplifyAllExprs(F.Body));
+            auto Value = F.Body[0].RetVal;
+            ASSERT_EQ(Value->Kind, ExprKind::BinOp) << Value->str();
+            ASSERT_EQ(Value->Operands.size(), 2u);
+            EXPECT_EQ(Value->Operands[0]->Kind, ExprKind::Var) << Value->str();
+            EXPECT_EQ(Value->Operands[1]->Kind, ExprKind::Const)
+                << Value->str();
+            EXPECT_EQ(Value->Type->Size, Bytes);
+            EXPECT_EQ(Value->Type->IsSigned, Signed);
+            const uint64_t Offset = (SubtractInner ? uint64_t(0) - A : A) +
+                                    (SubtractOuter ? uint64_t(0) - B : B);
+            for (uint64_t Input : {uint64_t(0), uint64_t(1), Mask, Mask >> 1}) {
+              const auto Actual = execute(F, Input);
+              ASSERT_TRUE(Actual.has_value());
+              EXPECT_EQ(*Actual & Mask, (Input + Offset) & Mask);
+            }
+          }
+}
+
+TEST(HighControlFlowSemantics, WordOffsetsKeepAddressIdentityAndWidths) {
+  for (unsigned Mode = 0; Mode < 6; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto X = local(0);
+    X->Type = NdType::makeInt(8, false);
+    auto A = HighExpr::makeConst(19, 8, ConstantAddressProvenance::Scalar);
+    auto B = HighExpr::makeConst(7, 8, ConstantAddressProvenance::Scalar);
+    if (Mode == 0 || Mode == 4)
+      A->ConstProvenance = ConstantAddressProvenance::Address;
+    if (Mode == 1 || Mode == 5)
+      B->ConstProvenance = ConstantAddressProvenance::Address;
+    if (Mode == 4)
+      A->ConstVal = UINT64_C(0xFFFFF80012345000);
+    if (Mode == 5)
+      B->ConstVal = UINT64_C(0xFFFFF80012345000);
+    auto Inner = HighExpr::makeBinop(Mode == 3 ? NdOp::INT_SUB : NdOp::INT_ADD,
+                                     Mode == 3 ? A : X, Mode == 3 ? X : A);
+    Inner->Type = X->Type;
+    auto View = std::make_shared<HighExpr>();
+    View->Kind = ExprKind::Cast;
+    View->Type = View->CastTo = NdType::makeInt(Mode == 2 ? 4 : 8, false);
+    View->Operands = {Inner};
+    auto Root = HighExpr::makeBinop(NdOp::INT_ADD, View, B);
+    Root->Type = X->Type;
+    HighFunc F;
+    F.Body = {result(0, Root)};
+    simplifyAllExprs(F.Body);
+    EXPECT_EQ(F.Body[0].RetVal, Root);
+    EXPECT_EQ(Root->Op, NdOp::INT_ADD);
+    EXPECT_EQ(F.Body[0].RetVal->Operands[0]->Kind, ExprKind::Cast);
+    if (Mode == 4)
+      EXPECT_EQ(Inner->Operands[1], A);
+    if (Mode == 5)
+      EXPECT_EQ(Root->Operands[1], B);
+  }
+}
+
+TEST(HighControlFlowSemantics, WordOffsetsCancelWithoutChangingSignedness) {
+  for (unsigned Bytes : {1u, 2u, 4u, 8u})
+    for (bool Signed : {false, true})
+      for (bool SubtractFirst : {false, true}) {
+        SCOPED_TRACE(testing::Message()
+                     << Bytes << ':' << Signed << ':' << SubtractFirst);
+        auto X = local(0);
+        X->Var.Size = Bytes;
+        X->Type = NdType::makeInt(Bytes, Signed);
+        auto C =
+            HighExpr::makeConst(0xA5, Bytes, ConstantAddressProvenance::Scalar);
+        C->Type = X->Type;
+        auto Inner = HighExpr::makeBinop(
+            SubtractFirst ? NdOp::INT_SUB : NdOp::INT_ADD, X, C);
+        Inner->Type = X->Type;
+        auto Root = HighExpr::makeBinop(
+            SubtractFirst ? NdOp::INT_ADD : NdOp::INT_SUB, Inner, C);
+        Root->Type = X->Type;
+        HighFunc F;
+        F.Body = {result(0, Root)};
+        EXPECT_TRUE(simplifyAllExprs(F.Body));
+        EXPECT_EQ(F.Body[0].RetVal, X);
+      }
+}
+
+TEST(HighControlFlowSemantics, NegativeOffsetSpellingKeepsTheOperationWidth) {
+  for (const auto &[Bytes, ConstantBytes] :
+       {std::pair{4u, 4u}, std::pair{8u, 8u}, std::pair{8u, 4u},
+        std::pair{16u, 8u}, std::pair{16u, 16u}}) {
+    SCOPED_TRACE(testing::Message() << Bytes << ':' << ConstantBytes);
+    auto X = local(0);
+    X->Var.Size = Bytes;
+    X->Type = NdType::makeInt(Bytes, false);
+    auto C = HighExpr::makeConst(UINT64_MAX, ConstantBytes,
+                                 ConstantAddressProvenance::Scalar);
+    auto Root = HighExpr::makeBinop(NdOp::INT_ADD, X, C);
+    Root->Type = X->Type;
+    HighFunc F;
+    F.Body = {result(0, Root)};
+    simplifyAllExprs(F.Body);
+    if (Bytes == ConstantBytes && Bytes <= sizeof(uint64_t)) {
+      EXPECT_EQ(Root->Op, NdOp::INT_SUB);
+      EXPECT_EQ(Root->Operands[1]->ConstVal, 1u);
+      EXPECT_EQ(Root->Operands[1]->ConstProvenance,
+                ConstantAddressProvenance::Scalar);
+    } else {
+      // UINT64_MAX is positive when evaluated in a 128-bit word. A narrow
+      // constant also needs its original extension before a wider addition.
+      EXPECT_EQ(Root->Op, NdOp::INT_ADD);
+      EXPECT_EQ(Root->Operands[1], C);
+    }
+  }
+}
+
+TEST(HighControlFlowSemantics, WordIdentitiesBoundSharedExpressionExpansion) {
+  ExprPtr X = local(0);
+  X->Type = NdType::makeInt(8, false);
+  for (unsigned I = 0; I < 20; ++I) {
+    X = HighExpr::makeBinop(NdOp::INT_ADD, X, X);
+    X->Type = NdType::makeInt(8, false);
+  }
+  auto Root = HighExpr::makeBinop(NdOp::INT_XOR, X, X);
+  Root->Type = X->Type;
+  HighFunc F;
+  F.Body = {result(0, Root)};
+  // Few distinct nodes can expand into a huge tree. Keep it without an
+  // unbounded structural comparison or an algebraic search.
+  EXPECT_FALSE(simplifyAllExprs(F.Body));
+  EXPECT_EQ(F.Body[0].RetVal, Root);
+}
+
 TEST(HighControlFlowSemantics, AdjacentLocalSlicesPreserveEveryBit) {
   for (unsigned Offset : {0U, 1U, 2U})
     for (unsigned Bytes : {2U, 4U, 8U}) {
@@ -1203,6 +1685,94 @@ TEST(HighControlFlowSemantics, SliceJoiningRejectsDifferentOrObservableValues) {
     simplifyAllExprs(F.Body);
     EXPECT_EQ(F.Body[0].RetVal->Op, NdOp::CONCAT) << Case;
   }
+}
+
+TEST(HighControlFlowSemantics, AMergedCallKeepsAnInstructionOnlyIfItHadOne) {
+  auto Call = [](va_t Site) {
+    auto E = HighExpr::makeCall("release", 0x4000, {local(0)});
+    E->CallSiteAddr = Site;
+    return HighExpr::makeBinop(NdOp::INT_ADD, E, HighExpr::makeConst(1, 8));
+  };
+  // Copies of one statement: the same instruction stays.
+  const ExprPtr Copy = Call(0x1010);
+  EXPECT_EQ(withMergedCallSites(Copy, Call(0x1010)), Copy);
+  // Two instructions made one call: it keeps neither, and the value the
+  // other statement shared is not changed in place.
+  const ExprPtr Kept = Call(0x1010);
+  const ExprPtr Merged = withMergedCallSites(Kept, Call(0x1020));
+  ASSERT_NE(Merged, Kept);
+  EXPECT_EQ(Merged->Operands[0]->CallSiteAddr, 0U);
+  EXPECT_EQ(Kept->Operands[0]->CallSiteAddr, 0x1010U);
+  EXPECT_TRUE(Merged->structuralEq(*Kept));
+  // A value without calls is left as it is.
+  const ExprPtr Plain = local(1);
+  EXPECT_EQ(withMergedCallSites(Plain, local(1)), Plain);
+}
+
+TEST(HighControlFlowSemantics, AShiftByZeroIsItsOperand) {
+  // AArch64's `tbz w0, #0, L` tests bit 0 as `(w0 >> 0) & 1`.
+  for (const NdOp Shift : {NdOp::INT_LEFT, NdOp::INT_RIGHT, NdOp::INT_ASHR}) {
+    HighFunc F;
+    F.Body = {result(
+        0, HighExpr::makeBinop(
+               NdOp::INT_AND,
+               HighExpr::makeBinop(Shift, local(0), HighExpr::makeConst(0, 8)),
+               HighExpr::makeConst(1, 8)))};
+    simplifyAllExprs(F.Body);
+    const HighExpr &Bit = *F.Body[0].RetVal;
+    ASSERT_EQ(Bit.Op, NdOp::INT_AND) << ndOpName(Shift);
+    EXPECT_EQ(Bit.Operands[0]->Kind, ExprKind::Var) << ndOpName(Shift);
+  }
+  // A shift by a register or a nonzero amount stays.
+  HighFunc F;
+  F.Body = {result(0, HighExpr::makeBinop(NdOp::INT_RIGHT, local(0),
+                                          HighExpr::makeConst(3, 8)))};
+  simplifyAllExprs(F.Body);
+  EXPECT_EQ(F.Body[0].RetVal->Op, NdOp::INT_RIGHT);
+}
+
+TEST(HighControlFlowSemantics, ATruthValueSelectingOneOrZeroIsItself) {
+  // -O0 AArch64 materializes `x == 0` as `cset w8, eq; and w8, w8, #1`,
+  // which reads `(x == 0 ? 1 : 0) & 1`.
+  auto Select = [](ExprPtr Condition, uint64_t Then, uint64_t Else) {
+    auto S = std::make_shared<HighExpr>();
+    S->Kind = ExprKind::BinOp;
+    S->Op = NdOp::SELECT;
+    S->Type = NdType::makeInt(4);
+    S->Operands = {std::move(Condition), HighExpr::makeConst(Then, 4),
+                   HighExpr::makeConst(Else, 4)};
+    return S;
+  };
+  for (const bool Inverted : {false, true}) {
+    SCOPED_TRACE(Inverted);
+    auto Equal = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                                     HighExpr::makeConst(0, 8));
+    HighFunc F;
+    F.Body = {result(0, HighExpr::makeBinop(
+                            NdOp::INT_AND,
+                            Select(Equal, Inverted ? 0 : 1, Inverted ? 1 : 0),
+                            HighExpr::makeConst(1, 4)))};
+    simplifyAllExprs(F.Body);
+    const HighExpr &Value = *F.Body[0].RetVal;
+    ASSERT_EQ(Value.Kind, ExprKind::UnaryOp);
+    ASSERT_EQ(Value.Op, NdOp::INT_ZEXT);
+    EXPECT_EQ(Value.Type->Size, 4u);
+    const HighExpr *Truth = Value.Operands[0].get();
+    if (Inverted) {
+      ASSERT_EQ(Truth->Op, NdOp::BOOL_NOT);
+      Truth = Truth->Operands[0].get();
+    }
+    EXPECT_EQ(Truth->Op, NdOp::INT_EQUAL);
+  }
+  // A condition that may hold another number selects as `x != 0` does, and a
+  // value that may have other bits keeps its mask.
+  HighFunc F;
+  F.Body = {result(0, Select(local(0), 1, 0)),
+            result(4, HighExpr::makeBinop(NdOp::INT_AND, local(1),
+                                          HighExpr::makeConst(1, 8)))};
+  simplifyAllExprs(F.Body);
+  EXPECT_EQ(F.Body[0].RetVal->Op, NdOp::SELECT);
+  EXPECT_EQ(F.Body[1].RetVal->Op, NdOp::INT_AND);
 }
 
 TEST(HighControlFlowSemantics, MemoryBoundaryAncestorsMatchIndividualQueries) {
@@ -1472,6 +2042,54 @@ TEST(HighControlFlowSemantics, SimplifierReportsInPlaceOperandChanges) {
   EXPECT_FALSE(simplifyAllExprs(F.Body));
 }
 
+TEST(HighControlFlowSemantics, SimplifierComparesASumByItsOtherTerm) {
+  // Compilers test for -1 as `x + 1 == 0`.  The sum wraps at its width, so
+  // its equality with a constant is its other term's with the difference,
+  // at every input.  The sum another comparison shares stays, and an
+  // ordered comparison, which the wrap would change, is not folded.
+  auto Sum =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(0), HighExpr::makeConst(1, 8));
+  auto Equal =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, Sum, HighExpr::makeConst(0, 8));
+  auto Ordered =
+      HighExpr::makeBinop(NdOp::INT_LESS, Sum, HighExpr::makeConst(5, 8));
+  auto NotEqual = HighExpr::makeBinop(
+      NdOp::INT_NOTEQUAL,
+      HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeConst(3, 8), local(0)),
+      HighExpr::makeConst(2, 8));
+  // Each comparison weighs in by a distinct factor: 4, 2 and 1.
+  const auto Weighed = [](ExprPtr Comparison, uint64_t Weight) {
+    return HighExpr::makeBinop(NdOp::INT_MULT, std::move(Comparison),
+                               HighExpr::makeConst(Weight, 8));
+  };
+  HighFunc F;
+  F.Body = {result(
+      0x1000,
+      HighExpr::makeBinop(
+          NdOp::INT_ADD, Weighed(Equal, 4),
+          HighExpr::makeBinop(NdOp::INT_ADD, Weighed(Ordered, 2), NotEqual)))};
+  const uint64_t Inputs[] = {0,
+                             1,
+                             5,
+                             0x7FFFFFFFFFFFFFFFull,
+                             0x8000000000000000ull,
+                             ~uint64_t(0),
+                             ~uint64_t(0) - 1};
+  std::vector<std::optional<uint64_t>> Before;
+  for (const uint64_t Input : Inputs)
+    Before.push_back(execute(F, Input));
+  ASSERT_TRUE(simplifyAllExprs(F.Body));
+  EXPECT_EQ(Equal->Operands[0]->Kind, ExprKind::Var);
+  EXPECT_EQ(Equal->Operands[1]->ConstVal, ~uint64_t(0));
+  EXPECT_EQ(NotEqual->Operands[0]->Kind, ExprKind::Var);
+  EXPECT_EQ(NotEqual->Operands[1]->ConstVal, ~uint64_t(0));
+  EXPECT_EQ(Ordered->Operands[0], Sum);
+  EXPECT_EQ(Sum->Op, NdOp::INT_ADD);
+  for (size_t I = 0; I < std::size(Inputs); ++I)
+    EXPECT_EQ(execute(F, Inputs[I]), Before[I]) << Inputs[I];
+  EXPECT_FALSE(simplifyAllExprs(F.Body));
+}
+
 TEST(HighControlFlowSemantics,
      RefusedOrderedMemorySimplificationIsNotProgress) {
   auto Load = HighExpr::makeLoad(local(0), NdType::makeInt(8));
@@ -1641,7 +2259,8 @@ TEST(HighControlFlowSemantics, ShiftedMaskKeepsObservedOrEffectfulHigh) {
 
     simplifyAllExprs(Function.Body);
 
-    EXPECT_EQ(Masked->Operands[0], Shifted) << Case;
+    // A shift by zero is its operand; the high part stays either way.
+    EXPECT_EQ(Masked->Operands[0], Case == 2 ? Shifted : Joined) << Case;
   }
 }
 
@@ -2678,7 +3297,7 @@ TEST(HighControlFlowSemantics, ThreadedSoleSuccessorKeepsItsTransferAndPhi) {
     Table.Targets = {0x1100, 0x1200, 0x1300};
     Table.CaseLabels = {0, 1, 2};
     MedToHighConverter Converter;
-    Converter.setJumpTables({Table});
+    M.JumpTables = {Table};
     const auto F = Converter.convert(M, Architecture);
     const uint64_t Expected[] = {7, 37, 93};
     for (uint64_t Condition : {0u, 1u, 2u}) {
@@ -2735,7 +3354,7 @@ TEST(HighControlFlowSemantics, SwitchPublishesTheCaseOfEachTablePosition) {
   Table.Targets = {0x1100, 0x1200, 0x1300};
   Table.CaseLabels = {0, 1, 2};
   MedToHighConverter Converter;
-  Converter.setJumpTables({Table});
+  M.JumpTables = {Table};
   const auto F = Converter.convert(M, Architecture);
 
   const auto Published = F.SwitchLabelsByJump.find(0x1008);
@@ -3074,7 +3693,7 @@ TEST(HighControlFlowSemantics, GotoToReturnBlockKeepsItsStoreAndLoad) {
   Table.Targets = {0x1100, 0x1200};
   Table.CaseLabels = {0, 1};
   MedToHighConverter Converter;
-  Converter.setJumpTables({Table});
+  M.JumpTables = {Table};
   const auto F = Converter.convert(M, Architecture);
   unsigned Stores = 0;
   walkStmts(F.Body,
@@ -3744,7 +4363,8 @@ TEST(HighControlFlowSemantics, SlotCallGoesThroughThePointerItHolds) {
   // symbol on a data slot names the variable, `int (*handler)(int)`, not the
   // callee: calling it by name would run the variable. A bound import slot
   // names its import, and a constant folded into `call rax` that lands in
-  // code is the callee itself.
+  // code is the callee itself. A slot spelled as an import that holds the
+  // image's own code is still a variable.
   const Arch Architecture = Arch::X64;
   BinaryImage Image;
   Image.Format = BinaryFormat::ELF;
@@ -3793,6 +4413,19 @@ TEST(HighControlFlowSemantics, SlotCallGoesThroughThePointerItHolds) {
   LinkerSlot.Name = "__imp_ZwClose";
   LinkerSlot.Addr = 0x404040;
   Image.Symbols.push_back(LinkerSlot);
+  // MinGW's own `__imp_X` variables, initialized to the function the runtime
+  // supplies in place of an import: one the loader relocates, and one a fixed
+  // image holds as is.
+  for (va_t Slot : {0x404048U, 0x404050U}) {
+    Symbol Variable;
+    Variable.Name = "__imp___acrt_iob_func";
+    Variable.Addr = Slot;
+    Image.Symbols.push_back(Variable);
+    for (unsigned I = 0; I < 8; ++I)
+      Image.Segments[1].Data[Slot - 0x404000 + I] =
+          static_cast<uint8_t>(uint64_t{0x401060} >> (8 * I));
+  }
+  Image.CodePtrRelocSlots.insert(0x404048);
   auto callIn = [](const HighFunc &F) -> ExprPtr {
     for (const HighStmt &S : F.Body) {
       if (S.Kind == StmtKind::Call && S.CallExpr)
@@ -3808,7 +4441,7 @@ TEST(HighControlFlowSemantics, SlotCallGoesThroughThePointerItHolds) {
                                           {0x404040, "__imp_ZwClose"},
                                           {0x401060, "target"}};
   for (va_t Constant : {0x404018U, 0x404020U, 0x404028U, 0x404030U, 0x404038U,
-                        0x404040U, 0x401060U}) {
+                        0x404040U, 0x404048U, 0x404050U, 0x401060U}) {
     SCOPED_TRACE(Constant);
     MedFunc M;
     M.Entry = 0x401000;
@@ -4857,6 +5490,175 @@ TEST(HighControlFlowSemantics, ArmJumpPastALoopItAloneEntersBecomesStructured) {
   EXPECT_EQ(Exits, 0u);
 }
 
+TEST(HighControlFlowSemantics, ALandingPadOneJumpEntersKeepsItsPlace) {
+  // The tail of std::panicking::panic_with_hook in an AArch64 Rust image.
+  // The unwinder enters 0x1764, which only jumps to 0x1780, and it enters
+  // 0x1780 from another call too.  0x1780 drops a guard and ends in
+  // `brk #1`.  One jump names 0x1780, but moving its code to that jump
+  // would leave no code at the address either entry resumes at.
+  auto Call = [](va_t Address, const char *Callee, bool Returns) {
+    HighStmt S;
+    S.Kind = StmtKind::Call;
+    S.Addr = Address;
+    S.CallExpr = HighExpr::makeCall(Callee, 0x2000, {});
+    S.CallExpr->DoesNotReturn = !Returns;
+    return S;
+  };
+  HighStmt Trap;
+  Trap.Kind = StmtKind::Call;
+  Trap.Addr = 0x1784;
+  Trap.CallExpr = HighExpr::makeCall("trap", 0, {HighExpr::makeConst(1, 2)});
+  Trap.CallExpr->IntrinsicId = Intrinsic::Brk;
+  const std::vector<HighStmt> Tail = {
+      result(0x1700, local(1)), jump(0x1764, 0x1780),
+      Call(0x177c, "panic_in_cleanup", /*Returns=*/false),
+      Call(0x1780, "guard_drop", /*Returns=*/true), Trap};
+  auto Shape = [](const std::vector<HighStmt> &Body) {
+    std::vector<std::pair<unsigned, va_t>> Out;
+    for (const HighStmt &S : Body)
+      Out.emplace_back(static_cast<unsigned>(S.Kind), S.Addr);
+    return Out;
+  };
+  std::vector<HighStmt> Body = Tail;
+  reduceSingleUseGotos(Body, /*SpliceRegions=*/true, {0x1764, 0x1780});
+  EXPECT_EQ(Shape(Body), Shape(Tail));
+  // A copy of 0x1780's code in place of the jump would leave the original
+  // unreferenced after a terminator, and dead-code elimination removes it.
+  Body = Tail;
+  duplicateSmallReturnTails(Body, /*PrintedSize=*/false, {0x1764, 0x1780});
+  EXPECT_EQ(Shape(Body), Shape(Tail));
+}
+
+TEST(HighControlFlowSemantics, APadsFirstReadFoldsBehindAnAnchor) {
+  // The pad at 0xDD9C of std::panicking::panic_handler's closure loads a
+  // slot that only its first test reads.  The read moves into the test, and
+  // an anchor keeps 0xDD9C, where the unwinder enters.
+  HighStmt Panic;
+  Panic.Kind = StmtKind::Call;
+  Panic.Addr = 0xdd98;
+  Panic.CallExpr = HighExpr::makeCall("panic_with_hook", 0x2000, {});
+  Panic.CallExpr->DoesNotReturn = true;
+  HighStmt Read = assign(0xdd9c, 2, 0);
+  Read.Val = HighExpr::makeLoad(local(3), NdType::makeInt(8));
+  HighStmt Test;
+  Test.Kind = StmtKind::If;
+  Test.Addr = 0xdda4;
+  Test.Cond =
+      HighExpr::makeBinop(NdOp::INT_SLESS, local(2), HighExpr::makeConst(1, 8));
+  Test.Body = {result(0xddc0, HighExpr::makeConst(0, 8))};
+  std::vector<HighStmt> Body = {Panic, Read, Test,
+                                result(0xdda8, HighExpr::makeConst(1, 8))};
+  reduceSingleUseGotos(Body, /*SpliceRegions=*/false, {0xdd9c});
+  ASSERT_EQ(Body.size(), 4u);
+  EXPECT_EQ(Body[1].Kind, StmtKind::Block);
+  EXPECT_EQ(Body[1].Addr, 0xdd9cu);
+  ASSERT_EQ(Body[2].Kind, StmtKind::If);
+  bool ReadsTheSlot = false, ReadsTheTemporary = false;
+  std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
+    if (!E)
+      return;
+    ReadsTheSlot |= E->Kind == ExprKind::Load;
+    ReadsTheTemporary |= E->Kind == ExprKind::Var && E->Var.Id == 2;
+    for (const ExprPtr &Operand : E->Operands)
+      Visit(Operand);
+  };
+  Visit(Body[2].Cond);
+  EXPECT_TRUE(ReadsTheSlot);
+  EXPECT_FALSE(ReadsTheTemporary);
+}
+
+TEST(HighControlFlowSemantics,
+     IndependentEntriesSurviveRepeatedDeadCodeCleanup) {
+  // The dispatcher may enter any block after the ordinary entry returns.
+  // Folding away its first copy must leave each block's original entry
+  // usable, including during the later DCE rounds after goto reduction.
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    const auto &Registers = getTargetRegInfo(Architecture);
+    MedFunc Med;
+    Med.Entry = 0x1000;
+    Med.Name = "independent_entries";
+    Med.ReturnType = NdType::makeInt(4);
+    for (unsigned I = 0; I != 33; ++I) {
+      MedBlock Block;
+      Block.Id = I;
+      Block.StartAddr = Med.Entry + I * 0x20;
+      Block.EndAddr = Block.StartAddr + 0x10;
+      MedOp Copy;
+      Copy.Opcode = NdOp::COPY;
+      Copy.Addr = Block.StartAddr;
+      Copy.Output.Kind = MedVar::Reg;
+      Copy.Output.RegOff = Registers.IntReturnReg;
+      Copy.Output.Id = I + 1;
+      Copy.Output.SSAVer = 1;
+      Copy.Output.Size = 4;
+      Copy.Output.TheArch = Architecture;
+      Copy.addInput(MedVar::makeConst(I + 7, 4));
+      MedOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = Block.StartAddr + 4;
+      MedVar Returned = Copy.Output;
+      if (!Registers.ReturnOperandIsValue) {
+        Returned.Id = 1000;
+        Returned.RegOff = Registers.LinkRegister;
+        Returned.SSAVer = 0;
+        Returned.Size = Registers.PointerSize;
+      }
+      Return.addInput(Returned);
+      Block.Ops = {Copy, Return};
+      Med.Blocks.push_back(std::move(Block));
+    }
+    MedToHighConverter Converter;
+    const HighFunc High = Converter.convert(Med, Architecture);
+    EXPECT_EQ(execute(High, 0), 7u);
+    for (unsigned I = 1; I != Med.Blocks.size(); ++I) {
+      SCOPED_TRACE(I);
+      HighFunc Entered = High;
+      Entered.Body.insert(Entered.Body.begin(),
+                          jump(0, Med.Blocks[I].StartAddr));
+      EXPECT_EQ(execute(Entered, 0, true), I + 7u);
+    }
+  }
+}
+
+TEST(HighControlFlowSemantics, AJumpTailKeepsTheLandingPadsAroundIt) {
+  // 0x1764 is a landing pad whose code is `goto 0x1780`; 0x1768 jumps there
+  // too.  0x1780 sets v1 and goes on to 0x17a0.
+  HighStmt Panic;
+  Panic.Kind = StmtKind::Call;
+  Panic.Addr = 0x177c;
+  Panic.CallExpr = HighExpr::makeCall("panic_in_cleanup", 0x2000, {});
+  Panic.CallExpr->DoesNotReturn = true;
+  HighStmt Join;
+  Join.Kind = StmtKind::Block;
+  Join.Addr = 0x17a0;
+  const std::vector<HighStmt> Tail = {result(0x1700, local(1)),
+                                      jump(0x1764, 0x1780),
+                                      jump(0x1768, 0x1780),
+                                      Panic,
+                                      assign(0x1780, 1, 1),
+                                      jump(0x1784, 0x17a0),
+                                      Join,
+                                      result(0x17a4, local(1))};
+  auto Shape = [](const std::vector<HighStmt> &Body) {
+    std::vector<std::pair<unsigned, va_t>> Out;
+    for (const HighStmt &S : Body)
+      Out.emplace_back(static_cast<unsigned>(S.Kind), S.Addr);
+    return Out;
+  };
+  // A pad that two jumps reach is no tail to copy to them.
+  std::vector<HighStmt> Body = Tail;
+  EXPECT_FALSE(duplicateSmallJumpTails(Body, {0x1780}));
+  EXPECT_EQ(Shape(Body), Shape(Tail));
+  // A pad that jumps to a tail keeps its address ahead of the copy.
+  Body = Tail;
+  ASSERT_TRUE(duplicateSmallJumpTails(Body, {0x1764}));
+  ASSERT_GE(Body.size(), 3u);
+  EXPECT_EQ(Body[1].Kind, StmtKind::Block);
+  EXPECT_EQ(Body[1].Addr, 0x1764u);
+  EXPECT_EQ(Body[2].Kind, StmtKind::Assign);
+}
+
 TEST(HighControlFlowSemantics, ArmJumpingBackAfterWorkBecomesALoop) {
   // v = x; X: v = v + 1; if (v < 5) { v = v + 1; goto X; }  return v;
   auto Bump = [](va_t Address) {
@@ -4949,6 +5751,51 @@ TEST(HighControlFlowSemantics, SiblingSkipsKeepTheirOwnEdgeCopies) {
   }
 }
 
+TEST(HighControlFlowSemantics, SiblingSkipsKeepSharedReadersOutsideThePrefix) {
+  // `v = 9; if (x) goto S; v = x + 7; if (v + v) goto S; S: return v + v;`
+  // Both reads in the second guard and the later return share one expression
+  // graph. The return still reads the prefix value outside the erased range.
+  for (bool Late : {false, true}) {
+    SCOPED_TRACE(Late);
+    for (bool ReadOutside : {false, true}) {
+      SCOPED_TRACE(ReadOutside);
+      const auto Read = HighExpr::makeBinop(NdOp::INT_ADD, local(1), local(1));
+      auto Prefix = assign(0x1008, 1, 0);
+      Prefix.Val = HighExpr::makeBinop(NdOp::INT_ADD, local(0),
+                                       HighExpr::makeConst(7, 8));
+      auto Second = conditional(0x100c, 0x1100);
+      Second.Cond = Read;
+      HighFunc F;
+      F.Body = {
+          assign(0x1000, 1, 9), conditional(0x1004, 0x1100), Prefix, Second,
+          result(0x1100, ReadOutside ? Read : HighExpr::makeConst(33, 8))};
+      auto Expected = [&](uint64_t X) -> uint64_t {
+        return ReadOutside ? (X ? 18 : 14) : 33;
+      };
+      for (uint64_t X : {0, 1, 2})
+        ASSERT_EQ(execute(F, X), Expected(X));
+      for (unsigned Pass = 0; Pass != 2; ++Pass) {
+        SCOPED_TRACE(Pass);
+        if (Late)
+          invertSkipGotos(F);
+        else
+          structureIfElse(F, 10);
+        for (uint64_t X : {0, 1, 2})
+          EXPECT_EQ(execute(F, X), Expected(X));
+      }
+      // The early structurer can assemble the arms before testing sibling
+      // skips. The late entry point still sees the directly foldable pair.
+      if (Late && !ReadOutside) {
+        bool HasPrefix = false;
+        walkStmts(F.Body, [&](const HighStmt &S) {
+          HasPrefix |= S.Kind == StmtKind::Assign && S.Addr == 0x1008;
+        });
+        EXPECT_FALSE(HasPrefix);
+      }
+    }
+  }
+}
+
 TEST(HighControlFlowSemantics, EnteredNopStillFallsIntoTheNextBlock) {
   // `if (x == 1) goto Y; goto X; return 7; Y: ; X: v = 1; return v + 10;`
   // The jump to Y runs into X, so X is not reached by jumps alone.
@@ -5006,8 +5853,8 @@ TEST(HighControlFlowSemantics, SwitchCleanupPreservesContinuationPaths) {
 
 TEST(HighControlFlowSemantics,
      UnreachableCleanupDropsOnlyUnreferencedReturnsAfterSourceTraps) {
-  for (const auto Id : {Intrinsic::Ud2, Intrinsic::ArmHlt, Intrinsic::Brk,
-                        Intrinsic::Hlt_A64}) {
+  for (const auto Id : {Intrinsic::Ud2, Intrinsic::Brk, Intrinsic::Hlt_A64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Id));
     HighStmt Trap;
     Trap.Kind = StmtKind::Call;
     Trap.Addr = 0x1000;
@@ -5025,15 +5872,20 @@ TEST(HighControlFlowSemantics,
         << "a branch may enter the return after the trap";
   }
 
-  HighStmt DebugTrap;
-  DebugTrap.Kind = StmtKind::Call;
-  DebugTrap.Addr = 0x1000;
-  DebugTrap.CallExpr = HighExpr::makeCall("debug_trap", 0, {});
-  DebugTrap.CallExpr->IntrinsicId = Intrinsic::Int3;
-  std::vector<HighStmt> Body{DebugTrap, result(0x1004, HighExpr::makeUndef(8))};
-  removeUnreachableCode(Body);
-  EXPECT_EQ(Body.size(), 2u)
-      << "a resumable debugger trap must retain its following return";
+  for (const auto Id : {Intrinsic::Int3, Intrinsic::ArmBkpt, Intrinsic::ArmHlt,
+                        Intrinsic::ArmUdf}) {
+    SCOPED_TRACE(static_cast<unsigned>(Id));
+    HighStmt Resumable;
+    Resumable.Kind = StmtKind::Call;
+    Resumable.Addr = 0x1000;
+    Resumable.CallExpr = HighExpr::makeCall("resumable_trap", 0, {});
+    Resumable.CallExpr->IntrinsicId = Id;
+    std::vector<HighStmt> Body{Resumable,
+                               result(0x1004, HighExpr::makeUndef(8))};
+    removeUnreachableCode(Body);
+    EXPECT_EQ(Body.size(), 2u)
+        << "a resumable trap must retain its following return";
+  }
 }
 
 TEST(HighControlFlowSemantics,
@@ -5954,7 +6806,7 @@ TEST(HighControlFlowSemantics, JumpTableSuccessorsKeepCallsStoresAndPhiEdges) {
       Table.CaseLabels = {0, 1, 2};
       const std::map<va_t, std::string> Names{{0x2000, "observe"}};
       MedToHighConverter Converter;
-      Converter.setJumpTables({Table});
+      M.JumpTables = {Table};
       Converter.setFuncNames(&Names);
       const auto High = Converter.convert(M, Architecture);
       unsigned Stores = 0, Calls = 0;
@@ -6001,7 +6853,7 @@ TEST(HighControlFlowSemantics, JumpTableLoopEdgesPreserveParallelPhiSnapshots) {
       Table.Targets = {0x1200, 0x1100};
       Table.CaseLabels = {0, 1};
       MedToHighConverter Converter;
-      Converter.setJumpTables({Table});
+      Med.JumpTables = {Table};
       const auto High = Converter.convert(Med, Architecture);
       EXPECT_TRUE(buildHighSourceFlowGraph(High).Diagnostics.Complete);
       for (unsigned Count = 1; Count <= 8; ++Count) {
@@ -6012,7 +6864,7 @@ TEST(HighControlFlowSemantics, JumpTableLoopEdgesPreserveParallelPhiSnapshots) {
       // The loop successor's PHIs cannot be assigned to some other case if
       // its dispatch edge is missing. Incomplete metadata stays unsupported.
       Table.Targets[1] = 0x1200;
-      Converter.setJumpTables({Table});
+      Med.JumpTables = {Table};
       const auto Incomplete = Converter.convert(Med, Architecture);
       EXPECT_FALSE(buildHighSourceFlowGraph(Incomplete).Diagnostics.Complete);
     }
@@ -6475,10 +7327,14 @@ void checkEnteredLoopExecution(const HighFunc &F,
         SourcePath,
         "-o",
         ExecutablePath};
+    // Cold Windows compiler/linker startup exceeded 30 seconds on the native
+    // runner. Keep a bounded tool deadline and retain its process diagnostic.
+    std::string CompileError;
     const int CompileResult = llvm::sys::ExecuteAndWait(
-        Compiler, Arguments, std::nullopt, Redirects, 30);
+        Compiler, Arguments, std::nullopt, Redirects, 90, 0, &CompileError);
     auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
     ASSERT_EQ(CompileResult, 0)
+        << Compiler << ": " << CompileError << "\n"
         << (Errors ? (*Errors)->getBuffer().str() : "no compiler diagnostic")
         << "\n"
         << Source;
@@ -7905,6 +8761,86 @@ TEST(HighControlFlowSemantics, ALaneOfAJoinIsThatLane) {
   EXPECT_EQ(Root->Operands[0]->Operands[1]->ConstVal, 5u);
 }
 
+TEST(HighControlFlowSemantics, ARecordFieldTakesItsOwnTypeOfASlicedLocal) {
+  // `return {rax, edx}` where edx holds a signed 32-bit local, read as the
+  // field's uint32_t through the register's low bytes: the whole register, or
+  // its sign extension.  The slice folds into the signed local, and the C
+  // initializer converts it to the field's type.
+  for (const bool Extended : {false, true}) {
+    SCOPED_TRACE(Extended);
+    const TypeRef Record = NdType::makeStruct(
+        {NdType::makeInt(8, false), NdType::makeInt(4, false)});
+    ASSERT_TRUE(Record);
+    Record->RegisterReturnRecord = true;
+    ExprPtr Wide = local(0);
+    Wide->Type = NdType::makeInt(8, false);
+    MedVar Narrow;
+    Narrow.Kind = MedVar::Temp;
+    Narrow.Id = 1;
+    Narrow.Size = 4;
+    ExprPtr Value = HighExpr::makeVar(Narrow, NdType::makeInt(4, true));
+    if (Extended) {
+      Value = HighExpr::makeUnary(NdOp::INT_SEXT, Value);
+      Value->Type = NdType::makeInt(8, true);
+    }
+    ExprPtr Pair = HighExpr::makeRecord(Record, {Wide, byteSlice(Value, 0, 4)});
+    ASSERT_EQ(Pair->Kind, ExprKind::Record);
+    HighFunc F;
+    F.Name = "pair";
+    F.Entry = 0x1000;
+    F.ReturnType = Record;
+    F.Body = {result(0x1000, Pair)};
+    simplifyAllExprs(F.Body);
+    const ExprPtr &Root = F.Body[0].RetVal;
+    ASSERT_EQ(Root->Kind, ExprKind::Record);
+    ASSERT_EQ(Root->Operands.size(), 2u);
+    EXPECT_EQ(Root->Operands[1]->Kind, ExprKind::Var);
+    std::string Source;
+    llvm::raw_string_ostream Stream(Source);
+    ASSERT_TRUE(HighCEmitter().emit({F}, Stream, {}));
+    Stream.flush();
+    const size_t Return = Source.find("return (struct ");
+    ASSERT_NE(Return, std::string::npos) << Source;
+    const std::string Initializer =
+        Source.substr(Return, Source.find(";\n", Return) - Return);
+    EXPECT_NE(Initializer.find(", (uint32_t)"), std::string::npos) << Source;
+  }
+}
+
+TEST(HighControlFlowSemantics, AFunctionReturningNoValueFoldsNoReturnedCall) {
+  // reset(p): if (p == 0) j = x; else j = release(p); return j;  in a
+  // function that returns no value (its tail call leaves release's result
+  // in RAX for no reader): C returns nothing on either path.
+  HighStmt Branch;
+  Branch.Kind = StmtKind::IfElse;
+  Branch.Addr = 0x1004;
+  Branch.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(0, 8));
+  Branch.Body = {assign(0x1008, 1, 5)};
+  HighStmt Call;
+  Call.Kind = StmtKind::Assign;
+  Call.Addr = 0x100C;
+  Call.Dst = local(1);
+  Call.Val = HighExpr::makeCall("release", 0x2000, {local(0)});
+  Call.Val->Type = NdType::makeInt(8);
+  Branch.ElseBody = {Call};
+  HighFunc F;
+  F.Name = "reset";
+  F.Entry = 0x1000;
+  F.ReturnsNoValue = true;
+  F.Body = {Branch, result(0x1010, local(1))};
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  ASSERT_TRUE(HighCEmitter().emit({F}, Stream, {}));
+  Stream.flush();
+  const size_t Definition = Source.find("void reset(");
+  ASSERT_NE(Definition, std::string::npos) << Source;
+  const std::string Body = Source.substr(Definition);
+  EXPECT_NE(Body.find("release("), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("return release("), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("return 5"), std::string::npos) << Source;
+}
+
 TEST(HighControlFlowSemantics, PhiCopiesOfOneRegisterShareItsName) {
   // v1 = x; v2 = v1; L: v3 = v2 + 1; v2 = v3; if (v3 < x + 5) goto L;
   // return v3;  -- the PHI copies of one register never overlap the values
@@ -8400,6 +9336,277 @@ TEST(HighControlFlowSemantics,
   ASSERT_EQ(Found->Operands.size(), 1u);
   ASSERT_EQ(Found->Operands[0]->Kind, ExprKind::Const);
   EXPECT_EQ(Found->Operands[0]->ConstVal, 7u);
+}
+
+TEST(HighControlFlowSemantics,
+     ACallReadsTheWholeRegisterPastItsPredecessorsLowSync) {
+  // linux_server loads a format with `lea rsi, [rip + s]` in the block
+  // before its call to a va_start forwarder, and SSA syncs ESI with the
+  // address's low bytes at a later instruction.  The call finds its named
+  // parameter in RSI through its predecessor, whose last write of the
+  // register is that sync, and passed its low four bytes,
+  // `(int32_t)("...")`.
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  auto Reg = [&](int Id, uint64_t RegOff, uint16_t Size) {
+    MedVar V;
+    V.Kind = MedVar::Reg;
+    V.TheArch = Arch::X64;
+    V.Id = Id;
+    V.SSAVer = 1;
+    V.Size = Size;
+    V.RegOff = RegOff;
+    return V;
+  };
+  const uint64_t Rdi = TRI.IntParamRegs[0], Rsi = TRI.IntParamRegs[1];
+  MedVar Address;
+  Address.Kind = MedVar::Temp;
+  Address.TheArch = Arch::X64;
+  Address.Id = 116;
+  Address.SSAVer = 3;
+  Address.Size = 8;
+  const MedVar Format = MedVar::makeConst(0x48A5CA, 8);
+  MedVar Result = Reg(20, TRI.IntReturnReg, 8);
+  MedFunc F;
+  F.Entry = 0x1000;
+  F.Name = "format_in_predecessor";
+  F.ReturnType = NdType::makeInt(8, false);
+  // Block 0 branches on its first argument, so it ends no straight line
+  // the call's block could join.
+  const MedVar Flag = Reg(41, Rdi, 1);
+  F.Blocks.resize(3);
+  F.Blocks[0].Id = 0;
+  F.Blocks[0].StartAddr = 0x1000;
+  F.Blocks[0].EndAddr = 0x1010;
+  F.Blocks[0].Succs = {1, 2};
+  MedOp Sync = operation(NdOp::SUBBYTES, 0x1007, Reg(31, Rsi, 4),
+                         {Format, MedVar::makeConst(0, 4)});
+  Sync.OriginSeq = -1;
+  F.Blocks[0].Ops = {operation(NdOp::COPY, 0x1000, Address, {Format}),
+                     operation(NdOp::COPY, 0x1000, Reg(30, Rsi, 8), {Format}),
+                     Sync,
+                     operation(NdOp::COND_BR, 0x100C, {},
+                               {MedVar::makeConst(0x1020, 8), Flag})};
+  F.Blocks[1].Id = 1;
+  F.Blocks[1].StartAddr = 0x1010;
+  F.Blocks[1].EndAddr = 0x1020;
+  F.Blocks[1].Preds = {0};
+  MedOp Call =
+      operation(NdOp::CALL, 0x1012, Result, {MedVar::makeConst(0x3000, 8)});
+  Call.CalleeRegisterArgs = 2;
+  Call.CalleeStackArgs = 0;
+  F.Blocks[1].Ops = {
+      operation(NdOp::COPY, 0x1010, Reg(40, Rdi, 8), {MedVar::makeConst(0, 8)}),
+      Call, operation(NdOp::RETURN, 0x1017, {}, {Result})};
+  F.Blocks[2].Id = 2;
+  F.Blocks[2].StartAddr = 0x1020;
+  F.Blocks[2].EndAddr = 0x1024;
+  F.Blocks[2].Preds = {0};
+  F.Blocks[2].Ops = {
+      operation(NdOp::RETURN, 0x1020, {}, {MedVar::makeConst(0, 8)})};
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  // The callee is a va_start forwarder whose two named parameters are its
+  // first integer registers: a call passes them as they reach it.
+  const std::map<va_t, VariadicVectorCallee> Forwarders{{0x3000, {0, 2}}};
+  MedToHighConverter Converter;
+  Converter.setBinaryImage(&Img);
+  Converter.setVariadicVectorCallees(&Forwarders);
+  const auto High = Converter.convert(F, Arch::X64);
+  const HighExpr *Found = nullptr;
+  walkStmts(High.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      std::function<void(const HighExpr &)> Walk = [&](const HighExpr &N) {
+        if (N.Kind == ExprKind::Call && N.CallAddr == 0x3000)
+          Found = &N;
+        N.forEachChildExpr([&](const ExprPtr &C) { Walk(*C); });
+      };
+      if (E)
+        Walk(*E);
+    });
+  });
+  ASSERT_NE(Found, nullptr);
+  ASSERT_GE(Found->Operands.size(), 2u);
+  ASSERT_TRUE(Found->Operands[1] && Found->Operands[1]->Type);
+  EXPECT_EQ(Found->Operands[1]->Type->Size, 8);
+}
+
+TEST(HighControlFlowSemantics, RegisterJoinsRespectEntryValuesInEitherOrder) {
+  for (auto Architecture : {Arch::X64, Arch::AArch64})
+    for (bool Reverse : {false, true})
+      for (unsigned Input : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(Reverse);
+        SCOPED_TRACE(Input);
+        const auto &TRI = getTargetRegInfo(Architecture);
+        auto Register = [&](int Id, int Version, uint16_t Bytes) {
+          MedVar V;
+          V.Kind = MedVar::Reg;
+          V.TheArch = Architecture;
+          V.Id = Id;
+          V.SSAVer = Version;
+          V.Size = Bytes;
+          V.RegOff = TRI.IntParamRegs[0];
+          return V;
+        };
+        MedFunc F;
+        F.Blocks.resize(3);
+        for (int I = 0; I < 3; ++I)
+          F.Blocks[I].Id = I;
+        F.Blocks[0].Succs = {1};
+        F.Blocks[1].Preds = {0, 2};
+        F.Blocks[1].Succs = {2};
+        F.Blocks[2].Preds = {1};
+        F.Blocks[2].Succs = {1};
+        PhiNode Low, Whole;
+        Low.Output = Register(10, 3, 4);
+        Low.Args = {{0, MedVar::makeConst(7, 4)}, {2, Low.Output}};
+        Whole.Output = Register(11, 3, 8);
+        Whole.Args = {{0, MedVar::makeConst(0x100000007, 8)},
+                      {2, Whole.Output}};
+        const bool Incoming = Input == 1 || Input == 2 || Input == 4 ||
+                              Input == 5 || Input == 6 || Input == 8;
+        if (Input == 1 || Input == 3 || Input == 7 || Input == 8)
+          Whole.Args[0].second = Register(11, 0, 8);
+        if (Input == 7 || Input == 8) {
+          auto Param = Register(11, 0, Input == 7 ? 8 : 4);
+          Param.Kind = MedVar::Param;
+          F.Params = {Param};
+        }
+        if (Input == 2)
+          Whole.Args[0].second = MedVar::makeUnspecified(8, Architecture);
+        if (Input == 3)
+          F.Blocks[0].Ops = {operation(NdOp::COPY, 0x1000, Register(11, 0, 8),
+                                       {MedVar::makeConst(0x100000007, 8)})};
+        if (Input == 4) {
+          PhiNode Nested;
+          Nested.Output = Register(11, 2, 8);
+          Nested.Args = {{1, Register(11, 0, 8)}};
+          F.Blocks[2].Phis = {Nested};
+          Whole.Args[1].second = Nested.Output;
+        }
+        if (Input == 5)
+          Whole.ExceptionalEntry = MedVar::makeUnspecified(8, Architecture);
+        if (Input == 6)
+          Whole.Args[0].first = 99;
+        auto &Join = F.Blocks[1];
+        Join.Phis = Reverse ? std::vector<PhiNode>{Whole, Low}
+                            : std::vector<PhiNode>{Low, Whole};
+        auto Read = Low.Output;
+        Read.Kind = MedVar::Temp;
+        Read.Id = 20;
+        Join.Ops = {operation(NdOp::COPY, 0x1100, Read, {Low.Output})};
+        const auto *Chosen =
+            detail::registerPhi(F, Join, TRI.IntParamRegs[0], TRI);
+        ASSERT_NE(Chosen, nullptr);
+        EXPECT_EQ(Chosen->Output.Size, Incoming ? 4 : 8);
+      }
+}
+
+TEST(HighControlFlowSemantics, ACallReadsTheWholeRegistersJoin) {
+  // sed's cross-jumped `__fprintf_chk` call: two paths load a format into
+  // RDX and jump to the shared call, whose block reads EDX first.  The join
+  // keeps a phi of EDX beside RDX's, and the call took the EDX phi for its
+  // argument, the format's low four bytes (`v45 = (int32_t)("%s%c")`).
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  auto Reg = [&](int Id, int Version, uint64_t RegOff, uint16_t Size) {
+    MedVar V;
+    V.Kind = MedVar::Reg;
+    V.TheArch = Arch::X64;
+    V.Id = Id;
+    V.SSAVer = Version;
+    V.Size = Size;
+    V.RegOff = RegOff;
+    return V;
+  };
+  const uint64_t Rdi = TRI.IntParamRegs[0], Rsi = TRI.IntParamRegs[1],
+                 Rdx = TRI.IntParamRegs[2];
+  MedFunc F;
+  F.Entry = 0x1000;
+  F.Name = "shared_format_call";
+  F.ReturnType = NdType::makeInt(8, false);
+  F.Blocks.resize(4);
+  F.Blocks[0].Id = 0;
+  F.Blocks[0].StartAddr = 0x1000;
+  F.Blocks[0].EndAddr = 0x1004;
+  F.Blocks[0].Succs = {1, 2};
+  F.Blocks[0].Ops = {
+      operation(NdOp::COND_BR, 0x1000, {},
+                {MedVar::makeConst(0x1020, 8), Reg(10, 0, Rdi, 1)})};
+  for (int I : {1, 2}) {
+    MedBlock &B = F.Blocks[I];
+    B.Id = I;
+    B.StartAddr = 0x1000 + 0x10 * I;
+    B.EndAddr = B.StartAddr + 0x10;
+    B.Preds = {0};
+    B.Succs = {3};
+    const MedVar Format = MedVar::makeConst(0x4000 + 0x10 * I, 8);
+    MedOp Sync = operation(NdOp::SUBBYTES, B.StartAddr + 4, Reg(31, I, Rdx, 4),
+                           {Format, MedVar::makeConst(0, 4)});
+    Sync.OriginSeq = -1;
+    B.Ops = {operation(NdOp::COPY, B.StartAddr, Reg(30, I, Rdx, 8), {Format}),
+             Sync,
+             operation(NdOp::BRANCH, B.StartAddr + 8, {},
+                       {MedVar::makeConst(0x1030, 8)})};
+  }
+  MedBlock &Join = F.Blocks[3];
+  Join.Id = 3;
+  Join.StartAddr = 0x1030;
+  Join.EndAddr = 0x1040;
+  Join.Preds = {1, 2};
+  PhiNode Low, Whole;
+  Low.Output = Reg(31, 3, Rdx, 4);
+  Low.Args = {{1, Reg(31, 1, Rdx, 4)}, {2, Reg(31, 2, Rdx, 4)}};
+  Whole.Output = Reg(30, 3, Rdx, 8);
+  Whole.Args = {{1, Reg(30, 1, Rdx, 8)}, {2, Reg(30, 2, Rdx, 8)}};
+  Join.Phis = {Low, Whole};
+  MedVar Sum;
+  Sum.Kind = MedVar::Temp;
+  Sum.TheArch = Arch::X64;
+  Sum.Id = 50;
+  Sum.SSAVer = 1;
+  Sum.Size = 4;
+  MedVar Result = Reg(20, 1, TRI.IntReturnReg, 8);
+  MedOp Call =
+      operation(NdOp::CALL, 0x1038, Result, {MedVar::makeConst(0x3000, 8)});
+  Call.CalleeRegisterArgs = 3;
+  Call.CalleeStackArgs = 0;
+  Join.Ops = {
+      operation(NdOp::INT_ADD, 0x1030, Sum,
+                {Reg(31, 3, Rdx, 4), MedVar::makeConst(1, 4)}),
+      operation(NdOp::STORE, 0x1032, {}, {MedVar::makeConst(0x5000, 8), Sum}),
+      operation(NdOp::COPY, 0x1034, Reg(40, 1, Rdi, 8),
+                {MedVar::makeConst(0, 8)}),
+      operation(NdOp::COPY, 0x1036, Reg(41, 1, Rsi, 8),
+                {MedVar::makeConst(2, 8)}),
+      Call,
+      operation(NdOp::RETURN, 0x103C, {}, {Result})};
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  // The callee is variadic like `__fprintf_chk`: a call passes its named
+  // parameters as they reach it.
+  const std::map<va_t, VariadicVectorCallee> Variadic{{0x3000, {0, 3}}};
+  MedToHighConverter Converter;
+  Converter.setBinaryImage(&Img);
+  Converter.setVariadicVectorCallees(&Variadic);
+  const auto High = Converter.convert(F, Arch::X64);
+  const HighExpr *Found = nullptr;
+  walkStmts(High.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      std::function<void(const HighExpr &)> Walk = [&](const HighExpr &N) {
+        if (N.Kind == ExprKind::Call && N.CallAddr == 0x3000)
+          Found = &N;
+        N.forEachChildExpr([&](const ExprPtr &C) { Walk(*C); });
+      };
+      if (E)
+        Walk(*E);
+    });
+  });
+  ASSERT_NE(Found, nullptr);
+  ASSERT_GE(Found->Operands.size(), 3u);
+  ASSERT_TRUE(Found->Operands[2] && Found->Operands[2]->Type);
+  EXPECT_EQ(Found->Operands[2]->Type->Size, 8);
 }
 
 TEST(HighControlFlowSemantics,
@@ -9313,6 +10520,96 @@ TEST(HighControlFlowSemantics, BlockEndingAnArmMovesToItsOnlyJump) {
   EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
   for (uint64_t X : {0, 1, 2})
     EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
+}
+
+TEST(HighControlFlowSemantics, NestedRegionSplicesRetainTheirOuterFollow) {
+  // The single-entry tail ends inside an arm. Moving it to the other arm
+  // must still reach the return after all enclosing containers. A wrong
+  // parent can instead select a sibling/default return or lose the follow.
+  for (const auto Kind : {StmtKind::Block, StmtKind::IfElse, StmtKind::Switch})
+    for (unsigned Depth : {0u, 9u, 41u}) {
+      SCOPED_TRACE(static_cast<int>(Kind));
+      SCOPED_TRACE(Depth);
+      HighStmt Inner;
+      Inner.Kind = StmtKind::IfElse;
+      Inner.Addr = 0x1004;
+      Inner.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                                       HighExpr::makeConst(1, 8));
+      Inner.Body = {assign(0x1008, 1, 1)};
+      Inner.ElseBody = {jump(0x100c, 0x1020)};
+      HighStmt Outer;
+      Outer.Kind = StmtKind::IfElse;
+      Outer.Addr = 0x1000;
+      Outer.Cond = local(0);
+      Outer.Body = {Inner};
+      Outer.ElseBody = {assign(0x1010, 1, 5), result(0x1014, local(1)),
+                        assign(0x1020, 1, 7)};
+      for (unsigned I = 0; I != Depth; ++I) {
+        HighStmt Wrapper;
+        Wrapper.Kind = Kind;
+        Wrapper.Addr = 0x2000 + 0x10 * I;
+        if (Kind == StmtKind::Switch) {
+          Wrapper.SwitchExpr = HighExpr::makeConst(0, 8);
+          SwitchCase Case;
+          Case.Value = 0;
+          Case.Body.push_back(std::move(Outer));
+          Wrapper.Cases.push_back(std::move(Case));
+          Wrapper.DefaultBody = {
+              result(Wrapper.Addr + 4, HighExpr::makeConst(99, 8))};
+        } else {
+          Wrapper.Body.push_back(std::move(Outer));
+          if (Kind == StmtKind::IfElse) {
+            Wrapper.Cond = HighExpr::makeConst(1, 8);
+            Wrapper.ElseBody = {
+                result(Wrapper.Addr + 4, HighExpr::makeConst(99, 8))};
+          }
+        }
+        Outer = std::move(Wrapper);
+      }
+      HighFunc F;
+      F.Body = {std::move(Outer), result(0x4000, local(1))};
+      for (uint64_t X : {0, 1})
+        ASSERT_EQ(execute(F, X, true), X == 0 ? 5u : 1u);
+      for (unsigned Round = 0; Round != 4; ++Round) {
+        reduceSingleUseGotos(F.Body, /*SpliceRegions=*/true);
+        for (uint64_t X : {0, 1, 2, 7})
+          EXPECT_EQ(execute(F, X, true), X == 0 ? 5u : X == 1 ? 1u : 7u);
+      }
+      EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+    }
+}
+
+TEST(HighControlFlowSemantics, ARegionNeverSplicesIntoItsOwnDescendant) {
+  for (unsigned Depth : {0u, 9u, 41u}) {
+    SCOPED_TRACE(Depth);
+    HighStmt Nested;
+    Nested.Kind = StmtKind::Block;
+    Nested.Body = {conditional(0x3010, 0x3000),
+                   result(0x3014, HighExpr::makeConst(7, 8))};
+    for (unsigned I = 0; I != Depth; ++I) {
+      HighStmt Parent;
+      Parent.Kind = StmtKind::Block;
+      Parent.Addr = 0x4000 + 0x10 * I;
+      Parent.Body.push_back(std::move(Nested));
+      Nested = std::move(Parent);
+    }
+    HighStmt Region;
+    Region.Kind = StmtKind::Block;
+    Region.Addr = 0x3000;
+    Region.Body.push_back(std::move(Nested));
+    HighFunc F;
+    F.Body = {result(0x1000, HighExpr::makeConst(3, 8)), std::move(Region),
+              result(0x5000, HighExpr::makeConst(11, 8))};
+    for (unsigned Round = 0; Round != 3; ++Round) {
+      reduceSingleUseGotos(F.Body, /*SpliceRegions=*/true);
+      EXPECT_EQ(execute(F, 0, true), 3u);
+      EXPECT_EQ(countKind(F, StmtKind::Goto), 1u);
+      unsigned Regions = 0;
+      walkStmts(F.Body,
+                [&](const HighStmt &S) { Regions += S.Addr == 0x3000; });
+      EXPECT_EQ(Regions, 1u);
+    }
+  }
 }
 
 TEST(HighControlFlowSemantics, CaseRegionHoldingATryMovesIntoItsCase) {
@@ -10450,4 +11747,139 @@ TEST(HighControlFlowSemantics, JumpTailCopyKeepsTheOuterLabelOwner) {
   EXPECT_EQ(Entries, 2U);
   for (uint64_t Input : {0U, 1U, 7U})
     EXPECT_EQ(execute(F, Input, true), Input ? 7U : 5U);
+}
+
+TEST(HighControlFlowDAG, SharedReadMultiplicityDoesNotExpandAsATree) {
+  MedVar V;
+  V.Kind = MedVar::Temp;
+  V.Id = 7;
+  V.Size = 8;
+  ExprPtr Read = HighExpr::makeVar(V);
+  ExprPtr Shared = Read;
+  for (unsigned I = 0; I != 33; ++I)
+    Shared = HighExpr::makeBinop(NdOp::INT_ADD, Shared, Shared);
+  HighStmt Assignment;
+  Assignment.Kind = StmtKind::Assign;
+  Assignment.Addr = 0x1000;
+  Assignment.Dst = HighExpr::makeVar(V);
+  Assignment.Val = HighExpr::makeConst(1, 8);
+  HighStmt RetZero;
+  RetZero.Kind = StmtKind::Return;
+  RetZero.Addr = 0x1002;
+  RetZero.Val = HighExpr::makeConst(0, 8);
+  HighStmt Conditional;
+  Conditional.Kind = StmtKind::If;
+  Conditional.Addr = 0x1001;
+  Conditional.Cond = Read;
+  Conditional.Body = {RetZero};
+  HighStmt RetShared;
+  RetShared.Kind = StmtKind::Return;
+  RetShared.Addr = 0x1003;
+  RetShared.Val = Shared;
+  std::vector<HighStmt> Body{Assignment, Conditional, RetShared};
+  reduceSingleUseGotos(Body, false);
+  ASSERT_FALSE(Body.empty());
+  EXPECT_EQ(Body.front().Kind, StmtKind::Assign);
+  ASSERT_TRUE(Body.front().Dst);
+  EXPECT_EQ(Body.front().Dst->Var, V);
+}
+
+namespace {
+ExprPtr sharedConstant(unsigned Layers) {
+  ExprPtr Value = HighExpr::makeConst(0, 8);
+  for (unsigned I = 0; I != Layers; ++I)
+    Value = HighExpr::makeBinop(NdOp::INT_ADD, Value, Value);
+  return Value;
+}
+std::vector<HighStmt> conditionalBody(ExprPtr Value, ExprPtr Condition) {
+  MedVar V;
+  V.Kind = MedVar::Temp;
+  V.Id = 17;
+  V.Size = 8;
+  HighStmt Assign;
+  Assign.Kind = StmtKind::Assign;
+  Assign.Addr = 0x1000;
+  Assign.Dst = HighExpr::makeVar(V);
+  Assign.Val = std::move(Value);
+  HighStmt Zero;
+  Zero.Kind = StmtKind::Return;
+  Zero.Addr = 0x1002;
+  Zero.Val = HighExpr::makeConst(0, 8);
+  HighStmt If;
+  If.Kind = StmtKind::If;
+  If.Addr = 0x1001;
+  If.Cond = std::move(Condition);
+  If.Body = {Zero};
+  HighStmt One;
+  One.Kind = StmtKind::Return;
+  One.Addr = 0x1003;
+  One.Val = HighExpr::makeConst(1, 8);
+  return {Assign, If, One};
+}
+ExprPtr readVariable() {
+  MedVar V;
+  V.Kind = MedVar::Temp;
+  V.Id = 17;
+  V.Size = 8;
+  return HighExpr::makeVar(V);
+}
+bool containsVariable(const std::vector<HighStmt> &Body) {
+  std::set<const HighExpr *> Seen;
+  bool Found = false;
+  auto Visit = [&](auto &&Self, const ExprPtr &E) -> void {
+    if (!E || !Seen.insert(E.get()).second)
+      return;
+    Found |= E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Temp &&
+             E->Var.Id == 17;
+    E->forEachChildExpr([&](const ExprPtr &Child) { Self(Self, Child); });
+  };
+  walkStmts(Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) { Visit(Visit, E); });
+  });
+  return Found;
+}
+} // namespace
+TEST(HighControlFlowDAG, SubstitutionFindsReadAfterLargeUnrelatedDag) {
+  auto Condition =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, sharedConstant(33), readVariable());
+  auto Body = conditionalBody(HighExpr::makeConst(1, 8), Condition);
+  EXPECT_TRUE(reduceSingleUseGotos(Body, false));
+  ASSERT_FALSE(Body.empty());
+  EXPECT_NE(Body.front().Kind, StmtKind::Assign);
+  EXPECT_FALSE(containsVariable(Body));
+}
+TEST(HighControlFlowDAG, SharedPureRightHandSideKeepsDepthLimit) {
+  for (unsigned Layers : {31u, 33u}) {
+    SCOPED_TRACE(Layers);
+    auto Body = conditionalBody(sharedConstant(Layers), readVariable());
+    reduceSingleUseGotos(Body, false);
+    ASSERT_FALSE(Body.empty());
+    EXPECT_EQ(Body.front().Kind == StmtKind::Assign, Layers == 33);
+    EXPECT_EQ(containsVariable(Body), Layers == 33);
+  }
+}
+TEST(HighControlFlowDAG,
+     SharedPureNodeAtDifferentDepthsCannotBorrowShallowProof) {
+  auto Shared = sharedConstant(29);
+  auto Deep =
+      HighExpr::makeBinop(NdOp::INT_ADD, Shared, HighExpr::makeConst(0, 8));
+  for (unsigned I = 0; I != 3; ++I)
+    Deep = HighExpr::makeBinop(NdOp::INT_ADD, Deep, HighExpr::makeConst(0, 8));
+  auto Root = HighExpr::makeBinop(NdOp::INT_ADD, Shared, Deep);
+  auto Body = conditionalBody(Root, readVariable());
+  reduceSingleUseGotos(Body, false);
+  ASSERT_FALSE(Body.empty());
+  EXPECT_EQ(Body.front().Kind, StmtKind::Assign);
+  EXPECT_TRUE(containsVariable(Body));
+}
+
+TEST(HighControlFlowDAG, SharedPurePrefixCannotHideAnEffectfulSibling) {
+  auto Call = HighExpr::makeCall("effect", 0x2000, {});
+  auto Value = HighExpr::makeBinop(NdOp::INT_ADD, sharedConstant(30), Call);
+  auto Body = conditionalBody(Value, readVariable());
+  reduceSingleUseGotos(Body, false);
+  ASSERT_FALSE(Body.empty());
+  EXPECT_EQ(Body.front().Kind, StmtKind::Assign);
+  EXPECT_EQ(Body.front().Val, Value);
+  EXPECT_TRUE(containsVariable(Body));
 }

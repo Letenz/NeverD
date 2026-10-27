@@ -1,5 +1,7 @@
 # Contratti dei kernel Android GKI pubblicati
 
+> Aggiornamento: per poll/epoll e stdio con buffer, vedere il [contratto attuale](../linux-network-contracts.md#poll-and-epoll-waits). Le note di questa pagina che limitano poll a timeout zero e GKI descrivono il sottoinsieme precedente.
+
 NeverD dà priorità ai rami Android GKI pubblicati 5.10–6.18, prima delle altre varianti Linux. La richiesta sceglie esplicitamente il ramo:
 
 ```json

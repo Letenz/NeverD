@@ -9,22 +9,42 @@
 // would give the object another type (`extern uint64_t stdout;` against
 // stdio.h's `extern FILE *stdout;`), which C rejects.
 //
-// NEVERD_LIBC_DATA_OBJECT(Name, Header): the C name of one object and the
-// header that declares it.
+// NEVERD_LIBC_DATA_OBJECT(Name, Header, Type): the C name of one object, the
+// header that declares it, and the C type it declares the object with.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_LIBC_DATA_OBJECT
-#error "define NEVERD_LIBC_DATA_OBJECT(Name, Header) before including this file"
+#error "define NEVERD_LIBC_DATA_OBJECT(Name, Header, Type) first"
 #endif
 
-NEVERD_LIBC_DATA_OBJECT("stdin", "stdio.h")
-NEVERD_LIBC_DATA_OBJECT("stdout", "stdio.h")
-NEVERD_LIBC_DATA_OBJECT("stderr", "stdio.h")
+NEVERD_LIBC_DATA_OBJECT("stdin", "stdio.h", "FILE *")
+NEVERD_LIBC_DATA_OBJECT("stdout", "stdio.h", "FILE *")
+NEVERD_LIBC_DATA_OBJECT("stderr", "stdio.h", "FILE *")
 // POSIX getopt state.
-NEVERD_LIBC_DATA_OBJECT("optarg", "unistd.h")
-NEVERD_LIBC_DATA_OBJECT("optind", "unistd.h")
-NEVERD_LIBC_DATA_OBJECT("opterr", "unistd.h")
-NEVERD_LIBC_DATA_OBJECT("optopt", "unistd.h")
+NEVERD_LIBC_DATA_OBJECT("optarg", "unistd.h", "char *")
+NEVERD_LIBC_DATA_OBJECT("optind", "unistd.h", "int")
+NEVERD_LIBC_DATA_OBJECT("opterr", "unistd.h", "int")
+NEVERD_LIBC_DATA_OBJECT("optopt", "unistd.h", "int")
+NEVERD_LIBC_DATA_OBJECT("environ", "unistd.h", "char **")
+NEVERD_LIBC_DATA_OBJECT("__environ", "unistd.h", "char **")
+NEVERD_LIBC_DATA_OBJECT("program_invocation_name", "errno.h", "char *")
+NEVERD_LIBC_DATA_OBJECT("program_invocation_short_name", "errno.h", "char *")
+// The time zone <time.h> keeps, whose `timezone` is also struct timezone's
+// tag in <sys/time.h>.
+NEVERD_LIBC_DATA_OBJECT("daylight", "time.h", "int")
+NEVERD_LIBC_DATA_OBJECT("timezone", "time.h", "long")
+NEVERD_LIBC_DATA_OBJECT("tzname", "time.h", "char *[2]")
+// Their GNU names, which <time.h> declares beside them.
+NEVERD_LIBC_DATA_OBJECT("__daylight", "time.h", "int")
+NEVERD_LIBC_DATA_OBJECT("__timezone", "time.h", "long")
+NEVERD_LIBC_DATA_OBJECT("__tzname", "time.h", "char *[2]")
+NEVERD_LIBC_DATA_OBJECT("getdate_err", "time.h", "int")
+// The IPv6 wildcard and loopback addresses, which an executable copies.
+NEVERD_LIBC_DATA_OBJECT("in6addr_any", "netinet/in.h", "const struct in6_addr")
+NEVERD_LIBC_DATA_OBJECT("in6addr_loopback", "netinet/in.h",
+                        "const struct in6_addr")
+// The sign lgamma leaves.
+NEVERD_LIBC_DATA_OBJECT("signgam", "math.h", "int")
 
 #undef NEVERD_LIBC_DATA_OBJECT

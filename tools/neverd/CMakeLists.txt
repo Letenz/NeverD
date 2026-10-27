@@ -5,32 +5,7 @@ if(NOT TARGET LLVMSwiftDemangle)
     "with the current fork sources.")
 endif()
 
-# Prefer the platform's compression library. Windows source builds can use
-# the pinned static fallback without a separately installed package manager.
-find_package(ZLIB QUIET)
-if(NOT TARGET ZLIB::ZLIB)
-  include(FetchContent)
-  function(neverd_mobile_fetch_zlib)
-    if(POLICY CMP0135)
-      cmake_policy(SET CMP0135 NEW)
-    endif()
-    set(ZLIB_BUILD_TESTING OFF)
-    set(ZLIB_BUILD_SHARED OFF)
-    set(ZLIB_BUILD_STATIC ON)
-    set(ZLIB_INSTALL OFF)
-    # Both maintainer-hosted archives have the same pinned bytes. Prefer the
-    # release asset so CI need not rely on the fossils endpoint being available.
-    FetchContent_Declare(neverd_mobile_zlib
-      URL
-        https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz
-        https://zlib.net/fossils/zlib-1.3.2.tar.gz
-      URL_HASH SHA256=bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16
-      TIMEOUT 180)
-    FetchContent_MakeAvailable(neverd_mobile_zlib)
-  endfunction()
-  neverd_mobile_fetch_zlib()
-  add_library(ZLIB::ZLIB ALIAS zlibstatic)
-endif()
+include(${CMAKE_SOURCE_DIR}/cmake/NeverDZlib.cmake)
 add_library(NeverDMobile STATIC
   mobile/MobileCommon.cpp
   mobile/MobileArchive.cpp
@@ -39,9 +14,6 @@ add_library(NeverDMobile STATIC
   mobile/MobileAndroid.cpp
   mobile/MobileAndroidInventory.cpp
   mobile/MobileAndroidReferences.cpp
-  mobile/MobileDalvikModel.cpp
-  mobile/MobileDalvikSignature.cpp
-  mobile/MobileDalvikDex.cpp
   mobile/MobileDalvikSmali.cpp
   mobile/MobileDalvikJava.cpp
   mobile/MobileIOS.cpp
@@ -63,10 +35,12 @@ if(APPLE)
   # Resolve LLVM Support through libneverd's existing registry. Linking the
   # component's archive directly avoids pulling a second static Support into
   # the CLI through the LLVM component's transitive link requirements.
-  target_link_libraries(NeverDMobile PRIVATE "$<TARGET_FILE:LLVMSwiftDemangle>")
+  target_link_libraries(NeverDMobile PRIVATE "$<TARGET_FILE:LLVMSwiftDemangle>"
+    "$<TARGET_FILE:NeverDDalvik>")
+  add_dependencies(NeverDMobile NeverDDalvik)
   add_dependencies(NeverDMobile LLVMSwiftDemangle)
 else()
-  target_link_libraries(NeverDMobile PRIVATE LLVMSwiftDemangle)
+  target_link_libraries(NeverDMobile PRIVATE LLVMSwiftDemangle NeverDDalvik)
 endif()
 if(NOT APPLE)
   # Internal loader symbols are not exported by the Windows C ABI DLL.
@@ -80,20 +54,31 @@ add_neverd_tool(neverd
   NeverDCLIFunctions.cpp
   NeverDSymbolDownload.cpp
   NeverDTranslateOutput.cpp
+  ExportTable.cpp
   cmd/NeverDCmdInfo.cpp
   cmd/NeverDCmdTables.cpp
+  cmd/NeverDCmdAnalysisSections.cpp
+  cmd/NeverDCmdTypes.cpp
+  cmd/NeverDCmdTypeFit.cpp
   cmd/NeverDCmdStrings.cpp
+  cmd/NeverDCmdPaths.cpp
   cmd/NeverDCmdXrefs.cpp
   cmd/NeverDCmdDisasm.cpp
+  cmd/NeverDCmdBytePatch.cpp
   cmd/NeverDCmdMarkup.cpp
   cmd/NeverDCmdSearch.cpp
   cmd/NeverDCmdExport.cpp
+  cmd/NeverDCmdDiff.cpp
+  cmd/NeverDCmdLineage.cpp
   cmd/NeverDCmdPipeline.cpp
   cmd/NeverDCmdSimplify.cpp
+  cmd/NeverDCmdProject.cpp
   cmd/NeverDCmdOptimizeIR.cpp
   cmd/NeverDCmdTranslate.cpp
   cmd/NeverDCmdEmulation.cpp
   cmd/NeverDCmdCPU.cpp
+  cmd/NeverDCmdModules.cpp
+  cmd/NeverDCmdExecution.cpp
   cmd/NeverDCmdProcess.cpp
   cmd/NeverDCmdUnpack.cpp
   cmd/NeverDCmdSafety.cpp
@@ -123,7 +108,9 @@ add_neverd_tool(neverd
   LINK_LIBS
   neverd_shared
   NeverDMobile
+  neverd_tool_json
 )
+neverd_stage_json_notice(neverd)
 
 # Symbol downloads go through the system's HTTP client: WinHTTP on Windows,
 # and elsewhere libcurl, loaded only when a download is asked for.
@@ -180,4 +167,18 @@ endif()
 
 if(COMMAND neverd_sign_hypervisor)
   neverd_sign_hypervisor(neverd)
+endif()
+
+if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    set(_neverd_sections_worker)
+    if(TARGET neverd-worker OR NEVERD_BUILD_WORKER OR NEVERD_BUILD_GUI)
+      set(_neverd_sections_worker "$<TARGET_FILE:neverd-worker>")
+    endif()
+    add_test(NAME NeverDAnalysisSectionsCLI
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/analysis_sections_test.py"
+              "$<TARGET_FILE:neverd>" ${_neverd_sections_worker})
+    set_tests_properties(NeverDAnalysisSectionsCLI PROPERTIES TIMEOUT 90 LABELS "CLI;AnalysisSections")
+  endif()
 endif()

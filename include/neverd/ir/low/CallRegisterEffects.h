@@ -30,14 +30,17 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
+#include <utility>
 #include <vector>
 
 namespace neverd {
 
 namespace libc {
 class NoReturnTargetIndex;
+class StackProbeIndex;
 } // namespace libc
 
 struct BinaryImage;
@@ -67,6 +70,10 @@ constexpr GPRFamilyMask vectorArgumentFamilies(unsigned Count) {
 /// CL, 2 for CX or CH, 4 for ECX, 8 for RCX; up to 16 for an XMM register).
 using GPRReadWidths =
     std::array<uint8_t, kX64VectorFamilyBase + kX64VectorArgumentFamilies>;
+
+/// Extra full-width scalar words left on every ordinary return, ordered by
+/// register byte offset. ABI result registers and address identities stay out.
+using GPRExitConstants = std::vector<std::pair<uint64_t, uint64_t>>;
 
 /// The GPR family of a register slice, or nullopt when \p RegOff is not one
 /// of the sixteen x86-64 GPRs this summary tracks.
@@ -110,6 +117,13 @@ struct RegisterStep {
   /// the slot the loader binds.  An import whose prototype fixes its entry
   /// reads (solveCallRegisterEffects) reads exactly those.
   va_t ImportCallee = InvalidVA;
+  /// The routine whose entry reads give an indirect call its arguments: the
+  /// one the function-pointer variable it goes through starts at
+  /// (PointerVariableCallee), keyed as that routine's summary is (the
+  /// variable's own address for another module's routine, whose prototype
+  /// fixes the reads).  Unlike ImportCallee, nothing else about the call
+  /// follows from it.
+  va_t ArgumentsFrom = InvalidVA;
   /// Nothing after this step executes (a call that does not return).
   bool Exits = false;
   /// A call whose arguments a contract at this site fixes (a printf-family
@@ -129,6 +143,11 @@ struct RegisterBlock {
 /// \p F has an effect this summary cannot describe.
 struct LocalRegisterEffect {
   GPRFamilyMask Writes = 0;
+  GPRExitConstants ExitConstants;
+  /// Complete, bounded straight-line scalar/CPUID body with an ordinary RET.
+  /// Source call recovery may expand it after checking the caller's physical
+  /// return-slot observations. This is not a general cached body for lifting.
+  std::shared_ptr<const std::vector<LowOp>> RegisterLeaf;
   std::set<va_t> Callees;
   /// Direct targets of calls that never return, but for those the name list
   /// knows: proved ones, and the code the user states never returns.  Their
@@ -149,6 +168,10 @@ struct LocalRegisterEffect {
   /// this to the solver, which knows the prototypes (RegisterStep::
   /// ImportCallee).
   bool UnknownEntryReads = false;
+  /// Independent entries, exceptional edges or malformed successors are not
+  /// represented by the ordinary register-flow graph. They forbid an absence
+  /// of observations proof without changing the argument-inference contract.
+  bool UnknownObservers = false;
   /// Liveness skeleton; block 0 is the entry.
   std::vector<RegisterBlock> Blocks;
   /// Positional arguments implied by the incoming stack-argument slots the
@@ -175,25 +198,48 @@ struct LocalRegisterEffect {
 /// never returning (a flagged call, or a tail call the LowIR contract keeps
 /// unflagged) ends its path: nothing it writes reaches a caller.
 /// A call whose instruction address \p FixedCallReads names reads exactly
-/// those bytes (RegisterStep::FixedArguments).
+/// those bytes (RegisterStep::FixedArguments).  A call through a
+/// function-pointer variable whose address \p ArgumentSources names reads
+/// what the routine it names reads (RegisterStep::ArgumentsFrom).  \p
+/// StackProbes answers which calls enter a stack probe, when given.
 LocalRegisterEffect localRegisterEffect(
     const BinaryImage &Img, const LowFunc &F,
     const libc::NoReturnTargetIndex *NoReturnTargets = nullptr,
-    const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr);
+    const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr,
+    const std::map<va_t, va_t> *ArgumentSources = nullptr,
+    const libc::StackProbeIndex *StackProbes = nullptr);
 
 LocalRegisterEffect localRegisterEffect(
     const BinaryImage &Img, CallRegisterBodyView F,
     const libc::NoReturnTargetIndex *NoReturnTargets = nullptr,
-    const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr);
+    const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr,
+    const std::map<va_t, va_t> *ArgumentSources = nullptr,
+    const libc::StackProbeIndex *StackProbes = nullptr);
+
+/// Join each run of \p Effect's steps that only read and write registers
+/// (no callee, no import, no exit, no fixed arguments, no vector copy) into
+/// one step with the same effect on the bytes live before it.
+/// localRegisterEffect returns summaries so joined: solving them gives what
+/// solving the instruction-by-instruction steps gives, over fewer steps.
+void joinPlainSteps(LocalRegisterEffect &Effect);
 
 struct CallRegisterSummaries {
   /// Families a call may change, for functions whose whole call tree is
   /// known.
   std::map<va_t, GPRFamilyMask> MayWrite;
+  /// Constants established locally on every return of a bounded call-free
+  /// body. Unknown paths, exceptional roots and addresses supply no fact.
+  std::map<va_t, GPRExitConstants> ExitConstants;
   /// Bytes of each family read before being written on some path from
   /// entry, including through callees.  A pass-through argument counts; a
   /// register a nested call merely receives does not.
   std::map<va_t, GPRReadWidths> EntryReads;
+  /// Non-result/control GPR families whose incoming values no path can observe.
+  /// Preserved-register exit transport still needs the caller's ABI check.
+  /// Unlike argument inference, this proof treats opaque calls as reading every
+  /// register and
+  /// never uses a nested call's may-write mask as a definite overwrite.
+  std::map<va_t, GPRFamilyMask> Unread;
   /// Positional arguments implied by the incoming stack slots a function
   /// reads, including through tail calls (0 when none), for functions whose
   /// stack reads are bounded, and for the imports whose counts are fixed.
@@ -227,6 +273,23 @@ CallRegisterSummaries solveCallRegisterEffects(
     const std::map<va_t, LocalRegisterEffect> &Funcs,
     GPRFamilyMask VolatileFamilies, GPRFamilyMask ArgumentFamilies,
     const std::set<va_t> &DispatchThunks = {},
+    const std::map<va_t, GPRReadWidths> &FixedEntryReads = {},
+    const std::map<va_t, int> &FixedEntryStackArgs = {});
+
+/// Each function's local effect, by entry, where another owner keeps it (as
+/// a cache of callee effects does).
+using LocalRegisterEffectRefs = std::map<va_t, const LocalRegisterEffect *>;
+
+/// Prove unobserved incoming GPR families from the same register-flow bodies.
+/// Opaque effects, partial writes and exhausted work retain the input. Argument
+/// counts and pointer-variable initializer hints cannot establish this fact.
+std::map<va_t, GPRFamilyMask>
+proveUnreadCallRegisters(const LocalRegisterEffectRefs &Funcs);
+
+/// As above, over effects \p Funcs points at.
+CallRegisterSummaries solveCallRegisterEffects(
+    const LocalRegisterEffectRefs &Funcs, GPRFamilyMask VolatileFamilies,
+    GPRFamilyMask ArgumentFamilies, const std::set<va_t> &DispatchThunks = {},
     const std::map<va_t, GPRReadWidths> &FixedEntryReads = {},
     const std::map<va_t, int> &FixedEntryStackArgs = {});
 

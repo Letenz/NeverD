@@ -10,6 +10,7 @@
 #include "neverd/analysis/InterpreterEntryAlignment.h"
 #include "neverd/analysis/InterpreterMachineStateProfile.h"
 #include "neverd/analysis/InterpreterModel.h"
+#include "neverd/analysis/Limits.h"
 #include "neverd/analysis/LowIRUndefinedIndependence.h"
 #include "neverd/ir/SourceTypeHint.h"
 #include "neverd/ir/low/LowIR.h"
@@ -105,7 +106,8 @@ llvm::Expected<InterpreterMachineStateModel> modelInterpreterMachineStateX64(
     const LowFunc &Residual,
     InterpreterMachineStateProfile Profile =
         InterpreterMachineStateProfile::UserX64NoFaultV1,
-    uint64_t MaxOperations = 65536);
+    uint64_t MaxOperations =
+        ::neverd::limits::analysis::kInterpreterMachineStateMaxOperations);
 llvm::Expected<InterpreterMachineStateModel> modelInterpreterMachineStateX64(
     const LowFunc &Residual, InterpreterMachineStateProfile Profile,
     uint64_t MaxOperations,

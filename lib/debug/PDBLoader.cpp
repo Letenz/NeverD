@@ -13,10 +13,12 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/debug/Limits.h"
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/FilePath.h"
+#include "neverd/types/CodeViewCallingConvention.h"
 
 #define DEBUG_TYPE "neverd-pdb-loader"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -114,20 +116,24 @@ bool isPostLinkRewrittenSection(llvm::StringRef Name) {
 
 bool pdb_loader_detail::recordedSectionsMatch(
     const BinaryImage &Image, llvm::ArrayRef<RecordedSection> Recorded) {
-  if (Recorded.size() != Image.Sections.size())
+  llvm::ArrayRef<Section> Sections = Image.Sections;
+  if (!Sections.empty() && Sections.back().IsImageHeader)
+    Sections = Sections.drop_back();
+  if (Recorded.size() != Sections.size())
     return false;
   // Sections from FirstMovable on may be re-laid out; see the declaration.
-  size_t FirstMovable = Image.Sections.size();
+  size_t FirstMovable = Sections.size();
   while (FirstMovable > 0 &&
-         isPostLinkRewrittenSection(Image.Sections[FirstMovable - 1].Name))
+         isPostLinkRewrittenSection(Sections[FirstMovable - 1].Name))
     --FirstMovable;
   constexpr uint64_t MaxCOFFField = std::numeric_limits<uint32_t>::max();
-  for (size_t I = 0; I < Image.Sections.size(); ++I) {
-    const Section &Loaded = Image.Sections[I];
+  for (size_t I = 0; I < Sections.size(); ++I) {
+    const Section &Loaded = Sections[I];
     const RecordedSection &Header = Recorded[I];
-    if (Loaded.VA < Image.Base || Loaded.Size > MaxCOFFField ||
-        Loaded.FileOff > MaxCOFFField || Loaded.FileSz > MaxCOFFField ||
-        Header.Name != Loaded.Name || Header.Characteristics != Loaded.Type)
+    if (Loaded.IsImageHeader || Loaded.VA < Image.Base ||
+        Loaded.Size > MaxCOFFField || Loaded.FileOff > MaxCOFFField ||
+        Loaded.FileSz > MaxCOFFField || Header.Name != Loaded.Name ||
+        Header.Characteristics != Loaded.Type)
       return false;
     if (I >= FirstMovable)
       continue;
@@ -691,6 +697,13 @@ struct PDBDebugContext::Impl {
   /// Stream offset of each seen `ProcSym`. A later request for a prefix
   /// callee seeks here instead of replaying the CU head.
   mutable std::map<uint32_t, std::map<va_t, uint32_t>> ModuleProcedureOffs;
+  /// The debug stream of each module ensureLocalsForAddress() has opened,
+  /// for its later procedures: opening one reads the module's descriptor
+  /// and substream headers again.  None for a module that has no stream to
+  /// open, as no module of a stripped PDB has, which is then not asked
+  /// again.  Guarded by LocalMutex.
+  mutable std::map<uint32_t, std::optional<llvm::pdb::ModuleDebugStreamRef>>
+      LocalModuleStreams;
   mutable std::mutex RecordParameterMutex;
   mutable std::set<uint32_t> RecordParameterModules;
   mutable std::map<va_t, std::vector<AuthenticatedRecordParameter>>
@@ -1103,7 +1116,9 @@ TypeRef PDBDebugContext::Impl::resolveIndex(TypeGraph &Graph,
                                             bool UseIpi, int Depth,
                                             TpiWalk Walk) const {
   joinTypePrefetch();
-  if (Depth > 32 || TI.isNoneType())
+  if (Depth > ::neverd::limits::debug::
+                  kPDBLoaderPDBDebugContextImplResolveIndexDepthLimit ||
+      TI.isNoneType())
     return {};
   if (TI.isSimple())
     return primitiveType(TI, PtrSize);
@@ -1299,7 +1314,16 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
       if (Full && *Full != Self)
         return Recurse(*Full);
     }
-    TypeRef Named = NdType::makeNamedRecord(Name, 0, true);
+    // An enumeration is as wide and signed as its underlying integer, which
+    // a convention passes it as.
+    const TypeRef Underlying = Recurse(Rec.getUnderlyingType());
+    TypeRef Named = NdType::makeNamedRecord(
+        Name,
+        Underlying && Underlying->Kind == NdTypeKind::Int ? Underlying->Size
+                                                          : 0,
+        true);
+    if (Underlying && Underlying->Kind == NdTypeKind::Int)
+      Named->IsSigned = Underlying->IsSigned;
     noteRecordFields(Named, Rec.getFieldList(), UseIpi);
     if (!Rec.isForwardRef() && Walk == TpiWalk::Fields) {
       attachDisplayFields(Named, Rec.getFieldList(), UseIpi, Depth);
@@ -1347,7 +1371,9 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
         }
       }
     }
-    return NdType::makeFunc(Return, std::move(Params));
+    return NdType::makeFunc(
+        Return, std::move(Params),
+        types::codeViewCallingConvention(Rec.CallConv, PtrSize));
   }
   case LK::LF_MFUNCTION: {
     llvm::codeview::MemberFunctionRecord Rec;
@@ -1389,7 +1415,9 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
         }
       }
     }
-    return NdType::makeFunc(Return, std::move(Params));
+    return NdType::makeFunc(
+        Return, std::move(Params),
+        types::codeViewCallingConvention(Rec.CallConv, PtrSize));
   }
   case LK::LF_BITFIELD: {
     llvm::codeview::BitFieldRecord Rec;
@@ -1442,7 +1470,10 @@ bool isDisplayFieldName(llvm::StringRef Name) {
 void PDBDebugContext::Impl::attachDisplayFields(
     const TypeRef &Record, llvm::codeview::TypeIndex FieldList, bool UseIpi,
     int Depth) const {
-  if (!Record || Depth > 32 || FieldList.isNoneType() || FieldList.isSimple())
+  if (!Record ||
+      Depth > ::neverd::limits::debug::
+                  kPDBLoaderPDBDebugContextImplAttachDisplayFieldsDepthLimit ||
+      FieldList.isNoneType() || FieldList.isSimple())
     return;
   // Do not bail when names are already present: LF_FIELDLIST
   // continuations append onto the same record. A nonempty first chunk
@@ -1607,7 +1638,10 @@ bool PDBDebugContext::Impl::visitProcedureType(
     const {
   llvm::codeview::TypeIndex Cur = TI;
   bool UseIpi = FromIpi;
-  for (int Depth = 0; Depth < 8; ++Depth) {
+  for (int Depth = 0;
+       Depth < ::neverd::limits::debug::
+                   kPDBLoaderPDBDebugContextImplVisitProcedureTypeDepthLimit;
+       ++Depth) {
     auto CV = loadType(UseIpi ? Ipi : Tpi, UseIpi, Cur);
     if (!CV)
       return false;
@@ -1811,7 +1845,8 @@ PDBDebugContext::loadImpl(const std::filesystem::path &PdbPath,
   Ctx->PImpl->CPU = cpuTypeFromMachine(DBI.getMachineType());
   Ctx->PImpl->PtrSize =
       (Image.Arch == Arch::X64 || Image.Arch == Arch::AArch64) ? 8 : 4;
-  Ctx->PImpl->Sections = Image.Sections;
+  Ctx->PImpl->Sections.assign(Image.Sections.begin(),
+                              Image.Sections.begin() + SecHeaders.size());
   {
     class Visitor : public llvm::pdb::ISectionContribVisitor {
     public:
@@ -1843,7 +1878,7 @@ PDBDebugContext::loadImpl(const std::filesystem::path &PdbPath,
   // enter LLVM's SymbolCache lazy type graph.
 
   auto ResolveVA = [&](uint16_t Seg, uint32_t Off) -> va_t {
-    if (Seg == 0 || Seg > Image.Sections.size())
+    if (Seg == 0 || Seg > SecHeaders.size())
       return 0;
     const Section &Owner = Image.Sections[Seg - 1];
     if (Off >= Owner.Size || Off > InvalidVA - Owner.VA)
@@ -1925,6 +1960,8 @@ PDBDebugContext::loadImpl(const std::filesystem::path &PdbPath,
 
         Progress.report("debug", 0, PubCount, "pdb publics");
         for (uint32_t I = 0; I < PubCount; ++I) {
+          if (I % limits::debug::kPDBLoadPublicProgressRecords == 0)
+            Progress.check();
           const uint32_t Off = llvm::support::endian::read32le(
               AddrBytes.data() + I * sizeof(uint32_t));
           pdb_loader_detail::ParsedPublicSym32 Pub;
@@ -1942,7 +1979,8 @@ PDBDebugContext::loadImpl(const std::filesystem::path &PdbPath,
             DataNames.observe(VA, Pub.Name);
           }
           const uint32_t Done = I + 1;
-          if (Done == PubCount || (Done % 4096u) == 0)
+          if (Done == PubCount ||
+              (Done % limits::debug::kPDBLoadPublicProgressRecords) == 0)
             Progress.report("debug", Done, PubCount, "pdb publics");
         }
 
@@ -2066,10 +2104,12 @@ PDBDebugContext::loadImpl(const std::filesystem::path &PdbPath,
   } else {
     parallelForEach(ModuleCount, [&](auto Claim, size_t Total) {
       for (size_t Index = Claim(); Index < Total; Index = Claim()) {
+        Progress.check();
         ScanModule(static_cast<uint32_t>(Index));
         const uint32_t Done =
             Finished.fetch_add(1, std::memory_order_relaxed) + 1;
-        if (Done == ModuleCount || (Done % 16) == 0) {
+        if (Done == ModuleCount ||
+            (Done % limits::debug::kPDBLoadModuleProgressRecords) == 0) {
           std::lock_guard<std::mutex> Guard(ProgressMutex);
           Progress.report("debug", Done, ModuleCount, "pdb modules");
         }
@@ -2131,14 +2171,24 @@ void PDBDebugContext::ensureLocalsForAddress(va_t Addr) const {
   }
   PImpl->LoadedModules.insert(ModuleIndex);
 
-  llvm::Expected<llvm::pdb::ModuleDebugStreamRef> ModuleOr =
-      PImpl->Native->getModuleDebugStream(ModuleIndex);
-  if (!ModuleOr) {
-    llvm::consumeError(ModuleOr.takeError());
-    return;
+  auto Stream = PImpl->LocalModuleStreams.find(ModuleIndex);
+  if (Stream == PImpl->LocalModuleStreams.end()) {
+    llvm::Expected<llvm::pdb::ModuleDebugStreamRef> ModuleOr =
+        PImpl->Native->getModuleDebugStream(ModuleIndex);
+    if (!ModuleOr) {
+      llvm::consumeError(ModuleOr.takeError());
+      PImpl->LocalModuleStreams.emplace(ModuleIndex, std::nullopt);
+      return;
+    }
+    Stream =
+        PImpl->LocalModuleStreams.emplace(ModuleIndex, std::move(*ModuleOr))
+            .first;
   }
+  if (!Stream->second)
+    return;
 
-  const llvm::codeview::CVSymbolArray &Records = ModuleOr->getSymbolArray();
+  const llvm::codeview::CVSymbolArray &Records =
+      Stream->second->getSymbolArray();
   bool HadError = false;
   uint32_t StartOff = Records.skew();
   // Seek a ProcSym we already saw. Resume only for a VA the prefix walk
@@ -2579,7 +2629,8 @@ PDBDebugContext::Impl::recordParameter(llvm::codeview::TypeIndex TI,
   using namespace llvm::codeview;
   bool Pointer = false;
   std::string ForwardName;
-  for (unsigned Depth = 0; Depth != 32; ++Depth) {
+  for (unsigned Depth = 0; Depth != ::neverd::limits::debug::kMaxPDBUnwrapDepth;
+       ++Depth) {
     auto CV = loadType(Tpi, false, TI);
     if (!CV)
       return std::nullopt;
@@ -2618,7 +2669,10 @@ PDBDebugContext::Impl::recordParameter(llvm::codeview::TypeIndex TI,
       llvm::consumeError(std::move(Error));
       return std::nullopt;
     }
-    if (C.getName().empty() || C.getName().size() > 8192 ||
+    if (C.getName().empty() ||
+        C.getName().size() >
+            ::neverd::limits::debug::
+                kPDBLoaderPDBDebugContextImplRecordParameterCGetNameSizeLimit ||
         (!ForwardName.empty() && C.getName() != ForwardName))
       return std::nullopt;
     if (C.isForwardRef()) {
@@ -2669,7 +2723,8 @@ void PDBDebugContext::Impl::loadRecordParameters(uint32_t ModuleIndex) const {
   va_t Entry = 0;
   uint32_t End = 0, CodeSize = 0, Nesting = 0;
   std::optional<TypeIndex> Parameter;
-  size_t Work = 200000;
+  size_t Work = ::neverd::limits::debug::
+      kPDBLoaderPDBDebugContextImplLoadRecordParametersWork;
   auto Registers =
       getTargetRegInfo(Arch::X64).integerParamRegs(BinaryFormat::COFF);
   for (; It != Records.end(); ++It) {
@@ -2791,7 +2846,9 @@ void PDBDebugContext::Impl::loadRecordParameters(uint32_t ModuleIndex) const {
     if (!Fact)
       continue;
     auto &At = Staged[Entry];
-    if (At.size() >= 64)
+    if (At.size() >=
+        ::neverd::limits::debug::
+            kPDBLoaderPDBDebugContextImplLoadRecordParametersAtSizeLimit)
       return;
     const auto Previous = llvm::find_if(
         At, [&](const auto &P) { return P.Register == Fact->Register; });
@@ -2836,6 +2893,18 @@ PDBDebugContext::resolveAuthenticatedRecordReturn(va_t Addr) const {
   const auto At = PImpl->RecordReturns.find(Addr);
   return At == PImpl->RecordReturns.end() ? std::nullopt
                                           : std::optional(At->second);
+}
+
+llvm::Error PDBDebugContext::withPDBFile(
+    llvm::function_ref<llvm::Error(llvm::pdb::PDBFile &)> Use) const {
+  if (!PImpl || !PImpl->Native)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "the PDB is not kept open");
+  // The prefetch opens the type streams unlocked; type resolution shares
+  // their lazy record cache under TypeMutex.
+  PImpl->joinTypePrefetch();
+  std::lock_guard<std::mutex> Guard(PImpl->TypeMutex);
+  return Use(PImpl->Native->getPDBFile());
 }
 
 bool PDBDebugContext::hasInfo() const { return PImpl && PImpl->Loaded; }

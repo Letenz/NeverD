@@ -6,12 +6,19 @@
 
 #include "COFFNativeEHProvenance.h"
 #include "COFFRegistrationCopyEdges.h"
+#include "COFFRegistrationCopySlots.h"
 #include "COFFRegistrationCxxIRProof.h"
 #include "COFFRegistrationFrameProof.h"
 #include "COFFRegistrationIRProof.h"
+#include "COFFRegistrationSEHCall.h"
 #include "COFFRegistrationSEHDynamicScope.h"
 #include "COFFRegistrationSEHException.h"
+#include "COFFRegistrationSEHFinally.h"
 #include "COFFRegistrationSEHJump.h"
+#include "COFFRegistrationSEHLocalUnwind.h"
+#include "COFFRegistrationSEHParentExit.h"
+#include "COFFRegistrationSEHRegisters.h"
+#include "COFFRegistrationSEHState.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -20,10 +27,12 @@
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
 #include "neverd/backend/llvm/WindowsRegistrationFrame.h"
-#include "neverd/backend/llvm/X86RegistrationSEHScope.h"
+#include "neverd/backend/llvm/X86/X86RegistrationSEHScope.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/X86/X86RegistrationCallback.h"
+#include "neverd/ir/med/X86/X86RegistrationSEHCall.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include "llvm/IR/CFG.h"
@@ -209,60 +218,17 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       callbacks(Function, Source, &ExpectedRoots, &ExceptionBridges);
   if (!CallbackMap)
     return CallbackMap.takeError();
-  std::map<va_t, va_t> NormalFinallyCalls;
-  for (const auto &Block : Replay.Blocks)
-    for (const auto &Op : Block.Ops)
-      if (Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
-          Op.Inputs[0].isConst())
-        for (const auto &Scope : Source.Registration->Scopes)
-          if (Scope.IsFinally && Scope.HandlerVA == Op.Inputs[0].Offset)
-            NormalFinallyCalls.emplace(Op.Addr, Scope.HandlerVA);
-  std::set<va_t> SeenNormalFinallyCalls;
-  std::set<const llvm::CallBase *> NormalFinallyIR;
-  for (const auto &Block : Function)
-    for (const auto &I : Block) {
-      const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
-      const auto *Marker =
-          I.getMetadata(windows_eh_md::RegistrationFinallyCallAttachment);
-      if (!Marker)
-        continue;
-      if (!Call || Marker->getNumOperands() != 3)
-        return rejectIR(
-            "ordinary finally call has a malformed source identity");
-      auto Field = [&](unsigned Index) {
-        return integer(llvm::mdconst::dyn_extract<llvm::ConstantInt>(
-                           Marker->getOperand(Index)),
-                       64);
-      };
-      const auto Owner = Field(0), Address = Field(1), Target = Field(2);
-      const auto *ParentFrame =
-          Call->arg_size() == 2
-              ? llvm::dyn_cast<llvm::IntrinsicInst>(Call->getArgOperand(1))
-              : nullptr;
-      if (Owner != Source.CodeRange.Begin || !Address || !Target ||
-          !matchesSourceOperation(I, Source.CodeRange.Begin, *Address, 2) ||
-          !NormalFinallyCalls.count(*Address) ||
-          NormalFinallyCalls.at(*Address) != *Target ||
-          !SeenNormalFinallyCalls.insert(*Address).second ||
-          !CallbackMap->count({*Target, true}) ||
-          Call->getCalledFunction() != CallbackMap->at({*Target, true}) ||
-          Call->arg_size() != 2 || integer(Call->getArgOperand(0), 8) != 0 ||
-          !ParentFrame ||
-          (Call->doesNotReturn() &&
-           llvm::any_of(*Call->getCalledFunction(),
-                        [](const llvm::BasicBlock &Block) {
-                          return llvm::isa<llvm::ReturnInst>(
-                              Block.getTerminator());
-                        })) ||
-          ParentFrame->getIntrinsicID() != llvm::Intrinsic::localaddress ||
-          ParentFrame->arg_size() || ParentFrame->getFunction() != &Function ||
-          Call->getNumOperandBundles())
-        return rejectIR(
-            "ordinary finally call changed its normal parent-frame ABI");
-      NormalFinallyIR.insert(Call);
-    }
-  if (SeenNormalFinallyCalls.size() != NormalFinallyCalls.size())
-    return rejectIR("source ordinary finally call has no recovered callback");
+  auto LocalUnwinds = coff_registration::bindSEHLocalUnwinds(
+      ReplayMed, Function, *Frame, *CallbackMap);
+  if (!LocalUnwinds)
+    return LocalUnwinds.takeError();
+  auto ParentExits = coff_registration::bindSEHParentExitContext(
+      Function, Source.CodeRange.Begin, *CallbackMap, LocalUnwinds->ChainLoads);
+  if (!ParentExits)
+    return ParentExits.takeError();
+  if (auto Error =
+          coff_registration::bindSEHParentExitSources(*ParentExits, ReplayMed))
+    return Error;
   std::vector<const llvm::Function *> CallbackFunctions;
   for (const auto &[Key, Callback] : *CallbackMap)
     CallbackFunctions.push_back(Callback);
@@ -307,14 +273,17 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
   };
   std::map<uint32_t, BlockTarget> BlockEntries, BlockExits;
   std::set<const llvm::InvokeInst *> Invokes;
+  std::set<const llvm::CallBase *> AnchoredDynamicCalls;
   std::set<const llvm::CallBase *> ScopeBoundaries;
   auto ScopeWrites = Jumps->StateRestores;
+  ScopeWrites.insert(LocalUnwinds->StateRestores.begin(),
+                     LocalUnwinds->StateRestores.end());
   std::set<const llvm::CallBase *> AbnormalFinallyIR;
   std::map<va_t, uint32_t> Protected;
-  std::set<std::pair<va_t, int>> Chain;
-  std::set<const llvm::Instruction *> ChainProtocolReads;
+  auto Chain = ParentExits->SourceChainRemovals;
+  auto ChainProtocolReads = ParentExits->ChainReads;
   size_t FSReads = 0;
-  size_t ExpectedFSReads = 0;
+  size_t ExpectedFSReads = ParentExits->ChainReads.size();
   for (const auto &Block : Function)
     for (const auto &Instruction : Block) {
       for (const auto &Operand : Instruction.operands())
@@ -336,6 +305,12 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       auto P = coff_native_eh::parseNativeEHProvenance(*Call);
       if (!P || P->Model != Model || P->FunctionVA != Source.CodeRange.Begin)
         return rejectIR("parent registration anchor is malformed");
+      if (P->Role == Role::RegistrationDynamicCall) {
+        const auto *Protected = coff_registration::dynamicSEHCall(*Call);
+        if (!Protected || !AnchoredDynamicCalls.insert(Protected).second)
+          return rejectIR("dynamic SEH call lost its exact source receipt");
+        continue;
+      }
       if (P->Role == Role::RegistrationChainAccess) {
         auto Found =
             llvm::find_if(States.ChainAccesses, [&](const auto &Access) {
@@ -546,16 +521,30 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       ReplayMed, *Frame, NativeFunctions, ScopeWrites);
   if (!ScopeState)
     return ScopeState.takeError();
+  auto SourceSegments = validateSourceSegments(
+      Function, ReplayMed, *CallbackMap, NativeFunctions, false, &*ParentExits);
+  if (!SourceSegments)
+    return SourceSegments.takeError();
+  if (auto Error = coff_registration::validateSEHRegisterStorage(
+          Function, ReplayMed, *CallbackMap))
+    return Error;
+  auto PhysicalWrites = coff_registration::bindSEHCallbackStateWrites(
+      ReplayMed, Function, *SourceSegments, NativeFunctions);
+  if (!PhysicalWrites)
+    return PhysicalWrites.takeError();
+  ScopeState->PhysicalWrites = PhysicalWrites->Writes;
+  ScopeState->CallbackWrites = PhysicalWrites->Stores;
   if (llvm::Error Error = coff_registration::validateFramePrivacy(
           Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
           IncomingAccesses, SourceCallerPCWrites, ChainProtocolReads,
           States.SecurityCookieVA, ImmutableImageRanges, nullptr,
-          &*ExceptionFields, &*Jumps, &*ScopeState))
+          &*ExceptionFields, &*Jumps, &*ScopeState, &*ParentExits,
+          &*LocalUnwinds))
     return Error;
-  auto SourceSegments = validateSourceSegments(Function, ReplayMed,
-                                               *CallbackMap, NativeFunctions);
-  if (!SourceSegments)
-    return SourceSegments.takeError();
+  auto NormalFinallyIR = coff_registration::bindSEHFinallyCalls(
+      ReplayMed, Function, *CallbackMap, *SourceSegments, NativeFunctions);
+  if (!NormalFinallyIR)
+    return NormalFinallyIR.takeError();
   for (size_t I = 0; I < Scopes.size(); ++I) {
     const auto &D = Dispatches.at(I);
     const auto *Outer = Scopes[I].EnclosingLevel < 0
@@ -567,14 +556,18 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       return rejectIR("scope enclosing state or handler target changed");
   }
   size_t ActiveRanges = 0, ActiveBlocks = 0;
+  const auto CallbackOwners = registrationSEHCallbackOwners(ReplayMed);
+  if (!CallbackOwners)
+    return rejectIR("source SEH callback ownership is incomplete");
+  std::set<const llvm::CallBase *> DynamicCalls;
   std::map<int, const llvm::BasicBlock *> SourceEntries, SourceExits;
   std::map<va_t, uint32_t> ExpectedProtected;
   for (const auto &State : States.Blocks) {
-    if (State.CallbackOnly)
+    if (CallbackOwners->count(State.BlockId))
       continue;
     if (State.Unknown)
       return rejectIR("source scope is not determined at a CFG block");
-    if (State.Levels.size() > 1) {
+    if (State.levels().size() > 1) {
       const auto Begin = BlockEntries.find(State.BlockId);
       const auto End = BlockExits.find(State.BlockId);
       if (Begin == BlockEntries.end() || End == BlockExits.end() ||
@@ -588,7 +581,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
               uint32_t(x86_registration::DynamicScopeLevel))
         return rejectIR("dynamic source block lost its exact state identity");
       std::map<int32_t, coff_registration::DynamicSEHScopeCase> Cases;
-      for (int32_t Level : State.Levels) {
+      for (int32_t Level : State.levels()) {
         if (Level < 0) {
           if (Level != *Source.Registration->SeededTryLevel)
             return rejectIR("dynamic source scope has an unknown sentinel");
@@ -605,16 +598,16 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       }
       if (auto Error = coff_registration::validateDynamicSEHScope(
               State, *Frame, SourceSegments->at(State.BlockId),
-              *Begin->second.Anchor, *End->second.Anchor, Cases))
+              *Begin->second.Anchor, *End->second.Anchor, Cases, DynamicCalls))
         return Error;
       ActiveRanges += Cases.size();
       SourceEntries.emplace(State.BlockId, Begin->second.Anchor->getParent());
       SourceExits.emplace(State.BlockId, End->second.Anchor->getParent());
       continue;
     }
-    const int32_t Level = State.Levels.empty()
+    const int32_t Level = State.levels().empty()
                               ? *Source.Registration->SeededTryLevel
-                              : State.Levels.front();
+                              : State.levels().front();
     auto Target = BlockExits.find(State.BlockId);
     if (Target == BlockExits.end() ||
         Target->second.Identity.SourceVA != State.Range.End ||
@@ -720,9 +713,9 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       return rejectIR("handler target has no checked source block");
     const auto *Entry = SourceEntries.at(HandlerState->BlockId);
     const llvm::BasicBlock *Body = Entry;
-    if (!HandlerState->Levels.empty() && HandlerState->Levels.front() >= 0)
+    if (!HandlerState->levels().empty() && HandlerState->levels().front() >= 0)
       Body = Enters
-                 .at({uint32_t(HandlerState->Levels.front()),
+                 .at({uint32_t(HandlerState->levels().front()),
                       uint32_t(HandlerState->BlockId)})
                  .second->getNormalDest();
     // A nested except body remains inside its outer scope. Its catchret must
@@ -731,20 +724,37 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       return rejectIR("scope handler target bypasses its checked source entry");
   }
   size_t CopyWork = 0;
+  const auto AdjacentExits = getRegistrationSEHAdjacentExits(ReplayMed);
+  if (!AdjacentExits)
+    return rejectIR("source adjacent finally exit is not proven");
+  coff_registration::RegistrationCopySlots CopySlots;
+  if (!CopySlots.build(Function, CallbackFunctions, CopyWork))
+    return rejectIR("parent copy storage has no closed recovery graph");
+  if (auto Error = coff_registration::validateSEHParentExitTargets(
+          *ParentExits, SourceEntries))
+    return Error;
+  std::set<const llvm::InvokeInst *> RetainedScopes;
+  std::map<uint32_t, const llvm::BasicBlock *> ScopeUnwinds;
+  for (const auto &[Region, Dispatch] : Dispatches)
+    ScopeUnwinds.emplace(Region, Dispatch.Unwind);
   for (const auto &Block : Replay.Blocks) {
     auto Entry = SourceEntries.find(Block.Id);
     if (Entry == SourceEntries.end())
       continue;
+    if (Block.StartAddr == Source.CodeRange.Begin) {
+      auto Retention = coff_registration::validateSEHRetainedScopes(
+          ReplayMed, Function, *Entry->second, ScopeUnwinds,
+          ParentExits->NormalEntry);
+      if (!Retention)
+        return Retention.takeError();
+      RetainedScopes = *Retention;
+      Invokes.insert(Retention->begin(), Retention->end());
+    }
     if (Block.StartAddr == Source.CodeRange.Begin &&
         Entry->second != &Function.getEntryBlock()) {
       const auto &Setup = Function.getEntryBlock();
-      const auto *Branch =
-          llvm::dyn_cast<llvm::UncondBrInst>(Setup.getTerminator());
-      if (!Branch || Branch->getSuccessor(0) != Entry->second)
-        return rejectIR(
-            "machine entry bypasses its checked registration block");
       for (const auto &I : Setup) {
-        if (IncomingSetup.count(&I))
+        if (IncomingSetup.count(&I) || ParentExits->Setup.count(&I))
           continue;
         if (I.isTerminator() || llvm::isa<llvm::AllocaInst>(I) ||
             llvm::isa<llvm::GetElementPtrInst>(I) ||
@@ -761,7 +771,13 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       }
     }
     std::set<const llvm::BasicBlock *> Expected;
+    const auto Adjacent = AdjacentExits->find(Block.Id);
+    if (Adjacent != AdjacentExits->end() &&
+        Block.Succs != std::vector<int>{Adjacent->second})
+      return rejectIR("source adjacent finally successor changed");
     for (int Successor : Block.Succs) {
+      if (Adjacent != AdjacentExits->end())
+        continue;
       auto Destination = SourceEntries.find(Successor);
       if (Destination == SourceEntries.end())
         return rejectIR(
@@ -774,7 +790,8 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       const auto *Next = Terminator->getSuccessor(I);
       if (!Expected.count(Next)) {
         Next = coff_registration::registrationCopyDestination(
-            *Terminator->getParent(), *Next, Expected, CopyWork, true);
+            *Terminator->getParent(), *Next, Expected, CopyWork, true,
+            &CopySlots);
         if (!Next)
           return rejectIR("SEH source edge gained unproved copy instructions");
       }
@@ -784,9 +801,19 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
       return rejectIR(
           "native normal control flow bypasses a source registration boundary");
   }
+  if (AnchoredDynamicCalls != DynamicCalls)
+    return rejectIR(
+        "dynamic SEH call receipts do not match their scope bodies");
+  if (auto Error = coff_registration::validateDynamicSEHCallMarkers(
+          NativeFunctions, DynamicCalls))
+    return Error;
   for (const auto *NativeFunction : NativeFunctions)
     for (const auto &Block : *NativeFunction)
-      for (const auto &I : Block)
+      for (const auto &I : Block) {
+        if (I.getMetadata(
+                windows_eh_md::RegistrationScopeRetentionAttachment) &&
+            !RetainedScopes.count(llvm::dyn_cast<llvm::InvokeInst>(&I)))
+          return rejectIR("scope retention marker has no checked entry edge");
         if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
             Call && Call->getCalledFunction() &&
             (Call->getCalledFunction()->getIntrinsicID() ==
@@ -796,6 +823,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
             !ScopeBoundaries.count(Call))
           return rejectIR(
               "native parent contains an unanchored SEH scope state change");
+      }
   for (const auto &Block : Function)
     if (const auto *Invoke =
             llvm::dyn_cast<llvm::InvokeInst>(Block.getTerminator());
@@ -807,7 +835,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
         if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
             Call &&
             llvm::is_contained(CallbackFunctions, Call->getCalledFunction()) &&
-            !NormalFinallyIR.count(Call) && !AbnormalFinallyIR.count(Call))
+            !NormalFinallyIR->count(Call) && !AbnormalFinallyIR.count(Call))
           return rejectIR(
               "generated callback has no checked runtime entry protocol");
   LowFunc GeneratedCalleeABI;
@@ -821,7 +849,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
         if (!Call)
           continue;
         const auto *Callee = Call->getCalledFunction();
-        if (Jumps->Calls.count(Call))
+        if (Jumps->Calls.count(Call) || LocalUnwinds->Calls.count(Call))
           continue;
         if (Callee && Callee->isIntrinsic())
           continue;
@@ -863,7 +891,7 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
             Function, CallbackFunctions, Frame->Slot, ExceptionBridges,
             IncomingAccesses, GeneratedCallerPCWrites, ChainProtocolReads,
             States.SecurityCookieVA, ImmutableImageRanges, nullptr,
-            &*ExceptionFields, &*Jumps, &*ScopeState))
+            &*ExceptionFields, &*Jumps, &*ScopeState, &*ParentExits))
       return Error;
   return llvm::Error::success();
 #endif

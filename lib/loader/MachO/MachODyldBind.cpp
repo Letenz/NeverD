@@ -5,7 +5,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "MachODyldFixups.h"
+#include "MachOThreadedBind.h"
 
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -15,6 +17,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <optional>
 #include <string>
 
 namespace neverd {
@@ -23,8 +26,12 @@ namespace macho_loader {
 using namespace llvm::MachO;
 
 void parseBindStreams(const uint8_t *BasePtr, size_t FileSize,
-                      const DyldInfoOffsets &DyldInfo, BinaryImage &Img) {
+                      const DyldInfoOffsets &DyldInfo, BinaryImage &Img,
+                      va_t TextVMAddr) {
   if (!BasePtr)
+    return;
+  if (detail::parseThreadedBindStreams(BasePtr, FileSize, DyldInfo, TextVMAddr,
+                                       Img))
     return;
   uint32_t BindOff = DyldInfo.BindOff;
   uint32_t BindSize = DyldInfo.BindSize;
@@ -41,7 +48,7 @@ void parseBindStreams(const uint8_t *BasePtr, size_t FileSize,
     const uint8_t *End = P + Sz;
 
     std::string SymName;
-    int64_t LibOrdinal = 0;
+    std::optional<int64_t> LibOrdinal;
     uint8_t SegIdx = 0;
     uint64_t SegOff = 0;
     int64_t Addend = 0;
@@ -84,7 +91,7 @@ void parseBindStreams(const uint8_t *BasePtr, size_t FileSize,
         if (!IsLazy)
           return;
         SymName.clear();
-        LibOrdinal = 0;
+        LibOrdinal.reset();
         SegIdx = 0;
         SegOff = 0;
         Addend = 0;
@@ -173,18 +180,19 @@ void parseBindStreams(const uint8_t *BasePtr, size_t FileSize,
               Offset > InvalidVA - Seg.VA)
             return;
           const va_t BindAddr = Seg.VA + Offset;
+          const int64_t Ordinal = LibOrdinal.value_or(0);
           std::string DylibName;
-          if (LibOrdinal > 0 && static_cast<uint64_t>(LibOrdinal) <=
-                                    Img.DynInfo.NeededLibs.size())
+          if (Ordinal > 0 &&
+              static_cast<uint64_t>(Ordinal) <= Img.DynInfo.NeededLibs.size())
             DylibName =
-                Img.DynInfo.NeededLibs[static_cast<size_t>(LibOrdinal - 1)];
+                Img.DynInfo.NeededLibs[static_cast<size_t>(Ordinal - 1)];
           // The legacy symbol-level display is not exact-slot evidence.
           std::string BindingModule;
           bool WeakImport = SymbolWeakImport;
-          if (LibOrdinal > 0 && static_cast<uint64_t>(LibOrdinal) <=
-                                    Img.MachODylibReferences.size()) {
+          if (Ordinal > 0 && static_cast<uint64_t>(Ordinal) <=
+                                 Img.MachODylibReferences.size()) {
             const MachODylibReference &Reference =
-                Img.MachODylibReferences[static_cast<size_t>(LibOrdinal - 1)];
+                Img.MachODylibReferences[static_cast<size_t>(Ordinal - 1)];
             BindingModule = Reference.Name;
             WeakImport = WeakImport || Reference.Weak;
           }
@@ -208,7 +216,7 @@ void parseBindStreams(const uint8_t *BasePtr, size_t FileSize,
             if (Img.isValidImportStorageSlot(BindAddr, SymName)) {
               detail::clearLocalPointerClassification(Img, BindAddr);
               Img.recordDyldBindSlot(BindAddr, SymName, Addend, BindingModule,
-                                     WeakImport);
+                                     WeakImport, LibOrdinal);
             }
           }
         };
@@ -217,9 +225,9 @@ void parseBindStreams(const uint8_t *BasePtr, size_t FileSize,
           if (Skip > InvalidVA - PtrSz)
             return;
           const uint64_t Stride = PtrSz + Skip;
-          constexpr uint64_t MaxBindSlots = 1u << 22;
-          if (Count > MaxBindSlots || Count > (InvalidVA - SegOff) / Stride ||
-              SymName.empty() || SegIdx >= Img.Segments.size())
+          if (Count > ::neverd::limits::loader::kMachODyldBindMaxBindSlots ||
+              Count > (InvalidVA - SegOff) / Stride || SymName.empty() ||
+              SegIdx >= Img.Segments.size())
             return;
           const Segment &Seg = Img.Segments[SegIdx];
           const uint64_t LastOff = SegOff + (Count - 1) * Stride;

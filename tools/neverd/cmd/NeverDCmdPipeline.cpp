@@ -13,9 +13,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "../NeverDCLI.h"
+#include "../ResourceLimits.h"
 #include "NeverDSanitizerPublicationCLI.h"
 
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
@@ -29,6 +31,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -81,6 +84,7 @@ std::optional<std::string> validateSanitizeArguments() {
       {PatchEntry.getNumOccurrences(), "--entry"},
       {PatchCompilerArgs.getNumOccurrences(), "--compiler-arg"},
       {PatchBindings.getNumOccurrences(), "--bind"},
+      {PatchDependencies.getNumOccurrences(), "--dependency"},
       {PatchCompilerTimeout.getNumOccurrences(), "--compiler-timeout"},
       {PatchReport.getNumOccurrences(), "--patch-report"},
       {PatchFuncAddr.getNumOccurrences(), "--func"},
@@ -114,7 +118,8 @@ std::optional<std::string> validateSourcePatchArguments() {
     return "compiler options require --from-c or --from-source";
   if (Inputs == 0 &&
       (PatchFuncAddr.getNumOccurrences() || PatchEntry.getNumOccurrences() ||
-       PatchReport.getNumOccurrences() || PatchBindings.getNumOccurrences()))
+       PatchReport.getNumOccurrences() || PatchBindings.getNumOccurrences() ||
+       PatchDependencies.getNumOccurrences()))
     return "replacement options require an external patch input";
   if (Inputs && PatchFromIR.empty() && PatchFromC.empty() &&
       PatchFromSource.empty() && PatchFromObject.empty())
@@ -138,7 +143,10 @@ std::optional<std::string> validateSourcePatchArguments() {
     return "--artifact must be ir or object";
   if (PatchCompileMode != "normal" && PatchCompileMode != "dyncode")
     return "--compile-mode must be normal or dyncode";
-  if (PatchCompilerTimeout == 0 || PatchCompilerTimeout > 3600)
+  if (PatchCompilerTimeout == 0 ||
+      PatchCompilerTimeout >
+          ::neverd::limits::cli::
+              kNeverDCmdPipelineValidateSourcePatchArgumentsPatchCompilerTimeoutLimit)
     return "--compiler-timeout must be between 1 and 3600 seconds";
   return std::nullopt;
 }
@@ -149,7 +157,8 @@ bool usesSourcePatchRequest() {
          (!PatchFromIR.empty() &&
           (PatchFuncAddr.getNumOccurrences() ||
            PatchEntry.getNumOccurrences() || PatchReport ||
-           PatchBindings.getNumOccurrences()));
+           PatchBindings.getNumOccurrences() ||
+           PatchDependencies.getNumOccurrences()));
 }
 
 int runSourcePatch(neverd_session_t Sess, StringRef Output, int Strategy) {
@@ -207,12 +216,15 @@ int runSourcePatch(neverd_session_t Sess, StringRef Output, int Strategy) {
     neverd_source_patch_binding_v1 Binding{};
     if (Kind == "function")
       Binding.kind = NEVERD_SOURCE_BIND_FUNCTION;
+    else if (Kind == "original")
+      Binding.kind = NEVERD_SOURCE_BIND_ORIGINAL_FUNCTION;
     else if (Kind == "const")
       Binding.kind = NEVERD_SOURCE_BIND_READ_ONLY_DATA;
     else if (Kind == "data")
       Binding.kind = NEVERD_SOURCE_BIND_WRITABLE_DATA;
     else {
-      WithColor::error() << "--bind kind must be function, const, or data\n";
+      WithColor::error()
+          << "--bind kind must be function, original, const, or data\n";
       return 1;
     }
     if (Symbol.empty() || Address.empty() ||
@@ -228,6 +240,29 @@ int runSourcePatch(neverd_session_t Sess, StringRef Output, int Strategy) {
   }
   Options.bindings = Bindings.data();
   Options.binding_count = Bindings.size();
+  std::vector<std::string> ImportNames, Libraries;
+  std::vector<neverd_source_patch_dependency_v1> Dependencies;
+  ImportNames.reserve(PatchDependencies.size());
+  Libraries.reserve(PatchDependencies.size());
+  for (const auto &Text : PatchDependencies) {
+    const auto [Kind, Rest] = StringRef(Text).split(':');
+    const auto [Symbol, Library] = Rest.split('=');
+    if ((Kind != "function" && Kind != "data") || Symbol.empty() ||
+        Library.empty()) {
+      WithColor::error()
+          << "--dependency requires function|data:SYMBOL=LIBRARY\n";
+      return 1;
+    }
+    ImportNames.push_back(Symbol.str());
+    Libraries.push_back(Library.str());
+    Dependencies.push_back(
+        {Libraries.back().c_str(), ImportNames.back().c_str(),
+         static_cast<uint32_t>(Kind == "function"
+                                   ? NEVERD_SOURCE_DEPENDENCY_FUNCTION
+                                   : NEVERD_SOURCE_DEPENDENCY_DATA)});
+  }
+  Options.dependencies = Dependencies.data();
+  Options.dependency_count = Dependencies.size();
   return neverd_patch_source(Sess, (*Buffer)->getBufferStart(),
                              (*Buffer)->getBufferSize(), &Options,
                              Output.str().c_str())
@@ -343,6 +378,71 @@ bool configureSBF(neverd_session_t Sess) {
     }
   }
   return true;
+}
+
+/// One C file of \p Root and every function it calls, directly or not,
+/// in one translation unit: the functions neverd_call_tree_json reaches,
+/// with imports and library code that byte signatures name left declared.
+const char *decompileWithCallees(neverd_session_t Sess, uint64_t Root,
+                                 std::string &Out) {
+  const std::string Options = "{\"root\":\"0x" + utohexstr(Root) +
+                              "\",\"max_depth\":64,\"max_listed\":100000}";
+  const char *Tree = neverd_call_tree_json(Sess, Options.c_str());
+  if (!Tree)
+    return "the callees cannot be listed";
+  Expected<json::Value> Parsed = json::parse(Tree);
+  neverd_free_string(Tree);
+  const json::Object *Reply = Parsed ? Parsed->getAsObject() : nullptr;
+  const json::Array *Order = Reply ? Reply->getArray("bottom_up") : nullptr;
+  if (!Order) {
+    if (!Parsed)
+      consumeError(Parsed.takeError());
+    return "the engine gave no callee order";
+  }
+  if (!Reply->getBoolean("complete").value_or(false))
+    return "the callees exceed the listing limit";
+  std::vector<neverd_va_t> Entries;
+  for (const json::Value &Value : *Order) {
+    uint64_t Entry = 0;
+    if (StringRef(Value.getAsString().value_or(""))
+            .drop_front(2)
+            .getAsInteger(16, Entry))
+      return "the engine gave a malformed callee";
+    Entries.push_back(Entry);
+  }
+  const char *Source = neverd_decompile_functions(
+      Sess, InputFile.getValue().c_str(), NEVERD_OUTPUT_C, Entries.data(),
+      static_cast<int>(Entries.size()));
+  if (!Source || !*Source) {
+    neverd_free_string(Source);
+    return "the functions do not decompile";
+  }
+  Out = Source;
+  neverd_free_string(Source);
+  return nullptr;
+}
+
+/// The address the image exports \p Name at: a routine the function list
+/// does not hold before discovery, as a leaf without unwind data.
+std::optional<uint64_t> exportedAddress(neverd_session_t Sess, StringRef Name) {
+  const char *Raw = neverd_exports_json(Sess);
+  Expected<json::Value> Parsed = json::parse(Raw ? Raw : "[]");
+  neverd_free_string(Raw);
+  if (!Parsed) {
+    consumeError(Parsed.takeError());
+    return std::nullopt;
+  }
+  if (const json::Array *Exports = Parsed->getAsArray())
+    for (const json::Value &Export : *Exports)
+      if (const json::Object *Row = Export.getAsObject();
+          Row && Row->getString("name") == Name) {
+        uint64_t Address = 0;
+        StringRef Text = Row->getString("addr").value_or("");
+        if ((Text.consume_front("0x") || Text.consume_front("0X")) &&
+            !Text.getAsInteger(16, Address))
+          return Address;
+      }
+  return std::nullopt;
 }
 
 } // namespace
@@ -561,14 +661,35 @@ int runLift(neverd_session_t Sess) {
 }
 
 int runDecompile(neverd_session_t Sess) {
-  const bool SourceTransforms = SourceSymbolic.getNumOccurrences() ||
-                                SourceLLVMControlFlow.getNumOccurrences() ||
-                                SourceLLVMLevel.getNumOccurrences() ||
-                                SourceLLVMPasses.getNumOccurrences();
-  if (SourceTransforms && (ExportFunc.empty() || NoOpt || Devirtualize)) {
+  const bool LLVMSourceTransforms = SourceLLVMControlFlow.getNumOccurrences() ||
+                                    SourceLLVMLevel.getNumOccurrences() ||
+                                    SourceLLVMPasses.getNumOccurrences();
+  const bool SourceTransforms =
+      SourceSymbolic.getNumOccurrences() || LLVMSourceTransforms;
+  const bool HasStackFrame = StackFrameFile.getNumOccurrences() != 0;
+  if ((StackFrameInfo || HasStackFrame) &&
+      (ExportFunc.empty() || NoOpt || Devirtualize ||
+       OutputLanguage != NEVERD_OUTPUT_C)) {
     WithColor::error()
-        << "source optimization options require --func and cannot "
-           "combine with --no-opt or --devirtualize\n";
+        << "stack frame options require --func and C output, without "
+           "--no-opt or --devirtualize\n";
+    return 1;
+  }
+  if (StackFrameInfo && (SourceTransforms || LlvmRoute)) {
+    WithColor::error()
+        << "--stack-frame-info inspects machine stack offsets; omit source "
+           "optimization options and --llvm\n";
+    return 1;
+  }
+  if (SourceTransforms && (NoOpt || Devirtualize)) {
+    WithColor::error() << "source optimization options cannot combine with "
+                          "--no-opt or --devirtualize\n";
+    return 1;
+  }
+  // Symbolic simplification also applies to the whole program; the LLVM
+  // source options shape one function's view.
+  if (LLVMSourceTransforms && ExportFunc.empty()) {
+    WithColor::error() << "LLVM source optimization options require --func\n";
     return 1;
   }
   if (!LlvmRoute && (SourceLLVMControlFlow.getNumOccurrences() ||
@@ -589,6 +710,45 @@ int runDecompile(neverd_session_t Sess) {
     for (const auto &Pass : SourceLLVMPasses)
       Passes.push_back(Pass);
     ViewOptions["llvm_passes"] = std::move(Passes);
+  }
+  std::string StackPolicyText = "{}";
+  bool HasStackVariables = false;
+  if (HasStackFrame) {
+    uint64_t Size = 0;
+    const auto EC = sys::fs::file_size(StackFrameFile.getValue(), Size);
+    if (EC ||
+        Size > ::neverd::limits::cli::kNeverDCmdPipelineRunDecompileSizeLimit) {
+      WithColor::error() << "cannot read --stack-frame: "
+                         << (EC ? EC.message() : "policy exceeds 128 KiB")
+                         << '\n';
+      return 1;
+    }
+    auto Buffer = MemoryBuffer::getFile(StackFrameFile.getValue());
+    if (!Buffer ||
+        (*Buffer)->getBufferSize() >
+            ::neverd::limits::cli::
+                kNeverDCmdPipelineRunDecompileBufferGetBufferSizeLimit) {
+      WithColor::error() << "cannot read bounded --stack-frame policy\n";
+      return 1;
+    }
+    auto Parsed = json::parse((*Buffer)->getBuffer());
+    if (!Parsed) {
+      WithColor::error() << "invalid --stack-frame JSON: "
+                         << toString(Parsed.takeError()) << '\n';
+      return 1;
+    }
+    auto *Policy = Parsed->getAsObject();
+    if (Policy && Policy->get("policy"))
+      Policy = Policy->getObject("policy");
+    if (!Policy) {
+      WithColor::error() << "--stack-frame must contain a policy object\n";
+      return 1;
+    }
+    if (const auto *Variables = Policy->getArray("variables"))
+      HasStackVariables = !Variables->empty();
+    StackPolicyText.clear();
+    raw_string_ostream(StackPolicyText) << json::Value(json::Object(*Policy));
+    ViewOptions["stack_frame"] = json::Object(*Policy);
   }
   std::string ViewOptionsText;
   raw_string_ostream(ViewOptionsText) << json::Value(std::move(ViewOptions));
@@ -742,7 +902,13 @@ int runDecompile(neverd_session_t Sess) {
       }
     } else {
       FuncIdx = neverd_func_find_by_name(Sess, ExportFunc.c_str());
-      if (FuncIdx < 0 && !FuncRef.empty() &&
+      if (FuncIdx < 0)
+        if (const std::optional<uint64_t> Exported =
+                exportedAddress(Sess, FuncRef)) {
+          HaveDirectAddr = true;
+          DirectAddr = *Exported;
+        }
+      if (FuncIdx < 0 && !HaveDirectAddr && !FuncRef.empty() &&
           !FuncRef.getAsInteger(16, DirectAddr)) {
         HaveDirectAddr = true;
         FuncIdx = neverd_func_find_by_addr(Sess, DirectAddr);
@@ -755,14 +921,80 @@ int runDecompile(neverd_session_t Sess) {
     }
     const uint64_t Entry =
         FuncIdx >= 0 ? neverd_func_entry(Sess, FuncIdx) : DirectAddr;
-    if (JsonOutput || SourceTransforms || (SourceStage && !Devirtualize)) {
+    if (DecompileCallees) {
+      if (LlvmRoute || Devirtualize || NoOpt || DedicatedLanguage ||
+          SourceTransforms || StackFrameInfo || HasStackFrame || JsonOutput) {
+        WithColor::error() << "--callees writes the default C of --func and "
+                              "its callees; omit other view options\n";
+        return 1;
+      }
+      std::string Text;
+      if (const char *Error = decompileWithCallees(Sess, Entry, Text)) {
+        WithColor::error() << "decompile failed: " << Error << ": "
+                           << takeLastError(Sess) << "\n";
+        return 1;
+      }
+      if (OutputFile.empty()) {
+        outs() << Text;
+        return 0;
+      }
+      std::error_code EC;
+      raw_fd_ostream OS(OutputFile, EC);
+      if (EC) {
+        WithColor::error() << "cannot open: " << EC.message() << "\n";
+        return 1;
+      }
+      OS << Text;
+      outs() << "C source of " << ExportFunc.getValue()
+             << " and its callees written to " << OutputFile.getValue() << "\n";
+      return 0;
+    }
+    if (StackFrameInfo || HasStackFrame) {
+      const char *Frame =
+          neverd_stack_frame_json(Sess, Entry, StackPolicyText.c_str());
+      if (!Frame) {
+        WithColor::error() << "stack frame refused: " << takeLastError(Sess)
+                           << '\n';
+        return 1;
+      }
+      if (StackFrameInfo) {
+        std::error_code EC;
+        std::optional<raw_fd_ostream> File;
+        if (!OutputFile.empty())
+          File.emplace(OutputFile, EC);
+        if (EC) {
+          neverd_free_string(Frame);
+          WithColor::error() << "cannot open: " << EC.message() << '\n';
+          return 1;
+        }
+        (File ? *File : outs()) << Frame << '\n';
+        neverd_free_string(Frame);
+        return 0;
+      }
+      neverd_free_string(Frame);
+      if (HasStackVariables) {
+        // Both frontends require the policy to preserve storage in both C
+        // routes. The SDK checks the emitted bindings, including name clashes.
+        const char *Other = neverd_ir_view_ex_json(
+            Sess, Entry, LlvmRoute ? "c" : "llvmc", 0, 1,
+            ("{\"stack_frame\":" + StackPolicyText + "}").c_str());
+        if (!Other) {
+          WithColor::error()
+              << "stack frame refused: " << takeLastError(Sess) << '\n';
+          return 1;
+        }
+        neverd_free_string(Other);
+      }
+    }
+    if (JsonOutput || SourceTransforms || HasStackFrame ||
+        (SourceStage && !Devirtualize)) {
       const char *Stage = SourceStage ? SourceStage : LlvmRoute ? "llvmc" : "c";
       json::Array Pages;
       std::string Text;
       size_t Offset = 0, Bytes = 0;
       for (;;) {
         const char *Raw =
-            SourceTransforms
+            SourceTransforms || HasStackFrame
                 ? neverd_ir_view_ex_json(Sess, Entry, Stage, Offset, 2048,
                                          ViewOptionsText.c_str())
                 : neverd_ir_view_json(Sess, Entry, Stage, Offset, 2048);
@@ -772,7 +1004,8 @@ int runDecompile(neverd_session_t Sess) {
           return 1;
         }
         const size_t Size = StringRef(Raw).size();
-        if (Size > 64 * 1024 * 1024 - Bytes) {
+        if (Size >
+            ::neverd::limits::cli::kMaxPipelineAggregateSourceBytes - Bytes) {
           neverd_free_string(Raw);
           WithColor::error()
               << "JSON source view exceeds the 64 MiB output budget\n";
@@ -909,6 +1142,7 @@ int runDecompile(neverd_session_t Sess) {
                          : neverd_decompile(Sess, Entry);
     }
   } else {
+    neverd_session_set_source_symbolic(Sess, SourceSymbolic ? 1 : 0);
     Source =
         DedicatedLanguage
             ? neverd_decompile_all_ex(Sess, InPath, Language, NoOpt, MaxFunc)

@@ -471,8 +471,8 @@ TEST(LowIRConcolicDetail, RejectsEveryUnsupportedProjectionProvenance) {
   const std::vector<SymConcreteRegister> Baseline = {{0, 2, 0x0102}};
   auto Project = [&](SymContext &Ctx, SymRef Query,
                      const solver::BitVectorModel &Model) {
-    return detail::projectRegisterModel(Ctx, Query, Model, Baseline,
-                                        llvm::endianness::little)
+    return detail::projectInputModel(Ctx, Query, Model, Baseline,
+                                     llvm::endianness::little)
         .Reason;
   };
 
@@ -574,8 +574,8 @@ TEST(LowIRConcolicDetail, RejectsOverlappingOriginsAndInvalidWitnesses) {
     solver::BitVectorModel Model;
     Model.set(Ctx.varId(Word), llvm::APInt(16, 0));
     Model.set(Ctx.varId(Byte), llvm::APInt(8, 0));
-    EXPECT_EQ(detail::projectRegisterModel(Ctx, Query, Model, Baseline,
-                                           llvm::endianness::little)
+    EXPECT_EQ(detail::projectInputModel(Ctx, Query, Model, Baseline,
+                                        llvm::endianness::little)
                   .Reason,
               ConcolicProjectionReason::OverlappingInputOrigins);
   }
@@ -585,8 +585,8 @@ TEST(LowIRConcolicDetail, RejectsOverlappingOriginsAndInvalidWitnesses) {
     SymRef Query = Ctx.mkEq(X, Ctx.mkOne(8));
     solver::BitVectorModel Wrong;
     Wrong.set(Ctx.varId(X), llvm::APInt(8, 0));
-    EXPECT_EQ(detail::projectRegisterModel(Ctx, Query, Wrong, Baseline,
-                                           llvm::endianness::little)
+    EXPECT_EQ(detail::projectInputModel(Ctx, Query, Wrong, Baseline,
+                                        llvm::endianness::little)
                   .Reason,
               ConcolicProjectionReason::CandidateDoesNotSatisfyQuery);
   }

@@ -26,7 +26,7 @@ permissions:
 
 concurrency:
   group: lift-native-qualification-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   linux-x64:
@@ -70,7 +70,7 @@ jobs:
             -DNEVERD_BUILD_GUI=OFF -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
             -DNEVERD_ENABLE_CPU_EMULATION=OFF -DNEVERD_ENABLE_SEMANTIC_TESTS=ON
       - name: Build the production CLI and complete Lift test owner
-        run: cmake --build build-lift-qualification --target neverd NeverDLiftTests NeverDLLVMCValueTests NeverDSourcePatchTests NeverDSourcePatchMatrixTests NeverDHighSwiftEmitterTests NeverDSessionCAPITests --parallel 4
+        run: python scripts/build.py build-lift-qualification --target neverd NeverDLiftTests NeverDLLVMCValueTests NeverDSourcePatchTests NeverDSourcePatchMatrixTests NeverDHighSwiftEmitterTests NeverDSessionCAPITests --parallel 4
       - name: Require all 108 previous failures and skips to pass
         run: |
           python scripts/run_lift_qualification.py \
@@ -115,7 +115,8 @@ jobs:
           output = Path('build-lift-qualification/evidence')
           for owner, pattern, minimum, label in (
               ('NeverDSourcePatchMatrixTests', 'AllTargets/*', 154, 'source-targets'),
-              ('NeverDSessionCAPITests', 'SessionCAPITest.*', 116, 'native-session'),
+              # External Windows kernel inputs have a separate suite.
+              ('NeverDSessionCAPITests', 'SessionCAPITest.*', 129, 'native-session'),
           ):
               binary = 'build-lift-qualification/bin/' + owner
               listed = subprocess.check_output([

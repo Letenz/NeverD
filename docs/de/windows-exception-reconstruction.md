@@ -224,3 +224,42 @@ Neue native Formen müssen im selben Change enthalten:
 
 Decodierbarkeit allein erweitert niemals die Allow-List. Entscheidend ist die
 Erhaltung des Runtime-Ausnahmeverhaltens im final gelinkten Image.
+
+Das Cleanup eines ausgewählten Handlers darf zum selben oder zu einem anderen gültigen Capture im Elternframe springen und den Skalarwert ersetzen (null wird zu eins). Ziel und Wert bleiben mit ihren Frame-Effekten verbunden; die Fortsetzung stellt die Register, ESP und Unwind-Grenze des tatsächlichen Ziels wieder her. Ausgesetzte und verschachtelte Finally-Aufrufe werden beendet. MedIR bindet jede Ersetzung an die genaue Callback-Aufrufstelle und das Capture und verlangt abgeschlossene Pfade in einem azyklischen Transfergraphen. Beide Puffer müssen während aller verbleibenden Cleanups gültig bleiben; überlappende Schreibzugriffe, abgelaufene Puffer, unbelegte Zyklen und entweichende Frame-Adressen werden abgewiesen.
+
+Ein durch RaiseException in einem unterbrochenen Finally aufgerufener Suchfilter kann zum selben oder zu einem anderen gültigen Capture springen oder auf einem anderen Zweig zurückkehren. Rückkehr und Sprung behalten getrennte Frame-Ergebnisse; der Sprung beendet den Filter und alle unterbrochenen verschachtelten Finally-Aufrufe und bewahrt sein eigenes Ziel und seinen Wert.
+
+Endliche Schleifen in Finally-Callbacks und Suchfiltern behalten pro Ausführung den vollständigen Frame, einschließlich Registerzählern, Elternframe und privatem Callback-Stack. Wiederkehrende vollständige Zustände, unbelegte Terminierung und erschöpfte Budgets werden abgewiesen. PHI-Kopierblöcke müssen zur exakten Quellkante und zum selben Callback gehören; der Installer prüft den Escape-Index jedes wiederhergestellten Skalarslots und sämtliche Aliase auf private, nichtatomare Zugriffe.
+
+Ein geprüftes SEH3/EH4-finally mit festem Frame darf SavedESP wiederherstellen
+und direkt zu einer bereits dem Elterncode zugeordneten Fortsetzung springen.
+Ein privater SjLj-Kontext stellt den erzeugten Stack und FS:[0] wieder her,
+bewahrt aktuelle logische Register und Frame-Schreibzugriffe des Callbacks und
+führt zur exakten Quell-Scope-Grenze. Der Installer prüft Aliase, Erfassung,
+Transfer und Auswahl unabhängig; Quellpuffer dürfen diesen Kontext nicht ersetzen.
+Ein Runtime-Ausstieg kann den temporären CRT-Unwind-Knoten zurücklassen. Vor einem
+weiteren Aufruf oder einer möglicherweise fehlerauslösenden Operation muss der
+Quellcode seine aktive Registrierung erneut verknüpfen oder sie bei der Rückkehr
+entfernen. Unbewiesene Kettenreparaturen und Ziele außerhalb des geprüften
+Eltern-CFG werden abgelehnt.
+
+Eine Fortsetzung darf ausschließlich vom finally-Sprung erreichbar sein, wenn
+jeder dekodierte Pfad ihres azyklischen Endstücks in bereits zugeordneten
+Elterncode mündet, ohne einen filter- oder finally-Einstieg zu durchqueren.
+Dieser physische Nachweis verleiht keine Speicherrechte eines Runtime-Handlers;
+SavedESP-Transfer und erreichende Zustände werden unabhängig geprüft. Eine
+unverankerte Rückkehr oder ein Zyklus begründet keine Elternzuordnung.
+
+
+Gewöhnliche finally-Aufrufe übertragen EAX/ECX/EDX/EBX/ESI/EDI explizit über
+private Speicherplätze im Elternframe, einschließlich der Werte beim physischen
+Nah-Rücksprung. Der Laufzeiteinstieg behält seinen eigenen Registervertrag und
+übernimmt keine Eingaben eines früheren gewöhnlichen Aufrufs. Ein ausschließlich
+durch einen nachgewiesenen gewöhnlichen finally-Aufruf referenzierter Scope
+bleibt erhalten, auch wenn ihn kein try level des Quellcodes aktiviert.
+
+Die Rekonstruktion von `nonlocal_finally_return` aus echtem MSVC x86 wird mit `/Od` und `/O2`, `/GS-` und `/GS`, optimiertem und unoptimiertem Quell-LLVM, beiden Patch-Modi und zwei erzwungenen Basisadressen geprüft. Ein äußerer SEH-Beobachter kontrolliert normale und außergewöhnliche Rückgaben, Stack-Wächter und die Wiederherstellung der Kette. Der GS-Pfad behält den ursprünglichen Wrapper zur Normalisierung des Ausnahmecodes bei, nachdem bewiesen wurde, dass sein skalarer Helfer den Aufrufer-Frame nicht beobachten kann.
+
+Die direkte Rückkehr aus der Elternfunktion unter `/O2` erfordert den Nachweis des benachbarten physischen Aufrufs, der Wiederherstellung des gespeicherten ESP, der ursprünglichen Kettenentfernung und des vollständigen Eltern-Epilogs. LowIR beweist diese Quelleffekte, MedIR bindet die verbleibenden Operationen und der COFF-Installer prüft den Vertrag unabhängig erneut. Ungenutzter synthetischer Registertransport fügt keine physischen Elternparameter hinzu; beobachtete Werte bleiben Abhängigkeiten. Die geprüfte nichtlokale MSVC-`goto`-Form verwendet den folgenden Vertrag für vollständige Abwicklung.
+
+Geprüfte Aufrufe von `_local_unwind2` und `_local_unwind4` behalten die genaue Quelloperation, den authentifizierten Import-Slot, das tatsächliche Argument des Elternframes, die vorzeichenlose Abwicklungsgrenze und die Zustandspaare bei der Rückkehr. EH4 verlangt außerdem den Nachweis der Cookie-Adresse und der initialisierten Frame-Cookies. Überschriebene Importdaten, bedingte Aufrufe oder eine abweichende Quellidentität entziehen den Nachweis. MedIR rekonstruiert genau zwei oder drei Stack-Argumente, ohne zufällig lebende Register zu Argumenten zu machen. Der native Ersatz unterstützt vollständige Abwicklung bis EH3 `-1` oder EH4 `-2`, nachdem die physische Elternframe-Brücke, die SavedESP-Wiederherstellung und die Quelloperationen unabhängig gebunden wurden. Echtes MSVC `nonlocal_finally_goto` wird mit `/Od`, `/O2`, `/GS-`, `/GS`, unverändertem und optimiertem LLVM, beiden Patch-Modi und zwei erzwungenen Basisadressen ausgeführt. Teilgrenzen und die Fortsetzung innerhalb aktiver äußerer Scopes benötigen weiterhin zusätzliche native Verträge.

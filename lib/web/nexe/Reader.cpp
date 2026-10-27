@@ -14,6 +14,7 @@
 #include "../PathPolicy.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA256.h"
@@ -25,7 +26,8 @@
 namespace neverd::web {
 namespace {
 constexpr std::string_view Sentinel = "<nexe~~sentinel>";
-constexpr uint64_t FooterSize = 32, SearchWindow = 16000;
+constexpr uint64_t FooterSize = 32,
+                   SearchWindow = ::neverd::limits::web::kReaderSearchWindow;
 
 uint64_t length(std::string_view Bytes, uint64_t Bound) {
   uint64_t Bits = 0;

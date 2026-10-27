@@ -127,21 +127,21 @@ TEST_F(ARM32_Intrinsics, LlvmC_BarriersUseACLE) {
       << content.substr(0, 3000);
 }
 
-TEST_F(ARM32_Intrinsics, LlvmC_BkptUsesBuiltin) {
+TEST_F(ARM32_Intrinsics, LlvmC_BkptKeepsItsCode) {
   auto r = decompileToC(obj("test_intrinsics_arm.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
-  EXPECT_TRUE(content.find("__builtin_debugtrap") != std::string::npos)
-      << "Expected __builtin_debugtrap() for bkpt:\n"
+  EXPECT_NE(content.find("__asm__ volatile(\"bkpt #0xAB\""), std::string::npos)
+      << "Expected BKPT with its original code:\n"
       << content.substr(0, 3000);
 }
 
-TEST_F(ARM32_Intrinsics, Decompile_BkptUsesBuiltin) {
+TEST_F(ARM32_Intrinsics, Decompile_BkptKeepsItsCode) {
   auto r = decompileToHighC(obj("test_intrinsics_arm.o"));
   ASSERT_EQ(r.exitCode, 0) << "Decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled_high.c");
-  EXPECT_TRUE(content.find("__builtin_debugtrap") != std::string::npos)
-      << "Expected __builtin_debugtrap() for bkpt in HighC:\n"
+  EXPECT_NE(content.find("__asm__ volatile(\"bkpt #0xAB\""), std::string::npos)
+      << "Expected BKPT with its original code in HighC:\n"
       << content.substr(0, 3000);
 }
 

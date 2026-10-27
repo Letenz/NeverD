@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../../lib/backend/codegen/COFF/COFFRegistrationCxxIRProof.h"
+#include "../../../lib/backend/llvm/X86/MedLLVMRegistrationCopyBlocks.h"
 #include "../../../lib/backend/llvm/X86/MedLLVMRegistrationCxxBlocks.h"
 #include "gtest/gtest.h"
 
@@ -14,6 +15,34 @@
 
 namespace {
 using namespace neverd;
+
+TEST(RegistrationPHICopy, ParentExitOwnsOnlyItsAuthenticatedCopyEdge) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("parent-copy", Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false),
+      llvm::GlobalValue::ExternalLinkage, "parent", Module);
+  auto *From = llvm::BasicBlock::Create(Context, "finally", Function);
+  auto *Copy = llvm::BasicBlock::Create(Context, "copy", Function);
+  auto *To = llvm::BasicBlock::Create(Context, "continuation", Function);
+  llvm::IRBuilder<> B(From);
+  B.CreateBr(Copy);
+  B.SetInsertPoint(Copy);
+  B.CreateBr(To);
+  B.SetInsertPoint(To);
+  B.CreateRetVoid();
+  const std::map<int, std::pair<va_t, bool>> Owners{{0, {0x1800, true}}};
+  const std::map<int, llvm::BasicBlock *> Blocks{{0, From}, {1, To}};
+  const std::map<llvm::BasicBlock *, std::pair<int, int>> Edges{{Copy, {0, 1}}};
+  EXPECT_FALSE(registrationPHICopyOwners(Owners, Blocks, Edges));
+  EXPECT_FALSE(registrationPHICopyOwners(Owners, Blocks, Edges, {{0, 2}}));
+  EXPECT_FALSE(registrationPHICopyOwners(Owners, Blocks, Edges, {{1, 0}}));
+  const auto Checked =
+      registrationPHICopyOwners(Owners, Blocks, Edges, {{0, 1}});
+  ASSERT_TRUE(Checked);
+  ASSERT_EQ(Checked->size(), 1u);
+  EXPECT_EQ(Checked->at(Copy), Owners.at(0));
+}
 
 TEST(RegistrationPHICopy, RequiresTheExactSameInvocationEdge) {
   for (unsigned Mutation = 0; Mutation != 13; ++Mutation) {

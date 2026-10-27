@@ -57,6 +57,7 @@ add_neverd_component_library(NeverDEmulationNative
 if(NEVERD_EMULATION_BACKEND_UNICORN)
   add_neverd_component_library(NeverDEmulationUnicorn
     backends/unicorn/UnicornBackend.cpp
+    backends/unicorn/UnicornResourcePause.cpp
     backends/unicorn/UnicornMachine.cpp
     backends/unicorn/UnicornArchitecture.cpp
     backends/unicorn/UnicornAArch64Atomic.cpp
@@ -94,6 +95,23 @@ add_neverd_component_library(NeverDEmulationImage
   LINK_COMPONENTS Loader EmulationCore
   LLVM_COMPONENTS Support)
 
+add_neverd_component_library(NeverDEmulationModules
+  runtime/ModuleBinding.cpp
+  runtime/ModuleMappingTransaction.cpp
+  runtime/ModuleResolver.cpp
+  LINK_COMPONENTS Modules EmulationImage EmulationRuntime
+  LLVM_COMPONENTS Support)
+
+add_neverd_component_library(NeverDEmulationWorkload
+  runtime/BufferExecution.cpp
+  runtime/ExecutionCommandJSON.cpp
+  runtime/ExecutionRun.cpp
+  runtime/ExecutionRunJSON.cpp
+  runtime/ExecutionRunInvocation.cpp
+  runtime/GuestInvocation.cpp
+  LINK_COMPONENTS EmulationModules EmulationABI
+  LLVM_COMPONENTS Support)
+
 add_subdirectory(os/linux)
 add_subdirectory(os/windows/exception)
 add_subdirectory(os/windows/process)
@@ -102,11 +120,13 @@ add_neverd_component_library(NeverDEmulationProcess
   runtime/ProcessSession.cpp
   runtime/ProcessReport.cpp
   runtime/ProcessDarwinFilesJSON.cpp
+  runtime/ProcessDarwinJSON.cpp
   runtime/ProcessDarwinSystemJSON.cpp
   runtime/ProcessDarwinTimeJSON.cpp
   runtime/ProcessLinuxTimeJSON.cpp
   runtime/ProcessLinuxSignalsJSON.cpp
   runtime/ProcessLinuxPriorityJSON.cpp
+  runtime/ProcessNetworkJSON.cpp
   runtime/ProcessLinuxKernelJSON.cpp
   runtime/ProcessLinuxFilesJSON.cpp
   runtime/ProcessLinuxDevicesJSON.cpp

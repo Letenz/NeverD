@@ -27,10 +27,10 @@ llvm::Error pnpDeviceError(const llvm::Twine &Message) {
 }
 } // namespace
 
-bool KernelModel::isProviderDevice(uint64_t Address) const {
+bool KernelModel::isPnpProviderDevice(uint64_t Address) const {
   const auto Found = Devices.find(Address);
   return Found != Devices.end() &&
-         Found->second.OwnerKind == DeviceOwnerKind::Provider;
+         Found->second.OwnerKind == DeviceOwnerKind::PnpProvider;
 }
 
 KernelModel::PnpDeviceRecord *KernelModel::pnpDeviceForPDO(uint64_t PDO) {
@@ -59,7 +59,7 @@ llvm::Expected<uint64_t> KernelModel::pnpDeviceForRoute(uint64_t Device) const {
   uint64_t Identity = 0;
   for (uint64_t Address : *Route) {
     const uint64_t Owner =
-        isProviderDevice(Address) ? Address : Devices.at(Address).PnpDevice;
+        isPnpProviderDevice(Address) ? Address : Devices.at(Address).PnpDevice;
     if (!Owner)
       continue;
     if (!pnpDeviceForPDO(Owner))
@@ -96,13 +96,14 @@ llvm::Error KernelModel::preparePnpDevices() {
   if (auto E = Memory.writeInteger(*Provider + 2, DriverObjectSize, 2))
     return E;
   PnpProviderDriver = *Provider;
+  ReferencedObjects.emplace(*Provider, ObjectReferences{ObjectKind::Driver});
   for (const auto &Configured : ConfiguredPnpDevices) {
     // The shared scenario validator owns both explicit bus contracts.
     if (!Configured.InitialDevicePower || !Configured.InitialSystemPower)
       return pnpDeviceError("provider requires explicit initial power states");
     auto Created = createDeviceObjectForOwner(
         {}, 0, UnknownDeviceType, SecureOpen, false, PnpProviderDriver,
-        DeviceOwnerKind::Provider);
+        DeviceOwnerKind::PnpProvider);
     if (!Created)
       return Created.takeError();
     if (Created->Status != StatusSuccess)
@@ -161,7 +162,7 @@ KernelModel::beginAddDevice(llvm::StringRef ID) {
         return Entry.second.AddDeviceActive;
       }))
     return pnpDeviceError("AddDevice can execute only once and serially");
-  if (!isProviderDevice(Device.PDO) || Unloading || Unloaded ||
+  if (!isPnpProviderDevice(Device.PDO) || Unloading || Unloaded ||
       !Requests.empty() || CurrentIRQL != scheduler::PassiveLevel)
     return pnpDeviceError(
         "AddDevice requires a live idle PDO at PASSIVE_LEVEL");
@@ -220,7 +221,7 @@ llvm::Error KernelModel::finalizeAddDevice(llvm::StringRef ID) {
   auto &Device = Found->second;
   if (!(*Device.AddDeviceStatus & profile::NTStatusFailureMask))
     return llvm::Error::success();
-  if (!isProviderDevice(Device.PDO))
+  if (!isPnpProviderDevice(Device.PDO))
     return llvm::Error::success();
   if (std::any_of(Devices.begin(), Devices.end(), [&](const auto &Entry) {
         return Entry.second.OwnerKind == DeviceOwnerKind::Guest &&
@@ -237,9 +238,9 @@ llvm::Error KernelModel::finalizeAddDevice(llvm::StringRef ID) {
       std::any_of(
           WorkItems.begin(), WorkItems.end(),
           [&](const auto &Entry) { return Entry.second == Device.PDO; }) ||
-      std::any_of(Files.begin(), Files.end(), [&](const auto &Entry) {
-        return Entry.second.Device == Device.PDO;
-      });
+      std::any_of(
+          FileObjects.begin(), FileObjects.end(),
+          [&](const auto &Entry) { return Entry.second.Device == Device.PDO; });
   if (HasReferences)
     return pnpDeviceError("failed AddDevice left provider references");
   if (auto E = retirePnpProvider(Device.PDO))
@@ -275,7 +276,7 @@ llvm::Error KernelModel::retirePnpProvider(uint64_t PDO) {
   auto &Device = Found->second;
   if (auto E = canReleaseResources(PDO))
     return E;
-  if (Device.OwnerKind != DeviceOwnerKind::Provider ||
+  if (Device.OwnerKind != DeviceOwnerKind::PnpProvider ||
       Device.OwnerDriver != PnpProviderDriver)
     return pnpDeviceError("provider teardown cannot delete a guest device");
   if (Device.Lower || Device.Upper || Device.InternalReferences ||
@@ -283,7 +284,7 @@ llvm::Error KernelModel::retirePnpProvider(uint64_t PDO) {
       std::any_of(WorkItems.begin(), WorkItems.end(),
                   [PDO](const auto &Entry) { return Entry.second == PDO; }) ||
       std::any_of(
-          Files.begin(), Files.end(),
+          FileObjects.begin(), FileObjects.end(),
           [PDO](const auto &Entry) { return Entry.second.Device == PDO; }) ||
       std::any_of(Requests.begin(), Requests.end(), [&](const auto &Entry) {
         const auto &Request = Entry.second;
@@ -326,7 +327,7 @@ llvm::Error KernelModel::validatePnpRemovalFinalization(
   if (auto E = canReleaseResources(PDO))
     return E;
   const auto *Configured = pnpDeviceForPDO(PDO);
-  if (!Configured || !isProviderDevice(PDO))
+  if (!Configured || !isPnpProviderDevice(PDO))
     return pnpDeviceError("remove finalization lost its provider identity");
   auto Inventory = driverDeviceInventory();
   if (!Inventory)
@@ -355,7 +356,7 @@ llvm::Error KernelModel::validatePnpRemovalFinalization(
         Scheduler.hasOutstanding(Owner))
       return pnpDeviceError("remove finalization has a retained guest device "
                             "or attachment");
-    for (const auto &[ID, File] : Files) {
+    for (const auto &[ID, File] : FileObjects) {
       (void)ID;
       if (File.Device == Owner)
         return pnpDeviceError("remove finalization has a retained file");

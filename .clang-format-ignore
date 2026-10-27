@@ -4,3 +4,7 @@ unittests/lift/aarch64/test_call_arg_phi_a64_pe.def
 unittests/lift/fixtures/library_vcruntime.def
 unittests/lift/fixtures/library_vcruntime_base.def
 unittests/safety/fixtures/safety_runtime.def
+
+# Type libraries the renderer generates keep its layout
+# (scripts/generate_windows_types.py).
+lib/types/headers/*.h

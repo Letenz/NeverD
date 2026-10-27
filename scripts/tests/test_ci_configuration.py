@@ -8,7 +8,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from unittest.mock import patch
 
 
@@ -23,9 +23,91 @@ SEMANTIC_PLUGIN_CMAKE = ROOT / "plugins" / "semantic" / "CMakeLists.txt"
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 STYLE_WORKFLOW = ROOT / ".github" / "workflows" / "llvm-style.yml"
 STYLE_EXPECTATIONS = ROOT / "scripts" / "tests" / "CIStyleExpectations.def"
+# These configure-only fixtures inspect target metadata without building runtimes.
+CONFIGURE_ONLY_OPTIONS = tuple(
+    f"-DNEVERD_ENABLE_{provider}=OFF"
+    for provider in ("MIMALLOC", "TBB", "HIGHWAY", "SIMDUTF", "SIMDJSON")
+)
 
 
 class CiConfigurationTests(unittest.TestCase):
+    def test_acceleration_matrix_runs_with_native_bash_and_default_options(self):
+        shell = "/bin/bash" if Path("/bin/bash").is_file() else shutil.which("bash")
+        if shell is None:
+            self.skipTest("bash is unavailable")
+        source = WORKFLOW.with_name("performance-libraries.yml").read_text()
+        step = self.workflow_step_containing(
+            source, "Test enabled and disabled libraries, including installed binaries")
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        # Run the real loop and argument expansion, including macOS Bash 3.2.
+        # Only external build/test commands are replaced by argument capture.
+        commands = r'''
+cmake() { printf '%s\0' "$@"; printf '\n'; }
+python() { return 0; }
+find() { return 0; }
+'''
+        for runner in ("macOS", "Linux", "Windows"):
+            with self.subTest(runner=runner):
+                result = subprocess.run(
+                    [shell, "--noprofile", "--norc", "-c", commands + script],
+                    env={**os.environ, "RUNNER_OS": runner},
+                    capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = [line.rstrip("\0").split("\0")
+                         for line in result.stdout.splitlines()]
+                self.assertEqual(len(calls), 8)
+                for index, (mode, profile) in enumerate(
+                        (m, p) for m in ("ON", "OFF") for p in ("Release", "Debug")):
+                    args = calls[2 * index]
+                    build = f"build-accel-{mode}-{profile}"
+                    self.assertEqual(args[args.index("-B") + 1], build)
+                    self.assertIn(f"-DCMAKE_BUILD_TYPE={profile}", args)
+                    self.assertIn(f"-DNEVERD_TEST_EXPECT_ACCELERATION={mode}", args)
+                    for provider in ("TBB", "HIGHWAY", "SIMDUTF", "SIMDJSON"):
+                        options = [arg for arg in args
+                                   if arg.startswith(f"-DNEVERD_ENABLE_{provider}=")]
+                        self.assertEqual(options, [] if mode == "ON" else
+                                         [f"-DNEVERD_ENABLE_{provider}=OFF"])
+                    self.assertEqual(calls[2 * index + 1],
+                                     ["--install", build, "--prefix", f"{build}/installed"])
+
+    def test_native_scheduler_selects_test_audits_on_windows_and_unix(self):
+        native = WORKFLOW.with_name("native-pipeline.yml").read_text()
+        step = self.workflow_step_containing(
+            native, "Repeat native contracts with native threads")
+        selection = re.search(
+            r"Path\('build-abi/evidence'\)\.glob\('([^']+)'\)", step)
+        self.assertIsNotNone(selection)
+        audits = {"NeverDAccelerationTests.json", "NeverDX86NativeStateAuditTests.json"}
+        receipts = {"neverd-build-receipt.json", "neverd-dependency-inputs.json",
+                    "neverd-fork-snapshot.json"}
+        # Windows Path.glob is case-insensitive: dependency receipts also match
+        # the old NeverD*.json pattern, but do not contain test inventories.
+        for path_type in (PurePosixPath, PureWindowsPath):
+            with self.subTest(path_type=path_type):
+                selected = {name for name in audits | receipts
+                            if path_type(name).match(selection.group(1))}
+                self.assertEqual(selected, audits)
+
+    def test_capstone_updates_run_native_and_product_contracts(self):
+        native = WORKFLOW.with_name("native-pipeline.yml").read_text()
+        product = WORKFLOW.with_name("web-windows-qualification.yml").read_text()
+        for source in (native, product):
+            push, pull_request = source.split("  pull_request:\n", 1)
+            self.assertIn("- 'third_party/capstone'", push.split("  push:\n", 1)[1])
+            self.assertIn("- 'third_party/capstone'", pull_request.split("\npermissions:", 1)[0])
+
+        owners = {"NeverDX86NativeStateAuditTests", "NeverDX86LegacyAlignedMoveTests",
+                  "NeverDX86UndefinedEffectsTests"}
+        for name in ("Build production and complete focused test owners",
+                     "Repeat native contracts with native threads"):
+            step = self.workflow_step_containing(native, name)
+            command = step.split("--target", 1)[1].split("\n          python", 1)[0]
+            self.assertTrue(owners <= set(re.findall(r"\bNeverD\w+Tests\b", command)))
+        audit = self.workflow_step_containing(native, "Require every focused C++ case")
+        for owner in owners:
+            self.assertIn("('" + owner + "',", audit)
+
     def test_msvc_test_targets_select_extended_coff_objects(self):
         for msvc_style in (False, True):
             with self.subTest(msvc_style=msvc_style), tempfile.TemporaryDirectory(
@@ -48,11 +130,15 @@ class CiConfigurationTests(unittest.TestCase):
                 (root / "CMakeLists.txt").write_text(source)
                 build = root / "build"
                 result = subprocess.run(
-                    ["cmake", "-S", str(root), "-B", str(build), "-G", "Ninja"],
+                    ["cmake", "-S", str(root), "-B", str(build), "-G", "Ninja",
+                     *CONFIGURE_ONLY_OPTIONS],
                     capture_output=True, text=True, check=False,
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 commands = json.loads((build / "compile_commands.json").read_text())
+                # Inspect this test target's generated compile command.
+                commands = [entry for entry in commands
+                            if Path(entry["file"]).name == "probe.cpp"]
                 self.assertEqual(len(commands), 1)
                 command = commands[0]
                 tokens = command.get("arguments") or re.findall(
@@ -109,6 +195,107 @@ class CiConfigurationTests(unittest.TestCase):
                     self.assertEqual(properties.get("RUN_SERIAL", False),
                                      test["name"] in serial)
 
+    def test_driver_batch_timeouts_preserve_exact_method_and_backend_boundaries(self):
+        execution = ROOT / "unittests" / "emulation" / "DriverBatchTestExecution.cmake"
+        methods = (
+            "Backends/KernelFileObjectExecution.OriginalBufferedNativeFileTransfers",
+            "Backends/KernelIntegerFormattingExecution.OriginalImportsAndLookupPreserveAllValueBits",
+        )
+        variants = ("whpLegacyPreferred", "whpLegacyRebased",
+                    "whpCheckedPreferred", "whpCheckedRebased")
+        selected = {f"{method}/{variant}" for method in methods for variant in variants}
+        neighbors = {
+            f"{method}/{backend}LegacyPreferred"
+            for method in methods for backend in ("unicorn", "kvm", "hvf")
+        } | {name + "Extra" for name in selected} | {
+            "Other/KernelFileObjectExecution.OriginalBufferedNativeFileTransfers/whpLegacyPreferred",
+            "Backends/KernelFileObjectExecution.OriginalDriverQueriesBufferedFileInformation/whpLegacyPreferred",
+        }
+        for annotated in (False, True):
+            with self.subTest(annotated=annotated), tempfile.TemporaryDirectory(
+                    prefix="neverd-driver-batch-policy-") as directory:
+                root = Path(directory)
+                original = sorted(selected | neighbors)
+                names = [name + ("  # GetParam() = bytes" if annotated else "")
+                         for name in original]
+                source = ""
+                for name in names:
+                    source += f'add_test("{name}" "{Path(sys.executable).as_posix()}")\n'
+                    source += f'set_tests_properties("{name}" PROPERTIES TIMEOUT 30)\n'
+                source += "set(NeverDNativeDriverTests_TESTS "
+                source += " ".join(f'"{name}"' for name in names) + ")\n"
+                source += f'include("{execution.as_posix()}")\n'
+                (root / "CTestTestfile.cmake").write_text(source, encoding="utf-8")
+                result = subprocess.run(
+                    ["ctest", "--test-dir", str(root), "--show-only=json-v1"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn("CMP0057", result.stderr)
+                tests = json.loads(result.stdout)["tests"]
+                self.assertEqual({test["name"] for test in tests}, set(names))
+                for test in tests:
+                    name = test["name"].split("  # GetParam() = ", 1)[0]
+                    props = {p["name"]: p["value"] for p in test["properties"]}
+                    if name in selected:
+                        guest_allowance = 18 * 5 if "FileObject" in name else 4 * 30
+                        self.assertGreater(props["TIMEOUT"], guest_allowance)
+                        self.assertLessEqual(props["TIMEOUT"], 180)
+                    else:
+                        self.assertEqual(props["TIMEOUT"], 30)
+                    self.assertFalse(props.get("RUN_SERIAL", False))
+
+    def test_darwin_batch_timeouts_cover_guests_without_changing_neighbor_cases(self):
+        execution = ROOT / "unittests" / "emulation" / "DarwinTestExecution.cmake"
+        guest_counts = {
+            "CreatedDirectoryFileSystemsKeepActualParentAndHeldLifetime": 8,
+            "CreatedRegularAttributesKeepIndependentProvidersAndObjectState": 20,
+            "AttributeNamesPreserveReferencesAndRetainedIdentity": 3,
+        }
+        profiles = ("MacOSARM64_hvf", "IOSARM64_hvf", "SimulatorARM64_hvf",
+                    "MacOSARM64_unicorn", "MacOSX64_whp", "MacOSX64_kvm")
+        selected = {
+            f"Transports/DarwinProcess.{method}/{profile}": guests * 20
+            for method, guests in guest_counts.items() for profile in profiles
+        }
+        neighbors = {name.replace("/MacOSARM64_hvf", "Extra/MacOSARM64_hvf")
+                     for name in selected if name.endswith("/MacOSARM64_hvf")} | {
+            "Other/DarwinProcess.CreatedDirectoryFileSystemsKeepActualParentAndHeldLifetime/MacOSARM64_hvf",
+            "Transports/DarwinProcess.CreatedRegularSynchronizationKeepsIndependentProvidersAndState/MacOSARM64_hvf",
+        }
+        previous = {
+            "Transports/DarwinProcess.ImmediateSelectPreservesBitmapsCopiesAndProviderPremises/MacOSARM64_hvf": 120,
+            "Transports/DarwinProcess.SymbolicFileSystemsKeepOwnSnapshotAndFollowedTargetSeparate/MacOSARM64_hvf": 240,
+        }
+        with tempfile.TemporaryDirectory(prefix="neverd-darwin-batch-policy-") as directory:
+            root = Path(directory)
+            names = sorted(set(selected) | neighbors | set(previous))
+            source = ""
+            for name in names:
+                source += f'add_test("{name}" "{Path(sys.executable).as_posix()}")\n'
+                source += f'set_tests_properties("{name}" PROPERTIES TIMEOUT 30)\n'
+            source += "set(NeverDDarwinProcessTests_TESTS "
+            source += " ".join(f'"{name}"' for name in names) + ")\n"
+            source += f'include("{execution.as_posix()}")\n'
+            (root / "CTestTestfile.cmake").write_text(source, encoding="utf-8")
+            result = subprocess.run(
+                ["ctest", "--test-dir", str(root), "--show-only=json-v1"],
+                capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            tests = json.loads(result.stdout)["tests"]
+            self.assertEqual({test["name"] for test in tests}, set(names))
+            for test in tests:
+                name = test["name"]
+                props = {p["name"]: p["value"] for p in test["properties"]}
+                if name in selected:
+                    self.assertGreater(props["TIMEOUT"], selected[name])
+                    self.assertLessEqual(props["TIMEOUT"], selected[name] + 30)
+                    self.assertEqual(props["TIMEOUT"] % 30, 0)
+                else:
+                    self.assertEqual(props["TIMEOUT"], previous.get(name, 30))
+                self.assertFalse(props.get("RUN_SERIAL", False))
+
     def test_mobile_focused_inventory_executes_on_every_runner(self):
         source = WORKFLOW.read_text(encoding="utf-8")
         step = self.workflow_step_containing(source, "focused contract has missing")
@@ -116,6 +303,16 @@ class CiConfigurationTests(unittest.TestCase):
         # Exercise the actual declarative inventory and its identity checks.
         # Stop before the first filesystem mutation or CTest invocation.
         inventory = textwrap.dedent(script.split('          evidence = Path(', 1)[0])
+        body = ast.parse(textwrap.dedent(script.split('\n          PY\n', 1)[0]))
+        owner_start = next(index for index, node in enumerate(body.body)
+                           if isinstance(node, ast.Assign) and any(
+                               isinstance(target, ast.Name) and target.id == "owners"
+                               for target in node.targets))
+        owner_end = next(index for index, node in enumerate(body.body)
+                         if isinstance(node, ast.Assign) and any(
+                             isinstance(target, ast.Name) and target.id == "common"
+                             for target in node.targets))
+        owners = body.body[owner_start:owner_end]
         for runner, profile in (("Linux", "linux-semantic"),
                                 ("macOS", "macos-patch"),
                                 ("Windows", "windows-focused")):
@@ -124,6 +321,59 @@ class CiConfigurationTests(unittest.TestCase):
                 scope = {}
                 exec(compile(inventory, str(WORKFLOW), "exec"), scope)
                 self.assertEqual(len(scope["expected"]), scope["expected_count"])
+                exec(compile(ast.Module(body=owners, type_ignores=[]),
+                             str(WORKFLOW), "exec"), scope)
+                for item in scope["expected"]:
+                    self.assertTrue(item.labels.intersection(scope["owners"]),
+                                    f"selector omits {runner}: {item.name}")
+                code_owners = [item for item in scope["expected"]
+                               if item.name.startswith("ExecutableCodeOwnerIndex.")]
+                self.assertEqual(len(code_owners), 6)
+                for item in code_owners:
+                    self.assertEqual(item.labels,
+                                     frozenset({"NeverDExecutableCodeOwnerTests"}))
+
+                # One GTest name can be registered by the aggregate and by
+                # focused binaries. Exercise CTest itself so coverage labels
+                # cannot accidentally select the other executable copies.
+                cases = {
+                    "SourceABI.PartialFPRegisterPreservationDoesNotInventArguments": (
+                        "NeverDLiftTests", "NeverDObjCSourceCallTests",
+                        "NeverDSourceEntryBindingTests"),
+                    "LowInstructionBoundary.AArch64BarePageBaseCompletesOnlyForExactDereference": (
+                        "NeverDLiftTests", "NeverDLowInstructionBoundaryTests"),
+                    "ExecutableCodeOwnerIndex.PreservesMetadataBoundariesAndRawThumbSpelling": (
+                        "NeverDExecutableCodeOwnerTests",),
+                }
+                required = {scope["TestRecord"](name, frozenset(labels))
+                            for name, labels in cases.items()}
+                self.assertTrue(required <= set(scope["expected"]))
+                with tempfile.TemporaryDirectory(prefix="neverd-focused-owners-") as directory:
+                    root = Path(directory)
+                    subdirectories = []
+                    for name, labels in cases.items():
+                        for index, label in enumerate(labels):
+                            subdir = root / f"owner{len(subdirectories)}"
+                            subdir.mkdir()
+                            subdirectories.append(subdir.name)
+                            actual_labels = labels if index == 0 else (label,)
+                            (subdir / "CTestTestfile.cmake").write_text(
+                                f'add_test("{name}" "${{CMAKE_COMMAND}}" "-E" "true")\n'
+                                f'set_tests_properties("{name}" PROPERTIES LABELS '
+                                f'"{";".join(actual_labels)}")\n')
+                    (root / "CTestTestfile.cmake").write_text(
+                        "".join(f'subdirs("{name}")\n' for name in subdirectories))
+                    names = root / "tests.txt"
+                    names.write_text("".join(name + "\n" for name in cases))
+                    result = subprocess.run(
+                        ["ctest", "--test-dir", str(root), "--label-regex",
+                         scope["owner_regex"], "--tests-from-file", str(names),
+                         "--show-only=json-v1"], capture_output=True, text=True,
+                        timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    selected = scope["parse_inventory"](json.loads(result.stdout))
+                    self.assertEqual(len(selected), len(required))
+                    self.assertEqual(set(selected), required)
 
     def test_med_ir_exports_source_abi_and_objc_dependencies(self):
         with tempfile.TemporaryDirectory(prefix="neverd-med-ir-link-") as directory:
@@ -145,7 +395,8 @@ class CiConfigurationTests(unittest.TestCase):
                 encoding="utf-8",
             )
             result = subprocess.run(
-                ["cmake", "-S", str(root), "-B", str(root / "build")],
+                ["cmake", "-S", str(root), "-B", str(root / "build"),
+                 *CONFIGURE_ONLY_OPTIONS],
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -170,7 +421,8 @@ class CiConfigurationTests(unittest.TestCase):
                 encoding="utf-8",
             )
             result = subprocess.run(
-                ["cmake", "-S", str(root), "-B", str(root / "build")],
+                ["cmake", "-S", str(root), "-B", str(root / "build"),
+                 *CONFIGURE_ONLY_OPTIONS],
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -207,7 +459,8 @@ class CiConfigurationTests(unittest.TestCase):
                 encoding="utf-8",
             )
             result = subprocess.run(
-                ["cmake", "-S", str(root), "-B", str(root / "build")],
+                ["cmake", "-S", str(root), "-B", str(root / "build"),
+                 *CONFIGURE_ONLY_OPTIONS],
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -304,6 +557,7 @@ class CiConfigurationTests(unittest.TestCase):
         self.assertEqual(
             verify_step.count("scripts.tests.test_audit_ci_test_results"), 1
         )
+        self.assertEqual(verify_step.count("scripts.tests.test_ci_test_reuse"), 1)
         self.assertEqual(
             verify_step.count("scripts.tests.test_neverd_bench_harness"), 1
         )
@@ -530,7 +784,7 @@ class CiConfigurationTests(unittest.TestCase):
     def test_workflow_still_builds_the_unfiltered_default_target(self):
         source = WORKFLOW.read_text(encoding="utf-8")
         step_marker = "      - name: Build default targets\n"
-        command = 'cmake --build build-ci --config Release --parallel "$BUILD_PARALLEL"'
+        command = 'python scripts/build.py build-ci --config Release --parallel "$BUILD_PARALLEL"'
         self.assertEqual(source.count(step_marker), 1)
         self.assertEqual(source.count(command), 1)
         build_section = source.split(step_marker, 1)[1].split("\n      - name:", 1)[0]

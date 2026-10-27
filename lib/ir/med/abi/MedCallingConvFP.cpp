@@ -6,8 +6,9 @@
 /// \file
 /// Recover observed floating/vector input bytes across target conventions.
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/ir/intrinsics/X86VectorLaneReads.h"
+#include "neverd/ir/intrinsics/X86/X86VectorLaneReads.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedCallingConvDetail.h"
 
@@ -33,6 +34,26 @@ void detectFPParams(
   // observed as live-in self-copies.
   if (TRI.VecRegCount == 0)
     return;
+  // Only a leading entry self-copy of a floating argument register can become
+  // a parameter (the loop at the end); without one, nothing is recovered.
+  auto isFPArgSelfCopy = [&](const MedOp &Op) {
+    return Op.Output.Kind == MedVar::Reg && Op.NumInputs >= 1 &&
+           Op.Inputs[0].Id == Op.Output.Id &&
+           TRI.isFPArgReg(Op.Output.RegOff, TargetFormat);
+  };
+  {
+    bool AnyCandidate = false;
+    for (const auto &Op : Entry.Ops) {
+      if (Op.Opcode != NdOp::COPY)
+        break;
+      if (isFPArgSelfCopy(Op)) {
+        AnyCandidate = true;
+        break;
+      }
+    }
+    if (!AnyCandidate)
+      return;
+  }
 
   // An entry self-copy alone does not prove a parameter: the lifter emits one
   // for every vector register the body touches, including those used purely as
@@ -102,7 +123,9 @@ void detectFPParams(
           return true;
         }
         const auto It = Defs.find(valueKey(Count));
-        if (It == Defs.end() || !It->second || Depth > 4)
+        if (It == Defs.end() || !It->second ||
+            Depth > ::neverd::limits::ir::
+                        kMedCallingConvFPDetectFPParamsShiftAmountsDepthLimit)
           return false;
         const MedOp &Def = *It->second;
         if ((Def.Opcode == NdOp::COPY || Def.Opcode == NdOp::INT_ZEXT) &&
@@ -125,11 +148,14 @@ void detectFPParams(
   // A vector mask can be a CONCAT of two constant halves, then stored in a
   // register whose first definition is version zero. Neither a missing nor an
   // ambiguous definition supplies a mask. Keep this query local and bounded.
-  size_t ConstantWork = 65536;
+  size_t ConstantWork = ::neverd::limits::ir::kMedCallingConvFPConstantWork;
   std::function<std::optional<llvm::APInt>(const MedVar &, unsigned)>
       constantBits =
           [&](const MedVar &V, unsigned Depth) -> std::optional<llvm::APInt> {
-    if (!ConstantWork || Depth > 16 || !V.Size || V.Size > 64)
+    if (!ConstantWork ||
+        Depth > ::neverd::limits::ir::
+                    kMedCallingConvFPDetectFPParamsConstantBitsDepthLimit ||
+        !V.Size || V.Size > 64)
       return std::nullopt;
     --ConstantWork;
     const unsigned Width = V.Size * 8;
@@ -228,7 +254,7 @@ void detectFPParams(
   // this query cannot establish the reaching definitions within its budget.
   llvm::DenseSet<ValueKey> PossibleFPReads;
   bool UnknownFPReads = false;
-  size_t ReadWork = 65536;
+  size_t ReadWork = ::neverd::limits::ir::kMedCallingConvFPReadWork;
   llvm::SmallVector<uint64_t, 4> ReturnRegs;
   if (!TRI.ReturnsFPInX87) {
     ReturnRegs.append(TRI.FPReturnRegs.begin(), TRI.FPReturnRegs.end());
@@ -650,14 +676,10 @@ void detectFPParams(
   for (const auto &Op : Entry.Ops) {
     if (Op.Opcode != NdOp::COPY)
       break;
-    if (Op.Output.Kind != MedVar::Reg)
-      continue;
-    if (Op.NumInputs < 1 || Op.Inputs[0].Id != Op.Output.Id)
+    if (!isFPArgSelfCopy(Op))
       continue;
 
     uint64_t ROff = Op.Output.RegOff;
-    if (!TRI.isFPArgReg(ROff, TargetFormat))
-      continue;
     // A positional convention (Win64) finds its floating arguments among
     // the argument slots; each still carries a scalar or a vector.
     if (AlreadyParam.count(ROff)) {

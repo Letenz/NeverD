@@ -14,19 +14,24 @@
 
 #include "neverd/Common.h"
 #include "neverd/debug/DWARFLoader.h"
-#include "neverd/debug/LLDMapLoader.h"
-#include "neverd/debug/MSVCMapLoader.h"
+#include "neverd/debug/DebugFileIdentity.h"
+#include "neverd/debug/MapFile.h"
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/support/FilePath.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/CRC.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <map>
 #include <span>
 #include <system_error>
@@ -63,10 +68,10 @@ void dropDebugDataBoundaryGuesses(BinaryImage &Img, const DebugContext &Dbg,
   // What else says a function begins there, which the data does not refute.
   std::set<va_t> Confirmed;
   for (const Symbol &Sym : Img.Symbols)
-    if (Sym.IsFunc && !IsGuess(Sym))
+    if (Sym.IsFunc && !IsGuess(Sym) && !Img.isFunctionContinuationAt(Sym.Addr))
       Confirmed.insert(Sym.Addr);
   for (const auto &[Start, End] : Img.KnownCodeRanges)
-    if (!Img.ContinuationCodeStarts.count(Start))
+    if (Img.hasKnownFunctionEntryAt(Start))
       Confirmed.insert(Start);
   std::set<va_t> Refuted;
   for (const Symbol &Sym : Img.Symbols)
@@ -114,6 +119,136 @@ splitDwarfCandidates(const std::filesystem::path &BinaryPath) {
   return Out;
 }
 
+/// The environment variable whose directories replace the default ones.
+#define NEVERD_DEBUG_FILE_DIRECTORY_VARIABLE(Name)                             \
+  constexpr char DebugFileDirectoryVariable[] = Name;
+#include "neverd/debug/DWARFLocation.def"
+
+/// The directories companion files are searched under by build ID and debug
+/// link: the ones the environment lists, else the defaults
+/// (DWARFLocation.def).
+std::vector<std::filesystem::path> debugFileDirectories() {
+  if (const char *Listed = std::getenv(DebugFileDirectoryVariable)) {
+    llvm::SmallVector<llvm::StringRef, 4> Parts;
+    llvm::StringRef(Listed).split(Parts, llvm::sys::EnvPathSeparator, -1,
+                                  /*KeepEmpty=*/false);
+    std::vector<std::filesystem::path> Listing;
+    for (llvm::StringRef Part : Parts)
+      Listing.push_back(std::filesystem::u8path(Part.str()));
+    return Listing;
+  }
+  return {
+#define NEVERD_DEBUG_FILE_DIRECTORY(Path) std::filesystem::u8path(Path),
+#include "neverd/debug/DWARFLocation.def"
+  };
+}
+
+/// A file that may hold an image's DWARF, and how it was found.
+struct DWARFCandidate {
+  std::filesystem::path Path;
+  DWARFLocation Location = DWARFLocation::Beside;
+};
+
+/// What an ELF image records of its companion: its build ID and debug link.
+struct CompanionIdentity {
+  std::vector<uint8_t> BuildID;
+  std::optional<DebugLink> Link;
+};
+
+CompanionIdentity companionIdentity(const std::filesystem::path &BinaryPath) {
+  CompanionIdentity Identity;
+  auto Opened = openObjectFile(BinaryPath);
+  if (!Opened) {
+    llvm::consumeError(Opened.takeError());
+    return Identity;
+  }
+  if (!Opened->Object)
+    return Identity;
+  Identity.BuildID = recordedBuildIdentity(*Opened->Object);
+  Identity.Link = elfDebugLink(*Opened->Object);
+  return Identity;
+}
+
+/// The companion files of the ELF image at \p BinaryPath in the order GDB
+/// tries them: by build ID under each debug directory, the file the debug
+/// link names beside the image, in .debug/ beside it and under each debug
+/// directory, then the files beside it named after it.
+std::vector<DWARFCandidate>
+companionCandidates(const std::filesystem::path &BinaryPath,
+                    const CompanionIdentity &Identity) {
+  std::vector<DWARFCandidate> Out;
+  const auto add = [&](std::filesystem::path Path, DWARFLocation Location) {
+    for (const DWARFCandidate &Known : Out)
+      if (Known.Path == Path)
+        return;
+    Out.push_back({std::move(Path), Location});
+  };
+  const std::vector<std::filesystem::path> Directories = debugFileDirectories();
+  if (Identity.BuildID.size() >= 2) {
+    const std::string Hex = buildIdentityHex(Identity.BuildID);
+    for (const std::filesystem::path &Directory : Directories)
+      add(Directory / ".build-id" / Hex.substr(0, 2) /
+              (Hex.substr(2) + ".debug"),
+          DWARFLocation::BuildID);
+  }
+  if (Identity.Link) {
+    const std::filesystem::path Name =
+        std::filesystem::u8path(Identity.Link->FileName);
+    std::error_code EC;
+    const std::filesystem::path Dir =
+        std::filesystem::absolute(BinaryPath, EC).parent_path();
+    add(Dir / Name, DWARFLocation::DebugLink);
+    add(Dir / ".debug" / Name, DWARFLocation::DebugLink);
+    for (const std::filesystem::path &Directory : Directories)
+      add(Directory / Dir.relative_path() / Name, DWARFLocation::DebugLink);
+  }
+  for (std::filesystem::path &Path : splitDwarfCandidates(BinaryPath))
+    add(std::move(Path), DWARFLocation::Beside);
+  return Out;
+}
+
+/// Whether \p Candidate can be the companion \p Identity describes: a build
+/// ID both record agrees, and a file found by the debug link of an image
+/// without a build ID has the CRC the link records.
+bool companionMatches(const DWARFCandidate &Candidate,
+                      const CompanionIdentity &Identity) {
+  if (!isReadableFile(Candidate.Path))
+    return false;
+  auto Opened = openObjectFile(Candidate.Path);
+  if (!Opened) {
+    llvm::consumeError(Opened.takeError());
+    return false;
+  }
+  if (!Opened->Object)
+    return false;
+  const std::vector<uint8_t> BuildID = recordedBuildIdentity(*Opened->Object);
+  if (!Identity.BuildID.empty() && !BuildID.empty())
+    return BuildID == Identity.BuildID;
+  if (Candidate.Location == DWARFLocation::BuildID)
+    return false;
+  if (Candidate.Location == DWARFLocation::DebugLink && Identity.Link)
+    return llvm::crc32(llvm::arrayRefFromStringRef(
+               Opened->Buffer->getBuffer())) == Identity.Link->CRC;
+  return true;
+}
+
+/// The companion files of the ELF image at \p BinaryPath that may hold its
+/// DWARF, in the order they are tried.
+std::vector<DWARFCandidate>
+matchingCompanions(const std::filesystem::path &BinaryPath) {
+  const CompanionIdentity Identity = companionIdentity(BinaryPath);
+  std::vector<DWARFCandidate> Out;
+  for (DWARFCandidate &Candidate : companionCandidates(BinaryPath, Identity)) {
+    if (companionMatches(Candidate, Identity)) {
+      Out.push_back(std::move(Candidate));
+      continue;
+    }
+    LLVM_DEBUG(llvm::dbgs() << "debug-discovery: passed over companion "
+                            << pathToUTF8(Candidate.Path) << "\n");
+  }
+  return Out;
+}
+
 std::vector<std::filesystem::path>
 mapCandidates(const std::filesystem::path &BinaryPath) {
   std::vector<std::filesystem::path> Out;
@@ -150,11 +285,14 @@ DebugInfoResult loadPDB(const std::filesystem::path &P, const BinaryImage &Img,
   return R;
 }
 
-DebugInfoResult loadDWARF(const std::filesystem::path &P, BinaryFormat Format,
-                          DWARFLoadTrust Trust,
-                          std::span<const uint8_t> ExpectedImageBytes = {}) {
+DebugInfoResult
+loadDWARF(const std::filesystem::path &P, BinaryFormat Format,
+          DWARFLoadTrust Trust,
+          std::span<const uint8_t> ExpectedImageBytes = {},
+          std::optional<llvm::Triple::ArchType> RequiredArch = std::nullopt) {
   DebugInfoResult R;
-  auto Ctx = DWARFDebugContext::load(P, Format, Trust, ExpectedImageBytes);
+  auto Ctx = DWARFDebugContext::load(P, Format, Trust, ExpectedImageBytes,
+                                     RequiredArch);
   if (Ctx && Ctx->hasInfo()) {
     R.Context = std::move(Ctx);
     R.Kind = DebugInfoKind::DWARF;
@@ -163,33 +301,146 @@ DebugInfoResult loadDWARF(const std::filesystem::path &P, BinaryFormat Format,
   return R;
 }
 
-DebugInfoResult loadMap(const std::filesystem::path &P,
-                        const BinaryImage &Img) {
-  DebugInfoResult R;
+/// Read the MAP at \p P against the image at \p BinaryPath.
+MapRead readMap(const std::filesystem::path &P, const BinaryImage &Img,
+                const std::filesystem::path &BinaryPath) {
+  return readMapFile(P, mapImageLayout(Img, BinaryPath));
+}
 
-  // A COFF /MAP states addresses as segment:offset, so it only resolves
-  // against an image base, and link.exe appends line-number tables the other
-  // dialects have no equivalent for.  MSVCMapDebugContext is the variant that
-  // reads both.  The remaining four dialects carry whole addresses and go
-  // through the auto-detecting loader, which also covers a PE linked with
-  // lld's /lldmap.
-  if (Img.Format == BinaryFormat::COFF) {
-    auto MSVCCtx = MSVCMapDebugContext::load(P, Img.Base);
-    if (MSVCCtx && MSVCCtx->hasInfo()) {
-      R.Context = std::move(MSVCCtx);
-      R.Kind = DebugInfoKind::Map;
-      R.Path = P;
+/// Take \p Map, read from \p P, into \p Result: as its context when it has
+/// none, else as the supplement whose names fill what the context leaves.
+void adoptMap(MapRead Map, const std::filesystem::path &P,
+              DebugInfoResult &Result) {
+  DebugInfoFile File;
+  File.Kind = DebugInfoKind::Map;
+  File.Path = P;
+  File.Dialect = Map.Facts.Dialect;
+  File.Check = Map.Check;
+  Result.Files.push_back(std::move(File));
+  if (Result) {
+    Result.Supplement = std::move(Map.Context);
+    return;
+  }
+  Result.Context = std::move(Map.Context);
+  Result.Kind = DebugInfoKind::Map;
+  Result.Path = P;
+}
+
+/// Load the DWARF file \p Named the caller chose for \p Img: a companion
+/// file, an unstripped copy of the image, or a .dSYM bundle.
+DebugInfoResult loadNamedDWARF(const std::filesystem::path &Named,
+                               const std::filesystem::path &BinaryPath,
+                               const BinaryImage &Img) {
+  DebugInfoResult R;
+  const std::string Shown = pathToUTF8(Named);
+  if (Img.Format != BinaryFormat::ELF && Img.Format != BinaryFormat::MachO) {
+    R.Error = "DWARF files describe ELF and Mach-O images; " +
+              pathToUTF8(BinaryPath.filename()) + " is neither";
+    return R;
+  }
+  std::filesystem::path File = Named;
+  std::error_code EC;
+  if (std::filesystem::is_directory(Named, EC)) {
+    File = dSYMBundleFile(Named);
+    if (File.empty()) {
+      R.Error = "no DWARF file in the bundle " + Shown;
       return R;
     }
   }
-
-  auto Ctx = LLDMapDebugContext::load(P, Img.isCOFF() ? Img.Base : 0);
-  if (Ctx && Ctx->hasInfo()) {
-    R.Context = std::move(Ctx);
-    R.Kind = DebugInfoKind::Map;
-    R.Path = P;
+  if (!isReadableFile(File)) {
+    R.Error = "DWARF file not found: " + Shown;
+    return R;
   }
+  auto Companion = openObjectFile(File, Img.Arch);
+  if (!Companion) {
+    R.Error = "cannot read " + pathToUTF8(File) + ": " +
+              llvm::toString(Companion.takeError());
+    return R;
+  }
+  if (!Companion->Object ||
+      !isTripleArchOf(Companion->Object->getArch(), Img.Arch)) {
+    R.Error =
+        pathToUTF8(File) + " describes no " + getArchName(Img.Arch) + " image";
+    return R;
+  }
+  // The image's own record of its build, from the bytes it was loaded from.
+  std::vector<uint8_t> Expected;
+  const llvm::MemoryBufferRef Bytes(
+      llvm::StringRef(reinterpret_cast<const char *>(Img.Raw.data()),
+                      Img.Raw.size()),
+      "image");
+  if (auto Image = llvm::object::ObjectFile::createObjectFile(Bytes))
+    Expected = recordedBuildIdentity(**Image);
+  else
+    llvm::consumeError(Image.takeError());
+  const std::vector<uint8_t> Recorded =
+      recordedBuildIdentity(*Companion->Object);
+  if (!Expected.empty() && !Recorded.empty() && Expected != Recorded) {
+    const char *What = Img.Format == BinaryFormat::MachO ? "UUID" : "build ID";
+    R.Error = pathToUTF8(File) +
+              " is the debug information of another build: " + "its " + What +
+              " is " + buildIdentityHex(Recorded) + ", the image's " +
+              buildIdentityHex(Expected);
+    return R;
+  }
+  R = loadDWARF(File, Img.Format, DWARFLoadTrust::UnauthenticatedCompanion, {},
+                Companion->Object->getArch());
+  if (!R)
+    R.Error = "no DWARF debug information in " + pathToUTF8(File);
   return R;
+}
+
+/// The PDB or DWARF discovery finds for \p Img, as \p Req allows.
+DebugInfoResult discoverNativeDebugInfo(const std::filesystem::path &BinaryPath,
+                                        const BinaryImage &Img,
+                                        const DebugInfoRequest &Req,
+                                        const LoadProgress &Progress) {
+  DebugInfoResult Result;
+  switch (Img.Format) {
+  case BinaryFormat::COFF:
+    if (!Req.SearchPDB)
+      break;
+    for (const PDBCandidate &C :
+         pdbCandidates(BinaryPath, Img, symbolPath(Req.SymbolPath))) {
+      if (!isReadableFile(C.Path))
+        continue;
+      DebugInfoResult Attempt = loadPDB(C.Path, Img, Progress);
+      if (Attempt)
+        return Attempt;
+      LLVM_DEBUG(llvm::dbgs()
+                 << "debug-discovery: rejected PDB candidate "
+                 << pathToUTF8(C.Path) << (Attempt.Error.empty() ? "" : ": ")
+                 << Attempt.Error << "\n");
+    }
+    break;
+
+  case BinaryFormat::ELF:
+  case BinaryFormat::MachO:
+    if (!Req.SearchDWARF)
+      break;
+    // Covers in-image .debug_info and, for Mach-O, an adjacent .dSYM bundle,
+    // in the order findDWARF reports.
+    Result =
+        loadDWARF(BinaryPath, Img.Format, DWARFLoadTrust::InImage, Img.Raw);
+    if (Result)
+      return Result;
+    for (const DWARFCandidate &C : matchingCompanions(BinaryPath)) {
+      // Split ELF/Mach-O candidates remain useful for names and lines, but
+      // cannot publish object extents: a build ID or CRC that matches says
+      // which build they are of, not that their extents are this image's.
+      // dSYM discovery from the primary Mach-O is handled by DWARFDebugContext
+      // and separately verifies LC_UUID.
+      Result = loadDWARF(C.Path, Img.Format,
+                         DWARFLoadTrust::UnauthenticatedCompanion);
+      if (Result)
+        return Result;
+    }
+    break;
+
+  default:
+    break;
+  }
+  return {};
 }
 
 } // anonymous namespace
@@ -231,102 +482,139 @@ std::optional<DWARFSource> findDWARF(const std::filesystem::path &BinaryPath,
     if (auto Bundle = findDSYMFile(BinaryPath);
         !Bundle.empty() && hasDWARFUnits(Bundle))
       return DWARFSource{std::move(Bundle), DWARFLocation::DSYM};
-  for (std::filesystem::path &C : splitDwarfCandidates(BinaryPath))
-    if (isReadableFile(C) && hasDWARFUnits(C))
-      return DWARFSource{std::move(C), DWARFLocation::Beside};
+  for (DWARFCandidate &C : matchingCompanions(BinaryPath))
+    if (hasDWARFUnits(C.Path))
+      return DWARFSource{std::move(C.Path), C.Location};
   return std::nullopt;
 }
 
-DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
-                              const BinaryImage &Img,
-                              const DebugInfoRequest &Req,
-                              const LoadProgress &Progress) {
+std::optional<std::filesystem::path>
+findMap(const std::filesystem::path &BinaryPath) {
+  for (std::filesystem::path &C : mapCandidates(BinaryPath))
+    if (isReadableFile(C))
+      return std::move(C);
+  return std::nullopt;
+}
+
+std::string describeMapMismatch(const MapCheck &Check) {
+  const auto placed = [](const MapSection &Section) {
+    const std::string Name = Section.Segment.empty()
+                                 ? Section.Name
+                                 : Section.Segment + "," + Section.Name;
+    return Name + " at 0x" + llvm::utohexstr(Section.Address) + " (0x" +
+           llvm::utohexstr(Section.Size) + " bytes)";
+  };
+  switch (Check.Reason) {
+  case MapMismatch::Stamp:
+    return "it records the build stamp " +
+           llvm::utohexstr(Check.MapStamp, /*LowerCase=*/true) +
+           ", the image " +
+           llvm::utohexstr(Check.ImageStamp, /*LowerCase=*/true);
+  case MapMismatch::Section:
+    return "it places " + placed(Check.MapPlaced) + ", the image has " +
+           placed(Check.ImagePlaced);
+  case MapMismatch::Outside:
+    return std::to_string(Check.Outside) + " of its " +
+           std::to_string(Check.Functions) +
+           " functions lie outside the image's code";
+  case MapMismatch::None:
+    break;
+  }
+  return "it does not match the image";
+}
+
+static DebugInfoResult
+loadDebugInfoImpl(const std::filesystem::path &BinaryPath,
+                  const BinaryImage &Img, const DebugInfoRequest &Req,
+                  const LoadProgress &Progress) {
   DebugInfoResult Result;
   if (!Req.Enabled)
     return Result;
+  // The cache container and its companions describe many images. Only an
+  // explicitly selected companion can belong to this projected Mach-O image.
+  const bool Searches = searchesDebugInfo(Img.Arch) && !Img.MachOSharedCache;
 
+  // The PDB or DWARF: the file the caller named, else the one discovery
+  // finds.
   if (!Req.PDBPath.empty()) {
     if (!isReadableFile(Req.PDBPath)) {
       Result.Error = "PDB file not found: " + pathToUTF8(Req.PDBPath);
       return Result;
     }
     Result = loadPDB(Req.PDBPath, Img, Progress, Req.AllowMissingPDBIdentity);
-    if (!Result && Result.Error.empty())
-      Result.Error = "no function symbols in " + pathToUTF8(Req.PDBPath);
-    return Result;
+    if (!Result) {
+      if (Result.Error.empty())
+        Result.Error = "no function symbols in " + pathToUTF8(Req.PDBPath);
+      return Result;
+    }
+  } else if (!Req.DWARFPath.empty()) {
+    Result = loadNamedDWARF(Req.DWARFPath, BinaryPath, Img);
+    if (!Result.Error.empty())
+      return Result;
+  } else if (Searches) {
+    Result = discoverNativeDebugInfo(BinaryPath, Img, Req, Progress);
   }
+  if (Result)
+    Result.Files.push_back({Result.Kind, Result.Path});
 
+  // A MAP the caller named is read beside them.
   if (!Req.MapPath.empty()) {
+    const std::string Shown = pathToUTF8(Req.MapPath);
     if (!isReadableFile(Req.MapPath)) {
-      Result.Error = "MAP file not found: " + pathToUTF8(Req.MapPath);
+      Result = {};
+      Result.Error = "MAP file not found: " + Shown;
       return Result;
     }
-    Result = loadMap(Req.MapPath, Img);
-    if (!Result)
-      Result.Error = "no function symbols in " + pathToUTF8(Req.MapPath);
-    return Result;
-  }
-
-  if (!searchesDebugInfo(Img.Arch))
-    return Result;
-
-  switch (Img.Format) {
-  case BinaryFormat::COFF:
-    if (!Req.SearchPDB)
-      break;
-    for (const PDBCandidate &C :
-         pdbCandidates(BinaryPath, Img, symbolPath(Req.SymbolPath))) {
-      if (!isReadableFile(C.Path))
-        continue;
-      DebugInfoResult Attempt = loadPDB(C.Path, Img, Progress);
-      if (Attempt)
-        return Attempt;
-      LLVM_DEBUG(llvm::dbgs()
-                 << "debug-discovery: rejected PDB candidate "
-                 << pathToUTF8(C.Path) << (Attempt.Error.empty() ? "" : ": ")
-                 << Attempt.Error << "\n");
-    }
-    break;
-
-  case BinaryFormat::ELF:
-  case BinaryFormat::MachO:
-    if (!Req.SearchDWARF)
-      break;
-    // Covers in-image .debug_info and, for Mach-O, an adjacent .dSYM bundle,
-    // in the order findDWARF reports.
-    Result =
-        loadDWARF(BinaryPath, Img.Format, DWARFLoadTrust::InImage, Img.Raw);
-    if (Result)
+    MapRead Map = readMap(Req.MapPath, Img, BinaryPath);
+    if (!Map.Error.empty() || !Map.Context) {
+      Result = {};
+      Result.Error =
+          Map.Error.empty() ? "no function symbols in " + Shown : Map.Error;
       return Result;
-    for (const std::filesystem::path &C : splitDwarfCandidates(BinaryPath)) {
-      if (!isReadableFile(C))
-        continue;
-      // Split ELF/Mach-O candidates remain useful for names and lines, but
-      // cannot publish object extents until build-id/debuglink identity is
-      // authenticated.  dSYM discovery from the primary Mach-O is handled by
-      // DWARFDebugContext and separately verifies LC_UUID.
-      Result =
-          loadDWARF(C, Img.Format, DWARFLoadTrust::UnauthenticatedCompanion);
-      if (Result)
-        return Result;
     }
-    break;
-
-  default:
-    break;
+    if (Map.Check.Match == MapMatch::Mismatch && !Req.UncheckedMap) {
+      Result = {};
+      Result.Error =
+          Shown + " describes another build: " + describeMapMismatch(Map.Check);
+      return Result;
+    }
+    adoptMap(std::move(Map), Req.MapPath, Result);
+    return Result;
   }
 
   // A MAP carries names and addresses but no types, source lines, or build
-  // identity, so it is the last resort: it exists for a stripped binary whose
-  // build kept nothing else.
+  // identity, so the one beside the binary is the last resort: it exists for
+  // a stripped binary whose build kept nothing else.  One that contradicts
+  // the image belongs to another build.
+  if (Result || !Searches || !Req.SearchMap)
+    return Result;
   for (const std::filesystem::path &C : mapCandidates(BinaryPath)) {
+    Progress.check();
     if (!isReadableFile(C))
       continue;
-    Result = loadMap(C, Img);
-    if (Result)
-      return Result;
+    MapRead Map = readMap(C, Img, BinaryPath);
+    if (!Map.Context)
+      continue;
+    if (Map.Check.Match == MapMatch::Mismatch) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "debug-discovery: passed over MAP " << pathToUTF8(C) << ": "
+                 << describeMapMismatch(Map.Check) << "\n");
+      continue;
+    }
+    adoptMap(std::move(Map), C, Result);
+    return Result;
   }
 
+  return Result;
+}
+
+DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
+                              const BinaryImage &Img,
+                              const DebugInfoRequest &Req,
+                              const LoadProgress &Progress) {
+  Progress.report("debug", 0, 1);
+  auto Result = loadDebugInfoImpl(BinaryPath, Img, Req, Progress);
+  Progress.report("debug", 1, 1);
   return Result;
 }
 
@@ -438,6 +726,21 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
   Img.numberSharedFunctionNames();
   LLVM_DEBUG(llvm::dbgs() << "debug-discovery: published " << Applied << " of "
                           << DbgFuncs.size() << " debug function symbols\n");
+  return Applied;
+}
+
+unsigned applyDebugInfo(BinaryImage &Img, DebugInfoResult &Found) {
+  unsigned Applied = 0;
+  size_t File = 0;
+  for (const DebugContext *Context :
+       {Found.Context.get(), Found.Supplement.get()}) {
+    if (!Context || !Context->hasInfo())
+      continue;
+    const unsigned Names = applyDebugSymbols(Img, *Context);
+    if (File < Found.Files.size())
+      Found.Files[File++].Applied = Names;
+    Applied += Names;
+  }
   return Applied;
 }
 

@@ -19,6 +19,25 @@
 
 class X86_64_CallAbi : public HighCHostExecutionTest {
 protected:
+  /// Whether "gcc" is GCC building x86-64 Linux code, as the kernels that
+  /// test GCC's own layout and scheduling need: elsewhere it may be another
+  /// compiler or target another machine.
+  bool gccBuildsX86_64Linux() {
+    const RunResult Machine = exec("gcc", {"-dumpmachine"});
+    return Machine.ok() && Machine.out.rfind("x86_64", 0) == 0 &&
+           Machine.out.find("linux") != std::string::npos &&
+           !exec("gcc", {"--version"}).contains("clang");
+  }
+
+  void SetUp() override {
+    HighCHostExecutionTest::SetUp();
+#if defined(__APPLE__) && defined(__aarch64__)
+    // The generated C and LLVM IR retain x86 instructions and va_list layout.
+    // Execute both them and the source oracle as x86-64 through Rosetta.
+    HostFlags = {"-arch", "x86_64"};
+#endif
+  }
+
   /// Lifts \p Source's object to LLVM IR, links it with \p Source renamed,
   /// and compares \p Entry with the original over a range of arguments.
   /// \p Callee is the source's other function.
@@ -54,9 +73,11 @@ protected:
                           << "      return 1;\n"
                           << "  return 0;\n"
                           << "}\n";
-    const auto Built =
-        exec(NEVERD_TEST_CLANG, {"-O1", "-w", IR.string(), Reference.string(),
-                                 Driver.string(), "-o", Program.string()});
+    std::vector<std::string> HostArgs = HostFlags;
+    HostArgs.insert(HostArgs.end(),
+                    {"-O1", "-w", IR.string(), Reference.string(),
+                     Driver.string(), "-o", Program.string()});
+    const auto Built = exec(NEVERD_TEST_CLANG, HostArgs);
     ASSERT_EQ(Built.exitCode, 0) << Built.err;
     EXPECT_EQ(exec(Program.string(), {}).exitCode, 0);
   }
@@ -247,12 +268,15 @@ TEST_F(X86_64_CallAbi, AByteReadOfAParameterTakesTheWholeRegister) {
                            "  return sext8(0x1FE) == -2 && sext8(0x17F) == 127 "
                            "? 0 : 1;\n"
                            "}\n";
-  const auto BuiltC = exec(NEVERD_TEST_CLANG, {"-O2", "-c", HighC.string(),
-                                               "-o", HighCObject.string()});
+  std::vector<std::string> CompileArgs = HostFlags;
+  CompileArgs.insert(CompileArgs.end(),
+                     {"-O2", "-c", HighC.string(), "-o", HighCObject.string()});
+  const auto BuiltC = exec(NEVERD_TEST_CLANG, CompileArgs);
   ASSERT_EQ(BuiltC.exitCode, 0) << BuiltC.err << "\n" << C;
-  const auto Linked =
-      exec(NEVERD_TEST_CLANG, {"-O2", Driver.string(), HighCObject.string(),
-                               "-o", Program.string()});
+  std::vector<std::string> LinkArgs = HostFlags;
+  LinkArgs.insert(LinkArgs.end(), {"-O2", Driver.string(), HighCObject.string(),
+                                   "-o", Program.string()});
+  const auto Linked = exec(NEVERD_TEST_CLANG, LinkArgs);
   ASSERT_EQ(Linked.exitCode, 0) << Linked.err;
   EXPECT_EQ(exec(Program.string(), {}).exitCode, 0) << C;
 }
@@ -500,4 +524,266 @@ TEST_F(X86_64_CallAbi, AVariadicCalleeTakesItsStackArguments) {
 // caller left unset, as the callee takes them in that order.
 TEST_F(X86_64_CallAbi, ALiftedVariadicCalleeTakesItsStackArguments) {
   expectLiftedRunsLikeSource(VariadicStackIntegers, "vsum_big", "sb");
+}
+
+static const char *const VariadicForwarders = R"C(
+#include <stdarg.h>
+static int vsum(int n, va_list ap) __attribute__((noinline));
+static int sum(int n, ...) __attribute__((noinline));
+static double vdsum(int n, va_list ap) __attribute__((noinline));
+static double dsum(int n, ...) __attribute__((noinline));
+static int vsum(int n, va_list ap) {
+  int s = 0;
+  for (int i = 0; i < n; i++)
+    s += va_arg(ap, int) * (i + 1);
+  return s;
+}
+static int sum(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  int r = vsum(n, ap);
+  va_end(ap);
+  return r;
+}
+static double vdsum(int n, va_list ap) {
+  double s = 0;
+  for (int i = 0; i < n; i++)
+    s += va_arg(ap, double) * (i + 1);
+  return s;
+}
+static double dsum(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  double r = vdsum(n, ap);
+  va_end(ap);
+  return r;
+}
+int forward(int x) {
+  return sum(0) + sum(2, x, 3) + sum(7, x, 1, 2, 3, 4, 5, x * 2) +
+         sum(6, x, 1, 2, 3, 4, 0) + (int)dsum(2, 1.5, (double)x) +
+         (int)dsum(1, (double)x * 3.0);
+}
+)C";
+
+// A variadic function whose va_list only reaches a call, the
+// `error(fmt, ...)` that calls `verror(fmt, va)`, is C's own: it takes its
+// named parameter and `...`, starts its va_list with va_start, and each
+// call passes what its caller sets.  `sum(0)` passes no argument past the
+// count, though another call passes two on the stack: those of a call that
+// passes fewer were only padding.  `sum(6, ..., 0)` passes its zero.
+TEST_F(X86_64_CallAbi, AVariadicForwarderPassesItsVaListOn) {
+  expectHighCRunsLikeSource(
+      {"-target", "x86_64-linux-gnu"}, VariadicForwarders, "forward",
+      {"forward", "sum", "vsum", "dsum", "vdsum"}, {0, 1, -1, 7, 1000});
+  if (HasFatalFailure() || IsSkipped())
+    return;
+  std::ifstream Input(tmpFile("decompiled_high.c"));
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+  const auto Definition = [&](const std::string &Name) {
+    const size_t At = C.find(" " + Name + "(int32_t arg0");
+    const size_t Open = At == std::string::npos ? At : C.find('{', At);
+    if (Open == std::string::npos || C.find(';', At) < Open)
+      return std::string();
+    return C.substr(At, C.find("\n}\n", At) - At);
+  };
+  for (const std::string Name : {"sum", "dsum"}) {
+    const std::string Body = Definition(Name);
+    ASSERT_FALSE(Body.empty()) << Name << "\n" << C;
+    EXPECT_EQ(Body.rfind(" " + Name + "(int32_t arg0, ...) {", 0), 0u) << C;
+    EXPECT_NE(Body.find("va_start(arguments, arg0);"), std::string::npos) << C;
+    EXPECT_NE(Body.find("va_end(arguments);"), std::string::npos) << C;
+  }
+  const std::string Caller = C.substr(C.find(" forward(int32_t arg0) {"));
+  EXPECT_NE(Caller.find("sum(0)"), std::string::npos) << C;
+  EXPECT_EQ(Caller.find("0.0"), std::string::npos) << C;
+  EXPECT_EQ(Caller.find(", 0, 0)"), std::string::npos) << C;
+  EXPECT_NE(Caller.find(", 4, 0)"), std::string::npos) << C;
+  // Clang keeps x across the first dsum call in [rsp], below the stack
+  // arguments: no integer argument.
+  EXPECT_NE(Caller.find("dsum(2, 1.5, "), std::string::npos) << C;
+}
+
+// `ap` and `buf` live at different times, so Clang gives them one stack
+// slot: report passes its address to vsum, which takes a va_list, and then
+// to fill, which writes 200 bytes there.
+static const char *const VaListSlotReuse = R"C(
+#include <stdarg.h>
+static int vsum(int n, va_list ap) __attribute__((noinline));
+static int vsum(int n, va_list ap) {
+  int s = 0;
+  for (int i = 0; i < n; i++)
+    s += va_arg(ap, int) * (i + 1);
+  return s;
+}
+static int fill(int n, char *buf, unsigned size) __attribute__((noinline));
+static int fill(int n, char *buf, unsigned size) {
+  for (unsigned i = 0; i < size; i++)
+    buf[i] = (char)(n + i);
+  int s = 0;
+  for (unsigned i = 0; i < size; i += 7)
+    s += buf[i] * (int)(i + 1);
+  return s;
+}
+static int report(int n, ...) __attribute__((noinline));
+static int report(int n, ...) {
+  int r;
+  {
+    va_list ap;
+    va_start(ap, n);
+    r = vsum(n, ap);
+    va_end(ap);
+  }
+  if (n) {
+    char buf[200];
+    r += fill(n, buf, sizeof buf);
+  }
+  return r;
+}
+int entry(int x) { return report(2, x, 3) + report(0) + report(3, x, x, x); }
+)C";
+
+// C's va_list holds the 24 bytes of one, which fill would write past: the
+// slot is no va_list there, and C passes report's va_list to no call.
+TEST_F(X86_64_CallAbi, ABufferInTheVaListsSlotTakesNoVaList) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, VaListSlotReuse,
+                            "entry", {"entry", "report", "vsum", "fill"},
+                            {0, 1, -1, 7, 1000});
+  if (HasFatalFailure() || IsSkipped())
+    return;
+  std::ifstream Input(tmpFile("decompiled_high.c"));
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+  EXPECT_EQ(C.find("arguments"), std::string::npos) << C;
+}
+
+// GCC sets a call's integer arguments before it converts its floating ones
+// (`mov edi, 2; cvtsi2sd xmm1, ebp; call dsum`), whose MXCSR state ends no
+// argument setup, emits the static functions first, the first of them at
+// address 0, and sets R9 for `sum(7, ...)` before the call to `sum` ahead
+// of it, which leaves R9 alone (-fipa-ra).
+static const char *const GccVariadicForwarders = R"C(
+#include <stdarg.h>
+static int sum(int n, ...) __attribute__((noinline));
+static double dsum(int n, ...) __attribute__((noinline));
+static int vsum(int n, va_list ap) __attribute__((noinline));
+static double vdsum(int n, va_list ap) __attribute__((noinline));
+int forward(int x) {
+  return sum(0) + sum(2, x, 3) + sum(7, x, 1, 2, 3, 4, 5, x * 2) +
+         sum(6, x, 1, 2, 3, 4, 0) + (int)dsum(2, 1.5, (double)x) +
+         (int)dsum(1, (double)x * 3.0);
+}
+static int sum(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  int r = vsum(n, ap);
+  va_end(ap);
+  return r;
+}
+static double dsum(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  double r = vdsum(n, ap);
+  va_end(ap);
+  return r;
+}
+static int vsum(int n, va_list ap) {
+  int s = 0;
+  for (int i = 0; i < n; i++)
+    s += va_arg(ap, int) * (i + 1);
+  return s;
+}
+static double vdsum(int n, va_list ap) {
+  double s = 0;
+  for (int i = 0; i < n; i++)
+    s += va_arg(ap, double) * (i + 1);
+  return s;
+}
+)C";
+
+TEST_F(X86_64_CallAbi, ArgumentSetupCrossesFloatingConversions) {
+  if (!gccBuildsX86_64Linux())
+    GTEST_SKIP() << "needs GCC building x86-64 Linux code";
+  expectHighCRunsLikeSource("gcc", {}, GccVariadicForwarders, "forward",
+                            {"forward", "sum", "vsum", "dsum", "vdsum"},
+                            {0, 1, -1, 7, 1000});
+  if (HasFatalFailure() || IsSkipped())
+    return;
+  std::ifstream Input(tmpFile("decompiled_high.c"));
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+  const std::string Caller = C.substr(C.find(" forward(int32_t arg0) {"));
+  EXPECT_NE(Caller.find("dsum(2, "), std::string::npos) << C;
+  // The arguments of the call opening at \p Open, as top-level commas count.
+  const auto Arguments = [&](size_t Open) {
+    size_t Count = 1;
+    int Depth = 0;
+    for (size_t I = Open; I < Caller.size(); ++I) {
+      if (Caller[I] == '(')
+        ++Depth;
+      else if (Caller[I] == ')' && --Depth == 0)
+        return Count;
+      else if (Caller[I] == ',' && Depth == 1)
+        ++Count;
+    }
+    return size_t(0);
+  };
+  // AL says one vector register: XMM1, still holding x * 3.0, passes none.
+  const size_t One = Caller.find("dsum(1, ");
+  ASSERT_NE(One, std::string::npos) << C;
+  EXPECT_EQ(Arguments(One + 4), 2u) << C;
+}
+
+// Debug information declares `sum(int n, ...)`, which C defines with every
+// argument register: the results of the calls the variadic arguments take
+// are read, and assigned.
+TEST_F(X86_64_CallAbi, ACallResultPassedAsAVariadicArgumentIsAssigned) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu", "-g"}, R"C(
+#include <stdarg.h>
+static int sum(int n, ...) __attribute__((noinline));
+static int twice(int x) __attribute__((noinline));
+static int sum(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  int s = 0;
+  for (int i = 0; i < n; i++)
+    s += va_arg(ap, int) * (i + 1);
+  va_end(ap);
+  return s;
+}
+static int twice(int x) { return 2 * x + 1; }
+int entry(int x) { return sum((x & 1) + 1, twice(x), twice(x + 3)); }
+)C",
+                            "entry", {"entry", "sum", "twice"},
+                            {0, 1, -1, 7, 1000});
+}
+
+// fwd returns what make returns, a struct of two registers, by a tail
+// call (`xor rdi, 5; jmp make`).  The call returns both registers, not the
+// RDX fwd held before it, which entry would read as the second field.
+TEST_F(X86_64_CallAbi, ATailCallForwardsATwoRegisterStruct) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+struct pair { long a, b; };
+struct pair make(long x) __attribute__((noinline));
+struct pair fwd(long x) __attribute__((noinline));
+struct pair make(long x) { struct pair p = {x * 3, x + 7}; return p; }
+struct pair fwd(long x) { return make(x ^ 5); }
+long entry(long x) { struct pair p = fwd(x); return p.a * 2 + p.b; }
+)C",
+                            "entry", {"entry", "fwd", "make"},
+                            {0, 1, -1, 7, 1000});
+}
+
+// A relocatable object's first function sits at address 0, which a call
+// still names: GCC emits a static function first, and a call to it reads
+// the callee's summary as any other does.
+TEST_F(X86_64_CallAbi, ACallToTheFunctionAtAddressZeroPassesItsArguments) {
+  if (!gccBuildsX86_64Linux())
+    GTEST_SKIP() << "needs GCC building x86-64 Linux code";
+  expectHighCRunsLikeSource("gcc", {}, R"C(
+static int twice(int x, int y) __attribute__((noinline));
+static int twice(int x, int y) { return x * 2 + y; }
+int entry(int x) { return twice(x, 1) + twice(x + 3, x); }
+)C",
+                            "entry", {"entry", "twice"}, {0, 1, -1, 7, 1000});
 }

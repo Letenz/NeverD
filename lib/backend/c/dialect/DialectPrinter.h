@@ -130,6 +130,30 @@ protected:
   }
   unsigned depth() const { return Depth; }
 
+  //===--- Literals ---===//
+
+  /// The bytes a narrow string literal spells, its parts joined, without its
+  /// terminator; none for another kind of string.
+  static std::optional<std::string> stringBytes(const Expr *E);
+  /// The bytes an initializer list of an array of \p Count bytes gives, in
+  /// order and at their designated indexes, up to its last one; none when an
+  /// element is not a byte constant.
+  static std::optional<std::string> listBytes(const Expr *Init, uint64_t Count);
+  /// Whether \p Ty is an array of a known number of bytes (unsigned 8-bit
+  /// integers), as the emitter declares an image's bytes.
+  static bool byteArray(const CType *Ty);
+
+  //===--- The program's types ---===//
+
+  /// How the language reaches the member \p E names, a `.` or `->` access,
+  /// when its record is one of the program's types
+  /// (SourceDialectOptions::LocalTypes): the hops to it, or for a bit-field
+  /// to the record whose methods read and write it; no hops, after
+  /// refusing, for a member they reach no other way.
+  std::optional<SourceDialectLocalTypes::Path> localMember(const Expr *E) const;
+  /// Whether the program's types define \p Ty, a record, in the language.
+  bool localRecord(const CType *Ty) const;
+
   //===--- Comments ---===//
 
   /// A C comment as the dialect writes it.

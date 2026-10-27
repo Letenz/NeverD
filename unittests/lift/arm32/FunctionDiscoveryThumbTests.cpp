@@ -263,6 +263,175 @@ TEST(FunctionDiscoveryARM, PreservesVerifiedMachODirectCallInsideBroadRange) {
             0u);
 }
 
+// A code pointer's bit 0 is the instruction set `blx` enters.  One the
+// runtime calls states either set; a stored one only Thumb, since an even
+// address may be data.  A pointer that contradicts other evidence states
+// nothing, and the runtime's own pointers say so in a load diagnostic.
+TEST(FunctionDiscoveryThumb, CodePointersStateTheModeOfWhatTheyAddress) {
+  BinaryImage Img;
+  Img.Arch = Arch::ARM;
+  Img.Bits = Bitness::Bits32;
+  Img.Base = 0x1000;
+  const std::array<uint8_t, 12> Code = {
+      0x01, 0x20, 0x70, 0x47, // 0x1000: movs r0, #1; bx lr
+      0x1e, 0xff, 0x2f, 0xe1, // 0x1004: bx lr
+      0x1e, 0xff, 0x2f, 0xe1, // 0x1008: bx lr
+  };
+  Img.Segments.push_back(makeExecutableSegment(0x1000, Code));
+  Section Text;
+  Text.Name = ".text";
+  Text.VA = 0x1000;
+  Text.Size = Code.size();
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Code.begin(), Code.end());
+  Img.Sections.push_back(Text);
+  const auto ModeAt = [&](va_t Address) -> std::optional<InstructionMode> {
+    const auto It = Img.ARMCodeModeEntries.find(Address);
+    if (It == Img.ARMCodeModeEntries.end())
+      return std::nullopt;
+    return It->second;
+  };
+
+  recordARMCodePointerMode(Img, 0x1001, ARMCodePointerUse::Stored);
+  EXPECT_EQ(ModeAt(0x1000), InstructionMode::Thumb);
+  recordARMCodePointerMode(Img, 0x1004, ARMCodePointerUse::Stored);
+  EXPECT_EQ(ModeAt(0x1004), std::nullopt);
+  recordARMCodePointerMode(Img, 0x1004, ARMCodePointerUse::Called);
+  EXPECT_EQ(ModeAt(0x1004), InstructionMode::ARM);
+  // Outside the code, a pointer is no code pointer.
+  recordARMCodePointerMode(Img, 0x2001, ARMCodePointerUse::Called);
+  EXPECT_EQ(ModeAt(0x2000), std::nullopt);
+  EXPECT_TRUE(Img.LoadDiagnostics.empty());
+
+  // Contradictions keep the entry as it was.
+  recordARMCodePointerMode(Img, 0x1005, ARMCodePointerUse::Stored);
+  EXPECT_TRUE(Img.LoadDiagnostics.empty());
+  recordARMCodePointerMode(Img, 0x1005, ARMCodePointerUse::Called);
+  EXPECT_EQ(ModeAt(0x1004), InstructionMode::ARM);
+  ASSERT_EQ(Img.LoadDiagnostics.size(), 1u);
+  EXPECT_EQ(Img.LoadDiagnostics.back().Code, "elf.arm_code_pointer_mode");
+  // `blx` to an ARM address with bit 1 set is unpredictable.
+  recordARMCodePointerMode(Img, 0x1002, ARMCodePointerUse::Called);
+  EXPECT_EQ(ModeAt(0x1002), std::nullopt);
+  EXPECT_EQ(Img.LoadDiagnostics.size(), 2u);
+  // Mapping symbols already decide what they cover.
+  Img.ARMCodeRegions.push_back({0x1008, 0x100c, ARMCodeRegionKind::ARM});
+  recordARMCodePointerMode(Img, 0x1008, ARMCodePointerUse::Called);
+  EXPECT_EQ(ModeAt(0x1008), std::nullopt);
+  recordARMCodePointerMode(Img, 0x1009, ARMCodePointerUse::Called);
+  EXPECT_EQ(ModeAt(0x1008), std::nullopt);
+  EXPECT_EQ(Img.LoadDiagnostics.size(), 3u);
+
+  // Without a section table read-only data can share the executable
+  // segment, so a stored odd address there may be a string's.
+  Img.Sections.clear();
+  Img.ARMCodeModeEntries.clear();
+  recordARMCodePointerMode(Img, 0x1001, ARMCodePointerUse::Stored);
+  EXPECT_EQ(ModeAt(0x1000), std::nullopt);
+  recordARMCodePointerMode(Img, 0x1001, ARMCodePointerUse::Called);
+  EXPECT_EQ(ModeAt(0x1000), InstructionMode::Thumb);
+}
+
+TEST(FunctionDiscoveryThumb, UndefinedAliasesStopReachableModeDiscovery) {
+  for (uint8_t Code : {0x00, 0xf9, 0xfe, 0xff}) {
+    SCOPED_TRACE(unsigned(Code));
+    BinaryImage Img = makeThumbImage();
+    Img.Mode = InstructionMode::Default;
+    Img.Format = BinaryFormat::ELF;
+    const std::array<uint8_t, 6> Bytes = {
+        Code, 0xde, // udf #imm8, including __brkdiv0 and trap
+        42,   0x20, 0x70, 0x47};
+    Img.Segments.push_back(makeExecutableSegment(0x1000, Bytes));
+    Img.ARMCodeModeEntries.emplace(0x1000, InstructionMode::Thumb);
+    ARMModeDiscovery Discovery(Img);
+    if (llvm::Error Err = Discovery.discover())
+      FAIL() << llvm::toString(std::move(Err));
+    EXPECT_EQ(Discovery.disassembledInstructions(), 1u);
+    EXPECT_EQ(Img.instructionModeAt(0x1000), InstructionMode::Thumb);
+    EXPECT_EQ(Img.instructionModeAt(0x1002), std::nullopt);
+    ASSERT_EQ(Img.ARMReachableCodeRegions.size(), 1u);
+    EXPECT_EQ(Img.ARMReachableCodeRegions.front().End, 0x1002u);
+  }
+}
+
+// The passes that decode an image's reachable code repeat when they learn a
+// literal or a routine that never returns, and the landing pads of the
+// exception tables extend what they decoded.  Neither decodes an instruction
+// twice: what an instruction does depends only on its bytes and its mode.
+TEST(FunctionDiscoveryThumb, LandingPadsExtendTheDecodeWithoutRepeatingIt) {
+  BinaryImage Img;
+  Img.Arch = Arch::ARM;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0x1000;
+  const std::array<uint8_t, 40> Code = {
+      0x80, 0xb5,             // 0x1000: push {r7, lr}
+      0x00, 0xf0, 0x0d, 0xf8, // 0x1002: bl 0x1020, guarded
+      0x00, 0x20,             // 0x1006: movs r0, #0
+      0x80, 0xbd,             // 0x1008: pop {r7, pc}
+      0x00, 0xbf,             // 0x100a: nop, unreached
+      0x01, 0x20,             // 0x100c: movs r0, #1, the landing pad
+      0x80, 0xbd,             // 0x100e: pop {r7, pc}
+      0x01, 0x48,             // 0x1010: ldr r0, [pc, #4]
+      0x00, 0xf0, 0x07, 0xf8, // 0x1012: bl 0x1024
+      0x00, 0xbf,             // 0x1016: nop, after a call that never returns
+      0x78, 0x56, 0x34, 0x12, // 0x1018: the literal
+      0x00, 0xbf, 0x00, 0xbf, // 0x101c: padding
+      0x70, 0x47,             // 0x1020: bx lr
+      0x00, 0xbf,             // 0x1022: padding
+      0x00, 0xde,             // 0x1024: udf #0
+      0x00, 0xbf,             // 0x1026: padding
+  };
+  Img.Segments.push_back(makeExecutableSegment(0x1000, Code));
+  Section Text;
+  Text.Name = ".text";
+  Text.VA = 0x1000;
+  Text.Size = Code.size();
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Code.begin(), Code.end());
+  Img.Sections.push_back(Text);
+  Img.ARMCodeModeEntries.emplace(0x1000, InstructionMode::Thumb);
+  Img.ARMCodeModeEntries.emplace(0x1010, InstructionMode::Thumb);
+
+  ARMModeDiscovery Discovery(Img);
+  if (llvm::Error Err = Discovery.discover())
+    FAIL() << llvm::toString(std::move(Err));
+  // The first pass followed the call to 0x1024 and stopped at the literal.
+  // Once it proved 0x1024 never returns, the next pass stopped at the call.
+  EXPECT_EQ(Img.instructionModeAt(0x1012), InstructionMode::Thumb);
+  EXPECT_EQ(Img.instructionModeAt(0x1016), std::nullopt);
+  EXPECT_EQ(Img.instructionModeAt(0x100c), std::nullopt);
+  EXPECT_EQ(Discovery.disassembledInstructions(), 9u);
+
+  ExceptionFunction Function;
+  Function.Itanium.emplace();
+  ItaniumCallSite Site;
+  Site.GuardedRange = {0x1002, 0x1006};
+  Site.LandingPadVA = 0x100c;
+  Function.Itanium->CallSites.push_back(Site);
+  Img.ExceptionMetadata.Functions.push_back(std::move(Function));
+  if (llvm::Error Err = Discovery.followLandingPads())
+    FAIL() << llvm::toString(std::move(Err));
+  EXPECT_EQ(Img.instructionModeAt(0x100c), InstructionMode::Thumb);
+  EXPECT_EQ(Img.instructionModeAt(0x100e), InstructionMode::Thumb);
+  EXPECT_EQ(Img.instructionModeAt(0x100a), std::nullopt);
+  EXPECT_EQ(Img.instructionModeAt(0x1016), std::nullopt);
+  EXPECT_EQ(Discovery.disassembledInstructions(), 11u);
+  const std::vector<ARMCodeRegion> Expected = {
+      {0x1000, 0x100a, ARMCodeRegionKind::Thumb},
+      {0x100c, 0x1016, ARMCodeRegionKind::Thumb},
+      {0x1020, 0x1022, ARMCodeRegionKind::Thumb},
+      {0x1024, 0x1026, ARMCodeRegionKind::Thumb},
+  };
+  ASSERT_EQ(Img.ARMReachableCodeRegions.size(), Expected.size());
+  for (size_t Index = 0; Index < Expected.size(); ++Index) {
+    SCOPED_TRACE(Index);
+    EXPECT_EQ(Img.ARMReachableCodeRegions[Index].Start, Expected[Index].Start);
+    EXPECT_EQ(Img.ARMReachableCodeRegions[Index].End, Expected[Index].End);
+    EXPECT_EQ(Img.ARMReachableCodeRegions[Index].Kind, Expected[Index].Kind);
+  }
+}
+
 TEST(FunctionDiscoveryThumb, NormalizesOnlyFunctionSymbols) {
   std::vector<uint8_t> Bytes = readFixture("test_patch_coff_arm.obj");
   if (Bytes.empty())

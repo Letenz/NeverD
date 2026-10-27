@@ -188,6 +188,11 @@ struct CompiledSection {
 using CompiledFunctionRange = llvm::mc_rewrite::RewriteFunctionRange;
 using CompiledWinEHSemanticRecord =
     llvm::mc_rewrite::RewriteWinEHSemanticRecord;
+#ifdef LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES
+using CompiledWinX86SEHFrame = llvm::mc_rewrite::RewriteWinX86SEHFrame;
+using CompiledWinX86SEHStateWrite =
+    llvm::mc_rewrite::RewriteWinX86SEHStateWrite;
+#endif
 
 /// Result of compiling a module to a single placement image.  Allocated
 /// in-image sections are laid out contiguously from a chosen base VA; every
@@ -215,6 +220,13 @@ struct CompiledImage {
   /// Exact compiler-emitted Windows language rows carrying source-issued
   /// semantic identities.
   std::vector<CompiledWinEHSemanticRecord> WinEHSemanticRecords;
+#ifdef LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES
+  /// Compiler-owned PE32 SEH frames and exact callback state stores. These
+  /// receipts retain generated states separately from source scope tokens.
+  std::vector<CompiledWinX86SEHFrame> WinX86SEHFrames;
+  std::vector<CompiledWinX86SEHStateWrite> WinX86SEHStateWrites;
+  bool WinX86SEHStateWritesValid = true;
+#endif
   /// Source-function identity -> authenticated original image entry. Lifted
   /// input receives this from the lifter; explicit replacement input receives
   /// it from bindSourcePatch. Patchers join by exact SourceFunctionOwners.

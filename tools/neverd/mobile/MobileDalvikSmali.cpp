@@ -1,5 +1,6 @@
 //===- MobileDalvikSmali.cpp - Bounded native smali reader
 //-----------------===//
+#include "../ResourceLimits.h"
 #include "MobileDalvik.h"
 
 #include "llvm/ADT/APFloat.h"
@@ -310,7 +311,8 @@ int64_t integer(const std::string &text, unsigned bits = 64,
                R"(([+-]?)(0[xX][0-9a-fA-F]+|[0-9]+)([tTsSlL]?))"))
       fail("invalid or oversized smali integer literal");
     std::string digits = match_value[2];
-    if (digits.size() > 32)
+    if (digits.size() >
+        ::neverd::limits::cli::kMobileDalvikSmaliIntegerDigitsSizeLimit)
       fail("invalid or oversized smali integer literal");
     bool hex = digits.size() > 1 && digits[0] == '0' &&
                (digits[1] == 'x' || digits[1] == 'X');
@@ -878,7 +880,8 @@ class Reader {
         result.keys.push_back(key);
         result.targets.push_back(label);
       }
-      if (result.keys.size() > 65535)
+      if (result.keys.size() >
+          ::neverd::limits::cli::kMobileDalvikSmaliPayloadResultKeysSizeLimit)
         fail("smali switch exceeds its case-count limit");
     }
     take();
@@ -1094,8 +1097,11 @@ class Reader {
                            : opcode.ends_with("/16")          ? 16
                            : opcode.ends_with("/32") || !wide ? 32
                                                               : 64;
-          if (count < 64 && (value < -(int64_t(1) << (count - 1)) ||
-                             value >= (int64_t(1) << (count - 1))))
+          if (count <
+                  ::neverd::limits::cli::
+                      kMobileDalvikSmaliInstructionConstClassConstStringConstWideConstMethodTypeCountLimit &&
+              (value < -(int64_t(1) << (count - 1)) ||
+               value >= (int64_t(1) << (count - 1))))
             fail("smali constant exceeds its instruction format");
         }
         ins.literal = value;

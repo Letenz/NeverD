@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/loader/Limits.h"
 
 #include <algorithm>
 
@@ -18,7 +19,10 @@ namespace neverd::coff_loader::registration_detail {
 bool proveRealignedCxxRegistrationLayout(const BinaryImage &Img,
                                          const InstallSite &Site,
                                          RegistrationChainInfo &Chain) {
-  const size_t Size = std::min<uint64_t>(Site.Range.size(), 128);
+  const size_t Size = std::min<uint64_t>(
+      Site.Range.size(),
+      ::neverd::limits::loader::
+          kCOFFRegistrationEHRealignmentProveRealignedCxxRegistrationLayoutSizeMinArgument2);
   const uint8_t *P = Img.readVA(Site.Range.Begin, Size);
   if (!P || Size < 17 || P[0] != 0x55 || P[1] != 0x89 || P[2] != 0xe5 ||
       P[3] != 0x53 || P[4] != 0x57 || P[5] != 0x56 || P[6] != 0x83 ||

@@ -15,6 +15,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/c/render/AArch64/AArch64PointerC.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/MsvcTypeName.h"
@@ -28,16 +29,26 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/SaveAndRestore.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <map>
+#include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace neverd {
 
 namespace {
+
+/// A goto label, named after the address of the block it labels.  The
+/// workbench reads this spelling back to take a click on a label to its
+/// block (labelDefinition in tools/neverd-gui/app/CodeView.cpp).
+std::string blockLabel(va_t Addr) { return "L_" + llvm::utohexstr(Addr); }
 
 // MSVC `HandlerType` adjectives from CRT `ehdata.h`.
 constexpr uint32_t kCxxCatchConst = 0x1u;
@@ -145,6 +156,30 @@ size_t printedTryBodyEnd(TryExitTest Hidden, TryExitTest LeftOut,
 bool stmtsAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
                      const std::vector<HighStmt> &Stmts, size_t End);
 
+/// Whether a `break` in \p Stmts ends the loop that holds them: one that no
+/// nested loop or switch takes for its own.
+bool breaksOutOf(const std::vector<HighStmt> &Stmts) {
+  for (const HighStmt &S : Stmts) {
+    switch (S.Kind) {
+    case StmtKind::Break:
+      return true;
+    case StmtKind::While:
+    case StmtKind::DoWhile:
+    case StmtKind::For:
+    case StmtKind::Switch:
+      continue;
+    default:
+      break;
+    }
+    if (breaksOutOf(S.Body) || breaksOutOf(S.ElseBody))
+      return true;
+    for (const auto &ClauseBody : S.EHClauseBodies)
+      if (breaksOutOf(ClauseBody))
+        return true;
+  }
+  return false;
+}
+
 bool stmtAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
                     const HighStmt &Stmt) {
   if (Hidden(Stmt))
@@ -153,6 +188,14 @@ bool stmtAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
   case StmtKind::Return:
   case StmtKind::Goto:
     return true;
+  case StmtKind::While:
+  case StmtKind::DoWhile:
+  case StmtKind::For:
+    // A loop whose test always holds runs until a statement in it leaves;
+    // with no break that ends it, nothing falls out of it.
+    return (!Stmt.Cond ||
+            (Stmt.Cond->Kind == ExprKind::Const && Stmt.Cond->ConstVal != 0)) &&
+           !breaksOutOf(Stmt.Body);
   case StmtKind::IfElse:
     return stmtsAlwaysExit(Hidden, LeftOut, Stmt.Body, Stmt.Body.size()) &&
            stmtsAlwaysExit(Hidden, LeftOut, Stmt.ElseBody,
@@ -167,7 +210,13 @@ bool stmtAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
       return false;
     if (Stmt.EHClauseBodies.empty())
       return true;
-    for (const auto &ClauseBody : Stmt.EHClauseBodies) {
+    for (size_t I = 0; I < Stmt.EHClauseBodies.size(); ++I) {
+      // A cleanup runs while the exception unwinds and rethrows it: nothing
+      // after the try follows it.
+      if (I < Stmt.EHClauses.size() &&
+          Stmt.EHClauses[I].Kind == HighEHClauseKind::CxxCleanup)
+        continue;
+      const auto &ClauseBody = Stmt.EHClauseBodies[I];
       if (!stmtsAlwaysExit(Hidden, LeftOut, ClauseBody,
                            hasFallthroughExceptClause(Stmt)
                                ? printedTryBodyEnd(Hidden, LeftOut, ClauseBody)
@@ -178,26 +227,6 @@ bool stmtAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
   default:
     return isNoReturnCallStmt(Stmt);
   }
-}
-
-/// The call \p E returns through casts and integer views, which a function
-/// printed `void` makes as a statement.
-const HighExpr *returnedCall(const HighExpr &E) {
-  const HighExpr *Cur = &E;
-  for (unsigned Depth = 0; Cur && Depth <= limits::kMaxIntegerViewUnwrapDepth;
-       ++Depth) {
-    if (Cur->Kind == ExprKind::Call)
-      return Cur;
-    const bool View =
-        Cur->Kind == ExprKind::Cast || Cur->Kind == ExprKind::BitCast ||
-        (Cur->Kind == ExprKind::UnaryOp &&
-         (Cur->Op == NdOp::INT_ZEXT || Cur->Op == NdOp::INT_SEXT)) ||
-        (Cur->Kind == ExprKind::BinOp && Cur->Op == NdOp::SUBBYTES);
-    if (!View || Cur->Operands.empty())
-      return nullptr;
-    Cur = Cur->Operands[0].get();
-  }
-  return nullptr;
 }
 
 bool stmtsAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
@@ -270,6 +299,12 @@ void writeCxxCatchType(llvm::raw_ostream &OS, const HighEHClause &Clause) {
   }
   if ((Clause.Adjectives & kCxxCatchReference) != 0)
     OS << " &";
+}
+
+/// Whether \p E is the integer constant zero, which C converts to the null
+/// pointer of any type.
+bool isZeroConstant(const HighExpr &E) {
+  return E.Kind == ExprKind::Const && E.ConstVal == 0;
 }
 
 } // namespace
@@ -485,6 +520,56 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
     OS << SourceRecorder->end(*Event);
 }
 
+bool HighCWriter::writeDeferredUnknownCopy(const HighStmt &Stmt, int Indent) {
+  if (!Stmt.Dst || !Stmt.Val ||
+      (Stmt.Dst->Kind != ExprKind::Var && Stmt.Dst->Kind != ExprKind::Phi))
+    return false;
+  const std::string Name = varName(Stmt.Dst->Var);
+  const auto Flag = DeferredUnknownFlags.find(Name);
+  if (Flag == DeferredUnknownFlags.end())
+    return false;
+  // A deferred destination can also be reused by a declared void call.
+  // Preserve the call's effects without manufacturing a known result or
+  // trying to assign its void C expression to the payload.
+  if (knownVoidCall(*Stmt.Val)) {
+    emitIndent(Indent);
+    OS << callStatementText(*Stmt.Val) << "\n";
+    emitIndent(Indent);
+    OS << Flag->second << " = 0;\n";
+    return true;
+  }
+  if (isUnknownCallOperand(Stmt.Val.get())) {
+    emitIndent(Indent);
+    OS << Flag->second << " = 0;\n";
+    return true;
+  }
+  std::string Available = "1";
+  const HighExpr *Value = peelIntegerViewOps(Stmt.Val.get());
+  if (Value && (Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi))
+    if (auto Source =
+            DeferredUnknownFlags.find(copyForwardName(varName(Value->Var)));
+        Source != DeferredUnknownFlags.end())
+      Available = Source->second;
+  std::string Payload;
+  {
+    llvm::SaveAndRestore<bool> Transport(ReadingDeferredPayload,
+                                         Available != "1");
+    Payload = exprStr(*Stmt.Val);
+  }
+  // The zero is only an unavailable payload. It cannot become a recovered
+  // machine value: every observation checks the accompanying availability.
+  emitIndent(Indent);
+  OS << Name << " = ";
+  if (Available != "1")
+    OS << Available << " ? (" << Payload << ") : 0";
+  else
+    OS << Payload;
+  OS << ";\n";
+  emitIndent(Indent);
+  OS << Flag->second << " = " << Available << ";\n";
+  return true;
+}
+
 void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
   if (Analysis.DeadStmts.count(&Stmt) &&
       !(Stmt.Kind == StmtKind::Assign && Stmt.Dst &&
@@ -504,15 +589,16 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       return;
     }
   }
-  const bool HideEHRuntimeMemory = CurrentFunc &&
-                                   CurrentFunc->ExceptionMetadata.has_value() &&
-                                   !preservesRegistrationMemory(*CurrentFunc);
+  const bool HideEHRuntimeMemory =
+      CurrentFunc && hidesRegistrationMemory(*CurrentFunc);
   auto IsEHRuntimeSpace = [&](NdMemoryAddressSpace Space) {
     return HideEHRuntimeMemory && Space == NdMemoryAddressSpace::X86FS;
   };
   switch (Stmt.Kind) {
   case StmtKind::Assign: {
     if (!Stmt.Dst || !Stmt.Val)
+      return;
+    if (writeDeferredUnknownCopy(Stmt, Indent))
       return;
     if ((Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi)) {
       const std::string DestRaw = varName(Stmt.Dst->Var);
@@ -535,7 +621,9 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         Stmt.Dst->MemoryOrdering == NdMemoryOrdering::None) {
       const uint16_t AccessSize =
           Stmt.Val && Stmt.Val->Type ? Stmt.Val->Type->Size : 0;
-      if (auto DestM = typedMemberAccess(*Stmt.Dst->Operands[0], AccessSize)) {
+      if (auto DestM = typedMemberAccess(*Stmt.Dst->Operands[0], AccessSize,
+                                         /*EnterNestedAtZero=*/true,
+                                         accessClassOf(Stmt.Val.get()))) {
         const std::string ValS = exprStr(*Stmt.Val);
         if (ValS == *DestM || ValS.find(*DestM) != std::string::npos)
           return;
@@ -566,7 +654,10 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           [this](const HighExpr &E, uint16_t Width) {
             return isSameWidthUnsigned(E, Width);
           },
-          Opts.Format == BinaryFormat::COFF);
+          Opts.Format == BinaryFormat::COFF,
+          [this](const HighExpr &A, const HighExpr &B, uint64_t Bytes) {
+            return disjointMemory(A, B, Bytes);
+          });
       if (!Rendered.empty()) {
         writeCIndentedSnippet(OS, Rendered, Indent);
         break;
@@ -574,7 +665,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     }
     if (Stmt.Val->Kind == ExprKind::Call &&
         !Stmt.Val->IntrinsicOutputs.empty()) {
-      auto Rendered = MultiOutputRender{}(
+      auto Rendered = MultiOutputRender{Opts.Format != BinaryFormat::COFF}(
           Opts.TheArch, Stmt.Val->IntrinsicId, Stmt.Val->IntrinsicOutputs,
           Stmt.Val->Operands, [this](const HighExpr &E) { return exprStr(E); },
           [this](const MedVar &V) { return varName(V); },
@@ -595,7 +686,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       // result needs an explicit output model, rather than an invented value.
       if (!CurrentFunc ||
           (Stmt.Dst->Kind != ExprKind::Var && Stmt.Dst->Kind != ExprKind::Phi))
-        llvm::report_fatal_error("HighC cannot render an SVC result");
+        throw std::invalid_argument("HighC cannot render an SVC result");
       bool ResultUsed = false;
       const MedVar Result = Stmt.Dst->Var;
       std::function<void(const HighExpr &)> FindUse = [&](const HighExpr &E) {
@@ -617,9 +708,9 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         });
       });
       if (ResultUsed)
-        llvm::report_fatal_error("HighC cannot render a live SVC result");
+        throw std::invalid_argument("HighC cannot render a live SVC result");
       emitIndent(Indent);
-      OS << statementCallText(*Stmt.Val) << ";\n";
+      OS << callStatementText(*Stmt.Val) << "\n";
       break;
     }
     // A callee declared to return nothing leaves no value in the result
@@ -628,7 +719,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     if (knownVoidCall(*Stmt.Val) &&
         (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi)) {
       emitIndent(Indent);
-      OS << statementCallText(*Stmt.Val) << ";\n";
+      OS << callStatementText(*Stmt.Val) << "\n";
       const std::string Dest = varName(Stmt.Dst->Var);
       const std::string Printed = printedForwardedVar(Dest, 0);
       if (!Analysis.OmittedCallResults.count(&Stmt) &&
@@ -651,7 +742,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
          !DeclaredCNames.count(
              printedForwardedVar(varName(Stmt.Dst->Var), 0)))) {
       emitIndent(Indent);
-      OS << statementCallText(*Stmt.Val) << ";\n";
+      OS << callStatementText(*Stmt.Val) << "\n";
       break;
     }
     bool DeadIntrinsicResult = Stmt.Dst->Kind == ExprKind::Var &&
@@ -674,7 +765,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         (isSideeffectIntrinsic(Stmt.Val->IntrinsicId) ||
          !intrinsicCName(Stmt.Val->IntrinsicId))) {
       emitIndent(Indent);
-      OS << statementCallText(*Stmt.Val) << ";\n";
+      OS << callStatementText(*Stmt.Val) << "\n";
       break;
     }
     if (Stmt.Dst->Kind == ExprKind::Load && !Stmt.Dst->Operands.empty()) {
@@ -735,6 +826,11 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           if (ProjectedDestType && ProjectedDestType->Kind == NdTypeKind::Ptr)
             OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
                << ValueText << ")";
+          else if (ProjectedDestType &&
+                   ProjectedDestType->Kind == NdTypeKind::Int &&
+                   printsPointer(*Stmt.Val, ValueText))
+            OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
+               << ValueText << ")";
           else
             OS << ValueText;
           OS << ";\n";
@@ -743,18 +839,34 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       if (Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
         if (auto VA = constAddress(*Stmt.Dst->Operands[0])) {
           if (auto Name = imageObjectName(*VA)) {
+            // An integer the object's type holds converts implicitly, as
+            // a store through any other path does (storedValueText).
+            const TypeRef Declared = assignedImageObjectType(*VA);
             emitIndent(Indent);
-            OS << *Name << " = " << exprStr(*Stmt.Val) << ";\n";
+            OS << *Name << " = "
+               << assignedText(Declared, *Stmt.Val,
+                               implicitIntegerConversion(*Stmt.Val, Declared)
+                                   .value_or(exprStr(*Stmt.Val)))
+               << ";\n";
             break;
           }
         }
       }
-      std::string Value =
-          storedValueText(*Stmt.Val, Stmt.Dst->Type, Stmt.Dst->MemoryOrdering);
-      if (Stmt.Dst->Type && Stmt.Val->Type &&
-          Stmt.Dst->Type->Kind == NdTypeKind::Int &&
-          Stmt.Val->Type->Kind == NdTypeKind::Ptr)
-        Value = "(" + typeToC(Stmt.Dst->Type) + ")(uintptr_t)(" + Value + ")";
+      auto ValueText = [&] {
+        std::string Value = storedValueText(*Stmt.Val, Stmt.Dst->Type,
+                                            Stmt.Dst->MemoryOrdering);
+        if (Stmt.Dst->Type && Stmt.Val->Type &&
+            Stmt.Dst->Type->Kind == NdTypeKind::Int &&
+            Stmt.Val->Type->Kind == NdTypeKind::Ptr)
+          Value = "(" + typeToC(Stmt.Dst->Type) + ")(uintptr_t)(" + Value + ")";
+        return Value;
+      };
+      if (Stmt.Dst->MemoryOrdering == NdMemoryOrdering::None &&
+          Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          writeFrameRecordStore(*Stmt.Dst->Operands[0], Stmt.Dst->Type,
+                                *Stmt.Val, Indent, ValueText))
+        break;
+      std::string Value = ValueText();
       bool ExactImageBytes = false;
       if (Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default)
         if (auto VA = constAddress(*Stmt.Dst->Operands[0]))
@@ -811,9 +923,17 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       auto DeclaredType = declaredParamType(Stmt.Dst->Var);
       if (!DeclaredType)
         DeclaredType = Stmt.Dst->Type;
+      // The local's declaration owns its C type: a call's pointer parameter
+      // types its assignments only as emitLocalDecls declared it.
+      const auto Declared = DeclaredCTypes.find(DestName);
+      const bool DeclaredPointer = Declared != DeclaredCTypes.end() &&
+                                   Declared->second &&
+                                   Declared->second->Kind == NdTypeKind::Ptr;
       bool PointerTypeFromCall = false;
       if (auto It = PointerArgDestTypes.find(varName(Stmt.Dst->Var));
           It != PointerArgDestTypes.end() && It->second &&
+          (!DeclaredPointer ||
+           typeToC(Declared->second) == typeToC(cDisplayType(It->second))) &&
           (!DeclaredType || DeclaredType->Kind == NdTypeKind::Int ||
            DeclaredType->Kind == NdTypeKind::Unknown ||
            (DeclaredType->Kind == NdTypeKind::Ptr &&
@@ -825,6 +945,22 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         DeclaredType = It->second;
         PointerTypeFromCall = true;
       }
+      // A local a typed call's pointer result declares takes what its other
+      // assignments give as that pointer.
+      bool PointerFromCallResult = false;
+      if (const TypeRef Pointer = callResultPointerTypeNamed(DestName);
+          Pointer && (!DeclaredType || DeclaredType->Kind != NdTypeKind::Ptr)) {
+        DeclaredType = Pointer;
+        PointerFromCallResult = true;
+      }
+      // A local declared as a pointer, such as one a typed record's pointer
+      // member gives its type (FieldForwardTypes), takes every value as one.
+      bool PointerFromDeclaration = false;
+      if (DeclaredPointer &&
+          (!DeclaredType || DeclaredType->Kind != NdTypeKind::Ptr)) {
+        DeclaredType = Declared->second;
+        PointerFromDeclaration = true;
+      }
       TypeRef ProjectedValueType = Stmt.Val->Type;
       if (Stmt.Val->Kind == ExprKind::Load && !Stmt.Val->Operands.empty() &&
           Stmt.Val->Operands[0]) {
@@ -834,6 +970,13 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
             ProjectedValueType = Slot->second.Type;
         }
       }
+      // A value C declares as a pointer, as such a local, a typed record's
+      // pointer member or a pointer object of the image, gives an integer
+      // its address.
+      if (const TypeRef Pointer = printedPointerType(*Stmt.Val);
+          Pointer &&
+          (!ProjectedValueType || ProjectedValueType->Kind != NdTypeKind::Ptr))
+        ProjectedValueType = Pointer;
       const std::string AddressText =
           PointerTypeFromCall ? addrStr(*Stmt.Val) : std::string();
       const bool DirectAddress =
@@ -860,23 +1003,55 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       else
         OS << DestName << " = ";
       if (DeclaredType && DeclaredType->Kind == NdTypeKind::Ptr) {
-        if (DirectAddress)
+        // Its call's result, a value of its pointer type or a null pointer
+        // constant needs no conversion.
+        const TypeRef Printed = !PointerFromCallResult ? nullptr
+                                : Stmt.Val->Kind == ExprKind::Call
+                                    ? callResultType(*Stmt.Val)
+                                    : callResultPointerType(*Stmt.Val);
+        if (auto Pointer = implicitPointerConversion(*Stmt.Val, DeclaredType))
+          OS << *Pointer;
+        else if (DirectAddress)
           OS << "(" << typeToC(DeclaredType) << ")(" << ValueText << ")";
+        else if ((PointerFromDeclaration || PointerTypeFromCall) &&
+                 ((ProjectedValueType &&
+                   ProjectedValueType->Kind == NdTypeKind::Ptr &&
+                   typeToC(cDisplayType(ProjectedValueType)) ==
+                       typeToC(DeclaredType) &&
+                   printsPointer(*Stmt.Val, ValueText)) ||
+                  sameDeclaredLocal(*Stmt.Val, ValueText, DeclaredType)))
+          OS << ValueText;
+        else if (PointerFromCallResult &&
+                 ((Printed && typeToC(Printed) == typeToC(DeclaredType)) ||
+                  (Stmt.Val->Kind == ExprKind::Const &&
+                   Stmt.Val->ConstVal == 0)))
+          OS << ValueText;
         else
           OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)(" << ValueText
              << ")";
-      } else if (DeclaredType && ProjectedValueType &&
-                 DeclaredType->Kind == NdTypeKind::Int &&
-                 ProjectedValueType->Kind == NdTypeKind::Ptr)
-        OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)(" << ValueText
+      } else if (const TypeRef IntegerDestination =
+                     DeclaredType
+                         ? (DeclaredType->Kind == NdTypeKind::Int ? DeclaredType
+                                                                  : nullptr)
+                     : DestinationType != DeclaredCTypes.end() &&
+                             DestinationType->second &&
+                             DestinationType->second->Kind == NdTypeKind::Int
+                         ? DestinationType->second
+                         : nullptr;
+                 IntegerDestination &&
+                 ((ProjectedValueType &&
+                   ProjectedValueType->Kind == NdTypeKind::Ptr) ||
+                  printsPointer(*Stmt.Val, ValueText) ||
+                  (Stmt.Val->Kind == ExprKind::Call &&
+                   callResultType(*Stmt.Val) &&
+                   callResultType(*Stmt.Val)->Kind == NdTypeKind::Ptr)))
+        OS << "(" << typeToC(IntegerDestination) << ")(uintptr_t)(" << ValueText
            << ")";
       else if (DeclaredType && DeclaredType->Kind == NdTypeKind::Int &&
                !ValueText.empty() &&
                (ValueText.front() == '&' || isStringLiteralText(ValueText)))
         OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)(" << ValueText
            << ")";
-      else if (isUnknownCallOperand(Stmt.Val.get()))
-        OS << "0";
       else if (auto Enum = enumConstDisplay(varName(Stmt.Dst->Var), *Stmt.Val))
         OS << *Enum;
       else if (std::optional<std::string> Converted =
@@ -885,6 +1060,23 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                                                    DestinationType->second)
                        : std::nullopt)
         OS << *Converted;
+      // A local the unit declares a pointer takes an integer, as an indirect
+      // call's result the cast of its callee types, as the address it is.
+      else if (DestinationType != DeclaredCTypes.end() &&
+               DestinationType->second &&
+               DestinationType->second->Kind == NdTypeKind::Ptr &&
+               printsAsInteger(*Stmt.Val, ValueText))
+        OS << "(" << typeToC(DestinationType->second) << ")(uintptr_t)("
+           << ValueText << ")";
+      // A local C declares floating takes the integer of its width HighIR
+      // assigns as the bits it is (strtod's double, read from the vector
+      // register), and an integer one a floating value likewise.
+      else if (std::optional<std::string> Bits =
+                   DestinationType != DeclaredCTypes.end()
+                       ? reinterpretedBits(DestinationType->second,
+                                           Stmt.Val->Type, ValueText)
+                       : std::nullopt)
+        OS << *Bits;
       else
         OS << ValueText;
     } else {
@@ -895,7 +1087,14 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         break;
       OS << DestS << " = " << ValS;
     }
-    OS << ";\n";
+    OS << ";";
+    if (Opts.EmitComments && Stmt.Val && Stmt.Val->Kind == ExprKind::Load &&
+        Stmt.Val->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        Stmt.Val->Operands.size() == 1 && Stmt.Val->Operands[0])
+      if (const auto Address = constAddress(*Stmt.Val->Operands[0]))
+        if (const auto Text = imageStringComment(Opts.Image, *Address))
+          OS << " /* " << *Text << " */";
+    OS << "\n";
     break;
   }
 
@@ -915,7 +1114,9 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     {
       const uint16_t AccessSize =
           Stmt.StoreVal->Type ? Stmt.StoreVal->Type->Size : 0;
-      if (auto Member = typedMemberAccess(*Stmt.StoreAddr, AccessSize)) {
+      if (auto Member = typedMemberAccess(*Stmt.StoreAddr, AccessSize,
+                                          /*EnterNestedAtZero=*/true,
+                                          accessClassOf(Stmt.StoreVal.get()))) {
         // Text containing a destination can still compute a new value (for
         // example a modular increment). Only an exact, ordinary self-load
         // proves this field assignment redundant.
@@ -957,12 +1158,28 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         }
       }
     }
+    // A float stored as its bits to a union member is stored to the union's
+    // floating alternative of its width: `v->d = x`, not `v->i` the bits.
+    if (Stmt.MemoryOrdering == NdMemoryOrdering::None &&
+        Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        Stmt.StoreVal->Kind == ExprKind::BitCast &&
+        Stmt.StoreVal->Operands.size() == 1 && Stmt.StoreVal->Operands[0] &&
+        Stmt.StoreVal->Operands[0]->Type && Stmt.StoreVal->Type &&
+        Stmt.StoreVal->Operands[0]->Type->Size == Stmt.StoreVal->Type->Size &&
+        !namedFrameSlot(*Stmt.StoreAddr))
+      if (const auto Member = floatAlternative(
+              *Stmt.StoreAddr, *Stmt.StoreVal->Operands[0]->Type)) {
+        emitIndent(Indent);
+        OS << *Member << " = " << exprStr(*Stmt.StoreVal->Operands[0]) << ";\n";
+        break;
+      }
     if (Stmt.MemoryOrdering == NdMemoryOrdering::None &&
         Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
-      if (auto Member = typedMemberAccess(*Stmt.StoreAddr,
-                                          Stmt.StoreVal && Stmt.StoreVal->Type
-                                              ? Stmt.StoreVal->Type->Size
-                                              : 0);
+      if (auto Member = typedMemberAccess(
+              *Stmt.StoreAddr,
+              Stmt.StoreVal && Stmt.StoreVal->Type ? Stmt.StoreVal->Type->Size
+                                                   : 0,
+              /*EnterNestedAtZero=*/true, accessClassOf(Stmt.StoreVal.get()));
           Member && !namedFrameSlot(*Stmt.StoreAddr)) {
         bool Overlayed = false;
         if (auto Overlay =
@@ -972,27 +1189,77 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         }
         emitIndent(Indent);
         OS << *Member << " = ";
-        if (isUnknownCallOperand(Stmt.StoreVal.get()))
-          OS << "0";
-        else {
-          std::string Value = exprStr(*Stmt.StoreVal);
-          const TypeRef StoredType = Stmt.StoreVal->Type;
-          const TypeRef MemberType = typedMemberType(
-              *Stmt.StoreAddr, StoredType ? StoredType->Size : 0);
-          // A sign/zero-extended integer call can reuse an 8-byte pointer
-          // field. Make the C conversion explicit without widening the store.
-          if (!Overlayed && isIntegerOverlayStore(*Stmt.StoreVal) &&
-              MemberType && MemberType->Kind == NdTypeKind::Ptr && StoredType &&
-              StoredType->Kind == NdTypeKind::Int &&
-              StoredType->Size == MemberType->Size) {
-            const bool Signed = StoredType->IsSigned ||
-                                (Stmt.StoreVal->Kind == ExprKind::UnaryOp &&
-                                 Stmt.StoreVal->Op == NdOp::INT_SEXT);
-            Value = "(" + typeToC(MemberType) + ")(" +
-                    (Signed ? "intptr_t" : "uintptr_t") + ")(" + Value + ")";
-          }
-          OS << Value;
+        std::string Value = exprStr(*Stmt.StoreVal);
+        const TypeRef StoredType = Stmt.StoreVal->Type;
+        const TypeRef MemberType =
+            typedMemberType(*Stmt.StoreAddr, StoredType ? StoredType->Size : 0,
+                            accessClassOf(Stmt.StoreVal.get()));
+        // A constant stored to an enumeration names its enumerator.
+        if (MemberType && MemberType->Kind == NdTypeKind::Struct &&
+            MemberType->IsEnum)
+          if (const HighExpr *Const = peelIntegerViewOps(Stmt.StoreVal.get());
+              Const && Const->Kind == ExprKind::Const)
+            if (auto Name = enumeratorDisplay(MemberType, Const->ConstVal))
+              Value = *Name;
+        // A sign/zero-extended integer call can reuse an 8-byte pointer
+        // field. Make the C conversion explicit without widening the store.
+        if (!Overlayed && isIntegerOverlayStore(*Stmt.StoreVal) && MemberType &&
+            MemberType->Kind == NdTypeKind::Ptr && StoredType &&
+            StoredType->Kind == NdTypeKind::Int &&
+            StoredType->Size == MemberType->Size) {
+          const bool Signed = StoredType->IsSigned ||
+                              (Stmt.StoreVal->Kind == ExprKind::UnaryOp &&
+                               Stmt.StoreVal->Op == NdOp::INT_SEXT);
+          Value = "(" + typeToC(MemberType) + ")(" +
+                  (Signed ? "intptr_t" : "uintptr_t") + ")(" + Value + ")";
+        } else if (!Overlayed && MemberType && StoredType &&
+                   MemberType->Kind != NdTypeKind::Float &&
+                   StoredType->Kind != NdTypeKind::Float &&
+                   (MemberType->Kind == NdTypeKind::Ptr ||
+                    StoredType->Kind == NdTypeKind::Ptr) &&
+                   !isZeroConstant(*Stmt.StoreVal) &&
+                   memberOfDefinedRecord(*Stmt.StoreAddr)) {
+          // A member the unit's definitions declare takes their type,
+          // which C converts the stored bytes' type to only by a cast:
+          // an address to a pointer of another type, or an integer.  An
+          // address the code holds as an integer is cast as the address.
+          // C converts an untyped pointer to an object pointer itself.
+          const auto untyped = [&](const TypeRef &Type) {
+            return Type && Type->Kind == NdTypeKind::Ptr &&
+                   (!Type->Pointee ||
+                    Type->Pointee->Kind == NdTypeKind::Void) &&
+                   Type->Size == MemberType->Size;
+          };
+          const bool ObjectMember =
+              MemberType->Kind == NdTypeKind::Ptr &&
+              !(MemberType->Pointee &&
+                MemberType->Pointee->Kind == NdTypeKind::Func);
+          bool Untyped = untyped(StoredType);
+          if (MemberType->Kind == NdTypeKind::Ptr)
+            if (const HighExpr *Address =
+                    peelIntegerViewOps(Stmt.StoreVal.get())) {
+              if (Address != Stmt.StoreVal.get() && Address->Type &&
+                  Address->Type->Kind == NdTypeKind::Ptr &&
+                  Address->Type->Size == MemberType->Size) {
+                Value = exprStr(*Address);
+                Untyped = untyped(Address->Type);
+              }
+              // A parameter the signature types as a pointer, stored
+              // whole, is its address.
+              else if ((Address->Kind == ExprKind::Var ||
+                        Address->Kind == ExprKind::Phi) &&
+                       Address->Var.Kind == MedVar::Param)
+                if (const TypeRef Declared = debugParamType(Address->Var);
+                    Declared && Declared->Kind == NdTypeKind::Ptr &&
+                    Declared->Size == MemberType->Size) {
+                  Value = copyForwardName(varName(Address->Var));
+                  Untyped = untyped(Declared);
+                }
+            }
+          if (!(ObjectMember && Untyped))
+            Value = "(__typeof__(" + *Member + "))(" + Value + ")";
         }
+        OS << Value;
         OS << ";\n";
         break;
       }
@@ -1025,15 +1292,14 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                 ProjectedDestType->Size < ProjectedSlot->second.Type->Size))
             ProjectedDestType = ProjectedSlot->second.Type;
         }
-        if (isUnknownCallOperand(Stmt.StoreVal.get()))
-          OS << "0";
-        else if (ProjectedDestType &&
-                 ProjectedDestType->Kind == NdTypeKind::Ptr)
+        if (ProjectedDestType && ProjectedDestType->Kind == NdTypeKind::Ptr)
           OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
              << ValueText << ")";
         else if (ProjectedDestType &&
                  ProjectedDestType->Kind == NdTypeKind::Int &&
-                 isStringLiteralText(ValueText))
+                 (isStringLiteralText(ValueText) ||
+                  printedPointerType(*Stmt.StoreVal) ||
+                  printsPointer(*Stmt.StoreVal, ValueText)))
           OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
              << ValueText << ")";
         else
@@ -1046,31 +1312,25 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         if (auto Name = imageObjectName(*VA)) {
           emitIndent(Indent);
           OS << *Name << " = ";
-          const std::string ValueText = exprStr(*Stmt.StoreVal);
-          if (isUnknownCallOperand(Stmt.StoreVal.get()))
-            OS << "0";
-          else if (isStringLiteralText(ValueText))
-            OS << "(uintptr_t)(" << ValueText << ")";
-          else
-            OS << ValueText;
+          // An integer the object's type holds converts implicitly, as a
+          // store through any other path does (storedValueText).
+          const TypeRef Declared = assignedImageObjectType(*VA);
+          OS << assignedText(Declared, *Stmt.StoreVal,
+                             implicitIntegerConversion(*Stmt.StoreVal, Declared)
+                                 .value_or(exprStr(*Stmt.StoreVal)));
           OS << ";\n";
           break;
         }
       }
     }
     if (Stmt.MemoryOrdering == NdMemoryOrdering::None &&
-        Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
-      if (auto Member =
-              frameRecordMember(*Stmt.StoreAddr, Stmt.StoreVal->Type)) {
-        emitIndent(Indent);
-        OS << *Member << " = "
-           << (isUnknownCallOperand(Stmt.StoreVal.get())
-                   ? "0"
-                   : storedValueText(*Stmt.StoreVal, Stmt.StoreVal->Type,
-                                     Stmt.MemoryOrdering))
-           << ";\n";
-        break;
-      }
+        Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        writeFrameRecordStore(
+            *Stmt.StoreAddr, Stmt.StoreVal->Type, *Stmt.StoreVal, Indent, [&] {
+              return storedValueText(*Stmt.StoreVal, Stmt.StoreVal->Type,
+                                     Stmt.MemoryOrdering);
+            }))
+      break;
     bool ExactImageBytes = false;
     if (Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
       if (auto VA = constAddress(*Stmt.StoreAddr))
@@ -1079,10 +1339,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         Stmt.StoreVal->Type,
         addrStr(*Stmt.StoreAddr, 0,
                 Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default),
-        isUnknownCallOperand(Stmt.StoreVal.get())
-            ? "0"
-            : storedValueText(*Stmt.StoreVal, Stmt.StoreVal->Type,
-                              Stmt.MemoryOrdering),
+        storedValueText(*Stmt.StoreVal, Stmt.StoreVal->Type,
+                        Stmt.MemoryOrdering),
         Stmt.MemoryOrdering, Stmt.MemoryAddressSpace, ExactImageBytes, Indent);
     break;
   }
@@ -1107,6 +1365,11 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         break;
       }
     }
+    // An aligned access to a frame slot faults on nothing C can run: the
+    // storage gives the slot the machine's alignment, so its check always
+    // passes, as a compiler folds it.
+    if (frameStorageAlignmentHolds(*Stmt.CallExpr))
+      break;
     {
       auto Rendered = renderX86SegmentedIntrinsicStatement(
           Opts.TheArch, *Stmt.CallExpr, nullptr,
@@ -1118,14 +1381,17 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           [this](const HighExpr &E, uint16_t Width) {
             return isSameWidthUnsigned(E, Width);
           },
-          Opts.Format == BinaryFormat::COFF);
+          Opts.Format == BinaryFormat::COFF,
+          [this](const HighExpr &A, const HighExpr &B, uint64_t Bytes) {
+            return disjointMemory(A, B, Bytes);
+          });
       if (!Rendered.empty()) {
         writeCIndentedSnippet(OS, Rendered, Indent);
         break;
       }
     }
     if (!Stmt.CallExpr->IntrinsicOutputs.empty()) {
-      auto Rendered = MultiOutputRender{}(
+      auto Rendered = MultiOutputRender{Opts.Format != BinaryFormat::COFF}(
           Opts.TheArch, Stmt.CallExpr->IntrinsicId,
           Stmt.CallExpr->IntrinsicOutputs, Stmt.CallExpr->Operands,
           [this](const HighExpr &E) { return exprStr(E); },
@@ -1140,10 +1406,45 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       }
     }
     emitIndent(Indent);
-    OS << statementCallText(*Stmt.CallExpr) << ";\n";
+    OS << callStatementText(*Stmt.CallExpr) << "\n";
     break;
 
   case StmtKind::Return:
+    // A va_start forwarder ends its va_list before it returns, after the
+    // returned value, which may read the list, is taken.
+    if (currentVaStart()) {
+      const bool Unknown =
+          !Stmt.RetVal || Stmt.RetVal->Kind == ExprKind::Undef ||
+          (Stmt.RetVal->Kind == ExprKind::Var &&
+           !Analysis.AssignedVars.count(varName(Stmt.RetVal->Var)) &&
+           (Stmt.RetVal->Var.Kind != MedVar::Param || InEHClauseBody));
+      if (IndirectReturnName.empty() && !InferredVoid && !Unknown) {
+        const std::string Value = formatReturnExpr(*Stmt.RetVal);
+        if (Value.find("arguments") != std::string::npos) {
+          emitIndent(Indent);
+          OS << "{\n";
+          emitIndent(Indent + 1);
+          OS << declaredAs(FuncReturnType, "va_result") << " = " << Value
+             << ";\n";
+          emitIndent(Indent + 1);
+          OS << "va_end(arguments);\n";
+          emitIndent(Indent + 1);
+          OS << "return va_result;\n";
+          emitIndent(Indent);
+          OS << "}\n";
+        } else {
+          emitIndent(Indent);
+          OS << "va_end(arguments);\n";
+          emitIndent(Indent);
+          OS << "return " << Value << ";\n";
+        }
+        break;
+      }
+      if (!InferredVoid || !Stmt.RetVal || !returnedCall(*Stmt.RetVal)) {
+        emitIndent(Indent);
+        OS << "va_end(arguments);\n";
+      }
+    }
     emitIndent(Indent);
     if (!IndirectReturnName.empty() &&
         (InferredVoid || !Stmt.RetVal || Stmt.RetVal->Kind == ExprKind::Undef ||
@@ -1157,8 +1458,12 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       // all the same.
       if (const HighExpr *Call =
               Stmt.RetVal ? returnedCall(*Stmt.RetVal) : nullptr) {
-        OS << statementCallText(*Call) << ";\n";
+        OS << callStatementText(*Call) << "\n";
         emitIndent(Indent);
+        if (currentVaStart()) {
+          OS << "va_end(arguments);\n";
+          emitIndent(Indent);
+        }
       }
       OS << "return;\n";
     } else if (!Stmt.RetVal || Stmt.RetVal->Kind == ExprKind::Undef ||
@@ -1304,7 +1609,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       OS << "__leave;\n";
       break;
     }
-    OS << "goto L_" + llvm::utohexstr(Stmt.GotoTarget) + ";\n";
+    OS << "goto " + blockLabel(Stmt.GotoTarget) + ";\n";
     break;
 
   case StmtKind::Break:
@@ -1339,10 +1644,15 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           namedFrameSlot(*Stmt.Val->Operands[0]))
         break;
       emitIndent(Indent);
+      if (Stmt.Val->Kind == ExprKind::Call &&
+          aarch64PointerCRequiresDiscard(Stmt.Val->IntrinsicId)) {
+        OS << callStatementText(*Stmt.Val) << "\n";
+        break;
+      }
       OS << (Stmt.Val->Kind == ExprKind::Store
                  ? statementText(exprStr(*Stmt.Val))
                  : exprStr(*Stmt.Val))
-         << ";\n";
+         << ";" << intrinsicInstructionComment(*Stmt.Val) << "\n";
     }
     break;
 
@@ -1363,33 +1673,13 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     // runs on normal exit too, but an out-of-line one prints an empty body
     // (its normal-exit call is already explicit code), so each piece runs
     // nothing extra.
-    if (Stmt.EHIsReducible && Stmt.Body.size() >= 2 &&
-        !Stmt.EHClauses.empty() &&
-        std::all_of(Stmt.EHClauses.begin(), Stmt.EHClauses.end(),
-                    [](const HighEHClause &Clause) {
-                      return Clause.Kind == HighEHClauseKind::SEHExcept ||
-                             Clause.Kind == HighEHClauseKind::SEHFinally;
-                    }) &&
-        std::all_of(Stmt.EHClauseBodies.begin(), Stmt.EHClauseBodies.end(),
-                    [](const auto &Body) { return Body.empty(); })) {
-      std::map<va_t, unsigned> Inner;
-      walkStmts(Stmt.Body, [&](const HighStmt &Child) {
-        if (Child.Kind == StmtKind::Goto)
-          ++Inner[Child.GotoTarget];
-      });
-      for (size_t K = 1; K < Stmt.Body.size(); ++K) {
-        const va_t Addr = Stmt.Body[K].Addr;
-        auto Uses = GotoTargetUses.find(Addr);
-        if (Addr == 0 || Addr == InvalidVA || Uses == GotoTargetUses.end() ||
-            Uses->second <= Inner[Addr])
-          continue;
-        std::vector<HighStmt> Split(2, Stmt);
-        Split[0].Body.assign(Stmt.Body.begin(), Stmt.Body.begin() + K);
-        Split[1].Body.assign(Stmt.Body.begin() + K, Stmt.Body.end());
-        Split[1].Addr = Addr;
-        writeStmts(Split, Indent);
-        return;
-      }
+    if (const std::optional<size_t> K = sehTrySplitPoint(Stmt)) {
+      std::vector<HighStmt> Split(2, Stmt);
+      Split[0].Body.assign(Stmt.Body.begin(), Stmt.Body.begin() + *K);
+      Split[1].Body.assign(Stmt.Body.begin() + *K, Stmt.Body.end());
+      Split[1].Addr = Stmt.Body[*K].Addr;
+      writeStmts(Split, Indent);
+      return;
     }
     if (!Stmt.EHIsReducible || Stmt.EHClauses.size() != 1 ||
         Stmt.EHClauseBodies.size() != 1) {
@@ -1426,27 +1716,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       } else if (Clause.FilterValue) {
         OS << sehFilterValueText(*Clause.FilterValue);
       } else {
-        std::string FilterName;
-        if (auto It = DefinedFunctionsByAddress.find(Clause.FilterOrActionVA);
-            It != DefinedFunctionsByAddress.end() && It->second)
-          FilterName = functionIdentifier(*It->second);
-        else if (Dbg) {
-          if (auto Sym = Dbg->resolveFunction(Clause.FilterOrActionVA);
-              Sym && !Sym->Name.empty())
-            FilterName = functionIdentifier(Sym->Name);
-        }
-        if (FilterName.empty() && Opts.Image) {
-          if (const Symbol *Sym =
-                  Opts.Image->findSymbolAt(Clause.FilterOrActionVA);
-              Sym && !Sym->Name.empty() &&
-              llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0)
-            FilterName = functionIdentifier(Sym->Name);
-        }
-        if (FilterName.empty() && Clause.FilterOrActionVA)
-          FilterName = functionIdentifier(
-              (kAutoFuncPrefix + llvm::utohexstr(Clause.FilterOrActionVA))
-                  .str());
-        OS << FilterName << "(GetExceptionInformation())";
+        OS << sehFilterName(Clause) << "(GetExceptionInformation())";
       }
       OS << ") {\n";
       // GetExceptionCode() is only valid in the __except arm; the handler
@@ -1458,14 +1728,19 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         writeTryBody(Stmt.EHClauseBodies.front(), Indent + 1);
         InEHClauseBody = SavedHandler;
       }
-      if (Stmt.EHClauseBodies.front().empty()) {
-        emitIndent(Indent + 1);
-        if (CurrentFunc && CurrentFunc->ExceptionMetadata &&
-            CurrentFunc->ExceptionMetadata->ownsCode(Clause.HandlerVA))
-          OS << "goto L_" << llvm::utohexstr(Clause.HandlerVA) << ";\n";
-        else
+      // An arm whose handler is where the try falls through ends there, and
+      // so does a copy of one: its handler has no label of its own.
+      if (Stmt.EHClauseBodies.front().empty() &&
+          !FallthroughExceptArms.count(&Stmt)) {
+        if (!CurrentFunc || !CurrentFunc->ExceptionMetadata ||
+            !CurrentFunc->ExceptionMetadata->ownsCode(Clause.HandlerVA)) {
+          emitIndent(Indent + 1);
           OS << "/* handler @ 0x" << llvm::utohexstr(Clause.HandlerVA)
              << " */\n";
+        } else if (GotoTargets.count(Clause.HandlerVA)) {
+          emitIndent(Indent + 1);
+          OS << "goto " << blockLabel(Clause.HandlerVA) << ";\n";
+        }
       }
     }
     emitIndent(Indent);
@@ -1695,7 +1970,8 @@ bool HighCWriter::tryWriteCursorForLoop(const std::vector<HighStmt> &Stmts,
     if (S.Kind == StmtKind::Return)
       MissRet = &S;
   }
-  if (!MissRet || !MissRet->RetVal)
+  // A function printed `void` returns no value the fold could print.
+  if (!MissRet || !MissRet->RetVal || InferredVoid)
     return false;
 
   auto Targeted = [&](const HighStmt &S) {
@@ -1711,7 +1987,7 @@ bool HighCWriter::tryWriteCursorForLoop(const std::vector<HighStmt> &Stmts,
 
   auto WriteLabel = [&](const HighStmt &S) {
     if (Targeted(S))
-      OS << "L_" + llvm::utohexstr(S.Addr) + ":\n";
+      OS << blockLabel(S.Addr) + ":\n";
   };
   auto WriteAssignRhs = [&](const HighStmt &S) {
     auto DeclaredType = declaredParamType(S.Dst->Var);
@@ -1937,7 +2213,7 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
             const HighStmt &N = Try.Body[K];
             if (N.Addr && N.Addr != InvalidVA && N.Addr != NameAt &&
                 N.Addr != JoinAt && GotoTargets.count(N.Addr))
-              OS << "L_" + llvm::utohexstr(N.Addr) + ":\n";
+              OS << blockLabel(N.Addr) + ":\n";
             WriteVisible(N, Inner);
           }
         });
@@ -2042,7 +2318,9 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
         continue;
       }
     }
-    if (S.Kind == StmtKind::IfElse && S.Cond && I + 1 < End) {
+    // `if (c) j = x; else j = f(); return j;` returns the call's value on
+    // one path, which a function printed `void` has none of.
+    if (S.Kind == StmtKind::IfElse && S.Cond && I + 1 < End && !InferredVoid) {
       const HighStmt &Ret = Stmts[I + 1];
       if (Ret.Kind == StmtKind::Return && Ret.RetVal &&
           Ret.RetVal->Kind == ExprKind::Var) {
@@ -2138,7 +2416,7 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
       if (!IsGotoTarget(Addr) || Addr == LastLabel ||
           !EmittedLabels.insert(Addr).second)
         return;
-      OS << "L_" + llvm::utohexstr(Addr) + ":";
+      OS << blockLabel(Addr) + ":";
       if (LandingPadLabels.count(Addr))
         OS << " /* landing pad: the unwinder enters here */";
       OS << "\n";
@@ -2227,7 +2505,9 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
         S.CxxContinuationReturnTargets.empty() && S.RetVal &&
         S.RetVal->Kind == ExprKind::Var) {
       const std::string Name = varName(S.RetVal->Var);
-      bool AssignedHere = false;
+      // The except arm captures this value before its explicit statements.
+      bool AssignedHere = S.RetVal->Var.Kind == MedVar::SEHExceptionCode &&
+                          SEHExceptionCodeNames.count(S.RetVal->Var.ConstVal);
       for (size_t K = 0; K < I; ++K) {
         const HighStmt &Prev = Stmts[K];
         if (Prev.Kind != StmtKind::Assign || !Prev.Dst)
@@ -2277,12 +2557,36 @@ void HighCWriter::writeTryBodyUnisolated(const std::vector<HighStmt> &Stmts,
                                          int Indent) {
   // Jumping out of __try is legal, so only a goto that lands where the try
   // falls through anyway is left out.
-  writeStmts(
-      Stmts, Indent,
-      printedTryBodyEnd(
-          [this](const HighStmt &Stmt) { return stmtHiddenFromC(Stmt); },
-          [this](const HighStmt &Exit) { return isFallthroughTryExit(Exit); },
-          Stmts));
+  const size_t End = printedTryBodyEnd(
+      [this](const HighStmt &Stmt) { return stmtHiddenFromC(Stmt); },
+      [this](const HighStmt &Exit) { return isFallthroughTryExit(Exit); },
+      Stmts);
+  writeStmts(Stmts, Indent, End);
+  // What is left out still carries the labels printed gotos land on, such as
+  // an empty anchor where a switch's cases leave: control there runs off the
+  // end of the body.
+  std::function<void(const HighStmt &)> Label = [&](const HighStmt &S) {
+    if (S.Addr && S.Addr != InvalidVA && GotoTargets.count(S.Addr) &&
+        EmittedLabels.insert(S.Addr).second) {
+      OS << blockLabel(S.Addr) << ":";
+      if (LandingPadLabels.count(S.Addr))
+        OS << " /* landing pad: the unwinder enters here */";
+      OS << "\n";
+      emitIndent(Indent);
+      OS << ";\n";
+    }
+    for (const auto *List : {&S.Body, &S.ElseBody, &S.DefaultBody})
+      for (const HighStmt &Child : *List)
+        Label(Child);
+    for (const auto &Case : S.Cases)
+      for (const HighStmt &Child : Case.Body)
+        Label(Child);
+    for (const auto &ClauseBody : S.EHClauseBodies)
+      for (const HighStmt &Child : ClauseBody)
+        Label(Child);
+  };
+  for (size_t I = End; I < Stmts.size(); ++I)
+    Label(Stmts[I]);
 }
 
 bool HighCWriter::isLabelAddress(va_t Addr) const {
@@ -2342,6 +2646,74 @@ HighCWriter::tryLeaveTargets(const std::vector<HighStmt> &Stmts,
     return Earlier.count(Addr) || EmittedLabels.count(Addr);
   });
   return Targets;
+}
+
+std::optional<size_t>
+HighCWriter::sehTrySplitPoint(const HighStmt &Stmt) const {
+  if (!Stmt.EHIsReducible || Stmt.Body.size() < 2 || Stmt.EHClauses.empty() ||
+      !std::all_of(Stmt.EHClauses.begin(), Stmt.EHClauses.end(),
+                   [](const HighEHClause &Clause) {
+                     return Clause.Kind == HighEHClauseKind::SEHExcept ||
+                            Clause.Kind == HighEHClauseKind::SEHFinally;
+                   }) ||
+      !std::all_of(Stmt.EHClauseBodies.begin(), Stmt.EHClauseBodies.end(),
+                   [](const auto &Body) { return Body.empty(); }))
+    return std::nullopt;
+  std::map<va_t, unsigned> Inner;
+  walkStmts(Stmt.Body, [&](const HighStmt &Child) {
+    if (Child.Kind == StmtKind::Goto)
+      ++Inner[Child.GotoTarget];
+  });
+  for (size_t K = 1; K < Stmt.Body.size(); ++K) {
+    const va_t Addr = Stmt.Body[K].Addr;
+    auto Uses = GotoTargetUses.find(Addr);
+    if (Addr == 0 || Addr == InvalidVA || Uses == GotoTargetUses.end() ||
+        Uses->second <= Inner[Addr])
+      continue;
+    return K;
+  }
+  return std::nullopt;
+}
+
+void HighCWriter::decideExceptArms(const HighFunc &Func) {
+  FallthroughExceptArms.clear();
+  if (!Func.ExceptionMetadata)
+    return;
+  const ExceptionFunction &EH = *Func.ExceptionMetadata;
+  // As decideTryExits walks: what each statement falls through to, past the
+  // end of its list to what follows that list.
+  std::function<void(const std::vector<HighStmt> &, const std::vector<va_t> &)>
+      Walk = [&](const std::vector<HighStmt> &Stmts,
+                 const std::vector<va_t> &Continuation) {
+        for (size_t I = 0; I < Stmts.size(); ++I) {
+          const HighStmt &S = Stmts[I];
+          const std::vector<va_t> Next =
+              fallthroughAddresses(Stmts, I, Continuation);
+          if (hasFallthroughExceptClause(S) &&
+              S.EHClauseBodies.front().empty() &&
+              EH.ownsCode(S.EHClauses.front().HandlerVA)) {
+            // A try printed in pieces falls into its next piece first.
+            const va_t Handler = S.EHClauses.front().HandlerVA;
+            if (!sehTrySplitPoint(S) && llvm::is_contained(Next, Handler))
+              FallthroughExceptArms.insert(&S);
+            else
+              GotoTargets.insert(Handler);
+          }
+          std::vector<va_t> BodyEnd = Next;
+          if (S.Kind == StmtKind::DoWhile || S.Kind == StmtKind::For)
+            BodyEnd.clear();
+          else if (S.Kind == StmtKind::While)
+            BodyEnd.assign(S.LoopHeaderAddr ? 1 : 0, S.LoopHeaderAddr);
+          Walk(S.Body, BodyEnd);
+          Walk(S.ElseBody, Next);
+          for (const auto &Case : S.Cases)
+            Walk(Case.Body, Next);
+          Walk(S.DefaultBody, Next);
+          for (const auto &ClauseBody : S.EHClauseBodies)
+            Walk(ClauseBody, Next);
+        }
+      };
+  Walk(Func.Body, {});
 }
 
 void HighCWriter::decideTryExits(const std::vector<HighStmt> &Stmts,
@@ -2893,7 +3265,8 @@ bool HighCWriter::isInplaceAddStore(const HighStmt &S, int64_t &Delta) const {
     return false;
   // A displayed field/slot may have a different signedness from its IR view.
   // Both load hiding and statement rendering must make the same decision.
-  TypeRef DisplayType = typedMemberType(*S.StoreAddr, Ty->Size);
+  TypeRef DisplayType =
+      typedMemberType(*S.StoreAddr, Ty->Size, Ty->accessClass());
   if (auto Disp = frameDisplacement(*S.StoreAddr)) {
     auto Slot = FrameSlots.find(*Disp);
     if (Slot != FrameSlots.end())
@@ -2904,8 +3277,10 @@ bool HighCWriter::isInplaceAddStore(const HighStmt &S, int64_t &Delta) const {
        DisplayType->IsEnum || DisplayType->Size != Ty->Size))
     return false;
   if (Ty->IsSigned &&
-      (!DisplayType || (!namedFrameSlot(*S.StoreAddr) &&
-                        !typedMemberAccess(*S.StoreAddr, Ty->Size))))
+      (!DisplayType ||
+       (!namedFrameSlot(*S.StoreAddr) &&
+        !typedMemberAccess(*S.StoreAddr, Ty->Size,
+                           /*EnterNestedAtZero=*/true, Ty->accessClass()))))
     return false;
   // Peeling a narrowing/widening view or a narrow signed immediate changes
   // the update's value. Only abbreviate an exact same-width arithmetic step.
@@ -2922,6 +3297,31 @@ bool HighCWriter::isInplaceAddStore(const HighStmt &S, int64_t &Delta) const {
   return Base && incrementBaseMatchesAddr(*Base, *S.StoreAddr);
 }
 
+bool HighCWriter::writeFrameRecordStore(
+    const HighExpr &Addr, const TypeRef &Ty, const HighExpr &Value, int Indent,
+    llvm::function_ref<std::string()> ValueText) {
+  if (auto Member = frameRecordMember(Addr, Ty)) {
+    emitIndent(Indent);
+    OS << *Member << " = " << frameRecordStored(Ty, ValueText()) << ";\n";
+    return true;
+  }
+  // A 16-byte integer at bytes a member holds, which no scalar of that width
+  // may name at their alignment: one copy of its bytes from a fresh carrier
+  // of its exact width, as writeMemoryStore makes.
+  if (!Ty || Ty->Kind != NdTypeKind::Int || Ty->Size != 16)
+    return false;
+  const auto Bytes = frameRecordBytes(Addr, Ty->Size);
+  if (!Bytes)
+    return false;
+  emitIndent(Indent);
+  if (Value.Kind == ExprKind::Const && Value.ConstVal == 0)
+    OS << "__builtin_memset(" << *Bytes << ", 0, 16);\n";
+  else
+    OS << "__builtin_memcpy(" << *Bytes << ", &(" << memoryTypeName(Ty) << "){"
+       << ValueText() << "}, 16);\n";
+  return true;
+}
+
 std::string HighCWriter::formatInplaceAdd(const TypeRef &Ty,
                                           const HighExpr &Addr, int64_t Delta) {
   if (Delta == 0 || Delta == std::numeric_limits<int64_t>::min())
@@ -2930,7 +3330,9 @@ std::string HighCWriter::formatInplaceAdd(const TypeRef &Ty,
   const uint64_t Abs =
       Delta > 0 ? static_cast<uint64_t>(Delta) : static_cast<uint64_t>(-Delta);
   const std::string Imm = std::to_string(Abs);
-  if (auto Member = typedMemberAccess(Addr, Ty ? Ty->Size : 0);
+  if (auto Member =
+          typedMemberAccess(Addr, Ty ? Ty->Size : 0, /*EnterNestedAtZero=*/true,
+                            Ty ? Ty->accessClass() : NdAccessClass::Unknown);
       Member && !namedFrameSlot(Addr))
     return *Member + Op + Imm;
   if (auto Slot = namedFrameSlot(Addr))
@@ -2943,22 +3345,6 @@ std::string HighCWriter::formatInplaceAdd(const TypeRef &Ty,
 }
 
 void HighCWriter::hideIncrementOnlyLoads(const HighFunc &Func) {
-  auto UsesName = [&](const HighExpr *E, const std::string &Name) -> bool {
-    std::function<bool(const HighExpr *)> Walk = [&](const HighExpr *N) {
-      if (!N)
-        return false;
-      if ((N->Kind == ExprKind::Var || N->Kind == ExprKind::Phi) &&
-          varName(N->Var) == Name)
-        return true;
-      bool Hit = false;
-      N->forEachChildExpr([&](const ExprPtr &C) {
-        if (Walk(C.get()))
-          Hit = true;
-      });
-      return Hit;
-    };
-    return Walk(E);
-  };
   // Only a load whose variable is the base of some in-place add can be
   // hidden.  Find those names once rather than rescanning the body for every
   // load assignment.
@@ -2975,6 +3361,41 @@ void HighCWriter::hideIncrementOnlyLoads(const HighFunc &Func) {
   });
   if (IncrementBaseNames.empty())
     return;
+  // The uses and the in-place adds do not change as loads are hidden.  Read
+  // them once; a load hidden below is not a later use because it is dead.
+  std::map<std::string, std::vector<const HighStmt *>> UsesOf, AddsOf;
+  // rawVarName is the string varName returns.  ReserveNames already recorded
+  // every variable, so this walk does not write the source map again.
+  struct VarNames {
+    const HighCWriter *Writer;
+    std::set<std::string> *Names;
+    void visit(const HighExpr *N) const {
+      if (!N)
+        return;
+      if (N->Kind == ExprKind::Var || N->Kind == ExprKind::Phi)
+        if (std::string Name = Writer->rawVarName(N->Var); !Name.empty())
+          Names->insert(std::move(Name));
+      N->forEachChildExpr([&](const ExprPtr &C) { visit(C.get()); });
+    }
+  };
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    std::set<std::string> Names;
+    VarNames Collect{this, &Names};
+    forEachRhsExpr(S, [&](const ExprPtr &E) { Collect.visit(E.get()); });
+    if (S.Kind == StmtKind::Assign && S.Dst)
+      Collect.visit(S.Dst.get());
+    for (const std::string &Name : Names)
+      UsesOf[Name].push_back(&S);
+    int64_t Delta = 0;
+    if (!isInplaceAddStore(S, Delta))
+      return;
+    const HighExpr *Base = asIncrementBase(*S.StoreVal, Delta);
+    if (!Base || (Base->Kind != ExprKind::Var && Base->Kind != ExprKind::Phi))
+      return;
+    const std::string Name = rawVarName(Base->Var);
+    if (!Name.empty())
+      AddsOf[Name].push_back(&S);
+  });
   walkStmts(Func.Body, [&](const HighStmt &Assign) {
     if (Analysis.DeadStmts.count(&Assign))
       return;
@@ -2992,31 +3413,27 @@ void HighCWriter::hideIncrementOnlyLoads(const HighFunc &Func) {
         !IncrementBaseNames.count(Name))
       return;
     unsigned IncrementStores = 0;
-    bool OtherUse = false;
-    walkStmts(Func.Body, [&](const HighStmt &S) {
-      if (&S == &Assign || Analysis.DeadStmts.count(&S))
-        return;
-      int64_t Delta = 0;
-      if (isInplaceAddStore(S, Delta)) {
-        const HighExpr *Base = asIncrementBase(*S.StoreVal, Delta);
-        if (Base &&
-            (Base->Kind == ExprKind::Var || Base->Kind == ExprKind::Phi) &&
-            varName(Base->Var) == Name &&
-            samePeeledAddr(*Assign.Val->Operands[0], *S.StoreAddr)) {
-          ++IncrementStores;
-          return;
-        }
+    std::vector<const HighStmt *> MatchingAdds;
+    if (const auto Adds = AddsOf.find(Name); Adds != AddsOf.end())
+      for (const HighStmt *S : Adds->second) {
+        if (S == &Assign || Analysis.DeadStmts.count(S) || !S->StoreAddr)
+          continue;
+        if (!samePeeledAddr(*Assign.Val->Operands[0], *S->StoreAddr))
+          continue;
+        ++IncrementStores;
+        MatchingAdds.push_back(S);
       }
-      bool Hit = false;
-      forEachRhsExpr(S, [&](const ExprPtr &E) {
-        if (UsesName(E.get(), Name))
-          Hit = true;
-      });
-      if (S.Kind == StmtKind::Assign && S.Dst && UsesName(S.Dst.get(), Name))
-        Hit = true;
-      if (Hit)
+    bool OtherUse = false;
+    if (const auto Uses = UsesOf.find(Name); Uses != UsesOf.end())
+      for (const HighStmt *S : Uses->second) {
+        if (S == &Assign || Analysis.DeadStmts.count(S))
+          continue;
+        if (std::find(MatchingAdds.begin(), MatchingAdds.end(), S) !=
+            MatchingAdds.end())
+          continue;
         OtherUse = true;
-    });
+        break;
+      }
     if (!OtherUse && IncrementStores > 0) {
       Analysis.DeadStmts.insert(&Assign);
       Analysis.DeadVars.insert(Name);
@@ -3025,22 +3442,6 @@ void HighCWriter::hideIncrementOnlyLoads(const HighFunc &Func) {
 }
 
 void HighCWriter::hideBitClearSlotCopies(const HighFunc &Func) {
-  auto UsesName = [&](const HighExpr *E, const std::string &Name) -> bool {
-    std::function<bool(const HighExpr *)> Walk = [&](const HighExpr *N) {
-      if (!N)
-        return false;
-      if ((N->Kind == ExprKind::Var || N->Kind == ExprKind::Phi) &&
-          varName(N->Var) == Name)
-        return true;
-      bool Hit = false;
-      N->forEachChildExpr([&](const ExprPtr &C) {
-        if (Walk(C.get()))
-          Hit = true;
-      });
-      return Hit;
-    };
-    return Walk(E);
-  };
   auto SlotOfCopy = [&](const HighExpr &E) -> std::optional<std::string> {
     const HighExpr *P = peelIntegerViewOps(&E);
     if (!P)
@@ -3076,32 +3477,29 @@ void HighCWriter::hideBitClearSlotCopies(const HighFunc &Func) {
       return R;
     return nullptr;
   };
-  auto StoresBitClear = [&](const HighStmt &S, const std::string &Name,
-                            const std::string &Slot) {
-    const HighExpr *Val = nullptr;
-    std::optional<std::string> Dest;
-    if (S.Kind == StmtKind::Store && S.StoreAddr && S.StoreVal) {
-      Dest = namedFrameSlot(*S.StoreAddr);
-      Val = S.StoreVal.get();
-    } else if (S.Kind == StmtKind::Assign && S.Dst && S.Val) {
-      if (S.Dst->Kind == ExprKind::Load && !S.Dst->Operands.empty() &&
-          S.Dst->Operands[0])
-        Dest = namedFrameSlot(*S.Dst->Operands[0]);
-      else if (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi)
-        Dest = varName(S.Dst->Var);
-      Val = S.Val.get();
+  // Whether a statement is hidden does not change until a copy is hidden
+  // or this walk enters a handler.  Remember it: each assignment otherwise
+  // asks again for every statement in its block.
+  std::unordered_map<const HighStmt *, bool> Hidden;
+  int HiddenFlags = -1;
+  auto HiddenNow = [&](const HighStmt &S) {
+    const int Flags = (InEHClauseBody ? 1 : 0) | (InCxxCleanupBody ? 2 : 0);
+    if (Flags != HiddenFlags) {
+      Hidden.clear();
+      HiddenFlags = Flags;
     }
-    if (!Val || !Dest || *Dest != Slot)
-      return false;
-    const HighExpr *Base = AndBase(*Val);
-    if (!Base)
-      return false;
-    if ((Base->Kind == ExprKind::Var || Base->Kind == ExprKind::Phi) &&
-        varName(Base->Var) == Name)
+    if (Analysis.DeadStmts.count(&S))
       return true;
-    return SlotOfCopy(*Base) == Slot;
+    if (const auto It = Hidden.find(&S); It != Hidden.end())
+      return It->second;
+    const bool Result = stmtHiddenFromC(S);
+    Hidden.emplace(&S, Result);
+    return Result;
   };
-
+  auto ForgetHidden = [&] {
+    Hidden.clear();
+    HiddenFlags = -1;
+  };
   std::function<void(const std::vector<HighStmt> &, bool)> Walk;
   Walk = [&](const std::vector<HighStmt> &Stmts, bool Handler) {
     const bool SavedHandler = InEHClauseBody;
@@ -3109,6 +3507,64 @@ void HighCWriter::hideBitClearSlotCopies(const HighFunc &Func) {
     InEHClauseBody = Handler;
     if (Handler)
       InCxxCleanupBody = true;
+    // The uses of a name, and which stores clear a slot with that name, do
+    // not change as copies are hidden.  Hiding only changes which of those
+    // statements still count.  Reading them once keeps a large block from
+    // renaming every variable once per assignment.
+    struct VarNames {
+      const HighCWriter *Writer;
+      std::set<std::string> *Names;
+      void visit(const HighExpr *N) const {
+        if (!N)
+          return;
+        if (N->Kind == ExprKind::Var || N->Kind == ExprKind::Phi)
+          if (std::string Name = Writer->rawVarName(N->Var); !Name.empty())
+            Names->insert(std::move(Name));
+        N->forEachChildExpr([&](const ExprPtr &C) { visit(C.get()); });
+      }
+    };
+    struct ClearSite {
+      const HighStmt *Stmt = nullptr;
+      std::string BaseVar;
+      std::optional<std::string> BaseSlot;
+    };
+    std::unordered_map<std::string, std::vector<const HighStmt *>> UsesOf;
+    std::unordered_map<std::string, std::vector<ClearSite>> ClearsByDest;
+    for (const HighStmt &S : Stmts) {
+      std::set<std::string> Names;
+      VarNames Collect{this, &Names};
+      forEachRhsExpr(S, [&](const ExprPtr &E) { Collect.visit(E.get()); });
+      if (S.Kind == StmtKind::Assign && S.Dst)
+        Collect.visit(S.Dst.get());
+      for (const std::string &Name : Names)
+        UsesOf[Name].push_back(&S);
+      const HighExpr *Val = nullptr;
+      std::optional<std::string> Dest;
+      if (S.Kind == StmtKind::Store && S.StoreAddr && S.StoreVal) {
+        Dest = namedFrameSlot(*S.StoreAddr);
+        Val = S.StoreVal.get();
+      } else if (S.Kind == StmtKind::Assign && S.Dst && S.Val) {
+        if (S.Dst->Kind == ExprKind::Load && !S.Dst->Operands.empty() &&
+            S.Dst->Operands[0])
+          Dest = namedFrameSlot(*S.Dst->Operands[0]);
+        else if (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi)
+          Dest = varName(S.Dst->Var);
+        Val = S.Val.get();
+      }
+      if (!Val || !Dest)
+        continue;
+      const HighExpr *Base = AndBase(*Val);
+      if (!Base)
+        continue;
+      ClearSite Site;
+      Site.Stmt = &S;
+      if (Base->Kind == ExprKind::Var || Base->Kind == ExprKind::Phi)
+        Site.BaseVar = varName(Base->Var);
+      Site.BaseSlot = SlotOfCopy(*Base);
+      if (Site.BaseVar.empty() && !Site.BaseSlot)
+        continue;
+      ClearsByDest[*Dest].push_back(std::move(Site));
+    }
     for (const HighStmt &Assign : Stmts) {
       if (!Analysis.DeadStmts.count(&Assign) &&
           Assign.Kind == StmtKind::Assign && Assign.Dst && Assign.Val &&
@@ -3119,30 +3575,32 @@ void HighCWriter::hideBitClearSlotCopies(const HighFunc &Func) {
         if (Slot && !Name.empty() && Name != *Slot &&
             !isEmittedParamName(Name)) {
           unsigned Clears = 0;
-          bool OtherUse = false;
-          for (const HighStmt &S : Stmts) {
-            if (&S == &Assign || Analysis.DeadStmts.count(&S) ||
-                stmtHiddenFromC(S))
-              continue;
-            if (StoresBitClear(S, Name, *Slot)) {
-              ++Clears;
-              continue;
+          std::unordered_set<const HighStmt *> ClearStmts;
+          if (const auto It = ClearsByDest.find(*Slot);
+              It != ClearsByDest.end())
+            for (const ClearSite &Site : It->second) {
+              if (Site.Stmt == &Assign || HiddenNow(*Site.Stmt))
+                continue;
+              if (Site.BaseVar == Name ||
+                  (Site.BaseSlot && *Site.BaseSlot == *Slot)) {
+                ++Clears;
+                ClearStmts.insert(Site.Stmt);
+              }
             }
-            bool Hit = false;
-            forEachRhsExpr(S, [&](const ExprPtr &E) {
-              if (UsesName(E.get(), Name))
-                Hit = true;
-            });
-            if (S.Kind == StmtKind::Assign && S.Dst &&
-                UsesName(S.Dst.get(), Name))
-              Hit = true;
-            if (Hit)
+          bool OtherUse = false;
+          if (const auto It = UsesOf.find(Name); It != UsesOf.end())
+            for (const HighStmt *S : It->second) {
+              if (S == &Assign || HiddenNow(*S) || ClearStmts.count(S))
+                continue;
               OtherUse = true;
-          }
+              break;
+            }
           if (!OtherUse && Clears > 0) {
             Analysis.DeadStmts.insert(&Assign);
             Analysis.DeadVars.insert(Name);
             CopyForward[Name] = *Slot;
+            // Hiding a copy changes which later statements are hidden.
+            ForgetHidden();
           }
         }
       }
@@ -3175,7 +3633,7 @@ HighCWriter::incomingHomeParamName(int64_t Disp) const {
       return MemberThis ? std::string("this") : IndirectReturnName;
   }
   if (Dbg) {
-    if (auto FS = Dbg->resolveFunction(CurrentFunc->Entry);
+    if (const auto &FS = resolvedFunction(CurrentFunc->Entry);
         FS && isMsvcIndirectReturn(FS->ReturnType, Opts.TheArch, Opts.Format)) {
       if (isWin64MemberIndirectReturn(*FS)) {
         if (Disp == 8)

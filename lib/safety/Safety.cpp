@@ -92,6 +92,7 @@ neverd::safety::validatePipelineCoverage(const PipelineResult &Result,
     case Disposition::SkippedLimit:
     case Disposition::RejectedLowIR:
     case Disposition::RejectedIncomplete:
+    case Disposition::RejectedUnwindlessNonLeaf:
     case Disposition::MedIRFailed:
       Incomplete = true;
       break;
@@ -114,11 +115,6 @@ neverd::safety::validatePipelineCoverage(const PipelineResult &Result,
     case Disposition::AbsorbedFunctionChunk:
       if (!AbsorbedChunkEntries.insert(Audit.Entry).second)
         return "incomplete safety lift inventory";
-      break;
-    case Disposition::RejectedUnwindlessNonLeaf:
-      if (Img && Img->hasAuthenticatedFunctionEntryAt(Audit.Entry))
-        return "incomplete safety lift at 0x" + llvm::utohexstr(Audit.Entry) +
-               " (rejected-unwindless-non-leaf)";
       break;
     }
     if (!Incomplete)

@@ -6,6 +6,7 @@
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/loader/ObjC/ObjCBlocks.h"
 #include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
@@ -169,7 +170,7 @@ class Values {
   const BinaryImage &Image;
   const HighFunc &Function;
   const ImportStorageSlotCollection &Imports;
-  size_t EvaluationBudget = 1000000;
+  size_t EvaluationBudget = kSourceEvaluationWork;
   std::set<int64_t> FrameIdentityBytes;
   std::set<int64_t> InitializedFrameBytes;
 
@@ -294,8 +295,8 @@ public:
     return V;
   }
   Value eval(const ExprPtr &E, unsigned Depth = 0) {
-    if (!E || Depth > 128 || !EvaluationBudget-- ||
-        (!E->Type && E->Kind != ExprKind::Call))
+    if (!E || Depth > ::neverd::sdk::kObjCBlockSourcesEvalDepthLimit ||
+        !EvaluationBudget-- || (!E->Type && E->Kind != ExprKind::Call))
       throw Invalid("block source has an incomplete or excessive expression");
     // Effect-only calls have no value type; their operands and call boundary
     // still participate in the ownership/escape proof.
@@ -691,7 +692,6 @@ void proveSourceFlow(const HighFunc &F, Facts Initial, Transfer Evaluate,
   const auto Graph = buildHighSourceFlowGraph(F);
   if (!Graph.Diagnostics.Complete || Graph.Nodes.empty())
     throw Invalid("block source has incomplete source control flow");
-  constexpr size_t MaxWork = 4000000, MaxFacts = 262144;
   size_t Work = 0, FactCount = 0;
   std::vector<std::optional<Facts>> Incoming(Graph.Nodes.size());
   std::vector<bool> Queued(Graph.Nodes.size());
@@ -700,7 +700,7 @@ void proveSourceFlow(const HighFunc &F, Facts Initial, Transfer Evaluate,
   FactCount = Incoming[Graph.Entry]->size();
   Queued[Graph.Entry] = true;
   auto Spend = [&](size_t Count) {
-    if (Count > MaxWork - Work)
+    if (Count > kMaxBlockSourceWork - Work)
       throw Invalid("block source exceeds its flow proof budget");
     Work += Count;
   };
@@ -719,7 +719,7 @@ void proveSourceFlow(const HighFunc &F, Facts Initial, Transfer Evaluate,
       if (!Input)
         Input = Output;
       FactCount = FactCount - Before + Input->size();
-      if (FactCount > MaxFacts)
+      if (FactCount > kMaxBlockSourceFacts)
         throw Invalid("block source exceeds its flow storage budget");
       if (Changed && !Queued[Next]) {
         Queued[Next] = true;
@@ -742,7 +742,9 @@ noEscape(const ObjCBlockSourceContext &Source,
          const ObjCBlockSourcePlan *ValidatedNestedBlocks = nullptr,
          bool AllowIndependentOutParameterStores = false) {
   try {
-    if (Active.size() >= 16 || !Active.insert({Entry, Parameter}).second)
+    if (Active.size() >=
+            ::neverd::sdk::kObjCBlockSourcesNoEscapeActiveSizeLimit ||
+        !Active.insert({Entry, Parameter}).second)
       throw Invalid("block consumer recursion is not established");
     struct Pop {
       decltype(Active) A;
@@ -1407,7 +1409,10 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
           return false;
         const auto &Copy = *Binding->ByValueCopy;
         if (Copy.Parameter != Parameter || Copy.FrameOffset != Offset ||
-            !Copy.Bytes || Copy.Bytes > 4096 ||
+            !Copy.Bytes ||
+            Copy.Bytes >
+                ::neverd::sdk::
+                    kObjCBlockSourcesStackBlocksBorrowsDisjointValueCopyStateCallBorrowsDisjointValueCopyCopyBytesLimit ||
             !frameRange(Function, Offset, Copy.Bytes) ||
             State.frameRangeContainsPointerIdentity(Offset, Copy.Bytes))
           return false;
@@ -2047,7 +2052,11 @@ discoverObjCBlockSources(const ObjCBlockSourceContext &Source,
                        Current.CaptureReceivers.end(),
                        [](const auto &Entry) { return !Entry.second.empty(); });
   };
-  for (unsigned Depth = 0; Depth < 16 && HasRoots(Plan); ++Depth) {
+  for (unsigned Depth = 0;
+       Depth <
+           ::neverd::sdk::kObjCBlockSourcesDiscoverObjCBlockSourcesDepthLimit &&
+       HasRoots(Plan);
+       ++Depth) {
     auto Next = discoverObjCBlockSourcesPass(Source, Result, &Plan);
     if (Next.CaptureReceivers == Plan.CaptureReceivers)
       return Next;
@@ -2208,12 +2217,12 @@ inline ObjCBlockSourceBindingResult bindObjCBlockSourceReferences(
       }
     }
     std::map<const HighExpr *, ExprPtr> Copies;
-    size_t Budget = 1000000;
+    size_t Budget = kSourceEvaluationWork;
     std::function<ExprPtr(const ExprPtr &, unsigned)> Copy;
     Copy = [&](const ExprPtr &Original, unsigned Depth) -> ExprPtr {
       if (!Original)
         return nullptr;
-      if (Depth > 200 || !Budget--)
+      if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth || !Budget--)
         throw Invalid("block source projection exceeds its expression budget");
       if (auto Existing = Copies.find(Original.get()); Existing != Copies.end())
         return Existing->second;
@@ -2270,7 +2279,7 @@ inline ObjCBlockSourceBindingResult bindObjCBlockSourceReferences(
     };
     std::function<void(std::vector<HighStmt> &, unsigned)> Walk;
     Walk = [&](std::vector<HighStmt> &Body, unsigned Depth) {
-      if (Depth > 200)
+      if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth)
         throw Invalid(
             "block source projection exceeds its control-flow budget");
       for (auto &Statement : Body) {

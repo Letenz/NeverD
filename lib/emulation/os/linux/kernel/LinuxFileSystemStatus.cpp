@@ -20,10 +20,13 @@ LinuxFiles::fileSystemStatus(uint64_t Address, ProcessResult &Result) {
   case PathKind::SymbolicLink:
   case PathKind::LinkTraversal:
     return unsupported(Result, FileLinkTraversal);
+  case PathKind::UnmodeledProc:
+    return unsupported(Result, "proc entry has no modeled semantics");
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
+  case PathKind::ProcFile:
   case PathKind::File:
   case PathKind::Device:
   case PathKind::Directory:

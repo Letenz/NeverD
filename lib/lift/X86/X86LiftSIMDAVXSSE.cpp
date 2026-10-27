@@ -17,7 +17,7 @@
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 #define DEBUG_TYPE "neverd-lift-x86"
 
@@ -323,8 +323,7 @@ bool liftSIMDAVXSSE(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       S.emit(NdOp::INT_ZEXT, Address, {Offset});
     }
     S.emitIntrinsic(Intrinsic::MaskedStoreB, {}, {Address, Mask, Src},
-                    NdMemoryOrdering::None,
-                    stringSourceAddressSpace(X86));
+                    NdMemoryOrdering::None, stringSourceAddressSpace(X86));
     break;
   }
 
@@ -365,8 +364,7 @@ bool liftSIMDAVXSSE(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     NdVar FirstIndex = NdVar::cst(0, 2);
     for (unsigned I = 1; I < 8; ++I) {
       NdVar Candidate = S.makeTemp(2);
-      S.emit(NdOp::SUBBYTES, Candidate,
-             {Src, NdVar::cst(I * 2, 4)});
+      S.emit(NdOp::SUBBYTES, Candidate, {Src, NdVar::cst(I * 2, 4)});
       NdVar IsLess = S.makeTemp(1);
       S.emit(NdOp::INT_LESS, IsLess, {Candidate, Minimum});
 
@@ -374,8 +372,7 @@ bool liftSIMDAVXSSE(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       S.emit(NdOp::SELECT, NextMinimum, {IsLess, Candidate, Minimum});
       Minimum = NextMinimum;
       NdVar NextIndex = S.makeTemp(2);
-      S.emit(NdOp::SELECT, NextIndex,
-             {IsLess, NdVar::cst(I, 2), FirstIndex});
+      S.emit(NdOp::SELECT, NextIndex, {IsLess, NdVar::cst(I, 2), FirstIndex});
       FirstIndex = NextIndex;
     }
 

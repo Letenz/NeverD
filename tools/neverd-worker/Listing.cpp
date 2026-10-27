@@ -1,9 +1,13 @@
 #include "Listing.h"
 
+#include "Config.h"
 #include "EngineSymbols.h"
 #include "References.h"
+#include "ResourceLimits.h"
 #include "StringReferences.h"
+#include "TablePage.h"
 #include "TextFold.h"
+#include "UnwindQuery.h"
 
 #include "neverd/DataAccessWidths.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
@@ -20,6 +24,7 @@
 #include <list>
 #include <map>
 #include <set>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -27,9 +32,11 @@ namespace neverd::worker {
 namespace {
 using DisasmExFunction = const char *(*)(neverd_session_t, neverd_va_t, int,
                                          unsigned);
+using FunctionDisasmFunction = const char *(*)(neverd_session_t, neverd_va_t,
+                                               neverd_va_t, int, unsigned);
 using CodeRefsFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
 using ImportSlotsFunction = const char *(*)(neverd_session_t);
-using UnwindFrameFunction = const char *(*)(neverd_session_t, neverd_va_t);
+using UnwindFrameFunction = unwind_query::Function;
 using FunctionChunksFunction = const char *(*)(neverd_session_t);
 using PointerRefsFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
 using DiscoverFunctionsFunction = int (*)(neverd_session_t);
@@ -49,42 +56,13 @@ using StringRefsFunction = const char *(*)(neverd_session_t, const char *,
 using StringEncodingsFunction = const char *(*)();
 using SwitchesFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
 using DemangleFunction = const char *(*)(const char *);
+using TypeMemberFunction = const char *(*)(neverd_session_t, const char *,
+                                           long long, unsigned long long,
+                                           const char *);
 
-// Listing layout, in characters after the prefix: name, mnemonic and comment
-// columns of a conventional interactive disassembler listing.
-constexpr std::size_t NameColumnWidth = 16;
-constexpr std::size_t MnemonicWidth = 8;
-constexpr std::size_t CommentColumn = 40;
-constexpr std::size_t MaxXrefLines = 2;
-/// The strings one neverd_strings_page_json call reads.
-constexpr int StringPageRows = 65536;
-constexpr std::size_t MaxPageLines = 2000;
-constexpr std::size_t MaxOpcodeBytes = 12;
-constexpr std::size_t MaxDecodeChunk = 2048;
-constexpr std::size_t FirstUnsizedChunk = 64;
-constexpr std::size_t DecodeCacheFunctions = 512;
 constexpr int IndexStepFunctions = 2048;
-constexpr std::size_t MaxStringDisplay = 400;
-constexpr std::size_t MaxUnsizedInstructions = 65536;
-constexpr std::uint64_t MaxAlignment = 0x1000;
-// Classic listings name padding by the alignment of its end, up to this or the
-// smallest power of two longer than the padding.
-constexpr std::uint64_t ClassicAlignmentLimit = 0x20;
-// Automatic string names keep this many characters, the `a` included.
-constexpr std::size_t StringNameLength = 15;
-// A string a comment quotes shows this many escaped characters.
-constexpr std::size_t CommentStringLength = 39;
 // Strings in these encodings are shown as plain bytes (`db`).
 constexpr std::string_view PlainStringEncodings[] = {"ascii", "utf-8"};
-constexpr std::size_t MaxOverviewBuckets = 16384;
-constexpr int OverviewSamples = 4;
-constexpr int StringScanMinimum = 4;
-/// Functions one neverd_string_refs_json call decodes.
-constexpr int StringReferencePageFunctions = 1024;
-constexpr std::size_t MaxReferencePage = 512;
-constexpr int PointerPage = 65536;
-/// Functions one neverd_switches_json call covers.
-constexpr int SwitchPageFunctions = 4096;
 constexpr char SeparatorRule[] = "; -------------------------------------------"
                                  "--------------------------------";
 constexpr char SubroutineRule[] =
@@ -213,6 +191,8 @@ bool isBranch(Flow flow) {
 #include "ListingVocabulary.def"
 #define NEVERD_DATA_ITEM_NAME(Id, Prefix)                                      \
   constexpr std::string_view Id = Prefix;
+#define NEVERD_IMPORT_SLOT_SUFFIX(Suffix)                                      \
+  constexpr std::string_view ImportSlotSuffix = Suffix;
 #include "neverd/DataNames.def"
 
 struct Region {
@@ -244,9 +224,11 @@ struct Instruction {
   std::uint64_t address = 0;
   std::uint32_t size = 0;
   std::string mnemonic, operands, bytes;
+  std::vector<unsigned> operandBits;
   Flow flow = Flow::None;
   std::optional<std::uint64_t> target;
   std::vector<std::pair<std::uint64_t, RefKind>> refs;
+  std::map<std::uint64_t, std::uint8_t> accessWidths;
   /// Absent when the engine does not state stack moves.
   std::optional<StackMove> stackMove;
   /// The stack pointer's offset from its value at the function's entry
@@ -259,10 +241,13 @@ struct UnwindMark {
   std::string personality;
 };
 struct DecodedFunction {
+  std::map<std::int64_t, std::string> manualNames;
   std::vector<Instruction> instructions;
   std::set<std::uint64_t> labels;
+  std::uint64_t entry = 0;
   std::uint64_t end = 0;
   std::optional<UnwindMark> unwind;
+  std::string recoveryError;
   /// The frame register a prologue sets up, or empty.
   std::string_view frameRegister;
   /// The stack register, when the stack pointer is tracked.
@@ -360,6 +345,7 @@ struct AutoData {
 
 struct Line {
   std::uint64_t item = 0, address = 0;
+  std::uint64_t itemSize = 0;
   std::uint32_t sub = 0;
   AddressClass cls = AddressClass::Unexplored;
   const char *kind = "data";
@@ -496,7 +482,8 @@ std::string quoteString(const std::string &value) {
     // Every escape counts as its spelled characters, a character as one.
     const std::size_t width =
         piece.size() > 1 && piece[0] == '\\' ? piece.size() : 1;
-    if (characters + width > CommentStringLength) {
+    if (characters + width >
+        ::neverd::limits::worker_config::kListingCommentStringLength) {
       cut = true;
       break;
     }
@@ -510,12 +497,14 @@ std::string quoteString(const std::string &value) {
 struct Listing::Impl {
   neverd_session_t session;
   DisasmExFunction disasmEx = nullptr;
+  FunctionDisasmFunction functionDisasm = nullptr;
   CodeRefsFunction codeRefs = nullptr;
   ImportSlotsFunction importSlots = nullptr;
   UnwindFrameFunction unwindFrame = nullptr;
   FunctionChunksFunction functionChunks = nullptr;
   PointerRefsFunction pointerRefs = nullptr;
   DiscoverFunctionsFunction discoverFunctions = nullptr;
+  DiscoverFunctionsFunction discoverFunctionsStep = nullptr;
   PointerAtFunction pointerAtQuery = nullptr;
   DataSymbolsFunction dataSymbols = nullptr;
   StringsExFunction stringsEx = nullptr;
@@ -525,15 +514,29 @@ struct Listing::Impl {
   ItemsFunction operandFormatsQuery = nullptr;
   /// The user's operand formats by instruction address, by operand index.
   std::unordered_map<std::uint64_t, std::vector<NumberFormat>> numberFormats;
+  /// neverd_local_type_member_json, which names structure offsets, and what
+  /// it answered for each type, offset and access width, read again with the
+  /// formats.
+  TypeMemberFunction typeMember = nullptr;
+  std::map<std::tuple<std::string, std::int64_t, unsigned>,
+           std::optional<StructLanding>>
+      landings;
+  StructNamer structNamer;
   StringAtFunction stringAtQuery = nullptr;
   DecodeTextFunction decodeText = nullptr;
   /// The user's data items (neverd_items_json) by address: a value, a string
   /// or undefined bytes, over what analysis reads in them.
   struct UserItem {
     std::uint64_t size = 1;
-    std::string kind, encoding;
+    std::string kind, encoding, type;
+    std::uint64_t elementSize = 0, count = 0, alignment = 0;
   };
   std::map<std::uint64_t, UserItem> userItems;
+  std::map<std::string, Json> dataElementTypes;
+  std::map<std::tuple<std::string, std::uint64_t, unsigned, bool>,
+           std::optional<std::string>>
+      enumValues;
+  std::map<std::uint64_t, Json> stackFrames;
   std::map<std::uint64_t, Instruction> userInstructions;
   StringRefsFunction stringRefs = nullptr;
   SwitchesFunction switchesQuery = nullptr;
@@ -550,8 +553,11 @@ struct Listing::Impl {
   std::unordered_map<std::string, EncodingInfo> stringEncodings;
   /// Whether the engine's function detector has run for this image.
   bool discovered = false;
+  bool allowSteppedDiscovery = false;
+  bool discoveryListingPending = false;
   OperandDialect dialect = OperandDialect::Generic;
   bool wide = true, elf = false, macho = false;
+  bool native = false;
   unsigned addressDigits = 16, pointerSize = 8;
   std::uint64_t imageEntry = 0;
   /// Code the loader runs on its own besides the entry (DT_INIT, DT_FINI).
@@ -569,6 +575,14 @@ struct Listing::Impl {
   std::uint64_t generation = 1;
   std::vector<Region> regions;
   std::vector<Function> functions;
+  /// The first function listed under each name, and how many functions are
+  /// not chunks, as functions held them at generation (namedFunction and
+  /// indexState read them; a listing holds tens of thousands of functions).
+  /// Names change only in a build, which advances generation first.
+  std::unordered_map<std::string, const Function *> functionsByName;
+  std::uint64_t functionsByNameGeneration = 0;
+  mutable std::size_t ownFunctionCount = 0;
+  mutable std::uint64_t ownFunctionCountGeneration = 0;
   std::unordered_map<std::uint64_t, std::string> dataNames;
   std::unordered_map<std::uint64_t, ImportSlot> slots;
   std::vector<StringItem> strings;
@@ -609,6 +623,38 @@ struct Listing::Impl {
   enum class IndexState { Idle, Building, Ready, Unavailable };
   IndexState indexState = IndexState::Idle;
   std::vector<Reference> references; // sorted by (to, from) when Ready
+  /// Recovered bodies replace a linear scan's references in their own extent.
+  /// Keep these across decode-cache eviction and an unfinished background scan.
+  struct RecoveredReferences {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    std::vector<Reference> rows;
+
+    void mergeRanges() {
+      std::sort(ranges.begin(), ranges.end());
+      std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
+      for (const auto &range : ranges)
+        if (!merged.empty() && range.first <= merged.back().second)
+          merged.back().second = std::max(merged.back().second, range.second);
+        else
+          merged.push_back(range);
+      ranges = std::move(merged);
+    }
+
+    bool contains(std::uint64_t address) const {
+      const auto next =
+          std::upper_bound(ranges.begin(), ranges.end(), address,
+                           [](std::uint64_t value, const auto &range) {
+                             return value < range.first;
+                           });
+      return next != ranges.begin() && address < std::prev(next)->second;
+    }
+  };
+  std::map<std::uint64_t, RecoveredReferences> recoveredReferences;
+  /// Exact decoded bytes, separately from the envelope used for layout.
+  /// Several functions can share code; ambiguous ownership stays unresolved.
+  std::map<std::uint64_t, std::map<std::uint64_t, std::uint32_t>>
+      recoveredInstructions;
+  std::uint32_t maxRecoveredInstructionSize = 0;
   std::optional<std::uint64_t> indexCursor;
   std::size_t indexDone = 0, indexTotal = 0;
   std::string indexError;
@@ -627,20 +673,31 @@ struct Listing::Impl {
 
   explicit Impl(neverd_session_t s) : session(s) {
     disasmEx = engineSymbol<DisasmExFunction>("neverd_disasm_json_ex");
+    functionDisasm =
+        engineSymbol<FunctionDisasmFunction>("neverd_function_disasm_json");
     codeRefs = engineSymbol<CodeRefsFunction>("neverd_code_refs_json");
     importSlots = engineSymbol<ImportSlotsFunction>("neverd_import_slots_json");
-    unwindFrame = engineSymbol<UnwindFrameFunction>("neverd_unwind_frame_json");
+    unwindFrame = unwind_query::function();
     functionChunks =
         engineSymbol<FunctionChunksFunction>("neverd_function_chunks_json");
     pointerRefs = engineSymbol<PointerRefsFunction>("neverd_pointer_refs_json");
     discoverFunctions = engineSymbol<DiscoverFunctionsFunction>(
         "neverd_session_discover_functions");
+    discoverFunctionsStep = engineSymbol<DiscoverFunctionsFunction>(
+        "neverd_session_discover_functions_step");
     pointerAtQuery = engineSymbol<PointerAtFunction>("neverd_pointer_at");
     stringsEx = engineSymbol<StringsExFunction>("neverd_strings_ex_json");
     stringsPage = engineSymbol<StringsPageFunction>("neverd_strings_page_json");
     itemsQuery = engineSymbol<ItemsFunction>("neverd_items_json");
     operandFormatsQuery =
         engineSymbol<ItemsFunction>("neverd_operand_formats_json");
+    typeMember =
+        engineSymbol<TypeMemberFunction>("neverd_local_type_member_json");
+    if (typeMember)
+      structNamer = [this](std::string_view type, std::int64_t offset,
+                           unsigned bytes) {
+        return structLanding(type, offset, bytes);
+      };
     stringAtQuery = engineSymbol<StringAtFunction>("neverd_string_at");
     decodeText = engineSymbol<DecodeTextFunction>("neverd_decode_text_json");
     stringRefs = engineSymbol<StringRefsFunction>("neverd_string_refs_json");
@@ -668,8 +725,10 @@ struct Listing::Impl {
     if (discovered)
       return;
     discovered = true;
-    if (discoverFunctions)
-      (void)discoverFunctions(session);
+    if (discoverFunctions && discoverFunctions(session) < 0) {
+      indexState = IndexState::Unavailable;
+      indexError = takeString(neverd_last_error(session));
+    }
   }
 
   void build() {
@@ -677,6 +736,7 @@ struct Listing::Impl {
     if (built && count == builtFunctionCount) {
       if (namesStale)
         rebuildNames(count);
+      discoveryListingPending = false;
       return;
     }
     built = true;
@@ -684,6 +744,7 @@ struct Listing::Impl {
     builtFunctionCount = count;
     ++generation;
     const auto arch = takeString(neverd_session_arch_name(session));
+    native = arch != "evm" && arch != "sbf";
     dialect = operandDialect(arch);
     const int bits = neverd_session_bitness(session);
     wide = bits != 32 && bits != 16;
@@ -697,8 +758,12 @@ struct Listing::Impl {
     buildNames(/*Rescan=*/true);
     decoded.clear();
     decodedOrder.clear();
+    recoveredReferences.clear();
+    recoveredInstructions.clear();
+    maxRecoveredInstructionSize = 0;
     alignCache.clear();
     applyDisplayNames();
+    discoveryListingPending = false;
   }
 
   /// Read the names and the user's items again over what the last build
@@ -711,6 +776,9 @@ struct Listing::Impl {
     buildNames(/*Rescan=*/false);
     decoded.clear();
     decodedOrder.clear();
+    recoveredReferences.clear();
+    recoveredInstructions.clear();
+    maxRecoveredInstructionSize = 0;
     alignCache.clear();
     applyDisplayNames();
   }
@@ -772,10 +840,6 @@ struct Listing::Impl {
       }
     if (auto *function = functionAtEntry(entry))
       rename(*function, std::string(EntryFunctionName));
-    if (!functionNamed(MainFunctionName))
-      if (const auto main = startArgumentMain(entry))
-        if (auto *function = functionAtEntry(*main))
-          rename(*function, std::string(MainFunctionName));
     aliases.clear();
     for (const auto &function : functions)
       if (function.name != function.engineName) {
@@ -848,6 +912,30 @@ struct Listing::Impl {
     return nullptr;
   }
 
+  /// functionNamed() of a built listing, from an index of its names.  A
+  /// build renames functions as it goes, so it asks functionNamed() itself.
+  const Function *namedFunction(const std::string &name) {
+    if (functionsByNameGeneration != generation) {
+      functionsByName.clear();
+      functionsByName.reserve(functions.size());
+      for (const auto &function : functions)
+        functionsByName.try_emplace(function.name, &function);
+      functionsByNameGeneration = generation;
+    }
+    const auto found = functionsByName.find(name);
+    return found == functionsByName.end() ? nullptr : found->second;
+  }
+
+  std::size_t ownFunctions() const {
+    if (ownFunctionCountGeneration != generation) {
+      ownFunctionCount = static_cast<std::size_t>(std::count_if(
+          functions.begin(), functions.end(),
+          [](const auto &function) { return !function.chunkOf; }));
+      ownFunctionCountGeneration = generation;
+    }
+    return ownFunctionCount;
+  }
+
   /// The import an instruction transfers to: a direct call to a veneer or an
   /// indirect call through an import slot.
   std::string calledImport(const Instruction &instruction) const {
@@ -863,81 +951,6 @@ struct Listing::Impl {
         if (auto it = slots.find(address); it != slots.end())
           return it->second.name;
     return {};
-  }
-
-  /// main is the first argument the image's start routine passes to the C
-  /// runtime (`__libc_start_main` and its variants): RDI/EDI on x86-64, the
-  /// last pushed code address on x86, X0 from ADRP+ADD on AArch64.
-  std::optional<std::uint64_t> startArgumentMain(std::uint64_t entry) {
-    const int index = functionIndex(entry);
-    if (index < 0 || functions[index].entry != entry)
-      return std::nullopt;
-    const auto isCode = [&](std::uint64_t address) {
-      const int region = regionIndex(address);
-      return region >= 0 && regions[region].exec;
-    };
-    std::optional<std::uint64_t> argument;
-    std::optional<std::uint64_t> page; // AArch64 ADRP x0
-    for (const auto &instruction : decode(index).instructions) {
-      const std::string_view mnemonic = instruction.mnemonic;
-      const std::string_view operands = instruction.operands;
-      const auto firstOffset = [&]() -> std::optional<std::uint64_t> {
-        for (const auto &[address, kind] : instruction.refs)
-          if ((kind == RefKind::Offset || kind == RefKind::Read) &&
-              isCode(address))
-            return address;
-        return std::nullopt;
-      };
-      if (instruction.flow == Flow::Call ||
-          instruction.flow == Flow::IndirectCall) {
-        if (isStartRoutine(calledImport(instruction)))
-          return argument;
-        argument.reset();
-        continue;
-      }
-      if ((mnemonic == "lea" || mnemonic == "mov") &&
-          (operands.starts_with("rdi,") || operands.starts_with("edi,"))) {
-        argument = firstOffset();
-      } else if (mnemonic == "push" && !wide) {
-        if (const auto value = firstOffset())
-          argument = value;
-      } else if (mnemonic == "adrp" && operands.starts_with("x0,")) {
-        page = parseImmediate(operands.substr(3));
-      } else if (mnemonic == "add" && operands.starts_with("x0, x0,") && page) {
-        if (const auto offset = parseImmediate(operands.substr(7)))
-          argument = *page + *offset;
-        page.reset();
-      }
-    }
-    return std::nullopt;
-  }
-
-  static bool isStartRoutine(std::string_view import) {
-    static constexpr std::string_view Routines[] = {
-#define NEVERD_START_ROUTINE(Name) Name,
-#include "ListingVocabulary.def"
-    };
-    for (const auto routine : Routines)
-      if (import == routine)
-        return true;
-    return false;
-  }
-
-  /// `#0x1234`, `0x1234` or decimal, as disassembler operands spell them.
-  static std::optional<std::uint64_t> parseImmediate(std::string_view text) {
-    while (!text.empty() && (text.front() == ' ' || text.front() == '#'))
-      text.remove_prefix(1);
-    int base = 10;
-    if (text.starts_with("0x")) {
-      text.remove_prefix(2);
-      base = 16;
-    }
-    std::uint64_t value = 0;
-    const auto parsed =
-        std::from_chars(text.data(), text.data() + text.size(), value, base);
-    if (parsed.ec != std::errc{} || parsed.ptr == text.data())
-      return std::nullopt;
-    return value;
   }
 
   void buildRegions() {
@@ -957,9 +970,11 @@ struct Listing::Impl {
             size > std::numeric_limits<std::uint64_t>::max() - start)
           continue;
         const auto fileSize = jsonCount(row.value("file_sz", Json()));
+        const auto initializedSize =
+            jsonCount(row.value("materialized_sz", Json(fileSize)));
         Range range{start,
                     start + size,
-                    start + std::min(size, fileSize),
+                    start + std::min(size, initializedSize),
                     std::max<std::uint64_t>(
                         1, jsonCount(row.value("alignment", Json()))),
                     row.value("name", std::string()),
@@ -1072,13 +1087,19 @@ struct Listing::Impl {
       if (function.end <= function.entry)
         function.end = function.entry + 1;
     }
-    // Byte signatures name library code.
+    // Only admitted identities classify library code. A byte candidate must
+    // not hide an application routine as a library function in the workbench.
     if (const auto matches = takeJson(neverd_sig_matches_json(session));
         matches.is_array())
-      for (const auto &match : matches)
+      for (const auto &match : matches) {
+        const auto autoName = match.find("auto_name");
+        if (autoName == match.end() || !autoName->is_string() ||
+            autoName->get_ref<const std::string &>().empty())
+          continue;
         if (auto *function =
                 functionAtEntry(jsonAddress(match.value("addr", Json()))))
           function->library = true;
+      }
     // A chunk is code of the kind its function is.
     for (auto &function : functions)
       if (function.chunkOf)
@@ -1199,7 +1220,7 @@ struct Listing::Impl {
           }
         noteImportTarget(row, thunk ? thunk : address);
         ImportSlot slot{name, row.value("module", std::string()),
-                        elf ? name + "_ptr" : name};
+                        elf ? name + std::string(ImportSlotSuffix) : name};
         listingNames.emplace(slot.label, address);
         slots.emplace(address, std::move(slot));
       }
@@ -1213,7 +1234,8 @@ struct Listing::Impl {
             functionAtEntry(address))
           continue;
         noteImportTarget(row, address);
-        ImportSlot slot{name, std::string(), elf ? name + "_ptr" : name};
+        ImportSlot slot{name, std::string(),
+                        elf ? name + std::string(ImportSlotSuffix) : name};
         listingNames.emplace(slot.label, address);
         slots.emplace(address, std::move(slot));
       }
@@ -1253,8 +1275,9 @@ struct Listing::Impl {
       // Page by page, so no result outgrows the adapter however many
       // strings a large image holds.
       for (std::optional<std::uint64_t> cursor = 0; cursor;) {
-        const auto page =
-            takeJson(stringsPage(session, options, *cursor, StringPageRows));
+        const auto page = takeJson(
+            stringsPage(session, options, *cursor,
+                        ::neverd::limits::worker::kListingStringPageRows));
         cursor.reset();
         if (!page.is_object())
           break;
@@ -1265,7 +1288,9 @@ struct Listing::Impl {
       }
     } else if (const auto rows = takeJson(
                    stringsEx ? stringsEx(session, options)
-                             : neverd_strings_json(session, StringScanMinimum));
+                             : neverd_strings_json(
+                                   session, ::neverd::limits::worker::
+                                                kListingStringScanMinimum));
                rows.is_array()) {
       strings.reserve(rows.size());
       for (const auto &row : rows)
@@ -1405,9 +1430,34 @@ struct Listing::Impl {
     return address < it->first + it->second.size ? &*it : nullptr;
   }
 
+  /// Where a structure offset lands in a local type, as the engine says: a
+  /// member that holds the byte, or the record that holds padding there.
+  std::optional<StructLanding>
+  structLanding(std::string_view type, std::int64_t offset, unsigned bytes) {
+    const auto key = std::make_tuple(std::string(type), offset, bytes);
+    if (const auto known = landings.find(key); known != landings.end())
+      return known->second;
+    std::optional<StructLanding> landing;
+    const auto answer = takeJson(
+        typeMember(session, std::get<0>(key).c_str(), offset, bytes, nullptr));
+    const auto fit =
+        answer.is_object() ? answer.value("fit", std::string()) : std::string();
+    const auto path = answer.is_object() ? answer.value("path", std::string())
+                                         : std::string();
+    // Bytes no member holds are named by the record that holds them, and
+    // the type's own padding by nothing.
+    if (!fit.empty() && fit != "outside" && (fit != "padding" || !path.empty()))
+      landing = StructLanding{path, static_cast<std::int64_t>(jsonCount(
+                                        answer.value("memberOffset", Json())))};
+    landings.emplace(key, landing);
+    return landing;
+  }
+
   /// Read how the user shows instruction operands' numbers.
   void loadNumberFormats() {
     numberFormats.clear();
+    enumValues.clear();
+    landings.clear();
     if (!operandFormatsQuery)
       return;
     const auto rows = takeJson(operandFormatsQuery(session));
@@ -1423,7 +1473,11 @@ struct Listing::Impl {
         if (formats.size() <= index)
           formats.resize(index + 1);
         formats[index] = {*base, entry.value("negate", false),
-                          entry.value("invert", false)};
+                          entry.value("invert", false),
+                          entry.value("type", std::string()),
+                          entry.value("base", std::string()) == "enum"
+                              ? (entry.value("flags", false) ? 1 : 0)
+                              : entry.value("delta", std::int64_t(0))};
       }
     }
   }
@@ -1432,6 +1486,7 @@ struct Listing::Impl {
   /// what the scan read in their bytes.
   void loadUserItems() {
     userItems.clear();
+    dataElementTypes.clear();
     userInstructions.clear();
     if (!itemsQuery)
       return;
@@ -1442,6 +1497,10 @@ struct Listing::Impl {
         item.size = jsonCount(row.value("size", Json()));
         item.kind = row.value("kind", std::string());
         item.encoding = row.value("encoding", std::string());
+        item.type = row.value("type", std::string());
+        item.elementSize = row.value("element_size", std::uint64_t(0));
+        item.count = row.value("count", std::uint64_t(0));
+        item.alignment = row.value("alignment", std::uint64_t(0));
         if (address && item.size)
           userItems.emplace(address, std::move(item));
       }
@@ -1482,8 +1541,8 @@ struct Listing::Impl {
 
   std::string decodedText(std::uint64_t address, std::uint64_t length,
                           const std::string &encoding) {
-    constexpr std::uint64_t MaxDecoded = 65536;
-    std::vector<unsigned char> bytes(std::min(length, MaxDecoded));
+    std::vector<unsigned char> bytes(
+        std::min(length, ::neverd::limits::worker::kListingMaxDecoded));
     const int read = neverd_read_bytes(session, address, bytes.data(),
                                        static_cast<int>(bytes.size()));
     bytes.resize(read > 0 ? static_cast<std::size_t>(read) : 0);
@@ -1547,7 +1606,8 @@ struct Listing::Impl {
     std::string name = "a";
     bool wordStart = true;
     for (unsigned char c : item.value) {
-      if (name.size() >= StringNameLength)
+      if (name.size() >=
+          ::neverd::limits::worker_config::kListingStringNameLength)
         break;
       if (c < 0x80 && std::isalnum(c)) {
         name += wordStart ? static_cast<char>(std::toupper(c))
@@ -1582,29 +1642,37 @@ struct Listing::Impl {
                ? &*it
                : nullptr;
   }
-  /// Index of the function whose decoded extent contains \p address.
-  int functionIndex(std::uint64_t address) {
-    auto it = std::upper_bound(
-        functions.begin(), functions.end(), address,
-        [](std::uint64_t value, const Function &f) { return value < f.entry; });
-    if (it == functions.begin())
-      return -1;
-    --it;
-    const int index = static_cast<int>(it - functions.begin());
-    if (address >= it->end)
-      return -1;
-    // Decoding sets where an unsized body ends, and moves a sized one's end
-    // before its padding.
-    if (it->size) {
-      decode(index);
-      return address < it->end ? index : -1;
+  std::optional<int> recoveredFunctionIndex(std::uint64_t address) const {
+    std::optional<std::uint64_t> owner;
+    auto at = recoveredInstructions.upper_bound(address);
+    const bool exact = recoveredInstructions.contains(address);
+    while (at != recoveredInstructions.begin()) {
+      --at;
+      // A proven start wins over the operand bytes of a different decode
+      // stream. Two owners of the same start remain ambiguous.
+      if (exact && at->first != address)
+        break;
+      if (address - at->first >= maxRecoveredInstructionSize)
+        break;
+      for (const auto &[entry, size] : at->second) {
+        if (address - at->first >= size)
+          continue;
+        if (owner && *owner != entry)
+          return -1;
+        owner = entry;
+      }
     }
-    if (address != it->entry && address >= decode(index).end)
-      return -1;
-    return index;
+    if (!owner)
+      return std::nullopt;
+    const auto it = std::lower_bound(
+        functions.begin(), functions.end(), *owner,
+        [](const Function &f, std::uint64_t value) { return f.entry < value; });
+    return it != functions.end() && it->entry == *owner
+               ? std::optional(static_cast<int>(it - functions.begin()))
+               : std::nullopt;
   }
-  /// Function extent without decoding, for coarse classification.
-  int functionIndexCoarse(std::uint64_t address) const {
+
+  int declaredFunctionIndex(std::uint64_t address) const {
     auto it = std::upper_bound(
         functions.begin(), functions.end(), address,
         [](std::uint64_t value, const Function &f) { return value < f.entry; });
@@ -1612,6 +1680,37 @@ struct Listing::Impl {
       return -1;
     --it;
     return address < it->end ? static_cast<int>(it - functions.begin()) : -1;
+  }
+  /// The declared or recovered owner, and whether recovery supplied it.
+  std::pair<int, bool> functionOwnerIndex(std::uint64_t address) const {
+    const int index = declaredFunctionIndex(address);
+    // Independent entries and explicit parts retain their identity, including
+    // when another decode stream covers their entry's bytes.
+    if (index < 0 ||
+        (!functions[index].chunkOf && functions[index].entry != address))
+      if (const auto recovered = recoveredFunctionIndex(address))
+        return {*recovered, true};
+    return {index, false};
+  }
+  /// Index of the function whose decoded extent contains \p address.
+  int functionIndex(std::uint64_t address) {
+    const auto [index, recovered] = functionOwnerIndex(address);
+    if (recovered || index < 0)
+      return index;
+    const auto &function = functions[index];
+    // Decoding sets where an unsized body ends, and moves a sized one's end
+    // before its padding.
+    if (function.size) {
+      decode(index);
+      return address < function.end ? index : -1;
+    }
+    if (address != function.entry && address >= decode(index).end)
+      return -1;
+    return index;
+  }
+  /// Function extent without decoding, for coarse classification.
+  int functionIndexCoarse(std::uint64_t address) const {
+    return functionOwnerIndex(address).first;
   }
   const StringItem *stringAt(std::uint64_t address) const {
     auto it = std::upper_bound(strings.begin(), strings.end(), address,
@@ -1635,14 +1734,7 @@ struct Listing::Impl {
                                        : std::string_view(it->second.spelling);
   }
 
-  std::vector<Instruction> disassemble(std::uint64_t address,
-                                       std::size_t count) {
-    const char *raw =
-        disasmEx
-            ? disasmEx(session, address, static_cast<int>(count),
-                       NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK)
-            : neverd_disasm_json(session, address, static_cast<int>(count));
-    const auto rows = takeJson(raw);
+  std::vector<Instruction> instructionRows(const Json &rows) {
     std::vector<Instruction> result;
     if (!rows.is_array())
       return result;
@@ -1655,14 +1747,21 @@ struct Listing::Impl {
       instruction.mnemonic = row.value("mnemonic", std::string());
       instruction.operands = row.value("op_str", std::string());
       instruction.bytes = row.value("bytes", std::string());
+      instruction.operandBits =
+          row.value("operand_bits", std::vector<unsigned>());
       instruction.flow = parseFlow(row.value("flow", std::string()));
       if (row.contains("target"))
         instruction.target = jsonAddress(row["target"]);
       if (const auto refs = row.value("refs", Json()); refs.is_array())
         for (const auto &ref : refs)
-          if (auto kind = parseRefKind(ref.value("kind", std::string())))
+          if (auto kind = parseRefKind(ref.value("kind", std::string()))) {
             instruction.refs.push_back(
                 {jsonAddress(ref.value("to", Json())), *kind});
+            const auto width = jsonCount(ref.value("size", Json()));
+            if (width && width <= MaxDataAccessWidth)
+              instruction.accessWidths[instruction.refs.back().first] =
+                  static_cast<std::uint8_t>(width);
+          }
       if (const auto sp = row.find("sp"); sp != row.end()) {
         StackMove move;
         move.known = sp->is_number_integer();
@@ -1679,6 +1778,17 @@ struct Listing::Impl {
     return result;
   }
 
+  std::vector<Instruction> disassemble(std::uint64_t address,
+                                       std::size_t count) {
+    const char *raw =
+        disasmEx
+            ? disasmEx(session, address, static_cast<int>(count),
+                       NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK |
+                           NEVERD_DISASM_OPERANDS)
+            : neverd_disasm_json(session, address, static_cast<int>(count));
+    return instructionRows(takeJson(raw));
+  }
+
   /// The stack variables of a function: offsets it addresses through the
   /// frame register its prologue sets up (`push rbp; mov rbp, rsp`, after an
   /// optional endbr), or through the stack register where the stack pointer
@@ -1687,7 +1797,12 @@ struct Listing::Impl {
   /// variable below it.
   void buildFrame(DecodedFunction &body) const {
     const auto &instructions = body.instructions;
-    std::size_t first = 0;
+    std::size_t first =
+        std::lower_bound(instructions.begin(), instructions.end(), body.entry,
+                         [](const Instruction &i, std::uint64_t address) {
+                           return i.address < address;
+                         }) -
+        instructions.begin();
     while (first < instructions.size() &&
            (instructions[first].mnemonic == "endbr64" ||
             instructions[first].mnemonic == "endbr32"))
@@ -1782,7 +1897,10 @@ struct Listing::Impl {
         return std::nullopt;
       return static_cast<std::size_t>(it - instructions.begin());
     };
-    reach(0, 0);
+    const auto entry = indexOf(body.entry);
+    if (!entry)
+      return;
+    reach(*entry, 0);
     while (!work.empty()) {
       const auto index = work.back();
       work.pop_back();
@@ -1850,6 +1968,9 @@ struct Listing::Impl {
 
   std::string frameName(const DecodedFunction &body,
                         std::int64_t offset) const {
+    if (const auto It = body.manualNames.find(offset);
+        It != body.manualNames.end())
+      return It->second;
     return offset < 0 ? std::string(LocalPrefix) + upperHex(-offset)
                       : std::string(ArgumentPrefix) +
                             upperHex(offset - argumentBase(body));
@@ -1872,17 +1993,92 @@ struct Listing::Impl {
     if (auto it = decoded.find(function.entry); it != decoded.end())
       return it->second;
     DecodedFunction body;
+    body.entry = function.entry;
     std::uint64_t cursor = function.entry;
     std::uint64_t furthestTarget = 0;
     bool stop = false;
+    bool recovered = functionDisasm && native;
+    bool complete = true;
+    if (recovered) {
+      // A distant chunk projects its owner's recovered CFG. Selecting the
+      // chunk as an entry can publish a transient independent function and
+      // invalidate the listing again on the next owner selection.
+      const auto entry = ownerOf(index).entry;
+      cursor = 0; // A continuation may precede its function's entry.
+      std::optional<std::uint64_t> previousAddress;
+      for (;;) {
+        const char *raw = functionDisasm(
+            session, entry, cursor,
+            ::neverd::limits::worker::kListingMaxDecodeChunk,
+            NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK | NEVERD_DISASM_OPERANDS);
+        if (!raw) {
+          const auto reason = takeString(neverd_last_error(session));
+          if (previousAddress)
+            throw Error("analysis_failed", reason);
+          // A rejected semantic lift still has bytes the user can inspect
+          // and repair. Keep the ordinary decoder and mark its lack of CFG
+          // authority explicitly instead of making the listing inaccessible.
+          body.recoveryError = reason;
+          recovered = false;
+          break;
+        }
+        const auto page = takeJson(raw);
+        complete &= page.value("lift_complete", false);
+        auto chunk = instructionRows(page.at("instructions"));
+        for (auto &instruction : chunk) {
+          if (instruction.address < cursor ||
+              (previousAddress && instruction.address <= *previousAddress) ||
+              instruction.size == 0 ||
+              instruction.address > UINT64_MAX - instruction.size)
+            throw Error("analysis_failed",
+                        "Invalid recovered instruction page");
+          previousAddress = instruction.address;
+          if (function.chunkOf && (instruction.address < function.entry ||
+                                   instruction.address >= function.end))
+            continue;
+          // A synthetic tail-call block names the callee's entry but owns
+          // none of its instruction bytes. All other recovered instructions
+          // retain their frame, including code beyond another entry's range.
+          const auto *other = functionAtEntry(instruction.address);
+          if (!other || other->entry == function.entry)
+            body.instructions.push_back(std::move(instruction));
+          if (body.instructions.size() >
+              ::neverd::limits::worker::kListingMaxUnsizedInstructions)
+            throw Error("analysis_failed",
+                        "Recovered function exceeds listing limit");
+        }
+        const auto next = page.at("next_address");
+        if (next.is_null())
+          break;
+        const auto nextAddress = jsonAddress(next);
+        if (!previousAddress || nextAddress <= *previousAddress)
+          throw Error("analysis_failed",
+                      "Invalid recovered instruction cursor");
+        if (body.instructions.size() >=
+            ::neverd::limits::worker::kListingMaxUnsizedInstructions)
+          throw Error("analysis_failed",
+                      "Recovered function exceeds listing limit");
+        cursor = nextAddress;
+      }
+      stop = recovered;
+      cursor = function.entry;
+      for (const auto &instruction : body.instructions)
+        if (instruction.address >= function.entry &&
+            instruction.address < function.end)
+          cursor = std::max(cursor, instruction.address + instruction.size);
+    }
     // An unsized body usually ends within a few dozen instructions; growing
     // chunks keep the engine from lifting far past its terminator.
-    std::size_t chunkSize = function.size ? MaxDecodeChunk : FirstUnsizedChunk;
+    std::size_t chunkSize =
+        function.size ? ::neverd::limits::worker::kListingMaxDecodeChunk
+                      : ::neverd::limits::worker::kListingFirstUnsizedChunk;
     while (!stop && cursor < function.end &&
-           body.instructions.size() < MaxUnsizedInstructions) {
+           body.instructions.size() <
+               ::neverd::limits::worker::kListingMaxUnsizedInstructions) {
       const std::size_t requested = chunkSize;
       auto chunk = disassemble(cursor, requested);
-      chunkSize = std::min(MaxDecodeChunk, chunkSize * 2);
+      chunkSize = std::min(::neverd::limits::worker::kListingMaxDecodeChunk,
+                           chunkSize * 2);
       if (chunk.empty())
         break;
       for (auto &instruction : chunk) {
@@ -1913,10 +2109,66 @@ struct Listing::Impl {
           std::max(function.entry + 1, std::min(function.end, body.end));
     else if (trimPadding(body))
       function.end = body.end;
+    if (recovered) {
+      auto &overlay = recoveredReferences[function.entry];
+      overlay.ranges = {{function.entry, std::max(function.end, body.end)}};
+      overlay.rows.clear();
+      for (const auto &instruction : body.instructions) {
+        overlay.ranges.emplace_back(instruction.address,
+                                    instruction.address + instruction.size);
+        if (complete) {
+          recoveredInstructions[instruction.address][ownerOf(index).entry] =
+              instruction.size;
+          maxRecoveredInstructionSize =
+              std::max(maxRecoveredInstructionSize, instruction.size);
+        }
+        if (instruction.target) {
+          const auto kind = instruction.flow == Flow::Call ? RefKind::Call
+                            : instruction.flow == Flow::CondJump
+                                ? RefKind::CondJump
+                                : RefKind::Jump;
+          overlay.rows.push_back(
+              {*instruction.target, instruction.address, kind});
+        }
+        for (const auto &ref : instruction.refs)
+          overlay.rows.push_back({ref.first, instruction.address, ref.second,
+                                  instruction.accessWidths.contains(ref.first)
+                                      ? instruction.accessWidths.at(ref.first)
+                                      : std::uint8_t{0}});
+      }
+      overlay.mergeRanges();
+      if (indexState == IndexState::Ready) {
+        std::erase_if(references, [&](const Reference &reference) {
+          if (!overlay.contains(reference.from))
+            return false;
+          // These facts are owned by relocated storage and switch recovery,
+          // not the instruction scan whose results this body supersedes.
+          if (reference.kind == RefKind::IndirectJump &&
+              switchJumps.contains(reference.from))
+            return false;
+          if (reference.kind == RefKind::Offset) {
+            if (switchTables.contains(reference.from))
+              return false;
+            if (const auto slot = pointerAt(reference.from);
+                slot && slot->target == reference.to)
+              return false;
+          }
+          return true;
+        });
+        const auto previous = references.size();
+        references.insert(references.end(), overlay.rows.begin(),
+                          overlay.rows.end());
+        const auto order = [](const Reference &a, const Reference &b) {
+          return a.to != b.to ? a.to < b.to : a.from < b.from;
+        };
+        std::sort(references.begin() + previous, references.end(), order);
+        std::inplace_merge(references.begin(), references.begin() + previous,
+                           references.end(), order);
+      }
+    }
     for (const auto &instruction : body.instructions)
       if (instruction.target && isBranch(instruction.flow) &&
-          *instruction.target > function.entry &&
-          *instruction.target < body.end)
+          *instruction.target != function.entry)
         body.labels.insert(*instruction.target);
     // Branches from other functions into this body need labels too.
     if (indexState == IndexState::Ready) {
@@ -1932,6 +2184,38 @@ struct Listing::Impl {
     // set up: its stack operands stay as they are.
     if (dialect == OperandDialect::X86 && !function.chunkOf)
       buildFrame(body);
+    if (const auto Frame = stackFrames.find(function.entry);
+        Frame != stackFrames.end()) {
+      using Inspect =
+          const char *(*)(neverd_session_t, neverd_va_t, const char *);
+      if (const auto inspect =
+              engineSymbol<Inspect>("neverd_stack_frame_json")) {
+        if (const auto *raw = inspect(session, function.entry,
+                                      Frame->second.dump().c_str())) {
+          const auto flow = takeJson(raw);
+          std::map<std::uint64_t, std::optional<std::int64_t>> offsets;
+          for (const auto &row : flow.at("instructions"))
+            offsets[parseAddress(row.at("address").get<std::string>())] =
+                row.at("before").is_number_integer()
+                    ? std::optional(row.at("before").get<std::int64_t>())
+                    : std::nullopt;
+          for (auto &insn : body.instructions)
+            insn.stackDelta = offsets[insn.address];
+          body.frame.clear();
+          for (const auto &access : flow.at("accesses")) {
+            const auto offset =
+                access.at("offset").get<std::int64_t>() - body.frameBase;
+            auto &bytes = body.frame[offset];
+            bytes = std::max(bytes, access.at("bytes").get<unsigned>());
+          }
+          for (const auto &variable :
+               Frame->second.value("variables", Json::array()))
+            body.manualNames[variable.at("offset").get<std::int64_t>() -
+                             body.frameBase] =
+                variable.at("name").get<std::string>();
+        }
+      }
+    }
     body.unwind = unwindAt(function.entry);
     // Only real instruction boundaries can carry labels.
     for (auto it = body.labels.begin(); it != body.labels.end();) {
@@ -1945,7 +2229,8 @@ struct Listing::Impl {
                : body.labels.erase(it);
     }
     decodedOrder.push_front(function.entry);
-    if (decodedOrder.size() > DecodeCacheFunctions) {
+    if (decodedOrder.size() >
+        ::neverd::limits::worker::kListingDecodeCacheFunctions) {
       decoded.erase(decodedOrder.back());
       decodedOrder.pop_back();
     }
@@ -1958,18 +2243,27 @@ struct Listing::Impl {
   /// a branch of the body reaches stays in it.  Returns whether it trimmed.
   bool trimPadding(DecodedFunction &body) const {
     auto &instructions = body.instructions;
-    auto padding = instructions.end();
-    while (padding != instructions.begin() &&
-           isPaddingMnemonic(std::prev(padding)->mnemonic))
+    const auto at = [&](std::uint64_t address) {
+      return std::lower_bound(instructions.begin(), instructions.end(), address,
+                              [](const Instruction &i, std::uint64_t value) {
+                                return i.address < value;
+                              });
+    };
+    // This is the main extent's padding, not a suffix of every recovered
+    // fragment sorted by address. Remote fragments keep their own boundaries.
+    const auto first = at(body.entry), last = at(body.end);
+    auto padding = last;
+    while (padding != first && isPaddingMnemonic(std::prev(padding)->mnemonic))
       --padding;
-    if (padding == instructions.begin() || padding == instructions.end() ||
+    if (padding == first || padding == last ||
         fallsThrough(std::prev(padding)->flow))
       return false;
     const std::uint64_t end = padding->address;
-    for (auto it = instructions.begin(); it != padding; ++it)
-      if (it->target && *it->target >= end && *it->target < body.end)
+    for (const auto &instruction : instructions)
+      if (instruction.target && *instruction.target >= end &&
+          *instruction.target < body.end)
         return false;
-    instructions.erase(padding, instructions.end());
+    instructions.erase(padding, last);
     body.end = end;
     return true;
   }
@@ -2001,8 +2295,10 @@ struct Listing::Impl {
     if (end <= start)
       return 0;
     const std::uint64_t length = end - start;
-    std::uint64_t limit = ClassicAlignmentLimit;
-    while (limit <= length && limit < MaxAlignment)
+    std::uint64_t limit =
+        ::neverd::limits::worker::kListingClassicAlignmentLimit;
+    while (limit <= length &&
+           limit < ::neverd::limits::worker::kListingMaxAlignment)
       limit *= 2;
     for (std::uint64_t candidate = limit; candidate >= 2; candidate /= 2)
       if (end % candidate == 0 && length < candidate)
@@ -2073,10 +2369,18 @@ struct Listing::Impl {
         item.start = start;
         item.size = row.size;
         item.index = static_cast<std::size_t>(string - strings.data());
-      } else {
-        item.kind = ItemKind::Data;
+      } else if (row.kind == "alignment") {
+        item.kind = ItemKind::Align;
         item.start = start;
         item.size = row.size;
+        item.alignment = row.alignment;
+      } else {
+        item.kind = ItemKind::Data;
+        item.start =
+            row.kind == "array"
+                ? start + (address - start) / row.elementSize * row.elementSize
+                : start;
+        item.size = row.kind == "array" ? row.elementSize : row.size;
       }
       return item;
     }
@@ -2243,6 +2547,14 @@ struct Listing::Impl {
   }
   std::optional<Item> nextItem(const Item &item) {
     const auto end = item.start + item.size;
+    // Two independently decoded streams can overlap. A preceding stream's
+    // operand bytes must not make paging skip another proven start.
+    if (item.kind == ItemKind::Instruction && !item.userCode) {
+      const auto at = recoveredInstructions.upper_bound(item.start);
+      if (at != recoveredInstructions.end() && at->first < end)
+        if (auto next = itemAt(at->first); next && next->start == at->first)
+          return next;
+    }
     if (end < regions[item.region].end)
       return itemAt(end);
     for (std::size_t r = item.region + 1; r < regions.size(); ++r)
@@ -2251,8 +2563,19 @@ struct Listing::Impl {
     return std::nullopt;
   }
   std::optional<Item> previousItem(const Item &item) {
-    if (item.start > regions[item.region].start)
+    if (item.start > regions[item.region].start) {
+      auto at = recoveredInstructions.lower_bound(item.start);
+      if (at != recoveredInstructions.begin()) {
+        --at;
+        if (item.start - at->first <= maxRecoveredInstructionSize)
+          if (auto previous = itemAt(at->first);
+              previous && previous->start == at->first &&
+              previous->kind == ItemKind::Instruction &&
+              previous->start + previous->size >= item.start)
+            return previous;
+      }
       return itemAt(item.start - 1);
+    }
     for (int r = item.region - 1; r >= 0; --r)
       if (auto previous = itemAt(regions[r].end - 1))
         return previous;
@@ -2456,7 +2779,7 @@ struct Listing::Impl {
                      ListingRole role, std::size_t base) {
     if (comment.empty())
       return;
-    text.padTo(base + CommentColumn);
+    text.padTo(base + ::neverd::limits::worker_config::kListingCommentColumn);
     text.append("; ", role);
     text.append(comment, role);
   }
@@ -2471,7 +2794,10 @@ struct Listing::Impl {
     const auto total = static_cast<std::size_t>(end - begin);
     for (const bool code : {true, false}) {
       bool heading = true;
-      for (auto it = begin; it != end && result.size() < MaxXrefLines; ++it) {
+      for (auto it = begin;
+           it != end &&
+           result.size() < ::neverd::limits::worker::kListingMaxXrefLines;
+           ++it) {
         if (isCodeRef(it->kind) != code)
           continue;
         StyledText line;
@@ -2494,6 +2820,7 @@ struct Listing::Impl {
                std::optional<std::uint64_t> target = std::nullopt) {
     Line line;
     line.item = item.start;
+    line.itemSize = item.size;
     line.address = address;
     line.sub = 0;
     line.cls = classOf(item);
@@ -2509,14 +2836,14 @@ struct Listing::Impl {
                     StyledText head, std::uint64_t address, const char *kind) {
     auto xrefs = xrefComments(address);
     if (!xrefs.empty()) {
-      head.padTo(base + CommentColumn);
+      head.padTo(base + ::neverd::limits::worker_config::kListingCommentColumn);
       head.append("; ", ListingRole::Xref);
       head.append(xrefs.front());
     }
     addLine(out, item, item.start, kind, std::move(head));
     for (std::size_t i = 1; i < xrefs.size(); ++i) {
       StyledText more = lead(base);
-      more.padTo(base + CommentColumn);
+      more.padTo(base + ::neverd::limits::worker_config::kListingCommentColumn);
       more.append("; ", ListingRole::Xref);
       more.append(xrefs[i]);
       addLine(out, item, item.start, "xref", std::move(more));
@@ -2535,7 +2862,9 @@ struct Listing::Impl {
                      std::size_t base) {
     const Region &region = regions[item.region];
     addLine(out, item, item.start, "separator", [&] {
-      auto t = lead(base ? base - NameColumnWidth : 0);
+      auto t = lead(
+          base ? base - ::neverd::limits::worker_config::kListingNameColumnWidth
+               : 0);
       t.append(SegmentRule, ListingRole::Separator);
       return t;
     }());
@@ -2562,7 +2891,7 @@ struct Listing::Impl {
     addLine(out, item, item.start, "comment", std::move(access));
     StyledText directive;
     directive.append(segmentDirectiveName(region), ListingRole::SegmentName);
-    directive.padTo(NameColumnWidth);
+    directive.padTo(::neverd::limits::worker_config::kListingNameColumnWidth);
     directive.append("segment ", ListingRole::Directive);
     std::string_view alignment;
 #define NEVERD_SEGMENT_ALIGNMENT(Bytes, Spelling)                              \
@@ -2656,9 +2985,53 @@ struct Listing::Impl {
     facts.flow = flowName(instruction.flow);
     facts.target = instruction.target;
     facts.bytes = instruction.bytes;
+    facts.operandBits = &instruction.operandBits;
     if (const auto formats = numberFormats.find(instruction.address);
         formats != numberFormats.end())
       facts.numberFormats = &formats->second;
+    std::vector<NumberFormat> mappedFormats;
+    std::vector<unsigned> mappedBits;
+    if (!classic.operandIndices.empty()) {
+      for (auto index : classic.operandIndices)
+        mappedBits.push_back(index < instruction.operandBits.size()
+                                 ? instruction.operandBits[index]
+                                 : 0);
+      facts.operandBits = &mappedBits;
+    }
+    if (facts.numberFormats && !classic.operandIndices.empty()) {
+      for (auto index : classic.operandIndices)
+        mappedFormats.push_back(index < facts.numberFormats->size()
+                                    ? (*facts.numberFormats)[index]
+                                    : NumberFormat{});
+      facts.numberFormats = &mappedFormats;
+    }
+    OperandFacts::EnumNamer enums =
+        [this](std::string_view type, std::uint64_t value, unsigned bits,
+               bool flags) -> std::optional<std::string> {
+      using FormatEnum = const char *(*)(neverd_session_t, const char *,
+                                         const char *, unsigned, int);
+      const auto key = std::make_tuple(std::string(type), value, bits, flags);
+      if (const auto found = enumValues.find(key); found != enumValues.end())
+        return found->second;
+      const auto format = engineSymbol<FormatEnum>("neverd_enum_value_json");
+      if (!format)
+        return {};
+      const auto reply =
+          takeJson(format(session, std::string(type).c_str(),
+                          hexAddress(value).c_str(), bits, flags));
+      const auto text = reply.is_object()
+                            ? std::optional(reply.value("text", std::string()))
+                            : std::nullopt;
+      if (enumValues.size() >=
+          ::neverd::limits::worker::
+              kListingInstructionTextEnumsEnumValuesSizeLimit)
+        enumValues.clear();
+      enumValues.emplace(key, text);
+      return text;
+    };
+    facts.enums = &enums;
+    if (structNamer)
+      facts.structs = &structNamer;
     FrameNamer frame;
     if (body && !body->frame.empty()) {
       frame = [this, body](std::int64_t offset) {
@@ -2674,7 +3047,7 @@ struct Listing::Impl {
     for (const auto &[to, kind] : instruction.refs)
       facts.references.push_back(to);
     if (!classic.operands.empty()) {
-      text.padTo(base + MnemonicWidth);
+      text.padTo(base + ::neverd::limits::worker_config::kListingMnemonicWidth);
       text.append(formatOperands(
           classic.operands, facts,
           [this](std::uint64_t address, NameUse use, std::string_view size) {
@@ -2722,26 +3095,51 @@ struct Listing::Impl {
     const DecodedFunction &body =
         item.function >= 0 ? decode(item.function) : standaloneBody;
     const Instruction &instruction = instructionOf(item);
-    if (function.chunkOf && item.start == function.entry) {
+    const bool remote = item.function >= 0 && !function.chunkOf &&
+                        (item.start < function.entry || item.start >= body.end);
+    bool remoteStart = false;
+    bool remoteEnd = false;
+    if (remote) {
+      const auto at = std::lower_bound(
+          body.instructions.begin(), body.instructions.end(), item.start,
+          [](const Instruction &i, std::uint64_t address) {
+            return i.address < address;
+          });
+      if (at != body.instructions.end() && at->address == item.start) {
+        remoteStart =
+            at == body.instructions.begin() ||
+            std::prev(at)->address + std::prev(at)->size != item.start ||
+            item.start == body.end;
+        remoteEnd = std::next(at) == body.instructions.end() ||
+                    std::next(at)->address != item.start + item.size ||
+                    item.start + item.size == function.entry;
+      }
+    }
+    if ((function.chunkOf && item.start == function.entry) || remoteStart) {
       // A chunk opens with its function's name, then its label; the code
       // before it brings the rule a jump or return ends with.
       const auto &owner = ownerOf(item.function);
-      StyledText open = lead(base - NameColumnWidth);
+      StyledText open =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       open.append(ChunkStartLead, ListingRole::AutoComment);
       open.append(owner.name, ListingRole::CodeName, owner.entry);
       addLine(out, item, item.start, "comment", std::move(open));
       addLine(out, item, item.start, "blank", {});
-      StyledText label = lead(base - NameColumnWidth);
+      StyledText label =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       label.append(nameOf(item.start, NameUse::Transfer, {}).text,
                    ListingRole::Label, item.start);
       label.append(":", ListingRole::Punctuation);
-      addNamedLine(out, item, base - NameColumnWidth, std::move(label),
-                   item.start, "label");
+      addNamedLine(out, item,
+                   base -
+                       ::neverd::limits::worker_config::kListingNameColumnWidth,
+                   std::move(label), item.start, "label");
     } else if (item.function >= 0 && item.start == function.entry) {
       // Function header: a rule, the attribute block (each ends with a blank
       // line), exports and the proc line with references.
       addLine(out, item, item.start, "blank", {});
-      StyledText rule = lead(base - NameColumnWidth);
+      StyledText rule =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       rule.append(SubroutineRule, ListingRole::Separator);
       addLine(out, item, item.start, "separator", std::move(rule));
       addLine(out, item, item.start, "blank", {});
@@ -2753,8 +3151,17 @@ struct Listing::Impl {
         if (present)
           attributes += (attributes.empty() ? "" : " ") + std::string(spelling);
       if (!attributes.empty()) {
-        StyledText line = lead(base - NameColumnWidth);
+        StyledText line = lead(
+            base - ::neverd::limits::worker_config::kListingNameColumnWidth);
         line.append(AttributesLead + attributes, ListingRole::AutoComment);
+        addLine(out, item, item.start, "comment", std::move(line));
+      }
+      if (!body.recoveryError.empty()) {
+        StyledText line = lead(
+            base - ::neverd::limits::worker_config::kListingNameColumnWidth);
+        line.append("; Linear disassembly; control-flow recovery failed: " +
+                        body.recoveryError,
+                    ListingRole::AutoComment);
         addLine(out, item, item.start, "comment", std::move(line));
       }
       addLine(out, item, item.start, "blank", {});
@@ -2762,7 +3169,8 @@ struct Listing::Impl {
       // the prototype.
       if (const auto &readable = demangledName(function.name);
           !readable.empty()) {
-        StyledText line = lead(base - NameColumnWidth);
+        StyledText line = lead(
+            base - ::neverd::limits::worker_config::kListingNameColumnWidth);
         line.append("; " + readable, ListingRole::AutoComment);
         addLine(out, item, item.start, "comment", std::move(line));
       }
@@ -2774,19 +3182,23 @@ struct Listing::Impl {
         publicLine.append(function.name, ListingRole::CodeName, function.entry);
         addLine(out, item, item.start, "directive", std::move(publicLine));
       }
-      StyledText head = lead(base - NameColumnWidth);
+      StyledText head =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       head.append(function.name,
                   function.library ? ListingRole::LibraryName
                                    : ListingRole::CodeName,
                   function.entry);
       head.padTo(base);
       head.append("proc near", ListingRole::Directive);
-      addNamedLine(out, item, base - NameColumnWidth, std::move(head),
-                   item.start, "header");
+      addNamedLine(out, item,
+                   base -
+                       ::neverd::limits::worker_config::kListingNameColumnWidth,
+                   std::move(head), item.start, "header");
       if (!body.frame.empty()) {
         addLine(out, item, item.start, "blank", {});
         for (const auto &[offset, size] : body.frame) {
-          StyledText line = lead(base - NameColumnWidth);
+          StyledText line = lead(
+              base - ::neverd::limits::worker_config::kListingNameColumnWidth);
           line.append(frameName(body, offset), ListingRole::Plain);
           line.padTo(base);
           line.append("= ", ListingRole::Punctuation);
@@ -2804,15 +3216,19 @@ struct Listing::Impl {
     } else if (body.labels.contains(item.start) ||
                (item.userCode && dataNames.contains(item.start))) {
       addLine(out, item, item.start, "blank", {});
-      StyledText label = lead(base - NameColumnWidth);
+      StyledText label =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       label.append(nameOf(item.start, NameUse::Transfer, {}).text,
                    ListingRole::Label, item.start);
       label.append(":", ListingRole::Punctuation);
-      addNamedLine(out, item, base - NameColumnWidth, std::move(label),
-                   item.start, "label");
+      addNamedLine(out, item,
+                   base -
+                       ::neverd::limits::worker_config::kListingNameColumnWidth,
+                   std::move(label), item.start, "label");
     }
     if (body.unwind && body.unwind->begin == item.start) {
-      StyledText open = lead(base - NameColumnWidth);
+      StyledText open =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       open.append(body.unwind->personality.empty()
                       ? std::string(UnwindOpen)
                       : std::string(UnwindOpen) + " // " +
@@ -2821,11 +3237,16 @@ struct Listing::Impl {
       addLine(out, item, item.start, "comment", std::move(open));
     }
     StyledText text = instructionText(
-        instruction, base, opcodeColumn(instruction, base - NameColumnWidth),
+        instruction, base,
+        opcodeColumn(
+            instruction,
+            base - ::neverd::limits::worker_config::kListingNameColumnWidth),
         &body);
     const auto comment =
         takeString(neverd_annotation_get(session, instruction.address));
-    appendComment(text, comment, ListingRole::Comment, base - NameColumnWidth);
+    appendComment(text, comment, ListingRole::Comment,
+                  base -
+                      ::neverd::limits::worker_config::kListingNameColumnWidth);
     // Without a comment of its own, an instruction marks a switch's table
     // load or dispatch, or quotes the string it refers to.
     const auto switchComment = [&]() -> std::string {
@@ -2856,17 +3277,21 @@ struct Listing::Impl {
     };
     if (comment.empty()) {
       if (const auto marked = switchComment(); !marked.empty()) {
-        appendComment(text, marked, ListingRole::AutoComment,
-                      base - NameColumnWidth);
+        appendComment(
+            text, marked, ListingRole::AutoComment,
+            base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       } else if (const auto readable = demangledOperand(); !readable.empty()) {
-        appendComment(text, readable, ListingRole::AutoComment,
-                      base - NameColumnWidth);
+        appendComment(
+            text, readable, ListingRole::AutoComment,
+            base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       } else {
         for (const auto &[to, kind] : instruction.refs)
           if (const auto *string = stringAt(to);
               string && string->address == to) {
-            appendComment(text, quoteString(string->value),
-                          ListingRole::AutoComment, base - NameColumnWidth);
+            appendComment(
+                text, quoteString(string->value), ListingRole::AutoComment,
+                base -
+                    ::neverd::limits::worker_config::kListingNameColumnWidth);
             break;
           }
       }
@@ -2879,16 +3304,20 @@ struct Listing::Impl {
     const std::uint64_t next = item.start + item.size;
     if (body.unwind && body.unwind->end > item.start &&
         body.unwind->end <= next) {
-      StyledText close = lead(base - NameColumnWidth);
+      StyledText close =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       close.append(UnwindClose + upperHex(body.unwind->begin),
                    ListingRole::AutoComment);
       addLine(out, item, item.start, "comment", std::move(close));
     }
-    if (item.function >= 0 && next >= body.end) {
+    if (item.function >= 0 && ((item.start >= function.entry &&
+                                item.start < body.end && next >= body.end) ||
+                               remoteEnd)) {
       // The footer belongs to the last instruction.  Code that no function
       // owns, padding or data follows a rule; a function brings its own.
-      StyledText end = lead(base - NameColumnWidth);
-      if (function.chunkOf) {
+      StyledText end =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
+      if (function.chunkOf || remote) {
         const auto &owner = ownerOf(item.function);
         end.append(ChunkEndLead, ListingRole::AutoComment);
         end.append(owner.name, ListingRole::CodeName, owner.entry);
@@ -2901,19 +3330,22 @@ struct Listing::Impl {
         addLine(out, item, item.start, "blank", {});
       }
       if (next < regions[item.region].end && !functionAtEntry(next)) {
-        StyledText rule = lead(base - NameColumnWidth);
+        StyledText rule = lead(
+            base - ::neverd::limits::worker_config::kListingNameColumnWidth);
         rule.append(SeparatorRule, ListingRole::Separator);
         addLine(out, item, item.start, "separator", std::move(rule));
       }
     } else if (!fallsThrough(instruction.flow)) {
-      StyledText rule = lead(base - NameColumnWidth);
+      StyledText rule =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       rule.append(SeparatorRule, ListingRole::Separator);
       addLine(out, item, item.start + item.size, "separator", std::move(rule));
     }
   }
 
   void dataLines(std::vector<Line> &out, const Item &item, std::size_t base) {
-    const std::size_t nameBase = base - NameColumnWidth;
+    const std::size_t nameBase =
+        base - ::neverd::limits::worker_config::kListingNameColumnWidth;
     StyledText head = lead(nameBase);
     std::optional<std::uint64_t> target;
     std::string comment;
@@ -2962,16 +3394,20 @@ struct Listing::Impl {
         head.padTo(base);
         head.append("text ", ListingRole::Directive);
         head.append("\"" + std::string(spelling) + "\", ", ListingRole::String);
-        head.append(escapeString(string.value, MaxStringDisplay),
-                    ListingRole::String);
+        head.append(
+            escapeString(string.value,
+                         ::neverd::limits::worker::kListingMaxStringDisplay),
+            ListingRole::String);
         appendComment(head,
                       takeString(neverd_annotation_get(session, item.start)),
                       ListingRole::Comment, nameBase);
         addLine(out, item, item.start, "data", std::move(head));
         return;
       }
-      head.append(escapeString(string.value, MaxStringDisplay),
-                  ListingRole::String);
+      head.append(
+          escapeString(string.value,
+                       ::neverd::limits::worker::kListingMaxStringDisplay),
+          ListingRole::String);
       break;
     }
     case ItemKind::Slot: {
@@ -3043,7 +3479,51 @@ struct Listing::Impl {
       break;
     }
     case ItemKind::Data: {
-      named(ListingRole::Plain);
+      const auto *array = userItemOverlapping(item.start, 1);
+      if (array && array->second.kind == "array") {
+        const auto index =
+            (item.start - array->first) / array->second.elementSize;
+        const auto root = nameOf(array->first, NameUse::Data, {});
+        head.append((root.text.empty() ? "array_" + upperHex(array->first)
+                                       : root.text) +
+                        "[" + std::to_string(index) + "]",
+                    ListingRole::DataName, item.start);
+        comment = "array element " + std::to_string(index) + " of " +
+                  std::to_string(array->second.count);
+        if (!array->second.type.empty()) {
+          using TypeQuery =
+              const char *(*)(neverd_session_t, const char *, const char *);
+          const auto query = engineSymbol<TypeQuery>("neverd_local_type_json");
+          auto [typeIt, fresh] =
+              dataElementTypes.try_emplace(array->second.type);
+          if (fresh && query)
+            typeIt->second =
+                takeJson(query(session, array->second.type.c_str(), nullptr));
+          const auto &type = typeIt->second;
+          const bool current =
+              type.is_object() && jsonCount(type.value("size", Json())) ==
+                                      array->second.elementSize;
+          comment += current ? "; " + array->second.type
+                             : "; stale element type: " + array->second.type;
+          if (item.size > 8 || (item.size != 1 && item.size != 2 &&
+                                item.size != 4 && item.size != 8)) {
+            head.padTo(base);
+            head.append(current ? array->second.type : "db",
+                        ListingRole::Keyword);
+            head.append(" <", ListingRole::Punctuation);
+            unsigned char preview[8]{};
+            const int shown =
+                static_cast<int>(std::min<std::uint64_t>(item.size, 8));
+            if (neverd_read_bytes(session, item.start, preview, shown) == shown)
+              for (int i = 0; i < shown; ++i)
+                head.append(x86Number(preview[i]) + " ", ListingRole::Number);
+            head.append("...>", ListingRole::Punctuation);
+            comment += "; " + std::to_string(item.size) + " bytes";
+            break;
+          }
+        }
+      } else
+        named(ListingRole::Plain);
       head.padTo(base);
       head.append(dataDirective(static_cast<unsigned>(item.size)),
                   ListingRole::Directive);
@@ -3115,15 +3595,19 @@ struct Listing::Impl {
     // The first comment shares the item's line when the item ends before
     // the comment column; past it, every comment takes a line of its own.
     std::size_t next = 0;
-    if (!comments.empty() && head.columns() < nameBase + CommentColumn) {
-      head.padTo(nameBase + CommentColumn);
+    if (!comments.empty() &&
+        head.columns() <
+            nameBase + ::neverd::limits::worker_config::kListingCommentColumn) {
+      head.padTo(nameBase +
+                 ::neverd::limits::worker_config::kListingCommentColumn);
       head.append(comments.front().text);
       next = 1;
     }
     addLine(out, item, item.start, "data", std::move(head), target);
     for (; next < comments.size(); ++next) {
       StyledText line = lead(nameBase);
-      line.padTo(nameBase + CommentColumn);
+      line.padTo(nameBase +
+                 ::neverd::limits::worker_config::kListingCommentColumn);
       line.append(comments[next].text);
       addLine(out, item, item.start, comments[next].kind, std::move(line));
     }
@@ -3133,7 +3617,8 @@ struct Listing::Impl {
     std::vector<Line> lines;
     const std::size_t opcodeWidth =
         opcodeBytes > 0 ? static_cast<std::size_t>(opcodeBytes) * 3 : 0;
-    const std::size_t base = opcodeWidth + NameColumnWidth;
+    const std::size_t base =
+        opcodeWidth + ::neverd::limits::worker_config::kListingNameColumnWidth;
     if (item.start == regions[item.region].start)
       segmentHeader(lines, item, base);
     if (item.kind == ItemKind::Instruction)
@@ -3141,7 +3626,8 @@ struct Listing::Impl {
     else
       dataLines(lines, item, base);
     if (item.start + item.size >= regions[item.region].end) {
-      StyledText ends = lead(base - NameColumnWidth);
+      StyledText ends =
+          lead(base - ::neverd::limits::worker_config::kListingNameColumnWidth);
       ends.append(segmentDirectiveName(regions[item.region]),
                   ListingRole::SegmentName);
       ends.padTo(base);
@@ -3160,6 +3646,7 @@ struct Listing::Impl {
                                                       : regions.back().end - 1);
     const int owner = region >= 0 ? region : regionIndex(line.item);
     Json json = {{"item", hexAddress(line.item)},
+                 {"item_size", hexAddress(line.itemSize)},
                  {"address", hexAddress(line.address)},
                  {"sub", line.sub},
                  {"cls", static_cast<int>(line.cls)},
@@ -3240,10 +3727,13 @@ struct Listing::Impl {
           static_cast<std::size_t>(std::max<std::ptrdiff_t>(1, to - from));
       return;
     }
-    // Each relocated data slot refers to its pointer.
+    applyRecoveredReferences();
+    // Each relocated data slot refers to its pointer. These storage facts
+    // survive instruction recovery even for slots embedded inside code.
     if (pointerRefs)
       for (std::optional<std::uint64_t> cursor = 0; cursor;) {
-        const auto page = takeJson(pointerRefs(session, *cursor, PointerPage));
+        const auto page = takeJson(pointerRefs(
+            session, *cursor, ::neverd::limits::worker::kListingPointerPage));
         cursor.reset();
         if (const auto rows = page.value("refs", Json()); rows.is_array())
           for (const auto &row : rows)
@@ -3265,6 +3755,21 @@ struct Listing::Impl {
     decoded.clear();
     decodedOrder.clear();
     ++generation;
+  }
+
+  /// Replace raw scan results with the recovered bodies already viewed.
+  void applyRecoveredReferences() {
+    RecoveredReferences covered;
+    for (const auto &[entry, overlay] : recoveredReferences)
+      covered.ranges.insert(covered.ranges.end(), overlay.ranges.begin(),
+                            overlay.ranges.end());
+    covered.mergeRanges();
+    std::erase_if(references, [&](const Reference &reference) {
+      return covered.contains(reference.from);
+    });
+    for (const auto &[entry, overlay] : recoveredReferences)
+      references.insert(references.end(), overlay.rows.begin(),
+                        overlay.rows.end());
   }
 
   /// Orders the index by target, then source, without repeats.
@@ -3298,7 +3803,9 @@ struct Listing::Impl {
     switchReferences.clear();
     switchError.clear();
     for (std::optional<std::uint64_t> cursor = 0; switchesQuery && cursor;) {
-      const char *raw = switchesQuery(session, *cursor, SwitchPageFunctions);
+      const char *raw =
+          switchesQuery(session, *cursor,
+                        ::neverd::limits::worker::kListingSwitchPageFunctions);
       cursor.reset();
       if (!raw) {
         switchError = takeString(neverd_last_error(session));
@@ -3446,7 +3953,8 @@ struct Listing::Impl {
     for (std::optional<std::uint64_t> cursor = 0; cursor;) {
       const char *raw = stringRefs(
           session, stringOptions.empty() ? nullptr : stringOptions.c_str(),
-          *cursor, StringReferencePageFunctions);
+          *cursor,
+          ::neverd::limits::worker::kListingStringReferencePageFunctions);
       if (!raw)
         throw Error("engine_error", takeString(neverd_last_error(session)));
       const auto page = takeJson(raw);
@@ -3543,6 +4051,15 @@ Listing::Listing(neverd_session_t session)
     : impl_(std::make_unique<Impl>(session)) {}
 Listing::~Listing() = default;
 
+void Listing::setStackFrames(const Json &rows, const std::string &imageHash) {
+  impl_->stackFrames.clear();
+  for (const auto &row : rows)
+    if (row.contains("stack_frame") &&
+        row.at("stack_frame").value("input_sha256", std::string()) == imageHash)
+      impl_->stackFrames[parseAddress(row.at("addr").get<std::string>())] =
+          row.at("stack_frame");
+}
+
 void Listing::invalidate() {
   impl_->built = false;
   ++impl_->generation;
@@ -3554,6 +4071,7 @@ void Listing::namesChanged() {
 }
 
 void Listing::reloadNumberFormats() {
+  impl_->dataElementTypes.clear();
   // A listing that is not built yet reads them as it builds.
   if (impl_->built)
     impl_->loadNumberFormats();
@@ -3575,6 +4093,46 @@ Listing::numberOperands(std::uint64_t address) {
   return formattableOperands(instruction.operands, d.dialect);
 }
 
+std::optional<std::vector<bool>>
+Listing::structOperands(std::uint64_t address) {
+  auto &d = *impl_;
+  d.build();
+  const auto item = d.itemAt(address);
+  if (!item || item->kind != ItemKind::Instruction || item->start != address)
+    return std::nullopt;
+  const auto &instruction = d.instructionOf(*item);
+  return neverd::worker::structOperands(instruction.operands, d.dialect);
+}
+
+bool Listing::namesStructOffsets() { return impl_->typeMember != nullptr; }
+
+std::optional<std::size_t>
+Listing::structOperand(std::uint64_t address, std::optional<std::size_t> asked,
+                       std::optional<std::int64_t> *number) {
+  auto &d = *impl_;
+  d.build();
+  const auto item = d.itemAt(address);
+  if (!item || item->kind != ItemKind::Instruction || item->start != address)
+    return std::nullopt;
+  const auto &operands = d.instructionOf(*item).operands;
+  const auto structs = neverd::worker::structOperands(operands, d.dialect);
+  const auto numbers = formattableOperands(operands, d.dialect);
+  std::optional<std::size_t> chosen;
+  if (asked && *asked < structs.size() && structs[*asked])
+    chosen = asked;
+  for (std::size_t i = 0; !chosen && i < structs.size(); ++i)
+    if (structs[i] && !(i < numbers.size() && numbers[i]))
+      chosen = i;
+  for (std::size_t i = structs.size(); !chosen && i-- > 0;)
+    if (structs[i])
+      chosen = i;
+  if (chosen && number)
+    *number = *chosen < numbers.size() && numbers[*chosen]
+                  ? operandNumber(operands, *chosen, d.dialect)
+                  : std::nullopt;
+  return chosen;
+}
+
 void Listing::setStringOptions(std::string options) {
   if (impl_->stringOptions == options)
     return;
@@ -3587,7 +4145,9 @@ void Listing::setPdbDisplayNames(const Json &names) {
   std::unordered_set<std::uint64_t> functions;
   for (const auto &row : names) {
     const auto name = row.value("name", std::string());
-    if (name.empty() || name.size() > 4096 ||
+    if (name.empty() ||
+        name.size() >
+            ::neverd::limits::worker::kListingSetPdbDisplayNamesNameSizeLimit ||
         std::any_of(name.begin(), name.end(),
                     [](unsigned char c) { return c < 0x20 || c == 0x7f; }))
       continue;
@@ -3617,36 +4177,63 @@ std::optional<std::string> Listing::pdbDataName(std::uint64_t address) {
   return std::nullopt;
 }
 
+void Listing::setSteppedDiscovery(bool enabled) {
+  impl_->allowSteppedDiscovery = enabled;
+}
+
 bool Listing::hasIdleWork() const {
   return (impl_->discoverFunctions && !impl_->discovered) ||
+         impl_->discoveryListingPending ||
          impl_->indexState == Impl::IndexState::Idle ||
          impl_->indexState == Impl::IndexState::Building;
 }
 
-void Listing::idleStep() {
+bool Listing::idleStep() {
   // Function discovery comes first, so the reference index covers its
   // functions.
   if (!impl_->discovered) {
-    impl_->discover();
-    impl_->build();
-    return;
+    if (impl_->allowSteppedDiscovery && impl_->discoverFunctionsStep) {
+      const auto status = impl_->discoverFunctionsStep(impl_->session);
+      if (!status)
+        return false;
+      impl_->discovered = true;
+      if (status < 0) {
+        impl_->indexState = Impl::IndexState::Unavailable;
+        impl_->indexError = takeString(neverd_last_error(impl_->session));
+        return true;
+      }
+    } else {
+      impl_->discover();
+      if (impl_->indexState == Impl::IndexState::Unavailable)
+        return true;
+    }
+    // Publish discovery completion before rebuilding the derived listing.
+    // A client waiting for the discovery snapshot to be released can now
+    // submit its analysis snapshot without queuing behind that rebuild.
+    impl_->discoveryListingPending = true;
+    return true;
   }
   impl_->build();
   impl_->indexStep();
+  return true;
 }
 
 Json Listing::indexState() const {
-  return {
-      {"state", impl_->indexStateName()},
-      {"done", impl_->indexDone},
-      {"total", impl_->indexTotal},
-      {"references", impl_->indexState == Impl::IndexState::Ready
-                         ? impl_->references.size()
-                         : 0},
-      {"generation", std::to_string(impl_->generation)},
-      {"functions",
-       std::count_if(impl_->functions.begin(), impl_->functions.end(),
-                     [](const auto &function) { return !function.chunkOf; })}};
+  Json state = {{"state", impl_->indexStateName()},
+                {"discovery_complete", impl_->discovered},
+                {"done", impl_->indexDone},
+                {"total", impl_->indexTotal},
+                {"references", impl_->indexState == Impl::IndexState::Ready
+                                   ? impl_->references.size()
+                                   : 0},
+                {"generation", std::to_string(impl_->generation)}};
+  // A listing not built yet lists nothing: a count of 0 would tell clients
+  // that every function is gone.
+  if (impl_->builtFunctionCount >= 0)
+    state["functions"] = impl_->ownFunctions();
+  if (!impl_->indexError.empty())
+    state["error"] = impl_->indexError;
+  return state;
 }
 
 Json Listing::page(const Json &payload) {
@@ -3658,15 +4245,24 @@ Json Listing::page(const Json &payload) {
             {"at_start", true},
             {"at_end", true},
             {"generation", std::to_string(d.generation)}};
-  d.opcodeBytes =
-      static_cast<int>(sizeField(payload, "opcode_bytes", 0, MaxOpcodeBytes));
-  const auto before = sizeField(payload, "before", 0, MaxPageLines);
-  const auto after = sizeField(payload, "after", 100, MaxPageLines);
+  d.opcodeBytes = static_cast<int>(
+      sizeField(payload, "opcode_bytes", 0,
+                ::neverd::limits::worker::kListingMaxOpcodeBytes));
+  const auto before = sizeField(payload, "before", 0,
+                                ::neverd::limits::worker::kListingMaxPageLines);
+  const auto after =
+      sizeField(payload, "after",
+                ::neverd::limits::worker::kListingPageAfterSizeFieldDefault,
+                ::neverd::limits::worker::kListingMaxPageLines);
   std::uint64_t address =
       payload.contains("address")
-          ? parseAddress(stringField(payload, "address", {}, 18))
+          ? parseAddress(stringField(
+                payload, "address", {},
+                ::neverd::limits::worker::kListingPageAddressStringFieldMax))
           : d.regions.front().start;
-  std::size_t sub = sizeField(payload, "sub", 0, 1 << 20);
+  std::size_t sub =
+      sizeField(payload, "sub", 0,
+                ::neverd::limits::worker::kListingPageSubSubSizeFieldMax);
   // An unmapped address snaps to the following region (or the last one).
   if (d.regionIndex(address) < 0) {
     auto it = std::upper_bound(
@@ -3678,6 +4274,26 @@ Json Listing::page(const Json &payload) {
   auto anchor = d.itemAt(address);
   if (!anchor)
     throw Error("invalid_address", "Address is outside the mapped image");
+  // A jump or an invalidated cursor may be in an unvisited fragment, or
+  // inside a decoy instruction. Paging stays a presentation-only query.
+  if (payload.contains("recover_address") && d.native && d.functionDisasm) {
+    const auto target = parseAddress(stringField(payload, "recover_address"));
+    const auto item = target == address ? anchor : d.itemAt(target);
+    // A saved code item fixes its instruction bytes, not its function owner.
+    // Navigation still needs the same bounded recovery as a source request;
+    // explicit entries and non-code item overrides retain their identity.
+    if (item && d.regions[item->region].exec &&
+        (item->userCode || !d.userItemOverlapping(target, 1)) &&
+        ((item->userCode && !d.functionAtEntry(target)) ||
+         item->kind != ItemKind::Instruction || item->start != target)) {
+      (void)chunkOwner(target);
+      // Discovery can rebuild the function and item indexes even if this
+      // address still has no proven owner.
+      anchor = d.itemAt(address);
+      if (!anchor)
+        throw Error("invalid_address", "Address is outside the mapped image");
+    }
+  }
   std::vector<Line> forward = d.itemLines(*anchor);
   // A sub-line past the item's last line continues with the next item, so a
   // client can page forward from its last loaded line.
@@ -3743,7 +4359,10 @@ Json Listing::overview(const Json &payload) {
   auto &d = *impl_;
   d.build();
   const auto buckets = std::max<std::size_t>(
-      1, sizeField(payload, "buckets", 1024, MaxOverviewBuckets));
+      1, sizeField(
+             payload, "buckets",
+             ::neverd::limits::worker::kListingOverviewBucketsSizeFieldDefault,
+             ::neverd::limits::worker::kListingMaxOverviewBuckets));
   std::uint64_t total = 0;
   Json regions = Json::array();
   for (const auto &region : d.regions) {
@@ -3810,9 +4429,11 @@ Json Listing::overview(const Json &payload) {
     };
     for (std::size_t b = 0; b < buckets; ++b) {
       AddressClass best = AddressClass::Unmapped;
-      for (int s = 0; s < OverviewSamples; ++s) {
+      for (int s = 0; s < ::neverd::limits::worker::kListingOverviewSamples;
+           ++s) {
         const long double position =
-            (static_cast<long double>(b) + (s + 0.5L) / OverviewSamples) /
+            (static_cast<long double>(b) +
+             (s + 0.5L) / ::neverd::limits::worker::kListingOverviewSamples) /
             static_cast<long double>(buckets);
         const auto linear = std::min<std::uint64_t>(
             total - 1, static_cast<std::uint64_t>(position * total));
@@ -3833,11 +4454,16 @@ Json Listing::references(std::uint64_t address, const Json &payload) {
   auto &d = *impl_;
   d.discover();
   d.build();
-  const auto direction = stringField(payload, "direction", "to", 8);
+  const auto direction = stringField(
+      payload, "direction", "to",
+      ::neverd::limits::worker::kListingReferencesDirectionStringFieldMax);
   const auto offset =
       sizeField(payload, "offset", 0, std::numeric_limits<std::size_t>::max());
   const auto limit = std::max<std::size_t>(
-      1, sizeField(payload, "limit", 128, MaxReferencePage));
+      1, sizeField(
+             payload, "limit",
+             ::neverd::limits::worker::kListingReferencesLimitSizeFieldDefault,
+             ::neverd::limits::worker::kListingMaxReferencePage));
   Json items = Json::array();
   std::size_t total = 0;
   const auto row = [&](std::uint64_t from, std::uint64_t to, RefKind kind) {
@@ -3854,6 +4480,11 @@ Json Listing::references(std::uint64_t address, const Json &payload) {
     return item;
   };
   if (direction == "to") {
+    // A computed target can be queried before its function was ever displayed.
+    // Decode that owner first, so its recovered references supersede the raw
+    // background scan regardless of navigation order.
+    if (d.functionDisasm && d.native)
+      (void)d.functionIndex(address);
     // An explicit request finishes the background index now; it is a
     // parallel decode of every function and completes quickly.
     while (d.indexState == Impl::IndexState::Idle ||
@@ -3902,15 +4533,42 @@ Json Listing::references(std::uint64_t address, const Json &payload) {
 Json Listing::strings(const Json &payload) {
   auto &d = *impl_;
   d.build();
-  const auto offset =
-      sizeField(payload, "offset", 0, std::numeric_limits<std::size_t>::max());
-  const auto limit = sizeField(payload, "limit", 128, 512);
+  const auto limit =
+      sizeField(payload, "limit",
+                ::neverd::limits::worker::kListingStringsLimitSizeFieldDefault,
+                ::neverd::limits::worker::kListingStringsLimitSizeFieldMax);
   if (!limit)
     throw Error("invalid_request", "limit must be at least 1");
   const auto filter = foldText(stringField(payload, "filter"));
+  const auto textLimit =
+      payload.contains("text_limit")
+          ? sizeField(
+                payload, "text_limit",
+                ::neverd::limits::worker::
+                    kListingStringsTextLimitSizeFieldDefault,
+                ::neverd::limits::worker::kListingStringsTextLimitSizeFieldMax)
+          : std::numeric_limits<std::size_t>::max();
+  if (!textLimit)
+    throw Error("invalid_request",
+                "String previews require a positive text_limit");
+  const auto sort = stringField(
+      payload, "sort", {},
+      ::neverd::limits::worker::kListingStringsSortSortStringFieldMax);
+  const bool descending = payload.value("descending", false);
+  if (!sort.empty() && sort != "address" && sort != "length" &&
+      sort != "type" && sort != "text")
+    throw Error("invalid_request", "Unknown string sort field");
   Json items = Json::array();
-  std::size_t total = 0;
-  for (const auto &string : d.strings) {
+  std::vector<std::size_t> order;
+  const auto typeOf = [&](const auto &string) {
+    const auto known = d.stringEncodings.find(string.encoding);
+    const auto spelling = known == d.stringEncodings.end()
+                              ? string.encoding
+                              : known->second.spelling;
+    return spelling.empty() ? std::string("C") : spelling;
+  };
+  for (std::size_t i = 0; i < d.strings.size(); ++i) {
+    const auto &string = d.strings[i];
     // The classic type column: C for plain ASCII, else the encoding.
     const auto known = d.stringEncodings.find(string.encoding);
     const std::string spelling = known == d.stringEncodings.end()
@@ -3923,20 +4581,68 @@ Json Listing::strings(const Json &payload) {
         foldText(address).find(filter) == std::string::npos &&
         foldText(type).find(filter) == std::string::npos)
       continue;
-    if (total >= offset && items.size() < limit)
-      items.push_back({{"address", address},
-                       {"length", string.length},
-                       {"type", type},
-                       {"text", string.value},
-                       {"encoding", string.encoding}});
-    ++total;
+    order.push_back(i);
+  }
+  if (!sort.empty()) {
+    // Sort the complete filtered index, never just the returned page.
+    const auto key =
+        [&](std::size_t i) -> std::pair<std::uint64_t, std::string> {
+      const auto &string = d.strings[i];
+      if (sort == "address")
+        return {string.address, {}};
+      if (sort == "length")
+        return {string.length, {}};
+      return {0, foldText(sort == "type" ? typeOf(string) : string.value)};
+    };
+    std::vector<std::pair<std::pair<std::uint64_t, std::string>, std::size_t>>
+        keyed;
+    keyed.reserve(order.size());
+    for (const auto i : order)
+      keyed.emplace_back(key(i), i);
+    std::stable_sort(
+        keyed.begin(), keyed.end(), [&](const auto &a, const auto &b) {
+          return descending ? a.first > b.first : a.first < b.first;
+        });
+    order.clear();
+    for (const auto &entry : keyed)
+      order.push_back(entry.second);
+  }
+  const auto total = order.size();
+  const auto position =
+      tablePagePosition(payload, total, limit,
+                        [&](std::size_t index) -> std::optional<TableRowRange> {
+                          return TableRowRange{d.strings[order[index]].address};
+                        });
+  const auto offset = position.offset;
+  for (auto i = std::min(offset, total); i < total && items.size() < limit;
+       ++i) {
+    const auto &string = d.strings[order[i]];
+    auto end = std::min(string.value.size(), textLimit);
+    const bool truncated = end < string.value.size();
+    if (truncated) {
+      // Never split a UTF-8 code point at the byte bound.
+      while (end &&
+             (static_cast<unsigned char>(string.value[end]) & 0xC0) == 0x80)
+        --end;
+    }
+    std::string text = string.value.substr(0, end);
+    if (truncated)
+      text += "\xe2\x80\xa6";
+    items.push_back({{"address", hexAddress(string.address)},
+                     {"length", string.length},
+                     {"type", typeOf(string)},
+                     {"text", std::move(text)},
+                     {"text_truncated", truncated},
+                     {"encoding", string.encoding}});
   }
   const bool complete = offset >= total || items.size() >= total - offset;
-  return {{"items", std::move(items)},
-          {"total", total},
-          {"offset", offset},
-          {"next_offset", complete ? Json(nullptr) : Json(offset + limit)},
-          {"complete", complete}};
+  Json result{{"items", std::move(items)},
+              {"total", total},
+              {"offset", offset},
+              {"next_offset", complete ? Json(nullptr) : Json(offset + limit)},
+              {"complete", complete}};
+  position.annotate(result);
+  return result;
 }
 
 Json Listing::stringReferences(const Json &payload) {
@@ -3996,11 +4702,47 @@ std::string Listing::nameAt(std::uint64_t address) {
 
 std::optional<std::uint64_t> Listing::chunkOwner(std::uint64_t address) {
   auto &d = *impl_;
+  d.discover();
   d.build();
-  const int f = d.functionIndexCoarse(address);
-  if (f < 0 || !d.functions[f].chunkOf)
+  if (const int f = d.functionIndex(address); f >= 0) {
+    if (d.functions[f].chunkOf)
+      return d.ownerOf(f).entry;
+    // Operand coverage can be a decoy stream swallowing the real start.
+    // Search for a proven start before accepting that weaker ownership.
+    if (d.recoveredInstructions.contains(address))
+      if (const auto found = d.recoveredFunctionIndex(address))
+        return *found >= 0 ? std::optional(d.ownerOf(*found).entry)
+                           : std::nullopt;
+    // Bytecode and older engines retain their ordinary extent lookup.
+    if (!d.functionDisasm || !d.native)
+      return d.ownerOf(f).entry;
+  }
+  if (!d.functionDisasm || !d.native || d.regionIndex(address) < 0)
     return std::nullopt;
-  return d.ownerOf(f).entry;
+  const auto middle = std::lower_bound(
+      d.functions.begin(), d.functions.end(), address,
+      [](const Function &f, std::uint64_t value) { return f.entry < value; });
+  auto left = middle, right = middle;
+  for (std::size_t count = 0;
+       count < ::neverd::limits::worker::kListingOwnerSearchFunctions;) {
+    const auto before = left == d.functions.begin()
+                            ? UINT64_MAX
+                            : address - std::prev(left)->entry;
+    const auto after =
+        right == d.functions.end() ? UINT64_MAX : right->entry - address;
+    if (std::min(before, after) >
+        ::neverd::limits::worker::kListingOwnerSearchDistance)
+      break;
+    const auto candidate = before <= after ? --left : right++;
+    if (candidate->chunkOf ||
+        d.regionIndex(candidate->entry) != d.regionIndex(address))
+      continue;
+    ++count;
+    (void)d.decode(static_cast<int>(candidate - d.functions.begin()));
+  }
+  const auto found = d.recoveredFunctionIndex(address);
+  return found && *found >= 0 ? std::optional(d.ownerOf(*found).entry)
+                              : std::nullopt;
 }
 
 std::optional<std::uint64_t> Listing::resolveName(const std::string &name) {
@@ -4008,6 +4750,10 @@ std::optional<std::uint64_t> Listing::resolveName(const std::string &name) {
   d.build();
   if (auto it = d.listingNames.find(name); it != d.listingNames.end())
     return it->second;
+  // listingNames keeps only the names the listing gives functions; the others
+  // show their engine's, a symbol's or the user's name.
+  if (const auto *function = d.namedFunction(name))
+    return function->entry;
   if (auto it = d.importTargets.find(name); it != d.importTargets.end())
     return it->second;
   if (auto it = d.exportAliases.find(name); it != d.exportAliases.end())
@@ -4052,9 +4798,11 @@ Json Listing::item(std::uint64_t address) {
   Json result{{"start", hexAddress(item->start)},
               {"size", item->size},
               {"kind", itemKindName(item->kind)}};
-  if (const auto user = impl_->userItems.find(item->start);
-      user != impl_->userItems.end())
+  if (const auto *user = impl_->userItemOverlapping(item->start, 1)) {
     result["user"] = user->second.kind;
+    result["definition_start"] = hexAddress(user->first);
+    result["definition_size"] = user->second.size;
+  }
   return result;
 }
 
@@ -4212,6 +4960,27 @@ Json Listing::regions() {
                                               : "CONST"}});
   }
   return items;
+}
+
+Json Listing::assemblySymbols(std::uint64_t address) {
+  Json result = Json::object();
+  const auto item = impl_->itemAt(address);
+  if (!item || item->function < 0)
+    return result;
+  const auto &body = impl_->decode(item->function);
+  std::set<std::string> ambiguous;
+  for (const auto &[offset, bytes] : body.frame) {
+    const auto name = impl_->frameName(body, offset);
+    if (ambiguous.contains(name))
+      continue;
+    if (result.contains(name) && result[name] != offset) {
+      result.erase(name);
+      ambiguous.insert(name);
+    } else {
+      result[name] = offset;
+    }
+  }
+  return result;
 }
 
 } // namespace neverd::worker

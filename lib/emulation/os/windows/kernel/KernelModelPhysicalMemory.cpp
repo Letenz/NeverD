@@ -246,4 +246,68 @@ llvm::Error KernelModel::initializeMDLPhysicalPages(const LockedMdl &State) {
       return E;
   return llvm::Error::success();
 }
+llvm::Expected<uint64_t>
+KernelModel::queryPhysicalAddress(uint64_t Address) const {
+  if (auto E = validateGuestAccess(Address, 1, false))
+    return E;
+  auto Readable = Memory.canAccess(Address, 1, Read);
+  if (!Readable)
+    return Readable.takeError();
+  if (!*Readable)
+    return physicalModelError(
+        "physical address query requires a live readable RAM mapping");
+  auto Translation = Physical.resolveAddress(Address);
+  if (!Translation)
+    return Translation.takeError();
+  // Residency belongs to allocation and pin owners, independently of the
+  // selected alias's permissions. The query acquires no lock or new PFN.
+  bool Resident = Physical.hasPinnedPages(Address, 1);
+  for (const uint64_t Owner : Translation->Owners) {
+    Resident |= Physical.find(Owner)->OwnsPages;
+    if (auto Pool = Allocations.find(Owner); Pool != Allocations.end())
+      Resident |= Pool->second.NonPaged;
+  }
+  if (!Resident)
+    return physicalModelError("physical address query requires nonpaged pool, "
+                              "independent physical pages or a live page lock");
+  return Translation->Physical;
+}
+
+llvm::Expected<uint64_t>
+KernelModel::queryPrimaryVirtualAddress(uint64_t PhysicalAddress) const {
+  // A live nonpaged PoolAllocation records its allocator-owned primary VA.
+  // Generic physical Region::Backing also includes private/request storage,
+  // so it is not sufficient evidence for the original PFN primary PTE.
+  std::optional<uint64_t> Primary;
+  for (const auto &[Base, Allocation] : Allocations) {
+    if (!Allocation.NonPaged)
+      continue;
+    auto Segments = Physical.describe(Base, 0, Allocation.Size);
+    if (!Segments)
+      return Segments.takeError();
+    for (const auto &Segment : *Segments) {
+      if (PhysicalAddress < Segment.Physical ||
+          PhysicalAddress - Segment.Physical >= Segment.Length)
+        continue;
+      const uint64_t Address =
+          Segment.Backing + (PhysicalAddress - Segment.Physical);
+      if (Primary && *Primary != Address)
+        return physicalModelError("physical address has ambiguous primary "
+                                  "nonpaged pool mappings");
+      Primary = Address;
+    }
+  }
+  if (!Primary)
+    return physicalModelError("physical address has no live primary "
+                              "nonpaged pool mapping");
+  // Retained physical identity cannot substitute for an unmapped, protected or
+  // rebound primary VA. Reuse the forward query's mapping/lifetime admission.
+  auto Current = queryPhysicalAddress(*Primary);
+  if (!Current)
+    return Current.takeError();
+  if (*Current != PhysicalAddress)
+    return physicalModelError("primary nonpaged pool mapping was replaced");
+  return *Primary;
+}
+
 } // namespace neverd::emulation

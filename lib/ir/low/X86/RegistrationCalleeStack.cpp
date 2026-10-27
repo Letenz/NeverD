@@ -8,8 +8,10 @@
 #include "RegistrationFrame.h"
 #include "RegistrationFrameEffects.h"
 
+#include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/loader/RegistrationScopeGraph.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -411,8 +413,10 @@ public:
       return std::nullopt;
     if (auto It = Cache.find(Target); It != Cache.end())
       return It->second;
-    if (Depth == 32 || Cache.size() == 256 || Target > UINT32_MAX ||
-        !Image.isCodeAddress(Target))
+    if (Depth == ::neverd::limits::ir::kMaxReturningStackProofDepth ||
+        Cache.size() ==
+            ::neverd::limits::ir::kRegistrationCalleeStackProveCacheSizeLimit ||
+        Target > UINT32_MAX || !Image.isCodeAddress(Target))
       return std::nullopt;
     if (Target <= UINT32_MAX - 6 && chargeCalleeWork(Work, 6)) {
       const auto Bytes =
@@ -442,7 +446,8 @@ public:
       if (Dec.init(Image)) {
         CFGBuilder Builder;
         Builder.setRegistrationCalleeIndex(&Owner);
-        const LowFunc Callee = Builder.build(Image, Dec, Target, "abi-stack");
+        const LowFunc Callee =
+            Builder.buildIntegerFrameProof(Image, Dec, Target, "abi-stack");
         StackBody Body(Image, Callee, Work);
         It->second = Callee.ExceptionMetadata
                          ? stackPopForRegistration(Body, Callee, Nested)
@@ -455,12 +460,66 @@ public:
 };
 } // namespace
 
+namespace {
+thread_local RegistrationStackPopMemo *CurrentStackPopMemo = nullptr;
+} // namespace
+
+RegistrationStackPopMemoScope::RegistrationStackPopMemoScope(
+    RegistrationStackPopMemo &Memo)
+    : Previous(CurrentStackPopMemo) {
+  CurrentStackPopMemo = &Memo;
+}
+
+RegistrationStackPopMemoScope::~RegistrationStackPopMemoScope() {
+  CurrentStackPopMemo = Previous;
+}
+
+std::optional<RegistrationStackPopMemo::Answer>
+RegistrationStackPopMemo::find(const BinaryImage &Other, va_t Target,
+                               unsigned Level) {
+  if (&Other != &Image)
+    return std::nullopt;
+  std::lock_guard<std::mutex> Lock(Mutex);
+  const auto It = Answers.find({Target, Level});
+  if (It == Answers.end())
+    return std::nullopt;
+  return It->second;
+}
+
+void RegistrationStackPopMemo::record(const BinaryImage &Other, va_t Target,
+                                      unsigned Level, const Answer &Value) {
+  if (&Other != &Image)
+    return;
+  std::lock_guard<std::mutex> Lock(Mutex);
+  Answers.emplace(std::make_pair(Target, Level), Value);
+}
+
 std::optional<uint32_t> getCheckedX86CalleeStackPop(const BinaryImage &Image,
                                                     va_t Target,
                                                     size_t *CumulativeWork) {
   if (!isPE32(Image))
     return std::nullopt;
-  return RegistrationCallCalleeIndex(Image, CumulativeWork).stackPop(Target);
+  size_t LocalWork = 0;
+  size_t &Work = CumulativeWork ? *CumulativeWork : LocalWork;
+  // A fresh index answers from the unchanged image and the SEH analysis
+  // level alone, charging the same work every time; only the caller's
+  // remaining budget decides whether that work fits. Every charge counts
+  // toward that total, so it fits exactly when the recorded work does.
+  RegistrationStackPopMemo *Memo = CurrentStackPopMemo;
+  const unsigned Level = x86SEHStateAnalysisLevel();
+  if (Memo)
+    if (const auto Known = Memo->find(Image, Target, Level)) {
+      if (!registration_abi::chargeCalleeWork(Work, Known->Work))
+        return std::nullopt;
+      return Known->Pop;
+    }
+  const size_t Before = Work;
+  const auto Pop = RegistrationCallCalleeIndex(Image, &Work).stackPop(Target);
+  // A failed charge leaves Work at the limit, so a smaller total proves the
+  // computation never ran out.
+  if (Memo && Work < limits::kMaxRegistrationEHStateWork)
+    Memo->record(Image, Target, Level, {Pop, Work - Before});
+  return Pop;
 }
 
 std::optional<uint32_t> RegistrationCallCalleeIndex::stackPop(va_t Target) {
@@ -483,7 +542,9 @@ RegistrationCallCalleeIndex::stackContracts(const LowFunc &Function) {
       if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
           Op.NumInputs == 1 && Op.Inputs[0].isConst() && Op.Inputs[0].Size == 4)
         Targets.emplace(Op.Inputs[0].Offset, Op.Opcode == NdOp::INDIR_CALL);
-      if (Targets.size() > 256)
+      if (Targets.size() >
+          ::neverd::limits::ir::
+              kRegistrationCalleeStackRegistrationCallCalleeIndexStackContractsTargetsSizeLimit)
         return std::nullopt;
     }
   // One graph and immutable-instruction cache for all interior callback

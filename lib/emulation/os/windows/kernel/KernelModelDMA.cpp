@@ -115,7 +115,7 @@ KernelModel::getDMAAdapter(llvm::ArrayRef<uint64_t> A) {
     return dmaAPIError(
         "IoGetDmaAdapter requires PASSIVE_LEVEL and export identity");
   const auto *Device = Resources.find(A[0]);
-  if (!Device || !Device->Present || !isProviderDevice(A[0]))
+  if (!Device || !Device->Present || !isPnpProviderDevice(A[0]))
     return dmaAPIError("IoGetDmaAdapter requires a present configured PDO");
   if (!A[1] || !A[2])
     return dmaAPIError(

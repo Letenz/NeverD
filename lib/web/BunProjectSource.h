@@ -9,7 +9,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#pragma once
+#ifndef NEVERD_WEB_PRIVATE_BUNPROJECTSOURCE_H
+#define NEVERD_WEB_PRIVATE_BUNPROJECTSOURCE_H
 
 #include "neverd/web/Source.h"
 
@@ -71,3 +72,5 @@ planBunProjectSource(std::string_view ArtifactID, std::string_view Text,
                      std::span<const BunProjectRequireCall> RequireCalls = {});
 
 } // namespace neverd::web
+
+#endif // NEVERD_WEB_PRIVATE_BUNPROJECTSOURCE_H

@@ -97,6 +97,16 @@ TEST(SafetyReport, PipelineCoverageRejectsPartialFunctionLifts) {
   ASSERT_TRUE(Error.has_value());
   EXPECT_NE(Error->find("0x3000"), std::string::npos);
   EXPECT_NE(Error->find("rejected-incomplete"), std::string::npos);
+
+  // Older producers may still report a rejection based on missing unwind
+  // metadata. Such an omitted body cannot count as complete coverage, even
+  // without a loader-authenticated function entry.
+  Result.FunctionAudits.back().Disposition =
+      neverd::PipelineFunctionDisposition::RejectedUnwindlessNonLeaf;
+  const auto LegacyError = validatePipelineCoverage(Result);
+  ASSERT_TRUE(LegacyError.has_value());
+  EXPECT_NE(LegacyError->find("rejected-unwindless-non-leaf"),
+            std::string::npos);
 }
 
 TEST(SafetyReport, PipelineCoverageMatchesAcceptedFunctionIdentities) {

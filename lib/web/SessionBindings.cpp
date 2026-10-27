@@ -11,6 +11,8 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web {
 namespace {
 llvm::json::Object bindingSummary(const SourceBindingAnalysis &Analysis,
@@ -105,7 +107,8 @@ std::string Session::sourceBindingRecords(std::string_view ExpectedRevision,
     Count = A.References.size();
   else
     throw Error("unsupported_binding_record_kind");
-  if (!Limit || Limit > 512 || Offset > Count)
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > Count)
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(Count, Offset + Limit);
   llvm::json::Array Items;

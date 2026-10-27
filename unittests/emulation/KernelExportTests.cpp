@@ -201,6 +201,39 @@ TEST(KernelExports, CanonicalImportProvidersShareOneExplicitPolicy) {
     EXPECT_FALSE(KernelExportRegistry::canonicalImportModule(Module));
 }
 
+TEST(KernelExports, ProcessorImportsAndDynamicLookupShareExactArity) {
+  KernelExportRegistry Registry;
+  ASSERT_EQ(llvm::toString(Registry.initialize({})), "");
+  for (const auto &[Name, Arity] :
+       {std::pair{"KeGetCurrentProcessorNumberEx", 1u},
+        std::pair{"KeRaiseIrqlToDpcLevel", 0u}}) {
+    const auto Dynamic = requireValue(Registry.resolve(Name));
+    ASSERT_NE(Dynamic, 0u);
+    EXPECT_EQ(requireValue(Registry.bindImport({0x1000, "ntoskrnl.exe", Name})),
+              Dynamic);
+    const auto *Entry = Registry.lookup(Dynamic);
+    ASSERT_NE(Entry, nullptr);
+    EXPECT_EQ(Entry->Module, "ntoskrnl.exe");
+    EXPECT_EQ(KernelModel::argumentCount(*Entry), Arity);
+    EXPECT_EQ(KernelModel::argumentCount(Name), Arity);
+  }
+}
+
+TEST(KernelExports, Int64FormatterImportAndLookupShareThreeArguments) {
+  KernelExportRegistry Registry;
+  ASSERT_EQ(llvm::toString(Registry.initialize({})), "");
+  const auto Dynamic =
+      requireValue(Registry.resolve("RtlInt64ToUnicodeString"));
+  ASSERT_NE(Dynamic, 0u);
+  EXPECT_EQ(requireValue(Registry.bindImport(
+                {0x1000, "ntoskrnl.exe", "RtlInt64ToUnicodeString"})),
+            Dynamic);
+  const auto *Entry = Registry.lookup(Dynamic);
+  ASSERT_NE(Entry, nullptr);
+  EXPECT_EQ(KernelModel::argumentCount(*Entry), 3u);
+  EXPECT_EQ(KernelModel::argumentCount("RtlInt64ToUnicodeString"), 3u);
+}
+
 TEST(KernelExports, HALStaticAndDynamicLookupRetainProviderIdentity) {
   KernelExportRegistry Registry;
   ASSERT_EQ(llvm::toString(Registry.initialize({})), "");
@@ -431,7 +464,7 @@ TEST(KernelExports, NamespaceCapacityNeverAllocatesTheReturnSentinel) {
   const uint64_t Sentinel =
       profile::ThunkBase + profile::ThunkSize - profile::ThunkStride;
   uint64_t Next =
-      profile::ThunkBase + Registry.entries().size() * profile::ThunkStride;
+      Sentinel - Registry.availableThunkCount() * profile::ThunkStride;
   unsigned Index = 0;
   while (Next < Sentinel) {
     EXPECT_EQ(requireValue(Registry.insertFrameworkFunction(
@@ -558,7 +591,12 @@ TEST(KernelExports, ReadablePEExportsMatchTheAuthoritativeNamespace) {
       ASSERT_NE(Entry, nullptr);
       EXPECT_EQ(Entry->Name, Name);
       EXPECT_EQ(Entry->Module, Module);
-      EXPECT_EQ(Entry->Kind, KernelExportRegistry::ExportKind::ModuleExport);
+      EXPECT_TRUE(Entry->isModuleSymbol());
+      if (Entry->Kind == KernelExportRegistry::ExportKind::ModuleData) {
+        EXPECT_GE(RVA, profile::KernelModuleDataRVA);
+        EXPECT_LT(RVA, profile::KernelModuleExportRVA);
+        EXPECT_FALSE(KernelExportRegistry::overlapsThunk(Entry->Address));
+      }
       ++Seen;
     }
   }
@@ -573,7 +611,7 @@ TEST(KernelExports, OpaqueCodeRangesExcludeReadableHeadersAndExportTables) {
                              "fltmgr.sys", "ndis.sys", "netio.sys"}) {
     const uint64_t Base = *KernelExportRegistry::moduleBase(Module);
     const uint64_t Code = Base + profile::KernelModuleCodeRVA;
-    const uint64_t End = Base + profile::KernelModuleExportRVA;
+    const uint64_t End = Base + profile::KernelModuleDataRVA;
     EXPECT_FALSE(KernelExportRegistry::overlapsThunk(Base, 4096));
     EXPECT_FALSE(KernelExportRegistry::overlapsThunk(End, 4096));
     EXPECT_FALSE(KernelExportRegistry::overlapsThunk(Code, 0));
@@ -921,7 +959,7 @@ TEST_F(KernelExportLookup, ModuleMetadataIsReadOnlyAndFunctionBodiesAreOpaque) {
         std::string::npos);
     EXPECT_NE(
         llvm::toString(Model->validateGuestAccess(
-                           Base + profile::KernelModuleExportRVA - 1, 2, true))
+                           Base + profile::KernelModuleDataRVA - 1, 2, false))
             .find("thunks"),
         std::string::npos);
     // API implementations obey the same opacity contract as CPU reads.
@@ -965,7 +1003,8 @@ TEST_F(KernelExportLookup, ModuleQueryRetainsBorrowedRecoveryDependencies) {
     return false;
   };
   for (const auto &[Address, Export] : Exports.entries()) {
-    EXPECT_FALSE(Contains(Address));
+    EXPECT_EQ(Contains(Address),
+              Export.Kind == KernelExportRegistry::ExportKind::ModuleData);
     EXPECT_TRUE(Contains(Address + 1));
   }
 }

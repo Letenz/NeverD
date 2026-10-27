@@ -12,6 +12,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedCallClobber.h"
 
 #include <algorithm>
 #include <map>
@@ -90,9 +91,19 @@ void LowToMedConverter::modelCallFPReturn(MedFunc &Func) {
     return false;
   };
 
+  // The blocks of each id, in block order, which the searches below read as
+  // a scan of the blocks finds them: a function's calls each ask, so a scan
+  // per call made large functions quadratic.
+  std::map<int, std::vector<MedBlock *>> BlocksById;
+  for (auto &B : Func.Blocks)
+    BlocksById[B.Id].push_back(&B);
+  auto firstBlock = [&](int Id) -> MedBlock * {
+    const auto Found = BlocksById.find(Id);
+    return Found == BlocksById.end() ? nullptr : Found->second.front();
+  };
   std::map<int, const MedBlock *> BlockById;
-  for (const auto &B : Func.Blocks)
-    BlockById.emplace(B.Id, &B);
+  for (const auto &[Id, Blocks] : BlocksById)
+    BlockById.emplace(Id, Blocks.front());
   auto succHasFPRetPhi = [&](int BlockId) -> bool {
     auto Cur = BlockById.find(BlockId);
     if (Cur == BlockById.end())
@@ -148,14 +159,12 @@ void LowToMedConverter::modelCallFPReturn(MedFunc &Func) {
   // routing the call's output there would steal it from the live integer return
   // and drop the result.
   auto fpRetPhiLiveInSucc = [&](int BlockId) -> bool {
+    std::set<int> SuccIds;
+    if (const auto Found = BlocksById.find(BlockId); Found != BlocksById.end())
+      for (const MedBlock *Cur : Found->second)
+        SuccIds.insert(Cur->Succs.begin(), Cur->Succs.end());
     for (const auto &B : Func.Blocks) {
-      bool IsSucc = false;
-      for (const auto &Cur : Func.Blocks)
-        if (Cur.Id == BlockId)
-          for (int S : Cur.Succs)
-            if (S == B.Id)
-              IsSucc = true;
-      if (!IsSucc)
+      if (!SuccIds.count(B.Id))
         continue;
       for (const auto &Phi : B.Phis) {
         if (Phi.Output.Kind != MedVar::Reg || Phi.Output.RegOff != FPRet)
@@ -195,20 +204,15 @@ void LowToMedConverter::modelCallFPReturn(MedFunc &Func) {
   auto fpRetReadInDominatedSucc = [&](int BlockId) -> bool {
     std::set<int> Seen{BlockId};
     std::vector<int> Work;
-    for (const auto &Cur : Func.Blocks)
-      if (Cur.Id == BlockId)
-        Work.assign(Cur.Succs.begin(), Cur.Succs.end());
+    if (const auto Found = BlocksById.find(BlockId); Found != BlocksById.end())
+      Work.assign(Found->second.back()->Succs.begin(),
+                  Found->second.back()->Succs.end());
     while (!Work.empty()) {
       int BId = Work.back();
       Work.pop_back();
       if (!Seen.insert(BId).second)
         continue;
-      const MedBlock *SB = nullptr;
-      for (const auto &B : Func.Blocks)
-        if (B.Id == BId) {
-          SB = &B;
-          break;
-        }
+      const MedBlock *SB = firstBlock(BId);
       if (!SB || SB->Preds.size() != 1)
         continue;
       bool HasPhi = false;
@@ -317,6 +321,7 @@ void LowToMedConverter::modelCallFPReturn(MedFunc &Func) {
       Out.RegOff = FPRet;
       Out.SSAVer = NewVer;
       Out.TheArch = TargetArch;
+      keepReplacedCallOutput(Func, Op, Op.Output);
       Op.Output = Out;
 
       // Straight-line reads after the call observe the result until a redef.
@@ -362,12 +367,7 @@ void LowToMedConverter::modelCallFPReturn(MedFunc &Func) {
           Work.pop_back();
           if (!Seen.insert(BId).second)
             continue;
-          MedBlock *SB = nullptr;
-          for (auto &B : Func.Blocks)
-            if (B.Id == BId) {
-              SB = &B;
-              break;
-            }
+          MedBlock *SB = firstBlock(BId);
           if (!SB || SB->Preds.size() != 1)
             continue; // not dominated solely by the call chain
           bool HasFPRetPhi = false;
@@ -412,11 +412,12 @@ void LowToMedConverter::modelCallFPReturn(MedFunc &Func) {
       // the call's wide output version, which getVar narrows to the arg's
       // width.
       if (!LaterRedef)
-        for (int Succ : Blk.Succs)
-          for (auto &B : Func.Blocks) {
-            if (B.Id != Succ)
-              continue;
-            for (auto &Phi : B.Phis)
+        for (int Succ : Blk.Succs) {
+          const auto Found = BlocksById.find(Succ);
+          if (Found == BlocksById.end())
+            continue;
+          for (MedBlock *B : Found->second) {
+            for (auto &Phi : B->Phis)
               if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == FPRet)
                 for (auto &A : Phi.Args)
                   if (A.first == Blk.Id && A.second.Kind == MedVar::Reg &&
@@ -425,6 +426,7 @@ void LowToMedConverter::modelCallFPReturn(MedFunc &Func) {
                     A.second.SSAVer = NewVer;
                   }
           }
+        }
     }
   }
 }

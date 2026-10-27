@@ -1,6 +1,10 @@
 add_neverd_component_library(NeverDEmulationDarwin
   DarwinProcess.cpp
   DarwinImage.cpp
+  DarwinCallbacks.cpp
+  DarwinLibSystem.cpp
+  DarwinTLS.cpp
+  DarwinTLSPreparation.cpp
   DarwinStack.cpp
   ../macos/MacOSProfile.cpp
   ../ios/IOSProfile.cpp

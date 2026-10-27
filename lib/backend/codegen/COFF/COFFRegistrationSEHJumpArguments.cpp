@@ -4,10 +4,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "COFFRegistrationSEHCall.h"
 #include "COFFRegistrationSEHJump.h"
 
 #include "neverd/Limits.h"
-#include "neverd/backend/llvm/X86RegistrationSEHJump.h"
+#include "neverd/backend/llvm/X86/X86RegistrationSEHJump.h"
 
 namespace neverd::coff_registration {
 namespace {
@@ -81,12 +82,14 @@ llvm::Error validateSEHJumpArguments(
       Offset.getZExtValue() != uint64_t(ExpectedOffset) ||
       Value->getParent() != Call.getParent() || !Value->comesBefore(&Call))
     return rejectIR("native jump value changed its original argument slot");
-  // Preserve the read at its runtime call. Protected invokes carry one
+  // Preserve the read at its runtime call. Protected calls carry one
   // separately authenticated provenance anchor between the two.
   const auto *Following = next(*Value);
   if (Following != &Call) {
     const auto *Anchor = llvm::dyn_cast_or_null<llvm::IntrinsicInst>(Following);
-    if (!llvm::isa<llvm::InvokeInst>(Call) || !Anchor ||
+    if (!Anchor ||
+        (!llvm::isa<llvm::InvokeInst>(Call) &&
+         dynamicSEHCall(*Anchor) != &Call) ||
         Anchor->getIntrinsicID() != llvm::Intrinsic::sideeffect ||
         Anchor->arg_size() || Anchor->getNumOperandBundles() != 1 ||
         Anchor->countOperandBundlesOfType(windows_eh_md::ProvenanceBundle) !=

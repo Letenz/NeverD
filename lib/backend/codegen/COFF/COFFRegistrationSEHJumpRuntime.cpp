@@ -7,18 +7,21 @@
 #include "COFFRegistrationSEHJump.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
-#include "neverd/backend/llvm/X86RegistrationSEHJump.h"
+#include "neverd/backend/llvm/X86/X86RegistrationSEHJump.h"
 
 #include "llvm/IR/IntrinsicInst.h"
 
 namespace neverd::coff_registration {
 
-llvm::Error validateSEHJumpUnwindBridge(const llvm::Function &Parent,
-                                        va_t SourceUnwind) {
+llvm::Error
+validateSEHJumpUnwindBridge(const llvm::Function &Parent,
+                            const RegistrationSEHJumpCapture &Source) {
   using namespace x86_registration;
   const auto *Module = Parent.getParent();
-  const auto *Runtime = Module->getFunction(SEHSourceJumpUnwindName);
-  const auto *Bridge = Module->getFunction(SEHJumpUnwindName);
+  const auto *Runtime =
+      Module->getFunction(getSEHSourceJumpUnwindName(Source.Protocol));
+  const auto *Bridge =
+      Module->getFunction(getSEHJumpUnwindName(Source.Protocol));
   auto HasABI = [](const llvm::Function *F) {
     return F && F->getReturnType()->isVoidTy() && !F->isVarArg() &&
            F->arg_size() == 1 &&
@@ -44,7 +47,7 @@ llvm::Error validateSEHJumpUnwindBridge(const llvm::Function &Parent,
   auto BridgeIdentity = rewrite_source::getOriginalVA(*Bridge);
   if (!BridgeIdentity)
     return BridgeIdentity.takeError();
-  if (!*Identity || **Identity != SourceUnwind || *BridgeIdentity)
+  if (!*Identity || **Identity != Source.UnwindVA || *BridgeIdentity)
     return rejectIR("native jump unwind helper changed its source identity");
 
   const auto &Block = Bridge->getEntryBlock();

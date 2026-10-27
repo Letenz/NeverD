@@ -17,6 +17,8 @@
 #include "neverd/analysis/InterpreterSpecialization.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/evm/EVMIR.h"
+#include "neverd/ir/FloatingCallArguments.h"
+#include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceMap.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
@@ -25,11 +27,13 @@
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCBlockCallHints.h"
+#include "neverd/pass/Limits.h"
 #include "neverd/pass/ir/simplify/SymSimplifyPass.h"
 #include "neverd/pipeline/SourceViewOptions.h"
 #include "neverd/sbf/SBFIR.h"
 #include "neverd/solver/SymSynthVerifier.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -54,27 +58,64 @@ class PipelineTestPeer;
 class Decoder;
 class LLVMSourceMap;
 
-/// Optional facts for consecutive restricted x64 analyses of an unchanged
-/// image. Owns the indexes borrowed by bounded machine-graph/body caches, not
-/// output IR or caller-dependent summaries. The image and debug context must
-/// outlive the cache; reset it before changing either, including symbols,
-/// exception metadata, bytes or analysis policy. Function selection may vary.
-/// Pipeline checks the exact function-entry and verified-entry inventories.
+/// What Pipeline::warmAnalysisCache left in a session's analysis cache.
+struct AnalysisCacheWarmup {
+  /// The functions whose bodies the cache holds for later runs.
+  size_t Prepared = 0;
+  /// The cache refused a body it could hold only by evicting one.
+  bool Full = false;
+};
+
+struct OmittedCalleeMemo;
+struct ImageImportCounts;
+
+/// Optional facts for consecutive restricted x64, i386, AArch64 and ARM
+/// analyses of an unchanged image. Owns the indexes borrowed by bounded
+/// machine-graph/body caches, not output IR or caller-dependent summaries. The
+/// image and debug context must outlive the cache; reset it before changing
+/// either, including symbols, exception metadata, bytes or analysis policy.
+/// Function selection may vary. Pipeline checks the exact function-entry and
+/// verified-entry inventories. It keeps the facts of the symbol inventory,
+/// which every symbol start and warming share, apart from those of a selection
+/// that adds its own entry, so passing through such a selection leaves them in
+/// place.  It reads that inventory from the image's symbols once for the cache.
 /// Additive CodeRefTargets publication is allowed, as for the raw graph cache.
-/// Use from one pipeline invocation at a time; its internal workers join
-/// before run() returns. Other architectures and whole-image runs stay local.
+/// Import-address names are image facts too. A run overlays the names of the
+/// functions it lifts, and their debug and thunk names, and removes that
+/// overlay before it returns. forgetDeclarations does not drop them.
+/// Use from one pipeline invocation at a time; its internal workers join before
+/// run() returns. Other architectures and whole-image runs stay local.
 class PipelineAnalysisCache {
 public:
   PipelineAnalysisCache() = default;
   PipelineAnalysisCache(const PipelineAnalysisCache &) = delete;
   PipelineAnalysisCache &operator=(const PipelineAnalysisCache &) = delete;
-  void reset() { Facts.reset(); }
+  void reset() {
+    Facts.reset();
+    SelectionFacts.reset();
+    Inventory.reset();
+    CalleeSignatures.reset();
+    ImportCounts.reset();
+  }
+  /// Drops what reads the program's declarations, which change without the
+  /// image or its debug information changing.
+  void forgetDeclarations() { ImportCounts.reset(); }
 
 private:
   friend class Pipeline;
   friend class PipelineTestPeer;
   struct Impl;
+  struct SymbolInventory;
   std::shared_ptr<Impl> Facts;
+  /// The latest selection whose entries the symbol inventory lacks.
+  std::shared_ptr<Impl> SelectionFacts;
+  std::shared_ptr<const SymbolInventory> Inventory;
+  /// The callees' signature bodies of restricted runs on any architecture
+  /// (PipelineResult::CalleeSignatureMemo).
+  std::shared_ptr<OmittedCalleeMemo> CalleeSignatures;
+  /// The prototype counts and stack-slot identities of every image import
+  /// (PipelineResult::OmittedCalleeArgumentCounts/OmittedCalleeStackArgs).
+  std::shared_ptr<const ImageImportCounts> ImportCounts;
 };
 
 struct PipelineOptions {
@@ -94,11 +135,26 @@ struct PipelineOptions {
   bool NoOpt = false;
   /// Optional HighIR expression rewriting; machine/ABI recovery is unaffected.
   bool SymbolicHighC = false;
+  /// Whole-program LLVM-to-C source runs the symbolic optimizer, as
+  /// SourceViewOptions::Symbolic does for one function.  Binary lifting and
+  /// patching never do.
+  bool SymbolicLLVMSource = false;
   /// Native source views may postpone HighIR projection after shared ABI and
   /// return recovery. Patch/lift, VM routes and DumpHigh retain eager behavior.
   bool DeferHighIR = false;
+  /// A native view of the control-flow graphs alone may postpone everything
+  /// after LowIR as well (resumeMedIR), under the same restrictions.
+  bool DeferMedIR = false;
+  /// Prepare and verify the same machine ABI MedIR consumed by the LLVM
+  /// backend, then stop before any HighIR or LLVM emission. Native analysis
+  /// only; incompatible with source, patch/lift and interpreter output modes.
+  bool MedAnalysisOnly = false;
   bool PatchMode = false;
   bool LiftMode = false;
+  /// Retain native emission observations through LLVM replacement/deletion.
+  /// This sidecar does not enable source-only transformations or infer origins
+  /// for optimizer-created values.
+  bool RetainLLVMSourceObservations = false;
   /// LLVM-to-C uses the LLVM route without authorizing source-only rewrites
   /// for binary lifting or patching.
   bool SourceProjection = false;
@@ -112,14 +168,17 @@ struct PipelineOptions {
   /// (true) or no longer one (false).  Whole-program detection follows them;
   /// a restricted run lifts its OnlyFunctionEntries.
   std::map<va_t, bool> FunctionEdits;
-  /// Explicit declarations for source rendering only; never consumed in
-  /// PatchMode or LiftMode and never promoted to transformation evidence.
+  /// Explicit declarations for source rendering, including LLVM-to-C. Machine
+  /// lifting, patching and analysis never consume them as ABI evidence.
   std::map<va_t, SourceFunctionTypeHint> SourceTypeHints;
   /// Exact semantic declarations used only when binding calls to a callee.
   /// This is distinct from SourceTypeHints: compiler-generated thunks may
   /// have a public call contract whose machine body contains incidental live
   /// registers that are not source parameters.
   std::map<va_t, SourceFunctionTypeHint> SourceCalleeTypeHints;
+  std::map<va_t, std::map<SourceCallOccurrenceKey, SourceCallTypeHint>>
+      SourceCallSiteHints;
+  std::map<va_t, SourceStackFrame> SourceStackFrames;
   /// Source-only descriptor and ownership proofs for captured block calls.
   std::map<va_t, ObjCBlockCaptureCallFields> ObjCBlockCaptureFields;
   /// Source-only receiver roots from authenticated invoke/descriptor pairs.
@@ -153,6 +212,18 @@ struct PipelineOptions {
   /// Borrowed for this run only. See PipelineAnalysisCache's lifetime and
   /// invalidation contract; nullptr preserves independent analysis.
   PipelineAnalysisCache *AnalysisCache = nullptr;
+
+  /// Machine analysis and rewriting exclude presentation-only source hints.
+  bool usesMachineMedIR() const {
+    return PatchMode || LiftMode || MedAnalysisOnly;
+  }
+
+  /// A requested LLVM source view can bind explicit declarations without
+  /// enabling runtime discovery or authorizing machine-code rewriting.
+  bool usesSourceDeclarations() const {
+    return !usesMachineMedIR() ||
+           (LiftMode && SourceProjection && !PatchMode && !MedAnalysisOnly);
+  }
 };
 
 enum class PipelineFunctionDisposition {
@@ -164,6 +235,8 @@ enum class PipelineFunctionDisposition {
   RejectedIncomplete,
   RemovedJumpTableTarget,
   AbsorbedFunctionChunk,
+  /// Legacy audit value, no longer emitted: missing unwind metadata does not
+  /// disprove a function entry. Retained for consumers of earlier audits.
   RejectedUnwindlessNonLeaf,
   MedIRFailed,
   Accepted,
@@ -207,14 +280,24 @@ struct PipelineFunctionAudit {
   uint64_t LiftedInstructions = 0;
   std::vector<va_t> DecodeFailures;
   std::vector<va_t> UnsupportedInstructions;
-  /// Unsupported instructions that are returns which may pop a return address
-  /// the function pushed itself; see LowFunc::UnprovenReturnAddresses.
+  /// Returns or tail transfers with unproved physical return-address
+  /// ownership; see LowFunc::UnprovenReturnAddresses.
   std::vector<va_t> UnprovenReturns;
   std::vector<va_t> TruncatedPaths;
   bool HasLowIR = false;
   bool HasMedIR = false;
   bool MedIRVerified = false;
   bool HasLLVMDefinition = false;
+};
+
+/// Signature bodies of the direct callees a set of functions leaves out.
+struct OmittedCalleeBodies {
+  /// The entries of the functions they were lifted around, in order.
+  std::vector<va_t> Functions;
+  std::vector<std::shared_ptr<const MedFunc>> Bodies;
+  /// Include direct callees whose arity is known but whose source types are
+  /// not.
+  bool IncludesSourceDeclarations = false;
 };
 
 struct PipelineResult {
@@ -231,9 +314,34 @@ struct PipelineResult {
   /// Direct-callee GPR write summaries (see CallRegisterEffects.h), keyed by
   /// callee entry.  Absent entries keep the ABI clobber set.
   std::map<va_t, uint32_t> CallMayWriteGPRs;
+  /// Scalar register words proved equal at every ordinary callee return.
+  std::map<va_t, GPRExitConstants> CallExitConstants;
+  /// Validated register-only leaves, shared with the bounded callee cache.
+  std::map<va_t, std::shared_ptr<const std::vector<LowOp>>> CallRegisterLeaves;
   /// Bytes of each GPR family a lifted callee reads before writing (its
   /// register arguments, including pass-throughs), keyed by callee entry.
   std::map<va_t, GPRReadWidths> CallEntryReadGPRs;
+  /// Incoming GPR values proved unobserved independently of argument inference.
+  std::map<va_t, GPRFamilyMask> CallUnreadGPRs;
+  /// For each function-pointer variable a call may go through, by address,
+  /// the key of the routine whose summary gives that call its arguments: the
+  /// routine the variable starts at (collectPointerVariableCallees), or the
+  /// variable itself for another module's routine, whose prototype fixes the
+  /// summary kept under the variable's address.
+  std::map<va_t, va_t> CallArgumentSources;
+  /// The bodies recoverModuleCallAbi lifted for the direct callees these
+  /// functions leave out, as lifted: another recovery over the same functions
+  /// (the native LLVM route of a session) reuses them instead of lifting them
+  /// again, which costs as much as the rest of recovery.
+  std::shared_ptr<const OmittedCalleeBodies> OmittedCallees;
+  /// Fixed machine-word declarations whose parameter carriers did not change
+  /// during omitted-callee recovery. Source LLVM uses these types for direct
+  /// calls; they supply neither bodies nor a source/native ABI proof.
+  std::vector<MedFunc> OmittedCalleeDeclarations;
+  /// What reading those bodies read of each callee, shared by the restricted
+  /// runs of the image (PipelineAnalysisCache): one selection's callees are
+  /// mostly another's.
+  std::shared_ptr<OmittedCalleeMemo> CalleeSignatureMemo;
   /// Bytes of the scalar float each prototyped import returns in the vector
   /// return register, keyed by the stub or slot a call names it by.
   std::map<va_t, uint16_t> CallFloatReturns;
@@ -244,6 +352,51 @@ struct PipelineResult {
   /// reads, including through tail calls (0 when none), keyed by callee
   /// entry. Absent entries leave the stack arguments to the call-site scan.
   std::map<va_t, int> CallEntryStackArgs;
+  /// The callees in CallEntryStackArgs whose count a typed prototype gives
+  /// slot by slot where every argument is on the stack (i386): a call to one
+  /// passes those slots and no register.
+  std::set<va_t> CallEntryStackSlots;
+  /// The bytes each import of CallEntryStackSlots pops as it returns, by the
+  /// stub or slot a call names it by: a stdcall routine's arguments.
+  std::map<va_t, int> CallEntryStackPops;
+  /// The integer arguments each prototyped import takes, by the stub or slot
+  /// a call names it by, where the setup of each call gives it its arguments
+  /// (Windows on ARM64): a call to one passes that many and no other
+  /// register.
+  std::map<va_t, int> CallEntryArgumentCounts;
+  /// Complete fixed scalar FP import signatures, with no integer or stack
+  /// parameters. Their register uses must reach SSA before call setup scans.
+  std::map<va_t, FloatingCallArguments> CallEntryFloatingArguments;
+  /// Complete fixed scalar integer operands with exact stack locations.
+  std::map<va_t, FixedIntegerCallArguments> CallEntryIntegerArguments;
+  std::shared_ptr<const std::map<va_t, FixedIntegerCallArguments>>
+      OmittedCalleeIntegerArguments;
+  /// Fixed scalar widths of header variadic imports; the tail stays open.
+  std::map<va_t, std::vector<uint16_t>> CallEntryVariadicArguments;
+  std::shared_ptr<const std::map<va_t, std::vector<uint16_t>>>
+      OmittedCalleeVariadicArguments;
+  /// The same signatures for imports reached only by omitted callees.
+  std::shared_ptr<const std::map<va_t, FloatingCallArguments>>
+      OmittedCalleeFloatingArguments;
+  /// CallEntryArgumentCounts for every import of the image, which the
+  /// conversions of omitted callees read: their own calls reach imports the
+  /// selected functions need not call.  Null where the convention counts
+  /// none.
+  std::shared_ptr<const std::map<va_t, int>> OmittedCalleeArgumentCounts;
+  /// Image-wide import stack counts and exact-slot identities read by omitted
+  /// i386 callees, independently of the imports the current selection calls.
+  std::shared_ptr<const std::map<va_t, int>> OmittedCalleeStackArgs;
+  std::shared_ptr<const std::set<va_t>> OmittedCalleeStackSlots;
+  /// Routines whose argument summary includes a declaration: imports by
+  /// their stubs and slots, documented WDK entries, and typed exports.
+  /// Machine positions override arity tables that count source parameters.
+  /// A recovered body alone cannot truncate this declared summary; exported
+  /// bodies can still contribute additional reads to their entry summary.
+  std::set<va_t> CallPrototypeArguments;
+  /// Explicit user declarations among CallPrototypeArguments. Source-call
+  /// binding uses this identity to override automatic Darwin SDK contracts;
+  /// a header record layout alone does not override those contracts.
+  std::set<va_t> CallUserPrototypes;
   /// Entries of indirect-call dispatchers (`_guard_dispatch_icall`): a call to
   /// one passes the argument registers its caller set.
   std::set<va_t> CallDispatchThunks;
@@ -255,6 +408,8 @@ struct PipelineResult {
   std::vector<HighFunc> HighFuncs;
   /// Shared source MedIR is ready; HighIR projection has not been requested.
   bool HighIRDeferred = false;
+  /// LowIR is ready; MedIR and everything after it have not been requested.
+  bool MedIRDeferred = false;
   std::vector<sigs::LibraryRecognition> LibraryRecognitions;
   /// Includes analyzed functions with no match, for cheap identity queries.
   std::map<va_t, std::vector<size_t>> LibraryRecognitionsByFunction;
@@ -318,12 +473,32 @@ public:
   /// recognitions; callers may copy those into a private result for a variant.
   void rebuildHighIR(const BinaryImage &Img, const PipelineOptions &Opts,
                      PipelineResult &Result, DebugContext *Dbg = nullptr);
+  /// Regenerate a private source variant from the original machine operations.
+  /// Explicit call contracts never enter the original result or patch/lift.
+  PipelineResult rebuildSourceCalls(const BinaryImage &Img,
+                                    const PipelineOptions &Opts,
+                                    const PipelineResult &Original,
+                                    DebugContext *Dbg = nullptr);
+
+  /// Build into Opts.AnalysisCache the bodies that selected-function runs on
+  /// \p Img would build on demand for \p Functions, so that those runs read
+  /// them instead; the runs' results are unchanged.  Nothing the cache holds
+  /// is evicted.  None when the cache does not apply: not an x86-64 image, no
+  /// cache, or a cache that the session's runs keep for other entries.
+  std::optional<AnalysisCacheWarmup>
+  warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
+                    DebugContext *Dbg, llvm::ArrayRef<va_t> Functions);
 
   /// Complete deferred HighIR from this image's prepared source MedIR. This
   /// preserves LowIR, MedIR and LLVM module identities and contains failures
   /// through the same completion boundary as eager HighIR conversion.
   bool resumeHighIR(const BinaryImage &Img, const PipelineOptions &Opts,
                     PipelineResult &Result, DebugContext *Dbg = nullptr);
+  /// Continue a run that deferred MedIR from its LowIR, as the run would
+  /// have: MedIR and the shared source analysis, then HighIR unless \p Opts
+  /// defers it.  \p Opts are the run's own, apart from the deferrals.
+  bool resumeMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
+                   PipelineResult &Result, DebugContext *Dbg = nullptr);
 
   /// Run the HelloWorldPass on a module.  Wraps PassBuilder/AnalysisManager
   /// setup so callers avoid instantiating LLVM PassManager templates (which
@@ -335,8 +510,10 @@ public:
   /// integer add/sub/and/or/xor with equivalent instruction sequences for
   /// \p Rounds rounds.  Returns the number of operators substituted.  Like
   /// runHelloWorldPass, this keeps PassManager instantiation inside libneverd.
-  static unsigned runInstSubstitutionPass(llvm::Module &Mod,
-                                          unsigned Rounds = 1);
+  static unsigned runInstSubstitutionPass(
+      llvm::Module &Mod,
+      unsigned Rounds =
+          ::neverd::limits::pass::kDefaultInstructionSubstitutionRounds);
 
   /// Run the constant-encryption pass on a module, replacing integer constant
   /// operands of binary operators / comparisons with run-time-decrypted values.
@@ -496,6 +673,9 @@ public:
     /// Conservative patch requests run neither transformation.
     bool EnableControlFlowRecovery = true;
     uint32_t SourcePasses = SourceViewOptions::BasicPasses;
+    /// Keep every function's body its own: an LLVM profile runs no inliner
+    /// over the module.  Source views set it.
+    bool KeepFunctionBoundaries = false;
     /// Per SemanticFixedPointPass invocation.  Deep has independent early and
     /// late invocations, so each receives this complete budget.  Zero means
     /// unlimited and still stops on a stable state or exact cycle.
@@ -592,7 +772,8 @@ private:
   void recognizeLibraries(const BinaryImage &Img, const PipelineOptions &Opts,
                           PipelineResult &Result, DebugContext *Dbg);
 
-  /// Shortcut path: MedIR -> LLVM IR (skip HighIR).
+  /// Machine ABI MedIR preparation, followed by LLVM emission unless analysis
+  /// alone was requested. Does not build HighIR.
   bool runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                         const PipelineOptions &Opts, PipelineResult &Result,
                         const DebugContext *Dbg);
@@ -619,14 +800,16 @@ private:
   /// indivisible scheduling unit.  Such a group may exceed the soft slice
   /// budget, because splitting it would make later group-level EH lowering
   /// impossible to validate or commit atomically.
-  static LLVMEmissionResult
-  emitLLVMSharded(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &Ctx,
-                  Arch TheArch,
-                  const std::vector<std::pair<va_t, std::string>> &Imports,
-                  const BinaryImage &Img, BinaryFormat Fmt, bool NoOpt,
-                  unsigned NumThreads, bool RecordSources = false,
-                  llvm::ArrayRef<sigs::LibraryRecognition> Recognitions = {},
-                  const DebugContext *Dbg = nullptr);
+  static LLVMEmissionResult emitLLVMSharded(
+      const std::vector<MedFunc> &Funcs, llvm::LLVMContext &Ctx, Arch TheArch,
+      const std::vector<std::pair<va_t, std::string>> &Imports,
+      const BinaryImage &Img, BinaryFormat Fmt, bool NoOpt, unsigned NumThreads,
+      bool RecordSources = false,
+      llvm::ArrayRef<sigs::LibraryRecognition> Recognitions = {},
+      const DebugContext *Dbg = nullptr, const SourceViewOptions &View = {},
+      const std::set<va_t> *PrototypeArgumentCallees = nullptr,
+      bool PreserveUnknownSourceValues = false,
+      llvm::ArrayRef<MedFunc> SourceCalleeDeclarations = {});
 
   /// Execute the common shard lifecycle. The emitter creates each module in
   /// its worker's context; only a complete linked module is returned in the
@@ -636,11 +819,22 @@ private:
       const std::vector<MedFunc> &Funcs, llvm::LLVMContext &Ctx,
       unsigned NumShards, unsigned NumThreads, bool NoOpt,
       llvm::function_ref<LLVMEmissionResult(unsigned, llvm::LLVMContext &)>
-          Emit);
+          Emit,
+      const SourceViewOptions &View = {});
 
   /// Shared source call/return recovery before either HighIR or LLVM emission.
+  /// \p Cache keeps the image's import-address names when this run shares one.
   void prepareSourceMedIR(const BinaryImage &Img, PipelineResult &Result,
-                          DebugContext *Dbg);
+                          DebugContext *Dbg, PipelineAnalysisCache *Cache);
+  /// prepareSourceMedIR for a run that defers HighIR, which then succeeds;
+  /// a failure is the run's error.
+  void prepareDeferredSource(const BinaryImage &Img, PipelineResult &Result,
+                             DebugContext *Dbg, PipelineAnalysisCache *Cache);
+  /// The import-address names of \p Img kept with \p Cache's image inputs, or
+  /// null when \p Cache is null or those inputs are not built yet. Additions
+  /// a run makes belong to that run and must not remain on the kept map.
+  std::map<va_t, std::string> *importAddressNames(const BinaryImage &Img,
+                                                  PipelineAnalysisCache *Cache);
 
   /// Phase 3: convert MedIR -> HighIR in parallel.
   void buildHighIR(const BinaryImage &Img, const PipelineOptions &Opts,

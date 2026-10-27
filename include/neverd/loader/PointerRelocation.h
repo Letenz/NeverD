@@ -156,6 +156,7 @@ decideAbsolutePointerRelocation(const BinaryImage &Img, va_t SlotVA,
   Effect.SlotVA = SlotVA;
   Effect.TargetVA = TargetVA;
   if (Img.ImportStorageSlots.count(SlotVA) ||
+      Img.MachOAuthenticatedPointers.count(SlotVA) ||
       Img.ConflictingImportStorageSlots.count(SlotVA) ||
       Img.ImportPtrSlots.count(SlotVA) || Img.DyldBindSlots.count(SlotVA))
     return Effect;
@@ -293,7 +294,9 @@ void recordAbsolutePointerRelocations(
 /// literals and tables in PAGE and INIT.  \p InData says whether an address
 /// lies in a data object; a target that the image's own metadata gives to
 /// code (a function symbol, runtime function record, known code range or the
-/// entry point) stays code.  Returns how many pointers changed.
+/// entry point) stays code.  A slot stays data wherever it lies: a run of
+/// pointers among code is a table (recordRelocatedPointerRunsInCode), never
+/// an instruction's operand.  Returns how many pointers changed.
 unsigned recordDataPointerTargets(BinaryImage &Img,
                                   llvm::function_ref<bool(va_t)> InData);
 

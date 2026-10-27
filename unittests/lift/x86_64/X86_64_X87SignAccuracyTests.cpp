@@ -9,8 +9,8 @@
 
 #include "X86FPStateAccuracyFixture.h"
 
-#include "neverd/ir/X87Context.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/ir/X86/X87Context.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -344,6 +344,12 @@ TEST(X87SignContract, OwnedContextStackSlotsAndPaddingRemainDistinct) {
       L.lift(I.Raw, Ops);
       const unsigned Top = (8 - Depth) & 7;
       NdOpEmulator E(Image);
+#if !(defined(__x86_64__) || defined(_M_X64)) ||                               \
+    !(defined(__clang__) || defined(__GNUC__))
+      // Keep this host-independent contract runnable through the explicit
+      // portable slice; native original-instruction tests remain separate.
+      E.setX87PortableMode(true);
+#endif
       std::array<std::vector<uint8_t>, 8> Expected;
       std::array<uint8_t, 512> State{};
       State[0] = 0x7f;
@@ -644,14 +650,12 @@ TEST(X87SignContract, EveryIncomingBranchAndLoopRetainsTheRuntimeContext) {
 }
 
 TEST(X87SignContract, AStaticFunctionBoundaryProvesNoSourceValue) {
-  // The calling convention empties the register stack at the boundary but
-  // defines no slot, so a sign change or FXAM there still reads no value.
+  // An unconsumed entry read cannot establish the checked i386 consumer
+  // contract, so a sign change or FXAM still has no proven source value.
   for (BinaryFormat Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
     for (unsigned Opcode : {0xe0U, 0xe1U, 0xe5U}) {
-      auto Image =
-          signControlFlowImage({0xd9, uint8_t(Opcode), 0xdb, 0x3a, 0xc3},
-                               Format); // op; fstp [rdx]; ret
+      auto Image = signControlFlowImage({0xd9, uint8_t(Opcode), 0xc3}, Format);
       Image.Arch = Arch::X86;
       Image.Bits = Bitness::Bits32;
       llvm::LLVMContext Context;
@@ -671,6 +675,36 @@ TEST(X87SignContract, AStaticFunctionBoundaryProvesNoSourceValue) {
                 Audit.UnsupportedInstructions.end())
           << Opcode;
       EXPECT_FALSE(Audit.HasLLVMDefinition);
+    }
+}
+
+TEST(X87SignContract, AStaticNativeEntryCannotUseTheInternalConsumerABI) {
+  // Consuming the input proves an internal typed parameter, but a native
+  // entry still needs an adapter to receive its value from the x87 stack.
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (unsigned Opcode : {0xe0U, 0xe1U, 0xe5U}) {
+      auto Image =
+          signControlFlowImage({0xd9, uint8_t(Opcode), 0xdb, 0x3a, 0xc3},
+                               Format); // op; fstp [edx]; ret
+      Image.Arch = Arch::X86;
+      Image.Bits = Bitness::Bits32;
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.LiftMode = true;
+      Options.SourceProjection = true;
+      Options.OnlyFunctionEntries = {Entry};
+      auto Result = Pipeline().run(Image, Context, Options);
+      ASSERT_EQ(Result.LowFuncs.size(), 1U);
+      EXPECT_TRUE(Result.LowFuncs[0].ConsumesX87Argument);
+      EXPECT_TRUE(Result.LowFuncs[0].hasCompleteInstructionLift());
+      EXPECT_FALSE(Result.Success);
+      EXPECT_FALSE(Result.LlvmModule);
+      EXPECT_NE(Result.Error.find("native entry/address use requires an x87 "
+                                  "argument adapter"),
+                std::string::npos)
+          << Result.Error;
     }
 }
 

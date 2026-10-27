@@ -9,7 +9,7 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/low/LowScalarConstant.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 namespace neverd::registration_state {
 
@@ -203,6 +203,8 @@ FrameValue FrameTransfer::evaluate(const LowOp &Op, bool Installed) const {
       Result.MayBeFrame = true;
     }
   }
+  if (auto Relative = evaluateRelativeScalar(Op))
+    return *Relative;
   if (Op.Output.Size <= 4)
     if (const auto Constant = lowScalarConstantResult(
             Op, [&](const NdVar &V) -> std::optional<uint64_t> {

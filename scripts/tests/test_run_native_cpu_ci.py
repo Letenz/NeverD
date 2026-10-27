@@ -214,7 +214,8 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 {name for name in drivers if name.startswith(direct_prefix)},
                 direct_kvm if backend == "kvm" else set(),
             )
-            outcomes[backend] = {re.sub("/" + backend + r"(?=_|$)", "/{backend}", name)
+            # Parameter names use both underscore and CamelCase suffixes.
+            outcomes[backend] = {re.sub("/" + backend + r"(?=_|[A-Z]|$)", "/{backend}", name)
                                  .replace("/" + backend.title(), "/{backend_title}")
                                  for name in drivers - direct_kvm}
             self.assertTrue(any("/{backend}_Original_" in name for name in outcomes[backend]))
@@ -554,7 +555,48 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 with self.subTest(backend=backend, host=host):
                     owners, required = native.darwin_inventory(native.ROOT, backend, host)
                     self.assertEqual(owners, ["NeverDDarwinProcessTests"])
-                    self.assertEqual(len(required), 95 * len(platforms))
+                    self.assertEqual(len(required), 104 * len(platforms))
+                    for platform in platforms:
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "DefaultStaticGuardsKeepDylibTLSAndExitLifetime/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "DylibGlobalsAndLocalStaticsFinalizeAfterTLS/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "DylibConstructorsAndTLSCallbacksKeepStartupAndExitOrder/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "LibSystemImportsPreserveErrnoAndRawKernelAuthority/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "ClassicLazyImportsResolveBeforeCallsAndKeepSlotsStable/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "LibSystemFileCallsShareCursorsAndDecodeOptionalMode/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "LibSystemMemoryCallsPreserveMappingsAndCErrorOrder/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "StartupDylibsShareDataAndKeepThreadLocalInstances/"
+                            f"{platform}_{backend}", required,
+                        )
                     for platform in platforms:
                         self.assertIn(
                             "Transports/DarwinProcess."

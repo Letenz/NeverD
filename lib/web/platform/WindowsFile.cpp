@@ -11,6 +11,8 @@
 
 #include "WindowsFile.h"
 
+#include "neverd/web/Limits.h"
+
 #ifdef _WIN32
 #include "../Internal.h"
 
@@ -80,7 +82,7 @@ public:
     Handle Token(Raw);
     DWORD N = 0;
     GetTokenInformation(Token.get(), TokenUser, nullptr, 0, &N);
-    if (!N || N > 65536)
+    if (!N || N > ::neverd::limits::web::kMaxWindowsPathBufferUnits)
       throw Error("private_storage_unavailable");
     std::vector<unsigned char> Buffer(N);
     if (!GetTokenInformation(Token.get(), TokenUser, Buffer.data(), N, &N))
@@ -316,17 +318,15 @@ Handle createDirectory(HANDLE Parent, std::string_view Name,
                        DirectoryAccess Access) {
   validateMemberName(Name);
   Security ACL;
-  // The kernel's relative rename opens the target directory for FILE_WRITE_DATA.
-  // Use traversal access compatible with that open. Only the rollback owner
-  // needs directory removal authority.
-  const ACCESS_MASK Extra = Access == DirectoryAccess::Remove
-                               ? FILE_LIST_DIRECTORY | DELETE
-                               : 0;
-  auto Result = openAt(Parent, wide(Name),
-                       FILE_TRAVERSE | FILE_READ_ATTRIBUTES | READ_CONTROL |
-                           Extra,
-                       FILE_CREATE, FILE_DIRECTORY_FILE,
-                       FILE_SHARE_READ | FILE_SHARE_WRITE, ACL.get());
+  // The kernel's relative rename opens the target directory for
+  // FILE_WRITE_DATA. Use traversal access compatible with that open. Only the
+  // rollback owner needs directory removal authority.
+  const ACCESS_MASK Extra =
+      Access == DirectoryAccess::Remove ? FILE_LIST_DIRECTORY | DELETE : 0;
+  auto Result = openAt(
+      Parent, wide(Name),
+      FILE_TRAVERSE | FILE_READ_ATTRIBUTES | READ_CONTROL | Extra, FILE_CREATE,
+      FILE_DIRECTORY_FILE, FILE_SHARE_READ | FILE_SHARE_WRITE, ACL.get());
   inspect(Result.get());
   return Result;
 }
@@ -439,9 +439,8 @@ void remove(HANDLE File) {
 void rename(HANDLE File, HANDLE Parent, std::string_view Name) {
   validateMemberName(Name);
   const auto Wide = wide(Name);
-  std::vector<unsigned char> Buffer(sizeof(FILE_RENAME_INFO) +
-                                        (Wide.size() + 1) * sizeof(wchar_t),
-                                    0);
+  std::vector<unsigned char> Buffer(
+      sizeof(FILE_RENAME_INFO) + (Wide.size() + 1) * sizeof(wchar_t), 0);
   auto *Info = reinterpret_cast<FILE_RENAME_INFO *>(Buffer.data());
   Info->ReplaceIfExists = FALSE;
   Info->RootDirectory = Parent;
@@ -452,14 +451,14 @@ void rename(HANDLE File, HANDLE Parent, std::string_view Name) {
   // process-relative pathname. FileRenameInformation is WDK information class
   // 10. The SDK's placeholder enum cannot represent it; use the native ABI's
   // 32-bit information-class argument without an out-of-range C++ enum cast.
-  using SetInformation = NTSTATUS(NTAPI *)(HANDLE, PIO_STATUS_BLOCK, PVOID,
-                                            ULONG, ULONG);
+  using SetInformation =
+      NTSTATUS(NTAPI *)(HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, ULONG);
   static const auto Function = reinterpret_cast<SetInformation>(
       GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtSetInformationFile"));
   constexpr ULONG RenameInformation = 10;
   IO_STATUS_BLOCK Status{};
   if (!Function || Function(File, &Status, Info, ULONG(Buffer.size()),
-                             RenameInformation) < 0)
+                            RenameInformation) < 0)
     throw Error("export_io_error");
 }
 } // namespace neverd::web::win

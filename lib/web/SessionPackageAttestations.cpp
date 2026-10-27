@@ -12,6 +12,8 @@
 #include "SessionInternal.h"
 #include "packages/attestations/Publication.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 
 namespace neverd::web {
@@ -19,7 +21,8 @@ namespace {
 template <class Row>
 std::string page(llvm::json::Object Summary, const std::vector<Row> &Rows,
                  uint64_t Offset, uint64_t Limit) {
-  if (!Limit || Limit > 512 || Offset > Rows.size())
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > Rows.size())
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(Rows.size(), Offset + Limit);
   llvm::json::Array Items;

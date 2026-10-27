@@ -11,15 +11,16 @@
 #include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
-#include "neverd/backend/llvm/X86RegistrationCxxUnwind.h"
-#include "neverd/backend/llvm/X86RegistrationEntry.h"
-#include "neverd/backend/llvm/X86RegistrationLayout.h"
+#include "neverd/backend/llvm/X86/X86RegistrationCxxUnwind.h"
+#include "neverd/backend/llvm/X86/X86RegistrationEntry.h"
+#include "neverd/backend/llvm/X86/X86RegistrationLayout.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
-#include "neverd/ir/med/X86RegistrationCallResult.h"
-#include "neverd/ir/med/X86RegistrationCallback.h"
-#include "neverd/ir/med/X86RegistrationFrame.h"
+#include "neverd/ir/med/X86/X86RegistrationCallResult.h"
+#include "neverd/ir/med/X86/X86RegistrationCallback.h"
+#include "neverd/ir/med/X86/X86RegistrationFrame.h"
+#include "neverd/ir/med/X86/X86RegistrationPhysicalFrame.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include "llvm/IR/CFG.h"
@@ -116,7 +117,13 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
       !States.RuntimeObjectAccessesComplete || !States.ImageReadsComplete ||
       !States.IncomingFrameAccessesComplete)
     return rejectIR("replayed C++ registration effects are incomplete");
-  const auto Coordinate = cxxRegistrationFrameCoordinate(Source, &States);
+  LowToMedConverter Converter;
+  Converter.setBinaryImage(&Image);
+  auto Med = Converter.convert(Result.Source, Arch::X86, BinaryFormat::COFF);
+  const auto *ChainAccesses = getX86RegistrationCxxChainAccesses(Med);
+  if (!ChainAccesses || !hasCheckedX86RegistrationCxxPhysicalFrame(Image, Med))
+    return rejectIR("C++ shared frame lost its current physical projection");
+  const auto Coordinate = cxxRegistrationFrameCoordinate(Med);
   const auto Size = Frame->Slot->getAllocationSize(Module->getDataLayout());
   const auto Layout = Coordinate && Size && !Size->isScalable()
                           ? projectX86RegistrationFrame(
@@ -127,9 +134,6 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
     return rejectIR("C++ source frame lost its physical coordinate projection");
   Frame->Establisher = Layout->Establisher;
   Result.Frame = *Frame;
-  LowToMedConverter Converter;
-  Converter.setBinaryImage(&Image);
-  auto Med = Converter.convert(Result.Source, Arch::X86, BinaryFormat::COFF);
   if (!hasX86RegistrationCxxEntryABI(Med, Function))
     return rejectIR("C++ parent changed its physical entry ABI");
   const std::array<const llvm::Function *, 1> Functions = {&Function};
@@ -342,13 +346,10 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
     if (!StateByBlock.count(BlockId))
       return rejectIR("C++ call moved outside a reached source block");
     const auto &State = *StateByBlock.at(BlockId);
-    if (State.Levels.size() > 1)
+    if (State.levels().size() > 1)
       return rejectIR("C++ source call has ambiguous dispatch states");
-    const int32_t Level = State.Levels.empty() ? -1 : State.Levels[0];
-    const bool HasTry =
-        llvm::any_of(State.CxxSearches,
-                     [&](const auto &Search) { return Search.Level == Level; });
-    const auto *Unwind = HasTry ? UnwindAt(Level) : nullptr;
+    const int32_t Level = State.levels().empty() ? -1 : State.levels()[0];
+    const auto *Unwind = State.CanDispatch ? UnwindAt(Level) : nullptr;
     const auto &Contract = States.CalleeContracts[Effect.CalleeIndex];
     if (Unwind) {
       ++Protected;
@@ -502,7 +503,7 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
   std::set<std::pair<va_t, int>> Chain;
   for (const auto &[Anchor, P] : Anchors[Role::RegistrationChainAccess]) {
     const RegistrationChainAccess *Access = nullptr;
-    for (const auto &Candidate : States.ChainAccesses)
+    for (const auto &Candidate : *ChainAccesses)
       if (Candidate.Address == P.SourceVA &&
           uint32_t(Candidate.OpSeq) == P.Clause)
         Access = &Candidate;
@@ -533,7 +534,7 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
     }
     ExpectedAnchors.insert(Anchor);
   }
-  if (Chain.size() != States.ChainAccesses.size())
+  if (Chain.size() != ChainAccesses->size())
     return rejectIR("C++ registration-chain source set is incomplete");
   for (const auto &Block : Function)
     for (const auto &I : Block)

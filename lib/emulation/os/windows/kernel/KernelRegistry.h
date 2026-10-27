@@ -18,6 +18,7 @@
 #include "llvm/ADT/StringRef.h"
 
 #include <map>
+#include <memory>
 
 namespace neverd::emulation {
 class GuestMemory;
@@ -25,39 +26,67 @@ class KernelModel;
 
 class KernelRegistry {
 public:
-  explicit KernelRegistry(GuestMemory &Memory) : Memory(Memory) {}
+  KernelRegistry(KernelModel &Owner, GuestMemory &Memory)
+      : Owner(Owner), Memory(Memory) {}
+  KernelRegistry(const KernelRegistry &) = delete;
+  KernelRegistry &operator=(const KernelRegistry &) = delete;
   llvm::Error
-  initialize(const std::optional<std::vector<DriverRegistryKey>> &Registry);
-  llvm::Expected<uint64_t> call(const KernelModel &Model, llvm::StringRef Name,
+  initialize(const std::optional<std::vector<DriverRegistryKey>> &Registry,
+             std::optional<uint64_t> SystemTime100ns = std::nullopt);
+  llvm::Expected<uint64_t> call(llvm::StringRef Name,
                                 llvm::ArrayRef<uint64_t> Arguments);
   std::optional<std::vector<DriverRegistryKey>> snapshot() const;
-  bool hasOpenHandles() const { return !Handles.empty(); }
-  bool ownsHandle(uint64_t Handle) const { return Handles.contains(Handle); }
+  bool hasOpenHandles() const;
 
 private:
+  friend class KernelModel;
+  llvm::Error checkHandleCapacity() const;
+  void retireObject(uint64_t Object) { KeyBodies.erase(Object); }
+  llvm::Expected<uint64_t> queryObjectName(KernelModel &Model, uint64_t Object,
+                                           uint64_t Buffer, uint32_t Length,
+                                           uint64_t ReturnLength,
+                                           bool RequiredLength);
+
   struct Key {
     std::string Path;
     std::map<std::string, DriverRegistryValue> Values;
+    // Windows value indices follow the live value list, including insertion
+    // order and deletion compaction, independently of case-insensitive lookup.
+    std::vector<std::string> ValueOrder;
     bool Deleted = false;
     bool Volatile = false;
+    std::optional<uint64_t> LastWriteTime100ns;
+    // The kernel retains these maxima until the corresponding list is empty.
+    uint32_t MaxNameLength = 0;
+    uint32_t MaxValueNameLength = 0;
+    uint32_t MaxValueDataLength = 0;
   };
-  struct Handle {
-    std::string Path;
-    uint32_t Access;
-  };
+  KernelModel &Owner;
   GuestMemory &Memory;
   bool Configured = false;
-  std::map<std::string, Key> Keys;
-  std::map<uint64_t, Handle> Handles;
-  uint64_t NextHandle = 0;
+  // Live names and per-open key bodies share the key data. Deleted entries
+  // leave Keys immediately; existing bodies retain their old data identity.
+  // Pointer/handle counts and retirement belong only to KernelModel.
+  std::map<std::string, std::shared_ptr<Key>> Keys;
+  std::map<uint64_t, std::shared_ptr<Key>> KeyBodies;
   size_t ValueCount = 0;
   size_t DataBytes = 0;
+  std::optional<uint64_t> SystemTime100ns;
 
-  llvm::Expected<uint64_t> open(const KernelModel &Model,
-                                llvm::ArrayRef<uint64_t> Arguments,
-                                bool Create);
+  llvm::Expected<std::optional<uint64_t>>
+  mutationTime(const KernelModel &Model) const;
+  llvm::Expected<uint64_t> queryKey(const KernelModel &Model, const Key &Entry,
+                                    uint32_t Class, uint64_t Buffer,
+                                    uint32_t Length, uint64_t ResultLength);
+  llvm::Expected<uint64_t> enumerateKey(const KernelModel &Model,
+                                        llvm::StringRef Path,
+                                        llvm::ArrayRef<uint64_t> Arguments);
+
+  llvm::Expected<uint64_t>
+  open(KernelModel &Model, llvm::ArrayRef<uint64_t> Arguments, bool Create);
   llvm::Expected<uint64_t> query(const KernelModel &Model, Key &Key,
-                                 llvm::ArrayRef<uint64_t> Arguments);
+                                 llvm::ArrayRef<uint64_t> Arguments,
+                                 bool Enumerate);
   llvm::Expected<uint64_t> set(const KernelModel &Model, Key &Key,
                                llvm::ArrayRef<uint64_t> Arguments);
 };

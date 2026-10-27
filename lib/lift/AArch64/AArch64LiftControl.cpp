@@ -11,8 +11,11 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "AArch64LiftDetail.h"
+
+#include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/AArch64Lifter.h"
+#include "neverd/lift/AArch64/AArch64Lifter.h"
 
 #include "llvm/Support/Debug.h"
 
@@ -210,33 +213,52 @@ bool AArch64Lifter::liftControl(LiftState &S, const cs_insn *Insn,
       S.emitIntrinsic(Id);
     break;
   }
+  // --- HVC / SMC, BRK (software breakpoint), HLT (debug halt) ---
+  // The call number or the code is the intrinsic's first input: the C
+  // writers print it, and a recompiled HVC or SMC makes the same call.
   case AARCH64_INS_HVC:
-    S.emitIntrinsic(Intrinsic::Hvc);
-    break;
   case AARCH64_INS_SMC:
-    S.emitIntrinsic(Intrinsic::Smc);
-    break;
-
-  // --- BRK (software breakpoint) ---
   case AARCH64_INS_BRK:
-    S.emitIntrinsic(Intrinsic::Brk);
+  case AARCH64_INS_HLT: {
+    const Intrinsic Id = Insn->id == AARCH64_INS_HVC   ? Intrinsic::Hvc
+                         : Insn->id == AARCH64_INS_SMC ? Intrinsic::Smc
+                         : Insn->id == AARCH64_INS_BRK ? Intrinsic::Brk
+                                                       : Intrinsic::Hlt_A64;
+    const std::optional<uint64_t> Code = exceptionCode(ARM64);
+    if (Id == Intrinsic::Brk || Id == Intrinsic::Hlt_A64) {
+      if (Code)
+        S.emitVoidIntrinsic(Id, {NdVar::cst(*Code, 2)});
+      else
+        S.emitVoidIntrinsic(Id);
+      break;
+    }
+    if (!Code) {
+      S.emitIntrinsic(Id);
+      break;
+    }
+    S.emitIntrinsic(Id, NdVar::reg(a64reg::X0, 8), {NdVar::cst(*Code, 2)});
+    // An SMC or HVC #0 follows the SMC Calling Convention, which returns its
+    // results in x0-x3; LowToMed gives it the argument registers it reads.
+    if ((Id == Intrinsic::Hvc || Id == Intrinsic::Smc) && *Code == 0)
+      for (unsigned Result = 0; Result < 4; ++Result)
+        S.emit(NdOp::COPY, NdVar::reg(a64reg::X0 + Result * 8, 8),
+               {S.makeTemp(8)});
     break;
+  }
 
-  // --- HLT (debug halt) ---
-  case AARCH64_INS_HLT:
-    S.emitIntrinsic(Intrinsic::Hlt_A64);
-    break;
-
-  // --- Memory barriers ---
+  // --- Memory barriers, with their option (`dmb ishld`, `dsb sy`) ---
   case AARCH64_INS_DMB:
-    S.emitVoidIntrinsic(Intrinsic::Dmb);
-    break;
   case AARCH64_INS_DSB:
-    S.emitVoidIntrinsic(Intrinsic::Dsb);
+  case AARCH64_INS_ISB: {
+    const Intrinsic Id = Insn->id == AARCH64_INS_DMB   ? Intrinsic::Dmb
+                         : Insn->id == AARCH64_INS_DSB ? Intrinsic::Dsb
+                                                       : Intrinsic::Isb;
+    if (const std::optional<uint64_t> Option = barrierOption(ARM64))
+      S.emitVoidIntrinsic(Id, {NdVar::cst(*Option, 1)});
+    else
+      S.emitVoidIntrinsic(Id);
     break;
-  case AARCH64_INS_ISB:
-    S.emitVoidIntrinsic(Intrinsic::Isb);
-    break;
+  }
 
   // --- System register access ---
   case AARCH64_INS_MRS: {
@@ -261,10 +283,19 @@ bool AArch64Lifter::liftControl(LiftState &S, const cs_insn *Insn,
       S.emitIntrinsic(Intrinsic::A64_GetFPCR, Dst);
       break;
     }
-    S.emitIntrinsic(Intrinsic::Mrs, Dst);
+    // Any other register by its encoding, which the C writers name.
+    S.emitIntrinsic(Intrinsic::Mrs, Dst,
+                    {NdVar::cst(systemInstructionField(Insn), 2)});
     break;
   }
   case AARCH64_INS_MSR: {
+    const uint16_t Field = systemInstructionField(Insn);
+    // An MSR (immediate) writes a PSTATE field, `msr daifset, #2` or
+    // `smstart`, whose immediate the field holds.
+    if (Field >> 14 == 0) {
+      S.emitVoidIntrinsic(Intrinsic::Msr, {NdVar::cst(Field, 2)});
+      break;
+    }
     if (ARM64.op_count < 2)
       break;
     NdVar Src = operandRead(S, ARM64.operands[1]);
@@ -283,48 +314,57 @@ bool AArch64Lifter::liftControl(LiftState &S, const cs_insn *Insn,
       S.emitVoidIntrinsic(Intrinsic::A64_SetFPCR, {Src});
       break;
     }
-    S.emitIntrinsic(Intrinsic::Msr, NdVar::reg(a64reg::X0, 8), {Src});
+    // Any other register by its encoding.  An MSR writes no general
+    // register.
+    S.emitVoidIntrinsic(Intrinsic::Msr, {NdVar::cst(Field, 2), Src});
     break;
   }
 
-  // --- Cache / TLB maintenance ---
-  case AARCH64_INS_SYS:
-    S.emitIntrinsic(Intrinsic::Dc);
+  // --- SYS: cache and TLB maintenance, address translation, and the rest ---
+  case AARCH64_INS_SYS: {
+    // The operation is the field (`dc civac` is #3, c7, c14, #1); a register
+    // operand is its address or its value.  SYS writes no general register.
+    Intrinsic Id = Intrinsic::Dc;
+    if (ARM64.op_count >= 1 &&
+        (ARM64.operands[0].type == AARCH64_OP_SYSREG ||
+         ARM64.operands[0].type == AARCH64_OP_SYSALIAS)) {
+      switch (ARM64.operands[0].sysop.sub_type) {
+      case AARCH64_OP_IC:
+        Id = Intrinsic::Ic;
+        break;
+      case AARCH64_OP_TLBI:
+        Id = Intrinsic::Tlbi;
+        break;
+      case AARCH64_OP_AT:
+        Id = Intrinsic::At;
+        break;
+      default:
+        break;
+      }
+    }
+    const NdVar Field = NdVar::cst(systemInstructionField(Insn), 2);
+    if (ARM64.op_count >= 1 &&
+        ARM64.operands[ARM64.op_count - 1].type == AARCH64_OP_REG)
+      S.emitVoidIntrinsic(
+          Id, {Field, operandRead(S, ARM64.operands[ARM64.op_count - 1])});
+    else
+      S.emitVoidIntrinsic(Id, {Field});
     break;
+  }
 
   // YIELD/WFE/WFI/SEV/SEVL → HINT in Capstone 6 (handled by HINT case)
 
   // --- Exception return ---
-  case AARCH64_INS_ERET:
-    S.emitIntrinsic(Intrinsic::Eret);
-    break;
+  // Restoring ELR/SPSR/PSTATE is not an ordinary function return. Refuse
+  // before publishing LowIR, including when permissive lifting is selected.
+#define NEVERD_A64_EXCEPTION_RETURN_INTRINSIC(Id, InsnID)                      \
+  case AARCH64_INS_##InsnID:                                                   \
+    throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
+#include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.def"
 
   // --- CLREX (clear exclusive monitor) ---
   case AARCH64_INS_CLREX:
     S.emitVoidIntrinsic(Intrinsic::A64_Clrex);
-    break;
-
-  // --- Pointer authentication (ARMv8.3) ---
-  // Capstone 6 consolidates PACIASP/PACIAZ → PACIA, PACIBSP/PACIBZ → PACIB,
-  // etc.
-  case AARCH64_INS_PACIA:
-  case AARCH64_INS_PACIZA:
-    S.emitIntrinsic(Intrinsic::Pacia);
-    break;
-  case AARCH64_INS_PACIB:
-  case AARCH64_INS_PACIZB:
-    S.emitIntrinsic(Intrinsic::Pacib);
-    break;
-  case AARCH64_INS_AUTIA:
-  case AARCH64_INS_AUTIZA:
-    S.emitIntrinsic(Intrinsic::Autia);
-    break;
-  case AARCH64_INS_AUTIB:
-  case AARCH64_INS_AUTIZB:
-    S.emitIntrinsic(Intrinsic::Autib);
-    break;
-  case AARCH64_INS_XPACI:
-    S.emitIntrinsic(Intrinsic::Xpaci);
     break;
 
   default:

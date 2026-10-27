@@ -7,14 +7,18 @@
 #include <unordered_map>
 
 namespace neverd::worker {
-/// Analyst presentation edits, scoped to a function and source representation.
-/// These never change the engine's variables, instructions or inferred types.
+/// Durable source edits. Names/comments are presentation; variable types are
+/// checked engine assertions passed into the source emitter, never text
+/// substitutions or authority for machine analysis and native rewriting.
 class CodeEdits {
 public:
   static void validateRow(const Json &row);
   static Json change(Json row, const Json &request);
   /// Refuse obsolete or ambiguous targets before a durable edit is committed.
   static void validateChange(const Json &view, const Json &request);
+  /// State affecting analysis, excluding only local display names and their
+  /// presentation identities. Unknown fields remain part of the comparison.
+  static Json analysisState(const Json &rows);
   using Resolver =
       std::function<std::optional<std::uint64_t>(const std::string &)>;
   /// The listing's display names for functions the engine leaves generic,

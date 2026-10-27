@@ -11,8 +11,11 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/support/GraphCycles.h"
 
 #include <algorithm>
+#include <map>
+#include <optional>
 #include <set>
 #include <utility>
 #include <vector>
@@ -167,6 +170,48 @@ void modelCallWideIntReturn(MedFunc &Func, Arch TheArch,
   if (HiId < 0)
     HiId = NextId++;
 
+  // The rewrite below inserts operations inside blocks and rewrites PHI
+  // arguments, but never changes the block list, a block's id or successors,
+  // a PHI's output or the block an argument comes from. Index the block graph
+  // once: finding each block by scanning all of them, for every call, made a
+  // 12k-block function take hours. FirstById is the block a scan by id finds
+  // first; BlocksById keeps every block of an id in order.
+  std::map<int, MedBlock *> FirstById;
+  std::map<int, std::vector<MedBlock *>> BlocksById;
+  std::map<int, std::set<int>> SuccIdsById;
+  bool UniqueIds = true;
+  for (auto &B : Func.Blocks) {
+    UniqueIds &= FirstById.emplace(B.Id, &B).second;
+    BlocksById[B.Id].push_back(&B);
+    SuccIdsById[B.Id].insert(B.Succs.begin(), B.Succs.end());
+  }
+  // Strongly connected components of the successor graph reaches() walks
+  // (ids without a block are sinks), computed on first use.
+  std::map<int, size_t> ComponentOf;
+  auto component = [&](int Id) -> std::optional<size_t> {
+    if (ComponentOf.empty()) {
+      std::map<int, size_t> Node;
+      std::vector<int> Ids;
+      for (const auto &[BlockId, Block] : FirstById) {
+        (void)Block;
+        Node.emplace(BlockId, Ids.size());
+        Ids.push_back(BlockId);
+      }
+      std::vector<std::vector<size_t>> Succs(Ids.size());
+      for (size_t I = 0; I < Ids.size(); ++I)
+        for (int Succ : FirstById.at(Ids[I])->Succs)
+          if (const auto It = Node.find(Succ); It != Node.end())
+            Succs[I].push_back(It->second);
+      const std::vector<size_t> Components = stronglyConnectedComponents(Succs);
+      for (size_t I = 0; I < Ids.size(); ++I)
+        ComponentOf.emplace(Ids[I], Components[I]);
+    }
+    const auto It = ComponentOf.find(Id);
+    if (It == ComponentOf.end())
+      return std::nullopt;
+    return It->second;
+  };
+
   // Whether block \p From reaches block \p To along successor edges.
   auto reaches = [&](int From, int To) {
     std::set<int> Seen;
@@ -178,11 +223,9 @@ void modelCallWideIntReturn(MedFunc &Func, Arch TheArch,
         return true;
       if (!Seen.insert(Id).second)
         continue;
-      for (const auto &B : Func.Blocks)
-        if (B.Id == Id) {
-          Work.insert(Work.end(), B.Succs.begin(), B.Succs.end());
-          break;
-        }
+      if (const auto It = FirstById.find(Id); It != FirstById.end())
+        Work.insert(Work.end(), It->second->Succs.begin(),
+                    It->second->Succs.end());
     }
     return false;
   };
@@ -191,20 +234,26 @@ void modelCallWideIntReturn(MedFunc &Func, Arch TheArch,
   // that does not, such as the exit paths after a call to `main`, merely
   // collects whatever each path left in the register.
   auto succHasRegPhi = [&](int BlockId, uint64_t RegOff) -> bool {
-    for (const auto &B : Func.Blocks) {
-      bool IsSucc = false;
-      for (const auto &Cur : Func.Blocks)
-        if (Cur.Id == BlockId)
-          for (int S : Cur.Succs)
-            if (S == B.Id)
-              IsSucc = true;
-      if (!IsSucc || !reaches(B.Id, BlockId))
+    const auto Succs = SuccIdsById.find(BlockId);
+    if (Succs == SuccIdsById.end())
+      return false;
+    for (int Succ : Succs->second) {
+      const auto Blocks = BlocksById.find(Succ);
+      if (Blocks == BlocksById.end())
         continue;
-      for (const auto &Phi : B.Phis)
-        if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == RegOff)
-          for (const auto &A : Phi.Args)
-            if (A.first == BlockId)
-              return true;
+      for (const MedBlock *B : Blocks->second) {
+        bool Merges = false;
+        for (const auto &Phi : B->Phis)
+          if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == RegOff)
+            for (const auto &A : Phi.Args)
+              Merges |= A.first == BlockId;
+        // With unique ids, BlockId's successor list is the edge reaches()
+        // follows, so a successor leads back exactly when it shares
+        // BlockId's component.
+        if (Merges && (UniqueIds ? component(B->Id) == component(BlockId)
+                                 : reaches(B->Id, BlockId)))
+          return true;
+      }
     }
     return false;
   };
@@ -432,12 +481,8 @@ void modelCallWideIntReturn(MedFunc &Func, Arch TheArch,
         Work.pop_back();
         if (!Seen.insert(State.BlockId).second)
           continue;
-        MedBlock *SB = nullptr;
-        for (auto &B : Func.Blocks)
-          if (B.Id == State.BlockId) {
-            SB = &B;
-            break;
-          }
+        const auto Found = FirstById.find(State.BlockId);
+        MedBlock *SB = Found == FirstById.end() ? nullptr : Found->second;
         if (!SB || SB->Preds.size() != 1)
           continue;
 
@@ -485,11 +530,12 @@ void modelCallWideIntReturn(MedFunc &Func, Arch TheArch,
             Work.push_back({Succ, State.Lo, State.Hi});
       }
 
-      for (int Succ : Blk.Succs)
-        for (auto &B : Func.Blocks) {
-          if (B.Id != Succ)
-            continue;
-          for (auto &Phi : B.Phis)
+      for (int Succ : Blk.Succs) {
+        const auto Blocks = BlocksById.find(Succ);
+        if (Blocks == BlocksById.end())
+          continue;
+        for (MedBlock *B : Blocks->second)
+          for (auto &Phi : B->Phis)
             for (auto &A : Phi.Args) {
               if (A.first != Blk.Id || A.second.Kind != MedVar::Reg)
                 continue;
@@ -501,7 +547,7 @@ void modelCallWideIntReturn(MedFunc &Func, Arch TheArch,
                 A.second.SSAVer = HiVer;
               }
             }
-        }
+      }
       OI += 2;
     }
   }

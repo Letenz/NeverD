@@ -16,6 +16,12 @@ namespace neverd::emulation {
 struct ExecutionLimits {
   uint64_t Instructions, Events, TimeoutMicroseconds;
 };
+enum class ExecutionTimePolicy {
+#define NEVERD_EXECUTION_TIME_POLICY(Name, Text) Name,
+#include "neverd/emulation/ExecutionBudget.def"
+#undef NEVERD_EXECUTION_TIME_POLICY
+};
+const char *executionTimePolicyName(ExecutionTimePolicy Policy);
 
 /// One caller-confined budget shared by all CPUs, threads and continuations of
 /// a workload. It cannot be copied, moved or reset to replenish resources.
@@ -27,6 +33,29 @@ public:
   using Clock = std::chrono::steady_clock;
   static llvm::Expected<std::unique_ptr<ExecutionBudget>>
   create(ExecutionLimits Limits, Clock::time_point Now = Clock::now());
+  static llvm::Expected<std::unique_ptr<ExecutionBudget>>
+  createWithTimePolicy(ExecutionLimits Limits, ExecutionTimePolicy Policy,
+                       Clock::time_point Now = Clock::now());
+
+  /// One owned active-work interval. Nested intervals charge their union once;
+  /// idle time between intervals is excluded under ActiveWork. The budget must
+  /// outlive its scopes. close() supports explicit clock samples in tests;
+  /// destruction closes a remaining interval with the current monotonic clock.
+  class WorkScope final {
+  public:
+    ~WorkScope();
+    WorkScope(const WorkScope &) = delete;
+    WorkScope &operator=(const WorkScope &) = delete;
+    llvm::Error close(Clock::time_point Now = Clock::now());
+
+  private:
+    friend class ExecutionBudget;
+    explicit WorkScope(ExecutionBudget *Budget) : Budget(Budget) {}
+    ExecutionBudget *Budget;
+  };
+  llvm::Expected<std::unique_ptr<WorkScope>>
+  enterWork(Clock::time_point Now = Clock::now());
+  ExecutionTimePolicy timePolicy() const { return Policy; }
 
   ExecutionBudget(const ExecutionBudget &) = delete;
   ExecutionBudget &operator=(const ExecutionBudget &) = delete;
@@ -46,10 +75,17 @@ public:
 
 private:
   ExecutionBudget(ExecutionLimits Limits, Clock::time_point Start,
-                  Clock::time_point Deadline)
-      : Limits(Limits), Start(Start), Deadline(Deadline) {}
+                  Clock::time_point Deadline, ExecutionTimePolicy Policy)
+      : Limits(Limits), Start(Start), Deadline(Deadline), Policy(Policy),
+        LastWorkEnd(Start) {}
+  void leaveWork(Clock::time_point Now) noexcept;
   const ExecutionLimits Limits;
   const Clock::time_point Start, Deadline;
+  const ExecutionTimePolicy Policy;
+  Clock::duration ActiveElapsed{};
+  Clock::time_point ActiveStart{}, ActiveDeadline{}, LastWorkEnd;
+  mutable Clock::time_point ActiveSample{};
+  uint64_t WorkDepth = 0;
   uint64_t Instructions = 0, Events = 0;
 };
 } // namespace neverd::emulation

@@ -189,7 +189,8 @@ KernelModel::captureUsbIdlePermission(uint64_t PDO) const {
       if (Device.UsbIdle && Device.ParentID == ParentID &&
           Device.UsbIdle->Role == DriverUsbIdleRole::CompositeFunction) {
         const auto Found = PnpDevices.find(Device.ID);
-        if (Found == PnpDevices.end() || !isProviderDevice(Found->second.PDO))
+        if (Found == PnpDevices.end() ||
+            !isPnpProviderDevice(Found->second.PDO))
           return usbError("composite permission requires every live member");
         Members.push_back(Found->second.PDO);
       }

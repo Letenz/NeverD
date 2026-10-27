@@ -11,6 +11,8 @@
 
 #include "Reader.h"
 
+#include "neverd/web/Limits.h"
+
 #include <set>
 
 namespace neverd::web::sea_detail {
@@ -66,7 +68,7 @@ class Resources {
     const auto H = metadata({At, 16});
     const auto Named = number(H, 12, 2), IDs = number(H, 14, 2),
                N = Named + IDs;
-    if (N > 4096 - Entries)
+    if (N > ::neverd::limits::web::kMaxPESEAEntries - Entries)
       throw Error("sea_native_table_budget_exceeded");
     Entries += N;
     const auto D = metadata({uint64_t(At) + 16, N * 8});
@@ -163,14 +165,16 @@ Location locatePE(const Reader &R) {
   if (!DOS.starts_with("MZ"))
     throw Error("sea_unsupported_container");
   const auto At = number(DOS, 60, 4);
-  if (At < 64 || At > 1024 * 1024)
+  if (At < 64 || At > ::neverd::limits::web::kMaxPESEAHeaderOffset)
     throw Error("sea_unsupported_container");
   const auto H = R.read({At, 24});
   const auto Machine = number(H, 4, 2), Count = number(H, 6, 2);
   if (H.compare(0, 4, "PE\0\0", 4) || (Machine != 0x8664 && Machine != 0xaa64))
     throw Error("sea_unsupported_container");
   const auto OptionalSize = number(H, 20, 2);
-  if (!Count || Count > 512 || OptionalSize < 136 || OptionalSize > 4096)
+  if (!Count || Count > ::neverd::limits::web::kPELocatePECountLimit ||
+      OptionalSize < 136 ||
+      OptionalSize > ::neverd::limits::web::kPELocatePEOptionalSizeLimit)
     throw Error("sea_native_table_budget_exceeded");
   const auto O = R.read({At + 24, OptionalSize});
   const auto Directories = number(O, 108, 4);

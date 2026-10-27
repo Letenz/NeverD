@@ -7,6 +7,7 @@
 /// Opaque FILE lifetime, buffering and positioning over the shared Linux FD
 /// owner. API 28 behavior is documented in docs/android-native-emulation.md.
 #include "AndroidInternal.h"
+#include "AndroidThreads.h"
 
 #include "neverd/emulation/CPU.h"
 
@@ -30,7 +31,7 @@ Bionic::streamService(linux_model::ServiceKind Kind, uint32_t FD, uint64_t A1,
   if (auto E = access(0, 0, 0))
     return std::move(E);
   ProcessServiceEvent Event{0, 0, {FD, A1, A2, 0, 0, 0}, std::nullopt};
-  auto R = Kernel.handle(Kind, Event);
+  auto R = kernelService(Kind, Event);
   if (!R)
     return R.takeError();
   if (*R && failed(**R))
@@ -45,31 +46,34 @@ llvm::Expected<Bionic::InputStream *> Bionic::inputStream(uint64_t Handle) {
   auto I = InputStreams.find(Handle);
   if (I == InputStreams.end())
     return failure("invalid or retired Bionic FILE handle");
+  if (I->second.Reader && *I->second.Reader != threadID())
+    return failure("concurrent access to a suspended Bionic FILE is unmodeled");
   if (auto E = opaqueHandle(Handle))
     return std::move(E);
   return &I->second;
 }
 
-llvm::Error Bionic::opaqueHandle(uint64_t Handle) {
-  // The token page deliberately has no readable FILE layout. Its second page
-  // supplies the one-byte buffer used when allocation fails or buffering is
-  // disabled. Both pages count against the workload's memory limit.
+llvm::Error Bionic::opaqueHandle(uint64_t Handle, llvm::StringRef Kind) {
+  // An opaque token deliberately exposes no readable guest layout. FILE
+  // allocations have a separate second page for their fallback byte buffer.
   auto Mapped = CPU.canAccess(Handle, PageSize, UserAccessible);
   if (!Mapped)
     return Mapped.takeError();
   if (!*Mapped)
-    return failure("unmapped Bionic FILE handle");
+    return failure(llvm::Twine("unmapped Bionic ") + Kind + " handle");
   for (unsigned Permission : {Read, Write, Execute}) {
     auto Changed = CPU.canAccess(Handle, 1, Permission | UserAccessible);
     if (!Changed)
       return Changed.takeError();
     if (*Changed)
-      return failure("Bionic FILE storage must remain opaque");
+      return failure(llvm::Twine("Bionic ") + Kind +
+                     " storage must remain opaque");
   }
   return llvm::Error::success();
 }
 
-llvm::Expected<std::optional<uint64_t>> Bionic::streamBufferSize(uint32_t FD) {
+llvm::Expected<std::optional<uint64_t>>
+Bionic::streamBufferSize(uint32_t FD, std::optional<uint64_t> SuppliedSize) {
   auto Status = Kernel.descriptorStatus(FD);
   if (!Status)
     return std::optional<uint64_t>();
@@ -81,6 +85,11 @@ llvm::Expected<std::optional<uint64_t>> Bionic::streamBufferSize(uint32_t FD) {
   }
   const auto BlockSize =
       std::get<linux_model::LinuxFiles::DescriptorStatus>(*Status).BlockSize;
+  // A supplied nonempty buffer does not use the filesystem size. The size
+  // comparison only controls Bionic's seek optimization, which this model
+  // deliberately does not perform. Still preserve known descriptor errors.
+  if (!BlockSize && SuppliedSize)
+    return SuppliedSize;
   if (!BlockSize) {
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic = "stdio buffering requires explicit file metadata";
@@ -157,7 +166,7 @@ BionicResult Bionic::openStream(const NativeCallEvent &Call) {
     }
   } else {
     ProcessServiceEvent Event{0, 0, {A[0], Flags, 0666, 0, 0, 0}, std::nullopt};
-    auto Opened = Kernel.handle(linux_model::ServiceKind::Open, Event);
+    auto Opened = kernelService(linux_model::ServiceKind::Open, Event);
     if (!Opened)
       return Opened.takeError();
     if (!*Opened)
@@ -181,7 +190,7 @@ BionicResult Bionic::openStream(const NativeCallEvent &Call) {
   }
   ProcessServiceEvent Protect{
       0, 0, {*Token, PageSize, 0, 0, 0, 0}, std::nullopt};
-  auto Protected = Kernel.handle(linux_model::ServiceKind::Mprotect, Protect);
+  auto Protected = kernelService(linux_model::ServiceKind::Mprotect, Protect);
   if (!Protected)
     return Protected.takeError();
   if (!*Protected || **Protected)
@@ -382,7 +391,9 @@ BionicResult Bionic::bufferStream(const NativeCallEvent &Call) {
     return std::optional<BionicValue>();
   std::optional<uint64_t> DefaultSize;
   if (Mode != 2) {
-    auto Queried = streamBufferSize(Stream.FD);
+    auto Queried = streamBufferSize(
+        Stream.FD,
+        Buffer && Size ? std::optional<uint64_t>(Size) : std::nullopt);
     if (!Queried)
       return Queried.takeError();
     if (!*Queried)

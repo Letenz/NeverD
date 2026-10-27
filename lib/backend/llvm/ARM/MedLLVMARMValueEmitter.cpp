@@ -15,10 +15,12 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-arm-value"
+#include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/IntrinsicsARM.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -28,6 +30,48 @@ llvm::Value *MedLLVMEmitter::emitARMIntrinsicValue(const MedOp &Op,
                                                    Intrinsic IC,
                                                    llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
+  // A coprocessor register read runs as itself (`mrc p15, #0, $0, c13, c0,
+  // #3`); an MRRC's registers are the halves of its 64-bit value.
+  if (IC == I::ArmMrc || IC == I::ArmMrrc) {
+    const std::string Asm =
+        Op.NumInputs == 2 && Op.Inputs[1].isConst() &&
+                Op.Output.Size == (IC == I::ArmMrc ? 4 : 8)
+            ? armCoprocessorInstructionAsm(IC, Op.Inputs[1].ConstVal)
+            : std::string();
+    if (Asm.empty())
+      llvm::report_fatal_error(
+          "ARM coprocessor read without its coprocessor field");
+    return Builder.CreateCall(
+        llvm::InlineAsm::get(
+            llvm::FunctionType::get(sizeToType(Op.Output.Size), false), Asm,
+            "=r,~{memory}", /*hasSideEffects=*/true),
+        {}, "coprocessor.register");
+  }
+  // An MRS runs as itself (`mrs $0, apsr`); the lift merges the flags it
+  // keeps into the word.
+  if (IC == I::ArmMrs) {
+    const std::string Asm =
+        Op.NumInputs == 2 && Op.Inputs[1].isConst() && Op.Output.Size == 4
+            ? armStatusInstructionAsm(IC, Op.Inputs[1].ConstVal)
+            : std::string();
+    if (Asm.empty())
+      llvm::report_fatal_error("ARM MRS without its status register field");
+    return Builder.CreateCall(
+        llvm::InlineAsm::get(
+            llvm::FunctionType::get(Builder.getInt32Ty(), false), Asm,
+            "=r,~{memory}", /*hasSideEffects=*/true),
+        {}, "status.register");
+  }
+  // The thread pointer __aeabi_read_tp returns, as LLVM reads it for the
+  // target (an MRC, or that call where the core has no TPIDRURO).
+  if (IC == I::ArmThreadPointer) {
+    if (Op.NumInputs != 1 || Op.Output.Size != 4)
+      llvm::report_fatal_error("ARM thread pointer read of a malformed shape");
+    auto *Read = llvm::Intrinsic::getOrInsertDeclaration(
+        Mod, llvm::Intrinsic::thread_pointer, {Builder.getPtrTy()});
+    return Builder.CreatePtrToInt(
+        Builder.CreateCall(Read, {}, "thread.pointer"), Builder.getInt32Ty());
+  }
   if (IC == I::ArmRbit && Op.Output.Size > 0) {
     auto *OutTy = sizeToType(Op.Output.Size);
     if (Op.NumInputs >= 2) {

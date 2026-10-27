@@ -6,6 +6,8 @@
 
 #include "LoadQuestionDialog.h"
 
+#include "../Config.h"
+
 #include <QCoreApplication>
 #include <QDialogButtonBox>
 #include <QFontMetrics>
@@ -16,14 +18,6 @@
 
 namespace neverd::gui {
 namespace {
-
-// The width of the PDB question, which these sit beside.
-constexpr int DialogWidth = 480;
-/// The dialog's margins, the space between its lines and before its
-/// buttons, on the 4-pixel grid.
-constexpr int Margin = 16;
-constexpr int LineSpacing = 4;
-constexpr int GroupSpacing = 8;
 
 QLabel *line(QWidget *parent, const QString &name) {
   auto *label = new QLabel(parent);
@@ -39,10 +33,15 @@ LoadQuestionDialog::LoadQuestionDialog(const QString &name, const Text &text,
     : QDialog(parent), wholeDetail_(text.detail), elide_(text.elide) {
   setObjectName(name);
   setWindowTitle(text.title);
-  setFixedWidth(DialogWidth);
+  setFixedWidth(::neverd::limits::gui_config::kLoadQuestionDialogDialogWidth);
   auto *layout = new QVBoxLayout(this);
-  layout->setContentsMargins(Margin, Margin, Margin, Margin);
-  layout->setSpacing(LineSpacing);
+  layout->setContentsMargins(
+      ::neverd::limits::gui_config::kLoadQuestionDialogMargin,
+      ::neverd::limits::gui_config::kLoadQuestionDialogMargin,
+      ::neverd::limits::gui_config::kLoadQuestionDialogMargin,
+      ::neverd::limits::gui_config::kLoadQuestionDialogMargin);
+  layout->setSpacing(
+      ::neverd::limits::gui_config::kLoadQuestionDialogLineSpacing);
 
   auto *question = line(this, QStringLiteral("question"));
   question->setWordWrap(true);
@@ -57,7 +56,15 @@ LoadQuestionDialog::LoadQuestionDialog(const QString &name, const Text &text,
                                                      : text.detailToolTip);
     layout->addWidget(detail_);
   }
-  layout->addSpacing(GroupSpacing);
+  if (!text.note.isEmpty()) {
+    auto *note = line(this, text.noteName);
+    note->setWordWrap(true);
+    note->setText(text.note);
+    note->setToolTip(text.noteToolTip);
+    layout->addWidget(note);
+  }
+  layout->addSpacing(
+      ::neverd::limits::gui_config::kLoadQuestionDialogGroupSpacing);
 
   auto *buttons = new QDialogButtonBox(this);
   buttons->setCenterButtons(true);
@@ -65,18 +72,32 @@ LoadQuestionDialog::LoadQuestionDialog(const QString &name, const Text &text,
   auto *no = buttons->addButton(QDialogButtonBox::No);
   yes->setObjectName(QStringLiteral("yes"));
   no->setObjectName(QStringLiteral("no"));
-  yes->setDefault(true);
-  yes->setFocus();
+  // A question about a file that is likely the wrong one defaults to No.
+  QPushButton *answer = text.cautious ? no : yes;
+  answer->setDefault(true);
+  answer->setFocus();
   connect(yes, &QPushButton::clicked, this, &QDialog::accept);
   connect(no, &QPushButton::clicked, this, &QDialog::reject);
   layout->addWidget(buttons);
 
-  // The lines reach the layout's size once its requests are handled.
-  QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
-  layout->activate();
-  setFixedHeight(heightForWidth(width()));
+  fitHeight();
   // The detail line shows from the first paint, before any resize.
   elideDetail();
+}
+
+void LoadQuestionDialog::fitHeight() {
+  // The lines reach the layout's size once its requests are handled.
+  QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+  layout()->activate();
+  setFixedHeight(heightForWidth(width()));
+}
+
+void LoadQuestionDialog::showEvent(QShowEvent *event) {
+  // The style sheet gives the detail line its font as the dialog polishes,
+  // after the constructor measured it: a Chinese or Japanese detail then
+  // needed a pixel more than the dialog had.
+  fitHeight();
+  QDialog::showEvent(event);
 }
 
 void LoadQuestionDialog::resizeEvent(QResizeEvent *event) {

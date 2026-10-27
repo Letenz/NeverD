@@ -79,6 +79,7 @@ __declspec(dllimport) void MmUnlockPages(MDL *);
 __declspec(dllimport) void MmBuildMdlForNonPagedPool(MDL *);
 __declspec(dllimport) void *MmMapLockedPagesSpecifyCache(MDL *, U32, U32,
                                                          void *, U32, U32);
+__declspec(dllimport) void *MmMapLockedPages(MDL *, U8);
 __declspec(dllimport) void MmUnmapLockedPages(void *, MDL *);
 // Also exercise the modeled helper entry, independently of real macro reads.
 __declspec(dllimport) U8 *MmGetSystemAddressForMdlSafe(MDL *, U32);
@@ -174,8 +175,14 @@ static NTSTATUS Dispatch(DEVICE_OBJECT *Ignored, IRP *Request) {
               Temporary->ByteCount != Length)
             Status = StatusInvalidParameter;
         }
-        if (Other)
+        if (Other) {
           MmUnmapLockedPages(Other, Temporary);
+          Other = MmMapLockedPages(Temporary, 0);
+          if (!Other || Other[0] != 0x62 || Other[Length - 1] != 0x84)
+            Status = StatusInvalidParameter;
+          if (Other)
+            MmUnmapLockedPages(Other, Temporary);
+        }
         MmUnlockPages(Temporary);
         IoFreeMdl(Temporary);
       }

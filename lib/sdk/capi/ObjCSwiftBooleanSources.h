@@ -11,6 +11,7 @@
 
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/pipeline/NativeSourceHints.h"
+#include "neverd/sdk/Limits.h"
 
 namespace neverd::sdk {
 inline bool objCSwiftBooleanSourceCallBound(const HighExpr &Expression,
@@ -153,13 +154,12 @@ inline bool objCSwiftBooleanSourceCallBound(const HighExpr &Expression,
   for (const auto &F : Result.HighFuncs)
     Functions.emplace(F.Entry, &F);
   Converter.setFuncNames(&Names);
-  Converter.setJumpTables(Low->JumpTables);
   const auto Replay = Converter.convert(*Med, Image.Arch);
   const auto BoundReplay =
       bindObjCSourceReferences(Replay, Image, nullptr, &Functions);
   std::map<SourceCallOccurrenceKey, const HighExpr *> RawCalls, BoundCalls;
   const auto Collect = [](const HighFunc &F, auto &Calls) {
-    size_t Budget = 100000;
+    size_t Budget = kSourceExpressionWork;
     bool Valid = true;
     walkStmts(F.Body, [&](const HighStmt &S) {
       forEachExpr(S, [&](const ExprPtr &Root) {
@@ -194,7 +194,7 @@ inline bool objCSwiftBooleanSourceCallBound(const HighExpr &Expression,
     if (Found == Calls.end() ||
         Found->second->Operands.size() != Actual.Operands.size())
       return false;
-    size_t Budget = 100000;
+    size_t Budget = kSourceExpressionWork;
     for (size_t I = 0; I < Actual.Operands.size(); ++I)
       if (!Found->second->Operands[I] || !Actual.Operands[I] ||
           !sameSourceExpressionIdentity(*Found->second->Operands[I],
@@ -204,7 +204,7 @@ inline bool objCSwiftBooleanSourceCallBound(const HighExpr &Expression,
   };
   // Count evaluations, not unique expression pointers: sharing one node in
   // two statements cannot reuse this one machine occurrence's evidence.
-  size_t Budget = 100000, Matches = 0;
+  size_t Budget = kSourceExpressionWork, Matches = 0;
   bool Foreign = false;
   std::set<SourceCallOccurrenceKey> Evaluated;
   std::vector<const HighStmt *> Statements;

@@ -41,10 +41,13 @@ LinuxFiles::readLink(uint32_t Directory, uint64_t PathAddress, uint64_t Address,
     return unsupported(Result, FilePathForm);
   // Absolute paths ignore dirfd; targets are copied, never resolved.
   switch (lookupPath(Path->Name, Path->RequiresDirectory)) {
+  case PathKind::UnmodeledProc:
+    return unsupported(Result, "proc entry has no modeled semantics");
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
+  case PathKind::ProcFile:
   case PathKind::File:
   case PathKind::Device:
   case PathKind::Directory:
@@ -55,7 +58,13 @@ LinuxFiles::readLink(uint32_t Directory, uint64_t PathAddress, uint64_t Address,
     break;
   }
   std::vector<uint8_t> Target;
-  if (Options->DynamicProcFDs && Path->Name == "/proc/self") {
+  if (Options->DynamicProc &&
+      procKind(Path->Name, false) == PathKind::SymbolicLink) {
+    auto Name = procLink(Path->Name);
+    if (!Name)
+      return unsupported(Result, "proc link target has no modeled pathname");
+    Target.assign(Name->begin(), Name->end());
+  } else if (Options->DynamicProcFDs && Path->Name == "/proc/self") {
     const auto PID = std::to_string(ProcessID);
     Target.assign(PID.begin(), PID.end());
   } else if (Options->DynamicProcFDs && procDescriptor(Path->Name)) {

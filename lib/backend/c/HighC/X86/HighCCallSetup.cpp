@@ -9,6 +9,8 @@
 
 #include "../HighCWriter.h"
 
+#include "neverd/backend/Limits.h"
+
 #include <functional>
 
 namespace neverd {
@@ -137,7 +139,9 @@ void HighCWriter::hideX86CallPushSetup(const HighFunc &Func) {
             continue;
           std::vector<const HighStmt *> Run;
           bool Matched = false;
-          for (size_t J = I; J > 0 && Run.size() < 8;) {
+          for (size_t J = I;
+               J > 0 && Run.size() < ::neverd::limits::backend::
+                                         kHighCCallSetupWalkRunSizeLimit;) {
             --J;
             const HighStmt &P = Body[J];
             if (P.Kind == StmtKind::Nop ||

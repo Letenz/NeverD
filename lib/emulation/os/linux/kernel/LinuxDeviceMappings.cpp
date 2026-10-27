@@ -5,9 +5,22 @@
 //===----------------------------------------------------------------------===//
 #include "LinuxMemory.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include <algorithm>
 
 namespace neverd::emulation::linux_model {
+std::optional<uint64_t>
+LinuxMemory::binderAddress(const LinuxDeviceState &Device, uint64_t Offset,
+                           uint64_t Size) const {
+  for (const auto &Alias : ReadOnlyDeviceRanges)
+    if (Alias.Owner.get() == &Device &&
+        Alias.Mapping == &Device.BinderMapping && Offset >= Alias.Offset &&
+        Offset - Alias.Offset <= Alias.End - Alias.Begin &&
+        Size <= Alias.End - Alias.Begin - (Offset - Alias.Offset))
+      return Alias.Begin + Offset - Alias.Offset;
+  return std::nullopt;
+}
 std::optional<uint64_t> LinuxMemory::firstDeviceByte(uint64_t Address,
                                                      uint64_t End) const {
   if (Address >= End)
@@ -47,10 +60,13 @@ bool LinuxMemory::canRetireDevices(uint64_t Address, uint64_t Size) const {
       ++Entry.second;
     }
   for (const auto &[Device, Entry] : Dropped)
-    if (uint64_t(Entry.first->use_count()) == Entry.second)
+    if (uint64_t(Entry.first->use_count()) == Entry.second) {
+      if (Device->hasPendingBinderWork())
+        return false;
       for (uint32_t ID : Device->Contexts)
         if (!contextIdle(*Device, ID))
           return false;
+    }
   return true;
 }
 
@@ -199,6 +215,33 @@ LinuxMemory::mapDevice(const ProcessServiceEvent &Event,
   auto Size = roundSize(Length);
   if (!Size || *Size > Limit)
     return std::optional<uint64_t>(uint64_t(0) - NoMemory);
+  if (Device && Device->Binder && Owner) {
+    if (Offset || PageSize != DeviceMappingPageSize ||
+        *Size >
+            ::neverd::limits::emulation::kLinuxDeviceMappingsBinderArenaLimit ||
+        (Flags != 2 && Flags != (2 | 0x4000)) || Protection != ProtRead)
+      return Unsupported();
+    if (!Owner->BinderMapping.Bytes.empty())
+      return std::optional<uint64_t>(uint64_t(0) - 16); // EBUSY
+    auto Address = placement(Hint, *Size);
+    if (!Address)
+      return Address.takeError();
+    if (!*Address)
+      return std::optional<uint64_t>(uint64_t(0) - NoMemory);
+    auto &Mapping = Owner->BinderMapping;
+    Mapping.Bytes.resize(*Size);
+    // A destroyed open may have occupied the same host address as this owner.
+    DeviceStates.erase(&Mapping);
+    DevicePages.erase(&Mapping);
+    auto Mapped = mapDevicePages(**Address, *Size, UserAccessible | Read,
+                                 Mapping, 0, Owner);
+    if (!Mapped)
+      return Mapped.takeError();
+    if (!*Mapped)
+      Mapping.Bytes.clear();
+    return std::optional<uint64_t>(*Mapped ? **Address
+                                           : uint64_t(0) - NoMemory);
+  }
   if (!Device || Flags != MapShared || PageSize != DeviceMappingPageSize ||
       (Protection & ~(ProtRead | ProtWrite | ProtExecute)))
     return Unsupported();
@@ -210,8 +253,11 @@ LinuxMemory::mapDevice(const ProcessServiceEvent &Event,
       Backing = &Mapping;
       break;
     }
-  if (!Backing)
+  if (!Backing) {
+    if (Device->KGSL && Device->KGSL->MemoryObjects && Owner && Owner->GPU)
+      return mapGPUObject(Event, std::move(Owner), Result);
     return Unsupported();
+  }
   if (Device->AccessMode == 1 || (Protection & ~ProtRead))
     return std::optional<uint64_t>(uint64_t(0) - AccessDenied);
   auto Address = placement(Hint, *Size);

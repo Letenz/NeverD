@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "AndroidInternal.h"
+#include "AndroidJavaLibrary.h"
 
 #include "neverd/emulation/ImageMapping.h"
 #include "neverd/loader/BinaryImageModel.h"
@@ -32,6 +33,10 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
                                       const BinaryImage &Image,
                                       const ProcessOptions &Options) {
   const auto &Native = *Options.Android;
+  if (Native.JavaLibrary && (!Native.JNI || !Native.Initialize ||
+                             !validJavaLibraryName(*Native.JavaLibrary)))
+    return failure(
+        "Java library requires JNI, initialized ELF and a logical name");
   if (!Image.isELF() || Image.Arch != Arch::AArch64 ||
       Image.Bits != Bitness::Bits64 || !Image.ELFMetadata ||
       Image.ELFMetadata->Type != ET_DYN)
@@ -153,6 +158,15 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
       Symbols.emplace(Name, PC);
     }
   }
+  if (Native.JNI)
+    if (auto E = initializeJNI(Space, Out))
+      return std::move(E);
+  if (auto E = initializeCalendar(Space, Native, Out))
+    return std::move(E);
+  if (auto E = initializeErrorStrings(Space, Out))
+    return std::move(E);
+  if (auto E = initializeDladdrObservations(Space, Native, Out))
+    return std::move(E);
   for (const auto &Region : Plan->Regions)
     if (auto E = Space.protect(Region.Address, Region.Bytes.size(),
                                Region.Permissions))
@@ -230,6 +244,24 @@ llvm::Expected<LinkedImage> loadImage(AddressSpace &Space,
   };
   if (auto E = Executable(Out.Entry))
     return std::move(E);
+  if (Native.JavaLibrary) {
+    for (const auto &S : Facts->Symbols) {
+      if (S.Name != "JNI_OnLoad" || S.SectionIndex == SHN_UNDEF)
+        continue;
+      if ((S.Info & 15) != STT_FUNC || S.SectionIndex >= SHN_LORESERVE ||
+          (S.Info >> 4 != STB_GLOBAL && S.Info >> 4 != STB_WEAK) ||
+          (S.Other & 3) != STV_DEFAULT)
+        return failure("JNI_OnLoad is not an exported function");
+      auto PC = Address(S.Value);
+      if (!PC)
+        return PC.takeError();
+      if (Out.JNIOnLoad && *Out.JNIOnLoad != *PC)
+        return failure("ambiguous JNI_OnLoad export");
+      if (auto E = Executable(*PC))
+        return std::move(E);
+      Out.JNIOnLoad = *PC;
+    }
+  }
   std::map<int64_t, uint64_t> Tags;
   for (const auto &D : Facts->Dynamic)
     Tags[D.Tag] = D.Value;

@@ -22,15 +22,19 @@
 #include "HighEntryStackOffsets.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighFlowOracle.h"
 #include "neverd/ir/high/HighSourceFlow.h"
-#include "neverd/ir/med/I386PicAddress.h"
+#include "neverd/ir/med/AArch64/AArch64SVEState.h"
+#include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
+#include "neverd/ir/med/X86/I386PicAddress.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/Diagnostic.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
@@ -43,6 +47,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <set>
+#include <stdexcept>
 #include <string_view>
 #include <unordered_set>
 
@@ -53,6 +58,14 @@ namespace neverd {
 void coalesceBranchEntryStatements(HighFunc &Func);
 
 namespace {
+
+TypeRef registerReturnType(std::vector<TypeRef> Members) {
+  TypeRef Record = NdType::makeStruct(std::move(Members));
+  if (!Record)
+    return {};
+  Record->RegisterReturnRecord = true;
+  return !sourceAggregateMembers(Record).empty() ? Record : TypeRef();
+}
 
 /// The C record a struct returned across several registers is: one member
 /// per field register, in the order the call site packs them (an AArch64
@@ -69,11 +82,7 @@ TypeRef multiRegisterReturnType(const std::vector<MedReturnReg> &Fields) {
     Members.push_back(Field.IsFP ? NdType::makeFloat(Field.Size)
                                  : NdType::makeInt(Field.Size, false));
   }
-  TypeRef Record = NdType::makeStruct(std::move(Members));
-  if (!Record)
-    return {};
-  Record->RegisterReturnRecord = true;
-  return !sourceAggregateMembers(Record).empty() ? Record : TypeRef();
+  return registerReturnType(std::move(Members));
 }
 
 // Temporary, opt-in observation of the actual source-recovery conversion.
@@ -83,8 +92,9 @@ class HighConversionTrace {
   Arch Architecture;
   unsigned Invocation = 0;
   bool Enabled = false;
-  static constexpr size_t MaxBytes = 98304;
-  static constexpr unsigned MaxRecords = 4096;
+  static constexpr size_t MaxBytes = ::neverd::limits::ir::kMedToHighMaxBytes;
+  static constexpr unsigned MaxRecords =
+      ::neverd::limits::ir::kMedToHighMaxRecords;
 
   static void variable(llvm::raw_ostream &OS, const MedVar &V) {
     OS << static_cast<unsigned>(V.Kind) << ':' << V.Id << ':' << V.SSAVer << ':'
@@ -170,7 +180,9 @@ public:
       : Med(Med), Architecture(Architecture) {
     const int SavedErrno = errno;
     const char *Selected = std::getenv("NEVERD_HIGH_TRACE_FUNCTION");
-    if (Selected && !Med.Name.empty() && Med.Name.size() <= 256 &&
+    if (Selected && !Med.Name.empty() &&
+        Med.Name.size() <= ::neverd::limits::ir::
+                               kMedToHighHighConversionTraceMedNameSizeLimit &&
         std::string_view(Selected) == std::string_view(Med.Name)) {
       static std::atomic<unsigned> Count{0};
       Invocation = Count.fetch_add(1, std::memory_order_relaxed);
@@ -255,7 +267,7 @@ public:
                       unsigned Depth) -> void {
         if (Body.empty() || Truncated)
           return;
-        if (Depth > 32) {
+        if (Depth > ::neverd::limits::ir::kMedToHighHighWalkWalkDepthLimit) {
           Truncated = true;
           return;
         }
@@ -289,14 +301,19 @@ public:
   }
 };
 
-const MedCallClobber *findCallClobber(const MedFunc &Func, const MedVar &V) {
-  auto It = std::find_if(
-      Func.CallClobbers.begin(), Func.CallClobbers.end(),
-      [&](const MedCallClobber &Clobber) { return Clobber.Value == V; });
-  return It == Func.CallClobbers.end() ? nullptr : &*It;
-}
-
 } // anonymous namespace
+
+const MedCallClobber *
+MedToHighConverter::findCallClobber(const MedVar &V) const {
+  if (!V.isConst()) {
+    const auto It = CallClobberIndex.find({V.Kind, V.Id, V.SSAVer});
+    return It == CallClobberIndex.end() ? nullptr : It->second;
+  }
+  auto It = std::find_if(
+      CurMed->CallClobbers.begin(), CurMed->CallClobbers.end(),
+      [&](const MedCallClobber &Clobber) { return Clobber.Value == V; });
+  return It == CurMed->CallClobbers.end() ? nullptr : &*It;
+}
 
 void fillUnstructuredGotoSkeleton(HighFunc &Func, const MedFunc &Med) {
   Func.Body.clear();
@@ -355,6 +372,22 @@ TypeRef MedToHighConverter::sourceCallResultType(const MedOp &Op) const {
     if (auto Type = sourceABICallResultType(Op.SourceCallHint->Signature);
         Type && Type->Size == Op.Output.Size)
       return Type;
+  // The packed MedIR temporary owns all HFA result registers. Keep those
+  // fields in HighIR instead of inventing an integer wider than the C target
+  // supports. The bound signature validates every result and argument lane.
+  if (Op.ScalarCallSignature && Op.ScalarCallSignature->ReturnElements)
+    if (const auto Signature = boundFloatingCallArguments(
+            Op, TargetArch, Image ? Image->abiFormat() : BinaryFormat::Unknown))
+      if (auto Type = registerReturnType(std::vector<TypeRef>(
+              Signature->ReturnElements,
+              NdType::makeFloat(Signature->ReturnBytes /
+                                Signature->ReturnElements))))
+        return Type;
+  if (Op.CalleeFloatReturnBytes && Op.Output.Kind == MedVar::Reg &&
+      (Op.Output.RegOff == getTargetRegInfo(TargetArch).FPReturnReg ||
+       (Op.ScalarCallSignature && TargetArch == Arch::X86 &&
+        getTargetRegInfo(TargetArch).isX87StackReg(Op.Output.RegOff))))
+    return NdType::makeFloat(Op.CalleeFloatReturnBytes);
   if (Op.Output.Kind == MedVar::Reg && Op.Output.Size == 10 &&
       getTargetRegInfo(TargetArch).isX87StackReg(Op.Output.RegOff))
     return NdType::makeFloat(10);
@@ -371,6 +404,11 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   // The proven GOT base of an unlinked i386 object is address zero.
   if (I386GotBase.count(varKey(V)))
     return HighExpr::makeConst(0, V.Size, ConstantAddressProvenance::Scalar);
+  // A proven get-PC value is the return address its call pushed, and a
+  // PC-rooted sum the number it computes.
+  if (const auto It = I386PcRootedValues.find(varKey(V));
+      It != I386PcRootedValues.end() && It->second.second == V.Size)
+    return i386PcRootedConstant(It->second.first, V.Size);
   // The zero register reads as zero, as the index of `[x11, xzr, lsl #3]`.
   if (const auto Zero = getTargetRegInfo(TargetArch).ZeroRegister;
       Zero && V.Kind == MedVar::Reg && V.RegOff == *Zero)
@@ -480,6 +518,17 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
     }
   }
 
+  // Store a header's scalar result in its declared source type. Machine
+  // consumers still see the numerically extended eighty-bit x87 carrier;
+  // merely forwarding the result need not materialize its raw storage.
+  if (auto It = SourceFloatCallValues.find(varKey(V));
+      It != SourceFloatCallValues.end() && V.Size == 10) {
+    auto Value = HighExpr::makeVar(V, It->second);
+    auto Extended = HighExpr::makeUnary(NdOp::FLOAT_FLOAT2FLOAT, Value);
+    Extended->Type = NdType::makeFloat(10);
+    return HighExpr::makeBitCast(Extended, NdType::makeInt(10, false));
+  }
+
   if (auto It = SourceRecordValues.find(varKey(V));
       It != SourceRecordValues.end() && V.Size == It->second->Size)
     return HighExpr::makeVar(V, It->second);
@@ -566,7 +615,7 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   }
 
   if (CurMed) {
-    if (const MedCallClobber *Clobber = findCallClobber(*CurMed, V)) {
+    if (const MedCallClobber *Clobber = findCallClobber(V)) {
       // Do not remap a caller-saved clobber onto this function's parameters.
       // After GSHandlerCheckCommon, r8 is flags scratch, not ContextRecord;
       // call arguments are recovered from COPYs / homes in collectCallArgs.
@@ -592,7 +641,7 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
           return HighExpr::makeUndef(V.Size);
         Known = std::min(Known, Clobber->PreservedPrefixSize);
         Input = Before;
-        Clobber = findCallClobber(*CurMed, Input);
+        Clobber = findCallClobber(Input);
       } while (Clobber);
       auto Low = sourceBitSlice(medvarToExpr(Input), 0, Known);
       // Calls do not zero the unpreserved suffix. Retain unknown bytes so a
@@ -669,7 +718,8 @@ ExprPtr MedToHighConverter::memoryAddressExpr(const MedVar &V,
 ExprPtr MedToHighConverter::sourceBitSlice(const ExprPtr &Value,
                                            uint64_t ByteOffset, uint16_t Bytes,
                                            unsigned Depth) {
-  if (!Value || !Bytes || Depth > 40)
+  if (!Value || !Bytes ||
+      Depth > ::neverd::limits::ir::kMedToHighConverterSourceBitSliceDepthLimit)
     return HighExpr::makeUndef(Bytes);
   if (Value->Kind == ExprKind::Var && Value->Var.Kind != MedVar::Param)
     if (auto Definition = inlineableDefinition(varKey(Value->Var)))
@@ -753,7 +803,10 @@ ExprPtr MedToHighConverter::forceInlineExpr(const ExprPtr &E) {
   static constexpr int kMaxNodes = limits::kMaxSSANodes;
 
   DepthGuard Guard(Depth, NodeCount);
-  if (!E || Depth > 30 || NodeCount > kMaxNodes)
+  if (!E ||
+      Depth >
+          ::neverd::limits::ir::kMedToHighConverterForceInlineExprDepthLimit ||
+      NodeCount > kMaxNodes)
     return E;
   ++NodeCount;
 
@@ -778,27 +831,53 @@ bool MedToHighConverter::memoryReadReachesCallTarget(
   const MedBlock *Block = CallTargetUse.Block;
   if (!Block || CallTargetUse.CallIdx > Block->Ops.size())
     return false;
-  size_t ReadIdx = CallTargetUse.CallIdx;
-  for (size_t I = CallTargetUse.CallIdx; I-- > 0;) {
-    const MedOp &Op = Block->Ops[I];
-    if (Op.Opcode == NdOp::LOAD && Op.Output.Kind == Value.Kind &&
-        Op.Output.Id == Value.Id && Op.Output.SSAVer == Value.SSAVer) {
-      ReadIdx = I;
-      break;
+  std::vector<CallTargetUseSite> Path;
+  const MedBlock *ReadBlock = nullptr;
+  size_t ReadIdx = 0;
+  size_t Before = CallTargetUse.CallIdx;
+  for (int Depth = 0; Depth < limits::kCallTargetSlotDepth; ++Depth) {
+    if (llvm::any_of(Path, [&](const auto &Use) { return Use.Block == Block; }))
+      return false;
+    Path.push_back({Block, Before});
+    for (size_t I = Before; I-- > 0;) {
+      const MedOp &Op = Block->Ops[I];
+      if (Op.Opcode == NdOp::LOAD && Op.Output.Kind == Value.Kind &&
+          Op.Output.Id == Value.Id && Op.Output.SSAVer == Value.SSAVer) {
+        ReadBlock = Block;
+        ReadIdx = I;
+        break;
+      }
     }
+    if (ReadBlock)
+      break;
+    // A single normal predecessor preserves the original observation's
+    // path. Joins, exceptional entries and cycles need a separate must-proof.
+    if (!CurMed || Block->Preds.size() != 1 || !Block->ExceptionalPreds.empty())
+      return false;
+    const auto Pred = llvm::find_if(CurMed->Blocks, [&](const MedBlock &B) {
+      return B.Id == Block->Preds.front();
+    });
+    if (Pred == CurMed->Blocks.end())
+      return false;
+    Block = &*Pred;
+    Before = Block->Ops.size();
   }
-  if (ReadIdx == CallTargetUse.CallIdx)
+  if (!ReadBlock)
     return false;
-  const MedOp &Read = Block->Ops[ReadIdx];
+  const MedOp &Read = ReadBlock->Ops[ReadIdx];
+  if (Read.MemoryOrdering != NdMemoryOrdering::None ||
+      Read.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
   const uint64_t StackPointer = getTargetRegInfo(TargetArch).StackPointer;
   // Whether \p Address, used by the op at \p Before, is this function's own
   // stack: the stack pointer through copies, zero extensions and constant
   // offsets.
-  auto frameAddress = [&](size_t Before, MedVar Address) {
+  auto frameAddress = [&](const MedBlock &Scope, size_t Before,
+                          MedVar Address) {
     for (size_t I = Before; I-- > 0;) {
       if (Address.Kind == MedVar::Reg && Address.RegOff == StackPointer)
         return true;
-      const MedOp &Def = Block->Ops[I];
+      const MedOp &Def = Scope.Ops[I];
       if (Def.Output.Kind != Address.Kind || Def.Output.Id != Address.Id ||
           Def.Output.SSAVer != Address.SSAVer || Def.NumInputs < 1)
         continue;
@@ -817,29 +896,32 @@ bool MedToHighConverter::memoryReadReachesCallTarget(
   // of image or heap memory name different storage, and so do a heap store
   // and a stack read.  A pointer the function loaded is assumed not to point
   // into its own frame.
-  const bool ReadsFrame = frameAddress(ReadIdx, Read.Inputs[0]);
-  for (size_t I = ReadIdx + 1; I < CallTargetUse.CallIdx; ++I) {
-    const MedOp &Op = Block->Ops[I];
-    if (Op.MemoryOrdering != NdMemoryOrdering::None)
-      return false;
-    // A store, call or atomic can change the memory the read observed.
-    switch (Op.Opcode) {
-    case NdOp::STORE:
-      if (Op.NumInputs >= 1 &&
-          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-          Read.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-          frameAddress(I, Op.Inputs[0]) != ReadsFrame)
-        continue;
-      return false;
-    case NdOp::CALL:
-    case NdOp::INDIR_CALL:
-    case NdOp::INTRINSIC:
-    case NdOp::ATOMIC_XCHG:
-    case NdOp::ATOMIC_ADD:
-    case NdOp::ATOMIC_CMPXCHG:
-      return false;
-    default:
-      break;
+  const bool ReadsFrame = frameAddress(*ReadBlock, ReadIdx, Read.Inputs[0]);
+  for (const auto &Use : Path) {
+    const size_t Begin = Use.Block == ReadBlock ? ReadIdx + 1 : 0;
+    for (size_t I = Begin; I < Use.CallIdx; ++I) {
+      const MedOp &Op = Use.Block->Ops[I];
+      if (Op.MemoryOrdering != NdMemoryOrdering::None)
+        return false;
+      // A store, call or atomic can change the memory the read observed.
+      switch (Op.Opcode) {
+      case NdOp::STORE:
+        if (Op.NumInputs >= 1 &&
+            Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+            Read.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+            frameAddress(*Use.Block, I, Op.Inputs[0]) != ReadsFrame)
+          continue;
+        return false;
+      case NdOp::CALL:
+      case NdOp::INDIR_CALL:
+      case NdOp::INTRINSIC:
+      case NdOp::ATOMIC_XCHG:
+      case NdOp::ATOMIC_ADD:
+      case NdOp::ATOMIC_CMPXCHG:
+        return false;
+      default:
+        break;
+      }
     }
   }
   return true;
@@ -853,7 +935,8 @@ ExprPtr MedToHighConverter::forceInlineCallTarget(const ExprPtr &E) {
   };
   static thread_local int Depth = 0;
   DepthGuard Guard(Depth);
-  if (!E || Depth > 16)
+  if (!E || Depth > ::neverd::limits::ir::
+                        kMedToHighConverterForceInlineCallTargetDepthLimit)
     return E;
   if (E->Kind == ExprKind::Var && E->Var.Id >= 0 && !E->Var.isConst()) {
     auto Key = varKey(E->Var);
@@ -886,7 +969,9 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
   UseCount.clear();
   DefExpr.clear();
   SourceRecordValues.clear();
+  SourceFloatCallValues.clear();
   collectI386GotBase(Med);
+  collectI386PcRootedValues(Med);
   for (const auto &Block : Med.Blocks)
     for (const auto &Op : Block.Ops)
       if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
@@ -894,6 +979,10 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
         const auto Type = sourceCallResultType(Op);
         if (Type->Kind == NdTypeKind::Struct)
           SourceRecordValues.emplace(varKey(Op.Output), Type);
+        else if (Type->Kind == NdTypeKind::Float && Type->Size <= 8 &&
+                 Op.Output.Size == 10 && Op.Output.Kind == MedVar::Reg &&
+                 getTargetRegInfo(TargetArch).isX87StackReg(Op.Output.RegOff))
+          SourceFloatCallValues.emplace(varKey(Op.Output), Type);
       }
   CallOutputs.clear();
   PhiOutputVars.clear();
@@ -1048,6 +1137,7 @@ void MedToHighConverter::attachSEHHandlerEntryCopies(HighFunc &Func,
   // Shared handlers merge their runtime inputs with ordinary predecessors.
   // Source-only unknown SP inputs stay unknown instead of becoming variables.
   std::map<va_t, std::vector<HighStmt>> Copies;
+  std::map<va_t, const MedBlock *> Handlers;
   for (const MedBlock &Block : Med.Blocks)
     for (const PhiNode &Phi : Block.Phis) {
       if (!Phi.ExceptionalEntry)
@@ -1062,9 +1152,36 @@ void MedToHighConverter::attachSEHHandlerEntryCopies(HighFunc &Func,
       }
       Copy.Val = std::move(Code);
       Copies[Block.StartAddr].push_back(std::move(Copy));
+      Handlers.emplace(Block.StartAddr, &Block);
     }
   if (Copies.empty())
     return;
+  // The copies then resume the handler block's code at the first statement
+  // it still has. Instructions that print nothing, such as the `nop` MinGW's
+  // startup code resumes at before its epilogue, leave no statement at the
+  // block's own address, so a jump there would name a label nothing carries.
+  std::set<va_t> StmtAddrs;
+  walkStmts(static_cast<const std::vector<HighStmt> &>(Func.Body),
+            [&](const HighStmt &S) {
+              if (S.Addr != 0 && S.Addr != InvalidVA)
+                StmtAddrs.insert(S.Addr);
+            });
+  std::map<int, const MedBlock *> BlockById;
+  for (const MedBlock &Block : Med.Blocks)
+    BlockById.emplace(Block.Id, &Block);
+  auto ResumeAddress = [&](const MedBlock &Handler) {
+    const MedBlock *Block = &Handler;
+    for (size_t Step = 0; Block && Step < Med.Blocks.size(); ++Step) {
+      const auto It = StmtAddrs.lower_bound(Block->StartAddr);
+      if (It != StmtAddrs.end() && *It < Block->EndAddr)
+        return *It;
+      if (Block->Succs.size() != 1)
+        break;
+      const auto Next = BlockById.find(Block->Succs.front());
+      Block = Next == BlockById.end() ? nullptr : Next->second;
+    }
+    return Handler.StartAddr;
+  };
   walkStmts(Func.Body, [&](HighStmt &S) {
     if (S.Kind != StmtKind::SEHTry)
       return;
@@ -1081,11 +1198,47 @@ void MedToHighConverter::attachSEHHandlerEntryCopies(HighFunc &Func,
       if (Arm.size() == It->second.size()) {
         HighStmt Jump;
         Jump.Kind = StmtKind::Goto;
-        Jump.GotoTarget = S.EHClauses[C].HandlerVA;
+        Jump.GotoTarget = ResumeAddress(*Handlers.at(It->first));
         Arm.push_back(std::move(Jump));
       }
     }
   });
+}
+
+std::set<va_t> MedToHighConverter::dispatcherEntries() const {
+  std::set<va_t> Entries;
+  if (!CurMed)
+    return Entries;
+  for (const MedBlock &Block : CurMed->Blocks)
+    if (!Block.ExceptionalPreds.empty() && Block.StartAddr != 0 &&
+        Block.StartAddr != InvalidVA)
+      Entries.insert(Block.StartAddr);
+  return Entries;
+}
+
+void MedToHighConverter::anchorDispatcherEntries(HighFunc &Func) const {
+  if (!CurMed)
+    return;
+  std::set<va_t> Present;
+  walkStmts(static_cast<const std::vector<HighStmt> &>(Func.Body),
+            [&](const HighStmt &S) { Present.insert(S.Addr); });
+  for (const MedBlock &Block : CurMed->Blocks) {
+    if (Block.ExceptionalPreds.empty() || Block.StartAddr == 0 ||
+        Block.StartAddr == InvalidVA || Block.EndAddr <= Block.StartAddr ||
+        Present.count(Block.StartAddr))
+      continue;
+    auto First = std::find_if(
+        Func.Body.begin(), Func.Body.end(), [&](const HighStmt &S) {
+          return S.Addr > Block.StartAddr && S.Addr < Block.EndAddr;
+        });
+    if (First == Func.Body.end())
+      continue;
+    HighStmt Anchor;
+    Anchor.Kind = StmtKind::Block;
+    Anchor.Addr = Block.StartAddr;
+    Func.Body.insert(First, std::move(Anchor));
+    Present.insert(Block.StartAddr);
+  }
 }
 
 void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
@@ -1093,11 +1246,16 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
     return;
   // The join-default sink models Win64 register joins (structureIfElse).
   const bool LateJoinSink = !CurMed || CurMed->CC == CallingConv::Win64;
+  // The dispatcher enters a landing pad without a jump, so one jump to a pad
+  // is not its only way in.  Moving the pad's code to that jump would leave
+  // its address with no code.
+  const std::set<va_t> DispatcherEntries = dispatcherEntries();
   bool Dirty = hoistTryExitJumps(Func.Body);
   // Cases that only jump to the same tail become one case first; copying
   // the tail into each of them would multiply it.
   Dirty |= groupSwitchCases(Func.Body);
-  Dirty |= duplicateSmallReturnTails(Func.Body);
+  Dirty |= duplicateSmallReturnTails(Func.Body, /*PrintedSize=*/false,
+                                     DispatcherEntries);
   // Region splices nest whole multi-block regions, so they run only after
   // the local rewrites have settled.  The late rewrites can leave new jumps
   // to a small return tail; those get one more tail-duplication pass.
@@ -1121,15 +1279,19 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
         Rewritten = busiestExitFollowsTheSwitch(Func.Body);
         Rewritten |= breakToTheLoopFollow(Func.Body);
       } else
-        Rewritten = duplicateSmallReturnTails(Func.Body) |
-                    duplicateSmallJumpTails(Func.Body);
+        Rewritten = duplicateSmallReturnTails(Func.Body, /*PrintedSize=*/false,
+                                              DispatcherEntries) |
+                    duplicateSmallJumpTails(Func.Body, DispatcherEntries);
       // The last phase always runs its rounds: the dead-code cleanup above
       // can leave a jump that now just falls through.
       if (!Rewritten && Phase != 5)
         continue;
       Dirty |= Rewritten;
     }
-    for (int Round = 0; Round < 8; ++Round) {
+    for (int Round = 0;
+         Round < ::neverd::limits::ir::
+                     kMedToHighMedToHighConverterReduceLateGotosRoundLimit;
+         ++Round) {
       const bool Grouped =
           groupSwitchCases(Func.Body) | dropJumpsToTheNextStatement(Func.Body) |
           hoistTryExitJumps(Func.Body) |
@@ -1144,7 +1306,8 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
           (Phase != 0 && flattenBlocks(Func.Body)) |
           (Phase != 0 && loopifyTrailingArmBodies(Func.Body)) |
           (Phase != 0 && hoistSharedArmTails(Func.Body));
-      if (!reduceSingleUseGotos(Func.Body, /*SpliceRegions=*/Phase != 0) &&
+      if (!reduceSingleUseGotos(Func.Body, /*SpliceRegions=*/Phase != 0,
+                                DispatcherEntries) &&
           !Grouped)
         break;
       Dirty = true;
@@ -1154,7 +1317,18 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
     eliminateDeadStmts(Func);
 }
 
+void MedToHighConverter::validateCallContracts(const MedFunc &Med) {
+  for (const MedBlock &Block : Med.Blocks)
+    for (const MedOp &Op : Block.Ops)
+      if (Op.X87ImportArguments)
+        throw std::runtime_error(
+            "C source output requires a native x87 import call adapter");
+}
+
 HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
+  if (const char *Error = validateAArch64SVEState(Med, TheArch))
+    throw std::runtime_error(Error);
+  validateCallContracts(Med);
   const ExceptionFunction *EH =
       Med.ExceptionMetadata ? &*Med.ExceptionMetadata : nullptr;
   if (!EH || !EH->SEH || EH->SEH->Scopes.empty() || EH->Cxx || EH->Itanium ||
@@ -1165,13 +1339,41 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   // ranges unstructured is kept; on a tie reverse postorder stays.  How many
   // gotos either prints never enters the choice.  The observers see only the
   // conversion that is kept.
+  const bool Observed =
+      ExpressionObserver || ExpressionCloneObserver || StatementObserver;
+  if (Observed && ObservationReset) {
+    // Reverse postorder is kept unless it leaves a guarded range
+    // unstructured, so the observers watch it, and are told to forget it
+    // only when address order does better.
+    SEHAddressOrder = false;
+    HighFunc Func = convertOnce(Med, TheArch);
+    if (Func.UnstructuredExceptionRegions) {
+      auto Expression = std::move(ExpressionObserver);
+      auto Clone = std::move(ExpressionCloneObserver);
+      auto Statement = std::move(StatementObserver);
+      ExpressionObserver = {};
+      ExpressionCloneObserver = {};
+      StatementObserver = {};
+      SEHAddressOrder = true;
+      const HighFunc Ordered = convertOnce(Med, TheArch);
+      ExpressionObserver = std::move(Expression);
+      ExpressionCloneObserver = std::move(Clone);
+      StatementObserver = std::move(Statement);
+      if (Ordered.UnstructuredExceptionRegions <
+          Func.UnstructuredExceptionRegions) {
+        ObservationReset();
+        Func = convertOnce(Med, TheArch);
+      }
+    }
+    SEHAddressOrder = false;
+    return Func;
+  }
   auto SavedExpression = std::move(ExpressionObserver);
   auto SavedClone = std::move(ExpressionCloneObserver);
   auto SavedStatement = std::move(StatementObserver);
   ExpressionObserver = {};
   ExpressionCloneObserver = {};
   StatementObserver = {};
-  const bool Observed = SavedExpression || SavedClone || SavedStatement;
   SEHAddressOrder = false;
   HighFunc Func = convertOnce(Med, TheArch);
   if (Func.UnstructuredExceptionRegions) {
@@ -1198,8 +1400,15 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   auto TStart = std::chrono::steady_clock::now();
   TargetArch = TheArch;
   CurMed = &Med;
+  CallClobberIndex.clear();
+  for (const auto &Clobber : Med.CallClobbers) {
+    const auto &V = Clobber.Value;
+    if (!V.isConst())
+      CallClobberIndex.try_emplace({V.Kind, V.Id, V.SSAVer}, &Clobber);
+  }
   ParamCopyIndexFunc = nullptr;
   LoadedEntrySlotsFor = nullptr;
+  LeftByCallsFor = nullptr;
   EntryOffsetDefsFor = nullptr;
   DynamicStackFor = nullptr;
   EntryStackOffsets.reset();
@@ -1207,7 +1416,15 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
                          ? sourceABIParameters(*Med.SourceTypeHint)
                          : std::vector<SourceABIParameter>{};
   HighFunc Func;
+  ReturnProtectionOps.clear();
+  if (TheArch == Arch::AArch64)
+    if (auto Projection = findAArch64ReturnProtection(
+            Med, Image ? Image->abiFormat() : BinaryFormat::Unknown)) {
+      Func.ReturnProtection = Projection->Protection;
+      ReturnProtectionOps = std::move(Projection->Operations);
+    }
   Func.Entry = Med.Entry;
+  Func.FrameBytes = Med.FrameBytes;
   Func.FrameSize = Med.FrameSize;
   Func.FrameHeadroom = Med.FrameHeadroom;
   // The incoming stack argument homes seeded below, written in place or read
@@ -1232,6 +1449,10 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   Func.DoesNotReturn = Med.DoesNotReturn;
   Func.ReturnsNoValue = Med.ReturnsNoValue;
   Func.IsVariadic = Med.IsVariadic;
+  Func.VaListDisplacement = Med.VaListDisplacement;
+  Func.VaRegisterSaveArea = Med.VaRegisterSaveArea;
+  Func.VaNamedIntegerRegisters = Med.VaNamedIntegerRegisters;
+  Func.VaListCalls = Med.VaListCalls;
   Func.EntryKind = Med.EntryKind;
   Func.ExceptionMetadata = Med.ExceptionMetadata;
   Func.HasUnresolvedSEHFrame = Med.HasUnresolvedSEHFrame;
@@ -1408,6 +1629,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
       structureExceptionRegions(Func, Med);
     attachSEHHandlerEntryCopies(Func, Med);
     reduceLateGotos(Func);
+    anchorDispatcherEntries(Func);
     Trace.high(Func, "after-exceptions");
     return Func;
   }
@@ -1465,7 +1687,8 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   loopJumpsAsBreakAndContinue(Func.Body);
   // Jumps to a return tail that structuring left become copies of it when
   // the tail prints short; earlier, such a jump may still become a break.
-  duplicateSmallReturnTails(Func.Body, /*PrintedSize=*/true);
+  duplicateSmallReturnTails(Func.Body, /*PrintedSize=*/true,
+                            dispatcherEntries());
   foldTempsInReturnTails(Func.Body);
   mergeJumpsIntoNextIfArms(Func);
   // Names merge last: every earlier pass may still move statements as if
@@ -1479,6 +1702,11 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   narrowLocals(Func);
   chooseIntegerSignedness(Func);
   nameRepeatedValues(Func);
+  // The passes since the last dead-code round fold and merge statements by
+  // the jumps that enter them, so a landing pad can lose the statement its
+  // label sits on.
+  anchorDispatcherEntries(Func);
+  recognizeVaStartForwarder(Func, TheArch);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
 
@@ -1488,7 +1716,8 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
             .count();
     const char *Detail = std::getenv("NEVERD_HIGHIR_DETAIL");
     const bool WantDetail = Detail && Detail[0] == '1' && Detail[1] == '\0';
-    if (TotalMs > 1000 || WantDetail) {
+    if (TotalMs > ::neverd::limits::ir::kSlowMedToHighReportMilliseconds ||
+        WantDetail) {
       auto ElapsedMs = [](auto Start, auto End) {
         return std::chrono::duration_cast<std::chrono::milliseconds>(End -
                                                                      Start)

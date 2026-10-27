@@ -8,6 +8,8 @@
 
 #include "RegistrationStateSolver.h"
 
+#include "neverd/loader/RegistrationScopeGraph.h"
+
 namespace neverd::registration_state {
 
 bool RegistrationStateSolver::transferBorrowedJump(size_t I, Domain &After,
@@ -29,8 +31,9 @@ bool RegistrationStateSolver::transferBorrowedJump(size_t I, Domain &After,
   if (!Conditional || !Conditional->Complete || !Buffer.JumpCapture ||
       !Conditional->JumpBuffers.count(*Buffer.JumpCapture) || Buffer.Offset ||
       Buffer.EntryOffset || Buffer.CallbackAddress || Buffer.SEHException ||
-      Buffer.ReturnPC || Value.MayBeFrame ||
-      After.Levels != std::set<int32_t>{-1} ||
+      Buffer.ReturnPC || !Value.isFrameIndependentScalar() ||
+      After.Levels != std::set<int32_t>{registrationOutsideTryLevel(EH4)} ||
+      (EH4 && (!CompleteCookies || !cookiesReady(After.Frame))) ||
       (After.Callback && !validateSEHInvocationBlock(I)) ||
       !charge(Conditional->JumpResumes.size() + 1))
     return Refuse();

@@ -24,21 +24,22 @@
 #include "MedVariadicDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/med/MedCallConvention.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <functional>
+#include <map>
+#include <optional>
+#include <set>
 
 namespace neverd {
 namespace med_variadic_detail {
 
-std::optional<int64_t> entrySpDelta(const VariadicValueIndex &Index,
-                                    uint64_t SpOff, const MedVar &Root,
+std::optional<int64_t> entrySpDelta(VariadicScan &S, const MedVar &Root,
                                     int Depth) {
   using Key = VariadicValueIndex::Key;
-  const auto &Definitions = Index.Definitions;
-  const auto &AmbiguousDefinitions = Index.AmbiguousDefinitions;
-  const auto &Phis = Index.Phis;
-  const auto &AmbiguousPhis = Index.AmbiguousPhis;
 
   std::set<Key> Active;
   std::function<std::optional<int64_t>(const MedVar &, int)> Eval =
@@ -53,9 +54,14 @@ std::optional<int64_t> entrySpDelta(const VariadicValueIndex &Index,
       return std::nullopt;
     if (V.Kind != MedVar::Reg && V.Kind != MedVar::Temp)
       return std::nullopt;
-    if (V.Kind == MedVar::Reg && V.RegOff == SpOff && V.SSAVer == 0)
+    if (V.Kind == MedVar::Reg && V.RegOff == S.SpOff && V.SSAVer == 0)
       return int64_t{0};
 
+    const auto &Index = S.values();
+    const auto &Definitions = Index.Definitions;
+    const auto &AmbiguousDefinitions = Index.AmbiguousDefinitions;
+    const auto &Phis = Index.Phis;
+    const auto &AmbiguousPhis = Index.AmbiguousPhis;
     const Key K = VariadicValueIndex::keyOf(V);
     if (!Active.insert(K).second || AmbiguousDefinitions.count(K) ||
         AmbiguousPhis.count(K))
@@ -116,7 +122,10 @@ std::optional<int64_t> entrySpDelta(const VariadicValueIndex &Index,
       return std::nullopt;
     }
   };
-  return Eval(Root, Depth > 0 ? 64 - Depth : 64);
+  return Eval(
+      Root, Depth > 0
+                ? 64 - Depth
+                : ::neverd::limits::ir::kMedVariadicEntrySpDeltaDepth0Default);
 }
 
 // Whether \p V is the x86-64 SysV va_start word ((fp_offset << 32) | gp_offset)
@@ -149,6 +158,47 @@ int countParamRegSpills(const MedFunc &Func, llvm::ArrayRef<uint64_t> Regs) {
   return static_cast<int>(Seen.size());
 }
 
+int firstSavedArgumentRegister(VariadicScan &S,
+                               std::optional<int64_t> LastSlot) {
+  const llvm::ArrayRef<uint64_t> Regs = S.TRI.IntParamRegs;
+  // Each register's spill slots, as offsets from the entry stack pointer.
+  std::map<size_t, std::set<int64_t>> Slots;
+  for (const auto &Blk : S.Func.Blocks)
+    for (const auto &Op : Blk.Ops) {
+      if (Op.Opcode != NdOp::STORE || Op.NumInputs < 2 ||
+          Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+        continue;
+      const MedVar &Value = Op.Inputs[1];
+      if (Value.Kind != MedVar::Reg || Value.SSAVer != 0 ||
+          Value.Size != S.TRI.PointerSize)
+        continue;
+      const auto *It = llvm::find(Regs, Value.RegOff);
+      if (It == Regs.end())
+        continue;
+      if (auto Offset = entrySpDelta(S, Op.Inputs[0], 0))
+        Slots[static_cast<size_t>(It - Regs.begin())].insert(*Offset);
+    }
+  // Walk down from the last register while each register's slot sits just
+  // below the next's.
+  size_t First = Regs.size();
+  std::set<int64_t> Above;
+  while (First > 0) {
+    const auto It = Slots.find(First - 1);
+    if (It == Slots.end())
+      break;
+    std::set<int64_t> Chained;
+    for (int64_t Offset : It->second)
+      if (First == Regs.size() ? !LastSlot || Offset == *LastSlot
+                               : Above.count(Offset + S.TRI.PointerSize))
+        Chained.insert(Offset);
+    if (Chained.empty())
+      break;
+    Above = std::move(Chained);
+    --First;
+  }
+  return static_cast<int>(First);
+}
+
 } // namespace med_variadic_detail
 
 using namespace med_variadic_detail;
@@ -173,6 +223,10 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
   bool Marked = false;
   std::optional<int> FirstVariadicRegister;
   std::optional<int> FirstVariadicVectorRegister;
+  std::optional<uint64_t> X64VaStartWord;
+  Func.VaListDisplacement.reset();
+  Func.VaRegisterSaveArea.reset();
+  Func.VaNamedIntegerRegisters = -1;
   switch (TargetArch) {
   case Arch::X64: {
     uint64_t VaStartWord = 0;
@@ -180,10 +234,12 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
     // fp_offset, past the integer save slots, steps over each named vector
     // register's.  The integer registers stay parameters: every call passes
     // them all.
-    if (Marked)
+    if (Marked) {
       FirstVariadicVectorRegister =
           static_cast<int>(((VaStartWord >> 32) - limits::kX64VaFpOffsetMin) /
                            limits::kX64VaFpOffsetStep);
+      X64VaStartWord = VaStartWord;
+    }
     break;
   }
   case Arch::X86:
@@ -200,6 +256,8 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
     break;
   case Arch::ARM:
     Marked = hasAAPCS32VariadicPrologue(S);
+    if (Marked)
+      FirstVariadicRegister = aapcs32FirstVariadicRegister(S);
     break;
   default:
     break;
@@ -215,7 +273,7 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
     for (const auto &Op : Blk.Ops)
       if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
           Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
-        if (auto D = entrySpDelta(S.values(), S.SpOff, Op.Inputs[1], 0))
+        if (auto D = entrySpDelta(S, Op.Inputs[1], 0))
           if (*D >= 0 && *D <= limits::kVariadicOverflowBaseMax)
             if (!Base || *D < *Base)
               Base = *D;
@@ -227,6 +285,19 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
       Base.value_or(TRI.CallPushesReturnAddress ? TRI.PointerSize : 0);
   Func.VariadicFirstRegister = FirstVariadicRegister.value_or(-1);
   Func.VariadicFirstVectorRegister = FirstVariadicVectorRegister.value_or(-1);
+  // Where the prologue initializes one va_list, gp_offset counts the named
+  // integer parameters ahead of the saved registers.  A named vector
+  // parameter's place among the integer ones is unknown, so only a function
+  // that takes none (fp_offset past the integer save slots alone) has a C
+  // signature to give.
+  if (X64VaStartWord && (*X64VaStartWord >> 32) == limits::kX64VaFpOffsetMin)
+    if (const auto Geometry =
+            x64VaStartGeometry(S, *X64VaStartWord, Func.VariadicOverflowBase)) {
+      Func.VaListDisplacement = Geometry->VaList;
+      Func.VaRegisterSaveArea = Geometry->SaveArea;
+      Func.VaNamedIntegerRegisters = static_cast<int>(
+          (*X64VaStartWord & 0xFFFFFFFFu) / limits::kX64VaGpOffsetStep);
+    }
 }
 
 } // namespace neverd

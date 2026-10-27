@@ -11,10 +11,26 @@
 #define NEVERD_EMULATION_LINUXDEVICEOPTIONS_H
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <vector>
 
 namespace neverd::emulation {
+/// Observation ranges, not a device ABI or a supplied response. A pointer is
+/// resolved once at entry; both snapshots observe that same guest address.
+struct LinuxIoctlTraceMemory {
+  uint64_t Offset = 0, Size = 0;
+  std::optional<uint64_t> PointerOffset;
+};
+struct LinuxIoctlTraceOptions {
+  uint32_t EventLimit = 4096;
+  uint64_t ByteLimit = 1048576;
+  std::map<uint32_t, std::vector<LinuxIoctlTraceMemory>> Requests;
+  /// False records only listed request numbers. Unlisted calls still execute
+  /// normally and consume neither evidence budget nor diagnostic reads.
+  bool IncludeUnlisted = true;
+};
+
 struct LinuxDeviceMemory {
   /// Relative to ioctl's argument, or to the little-endian guest pointer
   /// read at argument + PointerOffset when that offset is present.
@@ -51,9 +67,19 @@ struct LinuxDeviceMapping {
 struct LinuxKGSLContexts {
   /// Select an explicit 40-byte-slot LP64 memstore mapping. The narrow model
   /// supports idle PREAMBLE/NO_GMEM_ALLOC contexts and consumed/retired
-  /// queries; GPU command execution and queued timestamps remain unsupported.
+  /// queries. Without SynchronousA3xx, queued is known zero only without a
+  /// producer for that context; externally submitted queue state is unmodeled.
   uint64_t MemstoreOffset = 0;
   uint32_t ContextLimit = 0;
+  /// Explicit deterministic A3xx PM4 subset. Legacy IB submissions drain
+  /// synchronously; CP_NOP, one-word CP_MEM_WRITE and one indirect IB level
+  /// (PFE/PFD) are executable within a shared 4096-word fetch budget.
+  /// Not a shader engine or a hardware scheduling/timing model.
+  bool SynchronousA3xx = false;
+  /// Coherent, bounded GPUOBJ and legacy GPUMEM_ID RAM objects with shared
+  /// identity and whole-object mappings. No shader, cache maintenance, secure
+  /// or asynchronous allocation.
+  bool MemoryObjects = false;
 };
 
 struct LinuxDeviceOptions {
@@ -69,6 +95,10 @@ struct LinuxDeviceOptions {
   /// supply no MMIO or inferred producer; updates must be explicitly provided.
   std::vector<LinuxDeviceMapping> ReadOnlyMappings;
   std::optional<LinuxKGSLContexts> KGSL;
+  /// Explicit LP64 Binder protocol-8 control/looper and object-free synchronous
+  /// transactions. A guest context manager must execute all service replies;
+  /// remote services and translated object handles are never inferred.
+  bool Binder = false;
 };
 } // namespace neverd::emulation
 #endif

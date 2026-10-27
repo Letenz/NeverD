@@ -13,6 +13,7 @@
 #include "PipelineReturnModelingDetail.h"
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -147,7 +148,8 @@ void materializeKnownStructReturnCallSites(const BinaryImage &Img,
         // complex-return signatures because incidental V-register reads are
         // much easier to confuse with independent scalar state.
         if (Shape.front().IsFP) {
-          auto Sig = libc::libcArityForSymbol(Imp->Name);
+          auto Sig =
+              libc::libcArityForSymbol(Imp->Name, libc::libcVariantOf(Img));
           if (!Sig || !Sig->FpRetComplex || Shape.size() != 2)
             continue;
         }
@@ -319,6 +321,23 @@ void materializeKnownStructReturnCallSites(const BinaryImage &Img,
   }
 }
 
+namespace {
+
+/// Whether \p Fields is the integer register pair a double-word integer
+/// returns in (RDX:RAX, X1:X0), each field a whole register.
+bool isIntegerRegisterPair(const std::vector<MedReturnReg> &Fields,
+                           const TargetRegInfo &TRI) {
+  auto wholeRegister = [&](const MedReturnReg &Field, uint64_t RegOff) {
+    return !Field.IsFP && Field.RegOff == RegOff &&
+           (Field.Size == 0 || Field.Size == TRI.PointerSize);
+  };
+  return TRI.IntReturnReg2 != 0 && Fields.size() == 2 &&
+         wholeRegister(Fields[0], TRI.IntReturnReg) &&
+         wholeRegister(Fields[1], TRI.IntReturnReg2);
+}
+
+} // namespace
+
 // Struct-return tail-call forwarder: `struct S f(args){return g(args);}`
 // lowers at -O2 to a lone `b g`, rewritten (CFGBuilder::rewriteAsTailCall) to
 // `CALL ret; RETURN ret` carrying only the single integer return register.
@@ -340,6 +359,17 @@ void materializeKnownStructReturnCallSites(const BinaryImage &Img,
 // returns only (modelCallStructReturn and the caller-side remodel are gated
 // to PointerSize==8; 32-bit aggregates return through sret / the wide-int
 // pair).
+//
+// An import's stub forwards the same way, through the import's slot: to
+// this image's own routine, when the loader starts the slot there
+// (importOwnRoutine), which is then g; otherwise to another module's
+// routine, which keeps the ABI its declaration gives it, so only a compiler
+// runtime routine declared to return a double word (`__udivti3`,
+// CompilerRuntimeDoubleWord.def) forwards the integer register pair.  A
+// forwarder hands its shape to the function it forwards to, which may come
+// earlier in the list and forward in turn (`__fixxfti` tail-calls the stub of
+// `__fixunsxfti`), so the remodel repeats until no call changes; a remodeled
+// call writes a temp and is not remodeled again.
 void remodelStructReturnForwarderCalls(const BinaryImage &Img,
                                        PipelineResult &Result) {
   const auto &TRI = getTargetRegInfo(Img.Arch);
@@ -347,115 +377,130 @@ void remodelStructReturnForwarderCalls(const BinaryImage &Img,
     std::map<va_t, MedFunc *> ByEntryMut;
     for (auto &MF : Result.MedFuncs)
       ByEntryMut[MF.Entry] = &MF;
-    for (auto &MF : Result.MedFuncs) {
-      // The function returns a multi-register struct (proven by its callers).
-      // The forwarder is detected structurally below by the tail `CALL ret;
-      // RETURN ret` pattern (rewriteAsTailCall's output) -- not by an empty
-      // parameter list, since recoverCallAbi has already surfaced the
-      // forwarded incoming arguments as this function's parameters.
-      if (MF.MultiReturn.size() < 2)
-        continue;
-      bool Rewrote = false;
-      for (auto &Blk : MF.Blocks) {
-        for (size_t I = 0; I + 1 < Blk.Ops.size(); ++I) {
-          auto &Op = Blk.Ops[I];
-          if (Op.Opcode != NdOp::CALL || Op.NumInputs < 1 ||
-              !Op.Inputs[0].isConst() || Op.Output.Kind != MedVar::Reg)
-            continue;
-          auto &Ret = Blk.Ops[I + 1];
-          if (Ret.Opcode != NdOp::RETURN || Ret.NumInputs < 1 ||
-              Ret.Inputs[0].Kind != MedVar::Reg ||
-              Ret.Inputs[0].RegOff != Op.Output.RegOff)
-            continue;
-          // Only an in-module callee can be re-typed to the struct return; a
-          // libc import keeps its own ABI (a struct-returning libc forwarder
-          // would need a libcArity entry, rare -- left as a future item).
-          auto CIt = ByEntryMut.find(Op.Inputs[0].ConstVal);
-          if (CIt == ByEntryMut.end())
-            continue;
-          MedFunc *G = CIt->second;
-          if (G->MultiReturn.empty())
-            G->MultiReturn = MF.MultiReturn; // g returns what f returns
-          // The forwarder's proven shape and the callee's emitted shape must
-          // agree (same register in each field) so the SUBBYTES outputs line
-          // up with both the call's packed result and the RETURN reassembly.
-          if (G->MultiReturn.size() != MF.MultiReturn.size())
-            continue;
-          bool Match = true;
-          for (size_t K = 0; K < MF.MultiReturn.size() && Match; ++K)
-            if (G->MultiReturn[K].RegOff != MF.MultiReturn[K].RegOff)
-              Match = false;
-          if (!Match)
-            continue;
-          const auto &Fields = MF.MultiReturn; // == G->MultiReturn
-
-          // Fresh Id/SSAVer for the flat result temp and per-field extracts.
-          int MaxId = 0, MaxVer = 0;
-          auto bump = [&](const MedVar &V) {
-            MaxId = std::max(MaxId, V.Id);
-            MaxVer = std::max(MaxVer, V.SSAVer);
-          };
-          for (const auto &B : MF.Blocks) {
-            for (const auto &O : B.Ops) {
-              bump(O.Output);
-              for (uint8_t K = 0; K < O.NumInputs; ++K)
-                bump(O.Inputs[K]);
+    bool Changed;
+    do {
+      Changed = false;
+      for (auto &MF : Result.MedFuncs) {
+        // The function returns a multi-register struct (proven by its
+        // callers).  The forwarder is detected structurally below by the
+        // tail `CALL ret; RETURN ret` pattern (rewriteAsTailCall's output)
+        // -- not by an empty parameter list, since recoverCallAbi has
+        // already surfaced the forwarded incoming arguments as this
+        // function's parameters.
+        if (MF.MultiReturn.size() < 2)
+          continue;
+        bool Rewrote = false;
+        for (auto &Blk : MF.Blocks) {
+          for (size_t I = 0; I + 1 < Blk.Ops.size(); ++I) {
+            auto &Op = Blk.Ops[I];
+            if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
+                Op.NumInputs < 1 || !Op.Inputs[0].isConst() ||
+                Op.Output.Kind != MedVar::Reg)
+              continue;
+            auto &Ret = Blk.Ops[I + 1];
+            if (Ret.Opcode != NdOp::RETURN || Ret.NumInputs < 1 ||
+                Ret.Inputs[0].Kind != MedVar::Reg ||
+                Ret.Inputs[0].RegOff != Op.Output.RegOff)
+              continue;
+            bool ThroughImport = false;
+            MedFunc *G =
+                forwardingCallee(Img, Result, ByEntryMut, Op, &ThroughImport);
+            if (G) {
+              // A routine reached through an import's entry took the shape
+              // its body confirms before the return contracts settled
+              // (propagateStructReturnForwarderShapes), or none.
+              if (G->MultiReturn.empty() && !ThroughImport)
+                G->MultiReturn = MF.MultiReturn; // g returns what f returns
+              // The forwarder's proven shape and the callee's emitted shape
+              // must agree (same register in each field) so the SUBBYTES
+              // outputs line up with both the call's packed result and the
+              // RETURN reassembly.
+              if (G->MultiReturn.size() != MF.MultiReturn.size())
+                continue;
+              bool Match = true;
+              for (size_t K = 0; K < MF.MultiReturn.size() && Match; ++K)
+                if (G->MultiReturn[K].RegOff != MF.MultiReturn[K].RegOff)
+                  Match = false;
+              if (!Match)
+                continue;
+            } else if (!isIntegerRegisterPair(MF.MultiReturn, TRI) ||
+                       !importReturnsDoubleWord(Img, Op.Inputs[0].ConstVal,
+                                                TRI.PointerSize)) {
+              // Another module's routine: only a declared double word.
+              continue;
             }
-            for (const auto &Ph : B.Phis) {
-              bump(Ph.Output);
-              for (const auto &A : Ph.Args)
-                bump(A.second);
+            const auto &Fields = MF.MultiReturn;
+
+            // Fresh Id/SSAVer for the flat result temp and per-field
+            // extracts.
+            int MaxId = 0, MaxVer = 0;
+            auto bump = [&](const MedVar &V) {
+              MaxId = std::max(MaxId, V.Id);
+              MaxVer = std::max(MaxVer, V.SSAVer);
+            };
+            for (const auto &B : MF.Blocks) {
+              for (const auto &O : B.Ops) {
+                bump(O.Output);
+                for (uint8_t K = 0; K < O.NumInputs; ++K)
+                  bump(O.Inputs[K]);
+              }
+              for (const auto &Ph : B.Phis) {
+                bump(Ph.Output);
+                for (const auto &A : Ph.Args)
+                  bump(A.second);
+              }
             }
-          }
-          int NextId = MaxId + 1, NextVer = MaxVer + 1;
-          uint16_t Total = 0;
-          for (const auto &F : Fields)
-            Total += F.Size ? F.Size : 8;
+            int NextId = MaxId + 1, NextVer = MaxVer + 1;
+            uint16_t Total = 0;
+            for (const auto &F : Fields)
+              Total += F.Size ? F.Size : 8;
 
-          MedVar Tv;
-          Tv.Kind = MedVar::Temp;
-          Tv.TheArch = Img.Arch;
-          Tv.Id = NextId++;
-          Tv.SSAVer = 0;
-          Tv.Size = Total;
-          Op.Output = Tv;
+            MedVar Tv;
+            Tv.Kind = MedVar::Temp;
+            Tv.TheArch = Img.Arch;
+            Tv.Id = NextId++;
+            Tv.SSAVer = 0;
+            Tv.Size = Total;
+            Op.Output = Tv;
 
-          std::vector<MedOp> Extracts;
-          uint16_t Cum = 0;
-          for (const auto &F : Fields) {
-            uint16_t Sz = F.Size ? F.Size : 8;
-            MedVar Out;
-            Out.Kind = MedVar::Reg;
-            Out.TheArch = Img.Arch;
-            Out.RegOff = F.RegOff;
-            Out.Id = NextId++;
-            Out.SSAVer = NextVer++;
-            Out.Size = Sz;
-            MedOp Ex;
-            Ex.Opcode = NdOp::SUBBYTES;
-            Ex.Addr = Op.Addr;
-            Ex.Output = Out;
-            Ex.addInput(Tv);
-            Ex.addInput(MedVar::makeConst(Cum, TRI.PointerSize));
-            Extracts.push_back(Ex);
-            Cum += Sz;
+            std::vector<MedOp> Extracts;
+            uint16_t Cum = 0;
+            for (const auto &F : Fields) {
+              uint16_t Sz = F.Size ? F.Size : 8;
+              MedVar Out;
+              Out.Kind = MedVar::Reg;
+              Out.TheArch = Img.Arch;
+              Out.RegOff = F.RegOff;
+              Out.Id = NextId++;
+              Out.SSAVer = NextVer++;
+              Out.Size = Sz;
+              MedOp Ex;
+              Ex.Opcode = NdOp::SUBBYTES;
+              Ex.Addr = Op.Addr;
+              Ex.Output = Out;
+              Ex.addInput(Tv);
+              Ex.addInput(MedVar::makeConst(Cum, TRI.PointerSize));
+              Extracts.push_back(Ex);
+              Cum += Sz;
+            }
+            // rewriteAsTailCall hard-codes the integer return register
+            // (X0/RAX) even for HFA forwarders whose fields live in v0/d0.. —
+            // wire the RETURN to the first extracted field so SSA stays valid
+            // (the struct return path reassembles every field by register
+            // regardless).
+            if (!Extracts.empty())
+              Ret.Inputs[0] = Extracts.front().Output;
+            Blk.Ops.insert(Blk.Ops.begin() + I + 1, Extracts.begin(),
+                           Extracts.end());
+            Rewrote = true;
+            break;
           }
-          // rewriteAsTailCall hard-codes the integer return register (X0/RAX)
-          // even for HFA forwarders whose fields live in v0/d0.. — wire the
-          // RETURN to the first extracted field so SSA stays valid (the
-          // struct return path reassembles every field by register
-          // regardless).
-          if (!Extracts.empty())
-            Ret.Inputs[0] = Extracts.front().Output;
-          Blk.Ops.insert(Blk.Ops.begin() + I + 1, Extracts.begin(),
-                         Extracts.end());
-          Rewrote = true;
-          break;
+          if (Rewrote)
+            break;
         }
-        if (Rewrote)
-          break;
+        Changed |= Rewrote;
       }
-    }
+    } while (Changed);
   }
 }
 

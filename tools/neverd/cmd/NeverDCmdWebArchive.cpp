@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../NeverDCLI.h"
+#include "../ResourceLimits.h"
 
 #include "neverd/sdk/NeverDCAPIWeb.h"
 
@@ -113,7 +114,8 @@ int runWebArchive() {
       const auto Next = Page->getAsObject()->getInteger("next_offset");
       if (!Next)
         return true;
-      if (*Next < 0 || uint64_t(*Next) <= Offset || *Next > 32768)
+      if (*Next < 0 || uint64_t(*Next) <= Offset ||
+          *Next > ::neverd::limits::cli::kMaxWebArchiveOffset)
         return false;
       Offset = *Next;
     }

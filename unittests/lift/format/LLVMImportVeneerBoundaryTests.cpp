@@ -62,6 +62,101 @@ BinaryImage makeCodePointerImage() {
   return Image;
 }
 
+TEST(LLVMImageFunctionEntry, ExactUnwindStartWithoutFunctionSymbolOwnsPointer) {
+  for (Arch Target : {Arch::X64, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      auto Image = makeCodePointerImage();
+      Image.Arch = Target;
+      Image.Format = Format;
+      Image.KnownCodeRanges = {{StubVA, StubVA + 16}};
+      MedFunc Source;
+      Source.Entry = CallerVA;
+      Source.Name = "table_address";
+      Source.ReturnType = NdType::makeInt(8);
+      Source.Blocks.emplace_back();
+      Source.Blocks[0].Id = 0;
+      Source.Blocks[0].StartAddr = CallerVA;
+      Source.Blocks[0].EndAddr = CallerVA + 4;
+      MedOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.addInput(
+          MedVar::makeConst(DataVA, 8, ConstantAddressProvenance::DataAddress));
+      MedOp Copy;
+      Copy.Opcode = NdOp::COPY;
+      Copy.Output.Kind = MedVar::Reg;
+      Copy.Output.TheArch = Target;
+      Copy.Output.RegOff = getTargetRegInfo(Target).IntReturnReg;
+      Copy.Output.Id = 1;
+      Copy.Output.SSAVer = 1;
+      Copy.Output.Size = 8;
+      Copy.addInput(Return.Inputs[0]);
+      Source.Blocks[0].Ops.push_back(Copy);
+      Return.Inputs[0] = Copy.Output;
+      Source.Blocks[0].Ops.push_back(Return);
+      for (bool PrecedingSymbol : {false, true}) {
+        SCOPED_TRACE(testing::Message() << int(Target) << " " << int(Format)
+                                        << " " << PrecedingSymbol);
+        if (PrecedingSymbol) {
+          auto Previous = Symbol::makeFunc(StubVA - 16);
+          Previous.Size = 16;
+          Previous.Name = "previous_function";
+          Image.Symbols.push_back(Previous);
+        }
+        llvm::LLVMContext Context;
+        auto Module = MedLLVMEmitter().emit({Source}, Context, "unwind-entry",
+                                            Target, {}, &Image, Format);
+        ASSERT_NE(Module, nullptr);
+        EXPECT_FALSE(llvm::verifyModule(*Module));
+        const auto *Entry =
+            Module->getFunction("sub_" + llvm::utohexstr(StubVA));
+        ASSERT_NE(Entry, nullptr);
+        EXPECT_TRUE(Entry->isDeclaration());
+        // A start authenticated independently at the preceding function's
+        // exclusive end is its own symbol, never previous_function + 16.
+        EXPECT_FALSE(Entry->use_empty());
+      }
+    }
+}
+
+TEST(LLVMImageFunctionEntry,
+     CodeReferencesAndContinuationStartsDoNotInventEntries) {
+  for (unsigned Mode : {0, 1, 2}) {
+    auto Image = makeCodePointerImage();
+    Image.Format = BinaryFormat::ELF;
+    Image.CodeRefTargets.insert(StubVA);
+    if (Mode != 0)
+      Image.KnownCodeRanges = {{StubVA, StubVA + 16}};
+    if (Mode == 1)
+      Image.ContinuationCodeStarts.insert(StubVA);
+    if (Mode == 2) {
+      Section Data;
+      Data.Name = ".rodata";
+      Data.VA = TextVA;
+      Data.Size = Data.FileSz = 0x200;
+      Data.Flags = SegmentFlags::Readable;
+      Image.Sections.push_back(Data);
+    }
+    MedFunc Source;
+    Source.Entry = CallerVA;
+    Source.Name = "table_address";
+    Source.ReturnType = NdType::makeInt(8);
+    Source.Blocks.emplace_back();
+    Source.Blocks[0].Id = 0;
+    Source.Blocks[0].StartAddr = CallerVA;
+    Source.Blocks[0].EndAddr = CallerVA + 4;
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.addInput(
+        MedVar::makeConst(DataVA, 8, ConstantAddressProvenance::DataAddress));
+    Source.Blocks[0].Ops.push_back(Return);
+    llvm::LLVMContext Context;
+    auto Module = MedLLVMEmitter().emit({Source}, Context, "unproved-entry",
+                                        Arch::X64, {}, &Image, Image.Format);
+    EXPECT_EQ(Module, nullptr) << Mode;
+  }
+}
+
 void addImport(BinaryImage &Image, llvm::StringRef Name, va_t IATAddress) {
   Import Imported;
   Imported.Module = "fixture.dll";
@@ -338,6 +433,53 @@ TEST(LLVMImportVeneerBoundary,
   expectValidModule(*Module);
   EXPECT_NE(Module->getNamedValue("exact_veneer"), nullptr);
   EXPECT_EQ(Module->getNamedValue("iat_collision"), nullptr);
+}
+
+TEST(LLVMImportVeneerBoundary, APushedVeneerAddressNamesItsImport) {
+  // A destructor's `push offset veneer` hands an iterator an import veneer's
+  // address, an instruction operand of code-address provenance.  The veneer
+  // is absent from MedIR, so it stands for its import, as it does in the
+  // pointer mirror, rather than having no code identity.
+  BinaryImage Image = makeCodePointerImage();
+  addImport(Image, "exact_veneer", IATVA);
+  ASSERT_TRUE(Image.recordImportStub(StubVA, 0));
+
+  MedFunc Func;
+  Func.Entry = CallerVA;
+  Func.Name = "pass_veneer";
+  Func.ReturnType = NdType::makeInt(8);
+  MedBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = CallerVA;
+  Block.EndAddr = CallerVA + 8;
+  // `push offset veneer`: the stored operand, not a value the code returns,
+  // whose identity the code-identity proof keeps to lifted owners.
+  MedVar StackPointer;
+  StackPointer.Kind = MedVar::Reg;
+  StackPointer.TheArch = Arch::X64;
+  StackPointer.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
+  StackPointer.Size = 8;
+  MedOp Push;
+  Push.Opcode = NdOp::STORE;
+  Push.Addr = CallerVA;
+  Push.addInput(StackPointer);
+  Push.addInput(
+      MedVar::makeConst(StubVA, 8, ConstantAddressProvenance::CodeAddress));
+  Block.Ops.push_back(std::move(Push));
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = CallerVA + 5;
+  Return.addInput(MedVar::makeConst(0, 8, ConstantAddressProvenance::Scalar));
+  Block.Ops.push_back(std::move(Return));
+  Func.Blocks.push_back(std::move(Block));
+
+  llvm::LLVMContext Context;
+  auto Module =
+      MedLLVMEmitter().emit({Func}, Context, "pushed-veneer", Arch::X64,
+                            importNames(Image), &Image, BinaryFormat::COFF);
+  ASSERT_NE(Module, nullptr);
+  expectValidModule(*Module);
+  EXPECT_NE(Module->getNamedValue("exact_veneer"), nullptr);
 }
 
 TEST(LLVMImportVeneerBoundary, RangeOnlyEvidenceCannotNameACodeRelocation) {

@@ -22,6 +22,7 @@ inline constexpr std::array kLibintlFunctions = {
     "gettext",
     "ngettext",
     "textdomain",
+    "__dcgettext",
 };
 
 inline constexpr auto kLibintlArity = std::to_array<LibCArityEntry>({
@@ -34,6 +35,7 @@ inline constexpr auto kLibintlArity = std::to_array<LibCArityEntry>({
     {"textdomain", {1, 0}},
     {"bindtextdomain", {2, 0}},
     {"bind_textdomain_codeset", {2, 0}},
+    {"__dcgettext", {3, 0}},
 });
 
 } // namespace neverd::libc

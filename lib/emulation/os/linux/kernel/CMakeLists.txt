@@ -1,10 +1,13 @@
 add_neverd_component_library(NeverDEmulationLinuxKernel
   LinuxServices.cpp
+  LinuxNetwork.cpp
+  LinuxDatagram.cpp
   LinuxTime.cpp
   LinuxClock.cpp
   LinuxCPUClock.cpp
   LinuxSleep.cpp
   LinuxSignals.cpp
+  LinuxSignalFrame.cpp
   LinuxPriority.cpp
   LinuxKernelAvailability.cpp
   LinuxUserMemory.cpp
@@ -12,19 +15,34 @@ add_neverd_component_library(NeverDEmulationLinuxKernel
   LinuxServiceABI.cpp
   LinuxThreadPointer.cpp
   LinuxMemory.cpp
+  LinuxVMAName.cpp
   LinuxDeviceMappings.cpp
   LinuxResidency.cpp
   LinuxFiles.cpp
   LinuxFileOptions.cpp
   LinuxDeviceFiles.cpp
+  LinuxIoctlTrace.cpp
+  LinuxBinder.cpp
+  LinuxBinderTransactions.cpp
   LinuxKGSL.cpp
+  LinuxGPUCommands.cpp
+  LinuxGPUObjects.cpp
   LinuxFilePaths.cpp
+  LinuxFileMutation.cpp
   LinuxFileLinks.cpp
   LinuxFileIO.cpp
+  LinuxDirectoryCreation.cpp
   LinuxDirectories.cpp
+  LinuxProc.cpp
+  LinuxProcRead.cpp
+  LinuxProcMaps.cpp
   LinuxFileWrite.cpp
   LinuxPIDFD.cpp
   LinuxPoll.cpp
+  LinuxEpoll.cpp
+  LinuxSelect.cpp
+  LinuxSocketReadiness.cpp
+  LinuxSocketReceive.cpp
   LinuxFileStatus.cpp
   LinuxFileSystemStatus.cpp
   LinuxFileXAttrs.cpp

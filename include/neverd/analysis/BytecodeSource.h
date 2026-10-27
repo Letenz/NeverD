@@ -8,6 +8,7 @@
 #define NEVERD_ANALYSIS_BYTECODESOURCE_H
 
 #include "neverd/analysis/BytecodeDecoder.h"
+#include "neverd/analysis/Limits.h"
 #include "neverd/ir/SourceTypeHint.h"
 
 namespace neverd::analysis {
@@ -45,10 +46,13 @@ struct BytecodeStateFunction {
 /// specified by the profile, not an inferred native link-register contract.
 /// Both existing C routes consume the returned LowIR and explicit source ABI.
 /// Register storage is little endian; instruction-field byte order is separate.
-llvm::Expected<BytecodeStateFunction> lowerBytecodeState(
-    const LowFunc &Function, uint32_t RegisterBytes,
-    Arch SourceArch = Arch::AArch64, uint64_t MaxOperations = 10000000,
-    llvm::ArrayRef<va_t> BoundCalls = {}, bool WithContext = false);
+llvm::Expected<BytecodeStateFunction>
+lowerBytecodeState(const LowFunc &Function, uint32_t RegisterBytes,
+                   Arch SourceArch = Arch::AArch64,
+                   uint64_t MaxOperations =
+                       ::neverd::limits::analysis::kBytecodeSourceMaxOperations,
+                   llvm::ArrayRef<va_t> BoundCalls = {},
+                   bool WithContext = false);
 
 } // namespace neverd::analysis
 

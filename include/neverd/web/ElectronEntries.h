@@ -12,12 +12,12 @@
 #pragma once
 
 #include "neverd/web/ElectronIPC.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourcePaths.h"
 
 namespace neverd::web {
 inline constexpr std::string_view ElectronEntryProfile =
     "electron-captured-entry-candidates-v1";
-inline constexpr uint64_t MaxElectronEntrySteps = 4000000;
 struct ElectronEntryInput {
   const SourceAnalysis *Source = nullptr;
   const ElectronSource *Evidence = nullptr;

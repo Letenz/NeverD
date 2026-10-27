@@ -117,7 +117,8 @@ validateSourcePatchBinding(const SourcePatchBinding &Binding,
 llvm::Expected<std::vector<SourcePatchBinding>>
 bindSourcePatchReferences(llvm::Module &Module, const BinaryImage &Image,
                           llvm::ArrayRef<SourcePatchMapping> Replacements,
-                          llvm::ArrayRef<SourcePatchBinding> Bindings) {
+                          llvm::ArrayRef<SourcePatchBinding> Bindings,
+                          bool RenameDeclarations) {
   auto Fail = [](const llvm::Twine &Detail) {
     return llvm::createStringError(llvm::errc::invalid_argument,
                                    "source binding: " + Detail);
@@ -174,6 +175,8 @@ bindSourcePatchReferences(llvm::Module &Module, const BinaryImage &Image,
   }
   // All requests validate before any declaration is changed. Explicit binding
   // fixes the symbol to this image, so direct PIC references are appropriate.
+  if (!RenameDeclarations)
+    return Result;
   for (const auto &Binding : Result) {
     llvm::GlobalValue *Value = Module.getNamedValue(Binding.Symbol);
     Value->setName(makeNdDataSymbol(Binding.OriginalVA));

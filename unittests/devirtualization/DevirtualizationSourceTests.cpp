@@ -9,7 +9,7 @@
 #include "neverd/analysis/BinaryInterpreterSpecialization.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
 

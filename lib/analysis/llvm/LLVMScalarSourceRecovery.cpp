@@ -8,6 +8,7 @@
 
 #include "LLVMScalarLoopRecoveryInternal.h"
 
+#include "neverd/analysis/Limits.h"
 #include "neverd/pass/ir/simplify/SymSimplifyPass.h"
 
 #include "llvm/IR/Verifier.h"
@@ -70,12 +71,16 @@ CleanupStatus cleanCandidate(Module &M,
         I.dropPoisonGeneratingFlags();
       }
     SymSimplifyOptions Options;
-    Options.MaxFiniteValueWork =
-        std::min<uint64_t>(65536, Remaining.MaxConstructionWork);
+    Options.MaxFiniteValueWork = std::min<uint64_t>(
+        ::neverd::limits::analysis::
+            kLLVMScalarSourceRecoveryCleanCandidateOptionsMaxFiniteValueWorkMinArgument1,
+        Remaining.MaxConstructionWork);
     const auto Finite = SymSimplifyPass::simplifyFiniteValues(F, Options);
     Remaining.MaxConstructionWork -= Finite.Work;
-    Options.MaxPredicateWork =
-        std::min<uint64_t>(65536, Remaining.MaxConstructionWork);
+    Options.MaxPredicateWork = std::min<uint64_t>(
+        ::neverd::limits::analysis::
+            kLLVMScalarSourceRecoveryCleanCandidateOptionsMaxPredicateWorkMinArgument1,
+        Remaining.MaxConstructionWork);
     const auto R = SymSimplifyPass::simplifyPredicates(F, Options);
     Remaining.MaxConstructionWork -= R.Work;
     if (Finite.Rewrites || R.Rewrites) {

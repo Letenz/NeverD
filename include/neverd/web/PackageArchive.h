@@ -13,6 +13,7 @@
 #define NEVERD_WEB_PACKAGEARCHIVE_H
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 
 namespace neverd::web {
 
@@ -21,10 +22,6 @@ inline constexpr std::string_view PackageArchiveProfile =
 inline constexpr std::string_view PackageGNUArchiveProfile =
     "gnu-oldtar-basic-single-gzip-v1";
 inline constexpr std::string_view ZipArchiveProfile = "zip32-local-central-v1";
-inline constexpr uint64_t MaxPackageArchiveBytes = 512ULL * 1024 * 1024;
-inline constexpr uint64_t MaxPackageArchiveFileBytes = 256ULL * 1024 * 1024;
-inline constexpr uint64_t MaxPackageArchiveMembers = 10000;
-inline constexpr uint64_t MaxPackageArchiveMetadata = 8ULL * 1024 * 1024;
 
 struct PackageArchiveMember {
   std::string ID, ParentID, Path, Kind, Link, BlobHash;

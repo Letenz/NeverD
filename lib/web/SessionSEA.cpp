@@ -11,6 +11,8 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web {
 namespace {
 llvm::json::Object summary(const SEAExtraction &E, uint64_t Revision) {
@@ -77,7 +79,9 @@ std::string Session::seaRecords(std::string_view Revision,
   if (Found == State->SEAExtractions.end())
     throw Error("unknown_sea_extraction");
   const auto &E = Found->second;
-  if (!Limit || Limit > 128 || Offset > E.Regions.size())
+  if (!Limit ||
+      Limit > ::neverd::limits::web::kSessionSEASessionSeaRecordsLimit ||
+      Offset > E.Regions.size())
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(E.Regions.size(), Offset + Limit);
   llvm::json::Array Items;

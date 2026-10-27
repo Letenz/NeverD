@@ -5,6 +5,8 @@
 #include "../../loader/Swift/SwiftVirtualSlot.h"
 #include "ObjCSuperGetterSources.h"
 
+#include "neverd/sdk/Limits.h"
+
 namespace neverd::sdk {
 namespace objc_merged_setter_detail {
 using namespace objc_super_getter_detail;
@@ -199,7 +201,7 @@ inline std::optional<Contract> proveBool(const BinaryImage &Image,
     }
   if (!Class)
     return std::nullopt;
-  size_t Budget = 1U << 18;
+  size_t Budget = kSourceSetterWork;
   const auto *CallerLow = machine(Image, Result, Root, 5, Budget);
   const auto *Low = machine(Image, Result, *Entry, Count, Budget);
   if (!CallerLow || !Low || !machine(Image, Result, Accessor->Entry, 8, Budget))
@@ -390,7 +392,7 @@ inline std::optional<Contract> proveCGRect(const BinaryImage &Image,
     }
   if (!Class)
     return std::nullopt;
-  size_t Budget = 1U << 18;
+  size_t Budget = kSourceSetterWork;
   const auto *CallerLow = machine(Image, Result, Root, 5, Budget);
   const auto *Low = machine(Image, Result, *Entry, Count, Budget);
   if (!CallerLow || !Low || !machine(Image, Result, Accessor->Entry, 8, Budget))

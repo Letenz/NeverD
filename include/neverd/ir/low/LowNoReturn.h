@@ -10,6 +10,8 @@
 
 #include "neverd/ir/low/LowIR.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
+
 namespace neverd {
 
 /// Ends the ordinary path; exceptional successors remain reachable.
@@ -27,7 +29,11 @@ inline bool isArchitecturalNoReturn(const LowOp &Op, Arch) {
 
 /// Follow ordinary and exceptional paths using exact instruction boundaries.
 /// Returning or unknown exceptional destinations prevent a no-return proof.
-bool lowFunctionNeverReturns(const LowFunc &Func, Arch TheArch);
+/// A direct tail call ends its path where \p TailCalleeNeverReturns answers
+/// that its target never returns; without that answer it returns.
+bool lowFunctionNeverReturns(
+    const LowFunc &Func, Arch TheArch,
+    llvm::function_ref<bool(va_t)> TailCalleeNeverReturns = nullptr);
 
 } // namespace neverd
 

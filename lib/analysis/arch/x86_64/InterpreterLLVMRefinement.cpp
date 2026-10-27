@@ -70,6 +70,20 @@ InterpreterLLVMRefinementResult checkBinaryLLVMRefinement(
     Result.Native.Proof.Diagnostic = Result.Diagnostic;
     return Result;
   }
+  if (Options.X64LegacyGSState) {
+    Result.Stage = InterpreterLLVMRefinementStage::Native;
+    Result.Native.Proof.Status = LowIRRefinementStatus::Unsupported;
+    Result.Diagnostic = "native proof requires authenticated legacy GS state";
+    Result.Native.Proof.Diagnostic = Result.Diagnostic;
+    return Result;
+  }
+  if (Options.X64MXCSRMask) {
+    Result.Stage = InterpreterLLVMRefinementStage::Native;
+    Result.Native.Proof.Status = LowIRRefinementStatus::Unsupported;
+    Result.Diagnostic = "native proof requires authenticated MXCSR state";
+    Result.Native.Proof.Diagnostic = Result.Diagnostic;
+    return Result;
+  }
   if (Options.X64CR8State) {
     Result.Stage = InterpreterLLVMRefinementStage::Native;
     Result.Native.Proof.Status = LowIRRefinementStatus::Unsupported;
@@ -78,7 +92,7 @@ InterpreterLLVMRefinementResult checkBinaryLLVMRefinement(
     Result.Native.Proof.Diagnostic = Result.Diagnostic;
     return Result;
   }
-  if (Options.X64SegmentedReads) {
+  if (Options.X64SegmentedReads || Options.X64SegmentedWrites) {
     Result.Stage = InterpreterLLVMRefinementStage::Native;
     Result.Native.Proof.Status = LowIRRefinementStatus::Unsupported;
     Result.Diagnostic = "native proof requires authenticated FS/GS base inputs";

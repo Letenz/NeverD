@@ -21,12 +21,15 @@ class Function;
 namespace neverd {
 struct MedBlock;
 namespace x86_registration {
-/// Wrap a preflighted call-free source block without duplicating its effects.
-void emitDynamicSEHScope(llvm::BasicBlock &Body, llvm::AllocaInst &Frame,
-                         uint64_t EntrySP, va_t Owner, const MedBlock &Source,
-                         llvm::ArrayRef<int32_t> Levels,
-                         const std::map<int32_t, llvm::BasicBlock *> &Unwinds,
-                         llvm::Function &TryBegin, llvm::Function &TryEnd);
+bool canEmitDynamicSEHScope(const llvm::BasicBlock &Body);
+/// Wrap one source body without duplicating its effects. Return its number of
+/// calls protected by the selected live state.
+unsigned
+emitDynamicSEHScope(llvm::BasicBlock &Body, llvm::AllocaInst &Frame,
+                    uint64_t EntrySP, va_t Owner, const MedBlock &Source,
+                    llvm::ArrayRef<int32_t> Levels,
+                    const std::map<int32_t, llvm::BasicBlock *> &Unwinds,
+                    llvm::Function &TryBegin, llvm::Function &TryEnd);
 } // namespace x86_registration
 } // namespace neverd
 

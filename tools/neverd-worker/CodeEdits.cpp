@@ -1,16 +1,60 @@
 #include "CodeEdits.h"
 
+#include "ResourceLimits.h"
+
+#include "neverd/support/IntegerLiterals.h"
+
 #include <algorithm>
 #include <cctype>
+#include <iterator>
+#include <map>
 #include <regex>
 #include <set>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 
 namespace neverd::worker {
 namespace {
+// A line or literal index as an object key: its decimal digits.
+bool indexKey(const std::string &key, std::size_t digits) {
+  return !key.empty() && key.size() <= digits &&
+         std::all_of(key.begin(), key.end(),
+                     [](unsigned char c) { return std::isdigit(c); });
+}
+// The literal grammar the view's text reads in.
+LiteralSyntax literalSyntax(const Json &view,
+                            const std::string &representation) {
+  const auto dialect = view.value("dialect", representation);
+  if (dialect == "rust")
+    return LiteralSyntax::Rust;
+  if (dialect == "go")
+    return LiteralSyntax::Go;
+  return LiteralSyntax::C;
+}
+// Whether each line of \p text that \p wanted lists starts inside a block
+// comment, which integerLiterals carries from line to line.
+std::unordered_map<std::size_t, bool>
+commentStates(std::string_view text, LiteralSyntax syntax,
+              std::set<std::size_t> wanted) {
+  std::unordered_map<std::size_t, bool> states;
+  bool inComment = false;
+  std::size_t start = 0;
+  for (std::size_t line = 0; !wanted.empty(); ++line) {
+    if (wanted.erase(line))
+      states.emplace(line, inComment);
+    const auto end = text.find('\n', start);
+    if (end == std::string_view::npos)
+      break;
+    (void)integerLiterals(text.substr(start, end - start), syntax, inComment);
+    start = end + 1;
+  }
+  return states;
+}
 bool identifier(const std::string &name) {
-  if (name.empty() || name.size() > 256 ||
+  if (name.empty() ||
+      name.size() >
+          ::neverd::limits::worker::kCodeEditsIdentifierNameSizeLimit ||
       !(std::isalpha(static_cast<unsigned char>(name[0])) || name[0] == '_'))
     return false;
   return std::all_of(name.begin(), name.end(), [](unsigned char c) {
@@ -30,6 +74,35 @@ bool source(const std::string &name) {
   return name == "c" || name == "llvmc" || name == "source" || name == "cpp" ||
          name == "rust" || name == "go";
 }
+// Prefix maxima answer exact interval predicates even for unsorted,
+// overlapping or empty input spans. Never merge neighbouring spans.
+class SourceSpanIndex {
+  std::vector<std::pair<std::size_t, std::size_t>> spans_;
+
+public:
+  template <class Iterator>
+  SourceSpanIndex(Iterator begin, Iterator end) : spans_(begin, end) {
+    std::sort(spans_.begin(), spans_.end());
+    std::size_t maximum = 0;
+    for (auto &span : spans_) {
+      maximum = std::max(maximum, span.second);
+      span.second = maximum;
+    }
+  }
+  bool overlaps(std::size_t begin, std::size_t end) const {
+    const auto after = std::lower_bound(
+        spans_.begin(), spans_.end(), end,
+        [](const auto &span, std::size_t end) { return span.first < end; });
+    return after != spans_.begin() && std::prev(after)->second > begin;
+  }
+  bool contains(std::size_t begin, std::size_t end) const {
+    const auto after = std::upper_bound(
+        spans_.begin(), spans_.end(), begin,
+        [](std::size_t begin, const auto &span) { return begin < span.first; });
+    return after != spans_.begin() && std::prev(after)->second >= end;
+  }
+};
+
 struct Token {
   std::size_t begin, end;
   std::string text;
@@ -53,11 +126,12 @@ std::vector<Token> tokens(const std::string &text) {
     }
     // C++ raw strings can contain quotes and identifier-looking text.
     auto raw = i;
-    for (const std::string prefix : {"u8", "u", "U", "L"})
-      if (text.compare(i, prefix.size() + 2, prefix + "R\"") == 0) {
-        raw += prefix.size();
-        break;
-      }
+    if (text[i] == 'u' || text[i] == 'U' || text[i] == 'L')
+      for (const std::string_view prefix : {"u8R\"", "uR\"", "UR\"", "LR\""})
+        if (text.compare(i, prefix.size(), prefix) == 0) {
+          raw += prefix.size() - 2;
+          break;
+        }
     if (text.compare(raw, 2, "R\"") == 0) {
       const auto open = text.find('(', raw + 2);
       if (open != std::string::npos && open - raw <= 18) {
@@ -188,8 +262,89 @@ std::string inlineComment(std::string text) {
 
 void CodeEdits::validateRow(const Json &row) {
   (void)parseAddress(stringField(row, "addr"));
+  auto typeImage = [](const Json &type) {
+    const auto hash = stringField(
+        type, "input_sha256", {},
+        ::neverd::limits::worker::
+            kCodeEditsValidateRowTypeImageHashInputSha256StringFieldMax);
+    if (hash.size() != 64 ||
+        !std::all_of(hash.begin(), hash.end(),
+                     [](unsigned char c) { return std::isxdigit(c); }))
+      throw Error("invalid_request",
+                  "A source type needs its input image identity");
+  };
+  if (row.contains("object_type")) {
+    const auto &type = row.at("object_type");
+    typeImage(type);
+    (void)stringField(
+        type, "type", {},
+        ::neverd::limits::worker::kCodeEditsValidateRowTypeStringFieldMax);
+    if (!sizeField(type, "bytes", 0,
+                   ::neverd::limits::worker::
+                       kCodeEditsValidateRowFloatingBytesSizeFieldMax) ||
+        !type.at("floating").is_boolean())
+      throw Error("invalid_request", "Invalid global object type");
+  }
+  if (row.contains("stack_frame")) {
+    const auto &Frame = row.at("stack_frame");
+    typeImage(Frame);
+    if (!Frame.is_object() ||
+        Frame.dump().size() >
+            ::neverd::limits::worker::kCodeEditsValidateRowFrameDumpSizeLimit ||
+        stringField(Frame, "snapshot", {},
+                    ::neverd::limits::worker::
+                        kCodeEditsValidateRowSnapshotStringFieldMax)
+            .empty() ||
+        !Frame.value("points", Json::array()).is_array() ||
+        Frame.value("points", Json::array()).size() >
+            ::neverd::limits::worker::
+                kCodeEditsValidateRowFrameValuePointsJsonArraySizeLimit ||
+        !Frame.value("variables", Json::array()).is_array() ||
+        Frame.value("variables", Json::array()).size() >
+            ::neverd::limits::worker::
+                kCodeEditsValidateRowFrameValueVariablesJsonArraySizeLimit)
+      throw Error("invalid_request", "Invalid stack frame table");
+  }
+  const auto calls = row.value("call_types", Json::object());
+  if (!calls.is_object() ||
+      calls.size() >
+          ::neverd::limits::worker::kCodeEditsValidateRowCallsSizeLimit ||
+      calls.dump().size() >
+          ::neverd::limits::worker::kCodeEditsValidateRowCallsDumpSizeLimit)
+    throw Error("invalid_request",
+                "Invalid or over-budget call-site declaration table");
+  for (const auto &[id, type] : calls.items()) {
+    if (id.empty() ||
+        id.size() > ::neverd::limits::worker::kCodeEditsValidateRowIdSizeLimit)
+      throw Error("invalid_request", "Invalid call-site identity");
+    typeImage(type);
+    if (stringField(type, "snapshot", {},
+                    ::neverd::limits::worker::
+                        kCodeEditsValidateRowDeclarationSnapshotStringFieldMax)
+            .empty() ||
+        stringField(
+            type, "declaration", {},
+            ::neverd::limits::worker::
+                kCodeEditsValidateRowDeclarationSnapshotDeclarationStringFieldMax)
+            .empty())
+      throw Error("invalid_request", "Invalid call-site declaration");
+    const auto actuals = type.value("variadic_types", Json::array());
+    if (!actuals.is_array() ||
+        actuals.size() >
+            ::neverd::limits::worker::kCodeEditsValidateRowActualsSizeLimit)
+      throw Error("invalid_request", "Invalid actual variadic argument types");
+    for (const auto &actual : actuals)
+      if (!actual.is_string() ||
+          actual.get_ref<const std::string &>().empty() ||
+          actual.get_ref<const std::string &>().size() >
+              ::neverd::limits::worker::
+                  kCodeEditsValidateRowActualGetRefConstStdStringSizeLimit)
+        throw Error("invalid_request", "Invalid actual variadic argument type");
+  }
   if (!row.contains("views") || !row.at("views").is_object() ||
-      row.at("views").size() > 6 || row.dump().size() > 4 * 1024 * 1024)
+      row.at("views").size() > ::neverd::limits::worker::kMaxSourceEditViews ||
+      row.dump().size() >
+          ::neverd::limits::worker::kCodeEditsValidateRowRowDumpSizeLimit)
     throw Error("invalid_request", "Invalid bounded code-edit state");
   for (const auto &[representation, view] : row.at("views").items()) {
     if (!source(representation) || !view.is_object())
@@ -197,9 +352,16 @@ void CodeEdits::validateRow(const Json &row) {
     const auto names = view.value("names", Json::object());
     if (!names.empty())
       (void)parseAddress(stringField(view, "identity"));
+    if (view.contains("shape"))
+      (void)parseAddress(stringField(
+          view, "shape", {},
+          ::neverd::limits::worker::kCodeEditsValidateRowShapeStringFieldMax));
     const auto comments = view.value("comments", Json::object());
-    if (!names.is_object() || !comments.is_object() || names.size() > 2048 ||
-        comments.size() > 2048)
+    if (!names.is_object() || !comments.is_object() ||
+        names.size() >
+            ::neverd::limits::worker::kCodeEditsValidateRowNamesSizeLimit ||
+        comments.size() >
+            ::neverd::limits::worker::kCodeEditsValidateRowCommentsSizeLimit)
       throw Error("invalid_request", "Code-edit entries exceed their budget");
     std::set<std::string> aliases;
     for (const auto &[original, alias] : names.items())
@@ -209,19 +371,103 @@ void CodeEdits::validateRow(const Json &row) {
         throw Error("invalid_request",
                     "Local names must be distinct identifiers");
     for (const auto &[line, note] : comments.items()) {
-      if (line.empty() || line.size() > 10 ||
-          !std::all_of(line.begin(), line.end(),
-                       [](unsigned char c) { return std::isdigit(c); }) ||
-          !note.is_object())
+      if (!indexKey(line, 10) || !note.is_object())
         throw Error("invalid_request", "Invalid code-comment anchor");
-      (void)stringField(note, "anchor", {}, 65536);
-      (void)stringField(note, "text", {}, 65536);
+      (void)stringField(
+          note, "anchor", {},
+          ::neverd::limits::worker::kCodeEditsValidateRowAnchorStringFieldMax);
+      (void)stringField(
+          note, "text", {},
+          ::neverd::limits::worker::kCodeEditsValidateRowTextStringFieldMax);
+    }
+    // The bases the user picked for the integer literals of a line, by their
+    // index on it, while the line reads as its anchor.
+    const auto numbers = view.value("numbers", Json::object());
+    const auto variableTypes = view.value("variable_types", Json::object());
+    const auto variableEdits = view.value("variable_edits", Json::array());
+    if (!variableEdits.is_array() ||
+        variableEdits.size() > ::neverd::limits::worker::
+                                   kCodeEditsValidateRowVariableEditsSizeLimit)
+      throw Error("invalid_request", "Invalid variable association table");
+    for (const auto &edit : variableEdits) {
+      const auto kind =
+          stringField(edit, "kind", {},
+                      ::neverd::limits::worker::
+                          kCodeEditsValidateRowKindKindStringFieldMax);
+      if (kind != "map" && kind != "split")
+        throw Error("invalid_request", "Invalid variable association kind");
+      if (stringField(
+              edit, "from", {},
+              ::neverd::limits::worker::
+                  kCodeEditsValidateRowToMapSnapshotFromFromStringFieldMax)
+              .empty() ||
+          stringField(
+              edit, "snapshot", {},
+              ::neverd::limits::worker::
+                  kCodeEditsValidateRowToMapSnapshotFromSnapshotStringFieldMax)
+              .empty() ||
+          (kind == "map" &&
+           stringField(
+               edit, "to", {},
+               ::neverd::limits::worker::
+                   kCodeEditsValidateRowToMapSnapshotFromToStringFieldMax)
+               .empty()))
+        throw Error("invalid_request", "Invalid variable association identity");
+      typeImage(edit);
+    }
+    if (!variableTypes.is_object() ||
+        variableTypes.size() > ::neverd::limits::worker::
+                                   kCodeEditsValidateRowVariableTypesSizeLimit)
+      throw Error("invalid_request", "Invalid source variable type table");
+    for (const auto &[id, edit] : variableTypes.items()) {
+      if (id.empty() ||
+          id.size() >
+              ::neverd::limits::worker::kCodeEditsValidateRowIdSizeLimit ||
+          !edit.is_object())
+        throw Error("invalid_request", "Invalid source variable type identity");
+      (void)stringField(edit, "snapshot", {},
+                        ::neverd::limits::worker::
+                            kCodeEditsValidateRowSnapshotStringFieldMax);
+      typeImage(edit);
+      (void)stringField(
+          edit, "type", {},
+          ::neverd::limits::worker::kCodeEditsValidateRowTypeStringFieldMax);
+      if (!sizeField(edit, "bytes", 0,
+                     ::neverd::limits::worker::
+                         kCodeEditsValidateRowBytesSizeFieldMax) ||
+          !edit.at("floating").is_boolean())
+        throw Error("invalid_request", "Invalid source variable type width");
+    }
+    if (!numbers.is_object() ||
+        numbers.size() >
+            ::neverd::limits::worker::kCodeEditsValidateRowNumbersSizeLimit)
+      throw Error("invalid_request", "Code-edit entries exceed their budget");
+    for (const auto &[line, entry] : numbers.items()) {
+      if (!indexKey(line, 10) || !entry.is_object())
+        throw Error("invalid_request", "Invalid number-format anchor");
+      (void)stringField(
+          entry, "anchor", {},
+          ::neverd::limits::worker::kCodeEditsValidateRowAnchorStringFieldMax);
+      const auto radixes = entry.value("radixes", Json::object());
+      if (!radixes.is_object() || radixes.empty() ||
+          radixes.size() >
+              ::neverd::limits::worker::kCodeEditsValidateRowRadixesSizeLimit)
+        throw Error("invalid_request", "Invalid number formats");
+      for (const auto &[index, radix] : radixes.items()) {
+        const auto base = radix.is_string()
+                              ? literalRadixNamed(radix.get<std::string>())
+                              : std::nullopt;
+        if (!indexKey(index, 4) || !base || *base == LiteralRadix::Number)
+          throw Error("invalid_request", "Invalid number format");
+      }
     }
   }
 }
 
 Json CodeEdits::change(Json row, const Json &request) {
-  const auto representation = stringField(request, "representation", {}, 16);
+  const auto representation = stringField(
+      request, "representation", {},
+      ::neverd::limits::worker::kCodeEditsChangeRepresentationStringFieldMax);
   if (!source(representation))
     throw Error("invalid_request", "Code edits need a source representation");
   if (row.is_null())
@@ -230,15 +476,60 @@ Json CodeEdits::change(Json row, const Json &request) {
   auto &view = row["views"][representation];
   if (view.is_null())
     view = {{"names", Json::object()}, {"comments", Json::object()}};
-  const auto kind = stringField(request, "kind", {}, 16);
-  if (kind == "name") {
-    const auto identity = stringField(request, "identity", {}, 32);
+  const auto kind = stringField(
+      request, "kind", {},
+      ::neverd::limits::worker::kCodeEditsChangeKindKindStringFieldMax);
+  if (kind == "stack_frame") {
+    if (request.value("reset", false))
+      row.erase("stack_frame");
+    else
+      row["stack_frame"] = request.at("stack_frame");
+  } else if (kind == "global_type") {
+    if (request.value("reset", false))
+      row.erase("object_type");
+    else
+      row["object_type"] = {
+          {"input_sha256",
+           stringField(
+               request, "input_sha256", {},
+               ::neverd::limits::worker::
+                   kCodeEditsChangeStackFrameGlobalTypeRowObjectTypeInputSha256StringFieldMax)},
+          {"type",
+           stringField(
+               request, "type", {},
+               ::neverd::limits::worker::
+                   kCodeEditsChangeStackFrameGlobalTypeRowObjectTypeTypeStringFieldMax)},
+          {"bytes",
+           sizeField(
+               request, "bytes", 0,
+               ::neverd::limits::worker::
+                   kCodeEditsChangeStackFrameGlobalTypeRowObjectTypeBytesSizeFieldMax)},
+          {"floating", request.value("floating", false)}};
+  } else if (kind == "name") {
+    const auto identity = stringField(
+        request, "identity", {},
+        ::neverd::limits::worker::
+            kCodeEditsChangeStackFrameGlobalTypeNameIdentityStringFieldMax);
     (void)parseAddress(identity);
-    if (view.value("identity", std::string()) != identity)
+    // The names stay while the text is the same code's: the same locals
+    // in the same order (decorate's code_shape).
+    const auto shape = request.value("shape", std::string());
+    if (view.value("identity", std::string()) != identity &&
+        (shape.empty() || view.value("shape", std::string()) != shape))
       view["names"] = Json::object();
     view["identity"] = identity;
-    const auto original = stringField(request, "original", {}, 256);
-    const auto name = stringField(request, "name", {}, 256);
+    if (!shape.empty())
+      view["shape"] = shape;
+    else
+      view.erase("shape");
+    const auto original = stringField(
+        request, "original", {},
+        ::neverd::limits::worker::
+            kCodeEditsChangeStackFrameGlobalTypeNameOriginalStringFieldMax);
+    const auto name = stringField(
+        request, "name", {},
+        ::neverd::limits::worker::
+            kCodeEditsChangeStackFrameGlobalTypeNameNameStringFieldMax);
     if (!identifier(original) ||
         (!name.empty() && name != original && !aliasIdentifier(name)))
       throw Error("invalid_request", "A local name must be an identifier");
@@ -247,22 +538,173 @@ Json CodeEdits::change(Json row, const Json &request) {
     else
       view["names"][original] = name;
   } else if (kind == "comment") {
-    const auto line = sizeField(request, "line", 0, 1000000);
-    const auto text = stringField(request, "text", {}, 65536);
+    const auto line = sizeField(
+        request, "line", 0,
+        ::neverd::limits::worker::
+            kCodeEditsChangeStackFrameGlobalTypeNameCommentLineLineSizeFieldMax);
+    const auto text = stringField(
+        request, "text", {},
+        ::neverd::limits::worker::
+            kCodeEditsChangeStackFrameGlobalTypeNameCommentTextTextStringFieldMax);
     const auto key = std::to_string(line);
     if (text.empty())
       view["comments"].erase(key);
     else
       view["comments"][key] = {
-          {"anchor", stringField(request, "anchor", {}, 65536)},
+          {"anchor",
+           stringField(
+               request, "anchor", {},
+               ::neverd::limits::worker::
+                   kCodeEditsChangeStackFrameGlobalTypeNameCommentViewCommentsKeyAnchorStringFieldMax)},
           {"text", text}};
+  } else if (kind == "number") {
+    const auto key = std::to_string(sizeField(
+        request, "line", 0,
+        ::neverd::limits::worker::
+            kCodeEditsChangeStackFrameGlobalTypeNameCommentNumberKeyLineSizeFieldMax));
+    const auto index = std::to_string(sizeField(
+        request, "index", 0,
+        ::neverd::limits::worker::
+            kCodeEditsChangeStackFrameGlobalTypeNameCommentNumberIndexSizeFieldMax));
+    const auto anchor = stringField(
+        request, "anchor", {},
+        ::neverd::limits::worker::
+            kCodeEditsChangeStackFrameGlobalTypeNameCommentNumberAnchorStringFieldMax);
+    const auto radix = literalRadixNamed(stringField(
+        request, "radix", {},
+        ::neverd::limits::worker::
+            kCodeEditsChangeStackFrameGlobalTypeNameCommentNumberRadixStringFieldMax));
+    if (!radix)
+      throw Error("invalid_request", "Unknown number base");
+    if (!view.contains("numbers"))
+      view["numbers"] = Json::object();
+    auto &numbers = view["numbers"];
+    // A line that reads differently now starts without bases.
+    if (!numbers.contains(key) ||
+        numbers[key].value("anchor", std::string()) != anchor)
+      numbers[key] = {{"anchor", anchor}, {"radixes", Json::object()}};
+    auto &radixes = numbers[key]["radixes"];
+    if (*radix == LiteralRadix::Number)
+      radixes.erase(index);
+    else
+      radixes[index] = std::string(literalRadixName(*radix));
+    if (radixes.empty())
+      numbers.erase(key);
+    if (numbers.empty())
+      view.erase("numbers");
+  } else if (kind == "call_type") {
+    row["call_types"] = request.at("call_types");
+  } else if (kind == "variables") {
+    view["variable_edits"] = request.at("variable_edits");
+  } else if (kind == "type") {
+    const auto id = stringField(
+        request, "variable_id", {},
+        ::neverd::limits::worker::
+            kCodeEditsChangeStackFrameGlobalTypeNameCommentNumberCallTypeVariablesTypeIdVariableIdStringFieldMax);
+    if (!view.contains("variable_types"))
+      view["variable_types"] = Json::object();
+    if (request.value("reset", false))
+      view["variable_types"].erase(id);
+    else
+      view["variable_types"][id] = {
+          {"input_sha256",
+           stringField(
+               request, "input_sha256", {},
+               ::neverd::limits::worker::
+                   kCodeEditsChangeStackFrameGlobalTypeNameCommentNumberCallTypeVariablesTypeViewVariableTypesIdInputSha256StringFieldMax)},
+          {"snapshot",
+           stringField(
+               request, "snapshot", {},
+               ::neverd::limits::worker::
+                   kCodeEditsChangeStackFrameGlobalTypeNameCommentNumberCallTypeVariablesTypeViewVariableTypesIdSnapshotStringFieldMax)},
+          {"type",
+           stringField(
+               request, "type", {},
+               ::neverd::limits::worker::
+                   kCodeEditsChangeStackFrameGlobalTypeNameCommentNumberCallTypeVariablesTypeViewVariableTypesIdTypeStringFieldMax)},
+          {"bytes",
+           sizeField(
+               request, "bytes", 0,
+               ::neverd::limits::worker::
+                   kCodeEditsChangeStackFrameGlobalTypeNameCommentNumberCallTypeVariablesTypeViewVariableTypesIdBytesSizeFieldMax)},
+          {"floating", request.value("floating", false)}};
   } else
     throw Error("invalid_request", "Unknown code edit kind");
   validateRow(row);
   return row;
 }
 
+Json CodeEdits::analysisState(const Json &rows) {
+  std::map<std::uint64_t, Json> ordered;
+  for (auto row : rows) {
+    validateRow(row);
+    auto &views = row.at("views");
+    for (auto it = views.begin(); it != views.end();) {
+      auto &view = it.value();
+      for (const auto *field : {"names", "identity", "shape"})
+        view.erase(field);
+      if (view.value("comments", Json::object()).empty())
+        view.erase("comments");
+      if (view.empty())
+        it = views.erase(it);
+      else
+        ++it;
+    }
+    if (views.empty())
+      row.erase("views");
+    if (row.size() != 1)
+      ordered.emplace(parseAddress(row.at("addr").get<std::string>()),
+                      std::move(row));
+  }
+  Json result = Json::array();
+  for (auto &[address, row] : ordered)
+    result.push_back(std::move(row));
+  return result;
+}
+
 void CodeEdits::validateChange(const Json &view, const Json &request) {
+  if (request.value("kind", std::string()) == "call_type") {
+    // Clearing policies never needs to rebind an occurrence. It must remain
+    // available when a stale or over-budget analysis cannot expose its graph.
+    if (request.value("action", std::string()) == "clear")
+      return;
+    if (view.value("call_snapshot", std::string()).empty())
+      throw Error("edit_budget",
+                  "The original call analysis exceeds the editing budget");
+    if (stringField(
+            request, "snapshot", {},
+            ::neverd::limits::worker::
+                kCodeEditsValidateChangeCallTypeKindCallSnapshotSnapshotStringFieldMax) !=
+        view.value("call_snapshot", std::string()))
+      throw Error("stale_target",
+                  "The original call analysis changed; select the call again");
+    const auto id = stringField(
+        request, "call_id", {},
+        ::neverd::limits::worker::
+            kCodeEditsValidateChangeCallTypeKindIdCallIdStringFieldMax);
+    for (const auto &call : view.value("source_calls", Json::array()))
+      if (call.value("id", std::string()) == id)
+        return;
+    throw Error("stale_target",
+                "The engine cannot identify this original call occurrence");
+  }
+  if (request.value("kind", std::string()) == "type") {
+    const auto id = stringField(
+        request, "variable_id", {},
+        ::neverd::limits::worker::
+            kCodeEditsValidateChangeTypeKindIdVariableIdStringFieldMax);
+    if (request.value("snapshot", std::string()) !=
+        view.value("variable_snapshot", std::string()))
+      throw Error("stale_target",
+                  "The source analysis changed; select the variable again");
+    for (const auto &variable : view.value("source_variables", Json::array()))
+      if (variable.value("id", std::string()) == id &&
+          !variable.value("ambiguous", true) &&
+          !variable.value("parameter", true))
+        return;
+    throw Error("stale_target",
+                "The engine cannot identify this variable unambiguously");
+  }
   if (request.value("kind", std::string()) == "name") {
     const auto original = stringField(request, "original");
     const auto identity = stringField(request, "identity");
@@ -289,14 +731,64 @@ void CodeEdits::validateChange(const Json &view, const Json &request) {
         throw Error("invalid_request",
                     "This name already occurs in the function");
   } else if (request.value("kind", std::string()) == "comment") {
-    const auto line = sizeField(request, "line", 0, 1000000);
-    const auto anchor = stringField(request, "anchor", {}, 65536);
+    const auto line = sizeField(
+        request, "line", 0,
+        ::neverd::limits::worker::
+            kCodeEditsValidateChangeNameCommentKindLineLineSizeFieldMax);
+    const auto anchor = stringField(
+        request, "anchor", {},
+        ::neverd::limits::worker::
+            kCodeEditsValidateChangeNameCommentKindAnchorStringFieldMax);
     for (const auto &row : view.at("rows"))
       if (row.value("line", std::size_t{0}) == line &&
           row.value("code_anchor", std::string()) == anchor)
         return;
     throw Error("stale_target",
                 "The selected line no longer belongs to this source view");
+  } else if (request.value("kind", std::string()) == "number") {
+    const auto line = sizeField(
+        request, "line", 0,
+        ::neverd::limits::worker::
+            kCodeEditsValidateChangeNameCommentNumberKindLineLineSizeFieldMax);
+    const auto index = sizeField(
+        request, "index", 0,
+        ::neverd::limits::worker::
+            kCodeEditsValidateChangeNameCommentNumberKindIndexSizeFieldMax);
+    const auto anchor = stringField(
+        request, "anchor", {},
+        ::neverd::limits::worker::
+            kCodeEditsValidateChangeNameCommentNumberKindAnchorStringFieldMax);
+    const auto radix = literalRadixNamed(stringField(
+        request, "radix", {},
+        ::neverd::limits::worker::
+            kCodeEditsValidateChangeNameCommentNumberKindRadixStringFieldMax));
+    if (!radix)
+      throw Error("invalid_request", "Unknown number base");
+    if (std::none_of(view.at("rows").begin(), view.at("rows").end(),
+                     [&](const Json &row) {
+                       return row.value("line", std::size_t{0}) == line &&
+                              row.value("code_anchor", std::string()) == anchor;
+                     }))
+      throw Error("stale_target",
+                  "The selected line no longer belongs to this source view");
+    // The anchor is the line as the engine wrote it; the shown text before
+    // it says whether it starts in a comment, which decoration never changes.
+    const auto syntax = literalSyntax(
+        view,
+        stringField(
+            request, "representation", {},
+            ::neverd::limits::worker::
+                kCodeEditsValidateChangeNameCommentNumberKindSyntaxRepresentationStringFieldMax));
+    bool inComment = commentStates(
+        view.at("text").get_ref<const std::string &>(), syntax, {line})[line];
+    const auto literals = integerLiterals(anchor, syntax, inComment);
+    if (index >= literals.size())
+      throw Error("stale_target",
+                  "The selected number no longer belongs to this source view");
+    if (*radix != LiteralRadix::Number &&
+        !spellIntegerLiteral(literals[index], *radix, syntax))
+      throw Error("invalid_request",
+                  "This number has no spelling in that base with its type");
   }
 }
 
@@ -323,13 +815,11 @@ void CodeEdits::spellIdentifierSymbols(Json &view) {
   for (const auto &name : names)
     spelled.emplace_back(name.value("begin_byte", std::size_t{0}),
                          name.value("end_byte", std::size_t{0}));
+  const SourceSpanIndex covered(spelled.begin(), spelled.end());
   const auto &text = view["text"].get_ref<const std::string &>();
   for (const auto &token : tokens(text)) {
     const auto found = named.find(token.text);
-    if (found == named.end() ||
-        std::any_of(spelled.begin(), spelled.end(), [&](const auto &span) {
-          return token.begin < span.second && token.end > span.first;
-        }))
+    if (found == named.end() || covered.overlaps(token.begin, token.end))
       continue;
     const Json &name = *found->second;
     names.push_back({{"begin_byte", token.begin},
@@ -422,10 +912,14 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
         break;
     }
     auto brace = end + 1;
-    while (brace < ts.size() && brace - end <= 32 && ts[brace].text != "{" &&
-           ts[brace].text != ";" && ts[brace].text != "=")
+    while (brace < ts.size() &&
+           brace - end <= ::neverd::limits::worker::kMaxSourceDecoratorTokens &&
+           ts[brace].text != "{" && ts[brace].text != ";" &&
+           ts[brace].text != "=")
       ++brace;
-    if (brace < ts.size() && brace - end <= 32 && ts[brace].text == "{") {
+    if (brace < ts.size() &&
+        brace - end <= ::neverd::limits::worker::kMaxSourceDecoratorTokens &&
+        ts[brace].text == "{") {
       // A prelude can be followed by synthetic helper definitions. Only a
       // resolved image name or an explicit SDK name span identifies this body.
       const auto at = imageAddress(ts[i].text);
@@ -490,11 +984,51 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
     if ((typed || binding) && ts[i].text != "mut")
       ++declarations[ts[i].text];
   }
+  // The function's parameters by position, as its definition declares
+  // them, and what its locals are: their names in the order the code
+  // declares them, and how many parameters it takes.  A type change, its
+  // own or a callee's, rewrites the text but keeps them.
+  std::unordered_map<std::string, std::size_t> parameters;
+  std::string shape;
+  if (definition) {
+    int depth = 0;
+    std::size_t position = 0;
+    std::optional<std::string> named;
+    auto at = *definition + 1;
+    for (; at < bodyEnd; ++at) {
+      const auto &text = ts[at].text;
+      if (text == "(" && ++depth == 1)
+        continue;
+      if (text == ")" && --depth == 0)
+        break;
+      if (depth == 1 && text == ",") {
+        if (named)
+          parameters.emplace(*named, position);
+        named.reset();
+        ++position;
+      } else if (depth == 1 && identifier(text) && declarations.contains(text))
+        named = text;
+    }
+    if (named)
+      parameters.emplace(*named, position);
+    std::set<std::string> seen;
+    for (auto i = at; i + 1 < bodyEnd; ++i)
+      if (identifier(ts[i].text) && declarations.contains(ts[i].text) &&
+          !parameters.contains(ts[i].text) && !member(ts, i) &&
+          seen.insert(ts[i].text).second)
+        shape += ts[i].text + ",";
+    shape = sourceIdentity(shape + "|" + std::to_string(parameters.size()));
+  }
+  if (!shape.empty())
+    view["code_shape"] = shape;
   Json edits = Json::object();
   if (!row.is_null())
     edits = row.at("views").value(representation, Json::object());
-  const bool stale = !edits.value("names", Json::object()).empty() &&
-                     edits.value("identity", std::string()) != identity;
+  // Names given in another text of the same code still name its locals.
+  const bool stale =
+      !edits.value("names", Json::object()).empty() &&
+      edits.value("identity", std::string()) != identity &&
+      (shape.empty() || edits.value("shape", std::string()) != shape);
   const auto aliases =
       stale ? Json::object() : edits.value("names", Json::object());
   view["code_edits_stale"] = stale;
@@ -526,7 +1060,7 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
   };
   std::vector<Replacement> replacements;
   Json names = Json::array();
-  std::vector<std::pair<std::size_t, std::size_t>> spelled;
+  std::set<std::pair<std::size_t, std::size_t>> spelled;
   for (const auto &name : view.value("source_names", Json::array())) {
     const auto begin = name.value("begin_byte", std::size_t{0});
     const auto end = name.value("end_byte", std::size_t{0});
@@ -540,30 +1074,44 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
                                       name.value("identifier", std::string())));
     if (!at)
       continue;
-    if (std::any_of(spelled.begin(), spelled.end(), [&](const auto &span) {
-          return begin < span.second && end > span.first;
-        }))
+    const auto following = spelled.lower_bound({begin, 0});
+    if ((following != spelled.end() && following->first < end) ||
+        (following != spelled.begin() && std::prev(following)->second > begin))
       throw Error("invalid_engine_result", "Overlapping source name spans");
     names.push_back({{"begin_byte", begin},
                      {"end_byte", end},
                      {"kind", "address"},
                      {"address", hexAddress(*at)},
                      {"original", original.substr(begin, end - begin)}});
-    spelled.emplace_back(begin, end);
+    spelled.emplace(begin, end);
     if (const auto shown = shownName(*at, original.substr(begin, end - begin)))
       replacements.push_back({begin, end, *shown});
   }
+  const SourceSpanIndex covered(spelled.begin(), spelled.end());
+  // A name the view calls or declares as a function names that function at
+  // every use, also where the code takes its address: in an initializer, or
+  // as an argument.  Each use then shows the name its declaration shows.
+  std::set<std::string> functionNames;
+  std::map<std::string, Json> sourceVariables;
+  std::set<std::string> ambiguousVariables;
+  for (const auto &variable : view.value("source_variables", Json::array())) {
+    const auto name = variable.value("name", std::string());
+    if (variable.value("ambiguous", true) ||
+        !sourceVariables.emplace(name, variable).second)
+      ambiguousVariables.insert(name);
+  }
+  for (std::size_t i = 0; i + 1 < ts.size(); ++i)
+    if (identifier(ts[i].text) && ts[i + 1].text == "(" && !member(ts, i))
+      functionNames.insert(ts[i].text);
   for (std::size_t i = 0; i < ts.size(); ++i) {
     const auto &token = ts[i];
-    if (std::any_of(spelled.begin(), spelled.end(), [&](const auto &span) {
-          return token.begin >= span.first && token.end <= span.second;
-        }))
+    if (covered.contains(token.begin, token.end))
       continue;
     if (!identifier(token.text) || member(ts, i))
       continue;
-    Json name = {{"begin_byte", token.begin},
-                 {"end_byte", token.end},
-                 {"original", token.text}};
+    // Most identifiers name nothing (a hex literal's digits read as one), so
+    // a name is filled in only once a kind below claims the identifier.
+    Json name = Json::object();
     std::string display = token.text;
     if (definition == i) {
       name["address"] = hexAddress(function);
@@ -572,16 +1120,37 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
         display = *shown;
     } else if (i >= body && i < bodyEnd && declarations[token.text] == 1) {
       name["kind"] = "local";
+      const auto found = sourceVariables.find(token.text);
+      const Json *binding = found != sourceVariables.end() &&
+                                    !ambiguousVariables.contains(token.text)
+                                ? &found->second
+                                : nullptr;
+      if (binding && !binding->value("parameter", true)) {
+        name["variable_id"] = binding->at("id");
+        name["snapshot"] = view.value("variable_snapshot", std::string());
+      }
       name["identity"] = identity;
+      if (const auto parameter = parameters.find(token.text);
+          parameter != parameters.end())
+        name["parameter"] = parameter->second;
       if (aliases.contains(token.text))
         display = aliases.at(token.text).get<std::string>();
-    } else if (globals.contains(token.text)) {
+    } else if (globals.contains(token.text) ||
+               (sourceVariables.contains(token.text) &&
+                sourceVariables.at(token.text).contains("address"))) {
       name["kind"] = "address";
-      name["address"] = hexAddress(globals.at(token.text));
-      if (const auto shown = shownName(globals.at(token.text), token.text))
+      const auto address = globals.contains(token.text)
+                               ? globals.at(token.text)
+                               : parseAddress(sourceVariables.at(token.text)
+                                                  .at("address")
+                                                  .get<std::string>());
+      name["address"] = hexAddress(address);
+      name["object"] = true;
+      if (const auto shown = shownName(address, token.text))
         display = *shown;
-    } else if (i + 1 < ts.size() &&
-               (ts[i + 1].text == "(" || links.contains(token.text))) {
+    } else if ((i + 1 < ts.size() &&
+                (ts[i + 1].text == "(" || links.contains(token.text))) ||
+               functionNames.contains(token.text)) {
       const auto at = imageAddress(token.text);
       if (!at)
         continue;
@@ -591,6 +1160,18 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
         display = *shown;
     } else
       continue;
+    if (!name.contains("variable_id")) {
+      const auto binding = sourceVariables.find(token.text);
+      if (binding != sourceVariables.end() &&
+          !ambiguousVariables.contains(token.text) &&
+          binding->second.contains("address")) {
+        name["variable_id"] = binding->second.at("id");
+        name["snapshot"] = view.value("variable_snapshot", std::string());
+      }
+    }
+    name["begin_byte"] = token.begin;
+    name["end_byte"] = token.end;
+    name["original"] = token.text;
     if (display != token.text) {
       // Never collide a local alias with any other identifier in the view.
       if (name.at("kind") == "local" && identifiers.contains(display))
@@ -603,6 +1184,16 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
   for (std::size_t i = 0; i + 1 < original.size(); ++i)
     if (original[i] == '\n')
       starts.push_back(i + 1);
+  // The bases the user picked for numbers, on lines that still read as their
+  // anchors.
+  const auto numbers = edits.value("numbers", Json::object());
+  const auto syntax = literalSyntax(view, representation);
+  std::set<std::size_t> formatted;
+  for (const auto &[line, entry] : numbers.items())
+    formatted.insert(std::stoull(line));
+  const auto startsInComment = formatted.empty()
+                                   ? std::unordered_map<std::size_t, bool>()
+                                   : commentStates(original, syntax, formatted);
   for (auto &mapping : view["rows"]) {
     const auto line = mapping.value("line", std::size_t{0});
     if (line >= starts.size())
@@ -612,6 +1203,27 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
       end = original.size();
     const auto anchor = original.substr(starts[line], end - starts[line]);
     mapping["code_anchor"] = anchor;
+    if (const auto entry = numbers.find(std::to_string(line));
+        entry != numbers.end() &&
+        entry->value("anchor", std::string()) == anchor) {
+      const auto state = startsInComment.find(line);
+      bool inComment = state != startsInComment.end() && state->second;
+      const auto literals = integerLiterals(anchor, syntax, inComment);
+      const auto &radixes = entry->at("radixes");
+      for (const auto &[index, radix] : radixes.items()) {
+        const auto at = std::stoull(index);
+        const auto base = literalRadixNamed(radix.get<std::string>());
+        if (at >= literals.size() || !base)
+          continue;
+        const auto &literal = literals[at];
+        if (const auto spelled = spellIntegerLiteral(literal, *base, syntax);
+            spelled && *spelled != literal.Text)
+          replacements.push_back({starts[line] + literal.Begin,
+                                  starts[line] + literal.End, *spelled});
+      }
+      // The GUI shows which base each number of the line was given.
+      mapping["code_number_radixes"] = radixes;
+    }
     std::string comment;
     if (const auto note = notes.find(std::to_string(line));
         note != notes.end() && note->value("anchor", std::string()) == anchor)

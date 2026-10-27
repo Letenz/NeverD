@@ -9,7 +9,7 @@
 #include "RegistrationStateSolver.h"
 
 #include "neverd/ir/low/LowNoReturn.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 namespace neverd::registration_state {
 
@@ -77,9 +77,32 @@ bool RegistrationStateSolver::transferOrdinaryFinally(
           Insn.ControlFlags, LowInstructionControlFlag::InstructionGuard) ||
       Insn.FirstOp > OpIndex || OpIndex - Insn.FirstOp >= Insn.OpCount ||
       Insn.FirstOp > Block.Ops.size() ||
-      Insn.OpCount > Block.Ops.size() - Insn.FirstOp ||
-      !runLocalFinally(Op.Inputs[0].Offset, After.Frame, true, &Writes))
+      Insn.OpCount > Block.Ops.size() - Insn.FirstOp || After.Levels.empty() ||
+      !After.Installed || After.Uninstalled)
     return Refuse();
+  SEHFrameOutcomes Outcomes;
+  for (int32_t Level : After.Levels) {
+    FrameState Frame = After.Frame;
+    Frame.store(*Chain.TryLevelOffset, 4,
+                FrameValue::constant(uint32_t(Level)));
+    if (!runLocalFinally(Op.Inputs[0].Offset, Frame, true, &Writes, nullptr,
+                         &Outcomes))
+      return Refuse();
+  }
+  std::optional<FrameState> Joined;
+  After.Levels.clear();
+  for (auto &[Level, Frame] : Outcomes) {
+    After.Levels.insert(Level);
+    if (!Joined)
+      Joined = std::move(Frame);
+    else if (!charge(Joined->cellCount() + Frame.cellCount() + 10))
+      return Refuse();
+    else
+      Joined->merge(Frame);
+  }
+  if (!Joined)
+    return Refuse();
+  After.Frame = std::move(*Joined);
   for (const auto &Write : Writes)
     invalidateJumpCaptures(After, FrameValue::frame(Write.Begin),
                            uint16_t(Write.End - Write.Begin));

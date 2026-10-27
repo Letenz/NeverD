@@ -21,7 +21,7 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedTypePass.h"
-#include "neverd/ir/med/X86RegistrationCallback.h"
+#include "neverd/ir/med/X86/X86RegistrationCallback.h"
 #include "neverd/loader/COFF/COFFLoader.h"
 
 #include "llvm/IR/IRBuilder.h"
@@ -108,7 +108,8 @@ void reconstructNestedSearch(bool Secondary, bool Rethrow = false,
                              [&](const auto &Edge) {
                                return Edge.Kind ==
                                           ExceptionalEdgeKind::CxxCatch &&
-                                      Edge.RegionIndex == 1;
+                                      Edge.singleContext() &&
+                                      Edge.singleContext()->RegionIndex == 1;
                              }),
               2u);
   }

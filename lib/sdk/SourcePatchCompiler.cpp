@@ -5,6 +5,7 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/backend/codegen/SourcePatch.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
@@ -90,7 +91,8 @@ llvm::Error appendUserArguments(std::vector<std::string> &Arguments,
             "machine entry padding requires the native object profile");
       auto Parts = Arg.drop_front(27).split(',');
       unsigned Count = 0, Before = 0;
-      if (Parts.first.getAsInteger(10, Count) || Count > 1024 ||
+      if (Parts.first.getAsInteger(10, Count) ||
+          Count > kMaxSourcePatchEntryPadding ||
           (!Parts.second.empty() && Parts.second.getAsInteger(10, Before)) ||
           Before > Count)
         return compilerError("invalid machine entry padding");
@@ -168,7 +170,9 @@ compileSourcePatch(llvm::StringRef Source,
   const auto Stdout = TempDir / "stdout";
   const auto Stderr = TempDir / "stderr";
   const unsigned Timeout =
-      Options.timeout_seconds ? Options.timeout_seconds : 30;
+      Options.timeout_seconds
+          ? Options.timeout_seconds
+          : ::neverd::sdk::kDefaultSourcePatchTimeoutSeconds;
   SourcePatchCompilation Result;
   Result.CompilerPath = *Program;
   if (auto Error = execute({*Program, "--version"}, Stdout, Stderr, Timeout))
@@ -284,6 +288,9 @@ compileSourcePatch(llvm::StringRef Source,
       // Keep compiler-owned frames instead of inventing native unwind recipes.
       Args.push_back("-fno-omit-frame-pointer");
       Args.push_back("-mno-omit-leaf-frame-pointer");
+      // Older ARM backends require the frame-chain policy as well to retain
+      // leaf frames and their compact-unwind records.
+      Args.push_back("-mframe-chain=aapcs+leaf");
     }
     Args.push_back("-c");
   } else {

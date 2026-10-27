@@ -12,14 +12,13 @@
 #pragma once
 
 #include "neverd/web/Interfaces.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceNavigation.h"
 
 namespace neverd::web {
 
 inline constexpr std::string_view InterfaceSourceRelationProfile =
     "request-source-relations-v2";
-inline constexpr uint64_t MaxInterfaceSourceRelations = 4096;
-inline constexpr uint64_t MaxInterfaceRelationSteps = 2000000;
 
 struct InterfaceRelationLimits {
   uint64_t Records = MaxInterfaceSourceRelations;

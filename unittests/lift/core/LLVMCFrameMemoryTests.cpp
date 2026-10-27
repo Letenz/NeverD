@@ -44,6 +44,26 @@ struct FrameFixture {
   }
 };
 
+TEST(LLVMCFrameMemory, TargetIndexWidthPreservesNegativeTypedOffsets) {
+  for (const char *Layout : {"e-p:32:32", "e-p:64:64:64:32", "e-p:64:64"}) {
+    SCOPED_TRACE(Layout);
+    FrameFixture F;
+    F.Module.setDataLayout(Layout);
+    auto *Top = F.B.CreateGEP(F.B.getInt8Ty(), F.Frame, F.B.getInt64(72));
+    auto *Back = F.B.CreateGEP(F.B.getInt32Ty(), Top, F.B.getInt64(-3));
+    auto *Store = F.B.CreateStore(F.B.getInt32(739), Back);
+    auto *Load = F.B.CreateLoad(F.B.getInt32Ty(), Back);
+    F.B.CreateRet(Load);
+    LLVMCAnalysisState State;
+    analyzeDeadFrameStores(State, *F.Fn);
+    const auto It = State.FramePointerLocations.find(Back);
+    ASSERT_NE(It, State.FramePointerLocations.end());
+    EXPECT_EQ(It->second.first, F.Frame);
+    EXPECT_EQ(It->second.second, 60);
+    EXPECT_EQ(State.DeadFrameStores.count(Store), 0u);
+  }
+}
+
 TEST(LLVMCFrameMemory, PhiReadsKeepBothBranchStores) {
   FrameFixture F;
   auto *Normal = llvm::BasicBlock::Create(F.Context, "normal", F.Fn);

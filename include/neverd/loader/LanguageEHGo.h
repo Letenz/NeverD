@@ -17,6 +17,7 @@
 #define NEVERD_LOADER_LANGUAGEEHGO_H
 
 #include "neverd/loader/ExceptionCommon.h"
+#include "neverd/loader/Limits.h"
 
 #include <cstdint>
 #include <optional>
@@ -170,9 +171,12 @@ struct GoStackMap {
   /// reaches and far below what would let a mis-resolved funcdata pointer turn
   /// into a large allocation; the last is needed because the first two
   /// multiply, and their product is thirty megabytes for one map.
-  static constexpr uint32_t MaxBitmaps = 1u << 12;
-  static constexpr uint32_t MaxBits = 1u << 16;
-  static constexpr uint32_t MaxTotalBytes = 1u << 20;
+  static constexpr uint32_t MaxBitmaps =
+      ::neverd::limits::loader::kLanguageEHGoMaxBitmaps;
+  static constexpr uint32_t MaxBits =
+      ::neverd::limits::loader::kLanguageEHGoMaxBits;
+  static constexpr uint32_t MaxTotalBytes =
+      ::neverd::limits::loader::kLanguageEHGoMaxTotalBytes;
 };
 
 /// One stretch of a function over which `PCDATA_StackMapIndex` selects one

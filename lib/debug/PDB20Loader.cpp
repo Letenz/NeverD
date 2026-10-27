@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "neverd/debug/Limits.h"
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/FilePath.h"
@@ -282,7 +283,7 @@ struct TypeStore {
   uint16_t PtrSize = 4;
 
   TypeRef resolve(uint32_t Index, int Depth = 0) const {
-    if (Depth > 32)
+    if (Depth > ::neverd::limits::debug::kPDB20LoaderResolveDepthLimit)
       return {};
     if (Index < llvm::codeview::TypeIndex::FirstNonSimpleIndex)
       return primitiveType(Index, PtrSize);
@@ -650,7 +651,7 @@ loadPdb20DebugContext(const std::filesystem::path &PdbPath,
   std::set<va_t> AmbiguousSizes;
   std::set<va_t> Addresses;
   auto ResolveVA = [&](uint16_t Seg, uint32_t Off) -> va_t {
-    if (Seg == 0 || Seg > Image.Sections.size())
+    if (Seg == 0 || Seg > SectionsOr->size())
       return 0;
     const Section &Owner = Image.Sections[Seg - 1];
     if (Off >= Owner.Size)

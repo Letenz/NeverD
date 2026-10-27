@@ -35,7 +35,8 @@ def paged_view(client, entry, stage):
 
 def run(executable):
     with tempfile.TemporaryDirectory(prefix="neverd-native-map-") as directory:
-        for arm64 in (False, True):
+        for arm64, discover_first in ((False, False), (True, False),
+                                      (False, True), (True, True)):
             client = Client(executable)
             try:
                 data, entry = native_elf(arm64, 0xffff800000400000 if arm64 else 0x400000)
@@ -45,10 +46,17 @@ def run(executable):
                 assert opened["status"] == "ok"
                 assert opened["analysis_state"] == "not_analyzed"
                 assert opened["payload"]["function_count"] == 0
+                if discover_first:
+                    # The background index can discover entries before the
+                    # pipeline knows their extents. Force that ordering rather
+                    # than depending on the runner's scheduling speed.
+                    references = client.call("xrefs", {"address": hex(entry),
+                                                       "direction": "to"})
+                    assert references["status"] == "ok", references
                 decoded = client.call("disasm", {"address": hex(entry), "limit": 2})
                 assert decoded["status"] == "ok", decoded
                 instruction_addresses = {row["address"] for row in decoded["payload"]["items"]}
-                for stage in ("low", "med"):
+                for stage in ("low", "med", "high"):
                     full = client.call("decompile", {"address": hex(entry), "representation": stage, "limit": 2048})
                     assert full["status"] == "ok", full
                     assert full["analysis_state"] == "not_analyzed", full
@@ -92,7 +100,11 @@ def run(executable):
                 for query in (function["name"], hex(entry + 1)):
                     resolved = client.call("resolve", {"query": query})
                     assert resolved["status"] == "ok", resolved
-                    assert resolved["payload"]["function_address"] == hex(entry)
+                    assert resolved["payload"]["function_address"] == hex(entry), {
+                        "architecture": "arm64" if arm64 else "x86_64",
+                        "discover_first": discover_first,
+                        "query": query, "expected_function": function, "response": resolved,
+                    }
                 for stage in ("c", "llvmc"):
                     reply = client.call("decompile", {"address": hex(entry), "representation": stage, "limit": 2048})
                     assert reply["status"] == "ok", reply
@@ -120,14 +132,14 @@ def run(executable):
                         assert text == result["text"] and rows == result["rows"]
                     else:
                         assert all(row["addresses"] == [] for row in result["rows"])
-                for stage in ("high", "llvm"):
+                for stage in ("llvm",):
                     reply = client.call("decompile", {"address": hex(entry), "representation": stage, "limit": 2})
                     assert reply["status"] == "ok", reply
                     assert reply["payload"]["mapping_status"] == "unsupported_representation"
                     assert reply["payload"]["rows"] == []
             finally:
                 client.close()
-        print("real native x86/AArch64: recovered function navigation, high-VA Low/Med instruction anchors, stable paged rows and explicit C/High/LLVM mapping status passed")
+        print("real native x86/AArch64: recovered function navigation, high-VA Low/Med/High instruction anchors, stable paged rows and explicit C/High/LLVM mapping status passed")
         return 0
 
 

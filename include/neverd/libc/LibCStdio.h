@@ -12,6 +12,7 @@ namespace neverd::libc {
 inline constexpr std::string_view kStdioHeader = "stdio.h";
 
 inline constexpr std::array kStdioFunctions = {
+    "__getdelim",
     "__overflow",
     "__uflow",
     "asprintf",
@@ -161,6 +162,7 @@ inline constexpr auto kStdioArity = std::to_array<LibCArityEntry>({
     {"getc_unlocked", {1, 0}},
     {"getchar_unlocked", {0, 0}},
     {"getdelim", {4, 0}},
+    {"__getdelim", {4, 0}},
     {"getline", {3, 0}},
     {"open_memstream", {2, 0}},
     {"setbuffer", {3, 0}},

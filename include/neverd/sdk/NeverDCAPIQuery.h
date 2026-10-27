@@ -57,6 +57,17 @@ NEVERD_API const char *neverd_import_slots_json(neverd_session_t Sess);
 /// its format ("dwarf-fde", "x64-unwind-v1", ...), "personality" is the
 /// resolved personality routine when one is known, and "language_data" is
 /// true when the record carries decoded language-specific data.
+/// AArch64 additionally returns "return_address" with the exact "query_pc"
+/// (no return-PC subtraction), "dwarf_state_at_pc" and "compact_recipe".
+/// Either source is null when absent, otherwise an object with "status":
+/// known, unknown, unsupported, malformed, out_of_range or resource_limit;
+/// an optional "diagnostic" explains unavailable results. Known results have
+/// "kind": unsigned, sp or sp_and_pc. Signed kinds also have "key": a or b;
+/// sp_and_pc adds "recipe": hint_pacm or non_hint_pauth_lr, and "signing_pc".
+/// Addresses use the same hexadecimal-string convention as begin/end.
+/// A compact recipe describes the completed prologue, not whether the return
+/// address is already signed at query_pc. It never replaces a failed DWARF
+/// state query. These static results do not authenticate or unwind a pointer.
 NEVERD_API const char *neverd_unwind_frame_json(neverd_session_t Sess,
                                                 neverd_va_t Address);
 /// The parts of functions that lie apart from their bodies, as
@@ -206,6 +217,53 @@ NEVERD_API const char *neverd_cfg_json(neverd_session_t Sess,
 /// published.
 NEVERD_API const char *neverd_callgraph_json(neverd_session_t Sess);
 
+/// Call paths between functions, read from each function's direct
+/// references (neverd_code_refs_json) without starting analysis.  Nodes are
+/// functions and imports; an import's veneer (a PLT entry, an import thunk)
+/// is the import.  A node calls, jumps to the entry of, or transfers through
+/// a slot holding another; with "data_refs" it also takes, reads or writes
+/// its address.  \p OptionsJson is an object: "waypoints" (2 to 64, each a
+/// "0x..." address of a function entry, an import's slot or veneer, or a
+/// function's or import's name), visited in order, one segment between each
+/// two; "exclude" (nodes no path passes, unless they are waypoints);
+/// "max_depth" (edges per segment, 1-64, default 16); "shortest_only"
+/// (bool); "data_refs" (bool); "max_paths" (0-1000, default 32) and
+/// "max_listed" (1-100000 nodes and edges per segment, default 4096).
+/// Returns {"segments":[{"from","to","shortest","node_count","edge_count",
+/// "nodes":["0x..."],"edges":[["from","to","kind","site"]],"paths":
+/// [["0x...",...]],"complete","reversed"?}],"unconnected":int,"nodes":
+/// [{"address","name","kind":"function"|"import","module"?,"library"?}],
+/// "max_depth","data_refs"}.  A segment's nodes are those on a path of at
+/// most "max_depth" edges (with "shortest_only", of "shortest" edges), in
+/// order of distance from "from"; "kind" is "call", "jump", "indirect" or
+/// "data"; "site" is the first instruction making the reference.  Paths are
+/// simple, shortest first.  Waypoints that connect only the other way round
+/// give that segment with "reversed":true; neither way, "shortest" is null
+/// and the segment counts in "unconnected".  "complete" is false when
+/// "max_listed" or "max_paths" cut a list, or path enumeration exceeded its
+/// step budget.  NULL with neverd_last_error() for malformed options, an
+/// unknown waypoint, or an EVM or SBF image.
+NEVERD_API const char *neverd_call_paths_json(neverd_session_t Sess,
+                                              const char *OptionsJson);
+
+/// The functions and imports one function reaches through the same graph
+/// as neverd_call_paths_json(), or the functions that reach it.
+/// \p OptionsJson is an object: "root" (required, as a waypoint is named);
+/// "direction" ("callees", the default, or "callers"); "max_depth" (1-64,
+/// default 1); "max_listed" (1-100000, default 4096); "data_refs"; "exclude";
+/// and "expand_library" (bool): imports, and unless it is true functions
+/// byte signatures name as library code, are listed but not expanded.
+/// Returns {"root","direction","max_depth","nodes":[{...,"depth"}],
+/// "edges":[["caller","callee","kind","site"]],"depth_limited","complete",
+/// "bottom_up"?}: nodes in breadth-first order, "depth_limited" when a node
+/// at "max_depth" has more, "complete" false when "max_listed" cut the
+/// list.  For callees, "bottom_up" lists the reached functions that expand
+/// with each one's callees before it and the root last: the order to
+/// decompile them in.  NULL with neverd_last_error() as for
+/// neverd_call_paths_json().
+NEVERD_API const char *neverd_call_tree_json(neverd_session_t Sess,
+                                             const char *OptionsJson);
+
 // ===--------------------------------------------------------------------===//
 // Address resolution
 // ===--------------------------------------------------------------------===//
@@ -227,6 +285,26 @@ NEVERD_API const char *neverd_search_bytes(neverd_session_t Sess,
 NEVERD_API const char *neverd_search_string(neverd_session_t Sess,
                                             const char *Pattern,
                                             int CaseSensitive, int MaxResults);
+/// Bounded search in address order. Options: kind (bytes/text/immediate),
+/// pattern, limit (1..4096), optional exclusive from address, backward and
+/// case_sensitive booleans. Returns owned JSON {items,complete,next_address};
+/// a non-null next_address resumes after the last item in the same direction.
+/// Immediate pages decode native executable ranges in bounded chunks. Repeat
+/// the same request while building is true. coverage and undecoded_ranges
+/// report skipped ranges; matches do not assert reachability or include memory
+/// displacements. Numeric values use the logical operand width.
+/// Matches stay within one segment's initialized bytes. Invalid options fail
+/// with null and a session error. Legacy search uses the same matcher.
+NEVERD_API const char *neverd_search_page(neverd_session_t Sess,
+                                          const char *OptionsJSON);
+
+/// Physical register inventory, reaching definitions, uses or static value
+/// before PC in Entry's original LowIR. Options: kind and register. Calls,
+/// undefined effects and unknown paths remain explicit boundaries. Owned JSON.
+NEVERD_API const char *neverd_register_flow_json(neverd_session_t Sess,
+                                                 neverd_va_t Entry,
+                                                 neverd_va_t PC,
+                                                 const char *OptionsJSON);
 
 // ===--------------------------------------------------------------------===//
 // Binary diff (function-level comparison between two sessions)

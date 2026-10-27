@@ -23,8 +23,6 @@ on:
       - 'cmake/NeverDLLVMPrebuilt.cmake'
       - 'scripts/audit_prebuilt_llvm_release.py'
       - 'scripts/tests/test_audit_prebuilt_llvm_release.py'
-  schedule:
-    - cron: '17 */6 * * *'
   workflow_dispatch:
 
 permissions:

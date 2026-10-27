@@ -143,7 +143,7 @@ jobs:
             -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
             -DBUILD_TESTING=OFF
       - name: Build CLI
-        run: cmake --build build-real-apps --target neverd --parallel 3
+        run: python scripts/build.py build-real-apps --target neverd --parallel 3
       - name: Bind binary artifact to this exact source
         env:
           CONSUMER_COMMIT: ${{ needs.trigger.outputs.consumer_commit }}
@@ -216,7 +216,7 @@ jobs:
             -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
             -DBUILD_TESTING=OFF
       - name: Build CLI
-        run: cmake --build build-real-apps --target neverd --parallel 3
+        run: python scripts/build.py build-real-apps --target neverd --parallel 3
       - name: Bind binary artifact to this exact source
         env:
           CONSUMER_COMMIT: ${{ needs.trigger.outputs.consumer_commit }}

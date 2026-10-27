@@ -16,6 +16,7 @@
 #define NEVERD_LIB_LOADER_GO_GORUNTIMEDETAIL_H
 
 #include "neverd/loader/Go/GoRuntimeEH.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/SmallVector.h"
@@ -70,30 +71,9 @@ inline constexpr int32_t UnsafePointRestart1 = -3;
 inline constexpr int32_t UnsafePointRestart2 = -4;
 inline constexpr int32_t UnsafePointRestartAtEntry = -5;
 
-/// Bounds.  Each is far above anything a real Go link produces and far below
-/// what would let a mis-identified table run the decoder out of time.
-inline constexpr uint64_t MaxFunctionCount = 1u << 22;
-inline constexpr uint32_t MaxPCDataTables = 64;
-inline constexpr uint8_t MaxFuncDataTables = 16;
-inline constexpr size_t MaxSymbolNameLength = 4096;
-inline constexpr uint64_t MaxFrameSize = 1u << 24;
-inline constexpr uint64_t MaxFrameSlotOffset = 1u << 20;
-inline constexpr unsigned MaxTextSections = 64;
-/// How far past `moduledata.text` the funcdata base is searched for.  The
-/// fields between them are a handful of segment bounds whose count has grown
-/// by a few words per release; this covers every layout since Go 1.16 with
-/// room to spare.
-inline constexpr unsigned MaxModuleDataSearchWords = 48;
 /// Candidate funcdata bases are confirmed against decoded records.  More
 /// samples cost nothing and make a coincidental match implausible.
 inline constexpr unsigned FuncDataBaseSampleTarget = 16;
-/// Bound on the number of steps taken while walking one pc-value table.
-inline constexpr unsigned MaxPCValueSteps = 1u << 16;
-/// Bound on how many ranges one pc-value table contributes to a record.  A
-/// table can legitimately have more steps than this on a very large function,
-/// in which case the record is truncated and marked rather than grown without
-/// limit.
-inline constexpr unsigned MaxPCValueRanges = 1u << 12;
 /// How many functions the Go 1.2 stack-map-index probe examines before it
 /// settles.  Only functions whose locals map has more than one bitmap say
 /// anything, so the target is a count of those rather than of all functions.
@@ -179,7 +159,9 @@ public:
   /// of the section means the offset was wrong.
   std::optional<std::string> cstring(va_t VA) const {
     std::string Result;
-    for (size_t I = 0; I < MaxSymbolNameLength; ++I) {
+    for (size_t I = 0;
+         I < ::neverd::limits::loader::kGoRuntimeDetailMaxSymbolNameLength;
+         ++I) {
       // A missing terminator must not make the read wrap to a low segment.
       if (I > InvalidVA - VA)
         return std::nullopt;
@@ -333,7 +315,9 @@ bool forEachPCValue(const ImageReader &R, va_t PcTab, uint32_t Offset,
   va_t Cursor = PcTab + Offset;
   va_t Pc = EntryVA;
   int32_t Value = -1;
-  for (unsigned Steps = 0; Steps < MaxPCValueSteps; ++Steps) {
+  for (unsigned Steps = 0;
+       Steps < ::neverd::limits::loader::kGoRuntimeDetailMaxPCValueSteps;
+       ++Steps) {
     // The runtime tests the entry address rather than the step count, so a
     // leading pair that advances the pc by zero keeps the exemption.
     const bool First = Pc == EntryVA;
@@ -502,6 +486,32 @@ void decodeStackMaps(const ImageReader &R, const FuncLayout &L,
                      GoFunctionEH &EH, ExceptionParseStatus &Status,
                      std::vector<std::string> &Diagnostics);
 
+} // namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE detail
+} // namespace neverd::go_loader
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::go_loader {
+namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE detail {
+inline constexpr uint64_t MaxFunctionCount =
+    ::neverd::limits::loader::kGoRuntimeDetailMaxFunctionCount;
+inline constexpr uint32_t MaxPCDataTables =
+    ::neverd::limits::loader::kGoRuntimeDetailMaxPCDataTables;
+inline constexpr uint8_t MaxFuncDataTables =
+    ::neverd::limits::loader::kGoRuntimeDetailMaxFuncDataTables;
+inline constexpr size_t MaxSymbolNameLength =
+    ::neverd::limits::loader::kGoRuntimeDetailMaxSymbolNameLength;
+inline constexpr uint64_t MaxFrameSize =
+    ::neverd::limits::loader::kGoRuntimeDetailMaxFrameSize;
+inline constexpr uint64_t MaxFrameSlotOffset =
+    ::neverd::limits::loader::kGoRuntimeDetailMaxFrameSlotOffset;
+inline constexpr unsigned MaxTextSections =
+    ::neverd::limits::loader::kGoRuntimeDetailMaxTextSections;
+inline constexpr unsigned MaxModuleDataSearchWords =
+    ::neverd::limits::loader::kGoRuntimeDetailMaxModuleDataSearchWords;
+inline constexpr unsigned MaxPCValueSteps =
+    ::neverd::limits::loader::kGoRuntimeDetailMaxPCValueSteps;
+inline constexpr unsigned MaxPCValueRanges =
+    ::neverd::limits::loader::kGoRuntimeDetailMaxPCValueRanges;
 } // namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE detail
 } // namespace neverd::go_loader
 

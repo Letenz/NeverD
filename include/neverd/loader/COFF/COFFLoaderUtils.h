@@ -27,6 +27,13 @@
 namespace neverd {
 namespace coff_loader {
 
+/// Loader-owned offsets of pointer-storage fields in the PE load configuration.
+struct LoadConfigCallableField {
+  uint32_t Offset;
+  RuntimeCallablePointerSlotKind Kind;
+};
+llvm::ArrayRef<LoadConfigCallableField> loadConfigCallableFields(Bitness Bits);
+
 namespace detail {
 
 /// PE32/PE32+ named import thunks reserve every bit above the low 31.
@@ -117,12 +124,60 @@ void parseExceptions(const llvm::object::COFFObjectFile &Obj, BinaryImage &Img,
 /// contributes diagnostics without publishing guessed or partial bindings.
 void parseImports(const llvm::object::COFFObjectFile &Obj, BinaryImage &Img);
 
+/// Whether the symbol record \p Sym is a debug record, such as `.file` or
+/// `.bf`/`.ef`: neither a name nor a place in the image.
+inline bool isDebugRecord(const llvm::object::COFFSymbolRef &Sym) {
+  return Sym.getSectionNumber() == llvm::COFF::IMAGE_SYM_DEBUG ||
+         Sym.isFileRecord() ||
+         Sym.getStorageClass() == llvm::COFF::IMAGE_SYM_CLASS_FUNCTION;
+}
+
+/// Whether the symbol record \p Sym is a section's own symbol: static, not a
+/// function, and followed by its auxiliary section definition.  GNU ld keeps
+/// one for each section an object contributes, at that object's first
+/// function or variable.  A static function's record also has an auxiliary
+/// record, its function definition, and names that function.
+inline bool isSectionDefinition(const llvm::object::COFFSymbolRef &Sym) {
+  return Sym.getStorageClass() == llvm::COFF::IMAGE_SYM_CLASS_STATIC &&
+         Sym.getComplexType() != llvm::COFF::IMAGE_SYM_DTYPE_FUNCTION &&
+         Sym.getNumberOfAuxSymbols() > 0;
+}
+
 /// Parse the COFF symbol table (.symtab) and populate Img.Symbols.
 /// Applies to object files and some executables with embedded symbols.
+/// A linked image's debug records are left out, and its section definitions
+/// load as Symbol::IsSection: they bound what an object contributed but name
+/// nothing.  An object file's relocations still name its sections.
 /// SectionVAs is an optional one-based mapped-section table; relocatable COFF
 /// uses it because its format-native section VirtualAddress fields must be 0.
 void parseSymbolTable(const llvm::object::COFFObjectFile &Obj, BinaryImage &Img,
                       uint64_t ImageBase, llvm::ArrayRef<va_t> SectionVAs = {});
+
+/// Record, once discovery has found the image's code, the data a linked
+/// image's own symbol table names among it: a symbol of no function type in
+/// an executable section that no code metadata claims, is no import thunk
+/// and starts no instruction, such as GNU ld's __CTOR_LIST__ and
+/// __DTOR_LIST__ in .text.  The relocated pointers to such an object, which
+/// the base relocations, read before the symbol table, took for pointers to
+/// code, become pointers to data (recordDataPointerTargets).
+void recordSymbolTableDataInCode(BinaryImage &Img);
+
+/// Records in Img.ConstantCodeSlots each `__imp_X` variable of an x86 or x64
+/// image's symbol table, MinGW's for a function its runtime supplies in place
+/// of an import (__MINGW_IMP_SYMBOL), that holds one of the image's function
+/// entries under a relocation and that no instruction changes or lets escape:
+/// every instruction that names it reads it, and no pointer in data or export
+/// names it.  A linear sweep of each executable section, resynchronized at
+/// the entries the image's metadata gives, finds those instructions.  A lazy
+/// binding that the function it starts at rewrites stays a variable.
+void recordConstantCodeSlots(BinaryImage &Img);
+
+/// Record as pointer slots of data the runs of relocated pointers a linked
+/// image keeps among its code: more pointer-wide fields back to back than one
+/// instruction can hold (maxAdjacentRelocatedFields), which the base
+/// relocations took for instruction operands.  MSVC places an i386 switch's
+/// jump table so, after its function.
+void recordRelocatedPointerRunsInCode(BinaryImage &Img);
 
 /// Parse one delay-import descriptor from the already mapped image.  Supports
 /// current RVA descriptors and legacy VA descriptors, returning the number of

@@ -5,13 +5,14 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/sdk/Limits.h"
 
 namespace neverd::sdk {
 // Bounded identity comparison for canonical source replays. This grants no
 // semantics to a call binding; callers authenticate bindings separately.
 inline bool sameSourceExpressionIdentity(const HighExpr &A, const HighExpr &B,
                                          size_t &Budget, unsigned Depth = 0) {
-  if (!Budget || Depth == 128)
+  if (!Budget || Depth == ::neverd::sdk::kMaxSourceExpressionIdentityDepth)
     return false;
   --Budget;
   if (A.Kind != B.Kind || A.Op != B.Op || !equalSourceTypes(A.Type, B.Type) ||
@@ -119,7 +120,10 @@ inline bool sameStructuredSourceBody(const HighFunc &Expected,
   const auto Compare = [&](auto &&Self, const std::vector<HighStmt> &Left,
                            const std::vector<HighStmt> &Right,
                            unsigned Depth) -> bool {
-    if (Depth >= 64 || Left.size() != Right.size() || Left.size() > Budget)
+    if (Depth >=
+            ::neverd::sdk::
+                kSourceExpressionIdentitySameStructuredSourceBodyCompareDepthLimit ||
+        Left.size() != Right.size() || Left.size() > Budget)
       return false;
     for (size_t I = 0; I < Left.size(); ++I) {
       if (!Budget)

@@ -36,7 +36,13 @@ NEVERD_KERNEL_IRQL_API(ExRaiseAccessViolation, Passive)
 NEVERD_KERNEL_IRQL_API(ExRaiseDatatypeMisalignment, Passive)
 NEVERD_KERNEL_IRQL_API(ProbeForRead, APC)
 NEVERD_KERNEL_IRQL_API(ProbeForWrite, APC)
-NEVERD_KERNEL_IRQL_API(ExGetPreviousMode, Any)
+// ExGetPreviousMode's WDK contract is <= DISPATCH_LEVEL. The byte-result
+// alias uses the same bounded admission and the same thread state.
+NEVERD_KERNEL_IRQL_API(ExGetPreviousMode, Dispatch)
+NEVERD_KERNEL_IRQL_API(PsGetCurrentThreadPreviousMode, Dispatch)
+// Pinned nonpaged lookup over the fixed module inventory; output residency
+// is checked separately. No dynamic function-table callback is executed.
+NEVERD_KERNEL_IRQL_API(RtlPcToFileHeader, Any)
 NEVERD_KERNEL_IRQL_API(NtQuerySystemInformation, Passive)
 NEVERD_KERNEL_IRQL_API(ZwQuerySystemInformation, Passive)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetrequestorprocessid
@@ -46,6 +52,8 @@ NEVERD_KERNEL_IRQL_API(IoGetRequestorProcess, Dispatch)
 NEVERD_KERNEL_IRQL_API(IoGetCurrentProcess, Any)
 NEVERD_KERNEL_IRQL_API(PsGetCurrentProcessId, Any)
 NEVERD_KERNEL_IRQL_API(PsGetProcessId, Any)
+// Conservative ceiling for the explicitly declared process environment view.
+NEVERD_KERNEL_IRQL_API(PsGetProcessPeb, Passive)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-psgetcurrentthread
 // The 19041.6456 kernel exports PsGetCurrentProcess as the IoGetCurrentProcess
 // routine (RVA 0x2bbc90) and PsGetCurrentThread as KeGetCurrentThread
@@ -63,8 +71,11 @@ NEVERD_KERNEL_IRQL_API(PsGetThreadId, Dispatch)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-obdereferenceobject
 NEVERD_KERNEL_IRQL_API(PsCreateSystemThread, Passive)
 NEVERD_KERNEL_IRQL_API(PsTerminateSystemThread, Passive)
-NEVERD_KERNEL_IRQL_API(ObReferenceObjectByHandle, Passive)
-NEVERD_KERNEL_IRQL_API(ObfDereferenceObject, Dispatch)
+#define NEVERD_KERNEL_OBJECT_API(Name, Arity, IRQL, Operation)                 \
+  NEVERD_KERNEL_IRQL_API(Name, IRQL)
+#include "KernelNamespaceAPIs.def"
+#include "KernelObjectAPIs.def"
+#undef NEVERD_KERNEL_OBJECT_API
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-kestackattachprocess
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-keunstackdetachprocess
 NEVERD_KERNEL_IRQL_API(KeStackAttachProcess, APC)
@@ -97,6 +108,22 @@ NEVERD_KERNEL_IRQL_API(KeUnstackDetachProcess, APC)
   NEVERD_KERNEL_IRQL_API(Name, IRQL)
 #include "KernelCStringAPIs.def"
 #undef NEVERD_KERNEL_CSTRING_API
+#define NEVERD_KERNEL_RUNDOWN_API(Name, Arity, IRQL, Operation)                \
+  NEVERD_KERNEL_IRQL_API(Name, IRQL)
+#include "KernelRundownAPIs.def"
+#undef NEVERD_KERNEL_RUNDOWN_API
+#define NEVERD_KERNEL_LOOKASIDE_API(Name, Arity, IRQL, Operation)              \
+  NEVERD_KERNEL_IRQL_API(Name, IRQL)
+#include "KernelLookasideAPIs.def"
+#undef NEVERD_KERNEL_LOOKASIDE_API
+#define NEVERD_KERNEL_FAST_MUTEX_API(Name, Arity, IRQL, Operation)             \
+  NEVERD_KERNEL_IRQL_API(Name, IRQL)
+#include "KernelFastMutexAPIs.def"
+#undef NEVERD_KERNEL_FAST_MUTEX_API
+#define NEVERD_KERNEL_RESOURCE_API(Name, Arity, IRQL, Operation)               \
+  NEVERD_KERNEL_IRQL_API(Name, IRQL)
+#include "KernelExecutiveResourceAPIs.def"
+#undef NEVERD_KERNEL_RESOURCE_API
 
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-ioconnectinterrupt
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-kesynchronizeexecution
@@ -118,6 +145,12 @@ NEVERD_KERNEL_IRQL_API(RtlEqualUnicodeString, Passive)
 NEVERD_KERNEL_IRQL_API(MmGetSystemRoutineAddress, Passive)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-mmisaddressvalid
 NEVERD_KERNEL_IRQL_API(MmIsAddressValid, Dispatch)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-mmgetphysicaladdress
+// The query separately requires a live resident mapping with known ownership.
+NEVERD_KERNEL_IRQL_API(MmGetPhysicalAddress, Any)
+// Fixed nonpaged PFN query: this profile admits only live nonpaged-pool
+// primary mappings; private backing and arbitrary reverse aliases refuse.
+NEVERD_KERNEL_IRQL_API(MmGetVirtualForPhysical, Any)
 // The base WDK query requires PASSIVE_LEVEL and returns caller-owned pool.
 NEVERD_KERNEL_IRQL_API(MmGetPhysicalMemoryRanges, Passive)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-keregisterbugcheckreasoncallback
@@ -182,16 +215,22 @@ NEVERD_KERNEL_IRQL_API(IoFreeIrp, Dispatch)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdmsec/nf-wdmsec-wdmlibrtlinitunicodestringex
 NEVERD_KERNEL_IRQL_API(IoGetDmaAdapter, Passive)
 NEVERD_KERNEL_IRQL_API(IoAllocateMdl, Dispatch)
+// The obsolete wrapper uses resident caller storage or nonpaged pool.
+NEVERD_KERNEL_IRQL_API(MmCreateMdl, Dispatch)
+NEVERD_KERNEL_IRQL_API(MmAdvanceMdl, Dispatch)
 NEVERD_KERNEL_IRQL_API(IoBuildPartialMdl, Dispatch)
 NEVERD_KERNEL_IRQL_API(IoFreeMdl, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmBuildMdlForNonPagedPool, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmProbeAndLockPages, Dispatch)
+NEVERD_KERNEL_IRQL_API(MmProbeAndLockProcessPages, APC)
 NEVERD_KERNEL_IRQL_API(MmUnlockPages, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmAllocatePagesForMdl, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmAllocatePagesForMdlEx, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmFreePagesFromMdl, Dispatch)
 NEVERD_KERNEL_IRQL_API(KeFlushIoBuffers, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmMapLockedPagesSpecifyCache, Dispatch)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-mmmaplockedpages
+NEVERD_KERNEL_IRQL_API(MmMapLockedPages, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmGetSystemAddressForMdlSafe, Dispatch)
 NEVERD_KERNEL_IRQL_API(MmUnmapLockedPages, Dispatch)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-mmprotectmdlsystemaddress
@@ -231,6 +270,29 @@ NEVERD_KERNEL_IRQL_API(IoReleaseRemoveLockEx, Dispatch)
 NEVERD_KERNEL_IRQL_API(IoReleaseRemoveLockAndWaitEx, Passive)
 NEVERD_KERNEL_IRQL_API(IoAttachDeviceToDeviceStack, Dispatch)
 NEVERD_KERNEL_IRQL_API(IoDetachDevice, Passive)
+NEVERD_KERNEL_IRQL_API(IoGetAttachedDevice, Dispatch)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-iogetrelateddeviceobject
+NEVERD_KERNEL_IRQL_API(IoGetRelatedDeviceObject, Dispatch)
+// The reserved base-file query uses this profile's device-query ceiling.
+NEVERD_KERNEL_IRQL_API(IoGetBaseFileSystemDeviceObject, Dispatch)
+NEVERD_KERNEL_IRQL_API(IoGetDeviceObjectPointer, Passive)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ioqueryfileinformation
+// Reserved helper: the supported target-kernel query path can block.
+NEVERD_KERNEL_IRQL_API(IoQueryFileInformation, Passive)
+NEVERD_KERNEL_IRQL_API(ZwQueryInformationFile, Passive)
+NEVERD_KERNEL_IRQL_API(ZwReadFile, Passive)
+NEVERD_KERNEL_IRQL_API(ZwWriteFile, Passive)
+NEVERD_KERNEL_IRQL_API(ZwSetInformationFile, Passive)
+NEVERD_KERNEL_IRQL_API(ZwFlushBuffersFile, Passive)
+NEVERD_KERNEL_IRQL_API(ZwDeviceIoControlFile, Passive)
+NEVERD_KERNEL_IRQL_API(ZwFsControlFile, Passive)
+NEVERD_KERNEL_IRQL_API(ZwCreateFile, Passive)
+NEVERD_KERNEL_IRQL_API(ZwOpenFile, Passive)
+NEVERD_KERNEL_IRQL_API(IoCreateFile, Passive)
+NEVERD_KERNEL_IRQL_API(IoCancelFileOpen, Passive)
+NEVERD_KERNEL_IRQL_API(IoGetAttachedDeviceReference, Dispatch)
+NEVERD_KERNEL_IRQL_API(IoGetLowerDeviceObject, Dispatch)
+NEVERD_KERNEL_IRQL_API(IoGetDeviceAttachmentBaseRef, Dispatch)
 NEVERD_KERNEL_IRQL_API(IoCompleteRequest, Dispatch)
 NEVERD_KERNEL_IRQL_API(IoAllocateWorkItem, Dispatch)
 NEVERD_KERNEL_IRQL_API(IoQueueWorkItem, Dispatch)
@@ -248,6 +310,7 @@ NEVERD_KERNEL_IRQL_API(KeWaitForMultipleObjects, Dispatch)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-dbgprintex
 NEVERD_KERNEL_IRQL_API(DbgPrint, Device)
 NEVERD_KERNEL_IRQL_API(DbgPrintEx, Device)
+NEVERD_KERNEL_IRQL_API(vDbgPrintExWithPrefix, Device)
 
 // Byte operations and Unicode copying are permitted at any IRQL with resident
 // operands. The modeled C memory primitives have the same residency rule as
@@ -259,6 +322,9 @@ NEVERD_KERNEL_IRQL_API(DbgPrintEx, Device)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlcomparememory
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlzeromemory
 NEVERD_KERNEL_IRQL_API(RtlCopyUnicodeString, Any)
+NEVERD_KERNEL_IRQL_API(memcpy_s, Any)
+NEVERD_KERNEL_IRQL_API(memmove_s, Any)
+NEVERD_KERNEL_IRQL_API(RtlImageNtHeader, Any)
 NEVERD_KERNEL_IRQL_API(memcpy, Any)
 NEVERD_KERNEL_IRQL_API(memmove, Any)
 NEVERD_KERNEL_IRQL_API(memset, Any)

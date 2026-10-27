@@ -1,5 +1,6 @@
 #include "QuickStartDialog.h"
 
+#include "../Config.h"
 #include "Icons.h"
 #include "ItemViewActivation.h"
 #include "ProjectDatabase.h"
@@ -22,6 +23,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScreen>
 #include <QScrollBar>
 #include <QSettings>
@@ -31,6 +33,7 @@
 #include <QSvgRenderer>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <utility>
 #include <vector>
@@ -40,24 +43,7 @@ namespace {
 
 constexpr char DarkLogo[] = ":/neverd/icons/app.svg";
 constexpr char LightLogo[] = ":/neverd/brand/logo-light.svg";
-constexpr QSize DialogSize(900, 560);
-constexpr QSize MinimumDialogSize(720, 460);
-/// The side pane: the product, above its ways to start.
-constexpr int SideWidth = 300;
-constexpr int SideTop = 32;
-constexpr int LogoSize = 56;
-constexpr int ActionHeight = 56;
-constexpr int ActionGlyphSlot = 36;
-constexpr int GlyphSize = 24;
-constexpr qreal RowRadius = 5;
 constexpr qreal DisabledOpacity = 0.45;
-/// The recent files.
-constexpr int RecentRowHeight = 60;
-constexpr int BadgeSize = 36;
-constexpr int EmptyGlyphSize = 44;
-constexpr int EmptyTextWidth = 300;
-constexpr int DropGlyphSize = 40;
-constexpr int DropInset = 14;
 /// Pixel sizes of the dialog's type, from the largest down.
 constexpr int BrandPixels = 24;
 constexpr int EmptyPixels = 15;
@@ -146,12 +132,33 @@ QFont sized(QFont font, int pixels, QFont::Weight weight = QFont::Normal) {
   return font;
 }
 
-/// \p text without its mnemonic marks, as it is painted.
+/// \p text without its mnemonic marks, as it is painted.  The "(&X)" that
+/// Chinese, Japanese, Korean and Arabic titles append goes whole: the key cap
+/// shows its letter.
 QString withoutMnemonic(QString text) {
+  static const QRegularExpression Appended(
+      QStringLiteral("\\s*[(\\x{FF08}]&[^&][)\\x{FF09}]$"));
+  text.remove(Appended);
   for (qsizetype At = 0; At < text.size(); ++At)
     if (text.at(At) == u'&')
       text.remove(At, 1);
   return text;
+}
+
+/// The letter \p title marks as its access key, which its key cap shows and
+/// which presses it without Alt as IDA's quick start keys do; \p fallback
+/// when the title marks none.
+QString accessKey(const QString &title, QChar fallback) {
+  for (qsizetype At = 0; At + 1 < title.size(); ++At) {
+    if (title.at(At) != u'&')
+      continue;
+    if (title.at(At + 1) == u'&') {
+      ++At;
+      continue;
+    }
+    return title.at(At + 1).toUpper();
+  }
+  return QString(fallback);
 }
 
 /// An SVG resource rendered at \p size logical pixels, crisp at \p ratio.
@@ -284,12 +291,27 @@ public:
     setCursor(Qt::PointingHandCursor);
     setAttribute(Qt::WA_Hover);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    setFixedHeight(ActionHeight);
+    setFixedHeight(::neverd::limits::gui_config::kQuickStartDialogActionHeight);
     setAccessibleDescription(description);
   }
 
-  QSize sizeHint() const override { return {SideWidth, ActionHeight}; }
-  QSize minimumSizeHint() const override { return {0, ActionHeight}; }
+  /// Wide enough to show the title, the description and the key cap whole.
+  /// Painting elides by the text's fractional width, so the width rounds up
+  /// and keeps a pixel more.
+  QSize sizeHint() const override {
+    const QFontMetricsF title(sized(font(), TitlePixels, QFont::Medium));
+    const QFontMetricsF body(sized(font(), BodyPixels));
+    const int text = static_cast<int>(
+        std::ceil(std::max(title.horizontalAdvance(title_),
+                           body.horizontalAdvance(description_))));
+    return {4 * ::neverd::limits::gui_config::kQuickStartDialogActionPadding +
+                ::neverd::limits::gui_config::kQuickStartDialogActionGlyphSlot +
+                text + capWidth() + 1,
+            ::neverd::limits::gui_config::kQuickStartDialogActionHeight};
+  }
+  QSize minimumSizeHint() const override {
+    return {0, ::neverd::limits::gui_config::kQuickStartDialogActionHeight};
+  }
 
 protected:
   void enterEvent(QEnterEvent *event) override {
@@ -317,31 +339,51 @@ protected:
       painter.setBrush(chrome("QuickStartDefaultAction"));
     else
       painter.setBrush(Qt::NoBrush);
-    painter.drawRoundedRect(row, RowRadius, RowRadius);
+    painter.drawRoundedRect(
+        row, ::neverd::limits::gui_config::kQuickStartDialogRowRadius,
+        ::neverd::limits::gui_config::kQuickStartDialogRowRadius);
     if (hasFocus() && window()->testAttribute(Qt::WA_KeyboardFocusChange)) {
       painter.setPen(QPen(chrome("QuickStartFocus"), 1));
       painter.setBrush(Qt::NoBrush);
-      painter.drawRoundedRect(row, RowRadius, RowRadius);
+      painter.drawRoundedRect(
+          row, ::neverd::limits::gui_config::kQuickStartDialogRowRadius,
+          ::neverd::limits::gui_config::kQuickStartDialogRowRadius);
     }
 
     const int middle = height() / 2;
-    const QRect glyphArea(12, middle - ActionGlyphSlot / 2, ActionGlyphSlot,
-                          ActionGlyphSlot);
-    painter.drawPixmap(glyphArea.left() + (ActionGlyphSlot - GlyphSize) / 2,
-                       glyphArea.top() + (ActionGlyphSlot - GlyphSize) / 2,
-                       glyph(glyph_, GlyphSize,
-                             chrome(defaultAction ? "QuickStartDefaultGlyph"
-                                                  : "QuickStartGlyph"),
-                             devicePixelRatioF()));
+    const QRect glyphArea(
+        ::neverd::limits::gui_config::kQuickStartDialogActionPadding,
+        middle -
+            ::neverd::limits::gui_config::kQuickStartDialogActionGlyphSlot / 2,
+        ::neverd::limits::gui_config::kQuickStartDialogActionGlyphSlot,
+        ::neverd::limits::gui_config::kQuickStartDialogActionGlyphSlot);
+    painter.drawPixmap(
+        glyphArea.left() +
+            (::neverd::limits::gui_config::kQuickStartDialogActionGlyphSlot -
+             ::neverd::limits::gui_config::kQuickStartDialogGlyphSize) /
+                2,
+        glyphArea.top() +
+            (::neverd::limits::gui_config::kQuickStartDialogActionGlyphSlot -
+             ::neverd::limits::gui_config::kQuickStartDialogGlyphSize) /
+                2,
+        glyph(glyph_, ::neverd::limits::gui_config::kQuickStartDialogGlyphSize,
+              chrome(defaultAction ? "QuickStartDefaultGlyph"
+                                   : "QuickStartGlyph"),
+              devicePixelRatioF()));
 
     const QFont keyFont = sized(font(), KeyPixels, QFont::Medium);
-    const int capWidth =
-        std::max(20, QFontMetrics(keyFont).horizontalAdvance(key_) + 12);
-    const QRect cap(width() - 12 - capWidth, middle - 10, capWidth, 20);
+    const QRect cap(
+        width() - ::neverd::limits::gui_config::kQuickStartDialogActionPadding -
+            capWidth(),
+        middle - 10, capWidth(), 20);
     drawKey(painter, cap, key_, keyFont);
 
-    const int left = glyphArea.right() + 1 + 12;
-    const int width = cap.left() - 12 - left;
+    const int left =
+        glyphArea.right() + 1 +
+        ::neverd::limits::gui_config::kQuickStartDialogActionPadding;
+    const int width =
+        cap.left() -
+        ::neverd::limits::gui_config::kQuickStartDialogActionPadding - left;
     const QFont titleFont = sized(font(), TitlePixels, QFont::Medium);
     const QFont bodyFont = sized(font(), BodyPixels);
     const QFontMetrics titleMetrics(titleFont), bodyMetrics(bodyFont);
@@ -361,6 +403,11 @@ protected:
   }
 
 private:
+  int capWidth() const {
+    const QFont keyFont = sized(font(), KeyPixels, QFont::Medium);
+    return std::max(20, QFontMetrics(keyFont).horizontalAdvance(key_) + 12);
+  }
+
   QString glyph_, key_, title_, description_;
 };
 
@@ -372,7 +419,7 @@ public:
 
   QSize sizeHint(const QStyleOptionViewItem &,
                  const QModelIndex &) const override {
-    return {0, RecentRowHeight};
+    return {0, ::neverd::limits::gui_config::kQuickStartDialogRecentRowHeight};
   }
 
   void paint(QPainter *painter, const QStyleOptionViewItem &option,
@@ -386,22 +433,28 @@ public:
       painter->setPen(Qt::NoPen);
       painter->setBrush(selected ? chrome("QuickStartSelection")
                                  : chrome("Hover"));
-      painter->drawRoundedRect(QRectF(option.rect).adjusted(0, 2, 0, -2),
-                               RowRadius, RowRadius);
+      painter->drawRoundedRect(
+          QRectF(option.rect).adjusted(0, 2, 0, -2),
+          ::neverd::limits::gui_config::kQuickStartDialogRowRadius,
+          ::neverd::limits::gui_config::kQuickStartDialogRowRadius);
     }
     if ((option.state & QStyle::State_HasFocus) && option.widget &&
         option.widget->window()->testAttribute(Qt::WA_KeyboardFocusChange)) {
       painter->setPen(QPen(chrome("QuickStartFocus"), 1));
       painter->setBrush(Qt::NoBrush);
       painter->drawRoundedRect(
-          QRectF(option.rect).adjusted(0.5, 2.5, -0.5, -2.5), RowRadius,
-          RowRadius);
+          QRectF(option.rect).adjusted(0.5, 2.5, -0.5, -2.5),
+          ::neverd::limits::gui_config::kQuickStartDialogRowRadius,
+          ::neverd::limits::gui_config::kQuickStartDialogRowRadius);
     }
     const QRect content = option.rect.adjusted(12, 0, -12, 0);
     const int middle = content.center().y();
 
-    const QRect badge(content.left(), middle - BadgeSize / 2, BadgeSize,
-                      BadgeSize);
+    const QRect badge(
+        content.left(),
+        middle - ::neverd::limits::gui_config::kQuickStartDialogBadgeSize / 2,
+        ::neverd::limits::gui_config::kQuickStartDialogBadgeSize,
+        ::neverd::limits::gui_config::kQuickStartDialogBadgeSize);
     const QColor badgeColor =
         selected && !missing
             ? chrome("RecentBadgeSelectedText")
@@ -483,10 +536,14 @@ protected:
     painter.setRenderHint(QPainter::Antialiasing);
     const QRect area = viewport()->rect();
     int top = area.center().y() - 64;
-    painter.drawPixmap(area.center().x() - EmptyGlyphSize / 2, top,
-                       glyph(QStringLiteral("start_previous"), EmptyGlyphSize,
-                             chrome("DisabledText"), devicePixelRatioF()));
-    top += EmptyGlyphSize + 16;
+    painter.drawPixmap(
+        area.center().x() -
+            ::neverd::limits::gui_config::kQuickStartDialogEmptyGlyphSize / 2,
+        top,
+        glyph(QStringLiteral("start_previous"),
+              ::neverd::limits::gui_config::kQuickStartDialogEmptyGlyphSize,
+              chrome("DisabledText"), devicePixelRatioF()));
+    top += ::neverd::limits::gui_config::kQuickStartDialogEmptyGlyphSize + 16;
     const QFont heading = sized(font(), EmptyPixels, QFont::DemiBold);
     painter.setFont(heading);
     painter.setPen(chrome("QuickStartTitle"));
@@ -499,8 +556,12 @@ protected:
     painter.setFont(sized(font(), BodyPixels));
     painter.setPen(chrome("PlaceholderText"));
     painter.drawText(
-        QRect(area.center().x() - EmptyTextWidth / 2, top, EmptyTextWidth,
-              area.height() - top),
+        QRect(
+            area.center().x() -
+                ::neverd::limits::gui_config::kQuickStartDialogEmptyTextWidth /
+                    2,
+            top, ::neverd::limits::gui_config::kQuickStartDialogEmptyTextWidth,
+            area.height() - top),
         Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
         QCoreApplication::translate("neverd::gui::QuickStartDialog",
                                     "The files you open appear here. Choose "
@@ -527,13 +588,21 @@ protected:
     painter.setPen(frame);
     painter.setBrush(Qt::NoBrush);
     painter.drawRoundedRect(
-        QRectF(rect()).adjusted(DropInset, DropInset, -DropInset, -DropInset),
+        QRectF(rect()).adjusted(
+            ::neverd::limits::gui_config::kQuickStartDialogDropInset,
+            ::neverd::limits::gui_config::kQuickStartDialogDropInset,
+            -::neverd::limits::gui_config::kQuickStartDialogDropInset,
+            -::neverd::limits::gui_config::kQuickStartDialogDropInset),
         12, 12);
     const QPoint center = rect().center();
-    painter.drawPixmap(center.x() - DropGlyphSize / 2,
-                       center.y() - DropGlyphSize - 4,
-                       glyph(QStringLiteral("start_drop"), DropGlyphSize,
-                             chrome("Focus"), devicePixelRatioF()));
+    painter.drawPixmap(
+        center.x() -
+            ::neverd::limits::gui_config::kQuickStartDialogDropGlyphSize / 2,
+        center.y() -
+            ::neverd::limits::gui_config::kQuickStartDialogDropGlyphSize - 4,
+        glyph(QStringLiteral("start_drop"),
+              ::neverd::limits::gui_config::kQuickStartDialogDropGlyphSize,
+              chrome("Focus"), devicePixelRatioF()));
     const QFont font = sized(this->font(), EmptyPixels, QFont::DemiBold);
     painter.setFont(font);
     painter.setPen(chrome("QuickStartTitle"));
@@ -552,27 +621,30 @@ QuickStartDialog::QuickStartDialog(FilePicker pickFile, QWidget *parent)
   setObjectName(QStringLiteral("quickStartDialog"));
   setWindowTitle(tr("Quick start"));
   setWindowIcon(icon(QStringLiteral("app")));
-  setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint |
-                 Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+  setWindowFlags(Qt::Window | Qt::CustomizeWindowHint | Qt::WindowTitleHint |
+                 Qt::WindowCloseButtonHint | Qt::WindowMinMaxButtonsHint);
   setAcceptDrops(true);
-  setMinimumSize(MinimumDialogSize);
-  setSizeGripEnabled(true);
+  setMinimumSize(::neverd::limits::gui_config::kQuickStartMinimumDialogSize);
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
 
   // The product, its ways to start, and whether it greets the next start.
   auto *side = new SidePane(this);
-  side->setFixedWidth(SideWidth);
+  side_ = side;
+  side->setFixedWidth(::neverd::limits::gui_config::kQuickStartDialogSideWidth);
   auto *sideLayout = new QVBoxLayout(side);
-  sideLayout->setContentsMargins(16, SideTop, 17, 20);
+  sideLayout->setContentsMargins(
+      16, ::neverd::limits::gui_config::kQuickStartDialogSideTop, 17, 20);
   sideLayout->setSpacing(0);
   auto *logo = new QLabel(side);
-  logo->setFixedSize(LogoSize, LogoSize);
+  logo->setFixedSize(::neverd::limits::gui_config::kQuickStartDialogLogoSize,
+                     ::neverd::limits::gui_config::kQuickStartDialogLogoSize);
   const auto paintLogo = [logo] {
     logo->setPixmap(renderSvg(
         QString::fromLatin1(Theme::instance().dark() ? DarkLogo : LightLogo),
-        LogoSize, qApp->devicePixelRatio()));
+        ::neverd::limits::gui_config::kQuickStartDialogLogoSize,
+        qApp->devicePixelRatio()));
   };
   paintLogo();
   sideLayout->addWidget(logo, 0, Qt::AlignHCenter);
@@ -598,15 +670,18 @@ QuickStartDialog::QuickStartDialog(FilePicker pickFile, QWidget *parent)
   version->setAlignment(Qt::AlignCenter);
   sideLayout->addWidget(version);
   sideLayout->addSpacing(32);
-  auto *newButton =
-      new StartButton(QStringLiteral("start_new"), tr("&New"),
-                      tr("Disassemble a new file"), QStringLiteral("N"), side);
-  auto *goButton =
-      new StartButton(QStringLiteral("start_go"), tr("&Go"),
-                      tr("Work on your own"), QStringLiteral("G"), side);
-  previous_ = new StartButton(QStringLiteral("start_previous"), tr("&Previous"),
-                              tr("Load the selected recent file"),
-                              QStringLiteral("P"), side);
+  const QString newTitle = tr("&New"), goTitle = tr("&Go"),
+                previousTitle = tr("&Previous");
+  const QString newKey = accessKey(newTitle, u'N'),
+                goKey = accessKey(goTitle, u'G'),
+                previousKey = accessKey(previousTitle, u'P');
+  auto *newButton = new StartButton(QStringLiteral("start_new"), newTitle,
+                                    tr("Disassemble a new file"), newKey, side);
+  auto *goButton = new StartButton(QStringLiteral("start_go"), goTitle,
+                                   tr("Work on your own"), goKey, side);
+  previous_ =
+      new StartButton(QStringLiteral("start_previous"), previousTitle,
+                      tr("Load the selected recent file"), previousKey, side);
   sideLayout->addWidget(newButton);
   sideLayout->addSpacing(4);
   sideLayout->addWidget(goButton);
@@ -675,13 +750,14 @@ QuickStartDialog::QuickStartDialog(FilePicker pickFile, QWidget *parent)
           [this](int row) { previous_->setEnabled(row >= 0); });
   connect(recent_, &QWidget::customContextMenuRequested, this,
           &QuickStartDialog::showRecentMenu);
-  // IDA's keys for its buttons, also without Alt.
+  // IDA's keys for its buttons, also without Alt: each button's access key
+  // in the current language, as its key cap shows.
   for (const auto &[key, button] :
-       {std::pair<const char *, QPushButton *>{"N", newButton},
-        {"G", goButton},
-        {"P", previous_}})
-    connect(new QShortcut(QKeySequence(QString::fromLatin1(key)), this),
-            &QShortcut::activated, button, &QPushButton::click);
+       {std::pair<QString, QPushButton *>{newKey, newButton},
+        {goKey, goButton},
+        {previousKey, previous_}})
+    connect(new QShortcut(QKeySequence(key), this), &QShortcut::activated,
+            button, &QPushButton::click);
 
   fillRecent();
   if (recent_->count()) {
@@ -693,9 +769,12 @@ QuickStartDialog::QuickStartDialog(FilePicker pickFile, QWidget *parent)
   }
 
   QSize preferred =
-      QSettings().value(settings::QuickStartSize, DialogSize).toSize();
+      QSettings()
+          .value(settings::QuickStartSize,
+                 ::neverd::limits::gui_config::kQuickStartDialogSize)
+          .toSize();
   if (!preferred.isValid())
-    preferred = DialogSize;
+    preferred = ::neverd::limits::gui_config::kQuickStartDialogSize;
   if (const QScreen *display = screen())
     preferred = preferred.boundedTo(display->availableGeometry().size() -
                                     QSize(48, 80));
@@ -731,6 +810,19 @@ void QuickStartDialog::keyPressEvent(QKeyEvent *event) {
 void QuickStartDialog::resizeEvent(QResizeEvent *event) {
   QDialog::resizeEvent(event);
   dropTarget_->setGeometry(rect());
+}
+
+void QuickStartDialog::showEvent(QShowEvent *event) {
+  // The actions measure their text in the fonts the style sheet gave them as
+  // the dialog polished.  The side takes the width they need, which a
+  // translation may make wider than English, up to MaximumSideWidth; the
+  // recent files give way.
+  side_->layout()->invalidate();
+  side_->setFixedWidth(std::clamp(
+      side_->sizeHint().width(),
+      ::neverd::limits::gui_config::kQuickStartDialogSideWidth,
+      ::neverd::limits::gui_config::kQuickStartDialogMaximumSideWidth));
+  QDialog::showEvent(event);
 }
 
 void QuickStartDialog::choose(Start start) {

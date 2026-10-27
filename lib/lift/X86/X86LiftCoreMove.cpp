@@ -17,8 +17,8 @@
 #include "X86ScalarFPConversion.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/ir/intrinsics/X86SegmentRegisters.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/ir/intrinsics/X86/X86SegmentRegisters.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 #include <optional>
 
@@ -119,11 +119,15 @@ std::optional<bool> liftSystemRegisterMove(X86Lifter::LiftState &S,
     return false;
   }
   if (int Dr = DrIndex(Src); Dr >= 0 && Dst.type == X86_OP_REG) {
+    if (!x86SystemRegisterName(Intrinsic::ReadDr, Dr))
+      return false;
     S.emitIntrinsic(Intrinsic::ReadDr, GPR(Dst),
                     {NdVar::scalar(static_cast<uint64_t>(Dr), 4)});
     return true;
   }
   if (int Dr = DrIndex(Dst); Dr >= 0 && Src.type == X86_OP_REG) {
+    if (!x86SystemRegisterName(Intrinsic::WriteDr, Dr))
+      return false;
     S.emitIntrinsic(Intrinsic::WriteDr, NdVar(),
                     {NdVar::scalar(static_cast<uint64_t>(Dr), 4), GPR(Src)});
     return true;
@@ -335,27 +339,66 @@ bool liftCoreMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     // pointer; an owned context executes it in liftFPU.
     if (L.ownsX87Context())
       return false;
-    [[fallthrough]];
+    throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
   case X86_INS_NOP:
     S.emit(NdOp::NOP, {}, {});
     break;
 
-  // --- MOV (+ MOVABS, plus SSE/SIMD 128-bit register-to-register moves).
-  // MOVAPS/MOVUPS/MOVDQA/MOVDQU/MOVD/MOVQ semantically are just "copy bytes"
-  // for our purposes — the lift doesn't model float arithmetic separately
-  // unless we later promote to FLOAT_* S.Ops. Treating them as bulk COPY at
-  // least preserves dataflow (so the destination XMM reg has a defined
-  // value) instead of dropping the instruction to NOP.
+  // Legacy aligned moves preserve the vector bits above bit 127. A memory
+  // operand additionally requires a 16-byte-aligned linear address, checked
+  // before either a load or a store can affect architectural state.
+  case X86_INS_MOVAPS:
+  case X86_INS_MOVAPD:
+  case X86_INS_MOVDQA: {
+    if (X86.op_count != 2)
+      return false;
+    const cs_x86_op &Destination = X86.operands[0];
+    const cs_x86_op &Source = X86.operands[1];
+    const auto IsXMM = [&](const cs_x86_op &Operand) {
+      return Operand.type == X86_OP_REG && Operand.size == 16 &&
+             Operand.reg >= X86_REG_XMM0 &&
+             Operand.reg <=
+                 (L.targetArch() == Arch::X64 ? X86_REG_XMM15 : X86_REG_XMM7);
+    };
+    const bool Store = Destination.type == X86_OP_MEM;
+    const bool Load = Source.type == X86_OP_MEM;
+    if ((Store ? Destination.size != 16 : !IsXMM(Destination)) ||
+        (Load ? Source.size != 16 : !IsXMM(Source)) || (Store && Load))
+      return false;
+    if (!Store && !Load) {
+      S.emit(NdOp::COPY, L.operandWrite(Destination),
+             {L.operandRead(S, Source)});
+      break;
+    }
+
+    const cs_x86_op &Memory = Store ? Destination : Source;
+    const NdVar Address = S.computeEA(Memory);
+    const NdMemoryAddressSpace AddressSpace = S.memoryAddressSpace(Memory);
+    // The address space is part of the guard: FS/GS alignment is checked
+    // after adding the authenticated base, not against the raw offset.
+    S.emitIntrinsic(Intrinsic::RequireAligned, {},
+                    {Address, NdVar::scalar(16, 8)}, NdMemoryOrdering::None,
+                    AddressSpace);
+    if (Store) {
+      S.emit(NdOp::STORE, {}, {Address, L.operandRead(S, Source)},
+             NdMemoryOrdering::None, AddressSpace);
+    } else {
+      const NdVar Value = S.makeTemp(16);
+      S.emit(NdOp::LOAD, Value, {Address}, NdMemoryOrdering::None,
+             AddressSpace);
+      S.emit(NdOp::COPY, L.operandWrite(Destination), {Value});
+    }
+    break;
+  }
+
+  // --- MOV (+ MOVABS and unaligned or scalar SSE/SIMD moves).
   case X86_INS_MOV:
   case X86_INS_MOVABS:
   case X86_INS_MOVZX:
   case X86_INS_MOVSX:
   case X86_INS_MOVSXD:
-  case X86_INS_MOVAPS:
-  case X86_INS_MOVAPD:
   case X86_INS_MOVUPS:
   case X86_INS_MOVUPD:
-  case X86_INS_MOVDQA:
   case X86_INS_MOVDQU:
   case X86_INS_MOVD:
   case X86_INS_MOVQ:
@@ -585,26 +628,38 @@ bool liftCoreMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   case X86_INS_XCHG: {
     if (X86.op_count < 2)
       break;
+    const bool FirstMemory = X86.operands[0].type == X86_OP_MEM;
+    const bool SecondMemory = X86.operands[1].type == X86_OP_MEM;
+    if (FirstMemory || SecondMemory) {
+      const auto &Memory = X86.operands[FirstMemory ? 0 : 1];
+      const auto &Register = X86.operands[FirstMemory ? 1 : 0];
+      if (FirstMemory == SecondMemory || Register.type != X86_OP_REG ||
+          Register.size != Memory.size)
+        return false;
+      // A memory XCHG is locked even without an F0 prefix. The single RMW
+      // owns the old value and the store, and precedes the register write so
+      // an aliased address register and a fault both retain their input state.
+      const NdVar Address = S.computeEA(Memory);
+      const NdVar New = L.operandRead(S, Register);
+      const NdVar Old = S.makeTemp(Memory.size);
+      S.emit(NdOp::ATOMIC_XCHG, Old, {Address, New},
+             NdMemoryOrdering::SequentiallyConsistent,
+             X86Lifter::LiftState::memoryAddressSpace(Memory));
+      S.emit(NdOp::COPY, L.operandWrite(Register), {Old});
+      if (L.targetArch() == Arch::X64 && Memory.size == 4) {
+        const RegInfo RI = mapCapstoneReg(static_cast<x86_reg>(Register.reg));
+        if (RI.Offset == x86reg::RSP || RI.Offset == x86reg::RBP)
+          S.emit(NdOp::INT_ZEXT, NdVar::reg(RI.Offset, 8),
+                 {NdVar::reg(RI.Offset, 4)});
+      }
+      break;
+    }
     NdVar A = L.operandRead(S, X86.operands[0]);
     NdVar B = L.operandRead(S, X86.operands[1]);
     NdVar TmpV = S.makeTemp(A.Size);
     S.emit(NdOp::COPY, TmpV, {A});
-    // A MEMORY operand must be written with an explicit STORE —
-    // L.operandWrite() returns a discarded ram(0) placeholder, so `xchg
-    // [mem],reg` previously updated only the register and silently dropped the
-    // memory half.  Do the store FIRST (using the original register values for
-    // its address) before the register write, so a register that also indexes
-    // the address (e.g. `xchg rax,[rax]`) is not clobbered first.
-    if (X86.operands[0].type == X86_OP_MEM) {
-      S.storeToMem(X86.operands[0], B);
-      S.emit(NdOp::COPY, L.operandWrite(X86.operands[1]), {TmpV});
-    } else if (X86.operands[1].type == X86_OP_MEM) {
-      S.storeToMem(X86.operands[1], TmpV);
-      S.emit(NdOp::COPY, L.operandWrite(X86.operands[0]), {B});
-    } else {
-      S.emit(NdOp::COPY, L.operandWrite(X86.operands[0]), {B});
-      S.emit(NdOp::COPY, L.operandWrite(X86.operands[1]), {TmpV});
-    }
+    S.emit(NdOp::COPY, L.operandWrite(X86.operands[0]), {B});
+    S.emit(NdOp::COPY, L.operandWrite(X86.operands[1]), {TmpV});
     break;
   }
 

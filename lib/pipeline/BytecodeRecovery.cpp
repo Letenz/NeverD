@@ -20,6 +20,7 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedTypePass.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/StringSwitch.h"
@@ -38,7 +39,10 @@ llvm::Error invalid(const llvm::Twine &Message) {
 }
 
 bool identifier(llvm::StringRef Name) {
-  if (Name.empty() || Name.size() > 128 || !llvm::isAlpha(Name.front()) ||
+  if (Name.empty() ||
+      Name.size() > ::neverd::limits::pipeline::
+                        kBytecodeRecoveryIdentifierNameSizeLimit ||
+      !llvm::isAlpha(Name.front()) ||
       !llvm::all_of(Name, [](char C) { return llvm::isAlnum(C) || C == '_'; }))
     return false;
   return !llvm::StringSwitch<bool>(Name)
@@ -95,7 +99,9 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
     return invalid(Decode
                        ? "layout must be an external decoder layout object"
                        : "profile must be an external decoder profile object");
-  if (!Ranges || Ranges->empty() || Ranges->size() > 100000)
+  if (!Ranges || Ranges->empty() ||
+      Ranges->size() > ::neverd::limits::pipeline::
+                           kBytecodeRecoveryRecoverBytecodeRangesSizeLimit)
     return invalid("functions must be a nonempty bounded JSON array");
   if (Root->get("bindings") && !Root->getArray("bindings"))
     return invalid("bindings must be a bounded JSON array");
@@ -160,8 +166,10 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
   std::map<uint64_t, uint64_t> Intervals;
   uint64_t Bytes = 0;
   uint64_t Blocks = 0;
-  uint64_t RemainingOperations = 10000000;
-  uint32_t RemainingInstructions = 1000000;
+  uint64_t RemainingOperations =
+      ::neverd::limits::pipeline::kBytecodeRecoveryRemainingOperations;
+  uint32_t RemainingInstructions =
+      ::neverd::limits::pipeline::kBytecodeRecoveryRemainingInstructions;
   for (const auto &Item : *Ranges) {
     const auto *O = Item.getAsObject();
     if (!O || O->size() != 3)
@@ -200,7 +208,9 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
   }
   std::vector<va_t> ExternalCalls;
   if (const auto *Bindings = Root->getArray("bindings")) {
-    if (Bindings->size() > 65536)
+    if (Bindings->size() >
+        ::neverd::limits::pipeline::
+            kBytecodeRecoveryRecoverBytecodeBindingsSizeLimit)
       return invalid("bindings must be a bounded JSON array");
     for (const auto &Item : *Bindings) {
       const auto *O = Item.getAsObject();
@@ -382,13 +392,8 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
         Converter.setStatementObserver([&](const MedOp &Op, const HighStmt &S) {
           if (Op.Opcode == NdOp::CALL)
             return;
-          HighSources.push_back({Med.Entry,
-                                 {Op.Addr, Op.OriginSeq},
-                                 {},
-                                 S.Kind == StmtKind::Store
-                                     ? HighSourceKind::Store
-                                     : HighSourceKind::Statement,
-                                 S.Kind});
+          HighSources.push_back(
+              observeHighStatement(Med.Entry, {Op.Addr, Op.OriginSeq}, S));
         });
         Converter.setExpressionObserver([&](const MedOp &Op, const ExprPtr &E) {
           if (Op.Opcode == NdOp::CALL && E && E->Kind == ExprKind::Call)

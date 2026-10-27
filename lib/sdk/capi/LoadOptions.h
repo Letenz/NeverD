@@ -23,10 +23,15 @@ llvm::Expected<LoaderChoice> parseLoadOptions(llvm::StringRef Text);
 /// The load options JSON of the loader \p Choice names.
 std::string loadOptionsJson(const LoaderChoice &Choice);
 
-/// The loader the input's `.neverd-load.json` keeps; the file's own format
-/// without one.
+/// The loader the input's `load.json` keeps (its project folder's); the file's
+/// own format without one.
 llvm::Expected<LoaderChoice>
 readLoadOptionsSidecar(const std::filesystem::path &Input);
+
+struct Session;
+/// Explicit request, current cache image on reload, then persisted selection.
+llvm::Expected<LoaderChoice>
+sessionLoadOptions(const Session *Session, const std::filesystem::path &Input);
 
 /// Settle the processor a binary file is read as when the user named none:
 /// read it from the bytes and keep in \p Choice what was read and why.

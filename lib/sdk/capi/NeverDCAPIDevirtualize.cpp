@@ -8,6 +8,7 @@
 
 #include "SessionImpl.h"
 
+#include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/ir/SourceABI.h"
@@ -16,6 +17,7 @@
 #include "neverd/ir/med/MedMutableSource.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
 #include "neverd/pipeline/NativeSourceHints.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Constants.h"
@@ -151,7 +153,7 @@ std::string highRecoverySourceLimitation(const HighFunc &Function) {
   // reject an explicit Undef leaf or a missing non-void return expression.
   // Check those publication failures without changing ordinary decompilation,
   // whose diagnostic placeholders are still useful to a human reader.
-  size_t Budget = 1000000;
+  size_t Budget = kSourceEvaluationWork;
   const auto Spend = [&](size_t Count) {
     if (Count > Budget)
       return false;
@@ -176,7 +178,7 @@ std::string highRecoverySourceLimitation(const HighFunc &Function) {
   while (!Statements.empty()) {
     const auto [Statement, Depth] = Statements.back();
     Statements.pop_back();
-    if (Depth > 200)
+    if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth)
       return "recovered source exceeds the statement-depth limit";
     if (Statement->Kind == StmtKind::Return && NeedsReturn &&
         !Statement->RetVal)
@@ -209,7 +211,7 @@ std::string highRecoverySourceLimitation(const HighFunc &Function) {
     Expressions.pop_back();
     if (!Expression)
       return "recovered source has a missing expression operand";
-    if (Depth > 200)
+    if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth)
       return "recovered source exceeds the expression-depth limit";
     const auto [It, Fresh] = SeenExpressions.emplace(Expression, Depth);
     if (!Fresh && It->second >= Depth)
@@ -228,7 +230,7 @@ std::string highRecoverySourceLimitation(const HighFunc &Function) {
 }
 
 std::string llvmRecoverySourceLimitation(const llvm::Module &Module) {
-  size_t Budget = 1000000;
+  size_t Budget = kSourceEvaluationWork;
   std::vector<const llvm::Value *> Pending;
   std::set<const llvm::Value *> Seen;
   const auto Add = [&](const llvm::Value *Value) {
@@ -244,6 +246,9 @@ std::string llvmRecoverySourceLimitation(const llvm::Module &Module) {
   for (const auto &Function : Module)
     for (const auto &Block : Function)
       for (const auto &Instruction : Block) {
+        if (llvm_source_unknown::isValue(&Instruction) &&
+            !Instruction.use_empty())
+          return "recovered LLVM source contains unrecovered machine state";
         if (!Budget)
           return "recovered LLVM source publication budget exhausted";
         --Budget;
@@ -456,7 +461,9 @@ static const char *devirtualizeSource(
         if (!Found)
           return Fail("control register must be a full x64 general register");
       }
-      if (Options->control_frame_slot_count > 64 ||
+      if (Options->control_frame_slot_count >
+              ::neverd::sdk::
+                  kNeverDCAPIDevirtualizeSourceOptionsControlFrameSlotCountLimit ||
           (Options->control_frame_slot_count && !Options->control_frame_slots))
         return Fail("invalid frame control slot list");
       for (size_t I = 0; I < Options->control_frame_slot_count; ++I) {

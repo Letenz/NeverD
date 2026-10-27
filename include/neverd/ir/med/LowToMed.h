@@ -15,6 +15,9 @@
 #ifndef NEVERD_IR_MED_LOWTOMED_H
 #define NEVERD_IR_MED_LOWTOMED_H
 
+#include "neverd/ir/FloatingCallArguments.h"
+#include "neverd/ir/IntegerCallArguments.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/FormattedCall.h"
 #include "neverd/ir/low/LowIR.h"
@@ -24,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 #include <utility>
 #include <vector>
@@ -43,7 +47,14 @@ public:
   /// freezing arithmetic between addresses that will be rebuilt as distinct
   /// symbols. Optional for standalone IR clients; null preserves the generic
   /// image-independent folding policy.
-  void setBinaryImage(const BinaryImage *I) { Image = I; }
+  void setBinaryImage(const BinaryImage *I) {
+    // What the converter read from another image does not describe this one.
+    if (I != Image) {
+      RuntimeRoutineCalls.reset();
+      CodePointerTargets.reset();
+    }
+    Image = I;
+  }
 
   /// Register DCE with an explicit architecture. Used by tests that build
   /// MedIR directly; the pipeline path sets TargetArch in convert().
@@ -56,6 +67,14 @@ public:
   /// and lifting: these declarations are not authenticated semantic evidence.
   void setSourceCallHintsEnabled(bool Enabled) {
     SourceCallHintsEnabled = Enabled;
+  }
+  /// Permit explicit call bindings without discovering runtime source ABIs.
+  void setSourceCallRuntimeHintsEnabled(bool Enabled) {
+    SourceCallRuntimeHintsEnabled = Enabled;
+  }
+  void setSourceCallSiteHints(
+      const std::map<SourceCallOccurrenceKey, SourceCallTypeHint> *Hints) {
+    SourceCallSiteHints = Hints;
   }
   /// Source rendering only. Entry contracts describe the function currently
   /// being converted and must remain independent from call-only overrides for
@@ -107,17 +126,62 @@ public:
   void setCallMayWriteGPRs(const std::map<va_t, uint32_t> *M) {
     CallMayWriteGPRs = M;
   }
+  void setCallExitConstants(const std::map<va_t, GPRExitConstants> *M) {
+    CallExitConstants = M;
+  }
   /// Direct-callee entry-read summaries (PipelineResult::CallEntryReadGPRs).
   void setCallEntryReadGPRs(const std::map<va_t, GPRReadWidths> *M) {
     CallEntryReadGPRs = M;
+  }
+  void setCallUnreadGPRs(const std::map<va_t, GPRFamilyMask> *M) {
+    CallUnreadGPRs = M;
+  }
+  /// The routine whose summary gives a call through each function-pointer
+  /// variable its arguments (PipelineResult::CallArgumentSources).
+  void setCallArgumentSources(const std::map<va_t, va_t> *M) {
+    CallArgumentSources = M;
   }
   /// Direct-callee incoming stack reads (PipelineResult::CallEntryStackArgs).
   void setCallEntryStackArgs(const std::map<va_t, int> *M) {
     CallEntryStackArgs = M;
   }
+  /// The callees whose stack reads count every slot
+  /// (PipelineResult::CallEntryStackSlots).
+  void setCallEntryStackSlots(const std::set<va_t> *S) {
+    CallEntryStackSlots = S;
+  }
+  /// The integer arguments prototyped imports take where call setup gives
+  /// calls their arguments (PipelineResult::CallEntryArgumentCounts).
+  void setCallEntryArgumentCounts(const std::map<va_t, int> *M) {
+    CallEntryArgumentCounts = M;
+  }
+  void setCallEntryIntegerArguments(
+      const std::map<va_t, FixedIntegerCallArguments> *M) {
+    CallEntryIntegerArguments = M;
+  }
+  void setCallEntryFloatingArguments(
+      const std::map<va_t, FloatingCallArguments> *M) {
+    CallEntryFloatingArguments = M;
+  }
+  void setCallEntryVariadicArguments(
+      const std::map<va_t, std::vector<uint16_t>> *M) {
+    CallEntryVariadicArguments = M;
+  }
+  /// Imports whose supported user prototypes already own the argument
+  /// summaries (PipelineResult::CallUserPrototypes). Automatic Darwin SDK
+  /// bindings must leave those summaries intact; explicit call-site contracts
+  /// retain their authority.
+  void setUserPrototypeCallees(const std::set<va_t> *S) {
+    UserPrototypeCallees = S;
+  }
   /// Indirect-call dispatchers (PipelineResult::CallDispatchThunks).
   void setCallDispatchThunks(const std::set<va_t> *S) {
     CallDispatchThunks = S;
+  }
+  /// Collects in \p Keys every key the call summaries above (write, entry
+  /// read, stack argument, stack slot and argument count) are read under.
+  void setCallSummaryKeysRead(std::set<va_t> *Keys) {
+    CallSummaryKeysRead = Keys;
   }
   /// Variadic direct callees (PipelineResult::CallVariadicFrom).
   /// Calls whose constant format names every argument they pass
@@ -143,6 +207,18 @@ public:
   /// call by its target).  Mach-O only (the slot table is empty otherwise);
   /// optional, null = no-op.
   void setStackProbeSlots(const std::set<va_t> *S) { StackProbeSlots = S; }
+  /// The addresses that name a runtime routine one intrinsic models
+  /// (runtimeRoutineCallsOf), read once for every converter of a run.
+  /// Without them a converter reads its own from its image.
+  void setRuntimeRoutineCalls(const std::map<va_t, Intrinsic> *Calls) {
+    SharedRuntimeRoutineCalls = Calls;
+  }
+  /// The code addresses the image's relocated code pointers hold
+  /// (codePointerTargetsOf), read once for every converter of a run.
+  /// Without them a converter reads its own from its image.
+  void setCodePointerTargets(const std::vector<va_t> *Targets) {
+    SharedCodePointerTargets = Targets;
+  }
 
   /// Provide the set of direct-call targets proven to return a 64-bit integer
   /// in the register pair (i386 EDX:EAX, ARM32 R1:R0).  When set, a direct CALL
@@ -164,6 +240,21 @@ public:
   /// same pre-SSA register-pair modeling runs and buildSsa places the high-half
   /// loop PHI. Optional; null = no-op.
   void setI64IndirectSites(const std::set<va_t> *S) { I64IndirectSites = S; }
+
+  /// Registration frame facts that an earlier conversion of the same LowFunc
+  /// against the same image proved
+  /// (MedFunc::RegistrationCallerCleanupABIComplete and
+  /// RegistrationCxxEntryPopBytes).  They depend on nothing else, so a
+  /// re-conversion of Entry reuses them instead of proving them again.
+  /// Optional; unset = prove them.
+  struct RegistrationFrameFacts {
+    va_t Entry = 0;
+    bool CallerCleanupABIComplete = false;
+    std::optional<uint16_t> CxxEntryPopBytes;
+  };
+  void setRegistrationFrameFacts(const RegistrationFrameFacts &Facts) {
+    KnownRegistrationFrameFacts = Facts;
+  }
 
   struct StackSlot {
     int64_t Offset;
@@ -187,6 +278,9 @@ private:
   void bindSourceCalls(MedFunc &Func, const LowFunc &Low, BinaryFormat Fmt);
   MedVar ndVarToMedVar(const NdVar &VN);
   void fixupSubRegisters(MedFunc &Func);
+  /// Keep the architectural data registers of checked ordinary SEH callbacks
+  /// on explicit state edges before SSA applies the ordinary calling ABI.
+  void modelSEHFinallyRegisters(MedFunc &Func);
 
   // --- Architecture-specific sub-register fixups (LLVM target-dispatch) ---
   // Each helper guards on TargetArch internally and is a no-op on other
@@ -272,14 +366,30 @@ private:
   /// Runs before buildSsa; no-op when StackProbeSlots is null/empty.  See
   /// setStackProbeSlots.
   void neutralizeStackProbeCalls(MedFunc &Func);
+  /// Rewrite each direct call to a runtime routine whose whole contract an
+  /// intrinsic models (RuntimeRoutineIntrinsics.def), `bl __aeabi_read_tp`,
+  /// into that intrinsic: it takes no argument and clobbers no register but
+  /// its result.  Runs before buildSsa.
+  void liftRuntimeRoutineCalls(MedFunc &Func);
   /// Record which GPRs a direct call's callee never writes.
-  void applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp);
+  void applyCallRegisterEffect(MedBlock &Block, MedOp &MOp, const LowOp &LOp,
+                               bool TailCall);
+  /// The fixed parameters of the variadic C library routine the import a
+  /// call at \p Key reaches is, where no prototype counts what it reads
+  /// (`open(path, flags, ...)`: 2); 0 for any other callee.
+  unsigned variadicImportFixedCount(va_t Key) const;
   /// Bind the arguments of a formatted call as its inputs, adding to \p MB
   /// the extraction of each floating one; false for any other operation.
   bool bindFormattedCall(MedBlock &MB, MedOp &MOp, const LowOp &LOp);
+  MedVar loadCallStackArgument(MedBlock &Block, const LowOp &Call,
+                               int64_t EntryOffset, uint16_t Bytes,
+                               bool TailCall);
   /// The import slot the register an INDIR_CALL being converted goes
   /// through was loaded from, else 0.
   va_t RegisterCallSlot = 0;
+  /// The routine whose summary gives the INDIR_CALL being converted its
+  /// arguments, by the function-pointer variable it goes through, else 0.
+  va_t CallArgumentsFrom = 0;
   void buildSsa(MedFunc &Func, const LowFunc &Low);
   void runDce(MedFunc &Func);
   void propagate(MedFunc &Func);
@@ -312,6 +422,9 @@ private:
 
   const BinaryImage *Image = nullptr;
   bool SourceCallHintsEnabled = false;
+  bool SourceCallRuntimeHintsEnabled = true;
+  const std::map<SourceCallOccurrenceKey, SourceCallTypeHint>
+      *SourceCallSiteHints = nullptr;
   bool SEHSourceProjectionEnabled = false;
   const std::map<va_t, SourceFunctionTypeHint> *SourceEntryTypeHints = nullptr;
   const std::map<va_t, SourceFunctionTypeHint> *SourceCalleeTypeHints = nullptr;
@@ -336,10 +449,23 @@ private:
   /// Per-callee callee-cleanup pop (entry VA -> bytes); see setCalleePopMap.
   const std::map<va_t, int> *CalleePopMap = nullptr;
   const std::map<va_t, uint32_t> *CallMayWriteGPRs = nullptr;
+  const std::map<va_t, GPRExitConstants> *CallExitConstants = nullptr;
   const std::map<va_t, GPRReadWidths> *CallEntryReadGPRs = nullptr;
+  const std::map<va_t, GPRFamilyMask> *CallUnreadGPRs = nullptr;
+  const std::map<va_t, va_t> *CallArgumentSources = nullptr;
   const std::map<va_t, int> *CallEntryStackArgs = nullptr;
+  const std::set<va_t> *CallEntryStackSlots = nullptr;
+  const std::map<va_t, int> *CallEntryArgumentCounts = nullptr;
+  const std::map<va_t, FixedIntegerCallArguments> *CallEntryIntegerArguments =
+      nullptr;
+  const std::map<va_t, FloatingCallArguments> *CallEntryFloatingArguments =
+      nullptr;
+  const std::set<va_t> *UserPrototypeCallees = nullptr;
   const std::set<va_t> *CallDispatchThunks = nullptr;
+  std::set<va_t> *CallSummaryKeysRead = nullptr;
   const std::map<va_t, int> *CallVariadicFrom = nullptr;
+  const std::map<va_t, std::vector<uint16_t>> *CallEntryVariadicArguments =
+      nullptr;
   const std::map<va_t, FormattedCall> *FormattedCalls = nullptr;
   /// Argument registers DispatchCallDefinedArgs tracks, one bit each.
   static constexpr size_t kTrackedArgSlots = 8;
@@ -353,6 +479,19 @@ private:
   /// provides it.  Mach-O only.
   const std::set<va_t> *StackProbeSlots = nullptr;
 
+  /// The addresses that name a runtime routine one intrinsic models (its
+  /// imports' stubs and slots, and its symbols), with that intrinsic: those
+  /// the run gave (setRuntimeRoutineCalls), else built from Image on first
+  /// use.  See liftRuntimeRoutineCalls.
+  const std::map<va_t, Intrinsic> *SharedRuntimeRoutineCalls = nullptr;
+  std::optional<std::map<va_t, Intrinsic>> RuntimeRoutineCalls;
+
+  /// The code addresses the image's relocated code pointers hold: those the
+  /// run gave (setCodePointerTargets), else built from Image on first use.
+  /// See simplifyCfg.
+  const std::vector<va_t> *SharedCodePointerTargets = nullptr;
+  std::optional<std::vector<va_t>> CodePointerTargets;
+
   /// Direct-call targets proven to return i64 in the register pair; see
   /// setI64Callees.  Null until the pipeline re-converts an i64-accumulator
   /// caller with whole-program return-type knowledge.
@@ -362,6 +501,9 @@ private:
   /// returns; see setI64IndirectSites.  Null unless the pipeline re-converts a
   /// caller whose function-pointer call threads an i64 accumulator.
   const std::set<va_t> *I64IndirectSites = nullptr;
+
+  /// See setRegistrationFrameFacts.
+  std::optional<RegistrationFrameFacts> KnownRegistrationFrameFacts;
 };
 
 /// Model a 32-bit target's 64-bit integer call return (i386 EDX:EAX, ARM32
@@ -376,10 +518,11 @@ private:
 void modelCallWideIntReturn(MedFunc &Func, Arch TheArch,
                             const std::set<va_t> *ForceI64Callees = nullptr);
 
-/// Take each x86 PUSHF image bit whose modelled flag no instruction defined
-/// since its root was entered, or since an unmodelled effect left it, from
-/// the machine flags the PUSHF read.  Runs on SSA MedIR.
-void foldMachineFlagsIntoPushfImages(MedFunc &Func);
+/// Take each bit of a status image (an x86 PUSHF, an ARM MRS of APSR) whose
+/// modelled flag no instruction defined since its root was entered, or since
+/// an unmodelled effect left it, from the machine word the instruction read.
+/// Runs on SSA MedIR.
+void foldMachineFlagsIntoStatusImages(MedFunc &Func);
 
 /// Verify MedFunc structural invariants.  Returns true if OK in every build
 /// mode so pipeline completeness reports cannot silently skip malformed IR.
@@ -397,6 +540,17 @@ inline bool debugVerifyMedFunc(const MedFunc &Func, const char *PassName) {
   return verifyMedFunc(Func, PassName);
 #endif
 }
+
+/// The addresses that name a runtime routine one intrinsic models in \p Img
+/// for \p TargetArch, with that intrinsic: the stubs and slots of its
+/// imports, then its function symbols, as a static image defines the routine
+/// itself at any address (an object's first function starts at 0).
+std::map<va_t, Intrinsic> runtimeRoutineCallsOf(const BinaryImage &Img,
+                                                Arch TargetArch);
+
+/// The code addresses the relocated code pointers of \p Img hold, as
+/// normalizeCodeAddress gives them, sorted and unique.
+std::vector<va_t> codePointerTargetsOf(const BinaryImage &Img);
 
 } // namespace neverd
 

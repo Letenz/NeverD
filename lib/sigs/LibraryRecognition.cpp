@@ -6,6 +6,8 @@
 
 #include "neverd/sigs/LibraryRecognition.h"
 
+#include "neverd/sigs/Limits.h"
+
 #include <algorithm>
 #include <set>
 
@@ -21,7 +23,9 @@ bool neverd::sigs::finalizeLibraryRecognitions(
     --Work;
     return true;
   };
-  if (Matches.size() > 128) {
+  if (Matches.size() >
+      ::neverd::limits::sigs::
+          kLibraryRecognitionNeverdSigsFinalizeLibraryRecognitionsMatchesSizeLimit) {
     Matches.clear();
     return false;
   }

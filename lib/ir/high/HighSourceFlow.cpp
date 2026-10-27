@@ -6,6 +6,7 @@
 //===----------------------------------------------------------------------===//
 #include "neverd/ir/high/HighSourceFlow.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -43,11 +44,11 @@ bool highSourceFrameBase(const HighFunc &Function, const MedVar &Variable) {
 void HighSourceFlowReport::add(HighSourceFlowIssue Issue, std::string Reason,
                                va_t Address, const HighExpr *Expression,
                                va_t RelatedAddress) {
-  constexpr size_t MaxDiagnostics = 4096;
-  if (Items.size() < MaxDiagnostics)
+  if (Items.size() < ::neverd::limits::ir::kHighSourceFlowMaxDiagnostics)
     Items.push_back(
         {Issue, std::move(Reason), Address, Expression, RelatedAddress});
-  else if (Items.size() == MaxDiagnostics) {
+  else if (Items.size() ==
+           ::neverd::limits::ir::kHighSourceFlowMaxDiagnostics) {
     Items.push_back(
         {HighSourceFlowIssue::Budget,
          "source projection evidence exceeds its diagnostic limit"});
@@ -61,12 +62,17 @@ namespace {
 /// are known, including edges entering or leaving a structured region.
 class SourceFlow {
   static constexpr size_t NoNode = std::numeric_limits<size_t>::max();
-  static constexpr size_t MaxNodes = 100000;
+  static constexpr size_t MaxNodes =
+      ::neverd::limits::ir::kHighSourceFlowMaxNodes;
   static constexpr size_t MaxEdges = 4 * MaxNodes;
-  static constexpr size_t MaxSwitchCases = 4096;
-  static constexpr size_t MaxLocals = 8192;
-  static constexpr size_t MaxOperations = 10000000;
-  static constexpr size_t MaxStateWords = 8 * 1024 * 1024; // 64 MiB.
+  static constexpr size_t MaxSwitchCases =
+      ::neverd::limits::ir::kHighSourceFlowMaxSwitchCases;
+  static constexpr size_t MaxLocals =
+      ::neverd::limits::ir::kHighSourceFlowMaxLocals;
+  static constexpr size_t MaxOperations =
+      ::neverd::limits::ir::kHighSourceFlowMaxOperations;
+  static constexpr size_t MaxStateWords =
+      ::neverd::limits::ir::kHighSourceFlowMaxStateWords; // 64 MiB.
   struct Failure {
     std::string Reason;
     HighSourceFlowIssue Issue;
@@ -168,19 +174,23 @@ class SourceFlow {
       spend();
       auto [Expression, Depth] = Pending.back();
       Pending.pop_back();
-      if (Depth > 200)
+      if (Depth > ::neverd::limits::ir::kHighSourceFlowReadsDepthLimit)
         fail("method expression exceeds the source projection depth limit",
              HighSourceFlowIssue::Budget);
       auto [It, Fresh] = Seen.emplace(Expression, Depth);
       if (!Fresh && It->second >= Depth)
         continue;
       It->second = Depth;
-      if ((Expression->Kind == ExprKind::Var ||
-           Expression->Kind == ExprKind::Phi) &&
-          !entryValue(Expression->Var)) {
+      if (Expression->Kind == ExprKind::Var ||
+          Expression->Kind == ExprKind::Phi) {
+        // Refinement also queries entry values, including switch selectors.
+        // Register their identities before allocating per-local tables, but
+        // do not require a source definition for an entry value.
         const size_t Local = local(Expression->Var);
-        Nodes[Index].Uses.push_back(Local);
-        Nodes[Index].UseExpressions.emplace(Local, Expression);
+        if (!entryValue(Expression->Var)) {
+          Nodes[Index].Uses.push_back(Local);
+          Nodes[Index].UseExpressions.emplace(Local, Expression);
+        }
       }
       // Only a direct address-of-local can expose an emitted C local to a
       // memory write. Its identity must never carry a stable branch fact.
@@ -253,7 +263,9 @@ class SourceFlow {
   // Narrowing, extension and floating conversion do not preserve these
   // facts. Bound the peel so malformed expression cycles remain unknown.
   static ExprPtr stripIntegerView(ExprPtr E) {
-    for (unsigned Depth = 0; E && Depth != 16; ++Depth) {
+    for (unsigned Depth = 0;
+         E && Depth != ::neverd::limits::ir::kMaxSourceFlowIntegerViewDepth;
+         ++Depth) {
       if (E->Kind != ExprKind::Cast || E->Operands.size() != 1 || !E->Type ||
           !E->CastTo || !E->Operands[0] || !E->Operands[0]->Type ||
           E->Type->Kind != NdTypeKind::Int ||
@@ -325,7 +337,7 @@ class SourceFlow {
 
   size_t block(const std::vector<HighStmt> &Body, size_t Next, Control Scope,
                unsigned Depth) {
-    if (Depth > 200)
+    if (Depth > ::neverd::limits::ir::kHighSourceFlowBlockDepthLimit)
       fail("method control flow exceeds the source projection depth limit",
            HighSourceFlowIssue::Budget);
     for (auto It = Body.rbegin(); It != Body.rend(); ++It)
@@ -506,7 +518,8 @@ class SourceFlow {
       ++BranchTests;
       auto Condition = N.Test;
       for (unsigned Depth = 0;
-           Depth != 8 && Condition && Condition->Kind == ExprKind::UnaryOp &&
+           Depth != ::neverd::limits::ir::kMaxSourceFlowNegationDepth &&
+           Condition && Condition->Kind == ExprKind::UnaryOp &&
            Condition->Op == NdOp::BOOL_NOT && Condition->Operands.size() == 1 &&
            Condition->IntrinsicOutputs.empty() &&
            Condition->MemoryOrdering == NdMemoryOrdering::None &&
@@ -544,7 +557,9 @@ class SourceFlow {
       while (Result && !Pending.empty()) {
         const size_t Current = Pending.back();
         Pending.pop_back();
-        if (++DominanceWork > 1000000) {
+        if (++DominanceWork >
+            ::neverd::limits::ir::
+                kHighSourceFlowRefineDominatesDominanceWorkLimit) {
           Result = false;
           break;
         }
@@ -621,7 +636,9 @@ class SourceFlow {
       while (Result && !Pending.empty()) {
         const size_t Current = Pending.back();
         Pending.pop_back();
-        if (++DominanceWork > 1000000) {
+        if (++DominanceWork >
+            ::neverd::limits::ir::
+                kHighSourceFlowRefineCopyDominatesDominanceWorkLimit) {
           Result = false;
           break;
         }
@@ -643,7 +660,11 @@ class SourceFlow {
     size_t CopyWork = 0;
     const auto CopyRoot = [&](auto &&Self, size_t Local, size_t Use,
                               unsigned Depth) -> std::optional<size_t> {
-      if (Depth > 64 || ++CopyWork > 100000 || Local == NoNode)
+      if (Depth >
+              ::neverd::limits::ir::kHighSourceFlowRefineCopyRootDepthLimit ||
+          ++CopyWork > ::neverd::limits::ir::
+                           kHighSourceFlowRefineCopyRootCopyWorkLimit ||
+          Local == NoNode)
         return std::nullopt;
       const CopyQuery Query{Local, Use};
       if (const auto Found = CopyRoots.find(Query); Found != CopyRoots.end())
@@ -698,8 +719,8 @@ class SourceFlow {
           ExprPtr Condition = Test;
           bool Inverted = false;
           for (unsigned Depth = 0;
-               Depth != 8 && Condition &&
-               Condition->Kind == ExprKind::UnaryOp &&
+               Depth != ::neverd::limits::ir::kMaxSourceFlowNegationDepth &&
+               Condition && Condition->Kind == ExprKind::UnaryOp &&
                Condition->Op == NdOp::BOOL_NOT &&
                Condition->Operands.size() == 1 &&
                Condition->IntrinsicOutputs.empty() &&
@@ -777,7 +798,8 @@ class SourceFlow {
     for (const auto &[Pair, Seen] : Tests)
       if (Seen.Count > 1 && Seen.Consistent &&
           !AddressTaken.count(Pair.first) && !AddressTaken.count(Pair.second) &&
-          Masks.size() < 32) {
+          Masks.size() <
+              ::neverd::limits::ir::kHighSourceFlowRefineMasksSizeLimit) {
         const uint32_t Mask = uint32_t{1} << Masks.size();
         Masks.emplace(Pair, Mask);
         InvalidatedBy[Pair.first] |= Mask;
@@ -822,7 +844,7 @@ class SourceFlow {
         const auto &N = Nodes[Original];
         Units += 1 + N.Uses.size() + N.Writes.size();
         if (Refined.size() == Limit || Counts[Original] == 32 ||
-            Units > 1000000)
+            Units > ::neverd::limits::ir::kMaxSourceFlowUnits)
           throw ExpansionLimit{};
         ++Counts[Original];
         const size_t Index = Refined.size();
@@ -903,9 +925,11 @@ class SourceFlow {
                                      std::set<size_t> &Dependencies,
                                      unsigned Depth = 0) {
     spend();
-    if (!Value || Depth > 32 || !Value->Type ||
-        Value->Type->Kind != NdTypeKind::Int || !Value->Type->Size ||
-        Value->Type->Size > 8 || Value->IntrinsicId != Intrinsic::None ||
+    if (!Value ||
+        Depth > ::neverd::limits::ir::kHighSourceFlowIndexRangeDepthLimit ||
+        !Value->Type || Value->Type->Kind != NdTypeKind::Int ||
+        !Value->Type->Size || Value->Type->Size > 8 ||
+        Value->IntrinsicId != Intrinsic::None ||
         !Value->IntrinsicOutputs.empty() ||
         Value->MemoryOrdering != NdMemoryOrdering::None ||
         Value->MemoryAddressSpace != NdMemoryAddressSpace::Default)
@@ -944,6 +968,17 @@ class SourceFlow {
         return *Input < (uint64_t{1} << (InputBytes * 8 - 1)) ? *Input : Mask;
       return std::nullopt;
     }
+    if (Value->Kind == ExprKind::BinOp && Value->Op == NdOp::SELECT &&
+        Value->Operands.size() == 3 && purePredicate(Value->Operands[0])) {
+      const auto True = indexRange(Value->Operands[1], Dependencies, Depth + 1);
+      const auto False =
+          indexRange(Value->Operands[2], Dependencies, Depth + 1);
+      if (!True || !False ||
+          Value->Operands[1]->Type->Size != Value->Type->Size ||
+          Value->Operands[2]->Type->Size != Value->Type->Size)
+        return std::nullopt;
+      return std::max(*True, *False);
+    }
     if (Value->Kind != ExprKind::BinOp || Value->Operands.size() != 2)
       return std::nullopt;
     const auto Left = indexRange(Value->Operands[0], Dependencies, Depth + 1);
@@ -968,9 +1003,14 @@ class SourceFlow {
     case NdOp::INT_MULT:
       return !*Right || *Left <= Mask / *Right ? *Left * *Right : Mask;
     case NdOp::INT_SUB:
-    case NdOp::INT_OR:
-    case NdOp::INT_XOR:
       return Mask;
+    case NdOp::INT_OR:
+    case NdOp::INT_XOR: {
+      // Upper bounds do not describe known-one bits. Cover every bit either
+      // interval can contain, rather than ORing the two upper endpoints.
+      const uint64_t Bits = *Left | *Right;
+      return Bits ? UINT64_MAX >> llvm::countl_zero(Bits) : 0;
+    }
     default:
       return std::nullopt;
     }
@@ -978,9 +1018,11 @@ class SourceFlow {
 
   bool purePredicate(const ExprPtr &Test, unsigned Depth = 0) {
     spend();
-    if (!Test || Depth > 32 || !Test->Type ||
-        Test->Type->Kind != NdTypeKind::Int || !Test->Type->Size ||
-        Test->Type->Size > 8 || Test->IntrinsicId != Intrinsic::None ||
+    if (!Test ||
+        Depth > ::neverd::limits::ir::kHighSourceFlowPurePredicateDepthLimit ||
+        !Test->Type || Test->Type->Kind != NdTypeKind::Int ||
+        !Test->Type->Size || Test->Type->Size > 8 ||
+        Test->IntrinsicId != Intrinsic::None ||
         !Test->IntrinsicOutputs.empty() ||
         Test->MemoryOrdering != NdMemoryOrdering::None ||
         Test->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
@@ -1205,7 +1247,9 @@ class SourceFlow {
   bool carriesFrameAddress(const HighExpr *E, const std::vector<bool> &Frame,
                            unsigned Depth = 0) {
     spend();
-    if (!E || Depth > 32)
+    if (!E ||
+        Depth >
+            ::neverd::limits::ir::kHighSourceFlowCarriesFrameAddressDepthLimit)
       return E != nullptr;
     switch (E->Kind) {
     case ExprKind::Var:
@@ -1565,7 +1609,9 @@ public:
   void bounds(const std::vector<HighSourceUnsignedRangeQuery> &Queries,
               std::vector<std::optional<uint64_t>> &Result) {
     try {
-      if (Queries.empty() || Queries.size() > 128 ||
+      if (Queries.empty() ||
+          Queries.size() >
+              ::neverd::limits::ir::kHighSourceFlowBoundsQueriesSizeLimit ||
           Function.StructuredExceptionRegions ||
           Function.UnstructuredExceptionRegions)
         return;
@@ -1689,7 +1735,11 @@ bool eliminateHighDeadPhiCopies(HighFunc &Function) {
   while (!Pending.empty()) {
     const auto [S, Depth] = Pending.back();
     Pending.pop_back();
-    if (Depth > 200 || Statements.size() == 100000)
+    if (Depth > ::neverd::limits::ir::
+                    kHighSourceFlowEliminateHighDeadPhiCopiesDepthLimit ||
+        Statements.size() ==
+            ::neverd::limits::ir::
+                kHighSourceFlowEliminateHighDeadPhiCopiesStatementsSizeLimit)
       return false;
     Statements.push_back(S);
     HasPhiCopy |= S->Kind == StmtKind::Assign && S->IsPhiCopy;

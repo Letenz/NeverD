@@ -14,6 +14,7 @@
 
 #include "neverd/web/Artifact.h"
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceValues.h"
 
 #include "llvm/ADT/APFloat.h"
@@ -187,7 +188,8 @@ class Evaluator {
     if (Text.empty() || Text.back() != u'n')
       throw Error("invalid_source_model");
     Text.remove_suffix(1);
-    if (Text.size() > 4096)
+    if (Text.size() >
+        ::neverd::limits::web::kSourceEvaluateBigLiteralTextSizeLimit)
       throw ValueLimit{};
     step(Text.size() * 16 + 1);
     std::string Digits;
@@ -242,7 +244,8 @@ class Evaluator {
       Text.remove_suffix(1);
     if (Text.empty())
       return integer32(0);
-    if (Text.size() > 4096)
+    if (Text.size() >
+        ::neverd::limits::web::kSourceEvaluateStringNumberTextSizeLimit)
       throw ValueLimit{};
     step(Text.size() * 16 + 1);
     auto NaN = [] { return number(APFloat::getNaN(APFloat::IEEEdouble())); };

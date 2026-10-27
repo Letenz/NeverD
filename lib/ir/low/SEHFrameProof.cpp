@@ -13,6 +13,7 @@
 #include "SEHFrameRuntimeMemory.h"
 #include "X86/FrameEffects.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/ir/low/LowScalarConstant.h"
@@ -31,9 +32,6 @@
 
 namespace neverd {
 namespace {
-
-// The shared work budget bounds total analysis; this also bounds C++ recursion.
-constexpr size_t MaxCalleeDepth = 16;
 
 using seh_frame::Key;
 using seh_frame::key;
@@ -100,7 +98,9 @@ bool completeLowSEHFrameCFG(const LowFunc &F,
             Insn.Control == LowInstructionControl::Branch ||
             Insn.Control == LowInstructionControl::Return ||
             Insn.Control == LowInstructionControl::TailCall ||
-            Insn.Control == LowInstructionControl::Terminator)))
+            (Insn.Control == LowInstructionControl::Terminator &&
+             !hasLowInstructionControlFlag(
+                 Insn.ControlFlags, LowInstructionControlFlag::Resumable)))))
         return false;
     }
     for (int Id : B.Preds)
@@ -460,7 +460,8 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
   const auto CallerSP = Caller.get(SP);
   int64_t Slot = 0;
   if (!CallerSP || llvm::SubOverflow(*CallerSP, int64_t{8}, Slot) ||
-      Calls.ActiveFunctions.size() >= MaxCalleeDepth ||
+      Calls.ActiveFunctions.size() >=
+          ::neverd::limits::ir::kSEHFrameProofMaxCalleeDepth ||
       Calls.ActiveFunctions.count(F.Entry) ||
       !consume(Remaining, Calls.ReturnSlots.size() + 1) ||
       Calls.overlapsReturnPC(Slot, *CallerSP) || !F.hasCompleteLiftCoverage() ||
@@ -719,8 +720,14 @@ std::string lowSEHFrameDependencyDigest(const LowFunc &F) {
       Word(Edge.BlockId);
       Word(Edge.TargetVA);
       Word(static_cast<unsigned>(Edge.Kind));
-      Word(Edge.RegionIndex);
-      Word(Edge.State);
+      if (const auto *Context = Edge.singleContext()) {
+        Word(Context->RegionIndex);
+        Word(Context->State);
+      } else {
+        Word(UINT64_MAX);
+        Word(Edge.contexts().size());
+        Hash.update(Edge.SharedContexts->digest());
+      }
       Word(Edge.SourceVA);
     };
     for (const auto &Edge : Block.ExceptionalPreds)
@@ -829,14 +836,17 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
         if (!consume(Remaining))
           return {};
         const auto Position = Positions.find(Edge.BlockId);
+        const auto *Context = Edge.singleContext();
         if (Edge.Kind != ExceptionalEdgeKind::SEHHandler ||
             Edge.TargetVA != Block.StartAddr || Edge.SourceVA != InvalidVA ||
-            !DeclaredHandlers.at(Block.StartAddr).count(Edge.RegionIndex) ||
+            !Context ||
+            !DeclaredHandlers.at(Block.StartAddr).count(Context->RegionIndex) ||
             Position == Positions.end()) {
           CheckedEdges = false;
           break;
         }
-        const auto &Scope = F.ExceptionMetadata->SEH->Scopes[Edge.RegionIndex];
+        const auto &Scope =
+            F.ExceptionMetadata->SEH->Scopes[Context->RegionIndex];
         const auto Range =
             getSemanticSEHGuardedRange(Scope, Arch::X64, *F.ExceptionMetadata);
         const auto &Source = F.Blocks[Position->second];

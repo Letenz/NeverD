@@ -12,12 +12,16 @@
 #include "COFFRegistrationSEHDynamicScope.h"
 #include "COFFRegistrationSEHException.h"
 #include "COFFRegistrationSEHJump.h"
+#include "COFFRegistrationSEHLocalUnwind.h"
+#include "COFFRegistrationSEHParentExit.h"
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/RegistrationFrameAddress.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
-#include "neverd/backend/llvm/X86RegistrationLayout.h"
+#include "neverd/backend/llvm/X86/X86RegistrationLayout.h"
+#include "neverd/backend/llvm/X86/X86RegistrationSEHJump.h"
 #include "neverd/ir/RegistrationCall.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExceptionCommon.h"
@@ -54,7 +58,9 @@ llvm::Error validateFramePrivacy(
     const RegistrationCxxFrameContract *Cxx,
     const RegistrationSEHExceptionContract *SEH,
     const RegistrationSEHJumpContract *Jumps,
-    const RegistrationSEHScopeState *Scopes) {
+    const RegistrationSEHScopeState *Scopes,
+    const RegistrationSEHParentExitContract *ParentExits,
+    const RegistrationSEHLocalUnwindContract *LocalUnwinds) {
   const llvm::Instruction *CurrentInstruction = nullptr;
   auto Reject = [&](llvm::StringRef Detail = {}) {
     std::string Message = "coff registration patch: synthetic frame has an "
@@ -92,7 +98,11 @@ llvm::Error validateFramePrivacy(
   std::map<const llvm::BasicBlock *, const RegistrationCxxCatchFrameContract *>
       Invocations;
   if (Cxx) {
-    if (!Cxx->Image || !LogicalFrame || Cxx->Catches.empty())
+    // A cleanup-only parent has no runtime catch objects. Its independently
+    // replayed destructor borrows still require the complete frame privacy
+    // and definite-initialization proof below.
+    if (!Cxx->Image || !LogicalFrame ||
+        (Cxx->Catches.empty() && Cxx->Borrows.empty()))
       return Reject("incomplete runtime object/frame contract");
     for (const auto &Catch : Cxx->Catches) {
       if (!Catch.Catch || Catch.Catch->getFunction() != &Parent ||
@@ -153,7 +163,10 @@ llvm::Error validateFramePrivacy(
       LocateImpl;
   Locate = [&](const llvm::Value *Value,
                unsigned Depth) -> std::optional<Cell> {
-    if (++Work > limits::kMaxRegistrationEHStateWork || Depth > 128) {
+    if (++Work > limits::kMaxRegistrationEHStateWork ||
+        Depth >
+            ::neverd::limits::backend::
+                kCOFFRegistrationFrameProofValidateFramePrivacyLocateDepthLimit) {
       Exhausted = true;
       return std::nullopt;
     }
@@ -169,7 +182,10 @@ llvm::Error validateFramePrivacy(
   };
   LocateImpl = [&](const llvm::Value *Value,
                    unsigned Depth) -> std::optional<Cell> {
-    if (++Work > limits::kMaxRegistrationEHStateWork || Depth > 128) {
+    if (++Work > limits::kMaxRegistrationEHStateWork ||
+        Depth >
+            ::neverd::limits::backend::
+                kCOFFRegistrationFrameProofValidateFramePrivacyLocateImplDepthLimit) {
       Exhausted = true;
       return std::nullopt;
     }
@@ -349,8 +365,21 @@ llvm::Error validateFramePrivacy(
           continue;
         if (llvm::pred_empty(Block))
           return std::nullopt;
-        for (const auto *Pred : llvm::predecessors(Block))
-          Pending.emplace_back(Pred, Pred->getTerminator());
+        for (const auto *Pred : llvm::predecessors(Block)) {
+          // A SjLj resume preserves the logical values last written by the
+          // exiting callback. Its apparent LLVM predecessor is the capture
+          // at machine entry; replay the authenticated transfer edge instead.
+          if (ParentExits && ParentExits->Dispatch &&
+              Pred == ParentExits->Dispatch->getParent()) {
+            const auto Resumes =
+                ParentExits->ResumptionPredecessors.find(Block);
+            if (Resumes == ParentExits->ResumptionPredecessors.end())
+              return std::nullopt;
+            for (const auto *Transfer : Resumes->second)
+              Pending.emplace_back(Transfer, Transfer->getTerminator());
+          } else
+            Pending.emplace_back(Pred, Pred->getTerminator());
+        }
       }
       return Common;
     }
@@ -546,8 +575,17 @@ llvm::Error validateFramePrivacy(
             continue;
           }
           if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I)) {
+            if (ParentExits && ParentExits->ChainWrites.count(Store))
+              continue;
             auto Where = Locate(Store->getPointerOperand(), 0);
             const uint64_t Bytes = Size(Store->getValueOperand()->getType());
+            if (Scopes && Scopes->CallbackWrites.count(Store) &&
+                (!Where || Where->Root != LogicalFrame ||
+                 Where->Offset != Scopes->Offset ||
+                 !Scopes->Writes.count(Store) ||
+                 Bytes != Scopes->Writes.at(Store)))
+              return Reject(
+                  "callback state write changed its source frame cell");
             if (Scopes && Scopes->Enabled) {
               const bool State = Scopes->Writes.count(Store);
               const bool Overlap =
@@ -556,7 +594,8 @@ llvm::Error validateFramePrivacy(
                   (Where->Offset >= Scopes->Offset ||
                    Bytes > uint64_t(Scopes->Offset - Where->Offset));
               if ((State && (!Where || Where->Root != LogicalFrame ||
-                             Where->Offset != Scopes->Offset || Bytes != 4)) ||
+                             Where->Offset != Scopes->Offset ||
+                             Bytes != Scopes->Writes.at(Store))) ||
                   (Overlap && !State))
                 return Reject("dynamic scope state storage changed");
             }
@@ -668,7 +707,11 @@ llvm::Error validateFramePrivacy(
             continue;
           }
           if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I)) {
+            if (LocalUnwinds && LocalUnwinds->Calls.count(Call))
+              continue;
             if (Jumps && Jumps->Calls.count(Call))
+              continue;
+            if (ParentExits && ParentExits->Calls.count(Call))
               continue;
             if (Call->isInlineAsm() || llvm::isa<llvm::CallBrInst>(Call) ||
                 Call->isMustTailCall() ||
@@ -764,6 +807,8 @@ llvm::Error validateFramePrivacy(
                 continue;
               }
             }
+            if (Scopes && Scopes->PhysicalWrites.count(Call))
+              continue;
             if (Callee && Callee->isIntrinsic()) {
               switch (Callee->getIntrinsicID()) {
               case llvm::Intrinsic::stacksave:
@@ -801,12 +846,30 @@ llvm::Error validateFramePrivacy(
                                       ? llvm::dyn_cast<llvm::IntrinsicInst>(
                                             Call->getArgOperand(1))
                                       : nullptr;
-              if (Function != &Parent || !Abnormal ||
-                  Abnormal->getBitWidth() != 8 ||
-                  Abnormal->getZExtValue() > 1 || !Frame ||
-                  Frame->getIntrinsicID() != llvm::Intrinsic::localaddress ||
+              if (!Abnormal || Abnormal->getBitWidth() != 8 ||
+                  Abnormal->getZExtValue() > 1 ||
                   Call->getCallingConv() != Callee->getCallingConv())
                 return Reject();
+              if (Function == &Parent) {
+                if (!Frame ||
+                    Frame->getIntrinsicID() != llvm::Intrinsic::localaddress)
+                  return Reject("ordinary finally call changed its normal "
+                                "parent-frame ABI");
+              } else {
+                // An outlined finally forwards only its physical parent
+                // frame. Source occurrence, near return and callee ownership
+                // are authenticated separately by bindSEHFinallyCalls.
+                const auto *ParentFrame =
+                    getX86RegistrationSEHJumpParentFrame(*Function, Parent);
+                if (Cxx || !SEH || !Abnormal->isZero() ||
+                    !Function->getReturnType()->isVoidTy() ||
+                    Function->arg_size() != 2 || !ParentFrame ||
+                    Call->getArgOperand(1) != ParentFrame ||
+                    !llvm::isa<llvm::CallInst>(Call) ||
+                    !Call->getMetadata(
+                        windows_eh_md::RegistrationFinallyCallAttachment))
+                  return Reject();
+              }
               continue;
             }
             if (llvm::any_of(Call->operands(), [&](const auto &Use) {

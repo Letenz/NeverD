@@ -629,6 +629,54 @@ class _SanitizeHost:
 
 
 class SessionTests(unittest.TestCase):
+    def test_patch_failures_preserve_native_diagnostics(self) -> None:
+        from neverd_plugin import NeverDError, Session
+
+        host = mock.Mock()
+        session = Session(object(), _native=_FakeNativeBridge(), _host=host)
+        for operation in (
+            lambda: session.preview_byte_patch(0, data=b"\x90"),
+            lambda: session.apply_byte_patch(0, data=b"\x90", expected=b"\xcc"),
+            lambda: session.assemble(0, "mov eax, unresolved"),
+            lambda: session.byte_patches,
+            lambda: session.byte_patch_ranges,
+        ):
+            with self.subTest(operation=operation):
+                host.owned_string.side_effect = [None, "stale patch preview"]
+                with self.assertRaisesRegex(NeverDError, "stale patch preview"):
+                    operation()
+        host.owned_string.side_effect = [None, None]
+        with self.assertRaisesRegex(NeverDError, "no preview byte patch result"):
+            session.preview_byte_patch(0, data=b"\x90")
+
+    def test_byte_patch_preserves_expected_bytes_and_explicit_frame_symbols(self) -> None:
+        from neverd_plugin import Session
+        from neverd_plugin.abi import NeverDBytePatchOptionsV1, NeverDAssembleOptionsV1
+
+        host = mock.Mock()
+        session = Session(object(), _native=_FakeNativeBridge(), _host=host)
+        def verify(name, *args):
+            options = args[-1]._obj
+            if name == "neverd_assemble_json":
+                self.assertIsInstance(options, NeverDAssembleOptionsV1)
+                self.assertEqual(options.pc, 0)
+            else:
+                self.assertEqual(name, "neverd_byte_patch_apply")
+                self.assertIsInstance(options, NeverDBytePatchOptionsV1)
+                self.assertEqual(options.expected, b"9090")
+                self.assertEqual(options.address, 0)
+            self.assertEqual(options.struct_size, ctypes.sizeof(options))
+            self.assertEqual(json.loads(options.symbols), {"var_20": -32})
+            self.assertEqual(options.text, b"mov eax, [rsp+var_20]")
+            return '{"size":4}'
+        host.owned_string.side_effect = verify
+        self.assertEqual(session.apply_byte_patch(0, kind="assemble", text="mov eax, [rsp+var_20]",
+                         expected=b"\x90\x90", symbols={"var_20": -32}), {"size": 4})
+        self.assertEqual(session.assemble(0, "mov eax, [rsp+var_20]", symbols={"var_20": -32}), {"size": 4})
+        host.call.return_value = 0
+        session.save_byte_patches()
+        session.revert_byte_patch(0)
+
     def test_source_patch_preserves_selection_bytes_and_address_zero(self) -> None:
         from neverd_plugin import Session
         from neverd_plugin.abi import NeverDSourcePatchOptionsV1
@@ -652,12 +700,15 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(options.mappings[0].original_va, 0)
             self.assertEqual(options.compiler_args[0], b"-DBASE=37")
             self.assertEqual(options.source_name, b"/space path/source.c")
-            self.assertEqual(options.binding_count, 2)
+            self.assertEqual(options.binding_count, 3)
             self.assertEqual(options.bindings[0].symbol, b"helper")
             self.assertEqual(options.bindings[0].kind, 0)
             self.assertEqual(options.bindings[0].original_va, 0x1000)
             self.assertEqual(options.bindings[1].kind, 2)
             self.assertEqual(options.bindings[1].size, 4)
+            self.assertEqual(options.bindings[2].kind, 3)
+            self.assertEqual(options.bindings[2].original_va, 0x2000)
+            self.assertEqual(options.bindings[2].size, 0)
             return 1
 
         host.call.side_effect = verify
@@ -665,7 +716,8 @@ class SessionTests(unittest.TestCase):
             b"a\0b", "/tmp/patch", input_kind="object", artifact="object",
             compiler="neverc", mappings={"replacement": 0},
             compiler_args=["-DBASE=37"], source_name="/space path/source.c",
-            bindings={"helper": ("function", 0x1000), "count": ("data", 0x3000, 4)},
+            bindings={"helper": ("function", 0x1000), "count": ("data", 0x3000, 4),
+                      "saved": ("original", 0x2000)},
         )
         self.assertTrue(report["success"])
 
@@ -735,6 +787,22 @@ class SessionTests(unittest.TestCase):
         host.owned_string.side_effect = [None, "input is not a PE image"]
         with self.assertRaisesRegex(NeverDError, "not a PE image"):
             session.unpack("packed.exe", "out.exe")
+
+    def test_x87_inventory_uses_shared_native_report(self) -> None:
+        from neverd_plugin import NeverDError, Session
+
+        host = mock.Mock()
+        report = {"schema_version": 1, "coverage": [{"numerical": "unsupported"}]}
+        host.owned_string.return_value = json.dumps(report)
+        session = Session(object(), _native=_FakeNativeBridge(), _host=host)
+        self.assertEqual(session.x87_capabilities(), report)
+        self.assertEqual(
+            host.owned_string.call_args.args[0], "neverd_x87_capabilities_json"
+        )
+        self.assertEqual(host.owned_string.call_args.args[2:], ())
+        host.owned_string.side_effect = [None, "x87 capability query failed"]
+        with self.assertRaisesRegex(NeverDError, "x87 capability query failed"):
+            session.x87_capabilities()
 
     def test_cpu_query_preserves_native_validation_and_unloaded_session(self) -> None:
         from neverd_plugin import NeverDError, Session

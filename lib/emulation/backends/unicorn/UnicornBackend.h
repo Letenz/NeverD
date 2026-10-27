@@ -91,9 +91,16 @@ public:
   /// The first CPU or checked GuestMemory fault survives later observations.
   std::optional<BackendFault> fault() const override;
   std::optional<BackendFault> takeRecoverableFault() override;
+  bool supportsResourcePause() const override {
+    return architecture() == GuestArchitecture::X64;
+  }
+  std::optional<ResourcePause> pendingResourcePause() const override;
+  llvm::Error acknowledgeResourcePause() override;
   bool executable(uint64_t Address) const override;
 
 private:
+  llvm::Expected<RegisterValue> readContextRegister(const BackendContext &,
+                                                    CPURegister) const override;
   llvm::Error runImpl(uint64_t PC, uint64_t Timeout, bool &Started);
   struct Impl;
   explicit UnicornBackend(std::unique_ptr<Impl> State);

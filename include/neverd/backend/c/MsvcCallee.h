@@ -216,6 +216,19 @@ inline TypeRef msvcExpectedCallArgType(const MsvcCallee &Row, size_t Index) {
   return {};
 }
 
+/// The class record a synthetic special-member prototype's `this` points to
+/// (`object` for `object_dtor`), as its source names it; empty when the
+/// prototype names none.  A C unit declares it incomplete before the
+/// prototype.
+inline std::string msvcSyntheticRecord(llvm::StringRef Identifier,
+                                       const MsvcCallee &Row) {
+  const TypeRef This = msvcSyntheticThis(Identifier, Row);
+  if (!This || This->Kind != NdTypeKind::Ptr || !This->Pointee ||
+      This->Pointee->Kind != NdTypeKind::Struct || This->Pointee->IsEnum)
+    return {};
+  return This->Pointee->SourceName;
+}
+
 inline std::string msvcSyntheticPrototype(llvm::StringRef Identifier,
                                           const MsvcCallee &Row,
                                           bool FastCall) {

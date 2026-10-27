@@ -11,7 +11,7 @@
 #include "neverd/analysis/InterpreterMachineStateProfile.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 
@@ -56,6 +56,24 @@ struct X64MachineFlags {
   }
 };
 
+/// Intel SDM 325383-084US, CLI/STI: CPL=0 clears/sets IF and preserves
+/// other flags. The kernel profile excludes asynchronous/debug delivery and
+/// privilege transitions, including observation of STI's interrupt inhibition.
+inline std::optional<bool>
+x64InterruptFlagValue(const LowOp &Op, InterpreterMachineStateProfile Profile) {
+  if (Profile != InterpreterMachineStateProfile::KernelX64NoFaultV1 ||
+      Op.Opcode != NdOp::INTRINSIC || Op.NumInputs != 1 || Op.Output.Size ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2)
+    return std::nullopt;
+  if (Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Cli))
+    return false;
+  if (Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Sti))
+    return true;
+  return std::nullopt;
+}
+
 struct X64MachineFlagsTransition {
   std::vector<LowOp> Ops;
   /// A canonical byte Boolean. Consumers must either record sticky failure
@@ -81,11 +99,13 @@ lowerX64MachineFlags(const LowOp &IntrinsicOp, NdVar System,
     return std::nullopt;
   const auto Kind = IntrinsicOp.Inputs[0].Offset;
   const bool Push = Kind == static_cast<uint64_t>(Intrinsic::Pushf);
-  if (Push ? (IntrinsicOp.NumInputs != 1 || !IntrinsicOp.Output.isTemp() ||
-              IntrinsicOp.Output.Size != 8)
-           : (Kind != static_cast<uint64_t>(Intrinsic::Popf) ||
-              IntrinsicOp.NumInputs != 2 || IntrinsicOp.Output.Size ||
-              IntrinsicOp.Inputs[1].Size != 8))
+  const auto Interrupt = x64InterruptFlagValue(IntrinsicOp, Profile);
+  if (!Interrupt &&
+      (Push ? (IntrinsicOp.NumInputs != 1 || !IntrinsicOp.Output.isTemp() ||
+               IntrinsicOp.Output.Size != 8)
+            : (Kind != static_cast<uint64_t>(Intrinsic::Popf) ||
+               IntrinsicOp.NumInputs != 2 || IntrinsicOp.Output.Size ||
+               IntrinsicOp.Inputs[1].Size != 8)))
     return std::nullopt;
   X64MachineFlagsTransition Result;
   const auto Emit = [&](NdOp Code, NdVar Output,
@@ -100,7 +120,11 @@ lowerX64MachineFlags(const LowOp &IntrinsicOp, NdVar System,
     Result.Ops.push_back(Op);
   };
   const auto Constant = [](uint64_t Value) { return NdVar::scalar(Value, 8); };
-  if (Push) {
+  if (Interrupt) {
+    constexpr uint64_t IF = uint64_t{1} << 9;
+    Emit(*Interrupt ? NdOp::INT_OR : NdOp::INT_AND, System,
+         {System, Constant(*Interrupt ? IF : ~IF)});
+  } else if (Push) {
     Emit(NdOp::INT_AND, IntrinsicOp.Output,
          {System, Constant(~X64MachineFlags::SnapshotClearMask)});
   } else {

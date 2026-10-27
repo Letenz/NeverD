@@ -151,6 +151,135 @@ protected:
   }
 };
 
+TEST_F(DriverKernelModel, StackQueryRequiresLiveActivation) {
+  constexpr uint64_t Base = Scratch + 0x8000, Size = 0x2000;
+  EXPECT_FALSE(failure("IoGetInitialStack", {}).empty());
+  EXPECT_FALSE(failure("IoGetStackLimits", {Scratch, Scratch + 8}).empty());
+  Model->enterExecution(Base);
+  EXPECT_FALSE(failure("IoGetInitialStack", {}).empty());
+  success(Model->activateStack(Base, Size));
+  EXPECT_EQ(invoke("IoGetInitialStack", {}), Base + Size);
+  invoke("IoGetStackLimits", {Scratch + 1, Scratch + 17});
+  EXPECT_EQ(integer(Scratch + 1), Base);
+  EXPECT_EQ(integer(Scratch + 17), Base + Size);
+  EXPECT_FALSE(failure("IoGetInitialStack", {0}).empty());
+  EXPECT_FALSE(failure("IoGetStackLimits", {Scratch}).empty());
+  EXPECT_FALSE(failure("IoGetStackLimits", {Scratch, Scratch + 8, 0}).empty());
+  success(Model->retireStack(Base, Size));
+  EXPECT_FALSE(failure("IoGetInitialStack", {}).empty());
+  EXPECT_FALSE(failure("IoGetStackLimits", {Scratch, Scratch + 8}).empty());
+}
+
+TEST_F(DriverKernelModel, StackQueryTracksNestedStackAndRestoration) {
+  constexpr uint64_t Parent = Scratch + 0x8000, Child = Scratch + 0xc000;
+  success(Model->activateStack(Parent, 0x2000));
+  success(Model->activateStack(Child, 0x1000));
+  Model->enterExecution(Parent, 0x1234);
+  const auto Saved = Model->captureExecutionContext();
+  success(Model->inheritExecutionContext(Child, Parent));
+  Model->enterExecution(Child, 0x1234);
+  EXPECT_EQ(invoke("IoGetInitialStack", {}), Child + 0x1000);
+  invoke("IoGetStackLimits", {Scratch, Scratch + 8});
+  EXPECT_EQ(integer(Scratch), Child);
+  EXPECT_EQ(integer(Scratch + 8), Child + 0x1000);
+  success(Model->restoreExecutionContext(Saved));
+  EXPECT_EQ(invoke("IoGetInitialStack", {}), Parent + 0x2000);
+  invoke("IoGetStackLimits", {Scratch + 8, Scratch});
+  EXPECT_EQ(integer(Scratch + 8), Parent);
+  EXPECT_EQ(integer(Scratch), Parent + 0x2000);
+  success(Model->retireStack(Child, 0x1000));
+  EXPECT_EQ(invoke("IoGetInitialStack", {}), Parent + 0x2000);
+  success(Model->validateExecutionReturn(Parent, 0));
+  success(Model->retireStack(Parent, 0x2000));
+}
+
+TEST_F(DriverKernelModel, StackQueryUsesFullWidthBoundsAtAdmittedIRQL) {
+  constexpr uint64_t Base = 0x100008000ULL, Size = 0x2000;
+  success(Memory->map(Base, Size, Read | Write));
+  success(Model->activateStack(Base, Size));
+  Model->enterExecution(Base);
+  for (uint8_t Level : {0, 1, 2, 15}) {
+    EXPECT_EQ(invoke("KfRaiseIrql", {Level}), 0u);
+    invoke("IoGetStackLimits", {Scratch, Scratch + 8});
+    EXPECT_EQ(integer(Scratch), Base);
+    EXPECT_EQ(integer(Scratch + 8), Base + Size);
+    if (Level <= 1)
+      EXPECT_EQ(invoke("IoGetInitialStack", {}), Base + Size);
+    else
+      EXPECT_NE(failure("IoGetInitialStack", {}).find("IRQL"),
+                std::string::npos);
+    invoke("KeLowerIrql", {0});
+  }
+  success(Model->validateExecutionReturn(Base, 0));
+  success(Model->retireStack(Base, Size));
+}
+
+TEST_F(DriverKernelModel, StackQueryWritesHighBeforeInaccessibleLow) {
+  constexpr uint64_t Base = Scratch + 0x8000;
+  success(Model->activateStack(Base, 0x2000));
+  Model->enterExecution(Base);
+  success(Memory->writeInteger(Scratch + 1, 0x1122334455667788ULL, 8));
+  success(Memory->protect(Scratch, profile::PageSize, Read));
+  EXPECT_FALSE(
+      failure("IoGetStackLimits", {Scratch + 1, Scratch + 0x2001}).empty());
+  EXPECT_EQ(integer(Scratch + 0x2001), Base + 0x2000);
+  EXPECT_EQ(integer(Scratch + 1), 0x1122334455667788ULL);
+}
+
+TEST_F(DriverKernelModel, StackQueryRejectsInaccessibleHighBeforeLowWrite) {
+  constexpr uint64_t Base = Scratch + 0x8000;
+  success(Model->activateStack(Base, 0x2000));
+  Model->enterExecution(Base);
+  success(Memory->writeInteger(Scratch + 1, 0x1122334455667788ULL, 8));
+  success(Memory->protect(Scratch + 0x2000, profile::PageSize, Read));
+  EXPECT_FALSE(
+      failure("IoGetStackLimits", {Scratch + 1, Scratch + 0x2001}).empty());
+  EXPECT_EQ(integer(Scratch + 1), 0x1122334455667788ULL);
+}
+
+TEST_F(DriverKernelModel, StackQueryRejectsOverlappingOutputs) {
+  success(Model->activateStack(Scratch + 0x8000, 0x2000));
+  Model->enterExecution(Scratch + 0x8000);
+  success(Memory->writeInteger(Scratch, 0x1122334455667788ULL, 8));
+  success(Memory->writeInteger(Scratch + 8, 0x8899aabbccddeeffULL, 8));
+  for (unsigned Offset : {0, 1, 4, 7}) {
+    EXPECT_FALSE(
+        failure("IoGetStackLimits", {Scratch, Scratch + Offset}).empty());
+    EXPECT_FALSE(
+        failure("IoGetStackLimits", {Scratch + Offset, Scratch}).empty());
+  }
+  EXPECT_FALSE(failure("IoGetStackLimits", {UINT64_MAX, Scratch}).empty());
+  EXPECT_EQ(integer(Scratch), 0x1122334455667788ULL);
+  EXPECT_EQ(integer(Scratch + 8), 0x8899aabbccddeeffULL);
+  EXPECT_FALSE(Memory->fault());
+}
+
+TEST_F(DriverKernelModel, StackQueryActivationPreservesExactLifetimeExtent) {
+  constexpr uint64_t Base = Scratch + 0x8000, Size = 0x2000;
+  success(Model->activateStack(Base, Size));
+  success(Model->activateStack(Base, Size));
+  Model->enterExecution(Base);
+  auto Refused = [&](llvm::Error E) {
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+  };
+  Refused(Model->activateStack(Base, Size + 1));
+  Refused(Model->activateStack(Base + 0x1000, Size));
+  Refused(Model->activateStack(0, Size));
+  Refused(Model->activateStack(UINT64_MAX - 0x100, Size));
+  Refused(Model->activateStack(Scratch, 0));
+  Refused(Model->retireStack(Base, Size + 1));
+  EXPECT_EQ(invoke("IoGetInitialStack", {}), Base + Size);
+  success(Model->retireStack(Base, Size));
+  Refused(Model->activateStack(Base, Size + 1));
+  EXPECT_FALSE(failure("IoGetInitialStack", {}).empty());
+  success(Model->activateStack(Base, Size));
+  EXPECT_FALSE(failure("IoGetInitialStack", {}).empty());
+  Model->enterExecution(Base);
+  EXPECT_EQ(invoke("IoGetInitialStack", {}), Base + Size);
+  success(Model->retireStack(Base, Size));
+}
+
 TEST_F(DriverKernelModel,
        ExceptionUserAuthorityStaysBoundToThreadProcessAndLifetime) {
   constexpr uint32_t Process = DriverRequest::DefaultRequestorProcessID;
@@ -1111,6 +1240,304 @@ TEST_F(DriverKernelModel, CRuntimeStringsFoldOnlyAsciiAndRefuseBadBuffers) {
   EXPECT_EQ(invoke("strnlen", {0, 0}), 0u);
   EXPECT_EQ(invoke("strncmp", {0, 0, 0}), 0u);
   EXPECT_EQ(invoke("_wcsnicmp", {0, 0, 0}), 0u);
+}
+
+TEST_F(DriverKernelModel, CRuntimeStringWritesCopyPadTruncateAndAppend) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Source = Scratch + 0x101, Dest = Scratch + 0x401;
+  for (unsigned Width : {1, 2}) {
+    SCOPED_TRACE(Width);
+    const char *Copy = Width == 1 ? "strcpy" : "wcscpy";
+    const char *NCopy = Width == 1 ? "strncpy" : "wcsncpy";
+    const char *Cat = Width == 1 ? "strcat" : "wcscat";
+    const char *NCat = Width == 1 ? "strncat" : "wcsncat";
+    std::vector<uint8_t> Input;
+    for (uint16_t Unit :
+         {uint16_t('A'), uint16_t(0xe9), uint16_t(0x263a), uint16_t(0)}) {
+      Input.push_back(uint8_t(Unit));
+      if (Width == 2)
+        Input.push_back(uint8_t(Unit >> 8));
+    }
+    success(Memory->write(Source, Input));
+    auto Reset = [&]() {
+      success(Memory->write(Dest, std::vector<uint8_t>(32, 0xcc)));
+    };
+    Reset();
+    EXPECT_EQ(invoke(Copy, {Dest, Source}), Dest);
+    auto Expected = Input;
+    Expected.resize(32, 0xcc);
+    EXPECT_EQ(bytes(Dest, 32), Expected);
+    for (unsigned Count = 0; Count <= 6; ++Count) {
+      SCOPED_TRACE(Count);
+      Reset();
+      EXPECT_EQ(invoke(NCopy, {Dest, Source, Count}), Dest);
+      Expected = Input;
+      Expected.resize(Count * Width, 0);
+      Expected.resize(32, 0xcc);
+      EXPECT_EQ(bytes(Dest, 32), Expected);
+      Reset();
+      success(Memory->writeInteger(Dest, 'P', Width));
+      success(Memory->writeInteger(Dest + Width, 0, Width));
+      EXPECT_EQ(invoke(NCat, {Dest, Source, Count}), Dest);
+      Expected.assign(Width, 0);
+      Expected[0] = 'P';
+      Expected.insert(Expected.end(), Input.begin(),
+                      Input.begin() + std::min(Count, 3u) * Width);
+      Expected.resize(Expected.size() + Width, 0);
+      Expected.resize(32, 0xcc);
+      EXPECT_EQ(bytes(Dest, 32), Expected);
+    }
+    Reset();
+    success(Memory->writeInteger(Dest, 'P', Width));
+    success(Memory->writeInteger(Dest + Width, 0, Width));
+    EXPECT_EQ(invoke(Cat, {Dest, Source}), Dest);
+    EXPECT_EQ(bytes(Dest + Width, Input.size()), Input);
+    Reset();
+    success(Memory->writeInteger(Dest, 0, Width));
+    EXPECT_EQ(invoke(NCat, {Dest, Source, 0x100000001}), Dest);
+    EXPECT_EQ(bytes(Dest, Input.size()), Input); // size_t is not truncated.
+  }
+}
+
+TEST_F(DriverKernelModel, CRuntimeStringWriteZeroCountsAndReadBoundaries) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint64_t Invalid = 0x90000000;
+  for (const char *Name : {"strncpy", "wcsncpy", "strncat"})
+    EXPECT_EQ(invoke(Name, {Invalid, Invalid, 0}), Invalid);
+  utf16(Scratch, u"P");
+  EXPECT_EQ(invoke("wcsncat", {Scratch, Invalid, 0}), Scratch);
+  success(Memory->protect(Scratch, 0x1000, Read));
+  EXPECT_NE(failure("wcsncat", {Scratch, Invalid, 0}).find("writable"),
+            std::string::npos);
+  success(Memory->protect(Scratch, 0x1000, Read | Write));
+  for (unsigned Width : {1, 2}) {
+    const uint64_t Source = Scratch + 0x10000 - Width;
+    const uint64_t Dest = Scratch + 0x100;
+    const char *NCopy = Width == 1 ? "strncpy" : "wcsncpy";
+    const char *NCat = Width == 1 ? "strncat" : "wcsncat";
+    success(Memory->writeInteger(Source, 'X', Width));
+    EXPECT_EQ(invoke(NCopy, {Dest, Source, 1}), Dest);
+    EXPECT_EQ(integer(Dest, Width), 'X');
+    success(Memory->writeInteger(Dest, 0, Width));
+    EXPECT_EQ(invoke(NCat, {Dest, Source, 1}), Dest);
+    EXPECT_EQ(integer(Dest, Width), 'X');
+    EXPECT_EQ(integer(Dest + Width, Width), 0u);
+  }
+  // A real read fault retires the backend; do not reuse it for later calls.
+  EXPECT_FALSE(failure("wcsncat", {Invalid, Invalid, 0}).empty());
+}
+
+TEST_F(DriverKernelModel, CRuntimeStringCopyReadFaultPreservesDestination) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Source = Scratch + 0xfffe, Dest = Scratch + 0x100;
+  success(Memory->writeInteger(Source, 'X', 2));
+  success(Memory->writeInteger(Dest, 0x1122334455667788, 8));
+  EXPECT_FALSE(failure("wcsncpy", {Dest, Source, 2}).empty());
+  EXPECT_EQ(integer(Dest), 0x1122334455667788u);
+}
+
+TEST_F(DriverKernelModel,
+       CRuntimeStringWritesRejectOverlapFaultsAndHugeCounts) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Source = Scratch + 0x100, Dest = Scratch + 0x200;
+  ascii(Source, "abcdef");
+  const auto Before = bytes(Source, 16);
+  for (const char *Name : {"strcpy", "strcat"})
+    EXPECT_NE(failure(Name, {Source, Source}).find("overlapping"),
+              std::string::npos);
+  EXPECT_NE(failure("strncpy", {Source + 1, Source, 4}).find("overlapping"),
+            std::string::npos);
+  EXPECT_EQ(bytes(Source, 16), Before);
+  EXPECT_NE(failure("wcsncpy", {Dest, Source, UINT64_MAX}).find("overflows"),
+            std::string::npos);
+  EXPECT_NE(failure("strncpy", {Dest, Source, 0x100000001}).find("limit"),
+            std::string::npos);
+  EXPECT_FALSE(failure("strcpy", {UINT64_MAX, Source}).empty());
+  const uint64_t Partial = Scratch + 0xffff;
+  success(Memory->writeInteger(Partial, 0xcc, 1));
+  EXPECT_FALSE(failure("strcpy", {Partial, Source}).empty());
+  EXPECT_EQ(integer(Partial, 1), 0xccu); // Preflight refuses the whole write.
+  const uint64_t Pool = invoke("ExAllocatePoolWithTag", {1, 32, 0x1234});
+  ascii(Pool, "paged");
+  invoke("KfRaiseIrql", {2});
+  EXPECT_NE(failure("strcpy", {Dest, Pool}).find("paged pool"),
+            std::string::npos);
+  EXPECT_NE(failure("strcpy", {Pool, Source}).find("paged pool"),
+            std::string::npos);
+  invoke("KeLowerIrql", {0});
+  invoke("ExFreePool", {Pool});
+  EXPECT_NE(failure("strcpy", {Pool, Source}).find("freed"), std::string::npos);
+}
+
+TEST_F(DriverKernelModel, QueuedSpinLocksRaiseStoreAndRestoreLikeTheKernel) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4b51534c; // 'KQSL'
+  const uint64_t Lock = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  const uint64_t Handle = invoke("ExAllocatePoolWithTag", {0, 0x18, Tag});
+  const uint64_t Other = invoke("ExAllocatePoolWithTag", {0, 0x18, Tag});
+  ASSERT_NE(Lock, 0u);
+  ASSERT_NE(Handle, 0u);
+  ASSERT_NE(Other, 0u);
+  invoke("KeInitializeSpinLock", {Lock});
+  EXPECT_EQ(Model->currentIRQL(), 0u);
+  // Acquire raises to DISPATCH_LEVEL, stores the handle in the lock, and stores
+  // the lock and saved IRQL in the handle.
+  EXPECT_EQ(invoke("KeAcquireInStackQueuedSpinLock", {Lock, Handle}), 0u);
+  EXPECT_EQ(Model->currentIRQL(), 2u);
+  EXPECT_EQ(integer(Lock), Handle);
+  EXPECT_EQ(integer(Handle + windows::LockQueueLockOffset), Lock);
+  EXPECT_EQ(integer(Handle + windows::LockQueueNextOffset), 0u);
+  EXPECT_EQ(integer(Handle + windows::LockQueueOldIrqlOffset, 1), 0u);
+  // A second acquisition of a held lock cannot make progress here.
+  EXPECT_EQ(failure("KeAcquireInStackQueuedSpinLock", {Lock, Other}),
+            "executive spin lock would deadlock on this cooperative processor");
+  // Initializing a held lock would clobber the token, so it is refused.
+  EXPECT_EQ(failure("KeInitializeSpinLock", {Lock}),
+            "cannot initialize a held executive spin lock");
+  // A corrupted saved IRQL in the handle is caught before the lock is cleared.
+  success(Memory->writeInteger(Handle + windows::LockQueueOldIrqlOffset, 7, 1));
+  EXPECT_EQ(failure("KeReleaseInStackQueuedSpinLock", {Handle}),
+            "queued spin lock handle's saved IRQL was modified");
+  success(Memory->writeInteger(Handle + windows::LockQueueOldIrqlOffset, 0, 1));
+  // Release restores the saved IRQL and frees the lock.
+  EXPECT_EQ(invoke("KeReleaseInStackQueuedSpinLock", {Handle}), 0u);
+  EXPECT_EQ(integer(Lock), 0u);
+  EXPECT_EQ(Model->currentIRQL(), 0u);
+  invoke("ExFreePoolWithTag", {Lock, Tag});
+  invoke("ExFreePoolWithTag", {Handle, Tag});
+  invoke("ExFreePoolWithTag", {Other, Tag});
+}
+
+TEST_F(DriverKernelModel, QueuedSpinLocksAtDpcLevelAndRefuseMismatches) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4b51534c;
+  const uint64_t Lock = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  const uint64_t Handle = invoke("ExAllocatePoolWithTag", {0, 0x18, Tag});
+  ASSERT_NE(Lock, 0u);
+  ASSERT_NE(Handle, 0u);
+  invoke("KeInitializeSpinLock", {Lock});
+  // The AtDpcLevel form requires the caller already at DISPATCH_LEVEL.
+  EXPECT_EQ(failure("KeAcquireInStackQueuedSpinLockAtDpcLevel", {Lock, Handle}),
+            "DPC-level queued spin-lock acquisition requires DISPATCH_LEVEL");
+  const auto Previous = invoke("KfRaiseIrql", {2});
+  EXPECT_EQ(invoke("KeAcquireInStackQueuedSpinLockAtDpcLevel", {Lock, Handle}),
+            0u);
+  EXPECT_EQ(integer(Lock), Handle);
+  // The raising release does not match a DPC-level acquisition.
+  EXPECT_EQ(failure("KeReleaseInStackQueuedSpinLock", {Handle}),
+            "queued spin lock release variant does not match acquisition");
+  // The matching release leaves IRQL at DISPATCH_LEVEL.
+  EXPECT_EQ(invoke("KeReleaseInStackQueuedSpinLockFromDpcLevel", {Handle}), 0u);
+  EXPECT_EQ(integer(Lock), 0u);
+  EXPECT_EQ(Model->currentIRQL(), 2u);
+  invoke("KeLowerIrql", {Previous});
+
+  // A contended lock stops clearly, and an unheld handle is not owned.
+  success(Memory->writeInteger(Lock, 0x1234, 8));
+  EXPECT_EQ(failure("KeAcquireInStackQueuedSpinLock", {Lock, Handle}),
+            "executive spin lock must be initialized and free");
+  success(Memory->writeInteger(Handle + windows::LockQueueLockOffset, 0, 8));
+  EXPECT_EQ(failure("KeReleaseInStackQueuedSpinLock", {Handle}),
+            "queued spin lock is not owned by this thread");
+  invoke("ExFreePoolWithTag", {Lock, Tag});
+  invoke("ExFreePoolWithTag", {Handle, Tag});
+}
+
+TEST_F(DriverKernelModel, RundownProtectionCountsReferencesLikeTheKernel) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4e555252; // 'RRUN'
+  const uint64_t Ref = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  ASSERT_NE(Ref, 0u);
+  // Initialization clears the whole word regardless of prior contents.
+  success(Memory->writeInteger(Ref, ~uint64_t(0), 8));
+  invoke("ExInitializeRundownProtection", {Ref});
+  EXPECT_EQ(integer(Ref), 0u);
+  // Each acquisition adds two and returns TRUE; release subtracts two.
+  EXPECT_EQ(invoke("ExAcquireRundownProtection", {Ref}), 1u);
+  EXPECT_EQ(integer(Ref), 2u);
+  EXPECT_EQ(invoke("ExAcquireRundownProtection", {Ref}), 1u);
+  EXPECT_EQ(integer(Ref), 4u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtection", {Ref}), 0u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtection", {Ref}), 0u);
+  EXPECT_EQ(integer(Ref), 0u);
+  // With nothing outstanding the wait runs the object down in place.
+  EXPECT_EQ(invoke("ExWaitForRundownProtectionRelease", {Ref}), 0u);
+  EXPECT_EQ(integer(Ref), 1u);
+  // Further acquisitions fail while run-down is in effect and write nothing.
+  EXPECT_EQ(invoke("ExAcquireRundownProtection", {Ref}), 0u);
+  EXPECT_EQ(integer(Ref), 1u);
+  // A repeat wait on an already run-down object is a no-op.
+  EXPECT_EQ(invoke("ExWaitForRundownProtectionRelease", {Ref}), 0u);
+  EXPECT_EQ(integer(Ref), 1u);
+  // Reinitialization makes it usable again.
+  invoke("ExReInitializeRundownProtection", {Ref});
+  EXPECT_EQ(integer(Ref), 0u);
+  EXPECT_EQ(invoke("ExAcquireRundownProtection", {Ref}), 1u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtection", {Ref}), 0u);
+  invoke("ExFreePoolWithTag", {Ref, Tag});
+}
+
+TEST_F(DriverKernelModel, RundownProtectionRefusesUnreachableCooperativePaths) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4e555252;
+  const uint64_t Ref = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  ASSERT_NE(Ref, 0u);
+  invoke("ExInitializeRundownProtection", {Ref});
+  // A release with nothing outstanding underflows, so it is refused and the
+  // count is untouched.
+  EXPECT_EQ(failure("ExReleaseRundownProtection", {Ref}),
+            "run-down protection release without a matching acquisition");
+  EXPECT_EQ(integer(Ref), 0u);
+  // Waiting while a reference is still outstanding would block on an event.
+  EXPECT_EQ(invoke("ExAcquireRundownProtection", {Ref}), 1u);
+  EXPECT_EQ(failure("ExWaitForRundownProtectionRelease", {Ref}),
+            "cannot wait for outstanding run-down references on this "
+            "cooperative processor");
+  EXPECT_EQ(integer(Ref), 2u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtection", {Ref}), 0u);
+  // Releasing after run-down has completed follows the kernel's null wait-block
+  // path and is refused.
+  invoke("ExRundownCompleted", {Ref});
+  EXPECT_EQ(integer(Ref), 1u);
+  EXPECT_EQ(failure("ExReleaseRundownProtection", {Ref}),
+            "cannot release run-down protection once run-down has started on "
+            "this cooperative processor");
+  EXPECT_EQ(integer(Ref), 1u);
+  // A null record is a clear refusal.
+  EXPECT_EQ(failure("ExAcquireRundownProtection", {0}),
+            "run-down protection requires 8-byte aligned kernel storage");
+  invoke("ExFreePoolWithTag", {Ref, Tag});
+}
+
+TEST_F(DriverKernelModel, RundownProtectionCountedFormsStepByTwiceTheCount) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4e555252;
+  const uint64_t Ref = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  ASSERT_NE(Ref, 0u);
+  invoke("ExInitializeRundownProtection", {Ref});
+  // A counted acquisition adds twice the count; a counted release removes it.
+  EXPECT_EQ(invoke("ExAcquireRundownProtectionEx", {Ref, 3}), 1u);
+  EXPECT_EQ(integer(Ref), 6u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtectionEx", {Ref, 2}), 0u);
+  EXPECT_EQ(integer(Ref), 2u);
+  // Releasing more than is outstanding underflows and is refused untouched.
+  EXPECT_EQ(failure("ExReleaseRundownProtectionEx", {Ref, 2}),
+            "run-down protection release without a matching acquisition");
+  EXPECT_EQ(integer(Ref), 2u);
+  // The ULONG doubles in 32 bits, so 0x80000000 steps by zero, and only the
+  // low 32 bits of the argument register count.
+  EXPECT_EQ(invoke("ExAcquireRundownProtectionEx", {Ref, 0x80000000}), 1u);
+  EXPECT_EQ(integer(Ref), 2u);
+  EXPECT_EQ(invoke("ExAcquireRundownProtectionEx", {Ref, 0xffffffff00000001}),
+            1u);
+  EXPECT_EQ(integer(Ref), 4u);
+  EXPECT_EQ(invoke("ExReleaseRundownProtectionEx", {Ref, 2}), 0u);
+  EXPECT_EQ(integer(Ref), 0u);
+  // After run-down, a counted acquisition fails without writing.
+  invoke("ExRundownCompleted", {Ref});
+  EXPECT_EQ(invoke("ExAcquireRundownProtectionEx", {Ref, 5}), 0u);
+  EXPECT_EQ(integer(Ref), 1u);
+  invoke("ExFreePoolWithTag", {Ref, Tag});
 }
 
 } // namespace

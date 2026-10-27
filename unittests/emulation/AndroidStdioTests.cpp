@@ -207,6 +207,9 @@ TEST_P(AndroidStdio, UserBuffersAndDisabledBufferingHaveObservableReadAhead) {
   returned(R);
   memory(R, {0, 97, 5, 1, 717, 0});
   Options.LinuxFiles->Metadata.clear();
+  R = run("stdio_buffering", {Buffer, 0, Buffer + 512, 3});
+  returned(R);
+  memory(R, {0, 97, 3, 1, 717, 0}, {{512, "alp"}});
   R = run("stdio_buffering", {Buffer, 2, UINT64_MAX, UINT64_MAX});
   returned(R);
   memory(R, {0, 97, 1, 1, 717, 0});

@@ -20,6 +20,7 @@
 
 #include "HighFlowGraph.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/libc/LibCNames.h"
 
 #include <algorithm>
@@ -220,7 +221,9 @@ void reportHighFlowOracle(const HighFunc &Func, const MedFunc &Med,
     if (auto It = ReturnOnly.find(B); It != ReturnOnly.end())
       return It->second;
     auto It = Index.find(B);
-    if (It == Index.end() || Depth > 8)
+    if (It == Index.end() ||
+        Depth > ::neverd::limits::ir::
+                    kHighFlowOracleReportHighFlowOracleReturnsDepthLimit)
       return false;
     ReturnOnly[B] = false;
     bool All = true;

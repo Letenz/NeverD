@@ -3,7 +3,14 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#pragma once
+///
+/// \file
+/// Bounded source navigation for admitted Bun extractions.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_WEB_PRIVATE_BUNSEMANTICINDEX_H
+#define NEVERD_WEB_PRIVATE_BUNSEMANTICINDEX_H
 
 #include "neverd/web/Bun.h"
 
@@ -50,3 +57,5 @@ std::string exportBunSemanticIndex(const BunExtraction &Extraction,
                                    std::string_view OutputDirectory,
                                    BunSemanticLimits Limits = {});
 } // namespace neverd::web
+
+#endif // NEVERD_WEB_PRIVATE_BUNSEMANTICINDEX_H

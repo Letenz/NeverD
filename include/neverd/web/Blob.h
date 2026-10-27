@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -18,7 +20,6 @@
 namespace neverd::web {
 class BlobStore;
 
-inline constexpr uint64_t MaxBlobReadBytes = 8 * 1024 * 1024;
 inline constexpr uint64_t BlobTransferBytes = 64 * 1024;
 
 /// An immutable byte range in an owned snapshot. Copies and slices share the

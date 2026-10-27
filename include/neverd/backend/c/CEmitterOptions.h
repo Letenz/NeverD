@@ -13,8 +13,12 @@
 #define NEVERD_BACKEND_C_CEMITTEROPTIONS_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/SourceVariableEdits.h"
+#include "neverd/libc/LibCVariant.h"
 
+#include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -23,15 +27,57 @@ namespace neverd {
 struct BinaryImage;
 struct CSourceMap;
 struct CSourceName;
+struct SourceVariableTypes;
+struct SourceCallTypeHint;
 class DataAccessWidths;
+struct NdType;
+
+/// What a unit holds of the program's own definitions of the records it
+/// names, from its local types.
+struct CRecordDefinitions {
+  /// C that defines the records and what they hold by value, which goes
+  /// after the unit's includes.
+  std::string Text;
+  /// The records Text defines, by the names the unit spells them by, and
+  /// whether each is a union.
+  std::map<std::string, bool> Records;
+  /// The records the unit has from the system's headers it includes, which
+  /// lay each out as the program does, with its members' names; likewise.
+  std::map<std::string, bool> HeaderRecords;
+  /// Every record Text names or the unit asked for, defined or not, and
+  /// whether each is a union, which the unit's own declarations of it say.
+  std::map<std::string, bool> Tags;
+  /// The ordinary identifiers Text declares, which the unit's own names
+  /// step around.
+  std::vector<std::string> Identifiers;
+  /// The enumerations Text defines, by their tags' names.
+  std::vector<std::string> Enumerations;
+  /// The local types Text defines, and the records it only declares, by
+  /// their names in the library, which another language's spelling of the
+  /// unit defines as its own.
+  std::vector<std::string> Types;
+  std::vector<std::string> DeclaredTypes;
+  /// Types whose matching target header declarations Text includes instead.
+  std::vector<std::string> HeaderTypes;
+  /// The records the unit's headers name by a typedef alone, as bionic's
+  /// <pthread.h> does pthread_mutex_t: the unit spells each by that name
+  /// and declares no typedef of its own, which would contradict the
+  /// header's.
+  std::vector<std::string> HeaderTypedefs;
+};
 
 struct CEmitterOptions {
   bool EmitIncludes = true;
+  /// The unit is a whole program, which a C compiler takes as one: its main
+  /// holds to the result and parameters C gives main.  A single function's
+  /// view keeps the name its listing gives it, as LLVM-C's does.
+  bool WholeProgram = false;
   bool EmitComments = true;
   /// Wrap record declarations in stable preprocessor guards so independently
   /// emitted translation units can be concatenated. A consumer that parses one
   /// complete unit and performs its own cross-unit deduplication can disable
-  /// the guards without changing the declarations themselves.
+  /// the guards without changing the declarations themselves.  The local
+  /// types' definitions (RecordDefinitions) keep their guards regardless.
   bool EmitRecordGuards = true;
   bool UseDebugNames = true;
   /// Structured pseudocode may use C++ exception syntax. A plain C view
@@ -42,6 +88,8 @@ struct CEmitterOptions {
   /// LLVMC clients with a complete source contract can retain the module's
   /// function types and request prototypes for definitions as well as imports.
   /// Disables inferred-void and debug-signature projections in that route.
+  /// A settled no-value contract still discards the machine return register;
+  /// a retained non-void signature uses a zero-initialized carrier instead.
   bool PreserveLLVMFunctionTypes = false;
   /// Spell ordinary scalar byte accesses through pointers, as
   /// ScalarPointers says. Ordered and unusual-width accesses retain their
@@ -68,6 +116,11 @@ struct CEmitterOptions {
   /// rdata C/wchar literals, and name image-backed data objects
   /// instead of emitting raw virtual addresses.
   const BinaryImage *Image = nullptr;
+  /// The C library whose declarations the program's calls follow: the
+  /// image's (libc::libcVariantOf), else its format's.
+  libc::LibCVariant libcVariant() const {
+    return Image ? libc::libcVariantOf(*Image) : libc::libcVariantOf(Format);
+  }
   /// The names the user gave addresses, which name image data ahead of debug
   /// information and symbols.
   const std::map<va_t, std::string> *UserNames = nullptr;
@@ -82,6 +135,27 @@ struct CEmitterOptions {
   /// Receives the names the text spells (CSourceMap::Names) without the
   /// marked render a source map needs.
   std::vector<CSourceName> *SourceNames = nullptr;
+  /// Given the named records a unit's types reach, through pointers and
+  /// arrays, the definitions the program's local types give them.  A record
+  /// left out, as one the local types do not define or define otherwise
+  /// than the debug information the unit reads its members by, stays
+  /// declared only. A pointer to a named record requests only its tag and
+  /// declaration, even if the library has its complete layout. A separate
+  /// by-value request for the same record still requires that layout.
+  std::function<CRecordDefinitions(
+      const std::vector<std::shared_ptr<NdType>> &)>
+      RecordDefinitions;
+  /// Analyst declarations for source interpretation only. They supply no
+  /// native ABI, memory extent, code ownership or rewriting authority.
+  const SourceVariableTypes *VariableTypes = nullptr;
+  const std::map<std::string, SourceCallTypeHint> *CallTypes = nullptr;
+  struct FrameVariable {
+    std::string Name;
+    std::shared_ptr<NdType> Type;
+  };
+  const std::map<int64_t, FrameVariable> *FrameVariables = nullptr;
+  const std::vector<SourceVariableEdit> *VariableEdits = nullptr;
+  std::string VariableSnapshot;
 };
 
 } // namespace neverd

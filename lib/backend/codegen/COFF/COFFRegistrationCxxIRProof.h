@@ -7,7 +7,7 @@
 #define NEVERD_COFFREGISTRATIONCXXIRPROOF_H
 #include "COFFRegistrationIRProof.h"
 
-#include "neverd/backend/llvm/X86RegistrationCatch.h"
+#include "neverd/backend/llvm/X86/X86RegistrationCatch.h"
 #include "neverd/ir/low/LowIR.h"
 
 namespace neverd {

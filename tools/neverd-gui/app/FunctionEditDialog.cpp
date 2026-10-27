@@ -11,6 +11,8 @@
 
 #include "FunctionEditDialog.h"
 
+#include "../Config.h"
+
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QDialogButtonBox>
@@ -28,11 +30,6 @@
 
 namespace neverd::gui {
 namespace {
-/// The dialog's margins and the space between its columns and rows, on the
-/// 4-pixel grid.
-constexpr int Margin = 16;
-constexpr int ColumnSpacing = 16;
-constexpr int RowSpacing = 8;
 /// Room for a 64-bit address with its segment, as IDA's fields have.
 constexpr int FieldCharacters = 28;
 /// The keys function_edit and function_attributes spell the attributes with.
@@ -79,7 +76,8 @@ FunctionEditDialog::FunctionEditDialog(const QJsonObject &attributes,
   const QString frameWhy = tr("NeverD does not keep this frame size");
 
   auto *fields = new QFormLayout;
-  fields->setVerticalSpacing(RowSpacing);
+  fields->setVerticalSpacing(
+      ::neverd::limits::gui_config::kFunctionEditDialogRowSpacing);
   fields->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
   name_ = new QLineEdit(attributes.value("name").toString(), this);
   name_->setObjectName(QStringLiteral("name"));
@@ -87,7 +85,7 @@ FunctionEditDialog::FunctionEditDialog(const QJsonObject &attributes,
   fields->addRow(tr("&Name of function"), name_);
   // A function's bounds are what analysis decodes; NeverD takes no end from
   // the user yet.
-  const QString boundsWhy = tr("Analysis decodes where the function ends");
+  const QString boundsWhy = tr("Analysis decides where the function ends");
   auto *startField = shownField(this, start, boundsWhy);
   startField->setObjectName(QStringLiteral("start"));
   fields->addRow(tr("&Start address"), startField);
@@ -121,7 +119,8 @@ FunctionEditDialog::FunctionEditDialog(const QJsonObject &attributes,
 
   // IDA's frame sizes: NeverD knows the arguments x86's `ret imm` pops.
   auto *sizes = new QFormLayout;
-  sizes->setVerticalSpacing(RowSpacing);
+  sizes->setVerticalSpacing(
+      ::neverd::limits::gui_config::kFunctionEditDialogRowSpacing);
   sizes->addRow(new QLabel(tr("Enter size of (in bytes)"), this));
   sizes->addRow(tr("Local &variables area"), shownField(this, {}, frameWhy));
   sizes->addRow(tr("Saved &registers"), shownField(this, {}, frameWhy));
@@ -137,7 +136,8 @@ FunctionEditDialog::FunctionEditDialog(const QJsonObject &attributes,
   sizes->addRow(tr("Frame pointer &delta"), shownField(this, {}, frameWhy));
 
   auto *left = new QVBoxLayout;
-  left->setSpacing(RowSpacing * 2);
+  left->setSpacing(::neverd::limits::gui_config::kFunctionEditDialogRowSpacing *
+                   2);
   left->addLayout(fields);
   left->addLayout(sizes);
   left->addStretch();
@@ -146,12 +146,14 @@ FunctionEditDialog::FunctionEditDialog(const QJsonObject &attributes,
   // recovers instead.
   auto *flags = new QGroupBox(this);
   auto *flagRows = new QVBoxLayout(flags);
-  flagRows->setSpacing(RowSpacing);
+  flagRows->setSpacing(
+      ::neverd::limits::gui_config::kFunctionEditDialogRowSpacing);
   const QString flagWhy = tr("NeverD does not keep this flag");
   noReturn_ =
       flag(flags, tr("D&oes not return"), attributes.value(NoReturnKey));
   noReturn_->setObjectName(QLatin1String(NoReturnKey));
-  noReturn_->setToolTip(tr("Analysis ends every call to the function"));
+  noReturn_->setToolTip(
+      tr("Analysis stops control flow at every call to the function"));
   flagRows->addWidget(noReturn_);
   flagRows->addWidget(unmodeled(flags, tr("&Far function"),
                                 tr("Only 16-bit x86 code has far functions")));
@@ -167,7 +169,8 @@ FunctionEditDialog::FunctionEditDialog(const QJsonObject &attributes,
   flagRows->addStretch();
 
   auto *columns = new QHBoxLayout;
-  columns->setSpacing(ColumnSpacing);
+  columns->setSpacing(
+      ::neverd::limits::gui_config::kFunctionEditDialogColumnSpacing);
   columns->addLayout(left, 1);
   columns->addWidget(flags);
 
@@ -181,8 +184,12 @@ FunctionEditDialog::FunctionEditDialog(const QJsonObject &attributes,
   connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
   auto *layout = new QVBoxLayout(this);
-  layout->setContentsMargins(Margin, Margin, Margin, Margin);
-  layout->setSpacing(Margin);
+  layout->setContentsMargins(
+      ::neverd::limits::gui_config::kFunctionEditDialogMargin,
+      ::neverd::limits::gui_config::kFunctionEditDialogMargin,
+      ::neverd::limits::gui_config::kFunctionEditDialogMargin,
+      ::neverd::limits::gui_config::kFunctionEditDialogMargin);
+  layout->setSpacing(::neverd::limits::gui_config::kFunctionEditDialogMargin);
   layout->addLayout(columns);
   layout->addWidget(buttons);
   name_->setFocus();

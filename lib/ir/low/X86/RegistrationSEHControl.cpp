@@ -10,10 +10,13 @@
 
 #include "RegistrationABIPrivate.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
+
+#include "llvm/ADT/STLExtras.h"
 
 #include <map>
 #include <set>
@@ -101,7 +104,12 @@ RegistrationCallCalleeIndex::sehControlContracts(const LowFunc &Function) {
         va_t Next = C.EndAddress;
         std::set<va_t> Seen;
         std::vector<RegistrationSEHControlContract> Path;
-        while (Next != Resume && Seen.size() < 64 && Seen.insert(Next).second) {
+        while (
+            Next != Resume &&
+            Seen.size() <
+                ::neverd::limits::ir::
+                    kRegistrationSEHControlRegistrationCallCalleeIndexSehControlContractsSeenSizeLimit &&
+            Seen.insert(Next).second) {
           if (!registration_abi::chargeCalleeWork(Work, 6))
             return std::nullopt;
           if (!Function.ExceptionMetadata->CodeRange.contains(Next))
@@ -125,12 +133,47 @@ RegistrationCallCalleeIndex::sehControlContracts(const LowFunc &Function) {
     }
   for (const auto &[Address, Jump] : FoldedJumps)
     Result.push_back(Jump);
+  // An ordinary parent epilogue is not evidence of a nonreturning finally.
+  // Only the adjacent physical invocation needs its original caller values
+  // threaded through the state solver. Seeding those values for every SEH
+  // function needlessly multiplies the cost of unrelated runtime closures.
+  if (llvm::none_of(Result, [](const auto &Control) {
+        return Control.Control ==
+                   RegistrationSEHControlContract::Kind::NearCall &&
+               Control.EndAddress == Control.Target;
+      }))
+    return Result;
+  for (const auto &Block : Function.Blocks) {
+    if (!registration_abi::chargeCalleeWork(Work, 1))
+      return std::nullopt;
+    if (!Block.Succs.empty() || Block.StartAddr >= Block.EndAddr ||
+        Block.EndAddr - Block.StartAddr < 4 ||
+        Block.EndAddr - Block.StartAddr > 8)
+      continue;
+    if (!registration_abi::chargeCalleeWork(Work, 16))
+      return std::nullopt;
+    if (Function.ExceptionMetadata->ownsCode({Block.StartAddr, Block.EndAddr}))
+      if (auto Epilogue = getRegistrationSEHParentEpilogue(Image, Block))
+        Result.push_back(*Epilogue);
+  }
   return Result;
 }
 
 } // namespace neverd
 
 namespace neverd::registration_state {
+
+const ExceptionFunction *installedRegistration(const BinaryImage &Image,
+                                               va_t Entry) {
+  const ExceptionFunction *Exception =
+      Image.ExceptionMetadata.findFunction(Entry);
+  if (!Exception || !Exception->Registration)
+    return nullptr;
+  const va_t Installer = Exception->FunctionEntry != 0
+                             ? Exception->FunctionEntry
+                             : Exception->CodeRange.Begin;
+  return Installer == Entry ? Exception : nullptr;
+}
 
 bool isSEHFinallyCallInstruction(const BinaryImage &Image,
                                  const RegistrationChainInfo &Chain,
@@ -152,7 +195,7 @@ bool isSEHFinallyCallInstruction(const BinaryImage &Image,
         return Scope.IsFinally && Scope.HandlerVA == Call->Inputs[0].Offset;
       }))
     return false;
-  const auto Bytes = readImmutableCodeBytes(Image, Address, Size);
+  const auto Bytes = readImmutablePE32CodeBytes(Image, Address, Size, {});
   return Bytes && (*Bytes)[0] == 0xe8 &&
          uint32_t(Address + Size +
                   int64_t(readLE<int32_t>(Bytes->data() + 1))) ==

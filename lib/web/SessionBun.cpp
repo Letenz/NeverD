@@ -11,6 +11,8 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web {
 namespace {
 llvm::json::Object summary(const BunExtraction &E, uint64_t Revision) {
@@ -87,7 +89,8 @@ std::string Session::bunRecords(std::string_view ExpectedRevision,
     throw Error("unsupported_bun_record_kind");
   const auto Count =
       RecordKind == "modules" ? E.Modules.size() : E.Regions.size();
-  if (!Limit || Limit > 512 || Offset > Count)
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > Count)
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(Count, Offset + Limit);
   auto Ref = [&](uint32_t Index) -> llvm::json::Value {

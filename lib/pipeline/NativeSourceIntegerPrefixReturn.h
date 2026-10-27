@@ -3,6 +3,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/pipeline/Limits.h"
 
 #include <algorithm>
 #include <map>
@@ -24,7 +25,8 @@ inline bool hasNativeSourceIntegerPrefixReturn(const HighFunc &Function) {
       Location.Kind != SourceABICarrierKind::IntegerRegister ||
       Location.ValueBytes != 8 || Location.ExtendTo32Bits)
     return false;
-  size_t Budget = 100000;
+  size_t Budget = ::neverd::limits::pipeline::
+      kNativeSourceIntegerPrefixReturnHasNativeSourceIntegerPrefixReturnBudget;
   std::map<HighSourceLocalIdentity, std::vector<ExprPtr>> Definitions;
   std::vector<ExprPtr> Returns;
   std::vector<const HighStmt *> Pending;
@@ -50,7 +52,9 @@ inline bool hasNativeSourceIntegerPrefixReturn(const HighFunc &Function) {
     Add(S.DefaultBody);
     for (const auto &Case : S.Cases)
       Add(Case.Body);
-    if (Pending.size() > 100000)
+    if (Pending.size() >
+        ::neverd::limits::pipeline::
+            kNativeSourceIntegerPrefixReturnHasNativeSourceIntegerPrefixReturnPendingSizeLimit)
       return false;
   }
 
@@ -82,7 +86,11 @@ inline bool hasNativeSourceIntegerPrefixReturn(const HighFunc &Function) {
   };
   const auto Defined = [&](auto &&Self, const ExprPtr &E, unsigned Bytes,
                            unsigned Depth) -> bool {
-    if (!Budget || Depth > 128 || !E || !Plain(*E) || E->Type->Size < Bytes)
+    if (!Budget ||
+        Depth >
+            ::neverd::limits::pipeline::
+                kNativeSourceIntegerPrefixReturnHasNativeSourceIntegerPrefixReturnDefinedDepthLimit ||
+        !E || !Plain(*E) || E->Type->Size < Bytes)
       return false;
     --Budget;
     if (E->Kind == ExprKind::Const)

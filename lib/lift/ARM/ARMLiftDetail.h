@@ -26,11 +26,97 @@
 #ifndef NEVERD_LIFT_ARM_ARMLIFTDETAIL_H
 #define NEVERD_LIFT_ARM_ARMLIFTDETAIL_H
 
-#include "neverd/lift/ARMLifter.h"
+#include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
+#include "neverd/lift/ARM/ARMLifter.h"
+#include "neverd/support/ARM/ARMTrap.h"
 
 #include <capstone/capstone.h>
+#include <cstdint>
+#include <optional>
 
 namespace neverd {
+
+/// The armCoprocessorField of a coprocessor register transfer's operands:
+/// `mrc p15, #0, r0, c13, c0, #3`, or `mrrc p15, #1, r0, r1, c14` when
+/// \p TwoRegisters.  None for any other shape.
+inline std::optional<uint64_t> coprocessorTransferField(const cs_arm &ARM,
+                                                        bool TwoRegisters) {
+  const cs_arm_op *Op = ARM.operands;
+  auto fits = [](const cs_arm_op &Operand, arm_op_type Type, int64_t Max) {
+    return Operand.type == Type && Operand.imm >= 0 && Operand.imm <= Max;
+  };
+  if (ARM.op_count != (TwoRegisters ? 5 : 6) || !fits(Op[0], ARM_OP_PIMM, 15))
+    return std::nullopt;
+  if (TwoRegisters)
+    return fits(Op[1], ARM_OP_IMM, 15) && fits(Op[4], ARM_OP_CIMM, 15)
+               ? std::optional<uint64_t>(
+                     armCoprocessorField(Op[0].imm, Op[1].imm, 0, Op[4].imm, 0))
+               : std::nullopt;
+  return fits(Op[1], ARM_OP_IMM, 7) && fits(Op[3], ARM_OP_CIMM, 15) &&
+                 fits(Op[4], ARM_OP_CIMM, 15) && fits(Op[5], ARM_OP_IMM, 7)
+             ? std::optional<uint64_t>(armCoprocessorField(
+                   Op[0].imm, Op[1].imm, Op[3].imm, Op[4].imm, Op[5].imm))
+             : std::nullopt;
+}
+
+/// Whether \p Op is a register a coprocessor or status register transfer
+/// moves: r0-r12, SP or LR.  An MRC to PC is the form that writes the
+/// condition flags (`mrc p14, #0, apsr_nzcv, c0, c1, #0`); elsewhere PC is
+/// UNPREDICTABLE.
+inline bool isTransferRegister(const cs_arm_op &Op) {
+  return Op.type == ARM_OP_REG &&
+         ((Op.reg >= ARM_REG_R0 && Op.reg <= ARM_REG_R12) ||
+          Op.reg == ARM_REG_SP || Op.reg == ARM_REG_LR);
+}
+
+/// The field of an MSR's destination \p Op: its mask (c 1, x 2, s 4, f 8),
+/// with ArmMsrSpsr for an SPSR.  CPSR, and APSR as A-profile code spells it
+/// (`apsr_nzcvq`, `apsr_g`), are one register.  None for a banked register,
+/// an M-profile one, or no field.
+inline std::optional<uint64_t> msrField(const cs_arm_op &Op) {
+  const unsigned Mask = Op.sysop.msr_mask;
+  if (Mask == 0 || Mask > 0xF)
+    return std::nullopt;
+  switch (Op.type) {
+  case ARM_OP_SPSR:
+    return ArmMsrSpsr | Mask;
+  case ARM_OP_CPSR:
+    return Mask;
+  case ARM_OP_SYSREG:
+    switch (Op.sysop.reg.mclasssysreg) {
+    case ARM_MCLASSSYSREG_APSR_NZCVQ:
+    case ARM_MCLASSSYSREG_APSR_G:
+    case ARM_MCLASSSYSREG_APSR_NZCVQG:
+      return Mask;
+    default:
+      return std::nullopt;
+    }
+  default:
+    return std::nullopt;
+  }
+}
+
+/// The armCpsField of a CPS: `cpsid i` disables IRQs, `cps #0x13` enters
+/// Supervisor mode.  None for an UNPREDICTABLE form armStatusInstructionAsm
+/// has no text for (`cpsid none, #0x13`).
+inline std::optional<uint64_t> cpsField(const cs_arm &ARM) {
+  const unsigned Imod = ARM.cps_mode == ARM_CPSMODE_IE   ? 2
+                        : ARM.cps_mode == ARM_CPSMODE_ID ? 3
+                                                         : 0;
+  const unsigned Masks =
+      ARM.cps_flag == ARM_CPSFLAG_NONE ? 0 : unsigned(ARM.cps_flag) & 7;
+  const bool ChangesMode = ARM.op_count == 1;
+  if (ARM.op_count > 1 ||
+      (ChangesMode && (ARM.operands[0].type != ARM_OP_IMM ||
+                       ARM.operands[0].imm < 0 || ARM.operands[0].imm > 0x1F)))
+    return std::nullopt;
+  const uint64_t Field =
+      armCpsField(Imod, Masks, ChangesMode,
+                  ChangesMode ? static_cast<unsigned>(ARM.operands[0].imm) : 0);
+  if (armStatusInstructionAsm(Intrinsic::ArmCps, Field).empty())
+    return std::nullopt;
+  return Field;
+}
 
 //===----------------------------------------------------------------------===//
 // Helpers shared by more than one handler translation unit

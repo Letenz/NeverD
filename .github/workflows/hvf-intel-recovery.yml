@@ -110,7 +110,7 @@ jobs:
       - name: Build only the original recovery owner
         working-directory: source
         timeout-minutes: 30
-        run: cmake --build build-hvf --config Release --target NeverDHvfTests --parallel 4
+        run: python scripts/build.py build-hvf --config Release --target NeverDHvfTests --parallel 4
       - name: Preserve live recovery progress without pausing native iterations
         id: recovery
         uses: ./diagnostics/.github/actions/hvf-intel-recovery

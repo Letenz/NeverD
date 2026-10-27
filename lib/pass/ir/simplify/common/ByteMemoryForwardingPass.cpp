@@ -8,6 +8,7 @@
 #include "neverd/pass/ir/simplify/ByteMemoryForwardingPass.h"
 
 #include "neverd/analysis/LLVMMemoryAnalysis.h"
+#include "neverd/pass/Limits.h"
 #include "neverd/pass/ir/simplify/SymSimplifyPass.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -74,7 +75,10 @@ std::optional<Address> address(llvm::Value *Pointer, const llvm::DataLayout &DL,
           !Count->isOne() || Offset.isNegative())
         return std::nullopt;
       const uint64_t Size = Bytes->getNumElements();
-      if (!Size || Size > 65536 || Offset.getZExtValue() >= Size)
+      if (!Size ||
+          Size > ::neverd::limits::pass::
+                     kByteMemoryForwardingPassAddressSizeLimit ||
+          Offset.getZExtValue() >= Size)
         return std::nullopt;
       return Address{Object, Offset.getZExtValue(), Size};
     }

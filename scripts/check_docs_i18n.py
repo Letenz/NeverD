@@ -2977,6 +2977,66 @@ def validate_readme_parity(errors: list[str], view: RepositoryView) -> None:
                 report(errors, f'{path}: README language selector differs')
 
 
+def validate_contributing_parity(errors: list[str], view: RepositoryView) -> None:
+    """Check reviewed contributor guides against the source, not prose quality."""
+    source = Path("CONTRIBUTING.md")
+    original = view.read_text(source)
+    revision = hashlib.sha256(original.encode("utf-8")).hexdigest()
+    original_sections = readme_sections(original, source, errors, "contributor")
+    selector = readme_urls(original.split("\n", 1)[0])
+    expected_selector = {source.as_posix()} | {
+        f"docs/{locale}/CONTRIBUTING.md" for locale in LOCALES
+    }
+    if len(selector) != len(expected_selector) or set(selector) != expected_selector:
+        report(errors, f"{source}: contributor language selector differs")
+
+    def section_slugs(sections: list[tuple[str, str]]) -> dict[str, str]:
+        slugs = {}
+        for key, body in sections:
+            heading = re.search(r"^#{2,3} (.+)$", body, re.MULTILINE)
+            if heading:
+                slugs[github_slug_base(heading.group(1))] = key
+        return slugs
+
+    original_slugs = section_slugs(original_sections)
+    for locale in LOCALES:
+        path = Path(f"docs/{locale}/CONTRIBUTING.md")
+        text = view.read_text(path)
+        if README_SOURCE_REVISION.findall(text) != [revision]:
+            report(errors, f"{path}: contributor source revision differs from {source}; "
+                   "review the translation before updating its i18n-source SHA-256")
+        translated = readme_sections(text, path, errors, "contributor")
+        if readme_urls(text.split("\n", 1)[0]) != [
+            posixpath.relpath(url, path.parent.as_posix()) for url in selector
+        ]:
+            report(errors, f"{path}: contributor language selector differs")
+        if [key for key, _ in translated] != [key for key, _ in original_sections]:
+            report(errors, f"{path}: contributor section order differs from {source}")
+            continue
+        slugs = section_slugs(translated)
+        for (key, expected), (_, actual) in zip(original_sections, translated):
+            if readme_example_signature(expected) != readme_example_signature(actual):
+                report(errors, f"{path}: contributor examples differ in {key}")
+            if readme_table_signature(expected) != readme_table_signature(actual):
+                report(errors, f"{path}: contributor table rows differ in {key}")
+            expected_visible = readme_visible_text(expected)
+            actual_visible = readme_visible_text(actual)
+            missing = set(re.findall(r"`([^`\n]+)`", expected_visible)) - set(
+                re.findall(r"`([^`\n]+)`", actual_visible))
+            if missing:
+                report(errors, f"{path}: contributor API/options missing in {key}: "
+                       + ", ".join(sorted(missing)))
+            if key == "banner":
+                expected_visible = expected_visible.split("\n", 1)[1]
+                actual_visible = actual_visible.split("\n", 1)[1]
+            expected_links = [canonical_readme_url(url, source, original_slugs)
+                              for url in readme_urls(expected_visible)]
+            actual_links = [canonical_readme_url(url, path, slugs)
+                            for url in readme_urls(actual_visible)]
+            if expected_links != actual_links:
+                report(errors, f"{path}: contributor link order or destinations differ in {key}")
+
+
 def validate_synced_guide_examples(errors: list[str], view: RepositoryView) -> None:
     """Keep executable examples in their matching translated sections."""
     for stem in SYNCHRONIZED_GUIDES:
@@ -3139,6 +3199,7 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
         return
 
     validate_readme_parity(errors, view)
+    validate_contributing_parity(errors, view)
     validate_emulation_overview(errors, view)
     validate_synced_guide_examples(errors, view)
     validate_source_patch_guides(errors, view)

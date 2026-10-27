@@ -13,6 +13,7 @@
 
 #include "neverd/web/Artifact.h"
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 
 #include <algorithm>
 
@@ -39,7 +40,8 @@ bool sourceByteBoundary(std::string_view Bytes, uint64_t Offset) {
 }
 
 TextCoordinates::TextCoordinates(std::string_view Text) : Bytes(Text) {
-  if (Bytes.size() > 4 * 1024 * 1024)
+  if (Bytes.size() >
+      ::neverd::limits::web::kSourceLocationTextCoordinatesBytesSizeLimit)
     throw Error("coordinate_byte_budget_exceeded");
   if (!validUtf8(Bytes))
     throw Error("unsupported_encoding");
@@ -52,14 +54,16 @@ TextCoordinates::TextCoordinates(std::string_view Text) : Bytes(Text) {
       Lines.back().End = Start;
       if (Code == '\r' && Cursor < Bytes.size() && Bytes[Cursor] == '\n')
         ++Cursor;
-      if (Lines.size() == 200000)
+      if (Lines.size() ==
+          ::neverd::limits::web::kSourceLocationTextCoordinatesLinesSizeLimit)
         throw Error("coordinate_line_budget_exceeded");
       Lines.push_back({Cursor, Cursor, {{Cursor, 0}}});
       Column = 0;
     } else {
       Column += Code > 0xFFFF ? 2 : 1;
       auto &Checkpoints = Lines.back().Checkpoints;
-      if (Cursor - Checkpoints.back().Byte >= 128)
+      if (Cursor - Checkpoints.back().Byte >=
+          ::neverd::limits::web::kSourceCheckpointByteStride)
         Checkpoints.push_back({Cursor, Column});
     }
   }

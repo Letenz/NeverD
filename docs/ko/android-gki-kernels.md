@@ -1,5 +1,7 @@
 # 출시된 Android GKI 커널 계약
 
+> 업데이트: poll/epoll 및 버퍼링된 stdio의 현재 동작은 [공통 계약](../linux-network-contracts.md#poll-and-epoll-waits)을 참고하세요. 이 페이지에서 poll을 시간 제한 0과 GKI로 한정한 설명은 이전 지원 범위입니다.
+
 NeverD는 다른 Linux 변형보다 출시된 Android GKI 5.10–6.18 분기를 우선합니다. 프로세스 요청에서 분기를 명시적으로 선택합니다.
 
 ```json

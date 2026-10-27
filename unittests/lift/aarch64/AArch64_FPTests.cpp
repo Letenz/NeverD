@@ -1,4 +1,5 @@
 #include "AArch64HighCBehavior.h"
+#include "CSourceText.h"
 
 class AArch64_FP : public AArch64HighCBehaviorTest {
 protected:
@@ -26,7 +27,7 @@ static std::string functionIR(const std::string &IR, const std::string &Name) {
 
 static std::string functionSource(const std::string &Source,
                                   const std::string &Name) {
-  auto NamePos = Source.find(Name + "(");
+  auto NamePos = neverd::test::cDefinitionAt(Source, Name);
   if (NamePos == std::string::npos)
     return {};
   auto Begin = Source.rfind('\n', NamePos);

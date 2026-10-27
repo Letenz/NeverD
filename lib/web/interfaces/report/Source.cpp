@@ -13,6 +13,7 @@
 #include "SourceStructure.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/PassiveReport.h"
 #include "neverd/web/ProtocolMethods.h"
 
@@ -27,7 +28,7 @@ uint32_t child(const SourceAnalysis &S, uint32_t Node, std::string_view Field) {
   return NoSourceIndex;
 }
 std::string method(const std::u16string *Name) {
-  if (!Name || Name->size() > 64)
+  if (!Name || Name->size() > ::neverd::limits::web::kSourceMethodNameSizeLimit)
     return "other_redacted";
   std::string ASCII;
   for (char16_t C : *Name) {

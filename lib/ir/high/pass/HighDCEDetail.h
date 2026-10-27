@@ -16,6 +16,8 @@
 #ifndef NEVERD_IR_HIGH_PASS_HIGHDCEDETAIL_H
 #define NEVERD_IR_HIGH_PASS_HIGHDCEDETAIL_H
 
+#include "../HighExprUseCounts.h"
+
 #include "neverd/ir/high/HighIR.h"
 
 #include <unordered_map>
@@ -39,12 +41,6 @@ void rewriteRhsVars(std::vector<HighStmt> &Stmts,
                     const VarKeyMap<ExprPtr> &Map);
 void countExprVarUses(const ExprPtr &E, VarKeyMap<int> &Uses,
                       HighExprSet &Seen);
-/// Single-use inlining must count a shared expression once per use site,
-/// rather than once per DAG node. Counts saturate at two because only the
-/// distinction between one and multiple uses matters here.
-void countExprVarUsesUpToTwo(
-    const ExprPtr &E, VarKeyMap<int> &Uses,
-    std::unordered_map<const HighExpr *, uint8_t> &Visits);
 /// Reads and effects belong to their original statement. Without an ordering
 /// proof, expression propagation cannot move or duplicate them at a use.
 bool containsNonMovableEffect(const ExprPtr &E);
@@ -72,6 +68,10 @@ void eliminateLoopAliases(std::vector<HighStmt> &Stmts);
 void elimConsecutiveDeadStores(std::vector<HighStmt> &Stmts);
 void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture);
 void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture);
+/// The same forwarding; writebacks are proven across joins only when
+/// \p AcrossJoins is set. \returns whether that proof changed \p Func.
+bool forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture,
+                              bool AcrossJoins);
 /// Forward scalar copies through nonescaping private slots on the shared
 /// source-flow graph. Calls must already carry complete source ABI bindings.
 /// Every reaching context must agree; cycles and exhausted budgets do nothing.

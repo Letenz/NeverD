@@ -18,6 +18,8 @@
 #ifndef NEVERD_BACKEND_C_VARIADICIMPORTSTUB_H
 #define NEVERD_BACKEND_C_VARIADICIMPORTSTUB_H
 
+#include "LibraryPrototype.h"
+
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/SymbolDecoration.h"
@@ -46,7 +48,17 @@ inline std::string variadicImportOfStub(const BinaryImage &Image, va_t Entry) {
   if (const libc::LibCPrototype *Prototype =
           libc::libcPrototype(Name, Image.Format))
     return Prototype->Variadic ? Name : std::string();
-  return libc::isKnownFunction(Name) && libc::varArgFixedCount(Name) > 0
+  // A routine some C libraries alone declare variadic, as Linux's ptrace,
+  // is variadic in their programs only.
+  if (const libc::LibCVariadicForward *Forward =
+          libc::libcVariadicForward(Name);
+      Forward && Forward->Format != BinaryFormat::Unknown)
+    return libc::variadicIn(*Forward, libc::libcVariantOf(Image)) &&
+                   libc::isKnownFunction(Name)
+               ? Name
+               : std::string();
+  return libc::isKnownFunction(Name) &&
+                 libc::varArgFixedCount(Name, libc::libcVariantOf(Image)) > 0
              ? Name
              : std::string();
 }
@@ -88,14 +100,36 @@ inline std::string stubParameterName(const libc::LibCVariadicForward &Forward,
   return "arg" + std::to_string(Index);
 }
 
+/// The machine word a call passes the va_list \p VaList as, which a runtime
+/// table's prototype that takes the list as `void *` (LibCFortify.h) takes:
+/// the pointer it is, or its array decays to, on x86, x86-64 and the AArch64
+/// ABIs of Darwin and Windows; the address of AAPCS64's record, which a call
+/// passes by reference; and the one pointer AAPCS's record holds, which a
+/// call passes in a register.
+inline std::string vaListWord(Arch TheArch, BinaryFormat Format,
+                              llvm::StringRef VaList) {
+  const bool OwnABI =
+      Format == BinaryFormat::MachO || Format == BinaryFormat::COFF;
+  if (TheArch == Arch::AArch64 && !OwnABI)
+    return "(void *)&" + VaList.str();
+  if (TheArch == Arch::ARM && !OwnABI)
+    return "*(void **)&" + VaList.str();
+  return VaList.str();
+}
+
 /// Writes \p Stub, a stub of the variadic import \p Import that jumps through
 /// \p Slot where the format names the slot, as a function that passes every
 /// argument it receives on through \p Forward, or, with no form C can pass
-/// them to, as the note that the stub is the import.
+/// them to, as the note that the stub is the import.  Its fixed parameters
+/// are of the types the headers of C library \p Variant give them.  A
+/// va_list form no header declares, which the unit declares from a runtime
+/// table as its calls of it are (`__vfprintf_chk`), is declared so once.
 inline void writeVariadicImportStub(llvm::raw_ostream &OS, llvm::StringRef Stub,
                                     llvm::StringRef Import,
                                     llvm::StringRef Slot,
-                                    const libc::LibCVariadicForward *Forward) {
+                                    const libc::LibCVariadicForward *Forward,
+                                    libc::LibCVariant Variant, Arch TheArch,
+                                    BinaryFormat Format) {
   using Kind = libc::LibCVariadicForward::Kind;
   OS << "/* " << Stub << " jumps to the import " << Import;
   if (!Slot.empty())
@@ -122,33 +156,44 @@ inline void writeVariadicImportStub(llvm::raw_ostream &OS, llvm::StringRef Stub,
        << " takes the pointers up to the null one as an array. */\n";
     break;
   }
-  // What the stub calls, declared as it is called.
-  OS << "extern " << F.Return << " " << F.Target << "(";
-  for (size_t I = 0; I < F.FixedCount; ++I) {
-    if (F.TheKind == Kind::Sentinel && I > 0)
+  // What the stub calls, declared as it is called: as the unit declares a
+  // routine of a runtime table's, which takes the list as a machine word.
+  const libc::LibCPrototype *Tabled =
+      F.TheKind == Kind::VaList && !libc::headerFor(F.Target)
+          ? libc::libcPrototype(F.Target, Format)
+          : nullptr;
+  if (Tabled) {
+    OS << "extern "
+       << c_library::declaration(*Tabled, F.Target, TheArch, Format) << ";\n";
+  } else {
+    OS << "extern " << F.Return << " " << F.Target << "(";
+    for (size_t I = 0; I < F.FixedCount; ++I) {
+      if (F.TheKind == Kind::Sentinel && I > 0)
+        break;
+      OS << (I ? ", " : "") << libc::forwardFixedType(F, I, Variant);
+    }
+    switch (F.TheKind) {
+    case Kind::VaList:
+      OS << ", va_list";
       break;
-    OS << (I ? ", " : "") << F.Fixed[I];
-  }
-  switch (F.TheKind) {
-  case Kind::VaList:
-    OS << ", va_list";
-    break;
-  case Kind::Bounded:
-    OS << ", ...";
-    break;
-  case Kind::Sentinel:
-    OS << ", char *const *";
-    if (F.Environment)
+    case Kind::Bounded:
+      OS << ", ...";
+      break;
+    case Kind::Sentinel:
       OS << ", char *const *";
-    break;
+      if (F.Environment)
+        OS << ", char *const *";
+      break;
+    }
+    OS << ");\n";
   }
-  OS << ");\n";
 
   std::string Names;
   OS << F.Return << " " << Stub << "(";
   for (size_t I = 0; I < F.FixedCount; ++I) {
     const std::string Name = stubParameterName(F, I);
-    OS << (I ? ", " : "") << stubDeclarator(F.Fixed[I], Name);
+    OS << (I ? ", " : "")
+       << stubDeclarator(libc::forwardFixedType(F, I, Variant), Name);
     Names += (I ? ", " : "") + Name;
   }
   const std::string Last = stubParameterName(F, F.FixedCount - 1);
@@ -160,7 +205,9 @@ inline void writeVariadicImportStub(llvm::raw_ostream &OS, llvm::StringRef Stub,
     OS << "    va_start(arguments, " << Last << ");\n    ";
     if (Returns)
       OS << stubDeclarator(F.Return, "result") << " = ";
-    OS << F.Target << "(" << Names << ", arguments);\n";
+    OS << F.Target << "(" << Names << ", "
+       << (Tabled ? vaListWord(TheArch, Format, "arguments") : "arguments")
+       << ");\n";
     OS << "    va_end(arguments);\n";
     if (Returns)
       OS << "    return result;\n";

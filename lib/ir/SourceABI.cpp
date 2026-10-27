@@ -1,9 +1,18 @@
+//===- SourceABI.cpp - Checked source value and carrier contracts --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Validates complete logical source types and their physical value carriers.
+
 #include "neverd/ir/SourceABI.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/lift/AArch64Regs.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include <algorithm>
 #include <set>
@@ -27,7 +36,8 @@ bool sameLocation(const SourceABIValueLocation &Left,
 
 bool equalTypes(const TypeRef &Left, const TypeRef &Right, unsigned Depth,
                 unsigned &Remaining) {
-  if (!Remaining || !Left || !Right || Depth > 16 ||
+  if (!Remaining || !Left || !Right ||
+      Depth > ::neverd::limits::ir::kSourceABIEqualTypesDepthLimit ||
       Left->Kind != Right->Kind || Left->Size != Right->Size ||
       Left->IsSigned != Right->IsSigned)
     return false;
@@ -66,9 +76,14 @@ bool equalTypes(const TypeRef &Left, const TypeRef &Right, unsigned Depth,
     return true;
   }
   case NdTypeKind::Func:
-    if (Left->Size != 0 || !Left->RetType || !Right->RetType ||
+    // These projections currently support the ordinary platform C convention.
+    // A displayable stdcall/vectorcall callback is not evidence for that ABI.
+    if (Left->FunctionConvention != types::CallingConvention::Unspecified ||
+        Right->FunctionConvention != types::CallingConvention::Unspecified ||
+        Left->Size != 0 || !Left->RetType || !Right->RetType ||
         Left->RetType->Kind == NdTypeKind::Func ||
-        Left->ParamTypes.size() > 64 ||
+        Left->ParamTypes.size() >
+            ::neverd::limits::ir::kSourceABIEqualTypesLeftParamTypesSizeLimit ||
         Left->ParamTypes.size() != Right->ParamTypes.size() ||
         !equalTypes(Left->RetType, Right->RetType, Depth + 1, Remaining))
       return false;
@@ -88,8 +103,24 @@ bool equalTypes(const TypeRef &Left, const TypeRef &Right, unsigned Depth,
 bool scalarType(const TypeRef &Type) {
   if (!Type)
     return false;
-  if (Type->Kind == NdTypeKind::Ptr)
+  if (Type->Kind == NdTypeKind::Ptr) {
+    // A named display record has an independently owned layout, and may be
+    // incomplete or recursive. Passing its address only transports pointer
+    // bits; it does not pass a record or authenticate that pointee's layout.
+    TypeRef Pointee = Type;
+    for (unsigned Depth = 0;
+         Depth < ::neverd::limits::ir::kSourceABIScalarTypeDepthLimit &&
+         Pointee && Pointee->Kind == NdTypeKind::Ptr;
+         ++Depth) {
+      if (Pointee->Size != 8)
+        return false;
+      Pointee = Pointee->Pointee;
+      if (Pointee && Pointee->Kind == NdTypeKind::Struct &&
+          !Pointee->SourceName.empty() && Pointee->Fields.empty())
+        return true;
+    }
     return Type->Size == 8 && equalSourceTypes(Type, Type);
+  }
   if (Type->Kind == NdTypeKind::Float)
     return Type->Size == 4 || Type->Size == 8;
   return Type->Kind == NdTypeKind::Int && (Type->Size == 1 || Type->Size == 2 ||
@@ -197,7 +228,10 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
     return scalarType(T) && T->Kind != NdTypeKind::Float &&
            T->SourceName != kSourceBooleanCType;
   };
-  if (!Hint.ReturnType || Hint.Parameters.size() > 64)
+  if (!Hint.ReturnType ||
+      Hint.Parameters.size() >
+          ::neverd::limits::ir::
+              kSourceABISwiftFixedShapeHintParametersSizeLimit)
     return false;
   const auto ReturnMembers = sourceAggregateMembers(Hint.ReturnType);
   const bool MixedResult = mixedSwiftResult(Hint.ReturnType, ReturnMembers);
@@ -329,7 +363,8 @@ bool equalSourceABIs(const SourceFunctionTypeHint &Left,
 }
 
 bool equalSourceTypes(const TypeRef &Left, const TypeRef &Right) {
-  unsigned Remaining = 4096;
+  unsigned Remaining =
+      ::neverd::limits::ir::kSourceABIEqualSourceTypesRemaining;
   return equalTypes(Left, Right, 0, Remaining);
 }
 
@@ -496,7 +531,10 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
        Hint.Convention != SourceFunctionTypeHint::ConventionKind::Swift) ||
       !Hint.HasExplicitABI ||
       (Hint.Architecture != Arch::AArch64 && Hint.Architecture != Arch::X64) ||
-      Hint.Parameters.size() > 64 || !Hint.ReturnType)
+      Hint.Parameters.size() >
+          ::neverd::limits::ir::
+              kSourceABIValidateSourceABIHintParametersSizeLimit ||
+      !Hint.ReturnType)
     return fail(Diagnostic,
                 "Source ABI requires an explicit arm64/x86_64 layout");
   const auto &TRI = getTargetRegInfo(Hint.Architecture);
@@ -594,7 +632,9 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
       return !IsReturn && Location.RegisterOffset == 0 &&
              Location.EntryStackOffset >=
                  (Hint.Architecture == Arch::X64 ? 8 : 0) &&
-             Location.EntryStackOffset <= 4096 - Type->Size &&
+             Location.EntryStackOffset <=
+                 ::neverd::limits::ir::kMaxSourceStackArgumentBytes -
+                     Type->Size &&
              Location.EntryStackOffset % Type->Size == 0;
     if (Location.EntryStackOffset != 0)
       return false;
@@ -603,7 +643,16 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
              TRI.isVectorReg(Location.RegisterOffset) &&
              (!IsReturn || Location.RegisterOffset == TRI.FPReturnReg);
     if (Location.Kind == SourceABICarrierKind::IntegerRegister)
-      return Type->Kind != NdTypeKind::Float &&
+      // Windows ARM64 variadic arguments carry floating bits in X registers.
+      // Explicit source declarations retain that logical floating type; the
+      // source boundary reinterprets the complete bits rather than converting
+      // their integer value. Inferred signatures and result carriers keep
+      // their existing restrictions.
+      return (Type->Kind != NdTypeKind::Float ||
+              (!IsReturn && Hint.Architecture == Arch::AArch64 &&
+               Hint.Origin ==
+                   SourceFunctionTypeHint::OriginKind::ExplicitSource &&
+               Hint.Convention == SourceFunctionTypeHint::ConventionKind::C)) &&
              IntegerRegister(Location.RegisterOffset) &&
              (!IsReturn || Location.RegisterOffset == TRI.IntReturnReg);
     return false;
@@ -799,7 +848,10 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                            SourceFunctionTypeHint::ConventionKind Convention) {
   Diagnostic.clear();
   if ((Architecture != Arch::AArch64 && Architecture != Arch::X64) ||
-      !Hint.ReturnType || Hint.Parameters.size() > 64)
+      !Hint.ReturnType ||
+      Hint.Parameters.size() >
+          ::neverd::limits::ir::
+              kSourceABIAssignDarwinSourceABIHintParametersSizeLimit)
     return fail(Diagnostic, "Unsupported Darwin fixed source ABI");
   const auto &TRI = getTargetRegInfo(Architecture);
   const bool PointTransform =

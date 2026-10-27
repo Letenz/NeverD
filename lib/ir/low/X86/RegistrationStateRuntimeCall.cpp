@@ -8,31 +8,45 @@
 
 #include "RegistrationStateSolver.h"
 
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 namespace neverd::registration_state {
 
 void RegistrationStateSolver::recordSEHRuntimeCall(
     const Domain &State, const LowOp &Op, RegistrationSEHBoundCall::Kind Kind,
     std::optional<int32_t> Output) {
-  if (Conditional || KnownCxx || EH4 || !State.Parent || State.Callback ||
-      State.Unknown || !State.Installed || State.Uninstalled)
+  if (Conditional || KnownCxx || State.Unknown || !State.Installed ||
+      (EH4 && (!CompleteCookies ||
+               Kind != RegistrationSEHBoundCall::Kind::RaiseException)) ||
+      State.Uninstalled)
     return;
-  const auto SP =
-      State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride].Offset;
-  if (!SP || !charge(5))
+  const auto &SP =
+      State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
+  if (!charge(5))
     return;
   RegistrationSEHBoundCall Call;
+  if (State.Parent && !State.Callback && SP.Offset)
+    Call.StackOffset = *SP.Offset;
+  else if (!State.Parent && State.Callback && State.Activation.Entry &&
+           !State.Activation.SearchFilter &&
+           Kind == RegistrationSEHBoundCall::Kind::RaiseException &&
+           SP.CallbackAddress &&
+           SP.CallbackAddress->Entry == *State.Activation.Entry &&
+           State.Frame.callbackMemoryIsPrivate(*SP.CallbackAddress, 16, true)) {
+    Call.EntryVA = *State.Activation.Entry;
+    Call.StackOffset = SP.CallbackAddress->Offset;
+  } else
+    return;
   Call.CalleeKind = Kind;
   Call.Address = Op.Addr;
   Call.OpSeq = Op.Seq;
   Call.TargetVA = Op.Inputs[0].Offset;
-  Call.StackOffset = *SP;
   using Argument = RegistrationSEHBoundArgument::Kind;
   const unsigned Count =
       Kind == RegistrationSEHBoundCall::Kind::ControlFP ? 3 : 4;
   for (unsigned I = 0; I != Count; ++I)
-    Call.Arguments.push_back({Argument::Scalar, *SP + int32_t(I * 4), 0});
+    Call.Arguments.push_back(
+        {Argument::Scalar, Call.StackOffset + int32_t(I * 4), 0});
   if (Kind == RegistrationSEHBoundCall::Kind::RaiseException)
     Call.Arguments.back() = {Argument::NullPointer, 0, 0};
   else if (Kind == RegistrationSEHBoundCall::Kind::ControlFP && Output)

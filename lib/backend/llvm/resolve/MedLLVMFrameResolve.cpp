@@ -18,11 +18,14 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedDynamicStack.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
@@ -31,16 +34,26 @@
 
 #include <algorithm>
 #include <bit>
+#include <cassert>
 #include <cstdint>
 #include <functional>
 #include <map>
 #include <optional>
 #include <set>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace neverd {
 
 namespace {
+// Hashes the query-local keys of canonicalFrameSlotKey's walks. They are
+// only probed, inserted and erased, so their order cannot reach an answer.
+struct FrameProofKeyHash {
+  template <typename Key> size_t operator()(const Key &K) const {
+    return llvm::hash_value(K);
+  }
+};
 // {(Id<<32)|SSAVer, Kind} key for the per-function frame-derived memo, matching
 // the DefIndex/PhiIndex scheme (lossless for 32-bit Id/SSAVer; the small Kind
 // enum never collides with DenseMap's int sentinels).
@@ -275,6 +288,26 @@ MedLLVMEmitter::addrSlotKey(const MedVar &V, int Depth,
   return medAddressSlotKey(V, DefOf, Depth, ThroughRegs);
 }
 
+bool MedLLVMEmitter::isEntryStackRealignmentRoot(const MedVar &V) const {
+  const auto &TRI = getTargetRegInfo(TargetArch);
+  if (!CurMedFunc || V.Kind != MedVar::Reg || V.TheArch != TargetArch ||
+      V.RegOff != TRI.StackPointer || V.Size != TRI.PointerSize)
+    return false;
+  const MedOp *Def = lookupDef(V);
+  if (!Def || Def->Opcode != NdOp::INT_AND)
+    return false;
+  const auto Owner = std::make_tuple(CurMedFunc, TargetArch, TargetFormat,
+                                     FrameReloadCacheGeneration);
+  if (EntryStackRealignmentRootsFor != Owner) {
+    EntryStackRealignmentRoots.clear();
+    for (const MedVar &Root :
+         entryStackRealignmentRoots(*CurMedFunc, TargetArch, TargetFormat))
+      EntryStackRealignmentRoots.insert(addressProvenanceVarKey(Root));
+    EntryStackRealignmentRootsFor = Owner;
+  }
+  return EntryStackRealignmentRoots.count(addressProvenanceVarKey(V)) != 0;
+}
+
 std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
     const MedVar &V, bool RequireEntryStackPointer,
     const ControlValueBindings *Bindings, size_t *SharedProofBudget) const {
@@ -297,6 +330,59 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
       return It->second;
     }
   }
+  // The walk reads the budget only to stop when it is spent, and once it is
+  // spent every step fails and so does the query. A shared-budget walk thus
+  // repeats with the same charge under any budget covering its nodes, and runs
+  // out under any smaller one. A bound query has its own budget, so its
+  // bindings fix its answer.
+  const bool SharedBudgetReplayable =
+      !Bindings && SharedProofBudget &&
+      FeasibleEdgeState != FeasibleEdgeCacheState::Building;
+  if (SharedBudgetReplayable) {
+    if (SharedBudgetFrameSlotCacheFor != CurMedFunc) {
+      SharedBudgetFrameSlotCacheFor = CurMedFunc;
+      SharedBudgetFrameSlotCache.clear();
+    }
+    if (auto It = SharedBudgetFrameSlotCache.find(QueryKey);
+        It != SharedBudgetFrameSlotCache.end()) {
+      const SharedBudgetFrameSlotProof &Known = It->second;
+      if (Known.Complete && Known.Nodes <= *SharedProofBudget) {
+        *SharedProofBudget -= Known.Nodes;
+        AddressProvenanceWork.FrameSlotNodes += Known.Nodes;
+        AddressProvenanceWork.FrameSlotCacheHits += Known.CacheHits;
+        ++AddressProvenanceWork.FrameSlotReplays;
+        return Known.Slot;
+      }
+      // A complete walk needs Nodes; one that ran out needs more than Nodes.
+      // The cache hits counted before running out are not kept.
+      if (Known.Complete ? *SharedProofBudget < Known.Nodes
+                         : *SharedProofBudget <= Known.Nodes) {
+        AddressProvenanceWork.FrameSlotNodes += *SharedProofBudget;
+        *SharedProofBudget = 0;
+        ++AddressProvenanceWork.FrameSlotReplays;
+        return std::nullopt;
+      }
+    }
+  }
+  std::optional<BoundFrameSlotQuery> BoundKey;
+  if (Bindings && !SharedProofBudget && !FrameProofBudgetForTesting &&
+      FeasibleEdgeState != FeasibleEdgeCacheState::Building) {
+    if (BoundFrameSlotCacheFor != CurMedFunc) {
+      BoundFrameSlotCacheFor = CurMedFunc;
+      BoundFrameSlotCache.clear();
+    }
+    std::vector<std::pair<AddressProvenanceVarKey, uint64_t>> Bound;
+    Bound.reserve(Bindings->size());
+    for (const auto &[Value, Bits] : *Bindings)
+      Bound.emplace_back(addressProvenanceVarKey(Value), Bits);
+    BoundKey.emplace(QueryKey.first, RequireEntryStackPointer,
+                     std::move(Bound));
+    if (auto It = BoundFrameSlotCache.find(*BoundKey);
+        It != BoundFrameSlotCache.end()) {
+      ++AddressProvenanceWork.FrameSlotCacheHits;
+      return It->second;
+    }
+  }
   // Building/publishing feasible edges invalidates dependent proofs, including
   // queries already in progress. Do not publish a result from that generation.
   const uint64_t Generation = FrameReloadCacheGeneration;
@@ -304,21 +390,30 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
   const uint64_t SpOff = TRI.StackPointer;
   const uint64_t FpOff = TRI.FramePointer;
   const unsigned PointerSize = TRI.PointerSize;
-  std::set<AddressProvenanceVarKey> Active;
+  std::unordered_set<AddressProvenanceVarKey, FrameProofKeyHash> Active;
   // Both walks share one saturating budget. The recurrence proof used to run
   // outside the slot budget and copied its visited set down every PHI/select
   // arm, re-expanding shared DAGs exponentially.
   size_t OwnProofBudget = FrameProofBudgetForTesting.value_or(8192);
   size_t &RemainingSlotProofNodes =
       SharedProofBudget ? *SharedProofBudget : OwnProofBudget;
+  const size_t StartingBudget = RemainingSlotProofNodes;
+  size_t ConsumedNodes = 0;
+  bool RanOut = false;
+  const uint64_t CacheHitsBefore = AddressProvenanceWork.FrameSlotCacheHits;
   auto consumeNode = [&] {
-    if (RemainingSlotProofNodes == 0)
+    if (RemainingSlotProofNodes == 0) {
+      RanOut = true;
       return false;
+    }
     --RemainingSlotProofNodes;
+    ++ConsumedNodes;
     ++AddressProvenanceWork.FrameSlotNodes;
     return true;
   };
-  std::map<AddressProvenanceVarKey, med_llvm::SlotKey> ProvenSlots;
+  std::unordered_map<AddressProvenanceVarKey, med_llvm::SlotKey,
+                     FrameProofKeyHash>
+      ProvenSlots;
   auto sameVar = [](const MedVar &A, const MedVar &B) {
     return !A.isConst() && !B.isConst() && A.Kind == B.Kind && A.Id == B.Id &&
            A.SSAVer == B.SSAVer;
@@ -373,27 +468,22 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
     const PhiNode *BPhi = lookupPhi(B);
     if (!APhi || !BPhi)
       return false;
-    for (const MedBlock &Block : CurMedFunc->Blocks) {
-      bool HasA = false;
-      bool HasB = false;
-      for (const PhiNode &Phi : Block.Phis) {
-        HasA |= &Phi == APhi;
-        HasB |= &Phi == BPhi;
-      }
-      if (HasA || HasB)
-        return HasA && HasB;
-    }
-    return false;
+    const MedBlock *Block = lookupPhiBlock(APhi);
+    return Block && Block == lookupPhiBlock(BPhi);
   };
   using AffinePair =
       std::pair<AddressProvenanceVarKey, AddressProvenanceVarKey>;
   using AffineMemoKey = std::pair<AffinePair, int>;
-  std::set<AffinePair> ActiveAffine;
-  std::map<AffineMemoKey, std::optional<int64_t>> AffineMemo;
+  std::unordered_set<AffinePair, FrameProofKeyHash> ActiveAffine;
+  std::unordered_map<AffineMemoKey, std::optional<int64_t>, FrameProofKeyHash>
+      AffineMemo;
   std::function<std::optional<int64_t>(const MedVar &, const MedVar &, int)>
       affineDeltaTo = [&](const MedVar &Start, const MedVar &Target,
                           int Depth) -> std::optional<int64_t> {
-    if (Start.isConst() || Start.Size < PointerSize || Depth > 64 ||
+    if (Start.isConst() || Start.Size < PointerSize ||
+        Depth >
+            ::neverd::limits::backend::
+                kMedLLVMFrameResolveMedLLVMEmitterCanonicalFrameSlotKeyAffineDeltaToDepthLimit ||
         !consumeNode())
       return std::nullopt;
     if (sameExactValue(Start, Target))
@@ -495,9 +585,11 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
     auto Cleanup = llvm::scope_exit([&] { Active.erase(Key); });
     auto Proof = [&]() -> std::optional<med_llvm::SlotKey> {
       const MedOp *Def = lookupDef(Cur);
-      // A runtime definition is not an identity copy of the ordinary entry
-      // register. Keep its invocation as the origin of any derived slots.
-      if (Def && Def->RegistrationRoot != MedOp::RegistrationRootKind::None)
+      // A runtime definition or entry realignment is not an identity copy of
+      // the ordinary entry register. Keep the exact definition as the origin
+      // of derived slots, without inventing a displacement from entry SP.
+      if (Def && (Def->RegistrationRoot != MedOp::RegistrationRootKind::None ||
+                  isEntryStackRealignmentRoot(Cur)))
         return RequireEntryStackPointer ? std::nullopt
                                         : std::optional<med_llvm::SlotKey>(
                                               {{Cur.Id, Cur.SSAVer}, 0});
@@ -615,11 +707,294 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
     return Proof;
   };
   auto Result = rec(V, 0);
-  if (Cacheable && ClosedFrameSlotCacheFor == CurMedFunc &&
-      Generation == FrameReloadCacheGeneration &&
-      FeasibleEdgeState != FeasibleEdgeCacheState::Building)
+  // The walk closes a stack-pointer cycle only back to the value it resolves:
+  // an inner loop's merge on an outer loop's back edge is a cycle that avoids
+  // it.  The function's affine frame keys close every cycle at once, so an
+  // unbound walk that failed without running out takes its answer from them.
+  if (!Result && !RanOut && !Bindings)
+    Result = affineFrameKey(V, RequireEntryStackPointer);
+  // Every step charges a node first and fails without one, and every failing
+  // step fails its query.
+  assert((!RanOut || !Result) && "a frame-slot walk that ran out succeeded");
+  const bool Published = Generation == FrameReloadCacheGeneration &&
+                         FeasibleEdgeState != FeasibleEdgeCacheState::Building;
+  if (Cacheable && ClosedFrameSlotCacheFor == CurMedFunc && Published)
     ClosedFrameSlotCache.emplace(QueryKey, Result);
+  if (SharedBudgetReplayable && SharedBudgetFrameSlotCacheFor == CurMedFunc &&
+      Published) {
+    SharedBudgetFrameSlotProof &Known = SharedBudgetFrameSlotCache[QueryKey];
+    if (!RanOut)
+      Known = {Result, ConsumedNodes,
+               AddressProvenanceWork.FrameSlotCacheHits - CacheHitsBefore,
+               /*Complete=*/true};
+    else if (!Known.Complete)
+      Known.Nodes = std::max(Known.Nodes, StartingBudget);
+  }
+  if (BoundKey && BoundFrameSlotCacheFor == CurMedFunc && Published)
+    BoundFrameSlotCache.emplace(std::move(*BoundKey), Result);
   return Result;
+}
+
+std::optional<med_llvm::SlotKey>
+MedLLVMEmitter::affineFrameKey(const MedVar &V,
+                               bool RequireEntryStackPointer) const {
+  // The fixed point reads edge feasibility, which a rebuild may still change.
+  if (!CurMedFunc || V.isConst() ||
+      FeasibleEdgeState == FeasibleEdgeCacheState::Building)
+    return std::nullopt;
+  if (AffineFrameKeysFor != CurMedFunc ||
+      AffineFrameKeysGeneration != FrameReloadCacheGeneration) {
+    AffineFrameKeysFor = CurMedFunc;
+    AffineFrameKeysGeneration = FrameReloadCacheGeneration;
+    AffineFrameKeys.clear();
+
+    const TargetRegInfo &TRI = getTargetRegInfo(TargetArch);
+    const uint64_t SpOff = TRI.StackPointer;
+    const uint64_t FpOff = TRI.FramePointer;
+    const unsigned PointerSize = TRI.PointerSize;
+    // Unknown is optimistic: a value no root has reached yet.  Each value only
+    // moves from Unknown to one key, or to NotAffine, so the iteration ends.
+    enum class Solution : uint8_t { Unknown, Known, NotAffine };
+    struct Value {
+      Solution State = Solution::Unknown;
+      AffineFrameKey Frame;
+    };
+    std::unordered_map<AddressProvenanceVarKey, Value, AffineFrameKeyHash>
+        Values;
+    // Each value's readers among the operations and PHIs that can carry it.
+    struct Reader {
+      const MedOp *Op = nullptr;
+      const PhiNode *Phi = nullptr;
+    };
+    std::unordered_map<AddressProvenanceVarKey, std::vector<Reader>,
+                       AffineFrameKeyHash>
+        Readers;
+    std::vector<Reader> Work;
+
+    auto carries = [](NdOp Opcode) {
+      return Opcode == NdOp::COPY || Opcode == NdOp::INT_ZEXT ||
+             Opcode == NdOp::INT_SEXT || Opcode == NdOp::SUBBYTES ||
+             Opcode == NdOp::INT_ADD || Opcode == NdOp::INT_SUB;
+    };
+    // The roots canonicalFrameSlotKey's walk starts its keys at.
+    auto rootOf = [&](const MedVar &Cur) -> std::optional<AffineFrameKey> {
+      if (Cur.isConst() || Cur.Size < PointerSize)
+        return std::nullopt;
+      const MedOp *Def = lookupDef(Cur);
+      const med_llvm::SlotKey Key{{Cur.Id, Cur.SSAVer}, 0};
+      if (Def && (Def->RegistrationRoot != MedOp::RegistrationRootKind::None ||
+                  isEntryStackRealignmentRoot(Cur)))
+        return AffineFrameKey{Key, /*EntryStackPointer=*/false};
+      const bool IsSelfCopy =
+          Def && Def->Opcode == NdOp::COPY && Def->NumInputs >= 1 &&
+          !Def->Inputs[0].isConst() && Def->Inputs[0].Kind == Cur.Kind &&
+          Def->Inputs[0].Id == Cur.Id && Def->Inputs[0].SSAVer == Cur.SSAVer;
+      if (Cur.Kind != MedVar::Reg || lookupPhi(Cur) || (Def && !IsSelfCopy))
+        return std::nullopt;
+      if (SpOff != 0 && Cur.RegOff == SpOff)
+        return AffineFrameKey{Key, /*EntryStackPointer=*/true};
+      if (FpOff != 0 && Cur.RegOff == FpOff)
+        return AffineFrameKey{Key, /*EntryStackPointer=*/false};
+      return std::nullopt;
+    };
+    auto delta = [](const MedVar &C,
+                    uint16_t ResultSize) -> std::optional<int64_t> {
+      const unsigned Bytes = ResultSize != 0 ? ResultSize : C.Size;
+      if (!C.isConst() || Bytes == 0 || Bytes > sizeof(uint64_t))
+        return std::nullopt;
+      const unsigned Bits = Bytes * 8;
+      uint64_t Raw = C.ConstVal;
+      if (Bits < 64) {
+        const uint64_t Mask = (uint64_t{1} << Bits) - 1;
+        Raw &= Mask;
+        if (Raw & (uint64_t{1} << (Bits - 1)))
+          Raw |= ~Mask;
+      }
+      return static_cast<int64_t>(Raw);
+    };
+    auto state = [&](const MedVar &Var) -> Value & {
+      return Values[addressProvenanceVarKey(Var)];
+    };
+    auto settle = [&](const MedVar &Out, const Value &Next) {
+      Value &Cur = state(Out);
+      if (Cur.State == Solution::NotAffine)
+        return;
+      Value Merged = Next;
+      if (Cur.State == Solution::Known && Next.State == Solution::Known &&
+          (Cur.Frame.Key != Next.Frame.Key ||
+           Cur.Frame.EntryStackPointer != Next.Frame.EntryStackPointer))
+        Merged.State = Solution::NotAffine;
+      if (Merged.State == Solution::Unknown ||
+          (Cur.State == Merged.State &&
+           (Cur.State != Solution::Known || Cur.Frame.Key == Merged.Frame.Key)))
+        return;
+      Cur = Merged;
+      if (auto It = Readers.find(addressProvenanceVarKey(Out));
+          It != Readers.end())
+        Work.insert(Work.end(), It->second.begin(), It->second.end());
+    };
+    // One operation or PHI from its current inputs.
+    auto evaluate = [&](const Reader &R) -> Value {
+      Value NotAffine;
+      NotAffine.State = Solution::NotAffine;
+      if (R.Phi) {
+        const PhiNode &Phi = *R.Phi;
+        if (Phi.Output.Size < PointerSize)
+          return NotAffine;
+        Value Common;
+        for (const auto &[PredId, Arg] : Phi.Args) {
+          const PhiEdgeFeasibility Edge = classifyPhiIncomingEdge(Phi, PredId);
+          if (Edge == PhiEdgeFeasibility::Infeasible)
+            continue;
+          if (Edge != PhiEdgeFeasibility::ProvenFeasible || Arg.isConst())
+            return NotAffine;
+          const Value &Arm = state(Arg);
+          if (Arm.State == Solution::NotAffine)
+            return NotAffine;
+          if (Arm.State == Solution::Unknown)
+            continue;
+          if (Common.State == Solution::Known &&
+              (Common.Frame.Key != Arm.Frame.Key ||
+               Common.Frame.EntryStackPointer != Arm.Frame.EntryStackPointer))
+            return NotAffine;
+          Common = Arm;
+        }
+        return Common;
+      }
+      const MedOp &Op = *R.Op;
+      if (Op.Output.Size < PointerSize || Op.NumInputs < 1)
+        return NotAffine;
+      // A runtime definition owns a new coordinate even when its carrier is
+      // a COPY. The fallback must keep the same root as the direct slot walk.
+      if (auto Root = rootOf(Op.Output))
+        return Value{Solution::Known, *Root};
+      auto offset = [&](const MedVar &Base, int64_t By) -> Value {
+        const Value &In = state(Base);
+        if (In.State != Solution::Known)
+          return In;
+        Value Out = In;
+        if (llvm::AddOverflow(In.Frame.Key.second, By, Out.Frame.Key.second))
+          return NotAffine;
+        return Out;
+      };
+      switch (Op.Opcode) {
+      case NdOp::COPY:
+      case NdOp::INT_ZEXT:
+      case NdOp::INT_SEXT:
+        if (Op.Inputs[0].isConst() || Op.Inputs[0].Size < PointerSize)
+          return NotAffine;
+        return state(Op.Inputs[0]);
+      case NdOp::SUBBYTES:
+        if (Op.NumInputs < 2 || !Op.Inputs[1].isConst() ||
+            Op.Inputs[1].ConstVal != 0 || Op.Inputs[0].isConst() ||
+            Op.Inputs[0].Size < PointerSize)
+          return NotAffine;
+        return state(Op.Inputs[0]);
+      case NdOp::INT_ADD:
+        if (Op.NumInputs < 2)
+          return NotAffine;
+        if (auto By = delta(Op.Inputs[1], Op.Output.Size);
+            By && !Op.Inputs[0].isConst())
+          return offset(Op.Inputs[0], *By);
+        if (auto By = delta(Op.Inputs[0], Op.Output.Size);
+            By && !Op.Inputs[1].isConst())
+          return offset(Op.Inputs[1], *By);
+        return NotAffine;
+      case NdOp::INT_SUB: {
+        int64_t Negated = 0;
+        auto By = Op.NumInputs >= 2 ? delta(Op.Inputs[1], Op.Output.Size)
+                                    : std::nullopt;
+        if (!By || Op.Inputs[0].isConst() ||
+            llvm::SubOverflow(int64_t{0}, *By, Negated))
+          return NotAffine;
+        return offset(Op.Inputs[0], Negated);
+      }
+      default:
+        return NotAffine;
+      }
+    };
+
+    for (const MedBlock &Block : CurMedFunc->Blocks) {
+      for (const PhiNode &Phi : Block.Phis)
+        for (const auto &Arg : Phi.Args)
+          if (!Arg.second.isConst())
+            Readers[addressProvenanceVarKey(Arg.second)].push_back(
+                {nullptr, &Phi});
+      for (const MedOp &Op : Block.Ops) {
+        if (Op.Dead || !carries(Op.Opcode) || Op.Output.isConst())
+          continue;
+        for (uint8_t I = 0; I < Op.NumInputs; ++I)
+          if (!Op.Inputs[I].isConst())
+            Readers[addressProvenanceVarKey(Op.Inputs[I])].push_back({&Op});
+      }
+    }
+    // Seed every root a carrying operation or PHI reads, as the walk would
+    // reach it from the value it resolves.
+    for (const MedBlock &Block : CurMedFunc->Blocks) {
+      auto seed = [&](const MedVar &Var) {
+        if (Var.isConst())
+          return;
+        Value &Cur = state(Var);
+        if (Cur.State != Solution::Unknown)
+          return;
+        if (auto Root = rootOf(Var)) {
+          Cur.State = Solution::Known;
+          Cur.Frame = *Root;
+          if (auto It = Readers.find(addressProvenanceVarKey(Var));
+              It != Readers.end())
+            Work.insert(Work.end(), It->second.begin(), It->second.end());
+        }
+      };
+      for (const PhiNode &Phi : Block.Phis)
+        for (const auto &Arg : Phi.Args)
+          seed(Arg.second);
+      for (const MedOp &Op : Block.Ops)
+        if (!Op.Dead && carries(Op.Opcode))
+          for (uint8_t I = 0; I < Op.NumInputs; ++I)
+            seed(Op.Inputs[I]);
+    }
+    auto run = [&] {
+      while (!Work.empty()) {
+        const Reader R = Work.back();
+        Work.pop_back();
+        settle(R.Phi ? R.Phi->Output : R.Op->Output, evaluate(R));
+      }
+    };
+    run();
+    // A PHI that settled while an arm stayed Unknown took that arm on trust,
+    // but nothing reaches the arm from a root: no key holds for the PHI.
+    bool Changed = true;
+    while (Changed) {
+      Changed = false;
+      for (const MedBlock &Block : CurMedFunc->Blocks)
+        for (const PhiNode &Phi : Block.Phis) {
+          if (state(Phi.Output).State != Solution::Known)
+            continue;
+          bool TookUnknownArm = false;
+          for (const auto &[PredId, Arg] : Phi.Args)
+            TookUnknownArm |= classifyPhiIncomingEdge(Phi, PredId) !=
+                                  PhiEdgeFeasibility::Infeasible &&
+                              state(Arg).State != Solution::Known;
+          if (!TookUnknownArm)
+            continue;
+          // state() may rehash, so take the PHI's entry after the arms'.
+          state(Phi.Output).State = Solution::NotAffine;
+          if (auto It = Readers.find(addressProvenanceVarKey(Phi.Output));
+              It != Readers.end())
+            Work.insert(Work.end(), It->second.begin(), It->second.end());
+          Changed = true;
+        }
+      run();
+    }
+    for (const auto &[Key, Solved] : Values)
+      if (Solved.State == Solution::Known)
+        AffineFrameKeys.emplace(Key, Solved.Frame);
+  }
+  const auto It = AffineFrameKeys.find(addressProvenanceVarKey(V));
+  if (It == AffineFrameKeys.end() ||
+      (RequireEntryStackPointer && !It->second.EntryStackPointer))
+    return std::nullopt;
+  return It->second.Key;
 }
 
 bool MedLLVMEmitter::varIsReloadedStackPtr(const MedVar &V, int Depth) const {

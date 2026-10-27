@@ -15,18 +15,84 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedReturnArguments.h"
 #include "neverd/ir/med/MedReturnValue.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include <algorithm>
+#include <map>
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <vector>
 
 namespace neverd {
 
 namespace {
+/// The parameter that arrives in register \p Reg, as the function's own
+/// parameter variable; null when none does.
+ExprPtr parameterInRegister(const MedFunc &Med, uint64_t Reg) {
+  for (size_t I = 0; I < Med.Params.size(); ++I) {
+    if (Med.Params[I].RegOff != Reg || I >= Med.TypedParams.size())
+      continue;
+    MedVar Parameter = Med.Params[I];
+    Parameter.Kind = MedVar::Param;
+    Parameter.Id = static_cast<int>(I);
+    return HighExpr::makeVar(Parameter, Med.TypedParams[I].Type);
+  }
+  return nullptr;
+}
+
+/// Whether every path from the function's entry into \p Block leaves the
+/// \p Width bytes of register at \p Reg as the caller passed them.  A phi or
+/// write of any of those bytes other than the copy that names the incoming
+/// value, a call, which clobbers them, an exceptional entry, which the
+/// unwinder fills, or an entry no predecessor explains, each leaves them
+/// otherwise.
+bool registerUntouchedFromEntry(const MedFunc &Med, const MedBlock &Block,
+                                uint64_t Reg, uint64_t Width) {
+  auto Overlaps = [&](const MedVar &V) {
+    return V.Kind == MedVar::Reg && V.Size > 0 && V.RegOff < Reg + Width &&
+           Reg < V.RegOff + V.Size;
+  };
+  auto IsIncomingCopy = [](const MedOp &Op) {
+    const MedVar &Out = Op.Output;
+    return Op.Opcode == NdOp::COPY && Op.NumInputs >= 1 &&
+           Op.Inputs[0].Kind == Out.Kind && Op.Inputs[0].RegOff == Out.RegOff &&
+           Op.Inputs[0].Size == Out.Size && Op.Inputs[0].Id == Out.Id &&
+           Op.Inputs[0].SSAVer == Out.SSAVer;
+  };
+  std::map<int, const MedBlock *> ById;
+  for (const MedBlock &Candidate : Med.Blocks)
+    ById.emplace(Candidate.Id, &Candidate);
+  std::set<int> Seen{Block.Id};
+  std::vector<const MedBlock *> Work{&Block};
+  while (!Work.empty()) {
+    const MedBlock &Current = *Work.back();
+    Work.pop_back();
+    if (!Current.ExceptionalPreds.empty())
+      return false;
+    for (const PhiNode &Phi : Current.Phis)
+      if (Overlaps(Phi.Output))
+        return false;
+    for (const MedOp &Op : Current.Ops)
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+          (Overlaps(Op.Output) && !IsIncomingCopy(Op)))
+        return false;
+    if (Current.Preds.empty() && Current.StartAddr != Med.Entry)
+      return false;
+    for (const int Pred : Current.Preds) {
+      const auto It = ById.find(Pred);
+      if (It == ById.end())
+        return false;
+      if (Seen.insert(Pred).second)
+        Work.push_back(It->second);
+    }
+  }
+  return true;
+}
+
 /// A bare RET does not syntactically read the return-value register. A runtime
 /// declaration can still describe a source value occupying that incoming ABI
 /// slot (notably Objective-C self on AArch64). Bind it only when the complete
@@ -63,15 +129,7 @@ ExprPtr unchangedDeclaredReturnParameter(const MedFunc &Med,
         return nullptr;
     }
   }
-  for (size_t I = 0; I < Med.Params.size(); ++I) {
-    if (Med.Params[I].RegOff != ReturnReg || I >= Med.TypedParams.size())
-      continue;
-    MedVar Parameter = Med.Params[I];
-    Parameter.Kind = MedVar::Param;
-    Parameter.Id = static_cast<int>(I);
-    return HighExpr::makeVar(Parameter, Med.TypedParams[I].Type);
-  }
-  return nullptr;
+  return parameterInRegister(Med, ReturnReg);
 }
 
 /// A SUBBYTES that re-views the low bytes of the register it writes (`w0`
@@ -197,6 +255,17 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
       UsesFPReturnReg ? TRI.FPReturnReg : TRI.IntReturnReg;
   const bool ExplicitABI =
       Med.SourceTypeHint && Med.SourceTypeHint->HasExplicitABI;
+  // Whether op \p Op leaves the \p Size bytes at \p RegOff as they were: it
+  // is no call, or a call whose callee provably keeps them.  After any other
+  // call they hold what its callee left there.
+  auto callKeepsRegister = [&](const MedOp &Op, uint64_t RegOff,
+                               uint16_t Size) {
+    if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+      return true;
+    return Op.PreservesCallerSaved ||
+           callPreservesRegisterBytes(TargetArch, Op.CallPreservedGPRs, RegOff,
+                                      Size);
+  };
   auto ValueFromDefinition = [&](const MedOp &Definition) -> ExprPtr {
     ExprPtr Value;
     if (Definition.Opcode == NdOp::CALL ||
@@ -218,25 +287,31 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
       Func.ReturnType->Kind == NdTypeKind::Struct &&
       Med.MultiReturn.size() >= 2 &&
       Func.ReturnType->Fields.size() == Med.MultiReturn.size()) {
-    auto Reaching = [&](uint64_t RegOff) -> ExprPtr {
-      auto WrittenIn = [&](const MedBlock &Block) -> ExprPtr {
-        for (auto RIt = Block.Ops.rbegin(); RIt != Block.Ops.rend(); ++RIt)
+    auto Reaching = [&](uint64_t RegOff, uint16_t Size) -> ExprPtr {
+      // What the register holds at the end of \p Block: its last write
+      // there, or none where a call after that write may change it.  None
+      // when the block neither writes nor clobbers it.
+      auto WrittenIn = [&](const MedBlock &Block) -> std::optional<ExprPtr> {
+        for (auto RIt = Block.Ops.rbegin(); RIt != Block.Ops.rend(); ++RIt) {
           if (RIt->Opcode != NdOp::RETURN && RIt->Output.Kind == MedVar::Reg &&
               RIt->Output.Size > 0 && RIt->Output.RegOff == RegOff &&
               !isRegisterLowView(*RIt))
             return ValueFromDefinition(*RIt);
+          if (!callKeepsRegister(*RIt, RegOff, Size))
+            return ExprPtr();
+        }
         if (const PhiNode *Phi = detail::registerPhi(
                 Med, Block, RegOff, getTargetRegInfo(TargetArch)))
           return HighExpr::makeVar(Phi->Output);
-        return nullptr;
+        return std::nullopt;
       };
-      if (ExprPtr Value = WrittenIn(CurBlock))
-        return Value;
+      if (std::optional<ExprPtr> Value = WrittenIn(CurBlock))
+        return *Value;
       std::set<const MedBlock *> Seen{&CurBlock};
       for (const MedBlock *Pred = onlyPredecessor(Med, CurBlock);
            Pred && Seen.insert(Pred).second; Pred = onlyPredecessor(Med, *Pred))
-        if (ExprPtr Value = WrittenIn(*Pred))
-          return Value;
+        if (std::optional<ExprPtr> Value = WrittenIn(*Pred))
+          return *Value;
       MedVar Entry;
       if (reachingRegAtBlockEntry(CurBlock, RegOff, Entry) && Entry.Size > 0 &&
           !isEntryIdentity(Med, Entry))
@@ -298,7 +373,7 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
       const MedReturnReg &Field = Med.MultiReturn[I];
       ExprPtr Value = OverEntryPadding(Field);
       if (!Value)
-        Value = Reaching(Field.RegOff);
+        Value = Reaching(Field.RegOff, Field.Size);
       // A field the function never writes returns the argument its caller
       // passed in the register, which recoverCallAbi made a parameter.
       if (!Value &&
@@ -451,6 +526,19 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
     RetVal = medvarToExpr(CurOp.Inputs[0]);
   if (!RetVal)
     RetVal = unchangedDeclaredReturnParameter(Med, TRI, ReturnReg);
+  // A RETURN that no path from the entry reaches with a write of the result
+  // register returns what the caller passed there, as the bare `ret` beside
+  // the tail call of `if (b) return g(b); return a;` does: the parameter that
+  // arrives in it.  A register no parameter arrives in holds nothing the
+  // function computed.
+  if (!RetVal) {
+    const auto Param = std::find_if(
+        Med.Params.begin(), Med.Params.end(),
+        [&](const MedVar &P) { return P.RegOff == ReturnReg && P.Size > 0; });
+    if (Param != Med.Params.end() &&
+        registerUntouchedFromEntry(Med, CurBlock, ReturnReg, Param->Size))
+      RetVal = parameterInRegister(Med, ReturnReg);
+  }
 
   // A proven register-pair result occupies both integer return
   // registers.  The RETURN operand names only the low register, so recover
@@ -467,7 +555,10 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
         Med.MultiReturn[1].RegOff == TRI.IntReturnReg2)) &&
       TRI.IntReturnReg2 != 0 && RetVal && RetVal->Type &&
       RetVal->Type->Size == TRI.PointerSize) {
+    // A call after the high register's last write leaves what its callee
+    // put there, which this function computed none of.
     ExprPtr High;
+    bool Clobbered = false;
     for (auto RIt = CurBlock.Ops.rbegin(); RIt != CurBlock.Ops.rend(); ++RIt) {
       if (RIt->Opcode == NdOp::RETURN)
         continue;
@@ -476,19 +567,25 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
         High = ValueFromDefinition(*RIt);
         break;
       }
+      if ((Clobbered =
+               !callKeepsRegister(*RIt, TRI.IntReturnReg2, TRI.PointerSize)))
+        break;
     }
-    if (!High)
+    if (!High && !Clobbered)
       if (const PhiNode *Phi =
               detail::registerPhi(Med, CurBlock, TRI.IntReturnReg2, TRI))
         High = HighExpr::makeVar(Phi->Output);
-    if (!High) {
+    if (!High && !Clobbered) {
       if (const MedBlock *Pred = onlyPredecessor(Med, CurBlock)) {
         for (auto RIt = Pred->Ops.rbegin(); RIt != Pred->Ops.rend(); ++RIt) {
-          if (RIt->Output.Kind != MedVar::Reg || RIt->Output.Size == 0 ||
-              RIt->Output.RegOff != TRI.IntReturnReg2)
-            continue;
-          High = ValueFromDefinition(*RIt);
-          break;
+          if (RIt->Output.Kind == MedVar::Reg && RIt->Output.Size > 0 &&
+              RIt->Output.RegOff == TRI.IntReturnReg2) {
+            High = ValueFromDefinition(*RIt);
+            break;
+          }
+          if ((Clobbered = !callKeepsRegister(*RIt, TRI.IntReturnReg2,
+                                              TRI.PointerSize)))
+            break;
         }
       }
     }
@@ -496,7 +593,7 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
     // register needs no PHI: its value is the one reaching the block.  The
     // incoming value at entry, named by an identity copy, is none the
     // function computed.
-    if (!High) {
+    if (!High && !Clobbered) {
       MedVar Reaching;
       if (reachingRegAtBlockEntry(CurBlock, TRI.IntReturnReg2, Reaching) &&
           Reaching.Size > 0 && !isEntryIdentity(Med, Reaching))
@@ -548,6 +645,21 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
       Func.ReturnType->Size < RetVal->Type->Size)
     RetVal = sourceBitSlice(RetVal, 0, Func.ReturnType->Size);
 
+  if (Med.FPReturnViaX87 && RetVal && RetVal->Type && Func.ReturnType &&
+      RetVal->Type->Kind == NdTypeKind::Float &&
+      Func.ReturnType->Kind == NdTypeKind::Float &&
+      RetVal->Type->Size != Func.ReturnType->Size) {
+    // An IEEE value extended into the x87 carrier and immediately returned
+    // at its declared precision is still that value, not eighty raw bits.
+    if (RetVal->Kind == ExprKind::UnaryOp &&
+        RetVal->Op == NdOp::FLOAT_FLOAT2FLOAT && RetVal->Operands.size() == 1 &&
+        equalSourceTypes(RetVal->Operands[0]->Type, Func.ReturnType))
+      RetVal = RetVal->Operands[0];
+    else {
+      RetVal = HighExpr::makeUnary(NdOp::FLOAT_FLOAT2FLOAT, RetVal);
+      RetVal->Type = Func.ReturnType;
+    }
+  }
   S.RetVal = RetVal;
   Func.Body.push_back(std::move(S));
 }

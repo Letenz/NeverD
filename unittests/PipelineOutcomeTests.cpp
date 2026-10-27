@@ -13,9 +13,12 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
+#include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/SourceABI.h"
-#include "neverd/ir/X87Context.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/ir/X86/X87Context.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
@@ -30,9 +33,12 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <initializer_list>
+#include <iterator>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -86,6 +92,16 @@ public:
   static std::shared_ptr<const void>
   analysisFacts(const PipelineAnalysisCache &Cache) {
     return Cache.Facts;
+  }
+
+  static std::shared_ptr<const void>
+  selectionFacts(const PipelineAnalysisCache &Cache) {
+    return Cache.SelectionFacts;
+  }
+
+  static std::shared_ptr<const void>
+  symbolInventory(const PipelineAnalysisCache &Cache) {
+    return Cache.Inventory;
   }
 
   static void buildLowIR(const BinaryImage &Image, PipelineResult &Result) {
@@ -254,27 +270,185 @@ TEST(PipelineOutcome, AnalysisCachePreservesFloatingAndIntegerCallChains) {
   }
 }
 
-TEST(PipelineOutcome, AnalysisCacheBindsExactEntryInventories) {
-  BinaryImage Image = selectionCacheImage(true);
+BinaryImage aarch64SelectionCacheImage() {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::ELF;
+  Image.Entry = 0x1000;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = Image.Entry;
+  Text.Size = Text.FileSz = 0x2000;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0);
+  const auto Word = [&](va_t At, uint32_t Insn) {
+    for (unsigned I = 0; I != 4; ++I)
+      Text.Data[At - Text.VA + I] = static_cast<uint8_t>(Insn >> (I * 8));
+  };
+  // stp x29, x30, [sp, #-16]!; bl To; ldp x29, x30, [sp], #16; ret
+  const auto Wrapper = [&](va_t From, va_t To) {
+    Word(From, 0xa9bf7bfd);
+    Word(From + 4, 0x94000000 | static_cast<uint32_t>(((To - From - 4) >> 2) &
+                                                      0x3ffffff));
+    Word(From + 8, 0xa8c17bfd);
+    Word(From + 12, 0xd65f03c0);
+    Image.Symbols.push_back(Symbol::makeFunc(From, 16));
+  };
+  Wrapper(0x1000, 0x1800);
+  Wrapper(0x1100, 0x1800);
+  Wrapper(0x1800, 0x2000);
+  // The callers share a chain to a leaf that returns its second argument:
+  // mov x0, x1; ret.
+  Word(0x2000, 0xaa0103e0);
+  Word(0x2004, 0xd65f03c0);
+  Image.Symbols.push_back(Symbol::makeFunc(0x2000, 8));
+  Image.Segments.push_back(std::move(Text));
+  return Image;
+}
+
+TEST(PipelineOutcome, AnalysisCacheServesAArch64Selections) {
+  // AArch64 selections share the analysis cache as x64 ones do: the facts
+  // of the symbol inventory serve every symbol start, and each run reads
+  // what a cold run does.
+  const BinaryImage Image = aarch64SelectionCacheImage();
   PipelineAnalysisCache Cache;
-  auto Check = [&](va_t Entry) {
-    const auto Before = PipelineTestPeer::analysisFacts(Cache);
+  PipelineResult First;
+  PipelineTestPeer::buildLowIR(Image, First, {0x1000}, &Cache);
+  const auto Facts = PipelineTestPeer::analysisFacts(Cache);
+  const auto Inventory = PipelineTestPeer::symbolInventory(Cache);
+  ASSERT_NE(Facts, nullptr);
+  ASSERT_NE(Inventory, nullptr);
+  for (const va_t Entry :
+       {va_t{0x1100}, va_t{0x1800}, va_t{0x2000}, va_t{0x1000}}) {
+    SCOPED_TRACE(Entry);
     PipelineResult Kept, Cold;
     PipelineTestPeer::buildLowIR(Image, Kept, {Entry}, &Cache);
     PipelineTestPeer::buildLowIR(Image, Cold, {Entry});
-    EXPECT_NE(PipelineTestPeer::analysisFacts(Cache), Before);
+    EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
+    EXPECT_EQ(PipelineTestPeer::symbolInventory(Cache), Inventory);
+    expectSameSelection(Kept, Cold);
+    EXPECT_EQ(Kept.CallEntryArgumentCounts, Cold.CallEntryArgumentCounts);
+    EXPECT_EQ(Kept.CallArgumentSources, Cold.CallArgumentSources);
+  }
+}
+
+BinaryImage arm32SelectionCacheImage() {
+  BinaryImage Image;
+  Image.Arch = Arch::ARM;
+  Image.Bits = Bitness::Bits32;
+  Image.Format = BinaryFormat::ELF;
+  Image.Entry = 0x1000;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = Image.Entry;
+  Text.Size = Text.FileSz = 0x2000;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0);
+  const auto Word = [&](va_t At, uint32_t Insn) {
+    for (unsigned I = 0; I != 4; ++I)
+      Text.Data[At - Text.VA + I] = static_cast<uint8_t>(Insn >> (I * 8));
+  };
+  // push {r4, lr}; bl To; pop {r4, pc}
+  const auto Wrapper = [&](va_t From, va_t To) {
+    Word(From, 0xe92d4010);
+    Word(From + 4, 0xeb000000 | static_cast<uint32_t>(((To - From - 12) >> 2) &
+                                                      0xffffff));
+    Word(From + 8, 0xe8bd8010);
+    Image.Symbols.push_back(Symbol::makeFunc(From, 12));
+  };
+  Wrapper(0x1000, 0x1800);
+  Wrapper(0x1100, 0x1800);
+  Wrapper(0x1800, 0x2000);
+  Word(0x2000, 0xe1a00001); // mov r0, r1
+  Word(0x2004, 0xe12fff1e); // bx lr
+  Image.Symbols.push_back(Symbol::makeFunc(0x2000, 8));
+  Image.Segments.push_back(std::move(Text));
+  return Image;
+}
+
+TEST(PipelineOutcome, AnalysisCacheBindsExactEntryInventories) {
+  BinaryImage Image = selectionCacheImage(true);
+  PipelineAnalysisCache Cache;
+  // A run whose exact inventory its kind of facts was not built for builds
+  // new ones, the other kind stays, and either way it equals a cold run.
+  auto Check = [&](va_t Entry, bool AddsEntry, bool Fresh) {
+    const auto Facts = PipelineTestPeer::analysisFacts(Cache);
+    const auto Selection = PipelineTestPeer::selectionFacts(Cache);
+    PipelineResult Kept, Cold;
+    PipelineTestPeer::buildLowIR(Image, Kept, {Entry}, &Cache);
+    PipelineTestPeer::buildLowIR(Image, Cold, {Entry});
+    const auto NowFacts = PipelineTestPeer::analysisFacts(Cache);
+    const auto NowSelection = PipelineTestPeer::selectionFacts(Cache);
+    EXPECT_EQ(AddsEntry ? NowSelection != Selection : NowFacts != Facts, Fresh);
+    EXPECT_EQ(AddsEntry ? NowFacts : NowSelection,
+              AddsEntry ? Facts : Selection);
     expectSameSelection(Kept, Cold);
   };
-  Check(0x1000);
-  Check(0x1200); // A new selected entry changes the known boundary inventory.
-  Check(0x1000);
+  Check(0x1000, false, true);
+  // A selected entry that starts no symbol adds to the known boundaries.
+  Check(0x1200, true, true);
+  Check(0x1000, false, false);
+  Check(0x1200, true, false);
   Image.VerifiedFunctionEntries.insert(0x1200);
-  Check(0x1000);
+  Check(0x1000, false, true);
+  Check(0x1200, true, true);
   // Equal cardinality is insufficient, and removing an entry matters too.
   Image.VerifiedFunctionEntries = {0x1300};
-  Check(0x1000);
+  Check(0x1000, false, true);
   Image.VerifiedFunctionEntries.clear();
-  Check(0x1000);
+  Check(0x1000, false, true);
+}
+
+TEST(PipelineOutcome, AnalysisCacheKeepsUnnamedCallersIndependent) {
+  for (unsigned Count : {1u, 4u}) {
+    ScopedThreadCount Threads(Count);
+    for (Arch TheArch : {Arch::X64, Arch::AArch64, Arch::ARM}) {
+      SCOPED_TRACE(Count);
+      SCOPED_TRACE(static_cast<unsigned>(TheArch));
+      BinaryImage Image = TheArch == Arch::AArch64
+                              ? aarch64SelectionCacheImage()
+                          : TheArch == Arch::ARM ? arm32SelectionCacheImage()
+                                                 : selectionCacheImage(true);
+      // Neither caller has a symbol. Each adds a different boundary to the
+      // callee analysis, while the relocation/owner/name indexes read the same
+      // image. Keep those indexes alive through both kinds of selection.
+      std::erase_if(Image.Symbols, [](const Symbol &Sym) {
+        return Sym.Addr == 0x1000 || Sym.Addr == 0x1100;
+      });
+      PipelineAnalysisCache Cache;
+      const auto Check = [&](va_t Entry) {
+        PipelineResult Kept, Cold;
+        PipelineTestPeer::buildLowIR(Image, Kept, {Entry}, &Cache);
+        PipelineTestPeer::buildLowIR(Image, Cold, {Entry});
+        ASSERT_EQ(Kept.LowFuncs.size(), 1u);
+        EXPECT_TRUE(Kept.LowFuncs.front().hasCompleteInstructionLift());
+        expectSameSelection(Kept, Cold);
+        EXPECT_EQ(Kept.CallEntryArgumentCounts, Cold.CallEntryArgumentCounts);
+        EXPECT_EQ(Kept.CallArgumentSources, Cold.CallArgumentSources);
+      };
+      for (va_t Entry : {0x1000, 0x1100, 0x1800, 0x1000, 0x1100})
+        Check(Entry);
+      // A newly confirmed boundary invalidates both kinds, even when the
+      // symbol inventory is unchanged. Return to a former snapshot as well.
+      Image.VerifiedFunctionEntries.insert(0x1100);
+      Check(0x1000);
+      Check(0x1800);
+      Image.VerifiedFunctionEntries.clear();
+      Check(0x1100);
+      // A reset retires every index before the backing code changes.
+      Cache.reset();
+      if (TheArch == Arch::AArch64)
+        Image.Segments[0].Data[0x2002 - 0x1000] = 0x00; // mov x0, x0
+      else if (TheArch == Arch::ARM)
+        Image.Segments[0].Data[0x2000 - 0x1000] = 0x00; // mov r0, r0
+      else {
+        Image.Segments[0].Data[0x2000 - 0x1000] = 0x89; // mov eax, edi
+        Image.Segments[0].Data[0x2001 - 0x1000] = 0xf8;
+      }
+      Check(0x1000);
+    }
+  }
 }
 
 TEST(PipelineOutcome, AnalysisCacheResetObservesChangedCalleeBytes) {
@@ -319,6 +493,158 @@ TEST(PipelineOutcome, AnalysisCacheSeparatesImagesAndSkipsWholeImageRuns) {
   const auto Whole = Pipeline().run(SecondImage, Context, Options);
   EXPECT_TRUE(Whole.Success) << Whole.Error;
   EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), nullptr);
+}
+
+TEST(PipelineOutcome, WarmedAnalysisCacheLeavesSelectedRunsUnchanged) {
+  for (unsigned Count : {1u, 4u}) {
+    ScopedThreadCount Threads(Count);
+    for (bool Floating : {false, true}) {
+      SCOPED_TRACE(Count);
+      SCOPED_TRACE(Floating);
+      const BinaryImage Image = selectionCacheImage(Floating);
+      std::vector<va_t> Functions;
+      for (const auto &Sym : Image.Symbols)
+        if (Sym.IsFunc)
+          Functions.push_back(Sym.Addr);
+      PipelineAnalysisCache Cache;
+      PipelineOptions Options;
+      Options.AnalysisCache = &Cache;
+      const auto Warmup =
+          Pipeline().warmAnalysisCache(Image, Options, nullptr, Functions);
+      ASSERT_TRUE(Warmup);
+      EXPECT_FALSE(Warmup->Full);
+      // The floating callee's own x87 stack keeps its body out of the cache.
+      EXPECT_EQ(Warmup->Prepared,
+                Floating ? Functions.size() - 1 : Functions.size());
+      const auto Facts = PipelineTestPeer::analysisFacts(Cache);
+      ASSERT_NE(Facts, nullptr);
+      for (va_t Entry : Functions) {
+        PipelineResult Kept, Cold;
+        PipelineTestPeer::buildLowIR(Image, Kept, {Entry}, &Cache);
+        PipelineTestPeer::buildLowIR(Image, Cold, {Entry});
+        // A selected symbol start shares the warmed state.
+        EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
+        expectSameSelection(Kept, Cold);
+      }
+    }
+  }
+}
+
+TEST(PipelineOutcome, AnalysisCacheReadsTheSymbolInventoryOnce) {
+  // Every run reads the image's boundary guesses and function-symbol starts.
+  // The cache reads them once for its image and each run reads what a cold
+  // run does; a grown symbol table is read again, and a reset drops them.
+  BinaryImage Image = selectionCacheImage(true);
+  Symbol Guess = Symbol::makeFunc(0x1200, 1);
+  Guess.IsBoundaryGuess = true;
+  Image.Symbols.push_back(Guess);
+  PipelineAnalysisCache Cache;
+  const auto Check = [&](va_t Entry) {
+    PipelineResult Kept, Cold;
+    PipelineTestPeer::buildLowIR(Image, Kept, {Entry}, &Cache);
+    PipelineTestPeer::buildLowIR(Image, Cold, {Entry});
+    expectSameSelection(Kept, Cold);
+  };
+  Check(0x1000);
+  const auto Inventory = PipelineTestPeer::symbolInventory(Cache);
+  const auto Facts = PipelineTestPeer::analysisFacts(Cache);
+  ASSERT_NE(Inventory, nullptr);
+  for (const va_t Entry : {va_t{0x1100}, va_t{0x1200}, va_t{0x1000}}) {
+    Check(Entry);
+    EXPECT_EQ(PipelineTestPeer::symbolInventory(Cache), Inventory);
+  }
+  // A guess is no symbol start, so its run shares the symbol facts too.
+  EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
+  EXPECT_EQ(PipelineTestPeer::selectionFacts(Cache), nullptr);
+
+  // A symbol that is no guess confirms the start.
+  Image.Symbols.push_back(Symbol::makeFunc(0x1200, 1));
+  Check(0x1000);
+  EXPECT_NE(PipelineTestPeer::symbolInventory(Cache), Inventory);
+  EXPECT_NE(PipelineTestPeer::analysisFacts(Cache), Facts);
+  Check(0x1200);
+
+  Cache.reset();
+  EXPECT_EQ(PipelineTestPeer::symbolInventory(Cache), nullptr);
+}
+
+TEST(PipelineOutcome, SelectionsOutsideTheSymbolInventoryKeepTheirOwnFacts) {
+  const BinaryImage Image = selectionCacheImage(false);
+  PipelineAnalysisCache Cache;
+  PipelineResult Symbol, Selected, Again, ColdSymbol, ColdSelected;
+  PipelineTestPeer::buildLowIR(Image, Symbol, {0x1000}, &Cache);
+  const auto Facts = PipelineTestPeer::analysisFacts(Cache);
+  ASSERT_NE(Facts, nullptr);
+  EXPECT_EQ(PipelineTestPeer::selectionFacts(Cache), nullptr);
+  // 0x1200 starts no symbol, so its run knows one more entry and keys facts
+  // of its own, beside the symbol inventory's.
+  PipelineTestPeer::buildLowIR(Image, Selected, {0x1200}, &Cache);
+  const auto Selection = PipelineTestPeer::selectionFacts(Cache);
+  ASSERT_NE(Selection, nullptr);
+  EXPECT_NE(Selection, Facts);
+  EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
+  PipelineTestPeer::buildLowIR(Image, ColdSelected, {0x1200});
+  expectSameSelection(Selected, ColdSelected);
+  // The next symbol start finds the symbol inventory's facts in place.
+  PipelineTestPeer::buildLowIR(Image, Again, {0x1000}, &Cache);
+  EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
+  EXPECT_EQ(PipelineTestPeer::selectionFacts(Cache), Selection);
+  PipelineTestPeer::buildLowIR(Image, ColdSymbol, {0x1000});
+  expectSameSelection(Again, ColdSymbol);
+  // Warming adds to them and leaves the selection's.
+  PipelineOptions Options;
+  Options.AnalysisCache = &Cache;
+  EXPECT_TRUE(Pipeline().warmAnalysisCache(Image, Options, nullptr, {0x1000}));
+  EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
+  EXPECT_EQ(PipelineTestPeer::selectionFacts(Cache), Selection);
+  // Facts for another image serve no run of this one, so warming replaces
+  // them; a reset retires both kinds.
+  const BinaryImage Other = selectionCacheImage(false);
+  EXPECT_TRUE(Pipeline().warmAnalysisCache(Other, Options, nullptr, {0x1000}));
+  EXPECT_NE(PipelineTestPeer::analysisFacts(Cache), Facts);
+  Cache.reset();
+  EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), nullptr);
+  EXPECT_EQ(PipelineTestPeer::selectionFacts(Cache), nullptr);
+  // i386 runs share the symbol inventory's facts too, which warming builds.
+  BinaryImage Narrow = selectionCacheImage(false);
+  Narrow.Arch = Arch::X86;
+  Narrow.Bits = Bitness::Bits32;
+  PipelineAnalysisCache NarrowCache;
+  Options.AnalysisCache = &NarrowCache;
+  EXPECT_TRUE(Pipeline().warmAnalysisCache(Narrow, Options, nullptr, {0x1000}));
+  EXPECT_NE(PipelineTestPeer::analysisFacts(NarrowCache), nullptr);
+  // Without a cache, or on an architecture whose runs share none, nothing is
+  // kept to warm.
+  EXPECT_FALSE(Pipeline().warmAnalysisCache(Image, PipelineOptions(), nullptr,
+                                            {0x1000}));
+  BinaryImage Bytecode = selectionCacheImage(false);
+  Bytecode.Arch = Arch::EVM;
+  PipelineAnalysisCache BytecodeCache;
+  Options.AnalysisCache = &BytecodeCache;
+  EXPECT_FALSE(
+      Pipeline().warmAnalysisCache(Bytecode, Options, nullptr, {0x1000}));
+  EXPECT_EQ(PipelineTestPeer::analysisFacts(BytecodeCache), nullptr);
+}
+
+TEST(PipelineOutcome, WarmingStopsAtTheCacheBoundWithoutEvicting) {
+  const BinaryImage Image = selectionCacheImage(false);
+  const std::set<va_t> Entries = {0x1000, 0x1100, 0x1800, 0x2000};
+  const auto Cache = createX87CallGraphCache(
+      nullptr, nullptr, /*RetainCallRegisterBodies=*/true,
+      {/*Entries=*/2, 8 * 1024 * 1024, 32 * 1024 * 1024});
+  const auto Warm = [&](std::vector<va_t> Functions) {
+    return CFGBuilder::warmCallGraphs(Cache, Image, Functions, &Entries,
+                                      nullptr, nullptr, nullptr, nullptr, 1);
+  };
+  const auto First = Warm({0x2000, 0x1800});
+  EXPECT_EQ(First.Retained, 2u);
+  EXPECT_FALSE(First.Full);
+  const auto Second = Warm({0x1000, 0x1100});
+  EXPECT_EQ(Second.Retained, 0u);
+  EXPECT_TRUE(Second.Full);
+  // What the cache held before stays there.
+  EXPECT_TRUE(CFGBuilder::cachedCallRegisterBody(
+      Cache, Image, 0x2000, &Entries, nullptr, nullptr, nullptr, nullptr));
 }
 
 TEST(PipelineOutcome, ParallelCalleeFrontiersPreserveEveryRegisterSummary) {
@@ -537,6 +863,67 @@ TEST(PipelineOutcome, PatchDiscoversStandaloneELFEntryButPreservesCRTEntry) {
   PipelineResult CRT = run(true);
   ASSERT_TRUE(CRT.Success) << CRT.Error;
   EXPECT_TRUE(CRT.LowFuncs.empty());
+}
+
+TEST(PipelineOutcome, UnsupportedBodiesCannotPublishSuccessfulEmptyModules) {
+  for (Arch Architecture : {Arch::X86, Arch::X64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool Patch : {false, true})
+        for (bool Selected : {false, true}) {
+          SCOPED_TRACE(getArchName(Architecture));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(Patch);
+          SCOPED_TRACE(Selected);
+          BinaryImage Image;
+          Image.Arch = Architecture;
+          Image.Bits =
+              Architecture == Arch::X64 ? Bitness::Bits64 : Bitness::Bits32;
+          Image.Format = Format;
+          Image.Entry = 0x1000;
+          Segment Text;
+          Text.Name = ".text";
+          Text.VA = Image.Entry;
+          Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+          // MOV EAX, ESI; XACQUIRE LOCK XADD [RDI/EDI], EAX; RET.
+          Text.Data = {0x89, 0xf0, 0xf2, 0xf0, 0x0f, 0xc1, 0x07, 0xc3};
+          Text.Size = Text.FileSz = Text.Data.size();
+          Image.Symbols.push_back(
+              {"unsupported_hle", Image.Entry, Text.Size, true});
+          Image.Segments.push_back(std::move(Text));
+          PipelineOptions Options;
+          Options.LiftMode = !Patch;
+          Options.PatchMode = Patch;
+          Options.NoOpt = true;
+          if (Selected)
+            Options.OnlyFunctionEntries.insert(Image.Entry);
+          llvm::LLVMContext Context;
+          auto Result = Pipeline().run(Image, Context, Options);
+          EXPECT_FALSE(Result.Success);
+          EXPECT_EQ(Result.LlvmModule, nullptr);
+          EXPECT_TRUE(Result.MedFuncs.empty());
+          EXPECT_NE(Result.Error.find("function 0x1000 was not admitted"),
+                    std::string::npos)
+              << Result.Error;
+          EXPECT_NE(Result.Error.find("unsupported instruction at 0x1002"),
+                    std::string::npos)
+              << Result.Error;
+          ASSERT_EQ(Result.FunctionAudits.size(), 1u);
+          EXPECT_EQ(Result.FunctionAudits.front().UnsupportedInstructions,
+                    std::vector<va_t>{0x1002});
+
+          if (!Selected) {
+            Options.LiftMode = Options.PatchMode = false;
+            Options.MedAnalysisOnly = true;
+            auto Analysis = Pipeline().run(Image, Context, Options);
+            EXPECT_TRUE(Analysis.Success) << Analysis.Error;
+            EXPECT_EQ(Analysis.LlvmModule, nullptr);
+            EXPECT_TRUE(Analysis.MedFuncs.empty());
+            ASSERT_EQ(Analysis.FunctionAudits.size(), 1u);
+            EXPECT_EQ(Analysis.FunctionAudits.front().UnsupportedInstructions,
+                      std::vector<va_t>{0x1002});
+          }
+        }
 }
 
 TEST(PipelineOutcome, RejectedLLVMEmissionRetainsStageDiagnostic) {
@@ -1185,6 +1572,138 @@ TEST(PipelineOutcome, ResolvedCallsPreserveAllBytesAcrossStackStoreWidths) {
     }
 }
 
+TEST(PipelineOutcome, AnalystCallDeclarationsRequireExplicitSourceProjection) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("analyst_call_scope", Context);
+  Module.setDataLayout("e-p:64:64");
+  auto *I64 = llvm::Type::getInt64Ty(Context);
+  auto *Original = llvm::FunctionType::get(I64, {I64, I64}, false);
+  auto *Target = llvm::Function::Create(
+      Original, llvm::GlobalValue::ExternalLinkage, "target", Module);
+  auto *Caller = llvm::Function::Create(llvm::FunctionType::get(I64, false),
+                                        llvm::GlobalValue::ExternalLinkage,
+                                        "caller", Module);
+  llvm::IRBuilder<> Builder(llvm::BasicBlock::Create(Context, "entry", Caller));
+  auto *Selected = llvm::FunctionType::get(I64, {I64}, false);
+  auto *Call = Builder.CreateCall(Selected, Target, {Builder.getInt64(7)});
+  Call->setMetadata("neverd.source.analyst-call",
+                    llvm::MDNode::get(Context, {}));
+  Builder.CreateRet(Call);
+  EXPECT_TRUE(normalizeResolvedLLVMCalls(Module, nullptr, true));
+  EXPECT_TRUE(validateResolvedLLVMCallSignatures(Module, true));
+  EXPECT_EQ(Target->getFunctionType(), Original);
+  EXPECT_EQ(Call->getFunctionType(), Selected);
+  testing::internal::CaptureStderr();
+  EXPECT_FALSE(normalizeResolvedLLVMCalls(Module));
+  EXPECT_FALSE(validateResolvedLLVMCallSignatures(Module));
+  EXPECT_FALSE(testing::internal::GetCapturedStderr().empty());
+  EXPECT_EQ(Call->arg_size(), 1u);
+}
+
+TEST(PipelineOutcome, OmittedPointerDeclarationsStayInSourceModules) {
+  ScopedThreadCount Threads(2);
+  constexpr va_t Target = 0x1100;
+  for (unsigned Count : {1u, 8u}) {
+    SCOPED_TRACE(Count);
+    BinaryImage Image;
+    Image.Arch = Arch::X64;
+    Image.Bits = Bitness::Bits64;
+    Image.Format = BinaryFormat::ELF;
+    Image.Entry = 0x1000;
+    Segment Text;
+    Text.Name = ".text";
+    Text.VA = Image.Entry;
+    Text.Size = 0x104;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.resize(Text.Size, 0xcc);
+    std::set<va_t> Entries;
+    for (unsigned I = 0; I != Count; ++I) {
+      const va_t Entry = Image.Entry + I * 0x20;
+      std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 8, 0xe8};
+      const uint32_t Displacement = Target - (Entry + 9);
+      for (unsigned Byte = 0; Byte != 4; ++Byte)
+        Code.push_back(Displacement >> (Byte * 8));
+      Code.insert(Code.end(), {0x48, 0x83, 0xc4, 8, 0xc3});
+      std::copy(Code.begin(), Code.end(),
+                Text.Data.begin() + (Entry - Text.VA));
+      auto Function = Symbol::makeFunc(Entry);
+      Function.Name = "forward_pointer_" + std::to_string(I);
+      Image.Symbols.push_back(std::move(Function));
+      Entries.insert(Entry);
+    }
+    const uint8_t Read[] = {0x48, 0x8b, 0x07, 0xc3}; // mov rax,[rdi]; ret
+    std::copy(std::begin(Read), std::end(Read), Text.Data.begin() + 0x100);
+    Image.Segments.push_back(std::move(Text));
+    auto Function = Symbol::makeFunc(Target);
+    Function.Name = "read_pointer";
+    Image.Symbols.push_back(std::move(Function));
+    for (bool HasException : {false, true}) {
+      SCOPED_TRACE(HasException);
+      if (HasException) {
+        ExceptionFunction Exception;
+        Exception.CodeRange = {Target, Target + sizeof(Read)};
+        Exception.Encoding = ExceptionEncoding::DwarfFDE;
+        Exception.Personality = ExceptionPersonality::None;
+        Exception.ParseStatus = ExceptionParseStatus::Complete;
+        Image.ExceptionMetadata.Functions.push_back(std::move(Exception));
+        Image.ExceptionMetadata.rebuildIndex();
+      }
+      PipelineAnalysisCache Cache;
+      // Reuse the same image cache across native, source and patch requests.
+      // Eight callers also exercise linked LLVM shards with one shared callee.
+      for (const auto [Source, Patch] : {std::pair{false, false},
+                                         {true, false},
+                                         {true, true},
+                                         {true, false}}) {
+        SCOPED_TRACE(Source);
+        SCOPED_TRACE(Patch);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.AnalysisCache = &Cache;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = Entries;
+        Options.MedAnalysisOnly = true;
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        Options.MedAnalysisOnly = false;
+        Options.LiftMode = true;
+        Options.SourceProjection = Source;
+        Options.PatchMode = Patch;
+        ASSERT_TRUE(PipelineTestPeer::runLift(Image, Context, Options, Result))
+            << Result.Error;
+        ASSERT_TRUE(Result.LlvmModule);
+        EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+        // An exception-bearing body is outside the declaration contract. Its
+        // existing zero-stack summary must avoid a redundant signature lift.
+        if (HasException) {
+          ASSERT_TRUE(Result.OmittedCallees);
+          EXPECT_TRUE(Result.OmittedCallees->Bodies.empty());
+        }
+        for (unsigned I = 0; I != Count; ++I) {
+          auto *Caller = Result.LlvmModule->getFunction("forward_pointer_" +
+                                                        std::to_string(I));
+          ASSERT_TRUE(Caller);
+          unsigned Calls = 0;
+          for (const auto &Block : *Caller)
+            for (const auto &Instruction : Block)
+              if (const auto *Call =
+                      llvm::dyn_cast<llvm::CallBase>(&Instruction);
+                  Call && Call->getCalledFunction() &&
+                  !Call->getCalledFunction()->isIntrinsic()) {
+                const auto *Callee = Call->getCalledFunction();
+                ASSERT_TRUE(Callee->isDeclaration());
+                ASSERT_EQ(Callee->arg_size(), 1u);
+                EXPECT_EQ(Callee->getArg(0)->getType()->isPointerTy(),
+                          Source && !Patch && !HasException);
+                ++Calls;
+              }
+          EXPECT_EQ(Calls, 1u);
+        }
+      }
+    }
+  }
+}
+
 TEST(PipelineOutcome, ResolvedCallsPlaceNarrowStackValuesInTheirSlots) {
   // -O0 code passes each int stack argument in the low half of its
   // eight-byte System V slot: `mov [rsp], r11d`, `mov [rsp+8], r10d`. The
@@ -1340,6 +1859,119 @@ TEST(PipelineOutcome, RealShardedEmissionDefinesEverySourceFunction) {
     EXPECT_EQ(Function.getName(), Functions[Index++].Name);
   }
   EXPECT_EQ(Index, Functions.size());
+}
+
+MedFunc unhandledIntrinsicFunction(Arch Architecture, uint16_t OutputSize,
+                                   va_t Entry = 0x1000) {
+  MedFunc Function = sourceFunction(Entry, "unsupported_intrinsic");
+  MedVar Output;
+  Output.Kind = MedVar::Temp;
+  Output.TheArch = Architecture;
+  Output.Id = 1;
+  Output.Size = OutputSize;
+  MedOp Operation;
+  Operation.Opcode = NdOp::INTRINSIC;
+  Operation.Addr = Entry;
+  Operation.addInput(MedVar::makeConst(0xffff, 2));
+  if (OutputSize)
+    Operation.Output = Output;
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  if (OutputSize) {
+    Return.addInput(Output);
+    Function.ReturnType = NdType::makeInt(OutputSize);
+  }
+  MedBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Entry;
+  Block.Ops = {Operation, Return};
+  Function.Blocks.push_back(std::move(Block));
+  return Function;
+}
+
+TEST(PipelineOutcome, UnhandledIntrinsicNeverPublishesZeroOrAnEmptyEffect) {
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (uint16_t Size : {0, 4}) {
+      SCOPED_TRACE(::testing::Message()
+                   << unsigned(Architecture) << ':' << Size);
+      llvm::LLVMContext Context;
+      MedLLVMEmitter Emitter;
+      auto Function = unhandledIntrinsicFunction(Architecture, Size);
+      std::unique_ptr<llvm::Module> Module;
+      try {
+        Module = Emitter.emit({Function}, Context, "unsupported", Architecture);
+        ADD_FAILURE() << "an unsupported intrinsic published a module";
+      } catch (const std::runtime_error &Error) {
+        EXPECT_NE(std::string(Error.what()).find("unsupported LLVM intrinsic"),
+                  std::string::npos);
+        EXPECT_NE(std::string(Error.what()).find("65535"), std::string::npos);
+      }
+      EXPECT_EQ(Module, nullptr);
+      EXPECT_EQ(Emitter.unhandledValueIntrinsicCount(), Size ? 1u : 0u);
+
+      // Reuse the same emitter after refusal. No old LLVM values or refusal
+      // counter may contaminate a later, valid generation.
+      auto &Operation = Function.Blocks[0].Ops[0];
+      Operation.Opcode = NdOp::COPY;
+      Operation.NumInputs = 0;
+      if (Size)
+        Operation.addInput(MedVar::makeConst(7, Size));
+      else
+        Function.Blocks[0].Ops.erase(Function.Blocks[0].Ops.begin());
+      Module = Emitter.emit({Function}, Context, "supported", Architecture);
+      ASSERT_NE(Module, nullptr);
+      EXPECT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+      EXPECT_EQ(Emitter.unhandledValueIntrinsicCount(), 0u);
+    }
+  }
+}
+
+TEST(PipelineOutcome,
+     UnhandledIntrinsicRefusalsAgreeAcrossSingleAndShardedEmission) {
+  ScopedThreadCount Threads(2);
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (unsigned Count : {1u, 8u})
+      for (bool NoOpt : {false, true})
+        for (bool SourceProjection : {false, true})
+          for (uint16_t Size : {0, 4}) {
+            SCOPED_TRACE(::testing::Message()
+                         << unsigned(Architecture) << ':' << Count << ':'
+                         << NoOpt << ':' << SourceProjection << ':' << Size);
+            llvm::LLVMContext Context;
+            BinaryImage Image;
+            Image.Arch = Architecture;
+            Image.Bits = Architecture == Arch::X86 || Architecture == Arch::ARM
+                             ? Bitness::Bits32
+                             : Bitness::Bits64;
+            Image.Format = BinaryFormat::ELF;
+            PipelineResult Result;
+            for (unsigned Index = 0; Index != Count; ++Index) {
+              auto Function = unhandledIntrinsicFunction(
+                  Architecture, Size, 0x1000 + Index * 0x100);
+              Function.Name += "_" + std::to_string(Index);
+              if (Index + 1 != Count) {
+                Function.Blocks[0].Ops.erase(Function.Blocks[0].Ops.begin());
+                Function.Blocks[0].Ops[0].NumInputs = 0;
+                Function.ReturnType = NdType::makeVoid();
+              }
+              Result.MedFuncs.push_back(std::move(Function));
+            }
+            PipelineOptions Options;
+            Options.LiftMode = true;
+            Options.SourceProjection = SourceProjection;
+            Options.RetainLLVMSourceObservations = true;
+            Options.NoOpt = NoOpt;
+            EXPECT_FALSE(
+                PipelineTestPeer::runLift(Image, Context, Options, Result));
+            EXPECT_EQ(Result.LlvmModule, nullptr);
+            EXPECT_EQ(Result.LLVMSources, nullptr);
+            EXPECT_FALSE(Result.LLVMVerifierFailed);
+            EXPECT_NE(Result.Error.find("unsupported LLVM intrinsic"),
+                      std::string::npos)
+                << Result.Error;
+            if (Count == 8)
+              EXPECT_NE(Result.Error.find("LLVM shard "), std::string::npos);
+          }
 }
 
 TEST(PipelineOutcome, SourceEHRefusalsAgreeAcrossSingleAndShardedEmission) {
@@ -1651,7 +2283,7 @@ void expectOwnedStageResult(const BinaryImage &Image,
   Options.TheArch = Image.Arch;
   ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Stream, Options));
   EXPECT_NE(Source.find("owned_trace_return"), std::string::npos);
-  EXPECT_NE(Source.find("42"), std::string::npos);
+  EXPECT_NE(Source.find("0x2A"), std::string::npos);
 }
 
 void exerciseOwnedPipelineStages() {

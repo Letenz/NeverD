@@ -8,10 +8,9 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
-#include "neverd/backend/llvm/X86RegistrationSEHJump.h"
+#include "neverd/backend/llvm/X86/X86RegistrationSEHJump.h"
 
 #include "llvm/IR/CFG.h"
-#include "llvm/IR/Operator.h"
 
 namespace neverd::coff_registration {
 
@@ -35,6 +34,7 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
   struct CaptureIR {
     const llvm::AllocaInst *Buffer = nullptr;
     const llvm::StoreInst *State = nullptr;
+    const llvm::AllocaInst *CapturedState = nullptr;
     std::set<const llvm::AllocaInst *> Saved;
   };
   std::map<va_t, CaptureIR> Captures;
@@ -100,13 +100,23 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
                 return rejectIR(
                     "native jump buffer changed its runtime extent");
               Capture.Buffer = Slot;
+            } else if (*Kind == unsigned(SEHJumpRole::CapturedState)) {
+              if (Capture.CapturedState ||
+                  !Slot->getAllocatedType()->isIntegerTy(32) ||
+                  Slot->getAlign() != llvm::Align(4))
+                return rejectIR("native capture changed its saved state slot");
+              Capture.CapturedState = Slot;
             } else if (*Kind != unsigned(SEHJumpRole::RegisterSnapshot) ||
                        !Capture.Saved.insert(Slot).second)
               return rejectIR("native register snapshot has an unknown role");
           }
         } else if (const auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(&I);
                    Slot && Function == &Parent && Slot != Frame.Slot &&
-                   !IncomingSetup.count(Slot))
+                   !IncomingSetup.count(Slot) &&
+                   !Slot->getMetadata(
+                       windows_eh_md::RegistrationRegisterAttachment))
+          // The register-exchange validator independently authenticates every
+          // invocation slot and rejects snapshot accesses to that storage.
           Registers.insert(Slot);
         const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
         const auto *Operation =
@@ -166,14 +176,14 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
   std::map<va_t, const llvm::AllocaInst *> Buffers;
   for (const auto &[Address, Capture] : Captures)
     Buffers.emplace(Address, Capture.Buffer);
-  auto Bound = bindSEHBoundCalls(Source, Parent, Frame, Buffers);
+  auto Bound = bindSEHBoundCalls(Source, Parent, Frame, Buffers, Callbacks);
   if (!Bound)
     return Bound.takeError();
   Result.Calls.insert(Bound->begin(), Bound->end());
   for (const auto &[Address, Capture] : Captures) {
     const auto *Call = Calls.at(Address);
     const auto &Receipt = *Expected->at(Address).Capture;
-    if (auto Error = validateSEHJumpUnwindBridge(Parent, Receipt.UnwindVA))
+    if (auto Error = validateSEHJumpUnwindBridge(Parent, Receipt))
       return Error;
     if (!Capture.Buffer || !Capture.State)
       return rejectIR(
@@ -235,36 +245,11 @@ bindSEHJumps(const MedFunc &Source, const llvm::Function &Parent,
     }
     if (SeenRegisters != Registers)
       return rejectIR("native jump omits a logical register snapshot");
-    const auto *State = Capture.State;
-    const auto *GEP =
-        llvm::dyn_cast<llvm::GetElementPtrInst>(State->getPointerOperand());
-    llvm::APInt Offset(32, 0);
-    const int32_t ResumeLevel = Expected->at(Address).ResumeLevel;
-    const llvm::Value *Initial = State->getValueOperand();
-    if (ResumeLevel != Receipt.Level) {
-      const auto *Select = llvm::dyn_cast<llvm::SelectInst>(Initial);
-      const auto *Compare =
-          Select ? llvm::dyn_cast<llvm::ICmpInst>(Select->getCondition())
-                 : nullptr;
-      if (!Select || !Compare || Compare->hasPoisonGeneratingFlags() ||
-          !Select->hasOneUse() || !Compare->hasOneUse() ||
-          Compare->getPredicate() != llvm::ICmpInst::ICMP_EQ ||
-          Compare->getOperand(0) != Call ||
-          integer(Compare->getOperand(1), 32) != 0 ||
-          integer(Select->getFalseValue(), 32) != uint32_t(ResumeLevel))
-        return rejectIR("native jump changed its resumed source try level");
-      Initial = Select->getTrueValue();
-      Restores.insert({Compare, Select});
-    }
-    if (!GEP || GEP->getPointerOperand() != Frame.Slot || Frame.EntrySP < 8 ||
-        !GEP->accumulateConstantOffset(Parent.getParent()->getDataLayout(),
-                                       Offset) ||
-        Offset.getZExtValue() != Frame.EntrySP - 8 ||
-        integer(Initial, 32) != uint32_t(Receipt.Level) || State->isAtomic() ||
-        !State->isVolatile() || State->getAlign() != llvm::Align(1))
-      return rejectIR("native jump changed its restored source try level");
-    Result.StateRestores.insert(State);
-    Restores.insert({GEP, State});
+    if (auto Error =
+            validateSEHJumpState(Expected->at(Address), *Call, *Capture.State,
+                                 Frame, Capture.CapturedState, Saves, Restores))
+      return Error;
+    Result.StateRestores.insert(Capture.State);
     const llvm::Instruction *Before = Call->getPrevNode();
     while (Before && !Saves.empty()) {
       const auto *Anchor = llvm::dyn_cast<llvm::IntrinsicInst>(Before);

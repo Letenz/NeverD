@@ -6,7 +6,23 @@
 
 #include "KernelModel.h"
 
+#include <array>
+
 namespace neverd::emulation {
+
+llvm::Expected<uint64_t> KernelModel::currentProcessorNumber(uint64_t Output) {
+  // The shared scheduler profile has one logical processor in group zero.
+  // Its systemwide index and group-relative number are therefore identical.
+  if (Output) {
+    constexpr std::array<uint8_t, 4> Number{
+        0, 0, uint8_t(profile::ProcessorNumber), 0};
+    if (auto E = validateObjectOutput(Output, Number.size()))
+      return E;
+    if (auto E = Memory.write(Output, Number))
+      return E;
+  }
+  return profile::ProcessorNumber;
+}
 
 llvm::Expected<uint64_t> KernelModel::setSystemAffinity(uint64_t Mask) {
   if (!CurrentExecution || !CurrentThreadKey)

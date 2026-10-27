@@ -7,6 +7,7 @@
 #include "RegistrationABIPrivate.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/LowIR.h"
 
 namespace neverd {
@@ -24,14 +25,18 @@ RegistrationCallCalleeIndex::contracts(const LowFunc &Function) {
       if (Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
           Op.Inputs[0].isConst() && Op.Inputs[0].Size == 4)
         Targets.insert(Op.Inputs[0].Offset);
-      if (Targets.size() > 256)
+      if (Targets.size() >
+          ::neverd::limits::ir::
+              kRegistrationCalleeIndexRegistrationCallCalleeIndexContractsTargetsSizeLimit)
         return std::nullopt;
     }
   std::vector<RegistrationCalleeFrameContract> Result;
   for (va_t Target : Targets) {
     auto Existing = Cache.find(Target);
     if (Existing == Cache.end()) {
-      if (Cache.size() == 256)
+      if (Cache.size() ==
+          ::neverd::limits::ir::
+              kRegistrationCalleeIndexRegistrationCallCalleeIndexContractsCacheSizeLimit)
         return std::nullopt;
       std::optional<RegistrationCalleeFrameContract> Contract;
       if (auto Import =
@@ -147,7 +152,11 @@ RegistrationCallCalleeIndex::cleanupContracts(const LowFunc &Function) {
       continue;
     auto It = CleanupCache.find(Action.ActionVA);
     if (It == CleanupCache.end()) {
-      if (CleanupCache.size() == 256)
+      // Cleanup entries are owned by the bounded unwind graph, which can
+      // contain more distinct relays than the ordinary-callee cache. Keep
+      // that format bound and charge every successful or failed proof to the
+      // same cumulative work budget.
+      if (CleanupCache.size() == limits::kMaxRegistrationEHRecords)
         return std::nullopt;
       auto Relay = getCheckedX86RegistrationCleanupRelayABI(
           Image, Action.ActionVA, &Work);

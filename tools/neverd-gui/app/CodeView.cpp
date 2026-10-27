@@ -1,7 +1,10 @@
 #include "CodeView.h"
 
+#include "../Config.h"
+#include "../ResourceLimits.h"
 #include "Icons.h"
 #include "Session.h"
+#include "SettingsKeys.h"
 #include "ShrinkableRow.h"
 #include "Theme.h"
 
@@ -18,26 +21,90 @@
 #include <QHelpEvent>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
 #include <QPainter>
 #include <QRegularExpression>
+#include <QScopedValueRollback>
 #include <QScrollBar>
 #include <QSet>
+#include <QSettings>
 #include <QTextLine>
 #include <QToolButton>
 #include <QToolTip>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace neverd::gui {
 namespace {
-constexpr int PageLines = 256;
-constexpr int Margin = 6;
-constexpr int WheelLines = 3;
-/// The fold over the lines before a C definition.
+
+/// The goto label \p line defines and the block address it names: HighC
+/// labels a goto's block `L_` and the address in hexadecimal (blockLabel in
+/// lib/backend/c/HighC/HighCStmtWriter.cpp), defined as `L_140001010:` or,
+/// in Rust, as a loop's `'L_140001010: loop`.
+std::optional<std::pair<QStringView, Address>>
+labelDefinition(QStringView line) {
+  line = line.trimmed();
+  if (line.startsWith(u'\''))
+    line = line.mid(1);
+  if (!line.startsWith(u"L_"))
+    return std::nullopt;
+  qsizetype end = 2;
+  while (end < line.size() && ((line[end] >= u'0' && line[end] <= u'9') ||
+                               (line[end] >= u'A' && line[end] <= u'F')))
+    ++end;
+  if (end == 2 || end >= line.size() || line[end] != u':' ||
+      line.mid(end).startsWith(u"::"))
+    return std::nullopt;
+  bool valid = false;
+  const Address address = line.mid(2, end - 2).toULongLong(&valid, 16);
+  if (!valid)
+    return std::nullopt;
+  return std::pair{line.left(end), address};
+}
+/// The function a frame record's name stands for: HighC declares a
+/// function's stack as a record named `frame_` and the function's address in
+/// hexadecimal (writeFunctionProjection in
+/// lib/backend/c/HighC/HighCFuncWriter.cpp), `frame_140003FE0`.
+std::optional<Address> frameRecordAddress(QStringView name) {
+  if (!name.startsWith(u"frame_") || name.size() == 6)
+    return std::nullopt;
+  for (const QChar digit : name.mid(6))
+    if (!((digit >= u'0' && digit <= u'9') || (digit >= u'A' && digit <= u'F')))
+      return std::nullopt;
+  bool valid = false;
+  const Address address = name.mid(6).toULongLong(&valid, 16);
+  if (!valid)
+    return std::nullopt;
+  return address;
+}
+
+/// Whether \p word stands alone in \p line, rather than in a longer name.
+bool containsWord(QStringView line, QStringView word) {
+  const auto identifier = [](QChar c) {
+    return c.isLetterOrNumber() || c == u'_';
+  };
+  for (qsizetype at = line.indexOf(word); at >= 0;
+       at = line.indexOf(word, at + 1)) {
+    const qsizetype end = at + word.size();
+    if ((at == 0 || !identifier(line[at - 1])) &&
+        (end == line.size() || !identifier(line[end])))
+      return true;
+  }
+  return false;
+}
+
+/// How often a drag beyond an edge scrolls the text.
+constexpr int DragScrollMs = 40;
+/// The fold over the lines before a definition: C's includes and
+/// declarations, or the declarations of what LLVM IR refers to.
 constexpr char PreludeRegion[] = "prelude";
+/// The fold over the attribute groups and metadata after LLVM IR's
+/// definition.
+constexpr char EpilogueRegion[] = "epilogue";
 
 /// How a representation is colored; Source takes the language the page names.
 enum class Dialect { C, Cpp, Rust, Go, IR, LLVM, Source };
@@ -193,7 +260,184 @@ bool identifierStart(QChar c) { return c.isLetter() || c == QLatin1Char('_'); }
 bool identifierPart(QChar c) {
   return c.isLetterOrNumber() || c == QLatin1Char('_');
 }
+
+/// A token of a line of LLVM IR: a name with its sigil (`@main`, `@"a b"`,
+/// `%sub`, `#0`, `!4`, `!llvm.module.flags`), a bare word (`load`, `bb_0`),
+/// or a word of the line's comment (`0x3FD8`, `__libc_start_main_ptr`).
+struct LLVMToken {
+  QString text;
+  int begin = 0;
+  bool comment = false;
+};
+
+/// Whether \p c continues an unquoted LLVM name.
+bool llvmNamePart(QChar c) {
+  return c.isLetterOrNumber() || c == QLatin1Char('-') ||
+         c == QLatin1Char('$') || c == QLatin1Char('.') ||
+         c == QLatin1Char('_');
+}
+
+/// The tokens of a line of LLVM IR, in order, outside its strings.
+QVector<LLVMToken> llvmTokens(QStringView text) {
+  QVector<LLVMToken> tokens;
+  const int n = int(text.size());
+  for (int i = 0; i < n;) {
+    const QChar c = text.at(i);
+    if (c == QLatin1Char(';')) {
+      for (int j = i + 1; j < n;) {
+        if (!isTokenCharacter(text.at(j))) {
+          ++j;
+          continue;
+        }
+        int end = j;
+        while (end < n && isTokenCharacter(text.at(end)))
+          ++end;
+        tokens.append({text.mid(j, end - j).toString(), j, true});
+        j = end;
+      }
+      break;
+    }
+    // LLVM escapes a quote in a string, so the next quote ends it.
+    if (c == QLatin1Char('"')) {
+      const int close = int(text.indexOf(QLatin1Char('"'), i + 1));
+      if (close < 0)
+        break;
+      i = close + 1;
+      continue;
+    }
+    const bool sigil = c == QLatin1Char('@') || c == QLatin1Char('%') ||
+                       c == QLatin1Char('#') || c == QLatin1Char('!');
+    const int start = i + (sigil ? 1 : 0);
+    int end = start;
+    if (sigil && end < n && text.at(end) == QLatin1Char('"')) {
+      // A quoted global or local name; `!"..."` is a metadata string.
+      const int close = int(text.indexOf(QLatin1Char('"'), end + 1));
+      if (close < 0)
+        break;
+      if (c != QLatin1Char('@') && c != QLatin1Char('%')) {
+        i = close + 1;
+        continue;
+      }
+      end = close + 1;
+    } else {
+      while (end < n && llvmNamePart(text.at(end)))
+        ++end;
+    }
+    if (end == start) {
+      ++i;
+      continue;
+    }
+    tokens.append({text.mid(i, end - i).toString(), i, false});
+    i = end;
+  }
+  return tokens;
+}
+
+/// The token of a line of LLVM IR at \p column, or none.
+std::optional<LLVMToken> llvmTokenAt(QStringView text, int column) {
+  for (const auto &token : llvmTokens(text))
+    if (column >= token.begin && column <= token.begin + int(token.text.size()))
+      return token;
+  return std::nullopt;
+}
+
+/// A global's name without its sigil and quotes, as the binary may name it.
+QString llvmGlobalName(const QString &token) {
+  QString name = token.mid(1);
+  if (name.size() < 2 || !name.startsWith(QLatin1Char('"')) ||
+      !name.endsWith(QLatin1Char('"')))
+    return name;
+  // LLVM escapes what a quoted name cannot hold as two hexadecimal digits.
+  const QByteArray quoted = name.mid(1, name.size() - 2).toUtf8();
+  QByteArray bytes;
+  for (int i = 0; i < quoted.size(); ++i) {
+    bool ok = false;
+    const int value = quoted[i] == '\\' && i + 2 < quoted.size()
+                          ? quoted.mid(i + 1, 2).toInt(&ok, 16)
+                          : 0;
+    if (ok) {
+      bytes.append(char(value));
+      i += 2;
+    } else {
+      bytes.append(quoted[i]);
+    }
+  }
+  return QString::fromUtf8(bytes);
+}
+
+/// The lines that define what LLVM IR names: a global or function (`@name`),
+/// a type, value or parameter (`%name`), a block (its label `name:`), an
+/// attribute group (`#0`) or metadata (`!4`, `!llvm.module.flags`).
+QHash<QString, int> llvmDefinitions(QStringView source) {
+  QHash<QString, int> found;
+  int line = 0;
+  for (const QStringView text : source.split(QLatin1Char('\n'))) {
+    const auto tokens = llvmTokens(text);
+    const auto define = [&](const QString &name) {
+      if (!found.contains(name))
+        found.insert(name, line);
+    };
+    if (!tokens.isEmpty() && !tokens.front().comment) {
+      const LLVMToken &first = tokens.front();
+      const QChar sigil = first.text.front();
+      const QStringView after =
+          text.mid(first.begin + first.text.size()).trimmed();
+      if ((sigil == QLatin1Char('@') || sigil == QLatin1Char('%') ||
+           sigil == QLatin1Char('!')) &&
+          after.startsWith(QLatin1Char('='))) {
+        define(first.text);
+      } else if (first.text == QLatin1String("attributes") &&
+                 tokens.size() > 1 &&
+                 tokens[1].text.startsWith(QLatin1Char('#'))) {
+        define(tokens[1].text);
+      } else if (first.text == QLatin1String("declare") ||
+                 first.text == QLatin1String("define")) {
+        // The function, then a definition's parameters.
+        bool named = false;
+        for (const auto &token : tokens) {
+          if (token.comment)
+            break;
+          if (!named && token.text.startsWith(QLatin1Char('@'))) {
+            define(token.text);
+            named = true;
+          } else if (named && first.text == QLatin1String("define") &&
+                     token.text.startsWith(QLatin1Char('%'))) {
+            define(token.text);
+          }
+        }
+      } else if (first.begin == 0 && llvmNamePart(sigil) &&
+                 after.startsWith(QLatin1Char(':'))) {
+        // A block's label, which branches name as `%label`.
+        define(QLatin1Char('%') + first.text);
+      }
+    }
+    ++line;
+  }
+  return found;
+}
 } // namespace
+
+SourceDefaults &SourceDefaults::instance() {
+  static SourceDefaults defaults;
+  return defaults;
+}
+
+bool SourceDefaults::symbolic() const {
+  return QSettings().value(settings::SymbolicSimplification, false).toBool();
+}
+
+void SourceDefaults::setSymbolic(bool enabled) {
+  if (enabled == symbolic())
+    return;
+  QSettings().setValue(settings::SymbolicSimplification, enabled);
+  emit changed();
+}
+
+QJsonObject SourceDefaults::options(const QString &representation) {
+  if (CodeView::isSource(representation) && instance().symbolic())
+    return {{"symbolic", true}};
+  return {};
+}
 
 CodeText::CodeText(Session &session, QWidget *parent)
     : QAbstractScrollArea(parent), session_(session) {
@@ -216,7 +460,50 @@ CodeText::CodeText(Session &session, QWidget *parent)
     else
       interrupted_ = true;
   });
+  // A new default reaches the shown function too, whatever this window
+  // chose for it; a hidden window takes it when it shows again.
+  connect(&SourceDefaults::instance(), &SourceDefaults::changed, this, [this] {
+    if (!function_ || !CodeView::isSource(representation_))
+      return;
+    auto options = sourceOptions_;
+    if (SourceDefaults::instance().symbolic())
+      options["symbolic"] = true;
+    else
+      options.remove("symbolic");
+    if (options == sourceOptions_)
+      return;
+    if (isVisible()) {
+      load(*function_, representation_, options);
+    } else {
+      sourceOptions_ = options;
+      interrupted_ = true;
+    }
+  });
   connect(&session_, &Session::unloaded, this, &CodeText::clear);
+  // A drag held beyond an edge scrolls toward it, the faster the farther
+  // out, and the selection follows, as in an editor.
+  dragScroll_.setInterval(DragScrollMs);
+  connect(&dragScroll_, &QTimer::timeout, this, [this] {
+    const QRect area = viewport()->rect();
+    const auto speed = [](int distance, qreal unit) {
+      return std::clamp(1 + int(distance / std::max<qreal>(1, unit)), 1, 20);
+    };
+    auto *rows = verticalScrollBar();
+    if (dragPoint_.y() < 0)
+      rows->setValue(rows->value() - speed(-dragPoint_.y(), lineHeight_));
+    else if (dragPoint_.y() >= area.height())
+      rows->setValue(rows->value() +
+                     speed(dragPoint_.y() - area.height(), lineHeight_));
+    auto *columns = horizontalScrollBar();
+    if (dragPoint_.x() < 0)
+      columns->setValue(columns->value() -
+                        int(speed(-dragPoint_.x(), charWidth_) * charWidth_));
+    else if (dragPoint_.x() >= area.width())
+      columns->setValue(
+          columns->value() +
+          int(speed(dragPoint_.x() - area.width(), charWidth_) * charWidth_));
+    dragTo(dragPoint_);
+  });
 }
 
 void CodeText::updateMetrics() {
@@ -254,8 +541,11 @@ void CodeText::scrollContentsBy(int, int) {
 
 void CodeText::cancel() {
   ++serial_;
+  refreshPages_.reset();
   pendingAddress_.reset();
-  selectedAddress_.reset();
+  // Cancelling hidden-pane work leaves the displayed document and its exact
+  // instruction selection intact. A replacement document clears it below.
+  statusNote_.clear();
   session_.cancelAnalysisReads(this);
   if (loading_) {
     sourceOptions_ = renderedOptions_;
@@ -267,7 +557,11 @@ void CodeText::cancel() {
 }
 
 void CodeText::clear() {
+  ++DocumentVersion;
+  complete_ = false;
   cancel();
+  selectedAddress_.reset();
+  placeAfterLoad_.reset();
   source_.clear();
   sourceBytes_ = renderedChars_ = renderedRows_ = widestLine_ = 0;
   interrupted_ = false;
@@ -276,6 +570,9 @@ void CodeText::clear() {
   regions_ = {};
   regionsValid_ = false;
   prelude_ = {};
+  epilogue_ = {};
+  references_.clear();
+  unresolvedDeclaration_.clear();
   declarations_.reset();
   library_.reset({}, {}, {});
   blocksAfterLoad_.clear();
@@ -306,13 +603,38 @@ void CodeText::clear() {
 
 void CodeText::load(Address function, const QString &representation,
                     std::optional<QJsonObject> options) {
+  ++DocumentVersion;
   const bool same = function_ == function && representation_ == representation;
-  const auto nextOptions =
-      options.value_or(same ? sourceOptions_ : QJsonObject());
+  const auto nextOptions = options.value_or(
+      same ? sourceOptions_ : SourceDefaults::options(representation));
+  const bool nameRefresh =
+      ((complete_ && !interrupted_) || refreshPages_) && !lines_.isEmpty() &&
+      same && nextOptions == sourceOptions_ &&
+      session_.queries().localNamesOnly() && CodeView::isSource(representation);
+  pageLines_ = nameRefresh
+                   ? ::neverd::limits::gui::kCodeViewNameRefreshPageLines
+                   : ::neverd::limits::gui::kCodeViewPageLines;
+  complete_ = false;
+  // A reload of complete text keeps its place; one a newer reload cuts short
+  // keeps the place the first one saved.
+  if (!same) {
+    placeAfterLoad_.reset();
+    selectAllAfterLoad_ = false;
+  } else if (!placeAfterLoad_ && !loading_ && !interrupted_ &&
+             cursorLine_ < lines_.size())
+    placeAfterLoad_ =
+        SourcePlace{lines_[cursorLine_].sourceLine, cursorColumn_,
+                    lines_[std::clamp(verticalScrollBar()->value(), 0,
+                                      int(lines_.size()) - 1)]
+                        .sourceLine};
   cancel();
+  selectedAddress_.reset();
+  if (nameRefresh)
+    refreshPages_.emplace();
   function_ = function;
   representation_ = representation;
   sourceOptions_ = nextOptions;
+  unresolvedDeclaration_.clear();
   const quint64 serial = ++serial_;
   if (!same) {
     renderedOptions_ = {};
@@ -324,18 +646,23 @@ void CodeText::load(Address function, const QString &representation,
   }
   inComment_ = false;
   loading_ = true;
-  viewport()->setCursor(Qt::IBeamCursor);
+  if (!nameRefresh)
+    viewport()->setCursor(Qt::IBeamCursor);
   interrupted_ = false;
   // Folding state survives a refresh of the same function as "fold all";
   // a new function opens at its definition, its prelude folded.
   foldAfterLoad_ = same && library_.libraryFolded();
   foldPreludeAfterLoad_ = !same || library_.isFolded(PreludeRegion);
+  foldEpilogueAfterLoad_ = !same || library_.isFolded(EpilogueRegion);
+  foldDetailsAfterLoad_ = !same;
   blocksAfterLoad_ = same ? library_.foldedBlocks() : QSet<QString>();
   blockStructureAfterLoad_ = same ? library_.blockStructure() : QString();
   if (!same)
     library_.reset({}, {}, {});
-  emit foldingChanged();
-  status_ = tr("Decompiling…");
+  if (!nameRefresh) {
+    emit foldingChanged();
+    status_ = tr("Decompiling…");
+  }
   emit statusChanged();
   request(0, serial);
 }
@@ -343,6 +670,25 @@ void CodeText::load(Address function, const QString &representation,
 void CodeText::setSourceOptions(const QJsonObject &options) {
   if (function_ && CodeView::isSource(representation_))
     load(*function_, representation_, options);
+}
+
+QJsonObject CodeText::defaultSourceOptions() const {
+  return SourceDefaults::options(representation_);
+}
+
+void CodeText::cancelTransformation() {
+  if (loading_ && lines_.isEmpty() && sourceOptions_.value("symbolic").toBool())
+    showOrdinary(tr("Cancelled"));
+  else
+    cancel();
+}
+
+void CodeText::showOrdinary(const QString &why) {
+  auto options = sourceOptions_;
+  options.remove("symbolic");
+  load(*function_, representation_, options);
+  // Pages arrive from the event loop, after this.
+  statusNote_ = why;
 }
 
 void CodeText::request(int offset, quint64 serial) {
@@ -354,20 +700,67 @@ void CodeText::request(int offset, quint64 serial) {
        {"representation", representation_},
        {"source_options", sourceOptions_},
        {"offset", offset},
-       {"limit", PageLines}},
+       {"limit", pageLines_}},
       this,
       [this, offset, serial](const QJsonObject &payload) {
         if (serial != serial_)
           return;
-        appendPage(payload, offset);
-        renderedOptions_ = sourceOptions_;
         const auto next = payload.value("next_offset");
-        if (!next.isNull() && next.toInt() > offset) {
-          rebuildLines(true);
-          request(next.toInt(), serial);
-          return;
+        struct RefreshPlace {
+          int cursor, top, horizontal;
+          std::optional<int> anchor;
+          QVector<EditName> names;
+        };
+        std::optional<RefreshPlace> refreshPlace;
+        std::optional<QSignalBlocker> rowsBlocked, columnsBlocked;
+        if (refreshPages_) {
+          refreshPages_->append(payload);
+          if (!next.isNull() && next.toInt() > offset) {
+            request(next.toInt(), serial);
+            return;
+          }
+          // Take the latest place, including scrolling or a selection made
+          // while the replacement was loading. No partial page is painted.
+          const auto original = [this](int line, int column) {
+            const int at = displayPosition(line, column);
+            return library_.canFold() ? library_.originalPosition(at) : at;
+          };
+          refreshPlace =
+              RefreshPlace{original(cursorLine_, cursorColumn_),
+                           lines_[std::clamp(verticalScrollBar()->value(), 0,
+                                             int(lines_.size()) - 1)]
+                               .sourceLine,
+                           horizontalScrollBar()->value(),
+                           anchor_ ? std::optional<int>(original(
+                                         anchor_->first, anchor_->second))
+                                   : std::nullopt,
+                           editNames_};
+          foldAfterLoad_ = library_.libraryFolded();
+          foldPreludeAfterLoad_ = library_.isFolded(PreludeRegion);
+          foldEpilogueAfterLoad_ = library_.isFolded(EpilogueRegion);
+          blocksAfterLoad_ = library_.foldedBlocks();
+          blockStructureAfterLoad_ = library_.blockStructure();
+          rowsBlocked.emplace(verticalScrollBar());
+          columnsBlocked.emplace(horizontalScrollBar());
+          auto pages = std::move(*refreshPages_);
+          refreshPages_.reset();
+          int pageOffset = 0;
+          for (const auto &page : pages) {
+            appendPage(page, pageOffset);
+            pageOffset = page.value("next_offset").toInt();
+          }
+        } else {
+          appendPage(payload, offset);
+          if (!next.isNull() && next.toInt() > offset) {
+            renderedOptions_ = sourceOptions_;
+            rebuildLines(true);
+            request(next.toInt(), serial);
+            return;
+          }
         }
+        renderedOptions_ = sourceOptions_;
         loading_ = false;
+        complete_ = true;
         // Folding needs the whole function: regions span pages.
         library_.reset(source_, sourceRows_,
                        regionsValid_ ? foldRegions() : QJsonArray(),
@@ -376,13 +769,101 @@ void CodeText::request(int offset, quint64 serial) {
           library_.setFolded(true);
         if (foldPreludeAfterLoad_)
           library_.setRegionFolded(PreludeRegion, true);
-        if (!blocksAfterLoad_.isEmpty() &&
-            library_.blockStructure() == blockStructureAfterLoad_)
+        if (foldEpilogueAfterLoad_)
+          library_.setRegionFolded(EpilogueRegion, true);
+        if (foldDetailsAfterLoad_)
+          library_.setFoldedBlocks(library_.defaultDetailBlocks());
+        else if (!blocksAfterLoad_.isEmpty() &&
+                 library_.blockStructure() == blockStructureAfterLoad_)
           library_.setFoldedBlocks(blocksAfterLoad_);
         // Unfolded pages are already colored and mapped. Only a changed
         // projection requires rebuilding earlier lines.
         rebuildLines(!library_.anyFolded());
         emit foldingChanged();
+        if (refreshPlace && !lines_.isEmpty()) {
+          // Local-name metadata tracks each occurrence across changes in
+          // spelling length. Keep a selected identifier selected in full.
+          auto oldNames = std::move(refreshPlace->names);
+          auto newNames = editNames_;
+          const auto byBegin = [](const EditName &a, const EditName &b) {
+            return a.begin < b.begin;
+          };
+          std::sort(oldNames.begin(), oldNames.end(), byBegin);
+          std::sort(newNames.begin(), newNames.end(), byBegin);
+          const bool matching =
+              oldNames.size() == newNames.size() &&
+              std::equal(oldNames.cbegin(), oldNames.cend(), newNames.cbegin(),
+                         [](const EditName &a, const EditName &b) {
+                           return a.target.value("original") ==
+                                      b.target.value("original") &&
+                                  a.target.value("identity") ==
+                                      b.target.value("identity") &&
+                                  a.target.value("kind") ==
+                                      b.target.value("kind") &&
+                                  a.target.value("address") ==
+                                      b.target.value("address");
+                         });
+          const auto mapped = [&](int position) {
+            int shift = 0;
+            if (matching)
+              for (int i = 0; i < oldNames.size(); ++i) {
+                const auto &oldName = oldNames[i];
+                const auto &newName = newNames[i];
+                if (position < oldName.begin)
+                  break;
+                if (position < oldName.end)
+                  return newName.begin + std::min(position - oldName.begin,
+                                                  newName.end - newName.begin);
+                shift = newName.end - oldName.end;
+              }
+            return position + shift;
+          };
+          const auto projected = [&](int original) {
+            const int at = library_.canFold()
+                               ? library_.projectedPosition(mapped(original))
+                               : mapped(original);
+            const int line =
+                std::clamp(int(std::upper_bound(lineStarts_.cbegin(),
+                                                lineStarts_.cend(), at) -
+                               lineStarts_.cbegin()) -
+                               1,
+                           0, int(lines_.size()) - 1);
+            return std::pair{line,
+                             std::clamp(at - lineStarts_[line], 0,
+                                        int(lines_[line].styled.text.size()))};
+          };
+          const auto cursor = projected(refreshPlace->cursor);
+          cursorLine_ = cursor.first;
+          cursorColumn_ = cursor.second;
+          anchor_ = refreshPlace->anchor
+                        ? std::optional(projected(*refreshPlace->anchor))
+                        : std::nullopt;
+          if (matching)
+            for (int i = 0; i < oldNames.size(); ++i)
+              if (highlight_ == oldNames[i].target.value("name").toString()) {
+                highlight_ = newNames[i].target.value("name").toString();
+                break;
+              }
+          verticalScrollBar()->setValue(
+              library_.canFold() ? library_.displayLine(refreshPlace->top)
+                                 : refreshPlace->top);
+          horizontalScrollBar()->setValue(refreshPlace->horizontal);
+          placeAfterLoad_.reset();
+        } else if (const auto place = std::exchange(placeAfterLoad_, {});
+                   place && !lines_.isEmpty()) {
+          // The first shown line at or after a source line.
+          const auto shown = [this](int source) {
+            for (int i = 0; i < lines_.size(); ++i)
+              if (lines_[i].sourceLine >= source)
+                return i;
+            return int(lines_.size()) - 1;
+          };
+          cursorLine_ = shown(place->cursorLine);
+          cursorColumn_ =
+              std::clamp(place->cursorColumn, 0,
+                         int(lines_[cursorLine_].styled.text.size()));
+          verticalScrollBar()->setValue(shown(place->topLine));
+        }
         const auto mapping = payload.value("mapping_status").toString();
         status_ = session_.metadata().value("analyzed").toBool()
                       ? QString()
@@ -397,27 +878,72 @@ void CodeText::request(int offset, quint64 serial) {
           status_ +=
               QStringLiteral(" · ") +
               tr("Saved variable names belong to a different source rendering");
+        if (!payload.value("stale_variable_types").toArray().isEmpty())
+          status_ +=
+              QStringLiteral(" · ") + tr("Saved variable types need review: "
+                                         "the analysis or local types changed");
+        for (const auto &edit :
+             payload.value("variable_edit_results").toArray())
+          if (!edit.toObject().value("applied").toBool()) {
+            status_ += QStringLiteral(" · ") +
+                       tr("Saved variable associations need review: ") +
+                       edit.toObject().value("refusal").toString();
+            break;
+          }
+        for (const auto &edit : payload.value("call_type_results").toArray())
+          if (!edit.toObject().value("applied").toBool()) {
+            status_ += QStringLiteral(" · ") +
+                       tr("Saved call-site declaration needs review: ") +
+                       edit.toObject().value("refusal").toString();
+            break;
+          }
         if (sourceOptions_.value("symbolic").toBool())
           status_ += QStringLiteral(" · ") + tr("Symbolic simplification");
         if (representation_ == QLatin1String("llvmc"))
           status_ +=
               QStringLiteral(" · ") + sourceOptions_.value("llvm_optimization")
                                           .toString(QStringLiteral("O2"));
+        if (!statusNote_.isEmpty())
+          status_ += (status_.isEmpty() ? QString() : QStringLiteral(" · ")) +
+                     std::exchange(statusNote_, {});
         updateRange();
         viewport()->update();
         if (const auto address = std::exchange(pendingAddress_, {}))
           selectAddress(*address);
+        if (selectAllAfterLoad_)
+          selectAll();
         emit statusChanged();
       },
-      [this, serial](const QString &, const QString &message) {
+      [this, offset, serial](const QString &code, const QString &message) {
         if (serial != serial_)
           return;
+        if (code == QLatin1String("budget_exceeded") &&
+            pageLines_ > ::neverd::limits::gui::kCodeViewPageLines) {
+          pageLines_ = ::neverd::limits::gui::kCodeViewPageLines;
+          request(offset, serial);
+          return;
+        }
         loading_ = false;
         pendingAddress_.reset();
+        placeAfterLoad_.reset();
+        selectAllAfterLoad_ = false;
+        if (refreshPages_) {
+          refreshPages_.reset();
+          interrupted_ = true;
+          status_ = tr("Could not refresh source: %1").arg(message);
+          emit statusChanged();
+          return;
+        }
         if (!lines_.isEmpty() && sourceOptions_ != renderedOptions_) {
           sourceOptions_ = renderedOptions_;
           status_ = tr("Transformation failed: %1").arg(message);
           emit statusChanged();
+          return;
+        }
+        // Symbolic simplification never keeps a function from showing: its
+        // ordinary source follows.
+        if (sourceOptions_.value("symbolic").toBool()) {
+          showOrdinary(tr("Transformation failed: %1").arg(message));
           return;
         }
         // A refused function reads in no language and names nothing.
@@ -458,6 +984,8 @@ void CodeText::appendPage(const QJsonObject &payload, int offset) {
     regionsValid_ =
         payload.value("library_regions").isArray() && pageOffset >= 0;
     prelude_ = payload.value("prelude").toObject();
+    epilogue_ = payload.value("epilogue").toObject();
+    references_.clear();
     declarations_.reset();
     byteOffset_ = std::max<qint64>(0, pageOffset);
     sourceNames_.clear();
@@ -486,6 +1014,15 @@ void CodeText::appendPage(const QJsonObject &payload, int offset) {
   }
   for (const auto &row : payload.value("rows").toArray())
     sourceRows_.append(row.toObject().toVariantMap());
+  for (const auto &value : payload.value("references").toArray()) {
+    const auto reference = value.toObject();
+    const auto line = reference.value("line").toInteger(-1);
+    const auto address = addressValue(reference.value("address"));
+    const QString name = reference.value("name").toString();
+    if (line >= 0 && line < std::numeric_limits<int>::max() && address &&
+        !name.isEmpty())
+      references_[int(line)].append({name, *address});
+  }
   // A source name's bytes are in the page that holds its line.
   const QByteArray bytes = text.toUtf8();
   for (const auto &value : payload.value("code_names").toArray()) {
@@ -587,21 +1124,38 @@ QJsonArray CodeText::foldRegions() const {
   // definition kept.
   const qint64 lines = prelude_.value("lines").toInteger(-1);
   const qint64 end = prelude_.value("end_byte").toInteger(-1);
+  const bool llvm = dialectOf(representation_, pageLanguage_) == Dialect::LLVM;
   if (lines > 0 && end > byteOffset_ + 1)
     regions.append(QJsonObject{
         {"id", PreludeRegion},
         {"kind", PreludeRegion},
         {"display_name",
-         tr("%n lines of includes and declarations", nullptr, int(lines))},
+         llvm ? tr("%n lines of declarations", nullptr, int(lines))
+              : tr("%n lines of includes and declarations", nullptr,
+                   int(lines))},
         {"foldable", true},
         {"mapping_status", "mapped"},
         {"spans", QJsonArray{QJsonObject{{"begin_byte", byteOffset_},
                                          {"end_byte", end - 1}}}}});
+  // The epilogue folds to its summary line too, the final newline kept.
+  const qint64 tail = epilogue_.value("lines").toInteger(-1);
+  const qint64 begin = epilogue_.value("begin_byte").toInteger(-1);
+  const qint64 last = byteOffset_ + sourceBytes_ - 1;
+  if (tail > 0 && begin >= byteOffset_ && begin < last)
+    regions.append(QJsonObject{
+        {"id", EpilogueRegion},
+        {"kind", EpilogueRegion},
+        {"display_name",
+         tr("%n lines of attributes and metadata", nullptr, int(tail))},
+        {"foldable", true},
+        {"mapping_status", "mapped"},
+        {"spans",
+         QJsonArray{QJsonObject{{"begin_byte", begin}, {"end_byte", last}}}}});
   return regions;
 }
 
 void CodeText::rebuildLines(bool append) {
-  const bool folding = !loading_ && library_.canFold();
+  const bool folding = (!loading_ || refreshPages_) && library_.canFold();
   const QString display = folding ? library_.text() : source_;
   const QVariantList &rows = folding ? library_.mappings() : sourceRows_;
   const int previousLine = cursorLine_;
@@ -612,12 +1166,20 @@ void CodeText::rebuildLines(bool append) {
     renderedChars_ = renderedRows_ = widestLine_ = 0;
   }
   int start = renderedChars_;
+  const bool addressLabels = labelsNameAddresses();
   while (start < display.size()) {
     int end = int(display.indexOf(QLatin1Char('\n'), start));
     if (end < 0)
       end = int(display.size());
     Line line;
     line.styled.text = display.mid(start, end - start);
+    // A label's row is the block it labels, though the rows the engine maps
+    // may give it the instruction of a statement around it.
+    if (addressLabels)
+      if (const auto label = labelDefinition(line.styled.text)) {
+        line.label = true;
+        line.addresses = {label->second};
+      }
     widestLine_ = std::max(widestLine_, int(line.styled.text.size()));
     highlightLine(line, inComment_);
     lines_.append(std::move(line));
@@ -627,7 +1189,7 @@ void CodeText::rebuildLines(bool append) {
   for (int i = renderedRows_; i < rows.size(); ++i) {
     const auto row = rows[i].toMap();
     const int index = row.value(QStringLiteral("line"), -1).toInt();
-    if (index < 0 || index >= lines_.size())
+    if (index < 0 || index >= lines_.size() || lines_[index].label)
       continue;
     for (const auto &address : row.value(QStringLiteral("addresses")).toList())
       if (const auto parsed = parseAddress(address.toString()))
@@ -698,8 +1260,10 @@ QString CodeText::regionAt(const QPoint &position) const {
 
 QString CodeText::blockAt(const QPoint &position) const {
   const int line = lineAt(position.y());
-  const int left = Margin + int((gutterChars_ + 0.5) * charWidth_);
-  const int right = Margin + int((gutterChars_ + 2) * charWidth_);
+  const int left = ::neverd::limits::gui_config::kCodeViewMargin +
+                   int((gutterChars_ + 0.5) * charWidth_);
+  const int right = ::neverd::limits::gui_config::kCodeViewMargin +
+                    int((gutterChars_ + 2) * charWidth_);
   return line >= 0 && line < lines_.size() && position.x() >= left &&
                  position.x() < right
              ? lines_[line].block
@@ -708,7 +1272,8 @@ QString CodeText::blockAt(const QPoint &position) const {
 
 void CodeText::updateMouseCursor(const QPoint &position) {
   const bool clickable =
-      !loading_ && !selecting_ && viewport()->rect().contains(position) &&
+      (!loading_ || refreshPages_) && !selecting_ &&
+      viewport()->rect().contains(position) &&
       (!blockAt(position).isEmpty() || !regionAt(position).isEmpty());
   const auto shape = clickable ? Qt::PointingHandCursor : Qt::IBeamCursor;
   if (viewport()->cursor().shape() != shape)
@@ -758,7 +1323,8 @@ void CodeText::setRegionFolded(const QString &id, bool folded) {
 }
 
 bool CodeText::setCurrentBlockFolded(bool folded) {
-  if (loading_ || cursorLine_ < 0 || cursorLine_ >= lines_.size())
+  if ((loading_ && !refreshPages_) || cursorLine_ < 0 ||
+      cursorLine_ >= lines_.size())
     return false;
   const auto id =
       !lines_[cursorLine_].block.isEmpty()
@@ -777,15 +1343,34 @@ void CodeText::setFolded(bool folded) {
 }
 
 bool CodeText::event(QEvent *event) {
+  // The text keeps Ctrl+A for itself, as IDA's text panes do, whatever a
+  // window-wide command takes the key for.
+  if (event->type() == QEvent::ShortcutOverride &&
+      static_cast<QKeyEvent *>(event)->matches(QKeySequence::SelectAll)) {
+    event->accept();
+    return true;
+  }
+  // A window switch or popup during a drag takes the release with it.
+  if (event->type() == QEvent::FocusOut || event->type() == QEvent::Hide) {
+    dragScroll_.stop();
+    selecting_ = false;
+  }
   if (event->type() == QEvent::ToolTip) {
     auto *help = static_cast<QHelpEvent *>(event);
     const QPoint local = viewport()->mapFrom(this, help->pos());
     if (const QString id = blockAt(local); !id.isEmpty()) {
-      QToolTip::showText(help->globalPos(),
-                         library_.isFolded(id)
-                             ? tr("Expand block (Ctrl+Shift+])")
-                             : tr("Collapse block (Ctrl+Shift+[)"),
-                         this);
+      QToolTip::showText(
+          help->globalPos(),
+          library_.isFolded(id)
+              ? tr("Expand block (%1)")
+                    .arg(QKeySequence(Qt::CTRL | Qt::SHIFT |
+                                      Qt::Key_BracketRight)
+                             .toString(QKeySequence::NativeText))
+              : tr("Collapse block (%1)")
+                    .arg(
+                        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_BracketLeft)
+                            .toString(QKeySequence::NativeText)),
+          this);
       return true;
     }
     if (const QString id = regionAt(local); !id.isEmpty()) {
@@ -793,14 +1378,26 @@ bool CodeText::event(QEvent *event) {
         const auto region = value.toMap();
         if (region.value(QStringLiteral("id")).toString() != id)
           continue;
+        const bool llvm =
+            dialectOf(representation_, pageLanguage_) == Dialect::LLVM;
         QToolTip::showText(
             help->globalPos(),
-            id == QLatin1String(PreludeRegion)
+            id == QLatin1String(PreludeRegion) && llvm
+                ? tr("The target, types, globals and functions this function "
+                     "refers to; click to show them, Keypad - to fold them "
+                     "again.")
+            : id == QLatin1String(PreludeRegion)
                 ? tr("The includes, support types and declarations this code "
                      "compiles with; click to show them, Keypad - to fold "
                      "them again.")
+            : id == QLatin1String(EpilogueRegion)
+                ? tr("The attribute groups and metadata this function uses; "
+                     "click to show them, Keypad - to fold them again.")
             : region.value(QStringLiteral("kind")) == "source-block"
-                ? tr("Expand block (Ctrl+Shift+])")
+                ? tr("Expand block (%1)")
+                      .arg(QKeySequence(Qt::CTRL | Qt::SHIFT |
+                                        Qt::Key_BracketRight)
+                               .toString(QKeySequence::NativeText))
                 : tr("%1\nRecognized library operation; click to show its "
                      "code.")
                       .arg(region.value(QStringLiteral("display_name"))
@@ -819,20 +1416,32 @@ bool CodeText::event(QEvent *event) {
         QToolTip::showText(help->globalPos(), text, this);
         return true;
       }
+    // A global of LLVM IR says what it is and where it goes.
+    if (const int line = lineAt(local.y()); line >= 0 && line < lines_.size())
+      if (const QString text = globalHoverText(line, columnAt(line, local.x()));
+          !text.isEmpty()) {
+        QToolTip::showText(help->globalPos(), text, this);
+        return true;
+      }
     // A type or macro the code declares shows its declaration.
     if (const int line = lineAt(local.y()); line >= 0 && line < lines_.size())
-      if (const QString token =
-              lines_[line].styled.tokenAt(columnAt(line, local.x()));
+      if (const QString token = tokenAt(line, columnAt(line, local.x()));
           !token.isEmpty())
         if (const auto declared = declarationLine(token)) {
           const auto text = QStringView(source_)
                                 .split(QLatin1Char('\n'))
                                 .at(*declared)
                                 .trimmed();
-          QToolTip::showText(help->globalPos(),
-                             tr("%1\nDouble-click to go to the declaration.")
-                                 .arg(text.toString()),
-                             this);
+          // A global of LLVM IR goes first to what the binary names so.
+          const bool global =
+              dialectOf(representation_, pageLanguage_) == Dialect::LLVM &&
+              token.startsWith(QLatin1Char('@'));
+          QToolTip::showText(
+              help->globalPos(),
+              global ? text.toString()
+                     : tr("%1\nDouble-click to go to the declaration.")
+                           .arg(text.toString()),
+              this);
           return true;
         } else if (const auto linked = declarations().linked.constFind(token);
                    linked != declarations().linked.cend()) {
@@ -1002,8 +1611,23 @@ void CodeText::highlightLine(Line &line, bool &inComment) const {
 }
 
 int CodeText::textLeft() const {
-  return Margin + int((gutterChars_ + 2) * charWidth_) -
-         horizontalScrollBar()->value();
+  return ::neverd::limits::gui_config::kCodeViewMargin +
+         int((gutterChars_ + 2) * charWidth_) - horizontalScrollBar()->value();
+}
+
+QRect CodeText::cursorViewportRect() const {
+  qreal x = textLeft();
+  if (cursorLine_ >= 0 && cursorLine_ < lines_.size()) {
+    auto &theme = Theme::instance();
+    auto &layout = lines_[cursorLine_].styled.layout(
+        theme.codeFont(), styleStamp_,
+        [&theme](int role) { return theme.listingRole(role); });
+    if (layout.lineCount())
+      x += layout.lineAt(0).cursorToX(cursorColumn_);
+  }
+  return QRect(qRound(x),
+               (cursorLine_ - verticalScrollBar()->value()) * lineHeight_, 1,
+               lineHeight_);
 }
 
 int CodeText::lineAt(int y) const {
@@ -1040,16 +1664,24 @@ void CodeText::paintEvent(QPaintEvent *) {
       painter.fillRect(row, theme.color(ColorRole::ListingCurrentLine));
     else if (marked_.contains(i) || lines_[i].folded)
       painter.fillRect(row, theme.color(ColorRole::CodeFold));
-    const int gutterRight = Margin + int((gutterChars_ + 2) * charWidth_);
+    const int gutterRight = ::neverd::limits::gui_config::kCodeViewMargin +
+                            int((gutterChars_ + 2) * charWidth_);
     painter.save();
     painter.setClipRect(QRect(
         gutterRight, y, std::max(0, area.width() - gutterRight), lineHeight_));
     auto &layout = lines_[i].styled.layout(font, styleStamp_, codeColor);
-    if (!highlight_.isEmpty() && layout.lineCount()) {
+    if ((!SearchHighlight.Text.isEmpty() || !highlight_.isEmpty()) &&
+        layout.lineCount()) {
       const QTextLine textLine = layout.lineAt(0);
-      for (const int at : tokenOccurrences(lines_[i].styled.text, highlight_)) {
+      const bool searching = !SearchHighlight.Text.isEmpty();
+      const auto matches =
+          searching ? SearchHighlight.matches(lines_[i].styled.text)
+                    : tokenOccurrences(lines_[i].styled.text, highlight_);
+      const int length =
+          searching ? SearchHighlight.Text.size() : highlight_.size();
+      for (const int at : matches) {
         const qreal x0 = textLine.cursorToX(at);
-        const qreal x1 = textLine.cursorToX(at + int(highlight_.size()));
+        const qreal x1 = textLine.cursorToX(at + length);
         painter.fillRect(QRectF(left + x0, y, x1 - x0, lineHeight_),
                          theme.color(ColorRole::ListingHighlight));
       }
@@ -1074,12 +1706,13 @@ void CodeText::paintEvent(QPaintEvent *) {
     }
     painter.restore();
     painter.setPen(theme.color(ColorRole::CodeLineNumber));
-    painter.drawText(
-        QRect(Margin, y, int(gutterChars_ * charWidth_), lineHeight_),
-        Qt::AlignRight | Qt::AlignVCenter,
-        QString::number(lines_[i].sourceLine + 1));
+    painter.drawText(QRect(::neverd::limits::gui_config::kCodeViewMargin, y,
+                           int(gutterChars_ * charWidth_), lineHeight_),
+                     Qt::AlignRight | Qt::AlignVCenter,
+                     QString::number(lines_[i].sourceLine + 1));
     if (!lines_[i].block.isEmpty()) {
-      const qreal x = Margin + (gutterChars_ + 1.25) * charWidth_;
+      const qreal x = ::neverd::limits::gui_config::kCodeViewMargin +
+                      (gutterChars_ + 1.25) * charWidth_;
       const qreal middle = y + lineHeight_ / 2.0;
       const qreal radius = std::min(charWidth_ * 0.35, lineHeight_ * 0.22);
       painter.save();
@@ -1099,6 +1732,7 @@ void CodeText::paintEvent(QPaintEvent *) {
 }
 
 void CodeText::moveCursor(int line, int column, bool extend) {
+  selectAllAfterLoad_ = false;
   pendingAddress_.reset();
   selectedAddress_.reset();
   if (lines_.isEmpty())
@@ -1115,9 +1749,15 @@ void CodeText::moveCursor(int line, int column, bool extend) {
     bar->setValue(cursorLine_);
   else if (cursorLine_ >= bar->value() + visibleLines())
     bar->setValue(cursorLine_ - visibleLines() + 1);
-  if (const auto address = currentAddress())
-    emit locationChanged(*address);
+  // A move of the code's own leaves the rows the disassembly marked, and
+  // takes the disassembly along.
+  if (!following_) {
+    marked_.clear();
+    if (const auto address = currentAddress())
+      emit locationChanged(*address);
+  }
   viewport()->update();
+  emit cursorChanged();
 }
 
 std::optional<Address> CodeText::currentAddress() const {
@@ -1128,6 +1768,12 @@ std::optional<Address> CodeText::currentAddress() const {
       lines_[cursorLine_].addresses.contains(*selectedAddress_))
     return selectedAddress_;
   return lines_[cursorLine_].addresses.front();
+}
+
+QVector<Address> CodeText::currentAddresses() const {
+  return cursorLine_ >= 0 && cursorLine_ < lines_.size()
+             ? lines_[cursorLine_].addresses
+             : QVector<Address>{};
 }
 
 void CodeText::selectAddress(Address address) {
@@ -1152,18 +1798,40 @@ void CodeText::selectAddress(Address address) {
     }
     break;
   }
-  marked_.clear();
+  QVector<int> rows;
   for (int i = 0; i < lines_.size(); ++i)
     if (lines_[i].addresses.contains(address))
-      marked_.append(i);
-  if (!marked_.isEmpty()) {
-    moveCursor(marked_.front(), 0, false);
+      rows.append(i);
+  if (!rows.isEmpty()) {
+    // The disassembly stays on the instruction the user selected there,
+    // though the row's first mapping may be another one.
+    const QScopedValueRollback<bool> following(following_, true);
+    moveCursor(rows.front(), 0, false);
     // Preserve an assembly address that is one of several on this row, so
     // a Tab round trip returns to the instruction the user selected.
     selectedAddress_ = address;
   }
+  marked_ = rows;
   viewport()->update();
   emit addressSelected(address, !marked_.isEmpty());
+}
+
+void CodeText::revealAddress(Address address) {
+  if (loading_ || lines_.isEmpty())
+    return;
+  QVector<int> rows;
+  for (int i = 0; i < lines_.size(); ++i)
+    if (lines_[i].addresses.contains(address))
+      rows.append(i);
+  // A row already under the cursor keeps it where the user put it.
+  if (!rows.isEmpty() && !rows.contains(cursorLine_)) {
+    const QScopedValueRollback<bool> following(following_, true);
+    moveCursor(rows.front(), 0, false);
+  }
+  if (!rows.isEmpty())
+    selectedAddress_ = address;
+  marked_ = rows;
+  viewport()->update();
 }
 
 QString CodeText::currentToken() const {
@@ -1173,7 +1841,7 @@ QString CodeText::currentToken() const {
 }
 
 std::optional<QJsonObject> CodeText::renameTarget() const {
-  if (!function_ || loading_)
+  if (!function_ || loading_ || interrupted_)
     return std::nullopt;
   const auto display = displayPosition(cursorLine_, cursorColumn_);
   if (!library_.regionAt(display).isEmpty())
@@ -1213,7 +1881,8 @@ bool sameLocalTarget(const QJsonObject &a, const QJsonObject &b) {
 QVector<CodeText::LocalReference>
 CodeText::localReferences(const QJsonObject &target) const {
   QVector<LocalReference> references;
-  if (!function_ || loading_ || !sameLocalTarget(target, target))
+  if (!function_ || loading_ || interrupted_ ||
+      !sameLocalTarget(target, target))
     return references;
   QVector<int> starts{0};
   for (int i = 0; i + 1 < source_.size(); ++i)
@@ -1281,7 +1950,7 @@ bool CodeText::selectLocalReference(const QJsonObject &target,
 }
 
 std::optional<QJsonObject> CodeText::commentTarget() const {
-  if (!function_ || loading_ || lines_.isEmpty())
+  if (!function_ || loading_ || interrupted_ || lines_.isEmpty())
     return std::nullopt;
   const auto position = displayPosition(cursorLine_, 0);
   if (library_.regionAt(position) == QLatin1String(PreludeRegion))
@@ -1298,10 +1967,90 @@ std::optional<QJsonObject> CodeText::commentTarget() const {
                        {"anchor", row.value("code_anchor").toString()},
                        {"text", row.value("code_comment").toString()}};
     // A note saved before the engine could map this row retains its source
-    // identity; adding an address mapping must not hide subsequent edits.
-    if (!row.value("code_comment_is_source").toBool())
+    // identity; adding an address mapping must not hide subsequent edits. A
+    // label's row maps to its block only for navigation: the worker shows an
+    // instruction's comment on the rows the engine maps, so a note on the
+    // label stays the line's.
+    if (!row.value("code_comment_is_source").toBool() &&
+        !lines_[cursorLine_].label)
       if (const auto at = currentAddress())
         target["mapped_address"] = hexAddress(*at);
+    return target;
+  }
+  return std::nullopt;
+}
+
+std::optional<CodeText::NumberTarget> CodeText::numberTarget() const {
+  // The worker edits the source views it decorates.
+  if (!function_ || loading_ || interrupted_ || lines_.isEmpty() ||
+      !editMetadata_ || !CodeView::isSource(representation_) ||
+      cursorLine_ >= lines_.size())
+    return std::nullopt;
+  const auto display = displayPosition(cursorLine_, cursorColumn_);
+  if (!library_.regionAt(display).isEmpty())
+    return std::nullopt;
+  const int position =
+      library_.canFold() ? library_.originalPosition(display) : display;
+  const int start =
+      position > 0
+          ? int(source_.lastIndexOf(QLatin1Char('\n'), position - 1)) + 1
+          : 0;
+  const int line = int(QStringView(source_).left(start).count(u'\n'));
+  QVariantMap row;
+  for (const auto &value : sourceRows_)
+    if (auto candidate = value.toMap();
+        candidate.value("line").toInt() == line &&
+        candidate.contains("code_anchor")) {
+      row = std::move(candidate);
+      break;
+    }
+  if (row.isEmpty())
+    return std::nullopt;
+  NumberTarget target;
+  target.line = line;
+  target.anchor = row.value("code_anchor").toString();
+  const QString language = this->language();
+  target.syntax = language == QLatin1String("rust") ? LiteralSyntax::Rust
+                  : language == QLatin1String("go") ? LiteralSyntax::Go
+                                                    : LiteralSyntax::C;
+  // A block comment carries over lines; the lines before say whether this
+  // one starts in one.
+  bool inComment = false;
+  for (int at = 0; at < start;) {
+    const int end = int(source_.indexOf(QLatin1Char('\n'), at));
+    if (end < 0 || end >= start)
+      break;
+    (void)integerLiterals(source_.mid(at, end - at).toStdString(),
+                          target.syntax, inComment);
+    at = end + 1;
+  }
+  bool anchorInComment = inComment;
+  int end = int(source_.indexOf(QLatin1Char('\n'), start));
+  if (end < 0)
+    end = int(source_.size());
+  const auto shown = integerLiterals(
+      source_.mid(start, end - start).toStdString(), target.syntax, inComment);
+  // The engine's own spelling, which the worker spells the other bases from;
+  // the shown line counts the same literals.
+  const auto written = integerLiterals(target.anchor.toStdString(),
+                                       target.syntax, anchorInComment);
+  // The literal under the cursor, or the one it just passed.
+  const auto column =
+      std::size_t(source_.mid(start, position - start).toUtf8().size());
+  for (std::size_t i = 0; i < shown.size() && i < written.size(); ++i) {
+    if (column < shown[i].Begin || column > shown[i].End ||
+        (column == shown[i].End && i + 1 < shown.size() &&
+         shown[i + 1].Begin == column))
+      continue;
+    target.index = int(i);
+    target.literal = written[i];
+    target.shown = shown[i].Radix;
+    const auto radix = row.value("code_number_radixes")
+                           .toMap()
+                           .value(QString::number(i))
+                           .toString();
+    target.chosen =
+        literalRadixNamed(radix.toStdString()).value_or(LiteralRadix::Number);
     return target;
   }
   return std::nullopt;
@@ -1344,6 +2093,7 @@ QString CodeText::allText() const {
 bool CodeText::findText(const QString &text, bool forward) {
   if (text.isEmpty())
     return false;
+  const bool folding = (!loading_ || refreshPages_) && library_.canFold();
   QVector<int> starts{0};
   for (int i = 0; i + 1 < source_.size(); ++i)
     if (source_[i] == '\n')
@@ -1352,7 +2102,7 @@ bool CodeText::findText(const QString &text, bool forward) {
   // rows, such as the prelude or a library operation, is the cursor's row;
   // the hidden body of a block follows its header.
   int current = cursorLine_;
-  if (!loading_ && library_.canFold() && cursorLine_ < lines_.size())
+  if (folding && cursorLine_ < lines_.size())
     current = library_.sourceLineAt(displayPosition(
         cursorLine_,
         forward ? int(lines_[cursorLine_].styled.text.size()) : 0));
@@ -1365,14 +2115,13 @@ bool CodeText::findText(const QString &text, bool forward) {
     const int column = int(source_.mid(starts[index], end - starts[index])
                                .indexOf(text, 0, Qt::CaseInsensitive));
     if (column >= 0) {
-      if (!loading_ && library_.unfoldSourceLine(index)) {
+      if (folding && library_.unfoldSourceLine(index)) {
         rebuildLines();
         emit foldingChanged();
       }
       const int position =
-          !loading_ && library_.canFold()
-              ? library_.projectedPosition(starts[index] + column)
-              : starts[index] + column;
+          folding ? library_.projectedPosition(starts[index] + column)
+                  : starts[index] + column;
       const auto next =
           std::upper_bound(lineStarts_.cbegin(), lineStarts_.cend(), position);
       const int line = std::max(0, int(next - lineStarts_.cbegin()) - 1);
@@ -1384,6 +2133,79 @@ bool CodeText::findText(const QString &text, bool forward) {
     }
   }
   return false;
+}
+
+std::pair<int, int> CodeText::searchSelection() const {
+  if (lines_.isEmpty())
+    return {0, 0};
+  const auto original = [this](int line, int column) {
+    const int at = displayPosition(line, column);
+    return library_.canFold() ? library_.originalPosition(at) : at;
+  };
+  const int cursor = original(cursorLine_, cursorColumn_);
+  const int anchor =
+      anchor_ ? original(anchor_->first, anchor_->second) : cursor;
+  return {std::min(cursor, anchor), std::max(cursor, anchor)};
+}
+
+QString CodeText::searchSeed() const {
+  const auto [begin, end] = searchSelection();
+  const auto selected = source_.mid(begin, end - begin);
+  return !selected.isEmpty() && !selected.contains(u'\n') ? selected
+                                                          : currentToken();
+}
+
+void CodeText::setSearchHighlight(const ViewSearchQuery &query) {
+  SearchHighlight = query;
+  viewport()->update();
+}
+
+bool CodeText::selectSearchRange(int begin, int length) {
+  if (!complete() || begin < 0 || length <= 0 || begin > source_.size() ||
+      length > source_.size() - begin)
+    return false;
+  const int line = QStringView(source_).left(begin).count(u'\n');
+  const int lastLine =
+      line + QStringView(source_).mid(begin, length).count(u'\n');
+  bool unfolded = false;
+  for (int row = line; row <= lastLine; ++row)
+    unfolded |= library_.unfoldSourceLine(row);
+  if (unfolded) {
+    rebuildLines();
+    emit foldingChanged();
+  }
+  const auto projected = [this](int at) {
+    const int position =
+        library_.canFold() ? library_.projectedPosition(at) : at;
+    const int row =
+        std::clamp(int(std::upper_bound(lineStarts_.cbegin(),
+                                        lineStarts_.cend(), position) -
+                       lineStarts_.cbegin()) -
+                       1,
+                   0, int(lines_.size()) - 1);
+    return std::pair{row, position - lineStarts_[row]};
+  };
+  const auto first = projected(begin);
+  const auto last = projected(begin + length);
+  // Searching this pane must not navigate the assembly or request another
+  // function. Tab remains the explicit synchronization gesture.
+  const QScopedValueRollback<bool> following(following_, true);
+  moveCursor(first.first, first.second, false);
+  moveCursor(last.first, last.second, true);
+  auto &layout = lines_[first.first].styled.layout(Theme::instance().codeFont(),
+                                                   styleStamp_, codeColor);
+  if (layout.lineCount()) {
+    const qreal left = textLeft() + layout.lineAt(0).cursorToX(first.second);
+    const qreal right = textLeft() + layout.lineAt(0).cursorToX(last.second);
+    const qreal gutter = textLeft() + horizontalScrollBar()->value();
+    if (left < gutter || right - left > viewport()->width() - gutter)
+      horizontalScrollBar()->setValue(horizontalScrollBar()->value() +
+                                      int(left - gutter));
+    else if (right > viewport()->width())
+      horizontalScrollBar()->setValue(horizontalScrollBar()->value() +
+                                      int(right - viewport()->width()));
+  }
+  return true;
 }
 
 void CodeText::keyPressEvent(QKeyEvent *event) {
@@ -1426,6 +2248,10 @@ void CodeText::keyPressEvent(QKeyEvent *event) {
     QApplication::clipboard()->setText(selectedText());
     return;
   }
+  if (event->matches(QKeySequence::SelectAll)) {
+    selectAll();
+    return;
+  }
   const auto foldModifiers = Qt::ControlModifier | Qt::ShiftModifier;
   if ((event->modifiers() & foldModifiers) == foldModifiers) {
     if (event->key() == Qt::Key_BracketLeft ||
@@ -1456,15 +2282,48 @@ void CodeText::keyPressEvent(QKeyEvent *event) {
       if (hasPrelude() && !preludeFolded() &&
           cursorLine_ < prelude_.value("lines").toInteger(0))
         setPreludeFolded(true);
+      else if (hasEpilogue() && !epilogueFolded() && cursorLine_ >= 0 &&
+               cursorLine_ < lines_.size() &&
+               lines_[cursorLine_].sourceLine >= epilogueLine())
+        setEpilogueFolded(true);
       return;
     }
   }
   QAbstractScrollArea::keyPressEvent(event);
 }
 
+void CodeText::selectAll() {
+  selectAllAfterLoad_ = loading_;
+  if (lines_.isEmpty())
+    return;
+  pendingAddress_.reset();
+  selectedAddress_.reset();
+  anchor_ = std::pair{0, 0};
+  cursorLine_ = int(lines_.size()) - 1;
+  cursorColumn_ = int(lines_.back().styled.text.size());
+  viewport()->update();
+}
+
+void CodeText::dragTo(const QPoint &position) {
+  if (lines_.isEmpty())
+    return;
+  selectAllAfterLoad_ = false;
+  pendingAddress_.reset();
+  selectedAddress_.reset();
+  const QRect area = viewport()->rect();
+  const int y = std::clamp(position.y(), 0, std::max(0, area.height() - 1));
+  const int line = std::clamp(lineAt(y), 0, int(lines_.size()) - 1);
+  if (!anchor_)
+    anchor_ = std::pair{cursorLine_, cursorColumn_};
+  cursorLine_ = line;
+  cursorColumn_ = columnAt(line, position.x());
+  viewport()->update();
+}
+
 void CodeText::mousePressEvent(QMouseEvent *event) {
   setFocus(Qt::MouseFocusReason);
   selecting_ = false;
+  dragScroll_.stop();
   if (event->button() != Qt::LeftButton && event->button() != Qt::RightButton)
     return;
   if (event->button() == Qt::LeftButton) {
@@ -1483,13 +2342,19 @@ void CodeText::mousePressEvent(QMouseEvent *event) {
   if (line < 0)
     return;
   const int column = columnAt(line, int(event->position().x()));
-  if (event->button() == Qt::RightButton && anchor_ && line == cursorLine_)
-    return;
+  // A right click inside the selection keeps it for the menu's Copy.
+  if (event->button() == Qt::RightButton && anchor_) {
+    const auto at = std::pair{line, column};
+    const auto cursor = std::pair{cursorLine_, cursorColumn_};
+    if (std::min(*anchor_, cursor) <= at && at <= std::max(*anchor_, cursor))
+      return;
+  }
   moveCursor(line, column, event->modifiers() & Qt::ShiftModifier);
   if (event->button() == Qt::LeftButton) {
     selecting_ = true;
+    dragPoint_ = event->position().toPoint();
     const auto name = sourceNameAt(line, column);
-    highlight_ = name ? name->first : lines_[line].styled.tokenAt(column);
+    highlight_ = name ? name->first : tokenAt(line, column);
   }
   updateMouseCursor(event->position().toPoint());
   viewport()->update();
@@ -1499,19 +2364,17 @@ void CodeText::mouseMoveEvent(QMouseEvent *event) {
   updateMouseCursor(event->position().toPoint());
   if (!selecting_ || !(event->buttons() & Qt::LeftButton) || lines_.isEmpty())
     return;
-  pendingAddress_.reset();
-  selectedAddress_.reset();
-  const int line =
-      std::clamp(lineAt(int(event->position().y())), 0, int(lines_.size()) - 1);
-  if (!anchor_)
-    anchor_ = std::pair{cursorLine_, cursorColumn_};
-  cursorLine_ = line;
-  cursorColumn_ = columnAt(line, int(event->position().x()));
-  viewport()->update();
+  dragPoint_ = event->position().toPoint();
+  dragTo(dragPoint_);
+  if (viewport()->rect().contains(dragPoint_))
+    dragScroll_.stop();
+  else if (!dragScroll_.isActive())
+    dragScroll_.start();
 }
 
 void CodeText::mouseReleaseEvent(QMouseEvent *event) {
   selecting_ = false;
+  dragScroll_.stop();
   updateMouseCursor(event->position().toPoint());
   if (anchor_ && *anchor_ == std::pair{cursorLine_, cursorColumn_})
     anchor_.reset();
@@ -1527,7 +2390,24 @@ void CodeText::mouseDoubleClickEvent(QMouseEvent *event) {
                                                      : name->second.symbol);
     return;
   }
+  if (dialectOf(representation_, pageLanguage_) == Dialect::LLVM) {
+    activateLLVMToken();
+    return;
+  }
   const QString token = currentToken();
+  // A goto label is a place in this function: the code goes to the label,
+  // the disassembly to the block it labels.
+  if (const auto label = addressLabel(token)) {
+    emit labelActivated(label->first);
+    goToLabel(token, label->second, label->first);
+    return;
+  }
+  // So is the function's frame: the disassembly goes to where the function
+  // begins, or to where it reads or writes the member, while the code stays.
+  if (const auto frame = frameAddress(token)) {
+    emit labelActivated(*frame);
+    return;
+  }
   // A type or macro this code declares opens at its declaration; the
   // language's own words name nothing in the binary.
   const auto &words = vocabularyOf(dialectOf(representation_, pageLanguage_));
@@ -1562,6 +2442,129 @@ void CodeText::setPreludeFolded(bool folded) {
   emit foldingChanged();
 }
 
+bool CodeText::hasEpilogue() const {
+  return library_.hasRegion(QLatin1String(EpilogueRegion));
+}
+
+bool CodeText::epilogueFolded() const {
+  return library_.isFolded(QLatin1String(EpilogueRegion));
+}
+
+void CodeText::setEpilogueFolded(bool folded) {
+  if (!hasEpilogue() || epilogueFolded() == folded)
+    return;
+  library_.setRegionFolded(QLatin1String(EpilogueRegion), folded);
+  rebuildLines();
+  if (folded && cursorLine_ >= lines_.size())
+    moveCursor(int(lines_.size()) - 1, 0, false);
+  emit foldingChanged();
+}
+
+int CodeText::epilogueLine() const {
+  return int(source_.count(QLatin1Char('\n')) -
+             epilogue_.value("lines").toInteger(0));
+}
+
+QString CodeText::tokenAt(int line, int column) const {
+  if (line < 0 || line >= lines_.size())
+    return {};
+  if (dialectOf(representation_, pageLanguage_) != Dialect::LLVM)
+    return lines_[line].styled.tokenAt(column);
+  const auto token = llvmTokenAt(lines_[line].styled.text, column);
+  return token ? token->text : QString();
+}
+
+std::optional<Address> CodeText::globalReferenceAt(int line, int column) const {
+  if (line < 0 || line >= lines_.size() || lines_[line].folded ||
+      dialectOf(representation_, pageLanguage_) != Dialect::LLVM)
+    return std::nullopt;
+  const QString &text = lines_[line].styled.text;
+  const auto token = llvmTokenAt(text, column);
+  if (!token || token->comment || !token->text.startsWith(QLatin1Char('@')))
+    return std::nullopt;
+  const auto found = references_.constFind(lines_[line].sourceLine);
+  if (found == references_.cend())
+    return std::nullopt;
+  // A mirror the line reaches at two offsets spells twice: the occurrence
+  // picks its reference.
+  int occurrence = 0;
+  for (const auto &other : llvmTokens(text))
+    if (other.begin < token->begin && other.text == token->text &&
+        !other.comment)
+      ++occurrence;
+  std::optional<Address> last;
+  for (const auto &reference : *found)
+    if (reference.name == token->text) {
+      if (occurrence-- == 0)
+        return reference.address;
+      last = reference.address;
+    }
+  return last;
+}
+
+QString CodeText::globalHoverText(int line, int column) const {
+  const auto address = globalReferenceAt(line, column);
+  if (!address)
+    return {};
+  QString text;
+  if (const auto declared = declarationLine(tokenAt(line, column))) {
+    const auto source = QStringView(source_).split(QLatin1Char('\n'));
+    // The comments over the declaration say what the global is: a mirror's
+    // image bytes and the offsets this function uses, a function's address.
+    int first = *declared;
+    while (first > 0 && source.at(first - 1).trimmed().startsWith(u';'))
+      --first;
+    for (int i = first; i < *declared; ++i) {
+      QStringView comment = source.at(i).trimmed().mid(1);
+      if (comment.startsWith(u' '))
+        comment = comment.mid(1);
+      text += comment;
+      text += QLatin1Char('\n');
+    }
+    // A mirror's declaration spells its whole layout.
+    constexpr int Shown = 160;
+    QString declaration = source.at(*declared).trimmed().toString();
+    if (declaration.size() > Shown)
+      declaration = declaration.left(Shown - 1) + QChar(0x2026);
+    text += declaration + QLatin1Char('\n');
+  }
+  return text + tr("Double-click to go to %1.")
+                    .arg(QStringLiteral("0x") + displayAddress(*address));
+}
+
+bool CodeText::showUnresolvedDeclaration(const QString &name) {
+  const QString token = std::exchange(unresolvedDeclaration_, QString());
+  return !token.isEmpty() && llvmGlobalName(token) == name &&
+         goToDeclaration(token);
+}
+
+void CodeText::activateLLVMToken() {
+  unresolvedDeclaration_.clear();
+  if (cursorLine_ < 0 || cursorLine_ >= lines_.size())
+    return;
+  const auto token =
+      llvmTokenAt(lines_[cursorLine_].styled.text, cursorColumn_);
+  if (!token)
+    return;
+  // A comment names image addresses and what the listing calls them there.
+  if (token->comment) {
+    emit nameActivated(token->text);
+    return;
+  }
+  if (token->text.startsWith(QLatin1Char('@'))) {
+    if (const auto address = globalReferenceAt(cursorLine_, cursorColumn_)) {
+      emit nameActivated(hexAddress(*address));
+      return;
+    }
+    // The binary may name a global the engine gives no address, such as an
+    // import; LLVM's own and NeverD's declarations show in the prelude.
+    unresolvedDeclaration_ = token->text;
+    emit nameActivated(llvmGlobalName(token->text));
+    return;
+  }
+  goToDeclaration(token->text);
+}
+
 const CodeText::Declarations &CodeText::declarations() const {
   if (declarations_)
     return *declarations_;
@@ -1586,6 +2589,10 @@ const CodeText::Declarations &CodeText::declarations() const {
   static const QRegularExpression Declared(
       QStringLiteral(R"(\b([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*[=;])"));
   auto &found = declarations_.emplace();
+  if (dialectOf(representation_, pageLanguage_) == Dialect::LLVM) {
+    found.types = llvmDefinitions(source_);
+    return found;
+  }
   int line = 0;
   std::optional<Address> declaredAt;
   for (const QStringView text : QStringView(source_).split(QLatin1Char('\n'))) {
@@ -1643,6 +2650,115 @@ std::optional<QString> CodeText::linkedSymbol(const QString &name) const {
   return std::nullopt;
 }
 
+bool CodeText::labelsNameAddresses() const {
+  // LLVM C numbers its labels instead.
+  return representation_ == QLatin1String("source") ||
+         representation_ == QLatin1String("c");
+}
+
+std::optional<std::pair<Address, int>>
+CodeText::addressLabel(const QString &name) const {
+  if (!labelsNameAddresses() || !name.startsWith(QLatin1String("L_")))
+    return std::nullopt;
+  int line = 0;
+  for (qsizetype start = 0; start < source_.size(); ++line) {
+    qsizetype end = source_.indexOf(QLatin1Char('\n'), start);
+    if (end < 0)
+      end = source_.size();
+    if (const auto label =
+            labelDefinition(QStringView(source_).mid(start, end - start));
+        label && label->first == name)
+      return std::pair{label->second, line};
+    start = end + 1;
+  }
+  return std::nullopt;
+}
+
+std::optional<Address> CodeText::frameAddress(const QString &name) const {
+  if (!labelsNameAddresses() || !function_)
+    return std::nullopt;
+  // The record of the function's stack, and the storage of it.
+  if (const auto record = frameRecordAddress(name))
+    return record;
+  if (name == QLatin1String("stack_storage") ||
+      name == QLatin1String("frame_base"))
+    return function_;
+  // A member, which the lines from the record's to its closing brace name.
+  const QStringView source(source_);
+  int line = 0;
+  qsizetype start = 0;
+  const auto next = [&]() -> std::optional<QStringView> {
+    if (start >= source.size())
+      return std::nullopt;
+    qsizetype end = source.indexOf(QLatin1Char('\n'), start);
+    if (end < 0)
+      end = source.size();
+    const QStringView text = source.mid(start, end - start);
+    start = end + 1;
+    ++line;
+    return text;
+  };
+  bool inRecord = false, member = false;
+  while (const auto text = next()) {
+    const QStringView trimmed = text->trimmed();
+    if (!inRecord) {
+      for (qsizetype at = trimmed.indexOf(u"frame_"); at >= 0;
+           at = trimmed.indexOf(u"frame_", at + 1)) {
+        qsizetype end = at + 6;
+        while (end < trimmed.size() &&
+               (trimmed[end].isLetterOrNumber() || trimmed[end] == u'_'))
+          ++end;
+        if (frameRecordAddress(trimmed.mid(at, end - at)) &&
+            trimmed.endsWith(u'{'))
+          inRecord = true;
+      }
+      continue;
+    }
+    if (trimmed.startsWith(u'}'))
+      break;
+    member |= containsWord(trimmed, name);
+  }
+  if (!member)
+    return std::nullopt;
+  // Where the cursor's line reads or writes it, else the first line after the
+  // record that does and that an instruction maps to.
+  if (cursorLine_ >= 0 && cursorLine_ < lines_.size() &&
+      !lines_[cursorLine_].label && !lines_[cursorLine_].addresses.isEmpty() &&
+      containsWord(lines_[cursorLine_].styled.text, name))
+    return lines_[cursorLine_].addresses.front();
+  while (const auto text = next()) {
+    if (!containsWord(*text, name))
+      continue;
+    for (const auto &value : std::as_const(sourceRows_)) {
+      const auto row = value.toMap();
+      if (row.value(QStringLiteral("line"), -1).toInt() != line - 1)
+        continue;
+      for (const auto &address :
+           row.value(QStringLiteral("addresses")).toList())
+        if (const auto parsed = parseAddress(address.toString()))
+          return parsed;
+    }
+  }
+  return function_;
+}
+
+void CodeText::goToLabel(const QString &name, int sourceLine, Address address) {
+  if (library_.unfoldSourceLine(sourceLine)) {
+    rebuildLines();
+    emit foldingChanged();
+  }
+  const int line =
+      library_.canFold() ? library_.displayLine(sourceLine) : sourceLine;
+  if (line < 0 || line >= lines_.size())
+    return;
+  highlight_ = name;
+  // The disassembly already shows the block.
+  const QScopedValueRollback<bool> following(following_, true);
+  moveCursor(line, std::max(0, int(lines_[line].styled.text.indexOf(name))),
+             false);
+  selectedAddress_ = address;
+}
+
 bool CodeText::goToDeclaration(const QString &name) {
   const auto source = declarationLine(name);
   if (!source || loading_)
@@ -1650,6 +2766,8 @@ bool CodeText::goToDeclaration(const QString &name) {
   if (hasPrelude() && preludeFolded() &&
       *source < prelude_.value("lines").toInteger(0))
     setPreludeFolded(false);
+  if (hasEpilogue() && epilogueFolded() && *source >= epilogueLine())
+    setEpilogueFolded(false);
   const int line = library_.canFold() ? library_.displayLine(*source) : *source;
   if (line < 0 || line >= lines_.size())
     return false;
@@ -1660,13 +2778,14 @@ bool CodeText::goToDeclaration(const QString &name) {
 }
 
 void CodeText::wheelEvent(QWheelEvent *event) {
-  if (event->modifiers() & Qt::ControlModifier) {
-    Theme::instance().zoomCodeFont(event->angleDelta().y() > 0 ? 1 : -1);
+  if (wheel_.zoomCodeFont(*event, lineHeight_))
     return;
-  }
-  const int steps = event->angleDelta().y() / 120;
-  verticalScrollBar()->setValue(verticalScrollBar()->value() -
-                                steps * WheelLines);
+  const QPoint delta = wheel_.scroll(*event, lineHeight_);
+  verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
+  horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
+  // The selection a drag makes follows the text the wheel scrolls.
+  if (selecting_ && (event->buttons() & Qt::LeftButton))
+    dragTo(dragPoint_);
 }
 
 void CodeText::contextMenuEvent(QContextMenuEvent *event) {
@@ -1733,11 +2852,20 @@ CodeView::CodeView(Session &session, const QString &representation,
   bar->addWidget(fold_);
   lock_->setCheckable(true);
   lock_->setAutoRaise(true);
-  lock_->setIcon(icon(QStringLiteral("lock")));
+  // The padlock closes while the function is kept, as the floating windows'
+  // does; no fill repeats the state.
+  lock_->setProperty("glyphToggle", true);
+  lock_->setIcon(icon(QStringLiteral("lock_open")));
+  connect(lock_, &QToolButton::toggled, lock_, [this](bool locked) {
+    lock_->setIcon(
+        icon(locked ? QStringLiteral("lock") : QStringLiteral("lock_open")));
+  });
   lock_->setToolTip(tr("Keep this function while the disassembly moves on"));
   bar->addWidget(lock_);
   optimize_->setObjectName(QStringLiteral("sourceOptimization"));
   optimize_->setAutoRaise(true);
+  optimize_->setIcon(icon(QStringLiteral("source_optimize")));
+  optimize_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
   optimize_->setText(tr("Optimization"));
   optimize_->setToolTip(tr("Transform the current function"));
   optimize_->setPopupMode(QToolButton::InstantPopup);
@@ -1779,7 +2907,8 @@ CodeView::CodeView(Session &session, const QString &representation,
 void CodeView::addSourceActions(QMenu &menu) {
   if (!isSource(representation()) || !text_->function())
     return;
-  auto *symbolic = menu.addAction(tr("Symbolically simplify this function"));
+  auto *symbolic = menu.addAction(icon(QStringLiteral("source_symbolic")),
+                                  tr("Symbolic simplification"));
   symbolic->setObjectName(QStringLiteral("sourceSymbolic"));
   symbolic->setCheckable(true);
   symbolic->setChecked(text_->sourceOptions().value("symbolic").toBool());
@@ -1791,8 +2920,19 @@ void CodeView::addSourceActions(QMenu &menu) {
       options.remove("symbolic");
     text_->setSourceOptions(options);
   });
+  // The default every function opens with, kept for later sessions.
+  auto *every =
+      menu.addAction(icon(QStringLiteral("source_symbolic_every")),
+                     tr("Symbolic simplification for every function"));
+  every->setObjectName(QStringLiteral("sourceSymbolicEvery"));
+  every->setCheckable(true);
+  every->setChecked(SourceDefaults::instance().symbolic());
+  connect(every, &QAction::triggered, this, [](bool enabled) {
+    SourceDefaults::instance().setSymbolic(enabled);
+  });
   if (representation() == QLatin1String("llvmc")) {
-    auto *recovery = menu.addAction(tr("Recover LLVM control flow"));
+    auto *recovery = menu.addAction(icon(QStringLiteral("source_control_flow")),
+                                    tr("Recover LLVM control flow"));
     recovery->setObjectName(QStringLiteral("sourceLLVMControlFlow"));
     recovery->setCheckable(true);
     recovery->setChecked(
@@ -1805,7 +2945,8 @@ void CodeView::addSourceActions(QMenu &menu) {
         options["llvm_control_flow"] = false;
       text_->setSourceOptions(options);
     });
-    auto *levels = menu.addMenu(tr("LLVM optimization"));
+    auto *levels = menu.addMenu(icon(QStringLiteral("source_optimize")),
+                                tr("LLVM optimization"));
     auto *group = new QActionGroup(levels);
     const auto selected = text_->sourceOptions()
                               .value("llvm_optimization")
@@ -1874,15 +3015,17 @@ void CodeView::addSourceActions(QMenu &menu) {
       });
     }
   }
-  auto *reset = menu.addAction(tr("Restore default source"));
+  auto *reset = menu.addAction(icon(QStringLiteral("undo")),
+                               tr("Restore default source"));
   reset->setObjectName(QStringLiteral("sourceDefault"));
-  reset->setEnabled(!text_->sourceOptions().isEmpty());
+  reset->setEnabled(text_->sourceOptions() != text_->defaultSourceOptions());
   connect(reset, &QAction::triggered, this,
-          [this] { text_->setSourceOptions({}); });
-  auto *cancel = menu.addAction(tr("Cancel transformation"));
+          [this] { text_->setSourceOptions(text_->defaultSourceOptions()); });
+  auto *cancel = menu.addAction(icon(QStringLiteral("cancel")),
+                                tr("Cancel transformation"));
   cancel->setObjectName(QStringLiteral("sourceCancel"));
   cancel->setEnabled(text_->loading());
-  connect(cancel, &QAction::triggered, text_, &CodeText::cancel);
+  connect(cancel, &QAction::triggered, text_, &CodeText::cancelTransformation);
 }
 
 void CodeView::updateRepresentations() {

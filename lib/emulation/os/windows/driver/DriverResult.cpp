@@ -10,8 +10,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "DriverCPUID.h"
+#include "DriverFileSystemJSON.h"
 #include "DriverLoaderViewJSON.h"
+#include "DriverMSR.h"
 #include "DriverPhysicalInventoryJSON.h"
+#include "DriverProcessPeb.h"
 #include "DriverSchedulingJSON.h"
 #include "DriverVaShadowQueryJSON.h"
 #include "DriverVersionQueryJSON.h"
@@ -202,8 +205,11 @@ registryJSON(const std::optional<std::vector<DriverRegistryKey>> &Registry) {
           {field::Type, Value.Type},
           {field::Data,
            llvm::toHex(llvm::ArrayRef<uint8_t>(Value.Data), true)}});
-    Keys.push_back(llvm::json::Object{{field::Path, Key.Path},
-                                      {field::Values, std::move(Values)}});
+    llvm::json::Object Entry{{field::Path, Key.Path},
+                             {field::Values, std::move(Values)}};
+    if (Key.LastWriteTime100ns)
+      Entry[field::LastWriteTime100ns] = *Key.LastWriteTime100ns;
+    Keys.push_back(std::move(Entry));
   }
   return Keys;
 }
@@ -750,6 +756,7 @@ std::string driverResultJSON(const DriverResult &Result) {
       Root[field::Profile] = execution::CheckedX64;
   }
   Root[field::Registry] = registryJSON(Result.Registry);
+  Root[field::FileSystem] = driver_filesystem::stateJSON(Result.FileSystem);
   llvm::json::Object Exports;
   for (const auto &[Name, Present] : Result.Configuration.KernelExports)
     Exports[Name] = Present;
@@ -760,10 +767,15 @@ std::string driverResultJSON(const DriverResult &Result) {
       {field::EventLimit, Result.Configuration.EventLimit},
       {field::TraceMemoryWrites, Result.Configuration.TraceMemoryWrites},
       {field::CPUID, driver_cpuid::toJSON(Result.Configuration.CPUID)},
+      {field::MSRReads, driver_msr::toJSON(Result.Configuration.MSRReads)},
+      {field::ProcessPebs,
+       driver_process_peb::toJSON(Result.Configuration.ProcessPebs)},
       {field::TimeoutMilliseconds, Result.Configuration.TimeoutMilliseconds},
       {field::LoadAddress, Address(Result.Configuration.LoadAddress)},
       {field::Unload, Result.Configuration.Unload},
       {field::Registry, registryJSON(Result.Configuration.Registry)},
+      {field::FileSystem,
+       driver_filesystem::configurationJSON(Result.Configuration.FileSystem)},
       {field::PnpDevices, pnpConfigurationJSON(Result.Configuration)},
       {interruptField::InterruptEvents,
        interruptEventConfigurationJSON(Result.Configuration)},
@@ -774,6 +786,10 @@ std::string driverResultJSON(const DriverResult &Result) {
       {userField::UserMemory,
        userMemoryConfigurationJSON(Result.Configuration)},
       {field::KernelExports, std::move(Exports)}};
+  if (Result.Configuration.RegistrySystemTime100ns)
+    (*Root[field::Configuration]
+          .getAsObject())[field::RegistrySystemTime100ns] =
+        *Result.Configuration.RegistrySystemTime100ns;
   if (Result.Configuration.Scheduling)
     (*Root[field::Configuration].getAsObject())[driver_scheduling::Scheduling] =
         driverSchedulingJSON(*Result.Configuration.Scheduling);
@@ -784,6 +800,11 @@ std::string driverResultJSON(const DriverResult &Result) {
     (*Root[field::Configuration].getAsObject())[field::KernelVaShadowQuery] =
         driver_va_shadow_query::toJSON(
             *Result.Configuration.KernelVaShadowQuery);
+  if (Result.Configuration.DebuggerState)
+    (*Root[field::Configuration].getAsObject())[field::DebuggerState] =
+        llvm::json::Object{
+            {"enabled", Result.Configuration.DebuggerState->Enabled},
+            {"not_present", Result.Configuration.DebuggerState->NotPresent}};
   if (Result.Configuration.VersionQuery)
     (*Root[field::Configuration].getAsObject())[field::VersionQuery] =
         driver_version_query::toJSON(*Result.Configuration.VersionQuery);
@@ -1048,6 +1069,18 @@ std::string driverResultJSON(const DriverResult &Result) {
       Item[field::RequestorProcessID] = Request.RequestorProcessID;
     if (Request.ResponseIndex)
       Item[field::ResponseIndex] = *Request.ResponseIndex;
+    if (Request.FileInformationClass)
+      Item[field::FileInformationClass] = *Request.FileInformationClass;
+    if (Request.FileObject)
+      Item[field::FileObject] = Address(*Request.FileObject);
+    if (Request.FileOpenOperation) {
+      Item[field::FileOpenOperation] = *Request.FileOpenOperation;
+      Item[field::File] = nullptr;
+    }
+    if (Request.FileSystemDevice)
+      Item[field::FileSystemDevice] = Address(*Request.FileSystemDevice);
+    if (Request.FileSystemFileID)
+      Item[field::FileSystemFileID] = *Request.FileSystemFileID;
     if (Request.Kind == DriverRequestKind::Pnp ||
         Request.Kind == DriverRequestKind::Power ||
         Request.Origin == DriverRequestOrigin::DriverAllocatedIRP ||

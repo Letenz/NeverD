@@ -1,16 +1,13 @@
 #include "StringReferences.h"
 
+#include "ResourceLimits.h"
 #include "TextFold.h"
 
 #include <algorithm>
 #include <limits>
 
 namespace neverd::worker {
-namespace {
-
-constexpr std::size_t MaxStringReferencePage = 512;
-
-} // namespace
+namespace {} // namespace
 
 void StringReferenceTable::reset(std::vector<StringReference> rows) {
   rows_ = std::move(rows);
@@ -25,15 +22,26 @@ Json StringReferenceTable::page(const Json &payload,
   const auto offset =
       sizeField(payload, "offset", 0, std::numeric_limits<std::size_t>::max());
   const auto limit = std::max<std::size_t>(
-      1, sizeField(payload, "limit", 128, MaxStringReferencePage));
-  const auto sort = stringField(payload, "sort", "address", 16);
+      1,
+      sizeField(
+          payload, "limit",
+          ::neverd::limits::worker::
+              kStringReferencesStringReferenceTablePageLimitSizeFieldDefault,
+          ::neverd::limits::worker::kStringReferencesMaxStringReferencePage));
+  const auto sort = stringField(
+      payload, "sort", "address",
+      ::neverd::limits::worker::
+          kStringReferencesStringReferenceTablePageSortSortStringFieldMax);
   if (sort != "address" && sort != "text" && sort != "function" &&
       sort != "type")
     throw Error("invalid_request",
                 "sort must be address, text, function or type");
   const bool descending = payload.value("descending", false);
   // The filter and the text compare case-folded in every script.
-  const std::string filter = foldText(stringField(payload, "filter", {}, 4096));
+  const std::string filter = foldText(stringField(
+      payload, "filter", {},
+      ::neverd::limits::worker::
+          kStringReferencesStringReferenceTablePageFilterStringFieldMax));
   std::string key = filter;
   key += '\0';
   key += sort;

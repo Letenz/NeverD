@@ -21,7 +21,10 @@ enum {
 /// Both strings are required and nonempty. The session's loaded analysis image
 /// is neither required nor changed. Requires CPU or driver emulation enabled.
 /// OptionsJSON is NULL for defaults, or a NUL-terminated UTF-8 JSON object of
-/// at most NEVERD_PROCESS_OPTIONS_JSON_LIMIT bytes. Optional keys: backend,
+/// at most NEVERD_PROCESS_OPTIONS_JSON_LIMIT bytes. Excluding the hex
+/// characters of validated Android DEX images and Linux regular-file bytes,
+/// text is also bounded by
+/// NEVERD_PROCESS_OPTIONS_JSON_METADATA_LIMIT. Optional keys: backend,
 /// instruction_limit, event_limit, timeout_microseconds, memory_limit,
 /// stack_size, output_limit, instruction_quantum, arguments and environment.
 /// Limits must be positive integers; arguments/environment are string arrays.

@@ -1,8 +1,28 @@
 **Languages**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](testing.md) | [한국어](../ko/testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` は x64/ARM64 Mach-O の整数、浮動小数点、混合スタック引数をソースパイプラインで検証します。`IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` はメモリ読み取り、呼び出し、スタックアドレスの流出、不透明な intrinsic やメモリ intrinsic に必要な入口ストレージを維持します。値だけを使う経路では宣言済み引数を使い、物理 SP への書き込みを生成せず、レジスタの浮動小数点状態効果を保持します。macOS モバイル行列は復元した Swift を独立にコンパイル・実行します。生成成功だけでは実行の証拠になりません。
+
+`NeverDLLVMCValueTests` は独立した Windows x64 ABI 関数への可変引数呼び出しを O0/O2 と両型保持設定でコンパイルして実行します。ネイティブ x64 で va_arg による値を検証し、他のアーキテクチャでは明示的にスキップします。
+
 [← ドキュメント索引](README.md)
 
 # NeverD のテスト
+
+## 入口スタック値のソース復元
+
+`NeverDSourceEntryBindingTests` は x64/ARM64、PE/ELF、HighC/LLVMC の入口スタック引数をコンパイルして実行します。完全なモジュール、呼び出し元だけの選択、明示的な浮動小数点ビット転送、キャッシュ再利用とリセットを検証します。不完全な書き込み、未整列の引数、フレームアドレスの逸出、未定義入力を拒否する対照を含みます。独立した呼び出し先定義で固定宣言を確認します。ホスト実行はネイティブ Windows ARM64 ドライバーの検証ではありません。 RBP と x29/x30 の復元済みフレームも検証します。保存バイトの上書き、SP だけを戻して RBP を変更した場合、戻り先アドレスの引数化は拒否し、ELF と Windows の保存レジスターの違いも確認します。
+
+追加の行列は、符号付き・符号なしの 1/2/4 バイト読み取りを両 C 経路、全体出力と呼び出し元のみの選択で O0/O2 と UBSan により実行します。呼び出し元は読み取るバイトだけを書き込み、宣言幅を超える読み取りは拒否されます。
+
+混合幅の行列は同一スロットの部分読み取りと完全な読み取りを O0/O2 と UBSan で実行します。ネイティブフレームの対照は両順序を確認し、狭い読み取りのみ、または完全な読み取りが別スロットに属する証拠を拒否します。
+
+既知のレジスタ呼び出しを x64/ARM64 PE/ELF の両 C 経路で、全体と呼び出し元のみの選択について実行します。元の LowIR は間接呼び出しのままです。部分書き込み、不透明な効果、一時値の再利用、メモリスロット、予算超過を拒否するテストも含みます。
+
+`PEFunctionAddresses.*` はスタックフレームのない x64 PE リーフ、所有関係、命令境界、拒否する接頭辞と狭いオペランド、出口、キャンセル、1/2/4/16 ワーカーの一致を検証します。シグネチャテストは全16条件の rel32 の正負変位、明示的な入口範囲、ソース再配置制約を扱います。Python テストは各単一位置条件がすべての元の競合宣言を区別し、代替名と共同で必要な位置を保持して既存宣言を重複させないことを確認します。
+
+`DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
+
+`DriverMSRExecution.*` と `DriverMSRDeclaration.*` は明示した MSR 値、全幅分割、状態保持、反復読み取り、厳密な命令予算、不足・無効な宣言、メモリ権限が増えないことを利用可能なバックエンドで検査します。`KernelMSRRead.*` は未使用宣言の依存を保持します。ネイティブドライバ、ドライバエミュレーション、カーネルスナップショットのテストを実行します。利用不能な WHP/HVF はスキップであり認証ではありません。
 
 NeverD のテストは、表現が期待した形か、バイナリ fixture のパイプライン経路が
 動くか、生成コードが動作を保つか、という 3 つの異なる問いに答えます。変更の
@@ -10,6 +30,22 @@ NeverD のテストは、表現が期待した形か、バイナリ fixture の�
 実行してください。
 
 `PipelineOutcome.ResolvedCalls*` はレジスタ群、call/invoke の同一性、スタックバイトの結合と分割、狭い値が自分のスロットに収まること、バイト不足の拒否を検証します。`MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` は記録されたオフセットを検証します。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` は x64、ARM32、AArch64 の ELF、PE、Mach-O を対象とします。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` は 3 形式で、長さの破壊、書き込み可能・範囲外のソース、同名のローカル関数、誤ったソースレジスタ、別の入口、再配置可能なイメージを拒否します。ホスト C 差分テストでは参照 C を別の翻訳単位で O0、生成 C を O2 でコンパイルし、ホスト最適化器の漸化式の誤コンパイルが参照値を汚さないようにします。AArch64 FMA テストが `-mfma` を要求するのは x86 ホストのみです。
+
+## レガシー GS 復元テスト
+
+`NeverDX86LegacyGSRecoveryTests` は交換と二重交換の普遍的事後条件、全幅のセグメントメモリアドレス、別名、FS・メモリ・フラグ保持、MXCSR との共存、不正な状態と一時領域、原子的拒否、効果保持、予算境界を確認します。`PEFixedImageTest.RawLegacyGS*` はネイティブ符号化の受け入れと証跡の結び付けを確認します。機械状態とネイティブ/LLVM 詳細化テストは未使用の宣言も含め未対応のソース契約を拒否します。`LegacyGSExecutionPolicy.RemainsUnmodeled` は具体実行の拒否を維持します。これは記号実行とポリシーのテストであり、ネイティブ特権命令の実行ではありません。
+
+## MXCSR 復元のテスト
+
+`InterpreterSpecialization.MXCSR*` は任意の初期状態、正確なメモリ値、予約ビット、DAZ、別名、無効な形式、ノード投影、予算境界を検証します。`PEFixedImageTest.RawMXCSR*` は legacy/VEX バイトとマスクを結び付けた記録を検証します。マシン状態とネイティブ/LLVM 精緻化のテストは、未使用の機能でもインターフェースを拡張できないことを確認します。
+
+## セグメント書き込みの復元テスト
+
+`InterpreterSpecialization.SegmentedWrite*` は独立したバイトメモリ結果、全スカラー幅、基底加算の桁あふれ、フレームのエイリアス、上書きされたポインター由来、ノード間の無効化、正確な予算と不足予算を検証します。`SegmentedWritesAndReadsShareLinearMemory` は同一および異なる基底を扱います。`PEFixedImageTest.RawSegmented*` はネイティブバイト、戻りスロットのエイリアス拒否、機能変更後の証跡を検証します。既存の互換性値は保持します。特化、PE 固定イメージ、機械状態、ネイティブ/LLVM 精緻化のテストをビルドしてください。未使用の書き込み機能もソースと証明の拒否対象です。
+
+## 具体的な入口メモリシード
+
+`NeverDSymbolicTests`、`NeverDConcolicTests`、`NeverDConcolicIntegrationTests` を実行します。`LowIRConcolicMemory.*` と記号層のテストは両エンディアン、別名ストア、独立バンク、欠落・不正範囲、リセット、実行後のシード拒否、予算境界、epoch、モデル幅、メモリ候補の再実行と重複排除を検証します。既存のネイティブ形式・アーキテクチャ行列も維持します。
 
 ## テストビルドの構成
 
@@ -1146,6 +1182,10 @@ CPU アフィニティー、新規プロセス、ウォームキャッシュ、R
 
 `SymExpr.*` は 4 ビットの入力とマスクの全組合せで下位端以外の定数範囲を検査し、幅広い値、入れ子の構造操作、既知・未知バイトの再結合、桁上がりの反例も扱います。予算テストは幅の広いノードを再帰境界に置き、予算を超える定数のコピーを拒否します。未知の範囲は式 DAG を増大させず、記号式のまま残す必要があります。 `SymState.*` は両方のバイト順序で、導出したスカラー定数とメモリ領域のリテラル定数を区別し、DAG や保存されたワード全体が変化しないことも確認します。
 
+`SymMBAWitness.*` は、作業予算を変えずに反転入力の次数96/128の積を検査し、下位6ビットの桁上がり入力を全探索します。257ビットまでの語、近接する偶奇変更、予算不足による拒否も対象です。具体的な非ゼロ反例は無益なゼロ化探索を止めるだけで、書き換えを認可しません。`--family complemented-carry-product --count 108` は、反転入力、因子の逆順、偶奇の近接例を含む次数48–256の432例を生成します。従来の全コーパスを性能と出力コストの対照として保持してください。CLIとGUI workerのソーステストは、次数96の両反例フィクスチャを全6経路でO0/O2実行します。
+
+`SymMBAResiduePowers.*` は剰余演算におけるべき乗の周期、偶数入力、小さな指数、乗数の独立した偶奇性、およびちょうどの予算と 1 単位不足する予算を検証します。257 ビットまでの完全なワードの積と、ネイティブ幅での独立したソルバー証明を使用します。`--family residue-power --count 81` は、周期境界の直近の値と単一因子の摂動を含む 16–512 次の 324 ケースを追加します。上限による拒否も結果として保持します。CLI と実際の worker は、独立した乗数を持つ 16/64 次のグループを全 6 ソース経路で O0/O2 実行します。
+
 `SymReadability.*` は減算と補数の表記、結合的演算のコスト、1 ビットおよび広幅リテラル、共有木の飽和、予算付き候補選択、サンプリングを無効にした 3 ビットの総当たり同値性を確認します。`SymMBASample.*` は全演算子、決定的な割り当て、未使用の広幅入力について、狭幅と任意精度の検証を AP 評価器と比較します。評価方式の異なる版で候補品質を比べる場合は、両方の出力を同じ尺度で数え直してください。SDK の版ごとのサイズカウンターは診断専用です。
 
 ## ARM32 とフレーム転送のテスト行列
@@ -1272,9 +1312,11 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `windows-alignment-oracle.yml` は `check_windows_alignment.py` と `WindowsAlignmentCases.def` を使い、独自の x64 Windows 例外を 72 件観測します。九つの aligned SSE 形式を、七つの非整列アドレス／アクセス権のケースと、整列済みだがアクセス不能なページの対照で実行します。例外コード、引数、障害 PC、保存コンテキスト、生の出力、ソースとバイナリのハッシュを保持し、入力と RAM が不変であることを確認します。これは OS の動作の観測であり、KVM/WHP の実行認証や SEH 対応の追加ではありません。
 
-`native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
+`native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 68 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 28 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks = 5615`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 135 ワークロードから 270 件の WHP 結果を要求します。内訳は組み込み 27、WDK 68 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5085 CPU + 270 WHP + 32 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 126 driver environment checks + 116 driver API checks = 5802`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+
+実際の WDK インベントリは `driver_device_queries.c`、`driver_file_objects.c`、`driver_file_handles.c` の通常版と CFG 版もビルドします。`DriverDeviceQueryTests.cpp` と `DriverFileObjectTests.cpp` は可搬版と同じ検証で、両契約、基址、スケジュール方式の参照保持、失敗 CREATE、プロセス識別、最終ハンドル CLEANUP、遅延 CLOSE を確認します。3 系統はネイティブ必須項目であり、インベントリ検証は `NEVERD_WDK_FIXTURE` を持つソースを独立に探索し、WDK ビルドの欠落を検出します。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1714,6 +1756,10 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 
 `SafeSEHReference.*` は不変の SafeSEH テーブルへの所属、不正または曖昧な格納領域、再配置、他のアーキテクチャと形式、分割間の宣言順序を検査します。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` は `NEVERD_NONLOCAL_FINALLY_INPUTS` を使い、ネイティブ MSVC の x86/x64、O0/O2、GS とソース最適化の有無を組み合わせた 32 通りの LLVM 出力を検証します。LLVM と解決済み呼び出しシグネチャを検証し、未対応の x86 ネイティブ EH 再構築は拒否されることも確認します。Windows EH 専用ジョブはネイティブ fixture artifact を取得して実行し、入力ディレクトリがなければテストは明示的にスキップされます。
 
+`RegistrationPrologueSaves.*` と `PipelineOptNone.*` はソースメモリー記録、コールバック引数と選択器の保護、通常コードの最適化を検証します。ネイティブ MSVC 行列は x86 `/Od` (`/GS-`, `/GS`) の `nonlocal_finally_return` を独立した COFF 検証とともに受理します。`check_windows_finally_rewrite.py` は二つの固定ベース、両パッチ方式、最適化前後の IR で、24 回の観測実行と 1536 回の呼び出し、チェーン・スタック保護、負の対照を検査します。EXE から DLL への変換は TLS のない入力のヘッダーだけを変更し、外側の SEH 観測器が例外検索を提供します。他の MSVC 形式は解析と拒否の検査です。
+
+`RegistrationEH4Wrapper.*` は二つのベース、可変・不変の実行時データ、MXCSR 分岐、全経路の定義、呼び出し元フレームの分離、命令・領域の重複、正確な PE 再配置を検査します。両 MSVC 形式に独立した負の対照があります。
+
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` は証明された Windows x64 SEH ハンドラーと通常・例外共有入口からのローカル巻き戻し呼び出しを検証します。反例は巻き戻し割り当ての不一致、不安定または部分幅の SP、独立入口、不完全な入力、欠落・偽造された例外辺、予算不足、不明なスタックメモリ、外部再配置、未認証ランタイムを含みます。LowIR 証明とモジュール証明書を SSA 検証へ渡し、通常の戻り継続テストは独立した入口規則を維持します。
 
 `OrdinaryInternalReturnsRetainTheParentsReturnPC` と `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` は、PE・ELF・Mach-O x64 と ELF i386 で親の戻りアドレス破壊と重ならない親ローカル書き込みを検査します。呼び出し先の戻りアドレス保持だけでは通常呼び出しを許可できません。
@@ -1742,11 +1788,28 @@ MSVC の単体テストは `/bigobj` を指定し、GoogleTest と LLVM のテ�
 
 ## ソースとネイティブオブジェクトのパッチ
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
+現在の拡張一覧は `unittests/Inputs/source-patch-expansion.json` にあり、283 CPU 行列ケース、14 配置、16 コールバック、265 例外契約とホスト別の正確な C API 一覧を含みます。`scripts/qualify_source_patch_expansion.py` は変更のない正確なソースコミットで全一覧の失敗・スキップゼロを要求します。`scripts/check_source_patch_expansion_runtime.py` はネイティブ OS ローダーでコールバック、依存関係、両者を組み合わせた IR／オブジェクトを別途実行し、ホストごとに84 機能、84 例外観測とライブラリ・シンボル欠落の2対照を検査します。実際の新旧共有ライブラリ、浮動小数点・スタック引数、元の本体の反復呼び出し、一度だけの後処理、ローダーメタデータ、公開ハッシュを確認します。CPU、互換層、ネイティブ OS プロセスの証拠を分離します。
+
+選択した六つのネイティブ OS／ISA ジョブは失敗・スキップゼロで合格しました。GoogleTest 3669 回、ネイティブプロセス観測 1008 回（機能 504 回、C++ 例外 504 回）、実ローダー拒否 12 回、96 イメージ、84 公開レシートです。
+
+| ホスト | ソース | Harness | CI ジョブ | テスト | 観測／拒否 |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+各成果物が検証するのは下表の正確なソースと harness コミットです。後続の dev 統合と文書コミットは別のローカル・文書チェックで扱います。過去の失敗・キャンセルは失敗のまま保持します。過去の補足観測216回、PE ARM32、旧32ビット Apple の CPU／互換層の結果は、新機能のネイティブハードウェアや C++ 例外の証明にはなりません。
+
+Windows ARM64 の検証では、固定されたサブモジュールと検証済み LLVM-MinGW ツールチェーンからネイティブ ARM64 Unicorn C DLL を実際にビルドし、MSVC インポートライブラリと明示的な CMake ターゲット上書きを使います。隔離したビルド用コピーは、非 SEH ジャンプ関数の組、命令キャッシュ同期を伴う ARM64 ページコミットコールバック、Windows LLP64 用の64ビット即値マスクという三つのホスト修正を認証します。サブモジュールのソースとリビジョンは変更しません。これは CPU 行列のテストホストを検証するもので、標準の MSVC ARM64 JIT 対応を示すものではありません。五つのホスト復帰チェックは、パッチ済みプロセスのネイティブ実行や C++ 例外の証拠と分けて記録します。
+
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 283 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-`sourcePatchTargetTriple` はイメージから ARM モード、ELF 浮動小数点 ABI、Mach-O CPU サブタイプを選択します。`COFFPatchObject` と `MachOPatchObject` はオブジェクト自身のシンボル、補助／セクション定義、アンワインド記録で範囲を検証し、MC ID を捏造しません。形式ごとのインストーラが実際のテーブルを登録します。 154 件の CPU テストはソース／IR／オブジェクト、四つのアーキテクチャ、三形式、状態、浮動小数点・スタック引数、二つの非ゼロ再ベースを要求します。旧 32 ビット Mach-O コンテナは実際のコンパイラコードを保持しますが OS 検証ではありません。
+`sourcePatchTargetTriple` はイメージから ARM モード、ELF 浮動小数点 ABI、Mach-O CPU サブタイプを選択します。`COFFPatchObject` と `MachOPatchObject` はオブジェクト自身のシンボル、補助／セクション定義、アンワインド記録で範囲を検証し、MC ID を捏造しません。形式ごとのインストーラが実際のテーブルを登録します。 283 件の CPU テストはソース／IR／オブジェクト、四つのアーキテクチャ、三形式、状態、浮動小数点・スタック引数、二つの非ゼロ再ベースを要求します。旧 32 ビット Mach-O コンテナは実際のコンパイラコードを保持しますが OS 検証ではありません。
 
 [ソースとネイティブオブジェクトのパッチ](source-patching.md)
 
@@ -1794,6 +1857,16 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `FrameOffsets.*Normalization*` は正確な恒等式、追加入力、ルートの同一性、証人をキャッシュしない到達不能述語、既定動作、構造准入と測定の課金、呼び出し後のノード超過拒否を検査します。`FrameNormalizationPreservesStoresAndNativeReturns` と `RawCodeFrameNormalization*` は独立したバイト評価器で元のメモリ効果と実際の戻り先を検査し、適用可能な両バイト順序、過不足のない予算と不足予算、レシート改変を扱います。`FrameNormalizationStrategyBindsIndependentProof` は両方のバイナリ証明の識別を検査します。
 
+`NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
+
+`NormalizationFeasibilityCachesExactTranslatedTheorems` · `NormalizationFeasibilityRejectsIncompleteAndUnrelatedProofs` · `NormalizationFeasibilityRetainsStorageAndWorkLimits`.
+
+`MachineExitRetReadsAliasedBytesBeforePhysicalPop` · `MachineExitCallCapturesTargetBeforeAliasingPush` · `MachineExitJumpRetainsDynamicAndOriginalDirectTargets` · `MachineExitKeepsInternalCallsAndReturnProofs` · `MachineExitRequiresExactDomainBytesAndTransferKind` · `MachineExitIntegrityBudgetsAndOrdinaryConsumers` · `MachineExitProvesLiveInternalReturnCells`.
+
+`ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
+
+`NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` は、キャッシュ済み履歴への再課金を防ぎ、追加した幅広定数の課金、作業量・ノード上限不足での拒否、可読性キャッシュのコピー独立性を検証します。
+
 ## ネイティブ Lift 検証
 
 `Lift native qualification` ワークフローは、以前検証できなかった 108 件（失敗 62 件、スキップ 46 件）を担当します。ネイティブ Linux x86-64 ランナーに Clang 23 以降、GNU GCC、i386 開発ライブラリを導入し、固定リビジョンのバイナリコーパスを初期化します。`unittests/Inputs/lift-qualification.json` は元の全テスト識別子を保持します。`scripts/run_lift_qualification.py` は欠落、重複、無効化、スキップ、失敗、非ゼロ終了を拒否します。`qualification.json` は個別の成功、ソースとコーパスのリビジョン、コンパイラのバージョン、バイナリハッシュを記録します。
@@ -1814,6 +1887,12 @@ python3 scripts/run_lift_qualification.py \
 ネイティブ Linux x64 ジョブは Clang IR、Clang ネイティブオブジェクト、GCC ネイティブオブジェクトの三つの C++ 例外置換も必須とします。XML とプロセス終了を別途監査し、失敗やスキップは検証失敗です。これらの C++ 入力には NeverC を使いません。
 
 ネイティブ検証ジョブは、x64 PLT/AArch64 指定子のスコープ修正を含む、固定された LLVM フォークをソースからビルドします。r4 の事前ビルドパッケージだけでは、Clang IR の例外経路の能力検証は完了しません。
+
+## Darwin dylib インポートのオフセット
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` は +8/-4、TLS ポインターの変更、新しいプロセスでの初期化を検証します。C、CLI、実際の Python 統合が全プロファイルを対象とします。必須一覧は各プロファイル101メソッド、対応する ARM64 が303件で、共通ネイティブ一覧は82件です。利用できないハードウェアはネイティブ実行に数えません。
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
 
 ## Ordinary Darwin whole-file lock coverage
 
@@ -1954,3 +2033,189 @@ Linux ネイティブ検証では `HighSwiftEmitter` 全体も実行し、レジ
 ### ゼロをまたぐシンボリック領域座標
 
 `SymRegionWrap.*` は両エンディアン、相対座標のゼロをまたぐ完全／部分アクセス、折り返さない入力の由来、コピーした未知状態の世代、ちょうど足りる／不足する保存予算、および絶対／スカラ範囲オーバーフローの拒否を検証します。`InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` はシンボリックアドレスが `base - 1` の形を保つことを確認し、独立したバイト単位の参照実行で STORE 全体の効果、ネイティブの戻りアドレス語、復元後のスタック状態を検証します。分離証明または入口アラインメントがなければ引き続き拒否が必要です。
+
+### 逐次 raw 実行での比較交換
+
+`SymAtomicCmpxchg.*` と `InterpreterSpecialization.AtomicCmpxchg*` は、全バイトの効果、両エンディアン、旧値の由来、入出力エイリアス、ネイティブ戻りセル、合流をまたぐアフィンスピルの無効化、有序操作の発生保持、厳密な受け入れ、十分な予算と不足予算を対象とします。独立したバイト参照器が扱うのは逐次的な値の意味論だけです。ソースラップの対照には初期化済みで構造が正しいグラフを使い、有序メモリの境界での拒否を要求します。独立 LowIR の対照には完全な sidecar も結び付け、証明書がないことを要求します。ネイティブバイナリの証明は、LOCK CMPXCHG のアーキテクチャ未定義出力監査が不完全なため、より早く拒否される場合があります。raw レシートの検査は順序、アドレス空間、更新オペランドを結び付けます。対応を主張する前に所有テスト群を実行してください。テスト定義だけでは実行の証拠になりません。
+
+`InterpreterSpecialization.WideIntegerConcat*` は両バイト順、上下位ワード、定数入力、重複出力、上位ワードによる分岐、不正形状、正確／不足予算、未知メモリ由来の保持を検査します。厳密に復号した `PSHUFD` は全256選択値と同一／別宛先を独立したダブルワード索引で照合します。`BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` はネイティブ証明と両ソース配置の拒否を維持します。
+
+`InterpreterSpecialization.Timestamp*` は独立した値・状態オラクルで全ビット、上位半分のクリア、独立／反復読み取り、レジスタ・フラグ・メモリ・セグメント基底の保持、正確／不足予算、不正な操作列、未知アドレス由来を検査します。`BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` は raw 完了とネイティブ証明／ソース配置の拒否を確認します。既存の `X86_64_Intrinsics` 時計ケースはソース出力と 1 回の読み取りによる全ビット結果を検査し、`DriverTimestamp` は Unicorn/KVM/WHP 共通の時計方針、状態保持、予算、オーバーフローを別途検査します。プラットフォームによるスキップはバックエンド実行の証拠ではありません。
+
+`KernelObjectTests.cpp` は既知 ID、型/権限/モード失敗、ハンドル情報、出力失敗時の参照漏れ防止、アンロード、スタック再利用を検証します。`DriverObjectTests.cpp` は独自の `driver_objects.c` を利用可能な Unicorn/KVM/WHP/HVF、Legacy/CheckedX64、標準/再配置アドレス、協調/17 命令スケジューリングで実行します。`NativeDriverTests.def` は KVM/WHP 結果を必須とし、欠落やスキップは未検証です。ACL、一般的なプロセス終了、未実装の型の証明にはなりません。
+
+`KernelDataExportTests.cpp` は識別子、可用性、thunk 容量、読み取り専用/NX、未宣言デバッガー、復元を検証します。`DriverDataExportTests.cpp` は独自の `driver_data.c` の実際の DATA インポートを利用し、利用可能なバックエンド・両契約・両基点で実行、アンロード、書き込み/実行拒否を確認します。シナリオ、C ABI、CLI、Python はブール値とレポート転送を検証します。`NativeDriverTests.def` はネイティブ結果を要求し、利用不可のバックエンドは未検証のままです。
+
+`KernelNamespaceTests.cpp` は型、相対名、大文字小文字、サイズ/コピー順序、末尾バイト、権限、プロセス範囲、IRQL、出力失敗、保持中の削除を検証します。`DriverNamespaceTests.cpp` は独自 `driver_namespace.c` を利用可能な Unicorn/KVM/WHP/HVF、両契約、両ロード位置、協調/17 命令スケジューリングで実行します。`NativeDriverTests.def` はネイティブ結果を要求します。利用不可バックエンドと未対応情報/セキュリティクラスは未検証範囲です。
+
+`KernelRegistryTests.cpp` は独立オープン、型付き参照、複製ハンドル、プロセス範囲、汎用権限、削除済み識別子、短い/奇数長バッファ、出力エイリアス、失敗・容量境界を検証します。`DriverRegistryObjectTests.cpp` は独自の `fixtures/driver_registry_objects.c` を利用可能なバックエンド、両契約、両基底で、協調実行および17命令スケジューリングで実行します。意図的な参照リークでアンロード拒否を検証し、ネイティブ受入れには4組合せすべてが必要です。
+
+`KernelDeviceStackTests.cpp` は現在の隣接関係、借用と保持、入力または隣接デバイスの削除、最後の参照の解放、不正・破損入力、参照追加前の IRQL 拒否を検証します。独自の `fixtures/driver_device_queries.c` を `DriverDeviceQueryTests.cpp` で実行し、利用可能なバックエンド、両契約、両ロードアドレス、協調および 17 命令のプリエンプティブ実行を網羅します。detach/delete 後の領域保持と意図的な参照リークによるアンロード拒否を確認し、ネイティブ受け入れには 4 種の契約/アドレス結果が必要です。
+
+KernelFileObjectTests と KernelObjectTests は型付きオープン、型不一致時の出力ゼロ化、汎用権限、各プロセスと全体の計数、コールバック内再オープン拒否、経路エラー後の再試行、要求元終了、再クリーンアップ、保留 CLOSE を確認します。KernelPnpRequestTests は遅延 CLEANUP の下位応答、KernelFrameworkFileTests は実効プロセスと LOCK_CONTROL を確認します。driver_file_objects.c の参照寿命テストも維持します。独自の driver_file_handles.c は協調実行と 17 命令スケジュールで同期／保留 CLEANUP と CLOSE、ワーカーからの解放、番号再利用、意図的リークを検証します。真正 WDK の driver_kmdf_file_handles.c はシステムプロセスでの清掃、元のプロセスでの終了、清掃コールバックなしの経路を確認します。NEVERD_KMDF_FILE_HANDLES_FIXTURE と任意の NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE を設定します。DriverFileObjectTests は利用可能なバックエンド、両契約、両基底を使い、不足した WDK やバックエンドを明示的にスキップします。ファイルシステムは別途検証が必要です。 シナリオ由来の KMDF CLEANUP/CLOSE は呼び出し元のプロセス、スレッド、PreviousMode を保持します。F モードは別ファイルの CLEANUP 内で保持ハンドルを閉じ、復帰時のコンテキストを確認します。
+
+`KernelFileQueryTests.cpp` は借用／専用パケット、即時／保留公開、IOSB 別名とパディング、ワーカー完了、寿命、ローカルクラス、ハンドル範囲、IRQL/APC 拒否を検証します。`KernelFileCreateTests.cpp` と `DriverFileSystemTests.cpp` は六クラスと名前境界を検証します。driver_file_queries.c と driver_filesystem_provider.c は利用可能なバックエンド、契約、基址、協調／17 命令スケジューリングで実行します。本物の通常／CFG イメージは NEVERD_WDM_FILE_QUERIES_FIXTURE、NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE、NEVERD_WDM_FILESYSTEM_FIXTURE、NEVERD_WDM_FILESYSTEM_CFG_FIXTURE を使用します。C API/CLI/Python は origin、全出力、処理済み失敗を確認します。元カーネルの限定プローブは生成 156 件と完了 18 件で、割り当て・ディスパッチ・通知の境界を明示します。完全なファイルシステムや汎用 APC の証明ではなく、ハードウェアと外部イメージの不足は明示的スキップです。
+
+`KernelIRPStack.ReadWriteCompletionPreservesStoredFilePosition` は独立した64ビット位置を使い、同期／非同期ファイル、即時／保留完了、成功／警告／エラー、ゼロ／非ゼロ長を検証します。正規の通常／CFG `driver_wdm_stack.c` フィクスチャは READ、WRITE、クリーンアップの間で位置を再確認します。
+
+プロセッサの回帰は出力境界、NULL、入れ子の復元、不正 IRQL、インポート識別を検証します。独自の `driver_processors.c` は各バックエンド、契約、基址、スケジューリングで入口、ワーカー、DPC を実行します。任意の `NEVERD_WDM_PROCESSORS_FIXTURE` と `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` は実際の WDK 通常/CFG イメージのインライン呼び出しと動的エクスポートを検証し、利用不能なバックエンドは明示的にスキップします。
+
+整数変換の回帰テストは全ビット幅、対応基数、容量境界、不正基数の処理順序、出力の別名、終端書き込み障害を検証します。独自の `driver_int64_strings.c` は入口、ワーク項目、アンロードでインポートと動的検索を確認し、IRQL 上昇時の拒否も検証します。任意の `NEVERD_WDM_INT64_STRINGS_FIXTURE` と `NEVERD_WDM_INT64_STRINGS_CFG_FIXTURE` は実際の WDK 通常/CFG ドライバーを利用可能なバックエンド、契約、ロード基底、スケジュールで検証します。
+
+
+`DriverFileSystemTests.cpp` / `KernelFileSystemTests.cpp` / `DriverFileSystemExecutionTests.cpp` / `DriverScenarioPublic` / `test_driver_filesystem_integration.py`: 任意の `filesystem` は DriverEntry 前にセッションのボリュームを宣言します。省略は可用性不明、`[]` は提供元なしで、各ボリュームには明示的なルートが必要です。既存ノードは `ZwOpenFile` と `ZwCreateFile`、`IoCreateFile` の FILE_OPEN で実際の CREATE 要求を通じて開けます。名前検索、ゲストフィルター、共有、ハンドルと参照の寿命は共通の所有者を使い、ホストファイルを読みません。新規作成、上書き、削除、メタデータ照会、データ I/O、列挙、制御は未対応です。 `NEVERD_WDM_FILESYSTEM_FIXTURE`, `NEVERD_WDM_FILESYSTEM_CFG_FIXTURE`, `NEVERD_TEST_DRIVER_FILESYSTEM_FIXTURE`, `NEVERD_TEST_LIBNEVERD`. `UnusedFileSystemDeclarationCannotAuthorizeRuntimeRecovery`: `configuration.filesystem` は入力、上位 `filesystem` は独立した状態で、`device_object` と各ノードの `end_of_file` を追加します。実行や投影検証の停止後も状態を保持します。`devices` はゲストのみです。アンロード時にセッションボリュームは残せますが、ゲストの参照、ハンドル、接続、IRP は解放が必要です。`[]` を含む宣言は未再構築依存性を保持し、実行可能 UNPACK 復元を禁止します。旧 Unicorn は拒否書き込みを停止前に反映する場合があり、投影エラーを診断に残します。
+
+`KernelFileCreateTests.cpp` はパケット保持、共有失敗、非同期の相対ルート保持、明示的取消、失敗／出力エイリアス、アンロードを検証します。`DriverFileSystemExecutionTests.cpp` は両契約、両基址、利用可能バックエンドで独自および実際の WDK 通常／CFG ドライバーを協調・命令時計スケジュールで実行します。C API／CLI／Python も同じ識別を保持します。利用不可はスキップであり、イベントや APC のプローブ境界は完全なカーネルを証明しません。
+
+`KernelFileTransfers` はパケット、オフセット特殊値、追記専用ハンドル、長さゼロ、出力エイリアス、即時・保留状態、ワーカー通知、公開前の拒否を検証します。`OriginalBufferedNativeFileTransfers` / `GenuineWdkBufferedNativeFileTransfers` はバックエンド、契約、ロード位置、スケジューリングを変えてインポートと動的解決を実行します。実 WDK の通常/CFG イメージには `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` / `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` を設定します。利用不能なバックエンドは明示的にスキップします。
+
+CRT 回帰は全バイト／UTF-16 単位、引数幅、変更不要な読み取り専用バッファー、件数／容量、切り詰め、NULL 順序、逐次エイリアス、部分障害、解放済み領域、走査上限を検証します。原作 `driver_crt_strings.c` と実 WDK の `NEVERD_WDM_CRT_STRINGS_FIXTURE`／`NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE` は入口・ワーカー・アンロードのインポートと動的解決を、passive／dispatch IRQL と両スケジューリング方式で検証します。ネイティブゲートは両契約・両ロード基址を要求し、利用不能なバックエンドは明示的にスキップします。
+
+メモリ回帰は容量全体のゼロ化とエラー時の無変更、ゼロ長、完全幅、重なり、ページ化・解放済み・読み取り専用メモリと上限を区別する。ヘッダー検査は符号なし DOS オフセット、64 ビット結果、境界、署名のみの受理と故障順を検証する。独自および実 WDK CRT フィクスチャが入口・ワーカー・アンロードのインポート／動的呼び出しを実行する。固定 WDK に `RtlImageNtHeader` 宣言がないためローカル ABI 宣言を使い、PE 型とインポートライブラリは実キットを使う。 固定 WDK の ntoskrnl.lib は memcpy_s をゲストコードとしてリンクする。独自フィクスチャは直接インポートを検証し、両方が動的エクスポート呼び出しを検証する。
+
+`KernelFileTransfers` はフラッシュ権限、全デバイス転送方式でのバッファなしパケット、64 ビット Information、ディスパッチ復帰前の公開・解放、ワーカー／ガード領域の通知、非同期／同時呼び出し拒否を検証します。既存の独自・実 WDK 転送フィクスチャも、ユーザー IOSB と九つの完了条件でインポート・動的検索のフラッシュを実行します。
+
+`KernelFileTransfers` は制御パケット、ULONG 切り詰め、ゼロ長ポインター、読み取り専用入力のコピー、IOSB 別名、入出力別の上限、遅延完了と元スレッドへの通知を検証します。既存の独自・実 WDK 転送フィクスチャは両 API のインポートと動的検索を四つのバッファ形態、九つの完了モードで実行します。
+
+回帰テストは出力のエイリアス、引数幅、奇数長、記述子の再読取、重複領域、割り当て失敗、NLS 拒否、部分書き込み、寿命、APC_LEVEL を確認します。時刻テストは起点前後の秒未満、ULONG 上限、入出力のエイリアスを扱います。独自および実 WDK の CRT ドライバーは入口・ワーカー・アンロードで静的／動的呼び出しを実行し、入口では APC_LEVEL も検証します。
+
+回帰テストは ASCII と NLS 非依存のワイド範囲を高位ビット付きで網羅し、拡張値拒否、引数数、APC_LEVEL を確認します。独自および実 WDK CRT では入口・ワーカー・アンロードで静的／動的呼び出しを確認します。WDK ctype.h の wint_t は 16 ビットであり、期待値にホスト CRT を使用しません。
+
+デバッグ回帰は三つの入口の short 規則、ゲスト境界での読み取り、段階的バッファー、埋め込み NUL、解放済み・ページ入力、IRQL を検査します。元の CRT と実際の WDK フィクスチャーで静的・動的呼び出しをエントリー、ワーカー、アンロードに実行し、両スケジュール、契約、ロードベースを検査します。利用不能なバックエンドは明示的にスキップします。
+
+回帰は保持・失効スレッド、要求元・ワーカー・接続中のコンテキスト、モジュール境界と穴、出力幅、寿命、権限、IRQL を検査します。元の CRT と実際の WDK フィクスチャーで静的・動的 KernelMode 照会、ファイル照会フィクスチャーで UserMode 呼び出しを検査します。両 WDK 系列に通常版と CFG 版を含め、不足する二つの宣言は実際の kit 型によるローカル ABI で補います。利用不能なバックエンドはスキップします。
+
+旧 MDL マッピングの検証は実 WDK の静的・動的呼び出し、アタッチ済みワーカー、独自イメージの別名、モードの縮小、IRQL、プロセス切り替え、失効した記述子、重複マッピング、注入した別名予算の枯渇を含みます。カーネル不足は MDL を保持して未対応の bugcheck を報告し、ユーザー不足は捕捉可能です。元のラッパーのプローブは引数と戻り値の幅のみを検証し、注入したマッパーは検証しません。
+
+`KernelFileQueries.BaseDevice*` は基底と二段フィルターの区別、参照数維持、拡張ポインターの無視、作成・クリーンアップ・クローズ状態、破損レコードと IRQL を検査します。独自および実 WDK 通常／CFG フィクスチャは既存のバックエンド、再配置、スケジューリング、呼び出し元寿命の組合せで静的・動的クエリを実行します。
+
+`KernelDevicePointer.*` は参照保持、出力の重なり、失敗と情報ステータス、保留 CREATE/CLEANUP 後の呼び出し側と APC の復元、引数幅、共有、出力障害時の書き込み順、受付条件、アンロードを検証します。元のフィクスチャと実 WDK 版には即時完了、ワーカーでの CREATE/CLEANUP 完了、アンロードまでの参照保持、動的検索を追加します。`KernelFileSystemExecution.*OpensExistingFiles` は両スケジュール方式、契約、ロード基址を検証し、利用できない実行基盤は明示的にスキップします。
+
+`KernelMDLUserMapping.ProcessProbe*` は引数幅、操作の正規化、IRQL、生存プロセスの許可条件、プローブ中のスレッド識別、入れ子の復元、例外後の再試行、アタッチ/復元のメモリ不足を検査します。実際の WDK フィクスチャは静的/動的呼び出し、解除後の実例外ハンドラー、アタッチ中の同一プロセス呼び出し、共有物理ページ、完全なロック解放を実行します。元のラッパーと終了ハンドラーのプローブは、明示的に注入した補助呼び出し境界間の制御フローのみを証明し、カーネル全体の動作を証明しません。
+
+`KernelObjects.FilterVersion*` は正確な引数数、呼び出し元に依存しない結果、ページ可能コードの IRQL 境界を検査します。独自および実際の WDK CRT フィクスチャはエントリ、ワーカー、アンロードで静的/動的呼び出しを行い、エントリでは APC_LEVEL も検査します。元の 2 命令のプローブは補助関数を注入せず、戻りレジスタ全体とデータメモリ副作用の不在を検証します。
+
+`KernelPhysicalRAM.AddressQueries*` と `KernelMDLUserMapping.PhysicalQuery*` は別名、アドレス空間、VA 再利用、境界、全幅 PFN、IRQL、ページ固定、解除済みマッピングを検証します。実際の WDK ユーザーマッピング用フィクスチャは静的・動的な `MmGetPhysicalAddress` を MDL PFN と比較し、読み取り専用ユーザービュー、DPC レベルのシステムビュー、以前の固定別名が残る再マッピングを実行します。
+
+`KernelMDLUserMapping.PrimaryQuery*` は正確な割り当て範囲、同一ページ上の隣接所有者、全幅アドレス、IRQL、解放、別名、マッピング置換、読み取り保護、未対応の主マッピングを検証します。実際の WDK フィクスチャは静的・動的な `MmGetVirtualForPhysical`、DPC レベルのシステムビュー、以前の固定別名が残るユーザー VA の再マッピングを実行します。
+
+`DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*` は有効化、解放、入れ子環境の復元、全幅境界、IRQL、プロセス接続、出力重複、High→Low の障害時書き込み順序を検証します。独自版と実際の WDK CRT フィクスチャは入口・ワーカー・アンロードで両 API を静的・動的に呼び、ローカル変数の範囲と DISPATCH_LEVEL での境界を確認します。
+
+`KernelMDLChain.CreateMdl*` と `KernelMDLUserMapping.CreateMdl*` は全幅検査、保持バイト、空・折返し値、プール／スタック寿命、ロック、別名、解放失敗、部分再利用、IRP 拒否、IRQL を検証します。実際の WDK フィクスチャは静的・動的生成、所有プール、呼出側プール内部とスタック、物理同一性、アンロードを実行します。原コードの観測はフィールド書込、プールフラグ変換、注入した確保／解放境界を区別します。
+
+`KernelMDLChain.AdvanceMdl*` と `KernelMDLUserMapping.AdvanceMdl*` は反復ページ境界、末尾、終端拒否、引数幅、全マッピング、解放失敗、権限、格納域とプロセス寿命を検証します。実 WDK は静的／動的呼出と明示解除・自動アンロックを実行します。原コード観測は完全な進行、復元ヘルパー、マッピング種類／PTE 解放を注入した解除ラッパーを区別し、OS ページデータベースの実行を主張しません。
+
+## 従来形式のアラインされたベクトル転送
+
+`NeverDX86LegacyAlignedMoveTests` は MOVDQA、MOVAPS、MOVAPD のレジスタ保存と、メモリアクセス前の16バイト境界チェックを検証します。アドレス幅による折り返しと明示的な FS/GS ベースも対象です。非整列アクセスは宛先レジスタとメモリを変更せず、セグメントベースが不明なら拒否します。これはリフトとエミュレータの検証です。厳密なシンボリック復元では、保持された整列条件を別途証明する必要があります。
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` と `PEFixedImageTest.RawAlign*` は独立した剰余証明、不正入力、厳密な予算、元の検査の保持、証明記録の改ざんを検査します。従来の移動命令の監査はアラインメント検査を含む全操作を結び付けますが、不透明な機械状態の保持は証明しません。
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`NeverDX86NativeStateAuditTests` は標準x64 REP MOVSQと従来のLDMXCSRの命令バイトとデコーダ詳細を厳密に照合します。全操作範囲は未定義出力の証明記録に結び付けられます。独立した全状態・順次コピーの期待値は重なり、回数ゼロ、アドレス形式、不足バイト、予約ビットを検査します。実行には回数・方向、メモリ、有効MXCSRマスク、値の妥当性の既存証明が必要です。この監査は部分フォールト後の再開や不透明状態の保持を証明しません。
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```
+
+`NeverDX86ScalarMoveAuditTests` は従来の MOVSS/MOVSD を元の命令バイトと完全なデコーダ詳細に照らして厳密に検査します。独立したバイト単位の期待値はレジスタマージ、メモリロードのゼロ拡張、スカラーストア、全アラインメント剰余、16/32/64 ビットのアドレス計算、全レジスタ・フラグ・MXCSR の保持を確認します。メモリ不足や読み取り専用領域へのストアはアーキテクチャ上の出力を確定してはなりません。文字列、VEX/EVEX、セグメント、不正形式は受理せず、記録は全操作範囲を束縛しても不透明状態の保持を保証しません。
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`SymStorePreservation.Independent*`、`RepeatedRegionsFormAUnionAndChargeEveryScan`、`EmptyIndependentRegionsKeepOriginalWorkAccounting`、`ExecutorUsesIndependentRegionsForOnlyOneStore` は、1 回の STORE による 2〜3 個の独立した現在のルートの保持、両バイト順、相対座標のゼロをまたぐ部分範囲、重複宣言、保護外の隙間、書き込み後の未知値の世代を確認します。正確な予算と 1 単位不足の予算で全作業量を確認し、存在しない領域を生成しません。無効・範囲外参照、狭い基底や定数基底、空・逆向き区間、書き込み自身の基底は状態を変更せず拒否します。空の `AdditionalRegions` では従来の単一ルートと `AdditionalRanges` の費用を保ちます。実行器では単一イベント、同一領域の隣接バイト、後続の通常書き込みによる無効化を確認します。`SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget` は比較の一致・不一致、正確・不足予算、2 つの保護ルート、旧値の出力、既存の保守的な拒否経路を確認します。
+
+`NeverDSymConditionalStoreTests` は独立したルート間の現在のバイトの条件付き効果、128 ビット書き込み、両エンディアン、部分的な重なり、シンボリック相対座標の折り返し、絶対メモリを対象とします。自身のバンクの隣接バイト、現在と過去の事実、書き込み後の未知エポック、非対応入力、必要量ちょうどと一単位不足の予算も確認します。実行器では既存のセグメント基址処理を使う STORE、厳格な CMPXCHG の成功と失敗、Old の遅延公開、拒否時の havoc、他の操作で Invalid が維持されることを確認します。通常の書き込みと保持契約の既定動作は変わりません。これらは有界メモリの意味論を検証するテストであり、アクセス権やプログラム全体の復元を認証するものではありません。
+
+
+`AbsoluteMemoryFactsTests.inc` はノード間の絶対ターゲット、合流の競合、部分重複と未知の別名書き込み、両バイト順と連鎖の有無でのスタック分離を検査する。独立バイト実行器が効果を確認し、除外範囲の欠落と予算不足は拒否する。`SymStorePreservation.Absolute*` と `SymState.AbsoluteProjections*` は領域の共存、高位アドレス、純粋で有界な射影、未知世代とトランザクション的拒否を検査する。`NeverDInterpreterSpecializationTests`、`NeverDSymbolicIntegerIntrinsicTests`、`NeverDSymMemoryKnowledgeTests`、続いてネイティブ独立性とLowIR精緻化スイートを実行する。
+
+絶対メモリの回帰テストは、有界の連続・疎バッチ、書き込みとセルの完全な包含、フレーム境界と除外境界の両端での具体的な別名反例を検証します。順序付きと逆順の範囲和集合は同じセルを保持し、隙間を破棄し、保持予算が一作業単位不足した場合に状態を変更しない必要があります。
+
+## 有限の通常 RAM 読み取り回帰テスト
+
+`LowIRReadTrace.*` は共有入力、両バイト順、アドレス・幅・順序・回数の変更、全分岐、先行フレーム書き込みとの部分重複、未定義値、反復読み取りの独立性、正確な予算と不足時の拒否、ループ拒否を確認します。`OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` は元の機械語の独立性、機械語から LowIR への精緻化、ポインター変更の拒否を確認します。`NeverDLowIRRefinementTests`、`NeverDLowIRUndefinedIndependenceTests`、`NeverDOriginalBinaryUndefinedIndependenceTests`、`NeverDPEFixedImageTests`、`NeverDInterpreterSpecializationTests` を実行してください。これらの証明だけではコンパイル済み C や具体的 CPU バックエンドを認証しません。
+
+## ネイティブ・スカラー問い合わせの回帰テスト
+
+`NativeQueryTrace.*` は独立結果、四つのゼロ拡張、引数・回数・順序の変更、未定義引数、通常読み取りとの交錯、全分岐、非変更状態、符号化・詳細監査、不正操作列、予算、ダイジェスト、静的・帰納 API の拒否を検証します。`NativeScalarQueryDescriptor.*` は共通記述の制限と実際の記録の結合を検証します。
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
+
+トラップ回帰は CC、F1、CD 03 の正確な保持、偽造メタデータの拒否、後続のない領域出口、ちょうど足りる操作予算と不足する予算を検証します。通常のプロバイダーにあるトラップは、同じ命令や次の命令の RETURN に継続できません。元の命令の証明は UD2 も含み、到達不能なトラップの Missing 監査を保持し、例外の種類、バイト列、監査の不一致を拒否します。到達可能なトラップは元の証明と通常の戻り候補への精化を拒否します。
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
+
+これらの検査が検証するのは宣言された領域であり、例外処理やソース/native 等価性は証明しません。
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+入口オブジェクトの回帰は、記号的コピー、退避・コピー済みスロット、実行時ループ、失われた束縛と合流、オブジェクトのエイリアス、完全な幅広・アトミック・セグメント書き込み、相対境界、不正な宣言、整合性情報の変更、準備・操作予算の丁度および不足境界とノード予算の枯渇を検査する。独立したバイト／レジスターのオラクルで保持された効果を確認する。担当スイートと raw 消費側の拒否を共に実行する。関数全体、コンパイル済み C、通常 ABI の証明書は得られない。
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NeverDObjCSourceCallTests`（`SourceFrameAnalysis.*`）と `NeverDCSourcePresentationTests` を実行し、バイトの由来、経路の一致、上書きまたは逸出した記憶領域、不変のイメージ範囲、予算、文字コード、メタデータ境界を確認します。`NeverDWorkerStackText` は公開の x64/ARM64 PE 例をコンパイルし、未知の上書きを含めて両方の C 経路を検証します。Clang と lld-link が必要で、Windows のネイティブ実行は別途検証します。
+
+<!-- i18n-section: interactive-byte-patches -->
+## 対話的パッチの責務
+
+`NeverDBytePatchTests` はバイトの上書き層、再配置の拒否、PC 相対アセンブル、PE 署名とチェックサムを検査します。`NeverDWorkerPatch` はプレビュー、古い入力、取り消しとやり直し、一括復元、読み取り専用レプリカ、再オープン、排他的エクスポートを検査します。
+
+`NeverDWorkerNativePatch` は実際の SDK でも同じ動作を検証します。`NeverDWorkerSourceBytePatch` は Linux 上でソースの証明、独立したプレビュー、スタックフレームのシンボル、ネイティブ C 関数の置換を検証します。
+
+`NeverDGuiPatchKeys` は `QWindow` のショートカット処理を通して、すべての第2キー、読込中のメニュー、キャンセル、エディター入力を検証します。`NeverDGuiNativePatchKeys` は実際の SDK バイト、Hex、独立ウィンドウ、元に戻す・やり直す・復元を検証します。同じ実行ファイルを X11 で動かすとネイティブのポップアップ処理も検証できます。
+
+```sh
+cmake --build build-gui --target neverd-gui-patch-tests
+ctest --test-dir build-gui -R 'NeverDGui(Native)?PatchKeys$' --output-on-failure
+NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  python3 tools/neverd-gui/tests/run_wayland_docking.py \
+  build-gui/bin/neverd-gui-patch-tests
+ctest --test-dir build-release/unittests/patch --output-on-failure
+ctest --test-dir build-gui -R 'NeverDWorker(Patch|NativePatch|SourceBytePatch)$' --output-on-failure
+PYTHONPATH=pluginsdk/python NEVERD_TEST_LIBNEVERD="$PWD/build-release/bin/libneverd.so" \
+  NEVERD_TEST_CLI="$PWD/build-release/bin/neverd" \
+  python3 -m unittest discover -s pluginsdk/python/tests -p test_byte_patch_integration.py -v
+QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNotTakeHexRaysKeys patchMenuUsesEngineChoicesAndFixedKeys cancelledPatchMenuDiscardsItsPendingKey
+QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
+```
+
+`NeverDSourceCallABITests` は Windows ARM64 の固定・可変引数のレジスター、幅、枯渇とスタック位置を確認する。`NeverDWorkerCallSiteTypes` は名前付き float、レジスターとスタック上の double、整数、浮動小数点戻り値を両 C 経路で復元し、独立した C 関数と O0/O2 で実行する。未昇格の可変引数や不完全なスタック書き込みは拒否し、解析スナップショットを維持する。Windows ARM64 ネイティブ実行の検証ではない。
+
+worker の回帰には、18 個のレジスター／スタック混合引数、浮動小数点の戻り値、半分しか書かれていないスタック引数の拒否も含む。
+
+`SourceCallABI` と `CallRegisterConstant` は失効した一時値、不透明な効果、バイト範囲、呼び出し位置の曖昧さ、厳密な予算境界を検査する。worker は減算で可変引数のベクトル個数を求める呼び出し元を両 C 経路で実行する。
+
+`LowScalarConstant.SelfDifference*` は未知入力の復元を1〜8バイトの具体的なビットパターン実行と比較し、異なる値、メモリオペランド、不正な形を拒否します。`ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` は ELF、COFF、Mach-O の x86、x64、AArch64 を対象とします。worker は復元した分岐と自己減算による System V ベクトル数を HighC と LLVMC の O0/O2 で実行します。
+
+`X86CarryArithmeticFlags.SelfSubtract*` と `APXSelfSubtract*` は結果、算術フラグ、保持されるレジスター状態を確認します。worker のスカラー分岐テストは自己減算・自己比較のフラグによる分岐を含め、ネイティブ実行と O0/O2 の HighC/LLVMC を比較します。
+
+NeverSight LLVM fork の `BinaryRewriteRelocationTest` は x64 PLT、i386 GOT、Mach-O GOTPCREL、AArch64 PAGE/PAGEOFF の最終バイト列を確認します。NeverD の統合ビルドは記録された fork を直接コンパイルします。これらの MC 検査はネイティブ例外実行の検証ではありません。
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` は直接レジスター保持と私有スタック退避を検査します。`I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` は Linux x86 で異なる二つのスカラー引数を使い、メモリー・レジスター両ターゲットの HighC/LLVMC を O0/O2 で実行します。Python ABI 一覧と GUI 文字列検査には解析セクションのインターフェイスと表示文言を含みます。
+
+`NeverDSelfCompareFlagTests` は x86、x64、ARM32、AArch64 の元の関数と再構築した関数を実行して比較します。既定の機械語経路、`NEVERD_SEMANTIC_HIGHC=1`、`NEVERD_SEMANTIC_LLVMC=1` を個別に実行します。自己 CMP/SUB のフラグ、分岐、条件値を、論理テストとシフトしたオペランドを対照に検証し、既存の符号付きオーバーフロー回帰も実行します。
+
+自己比較の行列には、引数なしの等値条件と減算オーバーフロー条件の実行も含まれます。入力レジスタ値を必要としないため、どちらの C 経路でも未知状態のトラップを追加してはいけません。
+
+HFA インポートスロットのテストは厳密な C プロトタイプをコンパイルし、ヘッダー宣言とローカル宣言の完全な引数と戻り値を実行検証します。両 C 経路で float・double 構造体、連続呼び出し、AArch64 実行を検証します。
+
+## 選択した関数の宣言テスト
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` は整数、ポインター、浮動小数点、void の実装とアドレス出力を結合する。`AddressOnlyCallbackConvertsToItsKnownParameterType` は型付きコールバックを実行する。`SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` は個別選択と単位全体、冷・温キャッシュを比較する。x64/ARM64 の PE、ELF、Mach-O 入力モデルから生成した C をホスト上で O0/O2 と UBSan で実行する。全対象でのネイティブ実行を意味しない。この境界の変更後は呼び出し契約、ポインター投影、ソース ABI、呼び出し先キャッシュのテストを実行する。

@@ -20,8 +20,9 @@
 
 #include "HighDCEDetail.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/HighIR.h"
-#include "neverd/ir/intrinsics/X86VectorLaneReads.h"
+#include "neverd/ir/intrinsics/X86/X86VectorLaneReads.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/bit.h"
@@ -38,10 +39,6 @@ namespace {
 
 /// One bit per byte of a value; a value wider than 64 bytes demands all.
 using ByteMask = uint64_t;
-
-constexpr size_t kVisitBudget = 2000000;
-/// How deep a constant mask's concatenations and copies may nest.
-constexpr unsigned kMaxConstantMaskDepth = 16;
 
 ByteMask allBytes(uint16_t Bytes) {
   return Bytes == 0 || Bytes >= 64 ? ~ByteMask{0} : (ByteMask{1} << Bytes) - 1;
@@ -131,7 +128,7 @@ public:
 private:
   HighFunc &Func;
   Arch Architecture;
-  size_t Budget = kVisitBudget;
+  size_t Budget = ::neverd::limits::ir::kHighDemandedBytesVisitBudget;
   std::unordered_map<const HighExpr *, ByteMask> NodeDemand;
   VarKeyMap<ByteMask> VarDemand;
   VarKeyMap<std::vector<const HighExpr *>> Definitions;
@@ -167,7 +164,7 @@ private:
   /// `vmov.i32 q9, #0xff`).
   std::optional<ByteMask> constantNonzeroBytes(const HighExpr &E,
                                                unsigned Depth) const {
-    if (Depth > kMaxConstantMaskDepth)
+    if (Depth > ::neverd::limits::ir::kHighDemandedBytesMaxConstantMaskDepth)
       return std::nullopt;
     if (E.Kind == ExprKind::Const)
       return nonzeroBytes(E.ConstVal, exprBytes(E));
@@ -233,6 +230,20 @@ private:
     }
   }
 
+  /// The bytes of a returned value C returns: the integer return type's, as
+  /// a bound source declaration gives it or the lift inferred it.  None where
+  /// a debug declaration, which only C's writer looks up, may replace it.
+  std::optional<uint16_t> returnedBytes() const {
+    TypeRef Type = Func.ReturnType;
+    if (Func.SourceTypeHint && Func.SourceTypeHint->ReturnType)
+      Type = Func.SourceTypeHint->ReturnType;
+    else if (!Func.DebugName.empty())
+      return std::nullopt;
+    if (!Type || Type->Kind != NdTypeKind::Int || !Type->Size)
+      return std::nullopt;
+    return Type->Size;
+  }
+
   /// Every operand of every observable evaluation, and every root a
   /// statement reads for anything but a variable's value, is demanded whole.
   void seed() {
@@ -245,6 +256,14 @@ private:
           return;
         if (DefinesVar && &Root == &S.Val && readOnlyByUses(S.Dst->Var))
           return;
+        // A function returns its value as its return type: `return v;` of
+        // an int32_t v in an int8_t function reads v's low byte.
+        if (S.Kind == StmtKind::Return && &Root == &S.RetVal && Root)
+          if (const std::optional<uint16_t> Bytes = returnedBytes();
+              Bytes && *Bytes < exprBytes(*Root)) {
+            demand(Root.get(), allBytes(*Bytes));
+            return;
+          }
         if (S.Kind == StmtKind::Assign && &Root == &S.Dst) {
           // An assignment through memory reads its address.
           Root->forEachChildExpr([&](const ExprPtr &C) { demandAll(C); });
@@ -470,7 +489,7 @@ private:
       Out.push_back(Count.ConstVal);
       return true;
     }
-    if (Depth > 4)
+    if (Depth > ::neverd::limits::ir::kHighDemandedBytesShiftAmountsDepthLimit)
       return false;
     // A conversion of one keeps its value within the converted width.
     if ((Count.Kind == ExprKind::Cast ||

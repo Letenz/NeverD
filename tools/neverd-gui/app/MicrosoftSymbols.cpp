@@ -10,6 +10,7 @@
 
 #include "MicrosoftSymbols.h"
 
+#include "../ResourceLimits.h"
 #include "PdbPromptDialog.h"
 #include "Session.h"
 
@@ -18,10 +19,7 @@
 #include <QTimer>
 
 namespace neverd::gui {
-namespace {
-/// How long to wait for another modal dialog to close before asking.
-constexpr int ModalRetryMs = 150;
-} // namespace
+namespace {} // namespace
 
 MicrosoftSymbols::MicrosoftSymbols(Session &session, QWidget *window,
                                    QNetworkAccessManager *network)
@@ -98,7 +96,8 @@ void MicrosoftSymbols::offer(quint64 serial, const QJsonObject &reference) {
   if (!current(serial))
     return;
   if (QApplication::activeModalWidget()) {
-    QTimer::singleShot(ModalRetryMs, this,
+    QTimer::singleShot(::neverd::limits::gui::kMicrosoftSymbolsModalRetryMs,
+                       this,
                        [this, serial, reference] { offer(serial, reference); });
     return;
   }
@@ -111,9 +110,10 @@ void MicrosoftSymbols::offer(quint64 serial, const QJsonObject &reference) {
       return;
     prompt_ = nullptr;
     const auto path = prompt->choice().value("path").toString();
-    if (path.isEmpty())
+    if (path.isEmpty()) {
       cancel();
-    else
+      session_.declinePdb();
+    } else
       apply(path, serial);
   });
   prompt->open();

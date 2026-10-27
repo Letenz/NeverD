@@ -7,6 +7,7 @@
 #ifndef NEVERD_SOLVER_BV_PERMANENTCONJUNCTS_H
 #define NEVERD_SOLVER_BV_PERMANENTCONJUNCTS_H
 
+#include "neverd/solver/Limits.h"
 #include "neverd/symbolic/SymExpr.h"
 
 #include "llvm/ADT/DenseSet.h"
@@ -22,23 +23,21 @@ namespace neverd::solver::detail {
 
 using PermanentConjunct = std::pair<symbolic::SymRef, bool>;
 
-// Large path predicates can contain thousands of small Boolean wrappers.
-// Bound this optional preparation independently of bit-blasting and SAT search;
-// a smaller caller-supplied allowance still takes precedence.
-inline constexpr unsigned MaxPermanentConjunctWork = 1U << 18;
-
 // Each returned literal is entailed by asserting Pred permanently. The caller
 // must still assert the complete original predicate. Charge every worklist pop
 // (including revisits), inspected operand edge and copied or inspected constant
 // word before doing that work. Refusal discards all preparation; it is not a
 // solver result.
 inline std::optional<llvm::SmallVector<PermanentConjunct, 32>>
-collectPermanentConjuncts(const symbolic::SymContext &Ctx,
-                          symbolic::SymRef Pred,
-                          unsigned MaxWork = MaxPermanentConjunctWork) {
+collectPermanentConjuncts(
+    const symbolic::SymContext &Ctx, symbolic::SymRef Pred,
+    unsigned MaxWork =
+        ::neverd::limits::solver::kPermanentConjunctsMaxPermanentConjunctWork) {
   using symbolic::SymOp;
   using symbolic::SymRef;
-  unsigned Remaining = std::min(MaxWork, MaxPermanentConjunctWork);
+  unsigned Remaining = std::min(
+      MaxWork,
+      ::neverd::limits::solver::kPermanentConjunctsMaxPermanentConjunctWork);
   auto Charge = [&](size_t Amount) {
     if (Amount > Remaining)
       return false;
@@ -121,5 +120,11 @@ collectPermanentConjuncts(const symbolic::SymContext &Ctx,
 }
 
 } // namespace neverd::solver::detail
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::solver::detail {
+inline constexpr unsigned MaxPermanentConjunctWork =
+    ::neverd::limits::solver::kPermanentConjunctsMaxPermanentConjunctWork;
+}
 
 #endif

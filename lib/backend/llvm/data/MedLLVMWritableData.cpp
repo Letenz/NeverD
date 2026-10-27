@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Common.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/object/SectionNames.h"
@@ -94,6 +95,12 @@ MedLLVMEmitter::writableDataSegOf(const MedVar &AddrVar,
     const Segment *S = writableSeg(AddrVar.ConstVal, &AddrVar);
     return S ? std::optional<uint64_t>(S->VA) : std::nullopt;
   }
+  // i386 PIC data at a displacement from the GOT lies in the segment of that
+  // sum, not in the GOT's own (matchI386GotRelative).
+  if (const auto Got = matchI386GotRelative(AddrVar)) {
+    const Segment *S = writableSeg(Got->Base, nullptr);
+    return S ? std::optional<uint64_t>(S->VA) : std::nullopt;
+  }
 
   // Memoize the DAG walk per non-constant address value: it is a pure function
   // of the (immutable during emit) function body, and the same address value is
@@ -114,7 +121,7 @@ MedLLVMEmitter::writableDataSegOf(const MedVar &AddrVar,
     bool Found = false;
     std::vector<MedVar> Work{AddrVar};
     std::set<std::tuple<int, int, int>> Seen;
-    int Budget = 4096;
+    int Budget = ::neverd::limits::backend::kMedLLVMWritableDataComputeBudget;
     while (!Work.empty() && Budget-- > 0) {
       MedVar Cur = Work.back();
       Work.pop_back();
@@ -310,7 +317,9 @@ llvm::Value *MedLLVMEmitter::tryResolveWritableData(const MedVar &AddrVar,
   PointerModelSeen PointerModelActive;
   std::function<PointerAddressModel(const MedVar &, int)> pointerAddressModel =
       [&](const MedVar &V, int Depth) -> PointerAddressModel {
-    if (Depth > 32)
+    if (Depth >
+        ::neverd::limits::backend::
+            kMedLLVMWritableDataMedLLVMEmitterTryResolveWritableDataPointerAddressModelDepthLimit)
       return PointerAddressModel::Mixed;
     if (V.isConst()) {
       uint64_t ExactVA = 0;
@@ -474,7 +483,8 @@ llvm::Value *MedLLVMEmitter::tryResolveWritableData(const MedVar &AddrVar,
     auto findPhi = [&](const MedVar &X) { return lookupPhi(X); };
     std::set<std::tuple<int, int, int>> Seen;
     std::vector<MedVar> Work{V};
-    int Budget = 64;
+    int Budget = ::neverd::limits::backend::
+        kMedLLVMWritableDataI386WritableBlendAddrBudget;
     while (!Work.empty() && Budget-- > 0) {
       MedVar Cur = Work.back();
       Work.pop_back();

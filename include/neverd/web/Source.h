@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
+
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -89,10 +91,6 @@ struct SourceAnalysis {
 
 inline constexpr std::string_view JavaScriptParserProfile =
     "hermes-602befee-js-v3";
-inline constexpr uint64_t MaxJavaScriptBytes = 1024 * 1024;
-inline constexpr uint64_t MaxJavaScriptNodes = 100000;
-inline constexpr uint64_t MaxJavaScriptStringUnits = 2 * 1024 * 1024;
-inline constexpr uint64_t MaxJavaScriptLexemes = 200000;
 inline constexpr std::string_view JavaScriptLexemeProfile =
     "hermes-602befee-lexemes-v1";
 

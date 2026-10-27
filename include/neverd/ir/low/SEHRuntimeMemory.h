@@ -9,6 +9,7 @@
 #ifndef NEVERD_IR_LOW_SEHRUNTIMEMEMORY_H
 #define NEVERD_IR_LOW_SEHRUNTIMEMEMORY_H
 
+#include "neverd/ir/Limits.h"
 #include "neverd/loader/ExceptionCommon.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -23,9 +24,6 @@
 namespace neverd {
 struct BinaryImage;
 struct LowFunc;
-
-/// Includes the terminating NUL for either image or source-written formats.
-inline constexpr size_t kMaxWindowsSEHFormatBytes = 4096;
 
 /// Check the bounded scalar Windows printf grammar, without a terminating NUL.
 /// Source argument type hints do not supply this runtime-memory contract.

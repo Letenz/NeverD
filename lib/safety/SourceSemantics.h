@@ -11,6 +11,7 @@
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImageModel.h"
+#include "neverd/safety/Limits.h"
 #include "neverd/safety/SinkCatalog.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -134,7 +135,6 @@ inline std::optional<uint64_t> canonicalConstantValue(const MedVar &Value) {
 
 inline std::optional<std::string> readMappedCString(const BinaryImage *Img,
                                                     const MedVar &Address) {
-  constexpr size_t MaxFormatBytes = 4096;
   if (!Img)
     return std::nullopt;
   const uint16_t PointerBytes = getTargetRegInfo(Img->Arch).PointerSize;
@@ -168,7 +168,8 @@ inline std::optional<std::string> readMappedCString(const BinaryImage *Img,
   const size_t Offset = static_cast<size_t>(RawOffset);
   const uint64_t SegmentAvailable = Seg->Data.size() - Offset;
   const size_t Available = static_cast<size_t>(std::min<uint64_t>(
-      MaxFormatBytes, std::min(OwnerAvailable, SegmentAvailable)));
+      ::neverd::limits::safety::kSourceSemanticsMaxFormatBytes,
+      std::min(OwnerAvailable, SegmentAvailable)));
   const uint8_t *Begin = Seg->Data.data() + Offset;
   const uint8_t *End = std::find(Begin, Begin + Available, uint8_t(0));
   if (End == Begin + Available)
@@ -376,7 +377,8 @@ recoverFormattedSourceOutputs(const BinaryImage *Img,
       formattedSourceName(StatedName);
   if (!Source)
     return std::nullopt;
-  const unsigned FixedCount = libc::varArgFixedCount(Source->first);
+  const unsigned FixedCount = libc::varArgFixedCount(
+      Source->first, Img ? libc::libcVariantOf(*Img) : libc::LibCVariant::GNU);
   if (FixedCount == 0 || FixedCount > Args.size())
     return std::nullopt;
   const unsigned FormatArg = FixedCount - 1;

@@ -13,10 +13,12 @@ import re
 import sys
 from types import ModuleType
 from types import MappingProxyType
-from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol, TypeVar, cast
+from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol, Sequence, TypeVar, cast
 
 from .abi import (
     EventType,
+    UNWIND_FRAME_QUERY,
+    VirtualAddress,
     LLVMOptimizationLevel,
     NeverDOptimizeLLVMOptions,
     NeverDOptimizeLLVMResult,
@@ -26,7 +28,10 @@ from .abi import (
     NeverDSanitizeResultV1,
     NeverDSourcePatchMappingV1,
     NeverDSourcePatchBindingV1,
+    NeverDSourcePatchDependencyV1,
     NeverDSourcePatchOptionsV1,
+    NeverDBytePatchOptionsV1,
+    NeverDAssembleOptionsV1,
     NeverDSimplifyOptions,
     NeverDSimplifyResult,
     NeverDSynthesizeOptions,
@@ -55,8 +60,31 @@ from .abi import (
     TranslationSemanticStop,
 )
 from .ffi import HostAPI
-
-_LOWIR_CONCOLIC_MAX_REGISTER_SEEDS_V1 = 4096
+from ._limits import (
+    DEFAULT_SYMBOLIC_WIDTH,
+    DEFAULT_INSTRUCTION_SUBSTITUTION_ROUNDS,
+    DEFAULT_EXPLORE_MAX_PATHS,
+    DEFAULT_EXPLORE_MAX_STEPS,
+    DEFAULT_EXPLORE_MAX_BLOCK_VISITS,
+    DEFAULT_CONCOLIC_MAX_STEPS,
+    DEFAULT_CONCOLIC_MAX_BLOCK_VISITS,
+    DEFAULT_CONCOLIC_MAX_LOOP_ITERATIONS,
+    DEFAULT_CONCOLIC_MAX_FLIP_ATTEMPTS,
+    DEFAULT_CONCOLIC_MAX_CANDIDATES,
+    DEFAULT_CONCOLIC_MAX_CONFLICTS,
+    DEFAULT_CONCOLIC_MAX_PROPAGATIONS,
+    DEFAULT_CONCOLIC_MAX_WATCH_VISITS,
+    DEFAULT_CONCOLIC_SOLVER_MAX_WIDTH,
+    DEFAULT_CONCOLIC_SOLVER_MAX_GATES,
+    DEFAULT_SOURCE_PATCH_TIMEOUT_SECONDS,
+    LOWIR_CONCOLIC_MAX_REGISTER_SEEDS_V1 as _LOWIR_CONCOLIC_MAX_REGISTER_SEEDS_V1,
+    MAX_SOURCE_PATCH_BINDINGS,
+    MAX_SOURCE_PATCH_COMPILER_ARGUMENTS,
+    MAX_SOURCE_PATCH_DEPENDENCIES,
+    MAX_SOURCE_PATCH_INPUT_BYTES,
+    MAX_SOURCE_PATCH_MAPPINGS,
+    MAX_SOURCE_PATCH_TIMEOUT_SECONDS,
+)
 
 
 _SEMVER = re.compile(
@@ -785,14 +813,16 @@ class Session:
         enabled: bool = True,
         pdb_path: os.PathLike[str] | str | None = None,
         map_path: os.PathLike[str] | str | None = None,
+        dwarf_path: os.PathLike[str] | str | None = None,
     ) -> None:
         """Choose the debug symbols the next load() reads.
 
         The search happens during load(), so this only takes effect on a
         subsequent one.  Naming a file makes it authoritative: load() then
         fails rather than falling back to a companion file that happens to sit
-        beside the binary.  Pass an empty path to resume searching, or
-        enabled=False to read the image alone.
+        beside the binary.  A PDB or DWARF outranks a MAP, whose names fill
+        only what they leave unnamed.  Pass an empty path to resume searching,
+        or enabled=False to read the image alone.
         """
 
         self._call(
@@ -808,6 +838,11 @@ class Session:
             self._call(
                 "neverd_session_set_map_path",
                 _utf8_argument("MAP path", os.fspath(map_path), allow_empty=True),
+            )
+        if dwarf_path is not None:
+            self._call(
+                "neverd_session_set_dwarf_path",
+                _utf8_argument("DWARF path", os.fspath(dwarf_path), allow_empty=True),
             )
 
     def load(self, path: os.PathLike[str] | str) -> None:
@@ -873,7 +908,23 @@ class Session:
         return self._owned_string("neverd_last_error") or ""
 
     def _json(self, name: str, operation: str, *arguments: object) -> object:
-        return _decode_json(operation, self._owned_string(name, *arguments))
+        value = self._owned_string(name, *arguments)
+        if value is None:
+            raise NeverDError(
+                self.last_error or f"NeverD returned no {operation} result"
+            )
+        return _decode_json(operation, value)
+
+    def x87_capabilities(self) -> object:
+        """Return the static x87 inventory without probing or loading a binary.
+
+        Numerical support, complete state and native-reference observations
+        remain separate. Test source references are not passing evidence.
+        """
+        value = self._owned_string("neverd_x87_capabilities_json")
+        if value is None:
+            raise NeverDError(self.last_error)
+        return _decode_json("x87 capabilities", value)
 
     def cpu_capabilities(
         self, configuration: str | None = None, *, probe_host: bool = False
@@ -978,6 +1029,20 @@ class Session:
     def relocations(self) -> object:
         return self._json("neverd_relocs_json", "relocations")
 
+    def unwind_frame(self, address: int) -> object:
+        """Return the complete unwind frame at the exact virtual address.
+
+        JSON null becomes None. AArch64 DWARF state describes this exact PC;
+        the independent compact recipe describes the completed prologue.
+        Neither source authenticates a live return address. No PC bias or
+        function-entry substitution is applied, and native statuses are kept.
+        """
+        return self._json(
+            UNWIND_FRAME_QUERY,
+            UNWIND_FRAME_QUERY,
+            _unsigned(UNWIND_FRAME_QUERY, address, ctypes.sizeof(VirtualAddress) * 8),
+        )
+
     @property
     def headers(self) -> object:
         return self._json("neverd_headers_json", "headers")
@@ -993,6 +1058,65 @@ class Session:
     @property
     def callgraph(self) -> object:
         return self._json("neverd_callgraph_json", "call graph")
+
+    def call_paths(
+        self,
+        waypoints: Sequence[str],
+        *,
+        exclude: Sequence[str] = (),
+        max_depth: int | None = None,
+        shortest_only: bool = False,
+        data_refs: bool = False,
+        max_paths: int | None = None,
+    ) -> object:
+        """Call paths through ``waypoints`` in order, shortest first.
+
+        Waypoints and exclusions are ``0x`` addresses or names of functions
+        and imports, read from direct references without analysis, as
+        ``neverd_call_paths_json`` takes them.
+        """
+
+        options: dict[str, object] = {
+            "waypoints": [str(point) for point in waypoints],
+            "exclude": [str(point) for point in exclude],
+            "shortest_only": bool(shortest_only),
+            "data_refs": bool(data_refs),
+        }
+        if max_depth is not None:
+            options["max_depth"] = max_depth
+        if max_paths is not None:
+            options["max_paths"] = max_paths
+        return self._json(
+            "neverd_call_paths_json",
+            "call paths",
+            _utf8_argument("call path options", json.dumps(options), allow_empty=False),
+        )
+
+    def call_tree(
+        self,
+        root: str,
+        *,
+        callers: bool = False,
+        max_depth: int | None = None,
+        exclude: Sequence[str] = (),
+        data_refs: bool = False,
+    ) -> object:
+        """The functions and imports ``root`` calls, or with ``callers`` the
+        functions that call it, as ``neverd_call_tree_json`` lists them."""
+
+        options: dict[str, object] = {
+            "root": str(root),
+            "direction": "callers" if callers else "callees",
+            "exclude": [str(point) for point in exclude],
+            "data_refs": bool(data_refs),
+        }
+        if max_depth is not None:
+            options["max_depth"] = max_depth
+        return self._json(
+            "neverd_call_tree_json",
+            "call tree",
+            _utf8_argument("call tree options", json.dumps(options), allow_empty=False),
+        )
 
     def strings(self, minimum_length: int = 4) -> object:
         return self._json(
@@ -1026,9 +1150,9 @@ class Session:
         self,
         address: int,
         *,
-        max_paths: int = 64,
-        max_steps: int = 1 << 16,
-        max_block_visits: int = 3,
+        max_paths: int = DEFAULT_EXPLORE_MAX_PATHS,
+        max_steps: int = DEFAULT_EXPLORE_MAX_STEPS,
+        max_block_visits: int = DEFAULT_EXPLORE_MAX_BLOCK_VISITS,
         include_expressions: bool = False,
     ) -> SymbolicExploration:
         """Explore every bounded LowIR path through a native function.
@@ -1177,16 +1301,16 @@ class Session:
         options.solver_max_gates = _unsigned("solver_max_gates", solver_max_gates, 64)
 
         expected_limits = ConcolicLimits(
-            max_steps=max_steps or 1 << 16,
-            max_block_visits=max_block_visits or 3,
-            max_loop_iterations=max_loop_iterations or 3,
-            max_flip_attempts=max_flip_attempts or 64,
-            max_candidates=max_candidates or 64,
-            solver_max_conflicts=solver_max_conflicts or 1 << 18,
-            solver_max_propagations=solver_max_propagations or 1 << 24,
-            solver_max_watch_visits=solver_max_watch_visits or 1 << 26,
-            solver_max_width=256,
-            solver_max_gates=solver_max_gates or 1 << 22,
+            max_steps=max_steps or DEFAULT_CONCOLIC_MAX_STEPS,
+            max_block_visits=max_block_visits or DEFAULT_CONCOLIC_MAX_BLOCK_VISITS,
+            max_loop_iterations=max_loop_iterations or DEFAULT_CONCOLIC_MAX_LOOP_ITERATIONS,
+            max_flip_attempts=max_flip_attempts or DEFAULT_CONCOLIC_MAX_FLIP_ATTEMPTS,
+            max_candidates=max_candidates or DEFAULT_CONCOLIC_MAX_CANDIDATES,
+            solver_max_conflicts=solver_max_conflicts or DEFAULT_CONCOLIC_MAX_CONFLICTS,
+            solver_max_propagations=solver_max_propagations or DEFAULT_CONCOLIC_MAX_PROPAGATIONS,
+            solver_max_watch_visits=solver_max_watch_visits or DEFAULT_CONCOLIC_MAX_WATCH_VISITS,
+            solver_max_width=DEFAULT_CONCOLIC_SOLVER_MAX_WIDTH,
+            solver_max_gates=solver_max_gates or DEFAULT_CONCOLIC_SOLVER_MAX_GATES,
         )
         expected_seed = tuple(
             sorted(
@@ -1441,7 +1565,7 @@ class Session:
         self,
         *,
         instruction_substitution: bool = False,
-        substitution_rounds: int = 1,
+        substitution_rounds: int = DEFAULT_INSTRUCTION_SUBSTITUTION_ROUNDS,
         constant_encryption: bool = False,
         opaque_predicate: bool = False,
         control_flow_flattening: bool = False,
@@ -1690,6 +1814,86 @@ class Session:
         return self.patch_result
 
     @property
+    def byte_patches(self) -> object:
+        """Canonical overlay runs, with immutable original and current bytes."""
+        return self._json("neverd_byte_patches_json", "read byte patches")
+
+    @property
+    def byte_patch_ranges(self) -> object:
+        """Changed address/size ranges without transferring the byte payloads."""
+        return self._json("neverd_byte_patch_ranges_json", "read byte patch ranges")
+
+    def preview_byte_patch(self, address: int, *, kind: str = "bytes",
+                           data: bytes | str = b"", text: str = "",
+                           value: int = 0, size: int = 0,
+                           fill_nops: bool = True, allow_overlap: bool = False,
+                           dialect: str = "intel", symbols: Mapping[str, int] | None = None) -> object:
+        return self._byte_patch(False, address, kind, data, text, value, size,
+                                fill_nops, allow_overlap, dialect, None, symbols)
+
+    def apply_byte_patch(self, address: int, *, kind: str = "bytes",
+                         data: bytes | str = b"", text: str = "",
+                         value: int = 0, size: int = 0,
+                         fill_nops: bool = True, allow_overlap: bool = False,
+                         dialect: str = "intel", expected: bytes | str | None = None,
+                         symbols: Mapping[str, int] | None = None) -> object:
+        """Apply in memory. Call save_byte_patches() to persist the overlay."""
+        return self._byte_patch(True, address, kind, data, text, value, size,
+                                fill_nops, allow_overlap, dialect, expected, symbols)
+
+    def _byte_patch(self, apply: bool, address: int, kind: str,
+                    data: bytes | str, text: str, value: int, size: int,
+                    fill_nops: bool, allow_overlap: bool, dialect: str,
+                    expected: bytes | str | None, symbols: Mapping[str, int] | None) -> object:
+        if dialect not in ("intel", "att"):
+            raise ValueError("dialect must be intel or att")
+        options = NeverDBytePatchOptionsV1()
+        options.struct_size = ctypes.sizeof(options)
+        options.address = _unsigned("address", address, 64)
+        options.kind = _utf8_argument("kind", kind, allow_empty=False)
+        options.bytes = _utf8_argument("data", data.hex() if isinstance(data, bytes) else data, allow_empty=True)
+        options.text = _utf8_argument("text", text, allow_empty=True)
+        options.value = _unsigned("value", value, 64)
+        options.size = _unsigned("size", size, 64)
+        options.fill_nops = int(fill_nops)
+        options.allow_overlap = int(allow_overlap)
+        options.dialect = int(dialect == "att")
+        options.symbols = json.dumps(dict(symbols or {})).encode("utf-8")
+        if expected is not None:
+            options.expected = _utf8_argument("expected", expected.hex() if isinstance(expected, bytes) else expected, allow_empty=True)
+        return self._json("neverd_byte_patch_apply" if apply else "neverd_byte_patch_preview",
+                          "apply byte patch" if apply else "preview byte patch", ctypes.byref(options))
+
+    def revert_byte_patch(self, address: int, size: int = 0) -> None:
+        """Restore a range, or the containing run when size is zero."""
+        self._require_zero(self._call("neverd_byte_patch_revert", _unsigned("address", address, 64),
+                                     _unsigned("size", size, 64)), "revert byte patch")
+
+    def save_byte_patches(self) -> None:
+        self._require_zero(self._call("neverd_byte_patches_save"), "save byte patches")
+
+    def load_byte_patches(self) -> None:
+        self._require_zero(self._call("neverd_byte_patches_load"), "load byte patches")
+
+    def export_byte_patches(self, output_path: os.PathLike[str] | str, *, allow_unsigned: bool = False) -> None:
+        self._require_zero(self._call("neverd_byte_patches_export",
+                           _utf8_argument("output path", os.fspath(output_path), allow_empty=False),
+                           int(allow_unsigned)), "export byte patches")
+
+    def assemble(self, pc: int, text: str, *, dialect: str = "intel", mode: str = "image",
+                 symbols: Mapping[str, int] | None = None) -> object:
+        if dialect not in ("intel", "att") or mode not in ("image", "arm", "thumb"):
+            raise ValueError("unknown assembly dialect or mode")
+        options = NeverDAssembleOptionsV1()
+        options.struct_size = ctypes.sizeof(options)
+        options.pc = _unsigned("pc", pc, 64)
+        options.dialect = int(dialect == "att")
+        options.mode = ("image", "arm", "thumb").index(mode)
+        options.symbols = json.dumps(dict(symbols or {})).encode("utf-8")
+        options.text = _utf8_argument("text", text, allow_empty=False)
+        return self._json("neverd_assemble_json", "assemble", ctypes.byref(options))
+
+    @property
     def source_patch_report(self) -> object:
         """Installation mappings and compiler details from the last request."""
         return self._json("neverd_patch_source_report", "source patch report")
@@ -1701,6 +1905,7 @@ class Session:
         *,
         mappings: Mapping[str, int] | None = None,
         bindings: Mapping[str, tuple[str, int] | tuple[str, int, int]] | None = None,
+        dependencies: Mapping[str, tuple[str, str]] | None = None,
         input_kind: str = "source",
         compiler: str = "clang",
         compiler_path: os.PathLike[str] | str | None = None,
@@ -1710,15 +1915,16 @@ class Session:
         strategy: str = "section",
         source_name: os.PathLike[str] | str | None = None,
         compiler_args: Iterable[str] = (),
-        timeout_seconds: int = 30,
+        timeout_seconds: int = DEFAULT_SOURCE_PATCH_TIMEOUT_SECONDS,
     ) -> object:
         """Compile and install replacements, returning the verified report.
 
         Mapping keys are exact replacement symbols; an empty key selects a
         sole external definition. Empty mappings retain legacy name matching.
         Bindings map declarations to ``(kind, original_address[, size])``;
-        kinds are ``function``, ``const`` (read-only data), and ``data``
-        (writable data). They share existing storage or call existing code.
+        kinds are ``function``, ``original`` (saved replaced body), ``const``
+        (read-only data), and ``data`` (writable data). Dependencies map exact
+        import symbols to ``(library, kind)``; kind is ``function`` or ``data``.
         Explicit compiler selection never falls back to another executable.
         Profiles unavailable in the loaded engine raise ``NeverDError``.
         """
@@ -1745,8 +1951,8 @@ class Session:
             payload = source
         else:
             raise ValueError("source must be nonempty str or bytes")
-        if len(payload) > 64 * 1024 * 1024:
-            raise ValueError("patch input exceeds 64 MiB")
+        if len(payload) > MAX_SOURCE_PATCH_INPUT_BYTES:
+            raise ValueError(f"patch input exceeds {MAX_SOURCE_PATCH_INPUT_BYTES // (1024 * 1024)} MiB")
         if input_kind != "object" and b"\0" in payload:
             raise ValueError("text input contains a NUL byte")
         buffer = ctypes.create_string_buffer(payload)
@@ -1755,9 +1961,9 @@ class Session:
             if path is not None:
                 setattr(options, name, _utf8_argument(name, os.fspath(path),
                                                      allow_empty=False))
-        arguments = list(islice(compiler_args, 257))
-        if len(arguments) > 256:
-            raise ValueError("at most 256 compiler arguments are supported")
+        arguments = list(islice(compiler_args, MAX_SOURCE_PATCH_COMPILER_ARGUMENTS + 1))
+        if len(arguments) > MAX_SOURCE_PATCH_COMPILER_ARGUMENTS:
+            raise ValueError(f"at most {MAX_SOURCE_PATCH_COMPILER_ARGUMENTS} compiler arguments are supported")
         native_args = (ctypes.c_char_p * len(arguments))(
             *(_utf8_argument("compiler argument", arg, allow_empty=False)
               for arg in arguments)
@@ -1765,7 +1971,7 @@ class Session:
         options.compiler_args = native_args
         options.compiler_arg_count = len(arguments)
         entries = list((mappings or {}).items())
-        if len(entries) > 65536:
+        if len(entries) > MAX_SOURCE_PATCH_MAPPINGS:
             raise ValueError("too many replacement mappings")
         native_mappings = (NeverDSourcePatchMappingV1 * len(entries))(
             *(NeverDSourcePatchMappingV1(
@@ -1776,16 +1982,16 @@ class Session:
         options.mappings = native_mappings
         options.mapping_count = len(entries)
         references = list((bindings or {}).items())
-        if len(references) > 65536:
+        if len(references) > MAX_SOURCE_PATCH_BINDINGS:
             raise ValueError("too many original reference bindings")
         native_bindings = (NeverDSourcePatchBindingV1 * len(references))()
         for index, (symbol, reference) in enumerate(references):
             if len(reference) not in (2, 3):
                 raise ValueError("bindings require (kind, address[, size])")
             kind, address = reference[:2]
-            kinds = ("function", "const", "data")
+            kinds = ("function", "const", "data", "original")
             if kind not in kinds:
-                raise ValueError("binding kind must be function, const, or data")
+                raise ValueError("binding kind must be function, const, data, or original")
             native_bindings[index] = NeverDSourcePatchBindingV1(
                 _utf8_argument("binding symbol", symbol, allow_empty=False),
                 kinds.index(kind), _unsigned("binding address", address, 64),
@@ -1793,9 +1999,23 @@ class Session:
             )
         options.bindings = native_bindings
         options.binding_count = len(references)
+        imports = list((dependencies or {}).items())
+        if len(imports) > MAX_SOURCE_PATCH_DEPENDENCIES:
+            raise ValueError("too many new dependencies")
+        native_dependencies = (NeverDSourcePatchDependencyV1 * len(imports))()
+        for index, (symbol, request) in enumerate(imports):
+            if len(request) != 2 or request[1] not in ("function", "data"):
+                raise ValueError("dependencies require (library, function|data)")
+            native_dependencies[index] = NeverDSourcePatchDependencyV1(
+                _utf8_argument("dependency library", request[0], allow_empty=False),
+                _utf8_argument("dependency symbol", symbol, allow_empty=False),
+                ("function", "data").index(request[1]),
+            )
+        options.dependencies = native_dependencies
+        options.dependency_count = len(imports)
         options.timeout_seconds = _unsigned("compiler timeout", timeout_seconds, 32)
-        if options.timeout_seconds > 3600:
-            raise ValueError("compiler timeout must not exceed 3600 seconds")
+        if options.timeout_seconds > MAX_SOURCE_PATCH_TIMEOUT_SECONDS:
+            raise ValueError(f"compiler timeout must not exceed {MAX_SOURCE_PATCH_TIMEOUT_SECONDS} seconds")
         self._require_success(self._call(
             "neverd_patch_source", buffer, len(payload), ctypes.byref(options),
             _utf8_argument("output path", os.fspath(output_path), allow_empty=False),
@@ -1823,6 +2043,35 @@ class Session:
         )
         if value is None:
             raise NeverDError(self.last_error or "decompile-all failed")
+        return value
+
+    def decompile_functions(
+        self,
+        path: os.PathLike[str] | str,
+        entries: Iterable[int],
+        *,
+        language: OutputLanguage | int = OutputLanguage.C,
+    ) -> str:
+        """One translation unit of the functions at ``entries``, as
+        ``decompile_all`` writes the whole program; pass a function and the
+        ``bottom_up`` list of its ``call_tree`` for its file."""
+
+        try:
+            output_language = OutputLanguage(language)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"unknown output language: {language!r}") from error
+        addresses = [_unsigned("entry", entry, 64) for entry in entries]
+        if not addresses:
+            raise ValueError("entries must name at least one function")
+        value = self._owned_string(
+            "neverd_decompile_functions",
+            _utf8_argument("input path", os.fspath(path), allow_empty=False),
+            int(output_language),
+            (ctypes.c_uint64 * len(addresses))(*addresses),
+            _c_int("entry count", len(addresses), minimum=1),
+        )
+        if value is None:
+            raise NeverDError(self.last_error or "decompile failed")
         return value
 
     def set_evm(self, *, strict: bool = True, hardfork: str | None = None) -> None:
@@ -3107,7 +3356,7 @@ def _simplify_host() -> HostAPI:
 def simplify_expression(
     expression: str,
     *,
-    width: int = 32,
+    width: int = DEFAULT_SYMBOLIC_WIDTH,
     deep: bool = True,
     max_atoms: int = 0,
     max_work: int = 0,
@@ -3191,7 +3440,7 @@ def simplify_expression(
 def synthesize_expression(
     expression: str,
     *,
-    width: int = 32,
+    width: int = DEFAULT_SYMBOLIC_WIDTH,
     max_cost: int = 0,
     max_samples: int = 0,
     verify_samples: int = 0,

@@ -941,8 +941,8 @@ KernelFramework::advance(uint64_t Token) {
       if (CancelCallbacks.contains(Token))
         if (auto E = retainQueueCallback(Token, Requests.at(S.Object).Queue))
           return E;
-      PendingCall =
-          GuestCall{Token, S.PC, {S.Object}, {}, S.SynchronizationObject};
+      PendingCall = GuestCall{
+          Token, S.PC, {S.Object}, {}, S.SynchronizationObject, S.ProcessID};
       return std::optional<uint64_t>{};
     }
     if (S.Kind == StepKind::PresentQueue) {

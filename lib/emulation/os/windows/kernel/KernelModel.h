@@ -14,10 +14,12 @@
 #include "DeviceLifecycle.h"
 #include "KernelDMA.h"
 #include "KernelDispatcher.h"
+#include "KernelFileSystem.h"
 #include "KernelFramework.h"
 #include "KernelGuestCall.h"
 #include "KernelInterrupts.h"
 #include "KernelMMIO.h"
+#include "KernelModelMemory.h"
 #include "KernelModuleImages.h"
 #include "KernelPoFx.h"
 #include "KernelRegistry.h"
@@ -44,10 +46,14 @@ class KernelExportRegistry;
 struct KernelContextCapture;
 enum class KernelAPIKind;
 class KernelModel {
+  friend class KernelRegistry;
+
 public:
-  KernelModel(GuestMemory &Memory, DriverResult &Result,
+  KernelModel(GuestMemory &Backing, DriverResult &Result,
               KernelExportRegistry *Exports = nullptr)
-      : Memory(Memory), Result(Result), Exports(Exports), Registry(Memory),
+      : ObservedMemory(Backing, [this] { recordUnpackEnvironmentRead(); }),
+        Memory(ObservedMemory), Result(Result), Exports(Exports),
+        Registry(*this, Memory),
         Dispatcher(Memory, Scheduler,
                    [this](uint64_t Address, uint32_t Size, bool IsWrite) {
                      return validateDispatcherStorage(Address, Size, IsWrite);
@@ -106,6 +112,10 @@ public:
        llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument =
            nullptr,
        const KernelContextCapture *Context = nullptr);
+  /// Deliver completed file notifications at an eligible caller boundary.
+  /// File retirement and API results remain owned by the file continuation.
+  llvm::Error
+  deliverFileRequestCompletions(const KernelContextCapture *Context = nullptr);
   llvm::Error snapshot();
   struct Invocation {
     uint64_t PC = 0;
@@ -203,7 +213,11 @@ public:
       FrameworkInterruptLock,
       FrameworkWaitLock,
       FrameworkCallback,
-      FrameworkCallbackLock
+      FrameworkCallbackLock,
+      FileClose,
+      FileHandleClose,
+      FileRequest,
+      FileOperation
     };
     Kind Type = Kind::Dispatcher;
     uint64_t Object = 0;
@@ -220,6 +234,16 @@ public:
   };
   std::optional<Wait> takeWait();
   llvm::Expected<std::optional<uint32_t>> pollWait(const Wait &Pending);
+  llvm::Expected<std::optional<uint64_t>> resumeFileHandleClose(uint64_t ID);
+  std::optional<uint64_t> takeFileRequestContinuation();
+  llvm::Expected<std::optional<uint64_t>> resumeFileRequest(uint64_t ID);
+  struct FileAPIContinuation {
+    bool Request = false;
+    uint64_t ID = 0;
+  };
+  std::optional<FileAPIContinuation> takeFileAPIContinuation();
+  llvm::Expected<std::optional<uint64_t>>
+  resumeFileAPI(FileAPIContinuation Continuation);
   std::optional<uint64_t> nextEventTime() const;
   bool hasQueuedDPC() const { return Scheduler.hasQueuedDPC(); }
   bool hasQueuedPriorityCallback() const {
@@ -260,9 +284,12 @@ public:
       CancelLock.CallbackExecution = Identity;
     }
   }
-  /// A synchronous exception callback retains its parent's user-memory
+  /// A synchronous nested callback retains its parent's process and memory
   /// authority while keeping its own execution and resource ownership.
-  llvm::Error inheritExecutionContext(uint64_t Child, uint64_t Parent);
+  llvm::Error
+  inheritExecutionContext(uint64_t Child, uint64_t Parent,
+                          std::optional<uint32_t> ProcessID = std::nullopt);
+  llvm::Error activateInheritedProcess();
   llvm::Error setUserRequestContext(
       bool Active,
       uint32_t ProcessID = DriverRequest::DefaultRequestorProcessID);
@@ -290,6 +317,10 @@ public:
                                   bool IsWrite) const;
 
 private:
+  llvm::Expected<uint64_t> dispatchKernelCall(
+      const std::string &Name, llvm::ArrayRef<uint64_t> Arguments,
+      llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument,
+      const KernelContextCapture *Context);
   static std::optional<unsigned> halArgumentCount(llvm::StringRef Name);
   llvm::Expected<uint64_t> callHAL(llvm::StringRef Name,
                                    llvm::ArrayRef<uint64_t> Arguments);
@@ -304,6 +335,7 @@ private:
   llvm::Expected<uint64_t> initializeUnicodeString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> ansiToUnicodeString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> unicodeToAnsiString(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> upcaseUnicodeString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> freeCountedString(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> stringFromGUID(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> guidFromString(llvm::ArrayRef<uint64_t> A);
@@ -319,9 +351,13 @@ private:
   llvm::Expected<uint64_t> debugMessage(
       llvm::ArrayRef<uint64_t> A, unsigned FormatIndex,
       llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument);
+  llvm::Expected<uint64_t> prefixedDebugMessage(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> checkedMemoryCopy(llvm::ArrayRef<uint64_t> A,
+                                             bool ClearOnError);
   llvm::Expected<uint64_t> memoryCall(KernelAPIKind Kind,
                                       llvm::ArrayRef<uint64_t> A);
 
+  KernelModelMemory ObservedMemory;
   GuestMemory &Memory;
   llvm::Expected<std::shared_ptr<RAMInitializationWatch>>
   watchInitialization(uint64_t Address, uint64_t Size);
@@ -538,6 +574,7 @@ private:
   /// Framework-owned WDM devices and their canonical symbolic-link keys.
   std::map<uint64_t, std::vector<std::string>> FrameworkDevices;
   KernelRegistry Registry;
+  KernelFileSystem FileSystem;
   KernelScheduler Scheduler;
   KernelDispatcher Dispatcher;
   KernelRemoveLocks RemoveLocks;
@@ -591,10 +628,18 @@ private:
   GuestCallToken CurrentGuestCall;
   uint64_t CurrentThreadKey = 0;
   std::map<uint64_t, uint64_t> ExecutionThreadKeys;
+  // DriverSession activates the actual extent before entering an execution.
+  // Nested stacks have independent bounds even when they share a thread key.
+  std::map<uint64_t, uint64_t> ExecutionStacks;
+  llvm::Expected<std::pair<uint64_t, uint64_t>> currentStackBounds() const;
+  llvm::Expected<uint64_t> queryInitialStack() const;
+  llvm::Expected<uint64_t> queryStackLimits(uint64_t Low, uint64_t High);
   struct ExecutionProcessContext {
     uint32_t ProcessID, CreatingProcessID;
     uint8_t PreviousMode;
-    bool Attached;
+    /// Public KeStackAttachProcess currently admits only a bounded operation
+    /// set. Internal object-manager callbacks have their own continuation.
+    bool RestrictedAttachment;
   };
   std::optional<ExecutionProcessContext> executionProcessContext() const;
   struct InheritedExecutionContext {
@@ -645,6 +690,7 @@ private:
     uint64_t ApcState;
     uint32_t PreviousProcessID;
     bool PreviousUserContext;
+    bool Private = false;
   };
   std::vector<ProcessAttachment> ProcessAttachments;
   bool hasProcessAttachment(uint64_t Execution) const;
@@ -661,6 +707,44 @@ private:
   llvm::Expected<uint64_t> acquireSpinLock(uint64_t Address, SpinLockMode Mode);
   llvm::Expected<uint64_t> releaseSpinLock(uint64_t Address,
                                            std::optional<uint8_t> RestoreIRQL);
+  // In-stack queued spin locks store the caller's KLOCK_QUEUE_HANDLE pointer in
+  // the lock and the saved IRQL in the handle, keyed here by the lock address.
+  struct QueuedSpinLock {
+    uint64_t Execution;
+    uint64_t Handle;
+    uint8_t OldIRQL;
+    bool RaisedIRQL;
+  };
+  std::map<uint64_t, QueuedSpinLock> QueuedSpinLocks;
+  // A lock address or an execution holds a lock if either spin-lock kind tracks
+  // it, so every held-lock rule treats executive and queued locks alike.
+  bool spinLockHeldAt(uint64_t Address) const {
+    return ExecutiveSpinLocks.count(Address) || QueuedSpinLocks.count(Address);
+  }
+  bool executionHoldsSpinLock(uint64_t Execution) const {
+    for (const auto &[Address, Lock] : ExecutiveSpinLocks)
+      if (Lock.Execution == Execution)
+        return true;
+    for (const auto &[Address, Lock] : QueuedSpinLocks)
+      if (Lock.Execution == Execution)
+        return true;
+    return false;
+  }
+  llvm::Error validateQueueHandle(uint64_t Handle) const;
+  llvm::Expected<uint64_t> acquireQueuedSpinLock(uint64_t SpinLock,
+                                                 uint64_t Handle, bool Raise);
+  llvm::Expected<uint64_t> releaseQueuedSpinLock(uint64_t Handle, bool Restore);
+  // Run-down protection keeps its whole state in the caller's EX_RUNDOWN_REF
+  // Count word, so these operations only validate and update guest memory.
+  llvm::Expected<uint64_t> readRundownCount(uint64_t RunRef);
+  llvm::Expected<uint64_t> initializeRundownProtection(uint64_t RunRef);
+  // \p Units is 1 for the plain routines and the ULONG count of the Ex forms.
+  llvm::Expected<uint64_t> acquireRundownProtection(uint64_t RunRef,
+                                                    uint32_t Units);
+  llvm::Expected<uint64_t> releaseRundownProtection(uint64_t RunRef,
+                                                    uint32_t Units);
+  llvm::Expected<uint64_t> waitForRundownProtectionRelease(uint64_t RunRef);
+  llvm::Expected<uint64_t> rundownCompleted(uint64_t RunRef);
   llvm::Error validateInterlockedLock(uint64_t Lock) const;
   llvm::Error validateInterlockedStorage(uint64_t Lock, uint64_t Address,
                                          uint32_t Size, bool IsWrite) const;
@@ -683,6 +767,100 @@ private:
   llvm::Expected<uint64_t> popEntrySList(uint64_t Header);
   llvm::Expected<uint64_t> flushSList(uint64_t Header);
   llvm::Expected<uint64_t> querySList(uint64_t Header, bool FirstEntry);
+
+  struct Lookaside {
+    bool Paged;
+    uint32_t Type, EntrySize, Tag;
+    uint64_t Allocate, Free;
+  };
+  std::map<uint64_t, Lookaside> Lookasides;
+  uint64_t LookasideHeads[2] = {};
+  llvm::Expected<uint64_t> initializeLookaside(llvm::ArrayRef<uint64_t> A,
+                                               bool Paged);
+  llvm::Expected<uint64_t> deleteLookaside(uint64_t Address, bool Paged);
+  llvm::Error validateLookasideAccess(uint64_t Address, uint32_t Size,
+                                      bool IsWrite) const;
+  llvm::Error canReleaseLookasideRange(uint64_t Address, uint64_t Size,
+                                       uint64_t Retiring) const;
+  llvm::Expected<std::vector<uint64_t>>
+  lookasideEntries(uint64_t Address) const;
+  llvm::Error writableLookasideStorage(uint64_t Address, uint32_t Size) const;
+  llvm::Error validateKernelObjectBorrow(uint64_t Address, uint64_t Size) const;
+  llvm::Error validateUnborrowedKernelStorage(uint64_t Address,
+                                              uint64_t Size) const;
+  enum class FastMutexMode { Normal, Unsafe, UnsafeGuarded };
+  struct FastMutexHold {
+    uint64_t Thread, Object;
+    uint8_t OldIRQL;
+    FastMutexMode Mode;
+  };
+  std::map<uint64_t, FastMutexHold> FastMutexHolds;
+  llvm::Expected<uint64_t> initializeFastMutex(uint64_t Address);
+  llvm::Expected<uint64_t> acquireFastMutex(uint64_t Address,
+                                            FastMutexMode Mode, bool Try);
+  llvm::Expected<uint64_t> releaseFastMutex(uint64_t Address, bool Unsafe);
+  llvm::Error validateFastMutexStorage(uint64_t Address, bool Initialize) const;
+  llvm::Error validateFastMutexAccess(uint64_t Address, uint32_t Size,
+                                      bool IsWrite) const;
+  llvm::Error validateFastMutexContext(uint8_t IRQL, uint16_t Critical,
+                                       uint16_t Guarded,
+                                       uint64_t Retiring = 0) const;
+  bool threadHoldsFastMutex(uint64_t Thread) const;
+  enum class ExecutiveResourceMode {
+    Exclusive,
+    Shared,
+    SharedWaitForExclusive
+  };
+  struct ExecutiveResourceOwner {
+    uint64_t Thread = 0, Value = 0;
+    uint32_t Count = 0;
+  };
+  struct ExecutiveResource {
+    uint64_t Flink = 0, Blink = 0, Table = 0;
+    bool Exclusive = false, BoostDisabled = false;
+    // Slot zero is the inline owner. A table has an unused header slot zero
+    // and the remaining owners at the same indices as this vector.
+    std::vector<ExecutiveResourceOwner> Owners{1};
+  };
+  std::map<uint64_t, ExecutiveResource> ExecutiveResources;
+  uint64_t ExecutiveResourceHead = 0;
+  llvm::Error validateExecutiveResourceAccess(uint64_t Address,
+                                              uint64_t Size) const;
+  llvm::Error canReleaseExecutiveResourceRange(uint64_t Address,
+                                               uint64_t Size) const;
+  llvm::Error validateExecutiveResourceMemory(uint64_t Address, uint32_t Size,
+                                              bool Write) const;
+  llvm::Expected<ExecutiveResource *>
+  executiveResource(uint64_t Address, bool Write,
+                    bool AllowTransferred = false);
+  std::vector<uint8_t> executiveResourceBytes(const ExecutiveResource &State,
+                                              bool Table) const;
+  llvm::Error validateExecutiveResourceRegistry() const;
+  llvm::Error publishExecutiveResource(uint64_t Address,
+                                       const ExecutiveResource &State);
+  llvm::Error validateExecutiveResourceContext(uint8_t IRQL, uint16_t Critical,
+                                               uint16_t Guarded,
+                                               uint64_t Retiring = 0,
+                                               uint64_t Owner = 0,
+                                               bool IgnoreMutex = false) const;
+  llvm::Error validateExecutiveResourceRestoreIRQL(uint8_t IRQL) const;
+  bool threadHoldsExecutiveResource(uint64_t Thread) const;
+  llvm::Expected<uint64_t> initializeExecutiveResource(uint64_t Address);
+  llvm::Expected<uint64_t> resetExecutiveResource(uint64_t Address,
+                                                  bool Delete);
+  llvm::Expected<uint64_t> acquireExecutiveResource(uint64_t Address,
+                                                    ExecutiveResourceMode Mode,
+                                                    bool Wait,
+                                                    bool EnterCritical = false);
+  llvm::Expected<uint64_t> releaseExecutiveResource(uint64_t Address,
+                                                    uint64_t Owner,
+                                                    bool LeaveCritical);
+  llvm::Expected<uint64_t> queryExecutiveResource(uint64_t Address,
+                                                  bool Exclusive, bool Waiters);
+  llvm::Expected<uint64_t> convertExecutiveResource(uint64_t Address);
+  llvm::Expected<uint64_t> disableExecutiveResourceBoost(uint64_t Address);
+  llvm::Expected<uint64_t>
+  transferExecutiveResource(uint64_t Address, uint64_t Owner, uint32_t Flags);
   struct RaisedIRQL {
     uint64_t Execution;
     uint8_t OldIRQL;
@@ -694,8 +872,11 @@ private:
   llvm::Expected<uint64_t> processObject(uint32_t ProcessID);
   llvm::Expected<uint64_t> requestorProcess(uint64_t IRP);
   llvm::Expected<uint64_t> currentProcess();
-  llvm::Error stackAttachProcess(uint64_t Process, uint64_t ApcState);
-  llvm::Error unstackDetachProcess(uint64_t ApcState);
+  llvm::Error stackAttachProcess(uint64_t Process, uint64_t ApcState,
+                                 bool Private = false);
+  llvm::Error unstackDetachProcess(uint64_t ApcState, bool Private = false);
+  llvm::Error probeAndLockProcessPages(uint64_t MDL, uint64_t Process,
+                                       uint8_t Mode, uint32_t Operation);
   llvm::Expected<uint64_t> allocateUserBuffer(uint32_t Size,
                                               llvm::ArrayRef<uint8_t> Initial,
                                               DriverUserPageAccess Access,
@@ -760,19 +941,51 @@ private:
   std::map<uint64_t, Wait> WaitRegistrations;
   std::map<uint64_t, size_t> WaitReferences;
   std::map<std::pair<uint64_t, uint32_t>, size_t> WaitBlockReferences;
-  struct SystemThread {
-    uint64_t Handle = 0;
+  enum class ObjectKind {
+    Process,
+    Thread,
+    Driver,
+    File,
+    Event,
+    Semaphore,
+    Job,
+    Token,
+    Device,
+    Directory,
+    SymbolicLink,
+    Key
+  };
+  struct ObjectReferences {
+    ObjectKind Kind;
+    size_t Pointers = 0;
+    size_t Handles = 0;
+    std::string Name;
+    KernelRegistry *RegistryOwner = nullptr;
+  };
+  struct ObjectHandle {
+    uint64_t Object;
+    uint32_t GrantedAccess;
+    uint32_t Attributes;
+    uint32_t ProcessID;
+    bool ScenarioOwned = false;
+  };
+  // External references have one owner. Execution and registered waits keep
+  // their domain-owned holds until completion; they are not caller references.
+  std::map<uint64_t, ObjectReferences> ReferencedObjects;
+  std::map<ObjectKind, uint64_t> ObjectTypes;
+  std::map<uint64_t, ObjectHandle> ObjectHandles;
+  uint64_t NextObjectHandle = profile::SystemThreadHandleBase;
+  struct ThreadObject {
     uint64_t CallbackID = 0;
+    uint32_t ProcessID = 0;
     uint32_t ExitStatus = 0;
-    size_t PointerReferences = 0;
-    bool HandleOpen = true;
+    uint32_t ExitPriority = 0;
+    bool System = false;
     bool Exited = false;
     bool Terminating = false;
   };
-  std::map<uint64_t, SystemThread> SystemThreads;
+  std::map<uint64_t, ThreadObject> ThreadObjects;
   std::map<uint64_t, uint64_t> CurrentThreadObjects;
-  std::map<uint64_t, uint64_t> ThreadHandles;
-  uint64_t NextThreadHandle = profile::SystemThreadHandleBase;
   std::optional<uint32_t> PendingThreadTermination;
   /// Client IDs of live thread objects, assigned on first observation. Issued
   /// IDs are never reused, and requestor process IDs may not collide with them.
@@ -785,10 +998,54 @@ private:
   createSystemThread(llvm::ArrayRef<uint64_t> Arguments);
   llvm::Expected<uint64_t> terminateSystemThread(uint32_t Status);
   llvm::Expected<uint64_t>
-  referenceThreadByHandle(llvm::ArrayRef<uint64_t> Arguments);
-  llvm::Expected<uint64_t> dereferenceThread(uint64_t Object);
+  referenceObjectByHandle(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t>
+  referenceObjectByPointer(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t> referenceObject(uint64_t Object);
+  llvm::Expected<uint64_t> dereferenceObject(uint64_t Object);
+  llvm::Expected<uint64_t> objectType(uint64_t Object);
+  llvm::Expected<uint64_t> objectType(ObjectKind Kind);
+  llvm::Error initializeDataExports(const DriverOptions &Options);
+  llvm::Error initializeObjectNamespace();
+  struct ObjectLookup {
+    uint64_t Status;
+    uint64_t Object = 0;
+    std::string RemainingName;
+  };
+  llvm::Expected<ObjectLookup>
+  lookupNamedObject(llvm::StringRef Name, uint64_t Root, uint32_t Attributes,
+                    bool OpenLink, bool ParseDevice = false,
+                    unsigned LinkDepth = 0);
+  std::string objectName(uint64_t Object) const;
+  uint64_t findSymbolicLink(llvm::StringRef Key) const;
+  const ObjectHandle *findObjectHandle(uint64_t Handle) const;
+  static std::optional<uint32_t> objectAccessMask(ObjectKind Kind);
+  static llvm::Expected<uint32_t> mapObjectAccess(ObjectKind Kind,
+                                                  uint32_t Access);
+  llvm::Expected<uint64_t> referenceObjectByName(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> openNamedObject(llvm::ArrayRef<uint64_t> A,
+                                           ObjectKind Kind);
+  llvm::Expected<uint64_t> queryObjectName(uint64_t Object, uint64_t Buffer,
+                                           uint32_t Length,
+                                           uint64_t ReturnLength,
+                                           bool RequiredLength);
+  llvm::Expected<uint64_t> queryObject(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> querySymbolicLink(llvm::ArrayRef<uint64_t> A);
+  llvm::Error validateDataExportAccess(uint64_t Address, uint32_t Size,
+                                       bool IsWrite) const;
+  bool DebuggerStateDeclared = false;
+  llvm::Expected<uint64_t>
+  openObjectByPointer(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t> lookupProcess(uint64_t ID, uint64_t Output);
+  llvm::Expected<uint64_t> lookupThread(uint64_t ID, uint64_t Output);
+  llvm::Expected<uint64_t> threadProcess(uint64_t Object);
+  llvm::Expected<uint64_t> threadTerminating(uint64_t Object) const;
+  llvm::Error validateObjectOutput(uint64_t Address, uint32_t Size);
+  bool matchesObjectType(ObjectKind Kind, uint64_t Type) const;
+  void retainObjectHandle(uint64_t Object, uint32_t Access, uint32_t Attributes,
+                          uint32_t ProcessID);
   llvm::Expected<uint64_t> closeHandle(uint64_t Handle);
-  void retireThreadIfUnreferenced(uint64_t Object);
+  void retireObjectIfUnreferenced(uint64_t Object);
   void retireBorrowedThread(uint64_t Key);
   llvm::Expected<uint64_t> threadPriorityKey(uint64_t Object,
                                              bool Changing) const;
@@ -796,6 +1053,7 @@ private:
   llvm::Expected<uint64_t> setThreadPriority(uint64_t Object, int32_t Priority);
   // Canonical logical-thread ownership survives parked and nested executions.
   std::set<uint64_t> SystemAffinityThreads;
+  llvm::Expected<uint64_t> currentProcessorNumber(uint64_t Output);
   llvm::Expected<uint64_t> setSystemAffinity(uint64_t Mask);
   llvm::Expected<uint64_t> revertSystemAffinity();
   std::map<uint64_t, size_t> RemoveLockWaitReferences;
@@ -808,7 +1066,8 @@ private:
   llvm::Error validateRemoveLockOwner(uint64_t Lock) const;
   llvm::Error canReleaseRemoveLockStorage(uint64_t Base, uint64_t Size) const;
   llvm::Error canReleaseRange(uint64_t Base, uint64_t Size,
-                              uint64_t IgnoredDMAPin = 0) const;
+                              uint64_t IgnoredDMAPin = 0,
+                              uint64_t RetiringLookaside = 0) const;
   llvm::Expected<uint64_t> beginWait(llvm::ArrayRef<uint64_t> Arguments,
                                      bool Delay);
   llvm::Expected<uint64_t>
@@ -819,7 +1078,8 @@ private:
   llvm::Error releaseWaitReferences(const Wait &Pending);
   llvm::Error
   canRevokeVirtualRange(uint64_t Base, uint64_t Size,
-                        std::optional<UsbIdleKey> RetiringUsbIdle = {}) const;
+                        std::optional<UsbIdleKey> RetiringUsbIdle = {},
+                        uint64_t RetiringLookaside = 0) const;
   llvm::Error prepareRevokeVirtualRange(uint64_t Base, uint64_t Size);
   llvm::Error prepareReleaseRange(uint64_t Base, uint64_t Size,
                                   uint64_t IgnoredDMAPin = 0);
@@ -856,6 +1116,7 @@ private:
   llvm::Expected<uint64_t> resolveRoutine(uint64_t Address);
   llvm::Expected<uint64_t> querySystemInformation(llvm::ArrayRef<uint64_t> Args,
                                                   bool Trusted);
+  llvm::Expected<uint64_t> pcToFileHeader(uint64_t PC, uint64_t Output);
   std::vector<KernelLoadedModule> LoadedModules;
   // Only loader-owned mapped spans, excluding image holes. Physical backing is
   // registered lazily when a permitted image range is first locked.
@@ -893,6 +1154,7 @@ private:
   llvm::Error validateQueryBuffer(uint64_t Address, uint32_t Size,
                                   bool Writable, llvm::StringRef API);
   std::optional<DriverKernelVaShadowQuery> KernelVaShadowQuery;
+  std::vector<DriverProcessPeb> ProcessPebs;
   llvm::Expected<uint64_t> queryKernelVaShadow(llvm::ArrayRef<uint64_t> Args);
   std::optional<DriverVersionQuery> VersionQuery;
   llvm::Expected<uint64_t> queryVersion(uint64_t Address);
@@ -916,7 +1178,7 @@ private:
   };
   std::map<uint64_t, PoolAllocation> Allocations;
   std::map<uint64_t, uint64_t> ArenaAllocations;
-  enum class DeviceOwnerKind { Guest, Provider };
+  enum class DeviceOwnerKind { Guest, PnpProvider, FileSystemProvider };
   struct DeviceRecord {
     uint64_t Address = 0;
     uint64_t Extension = 0;
@@ -933,6 +1195,7 @@ private:
     // DEVICE_OBJECT.ReferenceCount field. Attachment links also prevent retire.
     uint64_t InternalReferences = 0;
     bool DeletePending = false;
+    bool UnlinkedFromDriver = false;
     std::optional<DevicePowerState> ReportedDevicePower;
   };
   std::map<uint64_t, DeviceRecord> Devices;
@@ -958,11 +1221,18 @@ private:
     std::optional<DriverWakeCapabilities> WakeCapabilities;
   };
   uint64_t PnpProviderDriver = 0;
+  uint64_t FileSystemProviderDriver = 0;
+  uint64_t deviceOwnerDriver(DeviceOwnerKind Kind) const;
+  llvm::Error initializeFileSystem(const DriverOptions &Options);
+  llvm::Error validateFileSystemRoute(
+      llvm::ArrayRef<uint64_t> Route, uint64_t FileObject = 0,
+      DriverRequestKind Kind = DriverRequestKind::DeviceControl) const;
+  llvm::Expected<uint64_t> dispatchFileSystem(uint64_t Device, uint64_t IRP);
   bool PnpDevicesPrepared = false;
   std::vector<DriverPnpDevice> ConfiguredPnpDevices;
   std::map<std::string, PnpDeviceRecord> PnpDevices;
   DeviceLifecycle Lifecycle;
-  bool isProviderDevice(uint64_t Address) const;
+  bool isPnpProviderDevice(uint64_t Address) const;
   PnpDeviceRecord *pnpDeviceForPDO(uint64_t PDO);
   const PnpDeviceRecord *pnpDeviceForPDO(uint64_t PDO) const;
   llvm::Expected<uint64_t> pnpDeviceForRoute(uint64_t Device) const;
@@ -976,17 +1246,154 @@ private:
   std::map<uint64_t, uint64_t> FreedRanges;
   std::array<bool, 28 * 8> DispatchBytesWritten{};
   std::shared_ptr<RAMInitializationWatch> DispatchInitialization;
-  std::map<std::string, std::string> SymbolicLinks;
-  enum class FileState { Closed, Opening, Open, Cleaned };
+  struct SymbolicLinkObject {
+    std::string Target;
+    std::vector<uint8_t> TargetBytes;
+    bool Permanent = true;
+    bool Named = true;
+  };
+  std::map<uint64_t, SymbolicLinkObject> SymbolicLinks;
+  enum class FileState { Failed, Opening, Open, Cleaned, Closing };
+  struct DeferredFileClose {
+    DriverRequest Input;
+    size_t ResultIndex;
+    std::optional<size_t> SourceIndex;
+  };
   struct OpenFile {
+    enum class Origin { Scenario, DriverCreate };
+    Origin Source = Origin::Scenario;
     uint64_t Address = 0;
     uint64_t Device = 0;
     /// Stable lifecycle owner even after the opened FDO is detached.
     uint64_t PnpDevice = 0;
     bool Asynchronous = false;
     FileState State = FileState::Opening;
+    uint64_t ScenarioHandle = 0;
+    uint32_t ScenarioID = 0;
+    bool ScenarioCleanupRequested = false;
+    uint32_t HandleCloseHolds = 0;
+    uint32_t InternalIOHolds = 0;
+    bool FileEventInitialized = false;
+    uint64_t CreateOperation = 0;
+    std::optional<uint64_t> ProviderOpen;
+    uint64_t NameStorage = 0;
+    uint64_t NameStorageSize = 0;
+    bool OpenCancelled = false;
+    uint64_t RelatedFile = 0;
+    std::optional<DeferredFileClose> DeferredCleanup;
+    std::optional<DeferredFileClose> DeferredClose;
   };
-  std::map<uint32_t, OpenFile> Files;
+  bool owesFileClose(const OpenFile &File) const;
+  void associateFileRequest(DriverRequestResult &Observation,
+                            const OpenFile &File) const;
+  llvm::Error validateFileSystemOpenBindings() const;
+  // Scenario identifiers name an open instance, not its object-manager body.
+  // A new CREATE may reuse an identifier while an older body remains held.
+  std::map<uint32_t, uint64_t> Files;
+  std::map<uint64_t, OpenFile> FileObjects;
+  llvm::Expected<Invocation> beginFileRequest(const DriverRequest &Input,
+                                              std::optional<size_t> SourceIndex,
+                                              size_t Index,
+                                              uint64_t RetainedFile = 0,
+                                              uint64_t DispatchDevice = 0,
+                                              uint64_t FileOperationID = 0);
+  llvm::Error retireFileIfUnreferenced(
+      uint64_t Object, std::optional<uint32_t> CallerProcess = std::nullopt);
+  llvm::Error tryFinalizeFileClose(uint64_t IRP);
+  llvm::Error waitForFileClose(uint64_t IRP);
+  llvm::Expected<std::optional<uint64_t>>
+  finishFileCloseDispatch(uint64_t Token, uint64_t ResultValue);
+  std::set<uint64_t> InternalFileCloses;
+  struct FileHandleClose {
+    uint64_t File = 0;
+    uint64_t IRP = 0;
+    uint32_t CallerProcess = 0;
+  };
+  std::map<uint64_t, FileHandleClose> FileHandleCloses;
+  uint64_t NextFileHandleClose = 1;
+  llvm::Error validateFileHandleClose(uint64_t File, bool Scenario) const;
+  llvm::Expected<std::optional<DriverRequestKind>>
+  planFileHandleClose(uint64_t Handle) const;
+  void releaseFileHandle(uint64_t Handle);
+  llvm::Expected<Invocation> beginFileHandleRequest(uint64_t File,
+                                                    DriverRequestKind Kind,
+                                                    uint32_t ProcessID);
+  llvm::Error closeFileHandle(uint64_t Handle);
+  llvm::Error dispatchFileHandleClose(uint64_t ID, const Invocation &Call,
+                                      uint32_t ProcessID);
+  llvm::Error waitForFileHandleClose(uint64_t ID);
+  llvm::Expected<std::optional<uint64_t>>
+  finishFileHandleDispatch(uint64_t Token, uint64_t ReturnValue);
+  struct FileRequest {
+    uint64_t File = 0, IRP = 0, ReturnedLength = 0, Storage = 0;
+    uint64_t StatusOutput = 0;
+    std::array<uint8_t, 16> StatusBytes{};
+    uint64_t CallerExecution = 0, CallerThread = 0;
+    uint32_t CallerProcess = 0;
+    uint32_t Status = 0, Information = 0;
+    bool Released = false;
+    bool CompletionPublished = false;
+    bool CriticalRegion = false;
+    bool Native = false, PacketReleased = false, CopyStatusBlock = false;
+  };
+  std::map<uint64_t, FileRequest> FileRequests;
+  uint64_t NextFileRequest = 1;
+  std::optional<uint64_t> PendingFileRequestContinuation;
+  enum class FileDeviceQuery { Base, Related };
+  llvm::Expected<uint64_t> queryFileDevice(uint64_t File,
+                                           FileDeviceQuery Query) const;
+  llvm::Expected<uint64_t>
+  beginFileAPIRequest(llvm::ArrayRef<uint64_t> A, DriverRequestKind Kind,
+                      bool Native, const KernelContextCapture *Context);
+  llvm::Expected<uint64_t>
+  setFileInformation(llvm::ArrayRef<uint64_t> A,
+                     const KernelContextCapture *Context);
+  bool nativeFileRequest(uint64_t ID) const;
+  llvm::Error releaseNativeFileRequestPacket(uint64_t IRP);
+  llvm::Error validateFileAPIInterrupts(const KernelContextCapture *Context);
+  llvm::Error publishFileRequestCompletion(uint64_t IRP);
+  llvm::Expected<bool> fileRequestReady(uint64_t ID) const;
+  llvm::Error waitForFileRequest(uint64_t ID);
+  llvm::Expected<std::optional<uint64_t>>
+  finishFileRequestDispatch(uint64_t Token, uint64_t ReturnValue);
+  struct FileOperation {
+    bool CancelOpen = false;
+    bool DevicePointer = false, PointerPublished = false,
+         CriticalRegion = false;
+    uint64_t File = 0, IRP = 0, Root = 0;
+    uint64_t HandleOutput = 0, StatusOutput = 0, ReservedHandle = 0;
+    uint64_t FileOutput = 0, DeviceOutput = 0;
+    uint64_t Storage = 0, StorageSize = 0, AccessState = 0;
+    uint64_t CallerExecution = 0, CallerThread = 0;
+    uint32_t CallerProcess = 0, Access = 0, Attributes = 0;
+    uint32_t Status = 0;
+    uint64_t Information = 0;
+    size_t ResultIndex = 0;
+    bool Released = false, RootReleased = false, CompletionPublished = false;
+  };
+  std::map<uint64_t, FileOperation> FileOperations;
+  uint64_t NextFileOperation = 1;
+  std::optional<uint64_t> PendingFileOperation;
+  enum class FileOpenKind { Create, Open, DevicePointer };
+  llvm::Expected<uint64_t> createFile(llvm::ArrayRef<uint64_t> A,
+                                      FileOpenKind Kind,
+                                      const KernelContextCapture *Context);
+  llvm::Expected<uint64_t>
+  getDeviceObjectPointer(llvm::ArrayRef<uint64_t> A,
+                         const KernelContextCapture *Context);
+  llvm::Expected<uint64_t> cancelFileOpen(llvm::ArrayRef<uint64_t> A,
+                                          const KernelContextCapture *Context);
+  llvm::Expected<bool> fileOperationReady(uint64_t ID) const;
+  llvm::Error waitForFileOperation(uint64_t ID);
+  llvm::Expected<std::optional<uint64_t>> resumeFileOperation(uint64_t ID);
+  llvm::Expected<std::optional<uint64_t>>
+  finishFileOperationDispatch(uint64_t Token, uint64_t ReturnValue);
+  llvm::Error startFileOperationDispatch(uint64_t ID, const Invocation &Call);
+  llvm::Error prepareCancelFileOpenPacket(uint64_t IRP, uint64_t ID);
+  llvm::Error publishFileOperationCompletion(uint64_t IRP);
+  void retainReservedObjectHandle(uint64_t Handle, uint64_t Object,
+                                  uint32_t Access, uint32_t Attributes,
+                                  uint32_t ProcessID);
   bool Unloading = false;
   bool Unloaded = false;
   struct RequestedPower {
@@ -1071,6 +1478,11 @@ private:
     std::vector<std::optional<bool>> UnwoundPending;
     bool Forwarded = false;
     uint64_t SystemBuffer = 0;
+    /// Internal query producers borrow caller storage through completion.
+    bool BorrowedSystemBuffer = false;
+    uint64_t FileRequestID = 0;
+    uint64_t FileOperation = 0;
+    bool FileSystemReceived = false;
     uint64_t UserBuffer = 0;
     uint64_t UserInput = 0;
     std::vector<UserRegion> UserRegions;
@@ -1091,6 +1503,9 @@ private:
     bool AsynchronousFile = false;
     uint32_t ProcessID = 0;
     uint32_t InputSize = 0;
+    /// Effective process of an object-manager file lifecycle callback. The
+    /// invoking thread's creating process and PreviousMode stay unchanged.
+    std::optional<uint32_t> CallbackProcessID;
     uint32_t TransferSize = 0;
     uint64_t ByteOffset = 0;
     bool Direct = false;
@@ -1112,7 +1527,11 @@ private:
     Completion,
     PowerDispatch,
     PowerCompletion,
-    Cancel
+    Cancel,
+    FileClose,
+    FileHandleClose,
+    FileRequest,
+    FileOperation
   };
   struct IRPCall {
     IRPCallKind Kind;
@@ -1121,6 +1540,10 @@ private:
     bool AwaitingCallback = false;
     uint64_t ReturnValue = 0;
     std::optional<uint64_t> ProviderReceiptIRP;
+    std::optional<uint32_t> FrameworkDispatchStatus;
+    uint64_t FileHandleOperation = 0;
+    uint64_t FileRequestID = 0;
+    uint64_t FileOperation = 0;
   };
   struct ProviderReceipt {
     uint64_t Device = 0;
@@ -1242,6 +1665,10 @@ private:
   llvm::Error initializeRequestPacket(ActiveRequest &Record,
                                       const DriverRequest &Input);
   struct LockedMdl {
+    // Descriptor storage is independent of the described pages and their lock.
+    enum class StorageKind { PrivateArena, NonPagedPool, ExecutionStack };
+    StorageKind Storage = StorageKind::PrivateArena;
+    uint64_t StorageOwner = 0;
     enum class Ownership {
       Request,
       RequestSystemBuffer,
@@ -1266,6 +1693,13 @@ private:
     uint64_t AllocationSize = 0;
     uint64_t UserAddress = 0;
     uint32_t ByteCount = 0;
+    struct AdvanceRange {
+      uint64_t OriginalAddress, BackingAddress, MappingBase;
+      uint32_t ByteCount, DroppedPages;
+    };
+    // Advancing the data window does not retire the original pin or alias.
+    std::optional<AdvanceRange> Advance;
+    uint64_t systemMappingBase() const;
     uint64_t Pool = 0;
     uint64_t Pin = 0;
     bool Writable = false;
@@ -1278,6 +1712,13 @@ private:
   std::map<uint64_t, LockedMdl> MDLs;
   llvm::Error initializeMDLPhysicalPages(const LockedMdl &State);
   llvm::Expected<uint64_t> allocateMDL(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t> createMDL(uint64_t Record, uint64_t Address,
+                                     uint64_t Size);
+  llvm::Error initializeMDLRecord(uint64_t Record, uint64_t Address,
+                                  uint32_t Size, uint64_t Extent,
+                                  uint16_t Flags);
+  llvm::Error canReleaseMDLStorage(uint64_t Base, uint64_t Size) const;
+  void retireMDLStorage(uint64_t Base, uint64_t Size);
   llvm::Expected<uint64_t>
   allocatePagesForMDL(llvm::ArrayRef<uint64_t> Arguments, bool Extended);
   llvm::Error freePagesFromMDL(uint64_t MDL);
@@ -1293,6 +1734,8 @@ private:
   llvm::Error probeAndLockPages(uint64_t MDL, uint32_t Mode,
                                 uint32_t Operation);
   llvm::Error unlockPages(uint64_t MDL);
+  llvm::Expected<uint64_t> advanceMDL(uint64_t MDL, uint32_t Bytes);
+  llvm::Error restoreAdvancedMDL(LockedMdl &State);
   llvm::Expected<uint64_t> protectMDLSystemAddress(uint64_t MDL,
                                                    uint32_t Protection);
   llvm::Error freeMDL(uint64_t MDL);
@@ -1344,16 +1787,21 @@ private:
   llvm::Error completeRequest(uint64_t IRP, uint8_t PriorityBoost);
   llvm::Error validateRequestCompletion(uint64_t IRP, uint32_t Status,
                                         uint64_t Information) const;
-  llvm::Error validateIOAccess(uint64_t Address, uint32_t Size,
-                               bool IsWrite) const;
+  llvm::Error validateIOAccess(uint64_t Address, uint32_t Size, bool IsWrite,
+                               bool DispatcherStorage = false) const;
   llvm::Expected<uint64_t> allocate(uint64_t Size, uint64_t Alignment = 16);
   llvm::Expected<uint64_t> isResidentKernelAddress(uint64_t Address) const;
+  llvm::Expected<uint64_t> queryPhysicalAddress(uint64_t Address) const;
+  llvm::Expected<uint64_t>
+  queryPrimaryVirtualAddress(uint64_t PhysicalAddress) const;
   llvm::Expected<uint64_t> allocatePhysicalBuffer(uint64_t AllocationSize,
                                                   uint64_t Alignment,
                                                   uint64_t DataOffset,
                                                   uint64_t DataSize);
   llvm::Expected<uint64_t> makeUnicodeString(const std::string &Text);
-  llvm::Expected<std::string> readObjectName(uint64_t Address);
+  llvm::Expected<std::string>
+  readObjectName(uint64_t Address,
+                 size_t MaxCharacters = profile::MaxDeviceNameSize);
   llvm::Expected<uint64_t> createDevice(llvm::ArrayRef<uint64_t> Arguments);
   struct DeviceCreation {
     uint32_t Status;
@@ -1375,8 +1823,17 @@ private:
   llvm::Error deleteDevice(uint64_t Address);
   llvm::Error retireDeviceIfUnreferenced(uint64_t Address);
   llvm::Expected<uint64_t> topAttachedDevice(uint64_t Base) const;
+  enum class DeviceStackQuery {
+    Top,
+    TopReference,
+    LowerReference,
+    BaseReference
+  };
+  llvm::Expected<uint64_t> queryDeviceStack(uint64_t Device,
+                                            DeviceStackQuery Query);
   llvm::Expected<std::vector<uint64_t>> deviceStack(uint64_t Top) const;
   enum class ObjectRead { Execution, Snapshot };
+  llvm::Error validateFileSystemDevice(uint64_t Address, ObjectRead Mode) const;
   llvm::Expected<uint64_t> readObjectField(uint64_t Address, unsigned Width,
                                            ObjectRead Mode) const;
   llvm::Error

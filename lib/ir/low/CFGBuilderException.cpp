@@ -12,11 +12,13 @@
 
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
+#include "neverd/ir/low/RegistrationCxxState.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -62,33 +64,33 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
       Callees = CalleeIndex->contracts(Func);
       Cleanups = CalleeIndex->cleanupContracts(Func);
     }
-    va_t CookieCheckVA = 0;
-    if (CurrentImg &&
-        Metadata.Personality == ExceptionPersonality::ExceptHandler4 &&
-        Metadata.Registration->GSCookieOffset != -2)
-      if (auto Check = coff_loader::getCheckedX86EH4CookieCheck(
-              *CurrentImg, Metadata.PersonalityVA);
-          Check &&
-          coff_loader::hasCheckedX86CookieCheckSuccessPath(*CurrentImg, *Check))
-        CookieCheckVA = *Check;
     if (CurrentImg && !Metadata.Cxx &&
-        Metadata.Personality == ExceptionPersonality::ExceptHandler3)
+        (Metadata.Personality == ExceptionPersonality::ExceptHandler3 ||
+         Metadata.Personality == ExceptionPersonality::ExceptHandler4))
       Func.RegistrationStates = analyzeCheckedX86SEHStates(
           *CurrentImg, Func, Stacks ? &*Stacks : nullptr,
           LocalUnwinds ? &*LocalUnwinds : nullptr,
           SEHControls ? &*SEHControls : nullptr, CalleeIndex);
+    else if (CheckCalls)
+      Func.RegistrationStates = analyzeCheckedX86CxxStates(
+          *CurrentImg, Func, Callees ? &*Callees : nullptr,
+          Cleanups ? &*Cleanups : nullptr, Stacks ? &*Stacks : nullptr,
+          LocalUnwinds ? &*LocalUnwinds : nullptr,
+          SEHControls ? &*SEHControls : nullptr);
     else
       Func.RegistrationStates = analyzeRegistrationStates(
           Func,
           CurrentImg && CurrentImg->DynInfo.SecurityCookieRVA
               ? CurrentImg->Base + CurrentImg->DynInfo.SecurityCookieRVA
               : 0,
-          CookieCheckVA, CheckCalls && Callees ? &*Callees : nullptr,
+          0, CheckCalls && Callees ? &*Callees : nullptr,
           CheckCalls && Cleanups ? &*Cleanups : nullptr,
           Stacks ? &*Stacks : nullptr, LocalUnwinds ? &*LocalUnwinds : nullptr,
           SEHControls ? &*SEHControls : nullptr);
     if (CurrentImg && !SEHControls) {
       Func.RegistrationStates->Complete = false;
+      Func.RegistrationStates->SEHStateStoresComplete = false;
+      Func.RegistrationStates->SEHStateStores.clear();
       Func.RegistrationStates->SEHInvocationExitsComplete = false;
       Func.RegistrationStates->Diagnostics.push_back(
           "SEH physical-control proof budget exhausted");
@@ -105,6 +107,10 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
 
   std::map<va_t, LowBlock *> BlocksByAddress;
   std::map<int, LowBlock *> BlocksById;
+  std::map<int, const RegistrationBlockState *> StatesByBlock;
+  if (Func.RegistrationStates)
+    for (const auto &State : Func.RegistrationStates->Blocks)
+      StatesByBlock.emplace(State.BlockId, &State);
   for (LowBlock &Block : Func.Blocks) {
     BlocksByAddress.emplace(Block.StartAddr, &Block);
     BlocksById.emplace(Block.Id, &Block);
@@ -122,14 +128,16 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
       Edges;
   size_t RegistrationEdgeWork = 0;
   bool RegistrationEdgesExhausted = false;
-  auto ChargeRegistrationEdge = [&] {
+  const char *RegistrationEdgeFailure =
+      "registration exceptional-edge expansion budget exhausted";
+  auto ChargeRegistrationEdge = [&](size_t Amount = 1) {
     if (!Metadata.Registration)
       return true;
-    if (RegistrationEdgeWork == limits::kMaxRegistrationEHStateWork) {
+    if (Amount > limits::kMaxRegistrationEHStateWork - RegistrationEdgeWork) {
       RegistrationEdgesExhausted = true;
       return false;
     }
-    ++RegistrationEdgeWork;
+    RegistrationEdgeWork += Amount;
     return true;
   };
   auto RejectExhaustedRegistrationEdges = [&] {
@@ -142,9 +150,16 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     Func.RegistrationStates->Complete = false;
     Func.RegistrationStates->RegistrationLifetimeComplete = false;
     Func.RegistrationStates->Blocks.clear();
-    Func.RegistrationStates->Diagnostics.push_back(
-        "registration exceptional-edge expansion budget exhausted");
+    Func.RegistrationStates->Diagnostics.push_back(RegistrationEdgeFailure);
     return true;
+  };
+  auto AppendEdge = [&](LowBlock &Source, const ExceptionalEdge &Edge) {
+    Source.ExceptionalSuccs.push_back(Edge);
+    if (auto It = BlocksById.find(Edge.BlockId); It != BlocksById.end()) {
+      ExceptionalEdge Pred = Edge;
+      Pred.BlockId = Source.Id;
+      It->second->ExceptionalPreds.push_back(Pred);
+    }
   };
   auto AddEdge = [&](LowBlock &Source, va_t TargetVA, ExceptionalEdgeKind Kind,
                      uint32_t Region, int32_t State,
@@ -157,15 +172,9 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     Edge.BlockId = TargetBlockId(TargetVA);
     Edge.TargetVA = TargetVA;
     Edge.Kind = Kind;
-    Edge.RegionIndex = Region;
-    Edge.State = State;
+    Edge.ExplicitContext = {Region, State};
     Edge.SourceVA = SourceVA;
-    Source.ExceptionalSuccs.push_back(Edge);
-    if (auto It = BlocksById.find(Edge.BlockId); It != BlocksById.end()) {
-      ExceptionalEdge Pred = Edge;
-      Pred.BlockId = Source.Id;
-      It->second->ExceptionalPreds.push_back(Pred);
-    }
+    AppendEdge(Source, Edge);
   };
   auto ForProtectedBlocks = [&](const ExceptionAddressRange &Range, auto &&Fn) {
     for (LowBlock &Block : Func.Blocks)
@@ -205,6 +214,76 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
 
   if (Metadata.Cxx) {
     const CxxExceptionInfo &Cxx = *Metadata.Cxx;
+    std::optional<std::vector<int32_t>> NextCleanup;
+    std::map<const std::vector<int32_t> *, std::vector<ExceptionalEdge>>
+        SharedCleanupEdges;
+    const auto CleanupEdges = [&](const std::vector<int32_t> &Levels)
+        -> const std::vector<ExceptionalEdge> * {
+      auto Found = SharedCleanupEdges.find(&Levels);
+      if (Found != SharedCleanupEdges.end())
+        return &Found->second;
+      if (!NextCleanup) {
+        if (!ChargeRegistrationEdge(Cxx.UnwindMap.size() + Cxx.IPMap.size() +
+                                    Cxx.TryBlocks.size() + 1))
+          return nullptr;
+        if (!Cxx.hasValidStateGraph()) {
+          RegistrationEdgesExhausted = true;
+          RegistrationEdgeFailure =
+              "registration exceptional-edge state graph is invalid";
+          return nullptr;
+        }
+        NextCleanup.emplace(Cxx.UnwindMap.size(), -1);
+        // Valid transitions only point to older states. Skip empty suffixes
+        // once, instead of walking thousands of empty entries for each level.
+        for (size_t I = 0; I != Cxx.UnwindMap.size(); ++I) {
+          const auto &Action = Cxx.UnwindMap[I];
+          (*NextCleanup)[I] = Action.ActionVA ? int32_t(I)
+                              : Action.ToState < 0
+                                  ? -1
+                                  : (*NextCleanup)[Action.ToState];
+        }
+      }
+      std::map<va_t, size_t> TargetIndices;
+      std::vector<std::vector<ExceptionalEdgeContext>> Contexts;
+      std::vector<ExceptionalEdge> Pattern;
+      for (int32_t State : Levels) {
+        if (!ChargeRegistrationEdge())
+          return nullptr;
+        if (State < 0 || size_t(State) >= NextCleanup->size())
+          continue;
+        for (int32_t Walk = (*NextCleanup)[State]; Walk >= 0;) {
+          if (!ChargeRegistrationEdge(1 + std::bit_width(TargetIndices.size())))
+            return nullptr;
+          const auto &Action = Cxx.UnwindMap[Walk];
+          auto [It, Inserted] =
+              TargetIndices.emplace(Action.ActionVA, Pattern.size());
+          if (Inserted) {
+            Pattern.emplace_back(TargetBlockId(Action.ActionVA),
+                                 Action.ActionVA,
+                                 ExceptionalEdgeKind::CxxCleanup);
+            Contexts.emplace_back();
+          }
+          Contexts[It->second].push_back({uint32_t(Walk), State});
+          Walk = Action.ToState < 0 ? -1 : (*NextCleanup)[Action.ToState];
+        }
+      }
+      for (size_t I = 0; I != Pattern.size(); ++I) {
+        auto &Values = Contexts[I];
+        // Charge sorting, storage and the content digest once per owning
+        // domain. Publishing a reference at each source is charged below.
+        if (!ChargeRegistrationEdge(Values.size() *
+                                    (3 + std::bit_width(Values.size()))))
+          return nullptr;
+        if (Values.size() == 1)
+          Pattern[I].ExplicitContext = Values.front();
+        else
+          Pattern[I].SharedContexts =
+              std::make_shared<const ExceptionalEdgeContextDomain>(
+                  std::move(Values));
+      }
+      return &SharedCleanupEdges.emplace(&Levels, std::move(Pattern))
+                  .first->second;
+    };
     auto AddCxxEdges = [&](LowBlock &Block, va_t IP, va_t SourceVA) {
       int32_t State = -1;
       for (const CxxIPState &IPState : Cxx.IPMap) {
@@ -235,40 +314,50 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
       if (Metadata.Registration) {
         if (!Func.RegistrationStates)
           continue;
-        auto It = std::find_if(Func.RegistrationStates->Blocks.begin(),
-                               Func.RegistrationStates->Blocks.end(),
-                               [&](const RegistrationBlockState &State) {
-                                 return State.BlockId == Block.Id;
-                               });
-        if (It == Func.RegistrationStates->Blocks.end() || !It->CanDispatch)
+        auto It = StatesByBlock.find(Block.Id);
+        if (It == StatesByBlock.end() || !It->second->CanDispatch)
           continue;
-        for (int32_t State : It->Levels) {
-          if (!ChargeRegistrationEdge())
+        const auto &StateFacts = *It->second;
+        const auto &Levels = StateFacts.levels();
+        if (StateFacts.SharedLevels) {
+          const auto *Pattern = CleanupEdges(Levels);
+          if (!Pattern || !ChargeRegistrationEdge(Pattern->size()))
             break;
-          int32_t Walk = State;
-          for (size_t Step = 0; Step < Cxx.UnwindMap.size(); ++Step) {
+          Block.ExceptionalSuccs.reserve(Block.ExceptionalSuccs.size() +
+                                         Pattern->size());
+          for (const auto &Edge : *Pattern)
+            AppendEdge(Block, Edge);
+        } else {
+          for (int32_t State : Levels) {
             if (!ChargeRegistrationEdge())
               break;
-            if (Walk < 0 || static_cast<size_t>(Walk) >= Cxx.UnwindMap.size())
-              break;
-            const CxxUnwindAction &Cleanup = Cxx.UnwindMap[Walk];
-            AddEdge(Block, Cleanup.ActionVA, ExceptionalEdgeKind::CxxCleanup,
-                    static_cast<uint32_t>(Walk), State);
-            Walk = Cleanup.ToState;
-          }
-          for (const auto &Search : It->CxxSearches) {
-            if (!ChargeRegistrationEdge())
-              break;
-            if (Search.Level != State ||
-                Search.TryIndex >= Cxx.TryBlocks.size())
-              continue;
-            const CxxTryBlock &Try = Cxx.TryBlocks[Search.TryIndex];
-            for (const CxxCatchHandler &Catch : Try.Handlers) {
+            int32_t Walk = State;
+            for (size_t Step = 0; Step < Cxx.UnwindMap.size(); ++Step) {
               if (!ChargeRegistrationEdge())
                 break;
-              AddEdge(Block, Catch.HandlerVA, ExceptionalEdgeKind::CxxCatch,
-                      Search.TryIndex, State);
+              if (Walk < 0 || size_t(Walk) >= Cxx.UnwindMap.size())
+                break;
+              const CxxUnwindAction &Cleanup = Cxx.UnwindMap[Walk];
+              AddEdge(Block, Cleanup.ActionVA, ExceptionalEdgeKind::CxxCleanup,
+                      static_cast<uint32_t>(Walk), State);
+              Walk = Cleanup.ToState;
             }
+          }
+        }
+        // Searches carry their exact originating level already. Re-scanning
+        // an entire unknown level domain for an empty search set adds no edge.
+        for (const auto &Search : StateFacts.CxxSearches) {
+          if (!ChargeRegistrationEdge(1 + std::bit_width(Levels.size())))
+            break;
+          if (!std::binary_search(Levels.begin(), Levels.end(), Search.Level) ||
+              Search.TryIndex >= Cxx.TryBlocks.size())
+            continue;
+          const CxxTryBlock &Try = Cxx.TryBlocks[Search.TryIndex];
+          for (const CxxCatchHandler &Catch : Try.Handlers) {
+            if (!ChargeRegistrationEdge())
+              break;
+            AddEdge(Block, Catch.HandlerVA, ExceptionalEdgeKind::CxxCatch,
+                    Search.TryIndex, Search.Level);
           }
         }
         continue;
@@ -297,20 +386,17 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
   // an exception arrives the runtime offers it to the current level's scope and
   // then to each enclosing one in turn, so every scope on that chain gets an
   // edge and not just the innermost.
-  if (Metadata.Registration && Func.RegistrationStates) {
+  if (Metadata.Registration && Func.RegistrationStates &&
+      !Metadata.Registration->Scopes.empty()) {
     const RegistrationChainInfo &Chain = *Metadata.Registration;
     const size_t ScopeCount = Chain.Scopes.size();
     for (LowBlock &Block : Func.Blocks) {
       if (RegistrationEdgesExhausted)
         break;
-      auto It = std::find_if(Func.RegistrationStates->Blocks.begin(),
-                             Func.RegistrationStates->Blocks.end(),
-                             [&](const RegistrationBlockState &State) {
-                               return State.BlockId == Block.Id;
-                             });
-      if (It == Func.RegistrationStates->Blocks.end() || !It->CanDispatch)
+      auto It = StatesByBlock.find(Block.Id);
+      if (It == StatesByBlock.end() || !It->second->CanDispatch)
         continue;
-      for (int32_t Level : It->Levels) {
+      for (int32_t Level : It->second->levels()) {
         if (!ChargeRegistrationEdge())
           break;
         // The scope count bounds the walk even for manually supplied cycles.

@@ -13,6 +13,8 @@
 
 #include "Internal.h"
 
+#include "neverd/web/Limits.h"
+
 #ifdef NEVERD_WEB_ICU
 #include <unicode/normalizer2.h>
 #include <unicode/uchar.h>
@@ -100,7 +102,9 @@ std::string nameKey(std::string_view Name) {
 std::string archivePathKey(std::string_view Path) {
   if (!archivePathsAvailable())
     throw Error("archive_path_policy_unavailable");
-  if (Path.empty() || Path.size() > 4096)
+  if (Path.empty() ||
+      Path.size() >
+          ::neverd::limits::web::kPathPolicyArchivePathKeyPathSizeLimit)
     throw Error("unsafe_member_name");
   std::string Key;
   while (!Path.empty()) {

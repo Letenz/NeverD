@@ -12,6 +12,18 @@
 #include <memory>
 
 namespace neverd::emulation {
+/// Complete initial bytes and final permissions of one new RAM range.
+struct InitializedMapping {
+  uint64_t Address;
+  unsigned Permissions;
+  llvm::ArrayRef<uint8_t> Bytes;
+};
+/// Trusted environment initialization, independent of guest write permission.
+/// Patches target ordinary RAM and preserve its allocation/alias identity.
+struct BackingPatch {
+  uint64_t Address;
+  llvm::ArrayRef<uint8_t> Bytes;
+};
 struct AddressMapping {
   uint64_t Address, Size;
   unsigned Permissions;
@@ -23,11 +35,51 @@ struct AddressMapping {
 class AddressSpace final : public GuestMemory,
                            public std::enable_shared_from_this<AddressSpace> {
 public:
+  /// Prepared additions retain the physical owner's stopped lease. Existing
+  /// mappings and bytes remain visible until commit. Destruction without
+  /// commit releases all reservations, preserving the mapping generation.
+  /// Keep this object on its creating thread, do not nest transactions, and
+  /// finish publication of related metadata before releasing it. CPU execution
+  /// and memory mutation reject this lease, including on the creating thread.
+  class MappingTransaction final {
+  public:
+    ~MappingTransaction();
+    MappingTransaction(const MappingTransaction &) = delete;
+    MappingTransaction &operator=(const MappingTransaction &) = delete;
+    /// Publish once; repeated commit is rejected without effects. Preparation
+    /// completed every allocation and validation of the mapping batch.
+    llvm::Error commit();
+
+  private:
+    friend class AddressSpace;
+    struct Impl;
+    explicit MappingTransaction(std::unique_ptr<Impl> State);
+    std::unique_ptr<Impl> State;
+  };
+
+  /// Stage new page-aligned RAM ranges and/or bounded backing patches. Every
+  /// patch byte must have RAM in the resulting layout. Physically overlapping
+  /// patches, including through aliases, are rejected. Preparation copies all
+  /// inputs; abandonment preserves existing bytes and reservation witnesses.
+  /// This does not touch backend projections. Their normal generation check
+  /// synchronizes before execution; projection failure remains terminal.
+  llvm::Expected<std::unique_ptr<MappingTransaction>>
+  prepareMappings(llvm::ArrayRef<InitializedMapping> Mappings,
+                  llvm::ArrayRef<BackingPatch> Patches = {});
+  /// Retain the same stopped lease for metadata over existing RAM. Commit
+  /// changes no mappings, bytes, reservation witnesses or mapping generation.
+  /// This does not make an empty prepareMappings batch valid.
+  llvm::Expected<std::unique_ptr<MappingTransaction>>
+  prepareMetadataPublication();
   static llvm::Expected<std::shared_ptr<AddressSpace>>
   create(std::shared_ptr<PhysicalMemory> Memory, uint64_t MappingLimit);
   ~AddressSpace() override;
   std::shared_ptr<AddressSpace> addressSpace() const override;
   std::shared_ptr<const void> identity() const;
+  /// Allocate zeroed, page-sized RAM without publishing a virtual mapping.
+  /// The returned view retains this space's physical owner and identity;
+  /// allocation capacity is returned when its final view/mapping is released.
+  llvm::Expected<MemoryView> allocateBacking(uint64_t Size);
   llvm::Expected<MemoryView> pinBacking(uint64_t, uint64_t) const override;
   llvm::Error validatePinned(const MemoryView &, uint64_t,
                              uint64_t) const override;

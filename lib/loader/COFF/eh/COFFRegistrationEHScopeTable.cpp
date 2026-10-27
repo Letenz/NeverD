@@ -21,8 +21,8 @@
 namespace neverd::coff_loader::registration_detail {
 namespace {
 
-/// One immediate byte, word or dword store relative to a checked base. A narrow
-/// immediate is an observation of written bits, not a complete runtime state.
+/// One candidate store relative to a checked base. A narrow immediate is an
+/// observation of written bits, not a complete runtime state.
 struct FrameSlotStore {
   va_t StoreVA = 0;
   va_t EndVA = 0;
@@ -35,7 +35,8 @@ struct FrameSlotStore {
 ///
 /// This is a byte scan rather than a decode, so it can also match bytes that
 /// are the tail of some other instruction. The CFG owner must authenticate
-/// each hit against its decoded instruction boundary before using it.
+/// each hit against its decoded instruction boundary and reaching value before
+/// using it. Adjacency alone cannot prove a register value across control flow.
 std::vector<FrameSlotStore>
 findFrameSlotStores(const BinaryImage &Img, const ExceptionAddressRange &Range,
                     uint8_t BaseRegister, int32_t BaseOffset) {
@@ -51,24 +52,37 @@ findFrameSlotStores(const BinaryImage &Img, const ExceptionAddressRange &Range,
     return Stores;
 
   const uint8_t *Data = Seg->Data.data();
-  for (uint64_t I = Begin; I + 4 <= End; ++I) {
+  for (uint64_t I = Begin; I + 3 <= End; ++I) {
     uint64_t Opcode = I;
     uint8_t Width = 4;
+    const bool RegisterZero = Data[Opcode] == 0x89;
     if (Data[Opcode] == 0x66) {
       ++Opcode;
       Width = 2;
     }
     if (Data[Opcode] == 0xC6 && Width == 4)
       Width = 1;
-    else if (Data[Opcode] != 0xC7)
+    else if (Data[Opcode] != 0xC7 && !RegisterZero)
       continue;
-    // ModRM /0 with the selected unindexed frame base and a displacement.
+    // A memory MOV with the selected unindexed frame base and a displacement.
     const uint8_t ModRM = Data[Opcode + 1];
     const unsigned Mod = ModRM >> 6;
     const uint64_t DispBytes = Mod == 1 ? 1 : Mod == 2 ? 4 : 0;
-    if ((ModRM & 0x38) || (ModRM & 7) != BaseRegister || !DispBytes ||
-        Opcode + 2 + DispBytes + Width > End)
+    const uint64_t ImmediateBytes = RegisterZero ? 0 : Width;
+    if ((!RegisterZero && (ModRM & 0x38)) || (ModRM & 7) != BaseRegister ||
+        !DispBytes || Opcode + 2 + DispBytes + ImmediateBytes > End)
       continue;
+    if (RegisterZero) {
+      const unsigned Register = (ModRM >> 3) & 7;
+      // Only observe an adjacent full-register self-XOR. Do not infer values
+      // through other instructions, and do not let a cleared frame/stack base
+      // describe a store into the installed registration frame.
+      if (Register == 4 || Register == BaseRegister || I < Begin + 2 ||
+          (Data[I - 2] != 0x31 && Data[I - 2] != 0x33) ||
+          Data[I - 1] != uint8_t(0xc0 | (Register << 3) | Register) ||
+          (I >= Begin + 3 && Data[I - 3] == 0x66))
+        continue;
+    }
     const uint64_t Immediate = Opcode + 2 + DispBytes;
     const int64_t Displacement =
         int64_t(BaseOffset) + (DispBytes == 1
@@ -76,11 +90,12 @@ findFrameSlotStores(const BinaryImage &Img, const ExceptionAddressRange &Range,
                                    : readLE<int32_t>(Data + Opcode + 2));
     if (Displacement < INT32_MIN || Displacement > INT32_MAX)
       continue;
-    const int32_t Value = Width == 1   ? Data[Immediate]
+    const int32_t Value = RegisterZero ? 0
+                          : Width == 1 ? Data[Immediate]
                           : Width == 2 ? readLE<uint16_t>(Data + Immediate)
                                        : readLE<int32_t>(Data + Immediate);
     Stores.push_back({static_cast<va_t>(Seg->VA + I),
-                      static_cast<va_t>(Seg->VA + Immediate + Width),
+                      static_cast<va_t>(Seg->VA + Immediate + ImmediateBytes),
                       int32_t(Displacement), Value, Width});
     // Do not publish a second dword candidate inside the operand-size prefix.
     if (Opcode != I)
@@ -145,7 +160,7 @@ uint32_t decodeScopeRecords(const BinaryImage &Img, va_t ArrayVA, va_t Limit,
   return static_cast<uint32_t>(Scopes.size());
 }
 
-/// Collect immediate stores in the prologue-authenticated state slot. For
+/// Collect candidate stores in the prologue-authenticated state slot. For
 /// other prologues retain a unique value-pattern observation for inspection;
 /// that heuristic does not establish registration ownership or CFG states.
 void recoverTryLevelStores(const BinaryImage &Img,

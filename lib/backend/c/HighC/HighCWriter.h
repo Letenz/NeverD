@@ -14,11 +14,15 @@
 #ifndef NEVERD_LIB_BACKEND_C_HIGHC_HIGHCWRITER_H
 #define NEVERD_LIB_BACKEND_C_HIGHC_HIGHCWRITER_H
 
+#include "../../AArch64OriginalMemory.h"
 #include "../CIdentifier.h"
 #include "../CSourceRecorder.h"
+#include "../DebugParamBinding.h"
 #include "../FloatConversion.h"
+#include "../StdcallImportPops.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
+#include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/pass/HighC/HighCPasses.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
@@ -28,7 +32,9 @@
 #include "neverd/loader/DataSymbolBinding.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdint>
@@ -44,6 +50,9 @@
 #include <vector>
 
 namespace neverd {
+
+/// The attribute that spells \p CC on a declaration, empty for none.
+llvm::StringRef debugCallConvAttribute(DebugCallConv CC);
 
 /// Internal writer that converts HighIR functions to C source text.
 /// Split across HighCEmitter.cpp (module-level orchestration),
@@ -80,6 +89,11 @@ inline constexpr llvm::StringLiteral kFrameStorageName = "stack_storage";
 
 /// The bytes of a pointer, and of an integer argument register, on \p A.
 uint16_t pointerBytes(Arch A);
+/// The class of the access that reads or writes \p Value, by its type.
+inline NdAccessClass accessClassOf(const HighExpr *Value) {
+  return Value && Value->Type ? Value->Type->accessClass()
+                              : NdAccessClass::Unknown;
+}
 
 /// The bytes of the integer \p Operand a bit count counts, or 0.
 uint16_t countedBytes(const HighExpr &Operand);
@@ -97,6 +111,10 @@ bool printsIntegerArithmetic(const HighExpr &E);
 /// extension is that value at any width, with no view of its own byte.
 bool printsTruthValue(const HighExpr &E);
 
+/// Whether \p Addr in \p Img is data an object can hold, not code or an
+/// import (HighCWriter::isImageDataAddress).
+bool isImageDataAt(const BinaryImage &Img, va_t Addr);
+
 class HighCWriter {
 public:
   static llvm::StringRef
@@ -110,17 +128,69 @@ public:
   HighCWriter(llvm::raw_ostream &OS, const CEmitterOptions &Opts,
               DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true,
               const std::unordered_set<std::string_view> *SharedNames = nullptr,
-              CSourceRecorder *Recorder = nullptr)
+              CSourceRecorder *Recorder = nullptr,
+              const HighCImageDataObjects *SharedDataObjects = nullptr,
+              const HighCImageFunctionSymbols *SharedFunctionSymbols = nullptr,
+              const PreparedPortableX87Function *PortableInterface = nullptr)
       : Out(OS), OS(Out), Opts(Opts), Dbg(Dbg),
         GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions),
-        SharedImageFunctionNames(SharedNames), SourceRecorder(Recorder) {}
+        SharedImageFunctionNames(SharedNames), SourceRecorder(Recorder),
+        SharedDataObjects(SharedDataObjects),
+        SharedFunctionSymbols(SharedFunctionSymbols),
+        PortableInterface(PortableInterface) {}
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
   /// Records the functions and objects the text names in the source map
   /// (HighCSourceNames.cpp).
   void recordSourceNames(const std::vector<HighFunc> &Funcs);
-  void writeSourceRecordDeclarations(const std::vector<HighFunc> &Funcs);
+  /// Declares a typedef of their own name for the records the signatures
+  /// point to, unless an ordinary identifier of the unit holds the name: a
+  /// routine it calls (\p CallTargets) or defines, or an object, as glibc's
+  /// stat is a function beside its struct stat.  A routine a header the
+  /// unit includes declares (calleeHeaders) leaves its records to the
+  /// header, whose names for them the unit does not know: bionic's
+  /// pthread_mutex_t is a typedef of an unnamed record.
+  void writeSourceRecordDeclarations(const std::vector<HighFunc> &Funcs,
+                                     const std::set<std::string> &CallTargets);
+  /// The records the unit declares a typedef of their own name for, which
+  /// it can spell by that name alone.
+  std::set<std::string> RecordTypedefs;
+  /// The records it declares none for because a function or an object of
+  /// the unit has the name, which it spells by their tags (`struct stat`):
+  /// whether each is a union.
+  std::map<std::string, bool> TagRecords;
+  /// The keyword the unit spells record \p Name's tag with, where it spells
+  /// the record by its tag (TagRecords); none otherwise.
+  const char *recordTagKeyword(llvm::StringRef Name) const;
+  /// Whether the unit can spell \p Type, a pointer to a named record, by
+  /// the record's name alone.
+  bool spellsRecordPointer(const TypeRef &Type) const;
+  /// Whether \p Value, printed as \p Text, is a local the unit declares as
+  /// \p Type, which an assignment of it needs no conversion to.
+  bool sameDeclaredLocal(const HighExpr &Value, const std::string &Text,
+                         const TypeRef &Type) const;
+  /// Whether the unit defines \p Record where code reads its members: the
+  /// program's local types define the records a unit names
+  /// (RecordDefinitions), and a record they leave out stays incomplete.
+  bool definesRecord(const TypeRef &Record) const;
+  /// Whether the unit has \p Record, a named record, complete: from the
+  /// program's definitions or a system header it includes.
+  bool holdsRecord(const TypeRef &Record) const;
+  /// The records the unit asks the local types for besides those its types
+  /// name: those an earlier rendering's code read members of through others
+  /// (HighCEmitter::emit).
+  std::vector<TypeRef> ExtraRecords;
+  /// Where a rendering keeps the records its code would read members of
+  /// that the unit does not define, for the next to ask for.
+  std::vector<TypeRef> *WantedRecords = nullptr;
+  /// Notes \p Record, which the code would read members of, for the next
+  /// rendering (WantedRecords).
+  void wantRecord(const TypeRef &Record) const;
+  /// Asks the program's local types for the definitions of the records the
+  /// unit names (CEmitterOptions::RecordDefinitions), and keeps the names
+  /// they declare from the unit's own.
+  void prepareRecordDefinitions(const std::vector<HighFunc> &Funcs);
   TypeRef declaredFunctionReturnType(const HighFunc &Func) const;
   void prepareFunctionReturns(std::vector<HighFunc> &Funcs) const;
   void prepareFunctionIdentifiers(const std::vector<HighFunc> &Funcs);
@@ -131,6 +201,10 @@ public:
   floatToIntegerConversion(const HighExpr &E) const;
   void collectImageObjects(const std::vector<HighFunc> &Funcs);
   void writeImageObjects();
+  std::map<std::pair<const HighFunc *, const HighExpr *>, std::string>
+      OriginalMemoryBases;
+  std::map<va_t, std::pair<AArch64OriginalMemoryStorage, std::string>>
+      OriginalMemoryObjects;
   std::optional<va_t> constAddress(const HighExpr &E) const;
   std::optional<uint64_t> foldReadonlyScalar(va_t Addr, uint16_t Size) const;
   std::optional<std::string> imageObjectName(va_t Addr) const;
@@ -177,6 +251,13 @@ public:
   void writeRegistrationEntryDeclarations(const std::vector<HighFunc> &Funcs);
   std::string registrationEntryExpression(const HighExpr &E) const;
   static bool preservesRegistrationMemory(const HighFunc &Func);
+  /// Whether the FS memory \p Func reads and writes is the x86 SEH
+  /// registration chain its exception metadata implies (FS:[0]), which the
+  /// C leaves out.  A function another platform's tables describe, as an
+  /// ELF function's DWARF FDE does, has none: its FS is the thread's, as
+  /// the stack protector's canary at FS:0x28 is
+  /// (exceptionEncodingIsOutsideWindows).
+  static bool hidesRegistrationMemory(const HighFunc &Func);
   bool isEmbeddedRegistrationCallback(const HighStmt &Stmt, size_t I) const;
   bool isEmbeddedWindowsCallback(const HighStmt &Stmt, size_t I) const;
   void writeEmbeddedNativeCallbacks(const HighStmt &Stmt, int Indent);
@@ -240,8 +321,19 @@ public:
                       const std::set<std::string> &ParamNames);
   void collectNamedFrameSlots(const HighFunc &Func);
   void invalidateJoinPhiFrameAliases(const HighFunc &Func);
+  /// How many parameters \p Func's definition prints: its HighIR ones
+  /// (emittedParamIndices), then the declared ones its code never reads
+  /// (unreadDeclaredParams).
   size_t emittedParamCount(const HighFunc &Func) const;
   std::vector<size_t> emittedParamIndices(const HighFunc &Func) const;
+  /// The parameters of \p Func's placed signature, by their indices in it,
+  /// that come after every one a HighIR parameter binds and that its code
+  /// never reads, such as a system call stub's stack arguments its
+  /// dispatcher takes: the definition prints them after its HighIR ones, as
+  /// its callers pass them.  Only integers and pointers after integers and
+  /// pointers, which take the next slots in every convention; none where a
+  /// HighIR parameter the signature does not name is printed.
+  std::vector<size_t> unreadDeclaredParams(const HighFunc &Func) const;
 
   //--- Statement rendering (HighCStmtWriter.cpp) ---
   void writeStmt(const HighStmt &Stmt, int Indent);
@@ -250,6 +342,7 @@ public:
   bool cxxThrowUsesRuntimeCall(const HighExpr &ThrowCall) const;
   TypeRef cxxScalarThrowType(const HighExpr &ThrowCall) const;
   void writeCExceptionRegion(const HighStmt &Stmt, int Indent);
+  std::string sehFilterName(const HighEHClause &Clause);
   void writeUnstructuredSEHRegion(const HighStmt &Stmt, int Indent);
   /// The blocks the exception runtime enters for except clauses \p Entries of
   /// an unstructured region: each runs its handler's entry copies, then jumps
@@ -304,6 +397,13 @@ public:
   void decideTryExits(const std::vector<HighStmt> &Stmts,
                       const std::vector<va_t> &Continuation,
                       std::set<std::pair<va_t, va_t>> &Kept);
+  /// Where the try \p Stmt, whose clause bodies are all empty, splits at a
+  /// jump into its protected body: it prints as consecutive tries.
+  std::optional<size_t> sehTrySplitPoint(const HighStmt &Stmt) const;
+  /// Find the empty __except arms of \p Func that resume where their try
+  /// falls through (FallthroughExceptArms); every other one jumps to its
+  /// handler, whose label it registers.
+  void decideExceptArms(const HighFunc &Func);
   /// Labels where the try Stmts[Index] falls through that print right after
   /// it: no statement printed earlier, the try included, starts them.
   std::vector<va_t> tryLeaveTargets(const std::vector<HighStmt> &Stmts,
@@ -329,8 +429,23 @@ public:
   /// wrap. Segmented offsets disable image backing projection to stay numeric.
   std::string addrStr(const HighExpr &Expr, int ParentPrec = 0,
                       bool ProjectImageBacking = true);
+  /// Whether the object the unit defines at \p Addr holds more than the
+  /// string \p Literal its first bytes spell, which is then no string: a
+  /// vector constant whose first lane is 9 is no L"\t".  A sized object
+  /// that holds a string's bytes is the string itself, as
+  /// imageStringLiteral asks of a symbol.
+  bool objectOutgrowsLiteral(va_t Addr, llvm::StringRef Literal) const;
   std::string renderUnaryOp(const HighExpr &E, int ParentPrec);
+  /// The name a call's target goes by, resolved once for each call address,
+  /// indirection and stated target, all it reads of a call: the image and
+  /// the debug information do not change while a unit is written.
   std::string resolvedCallTarget(const HighExpr &E) const;
+  std::string resolveCallTarget(const HighExpr &E) const;
+  /// The name the image lists the function at \p Addr under
+  /// (BinaryImage::getFunctionNameAt), looked up once per address: the image
+  /// does not change while a unit is written, and each lookup scans every
+  /// export and symbol it holds.
+  const std::string &imageFunctionNameAt(va_t Addr) const;
   /// The C identifier a direct call names; see HighCExprWriter.cpp.
   std::string callIdentifier(const HighExpr &E) const;
   /// The C name of the import slot call \p E goes through, itself or by the
@@ -358,11 +473,35 @@ public:
   /// Whether \p Func is the stub of a variadic C library import, which a
   /// call runs as a call through the import's slot.
   bool isVariadicImportStub(const HighFunc &Func) const;
+  /// The C library routine \p Func, an import's stub named like its import,
+  /// forwards to (`strlen: jmp *strlen@GOT`): a call to the stub reaches the
+  /// routine the header declares, by its name, while the stub's definition
+  /// takes its address (copiesHeaderRoutine).  Empty for another function.
+  std::string headerRoutineOfStub(const HighFunc &Func) const;
+  /// Whether a C library's headers declare the routine \p Func defines,
+  /// whose prototype the debug context takes from them
+  /// (FunctionSym::PrototypeFromCLibrary): its definition steps aside from
+  /// the name.
+  bool libraryDeclaresDefinition(const HighFunc &Func) const;
+  /// The variadic routine this file defines that the stub \p Func jumps to,
+  /// through the slot of a symbol the image defines itself, or null.
+  const HighFunc *variadicOwnRoutineOfStub(const HighFunc &Func) const;
   std::string renderCallExpr(const HighExpr &E);
   std::string renderSourceCallExpr(const HighExpr &E);
   const HighFunc *sourceCallDefinition(const SourceCallTypeHint &Hint,
                                        llvm::StringRef Name) const;
   std::string varName(const MedVar &V) const;
+  std::string rawVarName(const MedVar &V) const;
+  TypeRef statedVariableType(const MedVar &V) const;
+  TypeRef statedVariableTypeNamed(const std::string &Name) const;
+  mutable std::map<std::string, TypeRef> StatedLocalTypes;
+  /// The inventory entry varName recorded each value under, by the function
+  /// and the value's identity fields (highSourceVariableId).  An emit clears
+  /// the inventory before its writers run and erases none of its entries.
+  mutable llvm::DenseMap<std::tuple<va_t, int, int, int64_t, int, int>,
+                         SourceVariable *>
+      RecordedSourceVariables;
+  std::map<std::pair<va_t, std::string>, unsigned> SourceLocalClasses;
   std::string debugNameForDisplacement(va_t Entry, int64_t Disp) const;
   TypeRef debugTypeForDisplacement(va_t Entry, int64_t Disp) const;
   TypeRef declaredParamType(const MedVar &V) const;
@@ -370,23 +509,17 @@ public:
   /// with, which its prototype and every use of the parameter share.
   TypeRef emittedParamType(const HighFunc &Func, size_t Index) const;
   /// The type of the parameter \p Func's definition prints at \p Position,
-  /// counted among the parameters it prints (emittedParamIndices), as a
+  /// counted among the parameters it prints (emittedParamCount), as a
   /// prototype and a call's arguments count them, or null past the last.
   TypeRef emittedParamTypeAt(const HighFunc &Func, size_t Position) const;
+  /// The type \p Func's definition prints the declared parameter \p Index
+  /// of its signature with, which its code never reads.
+  TypeRef unreadDeclaredParamType(const HighFunc &Func, size_t Index) const;
   /// What a parameter holds of its function's debug signature, matched by
   /// where the convention passes each (SourceParameterPlacement), never by
   /// position: System V passes `f(double x, int n)` with n in the first
   /// integer register.
-  struct DebugParamBinding {
-    /// The debug parameter it holds a piece of, or -1.
-    int Index = -1;
-    /// Where the piece starts in that parameter's value.
-    uint16_t Offset = 0;
-    /// It holds the whole value the debug type describes.
-    bool Whole = false;
-    /// It holds the hidden pointer to the result's storage.
-    bool Result = false;
-  };
+  using DebugParamBinding = neverd::DebugParamBinding;
   DebugParamBinding debugParamBinding(const HighFunc &Func, size_t Index) const;
   /// The name \p Func's parameter \p Index reads as by its debug signature:
   /// the debug parameter's, `<name>_<offset>` for a later piece of one, or
@@ -402,18 +535,64 @@ public:
   std::optional<std::pair<const HighExpr *, uint64_t>>
   typedPointerOffset(const HighExpr &Addr) const;
   /// `base[index]` when Addr is `typed_ptr + index * sizeof(*typed_ptr)`.
-  /// ElemType is the loaded pointer/element, not the address of `base`.
+  /// ElemType is the loaded pointer/element, not the address of `base`; for
+  /// an access of \p AccessSize bytes narrower than a record element, the
+  /// element's member at its start that is that wide (Member), whose type
+  /// ElemType is then.  None where no scalar member is.
   struct TypedIndexAccess {
     std::string Base;
     std::string Index;
+    std::string Member;
     TypeRef ElemType;
+    std::string text() const {
+      return Base + "[" + Index + "]" + (Member.empty() ? "" : "." + Member);
+    }
   };
-  std::optional<TypedIndexAccess> typedIndexAccess(const HighExpr &Addr);
+  std::optional<TypedIndexAccess>
+  typedIndexAccess(const HighExpr &Addr, uint16_t AccessSize = 0,
+                   NdAccessClass Class = NdAccessClass::Unknown);
+  /// The member \p Load reads: one of its width, else one of another width
+  /// it reads as it is, but never a whole record, whose bytes no scalar is.
+  std::optional<std::string> loadedMemberAccess(const HighExpr &Load) const;
+  /// The type of the member loadedMemberAccess names.
+  TypeRef loadedMemberType(const HighExpr &Load) const;
+  /// The union alternative of floating type \p Float that holds the bits
+  /// the code reads by \p Bits, an ordinary load, or writes to \p Addr, as
+  /// `v->d` holds those of `v->i`; none where no such alternative of that
+  /// width is there.
+  std::optional<std::string> floatAlternative(const HighExpr &Addr,
+                                              const NdType &Float) const;
+  /// The member at \p Addr an access of \p AccessSize bytes reads or
+  /// writes; of a union's alternatives of that width, the one its \p Class
+  /// holds (NdType::scalarOfClassAt).
   std::optional<std::string>
   typedMemberAccess(const HighExpr &Addr, uint16_t AccessSize = 0,
-                    bool EnterNestedAtZero = true) const;
+                    bool EnterNestedAtZero = true,
+                    NdAccessClass Class = NdAccessClass::Unknown) const;
   std::optional<std::string> typedMemberAddress(const HighExpr &Addr) const;
-  TypeRef typedMemberType(const HighExpr &Addr, uint16_t AccessSize = 0) const;
+  TypeRef typedMemberType(const HighExpr &Addr, uint16_t AccessSize = 0,
+                          NdAccessClass Class = NdAccessClass::Unknown) const;
+  /// The function type of the typed member an indirect call's \p Callee
+  /// loads its target from (indirectCalleeStr prints it as the member), or
+  /// null.
+  TypeRef typedSlotFunction(const HighExpr &Callee) const;
+  /// Whether \p Addr is a member of a record the unit defines from the
+  /// program's local types (RecordDefinitions).
+  bool memberOfDefinedRecord(const HighExpr &Addr) const;
+  /// \p Type with \p Declarator, by the typedef its declaration names it by
+  /// (NdType::TypedefName) where the unit defines that typedef, as IDA
+  /// prints `PKDEFERRED_ROUTINE DeferredRoutine`; else as C spells it.
+  std::string declaredAs(const TypeRef &Type, llvm::StringRef Declarator) const;
+  /// \p Text, a value of type \p From, as the bits of a value of type
+  /// \p To where one is floating and the other an integer of its width, four
+  /// or eight bytes: a local C declares double that HighIR reads as the
+  /// integer of its vector register, or assigns one to.  None for any other
+  /// pair, which C converts as values.
+  std::optional<std::string> reinterpretedBits(const TypeRef &To,
+                                               const TypeRef &From,
+                                               const std::string &Text) const;
+  /// The typedef declaredAs names \p Type by, if any.
+  std::optional<std::string> declaredTypedef(const TypeRef &Type) const;
   /// Frame displacement that is a unique interior field of a named record
   /// slot (`record.p` at wrapper+8). Exact slot addresses stay unnamed here.
   std::optional<std::string>
@@ -448,6 +627,8 @@ public:
   static bool pointsToVoid(const TypeRef &Ty);
   /// Pointer object used as an `INDIR_CALL` base, without `(uintptr_t)`.
   std::string pointerObjectStr(const HighExpr &E);
+  /// An unavailable value retains its pointer type as well as its failure.
+  std::string unknownValueText(const HighExpr &E, llvm::StringRef Kind);
   /// The failure an unknown value prints at its use, or empty when \p E
   /// names a value the function defines.
   std::string unknownVarUse(const HighExpr &E, const std::string &Name,
@@ -455,9 +636,22 @@ public:
   /// Pointer-sized Load chain used as a callee: `*(void **)p` / `**(void
   /// ***)p`. A loaded vtable slot `Load(Load(obj)+imm)` is
   /// `*(void **)((uintptr_t)(*(void **)(obj)) + imm)`, not integer soup.
+  TypeRef indirectCallFunctionType(const HighExpr &Call) const;
+  TypeRef fixedCalleeFunctionType(const FunctionSym &Callee) const;
   std::string indirectCalleeStr(const HighExpr &E,
-                                const TypeRef &ReturnType = nullptr);
+                                const TypeRef &ReturnType = nullptr,
+                                const TypeRef &FunctionType = nullptr);
   const HighExpr *unwrapIntegerView(const HighExpr *E) const;
+  /// The instruction a call \p E of an intrinsic that keeps its operand was
+  /// lifted from (`brk #0x3E8`, intrinsicInstructionText); empty for any
+  /// other call.
+  std::string intrinsicInstruction(const HighExpr &E) const;
+  /// ` /* brk #0x3E8 */` beside a statement calling \p E, whose builtin
+  /// leaves out the operand of the instruction it stands for; empty when its
+  /// C spells the instruction itself.
+  std::string intrinsicInstructionComment(const HighExpr &E) const;
+  /// \p Call as a statement, with the instruction it stands for beside it.
+  std::string callStatementText(const HighExpr &Call);
   /// Whether every byte of \p E from \p Bytes up is zero, as far as its
   /// form and forwarded values show: a comparison, a constant, a zero
   /// extension or a mask that fits.
@@ -481,17 +675,89 @@ public:
   /// True when \p E prints as an unsigned integer of exactly \p Width bytes.
   /// Widening views and untyped add/sub/mul stay wrapped.
   bool isSameWidthUnsigned(const HighExpr &E, uint16_t Width) const;
+  /// The debug information's function at the address call \p E names,
+  /// none for an indirect call whose callee is unknown, which names its own
+  /// instruction: debug information gives the caller there.
+  std::optional<FunctionSym> debugFunctionCalled(const HighExpr &E) const;
   std::optional<FunctionSym> debugCallee(const HighExpr &E) const;
+  /// The debug information's function at \p Entry, resolved once per
+  /// output: the statement tests ask for the current function's on every
+  /// line, and resolving it reads names, declarations and prototypes.
+  const std::optional<FunctionSym> &resolvedFunction(va_t Entry) const;
+  /// The pointer type a local is declared with where a typed call's pointer
+  /// result declares it (collectCallResultNames, emitLocalDecls), whatever
+  /// the type of its machine value; null for any other value or name.
+  TypeRef callResultPointerType(const HighExpr &Value) const;
+  /// The type a typed call's result declares the local it is assigned to
+  /// with (collectCallResultNames): its callee's return, a pointer to the
+  /// record an MSVC call returns through a hidden pointer; null where C
+  /// cannot spell it.
+  TypeRef callResultType(const HighExpr &Call) const;
+  bool debugCallReturnIsDeclared(const HighExpr &Call,
+                                 const FunctionSym &Function) const;
+  TypeRef callResultPointerTypeNamed(const std::string &Name) const;
+  /// The pointer type of the member \p Value reads, where it prints as a
+  /// typed record's member (`Format->lpDecimalSep`); null otherwise.
+  TypeRef typedPointerMemberLoad(const HighExpr &Value) const;
+  /// The pointer type \p Value prints as where its machine value is an
+  /// integer: a local a typed call's pointer result declares, a typed
+  /// record's pointer member, or an object of the image declared as a
+  /// pointer.  An integer it is stored to takes it as the address it is.
+  TypeRef printedPointerType(const HighExpr &Value) const;
+  /// An unchanged local pointer behind full-width machine bit views, where
+  /// the destination has the same declared pointer type. Never replay its
+  /// definition: a captured pointer may outlive a reassignment of its source.
+  std::optional<std::string> implicitPointerConversion(const HighExpr &Value,
+                                                       const TypeRef &To);
+  /// Whether \p Text, as \p Value printed, is a pointer in C: a local the
+  /// text declares one, a typed record's pointer member or a pointer object,
+  /// as the value or as the definition it is forwarded from.  An integer it
+  /// is stored or assigned to takes it as the address it is.
+  bool printsPointer(const HighExpr &Value, llvm::StringRef Text) const;
+  /// What \p Value prints as where that is a pointer printedPointerType
+  /// knows: the value, the definition it is forwarded from, or the member
+  /// load a temporary carries; null otherwise.
+  const HighExpr *printedPointerSource(const HighExpr &Value) const;
+  /// Whether the debug information declares \p E's callee: it types its
+  /// return or parameters, or names it where the unit includes no header
+  /// that declares it.  A public symbol's name alone yields to the header's
+  /// prototype of a C library routine the unit includes.
+  bool debugDeclaresCallee(const HighExpr &E) const;
+  /// Whether \p Type names a record a C library header the unit includes
+  /// for \p E's callee declares, points to a typedef of it, or is an array
+  /// it gives a parameter: the header's `struct stat`, which the unit
+  /// neither defines nor names by a typedef, and which a function of the
+  /// same name would hide, its time_t, or its jmp_buf, which may be long
+  /// where the unit's exact widths say int32_t.
+  bool headerTypeOfCallee(const HighExpr &E, const TypeRef &Type) const;
+  /// Whether the unit includes the standard header that declares the C
+  /// library routine \p Name (libc::headerFor).
+  bool includesHeaderOf(llvm::StringRef Name) const;
+  /// Whether the user declares the routine the call target \p Name names
+  /// (userPrototype): the unit declares it as the user does, not through
+  /// the header that declares the C library's routine of the name.
+  bool userDeclaresCallee(llvm::StringRef Name) const;
   TypeRef expectedDebugCallArgType(const FunctionSym &FS, size_t Index) const;
   TypeRef displayCallArgType(const HighExpr &Call, size_t Index) const;
   /// Display-only printed arity from TPI/PDB or \ref msvcCallee.
   /// MSVC member rows live in MsvcCallees.def; `_ctor` keeps this plus a
   /// pointer/string/fill source and drops leftover register clobbers.
   size_t debugCallArgLimit(const HighExpr &E) const;
+  /// An upper bound on the operands of call \p E its printed text reads, by
+  /// which the analyses decide which call results C assigns: past it, an
+  /// operand's value is no use.
+  size_t renderedCallOperandBound(const HighExpr &E) const;
   /// The fixed arity of the known function \p Symbol, which the C name
-  /// \p Identifier reads; a C++ stem is no name the tables know.
-  static std::optional<libc::LibCArity> knownArity(llvm::StringRef Symbol,
-                                                   llvm::StringRef Identifier);
+  /// \p Identifier reads; a C++ stem is no name the tables know.  An i386
+  /// stdcall routine's names spell it (stdcallPops): a 32-bit argument for
+  /// each four bytes the routine pops.
+  std::optional<libc::LibCArity> knownArity(llvm::StringRef Symbol,
+                                            llvm::StringRef Identifier) const;
+  /// The bytes the i386 stdcall routine \p Symbol, which the C name
+  /// \p Identifier reads, pops: as its own name spells them (`_Validate@8`)
+  /// or the names the image imports it by (StdcallImportPops).
+  std::optional<unsigned> stdcallPops(llvm::StringRef Symbol,
+                                      llvm::StringRef Identifier) const;
   /// How many arguments the plain declaration of the external function \p E
   /// calls gives it (writeForwardDecls), when its arity is known.
   std::optional<size_t> plainDeclarationArity(const HighExpr &E) const;
@@ -500,6 +766,8 @@ public:
   /// or prints as a literal already.
   std::string stringArgumentNote(const HighExpr &Arg);
   void collectUnknownOnlyNames(const HighFunc &Func);
+  void collectDeferredUnknowns(const HighFunc &Func);
+  bool writeDeferredUnknownCopy(const HighStmt &Stmt, int Indent);
   void collectCtorSourceNames(const HighFunc &Func);
   bool isUnknownCallOperand(const HighExpr *Op) const;
   bool isCtorSourceExpr(const HighExpr *Op) const;
@@ -540,11 +808,25 @@ public:
                                                const TypeRef &Expected);
   /// \p E as the argument of a parameter of type \p Expected, which a
   /// prototype declares: an integer converts to a pointer parameter, and a
-  /// string or an address to an integer one.
-  std::string exprStrAsTypedArg(const HighExpr &E, const TypeRef &Expected);
-  /// The text \p E passes to a parameter of type \p Expected, before a
-  /// pointer converts to an integer parameter.
-  std::string typedArgumentText(const HighExpr &E, const TypeRef &Expected);
+  /// string or an address to an integer one.  \p Spelled is the type the
+  /// declaration spells the parameter by where that is a typedef (a function
+  /// this unit defines, declaredAs), which a conversion names too.
+  std::string
+  exprStrAsTypedArg(const HighExpr &E, const TypeRef &Expected,
+                    const std::optional<std::string> &Spelled = std::nullopt);
+  /// The text \p E passes to a parameter of type \p Expected, spelled
+  /// \p Spelled, before a pointer converts to an integer parameter.
+  std::string
+  typedArgumentText(const HighExpr &E, const TypeRef &Expected,
+                    const std::optional<std::string> &Spelled = std::nullopt);
+  /// \p Text, which \p Value prints, as the value an object C declares as
+  /// \p Declared is assigned: C converts no integer to a pointer, no pointer
+  /// to an integer and no pointer to one of another type by assignment.
+  std::string assignedText(const TypeRef &Declared, const HighExpr &Value,
+                           std::string Text) const;
+  /// The type an image object at \p Addr is declared with, where C can assign
+  /// it: its header's for a C library object, otherwise its own.
+  TypeRef assignedImageObjectType(va_t Addr) const;
   /// Whether \p E, printed as \p Text, has an integer type in C that a
   /// pointer parameter does not take as it is (not a null pointer constant).
   bool printsAsInteger(const HighExpr &E, llvm::StringRef Text) const;
@@ -568,8 +850,48 @@ public:
   int debugSymRichness(const FunctionSym &FS) const;
   static TypeRef cDisplayType(const TypeRef &Ty);
   std::optional<int64_t> frameDisplacement(const HighExpr &E) const;
+  /// Whether the \p Bytes bytes at \p A and those at \p B cannot overlap:
+  /// both lie in the frame, or both are constant addresses, that far apart.
+  bool disjointMemory(const HighExpr &A, const HighExpr &B,
+                      uint64_t Bytes) const;
   std::optional<int64_t>
   certifiedFrameStorageDisplacement(const HighExpr &E) const;
+  /// Whether the alignment precondition \p Call always holds in C: its
+  /// address is a slot of the frame storage, whose layout gives the slot the
+  /// alignment the entry stack pointer's residue gives it in the machine.
+  bool frameStorageAlignmentHolds(const HighExpr &Call);
+  /// The va_start forwarder \p Func is, as C prints it (`T f(named, ...)`):
+  /// none where a source or debug signature declares its parameters.
+  const HighFunc::VaStartForwarder *
+  vaStartForwarder(const HighFunc &Func) const;
+  /// Whether a call of \p Func, a va_start forwarder, passes an operand
+  /// that holds one of va_start's areas (HighFunc::VaStartForwarder::Junk).
+  bool vaStartJunkPassed(const HighFunc &Func) const;
+  mutable std::map<const HighFunc *, bool> VaStartJunkPassedCache;
+  /// CurrentFunc's, where it is one.
+  const HighFunc::VaStartForwarder *currentVaStart() const {
+    return CurrentFunc ? vaStartForwarder(*CurrentFunc) : nullptr;
+  }
+  /// Whether \p Stmt is a store of CurrentFunc's va_start, which C's
+  /// va_start does: a va_list field, a saved argument register, or an
+  /// overflow parameter's home.
+  bool vaStartStatement(const HighStmt &Stmt) const;
+  /// The parameter `va_start` names: CurrentFunc's last named one, as its
+  /// header spells it.
+  std::string VaStartLastNamed;
+  /// The operands a call \p E of the va_start forwarder \p Callee passes:
+  /// its named parameters, then the integer, vector and stack arguments.
+  /// \p Printed, for the call CurrentFunc prints, takes each kind up to the
+  /// last the call sets, and no stack argument call recovery only padded the
+  /// call with; otherwise every operand that may be passed.
+  std::vector<size_t> vaStartCallOperands(const HighExpr &E,
+                                          const HighFunc &Callee,
+                                          const HighFunc::VaStartForwarder &Va,
+                                          bool Printed) const;
+  /// Whether \p Op, an argument of a va_start forwarder, is a register the
+  /// call never set, seen through the conversions that carry it in its
+  /// register (a vector register's double as its bits).
+  bool vaStartUnknownOperand(const HighExpr *Op) const;
   /// Whether \p E combines a certified frame address with a run-time value,
   /// so it reaches whichever frame bytes that value selects.
   bool reachesFrameThroughIndex(const HighExpr &E) const;
@@ -648,6 +970,10 @@ public:
   /// Parameter display names (`item`, injected `result`) cannot also name a
   /// frame home. The incoming C parameter already owns that identifier.
   bool isReservedParamDisplayName(llvm::StringRef Name) const;
+  /// Whether the unit gives \p Name at file scope to a function or an object
+  /// it declares or calls, or to a type it declares a typedef of: a local of
+  /// the name would hide it from the function's code.
+  bool namesFileScope(llvm::StringRef Name) const;
   bool isAddressTakenSlot(llvm::StringRef Name) const;
   bool hidesAddressTakenParamHome(llvm::StringRef Slot,
                                   const HighExpr &Val) const;
@@ -763,6 +1089,8 @@ public:
 
   std::set<std::string> ExternFuncs;
   std::map<std::string, const HighFunc *> DefinedFuncs;
+  /// The identifiers the unit's code calls or takes the address of.
+  std::set<std::string> UnitCallTargets;
   /// True when \p Name is a function this file or the image defines, not a
   /// libc routine of the same name (ntoskrnl implements its own `setjmp`).
   /// A call to the function being written when it is printed as void: its
@@ -775,6 +1103,8 @@ public:
   }
   bool isOwnFunctionName(llvm::StringRef Name,
                          const std::vector<HighFunc> &Funcs);
+  /// The headers writeIncludes included.
+  std::set<std::string> IncludedHeaders;
   /// Views remain valid for this writer because its BinaryImage is immutable
   /// for the duration of one emission.
   std::optional<std::unordered_set<std::string_view>> ImageFunctionNames;
@@ -782,7 +1112,15 @@ public:
   std::map<std::string, const HighFunc *> DefinedFunctionsByIdentifier;
   std::map<va_t, const HighFunc *> DefinedFunctionsByAddress;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
+  /// The local types' definitions of the records the unit names.
+  CRecordDefinitions RecordDefinitions;
   std::map<const HighFunc *, std::string> FunctionIdentifiers;
+  /// The definitions whose own names are a C library routine's, which they
+  /// step aside from (copiesHeaderRoutine, libraryDeclaresDefinition).
+  std::set<const HighFunc *> HeaderRoutineCopies;
+  /// Whether the signature \p Func is emitted with is one C takes for a
+  /// hosted program's main.
+  bool takesMainSignature(const HighFunc &Func) const;
   /// The C name each defined function's symbol spells, for its comment.
   std::map<const HighFunc *, std::string> FunctionSymbolNames;
   std::map<std::string, std::string> FunctionIdentifiersBySourceName;
@@ -791,6 +1129,9 @@ public:
   // carry source names. Keep their mapping separate when both _foo and __foo
   // occur in one function.
   std::map<std::string, std::set<std::string>> ExternalCallSources;
+  /// What each i386 stdcall routine the image imports pops, by its import
+  /// name (c_library::stdcallImportPops).
+  c_library::ImportPops StdcallImportPops;
   /// Callees with a call that never returns (HighExpr::DoesNotReturn); their
   /// declarations say so, as for a routine the name list knows.
   std::set<std::string> NoReturnCallTargets;
@@ -802,15 +1143,21 @@ public:
   /// slot's own name, or the function pointer a call through it declares.
   std::set<va_t> ImportDataSlotReads;
   std::map<va_t, std::string> ImportDataSlotNames;
+  std::map<va_t, TypeRef> ImportDataSlotTypes;
   std::map<std::string, std::string> ExternalSourceIdentifiers;
   /// The identifiers functionIdentifier() spelled for functions no map
   /// names, and the symbols they stand for (recordSourceNames()).
   mutable std::map<std::string, std::string> ReferencedFunctionSymbols;
+  /// resolvedFunction()'s answers.
+  mutable std::map<va_t, std::optional<FunctionSym>> ResolvedFunctions;
   std::set<va_t> GotoTargets;
   /// How many gotos target each address in the current function.
   std::map<va_t, unsigned> GotoTargetUses;
   /// (address, target) of try-body gotos left out as fall-through exits.
   std::set<std::pair<va_t, va_t>> FallthroughTryExits;
+  /// Tries whose empty __except arm resumes where the try falls through, so
+  /// the arm prints no jump to its handler.
+  std::set<const HighStmt *> FallthroughExceptArms;
   /// While the protected body of a __try prints: the labels where that try
   /// falls through.  A goto there leaves the body as `__leave` does.
   std::vector<va_t> LeaveTargets;
@@ -848,8 +1195,15 @@ public:
   std::set<Intrinsic> LinuxSyscallHelpers;
   /// A Windows x86 function renders an <intrin.h>-only intrinsic.
   bool NeedsMsvcIntrinsics = false;
+  bool NeedsX86SystemRegisterDispatch = false;
+  bool NeedsX86ScalarSystemDispatch = false;
+  bool NeedsX86DescriptorStateDispatch = false;
+  bool NeedsX86VirtualizationDispatch = false;
+  bool NeedsX86SystemStateDispatch = false;
   /// A non-Windows x86 function renders an <x86intrin.h>-only intrinsic.
   bool NeedsGnuX86Intrinsics = false;
+  /// A CPUID GCC or Clang compiles, which <cpuid.h> spells.
+  bool NeedsCpuid = false;
   bool NeedsFEnvAccess = false;
   std::set<std::string> CIntrinsicNames;
   bool NeedsObjCRuntime = false;
@@ -915,6 +1269,8 @@ public:
   HighCAnalysisState Analysis;
   bool InferredVoid = false;
   TypeRef FuncReturnType;
+  const PreparedPortableX87Function *PortableInterface = nullptr;
+  std::string renderPortableX87Call(const HighExpr &Expr);
   const HighFunc *CurrentFunc = nullptr;
   /// The parameter bindings and emitted types of the function last asked
   /// about.
@@ -923,15 +1279,14 @@ public:
   mutable std::vector<DebugParamBinding> ParamBindings;
   mutable std::vector<TypeRef> EmittedParamTypes;
   mutable std::vector<std::string> ParamDebugNames;
+  /// Whether an original or debug parameter can supply a record declaration.
+  /// Completion fills record fields, so unnamed/incomplete records count too.
+  mutable bool HasRecordParamTypes = false;
   /// The convention's rules placed the cached function's debug parameters
   /// by where they arrive, rather than by position.
   mutable bool ParamsPlaced = false;
   /// Fills the cache for \p Func.
   void bindParams(const HighFunc &Func) const;
-  /// Where a stack parameter of \p Func arrives, from the entry stack
-  /// pointer; none for a register parameter or an unknown location.
-  std::optional<int64_t> stackParamOffset(const HighFunc &Func,
-                                          size_t Index) const;
   /// emittedParamIndices' answers, which walk the function's body.
   mutable std::map<std::pair<const HighFunc *, va_t>, std::vector<size_t>>
       EmittedParamIndices;
@@ -981,21 +1336,93 @@ public:
   /// Slot identity retained for value forwarding and catch-object recovery
   /// after their memory representation switches to stack_storage.
   std::map<int64_t, NamedFrameSlot> FrameStorageSlots;
-  /// Frame storage prints as one record laid out like its bytes. A member is
-  /// an integer every access at its displacement reads or writes alike, at
-  /// an aligned offset, clear of other accesses: `stack_storage.var_mA0`.
+  /// Frame storage prints as one record laid out like its bytes, and every
+  /// frame access or address with a certified displacement names a member:
+  /// - the widest accesses at a displacement, when they cover every access
+  ///   overlapping them at an offset aligned to their width, make a scalar
+  ///   member: `stack_storage.var_mA0`;
+  /// - the other accesses inside it are views of its bytes:
+  ///   `*(uint32_t *)&stack_storage.var_mA0`,
+  ///   `*(int8_t *)((uint8_t *)&stack_storage.var_mA0 + 2)`;
+  /// - accesses that straddle each other, and frame addresses the function
+  ///   takes outside any member, make a byte array that runs to the next
+  ///   member: `(uintptr_t)&stack_storage.var_m218`.
+  /// A same-width read of the other signedness converts the member. A
+  /// debug object of another type keeps its bytes raw, as in LLVM C.
   struct FrameRecordMember {
     std::string Name;
+    /// The scalar type, or null for a byte array.
     TypeRef Type;
+    uint64_t Size = 0;
   };
   std::map<int64_t, FrameRecordMember> FrameRecordMembers;
+  /// The member at \p Addr that holds a record's pointer an out-parameter
+  /// stores (collectFrameRecordMembers), read whole or at its address.
+  const FrameRecordMember *statedFrameRecordMember(const HighExpr &Addr,
+                                                   uint16_t AccessSize) const;
+  /// The pointer to a named record that a call's `T **` parameter \p Index
+  /// stores where it points; null for another parameter.
+  TypeRef outParameterRecordPointer(const HighExpr &Call, size_t Index) const;
   /// What each slot was named before frame storage replaced it.
   std::map<int64_t, std::string> FrameSlotNamesBeforeStorage;
   void collectFrameRecordMembers(const HighFunc &Func, uint64_t FrameBaseOffset,
                                  uint64_t StorageSize);
-  /// The member an integer access of type \p Ty at \p Addr names.
+  /// A type a member holds or a view reads: a float, a double, or an integer
+  /// of a C scalar's width.
+  bool frameRecordScalar(const TypeRef &T) const;
+  bool frameRecordInteger(const TypeRef &T) const;
+  bool frameRecordWideInteger(const TypeRef &T) const;
+  /// The member holding the bytes [\p Disp, \p Disp + \p Size), and its
+  /// displacement.
+  const std::pair<const int64_t, FrameRecordMember> *
+  frameRecordMemberHolding(int64_t Disp, uint64_t Size) const;
+  /// The lvalue an access of type \p Ty at \p Disp writes or reads: the
+  /// member itself or a view of its bytes.
+  std::optional<std::string> frameRecordLvalue(int64_t Disp,
+                                               const TypeRef &Ty) const;
+  /// The value a load of type \p Ty at \p Disp reads, converted when it
+  /// reads a whole member that differs only in signedness.
+  std::optional<std::string> frameRecordRvalue(int64_t Disp,
+                                               const TypeRef &Ty) const;
+  /// The address of \p Disp as an operand of a pointer cast, named by the
+  /// member holding it: `&stack_storage.var_mA0`, else `(frame_base - 160)`.
+  std::string frameRecordPointer(int64_t Disp) const;
+  /// The address of \p Disp as an integer: `(uintptr_t)&stack_storage.var_mA0`,
+  /// else `(frame_base - 160)`.
+  std::string frameRecordAddress(int64_t Disp) const;
+  /// The lvalue a slot of type \p Ty at \p Disp names once the storage
+  /// replaces it, or a region of \p RegionBytes bytes there.
+  std::string frameStorageView(int64_t Disp, const TypeRef &Ty,
+                               int64_t RegionBytes) const;
+  /// The displacement a variable the storage replaces reads, with its type.
+  std::optional<std::pair<int64_t, TypeRef>>
+  projectedSlotRead(const HighExpr &E) const;
+  /// The address \p E computes, of \p Disp, as frameRecordAddress prints it.
+  std::string frameAddressText(const HighExpr &E, int64_t Disp);
+  /// Writes the store of \p Value, of type \p Ty, at \p Addr as the frame
+  /// record's member or bytes there, if a member holds them.
+  bool writeFrameRecordStore(const HighExpr &Addr, const TypeRef &Ty,
+                             const HighExpr &Value, int Indent,
+                             llvm::function_ref<std::string()> ValueText);
+  /// The type a member holds an access of type \p Ty as: a scalar's own, or
+  /// for a pointer of the host's width, the unsigned integer its bits are.
+  TypeRef frameRecordCarrier(const TypeRef &Ty) const;
+  /// \p Value, of type \p Ty, as the member's carrier holds it.
+  std::string frameRecordStored(const TypeRef &Ty, std::string Value) const;
+  /// The value a load of type \p Ty at \p Disp reads from the record.
+  std::optional<std::string> frameRecordRead(int64_t Disp,
+                                             const TypeRef &Ty) const;
+  /// The pointer to the \p Size bytes at \p Addr, when a member holds them.
+  std::optional<std::string> frameRecordBytes(const HighExpr &Addr,
+                                              uint64_t Size) const;
+  /// The lvalue an access of type \p Ty at \p Addr names: what a store or
+  /// an in-place update writes.
   std::optional<std::string> frameRecordMember(const HighExpr &Addr,
                                                const TypeRef &Ty) const;
+  /// The value a load of type \p Ty at \p Addr reads, converted when the
+  /// member it reads whole differs only in signedness.
+  std::optional<std::string> frameRecordMemberValue(const HighExpr &Addr,
+                                                    const TypeRef &Ty) const;
   std::map<std::string, int64_t> FrameAliases;
   /// Bounds nested alignment-to-base certification as well as flat offsets.
   mutable unsigned FrameDisplacementDepth = 0;
@@ -1025,6 +1452,16 @@ public:
   mutable std::unordered_map<std::string, std::vector<const HighExpr *>>
       AssignedValuesByName;
   mutable bool AssignedValuesIndexed = false;
+  /// imageFunctionNameAt's answers.
+  mutable std::unordered_map<va_t, std::string> ListedFunctionNames;
+  /// resolvedCallTarget's answers, by call address.
+  struct ResolvedCallTarget {
+    bool Indirect;
+    std::string Target;
+    std::string Name;
+  };
+  mutable std::unordered_map<va_t, llvm::SmallVector<ResolvedCallTarget, 1>>
+      ResolvedCallTargets;
   /// Multi-use MSVC ctor dests print as the this operand (`&var`), not `v21`.
   std::map<std::string, const HighExpr *> CtorThisForward;
   /// Assigned call results that stay as temps take a Get* stem (`FontColor`).
@@ -1044,8 +1481,11 @@ public:
   std::set<std::string> HiddenCxxCtorIdentifiers;
   std::set<std::string> CatchAliasTemps;
   /// Destinations whose only assignments are Undef / unknown copies of those.
-  /// Assigns are hidden; stores of the name print `0`.
+  /// Assigns are hidden; observable uses diagnose missing state.
   std::set<std::string> UnknownOnlyNames;
+  /// Availability of mixed known/unknown integer PHIs and their copies.
+  std::map<std::string, std::string> DeferredUnknownFlags;
+  bool ReadingDeferredPayload = false;
   /// Names that appear as assign destinations in this function.
   std::set<std::string> AssignedNames;
   /// Temps assigned a pointer/string/frame address (copy/string ctor src).
@@ -1105,6 +1545,20 @@ public:
     /// The widest atomic access (an ordered load or store, or a
     /// read-modify-write) at its address: C keeps it as aligned as the image.
     uint16_t AtomicBytes = 0;
+    /// The widest alignment an access at its address requires (an aligned
+    /// vector move faults on a misaligned address): C keeps it as aligned
+    /// as the image.
+    uint16_t AlignedBytes = 0;
+    /// The C library header that declares the object, as <stdio.h> does
+    /// stdin, whose copy the image holds (LibCDataObjects.def): the unit
+    /// includes it and declares no object of its own, and the object has the
+    /// type the header gives it (HeaderType).  Empty for any other object.
+    std::string Header;
+    TypeRef HeaderType;
+    /// A header's object whose type is none HighC holds, a record's or an
+    /// array's (<netinet/in.h>'s in6addr_loopback): the unit reaches it
+    /// through its bytes.
+    bool HeaderBytes = false;
   };
   std::map<va_t, ImageObject> ImageObjects;
   /// The access width that names the unnamed object \p Obj at \p Addr, as
@@ -1138,13 +1592,12 @@ public:
   /// table a compiler emits under an assembler-local label), cut at the data
   /// symbols around \p Addr, which begin objects even when unsized.
   std::optional<std::pair<va_t, uint64_t>> indexedObjectAt(va_t Addr) const;
-  /// The image's sized data objects by address, each as large as the
-  /// largest symbol there, and the furthest end of any object up to each.
-  std::vector<std::pair<va_t, uint64_t>> SizedObjects;
-  std::vector<va_t> SizedObjectReach;
-  /// Where the image's data symbols begin, sized or not, in order: a PDB
-  /// public names an object without sizing it.
-  std::vector<va_t> DataSymbolStarts;
+  /// The image's data objects, read by collectImageObjects(): those the
+  /// emitter prepared for the image when it did (SharedDataObjects), else the
+  /// writer's own.  Until then none, as before they were shared.
+  const HighCImageDataObjects *SharedDataObjects;
+  HighCImageDataObjects OwnDataObjects;
+  const HighCImageDataObjects *DataObjects = &OwnDataObjects;
   /// The image object a call argument prints as when it is a string: the
   /// array's address, or a load of a pointer to one.  The expression is the
   /// one that prints the object's name.
@@ -1168,6 +1621,10 @@ public:
   /// The prototype of the external function a call target \p Name names
   /// (writeForwardDecls), by the one symbol its calls link to.
   const libc::LibCPrototype *externalPrototype(const std::string &Name) const;
+  /// The headers that declare the external function \p Name, which a unit
+  /// that calls it includes: its C library header, and the one its prototype
+  /// names types from.
+  std::vector<std::string> calleeHeaders(const std::string &Name) const;
   /// The C type \p Type of a prototype on this target: `WINAPI` is stdcall
   /// on 32-bit x86 and nothing elsewhere.
   std::string prototypeType(std::string_view Type) const;
@@ -1181,9 +1638,26 @@ public:
     StatementCall = Outer;
     return Text;
   }
-  /// Functions the code takes the address of, by entry: the C name the
-  /// address prints as.
-  std::map<va_t, std::string> FunctionAddressNames;
+  /// The image's function symbols by address, which noteFunctionAddress()
+  /// reads: those the emitter prepared for the image when it did, else the
+  /// writer's own, read at the first address it asks about.
+  const HighCImageFunctionSymbols *SharedFunctionSymbols;
+  std::optional<HighCImageFunctionSymbols> OwnFunctionSymbols;
+  /// Keep the source identity until declarations have allocated their final
+  /// C identifiers. An earlier spelling can later belong to an image object.
+  struct FunctionAddressTarget {
+    std::string Symbol;
+    const HighFunc *Definition = nullptr;
+  };
+  std::map<va_t, FunctionAddressTarget> FunctionAddressNames;
+  /// Address-only symbols without a callable signature use a byte alias of
+  /// the linker identity. Taking an address cannot invent a return type.
+  std::map<std::string, std::string> FunctionAddressAliases;
+  std::string
+  functionAddressIdentifier(const FunctionAddressTarget &Target) const;
+  /// Linker function names cannot also name definitions of reconstructed data.
+  std::optional<std::set<std::string>> ImageFunctionLinkNames;
+  bool imageFunctionOwnsLinkIdentifier(llvm::StringRef Name);
   /// The symbols of those functions this output does not define, declared as
   /// the functions it calls are.
   std::set<std::string> AddressTakenFunctions;
@@ -1216,15 +1690,31 @@ public:
     /// needs that.  1 and 0 for a backing without one.
     unsigned Align = 1;
     uint64_t Pad = 0;
+    /// The bytes are a C library header's object (ImageObject::Header),
+    /// reached through its address: the unit defines none of its own.
+    bool Header = false;
   };
   std::vector<ImageBacking> ImageBackings;
   /// The symbol the object a backing is named after has in its comment, as
   /// the backing's `neverd.image` line names it; empty for a name the
   /// emitter made.
   std::string backingReadable(const ImageBacking &Backing) const;
+  /// The initializer of a backing's bytes, if any byte is nonzero: a string
+  /// of them within C's translation limits, or a list of them, whichever is
+  /// shorter.
+  void writeBackingBytes(const ImageBacking &Backing);
   /// The C address a relocated pointer slot holds: the function or data it
   /// names, or none when no C object names it.
   std::optional<std::string> relocatedSlotTarget(va_t Slot) const;
+  /// stringLiteralAt() of the image and debug information, which a writer
+  /// asks of one address again and again; each answer reads the image's
+  /// symbols and relocations.
+  std::optional<std::string> stringLiteral(va_t Addr) const;
+  mutable std::unordered_map<va_t, std::optional<std::string>> StringLiterals;
+  /// The constants a call passes to a narrow string parameter, which print
+  /// as narrow literals (imageStringLiteral's Narrow) where the image's
+  /// bytes read as wide ones too.
+  std::set<const HighExpr *> NarrowStringOperands;
   /// A pointer-sized object at a relocated slot: the address it holds, as
   /// its initializer.
   std::optional<std::string>

@@ -13,7 +13,9 @@ namespace neverd::coff_registration {
 struct RegistrationSEHScopeState {
   bool Enabled = false;
   int64_t Offset = 0;
-  std::set<const llvm::StoreInst *> Writes;
+  std::map<const llvm::StoreInst *, uint16_t> Writes;
+  std::set<const llvm::StoreInst *> CallbackWrites;
+  std::set<const llvm::CallBase *> PhysicalWrites;
 };
 
 llvm::Expected<RegistrationSEHScopeState>
@@ -32,7 +34,12 @@ validateDynamicSEHScope(const RegistrationBlockState &Source,
                         const RegistrationFrame &Frame,
                         const SourceSegment &Segment,
                         const llvm::CallInst &Enter, const llvm::CallInst &Exit,
-                        const std::map<int32_t, DynamicSEHScopeCase> &Cases);
+                        const std::map<int32_t, DynamicSEHScopeCase> &Cases,
+                        std::set<const llvm::CallBase *> &Calls);
+
+llvm::Error
+validateDynamicSEHCallMarkers(llvm::ArrayRef<const llvm::Function *> Functions,
+                              const std::set<const llvm::CallBase *> &Calls);
 } // namespace neverd::coff_registration
 
 #endif // NEVERD_COFFREGISTRATIONSEHDYNAMICSCOPE_H

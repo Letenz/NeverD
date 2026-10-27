@@ -11,7 +11,7 @@
 #include "RegistrationFrameEffects.h"
 
 #include "neverd/ir/low/LowIR.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 namespace neverd::registration_state {
 
@@ -33,12 +33,12 @@ void checkConditionalNativeFrame(const FrameState &State, const LowOp &Op,
     return;
   for (unsigned I = 0; I != Op.NumInputs; ++I) {
     const auto Value = Transfer.read(Op.Inputs[I]);
-    if (Value.MayBeFrame && !Value.FrameOnlyFromSEHScalar)
+    if (!Value.isFrameIndependentScalar())
       Inputs.NativeFramePrivate = false;
   }
   if (Op.Opcode == NdOp::RETURN) {
     const auto &Value = State.Registers[x86reg::RAX / x86reg::GeneralRegStride];
-    if (Value.MayBeFrame && !Value.FrameOnlyFromSEHScalar)
+    if (!Value.isFrameIndependentScalar())
       Inputs.NativeFramePrivate = false;
   }
 }

@@ -8,6 +8,10 @@
 #include "llvm/Support/FormatVariadic.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <optional>
+#include <utility>
+#include <vector>
 
 namespace neverd::emulation::linux_model {
 namespace {
@@ -20,11 +24,6 @@ bool freeRange(llvm::ArrayRef<AddressMapping> Ranges, uint64_t Address,
       return false;
   return true;
 }
-unsigned permissions(uint64_t Protection) {
-  return UserAccessible | (Protection & ProtRead ? Read : 0u) |
-         (Protection & ProtWrite ? Write : 0u) |
-         (Protection & ProtExecute ? Execute : 0u);
-}
 bool supportedProtection(uint64_t Protection) {
   // Write-only and execute-only differ across hardware/personality/pkey
   // policies. Admit only the explicit common readable combinations or NONE.
@@ -33,10 +32,17 @@ bool supportedProtection(uint64_t Protection) {
 }
 } // namespace
 
+unsigned LinuxMemory::permissions(uint64_t Protection) {
+  return UserAccessible | (Protection & ProtRead ? Read : 0u) |
+         (Protection & ProtWrite ? Write : 0u) |
+         (Protection & ProtExecute ? Execute : 0u);
+}
+
 LinuxMemory::LinuxMemory(AddressSpace &Space, const MemoryLayout &Layout,
                          uint64_t InitialBreak, const ProcessOptions &Options)
-    : Space(Space), PageSize(Layout.PageSize), UserLimit(Layout.UserLimit),
-      Limit(Options.MemoryLimit), MinimumBreak(InitialBreak),
+    : Space(Space), Options(Options), PageSize(Layout.PageSize),
+      UserLimit(Layout.UserLimit), Limit(Options.MemoryLimit),
+      MinimumBreak(InitialBreak),
       GuardBase(StackTop - Options.StackSize - PageSize),
       GuardEnd(StackTop + PageSize), ProgramBreak(InitialBreak) {}
 
@@ -78,6 +84,34 @@ LinuxMemory::findGap(llvm::ArrayRef<AddressMapping> Ranges, uint64_t Start,
                                      : std::nullopt;
 }
 
+void LinuxMemory::setAllocationOwnership(uint64_t Address, uint64_t Size,
+                                         bool Owned) {
+  const uint64_t End = Address + Size;
+  std::vector<std::pair<uint64_t, uint64_t>> Updated;
+  for (const auto &[Begin, Limit] : AnonymousAllocationRanges) {
+    if (Limit <= Address || Begin >= End) {
+      Updated.emplace_back(Begin, Limit);
+      continue;
+    }
+    if (Begin < Address)
+      Updated.emplace_back(Begin, Address);
+    if (Limit > End)
+      Updated.emplace_back(End, Limit);
+  }
+  if (Owned)
+    Updated.emplace_back(Address, End);
+  std::sort(Updated.begin(), Updated.end());
+  AnonymousAllocationRanges.clear();
+  for (const auto &Range : Updated) {
+    if (!AnonymousAllocationRanges.empty() &&
+        AnonymousAllocationRanges.back().second >= Range.first)
+      AnonymousAllocationRanges.back().second =
+          std::max(AnonymousAllocationRanges.back().second, Range.second);
+    else
+      AnonymousAllocationRanges.push_back(Range);
+  }
+}
+
 llvm::Expected<bool> LinuxMemory::mapPages(uint64_t Address, uint64_t Size,
                                            unsigned Permissions) {
   auto RAM = Space.physicalMemory();
@@ -110,6 +144,7 @@ llvm::Expected<bool> LinuxMemory::mapPages(uint64_t Address, uint64_t Size,
     }
     Mapped += PageSize;
   }
+  setAllocationOwnership(Address, Size, true);
   return true;
 }
 llvm::Expected<bool> LinuxMemory::unmapPages(uint64_t Address, uint64_t Size) {
@@ -126,8 +161,11 @@ llvm::Expected<bool> LinuxMemory::unmapPages(uint64_t Address, uint64_t Size) {
       return failure(MemoryState);
     if (auto E = Space.unmap(Begin, End - Begin))
       return std::move(E);
+    setAllocationOwnership(Begin, End - Begin, false);
     setMergeable(Begin, End - Begin, false);
     retireDeviceRanges(Begin, End - Begin);
+    retireProcMappings(Begin, End - Begin);
+    retireAnonymousVMANames(Begin, End - Begin);
     Removed = true;
   }
   return Removed;
@@ -165,6 +203,61 @@ void LinuxMemory::setMergeable(uint64_t Address, uint64_t Size,
     else
       MergeableRanges.push_back(Range);
   }
+}
+
+llvm::Expected<std::optional<uint64_t>>
+LinuxMemory::discard(const ProcessServiceEvent &Event, ProcessResult &Result) {
+  using Reply = std::optional<uint64_t>;
+  auto Unsupported = [&](const char *Text) -> Reply {
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic = Text;
+    return std::nullopt;
+  };
+  const uint64_t Address = Event.Arguments[0];
+  auto Size = roundSize(Event.Arguments[1]);
+  if (Address % PageSize || !Size || Address > UINT64_MAX - *Size)
+    return Reply(errorValue(InvalidArgument));
+  if (!*Size)
+    return Reply(0);
+  auto Ranges = Space.mappings();
+  if (!Ranges)
+    return Ranges.takeError();
+  const uint64_t End = Address + *Size;
+  uint64_t Covered = 0;
+  auto Owner = AnonymousAllocationRanges.begin();
+  for (const auto &R : *Ranges) {
+    const uint64_t Begin = std::max(Address, R.Address);
+    const uint64_t Limit = std::min(End, R.Address + R.Size);
+    for (uint64_t At = Begin; At < Limit; At += PageSize) {
+      while (Owner != AnonymousAllocationRanges.end() && Owner->second <= At)
+        ++Owner;
+      if (R.Device || Owner == AnonymousAllocationRanges.end() ||
+          Owner->first > At || PageSize > Owner->second - At)
+        return Unsupported("Linux madvise DONTNEED requires owned private "
+                           "anonymous mmap or brk backing");
+      // Dropping a private PTE must not overwrite retained physical aliases or
+      // pinned views. Allocate a fresh zero page before removing this mapping.
+      // The OS owns mutations for the whole stopped operation; unexpected map
+      // failures are terminal. AddressSpace owns permissions and generations.
+      auto Page = Space.physicalMemory()->allocate(PageSize);
+      if (!Page) {
+        auto E = Page.takeError();
+        if (!E.isA<GuestMemoryLimitError>())
+          return std::move(E);
+        llvm::consumeError(std::move(E));
+        return Unsupported("Linux madvise DONTNEED replacement backing "
+                           "exceeds model memory limit");
+      }
+      if (auto E = Space.unmap(At, PageSize))
+        return std::move(E);
+      if (auto E = Space.mapRegion(At, *Page, 0, PageSize, R.Permissions))
+        return std::move(E);
+      Covered += PageSize;
+    }
+  }
+  // Kernel traversal still discards mapped pages on both sides of a hole.
+  // VMA names, protections, break position and KSM eligibility stay intact.
+  return Reply(Covered == *Size ? 0 : errorValue(NoMemory));
 }
 
 llvm::Expected<uint64_t> LinuxMemory::advise(const ProcessServiceEvent &Event) {
@@ -284,6 +377,7 @@ llvm::Expected<uint64_t> LinuxMemory::unmap(const ProcessServiceEvent &Event) {
   auto Removed = unmapPages(Address, *Size);
   if (!Removed)
     return Removed.takeError();
+  retireGPUObjects(Address, *Size);
   return 0;
 }
 llvm::Expected<uint64_t> LinuxMemory::setBreak(uint64_t Address) {
@@ -336,7 +430,25 @@ LinuxMemory::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
       return Value.takeError();
     return std::optional<uint64_t>(*Value);
   };
+  if (Kind == ServiceKind::Mprotect || Kind == ServiceKind::Munmap ||
+      Kind == ServiceKind::Madvise) {
+    const auto Size = roundSize(Event.Arguments[1]);
+    if (Size && Event.Arguments[0] % PageSize == 0 &&
+        validRange(Event.Arguments[0], *Size) &&
+        overlapsGPUObject(Event.Arguments[0], *Size) &&
+        (Kind == ServiceKind::Madvise ||
+         (Kind == ServiceKind::Mprotect &&
+          (Event.Arguments[2] & ProtExecute)) ||
+         overlapsGPUObject(Event.Arguments[0], *Size, true))) {
+      Result.Stop = ProcessStopReason::UnsupportedService;
+      Result.Diagnostic =
+          "GPU object VMA splitting, execution or advice is unmodeled";
+      return std::optional<uint64_t>();
+    }
+  }
   switch (Kind) {
+  case ServiceKind::Prctl:
+    return prctl(Event, Result);
   case ServiceKind::Mmap:
     if (!supportedProtection(Event.Arguments[2]) ||
         Event.Arguments[3] != (MapPrivate | MapAnonymous))
@@ -352,7 +464,7 @@ LinuxMemory::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
         validRange(Event.Arguments[0], *Size) &&
         !canRetireDevices(Event.Arguments[0], *Size)) {
       Result.Stop = ProcessStopReason::UnsupportedService;
-      Result.Diagnostic = "GPU last mapping cannot retire a busy context";
+      Result.Diagnostic = "Device last mapping cannot retire pending work";
       return std::optional<uint64_t>();
     }
     return Reply(unmap(Event));
@@ -364,6 +476,8 @@ LinuxMemory::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
       Result.Diagnostic = DeviceMappingAdvice;
       return std::optional<uint64_t>();
     }
+    if (uint32_t(Event.Arguments[2]) == AdviceDontNeed)
+      return discard(Event, Result);
     if (uint32_t(Event.Arguments[2]) != AdviceMergeable &&
         uint32_t(Event.Arguments[2]) != AdviceUnmergeable) {
       Result.Stop = ProcessStopReason::UnsupportedService;

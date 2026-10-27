@@ -15,8 +15,11 @@
 #define NEVERD_IR_MED_MEDIR_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/FloatingCallArguments.h"
+#include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/SourceCallTypeHint.h"
+#include "neverd/ir/SourceFrameBytes.h"
 #include "neverd/ir/SourceTypeHint.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/low/SourceClassGetterCall.h"
@@ -32,6 +35,8 @@
 #include <vector>
 
 namespace neverd {
+
+struct X86RegistrationCxxPhysicalFrame;
 
 /// Sentinel RegOff for a stack-passed parameter (Kind==Param with no backing
 /// register).  The emitter must not enter such a param into its register->arg
@@ -212,9 +217,11 @@ struct MedOp {
   /// the definition on the intrinsic so SSA does not invent a live-in value
   /// when those transport operations are later propagated away.
   std::vector<MedVar> IntrinsicOutputs;
-  // Ordinary operations retain six inline slots. Source-bound calls may carry
-  // their full scalar argument list through the same SSA/liveness operands.
-  llvm::SmallVector<MedVar, 6> Inputs = llvm::SmallVector<MedVar, 6>(6);
+  // Unary and binary operations keep their inputs inline. Larger operations
+  // and source-bound calls grow through addInput, retaining every operand.
+  static constexpr unsigned InlineInputs = 2;
+  using InputStorage = llvm::SmallVector<MedVar, InlineInputs>;
+  InputStorage Inputs = InputStorage(InlineInputs);
   uint8_t NumInputs = 0;
   va_t Addr = 0;
   /// Sequence number of the original LowOp.  Synthetic MedOps keep -1, so a
@@ -236,8 +243,9 @@ struct MedOp {
   bool HasSourceErrorResult = false;
   bool Dead = false;
   /// Source views only: this STORE saves a callee-saved register's entry
-  /// value into prologue storage (markCalleeSavePrologueSaves), so source
-  /// emitters leave it out.  Binary lifting and patching never set it.
+  /// value into prologue storage, or a scalar into scratch bytes
+  /// proved unobserved before overwrite/return (markSourceStackAccesses).
+  /// Source emitters leave it out. Binary lifting and patching never set it.
   bool PrologueSave = false;
   /// Source views only: this LOAD reads the return address the call pushed,
   /// in a function that never overwrites it (markReturnAddressReads).
@@ -249,10 +257,27 @@ struct MedOp {
   /// Win64 register arguments the direct callee reads (RCX, RDX, R8, R9 in
   /// order), published as Inputs[1..N]; -1 when the callee is unsummarized.
   int8_t CalleeRegisterArgs = -1;
+  /// Fixed scalar prefix of a checked header variadic call, or -1.
+  /// Its explicit register operands and recovered stack tail remain open.
+  int8_t CalleeVariadicFrom = -1;
   /// The vector argument registers the summarized callee reads, published
   /// after the register arguments as Inputs[1 + CalleeRegisterArgs..]; -1
   /// when the convention publishes none.
   int8_t CalleeVectorArgs = -1;
+  /// First operand carrying a checked callee's incoming x87 argument, or
+  /// zero when there is none. Internal consumers append it after ordinary
+  /// arguments; CRT stack calls use only their explicit x87 arguments.
+  uint8_t X87ArgumentInput = 0;
+  /// Number of x87 arguments beginning at X87ArgumentInput for a native CRT
+  /// import, or zero for the internal integer-returning consumer contract.
+  uint8_t X87ImportArguments = 0;
+  /// Physical slots whose retained payload the checked consumer may change:
+  /// its argument and its temporary stack space. Other ST values survive.
+  uint8_t X87ClobberedSlots = 0;
+  /// The vector register count the call's own setup loads for a variadic
+  /// callee (CallArgumentConvention::VariadicVectorCountRegister), or -1
+  /// where it loads no constant one.
+  int8_t VariadicVectorCount = -1;
   /// Where a positional convention passes a floating argument in its slot's
   /// vector register instead: bit K for register argument K, Inputs[1 + K].
   uint8_t CalleeVectorSlots = 0;
@@ -267,8 +292,23 @@ struct MedOp {
   /// four bits per argument, or per slot, in four-byte units (1 float, 2
   /// double, 4 all).
   uint32_t CalleeVectorArgWidths = 0;
+  /// The proven scalar FP result width. A complete header signature also
+  /// binds the explicit FP inputs. Zero means no scalar result contract.
+  uint16_t CalleeFloatReturnBytes = 0;
+  /// Complete mixed header operands, bound in source order before SSA.
+  std::shared_ptr<const FloatingCallArguments> ScalarCallSignature;
+  /// Complete fixed integer/pointer operands bound before SSA, including
+  /// exact-width loads of the outgoing stack arguments at the call site.
+  std::shared_ptr<const FixedIntegerCallArguments> IntegerCallSignature;
   /// The bytes the callee reads of input \p Input, a vector argument, or 0.
   uint16_t vectorArgumentWidth(unsigned Input) const {
+    if (ScalarCallSignature && Input > 0 &&
+        Input <= ScalarCallSignature->Scalars.size()) {
+      const auto &Parameter = ScalarCallSignature->Scalars[Input - 1];
+      return Parameter.Kind == SourceABICarrierKind::FloatingRegister
+                 ? Parameter.Bytes
+                 : 0;
+    }
     if (CalleeVectorSlots) {
       const unsigned Slot = Input - 1;
       if (Input == 0 || Slot >= 8 || !((CalleeVectorSlots >> Slot) & 1))
@@ -290,6 +330,12 @@ struct MedOp {
   /// The source instruction is a proven no-return call.  This is explicit MedIR
   /// control provenance: consumers must not infer it again from a mutable name.
   bool DoesNotReturn = false;
+
+  /// This CALL/INDIR_CALL or its paired RETURN comes from an independently
+  /// classified native tail transfer. It does not write the native link word.
+  /// Preserve the LowIR control provenance; a call followed by a return alone
+  /// is not sufficient evidence.
+  bool IsTailCall = false;
 
   void addInput(MedVar V) {
     if (NumInputs < 65) {
@@ -371,6 +417,15 @@ struct MedCallClobber {
   uint16_t PreservedPrefixSize = 0;
 };
 
+/// A callee-input observation proof bound to one original direct call.
+/// Rewriting its target or occurrence invalidates this source-only evidence.
+struct MedCallUnreadRegisters {
+  va_t Target = InvalidVA;
+  va_t Instruction = InvalidVA;
+  int OriginSeq = -1;
+  uint32_t Families = 0;
+};
+
 /// Caller-observed AArch64 direct-call return fields that include implicit
 /// clobbers.  Whole-program recovery validates these against the callee before
 /// materializing a multi-register return.
@@ -414,10 +469,18 @@ struct MedCallInfo {
   /// slot as padding (`mov [rsp], r11d` passes an int in an eight-byte slot).
   /// Empty when a value's place is not known.
   std::vector<int64_t> StackArgumentOffsets;
+  /// The position where call-ABI recovery ended an indirect call's register
+  /// arguments because the register there only holds the call's target
+  /// (`ldr r0, [r0, #24]; blx r0`); no other layer extends them past it.
+  /// -1 when recovery ended them elsewhere.
+  int TargetRegisterArgIdx = -1;
   uint16_t StackArgumentSlotBytes = 0;
 };
 
 struct MedFunc {
+  /// Display observations of the original machine bytes; never rewrite facts.
+  std::vector<SourceFrameBytes> FrameBytes;
+  bool AnalystStackFrame = false;
   va_t Entry = 0;
   uint64_t OriginalSize = 0;
   std::string Name;
@@ -430,6 +493,8 @@ struct MedFunc {
   /// Exact SSA values implicitly defined by CALL/INDIR_CALL for caller-saved
   /// registers not represented by the call's explicit return value.
   std::vector<MedCallClobber> CallClobbers;
+  /// Original call-site id -> checked unobserved incoming GPR families.
+  std::map<uint32_t, MedCallUnreadRegisters> CallUnreadRegisters;
   std::vector<MedStructReturnCandidate> StructReturnCandidates;
   SourceRegisterCopies RegisterCopyProjections;
   SourceClassGetterCalls ClassGetterCallFacts;
@@ -488,6 +553,9 @@ struct MedFunc {
   /// The operand remains the result after SSA propagation changes its carrier
   /// to a temporary or constant; this is independent of heuristic typing.
   bool ExplicitX87ReturnValue = false;
+  /// The final parameter is the checked incoming logical ST0 consumed by
+  /// every returning path. Its complete binary80 payload is transported.
+  bool ConsumesX87Argument = false;
   /// Bytes of the result every return path defines when that is fewer than
   /// the return register holds (a `bool` left in AL over an undefined RAX);
   /// 0 otherwise.  The bytes above belong to no result.
@@ -523,9 +591,9 @@ struct MedFunc {
   int64_t VariadicOverflowBase = 0;
 
   /// The position of the first integer argument register a variadic
-  /// function's register save area spills (AAPCS64): the registers before it
-  /// carry its named parameters, the rest only what each caller passes.  -1
-  /// where unknown.
+  /// function's register save area spills (AAPCS64, AAPCS32): the registers
+  /// before it carry its named parameters, the rest only what each caller
+  /// passes.  -1 where unknown.
   int VariadicFirstRegister = -1;
 
   /// The position of the first vector argument register a variadic
@@ -534,6 +602,21 @@ struct MedFunc {
   /// arguments each caller passes, every one promoted to double.  -1 where
   /// the convention saves none.
   int VariadicFirstVectorRegister = -1;
+
+  /// System V x86-64 va_start, where the prologue initializes one va_list:
+  /// the va_list's and the register save area's displacements from the entry
+  /// stack pointer, and how many integer argument registers carry named
+  /// parameters (gp_offset / 8).  Only the C writer reads them, to print the
+  /// function with `...`; call recovery and the LLVM route keep taking the
+  /// saved registers as parameters (VariadicFirstRegister stays unset).
+  std::optional<int64_t> VaListDisplacement;
+  std::optional<int64_t> VaRegisterSaveArea;
+  int VaNamedIntegerRegisters = -1;
+  /// The calls that pass that va_list's address, by call site: true where
+  /// they pass the va_list, false where they may pass another object in its
+  /// slot, such as a buffer the compiler placed there after va_end
+  /// (markVaListCalls).
+  std::map<va_t, bool> VaListCalls;
 
   /// Whether this variadic function's register save area holds the vector
   /// argument registers (System V x86-64): it then takes every integer and
@@ -599,6 +682,10 @@ struct MedFunc {
   /// common SEH invocation frame. This function cannot be lowered to LLVM.
   bool HasUnresolvedSEHFrame = false;
   std::optional<RegistrationStateAnalysis> RegistrationStates;
+  /// Independent replay of expanded shared helpers. The source states above
+  /// retain their original call occurrences and prologue receipt.
+  std::shared_ptr<const X86RegistrationCxxPhysicalFrame>
+      RegistrationPhysicalFrame;
 
   bool hasTypeInfo() const { return ReturnType != nullptr; }
 

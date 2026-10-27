@@ -3,10 +3,13 @@
 
 #include "SourceBooleanResultContract.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/IntrinsicTermination.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
 
 #include <algorithm>
@@ -32,7 +35,6 @@ struct SourceBooleanResultCertificate {
 
 namespace source_boolean_result_detail {
 using Bits = std::map<uint64_t, uint8_t>;
-constexpr size_t MaxFacts = 4096;
 
 inline uint8_t lookup(const Bits &Values, uint64_t Byte) {
   const auto It = Values.find(Byte);
@@ -75,19 +77,21 @@ inline bool ordinaryBinary(NdOp Opcode) {
   }
 }
 
-// A BRK has no successor and cannot expose the selected Boolean's undefined
-// high bits through a return. The image-backed owner additionally checks the
-// exact immutable ARM64 instruction before using this LowIR shape.
+// A fatal BRK cannot expose the selected Boolean's undefined high bits through
+// a return. A debugger BRK may resume even when the CFG has no successor.
+// The image-backed owner additionally checks the exact immutable instruction.
 inline bool terminalBrk(const LowBlock &Block) {
   if (!Block.Succs.empty() || Block.Ops.size() != 1)
     return false;
   const auto &Op = Block.Ops.front();
   return Block.EndAddr == Op.Addr + 4 && Op.Seq == 0 &&
-         Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 1 &&
-         Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+         Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 2 &&
+         Op.Inputs[1].isConst() && Op.Inputs[1].Size == 2 &&
+         Op.Inputs[1].Offset <= UINT16_MAX && Op.Inputs[0].isConst() &&
+         Op.Inputs[0].Size == 2 &&
          Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Brk) &&
-         Op.Output ==
-             NdVar::reg(getTargetRegInfo(Arch::AArch64).IntReturnReg, 8);
+         Op.Output.Size == 0 &&
+         intrinsicNeverReturns(Intrinsic::Brk, Op.Inputs[1].Offset);
 }
 
 struct Transfer {
@@ -99,7 +103,7 @@ struct Transfer {
   const TargetRegInfo &TRI = getTargetRegInfo(Arch::AArch64);
   std::set<uint64_t> ArchitectureBytes;
   std::set<uint64_t> Preserved;
-  size_t Remaining = 262144;
+  size_t Remaining = ::neverd::limits::ir::kSourceBooleanResultProofRemaining;
 
   Transfer(const std::map<SourceCallOccurrenceKey,
                           SourceBooleanOtherCallContract> &Calls,
@@ -185,7 +189,7 @@ struct Transfer {
         LiteralTemps.clear();
         Instruction = Op.Addr;
       }
-      if (Op.NumInputs > 6 || Op.Output.Size > 64 ||
+      if (Op.NumInputs > std::size(Op.Inputs) || Op.Output.Size > 64 ||
           (Op.Output.Size && (!validValue(Op.Output) || Op.Output.isConst())) ||
           Op.MemoryOrdering != NdMemoryOrdering::None ||
           Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
@@ -391,6 +395,13 @@ struct Transfer {
             }
           }
         }
+      } else if (lowAArch64AddressLoadShapeIsValid(Op)) {
+        // Equal explicit operands, memory and control state execute the same
+        // original read in both runs. No address or no-fault fact is inferred.
+        // A differing Boolean bit must never influence either address input.
+        if (InputDiffers)
+          return false;
+        std::fill(Value.begin(), Value.end(), 0);
       } else if (Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE) {
         const auto Memory = lowMemoryOperands(Op);
         if (!Memory.Complete || !Memory.Address || Memory.Address->Size != 8 ||
@@ -472,8 +483,14 @@ struct Transfer {
           }
         }
       }
-      if (Registers.size() > MaxFacts || Temps.size() > MaxFacts ||
-          DefinedTemps.size() > MaxFacts || LiteralTemps.size() > MaxFacts)
+      if (Registers.size() >
+              ::neverd::limits::ir::kSourceBooleanResultProofMaxFacts ||
+          Temps.size() >
+              ::neverd::limits::ir::kSourceBooleanResultProofMaxFacts ||
+          DefinedTemps.size() >
+              ::neverd::limits::ir::kSourceBooleanResultProofMaxFacts ||
+          LiteralTemps.size() >
+              ::neverd::limits::ir::kSourceBooleanResultProofMaxFacts)
         return false;
     }
     return true;
@@ -502,8 +519,14 @@ proveSourceBooleanResultNormalization(
   std::string Error;
   const auto SelectedInputs = sourceBooleanInputParameters(SelectedContract);
   if (!SelectedInputs || Architecture != Arch::AArch64 || Function.Entry % 4 ||
-      Function.Blocks.empty() || Function.Blocks.size() > 256 ||
-      Calls.size() > 8192 || EntrySignature.Architecture != Architecture ||
+      Function.Blocks.empty() ||
+      Function.Blocks.size() >
+          ::neverd::limits::ir::
+              kSourceBooleanResultProofProveSourceBooleanResultNormalizationFunctionBlocksSizeLimit ||
+      Calls.size() >
+          ::neverd::limits::ir::
+              kSourceBooleanResultProofProveSourceBooleanResultNormalizationCallsSizeLimit ||
+      EntrySignature.Architecture != Architecture ||
       !validateSourceABI(EntrySignature, Error) ||
       EntrySignature.ReturnLocation.Kind ==
           SourceABICarrierKind::IndirectResultPointer ||
@@ -569,16 +592,21 @@ proveSourceBooleanResultNormalization(
     if (B.Id < 0 || !Ids.emplace(B.Id, I).second ||
         !Starts.emplace(B.StartAddr, I).second || B.StartAddr % 4 ||
         B.EndAddr <= B.StartAddr || (B.EndAddr - B.StartAddr) % 4 ||
-        B.EndAddr - B.StartAddr > 32768 || B.Ops.empty() ||
-        !B.ExceptionalPreds.empty() || !B.ExceptionalSuccs.empty())
+        B.EndAddr - B.StartAddr >
+            ::neverd::limits::ir::kMaxBooleanProofBlockBytes ||
+        B.Ops.empty() || !B.ExceptionalPreds.empty() ||
+        !B.ExceptionalSuccs.empty())
       return std::nullopt;
     if (B.StartAddr == Function.Entry)
       Entry = I;
     std::set<va_t> Instructions;
     va_t Previous = B.StartAddr;
     for (const auto &Op : B.Ops) {
-      if (++Count > 8192 || Op.Addr < Previous || Op.Addr < B.StartAddr ||
-          Op.Addr >= B.EndAddr || Op.Addr % 4 || Op.Opcode == NdOp::INDIR_BR)
+      if (++Count >
+              ::neverd::limits::ir::
+                  kSourceBooleanResultProofProveSourceBooleanResultNormalizationCountLimit ||
+          Op.Addr < Previous || Op.Addr < B.StartAddr || Op.Addr >= B.EndAddr ||
+          Op.Addr % 4 || Op.Opcode == NdOp::INDIR_BR)
         return std::nullopt;
       Previous = Op.Addr;
       Instructions.insert(Op.Addr);
@@ -669,7 +697,8 @@ proveSourceBooleanResultNormalization(
       auto Joined = Incoming[Next].value_or(Bits{});
       for (const auto &[Byte, Mask] : Output)
         Joined[Byte] |= Mask;
-      if (Joined.size() > MaxFacts)
+      if (Joined.size() >
+          ::neverd::limits::ir::kSourceBooleanResultProofMaxFacts)
         return std::nullopt;
       if (!Incoming[Next] || Joined != *Incoming[Next]) {
         Incoming[Next] = std::move(Joined);
@@ -683,4 +712,12 @@ proveSourceBooleanResultNormalization(
   return SourceBooleanResultCertificate{&Function, Selected};
 }
 } // namespace neverd
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd {
+namespace source_boolean_result_detail {
+inline constexpr size_t MaxFacts =
+    ::neverd::limits::ir::kSourceBooleanResultProofMaxFacts;
+}
+} // namespace neverd
+
 #endif

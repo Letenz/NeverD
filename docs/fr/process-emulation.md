@@ -1,5 +1,7 @@
 **Langues** : [English](../process-emulation.md) | [简体中文](../zh-CN/process-emulation.md) | [繁體中文](../zh-TW/process-emulation.md) | [日本語](../ja/process-emulation.md) | [한국어](../ko/process-emulation.md) | [Français](process-emulation.md) | [Deutsch](../de/process-emulation.md) | [Español](../es/process-emulation.md) | [Italiano](../it/process-emulation.md) | [Русский](../ru/process-emulation.md) | [العربية](../ar/process-emulation.md)
 
+> Mise à jour : consultez le [contrat actuel](../linux-network-contracts.md#poll-and-epoll-waits) pour poll/epoll et stdio avec tampon. Les restrictions de cette page à un délai nul et à GKI décrivent le sous-ensemble précédent de poll.
+
 [← Index de la documentation](README.md)
 
 # Émulation de processus invités

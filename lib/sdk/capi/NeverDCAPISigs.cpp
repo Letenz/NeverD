@@ -18,6 +18,7 @@
 #include "neverd/sigs/SignatureMatcher.h"
 
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <future>
@@ -27,7 +28,23 @@ using namespace neverd;
 using namespace neverd::sdk;
 
 void Session::refreshFunctionNames() {
-  const auto Names = SigDB.buildNameMap();
+  refreshFunctionNames(SigDB.buildNameMap());
+}
+
+void Session::refreshFunctionNames(
+    std::unordered_map<uint64_t, std::string> Names) {
+  // Deriving the names again from what they were derived from gives the
+  // names the list holds.
+  if (NamesDerivedFrom && NamesDerivedFrom->Revision == FunctionListRevision &&
+      NamesDerivedFrom->List == Functions.data() &&
+      NamesDerivedFrom->Count == Functions.size() &&
+      NamesDerivedFrom->Renames == Renames &&
+      NamesDerivedFrom->Signatures == Names)
+    return;
+  // The list is in address order, as the map is, so each name lands at or
+  // just before where the last one did instead of being searched for.
+  auto Next = OriginalNames.begin();
+  const std::optional<va_t> Main = programMain();
   for (auto &F : Functions) {
     if (F.LinkageName.empty()) {
       F.LinkageName = F.Name;
@@ -40,14 +57,23 @@ void Session::refreshFunctionNames() {
           I != Names.end() && !I->second.empty()) {
         F.Name = I->second;
         F.Origin = NameOrigin::Analysis;
+      } else if (F.Entry == Main && isSynthesizedFuncName(F.Name)) {
+        // The function the start routine runs as main, as C names it.
+        F.Name = "main";
+        F.Origin = NameOrigin::Analysis;
       }
     }
-    OriginalNames[F.Entry] = F.Name;
+    Next = std::next(OriginalNames.insert_or_assign(Next, F.Entry, F.Name));
+    F.ResolvedOrigin = F.Origin;
     if (auto Rename = Renames.find(F.Entry); Rename != Renames.end()) {
       F.Name = Rename->second;
       F.Origin = NameOrigin::User;
     }
   }
+  functionListChanged();
+  NamesDerivedFrom =
+      FunctionNameInputs{FunctionListRevision, Functions.data(),
+                         Functions.size(), Renames, std::move(Names)};
 }
 
 /// The addresses signatures are tried at: every function the session lists,
@@ -190,25 +216,38 @@ const char *neverd_sig_matches_json(neverd_session_t Sess) {
   if (!S)
     return dupStr("[]");
 
-  llvm::json::Array Arr;
-  for (const auto &M : S->SigDB.matches()) {
-    llvm::json::Object Obj;
-    Obj["addr"] = vaHex(M.Address);
-    Obj["name"] = jsonSafeText(M.Name);
-    // The routine's other linkage names in its library, which the match
-    // gives the same address.
-    if (!M.Aliases.empty()) {
-      llvm::json::Array Aliases;
-      for (const std::string &Alias : M.Aliases)
-        Aliases.push_back(jsonSafeText(Alias));
-      Obj["aliases"] = std::move(Aliases);
-    }
-    Obj["library"] = jsonSafeText(M.LibraryName);
-    Obj["func_len"] = static_cast<int64_t>(M.FuncLen);
-    // Whether the image confirmed every routine the match's signature
-    // branches to: such a match settles an address other matches dispute.
-    Obj["confirmed"] = M.Confirmed;
-    Arr.push_back(std::move(Obj));
-  }
-  return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
+  // Stream in json::Object's sorted key order. Large candidate sets need not
+  // retain a second object graph, allocate every key, or sort every row.
+  std::string Buffer;
+  llvm::raw_string_ostream OS(Buffer);
+  llvm::json::OStream JSON(OS);
+  JSON.array([&] {
+    for (const auto &M : S->SigDB.matches())
+      JSON.object([&] {
+        const auto *Decision = S->SigDB.nameDecision(M.Address);
+        JSON.attribute("addr", vaHex(M.Address));
+        if (!M.Aliases.empty())
+          JSON.attributeArray("aliases", [&] {
+            for (const std::string &Alias : M.Aliases)
+              JSON.value(jsonSafeText(Alias));
+          });
+        JSON.attribute("auto_name",
+                       Decision ? jsonSafeText(Decision->Name) : "");
+        JSON.attribute("caller_confirmed", M.CallerConfirmed);
+        JSON.attribute("candidate_reason",
+                       Decision ? "" : "independent_identity_missing");
+        JSON.attribute("confirmed", M.Confirmed);
+        JSON.attribute("func_len", static_cast<int64_t>(M.FuncLen));
+        JSON.attribute("library", jsonSafeText(M.LibraryName));
+        JSON.attribute("name", jsonSafeText(M.Name));
+        JSON.attribute("name_evidence",
+                       !Decision ? "none"
+                       : Decision->Evidence ==
+                               sigs::SignatureNameEvidence::ImageSymbol
+                           ? "image_symbol"
+                           : "exception_personality");
+      });
+  });
+  OS.flush();
+  return dupStr(Buffer);
 }

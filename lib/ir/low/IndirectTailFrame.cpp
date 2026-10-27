@@ -3,25 +3,43 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Prove restoration of the native stack and link before an indirect tail call.
+//===----------------------------------------------------------------------===//
 
 #include "IndirectTailFrame.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
+#include "neverd/loader/ExceptionForwarding.h"
 
+#include <algorithm>
 #include <bit>
 #include <deque>
+#include <iterator>
 #include <map>
+#include <optional>
 
 namespace neverd {
 namespace {
 
 struct FrameWord {
-  enum Kind { Unknown, Stack, Link } K = Unknown;
+  enum Kind { Unknown, Stack, Link, SignedLink } K = Unknown;
   int64_t Offset = 0;
   // Keep derived-frame taint when arithmetic or a join loses the exact offset.
   // Losing an exact address must not make a later escape appear harmless.
   bool MayBeStack = false;
+  // Derived from an address of this function's own code (`adr x1, label` of a
+  // switch's case table): a branch there is a computed jump within the
+  // function, not a tail call.
+  bool MayBeLocalCode = false;
+  // For SignedLink, Offset is the signing modifier's entry-SP offset.
+  unsigned AuthenticationKey = 0;
+  bool ZeroModifier = false;
+  std::optional<uint64_t> SecondModifier;
+  bool ImplicitPrefix = false;
+  std::optional<uint64_t> Constant;
   bool operator==(const FrameWord &) const = default;
 };
 
@@ -37,6 +55,41 @@ class TailFrameGuard {
   const TargetRegInfo &TRI = getTargetRegInfo(Arch::AArch64);
   const std::vector<TargetRegisterRange> Preserved;
   size_t Remaining;
+  const LowFunc *Owner = nullptr;
+
+  bool functionTemporary(uint64_t Offset) const {
+    const auto &Ranges = Owner->FunctionTemporaries;
+    const auto It =
+        std::upper_bound(Ranges.begin(), Ranges.end(), Offset,
+                         [](uint64_t Byte, const LowFunctionTemporary &Range) {
+                           return Byte < Range.Offset;
+                         });
+    if (It == Ranges.begin())
+      return false;
+    const auto &Range = *std::prev(It);
+    return Offset - Range.Offset <= Range.Bytes &&
+           sizeof(uint64_t) <= Range.Bytes - (Offset - Range.Offset);
+  }
+
+  /// The function's own code: the span from its lowest block to the end of
+  /// its highest, and the range its frame description covers.  A switch's
+  /// case code that only its unresolved table reaches lies there, though no
+  /// block holds it.  The entry itself is a call target: a branch there
+  /// recurses (`volatile f self = f; return self(...)`).
+  va_t CodeBegin = InvalidVA;
+  va_t CodeEnd = 0;
+  ExceptionAddressRange Described;
+  va_t Entry = InvalidVA;
+  /// The function's frame description; a branch out of the frame must leave
+  /// an unwind from it nothing of the frame to run.
+  const ExceptionFunction *Unwind = nullptr;
+
+  bool localCode(uint64_t Address) const {
+    return Address != Entry &&
+           ((Address >= CodeBegin && Address < CodeEnd) ||
+            (Described.isValid() && Address >= Described.Begin &&
+             Address < Described.End));
+  }
 
   bool charge(size_t Work) {
     if (Work > Remaining)
@@ -70,14 +123,18 @@ class TailFrameGuard {
 
   bool read(const FrameState &State, const NdVar &Value, FrameWord &Word) {
     Word = lookup(State, Value);
+    if (Value.isConst() && Value.Size == sizeof(uint64_t))
+      Word.Constant = Value.Offset;
     if ((!Value.isReg() && !Value.isTemp()) || Value.Size == 8)
       return true;
     if (!validRange(Value) || !charge(State.Values.size()))
       return false;
     for (const auto &[Key, Fact] : State.Values)
       if (Key.first == Value.Space && Key.second < Value.Offset + Value.Size &&
-          Value.Offset < Key.second + 8)
+          Value.Offset < Key.second + 8) {
         Word.MayBeStack |= Fact.MayBeStack;
+        Word.MayBeLocalCode |= Fact.MayBeLocalCode;
+      }
     return true;
   }
 
@@ -96,24 +153,72 @@ class TailFrameGuard {
       }
       // A partial write loses the whole identity, including an SP/LR alias.
       // Conservatively retain any frame taint in the remaining bytes.
-      if (Output.Size != 8)
+      if (Output.Size != 8) {
         Word.MayBeStack |= Fact.MayBeStack;
+        Word.MayBeLocalCode |= Fact.MayBeLocalCode;
+      }
       if (Output.Size != 8 || Output.Offset != Key.second)
         State.Escaped |= Fact.MayBeStack;
       It = State.Values.erase(It);
     }
-    if (Output.Size != 8)
+    if (Output.Size != 8) {
       Word.K = FrameWord::Unknown;
-    if (Word.K != FrameWord::Unknown || Word.MayBeStack)
+      Word.Constant.reset();
+    }
+    if (Word.K != FrameWord::Unknown || Word.MayBeStack ||
+        Word.MayBeLocalCode || Word.Constant)
       State.Values[{Output.Space, Output.Offset}] = Word;
+    return true;
+  }
+
+  /// Whether \p Size bytes at \p Offset lie in the frame this function has
+  /// allocated: below its entry stack pointer and at or above the current one.
+  static bool allocatedFrame(const FrameWord &SP, int64_t Offset,
+                             uint64_t Size) {
+    return SP.K == FrameWord::Stack && Offset >= SP.Offset &&
+           Offset + static_cast<int64_t>(Size) <= 0;
+  }
+
+  /// A store whose target the spills do not track exactly.  Through an
+  /// address derived from the frame, or once a frame address has escaped, it
+  /// may hit any spill: all are forgotten.  Any other address cannot reach the
+  /// frame this function allocated, which nothing outside it can name under
+  /// the native ABI, so only those spills survive.  Every stack-derived word
+  /// it drops or writes escapes.
+  bool storeUntracked(FrameState &State, const FrameWord &Address,
+                      const FrameWord &Value) {
+    if (!charge(State.Spills.size()))
+      return false;
+    const auto SP = lookup(State, NdVar::reg(TRI.StackPointer, 8));
+    const bool Foreign = !Address.MayBeStack && !State.Escaped;
+    std::erase_if(State.Spills, [&](const auto &Item) {
+      if (Foreign && allocatedFrame(SP, Item.first, 8))
+        return false;
+      State.Escaped |= Item.second.MayBeStack;
+      return true;
+    });
+    State.Escaped |= Value.MayBeStack;
+    return true;
+  }
+
+  /// The taint of a value loaded through a frame address that no exact spill
+  /// answers: it may be any spilled word.
+  bool spilledTaint(const FrameState &State, FrameWord &Result) {
+    if (!charge(State.Spills.size()))
+      return false;
+    for (const auto &[Offset, Spill] : State.Spills) {
+      Result.MayBeStack |= Spill.MayBeStack;
+      Result.MayBeLocalCode |= Spill.MayBeLocalCode;
+    }
     return true;
   }
 
   bool forgetTemps(FrameState &State) {
     if (!charge(State.Values.size()))
       return false;
-    std::erase_if(State.Values, [](const auto &Item) {
-      return Item.first.first == VnodeSpace::TEMP;
+    std::erase_if(State.Values, [&](const auto &Item) {
+      return Item.first.first == VnodeSpace::TEMP &&
+             !functionTemporary(Item.first.second);
     });
     return true;
   }
@@ -122,19 +227,22 @@ class TailFrameGuard {
                 std::set<va_t> *Candidates = nullptr) {
     va_t Instruction = InvalidVA;
     for (const LowOp &Op : Block.Ops) {
-      if (!charge(1) || Op.NumInputs > 6)
+      if (!charge(1) || Op.NumInputs > std::size(Op.Inputs))
         return false;
       if (Op.Addr != Instruction) {
         if (!forgetTemps(State))
           return false;
         Instruction = Op.Addr;
       }
-      FrameWord Inputs[6];
+      FrameWord Inputs[kLowOperationInputs];
       FrameWord Result;
       for (unsigned I = 0; I < Op.NumInputs; ++I) {
         if (!read(State, Op.Inputs[I], Inputs[I]))
           return false;
+        if (Op.Inputs[I].isConst() && localCode(Op.Inputs[I].Offset))
+          Inputs[I].MayBeLocalCode = true;
         Result.MayBeStack |= Inputs[I].MayBeStack;
+        Result.MayBeLocalCode |= Inputs[I].MayBeLocalCode;
       }
 
       if (Op.Opcode == NdOp::INDIR_BR) {
@@ -143,7 +251,9 @@ class TailFrameGuard {
         if (Candidates && Op.NumInputs == 1 && Op.Inputs[0].Size == 8 &&
             SP.K == FrameWord::Stack && SP.Offset == 0 &&
             LR.K == FrameWord::Link && !Inputs[0].MayBeStack &&
-            Inputs[0].K != FrameWord::Link)
+            !Inputs[0].MayBeLocalCode && Inputs[0].K != FrameWord::Link &&
+            Inputs[0].K != FrameWord::SignedLink &&
+            (!Unwind || exceptionForwardsUnwindAt(*Unwind, Op.Addr)))
           Candidates->insert(Op.Addr);
       }
 
@@ -155,6 +265,12 @@ class TailFrameGuard {
       case NdOp::INT_ADD:
       case NdOp::INT_SUB:
         if (Op.NumInputs == 2 && Op.Output.Size == 8) {
+          if (Inputs[0].Constant && Inputs[1].Constant &&
+              Op.Inputs[0].Size == sizeof(uint64_t) &&
+              Op.Inputs[1].Size == sizeof(uint64_t))
+            Result.Constant = Op.Opcode == NdOp::INT_ADD
+                                  ? *Inputs[0].Constant + *Inputs[1].Constant
+                                  : *Inputs[0].Constant - *Inputs[1].Constant;
           for (unsigned Base = 0; Base < 2; ++Base) {
             const unsigned Scalar = 1 - Base;
             const NdVar &Delta = Op.Inputs[Scalar];
@@ -176,7 +292,7 @@ class TailFrameGuard {
               Step = -Step;
             const int64_t Offset = Inputs[Base].Offset + Step;
             if (bounded(Offset))
-              Result = {FrameWord::Stack, Offset, true};
+              Result = {FrameWord::Stack, Offset, true, Result.MayBeLocalCode};
           }
         }
         break;
@@ -197,14 +313,12 @@ class TailFrameGuard {
         // an exact known spill; untracked loads provide no restoration fact.
         Result = {};
         if (Op.Opcode == NdOp::STORE) {
-          if (!charge(State.Spills.size()))
-            return false;
           if (!Exact) {
-            for (const auto &[Offset, Spill] : State.Spills)
-              State.Escaped |= Spill.MayBeStack;
-            State.Spills.clear();
-            State.Escaped |= Value.MayBeStack;
+            if (!storeUntracked(State, Address, Value))
+              return false;
           } else {
+            if (!charge(State.Spills.size()))
+              return false;
             std::erase_if(State.Spills, [&](const auto &Item) {
               const bool Overlap =
                   Item.first < Address.Offset + Memory.AccessSize &&
@@ -214,14 +328,30 @@ class TailFrameGuard {
                 State.Escaped |= Item.second.MayBeStack;
               return Overlap;
             });
-            if (Memory.AccessSize == 8 &&
-                (Value.K != FrameWord::Unknown || Value.MayBeStack))
+            const bool Recorded =
+                Memory.AccessSize == 8 &&
+                (Value.K != FrameWord::Unknown || Value.MayBeStack ||
+                 Value.MayBeLocalCode || Value.Constant);
+            if (Recorded)
               State.Spills[Address.Offset] = Value;
+            // A frame address no spill records, or stored outside the frame
+            // this function allocated, can reach code that writes through it.
+            const auto SP = lookup(State, NdVar::reg(TRI.StackPointer, 8));
+            if (!Recorded ||
+                !allocatedFrame(SP, Address.Offset, Memory.AccessSize))
+              State.Escaped |= Value.MayBeStack;
           }
-        } else if (Exact && Memory.AccessSize == 8) {
-          const auto Found = State.Spills.find(Address.Offset);
-          if (Found != State.Spills.end())
-            Result = Found->second;
+        } else {
+          bool Answered = false;
+          if (Exact && Memory.AccessSize == 8) {
+            const auto Found = State.Spills.find(Address.Offset);
+            if (Found != State.Spills.end()) {
+              Result = Found->second;
+              Answered = true;
+            }
+          }
+          if (!Answered && Address.MayBeStack && !spilledTaint(State, Result))
+            return false;
         }
         break;
       }
@@ -249,8 +379,9 @@ class TailFrameGuard {
                  Item.first < SP.Offset || Item.first + 8 > 0;
         });
         std::erase_if(State.Values, [&](const auto &Item) {
-          return Item.first.first == VnodeSpace::TEMP ||
-                 !callPreserves(Item.first.second);
+          return Item.first.first == VnodeSpace::TEMP
+                     ? !functionTemporary(Item.first.second)
+                     : !callPreserves(Item.first.second);
         });
         Result = {};
         break;
@@ -258,9 +389,97 @@ class TailFrameGuard {
       case NdOp::ATOMIC_XCHG:
       case NdOp::ATOMIC_ADD:
       case NdOp::ATOMIC_CMPXCHG:
-      case NdOp::INTRINSIC:
-        // No implicit memory/register effect contract is invented here.
-        return false;
+      case NdOp::INTRINSIC: {
+        // Checked arithmetic writes only its explicit result. Retain all
+        // operand taint without assuming checking controls or an exact value.
+        if (lowAArch64CPAShapeIsValid(Op) || lowAArch64SVECPAShapeIsValid(Op) ||
+            lowAArch64SVEPrefixShapeIsValid(Op))
+          break;
+        if (lowAArch64PAuthShapeIsValid(Op)) {
+          // A modifier's stack address is not the authenticated target.
+          // A saved link is restored only by its matching key and modifier.
+          Result = Inputs[1];
+          Result.Constant.reset();
+          const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+          if (const auto Auth = aarch64PAuthOperation(Id)) {
+            Result.K = FrameWord::Unknown;
+            const bool Zero = Op.NumInputs == 3 && Op.Inputs[2].isConst() &&
+                              Op.Inputs[2].Offset == 0;
+            const bool KnownModifier = Zero || Inputs[2].K == FrameWord::Stack;
+            const int64_t Modifier = Zero ? 0 : Inputs[2].Offset;
+            if (!Auth->Strip && !Auth->Authenticate && KnownModifier &&
+                Inputs[1].K == FrameWord::Link) {
+              Result.K = FrameWord::SignedLink;
+              Result.Offset = Modifier;
+              Result.AuthenticationKey = Auth->Key;
+              Result.ZeroModifier = Zero;
+            } else if (Auth->Authenticate && KnownModifier &&
+                       Inputs[1].K == FrameWord::SignedLink &&
+                       !Inputs[1].SecondModifier &&
+                       Inputs[1].AuthenticationKey == Auth->Key &&
+                       Inputs[1].ZeroModifier == Zero &&
+                       Inputs[1].Offset == Modifier) {
+              Result = {FrameWord::Link};
+            }
+          } else if (const auto Auth = aarch64PAuthExtendedOperation(Id)) {
+            Result.K = FrameWord::Unknown;
+            const bool Zero = Inputs[2].Constant == 0;
+            const bool KnownModifier = Zero || Inputs[2].K == FrameWord::Stack;
+            const int64_t Modifier = Zero ? 0 : Inputs[2].Offset;
+            const bool KnownPrefix =
+                !Auth->ConditionalPrefix ||
+                Inputs[kAArch64PACMOperandCount].Constant == 1;
+            if (KnownModifier && Inputs[3].Constant && KnownPrefix) {
+              if (!Auth->Authenticate && Inputs[1].K == FrameWord::Link) {
+                Result.K = FrameWord::SignedLink;
+                Result.Offset = Modifier;
+                Result.AuthenticationKey = Auth->Key;
+                Result.ZeroModifier = Zero;
+                Result.SecondModifier = Inputs[3].Constant;
+                Result.ImplicitPrefix = Auth->ConditionalPrefix;
+              } else if (Auth->Authenticate &&
+                         Inputs[1].K == FrameWord::SignedLink &&
+                         Inputs[1].AuthenticationKey == Auth->Key &&
+                         Inputs[1].ZeroModifier == Zero &&
+                         Inputs[1].Offset == Modifier &&
+                         Inputs[1].SecondModifier == Inputs[3].Constant &&
+                         Inputs[1].ImplicitPrefix == Auth->ConditionalPrefix) {
+                Result = {FrameWord::Link};
+              }
+            }
+          }
+          break;
+        }
+        // A value-only intrinsic is an ordinary value, and a trap ends its
+        // path, so nothing after it is reached.
+        if (lowIntrinsicHasOnlyValueEffects(Op) ||
+            lowIntrinsicIsUnconditionalTrap(Op))
+          break;
+        // A read of state no analysis tracks writes only its output.
+        if (lowIntrinsicWritesOnlyItsOutput(Op)) {
+          Result = {};
+          break;
+        }
+        // An atomic or exclusive access writes only its output and the memory
+        // at its address.  Its ordering, and an exclusive store's possible
+        // failure, keep that memory out of the spill facts, and the value it
+        // returns is untracked, though through a frame address it may be any
+        // spilled word.  No implicit memory/register effect contract is
+        // invented for any other intrinsic.
+        const auto Memory = Op.Opcode == NdOp::INTRINSIC
+                                ? lowIntrinsicMemoryOperands(Op)
+                                : lowMemoryOperands(Op);
+        FrameWord Address, Value;
+        if (!Memory.Complete || !Memory.Address ||
+            !read(State, *Memory.Address, Address))
+          return false;
+        Result = {};
+        if ((Address.MayBeStack && !spilledTaint(State, Result)) ||
+            (Memory.StoredValue && (!read(State, *Memory.StoredValue, Value) ||
+                                    !storeUntracked(State, Address, Value))))
+          return false;
+        break;
+      }
       default:
         break;
       }
@@ -277,23 +496,33 @@ class TailFrameGuard {
       return false;
     const auto Merge = [](FrameWord A, FrameWord B) {
       const bool May = A.MayBeStack || B.MayBeStack;
-      if (A.K != B.K || A.Offset != B.Offset)
+      const bool LocalCode = A.MayBeLocalCode || B.MayBeLocalCode;
+      if (A.K != B.K || A.Offset != B.Offset ||
+          A.AuthenticationKey != B.AuthenticationKey ||
+          A.ZeroModifier != B.ZeroModifier ||
+          A.SecondModifier != B.SecondModifier ||
+          A.ImplicitPrefix != B.ImplicitPrefix)
         A = {};
+      if (A.Constant != B.Constant)
+        A.Constant.reset();
       A.MayBeStack = May;
+      A.MayBeLocalCode = LocalCode;
       return A;
     };
     for (auto It = Into.begin(); It != Into.end();) {
       const auto Found = Other.find(It->first);
       It->second =
           Merge(It->second, Found == Other.end() ? FrameWord{} : Found->second);
-      if (It->second.K == FrameWord::Unknown && !It->second.MayBeStack)
+      if (It->second.K == FrameWord::Unknown && !It->second.MayBeStack &&
+          !It->second.MayBeLocalCode && !It->second.Constant)
         It = Into.erase(It);
       else
         ++It;
     }
     for (const auto &[KeyValue, Word] : Other)
-      if (!Into.count(KeyValue) && Word.MayBeStack)
-        Into[KeyValue] = {FrameWord::Unknown, 0, true};
+      if (!Into.count(KeyValue) && (Word.MayBeStack || Word.MayBeLocalCode))
+        Into[KeyValue] = {FrameWord::Unknown, 0, Word.MayBeStack,
+                          Word.MayBeLocalCode};
     return true;
   }
 
@@ -303,12 +532,35 @@ public:
         Remaining(std::min(MaxWork, limits::kMaxIndirectTailFrameWork)) {}
 
   std::set<va_t> run(const LowFunc &Function) {
-    if (Function.Blocks.empty() || !Function.FunctionTemporaries.empty() ||
-        !Function.hasCompleteLiftCoverage() || Function.ExceptionMetadata)
+    // A frame description that only unwinds the frame (a plain FDE, which
+    // every function of an ordinary shared library has) runs no handler, so
+    // a branch out of the frame leaves nothing behind.  A C or C++ table may
+    // still let an unwind from one branch pass through; each candidate is
+    // checked against it, and the blocks below still refuse exceptional
+    // edges.
+    Unwind =
+        Function.ExceptionMetadata ? &*Function.ExceptionMetadata : nullptr;
+    Owner = &Function;
+    if (auto Error = validateLowInstructionBoundaries(Function)) {
+      llvm::consumeError(std::move(Error));
+      return {};
+    }
+    if (Function.Blocks.empty() || !Function.hasCompleteLiftCoverage() ||
+        (Unwind && !Unwind->describesUnwindOnly() && !Unwind->Itanium))
       return {};
     const size_t Count = Function.Blocks.size();
     if (!charge(Count))
       return {};
+    CodeBegin = InvalidVA;
+    CodeEnd = 0;
+    for (const LowBlock &Block : Function.Blocks) {
+      CodeBegin = std::min(CodeBegin, Block.StartAddr);
+      CodeEnd = std::max(CodeEnd, Block.EndAddr);
+    }
+    Described = Function.ExceptionMetadata
+                    ? Function.ExceptionMetadata->CodeRange
+                    : ExceptionAddressRange{};
+    Entry = Function.Entry;
     std::vector<std::optional<FrameState>> Seeds(Count), In(Count), Out(Count);
     int Entry = -1;
     std::set<va_t> Starts;

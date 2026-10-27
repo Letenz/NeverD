@@ -36,11 +36,13 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 #include <vector>
@@ -90,6 +92,10 @@ struct SolverLimits {
 
 SolverLimits resolveLimits(const MBAOptions &Opts);
 
+/// Work bound for the complete small recipe lookup, or the larger runtime
+/// table construction when explicitly requested.
+size_t bitwiseSynthesisWork(unsigned NumVars);
+
 //===----------------------------------------------------------------------===//
 // Traversal and classification
 //===----------------------------------------------------------------------===//
@@ -112,6 +118,9 @@ bool canMeasureAtRoot(const SymContext &Ctx, SymRef R);
 /// that puts the hidden subterms back.
 struct Abstraction {
   SymRef Body;
+  /// A nonlinear product occurs in the source DAG. Without one, enabling
+  /// product roles cannot change this reading or yield a polynomial candidate.
+  bool MayHaveProducts = false;
   /// The same hidden inputs before recovering their affine relations. Keep
   /// this reading available when rebinding an arithmetic use would obscure
   /// its independent occurrence inside a bitwise operator.
@@ -131,7 +140,8 @@ struct Abstraction {
 std::optional<Abstraction>
 abstractToMBA(SymContext &Ctx, SymRef Root, bool AllowProducts,
               WorkBudget *Budget = nullptr,
-              size_t MaxBytes = MBAOptions{}.MaxTableBytes);
+              size_t MaxBytes = MBAOptions{}.MaxTableBytes,
+              bool CoarsenMaskedXors = false);
 
 //===----------------------------------------------------------------------===//
 // Measurement
@@ -266,6 +276,12 @@ SymRef cheapestOf(const SymContext &Ctx, llvm::ArrayRef<SymRef> Candidates);
 /// reason to reject a particular degree.  Exhaustive mode passes the largest
 /// size_t and therefore removes the budget without changing the representation
 /// or the set of degrees it can express.
+struct ArithmeticMemo;
+struct RegionMemo;
+struct AbstractionMemo;
+struct ParityMemo;
+struct ResidueMemo;
+
 class WorkBudget {
 public:
   explicit WorkBudget(size_t Limit)
@@ -293,9 +309,27 @@ public:
   bool exhausted() const { return Exhausted; }
   size_t used() const { return Used; }
   bool unlimited() const { return Unlimited; }
+  size_t available() const {
+    return Unlimited ? std::numeric_limits<size_t>::max() : Remaining;
+  }
   bool canConsume(size_t Units) const {
     return Unlimited || Units <= Remaining;
   }
+
+  // Enabled only by the deep entry point, whose context outlives this budget.
+  // The implementation retains completed arithmetic results, never refusals.
+  const SymContext *MemoOwner = nullptr;
+  size_t MemoCapacity = 0;
+  std::shared_ptr<ArithmeticMemo> Arithmetic;
+  std::shared_ptr<RegionMemo> Regions;
+  std::shared_ptr<AbstractionMemo> Abstractions;
+  std::shared_ptr<ParityMemo> Parities;
+  // Optional search attempts, including declines. A declined attempt grants
+  // no equality; it only avoids repeating the same search under fewer
+  // resources.
+  std::shared_ptr<ResidueMemo> Residues;
+  size_t MultipleResidueAttempts = 0;
+  size_t IncompleteAbstractions = 0;
 
 private:
   size_t Remaining;
@@ -367,10 +401,61 @@ struct PolyForm {
 /// The minterms \p Table selects, as indices.
 llvm::SmallVector<MintermIndex, 8> selectedMinterms(const TruthTable &Table);
 
+struct QuadraticProduct {
+  llvm::APInt Coefficient;
+  llvm::SmallVector<TruthTable, 2> Factors;
+};
+
+/// Remove the exact common factor multiset of a homogeneous term group.
+/// An empty result leaves the group unchanged, including on optional refusal.
+llvm::SmallVector<SymRef, 8>
+extractPolynomialCofactor(llvm::SmallVectorImpl<PolyTerm> &Terms,
+                          WorkBudget &Budget, size_t MaxBytes);
+
+/// Recover the unique unordered pair of Boolean factors from a quadratic
+/// coefficient matrix. Missing coefficients are zero modulo the word width.
+std::optional<QuadraticProduct>
+recoverQuadraticProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
+                        uint32_t Width, WorkBudget &Budget, size_t MaxBytes);
+
+/// Recover a quadratic product by reading coefficient rows directly from its
+/// terms. Determined distinguishes a disproved product from resource refusal.
+/// For a single term, success preserves its coefficient and factor-table order.
+std::optional<QuadraticProduct>
+recoverQuadraticTerms(const SymContext &Ctx, llvm::ArrayRef<PolyTerm> Terms,
+                      llvm::ArrayRef<uint32_t> AtomIds, uint32_t Width,
+                      WorkBudget &Budget, size_t MaxBytes, bool &Determined);
+
+/// Infer factor supports from all subset degrees. Nullopt declines the bounded
+/// reconstruction; an empty vector disproves a single product. Nonempty support
+/// is a candidate only: all coefficients still need independent validation.
+std::optional<llvm::SmallVector<TruthTable, 4>>
+recoverProductSupport(const HigherCoefficients &Higher, unsigned Degree,
+                      unsigned NumAtoms, WorkBudget &Budget, size_t MaxBytes);
+
+struct CubicProduct {
+  llvm::APInt Coefficient;
+  llvm::SmallVector<TruthTable, 3> Factors;
+};
+
+/// Recover a cubic product with a common minterm and a scale of additive
+/// order at least four. When Determined is set, this anchor uniquely fixes
+/// the factors (up to permutation): failure needs no exhaustive retry.
+/// Other products remain eligible for bounded search.
+std::optional<CubicProduct>
+recoverCubicProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
+                    uint32_t Width, WorkBudget &Budget, size_t MaxBytes,
+                    bool *Determined = nullptr);
+
+/// Exact general expansion by default. SingleProduct additionally permits
+/// rejecting incompatible extremal coefficients during candidate synthesis;
+/// difference verifiers must leave it disabled.
 std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
                                            llvm::ArrayRef<PolyTerm> Terms,
                                            llvm::ArrayRef<uint32_t> AtomIds,
-                                           uint32_t Width, WorkBudget &Budget);
+                                           uint32_t Width, WorkBudget &Budget,
+                                           bool Optional = false,
+                                           bool SingleProduct = false);
 
 /// Walk every way of taking one minterm from each factor, handing each
 /// resulting monomial to \p Visit.  Stops early when \p Visit returns false.
@@ -436,6 +521,21 @@ bool provePolynomialIdentity(SymContext &Ctx, SymRef Before, SymRef After,
                              unsigned MaxAtoms, WorkBudget &Budget,
                              size_t MaxBytes = MBAOptions{}.MaxTableBytes);
 
+/// Certify modular arithmetic distribution with nonarithmetic words opaque.
+/// Normalize both sides independently; incomplete normalization is refusal.
+bool proveArithmeticIdentity(SymContext &Ctx, SymRef Before, SymRef After,
+                             WorkBudget &Budget,
+                             size_t MaxBytes = MBAOptions{}.MaxTableBytes,
+                             bool ExpandComplements = true);
+
+/// Certify an affine equality over bitwise views of every bit of one opaque
+/// word, including literal AND/OR/XOR and NOT chains.
+/// Opaque residual words must cancel exactly. Reject incomplete proofs;
+/// sampling is not authority.
+bool proveMaskedSumIdentity(const SymContext &Ctx, SymRef Before, SymRef After,
+                            SymRef Carrier, WorkBudget &Budget,
+                            size_t MaxBytes = MBAOptions{}.MaxTableBytes);
+
 //===----------------------------------------------------------------------===//
 // Solving
 //===----------------------------------------------------------------------===//
@@ -463,10 +563,17 @@ struct SolveReport {
   bool BudgetExhausted = false;
 };
 
-/// Normalize and factor Add/Mul regions over fixed-width words. Other
-/// operations remain opaque atoms; resource refusal leaves the region intact.
+/// Combine weighted bitwise views by their per-bit coefficients and constants.
+/// Independently prove each shorter group before composing the result.
+SymRef solveWeightedMasks(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                          WorkBudget &Budget, SolveReport &Rep);
+
+/// Normalize and factor Add/Mul regions over fixed-width words. Complements
+/// may expand as -1-x or remain opaque alongside other operations. Resource
+/// refusal leaves the region intact; both modes independently check the result.
 SymRef solveArithmetic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
-                       WorkBudget &Budget, SolveReport &Rep);
+                       WorkBudget &Budget, SolveReport &Rep,
+                       bool ExpandComplements = true);
 
 /// A final coefficient reading, kept outside the repeated region walk.
 SymRef solveCoefficientFactors(SymContext &Ctx, SymRef E,
@@ -490,12 +597,96 @@ SymRef foldPartitionedMaskSum(SymContext &Ctx, SymRef A, SymRef B,
 SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                               WorkBudget &Budget, SolveReport &Rep);
 
+/// Recover higher products by proving small quotients under shared cofactors.
+SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                             WorkBudget &Budget, SolveReport &Rep);
+
+/// Recover a bounded product frontier after earlier arithmetic factoring.
+SymRef solveNestedProductCofactors(SymContext &Ctx, SymRef E,
+                                   const MBAOptions &Opts, WorkBudget &Budget,
+                                   SolveReport &Rep);
+
+/// Necessary multiplicity bounds only; never authorizes a replacement.
+bool productCoefficientsFitScale(const HigherCoefficients &Higher,
+                                 unsigned Degree, const llvm::APInt &Scale,
+                                 WorkBudget &Budget);
+
+/// Prove modular zero products from complete low-bit residue partitions of
+/// factors sharing an additive base. Opaque bases need no independent inputs.
+SymRef foldProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                           size_t &Storage);
+
+/// A complete lower bound over every low-bit residue, capped at Ceiling.
+std::optional<unsigned>
+minimumProductResidueZeros(llvm::MutableArrayRef<llvm::APInt> Offsets,
+                           unsigned Width, unsigned Ceiling,
+                           WorkBudget &Budget);
+
+/// No value means the cheap affine hint declined; a value is a complete
+/// result or the original product when proof resources were insufficient.
+/// CompleteBase reports whether all factors share a proved full affine word,
+/// even when none of its candidate readings improves the product.
+std::optional<SymRef>
+foldAffineProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                          size_t &Storage,
+                          std::optional<bool> ProjectedHint = std::nullopt,
+                          bool *CompleteBase = nullptr);
+
+/// Cheap admission only; no equality follows from this structural hint.
+bool hasProjectedResidueFactors(const SymContext &Ctx, SymRef Root);
+
+/// Prove full-word product zero from complete affine maps of low prefixes.
+/// Admitted reuses a successful hint; it never authorizes a replacement.
+SymRef foldProjectedProductResidues(SymContext &Ctx, SymRef Root,
+                                    WorkBudget &Budget, size_t &Storage,
+                                    bool Admitted = false);
+
+/// Recover nonzero products from complete cofactor precision proofs after
+/// the cheaper full-affine and projected-zero paths have declined.
+SymRef foldResidualProductResidues(SymContext &Ctx, SymRef Root,
+                                   WorkBudget &Budget, size_t &Storage);
+
+/// Multiplicative period of odd words. Width is in [1, 8], as established by
+/// the bounded residue readers before constructing or reducing a low word.
+inline size_t residueUnitPeriod(unsigned Width) {
+  return size_t(1) << (Width > 2 ? Width - 2 : Width - 1);
+}
+
+/// Complete bounded bit decisions over a product's observed low word.
+/// Complete, when supplied, records a finished search over free variables;
+/// it does not certify global minimality or an equivalence on its own.
+SymRef foldResidueDecisions(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                            size_t &Storage, bool OddProductOnly = false,
+                            size_t MaxWork = std::numeric_limits<size_t>::max(),
+                            bool *StorageLimited = nullptr,
+                            bool *Complete = nullptr);
+
+/// Avoid rediscovering an emitted exact low-word reading. Original opaque
+/// inputs still participate in the deep walk. The canonical builder propagates
+/// their rewrites; changed original products remain eligible for analysis.
+void recordResidueReading(SymContext &Ctx, size_t First, WorkBudget &Budget,
+                          size_t &Storage);
+bool hasCompletedResidueReading(const SymContext &Ctx, SymRef Root,
+                                WorkBudget &Budget, bool GeneratedOnly = false);
+
+/// Only the low product bit survives a highest-bit scale.
+SymRef foldProductValuations(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                             size_t &Storage);
+
+SymRef foldProductParity(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                         size_t &Storage);
+
 /// Solve independent summand groups before measuring \p E as one region.
 /// This is the mask-free half of the region solver; \c solveMasked reduces to
 /// it once it has split a masked expression into mask-free columns, so keeping
 /// it separate is what stops the mask split from recursing into itself.
 SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                       WorkBudget &Budget, SolveReport &Rep);
+
+/// Recover an expanded quadratic/cubic root before local rewrites obscure its
+/// independently partitioned factors. Uses the same polynomial verifier.
+SymRef solveExpandedProducts(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                             WorkBudget &Budget, SolveReport &Rep);
 
 } // namespace neverd::symbolic::detail
 

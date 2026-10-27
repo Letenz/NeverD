@@ -32,6 +32,9 @@ inline bool isNamedValueExpr(const HighExpr &E) {
 }
 
 struct HighCAnalysisState {
+  /// C shows the function as returning nothing (analyzeVoidReturn): a return
+  /// reads only the call it hands back, which prints as a statement.
+  bool VoidReturns = false;
   std::set<const HighStmt *> DeadStmts;
   std::set<std::string> DeadVars;
   std::map<const HighExpr *, std::string> AddressKeys;
@@ -67,6 +70,10 @@ bool isNoreturnCallExpr(const HighExpr &E);
 /// Calls, writes and ordered accesses remain observable even when their
 /// scalar result is unused. Shared by return projection and local liveness.
 bool highCExpressionHasEffect(const HighExpr &E);
+
+/// The call \p E returns through casts and integer views, which a function
+/// printed `void` makes as a statement.
+const HighExpr *returnedCall(const HighExpr &E);
 
 void collectUsedVarsExpr(const HighExpr &Expr,
                          std::map<std::string, TypeRef> &Vars, VarNameFn VarFn,

@@ -7,7 +7,9 @@
 #include "RegistrationStateSolver.h"
 
 #include "neverd/Limits.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
+#include "neverd/loader/COFF/COFFCxxEpilogue.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/RegistrationScopeGraph.h"
 
 #include <algorithm>
@@ -23,13 +25,17 @@ RegistrationStateSolver::RegistrationStateSolver(
     const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
     const std::vector<RegistrationSEHControlContract> *SEHControls,
     ConditionalFrame *Conditional, const BoundCalleeProver *BoundCallees,
-    const EH3JumpRuntime *JumpRuntime)
+    const SEHJumpRuntime *JumpRuntime,
+    const coff_loader::X86CxxHandlerABI *CxxHandler,
+    const coff_loader::X86CxxPrologueCall *CxxPrologue,
+    const std::vector<coff_loader::X86CxxEpilogueCall> *CxxEpilogues)
     : Function(Function), EH(*Function.ExceptionMetadata),
       Chain(*EH.Registration), SecurityCookieVA(SecurityCookieVA),
-      CookieCheckVA(CookieCheckVA), Callees(Callees), Cleanups(Cleanups),
-      Stacks(Stacks), LocalUnwinds(LocalUnwinds), SEHControls(SEHControls),
-      Conditional(Conditional), BoundCallees(BoundCallees),
-      JumpRuntime(JumpRuntime),
+      CookieCheckVA(CookieCheckVA), CxxHandler(CxxHandler),
+      CxxPrologue(CxxPrologue), CxxEpilogues(CxxEpilogues), Callees(Callees),
+      Cleanups(Cleanups), Stacks(Stacks), LocalUnwinds(LocalUnwinds),
+      SEHControls(SEHControls), Conditional(Conditional),
+      BoundCallees(BoundCallees), JumpRuntime(JumpRuntime),
       KnownCxx(EH.Encoding == ExceptionEncoding::X86CxxFuncInfo &&
                (EH.Personality == ExceptionPersonality::CxxFrameHandlerX86 ||
                 EH.Personality == ExceptionPersonality::CxxFrameHandler3)),
@@ -66,7 +72,11 @@ RegistrationStateAnalysis RegistrationStateSolver::run() {
   initializeCookies();
   collectOccurrences();
   seedEntries();
-  while (!Work.empty() && !Exhausted) {
+  while ((!Work.empty() || !PendingSEHFrames.empty()) && !Exhausted) {
+    if (Work.empty()) {
+      flushSEHScopes();
+      continue;
+    }
     const auto [Priority, I, Activation] = *Work.begin();
     Work.erase(Work.begin());
     auto &State = States[I].at(Activation);
@@ -95,6 +105,32 @@ bool RegistrationStateSolver::initialize() {
     Result.Diagnostics.push_back("registration metadata is incomplete");
     return false;
   }
+  if (CxxPrologue && !validateCxxPrologue()) {
+    Result.Diagnostics.push_back(
+        "shared C++ prologue has no exact parent entry and call boundary");
+    return false;
+  }
+  if (CxxEpilogues)
+    for (const auto &Call : *CxxEpilogues)
+      if (!charge(1) || !CxxPrologue || !Call.Caller.isValid() ||
+          Call.Caller.End - Call.Caller.Begin != 5 ||
+          Call.Caller.Begin < CxxPrologue->Caller.End ||
+          Call.Caller.End > EH.CodeRange.End || !Call.Helper.isValid() ||
+          Call.Helper.size() != (Call.CookieCheck ? 15u : 20u) ||
+          EH.CodeRange.overlaps(Call.Helper) || !Call.Restore.isValid() ||
+          Call.Restore.size() != 20 || EH.CodeRange.overlaps(Call.Restore) ||
+          (Call.CookieCheck
+               ? Call.Helper.overlaps(Call.Restore) ||
+                     !Call.CookieCheck->Checker.isValid() ||
+                     Call.CookieCheck->Checker.overlaps(EH.CodeRange) ||
+                     Call.CookieCheck->Checker.overlaps(Call.Helper) ||
+                     Call.CookieCheck->Checker.overlaps(Call.Restore)
+               : Call.Helper.Begin != Call.Restore.Begin) ||
+          !CxxEpilogueIndex.emplace(Call.Caller.Begin, &Call).second) {
+        Result.Diagnostics.push_back(
+            "shared C++ epilogue has no unique physical call description");
+        return false;
+      }
   if (Chain.RealignedFrame && !validateRealignedLayout()) {
     Result.Diagnostics.push_back("realigned registration frame requires a "
                                  "separate coordinate transfer proof");
@@ -102,7 +138,7 @@ bool RegistrationStateSolver::initialize() {
   }
   if (!Chain.RegistrationOffset || !Chain.TryLevelOffset ||
       !Chain.SeededTryLevel || !Chain.ChainInstallVA ||
-      Chain.TryLevelStores.empty() ||
+      (!KnownCxx && Chain.TryLevelStores.empty()) ||
       (KnownCxx && (!Chain.cxxRuntimeFrameOffset() ||
                     *Chain.RegistrationOffset < INT32_MIN + 4))) {
     Result.Diagnostics.push_back(
@@ -201,7 +237,8 @@ bool RegistrationStateSolver::initialize() {
       HasInstallBoundary |=
           Instruction.Address == Chain.ChainInstallVA &&
           Instruction.Size != 0 &&
-          Instruction.Control == LowInstructionControl::None &&
+          Instruction.Control == (CxxPrologue ? LowInstructionControl::Call
+                                              : LowInstructionControl::None) &&
           Instruction.Address <= InvalidVA - Instruction.Size &&
           Instruction.Address + Instruction.Size == Block.EndAddr;
   if (!HasInstallBoundary) {
@@ -223,6 +260,8 @@ bool RegistrationStateSolver::charge(size_t Amount) {
     Result.SEHJumpResumptions.clear();
     Result.SEHJumpCapturesComplete = false;
     Result.SEHJumpCaptures.clear();
+    Result.SEHStateStoresComplete = false;
+    Result.SEHStateStores.clear();
     Result.SEHBoundCallsComplete = false;
     Result.SEHBoundCalls.clear();
     Result.SEHExceptionAccessesComplete = false;
@@ -242,12 +281,15 @@ RegistrationStateAnalysis analyzeRegistrationStates(
     const std::vector<RegistrationCleanupFrameContract> *Cleanups,
     const std::vector<RegistrationCalleeStackContract> *Stacks,
     const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
-    const std::vector<RegistrationSEHControlContract> *SEHControls) {
+    const std::vector<RegistrationSEHControlContract> *SEHControls,
+    const coff_loader::X86CxxHandlerABI *CxxHandler,
+    const coff_loader::X86CxxPrologueCall *CxxPrologue) {
   if (!Function.ExceptionMetadata || !Function.ExceptionMetadata->Registration)
     return {};
   return registration_state::RegistrationStateSolver(
              Function, SecurityCookieVA, CookieCheckVA, Callees, Cleanups,
-             Stacks, LocalUnwinds, SEHControls)
+             Stacks, LocalUnwinds, SEHControls, nullptr, nullptr, nullptr,
+             CxxHandler, CxxPrologue)
       .run();
 }
 } // namespace neverd

@@ -31,6 +31,9 @@ KernelModel::dmaMdlView(uint64_t MDL, uint64_t CurrentVA, uint32_t Length,
       I->second.Owner == LockedMdl::Ownership::ReleasedPages)
     return channelError("DMA requires a locked or nonpaged MDL");
   const auto &View = I->second;
+  if (View.Advance)
+    return channelError("DMA of an advanced MDL requires unmodeled "
+                        "PFN-tail lifetime support");
   const uint64_t Virtual = View.OriginalAddress;
   if (!Length || CurrentVA < Virtual || CurrentVA - Virtual >= View.ByteCount ||
       Length > View.ByteCount - (CurrentVA - Virtual))

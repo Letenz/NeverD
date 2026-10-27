@@ -1,5 +1,6 @@
 add_neverd_unittest(NeverDConcolicTests
   LowIRConcolicTests.cpp
+  LowIRConcolicMemoryTests.cpp
 
   LINK_COMPONENTS Concolic
 )

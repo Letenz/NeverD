@@ -1,14 +1,50 @@
 **언어**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](../ja/testing.md) | [한국어](testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites`는 소스 파이프라인에서 x64/ARM64 Mach-O의 정수, 부동소수점 및 혼합 스택 인자를 검사합니다. `IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers`는 메모리 읽기, 호출, 스택 주소 유출, 불투명하거나 메모리를 사용하는 intrinsic에 필요한 진입 저장소를 유지합니다. 값만 사용하는 경로는 선언된 인자를 사용하여 물리 SP 쓰기를 추가하지 않으며 레지스터 부동소수점 상태 효과를 유지합니다. macOS 모바일 행렬은 복원된 Swift를 독립적으로 컴파일하고 실행합니다. 생성 성공만으로 실행 검증을 의미하지는 않습니다.
+
+`NeverDLLVMCValueTests`는 별도의 Windows x64 ABI 함수에 대한 가변 호출을 O0/O2와 두 형식 보존 설정으로 컴파일하고 실행합니다. 네이티브 x64에서 va_arg 값을 확인하며 다른 아키텍처는 명시적으로 건너뜁니다.
+
 [← 문서 인덱스](README.md)
 
 # NeverD 테스트
+
+## 진입 스택 값의 소스 복원
+
+`NeverDSourceEntryBindingTests`는 x64/ARM64, PE/ELF, HighC/LLVMC의 진입 스택 인수를 컴파일하고 실행합니다. 전체 모듈, 호출자만 선택, 명시적 부동소수점 비트 전달, 캐시 재사용과 초기화를 검증합니다. 부분 쓰기, 정렬되지 않은 인수, 프레임 주소 유출 및 정의되지 않은 입력을 거부하는 대조군과 독립 피호출 함수 정의를 통한 고정 선언 검증을 포함합니다. 호스트 실행은 네이티브 Windows ARM64 드라이버 검증이 아닙니다. RBP와 x29/x30 프레임 복원도 검증합니다. 저장 바이트 덮어쓰기, SP만 복원하고 RBP를 변경한 경우, 반환 주소를 매개변수로 사용하는 경우를 거부하며 ELF와 Windows의 보존 레지스터 차이도 확인합니다.
+
+추가 행렬은 부호 있는 값과 없는 값의 1/2/4바이트 읽기를 두 C 경로, 전체 출력과 호출자만 선택한 출력에서 O0/O2 및 UBSan으로 실행합니다. 호출자는 읽는 바이트만 쓰며 선언 폭을 넘는 읽기는 거부합니다.
+
+혼합 폭 행렬은 같은 슬롯의 접두부 읽기와 전체 읽기를 O0/O2 및 UBSan으로 실행합니다. 네이티브 프레임 대조군은 두 순서를 검사하고 좁은 읽기만 있거나 전체 읽기가 다른 슬롯에 속한 증거를 거부합니다.
+
+알려진 레지스터 호출은 x64/ARM64 PE/ELF의 두 C 경로에서 전체 모듈과 호출자 선택으로 실행합니다. 원래 LowIR 간접 호출은 유지합니다. 부분 쓰기, 불투명 효과, 임시 값 재사용, 메모리 슬롯, 작업 한도 초과를 거부하는 검사도 포함합니다.
+
+`PEFunctionAddresses.*`는 스택 프레임 없는 x64 PE 리프, 소유 관계와 명령 경계, 거부되는 접두사와 좁은 피연산자, 종료 증명, 취소 및 1/2/4/16 작업자의 결과 일치를 검사합니다. 시그니처 테스트는 16개 조건부 rel32 형식의 양방향 변위, 명시적 진입점 범위와 원본 재배치 제약을 확인합니다. Python 테스트는 각 단일 위치 조건이 모든 원본 충돌 선언을 구별하며 대체 이름과 함께 필요한 위치를 보존하고 기존 선언을 중복하지 않는지 검사합니다.
+
+`DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
+
+`DriverMSRExecution.*`와 `DriverMSRDeclaration.*`는 가용 백엔드에서 명시적 MSR 값, 전체 너비 분할, 상태 보존, 반복 읽기, 정확한 명령 예산, 누락·잘못된 선언과 메모리 권한 부재를 검사합니다. `KernelMSRRead.*`는 미사용 선언의 의존성을 유지합니다. 원시 드라이버, 드라이버 에뮬레이션 및 커널 스냅샷 테스트를 실행합니다. 사용할 수 없는 WHP/HVF는 검증 통과가 아닌 건너뛰기입니다.
 
 NeverD 테스트는 표현 모양이 예상과 같은지, 바이너리 fixture의 전체 pipeline 경로가
 동작하는지, 생성 코드가 동작을 보존하는지라는 세 가지 질문에 답합니다. 변경의 질문에
 답하는 가장 작은 스위트를 고른 뒤 위험이 큰 풀 리퀘스트에서는 더 넓은 집계를 실행하세요.
 
 `PipelineOutcome.ResolvedCalls*`는 레지스터 그룹, call/invoke 식별, 스택 바이트 결합·분할, 좁은 값의 자기 슬롯 배치, 누락 바이트 거부를 검사합니다. `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue`는 기록된 오프셋을 검사합니다. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument`는 x64, ARM32, AArch64의 ELF, PE, Mach-O를 다룹니다. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths`는 세 형식에서 변경된 길이, 쓰기 가능·범위 초과 데이터, 같은 이름의 로컬 함수, 잘못된 원본 레지스터, 대체 진입점 및 재배치 가능 이미지를 거부합니다. 호스트 C 차등 테스트는 참조 C를 별도 번역 단위에서 O0로, 생성 C를 O2로 컴파일하여 호스트 최적화기의 순환식 오컴파일이 기준값을 오염시키지 않도록 합니다. AArch64 FMA 검사는 x86 호스트에서만 `-mfma`를 요청합니다.
+
+## 레거시 GS 복원 테스트
+
+`NeverDX86LegacyGSRecoveryTests`는 교환/이중 교환의 보편적 후조건, 전체 폭 세그먼트 메모리 주소, 별칭, FS/메모리/플래그 유지, MXCSR 공존, 잘못된 상태와 임시 슬롯, 원자적 거부, 효과 유지와 예산 경계를 검사합니다. `PEFixedImageTest.RawLegacyGS*`는 네이티브 인코딩 허용과 증거 결합을 검사합니다. 기계 상태 및 네이티브/LLVM 정제 테스트는 미사용 선언을 포함하여 지원하지 않는 소스 계약을 거부합니다. `LegacyGSExecutionPolicy.RemainsUnmodeled`은 구체 실행 거부를 유지합니다. 이는 기호 및 정책 테스트이며 네이티브 특권 명령 실행이 아닙니다.
+
+## MXCSR 복원 검사
+
+`InterpreterSpecialization.MXCSR*`는 임의 초기 상태, 정확한 메모리 값, 예약 비트, DAZ, 별칭, 잘못된 형식, 노드 투영과 예산 경계를 검사합니다. `PEFixedImageTest.RawMXCSR*`는 legacy/VEX 바이트와 마스크가 결합된 기록을 검사합니다. 기계 상태와 네이티브/LLVM 정제 테스트는 사용하지 않은 기능도 인터페이스를 확장할 수 없음을 확인합니다.
+
+## 세그먼트 쓰기 복원 검사
+
+`InterpreterSpecialization.SegmentedWrite*`는 독립 바이트 메모리 결과, 모든 스칼라 폭, 베이스 덧셈 순환, 프레임 별칭, 덮어쓴 포인터 출처, 노드 간 무효화 및 정확하거나 부족한 예산을 검사합니다. `SegmentedWritesAndReadsShareLinearMemory`는 같거나 다른 베이스를 다룹니다. `PEFixedImageTest.RawSegmented*`는 네이티브 바이트, 반환 슬롯 별칭 거부 및 기능 변경 증빙을 검사합니다. 기존 호환성 값은 유지됩니다. 특수화, PE 고정 이미지, 머신 상태, 네이티브/LLVM 정제 테스트를 빌드하세요. 소스 및 증명 거부 검사는 사용하지 않는 쓰기 기능도 포함합니다.
+
+## 구체적 진입 메모리 시드
+
+`NeverDSymbolicTests`, `NeverDConcolicTests`, `NeverDConcolicIntegrationTests`를 실행합니다. `LowIRConcolicMemory.*`와 기호 계층 테스트는 두 바이트 순서, 별칭 저장, 독립 뱅크, 누락/잘못된 범위, 초기화와 늦은 시드, 예산 경계, epoch, 모델 폭, 메모리 후보 재실행과 중복 제거를 검증합니다. 기존 네이티브 형식/아키텍처 행렬도 회귀 검사합니다.
 
 ## 테스트 빌드 구성
 
@@ -1136,6 +1172,10 @@ CPU 선호도, 새 프로세스, 따뜻한 캐시 및 RSS 조건이 적용됩니
 
 `SymExpr.*`는 4비트 입력과 마스크를 전수 검사하여 최하위 위치가 아닌 상수 구간을 확인하고, 넓은 값, 중첩 구조 연산, 알려진 바이트와 미지 바이트의 재조합, 산술 올림 반례를 다룹니다. 예산 회귀는 넓은 노드를 재귀 경계에 배치하고 예산을 초과하는 상수 복사를 거부합니다. 미지 구간은 표현식 DAG를 확장하지 않고 기호 형태로 남아야 합니다. `SymState.*`는 두 바이트 순서 모두에서 도출된 스칼라 상수와 영역의 리터럴 상수를 구분하고, DAG 노드나 저장된 전체 워드가 바뀌지 않는지도 확인합니다.
 
+`SymMBAWitness.*`는 기존 작업 예산에서 반전 입력을 가진 96/128차 곱을 검사하며, 하위 6비트의 자리올림 입력을 전수 검사합니다. 최대 257비트 워드, 인접한 홀짝 변경 및 예산 부족에 따른 거부도 포함합니다. 구체적인 비영 반례는 불필요한 영식 탐색만 중단하며 재작성을 허용하지 않습니다. `--family complemented-carry-product --count 108`은 반전 입력, 역순 인수 및 홀짝 근접 사례를 포함하는 48–256차 사례 432개를 생성합니다. 이전의 모든 코퍼스를 성능과 출력 비용의 대조군으로 유지하세요. CLI와 GUI worker 소스 테스트는 두 96차 반례 픽스처를 여섯 소스 경로 모두에서 O0/O2로 실행합니다.
+
+`SymMBAResiduePowers.*`는 모듈러 거듭제곱의 주기, 짝수 입력, 작은 지수, 곱셈 인자의 독립적인 홀짝성, 정확한 자원 예산과 한 단위 부족한 예산을 검사합니다. 최대 257비트의 전체 워드 곱과 네이티브 비트 폭의 독립적인 솔버 증명을 사용합니다. `--family residue-power --count 81`은 주기 경계의 바로 이웃한 값과 단일 인자 교란을 포함하는 16–512차 사례 324개를 추가합니다. 한도에 따른 거부도 결과에 유지합니다. CLI와 실제 worker는 독립적인 곱셈 인자가 있는 16/64차 그룹을 여섯 소스 경로 모두에서 O0/O2로 실행합니다.
+
 `SymReadability.*`는 뺄셈과 보수 표기, 결합 연산 비용, 1비트 및 넓은 리터럴, 공유 트리 포화, 예산 제한 후보 선택, 표본 검증을 끈 상태의 3비트 완전 동치성을 검사합니다. `SymMBASample.*`는 모든 연산자, 결정적 대입, 사용하지 않는 넓은 입력에 대해 좁은 값과 임의 정밀도 검증을 AP 평가기와 비교합니다. 점수 버전이 다를 때 후보 품질을 비교하려면 두 출력을 같은 척도로 다시 세어야 합니다. SDK의 버전별 크기 카운터는 진단용입니다.
 
 ## ARM32 및 프레임 전달 테스트 행렬
@@ -1262,9 +1302,11 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `windows-alignment-oracle.yml`은 `check_windows_alignment.py`와 `WindowsAlignmentCases.def`로 독자적인 x64 Windows 예외 관측 72개를 수집합니다. 정렬을 요구하는 SSE 형식 아홉 가지에 대해 비정렬 주소/권한 사례 일곱 가지와 정렬되었지만 접근할 수 없는 페이지 대조 사례를 실행합니다. 예외 코드, 인수, 장애 PC, 저장된 컨텍스트, 원시 출력, 소스/바이너리 해시를 보존하고 입력과 RAM이 바뀌지 않았는지 확인합니다. 이는 OS 동작의 근거이며 KVM/WHP 실행 검증이나 SEH 지원 추가를 의미하지 않습니다.
 
-`native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 48개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
+`native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 68개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 28 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks = 5615`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 135개 작업 전체에서 WHP 결과 270개를 요구합니다. 기본 이미지 27개, WDK 이미지 68개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `5085 CPU + 270 WHP + 32 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 126 driver environment checks + 116 driver API checks = 5802`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
+
+실제 WDK 목록은 `driver_device_queries.c`, `driver_file_objects.c`, `driver_file_handles.c`의 일반 및 CFG 버전도 빌드합니다. `DriverDeviceQueryTests.cpp`와 `DriverFileObjectTests.cpp`는 이식 가능한 호출자와 같은 검증으로 양쪽 계약, 기준 주소, 스케줄링 정책에서 참조 유지, 실패한 CREATE, 프로세스 신원, 마지막 핸들 CLEANUP 및 지연 CLOSE를 확인합니다. 세 계열 모두 네이티브 필수 검사에 포함되며 목록 검증은 `NEVERD_WDK_FIXTURE` 소스를 독립적으로 찾아 WDK 빌드 누락을 감지합니다.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 
@@ -1704,6 +1746,10 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 
 `SafeSEHReference.*`는 불변 SafeSEH 테이블 소속, 잘못되거나 모호한 저장 영역, 재배치, 다른 아키텍처와 형식, 분할 간 선언 순서를 검사합니다. `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM`는 `NEVERD_NONLOCAL_FINALLY_INPUTS`로 네이티브 MSVC x86/x64, O0/O2, GS 및 소스 최적화 설정의 LLVM 조합 32개를 검사합니다. LLVM과 해석된 호출 시그니처를 검증하며 지원하지 않는 x86 네이티브 EH 재구성이 계속 거부되어야 합니다. Windows EH 전용 작업은 네이티브 fixture artifact를 내려받아 실행하며 입력 디렉터리가 없으면 테스트를 명시적으로 건너뜁니다.
 
+`RegistrationPrologueSaves.*`와 `PipelineOptNone.*`는 소스 메모리 기록, 콜백 인수와 선택기 보호, 일반 코드 최적화를 검증합니다. 네이티브 MSVC 행렬은 x86 `/Od` (`/GS-`, `/GS`)의 `nonlocal_finally_return`을 독립 COFF 검증으로 확인합니다. `check_windows_finally_rewrite.py`는 두 강제 기준 주소와 두 패치 모드에서 원본/최적화 IR을 비교합니다. 관찰기 실행 24회, 호출 1536회, 체인과 스택 보호 및 음성 대조를 검사합니다. EXE를 DLL로 바꾸는 어댑터는 TLS 없는 입력의 헤더만 수정하고 원래 코드를 유지하며 외부 SEH 관찰기가 예외 검색을 제공합니다. 다른 MSVC 형태는 분석과 거부만 검사합니다.
+
+`RegistrationEH4Wrapper.*`는 두 기준 주소, 가변 및 불변 런타임 데이터, MXCSR 분기, 모든 경로의 정의, 호출자 프레임 격리, 명령 및 저장소 중첩과 정확한 PE 재배치를 검사합니다. 두 MSVC 프로필에는 각각 독립 음성 대조가 있습니다.
+
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame`은 인증된 Windows x64 SEH 처리기와 일반/예외 공유 진입의 로컬 해제 호출을 검사합니다. 반례에는 해제 할당 불일치, 불안정하거나 일부 폭의 SP, 독립 루트, 불완전한 입력, 누락되거나 위조된 예외 간선, 작업 한도 소진, 알 수 없는 스택 메모리, 외부 재배치 및 신뢰할 수 없는 런타임이 포함됩니다. LowIR 호출 증명과 모듈 증명서를 SSA 검증에 전달하며 일반 반환 연속 테스트는 별도 진입 규칙을 유지합니다.
 
 `OrdinaryInternalReturnsRetainTheParentsReturnPC`와 `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation`은 PE, ELF, Mach-O x64 및 ELF i386에서 부모 반환 주소 손상과 겹치지 않는 부모 지역 쓰기를 검사합니다. 피호출자 반환 주소 보존만으로 일반 호출을 허용할 수 없습니다.
@@ -1732,7 +1778,24 @@ MSVC 단위 테스트 대상은 `/bigobj`를 사용하여 GoogleTest와 LLVM 템
 
 ## 소스 및 네이티브 오브젝트 패치
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
+현재 확장 목록은 `unittests/Inputs/source-patch-expansion.json`에 있습니다. CPU 행렬 283개, 배치 14개, 콜백 16개, 예외 계약 265개와 정확한 호스트별 C API 목록을 포함합니다. `scripts/qualify_source_patch_expansion.py`는 수정 없는 정확한 소스 커밋에서 전체 목록의 실패·건너뛰기 0을 요구합니다. `scripts/check_source_patch_expansion_runtime.py`는 네이티브 OS 로더로 콜백·의존성·결합 IR/객체를 별도 실행하며 호스트당 기능 84회, 예외 84회와 라이브러리·심볼 누락 대조 2개를 검사합니다. 실제 신구 공유 라이브러리, 부동소수점·스택 인자, 반복 원래 본문 호출, 정확히 한 번의 정리, 로더 메타데이터와 게시 해시를 확인합니다. CPU, 호환 계층, 네이티브 OS 프로세스 증거는 구분합니다.
+
+선택한 여섯 네이티브 OS/ISA 작업은 실패·건너뛰기 없이 통과했습니다. GoogleTest 실행 3669회, 네이티브 프로세스 관측 1008회(기능 504회, C++ 예외 504회), 실제 로더 거부 12회, 이미지 96개, 게시 영수증 84개입니다.
+
+| 호스트 | 소스 | Harness | CI 작업 | 테스트 | 관측 / 거부 |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+각 산출물은 아래 표의 정확한 소스와 harness 커밋만 검증합니다. 이후 dev 통합과 문서 커밋에는 별도의 로컬·문서 검사를 적용합니다. 과거 실패·취소 작업은 실패로 보존합니다. 과거의 보충 관측 216회, PE ARM32 및 구형 32비트 Apple CPU/호환 계층 결과는 새 기능의 네이티브 하드웨어나 C++ 예외 증거가 아닙니다.
+
+Windows ARM64 검증은 고정 서브모듈과 검증된 LLVM-MinGW 도구 체인으로 실제 빌드한 네이티브 ARM64 Unicorn C DLL, MSVC 임포트 라이브러리, 명시적 CMake 대상 재정의를 사용합니다. 격리된 빌드 복사본은 비 SEH 점프 함수 쌍, 명령 캐시 동기화를 포함한 ARM64 페이지 커밋 콜백, Windows LLP64용 64비트 즉시값 마스크라는 세 호스트 수정을 인증합니다. 서브모듈 소스와 리비전은 그대로입니다. 이는 CPU 행렬의 테스트 호스트를 검증하며 기본 MSVC ARM64 JIT 지원을 입증하지 않습니다. 다섯 호스트 복구 검사는 패치 프로세스의 네이티브 실행 및 C++ 예외 증거와 별도로 기록합니다.
+
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 283 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
@@ -1784,6 +1847,16 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 `FrameOffsets.*Normalization*`은 정확한 항등식, 추가 입력, 루트 식별, 증인을 캐시하지 않는 도달 불가능 조건, 기본 동작, 구조 및 측정 비용, 호출 후 노드 한도 거부를 검사합니다. `FrameNormalizationPreservesStoresAndNativeReturns`와 `RawCodeFrameNormalization*`은 독립 바이트 판정기로 원래 메모리 효과와 실제 반환 주소, 해당되는 양쪽 바이트 순서, 정확하거나 부족한 연산 예산 및 영수증 변조를 확인합니다. `FrameNormalizationStrategyBindsIndependentProof`는 두 바이너리 증명 식별을 검사합니다.
 
+`NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
+
+`NormalizationFeasibilityCachesExactTranslatedTheorems` · `NormalizationFeasibilityRejectsIncompleteAndUnrelatedProofs` · `NormalizationFeasibilityRetainsStorageAndWorkLimits`.
+
+`MachineExitRetReadsAliasedBytesBeforePhysicalPop` · `MachineExitCallCapturesTargetBeforeAliasingPush` · `MachineExitJumpRetainsDynamicAndOriginalDirectTargets` · `MachineExitKeepsInternalCallsAndReturnProofs` · `MachineExitRequiresExactDomainBytesAndTransferKind` · `MachineExitIntegrityBudgetsAndOrdinaryConsumers` · `MachineExitProvesLiveInternalReturnCells`.
+
+`ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
+
+`NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` 는 캐시된 이력을 다시 청구하지 않고, 추가된 넓은 상수는 계속 청구하며, 작업 및 노드 예산 부족은 거부하고, 복사된 가독성 캐시가 독립적으로 유지되는지 확인합니다.
+
 ## 네이티브 Lift 검증
 
 `Lift native qualification` 워크플로는 이전에 검증하지 못한 108개 사례(실패 62개, 건너뜀 46개)를 담당합니다. 네이티브 Linux x86-64 실행기에 Clang 23 이상, GNU GCC, i386 개발 라이브러리를 설치하고 고정된 바이너리 코퍼스를 초기화합니다. `unittests/Inputs/lift-qualification.json`은 원래 테스트 식별자를 모두 유지합니다. `scripts/run_lift_qualification.py`는 누락, 중복, 비활성화, 건너뜀, 실패와 0이 아닌 프로세스 종료를 거부합니다. `qualification.json`은 개별 통과 결과, 소스 및 코퍼스 리비전, 컴파일러 버전과 바이너리 해시를 기록합니다.
@@ -1804,6 +1877,12 @@ python3 scripts/run_lift_qualification.py \
 네이티브 Linux x64 작업은 Clang IR, Clang 네이티브 객체, GCC 네이티브 객체의 세 C++ 예외 패치도 필수로 검증합니다. XML과 프로세스 종료 상태를 별도로 감사하며 실패나 건너뛰기는 검증 실패입니다. 이 C++ 입력에는 NeverC를 사용하지 않습니다.
 
 네이티브 검증 작업은 x64 PLT/AArch64 지정자 범위 수정을 포함하는 고정 LLVM 포크를 소스에서 빌드합니다. r4 사전 빌드 패키지만으로는 Clang IR 예외 경로의 기능 검증을 완료할 수 없습니다.
+
+## Darwin dylib 가져오기 오프셋
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing`은 +8/-4, TLS 포인터 변경, 새 프로세스의 초기 상태를 확인합니다. C, CLI, 실제 Python 통합이 모든 프로필을 검사합니다. 필수 목록은 프로필별101개 메서드와 일치하는 ARM64 사례303개이며 공통 네이티브 목록은82개입니다. 사용할 수 없는 하드웨어는 네이티브 실행으로 계산하지 않습니다.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
 
 ## Ordinary Darwin whole-file lock coverage
 
@@ -1944,3 +2023,189 @@ Linux 네이티브 검증은 `HighSwiftEmitter` 전체도 실행하여 레지스
 ### 0을 가로지르는 기호 영역 좌표
 
 `SymRegionWrap.*`는 두 바이트 순서, 상대 좌표 0을 가로지르는 전체 및 부분 접근, 순환하지 않는 입력 출처, 복사된 미지 상태 세대, 정확하거나 부족한 보존 예산, 절대／스칼라 범위 오버플로 거부를 검사합니다. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero`는 기호 주소가 `base - 1` 형태를 유지하는지 확인하고, 독립적인 바이트 참조 실행으로 전체 STORE 효과, 네이티브 반환 주소 워드, 복원된 스택 상태를 검사합니다. 분리 증명이나 진입 정렬이 없으면 계속 거부해야 합니다.
+
+### 순차 raw 실행의 비교 교환
+
+`SymAtomicCmpxchg.*`와 `InterpreterSpecialization.AtomicCmpxchg*`는 전체 바이트 효과, 두 바이트 순서, 이전 값 출처, 입출력 별칭, 네이티브 반환 셀, 병합을 가로지르는 아핀 스필 무효화, 순서 지정 연산의 발생 유지, 엄격한 허용과 정확한/부족한 예산을 다룹니다. 독립 바이트 오라클은 순차 값 의미론만 모델링합니다. 소스 래핑 대조군은 초기화되고 구조적으로 유효한 그래프에 대해 순서 지정 메모리 경계의 거부를 요구합니다. 독립 LowIR 대조군은 완전한 sidecar도 결합하며 인증서가 없어야 합니다. 네이티브 바이너리 증명은 LOCK CMPXCHG의 아키텍처 미정의 출력 감사가 완전하지 않아 더 이른 단계에서 거부될 수 있습니다. raw 영수증 검사는 순서, 주소 공간과 새 값 피연산자를 결합합니다. 지원을 선언하기 전에 소유 테스트 모음을 실행해야 합니다. 테스트 정의만으로 실행 증거가 되지는 않습니다.
+
+`InterpreterSpecialization.WideIntegerConcat*`는 두 바이트 순서, 상하위 워드, 상수 입력, 겹치는 출력, 상위 워드 제어, 잘못된 형태, 정확한／부족한 예산, 알 수 없는 메모리 출처 보존을 검사합니다. 엄격히 디코딩한 `PSHUFD`의 256개 선택값과 동일／다른 목적지를 독립적인 더블워드 인덱스로 대조합니다. `BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery`는 네이티브 증명과 두 소스 배치의 거부를 유지합니다.
+
+`InterpreterSpecialization.Timestamp*`는 독립 값/상태 오라클로 전체 표본, 상위 절반 초기화, 독립/반복 읽기, 레지스터/플래그/메모리/세그먼트 기준 주소 보존, 정확한/부족한 예산, 잘못된 묶음과 알 수 없는 주소 출처를 검사합니다. `BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery`는 raw 완료와 네이티브 증명/소스 배치 거부를 확인합니다. 기존 `X86_64_Intrinsics` 시계 사례는 소스 출력과 단일 읽기의 전체 비트를 검사하며 `DriverTimestamp`는 Unicorn/KVM/WHP 공통 시계 정책, 상태 보존, 예산, 오버플로를 별도로 검사합니다. 플랫폼 건너뛰기는 해당 백엔드 실행을 입증하지 않습니다.
+
+`KernelObjectTests.cpp`는 알려진 ID, 형식/권한/모드 실패, 핸들 정보, 출력 실패 시 참조 누수 방지, 언로드와 스택 재사용을 검사합니다. `DriverObjectTests.cpp`는 원본 `driver_objects.c`를 사용 가능한 Unicorn/KVM/WHP/HVF, Legacy/CheckedX64, 기본/재배치 주소 및 협력/17 명령 스케줄링에서 실행합니다. `NativeDriverTests.def`는 KVM/WHP 결과를 요구하며 누락과 건너뜀은 검증 공백입니다. ACL, 일반 프로세스 종료 또는 미구현 객체 형식은 입증하지 않습니다.
+
+`KernelDataExportTests.cpp`는 ID, 가용성, thunk 용량, 읽기 전용/NX, 미선언 디버거 및 복구를 검사합니다. `DriverDataExportTests.cpp`는 원본 `driver_data.c`의 실제 DATA 가져오기를 사용하여 가용 백엔드, 두 계약과 기준 주소에서 실행, 언로드 및 쓰기/실행 거부를 검사합니다. 시나리오, C ABI, CLI와 Python은 불리언과 보고서 전달을 검증합니다. `NativeDriverTests.def`가 네이티브 결과를 요구하며 사용할 수 없는 백엔드는 검증 공백으로 남습니다.
+
+`KernelNamespaceTests.cpp`는 형식, 상대 이름, 대소문자, 크기/복사 순서, 꼬리 바이트, 권한, 프로세스 범위, IRQL, 실패 출력 및 보유 중 삭제를 검증합니다. `DriverNamespaceTests.cpp`는 독립 `driver_namespace.c`를 가용 Unicorn/KVM/WHP/HVF, 두 계약과 로드 주소, 협력/17 명령 스케줄링으로 실행합니다. `NativeDriverTests.def`는 네이티브 결과를 요구합니다. 미가용 백엔드와 미지원 정보/보안 클래스는 여전히 검증 공백입니다.
+
+`KernelRegistryTests.cpp`는 독립 열기, 형식 참조, 복제 핸들, 프로세스 범위, 일반 권한, 삭제 ID, 짧거나 홀수인 버퍼, 출력 별칭과 실패/용량 경계를 검사합니다. `DriverRegistryObjectTests.cpp`는 독자 작성한 `fixtures/driver_registry_objects.c`를 사용 가능한 백엔드, 두 계약과 두 베이스에서 협력형 및 17명령 스케줄링으로 실행합니다. 의도적인 포인터 누수로 언로드 거부를 확인하며 네이티브 수용에는 네 조합 모두가 필요합니다.
+
+`KernelDeviceStackTests.cpp`는 현재 이웃, 빌린 결과와 보유한 결과, 입력 또는 이웃 장치의 삭제, 마지막 참조 해제, 잘못되거나 손상된 입력, 참조 추가 전 IRQL 거부를 검사합니다. 자체 `fixtures/driver_device_queries.c`는 `DriverDeviceQueryTests.cpp`를 통해 사용 가능한 백엔드, 두 계약과 로드 주소, 협력 및 17명령 선점 스케줄링에서 실행됩니다. detach/delete 후 저장 공간 유지와 의도적 참조 누수 시 언로드 거부를 검증하며 네 가지 네이티브 계약/주소 결과가 필수입니다.
+
+KernelFileObjectTests와 KernelObjectTests는 형식 검사, 형식 불일치 시 출력 초기화, 일반 권한, 프로세스별·전체 핸들 수, 콜백 재열기 거부, 잘못된 경로 재시도, 요청자 종료, 반복 정리 및 대기 CLOSE를 확인합니다. KernelPnpRequestTests는 지연 CLEANUP의 하위 응답을, KernelFrameworkFileTests는 콜백 프로세스와 LOCK_CONTROL을 확인합니다. driver_file_objects.c의 포인터 수명 검증도 유지됩니다. 독자적인 driver_file_handles.c는 협력 실행과 17명령 스케줄링에서 동기·대기 CLEANUP과 CLOSE, 시스템 작업자 해제, 번호 재사용과 누수를 검증합니다. 실제 WDK driver_kmdf_file_handles.c는 시스템 정리, 호출자 문맥 복원 및 정리 콜백이 없는 경로를 검사합니다. NEVERD_KMDF_FILE_HANDLES_FIXTURE와 선택적 NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE를 설정합니다. DriverFileObjectTests는 가능한 백엔드, 두 계약과 주소를 사용하며 없는 WDK 산출물이나 백엔드는 명시적으로 건너뜁니다. 파일 시스템은 별도 검증이 필요합니다. 시나리오에서 시작한 KMDF CLEANUP/CLOSE는 호출 프로세스, 스레드와 PreviousMode를 유지합니다. F 모드는 다른 파일의 CLEANUP에서 보유 핸들을 닫고 반환 후 컨텍스트 복원을 확인합니다.
+
+`KernelFileQueryTests.cpp`는 빌린/독립 패킷, 즉시/보류 공개, IOSB 별칭과 패딩, 작업자 완료, 수명, 로컬 클래스, 핸들 범위와 IRQL/APC 거부를 검증합니다. `KernelFileCreateTests.cpp`, `DriverFileSystemTests.cpp`는 여섯 메타데이터 클래스와 이름 경계를 검증합니다. driver_file_queries.c와 driver_filesystem_provider.c는 가능한 백엔드, 계약, 기준 주소와 협력/17명령 스케줄링에서 실행합니다. 실제 일반/CFG 이미지는 NEVERD_WDM_FILE_QUERIES_FIXTURE, NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE, NEVERD_WDM_FILESYSTEM_FIXTURE, NEVERD_WDM_FILESYSTEM_CFG_FIXTURE를 사용합니다. C API/CLI/Python은 출처, 전체 바이트와 처리된 실패 상태를 확인합니다. 원본 커널의 제한된 생성 156건/완료 18건은 할당, 디스패치와 알림 경계를 명시하며 전체 파일 시스템이나 범용 APC를 입증하지 않습니다. 없는 하드웨어와 외부 이미지는 명시적으로 건너뜁니다.
+
+`KernelIRPStack.ReadWriteCompletionPreservesStoredFilePosition`은 독립적인 64비트 위치로 동기／비동기 파일, 즉시／대기 완료, 성공／경고／오류 및 0／비0 길이를 확인합니다. 정식 일반／CFG `driver_wdm_stack.c` 픽스처는 READ, WRITE 및 정리 사이에서 위치를 다시 읽습니다.
+
+프로세서 회귀는 출력 경계, NULL, 중첩 복원, 잘못된 IRQL 및 가져오기 식별을 확인합니다. 독자적인 `driver_processors.c`는 백엔드, 계약, 기준 주소, 스케줄링별로 진입점, 작업자, DPC를 실행합니다. 선택 항목 `NEVERD_WDM_PROCESSORS_FIXTURE`와 `NEVERD_WDM_PROCESSORS_CFG_FIXTURE`는 실제 WDK 일반/CFG 이미지의 인라인 호출과 동적 내보내기를 검증하며, 사용할 수 없는 백엔드는 명시적으로 건너뜁니다.
+
+정수 변환 회귀 테스트는 전체 비트 너비, 지원 진수, 용량 경계, 잘못된 진수의 처리 순서, 출력 별칭과 종료 문자 오류를 검증합니다. 독자적인 `driver_int64_strings.c`는 진입점, 작업 항목, 언로드에서 가져오기와 동적 조회를 확인하고 높은 IRQL의 거부도 검증합니다. 선택적 `NEVERD_WDM_INT64_STRINGS_FIXTURE` 및 `NEVERD_WDM_INT64_STRINGS_CFG_FIXTURE`는 실제 WDK 일반/CFG 드라이버를 사용 가능한 백엔드, 계약, 로드 주소와 스케줄링에서 검증합니다.
+
+
+`DriverFileSystemTests.cpp` / `KernelFileSystemTests.cpp` / `DriverFileSystemExecutionTests.cpp` / `DriverScenarioPublic` / `test_driver_filesystem_integration.py`: 선택적 `filesystem`은 DriverEntry 전에 세션 볼륨을 선언합니다. 생략은 가용성 미상, `[]`는 공급자 없음을 뜻하며 각 볼륨은 루트를 명시해야 합니다. 기존 노드는 `ZwOpenFile` 및 `ZwCreateFile`, `IoCreateFile`의 FILE_OPEN을 통해 실제 CREATE 요청으로 열 수 있습니다. 이름 조회, 게스트 필터, 공유, 핸들과 포인터 수명은 공통 소유자를 사용하며 호스트 파일을 읽지 않습니다. 생성, 덮어쓰기, 삭제, 메타데이터 조회, 데이터 I/O, 열거 및 제어는 아직 지원하지 않습니다. `NEVERD_WDM_FILESYSTEM_FIXTURE`, `NEVERD_WDM_FILESYSTEM_CFG_FIXTURE`, `NEVERD_TEST_DRIVER_FILESYSTEM_FIXTURE`, `NEVERD_TEST_LIBNEVERD`. `UnusedFileSystemDeclarationCannotAuthorizeRuntimeRecovery`: `configuration.filesystem`은 입력이며 최상위 `filesystem`은 독립 상태에 `device_object`와 노드 `end_of_file`을 추가합니다. 실행 또는 투영 검증 중지 후에도 상태는 남습니다. `devices`는 게스트 장치만 포함합니다. 언로드 후 세션 볼륨은 남을 수 있지만 게스트 참조, 핸들, 연결 및 IRP는 해제해야 합니다. `[]`를 포함한 선언은 복원되지 않은 의존성을 남기며 실행 가능한 UNPACK 복원을 막습니다. 구형 Unicorn은 중지 전 거부된 쓰기를 반영할 수 있으며 진단에 투영 오류가 남습니다.
+
+`KernelFileCreateTests.cpp`는 패킷 유지, 공유 실패, 비동기 상대 루트 유지, 명시적 취소, 실패／별칭 출력 및 언로드를 검증합니다. `DriverFileSystemExecutionTests.cpp`는 양쪽 계약과 기준 주소, 사용 가능한 백엔드에서 원본 및 실제 WDK 일반／CFG 드라이버를 협력형과 명령 시계 스케줄링으로 실행합니다. C API／CLI／Python도 동일한 식별자를 유지합니다. 사용할 수 없는 백엔드는 건너뛰며 이벤트와 APC 탐침 경계는 전체 커널을 입증하지 않습니다.
+
+`KernelFileTransfers`는 패킷 필드, 특수 오프셋, 추가 전용 핸들, 길이 0, 출력 별칭, 즉시·보류 상태, 작업자 알림, 공개 전 거부를 검사합니다. `OriginalBufferedNativeFileTransfers` / `GenuineWdkBufferedNativeFileTransfers`는 백엔드, 계약, 적재 주소, 스케줄링별로 가져오기 및 동적 해석 호출을 실행합니다. 실제 WDK 일반/CFG 이미지에는 `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` / `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE`를 설정합니다. 사용할 수 없는 백엔드는 명시적으로 건너뜁니다.
+
+CRT 회귀는 모든 바이트/UTF-16 단위, 인수 폭, 변경이 없는 읽기 전용 버퍼, 개수/용량, 잘림, NULL 순서, 순차 별칭, 부분 오류, 해제된 저장소와 탐색 한도를 확인합니다. 원본 `driver_crt_strings.c`와 실제 WDK `NEVERD_WDM_CRT_STRINGS_FIXTURE`/`NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE`는 진입점, 작업자, 언로드에서 가져오기와 동적 조회를 passive/dispatch IRQL 및 두 스케줄링 방식으로 검증합니다. 네이티브 게이트는 두 계약과 적재 기준 주소를 요구하며 사용할 수 없는 백엔드는 명시적으로 건너뜁니다.
+
+메모리 회귀는 전체 용량 지우기와 오류 시 보존, 0 길이, 전체 폭, 겹침, 페이징·해제·읽기 전용 저장소와 한도를 구분한다. 헤더 검사는 부호 없는 DOS 오프셋, 64비트 결과, 주소 경계, 서명만의 승인과 오류 순서를 검증한다. 독립 및 실제 WDK CRT 픽스처는 진입·작업자·언로드에서 가져오기와 동적 호출을 실행한다. 고정 WDK 헤더에 `RtlImageNtHeader` 선언이 없어 로컬 ABI 선언을 사용하지만 PE 형식과 가져오기 라이브러리는 실제 키트를 사용한다. 고정 WDK의 ntoskrnl.lib는 memcpy_s를 게스트 코드로 연결한다. 독립 픽스처는 직접 가져오기를 검증하고 두 픽스처 모두 동적 내보내기 호출을 검증한다.
+
+`KernelFileTransfers`는 플러시 권한, 모든 장치 전송 방식의 버퍼 없는 패킷, 64비트 Information, 디스패치 반환 전 게시·해제, 작업자/보호 영역 알림 및 비동기/동시 요청 거부를 검증합니다. 기존 자체 및 실제 WDK 전송 픽스처도 사용자 IOSB와 아홉 완료 조건에서 가져오기 및 동적 조회 플러시 호출을 실행합니다.
+
+`KernelFileTransfers`는 제어 패킷, ULONG 잘림, 길이 0 포인터, 읽기 전용 입력 복사, IOSB 별칭, 독립 입출력 한계, 지연 완료와 원래 스레드 알림을 검증합니다. 기존 원본 및 실제 WDK 전송 픽스처는 두 API의 가져오기와 동적 조회를 네 가지 버퍼 형태와 아홉 완료 모드로 실행합니다.
+
+회귀 테스트는 출력 별칭, 좁은 인수, 홀수 길이, 설명자 재읽기, 순차 겹침, 할당 실패, NLS 거부, 부분 오류, 수명과 APC_LEVEL을 확인합니다. 시간 테스트는 기준점의 소수 초, ULONG 상한, 입력/출력 별칭을 확인합니다. 자체 및 실제 WDK CRT 드라이버가 진입점, 작업자, 언로드에서 정적/동적 호출을 실행하며 진입점에서는 APC_LEVEL도 검증합니다.
+
+회귀 테스트는 ASCII와 NLS 독립 와이드 범위를 상위 비트와 조합해 전수 검사하고 확장 값 거부, 정확한 인수 수와 APC_LEVEL을 확인합니다. 자체 및 실제 WDK CRT는 진입점, 작업자, 언로드에서 세 정적/동적 호출을 검증합니다. WDK ctype.h의 wint_t는 16비트이며 기대값은 호스트 CRT에 의존하지 않습니다.
+
+디버그 회귀는 세 진입점의 short 규칙, 게스트 경계 읽기, 단계별 버퍼, 내장 NUL, 해제되거나 페이징된 입력 및 IRQL을 검사합니다. 원본 및 실제 WDK CRT 픽스처는 진입, 작업자, 언로드에서 정적 및 동적 호출을 두 스케줄링 모드, 계약 및 로드 기준 주소로 실행합니다. 사용할 수 없는 백엔드는 명시적으로 건너뜁니다.
+
+회귀는 유지되거나 만료된 스레드, 요청자/작업자/연결 컨텍스트, 모듈 경계와 구멍, 출력 너비, 수명, 권한, IRQL을 검사합니다. 원본 및 실제 WDK CRT 픽스처는 정적/동적 KernelMode 조회를, 파일 조회 픽스처는 UserMode 호출자도 검사합니다. 두 WDK 계열 모두 일반/CFG 이미지를 포함하며 누락된 두 선언은 실제 kit 타입의 로컬 ABI로 보완합니다. 사용할 수 없는 백엔드는 건너뜁니다.
+
+레거시 MDL 검증에는 실제 WDK 정적·동적 호출, 프로세스에 연결된 작업자, 자체 이미지 별칭, 모드 축소, IRQL, 프로세스 전환, 만료된 설명자, 중복 시스템 매핑과 주입된 별칭 예산 소진이 포함됩니다. 커널 부족은 MDL을 보존하고 미지원 bugcheck를 보고하며 사용자 부족은 예외 처리할 수 있습니다. 원본 래퍼 탐침은 인수 전달과 반환 폭만 검증하고 주입된 매퍼는 검증하지 않습니다.
+
+`KernelFileQueries.BaseDevice*`는 기본 장치와 두 필터 계층, 참조 유지, 확장 포인터 무시, 생성／정리／닫기 상태, 손상된 기록 및 IRQL을 검사합니다. 자체 및 실제 WDK 일반／CFG 파일 쿼리 픽스처는 기존 백엔드, 재배치, 스케줄링과 호출자 수명 조합에서 정적／동적 기본 쿼리를 실행합니다.
+
+`KernelDevicePointer.*`는 참조 유지, 출력 겹침, 실패/정보 상태 열기, 대기 CREATE/CLEANUP 후 호출자와 APC 복원, 인수 폭, 공유, 출력 오류의 쓰기 순서, 진입 조건과 언로드를 검사합니다. 원본 및 실제 WDK 파일 시스템 픽스처에 즉시 완료, 작업 항목 CREATE/CLEANUP 완료, 언로드까지 참조 유지와 동적 조회를 추가합니다. `KernelFileSystemExecution.*OpensExistingFiles`는 두 스케줄링 방식, 계약과 로드 주소를 검사하며 사용할 수 없는 전송은 명시적으로 건너뜁니다.
+
+`KernelMDLUserMapping.ProcessProbe*`는 인수 너비, 작업 정규화, IRQL, 살아 있는 프로세스 허용 조건, 검사 중 스레드 식별, 중첩 복원, 예외 후 재시도, 연결/복원 메모리 부족을 검사합니다. 실제 WDK 사용자 매핑 픽스처는 정적/동적 호출, 해제 후 실제 예외 처리기, 연결 상태의 같은 프로세스 호출, 공유 물리 페이지 및 완전한 잠금 해제를 실행합니다. 원본 래퍼와 종료 처리기 검사는 명시적으로 주입한 보조 호출 경계 사이의 제어 흐름만 입증하며 전체 커널 동작을 입증하지 않습니다.
+
+`KernelObjects.FilterVersion*`는 정확한 인수 개수, 호출자와 무관한 결과 및 페이징 IRQL 경계를 검사합니다. 자체 및 실제 WDK CRT 픽스처는 진입점, 작업 스레드, 언로드에서 정적/동적 호출을 수행하며 진입점의 APC_LEVEL도 검사합니다. 원본 두 명령어 검사는 보조 함수를 주입하지 않고 전체 반환 레지스터와 데이터 메모리 부작용 없음을 확인합니다.
+
+`KernelPhysicalRAM.AddressQueries*`와 `KernelMDLUserMapping.PhysicalQuery*`는 별칭, 주소 공간 식별, VA 재사용, 경계, 전체 폭 PFN, IRQL, 페이지 잠금 및 해제된 매핑을 검사합니다. 실제 WDK 사용자 매핑 픽스처는 정적·동적 `MmGetPhysicalAddress`를 MDL PFN과 비교하며, 읽기 전용 사용자 뷰, DPC 수준 시스템 뷰 및 이전 고정 별칭이 남은 재매핑을 실행합니다.
+
+`KernelMDLUserMapping.PrimaryQuery*`는 정확한 할당 바이트, 같은 페이지의 인접 소유자, 전체 폭 주소, IRQL, 해제, 별칭, 매핑 교체, 읽기 보호 및 지원되지 않는 기본 매핑을 검사합니다. 실제 WDK 픽스처는 정적·동적 `MmGetVirtualForPhysical`, DPC 수준 시스템 뷰, 이전 고정 별칭이 남아 있는 사용자 VA 재매핑을 실행합니다.
+
+`DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*`는 활성화, 해제, 중첩 컨텍스트 복원, 전체 폭 경계, IRQL, 프로세스 연결, 출력 중복 및 High→Low 오류 쓰기 순서를 검사합니다. 자체 및 실제 WDK CRT 픽스처는 진입점, 작업자, 언로드에서 두 API를 정적·동적으로 호출하고 지역 변수 범위와 DISPATCH_LEVEL의 경계를 확인합니다.
+
+`KernelMDLChain.CreateMdl*` 및 `KernelMDLUserMapping.CreateMdl*`는 인수 폭, 보존 바이트, 빈 범위와 순환, 풀 및 스택 수명, 잠금, 별칭, 해제 실패, 부분 재사용, IRP 거부와 IRQL을 검사합니다. 실제 WDK 픽스처는 정적·동적 생성, 소유 풀, 호출자 풀 내부 및 스택 기술자, 물리 동일성과 완전한 언로드를 실행합니다. 원본 탐침은 필드 쓰기, 풀 플래그 변환과 주입된 할당／해제 경계를 구분합니다.
+
+`KernelMDLChain.AdvanceMdl*`과 `KernelMDLUserMapping.AdvanceMdl*`은 반복 페이지 이동, 꼬리, 끝 거절, 인수 폭, 전체 매핑, 정리 실패, 권한과 저장소/프로세스 수명을 검사합니다. 실제 WDK는 정적/동적 호출과 명시적 매핑 해제 및 자동 잠금 해제를 실행합니다. 원본 검사는 전체 진행, 복원 도우미, 매핑 종류/PTE 해제 경계를 주입한 래퍼를 구분하며 OS 페이지 데이터베이스 실행을 주장하지 않습니다.
+
+## 기존 정렬 벡터 이동
+
+`NeverDX86LegacyAlignedMoveTests`는 MOVDQA, MOVAPS, MOVAPD의 레지스터 보존과 메모리 접근 전 16바이트 정렬 검사를 확인합니다. 주소 폭에 따른 순환과 명시적 FS/GS 기준 주소도 포함합니다. 정렬되지 않은 접근은 대상 레지스터와 메모리를 보존해야 하며, 세그먼트 기준 주소가 없으면 거부합니다. 이 검증은 리프팅과 에뮬레이터에 해당합니다. 정확한 기호 복원은 유지된 정렬 조건을 별도로 증명해야 합니다.
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*`와 `PEFixedImageTest.RawAlign*`는 독립적인 나머지 증명, 잘못된 입력, 정확한 예산, 원래 검사 보존 및 증명 기록 변조를 검사합니다. 레거시 이동 명령 감사는 정렬 검사를 포함한 전체 연산 범위를 연결하며 불투명한 기계 상태의 보존을 증명하지 않습니다.
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`NeverDX86NativeStateAuditTests`는 표준 x64 REP MOVSQ와 레거시 LDMXCSR의 명령 바이트 및 디코더 세부 정보를 엄격히 검증합니다. 전체 연산 범위는 정의되지 않은 출력 증명 기록에 연결됩니다. 독립적인 전체 상태 및 순차 복사 오라클은 겹침, 0회 복사, 주소 형식, 누락 바이트, 예약 비트를 검사합니다. 실행에는 기존 횟수/방향, 메모리, 유효 MXCSR 마스크 및 값의 유효성 증명이 필요합니다. 이 감사는 부분 오류 후 재시작이나 불투명 상태 보존을 증명하지 않습니다.
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```
+
+`NeverDX86ScalarMoveAuditTests`는 원본 바이트와 완전한 디코더 세부 정보를 기준으로 레거시 MOVSS/MOVSD의 엄격한 허용 여부를 검사합니다. 독립적인 바이트 오라클은 레지스터 병합, 메모리 로드의 0 확장, 스칼라 저장, 모든 정렬 나머지, 16/32/64비트 주소 지정과 전체 레지스터·플래그·MXCSR 보존을 검증합니다. 메모리 바이트 누락이나 읽기 전용 메모리 저장은 아키텍처 출력을 확정해서는 안 됩니다. 문자열, VEX/EVEX, 세그먼트 및 잘못된 형식은 계속 거부하며 기록은 전체 연산 범위를 결속하지만 불투명 상태 보존 권한을 부여하지 않습니다.
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`SymStorePreservation.Independent*`, `RepeatedRegionsFormAUnionAndChargeEveryScan`, `EmptyIndependentRegionsKeepOriginalWorkAccounting`, `ExecutorUsesIndependentRegionsForOnlyOneStore`는 한 번의 STORE로 독립적인 현재 루트 두세 개를 보존하는 동작, 두 바이트 순서, 상대 좌표 0을 지나는 부분 구간, 중첩 선언, 보호되지 않은 간격, 쓰기 이후 미지 값 세대를 검사합니다. 정확한 예산과 한 단위 부족한 예산으로 전체 비용을 확인하며, 없는 영역은 구체화하지 않아야 합니다. 잘못되거나 범위를 벗어난 참조, 좁거나 상수인 기준 주소, 빈 구간이나 역방향 구간, 실제 쓰기 자체의 기준 주소는 상태 변경 없이 거부합니다. 비어 있는 `AdditionalRegions`는 기존 단일 루트 및 `AdditionalRanges` 비용을 유지합니다. 실행기는 단일 이벤트, 같은 영역의 인접 바이트, 이후 일반 쓰기의 무효화를 검사합니다. `SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget`는 비교 일치·불일치, 정확·부족 예산, 보호 루트 두 개, 이전 값 출력, 기존의 보수적 거부 경로를 검사합니다.
+
+`NeverDSymConditionalStoreTests`는 독립 루트 사이의 현재 바이트 조건부 효과, 128비트 쓰기, 두 바이트 순서, 부분 중첩, 기호 상대 좌표의 순환 및 절대 메모리를 다룹니다. 자체 뱅크의 인접 바이트, 현재 사실과 과거 사실, 쓰기 후 미지 에포크, 지원하지 않는 입력, 정확한 예산과 한 단위 부족한 예산도 확인합니다. 실행기 사례는 기존 세그먼트 기준 주소 처리를 사용하는 STORE, 엄격한 CMPXCHG의 성공과 실패, Old의 지연 공개, 거부 시 havoc 및 다른 연산에서 Invalid 유지 여부를 확인합니다. 일반 쓰기와 보존 계약의 기본 동작은 유지됩니다. 이 테스트는 제한된 메모리 의미론을 검증하며 접근 권한이나 전체 프로그램 복원을 인증하지 않습니다.
+
+
+`AbsoluteMemoryFactsTests.inc`는 노드 간 절대 대상, 합류 충돌, 부분 중첩과 미지의 별칭 쓰기, 두 바이트 순서 및 연결 활성화/비활성화에서 스택 분리를 검사한다. 독립 바이트 실행기가 효과를 확인하며 제외 범위 누락과 예산 부족은 거부해야 한다. `SymStorePreservation.Absolute*`와 `SymState.AbsoluteProjections*`는 영역 공존, 높은 주소, 순수한 유한 투영, 미지 세대 및 원자적 거부를 검사한다. `NeverDInterpreterSpecializationTests`, `NeverDSymbolicIntegerIntrinsicTests`, `NeverDSymMemoryKnowledgeTests` 실행 후 네이티브 독립성과 LowIR 정제 모음을 실행한다.
+
+절대 메모리 회귀 테스트는 제한된 연속 및 희소 배치, 전체 쓰기와 셀의 포함 관계, 프레임 및 제외 경계 양끝의 구체적인 별칭 반례를 다룹니다. 정렬 및 역순 범위 합집합은 같은 셀을 보존하고 간격을 폐기하며 보존 예산이 작업 단위 하나만큼 부족하면 상태를 변경하지 않아야 합니다.
+
+## 유한 일반 RAM 읽기 회귀 테스트
+
+`LowIRReadTrace.*`는 공유 입력, 양쪽 바이트 순서, 주소·폭·순서·횟수 변경, 모든 분기, 이전 프레임 쓰기와 부분 중첩, 미정의 값, 반복 읽기의 독립성, 정확하거나 부족한 예산 및 루프 거부를 검사합니다. `OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs`는 원본 기계어 독립성, 기계어에서 LowIR로의 정제와 포인터 변경 거부를 검사합니다. `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDPEFixedImageTests`, `NeverDInterpreterSpecializationTests`를 실행합니다. 이 증명만으로 컴파일된 C나 구체적 CPU 백엔드를 인증하지는 않습니다.
+
+## 네이티브 스칼라 질의 회귀 테스트
+
+`NativeQueryTrace.*`는 독립 결과, 네 가지 0 확장, 인자·횟수·순서 변경, 미정의 인자, 일반 읽기 교차, 모든 분기, 보존 상태, 인코딩·세부 감사, 잘못된 묶음, 예산, 다이제스트, 정적·귀납 거부를 검사합니다. `NativeScalarQueryDescriptor.*`는 공통 기술 제한과 실제 기록의 결합을 검사합니다.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
+
+트랩 회귀는 CC, F1, CD 03의 정확한 유지, 위조 메타데이터 거부, 후속 경로 없는 영역 출구, 정확한 연산 예산과 부족한 예산을 검사합니다. 일반 공급자의 트랩은 같은 명령 또는 다음 명령의 RETURN으로 진행할 수 없습니다. 원본 증명은 UD2도 포함하며, 도달 불가능한 트랩의 Missing 감사를 유지하고 예외 종류, 바이트 또는 감사 불일치를 거부합니다. 도달 가능한 트랩은 원본 증명 및 일반 반환 후보에 대한 정제를 거부하게 합니다.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
+
+이 검사는 선언된 영역을 검증하며 예외 처리나 소스/native 동등성을 증명하지 않습니다.
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+진입 객체 회귀는 기호 복사, 저장 슬롯과 슬롯 복사, 런타임 루프, 잃어버린 바인딩과 합류, 객체 별칭, 전체 넓은/원자/세그먼트 쓰기, 상대 경계, 잘못된 선언, 영수증 변조, 준비·연산 예산의 정확한 한계와 부족한 한계, 노드 예산 소진을 검사한다. 독립적인 바이트/레지스터 오라클이 유지된 효과를 확인한다. 담당 테스트와 raw 소비자 거부 테스트를 함께 실행한다. 이 검사는 전체 함수, 컴파일된 C 또는 일반 ABI 인증서를 제공하지 않는다.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NeverDObjCSourceCallTests`의 `SourceFrameAnalysis.*`와 `NeverDCSourcePresentationTests`를 실행하여 바이트 출처, 경로 일치, 덮어쓰거나 이탈한 저장소, 불변 이미지 범위, 예산, 인코딩 및 메타데이터 경계를 확인합니다. `NeverDWorkerStackText`는 공개 x64/ARM64 PE 사례를 컴파일하고 알 수 없는 덮어쓰기를 포함하여 두 C 경로를 검증합니다. Clang과 lld-link가 필요하며 Windows 네이티브 실행은 별도로 검증해야 합니다.
+
+<!-- i18n-section: interactive-byte-patches -->
+## 대화형 패치의 책임
+
+`NeverDBytePatchTests`는 바이트 오버레이, 재배치 거부, PC 상대 어셈블리, PE 서명과 체크섬을 검사합니다. `NeverDWorkerPatch`는 미리 보기, 오래된 입력, 실행 취소와 다시 실행, 일괄 복원, 읽기 전용 복제본, 다시 열기, 독점 내보내기를 검사합니다.
+
+`NeverDWorkerNativePatch`는 실제 SDK에서도 같은 동작을 검증합니다. `NeverDWorkerSourceBytePatch`는 Linux에서 소스 증명, 독립된 미리보기, 스택 프레임 심볼 및 네이티브 C 함수 교체를 검증합니다.
+
+`NeverDGuiPatchKeys`는 `QWindow` 단축키 처리로 모든 두 번째 키, 로딩 중인 메뉴, 취소 및 편집기 입력을 검증합니다. `NeverDGuiNativePatchKeys`는 실제 SDK 바이트, Hex, 분리 창, 실행 취소·다시 실행·복원을 검증합니다. 같은 실행 파일을 X11에서 실행하면 네이티브 팝업 처리도 확인합니다.
+
+```sh
+cmake --build build-gui --target neverd-gui-patch-tests
+ctest --test-dir build-gui -R 'NeverDGui(Native)?PatchKeys$' --output-on-failure
+NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  python3 tools/neverd-gui/tests/run_wayland_docking.py \
+  build-gui/bin/neverd-gui-patch-tests
+ctest --test-dir build-release/unittests/patch --output-on-failure
+ctest --test-dir build-gui -R 'NeverDWorker(Patch|NativePatch|SourceBytePatch)$' --output-on-failure
+PYTHONPATH=pluginsdk/python NEVERD_TEST_LIBNEVERD="$PWD/build-release/bin/libneverd.so" \
+  NEVERD_TEST_CLI="$PWD/build-release/bin/neverd" \
+  python3 -m unittest discover -s pluginsdk/python/tests -p test_byte_patch_integration.py -v
+QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNotTakeHexRaysKeys patchMenuUsesEngineChoicesAndFixedKeys cancelledPatchMenuDiscardsItsPendingKey
+QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
+```
+
+`NeverDSourceCallABITests`는 Windows ARM64 고정·가변 인자의 전달 위치, 폭, 레지스터 소진과 스택 오프셋을 검사한다. `NeverDWorkerCallSiteTypes`는 이름 있는 float, 레지스터·스택 double, 정수와 부동소수점 반환을 두 C 경로에서 독립된 C 함수와 O0/O2로 실행한다. 승격되지 않은 가변 인자와 불완전한 스택 쓰기는 거부하고 분석 스냅샷을 유지한다. Windows ARM64 네이티브 실행 검증은 아니다.
+
+worker 회귀에는 레지스터와 스택에 나뉜 인자 18개, 부동소수점 반환값, 절반만 기록된 스택 인자의 거부도 포함한다.
+
+`SourceCallABI`와 `CallRegisterConstant`는 만료된 임시 값, 불투명 효과, 바이트 범위, 호출 위치 모호성과 정확한 예산 경계를 검사한다. worker는 뺄셈으로 가변 인자 벡터 개수를 계산하는 호출자를 두 C 경로에서 실행한다.
+
+`LowScalarConstant.SelfDifference*`는 알 수 없는 입력의 복구를 1~8바이트의 구체적인 바이트 패턴 실행과 비교하고 서로 다른 값, 메모리 피연산자 및 잘못된 형태를 거부합니다. `ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary`는 ELF, COFF, Mach-O의 x86, x64, AArch64를 다룹니다. worker는 복구한 분기와 자기 뺄셈으로 얻은 System V 벡터 수를 HighC와 LLVMC의 O0/O2에서 실행합니다.
+
+`X86CarryArithmeticFlags.SelfSubtract*`와 `APXSelfSubtract*`는 결과 비트, 산술 플래그와 보존된 레지스터 상태를 확인합니다. worker 스칼라 분기 테스트는 자기 뺄셈 및 비교 플래그 분기를 포함하여 네이티브 실행과 O0/O2 HighC/LLVMC를 비교합니다.
+
+NeverSight LLVM fork의 `BinaryRewriteRelocationTest`는 x64 PLT, i386 GOT, Mach-O GOTPCREL 및 AArch64 PAGE/PAGEOFF의 최종 바이트를 확인합니다. NeverD 통합 빌드는 기록된 fork를 직접 컴파일합니다. 이 MC 검사는 네이티브 예외 실행을 검증하지 않습니다.
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges`는 레지스터 캡처와 비공개 스택 저장을 확인합니다. `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers`는 Linux x86에서 서로 다른 두 스칼라 인수로 메모리 및 레지스터 대상의 HighC/LLVMC를 O0/O2로 실행합니다. Python ABI 목록과 GUI 소스 문자열 검사는 분석 섹션 인터페이스와 메시지를 포함합니다.
+
+`NeverDSelfCompareFlagTests`는 x86, x64, ARM32, AArch64의 원본 함수와 재구성한 함수를 실행하여 비교합니다. 기본 기계어 경로, `NEVERD_SEMANTIC_HIGHC=1`, `NEVERD_SEMANTIC_LLVMC=1`을 각각 실행합니다. 자기 CMP/SUB의 플래그, 분기, 조건 값을 논리 테스트 및 시프트된 피연산자 대조군과 검증하고 기존 부호 있는 오버플로 회귀도 실행합니다.
+
+자기 비교 행렬은 인수가 없는 동등 비교 및 뺄셈 오버플로 사례도 실행합니다. 입력 레지스터 값이 필요하지 않으므로 두 C 경로 모두 알 수 없는 상태의 트랩을 추가하면 안 됩니다.
+
+HFA 임포트 슬롯 테스트는 엄격한 C 프로토타입을 컴파일하고 헤더 및 로컬 선언의 완전한 인수와 반환값을 실행 검증합니다. 두 C 경로 모두 float 및 double 구조체, 연속 호출, AArch64 실행을 다룹니다.
+
+## 선택한 함수 선언 검사
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes`는 주소 출력을 정수, 포인터, 부동소수점, void 구현과 결합한다. `AddressOnlyCallbackConvertsToItsKnownParameterType`는 형식이 지정된 콜백을 실행한다. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules`는 개별 선택과 전체 단위 및 콜드·웜 캐시를 비교한다. x64/ARM64 PE, ELF, Mach-O 모델이 생성한 C를 호스트에서 O0/O2와 UBSan으로 실행한다. 모든 대상의 네이티브 실행을 검증한 것은 아니다. 경계 변경 후 호출 계약, 포인터 투영, 소스 ABI 및 피호출 함수 캐시 검사를 실행한다.

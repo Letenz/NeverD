@@ -10,6 +10,7 @@
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/Demangle/SwiftDemangle.h"
 
@@ -83,11 +84,11 @@ swiftMangledURLArrayForceCastSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -203,11 +204,11 @@ swiftMangledURLArrayBufferSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -314,11 +315,11 @@ swiftMangledURLArrayAppendSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   const auto Expected = llvm::swiftDemangle(
       "$sSa6append10contentsOfyqd__n_t7ElementQyd__RszSTRd__lF"
@@ -327,7 +328,7 @@ swiftMangledURLArrayAppendSourceABI(
   if (!Parsed.Root || !Parsed.Error.empty() || !Expected.Root ||
       !Expected.Error.empty())
     return std::nullopt;
-  size_t Budget = 128;
+  size_t Budget = kSourceSliceWork;
   const auto Equal = [&](const auto &Self, const llvm::SwiftDemangleNode &A,
                          const llvm::SwiftDemangleNode &B) -> bool {
     if (!Budget || A.Kind != B.Kind || A.Text != B.Text || A.Index != B.Index ||
@@ -368,7 +369,10 @@ swiftMangledArrayStringValueInitializerSourceABI(
       !Image.isCodeAddress(Entry) || Low.Entry != Entry ||
       Low.Blocks.size() != 1 || Low.Blocks[0].StartAddr != Entry ||
       !Low.Blocks[0].Preds.empty() || !Low.Blocks[0].Succs.empty() ||
-      Low.Blocks[0].Ops.empty() || Low.Blocks[0].Ops.size() > 4096)
+      Low.Blocks[0].Ops.empty() ||
+      Low.Blocks[0].Ops.size() >
+          ::neverd::sdk::
+              kSwiftMangledSourceABISwiftMangledArrayStringValueInitializerSourceABILowBlocks0OpsSizeLimit)
     return std::nullopt;
   const auto &TRI = getTargetRegInfo(Image.Arch);
   const auto Register = TRI.IntReturnReg;
@@ -399,11 +403,11 @@ swiftMangledArrayStringValueInitializerSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -499,11 +503,11 @@ swiftMangledObjCBoolMemberSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -587,11 +591,11 @@ swiftMangledObjCObjectVoidMethodSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -686,11 +690,11 @@ swiftMangledUIColorIntAllocatorSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -763,11 +767,11 @@ swiftMangledUIColorIntAlphaAllocatorSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -858,11 +862,11 @@ swiftMangledClassOptionalExistentialGetterSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -941,11 +945,11 @@ swiftMangledClassScalarGetterSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -1017,11 +1021,11 @@ swiftMangledDoubleFloatingPropertySourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -1110,11 +1114,11 @@ swiftMangledClassReferenceGetterSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -1191,11 +1195,11 @@ swiftMangledProfiledObjCCGFloatSetterSourceABI(
     return std::nullopt;
 
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -1263,11 +1267,11 @@ swiftMangledClassScalarSetterSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -1341,11 +1345,11 @@ swiftMangledAnyClassInitializerSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -1426,11 +1430,11 @@ swiftMangledObjCOptionalStringGetterSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -1516,11 +1520,11 @@ swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -1616,11 +1620,11 @@ swiftMangledObjCOptionalStringIntDictionaryGetterSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -1708,11 +1712,11 @@ swiftMangledUIColorPairClassInitializerSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -1816,11 +1820,11 @@ swiftMangledCGRectClassInitializerSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -1910,11 +1914,11 @@ swiftMangledCoderClassInitializerSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Count) {
@@ -2034,11 +2038,11 @@ swiftMangledNibBundleClassInitializerSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Count) {
@@ -2147,11 +2151,11 @@ swiftMangledBundleModuleClosureSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Count) {
@@ -2205,7 +2209,7 @@ swiftMangledBundleModuleClosureSourceABI(
   if (!Flow.Complete || !Flow.Items.empty())
     return std::nullopt;
   bool Undefined = false;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   walkStmts(Function.Body, [&](const HighStmt &Statement) {
     forEachExpr(Statement, [&](const ExprPtr &Root) {
       std::vector<const HighExpr *> Pending{Root.get()};
@@ -2256,11 +2260,11 @@ swiftMangledZeroArgClassInitializerSourceABI(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {

@@ -87,7 +87,8 @@ Blob decompress(const Blob &Input, uint64_t Budget) {
   std::array<char, BlobTransferBytes> Output;
   uint64_t Read = 0, Produced = 0, Steps = 0;
   for (;;) {
-    if (++Steps > 2 * MaxPackageArchiveBytes / BlobTransferBytes + 1024)
+    if (++Steps > 2 * MaxPackageArchiveBytes / BlobTransferBytes +
+                      ::neverd::limits::web::kPackageArchiveWorkSlack)
       throw Error("package_archive_work_budget_exceeded");
     if (!S.avail_in && Read < Input.size()) {
       Chunk =

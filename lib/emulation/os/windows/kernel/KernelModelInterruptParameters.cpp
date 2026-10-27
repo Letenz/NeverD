@@ -91,7 +91,7 @@ llvm::Expected<uint64_t> KernelModel::connectInterruptEx(uint64_t Record) {
       return Value.takeError();
     *Field.Value = *Value;
   }
-  if (!Params.PDO || !isProviderDevice(Params.PDO))
+  if (!Params.PDO || !isPnpProviderDevice(Params.PDO))
     return apiError("Ex registration requires its configured PDO");
   return registerInterrupt(Params);
 }

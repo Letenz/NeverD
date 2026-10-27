@@ -6,8 +6,8 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/LowIR.h"
-#include "neverd/ir/med/X86RegistrationCall.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/ir/med/X86/X86RegistrationCall.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 namespace neverd {
 

@@ -6,6 +6,8 @@
 
 #include "LLVMCWriter.h"
 
+#include "neverd/backend/Limits.h"
+
 namespace neverd {
 namespace {
 
@@ -83,10 +85,21 @@ std::optional<std::string>
 LLVMCWriter::scalarExpressionText(const llvm::Value *V, bool ForceExpression,
                                   bool InvertCompare, bool Parenthesize) {
   using Expr = std::optional<ScalarExpression>;
-  unsigned Work = 128;
+  unsigned Work = ::neverd::limits::backend::
+      kLLVMCScalarExpressionsLLVMCWriterScalarExpressionTextWork;
   auto Render = [&](auto &&Self, const llvm::Value *Value, unsigned Depth,
                     bool Force) -> Expr {
-    if (!Value || Depth > 32 || Work == 0 || !Value->getType()->isIntegerTy())
+    if (!Value ||
+        Depth >
+            ::neverd::limits::backend::
+                kLLVMCScalarExpressionsLLVMCWriterScalarExpressionTextRenderDepthLimit ||
+        Work == 0 || !Value->getType()->isIntegerTy())
+      return std::nullopt;
+    // Missing machine state is an observed expression, never a declared C
+    // leaf. Let valueStr retain its trap or availability guard, including
+    // when this value occurs inside a larger scalar expression.
+    if (llvm_source_unknown::isValue(Value) ||
+        DeferredUnknownFlags.count(Value))
       return std::nullopt;
     --Work;
     const unsigned Bits = Value->getType()->getIntegerBitWidth();
@@ -405,7 +418,9 @@ LLVMCWriter::scalarConditionalUpdate(const llvm::Value *Destination,
     unsigned Work = 0;
     while (!Pending.empty()) {
       const auto *Value = Pending.pop_back_val();
-      if (++Work > 128)
+      if (++Work >
+          ::neverd::limits::backend::
+              kLLVMCScalarExpressionsLLVMCWriterScalarConditionalUpdateIndependentWorkLimit)
         return false;
       if (!Seen.insert(Value).second || llvm::isa<llvm::ConstantInt>(Value))
         continue;

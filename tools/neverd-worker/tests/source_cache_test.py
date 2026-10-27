@@ -53,6 +53,17 @@ def run(executable):
         high = source(llvm_client, B)
         assert high["fixture_prepared_view"] == "source", high
         reused(source(llvm_client, representation="llvmc"), llvm)
+        # Opening a native graph prepares only its control-flow graphs. Source
+        # for the same entry then continues the retained pipeline instead of
+        # preparing again.
+        graph_client = clients.enter_context(Client(executable))
+        ok(graph_client, "open", {"path": str(binary), "analysis": False,
+                                   "read_only": True})
+        ok(graph_client, "cfg", {"address": A})
+        graph_source = source(graph_client)
+        assert graph_source["fixture_prepared_view"] == "cfg", graph_source
+        assert graph_source["fixture_prepares"] == 1, graph_source
+        reused(source(graph_client), graph_source)
         first = source(client)
         assert first["fixture_prepares"] == 1 and first["fixture_pages"] == 1
         assert first["fixture_renders"] == 0, first
@@ -181,6 +192,41 @@ def run(executable):
         assert rebuilt_b["fixture_prepares"] > previous_b["fixture_prepares"]
         assert rebuilt_b["fixture_pages"] > previous_b["fixture_pages"]
 
+        # Pages preserve navigation order, repeated references, and every
+        # overlapping name. Nested ends or out-of-order producer data remain
+        # valid even when the document cannot use ordered page lookup.
+        for ordering in ("ordered", "unordered", "nested"):
+            fixture = root / f"source-cache-{ordering}.bin"
+            fixture.write_bytes(b"source page navigation fixture")
+            paged = clients.enter_context(Client(executable))
+            ok(paged, "open", {"path": str(fixture), "analysis": False})
+            # The unnamed entry acquires the listing's start alias, so IR
+            # pages also pass through the completed document cache.
+            full = source(paged, representation="low", limit=4)
+            lines = full["text"].splitlines(keepends=True)
+            assert len(lines) == 4
+            assert len(full["rows"]) == 4 and len(full["references"]) == 8
+            assert len(full["source_names"]) == len(full["code_names"]) == 4
+            for offset in (0, 1, 2, 3, 4, 7):
+                for limit in (1, 2, 4):
+                    page = source(paged, representation="low", offset=offset,
+                                  limit=limit)
+                    start, end = min(offset, 4), min(offset + limit, 4)
+                    begin_byte = len("".join(lines[:start]).encode())
+                    end_byte = len("".join(lines[:end]).encode())
+                    assert page["text"] == "".join(lines[start:end])
+                    assert page["byte_offset"] == begin_byte
+                    assert page["fixture_pages"] == full["fixture_pages"]
+                    for field in ("rows", "references"):
+                        expected = [item for item in full[field]
+                                    if start <= item["line"] < end]
+                        assert page[field] == expected, (ordering, offset, field)
+                    for field in ("source_names", "code_names"):
+                        expected = [item for item in full[field]
+                                    if item["begin_byte"] < end_byte and
+                                    item["end_byte"] > begin_byte]
+                        assert page[field] == expected, (ordering, offset, field)
+
         # The byte budget applies before the eight-document count limit.
         # Each document includes thousands of row objects as well as text.
         big = root / "source-cache-budget.bin"
@@ -189,12 +235,36 @@ def run(executable):
         ok(bounded, "open", {"path": str(big), "analysis": False})
         large = source(bounded, limit=1)
         reused(source(bounded, limit=1), large)
+        # Retiring encoded pages must leave the owning document usable. Small
+        # overlapping pages exercise count pressure; larger ones exercise byte
+        # pressure without asking the backend to render the document again.
+        for width in (32, 512):
+            original_page = source(bounded, offset=100, limit=width)
+            for offset in range(101, 171):
+                source(bounded, offset=offset, limit=width)
+            assert source(bounded, offset=100, limit=width) == original_page
+            reused(source(bounded, limit=1), large)
         for entry in entries[1:4]:
             source(bounded, entry, limit=1)
         rebuilt = source(bounded, limit=1)
         assert rebuilt["fixture_prepares"] > large["fixture_prepares"], rebuilt
         assert rebuilt["fixture_pages"] > large["fixture_pages"], rebuilt
         assert rebuilt["text"] == large["text"]
+
+        # A large document still fits the existing byte allowance when the
+        # original is kept in wire form rather than a second parsed DOM.
+        # Every later page must reuse it; SDK counters make this independent
+        # of machine speed and encoded-page eviction.
+        huge_file = root / "pseudocode-large.bin"
+        huge_file.write_bytes(b"large source cache fixture")
+        huge = clients.enter_context(Client(executable))
+        ok(huge, "open", {"path": str(huge_file), "analysis": False})
+        head = source(huge, representation="llvmc")
+        assert head["total_lines"] == 20008, head
+        tail = source(huge, representation="llvmc", offset=20000, limit=16)
+        assert tail["complete"] and "code line 19999" in tail["text"], tail
+        assert tail["fixture_pages"] == head["fixture_pages"], (head, tail)
+        assert source(huge, representation="llvmc") == head
 
         # Switching pipelines can fail after discarding the preceding IR.
         # A graph request for A must really prepare A again; B then retries

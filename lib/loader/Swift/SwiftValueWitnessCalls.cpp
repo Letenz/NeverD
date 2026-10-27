@@ -5,7 +5,9 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 
 #include <algorithm>
 #include <array>
@@ -64,13 +66,16 @@ struct Path {
     } else {
       Steps.push_back({Step::Kind::Add, Offset, 0});
     }
-    return Steps.size() <= 32;
+    return Steps.size() <=
+           ::neverd::limits::loader::kSwiftValueWitnessCallsAddStepsSizeLimit;
   }
 
   bool
   load(uint16_t Bytes,
        std::optional<std::pair<size_t, size_t>> Definition = std::nullopt) {
-    if (Bytes != 8 || Steps.size() == 32)
+    if (Bytes != 8 ||
+        Steps.size() ==
+            ::neverd::limits::loader::kSwiftValueWitnessCallsLoadStepsSizeLimit)
       return false;
     Steps.push_back({Step::Kind::Load, 0, Bytes, Definition});
     return true;
@@ -131,7 +136,8 @@ class Tracer {
   std::map<int, size_t> Blocks;
   bool Valid = true;
   size_t Budget = 0;
-  size_t RemainingBudget = 1U << 20;
+  size_t RemainingBudget =
+      ::neverd::limits::loader::kSwiftValueWitnessCallsRemainingBudget;
   bool Exhausted = false;
   bool UsedCycle = false;
   bool UsedFrame = false;
@@ -192,7 +198,9 @@ class Tracer {
       // proof independent of any inferred call signature or escape summary.
       if (Operation.Opcode == NdOp::CALL ||
           Operation.Opcode == NdOp::INDIR_CALL ||
-          Operation.Opcode == NdOp::INTRINSIC ||
+          (Operation.Opcode == NdOp::INTRINSIC &&
+           !(Image.Arch == Arch::AArch64 &&
+             lowAArch64AddressLoadShapeIsValid(Operation))) ||
           Operation.Opcode == NdOp::ATOMIC_XCHG ||
           Operation.Opcode == NdOp::ATOMIC_ADD ||
           Operation.Opcode == NdOp::ATOMIC_CMPXCHG)
@@ -229,7 +237,9 @@ class Tracer {
       for (size_t Earlier = 0; Earlier < Index; ++Earlier) {
         const auto &Prior = Block.Ops[Earlier];
         if (Prior.Opcode == NdOp::CALL || Prior.Opcode == NdOp::INDIR_CALL ||
-            Prior.Opcode == NdOp::INTRINSIC)
+            (Prior.Opcode == NdOp::INTRINSIC &&
+             !(Image.Arch == Arch::AArch64 &&
+               lowAArch64AddressLoadShapeIsValid(Prior))))
           return std::nullopt;
         if (Prior.Opcode != NdOp::STORE)
           continue;
@@ -463,9 +473,17 @@ public:
       const auto &Block = Function.Blocks[I];
       Valid &= Blocks.emplace(Block.Id, I).second;
       EntryBlocks += Block.StartAddr == Function.Entry;
-      if (Block.Preds.size() > 4096 || Block.Succs.size() > 4096 ||
-          Edges > 131072 - Block.Preds.size() ||
-          Edges + Block.Preds.size() > 131072 - Block.Succs.size()) {
+      if (Block.Preds.size() >
+              ::neverd::limits::loader::
+                  kSwiftValueWitnessCallsTracerBlockPredsSizeLimit ||
+          Block.Succs.size() >
+              ::neverd::limits::loader::
+                  kSwiftValueWitnessCallsTracerBlockSuccsSizeLimit ||
+          Edges > ::neverd::limits::loader::kMaxSwiftWitnessTraceEdges -
+                      Block.Preds.size() ||
+          Edges + Block.Preds.size() >
+              ::neverd::limits::loader::kMaxSwiftWitnessTraceEdges -
+                  Block.Succs.size()) {
         Valid = false;
         continue;
       }
@@ -515,7 +533,7 @@ public:
   bool usedFrame() const { return UsedFrame; }
 
   std::optional<Path> at(size_t Block, size_t Operation, const NdVar &Value) {
-    Budget = 4096;
+    Budget = ::neverd::limits::loader::kSwiftValueWitnessCallsAtBudget;
     Active.clear();
     ActiveSpills.clear();
     UsedCycle = false;
@@ -572,7 +590,9 @@ buildSwiftValueWitnessCallHints(const BinaryImage &Image,
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
-      Function.Blocks.size() > 16384)
+      Function.Blocks.size() >
+          ::neverd::limits::loader::
+              kSwiftValueWitnessCallsBuildSwiftValueWitnessCallHintsFunctionBlocksSizeLimit)
     return Result;
   struct Witness {
     SourceCallTypeHint Hint;

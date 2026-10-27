@@ -12,6 +12,7 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceBindings.h"
 
 #include <optional>
@@ -24,9 +25,6 @@ inline constexpr std::string_view JavaScriptModuleLinkProfile =
     "admitted-relative-file-v1";
 inline constexpr std::string_view NodeModuleLinkProfile =
     "admitted-node-relative-file-v1";
-inline constexpr uint64_t MaxJavaScriptModuleSteps = 2000000;
-inline constexpr uint64_t MaxJavaScriptModuleNameUnits = 1048576;
-inline constexpr uint64_t MaxJavaScriptModulePathUnits = 4096;
 
 struct SourceModuleRequest {
   std::string ID;
@@ -143,8 +141,6 @@ struct HTMLLinks;
 struct HTMLImportMaps;
 inline constexpr std::string_view HTMLModuleLinkProfile =
     "html-inline-module-file-candidates-v2";
-inline constexpr uint64_t MaxHTMLModuleLinkSteps = 4 * 1024 * 1024;
-inline constexpr uint64_t MaxHTMLModuleRequests = 10000;
 /// Explicit inline occurrence context, never a fabricated captured member.
 /// Literal ESM imports/reexports and dynamic import expressions use the HTML
 /// URL owners. Import-map composition requires the source-order candidate

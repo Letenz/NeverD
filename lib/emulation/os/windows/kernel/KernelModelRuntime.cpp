@@ -180,18 +180,20 @@ struct FormatSpec {
 class Formatter {
   const KernelModel &Model;
   GuestMemory &Memory;
-  ArgumentReader ReadArgument;
+  using TypedArgumentReader =
+      llvm::function_ref<llvm::Expected<uint64_t>(unsigned, unsigned)>;
+  TypedArgumentReader ReadArgument;
   unsigned NextArgument;
   unsigned UsedArguments = 0;
   std::string Output;
 
-  llvm::Expected<uint64_t> argument() {
+  llvm::Expected<uint64_t> argument(unsigned Size) {
     if (UsedArguments == MaxDebugArguments)
       return runtimeError("DbgPrint exceeds the variadic argument limit");
     if (!ReadArgument)
       return runtimeError("DbgPrint variadic argument reader is unavailable");
     ++UsedArguments;
-    return ReadArgument(NextArgument++);
+    return ReadArgument(NextArgument++, Size);
   }
 
   llvm::Error append(llvm::StringRef Text) {
@@ -244,7 +246,7 @@ class Formatter {
     }
     if (Position < Format.size() && Format[Position] == '*') {
       ++Position;
-      auto Width = argument();
+      auto Width = argument(4);
       if (!Width)
         return Width.takeError();
       const int64_t SignedWidth = static_cast<int32_t>(*Width);
@@ -263,7 +265,7 @@ class Formatter {
       ++Position;
       if (Position < Format.size() && Format[Position] == '*') {
         ++Position;
-        auto Precision = argument();
+        auto Precision = argument(4);
         if (!Precision)
           return Precision.takeError();
         const int32_t SignedPrecision = static_cast<int32_t>(*Precision);
@@ -462,7 +464,7 @@ class Formatter {
 
 public:
   Formatter(const KernelModel &Model, GuestMemory &Memory,
-            ArgumentReader ReadArgument, unsigned FirstArgument)
+            TypedArgumentReader ReadArgument, unsigned FirstArgument)
       : Model(Model), Memory(Memory), ReadArgument(ReadArgument),
         NextArgument(FirstArgument) {}
 
@@ -502,7 +504,17 @@ public:
       auto Kind = conversion(Format[Position++]);
       if (!Kind)
         return runtimeError("unsupported DbgPrint conversion specifier");
-      auto Value = argument();
+      // Slots advance by eight bytes on x64, but the kernel reads only the
+      // conversion's scalar width (including byte/WORD character loads).
+      unsigned Size = 8;
+      if (*Kind < Conversion::Pointer)
+        Size = Spec->Bits / 8;
+      else if (*Kind == Conversion::Character)
+        Size =
+            Spec->Length == LengthKind::Wide || Spec->Length == LengthKind::Long
+                ? 2
+                : 1;
+      auto Value = argument(Size);
       if (!Value)
         return Value.takeError();
       if (auto E = render(*Kind, *Spec, *Value))
@@ -511,6 +523,26 @@ public:
     return Output;
   }
 };
+
+std::string debugBuffer(llvm::StringRef Prefix, llvm::StringRef Body) {
+  // The prefix is clipped again for each growing attempt. An empty body can
+  // therefore succeed with only 127 prefix bytes even when the prefix is long.
+  for (unsigned Capacity = 128; Capacity <= MaxDebugBytes; Capacity += 128) {
+    auto Kept = Prefix.take_front(Capacity - 1);
+    if (Body.size() < Capacity - Kept.size()) {
+      std::string Text = (Kept + Body).str();
+      // Successful calls publish strlen(buffer), not the printf byte count.
+      Text.resize(Text.find('\0') == std::string::npos ? Text.size()
+                                                       : Text.find('\0'));
+      return Text;
+    }
+  }
+  // Overflow publishes exactly 511 bytes, even with embedded NUL characters.
+  std::string Text = (Prefix.take_front(MaxDebugBytes - 1) + Body).str();
+  Text.resize(MaxDebugBytes - 2);
+  Text.push_back('\n');
+  return Text;
+}
 } // namespace
 
 llvm::Expected<uint64_t> unicodeOperation(const KernelModel &Model,
@@ -636,6 +668,84 @@ llvm::Expected<uint64_t> initializeUnicodeStringEx(const KernelModel &Model,
   if (auto E = Memory.writeInteger(A[0] + UnicodeMaximumOffset, Length + 2, 2))
     return E;
   return StatusSuccess;
+}
+
+llvm::Expected<uint16_t> uppercaseUnicodeUnit(uint16_t Unit) {
+  if (Unit >= 0xc0)
+    return runtimeError("Unicode upcasing requires an unmodeled NLS table");
+  return Unit >= 'a' && Unit <= 'z' ? uint16_t(Unit - 32) : Unit;
+}
+
+llvm::Expected<uint64_t> uppercaseCharacter(uint64_t Value, bool Narrow) {
+  // Kernel toupper converts the low byte through the active code page, even
+  // for int carriers outside the portable CRT input domain. ASCII is shared
+  // by ANSI and UTF-8 modes; extended bytes require a declared code page.
+  const uint16_t Unit = Narrow ? uint8_t(Value) : uint16_t(Value);
+  if (Narrow && Unit > MaxASCII)
+    return runtimeError("toupper requires an unmodeled ANSI code page");
+  auto Upper = uppercaseUnicodeUnit(Unit);
+  if (!Upper)
+    return Upper.takeError();
+  return uint64_t(*Upper);
+}
+
+llvm::Expected<uint64_t> hashUnicodeString(const KernelModel &Model,
+                                           GuestMemory &Memory,
+                                           llvm::ArrayRef<uint64_t> A) {
+  if (!A[0] || !A[3])
+    return StatusInvalidParameter;
+  if (auto E = checkBufferRange(A[0], UnicodeBufferOffset + 8))
+    return E;
+  auto Buffer = readInteger(Model, Memory, A[0] + UnicodeBufferOffset, 8);
+  if (!Buffer)
+    return Buffer.takeError();
+  if (auto E = Model.validateGuestAccess(A[3], 4, true))
+    return E;
+  if (auto E = Memory.writeInteger(A[3], 0, 4))
+    return E;
+  auto Length = readInteger(Model, Memory, A[0], 2);
+  if (!Length)
+    return Length.takeError();
+  if (uint32_t(A[2]) > 1)
+    return StatusInvalidParameter;
+  uint32_t Hash = 0;
+  for (unsigned I = 0; I < *Length / 2; ++I) {
+    if (auto E = checkBufferRange(*Buffer, I * 2 + 2))
+      return E;
+    auto Unit = readInteger(Model, Memory, *Buffer + I * 2, 2);
+    if (!Unit)
+      return Unit.takeError();
+    if (uint8_t(A[1])) {
+      auto Upper = uppercaseUnicodeUnit(*Unit);
+      if (!Upper)
+        return Upper.takeError();
+      *Unit = *Upper;
+    }
+    Hash = Hash * 65599u + uint32_t(*Unit);
+  }
+  if (auto E = Model.validateGuestAccess(A[3], 4, true))
+    return E;
+  if (auto E = Memory.writeInteger(A[3], Hash, 4))
+    return E;
+  return StatusSuccess;
+}
+
+llvm::Expected<uint64_t> timeToSecondsSince1980(const KernelModel &Model,
+                                                GuestMemory &Memory,
+                                                llvm::ArrayRef<uint64_t> A) {
+  auto Time = readInteger(Model, Memory, A[0], 8);
+  if (!Time)
+    return Time.takeError();
+  // Every negative signed input is before 1980. Unsigned subtraction makes
+  // the other out-of-range values explicit without signed overflow.
+  const uint64_t Seconds = *Time / 10000000 - 11960006400ULL;
+  if ((*Time >> 63) || Seconds > UINT32_MAX)
+    return 0;
+  if (auto E = Model.validateGuestAccess(A[1], 4, true))
+    return E;
+  if (auto E = Memory.writeInteger(A[1], Seconds, 4))
+    return E;
+  return 1;
 }
 
 llvm::Expected<uint64_t> timeToTimeFields(const KernelModel &Model,
@@ -884,10 +994,11 @@ llvm::Expected<uint64_t> prefixUnicodeString(const KernelModel &Model,
 
 llvm::Expected<uint64_t> integerToUnicodeString(const KernelModel &Model,
                                                 GuestMemory &Memory,
-                                                llvm::ArrayRef<uint64_t> A) {
-  // RtlIntegerToChar (RVA 0x6f7000) formats the unsigned value with uppercase
-  // digits and no padding before rejecting any record access.
-  uint32_t Value = static_cast<uint32_t>(A[0]);
+                                                llvm::ArrayRef<uint64_t> A,
+                                                bool WideValue) {
+  // RtlIntegerToChar (RVA 0x6f7000) and RtlLargeIntegerToChar (0x6f6a70)
+  // format unsigned uppercase digits before accessing the output record.
+  uint64_t Value = WideValue ? A[0] : uint32_t(A[0]);
   uint32_t Base = static_cast<uint32_t>(A[1]);
   if (!Base)
     Base = 10;
@@ -908,7 +1019,7 @@ llvm::Expected<uint64_t> integerToUnicodeString(const KernelModel &Model,
     return StatusInvalidParameter;
   }
   static constexpr char Digits[] = "0123456789ABCDEF";
-  char Reversed[32];
+  char Reversed[64];
   unsigned Count = 0;
   do {
     uint32_t Digit;
@@ -928,9 +1039,6 @@ llvm::Expected<uint64_t> integerToUnicodeString(const KernelModel &Model,
   auto Maximum = Memory.readInteger(A[2] + UnicodeMaximumOffset, 2);
   if (!Maximum)
     return Maximum.takeError();
-  auto Buffer = Memory.readInteger(A[2] + UnicodeBufferOffset, 8);
-  if (!Buffer)
-    return Buffer.takeError();
   // RtlAnsiStringToUnicodeString (RVA 0x6f6840) stores Length before checking
   // that MaximumLength also holds the terminator.
   const uint64_t Length = Count * 2;
@@ -940,12 +1048,26 @@ llvm::Expected<uint64_t> integerToUnicodeString(const KernelModel &Model,
     return E;
   if (Length + 2 > *Maximum)
     return StatusBufferOverflow;
-  std::vector<uint8_t> Bytes(Length + 2, 0);
+  auto Buffer = Memory.readInteger(A[2] + UnicodeBufferOffset, 8);
+  if (!Buffer)
+    return Buffer.takeError();
+  std::vector<uint8_t> Bytes(Length, 0);
   for (unsigned I = 0; I < Count; ++I)
     Bytes[I * 2] = static_cast<uint8_t>(Reversed[Count - 1 - I]);
   if (auto E = Model.validateGuestAccess(*Buffer, Bytes.size(), true))
     return E;
   if (auto E = Memory.write(*Buffer, Bytes))
+    return E;
+  // The target conversion publishes digits before reloading Buffer for the
+  // terminator. A caller buffer may overlap its own UNICODE_STRING record.
+  Buffer = Memory.readInteger(A[2] + UnicodeBufferOffset, 8);
+  if (!Buffer)
+    return Buffer.takeError();
+  if (*Buffer > UINT64_MAX - Length)
+    return runtimeError("integer string terminator address overflows");
+  if (auto E = Model.validateGuestAccess(*Buffer + Length, 2, true))
+    return E;
+  if (auto E = Memory.writeInteger(*Buffer + Length, 0, 2))
     return E;
   return StatusSuccess;
 }
@@ -1087,6 +1209,145 @@ uint64_t foldAsciiUpper(uint64_t Unit) {
 }
 } // namespace
 
+llvm::Expected<uint64_t> imageNtHeader(const KernelModel &Model,
+                                       GuestMemory &Memory, uint64_t Base) {
+  // RtlImageNtHeader calls RtlImageNtHeaderEx with NO_RANGE_CHECK. It validates
+  // DOS and PE signatures, not the machine, optional header or section table.
+  if (!Base || Base == UINT64_MAX)
+    return 0;
+  auto Read = [&](uint64_t Address,
+                  unsigned Width) -> llvm::Expected<uint64_t> {
+    if (auto E = checkBufferRange(Address, Width))
+      return E;
+    if (auto E = Model.validateGuestAccess(Address, Width, false))
+      return E;
+    return Memory.readInteger(Address, Width);
+  };
+  auto Dos = Read(Base, 2);
+  if (!Dos)
+    return Dos.takeError();
+  if (*Dos != 0x5a4d)
+    return 0;
+  if (Base > UINT64_MAX - 60)
+    return runtimeError("DOS header address overflows");
+  auto Offset = Read(Base + 60, 4);
+  if (!Offset)
+    return Offset.takeError();
+  if (*Offset > UINT64_MAX - Base)
+    return 0;
+  const uint64_t Header = Base + *Offset;
+  // The pinned x64 routine applies the original user-address fence to a
+  // low-address image, even though NO_RANGE_CHECK omits the caller image size.
+  constexpr uint64_t UserFence = 0x7ffffffeffff;
+  if (Base < UserFence && Header >= UserFence - 264)
+    return 0;
+  auto Signature = Read(Header, 4);
+  if (!Signature)
+    return Signature.takeError();
+  return *Signature == 0x4550 ? Header : 0;
+}
+
+uint64_t cIsDigit(uint32_t Value) {
+  const uint8_t Byte = uint8_t(Value);
+  return Value != UINT32_MAX && Byte >= '0' && Byte <= '9' ? 4 : 0;
+}
+
+llvm::Expected<uint64_t> cStringChangeCase(const KernelModel &Model,
+                                           GuestMemory &Memory,
+                                           uint64_t Address, unsigned UnitWidth,
+                                           bool Lower) {
+  // The narrow upper and wide lower exports handle NULL; wide upper reads it.
+  if (!Address && (UnitWidth == 1 || Lower))
+    return 0;
+  const uint64_t First = Lower ? 'A' : 'a';
+  for (uint64_t I = 0;; ++I) {
+    auto Unit = readScanUnit(Model, Memory, Address, I, UnitWidth);
+    if (!Unit)
+      return Unit.takeError();
+    if (!*Unit)
+      return Address;
+    if (*Unit >= First && *Unit < First + 26) {
+      const uint64_t Target = Address + I * UnitWidth;
+      if (auto E = Model.validateGuestAccess(Target, UnitWidth, true))
+        return E;
+      if (auto E = Memory.writeInteger(Target, Lower ? *Unit + 32 : *Unit - 32,
+                                       UnitWidth))
+        return E;
+    }
+  }
+}
+
+llvm::Expected<uint64_t> cStringCheckedWrite(const KernelModel &Model,
+                                             GuestMemory &Memory,
+                                             llvm::ArrayRef<uint64_t> A,
+                                             unsigned UnitWidth, bool Append) {
+  constexpr uint64_t Invalid = 22, Range = 34, Truncated = 80;
+  const bool Counted = A.size() == 4;
+  const uint64_t Destination = A[0], Capacity = A[1], Source = A[2];
+  const uint64_t Count = Counted ? A[3] : UINT64_MAX;
+  if (Counted && !Count && !Destination && !Capacity)
+    return 0;
+  if (!Destination || !Capacity)
+    return Invalid;
+  auto Store = [&](uint64_t Index, uint64_t Value) -> llvm::Error {
+    if (Index >= profile::KernelArenaSize / UnitWidth)
+      return runtimeError("checked C string exceeds the model buffer limit");
+    if (auto E = checkBufferRange(Destination, (Index + 1) * UnitWidth))
+      return E;
+    const uint64_t Address = Destination + Index * UnitWidth;
+    if (auto E = Model.validateGuestAccess(Address, UnitWidth, true))
+      return E;
+    return Memory.writeInteger(Address, Value, UnitWidth);
+  };
+  auto Clear = [&](uint64_t Status) -> llvm::Expected<uint64_t> {
+    if (auto E = Store(0, 0))
+      return E;
+    return Status;
+  };
+  if (Counted && !Count)
+    return Clear(0);
+  if (!Source)
+    return Clear(Invalid);
+  uint64_t Prefix = 0;
+  if (Append) {
+    while (Prefix < Capacity) {
+      auto Unit = readScanUnit(Model, Memory, Destination, Prefix, UnitWidth);
+      if (!Unit)
+        return Unit.takeError();
+      if (!*Unit)
+        break;
+      ++Prefix;
+    }
+    if (Prefix == Capacity)
+      return Clear(Invalid);
+  }
+  const uint64_t Available = Capacity - Prefix;
+  for (uint64_t I = 0;; ++I) {
+    auto Unit = readScanUnit(Model, Memory, Source, I, UnitWidth);
+    if (!Unit)
+      return Unit.takeError();
+    // These exports copy one unit at a time, including on error. A later
+    // fault does not roll back earlier stores or a completed append prefix.
+    if (auto E = Store(Prefix + I, *Unit))
+      return E;
+    if (!*Unit)
+      return 0;
+    if (I + 1 == Available) {
+      if (Counted && Count == UINT64_MAX) {
+        if (auto E = Store(Capacity - 1, 0))
+          return E;
+        return Truncated;
+      }
+      return Clear(Range);
+    }
+    if (Counted && I + 1 == Count) {
+      if (auto E = Store(Prefix + I + 1, 0))
+        return E;
+      return 0;
+    }
+  }
+}
+
 llvm::Expected<uint64_t> cStringLength(const KernelModel &Model,
                                        GuestMemory &Memory,
                                        llvm::ArrayRef<uint64_t> A,
@@ -1129,6 +1390,71 @@ llvm::Expected<uint64_t> cStringCompare(const KernelModel &Model,
       return 0;
   }
   return 0;
+}
+
+llvm::Expected<uint64_t> cStringWrite(const KernelModel &Model,
+                                      GuestMemory &Memory,
+                                      llvm::ArrayRef<uint64_t> A,
+                                      unsigned UnitWidth, bool Append) {
+  const bool Counted = A.size() == 3;
+  const uint64_t Count = Counted ? A[2] : UINT64_MAX;
+  // Unlike strncat, the wide kernel routine still scans and stores the
+  // destination terminator when Count is zero. Neither reads the source.
+  if (Counted && !Count && (!Append || UnitWidth == 1))
+    return A[0];
+  if (Counted && !Append) {
+    if (Count > UINT64_MAX / UnitWidth)
+      return runtimeError("C string count overflows its byte size");
+    if (auto E = checkBufferRange(A[0], Count * UnitWidth))
+      return E;
+  }
+  uint64_t PrefixBytes = 0;
+  if (Append) {
+    auto Length = cStringLength(Model, Memory, {A[0]}, UnitWidth);
+    if (!Length)
+      return Length.takeError();
+    PrefixBytes = *Length * UnitWidth;
+  }
+  std::vector<uint8_t> Output;
+  bool Terminated = false;
+  for (uint64_t I = 0; I < Count; ++I) {
+    auto Unit = readScanUnit(Model, Memory, A[1], I, UnitWidth);
+    if (!Unit)
+      return Unit.takeError();
+    Output.push_back(uint8_t(*Unit));
+    if (UnitWidth == 2)
+      Output.push_back(uint8_t(*Unit >> 8));
+    if (!*Unit) {
+      Terminated = true;
+      break;
+    }
+  }
+  const uint64_t SourceBytes = Output.size();
+  if (Counted && !Append)
+    Output.resize(Count * UnitWidth, 0);
+  else if (!Terminated)
+    Output.resize(Output.size() + UnitWidth, 0);
+  const uint64_t TotalBytes = PrefixBytes + Output.size();
+  if (auto E = checkBufferRange(A[0], TotalBytes))
+    return E;
+  // C defines no overlapping copy/append behavior. Include the destination
+  // prefix in that check, but only source units actually consumed by the call.
+  if (SourceBytes &&
+      (A[0] <= A[1] ? A[1] - A[0] < TotalBytes : A[0] - A[1] < SourceBytes))
+    return runtimeError("overlapping buffers passed to a C string write API");
+  const uint64_t Destination = A[0] + PrefixBytes;
+  if (auto E = Model.validateGuestAccess(Destination, Output.size(), true))
+    return E;
+  auto Writable = Memory.canAccess(Destination, Output.size(), Write);
+  if (!Writable)
+    return Writable.takeError();
+  if (!*Writable)
+    return runtimeError("C string destination requires writable memory");
+  if (auto E = Memory.validateBacking(Destination, Output.size()))
+    return E;
+  if (auto E = Memory.write(Destination, Output))
+    return E;
+  return A[0];
 }
 
 llvm::Expected<uint64_t> cStringFindChar(const KernelModel &Model,
@@ -1225,6 +1551,48 @@ llvm::Expected<std::string> formatDebugMessage(const KernelModel &Model,
                                                uint64_t Format,
                                                unsigned FirstArgument,
                                                ArgumentReader ReadArgument) {
-  return Formatter(Model, Memory, ReadArgument, FirstArgument).format(Format);
+  auto Read = [&](unsigned Index, unsigned) -> llvm::Expected<uint64_t> {
+    if (!ReadArgument)
+      return runtimeError("DbgPrint variadic argument reader is unavailable");
+    return ReadArgument(Index);
+  };
+  auto Body = Formatter(Model, Memory, Read, FirstArgument).format(Format);
+  if (!Body)
+    return Body.takeError();
+  return debugBuffer({}, *Body);
+}
+
+llvm::Expected<std::string> formatPrefixedDebugMessage(const KernelModel &Model,
+                                                       GuestMemory &Memory,
+                                                       uint64_t Prefix,
+                                                       uint64_t Format,
+                                                       uint64_t Arguments) {
+  std::string Text;
+  // strlen scans the whole prefix, even if only a small prefix slice is kept.
+  for (uint64_t I = 0;; ++I) {
+    if (auto E = checkBufferRange(Prefix, I + 1))
+      return E;
+    auto Byte = readInteger(Model, Memory, Prefix + I, 1);
+    if (!Byte)
+      return Byte.takeError();
+    if (!*Byte)
+      break;
+    if (*Byte > MaxASCII)
+      return runtimeError("DbgPrint prefix requires an unmodeled code page");
+    if (Text.size() < MaxDebugBytes - 1)
+      Text.push_back(static_cast<char>(*Byte));
+  }
+  auto Read = [&](unsigned Index, unsigned Size) -> llvm::Expected<uint64_t> {
+    const uint64_t Offset = uint64_t(Index) * 8;
+    if (Arguments > UINT64_MAX - Offset)
+      return runtimeError("DbgPrint va_list address overflows");
+    if (auto E = checkBufferRange(Arguments + Offset, Size))
+      return E;
+    return readInteger(Model, Memory, Arguments + Offset, Size);
+  };
+  auto Body = Formatter(Model, Memory, Read, 0).format(Format);
+  if (!Body)
+    return Body.takeError();
+  return debugBuffer(Text, *Body);
 }
 } // namespace neverd::emulation::runtime

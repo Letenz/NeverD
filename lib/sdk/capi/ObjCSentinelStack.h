@@ -3,6 +3,8 @@
 
 #include "../../ir/high/pass/HighFrameAddress.h"
 
+#include "neverd/sdk/Limits.h"
+
 #include <map>
 
 namespace neverd::sdk {
@@ -25,7 +27,7 @@ sentinelPrivateStackLoads(const HighFunc &Function, const HighExpr &Call,
         Statement.Dst->Kind == ExprKind::Var)
       ++DefinitionCounts[varKey(Statement.Dst->Var)];
   });
-  size_t Budget = 10000;
+  size_t Budget = kSourceFrameWork;
   VarKeyMap<ExprPtr> FrameAliases;
   std::map<int64_t, va_t> Slots;
   unsigned Calls = 0;
@@ -40,7 +42,10 @@ sentinelPrivateStackLoads(const HighFunc &Function, const HighExpr &Call,
   };
   const auto Read = [&](auto &&Self, const ExprPtr &Value,
                         unsigned Depth) -> bool {
-    if (!Value || !Budget || Depth > 64 ||
+    if (!Value || !Budget ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSentinelStackSentinelPrivateStackLoadsReadReadDepthLimit ||
         Value->IntrinsicId != Intrinsic::None ||
         !Value->IntrinsicOutputs.empty() ||
         Value->MemoryOrdering != NdMemoryOrdering::None ||

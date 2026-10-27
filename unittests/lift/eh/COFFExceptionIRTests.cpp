@@ -4,10 +4,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../core/SourceCallExecution.h"
+#include "CSourceText.h"
 #include "gtest/gtest.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
+#include "neverd/backend/RewriteSourceIdentity.h"
+#include "neverd/backend/c/CSourceMap.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
@@ -143,6 +147,51 @@ CompilerResult runCCompiler(llvm::StringRef Source,
   Result.Output = Read(OutputPath);
   Result.Error += Read(ErrorPath);
   return Result;
+}
+
+void checkStandaloneSEHSource(llvm::StringRef Source,
+                              bool CompileObject = false) {
+  ASSERT_TRUE(hasHostFixtureCompiler());
+  // Supply the small platform-header interface independently of the emitter.
+  // The compiler still checks the real SEH intrinsic scopes, and the source
+  // itself must include the header rather than relying on a test prelude.
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-seh-headers", Directory));
+  llvm::FileRemover RemoveDirectory(Directory);
+  const std::string HeaderPath = Directory.str().str() + "/excpt.h";
+  llvm::FileRemover RemoveHeader(HeaderPath);
+  std::error_code Error;
+  {
+    llvm::raw_fd_ostream Header(HeaderPath, Error);
+    ASSERT_FALSE(Error);
+    Header << "#define EXCEPTION_EXECUTE_HANDLER 1\n"
+              "#define EXCEPTION_CONTINUE_SEARCH 0\n"
+              "#define EXCEPTION_CONTINUE_EXECUTION (-1)\n"
+              "unsigned long _exception_code(void);\n"
+              "void *_exception_info(void);\n"
+              "#define exception_code _exception_code\n"
+              "#define GetExceptionCode() _exception_code()\n"
+              "#define GetExceptionInformation() _exception_info()\n";
+  }
+  const auto Result = runCCompiler(
+      Source, {"--target=x86_64-pc-windows-msvc", "-fms-extensions", "-std=c11",
+               "-fsyntax-only", "-isystem", Directory});
+  EXPECT_EQ(Result.ExitCode, 0) << Result.Error << "\n" << Source.str();
+  if (CompileObject) {
+    const std::string ObjectPath = Directory.str().str() + "/seh.obj";
+    llvm::FileRemover RemoveObject(ObjectPath);
+    for (llvm::StringRef Level : {"-O0", "-O2"}) {
+      // SEH catches machine faults as well as language-level throwing calls.
+      // In particular, a trap in a nested protected region must keep the
+      // parent's unwind registration and escaped filter locals at O0.
+      const auto Object = runCCompiler(
+          Source, {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
+                   "-fasync-exceptions", "-std=c11", Level, "-c", "-o",
+                   ObjectPath, "-isystem", Directory});
+      EXPECT_EQ(Object.ExitCode, 0) << Object.Error << "\n" << Source.str();
+    }
+  }
 }
 
 std::string emitHighC(llvm::ArrayRef<HighFunc> Funcs,
@@ -500,6 +549,225 @@ TEST(COFFExceptionIR, HighCSEHFilterRendersNamedFilterCall) {
   EXPECT_NE(Source.find("handler @ 0x140001200"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("#if 0"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+}
+
+TEST(COFFExceptionIR, HighCStandaloneSEHIncludesItsPlatformDeclarations) {
+  REQUIRE_HOST_FIXTURE_COMPILER();
+  for (bool NamedFilter : {false, true}) {
+    SCOPED_TRACE(NamedFilter);
+    HighFunc Function;
+    Function.Name = "seh_header_dependencies";
+    Function.Entry = 0x140001000;
+    Function.ReturnType = NdType::makeInt(4, false);
+    HighStmt Try;
+    Try.Kind = StmtKind::SEHTry;
+    Try.EHIsReducible = true;
+    Try.EHRange = {Function.Entry, Function.Entry + 0x20};
+    HighStmt Work;
+    Work.Kind = StmtKind::Call;
+    Work.CallExpr = HighExpr::makeCall("may_raise", 0x140002000, {});
+    Try.Body.push_back(Work);
+    HighEHClause Clause;
+    Clause.Kind = HighEHClauseKind::SEHExcept;
+    Clause.FilterOrActionVA = NamedFilter ? 0x140003000 : 0;
+    Clause.HandlerVA = Function.Entry + 0x20;
+    Try.EHClauses.push_back(Clause);
+    MedVar Code;
+    Code.Kind = MedVar::SEHExceptionCode;
+    Code.Size = 4;
+    Code.ConstVal = Clause.HandlerVA;
+    HighStmt HandlerReturn;
+    HandlerReturn.Kind = StmtKind::Return;
+    HandlerReturn.RetVal = HighExpr::makeVar(Code, Function.ReturnType);
+    Try.EHClauseBodies.push_back({HandlerReturn});
+    // Header collection must visit regions nested inside ordinary blocks.
+    HighStmt Outer;
+    Outer.Kind = StmtKind::If;
+    Outer.Cond = HighExpr::makeConst(1, 1);
+    Outer.Body.push_back(Try);
+    Function.Body.push_back(Outer);
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = HighExpr::makeConst(0, 4);
+    Function.Body.push_back(Return);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    std::string Source;
+    llvm::raw_string_ostream Stream(Source);
+    ASSERT_TRUE(HighCEmitter().emit({Function}, Stream, Options));
+    EXPECT_NE(Source.find("GetExceptionCode()"), std::string::npos);
+    EXPECT_NE(Source.find("return seh_exception_code;"), std::string::npos)
+        << Source;
+    checkStandaloneSEHSource(Source);
+  }
+}
+
+// A try at Begin whose one __except clause calls the filter at Filter and
+// resumes at Handler, around one call.
+HighStmt sehTryAround(va_t Begin, va_t End, va_t Filter, va_t Handler,
+                      const char *Work, std::vector<HighStmt> Arm = {}) {
+  HighStmt Try;
+  Try.Kind = StmtKind::SEHTry;
+  Try.EHIsReducible = true;
+  Try.Addr = Begin;
+  Try.EHRange = {Begin, End};
+  HighStmt Call;
+  Call.Kind = StmtKind::Call;
+  Call.Addr = Begin;
+  Call.CallExpr = HighExpr::makeCall(Work, 0x140002000, {});
+  Try.Body.push_back(std::move(Call));
+  HighEHClause Except;
+  Except.Kind = HighEHClauseKind::SEHExcept;
+  Except.FilterOrActionVA = Filter;
+  Except.HandlerVA = Handler;
+  Try.EHClauses.push_back(Except);
+  Try.EHClauseBodies.push_back(std::move(Arm));
+  return Try;
+}
+
+ExceptionFunction sehMetadata(va_t Begin, va_t End) {
+  ExceptionFunction EH;
+  EH.CodeRange = {Begin, End};
+  EH.ParseStatus = ExceptionParseStatus::Complete;
+  EH.Personality = ExceptionPersonality::CSpecificHandler;
+  return EH;
+}
+
+TEST(COFFExceptionIR, HighCSEHFilterIsNamedAsTheFunctionListNamesIt) {
+  // A MinGW object's `.text` section symbol and a linker label start where
+  // its first function does; the function's own symbol names the filter
+  // there.  An export names a filter no symbol does.
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Format = BinaryFormat::COFF;
+  for (const char *Name : {".text", "___tls_start__"}) {
+    Symbol Label;
+    Label.Name = Name;
+    Label.Addr = 0x140001100;
+    Label.IsSection = Label.Name == ".text";
+    Image.Symbols.push_back(Label);
+  }
+  Symbol Filter;
+  Filter.Name = "_gnu_exception_handler";
+  Filter.Addr = 0x140001100;
+  Filter.IsFunc = true;
+  Image.Symbols.push_back(Filter);
+  Export Exported;
+  Exported.Name = "startup_filter";
+  Exported.Addr = 0x140001300;
+  Image.Exports.push_back(Exported);
+
+  std::vector<HighFunc> Functions(2);
+  for (size_t I = 0; I < Functions.size(); ++I) {
+    HighFunc &Function = Functions[I];
+    Function.Name = I ? "exported_filter_fn" : "symbol_filter_fn";
+    Function.Entry = 0x140001000 + I * 0x40;
+    Function.ReturnType = NdType::makeVoid();
+    Function.Body.push_back(sehTryAround(Function.Entry, Function.Entry + 0x10,
+                                         I ? 0x140001300 : 0x140001100,
+                                         0x140001200, "work"));
+  }
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  Options.Image = &Image;
+  ASSERT_TRUE(HighCEmitter().emit(Functions, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("_gnu_exception_handler(GetExceptionInformation())"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("startup_filter(GetExceptionInformation())"),
+            std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("text(GetExceptionInformation())"), std::string::npos)
+      << Source;
+}
+
+TEST(COFFExceptionIR, HighCEmptyExceptArmResumingAfterItsTryPrintsNoJump) {
+  // MSVC's nested __try levels at -O0: an empty __except resumes at a lone
+  // jmp that ordinary flow takes too, past the inner try.  That handler
+  // prints nothing, so the arm ends where its try falls through.
+  HighFunc Function;
+  Function.Name = "nested_seh";
+  Function.Entry = 0x140004A00;
+  Function.ReturnType = NdType::makeVoid();
+  Function.ExceptionMetadata = sehMetadata(0x140004A00, 0x140004A60);
+  HighStmt Anchor;
+  Anchor.Kind = StmtKind::Block;
+  Anchor.Addr = 0x140004A24;
+  HighStmt Recover;
+  Recover.Kind = StmtKind::Call;
+  Recover.Addr = 0x140004A26;
+  Recover.CallExpr = HighExpr::makeCall("recover", 0x140002010, {});
+  HighStmt Outer = sehTryAround(0x140004A12, 0x140004A26, 0x1400083C0,
+                                0x140004A26, "outer_work", {Recover});
+  Outer.Body = {sehTryAround(0x140004A12, 0x140004A24, 0x14000838C, 0x140004A24,
+                             "inner_work"),
+                Anchor};
+  Function.Body.push_back(std::move(Outer));
+  HighStmt Ret;
+  Ret.Kind = StmtKind::Return;
+  Ret.Addr = 0x140004A57;
+  Function.Body.push_back(Ret);
+
+  const std::string Source = emitHighC({Function});
+  const size_t Inner =
+      Source.find("} __except (sub_14000838C(GetExceptionInformation())) {");
+  ASSERT_NE(Inner, std::string::npos) << Source;
+  const size_t Close = Source.find('}', Inner + 1);
+  ASSERT_NE(Close, std::string::npos) << Source;
+  EXPECT_EQ(Source.find_first_not_of(" \n", Source.find('\n', Inner)), Close)
+      << Source;
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("L_140004A24"), std::string::npos) << Source;
+}
+
+TEST(COFFExceptionIR, HighCLeftOutTryTailKeepsTheLabelAJumpLandsOn) {
+  // A switch's cases leave a __try body for its last statement, an empty
+  // anchor the body's printed end leaves out.  Its label stays at the end of
+  // the body, where control runs off it.
+  HighFunc Function;
+  Function.Name = "try_tail_label";
+  Function.Entry = 0x140004E90;
+  Function.ReturnType = NdType::makeVoid();
+  Function.ExceptionMetadata = sehMetadata(0x140004E90, 0x140004F78);
+  HighStmt Try =
+      sehTryAround(0x140004EA1, 0x140004F4D, 0x140008618, 0x140004F4D, "work");
+  HighStmt Leave;
+  Leave.Kind = StmtKind::Goto;
+  Leave.Addr = 0x140004EC0;
+  Leave.GotoTarget = 0x140004F4B;
+  HighStmt Branch;
+  Branch.Kind = StmtKind::If;
+  Branch.Addr = 0x140004EB8;
+  Branch.Cond = HighExpr::makeCall("failed", 0x140002020, {});
+  Branch.Body.push_back(Leave);
+  Try.Body.push_back(Branch);
+  HighStmt More;
+  More.Kind = StmtKind::Call;
+  More.Addr = 0x140004F30;
+  More.CallExpr = HighExpr::makeCall("more", 0x140002030, {});
+  Try.Body.push_back(More);
+  HighStmt Anchor;
+  Anchor.Kind = StmtKind::Block;
+  Anchor.Addr = 0x140004F4B;
+  Try.Body.push_back(Anchor);
+  Function.Body.push_back(std::move(Try));
+  HighStmt Ret;
+  Ret.Kind = StmtKind::Return;
+  Ret.Addr = 0x140004F70;
+  Function.Body.push_back(Ret);
+
+  const std::string Source = emitHighC({Function});
+  const size_t Jump = Source.find("goto L_140004F4B;");
+  const size_t Label = Source.find("L_140004F4B:");
+  const size_t Except = Source.find("} __except (");
+  ASSERT_NE(Jump, std::string::npos) << Source;
+  ASSERT_NE(Label, std::string::npos) << Source;
+  EXPECT_LT(Jump, Label) << Source;
+  EXPECT_LT(Label, Except) << Source;
 }
 
 TEST(COFFExceptionIR, HighCCommentsDisabledStillEmitsOnlyTrap) {
@@ -1107,6 +1375,15 @@ TEST(COFFExceptionIR, LLVMCCatchSwitchRendersExceptSyntax) {
             std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("unhandled:"), std::string::npos) << Source;
+
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  std::string Standalone;
+  llvm::raw_string_ostream Stream(Standalone);
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, Stream, Options));
+  if (hasHostFixtureCompiler())
+    checkStandaloneSEHSource(Standalone);
 }
 
 TEST(COFFExceptionIR, LLVMCWrapUsesRecoveredSEHFilter) {
@@ -1264,7 +1541,7 @@ TEST(COFFExceptionIR, LLVMCExceptWrapContainsHandlerBody) {
 
   std::string Source = emitLLVMC(Module);
   const auto ExceptAt = Source.find("} __except (EXCEPTION_EXECUTE_HANDLER) {");
-  const auto StoreAt = Source.find("ProbeSink = 41");
+  const auto StoreAt = Source.find("ProbeSink = 0x29");
   EXPECT_NE(ExceptAt, std::string::npos) << Source;
   EXPECT_NE(StoreAt, std::string::npos) << Source;
   EXPECT_LT(ExceptAt, StoreAt) << Source;
@@ -1357,7 +1634,11 @@ TEST(COFFExceptionIR, LLVMCExceptContinuationFollowsHandler) {
   EXPECT_LT(ExceptAt, HandleAt) << Source;
   EXPECT_LT(HandleAt, ExceptClose) << Source;
   EXPECT_LT(ExceptClose, AfterAt) << Source;
-  EXPECT_EQ(Source.find("goto ", BodyAt), std::string::npos) << Source;
+  // Cross-scope edges name the continuation explicitly. Its label and body
+  // must both stay outside __except, and every call is still emitted once.
+  const auto ContinuationAt = Source.find("\nL_cont:\n", ExceptClose);
+  ASSERT_NE(ContinuationAt, std::string::npos) << Source;
+  EXPECT_LT(ContinuationAt, AfterAt) << Source;
   EXPECT_EQ(Source.find("handler_step();", HandleAt + 1), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("after_step();", AfterAt + 1), std::string::npos)
@@ -1514,12 +1795,12 @@ TEST(COFFExceptionIR, LLVMCProjectsInternalInvokePhiBridgeCopy) {
   const std::string Source = emitLLVMC(Module);
   const auto InsideAt = Source.find("inside_step();");
   ASSERT_NE(InsideAt, std::string::npos) << Source;
-  const auto CopyAt = Source.find(" = 13;", InsideAt);
+  const auto CopyAt = Source.find(" = 0xD;", InsideAt);
   const auto GotoAt = Source.find("goto L_exit;", InsideAt);
   ASSERT_NE(CopyAt, std::string::npos) << Source;
   ASSERT_NE(GotoAt, std::string::npos) << Source;
   EXPECT_LT(CopyAt, GotoAt) << Source;
-  EXPECT_EQ(Source.find(" = 13;", GotoAt), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" = 0xD;", GotoAt), std::string::npos) << Source;
   if (hasHostFixtureCompiler()) {
     const std::string Prelude =
         "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
@@ -1613,12 +1894,12 @@ TEST(COFFExceptionIR, LLVMCProjectsFallbackAdjacentInvokePhiBridgeCopy) {
   const std::string Source = emitLLVMC(Module);
   const auto InsideAt = Source.find("inside_step();");
   ASSERT_NE(InsideAt, std::string::npos) << Source;
-  const auto CopyAt = Source.find(" = 13;", InsideAt);
+  const auto CopyAt = Source.find(" = 0xD;", InsideAt);
   const auto GotoAt = Source.find("goto L_exit;", InsideAt);
   ASSERT_NE(CopyAt, std::string::npos) << Source;
   ASSERT_NE(GotoAt, std::string::npos) << Source;
   EXPECT_LT(CopyAt, GotoAt) << Source;
-  EXPECT_EQ(Source.find(" = 13;", GotoAt), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" = 0xD;", GotoAt), std::string::npos) << Source;
   if (hasHostFixtureCompiler()) {
     const std::string Prelude =
         "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
@@ -1766,7 +2047,7 @@ TEST(COFFExceptionIR, LLVMCProjectsInvokeNormalEdgesWithHandlerPhiCopy) {
   EXPECT_FALSE(llvm::verifyFunction(*Function, &llvm::errs()));
 
   const std::string Source = emitLLVMC(Module);
-  const auto BodyAt = Source.find("seh_phi_exit_order(");
+  const auto BodyAt = test::cDefinitionAt(Source, "seh_phi_exit_order");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   const auto ExitAt = Source.find("exit_step()", BodyAt);
   const auto InsideAt = Source.find("inside_step();", BodyAt);
@@ -1866,7 +2147,7 @@ TEST(COFFExceptionIR, LLVMCProjectsBothConstantPhiCopiesAfterExcept) {
   EXPECT_FALSE(llvm::verifyFunction(*Function, &llvm::errs()));
 
   const std::string Source = emitLLVMC(Module);
-  const auto BodyAt = Source.find("seh_phi_constant_edges(");
+  const auto BodyAt = test::cDefinitionAt(Source, "seh_phi_constant_edges");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   const auto ExitAt = Source.find("exit_step();", BodyAt);
   const auto ExceptAt = Source.find("} __except (", BodyAt);
@@ -1892,10 +2173,9 @@ TEST(COFFExceptionIR, LLVMCProjectsBothConstantPhiCopiesAfterExcept) {
       << Source;
   EXPECT_NE(Source.find("goto L_join;", ExitAt), std::string::npos) << Source;
   if (hasHostFixtureCompiler()) {
+    // The unit declares its callees itself.
     const std::string Prelude =
-        "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
-        "void exit_step(void);\nvoid inside_step(void);\n"
-        "void after_step(uint32_t);\n";
+        "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n";
     CompilerResult Syntax = runCCompiler(
         Prelude + Source, {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
                            "-std=c11", "-fsyntax-only"});
@@ -1969,7 +2249,7 @@ TEST(COFFExceptionIR, LLVMCFallbackProjectsInvokeNormalEdgesInsideTry) {
   EXPECT_FALSE(llvm::verifyFunction(*Function, &llvm::errs()));
 
   const std::string Source = emitLLVMC(Module);
-  const auto BodyAt = Source.find("seh_fallback_exit(");
+  const auto BodyAt = test::cDefinitionAt(Source, "seh_fallback_exit");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   const auto ExitAt = Source.find("exit_step();", BodyAt);
   const auto InsideAt = Source.find("inside_step();", BodyAt);
@@ -1986,17 +2266,16 @@ TEST(COFFExceptionIR, LLVMCFallbackProjectsInvokeNormalEdgesInsideTry) {
   EXPECT_LT(ExitAt, ExitGotoAt) << Source;
   EXPECT_LT(ExitGotoAt, InsideAt) << Source;
   EXPECT_LT(InsideGotoAt, AfterAt) << Source;
-  EXPECT_LT(AfterAt, ExceptAt) << Source;
+  EXPECT_LT(ExceptAt, AfterAt) << Source;
   EXPECT_NE(Source.find("L_exit:", BodyAt), std::string::npos) << Source;
   EXPECT_NE(Source.find("L_join:", BodyAt), std::string::npos) << Source;
   const auto HandlerDtorAt = Source.find("object_dtor(", ExceptAt);
   EXPECT_NE(HandlerDtorAt, std::string::npos) << Source;
   EXPECT_EQ(Source.find("goto L_done;", ExceptAt), std::string::npos) << Source;
   if (hasHostFixtureCompiler()) {
+    // The unit declares its callees itself.
     const std::string Prelude =
-        "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
-        "void exit_step(void);\nvoid inside_step(void);\n"
-        "void after_step(void);\nvoid object_dtor(void *);\n";
+        "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n";
     CompilerResult Syntax = runCCompiler(
         Prelude + Source, {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
                            "-std=c11", "-fsyntax-only"});
@@ -2066,7 +2345,7 @@ TEST(COFFExceptionIR, LLVMCFallbackKeepsInvokeTargetReturnLabel) {
   EXPECT_FALSE(llvm::verifyFunction(*Function, &llvm::errs()));
 
   const std::string Source = emitLLVMC(Module);
-  const auto BodyAt = Source.find("seh_ret_label(");
+  const auto BodyAt = test::cDefinitionAt(Source, "seh_ret_label");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   const auto ExitAt = Source.find("exit_step();", BodyAt);
   const auto ExceptAt = Source.find("} __except (", BodyAt);
@@ -2084,10 +2363,9 @@ TEST(COFFExceptionIR, LLVMCFallbackKeepsInvokeTargetReturnLabel) {
   EXPECT_NE(Source.find("object_dtor(", ExceptAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("goto L_done;", ExceptAt), std::string::npos) << Source;
   if (hasHostFixtureCompiler()) {
+    // The unit declares its callees itself.
     const std::string Prelude =
-        "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
-        "void exit_step(void);\nvoid inside_step(void);\n"
-        "void object_dtor(void *);\n";
+        "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n";
     CompilerResult Syntax = runCCompiler(
         Prelude + Source, {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
                            "-std=c11", "-fsyntax-only"});
@@ -2095,7 +2373,7 @@ TEST(COFFExceptionIR, LLVMCFallbackKeepsInvokeTargetReturnLabel) {
   }
 }
 
-TEST(COFFExceptionIR, LLVMCFallbackRejectsHandlerJumpIntoTry) {
+TEST(COFFExceptionIR, LLVMCFallbackMovesSharedContinuationOutOfTry) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-seh-fallback-illegal-entry", Context);
   Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
@@ -2131,7 +2409,6 @@ TEST(COFFExceptionIR, LLVMCFallbackRejectsHandlerJumpIntoTry) {
   llvm::IRBuilder<> JoinBuilder(Join);
   llvm::PHINode *Joined = JoinBuilder.CreatePHI(I32, 2, "joined");
   Joined->addIncoming(Result, Entry);
-  Joined->addIncoming(JoinBuilder.getInt32(99), Handler);
   JoinBuilder.CreateCall(AfterStep, {Joined});
   JoinBuilder.CreateBr(Done);
   llvm::IRBuilder<> DispatchBuilder(Dispatch);
@@ -2142,16 +2419,247 @@ TEST(COFFExceptionIR, LLVMCFallbackRejectsHandlerJumpIntoTry) {
   llvm::CatchPadInst *CatchPad = PadBuilder.CreateCatchPad(
       Switch,
       {llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(Context))});
+  auto *Code = PadBuilder.CreateIntrinsic(llvm::Intrinsic::eh_exceptioncode, {},
+                                          {CatchPad}, nullptr, "code");
+  Joined->addIncoming(Code, Handler);
   PadBuilder.CreateCatchRet(CatchPad, Handler);
   llvm::IRBuilder<> HandlerBuilder(Handler);
   HandlerBuilder.CreateBr(Join);
   EXPECT_FALSE(llvm::verifyFunction(*Function, &llvm::errs()));
 
-  // The first movable continuation is Done, but the handler branches to
-  // Join.  Keeping Join in the fallback __try would emit an illegal jump
-  // from __except into that protected scope.
-  EXPECT_DEATH((void)emitLLVMC(Module),
-               "LLVMC EH fallback handler enters protected try body");
+  // LLVM orders Done before Join. Both continuations must stay outside the
+  // wrapper, reached through the same PHI edges as in the original CFG.
+  rewrite_source::setOriginalVA(*Function, 0x140001000);
+  const std::string Unmapped = emitLLVMC(Module);
+  CSourceMap Map;
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  Options.SourceMap = &Map;
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, Stream, Options));
+  EXPECT_EQ(Source, Unmapped);
+  ASSERT_FALSE(Map.Variables.empty());
+  for (const auto &[Key, Variable] : Map.Variables) {
+    if (!Variable.Bytes) {
+      EXPECT_TRUE(Variable.Ambiguous);
+      EXPECT_FALSE(Variable.Type);
+    }
+  }
+  const auto Except = Source.find("} __except (");
+  const auto JoinAt = Source.find("\nL_join:\n");
+  ASSERT_NE(Except, std::string::npos) << Source;
+  ASSERT_NE(JoinAt, std::string::npos) << Source;
+  EXPECT_LT(Except, JoinAt) << Source;
+  EXPECT_NE(Source.find(" = GetExceptionCode();", Except), std::string::npos)
+      << Source;
+  const std::string Prelude =
+      "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
+      "unsigned long GetExceptionCode(void);\n";
+  if (hasHostFixtureCompiler()) {
+    const auto Syntax = runCCompiler(
+        Prelude + Source, {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
+                           "-std=c11", "-fsyntax-only"});
+    ASSERT_EQ(Syntax.ExitCode, 0) << Syntax.Error << "\n" << Source;
+  }
+  // A setjmp provider exercises the generated normal/handler CFG on the
+  // host. The target compile above separately validates legal SEH scopes.
+  const std::string Harness = R"(
+#include <setjmp.h>
+static jmp_buf destination;
+static unsigned raising, observed, calls;
+unsigned long GetExceptionCode(void) { return 99; }
+#define __try if (setjmp(destination) == 0)
+#define __except(filter) else
+uint32_t exit_step(void) { if (raising) longjmp(destination, 1); return 37; }
+void after_step(uint32_t value) { ++calls; observed = value; }
+)";
+  const std::string Main = R"(
+int main(void) {
+  for (raising = 0; raising != 2; ++raising) {
+    calls = observed = 0;
+    seh_illegal_entry();
+    if (calls != 1 || observed != (raising ? 99 : 37)) return 1;
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(
+        Prelude + Harness + Source + Main,
+        {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+}
+
+TEST(COFFExceptionIR, LLVMCTryBeginSplitAfterLoopKeepsRangeAndHandlerEdges) {
+  for (bool MultipleRanges : {false, true}) {
+    SCOPED_TRACE(MultipleRanges);
+    for (bool LateBegin : {false, true}) {
+      SCOPED_TRACE(LateBegin);
+      llvm::LLVMContext Context;
+      llvm::Module Module("seh-range-loop", Context);
+      Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
+      llvm::IRBuilder<> B(Context);
+      auto *Void = B.getVoidTy();
+      auto *I32 = B.getInt32Ty();
+      auto Declare = [&](llvm::StringRef Name, llvm::Type *Result,
+                         llvm::ArrayRef<llvm::Type *> Args = {}) {
+        return llvm::Function::Create(
+            llvm::FunctionType::get(Result, Args, false),
+            llvm::GlobalValue::ExternalLinkage, Name, Module);
+      };
+      auto *Personality = Declare("__C_specific_handler", I32);
+      auto *F = Declare("range_loop", Void);
+      F->setPersonalityFn(Personality);
+      auto Block = [&](llvm::StringRef Name) {
+        return llvm::BasicBlock::Create(Context, Name, F);
+      };
+      auto *Entry = Block("entry");
+      auto *Header = Block("header");
+      auto *Begin = Block("begin");
+      auto *Body = Block("body");
+      auto *End = Block("end");
+      auto *Between = MultipleRanges ? Block("between") : nullptr;
+      auto *BeginAgain = MultipleRanges ? Block("begin_again") : nullptr;
+      auto *BodyAgain = MultipleRanges ? Block("body_again") : nullptr;
+      auto *EndAgain = MultipleRanges ? Block("end_again") : nullptr;
+      auto *Tail = Block("tail");
+      auto *Done = Block("done");
+      auto *Dispatch = Block("dispatch");
+      auto *Pad = Block("pad");
+      auto *Handler = Block("handler");
+      auto *Before = Declare("before_step", I32);
+      auto *Step = Declare("range_step", I32, {I32});
+      auto *BetweenStep = Declare("between_step", Void);
+      auto *After = Declare("after_step", Void, {I32});
+      auto *TryBegin = llvm::Intrinsic::getOrInsertDeclaration(
+          &Module, llvm::Intrinsic::seh_try_begin);
+      auto *TryEnd = llvm::Intrinsic::getOrInsertDeclaration(
+          &Module, llvm::Intrinsic::seh_try_end);
+      B.SetInsertPoint(Entry);
+      B.CreateBr(Header);
+      B.SetInsertPoint(Header);
+      B.CreateCondBr(B.CreateICmpNE(B.CreateCall(Before), B.getInt32(0)), Begin,
+                     Done);
+      B.SetInsertPoint(Begin);
+      B.CreateInvoke(TryBegin, Body, Dispatch);
+      B.SetInsertPoint(Body);
+      llvm::Value *Value = B.CreateInvoke(Step, End, Dispatch, {B.getInt32(0)});
+      B.SetInsertPoint(End);
+      B.CreateInvoke(TryEnd, MultipleRanges ? Between : Tail, Dispatch);
+      if (MultipleRanges) {
+        B.SetInsertPoint(Between);
+        B.CreateCall(BetweenStep);
+        B.CreateBr(BeginAgain);
+        B.SetInsertPoint(BeginAgain);
+        B.CreateInvoke(TryBegin, BodyAgain, Dispatch);
+        B.SetInsertPoint(BodyAgain);
+        Value = B.CreateInvoke(Step, EndAgain, Dispatch, {B.getInt32(1)});
+        B.SetInsertPoint(EndAgain);
+        B.CreateInvoke(TryEnd, Tail, Dispatch);
+      }
+      B.SetInsertPoint(Tail);
+      auto *Joined = B.CreatePHI(I32, 2, "joined");
+      Joined->addIncoming(Value, MultipleRanges ? EndAgain : End);
+      Joined->addIncoming(B.getInt32(99), Handler);
+      B.CreateCall(After, {Joined});
+      B.CreateBr(Header);
+      B.SetInsertPoint(Done);
+      B.CreateRetVoid();
+      B.SetInsertPoint(Dispatch);
+      auto *Switch = B.CreateCatchSwitch(llvm::ConstantTokenNone::get(Context),
+                                         nullptr, 1);
+      Switch->addHandler(Pad);
+      B.SetInsertPoint(Pad);
+      auto *CatchPad = B.CreateCatchPad(
+          Switch, {llvm::ConstantPointerNull::get(B.getPtrTy())});
+      B.CreateCatchRet(CatchPad, Handler);
+      B.SetInsertPoint(Handler);
+      B.CreateBr(Tail);
+      if (LateBegin)
+        Begin->moveBefore(Dispatch->getIterator());
+      ASSERT_FALSE(llvm::verifyFunction(*F, &llvm::errs()));
+      const std::string Source = emitLLVMC(Module);
+      if (MultipleRanges) {
+        // The unprotected operation must remain outside every emitted try.
+        int Depth = 0, TryDepth = -1;
+        for (llvm::StringRef Line :
+             llvm::split(llvm::StringRef(Source), '\n')) {
+          if (Line.contains("__try"))
+            TryDepth = Depth;
+          if (Line.contains("between_step();"))
+            EXPECT_EQ(TryDepth, -1) << Source;
+          for (char C : Line) {
+            if (C == '{')
+              ++Depth;
+            if (C == '}') {
+              --Depth;
+              if (TryDepth == Depth)
+                TryDepth = -1;
+            }
+          }
+        }
+      }
+      const std::string Prelude =
+          "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n";
+      if (hasHostFixtureCompiler()) {
+        const auto Syntax = runCCompiler(
+            Prelude + Source, {"--target=x86_64-pc-windows-msvc",
+                               "-fms-extensions", "-std=c11", "-fsyntax-only"});
+        ASSERT_EQ(Syntax.ExitCode, 0) << Syntax.Error << "\n" << Source;
+      }
+      const std::string Harness = R"(
+#include <setjmp.h>
+static jmp_buf destination;
+static unsigned raising, iterations, calls, between_calls, bad;
+#define __try if (setjmp(destination) == 0)
+#define __except(filter) else
+uint32_t before_step(void) { return iterations < 3; }
+uint32_t range_step(uint32_t phase) {
+  ++calls;
+  if (raising & (1u << (iterations * 2 + phase))) longjmp(destination, 1);
+  return 37 + phase * 4;
+}
+void between_step(void) { ++between_calls; }
+void after_step(uint32_t value) {
+  const unsigned mask = (raising >> (iterations * 2)) & (MULTIPLE ? 3u : 1u);
+  bad |= value != (mask ? 99 : (MULTIPLE ? 41 : 37));
+  ++iterations;
+}
+)";
+      const std::string Main = R"(
+int main(void) {
+  for (raising = 0; raising != 64; ++raising) {
+    iterations = calls = between_calls = bad = 0;
+    range_loop();
+    unsigned expected_between = 0;
+    for (unsigned i = 0; i != 3; ++i)
+      expected_between += MULTIPLE && !(raising & (1u << (i * 2)));
+    if (iterations != 3 || calls != 3 + expected_between || bad ||
+        between_calls != expected_between) return 1;
+  }
+  return 0;
+}
+)";
+      for (llvm::StringRef Level : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Prelude + "#define MULTIPLE " + (MultipleRanges ? "1\n" : "0\n") +
+                Harness + Source + Main,
+            {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      if (MultipleRanges) {
+        auto *Branch = llvm::cast<llvm::BranchInst>(Header->getTerminator());
+        Branch->setSuccessor(1, BodyAgain);
+        ASSERT_FALSE(llvm::verifyFunction(*F, &llvm::errs()));
+        EXPECT_THROW((void)emitLLVMC(Module), std::runtime_error);
+        Branch->setSuccessor(1, Done);
+        // Nested begin without closing the active range cannot be flattened
+        // into independent try statements merely because the handler matches.
+        llvm::cast<llvm::InvokeInst>(End->getTerminator())
+            ->setCalledFunction(TryBegin);
+        ASSERT_FALSE(llvm::verifyFunction(*F, &llvm::errs()));
+        EXPECT_THROW((void)emitLLVMC(Module), std::runtime_error);
+      }
+    }
+  }
 }
 
 TEST(COFFExceptionIR, LLVMCFinallyWrapContainsCleanupBody) {
@@ -2470,7 +2978,7 @@ TEST(COFFExceptionIR, LLVMCNestedFinallyInsideExceptContainsBothBodies) {
   const auto OuterAt = Source.find("outer_step();", BodyAt);
   const auto ExceptKw =
       Source.find("} __except (EXCEPTION_EXECUTE_HANDLER) {", BodyAt);
-  const auto StoreAt = Source.find("ProbeSink = 41", BodyAt);
+  const auto StoreAt = Source.find("ProbeSink = 0x29", BodyAt);
   EXPECT_NE(ArmAt, std::string::npos) << Source;
   EXPECT_NE(TryAt, std::string::npos) << Source;
   EXPECT_NE(RaiseAt, std::string::npos) << Source;
@@ -2535,6 +3043,320 @@ TEST(COFFExceptionIR, LLVMCNestedFinallyInsideExceptContainsBothBodies) {
                      {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
                       "-std=c11", "-fsyntax-only", "-Werror=uninitialized"});
     EXPECT_EQ(Syntax.ExitCode, 0) << Syntax.Error << "\n" << Source;
+  }
+}
+
+TEST(COFFExceptionIR, LLVMCSharedHandlerKeepsNestedUnwindOnlyCleanup) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("shared-seh-nested-cleanup", Context);
+  Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
+  llvm::IRBuilder<> B(Context);
+  auto Declare = [&](llvm::StringRef Name, llvm::Type *Return,
+                     llvm::ArrayRef<llvm::Type *> Args = {}) {
+    return llvm::Function::Create(llvm::FunctionType::get(Return, Args, false),
+                                  llvm::GlobalValue::ExternalLinkage, Name,
+                                  Module);
+  };
+  auto *F = Declare("nested_cleanup", B.getInt32Ty(), {B.getInt32Ty()});
+  F->getArg(0)->setName("take_inner");
+  F->setPersonalityFn(Declare("__C_specific_handler", B.getInt32Ty()));
+  auto Block = [&](llvm::StringRef Name) {
+    return llvm::BasicBlock::Create(Context, Name, F);
+  };
+  auto *Entry = Block("entry");
+  auto *Choice = Block("choice");
+  auto *BeginInner = Block("begin_inner");
+  auto *Body = Block("body");
+  auto *EndInner = Block("end_inner");
+  auto *AfterInner = Block("after_inner");
+  auto *EndOuter = Block("end_outer");
+  auto *EarlyEnd = Block("early_end");
+  auto *Tail = Block("tail");
+  auto *Dispatch = Block("dispatch");
+  auto *PadBlock = Block("pad");
+  auto *Handler = Block("handler");
+  auto *CleanupBlock = Block("cleanup");
+  auto *CleanupEnd = Block("cleanup_end");
+  auto *TryBegin = llvm::Intrinsic::getOrInsertDeclaration(
+      &Module, llvm::Intrinsic::seh_try_begin);
+  auto *TryEnd = llvm::Intrinsic::getOrInsertDeclaration(
+      &Module, llvm::Intrinsic::seh_try_end);
+  auto *Step = Declare("protected_step", B.getVoidTy());
+  auto *CleanupCall = Declare("cleanup_step", B.getVoidTy(), {B.getInt32Ty()});
+  B.SetInsertPoint(Entry);
+  B.CreateInvoke(TryBegin, Choice, Dispatch);
+  B.SetInsertPoint(Choice);
+  B.CreateCondBr(B.CreateICmpNE(F->getArg(0), B.getInt32(0)), BeginInner,
+                 EarlyEnd);
+  B.SetInsertPoint(BeginInner);
+  B.CreateInvoke(TryBegin, Body, CleanupBlock);
+  B.SetInsertPoint(Body);
+  B.CreateInvoke(Step, EndInner, CleanupBlock);
+  B.SetInsertPoint(EndInner);
+  B.CreateInvoke(TryEnd, AfterInner, CleanupBlock);
+  B.SetInsertPoint(AfterInner);
+  B.CreateInvoke(CleanupCall, EndOuter, Dispatch, {B.getInt32(0)});
+  B.SetInsertPoint(EndOuter);
+  B.CreateInvoke(TryEnd, Tail, Dispatch);
+  B.SetInsertPoint(EarlyEnd);
+  B.CreateInvoke(TryEnd, Tail, Dispatch);
+  B.SetInsertPoint(Tail);
+  auto *Value = B.CreatePHI(B.getInt32Ty(), 3, "result");
+  Value->addIncoming(B.getInt32(7), EndOuter);
+  Value->addIncoming(B.getInt32(11), EarlyEnd);
+  Value->addIncoming(B.getInt32(99), Handler);
+  B.CreateRet(Value);
+  B.SetInsertPoint(Dispatch);
+  auto *Switch =
+      B.CreateCatchSwitch(llvm::ConstantTokenNone::get(Context), nullptr, 1);
+  Switch->addHandler(PadBlock);
+  B.SetInsertPoint(PadBlock);
+  auto *Pad =
+      B.CreateCatchPad(Switch, {llvm::ConstantPointerNull::get(B.getPtrTy())});
+  B.CreateCatchRet(Pad, Handler);
+  B.SetInsertPoint(Handler);
+  B.CreateBr(Tail);
+  B.SetInsertPoint(CleanupBlock);
+  auto *Cleanup = B.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
+  B.CreateInvoke(CleanupCall, CleanupEnd, Dispatch, {B.getInt32(1)});
+  B.SetInsertPoint(CleanupEnd);
+  B.CreateCleanupRet(Cleanup, Dispatch);
+  ASSERT_FALSE(llvm::verifyFunction(*F, &llvm::errs()));
+  const std::string Source = emitLLVMC(Module);
+  EXPECT_NE(Source.find("if (!neverd_seh_normal)"), std::string::npos)
+      << Source;
+  const std::string Prelude =
+      "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n";
+  if (hasHostFixtureCompiler())
+    for (llvm::StringRef Level : {"-O0", "-O2"}) {
+      const auto Compiled = runCCompiler(
+          Prelude + Source,
+          {"--target=x86_64-pc-windows-msvc", "-fms-extensions", "-std=c11",
+           "-Xclang", "-fasync-exceptions", "-c", Level});
+      EXPECT_EQ(Compiled.ExitCode, 0) << Compiled.Error << "\n" << Source;
+    }
+  // A host check of normal paths: cleanup's normal counterpart runs exactly
+  // once and the unwind-only body never substitutes for it. Native Windows
+  // object generation above checks the actual nested SEH and every goto.
+  const std::string Harness = R"(
+#define __try if (1)
+#define __except(filter) else
+#define __finally if (1)
+static unsigned normal_calls, unwind_calls, steps;
+void protected_step(void) { ++steps; }
+void cleanup_step(uint32_t abnormal) {
+  if (abnormal) ++unwind_calls; else ++normal_calls;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(Prelude + Harness + Source + R"(
+int main(void) {
+  if (nested_cleanup(0) != 11 || normal_calls || unwind_calls || steps) return 1;
+  if (nested_cleanup(1) != 7 || normal_calls != 1 || unwind_calls || steps != 1)
+    return 2;
+  return 0;
+}
+)",
+                                              {Level});
+}
+
+TEST(COFFExceptionIR, LLVMCMixedHandlersKeepUnwindOnlyCleanup) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("mixed-seh-scopes", Context);
+  Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
+  llvm::IRBuilder<> B(Context);
+  auto Declare = [&](llvm::StringRef Name, llvm::Type *Return,
+                     llvm::ArrayRef<llvm::Type *> Args = {}) {
+    return llvm::Function::Create(llvm::FunctionType::get(Return, Args, false),
+                                  llvm::GlobalValue::ExternalLinkage, Name,
+                                  Module);
+  };
+  auto *F = Declare("mixed_scopes", B.getInt32Ty(), {B.getInt32Ty()});
+  F->setPersonalityFn(Declare("__C_specific_handler", B.getInt32Ty()));
+  auto Block = [&](llvm::StringRef Name) {
+    return llvm::BasicBlock::Create(Context, Name, F);
+  };
+  auto *Entry = Block("entry");
+  auto *BeginA = Block("begin_a");
+  auto *BodyA = Block("body_a");
+  auto *EndA = Block("end_a");
+  auto *TailA = Block("tail_a");
+  auto *BeginCleanup = Block("begin_cleanup");
+  auto *BeginB = Block("begin_b");
+  auto *BodyB = Block("body_b");
+  auto *EndB = Block("end_b");
+  auto *EndCleanup = Block("end_cleanup");
+  auto *TailB = Block("tail_b");
+  auto *DispatchA = Block("dispatch_a");
+  auto *PadA = Block("pad_a");
+  auto *HandlerA = Block("handler_a");
+  auto *DispatchB = Block("dispatch_b");
+  auto *PadB = Block("pad_b");
+  auto *HandlerB = Block("handler_b");
+  auto *CleanupBlock = Block("cleanup");
+  auto *TryBegin = llvm::Intrinsic::getOrInsertDeclaration(
+      &Module, llvm::Intrinsic::seh_try_begin);
+  auto *TryEnd = llvm::Intrinsic::getOrInsertDeclaration(
+      &Module, llvm::Intrinsic::seh_try_end);
+  auto *Step = Declare("mixed_step", B.getVoidTy(), {B.getInt32Ty()});
+  auto *CleanupCall = Declare("mixed_cleanup", B.getVoidTy(), {B.getInt32Ty()});
+  B.SetInsertPoint(Entry);
+  B.CreateCondBr(B.CreateICmpEQ(F->getArg(0), B.getInt32(0)), BeginA,
+                 BeginCleanup);
+  B.SetInsertPoint(BeginA);
+  B.CreateInvoke(TryBegin, BodyA, DispatchA);
+  B.SetInsertPoint(BodyA);
+  B.CreateInvoke(Step, EndA, DispatchA, {B.getInt32(10)});
+  B.SetInsertPoint(EndA);
+  B.CreateInvoke(TryEnd, TailA, DispatchA);
+  B.SetInsertPoint(TailA);
+  B.CreateRet(B.getInt32(17));
+  B.SetInsertPoint(BeginCleanup);
+  B.CreateInvoke(TryBegin, BeginB, CleanupBlock);
+  B.SetInsertPoint(BeginB);
+  B.CreateInvoke(TryBegin, BodyB, DispatchB);
+  B.SetInsertPoint(BodyB);
+  B.CreateInvoke(Step, EndB, DispatchB, {B.getInt32(20)});
+  B.SetInsertPoint(EndB);
+  B.CreateInvoke(TryEnd, EndCleanup, DispatchB);
+  B.SetInsertPoint(EndCleanup);
+  B.CreateInvoke(TryEnd, TailB, CleanupBlock);
+  B.SetInsertPoint(TailB);
+  B.CreateCall(CleanupCall, {B.getInt32(0)});
+  B.CreateRet(B.getInt32(23));
+  for (bool Nested : {false, true}) {
+    auto *Dispatch = Nested ? DispatchB : DispatchA;
+    auto *PadBlock = Nested ? PadB : PadA;
+    auto *Handler = Nested ? HandlerB : HandlerA;
+    B.SetInsertPoint(Dispatch);
+    auto *Switch = B.CreateCatchSwitch(llvm::ConstantTokenNone::get(Context),
+                                       Nested ? CleanupBlock : nullptr, 1);
+    Switch->addHandler(PadBlock);
+    B.SetInsertPoint(PadBlock);
+    auto *Pad = B.CreateCatchPad(
+        Switch, {llvm::ConstantPointerNull::get(B.getPtrTy())});
+    B.CreateCatchRet(Pad, Handler);
+    B.SetInsertPoint(Handler);
+    B.CreateRet(B.getInt32(Nested ? 102 : 101));
+  }
+  B.SetInsertPoint(CleanupBlock);
+  auto *Cleanup = B.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
+  B.CreateCall(CleanupCall, {B.getInt32(1)},
+               {llvm::OperandBundleDef("funclet", Cleanup)});
+  B.CreateCleanupRet(Cleanup, nullptr);
+  ASSERT_FALSE(llvm::verifyFunction(*F, &llvm::errs()));
+  const std::string Source = emitLLVMC(Module);
+  EXPECT_EQ(Source.find("return; /* __finally */"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("if (!neverd_seh_normal)"), std::string::npos)
+      << Source;
+  const std::string Prelude =
+      "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n";
+  if (hasHostFixtureCompiler())
+    for (llvm::StringRef Level : {"-O0", "-O2"}) {
+      const auto Compiled = runCCompiler(
+          Prelude + Source,
+          {"--target=x86_64-pc-windows-msvc", "-fms-extensions", "-std=c11",
+           "-Xclang", "-fasync-exceptions", "-c", Level});
+      EXPECT_EQ(Compiled.ExitCode, 0) << Compiled.Error << "\n" << Source;
+    }
+  // Execute the normal paths independently. Native Windows object emission
+  // above checks the real nested SEH, including the cleanup on filter refusal.
+  const std::string Harness = R"(
+#define __try if (1)
+#define __except(filter) else
+#define __finally if (1)
+static unsigned normal_calls, unwind_calls, steps;
+void mixed_step(uint32_t n) { steps += n; }
+void mixed_cleanup(uint32_t abnormal) {
+  if (abnormal) ++unwind_calls; else ++normal_calls;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(Prelude + Harness + Source + R"(
+int main(void) {
+  if (mixed_scopes(0) != 17 || steps != 10 || normal_calls || unwind_calls) return 1;
+  if (mixed_scopes(1) != 23 || steps != 30 || normal_calls != 1 || unwind_calls) return 2;
+  return 0;
+}
+)",
+                                              {Level});
+}
+
+TEST(COFFExceptionIR, LLVMCFinallyAndFilterShareTheParentLocalAddress) {
+  REQUIRE_HOST_FIXTURE_COMPILER();
+  for (bool FilterUsesFrame : {false, true}) {
+    llvm::LLVMContext Context;
+    llvm::Module Module("seh-parent-local-area", Context);
+    Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
+    Module.setDataLayout("e-p:64:64");
+    llvm::IRBuilder<> Builder(Context);
+    auto *Void = Builder.getVoidTy();
+    auto *Pointer = Builder.getPtrTy();
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(Void, false),
+        llvm::GlobalValue::ExternalLinkage, "parent_frame", Module);
+    auto Personality = Module.getOrInsertFunction(
+        "__C_specific_handler",
+        llvm::FunctionType::get(Builder.getInt32Ty(), true));
+    Function->setPersonalityFn(
+        llvm::cast<llvm::Constant>(Personality.getCallee()));
+    auto Raise = Module.getOrInsertFunction("may_raise", Void);
+    auto Finally = Module.getOrInsertFunction("use_parent", Void, Pointer);
+    auto Filter = Module.getOrInsertFunction(
+        "filter_parent",
+        FilterUsesFrame
+            ? llvm::FunctionType::get(Builder.getInt32Ty(), {Pointer, Pointer},
+                                      false)
+            : llvm::FunctionType::get(Builder.getInt32Ty(), {Pointer}, false));
+    auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+    auto *Normal = llvm::BasicBlock::Create(Context, "normal", Function);
+    auto *Cleanup = llvm::BasicBlock::Create(Context, "cleanup", Function);
+    auto *Dispatch = llvm::BasicBlock::Create(Context, "dispatch", Function);
+    auto *Pad = llvm::BasicBlock::Create(Context, "pad", Function);
+    auto *Handler = llvm::BasicBlock::Create(Context, "handler", Function);
+    Builder.SetInsertPoint(Entry);
+    Builder.CreateInvoke(Raise, Normal, Cleanup);
+    Builder.SetInsertPoint(Normal);
+    Builder.CreateRetVoid();
+    Builder.SetInsertPoint(Cleanup);
+    auto *CleanupToken =
+        Builder.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
+    auto *Address = Builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
+        &Module, llvm::Intrinsic::localaddress));
+    Builder.CreateCall(Finally, {Address},
+                       {llvm::OperandBundleDef("funclet", CleanupToken)});
+    Builder.CreateCleanupRet(CleanupToken, Dispatch);
+    Builder.SetInsertPoint(Dispatch);
+    auto *Switch = Builder.CreateCatchSwitch(
+        llvm::ConstantTokenNone::get(Context), nullptr, 1);
+    Switch->addHandler(Pad);
+    Builder.SetInsertPoint(Pad);
+    auto *Catch = Builder.CreateCatchPad(Switch, {Filter.getCallee()});
+    Builder.CreateCatchRet(Catch, Handler);
+    Builder.SetInsertPoint(Handler);
+    Builder.CreateRetVoid();
+    ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
+    const auto Try = Source.find("__try {");
+    const auto FinallyAt = Source.find("} __finally {");
+    const auto Intrinsic = Source.find("__asm__(\"llvm.localaddress\")");
+    ASSERT_NE(Try, std::string::npos) << Source;
+    ASSERT_NE(FinallyAt, std::string::npos) << Source;
+    ASSERT_NE(Intrinsic, std::string::npos) << Source;
+    EXPECT_LT(Intrinsic, Try) << Source;
+    EXPECT_EQ(Source.find("__asm__(\"llvm.localaddress\")", Intrinsic + 1),
+              std::string::npos)
+        << Source;
+    EXPECT_NE(Source.find(" = seh_parent_frame", FinallyAt), std::string::npos)
+        << Source;
+    checkStandaloneSEHSource(Source, /*CompileObject=*/true);
   }
 }
 
@@ -2710,7 +3532,9 @@ TEST(COFFExceptionIR,
       llvm::StringRef(HostileFunctionBytes, sizeof(HostileFunctionBytes) - 1),
       "unsafe_hostile_helper");
   Hostile->setMetadata(windows_eh_md::FunctionAttachment, Payload);
-  const char HostileArgumentBytes[] = "for\0) { pwned(); }\nint injected";
+  // LLVM rejects NUL in value names. Keep a legal control byte here; the
+  // HighC hostile-name fixture also covers NUL before LLVM admission.
+  const char HostileArgumentBytes[] = "for\x01) { pwned(); }\nint injected";
   llvm::FunctionType *ArgumentsType =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
                               {llvm::PointerType::getUnqual(Context),
@@ -2879,6 +3703,65 @@ TEST(COFFExceptionIR, EmitsLosslessNamedMetadata) {
   EXPECT_NE(IRFunc->getMetadata(exception_rewrite::FunctionAttachment),
             nullptr);
 }
+TEST(COFFExceptionIR, ObserversWatchTheConversionAGuardedFunctionKeeps) {
+  MedFunc Func;
+  Func.Entry = 0x140001000;
+  Func.Name = "observed_eh";
+  Func.ReturnType = NdType::makeVoid();
+  for (unsigned Id : {0u, 1u}) {
+    MedBlock Block;
+    Block.Id = static_cast<int>(Id);
+    Block.StartAddr = Func.Entry + 0x20 * Id;
+    Block.EndAddr = Block.StartAddr + 0x10;
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = Block.StartAddr + 8;
+    Return.OriginSeq = 0;
+    Block.Ops.push_back(Return);
+    Func.Blocks.push_back(std::move(Block));
+  }
+  ExceptionFunction Metadata;
+  Metadata.CodeRange = {Func.Entry, Func.Entry + 0x30};
+  Metadata.ParseStatus = ExceptionParseStatus::Complete;
+  Metadata.Personality = ExceptionPersonality::CSpecificHandler;
+  SEHExceptionInfo SEH;
+  SEHScopeRecord Scope;
+  Scope.GuardedRange = {Func.Entry, Func.Entry + 0x10};
+  Scope.Kind = SEHScopeKind::CatchAll;
+  Scope.HandlerVA = Func.Entry + 0x20;
+  SEH.Scopes.push_back(Scope);
+  Metadata.SEH = std::move(SEH);
+  Func.ExceptionMetadata = std::move(Metadata);
+
+  // What the observers record and the IR kept, with a way to forget the
+  // observations and without one.
+  const auto Convert = [&](bool Forgets, size_t &Resets) {
+    MedToHighConverter Converter;
+    std::vector<std::pair<va_t, StmtKind>> Seen;
+    Converter.setStatementObserver([&](const MedOp &Op, const HighStmt &S) {
+      Seen.push_back({Op.Addr, S.Kind});
+    });
+    if (Forgets)
+      Converter.setObservationReset([&] {
+        Seen.clear();
+        ++Resets;
+      });
+    const HighFunc High = Converter.convert(Func, Arch::X64);
+    EXPECT_EQ(High.UnstructuredExceptionRegions, 0u);
+    std::string Dump;
+    llvm::raw_string_ostream OS(Dump);
+    Pipeline::dumpHighIR({High}, OS);
+    return std::pair{Dump, Seen};
+  };
+  size_t Resets = 0, Unused = 0;
+  const auto Kept = Convert(true, Resets);
+  ASSERT_FALSE(Kept.second.empty());
+  // The structured layout is the one kept, so nothing is forgotten, and the
+  // observers saw exactly what they see when the conversion is repeated.
+  EXPECT_EQ(Resets, 0u);
+  EXPECT_EQ(Kept, Convert(false, Unused));
+}
+
 TEST(COFFExceptionIR, StructuresReducibleSEHAndCxxRegionsInHighIR) {
   auto MakeFunction = [] {
     MedFunc Func;
@@ -3429,7 +4312,10 @@ TEST(COFFExceptionIR, ObjectOfATryBodyIsACleanupScopeInsideTheTry) {
   const size_t Dtor = Source.find("probe_dtor(", Cleanup);
   ASSERT_LT(Dtor, Rethrow) << Source;
   // The destructor's `this` is the object the constructor built.
-  EXPECT_NE(Source.substr(Dtor, Rethrow - Dtor).find("frame_base - 40"),
+  EXPECT_NE(Source.substr(Dtor, Rethrow - Dtor).find("&stack_storage.var_m28"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("probe_ctor((probe*)&stack_storage.var_m28)"),
             std::string::npos)
       << Source;
   EXPECT_LT(Source.find("probe_ctor("), InnerTry) << Source;
@@ -4291,6 +5177,46 @@ TEST(COFFExceptionIR, SEHHandlerEndingAnArmContinuesAfterTheIfElse) {
   const std::string Source = emitHighC({High});
   EXPECT_EQ(Source.find("goto L_140001040"), std::string::npos) << Source;
   EXPECT_NE(Source.find("sub_14000D000();"), std::string::npos) << Source;
+}
+
+TEST(COFFExceptionIR, UnstructuredSEHEntryMayHaveNoLiveRegisterCopies) {
+  REQUIRE_HOST_FIXTURE_COMPILER();
+  HighFunc Function;
+  Function.Entry = 0x140001000;
+  Function.Name = "empty_handler_entry";
+  Function.ReturnType = NdType::makeInt(4);
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.GotoTarget = Function.Entry + 0x40;
+  HighStmt Region;
+  Region.Kind = StmtKind::SEHTry;
+  Region.EHRange = {Function.Entry, Function.Entry + 0x10};
+  Region.EHIsReducible = false;
+  HighEHClause Clause;
+  Clause.Kind = HighEHClauseKind::SEHExcept;
+  Clause.HandlerVA = Jump.GotoTarget;
+  Region.EHClauses = {Clause};
+  Region.EHClauseBodies = {{Jump}};
+  Region.Body = {Jump};
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.Addr = Jump.GotoTarget;
+  Return.RetVal = HighExpr::makeConst(7, 4);
+  Function.Body = {Region, Return};
+  const std::string Source = emitHighC({Function});
+  EXPECT_NE(Source.find("Native exception entry to the handler"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("goto L_140001040;"), std::string::npos) << Source;
+  for (const char *Level : {"-O0", "-O2"}) {
+    const auto Syntax = runCCompiler("#include <stdint.h>\n" + Source,
+                                     {"-std=c11", Level, "-fsyntax-only"});
+    EXPECT_EQ(Syntax.ExitCode, 0) << Syntax.Error << Source;
+  }
+  // Actual handler code still cannot be moved into an unstructured clause.
+  Function.Body.front().EHClauseBodies.front().insert(
+      Function.Body.front().EHClauseBodies.front().begin(), Return);
+  EXPECT_THROW(emitHighC({Function}), std::invalid_argument);
 }
 
 TEST(COFFExceptionIR, SEHRangeLeavingAGuardedCallOutsideStaysUnstructured) {
@@ -5751,8 +6677,8 @@ TEST(COFFExceptionIR, LargeImageStillResolvesAnImageRelativeJumpTable) {
   OS.flush();
   EXPECT_EQ(Source.find("L_FFFFFFFFFFFFFFFF"), std::string::npos) << Source;
   // Every case keeps its return value.
-  EXPECT_NE(Source.find("return 16;"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return 55;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0x10;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0x37;"), std::string::npos) << Source;
 }
 
 TEST(COFFExceptionIR, SymbolHeavyImageStillResolvesAnImageRelativeJumpTable) {
@@ -5868,6 +6794,6 @@ TEST(COFFExceptionIR, SymbolHeavyImageStillResolvesAnImageRelativeJumpTable) {
   OS.flush();
   EXPECT_EQ(Source.find("L_FFFFFFFFFFFFFFFF"), std::string::npos) << Source;
   // Every case keeps its return value.
-  EXPECT_NE(Source.find("return 16;"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return 55;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0x10;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0x37;"), std::string::npos) << Source;
 }

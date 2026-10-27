@@ -3,8 +3,15 @@
 add_neverd_component_library(NeverDInterpreterSpecialization
   InterpreterSpecialization.cpp
   RawEnvironment.cpp
+  ../arch/RecoveryArchitecture.cpp
+  ../arch/x86_64/RawEnvironment.cpp
+  ../arch/x86_64/ExternalExits.cpp
   ../arch/x86_64/NativeStackControl.cpp
   ../arch/x86_64/X64Recovery.cpp
+  ../arch/x86_64/X64MXCSR.cpp
+  ../arch/x86_64/X64LegacyGS.cpp
+  ../arch/x86_64/X64Alignment.cpp
+  ../arch/x86_64/X64RuntimeControl.cpp
   ../arch/x86_64/InterpreterMachineState.cpp
   FiniteValues.cpp
   CompleteModel.cpp

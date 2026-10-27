@@ -4,6 +4,7 @@
 #include "ObjCNativeSourceCallCallees.h"
 
 #include "neverd/loader/MachO/CFunctionParameterCalls.h"
+#include "neverd/sdk/Limits.h"
 
 namespace neverd::sdk {
 inline bool objCCFunctionParameterSourceCallBound(const HighExpr &Expression,
@@ -68,7 +69,7 @@ inline bool objCCFunctionParameterSourceCallBound(const HighExpr &Expression,
     return false;
   // Count source evaluations, including shared expression nodes. One saved
   // machine occurrence cannot justify two callback invocations.
-  size_t Budget = 100000, Matches = 0;
+  size_t Budget = kSourceExpressionWork, Matches = 0;
   bool Foreign = false;
   std::set<SourceCallOccurrenceKey> Seen;
   std::vector<const HighStmt *> Statements;

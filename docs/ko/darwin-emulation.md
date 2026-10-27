@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 124a88c959c13d8407e343d17f7964de3af1071a89f0c6430eaab22959ce3ebc -->
+<!-- i18n-source: 26e0c6dba6d3b863bb8dc0c4690bbc6ea61bbe5dd2accd19643847c8968fc13e -->
 
 [← 문서 목록](README.md)
 
@@ -29,11 +29,11 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 세그먼트는 현재/최대 권한과 0 채움을 유지합니다. `__PAGEZERO`는 큰 물리 메모리 할당 없이 주소를 예약합니다. 파일/VM 범위, OS 페이지 정렬, 반올림한 겹침, 헤더 소유권, 실행 가능한 진입점과 예산을 검사합니다. 헤더 세그먼트는 읽기 및 실행 가능해야 하며 보호 페이지와 전용 복귀 게이트는 예약됩니다. 마지막 파일 페이지는 페이지 경계 또는 EOF까지 원본 바이트를 유지하고 후속 완전한 VM 페이지는 0으로 채웁니다. 근거는 [XNU 로더](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/mach_loader.c)입니다.
 
-`LC_MAIN`은 `argc`, `argv`, `envp`, apple 벡터를 정수 인수 네 개로 받고 반환값의 하위 8비트를 종료 상태로 사용합니다. `/usr/lib/dyld`는 가져오기가 없는 이 진입 전달에서만 허용하며 호스트 dyld는 실행하지 않습니다. 0이 아닌 `stacksize`는 거부합니다. 예산은 호출자의 명시적 `stack_size`가 결정합니다.
+`LC_MAIN`은 `argc`, `argv`, `envp`, apple 벡터를 정수 인수 네 개로 받고 반환값의 하위 8비트를 종료 상태로 사용합니다. `/usr/lib/dyld`는 아래의 유한 가져오기 계약을 충족하는 `LC_MAIN` 진입에서 허용하며 호스트 dyld는 실행하지 않습니다. 0이 아닌 `stacksize`는 거부합니다. 예산은 호출자의 명시적 `stack_size`가 결정합니다.
 
 `LC_UNIXTHREAD`는 PC만 설정된 완전한 네이티브 64비트 일반 레지스터 레코드 하나를 요구합니다. 초기 스택에는 argc, 종료된 argv/envp, `executable_path=<input filename>`을 포함하는 종료된 apple 벡터가 있습니다. 사용자 SP/플래그, 다른 레지스터, 추가 flavor, 충돌하는 진입점은 거부합니다. 호스트 환경이나 Linux 보조 벡터를 상속하지 않습니다. [dyld 구조](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md)를 참고하세요.
 
-외부 dylib, 가져오기, rebases/chained fixups, 생성자/소멸자, TLS 섹션, arm64e/PAC, 미지원 CPU 하위 유형, 암호화 및 모델링하지 않은 로드 명령은 실행 전에 실패합니다. fixup 없는 PIE는 선호 주소를 사용하며 ASLR이 아닙니다. 서명 blob은 메타데이터이며 AMFI나 entitlement 정책을 구현하지 않습니다.
+아래의 유한 libSystem, 명시적 시작 dylib, 시작 생성자, 주 스레드 C/C++ TLS 및 프로세스 종료 시 C/C++ 소멸자를 지원합니다. 선택적 DSO 종료, 구형 TLS 초기화 섹션, arm64e/PAC, 미지원 CPU 하위 유형, 암호화와 미모델링 명령은 실행 전에 실패합니다. 주 실행 파일은 선호 주소를, dylib는 결정적 독립 주소를 사용합니다. 서명 메타데이터는 AMFI나 entitlement를 구현하지 않습니다.
 
 ## Darwin 서비스
 
@@ -1796,3 +1796,98 @@ lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / ma
 native preparation489 observations including258 lchown / ARM64 O0 O1 O2
 common native82 / mandatory95 per matching platform / ARM64 required285
 ```
+
+## 유한 libSystem 가져오기
+
+기본 thin 실행 파일과 아래의 명시적 시작 dylib는 강한 `/usr/lib/libSystem.B.dylib` 의존성을 바인딩합니다. 주 진입점 `LC_MAIN`, `MH_TWOLEVEL`, 일반 ordinal이 필요하며 libSystem 호환 요구는 1.0 이하여야 합니다. 원본 classic/generic64 fixup과 미정의 심볼의 완전한 바인딩을 검증합니다. 알 수 없는 심볼, weak/threaded 바인딩, 다른 relocation, 초기화 콜백과 인증 포인터는 거부합니다.
+
+가져오기가 있을 때만 인증된 진입점과 매 실행의 새 주 스레드 errno를 만듭니다. 래퍼는 Darwin 커널 효과를 공유하며 실패를 `-1`과 errno로 변환하고 성공 시 errno를 보존합니다. C `_exit`는 Mach-O `__exit`이고 C `exit`의 `_exit`는 미지원입니다. 일반 함수는 반환 프레임을 검사하며 종료 함수는 반환 주소가 필요 없습니다. 보고서는 공급자, 링크 이름, 인수 개수와 전체 비트를 유지하고 미완료/비복귀 결과는 null입니다. 기존 raw 보고서는 호환됩니다.
+
+`SG_READ_ONLY`는 fixup 뒤 현재 보호만 읽기 전용으로 바꾸고 선언된 최대 보호는 유지합니다. O0/O1/O2 원본 관측에서 최대 RW이면 `mprotect`로 쓰기를 복원할 수 있었습니다. 진입점과 errno 예약 페이지의 해제/보호 변경은 거부합니다. 준비와 실행은 기한, 이벤트 계정 및 기존 메모리 예산을 공유합니다.
+
+동일한 독립 작성 객체를 system/classic/chained로 링크하여 실제 libSystem에서 실행합니다. 다섯 플랫폼/ISA의 process/C/CLI/Python과 세 ARM64 HVF profile을 확인합니다. 임의 dylib, dlopen/dlsym, shared cache, 생성자, 스레드, Apple 프레임워크, Intel HVF 및 실제 iOS 검증은 미완료입니다。
+
+classic lazy 포인터는 게스트 진입 전에 해석한다. 각 프로그램은 목적지, 일반 ordinal, 심볼을 독립적으로 지정하며 포인터 형식, 0 addend, DO_BIND 하나와 바로 뒤의 DONE만 허용한다. 이전 상태를 상속하지 않으며 로컬 실행 가능 바이트의 rebase 하나와 같은 슬롯의 lazy bind 하나만 병합한다. 두 원본 레코드 모두 예산에 계산한다. dyld_stub_binder는 실제 lazy 호출에 동반되는 강한 일반 classic bind와 0 addend로만 허용하며, 실행 시 C 프레임·인수 읽기, errno 변경, 호출 기록 전에 실패한다. 런타임 resolver나 dyld 내부 상태는 구현하지 않는다. 여섯 함수의 네이티브 대조군과 게스트가 포인터 안정성, 출력 및 종료 상태를 확인한다.
+
+`open`, `lseek`, `pread`, `pwrite`, `dup`, `dup2`는 기존 파일 목록, 변경 권한 및 서술자 커서를 공유합니다. `open`은 기본적으로 인수 두 개를 기록하며 flags의 하위 32비트에 O_CREAT가 있으면 세 개를 기록합니다. ARM64의 선택적 승격 int는 진입 SP의 유효한 4바이트만 읽고 패딩은 읽지 않습니다. x64는 세 번째 범용 레지스터 인수를 사용합니다. 보고서는 원래 값을 보존하고 별도 커널 mode만 16비트로 줄입니다. O_CREAT가 없으면 mode는 0이며 선택적 저장소를 읽지 않습니다. x64 반환 주소 검증은 유지됩니다. 인수 읽기 실패는 호출 기록, errno 및 파일 변경보다 먼저 발생합니다. [Apple ARM64 ABI](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms)와 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c)을 따릅니다. O0/O1/O2 네이티브 대조는 공유 오프셋, 위치 지정 I/O, dup2 실패, 4 GiB 초과 위치, mode 및 이진 내용을 검증합니다. 스레드 취소와 호환 경로 변환은 지원하지 않습니다.
+
+`mmap`, `mprotect`, `munmap`은 기존 매핑, 접근 권한, 상주 예약 영역과 파일 참조를 사용합니다. C 래퍼는 보호 값·플래그·기술자를 32비트로 줄이고 보고서는 원래 인자를 유지합니다. `mmap`은 길이가 0이거나 MAP_PRIVATE/MAP_SHARED가 없으면 커널 효과 전에 MAP_FAILED와 EINVAL을 반환하며, 허용된 호출에는 MAP_UNIX03을 추가합니다. 원시 BSD 의미는 유지됩니다. [XNU UNIX03 래퍼](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/libsyscall/wrappers/unix03/mmap.c)를 참고한 독립 C 대조는 익명 페이지 초기화, 권한 변경, 오류 순서, 기술자를 닫은 뒤 매핑 수명, 비공유 쓰기와 EOF 끝 페이지를 확인합니다. 공유·고정·실행 가능 매핑과 할당기 동작은 이번 범위 밖입니다.
+
+```text
+provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
+C -> Mach-O: read -> _read; write -> _write; close -> _close
+C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
+C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
+entry: LC_MAIN main + MH_TWOLEVEL images; ordinary positive ordinals; main preferred base
+fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
+unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
+errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
+SG_READ_ONLY: current R after fixup; original declared maximum is retained
+gates: RX/max RX; errno: RW/max RW; both resident model reservations
+budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
+preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
+report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
+call carriers: hex; full GP bits or defined ARM64 int vararg bytes; exact arity; null result if incomplete/nonreturning
+open: 2 args or 3 with O_CREAT; ARM64 mode int at SP, x64 third GP; kernel mode_t 16 bits
+basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
+_exit: status 35; stdout_hex 58; named calls 2; events 2
+file calls: main status 73; stdout_hex 460044; named calls 40; events 41
+memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
+native common catalogue: 82; required methods/platform: 104; matching ARM64 identities: 312
+```
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
+```
+
+## 명시적 시작 dylib와 주 스레드 TLS
+
+`darwin.modules`는 대소문자를 구분하는 정확한 설치 이름과 원본 Mach-O 경로를 최대 32개 지정합니다. 도달 가능한 의존성만 읽으며 `@loader_path`는 문자 그대로 비교하고 호스트 라이브러리를 검색하지 않습니다. MH_DYLIB의 ISA/플랫폼, 식별자와 버전을 확인하고 일반 ordinal로 실제 제공자를 선택합니다. 같은 이름의 export와 공유 의존성은 각각의 정체성을 유지하며 전체 입력과 상주 데이터는 공통 예산을 사용합니다.
+
+일반 C의 초기화/제로 초기화 TLS와 최대 16바이트 정렬을 지원합니다. 준비 시 모듈별 저장소를 매핑하고 비용을 계산하며 첫 접근에서 재배치된 실시간 연속 템플릿을 복사합니다. 앞선 BSS/간격 수정도 보존합니다. 기술자와 복귀 프레임을 검증하고 TLS 페이지의 재사용, 해제 및 보호 변경을 거부합니다. 원본 O0/O1/O2 classic/chained 네이티브 대조와 다섯 C/CLI/Python 프로필을 비교합니다. 순환, 약한/재export, 선택적 DSO 종료와 구형 TLS 초기화 섹션, dlopen/dlsym, 스레드와 전체 프레임워크는 미구현이며 Intel 네이티브와 실제 iOS는 미검증입니다.
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"darwin":{"modules":[{"name":"@loader_path/libneverd-base.dylib","path":"/inputs/libneverd-base.dylib"},{"name":"@loader_path/libneverd-leaf.dylib","path":"/inputs/libneverd-leaf.dylib"}]}}
+```
+
+```text
+graph: strong acyclic startup; exact install name; same ISA/platform; MH_DYLIB + LC_ID_DYLIB
+catalogue: max 32; only reachable inputs; no host lookup or @ path expansion
+budget: aggregate full files; aggregate resident mappings/TLS/metadata; 65536 records
+exports: regular / thread-local; ordinary dependency ordinal; rebased actual provider
+TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live contiguous first copy
+resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
+lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
+addends: checked signed ordinary provider offsets; data/TLS initializers; original provider spans only
+unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; selective DSO finalization/legacy TLS init; dlopen/dlsym; threads
+workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
+native common catalogue: 82; required methods/platform: 104; matching ARM64 identities: 312
+```
+
+## Darwin dylib 가져오기 오프셋
+
+일반적인 강한 dylib 가져오기는 전역 포인터와 TLS 템플릿에 부호 있는 바이트 가산값을 지원합니다. `DarwinImage`가 내보낸 주소, 라이브러리 배치 차이, 가산값을 한 번만 합성하고 오버플로와 선택한 제공자의 원래 세그먼트 범위를 검사합니다. 포인터 값에서 접근 폭을 추정하지 않습니다. libSystem 진입점, 가져온 TLV 설명자, 지연 바인딩의 가산값은 0이어야 합니다.
+
+원본 O0/O1/O2 classic/chained 네이티브 대조는 출력 없이 종료값 78을 반환합니다. C, CLI, Python은 다섯 프로필을 검증합니다. Intel 네이티브 실행과 실제 iOS 기기는 아직 검증하지 않았습니다.
+
+## 시작 생성자와 TLS 종료 콜백
+
+원본 `S_MOD_INIT_FUNC_POINTERS`, 읽기 전용 `S_INIT_FUNC_OFFSETS`, 단일 `LC_ROUTINES_64`를 `LC_MAIN` 전에 실행합니다. 선언 순서의 의존성 후위 순회로 공유 이미지를 한 번만 초기화합니다. 대상은 원본 실행 세그먼트여야 하며 ARM64는 정렬된 4바이트 전체를 요구합니다. 대기 테이블 변경은 거부합니다. 생성자는 argc/argv/envp/apple/`ProgramVars`를 받고 프로그램 이름은 사용자 argv0와 독립된 실행 파일 이름입니다. C++ `thread_local` 지연 생성은 원본 게스트 코드가 수행합니다.
+
+`__tlv_atexit`는 두 인자 void ABI이며 추가 DSO 인자를 무시하고 errno와 결과 레지스터를 보존하여 null 결과를 기록합니다. 사전 계산한 저장소는 null·중복을 포함해 최대 1024개를 보관하고 객체 값은 64비트 그대로 유지합니다. main 복귀와 C `exit`는 역순으로 처리하며 새 등록은 오래된 항목보다 먼저 실행됩니다. 현재 SP와 x64 red zone 아래의 프레임이 살아 있는 스택 객체를 보존합니다. 모든 작업은 기존 예산을 공유하고 콜백 완료 후 종료 결과를 공개합니다. C `_exit`와 raw BSD exit는 즉시 종료합니다. 재진입 exit, 선택적 DSO 종료, 구형 TLS 초기화 섹션과 스레드는 미지원입니다. 다섯 소프트웨어 구성, 세 ARM64 HVF 구성과 독립 O0/O1/O2 classic/chained 대조를 사용하며 대조는 스택 보호를 끕니다. guard 데이터 가져오기는 거부하고 Intel 네이티브와 실제 iOS는 미검증입니다.
+
+## C/C++ 프로세스 종료 소멸
+
+C `atexit`와 C++ `__cxa_atexit`는 정수 0을 반환하고 errno를 보존합니다. C 콜백은 인수가 없고 C++ 콜백은 원래 객체 값을 받으며 DSO는 불투명한 이벤트 값입니다. 정상 종료는 주 스레드 TLS를 한 번 처리한 뒤 C/C++ 공통 등록 순서의 역순으로 전역 콜백을 실행합니다. 새 전역 등록이 이전 항목보다 먼저 실행되고 TLS 단계는 다시 시작하지 않습니다. 강한 등록 가져오기만 별도의 1024개 저장소를 예약하며 기존 raw, 생성자 및 TLS 예산을 유지합니다.
+
+원본 두 dylib는 컴파일러 생성 소멸자, 지역 static 반복 접근, 중첩 등록, 깊은 스택 객체와 소멸자 내부 `_exit`를 확인합니다. 지역 static은 `-fno-threadsafe-statics`를 사용합니다. `__cxa_finalize`, dlopen/dlclose, 스레드와 전체 프레임워크는 계속 거부합니다. 소프트웨어 5개 및 ARM64 HVF 3개 구성과 C/CLI/Python은 기존 형식과 예산을 공유합니다. Intel 네이티브 및 실제 iOS는 미검증입니다.
+
+## 주 스레드 C++ static guard
+
+`/usr/lib/libc++.1.dylib`(호환 버전 최대 1.0.0)의 강한 zero-addend import `___cxa_guard_acquire`, `___cxa_guard_release`, `___cxa_guard_abort`만 허용합니다. 다른 C++ 심볼, libc++abi, 별칭, weak/reexport와 내장 덮어쓰기는 거부합니다. libSystem과 두 페이지를 공유하며 guard만으로 콜백 큐를 예약하지 않습니다.
+
+guard는 null이 아니고 자연 정렬된 8바이트입니다. 초기화 바이트가 0이 아니면 acquire는 그 한 바이트만 읽어 int 0을 반환하며 쓰기 권한이나 포트가 필요 없습니다. 0 상태에는 명시적 비영 `darwin_system.thread_self_port`(`DarwinSystemOptions::ThreadSelfPort`)가 필요합니다. P의 pending은 `(uint64_t(P)<<32)|0x200`, acquire는 1, abort는 0 복원, release는 `(uint64_t(P)<<32)|0x101`입니다. void 호출은 errno/결과 레지스터를 보존하며 보고 결과는 null입니다. 재귀, 외부 소유자, 대기/미지 상태, 잘못된 메모리는 변경 전에 거부하고 호스트 ID를 추정하지 않습니다.
+
+기본 static 두 dylib는 시작 및 TLS/전역 종료 중 생성, 반복 접근, 전체 guard/센티널, abort/retry와 normal/raw 종료를 검증하며 기존 LIFO, 예산, 새 프로세스 격리를 유지합니다. 소프트웨어 5개, ARM64 HVF 3개, C/CLI/Python과 O0/O1/O2 classic/chained 원본을 검사합니다. ARM64는 `-march=armv8-a -mcpu=generic`과 최종 LDARB/LDAPR 부재 확인이 필요합니다. march만 지정하면 LDAPRB가 남을 수 있습니다. RCpc, 동시 초기화, 예외와 선택적 DSO 종료는 미지원입니다. x64는 Rosetta이며 실제 Intel/iOS는 미검증입니다.

@@ -40,6 +40,15 @@ NEVERD_DATA_ITEM_NAME(PointerNamePrefix, "off_")
 NEVERD_DATA_ITEM_NAME(UnknownNamePrefix, "unk_")
 #undef NEVERD_DATA_ITEM_NAME
 
+// NEVERD_IMPORT_SLOT_SUFFIX(Suffix): what the name of an ELF image's slot for
+// an import's address adds to the import's name (`__libc_start_main_ptr`), as
+// IDA names a GOT entry; another format's slot takes the import's name.
+#ifndef NEVERD_IMPORT_SLOT_SUFFIX
+#define NEVERD_IMPORT_SLOT_SUFFIX(Suffix)
+#endif
+NEVERD_IMPORT_SLOT_SUFFIX("_ptr")
+#undef NEVERD_IMPORT_SLOT_SUFFIX
+
 // NEVERD_DATA_ITEM_KIND(Id, Spelling): kinds of data item a user defines
 // besides a value of one of the sizes above, which takes its size keyword
 // (`qword`) as its kind.

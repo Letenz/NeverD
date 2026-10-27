@@ -13,6 +13,7 @@
 #include "Identity.h"
 #include "SemVer.h"
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/PackageAdvisories.h"
 
 namespace neverd::web {
@@ -26,8 +27,9 @@ const Object &object(const llvm::json::Value &V) {
     throw Error("package_advisory_invalid_object");
   return *O;
 }
-std::string required(const Object &O, llvm::StringRef Key,
-                     size_t Limit = 4096) {
+std::string
+required(const Object &O, llvm::StringRef Key,
+         size_t Limit = ::neverd::limits::web::kReaderRequiredLimit) {
   const auto Value = text(O, Key, Limit);
   if (!Value)
     throw Error("package_advisory_required_field_missing");

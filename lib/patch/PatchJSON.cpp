@@ -1,0 +1,229 @@
+//===- PatchJSON.cpp - Byte patch rows ------------------------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Bounded, lossless byte patch persistence shared by every adapter.
+//===----------------------------------------------------------------------===//
+
+#include "neverd/patch/Limits.h"
+#include "neverd/patch/PatchIO.h"
+
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/raw_ostream.h"
+
+#if NEVERD_USE_SIMDJSON
+#include "simdjson.h"
+#endif
+
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+using namespace neverd::patch;
+namespace patchLimits = neverd::limits::patch;
+
+static llvm::Error invalid(const llvm::Twine &Message) {
+  return llvm::make_error<llvm::StringError>(Message,
+                                             llvm::inconvertibleErrorCode());
+}
+
+llvm::Expected<std::vector<uint8_t>>
+neverd::patch::parseHex(llvm::StringRef Text, uint64_t Limit) {
+  if (Text.size() % 2 || Text.size() / 2 > Limit)
+    return invalid("hex bytes need pairs of digits within the byte limit");
+  std::vector<uint8_t> Bytes;
+  Bytes.reserve(Text.size() / 2);
+  for (size_t I = 0; I < Text.size(); I += 2) {
+    const unsigned H = llvm::hexDigitValue(Text[I]);
+    const unsigned L = llvm::hexDigitValue(Text[I + 1]);
+    if (H > 15 || L > 15)
+      return invalid("invalid hexadecimal byte");
+    Bytes.push_back((H << 4) | L);
+  }
+  return Bytes;
+}
+
+// Only formatter-produced hexadecimal text reaches this helper. It is ASCII
+// without quotes or escapes, so generic string validation/escaping is
+// redundant.
+static void writeHexAttribute(llvm::json::OStream &Output, llvm::StringRef Key,
+                              llvm::StringRef Text) {
+  Output.attributeBegin(Key);
+  Output.rawValue(
+      [&](llvm::raw_ostream &Stream) { Stream << '"' << Text << '"'; });
+  Output.attributeEnd();
+}
+
+void neverd::patch::writePatchRows(llvm::json::OStream &Output,
+                                   const PatchOverlay &Overlay) {
+  llvm::SmallString<32> Bytes;
+  Output.array([&] {
+    for (const auto &[Offset, Row] : Overlay.rows())
+      Output.object([&] {
+        const std::string FileOffset = "0x" + llvm::utohexstr(Offset, true);
+        writeHexAttribute(Output, "addr", FileOffset);
+        llvm::toHex(Row.Current, true, Bytes);
+        writeHexAttribute(Output, "current", Bytes);
+        writeHexAttribute(Output, "file_off", FileOffset);
+        Output.attribute("kind", patchKindName(Row.Kind));
+        llvm::toHex(Row.Original, true, Bytes);
+        writeHexAttribute(Output, "original", Bytes);
+        Output.attribute("size", Row.size());
+        writeHexAttribute(Output, "va",
+                          "0x" + llvm::utohexstr(Row.Address, true));
+      });
+  });
+}
+
+namespace {
+struct RowFields {
+  std::optional<llvm::StringRef> FileOffset, Address, Key, Original, Current,
+      Kind;
+  std::optional<uint64_t> Size;
+  bool HasKey = false;
+
+  void setString(llvm::StringRef Name, std::optional<llvm::StringRef> Value) {
+    auto *Field = llvm::StringSwitch<std::optional<llvm::StringRef> *>(Name)
+                      .Case("file_off", &FileOffset)
+                      .Case("va", &Address)
+                      .Case("addr", &Key)
+                      .Case("original", &Original)
+                      .Case("current", &Current)
+                      .Case("kind", &Kind)
+                      .Default(nullptr);
+    if (Field)
+      *Field = Value;
+    if (Name == "addr")
+      HasKey = true;
+  }
+};
+
+llvm::Expected<RowFields> readFields(const llvm::json::Value &Value) {
+  const auto *Object = Value.getAsObject();
+  if (!Object)
+    return invalid("patch row must be an object");
+  RowFields Fields;
+  for (const auto &[Key, Field] : *Object)
+    if (Key == "size")
+      Fields.Size = Field.getAsUINT64();
+    else
+      Fields.setString(Key, Field.getAsString());
+  return Fields;
+}
+
+#if NEVERD_USE_SIMDJSON
+llvm::Expected<RowFields> readFields(simdjson::dom::element Value) {
+  simdjson::dom::object Object;
+  if (Value.get_object().get(Object))
+    return invalid("patch row must be an object");
+  RowFields Fields;
+  // Iterate in source order: LLVM's reader retains the last duplicate key,
+  // including a wrong-typed replacement of an earlier valid field.
+  for (const auto Field : Object) {
+    const llvm::StringRef Key(Field.key.data(), Field.key.size());
+    if (Key == "size") {
+      uint64_t Size;
+      if (Field.value.get_uint64().get(Size))
+        Fields.Size.reset();
+      else
+        Fields.Size = Size;
+    } else {
+      std::string_view Text;
+      if (Field.value.get_string().get(Text))
+        Fields.setString(Key, std::nullopt);
+      else
+        Fields.setString(Key, llvm::StringRef(Text.data(), Text.size()));
+    }
+  }
+  return Fields;
+}
+#endif
+
+llvm::Expected<PatchRow> readRow(const RowFields &Fields, uint64_t &Total) {
+  PatchRow Row;
+  const auto ReadAddress = [](std::optional<llvm::StringRef> Text,
+                              uint64_t &Out) {
+    return Text && Text->consume_front("0x") && !Text->empty() &&
+           !Text->getAsInteger(16, Out);
+  };
+  const auto Kind = Fields.Kind ? parsePatchKind(*Fields.Kind) : std::nullopt;
+  if (!ReadAddress(Fields.FileOffset, Row.FileOffset) ||
+      !ReadAddress(Fields.Address, Row.Address) || !Fields.Size ||
+      !*Fields.Size || *Fields.Size > patchLimits::kMaxPatchedBytes - Total ||
+      !Fields.Original || !Fields.Current || !Kind)
+    return invalid("invalid patch row fields");
+  if (Fields.HasKey) {
+    uint64_t Key = 0;
+    if (!ReadAddress(Fields.Key, Key) || Key != Row.FileOffset)
+      return invalid("patch row key differs from file offset");
+  }
+  auto Original = parseHex(*Fields.Original, patchLimits::kMaxPatchedBytes);
+  if (!Original)
+    return Original.takeError();
+  auto Current = parseHex(*Fields.Current, patchLimits::kMaxPatchedBytes);
+  if (!Current)
+    return Current.takeError();
+  if (Original->size() != *Fields.Size || Current->size() != *Fields.Size)
+    return invalid("patch row size does not match its bytes");
+  Total += *Fields.Size;
+  Row.Original = std::move(*Original);
+  Row.Current = std::move(*Current);
+  Row.Kind = *Kind;
+  return Row;
+}
+
+template <typename Array>
+llvm::Expected<std::vector<PatchRow>> readRows(const Array &Values) {
+  if (Values.size() > patchLimits::kMaxPatchRows)
+    return invalid("patches.json must be a bounded array");
+  std::vector<PatchRow> Rows;
+  Rows.reserve(Values.size());
+  uint64_t Total = 0;
+  for (const auto &Value : Values) {
+    auto Fields = readFields(Value);
+    if (!Fields)
+      return Fields.takeError();
+    auto Row = readRow(*Fields, Total);
+    if (!Row)
+      return Row.takeError();
+    Rows.push_back(std::move(*Row));
+  }
+  return Rows;
+}
+} // namespace
+
+llvm::Expected<std::vector<PatchRow>>
+neverd::patch::parsePatchRows(llvm::StringRef Text) {
+  if (Text.size() > patchLimits::kMaxPatchesFileBytes)
+    return invalid("patches.json exceeds its size limit");
+#if NEVERD_USE_SIMDJSON
+  {
+    // Extract typed rows from the validated tape; no per-row JSON object tree
+    // or parser storage survives this call. Borrowed strings are decoded into
+    // owning byte vectors before the temporary parser is destroyed.
+    simdjson::dom::parser Parser;
+    simdjson::dom::element Root;
+    if (!Parser.parse(Text.data(), Text.size()).get(Root)) {
+      simdjson::dom::array Values;
+      if (Root.get_array().get(Values))
+        return invalid("patches.json must be a bounded array");
+      return readRows(Values);
+    }
+  }
+  // LLVM accepts some legacy number spellings and provides existing syntax
+  // diagnostics. Preserve that contract for inputs outside the SIMD parser.
+#endif
+  auto Parsed = llvm::json::parse(Text);
+  if (!Parsed)
+    return Parsed.takeError();
+  const auto *Values = Parsed->getAsArray();
+  if (!Values)
+    return invalid("patches.json must be a bounded array");
+  return readRows(*Values);
+}

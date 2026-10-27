@@ -13,11 +13,17 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/intrinsics/IntrinsicTermination.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/ir/intrinsics/X86Interrupts.h"
+#include "neverd/ir/intrinsics/X86/X86Interrupts.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+
+#include <functional>
+#include <map>
+#include <optional>
+#include <set>
 
 namespace neverd {
 
@@ -238,15 +244,74 @@ static bool isX86NoReturnInterruptCall(const HighExpr &Expression) {
 bool isTerminatingHighCall(const ExprPtr &Expression) {
   if (isNonReturningSourceCall(Expression))
     return true;
-  if (Expression && Expression->Kind == ExprKind::Call &&
-      !Expression->IsIndirectCall && !Expression->SourceCallHint &&
-      isX86NoReturnInterruptCall(*Expression))
+  if (!Expression || Expression->Kind != ExprKind::Call ||
+      Expression->IsIndirectCall || Expression->SourceCallHint)
+    return false;
+  if (isX86NoReturnInterruptCall(*Expression))
     return true;
-  return Expression && Expression->Kind == ExprKind::Call &&
-         !Expression->IsIndirectCall && !Expression->SourceCallHint &&
-         Expression->Operands.empty() && Expression->IntrinsicOutputs.empty() &&
-         Expression->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-         isUnconditionalTrapIntrinsic(Expression->IntrinsicId);
+  if (!Expression->IntrinsicOutputs.empty() ||
+      Expression->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const Intrinsic Id = Expression->IntrinsicId;
+  if (Expression->Operands.empty())
+    return isUnconditionalTrapIntrinsic(Id) ||
+           intrinsicNeverReturns(Id, std::nullopt);
+  // An exception-generating instruction keeps the code it carries as its one
+  // operand (`brk #1`, `udf #0`).  The table LowIR and MedIR end the flow
+  // with decides whether it returns (IntrinsicTermination.h).
+  const ExprPtr &Code = Expression->Operands.front();
+  if (Expression->Operands.size() != 1 || !Code ||
+      Code->Kind != ExprKind::Const)
+    return false;
+  return intrinsicNeverReturns(Id, Code->ConstVal);
+}
+
+ExprPtr withMergedCallSites(const ExprPtr &Kept, const ExprPtr &Dropped) {
+  auto Sites = [](const ExprPtr &Root) {
+    std::set<va_t> Found;
+    HighExprSet Seen;
+    std::vector<const HighExpr *> Work{Root.get()};
+    while (!Work.empty()) {
+      const HighExpr *E = Work.back();
+      Work.pop_back();
+      if (!E || !Seen.insert(E).second)
+        continue;
+      if (E->Kind == ExprKind::Call)
+        Found.insert(E->CallSiteAddr);
+      E->forEachChildExpr([&](const ExprPtr &C) { Work.push_back(C.get()); });
+    }
+    return Found;
+  };
+  if (Sites(Kept) == Sites(Dropped))
+    return Kept;
+  // Copy the calls and what holds them; a node shared within the value stays
+  // shared.
+  std::map<const HighExpr *, ExprPtr> Copies;
+  std::function<ExprPtr(const ExprPtr &)> Forget = [&](const ExprPtr &E) {
+    if (!E)
+      return E;
+    if (const auto It = Copies.find(E.get()); It != Copies.end())
+      return It->second;
+    Copies.emplace(E.get(), E);
+    bool Changed = E->Kind == ExprKind::Call && E->CallSiteAddr != 0;
+    std::vector<ExprPtr> Operands;
+    Operands.reserve(E->Operands.size());
+    for (const ExprPtr &Operand : E->Operands) {
+      Operands.push_back(Forget(Operand));
+      Changed |= Operands.back() != Operand;
+    }
+    ExprPtr Target = Forget(E->IndirectTarget);
+    Changed |= Target != E->IndirectTarget;
+    if (!Changed)
+      return E;
+    auto Copy = std::make_shared<HighExpr>(*E);
+    Copy->Operands = std::move(Operands);
+    Copy->IndirectTarget = std::move(Target);
+    if (Copy->Kind == ExprKind::Call)
+      Copy->CallSiteAddr = 0;
+    return Copies[E.get()] = Copy;
+  };
+  return Forget(Kept);
 }
 
 static bool hasMemoryBoundary(const HighExpr &Expr) {

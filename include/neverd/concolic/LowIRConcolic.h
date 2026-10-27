@@ -6,7 +6,7 @@
 ///
 /// \file
 /// Runs one concrete LowIR trace, negates each exact conditional-decision
-/// prefix, and publishes only entry-register seeds whose fresh replay reaches
+/// prefix, and publishes only entry-input seeds whose fresh replay reaches
 /// the same occurrence with the opposite polarity.
 ///
 //===----------------------------------------------------------------------===//
@@ -14,6 +14,7 @@
 #ifndef NEVERD_CONCOLIC_LOWIRCONCOLIC_H
 #define NEVERD_CONCOLIC_LOWIRCONCOLIC_H
 
+#include "neverd/concolic/Limits.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/solver/BitVectorSolver.h"
 #include "neverd/symbolic/SymExplore.h"
@@ -38,6 +39,7 @@ enum class ConcolicTraceReason : uint8_t {
   UnsupportedEffects,
   IncompleteOutcome,
   InvalidDecisionHistory,
+  MemorySeedBudgetExceeded,
 };
 
 enum class ConcolicProjectionReason : uint8_t {
@@ -88,9 +90,12 @@ const char *concolicFlipStatusName(ConcolicFlipStatus Status);
 
 inline solver::SolverOptions defaultLowIRConcolicSolverOptions() {
   solver::SolverOptions Options;
-  Options.Sat.MaxConflicts = uint64_t{1} << 18;
-  Options.Sat.MaxPropagations = uint64_t{1} << 24;
-  Options.Sat.MaxWatchVisits = uint64_t{1} << 26;
+  Options.Sat.MaxConflicts = ::neverd::limits::concolic::
+      kLowIRConcolicDefaultLowIRConcolicSolverOptionsMaxConflicts;
+  Options.Sat.MaxPropagations = ::neverd::limits::concolic::
+      kLowIRConcolicDefaultLowIRConcolicSolverOptionsMaxPropagations;
+  Options.Sat.MaxWatchVisits = ::neverd::limits::concolic::
+      kLowIRConcolicDefaultLowIRConcolicSolverOptionsMaxWatchVisits;
   return Options;
 }
 
@@ -107,6 +112,12 @@ struct LowIRConcolicOptions {
   /// Number of distinct replay-verified seeds retained in the report.
   unsigned MaxCandidates = 64;
   solver::SolverOptions Solver = defaultLowIRConcolicSolverOptions();
+  /// Concrete entry RAM in address order. These bytes do not constrain the
+  /// primary symbolic state or establish allocation ownership/disjointness.
+  std::vector<symbolic::SymConcreteMemory> InitialMemory;
+  /// Total entry-memory bytes accepted before copying or running a trace.
+  /// Zero accepts only an empty memory seed.
+  size_t MaxMemorySeedBytes = 1u << 20;
 };
 
 /// Context-free copy of one decision from the original trace.
@@ -121,6 +132,8 @@ struct LowIRConcolicDecision {
 struct LowIRConcolicCandidate {
   /// Sorted, non-overlapping ranges with the same shape as InitialSeed.
   std::vector<symbolic::SymConcreteRegister> Seed;
+  /// Same sorted address ranges as InitialMemory, with projected input bytes.
+  std::vector<symbolic::SymConcreteMemory> MemorySeed;
 };
 
 struct LowIRConcolicFlip {
@@ -167,6 +180,9 @@ struct LowIRConcolicReport {
   unsigned FlipAttempts = 0;
   bool FlipBudgetHit = false;
   bool CandidateBudgetHit = false;
+  /// Version 2 reports retain memory seeds as well as register seeds. Reports
+  /// without a requested memory seed retain the version 1 contract.
+  std::vector<symbolic::SymConcreteMemory> InitialMemory;
 };
 
 LowIRConcolicReport

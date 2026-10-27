@@ -3,11 +3,18 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
+/// \file
+/// Verify private LLVM source queries and their session cache boundaries.
+///
+//===----------------------------------------------------------------------===//
 
 #include "SessionImpl.h"
-#include "gtest/gtest.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
+#include "neverd/backend/llvm/WindowsEHMetadata.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -15,6 +22,7 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Verifier.h"
 
+#include <gtest/gtest.h>
 #include <optional>
 #include <string>
 #include <utility>
@@ -72,6 +80,62 @@ protected:
   Session State;
 };
 
+TEST_F(SessionLLVMTest, OmittedDebugNamedRuntimeUsesItsDeclaredArity) {
+  constexpr va_t Runtime = 0x2000;
+  class PublicNames : public NullDebugContext {
+  public:
+    bool hasInfo() const override { return true; }
+    std::optional<std::string> functionName(va_t Address) const override {
+      return Address == Runtime
+                 ? std::optional<std::string>("__security_check_cookie")
+                 : std::nullopt;
+    }
+  };
+  State.Dbg = std::make_unique<PublicNames>();
+  State.Img.Format = BinaryFormat::COFF;
+  MedFunc Function = sourceFunction();
+  Function.CC = CallingConv::Win64;
+  auto &Ops = Function.Blocks.front().Ops;
+  Ops.clear();
+  unsigned Id = 0;
+  for (uint64_t Register : {x86reg::RCX, x86reg::RDX, x86reg::R8}) {
+    MedOp Setup;
+    Setup.Opcode = NdOp::COPY;
+    Setup.Addr = Function.Entry + Id;
+    Setup.Output.Kind = MedVar::Reg;
+    Setup.Output.Id = ++Id;
+    Setup.Output.RegOff = Register;
+    Setup.Output.Size = 8;
+    Setup.Output.SSAVer = 1;
+    Setup.Output.TheArch = Arch::X64;
+    Setup.addInput(MedVar::makeConst(47 + Id, 8));
+    Ops.push_back(Setup);
+  }
+  MedOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = Function.Entry + Id;
+  Call.addInput(MedVar::makeConst(Runtime, 8));
+  Ops.push_back(Call);
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Ops.push_back(Return);
+  State.PipeResult.MedFuncs.push_back(std::move(Function));
+  std::shared_ptr<LLVMSourceMap> Sources;
+  for (bool NoOpt : {false, true}) {
+    auto Module = State.emitNativeLlvm(NoOpt, nullptr, Sources);
+    ASSERT_TRUE(Module) << State.LastError;
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    const auto *RuntimeFunction =
+        Module->getFunction("__security_check_cookie");
+    ASSERT_TRUE(RuntimeFunction);
+    EXPECT_EQ(RuntimeFunction->arg_size(), 1u);
+    ASSERT_TRUE(State.NativeMedFuncs);
+    const auto &Calls = State.NativeMedFuncs->front().CallInfos;
+    ASSERT_EQ(Calls.size(), 1u);
+    EXPECT_EQ(Calls.front().Args.size(), 1u);
+  }
+}
+
 TEST_F(SessionLLVMTest, ExactAddressZeroIgnoresHelperNamesAndDeclarations) {
   addFunction("sub_0", std::nullopt);
   addFunction("external_declaration", 0, true);
@@ -82,12 +146,85 @@ TEST_F(SessionLLVMTest, ExactAddressZeroIgnoresHelperNamesAndDeclarations) {
   EXPECT_TRUE(State.LastError.empty());
 }
 
+TEST_F(SessionLLVMTest, EmissionExceptionsKeepTheSessionAndReason) {
+  State.Img.Arch = Arch::AArch64;
+  auto Function = sourceFunction();
+  MedOp Exit;
+  Exit.Opcode = NdOp::INTRINSIC;
+  Exit.addInput(MedVar::makeConst(static_cast<uint64_t>(Intrinsic::Eret),
+                                  sizeof(uint16_t)));
+  Function.Blocks.front().Ops.insert(Function.Blocks.front().Ops.begin(), Exit);
+  State.PipeResult.MedFuncs.push_back(Function);
+  std::shared_ptr<LLVMSourceMap> Sources;
+  for (bool NoOpt : {false, true})
+    for (bool OriginalImage : {false, true}) {
+      State.clearError();
+      EXPECT_NO_THROW(EXPECT_FALSE(
+          State.emitNativeLlvm(NoOpt, nullptr, Sources, OriginalImage)));
+      EXPECT_NE(State.LastError.find(kAArch64ExceptionReturnUnsupported),
+                std::string::npos)
+          << State.LastError;
+      EXPECT_FALSE(Sources);
+      EXPECT_TRUE(State.PipeRan);
+      EXPECT_TRUE(State.PipeResult.Success);
+      EXPECT_TRUE(State.FunctionLlvmModules.empty());
+    }
+  State.PipeResult.MedFuncs.front() = sourceFunction();
+  State.NativeMedFuncs.reset();
+  State.clearError();
+  ASSERT_TRUE(State.emitNativeLlvm(true, nullptr, Sources)) << State.LastError;
+  EXPECT_TRUE(State.LastError.empty());
+}
+
+TEST_F(SessionLLVMTest, SourceOnlyStackLimitSurvivesModulePreparation) {
+  State.Img.Format = BinaryFormat::COFF;
+  auto Function = sourceFunction();
+  Function.HasUnresolvedSEHFrame = true;
+  State.PipeResult.MedFuncs.push_back(Function);
+  std::shared_ptr<LLVMSourceMap> Sources;
+  for (bool NoOpt : {false, true})
+    for (bool OriginalImage : {false, true}) {
+      State.clearError();
+      auto Module =
+          State.emitNativeLlvm(NoOpt, nullptr, Sources, OriginalImage);
+      ASSERT_TRUE(Module) << State.LastError;
+      ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+      const auto *Emitted = Module->getFunction(Function.Name);
+      ASSERT_TRUE(Emitted);
+      EXPECT_TRUE(
+          Emitted->hasFnAttribute(windows_eh_md::UnresolvedSourceFrame));
+      EXPECT_TRUE(State.LastError.empty());
+    }
+}
+
 TEST_F(SessionLLVMTest, MissingIdentityNeverFallsBackToSymbolSpelling) {
   addFunction("sub_1000", std::nullopt);
   addFunction("sub_100", 0x2000);
 
   EXPECT_EQ(State.findNativeLlvmFunction(0x1000), nullptr);
   EXPECT_NE(State.LastError.find("not found at 0x1000"), std::string::npos);
+}
+
+TEST_F(SessionLLVMTest, MissingFunctionRetainsItsPipelineFailure) {
+  addFunction("unrelated_source", 0x2000);
+  PipelineFunctionAudit Rejected;
+  Rejected.Entry = 0x1000;
+  Rejected.Disposition = PipelineFunctionDisposition::RejectedIncomplete;
+  Rejected.DecodeFailures = {0x1005};
+  State.PipeResult.FunctionAudits.push_back(Rejected);
+  const std::string Expected =
+      "LLVM function not found at 0x1000 "
+      "(rejected-incomplete; decode failure at 0x1005)";
+  EXPECT_EQ(State.findNativeLlvmFunction(0x1000), nullptr);
+  EXPECT_EQ(State.LastError, Expected);
+  for (bool NoOpt : {false, true}) {
+    State.clearError();
+    EXPECT_EQ(State.ensureFunctionLlvmModule(0x1000, NoOpt), nullptr);
+    EXPECT_EQ(State.LastError, Expected);
+  }
+  State.clearError();
+  EXPECT_EQ(State.findNativeLlvmFunction(0x3000), nullptr);
+  EXPECT_EQ(State.LastError, "LLVM function not found at 0x3000");
 }
 
 TEST_F(SessionLLVMTest, DuplicateOriginalAddressIsAmbiguous) {

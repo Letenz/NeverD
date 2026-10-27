@@ -14,32 +14,29 @@
 
 #include "EHFrameDetail.h"
 
+#include "neverd/loader/DWARF/AArch64ReturnAddressState.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/Support/MathExtras.h"
 
+#include <bit>
 #include <limits>
 #include <utility>
 
 #define DEBUG_TYPE "neverd-dwarf-eh"
 
 namespace neverd::dwarf_eh {
-namespace {
-
-/// Largest call-frame instruction expression block accepted.  A DWARF
-/// expression describing a CFA rule is a handful of bytes in practice; a
-/// length beyond this is a corrupt or hostile record, not a real rule.
-constexpr uint64_t kMaxExpressionBytes = 64 * 1024;
-
-} // namespace
+namespace {} // namespace
 
 namespace detail {
 
 bool decodeCFIProgram(const uint8_t *Buf, size_t Size, size_t Cursor,
                       size_t End, const DwarfCIE &CIE, uint8_t FDEEncoding,
                       va_t BufVA, const PointerBases &Bases, unsigned PtrSize,
-                      const BinaryImage *Img, const ParseLimits &Limits,
+                      std::optional<va_t> FunctionStart, const BinaryImage *Img,
+                      const ParseLimits &Limits,
                       std::vector<CFIInstruction> &Out,
                       ExceptionParseStatus &Status,
                       std::vector<std::string> &Diagnostics) {
@@ -54,6 +51,9 @@ bool decodeCFIProgram(const uint8_t *Buf, size_t Size, size_t Cursor,
     Diagnostics.emplace_back(Message);
     return false;
   };
+
+  if (!CodeAlign)
+    return fail(aarch64::kZeroCodeAlignment);
 
   auto advance = [&](uint64_t Delta) {
     // The scaled advance is bounded by the entry's own address range in
@@ -119,6 +119,16 @@ bool decodeCFIProgram(const uint8_t *Buf, size_t Size, size_t Cursor,
       continue;
     }
 
+    if ((!Img || Img->Arch != Arch::AArch64) &&
+        (Low == aarch64::kSetRAState || Low == aarch64::kNegateRAState ||
+         Low == aarch64::kNegateRAStateWithPC)) {
+      Insn.Kind = CFIOpKind::Opaque;
+      Insn.OperandBytes.assign(1, Op);
+      Out.push_back(std::move(Insn));
+      Status = mergeExceptionParseStatus(Status, ExceptionParseStatus::Partial);
+      Diagnostics.emplace_back(aarch64::kUnsupportedArchitecture);
+      return true;
+    }
     switch (Low) {
     case DW_CFA_nop:
       Insn.Kind = CFIOpKind::Nop;
@@ -132,7 +142,17 @@ bool decodeCFIProgram(const uint8_t *Buf, size_t Size, size_t Cursor,
         return fail("unreadable DWARF set_loc address");
       }
       Insn.Kind = CFIOpKind::SetLoc;
-      Insn.Offset = static_cast<int64_t>(Address);
+      Insn.Offset = std::bit_cast<int64_t>(Address);
+      if (!FunctionStart) {
+        Out.push_back(std::move(Insn));
+        Status =
+            mergeExceptionParseStatus(Status, ExceptionParseStatus::Partial);
+        Diagnostics.emplace_back(aarch64::kUnboundSetLoc);
+        return true;
+      }
+      if (Address < *FunctionStart || Address - *FunctionStart <= Location)
+        return fail(aarch64::kInvalidSetLoc);
+      Location = Address - *FunctionStart;
       break;
     }
     case DW_CFA_advance_loc1:
@@ -261,7 +281,8 @@ bool decodeCFIProgram(const uint8_t *Buf, size_t Size, size_t Cursor,
       uint64_t Length = 0;
       if (!readULEB128(Buf, End, Cursor, Length))
         return fail("truncated DWARF def_cfa_expression length");
-      if (Length > kMaxExpressionBytes || !rangeInBounds(Cursor, Length, End))
+      if (Length > ::neverd::limits::loader::kEHFrameCFIMaxExpressionBytes ||
+          !rangeInBounds(Cursor, Length, End))
         return fail("invalid DWARF def_cfa_expression block");
       Insn.Kind = CFIOpKind::DefCFAExpression;
       Insn.Expression.assign(Buf + Cursor, Buf + Cursor + Length);
@@ -274,7 +295,8 @@ bool decodeCFIProgram(const uint8_t *Buf, size_t Size, size_t Cursor,
       if (!readULEB128(Buf, End, Cursor, Reg) ||
           !readULEB128(Buf, End, Cursor, Length))
         return fail("truncated DWARF expression operands");
-      if (Length > kMaxExpressionBytes || !rangeInBounds(Cursor, Length, End))
+      if (Length > ::neverd::limits::loader::kEHFrameCFIMaxExpressionBytes ||
+          !rangeInBounds(Cursor, Length, End))
         return fail("invalid DWARF expression block");
       Insn.Kind = Low == DW_CFA_expression ? CFIOpKind::Expression
                                            : CFIOpKind::ValExpression;
@@ -291,13 +313,38 @@ bool decodeCFIProgram(const uint8_t *Buf, size_t Size, size_t Cursor,
       Insn.Offset = static_cast<int64_t>(Size2);
       break;
     }
-    case DW_CFA_AARCH64_negate_ra_state:
-      // 0x2d is DW_CFA_GNU_window_save on SPARC.  Both are operand-free and
-      // both toggle a per-frame boolean, so one normalized kind is exact for
-      // the architectures NeverD lifts.
+    case aarch64::kSetRAState: {
+      const size_t OperandStart = Cursor;
+      int64_t Factored = 0;
+      if (!readULEB128(Buf, End, Cursor, Insn.RAState) ||
+          !readSLEB128(Buf, End, Cursor, Factored))
+        return fail(aarch64::kTruncatedState);
+      Insn.Kind = CFIOpKind::SetRAState;
+      if (Insn.RAState > aarch64::kSignedSPPC) {
+        Insn.OperandBytes.assign(Buf + OperandStart, Buf + Cursor);
+        Status =
+            mergeExceptionParseStatus(Status, ExceptionParseStatus::Partial);
+        Diagnostics.emplace_back(aarch64::kReservedState);
+        break;
+      }
+      if (Insn.RAState == aarch64::kSignedSPPC) {
+        const uint64_t Magnitude = Factored < 0
+                                       ? uint64_t(0) - uint64_t(Factored)
+                                       : uint64_t(Factored);
+        const uint64_t Maximum = uint64_t(INT64_MAX) + (Factored < 0);
+        if (Magnitude && CodeAlign > Maximum / Magnitude)
+          return fail(aarch64::kCodeOffsetOverflow);
+        const uint64_t Product = Magnitude * CodeAlign;
+        Insn.Offset = Factored < 0
+                          ? std::bit_cast<int64_t>(uint64_t(0) - Product)
+                          : static_cast<int64_t>(Product);
+      }
+      break;
+    }
+    case aarch64::kNegateRAState:
       Insn.Kind = CFIOpKind::NegateRAState;
       break;
-    case DW_CFA_AARCH64_negate_ra_state_with_pc:
+    case aarch64::kNegateRAStateWithPC:
       Insn.Kind = CFIOpKind::NegateRAStateWithPC;
       break;
     default:

@@ -12,6 +12,13 @@
 NEVERD_KERNEL_REGISTRY_API(ZwOpenKey, 3)
 NEVERD_KERNEL_REGISTRY_API(ZwCreateKey, 7)
 NEVERD_KERNEL_REGISTRY_API(ZwQueryValueKey, 6)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-zwenumeratevaluekey
+// NtEnumerateValueKey in Windows 10.0.19041.6456 rejects classes above Partial.
+NEVERD_KERNEL_REGISTRY_API(ZwEnumerateValueKey, 6)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-zwquerykey
+NEVERD_KERNEL_REGISTRY_API(ZwQueryKey, 5)
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-zwenumeratekey
+NEVERD_KERNEL_REGISTRY_API(ZwEnumerateKey, 6)
 NEVERD_KERNEL_REGISTRY_API(ZwSetValueKey, 6)
 NEVERD_KERNEL_REGISTRY_API(ZwDeleteValueKey, 2)
 NEVERD_KERNEL_REGISTRY_API(ZwDeleteKey, 1)

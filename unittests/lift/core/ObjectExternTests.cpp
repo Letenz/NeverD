@@ -16,6 +16,8 @@
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/decode/Decoder.h"
+#include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
@@ -96,6 +98,48 @@ const Symbol *dataSymbol(const BinaryImage &Img, llvm::StringRef Name) {
   return nullptr;
 }
 
+TEST(ObjectExterns,
+     OnlyLoaderOwnedObjectCalleesBypassExecutableEntryAdmission) {
+  for (bool Relocatable : {false, true}) {
+    for (bool Callable : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << Relocatable << ':' << Callable);
+      BinaryImage Img;
+      Img.Arch = Arch::X64;
+      Img.Bits = Bitness::Bits64;
+      Img.Format = BinaryFormat::ELF;
+      Img.IsRelocatable = Relocatable;
+      Segment Text;
+      Text.VA = 0x1000;
+      Text.Size = 5;
+      Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+      Text.Data = {0xe9, 0xfb, 0x0f, 0, 0}; // jmp 0x2000
+      Img.Segments.push_back(std::move(Text));
+      Segment Extern;
+      Extern.VA = 0x2000;
+      Extern.Size = 8;
+      Extern.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      Extern.Data.resize(Extern.Size);
+      Img.Segments.push_back(std::move(Extern));
+      Img.Imports.push_back({"extern", "fputs", 0, 0x2000});
+      Img.Symbols.push_back(Symbol::makeFunc(0x2000));
+      if (Callable)
+        Img.ObjectExternFunctionEntries.insert(0x2000);
+      ASSERT_FALSE(Img.isFunctionEntryCandidateAt(0x2000));
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Arch::X64));
+      CFGBuilder Builder;
+      const auto Function = Builder.build(Img, Dec, 0x1000, "tail");
+      unsigned Calls = 0;
+      for (const auto &Block : Function.Blocks)
+        for (const auto &Op : Block.Ops)
+          if (Op.Opcode == NdOp::CALL && Op.NumInputs &&
+              Op.Inputs[0].isConst() && Op.Inputs[0].Offset == 0x2000)
+            ++Calls;
+      EXPECT_EQ(Calls, unsigned(Relocatable && Callable));
+    }
+  }
+}
+
 TEST(ObjectExterns, UndefinedAndCommonSymbolsResolveOnEveryArchitecture) {
   for (const ExternFixture &Fixture : kFixtures) {
     SCOPED_TRACE(Fixture.Object);
@@ -109,6 +153,8 @@ TEST(ObjectExterns, UndefinedAndCommonSymbolsResolveOnEveryArchitecture) {
       Imports.insert(Imp.Name);
     for (const char *Called : {"perror", "exit", "fputs"})
       EXPECT_TRUE(Imports.count(Called)) << Called;
+    for (const Import &Imp : Img.Imports)
+      EXPECT_TRUE(Img.ObjectExternFunctionEntries.count(Imp.IATAddr));
     // A weak reference keeps the null test the code makes of it.
     EXPECT_FALSE(Imports.count("maybe"));
     EXPECT_EQ(Img.findSymbol("maybe"), nullptr);
@@ -121,6 +167,7 @@ TEST(ObjectExterns, UndefinedAndCommonSymbolsResolveOnEveryArchitecture) {
     ASSERT_NE(Tentative, nullptr);
     ASSERT_NE(Defined, nullptr);
     for (const Symbol *Data : {Counter, Stdout, Tentative}) {
+      EXPECT_FALSE(Img.ObjectExternFunctionEntries.count(Data->Addr));
       const Segment *Storage = Img.getSegmentFor(Data->Addr);
       ASSERT_NE(Storage, nullptr) << Data->Name;
       EXPECT_TRUE(Storage->isWritable()) << Data->Name;

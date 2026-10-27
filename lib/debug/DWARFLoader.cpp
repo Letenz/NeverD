@@ -11,7 +11,10 @@
 
 #include "neverd/debug/DWARFLoader.h"
 
+#include "neverd/debug/CompressedSections.h"
+#include "neverd/debug/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/support/FilePath.h"
 
 #define DEBUG_TYPE "neverd-dwarf-loader"
@@ -40,6 +43,7 @@
 #include <array>
 #include <functional>
 #include <limits>
+#include <mutex>
 #include <set>
 #include <span>
 
@@ -294,6 +298,15 @@ using dwarf_loader_detail::StrictAttributeLookup;
 struct DWARFDebugContext::Impl {
   std::unique_ptr<llvm::MemoryBuffer> BinaryBuf;
   std::unique_ptr<llvm::MemoryBuffer> DSYMBuf;
+  /// Held by the queries that read DwarfCtx after loading, whose lazy
+  /// caches no two readers may fill at once.
+  mutable std::mutex ContextMutex;
+  /// The object's bytes with its compressed sections expanded, which the
+  /// DWARF reader reads in its place (CompressedSections.h).
+  std::vector<uint8_t> ExpandedBytes;
+  /// The object DwarfCtx reads, which it resolves a relocatable object's
+  /// relocations through whenever it reads a value: it outlives DwarfCtx.
+  std::unique_ptr<llvm::object::ObjectFile> Object;
   std::unique_ptr<llvm::DWARFContext> DwarfCtx;
 
   std::map<va_t, FunctionSym> FuncMap;
@@ -325,6 +338,21 @@ struct DWARFDebugContext::Impl {
   };
 
   std::map<va_t, FunctionInfo> Functions;
+  /// Each range of each of Functions, by its start, and the greatest end of
+  /// the ranges up to each, so that the functions whose ranges contain an
+  /// address are found without reading every function (functionsContaining).
+  struct FunctionRange {
+    va_t Begin;
+    va_t End;
+    va_t Entry;
+  };
+  std::vector<FunctionRange> FunctionRanges;
+  std::vector<va_t> FunctionRangeEndsSoFar;
+  /// Reads FunctionRanges from Functions, which loading has filled.
+  void indexFunctionRanges();
+  /// The entries of the functions one of whose ranges contains \p PC, in
+  /// entry order and each once: those of Functions containsPC finds.
+  llvm::SmallVector<va_t, 4> functionsContaining(va_t PC) const;
   dwarf_loader_detail::SubprogramExtentRegistry SubprogramExtents;
   std::vector<DataObjectSym> DataObjects;
 
@@ -334,7 +362,9 @@ struct DWARFDebugContext::Impl {
   bool Loaded = false;
   bool AuthenticatedObjectExtents = false;
 
-  struct ReturnTypeResolution {
+  /// The type a DIE declares, found on the DIE or on the declarations its
+  /// DW_AT_specification and DW_AT_abstract_origin chain names.
+  struct DeclaredTypeResolution {
     enum class Status : uint8_t { Absent, Found, Malformed };
     Status TheStatus = Status::Absent;
     llvm::DWARFDie TypeDie;
@@ -343,7 +373,20 @@ struct DWARFDebugContext::Impl {
   TypeRef convertDwarfType(llvm::DWARFDie Die, int Depth = 0);
   std::optional<AuthenticatedRecordParameter>
   recordParameter(llvm::DWARFDie Die, va_t Entry) const;
-  ReturnTypeResolution resolveReturnType(llvm::DWARFDie Die) const;
+  /// Where each formal parameter of the i386 function \p Die enters it at
+  /// \p Entry, where one enters in a register: GCC passes a local function's
+  /// first three there (regparm) and clang its first two (fastcc), where
+  /// cdecl, the platform's convention, passes none.  Empty where none does.
+  std::vector<SourceABIValueLocation>
+  parameterEntryLocations(llvm::DWARFDie Die, va_t Entry) const;
+  /// Where the formal parameter \p Param enters its function at \p Entry: the
+  /// general register a location covering the entry names, or the one whose
+  /// entry value another location takes; the caller's slots, where the
+  /// covering location is memory the frame base or ESP addresses; else none.
+  SourceABIValueLocation parameterEntryLocation(llvm::DWARFDie Param,
+                                                va_t Entry) const;
+  DeclaredTypeResolution resolveDeclaredType(llvm::DWARFDie Die) const;
+  llvm::DWARFDie declaredTypeDie(llvm::DWARFDie Die) const;
   AuthenticatedReturnValueState classifyReturnValue(llvm::DWARFDie Die,
                                                     int Depth = 0) const;
   std::vector<Location> decodeLocations(llvm::DWARFDie Die,
@@ -362,25 +405,26 @@ struct DWARFDebugContext::Impl {
 
 DWARFDebugContext::~DWARFDebugContext() = default;
 
-std::filesystem::path findDSYMFile(const std::filesystem::path &BinaryPath) {
+std::filesystem::path dSYMBundleFile(const std::filesystem::path &Bundle) {
   // A directory that cannot be read holds no bundle: the queries that ask
   // before a load must not throw.
-  const auto firstFile = [](const std::filesystem::path &DwarfDir) {
-    std::error_code EC;
-    for (std::filesystem::directory_iterator It(DwarfDir, EC), End;
-         !EC && It != End; It.increment(EC))
-      if (std::error_code FileEC; It->is_regular_file(FileEC))
-        return It->path();
-    return std::filesystem::path();
-  };
   std::error_code EC;
+  const auto DwarfDir = Bundle / "Contents" / "Resources" / "DWARF";
+  if (!std::filesystem::exists(DwarfDir, EC))
+    return {};
+  for (std::filesystem::directory_iterator It(DwarfDir, EC), End;
+       !EC && It != End; It.increment(EC))
+    if (std::error_code FileEC; It->is_regular_file(FileEC))
+      return It->path();
+  return {};
+}
 
+std::filesystem::path findDSYMFile(const std::filesystem::path &BinaryPath) {
+  std::error_code EC;
   auto Bundle = BinaryPath;
   Bundle += ".dSYM";
-  const auto BundleDwarf = Bundle / "Contents" / "Resources" / "DWARF";
-  if (std::filesystem::exists(BundleDwarf, EC))
-    if (auto File = firstFile(BundleDwarf); !File.empty())
-      return File;
+  if (auto File = dSYMBundleFile(Bundle); !File.empty())
+    return File;
 
   auto Parent = BinaryPath.parent_path();
   if (Parent.empty())
@@ -392,11 +436,8 @@ std::filesystem::path findDSYMFile(const std::filesystem::path &BinaryPath) {
     if (It->path().extension() != ".dSYM" || !It->is_directory(EntryEC) ||
         It->path().stem() != Stem)
       continue;
-    const auto Inner = It->path() / "Contents" / "Resources" / "DWARF";
-    std::error_code InnerEC;
-    if (std::filesystem::exists(Inner, InnerEC))
-      if (auto File = firstFile(Inner); !File.empty())
-        return File;
+    if (auto File = dSYMBundleFile(It->path()); !File.empty())
+      return File;
   }
   return {};
 }
@@ -446,14 +487,36 @@ static std::unique_ptr<llvm::object::ObjectFile> getObjectFromBuffer(
   return Fallback;
 }
 
+/// \p Obj, or the copy of it whose compressed sections \p Expanded keeps
+/// expanded, for a DWARF reader without decompressors.
+static std::unique_ptr<llvm::object::ObjectFile>
+withExpandedSections(std::unique_ptr<llvm::object::ObjectFile> Obj,
+                     std::vector<uint8_t> &Expanded) {
+  auto Bytes = expandCompressedSections(Obj->getData());
+  if (!Bytes)
+    return Obj;
+  Expanded = std::move(*Bytes);
+  auto Plain = llvm::object::ObjectFile::createObjectFile(llvm::MemoryBufferRef(
+      llvm::toStringRef(llvm::ArrayRef<uint8_t>(Expanded)),
+      Obj->getFileName()));
+  if (!Plain) {
+    llvm::consumeError(Plain.takeError());
+    Expanded.clear();
+    return Obj;
+  }
+  return std::move(*Plain);
+}
+
 bool hasDWARFUnits(const std::filesystem::path &Path) {
   auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Path), /*IsText=*/false,
                                             /*RequiresNullTerminator=*/false);
   if (!Buffer)
     return false;
-  const auto Object = getObjectFromBuffer(**Buffer);
+  auto Object = getObjectFromBuffer(**Buffer);
   if (!Object)
     return false;
+  std::vector<uint8_t> Expanded;
+  Object = withExpandedSections(std::move(Object), Expanded);
   const auto Context = llvm::DWARFContext::create(*Object);
   return Context && Context->getNumCompileUnits() > 0;
 }
@@ -524,7 +587,8 @@ dwarfFramePointerRegister(llvm::Triple::ArchType Arch) {
 std::unique_ptr<DWARFDebugContext>
 DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
                         BinaryFormat Format, DWARFLoadTrust Trust,
-                        std::span<const uint8_t> ExpectedImageBytes) {
+                        std::span<const uint8_t> ExpectedImageBytes,
+                        std::optional<llvm::Triple::ArchType> RequiredArch) {
   auto Ctx = std::unique_ptr<DWARFDebugContext>(new DWARFDebugContext());
   Ctx->PImpl = std::make_unique<Impl>();
 
@@ -536,7 +600,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
   }
   Ctx->PImpl->BinaryBuf = std::move(*BufOr);
 
-  auto Obj = getObjectFromBuffer(*Ctx->PImpl->BinaryBuf, std::nullopt,
+  auto Obj = getObjectFromBuffer(*Ctx->PImpl->BinaryBuf, RequiredArch,
                                  ExpectedImageBytes);
   if (!Obj) {
     llvm::WithColor::warning()
@@ -551,6 +615,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
   Ctx->PImpl->MachineArch = MainArch;
   Ctx->PImpl->DwarfFramePointerReg = dwarfFramePointerRegister(MainArch);
 
+  Obj = withExpandedSections(std::move(Obj), Ctx->PImpl->ExpandedBytes);
   Ctx->PImpl->DwarfCtx = llvm::DWARFContext::create(*Obj);
   if (!Ctx->PImpl->DwarfCtx) {
     llvm::WithColor::warning() << "debug: cannot create DWARFContext for "
@@ -600,6 +665,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
                           << Ctx->PImpl->DwarfCtx->getNumCompileUnits()
                           << " compile units found" << "\n");
   Ctx->PImpl->parseCompileUnits(*Obj);
+  Ctx->PImpl->Object = std::move(Obj);
   Ctx->PImpl->Loaded = true;
 
   LLVM_DEBUG(llvm::dbgs() << "debug: loaded " << Ctx->PImpl->FuncList.size()
@@ -607,13 +673,105 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
   return Ctx;
 }
 
+std::vector<SourceABIValueLocation>
+DWARFDebugContext::Impl::parameterEntryLocations(llvm::DWARFDie Die,
+                                                 va_t Entry) const {
+  std::vector<SourceABIValueLocation> Entries;
+  if (MachineArch != llvm::Triple::x86)
+    return Entries;
+  bool InRegister = false;
+  for (llvm::DWARFDie Child : Die.children()) {
+    if (Child.getTag() != llvm::dwarf::DW_TAG_formal_parameter)
+      continue;
+    Entries.push_back(parameterEntryLocation(Child, Entry));
+    InRegister |= Entries.back().Kind == SourceABICarrierKind::IntegerRegister;
+  }
+  if (!InRegister)
+    Entries.clear();
+  return Entries;
+}
+
+SourceABIValueLocation
+DWARFDebugContext::Impl::parameterEntryLocation(llvm::DWARFDie Param,
+                                                va_t Entry) const {
+  auto Locations = Param.getLocations(llvm::dwarf::DW_AT_location);
+  if (!Locations) {
+    llvm::consumeError(Locations.takeError());
+    return {};
+  }
+  // i386's DWARF numbers the general registers as its encoding does: EAX,
+  // ECX, EDX, EBX, ESP, EBP, ESI, EDI.  No parameter enters in ESP.
+  auto GeneralRegister = [](uint8_t Code) -> std::optional<uint64_t> {
+    if (Code < llvm::dwarf::DW_OP_reg0 || Code > llvm::dwarf::DW_OP_reg7 ||
+        Code == llvm::dwarf::DW_OP_reg4)
+      return std::nullopt;
+    return x86reg::generalReg(Code - llvm::dwarf::DW_OP_reg0);
+  };
+  std::optional<SourceABIValueLocation> Found;
+  bool Conflict = false;
+  auto Note = [&](SourceABICarrierKind Kind, uint64_t Register) {
+    if (Found && (Found->Kind != Kind || Found->RegisterOffset != Register))
+      Conflict = true;
+    Found.emplace();
+    Found->Kind = Kind;
+    Found->RegisterOffset = Register;
+  };
+  auto *Unit = Param.getDwarfUnit();
+  for (const auto &Location : *Locations) {
+    llvm::StringRef Raw(reinterpret_cast<const char *>(Location.Expr.data()),
+                        Location.Expr.size());
+    llvm::DataExtractor Data(Raw, Unit->isLittleEndian(),
+                             Unit->getAddressByteSize());
+    llvm::DWARFExpression Expression(Data, Unit->getAddressByteSize(),
+                                     Unit->getFormat());
+    llvm::SmallVector<std::pair<uint8_t, uint64_t>, 4> Ops;
+    bool Valid = true;
+    for (const auto &Op : Expression) {
+      if (Op.isError() || Ops.size() == 4) {
+        Valid = false;
+        break;
+      }
+      Ops.push_back({Op.getCode(),
+                     Op.getNumOperands() ? Op.getRawOperand(0) : uint64_t()});
+    }
+    if (!Valid || Ops.empty())
+      continue;
+    // The value the register held at the entry, wherever the location
+    // applies: DWARF 5's DW_OP_entry_value, GCC's DW_OP_GNU_entry_value.
+    if (Ops.size() == 3 &&
+        (Ops[0].first == llvm::dwarf::DW_OP_entry_value ||
+         Ops[0].first == llvm::dwarf::DW_OP_GNU_entry_value) &&
+        Ops[0].second == 1 && Ops[2].first == llvm::dwarf::DW_OP_stack_value) {
+      if (const auto Register = GeneralRegister(Ops[1].first))
+        Note(SourceABICarrierKind::IntegerRegister, *Register);
+      continue;
+    }
+    if (Location.Range &&
+        !(Location.Range->valid() && Location.Range->LowPC <= Entry &&
+          Entry < Location.Range->HighPC))
+      continue;
+    if (Ops.size() != 1)
+      continue;
+    if (const auto Register = GeneralRegister(Ops[0].first))
+      Note(SourceABICarrierKind::IntegerRegister, *Register);
+    else if (Ops[0].first == llvm::dwarf::DW_OP_fbreg ||
+             Ops[0].first == llvm::dwarf::DW_OP_breg4)
+      Note(SourceABICarrierKind::Stack, 0);
+  }
+  if (!Found || Conflict)
+    return {};
+  return *Found;
+}
+
 std::optional<AuthenticatedRecordParameter>
 DWARFDebugContext::Impl::recordParameter(llvm::DWARFDie Die, va_t Entry) const {
-  llvm::DWARFDie Type =
-      Die.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type);
+  llvm::DWARFDie Type = declaredTypeDie(Die);
   bool Pointer = false;
   unsigned Depth = 0;
-  for (; Type && Depth < 32; ++Depth) {
+  for (; Type &&
+         Depth < ::neverd::limits::debug::
+                     kDWARFLoaderDWARFDebugContextImplRecordParameterDepthLimit;
+       ++Depth) {
     const auto Tag = Type.getTag();
     if (Tag == llvm::dwarf::DW_TAG_pointer_type) {
       if (Pointer || !Type.getDwarfUnit() ||
@@ -636,7 +794,8 @@ DWARFDebugContext::Impl::recordParameter(llvm::DWARFDie Die, va_t Entry) const {
       return std::nullopt;
     Type = Type.getAttributeValueAsReferencedDie(Next.Value);
   }
-  if (!Pointer || !Type || Depth == 32 ||
+  if (!Pointer || !Type ||
+      Depth == ::neverd::limits::debug::kMaxDWARFUnwrapDepth ||
       (Type.getTag() != llvm::dwarf::DW_TAG_structure_type &&
        Type.getTag() != llvm::dwarf::DW_TAG_class_type))
     return std::nullopt;
@@ -649,7 +808,10 @@ DWARFDebugContext::Impl::recordParameter(llvm::DWARFDie Die, va_t Entry) const {
   std::string Qualified;
   llvm::raw_string_ostream NameOS(Qualified);
   llvm::dumpTypeQualifiedName(Type, NameOS);
-  if (Qualified.empty() || Qualified.size() > 4096)
+  if (Qualified.empty() ||
+      Qualified.size() >
+          ::neverd::limits::debug::
+              kDWARFLoaderDWARFDebugContextImplRecordParameterQualifiedSizeLimit)
     return std::nullopt;
 
   auto Locations = Die.getLocations(llvm::dwarf::DW_AT_location);
@@ -705,15 +867,6 @@ DWARFDebugContext::Impl::recordParameter(llvm::DWARFDie Die, va_t Entry) const {
 }
 
 namespace {
-/// Records and arrays nested deeper than this are not laid out.
-constexpr int kMaxLayoutDepth = 16;
-/// More scalars than a layout lists: no convention passes a value with more
-/// in registers, nor reads its scalars to place it.
-constexpr size_t kMaxLayoutLeaves = 64;
-/// More elements than an array's layout is computed for.
-constexpr uint64_t kMaxLayoutElements = uint64_t(1) << 32;
-/// No scalar's size implies a larger alignment.
-constexpr uint64_t kMaxScalarAlignment = 16;
 
 /// The size and alignment of a value the debug information describes; the
 /// alignment is 0 where the layout does not say it.
@@ -730,8 +883,9 @@ struct ValueLayout {
   bool LeavesKnown = true;
 
   void add(uint64_t Offset, uint64_t Size, bool Floating) {
-    if (!LeavesKnown || Leaves.size() >= kMaxLayoutLeaves || !Size ||
-        Offset + Size > UINT16_MAX) {
+    if (!LeavesKnown ||
+        Leaves.size() >= ::neverd::limits::debug::kDWARFLoaderMaxLayoutLeaves ||
+        !Size || Offset + Size > UINT16_MAX) {
       LeavesKnown = false;
       return;
     }
@@ -740,10 +894,13 @@ struct ValueLayout {
   }
 };
 
+// A scalar size does not imply an alignment above the native scalar ABI.
+constexpr uint64_t MaxScalarAlignment = 16;
+
 /// The alignment a scalar of \p Bytes has, or 0 when its size does not say
 /// (the 12 bytes of an i386 long double).
 uint64_t scalarAlignment(uint64_t Bytes) {
-  return Bytes && Bytes <= kMaxScalarAlignment && llvm::isPowerOf2_64(Bytes)
+  return Bytes && Bytes <= MaxScalarAlignment && llvm::isPowerOf2_64(Bytes)
              ? Bytes
              : 0;
 }
@@ -800,10 +957,11 @@ std::optional<uint64_t> arrayElements(llvm::DWARFDie Array) {
         return std::nullopt;
       Extent = *Last - *First + 1;
     }
-    if (static_cast<uint64_t>(Extent) > kMaxLayoutElements)
+    if (static_cast<uint64_t>(Extent) >
+        ::neverd::limits::debug::kDWARFLoaderMaxLayoutElements)
       return std::nullopt;
     Count *= static_cast<uint64_t>(Extent);
-    if (Count > kMaxLayoutElements)
+    if (Count > ::neverd::limits::debug::kDWARFLoaderMaxLayoutElements)
       return std::nullopt;
   }
   return Count;
@@ -914,7 +1072,8 @@ std::optional<ValueShape> layOutRecord(llvm::DWARFDie Record, uint64_t Base,
 /// described.
 std::optional<ValueShape> layOut(llvm::DWARFDie Type, uint64_t Base, int Depth,
                                  ValueLayout &Layout) {
-  if (!Type.isValid() || Depth > kMaxLayoutDepth) {
+  if (!Type.isValid() ||
+      Depth > ::neverd::limits::debug::kDWARFLoaderMaxLayoutDepth) {
     Layout.LeavesKnown = false;
     return std::nullopt;
   }
@@ -991,7 +1150,8 @@ std::optional<ValueShape> layOut(llvm::DWARFDie Type, uint64_t Base, int Depth,
         (Bytes && *Bytes != *Count * Shape->Bytes))
       break;
     if (!Element.LeavesKnown ||
-        *Count * Element.Leaves.size() > kMaxLayoutLeaves)
+        *Count * Element.Leaves.size() >
+            ::neverd::limits::debug::kDWARFLoaderMaxLayoutLeaves)
       Layout.LeavesKnown = false;
     for (uint64_t I = 0; Layout.LeavesKnown && I < *Count; ++I)
       for (const NdScalarLeaf &Leaf : Element.Leaves)
@@ -1011,7 +1171,10 @@ std::optional<ValueShape> layOut(llvm::DWARFDie Type, uint64_t Base, int Depth,
 
 /// The DIE \p Type names through its typedefs and qualifiers.
 llvm::DWARFDie unqualifiedType(llvm::DWARFDie Type) {
-  for (int Depth = 0; Type.isValid() && Depth <= kMaxLayoutDepth; ++Depth) {
+  for (int Depth = 0;
+       Type.isValid() &&
+       Depth <= ::neverd::limits::debug::kDWARFLoaderMaxLayoutDepth;
+       ++Depth) {
     switch (Type.getTag()) {
     case llvm::dwarf::DW_TAG_typedef:
     case llvm::dwarf::DW_TAG_const_type:
@@ -1098,7 +1261,9 @@ bool platformConvention(llvm::DWARFDie Die) {
 
 TypeRef DWARFDebugContext::Impl::convertDwarfType(llvm::DWARFDie Die,
                                                   int Depth) {
-  if (!Die.isValid() || Depth > 16)
+  if (!Die.isValid() ||
+      Depth > ::neverd::limits::debug::
+                  kDWARFLoaderDWARFDebugContextImplConvertDwarfTypeDepthLimit)
     return NdType::makeInt(4);
 
   auto Tag = Die.getTag();
@@ -1138,7 +1303,18 @@ TypeRef DWARFDebugContext::Impl::convertDwarfType(llvm::DWARFDie Die,
         Die.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type);
     auto PT = PointeeDie.isValid() ? convertDwarfType(PointeeDie, Depth + 1)
                                    : NdType::makeVoid();
-    return NdType::makePtr(PT);
+    // A pointer is as wide as its unit's addresses unless it says otherwise:
+    // four bytes on i386 and 32-bit ARM, where a parameter after it is the
+    // next slot's.
+    TypeRef Pointer = NdType::makePtr(PT);
+    const auto Bytes = Die.find(llvm::dwarf::DW_AT_byte_size);
+    const uint64_t Size =
+        Bytes ? Bytes->getAsUnsignedConstant().value_or(0)
+              : (Die.getDwarfUnit() ? Die.getDwarfUnit()->getAddressByteSize()
+                                    : 0);
+    if (Size == 4 || Size == 8)
+      Pointer->Size = static_cast<uint16_t>(Size);
+    return Pointer;
   }
   case llvm::dwarf::DW_TAG_typedef:
   case llvm::dwarf::DW_TAG_const_type:
@@ -1217,13 +1393,16 @@ TypeRef DWARFDebugContext::Impl::convertDwarfType(llvm::DWARFDie Die,
   }
 }
 
-DWARFDebugContext::Impl::ReturnTypeResolution
-DWARFDebugContext::Impl::resolveReturnType(llvm::DWARFDie Die) const {
-  using Resolution = ReturnTypeResolution;
+DWARFDebugContext::Impl::DeclaredTypeResolution
+DWARFDebugContext::Impl::resolveDeclaredType(llvm::DWARFDie Die) const {
+  using Resolution = DeclaredTypeResolution;
   std::vector<llvm::DWARFDie> Active;
   std::function<Resolution(llvm::DWARFDie, unsigned)> Resolve =
       [&](llvm::DWARFDie Current, unsigned Depth) -> Resolution {
-    if (!Current.isValid() || Depth > 32)
+    if (!Current.isValid() ||
+        Depth >
+            ::neverd::limits::debug::
+                kDWARFLoaderDWARFDebugContextImplResolveDeclaredTypeResolveDepthLimit)
       return {Resolution::Status::Malformed, {}};
     if (std::find(Active.begin(), Active.end(), Current) != Active.end())
       return {Resolution::Status::Malformed, {}};
@@ -1294,11 +1473,28 @@ DWARFDebugContext::Impl::resolveReturnType(llvm::DWARFDie Die) const {
   return Resolve(Die, 0);
 }
 
+llvm::DWARFDie
+DWARFDebugContext::Impl::declaredTypeDie(llvm::DWARFDie Die) const {
+  // A DIE's own type stands.  The out-of-line copy of an inlined function
+  // names its parameters only by DW_AT_abstract_origin, and a static data
+  // member's definition its declaration only by DW_AT_specification.
+  if (const llvm::DWARFDie Own =
+          Die.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type))
+    return Own;
+  const DeclaredTypeResolution Declared = resolveDeclaredType(Die);
+  return Declared.TheStatus == DeclaredTypeResolution::Status::Found
+             ? Declared.TypeDie
+             : llvm::DWARFDie();
+}
+
 AuthenticatedReturnValueState
 DWARFDebugContext::Impl::classifyReturnValue(llvm::DWARFDie Die,
                                              int Depth) const {
   using Kind = AuthenticatedReturnKind;
-  if (!Die.isValid() || Depth > 16)
+  if (!Die.isValid() ||
+      Depth >
+          ::neverd::limits::debug::
+              kDWARFLoaderDWARFDebugContextImplClassifyReturnValueDepthLimit)
     return {};
 
   const auto byteSize = [&](bool PointerDefault) -> std::optional<uint16_t> {
@@ -1472,7 +1668,7 @@ bool containsPC(va_t PC, llvm::ArrayRef<std::pair<va_t, va_t>> AddressRanges) {
 void DWARFDebugContext::Impl::parseLocalVariable(
     llvm::DWARFDie Die, va_t FuncAddr, bool IsParam,
     llvm::ArrayRef<AddressRange> ScopeRanges) {
-  auto TypeDie = Die.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type);
+  auto TypeDie = declaredTypeDie(Die);
   TypeRef Type =
       TypeDie.isValid() ? convertDwarfType(TypeDie) : NdType::makeInt(4);
   if (!declaredTypeSize(Type))
@@ -1492,7 +1688,7 @@ void DWARFDebugContext::Impl::parseLocalVariable(
 
 void DWARFDebugContext::Impl::parseGlobalVariable(llvm::DWARFDie Die,
                                                   llvm::DWARFUnit *Unit) {
-  auto TypeDie = Die.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type);
+  auto TypeDie = declaredTypeDie(Die);
   TypeRef Type =
       TypeDie.isValid() ? convertDwarfType(TypeDie) : NdType::makeInt(4);
   const std::optional<uint64_t> Size = declaredTypeSize(Type);
@@ -1596,12 +1792,12 @@ void DWARFDebugContext::Impl::parseFunction(llvm::DWARFDie Die,
   }
 
   AuthenticatedReturnValueState ReturnState;
-  const ReturnTypeResolution ReturnType = resolveReturnType(Die);
-  if (ReturnType.TheStatus == ReturnTypeResolution::Status::Absent) {
+  const DeclaredTypeResolution ReturnType = resolveDeclaredType(Die);
+  if (ReturnType.TheStatus == DeclaredTypeResolution::Status::Absent) {
     // DWARF encodes a source-level void return by omitting DW_AT_type.
     ReturnState = {AuthenticatedReturnKind::NoValue, 0};
     Sym.ReturnType = NdType::makeVoid();
-  } else if (ReturnType.TheStatus == ReturnTypeResolution::Status::Found) {
+  } else if (ReturnType.TheStatus == DeclaredTypeResolution::Status::Found) {
     ReturnState = classifyReturnValue(ReturnType.TypeDie);
     Sym.ReturnType = convertDwarfType(ReturnType.TypeDie);
     if (!Sym.ReturnType || Sym.ReturnType->Kind == NdTypeKind::Unknown)
@@ -1621,8 +1817,7 @@ void DWARFDebugContext::Impl::parseFunction(llvm::DWARFDie Die,
     std::string Name;
     if (const char *RawName = Child.getName(llvm::DINameKind::ShortName))
       Name = RawName;
-    auto ParamDie =
-        Child.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type);
+    auto ParamDie = declaredTypeDie(Child);
     TypeRef Type =
         ParamDie.isValid() ? convertDwarfType(ParamDie) : NdType::makeInt(4);
     if (ParamDie.isValid() && Type)
@@ -1630,6 +1825,7 @@ void DWARFDebugContext::Impl::parseFunction(llvm::DWARFDie Die,
     Sym.Params.emplace_back(std::move(Name), std::move(Type));
   }
   Sym.PlatformConvention = platformConvention(Die);
+  Sym.ParamEntryLocations = parameterEntryLocations(Die, Addr);
 
   RecordParameters[Addr] = std::move(EntryRecords);
   FunctionInfo &Info = Functions[Addr];
@@ -1740,7 +1936,10 @@ void DWARFDebugContext::Impl::parseCompileUnits(
   // Each worker owns its object/context and output; sharing just the mapped
   // bytes avoids racing those caches. Small images stay on the calling thread.
   const unsigned Workers =
-      !Compressed && Units >= 8 && ObjectData.getBufferSize() >= 256 * 1024
+      !Compressed && Units >= 8 &&
+              ObjectData.getBufferSize() >=
+                  ::neverd::limits::debug::
+                      kDWARFLoaderDWARFDebugContextImplParseCompileUnitsWorkersObjectDataGetBufferSizeLimit
           ? static_cast<unsigned>(
                 std::min<size_t>(workerThreadCount(), Units / 4))
           : 1;
@@ -1803,6 +2002,44 @@ void DWARFDebugContext::Impl::parseCompileUnits(
             [](const FunctionSym &A, const FunctionSym &B) {
               return A.Addr < B.Addr;
             });
+  indexFunctionRanges();
+}
+
+void DWARFDebugContext::Impl::indexFunctionRanges() {
+  FunctionRanges.clear();
+  for (const auto &[Entry, Info] : Functions)
+    for (const auto &[Begin, End] : Info.Ranges)
+      if (Begin < End)
+        FunctionRanges.push_back({Begin, End, Entry});
+  std::sort(FunctionRanges.begin(), FunctionRanges.end(),
+            [](const FunctionRange &A, const FunctionRange &B) {
+              return A.Begin < B.Begin;
+            });
+  FunctionRangeEndsSoFar.resize(FunctionRanges.size());
+  va_t Greatest = 0;
+  for (size_t I = 0; I < FunctionRanges.size(); ++I)
+    FunctionRangeEndsSoFar[I] = Greatest =
+        std::max(Greatest, FunctionRanges[I].End);
+}
+
+llvm::SmallVector<va_t, 4>
+DWARFDebugContext::Impl::functionsContaining(va_t PC) const {
+  llvm::SmallVector<va_t, 4> Entries;
+  // Of the ranges that start at or before PC, those that end after it
+  // contain it; none does before the last range whose end so far is past PC.
+  size_t I = std::upper_bound(FunctionRanges.begin(), FunctionRanges.end(), PC,
+                              [](va_t Value, const FunctionRange &Range) {
+                                return Value < Range.Begin;
+                              }) -
+             FunctionRanges.begin();
+  while (I > 0 && FunctionRangeEndsSoFar[I - 1] > PC) {
+    --I;
+    if (FunctionRanges[I].End > PC)
+      Entries.push_back(FunctionRanges[I].Entry);
+  }
+  std::sort(Entries.begin(), Entries.end());
+  Entries.erase(std::unique(Entries.begin(), Entries.end()), Entries.end());
+  return Entries;
 }
 
 VariableExtentLookup DWARFDebugContext::Impl::lookupLocal(
@@ -1814,14 +2051,12 @@ VariableExtentLookup DWARFDebugContext::Impl::lookupLocal(
       return VariableExtentLookup::ambiguous();
     Function = &It->second;
   } else {
-    for (const auto &[Entry, Candidate] : Functions) {
-      if (!containsPC(FuncAddr, Candidate.Ranges))
-        continue;
+    for (const va_t Entry : functionsContaining(FuncAddr)) {
       if (SubprogramExtents.isAmbiguous(Entry))
         return VariableExtentLookup::ambiguous();
       if (Function)
         return VariableExtentLookup::ambiguous();
-      Function = &Candidate;
+      Function = &Functions.at(Entry);
     }
   }
   if (!Function)
@@ -1952,9 +2187,7 @@ std::optional<FunctionSym> DWARFDebugContext::resolveFunction(va_t Addr) const {
     return It->second;
 
   const FunctionSym *Resolved = nullptr;
-  for (const auto &[Entry, Info] : PImpl->Functions) {
-    if (!containsPC(Addr, Info.Ranges))
-      continue;
+  for (const va_t Entry : PImpl->functionsContaining(Addr)) {
     auto Sym = PImpl->FuncMap.find(Entry);
     if (Sym == PImpl->FuncMap.end() || Resolved)
       return std::nullopt;
@@ -2021,6 +2254,7 @@ std::optional<SourceLoc> DWARFDebugContext::sourceLocation(va_t Addr) const {
   if (!PImpl || !PImpl->Loaded || !PImpl->DwarfCtx)
     return std::nullopt;
 
+  std::lock_guard<std::mutex> Guard(PImpl->ContextMutex);
   auto Info = PImpl->DwarfCtx->getLineInfoForAddress(
       {Addr, llvm::object::SectionedAddress::UndefSection});
   if (!Info || (Info->FileName.empty() && Info->Line == 0))
@@ -2031,6 +2265,15 @@ std::optional<SourceLoc> DWARFDebugContext::sourceLocation(va_t Addr) const {
   Loc.Line = Info->Line;
   Loc.Col = Info->Column;
   return Loc;
+}
+
+llvm::Error DWARFDebugContext::withDWARFContext(
+    llvm::function_ref<llvm::Error(llvm::DWARFContext &)> Use) const {
+  if (!PImpl || !PImpl->Loaded || !PImpl->DwarfCtx)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "no DWARF was read");
+  std::lock_guard<std::mutex> Guard(PImpl->ContextMutex);
+  return Use(*PImpl->DwarfCtx);
 }
 
 std::vector<FunctionSym> DWARFDebugContext::allFunctions() const {

@@ -123,6 +123,9 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
       std::find(Request->DeviceRoute.begin(), Request->DeviceRoute.end(),
                 Device) == Request->DeviceRoute.end())
     return stackError("target is outside the request's retained device route");
+  if (auto E = validateFileSystemRoute(Request->DeviceRoute,
+                                       Request->FileAddress, Request->Kind))
+    return E;
   auto Cursor = requestStackCursor(IRP);
   if (!Cursor)
     return Cursor.takeError();
@@ -156,7 +159,8 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
       return stackError(
           "changing the power minor while forwarding is unsupported");
   }
-  const bool Provider = isProviderDevice(Device);
+  const bool FileProvider = FileSystem.ownsDevice(Device);
+  const bool Provider = isPnpProviderDevice(Device) || FileProvider;
   llvm::Expected<uint64_t> PC =
       Provider ? llvm::Expected<uint64_t>(0)
                : Memory.readInteger(Devices.at(Device).OwnerDriver +
@@ -178,6 +182,7 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
   const bool WasForwarded = Request->Forwarded;
   const auto WasPending = Request->UnwoundPending[Slot];
   const bool FileBusReceived = Request->FileBusReceived;
+  const bool FileSystemReceived = Request->FileSystemReceived;
   const bool UsbReceived = Result.Requests[Request->ResultIndex].UsbIdle &&
                            Result.Requests[Request->ResultIndex]
                                .UsbIdle->BusReceivedAt100ns.has_value();
@@ -196,7 +201,9 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
   Request->Forwarded = true;
   Request->UnwoundPending[Slot].reset();
   if (Provider) {
-    auto Status = callProviderDriver(Device, IRP, Owner, SendTimeout);
+    auto Status = FileProvider
+                      ? dispatchFileSystem(Device, IRP)
+                      : callProviderDriver(Device, IRP, Owner, SendTimeout);
     if (Status) {
       auto Allocation = DriverIRPs.find(IRP);
       if (Allocation != DriverIRPs.end() &&
@@ -224,6 +231,7 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
     // metadata. Once a real receipt occurred, effects cannot be rolled back.
     if (Retained && !Retained->Completed && NowReceived == Received &&
         Retained->FileBusReceived == FileBusReceived &&
+        Retained->FileSystemReceived == FileSystemReceived &&
         bool(Current.UsbIdle && Current.UsbIdle->BusReceivedAt100ns) ==
             UsbReceived) {
       E = llvm::joinErrors(
@@ -569,6 +577,8 @@ KernelModel::advanceIRPCompletion(uint64_t Token) {
     return E;
   if (auto E = tryFinalizePowerRequest(IRP))
     return E;
+  if (auto E = tryFinalizeFileClose(IRP))
+    return E;
   return std::optional<uint64_t>{ReturnValue};
 }
 
@@ -598,6 +608,14 @@ KernelModel::finishWdmGuestCallBody(uint64_t Token, uint64_t ResultValue) {
   auto Call = IRPCalls.find(Token);
   if (Call == IRPCalls.end() || !Call->second.AwaitingCallback)
     return stackError("unknown or inactive guest continuation");
+  if (Call->second.Kind == IRPCallKind::FileClose)
+    return finishFileCloseDispatch(Token, ResultValue);
+  if (Call->second.Kind == IRPCallKind::FileHandleClose)
+    return finishFileHandleDispatch(Token, ResultValue);
+  if (Call->second.Kind == IRPCallKind::FileRequest)
+    return finishFileRequestDispatch(Token, ResultValue);
+  if (Call->second.Kind == IRPCallKind::FileOperation)
+    return finishFileOperationDispatch(Token, ResultValue);
   if (Call->second.Kind == IRPCallKind::PowerCompletion)
     return finishPowerCompletion(Token);
   if (Call->second.Kind == IRPCallKind::Cancel) {
@@ -609,6 +627,8 @@ KernelModel::finishWdmGuestCallBody(uint64_t Token, uint64_t ResultValue) {
     CancelLock = {};
     IRPCalls.erase(Call);
     if (auto E = tryFinalizeDriverIRP(IRP))
+      return E;
+    if (auto E = tryFinalizeFileClose(IRP))
       return E;
     if (auto E = tryFinalizePowerRequest(IRP))
       return E;
@@ -642,6 +662,8 @@ KernelModel::finishWdmGuestCallBody(uint64_t Token, uint64_t ResultValue) {
       return E;
     if (auto E = tryFinalizeDriverIRP(IRP))
       return E;
+    if (auto E = tryFinalizeFileClose(IRP))
+      return E;
     return std::optional<uint64_t>{Status};
   }
   const uint64_t IRP = Call->second.IRP;
@@ -668,6 +690,8 @@ KernelModel::finishWdmGuestCallBody(uint64_t Token, uint64_t ResultValue) {
     if (auto E = tryFinalizePowerRequest(IRP))
       return E;
     if (auto E = tryFinalizeDriverIRP(IRP))
+      return E;
+    if (auto E = tryFinalizeFileClose(IRP))
       return E;
     return std::optional<uint64_t>{ReturnValue};
   }

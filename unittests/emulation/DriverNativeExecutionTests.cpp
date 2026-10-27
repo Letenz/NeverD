@@ -128,6 +128,9 @@ TEST_P(DriverNativeExecution,
       std::filesystem::path(Input.Image).filename() == LoopImage
           ? LoopLimit
           : InstructionLimit;
+  if (llvm::StringRef(Input.Name) == Int64StringWorkload ||
+      llvm::StringRef(Input.Name) == Int64StringCfgWorkload)
+    Options.InstructionLimit = Int64StringInstructionLimit;
   Options.TimeoutMilliseconds = TimeoutMilliseconds;
   // The scenario may already request a relocation. Both variants must use
   // their declared base instead of inheriting that example-specific address.

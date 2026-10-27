@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/Packages.h"
 #include "neverd/web/Source.h"
 
@@ -20,18 +21,6 @@ namespace neverd::web {
 
 inline constexpr std::string_view NodeBehaviorProfile =
     "node-22.15-static-behavior-v1";
-inline constexpr uint64_t MaxNodeBehaviorRecords = 4096;
-inline constexpr uint64_t MaxNodeBehaviorArguments = 16;
-inline constexpr uint64_t MaxNodeBehaviorSteps = 2000000;
-inline constexpr uint64_t MaxCachedNodeBehaviors = 4;
-inline constexpr uint64_t MaxPackageBehaviorSources = 16;
-inline constexpr uint64_t MaxPackageBehaviorBytes = 8 * 1024 * 1024;
-inline constexpr uint64_t MaxPackageBehaviorNodes = 1000000;
-inline constexpr uint64_t MaxPackageBehaviorAncestry = 16;
-inline constexpr uint64_t MaxPackageBehaviorEntries = 16;
-inline constexpr uint64_t MaxPackageBehaviorRecords = 8192;
-inline constexpr uint64_t MaxPackageBehaviorSteps = 8000000;
-inline constexpr uint64_t MaxCachedPackageBehaviors = 2;
 
 struct NodeBehaviorArgument {
   std::string NodeID;

@@ -104,7 +104,9 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 활성 Control Flow Guard(CFG)는 PE 플래그, 포인터 슬롯과 정렬된 실행 가능 대상 테이블을 검증합니다. check/dispatch 도우미는 선언된 이미지 진입점 또는 등록된 API 썽크만 허용하며 Win64 호출 상태를 보존하고 미선언 대상을 거부합니다. CFG가 활성화되지 않은 계측은 원래 게스트 대체 포인터를 유지합니다. 활성 XFG, 내보내기 억제 및 다른 미지원 보호 정책은 거부되며 실행 가능 메모리에 있다는 이유만으로 유효한 대상이 되지는 않습니다.
 
-WDM 스택에는 같은 게스트 드라이버가 소유한 여러 장치를 둘 수 있습니다. `IoAttachDeviceToDeviceStack`은 독립 소스 장치를 대상의 현재 최상단에 연결하고 이전 최상단을 반환합니다. `StackSize`와 `AlignmentRequirement`를 설정하지만 `NextDevice` 목록이나 버퍼 플래그는 변경하지 않습니다. `IoDetachDevice`는 저장한 하위 장치를 받으며 `PASSIVE_LEVEL`이 필요합니다. 연결은 `DISPATCH_LEVEL` 이하에서 가능합니다. 이름 있는 하위 장치를 열면 현재 최상단으로 디스패치하지만 `FILE_OBJECT.DeviceObject`와 보고서는 이름 있는 장치 신원을 유지합니다. READ/WRITE 버퍼링은 선택한 최상단의 플래그를 사용합니다. 요청이 보존한 경로는 분리·삭제 후에도 디스패치 반환까지 각 장치를 유지하며, 내부 참조는 열린 핸들 수인 `ReferenceCount`에 더해지지 않습니다.
+WDM 스택에는 같은 게스트 드라이버가 소유한 여러 장치를 둘 수 있습니다. `IoAttachDeviceToDeviceStack`은 독립 소스 장치를 대상의 현재 최상단에 연결하고 이전 최상단을 반환합니다. `StackSize`와 `AlignmentRequirement`를 설정하지만 `NextDevice` 목록이나 버퍼 플래그는 변경하지 않습니다. `IoDetachDevice`는 저장한 하위 장치를 받으며 `PASSIVE_LEVEL`이 필요합니다. 연결은 `DISPATCH_LEVEL` 이하에서 가능합니다. 이름 있는 하위 장치를 열면 현재 최상단으로 디스패치하지만 `FILE_OBJECT.DeviceObject`와 보고서는 이름 있는 장치 신원을 유지합니다. READ/WRITE 버퍼링은 선택한 최상단의 플래그를 사용합니다. 요청이 보존한 경로는 분리·삭제 후에도 디스패치 반환까지 각 장치를 유지하며, 내부 참조는 `DEVICE_OBJECT.ReferenceCount`에 더해지지 않습니다.
+
+모델링된 장치 스택에서 `IoGetAttachedDevice`는 참조를 추가하지 않고 현재 최상위 장치를 빌립니다. `IoGetAttachedDeviceReference`와 `IoGetDeviceAttachmentBaseRef`는 각각 최상위 및 기반 장치를 포인터 참조와 함께 반환합니다. `IoGetLowerDeviceObject`는 바로 아래 장치를 참조하며, 아래 장치가 없거나 입력 장치가 삭제 대기 중이면 null을 반환합니다. 아래 장치만 삭제 대기 중인 경우에는 결과를 억제하지 않습니다. 참조된 각 결과는 `ObDereferenceObject`로 해제해야 합니다. 참조는 detach/delete 후에도 저장 공간을 유지하며 `DEVICE_OBJECT.ReferenceCount`를 변경하지 않습니다. 네 쿼리는 소유된 토폴로지를 검증하며 IRQL은 `DISPATCH_LEVEL` 이하여야 합니다.
 
 `IofCallDriver`와 `IoCallDriver` 도우미는 보존 경로에서 지정된 정확한 대상을 호출합니다. 실제 인라인 `IoCopyCurrentIrpStackLocationToNext`, `IoSkipCurrentIrpStackLocation`, `IoSetCompletionRoutine`은 원래 게스트 IRP를 조작하며 커서, 개수, 제어 플래그를 검증합니다. 하위 디스패치의 실제 반환 상태는 `IoStatus` 및 완료 루틴 반환값과 분리됩니다. 완료 처리는 커서를 전진시키고 성공/오류/취소 조건에 따라 콜백을 호출하며 pending을 위로 전달합니다. 완료 루틴이 실행되면 해당 루틴이 전달을 책임지며, 디스패치가 이미 `STATUS_PENDING`을 반환한 뒤에도 전달할 수 있습니다. `STATUS_MORE_PROCESSING_REQUIRED`는 IRP, MDL, 버퍼를 유지한 채 완료 해제를 멈추고 이후 완료 호출로 재개합니다. 중첩 완료에는 외부 루틴의 중단 결과가 필요하며 최종 해제 시 저장소를 한 번만 폐기합니다. 소유 하위 시스템이 표시된 continuation은 WDM/WDF 호출 프레임과 상속 IRQL을 보존합니다. 상위 완료 콜백 전에 소비된 하위 스택 위치를 0으로 지웁니다.
 
@@ -339,11 +341,11 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `RtlStringFromGUID`, `RtlGUIDFromString` | 레지스트리 형식 GUID 텍스트 `{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}`. 서식 지정은 소문자 숫자를 `Strg` 태그의 78바이트 페이지 풀 할당에 쓰며 `RtlFreeUnicodeString`이 해제함. 구문 분석은 대소문자와 관계없이 정확한 필드 너비를 요구하고 뒤따르는 텍스트는 0 단위 뒤에서만 허용하며, 뒤늦은 불일치 시 `Data1`–`Data3`을 이미 저장한 채 `STATUS_INVALID_PARAMETER`를 반환함 |
 | `RtlTimeToTimeFields`, `RtlTimeFieldsToTime` | 1601년부터의 100ns 단위 시스템 시간과 `TIME_FIELDS` 사이의 그레고리력 변환(기록된 윤초 없음). 요일은 출력 시 계산하고 입력 시 무시하며, 1601–30827 범위를 벗어나거나 실제 날짜가 아닌 필드는 `FALSE`를 반환하고 음수 시간은 중단함 |
 | `PsGetCurrentProcess`, `PsGetCurrentThread`, `KeGetCurrentThread` | `IoGetCurrentProcess`와 인라인 `GS:[0x188]` 읽기의 내보내기 별칭으로 모든 IRQL에서 사용 가능함. 현재 APC 상태의 프로세스는 연결된 프로세스를 따르지만 현재 논리 스레드의 빌린 불투명 식별자는 바뀌지 않음 |
-| `PsGetCurrentThreadId`, `PsGetThreadId` | 살아 있는 스레드 객체의 클라이언트 ID. 처음 관찰될 때 `0x2000`부터 4씩 할당하며 모델링된 프로세스 ID를 건너뛰고 재사용하지 않음. 발급된 스레드 ID와 같은 요청자 ID를 가진 요청은 거부함. `PsCreateSystemThread`도 `ClientId`로 시스템 프로세스 ID와 스레드 ID를 반환함. 포그라운드 디스패치는 하나의 논리 스레드에서 실행되므로 요청자 프로세스가 달라도 그 ID는 같지만 `PsGetCurrentProcessId`는 요청자를 따름. `PsGetThreadId`는 IRQL ≤ `DISPATCH_LEVEL`이 필요함 |
+| `PsGetCurrentThreadId`, `PsGetThreadId` | 클라이언트 ID는 `0x2000`부터 4씩 증가하며 알려진 프로세스 ID를 피하고 재사용하지 않습니다. 스레드 객체가 유지되는 동안 ID도 유효합니다. 전경 요청 프로세스가 바뀌면 새 스레드 ID를 사용하고 중첩 실행은 부모 ID를 유지합니다. `PsGetThreadId`는 IRQL ≤ `DISPATCH_LEVEL`을 요구합니다. |
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 게스트 예외를 발생시키며 정상 API 반환은 없음. 실제 C 필터/처리기와 unwind finally, 사용자 CPU 메모리 예외의 제한된 재개는 아래 설명 참조 |
 | `ExAllocatePool2` | Paged/nonpaged NX 할당이며 기본값은 0으로 초기화. uninitialized 및 cache-aligned 플래그를 모델링함. 잘못된 필수 플래그는 NULL을 반환하고, quota/executable 풀과 할당 예외 발생은 중단함 |
 | `MmGetSystemRoutineAddress` | 공유 export 목록을 통해 길이가 지정된 게스트 이름을 해석함 |
-| `MmIsAddressValid` | IRQL ≤ 2에서 제한된 구체적 조회를 수행합니다. 영 페이지가 매핑되지 않은 경우에만 NULL은 거짓이며, 살아 있는 모델 객체 또는 비페이지 풀의 정확한 바이트에 읽기와 쓰기가 가능한 RAM이 있을 때만 참입니다. 페이지 풀, 해제되거나 소유자가 없는 메모리, 할당 패딩, 풀 외 물리 버퍼 및 보호된 영역은 명시적으로 중단됩니다. 필드 접근, 소유권이나 이후 수명을 보장하지 않으며 복구의 환경 의존성을 유지합니다. |
+| `MmIsAddressValid` | IRQL ≤ 2의 제한된 구체 쿼리. NULL은 영 페이지가 매핑되지 않았을 때만 거짓이다. 살아 있는 모델 객체나 비페이지 풀의 정확한 바이트에는 읽기와 쓰기가 가능한 RAM이 필요하다. 모델이 직접 생성한 커널 공급자 이미지에서는 정확한 범위의 읽기 가능한 RAM을 인정하므로 읽기 전용 헤더와 내보내기 테이블도 상주한다. 입력 드라이버 메타데이터, 별칭, 임의 매핑은 이 소유권을 부여하지 않는다. 페이지 풀, 해제되거나 소유자가 없는 메모리, 할당 패딩, 풀 외 물리 버퍼, 접근 불가 또는 장치 메모리는 명시적으로 중단한다. 필드 접근, 쓰기 권한, 소유권, 미래 수명을 보장하지 않으며 복원 시 환경 의존성을 유지한다. |
 | `KeRegisterBugCheckReasonCallback`, `KeDeregisterBugCheckReasonCallback` | checked-x64에서 등록과 해제만 지원합니다. 드라이버 이미지의 정렬된 읽기/쓰기 가능한 48바이트 레코드, 이미지 내 실행 가능한 콜백, 사유 2–7, 최대 64개 레코드 식별자로 제한됩니다. 구성 요소 이름은 처음에 읽을 수 있는 최대 256바이트 NUL 종료 문자열이어야 합니다. 중복 등록·해제·재등록은 알려진 필드와 State 전이를 유지하며 이름 포인터의 이후 수명을 보장하지 않습니다. 콜백·이름·사유·State만 읽을 수 있고, 해제 후에도 모든 쓰기, 불투명 필드 접근, 겹치는 페이지의 MDL 대여를 거부합니다. DriverUnload에서 등록을 해제해야 합니다. 환경 의존성을 유지하며 충돌 시 호출과 덤프 생성은 지원하지 않습니다. |
 | `NtQuerySystemInformation`, `ZwQuerySystemInformation` | PASSIVE_LEVEL에서 클래스 `11`(`SystemModuleInformation`)을 지원합니다. 길이 0의 크기 조회와 모델 제공자 및 입력 드라이버의 완전한 Win64 모듈 레코드를 반환합니다. 부분 버퍼와 알 수 없는 정보 클래스는 명시적으로 중단합니다. 클래스 `196`은 명시적 `kernel_va_shadow_query`를 사용합니다. 해당 조회 절을 참조하세요. |
 | `MmMapIoSpace`, `MmMapIoSpaceEx`, `MmUnmapIoSpace` | 선언된 변환 후 하위 구간, 비캐시 RO／RW, 공유 별칭과 정확한 unmap. 임의 물리 메모리는 미지원 |
@@ -354,33 +356,48 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `GetScatterGatherList`, `PutScatterGatherList` | DISPATCH_LEVEL 테이블 메서드. 실제 인라인 또는 자원 대기 콜백, 고정된 MDL 뷰, 명시적 매핑 해제 |
 | `AllocateAdapterChannel`, `MapTransfer`, `FlushAdapterBuffers`, `FreeMapRegisters` | 변환된 버스 마스터 채널 콜백, 공유 레지스터 할당량, 연속 MDL 조각, 전체 플러시와 정확한 보유 레지스터 해제 |
 | `KeFlushIoBuffers` | 유효한 잠금／비페이지 MDL에 대한 일관성 CPU 캐시 플러시. DMA 매핑은 해제하지 않음 |
-| `MmMapLockedPagesSpecifyCache`, `MmGetSystemAddressForMdlSafe`, `MmUnmapLockedPages` | 사용자/시스템 매핑은 물리 페이지 캐시 속성과 각 권한을 유지하며 비페이지 풀 MDL은 안전 도우미로 원래 시스템 매핑을 재사용 |
+| `MmMapLockedPages`, `MmMapLockedPagesSpecifyCache`, `MmGetSystemAddressForMdlSafe`, `MmUnmapLockedPages` | 사용자/시스템 매핑은 물리 페이지 캐시 속성과 각 권한을 유지하며 비페이지 풀 MDL은 안전 도우미로 원래 시스템 매핑을 재사용 |
 | `IoAllocateMdl`, `MmBuildMdlForNonPagedPool`, `MmProbeAndLockPages`, `MmUnlockPages`, `IoFreeMdl` | 독립 또는 IRP 연결 비페이지 풀/사용자 MDL, 변경 가능한 체인 링크, 독립 잠금과 시스템 별칭. 할당량은 미지원 |
 | `ZwOpenKey`, `ZwCreateKey`, `ZwQueryValueKey`, `ZwSetValueKey`, `ZwDeleteValueKey`, `ZwDeleteKey`, `ZwClose` | 명시적인 세션 레지스트리, 핸들별 권한과 수명, 쿼리 버퍼 크기와 변경. 호스트 레지스트리에 접근하지 않음 |
+| `ZwEnumerateValueKey` | 생성 순서로 Basic, Full, Partial 값 정보를 열거. 교체는 인덱스를 유지하고 삭제는 인덱스를 압축하며 재생성은 끝에 추가. `KEY_QUERY_VALUE` 필요, 범위 밖은 `STATUS_NO_MORE_ENTRIES`. 값 조회와 직렬화를 공유하며 x64 Full 데이터는 8바이트 정렬, 빈 데이터 오프셋은 `0xffffffff`. 패딩과 불완전한 UTF-16 단위는 유지 |
+| `ZwQueryKey`, `ZwEnumerateKey` | Basic, Node, Full, Name, Cached 키 조회와 Basic/Node/Full 직접 하위 키 열거를 지원하며, 살아 있는 하위 키를 대문자 ASCII 순으로 열거합니다. 조회에는 `KEY_QUERY_VALUE`(Name은 부여된 권한 중 하나), 열거에는 `KEY_ENUMERATE_SUB_KEYS`가 필요합니다. 짧은 버퍼 결과와 과거 최대 길이를 유지하며 시간 출력에는 명시된 시간이 필요합니다 |
 | `ExAllocatePool` | 기존 두 인수 인터페이스로 풀 유형 `0`, `1`, `512`의 데이터를 할당합니다. 정렬, 초기화되지 않은 바이트 모델, 크기/IRQL 검사를 공유하고 고갈 시 NULL을 반환합니다. `ExFreePool` 또는 태그가 0인 `ExFreePoolWithTag`로 해제하며 남은 할당은 커널 종속 상태로 유지됩니다. |
 | `ExAllocatePoolWithTag`, `ExFreePoolWithTag`, `ExFreePool` | 풀 유형 `0`, `1`, `512`의 데이터 할당. 크기/태그는 양수이며, 태그가 있는 해제는 일치해야 하고 주소를 재사용하지 않음 |
 | `IoCreateDevice`, `IoDeleteDevice` | 장치 유형 `0x22`, 특성 `0` 또는 `0x100`, 제한된 확장, ASCII `\Device\Name` 이름 |
 | `IoAttachDeviceToDeviceStack`, `IoDetachDevice` | 동일 드라이버 연결. 이전 최상단을 반환하며 분리는 저장한 하위 장치를 받음. 위 토폴로지/수명 제한 적용 |
+| `IoGetAttachedDevice`, `IoGetAttachedDeviceReference`, `IoGetLowerDeviceObject`, `IoGetDeviceAttachmentBaseRef` | 현재 모델링된 최상위/하위/기반 장치, 빌림과 공유 포인터 참조, 삭제 상태; IRQL <= DISPATCH_LEVEL |
 | `IofCallDriver`, `IoCallDriver` | 보존 경로의 정확한 대상으로 디스패치. 게스트 커서 검증 및 하위 NTSTATUS 보존 |
 | `IoInitializeRemoveLockEx`, `IoAcquireRemoveLockEx` | 확장부의 정확한 소유자와 불투명32/120바이트, NULL/중복 Tag |
 | `IoReleaseRemoveLockEx`, `IoReleaseRemoveLockAndWaitEx` | 일치하는 Tag 해제와 제공자 수신 후 재개 가능한 REMOVE 대기 |
 | `PoCallDriver`, `PoStartNextPowerIrp` | 관리 전원 IRP 전달 및 추가 핸드셰이크 없는 Vista+ 검증 |
 | `PoSetPowerState`, `PoRequestPowerIrp` | 독립 장치 알림 상태와 명시적 PDO FIFO의 실제 자식 요청. 범위는 위 설명 |
 | `IoCreateSymbolicLink`, `IoDeleteSymbolicLink` | 하나의 세션 네임스페이스에서 ASCII `\DosDevices\Name` 또는 `\??\Name`을 사용하며 `\Device\Name`을 가리킴 |
-| `DbgPrint`, `DbgPrintEx` | 검증된 Win64 가변 인수 포맷팅, 최대 출력 512바이트. 모든 디버거 필터가 활성화됨 |
+| `DbgPrint`, `DbgPrintEx`, `vDbgPrintExWithPrefix` | 검증된 Win64 가변 인수 포맷팅, 최대 출력 511바이트. 모든 디버거 필터가 활성화됨 |
 | `IoGetCurrentIrpStackLocation` | 활성 모델 IRP의 스택 위치를 반환함. 일반적인 컴파일된 WDM 매크로도 동일한 게스트 필드를 읽음 |
 | `KeGetCurrentIrql` | 명시적인 상승과 복원을 포함한 현재 IRQL/CR8을 읽습니다. 디스패치와 작업 항목은 `PASSIVE_LEVEL`, DPC는 `DISPATCH_LEVEL`에서 시작합니다 |
 | `KfRaiseIrql`, `KeLowerIrql` | 실제 x64 WDK IRQL 상승·하강 임포트와 인라인 도우미입니다. 각 실행은 반환 전에 저장 값을 LIFO 순서로 복원합니다. IRQL <= APC_LEVEL의 유효한 대기는 상승 상태를 보존하고 대기 당시 IRQL에서 재개합니다. DISPATCH_LEVEL 잠금 보유 중에는 중단할 수 없습니다. CR8은 변경을 반영하며 설정된 CPU0 이벤트 선점에는 `scheduling`을 사용합니다. 임의의 중첩 인터럽트는 지원하지 않습니다. |
 | `KeInitializeSpinLock`, `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeAcquireSpinLockAtDpcLevel`, `KeReleaseSpinLockFromDpcLevel`, `KeTryToAcquireSpinLockAtDpcLevel` | CPU0의 상주 정렬 실행 스핀록입니다. 소유자, 획득·해제 쌍, IRQL 복원을 검사하며, 경합 중 차단 획득은 명시적으로 중단합니다. |
+| `KeInitializeGuardedMutex`, `ExAcquireFastMutex`, `ExTryToAcquireFastMutex`, `ExReleaseFastMutex`, `KeAcquireGuardedMutex`, `KeTryToAcquireGuardedMutex`, `KeReleaseGuardedMutex` | 정렬된 56바이트 x64 비페이지 저장소에서 Windows 8+ 빠른/보호 뮤텍스 프로토콜을 구현합니다. WDK `ExInitializeFastMutex`는 `KeInitializeEvent`를 호출하는 매크로이며 내보내기가 아닙니다. 경합 없는 획득은 현재 스레드를 기록하고 APC_LEVEL로 올리며 해제는 저장한 IRQL을 복원합니다. 이미 소유한 잠금의 Try는 바이트나 IRQL을 변경하지 않고 FALSE를 반환합니다. 재귀/경합 차단 획득 및 AutoBoost 대기는 지원하지 않습니다. 보유 중 게스트 쓰기, 재초기화, 저장소 회수, MDL 차용, 스레드 종료와 언로드를 거부합니다. |
+| `ExAcquireFastMutexUnsafe`, `ExReleaseFastMutexUnsafe`, `KeAcquireGuardedMutexUnsafe`, `KeReleaseGuardedMutexUnsafe` | Unsafe 쌍은 IRQL과 OldIrql을 유지합니다. PASSIVE_LEVEL에서 빠른 뮤텍스는 임계 또는 보호 영역, 보호 뮤텍스는 보호 영역이 필요합니다. APC_LEVEL도 허용됩니다. 소유 스레드가 일치하는 변형으로 해제할 때까지 필요한 조건을 유지해야 하며, 다른 잠금 조건을 깨는 순서의 IRQL 복원은 실패합니다. |
+| `ExInitializeResourceLite`, `ExReinitializeResourceLite`, `ExDeleteResourceLite`, `ExDisableResourceBoostLite` | 8바이트 정렬 비페이지 저장소의 불투명한 104바이트 x64 ERESOURCE입니다. 초기화, 재초기화, 부스트 비활성화는 DISPATCH_LEVEL까지, 삭제는 APC_LEVEL 이하에서 허용됩니다. 재초기화는 소유자 테이블을 유지합니다. 게스트 접근이나 MDL 차용으로 소유권을 우회할 수 없습니다. 소유자가 없어도 메모리 해제와 언로드 전에 삭제해야 합니다. |
+| `ExAcquireResourceExclusiveLite`, `ExTryToAcquireResourceExclusiveLite`, `ExAcquireResourceSharedLite`, `ExAcquireSharedStarveExclusive`, `ExAcquireSharedWaitForExclusive`, `ExConvertExclusiveToSharedLite`, `ExReleaseResourceLite`, `ExReleaseResourceForThreadLite`, `ExIsResourceAcquiredExclusiveLite`, `ExIsResourceAcquiredSharedLite`, `ExGetExclusiveWaiterCount`, `ExGetSharedWaiterCount`, `ExEnterCriticalRegionAndAcquireResourceExclusive`, `ExEnterCriticalRegionAndAcquireResourceShared`, `ExEnterCriticalRegionAndAcquireSharedWaitForExclusive`, `ExReleaseResourceAndLeaveCriticalRegion` | 최대 64명 소유자의 재귀 독점/공유 획득, 공유 전환 및 스레드 소유권을 확인하는 해제를 지원합니다. 공유 상태 조회에는 독점 재귀 횟수도 포함됩니다. 소유 중 일반 커널 APC를 계속 비활성화해야 하며 결합 도우미는 임계 영역에 진입/이탈합니다. 획득, 전환, 결합 도우미는 APC_LEVEL 이하, 해제와 조회는 DISPATCH_LEVEL까지 허용됩니다. 비차단 경합은 FALSE를 반환합니다. 경합 차단 대기와 우선순위 부스트는 미지원이므로 대기자 수는 0입니다. 테이블 확장과 공유 획득 실패 경로의 차이는 대상 커널을 따릅니다. |
+| `ExSetResourceOwnerPointer`, `ExSetResourceOwnerPointerEx` | 하위 두 비트가 1이고 Flags=0인 커널 소유자 포인터 이전은 획득 횟수를 유지합니다. 저장소는 계속 유효해야 하며 완전히 해제할 때까지 ExReleaseResourceForThreadLite만 허용됩니다. 스레드 참조 플래그 이전과 이전하지 않은 다른 스레드의 해제는 미지원입니다. |
+| `KeAcquireInStackQueuedSpinLock`, `KeReleaseInStackQueuedSpinLock`, `KeAcquireInStackQueuedSpinLockAtDpcLevel`, `KeReleaseInStackQueuedSpinLockFromDpcLevel` | CPU0의 인스택 큐 스핀록입니다. 호출자의 `KLOCK_QUEUE_HANDLE`가 록을 기록하고, 승격 형식은 저장된 IRQL도 기록합니다. 획득은 `DISPATCH_LEVEL`로 올리고 핸들을 록에 저장하며, `AtDpcLevel` 형식은 호출자가 이미 그 수준에 있어야 합니다. 해제는 록을 지우고 승격 형식은 저장된 IRQL을 복원하며, 해제 형식은 획득과 일치해야 합니다. 이 협조적 프로세서에서는 다른 프로세서가 보유한 록을 기다릴 수 없어 명시적으로 중단하며, 페이징·사용자 모드·록과 겹치는 핸들 저장소도 마찬가지입니다. |
+| `ExInitializeRundownProtection`, `ExReInitializeRundownProtection`, `ExAcquireRundownProtection`, `ExReleaseRundownProtection`, `ExWaitForRundownProtectionRelease`, `ExRundownCompleted`, `ExAcquireRundownProtectionEx`, `ExReleaseRundownProtectionEx` | 호출자의 `EX_RUNDOWN_REF`에 대한 잠금 없는 런다운 보호입니다. 단일 `Count` 워드가 런다운 비트와 미해제 수의 두 배를 담습니다. 런다운 시작 전 획득은 2를 더하고 TRUE를 반환하며, 시작 후에는 쓰지 않고 FALSE를 반환합니다. 해제는 2를 뺍니다. 미해제가 없으면 대기는 즉시 객체를 런다운으로 표시하고, 반복 대기는 효과가 없습니다. `ExRundownCompleted`는 무조건 표시하고 초기화는 지웁니다. 미해제 참조가 있는 상태의 대기와 런다운 시작 후의 해제는 이 협조적 프로세서에서 진행할 수 없어 명시적으로 중단하며, 미해제가 없는 상태의 해제도 마찬가지입니다. 개수를 받는 `Ex` 형식은 ULONG의 두 배(32비트에서 두 배로 계산)만큼 개수를 바꿉니다. 캐시 인식 형식은 모델링하지 않습니다. |
 | `ExInterlockedInsertHeadList`, `ExInterlockedInsertTailList`, `ExInterlockedRemoveHeadList`, `ExInterlockedPushEntryList`, `ExInterlockedPopEntryList`, `ExInterlockedAddUlong`, `ExInterlockedAddLargeInteger` | 모든 IRQL에서, 비어 있는 상주 실행 스핀록 아래 인터럽트를 마스크하고 IRQL을 바꾸지 않은 채 한 번 갱신합니다. 삽입은 이전 이웃 또는 NULL을 반환하고, 제거는 제거된 항목 자체의 링크를 남기며, 덧셈은 랩어라운드하여 원래 값을 반환합니다. 손상된 링크는 커널의 `FAST_FAIL_CORRUPT_LIST_ENTRY`처럼 중단되고, 보유 중인 락과 페이징 가능·사용자 모드·락과 겹치는 저장소는 명시적으로 중단합니다. |
 | `InitializeSListHead`, `ExpInterlockedPushEntrySList`, `ExpInterlockedPopEntrySList`, `ExpInterlockedFlushSList`, `ExQueryDepthSList`, `FirstEntrySList` | x64의 잠금 없는 `SLIST_HEADER` 목록입니다. `InterlockedPushEntrySList`, `InterlockedPopEntrySList`, `InterlockedFlushSList` 매크로와 그 `ExInterlocked` 형식은 `Exp` 익스포트로 도달합니다. 푸시는 Depth와 Sequence를 함께 1 늘리고, 팝은 Depth만 줄이며, 플러시는 Depth와 첫 항목을 지웁니다. 꺼내거나 플러시한 항목은 링크를 유지합니다. `InitializeSListHead`는 커널처럼 정렬되지 않은 헤더에 `STATUS_DATATYPE_MISALIGNMENT`를 발생시키고, 그 밖의 정렬되지 않은 헤더와 항목은 명시적으로 중단합니다. `ExQueryDepthSList`는 `DISPATCH_LEVEL` 이하, 나머지는 모든 IRQL에서 호출할 수 있습니다. |
+| `ExInitializeNPagedLookasideList`, `ExInitializePagedLookasideList`, `ExDeleteNPagedLookasideList`, `ExDeletePagedLookasideList` | 기본 풀 콜백과 x64 WDK 할당·해제 인라인 코드는 호출자의 SLIST와 카운터를 공유합니다. 초기 깊이는 4, 최대 깊이는 256이며 삭제 전에 일치하는 캐시 풀 블록을 모두 검사하고 해제합니다. 96바이트 헤더는 비페이징 메모리에 있어야 하며 16바이트로 정렬해야 합니다. 비페이징 API는 DISPATCH_LEVEL 이하, 페이징 API와 인라인 접근은 APC_LEVEL 이하를 요구합니다. 헤더, 캐시 블록, MDL 차용의 수명을 검사하며 언로드 전 명시적 삭제가 필요합니다. 사용자 콜백, 할당 실패 예외, 페이징 NX 플래그, 동적 깊이 조정은 지원하지 않습니다. 삭제된 링크에는 고정된 무효 값을 씁니다. |
 | `IoAllocateWorkItem`, `IoQueueWorkItem`, `IoFreeWorkItem` | 장치 소유의 불투명 작업 항목. `DelayedWorkQueue`만 지원하며 `PASSIVE_LEVEL`에서 장치와 컨텍스트를 콜백에 전달. 대기열에 있는 항목은 해제 불가 |
 | `KeInitializeDpc`, `KeInsertQueueDpc`, `KeRemoveQueueDpc`, `KeSetImportanceDpc`, `KeSetTargetProcessorDpc` | 불투명 DPC, 게스트 콜백 인수 네 개, `DISPATCH_LEVEL`, 중복/제거 동작과 중요도; 대상 CPU0만 지원 |
 | `KeInitializeTimer`, `KeInitializeTimerEx`, `KeSetTimer`, `KeSetTimerEx`, `KeCancelTimer`, `KeReadStateTimer` | 알림/동기화 타이머, 상대/절대 100 ns 기한, 밀리초 주기, 재설정/취소와 가상 시간 신호 조회 |
 | `KeInitializeEvent`, `KeSetEvent`, `KeResetEvent`, `KeClearEvent`, `KeReadStateEvent` | 알림/동기화 이벤트의 서로 다른 신호 소비; `KeSetEvent`는 Increment=0, Wait=FALSE만 허용 |
 | `KeInitializeSemaphore`, `KeReleaseSemaphore`, `KeReadStateSemaphore` | 양의 상한이 있는 상주 카운팅 세마포입니다. 성공한 대기는 1을 소비합니다. 해제는 Increment=0, Wait=FALSE만 허용하며 상한 초과 시 `STATUS_SEMAPHORE_LIMIT_EXCEEDED`를 발생시킵니다. |
 | `KeInitializeMutex`, `KeReleaseMutex`, `KeReadStateMutex` | 상주 KMUTEX는 논리 스레드가 소유하며 중첩 콜백과 SEH에 걸쳐 재귀적으로 획득할 수 있습니다. KeReleaseMutex는 이전 부호 있는 신호 상태를 반환하고 소유자와 일치하는 DISPATCH_LEVEL 획득 상태를 요구하며 Wait=FALSE만 허용합니다. 보유 중에는 가장 바깥쪽 반환, 재초기화 및 저장 공간 해제를 금지합니다. 소유자가 아닌 해제는 `STATUS_MUTANT_NOT_OWNED`를 발생시킵니다. |
-| `PsCreateSystemThread`, `PsTerminateSystemThread`, `ObReferenceObjectByHandle`, `ObfDereferenceObject`, `ZwClose` | PASSIVE_LEVEL에서 실행되는 제한된 시스템 프로세스 스레드. 핸들과 불투명 스레드 객체 참조의 수명은 독립적이다. PsTerminateSystemThread는 복귀하지 않고 종료하며 대기 가능한 객체를 신호 상태로 만든다. APC 전달, 프로세스 우선순위 클래스 및 타입 지정 객체 참조는 지원하지 않는다. |
+| `PsCreateSystemThread`, `PsTerminateSystemThread` | 시스템 프로세스 스레드는 별도 게스트 스택에서 `PASSIVE_LEVEL`로 실행됩니다. 종료는 객체를 신호 상태로 만들고 반환하지 않으며 시작 루틴의 일반 반환은 명시적으로 중단됩니다. NULL 프로세스 핸들, 선택적 `ClientId`, NULL 또는 커널 핸들 전용 속성을 지원합니다. APC 전달과 다른 프로세스에서의 생성은 미지원입니다. |
+| `PsLookupProcessByProcessId`, `PsLookupThreadByThreadId`, `PsGetThreadProcess`, `IoThreadToProcess`, `PsIsThreadTerminating` | 알려진 시스템/요청 프로세스 ID와 발급된 스레드 ID만 조회하며 알 수 없는 ID는 `STATUS_INVALID_CID`를 반환합니다. 유지된 스레드의 생성 프로세스와 종료 상태를 조회할 수 있습니다. 프로세스 ID는 세션이 소유하며 조회는 취소된 사용자 메모리를 복원하지 않습니다. |
+| `ObGetObjectType`, `ObfReferenceObject`, `ObfDereferenceObject`, `ObReferenceObjectByPointer`, `ObReferenceObjectByHandle`, `ObOpenObjectByPointer`, `ZwClose` | 불투명 형식 ID, 형식 지정 참조 및 여러 핸들의 수명을 한 곳에서 관리합니다. 포인터 참조는 두 접근 모드 모두에서 지정 형식을 검사합니다. 핸들 참조는 `UserMode`에서 허용 권한을 검사하고 커널 핸들을 거부합니다. 선택적 `OBJECT_HANDLE_INFORMATION`은 허용 권한을 반환합니다. `ObOpenObjectByPointer`는 `KernelMode`, NULL 접근 상태, 0 또는 `OBJ_KERNEL_HANDLE`만 지원합니다. 프로세스/스레드 핸들의 일반 권한, ACL, 의사 핸들, 파일 참조는 미지원입니다. DriverUnload 전에 모든 호출자 참조와 핸들을 해제해야 합니다. |
+| `ObQueryNameString`, `ObReferenceObjectByName`, `ZwOpenDirectoryObject`, `ZwOpenSymbolicLinkObject`, `ZwQuerySymbolicLinkObject`, `ZwQueryObject` | ASCII 이름은 공유 세션 이름 공간(루트, `\Driver`, `\Device`, `\FileSystem`, 전역 DOS 맵 `\GLOBAL??` 및 `\??`/`\DosDevices` 별칭)을 사용합니다. 이름 참조는 KernelMode, 알려진 형식, DesiredAccess=0, 접근 상태/구문 분석 컨텍스트 없음, 선택적 OBJ_CASE_INSENSITIVE만 허용합니다. 외부 드라이버, 레지스트리 이름 분석, 파일 개체, Unicode 대소문자 변환, 보안 검사 및 구문 분석 콜백은 미지원입니다. ZwQueryObject는 ObjectNameInformation만 지원합니다. 디렉터리/링크의 상대 열기와 일반 권한 매핑을 지원하며 Zw 조회는 커널 접근 의미를 사용합니다. 이름 조회는 정확한 크기를 반환하고 링크 조회는 캡처한 MaximumLength 바이트를 보존합니다. 삭제한 링크 이름은 마지막 핸들 종료까지 유지되고 포인터 참조는 분리된 객체를 유지합니다. 장치 삭제는 이름을 제거하며 I/O 보유 종료 후 드라이버 목록에서 제거하고 포인터 참조는 저장 공간을 유지합니다. |
+| `PsProcessType`, `PsThreadType`, `IoDriverObjectType`, `IoFileObjectType`, `ExEventObjectType`, `ExSemaphoreObjectType`, `PsJobType`, `SeTokenObjectType`, `PsInitialSystemProcess`, `KeNumberProcessors`, `KdDebuggerEnabled`, `KdDebuggerNotPresent` | 읽기 전용이며 실행할 수 없는 PE 데이터로, 정적 가져오기와 동적 조회 주소가 같습니다. 형식 포인터는 객체 관리 ID를 공유하며 세션 DRIVER_OBJECT는 형식 조회와 포인터 참조를 지원합니다. 형식 토큰만으로 다른 클래스가 구현되지는 않습니다. `PsInitialSystemProcess`는 시스템 프로세스, `KeNumberProcessors`는 단일 프로세서 마스크를 따릅니다. 디버거 바이트를 읽으려면 `debugger_state`에 불리언 `enabled`와 `not_present`가 모두 필요합니다. 생략하면 기본 상태를 제공하지 않습니다. 두 실행 계약을 지원합니다. |
 | `KeSetPriorityThread`, `KeQueryPriorityThread` | `PASSIVE_LEVEL` 실행 우선순위이며 1..31을 설정하고 이전 값을 반환합니다. 결정적 초기값은 8이고 알려진 스레드 객체가 필요합니다. `scheduling`으로 우선순위 스케줄링을 사용하며 동적 부스트와 프로세스 우선순위 클래스는 지원하지 않습니다. [driver-scheduling.md](driver-scheduling.md) |
 | `KeQueryActiveProcessors`, `KeSetSystemAffinityThread`, `KeRevertToUserAffinityThread` | 그룹 0에는 프로세서가 하나 있습니다. `KeQueryActiveProcessors`는 유효한 모든 IRQL에서 마스크 `1`을 반환합니다. 레거시 선호도 설정·복원 쌍은 IRQL <= DISPATCH_LEVEL에서 마스크 `1`을 허용하고 중단·중첩 호출에서도 논리 스레드 소유권을 유지하며 외부 반환 전에 복원을 요구합니다. 다른 마스크와 대응 설정이 없는 복원은 명시적으로 실패합니다. 환경에 의존하는 이 호출들은 UNPACK 의존성을 유지합니다. |
 | `KeEnterCriticalRegion`, `KeLeaveCriticalRegion`, `KeEnterGuardedRegion`, `KeLeaveGuardedRegion`, `KeAreApcsDisabled`, `KeAreAllApcsDisabled` | 스레드별 중첩 APC 비활성화 상태. 중요 영역과 보유한 KMUTEX는 일반 APC를, 보호 영역과 IRQL >= APC_LEVEL은 모든 APC를 비활성화한다. 시스템 스레드는 중요 영역 하나 안에서 시작한다. 짝이 없는 종료와 균형이 맞지 않는 복귀는 실패한다. APC 전달은 모델링하지 않는다. |
@@ -391,6 +408,7 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `IofCompleteRequest`, `IoCompleteRequest` | `IO_NO_INCREMENT`로 완료 해제를 수행. 중단/재개를 지원하고 최종 경계에서만 IRP/MDL/버퍼를 폐기 |
 | `memcpy`, `memmove`, `memset`, `memcmp`, `RtlCopyMemory`, `RtlMoveMemory`, `RtlFillMemory`, `RtlZeroMemory`, `RtlCompareMemory` | 호출당 최대 1 MiB의 제한된 게스트 버퍼 작업. 비중첩 복사 API는 겹치는 범위를 거부함 |
 | `strlen`, `wcslen`, `strnlen`, `wcsnlen`, `strcmp`, `wcscmp`, `strncmp`, `wcsncmp`, `_stricmp`, `_wcsicmp`, `_strnicmp`, `_wcsnicmp`, `strchr`, `wcschr`, `strrchr`, `wcsrchr`, `strstr`, `wcsstr`, `strspn`, `wcsspn`, `wcscspn` | 내보낸 C 런타임 문자열 헬퍼는 임의의 IRQL에서 호출자 메모리를 한 단위씩 읽으며, 종결자가 없는 스캔은 1 MiB 모델 한계에서 멈춘다. 개수와 검색 결과는 표준 C 의미를 따른다. `strcmp`, `wcscmp`, `strncmp`는 -1, 0 또는 1로 정규화하고, `wcsncmp`와 대소문자 구분 없는 계열은 원시 차이를 반환하며 ASCII A-Z만 접는다. 검색 대상은 단위 폭으로 잘리고 종결자도 검색하므로 0 검색은 그 주소를 반환한다. `strstr`/`wcsstr`의 빈 부분 문자열은 원본 문자열을 반환한다. 널 레코드나, 개수 없이 매핑된 메모리를 넘어가는 스캔은 명시적으로 실패한다. |
+| `strcpy`, `wcscpy`, `strncpy`, `wcsncpy`, `strcat`, `wcscat`, `strncat`, `wcsncat` | 바이트/UTF-16 복사와 연결은 원래 대상 주소를 반환합니다. 길이 지정 복사는 정확한 단위 수를 쓰고 짧은 입력은 0으로 채우며 잘린 뒤 종결자를 추가하지 않습니다. 길이 지정 연결은 지정 수 이하를 추가하고 종결합니다. 0인 `strncpy`/`wcsncpy`/`strncat`은 메모리를 접근하지 않지만 `wcsncat`은 대상 종결자를 찾아 씁니다. 겹침, 잘못된 저장소, 1 MiB 초과는 쓰기 전에 중단하며 페이지 메모리 IRQL 규칙을 유지합니다 |
 
 `MmProbeAndLockPages`는 IRQL <= APC_LEVEL에서 입력 드라이버 이미지의 로더 소유 단일 연속 범위를 `KernelMode`로 잠글 수 있습니다. 이미지 페이지는 읽을 수 있어야 하며 물리 페이지 한도를 따릅니다. 모델의 이미지 저장소는 이미 전용 상주 메모리이므로 원래 이미지 뷰가 읽기 전용이어도 `IoWriteAccess`와 `IoModifyAccess`는 쓰기 가능한 MDL 별칭을 허용합니다. `IoReadAccess` 별칭은 읽기 전용 계약을 유지합니다. 원본 이미지 보호 속성은 바꾸지 않습니다. 이미지의 빈 영역과 무관한 매핑은 제외하며 사용자 주소 경계 아래의 이미지도 소유권으로 식별합니다. 잠금 해제와 설명자 해제가 필요합니다. 로더 소유 이미지 페이지의 임시 MDL은 모든 별칭 매핑과 잠금을 해제하고 모든 설명자를 해제하면 추가 복원 의존성을 남기지 않습니다. 이 계약은 요청 주소가 없는 커널 모드 캐시 별칭을 허용합니다. 살아 있는 MDL, 다른 소유권이나 매핑 유형, 게스트의 물리 PFN 식별값 읽기는 의존성으로 남으며 모델링된 복사·이동·비교 서비스의 읽기도 포함합니다.
 
@@ -433,7 +451,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 선택적인 루트 필드 `"load_address": "0x190000000"`는 베이스 재배치를 요청합니다. 생략하거나 `"0x0"`을 지정하면 선호 주소를 사용합니다. 이미지는 재배치 요구 사항을 충족해야 합니다. 기존 초기화 명령이나 C API에는 암묵적인 시나리오가 없습니다.
 
-루트에서는 `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `load_address`, `requests`, `unload`, `kernel_exports`, `registry`, `pnp_devices`만 허용됩니다. 일반 파일 요청은 `kind`, 선택적인 `device` 또는 `device_id`(서로 배타적)와 `file`을 받습니다. IOCTL에는 `code`가 필수이며 `input`, `output_size`, `direct_input`을 받을 수 있습니다. `read`는 `output_size`와 `byte_offset`, `write`는 `input`과 `byte_offset`을 받습니다. 오프셋 기본값은 0이며 정수 또는 16진 문자열을 받고, 음수가 아닌 부호 있는 64비트 값 범위에 들어야 합니다. 수명 주기 요청은 전송 필드를 거부합니다. 알 수 없거나 중복된 필드는 거부합니다. `code`는 부호 없는 32비트 JSON 정수 또는 `0x` 16진 문자열을 받습니다. `input`은 접두사나 공백이 없는 짝수 길이의 16진 바이트 문자열이며, 생략하면 빈 입력입니다. `output_size`는 부호 없는 JSON 정수이며 생략하면 0입니다. 소수와 부동소수점 표기는 거부합니다.
+루트에서는 `service_name`, `scheduling`, `trace_memory_writes`, `cpuid`, `msr_reads`, `loader_view`, `version_query`, `physical_memory_inventory`, `kernel_va_shadow_query`, `debugger_state`, `load_address`, `requests`, `unload`, `filesystem`, `kernel_exports`, `registry_system_time_100ns`, `registry`, `pnp_devices`만 허용됩니다. 일반 파일 요청은 `kind`, 선택적인 `device` 또는 `device_id`(서로 배타적)와 `file`을 받습니다. IOCTL에는 `code`가 필수이며 `input`, `output_size`, `direct_input`을 받을 수 있습니다. `read`는 `output_size`와 `byte_offset`, `write`는 `input`과 `byte_offset`을 받습니다. 오프셋 기본값은 0이며 정수 또는 16진 문자열을 받고, 음수가 아닌 부호 있는 64비트 값 범위에 들어야 합니다. 수명 주기 요청은 전송 필드를 거부합니다. 알 수 없거나 중복된 필드는 거부합니다. `code`는 부호 없는 32비트 JSON 정수 또는 `0x` 16진 문자열을 받습니다. `input`은 접두사나 공백이 없는 짝수 길이의 16진 바이트 문자열이며, 생략하면 빈 입력입니다. `output_size`는 부호 없는 JSON 정수이며 생략하면 0입니다. 소수와 부동소수점 표기는 거부합니다.
 
 READ/WRITE/IOCTL 요청만 선택적 `cancel_after_100ns` 필드를 허용합니다. 값은 0부터 `INT64_MAX`(9223372036854775807)까지의 JSON 정수입니다. 실제 시간이 아니라 요청 제출 시점을 기준으로 한 가상 100 ns 단위로 취소를 예약합니다. KMDF에서 0은 프레임워크 라우팅 후 게스트 I/O 콜백 전에 적용하며, 라우팅이 이미 요청을 완료했다면 완료가 우선합니다. WDM에서는 디스패치 반환 후 0을 적용합니다. 양수 지연에서는 준비된 콜백이나 실행 프레임이 없을 때만 타이머, 대기 또는 취소 기한으로 시간을 진행합니다. 보류 중인 WDM IRP는 등록된 취소 루틴을 취소 스핀락을 잡은 `DISPATCH_LEVEL`에서 호출합니다. 완료 전에 `Irp->CancelIrql`로 잠금을 해제해야 합니다. 일반 큐와 PnP 취소는 여전히 지원하지 않습니다. 각 요청 보고서의 `cancel_requested_at_100ns`는 취소가 실제 발생한 절대 가상 시간이거나, 완료가 먼저 발생하는 경우를 포함해 취소가 발생하지 않았다면 null입니다. 취소 요청만으로 IRP가 완료되거나 최종 상태가 정해지지는 않습니다.
 `IoSetCancelRoutine`, `IoAcquireCancelSpinLock`, `IoReleaseCancelSpinLock`, `IoCancelIrp`는 같은 IRP 상태와 취소 스핀락을 사용합니다. `IoCancelIrp`는 등록된 루틴을 동기적으로 호출하고 호출 여부를 반환합니다.
@@ -471,11 +489,17 @@ READ/WRITE에서는 `DO_BUFFERED_IO` 또는 `DO_DIRECT_IO`가 버퍼 방식이�
 
 경로는 `\Registry\Machine` 또는 `\Registry\User` 아래의 절대 ASCII 경로여야 합니다. 상위 키는 자동 생성합니다. 키와 값은 ASCII 규칙으로 대소문자를 구분하지 않으며 비 ASCII 이름과 중복을 거부합니다. 구성을 생략하면 가용성이 미지정되어 레지스트리 호출이 중단됩니다. `"registry": []`는 빈 네임스페이스를 명시합니다. 드라이버에서 키, 값, 호스트 레지스트리 데이터나 서비스 구성을 추론하지 않습니다.
 
-`ZwOpenKey`와 `ZwCreateKey`는 독립적인 불투명 핸들을 반환하며 핸들별로 쿼리, 설정, 하위 키 생성과 삭제 권한을 검사합니다. 구성 트리는 일반 `KEY_READ`와 `KEY_WRITE`를 포함한 지원되는 `KEY_ALL_ACCESS` 비트를 허용합니다. 명시적으로 접근 가능한 테스트 트리이며 Windows ACL이나 권한 평가를 구현하지 않습니다. 일반 권한, `MAXIMUM_ALLOWED`, 다른 레지스트리 뷰, 사용자 보안 설명자, 클래스와 심볼릭 링크는 지원하지 않습니다. 상대 생성에는 `KEY_CREATE_SUB_KEY`를 가진 직접 부모 핸들이 필요합니다. 입력 키는 비휘발성이며 새 키는 휘발성일 수 있지만 휘발성 키 아래의 비휘발성 자식은 거부합니다. 재부팅이나 디스크 영속성은 모델링하지 않습니다.
+레지스트리 키 개체는 공통 개체 소유자를 사용합니다. 열기마다 별도 키 본문을 만들며 그 포인터로 연 핸들은 같은 본문을 유지합니다. 키 열기는 일반 권한을 매핑하고 커널/프로세스 범위를 지키며 상태 공개 전에 출력을 검사합니다. 삭제하면 활성 이름은 즉시 제거되며 이전 본문은 삭제 상태로 남고 새 키가 같은 경로를 다시 사용할 수 있습니다. 포인터 참조는 마지막 핸들 닫기 후에도 유지됩니다. ObQueryNameString과 ZwQueryObject(ObjectNameInformation)는 짧거나 홀수 길이인 버퍼와 삭제된 키 결과를 처리하며 시스템 호출은 데이터 뒤에 ReturnLength를 씁니다. ObReferenceObjectByName을 통한 레지스트리 이름 분석, ACL, 대체 뷰와 파일 개체는 미지원입니다. 본문과 핸들은 각각 256개로 제한되며 남은 참조는 언로드를 막습니다.
+
+`ZwOpenKey`와 `ZwCreateKey`는 독립적인 불투명 핸들을 반환하며 핸들별로 쿼리, 설정, 하위 키 생성과 삭제 권한을 검사합니다. 구성 트리는 일반 `KEY_READ`와 `KEY_WRITE`를 포함한 지원되는 `KEY_ALL_ACCESS` 비트를 허용합니다. 명시적으로 접근 가능한 테스트 트리이며 Windows ACL이나 권한 평가를 구현하지 않습니다. `MAXIMUM_ALLOWED`, 다른 레지스트리 뷰, 사용자 보안 설명자, 클래스와 심볼릭 링크는 지원하지 않습니다. 상대 생성에는 `KEY_CREATE_SUB_KEY`를 가진 직접 부모 핸들이 필요합니다. 입력 키는 비휘발성이며 새 키는 휘발성일 수 있지만 휘발성 키 아래의 비휘발성 자식은 거부합니다. 재부팅이나 디스크 영속성은 모델링하지 않습니다.
 
 `ZwQueryValueKey`는 Basic, Full, Partial과 정의된 Align64 정보 클래스를 구현하여 정확한 길이, 데이터 정렬, 부분 출력, 서로 다른 `STATUS_BUFFER_TOO_SMALL` / `STATUS_BUFFER_OVERFLOW` 결과를 제공합니다. `ZwSetValueKey`와 `ZwDeleteValueKey`는 현재 세션의 트리만 변경합니다. `ZwDeleteKey`는 자식이 남은 키를 거부하며 삭제된 키의 핸들은 닫기 전까지 `STATUS_KEY_DELETED`를 반환합니다. `ZwClose`는 키와 독립적으로 핸들을 해제합니다. 열린 레지스트리 핸들이 남으면 언로드가 실패합니다.
 
 상위 키를 포함한 키 256개, 총 값 1024개, 값당 65536바이트, 전체 값 데이터 512 KiB, 키 경로 1024 ASCII 바이트, 값 이름 256바이트, 동시 열린 핸들 256개로 제한합니다. 생성과 변경에도 시나리오 사전 검사와 같은 제한을 적용합니다. 보고서의 `configuration.registry`는 원래 입력을 보존하고 `registry`는 중단 전 변경을 포함한 최종 키 경로와 값을 나열합니다. 미지정 상태는 null로 보고합니다. 값 스냅샷에는 휘발성 속성과 핸들 식별자가 포함되지 않습니다.
+
+키별 `last_write_time_100ns` 또는 루트의 `registry_system_time_100ns`로 시간을 선언합니다. 후자는 가상 시간 0에서의 Windows 절대 시간(1601년 이후 100 ns 단위)이며 명시적인 `registry`가 필요합니다. 두 값은 0..9223372036854775807 범위의 JSON 정수이며 0도 유효합니다. 키별 시간이 우선하고 나머지 초기 키와 암시적 상위 키는 시계를 상속합니다. 시간이 없어도 Name 및 크기 조회는 가능하지만 시간을 반환하는 출력은 명시적으로 중단합니다. 변경 시 시계에 스케줄러 경과 시간을 더하며 오버플로는 변경 전에 거부합니다. 시계가 없는 변경은 해당 키의 기존 시간을 무효화하고 동일한 유형과 데이터 쓰기는 시간을 유지합니다. 하위 키 생성과 삭제는 상위 키 시간을 갱신합니다. 보고서는 알려진 시간과 원래 시계 설정을 보존하고 알 수 없는 시간은 생략합니다.
+
+Full/Cached는 현재 개수와 과거 최대 길이를 반환하며 해당 하위 키/값 목록이 비면 최대 길이를 0으로 만듭니다. x64 Cached는 40바이트가 필요하고 마지막 4바이트는 보존합니다. 삭제된 키의 Name 조회도 경로를 복사하며 완전한 출력은 `STATUS_KEY_DELETED`, 짧은 출력은 일반 크기 상태를 반환합니다. 스냅샷에는 캐시된 최대값이 없으므로 완전한 실행 체크포인트가 아닙니다.
 
 ## Microsoft 예제 검증
 
@@ -501,7 +525,11 @@ JSON 보고서는 `stop_reason`, null이 가능한 `nt_status`와 `nt_success`, 
 
 `ExRaiseStatus`는 NTSTATUS의 하위 32비트를 게스트 예외 처리기에 전달합니다. `ExRaiseAccessViolation`과 `ExRaiseDatatypeMisalignment`는 각각 `STATUS_ACCESS_VIOLATION`과 `STATUS_DATATYPE_MISALIGNMENT`를 발생시킵니다. 프로필은 개별 Microsoft DDI 문서를 따릅니다. ExRaiseStatus는 `APC_LEVEL`을 허용하고 인수가 없는 두 루틴은 `PASSIVE_LEVEL`을 요구합니다. 일부 WDK SAL 주석은 래퍼에 APC_LEVEL을 허용하지만 이 프로필은 문서의 더 엄격한 상한을 유지합니다. 예외를 발생시킨 호출은 `result: null`을 유지하고 `detail`에 코드를 기록하며 성공적인 API 반환으로 보고하지 않습니다.
 
-예외 전달은 이미지에서 해석한 x64 버전 1 unwind 테이블과 `__C_specific_handler` 범위를 사용하여 실제 게스트 필터, 처리기, unwind 중의 `__finally`를 실행합니다. 필터의 0은 검색 계속, 양수는 처리기 선택, 음수는 실행 재개를 뜻합니다. 음수로 재개할 수 있는 것은 포착 가능한 사용자 CPU 메모리 예외뿐이며 검증된 `CONTEXT_INTEGER | CONTEXT_CONTROL` 변경만 적용하고 나머지 원래 CPU 상태 전체를 보존합니다. 일반 헬퍼 프레임 unwind, 저장된 비휘발성 범용 레지스터 복원, 현재 스택 경계 및 `GetExceptionCode()`를 지원합니다. 정상 경로와 예외 unwind의 finally 모두 실제 게스트 코드를 실행합니다. 필터와 finally는 부모 실행의 프로세스/스레드 신원과 사용자 접근 권한을 상속하며 권한 없는 시스템 작업자의 권한을 높이지 않습니다. 처리기는 지원하는 바깥 범위로 다시 예외를 발생시킬 수 있습니다. 필터/finally의 중첩 및 충돌 unwind, 연결된 V1 메타데이터, 부분 프롤로그, 표준 에필로그, 전체 XMM6–XMM15 복원을 지원합니다. 예외 레코드 연결을 보존하고 시작한 finally를 반복하지 않습니다. C++ 처리 방식과 불완전한 메타데이터는 명시적으로 거부합니다. 잡히지 않은 API 예외는 `model_error`로 중단하며 포착 가능한 사용자 메모리 예외 이외의 CPU 오류는 실행을 종료합니다. 상수 `EXCEPTION_EXECUTE_HANDLER`는 해당 처리기를 직접 선택합니다. 처리기를 선택한 뒤 unwind할 때만 벗어나는 범위의 finally를 실행하며 검색 중이나 필터가 원래 실행을 재개할 때는 정리하지 않습니다. 필터가 반환할 때마다 `EXCEPTION_POINTERS`, 예외 레코드, 지원하지 않는 `CONTEXT` 필드를 검증하고 해당 변경은 명시적으로 실패합니다. 모델 API가 발생시킨 예외를 음수 필터로 재개하는 것은 지원하지 않습니다.
+예외 전달은 이미지에서 해석한 x64 V1/V2 unwind 테이블과 `__C_specific_handler` 범위를 사용하여 실제 게스트 필터, 처리기, unwind 중의 `__finally`를 실행합니다. 필터의 0은 검색 계속, 양수는 처리기 선택, 음수는 실행 재개를 뜻합니다. 음수로 재개할 수 있는 것은 포착 가능한 사용자 CPU 메모리 예외뿐이며 검증된 `CONTEXT_INTEGER | CONTEXT_CONTROL` 변경만 적용하고 나머지 원래 CPU 상태 전체를 보존합니다. 일반 헬퍼 프레임 unwind, 저장된 비휘발성 범용 레지스터 복원, 현재 스택 경계 및 `GetExceptionCode()`를 지원합니다. 정상 경로와 예외 unwind의 finally 모두 실제 게스트 코드를 실행합니다. 필터와 finally는 부모 실행의 프로세스/스레드 신원과 사용자 접근 권한을 상속하며 권한 없는 시스템 작업자의 권한을 높이지 않습니다. 처리기는 지원하는 바깥 범위로 다시 예외를 발생시킬 수 있습니다. 필터/finally의 중첩 및 충돌 unwind, 연결된 V1 메타데이터, 부분 프롤로그, 표준 에필로그, 전체 XMM6–XMM15 복원을 지원합니다. 예외 레코드 연결을 보존하고 시작한 finally를 반복하지 않습니다. C++ 처리 방식과 불완전한 메타데이터는 명시적으로 거부합니다. 잡히지 않은 API 예외는 `model_error`로 중단하며 포착 가능한 사용자 메모리 예외 이외의 CPU 오류는 실행을 종료합니다. 상수 `EXCEPTION_EXECUTE_HANDLER`는 해당 처리기를 직접 선택합니다. 처리기를 선택한 뒤 unwind할 때만 벗어나는 범위의 finally를 실행하며 검색 중이나 필터가 원래 실행을 재개할 때는 정리하지 않습니다. 필터가 반환할 때마다 `EXCEPTION_POINTERS`, 예외 레코드, 지원하지 않는 `CONTEXT` 필드를 검증하고 해당 변경은 명시적으로 실패합니다. 모델 API가 발생시킨 예외를 음수 필터로 재개하는 것은 지원하지 않습니다.
+
+COFF 로더는 V2 에필로그 위치를 프롤로그 연산과 분리합니다. V2는 주 프레임의 저장 레지스터와 선언된 에필로그 안의 정확한 위치를 기준으로 복원하며 스택 공간 해제는 그 범위 밖입니다. 잘못된 범위, 크기 또는 복원 순서는 스택 읽기 전에 거부합니다. V1은 명령 기반 인식을 유지하며 모든 백엔드가 스택 검사와 예외 처리를 공유합니다.
+
+V2 에필로그는 선두의 연속된 `UWOP_EPILOG`만 정의합니다. 뒤따르는 마커는 두 슬롯을 건너뛰며 상태 복원이나 프롤로그 오프셋 순서에 영향을 주지 않습니다. 잘린 슬롯 쌍은 여전히 잘못된 형식으로 거부합니다.
 
 네이티브 x64 KVM/WHP는 실제 `#XM`을 `X64SIMDException`을 통해 드라이버 C SEH로 전달합니다. 하드웨어 오류의 `CONTEXT`는 XMM0–15와 MXCSR를 보존합니다. 필터, 예외 언와인드 finally 콜백과 선택된 핸들러는 MXCSR `0x1f80`, DF 해제 상태에서 실행됩니다. 음수 필터는 XMM과 최상위 `CONTEXT.MxCsr`를 수정한 후 원래 명령을 재시도할 수 있습니다. 후자에는 게스트 CPU 마스크가 적용되며 `FltSave.MxCsr`는 커널 복원을 제어하지 않습니다. 모델 API 예외는 정수/제어 레코드를 유지하며 x87/AVX 컨텍스트 수정은 계속 거부됩니다.
 
@@ -614,7 +642,9 @@ CPU0 명시적 선점, 가상 시계 의미와 현재 한계는 [드라이버 �
 
 `KeQueryPerformanceCounter`는 공유 스케줄러 시간을 100 ns 단위로 반환하며 주파수는 초당 10,000,000회로 고정됩니다. 선택적 출력 포인터에는 8바이트 전체 쓰기 권한과 객체 수명 검사가 적용됩니다. 모든 유효한 x64 IRQL에서 호출할 수 있습니다. 협력 모드는 기존 스케줄링 경계에서만 시간을 진행하며 명령어 시계 모드는 설정된 타이밍을 유지합니다. 읽기 자체는 별도 시계를 만들거나 시간을 진행하지 않습니다. 이는 결정적 프로필이며 호스트 하드웨어 측정이 아닙니다. 독립적으로 컴파일된 런타임 픽스처는 네이티브 CPU 백엔드의 기본 및 재배치 주소에서 정적／동적 식별, 주파수와 단조성을 검사합니다.
 
-`RDTSC`와 `RDTSCP`는 `KeQueryPerformanceCounter`와 동일한 10 MHz 스케줄러 시계를 읽습니다. `RDTSCP`는 단일 모델 프로세서를 나타내는 0을 ECX에 반환합니다. EAX/EDX와 RDTSCP의 ECX 상위 32비트는 0이 되며 다른 레지스터와 플래그는 유지됩니다. 협력 실행에서는 읽기가 시간을 진행시키지 않습니다. 명시적 명령 스케줄링에서는 해당 명령을 계산한 뒤 시간을 읽으므로 시간 할당량 길이에 의존하지 않습니다. 오버플로는 레지스터 결과를 쓰기 전에 중단되며 명령 예산과 관찰자 중단도 적용됩니다. 호스트 TSC 주파수나 프로세서 식별 정보는 노출하지 않습니다. MSR 접근, RDPMC 및 그 밖의 모델링하지 않은 CPU 조회는 계속 지원하지 않습니다.
+`RDTSC`와 `RDTSCP`는 `KeQueryPerformanceCounter`와 동일한 10 MHz 스케줄러 시계를 읽습니다. `RDTSCP`는 단일 모델 프로세서를 나타내는 0을 ECX에 반환합니다. EAX/EDX와 RDTSCP의 ECX 상위 32비트는 0이 되며 다른 레지스터와 플래그는 유지됩니다. 협력 실행에서는 읽기가 시간을 진행시키지 않습니다. 명시적 명령 스케줄링에서는 해당 명령을 계산한 뒤 시간을 읽으므로 시간 할당량 길이에 의존하지 않습니다. 오버플로는 레지스터 결과를 쓰기 전에 중단되며 명령 예산과 관찰자 중단도 적용됩니다. 호스트 TSC 주파수나 프로세서 식별 정보는 노출하지 않습니다. 모델링하지 않은 MSR 접근, RDPMC 및 그 밖의 모델링하지 않은 CPU 조회는 계속 지원하지 않습니다.
+
+선택적 `msr_reads`는 checked-x64의 표준 `RDMSR`에 명시한 고정 비결함 값을 제공합니다. 각 항목은 부호 없는 32비트 `index`와 64비트 16진수 문자열 `value`를 요구합니다. IA32_LSTAR만 지원하며 예는 `[{"index":3221225602,"value":"0xfffff80001234000"}]`입니다. 중복, 다른 MSR, 접두사가 있는 인코딩과 WRMSR는 거부합니다. ECX로 값을 선택하고 EDX:EAX에 두 절반을 쓰며 상위 비트를 지우고 RCX, 플래그 및 다른 상태를 보존합니다. 미선언 읽기는 결과를 쓰기 전에 중단합니다. 입력은 `configuration.msr_reads`에 기록되며 미사용 선언도 미복원 환경 의존성을 남깁니다. 값이 메모리 접근권, 커널 식별 또는 증명 전제를 부여하지 않습니다. x64 인코딩·선택자와 Windows 세션은 Unicorn/KVM/WHP/HVF에서 공유되며 호스트 MSR를 읽지 않습니다.
 
 선택적 `cpuid`는 최대 64개의 CPU 쿼리 결과를 선언합니다. 각 레코드에는 부호 없는 32비트 정수 `leaf`, `eax`, `ebx`, `ecx`, `edx`가 필요합니다. 선택적 `subleaf`는 입력 ECX를 제한하며 생략하면 해당 leaf의 모든 하위 leaf와 일치합니다. 중복되거나 겹치는 선언은 실행 전에 거부합니다. CPUID는 입력 EAX/ECX의 하위 32비트를 사용하고 네 출력 레지스터를 0 확장하며 플래그와 다른 레지스터를 보존합니다. 선언되지 않은 쿼리는 결과 게시 전에 leaf/subleaf 진단과 함께 중단됩니다. `configuration.cpuid`는 선언을 유지합니다. 이는 명시적인 환경 입력이며 호스트 쿼리나 명령 지원 보장이 아닙니다. 사용하면 드라이버 UNPACK 의존성과 명시적 스냅샷 진단이 유지됩니다.
 
@@ -654,3 +684,109 @@ PASSIVE_LEVEL에서 길이가 4 미만이면 결과에 접근하지 않고 `STAT
 ## 제한된 커널 호출자 문맥 캡처
 
 `RtlCaptureContext`는 checked-x64 Unicorn/KVM/WHP의 가져오기/동적 호출에 같은 구현을 사용하며 IRQL <= DISPATCH_LEVEL을 요구합니다. 16바이트 정렬된 읽기/쓰기 가능한 1232바이트 커널 레코드의 `[48,72)`, `[120,262)`, `[280,284)`, `[416,672)`만 씁니다. 나머지와 x87 데이터/포인터, MXCSR mask는 보존합니다. ContextFlags=`0x10000f`, 호출자 RSP=진입 RSP+8, RIP는 실제 반환 슬롯입니다. 진입 RSP-8에 8바이트 플래그를 쓰고 RAX는 0 확장 EFLAGS, 산술 플래그는 ADD(진입 RSP-8,8) 결과입니다. DS/ES/FS/GS는 checked 논리 SS이며 호스트나 원시 전송 값이 아닙니다. 전체 레코드와 반환/임시 슬롯은 일반 커널 RAM, 객체 수명, 권한, 유일한 물리 매핑을 검사하며 겹침을 거부합니다. 진입 RSP의 16 나머지는 8입니다. 수집/검사 실패는 CPU/RAM을 바꾸지 않고 legacy는 거부합니다. 모든 Windows 구현을 뜻하지 않으며 덮어쓴 뒤에도 환경 의존성을 유지하여 UNPACK 복원이나 기호 전제를 허가하지 않습니다.
+
+파일 본체의 주소별 신원은 시나리오 핸들, 추가 핸들, 호출자 포인터가 공유합니다. ObOpenObjectByPointer는 생성된 FILE_OBJECT의 커널 접근과 선택적 OBJ_KERNEL_HANDLE을 지원하며 일반 권한을 구체적 권한으로 변환합니다. 프로세스의 마지막 핸들을 닫을 때 다른 프로세스에 핸들이 남으면 IRP_MJ_LOCK_CONTROL / IRP_MN_UNLOCK_ALL을, 전체 마지막이면 CLEANUP을 보냅니다. 지연된 CLEANUP은 선언된 하위 응답을 보존합니다. 번호를 재사용해도 CLOSE는 마지막 핸들, 포인터, 종료 후속 호출을 기다립니다. 커널 핸들의 CLEANUP은 유효 프로세스를 잠시 시스템으로 바꾸면서 스레드, 생성 프로세스, PreviousMode를 유지하며 CLOSE는 실제 해제 프로세스로 돌아옵니다. 대기 중인 콜백은 해제자를 중지시킵니다. 공급자의 열기가 성립하기 전에 CREATE가 실패하면 참조된 저장소만 남기고 장치 연결을 없앱니다. 명시적으로 취소된 열기는 CLOSE까지 장치를 유지합니다. 연결된 본체는 DEVICE_OBJECT.ReferenceCount에 한 번만 포함됩니다. WDM과 KMDF가 수명을 공유하며 일반 KMDF 장치는 LOCK_CONTROL을 STATUS_INVALID_DEVICE_REQUEST로 완료합니다. 종료 콜백 중 재열기, 미완료 파일 I/O 중 닫기, KMDF 필터의 LOCK_CONTROL 전달, 공급자의 데이터／제어 I/O는 미지원입니다.
+
+## 파일 정보 조회 IRP
+
+`IoQueryFileInformation`은 기존에 모델링된 WDM 파일의 장치 스택으로 실제 `IRP_MJ_QUERY_INFORMATION`을 보냅니다. 정보는 게스트 드라이버 또는 명시적으로 선언된 파일 시스템 공급자가 제공합니다. 알려진 프로세스/스레드, PASSIVE_LEVEL, 활성화된 인터럽트와 특수 커널 APC가 필요합니다. 같은 파일의 중첩 I/O, 마운트된 VPB, 파일 확장 라우팅, 프레임워크 소유 파일, 비동기 조회의 마지막 참조에 필요한 지연 삭제는 명시적으로 지원하지 않습니다. `IoGetRelatedDeviceObject`는 IRQL <= DISPATCH_LEVEL에서 검증된 비마운트 스택의 최상위 장치를 반환합니다.
+
+조회는 완료까지 호출자의 버퍼를 빌립니다. 즉시 반환은 디스패치 상태, 보류 후 반환은 완료 상태를 사용합니다. 즉시 오류 완료는 비공개 IOSB를 게시하지 않아 반환 길이가 0입니다. 작업자 완료 알림은 원래 호출자가 재개될 때 전달합니다. 동기 조회는 최종 CLOSE까지 파일을 유지한 뒤 ReturnedLength 네 바이트만 씁니다. 인접 바이트와 출력 버퍼 별칭을 보존합니다. 보고서는 kind `query_information`, origin `IoQueryFileInformation`, `file_information_class`를 사용하며 시나리오 입력은 이 종류를 생성할 수 없습니다. 클래스 75는 71과 스택 플래그 1로 바꾸고 나머지는 게스트에 전달합니다. 클래스별 제공자 동작이 구현되었다는 의미는 아닙니다.
+
+동기 조회는 최종 CLOSE까지 임계 영역을 유지한 뒤 호출자의 이전 APC 상태를 복원합니다. 보류 알림은 보호 영역 종료와 IRQL 복원을 포함한 적격 커널 API 반환 시점 및 소유 스레드의 게스트 명령 재개 전에 보입니다. 보고서 바이트는 원래 프로세스에서 수집하므로 완료 작업자가 사용자 버퍼를 읽지 않습니다. 할당 실패는 동기 파일 이벤트를 초기화하고 ReturnedLength는 그대로 둡니다.
+
+`ZwQueryInformationFile`은 공통 조회 소유자로 프로세스 범위 파일 핸들을 확인하고 별도의 0으로 초기화한 SystemBuffer를 할당하며 호출자 출력을 빌립니다. 로컬 클래스는 Access (8), 동기 Position (14), Mode (16), Alignment (17), IsRemoteDevice (51)입니다. Mode와 Alignment도 자체 IRP를 만듭니다. 전달 클래스는 4/5/6/7/9/14/21/22/28/34/35/59/71/75이며 비동기 Position은 전달하고 75는 71과 스택 플래그 1로 바꿉니다. KernelMode 참조는 핸들 범위를 유지하고 부여된 접근 마스크를 검사하지 않습니다. 보고서 origin은 `ZwQueryInformationFile`입니다.
+
+게스트 장치의 READ/WRITE 완료는 동기 전송과 0바이트 전송에서도 저장된 `FILE_OBJECT.CurrentByteOffset`을 유지합니다. 요청의 명시적 `byte_offset` 자체는 파일 위치를 바꾸지 않습니다. 위치 변경에는 구현된 파일 시스템 처리나 파일 위치 설정 작업이 필요합니다.
+
+즉시 완료는 디스패치 복귀까지 패킷을 유지합니다. 오류가 아닌 완료는 출력을 복사한 뒤 Information과 4바이트 Status를 쓰고, 즉시 오류는 호출자 IOSB를 보존합니다. 보류 완료는 원래 전달 가능한 스레드에 알립니다. 비동기 보류 호출은 복귀할 때 사설 IOSB 16바이트 전체를 복사하고 다른 쓰기는 패딩을 보존합니다. 공통 물리 메모리 소유자가 해제를 관리합니다. 네이티브 Fast I/O, 미등재 클래스, 길이 0 버퍼, 짧은 Mode/Alignment 버퍼는 거부하며 범용 NtQueryInformationFile 또는 APC 지원을 뜻하지 않습니다.
+
+선언 공급자는 유지된 열기 토큰으로 Basic (4), Standard (5), Internal (6), Name (9), NetworkOpen (34), AttributeTag (35)를 반환하며 선언된 시각, 할당, EOF, 속성과 64비트 ID를 보존합니다. 이름은 허용된 ASCII 경로의 볼륨 상대 UTF-16입니다. 짧은 고정 구조 버퍼는 STATUS_INFO_LENGTH_MISMATCH를 반환합니다. 이름은 최소 8바이트가 필요하며 잘리면 완전한 UTF-16 단위, STATUS_BUFFER_OVERFLOW 및 전체 이름 길이를 반환합니다. 두 API는 인코더와 실제 게스트 필터 경로를 공유하며 다른 공급자 클래스는 지원하지 않습니다.
+
+## 프로세서 식별과 DPC 수준 상승
+
+단일 프로세서 설정의 `KeGetCurrentProcessorNumberEx`는 모든 모델 IRQL에서 인덱스 0을 반환하고 선택적 출력에 그룹 0, 프로세서 0, 예약 바이트 0인 네 바이트만 씁니다. 잘못된 출력을 거부하고 주변 메모리를 보존합니다. `KeRaiseIrqlToDpcLevel`은 IRQL 0, 1, 2를 허용하고 이전 수준을 반환하며 `KfRaiseIrql`, `KeLowerIrql`과 실행별 중첩 상태를 공유합니다. 가져오기와 동적 조회는 같은 계약을 사용합니다. 실제 x64 WDK 인라인 함수는 `KfRaiseIrql(2)`를 호출하고 별도 내보내기도 동적으로 조회할 수 있습니다.
+
+`RtlInt64ToUnicodeString`은 PASSIVE_LEVEL에서 부호 없는 64비트 값 전체를 문자열로 변환합니다. 진수 2, 8, 10, 16을 지원하며 0은 10진수입니다. 기존 `RtlIntegerToUnicodeString`은 ULONG 절단을 유지합니다. 두 함수는 `STATUS_BUFFER_OVERFLOW`를 반환하기 전에 `Length`를 기록하고, 종료 문자 공간을 요구하며, 사용하지 않은 바이트를 보존합니다. 숫자를 기록한 뒤 `Buffer`를 다시 읽어 종료 문자를 기록하므로 출력과 레코드가 겹치는 경우에도 같은 순서를 따릅니다. 종료 문자 기록에 실패해도 이미 기록된 숫자는 유지됩니다.
+
+
+## 선언된 파일 시스템 목록
+
+선택적 `filesystem`은 DriverEntry 전에 세션 볼륨을 선언합니다. 생략은 가용성 미상, `[]`는 공급자 없음을 뜻하며 각 볼륨은 루트를 명시해야 합니다. 기존 노드는 `ZwOpenFile` 및 `ZwCreateFile`, `IoCreateFile`의 FILE_OPEN을 통해 실제 CREATE 요청으로 열 수 있습니다. 이름 조회, 게스트 필터, 공유, 핸들과 포인터 수명은 공통 소유자를 사용하며 호스트 파일을 읽지 않습니다. 생성, 덮어쓰기, 삭제, 데이터 I/O, 열거 및 제어는 아직 지원하지 않습니다.
+
+이름과 경로는 출력 가능한 ASCII이며 대소문자를 무시하고 부모 디렉터리를 명시해야 합니다. 64비트 파일 ID는 볼륨 내에서 고유합니다. 별칭, 스트림, 링크, 재분석 지점, Unicode는 지원하지 않습니다. 종류, 속성, 할당 크기와 네 개의 음이 아닌 signed64 타임스탬프는 0도 명시해야 합니다. 파일은 빈 문자열을 포함한 정확한 16진수 `data`가 필요하며 EOF는 바이트 수입니다. 디렉터리는 data 없이 할당 크기 0입니다. 섹터는 512–4096의 2의 거듭제곱이고 할당은 섹터 정렬 및 EOF 이상, 마스크는 섹터보다 작은 2^n−1입니다. `full_access`는 ACL 거부만 제외합니다.
+
+`DriverFileSystemLimits.def`: 8 volumes / 512 nodes / 1024 path bytes / 64 KiB names / 64 KiB per file / 512 KiB content / 64 MiB allocation / 4 MiB filesystem report contribution. JSON input: 2 MiB.
+
+```json
+{
+  "filesystem": [
+    {
+      "device_name": "\\Device\\DeclaredVolume",
+      "access_policy": "full_access",
+      "sector_size": 4096,
+      "alignment_mask": 511,
+      "nodes": [
+        {
+          "path": "\\",
+          "kind": "directory",
+          "file_id": 0,
+          "attributes": 16,
+          "allocation_size": 0,
+          "creation_time_100ns": 0,
+          "last_access_time_100ns": 0,
+          "last_write_time_100ns": 0,
+          "change_time_100ns": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+`configuration.filesystem`은 입력이며 최상위 `filesystem`은 독립 상태에 `device_object`와 노드 `end_of_file`을 추가합니다. 실행 또는 투영 검증 중지 후에도 상태는 남습니다. `devices`는 게스트 장치만 포함합니다. 언로드 후 세션 볼륨은 남을 수 있지만 게스트 참조, 핸들, 연결 및 IRP는 해제해야 합니다. `[]`를 포함한 선언은 복원되지 않은 의존성을 남기며 실행 가능한 UNPACK 복원을 막습니다. 구형 Unicorn은 중지 전 거부된 쓰기를 반영할 수 있으며 진단에 투영 오류가 남습니다.
+
+
+ASCII 이름, 네임스페이스 링크, RootDirectory로 유지되는 디렉터리 핸들을 지원합니다. 루트 접미사 `\`와 지원하지 않는 접미사 없는 볼륨 열기는 구분됩니다. 디렉터리／비디렉터리 및 비경고 동기 옵션을 지원합니다. `IoCancelFileOpen`은 아직 게시되지 않은 하위 성공 열기에 CLEANUP을 보내며 마지막 참조 해제가 CLOSE를 보냅니다. 취소 없는 상위 실패는 거부합니다. DriverEntry 핸들은 DriverUnload에서 닫을 수 있습니다. 비동기 작업과 중첩 해제에서도 완료, 디스패치, API 반환값을 유지합니다. 보고서는 `file_object`, `file_open_operation`, `filesystem_device`, `filesystem_file_id`를 사용하며 드라이버 생성 요청의 `file`은 null입니다. EA, 장치 힌트, 바이너리 ID, 재분석, oplock, 트랜잭션, ACL, 파일명 저장소 교체 및 프레임워크 경로는 미지원입니다.
+
+`ZwReadFile` / `ZwWriteFile`은 버퍼 방식 장치 스택의 열린 동기 WDM 파일을 지원합니다. PASSIVE_LEVEL, 활성 인터럽트와 특수 커널 APC, NULL Event·APC 루틴·컨텍스트가 필요합니다. KernelMode는 핸들 범위를 유지하며 권한 마스크를 검사하지 않지만 추가 전용 쓰기는 오프셋 −1을 사용합니다. NULL 또는 −2는 저장된 위치이며 다른 음수는 쓰기의 −1을 제외하고 무효입니다. 길이와 키는 ULONG입니다. 쓰기 입력은 디스패치 전에 복사하며 읽기 완료는 바이트, Information, 4바이트 Status 순서로 공개합니다. 즉시 오류는 호출자의 IOSB를 보존하고 보류 오류는 공개합니다. 보류 호출은 원래 호출자를 유지하며 완료를 기다리고 길이 0도 디스패치합니다. 공통 완료는 파일 위치를 변경하지 않습니다. 한도는 1 MiB입니다. 비동기 파일, direct/neither I/O, 캐시 Fast I/O, 완료 포트, 프레임워크 경로, 선언 제공자의 데이터 I/O는 미지원입니다. 보고서 출처는 `ZwReadFile` / `ZwWriteFile`입니다.
+
+`ZwSetInformationFile`은 같은 파일 소유자에서 동기 FilePositionInformation (14)을 구현합니다. 입력 8바이트를 캡처하며 Length >= 8과 음이 아닌 부호 있는 64비트 위치를 요구합니다. 장치 섹터 크기가 0이 아니면 비캐시 정렬도 검사합니다. 저장 위치를 먼저 바꾼 뒤 4바이트 Status와 8바이트 Information=0을 쓰며 IOSB 패딩과 출력 오류 전의 쓰기를 보존합니다. IRP를 만들거나 파일 이벤트를 재설정하지 않습니다. 핸들 범위, 호출자 자격, 같은 파일의 직렬화는 파일 API 계약을 따릅니다. 다른 클래스와 비동기 위치 설정은 미지원입니다. 위치 조회 및 이후 NULL/−2 읽기·쓰기 오프셋은 이 상태를 사용합니다.
+
+`ZwFlushBuffersFile`은 열린 동기 WDM 파일 핸들을 지원합니다. KernelMode에서도 FILE_WRITE_DATA 또는 FILE_APPEND_DATA 권한을 확인하며, 파일의 명명된 파이프 플래그가 있으면 FILE_WRITE_DATA가 필요합니다. 버퍼 없는 요청은 major 9/minor 0을 사용하며 지연 완료 플래그를 설정하지 않습니다. 조건을 충족한 즉시 완료는 디스패치 반환 전에 IOSB를 게시하고 패킷을 해제합니다. 작업자, 보호 영역 또는 상승한 IRQL에서 완료하면 원래 호출자의 알림 가능 시점까지 기다립니다. Information은 64비트를 유지하며 출력 복사와 파일 위치 변경은 없습니다. 비동기 파일, 선언형 제공자 플러시와 프레임워크 경로는 지원하지 않습니다. 보고 종류는 `flush_buffers`, 출처는 `ZwFlushBuffersFile`이며 시나리오는 이 커널 생성 요청을 만들 수 없습니다.
+
+`ZwDeviceIoControlFile`과 `ZwFsControlFile`은 열린 동기 WDM 핸들, METHOD_BUFFERED, NULL Event/APC 인수를 지원합니다. 공통 소유자가 ULONG 길이와 코드를 캡처하고 입력을 복사하며 나머지 출력 할당을 0으로 초기화합니다. 출력은 요청한 길이로 제한되고, 출력이 없으면 복사 없이 Information 전체 비트를 유지합니다. 장치 제어는 알림 가능한 즉시 완료하며 FSCTL은 서비스 끝까지 즉시 완료 패킷을 보존합니다. 원래 호출자 알림, IOSB 패딩과 파일 위치를 유지합니다. KernelMode는 권한 마스크 검사를 생략하고 읽기/쓰기 스택 플래그를 전달합니다. 한도는 1 MiB입니다. 비동기, direct/neither, 장치 Fast I/O, IOCP, 내부 버퍼 우회, 제공자/프레임워크 경로, 코드 0x94264/0x98268/0x9042c/0x90020은 미지원입니다. 길이가 0이 아닌 NULL 입력은 거부합니다. 출처는 API 이름이며 `fsctl`은 커널만 생성할 수 있습니다.
+
+커널 CRT는 `isdigit`, `_strupr`, `_wcslwr`, `_wcsupr`, `strcpy_s`, `strncpy_s`, `wcscat_s`, `wcsncpy_s`를 지원합니다. 숫자 분류는 int/바이트 폭으로 자른 뒤 마스크 4를 반환하며 EOF를 별도로 처리합니다. 제자리 변환은 ASCII만 바꾸고 다른 바이트/UTF-16 단위는 보존하며 NLS 표를 사용하지 않습니다. 검사된 쓰기는 순차 저장, 오류 값 22/34/80, 오류 시 첫 단위 지우기, 전체 size_t 폭의 `_TRUNCATE`를 유지합니다. 이후 접근 오류에도 앞선 저장은 남습니다. 0 개수, NULL, 부분 출력, 별칭은 고정 커널의 동작이며 이식 가능한 C 중첩 보장이 아닙니다. 1 MiB 한도는 실제 탐색/쓰기에 적용하며 사용하지 않는 용량은 접근하지 않습니다. 페이지 가능 저장소의 IRQL 제한도 유지합니다.
+
+커널 `memcpy_s`와 `memmove_s`는 접근 가능한 제한 버퍼와 전체 size_t 폭을 지원한다. 길이가 0이면 포인터에 접근하지 않으며 성공 시 겹침은 move 의미로 처리한다. 잘못된 인수는 22 또는 34를 반환하며 오류 시 지정 용량을 지우는 것은 `memcpy_s`뿐이다. 기존 1 MiB 한도, 수명 및 IRQL 검사를 재사용하며 최적화 복사의 오류 중 부분 SIMD 저장은 재현하지 않는다. `RtlImageNtHeader`는 MZ, 부호 없는 DOS 오프셋, PE 서명과 고정 x64 커널의 사용자 주소 경계를 확인한다. 선택 헤더, 섹션 및 적재 가능성은 검증하지 않는다. 잘못된 서명은 NULL을 반환하고 잘못된 메모리는 실행을 명시적으로 중단한다.
+
+`RtlHashUnicodeString`, `RtlUpcaseUnicodeString`, `RtlTimeToSecondsSince1980`은 APC_LEVEL 이하에서 호출할 수 있습니다. 해시 알고리즘 0/1은 x65599를 사용하며 Length를 읽기 전에 출력을 지우고 MaximumLength는 무시합니다. 대소문자를 구분하는 해시는 모든 UTF-16 단위를 허용합니다. 대문자 변환을 사용하는 작업은 U+00C0 미만을 지원하며 그 이상은 모델링되지 않은 NLS 테이블을 명시적으로 요구합니다. 대문자 변환은 겹치는 영역에 순서대로 쓰고 각 단위에서 Buffer를, 마지막에 Length를 다시 읽으며 종료 문자를 추가하지 않습니다. 할당은 공유 페이징 `Strg` 풀과 `RtlFreeUnicodeString`을 사용하며 길이 0 할당은 지원하지 않습니다. 홀수 Length에서는 완전한 단위만 처리합니다. 시간 변환은 100 ns 값을 초로 절삭하고 1980 기준값을 빼며 ULONG 범위 안에서만 4바이트를 씁니다. 범위 밖에서는 출력을 유지합니다.
+
+`toupper`, `towupper`, `RtlUpcaseUnicodeChar`는 APC_LEVEL 제한과 계수형 Unicode 함수의 대문자 매핑을 공유합니다. 커널 toupper는 입력의 하위 바이트를 사용하며 ASCII만 허용합니다. EOF의 바이트 값을 포함한 확장 값은 모델링되지 않은 코드 페이지가 필요합니다. 와이드 입력은 16비트로 좁혀 U+00C0 미만을 허용하고 나머지는 NLS를 명시적으로 요구합니다. 이 스칼라 함수는 제자리 CRT 변환과 다른 커널 보조 함수를 사용하므로 매핑 규칙을 혼동하지 않습니다.
+
+`vDbgPrintExWithPrefix`는 `DbgPrint` / `DbgPrintEx`와 유한 포매터, 모든 필터가 켜진 관찰 모델, DIRQL 상한을 공유합니다. 게스트 x64 `va_list`는 8바이트 슬롯으로 이동하지만 실제 스칼라 너비만 읽으며, `hh`는 고정 커널의 16비트 short 규칙을 따릅니다. 접두사 버퍼는 128/256/384/512바이트로 늘어납니다. 성공하면 첫 NUL까지, 최종 오버플로이면 줄바꿈으로 끝나는 511바이트를 게시합니다. 전체 본문(최대 512바이트)을 먼저 검사하므로 잘려 나가는 잘못되거나 미지원인 꼬리도 허용하지 않습니다. ASCII 접두사는 1 MiB 한도 안에서 종결자까지 읽습니다. Unicode 변환에는 PASSIVE_LEVEL이 필요하며 호스트 필터, 디버그 콜백과 전송은 모델링하지 않습니다.
+
+`IoThreadToProcess`는 유지된 스레드의 생성 프로세스 ID를 공유합니다. `PsGetCurrentThreadPreviousMode`는 `ExGetPreviousMode`와 상태 및 DISPATCH_LEVEL 상한을 공유하며 기존의 과도한 허용 범위를 수정합니다. `RtlPcToFileHeader`는 전체 너비 주소로 고정 모듈 목록을 조회하고 PC 메모리를 읽지 않고 8바이트를 씁니다. 일치하지 않으면 0입니다. 이 제한된 비페이징 조회는 상주 출력에서 모든 유효 IRQL을 허용합니다. 목록 누락은 명시적으로 실패하며 동적 언와인드 테이블과 retpoline 범위는 지원하지 않습니다.
+
+`MmMapLockedPages`는 기존 매퍼에 캐시된 페이지, HIGH 우선순위와 자원 부족 시 bugcheck 플래그를 전달합니다. 커널 매핑은 DISPATCH_LEVEL까지, 프로세스 소유 사용자 뷰는 APC_LEVEL까지 허용하며 후자의 자원 부족은 기존 예외를 발생시킵니다. bugcheck 플래그가 있는 커널 자원 부족은 명시적 모델 오류로 중단하며 성공한 호출처럼 NULL을 반환하지 않습니다. 실제 bugcheck 처리는 지원하지 않습니다.
+
+[`IoGetBaseFileSystemDeviceObject`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iogetbasefilesystemdeviceobject)는 살아 있는 파일의 기본 장치를 빌리며 연결 스택 탐색, 참조 증가, 파일 확장 조회를 하지 않습니다. 이 프로필은 소유된 비마운트 경로와 IRQL <= DISPATCH_LEVEL로 제한되며 마운트된 VPB나 잘못된 소유권／토폴로지는 명시적으로 중단합니다. Microsoft가 시스템용으로 예약한 함수이므로 이 IRQL 상한은 공개 Windows 계약이 아닌 모델 정책입니다.
+
+[`IoGetDeviceObjectPointer`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-iogetdeviceobjectpointer)는 특수 커널 APC가 활성화된 PASSIVE_LEVEL에서 선언된 기존 파일을 엽니다. 대소문자를 구분하지 않는 이름, 내부 커널 핸들, 읽기/쓰기 공유와 비동기 비디렉터리 열기를 사용합니다. 반환된 파일 참조는 장치를 유지하며 호출자가 `ObfDereferenceObject`로 해제합니다. 출력이 겹쳐도 파일 다음 장치 순으로 씁니다. CREATE와 내부 핸들 CLEANUP은 대기할 수 있으며 원래 스레드는 둘 다 끝날 때까지 임계 영역을 유지합니다. 파일 경로 없는 장치/볼륨 열기, 마운트된 VPB, 파일 확장 경로와 알 수 없는 공급자는 지원하지 않습니다.
+
+`MmProbeAndLockProcessPages`는 IRQL <= APC_LEVEL에서 기존 MDL 검사를 사용합니다. 모드는 하위 8비트, 작업은 하위 32비트를 사용하며 0은 읽기, 나머지는 쓰기입니다. 같은 프로세스 호출은 연결이 필요 없습니다. 다른 프로세스 호출은 기존 작업 항목/시스템 스레드 제한을 유지하며 살아 있는 요청을 가진 알려진 사용자 프로세스가 필요합니다. 내부 연결은 성공 또는 검사 예외 후 원래 프로세스를 복원하고 스레드 식별과 이전 모드를 유지합니다. 복원 실패는 명시적으로 중단됩니다. 전경에서 다른 프로세스로 연결하거나 임의의 프로세스 개체를 사용하는 것은 지원하지 않습니다. WDK는 이 루틴을 시스템용으로 예약합니다.
+
+`ObGetFilterVersion`은 인수나 개체 참조 없이 고정 프로필의 개체 콜백 등록 ABI 버전 `0x100`을 반환합니다. 이 페이징 가능한 조회는 IRQL <= APC_LEVEL로 제한됩니다. 버전 조회만 제공하며 콜백 등록과 전달은 지원하지 않습니다.
+
+`MmGetPhysicalAddress`는 현재 매핑에서 읽을 수 있는 활성 비페이징 풀, 독립 물리 페이지 및 고정 RAM을 조회합니다. 사용자 뷰에는 기존 프로세스 및 IRQL 제한이 적용됩니다. 기존 전체 폭 물리 식별자와 바이트 오프셋을 반환하며, 알 수 없는 상주 상태, 패딩, 해제된 뷰와 바이트는 명시적으로 거부합니다. DMA 주소는 제공하지 않습니다.
+
+`MmGetVirtualForPhysical`은 활성 비페이징 풀 할당의 정확한 바이트에 대해서만 할당자가 소유한 기본 주소를 반환합니다. 현재 기본 매핑은 읽을 수 있어야 하며 조회한 물리 식별자와 일치해야 합니다. 별칭 재매핑은 소유자를 바꾸지 않습니다. 이 프로필은 페이징 풀, 독립 물리 페이지 및 내부 저장소의 기본 매핑을 선언하지 않으므로 명시적으로 거부합니다. 제한된 비페이징 조회는 모든 IRQL에서 허용됩니다.
+
+`IoGetInitialStack`(APC_LEVEL 이하)과 `IoGetStackLimits`(모든 IRQL)는 현재 활성 세션 스택을 조회합니다. 이 프로필의 초기 기준 주소는 상한입니다. 전경, 작업자 및 중첩 실행 스택은 일시 중단과 프로세스 연결 중에도 각 범위를 유지합니다. High 다음 Low를 쓰며 후속 접근 실패 전의 쓰기를 유지합니다. 겹치는 출력, 알 수 없거나 해제된 스택, 모델링되지 않은 스택 확장은 명시적으로 거부합니다.
+
+`MmCreateMdl`은 DISPATCH_LEVEL 이하에서 전체 폭 인수 세 개를 받습니다. 0으로 초기화한 비페이지 풀을 할당하거나 활성 비페이지 풀 또는 현재 실행 스택의 완전히 쓰기 가능한 범위를 사용합니다. ULONG_MAX보다 큰 길이는 접근 전에 NULL을 반환합니다. 빈 범위와 주소 순환은 원시 메타데이터로 보존하지만 페이지 구성에는 유효한 비어 있지 않은 범위와 정확한 16비트 기술자 크기가 필요합니다. 여섯 필드를 원래 순서로 쓰고 다른 호출자 바이트는 유지합니다. 풀 시작 기술자는 IoFreeMdl 또는 풀 해제로, 내부 및 스택 기록은 소유 저장소와 함께 해제됩니다. 잠금, 소유 매핑, 사용자 뷰와 의존성이 해제를 막습니다. IRP 이전, 활성 기록 재초기화, 스택 슬롯 재사용, IoFreeMdl의 부분 매핑 자동 해제는 지원하지 않습니다.
+
+`MmAdvanceMdl`은 자체 시스템 매핑을 가진 독립적인 잠긴 풀/사용자 버퍼를 DISPATCH_LEVEL 이하에서 지원합니다. ULONG은 상위 비트를 무시하며 끝에 도달하거나 넘으면 변경 없이 STATUS_INVALID_PARAMETER_2를 반환합니다. 고정 x64 프로필은 보존한 전체 PFN 배열을 회전하고 꼬리를 표시합니다. 매핑 해제와 잠금 해제는 페이지 단위 메타데이터와 PFN 순서를 복원한 뒤 전체 별칭과 원래 잠금을 해제합니다. 현재 바이트 오프셋은 유지되며 소유 범위는 늘어나지 않습니다. 해제 후 정규화된 오래된 MappedSystemVa를 남기고 다시 매핑하려면 새 프로브/잠금이 필요합니다. IRP 체인, 부분 의존성, 사용자 뷰, DMA, 이미지, 비페이지 직접 구성 및 매핑 없는 진행은 지원하지 않습니다.
+
+`process_pebs`는 `checked-x64-v1`의 `PASSIVE_LEVEL`에서 모델이 이미 소유한 프로세스의 안정적인 `PsGetProcessPeb` 반환값을 선언합니다. 최대 64개이며 각 항목에는 0이 아닌 32비트 `process_id`와 16진수 64비트 `value`만 있어야 합니다. 0도 `[{"process_id":4,"value":"0x0"}]`처럼 명시해야 하며 중복 ID는 거부됩니다. 생략하면 알 수 없는 값으로 남고 `[]`는 상속된 선언을 지웁니다. Unicorn/KVM/WHP/HVF의 공통 Windows 모델이 정확한 프로세스 토큰을 검사합니다. 선언은 프로세스, 메모리 매핑, PEB 구조나 실제 커널 출처를 만들지 않습니다. 사용하지 않은 선언도 복원되지 않은 환경 의존성을 남깁니다.

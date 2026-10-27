@@ -18,6 +18,7 @@
 #include "neverd/loader/BinaryImageModel.h"
 #include "neverd/safety/ArgSlicer.h"
 #include "neverd/safety/EntryInputPolicy.h"
+#include "neverd/safety/Limits.h"
 #include "neverd/safety/ObjectModel.h"
 #include "neverd/safety/SinkScanner.h"
 #include "neverd/solver/BitVectorSolver.h"
@@ -1132,9 +1133,15 @@ ExploreHit exploreSink(const AnalysisInput &In, const SinkCatalog &Cat,
     for (const LowBlock &B : LF->Blocks)
       Reach.insert(B.Id);
 
-  const unsigned MaxPaths = Budgets.MaxPaths ? Budgets.MaxPaths : 64;
-  const unsigned MaxSteps = Budgets.MaxSteps ? Budgets.MaxSteps : (1u << 16);
-  const unsigned MaxLoop = Budgets.MaxLoop ? Budgets.MaxLoop : 3;
+  const unsigned MaxPaths =
+      Budgets.MaxPaths ? Budgets.MaxPaths
+                       : ::neverd::limits::safety::kDefaultExplorationPaths;
+  const unsigned MaxSteps =
+      Budgets.MaxSteps ? Budgets.MaxSteps
+                       : ::neverd::limits::safety::kDefaultExplorationSteps;
+  const unsigned MaxLoop =
+      Budgets.MaxLoop ? Budgets.MaxLoop
+                      : ::neverd::limits::safety::kDefaultExplorationLoopVisits;
 
   const MedCallInfo *CI = Site.CallInfoIndex < Fn.CallInfos.size()
                               ? &Fn.CallInfos[Site.CallInfoIndex]

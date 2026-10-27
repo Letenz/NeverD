@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../NeverDCLI.h"
+#include "../ResourceLimits.h"
 
 #include "neverd/Common.h"
 
@@ -111,7 +112,9 @@ int runExport(neverd_session_t Sess) {
       for (int I = 0; I < neverd_func_count(Sess); ++I) {
         const char *N = neverd_func_name(Sess, I);
         json::Object Func;
-        Func["name"] = N ? N : "";
+        // A json::Value made from a `const char *` only refers to it, and N
+        // is freed before the array is written.
+        Func["name"] = std::string(N ? N : "");
         Func["addr"] = "0x" + utohexstr(neverd_func_entry(Sess, I));
         Func["size"] = static_cast<int64_t>(neverd_func_size(Sess, I));
         Funcs.push_back(std::move(Func));
@@ -144,7 +147,7 @@ int runExport(neverd_session_t Sess) {
     } else if (ExportFmt == FmtSwiftMethods) {
       uint64_t Bytes = 0;
       if (sys::fs::file_size(ExportSourceSignatures, Bytes) ||
-          Bytes > 32 * 1024 * 1024) {
+          Bytes > ::neverd::limits::cli::kNeverDCmdExportRunExportBytesLimit) {
         WithColor::error() << "Swift signature file is unreadable or exceeds "
                               "its byte budget\n";
         return 1;
@@ -176,6 +179,29 @@ int runExport(neverd_session_t Sess) {
 }
 
 int runDiff() {
+  if (DiffStructural)
+    return runStructuralDiff();
+  if (!DiffOptions.empty() || !DiffSave.empty() || !DiffReopen.empty() ||
+      !DiffOverrides.empty() || !DiffList.empty() || DiffIgnoreNames ||
+      DiffProfile.getNumOccurrences() ||
+      DiffMinSimilarity.getNumOccurrences() ||
+      DiffTimeout.getNumOccurrences() || DiffOffset.getNumOccurrences() ||
+      DiffLimit.getNumOccurrences() || DiffListSide.getNumOccurrences() ||
+      DiffListSearch.getNumOccurrences() || DiffListSort.getNumOccurrences() ||
+      DiffListDescending.getNumOccurrences() ||
+      DiffAmbiguousWith.getNumOccurrences() ||
+      DiffSourceFunction.getNumOccurrences() ||
+      DiffSourceSide.getNumOccurrences() ||
+      DiffSourceRepresentation.getNumOccurrences() ||
+      DiffSourceInstructions.getNumOccurrences() ||
+      DiffSourceDifference.getNumOccurrences() ||
+      DiffSourcePrelude.getNumOccurrences() ||
+      DiffSourceWork.getNumOccurrences() ||
+      DiffSourceBytes.getNumOccurrences()) {
+    WithColor::error()
+        << "structural comparison options require --structural\n";
+    return 1;
+  }
   if (!JsonOutput && !DiffJson)
     outs() << "=== " << ProjectName << " v" << VersionString << " (diff) ===\n";
 

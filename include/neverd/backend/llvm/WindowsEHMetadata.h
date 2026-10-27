@@ -18,6 +18,10 @@
 namespace neverd::windows_eh_md {
 
 inline constexpr llvm::StringLiteral FunctionAttachment("neverd.windows.eh");
+/// Source-only projection with independently rooted runtime stack values.
+/// This is not a native frame reconstruction certificate.
+inline constexpr llvm::StringLiteral
+    UnresolvedSourceFrame("neverd.source.unresolved-seh-frame");
 inline constexpr llvm::StringLiteral
     NativeAttachment("neverd.windows.eh.native");
 inline constexpr llvm::StringLiteral
@@ -47,6 +51,7 @@ enum class NativeProvenanceRole : unsigned {
   RangeExitTarget = 7,
   RegistrationChainAccess = 8,
   RegistrationCallback = 9,
+  RegistrationDynamicCall = 10,
 };
 
 inline constexpr llvm::StringLiteral
@@ -65,8 +70,17 @@ inline constexpr llvm::StringLiteral RegistrationOperationAttachment(
     "neverd.windows.registration.source-operation");
 inline constexpr llvm::StringLiteral RegistrationFinallyCallAttachment(
     "neverd.windows.registration.finally-call");
+inline constexpr llvm::StringLiteral RegistrationScopeRetentionAttachment(
+    "neverd.windows.registration.scope-retention");
 inline constexpr llvm::StringLiteral
     RegistrationJumpAttachment("neverd.windows.registration.jump");
+inline constexpr llvm::StringLiteral
+    RegistrationParentExitAttachment("neverd.windows.registration.parent-exit");
+/// Private data-register exchange: owner VA, role, callback VA, source site,
+/// register offset. Roles 0/1/2/3 are call input/callback input/callback
+/// output/ call output; role 4 identifies the unique parent-owned i32 slot.
+inline constexpr llvm::StringLiteral
+    RegistrationRegisterAttachment("neverd.windows.registration.register");
 
 enum ProvenanceOperand : unsigned {
   ProvenanceVersion = 0,

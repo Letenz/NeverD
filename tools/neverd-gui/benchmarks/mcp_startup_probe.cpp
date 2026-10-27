@@ -1,3 +1,4 @@
+#include "../ResourceLimits.h"
 #include "McpConnectionManager.h"
 
 #include <QCommandLineParser>
@@ -72,7 +73,8 @@ int main(int argc, char **argv) {
   parser.addHelpOption();
   parser.addOption({"case", "Run one fixed constructor/control case", "name"});
   parser.addOption(
-      {"samples", "Fresh-process samples for each fixed case", "count", "3"});
+      {"samples", "Fresh-process samples for each fixed case", "count",
+       QString::number(::neverd::limits::gui::kDefaultMcpStartupSamples)});
   parser.addOption({"output", "Write JSON here instead of stdout", "path"});
   parser.process(app);
   if (parser.isSet("case")) {
@@ -86,7 +88,8 @@ int main(int argc, char **argv) {
 
   bool valid = false;
   const auto count = parser.value("samples").toInt(&valid);
-  if (!valid || count < 1 || count > 100) {
+  if (!valid || count < 1 ||
+      count > ::neverd::limits::gui::kMaxMcpStartupSamples) {
     qCritical("samples must be 1-100");
     return 2;
   }

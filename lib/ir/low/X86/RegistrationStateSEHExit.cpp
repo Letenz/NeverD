@@ -11,34 +11,9 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/LowNoReturn.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 namespace neverd::registration_state {
-
-std::optional<va_t> RegistrationStateSolver::sehCallContinuation(va_t Call) {
-  if (!charge(1))
-    return std::nullopt;
-  const auto Source = SEHControlIndex.find(Call);
-  if (Source == SEHControlIndex.end() ||
-      Source->second.Control != RegistrationSEHControlContract::Kind::NearCall)
-    return std::nullopt;
-  va_t Next = Source->second.EndAddress;
-  std::set<va_t> Seen;
-  while (!Entries.count(Next)) {
-    if (!charge(5) || Seen.size() == 64 || !Seen.insert(Next).second)
-      return std::nullopt;
-    const auto Jump = SEHControlIndex.find(Next);
-    if (Jump == SEHControlIndex.end() ||
-        Jump->second.Control !=
-            RegistrationSEHControlContract::Kind::NearJump ||
-        (Jump->second.EndAddress - Next != 2 &&
-         Jump->second.EndAddress - Next != 5) ||
-        !EH.CodeRange.contains(Next))
-      return std::nullopt;
-    Next = Jump->second.Target;
-  }
-  return EH.CodeRange.contains(Next) ? std::optional<va_t>{Next} : std::nullopt;
-}
 
 bool RegistrationStateSolver::validateSEHInvocationBlock(size_t I) {
   const auto &Block = Function.Blocks[I];
@@ -104,11 +79,7 @@ bool RegistrationStateSolver::enterOrdinaryFinally(size_t I,
     Result.SEHInvocationExitsComplete = false;
     return true;
   };
-  const auto &Block = Function.Blocks[I];
-  const auto Control = SEHControlIndex.find(Op.Addr);
-  const auto Boundary = Boundaries.find(Op.Addr);
   const auto Entry = Entries.find(Op.Inputs[0].Offset);
-  const auto Resume = sehCallContinuation(Op.Addr);
   const auto SP =
       Before.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
   const bool ParentCall = Before.Parent && !Before.Callback &&
@@ -124,69 +95,15 @@ bool RegistrationStateSolver::enterOrdinaryFinally(size_t I,
       SP.CallbackAddress->Offset >=
           -int64_t(limits::kMaxSourceCallBorrowedBytes) &&
       Before.SEHCallers.size() < 16;
-  if (!Function.hasCompleteLiftCoverage() || Before.Unknown || Facts.Invalid ||
-      (!ParentCall && !CallbackCall) || Chain.RealignedFrame ||
+  if (Before.Unknown || Facts.Invalid || (!ParentCall && !CallbackCall) ||
+      Chain.RealignedFrame ||
       Before.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride].Offset !=
           0 ||
-      Entry == Entries.end() || Control == SEHControlIndex.end() ||
-      Control->second.Control !=
-          RegistrationSEHControlContract::Kind::NearCall ||
-      Control->second.Target != Op.Inputs[0].Offset || Op.Seq < 0 ||
-      Boundary == Boundaries.end() || Boundary->second.first != Block.Id ||
-      Control->second.EndAddress > Block.EndAddr || Block.Succs.size() != 1 ||
-      !Index.count(Block.Succs.front()) || !Resume ||
-      Function.Blocks[Index.at(Block.Succs.front())].StartAddr != *Resume ||
-      !charge(Block.Ops.size() + Block.InstructionBoundaries.size() +
-              Before.Frame.cellCount() + 10))
+      Entry == Entries.end() ||
+      !validateSEHCallContinuation(
+          I, Op, CallbackCall ? *Before.Activation.Entry : 0) ||
+      !charge(Before.Frame.cellCount() + 10))
     return Refuse();
-  const auto &Insn = Boundary->second.second;
-  const size_t OpIndex = &Op - Block.Ops.data();
-  if (Insn.Control != LowInstructionControl::Call ||
-      Insn.Size != Control->second.EndAddress - Op.Addr ||
-      Insn.Immediate != Control->second.Target ||
-      Insn.Mode != InstructionMode::Default ||
-      Insn.TargetMode != LowInstructionTargetMode::Preserve ||
-      hasLowInstructionControlFlag(Insn.ControlFlags,
-                                   LowInstructionControlFlag::Conditional) ||
-      hasLowInstructionControlFlag(
-          Insn.ControlFlags, LowInstructionControlFlag::InstructionGuard) ||
-      isUnconditionalNoReturn(Insn) || Insn.FirstOp > OpIndex ||
-      OpIndex - Insn.FirstOp >= Insn.OpCount)
-    return Refuse();
-  if (auto Error = validateLowInstructionBoundaries(
-          Block, LowInstructionBoundaryRequirement::Required)) {
-    llvm::consumeError(std::move(Error));
-    return Refuse();
-  }
-  if (Control->second.EndAddress != Block.EndAddr) {
-    // A CALL followed by a direct jump can share one LowIR block. Its
-    // physical return PC remains the CALL's end, before that tail jump.
-    // Only the authenticated branch itself may follow the source CALL;
-    // a separate register or memory effect needs an ordinary transfer.
-    const auto &Tail = Block.InstructionBoundaries.back();
-    const auto Jump = SEHControlIndex.find(Control->second.EndAddress);
-    if (Tail.Address != Control->second.EndAddress ||
-        Tail.Address + Tail.Size != Block.EndAddr ||
-        Tail.Control != LowInstructionControl::Branch ||
-        Tail.ControlFlags != LowInstructionControlFlag::Branch ||
-        Tail.Mode != InstructionMode::Default ||
-        Tail.TargetMode != LowInstructionTargetMode::Preserve ||
-        Tail.FirstOp != Insn.FirstOp + Insn.OpCount || Tail.OpCount != 1 ||
-        Jump == SEHControlIndex.end() ||
-        Jump->second.Control !=
-            RegistrationSEHControlContract::Kind::NearJump ||
-        Jump->second.EndAddress != Block.EndAddr ||
-        Tail.Immediate != Jump->second.Target)
-      return Refuse();
-    const auto &Branch = Block.Ops[Tail.FirstOp];
-    if (Branch.Opcode != NdOp::BRANCH || Branch.NumInputs != 1 ||
-        Branch.Output.Size || Branch.Seq < 0 ||
-        Branch.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
-        Branch.MemoryOrdering != NdMemoryOrdering::None ||
-        !isPE32CodeTarget(Branch.Inputs[0]) ||
-        Branch.Inputs[0].Offset != Jump->second.Target)
-      return Refuse();
-  }
   Domain Root = Before;
   Root.Activation = {Op.Inputs[0].Offset, false, Op.Addr};
   if (CallbackCall) {
@@ -208,7 +125,6 @@ bool RegistrationStateSolver::enterOrdinaryFinally(size_t I,
     Caller.OrdinaryCallStack = Before.OrdinaryCallStack;
     Caller.StackRestore = Before.StackRestore;
     Root.SEHCallers.push_back(std::move(Caller));
-    Result.HasBoundSEHCallees = true;
   }
   Root.Parent = false;
   Root.Callback = true;
@@ -236,6 +152,14 @@ void RegistrationStateSolver::recordSEHStackRestore(
   // the exit still has to recover exactly the authenticated SavedESP snapshot.
   if (After.StackRestore && Value.Offset)
     return;
+  // Pushes and pops within the active callback do not restore the parent's
+  // SavedESP. Keep any suspended ordinary finally invocation until its exact
+  // near return, even when the inner callback allocates private scratch.
+  if (Value.CallbackAddress &&
+      Value.CallbackAddress->Entry == After.Activation.Entry) {
+    After.StackRestore.reset();
+    return;
+  }
   After.StackRestore.reset();
   After.SEHCallers.clear();
   const auto Source = Boundaries.find(Op.Addr);
@@ -332,7 +256,7 @@ bool RegistrationStateSolver::transferSEHExit(size_t I, Domain &After,
   Exit.EndAddress = Block.EndAddr;
   Exit.OpSeq = Op.Seq;
   if (OrdinaryReturn && !After.SEHCallers.empty())
-    return returnNestedFinally(After, Op, Facts);
+    return returnNestedFinally(After, Op, Facts, Exit);
   if (OrdinaryReturn) {
     const auto Control = SEHControlIndex.find(Op.Addr);
     const auto Call = SEHControlIndex.find(Exit.CallVA);
@@ -361,7 +285,8 @@ bool RegistrationStateSolver::transferSEHExit(size_t I, Domain &After,
         Function.Blocks[Index.at(Block.Succs.front())].StartAddr !=
             Op.Inputs[0].Offset ||
         !EH.CodeRange.contains(Op.Inputs[0].Offset) ||
-        !SEHParentEntries.count(Op.Inputs[0].Offset) ||
+        (!SEHParentEntries.count(Op.Inputs[0].Offset) &&
+         !SEHParentContinuations.count(Op.Inputs[0].Offset)) ||
         FinallyTargets.count(Op.Inputs[0].Offset))
       return Refuse();
     for (const auto &Scope : Chain.Scopes)
@@ -380,6 +305,14 @@ bool RegistrationStateSolver::transferSEHExit(size_t I, Domain &After,
   auto [It, New] = SEHExits.emplace(Identity, Exit);
   if (!New && It->second != Exit)
     return Refuse();
+  if (!OrdinaryReturn) {
+    After.AbandonedSEHGuard |=
+        !After.Activation.OrdinaryCall ||
+        llvm::any_of(After.SEHCallers, [](const auto &Caller) {
+          return !Caller.Activation.OrdinaryCall;
+        });
+    After.SEHCallers.clear();
+  }
   After.Frame.leaveCallback();
   After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
       FrameValue::frame(Exit.StackOffset);

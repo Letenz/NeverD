@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../NeverDCLI.h"
+#include "../ResourceLimits.h"
 
 #include "neverd/sdk/NeverDCAPIWeb.h"
 
@@ -456,7 +457,9 @@ int runWeb() {
         auto Page = result(neverd_web_asar_records_json(
             Session.Handle, Revision->data(), Revision->size(),
             Extraction->data(), Extraction->size(), Offset,
-            AsarInspect ? 128 : 1));
+            AsarInspect
+                ? ::neverd::limits::cli::kNeverDCmdWebRunWebPagePageSelected
+                : 1));
         if (!Page)
           return 1;
         llvm::outs() << *Page << '\n';
@@ -706,7 +709,9 @@ int runWeb() {
           auto Page = result(neverd_web_html_records_json(
               Session.Handle, Revision->data(), Revision->size(),
               HTMLID->data(), HTMLID->size(), Kind.data(), Kind.size(), Offset,
-              HTMLSource ? 1 : 128));
+              HTMLSource
+                  ? 1
+                  : ::neverd::limits::cli::kNeverDCmdWebRunWebPagePageDefault));
           if (!Page)
             return 1;
           llvm::outs() << *Page << '\n';
@@ -805,7 +810,9 @@ int runWeb() {
           auto Chunk = result(neverd_web_source_view_chunk_json(
               Session.Handle, Revision->data(), Revision->size(),
               ViewID->data(), ViewID->size(), At,
-              std::min<uint64_t>(Size, 65536)));
+              std::min<uint64_t>(Size,
+                                 ::neverd::limits::cli::
+                                     kNeverDCmdWebRunWebChunkMinArgument2)));
           if (!Chunk)
             return 1;
           llvm::outs() << *Chunk << '\n';

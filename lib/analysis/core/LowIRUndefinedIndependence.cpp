@@ -24,11 +24,13 @@
 #include "NativeUndefinedIndependence.h"
 #include "OrderedQuery.h"
 
+#include "neverd/analysis/Limits.h"
 #include "neverd/analysis/LowIRRefinement.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/symbolic/SymExec.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA256.h"
 
@@ -36,6 +38,7 @@
 #include <bit>
 #include <climits>
 #include <deque>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -75,7 +78,8 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
             llvm::ArrayRef<LowIRNativeFlagTransition> Flags = {},
             llvm::ArrayRef<LowIRNativeProfileProjection> Projections = {},
             llvm::ArrayRef<LowIRNativeAuditBoundary> AuditBoundaries = {},
-            const LowIRNativePreservationCertificate *Preservation = nullptr) {
+            const LowIRNativePreservationCertificate *Preservation = nullptr,
+            llvm::ArrayRef<LowIRExternalQueryTransition> Queries = {}) {
   llvm::SHA256 Hash;
   const auto Number = [&](uint64_t Value) {
     uint8_t Bytes[8];
@@ -108,8 +112,16 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
       Number(static_cast<uint64_t>(Edge.BlockId));
       Number(Edge.TargetVA);
       Number(static_cast<unsigned>(Edge.Kind));
-      Number(Edge.RegionIndex);
-      Number(static_cast<uint64_t>(Edge.State));
+      if (const auto *Context = Edge.singleContext()) {
+        Number(Context->RegionIndex);
+        Number(static_cast<uint64_t>(Context->State));
+      } else {
+        // A region index is only 32 bits. This marker extends the old
+        // singleton encoding without changing existing proof identities.
+        Number(UINT64_MAX);
+        Number(Edge.contexts().size());
+        Hash.update(Edge.SharedContexts->digest());
+      }
     }
   };
   // The absent opt-in retains the prior schema and default proof identities.
@@ -284,6 +296,59 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
   Number(Sat.MinimizeLearned);
   Number(Sat.PhaseSaving);
   Number(Sat.DefaultPhase);
+  if (Contract.ExternalReads != LowIRExternalReadModel::None) {
+    Hash.update("ordinary-ram-read-trace-v1");
+    Number(static_cast<unsigned>(Contract.ExternalReads));
+  }
+  if (Contract.ExternalQueries != LowIRExternalQueryModel::None) {
+    Hash.update("ordered-native-scalar-query-v1");
+    Number(static_cast<unsigned>(Contract.ExternalQueries));
+    Number(Queries.size());
+    for (const auto &Q : Queries) {
+      Number(static_cast<uint64_t>(Q.BlockId));
+      Number(Q.InstructionAddress);
+      Number(Q.Identity.size());
+      Hash.update(Q.Identity);
+      Number(Q.SemanticsVersion);
+      Number(Q.OperationDigest.size());
+      Hash.update(Q.OperationDigest);
+      Number(Q.DescriptorDigest.size());
+      Hash.update(Q.DescriptorDigest);
+    }
+  }
+  return llvm::toHex(Hash.final());
+}
+
+std::string scalarQueryDigest(const SpecializationScalarQuery &Query) {
+  llvm::SHA256 Hash;
+  Hash.update("neverd-scalar-query-descriptor-v1");
+  const auto Number = [&](uint64_t Value) {
+    uint8_t Bytes[8];
+    for (unsigned I = 0; I != 8; ++I)
+      Bytes[I] = static_cast<uint8_t>(Value >> (I * 8));
+    Hash.update(Bytes);
+  };
+  const auto Variable = [&](const NdVar &V) {
+    Number(static_cast<unsigned>(V.Space));
+    Number(V.Offset);
+    Number(V.Size);
+    Number(static_cast<unsigned>(V.Provenance));
+    Number(V.AddressOwnerVA);
+  };
+  Number(Query.Identity.size());
+  Hash.update(Query.Identity);
+  Number(Query.SemanticsVersion);
+  Number(Query.Selectors.size());
+  for (const auto &V : Query.Selectors)
+    Variable(V);
+  Number(Query.ResultBits.size());
+  for (uint16_t Bits : Query.ResultBits)
+    Number(Bits);
+  Number(Query.Bindings.size());
+  for (const auto &B : Query.Bindings) {
+    Variable(B.Destination);
+    Number(B.Result);
+  }
   return llvm::toHex(Hash.final());
 }
 
@@ -297,12 +362,27 @@ std::vector<LowIRNativeAuditBoundary> auditBoundaryReceipts(
   return Receipts;
 }
 
+struct OrdinaryReadEvent {
+  SymRef Address;
+  uint16_t Bytes;
+};
+
+struct ScalarQueryEvent {
+  std::string Identity;
+  uint32_t SemanticsVersion;
+  std::vector<SymRef> Selectors;
+  std::vector<uint16_t> ResultBits;
+  size_t OrdinaryReadOrdinal;
+};
+
 struct TerminalState {
   SymState State;
   SymRef Predicate, SystemFlags, ReturnOperand;
   std::set<uint64_t> Written;
   int Cutpoint = -1;
   std::set<uint64_t> DefinedFunctionTemporaries{};
+  std::vector<OrdinaryReadEvent> ReadTrace{};
+  std::vector<ScalarQueryEvent> QueryTrace{};
 };
 
 struct LoopPrefix {
@@ -328,9 +408,12 @@ struct RefinementSession {
   std::string OriginalDigest, CandidateDigest;
   std::vector<LowIRUndefinedInstruction> OriginalInstructions;
   std::vector<LowIRNativeFlagTransition> Flags;
+  std::vector<LowIRExternalQueryTransition> Queries;
   std::vector<LowIRNativeProfileProjection> Projections;
   std::map<va_t, uint8_t> ImmutableBytes;
   uint64_t ReadEvidenceBytes = 0;
+  std::vector<SymRef> OrdinaryReadInputs;
+  std::vector<std::vector<SymRef>> ScalarQueryInputs;
   const LowIRLoopRefinementPlan *LoopPlan = nullptr;
   std::optional<TerminalState> OriginalStart, CandidateStart;
   int StartingCutpoint = -1;
@@ -449,6 +532,7 @@ class Checker {
   LowFunc NativeTrace;
   std::vector<LowIRUndefinedInstruction> NativeRecords;
   std::vector<LowIRNativeFlagTransition> NativeFlagTransitions;
+  std::vector<LowIRExternalQueryTransition> ScalarQueryTransitions;
   std::vector<LowIRNativeProfileProjection> NativeProfileProjections;
   std::map<int, std::vector<int>> NativeTraceEdges;
   uint64_t OwnedNativeInputOperations = 0, OwnedNativeInputEffects = 0;
@@ -465,6 +549,10 @@ class Checker {
   LowIRIndependenceResult &Result = OwnedResult;
   SymContext OwnedContext;
   SymContext &Ctx = OwnedContext;
+  std::vector<SymRef> OwnedOrdinaryReadInputs;
+  std::vector<SymRef> &OrdinaryReadInputs = OwnedOrdinaryReadInputs;
+  std::vector<std::vector<SymRef>> OwnedScalarQueryInputs;
+  std::vector<std::vector<SymRef>> &ScalarQueryInputs = OwnedScalarQueryInputs;
   // Exact query identities stay within this checker and its actual immutable
   // context. Retain only completed domains under the existing word ceiling.
   detail::FiniteQueryCache FrameProofs{Limits.MaxSymbolicNodes, Ctx};
@@ -513,6 +601,8 @@ class Checker {
     SymRef LeftSystemFlags, RightSystemFlags;
     bool SkipCutpoint = false;
     std::set<uint64_t> DefinedFunctionTemporaries;
+    std::vector<OrdinaryReadEvent> ReadTrace{};
+    std::vector<ScalarQueryEvent> QueryTrace{};
   };
   std::deque<Path> Pending;
 
@@ -744,7 +834,10 @@ class Checker {
     Bound.MaxNodes = Limits.MaxSymbolicNodes;
     Bound.MaxWork = Limits.MaxSymbolicNodes;
     Bound.MaxWidth =
-        Limits.Solver.Blast.MaxWidth ? Limits.Solver.Blast.MaxWidth : 256;
+        Limits.Solver.Blast.MaxWidth
+            ? Limits.Solver.Blast.MaxWidth
+            : ::neverd::limits::analysis::
+                  kLowIRUndefinedIndependenceConditionalLimitsBoundMaxWidthDefault;
     Bound.MaxQueries = Limits.MaxSolverQueries;
     return Bound;
   }
@@ -1018,6 +1111,102 @@ class Checker {
         if (P && Function && Function->isFunctionTemporaryByte(V.Offset + I))
           P->DefinedFunctionTemporaries.insert(V.Offset + I);
       }
+  }
+
+  void scalarQuery(Path &P, const SpecializationScalarQuery &Q,
+                   llvm::ArrayRef<LowOp> Operations,
+                   const LowInstructionBoundary &Boundary,
+                   const LowInstructionUndefinedEffects &Effects,
+                   std::set<uint64_t> &Defined) {
+    if (Contract.ExternalQueries != LowIRExternalQueryModel::OrderedScalarV1)
+      fail(Status::Unsupported, "scalar query requires an explicit contract");
+    if (Boundary.Control != LowInstructionControl::None ||
+        Boundary.ControlFlags != LowInstructionControlFlag::None ||
+        !Effects.Effects.empty())
+      fail(Status::Unsupported,
+           "scalar query has unsupported control or effects");
+    if (Q.Identity.empty() ||
+        Q.Identity.size() >
+            LowIRIndependenceLimits::kMaxScalarQueryIdentityBytes ||
+        !Q.SemanticsVersion ||
+        Q.Selectors.size() >
+            LowIRIndependenceLimits::kMaxScalarQuerySelectors ||
+        Q.ResultBits.empty() ||
+        Q.ResultBits.size() > LowIRIndependenceLimits::kMaxScalarQueryResults ||
+        Q.Bindings.empty() ||
+        Q.Bindings.size() > LowIRIndependenceLimits::kMaxScalarQueryBindings)
+      fail(Status::Invalid, "invalid scalar query descriptor");
+    for (uint16_t Bits : Q.ResultBits)
+      if (!Bits || Bits > 64)
+        fail(Status::Invalid, "invalid scalar query result width");
+    for (size_t I = 0; I != Q.Bindings.size(); ++I) {
+      const auto &B = Q.Bindings[I];
+      const auto &V = B.Destination;
+      if ((!V.isReg() && !V.isTemp()) || !scalar(V) ||
+          B.Result >= Q.ResultBits.size() ||
+          Q.ResultBits[B.Result] > V.Size * 8)
+        fail(Status::Invalid, "invalid scalar query result binding");
+      for (size_t J = 0; J != I; ++J) {
+        const auto &Other = Q.Bindings[J].Destination;
+        if (V.Space == Other.Space &&
+            (V.Offset <= Other.Offset ? Other.Offset - V.Offset < V.Size
+                                      : V.Offset - Other.Offset < Other.Size))
+          fail(Status::Invalid, "overlapping scalar query result bindings");
+      }
+    }
+    if (llvm::none_of(Q.Bindings, [&](const auto &B) {
+          return B.Destination == Operations.front().Output;
+        }))
+      fail(Status::Invalid, "scalar query omits its primary output");
+    const auto Charge = [&] {
+      if (Result.Observations >= Limits.MaxObservations)
+        fail(Status::BudgetExceeded, "scalar query trace budget exhausted");
+      ++Result.Observations;
+    };
+    Charge();
+    ScalarQueryEvent Event{
+        Q.Identity, Q.SemanticsVersion, {}, Q.ResultBits, P.ReadTrace.size()};
+    SymExec Left(Ctx, P.Left), Right(Ctx, P.Right);
+    // Check every input before modifying any overlapping output. In
+    // particular, sharing an answer cannot hide an undefined selector.
+    for (const auto &Selector : Q.Selectors) {
+      if (!scalar(Selector))
+        fail(Status::Invalid, "invalid scalar query selector");
+      checkTemporary(Selector, Defined);
+      const auto L = Left.operandValue(Selector);
+      equal(P.Predicate, L, Right.operandValue(Selector),
+            "scalar query selector");
+      Event.Selectors.push_back(ordinary(L));
+    }
+    const auto Index = P.QueryTrace.size();
+    if (Index == ScalarQueryInputs.size())
+      ScalarQueryInputs.emplace_back();
+    if (Index >= ScalarQueryInputs.size())
+      fail(Status::Invalid, "invalid scalar query ordinal");
+    auto &Inputs = ScalarQueryInputs[Index];
+    for (size_t I = 0; I != Q.ResultBits.size(); ++I) {
+      Charge();
+      if (I == Inputs.size())
+        Inputs.push_back(Ctx.mkFreshVar(64, "scalar_query"));
+      nodes();
+    }
+    for (const auto &B : Q.Bindings) {
+      Charge();
+      auto Value = Ctx.mkExtract(Inputs[B.Result], 0, Q.ResultBits[B.Result]);
+      Value = Ctx.mkZExtOrTrunc(Value, B.Destination.Size * 8);
+      const auto Space =
+          B.Destination.isReg() ? SymSpace::Register : SymSpace::Temporary;
+      P.Left.write(Space, B.Destination.Offset, Value);
+      P.Right.write(Space, B.Destination.Offset, Value);
+      define(B.Destination, Defined, &P);
+      nodes();
+    }
+    // All feasible terminal pairs must still agree on the complete query
+    // trace. Each occurrence is independent, even for repeated selectors.
+    P.QueryTrace.push_back(std::move(Event));
+    ScalarQueryTransitions.push_back(
+        {Result.BlockId, Boundary.Address, Q.Identity, Q.SemanticsVersion,
+         lowUndefinedOperationDigest(Operations), scalarQueryDigest(Q)});
   }
 
   bool flagIntrinsic(Path &P, const LowOp &Original,
@@ -1446,7 +1635,7 @@ class Checker {
         fail(Status::BudgetExceeded, "original operation budget exhausted");
       NativeInputOperations += Insn.Ops.size();
       for (const auto &Op : Insn.Ops)
-        if (Op.NumInputs > 6)
+        if (Op.NumInputs > std::size(Op.Inputs))
           fail(Status::Invalid, "operand capacity exceeded");
       for (const auto &Op : Insn.Ops) {
         checkScratch(Op.Output);
@@ -1583,6 +1772,62 @@ class Checker {
     // state and fresh undefined choices. Direct and indirect cycles obey the
     // same path/visit/operation budgets; only exhaustion of all feasible paths
     // at ordinary returns can certify a finite unrolling, never a prefix.
+  }
+
+  // The caller first proves two-execution address equality. A common read
+  // input overapproximates ordinary RAM, retaining all prior frame writes.
+  std::pair<SymRef, SymRef> ordinaryLoad(Path &P, SymRef Address,
+                                         uint16_t Bytes) {
+    if (!Bytes || Bytes > 8 || Ctx.width(Address) != 64)
+      fail(Status::Invalid, "invalid ordinary RAM read shape");
+    const auto Charge = [&] {
+      if (Result.Observations >= Limits.MaxObservations)
+        fail(Status::BudgetExceeded, "ordinary RAM read budget exhausted");
+      ++Result.Observations;
+    };
+    Charge();
+    const auto Index = P.ReadTrace.size();
+    if (Index == OrdinaryReadInputs.size())
+      OrdinaryReadInputs.push_back(Ctx.mkFreshVar(64, "ordinary_read"));
+    if (Index >= OrdinaryReadInputs.size())
+      fail(Status::Invalid, "invalid ordinary RAM read ordinal");
+    const auto Sample = OrdinaryReadInputs[Index];
+    SymRef Left, Right;
+    for (uint16_t Byte = 0; Byte != Bytes; ++Byte) {
+      Charge();
+      const auto Shift = Contract.ByteOrder == llvm::endianness::little
+                             ? Byte * 8
+                             : (Bytes - 1 - Byte) * 8;
+      auto L = Ctx.mkExtract(Sample, Shift, 8), R = L;
+      const auto ByteAddress = Ctx.mkAdd(Address, Ctx.mkConst(64, Byte));
+      for (uint64_t Written : P.Written) {
+        Charge();
+        const auto FrameAddress = Ctx.mkAdd(
+            EntryRoot,
+            Ctx.mkConst(64, static_cast<uint64_t>(Contract.Frame->Begin) +
+                                Written));
+        const auto Same = Ctx.mkEq(ByteAddress, FrameAddress);
+        const auto Cell = Ctx.mkAdd(MemoryRoot, Ctx.mkConst(64, Written));
+        L = Ctx.mkIte(Same, P.Left.load(Cell, 1), L);
+        R = Ctx.mkIte(Same, P.Right.load(Cell, 1), R);
+        nodes();
+      }
+      const auto Append = [&](SymRef Prior, SymRef Next) {
+        if (!Prior)
+          return Next;
+        return Contract.ByteOrder == llvm::endianness::little
+                   ? Ctx.mkConcat(Next, Prior)
+                   : Ctx.mkConcat(Prior, Next);
+      };
+      Left = Append(Left, L);
+      Right = Append(Right, R);
+      nodes();
+    }
+    // The ordinal namespace is shared before either execution selects paths.
+    // Address/width/order agreement and complete terminal coverage are checked
+    // separately; sharing the sample alone is never an equality proof.
+    P.ReadTrace.push_back({Address, Bytes});
+    return {Left, Right};
   }
 
   // The caller first proves two-execution address equality. Enumerate its
@@ -1778,7 +2023,9 @@ class Checker {
     // These are real trace blocks: intermediate instruction visits neither
     // allocate a Path nor enter Pending. Per-instruction semantics, scratch
     // lifetimes and instruction/operation budgets remain in runPath.
-    while (B.InstructionBoundaries.size() < 32) {
+    while (B.InstructionBoundaries.size() <
+           ::neverd::limits::analysis::
+               kLowIRUndefinedIndependenceBInstructionBoundariesSizeLimit) {
       const auto &Last =
           NativeInstructions.at(B.InstructionBoundaries.back().Address);
       if (Last.Origin.Control != LowInstructionControl::None ||
@@ -1899,6 +2146,12 @@ class Checker {
         fail(Status::Unsupported,
              "unsupported architectural undefined effects: " +
                  Description.Diagnostic);
+      const auto Operations =
+          llvm::ArrayRef(B.Ops).slice(Boundary.FirstOp, Boundary.OpCount);
+      std::optional<SpecializationScalarQuery> Query;
+      if (ReadProvider && !Operations.empty() &&
+          Operations.front().Opcode == NdOp::INTRINSIC)
+        Query = ReadProvider->scalarQuery(Operations);
       // Function-local storage starts unbound. Only bytes actually defined on
       // this path survive an instruction boundary; native lifter temporaries
       // retain their original instruction-local lifetime.
@@ -1927,6 +2180,12 @@ class Checker {
             Original.MemoryAddressSpace != NdMemoryAddressSpace::Default)
           fail(Status::Unsupported,
                "ordered or nondefault memory is unsupported");
+        if (I == 0 && Query) {
+          scalarQuery(P, *Query, Operations, Boundary, Description, Defined);
+          Apply(I + 1);
+          nodes();
+          continue;
+        }
         if (flagIntrinsic(P, Original, Description, Defined)) {
           define(Original.Output, Defined, &P);
           Apply(I + 1);
@@ -1963,8 +2222,17 @@ class Checker {
               Difference->getSExtValue() < Frame.End &&
               static_cast<uint64_t>(Frame.End) - Difference->getZExtValue() >=
                   View.AccessSize;
-          if (!InFrame && ReadProvider && !Store &&
-              (!Difference || Ctx.asConst(ordinary(A)))) {
+          if (!InFrame && !Store &&
+              Contract.ExternalReads ==
+                  LowIRExternalReadModel::OrderedOrdinaryRAMV1) {
+            const auto [L, R] = ordinaryLoad(P, ordinary(A), View.AccessSize);
+            P.Left.write(SymSpace::Temporary, AddressTemporary, L);
+            P.Right.write(SymSpace::Temporary, AddressTemporary, R);
+            Op.Opcode = NdOp::COPY;
+            Op.NumInputs = 1;
+            Op.Inputs[0] = NdVar::tmp(AddressTemporary, View.AccessSize);
+          } else if (!InFrame && ReadProvider && !Store &&
+                     (!Difference || Ctx.asConst(ordinary(A)))) {
             const auto Value = immutableLoad(P, ordinary(A), View.AccessSize,
                                              Boundary.Address, Original.Seq);
             P.Left.write(SymSpace::Temporary, AddressTemporary, Value);
@@ -2054,7 +2322,8 @@ class Checker {
                 {std::move(P.Left), P.Predicate, P.LeftSystemFlags,
                  Original.NumInputs ? Left.branchTarget() : SymRef{},
                  std::move(P.Written), -1,
-                 std::move(P.DefinedFunctionTemporaries)});
+                 std::move(P.DefinedFunctionTemporaries),
+                 std::move(P.ReadTrace), std::move(P.QueryTrace)});
             ++(CandidateExecution ? Refinement->CandidatePathCount
                                   : Refinement->OriginalPathCount);
           }
@@ -2142,6 +2411,15 @@ class Checker {
   }
 
   void validate() {
+    if (Contract.ExternalReads != LowIRExternalReadModel::None) {
+      if (Contract.ExternalReads !=
+              LowIRExternalReadModel::OrderedOrdinaryRAMV1 ||
+          !Contract.Frame)
+        fail(Status::Invalid, "invalid ordinary RAM read contract");
+      if (inductive())
+        fail(Status::Unsupported,
+             "ordinary RAM read traces require a finite proof");
+    }
     // Both inductive segments and finite executions use the same native
     // collector. Candidate inference needs an actual image reader as well;
     // semantic LowIR labels alone cannot authorize native collection policy.
@@ -2151,6 +2429,13 @@ class Checker {
                       Refinement->NativeFinite)) &&
         (!Refinement || (Refinement->NativeFinite && !Refinement->LoopPlan &&
                          Refinement->PrefixSearchCutpoint < 0));
+    if (Contract.ExternalQueries != LowIRExternalQueryModel::None) {
+      if (Contract.ExternalQueries != LowIRExternalQueryModel::OrderedScalarV1)
+        fail(Status::Invalid, "unknown scalar query contract");
+      if (!FiniteNative)
+        fail(Status::Unsupported,
+             "scalar query traces require a finite native proof provider");
+    }
     if (Contract.NativePreservedState) {
       if (!Native)
         fail(Status::Unsupported,
@@ -2248,7 +2533,7 @@ class Checker {
           if (isLowRawEnvironmentRequirement(Op))
             fail(Status::Unsupported,
                  "raw environment requirement has no static proof contract");
-          if (Op.NumInputs > 6)
+          if (Op.NumInputs > std::size(Op.Inputs))
             fail(Status::Invalid, "operand capacity exceeded");
         }
         for (const auto &Op : B.Ops) {
@@ -2470,8 +2755,9 @@ public:
           checkTemporary(V, Defined);
         };
         for (const auto &Op : C.Expressions) {
-          if (Op.NumInputs > 6 || !Op.Output.isTemp() || !scalar(Op.Output) ||
-              Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE ||
+          if (Op.NumInputs > std::size(Op.Inputs) || !Op.Output.isTemp() ||
+              !scalar(Op.Output) || Op.Opcode == NdOp::LOAD ||
+              Op.Opcode == NdOp::STORE ||
               Op.MemoryOrdering != NdMemoryOrdering::None ||
               Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
               !supportedShape(Op))
@@ -2796,6 +3082,34 @@ public:
                                          Original.Predicate)) ==
               solver::SatResult::Unsat)
             continue;
+          if (Original.QueryTrace.size() != Candidate.QueryTrace.size())
+            fail(Status::Dependent, "scalar query counts differ");
+          for (size_t I = 0; I != Original.QueryTrace.size(); ++I) {
+            const auto &A = Original.QueryTrace[I];
+            const auto &B = Candidate.QueryTrace[I];
+            if (A.Identity != B.Identity ||
+                A.SemanticsVersion != B.SemanticsVersion ||
+                A.ResultBits != B.ResultBits ||
+                A.Selectors.size() != B.Selectors.size() ||
+                A.OrdinaryReadOrdinal != B.OrdinaryReadOrdinal)
+              fail(Status::Dependent, "scalar query traces differ");
+            for (size_t J = 0; J != A.Selectors.size(); ++J) {
+              if (Ctx.width(A.Selectors[J]) != Ctx.width(B.Selectors[J]))
+                fail(Status::Dependent, "scalar query selector widths differ");
+              equal(Predicate, A.Selectors[J], B.Selectors[J],
+                    "ordered scalar query selector");
+            }
+          }
+          if (Original.ReadTrace.size() != Candidate.ReadTrace.size())
+            fail(Status::Dependent, "ordinary RAM read counts differ");
+          for (size_t I = 0; I != Original.ReadTrace.size(); ++I) {
+            const auto &A = Original.ReadTrace[I];
+            const auto &B = Candidate.ReadTrace[I];
+            if (A.Bytes != B.Bytes)
+              fail(Status::Dependent, "ordinary RAM read widths differ");
+            equal(Predicate, A.Address, B.Address,
+                  "ordered ordinary RAM read address");
+          }
           if (inductive() &&
               (Original.Cutpoint >= 0 || Candidate.Cutpoint >= 0)) {
             if (Original.Cutpoint != Candidate.Cutpoint)
@@ -2881,10 +3195,14 @@ public:
                                         : OwnedReadEvidenceBytes),
         Contract(C), Limits(L),
         Result(Session ? Session->Statistics : OwnedResult),
-        Ctx(Session ? Session->Context : OwnedContext), Refinement(Session),
-        CandidateExecution(Candidate), ReadProvider(Reader),
-        ScheduledPaths(Session ? Session->ScheduledPaths
-                               : OwnedScheduledPaths) {}
+        Ctx(Session ? Session->Context : OwnedContext),
+        OrdinaryReadInputs(Session ? Session->OrdinaryReadInputs
+                                   : OwnedOrdinaryReadInputs),
+        ScalarQueryInputs(Session ? Session->ScalarQueryInputs
+                                  : OwnedScalarQueryInputs),
+        Refinement(Session), CandidateExecution(Candidate),
+        ReadProvider(Reader), ScheduledPaths(Session ? Session->ScheduledPaths
+                                                     : OwnedScheduledPaths) {}
 
   Checker(SpecializationProvider &P, SpecializationCursor Entry,
           const LowIRIndependenceContract &C, const LowIRIndependenceLimits &L,
@@ -2907,9 +3225,14 @@ public:
                                         : OwnedReadEvidenceBytes),
         Contract(C), Limits(L),
         Result(Session ? Session->Statistics : OwnedResult),
-        Ctx(Session ? Session->Context : OwnedContext), Refinement(Session),
-        ReadProvider(&P), ScheduledPaths(Session ? Session->ScheduledPaths
-                                                 : OwnedScheduledPaths) {
+        Ctx(Session ? Session->Context : OwnedContext),
+        OrdinaryReadInputs(Session ? Session->OrdinaryReadInputs
+                                   : OwnedOrdinaryReadInputs),
+        ScalarQueryInputs(Session ? Session->ScalarQueryInputs
+                                  : OwnedScalarQueryInputs),
+        Refinement(Session), ReadProvider(&P),
+        ScheduledPaths(Session ? Session->ScheduledPaths
+                               : OwnedScheduledPaths) {
     NativeTrace.Entry = Entry.Address;
   }
 
@@ -2975,18 +3298,10 @@ public:
           }
           Predicate = Ctx.mkAnd(Predicate, detail::nonwrappingFramePredicate(
                                                Ctx, EntryRoot, F.Begin, F.End));
-          // The existing root bounds make these the unsigned first and last
-          // accessible bytes without wraparound. Exclusion is a symbolic entry
-          // precondition: adjacency is allowed, but no byte may overlap a
-          // range.
-          const auto First = Ctx.mkAdd(
-              EntryRoot, Ctx.mkConst(64, static_cast<uint64_t>(F.Begin)));
-          const auto Last = Ctx.mkAdd(
-              EntryRoot, Ctx.mkConst(64, static_cast<uint64_t>(F.End) - 1));
           for (const auto &R : F.ExcludedAddressRanges) {
             Predicate = Ctx.mkAnd(
-                Predicate, Ctx.mkOr(Ctx.mkUlt(Last, Ctx.mkConst(64, R.Begin)),
-                                    Ctx.mkUle(Ctx.mkConst(64, R.End), First)));
+                Predicate, detail::excludedFrameRangePredicate(
+                               Ctx, EntryRoot, F.Begin, F.End, R.Begin, R.End));
             nodes();
           }
           MemoryRoot = Ctx.mkFreshVar(64, "proof_frame");
@@ -3014,7 +3329,7 @@ public:
           };
           for (const auto &B : Refinement->Candidate.Blocks)
             for (const auto &Op : B.Ops) {
-              if (Op.NumInputs > 6)
+              if (Op.NumInputs > std::size(Op.Inputs))
                 fail(Status::Invalid, "candidate operand capacity exceeded");
               if (Op.Output.Size)
                 Seed(Op.Output);
@@ -3122,11 +3437,11 @@ public:
           }
           for (auto &B : NativeTrace.Blocks)
             B.Succs = NativeTraceEdges[B.Id];
-          const auto Digest =
-              inputDigest(NativeTrace, NativeRecords, Contract, Limits,
-                          NativeFlagTransitions, NativeProfileProjections,
-                          auditBoundaryReceipts(NativeAuditBoundaries),
-                          Preservation ? &*Preservation : nullptr);
+          const auto Digest = inputDigest(
+              NativeTrace, NativeRecords, Contract, Limits,
+              NativeFlagTransitions, NativeProfileProjections,
+              auditBoundaryReceipts(NativeAuditBoundaries),
+              Preservation ? &*Preservation : nullptr, ScalarQueryTransitions);
           Refinement->OriginalDigest = Digest;
           if (inductive()) {
             Refinement->OriginalSegmentDigests.push_back(Digest);
@@ -3135,6 +3450,9 @@ public:
           Refinement->OriginalInstructions.insert(
               Refinement->OriginalInstructions.end(), NativeRecords.begin(),
               NativeRecords.end());
+          Refinement->Queries.insert(Refinement->Queries.end(),
+                                     ScalarQueryTransitions.begin(),
+                                     ScalarQueryTransitions.end());
           Refinement->Flags.insert(Refinement->Flags.end(),
                                    NativeFlagTransitions.begin(),
                                    NativeFlagTransitions.end());
@@ -3146,7 +3464,8 @@ public:
             NativeResult->Instructions.push_back(Insn);
         } else if (CandidateExecution) {
           Refinement->CandidateDigest = inputDigest(
-              *Function, Records, Contract, Limits, NativeFlagTransitions);
+              *Function, Records, Contract, Limits, NativeFlagTransitions, {},
+              {}, nullptr, ScalarQueryTransitions);
           if (inductive())
             Refinement->CandidateSegmentDigests.push_back(
                 Refinement->CandidateDigest);
@@ -3164,14 +3483,16 @@ public:
             inputDigest(NativeTrace, NativeRecords, Contract, Limits,
                         NativeFlagTransitions, NativeProfileProjections,
                         auditBoundaryReceipts(NativeAuditBoundaries),
-                        Preservation ? &*Preservation : nullptr),
+                        Preservation ? &*Preservation : nullptr,
+                        ScalarQueryTransitions),
             std::move(NativeRecords),
             Contract,
             Limits,
             std::move(NativeFlagTransitions),
             std::move(NativeProfileProjections),
             auditBoundaryReceipts(NativeAuditBoundaries),
-            Preservation};
+            Preservation,
+            std::move(ScalarQueryTransitions)};
         for (auto &[Address, Insn] : NativeInstructions)
           NativeResult->Instructions.push_back(std::move(Insn));
       } else {
@@ -3276,6 +3597,7 @@ refinementResult(RefinementSession &Session,
   Certificate.OriginalInstructions = std::move(Session.OriginalInstructions);
   Certificate.Producers = std::move(Session.Producers);
   Certificate.NativeFlagTransitions = std::move(Session.Flags);
+  Certificate.ExternalQueryTransitions = std::move(Session.Queries);
   Certificate.NativeProfileProjections = std::move(Session.Projections);
   Certificate.NativeAuditBoundaries =
       auditBoundaryReceipts(Session.NativeAuditBoundaries);
@@ -3393,7 +3715,7 @@ bool prepareCandidateRecords(
     }
     Operations += B.Ops.size();
     for (const auto &Op : B.Ops)
-      if (Op.NumInputs > 6) {
+      if (Op.NumInputs > std::size(Op.Inputs)) {
         Session.Statistics.Diagnostic = "candidate operand capacity exceeded";
         return false;
       }

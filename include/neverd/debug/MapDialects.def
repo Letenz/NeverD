@@ -1,0 +1,33 @@
+//===- MapDialects.def - The linker MAP formats NeverD reads ---*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The MAP file formats NeverD reads, with the spelling the C API reports and
+/// the linker a frontend names for it.  Define the macro before including
+/// this file.
+///
+///   NEVERD_MAP_DIALECT(Name, Spelling, Linker)
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_MAP_DIALECT
+#define NEVERD_MAP_DIALECT(Name, Spelling, Linker)
+#endif
+
+// Segment:offset publics, as link.exe /MAP and lld-link /MAP write them; the
+// MAPs of Borland's linkers (Delphi, C++Builder) and IDA's "Create MAP file"
+// share the layout without link.exe's Rva+Base column.
+NEVERD_MAP_DIALECT(MSVC, "msvc", "link.exe")
+// lld-link /lldmap: image-relative addresses with output and input sections.
+NEVERD_MAP_DIALECT(LLDCOFF, "lld-link", "lld-link")
+// ld.lld --Map: VMA, LMA, size and alignment rows.
+NEVERD_MAP_DIALECT(LLD, "ld.lld", "ld.lld")
+// GNU ld --Map (BFD): the "Linker script and memory map" listing.
+NEVERD_MAP_DIALECT(GNU, "gnu-ld", "GNU ld")
+// Apple ld64 and ld64.lld -map: "# Path:", "# Sections:" and "# Symbols:".
+NEVERD_MAP_DIALECT(LD64, "ld64", "ld64")
+
+#undef NEVERD_MAP_DIALECT

@@ -19,6 +19,7 @@ LEGACY_PAGES = 0x222133
 INDEPENDENT_PARTIAL = 0x222137
 CONTIGUOUS_CHUNKS = 0x22213B
 KERNEL_POOL_LOCK = 0x22213F
+PROCESS_LOCK = 0x222143
 PROCESS_EXIT = 0x22210B
 WRONG_PROCESS_UNMAP = 0x22210F
 MAPPING_SHORTAGE = 0x222113
@@ -93,12 +94,16 @@ class DriverUserMappingIntegrationTests(unittest.TestCase):
                     self._success(result, ["43750107", "a7010000"])
                     self.assertEqual(int(result["image_base"], 16), address)
                     calls = [call["name"] for call in result["calls"]]
-                    mapping_modes = [
-                        int(call["arguments"][1], 16) & 0xFF
-                        for call in result["calls"]
-                        if call["name"] == "MmMapLockedPagesSpecifyCache"
-                    ]
-                    self.assertCountEqual(mapping_modes, [1, 1, 0, 0, 1])
+                    for name, expected in (
+                        ("MmMapLockedPagesSpecifyCache", [1, 0]),
+                        ("MmMapLockedPages", [1, 0, 1]),
+                    ):
+                        mapping_modes = [
+                            int(call["arguments"][1], 16) & 0xFF
+                            for call in result["calls"]
+                            if call["name"] == name
+                        ]
+                        self.assertEqual(mapping_modes, expected, name)
                     self.assertIn("KeStackAttachProcess", calls)
                     self.assertIn("KeUnstackDetachProcess", calls)
                     self.assertEqual(
@@ -135,6 +140,21 @@ class DriverUserMappingIntegrationTests(unittest.TestCase):
         for variant, fixture in self.fixtures:
             with self.subTest(variant=variant):
                 self._success(self._run(fixture, scenario), ["a7010000"], revoked=True)
+
+    def test_process_probe_restores_context_before_the_guest_handler(self) -> None:
+        scenario = self._single_request(PROCESS_LOCK)
+        for variant, fixture in self.fixtures:
+            for address in (0x180000000, 0x190000000):
+                with self.subTest(variant=variant, address=address):
+                    scenario["load_address"] = hex(address)
+                    result = self._run(fixture, scenario)
+                    self._success(result, ["0343750f"])
+                    calls = [call["name"] for call in result["calls"]]
+                    self.assertEqual(calls.count("MmProbeAndLockProcessPages"), 4)
+                    self.assertEqual(calls.count("MmGetSystemRoutineAddress"), 1)
+                    self.assertEqual(calls.count("KeStackAttachProcess"), 1)
+                    self.assertEqual(calls.count("KeUnstackDetachProcess"), 1)
+                    self.assertEqual(calls.count("MmUnlockPages"), 4)
 
     def test_wrong_process_unmap_remains_an_explicit_model_error(self) -> None:
         scenario = self._single_request(WRONG_PROCESS_UNMAP)

@@ -11,7 +11,8 @@
 
 namespace neverd::emulation {
 /// Explicit initial nice values of fixture-owned tasks with the caller's UID.
-/// Unlisted task identities and group/user selection remain unmodeled.
+/// New modeled pthreads inherit their parent's current value. Unobserved
+/// parent values and group/user selection remain unmodeled.
 struct LinuxPriorityOptions {
   std::map<uint32_t, int32_t> Tasks;
   bool CapSysNice = false;

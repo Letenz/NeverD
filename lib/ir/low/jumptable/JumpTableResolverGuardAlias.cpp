@@ -17,6 +17,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "GuardExpression.h"
 #include "JumpTableResolverDetail.h"
 
 #include "neverd/Limits.h"
@@ -47,17 +48,9 @@ namespace neverd {
 
 namespace {
 
-struct GuardExpr;
-using GuardExprPtr = std::shared_ptr<const GuardExpr>;
-
-struct GuardExpr {
-  enum class Kind : uint8_t { Constant, Index, Operation } K;
-  uint16_t Size = 0;
-  uint64_t Constant = 0;
-  NdOp Opcode = NdOp::NOP;
-  std::vector<GuardExprPtr> Inputs;
-  bool ContainsIndex = false;
-};
+using guard_detail::guardChangePoints;
+using guard_detail::GuardExpr;
+using guard_detail::GuardExprPtr;
 
 uint64_t widthMask(uint16_t Bytes) {
   return Bytes == 0 || Bytes >= sizeof(uint64_t)
@@ -187,191 +180,6 @@ namespace {
 
 using symbolic::SymContext;
 using symbolic::SymRef;
-
-std::optional<SymRef> coerceGuardValue(SymContext &Ctx, SymRef Value,
-                                       uint32_t Width) {
-  if (!Value || Width == 0 || Width > 64)
-    return std::nullopt;
-  const uint32_t InputWidth = Ctx.width(Value);
-  if (InputWidth == Width)
-    return Value;
-  if (InputWidth < Width)
-    return Ctx.mkZExt(Value, Width);
-  return Ctx.mkExtract(Value, 0, Width);
-}
-
-} // namespace
-
-std::optional<SymRef>
-symbolizeJumpTableIntegerOperation(SymContext &Ctx, NdOp Opcode,
-                                   uint16_t OutputSize,
-                                   llvm::ArrayRef<SymRef> RawInputs) {
-  if (OutputSize == 0 || OutputSize > sizeof(uint64_t) || RawInputs.empty() ||
-      std::any_of(RawInputs.begin(), RawInputs.end(), [&](SymRef Input) {
-        return !Input || Ctx.width(Input) == 0 || Ctx.width(Input) > 64;
-      }))
-    return std::nullopt;
-  const uint32_t OutputWidth = uint32_t(OutputSize) * 8u;
-  auto finish = [&](SymRef Value) -> std::optional<SymRef> {
-    return coerceGuardValue(Ctx, Value, OutputWidth);
-  };
-  auto commonInputs = [&]() -> std::optional<std::vector<SymRef>> {
-    uint32_t Width = 0;
-    for (SymRef Input : RawInputs)
-      Width = std::max(Width, Ctx.width(Input));
-    std::vector<SymRef> Inputs;
-    Inputs.reserve(RawInputs.size());
-    for (SymRef Input : RawInputs) {
-      std::optional<SymRef> Coerced = coerceGuardValue(Ctx, Input, Width);
-      if (!Coerced)
-        return std::nullopt;
-      Inputs.push_back(*Coerced);
-    }
-    return Inputs;
-  };
-  auto binaryInputs = [&]() -> std::optional<std::vector<SymRef>> {
-    if (RawInputs.size() != 2)
-      return std::nullopt;
-    return commonInputs();
-  };
-  auto predicateResult = [&](SymRef Predicate) -> std::optional<SymRef> {
-    if (!Predicate || Ctx.width(Predicate) != 1)
-      return std::nullopt;
-    return finish(Predicate);
-  };
-
-  switch (Opcode) {
-  case NdOp::COPY:
-  case NdOp::INT_ZEXT:
-    if (RawInputs.size() != 1)
-      return std::nullopt;
-    return finish(RawInputs[0]);
-  case NdOp::INT_SEXT:
-    if (RawInputs.size() != 1)
-      return std::nullopt;
-    if (Ctx.width(RawInputs[0]) < OutputWidth)
-      return Ctx.mkSExt(RawInputs[0], OutputWidth);
-    return finish(RawInputs[0]);
-  case NdOp::SUBBYTES: {
-    if (RawInputs.size() != 2)
-      return std::nullopt;
-    const std::optional<llvm::APInt> Offset = Ctx.asConst(RawInputs[1]);
-    if (!Offset || Offset->getActiveBits() > 64)
-      return std::nullopt;
-    const uint64_t ByteOffset = Offset->getZExtValue();
-    if (ByteOffset > Ctx.width(RawInputs[0]) / 8u)
-      return std::nullopt;
-    const uint64_t Low = ByteOffset * 8u;
-    if (Low > Ctx.width(RawInputs[0]) ||
-        OutputWidth > Ctx.width(RawInputs[0]) - Low)
-      return std::nullopt;
-    return Ctx.mkExtract(RawInputs[0], static_cast<uint32_t>(Low), OutputWidth);
-  }
-  case NdOp::CONCAT: {
-    if (RawInputs.size() < 2)
-      return std::nullopt;
-    return finish(Ctx.mkConcat(RawInputs));
-  }
-  case NdOp::INT_NEGATE:
-  case NdOp::INT_NOT:
-    if (RawInputs.size() != 1)
-      return std::nullopt;
-    return finish(Ctx.mkNot(RawInputs[0]));
-  case NdOp::INT_NEG2:
-    if (RawInputs.size() != 1)
-      return std::nullopt;
-    return finish(Ctx.mkNeg(RawInputs[0]));
-  case NdOp::BOOL_NOT:
-    if (RawInputs.size() != 1)
-      return std::nullopt;
-    return predicateResult(
-        Ctx.mkEq(RawInputs[0], Ctx.mkZero(Ctx.width(RawInputs[0]))));
-  case NdOp::BOOL_AND:
-  case NdOp::BOOL_OR:
-  case NdOp::BOOL_XOR: {
-    if (RawInputs.size() != 2)
-      return std::nullopt;
-    const auto L = Ctx.mkNe(RawInputs[0], Ctx.mkZero(Ctx.width(RawInputs[0])));
-    const auto R = Ctx.mkNe(RawInputs[1], Ctx.mkZero(Ctx.width(RawInputs[1])));
-    return predicateResult(Opcode == NdOp::BOOL_AND  ? Ctx.mkAnd(L, R)
-                           : Opcode == NdOp::BOOL_OR ? Ctx.mkOr(L, R)
-                                                     : Ctx.mkXor(L, R));
-  }
-  default:
-    break;
-  }
-
-  std::optional<std::vector<SymRef>> Inputs = binaryInputs();
-  if (!Inputs)
-    return std::nullopt;
-  SymRef L = (*Inputs)[0];
-  SymRef R = (*Inputs)[1];
-  switch (Opcode) {
-  case NdOp::INT_ADD:
-    return finish(Ctx.mkAdd(L, R));
-  case NdOp::INT_SUB:
-    return finish(Ctx.mkSub(L, R));
-  case NdOp::INT_MULT:
-    // AArch64's narrow multiply is explicitly performed at OutputWidth while
-    // the generic emitter multiplies at the common input width.  They agree
-    // only when that width is already the output width; otherwise the guard is
-    // not architecture-neutral and must not authorize a table.
-    if (Ctx.width(L) != OutputWidth)
-      return std::nullopt;
-    return finish(Ctx.mkMul(L, R));
-  case NdOp::INT_DIV:
-    return finish(Ctx.mkUDiv(L, R));
-  case NdOp::INT_SDIV:
-    return finish(Ctx.mkSDiv(L, R));
-  case NdOp::INT_REM:
-    return finish(Ctx.mkURem(L, R));
-  case NdOp::INT_SREM:
-    return finish(Ctx.mkSRem(L, R));
-  case NdOp::INT_AND:
-    return finish(Ctx.mkAnd(L, R));
-  case NdOp::INT_OR:
-    return finish(Ctx.mkOr(L, R));
-  case NdOp::INT_XOR:
-    return finish(Ctx.mkXor(L, R));
-  case NdOp::INT_LEFT:
-    return finish(Ctx.mkShl(L, R));
-  case NdOp::INT_RIGHT:
-    return finish(Ctx.mkLShr(L, R));
-  case NdOp::INT_ASHR:
-    return finish(Ctx.mkAShr(L, R));
-  case NdOp::INT_EQUAL:
-    return predicateResult(Ctx.mkEq(L, R));
-  case NdOp::INT_NOTEQUAL:
-    return predicateResult(Ctx.mkNe(L, R));
-  case NdOp::INT_LESS:
-    return predicateResult(Ctx.mkUlt(L, R));
-  case NdOp::INT_LESSEQUAL:
-    return predicateResult(Ctx.mkUle(L, R));
-  case NdOp::INT_SLESS:
-    return predicateResult(Ctx.mkSlt(L, R));
-  case NdOp::INT_SLESSEQUAL:
-    return predicateResult(Ctx.mkSle(L, R));
-  case NdOp::INT_CARRY: {
-    SymRef Sum = Ctx.mkAdd(L, R);
-    return predicateResult(Ctx.mkUlt(Sum, L));
-  }
-  case NdOp::INT_SOVF: {
-    SymRef Sum = Ctx.mkAdd(L, R);
-    SymRef OverflowBits =
-        Ctx.mkAnd(Ctx.mkNot(Ctx.mkXor(L, R)), Ctx.mkXor(Sum, L));
-    return predicateResult(Ctx.mkExtract(OverflowBits, Ctx.width(L) - 1, 1));
-  }
-  case NdOp::INT_SBOR: {
-    SymRef Diff = Ctx.mkSub(L, R);
-    SymRef OverflowBits = Ctx.mkAnd(Ctx.mkXor(L, R), Ctx.mkXor(Diff, L));
-    return predicateResult(Ctx.mkExtract(OverflowBits, Ctx.width(L) - 1, 1));
-  }
-  default:
-    return std::nullopt;
-  }
-}
-
-namespace {
 
 struct GuardSymbolization {
   SymContext Ctx;
@@ -602,7 +410,7 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
     const InsnRecord &Rec, JumpTableInfo &Info, size_t *CandidateEvidenceBudget,
     bool UseDefinedAlternativesAsRoots,
     const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides,
-    bool AllowSparseDomain) {
+    bool AllowSparseDomain) const {
   Info.IncompleteGuardDomain = false;
   Info.SemanticGuardDomainAmbiguous = false;
   if ((!Info.IndexValueAtUse.isReg() && !Info.IndexValueAtUse.isTemp()) ||
@@ -679,6 +487,8 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
     size_t DefQuery = std::numeric_limits<size_t>::max();
     size_t ExtendedLaneQuery = std::numeric_limits<size_t>::max();
     bool IndexQueryUsesDefinition = false;
+    size_t LiteralQuery = std::numeric_limits<size_t>::max();
+    NdVar Literal;
   };
   using BuildKey = std::tuple<uint8_t, uint64_t, uint16_t, va_t, int>;
   std::map<BuildKey, GuardSyntaxPtr> SyntaxMemo;
@@ -697,6 +507,16 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
   std::vector<std::pair<GuardSyntaxPtr, JumpTableValueQuery>>
       ExtendedLaneQueries;
   std::vector<std::pair<GuardSyntaxPtr, bool>> GuardRoots;
+
+  // GuardExpr constants are numeric values after relinking. An address with
+  // the same source bits cannot supply a numeric range, even when its exact
+  // store/reload identity is known.
+  auto isGuardLiteral = [](const NdVar &Value) {
+    return Value.isConst() &&
+           (Value.Provenance == ConstantAddressProvenance::Unknown ||
+            Value.Provenance == ConstantAddressProvenance::Scalar) &&
+           Value.AddressOwnerVA == InvalidVA;
+  };
 
   auto supportedGuardOpcode = [](NdOp Opcode) {
     switch (Opcode) {
@@ -964,9 +784,25 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
     size_t Index;
   };
   std::vector<SelectSite> SelectSites;
-  bool HasGuardCondition = false;
+  size_t ControllingGuards = 0;
   for (const std::optional<bool> &Condition : TableConditions)
-    HasGuardCondition |= Condition.has_value();
+    ControllingGuards += Condition.has_value();
+  const bool HasGuardCondition = ControllingGuards != 0;
+  // The controlling guards are candidate-wide inventory too, which
+  // tableLoadConditionValues has already paid for.  More of them than the
+  // ordinary allowance holds, as in a compare chain before a dense table, give
+  // this batch the dedicated allowance.  Their value queries then walk back
+  // across the chain's blocks, so they use the large-expression role depth.
+  const bool LongGuardChain =
+      ControllingGuards > limits::kMaxJumpTableOrdinaryControllingGuards;
+  const uint32_t GuardValueDepth =
+      LongGuardChain ? limits::kMaxJumpTableLargeExpressionRoleResolverDepth
+                     : limits::kMaxJumpTableExpandedResolverDepth;
+  if (LongGuardChain) {
+    GuardBuildWork += limits::kMaxJumpTableGuardExpressionEvidenceWork -
+                      limits::kMaxJumpTableEvidenceWork;
+    GuardExpressionAllowanceExtended = true;
+  }
   if (HasGuardCondition)
     for (const auto &[Addr, Insn] : Insns) {
       if (!consumeAliasSyntaxWork())
@@ -1097,16 +933,17 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
     }
   }
   // Value reconstruction crosses CFG predecessors as well as expression
-  // definitions. Use the expanded graph-walk limit; local guard syntax keeps
-  // its separate depth bound and every query retains the shared work budget.
+  // definitions. Use the guard batch's graph-walk limit; local guard syntax
+  // keeps its separate depth bound and every query retains the shared work
+  // budget.
   if (!AliasQueries.empty()) {
     bool AliasProofComplete = false;
     const std::vector<bool> AliasResults = tableValuesMatchAtUses(
         AliasQueries, &AliasProofComplete, nullptr, InvalidVA, nullptr,
         CandidateEvidenceBudget, /*LocalMatchEvidenceLimit=*/0,
         /*CandidateBranchesSharingTargets=*/nullptr,
-        /*QueryUnsignedFeasibleMasks=*/nullptr,
-        limits::kMaxJumpTableExpandedResolverDepth, CertifiedEdgeOverrides);
+        /*QueryUnsignedFeasibleMasks=*/nullptr, GuardValueDepth,
+        CertifiedEdgeOverrides);
     if (!AliasProofComplete || AliasResults.size() != AliasQueries.size()) {
       Info.IncompleteGuardDomain = true;
       return false;
@@ -1223,6 +1060,8 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
       if (V.Size == 0 || V.Size > sizeof(uint64_t))
         return {};
       if (V.isConst()) {
+        if (!isGuardLiteral(V))
+          return {};
         if (V.Offset < 64)
           ProposedJoinedBound = std::max(ProposedJoinedBound, V.Offset + 1);
         if (!consumeGuardBuildWork())
@@ -1317,8 +1156,39 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
             Def.Seq >= GuardSplit->Seq)
           return Finish(Node);
       }
-      if (!supportedGuardOpcode(Def.Opcode))
+      if (!supportedGuardOpcode(Def.Opcode)) {
+        // A nearby literal STORE is a proposal, not the value of this LOAD.
+        // Ask the shared all-path memory/value resolver to authenticate the
+        // literal at this exact use before materializing it in the guard.
+        // One nearest-writer proposal bounds speculative work; an intervening
+        // alias, call, partial write or independent root grants no shortcut.
+        if (Def.Opcode == NdOp::LOAD &&
+            Def.MemoryOrdering == NdMemoryOrdering::None &&
+            Def.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+          for (int J = DefIndex - 1; J >= 0; --J) {
+            if (!consumeGuardBuildWork())
+              return Finish({});
+            const LowOp &Writer = Ops[J];
+            if (Writer.Opcode != NdOp::STORE)
+              continue;
+            if (Writer.NumInputs == 2 && isGuardLiteral(Writer.Inputs[1]) &&
+                Writer.Inputs[1].Size == V.Size &&
+                Writer.MemoryOrdering == NdMemoryOrdering::None &&
+                Writer.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+              if (!consumeGuardBuildWork(2))
+                return Finish({});
+              Node->LiteralQuery = ProofQueries.size();
+              Node->Literal = Writer.Inputs[1];
+              ProofQueries.push_back({V,
+                                      UseAddr,
+                                      UseSeq,
+                                      {{Node->Literal, InvalidVA, -1, false}}});
+            }
+            break;
+          }
+        }
         return Finish(Node);
+      }
       if (!consumeGuardBuildWork(/*query + one alternative=*/2))
         return Finish({});
       const bool DefinedLane = Def.Output.Size != V.Size;
@@ -1342,11 +1212,19 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
       // producer (for example, a bit count). Retain the original query as a
       // fallback, only to be evaluated if the occurrence proof cannot bind
       // the index. Expanding it eagerly would revisit unrelated deep inputs
-      // even when the exact lane already proves the guard.
-      if (DefinedLane &&
+      // even when the exact lane already proves the guard.  A masked value
+      // has no occurrence identity with a mask the table use recomputes from
+      // the wider register (a W compare before an X index); only the value
+      // comparison sees that, so it gets the same fallback.
+      const bool ExtensionWriter =
+          DefinedLane &&
           (Def.Opcode == NdOp::INT_ZEXT || Def.Opcode == NdOp::INT_SEXT) &&
           Def.NumInputs == 1 && Def.Inputs[0].Size > V.Size &&
-          V.Offset == Def.Output.Offset) {
+          V.Offset == Def.Output.Offset;
+      const bool MaskedDefinition =
+          !DefinedLane && Def.Opcode == NdOp::INT_AND && Def.NumInputs == 2 &&
+          Def.Inputs[0].isConst() != Def.Inputs[1].isConst();
+      if (ExtensionWriter || MaskedDefinition) {
         if (!consumeGuardBuildWork(IndexAlternatives.size() + 2))
           return Finish({});
         ExtendedLaneQueries.emplace_back(Node, ProofQueries[Node->IndexQuery]);
@@ -1434,8 +1312,8 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
             Queries, &Complete, &QueryComplete, InvalidVA, nullptr,
             CandidateEvidenceBudget, /*LocalMatchEvidenceLimit=*/0,
             /*CandidateBranchesSharingTargets=*/nullptr,
-            /*QueryUnsignedFeasibleMasks=*/nullptr,
-            limits::kMaxJumpTableExpandedResolverDepth, CertifiedEdgeOverrides);
+            /*QueryUnsignedFeasibleMasks=*/nullptr, GuardValueDepth,
+            CertifiedEdgeOverrides);
       };
   bool ProofComplete = false;
   std::vector<bool> ProofQueryComplete;
@@ -1539,6 +1417,16 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
       Expr->ContainsIndex = true;
       return Finish(Expr);
     }
+    const bool LiteralQueryPresent =
+        Node->LiteralQuery < ProofResults.size() &&
+        Node->LiteralQuery < ProofQueryComplete.size();
+    const bool LiteralQueryComplete =
+        LiteralQueryPresent && ProofQueryComplete[Node->LiteralQuery];
+    if (LiteralQueryComplete && ProofResults[Node->LiteralQuery]) {
+      Expr->K = GuardExpr::Kind::Constant;
+      Expr->Constant = Node->Literal.Offset;
+      return Finish(Expr);
+    }
     // The lexical def is only syntax.  Its exact output must be the value
     // reaching this exact use in the shared lane-aware resolver; an EAX/W
     // write therefore blocks a stale older RAX/X definition here.  When only
@@ -1548,7 +1436,8 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
     if (!Node->HasDef || !Node->InputsComplete) {
       if (!IndexQueryComplete ||
           (Node->IndexQueryUsesDefinition && !DefQueryComplete) ||
-          (ExtendedLanePresent && !ExtendedLaneComplete))
+          (ExtendedLanePresent && !ExtendedLaneComplete) ||
+          (LiteralQueryPresent && !LiteralQueryComplete))
         SawIncompleteProofQuery = true;
       return Finish({});
     }
@@ -1668,6 +1557,27 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
   }
 
   if (IndexGuards.empty()) {
+    // Separate predecessor arms can each guard the same selector without a
+    // single condition dominating the LOAD. Their literals only propose an
+    // envelope; the joined query below must still prove it on every path.
+    if (!GuardedGroupProofContext && !Info.IndexValueDefinedAtUse) {
+      for (const auto &[Addr, Insn] : Insns) {
+        if (!consumeCandidateEvidence())
+          return failIncomplete();
+        for (const LowOp &Op : Insn.Ops) {
+          if (!consumeCandidateEvidence())
+            return failIncomplete();
+          if (Op.Opcode != NdOp::INT_SUB && Op.Opcode != NdOp::INT_LESS &&
+              Op.Opcode != NdOp::INT_LESSEQUAL &&
+              Op.Opcode != NdOp::INT_SLESS && Op.Opcode != NdOp::INT_SLESSEQUAL)
+            continue;
+          for (unsigned I = 0; I < Op.NumInputs; ++I)
+            if (isGuardLiteral(Op.Inputs[I]) && Op.Inputs[I].Offset < 64)
+              ProposedJoinedBound =
+                  std::max(ProposedJoinedBound, Op.Inputs[I].Offset + 1);
+        }
+      }
+    }
     // A loop may check its initial and recurrent index separately. No one
     // dominating comparison then names the complete merged value. Reuse the
     // shared finite-domain proof over that exact use, including every current
@@ -1676,8 +1586,7 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
     // from table capacity or omit an unguarded incoming path.
     // Provisional group graphs keep their separate universal guard proof;
     // their hypothesized edges cannot seed an existential finite domain.
-    if (!GuardedGroupProofContext && SawControllingGuard &&
-        !Info.IndexValueDefinedAtUse &&
+    if (!GuardedGroupProofContext && !Info.IndexValueDefinedAtUse &&
         ProposedJoinedBound >= limits::kMinJumpTableEntries) {
       if (!consumeGuardBuildWork(12))
         return failIncomplete();
@@ -1691,8 +1600,8 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
       std::vector<uint64_t> Masks;
       const auto Results = tableValuesMatchAtUses(
           {Joined}, nullptr, &Complete, InvalidVA, nullptr,
-          CandidateEvidenceBudget, 0, nullptr, &Masks,
-          limits::kMaxJumpTableExpandedResolverDepth, CertifiedEdgeOverrides);
+          CandidateEvidenceBudget, 0, nullptr, &Masks, GuardValueDepth,
+          CertifiedEdgeOverrides);
       // The ordinary table representation requires a dense zero-based
       // prefix. Sparse domains keep their existing specialized owner.
       if (Results.size() == 1 && Complete.size() == 1 && Complete[0] &&
@@ -1823,12 +1732,30 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
                                static_cast<size_t>(LastSample) + 1))
     return failIncomplete();
 
+  // Retain the original whole-window evidence charge above. Partitioning
+  // changes execution cost, never the candidate's proof allowance or outcome.
+  std::vector<uint64_t> ChangePoints{0, LastSample + 1};
+  bool Partitioned = true;
+  for (const auto &[Expr, TableCondition] : IndexGuards) {
+    (void)TableCondition;
+    if (!guardChangePoints(Expr, LastSample, ChangePoints)) {
+      Partitioned = false;
+      break;
+    }
+  }
+  if (Partitioned) {
+    std::sort(ChangePoints.begin(), ChangePoints.end());
+    ChangePoints.erase(std::unique(ChangePoints.begin(), ChangePoints.end()),
+                       ChangePoints.end());
+  }
+  size_t Interval = 0;
   uint32_t FirstRejected = 0;
   bool SawRejected = false;
   // A sparse domain (a two-level index table, whose unreached index bytes are
   // simply unused) is bounded by its last reaching value.
   std::optional<uint64_t> LastReaching;
-  for (uint64_t Value = 0; Value <= LastSample; ++Value) {
+  for (uint64_t Value = 0; Value <= LastSample;) {
+    const uint64_t Next = Partitioned ? ChangePoints[++Interval] : Value + 1;
     bool Reaches = true;
     for (const auto &[Expr, TableCondition] : IndexGuards) {
       std::optional<uint64_t> Condition = evaluateGuardExpr(Expr, Value);
@@ -1837,13 +1764,14 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
       Reaches &= ((*Condition != 0) == TableCondition);
     }
     if (Reaches)
-      LastReaching = Value;
+      LastReaching = Next - 1;
     if (!SawRejected && !Reaches) {
       FirstRejected = static_cast<uint32_t>(Value);
       SawRejected = true;
     } else if (SawRejected && Reaches && !AllowSparseDomain) {
       return failSemantic();
     }
+    Value = Next;
   }
   const bool SparseDomain = AllowSparseDomain && SawRejected && LastReaching &&
                             *LastReaching >= FirstRejected &&

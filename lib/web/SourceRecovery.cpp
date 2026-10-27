@@ -14,6 +14,7 @@
 #include "RecoveryParser.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 
 #include <algorithm>
 
@@ -72,7 +73,13 @@ ReadableSource recoverReadableJavaScript(std::string_view ArtifactID,
       if (!Candidate.empty() && (NewLine || L.Syntax == "}")) {
         if (Candidate.back() != '\n' && Candidate.back() != '\r')
           Append("\n");
-        Append(std::string(size_t(std::min<uint64_t>(Depth, 32)) * 2, ' '));
+        Append(std::string(
+            size_t(std::min<uint64_t>(
+                Depth,
+                ::neverd::limits::web::
+                    kSourceRecoveryRecoverReadableJavaScriptMinArgument2)) *
+                2,
+            ' '));
       }
       Append(Text.substr(L.Start, L.End - L.Start));
       At = L.End;

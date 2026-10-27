@@ -80,9 +80,9 @@ struct RegistrationChainInfo {
   /// Frame offset of the current-try-level slot, relative to the established
   /// frame register, when the function's own stores proved it.
   std::optional<int32_t> TryLevelOffset;
-  /// The stores into that slot, in address order.  Empty when the slot could
-  /// not be proven, which leaves the scopes without recovered ranges rather
-  /// than giving them invented ones.
+  /// Byte-scan observations of stores into that slot, in address order.
+  /// These need independent instruction and value proof. C++ register writes
+  /// may be proved by LowIR even when no byte-scan observation is available.
   std::vector<RegistrationTryLevelStore> TryLevelStores;
   /// The level the prologue seeded: -1 for `_except_handler3` and -2 for
   /// `_except_handler4`.  Both mean "no scope is current".

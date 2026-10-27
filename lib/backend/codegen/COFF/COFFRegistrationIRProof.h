@@ -130,12 +130,14 @@ struct SourceSegment {
   const llvm::Instruction *Enter = nullptr;
   const llvm::Instruction *Exit = nullptr;
 };
+struct RegistrationSEHParentExitContract;
 bool matchesSourceOperation(const llvm::Instruction &I, va_t Owner,
                             va_t Address, uint8_t Kind);
 llvm::Expected<std::map<int, SourceSegment>> validateSourceSegments(
     const llvm::Function &Parent, const MedFunc &Source,
     const std::map<CallbackKey, const llvm::Function *> &Callbacks,
     llvm::ArrayRef<const llvm::Function *> Functions,
-    bool ReachedCxxSource = false);
+    bool ReachedCxxSource = false,
+    const RegistrationSEHParentExitContract *ParentExits = nullptr);
 } // namespace neverd::coff_registration
 #endif

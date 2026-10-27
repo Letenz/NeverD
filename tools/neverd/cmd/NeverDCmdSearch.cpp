@@ -12,7 +12,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "../NeverDCLI.h"
+#include "../ResourceLimits.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/WithColor.h"
@@ -28,8 +30,61 @@
 using namespace llvm;
 
 namespace neverd::cli {
+namespace {
+cl::opt<std::string> SearchImmediate(
+    "immediate",
+    cl::desc("Search logical native immediates (signed decimal or 0x hex)"),
+    cl::init(""), cl::sub(SearchCmd));
+cl::opt<std::string> SearchFrom("from",
+                                cl::desc("Exclusive search cursor (hex)"),
+                                cl::init(""), cl::sub(SearchCmd));
+cl::opt<bool> SearchBackward("backward",
+                             cl::desc("Search in descending address order"),
+                             cl::sub(SearchCmd));
+} // namespace
 
 int runSearch(neverd_session_t Sess) {
+  if (!SearchImmediate.empty()) {
+    if (!SearchHex.empty() || !SearchText.empty() || SearchMaxResults < 1 ||
+        SearchMaxResults >
+            ::neverd::limits::cli::kNeverDCmdSearchRunSearchMaxResultsLimit) {
+      WithColor::error()
+          << "--immediate requires one pattern and --max-results in 1..4096\n";
+      return 1;
+    }
+    json::Object Request{{"kind", "immediate"},
+                         {"pattern", SearchImmediate.getValue()},
+                         {"limit", SearchMaxResults.getValue()},
+                         {"backward", bool(SearchBackward)}};
+    if (!SearchFrom.empty()) {
+      const auto From = parseAddrArg(SearchFrom);
+      if (!From) {
+        WithColor::error() << "invalid --from address\n";
+        return 1;
+      }
+      Request["from"] = "0x" + utohexstr(*From);
+    }
+    std::string Text;
+    raw_string_ostream(Text) << json::Value(std::move(Request));
+    // One SDK page builds bounded chunks; continue without changing its cursor.
+    for (;;) {
+      const auto *Reply = neverd_search_page(Sess, Text.c_str());
+      if (!Reply) {
+        WithColor::error() << takeLastError(Sess) << "\n";
+        return 1;
+      }
+      auto Parsed = json::parse(Reply);
+      neverd_free_string(Reply);
+      if (!Parsed) {
+        WithColor::error() << toString(Parsed.takeError()) << "\n";
+        return 1;
+      }
+      if (Parsed->getAsObject()->getBoolean("building").value_or(false))
+        continue;
+      outs() << *Parsed << "\n";
+      return 0;
+    }
+  }
   int MaxRes = static_cast<int>(SearchMaxResults.getValue());
 
   if (!SearchHex.empty()) {
@@ -172,23 +227,44 @@ int runSigs(neverd_session_t Sess, const char *Argv0) {
   if (JsonOutput) {
     outs() << (Json ? Json : "[]") << "\n";
   } else {
-    outs() << format("Found %d signature matches:\n\n", *MatchCount);
+    const char *Headers = neverd_headers_json(Sess);
+    auto HeaderValue = json::parse(Headers ? Headers : "{}");
+    neverd_free_string(Headers);
+    if (HeaderValue) {
+      if (const auto *Root = HeaderValue->getAsObject())
+        if (const auto *Selection = Root->getObject("signature_selection"))
+          outs() << "Signature packs: "
+                 << Selection->getInteger("selected_files").value_or(0)
+                 << " selected, "
+                 << Selection->getInteger("skipped_files").value_or(0)
+                 << " skipped by target metadata\n";
+    } else {
+      consumeError(HeaderValue.takeError());
+    }
+    outs() << format("Found %d signature candidates:\n\n", *MatchCount);
     auto Parsed = json::parse(Json ? Json : "[]");
     if (Parsed) {
       if (auto *Arr = Parsed->getAsArray()) {
-        outs() << format("  %-18s %-40s %s\n", "Address", "Name", "Library");
-        outs() << format("  %-18s %-40s %s\n", "-------", "----", "-------");
+        outs() << format("  %-18s %-12s %-40s %s\n", "Address", "Status",
+                         "Name", "Library");
+        outs() << format("  %-18s %-12s %-40s %s\n", "-------", "------",
+                         "----", "-------");
         for (const auto &Item : *Arr) {
           if (auto *Obj = Item.getAsObject()) {
             auto Addr = Obj->getString("addr").value_or("");
             auto Name = Obj->getString("name").value_or("");
+            auto AutoName = Obj->getString("auto_name").value_or("");
             auto Lib = Obj->getString("library").value_or("");
-            outs() << format("  %-18s %-40s %s\n", Addr.str().c_str(),
-                             Name.str().c_str(), Lib.str().c_str());
+            outs() << format("  %-18s %-12s %-40s %s\n", Addr.str().c_str(),
+                             AutoName.empty() ? "candidate" : "identified",
+                             (AutoName.empty() ? Name : AutoName).str().c_str(),
+                             Lib.str().c_str());
           }
         }
       }
     }
+    outs() << "\nCandidates without independent identity evidence are not "
+              "automatically named.\n";
   }
   if (Json)
     neverd_free_string(Json);

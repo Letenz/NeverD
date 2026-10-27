@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "LLVMScalarLoopRecoveryInternal.h"
 
+#include "neverd/analysis/Limits.h"
+
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Transforms/Utils/Local.h"
 
@@ -73,7 +75,10 @@ bool zeroTrip(Search &S, Function &F, DominatorTree &DT, LoopInfo &LI) {
     SmallVector<BasicBlock *, 8> Cuts;
     if (OuterPre && OuterPre->phis().empty()) {
       unsigned N = 0;
-      for (auto *D = DT.getNode(OuterPre)->getIDom(); D && N++ < 8;
+      for (auto *D = DT.getNode(OuterPre)->getIDom();
+           D &&
+           N++ <
+               ::neverd::limits::analysis::kLLVMScalarLoopRegionsZeroTripNLimit;
            D = D->getIDom())
         if (!pred_empty(D->getBlock()))
           Cuts.push_back(D->getBlock());
@@ -274,7 +279,13 @@ bool rotate(Search &S, Function &F, LoopInfo &LI) {
     // Prefer ordered tests, then equality. An original guard boundary is a
     // separate proposal: extending a wrapped narrow last index plus one need
     // not reconstruct that boundary. Full proof checks both interpretations.
-    for (unsigned Kind = 0; Kind < (GuardLimit ? 6U : 3U); ++Kind) {
+    for (unsigned Kind = 0;
+         Kind < (GuardLimit
+                     ? ::neverd::limits::analysis::
+                           kLLVMScalarLoopRegionsRotateGuardLimitSelected
+                     : ::neverd::limits::analysis::
+                           kLLVMScalarLoopRegionsRotateGuardLimitDefault);
+         ++Kind) {
       Candidate C;
       if (!S.clone(F, C))
         return false;

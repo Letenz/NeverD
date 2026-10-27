@@ -13,6 +13,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <map>
 #include <memory>
@@ -43,6 +44,8 @@ const char *concolicTraceReasonName(ConcolicTraceReason Reason) {
     return "incomplete_outcome";
   case ConcolicTraceReason::InvalidDecisionHistory:
     return "invalid_decision_history";
+  case ConcolicTraceReason::MemorySeedBudgetExceeded:
+    return "memory_seed_budget_exceeded";
   }
   return "?";
 }
@@ -203,9 +206,30 @@ normalizeSeed(llvm::ArrayRef<SymConcreteRegister> Seed,
   return Normalized;
 }
 
+std::optional<std::vector<SymConcreteMemory>>
+normalizeMemory(llvm::ArrayRef<SymConcreteMemory> Memory) {
+  for (const SymConcreteMemory &Range : Memory)
+    if (Range.Bytes.empty() ||
+        Range.Bytes.size() - 1 > UINT64_MAX - Range.Address)
+      return std::nullopt;
+
+  std::vector<SymConcreteMemory> Normalized(Memory.begin(), Memory.end());
+  std::sort(Normalized.begin(), Normalized.end(),
+            [](const auto &Left, const auto &Right) {
+              return Left.Address < Right.Address;
+            });
+  for (size_t I = 1; I < Normalized.size(); ++I) {
+    const auto &Previous = Normalized[I - 1];
+    if (Normalized[I].Address <= Previous.Address + Previous.Bytes.size() - 1)
+      return std::nullopt;
+  }
+  return Normalized;
+}
+
 ExploreOptions traceOptions(const LowIRConcolicOptions &Options,
                             ConcreteShadow &Shadow,
-                            llvm::ArrayRef<SymConcreteRegister> Seed) {
+                            llvm::ArrayRef<SymConcreteRegister> Seed,
+                            llvm::ArrayRef<SymConcreteMemory> Memory) {
   ExploreOptions Result;
   Result.MaxPaths = 1;
   Result.MaxSteps = Options.MaxSteps;
@@ -214,15 +238,17 @@ ExploreOptions traceOptions(const LowIRConcolicOptions &Options,
   Result.ByteOrder = Options.ByteOrder;
   Result.Concolic = &Shadow;
   Result.ConcolicSeed.assign(Seed.begin(), Seed.end());
+  Result.ConcolicMemory.assign(Memory.begin(), Memory.end());
   return Result;
 }
 
 OwnedTrace runTrace(const LowFunc &Func, const LowIRConcolicOptions &Options,
-                    llvm::ArrayRef<SymConcreteRegister> Seed) {
+                    llvm::ArrayRef<SymConcreteRegister> Seed,
+                    llvm::ArrayRef<SymConcreteMemory> Memory) {
   OwnedTrace Result;
   Result.Context = std::make_unique<SymContext>();
   SymExecConcreteShadow Shadow;
-  ExploreOptions Explore = traceOptions(Options, Shadow, Seed);
+  ExploreOptions Explore = traceOptions(Options, Shadow, Seed, Memory);
   Result.Exploration = explorePathsDetailed(*Result.Context, Func, Explore);
   return Result;
 }
@@ -268,22 +294,28 @@ SymRef buildQuery(SymContext &Ctx, const SymPath &Path,
 
 } // namespace
 
-detail::ModelProjection detail::projectRegisterModel(
+detail::ModelProjection detail::projectInputModel(
     const SymContext &Ctx, SymRef Query, const solver::BitVectorModel &Model,
-    llvm::ArrayRef<SymConcreteRegister> Baseline, llvm::endianness Order) {
+    llvm::ArrayRef<SymConcreteRegister> Baseline, llvm::endianness Order,
+    llvm::ArrayRef<SymConcreteMemory> Memory) {
   ModelProjection Result;
   if (!Query.isValid() || Ctx.width(Query) != 1) {
     Result.Reason = ConcolicProjectionReason::InvalidQuery;
     return Result;
   }
 
-  ByteMap CandidateBytes;
+  // Register offsets and guest addresses name independent byte banks. Equal
+  // numeric offsets must neither conflict nor overwrite one another.
+  std::array<ByteMap, 2> CandidateBytes;
   for (const SymConcreteRegister &Range : Baseline)
-    unpack(Range.Value, Range.Bytes, Order, Range.Offset, CandidateBytes);
+    unpack(Range.Value, Range.Bytes, Order, Range.Offset, CandidateBytes[0]);
+  for (const SymConcreteMemory &Range : Memory)
+    for (size_t I = 0; I < Range.Bytes.size(); ++I)
+      CandidateBytes[1][Range.Address + I] = Range.Bytes[I];
 
   llvm::SmallVector<uint32_t, 8> Vars;
   Ctx.collectVars(Query, Vars);
-  ByteMap ProjectedOwners;
+  std::array<ByteMap, 2> ProjectedOwners;
   for (uint32_t VarId : Vars) {
     const SymVarInfo &Info = Ctx.varInfo(VarId);
     if (Info.Fresh) {
@@ -295,7 +327,8 @@ detail::ModelProjection detail::projectRegisterModel(
       return Result;
     }
     const SymInputOrigin &Origin = *Info.InputOrigin;
-    if (Origin.Kind != SymInputKind::Register) {
+    if (Origin.Kind != SymInputKind::Register &&
+        Origin.Kind != SymInputKind::AbsoluteMemory) {
       Result.Reason = ConcolicProjectionReason::UnsupportedInputKind;
       return Result;
     }
@@ -313,32 +346,25 @@ detail::ModelProjection detail::projectRegisterModel(
       Result.Reason = ConcolicProjectionReason::MissingModelValue;
       return Result;
     }
+    if (Value->getBitWidth() != Info.Width) {
+      Result.Reason = ConcolicProjectionReason::InvalidInputWidth;
+      return Result;
+    }
+    const size_t Bank = Origin.Kind == SymInputKind::Register ? 0 : 1;
     for (uint16_t I = 0; I < Origin.Bytes; ++I) {
       const uint64_t Byte = Origin.Offset + I;
-      if (ProjectedOwners.count(Byte) != 0) {
+      if (ProjectedOwners[Bank].count(Byte) != 0) {
         Result.Reason = ConcolicProjectionReason::OverlappingInputOrigins;
         return Result;
       }
-      ProjectedOwners[Byte] = 0;
-      if (CandidateBytes.count(Byte) == 0) {
+      ProjectedOwners[Bank][Byte] = 0;
+      if (CandidateBytes[Bank].count(Byte) == 0) {
         Result.Reason = ConcolicProjectionReason::MissingBaselineByte;
         return Result;
       }
     }
     unpack(Value->getZExtValue(), Origin.Bytes, Order, Origin.Offset,
-           CandidateBytes);
-  }
-
-  Result.Seed.reserve(Baseline.size());
-  for (const SymConcreteRegister &Range : Baseline) {
-    std::optional<uint64_t> Value =
-        pack(CandidateBytes, Range.Offset, Range.Bytes, Order);
-    if (!Value) {
-      Result.Reason = ConcolicProjectionReason::MissingBaselineByte;
-      Result.Seed.clear();
-      return Result;
-    }
-    Result.Seed.push_back({Range.Offset, Range.Bytes, *Value});
+           CandidateBytes[Bank]);
   }
 
   // Reconstruct every query variable from the candidate bytes. Do not use
@@ -350,19 +376,35 @@ detail::ModelProjection detail::projectRegisterModel(
     VarValues.emplace_back(Ctx.varInfo(Id).Width, 0);
   for (uint32_t VarId : Vars) {
     const SymInputOrigin &Origin = *Ctx.varInfo(VarId).InputOrigin;
+    const size_t Bank = Origin.Kind == SymInputKind::Register ? 0 : 1;
     std::optional<uint64_t> Value =
-        pack(CandidateBytes, Origin.Offset, Origin.Bytes, Order);
+        pack(CandidateBytes[Bank], Origin.Offset, Origin.Bytes, Order);
     if (!Value) {
       Result.Reason = ConcolicProjectionReason::MissingBaselineByte;
-      Result.Seed.clear();
       return Result;
     }
     VarValues[VarId] = llvm::APInt(Ctx.varInfo(VarId).Width, *Value);
   }
   if (Ctx.eval(Query, VarValues).isZero()) {
     Result.Reason = ConcolicProjectionReason::CandidateDoesNotSatisfyQuery;
-    Result.Seed.clear();
+    return Result;
   }
+
+  Result.Seed.reserve(Baseline.size());
+  for (const SymConcreteRegister &Range : Baseline) {
+    std::optional<uint64_t> Value =
+        pack(CandidateBytes[0], Range.Offset, Range.Bytes, Order);
+    if (!Value) {
+      Result.Reason = ConcolicProjectionReason::MissingBaselineByte;
+      Result.Seed.clear();
+      return Result;
+    }
+    Result.Seed.push_back({Range.Offset, Range.Bytes, *Value});
+  }
+  Result.MemorySeed.assign(Memory.begin(), Memory.end());
+  for (SymConcreteMemory &Range : Result.MemorySeed)
+    for (size_t I = 0; I < Range.Bytes.size(); ++I)
+      Range.Bytes[I] = CandidateBytes[1].at(Range.Address + I);
   return Result;
 }
 
@@ -405,8 +447,9 @@ namespace {
 ConcolicReplayReason
 verifyReplay(const LowFunc &Func, const LowIRConcolicOptions &Options,
              llvm::ArrayRef<LowIRConcolicDecision> Original, size_t TargetIndex,
-             llvm::ArrayRef<SymConcreteRegister> Seed) {
-  OwnedTrace Replay = runTrace(Func, Options, Seed);
+             llvm::ArrayRef<SymConcreteRegister> Seed,
+             llvm::ArrayRef<SymConcreteMemory> Memory) {
+  OwnedTrace Replay = runTrace(Func, Options, Seed, Memory);
   if (Replay.Exploration.Paths.empty())
     return ConcolicReplayReason::NoReplayTrace;
 
@@ -440,15 +483,28 @@ bool equalSeed(llvm::ArrayRef<SymConcreteRegister> Left,
   return true;
 }
 
+bool equalMemory(llvm::ArrayRef<SymConcreteMemory> Left,
+                 llvm::ArrayRef<SymConcreteMemory> Right) {
+  if (Left.size() != Right.size())
+    return false;
+  for (size_t I = 0; I < Left.size(); ++I)
+    if (Left[I].Address != Right[I].Address || Left[I].Bytes != Right[I].Bytes)
+      return false;
+  return true;
+}
+
 } // namespace
 
 detail::CandidatePublication detail::publishReplayVerifiedSeed(
     std::vector<LowIRConcolicCandidate> &Published,
-    std::vector<SymConcreteRegister> Seed, unsigned MaxCandidates) {
-  auto Existing = std::find_if(Published.begin(), Published.end(),
-                               [&](const LowIRConcolicCandidate &Candidate) {
-                                 return equalSeed(Candidate.Seed, Seed);
-                               });
+    std::vector<SymConcreteRegister> Seed, unsigned MaxCandidates,
+    std::vector<SymConcreteMemory> Memory) {
+  auto Existing =
+      std::find_if(Published.begin(), Published.end(),
+                   [&](const LowIRConcolicCandidate &Candidate) {
+                     return equalSeed(Candidate.Seed, Seed) &&
+                            equalMemory(Candidate.MemorySeed, Memory);
+                   });
   if (Existing != Published.end())
     return {ConcolicFlipStatus::VerifiedDuplicate,
             static_cast<size_t>(Existing - Published.begin())};
@@ -456,7 +512,7 @@ detail::CandidatePublication detail::publishReplayVerifiedSeed(
     return {ConcolicFlipStatus::CandidateBudgetExceeded, std::nullopt};
 
   const size_t Index = Published.size();
-  Published.push_back({std::move(Seed)});
+  Published.push_back({std::move(Seed), std::move(Memory)});
   return {ConcolicFlipStatus::Verified, Index};
 }
 
@@ -479,16 +535,29 @@ LowIRConcolicReport runLowIRConcolic(const LowFunc &Func,
   Report.FunctionEntry = Func.Entry;
   Report.FunctionName = Func.Name;
   Report.LiftComplete = Func.hasCompleteInstructionLift();
+  Report.Version = Options.InitialMemory.empty() ? 1 : 2;
+
+  size_t MemoryBytes = 0;
+  for (const SymConcreteMemory &Range : Options.InitialMemory) {
+    if (Range.Bytes.size() > Options.MaxMemorySeedBytes - MemoryBytes) {
+      Report.TraceReason = ConcolicTraceReason::MemorySeedBudgetExceeded;
+      return Report;
+    }
+    MemoryBytes += Range.Bytes.size();
+  }
 
   std::optional<std::vector<SymConcreteRegister>> Initial =
       normalizeSeed(Options.InitialSeed, Options.ByteOrder);
-  if (!Initial) {
+  std::optional<std::vector<SymConcreteMemory>> InitialMemory =
+      normalizeMemory(Options.InitialMemory);
+  if (!Initial || !InitialMemory) {
     Report.TraceReason = ConcolicTraceReason::InvalidInitialSeed;
     return Report;
   }
   Report.InitialSeed = *Initial;
+  Report.InitialMemory = *InitialMemory;
 
-  OwnedTrace Trace = runTrace(Func, Options, *Initial);
+  OwnedTrace Trace = runTrace(Func, Options, *Initial, *InitialMemory);
   if (Trace.Exploration.Paths.empty()) {
     Report.TraceReason = ConcolicTraceReason::NoTrace;
     return Report;
@@ -595,21 +664,23 @@ LowIRConcolicReport runLowIRConcolic(const LowFunc &Func,
         Flip.Status = ConcolicFlipStatus::InvalidQuery;
       } else {
         const SymRef Query = buildQuery(Ctx, Path, Decision);
-        detail::ModelProjection Candidate = detail::projectRegisterModel(
-            Ctx, Query, Solver.model(), *Initial, Options.ByteOrder);
+        detail::ModelProjection Candidate =
+            detail::projectInputModel(Ctx, Query, Solver.model(), *Initial,
+                                      Options.ByteOrder, *InitialMemory);
         Flip.ProjectionReason = Candidate.Reason;
         if (Candidate.Reason != ConcolicProjectionReason::None) {
           Flip.Status = ConcolicFlipStatus::ProjectionRejected;
         } else {
-          Flip.ReplayReason = verifyReplay(Func, Options, Report.Decisions,
-                                           DecisionIndex, Candidate.Seed);
+          Flip.ReplayReason =
+              verifyReplay(Func, Options, Report.Decisions, DecisionIndex,
+                           Candidate.Seed, Candidate.MemorySeed);
           if (Flip.ReplayReason != ConcolicReplayReason::None) {
             Flip.Status = ConcolicFlipStatus::ReplayRejected;
           } else {
             detail::CandidatePublication Publication =
-                detail::publishReplayVerifiedSeed(Report.Candidates,
-                                                  std::move(Candidate.Seed),
-                                                  Options.MaxCandidates);
+                detail::publishReplayVerifiedSeed(
+                    Report.Candidates, std::move(Candidate.Seed),
+                    Options.MaxCandidates, std::move(Candidate.MemorySeed));
             Flip.Status = Publication.Status;
             Flip.CandidateIndex = Publication.CandidateIndex;
             if (Publication.Status ==

@@ -11,6 +11,7 @@
 #include "neverd/loader/COFF/COFFDelphiEH.h"
 #include "neverd/loader/DWARF/LSDA.h"
 #include "neverd/loader/ExceptionInfo.h"
+#include "neverd/loader/Limits.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -92,12 +93,6 @@ bool parseMinGWLSDA(ExceptionFunction &F, const BinaryImage &Img) {
 std::set<va_t> findUnnamedMinGWPersonalities(
     BinaryImage &Img,
     std::unordered_map<va_t, std::pair<va_t, std::string>> &PersonalityCache) {
-  // Most frames installing the routine cannot prove anything about it: a scope
-  // with destructors and no handler is cleanup-only, and at `-O0` those come
-  // first.  So an address is retried on later frames rather than written off by
-  // the first one that could not settle it, and the cap is what keeps an
-  // address no frame can prove from costing one decode per frame.
-  constexpr unsigned MaxProofAttempts = 32;
   std::set<va_t> Proven;
   std::map<va_t, unsigned> Attempts;
   auto Resolve = [&](va_t VA) -> const std::pair<va_t, std::string> & {
@@ -112,7 +107,7 @@ std::set<va_t> findUnnamedMinGWPersonalities(
     if (Proven.count(F.PersonalityVA))
       continue;
     unsigned &Tries = Attempts[F.PersonalityVA];
-    if (Tries >= MaxProofAttempts)
+    if (Tries >= ::neverd::limits::loader::kCOFFExceptionMaxProofAttempts)
       continue;
     ++Tries;
     if (detail::classifyPersonality(Resolve(F.PersonalityVA).second) !=
@@ -179,17 +174,25 @@ void ensureExceptionHandlers(BinaryImage &Img, const std::set<va_t> &Entries) {
   // is a GS wrapper: every frame that installs an unnamed handler asks, and a
   // stripped image's CxxFrameHandler3 is one that thousands of frames share.
   std::unordered_map<va_t, std::optional<ExceptionPersonality>> GSWrapperBase;
+  // The loop below acts only on records whose tables are still undecoded;
+  // after a full load there are none, and the image-wide scans that serve
+  // their decoding would be built for nothing on every call.
+  const bool Undecoded = llvm::any_of(
+      Img.ExceptionMetadata.Functions,
+      [](const ExceptionFunction &F) { return !F.LanguageTablesResolved; });
   const std::set<va_t> UnnamedMinGW =
-      findUnnamedMinGWPersonalities(Img, PersonalityCache);
+      Undecoded ? findUnnamedMinGWPersonalities(Img, PersonalityCache)
+                : std::set<va_t>();
   const bool DecodeAll = Wanted.empty();
   detail::CxxFuncInfoGroups CxxGroups;
   const detail::CxxFuncInfoGroups *CxxGroupPtr = nullptr;
-  if (DecodeAll) {
+  if (DecodeAll && Undecoded) {
     CxxGroups = detail::buildCxxFuncInfoGroups(Img);
     CxxGroupPtr = &CxxGroups;
   }
   const detail::PrimaryFunctionByBegin PrimaryByBegin =
-      detail::indexPrimaryFunctionsByBegin(Img);
+      Undecoded ? detail::indexPrimaryFunctionsByBegin(Img)
+                : detail::PrimaryFunctionByBegin();
 
   bool Progress = true;
   while (Progress) {
@@ -403,6 +406,17 @@ void ensureExceptionHandlers(BinaryImage &Img, const std::set<va_t> &Entries) {
     }
   }
   Img.ExceptionMetadata.rebuildIndex();
+}
+
+ExceptionHandlerState exceptionHandlerState(const BinaryImage &Img) {
+  ExceptionHandlerState State;
+  State.Functions = Img.ExceptionMetadata.Functions.size();
+  for (const ExceptionFunction &F : Img.ExceptionMetadata.Functions)
+    State.ResolvedPersonalities += F.PersonalityVA && F.LanguageTablesResolved;
+  State.KnownCodeRanges = Img.KnownCodeRanges.size();
+  State.Symbols = Img.Symbols.size();
+  State.ParseStatus = Img.ExceptionMetadata.ParseStatus;
+  return State;
 }
 
 void resolveExceptionHandlers(BinaryImage &Img) {

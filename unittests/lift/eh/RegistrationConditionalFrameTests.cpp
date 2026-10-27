@@ -14,15 +14,21 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/X86/X86RegistrationSEHCall.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/COFF/COFFLoader.h"
+#include "neverd/pipeline/Pipeline.h"
 
 using namespace neverd;
 
 #ifdef NEVERD_BINARY_CORPUS_ROOT
 namespace {
-auto loadXCPT4() {
-  return COFFLoader().load(
+auto loadXCPT4(bool Selected = false) {
+  COFFLoader Loader;
+  if (Selected)
+    Loader.restrictFunctions({0x401580});
+  return Loader.load(
       std::string(NEVERD_BINARY_CORPUS_ROOT) +
       "/corpus/windows-eh/msvc/vs2019/x86/native/no-gs/o0/windows-seh-tests/"
       "xcpt4-msvc-x86-native-no-gs-o0.exe");
@@ -48,11 +54,66 @@ TEST(RegistrationConditionalFrame,
   EXPECT_TRUE(States.CallbackStatesComplete);
   EXPECT_TRUE(States.RegistrationLifetimeComplete);
   EXPECT_TRUE(States.SEHInvocationExitsComplete);
-  EXPECT_TRUE(States.HasEH3JumpCaptures);
+  EXPECT_TRUE(States.HasSEHJumpCaptures);
   EXPECT_TRUE(States.SEHJumpResumptionsComplete);
   EXPECT_FALSE(States.SEHInvocationExits.empty());
   EXPECT_FALSE(States.SEHJumpResumptions.empty());
   EXPECT_LE(Work, limits::kMaxRegistrationEHStateWork);
+}
+
+TEST(RegistrationConditionalFrame,
+     XCPT4SelectedFunctionRetainsItsScalarFilterRange) {
+  auto Image = loadXCPT4(true);
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  size_t Work = 0;
+  RegistrationCallCalleeIndex Index(*Image, &Work);
+  CFGBuilder Builder;
+  Builder.setRegistrationCalleeIndex(&Index);
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(*Image));
+  const auto Function = Builder.build(*Image, Dec, 0x401580, "main");
+  ASSERT_TRUE(Function.RegistrationStates);
+  const auto &States = *Function.RegistrationStates;
+  for (const auto &Diagnostic : States.Diagnostics)
+    ADD_FAILURE() << Diagnostic;
+  ASSERT_TRUE(States.Complete);
+  const auto Ranges =
+      registrationRangesWhere(States, [](int32_t Level) { return Level == 1; });
+  ASSERT_TRUE(Ranges);
+  ASSERT_EQ(Ranges->size(), 1u);
+  EXPECT_LE(Work, limits::kMaxRegistrationEHStateWork);
+  const auto Med =
+      LowToMedConverter().convert(Function, Arch::X86, BinaryFormat::COFF);
+  EXPECT_FALSE(Med.SkippedSSA);
+  EXPECT_TRUE(getRegistrationSEHReturns(Med))
+      << "native parent chain: " << States.SEHParentChainComplete;
+}
+
+TEST(RegistrationConditionalFrame,
+     XCPT4SourcePipelineRetainsItsScalarFilterRange) {
+  auto Image = loadXCPT4(true);
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  llvm::LLVMContext Context;
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  Options.OnlyFunctionEntries.insert(0x401580);
+  const auto Result = Pipeline().run(*Image, Context, Options);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_EQ(Result.LowFuncs.size(), 1u);
+  ASSERT_EQ(Result.MedFuncs.size(), 1u);
+  // Pipeline function discovery exposes additional call targets to the
+  // shared proof budget. A standalone CFGBuilder run missed this regression.
+  for (const auto *States : {&Result.LowFuncs.front().RegistrationStates,
+                             &Result.MedFuncs.front().RegistrationStates}) {
+    ASSERT_TRUE(*States);
+    for (const auto &Diagnostic : (*States)->Diagnostics)
+      ADD_FAILURE() << Diagnostic;
+    EXPECT_TRUE((*States)->Complete);
+    const auto Ranges = registrationRangesWhere(
+        **States, [](int32_t Level) { return Level == 1; });
+    ASSERT_TRUE(Ranges);
+    EXPECT_EQ(Ranges->size(), 1u);
+  }
 }
 
 TEST(RegistrationConditionalFrame, XCPT4HelperChecksItsBoundIncomingCounter) {
@@ -214,15 +275,15 @@ TEST(RegistrationConditionalFrame, OriginalHelperResumesItsBorrowedCapture) {
     Parent.store(-308, 4, FrameValue::frame(-288));
     Parent.store(-304, 4, FrameValue::frame(-28));
     Parent.store(-28, 4, FrameValue::constant(1));
-    EH3JumpCapture Capture;
+    SEHJumpCapture Capture;
     Capture.Call = 0x4025fe;
     Capture.ReturnPC = 0x402603;
     Capture.UnwindTarget = 0x407c78;
     Capture.BufferOffset = -288;
     Capture.StackOffset = -316;
     Capture.Nonvolatile[0] = FrameValue::frame(0);
-    storeEH3JumpCapture(Parent, Capture);
-    std::map<int32_t, EH3JumpCapture> Captures{{-288, Capture}};
+    storeSEHJumpCapture(Parent, Capture);
+    std::map<int32_t, SEHJumpCapture> Captures{{-288, Capture}};
     size_t Work = 0;
     if (Mutation == 1)
       Captures.clear();

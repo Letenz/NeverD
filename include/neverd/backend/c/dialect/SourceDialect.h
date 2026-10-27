@@ -23,13 +23,18 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
 namespace neverd {
 
 struct CSourceName;
+namespace types {
+class TypeLibrary;
+}
 
 enum class SourceDialect : uint8_t {
 #define NEVERD_SOURCE_DIALECT(Id, Key, Display) Id,
@@ -60,12 +65,47 @@ SourceDialect sourceDialectOfFunction(
     llvm::StringRef Symbol, bool Named, const LanguageRuntimeInfo &Language,
     SourceLanguageRuntime HandlerRuntime = SourceLanguageRuntime::Unknown);
 
+/// The program's types a unit's C defines (CSourceMap::LocalTypes), as the
+/// dialect's language defines them: the text that stands for those bytes of
+/// the C, and how code reaches each member of each record the text defines,
+/// by the record's and the member's C names.
+struct SourceDialectLocalTypes {
+  size_t CBegin = 0;
+  size_t CEnd = 0;
+  std::string Text;
+  struct Hop {
+    std::string Name;
+    /// A method that returns a pointer to the member.
+    bool Accessor = false;
+  };
+  /// The hops to a member, its own last.  A bit-field's lead to the record
+  /// whose methods read and write it, Getter and Setter.
+  struct Path {
+    std::vector<Hop> Hops;
+    std::string Getter, Setter;
+
+    bool bitField() const { return !Getter.empty() && !Setter.empty(); }
+  };
+  std::map<std::string, std::map<std::string, Path>> Members;
+  /// The records the text defines without members, as it only points to
+  /// them.
+  std::set<std::string> Opaque;
+};
+
 struct SourceDialectOptions {
   SourceDialect Dialect = SourceDialect::C;
   Arch TheArch = Arch::X64;
   BinaryFormat Format = BinaryFormat::ELF;
   /// The names the C text spells, from CSourceMap::Names.
   llvm::ArrayRef<CSourceName> Names;
+  /// Target header types joined to the program's local types. The reader
+  /// obtains declarations of referenced header types from this library;
+  /// definitions in the emitted C remain authoritative.
+  const types::TypeLibrary *Types = nullptr;
+  /// Program types the emitter proved are supplied by matching headers.
+  llvm::ArrayRef<std::string> HeaderTypes;
+  /// Rust and Go: the program's types, as the language defines them.
+  std::optional<SourceDialectLocalTypes> LocalTypes;
 };
 
 /// A statement or declaration of the dialect text and the C bytes it spells.

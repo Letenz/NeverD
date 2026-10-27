@@ -6,6 +6,9 @@
 
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
 
+#include "ELFLoaderDetail.h"
+
+#include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/object/ELFLayout.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
@@ -149,8 +152,9 @@ std::map<va_t, size_t> findARMPLTVeneers(const BinaryImage &Img) {
 }
 
 size_t recordARMPLTVeneers(BinaryImage &Img) {
-  if (!isSingleInstructionMode(Img.Mode))
-    return 0;
+  // A mixed ARM/Thumb image pairs its veneers too: the PLT is ARM code
+  // whatever the rest is, findARMPLTVeneers reads only ARM encodings, and a
+  // stub's import identity does not depend on the callers' instruction set.
   size_t Paired = 0;
   for (const auto &[VA, Import] : findARMPLTVeneers(Img))
     if (Img.recordImportStub(VA, Import))
@@ -184,6 +188,7 @@ void recordRuntimePointerArray(va_t Addr, uint64_t Size, std::vector<va_t> &Out,
     va_t Target = static_cast<va_t>(readPtr(P, Img.is64Bit()));
     if (Target == 0)
       continue;
+    recordARMCodePointerMode(Img, Target, ARMCodePointerUse::Called);
     Target = normalizeELFFunctionAddress(Target, Img);
     if (!Img.recordRuntimeFunction(Target))
       continue;
@@ -283,15 +288,8 @@ void parseDynamic(const llvm::object::ELFFile<ELFT> &ELF,
       !rangeInBounds(DynamicSH.sh_offset, DynamicSH.sh_size, Size))
     return;
 
-  llvm::StringRef DynStrTab;
-  if (DynamicSH.sh_link != 0 && DynamicSH.sh_link < Sections.size()) {
-    const typename ELFT::Shdr *StrSH = &Sections[DynamicSH.sh_link];
-    auto TabOr = ELF.getStringTable(*StrSH);
-    if (TabOr)
-      DynStrTab = *TabOr;
-    else
-      llvm::consumeError(TabOr.takeError());
-  }
+  const auto DynStrTab =
+      detail::getLinkedStringTable<ELFT>(ELF, Sections, DynamicSH);
 
   struct DynEntry {
     int64_t Tag;
@@ -353,10 +351,12 @@ void parseDynamic(const llvm::object::ELFFile<ELFT> &ELF,
     case DT_INIT:
       Img.DynInfo.InitAddr = normalizeELFFunctionAddress(E.Val, Img);
       Img.recordRuntimeFunction(Img.DynInfo.InitAddr);
+      recordARMCodePointerMode(Img, E.Val, ARMCodePointerUse::Called);
       break;
     case DT_FINI:
       Img.DynInfo.FiniAddr = normalizeELFFunctionAddress(E.Val, Img);
       Img.recordRuntimeFunction(Img.DynInfo.FiniAddr);
+      recordARMCodePointerMode(Img, E.Val, ARMCodePointerUse::Called);
       break;
     case DT_PREINIT_ARRAY:
       recordRuntimePointerArray(E.Val, FindVal(DT_PREINIT_ARRAYSZ),
@@ -415,13 +415,8 @@ void parsePLTImports(const llvm::object::ELFFile<ELFT> &ELF,
     }
   }
 
-  if (DynSymSH) {
-    auto TabOr = ELF.getStringTableForSymtab(*DynSymSH, Sections);
-    if (TabOr)
-      DynStr = *TabOr;
-    else
-      llvm::consumeError(TabOr.takeError());
-  }
+  if (DynSymSH)
+    DynStr = detail::getLinkedStringTable<ELFT>(ELF, Sections, *DynSymSH);
 
   if (!DynSymSH || DynStr.empty() || !RelPltSH || RelPltSH->sh_entsize == 0)
     return;
@@ -584,6 +579,38 @@ void parseNotes(const llvm::object::ELFFile<ELFT> &ELF, const uint8_t *Data,
         Img.DynInfo.PDBPath = (kBuildIdPrefix + BuildId).str();
         LLVM_DEBUG(llvm::dbgs() << "elf: build-id = " << BuildId << "\n");
       }
+      if (NoteNameRef == elf_notes::GnuOwner && NH.Type == NT_GNU_ABI_TAG &&
+          NH.DescSz == 4 * sizeof(uint32_t) && Img.ELFMetadata) {
+        const uint8_t *Desc =
+            P + sizeof(ELFNoteHeader) + static_cast<size_t>(NameAlign);
+        const uint32_t System = uint32_t(Desc[0]) | uint32_t(Desc[1]) << 8 |
+                                uint32_t(Desc[2]) << 16 |
+                                uint32_t(Desc[3]) << 24;
+        auto &Metadata = *Img.ELFMetadata;
+        Metadata.ConflictingGNUABISystems |=
+            Metadata.GNUABISystem && *Metadata.GNUABISystem != System;
+        Metadata.GNUABISystem = System;
+      }
+      // The NDK's identification note leads with the API level.
+      if (NoteNameRef == elf_notes::AndroidOwner &&
+          NH.Type == elf_notes::AndroidIdent && NH.DescSz >= 4 &&
+          Img.ELFMetadata) {
+        const uint8_t *Desc =
+            P + sizeof(ELFNoteHeader) + static_cast<size_t>(NameAlign);
+        Img.ELFMetadata->AndroidApiLevel =
+            uint32_t(Desc[0]) | uint32_t(Desc[1]) << 8 |
+            uint32_t(Desc[2]) << 16 | uint32_t(Desc[3]) << 24;
+      }
+      // FreeBSD's ABI tag names the system version the image was built for.
+      if (NoteNameRef == elf_notes::FreeBSDOwner &&
+          NH.Type == elf_notes::FreeBSDABITag && NH.DescSz >= 4 &&
+          Img.ELFMetadata) {
+        const uint8_t *Desc =
+            P + sizeof(ELFNoteHeader) + static_cast<size_t>(NameAlign);
+        Img.ELFMetadata->FreeBSDVersion =
+            uint32_t(Desc[0]) | uint32_t(Desc[1]) << 8 |
+            uint32_t(Desc[2]) << 16 | uint32_t(Desc[3]) << 24;
+      }
 
       P += static_cast<size_t>(TotalSize);
     }
@@ -631,4 +658,26 @@ template void parseNotes<llvm::object::ELF64LE>(
     size_t, BinaryImage &);
 
 } // namespace elf_loader
+} // namespace neverd
+
+namespace neverd {
+
+std::optional<va_t> BinaryImage::linkedI386GlobalOffsetTable() const {
+  if (Arch != Arch::X86 || getPointerSize() != 4 || !isELF() || IsRelocatable)
+    return std::nullopt;
+  std::optional<va_t> GOT;
+  if (DynInfo.PltGotAddr != 0)
+    GOT = DynInfo.PltGotAddr;
+  // A static or unstripped image may name the table itself.  Two records
+  // that disagree leave the GOT address unknown.
+  if (const Symbol *Sym = findSymbol("_GLOBAL_OFFSET_TABLE_")) {
+    if (GOT && *GOT != Sym->Addr)
+      return std::nullopt;
+    GOT = Sym->Addr;
+  }
+  if (!GOT || !getSegmentFor(*GOT))
+    return std::nullopt;
+  return GOT;
+}
+
 } // namespace neverd

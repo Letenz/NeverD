@@ -23,7 +23,7 @@ struct LowOp;
 namespace registration_state {
 
 struct JumpRuntimeBinding {
-  enum class Kind { Capture, Resume, EH3Unwind } Routine;
+  enum class Kind { Capture, Resume, EH3Unwind, EH4Unwind } Routine;
   va_t Target = InvalidVA;
   va_t ImportSlot = InvalidVA;
   bool Indirect = false;
@@ -43,7 +43,7 @@ checkedJumpRuntimeCall(const BinaryImage &Image, const LowFunc &Function,
 
 /// Partition the ordinary fallthrough at an authenticated capture or resume
 /// call. This grants no buffer, frame, resumption or no-return authority.
-bool isEH3JumpRuntimeInstruction(const BinaryImage &Image, va_t Address,
+bool isSEHJumpRuntimeInstruction(const BinaryImage &Image, va_t Address,
                                  uint16_t Size, llvm::ArrayRef<LowOp> Ops);
 
 } // namespace registration_state

@@ -12,7 +12,7 @@
 #include "neverd/ir/RegistrationState.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include <tuple>
 
@@ -128,60 +128,6 @@ TEST(RegistrationState, IndexedFrameAccessesKeepPartialAndUnknownAliases) {
       EXPECT_TRUE(Load(INT32_MAX - 3, 1).MayBeFrame);
     }
   }
-}
-
-LowFunc makeCookieFrame(bool GS = false) {
-  auto F = makeBranchingFrame();
-  auto &EH = *F.ExceptionMetadata;
-  EH.Personality = ExceptionPersonality::ExceptHandler4;
-  EH.Encoding = ExceptionEncoding::X86ScopeTableEH4;
-  auto &Chain = *EH.Registration;
-  Chain.SeededTryLevel = -2;
-  Chain.ScopeTableVA = 0x3000;
-  Chain.EHCookieOffset = -28;
-  Chain.GSCookieOffset = GS ? -36 : -2;
-  Chain.GSCookieXOROffset = GS ? 4 : 0;
-  Chain.HasSecurityCookies = GS;
-  Chain.Scopes.front().EnclosingLevel = -2;
-  Chain.TryLevelStores.back().Level = -2;
-  F.Blocks[2].Ops.back().Inputs[1] = NdVar::cst(uint32_t(-2), 4);
-  auto &Entry = F.Blocks.front();
-  auto Install = Entry.Ops.back();
-  Entry.Ops.pop_back();
-  emitOp(Entry, 0x1000, NdOp::COPY, NdVar::tmp(20, 4),
-         {NdVar::reg(x86reg::RSP, 4)});
-  emitOp(Entry, 0x1000, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
-         {NdVar::reg(x86reg::RSP, 4), NdVar::cst(24, 4)});
-  emitOp(Entry, 0x1000, NdOp::LOAD, NdVar::tmp(21, 4), {NdVar::cst(0x4000, 4)});
-  emitOp(Entry, 0x1000, NdOp::INT_XOR, NdVar::tmp(22, 4),
-         {NdVar::tmp(21, 4), NdVar::cst(0x3000, 4)});
-  auto Store = [&](int32_t Slot, NdVar Value) {
-    emitOp(Entry, 0x1000, NdOp::INT_ADD, NdVar::tmp(24, 4),
-           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(Slot), 4)});
-    emitOp(Entry, 0x1000, NdOp::STORE, {}, {NdVar::tmp(24, 4), Value});
-  };
-  Store(-8, NdVar::tmp(22, 4));
-  emitOp(Entry, 0x1000, NdOp::INT_XOR, NdVar::tmp(23, 4),
-         {NdVar::tmp(21, 4), NdVar::reg(x86reg::RBP, 4)});
-  Store(-28, NdVar::tmp(23, 4));
-  if (GS) {
-    emitOp(Entry, 0x1000, NdOp::INT_ADD, NdVar::tmp(25, 4),
-           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(4, 4)});
-    emitOp(Entry, 0x1000, NdOp::INT_XOR, NdVar::tmp(26, 4),
-           {NdVar::tmp(21, 4), NdVar::tmp(25, 4)});
-    Store(-36, NdVar::tmp(26, 4));
-  }
-  Install.Seq = Entry.Ops.size();
-  Install.Inputs[1] = NdVar::tmp(20, 4);
-  Entry.Ops.push_back(Install);
-  auto &Exit = F.Blocks.back();
-  emitOp(Exit, Exit.StartAddr, NdOp::INT_ADD, NdVar::tmp(30, 4),
-         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-16), 4)});
-  emitOp(Exit, Exit.StartAddr, NdOp::LOAD, NdVar::tmp(31, 4),
-         {NdVar::tmp(30, 4)});
-  emitOp(Exit, Exit.StartAddr, NdOp::STORE, {},
-         {NdVar::cst(0, 4), NdVar::tmp(31, 4)}, NdMemoryAddressSpace::X86FS);
-  return F;
 }
 
 TEST(RegistrationState, EH4CookiesUseTheAuthenticatedImageAndRuntimeFrame) {
@@ -300,6 +246,44 @@ TEST(RegistrationState, EH4CookiesAndScopeEncodingRemainRuntimePrivate) {
   }
 }
 
+TEST(RegistrationState, EH4CallbackScratchCannotAliasCookieStorage) {
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = makeCookieFrame();
+    auto &Block = F.Blocks.emplace_back();
+    Block.Id = 4;
+    Block.StartAddr = 0x1800;
+    Block.EndAddr = 0x1811;
+    emitOp(Block, 0x1800, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
+           {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
+    NdVar Address = NdVar::reg(x86reg::RSP, 4);
+    if (Mutation == 1 || Mutation == 2) {
+      emitOp(Block, 0x1803, NdOp::INT_ADD, NdVar::tmp(40, 4),
+             {NdVar::reg(x86reg::RBP, 4),
+              NdVar::cst(uint32_t(Mutation == 1 ? -28 : -8), 4)});
+      Address = NdVar::tmp(40, 4);
+    } else if (Mutation == 3)
+      Address = NdVar::cst(0x4000, 4);
+    else if (Mutation == 4)
+      Address = NdVar::reg(x86reg::RCX, 4);
+    emitOp(Block, 0x1803, NdOp::STORE, {}, {Address, NdVar::cst(1, 4)});
+    emitOp(Block, 0x180a, NdOp::LOAD, NdVar::reg(x86reg::RAX, 4),
+           {NdVar::reg(x86reg::RSP, 4)});
+    emitOp(Block, 0x180d, NdOp::INT_ADD, NdVar::reg(x86reg::RSP, 4),
+           {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
+    emitOp(Block, 0x1810, NdOp::RETURN, {}, {});
+    Block.InstructionBoundaries = {
+        {0x1800, 3}, {0x1803, 7}, {0x180a, 3}, {0x180d, 3}, {0x1810, 1}};
+    Block.InstructionBoundaries.back().Control = LowInstructionControl::Return;
+    const auto Result = analyzeRegistrationStates(F, 0x4000);
+    EXPECT_EQ(Result.SecurityCookiesComplete, Mutation == 0);
+    if (!Mutation) {
+      EXPECT_TRUE(Result.Complete);
+      EXPECT_TRUE(Result.CallbackStatesComplete);
+    }
+  }
+}
+
 TEST(RegistrationState, IncomingCallerFrameUsesTheFinalCFGValue) {
   for (bool Agree : {false, true}) {
     LowFunc F = makeBranchingFrame();
@@ -327,8 +311,12 @@ TEST(RegistrationState, RetainsBothStatesAtJoin) {
   LowFunc F = makeBranchingFrame();
   auto Result = analyzeRegistrationStates(F);
   ASSERT_TRUE(Result.Complete);
+  // This analysis fixture has decoded extents but no operation indices.
+  // Missing native provenance must not discard its checked state semantics.
+  EXPECT_FALSE(Result.SEHStateStoresComplete);
+  EXPECT_TRUE(Result.SEHStateStores.empty());
   ASSERT_EQ(Result.Blocks.size(), 4u);
-  EXPECT_EQ(Result.Blocks[3].Levels, (std::vector<int32_t>{-1, 0}));
+  EXPECT_EQ(Result.Blocks[3].levels(), (std::vector<int32_t>{-1, 0}));
   EXPECT_FALSE(registrationRangesWhere(
       Result, [](int32_t Level) { return Level == 0; }));
 }
@@ -338,16 +326,16 @@ TEST(RegistrationState, ReplaysLoopBackedges) {
   F.Blocks[3].Succs = {1};
   auto Result = analyzeRegistrationStates(F);
   ASSERT_TRUE(Result.Complete);
-  EXPECT_TRUE(Result.Blocks[0].Levels.empty());
-  EXPECT_EQ(Result.Blocks[1].Levels, (std::vector<int32_t>{-1, 0}));
+  EXPECT_TRUE(Result.Blocks[0].levels().empty());
+  EXPECT_EQ(Result.Blocks[1].levels(), (std::vector<int32_t>{-1, 0}));
 }
 
 TEST(RegistrationState, DoesNotSeedBeforeTheRegistrationIsInstalled) {
   LowFunc F = makeBranchingFrame();
   auto Result = analyzeRegistrationStates(F);
   ASSERT_TRUE(Result.Complete);
-  EXPECT_TRUE(Result.Blocks[0].Levels.empty());
-  EXPECT_EQ(Result.Blocks[1].Levels, (std::vector<int32_t>{-1}));
+  EXPECT_TRUE(Result.Blocks[0].levels().empty());
+  EXPECT_EQ(Result.Blocks[1].levels(), (std::vector<int32_t>{-1}));
 }
 
 TEST(RegistrationState, MissingInstallationBoundaryCannotAuthorizeTheSeed) {
@@ -379,15 +367,15 @@ TEST(RegistrationState, DoesNotApplyStoresFromUnreachableBlocks) {
   F.Blocks[0].Succs = {1};
   auto Result = analyzeRegistrationStates(F);
   ASSERT_TRUE(Result.Complete);
-  EXPECT_TRUE(Result.Blocks[2].Levels.empty());
-  EXPECT_EQ(Result.Blocks[3].Levels, (std::vector<int32_t>{0}));
+  EXPECT_TRUE(Result.Blocks[2].levels().empty());
+  EXPECT_EQ(Result.Blocks[3].levels(), (std::vector<int32_t>{0}));
 }
 
 TEST(RegistrationState, KeepsTheIncomingLevelUntilTheStoreRetires) {
   LowFunc F = makeBranchingFrame();
   auto Result = analyzeRegistrationStates(F);
   ASSERT_TRUE(Result.Complete);
-  EXPECT_EQ(Result.Blocks[1].Levels, (std::vector<int32_t>{-1}));
+  EXPECT_EQ(Result.Blocks[1].levels(), (std::vector<int32_t>{-1}));
 }
 
 TEST(RegistrationState, InvalidInstructionBoundaryCannotAuthorizeAState) {
@@ -462,7 +450,7 @@ TEST(RegistrationState, NarrowCxxStoresPreserveEveryReachingHighByte) {
     auto Result = analyzeRegistrationStates(F);
     ASSERT_TRUE(Result.Complete) << unsigned(Width) << ' ' << First;
     ASSERT_EQ(Result.Blocks.size(), 5u);
-    EXPECT_EQ(Result.Blocks.back().Levels, Expected);
+    EXPECT_EQ(Result.Blocks.back().levels(), Expected);
     EXPECT_FALSE(Result.Blocks.back().Unknown);
   }
 }
@@ -682,7 +670,7 @@ TEST(RegistrationState, InitialActiveSEHScopeRetainsItsFrameSentinel) {
     const auto A = analyzeRegistrationStates(F, EH4 ? 0x4000 : 0);
     ASSERT_TRUE(A.Complete);
     ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
-    EXPECT_EQ(A.Blocks.back().Levels, (std::vector<int32_t>{Outside, 0}));
+    EXPECT_EQ(A.Blocks.back().levels(), (std::vector<int32_t>{Outside, 0}));
     if (EH4)
       EXPECT_TRUE(A.SecurityCookiesComplete);
   }
@@ -699,7 +687,7 @@ TEST(RegistrationState, EmptySEHScopeTableKeepsItsOutsideState) {
     const auto A = analyzeRegistrationStates(F, EH4 ? 0x4000 : 0);
     ASSERT_TRUE(A.Complete);
     ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
-    EXPECT_EQ(A.Blocks.back().Levels, (std::vector<int32_t>{Outside}));
+    EXPECT_EQ(A.Blocks.back().levels(), (std::vector<int32_t>{Outside}));
   }
 }
 
@@ -804,6 +792,166 @@ TEST(RegistrationState, ProjectsInitializedCleanupObjectsAtEveryDispatch) {
     ASSERT_GE(Effect.BlockId, 0);
     EXPECT_EQ(Effect.Range.Begin, F.Blocks[Effect.BlockId].StartAddr);
   }
+}
+
+TEST(RegistrationState, SharedUnwindTailsKeepEachSourceLevelProof) {
+  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = makeCxxObjectCleanup();
+    auto &EH = *F.ExceptionMetadata;
+    EH.Cxx->TryBlocks.clear();
+    EH.Cxx->MaxState = 3;
+    EH.Cxx->UnwindMap.resize(3);
+    EH.Cxx->UnwindMap[1] = {0, 0, CxxUnwindAction::ActionKind::None};
+    EH.Cxx->UnwindMap[2] = {0, 0, CxxUnwindAction::ActionKind::None};
+    F.Blocks[1].Succs = {8, 9};
+    for (unsigned I = 0; I != 2; ++I) {
+      LowBlock Branch;
+      Branch.Id = 8 + I;
+      Branch.StartAddr = 0x1200 + I * 0x20;
+      Branch.EndAddr = Branch.StartAddr + 7;
+      Branch.InstructionBoundaries.push_back({Branch.StartAddr, 7});
+      Branch.Succs = {7};
+      addSlotStore(Branch, I + 1);
+      EH.Registration->TryLevelStores.push_back(
+          {Branch.StartAddr, Branch.EndAddr, int32_t(I + 1)});
+      F.Blocks.push_back(std::move(Branch));
+    }
+    const std::vector Calls{objectLeafContract()};
+    std::vector Cleanups{objectCleanupContract()};
+    if (Mutation == 1)
+      Cleanups.clear();
+    if (Mutation == 2)
+      Cleanups[0].Calls[0].Leaf.ECXReads[0].End = 8;
+    const auto A = analyzeRegistrationStates(F, 0, 0, &Calls, &Cleanups);
+    ASSERT_TRUE(A.Complete);
+    EXPECT_EQ(A.CleanupFrameEffectsComplete, Mutation == 0);
+    std::set<int32_t> Levels;
+    for (const auto &Effect : A.CleanupFrameEffects)
+      if (Effect.BlockId == 7) {
+        EXPECT_EQ(Effect.ActionState, 0u);
+        EXPECT_EQ(Effect.FrameReads,
+                  (std::vector<RegistrationObjectExtent>{{-24, -20}}));
+        Levels.insert(Effect.DispatchLevel);
+      }
+    EXPECT_EQ(Levels,
+              Mutation == 0 ? (std::set<int32_t>{1, 2}) : std::set<int32_t>{});
+  }
+}
+
+TEST(RegistrationState, UnknownUnwindStateVisitsEachSharedCallbackTail) {
+  for (bool CheckCleanups : {false, true})
+    for (bool ReverseBlocks : {false, true})
+      for (unsigned BodyBlocks : {0u, 256u, 2048u}) {
+        SCOPED_TRACE(::testing::Message()
+                     << CheckCleanups << "/" << ReverseBlocks << "/"
+                     << BodyBlocks);
+        auto F = makeNarrowCxxStateFrame(4, 0, 0, 0);
+        auto &Cxx = *F.ExceptionMetadata->Cxx;
+        Cxx.MaxState = limits::kMaxRegistrationEHRecords;
+        Cxx.UnwindMap.clear();
+        for (uint32_t I = 0; I != Cxx.MaxState; ++I)
+          Cxx.UnwindMap.push_back(
+              {int32_t(I) - 1, 0, CxxUnwindAction::ActionKind::None});
+        // Distinct callback roots occur in suffixes shared by many levels.
+        Cxx.UnwindMap[0].ActionVA = 0x1800;
+        Cxx.UnwindMap[0].Kind = CxxUnwindAction::ActionKind::Direct;
+        Cxx.UnwindMap[2048].ActionVA = 0x1810;
+        Cxx.UnwindMap[2048].Kind = CxxUnwindAction::ActionKind::Direct;
+        // This unproved state value must remain unknown. Its conservative
+        // callback roots are still required, without enumerating every shared
+        // unwind suffix once per possible originating level.
+        F.Blocks[3].Ops.back().Inputs[1] = NdVar::reg(x86reg::RAX, 4);
+        for (unsigned I = 0; I != 2; ++I) {
+          LowBlock Callback;
+          Callback.Id = 5 + I;
+          Callback.StartAddr = 0x1800 + I * 0x10;
+          Callback.EndAddr = Callback.StartAddr + 1;
+          Callback.InstructionBoundaries.push_back({Callback.StartAddr, 1});
+          F.Blocks.push_back(std::move(Callback));
+        }
+        // The unknown state can persist through a large ordinary body. Every
+        // point contributes its own frame snapshot to the same callback roots;
+        // the immutable unwind graph must not consume the budget again at each
+        // point. Publishing the same unknown domain must also stay bounded
+        // without dropping any possible level from an individual block.
+        if (BodyBlocks) {
+          F.Blocks[4].Succs = {7};
+          for (unsigned I = 0; I != BodyBlocks; ++I) {
+            LowBlock Body;
+            Body.Id = 7 + I;
+            Body.StartAddr = 0x3000 + I * 4;
+            Body.EndAddr = Body.StartAddr + 1;
+            Body.InstructionBoundaries.push_back({Body.StartAddr, 1});
+            emitOp(Body, Body.StartAddr, NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
+                   {NdVar::cst(I, 4)});
+            if (I + 1 != BodyBlocks)
+              Body.Succs = {Body.Id + 1};
+            F.Blocks.push_back(std::move(Body));
+          }
+          F.ExceptionMetadata->CodeRange.End = F.Blocks.back().EndAddr;
+        }
+        if (ReverseBlocks)
+          std::reverse(F.Blocks.begin(), F.Blocks.end());
+        const std::vector<RegistrationCleanupFrameContract> Cleanups;
+        const auto A = analyzeRegistrationStates(
+            F, 0, 0, nullptr, CheckCleanups ? &Cleanups : nullptr);
+        EXPECT_FALSE(A.Complete);
+        EXPECT_FALSE(A.RegistrationLifetimeComplete);
+        EXPECT_FALSE(A.CleanupFrameEffectsComplete);
+        EXPECT_TRUE(A.CleanupFrameEffects.empty());
+        EXPECT_TRUE(A.ChainAccesses.empty());
+        ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
+        std::vector<int32_t> AllLevels{-1};
+        for (uint32_t I = 0; I != Cxx.MaxState; ++I)
+          AllLevels.push_back(I);
+        for (int ID : {5, 6, BodyBlocks ? int(6 + BodyBlocks) : 4}) {
+          const auto Root =
+              std::find_if(A.Blocks.begin(), A.Blocks.end(),
+                           [ID](const auto &B) { return B.BlockId == ID; });
+          ASSERT_NE(Root, A.Blocks.end());
+          EXPECT_TRUE(Root->Reached);
+          EXPECT_TRUE(Root->Unknown);
+          EXPECT_EQ(Root->CallbackOnly, ID == 5 || ID == 6);
+          EXPECT_EQ(Root->levels(), AllLevels);
+        }
+        EXPECT_TRUE(std::none_of(
+            A.Diagnostics.begin(), A.Diagnostics.end(), [](const auto &D) {
+              return D.find("budget exhausted") != std::string::npos;
+            }));
+      }
+}
+
+TEST(RegistrationState, PublishedUnknownDomainsOwnTheirIndependentLifetimes) {
+  std::vector<RegistrationBlockState> Retained;
+  for (uint32_t Count : {2u, 9u}) {
+    auto F = makeNarrowCxxStateFrame(4, 0, 0, 0);
+    auto &Cxx = *F.ExceptionMetadata->Cxx;
+    Cxx.MaxState = Count;
+    Cxx.TryBlocks.clear();
+    Cxx.UnwindMap.clear();
+    for (uint32_t I = 0; I != Count; ++I)
+      Cxx.UnwindMap.push_back(
+          {int32_t(I) - 1, 0, CxxUnwindAction::ActionKind::None});
+    F.Blocks[3].Ops.back().Inputs[1] = NdVar::reg(x86reg::RAX, 4);
+    const auto A = analyzeRegistrationStates(F);
+    EXPECT_FALSE(A.Complete);
+    EXPECT_FALSE(A.RegistrationLifetimeComplete);
+    const auto Block =
+        llvm::find_if(A.Blocks, [](const auto &B) { return B.BlockId == 4; });
+    ASSERT_NE(Block, A.Blocks.end());
+    ASSERT_TRUE(Block->Unknown);
+    Retained.push_back(*Block);
+  }
+  // Both solvers, input functions and analysis results have been destroyed.
+  // A later analysis cannot change the earlier block's complete domain.
+  EXPECT_EQ(Retained[0].levels(), (std::vector<int32_t>{-1, 0, 1}));
+  EXPECT_EQ(Retained[1].levels(),
+            (std::vector<int32_t>{-1, 0, 1, 2, 3, 4, 5, 6, 7, 8}));
+  const auto Copy = Retained;
+  Retained.clear();
+  EXPECT_EQ(Copy[0].levels(), (std::vector<int32_t>{-1, 0, 1}));
+  EXPECT_EQ(Copy[1].levels().back(), 8);
 }
 
 TEST(RegistrationState, RejectsUnprovedCleanupObjectsAndContracts) {
@@ -1176,7 +1324,7 @@ TEST(RegistrationState, PrivateThrowStopsOrdinaryFlowAndKeepsCatchResumption) {
     ASSERT_EQ(A.CallFrameEffects.size(), 1u);
     EXPECT_TRUE(A.CallFrameEffects[0].DoesNotReturn);
     EXPECT_EQ(A.CallFrameEffects[0].EndAddress, 0x1105u);
-    EXPECT_TRUE(A.Blocks[2].Levels.empty());
+    EXPECT_TRUE(A.Blocks[2].levels().empty());
     EXPECT_TRUE(A.Blocks[0].Reached);
     EXPECT_FALSE(A.Blocks[2].Reached);
     EXPECT_TRUE(A.Blocks[5].Reached);
@@ -1422,10 +1570,10 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
     EXPECT_TRUE(A.CallFrameEffects.empty());
     if (Valid) {
       if (Mutation == 24) {
-        EXPECT_EQ(A.Blocks[2].Levels, (std::vector<int32_t>{-1, 0}));
+        EXPECT_EQ(A.Blocks[2].levels(), (std::vector<int32_t>{-1, 0}));
       } else {
-        EXPECT_EQ(A.Blocks[2].Levels.size(), 1u);
-        if (A.Blocks[2].Levels.size() != 1)
+        EXPECT_EQ(A.Blocks[2].levels().size(), 1u);
+        if (A.Blocks[2].levels().size() != 1)
           continue;
         const int32_t ExpectedLevel =
             Mutation == 28 ? 2
@@ -1433,7 +1581,7 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
                     Mutation == 23 || Mutation == 25 || Mutation == 26
                 ? 0
                 : -1;
-        EXPECT_EQ(A.Blocks[2].Levels.front(), ExpectedLevel);
+        EXPECT_EQ(A.Blocks[2].levels().front(), ExpectedLevel);
       }
       bool FoundSP = false;
       bool FoundFinallyWrite = false;
@@ -1572,7 +1720,7 @@ TEST(RegistrationState, OnlyCanonicalWaitPreservesLocalFinallyFrameEffects) {
       continue;
     EXPECT_TRUE(A.CallbackStatesComplete);
     EXPECT_TRUE(A.RegistrationLifetimeComplete);
-    ASSERT_EQ(A.Blocks[2].Levels, (std::vector<int32_t>{-1}));
+    ASSERT_EQ(A.Blocks[2].levels(), (std::vector<int32_t>{-1}));
     bool FoundSP = false, FoundEffect = false;
     for (const auto &Value : A.FrameValues) {
       if (Value.Address == 0x1020 && Value.OpSeq == SPSeq) {
@@ -1691,7 +1839,7 @@ TEST(RegistrationState, LocalFinallyOwnsOnlyItsAllocatedCallbackStack) {
     EXPECT_FALSE(A.CallFrameEffectsComplete);
     if (Mutation == 0) {
       EXPECT_TRUE(A.CallbackStatesComplete);
-      ASSERT_EQ(A.Blocks[2].Levels, std::vector<int32_t>{-1});
+      ASSERT_EQ(A.Blocks[2].levels(), std::vector<int32_t>{-1});
       const auto Written = llvm::find_if(A.FrameValues, [&](const auto &Value) {
         return Value.Address == 0x1020 && Value.OpSeq == ReadSeq;
       });
@@ -1870,8 +2018,10 @@ TEST(RegistrationState, SharedSEHCallbackTailsKeepEachInvocationStack) {
 }
 
 TEST(RegistrationState, SEHActivationsShareTheCumulativeWorkBudget) {
-  for (unsigned Count : {2u, 512u}) {
+  for (auto [Count, TailOps] :
+       {std::pair{2u, 2048u}, std::pair{512u, 0u}, std::pair{512u, 2048u}}) {
     SCOPED_TRACE(Count);
+    SCOPED_TRACE(TailOps);
     auto F = makeBranchingFrame();
     F.ExceptionMetadata->CodeRange.End = 0x40000;
     auto &Chain = *F.ExceptionMetadata->Registration;
@@ -1897,15 +2047,22 @@ TEST(RegistrationState, SEHActivationsShareTheCumulativeWorkBudget) {
     LowBlock Tail;
     Tail.Id = TailId;
     Tail.StartAddr = 0x30000;
-    Tail.EndAddr = 0x30001;
-    emitOp(Tail, 0x30000, NdOp::RETURN, {}, {});
-    Tail.InstructionBoundaries = {{0x30000, 1, 0, 1}};
+    Tail.EndAddr = 0x30001 + TailOps;
+    // The shared tail executes in every callback activation. Its operations
+    // alone exceed the cumulative budget in the large nonempty case.
+    for (unsigned I = 0; I != TailOps; ++I) {
+      emitOp(Tail, Tail.StartAddr + I, NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
+             {NdVar::reg(x86reg::RAX, 4)});
+      Tail.InstructionBoundaries.push_back({Tail.StartAddr + I, 1, I, 1});
+    }
+    emitOp(Tail, Tail.EndAddr - 1, NdOp::RETURN, {}, {});
+    Tail.InstructionBoundaries.push_back({Tail.EndAddr - 1, 1, TailOps, 1});
     Tail.InstructionBoundaries.back().Control = LowInstructionControl::Return;
     for (unsigned Entry = 0; Entry != Count; ++Entry)
       Tail.Preds.push_back(4 + Entry);
     F.Blocks.push_back(std::move(Tail));
     const auto A = analyzeRegistrationStates(F);
-    if (Count == 2) {
+    if (Count == 2 || !TailOps) {
       EXPECT_TRUE(A.Complete);
       EXPECT_TRUE(A.CallbackStatesComplete);
     } else {
@@ -2187,7 +2344,7 @@ TEST(RegistrationState, UnlinkEndsTheLiveRegistration) {
   EXPECT_EQ(Result.ChainAccesses[2].Address, 0x1030u);
   EXPECT_EQ(Result.ChainAccesses[2].EndAddress, 0x1037u);
   EXPECT_EQ(Result.ChainAccesses[2].OpSeq, F.Blocks[3].Ops.back().Seq);
-  EXPECT_TRUE(Result.Blocks.back().Levels.empty());
+  EXPECT_TRUE(Result.Blocks.back().levels().empty());
   EXPECT_FALSE(Result.Blocks.back().CanDispatch);
 }
 
@@ -2307,7 +2464,7 @@ TEST(RegistrationState, FinallyCanDispatchToItsEnclosingScope) {
   ASSERT_TRUE(Result.Complete);
   EXPECT_TRUE(Result.Blocks[4].CallbackOnly);
   EXPECT_TRUE(Result.Blocks[4].CanDispatch);
-  EXPECT_EQ(Result.Blocks[4].Levels, (std::vector<int32_t>{0}));
+  EXPECT_EQ(Result.Blocks[4].levels(), (std::vector<int32_t>{0}));
   EXPECT_TRUE(Result.Blocks[5].CallbackOnly);
   EXPECT_FALSE(Result.Blocks[5].CanDispatch);
 }
@@ -2471,8 +2628,8 @@ TEST(RegistrationState, EmptyLevelsDoNotConflateUninstalledAndUnreachedFrames) {
   ASSERT_TRUE(A.Complete);
   ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
   EXPECT_TRUE(A.Blocks[0].Reached);
-  EXPECT_TRUE(A.Blocks[0].Levels.empty());
+  EXPECT_TRUE(A.Blocks[0].levels().empty());
   EXPECT_FALSE(A.Blocks.back().Reached);
-  EXPECT_TRUE(A.Blocks.back().Levels.empty());
+  EXPECT_TRUE(A.Blocks.back().levels().empty());
   EXPECT_FALSE(A.Blocks.back().Unknown);
 }

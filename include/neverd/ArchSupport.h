@@ -29,6 +29,12 @@ inline bool archLiftSupported(Arch A) {
 
 inline bool archCodegenSupported(Arch A) { return archLiftSupported(A); }
 
+/// Whether every instruction of an \p A image decodes in the one mode the
+/// image's bitness gives it.  AArch32 interworks ARM and Thumb code, whose
+/// mode each address takes from the image's metadata, so code placed at a new
+/// address has no mode until something states one.
+constexpr bool archHasSingleInstructionMode(Arch A) { return A != Arch::ARM; }
+
 /// Whether \p A stores a multi-byte value least significant byte first.  The
 /// loaders take no big-endian image of the native ISAs; EVM memory is
 /// big-endian.
@@ -51,8 +57,11 @@ constexpr uint64_t kSyntheticStackAlignment = 16;
 constexpr uint64_t kMaxAtomicAccessBytes = 16;
 
 /// Residue of the ABI entry stack pointer modulo the synthetic stack alignment.
-/// x86-64 includes the pushed return address; Darwin i386 enters at 12 mod 16.
-/// A process entry point is entered aligned.
+/// x86-64 includes the pushed return address.  i386 enters at 12 mod 16 under
+/// the System V psABI, which aligns the stack to sixteen at a call, and on
+/// Darwin: code its compilers build keeps a vector there with movaps.  Windows
+/// aligns it to four, which any residue keeps.  A process entry point is
+/// entered aligned.
 constexpr uint64_t
 syntheticEntryStackResidue(Arch A, BinaryFormat Fmt = BinaryFormat::Unknown,
                            StackEntryKind Kind = StackEntryKind::Call) {
@@ -60,7 +69,10 @@ syntheticEntryStackResidue(Arch A, BinaryFormat Fmt = BinaryFormat::Unknown,
     return 0;
   if (A == Arch::X64)
     return 8;
-  return A == Arch::X86 && Fmt == BinaryFormat::MachO ? 12 : 0;
+  return A == Arch::X86 &&
+                 (Fmt == BinaryFormat::MachO || Fmt == BinaryFormat::ELF)
+             ? 12
+             : 0;
 }
 
 /// The alignment the ABI guarantees the entry stack pointer.  ARM AAPCS

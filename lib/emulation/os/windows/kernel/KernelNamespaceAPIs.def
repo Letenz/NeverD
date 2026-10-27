@@ -1,0 +1,27 @@
+//===- KernelNamespaceAPIs.def - Named object API contracts -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Namespace calls share object identities, references and handles.
+//===----------------------------------------------------------------------===//
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-obquerynamestring
+NEVERD_KERNEL_OBJECT_API(ObQueryNameString, 4, APC,
+                         queryObjectName(A[0], A[1], uint32_t(A[2]), A[3],
+                                         true))
+// ObReferenceObjectByName follows the target kernel's named-reference ABI.
+NEVERD_KERNEL_OBJECT_API(ObReferenceObjectByName, 8, Passive,
+                         referenceObjectByName(A))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-zwopendirectoryobject
+NEVERD_KERNEL_OBJECT_API(ZwOpenDirectoryObject, 3, Passive,
+                         openNamedObject(A, ObjectKind::Directory))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-zwopensymboliclinkobject
+NEVERD_KERNEL_OBJECT_API(ZwOpenSymbolicLinkObject, 3, Passive,
+                         openNamedObject(A, ObjectKind::SymbolicLink))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-zwquerysymboliclinkobject
+NEVERD_KERNEL_OBJECT_API(ZwQuerySymbolicLinkObject, 3, Passive,
+                         querySymbolicLink(A))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-zwqueryobject
+NEVERD_KERNEL_OBJECT_API(ZwQueryObject, 5, Passive, queryObject(A))

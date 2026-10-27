@@ -1,0 +1,36 @@
+//===- KernelObjectAPIs.def - Object lifetime API contracts --------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-pslookupprocessbyprocessid
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-pslookupthreadbythreadid
+NEVERD_KERNEL_OBJECT_API(PsLookupProcessByProcessId, 2, APC,
+                         lookupProcess(A[0], A[1]))
+NEVERD_KERNEL_OBJECT_API(PsLookupThreadByThreadId, 2, APC,
+                         lookupThread(A[0], A[1]))
+NEVERD_KERNEL_OBJECT_API(PsGetThreadProcess, 1, Dispatch, threadProcess(A[0]))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-iothreadtoprocess
+NEVERD_KERNEL_OBJECT_API(IoThreadToProcess, 1, Dispatch, threadProcess(A[0]))
+NEVERD_KERNEL_OBJECT_API(PsIsThreadTerminating, 1, Dispatch,
+                         threadTerminating(A[0]))
+// The fixed kernel returns callback registration ABI 0x100 from paged code.
+// APC_LEVEL is this profile's ceiling; querying it does not register callbacks.
+NEVERD_KERNEL_OBJECT_API(ObGetFilterVersion, 0, APC, uint64_t(0x100))
+// ObGetObjectType is the target kernel's opaque type-identity query. Its
+// result does not expose private OBJECT_TYPE or OBJECT_HEADER layouts.
+NEVERD_KERNEL_OBJECT_API(ObGetObjectType, 1, Dispatch, objectType(A[0]))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-obreferenceobject
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-obdereferenceobject
+NEVERD_KERNEL_OBJECT_API(ObfReferenceObject, 1, Dispatch, referenceObject(A[0]))
+NEVERD_KERNEL_OBJECT_API(ObfDereferenceObject, 1, Dispatch,
+                         dereferenceObject(A[0]))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-obreferenceobjectbypointer
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-obreferenceobjectbyhandle
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-obopenobjectbypointer
+NEVERD_KERNEL_OBJECT_API(ObReferenceObjectByPointer, 4, Dispatch,
+                         referenceObjectByPointer(A))
+NEVERD_KERNEL_OBJECT_API(ObReferenceObjectByHandle, 6, Passive,
+                         referenceObjectByHandle(A))
+NEVERD_KERNEL_OBJECT_API(ObOpenObjectByPointer, 7, APC, openObjectByPointer(A))

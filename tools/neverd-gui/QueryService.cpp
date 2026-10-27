@@ -1,5 +1,8 @@
 #include "QueryService.h"
 
+#include "ResourceLimits.h"
+#include "app/UnwindInfoWords.h"
+
 #include <QCache>
 #include <QElapsedTimer>
 #include <QJsonArray>
@@ -28,8 +31,16 @@ bool cacheable(const QString &operation) {
 }
 
 bool readable(const QString &operation) {
-  static const QSet<QString> operations{"metadata",
+  static const QSet<QString> operations{"patch_context",
+                                        "patch_preview",
+                                        "patches",
+                                        "patch_source_target",
+                                        "patch_source_preview",
+                                        "source_patch_context",
+                                        "metadata",
+                                        "analysis_sections",
                                         "analysis_snapshot",
+                                        "code_edit_prepare",
                                         "history",
                                         "annotations",
                                         "contributions",
@@ -42,15 +53,32 @@ bool readable(const QString &operation) {
                                         "xrefs",
                                         "string_references",
                                         "string_encodings",
+                                        "x87_capabilities",
                                         "string_options",
                                         "identify",
                                         "pdb_inspect",
                                         "pdb_reference",
                                         "dwarf_reference",
+                                        "map_reference",
+                                        "map_inspect",
                                         "symbol_table_reference",
                                         "function_attributes",
+                                        "function_type",
+                                        "source_type",
+                                        "source_variables",
+                                        "call_sites",
+                                        "stack_frame",
+                                        "register_flow",
+                                        "local_types",
+                                        "local_type",
+                                        "local_types_source",
+                                        "local_types_fit",
+                                        "type_libraries",
+                                        "call_paths",
+                                        "call_tree",
                                         "search"};
-  return cacheable(operation) || operations.contains(operation);
+  return operation == QLatin1String(neverd::gui::unwind_info::kOperation) ||
+         cacheable(operation) || operations.contains(operation);
 }
 
 bool command(const QString &operation) {
@@ -58,29 +86,41 @@ bool command(const QString &operation) {
                                         "analyze",
                                         "signatures_load",
                                         "pdb_load",
+                                        "dwarf_load",
+                                        "map_load",
                                         "annotation_set",
                                         "rename",
+                                        "analysis_section_add",
+                                        "analysis_section_remove",
                                         "code_edit",
                                         "function_create",
                                         "function_delete",
                                         "function_edit",
                                         "item_define",
+                                        "patch_apply",
+                                        "patch_revert",
+                                        "patch_export",
+                                        "source_patch",
                                         "operand_format",
                                         "save",
                                         "reload",
                                         "undo",
                                         "redo",
                                         "history_reset",
+                                        "project_sync",
                                         "string_options",
                                         "contribution_register",
-                                        "contribution_unregister"};
+                                        "contribution_unregister",
+                                        "local_types_declare",
+                                        "local_types_forget",
+                                        "type_libraries_set"};
   return operations.contains(operation);
 }
 
 // Sort object keys only. Strings (including symbols and 64-bit addresses),
 // numbers, array order and absent defaults keep their exact request meaning.
 QJsonValue canonical(const QJsonValue &value, int depth, bool &valid) {
-  if (depth > 64) {
+  if (depth > ::neverd::limits::gui::kQueryServiceCanonicalDepthLimit) {
     valid = false;
     return {};
   }
@@ -156,6 +196,7 @@ struct QueryService::State {
     bool cancelRequested = false, discoveredAnalysis = false;
     int graphRetries = 0;
     QJsonObject summary, result;
+    QJsonObject BackgroundSnapshot;
     QString summaryRevision;
     QElapsedTimer sent;
   };
@@ -177,6 +218,7 @@ struct QueryService::State {
   quint64 listing = 0;
   Id nextSubscription = 0;
   QString project, revision = "0";
+  bool localNamesOnly = false;
   qsizetype queuedBytes = 0;
   QHash<quint64, JobPtr> jobs;
   QHash<Id, Subscription> subscriptions;
@@ -187,12 +229,16 @@ struct QueryService::State {
 
   State(QueryService *service, Sender send, Limits budget)
       : q(service), sender(std::move(send)), limits(budget),
-        cache(std::clamp(budget.cacheBytes, 0, 1024 * 1024 * 1024)) {
+        cache(std::clamp(
+            budget.cacheBytes, 0,
+            ::neverd::limits::gui::kQueryServiceStateClampArgument3)) {
     limits.maxJobs = std::max<qsizetype>(1, limits.maxJobs);
     limits.maxSubscriptions = std::max<qsizetype>(1, limits.maxSubscriptions);
     limits.maxQueuedBytes = std::max<qsizetype>(1, limits.maxQueuedBytes);
-    limits.maxRequestBytes =
-        std::clamp<qsizetype>(limits.maxRequestBytes, 1, 8 * 1024 * 1024);
+    limits.maxRequestBytes = std::clamp<qsizetype>(
+        limits.maxRequestBytes, 1,
+        ::neverd::limits::gui::
+            kQueryServiceStateLimitsMaxRequestBytesClampArgument3);
   }
 
   bool pending() const { return !jobs.isEmpty() || !subscriptions.isEmpty(); }
@@ -391,6 +437,7 @@ struct QueryService::State {
 
   void dispatch(const JobPtr &job, const QString &operation,
                 const QJsonObject &payload) {
+    job->BackgroundSnapshot = {};
     job->wireOperation = operation;
     job->wireProject = project;
     job->wireRevision = revision;
@@ -504,6 +551,13 @@ struct QueryService::State {
         return;
     }
     removeJob(job);
+    if (!job->BackgroundSnapshot.isEmpty() && job->epoch == epoch &&
+        job->BackgroundSnapshot.value("project_id").toString() == project &&
+        job->BackgroundSnapshot.value("revision").toString() == revision) {
+      emit q->backgroundSnapshotReady(job->BackgroundSnapshot);
+      if (!guard)
+        return;
+    }
     if (job->discoveredAnalysis && job->epoch == epoch) {
       const auto discoveredEpoch = epoch;
       QTimer::singleShot(0, q, [this, discoveredEpoch] {
@@ -594,6 +648,13 @@ struct QueryService::State {
       else if (changed)
         cache.clear();
       if (changed) {
+        localNamesOnly = !opening && status == "ok" &&
+                         job->spec.operation == "code_edit" &&
+                         job->spec.payload.value("kind") == "name" &&
+                         response.value("payload")
+                             .toObject()
+                             .value("local_names_only")
+                             .toBool();
         const QPointer<QueryService> guard(q);
         emit q->contextChanged();
         if (!guard || active != job || !jobs.contains(job->id))
@@ -606,10 +667,26 @@ struct QueryService::State {
 
     // This is an executor fact, including a view error after successful
     // analysis. Administrative and uncorrelated replies cannot establish it.
+    if (job->kind == Command && status == "ok" &&
+        (job->spec.operation == "analysis_section_add" ||
+         job->spec.operation == "analysis_section_remove" ||
+         (job->spec.operation == "reload" &&
+          response.value("analysis_state") == "not_analyzed")))
+      analysisComplete = false;
     if (!admissionFailure && status != "cancelled" && !project.isEmpty() &&
         response.value("analysis_state") == "complete" && !analysisComplete) {
       analysisComplete = true;
       job->discoveredAnalysis = true;
+    }
+
+    if (!admissionFailure && status != "cancelled" && !project.isEmpty() &&
+        response.value("background").isObject() &&
+        response.value("background_sequence").isString()) {
+      job->BackgroundSnapshot = {
+          {"project_id", project},
+          {"revision", revision},
+          {"background", response.value("background")},
+          {"background_sequence", response.value("background_sequence")}};
     }
 
     if (job->kind == Graph && !job->cancelRequested) {
@@ -726,6 +803,7 @@ void QueryService::resetSession() {
   state_->available = false;
   state_->project.clear();
   state_->revision = "0";
+  state_->localNamesOnly = false;
   state_->retire({}, "worker_stopped");
   const QPointer<QueryService> guard(this);
   emit contextChanged();
@@ -753,6 +831,7 @@ void QueryService::resetReadContext(const QString &project,
 bool QueryService::available() const { return state_->available; }
 QString QueryService::projectId() const { return state_->project; }
 QString QueryService::revision() const { return state_->revision; }
+bool QueryService::localNamesOnly() const { return state_->localNamesOnly; }
 quint64 QueryService::sessionEpoch() const { return state_->epoch; }
 bool QueryService::analysisComplete() const { return state_->analysisComplete; }
 bool QueryService::hasPending() const { return state_->pending(); }
@@ -774,7 +853,11 @@ void QueryService::listingChanged() {
   state_->cache.clear();
 }
 void QueryService::setCacheBudgetMiB(int mebibytes) {
-  state_->cache.setMaxCost(std::clamp(mebibytes, 16, 1024) * 1024 * 1024);
+  state_->cache.setMaxCost(
+      std::clamp(
+          mebibytes, 16,
+          ::neverd::limits::gui::kQueryServiceSetCacheBudgetMiBClampArgument3) *
+      1024 * 1024);
 }
 void QueryService::receive(const QJsonObject &response) {
   state_->receive(response);

@@ -1,3 +1,35 @@
+add_neverd_unittest(NeverDRegisterSnapshotTests
+  RegisterSnapshotTests.cpp
+  ContextRegisterSnapshotTests.cpp
+  TIMEOUT 20
+  NO_PRETTY_VALUES
+  LINK_COMPONENTS EmulationCPU)
+
+add_neverd_unittest(NeverDExecutionRunJSONTests
+  ExecutionRunJSONTests.cpp
+  TIMEOUT 20
+  LINK_COMPONENTS EmulationWorkload)
+
+add_neverd_unittest(NeverDExecutionRunTests
+  ExecutionRunTests.cpp
+  GuestInvocationABITests.cpp
+  TIMEOUT 30
+  LINK_COMPONENTS EmulationWorkload)
+
+add_neverd_unittest(NeverDResourcePauseTests
+  ResourcePauseTests.cpp
+  TIMEOUT 20
+  LINK_COMPONENTS EmulationRuntime)
+
+add_neverd_unittest(NeverDModuleBindingTests
+  ModuleBindingTests.cpp
+  MappingTransactionTests.cpp
+  TIMEOUT 20
+  LINK_COMPONENTS EmulationModules)
+
+target_include_directories(NeverDModuleBindingTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
 add_neverd_unittest(NeverDHvfTests
   HvfTests.cpp
   HvfExecutorTests.cpp
@@ -13,60 +45,60 @@ if(APPLE AND NEVERD_EMULATION_BACKEND_HVF)
 endif()
 
 add_neverd_unittest(NeverDAArch64StateTests
-  AArch64StateTests.cpp
-  AArch64MachineProbeTests.cpp
+  aarch64/AArch64StateTests.cpp
+  aarch64/AArch64MachineProbeTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationArch)
 target_include_directories(NeverDAArch64StateTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
 
 add_neverd_unittest(NeverDAArch64FPTests
-  AArch64FPStateTests.cpp
-  AArch64SIMDTests.cpp
-  AArch64ProbeExecutionTests.cpp
+  aarch64/AArch64FPStateTests.cpp
+  aarch64/AArch64SIMDTests.cpp
+  aarch64/AArch64ProbeExecutionTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDAArch64FPTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
 
 add_neverd_unittest(NeverDAArch64PAuthTests
-  AArch64PAuthTests.cpp
+  aarch64/AArch64PAuthTests.cpp
   TIMEOUT 20
   LINK_COMPONENTS EmulationCPU)
 
 add_neverd_unittest(NeverDAArch64BTITests
-  AArch64BTITests.cpp
+  aarch64/AArch64BTITests.cpp
   TIMEOUT 20
   LINK_COMPONENTS EmulationCPU EmulationRuntime)
 
 add_neverd_unittest(NeverDAArch64CacheTests
-  AArch64CacheTests.cpp
+  aarch64/AArch64CacheTests.cpp
   TIMEOUT 20
   NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationCPU EmulationRuntime)
 
 add_neverd_unittest(NeverDAArch64NZCVTests
-  AArch64NZCVTests.cpp
+  aarch64/AArch64NZCVTests.cpp
   TIMEOUT 20
   NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationCPU EmulationRuntime)
 
 add_neverd_unittest(NeverDAArch64MemoryTests
-  AArch64CrossPageTests.cpp
-  AArch64VectorMemoryTests.cpp
-  AArch64StructureMemoryTests.cpp
-  AArch64AcquireReleaseTests.cpp
-  AArch64ExclusiveTests.cpp
-  AArch64AtomicTests.cpp
+  aarch64/AArch64CrossPageTests.cpp
+  aarch64/AArch64VectorMemoryTests.cpp
+  aarch64/AArch64StructureMemoryTests.cpp
+  aarch64/AArch64AcquireReleaseTests.cpp
+  aarch64/AArch64ExclusiveTests.cpp
+  aarch64/AArch64AtomicTests.cpp
   TIMEOUT 15
   NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationCPU)
 
 add_neverd_unittest(NeverDX64FPTests
-  X64FPStateTests.cpp
-  X64XsaveTests.cpp
-  X64MachineProbeTests.cpp
-  X64ProbeExecutionTests.cpp
+  x86_64/X64FPStateTests.cpp
+  x86_64/X64XsaveTests.cpp
+  x86_64/X64MachineProbeTests.cpp
+  x86_64/X64ProbeExecutionTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDX64FPTests PRIVATE
@@ -97,7 +129,7 @@ add_neverd_unittest(NeverDExecutionSessionTests
   LINK_COMPONENTS EmulationRuntime EmulationImage)
 
 add_neverd_unittest(NeverDDirectX64Tests
-  DirectX64Tests.cpp
+  x86_64/DirectX64Tests.cpp
   NO_PRETTY_VALUES
   TIMEOUT 15
   LINK_COMPONENTS EmulationRuntime)
@@ -105,26 +137,26 @@ target_include_directories(NeverDDirectX64Tests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
 
 add_neverd_unittest(NeverDX64MemoryUpdateTests
-  X64MemoryUpdateTests.cpp
-  X64BitStringTests.cpp
-  X64StringTransferTests.cpp
-  X64StringComparisonTests.cpp
-  X64MXCSRTests.cpp
-  X64DataTests.cpp
-  X64PackedIntegerTests.cpp
-  X64PackedShiftTests.cpp
-  X64VectorMaskTests.cpp
-  X64ShuffleTests.cpp
-  X64PartialMoveTests.cpp
-  X64WordLaneTests.cpp
-  X64IntegerFloatTests.cpp
-  X64FloatIntegerTests.cpp
-  X64SSEComparisonTests.cpp
-  X64SSEPredicateTests.cpp
-  X64SSEPrecisionTests.cpp
-  X64PackedFloatTests.cpp
-  X64PackedFloatIntegerTests.cpp
-  X64CrossPageTests.cpp
+  x86_64/X64MemoryUpdateTests.cpp
+  x86_64/X64BitStringTests.cpp
+  x86_64/X64StringTransferTests.cpp
+  x86_64/X64StringComparisonTests.cpp
+  x86_64/X64MXCSRTests.cpp
+  x86_64/X64DataTests.cpp
+  x86_64/X64PackedIntegerTests.cpp
+  x86_64/X64PackedShiftTests.cpp
+  x86_64/X64VectorMaskTests.cpp
+  x86_64/X64ShuffleTests.cpp
+  x86_64/X64PartialMoveTests.cpp
+  x86_64/X64WordLaneTests.cpp
+  x86_64/X64IntegerFloatTests.cpp
+  x86_64/X64FloatIntegerTests.cpp
+  x86_64/X64SSEComparisonTests.cpp
+  x86_64/X64SSEPredicateTests.cpp
+  x86_64/X64SSEPrecisionTests.cpp
+  x86_64/X64PackedFloatTests.cpp
+  x86_64/X64PackedFloatIntegerTests.cpp
+  x86_64/X64CrossPageTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDX64MemoryUpdateTests PRIVATE
@@ -133,8 +165,8 @@ target_include_directories(NeverDX64MemoryUpdateTests PRIVATE
 add_neverd_unittest(NeverDRAMTransactionTests
   RAMTransactionTests.cpp
   RAMReservationTests.cpp
-  X64AtomicTests.cpp
-  X64WideAtomicTests.cpp
+  x86_64/X64AtomicTests.cpp
+  x86_64/X64WideAtomicTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDRAMTransactionTests PRIVATE
@@ -158,30 +190,30 @@ add_neverd_unittest(NeverDThreadPointerTests
   LINK_COMPONENTS EmulationCPU)
 
 add_neverd_unittest(NeverDX64IntegerTests
-  X64IntegerTests.cpp
-  X64PauseTests.cpp
-  X64PushFlagsTests.cpp
-  X64PopFlagsTests.cpp
-  X64StatusFlagsTests.cpp
-  X64DoubleShiftTests.cpp
-  X64ScalarShiftTests.cpp
-  X64LoopTests.cpp
-  X64BranchTests.cpp
-  X64StackTests.cpp
-  X64FrameExitTests.cpp
-  X64FrameEntryTests.cpp
-  X64ReturnPrefixTests.cpp
+  x86_64/X64IntegerTests.cpp
+  x86_64/X64PauseTests.cpp
+  x86_64/X64PushFlagsTests.cpp
+  x86_64/X64PopFlagsTests.cpp
+  x86_64/X64StatusFlagsTests.cpp
+  x86_64/X64DoubleShiftTests.cpp
+  x86_64/X64ScalarShiftTests.cpp
+  x86_64/X64LoopTests.cpp
+  x86_64/X64BranchTests.cpp
+  x86_64/X64StackTests.cpp
+  x86_64/X64FrameExitTests.cpp
+  x86_64/X64FrameEntryTests.cpp
+  x86_64/X64ReturnPrefixTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDX64IntegerTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
 
 add_neverd_unittest(NeverDX64ExceptionTests
-  X64ExceptionTests.cpp
-  X64SIMDExceptionTests.cpp
-  X64AlignmentTests.cpp
-  X64DivisionTests.cpp
-  X64StateTransitionTests.cpp
+  x86_64/X64ExceptionTests.cpp
+  x86_64/X64SIMDExceptionTests.cpp
+  x86_64/X64AlignmentTests.cpp
+  x86_64/X64DivisionTests.cpp
+  x86_64/X64StateTransitionTests.cpp
   NO_PRETTY_VALUES
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
@@ -191,11 +223,17 @@ target_include_directories(NeverDX64ExceptionTests PRIVATE
 add_neverd_unittest(NeverDLinuxProcessTests
   LinuxProcessTests.cpp
   LinuxPriorityTests.cpp
+  LinuxNetworkTests.cpp
+  LinuxSelectTests.cpp
+  LinuxPollTests.cpp
+  LinuxReceiveTests.cpp
   LinuxKernelAvailabilityTests.cpp
   LinuxPIDFDTests.cpp
   LinuxProcessLayoutTests.cpp
   LinuxMemoryTests.cpp
   LinuxFileNamespaceTests.cpp
+  LinuxProcTests.cpp
+  LinuxBinderTests.cpp
   LinuxClockTests.cpp
   LinuxOutputNativeTests.cpp
   ProcessReportTests.cpp
@@ -234,6 +272,10 @@ include(ProcessFixtures.cmake)
 add_neverd_unittest(NeverDDarwinProcessTests
   DarwinProcessTests.cpp
   DarwinImageTests.cpp
+  DarwinCallbackTests.cpp
+  DarwinLinkingTests.cpp
+  DarwinDylibTests.cpp
+  DarwinLibSystemTests.cpp
   DarwinMemoryTests.cpp
   DarwinFileTests.cpp
   DarwinModeTests.cpp
@@ -263,20 +305,44 @@ if(MSVC)
   target_compile_options(NeverDDarwinProcessTests PRIVATE /bigobj)
 endif()
 include(DarwinFixtures.cmake)
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/DarwinTestExecution.cmake")
 add_neverd_unittest(NeverDAndroidNativeTests
   AndroidNativeTests.cpp
   AndroidMemoryTests.cpp
+  AndroidObservationTests.cpp
   AndroidTokenTests.cpp
   AndroidPropertyTests.cpp
   AndroidStdioTests.cpp
+  AndroidProcTests.cpp
+  AndroidJNITests.cpp
+  AndroidMessageQueueTests.cpp
+  AndroidBinderTests.cpp
   AndroidSearchTests.cpp
+  AndroidStringCopyTests.cpp
+  AndroidStringLengthTests.cpp
   AndroidMutexTests.cpp
+  AndroidSemaphoreTests.cpp
+  AndroidDladdrTests.cpp
+  AndroidRandomTests.cpp
+  AndroidNetworkTests.cpp
+  AndroidAuxvTests.cpp
+  AndroidEnvironmentTests.cpp
+  AndroidErrorTests.cpp
+  AndroidCalendarTests.cpp
+  AndroidFDSetTests.cpp
+  AndroidReadinessTests.cpp
+  AndroidReceiveTests.cpp
+  AndroidStreamWaitTests.cpp
+  AndroidPollTests.cpp
   AndroidThreadAttributeTests.cpp
   AndroidThreadTests.cpp
   AndroidTimeTests.cpp
   AndroidSleepTests.cpp
   AndroidSignalTests.cpp
   AndroidSnapshotTests.cpp
+  AndroidAllocationTests.cpp
+  AndroidLogTests.cpp
   AndroidResidencyTests.cpp
   AndroidFileTests.cpp
   AndroidDeviceTests.cpp
@@ -287,6 +353,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidScanningTests.cpp
   AndroidFinalizerTests.cpp
   TIMEOUT 30
+  NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDAndroidNativeTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)
 include(AndroidFixtures.cmake)
@@ -489,6 +556,12 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
   set_tests_properties(UnicornDecode.RegisterU UnicornDecode.RoundMemory PROPERTIES
     LABELS NeverDUnicornDecodeTests TIMEOUT 15)
   target_compile_definitions(NeverDExecutionConfigurationTests PRIVATE NEVERD_TEST_UNICORN=1)
+  add_neverd_unittest(NeverDUnicornStateReuseTests
+    UnicornStateReuseTests.cpp
+    TIMEOUT 15
+    LINK_COMPONENTS EmulationCPU)
+  target_include_directories(NeverDUnicornStateReuseTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/lib/emulation)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_neverd_unittest(NeverDUnicornStateTransferTests
       UnicornStateTransferTests.cpp
@@ -498,7 +571,8 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
     target_include_directories(NeverDUnicornStateTransferTests PRIVATE
       ${CMAKE_SOURCE_DIR}/lib/emulation)
     target_link_options(NeverDUnicornStateTransferTests PRIVATE
-      "-Wl,--wrap=uc_reg_read")
+      "-Wl,--wrap=uc_reg_read" "-Wl,--wrap=uc_reg_read_batch"
+      "-Wl,--wrap=uc_reg_write_batch")
     add_neverd_unittest(NeverDUnicornMachineControlTests
       UnicornMachineControlTests.cpp
       TIMEOUT 15
@@ -507,7 +581,8 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
     target_include_directories(NeverDUnicornMachineControlTests PRIVATE
       ${CMAKE_SOURCE_DIR}/lib/emulation)
     target_link_options(NeverDUnicornMachineControlTests PRIVATE
-      "-Wl,--wrap=uc_emu_start" "-Wl,--wrap=uc_reg_read")
+      "-Wl,--wrap=uc_emu_start" "-Wl,--wrap=uc_reg_read"
+      "-Wl,--wrap=uc_reg_read_batch")
     add_executable(NeverDUnicornDeadlineTests
       ${CMAKE_SOURCE_DIR}/third_party/unicorn/tests/unit/test_pre_entry_deadline.c)
     target_include_directories(NeverDUnicornDeadlineTests PRIVATE
@@ -525,7 +600,7 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
   add_neverd_unittest(NeverDCPUEmulationTests
     CPUArchitectureTests.cpp
     ExecutionExitTests.cpp
-    AArch64ProjectionTests.cpp
+    aarch64/AArch64ProjectionTests.cpp
     LINK_COMPONENTS EmulationCPU
     LINK_LIBS unicorn)
   target_include_directories(NeverDCPUEmulationTests PRIVATE
@@ -546,6 +621,10 @@ set(NEVERD_KMDF_CONTROL_FIXTURE "" CACHE FILEPATH
   "Optional original KMDF control-device fixture linked with genuine WDK libraries")
 set(NEVERD_KMDF_CONTROL_CFG_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK KMDF control-device fixture linked with active CFG")
+set(NEVERD_KMDF_FILE_HANDLES_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK KMDF shared-file-handle fixture")
+set(NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK KMDF shared-file-handle fixture with active CFG")
 set(NEVERD_KMDF_PNP_FIXTURE "" CACHE FILEPATH
   "Optional original KMDF PnP fixture linked with genuine WDK libraries")
 set(NEVERD_KMDF_PNP_CFG_FIXTURE "" CACHE FILEPATH
@@ -679,7 +758,7 @@ foreach(_driver_name success failure unknown fault loop devices readonly privile
 endforeach()
 # The loader fixture deliberately retains relocations and a compiler-inserted
 # stack protector. The WDM fixture covers the complete synchronous lifecycle.
-foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority driver_loader_view driver_bugcheck driver_version_query driver_physical_ranges driver_va_shadow_query driver_strings driver_identity driver_time_fields driver_interlocked driver_slist driver_cstrings)
+foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_registry_values driver_registry_keys driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority driver_loader_view driver_bugcheck driver_version_query driver_physical_ranges driver_va_shadow_query driver_process_peb driver_strings driver_identity driver_time_fields driver_interlocked driver_slist driver_cstrings driver_cstring_writes driver_crt_strings driver_lookaside driver_fast_mutex driver_eresource driver_objects driver_device_queries driver_file_handles driver_file_objects driver_file_queries driver_file_transfers driver_processors driver_int64_strings driver_filesystem_provider driver_registry_objects driver_namespace driver_data driver_qspinlock driver_rundown)
   set(_driver_object "${_driver_fixture_dir}/${_driver_name}.obj")
   set(_driver_image "${_driver_fixture_dir}/${_driver_name}.sys")
   if(_driver_name STREQUAL "loader")
@@ -804,6 +883,33 @@ add_custom_command(OUTPUT "${_driver_context_image}" "${_driver_context_object}"
     "${_driver_import_lib}"
   VERBATIM)
 list(APPEND _driver_outputs "${_driver_context_image}")
+set(_driver_seh_v2_image "${_driver_fixture_dir}/driver_seh_v2.sys")
+set(_driver_seh_v2_object "${_driver_fixture_dir}/driver_seh_v2.obj")
+set(_driver_seh_v2_assembly "${_driver_fixture_dir}/driver_seh_v2_asm.obj")
+set(_driver_seh_v2_import "${_driver_fixture_dir}/driver_seh_v2.lib")
+add_custom_command(OUTPUT "${_driver_seh_v2_image}" "${_driver_seh_v2_object}"
+    "${_driver_seh_v2_assembly}" "${_driver_seh_v2_import}"
+  COMMAND "${NEVERD_DRIVER_LLD_LINK}" /lib /machine:x64
+    "/def:${CMAKE_CURRENT_SOURCE_DIR}/fixtures/driver_seh_v2.def"
+    "/out:${_driver_seh_v2_import}"
+  COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
+    --target=x86_64-pc-windows-msvc -std=c11 -ffreestanding
+    -fno-stack-protector -fms-extensions -fexceptions -O1 -c
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/driver_seh_v2.c"
+    -o "${_driver_seh_v2_object}"
+  COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
+    --target=x86_64-pc-windows-msvc -c
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/driver_seh_v2.S"
+    -o "${_driver_seh_v2_assembly}"
+  COMMAND "${NEVERD_DRIVER_LLD_LINK}" /machine:x64 /entry:DriverEntry
+    /subsystem:native /driver /dll /nodefaultlib /dynamicbase /timestamp:0
+    /base:0x180000000 "/out:${_driver_seh_v2_image}"
+    "${_driver_seh_v2_object}" "${_driver_seh_v2_assembly}"
+    "${_driver_seh_v2_import}"
+  DEPENDS fixtures/driver_seh_v2.c fixtures/driver_seh_v2.S
+    fixtures/driver_seh_v2.def
+  VERBATIM)
+list(APPEND _driver_outputs "${_driver_seh_v2_image}")
 add_custom_target(NeverDDriverFixtures DEPENDS ${_driver_outputs})
 
 # Microsoft kit files are optional external validation inputs. Never assume a
@@ -811,10 +917,12 @@ add_custom_target(NeverDDriverFixtures DEPENDS ${_driver_outputs})
 set(_driver_kmdf_definitions)
 set(_driver_has_kmdf_fixture FALSE)
 set(_driver_has_kmdf_control_fixture FALSE)
+set(_driver_has_kmdf_file_handles_fixture FALSE)
 set(_driver_has_kmdf_pnp_fixture FALSE)
 set(_driver_has_kmdf_lock_fixture FALSE)
 foreach(_driver_kmdf_variable NEVERD_KMDF_FIXTURE NEVERD_KMDF_CFG_FIXTURE
     NEVERD_KMDF_CONTROL_FIXTURE NEVERD_KMDF_CONTROL_CFG_FIXTURE
+    NEVERD_KMDF_FILE_HANDLES_FIXTURE NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE
     NEVERD_KMDF_PNP_FIXTURE NEVERD_KMDF_PNP_CFG_FIXTURE
     NEVERD_KMDF_LOCK_FIXTURE NEVERD_KMDF_LOCK_CFG_FIXTURE)
   if(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_CFG_FIXTURE"
@@ -830,6 +938,11 @@ foreach(_driver_kmdf_variable NEVERD_KMDF_FIXTURE NEVERD_KMDF_CFG_FIXTURE
   if(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_PNP_CFG_FIXTURE"
       AND NOT _driver_has_kmdf_pnp_fixture)
     message(STATUS "Driver KMDF PnP CFG tests skipped: NEVERD_KMDF_PNP_FIXTURE is unavailable")
+    continue()
+  endif()
+  if(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE"
+      AND NOT _driver_has_kmdf_file_handles_fixture)
+    message(STATUS "Driver KMDF file-handle CFG tests skipped: NEVERD_KMDF_FILE_HANDLES_FIXTURE is unavailable")
     continue()
   endif()
   if(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_LOCK_CFG_FIXTURE"
@@ -848,6 +961,8 @@ foreach(_driver_kmdf_variable NEVERD_KMDF_FIXTURE NEVERD_KMDF_CFG_FIXTURE
       set(_driver_has_kmdf_fixture TRUE)
     elseif(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_CONTROL_FIXTURE")
       set(_driver_has_kmdf_control_fixture TRUE)
+    elseif(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_FILE_HANDLES_FIXTURE")
+      set(_driver_has_kmdf_file_handles_fixture TRUE)
     elseif(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_PNP_FIXTURE")
       set(_driver_has_kmdf_pnp_fixture TRUE)
     elseif(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_LOCK_FIXTURE")
@@ -1333,6 +1448,114 @@ foreach(_driver_user_mapping_variable NEVERD_WDM_USER_MAPPING_FIXTURE
   endif()
 endforeach()
 
+set(NEVERD_WDM_DEVICE_QUERIES_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK device-query fixture")
+set(NEVERD_WDM_DEVICE_QUERIES_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK device-query fixture with active CFG")
+set(NEVERD_WDM_FILE_OBJECTS_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK retained file-object fixture")
+set(NEVERD_WDM_FILE_OBJECTS_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK retained file-object fixture with active CFG")
+set(NEVERD_WDM_FILE_HANDLES_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK shared file-handle fixture")
+set(NEVERD_WDM_FILE_HANDLES_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK shared file-handle fixture with active CFG")
+set(_driver_wdm_file_lifetime_definitions)
+foreach(_lifetime_fixture NEVERD_WDM_DEVICE_QUERIES_FIXTURE
+    NEVERD_WDM_DEVICE_QUERIES_CFG_FIXTURE NEVERD_WDM_FILE_OBJECTS_FIXTURE
+    NEVERD_WDM_FILE_OBJECTS_CFG_FIXTURE NEVERD_WDM_FILE_HANDLES_FIXTURE
+    NEVERD_WDM_FILE_HANDLES_CFG_FIXTURE)
+  if(EXISTS "${${_lifetime_fixture}}" AND NOT IS_DIRECTORY "${${_lifetime_fixture}}")
+    get_filename_component(_lifetime_path "${${_lifetime_fixture}}" ABSOLUTE)
+    list(APPEND _driver_wdm_file_lifetime_definitions
+      "${_lifetime_fixture}=\"${_lifetime_path}\"")
+  endif()
+endforeach()
+
+set(NEVERD_WDM_FILE_QUERIES_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK file-information query fixture")
+set(NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK file-information query fixture with active CFG")
+set(_driver_wdm_file_queries_definitions)
+foreach(_query_fixture NEVERD_WDM_FILE_QUERIES_FIXTURE
+    NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE)
+  if(EXISTS "${${_query_fixture}}" AND NOT IS_DIRECTORY "${${_query_fixture}}")
+    get_filename_component(_query_path "${${_query_fixture}}" ABSOLUTE)
+    list(APPEND _driver_wdm_file_queries_definitions
+      "${_query_fixture}=\"${_query_path}\"")
+  endif()
+endforeach()
+
+set(NEVERD_WDM_FILE_TRANSFERS_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK synchronous file-transfer fixture")
+set(NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK synchronous file-transfer fixture with active CFG")
+set(_driver_wdm_file_transfers_definitions)
+foreach(_transfer_fixture NEVERD_WDM_FILE_TRANSFERS_FIXTURE
+    NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE)
+  if(EXISTS "${${_transfer_fixture}}" AND NOT IS_DIRECTORY "${${_transfer_fixture}}")
+    get_filename_component(_transfer_path "${${_transfer_fixture}}" ABSOLUTE)
+    list(APPEND _driver_wdm_file_transfers_definitions
+      "${_transfer_fixture}=\"${_transfer_path}\"")
+  endif()
+endforeach()
+
+set(NEVERD_WDM_PROCESSORS_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK processor and IRQL fixture")
+set(NEVERD_WDM_PROCESSORS_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK processor and IRQL fixture with active CFG")
+set(_driver_wdm_processors_definitions)
+foreach(_processor_fixture NEVERD_WDM_PROCESSORS_FIXTURE
+    NEVERD_WDM_PROCESSORS_CFG_FIXTURE)
+  if(EXISTS "${${_processor_fixture}}" AND NOT IS_DIRECTORY "${${_processor_fixture}}")
+    get_filename_component(_processor_path "${${_processor_fixture}}" ABSOLUTE)
+    list(APPEND _driver_wdm_processors_definitions
+      "${_processor_fixture}=\"${_processor_path}\"")
+  endif()
+endforeach()
+
+set(NEVERD_WDM_CRT_STRINGS_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK checked CRT string fixture")
+set(NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK checked CRT string fixture with active CFG")
+set(_driver_wdm_crt_strings_definitions)
+foreach(_crt_fixture NEVERD_WDM_CRT_STRINGS_FIXTURE
+    NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE)
+  if(EXISTS "${${_crt_fixture}}" AND NOT IS_DIRECTORY "${${_crt_fixture}}")
+    get_filename_component(_crt_path "${${_crt_fixture}}" ABSOLUTE)
+    list(APPEND _driver_wdm_crt_strings_definitions
+      "${_crt_fixture}=\"${_crt_path}\"")
+  endif()
+endforeach()
+
+set(NEVERD_WDM_INT64_STRINGS_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK integer formatting fixture")
+set(NEVERD_WDM_INT64_STRINGS_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK integer formatting fixture with active CFG")
+set(_driver_wdm_int64_strings_definitions)
+foreach(_integer_fixture NEVERD_WDM_INT64_STRINGS_FIXTURE
+    NEVERD_WDM_INT64_STRINGS_CFG_FIXTURE)
+  if(EXISTS "${${_integer_fixture}}" AND NOT IS_DIRECTORY "${${_integer_fixture}}")
+    get_filename_component(_integer_path "${${_integer_fixture}}" ABSOLUTE)
+    list(APPEND _driver_wdm_int64_strings_definitions
+      "${_integer_fixture}=\"${_integer_path}\"")
+  endif()
+endforeach()
+
+set(NEVERD_WDM_FILESYSTEM_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK declared filesystem fixture")
+set(NEVERD_WDM_FILESYSTEM_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK declared filesystem fixture with active CFG")
+set(_driver_wdm_filesystem_definitions)
+foreach(_filesystem_fixture NEVERD_WDM_FILESYSTEM_FIXTURE
+    NEVERD_WDM_FILESYSTEM_CFG_FIXTURE)
+  if(EXISTS "${${_filesystem_fixture}}" AND NOT IS_DIRECTORY "${${_filesystem_fixture}}")
+    get_filename_component(_filesystem_path "${${_filesystem_fixture}}" ABSOLUTE)
+    list(APPEND _driver_wdm_filesystem_definitions
+      "${_filesystem_fixture}=\"${_filesystem_path}\"")
+  endif()
+endforeach()
+
 set(_driver_execution_fixture_definitions
   NEVERD_DRIVER_FIXTURES="${_driver_fixture_dir}"
   NEVERD_DRIVER_SCENARIOS="${CMAKE_SOURCE_DIR}/docs/examples"
@@ -1340,6 +1563,13 @@ set(_driver_execution_fixture_definitions
   ${_driver_kmdf_definitions}
   ${_driver_wdm_stack_definitions}
   ${_driver_wdm_owned_irp_definitions}
+  ${_driver_wdm_file_lifetime_definitions}
+  ${_driver_wdm_file_queries_definitions}
+  ${_driver_wdm_file_transfers_definitions}
+  ${_driver_wdm_processors_definitions}
+  ${_driver_wdm_int64_strings_definitions}
+  ${_driver_wdm_crt_strings_definitions}
+  ${_driver_wdm_filesystem_definitions}
   ${_driver_wdm_wait_wake_definitions}
   ${_driver_wdm_multiple_wait_definitions}
   ${_driver_wdm_usb_idle_definitions}
@@ -1358,10 +1588,23 @@ set(_driver_execution_fixture_definitions
   ${_driver_wdm_neither_definitions}
   ${_driver_wdm_user_mapping_definitions})
 add_neverd_unittest(NeverDNativeDriverTests
+  DriverObjectTests.cpp
+  DriverRegistryObjectTests.cpp
+  DriverDeviceQueryTests.cpp
+  DriverFileObjectTests.cpp
+  DriverProcessorTests.cpp
+  DriverIntegerFormattingTests.cpp
+  DriverRuntimeStringTests.cpp
+  DriverFileSystemExecutionTests.cpp
+  DriverNamespaceTests.cpp
+  DriverDataExportTests.cpp
   NO_PRETTY_VALUES
   DriverNativeExecutionTests.cpp
   DriverTimestampTests.cpp
   DriverCPUIDTests.cpp
+  DriverMSRReadTests.cpp
+  DriverProcessPebTests.cpp
+  DriverSEHV2Tests.cpp
   DriverLoaderViewTests.cpp
   DriverBugCheckTests.cpp
   DriverVersionQueryTests.cpp
@@ -1384,13 +1627,20 @@ target_include_directories(NeverDNativeDriverTests PRIVATE
 target_compile_definitions(NeverDNativeDriverTests PRIVATE
   ${_driver_execution_fixture_definitions})
 add_dependencies(NeverDNativeDriverTests NeverDDriverFixtures)
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/DriverBatchTestExecution.cmake")
 
 add_neverd_unittest(NeverDKernelSnapshotTests
   NO_PRETTY_VALUES
   KernelSnapshotTests.cpp
+  DriverFileSystemTests.cpp
+  KernelFileSystemTests.cpp
+  KernelFileCreateTests.cpp
   KernelUnpackStateTests.cpp
   KernelLoaderViewTests.cpp
   KernelResidentQueryTests.cpp
+  KernelMSRReadTests.cpp
+  KernelProcessPebTests.cpp
   KernelBugCheckTests.cpp
   KernelVersionQueryTests.cpp
   KernelPhysicalInventoryTests.cpp
@@ -1474,6 +1724,14 @@ add_neverd_unittest(NeverDDriverEmulationTests
   ExecutionPolicyTests.cpp
   DriverScenarioTests.cpp
   KernelModelTests.cpp
+  KernelObjectTests.cpp
+  KernelFileObjectTests.cpp
+  KernelFileQueryTests.cpp
+  KernelNamespaceTests.cpp
+  KernelDataExportTests.cpp
+  KernelLookasideTests.cpp
+  KernelFastMutexTests.cpp
+  KernelExecutiveResourceTests.cpp
   KernelRequestOwnershipTests.cpp
   KernelDriverIRPAllocationTests.cpp
   KernelDriverIRPOwnershipTests.cpp
@@ -1576,6 +1834,12 @@ if(TARGET neverd_shared AND TARGET neverd)
     ${_driver_kmdf_definitions}
     ${_driver_wdm_stack_definitions}
   ${_driver_wdm_owned_irp_definitions}
+  ${_driver_wdm_file_queries_definitions}
+  ${_driver_wdm_file_transfers_definitions}
+  ${_driver_wdm_processors_definitions}
+  ${_driver_wdm_int64_strings_definitions}
+  ${_driver_wdm_crt_strings_definitions}
+  ${_driver_wdm_filesystem_definitions}
   ${_driver_wdm_wait_wake_definitions}
   ${_driver_wdm_multiple_wait_definitions}
   ${_driver_wdm_usb_idle_definitions}

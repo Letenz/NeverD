@@ -2,11 +2,16 @@ LIBRARY ntoskrnl.exe
 EXPORTS
   RtlCopyMemory
   KeQueryActiveProcessors
+  KeGetCurrentProcessorNumberEx
+  KeRaiseIrqlToDpcLevel
   KeSetSystemAffinityThread
   KeRevertToUserAffinityThread
   ZwOpenKey
   ZwCreateKey
   ZwQueryValueKey
+  ZwEnumerateValueKey
+  ZwQueryKey
+  ZwEnumerateKey
   ZwSetValueKey
   ZwDeleteValueKey
   ZwDeleteKey
@@ -21,6 +26,12 @@ EXPORTS
   ExFreePool
   ExFreePoolWithTag
   IoCreateDevice
+  IoAttachDeviceToDeviceStack
+  IoDetachDevice
+  IoGetAttachedDevice
+  IoGetAttachedDeviceReference
+  IoGetLowerDeviceObject
+  IoGetDeviceAttachmentBaseRef
   IoCreateSymbolicLink
   IoDeleteDevice
   IoAllocateWorkItem
@@ -51,9 +62,16 @@ EXPORTS
   IoDeleteSymbolicLink
   IofCompleteRequest
   ZwOpenFile
+  NeverDUnsupportedFixtureAPI
+  ZwCreateFile
+  IoCreateFile
+  IoCancelFileOpen
+  IofCallDriver
   MmMapLockedPagesSpecifyCache
+  MmMapLockedPages
   MmUnmapLockedPages
   MmProbeAndLockPages
+  MmProbeAndLockProcessPages
   MmUnlockPages
   IoAllocateMdl
   IoFreeMdl
@@ -62,8 +80,11 @@ EXPORTS
   ExAllocatePool2
   DbgPrint
   DbgPrintEx
+  vDbgPrintExWithPrefix
   MmGetSystemRoutineAddress
   MmIsAddressValid
+  MmGetPhysicalAddress
+  MmGetVirtualForPhysical
   KeRegisterBugCheckReasonCallback
   KeDeregisterBugCheckReasonCallback
   RtlCopyUnicodeString
@@ -75,14 +96,38 @@ EXPORTS
   KeSetPriorityThread
   ObReferenceObjectByHandle
   ObfDereferenceObject
+  ObfReferenceObject
+  ObReferenceObjectByPointer
+  ObOpenObjectByPointer
+  ObGetObjectType
+  ObGetFilterVersion
+  PsLookupProcessByProcessId
+  PsLookupThreadByThreadId
+  PsGetThreadProcess
+  IoThreadToProcess
+  PsIsThreadTerminating
   PsCreateSystemThread
   PsTerminateSystemThread
   KeAreApcsDisabled
   KeAreAllApcsDisabled
+  KeEnterCriticalRegion
   KeLeaveCriticalRegion
   KeEnterGuardedRegion
   KeLeaveGuardedRegion
   IoGetCurrentProcess
+  IoQueryFileInformation
+  ZwQueryInformationFile
+  ZwReadFile
+  ZwWriteFile
+  ZwSetInformationFile
+  ZwFlushBuffersFile
+  ZwDeviceIoControlFile
+  ZwFsControlFile
+  IoGetRelatedDeviceObject
+  IoGetBaseFileSystemDeviceObject
+  IoGetDeviceObjectPointer
+  IoGetInitialStack
+  IoGetStackLimits
   KeStackAttachProcess
   KeUnstackDetachProcess
   RtlInitAnsiString
@@ -90,10 +135,14 @@ EXPORTS
   RtlAppendUnicodeToString
   RtlAppendUnicodeStringToString
   RtlPrefixUnicodeString
+  RtlInt64ToUnicodeString
   RtlIntegerToUnicodeString
   RtlUnicodeStringToInteger
   PsGetCurrentProcessId
+  ExGetPreviousMode
+  PsGetCurrentThreadPreviousMode
   PsGetProcessId
+  PsGetProcessPeb
   PsGetCurrentProcess
   PsGetCurrentThread
   KeGetCurrentThread
@@ -102,6 +151,12 @@ EXPORTS
   RtlAnsiStringToUnicodeString
   RtlUnicodeStringToAnsiString
   RtlFreeUnicodeString
+  RtlHashUnicodeString
+  RtlUpcaseUnicodeString
+  RtlUpcaseUnicodeChar
+  toupper
+  towupper
+  RtlTimeToSecondsSince1980
   RtlFreeAnsiString
   MmGetPhysicalMemoryRanges
   RtlInitUnicodeStringEx
@@ -147,3 +202,95 @@ EXPORTS
   strspn
   wcsspn
   wcscspn
+  KeAcquireInStackQueuedSpinLock
+  KeReleaseInStackQueuedSpinLock
+  KeAcquireInStackQueuedSpinLockAtDpcLevel
+  KeReleaseInStackQueuedSpinLockFromDpcLevel
+  ExInitializeRundownProtection
+  ExReInitializeRundownProtection
+  ExAcquireRundownProtection
+  ExReleaseRundownProtection
+  ExWaitForRundownProtectionRelease
+  ExRundownCompleted
+  ExAcquireRundownProtectionEx
+  ExReleaseRundownProtectionEx
+
+strcpy
+wcscpy
+strncpy
+wcsncpy
+strcat
+wcscat
+strncat
+wcsncat
+ExInitializeNPagedLookasideList
+ExInitializePagedLookasideList
+ExDeleteNPagedLookasideList
+ExDeletePagedLookasideList
+
+KeInitializeGuardedMutex
+ExAcquireFastMutex
+ExTryToAcquireFastMutex
+ExReleaseFastMutex
+ExAcquireFastMutexUnsafe
+ExReleaseFastMutexUnsafe
+KeAcquireGuardedMutex
+KeTryToAcquireGuardedMutex
+KeReleaseGuardedMutex
+KeAcquireGuardedMutexUnsafe
+KeReleaseGuardedMutexUnsafe
+
+ExInitializeResourceLite
+ExReinitializeResourceLite
+ExDeleteResourceLite
+ExAcquireResourceExclusiveLite
+ExTryToAcquireResourceExclusiveLite
+ExAcquireResourceSharedLite
+ExAcquireSharedStarveExclusive
+ExAcquireSharedWaitForExclusive
+ExConvertExclusiveToSharedLite
+ExReleaseResourceLite
+ExReleaseResourceForThreadLite
+ExIsResourceAcquiredExclusiveLite
+ExIsResourceAcquiredSharedLite
+ExGetExclusiveWaiterCount
+ExGetSharedWaiterCount
+ExDisableResourceBoostLite
+ExEnterCriticalRegionAndAcquireResourceExclusive
+ExEnterCriticalRegionAndAcquireResourceShared
+ExEnterCriticalRegionAndAcquireSharedWaitForExclusive
+ExReleaseResourceAndLeaveCriticalRegion
+ExSetResourceOwnerPointer
+ExSetResourceOwnerPointerEx
+  PsProcessType DATA
+  PsThreadType DATA
+  IoDriverObjectType DATA
+  IoFileObjectType DATA
+  ExEventObjectType DATA
+  ExSemaphoreObjectType DATA
+  PsJobType DATA
+  SeTokenObjectType DATA
+  PsInitialSystemProcess DATA
+  KeNumberProcessors DATA
+  KdDebuggerEnabled DATA
+  KdDebuggerNotPresent DATA
+
+  ObQueryNameString
+  ObReferenceObjectByName
+  ZwOpenDirectoryObject
+  ZwOpenSymbolicLinkObject
+  ZwQuerySymbolicLinkObject
+  ZwQueryObject
+
+  isdigit
+  _strupr
+  _wcslwr
+  _wcsupr
+  strcpy_s
+  strncpy_s
+  wcscat_s
+  wcsncpy_s
+  memcpy_s
+  memmove_s
+  RtlImageNtHeader
+  RtlPcToFileHeader

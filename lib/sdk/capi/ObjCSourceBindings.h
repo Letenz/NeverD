@@ -16,6 +16,7 @@
 #include "ObjCSentinelStack.h"
 #include "ObjCSourceProjection.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinImportVeneer.h"
@@ -31,6 +32,7 @@
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftStringCalls.h"
 #include "neverd/loader/Swift/SwiftVirtualCalls.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Demangle/SwiftDemangle.h"
@@ -95,7 +97,10 @@ namespace objc_binding_detail {
 
 inline std::optional<std::vector<va_t>>
 formatAddresses(const SourceCallTypeHint::FormatArguments &Format) {
-  if (!Format.FormatAddress || Format.AlternativeFormatAddresses.size() >= 64 ||
+  if (!Format.FormatAddress ||
+      Format.AlternativeFormatAddresses.size() >=
+          ::neverd::sdk::
+              kObjCSourceBindingsFormatAddressesFormatAlternativeFormatAddressesSizeLimit ||
       !std::is_sorted(Format.AlternativeFormatAddresses.begin(),
                       Format.AlternativeFormatAddresses.end()) ||
       std::adjacent_find(Format.AlternativeFormatAddresses.begin(),
@@ -284,7 +289,9 @@ inline bool provenSourcePointerValue(
     const BinaryImage &Image, size_t &Budget, std::set<VarKey> &Active,
     unsigned Depth = 0,
     const std::set<const HighExpr *> *FrameLoads = nullptr) {
-  if (!Value || !Budget-- || Depth > 64)
+  if (!Value || !Budget-- ||
+      Depth >
+          ::neverd::sdk::kObjCSourceBindingsProvenSourcePointerValueDepthLimit)
     return false;
   if (Value->Type && Value->Type->Kind == NdTypeKind::Ptr &&
       Value->Type->Size == 8)
@@ -357,7 +364,9 @@ mayCarryPrivateFrameAddress(const HighFunc &Function,
     Pending.pop_back();
     if (!E || !Expressions.insert(E.get()).second)
       continue;
-    if (!Budget || Depth > 64)
+    if (!Budget ||
+        Depth > ::neverd::sdk::
+                    kObjCSourceBindingsMayCarryPrivateFrameAddressDepthLimit)
       return true;
     --Budget;
     if (E->Kind == ExprKind::Load || E->Kind == ExprKind::Call)
@@ -390,7 +399,7 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
   if (Image.Arch != Arch::AArch64 || Function.FrameSize <= 0 ||
       Function.FrameSize > (1 << 24) || Call.Operands.size() <= FixedCount)
     return Proven;
-  size_t Budget = 1000000;
+  size_t Budget = kSourceEvaluationWork;
   VarKeyMap<unsigned> Counts;
   walkStmts(Function.Body, [&](const HighStmt &S) {
     if (S.Kind == StmtKind::Assign && S.Dst &&
@@ -419,7 +428,11 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
   std::set<const HighExpr *> Seen;
   const auto Collect = [&](auto &&Self, const ExprPtr &E,
                            unsigned Depth) -> void {
-    if (!E || !Budget || Depth > 64 || !Seen.insert(E.get()).second)
+    if (!E || !Budget ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsProvenPrivateFramePointerLoadsCollectDepthLimit ||
+        !Seen.insert(E.get()).second)
       return;
     --Budget;
     if (E->Kind == ExprKind::Load && E->Type && E->Type->Size == 8 &&
@@ -446,11 +459,16 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
   };
   for (size_t I = FixedCount; I < Call.Operands.size(); ++I)
     Collect(Collect, Call.Operands[I], 0);
-  if (!Budget || Candidates.empty() || Candidates.size() > 16)
+  if (!Budget || Candidates.empty() ||
+      Candidates.size() >
+          ::neverd::sdk::
+              kObjCSourceBindingsProvenPrivateFramePointerLoadsCandidatesSizeLimit)
     return Proven;
   const auto Graph = buildHighSourceFlowGraph(Function);
   if (!Graph.Diagnostics.Complete || Graph.Nodes.empty() ||
-      Graph.Nodes.size() > 100000)
+      Graph.Nodes.size() >
+          ::neverd::sdk::
+              kObjCSourceBindingsProvenPrivateFramePointerLoadsGraphNodesSizeLimit)
     return Proven;
 
   // Inspect definitions as well as syntactic aliases: a PHI or renamed local
@@ -510,7 +528,10 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
           B->Selector != "countByEnumeratingWithState:objects:count:" ||
           B->Signature.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK ||
           E.Operands.size() != 5 || !objcSourceCallBound(E, Image, {}) ||
-          !Count || !*Count || *Count > (1u << 16))
+          !Count || !*Count ||
+          *Count >
+              ::neverd::sdk::
+                  kObjCSourceBindingsProvenPrivateFramePointerLoadsSafeEnumerationCountLimit)
         return false;
       const auto State = Offset(E.Operands[2]);
       const auto Buffer = Offset(E.Operands[3]);
@@ -595,7 +616,7 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
           if (*At == Slot && Value && Value->Type && Value->Type->Size == 8 &&
               !F.Escaped && S.MemoryOrdering == NdMemoryOrdering::None &&
               S.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
-            size_t PointerBudget = 4096;
+            size_t PointerBudget = kSourceValueWork;
             std::set<VarKey> PointerActive;
             const bool Null =
                 Value->Kind == ExprKind::Const && !Value->ConstVal &&
@@ -620,7 +641,8 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
       if (F.Escaped)
         F.Pointer = false;
     };
-    while (!Pending.empty() && Budget && ++Work <= 100000) {
+    while (!Pending.empty() && Budget &&
+           ++Work <= static_cast<int>(::neverd::sdk::kSourceExpressionWork)) {
       const size_t Index = Pending.back();
       Pending.pop_back();
       Fact Out = *Incoming[Index];
@@ -636,7 +658,8 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
         }
       }
     }
-    if (!Budget || Work > 100000)
+    if (!Budget ||
+        Work > static_cast<int>(::neverd::sdk::kSourceExpressionWork))
       return {};
     for (size_t I = 0; I < Graph.Nodes.size(); ++I) {
       if (!Incoming[I] || !Incoming[I]->Pointer || Incoming[I]->Escaped)
@@ -662,7 +685,7 @@ inline std::set<const HighExpr *> provenFastEnumerationObjectLoads(
   if (Image.Arch != Arch::AArch64 || Function.FrameSize <= 0 ||
       Function.FrameSize > (1 << 24) || Call.Operands.size() <= FixedCount)
     return Proven;
-  size_t Budget = 1000000;
+  size_t Budget = kSourceEvaluationWork;
   VarKeyMap<unsigned> Counts;
   walkStmts(Function.Body, [&](const HighStmt &S) {
     if (S.Kind == StmtKind::Assign && S.Dst &&
@@ -761,7 +784,11 @@ inline std::set<const HighExpr *> provenFastEnumerationObjectLoads(
   std::set<const HighExpr *> Seen;
   const auto Collect = [&](auto &&Self, const ExprPtr &E,
                            unsigned Depth) -> void {
-    if (!E || !Budget || Depth > 64 || !Seen.insert(E.get()).second)
+    if (!E || !Budget ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsProvenFastEnumerationObjectLoadsCollectDepthLimit ||
+        !Seen.insert(E.get()).second)
       return;
     --Budget;
     if (E->Kind == ExprKind::Load) {
@@ -794,11 +821,16 @@ inline std::set<const HighExpr *> provenFastEnumerationObjectLoads(
   };
   for (size_t I = FixedCount; I < Call.Operands.size(); ++I)
     Collect(Collect, Call.Operands[I], 0);
-  if (!Budget || Candidates.empty() || Candidates.size() > 8)
+  if (!Budget || Candidates.empty() ||
+      Candidates.size() >
+          ::neverd::sdk::
+              kObjCSourceBindingsProvenFastEnumerationObjectLoadsCandidatesSizeLimit)
     return {};
   const auto Graph = buildHighSourceFlowGraph(Function);
   if (!Graph.Diagnostics.Complete || Graph.Nodes.empty() ||
-      Graph.Nodes.size() > 100000)
+      Graph.Nodes.size() >
+          ::neverd::sdk::
+              kObjCSourceBindingsProvenFastEnumerationObjectLoadsGraphNodesSizeLimit)
     return {};
 
   const auto Derived = [&](const ExprPtr &E) {
@@ -848,8 +880,10 @@ inline std::set<const HighExpr *> provenFastEnumerationObjectLoads(
       const auto Data = Offset(E.Operands[3]);
       const auto Count = LiteralCount(E.Operands[4]);
       if (!At || *At != State || !Data || !Count || !*Count ||
-          *Count > (1u << 16) || !InFrame(*Data, *Count * 8) ||
-          Overlaps(State, 64, *Data, *Count * 8))
+          *Count >
+              ::neverd::sdk::
+                  kObjCSourceBindingsProvenFastEnumerationObjectLoadsValidEnumerationCountLimit ||
+          !InFrame(*Data, *Count * 8) || Overlaps(State, 64, *Data, *Count * 8))
         return std::nullopt;
       return Buffer{*Data, *Count * 8};
     };
@@ -885,8 +919,12 @@ inline std::set<const HighExpr *> provenFastEnumerationObjectLoads(
       const auto Count = LiteralCount(E.Operands[4]);
       const auto Objects = Offset(E.Operands[2]);
       const auto Keys = Offset(E.Operands[3]);
-      if (!Count || !*Count || *Count > (1u << 16) || !Objects || !Keys ||
-          !InFrame(*Objects, *Count * 8) || !InFrame(*Keys, *Count * 8))
+      if (!Count || !*Count ||
+          *Count >
+              ::neverd::sdk::
+                  kObjCSourceBindingsProvenFastEnumerationObjectLoadsSafeDictionaryCountLimit ||
+          !Objects || !Keys || !InFrame(*Objects, *Count * 8) ||
+          !InFrame(*Keys, *Count * 8))
         return false;
       for (const auto At : {*Objects, *Keys})
         if (Overlaps(At, *Count * 8, State, 64) ||
@@ -1033,7 +1071,8 @@ inline std::set<const HighExpr *> provenFastEnumerationObjectLoads(
       }
       return std::nullopt;
     };
-    while (!Pending.empty() && Budget && ++Work <= 100000) {
+    while (!Pending.empty() && Budget &&
+           ++Work <= static_cast<int>(::neverd::sdk::kSourceExpressionWork)) {
       const size_t Index = Pending.back();
       Pending.pop_back();
       Fact Out = *Incoming[Index];
@@ -1070,7 +1109,8 @@ inline std::set<const HighExpr *> provenFastEnumerationObjectLoads(
         }
       }
     }
-    if (!Budget || Work > 100000)
+    if (!Budget ||
+        Work > static_cast<int>(::neverd::sdk::kSourceExpressionWork))
       return {};
     for (size_t I = 0; I < Graph.Nodes.size(); ++I) {
       if (!Incoming[I] || !Incoming[I]->Active || Incoming[I]->Escaped ||
@@ -1104,7 +1144,7 @@ provenBlockClassCaptureLoads(const HighFunc &Function, const BinaryImage &Image,
       Function.FrameSize > (1u << 24) || Function.FrameHeadroom > (1u << 24) ||
       Call.Operands.size() <= FixedCount)
     return Proven;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   const auto Context = [](const ExprPtr &E) {
     return E && E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Param &&
            E->Var.Id == 0 && E->Var.SSAVer == 0 && E->Var.RenameTag < 0 &&
@@ -1141,7 +1181,10 @@ provenBlockClassCaptureLoads(const HighFunc &Function, const BinaryImage &Image,
   const auto FromCapture = [&](auto &&Self, const ExprPtr &E,
                                std::set<VarKey> &Active,
                                unsigned Depth) -> std::optional<uint64_t> {
-    if (!E || !Budget || Depth > 64)
+    if (!E || !Budget ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsProvenBlockClassCaptureLoadsFromCaptureDepthLimit)
       return std::nullopt;
     --Budget;
     if (const auto At = Capture(E))
@@ -1175,7 +1218,11 @@ provenBlockClassCaptureLoads(const HighFunc &Function, const BinaryImage &Image,
   std::set<const HighExpr *> Visited;
   const auto Collect = [&](auto &&Self, const ExprPtr &E,
                            unsigned Depth) -> void {
-    if (!E || !Budget || Depth > 64 || !Visited.insert(E.get()).second)
+    if (!E || !Budget ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsProvenBlockClassCaptureLoadsCollectDepthLimit ||
+        !Visited.insert(E.get()).second)
       return;
     --Budget;
     if (const auto At = Capture(E))
@@ -1191,11 +1238,16 @@ provenBlockClassCaptureLoads(const HighFunc &Function, const BinaryImage &Image,
   };
   for (size_t I = FixedCount; I < Call.Operands.size(); ++I)
     Collect(Collect, Call.Operands[I], 0);
-  if (!Budget || Candidates.empty() || Candidates.size() > 16)
+  if (!Budget || Candidates.empty() ||
+      Candidates.size() >
+          ::neverd::sdk::
+              kObjCSourceBindingsProvenBlockClassCaptureLoadsCandidatesSizeLimit)
     return {};
   const auto Graph = buildHighSourceFlowGraph(Function);
   if (!Graph.Diagnostics.Complete || Graph.Nodes.empty() ||
-      Graph.Nodes.size() > 100000)
+      Graph.Nodes.size() >
+          ::neverd::sdk::
+              kObjCSourceBindingsProvenBlockClassCaptureLoadsGraphNodesSizeLimit)
     return {};
   VarKeyMap<ExprPtr> FrameAliases;
   VarKeyMap<unsigned> DefinitionCounts;
@@ -1218,7 +1270,10 @@ provenBlockClassCaptureLoads(const HighFunc &Function, const BinaryImage &Image,
                                   unsigned Depth) -> bool {
     if (!E)
       return false;
-    if (!Budget || Depth > 64)
+    if (!Budget ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsProvenBlockClassCaptureLoadsContextDerivedDepthLimit)
       return true;
     --Budget;
     if (Context(E))
@@ -1276,7 +1331,8 @@ provenBlockClassCaptureLoads(const HighFunc &Function, const BinaryImage &Image,
              Formal->Size == 8 && equalSourceTypes(Formal, Declared) && Bytes &&
              Bytes <= Declared->Pointee->Size;
     };
-    while (!Pending.empty() && Budget && ++Work <= 100000) {
+    while (!Pending.empty() && Budget &&
+           ++Work <= static_cast<int>(::neverd::sdk::kSourceExpressionWork)) {
       const size_t Index = Pending.back();
       Pending.pop_back();
       Fact Out = *Incoming[Index];
@@ -1358,7 +1414,8 @@ provenBlockClassCaptureLoads(const HighFunc &Function, const BinaryImage &Image,
         }
       }
     }
-    if (!Budget || Work > 100000)
+    if (!Budget ||
+        Work > static_cast<int>(::neverd::sdk::kSourceExpressionWork))
       return {};
     for (size_t I = 0; I < Graph.Nodes.size(); ++I) {
       if (!Incoming[I])
@@ -1384,9 +1441,11 @@ provenSourceInteger64Value(const ExprPtr &Value,
                            const VarKeyMap<std::vector<ExprPtr>> &Definitions,
                            const BinaryImage &Image, size_t &Budget,
                            std::set<VarKey> &Active, unsigned Depth = 0) {
-  if (!Value || !Budget || Depth > 64 || !Value->Type ||
-      Value->Type->Kind != NdTypeKind::Int || Value->Type->Size != 8 ||
-      Value->IntrinsicId != Intrinsic::None ||
+  if (!Value || !Budget ||
+      Depth > ::neverd::sdk::
+                  kObjCSourceBindingsProvenSourceInteger64ValueDepthLimit ||
+      !Value->Type || Value->Type->Kind != NdTypeKind::Int ||
+      Value->Type->Size != 8 || Value->IntrinsicId != Intrinsic::None ||
       !Value->IntrinsicOutputs.empty() ||
       Value->MemoryOrdering != NdMemoryOrdering::None ||
       Value->MemoryAddressSpace != NdMemoryAddressSpace::Default)
@@ -1503,11 +1562,15 @@ inline TypeRef provenLocalizedFormatInteger64Type(
     const BinaryImage &Image) {
   if (Image.Arch != Arch::AArch64)
     return {};
-  size_t Budget = 4096;
+  size_t Budget = kSourceValueWork;
   std::set<VarKey> ActiveValues, ActiveAddresses;
   const auto LiteralAddress = [&](auto &&Self, const ExprPtr &E,
                                   unsigned Depth) -> std::optional<va_t> {
-    if (!E || !Budget-- || Depth > 64 || !E->Type || E->Type->Size != 8 ||
+    if (!E || !Budget-- ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsProvenLocalizedFormatInteger64TypeLiteralAddressDepthLimit ||
+        !E->Type || E->Type->Size != 8 ||
         (E->Type->Kind != NdTypeKind::Int &&
          E->Type->Kind != NdTypeKind::Ptr) ||
         E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
@@ -1556,7 +1619,11 @@ inline TypeRef provenLocalizedFormatInteger64Type(
   };
   const auto Resolve = [&](auto &&Self, const ExprPtr &E,
                            unsigned Depth) -> TypeRef {
-    if (!E || !Budget-- || Depth > 64 || !E->Type || E->Type->Size != 8 ||
+    if (!E || !Budget-- ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsProvenLocalizedFormatInteger64TypeResolveDepthLimit ||
+        !E->Type || E->Type->Size != 8 ||
         (E->Type->Kind != NdTypeKind::Int &&
          E->Type->Kind != NdTypeKind::Ptr) ||
         E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
@@ -1632,7 +1699,8 @@ inline std::optional<uint32_t> constantBorrowedByteCount(const ExprPtr &Value,
   if (!Value || !Type || Type->Kind != NdTypeKind::Int ||
       (Type->Size != 1 && Type->Size != 2 && Type->Size != 4 &&
        Type->Size != 8) ||
-      Depth > 16)
+      Depth >
+          ::neverd::sdk::kObjCSourceBindingsConstantBorrowedByteCountDepthLimit)
     return std::nullopt;
   const auto Normalize = [](uint64_t Raw,
                             const TypeRef &Integer) -> std::optional<uint64_t> {
@@ -1652,7 +1720,10 @@ inline std::optional<uint32_t> constantBorrowedByteCount(const ExprPtr &Value,
   // mistaken for a large positive byte count.
   const auto Evaluate = [&](const auto &Self, const ExprPtr &Expression,
                             unsigned CurrentDepth) -> std::optional<uint64_t> {
-    if (!Expression || !Expression->Type || CurrentDepth > 16)
+    if (!Expression || !Expression->Type ||
+        CurrentDepth >
+            ::neverd::sdk::
+                kObjCSourceBindingsConstantBorrowedByteCountEvaluateCurrentDepthLimit)
       return std::nullopt;
     if (Expression->Kind == ExprKind::Const)
       return Normalize(Expression->ConstVal, Expression->Type);
@@ -1694,7 +1765,7 @@ inline std::optional<uint32_t> constantBorrowedByteCount(const ExprPtr &Value,
   const uint64_t Mask = Bits == 64 ? UINT64_MAX : (UINT64_C(1) << Bits) - 1;
   const uint64_t Count = *Declared & Mask;
   if ((Type->IsSigned && (Count & (UINT64_C(1) << (Bits - 1)))) ||
-      Count > 1024 * 1024)
+      Count > ::neverd::sdk::kObjCSourceBindingsConstantBorrowedByteCountLimit)
     return std::nullopt;
   return static_cast<uint32_t>(Count);
 }
@@ -1763,7 +1834,8 @@ inline const Symbol *uniqueWritableDataSymbol(const BinaryImage &Image,
       Image.Bits != Bitness::Bits64 ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
       Image.MachOChainedFixupsAmbiguous || !Address || !Width ||
-      Width > 1024 * 1024 || Width > InvalidVA - Address)
+      Width > ::neverd::limits::ir::kMaxSourceObjectBytes ||
+      Width > InvalidVA - Address)
     return nullptr;
   const auto *Section = Image.getSectionFor(Address);
   const auto *Segment = Image.getSegmentFor(Address);
@@ -1838,8 +1910,11 @@ struct ConstantObjectTableEntry {
 inline std::optional<std::vector<ConstantObjectTableEntry>>
 constantObjectTableEntries(const BinaryImage &Image, va_t Address,
                            uint32_t ByteCount) {
-  if (!Address || !ByteCount || ByteCount > 65536 || ByteCount % 8 ||
-      ByteCount > InvalidVA - Address)
+  if (!Address || !ByteCount ||
+      ByteCount >
+          ::neverd::sdk::
+              kObjCSourceBindingsConstantObjectTableEntriesByteCountLimit ||
+      ByteCount % 8 || ByteCount > InvalidVA - Address)
     return std::nullopt;
   std::vector<ConstantObjectTableEntry> Entries;
   Entries.reserve(ByteCount / 8);
@@ -1916,11 +1991,11 @@ swiftSimpleDescriptorModule(llvm::StringRef Symbol,
                             llvm::StringRef DeclKind) {
   Symbol.consume_front("_");
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(Symbol, Options);
   const auto Shape = [](const llvm::SwiftDemangleNode &Node,
                         llvm::StringRef Kind, size_t Children) {
@@ -1969,11 +2044,11 @@ inline bool swiftNominalDescriptor(llvm::StringRef Symbol,
 inline bool swiftExportedNominalDescriptor(llvm::StringRef Symbol) {
   Symbol.consume_front("_");
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(Symbol, Options);
   const auto Shape = [](const llvm::SwiftDemangleNode &Node,
                         llvm::StringRef Kind, size_t Children) {
@@ -1989,7 +2064,9 @@ inline bool swiftExportedNominalDescriptor(llvm::StringRef Symbol) {
   const auto ValidDeclaration = [&](const auto &Self,
                                     const llvm::SwiftDemangleNode &Node,
                                     unsigned Depth) -> bool {
-    if (Depth >= 8 ||
+    if (Depth >=
+            ::neverd::sdk::
+                kObjCSourceBindingsSwiftExportedNominalDescriptorValidDeclarationEnumClassStructureDepthLimit ||
         (Node.Kind != "Structure" && Node.Kind != "Class" &&
          Node.Kind != "Enum") ||
         Node.Text || Node.Index || Node.Children.size() != 2)
@@ -2014,11 +2091,11 @@ inline bool swiftProtocolDescriptor(llvm::StringRef Symbol) {
 
 inline bool swiftMangledType(llvm::StringRef Symbol) {
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(Symbol, Options);
   return Parsed.Root && Parsed.Error.empty() && Parsed.Root->Kind == "Global" &&
          !Parsed.Root->Text && !Parsed.Root->Index &&
@@ -2364,11 +2441,11 @@ inline std::optional<SourceCallTypeHint> swiftWitnessTableAddressHint(
       !llvm::StringRef(Table->Name).ends_with("WP"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed =
       llvm::swiftDemangle(llvm::StringRef(Table->Name).drop_front(1), Options);
   if (!Parsed.Root || !Parsed.Error.empty() || Parsed.Root->Kind != "Global" ||
@@ -2445,7 +2522,7 @@ inline bool swiftSingletonDescriptorForwardedByNativeHelper(
     return false;
   std::set<const HighExpr *> Seen;
   size_t RuntimeCalls = 0;
-  size_t Budget = 4096;
+  size_t Budget = kSourceValueWork;
   bool Valid = true;
   walkStmts(Helper.Body, [&](const HighStmt &Statement) {
     forEachExpr(Statement, [&](const ExprPtr &Root) {
@@ -2469,12 +2546,17 @@ inline bool swiftSingletonDescriptorForwardedByNativeHelper(
           const auto &Operands = Expression->Operands;
           const HighExpr *Value =
               Operands.size() == 2 ? Operands[1].get() : nullptr;
-          for (unsigned Depth = 0; Value && Depth < 4 &&
-                                   (Value->Kind == ExprKind::Cast ||
-                                    Value->Kind == ExprKind::BitCast) &&
-                                   Value->Type && Value->Type->Size == 8 &&
-                                   Value->Operands.size() == 1;
-               ++Depth)
+          for (
+              unsigned Depth = 0;
+              Value &&
+              Depth <
+                  ::neverd::sdk::
+                      kObjCSourceBindingsSwiftSingletonDescriptorForwardedByNativeHelperSwiftGetSingletonMetadataDepthLimit &&
+              (Value->Kind == ExprKind::Cast ||
+               Value->Kind == ExprKind::BitCast) &&
+              Value->Type && Value->Type->Size == 8 &&
+              Value->Operands.size() == 1;
+              ++Depth)
             Value = Value->Operands[0].get();
           if (!Expected ||
               !runtimeBindingMatches(*Expression->SourceCallHint, *Expected) ||
@@ -2713,7 +2795,12 @@ swiftImportedTypedefDescriptorMatches(const BinaryImage &Image, va_t Descriptor,
   va_t Cursor = *Name;
   const auto Component = [&]() -> std::optional<std::string> {
     std::string Text;
-    for (unsigned I = 0; I <= 256; ++I) {
+    for (
+        unsigned I = 0;
+        I <=
+        ::neverd::sdk::
+            kObjCSourceBindingsSwiftImportedTypedefDescriptorMatchesComponentILimit;
+        ++I) {
       if (Cursor == InvalidVA)
         return std::nullopt;
       const auto Byte = readImmutableImageBytes(Image, Cursor++, 1);
@@ -2760,7 +2847,8 @@ struct SwiftPrivateDescriptorFieldPath {
 inline std::optional<SwiftPrivateDescriptorFieldPath>
 swiftPrivateDescriptorFieldPath(const BinaryImage &Image, va_t Descriptor,
                                 va_t TypeReference, uint32_t SymbolicOffset) {
-  if (Descriptor % 4 || SymbolicOffset > 123 ||
+  if (Descriptor % 4 ||
+      SymbolicOffset > ::neverd::sdk::kMaxSwiftSymbolicTypeReferenceOffset ||
       TypeReference > InvalidVA - SymbolicOffset - 5)
     return std::nullopt;
   const auto Reference =
@@ -2783,7 +2871,8 @@ swiftPrivateDescriptorFieldPath(const BinaryImage &Image, va_t Descriptor,
     // A field can wrap the same descriptor in a different generic type. Only
     // its exact original reference edge supplies identity; no recipe is copied
     // from that field. Validate the complete bounded reference before use.
-    for (uint32_t I = 0; I <= 128;) {
+    for (uint32_t I = 0;
+         I <= ::neverd::sdk::kObjCSourceBindingsFindDescriptorILimit;) {
       if (FieldType > InvalidVA - I)
         return std::nullopt;
       const auto Byte = readImmutableImageBytes(Image, FieldType + I, 1);
@@ -2791,10 +2880,11 @@ swiftPrivateDescriptorFieldPath(const BinaryImage &Image, va_t Descriptor,
         return std::nullopt;
       if (!Byte->front())
         return Found;
-      if (I == 128)
+      if (I == ::neverd::sdk::kMaxSwiftSymbolicTypeBytes)
         return std::nullopt;
       if (Byte->front() == 1 || Byte->front() == 2) {
-        if (I > 123 || !readImmutableImageBytes(Image, FieldType + I, 5))
+        if (I > ::neverd::sdk::kMaxSwiftSymbolicTypeReferenceOffset ||
+            !readImmutableImageBytes(Image, FieldType + I, 5))
           return std::nullopt;
         const auto Edge = swiftRelativeAddress(Image, FieldType + I + 1);
         if (!Edge)
@@ -2813,9 +2903,8 @@ swiftPrivateDescriptorFieldPath(const BinaryImage &Image, va_t Descriptor,
   };
   // The caller authenticates the private symbol and complete type mangling.
   // A bounded scan supplies a path, never an address derived from image slide.
-  constexpr size_t MaxExports = 262144;
-  size_t FieldBudget = 65536;
-  if (Image.Exports.size() > MaxExports)
+  size_t FieldBudget = kSourceBindingFieldWork;
+  if (Image.Exports.size() > kMaxSourceBindingExports)
     return std::nullopt;
   for (const auto &Export : Image.Exports) {
     if (!llvm::StringRef(Export.Name).ends_with("CMn"))
@@ -2835,7 +2924,9 @@ swiftPrivateDescriptorFieldPath(const BinaryImage &Image, va_t Descriptor,
     const uint32_t Count =
         llvm::support::endian::read32le(FieldHeader->data() + 12);
     if ((FieldKind != 1 && FieldKind != 7) || RecordSize != 12 || !Count ||
-        Count > 4096)
+        Count >
+            ::neverd::sdk::
+                kObjCSourceBindingsSwiftPrivateDescriptorFieldPathCountLimit)
       continue;
     if (Count > FieldBudget)
       return std::nullopt;
@@ -2940,7 +3031,9 @@ inline bool swiftDescriptorTypeRecipeMatches(
     unsigned Length = 0;
     while (!Input.empty() && llvm::isDigit(Input.front())) {
       Length = Length * 10 + unsigned(Input.front() - '0');
-      if (Length > 63)
+      if (Length >
+          ::neverd::sdk::
+              kObjCSourceBindingsSwiftDescriptorTypeRecipeMatchesReadLabelLengthLimit)
         return false;
       Input = Input.drop_front();
     }
@@ -2986,11 +3079,11 @@ inline bool swiftDescriptorTypeRecipeMatches(
       !OptionalPair && !OptionalTuple)
     return false;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   auto Parse = [&](llvm::StringRef Name) {
     Name.consume_front("_");
     return llvm::swiftDemangle(Name, Options);
@@ -3009,12 +3102,16 @@ inline bool swiftDescriptorTypeRecipeMatches(
       !Shape(Outer.Root->Children[0].Children[0], "Type", 1))
     return false;
   const auto &OuterType = Outer.Root->Children[0].Children[0];
-  size_t Budget = 4096;
+  size_t Budget = kSourceValueWork;
   const auto Same = [&](const auto &Self, const llvm::SwiftDemangleNode &A,
                         const llvm::SwiftDemangleNode &B,
                         unsigned Depth) -> bool {
-    if (!Budget-- || Depth > 64 || A.Kind != B.Kind || A.Text != B.Text ||
-        A.Index != B.Index || A.Children.size() != B.Children.size())
+    if (!Budget-- ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsSwiftDescriptorTypeRecipeMatchesSameSameDepthLimit ||
+        A.Kind != B.Kind || A.Text != B.Text || A.Index != B.Index ||
+        A.Children.size() != B.Children.size())
       return false;
     for (size_t I = 0; I < A.Children.size(); ++I)
       if (!Self(Self, A.Children[I], B.Children[I], Depth + 1))
@@ -3233,7 +3330,9 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
       overlapsPointerStorage(Image, Reference->Addr, 8))
     return std::nullopt;
   const uint32_t Length = llvm::support::endian::read32le(ReferenceBytes + 4);
-  if (!Length || Length > 128)
+  if (!Length ||
+      Length > ::neverd::sdk::
+                   kObjCSourceBindingsSwiftTypeMetadataPairProofLengthLimit)
     return std::nullopt;
   const auto TypeReference = swiftRelativeAddress(Image, Reference->Addr);
   const auto *TypeBytes =
@@ -3247,7 +3346,6 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
       overlapsPointerStorage(Image, *TypeReference, uint64_t(Length) + 1))
     return std::nullopt;
 
-  constexpr size_t MaxDescriptors = 8;
   size_t SymbolicReferences = 0;
   std::vector<SwiftTypeMetadataDescriptorReference> Descriptors;
   std::vector<SwiftTypeMetadataDescriptorReference> RegisteredTypes;
@@ -3261,7 +3359,7 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
       Rebuilt.push_back(static_cast<char>(TypeBytes[I++]));
       continue;
     }
-    if (Length - I < 5 || ++SymbolicReferences > MaxDescriptors)
+    if (Length - I < 5 || ++SymbolicReferences > kMaxSourceBindingDescriptors)
       return std::nullopt;
     const auto DescriptorAddress =
         swiftRelativeAddress(Image, *TypeReference + I + 1);
@@ -3323,11 +3421,11 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
       if (!Name.starts_with("$s") || !Name.ends_with("Mn"))
         return std::nullopt;
       llvm::SwiftDemangleOptions Options;
-      Options.MaxInputBytes = 8000;
-      Options.MaxNodes = 1024;
-      Options.MaxDepth = 64;
-      Options.MaxMemoryBytes = 1024 * 1024;
-      Options.MaxOperations = 100000;
+      Options.MaxInputBytes = kSwiftBindingInputBytes;
+      Options.MaxNodes = kSwiftBindingNodes;
+      Options.MaxDepth = kSwiftBindingDepth;
+      Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+      Options.MaxOperations = kSwiftBindingOperations;
       const auto Parsed = llvm::swiftDemangle(Name, Options);
       const auto Shape = [](const llvm::SwiftDemangleNode &N,
                             llvm::StringRef Kind) {
@@ -3402,9 +3500,12 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
   bool RequiresStructuredProof = false;
   const bool StructuredMatches = swiftDescriptorTypeRecipeMatches(
       Base, Rebuilt, Descriptors, &RequiresStructuredProof);
-  if (Rebuilt.size() > 256 || (RequiresStructuredProof || Expanded != Base
-                                   ? !StructuredMatches
-                                   : !swiftMangledType(Expanded)))
+  if (Rebuilt.size() >
+          ::neverd::sdk::
+              kObjCSourceBindingsSwiftTypeMetadataPairProofRebuiltSizeLimit ||
+      (RequiresStructuredProof || Expanded != Base
+           ? !StructuredMatches
+           : !swiftMangledType(Expanded)))
     return std::nullopt;
 
   return SwiftTypeMetadataPairProof{
@@ -3584,7 +3685,7 @@ inline std::vector<std::pair<size_t, size_t>> swiftForwardedTypeMetadataPairs(
   };
   std::array<size_t, 8> Reads{}, PairedReads{};
   std::set<std::pair<size_t, size_t>> Pairs;
-  size_t Budget = 16384;
+  size_t Budget = kSourceBindingOccurrenceWork;
   bool Complete = true;
   const auto Read = [&](const MedVar &Var) {
     if (Var.Kind == MedVar::Param && Var.Id >= 0 &&
@@ -3595,7 +3696,10 @@ inline std::vector<std::pair<size_t, size_t>> swiftForwardedTypeMetadataPairs(
                         unsigned Depth) -> void {
     if (!Value || !Complete)
       return;
-    if (Depth > 64 || !Budget) {
+    if (Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsSwiftForwardedTypeMetadataPairsScanScanDepthLimit ||
+        !Budget) {
       Complete = false;
       return;
     }
@@ -3701,11 +3805,11 @@ swiftExportedConformanceDescriptorName(const BinaryImage &Image,
   if (Exports != 1)
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto ParsedConformance = llvm::swiftDemangle(
       llvm::StringRef(Conformance->Name).drop_front(1), Options);
   const auto Shape = [](const llvm::SwiftDemangleNode &Node,
@@ -3756,11 +3860,11 @@ swiftLocalWitnessGlobals(const BinaryImage &Image, va_t ConformanceAddress,
   if (!Metadata || !Conformance)
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto ParsedConformance =
       llvm::swiftDemangle(llvm::StringRef(*Conformance).drop_front(1), Options);
   const auto ParsedMetadata = llvm::swiftDemangle(
@@ -3786,7 +3890,10 @@ swiftLocalWitnessGlobals(const BinaryImage &Image, va_t ConformanceAddress,
   const auto SameType =
       [&](const auto &Self, const llvm::SwiftDemangleNode &Left,
           const llvm::SwiftDemangleNode &Right, unsigned Depth) -> bool {
-    if (Depth > 64 || Left.Kind != Right.Kind || Left.Text != Right.Text ||
+    if (Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsSwiftLocalWitnessGlobalsSameTypeDepthLimit ||
+        Left.Kind != Right.Kind || Left.Text != Right.Text ||
         Left.Index != Right.Index ||
         Left.Children.size() != Right.Children.size())
       return false;
@@ -3871,7 +3978,10 @@ swiftWitnessCacheAddressHint(const HighFunc &Function, const BinaryImage &Image,
   });
   const auto Resolve = [&](auto &&Self, ExprPtr Value,
                            unsigned Depth = 0) -> ExprPtr {
-    if (!Value || Depth > 64)
+    if (!Value ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsSwiftWitnessCacheAddressHintResolveDepthLimit)
       return nullptr;
     if ((Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
         Value->Operands.size() == 1 && Value->Type && Value->Operands[0] &&
@@ -4107,7 +4217,10 @@ swiftStaticOptionalSelfStorageHint(const BinaryImage &Image, va_t Address) {
       Length = Length * 10 + (Text[Digits] - '0');
       ++Digits;
     }
-    if (!Digits || !Length || Length > 1024 ||
+    if (!Digits || !Length ||
+        Length >
+            ::neverd::sdk::
+                kObjCSourceBindingsSwiftStaticOptionalSelfStorageHintComponentLengthLimit ||
         (Digits < Text.size() && Text[Digits] >= '0' && Text[Digits] <= '9') ||
         Text.size() - Digits < Length)
       return std::nullopt;
@@ -4150,7 +4263,8 @@ swiftStaticOptionalSelfStorageHint(const BinaryImage &Image, va_t Address) {
     return std::nullopt;
   const uint64_t Width = llvm::support::endian::read64le(Layout);
   const uint64_t Stride = llvm::support::endian::read64le(Layout + 8);
-  if (!Width || Width != Stride || Width % 16 || Width > 1024 * 1024 ||
+  if (!Width || Width != Stride || Width % 16 ||
+      Width > ::neverd::limits::ir::kMaxSourceObjectBytes ||
       Width > InvalidVA - Address ||
       (Storage->Size && Storage->Size != Width) ||
       Image.getSectionFor(Address + Width - 1) != Section ||
@@ -4179,11 +4293,11 @@ inline bool swiftStaticOptionalURLBufferSymbol(llvm::StringRef Name) {
   if (!Name.ends_with("VSgvpZ"))
     return false;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(Name, Options);
   const auto Shape = [](const llvm::SwiftDemangleNode &Node,
                         llvm::StringRef Kind, size_t Children) {
@@ -4269,11 +4383,11 @@ swiftStaticOptionalURLBufferHint(const BinaryImage &Image, va_t Address) {
 inline bool swiftStaticStringStorageSymbol(llvm::StringRef Name) {
   Name.consume_front("_");
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(Name, Options);
   const auto Shape = [](const llvm::SwiftDemangleNode &Node,
                         llvm::StringRef Kind, size_t Children) {
@@ -4299,7 +4413,9 @@ inline bool swiftStaticStringStorageSymbol(llvm::StringRef Name) {
   const auto *Context = &Owner;
   unsigned Depth = 0;
   while (!Named(*Context, "Module")) {
-    if (++Depth > 8 ||
+    if (++Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsSwiftStaticStringStorageSymbolIdentifierEnumClassStructureDepthLimit ||
         (Context->Kind != "Structure" && Context->Kind != "Class" &&
          Context->Kind != "Enum") ||
         Context->Text || Context->Index || Context->Children.size() != 2 ||
@@ -4473,8 +4589,11 @@ inline bool swiftInlineSmallStringStorePair(const HighStmt &First,
 
   const auto SameAddress = [&](auto &&Self, const ExprPtr &Left,
                                const ExprPtr &Right, unsigned Depth) -> bool {
-    if (!Left || !Right || Depth > 4 || !Left->Type || !Right->Type ||
-        Left->Type->Kind != NdTypeKind::Int ||
+    if (!Left || !Right ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsSwiftInlineSmallStringStorePairSameAddressDepthLimit ||
+        !Left->Type || !Right->Type || Left->Type->Kind != NdTypeKind::Int ||
         Right->Type->Kind != NdTypeKind::Int || Left->Type->Size != 8 ||
         Right->Type->Size != 8 ||
         Left->MemoryOrdering != NdMemoryOrdering::None ||
@@ -4664,7 +4783,9 @@ swiftStaticStringStorageHint(const BinaryImage &Image, va_t Base) {
       !std::all_of(Header, Header + 24, [](uint8_t Byte) { return !Byte; }))
     return std::nullopt;
   const uint64_t Count = llvm::support::endian::read64le(Header + 24);
-  if (!Count || Count > 32 ||
+  if (!Count ||
+      Count > ::neverd::sdk::
+                  kObjCSourceBindingsSwiftStaticStringStorageHintCountLimit ||
       llvm::support::endian::read64le(Header + 32) != Count * 2)
     return std::nullopt;
   const auto *Storage = uniqueWritableDataSymbol(Image, Base, 40);
@@ -4673,11 +4794,11 @@ swiftStaticStringStorageHint(const BinaryImage &Image, va_t Base) {
   llvm::StringRef Name(Storage->Name);
   Name.consume_front("_");
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(Name, Options);
   if (!Parsed.Root || !Parsed.Error.empty() || Parsed.Root->Kind != "Global" ||
       Parsed.Root->Text || Parsed.Root->Index ||
@@ -4787,11 +4908,11 @@ swiftStaticRootObjectStorage(const BinaryImage &Image, va_t Base) {
   llvm::StringRef Name(Storage->Name);
   Name.consume_front("_");
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Tree = llvm::swiftDemangle(Name, Options);
   const auto Shape = [](const auto &Node, llvm::StringRef Kind, size_t Count) {
     return Node.Kind == Kind && !Node.Text && !Node.Index &&
@@ -4882,7 +5003,10 @@ inline bool swiftStaticRootObjectUse(const BinaryImage &Image,
                                      const HighExpr &Call, va_t Site,
                                      const SwiftStaticRootObjectProof &Proof) {
   if (Image.Arch != Arch::AArch64 || Function.Entry > InvalidVA - 12 || !Site ||
-      Site < Function.Entry + 12 || Function.Body.size() > 128 ||
+      Site < Function.Entry + 12 ||
+      Function.Body.size() >
+          ::neverd::sdk::
+              kObjCSourceBindingsSwiftStaticRootObjectUseFunctionBodySizeLimit ||
       Function.Name != Proof.Initializer || Call.Kind != ExprKind::Call ||
       Call.IsIndirectCall || Call.IndirectTarget || !Call.SourceCallHint ||
       Call.Operands.size() != 2 || !Call.Operands[0] ||
@@ -5084,8 +5208,11 @@ localStorageAccessHint(const BinaryImage &Image, va_t Address, uint64_t Width) {
     if (!Base || Symbol.Addr > Base->Addr)
       Base = &Symbol;
   }
-  if (!Base || Width > 1024 * 1024 ||
-      Address - Base->Addr > 1024 * 1024 - Width)
+  if (!Base || Width > ::neverd::limits::ir::kMaxSourceObjectBytes ||
+      Address - Base->Addr >
+          ::neverd::sdk::
+                  kObjCSourceBindingsLocalStorageAccessHintAddressBaseAddrLimit -
+              Width)
     return std::nullopt;
   const uint64_t Extent = Address - Base->Addr + Width;
   if (Base->Size && Extent > Base->Size)
@@ -5257,7 +5384,9 @@ kvoCallbackContextParameter(const HighFunc &Function,
 
 inline bool exactParameterValue(const ExprPtr &Value, size_t Parameter,
                                 unsigned Depth = 0) {
-  if (!Value || Depth > 8 || !Value->Type || Value->Type->Size != 8)
+  if (!Value ||
+      Depth > ::neverd::sdk::kObjCSourceBindingsExactParameterValueDepthLimit ||
+      !Value->Type || Value->Type->Size != 8)
     return false;
   if (Value->Kind == ExprKind::Var)
     return Value->Var.Kind == MedVar::Param && Value->Var.Id >= 0 &&
@@ -5310,14 +5439,14 @@ kvoContextLocalAliases(const HighFunc &Function, const BinaryImage &Image,
       Def.Address = Value->ConstVal;
   });
   std::map<HighSourceLocalIdentity, unsigned> Reads, ComparedReads;
-  size_t Budget = 1000000;
+  size_t Budget = kSourceEvaluationWork;
   bool Complete = true;
   std::function<void(const ExprPtr &, const HighExpr *, size_t, unsigned)>
       Scan = [&](const ExprPtr &Value, const HighExpr *Parent, size_t Index,
                  unsigned Depth) {
         if (!Value)
           return;
-        if (Depth > 200 || !Budget--) {
+        if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth || !Budget--) {
           Complete = false;
           return;
         }
@@ -5403,7 +5532,10 @@ selectedStorageSeeds(const HighFunc &Function, const BinaryImage &Image,
   std::optional<bool> FlowValid;
   for (const auto &[Key, Values] : Definitions) {
     if (!Candidates.count(Key) || UnsupportedKinds.count(Key) ||
-        Values.size() < 2 || Values.size() > 64)
+        Values.size() < 2 ||
+        Values.size() >
+            ::neverd::sdk::
+                kObjCSourceBindingsSelectedStorageSeedsValuesSizeLimit)
       continue;
     std::vector<va_t> Addresses;
     std::optional<va_t> Base;
@@ -5447,7 +5579,10 @@ selectedStorageSeeds(const HighFunc &Function, const BinaryImage &Image,
       SeedNodes.insert(Value.get());
     const auto ContainsVar = [&](auto &&Self, const ExprPtr &E,
                                  unsigned Depth) -> bool {
-      if (!E || Depth > 64)
+      if (!E ||
+          Depth >
+              ::neverd::sdk::
+                  kObjCSourceBindingsSelectedStorageSeedsContainsVarDepthLimit)
         return false;
       if ((E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) &&
           varKey(E->Var) == Key)
@@ -5459,7 +5594,9 @@ selectedStorageSeeds(const HighFunc &Function, const BinaryImage &Image,
     };
     const auto Offset = [&](auto &&Self, const ExprPtr &E,
                             unsigned Depth) -> std::optional<uint64_t> {
-      if (!E || !E->Type || E->Type->Size != 8 || Depth > 16)
+      if (!E || !E->Type || E->Type->Size != 8 ||
+          Depth > ::neverd::sdk::
+                      kObjCSourceBindingsSelectedStorageSeedsOffsetDepthLimit)
         return std::nullopt;
       if ((E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) &&
           varKey(E->Var) == Key)
@@ -5476,7 +5613,9 @@ selectedStorageSeeds(const HighFunc &Function, const BinaryImage &Image,
               (Constant->ConstProvenance == ConstantAddressProvenance::Scalar ||
                Constant->ConstProvenance ==
                    ConstantAddressProvenance::Unknown) &&
-              Constant->ConstVal <= 4096 &&
+              Constant->ConstVal <=
+                  ::neverd::sdk::
+                      kObjCSourceBindingsSelectedStorageSeedsOffsetConstantConstValLimit &&
               *Inner <= UINT64_MAX - Constant->ConstVal)
             return *Inner + Constant->ConstVal;
         }
@@ -5504,7 +5643,10 @@ selectedStorageSeeds(const HighFunc &Function, const BinaryImage &Image,
     };
     const auto SafeExpression = [&](auto &&Self, const ExprPtr &E,
                                     unsigned Depth) -> bool {
-      if (!E || Depth > 64)
+      if (!E ||
+          Depth >
+              ::neverd::sdk::
+                  kObjCSourceBindingsSelectedStorageSeedsSafeExpressionDepthLimit)
         return !E;
       if (SeedNodes.count(E.get()))
         return false;
@@ -5561,12 +5703,16 @@ inline std::optional<uint64_t> nativeScalarStorageArgumentExtent(
     const HighFunc &Function, size_t Parameter, bool AllowPointerValues,
     bool AllowStores = true,
     const std::map<va_t, const HighFunc *> *Functions = nullptr) {
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   std::set<std::pair<const HighFunc *, size_t>> Active;
   const auto Analyze = [&](const auto &Self, const HighFunc &Current,
                            size_t CurrentParameter,
                            unsigned CallDepth) -> std::optional<uint64_t> {
-    if (!Budget || CallDepth > 32 || !Current.SourceTypeHint ||
+    if (!Budget ||
+        CallDepth >
+            ::neverd::sdk::
+                kObjCSourceBindingsNativeScalarStorageArgumentExtentAnalyzeCallDepthLimit ||
+        !Current.SourceTypeHint ||
         Current.Params.size() != Current.SourceTypeHint->Parameters.size() ||
         CurrentParameter >= Current.Params.size() ||
         !Current.Params[CurrentParameter].Type ||
@@ -5595,7 +5741,8 @@ inline std::optional<uint64_t> nativeScalarStorageArgumentExtent(
     uint64_t Extent = 0;
     auto Contains = [&](const auto &ContainsSelf, const ExprPtr &Expression,
                         unsigned Depth) -> bool {
-      if (!Expression || !Budget || Depth > 200)
+      if (!Expression || !Budget ||
+          Depth > ::neverd::sdk::kMaxSourceProjectionDepth)
         return false;
       --Budget;
       if (Expression->Kind == ExprKind::Var &&
@@ -5629,7 +5776,7 @@ inline std::optional<uint64_t> nativeScalarStorageArgumentExtent(
     Scan = [&](const ExprPtr &Expression, unsigned Depth) {
       if (!Expression || !Valid)
         return;
-      if (!Budget || Depth > 200) {
+      if (!Budget || Depth > ::neverd::sdk::kMaxSourceProjectionDepth) {
         Valid = false;
         return;
       }
@@ -5737,7 +5884,10 @@ classReferenceAddressHint(const BinaryImage &Image, va_t Address) {
   const auto Found = Image.ObjCSourceReferences.find(Address);
   if (Found == Image.ObjCSourceReferences.end() ||
       Found->second.Address != Address || Found->second.Size != 8 ||
-      Found->second.Name.empty() || Found->second.Name.size() > 1024)
+      Found->second.Name.empty() ||
+      Found->second.Name.size() >
+          ::neverd::sdk::
+              kObjCSourceBindingsClassReferenceAddressHintFoundSecondNameSizeLimit)
     return std::nullopt;
   const auto Kind = Found->second.TheKind;
   if (Kind != ObjCSourceReference::Kind::Class &&
@@ -5815,7 +5965,9 @@ swiftPrivateWitnessIdentity(const BinaryImage &Image, va_t Address,
                              llvm::StringRef Kind) {
     return Node.Kind == Kind && Node.Text && !Node.Index &&
            Node.Children.empty() && !Node.Text->empty() &&
-           Node.Text->size() <= 128 &&
+           Node.Text->size() <=
+               ::neverd::sdk::
+                   kObjCSourceBindingsSwiftPrivateWitnessIdentityIdentifierNodeTextSizeLimit &&
            std::all_of(Node.Text->begin(), Node.Text->end(),
                        [](char C) { return llvm::isAlnum(C) || C == '_'; });
   };
@@ -5867,11 +6019,11 @@ swiftPrivateWitnessIdentity(const BinaryImage &Image, va_t Address,
   if (!ProtocolSymbol || !swiftProtocolDescriptor(*ProtocolSymbol))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(*ProtocolSymbol, Options);
   if (!Parsed.Root || !Parsed.Error.empty() ||
       !Shape(*Parsed.Root, "Global", 1) ||
@@ -5946,7 +6098,9 @@ swiftPrivateWitnessIdentity(const BinaryImage &Image, va_t Address,
       Records = &Section;
     }
   if (!Records || Records->VA % 4 || !Records->Size || Records->Size % 4 ||
-      Records->Size / 4 > 65536 ||
+      Records->Size / 4 >
+          ::neverd::sdk::
+              kObjCSourceBindingsSwiftPrivateWitnessIdentityRecordsSize4Limit ||
       !readImmutableImageBytes(Image, Records->VA, Records->Size))
     return std::nullopt;
   unsigned Registrations = 0;
@@ -6012,7 +6166,10 @@ inline std::optional<uint64_t> constantAddress(const HighExpr &Expression,
                                                unsigned Depth) {
   const auto Integer = [&](const auto &Self, const HighExpr &E,
                            unsigned CurrentDepth) -> std::optional<uint64_t> {
-    if (CurrentDepth > 128 || !E.Type || !E.Type->Size || E.Type->Size > 8 ||
+    if (CurrentDepth >
+            ::neverd::sdk::
+                kObjCSourceBindingsConstantAddressIntegerCurrentDepthLimit ||
+        !E.Type || !E.Type->Size || E.Type->Size > 8 ||
         (E.Type->Kind != NdTypeKind::Int && E.Type->Kind != NdTypeKind::Ptr))
       return std::nullopt;
     const auto Mask = [](uint16_t Bytes) {
@@ -6127,7 +6284,8 @@ inline std::optional<uint64_t> constantAddress(const HighExpr &Expression,
     }
     return Normalize(Result);
   };
-  if (Depth > 128 || !Expression.Type || Expression.Type->Size != 8)
+  if (Depth > ::neverd::sdk::kObjCSourceBindingsConstantAddressDepthLimit ||
+      !Expression.Type || Expression.Type->Size != 8)
     return std::nullopt;
   return Integer(Integer, Expression, Depth);
 }
@@ -6177,7 +6335,10 @@ inline MergedIvarOffsetPlans mergedIvarOffsetPlans(const HighFunc &Function,
   auto Resolve = [&](const auto &Self, const ExprPtr &Value, uint16_t Width,
                      std::set<Local> &Visiting,
                      unsigned Depth) -> std::optional<Resolution> {
-    if (!Value || Depth > 64 || !Value->Type || Value->Type->Size != 8 ||
+    if (!Value ||
+        Depth > ::neverd::sdk::
+                    kObjCSourceBindingsMergedIvarOffsetPlansResolveDepthLimit ||
+        !Value->Type || Value->Type->Size != 8 ||
         Value->IntrinsicId != Intrinsic::None ||
         !Value->IntrinsicOutputs.empty() ||
         Value->MemoryOrdering != NdMemoryOrdering::None ||
@@ -6249,7 +6410,7 @@ inline MergedIvarOffsetPlans mergedIvarOffsetPlans(const HighFunc &Function,
   };
 
   std::vector<ExprPtr> Candidates;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   walkStmts(Function.Body, [&](const HighStmt &S) {
     forEachRhsExpr(S, [&](const ExprPtr &Root) {
       std::vector<ExprPtr> Pending{Root};
@@ -6285,7 +6446,7 @@ inline MergedIvarOffsetPlans mergedIvarOffsetPlans(const HighFunc &Function,
     if (!Current)
       continue;
     bool Valid = true;
-    size_t UsesBudget = 100000;
+    size_t UsesBudget = kSourceExpressionWork;
     const auto Related = [&](const Resolution &Other) {
       for (const auto &[Leaf, Reference] : Other.Leaves) {
         (void)Reference;
@@ -6314,7 +6475,10 @@ inline MergedIvarOffsetPlans mergedIvarOffsetPlans(const HighFunc &Function,
           return;
         const auto Visit = [&](const auto &Self, const ExprPtr &E,
                                unsigned Depth) -> void {
-          if (!Valid || !E || !UsesBudget || Depth > 128) {
+          if (!Valid || !E || !UsesBudget ||
+              Depth >
+                  ::neverd::sdk::
+                      kObjCSourceBindingsMergedIvarOffsetPlansVisitDepthLimit) {
             Valid = false;
             return;
           }
@@ -6354,11 +6518,14 @@ inline MergedIvarOffsetPlans mergedIvarOffsetPlans(const HighFunc &Function,
 }
 
 inline std::optional<uint64_t> swiftLiteralStorageWord(const ExprPtr &Value) {
-  size_t Budget = 256;
+  size_t Budget = kSourceBindingSmallWork;
   const auto Evaluate = [&](auto &&Self, const ExprPtr &Current,
                             unsigned Depth) -> std::optional<uint64_t> {
-    if (!Current || Depth > 16 || !Budget || !Current->Type ||
-        Current->Type->Size != 8 ||
+    if (!Current ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsSwiftLiteralStorageWordEvaluateDepthLimit ||
+        !Budget || !Current->Type || Current->Type->Size != 8 ||
         (Current->Type->Kind != NdTypeKind::Int &&
          Current->Type->Kind != NdTypeKind::Ptr))
       return std::nullopt;
@@ -6387,7 +6554,7 @@ inline std::optional<uint64_t> swiftLiteralStorageWord(const ExprPtr &Value) {
 inline bool containsBorrowedStorage(const ExprPtr &Value) {
   std::vector<const HighExpr *> Pending{Value.get()};
   std::set<const HighExpr *> Seen;
-  size_t Budget = 1000;
+  size_t Budget = kSourceBindingCallWork;
   while (!Pending.empty()) {
     if (!Budget--)
       return true;
@@ -6530,18 +6697,24 @@ inline std::optional<va_t> swiftWitnessUndefDescriptor(const HighFunc &Function,
   if (!Flow.Complete || !Flow.Items.empty())
     return std::nullopt;
   const auto Graph = buildHighSourceFlowGraph(Function);
-  if (!Graph.Diagnostics.Complete || Graph.Nodes.size() > 4096)
+  if (!Graph.Diagnostics.Complete ||
+      Graph.Nodes.size() >
+          ::neverd::sdk::
+              kObjCSourceBindingsSwiftWitnessUndefDescriptorGraphNodesSizeLimit)
     return std::nullopt;
   std::map<HighSourceLocalIdentity, std::vector<ExprPtr>> Definitions;
   std::set<HighSourceLocalIdentity> AddressTaken;
   std::set<const HighStmt *> Statements;
-  size_t Budget = 16384, Occurrences = 0;
+  size_t Budget = kSourceBindingOccurrenceWork, Occurrences = 0;
   bool Complete = true;
   const auto Scan = [&](auto &&Self, const ExprPtr &Value,
                         unsigned Depth) -> void {
     if (!Value || !Complete)
       return;
-    if (!Budget || Depth > 64) {
+    if (!Budget ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsSwiftWitnessUndefDescriptorScanScanDepthLimit) {
       Complete = false;
       return;
     }
@@ -6578,7 +6751,10 @@ inline std::optional<va_t> swiftWitnessUndefDescriptor(const HighFunc &Function,
   std::set<HighSourceLocalIdentity> Active;
   const auto Resolve = [&](auto &&Self, const ExprPtr &Value,
                            unsigned Depth) -> std::optional<va_t> {
-    if (!Word(Value) || !Budget || Depth > 64)
+    if (!Word(Value) || !Budget ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSourceBindingsSwiftWitnessUndefDescriptorResolveDepthLimit)
       return std::nullopt;
     --Budget;
     if (Value->Kind == ExprKind::Load && !Value->SourceCallHint &&
@@ -6727,7 +6903,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
   using MetadataChoices = std::map<va_t, MetadataAlias>;
   std::map<MetadataLocal, MetadataChoices> MetadataPairCandidates;
   std::set<MetadataLocal> MetadataConflicts;
-  size_t MetadataScanBudget = 1000000;
+  size_t MetadataScanBudget = kSourceMetadataScanWork;
   bool MetadataScanComplete = true;
   const auto MetadataLocalAt =
       [&](const ExprPtr &Value) -> std::optional<MetadataLocal> {
@@ -6792,7 +6968,8 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       [&](const ExprPtr &E, unsigned Depth) {
         if (!E || !MetadataScanComplete)
           return;
-        if (Depth > 200 || !MetadataScanBudget) {
+        if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth ||
+            !MetadataScanBudget) {
           MetadataScanComplete = false;
           return;
         }
@@ -6825,7 +7002,10 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
     MetadataScanComplete =
         MetadataScanComplete && Flow.Complete && Flow.Items.empty() &&
         Graph.Diagnostics.Complete && Graph.Diagnostics.Items.empty() &&
-        !Graph.Nodes.empty() && MetadataCoordinates.size() <= 64;
+        !Graph.Nodes.empty() &&
+        MetadataCoordinates.size() <=
+            ::neverd::sdk::
+                kObjCSourceBindingsBindObjCSourceReferencesMetadataScanCompleteMetadataCoordinatesSizeLimit;
     if (MetadataScanComplete) {
       std::vector<std::set<MetadataState>> Reached(Graph.Nodes.size());
       std::vector<std::pair<size_t, MetadataState>> Work;
@@ -6834,7 +7014,10 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       Work.emplace_back(Graph.Entry, Initial);
       for (size_t W = 0; MetadataScanComplete && W < Work.size(); ++W) {
         const auto [Index, Incoming] = Work[W];
-        if (!MetadataScanBudget || Work.size() > 16384) {
+        if (!MetadataScanBudget ||
+            Work.size() >
+                ::neverd::sdk::
+                    kObjCSourceBindingsBindObjCSourceReferencesWorkSizeLimit) {
           MetadataScanComplete = false;
           break;
         }
@@ -6844,7 +7027,8 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
             [&](const ExprPtr &E, unsigned Depth) {
               if (!E || !MetadataScanComplete)
                 return;
-              if (Depth > 200 || !MetadataScanBudget) {
+              if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth ||
+                  !MetadataScanBudget) {
                 MetadataScanComplete = false;
                 return;
               }
@@ -6882,7 +7066,8 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       [&](const ExprPtr &Value, unsigned Depth) {
         if (!Value)
           return;
-        if (Depth > 200 || !MetadataScanBudget) {
+        if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth ||
+            !MetadataScanBudget) {
           MetadataScanComplete = false;
           return;
         }
@@ -6985,69 +7170,69 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
   });
   std::set<const HighExpr *> FormatObjectExpressions;
   std::set<const HighExpr *> FormatScanSeen;
-  std::function<void(const ExprPtr &)> ScanFormats =
-      [&](const ExprPtr &Expression) {
-        if (!Expression || !FormatScanSeen.insert(Expression.get()).second)
-          return;
-        if (Expression->SourceCallHint && Expression->SourceCallHint->Format) {
-          const auto &Format = *Expression->SourceCallHint->Format;
-          const auto Addresses = formatAddresses(Format);
-          if (Addresses &&
-              Format.FormatParameter < Expression->Operands.size()) {
-            const std::set<va_t> Candidates(Addresses->begin(),
-                                            Addresses->end());
-            std::set<const HighExpr *> Leaves;
-            std::set<VarKey> Active;
-            size_t TraceBudget = 4096;
-            const auto Trace = [&](auto &&Self, const ExprPtr &Value,
-                                   unsigned Depth) -> bool {
-              if (!Value || !TraceBudget-- || Depth > 64)
-                return false;
-              if ((Value->Kind == ExprKind::Cast ||
-                   Value->Kind == ExprKind::BitCast) &&
-                  Value->Operands.size() == 1 && Value->Type &&
-                  Value->Type->Size == 8)
-                return Self(Self, Value->Operands.front(), Depth + 1);
-              if (Value->Kind == ExprKind::Call && Value->SourceCallHint &&
-                  Value->SourceCallHint->CallKind ==
-                      SourceCallTypeHint::Kind::RuntimeConstantString)
-                return Value->Operands.empty() &&
-                       Candidates.count(Value->SourceCallHint->TargetAddress) !=
-                           0;
-              if (Value->Kind == ExprKind::Const) {
-                if (!Candidates.count(Value->ConstVal))
-                  return false;
-                Leaves.insert(Value.get());
-                return true;
-              }
-              if (Value->Kind == ExprKind::BinOp && Value->Op == NdOp::SELECT &&
-                  Value->Operands.size() == 3)
-                return Self(Self, Value->Operands[1], Depth + 1) &&
-                       Self(Self, Value->Operands[2], Depth + 1);
-              if (Value->Kind != ExprKind::Var && Value->Kind != ExprKind::Phi)
-                return false;
-              const auto Key = varKey(Value->Var);
-              if (!Active.insert(Key).second)
-                return false;
-              const auto Found = FormatDefinitions.find(Key);
-              bool Valid =
-                  Found != FormatDefinitions.end() && !Found->second.empty();
-              if (Valid)
-                for (const auto &Definition : Found->second)
-                  if (!Self(Self, Definition, Depth + 1)) {
-                    Valid = false;
-                    break;
-                  }
-              Active.erase(Key);
-              return Valid;
-            };
-            if (Trace(Trace, Expression->Operands[Format.FormatParameter], 0))
-              FormatObjectExpressions.insert(Leaves.begin(), Leaves.end());
+  std::function<void(const ExprPtr &)> ScanFormats = [&](const ExprPtr
+                                                             &Expression) {
+    if (!Expression || !FormatScanSeen.insert(Expression.get()).second)
+      return;
+    if (Expression->SourceCallHint && Expression->SourceCallHint->Format) {
+      const auto &Format = *Expression->SourceCallHint->Format;
+      const auto Addresses = formatAddresses(Format);
+      if (Addresses && Format.FormatParameter < Expression->Operands.size()) {
+        const std::set<va_t> Candidates(Addresses->begin(), Addresses->end());
+        std::set<const HighExpr *> Leaves;
+        std::set<VarKey> Active;
+        size_t TraceBudget = kSourceValueWork;
+        const auto Trace = [&](auto &&Self, const ExprPtr &Value,
+                               unsigned Depth) -> bool {
+          if (!Value || !TraceBudget-- ||
+              Depth >
+                  ::neverd::sdk::
+                      kObjCSourceBindingsBindObjCSourceReferencesScanFormatsTraceDepthLimit)
+            return false;
+          if ((Value->Kind == ExprKind::Cast ||
+               Value->Kind == ExprKind::BitCast) &&
+              Value->Operands.size() == 1 && Value->Type &&
+              Value->Type->Size == 8)
+            return Self(Self, Value->Operands.front(), Depth + 1);
+          if (Value->Kind == ExprKind::Call && Value->SourceCallHint &&
+              Value->SourceCallHint->CallKind ==
+                  SourceCallTypeHint::Kind::RuntimeConstantString)
+            return Value->Operands.empty() &&
+                   Candidates.count(Value->SourceCallHint->TargetAddress) != 0;
+          if (Value->Kind == ExprKind::Const) {
+            if (!Candidates.count(Value->ConstVal))
+              return false;
+            Leaves.insert(Value.get());
+            return true;
           }
-        }
-        for (const auto &Operand : Expression->Operands)
-          ScanFormats(Operand);
-      };
+          if (Value->Kind == ExprKind::BinOp && Value->Op == NdOp::SELECT &&
+              Value->Operands.size() == 3)
+            return Self(Self, Value->Operands[1], Depth + 1) &&
+                   Self(Self, Value->Operands[2], Depth + 1);
+          if (Value->Kind != ExprKind::Var && Value->Kind != ExprKind::Phi)
+            return false;
+          const auto Key = varKey(Value->Var);
+          if (!Active.insert(Key).second)
+            return false;
+          const auto Found = FormatDefinitions.find(Key);
+          bool Valid =
+              Found != FormatDefinitions.end() && !Found->second.empty();
+          if (Valid)
+            for (const auto &Definition : Found->second)
+              if (!Self(Self, Definition, Depth + 1)) {
+                Valid = false;
+                break;
+              }
+          Active.erase(Key);
+          return Valid;
+        };
+        if (Trace(Trace, Expression->Operands[Format.FormatParameter], 0))
+          FormatObjectExpressions.insert(Leaves.begin(), Leaves.end());
+      }
+    }
+    for (const auto &Operand : Expression->Operands)
+      ScanFormats(Operand);
+  };
   walkStmts(Function.Body, [&](const HighStmt &Statement) {
     forEachExpr(Statement, ScanFormats);
   });
@@ -7056,7 +7241,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
   // make a later argument borrow an earlier argument's binding.
   using CopyKey = std::tuple<ExprPtr, bool, bool, bool>;
   std::map<CopyKey, ExprPtr> Copies;
-  size_t Budget = 1000000;
+  size_t Budget = kSourceEvaluationWork;
   va_t StatementAddress = 0;
   auto Fail = [&](const char *Message, const HighExpr *Expression = nullptr) {
     if (Result.Limitation.empty())
@@ -7140,7 +7325,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
              bool AddressContext, bool MemoryAddress) -> ExprPtr {
     if (!Original)
       return nullptr;
-    if (Depth > 200 || !Budget) {
+    if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth || !Budget) {
       Fail("source reference projection exceeds its complexity budget");
       return HighExpr::makeUndef(Original->Type ? Original->Type->Size : 8);
     }
@@ -7608,7 +7793,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         }
       }
     }
-    if (Original->Kind == ExprKind::Load && !AddressContext && !MemoryAddress) {
+    if (!AddressContext && !MemoryAddress) {
       if (const auto Found = ScalarLoads.find(Original.get());
           Found != ScalarLoads.end()) {
         const auto &Plan = Found->second;
@@ -7619,9 +7804,16 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
           Base->Type = NdType::makeInt(8, false);
           Base->SourceCallHint =
               std::make_shared<SourceCallTypeHint>(std::move(*Hint));
-          Expression->Operands = {HighExpr::makeBinop(
-              NdOp::INT_ADD, Base,
-              Copy(Plan.Offset, Depth + 1, false, false, false))};
+          auto Offset = Copy(Plan.Offset, Depth + 1, false, false, false);
+          if (Plan.OriginalMemory) {
+            // Relocate only the proved table base. The original read retains
+            // its raw index, instruction word, access width and effects.
+            Expression->Operands[kAddressMemoryBaseOperand] = Base;
+            Expression->Operands[kAddressMemoryIndexOperand] = Offset;
+          } else {
+            Expression->Operands = {
+                HighExpr::makeBinop(NdOp::INT_ADD, Base, Offset)};
+          }
           Result.BorrowedBytes.insert({Plan.Base, Plan.Extent});
           return Expression;
         }
@@ -7691,7 +7883,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       if (Stub && Stub->Format &&
           Expression->Operands.size() >= Stub->Format->FixedCount) {
         const auto Fixed = Stub->Format->FixedCount;
-        size_t PointerBudget = 4096;
+        size_t PointerBudget = kSourceValueWork;
         std::set<VarKey> ActivePointers;
         bool PointerTail = std::all_of(
             Expression->Operands.begin() + Fixed, Expression->Operands.end(),
@@ -7713,7 +7905,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
                 provenBlockClassCaptureLoads(Function, Image, FormatDefinitions,
                                              *Expression, Fixed)})
             ProvenLoads.insert(Group.begin(), Group.end());
-          PointerBudget = 4096;
+          PointerBudget = kSourceValueWork;
           ActivePointers.clear();
           PointerTail =
               !ProvenLoads.empty() &&
@@ -7735,7 +7927,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
           // scalar carriers agree with the format declaration below.
         } else if (!Expression->SourceCallHint ||
                    plainNativeBinding(*Expression->SourceCallHint)) {
-          size_t IntegerBudget = 4096;
+          size_t IntegerBudget = kSourceValueWork;
           std::set<VarKey> ActiveIntegers;
           std::vector<TypeRef> Types;
           for (size_t I = Fixed; I < Expression->Operands.size(); ++I) {
@@ -8089,7 +8281,11 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
             // Dynamic values keep their original carriers and runtime call.
             const auto PureConstant = [&](const auto &Self, const ExprPtr &E,
                                           unsigned Depth) -> bool {
-              if (!E || Depth > 16 || !E->Type || E->SourceCallHint ||
+              if (!E ||
+                  Depth >
+                      ::neverd::sdk::
+                          kObjCSourceBindingsBindObjCSourceReferencesPureConstantCopyPureConstantDepthLimit ||
+                  !E->Type || E->SourceCallHint ||
                   E->IntrinsicId != Intrinsic::None ||
                   !E->IntrinsicOutputs.empty() || E->IndirectTarget ||
                   E->MemoryOrdering != NdMemoryOrdering::None ||
@@ -8656,7 +8852,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
   };
   std::function<void(std::vector<HighStmt> &, unsigned)> Walk;
   Walk = [&](std::vector<HighStmt> &Body, unsigned Depth) {
-    if (Depth > 200) {
+    if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth) {
       Fail("source reference control flow exceeds its depth budget");
       return;
     }
@@ -8767,7 +8963,7 @@ privateFrameArgumentOffset(const ExprPtr &Argument, const HighFunc &Function,
   if (!Argument || Function.FrameSize <= 0 ||
       (TRI.PointerSize != 4 && TRI.PointerSize != 8))
     return std::nullopt;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   VarKeyMap<unsigned> Definitions;
   walkStmts(Function.Body, [&](const HighStmt &Statement) {
     if (!Budget)
@@ -9536,13 +9732,16 @@ inline bool objcSourceCallBound(
              Statement.Dst->Kind == ExprKind::Phi))
           Definitions[varKey(Statement.Dst->Var)].push_back(Statement.Val);
       });
-    size_t ObjectBudget = 4096;
+    size_t ObjectBudget = kSourceValueWork;
     std::set<VarKey> ActiveObjects;
     const auto GlobalAddress = [&](auto &&Self, const ExprPtr &Value,
                                    size_t &Budget, std::set<VarKey> &Active,
                                    unsigned Depth = 0) -> std::optional<va_t> {
-      if (!Value || !Budget-- || Depth > 64 || !Value->Type ||
-          Value->Type->Size < 8 || Value->Type->Size > 16 ||
+      if (!Value || !Budget-- ||
+          Depth >
+              ::neverd::sdk::
+                  kObjCSourceBindingsObjcSourceCallBoundGlobalAddressDepthLimit ||
+          !Value->Type || Value->Type->Size < 8 || Value->Type->Size > 16 ||
           (Value->Type->Kind != NdTypeKind::Int &&
            Value->Type->Kind != NdTypeKind::Ptr) ||
           Value->IntrinsicId != Intrinsic::None ||
@@ -9591,8 +9790,11 @@ inline bool objcSourceCallBound(
     };
     const auto ObjectIdentity = [&](auto &&Self, const ExprPtr &Value,
                                     unsigned Depth = 0) -> std::optional<va_t> {
-      if (!Value || !ObjectBudget-- || Depth > 64 || !Value->Type ||
-          Value->Type->Size < 8 || Value->Type->Size > 16 ||
+      if (!Value || !ObjectBudget-- ||
+          Depth >
+              ::neverd::sdk::
+                  kObjCSourceBindingsObjcSourceCallBoundObjectIdentityDepthLimit ||
+          !Value->Type || Value->Type->Size < 8 || Value->Type->Size > 16 ||
           (Value->Type->Kind != NdTypeKind::Int &&
            Value->Type->Kind != NdTypeKind::Ptr) ||
           Value->IntrinsicId != Intrinsic::None ||
@@ -9610,7 +9812,7 @@ inline bool objcSourceCallBound(
         return Value->SourceCallHint->TargetAddress;
       if (Value->Kind == ExprKind::Load && Value->Operands.size() == 1) {
         const auto &Address = Value->Operands.front();
-        size_t AddressBudget = 4096;
+        size_t AddressBudget = kSourceValueWork;
         std::set<VarKey> ActiveAddresses;
         if (const auto Storage = GlobalAddress(GlobalAddress, Address,
                                                AddressBudget, ActiveAddresses))
@@ -9666,12 +9868,14 @@ inline bool objcSourceCallBound(
                                  Query)
                            : std::map<const HighExpr *, va_t>{};
     enum class Identity { Object, Class, Selector };
-    size_t Budget = 4096;
+    size_t Budget = kSourceValueWork;
     std::set<VarKey> Active;
     const auto Matches = [&](auto &&Self, const ExprPtr &Value, va_t Address,
                              Identity Kind, unsigned Depth) -> bool {
-      if (!Value || !Budget-- || Depth > 64 || !Value->Type ||
-          Value->IntrinsicId != Intrinsic::None ||
+      if (!Value || !Budget-- ||
+          Depth > ::neverd::sdk::
+                      kObjCSourceBindingsObjcSourceCallBoundMatchesDepthLimit ||
+          !Value->Type || Value->IntrinsicId != Intrinsic::None ||
           !Value->IntrinsicOutputs.empty() ||
           Value->MemoryOrdering != NdMemoryOrdering::None ||
           Value->MemoryAddressSpace != NdMemoryAddressSpace::Default)
@@ -9790,7 +9994,7 @@ inline bool objcSourceCallBound(
                 Definitions[varKey(Statement.Dst->Var)].push_back(
                     Statement.Val);
             });
-            size_t Budget = 4096;
+            size_t Budget = kSourceValueWork;
             std::set<VarKey> Active;
             std::optional<std::set<const HighExpr *>> FrameLoads;
             std::optional<std::set<const HighExpr *>> EnumLoads;
@@ -9816,7 +10020,7 @@ inline bool objcSourceCallBound(
                   FrameLoads = provenPrivateFramePointerLoads(
                       *ContainingFunction, Image, Definitions, Expression,
                       Format.FixedCount);
-                Budget = 4096;
+                Budget = kSourceValueWork;
                 Active.clear();
                 if (FrameLoads->empty() ||
                     !provenSourcePointerValue(Expression.Operands[I],
@@ -9826,7 +10030,7 @@ inline bool objcSourceCallBound(
                     EnumLoads = provenFastEnumerationObjectLoads(
                         *ContainingFunction, Image, Definitions, Expression,
                         Format.FixedCount);
-                  Budget = 4096;
+                  Budget = kSourceValueWork;
                   Active.clear();
                   if (EnumLoads->empty() ||
                       !provenSourcePointerValue(Expression.Operands[I],
@@ -9836,7 +10040,7 @@ inline bool objcSourceCallBound(
                       ClassLoads = provenBlockClassCaptureLoads(
                           *ContainingFunction, Image, Definitions, Expression,
                           Format.FixedCount);
-                    Budget = 4096;
+                    Budget = kSourceValueWork;
                     Active.clear();
                     if (ClassLoads->empty() ||
                         !provenSourcePointerValue(Expression.Operands[I],
@@ -9929,11 +10133,14 @@ inline bool objcSourceCallBound(
              Statement.Dst->Kind == ExprKind::Phi))
           Definitions[varKey(Statement.Dst->Var)].push_back(Statement.Val);
       });
-    size_t CandidateBudget = 4096;
+    size_t CandidateBudget = kSourceValueWork;
     std::set<VarKey> ActiveVariables;
     const auto MatchesCandidate = [&](auto &&Self, const ExprPtr &Value,
                                       unsigned Depth) -> bool {
-      if (!Value || !CandidateBudget-- || Depth > 64)
+      if (!Value || !CandidateBudget-- ||
+          Depth >
+              ::neverd::sdk::
+                  kObjCSourceBindingsObjcSourceCallBoundMatchesCandidateDepthLimit)
         return false;
       if ((Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
           Value->Operands.size() == 1 && Value->Type && Value->Type->Size == 8)
@@ -10006,13 +10213,15 @@ inline bool objcSourceCallBound(
         const auto &Object = Expression.Operands[1];
         bool HasStaticRootStorage = false;
         std::vector<std::pair<ExprPtr, unsigned>> Pending{{Object, 0}};
-        unsigned Budget = 256;
+        unsigned Budget = kSourceBindingSmallWork;
         while (!Pending.empty()) {
           const auto [E, Depth] = Pending.back();
           Pending.pop_back();
           if (!E)
             continue;
-          if (!Budget-- || Depth > 32)
+          if (!Budget-- ||
+              Depth > ::neverd::sdk::
+                          kObjCSourceBindingsObjcSourceCallBoundDepthLimit)
             return false;
           HasStaticRootStorage |= E->SourceCallHint &&
                                   llvm::StringRef(E->SourceCallHint->TargetName)
@@ -10072,7 +10281,7 @@ inline bool objcSourceCallBound(
           BooleanDefinitions;
       std::set<HighSourceLocalIdentity> AddressTaken, ActiveBooleanVariables;
       std::optional<bool> BooleanFlowValid;
-      size_t BooleanBudget = 4096;
+      size_t BooleanBudget = kSourceValueWork;
       const auto PrepareBooleanFlow = [&]() {
         if (BooleanFlowValid)
           return *BooleanFlowValid;
@@ -10113,9 +10322,13 @@ inline bool objcSourceCallBound(
       };
       const auto Canonical = [&](const auto &Self, const ExprPtr &Value,
                                  unsigned Depth = 0) -> bool {
-        if (!BooleanBudget || !Value || Depth > 16 || !Value->Type ||
-            Value->Type->Kind != NdTypeKind::Int || !Value->Type->Size ||
-            Value->Type->Size > 8 || Value->IntrinsicId != Intrinsic::None ||
+        if (!BooleanBudget || !Value ||
+            Depth >
+                ::neverd::sdk::
+                    kObjCSourceBindingsObjcSourceCallBoundCanonicalDepthLimit ||
+            !Value->Type || Value->Type->Kind != NdTypeKind::Int ||
+            !Value->Type->Size || Value->Type->Size > 8 ||
+            Value->IntrinsicId != Intrinsic::None ||
             !Value->IntrinsicOutputs.empty() ||
             Value->MemoryOrdering != NdMemoryOrdering::None ||
             Value->MemoryAddressSpace != NdMemoryAddressSpace::Default)

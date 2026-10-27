@@ -10,6 +10,402 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverKernelSEH.V2BodyUnwindsSavedRegisters")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverKernelSEH.V2EpilogueRestoresOnlyRemainingPrimaryPushes")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverKernelSEH.V2PartialPrologueUsesOnlyCompletedOperations")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverKernelSEH.V2DiscardedFlagsDoNotRestoreVolatileState")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverKernelSEH.V2InvalidEpilogueCannotFallBackToFullFrame")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverKernelSEH.V2ChainedEpilogueUsesPrimaryPushes")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverSEHV2Execution.OriginalHelpersRaiseCatchAndContinue/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverProcessPebDeclaration.RoundTripsExactValuesAndExplicitAbsence")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverProcessPebDeclaration.RejectsMalformedAndLegacyInputs")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProcessPeb.KnownObjectsKeepTheirOwnCopiedDeclaration")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProcessPeb.MissingAndForgedObjectsDoNotAcquireIdentity")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProcessPeb.ArityAndPassiveCeilingStayExplicit")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProcessPeb.UnusedDeclarationRetainsEnvironmentDependency")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProcessPebInitialization.RejectsInvalidAndNonCheckedDeclarations")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/"
+    "DriverProcessPebExecution.NullDeclarationAndRepeatedQueriesAreExact/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverProcessPebExecution.MissingAndForeignDeclarationsStop/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/"
+    "DriverProcessPebExecution.ValuesGrantNeitherStorageNorProcessIdentity/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverMSRDeclaration.RoundTripsFullWidthValuesAndCanBeCleared")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverMSRDeclaration.RejectsMalformedDuplicateAndUnownedInputs")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMSRRead.EvenUnusedDeclarationsRetainEnvironmentDependencies")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMSRRead.DirectModelInitializationKeepsDeclarationValidation")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverMSRExecution.DeclaredReadsPreserveStateAndRepeatExactly/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverMSRExecution.MissingAndUnsupportedSelectorsStopBeforeResults/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverMSRExecution.InstructionBudgetsBoundEveryRead/{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverMSRExecution.DeclarationDoesNotAdmitWritesOrPrefixedForms/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverMSRExecution.DeclaredAddressDoesNotCreateGuestMemory/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverQueriesBufferedFileInformation/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverQueriesBufferedFileInformation/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverQueriesBufferedFileInformation/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverQueriesBufferedFileInformation/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkQueriesBufferedFileInformation/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkQueriesBufferedFileInformation/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkQueriesBufferedFileInformation/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkQueriesBufferedFileInformation/{backend}CheckedRebased")
+
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDeviceQueryExecution."
+    "GenuineWdkRetainsQueriedDeletedDevices/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDeviceQueryExecution."
+    "GenuineWdkRetainsQueriedDeletedDevices/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDeviceQueryExecution."
+    "GenuineWdkRetainsQueriedDeletedDevices/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDeviceQueryExecution."
+    "GenuineWdkRetainsQueriedDeletedDevices/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkDefersCloseUntilLastReference/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkDefersCloseUntilLastReference/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkDefersCloseUntilLastReference/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkDefersCloseUntilLastReference/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkClosesSharedFileHandles/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkClosesSharedFileHandles/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkClosesSharedFileHandles/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkClosesSharedFileHandles/{backend}CheckedRebased")
+
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "OriginalDriverOpensExistingFiles/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "OriginalDriverOpensExistingFiles/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "OriginalDriverOpensExistingFiles/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "OriginalDriverOpensExistingFiles/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "GenuineWdkOpensExistingFiles/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "GenuineWdkOpensExistingFiles/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "GenuineWdkOpensExistingFiles/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "GenuineWdkOpensExistingFiles/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "OriginalDriverObservesDeclaredVolumes/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "OriginalDriverObservesDeclaredVolumes/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "OriginalDriverObservesDeclaredVolumes/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "OriginalDriverObservesDeclaredVolumes/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "GenuineWdkObservesDeclaredVolumes/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "GenuineWdkObservesDeclaredVolumes/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "GenuineWdkObservesDeclaredVolumes/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileSystemExecution."
+    "GenuineWdkObservesDeclaredVolumes/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkQueriesBorrowedFileInformation/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkQueriesBorrowedFileInformation/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkQueriesBorrowedFileInformation/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkQueriesBorrowedFileInformation/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineKmdfRestoresFileHandleCaller/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineKmdfRestoresFileHandleCaller/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineKmdfRestoresFileHandleCaller/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineKmdfRestoresFileHandleCaller/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelProcessorExecution."
+                                   "GenuineWdkInlineAndExportCallsShareProcesso"
+                                   "rState/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelProcessorExecution."
+    "GenuineWdkInlineAndExportCallsShareProcessorState/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelProcessorExecution."
+                                   "GenuineWdkInlineAndExportCallsShareProcesso"
+                                   "rState/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelProcessorExecution."
+    "GenuineWdkInlineAndExportCallsShareProcessorState/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelIntegerFormattingExecution."
+    "GenuineWdkCallsPreserveAllValueBits/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelIntegerFormattingExecution."
+    "GenuineWdkCallsPreserveAllValueBits/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelIntegerFormattingExecution."
+    "GenuineWdkCallsPreserveAllValueBits/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelIntegerFormattingExecution."
+    "GenuineWdkCallsPreserveAllValueBits/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelIntegerFormattingExecution."
+    "OriginalImportsAndLookupPreserveAllValueBits/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelIntegerFormattingExecution."
+    "OriginalImportsAndLookupPreserveAllValueBits/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelIntegerFormattingExecution."
+    "OriginalImportsAndLookupPreserveAllValueBits/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelIntegerFormattingExecution."
+    "OriginalImportsAndLookupPreserveAllValueBits/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelProcessorExecution."
+    "OriginalImportsAndLookupShareProcessorState/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelProcessorExecution."
+    "OriginalImportsAndLookupShareProcessorState/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelProcessorExecution."
+    "OriginalImportsAndLookupShareProcessorState/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelProcessorExecution."
+    "OriginalImportsAndLookupShareProcessorState/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverQueriesBorrowedFileInformation/"
+    "{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverQueriesBorrowedFileInformation/"
+    "{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverQueriesBorrowedFileInformation/"
+    "{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverQueriesBorrowedFileInformation/"
+    "{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelFileObjectExecution."
+                                   "OriginalDriverClosesSharedFileHandles/"
+                                   "{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelFileObjectExecution."
+                                   "OriginalDriverClosesSharedFileHandles/"
+                                   "{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelFileObjectExecution."
+                                   "OriginalDriverClosesSharedFileHandles/"
+                                   "{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelFileObjectExecution."
+                                   "OriginalDriverClosesSharedFileHandles/"
+                                   "{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverDefersCloseUntilLastReference/"
+    "{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverDefersCloseUntilLastReference/"
+    "{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverDefersCloseUntilLastReference/"
+    "{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalDriverDefersCloseUntilLastReference/"
+    "{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelDeviceQueryExecution."
+                                   "OriginalDriverRetainsQueriedDeletedDevices/"
+                                   "{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelDeviceQueryExecution."
+                                   "OriginalDriverRetainsQueriedDeletedDevices/"
+                                   "{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelDeviceQueryExecution."
+                                   "OriginalDriverRetainsQueriedDeletedDevices/"
+                                   "{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelDeviceQueryExecution."
+                                   "OriginalDriverRetainsQueriedDeletedDevices/"
+                                   "{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelRegistryObjectExecution."
+    "OriginalDriverSharesKeyHandlesAndDetectsPointerLeaks/"
+    "{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelRegistryObjectExecution."
+    "OriginalDriverSharesKeyHandlesAndDetectsPointerLeaks/"
+    "{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelRegistryObjectExecution."
+    "OriginalDriverSharesKeyHandlesAndDetectsPointerLeaks/"
+    "{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelRegistryObjectExecution."
+    "OriginalDriverSharesKeyHandlesAndDetectsPointerLeaks/"
+    "{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelNamespaceExecution."
+    "OriginalDriverPreservesNamespaceAndHeldObjectLifetimes/"
+    "{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelNamespaceExecution."
+    "OriginalDriverPreservesNamespaceAndHeldObjectLifetimes/"
+    "{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelNamespaceExecution."
+    "OriginalDriverPreservesNamespaceAndHeldObjectLifetimes/"
+    "{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelNamespaceExecution."
+    "OriginalDriverPreservesNamespaceAndHeldObjectLifetimes/"
+    "{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDataExecution."
+    "OriginalDataImportsShareIdentityAcrossLookupAndUnload/"
+    "{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDataExecution."
+    "OriginalDataImportsShareIdentityAcrossLookupAndUnload/"
+    "{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDataExecution."
+    "OriginalDataImportsShareIdentityAcrossLookupAndUnload/"
+    "{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDataExecution."
+    "OriginalDataImportsShareIdentityAcrossLookupAndUnload/"
+    "{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDataExecution."
+    "DeclaredDebuggerBytesMatchDirectAndAPIReads/"
+    "{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDataExecution."
+    "DeclaredDebuggerBytesMatchDirectAndAPIReads/"
+    "{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDataExecution."
+    "DeclaredDebuggerBytesMatchDirectAndAPIReads/"
+    "{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelDataExecution."
+    "DeclaredDebuggerBytesMatchDirectAndAPIReads/"
+    "{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelDataExecution."
+                                   "UndeclaredReadsWritesAndExecutionFail/"
+                                   "{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelDataExecution."
+                                   "UndeclaredReadsWritesAndExecutionFail/"
+                                   "{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelDataExecution."
+                                   "UndeclaredReadsWritesAndExecutionFail/"
+                                   "{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST("Backends/KernelDataExecution."
+                                   "UndeclaredReadsWritesAndExecutionFail/"
+                                   "{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/"
+    "KernelObjectExecution."
+    "OriginalDriverRetainsObjectsAcrossHandleCloseAndExit/"
+    "{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/"
+    "KernelObjectExecution."
+    "OriginalDriverRetainsObjectsAcrossHandleCloseAndExit/"
+    "{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/"
+    "KernelObjectExecution."
+    "OriginalDriverRetainsObjectsAcrossHandleCloseAndExit/"
+    "{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/"
+    "KernelObjectExecution."
+    "OriginalDriverRetainsObjectsAcrossHandleCloseAndExit/"
+    "{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelContextCapture.ExactRecordScratchAndFlagsPreserveEveryOtherByte")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelContextCapture.HighStackAndCrossPageRecordUseActualReturnWord")
@@ -81,11 +477,16 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverVaShadowQueryDeclaration.RejectsMalformedAndLegacyBeforeLoading")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
-    "Native/DriverVaShadowQueryExecution.ImportsAndDynamicQueriesSurviveRebasedLifecycle/{backend}")
+    "Native/"
+    "DriverVaShadowQueryExecution."
+    "ImportsAndDynamicQueriesSurviveRebasedLifecycle/{backend}")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
-    "Native/DriverVaShadowQueryExecution.MissingDeclarationAndInvalidOutputsStop/{backend}")
+    "Native/"
+    "DriverVaShadowQueryExecution.MissingDeclarationAndInvalidOutputsStop/"
+    "{backend}")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
-    "Backends/UnpackDriver.UnusedVaShadowQueryCannotAuthorizeRuntimeRecovery/{backend_title}")
+    "Backends/UnpackDriver.UnusedVaShadowQueryCannotAuthorizeRuntimeRecovery/"
+    "{backend_title}")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelPhysicalInventory.ExactByteRangesAndTerminatorInOwnedPool")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
@@ -95,24 +496,33 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelPhysicalInventory.InvalidDeclarationFailsBeforeKernelAllocation")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
-    "KernelPhysicalInventory.CopiedDeclarationRetainsOpaqueLifetimeDependencies")
+    "KernelPhysicalInventory."
+    "CopiedDeclarationRetainsOpaqueLifetimeDependencies")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelPhysicalInventory.PinnedResultCannotBeFreedAndIdentityIsInRange")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelPhysicalInventory.ShortageReturnsNullWithoutPublishingAnotherObject")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
-    "KernelPhysicalInventory.InventoryDoesNotGrantPhysicalReadOrMappingAuthority")
+    "KernelPhysicalInventory."
+    "InventoryDoesNotGrantPhysicalReadOrMappingAuthority")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverPhysicalInventoryDeclaration.RoundTripsAndInheritsExplicitSource")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverPhysicalInventoryDeclaration.RejectsMalformedAndLegacyBeforeLoading")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
-    "Native/DriverPhysicalInventoryExecution.IndependentResultsSurviveRebasedLifecycle/{backend}")
+    "Native/"
+    "DriverPhysicalInventoryExecution."
+    "IndependentResultsSurviveRebasedLifecycle/{backend}")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
-    "Native/DriverPhysicalInventoryExecution.MissingDeclarationAndFreedReadsStop/{backend}")
+    "Native/"
+    "DriverPhysicalInventoryExecution.MissingDeclarationAndFreedReadsStop/"
+    "{backend}")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
-    "Backends/UnpackDriver.UnusedPhysicalInventoryCannotAuthorizeRuntimeRecovery/{backend_title}")
-// Shared driver environment and recovery guards are mandatory on both transports.
+    "Backends/"
+    "UnpackDriver.UnusedPhysicalInventoryCannotAuthorizeRuntimeRecovery/"
+    "{backend_title}")
+// Shared driver environment and recovery guards are mandatory on both
+// transports.
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelLoaderView.DefaultSectionAndFlagsStayOpaque")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
@@ -141,6 +551,14 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelResidentQuery.DispatchCeilingIsCheckedBeforeTheNullResult")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelResidentQuery.QueryBeforeOrAfterBaselineRetainsDependency")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProviderResidentQuery.ExactProvidersIncludeReadOnlyMetadata")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProviderResidentQuery.CurrentRAMPermissionsAreStillRequired")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProviderResidentQuery.AliasesAndDevicesAcquireNoProviderAuthority")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProviderResidentQuery.QueryPreservesOpacityAndRecoveryDependency")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelBugCheck.RegistrationDuplicatesRemovalAndReusePreserveIRQL")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
@@ -242,6 +660,9 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/UnpackDriver."
     "UnusedLoaderDeclarationCannotAuthorizeRuntimeRecovery/{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver."
+    "UnusedFileSystemDeclarationCannotAuthorizeRuntimeRecovery/{backend_title}")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/UnpackDriver."
     "UnusedVersionQueryCannotAuthorizeRuntimeRecovery/{backend_title}")
@@ -643,3 +1064,53 @@ NEVERD_NATIVE_DRIVER_KVM_REQUIRED_TEST(
     "Kvm")
 
 #endif
+
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalBufferedNativeFileTransfers/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalBufferedNativeFileTransfers/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalBufferedNativeFileTransfers/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "OriginalBufferedNativeFileTransfers/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkBufferedNativeFileTransfers/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkBufferedNativeFileTransfers/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkBufferedNativeFileTransfers/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelFileObjectExecution."
+    "GenuineWdkBufferedNativeFileTransfers/{backend}CheckedRebased")
+
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "OriginalImportsAndLookupPreserveCheckedWrites/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "OriginalImportsAndLookupPreserveCheckedWrites/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "OriginalImportsAndLookupPreserveCheckedWrites/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "OriginalImportsAndLookupPreserveCheckedWrites/{backend}CheckedRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "GenuineWdkCallsPreserveCheckedWrites/{backend}LegacyPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "GenuineWdkCallsPreserveCheckedWrites/{backend}LegacyRebased")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "GenuineWdkCallsPreserveCheckedWrites/{backend}CheckedPreferred")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/KernelCRTStringExecution."
+    "GenuineWdkCallsPreserveCheckedWrites/{backend}CheckedRebased")

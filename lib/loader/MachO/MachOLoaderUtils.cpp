@@ -6,6 +6,8 @@
 
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 
+#include "neverd/loader/MachO/MachOMetadataPointer.h"
+#include "neverd/loader/MachO/MachOPlatform.h"
 #include "neverd/object/MachOLayout.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/FilePath.h"
@@ -193,20 +195,27 @@ openMachOBuffer(llvm::MemoryBufferRef Buffer) {
 
 void parseDyldInfoLoadCommands(const llvm::object::MachOObjectFile &Obj,
                                DyldInfoOffsets &Out) {
+  bool Found = false;
   for (const auto &LC : Obj.load_commands()) {
     if ((LC.C.cmd != LC_DYLD_INFO && LC.C.cmd != LC_DYLD_INFO_ONLY) ||
         LC.C.cmdsize < sizeof(dyld_info_command))
       continue;
+    if (Found) {
+      Out.Ambiguous = true;
+      continue;
+    }
+    Found = true;
     auto DI = *reinterpret_cast<const dyld_info_command *>(LC.Ptr);
     Out.RebaseOff = DI.rebase_off;
     Out.RebaseSize = DI.rebase_size;
     Out.BindOff = DI.bind_off;
     Out.BindSize = DI.bind_size;
+    Out.WeakBindOff = DI.weak_bind_off;
+    Out.WeakBindSize = DI.weak_bind_size;
     Out.LazyBindOff = DI.lazy_bind_off;
     Out.LazyBindSize = DI.lazy_bind_size;
     Out.ExportOff = DI.export_off;
     Out.ExportSize = DI.export_size;
-    return;
   }
 }
 
@@ -410,9 +419,11 @@ void parseRuntimeFunctionSections(const std::vector<SectionInfo> &Sections,
           continue;
         Addr = TextVMAddr + Offset;
       } else {
-        Addr = static_cast<va_t>(readPtr(P, Img.is64Bit()));
-        if (Addr == 0)
+        const auto Target =
+            readMetadataPointerTarget(Img, Sec.Addr + I * EntrySize);
+        if (!Target || !*Target)
           continue;
+        Addr = *Target;
       }
       appendRuntimeFunction(Addr, Out, Img);
     }
@@ -484,6 +495,18 @@ void parseExportTrie(const uint8_t *BasePtr, size_t FileSize,
         if (!ReadULEB(TermP, TermEnd, Addr) || Addr > InvalidVA - TextVMAddr)
           continue;
         va_t ExportAddr = TextVMAddr + Addr;
+        // dyld stores Thumb function pointers with bit zero set, whereas
+        // nlist entries use canonical code addresses. Only exact Thumb mode
+        // evidence permits normalization; odd data exports retain their byte
+        // address even when the containing image also has Thumb functions.
+        if (Img.Arch == Arch::ARM && (ExportAddr & 1u) != 0) {
+          const va_t CodeAddr = clearThumbBit(ExportAddr);
+          const auto Mode = Img.ARMCodeModeEntries.find(CodeAddr);
+          if (Mode != Img.ARMCodeModeEntries.end() &&
+              Mode->second == InstructionMode::Thumb &&
+              Img.hasExecutableCodeOwnerAt(CodeAddr))
+            ExportAddr = CodeAddr;
+        }
         if (ExistingExports.insert(ExportAddr).second) {
           Export Exp;
           Exp.Name = Prefix;
@@ -538,14 +561,17 @@ void parseUUID(const llvm::object::MachOObjectFile &Obj, BinaryImage &Img) {
 void parseBuildVersion(const llvm::object::MachOObjectFile &Obj,
                        BinaryImage &Img) {
   for (const auto &LC : Obj.load_commands()) {
+    if (const std::optional<uint32_t> Platform =
+            machOCommandPlatform(Obj, LC, Img.Arch))
+      Img.DynInfo.MachOPlatforms.push_back(*Platform);
     if (LC.C.cmd != LC_BUILD_VERSION ||
-        LC.C.cmdsize < sizeof(build_version_command))
+        LC.C.cmdsize < sizeof(build_version_command) ||
+        !Img.DynInfo.MinOSVersion.empty())
       continue;
     auto BV = *reinterpret_cast<const build_version_command *>(LC.Ptr);
     Img.DynInfo.MinOSVersion = packed_version::toString(BV.minos);
     LLVM_DEBUG(llvm::dbgs()
                << "macho: min OS = " << Img.DynInfo.MinOSVersion << "\n");
-    return;
   }
 }
 

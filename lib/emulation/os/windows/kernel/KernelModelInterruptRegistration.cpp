@@ -121,7 +121,7 @@ KernelModel::registerInterrupt(InterruptParameters Params) {
          Params.SpinLock < Params.Output + profile::PointerSize))
       return apiError(
           "interrupt spin lock requires separate aligned kernel storage");
-    if (ExecutiveSpinLocks.contains(Params.SpinLock))
+    if (spinLockHeldAt(Params.SpinLock))
       return apiError(
           "interrupt spin lock is already owned by an executive lock");
     // A previously connected lock was already checked and is opaque while

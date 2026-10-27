@@ -19,6 +19,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/pass/ir/simplify/common/SymSimplifyDetail.h"
 #include "SemanticConvergence.h"
 #include "gtest/gtest.h"
 
@@ -345,6 +346,41 @@ TEST(SymSimplifyGuard, RewritesMixedBooleanArithmeticWhenUnstamped) {
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 
+TEST(SymSimplifyGuard, GeneratedVariableShiftsRequireCompleteValueBounds) {
+  namespace sym = neverd::symbolic;
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u}) {
+    SCOPED_TRACE(Width);
+    const bool Supported = Width <= sym::SymKnownBits::MaxWidth;
+    sym::SymContext Ctx;
+    Translator Xlat(Ctx);
+    auto X = Ctx.mkVar("x", Width);
+    auto Count = Ctx.mkVar("count", Width);
+    for (auto Op : {sym::SymOp::Shl, sym::SymOp::LShr, sym::SymOp::AShr}) {
+      auto Shift = [&](sym::SymRef N) {
+        return Op == sym::SymOp::Shl    ? Ctx.mkShl(X, N)
+               : Op == sym::SymOp::LShr ? Ctx.mkLShr(X, N)
+                                        : Ctx.mkAShr(X, N);
+      };
+      auto Bounded = Ctx.mkAnd(Count, Ctx.mkConst(Width, Width - 1));
+      EXPECT_EQ(Xlat.hasCompatibleResultSemantics(Shift(Bounded)), Supported);
+      EXPECT_FALSE(Xlat.hasCompatibleResultSemantics(Shift(Count)));
+      EXPECT_FALSE(Xlat.hasCompatibleResultSemantics(
+          Shift(Ctx.mkAnd(Count, Ctx.mkConst(Width, Width)))));
+      EXPECT_FALSE(Xlat.hasCompatibleResultSemantics(
+          Shift(Ctx.mkAdd(Bounded, Ctx.mkConst(Width, 1)))));
+      for (uint64_t I = 0; I < 2 * Width; ++I)
+        EXPECT_LT(
+            Ctx.eval(Bounded, {llvm::APInt(Width, 0), llvm::APInt(Width, I)})
+                .getLimitedValue(),
+            Width);
+    }
+    auto Small = Ctx.mkVar("small", 8);
+    auto Extended = Ctx.mkZExt(Ctx.mkAnd(Small, Ctx.mkConst(8, 7)), Width);
+    EXPECT_EQ(Xlat.hasCompatibleResultSemantics(Ctx.mkLShr(X, Extended)),
+              Supported);
+  }
+}
+
 TEST(SymSimplifyGuard, RewritesCarrySaveAdditionWithAConstantLeftShift) {
   llvm::LLVMContext C;
   llvm::Module M("m", C);
@@ -369,6 +405,21 @@ TEST(SymSimplifyGuard, ProvesPackedDisjointOrAndUnsignedWidenedShift) {
   EXPECT_NE(After.find("add i64"), std::string::npos) << After;
   EXPECT_EQ(After.find("@llvm.fshl"), std::string::npos) << After;
   EXPECT_EQ(After.find("or disjoint"), std::string::npos) << After;
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, SynthesisProofBudgetDoesNotLimitSplitWordRecovery) {
+  llvm::LLVMContext C;
+  llvm::Module M("m", C);
+  llvm::Function *F = buildSplitWordCarrySave(M, /*SignedNoWrap=*/false);
+  SymSimplifyOptions Options;
+  Options.EnableSynthesis = true;
+  Options.SynthesisSolver = solver::SolverOptions::sourceView();
+  Options.SynthesisSolver->Blast.MaxWidth = 8;
+  const auto Result = SymSimplifyPass::simplifyWithResult(*F, Options);
+  EXPECT_GT(Result.Rewrites, 0u) << printFunction(*F);
+  EXPECT_EQ(Result.Proof, solver::ProofStatus::Equivalent);
+  EXPECT_EQ(printFunction(*F).find("@llvm.fshl"), std::string::npos);
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 
@@ -538,6 +589,280 @@ TEST(SymSimplifyGuard, LeavesPoisonGeneratingOperationsOpaque) {
 
   EXPECT_EQ(SymSimplifyPass::simplify(*WithOvershift), 0u);
   EXPECT_EQ(SymSimplifyPass::simplify(*WithNSW), 0u);
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, MaskedNoWrapAdmissionMatchesExhaustiveByteDomains) {
+  llvm::LLVMContext C;
+  llvm::Module M("masked_add_domains", C);
+  auto *I8 = llvm::Type::getInt8Ty(C);
+  for (unsigned A : {0x35u, 0x7fu, 0x80u, 0x93u, 0xffu}) {
+    for (unsigned B : {0u, 1u, 0x11u, 0x80u, 0xffu}) {
+      for (unsigned Flags : {1u, 2u, 3u}) {
+        SCOPED_TRACE(::testing::Message() << A << "," << B << "," << Flags);
+        auto *F =
+            llvm::Function::Create(llvm::FunctionType::get(I8, {I8, I8}, false),
+                                   llvm::Function::ExternalLinkage, "f", &M);
+        llvm::IRBuilder<> IR(llvm::BasicBlock::Create(C, "entry", F));
+        auto make = [&] {
+          auto *L = IR.CreateAnd(F->getArg(0), IR.getInt8(A));
+          auto *R = IR.CreateAnd(F->getArg(1), IR.getInt8(B));
+          return IR.CreateAdd(L, R, "", Flags & 1, Flags & 2);
+        };
+        auto *Root = IR.CreateXor(make(), make());
+        IR.CreateRet(Root);
+        bool Defined = true;
+        // Independent integer arithmetic checks every pair, including each
+        // sign/unsigned overflow boundary; flags are never evidence here.
+        for (unsigned X = 0; X != 256; ++X)
+          for (unsigned Y = 0; Y != 256; ++Y) {
+            unsigned L = X & A, R = Y & B;
+            int SL = L < 128 ? int(L) : int(L) - 256;
+            int SR = R < 128 ? int(R) : int(R) - 256;
+            Defined &= (!(Flags & 1) || L + R < 256) &&
+                       (!(Flags & 2) || (SL + SR >= -128 && SL + SR <= 127));
+          }
+        auto Result = SymSimplifyPass::constantValueOf(Root);
+        EXPECT_EQ(Result.has_value(), Defined) << printFunction(*F);
+        if (Result)
+          EXPECT_TRUE(Result->isZero());
+      }
+    }
+  }
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains) {
+  for (unsigned Width : {8u, 16u, 32u, 64u, 128u, 257u}) {
+    for (bool Poisoned : {false, true}) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Poisoned);
+      llvm::LLVMContext C;
+      llvm::Module M("nested_mask_bounds", C);
+      auto *Ty = llvm::IntegerType::get(C, Width);
+      auto *F =
+          llvm::Function::Create(llvm::FunctionType::get(Ty, {Ty}, false),
+                                 llvm::Function::ExternalLinkage, "f", &M);
+      llvm::IRBuilder<> IR(llvm::BasicBlock::Create(C, "entry", F));
+      auto make = [&] {
+        llvm::Value *X = F->getArg(0);
+        if (Poisoned)
+          X = IR.CreateNSWAdd(X, llvm::ConstantInt::get(Ty, 1));
+        auto mask = [&](unsigned Value) {
+          return IR.CreateAnd(X, llvm::ConstantInt::get(Ty, Value));
+        };
+        auto *Inner = IR.CreateAdd(mask(0x35), mask(0x46), "", true, true);
+        return IR.CreateAdd(Inner, mask(3), "", true, true);
+      };
+      auto *Root = IR.CreateXor(make(), make());
+      IR.CreateRet(Root);
+      auto Result = SymSimplifyPass::constantValueOf(Root);
+      EXPECT_EQ(Result.has_value(), !Poisoned) << printFunction(*F);
+      if (Result)
+        EXPECT_TRUE(Result->isZero());
+      EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    }
+  }
+}
+
+TEST(SymSimplifyGuard, MaskedMultiplyAdmissionMatchesExhaustiveByteDomains) {
+  llvm::LLVMContext C;
+  llvm::Module M("masked_mul_domains", C);
+  auto *Ty = llvm::Type::getInt8Ty(C);
+  for (unsigned A : {1u, 6u, 15u, 0x7fu, 0x80u, 0x93u, 0xffu})
+    for (unsigned B : {1u, 6u, 15u, 0x80u, 0xffu})
+      for (unsigned Flags : {1u, 2u, 3u}) {
+        SCOPED_TRACE(::testing::Message() << A << ',' << B << ',' << Flags);
+        auto *F =
+            llvm::Function::Create(llvm::FunctionType::get(Ty, {Ty, Ty}, false),
+                                   llvm::Function::ExternalLinkage, "f", &M);
+        llvm::IRBuilder<> IR(llvm::BasicBlock::Create(C, "entry", F));
+        auto make = [&] {
+          return IR.CreateMul(IR.CreateAnd(F->getArg(0), IR.getInt8(A)),
+                              IR.CreateAnd(F->getArg(1), IR.getInt8(B)), "",
+                              Flags & 1, Flags & 2);
+        };
+        auto *Root = IR.CreateXor(make(), make());
+        IR.CreateRet(Root);
+        bool Defined = true;
+        for (unsigned X = 0; X < 256; ++X)
+          for (unsigned Y = 0; Y < 256; ++Y) {
+            const unsigned L = X & A, R = Y & B;
+            const int SL = L < 128 ? int(L) : int(L) - 256;
+            const int SR = R < 128 ? int(R) : int(R) - 256;
+            Defined &= (!(Flags & 1) || L * R < 256) &&
+                       (!(Flags & 2) || (SL * SR >= -128 && SL * SR <= 127));
+          }
+        auto Result = SymSimplifyPass::constantValueOf(Root);
+        EXPECT_EQ(Result.has_value(), Defined) << printFunction(*F);
+        if (Result)
+          EXPECT_TRUE(Result->isZero());
+      }
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, MaskedMultiplyPreservesPoisonAndBoundedAdmission) {
+  for (unsigned Width : {8u, 16u, 32u, 64u, 128u, 257u, 512u, 513u})
+    for (unsigned Mode : {0u, 1u, 2u, 3u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Mode);
+      llvm::LLVMContext C;
+      llvm::Module M("masked_mul_bounds", C);
+      auto *Ty = llvm::IntegerType::get(C, Width);
+      auto *F =
+          llvm::Function::Create(llvm::FunctionType::get(Ty, {Ty, Ty}, false),
+                                 llvm::Function::ExternalLinkage, "f", &M);
+      llvm::IRBuilder<> IR(llvm::BasicBlock::Create(C, "entry", F));
+      auto make = [&] {
+        llvm::Value *X = F->getArg(0);
+        if (Mode == 1)
+          X = IR.CreateNSWAdd(X, llvm::ConstantInt::get(Ty, 1));
+        auto mask = [&](llvm::Value *V, unsigned Bits) {
+          return IR.CreateAnd(V, llvm::ConstantInt::get(Ty, Bits));
+        };
+        llvm::Value *L = mask(X, 3);
+        if (Mode == 2)
+          for (unsigned I = 0; I < 32; ++I)
+            L = IR.CreateAdd(L, mask(X, 1));
+        else
+          L = IR.CreateAdd(L, mask(X, 3));
+        auto *Product = IR.CreateMul(L, mask(F->getArg(1), 7), "", true, true);
+        if (Mode == 3)
+          llvm::cast<llvm::Instruction>(Product)->setMetadata(
+              llvm::LLVMContext::MD_range,
+              llvm::MDNode::get(C, {llvm::ConstantAsMetadata::get(
+                                        llvm::ConstantInt::get(Ty, 0)),
+                                    llvm::ConstantAsMetadata::get(
+                                        llvm::ConstantInt::get(Ty, 1))}));
+        return Product;
+      };
+      auto *Root = IR.CreateXor(make(), make());
+      IR.CreateRet(Root);
+      auto Result = SymSimplifyPass::constantValueOf(Root);
+      EXPECT_EQ(Result.has_value(), Mode == 0 && Width <= 512);
+      if (Result)
+        EXPECT_TRUE(Result->isZero());
+      // Range metadata on mul is deliberately malformed; admission must
+      // refuse it before the symbolic result could erase that annotation.
+      if (Mode != 3)
+        EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    }
+}
+
+TEST(SymSimplifyGuard, MaskedDisjointOrMatchesExhaustiveByteDomains) {
+  llvm::LLVMContext C;
+  llvm::Module M("masked_or_domains", C);
+  auto *Ty = llvm::Type::getInt8Ty(C);
+  for (unsigned A : {0u, 1u, 0x35u, 0x80u, 0xffu}) {
+    for (unsigned B : {0u, 1u, 0x4au, 0x80u, 0xffu}) {
+      for (bool Flagged : {false, true}) {
+        SCOPED_TRACE(::testing::Message() << A << "," << B << "," << Flagged);
+        auto *F =
+            llvm::Function::Create(llvm::FunctionType::get(Ty, {Ty, Ty}, false),
+                                   llvm::Function::ExternalLinkage, "f", &M);
+        llvm::IRBuilder<> IR(llvm::BasicBlock::Create(C, "entry", F));
+        auto *L = IR.CreateAnd(F->getArg(0), IR.getInt8(A));
+        auto *R = IR.CreateAnd(F->getArg(1), IR.getInt8(B));
+        auto *Combined =
+            Flagged ? IR.CreateDisjointOr(L, R) : IR.CreateOr(L, R);
+        auto *Root = IR.CreateSub(Combined, IR.CreateAdd(L, R));
+        IR.CreateRet(Root);
+        bool DefinedAndEqual = true;
+        for (unsigned X = 0; X != 256; ++X)
+          for (unsigned Y = 0; Y != 256; ++Y) {
+            const unsigned Left = X & A, Right = Y & B;
+            DefinedAndEqual &= (Left | Right) == ((Left + Right) & 255);
+          }
+        auto Result = SymSimplifyPass::constantValueOf(Root);
+        EXPECT_EQ(Result.has_value(), DefinedAndEqual) << printFunction(*F);
+        if (Result)
+          EXPECT_TRUE(Result->isZero());
+      }
+    }
+  }
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, NestedOrAdmissionPreservesPoisonAndBounds) {
+  for (unsigned Width : {8u, 16u, 32u, 64u, 128u, 257u, 512u, 513u}) {
+    for (unsigned Mode : {0u, 1u, 2u, 3u}) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Mode);
+      llvm::LLVMContext C;
+      llvm::Module M("nested_or_bounds", C);
+      auto *Ty = llvm::IntegerType::get(C, Width);
+      auto *F =
+          llvm::Function::Create(llvm::FunctionType::get(Ty, {Ty, Ty}, false),
+                                 llvm::Function::ExternalLinkage, "f", &M);
+      llvm::IRBuilder<> IR(llvm::BasicBlock::Create(C, "entry", F));
+      auto make = [&] {
+        llvm::Value *X = F->getArg(0);
+        if (Mode == 1)
+          X = IR.CreateNSWAdd(X, llvm::ConstantInt::get(Ty, 1));
+        auto mask = [&](llvm::Value *V, unsigned Mask) {
+          return IR.CreateAnd(V, llvm::ConstantInt::get(Ty, Mask));
+        };
+        llvm::Value *Low =
+            IR.CreateAdd(mask(X, 0x35), mask(F->getArg(1), 0x46));
+        if (Mode == 2)
+          for (unsigned I = 0; I != 32; ++I)
+            Low = IR.CreateAdd(Low, mask(X, 1));
+        auto *High =
+            IR.CreateAnd(X, llvm::ConstantInt::get(C, llvm::APInt::getOneBitSet(
+                                                          Width, Width - 1)));
+        if (Mode == 3)
+          Low = IR.CreateOr(Low, High);
+        return IR.CreateDisjointOr(Low, High);
+      };
+      auto *Root = IR.CreateXor(make(), make());
+      IR.CreateRet(Root);
+      auto Result = SymSimplifyPass::constantValueOf(Root);
+      EXPECT_EQ(Result.has_value(), Mode == 0 && Width <= 512)
+          << printFunction(*F);
+      if (Result)
+        EXPECT_TRUE(Result->isZero());
+      EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    }
+  }
+}
+
+TEST(SymSimplifyGuard, NestedOrAdmissionDoesNotIgnoreArithmeticCarries) {
+  llvm::LLVMContext C;
+  llvm::Module M("or_carries", C);
+  auto *Ty = llvm::Type::getInt8Ty(C);
+  for (unsigned Mask : {0x08u, 0x10u, 0x20u, 0x40u, 0x80u}) {
+    auto *F =
+        llvm::Function::Create(llvm::FunctionType::get(Ty, {Ty, Ty}, false),
+                               llvm::Function::ExternalLinkage, "f", &M);
+    llvm::IRBuilder<> IR(llvm::BasicBlock::Create(C, "entry", F));
+    auto make = [&] {
+      auto *Low =
+          IR.CreateDisjointOr(IR.CreateAnd(F->getArg(0), IR.getInt8(0x10)),
+                              IR.CreateAnd(F->getArg(1), IR.getInt8(0x20)));
+      auto *Sum =
+          IR.CreateAdd(Low, IR.CreateAnd(F->getArg(1), IR.getInt8(0x20)));
+      return IR.CreateDisjointOr(Sum,
+                                 IR.CreateAnd(F->getArg(0), IR.getInt8(Mask)));
+    };
+    auto *Root = IR.CreateXor(make(), make());
+    IR.CreateRet(Root);
+    bool Defined = true;
+    for (unsigned X = 0; X != 256; ++X)
+      for (unsigned Y = 0; Y != 256; ++Y) {
+        const unsigned Sum = ((X & 0x10) | (Y & 0x20)) + (Y & 0x20);
+        Defined &= !(Sum & (X & Mask));
+      }
+    auto Result = SymSimplifyPass::constantValueOf(Root);
+    // Independent operands may prove fewer facts than their correlations.
+    // Every admitted case must nevertheless be defined over every byte pair.
+    if (Result) {
+      EXPECT_TRUE(Defined);
+      EXPECT_TRUE(Result->isZero());
+    }
+    if (Mask == 0x08 || Mask == 0x80)
+      EXPECT_TRUE(Result.has_value()) << printFunction(*F);
+    if (Mask == 0x10 || Mask == 0x40)
+      EXPECT_FALSE(Result.has_value()) << printFunction(*F);
+  }
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 
@@ -1342,6 +1667,111 @@ TEST(SymSimplifyGuard, SynthesisEquivalent) {
   EXPECT_EQ(LogicalShiftsByFour, 1u) << printFunction(*F);
 }
 
+TEST(SymSimplifyGuard, SemanticAffineSynthesisAcrossBlocksAndAtCallArguments) {
+  for (bool AtCall : {false, true}) {
+    SCOPED_TRACE(AtCall);
+    llvm::LLVMContext C;
+    llvm::Module M("semantic_affine", C);
+    auto *I32 = llvm::Type::getInt32Ty(C);
+    auto *FT = llvm::FunctionType::get(I32, {I32, I32, I32}, false);
+    auto *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                     "affine", M);
+    for (llvm::Argument &A : F->args())
+      A.addAttr(llvm::Attribute::NoUndef);
+    auto *Entry = llvm::BasicBlock::Create(C, "entry", F);
+    auto *Use = llvm::BasicBlock::Create(C, "use", F);
+    llvm::IRBuilder<> B(Entry);
+    llvm::Value *X = F->getArg(0), *Y = F->getArg(1), *Z = F->getArg(2);
+    llvm::Value *Direct = B.CreateLShr(X, B.getInt32(4));
+    llvm::Value *Half = B.CreateLShr(X, B.getInt32(2));
+    B.CreateBr(Use);
+    B.SetInsertPoint(Use);
+    llvm::Value *Nested = B.CreateLShr(Half, B.getInt32(2));
+    llvm::Value *Sum = B.CreateAdd(B.CreateMul(X, B.getInt32(182)),
+                                   B.CreateMul(Y, B.getInt32(73)));
+    Sum = B.CreateAdd(Sum, B.CreateMul(Z, B.getInt32(211)));
+    Sum = B.CreateAdd(Sum, B.CreateSub(Direct, Nested));
+    if (AtCall) {
+      auto Sink = M.getOrInsertFunction(
+          "observable_sink", llvm::FunctionType::get(I32, {I32}, false));
+      B.CreateRet(B.CreateCall(Sink, {Sum}));
+    } else {
+      B.CreateRet(Sum);
+    }
+    ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    SymSimplifyOptions Opts = synthesisOptions();
+    Opts.Synthesis.MaxCost = 32;
+    Opts.Synthesis.MaxConstants = 0;
+    Opts.Synthesis.MaxWork = 20000;
+    const auto Result = SymSimplifyPass::simplifyWithResult(*F, Opts);
+    EXPECT_GT(Result.Rewrites, 0u) << printFunction(*F);
+    EXPECT_EQ(Result.Proof, solver::ProofStatus::Equivalent);
+    EXPECT_GT(Result.ProofWork.Queries, 0u);
+    EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    unsigned Shifts = 0, Calls = 0;
+    for (const llvm::Instruction &I : llvm::instructions(*F)) {
+      Shifts += I.getOpcode() == llvm::Instruction::LShr;
+      Calls += llvm::isa<llvm::CallInst>(I);
+    }
+    EXPECT_EQ(Shifts, 0u) << printFunction(*F);
+    EXPECT_EQ(Calls, unsigned(AtCall));
+  }
+}
+
+TEST(SymSimplifyGuard,
+     SemanticQuadraticSynthesisAcrossBlocksAndAtCallArguments) {
+  for (bool AtCall : {false, true}) {
+    SCOPED_TRACE(AtCall);
+    llvm::LLVMContext C;
+    llvm::Module M("semantic_quadratic", C);
+    auto *I32 = llvm::Type::getInt32Ty(C);
+    auto *FT = llvm::FunctionType::get(I32, {I32, I32, I32}, false);
+    auto *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                     "quadratic", M);
+    for (llvm::Argument &A : F->args())
+      A.addAttr(llvm::Attribute::NoUndef);
+    auto *Entry = llvm::BasicBlock::Create(C, "entry", F);
+    auto *Use = llvm::BasicBlock::Create(C, "use", F);
+    llvm::IRBuilder<> B(Entry);
+    llvm::Value *X = F->getArg(0), *Y = F->getArg(1), *Z = F->getArg(2);
+    llvm::Value *Direct = B.CreateLShr(X, B.getInt32(4));
+    llvm::Value *Half = B.CreateLShr(X, B.getInt32(2));
+    B.CreateBr(Use);
+    B.SetInsertPoint(Use);
+    llvm::Value *Nested = B.CreateLShr(Half, B.getInt32(2));
+    llvm::Value *Sum =
+        B.CreateAdd(B.CreateMul(B.CreateMul(X, X), B.getInt32(11)),
+                    B.CreateMul(B.CreateMul(X, Y), B.getInt32(73)));
+    Sum = B.CreateAdd(Sum, B.CreateMul(Z, B.getInt32(211)));
+    Sum = B.CreateAdd(Sum, B.CreateSub(Direct, Nested));
+    if (AtCall) {
+      auto Sink = M.getOrInsertFunction(
+          "observable_sink", llvm::FunctionType::get(I32, {I32}, false));
+      B.CreateRet(B.CreateCall(Sink, {Sum}));
+    } else {
+      B.CreateRet(Sum);
+    }
+    ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    SymSimplifyOptions Opts = synthesisOptions();
+    Opts.Synthesis = symbolic::SynthOptions::sourceView();
+    Opts.SynthesisSolver = solver::SolverOptions::sourceView();
+    Opts.Synthesis.MaxConstants = 0;
+    Opts.Synthesis.MaxWork = 20000;
+    const auto Result = SymSimplifyPass::simplifyWithResult(*F, Opts);
+    EXPECT_GT(Result.Rewrites, 0u) << printFunction(*F);
+    EXPECT_EQ(Result.Proof, solver::ProofStatus::Equivalent);
+    EXPECT_GT(Result.ProofWork.Queries, 0u);
+    EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    unsigned Shifts = 0, Calls = 0;
+    for (const llvm::Instruction &I : llvm::instructions(*F)) {
+      Shifts += I.getOpcode() == llvm::Instruction::LShr;
+      Calls += llvm::isa<llvm::CallInst>(I);
+    }
+    EXPECT_EQ(Shifts, 0u) << printFunction(*F);
+    EXPECT_EQ(Calls, unsigned(AtCall));
+  }
+}
+
 TEST(SymSimplifyGuard, SynthesisDifferentLeavesIRUnchanged) {
   llvm::LLVMContext C;
   llvm::Module M("m", C);
@@ -1385,6 +1815,34 @@ TEST(SymSimplifyGuard, SynthesisUnknownLeavesIRUnchanged) {
   EXPECT_GT(Result.SearchWork, 0u);
   EXPECT_EQ(Result.ProofWork.Queries, 1u);
   EXPECT_FALSE(Result.Counterexample.has_value());
+  EXPECT_EQ(printFunction(*F), Before);
+}
+
+TEST(SymSimplifyGuard, SynthesisProofBudgetOverrideLeavesIRUnchanged) {
+  llvm::LLVMContext C;
+  llvm::Module M("m", C);
+  auto *I32 = llvm::Type::getInt32Ty(C);
+  auto *F = llvm::Function::Create(
+      llvm::FunctionType::get(I32, {I32, I32, I32}, false),
+      llvm::Function::ExternalLinkage, "synthesis_proof_budget", M);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", F));
+  auto *X = F->getArg(0);
+  auto *Direct = B.CreateLShr(X, B.getInt32(4));
+  auto *Nested = B.CreateLShr(B.CreateLShr(X, B.getInt32(2)), B.getInt32(2));
+  auto *Sum = B.CreateAdd(B.CreateMul(X, B.getInt32(182)),
+                          B.CreateMul(F->getArg(1), B.getInt32(73)));
+  Sum = B.CreateAdd(Sum, B.CreateMul(F->getArg(2), B.getInt32(211)));
+  B.CreateRet(B.CreateAdd(Sum, B.CreateSub(Direct, Nested)));
+  const std::string Before = printFunction(*F);
+  SymSimplifyOptions Options = synthesisOptions();
+  Options.Synthesis = symbolic::SynthOptions::sourceView();
+  Options.SynthesisSolver = solver::SolverOptions::sourceView();
+  Options.SynthesisSolver->Blast.MaxWidth = 8;
+  const auto Result = SymSimplifyPass::simplifyWithResult(*F, Options);
+  EXPECT_EQ(Result.Rewrites, 0u);
+  EXPECT_EQ(Result.Outcome, SymSimplifyOutcome::ProofIncomplete);
+  EXPECT_EQ(Result.Proof, solver::ProofStatus::Unknown);
+  EXPECT_EQ(Result.ProofWork.Queries, 1u);
   EXPECT_EQ(printFunction(*F), Before);
 }
 
@@ -1902,6 +2360,46 @@ TEST(SymSimplifyGuard, SourceDefaultRunsO2WithoutSymbolicWork) {
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 
+TEST(SymSimplifyGuard, SourceSymbolicToggleEnablesBoundedSemanticSearch) {
+  using Level = SourceViewOptions::LLVMOptimization;
+  for (const auto Profile : {Level::Basic, Level::O0, Level::O1, Level::O2,
+                             Level::O3, Level::Custom}) {
+    for (bool Symbolic : {false, true}) {
+      SCOPED_TRACE(static_cast<unsigned>(Profile));
+      SCOPED_TRACE(Symbolic);
+      llvm::LLVMContext C;
+      llvm::Module M("source_synthesis", C);
+      auto *I32 = llvm::Type::getInt32Ty(C);
+      auto *F = llvm::Function::Create(
+          llvm::FunctionType::get(I32, {I32}, false),
+          llvm::Function::ExternalLinkage, "nonlinear", M);
+      F->getArg(0)->addAttr(llvm::Attribute::NoUndef);
+      llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", F));
+      B.CreateRet(
+          B.CreateMul(F->getArg(0), B.CreateAdd(F->getArg(0), B.getInt32(1))));
+      SourceViewOptions Options;
+      Options.LLVM = Profile;
+      Options.Symbolic = Symbolic;
+      Options.Passes = 0;
+      const auto Result =
+          Pipeline::optimizeOrPromoteModule(M, nullptr, Options);
+      ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+      EXPECT_NE(Result.Stop, OptimizationStopReason::InputInvalid);
+      EXPECT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
+      // A nonlinear expression has no affine answer. Work here demonstrates
+      // that the real source request reaches bounded semantic search, even
+      // when the selected LLVM cleanup profile leaves it unchanged.
+      if (Symbolic)
+        EXPECT_GT(Result.SearchWork, 0u);
+      else
+        EXPECT_EQ(Result.SearchWork, 0u);
+      EXPECT_LE(Result.SearchWork,
+                Result.Rounds * symbolic::SynthOptions::sourceView().MaxWork);
+      EXPECT_EQ(Result.SemanticRewrites, 0u);
+    }
+  }
+}
+
 TEST(SymSimplifyGuard, DeepDefaultO2InlinesAndEliminatesInternalHelper) {
   llvm::LLVMContext C;
   llvm::Module M("m", C);
@@ -2028,48 +2526,48 @@ TEST(SymSimplifyGuard, DeepO0ForwardsSemanticOptionsAndCountsDefinitionsOnce) {
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 
-TEST(SymSimplifyGuard, DeepRepairsFrameRelativeIntToPtrAfterO2) {
-  llvm::LLVMContext C;
-  llvm::Module M("m", C);
-  auto *I32 = llvm::Type::getInt32Ty(C);
-  auto *I64 = llvm::Type::getInt64Ty(C);
-  auto *Ptr = llvm::PointerType::getUnqual(C);
-  auto *ObserveTy = llvm::FunctionType::get(llvm::Type::getVoidTy(C), {I64},
-                                            /*isVarArg=*/false);
-  llvm::FunctionCallee Observe = M.getOrInsertFunction("observe_sp", ObserveTy);
-  auto *FT = llvm::FunctionType::get(llvm::Type::getVoidTy(C), {Ptr},
-                                     /*isVarArg=*/false);
-  auto *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
-                                   "frame_relative", &M);
-  llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, kFrameSetupBlock, F));
-  llvm::Value *FrameBase = B.CreatePtrToInt(F->getArg(0), I64, kRspInitValue);
-  B.CreateCall(Observe, {FrameBase});
-  llvm::Constant *NegativeAddress = llvm::ConstantExpr::getIntToPtr(
-      llvm::ConstantInt::getSigned(I64, -16), Ptr);
-  B.CreateStore(llvm::ConstantInt::get(I32, 7), NegativeAddress,
-                /*isVolatile=*/true);
-  B.CreateRetVoid();
-
-  Pipeline::OptimizationOptions Options;
-  Options.LLVMLevel = llvm::OptimizationLevel::O2;
-  OptimizationResult Result = Pipeline::optimizeModule(M, Options);
-
-  EXPECT_NE(Result.Stop, OptimizationStopReason::InputInvalid);
-  EXPECT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
-  llvm::Function *Optimized = M.getFunction("frame_relative");
-  ASSERT_NE(Optimized, nullptr);
-  const llvm::StoreInst *StackStore = nullptr;
-  for (const llvm::Instruction &I : llvm::instructions(*Optimized))
-    if (const auto *Candidate = llvm::dyn_cast<llvm::StoreInst>(&I))
-      if (Candidate->isVolatile())
-        StackStore = Candidate;
-  ASSERT_NE(StackStore, nullptr) << printFunction(*Optimized);
-  const auto *Fixed =
-      llvm::dyn_cast<llvm::IntToPtrInst>(StackStore->getPointerOperand());
-  ASSERT_NE(Fixed, nullptr) << printFunction(*Optimized);
-  EXPECT_EQ(Fixed->getName(), "stackptr");
-  EXPECT_TRUE(llvm::isa<llvm::BinaryOperator>(Fixed->getOperand(0)));
-  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+TEST(SymSimplifyGuard, DeepKeepsAbsoluteAddressesDistinctFromFrameOffsets) {
+  for (bool BeforeFrame : {false, true}) {
+    for (unsigned Bits : {32u, 64u}) {
+      llvm::LLVMContext C;
+      llvm::Module M("absolute_address", C);
+      M.setDataLayout(Bits == 32 ? "e-p:32:32" : "e-p:64:64");
+      auto *Integer = llvm::IntegerType::get(C, Bits);
+      auto *Ptr = llvm::PointerType::getUnqual(C);
+      auto Observe = M.getOrInsertFunction(
+          "observe_sp",
+          llvm::FunctionType::get(llvm::Type::getVoidTy(C), {Integer}, false));
+      auto *F = llvm::Function::Create(
+          llvm::FunctionType::get(llvm::Type::getVoidTy(C), {Ptr}, false),
+          llvm::Function::ExternalLinkage, "absolute_store", &M);
+      llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, kFrameSetupBlock, F));
+      auto *Address = llvm::ConstantExpr::getIntToPtr(
+          llvm::ConstantInt::getSigned(Integer, -16), Ptr);
+      auto Store = [&] { B.CreateStore(B.getInt32(7), Address, true); };
+      if (BeforeFrame)
+        Store();
+      auto *FrameBase = B.CreatePtrToInt(F->getArg(0), Integer, kRspInitValue);
+      B.CreateCall(Observe, {FrameBase});
+      if (!BeforeFrame)
+        Store();
+      B.CreateRetVoid();
+      ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+      Pipeline::OptimizationOptions Options;
+      Options.LLVMLevel = llvm::OptimizationLevel::O2;
+      const auto Result = Pipeline::optimizeModule(M, Options);
+      ASSERT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
+      ASSERT_NE(Result.Stop, OptimizationStopReason::InputInvalid);
+      ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+      unsigned Stores = 0;
+      for (const auto &I : llvm::instructions(*M.getFunction("absolute_store")))
+        if (const auto *Write = llvm::dyn_cast<llvm::StoreInst>(&I)) {
+          ++Stores;
+          EXPECT_TRUE(Write->isVolatile());
+          EXPECT_EQ(Write->getPointerOperand(), Address);
+        }
+      EXPECT_EQ(Stores, 1u);
+    }
+  }
 }
 
 TEST(SymSimplifyGuard, VerifierRejectionIsTransactional) {

@@ -1,6 +1,9 @@
 #include "HexView.h"
 
+#include "../Config.h"
+#include "../ResourceLimits.h"
 #include "AddressSpace.h"
+#include "PatchEditor.h"
 #include "Session.h"
 #include "Theme.h"
 
@@ -16,16 +19,16 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <algorithm>
+#include <limits>
 
 namespace neverd::gui {
 namespace {
 constexpr int BytesPerRow = 16;
-constexpr int ChunkBytes = 4096;
-constexpr int MaxChunks = 256;
 /// The most bytes one copy takes: half the chunk cache, so that its bytes
 /// stay loaded until the copy completes.
-constexpr Address MaxCopyBytes = Address(MaxChunks / 2) * ChunkBytes;
-constexpr int Margin = 6;
+constexpr Address MaxCopyBytes =
+    Address(::neverd::limits::gui::kHexViewMaxChunks / 2) *
+    ::neverd::limits::gui::kHexViewChunkBytes;
 // Columns: address, two spaces, 16 hex bytes ("xx " each, extra space after
 // eight), two spaces, 16 characters.
 constexpr int HexGroup = 8;
@@ -34,7 +37,13 @@ constexpr char TextEncodingKey[] = "hex/textEncoding";
 constexpr char HiddenByte = '.';
 
 Address chunkBase(Address address) {
-  return address & ~Address(ChunkBytes - 1);
+  return address & ~Address(::neverd::limits::gui::kHexViewChunkBytes - 1);
+}
+
+/// Where a row's bytes start: after the margin, the address and two spaces.
+qreal bytesLeft(int bitness, qreal charWidth) {
+  return ::neverd::limits::gui_config::kHexViewMargin +
+         ((bitness == 64 ? 16 : 8) + 2) * charWidth;
 }
 } // namespace
 
@@ -53,6 +62,9 @@ HexView::HexView(Session &session, const AddressSpace &space, QWidget *parent)
     clearChunks();
     loadEncodings();
   });
+  connect(&session_, &Session::bytePatchesChanged, viewport(),
+          qOverload<>(&QWidget::update));
+  connect(&session_, &Session::revisionChanged, this, &HexView::clearChunks);
   connect(&session_, &Session::unloaded, this, [this] {
     current_.reset();
     anchor_.reset();
@@ -99,8 +111,19 @@ void HexView::setTextEncoding(const QString &name) {
   clearChunks();
 }
 
+void HexView::setExportAction(QAction *action) {
+  ExportAction = action;
+  addAction(action);
+}
+
 void HexView::contextMenuEvent(QContextMenuEvent *event) {
+  setFocus(Qt::MouseFocusReason);
   QMenu menu(this);
+  emit populateContextMenu(&menu);
+  if (ExportAction) {
+    menu.addAction(ExportAction);
+    menu.addSeparator();
+  }
   auto *encodings = menu.addMenu(tr("Text encoding"));
   auto *group = new QActionGroup(encodings);
   const auto add = [&](const QString &label, const QString &name) {
@@ -184,6 +207,15 @@ void HexView::updateRange() {
                                      std::numeric_limits<int>::max())));
   bar->setPageStep(visibleRows());
   bar->setSingleStep(1);
+  // A pane narrower than a row scrolls sideways to the text column.
+  const qreal rowWidth = bytesLeft(session_.bitness(), charWidth_) +
+                         (BytesPerRow * 3 + 2 + BytesPerRow) * charWidth_ +
+                         ::neverd::limits::gui_config::kHexViewMargin;
+  auto *horizontal = horizontalScrollBar();
+  horizontal->setRange(
+      0, std::max(0, int(std::ceil(rowWidth)) - viewport()->width()));
+  horizontal->setPageStep(viewport()->width());
+  horizontal->setSingleStep(int(std::ceil(charWidth_)));
 }
 
 void HexView::resizeEvent(QResizeEvent *event) {
@@ -211,7 +243,7 @@ void HexView::request(Address key) const {
     return;
   // Reading stops at the first unmapped byte, so a chunk ends with its
   // region: bytes past a gap belong to the next region's chunk.
-  Address end = chunkBase(key) + ChunkBytes;
+  Address end = chunkBase(key) + ::neverd::limits::gui::kHexViewChunkBytes;
   if (const auto *region = space_.regionOf(key))
     end = std::min(end, region->end);
   const Address base = key;
@@ -238,7 +270,8 @@ void HexView::request(Address key) const {
                                            : cell.toString());
         self->chunks_.insert(base, chunk);
         self->order_.push_front(base);
-        while (int(self->order_.size()) > MaxChunks) {
+        while (int(self->order_.size()) >
+               ::neverd::limits::gui::kHexViewMaxChunks) {
           self->chunks_.remove(self->order_.back());
           self->order_.pop_back();
         }
@@ -309,9 +342,11 @@ void HexView::paintEvent(QPaintEvent *) {
   painter.fillRect(viewport()->rect(), theme.color(ColorRole::HexBackground));
   if (space_.empty())
     return;
+  painter.translate(-horizontalScrollBar()->value(), 0);
   painter.setFont(theme.codeFont());
   const int digits = session_.bitness() == 64 ? 16 : 8;
-  const qreal hexLeft = Margin + (digits + 2) * charWidth_;
+  const qreal hexLeft =
+      ::neverd::limits::gui_config::kHexViewMargin + (digits + 2) * charWidth_;
   const qreal asciiLeft = hexLeft + (BytesPerRow * 3 + 2) * charWidth_;
   const qint64 first = verticalScrollBar()->value();
   const auto Selected = selection();
@@ -321,8 +356,9 @@ void HexView::paintEvent(QPaintEvent *) {
       break;
     const int y = i * lineHeight_;
     painter.setPen(theme.color(ColorRole::HexAddress));
-    painter.drawText(QPointF(Margin, y + ascent_),
-                     displayAddress(*rowAddress, digits));
+    painter.drawText(
+        QPointF(::neverd::limits::gui_config::kHexViewMargin, y + ascent_),
+        displayAddress(*rowAddress, digits));
     const auto isCurrent = [&](Address address) {
       return current_ && address >= *current_ &&
              address < *current_ + Address(currentSize_);
@@ -335,10 +371,16 @@ void HexView::paintEvent(QPaintEvent *) {
     for (int b = 0; b < BytesPerRow; ++b) {
       const Address address = *rowAddress + b;
       const bool current = isCurrent(address);
-      if ((!current && !isSelected(address)) || !space_.regionOf(address))
+      const bool patched = session_.hasBytePatch(address);
+      if ((!current && !isSelected(address) && !patched) ||
+          !space_.regionOf(address))
         continue;
-      const QColor fill = theme.color(current ? ColorRole::HexCurrent
-                                              : ColorRole::ListingSelection);
+      const QColor fill =
+          theme.color(patched   ? (current || isSelected(address)
+                                       ? ColorRole::ListingPatchedSelection
+                                       : ColorRole::HexPatched)
+                      : current ? ColorRole::HexCurrent
+                                : ColorRole::ListingSelection);
       const qreal x = hexLeft + (b * 3 + (b >= HexGroup ? 1 : 0)) * charWidth_;
       painter.fillRect(
           QRectF(x - charWidth_ / 4, y, charWidth_ * 2.5, lineHeight_), fill);
@@ -356,7 +398,8 @@ void HexView::paintEvent(QPaintEvent *) {
       const Chunk *source = chunk(key);
       const int offset = int(address - key);
       const bool mapped = source && offset < source->mapped;
-      const bool current = isCurrent(address);
+      const bool current =
+          isCurrent(address) && !session_.hasBytePatch(address);
       if (!source) {
         painter.setPen(theme.color(ColorRole::HexUnmapped));
         painter.drawText(QPointF(x, y + ascent_), QStringLiteral(".."));
@@ -371,6 +414,9 @@ void HexView::paintEvent(QPaintEvent *) {
       painter.setPen(current ? theme.color(ColorRole::HexCurrentText)
                      : value ? theme.color(ColorRole::HexByte)
                              : theme.color(ColorRole::HexZero));
+      if (session_.hasBytePatch(address))
+        painter.drawLine(QPointF(x, y + lineHeight_ - 1),
+                         QPointF(x + 2 * charWidth_, y + lineHeight_ - 1));
       painter.drawText(
           QPointF(x, y + ascent_),
           QStringLiteral("%1").arg(value, 2, 16, QLatin1Char('0')).toUpper());
@@ -391,6 +437,11 @@ void HexView::paintEvent(QPaintEvent *) {
 }
 
 void HexView::keyPressEvent(QKeyEvent *event) {
+  if (event->key() == Qt::Key_F2 && event->modifiers() == Qt::NoModifier) {
+    editByte();
+    event->accept();
+    return;
+  }
   if (event->matches(QKeySequence::Copy)) {
     copySelection();
     return;
@@ -428,18 +479,35 @@ void HexView::keyPressEvent(QKeyEvent *event) {
   if (!space_.regionOf(next))
     return;
   moveCurrent(next, event->modifiers() & Qt::ShiftModifier);
+  // A pane scrolled sideways keeps the byte in view in one of its columns.
+  auto *horizontal = horizontalScrollBar();
+  const int byte = int(next % BytesPerRow);
+  const qreal hex = bytesLeft(session_.bitness(), charWidth_) +
+                    (byte * 3 + (byte >= HexGroup ? 1 : 0)) * charWidth_;
+  const qreal text = bytesLeft(session_.bitness(), charWidth_) +
+                     (BytesPerRow * 3 + 2 + byte) * charWidth_;
+  const auto shown = [&](qreal left, qreal width) {
+    return left >= horizontal->value() &&
+           left + width <= horizontal->value() + viewport()->width();
+  };
+  if (!shown(hex, 2 * charWidth_) && !shown(text, charWidth_))
+    horizontal->setValue(hex < horizontal->value()
+                             ? int(std::floor(hex))
+                             : int(std::ceil(hex + 2 * charWidth_)) -
+                                   viewport()->width());
   emit locationChanged(next);
 }
 
 std::optional<Address> HexView::addressAt(const QPointF &position) const {
   const int digits = session_.bitness() == 64 ? 16 : 8;
-  const qreal hexLeft = Margin + (digits + 2) * charWidth_;
+  const qreal hexLeft =
+      ::neverd::limits::gui_config::kHexViewMargin + (digits + 2) * charWidth_;
   const qreal asciiLeft = hexLeft + (BytesPerRow * 3 + 2) * charWidth_;
   const int rowIndex = int(position.y()) / std::max(1, lineHeight_);
   const auto rowAddress = addressOfRow(verticalScrollBar()->value() + rowIndex);
   if (!rowAddress)
     return std::nullopt;
-  const qreal x = position.x();
+  const qreal x = position.x() + horizontalScrollBar()->value();
   int byte = -1;
   if (x >= asciiLeft)
     byte = int((x - asciiLeft) / charWidth_);
@@ -496,13 +564,10 @@ void HexView::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void HexView::copySelection() {
-  std::pair<Address, Address> range;
-  if (const auto selected = selection())
-    range = *selected;
-  else if (current_)
-    range = {*current_, *current_ + Address(currentSize_) - 1};
-  else
+  const auto selected = byteSelection();
+  if (!selected)
     return;
+  const auto range = *selected;
   if (range.second - range.first >= MaxCopyBytes) {
     emit session_.message(tr("Copy takes at most %1 bytes; select fewer.")
                               .arg(qulonglong(MaxCopyBytes)),
@@ -511,6 +576,16 @@ void HexView::copySelection() {
   }
   pendingCopy_ = range;
   completeCopy();
+}
+
+std::optional<std::pair<Address, Address>> HexView::byteSelection() const {
+  if (const auto selected = selection())
+    return selected;
+  if (!current_ || currentSize_ <= 0 ||
+      Address(currentSize_ - 1) >
+          std::numeric_limits<Address>::max() - *current_)
+    return std::nullopt;
+  return std::pair{*current_, *current_ + Address(currentSize_) - 1};
 }
 
 void HexView::completeCopy() {
@@ -532,7 +607,8 @@ void HexView::completeCopy() {
         return;
       }
       for (Address key = chunkKey(address); key <= last;
-           key = chunkKey(chunkBase(key) + ChunkBytes))
+           key = chunkKey(chunkBase(key) +
+                          ::neverd::limits::gui::kHexViewChunkBytes))
         if (!chunks_.contains(key))
           request(key);
       return;
@@ -548,11 +624,47 @@ void HexView::completeCopy() {
 }
 
 void HexView::wheelEvent(QWheelEvent *event) {
-  if (event->modifiers() & Qt::ControlModifier) {
-    Theme::instance().zoomCodeFont(event->angleDelta().y() > 0 ? 1 : -1);
+  if (wheel_.zoomCodeFont(*event, lineHeight_))
     return;
-  }
   QAbstractScrollArea::wheelEvent(event);
+}
+
+QRect HexView::cursorViewportRect() const {
+  if (!current_)
+    return {};
+  const int byte = int(*current_ % BytesPerRow);
+  const qreal x = bytesLeft(session_.bitness(), charWidth_) +
+                  (byte * 3 + (byte >= HexGroup ? 1 : 0)) * charWidth_ -
+                  horizontalScrollBar()->value();
+  return QRect(qRound(x),
+               int(rowOf(*current_) - verticalScrollBar()->value()) *
+                   lineHeight_,
+               qRound(2 * charWidth_), lineHeight_);
+}
+
+void HexView::editByte() {
+  if (!current_ || session_.readOnly() || !session_.keepsBytePatches())
+    return;
+  const auto byte = byteAt(*current_);
+  if (!byte)
+    return;
+  if (auto *old = viewport()->findChild<PatchEditor *>())
+    old->deleteLater();
+  auto *editor =
+      new PatchEditor(session_, *current_, "bytes",
+                      QStringLiteral("%1").arg(*byte, 2, 16, QLatin1Char('0')),
+                      viewport(), true);
+  connect(editor, &PatchEditor::cancelled, this, [this, editor] {
+    editor->deleteLater();
+    setFocus();
+  });
+  connect(editor, &PatchEditor::applied, this, [this, editor] {
+    editor->deleteLater();
+    setFocus();
+    if (current_)
+      moveCurrent(*current_ + 1, false);
+  });
+  editor->openAt(cursorViewportRect());
 }
 
 } // namespace neverd::gui

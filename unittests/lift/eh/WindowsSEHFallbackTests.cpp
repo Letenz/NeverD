@@ -170,8 +170,8 @@ TEST(WindowsSEHFallback, NativeContinuationKeepsItsBodyAfterReturn) {
     const auto Source = emitFallback(Function, Arch::X86);
     const size_t Entry = Source.find("L_1080:");
     ASSERT_NE(Entry, std::string::npos) << Source;
-    EXPECT_LT(Source.find("return 42;"), Entry) << Source;
-    EXPECT_NE(Source.find("return 43;", Entry), std::string::npos) << Source;
+    EXPECT_LT(Source.find("return 0x2A;"), Entry) << Source;
+    EXPECT_NE(Source.find("return 0x2B;", Entry), std::string::npos) << Source;
   }
 }
 

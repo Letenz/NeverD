@@ -1,12 +1,11 @@
 #include "EngineClient.h"
 
+#include "ResourceLimits.h"
+
 #include <QJsonDocument>
 #include <QtEndian>
 
-namespace {
-constexpr qsizetype MaxFrame = 8 * 1024 * 1024;
-constexpr qint64 MaxWriteQueue = 16 * 1024 * 1024;
-} // namespace
+namespace {} // namespace
 
 void WorkerTransport::start(const QString &program, quint64 epoch) {
   stop();
@@ -54,8 +53,9 @@ void WorkerTransport::send(const QJsonObject &request) {
     return;
   }
   const QByteArray data = QJsonDocument(request).toJson(QJsonDocument::Compact);
-  if (data.size() > MaxFrame ||
-      process_->bytesToWrite() + data.size() > MaxWriteQueue) {
+  if (data.size() > ::neverd::limits::gui::kEngineClientMaxFrame ||
+      process_->bytesToWrite() + data.size() >
+          ::neverd::limits::gui::kEngineClientMaxWriteQueue) {
     emit message(
         {{"type", "response"},
          {"request_id", request["request_id"]},
@@ -78,7 +78,8 @@ void WorkerTransport::receive() {
     input_ += process_->read(qMin<qint64>(65536, process_->bytesAvailable()));
     while (input_.size() >= 4) {
       const auto length = qFromBigEndian<quint32>(input_.constData());
-      if (length == 0 || length > MaxFrame) {
+      if (length == 0 ||
+          length > ::neverd::limits::gui::kEngineClientMaxFrame) {
         emit failure(tr("Invalid analysis protocol frame."), epoch_);
         emit stopped(epoch_);
         stop();
@@ -102,9 +103,8 @@ void WorkerTransport::receive() {
 }
 
 void WorkerTransport::flushDiagnostics(bool all) {
-  // A line no newline ends is reported once it grows past a burst.
-  constexpr qsizetype MaxPartialLine = 65536;
-  all = all || diagnostics_.size() > MaxPartialLine;
+  all = all || diagnostics_.size() >
+                   ::neverd::limits::gui::kEngineClientMaxPartialLine;
   const auto end =
       all ? diagnostics_.size() : diagnostics_.lastIndexOf('\n') + 1;
   if (end <= 0)
@@ -120,7 +120,9 @@ void WorkerTransport::stop() {
     process_->disconnect(this);
     if (process_->state() != QProcess::NotRunning) {
       process_->kill();
-      process_->waitForFinished(2000); // Off the UI thread.
+      process_->waitForFinished(
+          ::neverd::limits::gui::
+              kEngineClientWorkerTransportStopWaitForFinishedMilliseconds); // Off the UI thread.
     }
     delete process_;
     process_ = nullptr;

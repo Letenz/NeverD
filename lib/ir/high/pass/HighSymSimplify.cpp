@@ -12,9 +12,9 @@
 /// is enough for the residue of ordinary lifting and useless against anything
 /// deliberate: an expression mixing `+ - *` with `& | ^ ~` blocks every rule
 /// either algebra can state, which is the entire point of writing one.  This
-/// general MBA pass measures what the expression computes and writes the
-/// shortest thing that computes the same. A separate proof-gated search
-/// reconstructs arithmetic spanning two machine words.
+/// general MBA pass measures what the expression computes and writes
+/// a shorter expression with the same semantics. Proof-gated searches also
+/// reconstruct modular affine expressions and arithmetic spanning two words.
 ///
 /// Translation in both directions is deliberately narrow. Integer arithmetic,
 /// exact word concatenation, and byte-valued integer predicates with known
@@ -24,6 +24,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/solver/SymSynthVerifier.h"
@@ -50,34 +51,10 @@ namespace {
 
 namespace sym = neverd::symbolic;
 
-/// A leaf or one already-canonical operator cannot become shorter.  Four nodes
-/// is the first useful case: `~x + 1` is four and simplifies to `-x`.
-constexpr size_t kMinInterestingNodes = 4;
-
-/// How much a rewrite has to save before it is worth making.
-///
-/// The cost is the rendered tree rather than the shared graph, so one unit is a
-/// real operator removed from the decompiled expression.  Requiring a strict
-/// improvement prevents canonical-form churn without hiding compact identities
-/// such as `~x + 1`.
-constexpr size_t kMinGain = 1;
-
-/// Widest expression this pass hands the engine, in bits.
-///
-/// The engine itself has no width ceiling — its literals are arbitrary
-/// precision, and a 256-bit word is measured exactly like a 32-bit one — so
-/// the only reason to have one here is that HighIR records a size for every
-/// type, including a struct and an array.  An aggregate is not a machine word,
-/// and measuring one would allocate values of its size at every corner to
-/// learn nothing.  Past the widest word a machine or a virtual machine
-/// actually has, a size is therefore read the way an unreadable one already
-/// is: the expression is preserved rather than measured.
-constexpr uint32_t kMaxWidth = 1024;
-
 /// The width a HighIR size stands for, or zero when it is not one to measure.
 uint32_t widthFromBytes(uint16_t Bytes) {
   const auto Bits = static_cast<uint32_t>(Bytes) * 8;
-  return Bits <= kMaxWidth ? Bits : 0;
+  return Bits <= ::neverd::limits::ir::kHighSymSimplifyMaxWidth ? Bits : 0;
 }
 
 /// The value a HighIR literal certainly denotes at \p Width, or nothing when
@@ -367,7 +344,7 @@ bool isScalarLocal(const ExprPtr &E) {
          E->Type->Kind == NdTypeKind::Int && widthFromBytes(E->Type->Size) &&
          E->Type->Size == E->Var.Size &&
          (E->Var.Kind == MedVar::Reg || E->Var.Kind == MedVar::Temp ||
-          E->Var.Kind == MedVar::Param);
+          E->Var.Kind == MedVar::Param || E->Var.Kind == MedVar::Stack);
 }
 
 //===----------------------------------------------------------------------===//
@@ -502,6 +479,7 @@ private:
   std::unordered_map<const HighExpr *, uint32_t> Widths;
   /// Engine variable node to the HighIR it stands for, for the way back.
   std::unordered_map<uint32_t, ExprPtr> Sources;
+  std::unordered_map<uint32_t, ExprPtr> DefinitionViews;
 };
 
 std::optional<sym::SymRef> Translator::operandAt(const ExprPtr &E,
@@ -641,6 +619,26 @@ sym::SymRef Translator::in(const ExprPtr &E) {
     case ExprKind::Var:
       if (ExprPtr Definition = definitionFor(Current)) {
         Result = in(Definition);
+        // Reuse a still-available local when emitting its exact compound
+        // value. Expanding that value for proof must not force repeated source
+        // copies that hide a profitable rewrite. Definitions already enforce
+        // width, alias, mutation and control-flow availability.
+        if (Ctx.op(Result) != sym::SymOp::Const &&
+            Ctx.op(Result) != sym::SymOp::Var)
+          DefinitionViews.try_emplace(Result.index(), Current);
+        if (Ctx.op(Result) == sym::SymOp::ZExt ||
+            Ctx.op(Result) == sym::SymOp::SExt) {
+          const auto Inner = Ctx.operand(Result, 0);
+          if (Ctx.width(Inner) % 8 == 0 && Ctx.op(Inner) != sym::SymOp::Const &&
+              Ctx.op(Inner) != sym::SymOp::Var) {
+            auto View = std::make_shared<HighExpr>();
+            View->Kind = ExprKind::Cast;
+            View->Type = View->CastTo =
+                NdType::makeInt(Ctx.width(Inner) / 8, false);
+            View->Operands = {Current};
+            DefinitionViews.try_emplace(Inner.index(), std::move(View));
+          }
+        }
         break;
       }
       // The pass runs after source renaming. Distinct SSA versions can now
@@ -797,14 +795,24 @@ ExprPtr literalExpr(const llvm::APInt &Val, uint16_t Bytes,
                     bool ScalarLiterals) {
   const auto Provenance = ScalarLiterals ? ConstantAddressProvenance::Scalar
                                          : ConstantAddressProvenance::Unknown;
+  auto Payload = [&](uint64_t Value) -> ExprPtr {
+    // A wide HighIR literal cannot distinguish a positive 64-bit payload
+    // with bit 63 set from a truncated wider value. Preserve the explicit
+    // zero extension so a surrounding region can read this value exactly.
+    if (Bytes > 8 && (Value >> 63) != 0) {
+      auto Extended = HighExpr::makeUnary(
+          NdOp::INT_ZEXT, HighExpr::makeConst(Value, 8, Provenance));
+      Extended->Type = NdType::makeInt(Bytes, false);
+      return Extended;
+    }
+    return HighExpr::makeConst(Value, Bytes, Provenance);
+  };
   if (std::optional<uint64_t> Direct = Val.tryZExtValue())
-    return HighExpr::makeConst(*Direct, Bytes, Provenance);
+    return Payload(*Direct);
   if (std::optional<uint64_t> Magnitude = (-Val).tryZExtValue())
-    return HighExpr::makeUnary(
-        NdOp::INT_NEG2, HighExpr::makeConst(*Magnitude, Bytes, Provenance));
+    return HighExpr::makeUnary(NdOp::INT_NEG2, Payload(*Magnitude));
   if (std::optional<uint64_t> Complement = (~Val).tryZExtValue())
-    return HighExpr::makeUnary(
-        NdOp::INT_NOT, HighExpr::makeConst(*Complement, Bytes, Provenance));
+    return HighExpr::makeUnary(NdOp::INT_NOT, Payload(*Complement));
   return nullptr;
 }
 
@@ -827,13 +835,30 @@ ExprPtr Translator::out(sym::SymRef R, uint32_t /*Width*/,
       continue;
     }
 
+    if (auto Alias = DefinitionViews.find(Index);
+        Alias != DefinitionViews.end()) {
+      Built.emplace(Index, Alias->second);
+      continue;
+    }
+
+    // A proved low-bit lookup can expose a sub-byte extract. Lower only
+    // its zero extension as one masked native-word operation: materializing
+    // the fragment as a byte would give a later sign extension wrong semantics.
+    sym::SymRef UnsignedFragment;
+    if (Ctx.op(Item.Ref) == sym::SymOp::ZExt) {
+      const auto Child = Ctx.operand(Item.Ref, 0);
+      if (Ctx.op(Child) == sym::SymOp::Extract && Ctx.width(Child) < 8)
+        UnsignedFragment = Child;
+    }
+
     if (!Item.ChildrenReady) {
       if (!Active.insert(Index).second) {
         Built.emplace(Index, nullptr);
         continue;
       }
       Work.push_back({Item.Ref, true});
-      llvm::ArrayRef<sym::SymRef> Operands = Ctx.operands(Item.Ref);
+      llvm::ArrayRef<sym::SymRef> Operands =
+          Ctx.operands(UnsignedFragment ? UnsignedFragment : Item.Ref);
       for (auto It = Operands.rbegin(); It != Operands.rend(); ++It)
         if (Built.find(It->index()) == Built.end())
           Work.push_back({*It, false});
@@ -1013,6 +1038,29 @@ ExprPtr Translator::out(sym::SymRef R, uint32_t /*Width*/,
     }
     case sym::SymOp::ZExt:
     case sym::SymOp::SExt: {
+      if (UnsignedFragment) {
+        const auto Source = Ctx.operand(UnsignedFragment, 0);
+        ExprPtr Operand = get(Source);
+        if (!Operand)
+          break;
+        const uint16_t SourceBytes = Ctx.width(Source) / 8;
+        const auto Low = Ctx.node(UnsignedFragment).Aux;
+        if (Low)
+          Operand = HighExpr::makeBinop(
+              NdOp::INT_RIGHT, Operand,
+              HighExpr::makeConst(Low, SourceBytes,
+                                  ConstantAddressProvenance::Scalar));
+        Operand = HighExpr::makeBinop(
+            NdOp::INT_AND, Operand,
+            HighExpr::makeConst(
+                (uint64_t(1) << Ctx.width(UnsignedFragment)) - 1, SourceBytes,
+                ConstantAddressProvenance::Scalar));
+        Result = std::make_shared<HighExpr>();
+        Result->Kind = ExprKind::Cast;
+        Result->Type = Result->CastTo = NdType::makeInt(ByteSize, false);
+        Result->Operands = {std::move(Operand)};
+        break;
+      }
       ExprPtr Operand = get(Ctx.operand(Item.Ref, 0));
       if (Operand) {
         Result = HighExpr::makeUnary(Ctx.op(Item.Ref) == sym::SymOp::ZExt
@@ -1057,7 +1105,8 @@ bool hasOnlyScalarLiteralInputs(const ExprPtr &Root,
                                 const AvailableDefinitions &Definitions) {
   std::vector<ExprPtr> Work{Root};
   HighExprSet Seen;
-  size_t Budget = 4096;
+  size_t Budget =
+      ::neverd::limits::ir::kHighSymSimplifyHasOnlyScalarLiteralInputsBudget;
   while (!Work.empty()) {
     ExprPtr Current = Work.back();
     Work.pop_back();
@@ -1098,7 +1147,9 @@ void simplifyOne(ExprPtr &E, const AvailableDefinitions &Definitions) {
 
   const std::optional<size_t> BeforeCost = expressionCost(E);
   if (!BeforeCost ||
-      (*BeforeCost < kMinInterestingNodes && Definitions.empty()))
+      (*BeforeCost <
+           ::neverd::limits::ir::kHighSymSimplifyMinInterestingNodes &&
+       Definitions.empty()))
     return;
 
   sym::SymContext Ctx;
@@ -1113,7 +1164,7 @@ void simplifyOne(ExprPtr &E, const AvailableDefinitions &Definitions) {
   // callers explicitly simplifying an obfuscated MBA retain the solver's
   // larger default budget. Exhausted regions remain unchanged.
   sym::MBAOptions Options;
-  Options.MaxWork = size_t(1) << 16;
+  Options.MaxWork = ::neverd::limits::ir::kHighSymSimplifySimplifyOneMaxWork;
   sym::MBAResult Result = sym::simplifyMBADeep(Ctx, Before, Options);
   if (Result.Changed && Result.Evidence != sym::MBAEvidence::Derivation)
     return;
@@ -1127,44 +1178,63 @@ void simplifyOne(ExprPtr &E, const AvailableDefinitions &Definitions) {
   if (Recovered != Result.Expr)
     Result.Expr = Recovered;
 
-  ExprPtr After =
-      Xlat.out(Result.Expr, Width, hasOnlyScalarLiteralInputs(E, Definitions));
-  if (!After)
-    return;
-  if (After->Kind == ExprKind::Var && E->Type && After->Type &&
-      E->Type->IsSigned != After->Type->IsSigned) {
-    auto Cast = std::make_shared<HighExpr>();
-    Cast->Kind = ExprKind::Cast;
-    Cast->Type = Cast->CastTo = E->Type;
-    Cast->Operands = {After};
-    After = std::move(Cast);
-  } else {
-    // A solver variable may be a shared source node. Do not change its type
-    // at another use when preserving the enclosing expression's result type.
-    After = std::make_shared<HighExpr>(*After);
-    if (E->Type) {
-      After->Type = E->Type;
-      if (After->Kind == ExprKind::Cast)
-        After->CastTo = E->Type;
+  const bool ScalarLiterals = hasOnlyScalarLiteralInputs(E, Definitions);
+  auto Publish = [&](sym::SymRef Candidate) {
+    ExprPtr After = Xlat.out(Candidate, Width, ScalarLiterals);
+    if (!After)
+      return false;
+    if (After->Kind == ExprKind::Var && E->Type && After->Type &&
+        E->Type->IsSigned != After->Type->IsSigned) {
+      auto Cast = std::make_shared<HighExpr>();
+      Cast->Kind = ExprKind::Cast;
+      Cast->Type = Cast->CastTo = E->Type;
+      Cast->Operands = {After};
+      After = std::move(Cast);
+    } else {
+      // A solver variable may be a shared source node. Do not change its type
+      // at another use when preserving the enclosing expression's result type.
+      After = std::make_shared<HighExpr>(*After);
+      if (E->Type) {
+        After->Type = E->Type;
+        if (After->Kind == ExprKind::Cast)
+          After->CastTo = E->Type;
+      }
     }
-  }
-  const std::optional<size_t> AfterCost = expressionCost(After);
-  // An equal-size source expression can hide a much larger proved expansion
-  // through earlier scalar definitions. Accept that tie when the expanded
-  // algebra became strictly smaller; dead definitions can then be removed.
-  const bool ShorterExpandedDefinition =
-      AfterCost && *AfterCost == *BeforeCost && !Definitions.empty() &&
-      Result.Changed && Result.SizeAfter < Result.SizeBefore;
-  if (!AfterCost ||
-      (*BeforeCost < *AfterCost + kMinGain && !ShorterExpandedDefinition))
+    const std::optional<size_t> AfterCost = expressionCost(After);
+    // A same-size source expression can hide a much larger proved expansion
+    // through earlier definitions; dead definitions can then be removed.
+    const bool ShorterExpandedDefinition =
+        AfterCost && *AfterCost == *BeforeCost && !Definitions.empty() &&
+        Candidate != Before &&
+        Ctx.readabilityCost(Candidate) < Ctx.readabilityCost(Before);
+    if (!AfterCost ||
+        (*BeforeCost <
+             *AfterCost + ::neverd::limits::ir::kHighSymSimplifyMinGain &&
+         !ShorterExpandedDefinition))
+      return false;
+    E = std::move(After);
+    return true;
+  };
+  // The source toggle also opts into semantic synthesis. Both renderers use
+  // the same finite search/proof policies; samples alone never reach HighIR.
+  solver::SymSynthVerifier Verifier(solver::SolverOptions::sourceView());
+  const sym::SynthResult Synth =
+      sym::synthesize(Ctx, Result.Expr, sym::SynthOptions::sourceView(),
+                      [&](sym::SymContext &Context, sym::SymRef A,
+                          sym::SymRef B) { return Verifier(Context, A, B); });
+  if (Synth.Changed && Synth.Evidence == sym::SynthEvidence::Verifier &&
+      Synth.Verification == sym::SynthVerification::Equivalent &&
+      Publish(Synth.Expr))
     return;
-  E = After;
+  Publish(Result.Expr);
 }
 
 /// Simplify maximal numeric regions, including those beneath opaque operators
 /// such as POPCOUNT and comparisons. Rebuild only changed ancestor nodes so a
 /// call, memory access, pointer cast, or other boundary stays in its original
-/// evaluation position. Each numeric region reaches the solver once.
+/// evaluation position. A width change starts an inner region too: a wrapped
+/// narrow sum need not be affine at the wider width of its extension. Simplify
+/// the inner expression at its actual width before considering the outer one.
 void simplifyRegions(ExprPtr &Root, const AvailableDefinitions &Definitions) {
   struct Item {
     ExprPtr Expr;
@@ -1217,6 +1287,11 @@ void simplifyRegions(ExprPtr &Root, const AvailableDefinitions &Definitions) {
     if (!Safe.at(E.get()) || !Translatable)
       E->forEachChildExpr(
           [&](const ExprPtr &Child) { Regions.insert(Child.get()); });
+    else
+      E->forEachChildExpr([&](const ExprPtr &Child) {
+        if (WidthOf(Child) != WidthOf(E))
+          Regions.insert(Child.get());
+      });
   }
 
   std::unordered_map<const HighExpr *, ExprPtr> Rebuilt;
@@ -1248,7 +1323,8 @@ std::optional<std::set<LocalIdentity>>
 definitionInputs(const ExprPtr &Value, const AvailableDefinitions &Definitions,
                  const std::set<LocalIdentity> &Escaped) {
   const auto Cost = expressionCost(Value);
-  if (!Cost || *Cost > 4096)
+  if (!Cost ||
+      *Cost > ::neverd::limits::ir::kHighSymSimplifyDefinitionInputsCostLimit)
     return std::nullopt;
   std::set<LocalIdentity> Inputs;
   std::vector<ExprPtr> Work{Value};
@@ -1269,7 +1345,8 @@ definitionInputs(const ExprPtr &Value, const AvailableDefinitions &Definitions,
       if (It != Definitions.end())
         Inputs.insert(It->second.Dependencies.begin(),
                       It->second.Dependencies.end());
-      if (Inputs.size() > 256)
+      if (Inputs.size() >
+          ::neverd::limits::ir::kHighSymSimplifyDefinitionInputsSizeLimit)
         return std::nullopt;
     }
     Work.insert(Work.end(), E->Operands.begin(), E->Operands.end());
@@ -1280,6 +1357,8 @@ definitionInputs(const ExprPtr &Value, const AvailableDefinitions &Definitions,
 void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
                               unsigned MaxThreads) {
   std::set<LocalIdentity> Escaped;
+  std::map<LocalIdentity, std::pair<int64_t, uint16_t>> StackViews;
+  bool FrameAddressTaken = false;
   std::unordered_set<va_t> Entries;
   HighExprSet Seen;
   size_t StatementCount = 0;
@@ -1300,6 +1379,17 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
         Work.pop_back();
         if (!E || !Seen.insert(E.get()).second)
           continue;
+        if (E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Stack) {
+          const auto Key = highSourceLocalIdentity(E->Var);
+          const auto View = std::make_pair(E->Var.StackOff, E->Var.Size);
+          auto [It, Added] = StackViews.emplace(Key, View);
+          if ((!Added && It->second != View) || !E->Var.Size ||
+              E->Var.StackOff >
+                  std::numeric_limits<int64_t>::max() - E->Var.Size) {
+            Escaped.insert(Key);
+            FrameAddressTaken = true;
+          }
+        }
         if (E->Kind == ExprKind::Addr) {
           std::vector<ExprPtr> AddressWork{E};
           HighExprSet AddressSeen;
@@ -1308,8 +1398,10 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
             AddressWork.pop_back();
             if (!A || !AddressSeen.insert(A.get()).second)
               continue;
-            if (A->Kind == ExprKind::Var)
+            if (A->Kind == ExprKind::Var) {
               Escaped.insert(highSourceLocalIdentity(A->Var));
+              FrameAddressTaken |= A->Var.Kind == MedVar::Stack;
+            }
             A->forEachChildExpr(
                 [&](const ExprPtr &Child) { AddressWork.push_back(Child); });
           }
@@ -1322,16 +1414,51 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
   Entries.erase(0);
   Entries.erase(InvalidVA);
 
+  // Only disjoint, unescaped frame objects are scalar definitions. Different
+  // spellings/widths of overlapping storage cannot be independent variables.
+  // Taking any frame address also permits pointer arithmetic into its peers.
+  for (const auto &[Key, View] : StackViews)
+    FrameAddressTaken |= Escaped.count(Key) != 0;
+  std::vector<decltype(StackViews)::const_iterator> OrderedStack;
+  for (auto It = StackViews.begin(); It != StackViews.end(); ++It) {
+    if (FrameAddressTaken)
+      Escaped.insert(It->first);
+    if (!Escaped.count(It->first))
+      OrderedStack.push_back(It);
+  }
+  std::sort(OrderedStack.begin(), OrderedStack.end(),
+            [](auto A, auto B) { return A->second.first < B->second.first; });
+  if (!OrderedStack.empty()) {
+    auto Furthest = OrderedStack.front();
+    for (auto It : OrderedStack) {
+      if (It == Furthest)
+        continue;
+      const auto End = Furthest->second.first + Furthest->second.second;
+      if (It->second.first < End) {
+        Escaped.insert(Furthest->first);
+        Escaped.insert(It->first);
+      }
+      if (It->second.first + It->second.second > End)
+        Furthest = It;
+    }
+  }
+
   struct StatementProperties {
     bool ResetBefore;
     bool ResetAfter;
     uint64_t Weight;
   };
   auto Classify = [&](const HighStmt &S) {
+    // Removing a dead frame write retains its address as an empty block.
+    // Such an anchor preserves scalar facts unless it is a control-flow
+    // entry. Expressions, child scopes and effects still form boundaries.
+    bool EmptyAnchor = S.Kind == StmtKind::Block;
+    if (EmptyAnchor)
+      forEachExpr(S, [&](const ExprPtr &) { EmptyAnchor = false; });
     const bool Straight =
-        (S.Kind == StmtKind::Assign || S.Kind == StmtKind::ExprStmt ||
-         S.Kind == StmtKind::Return || S.Kind == StmtKind::Nop ||
-         S.Kind == StmtKind::Store) &&
+        (EmptyAnchor || S.Kind == StmtKind::Assign ||
+         S.Kind == StmtKind::ExprStmt || S.Kind == StmtKind::Return ||
+         S.Kind == StmtKind::Nop || S.Kind == StmtKind::Store) &&
         S.Body.empty() && S.ElseBody.empty() && S.Cases.empty() &&
         S.DefaultBody.empty() && S.EHClauses.empty() &&
         S.EHClauseBodies.empty() && !S.IsPhiCopy &&
@@ -1344,7 +1471,10 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
       Pure &= Cost.has_value();
       // Scheduling estimates never expand the rendered tree or overflow on a
       // compact DAG whose rendered size has saturated expressionCost().
-      Weight += std::min<size_t>(Cost.value_or(1), 4096);
+      Weight += std::min<size_t>(
+          Cost.value_or(1),
+          ::neverd::limits::ir::
+              kHighSymSimplifyStatementRegionsClassifyWeightMinArgument2);
     });
     return StatementProperties{
         !Straight || !Pure || Entries.count(S.Addr) ||
@@ -1360,12 +1490,23 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
       Definitions.clear();
       return;
     }
-    // An ordinary store changes memory, not a scalar register, temporary,
-    // or unescaped parameter.  Its address and value have already been
-    // checked for effects; keep proven scalar definitions available to the
-    // following expressions, including a store/reload pair in the frame.
-    if (S.Kind == StmtKind::Store)
+    // Unknown stores may touch a frame object. Kill every definition that
+    // reads one, including transitive dependents, while retaining independent
+    // register/temporary facts whose values a memory store cannot change.
+    if (S.Kind == StmtKind::Store) {
+      for (auto It = Definitions.begin(); It != Definitions.end();) {
+        const bool ReadsFrame =
+            StackViews.count(It->first) ||
+            std::any_of(It->second.Dependencies.begin(),
+                        It->second.Dependencies.end(),
+                        [&](const auto &Key) { return StackViews.count(Key); });
+        if (ReadsFrame)
+          It = Definitions.erase(It);
+        else
+          ++It;
+      }
       return;
+    }
     if (S.Kind != StmtKind::Assign)
       return;
     if (!isScalarLocal(S.Dst)) {
@@ -1382,10 +1523,25 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
         ++It;
     }
     if (Inputs && !Inputs->count(Key) && !Escaped.count(Key) &&
-        Definitions.size() < 256 && S.Val && S.Val->Type &&
-        S.Val->Type->Size == S.Dst->Type->Size &&
-        S.Val->Type->IsSigned == S.Dst->Type->IsSigned)
-      Definitions.emplace(Key, AvailableDefinition{S.Val, std::move(*Inputs)});
+        Definitions.size() <
+            ::neverd::limits::ir::
+                kHighSymSimplifyStatementRegionsSimplifyDefinitionsSizeLimit &&
+        S.Val && S.Val->Type && S.Val->Type->Kind == NdTypeKind::Int &&
+        S.Val->Type->Size == S.Dst->Type->Size) {
+      // A same-width assignment keeps the word's bits even when the emitted
+      // local has the other signedness. Retain the conversion explicitly so
+      // later widening reads the destination's signedness, not the source's.
+      ExprPtr Value = S.Val;
+      if (Value->Type->IsSigned != S.Dst->Type->IsSigned) {
+        auto Converted = std::make_shared<HighExpr>();
+        Converted->Kind = ExprKind::Cast;
+        Converted->Type = S.Dst->Type;
+        Converted->CastTo = S.Dst->Type;
+        Converted->Operands = {Value};
+        Value = std::move(Converted);
+      }
+      Definitions.emplace(Key, AvailableDefinition{Value, std::move(*Inputs)});
+    }
   };
   std::vector<std::vector<HighStmt> *> Scopes{&Stmts};
   auto AppendChildren = [&](HighStmt &S) {
@@ -1402,8 +1558,12 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
   // the original one-scope-at-a-time path. In particular, do not build task
   // metadata for the common small function selected in the GUI.
   if (MaxThreads > 1)
-    MaxThreads = std::min({MaxThreads, workerThreadCount(), 4u});
-  if (MaxThreads <= 1 || StatementCount < 1024) {
+    MaxThreads = std::min({MaxThreads, workerThreadCount(),
+                           ::neverd::limits::ir::kMaxHighSymbolicWorkers});
+  if (MaxThreads <= 1 ||
+      StatementCount <
+          ::neverd::limits::ir::
+              kHighSymSimplifyStatementRegionsStatementCountLimit) {
     while (!Scopes.empty()) {
       auto *Scope = Scopes.back();
       Scopes.pop_back();
@@ -1439,7 +1599,10 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
         return;
       Segments.push_back({Begin, Statements.size()});
       Weights.push_back(Weight);
-      TotalWeight = std::min<uint64_t>(4096, TotalWeight + Weight);
+      TotalWeight = std::min<uint64_t>(
+          ::neverd::limits::ir::
+              kHighSymSimplifyStatementRegionsFinishTotalWeightMinArgument1,
+          TotalWeight + Weight);
       Begin = Statements.size();
       Weight = 0;
     };
@@ -1468,7 +1631,7 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
   // Every task owns distinct statement fields and its own definitions and
   // symbolic contexts. Shared input expressions/types are read-only;
   // simplifyRegions rebuilds changed nodes instead of mutating their DAG.
-  if (TotalWeight < 4096) {
+  if (TotalWeight < ::neverd::limits::ir::kMinParallelHighSymbolicWeight) {
     for (size_t I = 0; I < Segments.size(); ++I)
       Process(I);
   } else {

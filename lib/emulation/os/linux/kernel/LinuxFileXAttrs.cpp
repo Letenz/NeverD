@@ -32,12 +32,12 @@ llvm::Expected<std::optional<uint64_t>> LinuxFiles::extendedAttribute(
     const std::optional<LinuxKernelOptions> &Kernel, ProcessResult &Result) {
   if (!Options)
     return unsupported(Result, FileInputsMissing);
-  const auto Order =
-      Kernel && Kernel->GKI ? gkiXAttrNameFirst(*Kernel->GKI) : std::nullopt;
+  const auto Order = Kernel ? xattrQueryImport(*Kernel) : std::nullopt;
   if (!Order)
     return unsupported(Result, XAttrKernel);
   const auto &[Target, Name, Value, Size, A4, A5] = Event.Arguments;
-  if (*Order) {
+  const bool NameFirst = *Order == LinuxXAttrQueryImport::NameBeforeTarget;
+  if (NameFirst) {
     auto Error = attributeNameError(Name);
     if (!Error)
       return Error.takeError();
@@ -60,17 +60,20 @@ llvm::Expected<std::optional<uint64_t>> LinuxFiles::extendedAttribute(
     case PathKind::SymbolicLink:
     case PathKind::LinkTraversal:
       return unsupported(Result, FileLinkTraversal);
+    case PathKind::UnmodeledProc:
+      return unsupported(Result, "proc entry has no modeled semantics");
     case PathKind::Missing:
       return std::optional<uint64_t>(uint64_t(0) - NoEntry);
     case PathKind::NotDirectory:
       return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
+    case PathKind::ProcFile:
     case PathKind::File:
     case PathKind::Device:
     case PathKind::Directory:
       break;
     }
   }
-  if (!*Order) {
+  if (!NameFirst) {
     auto Error = attributeNameError(Name);
     if (!Error)
       return Error.takeError();

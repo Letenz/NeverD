@@ -63,6 +63,7 @@ NEVERD_WDK_ARGUMENTS("link", "/machine:x64", "/subsystem:native", "/driver",
 NEVERD_WDK_ARGUMENTS("cfg_compile", "-Xclang", "-cfguard")
 NEVERD_WDK_ARGUMENTS("cfg_link", "/guard:cf")
 NEVERD_WDK_ARGUMENTS("async_compile", "-fasync-exceptions")
+NEVERD_WDK_ARGUMENTS("public_api_compile", "-DNEVERD_WDK_FIXTURE")
 // Force the real CMPXCHG16B intrinsic instead of an external libatomic call.
 NEVERD_WDK_ARGUMENTS("wide_atomic_compile", "-mcx16")
 NEVERD_WDK_ARGUMENTS("seh_compile", "-fasync-exceptions",
@@ -75,8 +76,26 @@ NEVERD_WDK_ARGUMENTS("seh_link", "/debug:dwarf")
 // sources.
 NEVERD_WDK_FIXTURE("KMDF", "driver_kmdf_lifecycle.c", "KMDF", "0", "")
 NEVERD_WDK_FIXTURE("KMDF_CONTROL", "driver_kmdf_control.c", "KMDF", "0", "")
+NEVERD_WDK_FIXTURE("KMDF_FILE_HANDLES", "driver_kmdf_file_handles.c", "KMDF",
+                   "0", "")
 NEVERD_WDK_FIXTURE("KMDF_PNP", "driver_kmdf_pnp.c", "KMDF", "0", "")
 NEVERD_WDK_FIXTURE("WDM_DMA", "driver_wdm_dma.c", "WDM", "0", "")
+NEVERD_WDK_FIXTURE("WDM_DEVICE_QUERIES", "driver_device_queries.c", "WDM", "0",
+                   "public_api")
+NEVERD_WDK_FIXTURE("WDM_FILE_OBJECTS", "driver_file_objects.c", "WDM", "0",
+                   "public_api")
+NEVERD_WDK_FIXTURE("WDM_FILE_HANDLES", "driver_file_handles.c", "WDM", "0",
+                   "public_api")
+NEVERD_WDK_FIXTURE("WDM_FILE_QUERIES", "driver_file_queries.c", "WDM", "0",
+                   "public_api")
+NEVERD_WDK_FIXTURE("WDM_FILE_TRANSFERS", "driver_file_transfers.c", "WDM", "0",
+                   "public_api")
+NEVERD_WDK_FIXTURE("WDM_FILESYSTEM", "driver_filesystem_provider.c", "WDM", "0",
+                   "public_api")
+NEVERD_WDK_FIXTURE("WDM_INT64_STRINGS", "driver_int64_strings.c", "WDM", "0",
+                   "public_api")
+NEVERD_WDK_FIXTURE("WDM_PROCESSORS", "driver_processors.c", "WDM", "0",
+                   "public_api")
 NEVERD_WDK_FIXTURE("WDM_DMA_CHANNEL", "driver_wdm_dma_channel.c", "WDM", "0",
                    "")
 NEVERD_WDK_FIXTURE("WDM_INTERRUPT", "driver_wdm_interrupts.c", "WDM", "0", "")
@@ -87,7 +106,8 @@ NEVERD_WDK_FIXTURE("WDM_REMOVE_LOCK", "driver_wdm_remove_lock.c", "WDM", "0",
                    "")
 NEVERD_WDK_FIXTURE("WDM_REMOVE_LOCK_DBG", "driver_wdm_remove_lock.c", "WDM",
                    "1", "")
-NEVERD_WDK_FIXTURE("WDM_RESOURCE", "driver_wdm_resources.c", "WDM", "0", "wide_atomic")
+NEVERD_WDK_FIXTURE("WDM_RESOURCE", "driver_wdm_resources.c", "WDM", "0",
+                   "wide_atomic")
 NEVERD_WDK_FIXTURE("WDM_SEH", "driver_wdm_seh.c", "WDM", "0", "seh")
 NEVERD_WDK_FIXTURE("WDM_STACK", "driver_wdm_stack.c", "WDM", "0", "")
 NEVERD_WDK_FIXTURE("KMDF_LOCK", "driver_kmdf_locks.c", "KMDF", "0", "")
@@ -103,3 +123,6 @@ NEVERD_WDK_FIXTURE("WDM_USER_MAPPING", "driver_wdm_user_mapping.c", "WDM", "0",
                    "async")
 NEVERD_WDK_FIXTURE("WDM_MULTIPLE_WAIT", "driver_wdm_multiple_wait.c", "WDM",
                    "0", "")
+
+NEVERD_WDK_FIXTURE("WDM_CRT_STRINGS", "driver_crt_strings.c", "WDM", "0",
+                   "public_api")

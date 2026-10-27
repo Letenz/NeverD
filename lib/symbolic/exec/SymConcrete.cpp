@@ -6,7 +6,9 @@
 
 #include "neverd/symbolic/SymConcrete.h"
 
+#include <iterator>
 #include <limits>
+#include <map>
 #include <set>
 
 namespace neverd::symbolic {
@@ -16,6 +18,7 @@ struct SymExecConcreteShadow::Impl {
   std::unique_ptr<SymState> State;
   std::unique_ptr<SymExec> Executor;
   std::set<uint64_t> SeededBytes;
+  std::map<uint64_t, uint64_t> SeededMemory;
   bool Trusted = false;
   bool Started = false;
 
@@ -26,18 +29,16 @@ struct SymExecConcreteShadow::Impl {
     State = std::make_unique<SymState>(*Context, ByteOrder);
     Executor = std::make_unique<SymExec>(*Context, *State);
     SeededBytes.clear();
+    SeededMemory.clear();
     Trusted = true;
     Started = false;
   }
 
-  std::optional<uint64_t> concreteValue(const NdVar &V) {
+  std::optional<llvm::APInt> concreteValue(const NdVar &V) {
     SymRef Expression = Executor->operandValue(V);
-    if (!Expression.isValid() || Context->width(Expression) > 64)
+    if (!Expression.isValid())
       return std::nullopt;
-    std::optional<llvm::APInt> Constant = Context->asConst(Expression);
-    if (!Constant || Constant->getActiveBits() > 64)
-      return std::nullopt;
-    return Constant->getZExtValue();
+    return Context->asConst(Expression);
   }
 
   bool fail() {
@@ -73,10 +74,34 @@ bool SymExecConcreteShadow::setRegister(uint64_t Offset, uint16_t Bytes,
   return true;
 }
 
+bool SymExecConcreteShadow::setMemory(uint64_t Address,
+                                      llvm::ArrayRef<uint8_t> Bytes) {
+  if (!P->Trusted || P->Started || Bytes.empty() ||
+      Bytes.size() - 1 > std::numeric_limits<uint64_t>::max() - Address)
+    return P->fail();
+
+  const uint64_t Last = Address + Bytes.size() - 1;
+  const auto Next = P->SeededMemory.lower_bound(Address);
+  if ((Next != P->SeededMemory.end() && Next->first <= Last) ||
+      (Next != P->SeededMemory.begin() && std::prev(Next)->second >= Address))
+    return P->fail();
+
+  P->SeededMemory.emplace_hint(Next, Address, Last);
+  for (size_t I = 0; I < Bytes.size(); ++I)
+    P->State->write(SymSpace::Memory, Address + I,
+                    P->Context->mkConst(8, Bytes[I]));
+  return true;
+}
+
 bool SymExecConcreteShadow::step(const LowOp &Op) {
   if (!P->Trusted)
     return false;
   P->Started = true;
+
+  // Widening data does not widen the linear-address interface.
+  if (const auto Memory = lowMemoryOperands(Op);
+      Memory.Address && Memory.Address->Size > sizeof(uint64_t))
+    return P->fail();
 
   // A concrete run must know every value the operation consumes, even when
   // symbolic simplification could prove that one of them does not affect the
@@ -101,10 +126,14 @@ std::optional<uint64_t> SymExecConcreteShadow::value(const NdVar &V) {
   if (!P->Trusted)
     return std::nullopt;
   P->Started = true;
-  std::optional<uint64_t> Result = P->concreteValue(V);
-  if (!Result)
-    P->Trusted = false;
-  return Result;
+  const std::optional<llvm::APInt> Result = P->concreteValue(V);
+  // Operation data can be wider than the scalar control-decision interface.
+  // Even a wide value with zero high bits does not fit that interface's width.
+  if (!Result || Result->getBitWidth() > 64) {
+    P->fail();
+    return std::nullopt;
+  }
+  return Result->getZExtValue();
 }
 
 } // namespace neverd::symbolic

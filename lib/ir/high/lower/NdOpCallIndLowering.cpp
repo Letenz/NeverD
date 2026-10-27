@@ -8,16 +8,21 @@
 /// Indirect call target resolution and INDIR_CALL lowering to HighIR.
 /// Extracts the indirect call target from four sources (in priority order):
 ///   1. Direct constant in the INDIR_CALL input nd-var
-///   2. LOAD source tracing (including RIP-relative patterns)
+///   2. Exact captured-target proof, with the original LOAD observation
 ///   3. Register-to-argument-index mapping
 ///   4. STORE→LOAD stack-slot offset matching
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedCallTarget.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/DataSymbolBinding.h"
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -61,6 +66,18 @@ static bool tryResolveNamedAddress(va_t Addr,
   return false;
 }
 
+/// Whether the pointer slot at \p Slot holds an address of \p Image's own
+/// code, under a relocation or in a fixed image's bytes: a variable the image
+/// initializes, which no loader binds to an import.
+static bool holdsOwnCodeAddress(const BinaryImage &Image, va_t Slot) {
+  if (Image.CodePtrRelocSlots.count(Slot))
+    return true;
+  const uint32_t Width = Image.getPointerSize();
+  const uint8_t *Bytes = Width ? Image.readVA(Slot, Width) : nullptr;
+  return Bytes && Image.hasExecutableCodeOwnerAt(
+                      static_cast<va_t>(readPtr(Bytes, Width == 8)));
+}
+
 /// The function a call reaches through the pointer slot at \p Slot. Only an
 /// import slot names it: one the import directory lists, the loader bound, or
 /// the linker named `__imp_X`. Any other name at \p Slot labels the slot
@@ -80,12 +97,17 @@ static bool tryResolveLoadedSlot(va_t Slot,
     std::string Name = DirectorySlot ? Imp->Name : std::string();
     // An import directory entry can carry no name (API-set and delay-load
     // imports often do); the symbol for its slot names the import. The linker
-    // names any import address slot `__imp_X` (`__imp__X` on i386).
+    // names any import address slot `__imp_X` (`__imp__X` on i386), but a
+    // slot that holds the image's own code is a variable of that name:
+    // MinGW's runtime defines `__imp_X` for each function it supplies in
+    // place of an import (__MINGW_IMP_SYMBOL), initialized to that function.
     if (Name.empty())
       if (const Symbol *Sym = Image->findSymbolAt(Slot);
           Sym && !Sym->Name.empty() &&
-          (DirectorySlot || llvm::StringRef(Sym->Name).starts_with("__imp_") ||
-           llvm::StringRef(Sym->Name).starts_with("_imp_")))
+          (DirectorySlot ||
+           ((llvm::StringRef(Sym->Name).starts_with("__imp_") ||
+             llvm::StringRef(Sym->Name).starts_with("_imp_")) &&
+            !holdsOwnCodeAddress(*Image, Slot))))
         Name = Sym->Name;
     // A slot holding `import + addend` reaches no function by that name.
     if (auto It = Storage.Slots.find(Slot); It != Storage.Slots.end()) {
@@ -99,6 +121,12 @@ static bool tryResolveLoadedSlot(va_t Slot,
     Out.Name = std::move(Name);
     Out.Addr = Slot;
     Out.IsIndirect = false;
+    // The slot of a symbol the image defines itself, which the loader starts
+    // at that routine, reaches the routine, by the name the slot is bound by
+    // (__lttf2 and __letf2 may name one routine).
+    if (DirectorySlot)
+      if (const std::optional<va_t> Own = ownRoutineOfImport(*Image, *Imp))
+        Out.Addr = *Own;
     return true;
   }
   // Without an image the caller's names are its only slot evidence.
@@ -134,53 +162,6 @@ static bool tryResolveConstTarget(const MedOp &CurOp,
     }
   }
   return tryResolveNamedAddress(Addr, FuncNames, Image, Out);
-}
-
-/// Strategy 2: trace through LOAD (and optional INT_ADD for RIP-relative
-/// addressing) to find a known import address.
-static bool tryResolveLoadTarget(const MedOp &CurOp, const MedBlock &CurBlock,
-                                 const std::map<va_t, std::string> *FuncNames,
-                                 const BinaryImage *Image,
-                                 MedToHighConverter::CallIndTarget &Out) {
-  if (CurOp.NumInputs < 1)
-    return false;
-
-  auto &TVar = CurOp.Inputs[0];
-  for (auto &BOp : CurBlock.Ops) {
-    if (BOp.Opcode != NdOp::LOAD || BOp.Output.Id != TVar.Id ||
-        BOp.Output.SSAVer != TVar.SSAVer || BOp.NumInputs < 1 ||
-        BOp.MemoryAddressSpace != NdMemoryAddressSpace::Default)
-      continue;
-
-    // Direct constant load address.
-    auto &Addr = BOp.Inputs[0];
-    if (Addr.isConst() &&
-        tryResolveLoadedSlot(Addr.ConstVal, FuncNames, Image, Out))
-      return true;
-
-    // RIP-relative pattern: INT_ADD rip, disp -> LOAD -> INDIR_CALL. The
-    // load reads one named slot only when every addend is a constant: an
-    // index (`call *table(,%rdi,8)`) selects among the table's entries, and
-    // naming the table would drop that selection.
-    for (auto &AOp : CurBlock.Ops) {
-      if (AOp.Opcode != NdOp::INT_ADD || AOp.Output.Id != Addr.Id ||
-          AOp.Output.SSAVer != Addr.SSAVer || AOp.NumInputs < 2 ||
-          AOp.Output.Size == 0 || AOp.Output.Size > 8)
-        continue;
-      uint64_t Slot = 0;
-      bool ConstantSlot = true;
-      for (uint8_t KI = 0; KI < AOp.NumInputs && ConstantSlot; ++KI) {
-        ConstantSlot = AOp.Inputs[KI].isConst();
-        Slot += AOp.Inputs[KI].ConstVal;
-      }
-      if (AOp.Output.Size < 8)
-        Slot &= (uint64_t(1) << (AOp.Output.Size * 8)) - 1;
-      if (ConstantSlot && tryResolveLoadedSlot(Slot, FuncNames, Image, Out))
-        return true;
-    }
-    break;
-  }
-  return false;
 }
 
 /// Strategy 3: if the target expression is a register that maps to a known
@@ -264,26 +245,63 @@ MedToHighConverter::CallIndTarget MedToHighConverter::resolveCallIndTarget(
 
   if (tryResolveConstTarget(CurOp, FuncNames, Image, Result))
     return Result;
-  if (tryResolveLoadTarget(CurOp, CurBlock, FuncNames, Image, Result))
-    return Result;
-  // The slot can be read in another block, before a loop that calls through
-  // the register on every iteration. The import the loader bound there is
-  // the callee wherever the read happened.
-  if (TargetExpr && TargetExpr->Kind == ExprKind::Var) {
-    ExprPtr Def = TargetExpr;
-    for (int Hop = 0; Hop < 4 && Def && Def->Kind == ExprKind::Var &&
-                      Def->Var.Id >= 0 && !Def->Var.isConst();
-         ++Hop) {
-      auto It = DefExpr.find(varKey(Def->Var));
-      Def = It == DefExpr.end() ? nullptr : It->second;
+  size_t CallIdx = 0;
+  for (; CallIdx < CurBlock.Ops.size(); ++CallIdx)
+    if (&CurBlock.Ops[CallIdx] == &CurOp)
+      break;
+  const auto ReadReaches = [&](const MedVar &Observation) {
+    CallTargetUse = {&CurBlock, CallIdx};
+    const bool Reaches = memoryReadReachesCallTarget(Observation);
+    CallTargetUse = {};
+    return Reaches;
+  };
+  if (CurOp.NumInputs && !CurOp.Inputs[0].isConst() &&
+      CallIdx < CurBlock.Ops.size()) {
+    if (const auto Cached =
+            resolveMedCallTarget(CurBlock, CallIdx, CurOp.Inputs[0])) {
+      if (Cached->ThroughSlot &&
+          tryResolveLoadedSlot(Cached->Address, FuncNames, Image, Result)) {
+        // Naming a captured import has the same memory premise as
+        // inlining its original read at the call. Copies and private
+        // spills do not change which observation owns that premise.
+        if (ReadReaches(CurBlock.Ops[Cached->LoadIndex].Output))
+          return Result;
+        CallIndTarget Captured;
+        Captured.Addr = Result.Addr;
+        return Captured;
+      }
+      if (!Cached->ThroughSlot &&
+          tryResolveNamedAddress(Cached->Address, FuncNames, Image, Result))
+        return Result;
     }
-    if (Def && Def->Kind == ExprKind::Load && Def->Operands.size() == 1 &&
-        Def->Operands[0] && Def->Operands[0]->Kind == ExprKind::Const &&
-        Def->MemoryOrdering == NdMemoryOrdering::None &&
-        Def->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-        tryResolveLoadedSlot(Def->Operands[0]->ConstVal, FuncNames, Image,
-                             Result))
-      return Result;
+  }
+  // A predecessor's observation can still identify the captured value's
+  // signature. Naming it requires the same reaching-memory proof as a local
+  // read; otherwise keep the runtime operand even when the import is known.
+  if (TargetExpr && TargetExpr->Kind == ExprKind::Var) {
+    ExprPtr Definition = TargetExpr;
+    MedVar Observation = Definition->Var;
+    for (int Depth = 0; Depth < limits::kCallTargetSlotDepth && Definition &&
+                        Definition->Kind == ExprKind::Var &&
+                        Definition->Var.Id >= 0 && !Definition->Var.isConst();
+         ++Depth) {
+      Observation = Definition->Var;
+      const auto It = DefExpr.find(varKey(Definition->Var));
+      Definition = It == DefExpr.end() ? nullptr : It->second;
+    }
+    if (Definition && Definition->Kind == ExprKind::Load &&
+        Definition->Operands.size() == 1 && Definition->Operands[0] &&
+        Definition->Operands[0]->Kind == ExprKind::Const &&
+        Definition->MemoryOrdering == NdMemoryOrdering::None &&
+        Definition->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        tryResolveLoadedSlot(Definition->Operands[0]->ConstVal, FuncNames,
+                             Image, Result)) {
+      if (ReadReaches(Observation))
+        return Result;
+      CallIndTarget Captured;
+      Captured.Addr = Result.Addr;
+      return Captured;
+    }
   }
   if (tryResolveRegTarget(TargetExpr, TargetArch, Result))
     return Result;
@@ -314,11 +332,11 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
       CI = K;
       break;
     }
-  auto Args =
-      collectCallArgs(CurBlock, CI, Target.IsIndirect ? 0 : Target.Addr);
+  auto Args = collectCallArgs(CurBlock, CI, Target.Addr);
 
   auto Call = HighExpr::makeCall(
       Target.Name, Target.Addr ? Target.Addr : CurOp.Addr, std::move(Args));
+  Call->CallSiteAddr = CurOp.Addr;
   Call->IsIndirectCall = Target.IsIndirect;
   Call->IndirectParamIdx = Target.IndirectParam;
   Call->DoesNotReturn = CurOp.DoesNotReturn;
@@ -351,6 +369,18 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
     }
   }
   Call->SourceCallHint = CurOp.SourceCallHint;
+  if (auto Signature = boundFloatingCallArguments(
+          CurOp, TargetArch,
+          Image ? Image->abiFormat() : BinaryFormat::Unknown))
+    Call->FloatingCallSignature =
+        std::make_shared<FloatingCallArguments>(std::move(*Signature));
+  else if (CurOp.CalleeFloatReturnBytes && CurMed)
+    if (const auto *Info = CurMed->findCall(CurBlock.Id, CI))
+      if (auto Signature = recoveredFloatingCallArguments(
+              CurOp, *Info, TargetArch,
+              Image ? Image->abiFormat() : BinaryFormat::Unknown))
+        Call->FloatingCallSignature =
+            std::make_shared<FloatingCallArguments>(std::move(*Signature));
   if (CurOp.SourceCallHint) {
     Call->CallAddr = CurOp.SourceCallHint->TargetAddress;
     // A bound void call has no output SSA value, but its expression still
@@ -376,11 +406,23 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
   if (CurOp.Output.Id >= 0 && CurOp.Output.Size > 0) {
     Call->Type = sourceCallResultType(CurOp);
     S.Kind = StmtKind::Assign;
-    S.Dst = HighExpr::makeVar(CurOp.Output, Call->Type && Call->Type->Kind ==
-                                                              NdTypeKind::Struct
-                                                ? Call->Type
-                                                : nullptr);
+    const bool SourceFloat = SourceFloatCallValues.count(varKey(CurOp.Output));
+    S.Dst = HighExpr::makeVar(
+        CurOp.Output,
+        SourceFloat || (Call->Type && Call->Type->Kind == NdTypeKind::Struct)
+            ? Call->Type
+            : nullptr);
     S.Val = Call;
+    if (!SourceFloat && CurOp.Output.Kind == MedVar::Reg &&
+        CurOp.Output.Size == 10 &&
+        getTargetRegInfo(TargetArch).isX87StackReg(CurOp.Output.RegOff)) {
+      if (Call->Type && Call->Type->Size != CurOp.Output.Size) {
+        S.Val = HighExpr::makeUnary(NdOp::FLOAT_FLOAT2FLOAT, S.Val);
+        S.Val->Type = NdType::makeFloat(CurOp.Output.Size);
+      }
+      S.Val = HighExpr::makeBitCast(S.Val,
+                                    NdType::makeInt(CurOp.Output.Size, false));
+    }
   }
   CallOutputs.insert({CurOp.Output.Id, CurOp.Output.SSAVer});
   if (S.Kind == StmtKind::Call)

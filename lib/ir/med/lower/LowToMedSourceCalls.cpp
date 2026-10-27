@@ -4,8 +4,12 @@
 #include "../../../loader/Swift/SwiftErrorSourceProjection.h"
 #include "../../../loader/Swift/SwiftMangledValueConstructorABI.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
+#include "neverd/ir/SourceCallABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/LowScalarConstant.h"
+#include "neverd/ir/low/SourceCallOccurrence.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/CFunctionParameterCalls.h"
@@ -22,40 +26,23 @@
 #include <set>
 
 namespace neverd {
-namespace {
-// A Darwin x64 CALL pushes the return address; a tail JMP reuses it. Source
-// stack locations are relative to callee entry SP, not the caller's current SP.
-std::optional<int64_t> returnAddressBias(const BinaryImage *Image,
-                                         va_t Address) {
-  if (!Image)
-    return std::nullopt;
-  const auto *P = Image->readVA(Address, 2);
-  if (!P)
-    return std::nullopt;
-  if (P[0] == 0xe8)
-    return 8;
-  if (P[0] == 0xe9 || P[0] == 0xeb)
-    return 0;
-  // Optional REX prefix for indirect calls through an extended register.
-  if ((P[0] & 0xf0) == 0x40) {
-    P = Image->readVA(Address + 1, 2);
-    if (!P)
-      return std::nullopt;
-  }
-  if (P[0] == 0xff && ((P[1] >> 3) & 7) == 2)
-    return 8;
-  if (P[0] == 0xff && ((P[1] >> 3) & 7) == 4)
-    return 0;
-  return std::nullopt;
-}
-} // namespace
 
 void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
                                         BinaryFormat Fmt) {
   // Image-independent IR clients supply explicit source contracts. Their
   // physical carriers do not depend on a container format. Runtime discovery
   // from a loaded image remains restricted to its supported Mach-O path.
-  if (!SourceCallHintsEnabled || (Image && Fmt != BinaryFormat::MachO) ||
+  const bool ExplicitSites =
+      SourceCallSiteHints && !SourceCallSiteHints->empty();
+  const bool RuntimeHints =
+      SourceCallRuntimeHintsEnabled && Image && Fmt == BinaryFormat::MachO;
+  // Standalone clients historically supplied one shared map. The pipeline
+  // keeps entry declarations separate from call-only thunk declarations.
+  const auto *EntryHints =
+      SourceEntryTypeHints ? SourceEntryTypeHints : SourceCalleeTypeHints;
+  const bool ExplicitEntry = EntryHints && EntryHints->count(Low.Entry);
+  if (!SourceCallHintsEnabled ||
+      (Image && !RuntimeHints && !ExplicitSites && !ExplicitEntry) ||
       (Image && (Image->IsRelocatable || Image->Arch != TargetArch)) ||
       (TargetArch != Arch::AArch64 && TargetArch != Arch::X64))
     return;
@@ -70,10 +57,11 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
         It != ObjCBlockCaptureReceivers->end())
       BlockCaptures = &It->second;
   auto Hints =
-      Image ? buildObjCSourceCallHints(*Image, Low, BlockParameters,
-                                       BlockCaptures, SourceCalleeTypeHints)
-            : std::map<va_t, SourceCallTypeHint>();
-  if (Image) {
+      RuntimeHints
+          ? buildObjCSourceCallHints(*Image, Low, BlockParameters,
+                                     BlockCaptures, SourceCalleeTypeHints)
+          : std::map<va_t, SourceCallTypeHint>();
+  if (RuntimeHints) {
     auto SwiftHints = buildSwiftValueWitnessCallHints(*Image, Low);
     for (auto &[Address, Hint] : SwiftHints) {
       auto [It, Inserted] = Hints.emplace(Address, std::move(Hint));
@@ -87,7 +75,7 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
         Hints.erase(It);
     }
   }
-  if (Image) {
+  if (RuntimeHints) {
     for (auto &[Address, Hint] :
          buildSwiftConsumedInputCallHints(*Image, Low)) {
       const auto Existing = Hints.find(Address);
@@ -100,11 +88,6 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     }
   }
   const SourceFunctionTypeHint *EntrySignature = nullptr;
-  // Standalone clients historically supplied one shared map. The pipeline
-  // supplies a distinct entry map so call-only thunk overrides cannot rewrite
-  // the machine body's return and live-in contract.
-  const auto *EntryHints =
-      SourceEntryTypeHints ? SourceEntryTypeHints : SourceCalleeTypeHints;
   if (EntryHints)
     if (auto It = EntryHints->find(Low.Entry); It != EntryHints->end()) {
       std::string Diagnostic;
@@ -112,7 +95,7 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
           validateSourceABI(It->second, Diagnostic))
         EntrySignature = &It->second;
     }
-  if (Image) {
+  if (RuntimeHints) {
     const ObjCBlockCaptureCallFields *Captures = nullptr;
     if (ObjCBlockCaptureFields)
       if (auto It = ObjCBlockCaptureFields->find(Low.Entry);
@@ -122,7 +105,7 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
         buildObjCBlockCallHints(*Image, Low, EntrySignature, &Hints, Captures);
     Hints.insert(BlockHints.begin(), BlockHints.end());
   }
-  if (Image && EntrySignature) {
+  if (RuntimeHints && EntrySignature) {
     auto FunctionPointers = buildCFunctionParameterCallHints(
         *Image, Low, *EntrySignature, SourceCalleeTypeHints);
     for (auto &[Address, Hint] : FunctionPointers) {
@@ -131,7 +114,7 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
         Hints.erase(It);
     }
   }
-  if (Image && SourceCalleeTypeHints) {
+  if (RuntimeHints && SourceCalleeTypeHints) {
     auto NativeHints =
         buildImmutableNativeCallHints(*Image, Low, *SourceCalleeTypeHints);
     for (auto &[Address, Hint] : NativeHints) {
@@ -141,7 +124,7 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     }
   }
   std::optional<SourceFunctionTypeHint> ProvisionalBooleanEntry;
-  if (Image && !EntrySignature) {
+  if (RuntimeHints && !EntrySignature) {
     bool HasBooleanCandidate = false;
     for (const auto &Block : Low.Blocks) {
       for (const auto &Op : Block.Ops) {
@@ -161,7 +144,7 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
       ProvisionalBooleanEntry =
           provisionalNativeSwiftBooleanEntry(*Image, Low.Entry);
   }
-  if (Image && (EntrySignature || ProvisionalBooleanEntry)) {
+  if (RuntimeHints && (EntrySignature || ProvisionalBooleanEntry)) {
     const auto Booleans = qualifySwiftBooleanProjections(
         *Image, Low,
         EntrySignature ? *EntrySignature : *ProvisionalBooleanEntry,
@@ -183,12 +166,12 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     }
   }
   const auto OpaqueHints =
-      Image && SourceCalleeFunctions && SourceCalleeTypeHints
+      RuntimeHints && SourceCalleeFunctions && SourceCalleeTypeHints
           ? buildSwiftOpaqueValueCallHints(*Image, Low, *SourceCalleeTypeHints,
                                            *SourceCalleeFunctions)
           : std::map<va_t, SourceCallTypeHint>{};
   const auto ConstructorHints =
-      Image && SourceCalleeFunctions && SourceCalleeTypeHints
+      RuntimeHints && SourceCalleeFunctions && SourceCalleeTypeHints
           ? buildSwiftFixedRecordConstructorCallHints(
                 *Image, Low, *SourceCalleeTypeHints, *SourceCalleeFunctions)
           : std::map<va_t, SourceCallTypeHint>{};
@@ -201,6 +184,12 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     V.TheArch = TargetArch;
     return V;
   };
+  std::set<SourceCallOccurrenceKey> UnboundCalls;
+  std::optional<std::map<SourceCallOccurrenceKey, va_t>> ConstantCalls;
+  for (const auto &Block : Low.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (const auto Site = sourceCallOccurrenceKey(Op))
+        UnboundCalls.insert(*Site);
   for (auto &Block : Func.Blocks) {
     std::vector<MedOp> Ops;
     for (auto Op : Block.Ops) {
@@ -267,16 +256,43 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
                                                Error->Location.ValueBytes)));
           Op.HasSourceErrorResult = true;
         }
+      // Generic callee summaries can already have published integer/vector
+      // register uses (notably SysV x64). A validated source ABI owns their
+      // order and lanes. Only replace that complete summary shape; explicit
+      // LowIR arguments and exact formatted calls retain their own contract.
+      // Prototype argument counts can annotate explicit operands too: the
+      // original single-target call occurrence must authorize reconstruction.
+      const bool SummaryArguments =
+          !Op.ExactArguments && Op.CalleeRegisterArgs >= 0 &&
+          Op.NumInputs == 1u + Op.CalleeRegisterArgs +
+                              std::max<int>(0, Op.CalleeVectorArgs) &&
+          UnboundCalls.count({Op.Addr, Op.OriginSeq, Op.Opcode,
+                              Op.Inputs[0].isConst()
+                                  ? std::optional<va_t>(Op.Inputs[0].ConstVal)
+                                  : std::nullopt});
+      const SourceCallOccurrenceKey Site{
+          Op.Addr, Op.OriginSeq, Op.Opcode,
+          Op.NumInputs && Op.Inputs[0].isConst()
+              ? std::optional<va_t>(Op.Inputs[0].ConstVal)
+              : std::nullopt};
+      const auto SiteHint =
+          SourceCallSiteHints ? SourceCallSiteHints->find(Site)
+                              : std::map<SourceCallOccurrenceKey,
+                                         SourceCallTypeHint>::const_iterator{};
+      const bool ExplicitSite =
+          ExplicitSites && SiteHint != SourceCallSiteHints->end();
       if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
-          Op.NumInputs != 1) {
+          (Op.NumInputs != 1 && !SummaryArguments && !ExplicitSite)) {
         Ops.push_back(std::move(Op));
         continue;
       }
       std::optional<SourceCallTypeHint> Hint;
-      if (auto It = Hints.find(Op.Addr); It != Hints.end())
+      if (ExplicitSite)
+        Hint = SiteHint->second;
+      else if (auto It = Hints.find(Op.Addr); It != Hints.end())
         Hint = It->second;
-      else if (SourceCalleeTypeHints && Op.Opcode == NdOp::CALL &&
-               Op.Inputs[0].isConst()) {
+      else if ((RuntimeHints || !Image) && SourceCalleeTypeHints &&
+               Op.Opcode == NdOp::CALL && Op.Inputs[0].isConst()) {
         auto It = SourceCalleeTypeHints->find(Op.Inputs[0].ConstVal);
         if (It != SourceCalleeTypeHints->end()) {
           Hint.emplace();
@@ -285,6 +301,16 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
           // The real native name is resolved by the ordinary call ABI pass.
         }
       }
+      // The user's supported prototype already supplied the ordinary call's
+      // arguments. An automatic SDK binding must not replace them with the
+      // platform declaration. Match both import slots and direct-call stubs.
+      if (Hint && !ExplicitSite &&
+          Hint->CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall &&
+          UserPrototypeCallees &&
+          (UserPrototypeCallees->count(Hint->TargetAddress) ||
+           (Op.Inputs[0].isConst() &&
+            UserPrototypeCallees->count(Op.Inputs[0].ConstVal))))
+        Hint.reset();
       if (Hint) {
         const auto Constructor = ConstructorHints.find(Op.Addr);
         if (Constructor != ConstructorHints.end() &&
@@ -354,11 +380,52 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
                       });
       std::optional<int64_t> Bias = 0;
       if (HasStack && TargetArch == Arch::X64)
-        Bias = returnAddressBias(Image, Op.Addr);
-      if (!Bias || Parameters.size() > 64) {
+        Bias = sourceCallReturnAddressBias(Image, TargetArch, Op.Addr);
+      if (!Bias ||
+          Parameters.size() >
+              ::neverd::limits::ir::
+                  kLowToMedSourceCallsLowToMedConverterBindSourceCallsParametersSizeLimit) {
         Ops.push_back(std::move(Op));
         continue;
       }
+      const bool ConstantNativeCall =
+          ExplicitSite && Op.Opcode == NdOp::INDIR_CALL &&
+          !Op.Inputs[0].isConst() &&
+          Hint->CallKind == SourceCallTypeHint::Kind::Native &&
+          Signature.Origin ==
+              SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      if (ConstantNativeCall) {
+        if (!ConstantCalls)
+          ConstantCalls = constantRegisterCallTargets(Low);
+        const auto Found = ConstantCalls->find(Site);
+        if (Found == ConstantCalls->end() ||
+            Found->second != Hint->TargetAddress) {
+          Ops.push_back(std::move(Op));
+          continue;
+        }
+      }
+      // Do this only after every binding check succeeds, so an unavailable
+      // or invalid source declaration leaves the generic arguments intact.
+      if (ConstantNativeCall) {
+        // This source operation now names a proved callee and its complete
+        // source declaration. Original LowIR and the physical occurrence key
+        // above retain the register call for byte/stack validation. Never
+        // turn a constant memory-call slot into its apparent code address.
+        Op.Opcode = NdOp::CALL;
+        Op.Inputs[0] =
+            MedVar::makeConst(Hint->TargetAddress, TRI.PointerSize,
+                              ConstantAddressProvenance::CodeAddress);
+      }
+      Op.NumInputs = 1;
+      Op.IntegerCallSignature.reset();
+      Op.ScalarCallSignature.reset();
+      Op.CalleeRegisterArgs = -1;
+      Op.CalleeVariadicFrom = -1;
+      Op.CalleeVectorArgs = -1;
+      Op.CalleeVectorSlots = 0;
+      Op.CalleeVectorArgWidths = 0;
+      Op.CalleeFloatReturnBytes = 0;
+      Op.CalleeStackArgs = -1;
       for (size_t I = 0; I < Parameters.size(); ++I) {
         const auto &Location = Parameters[I].Location;
         MedVar Argument;

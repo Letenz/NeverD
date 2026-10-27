@@ -11,6 +11,10 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/dialect/SourceDialect.h"
 #include "neverd/loader/SymbolSpelling.h"
+#include "neverd/types/HeaderLibrary.h"
+#include "neverd/types/TypeLayout.h"
+#include "neverd/types/TypeParse.h"
+#include "neverd/types/TypeRender.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
@@ -22,6 +26,7 @@
 
 #include <cstdlib>
 #include <map>
+#include <set>
 
 using namespace neverd;
 
@@ -85,6 +90,342 @@ TEST(SourceDialect, CxxUsesQualifiedNamesAndExactLibraryAliases) {
   EXPECT_EQ(
       readableCxxTypeName("ATL::CStringT<wchar_t, ATL::StrTraitATL<wchar_t>>"),
       "ATL::CStringT<wchar_t, ATL::StrTraitATL<wchar_t>>");
+}
+
+TEST(SourceDialect, ReturnProtectionRemainsVisibleInEveryDialect) {
+  const char *C =
+      "__attribute__((target(\"branch-protection=pac-ret+leaf+b-key\")))\n"
+      "int protected_return(void) { return 7; }\n";
+  for (SourceDialect Dialect :
+       {SourceDialect::Cpp, SourceDialect::Rust, SourceDialect::Go}) {
+    const auto Text = spell(C, Dialect);
+    EXPECT_TRUE(Text.Unread.empty());
+    EXPECT_NE(Text.Text.find("branch-protection=pac-ret+leaf+b-key"),
+              std::string::npos)
+        << Text.Text;
+    EXPECT_EQ(Text.Text.find("target_feature(enable = \"branch-protection"),
+              std::string::npos)
+        << Text.Text;
+  }
+}
+
+TEST(SourceDialect, CxxOverloadsShareTheirName) {
+  // The two __do_deallocate_handle_size overloads of the NDK's libc++, which
+  // C names `handle` and `handle_2`, are both the one C++ name, as IDA prints
+  // them; each still links its own symbol.
+  const char *C = "int handle(int p, int n, int a);\n"
+                  "int handle_2(int p, int n);\n"
+                  "int count;\n"
+                  "int count_2(void);\n"
+                  "int helper(void);\n"
+                  "int helper_2(void);\n"
+                  "int work(int p) {\n"
+                  "    return handle(p, 1, 2) + handle_2(p, 1) + count + "
+                  "count_2() + helper() + helper_2();\n"
+                  "}\n";
+  std::vector<CSourceName> Names = {
+      {CSourceName::Kind::Function, "handle",
+       "_ZNSt6__ndk117_DeallocateCaller27__do_deallocate_handle_sizeEPvjSt11"
+       "align_val_t",
+       0x64930},
+      {CSourceName::Kind::Function, "handle_2",
+       "_ZNSt6__ndk117_DeallocateCaller27__do_deallocate_handle_sizeEPvj",
+       0x64980},
+      // A variable and a function of one name would name neither.
+      {CSourceName::Kind::Object, "count", "_ZN4Demo5countE", 0x80000},
+      {CSourceName::Kind::Function, "count_2", "_ZN4Demo5countEv", 0x1000},
+      // Two files' static helpers of one symbol are two functions.
+      {CSourceName::Kind::Function, "helper", "_ZN12_GLOBAL__N_16helperEv",
+       0x2000},
+      {CSourceName::Kind::Function, "helper_2", "_ZN12_GLOBAL__N_16helperEv",
+       0x3000}};
+  const auto Cpp = spell(C, SourceDialect::Cpp, Names);
+  EXPECT_TRUE(Cpp.Unread.empty());
+  const std::string Shared =
+      "std::_DeallocateCaller::__do_deallocate_handle_size";
+  EXPECT_NE(Cpp.Text.find(Shared + "(p, 1, 2)"), std::string::npos) << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find(Shared + "(p, 1)"), std::string::npos) << Cpp.Text;
+  EXPECT_EQ(Cpp.Text.find("handle_2"), std::string::npos) << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("+ count + count_2() + helper() + helper_2()"),
+            std::string::npos)
+      << Cpp.Text;
+  std::set<va_t> Linked;
+  for (const auto &Name : Cpp.Names)
+    if (Cpp.Text.substr(Name.Begin, Name.End - Name.Begin) == Shared &&
+        Name.Address)
+      Linked.insert(*Name.Address);
+  EXPECT_EQ(Linked, (std::set<va_t>{0x64930, 0x64980}));
+}
+
+TEST(SourceDialect, ReadsTheDeclarationsHighCWrites) {
+  // A typedef name a declaration declares again, or a block's own variable
+  // of a typedef's name (which hides the type to the block's end), a C23
+  // enumeration's fixed type, and va_list with va_arg's type operand all
+  // read; the C++ view of such a unit is no C shown as is.
+  const char *C =
+      "typedef uint32_t size_t;\n"
+      "typedef struct addrinfo addrinfo;\n"
+      "enum _Unwind_Reason_Code : uint32_t { _URC_NO_REASON = 0 };\n"
+      "int fcntl(int fd, int command, ...);\n"
+      "int vlog(int arg0, int arg1, ...) {\n"
+      "    va_list arguments;\n"
+      "    va_start(arguments, arg1);\n"
+      "    void *argument2 = va_arg(arguments, void *);\n"
+      "    va_end(arguments);\n"
+      "    return fcntl(arg0, arg1, argument2);\n"
+      "}\n"
+      "int resolve(int32_t size_t) {\n"
+      "    int32_t addrinfo;\n"
+      "    addrinfo = size_t + _URC_NO_REASON;\n"
+      "    return addrinfo;\n"
+      "}\n"
+      "int typed(addrinfo *list) { return list != 0; }\n";
+  for (SourceDialect Dialect : {SourceDialect::C, SourceDialect::Cpp}) {
+    const auto Text = spell(C, Dialect);
+    EXPECT_TRUE(Text.Unread.empty()) << Text.Text;
+    EXPECT_EQ(Text.Text.find("shown as C"), std::string::npos) << Text.Text;
+    EXPECT_NE(Text.Text.find(": uint32_t"), std::string::npos) << Text.Text;
+    EXPECT_NE(Text.Text.find("va_arg(arguments, void *)"), std::string::npos)
+        << Text.Text;
+  }
+  EXPECT_EQ(tokens(spell(C, SourceDialect::C).Text), tokens(C));
+}
+
+TEST(SourceDialect, ReadsPrototypeIntegerIdentityTypes) {
+  // Dump's std::filebuf::overflow uses the portable spelling of unsigned long
+  // for fwrite's result. Keep both its width and the keyword type's identity.
+  const char *C = R"(
+int32_t overflow(void) {
+    __typeof__(__builtin_choose_expr(sizeof(unsigned long) == 8, (unsigned long)0, (uint64_t)0)) v18 = 1;
+    __typeof__(__builtin_choose_expr(sizeof(long) == 4, (long)0, (int32_t)0)) narrow = -1;
+    __typeof__(__builtin_choose_expr(sizeof(long long) == 8, (long long)0, (int64_t)0)) wide = -1;
+    __typeof__(__builtin_choose_expr(sizeof(unsigned long long) == 8, (unsigned long long)0, (uint64_t)0)) other = 2;
+    return (int32_t)(v18 + narrow + wide + other);
+}
+)";
+  for (Arch A : {Arch::X86, Arch::ARM, Arch::X64, Arch::AArch64})
+    for (BinaryFormat F :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (SourceDialect D : {SourceDialect::C, SourceDialect::Cpp,
+                              SourceDialect::Rust, SourceDialect::Go}) {
+        SCOPED_TRACE(sourceDialectKey(D).str());
+        SourceDialectOptions Options;
+        Options.Dialect = D;
+        Options.TheArch = A;
+        Options.Format = F;
+        const auto Text = spellInDialect(C, Options);
+        ASSERT_TRUE(Text.Unread.empty()) << Text.Text;
+        EXPECT_EQ(Text.Text.find("shown as C"), std::string::npos);
+        if (D == SourceDialect::C)
+          EXPECT_EQ(tokens(Text.Text), tokens(C));
+        else if (D == SourceDialect::Rust) {
+          EXPECT_NE(Text.Text.find("v18: u64"), std::string::npos) << Text.Text;
+          EXPECT_NE(Text.Text.find("narrow: i32"), std::string::npos)
+              << Text.Text;
+          EXPECT_NE(Text.Text.find("wide: i64"), std::string::npos)
+              << Text.Text;
+          EXPECT_NE(Text.Text.find("other: u64"), std::string::npos)
+              << Text.Text;
+        } else if (D == SourceDialect::Go) {
+          EXPECT_NE(Text.Text.find("v18 uint64"), std::string::npos)
+              << Text.Text;
+          EXPECT_NE(Text.Text.find("narrow int32"), std::string::npos)
+              << Text.Text;
+          EXPECT_NE(Text.Text.find("wide int64"), std::string::npos)
+              << Text.Text;
+          EXPECT_NE(Text.Text.find("other uint64"), std::string::npos)
+              << Text.Text;
+        }
+      }
+}
+
+TEST(SourceDialect, DoesNotGuessUnknownTypeofExpressions) {
+  for (llvm::StringRef Type :
+       {"__typeof__(unknown())",
+        "__typeof__(__builtin_choose_expr(unknown(), (long)0, (int32_t)0))",
+        "__typeof__(__builtin_choose_expr(sizeof(long) == 8, (long)0, "
+        "unknown()))"}) {
+    const std::string C = ("void f(void) { " + Type + " v18; }\n").str();
+    const auto Text = spell(C, SourceDialect::Cpp);
+    EXPECT_FALSE(Text.Unread.empty()) << Text.Text;
+    EXPECT_NE(Text.Text.find("shown as C"), std::string::npos) << Text.Text;
+    EXPECT_NE(Text.Text.find(C), std::string::npos) << Text.Text;
+  }
+}
+
+TEST(SourceDialect, ReadsTargetHeaderTypesWithoutPrintingTheirDefinitions) {
+  const char *C = R"C(
+clock_t ticks(clock_t value) { return value + 1; }
+off_t offset(off_t value) { return value; }
+locale_t locale(locale_t value) { return value; }
+pthread_t thread(pthread_t value) { return value; }
+pid_t process(pid_t value) { return value; }
+wint_t wide(wint_t value) { return value; }
+void lock(pthread_mutex_t *mutex, pthread_cond_t *condition, mbstate_t *state) {}
+char *decimal(struct lconv *value) { return value->decimal_point; }
+static_assert(offsetof(struct timespec, tv_nsec) >= 0, "timespec.tv_nsec");
+)C";
+  struct Target {
+    types::HeaderLibrary Header;
+    Arch TheArch;
+    BinaryFormat Format;
+  };
+  for (const Target &Target :
+       {Target{types::HeaderLibrary::AndroidARM64, Arch::AArch64,
+               BinaryFormat::ELF},
+        Target{types::HeaderLibrary::AndroidARM, Arch::ARM, BinaryFormat::ELF},
+        Target{types::HeaderLibrary::LinuxX64, Arch::X64, BinaryFormat::ELF},
+        Target{types::HeaderLibrary::MacOSARM64, Arch::AArch64,
+               BinaryFormat::MachO}}) {
+    SCOPED_TRACE(types::headerLibraryName(Target.Header).str());
+    SourceDialectOptions Options;
+    Options.Types = types::headerLibrary(Target.Header);
+    ASSERT_NE(Options.Types, nullptr);
+    Options.TheArch = Target.TheArch;
+    Options.Format = Target.Format;
+    for (SourceDialect Dialect : {SourceDialect::C, SourceDialect::Cpp}) {
+      Options.Dialect = Dialect;
+      const auto Text = spellInDialect(C, Options);
+      ASSERT_TRUE(Text.Unread.empty()) << Text.Text;
+      EXPECT_EQ(tokens(Text.Text), tokens(C));
+    }
+  }
+  SourceDialectOptions Windows;
+  Windows.Types = types::headerLibrary(types::HeaderLibrary::WindowsUserX64);
+  ASSERT_NE(Windows.Types, nullptr);
+  Windows.Format = BinaryFormat::COFF;
+  Windows.Dialect = SourceDialect::Cpp;
+  const auto View = spellInDialect(
+      "DWORD active(HANDLE value) { return value != 0; }", Windows);
+  EXPECT_TRUE(View.Unread.empty()) << View.Text;
+}
+
+TEST(SourceDialect, EmittedDefinitionsOverrideTargetHeaderTypes) {
+  types::TypeLibrary Library(types::DataModel::LP64);
+  types::ParseOptions Parse;
+  Parse.Origin = types::TypeOrigin::Header;
+  ASSERT_TRUE(
+      types::parseCTypes("struct Record { uint64_t value; };", Library, Parse)
+          .ok());
+  const char *C =
+      "struct Record { int16_t value; };\n"
+      "int16_t get(struct Record *record) { return record->value; }\n";
+  for (SourceDialect Dialect : {SourceDialect::C, SourceDialect::Cpp,
+                                SourceDialect::Rust, SourceDialect::Go}) {
+    SourceDialectOptions Options;
+    Options.Types = &Library;
+    Options.Dialect = Dialect;
+    const auto Text = spellInDialect(C, Options);
+    ASSERT_TRUE(Text.Unread.empty()) << Text.Text;
+    if (Dialect == SourceDialect::C || Dialect == SourceDialect::Cpp)
+      EXPECT_EQ(tokens(Text.Text), tokens(C));
+    else
+      EXPECT_NE(Text.Text.find(Dialect == SourceDialect::Rust ? "value: i16"
+                                                              : "value int16"),
+                std::string::npos)
+          << Text.Text;
+  }
+  // A program's matching header type has its original debug origin. The
+  // emitter's proof, rather than that origin alone, supplies its declaration.
+  auto Type = *Library.find("Record");
+  Type.Origin = types::TypeOrigin::DWARF;
+  Library.define(std::move(Type));
+  SourceDialectOptions Options;
+  Options.Types = &Library;
+  Options.Dialect = SourceDialect::Cpp;
+  std::vector<std::string> Headers = {"Record"};
+  Options.HeaderTypes = Headers;
+  EXPECT_TRUE(
+      spellInDialect("uint64_t get(struct Record *p) { return p->value; }",
+                     Options)
+          .Unread.empty());
+}
+
+TEST(SourceDialect, ReadsUnevaluatedMemberTypeofCasts) {
+  const char *C = R"C(
+struct Record { uint16_t narrow; void *pointer; int32_t (*callback)(int32_t); };
+void store(struct Record *record, uintptr_t address, int64_t value) {
+    record->narrow = (__typeof__(record->narrow))(value);
+    record->pointer = (__typeof__(record->pointer))(address);
+    record->callback = (__typeof__(record->callback))(address);
+}
+)C";
+  for (SourceDialect Dialect : {SourceDialect::C, SourceDialect::Cpp,
+                                SourceDialect::Rust, SourceDialect::Go}) {
+    const auto Text = spell(C, Dialect);
+    ASSERT_TRUE(Text.Unread.empty()) << Text.Text;
+    if (Dialect == SourceDialect::C || Dialect == SourceDialect::Cpp)
+      EXPECT_EQ(tokens(Text.Text), tokens(C));
+  }
+  for (const char *Query : {"unknown", "record->bits", "(record->bits)"}) {
+    const std::string Bad =
+        std::string("struct Record { unsigned bits : 1; }; void f(struct "
+                    "Record *record) { int value = (__typeof__(") +
+        Query + "))(0); }";
+    EXPECT_FALSE(spell(Bad, SourceDialect::Cpp).Unread.empty()) << Bad;
+  }
+}
+
+TEST(SourceDialect, ReadsAnonymousRecordCompoundLiterals) {
+  for (const char *C : {R"C(
+uint64_t bits(double value) {
+    return ((union { double value; uint64_t bits; }){ .value = value }).bits;
+}
+)C",
+                        R"C(
+unsigned __int128 bits(void) {
+    register int64_t __attribute__((vector_size(16))) vector __asm__("v17");
+    return ((union { unsigned __int128 Bits; int64_t Vector __attribute__((vector_size(16))); }){ .Vector = vector }).Bits;
+}
+)C"})
+    for (SourceDialect Dialect : {SourceDialect::C, SourceDialect::Cpp}) {
+      const auto Text = spell(C, Dialect);
+      ASSERT_TRUE(Text.Unread.empty()) << Text.Text;
+      if (Dialect == SourceDialect::C)
+        EXPECT_EQ(tokens(Text.Text), tokens(C));
+      else
+        EXPECT_NE(Text.Text.find("decltype([] { union {"), std::string::npos)
+            << Text.Text;
+    }
+}
+
+TEST(SourceDialect, ReadsLLVMScalarTypeSpellings) {
+  const char *C = R"C(
+_Float16 half(_Float16 value) { return value; }
+__bf16 brain(__bf16 value) { return value; }
+__uint128_t wide(__uint128_t value) { return value; }
+__int128_t signed_wide(__int128_t value) { return value; }
+)C";
+  for (SourceDialect Dialect : {SourceDialect::C, SourceDialect::Cpp}) {
+    const auto Text = spell(C, Dialect);
+    ASSERT_TRUE(Text.Unread.empty()) << Text.Text;
+    EXPECT_EQ(tokens(Text.Text), tokens(C));
+  }
+}
+
+TEST(SourceDialect, ReadsAutoTypeFromItsInitializer) {
+  const char *C = R"C(
+uint64_t copy(uint32_t value) {
+    __auto_type old = (uint64_t)value;
+    __auto_type address = &old;
+    return *address;
+}
+)C";
+  for (SourceDialect Dialect : {SourceDialect::C, SourceDialect::Cpp,
+                                SourceDialect::Rust, SourceDialect::Go}) {
+    const auto Text = spell(C, Dialect);
+    ASSERT_TRUE(Text.Unread.empty()) << Text.Text;
+    if (Dialect == SourceDialect::C || Dialect == SourceDialect::Cpp)
+      EXPECT_EQ(tokens(Text.Text), tokens(C));
+    else
+      EXPECT_NE(Text.Text.find(Dialect == SourceDialect::Rust ? "old: u64"
+                                                              : "old uint64"),
+                std::string::npos)
+          << Text.Text;
+  }
+  for (const char *Bad : {"void f(void) { __auto_type value; }",
+                          "void f(void) { __auto_type value = unknown(); }"})
+    EXPECT_FALSE(spell(Bad, SourceDialect::Cpp).Unread.empty()) << Bad;
 }
 
 TEST(SourceDialect, CxxSymbolsAreValidatedAndKeepOperatorsAndTemplates) {
@@ -400,6 +741,37 @@ TEST(SourceDialect, SpellsSparseArraysAndOneDeclarationPerObject) {
   EXPECT_EQ(Go.find("var counter int64\n"), std::string::npos) << Go;
 }
 
+TEST(SourceDialect, SpellsImageBytesFromStringsAndCharacters) {
+  // The emitter spells an image's bytes as a string, or as a list with text
+  // as characters.  Each dialect spells the same bytes, which C zero-fills
+  // past the initializer.  Rust reads a list that is mostly text as its byte
+  // string too; other bytes stay a list.
+  const char *C =
+      "unsigned char text[8] = \"a\\\"\\\\\\000\\n\\377\";\n"
+      "unsigned char list[6] = { '@', '\\'', 0x88, [5] = '\\\\', };\n"
+      "unsigned char table[5] = { 0x40, 0x88, 0x99, [4] = 0x1, };\n";
+  const std::string Rust = spell(C, SourceDialect::Rust).Text;
+  EXPECT_NE(Rust.find(R"(static mut text: [u8; 8] = *b"a\"\\\0\n\xFF\0\0";)"),
+            std::string::npos)
+      << Rust;
+  EXPECT_NE(Rust.find(R"(static mut list: [u8; 6] = *b"@'\x88\0\0\\";)"),
+            std::string::npos)
+      << Rust;
+  EXPECT_NE(
+      Rust.find("static mut table: [u8; 5] = [0x40, 0x88, 0x99, 0, 0x1];"),
+      std::string::npos)
+      << Rust;
+  const std::string Go = spell(C, SourceDialect::Go).Text;
+  EXPECT_NE(
+      Go.find(R"(var text [8]uint8 = [8]uint8{'a', '"', '\\', 0, 0xA, 0xFF})"),
+      std::string::npos)
+      << Go;
+  EXPECT_NE(
+      Go.find(R"(var list [6]uint8 = [6]uint8{'@', '\'', 0x88, 5: '\\'})"),
+      std::string::npos)
+      << Go;
+}
+
 TEST(SourceDialect, ShowsWhatItCannotSpellAsC) {
   const char *C = "#include <stdint.h>\n"
                   "int64_t k(int64_t v) {\n"
@@ -593,6 +965,14 @@ int32_t byte_range(uint8_t a) {
 int64_t cast_chain(int32_t x) {
     return (int64_t)(uint32_t)((int32_t)x) + (int64_t)(int16_t)x;
 }
+
+int32_t typeof_once(int64_t value) {
+    uint16_t narrow = 0;
+    uint16_t *cursor = &narrow;
+    narrow = (__typeof__(*(cursor++)))(value);
+    if (cursor != &narrow) { return -100000; }
+    return narrow;
+}
 )C";
 
 /// The C side's checks: one line per call.
@@ -632,6 +1012,7 @@ int main(void) {
     printf("%lld\n", (long long)multiply_high(0xFFFFFFFFFFFFFFFFull, 3));
     printf("%lld\n", (long long)byte_range(255));
     printf("%lld\n", (long long)cast_chain(-70000));
+    printf("%lld\n", (long long)typeof_once(65537));
     return 0;
 }
 )C";
@@ -674,6 +1055,7 @@ fn main() {
         println!("{}", multiply_high(0xFFFFFFFFFFFFFFFF, 3) as i64);
         println!("{}", byte_range(255) as i64);
         println!("{}", cast_chain(-70000) as i64);
+        println!("{}", typeof_once(65537) as i64);
     }
 }
 )RS";
@@ -699,6 +1081,25 @@ llvm::Expected<std::string> run(llvm::StringRef Program,
                                    "): " + Message + "\n" +
                                    (Errors ? (*Errors)->getBuffer() : ""));
   return Text ? (*Text)->getBuffer().str() : std::string();
+}
+
+/// Keep the Windows COFF linker independent of Git Bash's POSIX link.exe.
+llvm::Expected<std::string> compileRust(llvm::StringRef Rustc,
+                                        llvm::StringRef Source,
+                                        llvm::StringRef Binary,
+                                        llvm::StringRef Dir) {
+  llvm::SmallVector<llvm::StringRef, 12> Args{"--edition=2021", "-O", "-C",
+                                              "overflow-checks=off"};
+#ifdef _WIN32
+  auto Linker = llvm::sys::findProgramByName("lld-link");
+  if (!Linker)
+    return llvm::createStringError(Linker.getError(),
+                                   "Rust fixture requires lld-link");
+  const std::string LinkerArgument = "linker=" + *Linker;
+  Args.append({"-C", LinkerArgument});
+#endif
+  Args.append({"-o", Binary, Source});
+  return run(Rustc, Args, Dir);
 }
 
 std::string normalizeLineEndings(std::string Text) {
@@ -928,6 +1329,37 @@ int main(void) {
   llvm::sys::fs::remove_directories(Dir);
 }
 
+TEST(SourceDialect, CxxAnonymousRecordsCompileAndKeepTheirBits) {
+  const char *Source = R"C(#include <stdint.h>
+uint32_t calls;
+uint64_t bits(double value) {
+    return ((union { double value; uint64_t bits; }){ .value = (calls++, value) }).bits;
+}
+int main(void) { return bits(1.0) != 0x3FF0000000000000ULL || calls != 1; }
+)C";
+  const auto Cpp = spell(Source, SourceDialect::Cpp);
+  ASSERT_TRUE(Cpp.Unread.empty()) << Cpp.Text;
+  const std::string Clang = NEVERD_TEST_CLANG;
+  if (Clang.empty())
+    GTEST_SKIP() << "no clang: the anonymous record's C++ view is not executed";
+  llvm::SmallString<128> Dir;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-anonymous", Dir));
+  llvm::SmallString<128> File(Dir), Binary(Dir);
+  llvm::sys::path::append(File, "source.cpp");
+  llvm::sys::path::append(Binary, "cpp.out");
+  std::error_code EC;
+  {
+    llvm::raw_fd_ostream OS(File, EC);
+    ASSERT_FALSE(EC);
+    OS << Cpp.Text;
+  }
+  auto Built = run(Clang, {"-std=gnu++20", "-O1", File, "-o", Binary}, Dir);
+  ASSERT_TRUE(bool(Built)) << llvm::toString(Built.takeError()) << Cpp.Text;
+  auto Result = run(Binary, {}, Dir);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError()) << Cpp.Text;
+  llvm::sys::fs::remove_directories(Dir);
+}
+
 TEST(SourceDialect, CxxAlignmentUsesStandardSyntaxAndPreservesStorage) {
   const llvm::StringRef Source = R"C(
 #include <stdint.h>
@@ -1057,6 +1489,277 @@ int64_t frame_record(int64_t arg0) {
   }
 }
 
+TEST(SourceDialect, ATypedefOfARecordsOwnTagDeclaresTheRecord) {
+  // Rust and Go name a record and its type alike, so `typedef struct X X`
+  // is the record: defined where the text defines it, opaque where it only
+  // declares it, and never an alias of itself.
+  constexpr const char *Source = R"C(#include <stdint.h>
+typedef struct _OPAQUE _OPAQUE;
+typedef struct _PAIR _PAIR;
+struct _PAIR { int32_t Low; int32_t High; };
+int32_t low(_PAIR *Pair, _OPAQUE *Handle) { return Pair->Low; }
+)C";
+  for (SourceDialect Dialect : {SourceDialect::Go, SourceDialect::Rust}) {
+    const bool Go = Dialect == SourceDialect::Go;
+    const auto View = spell(Source, Dialect);
+    ASSERT_TRUE(View.Unread.empty()) << View.Text;
+    EXPECT_EQ(View.Text.find("_PAIR = _PAIR"), std::string::npos) << View.Text;
+    EXPECT_EQ(View.Text.find("_OPAQUE = _OPAQUE"), std::string::npos);
+    const std::string Pair = Go ? "type _PAIR struct {" : "struct _PAIR {";
+    const auto Defined = View.Text.find(Pair);
+    ASSERT_NE(Defined, std::string::npos) << View.Text;
+    EXPECT_EQ(View.Text.find(Pair, Defined + 1), std::string::npos);
+    EXPECT_NE(View.Text.find(Go ? "type _OPAQUE struct{}"
+                                : "struct _OPAQUE {\n    _opaque: [u8; 0],\n}"),
+              std::string::npos)
+        << View.Text;
+  }
+}
+
+TEST(SourceDialect, ReadsTheDefinitionsOfTheProgramsTypes) {
+  // A unit holds the program's records as its local types define them:
+  // unions, anonymous members, bit-fields, enumerations, packing and
+  // alignment, with checks of their sizes and offsets.
+  constexpr const char *Source = R"C(#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#if !defined(__cplusplus) && !defined(static_assert)
+#define static_assert _Static_assert
+#endif
+
+#ifndef NEVERD_TYPE__KIND
+#define NEVERD_TYPE__KIND
+enum _KIND
+{
+    Negative = -1,
+    Zero = 0,
+    Positive = 1,
+};
+static_assert(sizeof(enum _KIND) == 4, "_KIND");
+#endif
+
+#ifndef NEVERD_TYPE__DPC
+#define NEVERD_TYPE__DPC
+struct _DPC
+{
+    union
+    {
+        uint32_t TargetInfoAsUlong;
+        struct
+        {
+            uint8_t Type;
+            uint8_t Importance;
+            volatile uint16_t Number;
+        };
+    };
+    uint32_t Ready : 1;
+    uint32_t : 3;
+    uint32_t Spare : 28;
+    enum _KIND Kind;
+    void *Context;
+};
+static_assert(offsetof(struct _DPC, Number) == 0x2, "_DPC.Number");
+#endif
+
+#pragma pack(push, 1)
+struct _PACKED
+{
+    uint8_t Tag;
+    uint32_t Value;
+};
+#pragma pack(pop)
+static_assert(sizeof(struct _PACKED) == 0x5, "_PACKED");
+
+struct DECLSPEC_ALIGN(16) _ALIGNED
+{
+    uint64_t Low;
+    uint64_t High;
+};
+
+int32_t kind(struct _DPC *Dpc, struct _PACKED *Packed) {
+    Packed->Value = 7;
+    return Dpc->Kind == Positive;
+}
+uint32_t target(struct _DPC *Dpc) {
+    return Dpc->TargetInfoAsUlong;
+}
+uint32_t ready(struct _DPC *Dpc) {
+    return Dpc->Ready;
+}
+)C";
+  // C reads it all back as written; C++ reads it whole, as C++ too.
+  const auto C = spell(Source, SourceDialect::C);
+  ASSERT_TRUE(C.Unread.empty()) << C.Text;
+  EXPECT_EQ(tokens(C.Text), tokens(Source));
+  const auto Cpp = spell(Source, SourceDialect::Cpp);
+  ASSERT_TRUE(Cpp.Unread.empty()) << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("static_assert(offsetof(struct _DPC, Number) == "
+                          "0x2, \"_DPC.Number\");"),
+            std::string::npos)
+      << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("return Dpc->TargetInfoAsUlong;"), std::string::npos);
+  EXPECT_NE(Cpp.Text.find("return Dpc->Ready;"), std::string::npos);
+  // Rust and Go spell what their structures lay out as C does, and show
+  // the rest as C, saying why.
+  const auto has = [](const SourceDialectText &View, llvm::StringRef Reason) {
+    return llvm::is_contained(View.Unread, Reason.str());
+  };
+  for (SourceDialect Dialect : {SourceDialect::Rust, SourceDialect::Go}) {
+    const bool Go = Dialect == SourceDialect::Go;
+    const auto View = spell(Source, Dialect);
+    EXPECT_TRUE(has(View, "an anonymous structure or union")) << View.Text;
+    EXPECT_TRUE(has(View, "a member of an anonymous structure or union"));
+    EXPECT_TRUE(has(View, "a bit-field"));
+    EXPECT_NE(View.Text.find(Go ? "const Positive int32 = 1"
+                                : "const Positive: i32 = 1;"),
+              std::string::npos)
+        << View.Text;
+    EXPECT_NE(View.Text.find(Go ? "func kind(" : "unsafe fn kind("),
+              std::string::npos);
+    if (Go) {
+      EXPECT_TRUE(has(View, "a packed record"));
+      EXPECT_TRUE(has(View, "an aligned record"));
+    } else {
+      EXPECT_NE(View.Text.find("#[repr(C, packed(1))]\nstruct _PACKED {"),
+                std::string::npos);
+      EXPECT_NE(View.Text.find("#[repr(C, align(16))]\nstruct _ALIGNED {"),
+                std::string::npos);
+    }
+  }
+}
+
+TEST(SourceDialect, TheProgramsTypesSpellTheirRecordsAndTheirMembers) {
+  // Given the program's types as Rust or Go defines them, the view holds
+  // that text for the C that defines them, and reaches each member as the
+  // text names it: through the fields that hold anonymous records, and in
+  // Go through the methods that read a union's members and what Go cannot
+  // align.
+  constexpr const char *Source = R"C(#include <stdint.h>
+typedef struct _DPC _DPC;
+
+// 2 types, from the program's local types.
+#ifndef NEVERD_TYPE__DPC
+#define NEVERD_TYPE__DPC
+struct _DPC
+{
+    union
+    {
+        uint32_t TargetInfoAsUlong;
+        struct
+        {
+            uint8_t Type;
+            uint8_t Importance;
+            uint16_t Number;
+        };
+    };
+    uint32_t Ready : 1;
+    uint32_t Spare : 31;
+    void *Context;
+};
+#endif
+
+#pragma pack(push, 1)
+struct _PACKED
+{
+    uint8_t Tag;
+    uint32_t Value;
+    uint32_t Wide : 3;
+};
+#pragma pack(pop)
+
+uint32_t target(_DPC *Dpc, struct _PACKED *Packed) {
+    Dpc->Number = 2;
+    Packed->Value = Dpc->TargetInfoAsUlong;
+    return (uint32_t)Dpc->Type;
+}
+uint32_t ready(_DPC *Dpc) {
+    Dpc->Ready = 1;
+    Dpc->Spare |= 4;
+    Dpc->Spare++;
+    return Dpc->Ready + Dpc->Spare;
+}
+uint32_t wide(struct _PACKED *Packed) {
+    return Packed->Wide;
+}
+)C";
+  const llvm::StringRef C(Source);
+  const size_t Begin = C.find("// 2 types");
+  const size_t End = C.find("#pragma pack(pop)") + strlen("#pragma pack(pop)");
+  using Hop = SourceDialectLocalTypes::Hop;
+  for (SourceDialect Dialect : {SourceDialect::Rust, SourceDialect::Go}) {
+    const bool Go = Dialect == SourceDialect::Go;
+    SourceDialectLocalTypes Local;
+    Local.CBegin = Begin;
+    Local.CEnd = End;
+    Local.Text = Go ? "// The program's types, in Go.\n"
+                    : "// The program's types, in Rust.\n";
+    using Path = SourceDialectLocalTypes::Path;
+    const auto field = [](std::vector<Hop> Hops) {
+      Path P;
+      P.Hops = std::move(Hops);
+      return P;
+    };
+    Local.Members["_DPC"]["TargetInfoAsUlong"] =
+        field({{"Anonymous", false}, {"TargetInfoAsUlong", Go}});
+    Local.Members["_DPC"]["Type"] =
+        field({{"Anonymous", false}, {"Anonymous", Go}, {"Type", false}});
+    Local.Members["_DPC"]["Number"] =
+        field({{"Anonymous", false}, {"Anonymous", Go}, {"Number", false}});
+    Local.Members["_DPC"]["Context"] = field({Hop{"Context", false}});
+    Local.Members["_PACKED"]["Tag"] = field({Hop{"Tag", false}});
+    Local.Members["_PACKED"]["Value"] = field({Hop{"Value", Go}});
+    // A bit-field's methods belong to the record that holds its storage.
+    Local.Members["_DPC"]["Ready"] =
+        Path{{}, "Ready", Go ? "SetReady" : "set_Ready"};
+    Local.Members["_DPC"]["Spare"] =
+        Path{{}, "Spare", Go ? "SetSpare" : "set_Spare"};
+    SourceDialectOptions Opts;
+    Opts.Dialect = Dialect;
+    Opts.LocalTypes = Local;
+    const SourceDialectText View = spellInDialect(Source, Opts);
+    // The definitions are the given text, and nothing of them shows as C.
+    EXPECT_NE(View.Text.find(Local.Text), std::string::npos) << View.Text;
+    EXPECT_EQ(View.Text.find("struct _DPC"), std::string::npos);
+    EXPECT_EQ(View.Text.find("TYPE__DPC"), std::string::npos);
+    if (Go) {
+      EXPECT_NE(View.Text.find("Dpc.Anonymous.Anonymous().Number = 2"),
+                std::string::npos)
+          << View.Text;
+      EXPECT_NE(View.Text.find("*Packed.Value() = "
+                               "*Dpc.Anonymous.TargetInfoAsUlong()"),
+                std::string::npos);
+    } else {
+      EXPECT_NE(View.Text.find("(*Dpc).Anonymous.Anonymous.Number = 2;"),
+                std::string::npos)
+          << View.Text;
+      EXPECT_NE(View.Text.find("(*Packed).Value = "
+                               "(*Dpc).Anonymous.TargetInfoAsUlong;"),
+                std::string::npos);
+    }
+    // A bit-field reads through its getter and stores through its setter,
+    // which a compound assignment and an increment compute from the getter.
+    const std::string Semicolon = Go ? "" : ";";
+    const std::string Dpc = Go ? "Dpc" : "(*Dpc)";
+    const std::string Setter = Go ? ".SetSpare(" : ".set_Spare(";
+    EXPECT_NE(View.Text.find(Dpc + (Go ? ".SetReady(1)" : ".set_Ready(1)") +
+                             Semicolon),
+              std::string::npos)
+        << View.Text;
+    EXPECT_NE(View.Text.find(Dpc + Setter + Dpc + ".Spare() | 4)" + Semicolon),
+              std::string::npos);
+    EXPECT_NE(View.Text.find(Dpc + Setter + Dpc + ".Spare() + 1)" + Semicolon),
+              std::string::npos);
+    EXPECT_NE(View.Text.find(Dpc + ".Ready() + " + Dpc + ".Spare()"),
+              std::string::npos);
+    // One the program's types give no methods for shows as C.
+    EXPECT_TRUE(llvm::is_contained(
+        View.Unread, "a bit-field the program's types read through no methods"))
+        << View.Text;
+    EXPECT_EQ(View.Unread.size(), 1u);
+  }
+}
+
 TEST(SourceDialect, RustViewComputesWhatCComputes) {
   std::string Rustc;
   if (const char *FromEnv = std::getenv("NEVERD_TEST_RUSTC"))
@@ -1102,21 +1805,314 @@ TEST(SourceDialect, RustViewComputesWhatCComputes) {
       {"-O1", "-fwrapv", "-fno-strict-aliasing", "-o", CBinary.str(), CSource},
       Dir);
   ASSERT_TRUE(bool(CBuild)) << llvm::toString(CBuild.takeError());
-  auto RustBuild = run(Rustc,
-                       {"--edition=2021", "-O", "-C", "overflow-checks=off",
-                        "-o", RustBinary.str(), RustSource},
-                       Dir);
+  auto RustBuild = compileRust(Rustc, RustSource, RustBinary, Dir);
   ASSERT_TRUE(bool(RustBuild)) << llvm::toString(RustBuild.takeError()) << "\n"
                                << Rust.Text;
   auto CResult = run(CBinary, {}, Dir);
   auto RustResult = run(RustBinary, {}, Dir);
   ASSERT_TRUE(bool(CResult)) << llvm::toString(CResult.takeError());
   ASSERT_TRUE(bool(RustResult)) << llvm::toString(RustResult.takeError());
-  EXPECT_EQ(std::count(CResult->begin(), CResult->end(), '\n'), 32);
+  EXPECT_EQ(std::count(CResult->begin(), CResult->end(), '\n'), 33);
   // C's Windows text-mode stdout uses CRLF; Rust's stdout writes LF. Keep
   // the scalar results exact while comparing the same logical line endings.
   EXPECT_EQ(normalizeLineEndings(*RustResult), normalizeLineEndings(*CResult))
       << Rust.Text;
+  llvm::sys::fs::remove_directories(Dir);
+}
+
+/// C that reads and writes bit-fields of the program's types, and the views
+/// of it that read and write them through the methods Local Types' Rust and
+/// Go renderings give them, each with its definitions and a main that
+/// prints what the function returns and the record's bytes.
+struct BitFieldPrograms {
+  std::string C, Rust, Go;
+};
+
+BitFieldPrograms bitFieldPrograms(neverd::types::DataModel Model) {
+  using namespace neverd::types;
+  TypeLibrary Library(Model);
+  EXPECT_TRUE(parseCTypes(R"(
+    struct _FLAGS {
+      unsigned char Kind;
+      union {
+        struct {
+          unsigned int Ready : 1;
+          unsigned int Level : 3;
+          int Delta : 4;
+        };
+        unsigned int Raw;
+      };
+      unsigned long long Wide : 40;
+    };
+    struct _SHARED {
+      unsigned char Kind;
+      unsigned int Ready : 1;
+      unsigned int Level : 3;
+      int Delta : 4;
+      unsigned long long Wide : 40;
+      unsigned short Tail;
+    };
+  )",
+                          Library)
+                  .ok());
+  // Independently check the two native layouts before rendering the views:
+  // Itanium allocation shares Kind's unit, while Microsoft starts a new unit.
+  const LocalType *Flags = Library.find("_FLAGS");
+  const LocalType *Shared = Library.find("_SHARED");
+  EXPECT_NE(Flags, nullptr);
+  EXPECT_NE(Shared, nullptr);
+  if (!Flags || !Shared)
+    return {};
+  EXPECT_EQ(Shared->Record->Members[1].Name, "Ready");
+  const bool Microsoft = Library.recordABI() == RecordABI::Microsoft;
+  EXPECT_EQ(Shared->Record->Members[1].BitOffset, Microsoft ? 32u : 8u);
+  EXPECT_EQ(Shared->Record->Members[5].BitOffset, Microsoft ? 128u : 64u);
+  const LocalType *Roots[] = {Flags, Shared};
+  RenderOptions C;
+  C.Lang = Language::C;
+  C.Spelling = BuiltinSpelling::Portable;
+  C.Asserts = true;
+  const EmbeddedC Definitions = renderEmbeddedC(Library, Roots, C);
+  const std::string Code = R"(uint32_t update(struct _FLAGS *F) {
+    F->Ready = 1;
+    F->Level |= 5;
+    F->Level++;
+    F->Delta = -3;
+    F->Delta -= 2;
+    F->Wide = 0x123456789A;
+    F->Wide += 0x10;
+    return F->Ready + F->Level * 16 + (uint32_t)F->Delta * 256 + (uint32_t)F->Wide;
+}
+uint32_t share(struct _SHARED *S) {
+    S->Kind = 7;
+    S->Ready = 1;
+    S->Level |= 5;
+    S->Delta = -3;
+    S->Wide = 0x123456789A;
+    S->Wide += 0x10;
+    S->Tail = 0xBEEF;
+    return S->Ready + S->Level * 16 + (uint32_t)S->Delta * 256 + (uint32_t)S->Wide + S->Tail;
+}
+)";
+  const std::string Unit =
+      "#include <stdint.h>\n" + Definitions.Text + "\n" + Code;
+  BitFieldPrograms Programs;
+  Programs.C = Unit + R"(#include <stdio.h>
+#include <string.h>
+int main(void) {
+    struct _FLAGS f;
+    memset(&f, 0, sizeof f);
+    printf("%u\n", update(&f));
+    const unsigned char *bytes = (const unsigned char *)&f;
+    for (unsigned i = 0; i < sizeof f; ++i)
+        printf("%u\n", bytes[i]);
+    struct _SHARED s;
+    memset(&s, 0, sizeof s);
+    printf("%u\n", share(&s));
+    bytes = (const unsigned char *)&s;
+    for (unsigned i = 0; i < sizeof s; ++i)
+        printf("%u\n", bytes[i]);
+    return 0;
+}
+)";
+  for (SourceDialect Dialect : {SourceDialect::Rust, SourceDialect::Go}) {
+    const bool Go = Dialect == SourceDialect::Go;
+    RenderOptions Options;
+    Options.Lang = Go ? Language::Go : Language::Rust;
+    Options.Spelling = BuiltinSpelling::Portable;
+    Options.Asserts = true;
+    const EmbeddedSource Embedded =
+        renderEmbeddedSource(Library, Roots, {}, Options);
+    SourceDialectLocalTypes Local;
+    Local.CBegin = Unit.find(Definitions.Text);
+    Local.CEnd = Local.CBegin + Definitions.Text.size();
+    Local.Text = Embedded.Text;
+    for (const auto &[Record, Members] : Embedded.Members)
+      for (const auto &[Name, Path] : Members) {
+        SourceDialectLocalTypes::Path &To = Local.Members[Record][Name];
+        for (const MemberPath::Hop &Hop : Path.Hops)
+          To.Hops.push_back({Hop.Name, Hop.Accessor});
+        To.Getter = Path.Getter;
+        To.Setter = Path.Setter;
+      }
+    SourceDialectOptions Opts;
+    Opts.Dialect = Dialect;
+    Opts.Format = Microsoft ? BinaryFormat::COFF : BinaryFormat::ELF;
+    Opts.LocalTypes = Local;
+    const SourceDialectText View = spellInDialect(Unit, Opts);
+    EXPECT_TRUE(View.Unread.empty())
+        << (View.Unread.empty() ? "" : View.Unread.front()) << View.Text;
+    if (Go)
+      Programs.Go = "package main\n\nimport (\n\t\"fmt\"\n\t\"unsafe\"\n)\n\n" +
+                    View.Text + R"(
+func main() {
+	// Go zeroes a variable's fields, which may leave its padding as the
+	// stack had it; C's memset zeroes every byte.
+	var f _FLAGS
+	bytes := (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))
+	for i := range bytes {
+		bytes[i] = 0
+	}
+	fmt.Println(update(&f))
+	for _, b := range bytes {
+		fmt.Println(b)
+	}
+	var s _SHARED
+	shared := (*[unsafe.Sizeof(s)]byte)(unsafe.Pointer(&s))
+	for i := range shared {
+		shared[i] = 0
+	}
+	fmt.Println(share(&s))
+	for _, b := range shared {
+		fmt.Println(b)
+	}
+}
+)";
+    else
+      Programs.Rust =
+          "#![allow(unused, non_snake_case, non_camel_case_types, "
+          "unused_mut, unused_parens, unused_unsafe, unused_assignments)]\n" +
+          View.Text + R"(
+fn main() {
+    let mut f: _FLAGS = unsafe { core::mem::zeroed() };
+    println!("{}", unsafe { update(&mut f) });
+    let bytes = unsafe {
+        core::slice::from_raw_parts(&f as *const _FLAGS as *const u8,
+                                    core::mem::size_of::<_FLAGS>())
+    };
+    for b in bytes {
+        println!("{}", b);
+    }
+    let mut s: _SHARED = unsafe { core::mem::zeroed() };
+    println!("{}", unsafe { share(&mut s) });
+    let shared = unsafe {
+        core::slice::from_raw_parts(&s as *const _SHARED as *const u8,
+                                    core::mem::size_of::<_SHARED>())
+    };
+    for b in shared {
+        println!("{}", b);
+    }
+}
+)";
+  }
+  return Programs;
+}
+
+TEST(SourceDialect, BitFieldViewsReadBothRecordABIs) {
+  // Read the actual generated declarations on every host. The native C
+  // execution below separately checks the ABI of the executing compiler.
+  for (auto Model :
+       {neverd::types::DataModel::LP64, neverd::types::DataModel::LLP64}) {
+    SCOPED_TRACE(static_cast<int>(Model));
+    const BitFieldPrograms Programs = bitFieldPrograms(Model);
+    ASSERT_FALSE(Programs.C.empty());
+    EXPECT_NE(Programs.Rust.find("fn update("), std::string::npos);
+    EXPECT_NE(Programs.Go.find("func update("), std::string::npos);
+    EXPECT_EQ(Programs.Rust.find("uint32_t update("), std::string::npos);
+    EXPECT_EQ(Programs.Go.find("uint32_t update("), std::string::npos);
+  }
+}
+
+TEST(SourceDialect, MicrosoftRecordMarkersKeepTagsAndAlignment) {
+  constexpr llvm::StringLiteral C = R"(
+struct DECLSPEC_ALIGN(16) NEVERD_MS_STRUCT _ALIGNED {
+  unsigned int Ready : 1;
+  unsigned int Spare : 31;
+};
+union NEVERD_MS_STRUCT _UNION {
+  unsigned int Ready : 1;
+  unsigned int Raw;
+};
+unsigned int aligned(struct _ALIGNED *p) { return p->Ready; }
+unsigned int raw(union _UNION *p) { return p->Raw; }
+)";
+  const auto View = spell(C, SourceDialect::C);
+  ASSERT_TRUE(View.Unread.empty()) << View.Text;
+  EXPECT_EQ(tokens(View.Text), tokens(C));
+  // Unknown layout macros must still fail, rather than being skipped as if
+  // every identifier between a record keyword and its tag were an attribute.
+  const auto Unknown = spell("struct NEVERD_MS_STRUCT_OTHER _FLAGS { "
+                             "unsigned int Ready : 1; };\n"
+                             "int read(struct _FLAGS *p) { return p->Ready; }",
+                             SourceDialect::C);
+  EXPECT_FALSE(Unknown.Unread.empty());
+}
+
+TEST(SourceDialect, BitFieldsOfTheProgramsTypesComputeWhatCComputes) {
+  const std::string Clang = NEVERD_TEST_CLANG;
+  if (Clang.empty())
+    GTEST_SKIP() << "no clang: the C side is not executed";
+  std::string Rustc, GoCompiler;
+  if (const char *FromEnv = std::getenv("NEVERD_TEST_RUSTC"))
+    Rustc = FromEnv;
+  else if (auto Found = llvm::sys::findProgramByName("rustc"))
+    Rustc = *Found;
+  if (const char *FromEnv = std::getenv("NEVERD_TEST_GO"))
+    GoCompiler = FromEnv;
+  else if (auto Found = llvm::sys::findProgramByName("go"))
+    GoCompiler = *Found;
+  if (Rustc.empty() && GoCompiler.empty())
+    GTEST_SKIP() << "no rustc or go: the views' meaning is not executed";
+  // Match the actual native C compiler without overriding its record ABI.
+#if defined(_WIN32)
+  const BitFieldPrograms Programs =
+      bitFieldPrograms(neverd::types::DataModel::LLP64);
+#else
+  const BitFieldPrograms Programs =
+      bitFieldPrograms(neverd::types::DataModel::LP64);
+#endif
+  ASSERT_FALSE(Programs.C.empty());
+
+  llvm::SmallString<128> Dir;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-bit-fields", Dir));
+  auto Write = [&](llvm::StringRef Name, llvm::StringRef Text) {
+    llvm::SmallString<128> Path(Dir);
+    llvm::sys::path::append(Path, Name);
+    std::error_code EC;
+    llvm::raw_fd_ostream OS(Path, EC);
+    EXPECT_FALSE(EC) << Path.str().str();
+    OS << Text;
+    return std::string(Path);
+  };
+  llvm::SmallString<128> CBinary(Dir);
+  llvm::sys::path::append(CBinary, "c.out");
+  auto CBuild = run(
+      Clang,
+      {"-O1", "-fwrapv", "-o", CBinary.str(), Write("program.c", Programs.C)},
+      Dir);
+  ASSERT_TRUE(bool(CBuild)) << llvm::toString(CBuild.takeError());
+  auto CResult = run(CBinary, {}, Dir);
+  ASSERT_TRUE(bool(CResult)) << llvm::toString(CResult.takeError());
+  if (!Rustc.empty()) {
+    llvm::SmallString<128> RustBinary(Dir);
+    llvm::sys::path::append(RustBinary, "rust.out");
+    auto Build =
+        compileRust(Rustc, Write("program.rs", Programs.Rust), RustBinary, Dir);
+    ASSERT_TRUE(bool(Build)) << llvm::toString(Build.takeError()) << "\n"
+                             << Programs.Rust;
+    auto Result = run(RustBinary, {}, Dir);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    EXPECT_EQ(normalizeLineEndings(*Result), normalizeLineEndings(*CResult))
+        << Programs.Rust;
+  }
+  if (!GoCompiler.empty()) {
+    llvm::SmallString<128> Module(Dir);
+    llvm::sys::path::append(Module, "go");
+    ASSERT_FALSE(llvm::sys::fs::create_directory(Module));
+    Write("go/go.mod", "module bits\n\ngo 1.22\n");
+    Write("go/main.go", Programs.Go);
+    llvm::SmallString<128> GoBinary(Dir);
+    llvm::sys::path::append(GoBinary, "go.out");
+    auto Build =
+        run(GoCompiler,
+            {"build", "-C", Module.str(), "-o", GoBinary.str(), "."}, Module);
+    ASSERT_TRUE(bool(Build)) << llvm::toString(Build.takeError()) << "\n"
+                             << Programs.Go;
+    auto Result = run(GoBinary, {}, Dir);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    EXPECT_EQ(normalizeLineEndings(*Result), normalizeLineEndings(*CResult))
+        << Programs.Go;
+  }
   llvm::sys::fs::remove_directories(Dir);
 }
 
@@ -1151,6 +2147,14 @@ int32_t loop_sum(int32_t n) {
     }
     return s;
 }
+int64_t through_copy(int64_t v) { return *&(int64_t){v + 1} + v; }
+int32_t typeof_once(int64_t value) {
+    uint16_t narrow = 0;
+    uint16_t *cursor = &narrow;
+    narrow = (__typeof__(*(cursor++)))(value);
+    if (cursor != &narrow) { return -100000; }
+    return narrow;
+}
 )C";
   const char *Calls[] = {"promote(200, 100)",
                          "promote(255, 255)",
@@ -1163,7 +2167,9 @@ int32_t loop_sum(int32_t n) {
                          "loop_sum(0)",
                          "loop_sum(1)",
                          "loop_sum(8)",
-                         "loop_sum(100)"};
+                         "loop_sum(100)",
+                         "through_copy(20)",
+                         "typeof_once(65537)"};
   SourceDialectText Go = spell(C, SourceDialect::Go);
   ASSERT_TRUE(Go.Unread.empty()) << Go.Text;
   std::string CSource =
@@ -1205,7 +2211,7 @@ int32_t loop_sum(int32_t n) {
   ASSERT_TRUE(bool(CResult)) << llvm::toString(CResult.takeError());
   ASSERT_TRUE(bool(GoResult)) << llvm::toString(GoResult.takeError());
   EXPECT_EQ(normalizeLineEndings(*CResult),
-            "300\n510\n44\n254\n0\n1\n-128\n128\n0\n1\n36\n5050\n");
+            "300\n510\n44\n254\n0\n1\n-128\n128\n0\n1\n36\n5050\n41\n1\n");
   EXPECT_EQ(normalizeLineEndings(*GoResult), normalizeLineEndings(*CResult))
       << Go.Text;
   llvm::sys::fs::remove_directories(Dir);

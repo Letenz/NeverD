@@ -11,9 +11,14 @@
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/COFF/PESignaturePolicy.h"
 #include "neverd/backend/codegen/ELF/ELFSourceSymbols.h"
+#include "neverd/backend/codegen/MachO/MachOLayoutGrowth.h"
 #include "neverd/backend/codegen/MachO/MachOSignaturePolicy.h"
 #include "neverd/backend/codegen/MachO/MachOSigner.h"
+#include "neverd/backend/codegen/PatchObject.h"
+#include "neverd/backend/codegen/SourcePatchPreparation.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/loader/FunctionDiscovery.h"
+#include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/loader/MachO/MachOARM32Mode.h"
 #include "neverd/support/TargetCodegenInfo.h"
 
@@ -21,6 +26,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Support/Errc.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
@@ -117,6 +123,10 @@ llvm::Expected<va_t> legacyTarget(llvm::StringRef Name,
 } // namespace
 
 llvm::Expected<std::string> sourcePatchTargetTriple(const BinaryImage &Image) {
+  if (Image.MachOSharedCache)
+    return patchError(macho_loader::cache_load::kSourceUnsupported);
+  if (Image.isArm64e())
+    return patchError(kArm64eSourceReplacementUnsupported);
   const char *Default = llvmCodegenTriple(Image.Arch, Image.Format);
   if (!Default)
     return patchError("unsupported native target");
@@ -222,10 +232,50 @@ bindSourcePatch(llvm::Module &Module, const BinaryImage &Image,
     if (It == Mappings.end() || It->OriginalVA != **Existing)
       return patchError("incoming source identity conflicts with request");
   }
+  if (Image.Format == BinaryFormat::MachO && Image.Arch == Arch::ARM) {
+    auto Target = sourcePatchTargetTriple(Image);
+    if (!Target)
+      return Target.takeError();
+    if (llvm::Triple(*Target).isWatchABI())
+      for (auto &F : Module)
+        if (!F.isDeclaration())
+          F.addFnAttr("frame-pointer", "all");
+  }
   for (const SourcePatchMapping &Mapping : Mappings)
     rewrite_source::setOriginalVA(*Module.getFunction(Mapping.Symbol),
                                   Mapping.OriginalVA);
   return Mappings;
+}
+
+llvm::Error validateInstalledSourcePatchSection(const BinaryImage &Final,
+                                                const CompiledImage &Image,
+                                                const CompiledSection &S) {
+  if (!S.IsAllocated || !S.Size)
+    return llvm::Error::success();
+  auto Fail = [&] {
+    return llvm::createStringError(
+        llvm::errc::not_supported,
+        "source patch: final section bytes, extent, or permissions changed: " +
+            S.Name);
+  };
+  const auto *Owner = Final.getSegmentFor(S.VA);
+  using Kind = llvm::mc_rewrite::RewriteSectionKind;
+  const bool Write =
+      S.Kind == Kind::WritableData || S.Kind == Kind::UninitializedData;
+  if (!Owner || !Owner->isReadable() ||
+      !rangeInBounds(S.VA - Owner->VA, S.Size, Owner->Size) ||
+      Owner->isWritable() != Write || (Write && Owner->isExecutable()) ||
+      (S.Kind == Kind::Code && !Owner->isExecutable()))
+    return Fail();
+  if (S.IsInImage ? !rangeInBounds(S.Offset, S.Size, Image.Bytes.size())
+                  : S.ExternalBytes.size() != S.Size)
+    return Fail();
+  const uint8_t *Expected =
+      S.IsInImage ? Image.Bytes.data() + S.Offset : S.ExternalBytes.data();
+  const auto *Actual = Final.readVA(S.VA, S.Size);
+  if (!Actual || !std::equal(Expected, Expected + S.Size, Actual))
+    return Fail();
+  return llvm::Error::success();
 }
 
 llvm::Expected<PatchResult> publishSourcePatch(
@@ -234,7 +284,9 @@ llvm::Expected<PatchResult> publishSourcePatch(
     llvm::function_ref<llvm::Expected<PatchResult>(
         const std::filesystem::path &, const std::filesystem::path &)>
         Install,
-    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt) {
+    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt,
+    const SourcePatchPreparation *Preparation,
+    llvm::function_ref<llvm::Error(const BinaryImage &)> VerifyCandidate) {
   if (Mappings.empty() || Image.Raw.empty())
     return patchError(
         "bound targets and a complete input snapshot are required");
@@ -286,7 +338,12 @@ llvm::Expected<PatchResult> publishSourcePatch(
   });
   const auto Input = TempDir / "input";
   const auto Candidate = TempDir / "candidate";
-  if (auto Error = writeBytes(Input, Image.Raw))
+  if (Preparation)
+    if (auto Error = verifySourcePatchPreparation(Image, *Preparation,
+                                                  Preparation->Image))
+      return Error;
+  if (auto Error =
+          writeBytes(Input, Preparation ? Preparation->Image.Raw : Image.Raw))
     return std::move(Error);
   auto Installed = Install(Input, Candidate);
   if (!Installed)
@@ -308,6 +365,22 @@ llvm::Expected<PatchResult> publishSourcePatch(
     if (Count != 1)
       return patchError("missing exact installation receipt: " +
                         Mapping.Symbol);
+  }
+
+  if (Image.isMachO()) {
+    std::vector<uint8_t> Raw;
+    {
+      auto File = llvm::MemoryBuffer::getFile(Candidate.string());
+      if (!File)
+        return patchError("cannot read native segment candidate");
+      const auto Buffer = (*File)->getBuffer();
+      Raw.assign(Buffer.bytes_begin(), Buffer.bytes_end());
+    }
+    // Release any file mapping before truncating the candidate on Windows.
+    if (auto E = completeMachOChainedSegmentTable(Raw, Image.Arch))
+      return E;
+    if (auto E = writeBytes(Candidate, Raw))
+      return E;
   }
 
   if (Signature) {
@@ -337,7 +410,16 @@ llvm::Expected<PatchResult> publishSourcePatch(
     const uint64_t Size = Target.sourceTrampolineSize();
     const uint64_t Offset = Reloaded->vaToFileOffset(Installed.OriginalVA);
     std::vector<uint8_t> Expected(Size);
-    if (!Reloaded->isCodeAddress(Installed.OwnerVA))
+    const auto *OwnerSegment = Reloaded->getSegmentFor(Installed.OwnerVA);
+    const auto *OwnerFrame =
+        Reloaded->ExceptionMetadata.findFunction(Installed.OwnerVA);
+    const bool UnsectionedMachOCode =
+        Reloaded->isMachO() && !Reloaded->getSectionFor(Installed.OwnerVA) &&
+        OwnerSegment && OwnerSegment->isExecutable() &&
+        !OwnerSegment->isWritable() && OwnerFrame &&
+        OwnerFrame->CodeRange.Begin == Installed.OwnerVA &&
+        OwnerFrame->ParseStatus == ExceptionParseStatus::Complete;
+    if (!Reloaded->isCodeAddress(Installed.OwnerVA) && !UnsectionedMachOCode)
       return patchError("installed owner is not executable in candidate: 0x" +
                         llvm::utohexstr(Installed.OwnerVA));
     if (!rangeInBounds(Offset, Size, Reloaded->Raw.size()))
@@ -350,6 +432,20 @@ llvm::Expected<PatchResult> publishSourcePatch(
       return patchError(
           "candidate entry does not match its installation receipt");
   }
+
+  if (Preparation) {
+    if (auto Error =
+            verifySourcePatchPreparation(Image, *Preparation, *Reloaded))
+      return Error;
+    for (const auto &Callback : Preparation->Callbacks)
+      Result.OriginalCallbacks.push_back(
+          {Callback.Symbol, Callback.Prefix.OriginalVA,
+           Callback.Prefix.CallbackVA, Callback.Prefix.CopiedSize});
+  }
+
+  if (VerifyCandidate)
+    if (auto Error = VerifyCandidate(*Reloaded))
+      return Error;
 
   // Same-filesystem hard-link publication is atomic and refuses an existing
   // destination, including a dangling symlink. Cleanup unlinks only staging.
@@ -367,7 +463,8 @@ llvm::Expected<PatchResult> installSourcePatch(
     llvm::Module &Module, const BinaryImage &Image,
     llvm::ArrayRef<SourcePatchMapping> Mappings,
     const std::filesystem::path &OutputPath, llvm::StringRef TextSection,
-    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt) {
+    llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt,
+    const SourcePatchPreparation *Preparation) {
   // Each admitted format must install persistent state in writable storage.
   // Address initializers additionally need load-time relocation registration;
   // until that contract is installed, never freeze an ASLR-sensitive pointer.
@@ -397,6 +494,22 @@ llvm::Expected<PatchResult> installSourcePatch(
           Global.getName());
   }
 
+  if (Image.isMachO() && Preparation && !Preparation->Imports.empty()) {
+    if (auto E = validateTarget(Module, Image))
+      return E;
+    Codegen Generator;
+    // Native indirect-symbol directives must survive emission. MC rewrite's
+    // raw section stream is insufficient for Mach-O's non-lazy pointer tables.
+    auto Object = Generator.compile(Module, Image.Arch, Image.Format,
+                                    Module.getTargetTriple().str());
+    if (!Object.Success || Object.ObjectData.empty())
+      return patchError("native dependency object emission failed");
+    return installObjectPatch(llvm::StringRef(reinterpret_cast<const char *>(
+                                                  Object.ObjectData.data()),
+                                              Object.ObjectData.size()),
+                              Image, Mappings, Preparation->Bindings,
+                              OutputPath, PrepareReceipt, nullptr, Preparation);
+  }
   return publishSourcePatch(
       Image, Mappings, OutputPath,
       [&](const std::filesystem::path &Input,
@@ -405,7 +518,7 @@ llvm::Expected<PatchResult> installSourcePatch(
         auto Patcher = BinaryPatcher::create(Image.Format);
         if (!Patcher)
           return patchError("unsupported binary format");
-        BinaryImage ReferenceImage = Image;
+        BinaryImage ReferenceImage = Preparation ? Preparation->Image : Image;
         if (ReferenceImage.isELF() ||
             ReferenceImage.Format == BinaryFormat::COFF)
           scanImportThunks(ReferenceImage);
@@ -416,7 +529,7 @@ llvm::Expected<PatchResult> installSourcePatch(
             Patcher->patch(Input, Candidate, Module, Image.Arch);
         return Result;
       },
-      PrepareReceipt);
+      PrepareReceipt, Preparation);
 }
 
 } // namespace neverd

@@ -232,6 +232,39 @@ TEST(HighEntryStackOffsets, UnknownConflictingAndUnanchoredPathsStayUnknown) {
   }
 }
 
+TEST(HighEntryStackOffsets, CallOffsetsAfterOneUnknownJoinKeepTheirDistances) {
+  Fixture F;
+  const auto First = F.add(1, F.SP, -16);
+  const auto Second = F.add(2, F.SP, -32);
+  const auto Join = F.phi(3, {First, Second});
+  const auto EarlierPush = F.add(4, Join, 8, true);
+  const auto CallSP = F.add(5, EarlierPush, 8, true);
+  const auto OtherJoin = F.phi(6, {First, Second});
+  HighEntryStackOffsets Offsets(F.Function, F.Architecture);
+  EXPECT_FALSE(Offsets.offset(CallSP));
+  EXPECT_FALSE(Offsets.offsetFrom(EarlierPush, CallSP));
+  EXPECT_EQ(Offsets.callOffsetFrom(EarlierPush, CallSP), 8);
+  EXPECT_EQ(Offsets.callOffsetFrom(CallSP, CallSP), 0);
+  EXPECT_EQ(Offsets.callOffsetFrom(Join, CallSP), 16);
+  EXPECT_FALSE(Offsets.callOffsetFrom(OtherJoin, CallSP));
+  EXPECT_FALSE(Offsets.offset(Join));
+}
+
+TEST(HighEntryStackOffsets, RelativeJoinOffsetsRejectNarrowingAndOverflow) {
+  Fixture F;
+  const auto Join = F.phi(3, {F.add(1, F.SP, -16), F.add(2, F.SP, -32)});
+  const auto Push = F.add(4, Join, 8, true);
+  const auto Narrow = F.copy(5, Join, 4);
+  const auto Widened = F.copy(6, Narrow, 8, NdOp::INT_ZEXT);
+  const auto Boundary = F.add(7, Join, std::numeric_limits<int64_t>::max());
+  const auto Overflow = F.add(8, Boundary, 1);
+  const auto Cancelled = F.add(9, Overflow, -1);
+  HighEntryStackOffsets Offsets(F.Function, F.Architecture);
+  EXPECT_FALSE(Offsets.callOffsetFrom(Widened, Push));
+  EXPECT_FALSE(Offsets.callOffsetFrom(Cancelled, Boundary));
+  EXPECT_FALSE(Offsets.callOffsetFrom(Join, F.value(99)));
+}
+
 TEST(HighEntryStackOffsets, CheckedIntermediateOverflowCannotBeCancelled) {
   constexpr int64_t Max = std::numeric_limits<int64_t>::max();
   constexpr int64_t Min = std::numeric_limits<int64_t>::min();

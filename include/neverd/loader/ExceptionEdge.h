@@ -17,7 +17,14 @@
 
 #include "neverd/Common.h"
 
+#include <algorithm>
+#include <array>
+#include <compare>
 #include <cstdint>
+#include <memory>
+#include <span>
+#include <tuple>
+#include <vector>
 
 namespace neverd {
 
@@ -83,6 +90,34 @@ inline const char *getExceptionalEdgeKindName(ExceptionalEdgeKind Kind) {
   return "unknown";
 }
 
+/// The table region and originating state that permit one exceptional transfer.
+/// These values are correlated: separate sets of regions and states would also
+/// admit pairs that the original state graph never contained.
+struct ExceptionalEdgeContext {
+  uint32_t RegionIndex = 0;
+  int32_t State = -1;
+  auto operator<=>(const ExceptionalEdgeContext &) const = default;
+};
+
+/// An owning, immutable set of exact contexts shared by edges with the same
+/// destination. Its digest binds every pair once for snapshot consumers; it is
+/// not an admission proof. Construction rejects an empty set and canonicalizes
+/// order and duplicates. Producers must budget the construction work.
+class ExceptionalEdgeContextDomain {
+public:
+  explicit ExceptionalEdgeContextDomain(
+      std::vector<ExceptionalEdgeContext> Contexts);
+  ExceptionalEdgeContextDomain(const ExceptionalEdgeContextDomain &) = default;
+  ExceptionalEdgeContextDomain &
+  operator=(const ExceptionalEdgeContextDomain &) = delete;
+  std::span<const ExceptionalEdgeContext> values() const { return Values; }
+  const std::array<uint8_t, 32> &digest() const { return Digest; }
+
+private:
+  std::vector<ExceptionalEdgeContext> Values;
+  std::array<uint8_t, 32> Digest;
+};
+
 /// IR-level exceptional transfer kept separate from ordinary CFG edges.  In a
 /// successor list BlockId is the target block; in a predecessor list it is the
 /// source block.  A value of -1 denotes a valid target outside the current
@@ -91,16 +126,49 @@ struct ExceptionalEdge {
   int BlockId = -1;
   va_t TargetVA = 0;
   ExceptionalEdgeKind Kind = ExceptionalEdgeKind::Unknown;
-  uint32_t RegionIndex = 0;
-  int32_t State = -1;
+  /// Inline storage for a single context. Read contexts() instead: a shared
+  /// domain, when present, is the complete authority for this edge.
+  ExceptionalEdgeContext ExplicitContext;
   /// Exact throwing instruction for synchronous edges. InvalidVA denotes a
   /// protected range, whose register state cannot be sampled at one call.
   va_t SourceVA = InvalidVA;
+  std::shared_ptr<const ExceptionalEdgeContextDomain> SharedContexts;
+
+  ExceptionalEdge() = default;
+  ExceptionalEdge(int Block, va_t Target,
+                  ExceptionalEdgeKind EdgeKind = ExceptionalEdgeKind::Unknown,
+                  uint32_t Region = 0, int32_t State = -1,
+                  va_t Source = InvalidVA)
+      : BlockId(Block), TargetVA(Target), Kind(EdgeKind),
+        ExplicitContext{Region, State}, SourceVA(Source) {}
+
+  std::span<const ExceptionalEdgeContext> contexts() const {
+    return SharedContexts ? SharedContexts->values()
+                          : std::span(&ExplicitContext, 1);
+  }
+
+  /// Exact singleton consumers must refuse a domain with several contexts.
+  const ExceptionalEdgeContext *singleContext() const {
+    const auto Values = contexts();
+    return Values.size() == 1 ? Values.data() : nullptr;
+  }
 
   bool operator==(const ExceptionalEdge &Other) const {
     return BlockId == Other.BlockId && TargetVA == Other.TargetVA &&
-           Kind == Other.Kind && RegionIndex == Other.RegionIndex &&
-           State == Other.State && SourceVA == Other.SourceVA;
+           Kind == Other.Kind && SourceVA == Other.SourceVA &&
+           ((SharedContexts && SharedContexts == Other.SharedContexts) ||
+            std::ranges::equal(contexts(), Other.contexts()));
+  }
+
+  bool operator<(const ExceptionalEdge &Other) const {
+    const auto Key = std::tie(BlockId, TargetVA, Kind, SourceVA);
+    const auto OtherKey =
+        std::tie(Other.BlockId, Other.TargetVA, Other.Kind, Other.SourceVA);
+    if (Key != OtherKey)
+      return Key < OtherKey;
+    if (SharedContexts && SharedContexts == Other.SharedContexts)
+      return false;
+    return std::ranges::lexicographical_compare(contexts(), Other.contexts());
   }
 };
 

@@ -38,7 +38,8 @@ llvm::Expected<PatchResult> installObjectPatch(
     llvm::ArrayRef<SourcePatchBinding> Bindings,
     const std::filesystem::path &Output,
     llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt = {},
-    const DynCodePatchEvidence *DynCode = nullptr);
+    const DynCodePatchEvidence *DynCode = nullptr,
+    const SourcePatchPreparation *Preparation = nullptr);
 
 /// Format-owned native COFF parser and installer. Uses COFF auxiliary/section
 /// extents and native relocations, independently of MC rewrite provenance.
@@ -48,7 +49,8 @@ llvm::Expected<PatchResult> installCOFFObjectPatch(
     llvm::ArrayRef<SourcePatchBinding> Bindings,
     const std::filesystem::path &Output,
     llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt,
-    const DynCodePatchEvidence *DynCode = nullptr);
+    const DynCodePatchEvidence *DynCode = nullptr,
+    const SourcePatchPreparation *Preparation = nullptr);
 
 llvm::Expected<PatchResult> installMachOObjectPatch(
     llvm::StringRef Object, const BinaryImage &Original,
@@ -56,7 +58,8 @@ llvm::Expected<PatchResult> installMachOObjectPatch(
     llvm::ArrayRef<SourcePatchBinding> Bindings,
     const std::filesystem::path &Output,
     llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt,
-    const DynCodePatchEvidence *DynCode = nullptr);
+    const DynCodePatchEvidence *DynCode = nullptr,
+    const SourcePatchPreparation *Preparation = nullptr);
 
 } // namespace neverd
 

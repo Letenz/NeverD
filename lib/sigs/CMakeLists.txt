@@ -3,10 +3,16 @@ add_neverd_component_library(NeverDSigs
   LibraryRecognition.cpp
   LibraryByteRecognition.cpp
   PatternGenerator.cpp
+  VTableEvidence.cpp
+  RuntimePointerEvidence.cpp
   PatternParser.cpp
   SignatureCache.cpp
   SignatureDB.cpp
+  SignatureDataContext.cpp
+  SignatureVTableContext.cpp
+  SignatureRuntimePointerContext.cpp
   SignatureMatcher.cpp
+  X86/X86ReferenceBoundary.cpp
 
   LINK_COMPONENTS
   Loader

@@ -16,6 +16,10 @@ namespace neverd::emulation::linux_model {
 #undef NEVERD_LINUX_DIAGNOSTIC
 #undef NEVERD_LINUX_VALUE
 
+inline std::string procProcessPath() {
+  return "/proc/" + std::to_string(ProcessID);
+}
+
 inline llvm::Error failure(const char *Text) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(), Text);
 }
@@ -33,11 +37,40 @@ struct MemoryLayout {
 /// Explicit OS-owned thread identity. The caller consumes Exit after a
 /// nonreturning SYS_exit; exit_group still terminates the whole process.
 /// An absent context retains the Linux single-thread workload contract.
+struct ProcTask {
+  uint32_t ID;
+  char State; // R: runnable, S: cooperative wait, Z: exited group leader.
+};
+/// A suspended kernel operation retains its copied inputs in the kernel owner.
+/// The scheduler only asks when to run it and completes the original trap.
+class KernelWait {
+public:
+  virtual ~KernelWait() = default;
+  virtual bool ready() const = 0;
+  virtual std::optional<uint64_t> nextWake() const = 0;
+  virtual llvm::Expected<std::optional<uint64_t>>
+  resume(ProcessResult &Result) = 0;
+  /// A zero-progress operation may request re-entry at the original trap.
+  /// The old wait is released before the handler; re-entry imports the restored
+  /// registers and looks up descriptors again, rather than resuming stale
+  /// state.
+  virtual bool restartOnSignal(const LinuxSignalAction &) const {
+    return false;
+  }
+  /// Only the operation owner can decide whether/how a caught signal ends a
+  /// wait. Unsupported restart/copy-out contracts must not become EINTR.
+  virtual llvm::Expected<std::optional<uint64_t>>
+  interrupt(ProcessResult &Result) {
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic = SignalWaitUnsupported;
+    return std::optional<uint64_t>();
+  }
+};
 struct ThreadContext {
   uint64_t ID = ThreadID;
   std::optional<uint64_t> Exit;
   /// Consumed by the scheduler before another service can run on this thread.
-  std::optional<uint64_t> SleepDeadline;
+  std::unique_ptr<KernelWait> Pending;
 };
 struct ServiceABI {
   ServiceRequestKind Trap;

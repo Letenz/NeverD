@@ -36,7 +36,8 @@ struct Harness {
 
   void reply(int index, QJsonObject payload = {}, QString revision = "1",
              QString project = "project-one", QString status = "ok",
-             QString code = {}, QString analysisState = {}) {
+             QString code = {}, QString analysisState = {},
+             QJsonObject background = {}, QString backgroundSequence = {}) {
     const auto request = sent.at(index);
     QJsonObject response{
         {"protocol_major", 1},      {"type", "response"},
@@ -47,6 +48,10 @@ struct Harness {
       response["error"] = QJsonObject{{"code", code}, {"message", code}};
     if (!analysisState.isEmpty())
       response["analysis_state"] = analysisState;
+    if (!background.isEmpty()) {
+      response["background"] = background;
+      response["background_sequence"] = backgroundSequence;
+    }
     service.receive(response);
   }
 };
@@ -94,6 +99,150 @@ class QueryServiceTests final : public QObject {
   }
 
 private slots:
+  void sectionEditsInvalidateCachedCodeAndAnalysis() {
+    Harness h;
+    establish(h);
+    h.service.subscribe(text(), &h.owner, {});
+    QTRY_COMPARE(h.sent.size(), 1);
+    h.reply(0, {{"text", "original"}}, "1", "project-one", "ok", {},
+            "complete");
+    QTRY_VERIFY(!h.service.hasPending());
+    QVERIFY(h.service.analysisComplete());
+    const auto epoch = h.service.sessionEpoch();
+    for (const QString operation : {QString("analysis_section_add"),
+                                    QString("analysis_section_remove")}) {
+      const int index = h.sent.size();
+      QVERIFY(h.service.enqueueCommand(operation, {}, &h.owner, {}));
+      QTRY_COMPARE(h.sent.size(), index + 1);
+      h.reply(index, {}, QString::number(index + 2), "project-one", "ok", {},
+              "not_analyzed");
+      QTRY_VERIFY(!h.service.hasPending());
+      QVERIFY(!h.service.analysisComplete());
+      QCOMPARE(h.service.sessionEpoch(), epoch);
+      h.service.subscribe(text(), &h.owner, {});
+      QTRY_COMPARE(h.sent.size(), index + 2);
+      h.reply(index + 1, {{"text", "changed"}}, QString::number(index + 2),
+              "project-one", "ok", {}, "complete");
+      QTRY_VERIFY(!h.service.hasPending());
+      QVERIFY(h.service.analysisComplete());
+    }
+    // Writes cannot enter through a read-only subscription.
+    QJsonObject refused;
+    h.service.subscribe(
+        {"analysis_section_add", {}}, &h.owner,
+        [&](const QJsonObject &response) { refused = response; });
+    QTRY_VERIFY(!refused.isEmpty());
+    QCOMPARE(refused.value("status").toString(), QString("error"));
+  }
+
+  void backgroundSnapshotFollowsSubscribersAndIsNotReplayedByCache() {
+    Harness h;
+    QStringList order;
+    QSignalSpy snapshots(&h.service, &QueryService::backgroundSnapshotReady);
+    connect(&h.service, &QueryService::backgroundSnapshotReady, &h.owner,
+            [&](const QJsonObject &) { order.append("snapshot"); });
+    h.service.enqueueCommand("open", {}, &h.owner, [&](const QJsonObject &) {
+      order.append("open");
+    });
+    QTRY_COMPARE(h.sent.size(), 1);
+    const QJsonObject background{{"generation", "new-listing"}};
+    h.reply(0, {}, "1", "project-one", "ok", {}, {}, background, "4");
+    QVERIFY(order.isEmpty());
+    QTRY_COMPARE(order, (QStringList{"open", "snapshot"}));
+    QCOMPARE(snapshots[0][0].toJsonObject().value("background"), background);
+    const Spec spec{"functions", {{"limit", 3}}};
+    int deliveries = 0;
+    const auto complete = [&](const QJsonObject &) { ++deliveries; };
+    h.service.subscribe(spec, &h.owner, complete);
+    QTRY_COMPARE(h.sent.size(), 2);
+    h.reply(1, {}, "1", "project-one", "ok", {}, {}, background, "5");
+    QTRY_COMPARE(deliveries, 1);
+    QCOMPARE(snapshots.size(), 2);
+    h.service.subscribe(spec, &h.owner, complete);
+    QTRY_COMPARE(deliveries, 2);
+    QCOMPARE(h.sent.size(), 2);
+    QCOMPARE(snapshots.size(), 2);
+  }
+
+  void backgroundSnapshotDoesNotEscapeRetirementOrDestruction_data() {
+    QTest::addColumn<bool>("destroy");
+    QTest::newRow("reset-in-subscriber") << false;
+    QTest::newRow("destroy-in-subscriber") << true;
+  }
+
+  void backgroundSnapshotDoesNotEscapeRetirementOrDestruction() {
+    QFETCH(bool, destroy);
+    auto h = std::make_unique<Harness>();
+    establish(*h);
+    int publications = 0;
+    connect(&h->service, &QueryService::backgroundSnapshotReady, this,
+            [&](const QJsonObject &) { ++publications; });
+    QObject owner;
+    bool delivered = false;
+    h->service.subscribe({"listing", {}}, &owner, [&](const QJsonObject &) {
+      delivered = true;
+      if (destroy)
+        h.reset();
+      else
+        h->service.resetSession();
+    });
+    QTRY_COMPARE(h->sent.size(), 1);
+    h->reply(0, {}, "1", "project-one", "ok", {}, {},
+             {{"generation", "new-listing"}}, "4");
+    QTRY_VERIFY(delivered);
+    QCOMPARE(publications, 0);
+  }
+
+  void backgroundSnapshotRejectsUntrustedReplies_data() {
+    QTest::addColumn<QString>("kind");
+    for (const auto &kind :
+         {"wire", "operation", "project", "admission", "cancelled", "progress"})
+      QTest::newRow(kind) << QString::fromLatin1(kind);
+  }
+
+  void backgroundSnapshotConsumerCanDestroyTheService() {
+    auto h = std::make_unique<Harness>();
+    establish(*h);
+    connect(&h->service, &QueryService::backgroundSnapshotReady, this,
+            [&](const QJsonObject &) { h.reset(); });
+    h->service.subscribe({"listing", {}}, &h->owner, {});
+    QTRY_COMPARE(h->sent.size(), 1);
+    h->reply(0, {}, "1", "project-one", "ok", {}, {},
+             {{"generation", "new-listing"}}, "4");
+    QTRY_VERIFY(!h);
+  }
+
+  void backgroundSnapshotRejectsUntrustedReplies() {
+    QFETCH(QString, kind);
+    Harness h;
+    establish(h);
+    QSignalSpy snapshots(&h.service, &QueryService::backgroundSnapshotReady);
+    h.service.subscribe({"listing", {}}, &h.owner, {});
+    QTRY_COMPARE(h.sent.size(), 1);
+    QJsonObject response{{"type", "response"},
+                         {"request_id", h.sent[0].id},
+                         {"operation", "listing"},
+                         {"project_id", "project-one"},
+                         {"revision", "1"},
+                         {"status", "ok"},
+                         {"background", QJsonObject{{"generation", "bogus"}}},
+                         {"background_sequence", "4"}};
+    if (kind == "wire")
+      response["request_id"] = "unowned";
+    else if (kind == "operation")
+      response["operation"] = "functions";
+    else if (kind == "project")
+      response["project_id"] = "another-project";
+    else if (kind == "admission") {
+      response["status"] = "error";
+      response["error"] = QJsonObject{{"code", "queue_full"}};
+    } else
+      response["status"] = kind;
+    h.service.receive(response);
+    QCoreApplication::processEvents();
+    QCOMPARE(snapshots.size(), 0);
+  }
+
   void analysisCompletionSurvivesLastSubscriberCancellationInFlight_data() {
     QTest::addColumn<bool>("graphAfterSummary");
     QTest::newRow("read-cancelled-before-natural-completion") << false;

@@ -1,5 +1,7 @@
 **Sprachen**: [English](../process-emulation.md) | [简体中文](../zh-CN/process-emulation.md) | [繁體中文](../zh-TW/process-emulation.md) | [日本語](../ja/process-emulation.md) | [한국어](../ko/process-emulation.md) | [Français](../fr/process-emulation.md) | [Deutsch](process-emulation.md) | [Español](../es/process-emulation.md) | [Italiano](../it/process-emulation.md) | [Русский](../ru/process-emulation.md) | [العربية](../ar/process-emulation.md)
 
+> Aktualisierung: Für poll/epoll und gepuffertes stdio gilt der [gemeinsame Vertrag](../linux-network-contracts.md#poll-and-epoll-waits). Die Einschränkungen dieser Seite auf Zeitlimit null und GKI beschreiben die frühere poll-Teilmenge.
+
 [← Dokumentationsindex](README.md)
 
 # Gastprozess-Emulation

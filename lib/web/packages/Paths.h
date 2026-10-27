@@ -11,13 +11,16 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
+
 #include <string_view>
 
 namespace neverd::web::package_paths {
 inline bool confined(std::string_view Path, bool Empty = false) {
   if (Path.empty())
     return Empty;
-  if (Path.size() > 4096 || Path.front() == '/' || Path.back() == '/' ||
+  if (Path.size() > ::neverd::limits::web::kPathsConfinedPathSizeLimit ||
+      Path.front() == '/' || Path.back() == '/' ||
       Path.find_first_of("\\:") != std::string_view::npos)
     return false;
   unsigned Depth = 0;
@@ -27,7 +30,8 @@ inline bool confined(std::string_view Path, bool Empty = false) {
   while (!Path.empty()) {
     const auto End = Path.find('/');
     const auto Part = Path.substr(0, End);
-    if (Part.empty() || Part == "." || Part == ".." || ++Depth > 64)
+    if (Part.empty() || Part == "." || Part == ".." ||
+        ++Depth > ::neverd::limits::web::kPathsConfinedDepthLimit)
       return false;
     if (End == std::string_view::npos)
       break;

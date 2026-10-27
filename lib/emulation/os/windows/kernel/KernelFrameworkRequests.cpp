@@ -345,6 +345,20 @@ KernelFramework::routeRequest(uint64_t WdmDevice, uint64_t IRP,
   auto View = RequestsHost.View(IRP);
   if (!View)
     return View.takeError();
+  if (View->Major == 5)
+    return requestError("file-information queries on framework-owned files "
+                        "are unsupported");
+  // KMDF does not route LOCK_CONTROL to EvtIoDefault. A non-filter completes
+  // it with STATUS_INVALID_DEVICE_REQUEST; filter forwarding needs a declared
+  // lower response, which this profile does not yet expose for lock requests.
+  if (View->Major == RequestMajorUnlockAll) {
+    if (D->second.Filter)
+      return requestError("LOCK_CONTROL filter forwarding is unsupported");
+    if (auto E = RequestsHost.Complete(IRP, ControlInvalidDeviceRequest, 0))
+      return E;
+    return std::optional<RequestDispatch>{
+        RequestDispatch{0, {}, ControlInvalidDeviceRequest}};
+  }
   auto FileRoute = routeFileRequest(D->first, IRP, *View);
   if (!FileRoute)
     return FileRoute.takeError();

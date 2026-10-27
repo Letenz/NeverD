@@ -7,7 +7,7 @@
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 
 #include "neverd/Limits.h"
-#include "neverd/backend/llvm/X86RegistrationCxxUnwind.h"
+#include "neverd/backend/llvm/X86/X86RegistrationCxxUnwind.h"
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -168,7 +168,10 @@ WindowsEHNativeSourceReason validateCxxFH3(const ExceptionFunction &EH,
     return WindowsEHNativeSourceReason::UnsupportedCxxVersion;
   if (!Cxx.hasValidStateGraph())
     return WindowsEHNativeSourceReason::InvalidCxxStateGraph;
-  if (Cxx.TryBlocks.empty())
+  if (Cxx.TryBlocks.empty() &&
+      (!Registration || llvm::none_of(Cxx.UnwindMap, [](const auto &Action) {
+        return Action.ActionVA != 0;
+      })))
     return WindowsEHNativeSourceReason::EmptyCxxTryMap;
   if (!Registration && Cxx.IPMap.empty())
     return WindowsEHNativeSourceReason::EmptyCxxIPMap;
@@ -658,6 +661,9 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
 #if defined(LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS) &&                            \
     defined(LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS) &&                          \
     defined(LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS)
+    // Both catch and cleanup records carry a complete compiler table layout.
+    // Installation replays the action graph and authenticates a missing try
+    // map as a literal zero count/pointer before constructing the PE update.
     return {Model, WindowsEHNativeSourceReason::Eligible, Capability};
 #endif
     return reject(Model,

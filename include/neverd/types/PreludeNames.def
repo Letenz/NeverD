@@ -1,0 +1,104 @@
+//===- PreludeNames.def - Names the compiler's own headers give -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The names the headers a C or C++ header NeverD renders includes first
+/// (<stdbool.h>, <stddef.h>, <stdint.h>) declare with the compiler's own C
+/// library, which a type the header defines may name otherwise: the
+/// program's own, as the Windows C runtime's records a Windows program
+/// joins, or a system's where the compiler is not the program's system
+/// (HeaderLibrarySystems.def).  Such a type takes another name for the
+/// header's own definitions, and the name stays the compiler's after them.
+/// A system's reserved names, `__x` and `_X`, are any C library's to
+/// declare, and always take another.
+///
+/// NEVERD_PRELUDE_TYPE(Name, Declared)
+///   A type the compiler's headers declare where Declared holds: "1" for
+///   every compiler, as C's <stddef.h> and <stdint.h> name them.
+///
+/// NEVERD_PRELUDE_MACRO(Name)
+///   An identifier a C library's own headers define as a macro, as the
+///   <sys/cdefs.h> of macOS, bionic and the BSDs do, which a member of a
+///   system's types may be named: it is undefined for the header's
+///   definitions and defined again after them.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_PRELUDE_TYPE
+#define NEVERD_PRELUDE_TYPE(Name, Declared)
+#endif
+#ifndef NEVERD_PRELUDE_MACRO
+#define NEVERD_PRELUDE_MACRO(Name)
+#endif
+
+NEVERD_PRELUDE_TYPE(size_t, "1")
+NEVERD_PRELUDE_TYPE(ptrdiff_t, "1")
+NEVERD_PRELUDE_TYPE(max_align_t, "1")
+NEVERD_PRELUDE_TYPE(intptr_t, "1")
+NEVERD_PRELUDE_TYPE(uintptr_t, "1")
+NEVERD_PRELUDE_TYPE(intmax_t, "1")
+NEVERD_PRELUDE_TYPE(uintmax_t, "1")
+NEVERD_PRELUDE_TYPE(int_least8_t, "1")
+NEVERD_PRELUDE_TYPE(int_least16_t, "1")
+NEVERD_PRELUDE_TYPE(int_least32_t, "1")
+NEVERD_PRELUDE_TYPE(int_least64_t, "1")
+NEVERD_PRELUDE_TYPE(uint_least8_t, "1")
+NEVERD_PRELUDE_TYPE(uint_least16_t, "1")
+NEVERD_PRELUDE_TYPE(uint_least32_t, "1")
+NEVERD_PRELUDE_TYPE(uint_least64_t, "1")
+NEVERD_PRELUDE_TYPE(int_fast8_t, "1")
+NEVERD_PRELUDE_TYPE(int_fast16_t, "1")
+NEVERD_PRELUDE_TYPE(int_fast32_t, "1")
+NEVERD_PRELUDE_TYPE(int_fast64_t, "1")
+NEVERD_PRELUDE_TYPE(uint_fast8_t, "1")
+NEVERD_PRELUDE_TYPE(uint_fast16_t, "1")
+NEVERD_PRELUDE_TYPE(uint_fast32_t, "1")
+NEVERD_PRELUDE_TYPE(uint_fast64_t, "1")
+// The Windows C runtimes' <corecrt.h>, which MinGW's <stdint.h> and
+// Microsoft's <stddef.h> include, Microsoft's and MinGW's both.
+NEVERD_PRELUDE_TYPE(wint_t, "defined(_WIN32)")
+NEVERD_PRELUDE_TYPE(wctype_t, "defined(_WIN32)")
+NEVERD_PRELUDE_TYPE(time_t, "defined(_WIN32)")
+NEVERD_PRELUDE_TYPE(__time32_t, "defined(_WIN32)")
+NEVERD_PRELUDE_TYPE(__time64_t, "defined(_WIN32)")
+NEVERD_PRELUDE_TYPE(mbstate_t, "defined(_WIN32)")
+NEVERD_PRELUDE_TYPE(errno_t, "defined(_WIN32)")
+NEVERD_PRELUDE_TYPE(rsize_t, "defined(_WIN32)")
+NEVERD_PRELUDE_TYPE(_locale_t, "defined(_WIN32)")
+// MinGW's alone.
+NEVERD_PRELUDE_TYPE(ssize_t, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(tagLC_ID, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(LC_ID, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(LPLC_ID, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(threadlocaleinfostruct, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(threadlocinfo, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(pthreadlocinfo, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(pthreadmbcinfo, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(localeinfo_struct, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(_locale_tstruct, "defined(__MINGW32__)")
+
+// <sys/cdefs.h>'s, which their <stdint.h> includes.
+NEVERD_PRELUDE_MACRO(__unused)
+NEVERD_PRELUDE_MACRO(__used)
+NEVERD_PRELUDE_MACRO(__const)
+NEVERD_PRELUDE_MACRO(__signed)
+NEVERD_PRELUDE_MACRO(__volatile)
+NEVERD_PRELUDE_MACRO(__restrict)
+NEVERD_PRELUDE_MACRO(__dead)
+NEVERD_PRELUDE_MACRO(__dead2)
+NEVERD_PRELUDE_MACRO(__pure)
+NEVERD_PRELUDE_MACRO(__pure2)
+NEVERD_PRELUDE_MACRO(__cold)
+NEVERD_PRELUDE_MACRO(__inline)
+NEVERD_PRELUDE_MACRO(__single)
+NEVERD_PRELUDE_MACRO(__unsafe_indexable)
+NEVERD_PRELUDE_MACRO(__nonnull)
+NEVERD_PRELUDE_MACRO(__nullable)
+NEVERD_PRELUDE_MACRO(__deprecated)
+NEVERD_PRELUDE_MACRO(__unavailable)
+
+#undef NEVERD_PRELUDE_TYPE
+#undef NEVERD_PRELUDE_MACRO

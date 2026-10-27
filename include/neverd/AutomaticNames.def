@@ -1,0 +1,25 @@
+//===- AutomaticNames.def - Prefixes of automatic code names ----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// The prefixes of the automatic names the listing gives code, which resolve
+// back to the hexadecimal address that follows them (`loc_F2329`), besides
+// the data prefixes of neverd/DataNames.def.  A name of these forms reads as
+// an address, so no rename gives one.
+//
+// NEVERD_AUTOMATIC_NAME_PREFIX(Prefix)
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_AUTOMATIC_NAME_PREFIX
+#define NEVERD_AUTOMATIC_NAME_PREFIX(Prefix)
+#endif
+NEVERD_AUTOMATIC_NAME_PREFIX("sub_")
+NEVERD_AUTOMATIC_NAME_PREFIX("loc_")
+NEVERD_AUTOMATIC_NAME_PREFIX("locret_")
+NEVERD_AUTOMATIC_NAME_PREFIX("asc_")
+NEVERD_AUTOMATIC_NAME_PREFIX("stru_")
+NEVERD_AUTOMATIC_NAME_PREFIX("j_")
+#undef NEVERD_AUTOMATIC_NAME_PREFIX

@@ -18,12 +18,19 @@ struct StringTransferShape {
   unsigned ElementBytes;
   unsigned CountInput;
   bool Fill;
+  bool CompleteState = false;
+
+  unsigned completionOperations(uint64_t Count) const {
+    return CompleteState
+               ? (Fill ? 2 : 3) + (Fill && ElementBytes != 8 && Count != 0)
+               : 1;
+  }
 };
 
-/// Only exact 64-bit-address MOVS/STOS shapes are admitted. The lifter owns
-/// the separate pointer/count updates; the intrinsic's discarded output is
-/// zero, as in both source backends. Ordered and segmented accesses are not
-/// equivalent to the ordinary scalar memory operations used here.
+/// Only exact 64-bit-address MOVS/STOS shapes are admitted. Complete-state
+/// operations return the final pointers and count; legacy operations retain
+/// their discarded zero result and separate lifter updates. Ordered and
+/// segmented accesses cannot become ordinary scalar memory operations.
 std::optional<StringTransferShape> stringTransferShape(const LowOp &Op);
 
 /// Lower a caller-proved count and direction. Each element is read completely

@@ -25,8 +25,8 @@
 namespace neverd {
 
 void parseCOFFLLDMap(llvm::StringRef Content,
-                     std::map<va_t, FunctionSym> &Functions,
-                     uint64_t ImageBase) {
+                     std::map<va_t, FunctionSym> &Functions, uint64_t ImageBase,
+                     std::vector<MapSection> *Sections) {
   bool InTable = false;
   std::string CurrentOutSection;
 
@@ -72,6 +72,8 @@ void parseCOFFLLDMap(llvm::StringRef Content,
 
     if (LastToken.starts_with(".")) {
       CurrentOutSection = LastToken.str();
+      if (Sections && Tokens.size() == 4)
+        Sections->push_back(MapSection{{}, CurrentOutSection, Addr, Size});
       continue;
     }
 

@@ -32,13 +32,6 @@ bool isRadixDigit(char C, unsigned Radix) {
   }
 }
 
-/// Punctuators, longest first, so that scanning them in order is maximal
-/// munch: `<<` is found before `<`, and `!=` before `!`.
-constexpr const char *kPuncts[] = {
-    "<<", ">>", "<=", ">=", "==", "!=", "&&", "||", "?", ":", "|", "^", "&",
-    "<",  ">",  "+",  "-",  "*",  "/",  "%",  "~",  "!", "(", ")", ",", "#",
-};
-
 } // namespace
 
 void Lexer::advance() {
@@ -82,21 +75,33 @@ void Lexer::advance() {
     return;
   }
 
-  for (const char *P : kPuncts) {
-    llvm::StringRef S(P);
-    if (Text.substr(Pos).starts_with(S)) {
-      Cur.K = Token::Punct;
-      Cur.Text = Text.slice(Pos, Pos + S.size());
-      Pos += S.size();
-      return;
+  // Only these prefixes have a two-character spelling. Dispatch once instead
+  // of repeatedly measuring and comparing every punctuator at every token.
+  // Taking the pair first preserves maximal munch; all other bytes retain the
+  // one-character fallback, including invalid punctuation and embedded NULs.
+  size_t Length = 1;
+  if (Pos + 1 < Text.size()) {
+    const char Next = Text[Pos + 1];
+    switch (C) {
+    case '<':
+    case '>':
+      Length += Next == C || Next == '=';
+      break;
+    case '=':
+    case '!':
+      Length += Next == '=';
+      break;
+    case '&':
+    case '|':
+      Length += Next == C;
+      break;
+    default:
+      break;
     }
   }
-
-  // Anything else comes back as a one-character punctuator, so the parser
-  // reports it as unexpected at the right offset instead of looping.
   Cur.K = Token::Punct;
-  Cur.Text = Text.slice(Pos, Pos + 1);
-  ++Pos;
+  Cur.Text = Text.slice(Pos, Pos + Length);
+  Pos += Length;
 }
 
 } // namespace neverd::symbolic::detail

@@ -27,11 +27,14 @@ makeKernelModuleImages(const KernelExportRegistry &Registry) {
   using Export = KernelExportRegistry::Export;
   std::map<uint64_t, std::vector<const Export *>> Groups;
   for (const auto &[Address, Entry] : Registry.entries()) {
-    if (Entry.Kind != KernelExportRegistry::ExportKind::ModuleExport)
+    if (!Entry.isModuleSymbol())
       continue;
     const auto Base = KernelExportRegistry::moduleBase(Entry.Module);
-    if (!Base || Address < *Base + KernelModuleCodeRVA ||
-        Address >= *Base + KernelModuleExportRVA)
+    const bool Data =
+        Entry.Kind == KernelExportRegistry::ExportKind::ModuleData;
+    const uint64_t First = Data ? KernelModuleDataRVA : KernelModuleCodeRVA;
+    const uint64_t Last = Data ? KernelModuleExportRVA : KernelModuleDataRVA;
+    if (!Base || Address < *Base + First || Address >= *Base + Last)
       return llvm::createStringError("kernel export is outside its module");
     Groups[*Base].push_back(&Entry);
   }
@@ -62,7 +65,7 @@ makeKernelModuleImages(const KernelExportRegistry &Registry) {
     write32le(Bytes.data() + 0x80, 0x4550);
     coff_file_header COFF{};
     COFF.Machine = llvm::COFF::IMAGE_FILE_MACHINE_AMD64;
-    COFF.NumberOfSections = 2;
+    COFF.NumberOfSections = 3;
     COFF.SizeOfOptionalHeader =
         sizeof(pe32plus_header) + 16 * sizeof(data_directory);
     COFF.Characteristics = llvm::COFF::IMAGE_FILE_EXECUTABLE_IMAGE |
@@ -77,7 +80,7 @@ makeKernelModuleImages(const KernelExportRegistry &Registry) {
     PE.SizeOfImage = Size;
     PE.SizeOfHeaders = PageSize;
     PE.SizeOfCode = ThunkSize;
-    PE.SizeOfInitializedData = Size - KernelModuleExportRVA;
+    PE.SizeOfInitializedData = Size - KernelModuleDataRVA;
     PE.BaseOfCode = KernelModuleCodeRVA;
     PE.Subsystem = llvm::COFF::IMAGE_SUBSYSTEM_NATIVE;
     PE.NumberOfRvaAndSize = 16;
@@ -88,12 +91,16 @@ makeKernelModuleImages(const KernelExportRegistry &Registry) {
     Directory.Size = Size - KernelModuleExportRVA;
     Store(Header, Directory);
     Header += 16 * sizeof(Directory);
-    for (unsigned I = 0; I < 2; ++I) {
+    for (unsigned I = 0; I < 3; ++I) {
       coff_section Section{};
-      const char *Name = I ? ".edata" : ".text";
+      const char *Name = I == 0 ? ".text" : I == 1 ? ".rdata" : ".edata";
       std::memcpy(Section.Name, Name, std::strlen(Name));
-      Section.VirtualAddress = I ? KernelModuleExportRVA : KernelModuleCodeRVA;
-      Section.VirtualSize = I ? Size - KernelModuleExportRVA : ThunkSize;
+      Section.VirtualAddress = I == 0   ? KernelModuleCodeRVA
+                               : I == 1 ? KernelModuleDataRVA
+                                        : KernelModuleExportRVA;
+      Section.VirtualSize = I == 0   ? ThunkSize
+                            : I == 1 ? KernelModuleDataSize
+                                     : Size - KernelModuleExportRVA;
       Section.PointerToRawData = Section.VirtualAddress;
       Section.SizeOfRawData = Section.VirtualSize;
       Section.Characteristics = llvm::COFF::IMAGE_SCN_MEM_READ |
@@ -104,7 +111,7 @@ makeKernelModuleImages(const KernelExportRegistry &Registry) {
       Header += sizeof(Section);
     }
     std::fill(Bytes.begin() + KernelModuleCodeRVA,
-              Bytes.begin() + KernelModuleExportRVA, ThunkTrapByte);
+              Bytes.begin() + KernelModuleDataRVA, ThunkTrapByte);
     export_directory_table_entry Exports{};
     Exports.OrdinalBase = 1;
     Exports.AddressTableEntries = Count;

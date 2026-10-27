@@ -11,6 +11,8 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web {
 namespace {
 llvm::json::Object moduleSummary(const SourceModuleAnalysis &M,
@@ -140,7 +142,8 @@ std::string Session::sourceModuleRecords(std::string_view ExpectedRevision,
     Count = M.Attributes.size();
   else
     throw Error("invalid_module_record_kind");
-  if (!Limit || Limit > 512 || Offset > Count)
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > Count)
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(Count, Offset + Limit);
   auto NodeID = [&](uint32_t I) -> llvm::json::Value {

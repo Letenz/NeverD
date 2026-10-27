@@ -20,6 +20,7 @@ public:
   ~AnalysisService() override;
   QueryService &queries() { return queries_; }
   bool ready() const { return ready_; }
+  void setSnapshotBlocked(bool blocked);
   static bool handles(const QString &operation);
 
 signals:
@@ -28,6 +29,7 @@ signals:
 private:
   QString send(const QString &operation, const QJsonObject &payload);
   void reset();
+  void requestSnapshot();
   void stopWorker();
   void receive(const QJsonObject &message);
   void dispatch();
@@ -42,6 +44,8 @@ private:
   QueryService::SubscriptionId snapshotRequest_ = 0;
   quint64 serial_ = 0, next_ = 0;
   bool ready_ = false;
+  bool snapshotBlocked_ = false, startingReplica_ = false;
+  bool updatesNames_ = false, refreshingNames_ = false;
 };
 
 /// Bounded independent replicas. A function's pages and graph transaction stay
@@ -52,6 +56,12 @@ public:
   AnalysisPool(QueryService &owner, const QString &workerPath,
                QObject *parent = nullptr);
   QueryService &queries(const QJsonObject &payload, QObject *owner);
+  /// Prepare one native entry in the same replica later source reads use.
+  /// This is speculative read-only work; context changes cancel it normally.
+  void prefetchSource(quint64 address);
+  /// Avoid overlapping a large discovery snapshot with a fresh image replica.
+  /// Reads in an existing replica remain independent of the owner.
+  void setSnapshotBlocked(bool blocked);
   // External clients can split a graph summary and viewport across requests.
   // Keep that stateful protocol on one replica, as before the pool existed.
   QueryService &externalQueries() { return lanes_.front().service->queries(); }
@@ -74,5 +84,8 @@ private:
   };
   std::array<Lane, 2> lanes_;
   QHash<QObject *, Binding> bindings_;
+  QObject preparationOwner_;
+  quint64 preparationSerial_ = 0;
+  bool preparing_ = false;
 };
 } // namespace neverd::gui

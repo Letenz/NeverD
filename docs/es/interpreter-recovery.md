@@ -154,6 +154,8 @@ Si un destino sigue sin resolverse cuando los refinamientos de productores, cond
 
 `EntryFrameBounds` declara explícitamente un intervalo `[Begin, End)` sin desbordamiento respecto al valor de entrada de `FrameBaseRegister`. No concede acceso a memoria ni garantiza ausencia de alias. Sin él, las raíces conservan su dominio modular. La prueba nativa exige los mismos límites en el contrato del llamador y los vincula al comprobante; la prueba LLVM conserva el dominio existente del marco. La recuperación sola no certifica equivalencia.
 
+`EntryFrameBounds::ExcludedAddressRanges` también puede declarar intervalos absolutos, no vacíos y sin desbordamiento, disjuntos de todo el marco de entrada. Son precondiciones explícitas del llamador, nunca inferidas de una dirección observada ni del origen de un puntero. `ProveStoreFrameSeparation` conserva los bytes actuales del marco y los punteros afines guardados solo después de demostrar que toda la escritura queda fuera del marco. Las escrituras sin esa prueba mantienen la invalidación normal por alias; una prueba desconocida o un presupuesto agotado provoca rechazo. Se incluye toda la fase de escritura CMPXCHG. La prueba nativa requiere la misma lista de exclusiones en su contrato de marco. Los comprobantes brutos vinculan la lista y la estrategia; los consumidores del código residual deben mantener las precondiciones.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contrato de ejecución
@@ -162,7 +164,7 @@ El adaptador binario admite actualmente imágenes x64 ELF y PE enlazadas en sus
 direcciones de mapeo. Los mapeos, bytes y permisos deben permanecer fijos, sin
 modificaciones concurrentes. El lifting estricto bajo demanda sigue el código
 máquina alcanzable. Las instrucciones no admitidas, llamadas, operaciones
-opacas, accesos de memoria ordenados, control sin resolver y manejo de
+opacas, accesos de memoria ordenados fuera del dominio raw CAS limitado descrito abajo, control sin resolver y manejo de
 excepciones del lenguaje detienen la recuperación.
 
 La recuperación PE requiere todos los metadatos de la imagen, incluidas las reubicaciones globales y los registros de excepciones. La CLI los carga antes de aplicar `--func`; quienes usan la API C no deben restringir previamente la sesión mediante `neverd_session_restrict_function()`. El adaptador rechaza imágenes cargadas con un conjunto limitado de funciones, porque los metadatos omitidos no prueban la ausencia de correcciones ni de aristas de excepción.
@@ -202,6 +204,22 @@ Las formas x64 exactas de `PUSHFQ`/`POPFQ` permanecen en el programa residual. E
 Antes de capturar todos los indicadores, cada indicador aritmético o de dirección modelado debe estar definido dentro de la función recuperada. Toda lectura directa de un indicador también requiere una definición en cada ruta predecesora alcanzable, aunque la simplificación simbólica anule su valor. De lo contrario, la recuperación se rechaza en lugar de emitir C con una trampa de «registro desconocido».
 
 Los temporales de LowIR solo viven dentro de una instrucción nativa levantada. Cada byte leído debe haberse definido antes en esa misma instrucción; reutilizar una posición de una instrucción anterior o cancelar algebraicamente un valor indefinido no demuestra que el código fuente sea válido. Las constantes de entrada solo pueden vincular registros físicos.
+
+<!-- i18n-section: supervisor-interrupt-control -->
+
+## Control del indicador de interrupciones en modo supervisor
+
+La recuperación de LowIR sin procesar y las pruebas de relación nativa admiten las formas canónicas x64 de `CLI`/`STI` solo con el perfil explícito `KernelX64NoFaultV1`. El componente compartido de indicadores x64 borra o activa IF y conserva todos los demás indicadores, registros de propósito general y bytes de memoria. La recuperación conserva la operación intrínseca original; las pruebas registran su transición y comparan siempre los indicadores de sistema finales, incluso sin observaciones de registros ordinarios.
+
+Este perfil fija CPL0/IOPL0 y excluye eventos asíncronos, entrega de eventos de depuración y transiciones de privilegio. Por ello no observa la inhibición temporal de interrupciones de STI. La ausencia de perfil o un perfil de usuario rechazan estas instrucciones; la ABI de código fuente existente sigue limitada a su perfil de usuario. Este soporte no proporciona un modelo de entrega de interrupciones ni de transición de privilegio.
+
+<!-- i18n-section: raw-cmpxchg -->
+
+## Comparación e intercambio en el modelo raw secuencial
+
+La especialización raw admite `ATOMIC_CMPXCHG` solo con `ExplicitMachineState=true` y `NormalNonfaultingExecution=true`, memoria `Default`, dirección de 64 bits, valores del mismo ancho de 1/2/4/8 bytes y orden `SequentiallyConsistent`. Conserva la operación atómica, el orden, el espacio de direcciones y sus ocurrencias. Usa el dominio secuencial existente, sin modificaciones concurrentes ni asíncronas; no proporciona un modelo de concurrencia o MMIO. Las demás operaciones atómicas, CAS de 16 bytes, otros órdenes, CAS segmentados y LOAD/STORE ordenados siguen sin estar admitidos por esta ruta.
+
+Los contratos existentes `ExternalStoresPreserveEntryReturnSlot` y `ExternalStoresDisjointEntryFrame` se aplican a toda la fase de escritura, incluso si falla la comparación o el valor no cambia. `ExternalStoresPreserveEntryReturnSlot` solo protege la ranura de retorno de entrada. `ExternalStoresDisjointEntryFrame` solo protege los límites del marco declarados; las celdas de retorno nativas activas fuera de ellos aún necesitan evidencia independiente de separación. No se infiere ninguna premisa adicional de ausencia de alias. La envoltura de código fuente del estado de máquina y las rutas independientes de prueba LowIR/nativa/LLVM siguen rechazando CAS ordenados alcanzables; un resultado raw completo no es un certificado de código fuente ni de equivalencia.
 
 <!-- i18n-section: machine-state -->
 
@@ -351,3 +369,17 @@ La repetición de prefijos de entrada visita las ramas pendientes antes de segui
 
 
 La búsqueda de alineación transmite `MaxCuts` al motor común de inferencia. Tras validar la entrada y seleccionar un conjunto que cubra todos los ciclos, rechaza los conjuntos demasiado grandes antes de explorar simbólicamente la entrada o ampliar las invariantes. Este límite por plan no reduce `MaxCutpointAttempts` ni los intentos válidos con un solo corte. El trabajo de selección de las familias filtradas sigue contabilizado. La inferencia independiente y nativa conserva sus límites; toda relación aceptada sigue requiriendo el verificador completo sin cambios.
+
+<!-- i18n-section: immutable-wide-reads -->
+
+## Lecturas anchas inmutables completas
+
+Con `ExplicitMachineState` y `NormalNonfaultingExecution`, un `LOAD` admitido de 16 bytes solo usa la imagen inmutable si cada dirección posible tiene una prueba completa de 16 bytes. La ejecución simbólica conserva los 128 bits. El residuo materializa partes escalares en orden de almacenamiento y captura la dirección que pueda solaparse antes de escribir cualquier byte de destino. Ambos órdenes de bytes comparten esta regla; cada operación emitida consume el presupuesto existente.
+
+Un dominio incompleto o un intervalo inmutable no disponible conserva toda la lectura en ejecución, sin pruebas parciales. Una longitud incorrecta devuelta por el proveedor provoca el rechazo. La memoria modificable y las observaciones de ejecución no otorgan autoridad de inmutabilidad. Los comprobantes brutos vinculan todos los bytes, incluida la mitad superior. La envoltura de código fuente y las pruebas nativas independientes mantienen sus requisitos de anchura y entorno.
+
+<!-- i18n-section: unrooted-native-stack -->
+
+## Transferencias internas después de cambiar la pila
+
+Las regiones de máquina explícitas sin procesar pueden seguir instrucciones near CALL y RET internas aunque el puntero de pila actual ya no pueda expresarse respecto al de entrada. El adaptador de arquitectura conserva la captura del destino, el apilado, la lectura de la dirección de retorno y el desapilado reales. Cada retorno interno sigue exigiendo demostrar el conjunto finito completo de destinos a partir de la palabra real de la pila. Solo las celdas de retorno demostradas relativas a la entrada pasan a la proyección y al inventario de conservación del marco; perder otra relación de pila en un límite del grafo aún puede causar un rechazo. La recuperación de funciones ordinarias mantiene los requisitos de restauración del marco. El resultado corresponde a una región sin procesar; la composición de toda la función y la equivalencia del código fuente o nativo requieren pruebas separadas.

@@ -165,6 +165,30 @@ TEST_F(KernelPnpDevice, GuestCannotDeleteMutateOrImpersonateProviderObjects) {
   EXPECT_TRUE(Result.PnpDevices[0].ProviderPresent);
 }
 
+TEST_F(KernelPnpDevice, StackQueriesShareReferencesAcrossDriverOwners) {
+  prepare();
+  const auto PDO = Result.PnpDevices[0].PDO;
+  const auto Fdo = createFdo();
+  EXPECT_EQ(take(Model->call("IoAttachDeviceToDeviceStack", {Fdo, PDO})), PDO);
+  EXPECT_EQ(take(Model->call("IoGetAttachedDevice", {PDO})), Fdo);
+  EXPECT_EQ(take(Model->call("IoGetAttachedDeviceReference", {PDO})), Fdo);
+  EXPECT_EQ(take(Model->call("IoGetDeviceAttachmentBaseRef", {Fdo})), PDO);
+  EXPECT_EQ(take(Model->call("IoGetLowerDeviceObject", {Fdo})), PDO);
+  EXPECT_EQ(take(Model->call("IoGetLowerDeviceObject", {PDO})), 0u);
+  EXPECT_EQ(get(PDO + DeviceReferenceCount, 4), 0u);
+  take(Model->call("IoDetachDevice", {PDO}));
+  take(Model->call("IoDeleteDevice", {Fdo}));
+  success(Model->validateGuestAccess(Fdo, 2, false));
+  take(Model->call("ObfDereferenceObject", {Fdo}));
+  rejected(Model->validateGuestAccess(Fdo, 2, false), "freed");
+  take(Model->call("ObfDereferenceObject", {PDO}));
+  take(Model->call("ObfDereferenceObject", {PDO}));
+  rejected(Model->call("ObfDereferenceObject", {PDO}), "referenced object");
+  success(Model->validateGuestAccess(PDO, 2, false));
+  success(Model->snapshot());
+  EXPECT_TRUE(Result.PnpDevices[0].ProviderPresent);
+}
+
 TEST_F(KernelPnpDevice,
        AddDeviceUsesConcreteArgumentsAndSerialSingleInvocation) {
   prepare();

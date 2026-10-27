@@ -38,6 +38,7 @@ ABI_OFFSET(IO_STACK_LOCATION, Context, 0x40);
 ABI_OFFSET(DEVICE_OBJECT, NextDevice, 0x10);
 ABI_OFFSET(DEVICE_OBJECT, AttachedDevice, 0x18);
 ABI_OFFSET(DEVICE_OBJECT, StackSize, 0x4c);
+ABI_OFFSET(FILE_OBJECT, CurrentByteOffset, 0x68);
 _Static_assert(SL_PENDING_RETURNED == 1 && SL_INVOKE_ON_CANCEL == 0x20 &&
                    SL_INVOKE_ON_SUCCESS == 0x40 && SL_INVOKE_ON_ERROR == 0x80,
                "completion control ABI");
@@ -181,6 +182,7 @@ static NTSTATUS Dispatch(PDEVICE_OBJECT Device, PIRP Irp) {
   NTSTATUS Status;
   if (!Check(Stack->DeviceObject == Device && Stack->FileObject != NULL &&
                  Stack->FileObject->DeviceObject == LowerDevice &&
+                 Stack->FileObject->CurrentByteOffset.QuadPart == 0 &&
                  Irp->StackCount == 2,
              6)) {
     Irp->IoStatus.Status = STATUS_UNSUCCESSFUL;

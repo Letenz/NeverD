@@ -21,6 +21,7 @@
 #define NEVERD_SAFETY_PROCESSREPLAY_H
 
 #include "neverd/Common.h"
+#include "neverd/safety/Limits.h"
 
 #include <array>
 #include <cstdint>
@@ -34,15 +35,6 @@ namespace neverd::safety::process_replay {
 
 inline constexpr std::string_view kProcessReplayAdapter = "process-replay-v1";
 inline constexpr uint32_t kProcessReplaySchemaVersion = 1;
-
-inline constexpr uint32_t kProcessReplayMaxArguments = 4096;
-inline constexpr uint32_t kProcessReplayMaxEnvironmentEntries = 4096;
-inline constexpr uint32_t kProcessReplayMaxResources = 16;
-inline constexpr uint32_t kProcessReplayMaxEvents = 4096;
-inline constexpr uint64_t kProcessReplayMaxLiteralBytes = uint64_t(1) << 20;
-inline constexpr uint64_t kProcessReplayMaxReadRequestBytes = uint64_t(1) << 24;
-inline constexpr uint64_t kProcessReplayMaxTotalReadRequestBytes = uint64_t(1)
-                                                                   << 28;
 
 enum class ProcessReplayEndianness : uint8_t {
   Little = 1,

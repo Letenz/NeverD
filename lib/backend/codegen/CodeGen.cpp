@@ -17,7 +17,9 @@
 
 #define DEBUG_TYPE "neverd-codegen"
 #include "neverd/ArchSupport.h"
-#include "neverd/backend/llvm/LLVMX86StackEffects.h"
+#include "neverd/backend/llvm/X86/LLVMX86StackEffects.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
+#include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/object/SectionNames.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -299,9 +301,18 @@ static void ensureTargets() {
 }
 
 CodegenResult Codegen::compile(llvm::Module &Mod, Arch TargetArch,
-                               BinaryFormat ObjectFormat) {
+                               BinaryFormat ObjectFormat,
+                               llvm::StringRef TargetTriple) {
   CodegenResult Result;
   ensureTargets();
+  if (Mod.getModuleFlag(macho_loader::cache_load::kAnalysisFlag)) {
+    llvm::WithColor::error() << macho_loader::cache_load::kRebuildUnsupported;
+    return Result;
+  }
+  if (Mod.getModuleFlag(kArm64eAnalysisModuleFlag)) {
+    llvm::WithColor::error() << kArm64eRebuildUnsupported;
+    return Result;
+  }
 
   if (!archCodegenSupported(TargetArch)) {
     llvm::WithColor::error()
@@ -316,7 +327,10 @@ CodegenResult Codegen::compile(llvm::Module &Mod, Arch TargetArch,
     return Result;
   }
 
-  llvm::Triple TT(TripleStr);
+  llvm::Triple TT(TargetTriple.empty() ? llvm::StringRef(TripleStr)
+                                       : TargetTriple);
+  if (!tripleMatchesTarget(TT, TargetArch, ObjectFormat))
+    return Result;
   Mod.setTargetTriple(TT);
 
   std::string Err;
@@ -362,6 +376,13 @@ CodegenResult Codegen::compile(llvm::Module &Mod, Arch TargetArch,
   }
 
   PM.run(Mod);
+
+  // LLVM can report a recoverable inline-assembly or allocation error and
+  // still emit a parseable, incomplete object. Such bytes are not a successful
+  // compilation. Keep the caller's diagnostic handler and original message.
+  if (const auto *Handler = Mod.getContext().getDiagHandlerPtr();
+      Handler && Handler->HasErrors)
+    return Result;
 
   Result.ObjectData.assign(ObjBuf.begin(), ObjBuf.end());
   LLVM_DEBUG(llvm::dbgs() << "codegen: compiled " << Result.ObjectData.size()
@@ -513,6 +534,16 @@ llvm::mc_rewrite::RewriteResult Codegen::compileForRewrite(
     llvm::StringRef TargetTriple, RewriteInputKind InputKind) {
   llvm::mc_rewrite::RewriteResult Result;
   ensureTargets();
+  if (Mod.getModuleFlag(macho_loader::cache_load::kAnalysisFlag)) {
+    llvm::WithColor::error() << macho_loader::cache_load::kRebuildUnsupported;
+    Result.ImageValid = false;
+    return Result;
+  }
+  if (Mod.getModuleFlag(kArm64eAnalysisModuleFlag)) {
+    llvm::WithColor::error() << kArm64eRebuildUnsupported;
+    Result.ImageValid = false;
+    return Result;
+  }
 
   if (!archCodegenSupported(TargetArch)) {
     llvm::WithColor::error()

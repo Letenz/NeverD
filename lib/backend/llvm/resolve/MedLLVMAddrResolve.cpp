@@ -15,9 +15,13 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/X86/X86FPState.h"
+#include "neverd/ir/med/X86/I386PicAddress.h"
 #include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/loader/RelocationProvenance.h"
 #include "neverd/support/Diagnostic.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -62,7 +66,9 @@ traceIndexedLaneConstant(const MedVar &Value, LookupDefFn &&lookupDef,
       traceLaneConstImpl =
           [&](const MedVar &Value, int TraceDepth,
               std::set<Key> Visited) -> std::optional<uint64_t> {
-    if (TraceDepth > 32)
+    if (TraceDepth >
+        ::neverd::limits::backend::
+            kMedLLVMAddrResolveTraceIndexedLaneConstantTraceLaneConstImplTraceDepthLimit)
       return std::nullopt;
     if (auto Constant = traceSSAConst(Value))
       return *Constant & sizeMask(Value.Size);
@@ -163,9 +169,9 @@ bool sameIndexValue(const MedVar &A, const MedVar &B) {
 
 template <typename LookupDefFn, typename NumericFn>
 std::optional<LoadIndexConstraint>
-operationIndexConstraint(const MedFunc *Func, const MedOp *Load,
-                         const BinaryImage *Image, LookupDefFn &&LookupDef,
-                         NumericFn &&IsNumeric) {
+predecessorIndexConstraint(const MedFunc *Func, const MedOp *Load,
+                           const BinaryImage *Image, LookupDefFn &&LookupDef,
+                           NumericFn &&IsNumeric) {
   if (!Func || !Load)
     return std::nullopt;
   size_t Remaining = static_cast<size_t>(limits::kMaxSSANodes);
@@ -265,7 +271,9 @@ operationIndexConstraint(const MedFunc *Func, const MedOp *Load,
   bool Truth = *Taken == Site->Id;
   MedVar Condition = Branch.Inputs[1];
   const MedOp *Compare = nullptr;
-  for (unsigned Depth = 0; Depth != 16; ++Depth) {
+  for (unsigned Depth = 0;
+       Depth != ::neverd::limits::backend::kMaxGuardedScalarOffsetDepth;
+       ++Depth) {
     Compare = LookupDef(Condition);
     if (!Compare || !sameIndexValue(Compare->Output, Condition))
       return std::nullopt;
@@ -362,6 +370,302 @@ operationIndexConstraint(const MedFunc *Func, const MedOp *Load,
   if (!Left.isConst())
     return LoadIndexConstraint{Left, std::nullopt, Right.ConstVal};
   return std::nullopt;
+}
+
+// Prove the induction invariant of a post-tested counter independently of
+// table layout. The initial edge supplies zero; the only other edge supplies
+// i + 1 after testing that result against a positive, non-wrapping limit.
+// The header must dominate both the operation and the latch, including every
+// structural predecessor and independent/exceptional entry.
+template <typename LookupDefFn, typename NumericFn>
+std::optional<LoadIndexConstraint>
+postTestedIndexConstraint(const MedFunc *Func, const MedOp *SiteOp,
+                          const BinaryImage *Image, LookupDefFn &&LookupDef,
+                          NumericFn &&IsNumeric) {
+  if (!Func || !SiteOp || Func->Blocks.empty())
+    return std::nullopt;
+  size_t Budget = static_cast<size_t>(limits::kMaxSSANodes);
+  auto consume = [&]() {
+    if (!Budget)
+      return false;
+    --Budget;
+    return true;
+  };
+  auto key = [](const MedVar &V) {
+    const uint64_t Storage =
+        V.Kind == MedVar::Reg || V.Kind == MedVar::Param ? V.RegOff
+        : V.Kind == MedVar::Stack ? static_cast<uint64_t>(V.StackOff)
+                                  : 0;
+    return std::make_tuple(V.Kind, V.TheArch, V.RenameTag, V.Id, V.SSAVer,
+                           V.Size, Storage);
+  };
+  using Key = decltype(key(MedVar{}));
+  struct Definition {
+    const MedBlock *Block = nullptr;
+    const PhiNode *Phi = nullptr;
+    const MedOp *Op = nullptr;
+    size_t Position = 0;
+    unsigned Count = 0;
+  };
+  std::map<Key, Definition> Definitions;
+  std::map<int, const MedBlock *> Blocks;
+  std::map<int, std::set<int>> Incoming;
+  std::set<int> ExceptionalIncoming;
+  const MedBlock *Site = nullptr;
+  for (const MedBlock &B : Func->Blocks) {
+    if (!consume() || !Blocks.emplace(B.Id, &B).second)
+      return std::nullopt;
+    for (const PhiNode &P : B.Phis) {
+      if (!consume())
+        return std::nullopt;
+      auto &D = Definitions[key(P.Output)];
+      D = {&B, &P, nullptr, 0, D.Count + 1};
+    }
+    for (size_t I = 0; I < B.Ops.size(); ++I) {
+      if (!consume())
+        return std::nullopt;
+      const MedOp &Op = B.Ops[I];
+      if (&Op == SiteOp)
+        Site = &B;
+      auto add = [&](const MedVar &V) {
+        if (V.isConst() || !V.Size)
+          return;
+        auto &D = Definitions[key(V)];
+        D = {&B, nullptr, &Op, I, D.Count + 1};
+      };
+      add(Op.Output);
+      for (const MedVar &V : Op.IntrinsicOutputs) {
+        if (!consume())
+          return std::nullopt;
+        add(V);
+      }
+    }
+    for (int Successor : B.Succs) {
+      if (!consume())
+        return std::nullopt;
+      Incoming[Successor].insert(B.Id);
+    }
+    for (const ExceptionalEdge &E : B.ExceptionalSuccs) {
+      if (!consume())
+        return std::nullopt;
+      ExceptionalIncoming.insert(E.BlockId);
+    }
+  }
+  for (const MedCallClobber &Clobber : Func->CallClobbers) {
+    if (!consume())
+      return std::nullopt;
+    // An implicit runtime definition cannot simultaneously be an induction
+    // PHI, step, or guard definition, even if malformed SSA reuses its key.
+    Definitions[key(Clobber.Value)].Count += 2;
+  }
+  if (!Site)
+    return std::nullopt;
+  auto definition = [&](const MedVar &V) -> const Definition * {
+    if (V.isConst())
+      return nullptr;
+    auto It = Definitions.find(key(V));
+    if (It == Definitions.end() || It->second.Count != 1)
+      return nullptr;
+    const Definition &D = It->second;
+    if (D.Op && (LookupDef(V) != D.Op || !sameIndexValue(D.Op->Output, V)))
+      return nullptr;
+    return &D;
+  };
+  auto terminates = [](const MedOp &Op) {
+    return Op.Opcode == NdOp::COND_BR || Op.Opcode == NdOp::BRANCH ||
+           Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::RETURN;
+  };
+  for (const MedOp &Op : Site->Ops) {
+    if (&Op == SiteOp)
+      break;
+    if (terminates(Op))
+      return std::nullopt;
+  }
+  auto isRoot = [&](const MedBlock &B) {
+    auto contains = [&](const std::set<va_t> &Roots) {
+      auto It = Roots.lower_bound(B.StartAddr);
+      return It != Roots.end() && (*It == B.StartAddr || *It < B.EndAddr);
+    };
+    return &B == &Func->Blocks.front() || contains(Func->ModuleAnalysisRoots) ||
+           (Image && contains(Image->CodeRefTargets)) ||
+           !B.ExceptionalPreds.empty() || ExceptionalIncoming.count(B.Id);
+  };
+  auto validIncoming = [&](const MedBlock &B) {
+    return B.Preds.size() == Incoming[B.Id].size() &&
+           std::set<int>(B.Preds.begin(), B.Preds.end()) == Incoming[B.Id];
+  };
+  auto dominates = [&](const MedBlock &Header, const MedBlock &Use) {
+    std::vector<int> Work{Use.Id};
+    std::set<int> Seen;
+    bool ReachedHeader = false;
+    while (!Work.empty()) {
+      if (!consume())
+        return false;
+      const int Id = Work.back();
+      Work.pop_back();
+      if (!Seen.insert(Id).second)
+        continue;
+      auto It = Blocks.find(Id);
+      if (It == Blocks.end())
+        return false;
+      const MedBlock &B = *It->second;
+      if (isRoot(B) || !validIncoming(B))
+        return false;
+      if (Id == Header.Id) {
+        ReachedHeader = true;
+        continue;
+      }
+      if (B.Preds.empty())
+        return false;
+      for (int Pred : B.Preds) {
+        if (!consume())
+          return false;
+        Work.push_back(Pred);
+      }
+    }
+    return ReachedHeader;
+  };
+  auto numeric = [&](const MedVar &V, unsigned Width) {
+    return V.isConst() && V.Size == Width && Width > 0 && Width <= 8 &&
+           IsNumeric(V) &&
+           (Width == 8 || V.ConstVal < (uint64_t(1) << (Width * 8)));
+  };
+  auto prove = [&](const Definition &D) -> std::optional<LoadIndexConstraint> {
+    const MedBlock &Header = *D.Block;
+    const PhiNode &P = *D.Phi;
+    const MedVar &Index = P.Output;
+    if (Index.Size == 0 || Index.Size > 8 || P.ExceptionalEntry ||
+        P.Args.size() != 2 || Header.Preds.size() != 2 ||
+        !validIncoming(Header) || isRoot(Header))
+      return std::nullopt;
+    std::set<int> PhiPreds;
+    const MedVar *BackValue = nullptr;
+    const MedBlock *Latch = nullptr;
+    bool Initial = false;
+    for (const auto &[Pred, V] : P.Args) {
+      if (!PhiPreds.insert(Pred).second || V.Size != Index.Size)
+        return std::nullopt;
+      if (numeric(V, Index.Size) && V.ConstVal == 0) {
+        if (Initial)
+          return std::nullopt;
+        Initial = true;
+      } else {
+        auto It = Blocks.find(Pred);
+        if (BackValue || It == Blocks.end())
+          return std::nullopt;
+        BackValue = &V;
+        Latch = It->second;
+      }
+    }
+    if (!Initial || !BackValue || PhiPreds != Incoming[Header.Id] ||
+        !dominates(Header, *Site) || !dominates(Header, *Latch) ||
+        Latch->Succs.size() != 2 || Latch->Succs[0] == Latch->Succs[1] ||
+        !Latch->ExceptionalSuccs.empty() || Latch->Ops.empty())
+      return std::nullopt;
+    const Definition *Step = definition(*BackValue);
+    if (!Step || Step->Block != Latch || !Step->Op ||
+        Step->Op->Opcode != NdOp::INT_ADD || Step->Op->NumInputs != 2)
+      return std::nullopt;
+    bool UnitStep = false;
+    for (unsigned Side : {0U, 1U})
+      UnitStep |= sameIndexValue(Step->Op->Inputs[Side], Index) &&
+                  numeric(Step->Op->Inputs[Side ^ 1u], Index.Size) &&
+                  Step->Op->Inputs[Side ^ 1u].ConstVal == 1;
+    if (!UnitStep)
+      return std::nullopt;
+    const MedOp &Branch = Latch->Ops.back();
+    if (Branch.Opcode != NdOp::COND_BR || Branch.NumInputs != 2 ||
+        !Branch.Inputs[0].isConst())
+      return std::nullopt;
+    for (const MedOp &Op : Latch->Ops)
+      if (&Op != &Branch && terminates(Op))
+        return std::nullopt;
+    std::optional<int> Taken;
+    for (int Id : Latch->Succs) {
+      auto It = Blocks.find(Id);
+      if (It == Blocks.end())
+        return std::nullopt;
+      const MedBlock &B = *It->second;
+      const uint64_t VA =
+          B.StartAddr != 0 || B.Ops.empty() ? B.StartAddr : B.Ops.front().Addr;
+      if (VA == Branch.Inputs[0].ConstVal) {
+        if (Taken)
+          return std::nullopt;
+        Taken = Id;
+      }
+    }
+    if (!Taken)
+      return std::nullopt;
+    bool Truth = *Taken == Header.Id;
+    MedVar Condition = Branch.Inputs[1];
+    size_t Before = Latch->Ops.size() - 1;
+    for (unsigned Depth = 0; Depth != 16; ++Depth) {
+      const Definition *CD = definition(Condition);
+      if (!CD || CD->Block != Latch || !CD->Op || CD->Position >= Before)
+        return std::nullopt;
+      Before = CD->Position;
+      const MedOp &Compare = *CD->Op;
+      if ((Compare.Opcode == NdOp::COPY || Compare.Opcode == NdOp::BOOL_NOT) &&
+          Compare.NumInputs == 1 && Compare.Inputs[0].Size == Condition.Size) {
+        Truth ^= Compare.Opcode == NdOp::BOOL_NOT;
+        Condition = Compare.Inputs[0];
+        continue;
+      }
+      if (!Truth || Compare.Output.Size != 1 || Compare.NumInputs != 2 ||
+          (Compare.Opcode != NdOp::INT_LESS &&
+           Compare.Opcode != NdOp::INT_SLESS) ||
+          !sameIndexValue(Compare.Inputs[0], *BackValue) ||
+          !numeric(Compare.Inputs[1], Index.Size) || Step->Position >= Before)
+        return std::nullopt;
+      const uint64_t Limit = Compare.Inputs[1].ConstVal;
+      // Keeping the entire invariant below the signed maximum makes the ADD
+      // non-wrapping for either signed or unsigned comparison semantics.
+      if (!Limit || Limit > limits::kMaxJumpTableEntries ||
+          Limit >= (uint64_t(1) << (Index.Size * 8 - 1)))
+        return std::nullopt;
+      return LoadIndexConstraint{Index, Limit - 1, std::nullopt};
+    }
+    return std::nullopt;
+  };
+  // Only consider PHIs on this operation's dependency walk. An unrelated
+  // bounded loop in the function cannot constrain this address occurrence.
+  std::vector<MedVar> Work;
+  for (unsigned I = 0; I < SiteOp->NumInputs; ++I)
+    Work.push_back(SiteOp->Inputs[I]);
+  std::set<Key> Seen;
+  while (!Work.empty()) {
+    if (!consume())
+      return std::nullopt;
+    MedVar V = Work.back();
+    Work.pop_back();
+    if (V.isConst() || !Seen.insert(key(V)).second)
+      continue;
+    const Definition *D = definition(V);
+    if (!D)
+      continue;
+    if (D->Phi) {
+      if (auto Bound = prove(*D))
+        return Bound;
+      continue;
+    }
+    for (unsigned I = 0; I < D->Op->NumInputs; ++I) {
+      if (!consume())
+        return std::nullopt;
+      Work.push_back(D->Op->Inputs[I]);
+    }
+  }
+  return std::nullopt;
+}
+
+template <typename LookupDefFn, typename NumericFn>
+std::optional<LoadIndexConstraint>
+operationIndexConstraint(const MedFunc *Func, const MedOp *Op,
+                         const BinaryImage *Image, LookupDefFn &&LookupDef,
+                         NumericFn &&IsNumeric) {
+  if (auto Bound =
+          predecessorIndexConstraint(Func, Op, Image, LookupDef, IsNumeric))
+    return Bound;
+  return postTestedIndexConstraint(Func, Op, Image, LookupDef, IsNumeric);
 }
 
 /// Recover the one record lane selected by a conventional `base + index`
@@ -523,13 +827,17 @@ IndexedPointerLaneSummary analyzeIndexedPointerLane(
     return Key{static_cast<int>(Value.Kind), Value.Id, Value.SSAVer,
                Value.Size};
   };
+  size_t WalkBudget = static_cast<size_t>(limits::kMaxSSANodes);
+  std::optional<uint64_t> BoundIndex;
   std::function<OffsetCongruence(const MedVar &, int, std::set<Key>)> walk;
   auto walkUnconstrained = [&](const MedVar &Value, int Depth,
                                std::set<Key> Seen) -> OffsetCongruence {
     // A bounded walk loses numeric precision, not the surrounding operation's
     // range: an outer mask can still bound an arbitrarily deep scalar chain.
     // Consumers independently prove index provenance before trusting the lane.
-    if (Depth > 64)
+    if (Depth >
+        ::neverd::limits::backend::
+            kMedLLVMAddrResolveAnalyzeIndexedPointerLaneWalkUnconstrainedDepthLimit)
       return dynamic(0, 1);
     if (auto Folded = foldedConstant(Value))
       return exact(*Folded);
@@ -647,7 +955,16 @@ IndexedPointerLaneSummary analyzeIndexedPointerLane(
   };
 
   walk = [&](const MedVar &Value, int Depth, std::set<Key> Seen) {
+    if (!WalkBudget)
+      return OffsetCongruence{};
+    --WalkBudget;
+    if (BoundIndex && Constraint && Value.Size <= PtrSize &&
+        sameIndexValue(Value, Constraint->Value))
+      return exact(*BoundIndex);
     OffsetCongruence Result = walkUnconstrained(Value, Depth, std::move(Seen));
+    if (BoundIndex && Result.isExact() && Value.Size > 0 &&
+        Value.Size < PtrSize)
+      Result = exact(Result.Residue & ((uint64_t(1) << (Value.Size * 8)) - 1));
     if (!Constraint || Value.Size > PtrSize ||
         !sameIndexValue(Value, Constraint->Value) || !Result.Valid)
       return Result;
@@ -694,8 +1011,33 @@ IndexedPointerLaneSummary analyzeIndexedPointerLane(
   OffsetCongruence Combined = exact(0);
   for (const MedVar &Term : Result.IndexTerms)
     Combined = add(Combined, walk(Term, 0, {}), SubtractKnownTerms);
-  if (!Combined.Valid || Combined.isExact() || Combined.Modulus < PtrSize ||
-      Combined.Modulus % PtrSize != 0)
+  // A finite control-flow bound can retain a non-power-of-two record
+  // stride (e.g. 88 bytes). Modular congruence alone reduces it to eight and
+  // would audit unrelated fields. Enumerate only the certified index domain;
+  // any other unknown term keeps the conservative congruence path below.
+  std::optional<std::set<uint64_t>> ExactOffsets;
+  if (Constraint && Constraint->Maximum &&
+      *Constraint->Maximum < limits::kMaxJumpTableEntries) {
+    ExactOffsets.emplace();
+    for (uint64_t I = 0; I <= *Constraint->Maximum; ++I) {
+      if (Constraint->Excluded && I == *Constraint->Excluded)
+        continue;
+      BoundIndex = I;
+      OffsetCongruence Offset = exact(0);
+      for (const MedVar &Term : Result.IndexTerms)
+        Offset = add(Offset, walk(Term, 0, {}), SubtractKnownTerms);
+      if (!Offset.isExact()) {
+        ExactOffsets.reset();
+        break;
+      }
+      ExactOffsets->insert(Offset.Residue);
+    }
+    BoundIndex.reset();
+  }
+  if (!WalkBudget || (ExactOffsets && ExactOffsets->empty()) ||
+      (!ExactOffsets &&
+       (!Combined.Valid || Combined.isExact() || Combined.Modulus < PtrSize ||
+        Combined.Modulus % PtrSize != 0)))
     return Result;
 
   size_t Remaining = static_cast<size_t>(limits::kMaxSSANodes);
@@ -703,7 +1045,11 @@ IndexedPointerLaneSummary analyzeIndexedPointerLane(
   for (uint64_t Base : Bases) {
     uint64_t Origin = (Base + Combined.Residue) & PtrMask;
     std::optional<uint64_t> LastBoundedSlot;
-    if (Combined.hasFiniteRange()) {
+    if (ExactOffsets) {
+      if (Base > PtrMask - *ExactOffsets->begin())
+        return Result;
+      Origin = Base + *ExactOffsets->begin();
+    } else if (Combined.hasFiniteRange()) {
       const uint64_t MinValue = *Combined.MinValue;
       const uint64_t MaxValue = *Combined.MaxValue;
       const uint64_t MinResidue = MinValue & (Combined.Modulus - 1);
@@ -743,6 +1089,27 @@ IndexedPointerLaneSummary analyzeIndexedPointerLane(
     CommonRunStart = RunStart;
 
     const uint64_t BoundEnd = OriginSection->VA + OriginSection->Size;
+    if (ExactOffsets) {
+      for (uint64_t Offset : *ExactOffsets) {
+        if (!Remaining || Base > PtrMask - Offset)
+          return Result;
+        --Remaining;
+        const uint64_t Slot = Base + Offset;
+        const Segment *SlotSegment = Img->getSegmentFor(Slot);
+        if (!SlotSegment || SlotSegment->isExecutable() ||
+            Img->getSectionFor(Slot) != OriginSection || Slot >= BoundEnd ||
+            PtrSize > BoundEnd - Slot)
+          return Result;
+        uint64_t SlotRunStart = SlotSegment->VA;
+        uint64_t SlotRunEnd = SlotSegment->VA + SlotSegment->Data.size();
+        ReadOnlyRun(SlotSegment, SlotRunStart, SlotRunEnd);
+        if (SlotRunStart != RunStart || Slot < SlotRunStart ||
+            Slot > SlotRunEnd || PtrSize > SlotRunEnd - Slot)
+          return Result;
+        Result.Slots.insert(Slot);
+      }
+      continue;
+    }
     uint64_t Slot = Origin;
     if (!LastBoundedSlot) {
       const uint64_t Residue = (Origin - OriginSection->VA) % Combined.Modulus;
@@ -867,7 +1234,10 @@ MedLLVMEmitter::traceControlConst(const MedVar &V,
   std::function<std::optional<uint64_t>(const MedVar &, int)> Eval =
       [&](const MedVar &Cur, int Depth) -> std::optional<uint64_t> {
     unsigned CurWidth = width(Cur);
-    if (CurWidth == 0 || Depth > 32)
+    if (CurWidth == 0 ||
+        Depth >
+            ::neverd::limits::backend::
+                kMedLLVMAddrResolveMedLLVMEmitterTraceControlConstEvalEvalDepthLimit)
       return std::nullopt;
     // getVar does not necessarily materialize an address-shaped constant as
     // this original numeric value. Once a leaf becomes ptrtoint(@global) or
@@ -1013,15 +1383,18 @@ MedLLVMEmitter::traceControlConst(const MedVar &V,
     case NdOp::INT_SLESS:
     case NdOp::INT_LESSEQUAL:
     case NdOp::INT_SLESSEQUAL:
-      if (!Bindings && Def->NumInputs >= 2 &&
-          (Def->Opcode == NdOp::INT_EQUAL ||
-           Def->Opcode == NdOp::INT_NOTEQUAL)) {
-        // Rebuilt addresses cannot be ordered by their original VA. Equality
-        // of the same defined object identity survives relocation, however.
+      if (!Bindings && Def->NumInputs >= 2) {
+        // Rebuilt addresses cannot be ordered by their original VA. The same
+        // complete object identity still compares equal to itself: both
+        // strict orders are false and both non-strict orders are true. This
+        // also proves an empty table's iteration body unreachable without
+        // deriving an ordering between distinct relocated objects.
         auto A = pureReadOnlyBaseIdentity(Def->Inputs[0], false);
         auto B = pureReadOnlyBaseIdentity(Def->Inputs[1], false);
         if (A && B && *A == *B) {
-          Result = Def->Opcode == NdOp::INT_EQUAL;
+          Result = Def->Opcode == NdOp::INT_EQUAL ||
+                   Def->Opcode == NdOp::INT_LESSEQUAL ||
+                   Def->Opcode == NdOp::INT_SLESSEQUAL;
           break;
         }
       }
@@ -1229,6 +1602,12 @@ void MedLLVMEmitter::invalidateFeasibleEdgeDependentCaches() const {
   StableOffsetCache.clear();
   ClosedFrameSlotCacheFor = nullptr;
   ClosedFrameSlotCache.clear();
+  SharedBudgetFrameSlotCacheFor = nullptr;
+  SharedBudgetFrameSlotCache.clear();
+  BoundFrameSlotCacheFor = nullptr;
+  BoundFrameSlotCache.clear();
+  AffineFrameKeysFor = nullptr;
+  AffineFrameKeys.clear();
   IndexedGlobalBaseCacheFor = nullptr;
   IndexedGlobalBaseCache.clear();
   InductionBasesFor = nullptr;
@@ -1611,7 +1990,9 @@ bool MedLLVMEmitter::valueIsGuardedScalarOffset(const MedVar &Value) const {
     return false;
   MedVar Root = Value;
   const MedOp *Scale = nullptr;
-  for (unsigned Depth = 0; Depth != 16; ++Depth) {
+  for (unsigned Depth = 0;
+       Depth != ::neverd::limits::backend::kMaxGuardedScalarOffsetDepth;
+       ++Depth) {
     Scale = lookupDef(Root);
     if (!Scale || !sameIndexValue(Scale->Output, Root))
       return false;
@@ -1650,7 +2031,9 @@ bool MedLLVMEmitter::valueIsGuardedScalarOffset(const MedVar &Value) const {
     }
     if (Multiplier == 0 || Multiplier > 8)
       continue;
-    for (unsigned Depth = 0; Depth != 16; ++Depth) {
+    for (unsigned Depth = 0;
+         Depth != ::neverd::limits::backend::kMaxGuardedScalarOffsetDepth;
+         ++Depth) {
       if (sameIndexValue(Index, Constraint->Value)) {
         const uint64_t Max = Root.Size == 8
                                  ? ~uint64_t(0)
@@ -1671,10 +2054,98 @@ bool MedLLVMEmitter::valueIsGuardedScalarOffset(const MedVar &Value) const {
   if (!Matches)
     return false;
 
-  // A guard certifies the scaled SSA definition, not the load everywhere it
-  // is used. Audit its producer DAG for relocation sources before admitting
-  // opaque runtime record fields. Private spills and image-backed pointer
-  // tables remain owned by their existing all-path memory proofs.
+  return valueIsOpaqueRuntimeOffset(Constraint->Value);
+}
+
+bool MedLLVMEmitter::valueIsOpaqueRuntimeOffset(const MedVar &Value) const {
+  if (!CurMedFunc || !Img)
+    return false;
+  const unsigned PointerSize = getTargetRegInfo(TargetArch).PointerSize;
+  if (PointerSize == 0 || PointerSize > 8)
+    return false;
+
+  // Exact spill recovery can itself consult scalar provenance. Keep a
+  // re-entered source query incomplete until its outer proof has finished.
+  using QueryKey = std::tuple<const MedLLVMEmitter *, const MedFunc *,
+                              AddressProvenanceVarKey>;
+  static thread_local std::set<QueryKey> ActiveQueries;
+  const QueryKey Query{this, CurMedFunc, addressProvenanceVarKey(Value)};
+  if (!ActiveQueries.insert(Query).second)
+    return false;
+  auto LeaveQuery = llvm::make_scope_exit([&] { ActiveQueries.erase(Query); });
+
+  // An ordinary mutable image word retains its runtime bits, including a
+  // pointer stored there by the program. A field the loader or emitter
+  // reconstructs as a pointer has a different contract. Audit the full load
+  // extent and its owner without reading or folding the initial value.
+  auto mutableRuntimeWord = [&](const MedVar &Address, unsigned Width) {
+    uint64_t VA = 0, OwnerVA = InvalidVA;
+    if (!resolveMaterializableDataAddress(Address, VA, &OwnerVA) ||
+        VA > InvalidVA - Width ||
+        (Img->isMachO() && Img->MachOChainedFixupsAmbiguous))
+      return false;
+    const Segment *Seg = Img->getSegmentFor(VA);
+    const Section *Sec = Img->getSectionFor(VA);
+    const va_t LayoutOwner = Img->layoutAddressOwner(VA);
+    const auto OwnerEnd = Img->mappedObjectOwnerEnd(VA);
+    if (!Seg || !Seg->isReadable() || !Seg->isWritable() ||
+        Seg->isExecutable() || Img->isCodeAddress(VA) ||
+        isReadOnlyAfterReloc(Seg) || Seg->Size > InvalidVA - Seg->VA ||
+        !rangeInBounds(VA - Seg->VA, Width, Seg->Size) ||
+        !rangeInBounds(VA - Seg->VA, Width, Seg->Data.size()) ||
+        LayoutOwner == InvalidVA || !OwnerEnd || *OwnerEnd < VA + Width ||
+        (OwnerVA != InvalidVA && OwnerVA != LayoutOwner) ||
+        (Sec && (!Sec->isWritable() || Sec->isExecutable() ||
+                 section_names::isReadOnlyAfterRelocSectionName(Sec->Name))))
+      return false;
+    auto overlaps = [&](va_t Start, uint64_t Size) {
+      return Size && (Start <= VA ? VA - Start < Size : Start - VA < Width);
+    };
+    for (const Segment &Other : Img->Segments)
+      if (&Other != Seg && overlaps(Other.VA, Other.Size))
+        return false;
+    for (const Section &Other : Img->Sections)
+      if (&Other != Sec && Other.isReadable() && overlaps(Other.VA, Other.Size))
+        return false;
+    if (Img->isELF() && Img->IsRelocatable &&
+        !Img->isUnrelocatedObjectField(VA, Width))
+      return false;
+
+    // Raw fixup records may write up to eight bytes. Include a field that
+    // starts before the LOAD, rather than accepting its pointer suffix.
+    const va_t First = VA - std::min<va_t>(VA, 7), End = VA + Width;
+    if (hasRelocationProvenanceIn(*Img, First, End))
+      return false;
+    auto touches = [&](const auto &Slots) {
+      auto address = [](const auto &Slot) -> va_t {
+        if constexpr (requires { Slot.first; })
+          return Slot.first;
+        else
+          return Slot;
+      };
+      const auto It = Slots.lower_bound(First);
+      return It != Slots.end() && address(*It) < End;
+    };
+    ensureImportStorageSnapshot();
+    return !touches(Img->DataPtrRelocTargetOwners) &&
+           !touches(Img->MachOResolvedChainedPointerSlots) &&
+           !touches(Img->ObjCSourceReferences) &&
+           !touches(Img->DataAddressRelocOperands) &&
+           !touches(Img->CodeAddressRelocOperands) &&
+           !touches(ConflictingImportStorageSlots) &&
+           !touches(EffectiveImportStorageSlots) &&
+           !touches(ExternalFunctionPointerSlots) &&
+           !touches(DataSymbolBindings) &&
+           llvm::none_of(Img->RuntimeCallablePointerSlots,
+                         [&](const auto &Slot) {
+                           return Slot.SlotVA >= First && Slot.SlotVA < End;
+                         });
+  };
+
+  // Audit the producer DAG independently of the consumer's domain proof.
+  // A nested runtime load retains its address dependencies, and a private
+  // reload retains every exact reaching STORE source. Neither may hide image
+  // pointers behind an otherwise ordinary arithmetic or merge operation.
   unsigned Budget = 256;
   std::set<AddressProvenanceVarKey> Active, Done;
   bool SawRuntimeLoad = false;
@@ -1688,21 +2159,64 @@ bool MedLLVMEmitter::valueIsGuardedScalarOffset(const MedVar &Value) const {
         const auto Key = addressProvenanceVarKey(V);
         if (Done.count(Key))
           return true;
-        if (!Active.insert(Key).second || lookupPhi(V) ||
-            varMayBeFrameAddress(V))
+        if (!Active.insert(Key).second || varMayBeFrameAddress(V))
           return false;
-        const MedOp *Def = lookupDef(V);
-        if (!Def) {
+        auto finish = [&] {
           Active.erase(Key);
           Done.insert(Key);
           return true;
+        };
+        if (const PhiNode *Phi = lookupPhi(V)) {
+          if (!sameIndexValue(Phi->Output, V))
+            return false;
+          bool SawFeasible = false;
+          for (const auto &[Pred, Arg] : Phi->Args) {
+            const auto Edge = classifyPhiIncomingEdge(*Phi, Pred);
+            if (Edge == PhiEdgeFeasibility::Infeasible)
+              continue;
+            if (Edge != PhiEdgeFeasibility::ProvenFeasible ||
+                Arg.Size != V.Size || !scalarSource(Arg, Depth + 1))
+              return false;
+            SawFeasible = true;
+          }
+          return SawFeasible && finish();
         }
+        const MedOp *Def = lookupDef(V);
+        if (!Def)
+          return finish();
         if (!sameIndexValue(Def->Output, V))
           return false;
+        // The lifter publishes an incoming physical carrier as an exact
+        // self-COPY. Other COPY cycles have no established entry value.
+        if (Def->Opcode == NdOp::COPY && Def->NumInputs == 1 &&
+            (V.Kind == MedVar::Reg || V.Kind == MedVar::Param) &&
+            sameIndexValue(Def->Inputs[0], V))
+          return finish();
         if (Def->Opcode == NdOp::LOAD) {
-          if (!isOpaqueRuntimeWordLoad(*Def))
+          if (Def->NumInputs != 1 || V.Size > PointerSize ||
+              Def->MemoryAddressSpace != NdMemoryAddressSpace::Default)
             return false;
-          SawRuntimeLoad = true;
+          const MedVar &Address = Def->Inputs[0];
+          if (varMayBeFrameAddress(Address)) {
+            std::vector<MedVar> Sources;
+            if (!collectFrameReloadSources(*Def, Sources) || Sources.empty())
+              return false;
+            for (const MedVar &Source : Sources)
+              if (Source.Size != V.Size || !scalarSource(Source, Depth + 1))
+                return false;
+          } else {
+            if (traceValueVA(Address)) {
+              if (!mutableRuntimeWord(Address, V.Size))
+                return false;
+            } else if (!scalarSource(Address, Depth + 1))
+              return false;
+            SawRuntimeLoad = true;
+          }
+        } else if (Def->Opcode == NdOp::SELECT) {
+          if (!selectPreservesPointerValues(*Def) ||
+              !scalarSource(Def->Inputs[1], Depth + 1) ||
+              !scalarSource(Def->Inputs[2], Depth + 1))
+            return false;
         } else {
           switch (Def->Opcode) {
           case NdOp::COPY:
@@ -1730,11 +2244,9 @@ bool MedLLVMEmitter::valueIsGuardedScalarOffset(const MedVar &Value) const {
             if (!scalarSource(Def->Inputs[I], Depth + 1))
               return false;
         }
-        Active.erase(Key);
-        Done.insert(Key);
-        return true;
+        return finish();
       };
-  return scalarSource(Constraint->Value, 0) && SawRuntimeLoad;
+  return scalarSource(Value, 0) && SawRuntimeLoad;
 }
 
 bool MedLLVMEmitter::valueIsStableAddressOffset(const MedVar &V,
@@ -1851,7 +2363,8 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
     std::optional<FrameRootKey> Root;
     std::set<Key> CycleAnchors;
   };
-  int RemainingFrameRootNodes = 8192;
+  int RemainingFrameRootNodes =
+      ::neverd::limits::backend::kMedLLVMAddrResolveRemainingFrameRootNodes;
   std::function<FrameRootProof(const MedVar &, int, std::set<Key>)>
       frameRootProof = [&](const MedVar &Start, int Depth,
                            std::set<Key> Seen) -> FrameRootProof {
@@ -2047,7 +2560,8 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
                                            BackedgeDependencies <= 1;
         return Result;
       };
-  int RemainingFrameDomainReachNodes = 8192;
+  int RemainingFrameDomainReachNodes = ::neverd::limits::backend::
+      kMedLLVMAddrResolveRemainingFrameDomainReachNodes;
   std::function<FrameDomainReachSummary(const MedVar &, const FrameRootKey &,
                                         int, std::set<Key>)>
       summarizeFrameDomainReach;
@@ -2180,7 +2694,9 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
   summarizeFrameDomainReach =
       [&](const MedVar &Start, const FrameRootKey &TargetRoot, int Depth,
           std::set<Key> Seen) -> FrameDomainReachSummary {
-    if (Depth > 128)
+    if (Depth >
+        ::neverd::limits::backend::
+            kMedLLVMAddrResolveMedLLVMEmitterValueIsStableAddressOffsetImplSummarizeFrameDomainReachDepthLimit)
       return {.Unknown = true};
     if (Start.isConst() || valueIsAuthenticatedModelZero(Start))
       return {.HasIndependentAlternative = true};
@@ -2237,10 +2753,14 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
   // mark treats a back-edge as "not a finite reaching path"; a completed
   // miss or hit is reused.  Exhaustion is fail-closed.
   std::map<std::pair<Key, Key>, uint8_t> ScalarReachState;
-  int RemainingScalarReachNodes = 8192;
+  int RemainingScalarReachNodes =
+      ::neverd::limits::backend::kMedLLVMAddrResolveRemainingScalarReachNodes;
   std::function<bool(const MedVar &, const Key &, int)> scalarValueReaches =
       [&](const MedVar &Start, const Key &Target, int Depth) -> bool {
-    if (Depth > 128 || Start.isConst())
+    if (Depth >
+            ::neverd::limits::backend::
+                kMedLLVMAddrResolveMedLLVMEmitterValueIsStableAddressOffsetImplScalarValueReachesDepthLimit ||
+        Start.isConst())
       return false;
     const Key StartKey = keyOf(Start);
     if (StartKey == Target)
@@ -2435,7 +2955,8 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
     const Key RootKey = keyOf(Root);
     std::vector<MedVar> Work{Root};
     std::set<Key> Seen;
-    int Budget = 8192;
+    int Budget = ::neverd::limits::backend::
+        kMedLLVMAddrResolveScalarRecurrenceHasInitializerBudget;
     auto reachesRoot = [&](const MedVar &Value) {
       return scalarValueReaches(Value, RootKey, 0);
     };
@@ -2565,7 +3086,8 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
     std::map<AddressProvenanceVarKey, size_t> CompleteDepth;
     std::map<AddressProvenanceVarKey, size_t> Active;
     std::vector<MedVar> Path;
-    int Budget = 8192;
+    int Budget = ::neverd::limits::backend::
+        kMedLLVMAddrResolveProveClosedScalarGraphBudget;
     std::function<bool(const MedVar &)> Visit = [&](const MedVar &Start) {
       if (Forbidden && sameVar(Start, *Forbidden))
         return false;
@@ -2587,7 +3109,10 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
       // chain costs one visit per node. Keep its depth guard independent of
       // the path-sensitive proof's smaller recursion limit; optimized loop
       // bodies can exceed that limit before reaching their scalar initializer.
-      if (Path.size() >= 512 || --Budget < 0)
+      if (Path.size() >=
+              ::neverd::limits::backend::
+                  kMedLLVMAddrResolveMedLLVMEmitterValueIsStableAddressOffsetImplProveClosedScalarGraphVisitPathSizeLimit ||
+          --Budget < 0)
         return false;
       ++AddressProvenanceWork.ClosedScalarNodes;
       Active.emplace(Node, Path.size());
@@ -2746,7 +3271,9 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
                  ? true
                  : stableOffsetFailure("unanchored-cycle", Start, Depth);
     }
-    if (Depth > 128) {
+    if (Depth >
+        ::neverd::limits::backend::
+            kMedLLVMAddrResolveMedLLVMEmitterValueIsStableAddressOffsetImplProveUncachedDepthLimit) {
       RecursiveDepthExhausted = true;
       return stableOffsetFailure("depth", Start, Depth);
     }
@@ -3157,9 +3684,25 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
                 continue;
               DomainInvalid = true;
             }
+            // An x86 floating-state memory operand is a source the operation
+            // reads as a LOAD would (`addss -0x54(%ebp), %xmm0`); only the
+            // F16C store writes through its address.
+            bool ReadsAddressOperand = false;
+            if (Write.Opcode == NdOp::INTRINSIC &&
+                (TargetArch == Arch::X86 || TargetArch == Arch::X64) &&
+                Write.NumInputs >= 2 && Write.Inputs[0].isConst() &&
+                Write.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+                Write.MemoryOrdering == NdMemoryOrdering::None) {
+              const auto Id = static_cast<Intrinsic>(Write.Inputs[0].ConstVal);
+              ReadsAddressOperand =
+                  Write.Inputs[0].ConstVal == static_cast<uint64_t>(Id) &&
+                  isX86FPStateMemoryIntrinsic(Id) &&
+                  Id != Intrinsic::X86F16CStoreState;
+            }
             if (Write.Opcode == NdOp::INTRINSIC)
               for (uint8_t I = 1; I < Write.NumInputs; ++I)
-                if (sameOrUnknownFrameRoot(Write.Inputs[I]))
+                if (!(I == 1 && ReadsAddressOperand) &&
+                    sameOrUnknownFrameRoot(Write.Inputs[I]))
                   DomainInvalid = true;
           }
         }
@@ -3320,6 +3863,7 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
                 if (!Img->DataPtrRelocSlots.count(Slot) ||
                     Img->CodePtrRelocSlots.count(Slot) ||
                     EffectiveImportStorageSlots.count(Slot) ||
+                    ExternalFunctionPointerSlots.count(Slot) ||
                     Img->hasRuntimeCallablePointerSlotAt(Slot)) {
                   DataOnly = false;
                   break;
@@ -3446,7 +3990,10 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
     const bool Cycle = !Start.isConst() && Seen.count(keyOf(Start));
     const auto CacheKey =
         std::make_pair(addressProvenanceVarKey(Start), InBoundedNumericMask);
-    if (!Cycle && Depth <= 128) {
+    if (!Cycle &&
+        Depth <=
+            ::neverd::limits::backend::
+                kMedLLVMAddrResolveMedLLVMEmitterValueIsStableAddressOffsetImplProveDepthLimit) {
       auto It = IndependentProofs.find(CacheKey);
       // A certificate obtained deeper in this same proof also fits here. A
       // shallower certificate cannot discharge a deeper use's depth budget.
@@ -3463,7 +4010,10 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(const MedVar &V,
       ++ContextGeneration;
     const bool Result =
         proveUncached(Start, Depth, Seen, ActiveFrameSlots, AnchoredPhis);
-    if (Result && !Cycle && Depth <= 128 &&
+    if (Result && !Cycle &&
+        Depth <=
+            ::neverd::limits::backend::
+                kMedLLVMAddrResolveMedLLVMEmitterValueIsStableAddressOffsetImplProveDepthLimit &&
         GenerationBefore == ContextGeneration) {
       auto [It, Inserted] = IndependentProofs.emplace(CacheKey, Depth);
       if (!Inserted)
@@ -3523,7 +4073,12 @@ MedLLVMEmitter::pureReadOnlyBaseIdentity(
       return std::nullopt;
 
     std::set<std::tuple<int, int, int>> LeafSeen;
-    for (int Depth = 0; Depth <= 16; ++Depth) {
+    for (
+        int Depth = 0;
+        Depth <=
+        ::neverd::limits::backend::
+            kMedLLVMAddrResolveMedLLVMEmitterPureReadOnlyBaseIdentityZeroExtendedNarrowConstantIdentityDepthLimit;
+        ++Depth) {
       if (Leaf.Size != LeafSize)
         return std::nullopt;
       if (Leaf.isConst()) {
@@ -3553,7 +4108,11 @@ MedLLVMEmitter::pureReadOnlyBaseIdentity(
     return std::nullopt;
   };
 
-  for (int Depth = 0; Depth <= 32; ++Depth) {
+  for (int Depth = 0;
+       Depth <=
+       ::neverd::limits::backend::
+           kMedLLVMAddrResolveMedLLVMEmitterPureReadOnlyBaseIdentityDepthLimit;
+       ++Depth) {
     if (Cur.Size != PointerSize)
       return std::nullopt;
     if (Cur.isConst()) {
@@ -3768,7 +4327,10 @@ bool MedLLVMEmitter::phiIncomingIsRecurrentImpl(const PhiNode &Phi, int PredId,
               int Depth, bool DirectPhiConstant) -> RecurrencePathProof {
     if (Depth == 0)
       RecurrenceMemo.clear();
-    if (!consume() || Depth > 32)
+    if (!consume() ||
+        Depth >
+            ::neverd::limits::backend::
+                kMedLLVMAddrResolveMedLLVMEmitterPhiIncomingIsRecurrentImplProveRecurrenceDepthLimit)
       return {};
     const RecurrenceKey MemoKey{addressProvenanceVarKey(Start), Depth,
                                 DirectPhiConstant};
@@ -3983,60 +4545,65 @@ bool MedLLVMEmitter::phiIncomingIsRecurrentImpl(const PhiNode &Phi, int PredId,
   // node only if it is reached at a shallower depth; copying a path-local set
   // here enumerated exponentially many paths through reconvergent PHIs.
   std::map<AddressProvenanceVarKey, int> AliasDepth;
-  std::function<void(const MedVar &, int)> collectAliases =
-      [&](const MedVar &Start, int Depth) {
-        if (!consume() || Depth > 32 || Start.isConst())
-          return;
-        auto [It, Inserted] =
-            AliasDepth.emplace(addressProvenanceVarKey(Start), Depth);
-        if (!Inserted && It->second <= Depth)
-          return;
-        It->second = Depth;
-        ++AddressProvenanceWork.AliasNodes;
-        if (const PhiNode *Nested = lookupPhi(Start)) {
-          if (Nested != &Phi && isSubregisterAlias(Nested->Output, Phi.Output))
-            AliasCandidates.insert(Nested);
-          for (const auto &[NestedPred, NestedArg] : Nested->Args)
-            if (classifyPhiIncomingEdge(*Nested, NestedPred) ==
-                PhiEdgeFeasibility::ProvenFeasible)
-              collectAliases(NestedArg, Depth + 1);
-          return;
-        }
-        const MedOp *Def = lookupDef(Start);
-        if (!Def)
-          return;
-        if (auto Forwarded = pointerPreservingInput(*Def)) {
-          collectAliases(*Forwarded, Depth + 1);
-          return;
-        }
-        if (Def->Opcode == NdOp::LOAD) {
-          std::vector<MedVar> Sources;
-          if (collectFrameReloadSources(*Def, Sources))
-            for (const MedVar &Source : Sources)
-              collectAliases(Source, Depth + 1);
-          return;
-        }
-        auto carry = [&](const MedVar &Input) {
-          if (Def->Output.Size != 0 && Input.Size != 0 &&
-              Def->Output.Size >= Input.Size)
-            collectAliases(Input, Depth + 1);
-        };
-        if (Def->Opcode == NdOp::INT_ADD && Def->NumInputs >= 2) {
-          carry(Def->Inputs[0]);
-          carry(Def->Inputs[1]);
-        } else if (Def->Opcode == NdOp::INT_SUB && Def->NumInputs >= 2) {
-          carry(Def->Inputs[0]);
-        } else if (selectPreservesPointerValues(*Def)) {
-          collectAliases(Def->Inputs[1], Depth + 1);
-          collectAliases(Def->Inputs[2], Depth + 1);
-        } else if (Def->Opcode == NdOp::INT_OR) {
-          MedVar Cond, ArmT, ArmF;
-          if (isMaskedSelectOr(*Def, Cond, ArmT, ArmF)) {
-            collectAliases(ArmT, Depth + 1);
-            collectAliases(ArmF, Depth + 1);
-          }
-        }
-      };
+  std::function<void(const MedVar &, int)> collectAliases = [&](const MedVar
+                                                                    &Start,
+                                                                int Depth) {
+    if (!consume() ||
+        Depth >
+            ::neverd::limits::backend::
+                kMedLLVMAddrResolveMedLLVMEmitterPhiIncomingIsRecurrentImplCollectAliasesDepthLimit ||
+        Start.isConst())
+      return;
+    auto [It, Inserted] =
+        AliasDepth.emplace(addressProvenanceVarKey(Start), Depth);
+    if (!Inserted && It->second <= Depth)
+      return;
+    It->second = Depth;
+    ++AddressProvenanceWork.AliasNodes;
+    if (const PhiNode *Nested = lookupPhi(Start)) {
+      if (Nested != &Phi && isSubregisterAlias(Nested->Output, Phi.Output))
+        AliasCandidates.insert(Nested);
+      for (const auto &[NestedPred, NestedArg] : Nested->Args)
+        if (classifyPhiIncomingEdge(*Nested, NestedPred) ==
+            PhiEdgeFeasibility::ProvenFeasible)
+          collectAliases(NestedArg, Depth + 1);
+      return;
+    }
+    const MedOp *Def = lookupDef(Start);
+    if (!Def)
+      return;
+    if (auto Forwarded = pointerPreservingInput(*Def)) {
+      collectAliases(*Forwarded, Depth + 1);
+      return;
+    }
+    if (Def->Opcode == NdOp::LOAD) {
+      std::vector<MedVar> Sources;
+      if (collectFrameReloadSources(*Def, Sources))
+        for (const MedVar &Source : Sources)
+          collectAliases(Source, Depth + 1);
+      return;
+    }
+    auto carry = [&](const MedVar &Input) {
+      if (Def->Output.Size != 0 && Input.Size != 0 &&
+          Def->Output.Size >= Input.Size)
+        collectAliases(Input, Depth + 1);
+    };
+    if (Def->Opcode == NdOp::INT_ADD && Def->NumInputs >= 2) {
+      carry(Def->Inputs[0]);
+      carry(Def->Inputs[1]);
+    } else if (Def->Opcode == NdOp::INT_SUB && Def->NumInputs >= 2) {
+      carry(Def->Inputs[0]);
+    } else if (selectPreservesPointerValues(*Def)) {
+      collectAliases(Def->Inputs[1], Depth + 1);
+      collectAliases(Def->Inputs[2], Depth + 1);
+    } else if (Def->Opcode == NdOp::INT_OR) {
+      MedVar Cond, ArmT, ArmF;
+      if (isMaskedSelectOr(*Def, Cond, ArmT, ArmF)) {
+        collectAliases(ArmT, Depth + 1);
+        collectAliases(ArmF, Depth + 1);
+      }
+    }
+  };
   collectAliases(Arg, 0);
   if (Exhausted)
     return false;
@@ -4060,7 +4627,13 @@ bool MedLLVMEmitter::phiHasPureForwardingCycle(const PhiNode &Phi) const {
   auto forwardedPhi = [&](const MedVar &Value) {
     MedVar Current = Value;
     std::set<AddressProvenanceVarKey> Seen;
-    for (int Depth = 0; Depth <= 64 && !Current.isConst(); ++Depth) {
+    for (
+        int Depth = 0;
+        Depth <=
+            ::neverd::limits::backend::
+                kMedLLVMAddrResolveMedLLVMEmitterPhiHasPureForwardingCycleForwardedPhiDepthLimit &&
+        !Current.isConst();
+        ++Depth) {
       if (const PhiNode *Nested = lookupPhi(Current))
         return Nested;
       if (!Seen.insert(addressProvenanceVarKey(Current)).second)
@@ -4088,7 +4661,8 @@ bool MedLLVMEmitter::phiHasPureForwardingCycle(const PhiNode &Phi) const {
   };
   appendSources(Phi);
   std::set<const PhiNode *> Seen;
-  size_t Budget = 4096;
+  size_t Budget = ::neverd::limits::backend::
+      kMedLLVMAddrResolveMedLLVMEmitterPhiHasPureForwardingCycleBudget;
   while (!Work.empty() && Budget-- > 0) {
     const PhiNode *Current = Work.back();
     Work.pop_back();
@@ -4213,7 +4787,9 @@ bool MedLLVMEmitter::isMaskedSelectOr(const MedOp &Or, MedVar &Cond,
   };
   std::function<bool(const MedVar &, int)> isBooleanValue = [&](const MedVar &V,
                                                                 int Depth) {
-    if (Depth > 8)
+    if (Depth >
+        ::neverd::limits::backend::
+            kMedLLVMAddrResolveMedLLVMEmitterIsMaskedSelectOrIsBooleanValueDepthLimit)
       return false;
     if (V.isConst())
       return V.ConstVal <= 1 && constantIsStableAddressOffset(V);
@@ -4335,6 +4911,71 @@ std::optional<uint64_t> MedLLVMEmitter::traceSSAConst(const MedVar &V) const {
   return std::nullopt;
 }
 
+std::optional<MedLLVMEmitter::I386GotRelativeAccess>
+MedLLVMEmitter::matchI386GotRelative(const MedVar &Address) const {
+  if (!CurMedFunc || !Img || TargetArch != Arch::X86 || Address.isConst())
+    return std::nullopt;
+  const std::optional<va_t> GOT = Img->linkedI386GlobalOffsetTable();
+  if (!GOT)
+    return std::nullopt;
+  // GCC's thunk leaves the GOT a folded constant; clang's call/pop leaves
+  // arithmetic rooted at the authenticated PC.
+  auto IsGOT = [&](const MedVar &V) {
+    if (V.isConst() || V.Size != 4)
+      return false;
+    if (const auto C = traceSSAConst(V); C && uint32_t(*C) == uint32_t(*GOT))
+      return true;
+    const auto Folded = foldI386PicAddress(
+        *CurMedFunc, V, [&](const MedVar &X) { return lookupDef(X); });
+    return Folded && uint32_t(*Folded) == uint32_t(*GOT);
+  };
+  auto Displacement = [&](const MedVar &V) -> std::optional<uint32_t> {
+    if (V.isConst() && isAddressProvenance(V.Provenance))
+      return std::nullopt;
+    const auto C = traceSSAConst(V);
+    return C ? std::optional<uint32_t>(uint32_t(*C)) : std::nullopt;
+  };
+  auto Sum = [&](const MedVar &V) -> const MedOp * {
+    const MedOp *Def = lookupDef(V);
+    return Def && Def->Opcode == NdOp::INT_ADD && Def->NumInputs == 2 &&
+                   Def->Output.Size == 4
+               ? Def
+               : nullptr;
+  };
+  auto At = [&](uint32_t Offset) { return uint64_t(uint32_t(*GOT) + Offset); };
+
+  MedVar Root = Address;
+  if (const MedOp *Wide = lookupDef(Root);
+      Wide && Wide->Opcode == NdOp::INT_ZEXT && Wide->NumInputs == 1 &&
+      Wide->Inputs[0].Size == 4)
+    Root = Wide->Inputs[0];
+  const MedOp *Outer = Sum(Root);
+  if (!Outer)
+    return std::nullopt;
+  for (unsigned K = 0; K < 2; ++K) {
+    const MedVar &Other = Outer->Inputs[1 - K];
+    if (const auto Disp = Displacement(Outer->Inputs[K])) {
+      // GOT + disp, and (GOT + index) + disp.
+      if (IsGOT(Other))
+        return I386GotRelativeAccess{At(*Disp), std::nullopt};
+      if (const MedOp *Inner = Sum(Other))
+        for (unsigned J = 0; J < 2; ++J)
+          if (!Inner->Inputs[1 - J].isConst() && IsGOT(Inner->Inputs[J]))
+            return I386GotRelativeAccess{At(*Disp), Inner->Inputs[1 - J]};
+      continue;
+    }
+    // (GOT + disp) + index.
+    if (Other.isConst())
+      continue;
+    if (const MedOp *Inner = Sum(Outer->Inputs[K]))
+      for (unsigned J = 0; J < 2; ++J)
+        if (IsGOT(Inner->Inputs[J]))
+          if (const auto Disp = Displacement(Inner->Inputs[1 - J]))
+            return I386GotRelativeAccess{At(*Disp), Other};
+  }
+  return std::nullopt;
+}
+
 std::optional<uint64_t>
 MedLLVMEmitter::traceTableBaseConst(const MedVar &V, int Depth, bool *SawLoad,
                                     uint16_t *OriginSize,
@@ -4349,7 +4990,10 @@ MedLLVMEmitter::traceTableBaseConst(const MedVar &V, int Depth, bool *SawLoad,
       *OriginSize = V.Size;
     return atSize(V.ConstVal, V.Size);
   }
-  if (!CurMedFunc || Depth > 8)
+  if (!CurMedFunc ||
+      Depth >
+          ::neverd::limits::backend::
+              kMedLLVMAddrResolveMedLLVMEmitterTraceTableBaseConstDepthLimit)
     return std::nullopt;
 
   // Emission replaces this exact certified SSA occurrence with numeric zero.
@@ -4388,6 +5032,12 @@ MedLLVMEmitter::traceTableBaseConst(const MedVar &V, int Depth, bool *SawLoad,
     return std::nullopt;
   }
   case NdOp::LOAD: {
+    // Source image storage belongs to the live, relocated image. Its contents
+    // are runtime values, even when the file has read-only section flags.
+    // Folding a pointer from file bytes would both erase runtime updates and
+    // make the address resolvers rebase an already-relocated pointer again.
+    if (OriginalImageStorageForSource && Img && !Img->IsRelocatable)
+      return std::nullopt;
     // FS/GS operands are segment-relative numeric offsets, not flat image
     // addresses.  Never inspect the backing image for a non-default load even
     // when its offset happens to equal a literal-pool or relocation slot VA.
@@ -4526,7 +5176,12 @@ MedLLVMEmitter::classifyPointerTableLoadRoles(const MedVar &V,
   // recorded so a callable consumer can reject an interior target rather than
   // treating it as an exact function entry.
   MedVar Current = V;
-  for (int Depth = 0; Depth < 16; ++Depth) {
+  for (
+      int Depth = 0;
+      Depth <
+      ::neverd::limits::backend::
+          kMedLLVMAddrResolveMedLLVMEmitterClassifyPointerTableLoadRolesDepthLimit;
+      ++Depth) {
     const MedOp *Def = lookupDef(Current);
     if (!Def)
       return finish(Result);
@@ -4596,7 +5251,10 @@ MedLLVMEmitter::classifyPointerTableLoadRoles(const MedVar &V,
                                        SeenSet)>
       recurrenceDelta = [&](const MedVar &Value, const MedVar &Root, int Depth,
                             SeenSet Seen) -> std::optional<int64_t> {
-    if (Depth > 32 || Value.isConst())
+    if (Depth >
+            ::neverd::limits::backend::
+                kMedLLVMAddrResolveMedLLVMEmitterClassifyPointerTableLoadRolesRecurrenceDeltaDepthLimit ||
+        Value.isConst())
       return std::nullopt;
     if (sameValue(Value, Root))
       return int64_t(0);
@@ -4634,7 +5292,9 @@ MedLLVMEmitter::classifyPointerTableLoadRoles(const MedVar &V,
 
   std::function<AddressDomain(const MedVar &, int, SeenSet)> analyzeAddress =
       [&](const MedVar &Address, int Depth, SeenSet Seen) -> AddressDomain {
-    if (Depth > 32)
+    if (Depth >
+        ::neverd::limits::backend::
+            kMedLLVMAddrResolveMedLLVMEmitterClassifyPointerTableLoadRolesAnalyzeAddressDepthLimit)
       return {};
     if (auto Exact = exactAddress(Address))
       return AddressDomain{{*Exact}, std::nullopt, true};
@@ -4766,274 +5426,818 @@ MedLLVMEmitter::classifyPointerTableLoadRoles(const MedVar &V,
   // same initial/recurrent edges, and the guarded successor must execute the
   // classified load before that recurrent edge can be taken.  Any missing CFG
   // fact leaves the caller on the existing section-span fallback.
-  auto guardedIterationCount =
-      [&](const MedVar &Address,
-          std::optional<int64_t> AddressStep) -> std::optional<size_t> {
-    if (!AddressStep || *AddressStep == 0)
-      return std::nullopt;
-    const PhiNode *AddressPhi = lookupPhi(Address);
-    if (!AddressPhi || AddressPhi->Args.size() != 2)
-      return std::nullopt;
+  auto guardedIterationCount = [&](const MedVar &Address, std::
+                                                              optional<int64_t>
+                                                                  AddressStep) -> std::
+                                                                                   optional<
+                                                                                       size_t> {
+                                                                                     if (!AddressStep ||
+                                                                                         *AddressStep ==
+                                                                                             0)
+                                                                                       return std::
+                                                                                           nullopt;
+                                                                                     const PhiNode
+                                                                                         *AddressPhi =
+                                                                                             lookupPhi(
+                                                                                                 Address);
+                                                                                     if (!AddressPhi ||
+                                                                                         AddressPhi
+                                                                                                 ->Args
+                                                                                                 .size() !=
+                                                                                             2)
+                                                                                       return std::
+                                                                                           nullopt;
 
-    std::map<int, const MedBlock *> Blocks;
-    const MedBlock *Header = nullptr;
-    const MedBlock *LoadBlock = nullptr;
-    for (const MedBlock &Block : CurMedFunc->Blocks) {
-      if (!Blocks.emplace(Block.Id, &Block).second)
-        return std::nullopt;
-      for (const PhiNode &Phi : Block.Phis)
-        if (&Phi == AddressPhi)
-          Header = &Block;
-      for (const MedOp &Op : Block.Ops)
-        if (&Op == Result.Load)
-          LoadBlock = &Block;
-    }
-    if (!Header || !LoadBlock || CurMedFunc->Blocks.empty() ||
-        Header == LoadBlock || Header->Id == CurMedFunc->Blocks.front().Id ||
-        LoadBlock->Id == CurMedFunc->Blocks.front().Id ||
-        Header->Preds.size() != 2 || Header->Succs.size() != 2 ||
-        !Header->ExceptionalSuccs.empty())
-      return std::nullopt;
-    if (Header->Succs[0] == Header->Succs[1] ||
-        Blocks.count(Header->Succs[0]) == 0 ||
-        Blocks.count(Header->Succs[1]) == 0 || LoadBlock->Preds.size() != 1)
-      return std::nullopt;
+                                                                                     std::map<
+                                                                                         int,
+                                                                                         const MedBlock
+                                                                                             *>
+                                                                                         Blocks;
+                                                                                     const MedBlock
+                                                                                         *Header =
+                                                                                             nullptr;
+                                                                                     const MedBlock
+                                                                                         *LoadBlock =
+                                                                                             nullptr;
+                                                                                     for (
+                                                                                         const MedBlock
+                                                                                             &Block :
+                                                                                         CurMedFunc
+                                                                                             ->Blocks) {
+                                                                                       if (!Blocks
+                                                                                                .emplace(
+                                                                                                    Block
+                                                                                                        .Id,
+                                                                                                    &Block)
+                                                                                                .second)
+                                                                                         return std::
+                                                                                             nullopt;
+                                                                                       for (
+                                                                                           const PhiNode
+                                                                                               &Phi :
+                                                                                           Block
+                                                                                               .Phis)
+                                                                                         if (&Phi ==
+                                                                                             AddressPhi)
+                                                                                           Header =
+                                                                                               &Block;
+                                                                                       for (
+                                                                                           const MedOp
+                                                                                               &Op :
+                                                                                           Block
+                                                                                               .Ops)
+                                                                                         if (&Op ==
+                                                                                             Result
+                                                                                                 .Load)
+                                                                                           LoadBlock =
+                                                                                               &Block;
+                                                                                     }
+                                                                                     if (!Header ||
+                                                                                         !LoadBlock ||
+                                                                                         CurMedFunc
+                                                                                             ->Blocks
+                                                                                             .empty() ||
+                                                                                         Header ==
+                                                                                             LoadBlock ||
+                                                                                         Header->Id ==
+                                                                                             CurMedFunc
+                                                                                                 ->Blocks
+                                                                                                 .front()
+                                                                                                 .Id ||
+                                                                                         LoadBlock
+                                                                                                 ->Id ==
+                                                                                             CurMedFunc
+                                                                                                 ->Blocks
+                                                                                                 .front()
+                                                                                                 .Id ||
+                                                                                         Header->Preds
+                                                                                                 .size() !=
+                                                                                             2 ||
+                                                                                         Header->Succs
+                                                                                                 .size() !=
+                                                                                             2 ||
+                                                                                         !Header
+                                                                                              ->ExceptionalSuccs
+                                                                                              .empty())
+                                                                                       return std::
+                                                                                           nullopt;
+                                                                                     if (Header->Succs
+                                                                                                 [0] ==
+                                                                                             Header
+                                                                                                 ->Succs
+                                                                                                     [1] ||
+                                                                                         Blocks.count(
+                                                                                             Header
+                                                                                                 ->Succs
+                                                                                                     [0]) ==
+                                                                                             0 ||
+                                                                                         Blocks.count(
+                                                                                             Header
+                                                                                                 ->Succs
+                                                                                                     [1]) ==
+                                                                                             0 ||
+                                                                                         LoadBlock
+                                                                                                 ->Preds
+                                                                                                 .size() !=
+                                                                                             1)
+                                                                                       return std::
+                                                                                           nullopt;
 
-    std::set<int> StructuralHeaderPreds;
-    std::set<int> StructuralLoadPreds;
-    for (const auto &[BlockId, Block] : Blocks) {
-      auto recordIncoming = [&](int Succ) {
-        if (Succ == Header->Id)
-          StructuralHeaderPreds.insert(BlockId);
-        if (Succ == LoadBlock->Id)
-          StructuralLoadPreds.insert(BlockId);
-      };
-      for (int Succ : Block->Succs)
-        recordIncoming(Succ);
-      for (const ExceptionalEdge &Edge : Block->ExceptionalSuccs)
-        recordIncoming(Edge.BlockId);
-    }
-    if (StructuralHeaderPreds !=
-            std::set<int>(Header->Preds.begin(), Header->Preds.end()) ||
-        StructuralLoadPreds != std::set<int>{Header->Id} ||
-        std::set<int>(LoadBlock->Preds.begin(), LoadBlock->Preds.end()) !=
-            std::set<int>{Header->Id})
-      return std::nullopt;
+                                                                                     std::set<
+                                                                                         int>
+                                                                                         StructuralHeaderPreds;
+                                                                                     std::set<
+                                                                                         int>
+                                                                                         StructuralLoadPreds;
+                                                                                     for (
+                                                                                         const auto
+                                                                                             &[BlockId,
+                                                                                               Block] :
+                                                                                         Blocks) {
+                                                                                       auto recordIncoming =
+                                                                                           [&](int Succ) {
+                                                                                             if (Succ ==
+                                                                                                 Header
+                                                                                                     ->Id)
+                                                                                               StructuralHeaderPreds
+                                                                                                   .insert(
+                                                                                                       BlockId);
+                                                                                             if (Succ ==
+                                                                                                 LoadBlock
+                                                                                                     ->Id)
+                                                                                               StructuralLoadPreds
+                                                                                                   .insert(
+                                                                                                       BlockId);
+                                                                                           };
+                                                                                       for (
+                                                                                           int Succ :
+                                                                                           Block
+                                                                                               ->Succs)
+                                                                                         recordIncoming(
+                                                                                             Succ);
+                                                                                       for (
+                                                                                           const ExceptionalEdge
+                                                                                               &Edge :
+                                                                                           Block
+                                                                                               ->ExceptionalSuccs)
+                                                                                         recordIncoming(
+                                                                                             Edge.BlockId);
+                                                                                     }
+                                                                                     if (StructuralHeaderPreds !=
+                                                                                             std::set<
+                                                                                                 int>(
+                                                                                                 Header
+                                                                                                     ->Preds
+                                                                                                     .begin(),
+                                                                                                 Header
+                                                                                                     ->Preds
+                                                                                                     .end()) ||
+                                                                                         StructuralLoadPreds !=
+                                                                                             std::set<
+                                                                                                 int>{
+                                                                                                 Header
+                                                                                                     ->Id} ||
+                                                                                         std::set<
+                                                                                             int>(
+                                                                                             LoadBlock
+                                                                                                 ->Preds
+                                                                                                 .begin(),
+                                                                                             LoadBlock
+                                                                                                 ->Preds
+                                                                                                 .end()) !=
+                                                                                             std::set<
+                                                                                                 int>{
+                                                                                                 Header
+                                                                                                     ->Id})
+                                                                                       return std::
+                                                                                           nullopt;
 
-    struct PhiEdges {
-      int InitialPred = -1;
-      const MedVar *InitialValue = nullptr;
-      int RecurrentPred = -1;
-      const MedVar *RecurrentValue = nullptr;
-    };
-    auto splitPhiEdges = [&](const PhiNode &Phi,
-                             int64_t ExpectedStep) -> std::optional<PhiEdges> {
-      if (Phi.Args.size() != 2)
-        return std::nullopt;
-      PhiEdges Edges;
-      for (const auto &[Pred, Arg] : Phi.Args) {
-        if (classifyPhiIncomingEdge(Phi, Pred) !=
-            PhiEdgeFeasibility::ProvenFeasible)
-          return std::nullopt;
-        if (phiIncomingIsRecurrent(Phi, Pred, Arg)) {
-          if (Edges.RecurrentValue)
-            return std::nullopt;
-          const std::optional<int64_t> Delta =
-              recurrenceDelta(Arg, Phi.Output, 0, {});
-          if (!Delta || *Delta != ExpectedStep)
-            return std::nullopt;
-          Edges.RecurrentPred = Pred;
-          Edges.RecurrentValue = &Arg;
-        } else {
-          if (Edges.InitialValue)
-            return std::nullopt;
-          Edges.InitialPred = Pred;
-          Edges.InitialValue = &Arg;
-        }
-      }
-      if (!Edges.InitialValue || !Edges.RecurrentValue ||
-          Edges.InitialPred == Edges.RecurrentPred)
-        return std::nullopt;
-      return Edges;
-    };
-    const std::optional<PhiEdges> AddressEdges =
-        splitPhiEdges(*AddressPhi, *AddressStep);
-    if (!AddressEdges || Address.Size != PtrSize ||
-        AddressPhi->Output.Size != PtrSize ||
-        AddressEdges->InitialValue->Size != PtrSize ||
-        AddressEdges->RecurrentValue->Size != PtrSize)
-      return std::nullopt;
-    const std::set<int> HeaderPreds(Header->Preds.begin(), Header->Preds.end());
-    if (HeaderPreds !=
-        std::set<int>{AddressEdges->InitialPred, AddressEdges->RecurrentPred})
-      return std::nullopt;
+                                                                                     struct
+                                                                                         PhiEdges {
+                                                                                       int InitialPred =
+                                                                                           -1;
+                                                                                       const MedVar
+                                                                                           *InitialValue =
+                                                                                               nullptr;
+                                                                                       int RecurrentPred =
+                                                                                           -1;
+                                                                                       const MedVar
+                                                                                           *RecurrentValue =
+                                                                                               nullptr;
+                                                                                     };
+                                                                                     auto splitPhiEdges =
+                                                                                         [&](const PhiNode
+                                                                                                 &Phi,
+                                                                                             int64_t
+                                                                                                 ExpectedStep) -> std::
+                                                                                                                   optional<
+                                                                                                                       PhiEdges> {
+                                                                                                                     if (Phi.Args
+                                                                                                                             .size() !=
+                                                                                                                         2)
+                                                                                                                       return std::
+                                                                                                                           nullopt;
+                                                                                                                     PhiEdges
+                                                                                                                         Edges;
+                                                                                                                     for (
+                                                                                                                         const auto
+                                                                                                                             &[Pred,
+                                                                                                                               Arg] :
+                                                                                                                         Phi.Args) {
+                                                                                                                       if (classifyPhiIncomingEdge(
+                                                                                                                               Phi,
+                                                                                                                               Pred) !=
+                                                                                                                           PhiEdgeFeasibility::
+                                                                                                                               ProvenFeasible)
+                                                                                                                         return std::
+                                                                                                                             nullopt;
+                                                                                                                       if (phiIncomingIsRecurrent(
+                                                                                                                               Phi,
+                                                                                                                               Pred,
+                                                                                                                               Arg)) {
+                                                                                                                         if (Edges
+                                                                                                                                 .RecurrentValue)
+                                                                                                                           return std::
+                                                                                                                               nullopt;
+                                                                                                                         const std::optional<
+                                                                                                                             int64_t>
+                                                                                                                             Delta = recurrenceDelta(
+                                                                                                                                 Arg,
+                                                                                                                                 Phi.Output,
+                                                                                                                                 0,
+                                                                                                                                 {});
+                                                                                                                         if (!Delta ||
+                                                                                                                             *Delta !=
+                                                                                                                                 ExpectedStep)
+                                                                                                                           return std::
+                                                                                                                               nullopt;
+                                                                                                                         Edges
+                                                                                                                             .RecurrentPred =
+                                                                                                                             Pred;
+                                                                                                                         Edges
+                                                                                                                             .RecurrentValue =
+                                                                                                                             &Arg;
+                                                                                                                       } else {
+                                                                                                                         if (Edges
+                                                                                                                                 .InitialValue)
+                                                                                                                           return std::
+                                                                                                                               nullopt;
+                                                                                                                         Edges
+                                                                                                                             .InitialPred =
+                                                                                                                             Pred;
+                                                                                                                         Edges
+                                                                                                                             .InitialValue =
+                                                                                                                             &Arg;
+                                                                                                                       }
+                                                                                                                     }
+                                                                                                                     if (!Edges
+                                                                                                                              .InitialValue ||
+                                                                                                                         !Edges
+                                                                                                                              .RecurrentValue ||
+                                                                                                                         Edges.InitialPred ==
+                                                                                                                             Edges
+                                                                                                                                 .RecurrentPred)
+                                                                                                                       return std::
+                                                                                                                           nullopt;
+                                                                                                                     return Edges;
+                                                                                                                   };
+                                                                                     const std::optional<
+                                                                                         PhiEdges>
+                                                                                         AddressEdges = splitPhiEdges(
+                                                                                             *AddressPhi,
+                                                                                             *AddressStep);
+                                                                                     if (!AddressEdges ||
+                                                                                         Address.Size !=
+                                                                                             PtrSize ||
+                                                                                         AddressPhi
+                                                                                                 ->Output
+                                                                                                 .Size !=
+                                                                                             PtrSize ||
+                                                                                         AddressEdges
+                                                                                                 ->InitialValue
+                                                                                                 ->Size !=
+                                                                                             PtrSize ||
+                                                                                         AddressEdges
+                                                                                                 ->RecurrentValue
+                                                                                                 ->Size !=
+                                                                                             PtrSize)
+                                                                                       return std::
+                                                                                           nullopt;
+                                                                                     const std::set<int> HeaderPreds(
+                                                                                         Header
+                                                                                             ->Preds
+                                                                                             .begin(),
+                                                                                         Header
+                                                                                             ->Preds
+                                                                                             .end());
+                                                                                     if (HeaderPreds !=
+                                                                                         std::set<
+                                                                                             int>{
+                                                                                             AddressEdges
+                                                                                                 ->InitialPred,
+                                                                                             AddressEdges
+                                                                                                 ->RecurrentPred})
+                                                                                       return std::
+                                                                                           nullopt;
 
-    const MedOp *Branch = nullptr;
-    for (const MedOp &Op : Header->Ops) {
-      if (Op.Opcode == NdOp::COND_BR) {
-        if (Branch)
-          return std::nullopt;
-        Branch = &Op;
-      } else if (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::INDIR_BR ||
-                 Op.Opcode == NdOp::RETURN) {
-        return std::nullopt;
-      }
-    }
-    if (!Branch || Branch->NumInputs < 2 || !Branch->Inputs[0].isConst() ||
-        Branch->Inputs[0].ConstVal == 0 || Header->Ops.empty() ||
-        &Header->Ops.back() != Branch)
-      return std::nullopt;
+                                                                                     const MedOp
+                                                                                         *Branch =
+                                                                                             nullptr;
+                                                                                     for (
+                                                                                         const MedOp
+                                                                                             &Op :
+                                                                                         Header
+                                                                                             ->Ops) {
+                                                                                       if (Op.Opcode ==
+                                                                                           NdOp::
+                                                                                               COND_BR) {
+                                                                                         if (Branch)
+                                                                                           return std::
+                                                                                               nullopt;
+                                                                                         Branch =
+                                                                                             &Op;
+                                                                                       } else if (
+                                                                                           Op.Opcode ==
+                                                                                               NdOp::
+                                                                                                   BRANCH ||
+                                                                                           Op.Opcode ==
+                                                                                               NdOp::
+                                                                                                   INDIR_BR ||
+                                                                                           Op.Opcode ==
+                                                                                               NdOp::
+                                                                                                   RETURN) {
+                                                                                         return std::
+                                                                                             nullopt;
+                                                                                       }
+                                                                                     }
+                                                                                     if (!Branch ||
+                                                                                         Branch->NumInputs <
+                                                                                             2 ||
+                                                                                         !Branch
+                                                                                              ->Inputs
+                                                                                                  [0]
+                                                                                              .isConst() ||
+                                                                                         Branch->Inputs
+                                                                                                 [0]
+                                                                                                     .ConstVal ==
+                                                                                             0 ||
+                                                                                         Header
+                                                                                             ->Ops
+                                                                                             .empty() ||
+                                                                                         &Header->Ops
+                                                                                                 .back() !=
+                                                                                             Branch)
+                                                                                       return std::
+                                                                                           nullopt;
 
-    bool ReachedLoad = false;
-    for (const MedOp &Op : LoadBlock->Ops) {
-      if (&Op == Result.Load) {
-        ReachedLoad = true;
-        break;
-      }
-      if (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR ||
-          Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::RETURN)
-        return std::nullopt;
-    }
-    if (!ReachedLoad)
-      return std::nullopt;
+                                                                                     bool ReachedLoad =
+                                                                                         false;
+                                                                                     for (
+                                                                                         const MedOp
+                                                                                             &Op :
+                                                                                         LoadBlock
+                                                                                             ->Ops) {
+                                                                                       if (&Op ==
+                                                                                           Result
+                                                                                               .Load) {
+                                                                                         ReachedLoad =
+                                                                                             true;
+                                                                                         break;
+                                                                                       }
+                                                                                       if (Op.Opcode ==
+                                                                                               NdOp::
+                                                                                                   BRANCH ||
+                                                                                           Op.Opcode ==
+                                                                                               NdOp::
+                                                                                                   COND_BR ||
+                                                                                           Op.Opcode ==
+                                                                                               NdOp::
+                                                                                                   INDIR_BR ||
+                                                                                           Op.Opcode ==
+                                                                                               NdOp::
+                                                                                                   RETURN)
+                                                                                         return std::
+                                                                                             nullopt;
+                                                                                     }
+                                                                                     if (!ReachedLoad)
+                                                                                       return std::
+                                                                                           nullopt;
 
-    auto blockAddress = [&](int Id) -> std::optional<va_t> {
-      auto It = Blocks.find(Id);
-      if (It == Blocks.end())
-        return std::nullopt;
-      const MedBlock &Block = *It->second;
-      return Block.StartAddr != 0 || Block.Ops.empty()
-                 ? std::optional<va_t>(Block.StartAddr)
-                 : std::optional<va_t>(Block.Ops.front().Addr);
-    };
-    std::optional<int> Taken;
-    for (int Succ : Header->Succs) {
-      const std::optional<va_t> Address = blockAddress(Succ);
-      if (Address && *Address == Branch->Inputs[0].ConstVal) {
-        if (Taken)
-          return std::nullopt;
-        Taken = Succ;
-      }
-    }
-    if (!Taken)
-      return std::nullopt;
-    const int Fallthrough =
-        *Taken == Header->Succs[0] ? Header->Succs[1] : Header->Succs[0];
-    if (LoadBlock->Id != *Taken && LoadBlock->Id != Fallthrough)
-      return std::nullopt;
-    const bool LoadOnBranchTrue = LoadBlock->Id == *Taken;
-    const int ExitSucc = LoadOnBranchTrue ? Fallthrough : *Taken;
+                                                                                     auto
+                                                                                         blockAddress = [&](int Id) -> std::
+                                                                                                                        optional<
+                                                                                                                            va_t> {
+                                                                                                                          auto It =
+                                                                                                                              Blocks
+                                                                                                                                  .find(
+                                                                                                                                      Id);
+                                                                                                                          if (It ==
+                                                                                                                              Blocks
+                                                                                                                                  .end())
+                                                                                                                            return std::
+                                                                                                                                nullopt;
+                                                                                                                          const MedBlock
+                                                                                                                              &Block =
+                                                                                                                                  *It->second;
+                                                                                                                          return Block.StartAddr !=
+                                                                                                                                             0 ||
+                                                                                                                                         Block
+                                                                                                                                             .Ops
+                                                                                                                                             .empty()
+                                                                                                                                     ? std::optional<
+                                                                                                                                           va_t>(
+                                                                                                                                           Block
+                                                                                                                                               .StartAddr)
+                                                                                                                                     : std::optional<
+                                                                                                                                           va_t>(
+                                                                                                                                           Block
+                                                                                                                                               .Ops
+                                                                                                                                               .front()
+                                                                                                                                               .Addr);
+                                                                                                                        };
+                                                                                     std::optional<
+                                                                                         int>
+                                                                                         Taken;
+                                                                                     for (
+                                                                                         int Succ :
+                                                                                         Header
+                                                                                             ->Succs) {
+                                                                                       const std::optional<
+                                                                                           va_t>
+                                                                                           Address = blockAddress(
+                                                                                               Succ);
+                                                                                       if (Address &&
+                                                                                           *Address ==
+                                                                                               Branch
+                                                                                                   ->Inputs
+                                                                                                       [0]
+                                                                                                   .ConstVal) {
+                                                                                         if (Taken)
+                                                                                           return std::
+                                                                                               nullopt;
+                                                                                         Taken =
+                                                                                             Succ;
+                                                                                       }
+                                                                                     }
+                                                                                     if (!Taken)
+                                                                                       return std::
+                                                                                           nullopt;
+                                                                                     const int Fallthrough =
+                                                                                         *Taken ==
+                                                                                                 Header
+                                                                                                     ->Succs
+                                                                                                         [0]
+                                                                                             ? Header
+                                                                                                   ->Succs
+                                                                                                       [1]
+                                                                                             : Header
+                                                                                                   ->Succs
+                                                                                                       [0];
+                                                                                     if (LoadBlock
+                                                                                                 ->Id !=
+                                                                                             *Taken &&
+                                                                                         LoadBlock
+                                                                                                 ->Id !=
+                                                                                             Fallthrough)
+                                                                                       return std::
+                                                                                           nullopt;
+                                                                                     const bool LoadOnBranchTrue =
+                                                                                         LoadBlock
+                                                                                             ->Id ==
+                                                                                         *Taken;
+                                                                                     const int ExitSucc =
+                                                                                         LoadOnBranchTrue
+                                                                                             ? Fallthrough
+                                                                                             : *Taken;
 
-    MedVar Condition = Branch->Inputs[1];
-    bool Negated = false;
-    const MedOp *Compare = nullptr;
-    for (int Depth = 0; Depth < 16 && !Condition.isConst(); ++Depth) {
-      const MedOp *Def = lookupDef(Condition);
-      if (!Def)
-        return std::nullopt;
-      if (Def->Opcode == NdOp::BOOL_NOT && Def->NumInputs >= 1) {
-        Negated = !Negated;
-        Condition = Def->Inputs[0];
-        continue;
-      }
-      if (Def->Opcode == NdOp::INT_LESS && Def->NumInputs >= 2) {
-        Compare = Def;
-        break;
-      }
-      const std::optional<MedVar> Forwarded = pointerPreservingInput(*Def);
-      if (!Forwarded)
-        return std::nullopt;
-      Condition = *Forwarded;
-    }
-    if (!Compare || LoadOnBranchTrue != !Negated)
-      return std::nullopt;
+                                                                                     MedVar Condition =
+                                                                                         Branch
+                                                                                             ->Inputs
+                                                                                                 [1];
+                                                                                     bool Negated =
+                                                                                         false;
+                                                                                     const MedOp
+                                                                                         *Compare =
+                                                                                             nullptr;
+                                                                                     for (
+                                                                                         int Depth =
+                                                                                             0;
+                                                                                         Depth <
+                                                                                             ::neverd::limits::
+                                                                                                 backend::
+                                                                                                     kMedLLVMAddrResolveMedLLVMEmitterClassifyPointerTableLoadRolesGuardedIterationCountDepthLimit &&
+                                                                                         !Condition
+                                                                                              .isConst();
+                                                                                         ++Depth) {
+                                                                                       const MedOp
+                                                                                           *Def = lookupDef(
+                                                                                               Condition);
+                                                                                       if (!Def)
+                                                                                         return std::
+                                                                                             nullopt;
+                                                                                       if (Def->Opcode ==
+                                                                                               NdOp::
+                                                                                                   BOOL_NOT &&
+                                                                                           Def->NumInputs >=
+                                                                                               1) {
+                                                                                         Negated =
+                                                                                             !Negated;
+                                                                                         Condition =
+                                                                                             Def->Inputs
+                                                                                                 [0];
+                                                                                         continue;
+                                                                                       }
+                                                                                       if (Def->Opcode ==
+                                                                                               NdOp::
+                                                                                                   INT_LESS &&
+                                                                                           Def->NumInputs >=
+                                                                                               2) {
+                                                                                         Compare =
+                                                                                             Def;
+                                                                                         break;
+                                                                                       }
+                                                                                       const std::optional<
+                                                                                           MedVar>
+                                                                                           Forwarded = pointerPreservingInput(
+                                                                                               *Def);
+                                                                                       if (!Forwarded)
+                                                                                         return std::
+                                                                                             nullopt;
+                                                                                       Condition =
+                                                                                           *Forwarded;
+                                                                                     }
+                                                                                     if (!Compare ||
+                                                                                         LoadOnBranchTrue !=
+                                                                                             !Negated)
+                                                                                       return std::
+                                                                                           nullopt;
 
-    const MedVar &Counter = Compare->Inputs[0];
-    const MedVar &BoundValue = Compare->Inputs[1];
-    const PhiNode *CounterPhi = lookupPhi(Counter);
-    if (!CounterPhi || CounterPhi == AddressPhi || Counter.Size == 0 ||
-        Counter.Size > 8 || BoundValue.Size != Counter.Size ||
-        !sameValue(CounterPhi->Output, Counter))
-      return std::nullopt;
-    bool CounterOwnedByHeader = false;
-    for (const PhiNode &Phi : Header->Phis)
-      CounterOwnedByHeader |= &Phi == CounterPhi;
-    if (!CounterOwnedByHeader)
-      return std::nullopt;
-    const std::optional<PhiEdges> CounterEdges = splitPhiEdges(*CounterPhi, 1);
-    if (!CounterEdges ||
-        CounterEdges->InitialPred != AddressEdges->InitialPred ||
-        CounterEdges->RecurrentPred != AddressEdges->RecurrentPred ||
-        CounterEdges->InitialValue->Size != Counter.Size ||
-        CounterEdges->RecurrentValue->Size != Counter.Size)
-      return std::nullopt;
+                                                                                     const MedVar &Counter =
+                                                                                         Compare
+                                                                                             ->Inputs
+                                                                                                 [0];
+                                                                                     const MedVar &BoundValue =
+                                                                                         Compare
+                                                                                             ->Inputs
+                                                                                                 [1];
+                                                                                     const PhiNode
+                                                                                         *CounterPhi =
+                                                                                             lookupPhi(
+                                                                                                 Counter);
+                                                                                     if (!CounterPhi ||
+                                                                                         CounterPhi ==
+                                                                                             AddressPhi ||
+                                                                                         Counter.Size ==
+                                                                                             0 ||
+                                                                                         Counter.Size >
+                                                                                             8 ||
+                                                                                         BoundValue
+                                                                                                 .Size !=
+                                                                                             Counter
+                                                                                                 .Size ||
+                                                                                         !sameValue(
+                                                                                             CounterPhi
+                                                                                                 ->Output,
+                                                                                             Counter))
+                                                                                       return std::
+                                                                                           nullopt;
+                                                                                     bool CounterOwnedByHeader =
+                                                                                         false;
+                                                                                     for (
+                                                                                         const PhiNode
+                                                                                             &Phi :
+                                                                                         Header
+                                                                                             ->Phis)
+                                                                                       CounterOwnedByHeader |=
+                                                                                           &Phi ==
+                                                                                           CounterPhi;
+                                                                                     if (!CounterOwnedByHeader)
+                                                                                       return std::
+                                                                                           nullopt;
+                                                                                     const std::optional<
+                                                                                         PhiEdges>
+                                                                                         CounterEdges = splitPhiEdges(
+                                                                                             *CounterPhi,
+                                                                                             1);
+                                                                                     if (!CounterEdges ||
+                                                                                         CounterEdges
+                                                                                                 ->InitialPred !=
+                                                                                             AddressEdges
+                                                                                                 ->InitialPred ||
+                                                                                         CounterEdges
+                                                                                                 ->RecurrentPred !=
+                                                                                             AddressEdges
+                                                                                                 ->RecurrentPred ||
+                                                                                         CounterEdges
+                                                                                                 ->InitialValue
+                                                                                                 ->Size !=
+                                                                                             Counter
+                                                                                                 .Size ||
+                                                                                         CounterEdges
+                                                                                                 ->RecurrentValue
+                                                                                                 ->Size !=
+                                                                                             Counter
+                                                                                                 .Size)
+                                                                                       return std::
+                                                                                           nullopt;
 
-    std::function<std::optional<uint64_t>(const MedVar &, int, SeenSet)>
-        scalarConstant = [&](const MedVar &Value, int Depth,
-                             SeenSet Seen) -> std::optional<uint64_t> {
-      if (Depth > 16 || Value.Size != Counter.Size)
-        return std::nullopt;
-      if (Value.isConst()) {
-        if (!isStableNumericOffset(Value))
-          return std::nullopt;
-        const unsigned Bits =
-            Value.Size == 0 ? PtrBits : static_cast<unsigned>(Value.Size) * 8;
-        if (Bits == 0 || Bits > 64)
-          return std::nullopt;
-        const uint64_t Mask =
-            Bits == 64 ? ~uint64_t(0) : (uint64_t(1) << Bits) - uint64_t(1);
-        return Value.ConstVal & Mask;
-      }
-      const AddressProvenanceVarKey Key = addressProvenanceVarKey(Value);
-      if (!Seen.insert(Key).second)
-        return std::nullopt;
-      const MedOp *Def = lookupDef(Value);
-      if (!Def)
-        return std::nullopt;
-      const std::optional<MedVar> Forwarded = pointerPreservingInput(*Def);
-      return Forwarded ? scalarConstant(*Forwarded, Depth + 1, Seen)
-                       : std::nullopt;
-    };
-    const std::optional<uint64_t> InitialCounter =
-        scalarConstant(*CounterEdges->InitialValue, 0, {});
-    const std::optional<uint64_t> Bound = scalarConstant(BoundValue, 0, {});
-    if (!InitialCounter || *InitialCounter != 0 || !Bound || *Bound == 0 ||
-        *Bound > static_cast<uint64_t>(limits::kMaxSSANodes))
-      return std::nullopt;
+                                                                                     std::function<std::optional<
+                                                                                         uint64_t>(
+                                                                                         const MedVar
+                                                                                             &,
+                                                                                         int,
+                                                                                         SeenSet)>
+                                                                                         scalarConstant =
+                                                                                             [&](const MedVar
+                                                                                                     &Value,
+                                                                                                 int Depth,
+                                                                                                 SeenSet
+                                                                                                     Seen)
+                                                                                         -> std::optional<
+                                                                                             uint64_t> {
+                                                                                       if (Depth >
+                                                                                               ::neverd::limits::
+                                                                                                   backend::
+                                                                                                       kMedLLVMAddrResolveMedLLVMEmitterClassifyPointerTableLoadRolesGuardedIterationCountScalarConstantDepthLimit ||
+                                                                                           Value.Size !=
+                                                                                               Counter
+                                                                                                   .Size)
+                                                                                         return std::
+                                                                                             nullopt;
+                                                                                       if (Value
+                                                                                               .isConst()) {
+                                                                                         if (!isStableNumericOffset(
+                                                                                                 Value))
+                                                                                           return std::
+                                                                                               nullopt;
+                                                                                         const unsigned Bits =
+                                                                                             Value.Size ==
+                                                                                                     0
+                                                                                                 ? PtrBits
+                                                                                                 : static_cast<
+                                                                                                       unsigned>(
+                                                                                                       Value
+                                                                                                           .Size) *
+                                                                                                       8;
+                                                                                         if (Bits ==
+                                                                                                 0 ||
+                                                                                             Bits >
+                                                                                                 64)
+                                                                                           return std::
+                                                                                               nullopt;
+                                                                                         const uint64_t Mask =
+                                                                                             Bits == 64
+                                                                                                 ? ~uint64_t(
+                                                                                                       0)
+                                                                                                 : (uint64_t(
+                                                                                                        1)
+                                                                                                    << Bits) -
+                                                                                                       uint64_t(
+                                                                                                           1);
+                                                                                         return Value
+                                                                                                    .ConstVal &
+                                                                                                Mask;
+                                                                                       }
+                                                                                       const AddressProvenanceVarKey
+                                                                                           Key = addressProvenanceVarKey(
+                                                                                               Value);
+                                                                                       if (!Seen.insert(
+                                                                                                    Key)
+                                                                                                .second)
+                                                                                         return std::
+                                                                                             nullopt;
+                                                                                       const MedOp
+                                                                                           *Def = lookupDef(
+                                                                                               Value);
+                                                                                       if (!Def)
+                                                                                         return std::
+                                                                                             nullopt;
+                                                                                       const std::optional<
+                                                                                           MedVar>
+                                                                                           Forwarded = pointerPreservingInput(
+                                                                                               *Def);
+                                                                                       return Forwarded
+                                                                                                  ? scalarConstant(
+                                                                                                        *Forwarded,
+                                                                                                        Depth +
+                                                                                                            1,
+                                                                                                        Seen)
+                                                                                                  : std::
+                                                                                                        nullopt;
+                                                                                     };
+                                                                                     const std::optional<
+                                                                                         uint64_t>
+                                                                                         InitialCounter = scalarConstant(
+                                                                                             *CounterEdges
+                                                                                                  ->InitialValue,
+                                                                                             0,
+                                                                                             {});
+                                                                                     const std::optional<
+                                                                                         uint64_t>
+                                                                                         Bound = scalarConstant(
+                                                                                             BoundValue,
+                                                                                             0,
+                                                                                             {});
+                                                                                     if (!InitialCounter ||
+                                                                                         *InitialCounter !=
+                                                                                             0 ||
+                                                                                         !Bound ||
+                                                                                         *Bound ==
+                                                                                             0 ||
+                                                                                         *Bound >
+                                                                                             static_cast<
+                                                                                                 uint64_t>(
+                                                                                                 limits::
+                                                                                                     kMaxSSANodes))
+                                                                                       return std::
+                                                                                           nullopt;
 
-    auto canReachWithoutHeader = [&](int Start, int Goal) {
-      std::vector<int> Work{Start};
-      std::set<int> Seen;
-      while (!Work.empty()) {
-        const int Current = Work.back();
-        Work.pop_back();
-        if (Current == Goal)
-          return true;
-        if (!Seen.insert(Current).second)
-          continue;
-        auto It = Blocks.find(Current);
-        if (It == Blocks.end())
-          continue;
-        auto enqueue = [&](int Succ) {
-          if (Succ == Goal || Succ != Header->Id)
-            Work.push_back(Succ);
-        };
-        for (int Succ : It->second->Succs)
-          enqueue(Succ);
-        for (const ExceptionalEdge &Edge : It->second->ExceptionalSuccs)
-          enqueue(Edge.BlockId);
-      }
-      return false;
-    };
-    if (!canReachWithoutHeader(LoadBlock->Id, AddressEdges->RecurrentPred) ||
-        canReachWithoutHeader(LoadBlock->Id, AddressEdges->InitialPred) ||
-        canReachWithoutHeader(ExitSucc, LoadBlock->Id) ||
-        canReachWithoutHeader(ExitSucc, AddressEdges->RecurrentPred) ||
-        canReachWithoutHeader(ExitSucc, Header->Id))
-      return std::nullopt;
+                                                                                     auto
+                                                                                         canReachWithoutHeader =
+                                                                                             [&](int Start,
+                                                                                                 int Goal) {
+                                                                                               std::vector<
+                                                                                                   int>
+                                                                                                   Work{
+                                                                                                       Start};
+                                                                                               std::set<
+                                                                                                   int>
+                                                                                                   Seen;
+                                                                                               while (
+                                                                                                   !Work.empty()) {
+                                                                                                 const int Current =
+                                                                                                     Work.back();
+                                                                                                 Work.pop_back();
+                                                                                                 if (Current ==
+                                                                                                     Goal)
+                                                                                                   return true;
+                                                                                                 if (!Seen.insert(
+                                                                                                              Current)
+                                                                                                          .second)
+                                                                                                   continue;
+                                                                                                 auto It =
+                                                                                                     Blocks
+                                                                                                         .find(
+                                                                                                             Current);
+                                                                                                 if (It ==
+                                                                                                     Blocks
+                                                                                                         .end())
+                                                                                                   continue;
+                                                                                                 auto enqueue =
+                                                                                                     [&](int Succ) {
+                                                                                                       if (Succ ==
+                                                                                                               Goal ||
+                                                                                                           Succ !=
+                                                                                                               Header
+                                                                                                                   ->Id)
+                                                                                                         Work.push_back(
+                                                                                                             Succ);
+                                                                                                     };
+                                                                                                 for (
+                                                                                                     int Succ :
+                                                                                                     It->second
+                                                                                                         ->Succs)
+                                                                                                   enqueue(
+                                                                                                       Succ);
+                                                                                                 for (
+                                                                                                     const ExceptionalEdge
+                                                                                                         &Edge :
+                                                                                                     It->second
+                                                                                                         ->ExceptionalSuccs)
+                                                                                                   enqueue(
+                                                                                                       Edge.BlockId);
+                                                                                               }
+                                                                                               return false;
+                                                                                             };
+                                                                                     if (!canReachWithoutHeader(
+                                                                                             LoadBlock
+                                                                                                 ->Id,
+                                                                                             AddressEdges
+                                                                                                 ->RecurrentPred) ||
+                                                                                         canReachWithoutHeader(
+                                                                                             LoadBlock
+                                                                                                 ->Id,
+                                                                                             AddressEdges
+                                                                                                 ->InitialPred) ||
+                                                                                         canReachWithoutHeader(
+                                                                                             ExitSucc,
+                                                                                             LoadBlock
+                                                                                                 ->Id) ||
+                                                                                         canReachWithoutHeader(
+                                                                                             ExitSucc,
+                                                                                             AddressEdges
+                                                                                                 ->RecurrentPred) ||
+                                                                                         canReachWithoutHeader(
+                                                                                             ExitSucc,
+                                                                                             Header
+                                                                                                 ->Id))
+                                                                                       return std::
+                                                                                           nullopt;
 
-    return static_cast<size_t>(*Bound);
-  };
+                                                                                     return static_cast<
+                                                                                         size_t>(
+                                                                                         *Bound);
+                                                                                   };
 
   AddressDomain Domain = analyzeAddress(LoadAddress, 0, {});
   const std::optional<size_t> GuardedIterations =
@@ -5201,10 +6405,13 @@ MedLLVMEmitter::classifyPointerTableLoadRoles(const MedVar &V,
     const bool IsCode = Img->CodePtrRelocSlots.count(Slot) != 0;
     const bool IsData = Img->DataPtrRelocSlots.count(Slot) != 0;
     const bool IsImport = EffectiveImportStorageSlots.count(Slot) != 0;
+    const bool IsExternalFunction =
+        ExternalFunctionPointerSlots.count(Slot) != 0;
     const bool IsRuntimeCallable = Img->hasRuntimeCallablePointerSlotAt(Slot);
     const unsigned StaticKinds = static_cast<unsigned>(IsCode) +
                                  static_cast<unsigned>(IsData) +
-                                 static_cast<unsigned>(IsImport);
+                                 static_cast<unsigned>(IsImport) +
+                                 static_cast<unsigned>(IsExternalFunction);
     // A runtime contract can deliberately overlay a static callable fallback
     // (for example a loader-replaceable helper pointer).  It remains callable.
     // Static role disagreement, or any runtime-callable/data overlap, is an
@@ -5213,7 +6420,7 @@ MedLLVMEmitter::classifyPointerTableLoadRoles(const MedVar &V,
                           ConflictingImportStorageSlots.count(Slot) != 0;
     Result.SawCode |= IsCode;
     Result.SawData |= IsData;
-    Result.SawImport |= IsImport;
+    Result.SawImport |= IsImport || IsExternalFunction;
     Result.SawRuntimeCallable |= IsRuntimeCallable;
     Result.SawUnknown |= StaticKinds == 0 && !IsRuntimeCallable;
   }
@@ -5260,7 +6467,12 @@ bool MedLLVMEmitter::recoverAbsoluteDataPointerLoadIdentities(
   MedVar Cur = V;
   const MedOp *Load = nullptr;
   uint64_t Adjustment = 0;
-  for (int Depth = 0; Depth < 8; ++Depth) {
+  for (
+      int Depth = 0;
+      Depth <
+      ::neverd::limits::backend::
+          kMedLLVMAddrResolveMedLLVMEmitterRecoverAbsoluteDataPointerLoadIdentitiesDepthLimit;
+      ++Depth) {
     const MedOp *Def = lookupDef(Cur);
     if (!Def)
       return false;
@@ -5436,7 +6648,12 @@ bool MedLLVMEmitter::recoverRelativeDataPointerTargets(
 
   MedVar Cur = V;
   const MedOp *Add = nullptr;
-  for (int Depth = 0; Depth < 8; ++Depth) {
+  for (
+      int Depth = 0;
+      Depth <
+      ::neverd::limits::backend::
+          kMedLLVMAddrResolveMedLLVMEmitterRecoverRelativeDataPointerTargetsDepthLimit;
+      ++Depth) {
     const MedOp *Def = lookupDef(Cur);
     if (!Def)
       return false;
@@ -5479,7 +6696,12 @@ bool MedLLVMEmitter::recoverRelativeDataPointerTargets(
                                uint64_t &LoadBase) -> bool {
     MedVar Offset = Start;
     bool SawSignedExtension = false;
-    for (int Depth = 0; Depth < 8; ++Depth) {
+    for (
+        int Depth = 0;
+        Depth <
+        ::neverd::limits::backend::
+            kMedLLVMAddrResolveMedLLVMEmitterRecoverRelativeDataPointerTargetsRecoverOffsetLoadDepthLimit;
+        ++Depth) {
       const MedOp *Def = lookupDef(Offset);
       if (!Def)
         return false;
@@ -5606,6 +6828,7 @@ bool MedLLVMEmitter::collectIndexedGlobalBase(const MedVar &V, uint64_t &Base,
                                               std::vector<MedVar> &IdxTerms,
                                               int Depth, bool FailClosed,
                                               bool *SawAmbiguousPhi) const {
+  IndexedGlobalBaseContext Context;
   const bool CleanTopLevel =
       Depth == 0 && Base == 0 && !HaveBase && IdxTerms.empty();
   auto replayDiagnostic = [&](bool SawAmbiguous, const PhiNode *AmbiguousPhi) {
@@ -5634,9 +6857,9 @@ bool MedLLVMEmitter::collectIndexedGlobalBase(const MedVar &V, uint64_t &Base,
     ++AddressProvenanceWork.IndexedBaseProofs;
     bool LocalSawAmbiguous = false;
     const PhiNode *LocalAmbiguousPhi = nullptr;
-    const bool Proven =
-        collectIndexedGlobalBaseImpl(V, Base, HaveBase, IdxTerms, Depth,
-                                     &LocalSawAmbiguous, &LocalAmbiguousPhi);
+    const bool Proven = collectIndexedGlobalBaseImpl(
+        V, Base, HaveBase, IdxTerms, Depth, &LocalSawAmbiguous,
+        &LocalAmbiguousPhi, Context);
     IndexedGlobalBaseProof Proof;
     Proof.Proven = Proven;
     Proof.Base = Base;
@@ -5653,9 +6876,9 @@ bool MedLLVMEmitter::collectIndexedGlobalBase(const MedVar &V, uint64_t &Base,
     ++AddressProvenanceWork.IndexedBaseProofs;
   bool LocalSawAmbiguous = false;
   const PhiNode *LocalAmbiguousPhi = nullptr;
-  const bool Proven =
-      collectIndexedGlobalBaseImpl(V, Base, HaveBase, IdxTerms, Depth,
-                                   &LocalSawAmbiguous, &LocalAmbiguousPhi);
+  const bool Proven = collectIndexedGlobalBaseImpl(V, Base, HaveBase, IdxTerms,
+                                                   Depth, &LocalSawAmbiguous,
+                                                   &LocalAmbiguousPhi, Context);
   replayDiagnostic(LocalSawAmbiguous, LocalAmbiguousPhi);
   return Proven;
 }
@@ -5667,7 +6890,8 @@ MedLLVMEmitter::uniqueDataAddressOwner(const MedVar &V, uint64_t Value,
   std::optional<uint64_t> Owner;
   std::vector<MedVar> Work{V};
   std::set<AddressProvenanceVarKey> Seen;
-  int Budget = 4096;
+  int Budget = ::neverd::limits::backend::
+      kMedLLVMAddrResolveMedLLVMEmitterUniqueDataAddressOwnerBudget;
   auto mergeOwner = [&](uint64_t Candidate) {
     if (Owner && *Owner != Candidate)
       Conflict = true;
@@ -5746,8 +6970,43 @@ MedLLVMEmitter::uniqueDataAddressOwner(const MedVar &V, uint64_t Value,
 bool MedLLVMEmitter::collectIndexedGlobalBaseImpl(
     const MedVar &V, uint64_t &Base, bool &HaveBase,
     std::vector<MedVar> &IdxTerms, int Depth, bool *SawAmbiguousPhi,
-    const PhiNode **AmbiguousPhi) const {
-  if (!CurMedFunc || Depth > 8)
+    const PhiNode **AmbiguousPhi, IndexedGlobalBaseContext &Context) const {
+  const auto Key =
+      std::make_tuple(addressProvenanceVarKey(V), Depth, Base, HaveBase);
+  auto replay = [&](const IndexedGlobalBaseProof &Proof) {
+    Base = Proof.Base;
+    HaveBase = Proof.HaveBase;
+    IdxTerms.insert(IdxTerms.end(), Proof.IdxTerms.begin(),
+                    Proof.IdxTerms.end());
+    if (SawAmbiguousPhi && Proof.SawAmbiguousPhi)
+      *SawAmbiguousPhi = true;
+    if (AmbiguousPhi && !*AmbiguousPhi)
+      *AmbiguousPhi = Proof.AmbiguousPhi;
+    return Proof.Proven;
+  };
+  if (auto It = Context.Proofs.find(Key); It != Context.Proofs.end())
+    return replay(It->second);
+  ++AddressProvenanceWork.IndexedBaseNodes;
+  IndexedGlobalBaseProof Proof;
+  Proof.Base = Base;
+  Proof.HaveBase = HaveBase;
+  Proof.Proven = collectIndexedGlobalBaseUncached(
+      V, Proof.Base, Proof.HaveBase, Proof.IdxTerms, Depth,
+      &Proof.SawAmbiguousPhi, &Proof.AmbiguousPhi, Context);
+  // Depth and incoming base are part of the key: a bounded/cyclic refusal or
+  // an owner conflict cannot masquerade as a shallower, clean-base proof.
+  auto [It, Inserted] = Context.Proofs.emplace(Key, std::move(Proof));
+  return replay(It->second);
+}
+
+bool MedLLVMEmitter::collectIndexedGlobalBaseUncached(
+    const MedVar &V, uint64_t &Base, bool &HaveBase,
+    std::vector<MedVar> &IdxTerms, int Depth, bool *SawAmbiguousPhi,
+    const PhiNode **AmbiguousPhi, IndexedGlobalBaseContext &Context) const {
+  if (!CurMedFunc ||
+      Depth >
+          ::neverd::limits::backend::
+              kMedLLVMAddrResolveMedLLVMEmitterCollectIndexedGlobalBaseImplDepthLimit)
     return false;
 
   if (V.isConst()) {
@@ -5785,6 +7044,17 @@ bool MedLLVMEmitter::collectIndexedGlobalBaseImpl(
     return true;
   }
 
+  // An i386 PIC table at a displacement from the GOT: the base is the sum,
+  // which the caller validates as any other (matchI386GotRelative).
+  if (const auto Got = matchI386GotRelative(V); Got && Got->Index) {
+    if (HaveBase && Base != Got->Base)
+      return false;
+    Base = Got->Base;
+    HaveBase = true;
+    IdxTerms.push_back(*Got->Index);
+    return true;
+  }
+
   const MedOp *Def = lookupDef(V);
   // Descend only through operations that preserve the complete unsigned
   // pointer value. In particular a widening SEXT of 0x80001000 and a non-zero
@@ -5793,7 +7063,7 @@ bool MedLLVMEmitter::collectIndexedGlobalBaseImpl(
     if (auto Forwarded = pointerPreservingInput(*Def))
       return collectIndexedGlobalBaseImpl(*Forwarded, Base, HaveBase, IdxTerms,
                                           Depth + 1, SawAmbiguousPhi,
-                                          AmbiguousPhi);
+                                          AmbiguousPhi, Context);
   // A non-recursive control-flow PHI can transport one table base just like a
   // COPY, but only after proving every feasible incoming edge.  Direct PHI
   // constants are emitted as raw original-image integers (the edge-copy path
@@ -5832,7 +7102,7 @@ bool MedLLVMEmitter::collectIndexedGlobalBaseImpl(
         std::vector<MedVar> ArmTerms;
         if (collectIndexedGlobalBaseImpl(Arg, ArmBase, HaveArmBase, ArmTerms,
                                          Depth + 1, SawAmbiguousPhi,
-                                         AmbiguousPhi) &&
+                                         AmbiguousPhi, Context) &&
             HaveArmBase)
           Candidate = traceValueVA(Arg);
       }
@@ -5958,7 +7228,8 @@ bool MedLLVMEmitter::collectIndexedGlobalBaseImpl(
     if (!KC || Def->Output.Size == 0 || Def->Inputs[0].Size == 0 ||
         Def->Output.Size < Def->Inputs[0].Size ||
         !collectIndexedGlobalBaseImpl(Def->Inputs[0], Base, HaveBase, IdxTerms,
-                                      Depth + 1, SawAmbiguousPhi, AmbiguousPhi))
+                                      Depth + 1, SawAmbiguousPhi, AmbiguousPhi,
+                                      Context))
       return false;
     uint16_t KSz = Def->Inputs[1].Size ? Def->Inputs[1].Size : 8;
     IdxTerms.push_back(MedVar::makeConst(uint64_t(0) - *KC, KSz));
@@ -6024,7 +7295,7 @@ bool MedLLVMEmitter::collectIndexedGlobalBaseImpl(
   // (including a constant offset) becomes an index addend.
   if (!CA &&
       collectIndexedGlobalBaseImpl(A, Base, HaveBase, IdxTerms, Depth + 1,
-                                   SawAmbiguousPhi, AmbiguousPhi)) {
+                                   SawAmbiguousPhi, AmbiguousPhi, Context)) {
     if (Def->Output.Size == 0 || A.Size == 0 || Def->Output.Size < A.Size)
       return false;
     IdxTerms.push_back(B);
@@ -6032,7 +7303,7 @@ bool MedLLVMEmitter::collectIndexedGlobalBaseImpl(
   }
   if (!CB &&
       collectIndexedGlobalBaseImpl(B, Base, HaveBase, IdxTerms, Depth + 1,
-                                   SawAmbiguousPhi, AmbiguousPhi)) {
+                                   SawAmbiguousPhi, AmbiguousPhi, Context)) {
     if (Def->Output.Size == 0 || B.Size == 0 || Def->Output.Size < B.Size)
       return false;
     IdxTerms.push_back(A);
@@ -6045,7 +7316,10 @@ bool MedLLVMEmitter::collectLiteralPoolBase(const MedVar &V, uint64_t &Base,
                                             bool &HaveBase,
                                             std::vector<MedVar> &IdxTerms,
                                             int Depth) const {
-  if (!CurMedFunc || Depth > 8)
+  if (!CurMedFunc ||
+      Depth >
+          ::neverd::limits::backend::
+              kMedLLVMAddrResolveMedLLVMEmitterCollectLiteralPoolBaseDepthLimit)
     return false;
 
   const MedOp *Def = lookupDef(V);

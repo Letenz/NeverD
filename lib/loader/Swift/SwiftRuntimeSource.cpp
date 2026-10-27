@@ -4,10 +4,12 @@
 
 #include "../ObjC/ObjCRuntimeData.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/Swift/SwiftMetadata.h"
 
 #include "llvm/Demangle/SwiftDemangle.h"
@@ -34,7 +36,9 @@ std::string normalized(std::string Name) {
   return Name;
 }
 bool identifier(const std::string &Name) {
-  return !Name.empty() && Name.size() <= 255 &&
+  return !Name.empty() &&
+         Name.size() <= ::neverd::limits::loader::
+                            kSwiftRuntimeSourceIdentifierNameSizeLimit &&
          (std::isalpha(static_cast<unsigned char>(Name[0])) ||
           Name[0] == '_') &&
          std::all_of(Name.begin(), Name.end(), [](unsigned char C) {
@@ -177,8 +181,10 @@ class NativeFlow {
       if (B.Bytes < 8 && (B.Identity & (uint64_t(1) << (B.Bytes * 8 - 1))))
         throw Unproven(
             "runtime address displacement has an ambiguous narrow sign");
-      if (Delta < -1048576 || Delta > 1048576 || A.Offset < -1048576 ||
-          A.Offset > 1048576)
+      if (Delta < -::neverd::limits::ir::kMaxSourceFrameDisplacement ||
+          Delta > ::neverd::limits::ir::kMaxSourceFrameDisplacement ||
+          A.Offset < -::neverd::limits::ir::kMaxSourceFrameDisplacement ||
+          A.Offset > ::neverd::limits::ir::kMaxSourceFrameDisplacement)
         throw Unproven("runtime address arithmetic exceeds its bound");
       A.Offset += Op.Opcode == NdOp::INT_SUB ? -Delta : Delta;
       return A;
@@ -433,7 +439,9 @@ public:
         !F.Blocks.front().Succs.empty() ||
         !F.Blocks.front().ExceptionalSuccs.empty() ||
         !F.Blocks.front().ExceptionalPreds.empty() ||
-        F.Blocks.front().Ops.size() > 4096)
+        F.Blocks.front().Ops.size() >
+            ::neverd::limits::loader::
+                kSwiftRuntimeSourceRunFBlocksFrontOpsSizeLimit)
       throw Unproven("runtime projection requires one bounded nonexceptional "
                      "native block");
     const auto &B = F.Blocks.front();
@@ -564,11 +572,11 @@ class Proof {
   }
   void metadataAccessorRole(const Identity &ID) const {
     llvm::SwiftDemangleOptions Options;
-    Options.MaxInputBytes = 8000;
-    Options.MaxNodes = 1024;
-    Options.MaxDepth = 64;
-    Options.MaxMemoryBytes = 1024 * 1024;
-    Options.MaxOperations = 100000;
+    Options.MaxInputBytes = ::neverd::limits::loader::kSwiftBindingInputBytes;
+    Options.MaxNodes = ::neverd::limits::loader::kSwiftBindingNodes;
+    Options.MaxDepth = ::neverd::limits::loader::kSwiftBindingDepth;
+    Options.MaxMemoryBytes = ::neverd::limits::loader::kSwiftBindingMemoryBytes;
+    Options.MaxOperations = ::neverd::limits::loader::kSwiftBindingOperations;
     const auto Parsed = llvm::swiftDemangle(ID.MangledSymbol, Options);
     const auto Shape = [](const llvm::SwiftDemangleNode &Node, const char *Kind,
                           size_t Children) {

@@ -14,6 +14,8 @@
 #include "packages/assessment/Publication.h"
 #include "packages/evidence/Admission.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 
 namespace neverd::web {
@@ -87,7 +89,8 @@ void head(const PackageReviewState &R, std::string_view Expected) {
     throw Error("stale_package_review_head");
 }
 uint64_t end(uint64_t Size, uint64_t Offset, uint64_t Limit) {
-  if (!Limit || Limit > 512 || Offset > Size)
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > Size)
     throw Error("invalid_page");
   return std::min<uint64_t>(Size, Offset + Limit);
 }

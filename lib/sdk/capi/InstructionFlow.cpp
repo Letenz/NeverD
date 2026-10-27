@@ -10,6 +10,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/decode/InstructionRelocations.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Parallel.h"
 
@@ -18,7 +19,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cassert>
+#include <iterator>
 #include <map>
+#include <tuple>
 
 namespace neverd::sdk {
 namespace {
@@ -112,13 +116,80 @@ StackMove stackMove(const TargetRegInfo &Registers, llvm::ArrayRef<LowOp> Ops) {
 
 } // namespace
 
+llvm::SmallVector<InstructionRef, 2>
+InstructionFlowScratch::dataAccesses(const BinaryImage &Img, Decoder &Dec,
+                                     const DecodedInsn &DI) {
+  if ((Img.Arch == Arch::X86 || Img.Arch == Arch::X64) && Dec.detailEnabled() &&
+      Dec.textEnabled() && DI.Raw && DI.Raw->detail) {
+    // These scalar families have no implicit memory operand. Their ordinary
+    // register/immediate forms may materialize addresses, but cannot read or
+    // write one. Do not generalize this to string, stack or system families.
+    bool ExplicitMemoryOnly = false;
+    switch (DI.Id) {
+    case X86_INS_MOV:
+    case X86_INS_MOVABS:
+    case X86_INS_MOVSX:
+    case X86_INS_MOVSXD:
+    case X86_INS_MOVZX:
+    case X86_INS_ADD:
+    case X86_INS_ADC:
+    case X86_INS_SUB:
+    case X86_INS_SBB:
+    case X86_INS_AND:
+    case X86_INS_OR:
+    case X86_INS_XOR:
+    case X86_INS_CMP:
+    case X86_INS_TEST:
+    case X86_INS_INC:
+    case X86_INS_DEC:
+    case X86_INS_NEG:
+    case X86_INS_NOT:
+    case X86_INS_IMUL:
+    case X86_INS_MUL:
+    case X86_INS_IDIV:
+    case X86_INS_DIV:
+    case X86_INS_SHL:
+    case X86_INS_SHR:
+    case X86_INS_SAR:
+    case X86_INS_ROL:
+    case X86_INS_ROR:
+    case X86_INS_RCL:
+    case X86_INS_RCR:
+    case X86_INS_SHLD:
+    case X86_INS_SHRD:
+    case X86_INS_BSWAP:
+      ExplicitMemoryOnly = true;
+      break;
+    default:
+      break;
+    }
+    const auto &X86 = DI.Raw->detail->x86;
+    if (ExplicitMemoryOnly && X86.op_count &&
+        X86.op_count <= std::size(X86.operands) &&
+        llvm::all_of(llvm::ArrayRef(X86.operands, X86.op_count),
+                     [](const cs_x86_op &Op) {
+                       return Op.type == X86_OP_REG || Op.type == X86_OP_IMM;
+                     }))
+      return {};
+  }
+  return summarize(Img, Dec, DI).Refs;
+}
+
 /// The flow of \p DI, with its stack pointer move when \p StackRegisters is
 /// given.
 InstructionFlow summarizeInstructionFlow(const BinaryImage &Img, Decoder &Dec,
                                          const DecodedInsn &DI,
                                          const TargetRegInfo *StackRegisters) {
+  InstructionFlowScratch Scratch;
+  return Scratch.summarize(Img, Dec, DI, StackRegisters);
+}
+
+InstructionFlow
+InstructionFlowScratch::summarize(const BinaryImage &Img, Decoder &Dec,
+                                  const DecodedInsn &DI,
+                                  const TargetRegInfo *StackRegisters) {
   InstructionFlow Flow;
-  std::vector<LowOp> Ops;
+  Ops.clear();
   // Each row is lifted independently of its neighbours.
   Dec.resetX86FpuState();
   try {
@@ -271,57 +342,128 @@ InstructionFlow summarizeInstructionFlow(const BinaryImage &Img, Decoder &Dec,
   return Flow;
 }
 
-/// The pointer the loader stored in a relocated slot, as a code address when
-/// the slot points to code.
-std::optional<va_t> relocatedPointer(const BinaryImage &Img, va_t Slot) {
-  const size_t Size = Img.getPointerSize();
-  const uint8_t *Bytes = Size ? Img.readVA(Slot, Size) : nullptr;
-  if (!Bytes)
-    return std::nullopt;
-  const va_t Target = readPtr(Bytes, Size == 8);
-  return Img.Arch == Arch::ARM && Img.CodePtrRelocSlots.count(Slot)
-             ? clearThumbBit(Target)
-             : Target;
-}
-
-FunctionPage functionPage(const Session &S, va_t FirstEntry, int MaxFunctions) {
-  return functionPage(S.Functions, FirstEntry, MaxFunctions);
-}
-
-FunctionPage functionPage(llvm::ArrayRef<FuncInfo> Functions, va_t FirstEntry,
-                          int MaxFunctions) {
+namespace {
+std::vector<const FuncInfo *>
+orderedFunctions(llvm::ArrayRef<FuncInfo> Functions) {
   std::vector<const FuncInfo *> Ordered;
   Ordered.reserve(Functions.size());
   for (const FuncInfo &F : Functions)
-    if (F.Entry >= FirstEntry)
-      Ordered.push_back(&F);
-  std::sort(Ordered.begin(), Ordered.end(),
-            [](const FuncInfo *Left, const FuncInfo *Right) {
-              return Left->Entry < Right->Entry;
-            });
+    Ordered.push_back(&F);
+  const auto ByEntry = [](const FuncInfo *Left, const FuncInfo *Right) {
+    return Left->Entry < Right->Entry;
+  };
+  if (!std::is_sorted(Ordered.begin(), Ordered.end(), ByEntry))
+    std::stable_sort(Ordered.begin(), Ordered.end(), ByEntry);
   Ordered.erase(std::unique(Ordered.begin(), Ordered.end(),
                             [](const FuncInfo *Left, const FuncInfo *Right) {
                               return Left->Entry == Right->Entry;
                             }),
                 Ordered.end());
-  const size_t End = std::min(
-      Ordered.size(), static_cast<size_t>(std::clamp(
-                          MaxFunctions, 1, FunctionPage::MaxFunctionsPerPage)));
-  FunctionPage Page;
-  if (End < Ordered.size())
-    Page.NextEntry = Ordered[End]->Entry;
-  Ordered.resize(End);
-  Page.Functions = std::move(Ordered);
-  return Page;
+  return Ordered;
 }
 
-bool decodeFunctions(
-    const BinaryImage &Img, const FunctionPage &Page,
-    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &)>
-        Visit) {
-  // A function without a recorded size is decoded only up to its first
-  // terminator; this bounds a corrupt or missing extent.
-  constexpr uint64_t MaxUnsizedInstructions = 65536;
+FunctionPage pageFunctions(llvm::ArrayRef<const FuncInfo *> Ordered,
+                           va_t FirstEntry, int MaxFunctions) {
+  const auto First = std::lower_bound(
+      Ordered.begin(), Ordered.end(), FirstEntry,
+      [](const FuncInfo *F, va_t Entry) { return F->Entry < Entry; });
+  const size_t End =
+      std::min(static_cast<size_t>(Ordered.end() - First),
+               static_cast<size_t>(std::clamp(
+                   MaxFunctions, 1, FunctionPage::MaxFunctionsPerPage)));
+  FunctionPage Page;
+  if (End < static_cast<size_t>(Ordered.end() - First))
+    Page.NextEntry = First[End]->Entry;
+  Page.Functions.assign(First, First + End);
+  // The order holds each entry once, ascending: every function's entry.
+  Page.Entries.reserve(Ordered.size());
+  for (const FuncInfo *F : Ordered)
+    Page.Entries.push_back(F->Entry);
+  return Page;
+}
+} // namespace
+
+FunctionPage functionPage(const Session &S, va_t FirstEntry, int MaxFunctions) {
+  if (!S.FunctionPages || S.FunctionPages->Revision != S.FunctionListRevision ||
+      S.FunctionPages->List != S.Functions.data() ||
+      S.FunctionPages->Count != S.Functions.size())
+    S.FunctionPages = Session::FunctionPageIndex{
+        S.FunctionListRevision, S.Functions.data(), S.Functions.size(),
+        orderedFunctions(S.Functions)};
+  return pageFunctions(S.FunctionPages->Ordered, FirstEntry, MaxFunctions);
+}
+
+FunctionPage functionPage(llvm::ArrayRef<FuncInfo> Functions, va_t FirstEntry,
+                          int MaxFunctions) {
+  return pageFunctions(orderedFunctions(Functions), FirstEntry, MaxFunctions);
+}
+
+namespace {
+
+/// The instructions of a function without a recorded size: those its own
+/// direct jumps reach from \p Entry, short of another function's entry in
+/// \p Entries, in address order.  32-bit ARM, whose jumps can change the
+/// instruction set, reads up to the first terminator instead.
+std::vector<va_t> unsizedBody(const BinaryImage &Img, Decoder &Dec,
+                              InstructionFlowScratch &Scratch, va_t Entry,
+                              llvm::ArrayRef<va_t> Entries,
+                              const std::function<bool()> &Stop,
+                              FunctionDecodeStatus &Status) {
+  const auto OtherEntry = [&](va_t Address) {
+    return Address != Entry &&
+           std::binary_search(Entries.begin(), Entries.end(), Address);
+  };
+  const bool FollowsJumps = Img.Arch != Arch::ARM && !Entries.empty();
+  std::set<va_t> Body;
+  std::vector<va_t> Pending{Entry};
+  while (!Pending.empty() && Body.size() < kMaxUnsizedInstructions &&
+         !(Stop && Stop())) {
+    const va_t Start = Pending.back();
+    Pending.pop_back();
+    bool Terminated = false;
+    const bool ModeKnown = decodeNativeRange(
+        Img, Dec, Start, 0, kMaxUnsizedInstructions - Body.size(),
+        [&](const DecodedInsn &DI, const uint8_t *, int) {
+          if ((Stop && Stop()) || OtherEntry(DI.Addr) ||
+              !Body.insert(DI.Addr).second) {
+            Terminated = true;
+            return false;
+          }
+          Terminated = Dec.isFunctionTerminator(DI);
+          if (FollowsJumps) {
+            const InstructionFlow Flow = Scratch.summarize(Img, Dec, DI);
+            Status.Incomplete |=
+                Flow.Kind == UnliftedFlow || Flow.Kind == "ijump";
+            if ((Flow.Kind == "jump" || Flow.Kind == "cjump") &&
+                Flow.Target != InvalidVA && !OtherEntry(Flow.Target) &&
+                !Body.count(Flow.Target))
+              Pending.push_back(Flow.Target);
+            // A straight-line terminator can end only the current block:
+            // AArch64 B.cond shares B's decode classification. The ordinary
+            // lift's conditional flow still reaches the next instruction.
+            if (Flow.Kind == "cjump")
+              Terminated = false;
+          }
+          return !Terminated;
+        });
+    Status.Incomplete |= !ModeKnown || !Terminated;
+  }
+  Status.Incomplete |= !Pending.empty();
+  Status.Stopped = Stop && Stop();
+  return {Body.begin(), Body.end()};
+}
+
+/// decodeFunctions over the functions of \p Extents, each an entry and its
+/// recorded size; \p Entries are every function's entries.
+bool decodeExtents(
+    const BinaryImage &Img, llvm::ArrayRef<std::pair<va_t, uint64_t>> Extents,
+    llvm::ArrayRef<va_t> Entries,
+    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &,
+                            InstructionFlowScratch &)>
+        Visit,
+    const std::function<bool()> &Stop = {},
+    std::vector<FunctionDecodeStatus> *Status = nullptr) {
+  std::vector<FunctionDecodeStatus> Reports(Extents.size());
   // The parts of a function its unwind records keep apart from its body,
   // past other functions' code, are its code too: MSVC moves cold paths
   // there.
@@ -329,51 +471,99 @@ bool decodeFunctions(
   for (const auto &Chunk : Img.ExceptionMetadata.outlyingChunks())
     Chunks[Chunk.Function].push_back(Chunk.Range);
   std::atomic<bool> DecoderFailed{false};
-  parallelForEach(Page.Functions.size(), [&](auto Claim, size_t Total) {
+  parallelForEach(Extents.size(), [&](auto Claim, size_t Total) {
     Decoder Local;
     if (!Local.init(Img)) {
       DecoderFailed = true;
       return;
     }
-    for (size_t Index = Claim(); Index < Total; Index = Claim()) {
-      const FuncInfo &F = *Page.Functions[Index];
-      const uint64_t Limit = F.Size > 0 ? F.Size : MaxUnsizedInstructions;
-      (void)decodeNativeRange(Img, Local, F.Entry, F.Size, Limit,
+    InstructionFlowScratch Scratch;
+    for (size_t Index = Claim(); Index < Total && !(Stop && Stop());
+         Index = Claim()) {
+      const auto [Entry, Size] = Extents[Index];
+      auto &Report = Reports[Index];
+      const auto ReadRange = [&](va_t Start, uint64_t Span, uint64_t Limit) {
+        uint64_t Bytes = 0;
+        const bool ModeKnown =
+            decodeNativeRange(Img, Local, Start, Span, Limit,
                               [&](const DecodedInsn &DI, const uint8_t *, int) {
-                                Visit(Index, Local, DI);
-                                return F.Size > 0 ||
-                                       !Local.isFunctionTerminator(DI);
+                                if (Stop && Stop())
+                                  return false;
+                                ++Report.Instructions;
+                                Report.Bytes += DI.Size;
+                                Bytes += DI.Size;
+                                Visit(Index, Local, DI, Scratch);
+                                return true;
                               });
-      if (const auto It = Chunks.find(F.Entry); It != Chunks.end())
-        for (const ExceptionAddressRange &Range : It->second)
-          (void)decodeNativeRange(
-              Img, Local, Range.Begin, Range.End - Range.Begin,
-              Range.End - Range.Begin,
-              [&](const DecodedInsn &DI, const uint8_t *, int) {
-                Visit(Index, Local, DI);
-                return true;
-              });
+        Report.Incomplete |= !ModeKnown || (Span && Bytes != Span);
+        Report.Stopped |= Stop && Stop();
+      };
+      if (Size > 0) {
+        ReadRange(Entry, Size, Size);
+      } else {
+        for (const va_t Address :
+             unsizedBody(Img, Local, Scratch, Entry, Entries, Stop, Report)) {
+          if (Stop && Stop())
+            break;
+          ReadRange(Address, 0, 1);
+        }
+      }
+      if (const auto It = Chunks.find(Entry); It != Chunks.end())
+        for (const ExceptionAddressRange &Range : It->second) {
+          if (Stop && Stop())
+            break;
+          ReadRange(Range.Begin, Range.End - Range.Begin,
+                    Range.End - Range.Begin);
+        }
     }
   });
+  if (Stop && Stop())
+    for (auto &Report : Reports) {
+      Report.Stopped = true;
+      Report.Incomplete = true;
+    }
+  if (Status)
+    *Status = std::move(Reports);
   return !DecoderFailed;
+}
+
+/// Whether \p Ref states a width that names data (DataAccessWidths::add).
+bool isDataAccess(const InstructionRef &Ref) {
+  return Ref.Kind == kReadReferenceKind || Ref.Kind == kWriteReferenceKind;
+}
+} // namespace
+
+bool decodeFunctions(
+    const BinaryImage &Img, const FunctionPage &Page,
+    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &,
+                            InstructionFlowScratch &)>
+        Visit,
+    const std::function<bool()> &Stop,
+    std::vector<FunctionDecodeStatus> *Status) {
+  std::vector<std::pair<va_t, uint64_t>> Extents;
+  Extents.reserve(Page.Functions.size());
+  for (const FuncInfo *F : Page.Functions)
+    Extents.emplace_back(F->Entry, F->Size);
+  return decodeExtents(Img, Extents, Page.Entries, Visit, Stop, Status);
 }
 
 std::optional<DataAccessWidths>
 collectDataAccessWidths(const BinaryImage &Img,
                         llvm::ArrayRef<FuncInfo> Functions) {
   std::vector<std::pair<va_t, unsigned>> Accesses;
+  const auto Ordered = orderedFunctions(Functions);
   for (std::optional<va_t> Cursor = va_t{0}; Cursor;) {
     const FunctionPage Page =
-        functionPage(Functions, *Cursor, FunctionPage::MaxFunctionsPerPage);
+        pageFunctions(Ordered, *Cursor, FunctionPage::MaxFunctionsPerPage);
     // Each function's accesses, which only the thread decoding it writes.
     std::vector<std::vector<std::pair<va_t, unsigned>>> Slots(
         Page.Functions.size());
     const bool Decoded = decodeFunctions(
-        Img, Page, [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
-          for (const InstructionRef &Ref :
-               summarizeInstructionFlow(Img, Dec, DI).Refs)
-            if (Ref.Kind == kReadReferenceKind ||
-                Ref.Kind == kWriteReferenceKind)
+        Img, Page,
+        [&](size_t Index, Decoder &Dec, const DecodedInsn &DI,
+            InstructionFlowScratch &Scratch) {
+          for (const InstructionRef &Ref : Scratch.summarize(Img, Dec, DI).Refs)
+            if (isDataAccess(Ref))
               Slots[Index].emplace_back(Ref.To, Ref.Bytes);
         });
     if (!Decoded)
@@ -389,21 +579,111 @@ collectDataAccessWidths(const BinaryImage &Img,
   return Widths;
 }
 
+std::optional<DataAccessWidths>
+DataAccessScan::update(const BinaryImage &Img,
+                       llvm::ArrayRef<FuncInfo> Functions) {
+  // The extent collectDataAccessWidths reads each function with: the one
+  // its pages give the function's entry.
+  std::vector<std::pair<va_t, uint64_t>> Next;
+  std::vector<va_t> NextEntries;
+  const auto Ordered = orderedFunctions(Functions);
+  Next.reserve(Ordered.size());
+  NextEntries.reserve(Ordered.size());
+  for (const FuncInfo *F : Ordered) {
+    Next.emplace_back(F->Entry, F->Size);
+    NextEntries.push_back(F->Entry);
+  }
+  // A function without a size reads up to the other functions' entries, so
+  // with other entries what it read before cannot be read again to take it
+  // back: read the list again whole.
+  if (NextEntries != Entries)
+    clear();
+  // The extents read again: those read before that the list no longer
+  // holds, which stop counting, and then those not read before.
+  std::vector<std::pair<va_t, uint64_t>> Read;
+  std::set_difference(Extents.begin(), Extents.end(), Next.begin(), Next.end(),
+                      std::back_inserter(Read));
+  const size_t Dropped = Read.size();
+  std::set_difference(Next.begin(), Next.end(), Extents.begin(), Extents.end(),
+                      std::back_inserter(Read));
+  // Each extent's accesses, which only the thread decoding it writes.
+  std::vector<std::vector<std::pair<va_t, unsigned>>> Slots(Read.size());
+  if (!Read.empty() &&
+      !decodeExtents(Img, Read, NextEntries,
+                     [&](size_t Index, Decoder &Dec, const DecodedInsn &DI,
+                         InstructionFlowScratch &Scratch) {
+                       for (const InstructionRef &Ref :
+                            Scratch.dataAccesses(Img, Dec, DI))
+                         if (isDataAccess(Ref))
+                           Slots[Index].emplace_back(Ref.To, Ref.Bytes);
+                     })) {
+    clear();
+    return std::nullopt;
+  }
+  // A function counts once for each width it states at an address, and
+  // only for a width that names data.
+  std::vector<std::tuple<va_t, unsigned, int>> Changes;
+  for (size_t Index = 0; Index < Read.size(); ++Index) {
+    auto &Slot = Slots[Index];
+    llvm::sort(Slot);
+    Slot.erase(std::unique(Slot.begin(), Slot.end()), Slot.end());
+    for (const auto &[Address, Width] : Slot)
+      if (Width && Width <= MaxDataAccessWidth)
+        Changes.emplace_back(Address, Width, Index < Dropped ? -1 : 1);
+  }
+  llvm::sort(Changes);
+  std::vector<Count> Merged;
+  Merged.reserve(Counts.size() + Changes.size());
+  auto Kept = Counts.begin();
+  for (size_t I = 0; I < Changes.size();) {
+    const va_t Address = std::get<0>(Changes[I]);
+    const unsigned Width = std::get<1>(Changes[I]);
+    int64_t Total = 0;
+    for (; I < Changes.size() && std::get<0>(Changes[I]) == Address &&
+           std::get<1>(Changes[I]) == Width;
+         ++I)
+      Total += std::get<2>(Changes[I]);
+    for (; Kept != Counts.end() &&
+           std::pair(Kept->Address, Kept->Width) < std::pair(Address, Width);
+         ++Kept)
+      Merged.push_back(*Kept);
+    if (Kept != Counts.end() && Kept->Address == Address &&
+        Kept->Width == Width)
+      Total += (Kept++)->Functions;
+    assert(Total >= 0 && "an extent stops counting a width it never stated");
+    if (Total > 0)
+      Merged.push_back({Address, Width, static_cast<uint32_t>(Total)});
+  }
+  Merged.insert(Merged.end(), Kept, Counts.end());
+  Counts = std::move(Merged);
+  Extents = std::move(Next);
+  Entries = std::move(NextEntries);
+  DataAccessWidths Widths;
+  for (const Count &Stated : Counts)
+    Widths.add(Stated.Address, Stated.Width);
+  return Widths;
+}
+
 const DataAccessWidths *Session::dataAccessWidths() {
   if (!Loaded || Img.Arch == Arch::EVM || Img.Arch == Arch::SBF ||
       !synchronizeFunctions())
     return nullptr;
-  // The widths are read from the functions' extents.
+  // The widths are read from the functions' extents: those they were read
+  // from serve while each function keeps its entry and size.
+  if (AccessWidths &&
+      llvm::equal(Functions, AccessWidthsFunctions,
+                  [](const FuncInfo &F, const std::pair<va_t, uint64_t> &E) {
+                    return F.Entry == E.first && F.Size == E.second;
+                  }))
+    return &*AccessWidths;
   std::vector<std::pair<va_t, uint64_t>> Extents;
   Extents.reserve(Functions.size());
   for (const FuncInfo &F : Functions)
     Extents.emplace_back(F.Entry, F.Size);
-  if (AccessWidths && AccessWidthsFunctions == Extents)
-    return &*AccessWidths;
   // C kept from before names data by the widths of other functions.
   if (AccessWidths)
     forgetEmittedSources();
-  AccessWidths = collectDataAccessWidths(Img, Functions);
+  AccessWidths = AccessScan.update(Img, Functions);
   AccessWidthsFunctions = std::move(Extents);
   return AccessWidths ? &*AccessWidths : nullptr;
 }

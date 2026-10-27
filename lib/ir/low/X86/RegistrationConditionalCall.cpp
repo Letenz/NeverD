@@ -8,8 +8,9 @@
 
 #include "RegistrationABIPrivate.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -63,7 +64,11 @@ bool hasConditionalCallFrame(const BinaryImage &Image, const LowOp &Op,
   if (!SP || *SP > INT32_MAX - 128 || Op.Opcode != NdOp::CALL)
     return false;
   std::map<int32_t, FrameValue> Arguments;
-  for (int32_t Offset = 8; Offset <= 128; Offset += 4) {
+  for (int32_t Offset = 8;
+       Offset <=
+       ::neverd::limits::ir::
+           kRegistrationConditionalCallHasConditionalCallFrameOffsetLimit;
+       Offset += 4) {
     const auto It = State.Cells.find(*SP + Offset - 8);
     if (It != State.Cells.end() && !It->second.MayBeFrame)
       Arguments.emplace(Offset, It->second);
@@ -74,7 +79,8 @@ bool hasConditionalCallFrame(const BinaryImage &Image, const LowOp &Op,
   if (!Dec.init(Image))
     return false;
   CFGBuilder Builder;
-  auto Callee = Builder.build(Image, Dec, Target, "bound-seh-call");
+  auto Callee =
+      Builder.buildIntegerFrameProof(Image, Dec, Target, "bound-seh-call");
   for (const auto &Block : Callee.Blocks)
     for (const auto &Insn : Block.InstructionBoundaries)
       if (!chargeCalleeWork(Work, 1) ||

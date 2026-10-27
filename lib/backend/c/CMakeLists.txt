@@ -1,6 +1,7 @@
 add_neverd_component_library(NeverDBackendC
   CSourceRecorder.cpp
   CSourceEvidence.cpp
+  DebugParamBinding.cpp
   dialect/CDialect.cpp
   dialect/CSyntaxLexer.cpp
   dialect/CSyntaxParser.cpp
@@ -13,7 +14,8 @@ add_neverd_component_library(NeverDBackendC
   HighC/HighCEmitter.cpp
   HighC/HighCExprBinOp.cpp
   HighC/HighCExprWriter.cpp
-  HighC/HighCX87Context.cpp
+  HighC/X86/HighCX87Context.cpp
+  HighC/X86/HighCPortableX87.cpp
   HighC/HighCSourceCalls.cpp
   HighC/HighCSourceNames.cpp
   HighC/HighCFuncWriter.cpp
@@ -25,6 +27,7 @@ add_neverd_component_library(NeverDBackendC
   HighC/X86/HighCCallSetup.cpp
   HighC/X86/HighCRegistration.cpp
   LLVMC/LLVMCEmitter.cpp
+  LLVMC/LLVMCVariableEdits.cpp
   LLVMC/LLVMCExprWriter.cpp
   LLVMC/LLVMCFuncWriter.cpp
   LLVMC/LLVMCMemoryUpdates.cpp
@@ -48,15 +51,27 @@ add_neverd_component_library(NeverDBackendC
   pass/LLVMC/LLVMCVoidAnalysis.cpp
   render/CTypeFormat.cpp
   render/HighC/HighCIntrinsicRender.cpp
-  render/HighC/HighCIntrinsicRenderARM.cpp
-  render/HighC/HighCIntrinsicRenderX86.cpp
+  render/ARM/HighCIntrinsicRenderARM.cpp
+  render/X86/HighCIntrinsicRenderX86.cpp
   render/LLVMC/LLVMCIntrinsicRender.cpp
-  render/LLVMC/LLVMCIntrinsicRenderARM.cpp
-  render/LLVMC/LLVMCIntrinsicRenderX86.cpp
+  render/ARM/LLVMCIntrinsicRenderARM.cpp
+  render/X86/LLVMCIntrinsicRenderX86.cpp
   render/SyscallHelpers.cpp
+  render/X86/X86Virtualization.cpp
+  render/X86/X86SystemState.cpp
+  render/X86/X86RepState.cpp
+  render/X86/X86Sgx.cpp
+  render/X86/X86BoundedLeaf.cpp
+  render/X86/X86CompressExpand.cpp
+  render/X86/X86FourSource.cpp
+  render/X86/X86APXAtomic.cpp
+  render/X86/X86AtomicExchange.cpp
+  render/X86/X86AmxState.cpp
+  render/X86/X86NativeFeatures.cpp
 
   LINK_COMPONENTS
   IR
+  LLVMCallContract
   LibC
   LLVMScalarLoopRecovery
   PassIR

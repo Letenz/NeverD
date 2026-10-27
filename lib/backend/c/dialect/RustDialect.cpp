@@ -114,6 +114,8 @@ private:
     case CType::Kind::Integer:
       return (Ty->Signed ? "i" : "u") + std::to_string(Ty->Bits);
     case CType::Kind::Floating:
+      if (Ty->Bits != 32 && Ty->Bits != 64)
+        unsupported("floating type '" + Ty->Spelling + "'");
       return "f" + std::to_string(Ty->Bits);
     case CType::Kind::Pointer: {
       const CType *Pointee = Ty->Inner;
@@ -266,6 +268,10 @@ private:
   }
 
   Printed value(const Expr *E, const CType *Want) {
+    // A character a byte holds is that byte's literal.
+    if (E->Kind == ExprKind::Character && E->Text.starts_with("'") && Want &&
+        Want->isInteger() && Want->Bits == 8 && !Want->Signed)
+      return withComments(E, Printed{"b" + E->Text.str(), PrecAtom});
     if (const Expr *Narrow = narrowable(E, Want))
       return withComments(E, narrowed(Narrow, Want));
     return convert(raw(E), valueType(E), Want);
@@ -450,6 +456,8 @@ private:
       return P;
     }
     case ExprKind::Member:
+      if (auto Bits = bitField(E))
+        return Printed{Bits->Holder + "." + Bits->Getter + "()", PrecAtom};
       return place(E);
     case ExprKind::SizeofExpr:
     case ExprKind::SizeofType:
@@ -470,6 +478,10 @@ private:
       return Printed{"align_of::<" + type(E->Written) + ">() as " + type(E->Ty),
                      PrecCast};
     case ExprKind::Offsetof:
+      if (E->ThroughAnonymous) {
+        unsupported("a member of an anonymous structure or union");
+        return Printed{"_", PrecAtom};
+      }
       return Printed{"offset_of!(" + type(E->Written) + ", " + E->Text.str() +
                          ") as " + type(E->Ty),
                      PrecCast};
@@ -484,6 +496,9 @@ private:
       return statementExpr(E);
     case ExprKind::BitCast:
       return bitCast(E);
+    case ExprKind::VaArg:
+      unsupported("va_arg");
+      return Printed{"_", PrecAtom};
     case ExprKind::Asm:
       return Printed{E->Text.str(), PrecAtom};
     }
@@ -508,6 +523,31 @@ private:
         Result += ".0";
     }
     return Result + (Single ? "_f32" : "");
+  }
+
+  /// \p Bytes as the byte string of an array of \p Count bytes, which C
+  /// zero-fills past them.
+  static std::string byteString(llvm::StringRef Bytes, uint64_t Count) {
+    std::string Text = "*b\"";
+    for (const unsigned char Byte : Bytes) {
+      if (Byte == '"' || Byte == '\\')
+        Text += {'\\', static_cast<char>(Byte)};
+      else if (Byte == '\n')
+        Text += "\\n";
+      else if (Byte == '\t')
+        Text += "\\t";
+      else if (Byte == '\r')
+        Text += "\\r";
+      else if (!Byte)
+        Text += "\\0";
+      else if (Byte >= 32 && Byte < 127)
+        Text += static_cast<char>(Byte);
+      else
+        Text += "\\x" + llvm::utohexstr(Byte, /*LowerCase=*/false, 2);
+    }
+    for (uint64_t I = Bytes.size(); I < Count; ++I)
+      Text += "\\0";
+    return Text + "\"";
   }
 
   std::string stringLiteral(const Expr *E) const {
@@ -896,6 +936,40 @@ private:
     return P;
   }
 
+  /// The place \p E, a member of one of the program's types, names through
+  /// \p Hops, which Rust reaches as fields.
+  std::string localPlace(const Expr *E,
+                         llvm::ArrayRef<SourceDialectLocalTypes::Hop> Hops) {
+    const Expr *Base = E->Ops.front();
+    std::string Text = E->Postfix
+                           ? "(*" + paren(value(Base, nullptr), PrecUnary) + ")"
+                           : paren(place(Base), PrecAtom);
+    for (const SourceDialectLocalTypes::Hop &Hop : Hops) {
+      if (Hop.Accessor) {
+        unsupported("a member the program's types read through a method");
+        return "_";
+      }
+      Text += "." + Hop.Name;
+    }
+    return Text;
+  }
+
+  /// A bit-field of one of the program's types, as Rust reads and writes
+  /// it: the record whose methods do, and their names.
+  struct BitField {
+    std::string Holder, Getter, Setter;
+  };
+  std::optional<BitField> bitField(const Expr *E) {
+    if (E->Kind != ExprKind::Member || !E->Field || !E->Field->BitWidth ||
+        !valueType(E)->isInteger() ||
+        valueType(E)->TheKind == CType::Kind::Bool)
+      return std::nullopt;
+    std::optional<SourceDialectLocalTypes::Path> Path = localMember(E);
+    if (!Path || !Path->bitField())
+      return std::nullopt;
+    return BitField{localPlace(E, Path->Hops), Path->Getter, Path->Setter};
+  }
+
   Printed place(const Expr *E) {
     switch (E->Kind) {
     case ExprKind::Paren:
@@ -932,6 +1006,23 @@ private:
     }
     case ExprKind::Member: {
       const Expr *Base = E->Ops.front();
+      // A member of one of the program's types, by the fields that hold it.
+      if (auto Path = localMember(E)) {
+        // Only the methods of a bit-field's record read and write it.
+        if (Path->bitField())
+          unsupported("a bit-field where Rust needs a place");
+        if (Path->Hops.empty() || refused())
+          return Printed{"_", PrecAtom};
+        return Printed{localPlace(E, Path->Hops), PrecAtom};
+      }
+      if (E->Field && E->Field->BitWidth) {
+        unsupported("a bit-field");
+        return Printed{"_", PrecAtom};
+      }
+      if (E->ThroughAnonymous) {
+        unsupported("a member of an anonymous structure or union");
+        return Printed{"_", PrecAtom};
+      }
       if (E->Postfix)
         return Printed{"(*" + paren(value(Base, nullptr), PrecUnary) + ")." +
                            E->Text.str(),
@@ -1179,6 +1270,21 @@ private:
     case ExprKind::Assign: {
       const Expr *L = E->Ops[0], *R = E->Ops[1];
       const CType *Target = valueType(L);
+      // A bit-field takes what its setter stores, computed from its getter.
+      if (auto Bits = bitField(L)) {
+        Printed Stored = value(R, Target);
+        if (E->Text != "=") {
+          const llvm::StringRef Op = E->Text.drop_back();
+          Printed Current = convert(
+              Printed{Bits->Holder + "." + Bits->Getter + "()", PrecAtom},
+              Target, E->OpTy);
+          Stored = convert(
+              binaryText(Current, Op, value(R, E->OpTy), binaryPrecedence(Op)),
+              E->OpTy, Target);
+        }
+        line(Bits->Holder + "." + Bits->Setter + "(" + Stored.Text + ");");
+        return;
+      }
       Printed Place = place(L);
       if (E->Text == "=") {
         line(Place.Text + " = " + value(R, Target).Text + ";");
@@ -1211,6 +1317,12 @@ private:
     }
     case ExprKind::Unary:
       if (E->Text == "++" || E->Text == "--") {
+        if (auto Bits = bitField(E->Ops.front())) {
+          line(Bits->Holder + "." + Bits->Setter + "(" + Bits->Holder + "." +
+               Bits->Getter + "()" + (E->Text == "++" ? " + 1" : " - 1") +
+               ");");
+          return;
+        }
         line(place(E->Ops.front()).Text +
              (E->Text == "++" ? " += 1;" : " -= 1;"));
         return;
@@ -1254,11 +1366,28 @@ private:
 
   std::string initializer(const Expr *Init, const CType *Ty) {
     if (Init->Kind != ExprKind::InitList) {
-      if (Ty->isArray() && Init->Kind == ExprKind::String)
+      if (Ty->isArray() && Init->Kind == ExprKind::String) {
+        if (byteArray(Ty))
+          if (const auto Bytes = stringBytes(Init);
+              Bytes && Bytes->size() <= *Ty->Count)
+            return byteString(*Bytes, *Ty->Count);
         return stringLiteral(Init);
+      }
       return value(Init, Ty).Text;
     }
     if (Ty->isArray()) {
+      // Bytes that are mostly text read as Rust's byte string of them.
+      if (byteArray(Ty))
+        if (const auto Bytes = listBytes(Init, *Ty->Count)) {
+          size_t Text = 0, Set = 0;
+          for (const unsigned char Byte : *Bytes) {
+            Set += Byte != 0;
+            Text += (Byte >= 32 && Byte < 127) || Byte == '\n' ||
+                    Byte == '\t' || Byte == '\r';
+          }
+          if (Set && Text * 4 >= Set * 3)
+            return byteString(*Bytes, *Ty->Count);
+        }
       // Each element in its place, designated or next; C zeroes the rest.
       std::vector<std::string> Elements;
       size_t Next = 0;
@@ -1465,12 +1594,25 @@ private:
           global(D);
         break;
       case DeclKind::Typedef:
-        if (!D->Ty->isInteger())
+        // Rust names a record and its type alike: a typedef that names a
+        // record by its own tag is the record, which its definition
+        // defines, or which the typedef declares opaque.
+        if (D->Ty->isRecord() && type(D->Ty) == escapeIdentifier(D->Name)) {
+          if (!D->Ty->Record->Complete)
+            record(D->Ty);
+        } else if (!D->Ty->isInteger())
           line("type " + escapeIdentifier(D->Name) + " = " + type(D->Ty) + ";");
         break;
       case DeclKind::Record:
         record(D->Ty);
         break;
+      case DeclKind::Enumeration:
+        // C's enumeration is an int and its enumerators int constants.
+        for (const Decl *Enumerator : D->Fields)
+          line("const " + escapeIdentifier(Enumerator->Name) +
+               ": i32 = " + std::to_string(*Enumerator->Value) + ";");
+        break;
+      case DeclKind::Enumerator:
       case DeclKind::Parameter:
         break;
       }
@@ -1533,7 +1675,13 @@ private:
             A.drop_front(Target + 8).take_until([](char C) {
               return C == '"';
             });
-        line("#[target_feature(enable = \"" + Features.str() + "\")]");
+        // Clang's return-signing policy is not a Rust CPU feature. Keep the
+        // policy visible as source metadata, as the Go view does, instead of
+        // inventing a target_feature that Rust does not implement.
+        if (Features.contains("branch-protection="))
+          line("// " + A.str());
+        else
+          line("#[target_feature(enable = \"" + Features.str() + "\")]");
       }
     }
     if (D->Inline)
@@ -1561,12 +1709,36 @@ private:
   }
 
   void record(const CType *Ty) {
-    if (!Ty->isRecord() || !Ty->Record->Complete ||
-        !PrintedRecords.insert(Ty).second)
+    // The program's types define their records themselves.
+    if (!Ty->isRecord() || PrintedRecords.contains(Ty) || localRecord(Ty))
       return;
-    line("#[repr(C)]");
+    const RecordDef &Record = *Ty->Record;
+    // What a Rust structure of these fields would not lay out as C does.
+    if (Record.Union)
+      return unsupported("a union");
+    for (const RecordField &Field : Record.Fields) {
+      if (Field.BitWidth)
+        return unsupported("a bit-field");
+      if (Field.isAnonymousRecord())
+        return unsupported("an anonymous structure or union");
+      if (Field.Type->Volatile)
+        return unsupported("a volatile member");
+    }
+    PrintedRecords.insert(Ty);
+    std::string Repr = "C";
+    if (Record.Pack)
+      Repr += ", packed(" + std::to_string(Record.Pack) + ")";
+    if (Record.Alignment)
+      Repr += ", align(" + std::to_string(Record.Alignment) + ")";
+    line("#[repr(" + Repr + ")]");
     openBlock("struct " + type(Ty));
-    for (const RecordField &Field : Ty->Record->Fields)
+    // A record the text only declares stays opaque: its address passes.
+    if (!Record.Complete) {
+      line("_opaque: [u8; 0],");
+      closeBlock();
+      return;
+    }
+    for (const RecordField &Field : Record.Fields)
       line(escapeIdentifier(Field.Name) + ": " + type(Field.Type) + ",");
     closeBlock();
   }

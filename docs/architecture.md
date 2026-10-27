@@ -4,9 +4,1878 @@
 
 # NeverD Architecture
 
+Compiler and IR architecture-specific implementation belongs beneath its owning
+component and phase in an `X86/`, `ARM/`, or `AArch64/` directory. X86 includes i386, x64 and
+x87. ARM includes ARM32 and shared Arm-family code; AArch64-specific code uses
+`AArch64/`. Shared dispatchers, IR interfaces and target-independent helpers stay at
+the component level. The C renderer groups its architecture helpers, intrinsic
+spelling tables and HighC/LLVMC adapters together under `render/<architecture>/`;
+its route-independent interfaces retain `render/HighC/` and `render/LLVMC/`.
+LLVM architecture headers mirror the existing backend implementation directories.
+The shared LLVM-to-C intrinsic spelling table includes the x86 entries from
+`ir/intrinsics/X86/`; generic names remain in the common table.
+Decoder, lifter, IR state, ABI and translation files follow the same ownership.
+Execution models and unpacking adapters extend their existing `arch/<target>/`
+layout, including the public execution models.
+
+Binary-format implementation remains grouped by ELF, COFF and Mach-O, including
+format-owned architecture encodings and unwind records. Platform emulator
+backends and UI features retain their existing service boundaries. The stable C
+SDK and portable-runtime C header paths remain unchanged. Tests keep their owning
+component and semantic suites, with architecture-specific sources beneath
+`x86/`, `x86_64/`, `x86_32/`, `arm32/` or `aarch64/`. Shared x86/x87 tests use
+`x86/`; mode-specific execution tests retain their existing mode names. Fixtures
+shared across architectures and format-owned tests stay with their consumers.
+Directory moves do not change component targets, intrinsic identities, exported
+symbols or instruction semantics.
+
+`X86DescriptorState.h` owns descriptor-state operand shapes; LowIR,
+Low-to-Med, Med verification and source output use that contract.
+`X86DescriptorStateNative.h` owns register widths, native API names, memory
+footprints and the assembly fallback. LLVM, HighC and LLVM-to-C share it.
+`X86MemoryAddressAsm.h` selects safe data-address carriers for explicit scalar
+memory fallbacks: AX for address32/64 and DI for i386 address16. Descriptor,
+query and atomic plans share this choice, avoiding compiler-owned realignment
+and PIC registers while retaining the original width and segment controls.
+The four appended legacy table IDs preserve i386's operand-size override
+without changing existing serialized identities. Native memory accesses stay
+inside the instruction. Explicit native addresses retain width/prefix controls;
+lifted normalized addresses have already undergone architectural wrapping.
+Return-value admission shares that contract. HighC's libc no-return lookup
+applies only to ordinary calls: the VERR instruction must not acquire the
+unrelated `verr()` library function's terminating behavior.
+
+`X86ScalarSystemNative.h` owns the widths and native API names for scalar
+RDMSR/WRMSR and port I/O. LLVM and both C projections share the plan and retain
+ordered, potentially trapping reads even when the result is unused. Constant
+propagation does not turn a 16-bit DX port into an 8-bit port. C output selects
+qualified builtins, real MSVC intrinsics or owned assembly at compile time.
+LLVM-to-C validates types and full memory effects before recognizing a call.
+Its port recognizer zero-extends a validated 8-bit immediate from the LLVM
+constant before rendering C. DX operands retain their full 16-bit value;
+the signed spelling of an instruction byte cannot choose a different port.
+
+`X86SystemRegisterAsm.h` owns CR/DR register selection, native width and native
+LLVM/C API names. LLVM emission and both C projections share that contract.
+The LLVM-to-C adapter validates the complete native call or legacy assembly
+before rendering it; neither a mnemonic nor an intrinsic declaration alone
+authorizes an architectural register access. Both forms retain unknown memory
+effects, undefined arithmetic flags and native faults, including dead reads.
+
+`ir/X86/X86MpxContext.h` owns concrete MPX enable evidence, the four bounds
+registers, BNDSTATUS and BDE/BTE address calculations. Unknown prerequisites
+remain unknown; a proven disabled prerequisite suppresses MPX effects without
+requiring operand values. The model selects BNDCFGU at CPL 3 and BNDCFGS at
+CPL 0–2, applies MAWA only to long-mode table indexing, and retains known-bit
+masks for bounds. It separates successful loads, invalid-directory #BR and
+implementation-dependent partial BNDLDX reads. Memory providers still own
+access validity, segment/canonical checks, ordering and partial stores.
+`ir/X86/X86MpxMemory.h` defines their whole-access completion contract. BNDMOV
+loads publish only after both fields complete; its memory stores retain LOCK
+and the selected segment. The original SP/BP base's default-stack property is
+retained separately: long-mode CS/DS/ES/SS overrides do not choose its fault
+class, and R12/R13 are data-default bases. `support/X86/X86Addressing.h` owns
+that base classification for MPX, AMX and native memory admission. Table
+operations sequence a BDE read before the three-field BTE access without
+probing the MIB pointer.
+An invalid BDE updates BNDSTATUS without changing the bank. A BTE read fault
+forgets only its destination, and store faults retain the provider's partial
+writes. Unavailable memory semantics are distinct from an architectural fault;
+they certify no effects from that request, not rollback of an earlier BDE read.
+Enabled operations require a known nontransactional context; an RTM/HLE
+checkpoint and abort continuation are not supplied by this state component.
+Original branch completion takes an explicit preserve/initialize effect;
+it does not infer an architectural branch from a transformed CFG edge.
+This component is a tested foundation, not yet a lifting/emission contract:
+strict MPX admission remains closed until original-transfer effects and
+memory completion are connected throughout the pipeline.
+
+`lift/X86/X86MpxEncoding.h` owns the qualified MPX byte-to-operand mapping.
+The full and lightweight decoder adapters share it, including native-width
+addresses despite long-mode 67H, mode-sized BNDMOV memory fields, LOCK stores,
+and the architectural register NOP forms. Encoded MIB index, scale and absent
+base remain distinct; they do not authorize an ordinary memory operation at
+the displayed expression. Invalid banks, 16-bit memory forms, prohibited
+RIP-relative forms and competing mandatory prefixes do not acquire a qualified
+shape. Decoding a valid stateful instruction does not enable its strict lifter.
+
+`lift/X86/X86MpxExecution.h` connects that byte reader to the shared context and
+memory provider for concrete single-instruction execution. Its explicit GPR
+and segment-base snapshot does not treat unknown inputs as zero. Checks and
+BNDMK use effective values without memory or segment-base reads; BNDMOV passes
+the original offset and segment to memory. BNDLDX/BNDSTX translate base plus
+displacement and the selected segment base, treating an absent base as zero
+and the unscaled index as the comparison value. Their scale is ignored. This
+entry point does not yet provide original CALL/RET completion, RTM/HLE state,
+or bounds-state transport through LowIR, MedIR and native output.
+
+`X86AmxState.h` owns the versioned x64 AMX architectural-bank contract. Decoded
+instructions name physical tile registers and retain their memory/encoding
+semantics; they do not expose TILECFG or TMM values through an ordinary function
+ABI. `X86AmxNative.h` maps this descriptor to native LLVM intrinsics, NeverC
+builtins and the required function features. Explicit address width, segment,
+VEX/EVEX and row-register class controls survive native code generation.
+`X86AmxAsm.h` retains the exact assembly contract for older SDKs and source
+compilers without the builtins. Both routes keep the bank in the CPU with
+complete TMM and memory effects; faults retain hardware partial progress and
+restart state. Native row intrinsics publish a 64-byte vector to ordinary SSA;
+source projection validates the complete intrinsic signature, controls and
+effects before admitting that vector boundary. The concrete
+executor owns the same physical bank and reuses the existing tile evaluators;
+unknown required bank contents fail. Legacy value-form AMX operations remain
+separate and guarded at native emission. See
+[x86 instruction support](x86-instruction-support.md#architectural-amx-bank-and-native-output)
+for feature distinctions, historical TF32 encoding and qualification limits.
+
+AMX descriptor version 2 separates an explicit SS prefix from the original
+SP/BP default-stack reference. Configuration transfers retain the latter under
+CS/DS/ES/SS overrides; FS/GS and address32 do not need long-mode noncanonical
+stack provenance. Native configuration APIs carry control bit `0x100` when the
+SDK advertises it. Older SDKs use an owned `[RBP + (offset - RBP)]` access,
+preserving the compiler's RBP and declaring the arithmetic scratch/flags.
+Data-address fallbacks use AX, and row strides use CX, under the shared scalar
+carrier authority. Tile row-memory with default-stack addr64 remains refused:
+its architectural stride occupies the index needed by the configuration plan.
+Legacy version-1 FS/GS, address32 and non-memory forms remain readable, including
+their exact old assembly contracts. Unsegmented version-1 addr64 memory must be
+lifted again from the original bytes because it lost default-stack provenance.
+
+`X86RepState.h` owns the versioned REP input and completion contract. One
+natural-width register tuple, packed arithmetic flags/DF and a constant encoding
+descriptor fit the LowIR operand boundary. LLVM and both C routes retain actual
+hardware register results, including zero-count address-size behavior, instead
+of reconstructing them with pointer arithmetic. `X86RepStateAsm.h` owns the
+older-SDK fallback and native API names. The bounded x64 MOVS/STOS analysis
+accepts only unsegmented 64-bit addresses, proves count/direction, validates all
+auxiliary output bindings and charges the complete scalar expansion.
+
+`X86BoundedLeaf.h` owns the returning ENCLU/GETSEC leaf sets and their
+register/flag dependencies. The x86 lifter emits pending full state; CFG owns
+the predecessor proof and rebuilds leaf-specific LowIR through the same state
+builder. Raw decoder records remain pending so graph discovery can revoke a
+proof. Only final unresolved state becomes an unsupported-instruction report.
+LowIR, MedIR, LLVM and both C routes validate the same state shape. The shared
+arithmetic-flag transport definition also supplies REP's packed flag constants.
+MedIR owns the dependency from an old flag input to the returned flags; dead
+flags cannot invent a source parameter. Ordinary completion does not supply a
+complete guest exception or nonlocal continuation ABI.
+
+`X86AtomicExchange.h` owns the native memory XCHG widths, segments, assembly
+and operand constraints. The lifter emits one ordered `ATOMIC_XCHG`, with
+the old value committed to the register only after the memory operation.
+LLVM and both C routes retain a native exchange: an arbitrary decoded
+address does not justify LLVM's natural-alignment promise, and lowering an
+unaligned exchange through a library call changes the original transaction.
+The C renderer is shared by both routes; LLVMC validates owned assembly
+before normalization, including dead calls. This does not change generic
+LLVM atomics or non-x86 exchange emission.
+The x86 scalar concrete emulator commits memory before publishing the old
+exchange value; unsupported exchanges still stop explicitly. LLVMC
+materializes generic atomic RMW results at their original statement, so a
+single-use snapshot cannot delay the transaction across a later load or call.
+
+`X86APXAtomic.h` owns the APX and legacy atomic native API names, operand widths,
+condition/segment controls and exact assembly fallback.
+`ir/intrinsics/X86/X86AtomicMemory.h` owns the shared
+`ApxAtomicIntrinsicShape` for LowIR/MedIR/HighIR admission. LLVM and both C
+routes preserve the original legacy/VEX/EVEX RAO-INT or CMPccXADD transaction,
+including dead results and false-condition write-back; no ordinary load/store expansion is
+permitted. Normalized offsets retain DS/FS/GS selection, with address-size
+wrapping performed by the existing effective-address owner. Long-mode
+RSP/RBP addresses additionally carry a checked final byte (`1`) after their
+ordinary operands. This preserves their stack-reference fault class when
+normalization erases the original base register. The extension is invalid
+on i386 or with FS/GS; R12/R13 and address32 stay data references. Existing
+ordinary forms retain their original arity. Native output maps the marker to
+`X86NativeStackReference`, and the owned assembly computes an RBP-relative
+index in RDX without replacing the frame pointer. LLVM and C capability gates
+select this native API only when the compiler supports stack references. `Codegen` treats LLVM error diagnostics as compilation failures and
+does not publish the parseable but incomplete objects LLVM can leave behind.
+Legacy RAO also supports i386; normalized addresses remain eight bytes while
+the native i386 carrier is four bytes. A complete narrow absolute displacement
+is wrapped and published as a full address at the lifter boundary. LLVM's
+shared atomic address-role map defers only the address to memory resolution;
+stored/comparator values remain ordinary address-fragment escape sinks.
+Native memory emission uses the same writable-data, pointer-table and
+immutable-data address owners as ordinary memory operations. Selected or
+recurrent immutable bases must retain relocation; segment-relative offsets
+and live-image storage bypass this process-image rebasing.
+
+`X86NativeFeatures` owns C compiler capability selection and function target
+attributes for AMX, SGX, bounded SGX/SMX state and REP comparison flags. Instruction renderers report their required feature
+sets; the function writer emits one combined attribute for the native APIs in
+use. Separate target attributes would discard one group's requirements in a
+mixed function. AMX/SGX assembly fallbacks do not acquire unavailable compiler features. REP
+comparison completion in long mode requires LAHF/SAHF on both native and
+assembly routes, and its `sahf` attribute survives every capability combination.
+SHA-256 vector projections participate in the same feature set, including the
+SGX/AMX fallback branches. LLVM-to-C validates the complete SHA operand/result
+shape before selecting a compiler intrinsic.
+
+`X86LiftTransactions` owns the bounded XABORT/XEND/XTEST instruction family,
+separate from SIMD cryptography. Raw byte/detail agreement precedes all effects.
+XABORT's constant byte and void completion use the shared system-state shape
+across LowIR, MedIR and C admission. Native LLVM and both C routes retain the
+same byte; a missing or dynamic operand cannot become an arbitrary abort code.
+
+`X86LiftTBM` owns the nine trailing-bit operations, including their XOP
+byte/detail validation, source-before-destination carry calculation, defined
+flags and undefined AF/PF effects. The common three-byte prefix and memory-tail
+validators retain VEX/XOP addressing rules; TBM owns its opcode/group, width and
+operand roles. Its arithmetic LowIR is shared by LLVM and both C routes.
+Undefined-output coverage is separate from an opaque machine-state bank audit.
+
+`X86LiftBEXTR` owns bit-field extraction across XOP immediate-control, VEX
+register-control and APX forms. It authenticates the encoding and decoded
+operands before reading the source, clamps shift operands before emitting
+LowIR, and records SF/AF/PF as undefined while defining CF/OF/ZF. APX NF
+preserves all flags. The shared prefix and APX validators retain address
+ownership. Decoder flag metadata is checked separately from architectural
+effects: legacy BEXTR metadata currently over-reports control-flag resets.
+
+`X86LiftBitCount` owns TZCNT, LZCNT and POPCNT admission, arithmetic and
+undefined-output effects across legacy, REX2 and APX/NF forms. F3 selection,
+66 operand size and REX cancellation are authenticated independently; shared
+address validators retain memory-tail ownership. The source-zero carry value
+is captured before an aliased destination write. TZCNT/LZCNT record OF/SF/AF/PF
+as undefined, POPCNT defines all status flags, and NF preserves them. Legacy
+Capstone LZCNT detail omits MODIFY_CF; that decoder contract does not override
+the architectural carry calculation. Completeness of this flag audit does not
+certify runtime CPU-feature selection or a complete opaque machine-state bank.
+
+`X86LiftBMILogic` owns ANDN, BLSI/BLSMSK/BLSR and BZHI VEX/APX/NF forms.
+Its raw encoding, operand and implicit-effect admission precedes every load
+and architectural write. Source-dependent carry is captured before aliased
+destinations, BZHI masks only the low eight index bits and bounds every shift,
+and ordinary forms record AF/PF as undefined. VEX BLSR decoder metadata reports
+RESET_ZF; the owner still computes the architectural result-zero ZF.
+`X86UndefinedFlagAudit` shares the effect-shape and later-use checks across
+BMI logic, bit counts, BEXTR and TBM; each family owns its admitted forms and
+the actual set of undefined flags.
+
+`X86LiftBMI2` owns flag-preserving MULX, PDEP/PEXT, RORX and SARX/SHLX/SHRX.
+VEX and APX forms share canonical prefix and memory-tail validators; raw bytes,
+implicit EDX/RDX and every public operand must agree before lifting. Both MULX
+halves are computed before either destination changes, with the high half
+winning when destinations alias. Shift counts are masked before LLVM shifts,
+and RORX immediates are scalar values. Their complete undefined-output audit
+has no new arbitrary bits; existing flag producers pass through unchanged.
+PDEP/PEXT retain the shared scalar intrinsic contract and native BMI2 lowering.
+`X86LiftADX` owns ADCX/ADOX admission and their independent unsigned CF/OF
+carry chains. It admits legacy map-2 and APX/NDD forms; ADX has no REX2 or NF
+form. It checks raw bytes, all public operands and implicit flags before a
+memory access. ADOX's legacy decoder detail omits TEST_OF and destination read
+access; the architectural inputs remain explicit in LowIR. Both sources and
+carry are consumed before any destination write, including aliases. Its empty
+undefined-output audit preserves earlier arbitrary flags, while the selected
+carry flag is defined by the addition. `X86LegacyScalarPrefixes` shares 66/F3,
+segment, address-size and REX cancellation scanning with bit counts; each
+family owns instruction selection and widths. The old BMI/ADX file is a small
+dispatcher delegating to the family owners.
+
+`X86SystemStateNative` also owns the RTM and CLZERO target requirements for
+native system calls. LLVM emission adds those requirements to the completed
+function without replacing its other family features, so standalone LLVM IR
+retains the instruction-selection contract used by the C routes.
+
+Source LLVM may retain loaded-image data in one external byte array, preserving
+overlapping scalar fields, pointer cells and original address differences.
+`LLVMOriginalImageStorage.h` owns the marker and its admission checks. This is
+an original-image source view, not a relocated reconstruction: native emission,
+relocatable objects and escaped address fragments retain their separate guards.
+The SDK includes this choice in its per-function LLVM cache key.
+Analyst global types follow the loaded address through LLVMC's image-address
+resolver, independently of whether C declares that address as a separate object.
+Only the loaded scalar acquires the checked display type; the backing array,
+overlapping accesses and native LLVM remain unchanged.
+
+Source unknown entry values use distinct opaque SSA seeds. A copy or PHI may
+transport an unavailable value without observing it; a real observation still
+requires its availability. Callee-save restoration follows those uses through
+dead copies and joins, while calls, exceptional entries and actual consumers
+retain their evidence. Native reconstruction does not acquire a machine-entry
+contract from these source seeds.
+
+HighC prepares both declared and inferred void returns before analyzing local
+uses, retaining any effectful return evaluation. The shared source-flow graph
+then removes dead PHI definitions, including unknown inputs of a local that is
+defined again before its observable uses. A store, value return or unresolved
+control-flow path retains the corresponding observation and availability check.
+
+`MedSSA` seeds entry liveness with upward-exposed uses, then propagates each
+newly live block/variable pair through real predecessor edges until a definition
+blocks it. The synthetic dominance root carries no variable values. Block-local
+use/kill construction owns register aliases and call clobbers for this analysis.
+
+`CallRegisterUnread` proves absent GPR input observations independently of
+argument inference. Opaque calls read every candidate family, and a nested
+call's may-write mask never kills a later input observation. Partial writes,
+exceptional entries, malformed successors and exhausted work remain conservative.
+Low-to-Med binds this evidence to the original direct-call occurrence and target;
+omitted-callee memoization includes it. Source scratch-restore liveness can cross
+only a still-matching call. Private-byte overwrite and escape checks stay in
+`MedPrologueSaves`; physical CALL return-slot writes are not C frame stores.
+
+After shared call-signature recovery, `MedPrologueSaves` also checks complete
+Win64 scalar leaf bodies for borrowed frame-pointer uses. Both source routes
+use the resulting byte-read intervals to suppress private stores that cannot
+be observed. Negative offsets count; pointer capture, lossy transforms,
+exceptional edges, nested calls and incoming stack parameters refuse the proof.
+Implicit register inputs are checked independently of inferred source arity.
+An SSA version of zero is not itself an entry input: a first load or arithmetic
+definition can also have that version. Call home areas and released frame bytes
+remain observable without explicit pointer arguments. This proof annotates only
+the source projection; it neither changes native memory effects nor supplies a
+general pointer-escape or kernel continuation contract.
+`MedStackAlignment` also owns signed entry-relative offset bounds for dynamic
+allocations. Machine-width scalar ranges, complete PHI components and checked
+offset arithmetic can separate their CALL return slots from fixed frame loads
+without inventing an exact stack address. Identity copies join the same PHI
+component. Every component needs an outside origin; an unrelated unseeded cycle
+remains unknown. The return-slot reader
+canonicalizes nonmemory operation prefixes before sharing completed byte
+histories, and charges graph work only when that graph is traversed.
+The omitted-callee reader also visits scalar direct calls carrying a proven
+private-frame address. Existing operation and extra-lift budgets still bound
+those bodies; an arity-only summary cannot stand in for their pointer effects.
+HighIR consumes a direct call's recovered argument list as a whole, including
+empty lists and unavailable interior slots. Its local setup scan cannot append
+adjacent frame variables or replace those unknown operands with stale stores.
+Module call recovery finalizes this boundary for both C routes.
+For fragmented Windows SEH ranges, LLVM C follows the begin/end markers along
+the CFG and retains each block's complete ordered unwind chain. Independent
+handlers and a handler nested within a finally keep their own clauses. Normal
+edges assign PHIs before leaving the generated compounds; a block's finally
+executes the recovered cleanup only on unwind. Closed lexical ranges retain
+their compact rendering.
+HighIR adds this recovery for positional register/stack conventions. Independent
+register banks retain their source variadic and floating-return preparation.
+
+After all native exception edges exist, the LLVM emitter removes an entry seed
+only when its private slot has one later definition dominating every read.
+This keeps SSA promotion from recomputing whole-function dominance frontiers
+for already defined temporaries. Bypassed definitions, first loop iterations,
+ordered accesses and escaping storage retain the original seed.
+Private cleanup also removes an adjacent load followed by its sole use, a
+plain store of the same value to the same nonescaping slot. This breaks dead
+entry-register identity cycles without discarding unknown values observed by
+native operations, returns, ordered accesses or source-annotated memory.
+
+LowIR owns x64 internal-call return proofs. Replaced-PC tail transfers require
+an exact write to the pushed return slot and a checked parent stack. Bounded
+closed recursive groups must preserve every invocation's return slot and
+ordinary preserved registers; unknown calls, memory writes or stack offsets
+cannot supply that proof. COFF stack-probe allocation recovery similarly uses
+the decoded subtraction and unwind-prologue boundary, sharing the decoded
+callee register-effect authority across frame analyses.
+Checked packed-flag and MXCSR reads use the shared x86 frame-effect authority
+and cannot by themselves invalidate a saved PC. PUSHF's lowered stack store
+and STMXCSR's four-byte memory intrinsic each require the ordinary return-slot
+proof; neither obtains private-storage authority from the state read.
+
+LLVM-to-C assigns split Windows protected ranges to blocks independently of
+LLVM block order. Shared handlers remain outside protected scopes, normal-edge
+PHI copies retain their original destinations, and inconsistent incoming scope
+states are refused. Unsupported C scope layouts throw a recoverable emission
+error instead of terminating the embedding process. Source-only unresolved SEH
+frames remain explicitly marked in LLVM and C; native emission still refuses
+them without the missing runtime stack contract.
+
+X86 LLVM assembly that modifies arithmetic flags declares `~{flags}`. LLVM's
+x86 register constraint parser does not map `~{cc}` to EFLAGS; an apparently
+correct instruction window can otherwise reuse a stale comparison after a
+native flag write. GNU C assembly still spells this clobber `"cc"`. Owned
+assembly producers and LLVM-to-C recognizers share the exact LLVM contract;
+the recognizer rejects older windows that omitted the actual EFLAGS effect.
+
+The shared LLVM intrinsic dispatcher refuses an operation unless its target
+handler owns the result or effect. Unknown void operations cannot disappear,
+and unhandled values cannot become zero. The emitter throws while it still
+owns the incomplete module; direct callers and both serial and sharded
+pipeline paths therefore receive a diagnostic instead of executable output.
+
+The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
+
+Only the leading `UWOP_EPILOG` sequence defines V2 epilogues. Later markers consume two slots without restoring state or affecting prologue offset ordering; a truncated pair remains malformed.
+
+Linked x64 PE discovery collects canonical RIP-relative LEA code addresses during the existing call sweep. Targets still need independent ownership and a bounded callable-exit proof; internal labels, continuations and unsupported bodies remain excluded. Discovery and signature references share the address-encoding classifier. COFF conditional rel32 references additionally require explicit source function symbols and zero-addend relocations. Offline `--single-reference-context` audits each complete single-site clause against every overlapping raw source claim, retaining all alternatives at that site.
+
+PE GuardCFFunctionTable parsing belongs to the COFF loader. Its complete,
+immutable table supplies address-taken function identities, without asserting
+an ABI, a supported body or runtime CFG admission. The low-level detector owns
+bounded proofs for relocation-backed entries without such metadata. Native
+LLVM resolution consumes those same proofs lazily per image and emitter;
+parallel shards do not mutate the image's verified-entry set. Neither an
+executable section nor a decodable prefix alone establishes a callable entry.
+Continuation ownership excludes both proof paths. A validated CFG entry needs
+no pointer relocation elsewhere in the image.
+
+`BinaryImage::isFunctionEntryCandidateAt` owns the shared structural gate for
+independent entries: executable ownership, instruction alignment, data-object
+exclusion and normalized continuation identity. Discovery, CFG tail calls,
+callee analysis and LLVM function-address resolution apply it before consuming
+positive metadata. It does not establish instruction semantics or an ABI.
+Thumb mode tags name the same instruction address. `ExceptionInfo` separately
+indexes primary function
+entries and unwind frame starts; a frame that begins later, a chained row or a
+cold fragment cannot supply an independent callable identity. Next-entry bounds
+use those primary identities as well. Explicitly selecting code for analysis
+retains its separate decode and admission checks.
+COFF `IMAGE_SCN_CNT_CODE` is instruction-storage evidence independently of
+page execute permission. Ownership, selected pipeline entries and SDK batch
+selection share that distinction without changing the image's page flags.
+A completed SDK discovery run reconciles provisional loader boundary guesses
+against the detector result. Stated symbols and user-created or renamed
+identities remain; a later catalog rebuild cannot resurrect a refuted guess.
+Patch/lift output requires every explicitly selected entry to survive into
+MedIR before LLVM emission. Automatically included exception callbacks cannot
+substitute for a rejected parent. Failures retain the entry's audit disposition
+and first decode or unsupported-instruction address; source views can still
+return their partial analysis.
+Whole-module lift/patch also fails when every attempted body was rejected;
+an empty LLVM module cannot stand in for unsupported instructions. Deliberate
+runtime/import exclusions and read-only machine analysis keep their separate
+outcomes.
+
+LLVM function-symbol lookup builds its eligible entry/end indexes lazily for
+each emission. It retains the last eligible symbol in image order and prefers
+an independent entry to an adjacent function's exclusive end. Reusing an
+emitter clears the indexes and entry proofs. A fatal pointer proof prevents
+further mirror retries in that module without weakening the original refusal.
+
+PE32 discovery rejects heuristic entries inside the operand bytes of reachable,
+complete instructions. The owning entry's control-flow walk supplies this
+evidence; overlapping paths, data and section boundaries invalidate it.
+Independent symbols, exports, direct calls and relocated pointers retain their
+separate authority.
+
+Parallel x86 call sweeps retain contiguous instruction ends and sparse direct
+call targets. A piece's start is implicit in its first boundary, and later
+starts are the preceding ends. Joining still redecodes a misaligned prefix
+until it reaches the canonical sweep; nested ranges retain their independent
+end-boundary checks. Joined pieces release their storage immediately instead
+of retaining two complete instruction logs through discovery.
+
+The COFF CFG reader also requires unique, complete file-backed storage for the
+target's minimum instruction unit. The table must be immutable, while target
+code may be writable or execute-only. Import-thunk decoding requires the full
+instruction span to remain in executable ownership.
+
+LLVM C's constant printer preserves storage and aggregate integer constants
+as literal bits, including values that coincide with image string or function
+addresses. Scalars, arrays, records and vector lanes share this rule. Explicit
+pointer constant expressions retain their symbolic addresses and relocations.
+
+Both C routes use the shared string scanner to annotate image objects read
+as scalar or vector blocks. Comments show the encoding and text without
+changing the load width, stored bits, alignment checks or pointer identity.
+Big-endian Unicode can be annotated even when a host C literal cannot replace
+its bytes. LLVM C's source-variable inventory separately distinguishes scalar
+edit types from aggregate allocation extents; an array or record is never
+registered as an integer whose width is the whole allocation.
+Literal substitution uses the complete bounded string read window; the
+64-character presentation cap applies only to comments. Known C string
+parameters select byte strings before a generic wide-string probe, so a
+one-character string beside another literal remains readable. Relocated,
+writable or oversized storage keeps its original address expression.
+
 This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
+
+`decode/X86/X86TransactionEncoding.h` owns the raw XBEGIN prefix, immediate
+width and signed fallback calculation shared by decoder normalization and
+lifting. A rel16 displacement retains a full 32/64-bit code target; address
+size cannot change its sign extension. The pinned decoder's i386 forms that
+use address size for extension are normalized once, before CFG discovery.
+Only the authenticated legacy representation is corrected; contradictory
+instruction detail still fails before LowIR effects. The two exits retain the
+original fallback and update EAX only after an abort. This transport does not
+supply a complete machine checkpoint or qualify hardware rollback.
+
+## Apple arm64e analysis
+
+The Mach-O loader retains the CPU subtype, including its ABI capability bits,
+and identifies arm64e and arm64e.x1 separately from ordinary arm64. The shared
+subtype table also gates source replacement and plain Objective-C object
+reconstruction; x1 cannot bypass authenticated-ABI requirements. All use
+the AArch64 decoder.
+
+`AArch64DecodeContract` separates raw occurrence identity from operand detail.
+The decoder records the original word, producer identity and buffer generation;
+classification-only results cannot reuse old operands. Native fast decoding
+can supply complete detail with text disabled, while the Capstone fallback
+cannot. Every decode attempt, reset and successful reinitialization expires
+borrowed records, including copies at the same PC and word. An owned snapshot
+must copy both the instruction and its detail and retain the occurrence fields.
+Lifting and operand queries share that admission contract. Operand queries
+reject a different requested architecture before accessing the record. Raw
+classification remains available without detail; direct BL targets use the shared encoding
+decoder. MOVPRFX follower evidence belongs to the same occurrence.
+
+`AArch64LiftPAuth` owns baseline PAC/AUT/XPAC operands,
+implicit LR/SP and X17/X16 HINT aliases, and authenticated branch/call/return
+semantics. Authenticated calls read the old operands before overwriting LR.
+`AArch64PAuth.def` owns the instruction inventory, implicit HINT operands,
+authenticated transfer encodings, keys and emission contracts. The fast and
+Capstone classifiers, lifter, intrinsic metadata and emitters consume those
+rows. Checked emulation reuses only the unchanged disabled-key HINT subset.
+`AArch64PAuthC.def` owns the C syntax shared by both projections;
+`AArch64ReturnProtection` proves the source-only return-signing recipe: an
+entry LR signed with entry SP, matching authentication at every normal return,
+and, when saved, a dominating private frame slot with no observable consumers.
+The proof follows conditional prologues, LR copies/PHIs and frame reloads;
+unused transport PHIs do not make the signature observable. Address-taken
+labels and landing pads retain their invocation's entry frame. Ordinary exits
+must restore SP, unsigned early returns must not cross a signing operation,
+and declared no-return calls retain the signing policy. Native tail-transfer
+provenance passes from LowIR into `MedOp::IsTailCall`; an adjacent CALL/RETURN
+pair alone is not evidence. Tail exits that may return require a restored SP
+and authenticated LR; a declared no-return tail needs no epilogue. Synthetic
+tail calls do not make a physical leaf non-leaf. An unresolved indirect
+branch keeps its diagnostic and cannot hide an active frame's incomplete
+recipe. HighIR records the key and leaf policy and omits
+only the proved recipe operations. HighC/C++
+express it with `target("branch-protection=pac-ret[+leaf][+b-key]")`; HighIR
+dumps and the Rust/Go views retain the policy as metadata. A different output
+architecture cannot silently drop it. Native Swift emission rejects this
+attribute until Swift has a corresponding source contract. Ordinary pointer
+authentication, observable signed values, mismatched modifiers/keys and
+incomplete recipes remain explicit. This includes Clang's arm64e tail-call
+sequence that inspects the authenticated LR and traps on failure before
+authenticating the callback pointer. LowIR, MedIR and the LLVM execution
+projection retain the original authentication operations.
+`MachOArm64e.def` owns chained format strides, pointer fields and diagnostics.
+`MachOArm64eFixups` owns the pointer-word decoder and signing-recipe publication
+shared by modern chained fixups and the original arm64e threaded bind format.
+The threaded bytecode reader plans the entire ordinal table and every chain
+before mutating the image. Exact load-command segment and library ordinals,
+header-mapping base, writable file-backed storage, unique ownership and
+existing import provenance are validated before publication. Authenticated
+words retain their bytes; plain rebases and binds use the same canonical slot
+records as modern chains. Mixed weak/lazy/classic rebase streams are rejected
+until their joint binding semantics are represented.
+
+Native dyld binding records and authenticated import recipes also retain the
+original signed library ordinal. SELF, main-executable, flat and weak lookup
+scopes remain distinct even when their module strings are empty; duplicate
+dependency names do not erase load-command identity. The shared
+`recordDyldBindSlot` operation rejects incompatible known scopes in either
+order and can refine absent legacy scope evidence without treating it as SELF.
+Classic, modern chained and threaded readers all use this model. A recipe with
+an import lookup scope cannot prove a local metadata pointer, including when
+the scope is numerically zero. Local object relocations and dyld-cache slide
+recipes retain their separate target provenance without an import ordinal.
+
+Generated C temporaries avoid every operand expression, preserving parameters
+and results that already use the renderer's preferred local names.
+Validated pointer-authentication operations preserve argument setup across
+both ABI recovery and C lowering. Return-contract recovery keeps their explicit
+results, including signatures and poisoned pointers, even when the operation
+also has side effects. It uses the lowering shape contract rather than treating
+every effectful intrinsic as void. Tail-transfer proofs retain target taint
+separately from the signing modifier and restore a saved signed link only
+after authentication with the matching key and entry-SP offset (or zero).
+Clang's explicit authentication-failure branch retains the setup of its sole
+continuing authenticated tail. Source C names an unassigned entry LR using
+`__builtin_return_address(0)`, as the LLVM projection already does.
+`AArch64PAuthLR.def` owns explicit FEAT_PAuth_LR encodings
+and their three-input operations. Fixed-register, original-PC, backward-PC-relative and
+register-modifier forms retain both diversifiers. Authentication of a return
+target remains observable without writing LR, including a poison check before
+an otherwise unused C return target is discarded. Fast and Capstone scanners
+both terminate at these returns. Frame proofs require a matching key and both
+modifiers before restoring a signed link. Joins discard conflicting signing
+recipes and preserve ordinary modifier constants only when every incoming
+path agrees. This applies equally to live registers and saved return cells.
+The machine operations use the implicit X17/X16/X15 forms so relocation cannot
+silently replace the original PC with the generated instruction's PC.
+`AArch64PAuthM.def` owns PACM's ten implicit consumers. CFG normalization
+resolves the immediately next executed instruction, including empty NOP bodies,
+repeated prefixes, ordinary joins and loop backedges. Mixed edges carry an
+explicit function temporary into SSA; direct branches cannot inherit a prefix
+from the preceding bytes. Generated LLVM and both C projections materialize
+operands before one indivisible PACM/consumer assembly pair, preserving original
+PC values and the execution host's enable controls. Frame proofs keep implicit
+PACM recipes separate from explicit PAuth_LR recipes because FEAT_PACIMP does
+not guarantee their equivalence. They retain declared function temporaries
+across instruction boundaries without treating declaration as initialization.
+An unresolved prefix at the end of available code, or a prefixed incoming edge
+at an independently enterable/exception root, fails explicitly; its pending
+marker cannot become ordinary source or native assembly. Exception returns and
+those implicit-entry state cases still require architectural state modelling.
+
+Machine AUT remains tied-operand inline assembly in LLVM and both C routes:
+the architecture may poison a pointer without trapping immediately. The
+separate `A64_AuthBranch` operation requires a valid control-flow target and
+uses `llvm.ptrauth.auth` / Clang's authentication builtin. Its effect survives
+dead-result elimination. These are analysis projections, not a guarantee that
+rebuilt code preserves the original authenticated call's resistance to spills.
+Code-identity recovery keeps the authenticated runtime value; it cannot treat
+its key or modifier as a code pointer or bypass authentication to name a callee.
+PACGA retains two independent 64-bit inputs and its generic signing operation.
+Both C routes emit the real instruction with an explicit output constraint;
+they do not depend on a nonexistent ACLE builtin or an unresolved LLVM helper.
+
+`LDRAA`/`LDRAB` retain a combined authentication-and-load operation. The
+original encoding owns the key, signed offset, addressing mode and SP origin.
+`AArch64PAuthLoad.def` owns the shared shape and fixed-register machine contract;
+the low result half contains the loaded value and the high half the outgoing
+base, unchanged without writeback. LLVM and both C projections execute one
+original-family instruction with a memory clobber. In particular, standalone
+`AUTDA`/`AUTDB` followed by a load is not equivalent when `FEAT_FPAC` is enabled
+without `FEAT_FPACCOMBINE`. Dead results still retain memory and failure effects.
+Explicit no-image SP projections require a complete raw-SP source proof.
+They save host SP in X14, install the raw value, execute the combined load with
+literal Rn=31, capture completed SP in X16 and restore host SP on success.
+Offset addressing preserves the original signed SP; writeback publishes the
+authenticated updated base. LLVM-to-C requires that exact assembly, constraints
+and complete memory effects. Image or synthesized frame values remain refused.
+Constrained-unpredictable writeback register overlap is rejected. This does
+not grant a reconstructed call/frame/unwind ABI or asynchronous-unwind proof. The operation follows Arm's [LDRA and Auth pseudocode](https://documentation-service.arm.com/documentation/ddi0602/2025-09?lang=en&rev=1).
+
+The [SP flow and authenticated-fault record](evidence/arm64e-sp-flow-and-pauth-faults-2026-10-27.json)
+qualifies these combined SP primitives at EL1/EL0 in the official model with
+baseline PAC, FPAC and FPACCOMBINE. Valid signed misalignment and invalid PAC,
+separately and together, retain the original word's exception order, raw SP,
+hardware origin and complete guarded-memory effects. The recovery wrapper is
+test machinery; it supplies no generated call or unwind ABI. Automatic original
+memory lifting marks the retained instruction word as scalar metadata, so image
+relocation cannot reinterpret its encoded displacement as an address.
+
+Scalar FEAT_CPA `ADDPT`, `SUBPT`, `MADDPT` and `MSUBPT` retain checked-pointer
+operations rather than ordinary integer arithmetic. `AArch64CPA.def` owns
+their encodings, operand widths and LLVM contracts; `AArch64CPAC.def` owns
+both C projections. The machine instruction observes the execution host's
+checking controls and preserves poisoning behavior. Fixed scratch registers
+and raw instruction words support assemblers predating CPA mnemonics, with
+explicit operand and clobber constraints. Compilation does not establish CPU
+feature availability. These operations preserve call argument setup and frame taint,
+without proving a checked result is an ordinary arithmetic value. Their explicit
+results remain return values; discarded C expressions retain the instruction.
+
+`AArch64AddressMemory.def` owns original ordinary-memory encodings and shapes.
+`AArch64AddressMemoryOperations.def` owns their identities, direction and
+register class. Its frozen scalar, vector and immediate lists occupy separate append
+positions, preserving previously published scalar and x86 identities. The GPR
+register-offset inventory covers LDRB/H, LDR W/X, LDRSB/SH W/X, LDRSW and
+STRB/H/W/X with UXTW, SXTW, UXTX/LSL and SXTX, including both encoded scales.
+The raw index and original word remain one effectful operation through LowIR,
+MedIR, LLVM and both C routes. W indices consume exactly four bytes. A load
+returns its accessed bytes; explicit IR sign/zero extends through the encoded
+W/X result width before publishing the complete X register. Stores consume
+only their accessed data bytes, with no invented return value.
+MedIR and HighIR share the original-memory pointer-input visitor: a non-SP
+base or an unscaled full-width index can supply parameter type evidence.
+Narrow or scaled indices do not. This type inference preserves the original
+instruction and grants no permission to replace its address calculation.
+Objective-C scalar table binding relocates only a proved immutable base,
+retaining the raw index, encoded extension, access width and memory effects.
+Every occurrence needs a bounded complete access range and the original
+instruction owner's address proof; publication rechecks the current uses.
+Byte and halfword stores slice the encoded W value explicitly; the tracer
+requires those source bytes to be known before publishing the slice. Unknown
+unused upper bytes do not prevent a known narrow store.
+The SIMD/FP register-offset inventory also covers B/H/S/D/Q loads and stores
+with all four extensions and both encoded scales. A load publishes the encoded
+physical register view before explicitly zeroing its upper V bytes; a later
+S/D read across a branch cannot reuse an older scalar definition. V31 remains
+data, rather than acquiring X31's zero-register meaning. Stores consume only
+the selected vector bytes. Native LLVM and C use V17 for that data while
+keeping the base and index in separate GPRs. Validated scalar S/D loads also
+participate in the common floating-return inference. AAPCS64 interfaces use
+native float/double parameters only when the existing byte-demand proof
+establishes the scalar width; full vector inputs retain their wide LLVM type.
+The real load retains AddressAdd's access-EL checks and any internal
+AddressIncrement choice; an unchecked sum or current-EL ADDPT cannot replace it.
+The address is unknown to generic memory proofs, and discarding the result
+cannot discard the access or its possible fault. The operations preserve local
+Z/P values only when their physical vector registers are disjoint. Validated loads also preserve
+earlier call arguments other than their explicit outputs.
+The shared raw-operation contract also describes GPR and B/H/S/D/Q unsigned
+and unscaled immediate accesses, including the GPR unprivileged variants.
+These operations retain the raw base and encoded displacement; their index
+operand is a required constant zero. Scratch rewriting changes only Rn/Rt,
+leaving every immediate bit and the access-EL variant intact. Explicit IR can
+execute these forms through LLVM and either C route without an image model.
+The same original-word owner covers all 13 GPR FEAT_LRCPC2 and ten B/H/S/D/Q
+FEAT_LRCPC3 ordered unscaled LDAPUR/STLUR forms. The original opcode retains
+RCpc acquire or release ordering as well as access-EL checked address addition;
+an ordinary acquire load is not an equivalent replacement. Opaque side effects
+and memory clobbers remain through LLVM and both C routes, including discarded
+reads. Unallocated neighboring size/opcode combinations fail at the lifter
+boundary even when supplied operand details claim a valid mnemonic. Automatic
+GPR-base lifting retains these ordered words for ordinary AArch64, classic
+arm64e and arm64e.x1 images. Existing immediate intrinsic identities and the
+SP/source-environment boundary remain unchanged.
+The finite tracer requires naturally aligned ordered accesses when the original
+alignment controls are unavailable. An unaligned request refuses before any
+result or memory write; address-span evidence alone grants no alignment proof.
+Execution still requires the corresponding host CPU feature; emitting the word
+does not establish that feature or qualify concurrent-memory behavior.
+Image configuration selects the nonordered single-access immediate
+operations for arm64e.x1 GPR bases through both decoder routes, including
+unprivileged variants. Architecture-only decoding preserves them conservatively;
+image-configured ordinary AArch64 and classic arm64e retain their existing
+memory/frame model. The x1 selection follows Apple's
+[hardware security profile](https://developer.apple.com/documentation/watchos-release-notes/watchos-27-release-notes),
+which introduces CPA2; a classic arm64e header alone does not select this
+checked-memory source contract.
+Reusing a decoder for a different image refreshes this selection even when its
+architecture and instruction mode are unchanged. Architecture-only and x1
+lifting retain literal-SP immediate, scalar/SIMD writeback, pair and NEON words
+under the same original-memory policy as GPRs. Ordered SP accesses retain their
+original RCpc/release word for every image subtype. Ordinary nonordered accesses
+in image-configured AArch64 and classic arm64e keep their frame path. Original
+SP words do not qualify a reconstructed source frame under CPA2. An opaque access through a proven entry-SP
+alias also fails image-backed lowering until its stack/call ABI is qualified;
+a nominal footprint cannot justify forwarding or omitting stack arguments.
+Runtime GPR values remain in runtime
+coordinates even when the module has an image. An exact address occurrence may
+instead rebase the raw base only after `AArch64MemoryImage` proves the complete
+base-to-access byte span in one initialized image owner. Negative displacements
+and the maximum unsigned Q span use 64-bit extents. LLVM requires one complete
+storage run; HighC declares the complete containing object. Neither substitutes
+an effective address for the raw base or changes the encoded displacement.
+Numeric equality cannot authenticate a scalar, fragment or code occurrence.
+Source admission also follows SSA/source definitions before body filtering:
+a runtime GPR may flow through scalar arithmetic, but a mixed image/runtime
+selection or unresolved image arithmetic needs an all-arms span proof and fails
+explicitly. A runtime arm cannot authorize another arm's image coordinates.
+HighC uses the shared source-flow graph to authenticate a copied image address
+at its exact use; a later assignment or an address-taken local supplies no
+constant-value certificate. Storage collection reuses that same proof, so a
+retained source variable cannot shrink the mirrored byte span.
+
+The exact ADRP owner recognizes a retained immediate dereference of its live
+page base. An ADRP/ADD chain can also use a retained immediate access as its
+occurrence-bound dereference witness. Reauthentication checks the original
+instruction word, base lane and complete image span; the certificate names the
+ADD's original base, independently of the memory instruction's displacement.
+This specialized provenance witness gives generic memory/alias analyses no
+ordinary-memory or no-fault authority. Constants without a valid image span
+still fail before source body filtering.
+Both native compiler routes use fixed separate input/output registers, preserving
+source aliases and the encoded scale. The common machine table also owns literal
+SP forms. With no image, an explicit raw-SP parameter can select the physical SP
+for one original memory instruction. Both projections save the host SP in X14,
+select the supplied SP, execute the unchanged SP-base access and restore the host
+SP on normal completion; X14 and memory are explicit clobbers. A fault observes
+the supplied SP. LLVMC checks the complete template, constraints and literal Rn,
+rather than recognizing an SP instruction as an ordinary GPR access.
+Image-backed bases, constants, SSA/frame values and reconstructed source stacks
+retain their admission failure before body filtering. This single-access contract
+does not reconstruct a stack ABI, asynchronous unwind or tagging environment.
+The software tracer admits a finite image/RAM read only when the authoritative
+address owner proves identical address bits for CPTA on/off and every internal
+CPACHECK choice over all accessed bytes. It refuses state-dependent addresses
+in both modes, including a poisoned or tagged base whose unchecked sum appears
+mapped. This proves no translation, tagging or no-fault behavior. Source ABI and
+Swift receiver proofs consume a validated read with an explicit result, without
+granting purity or removing the access. Jump-table recovery
+requires the same control-independent address proof for every admitted physical
+slot and an exact table base/index identity. SIMD loads do not acquire the
+GPR table-transport proof. A monotonic address interval may
+certify the entire zero-extended W input domain without a branch proof; a full
+X input first needs an explicit zero-extension proof at the exact load use.
+Otherwise a complete native-width bound retains its compound unsigned path
+predicates. None of these address proofs grants runtime coordinates, mapping,
+storage ownership or finite-join authority. The common selector/storage fixed
+point remains mandatory. Compact byte/halfword and word-relative tables retain
+their entry width and signed target transforms, including a data anchor for
+word-relative entries. The encoded read never becomes an unchecked effective
+address; existing root, mutation and storage audits still apply. Both source routes consume the
+authenticated load's input occurrence, preserving zero indices and an index
+register overwritten by the load.
+Source emission keeps these original reads even after recovering a switch.
+When a relocatable table read has no observable result, a bounded original-byte
+copy preserves the access without demanding callable identities for unreachable
+physical slots. The shared byte-storage descriptor grants no address or flow
+proof. A common 64-bit byte-span query includes negative displacements and
+the original raw base, without shortening the maximum 65,536-byte unsigned-Q
+span. Alignment padding is not original prefix content. HighC requires every
+use of the exact expression in its function to be
+unobserved, together with a complete source-range proof; LLVM requires the
+existing exact-occurrence, storage-role and terminal-use closure. Observable
+reads still use the normal relocation-aware memory owner. Table-relative data
+layout also observes original reads through unique local definitions.
+Private-copy source replay recomputes stack-access annotations from the current
+MedIR body; a stale prologue-save flag cannot hide an edited store from that
+independent machine replay.
+GPR single pre/post-index accesses use `AArch64WritebackMemory.def` and its
+validated original-word descriptor. Loads return the completed X value below
+the completed base in one 128-bit result; stores return the completed base.
+The lifter publishes the W view before its zero-extended X view, then commits
+the base. The native instruction owns both the access and writeback, preserving
+pre/post ordering and access-EL `AddressAdd` behavior. No ordinary integer ADD
+reconstructs the base. Constrained-unpredictable base/data overlap is refused;
+XZR and SP have distinct encoded roles. Automatic image admission follows the
+same x1-only policy as single immediates. With no image, an explicit raw-SP
+parameter also supports GPR/SIMD single writeback, pairs and baseline NEON
+structure accesses. Their scratch words retain Rn=31. The native envelope saves
+the host SP in X14, installs X16, executes the original SP instruction, captures
+the completed SP in X16 and restores the host SP before publishing results.
+The machine table owns the complete assembly and constraints; inverse LLVM-to-C
+admission rejects changed SP fields, missing restoration and missing clobbers.
+The shared source-base proof follows complete copies, all SELECT/PHI arms and
+the completed-base result of an original SP operation back to explicit runtime
+parameters. Every dependency must reach a parameter; an uninitialized cycle
+cannot borrow another arm's permission. HighIR uses every reaching definition
+at the exact use, including initialized loop backedges, and refuses address-taken
+variables. Loaded data, the wrong result half, narrowing, constants, image or
+synthesized frames cannot acquire that proof. The reconstructed frame/call/unwind
+ABI remains refused by the shared memory source-base policy.
+The [raw-SP primitive record](evidence/arm64e-raw-sp-memory-2026-10-27.json)
+binds 1,579 independent words to 60 official Arm model executions at EL1/EL0,
+with SA/SA0 enabled, and 7,895 native alignment faults through five actual output
+routes. It does not qualify automatic SP source-frame reconstruction or signed
+native exception unwinding.
+
+The intrinsic defines its typed auxiliary SSA outputs. A following COPY still
+defines its own destination; HighIR lowers that COPY before ordinary copy
+propagation, matching LLVM instead of silently skipping result transport.
+HighC liveness treats auxiliary results of both call and assignment statements
+as definitions. It omits unused result assignments while retaining the original
+instruction and every live Var/PHI result, so discarded fields need no warning
+suppression in strict C builds.
+
+Both source routes and LLVM validate the complete contract before source-only
+filtering. A discarded result retains the memory instruction. Exact image-base
+witnesses authenticate the incoming occurrence; only the original instruction's
+completed-base extraction may follow it without invalidating that witness.
+Image materialization includes the incoming base, accessed bytes and outgoing
+base in one complete owner. It does not require a post-index instruction to
+access bytes at its outgoing base. Returned bases are runtime coordinates and
+can feed another retained memory operation without reinterpreting them as image
+VAs. The software tracer commits only complete finite reads/writes for which the
+shared address owner proves control-independent access and writeback bits.
+
+SIMD single pre/post-index B/H/S/D/Q accesses use the same descriptor and
+original-instruction owner. A load defines two typed auxiliary SSA results:
+the complete zero-extended V register and completed X base. A store consumes
+the complete V value and returns the base. Xn/Vn numeric overlap is legal;
+V31 remains a vector register. LowIR binding collection, SSA conversion and
+finite tracing share the original result-transport query, preserving typed
+temporary identity by position and width. A SIMD LowIR adapter additionally
+requires independently stored value/base carriers. LowIR validation and finite tracing reject
+missing, shortened or duplicate bindings before publishing memory effects.
+A source use of an auxiliary base must be dominated by its defining instruction,
+including copies that carry it; skipped definitions cannot grant runtime-base
+admission. HighC and
+LLVMC retain the original instruction even when both load results are unused;
+the vector tuple remains internal and grants no native vector entry/return ABI.
+The x1-only automatic policy, exact image occurrences and complete storage
+proof also apply to these single SIMD accesses.
+
+GPR W/X pairs, signed LDPSW and SIMD S/D/Q pairs share the original-word
+contract for offset, pre-index, post-index and non-temporal accesses. Pair loads
+publish three auxiliary values: both complete X/V values and the completed
+base; stores consume both complete values and return the base. A non-writeback
+load may overwrite its incoming GPR base, so only writeback forms commit the
+base result to the architectural register. Duplicate load destinations and
+constrained-unpredictable GPR writeback overlaps are refused. Both projections
+and LLVM retain one native pair instruction, including its access descriptor,
+second-address increment and writeback ordering. Finite tracing requires both
+transfers to fit the same declared memory model before committing results.
+Nominal frame observations cover the entire pair without granting an original
+SP execution environment. Auxiliary carrier completeness, source dominance and
+image occurrence validation reuse the same owners as SIMD single writeback.
+
+The pair-memory integer bridge passes the same model at EL1 and EL0 through
+five output routes and all four CPTA/CPTA0 settings: 215 samples per route and
+control, totaling 8,600 generated sample calls. Integrated dev outputs match
+the tested model inputs byte for byte. The [pair record](evidence/arm64e-pair-memory-2026-10-26.json)
+retains the source and input provenance, regression results and qualification
+limits.
+
+The separate GPR writeback integer bridge passed the unmodified Arm AEM FVP
+11.32.19 at EL1 and EL0: 130 independent samples through HighC/LLVMC O0/O2 and
+LLVM ELF, with all four effective CPTA/CPTA0 settings. The eight-test export,
+selected regression results (including original-owner failures) and model records are pinned in
+[evidence](evidence/arm64e-writeback-memory-2026-10-26.json). This is Normal WB,
+nonoverflow model coverage; it does not qualify native Apple CPA2 hardware or
+automatically lifted whole images.
+
+The SIMD writeback integer bridge independently passed the same unmodified
+model at EL1 and EL0: 100 samples through five output routes and all four
+CPTA/CPTA0 controls, totaling 4,000 generated sample calls. The ten-test input
+report, exact source/object hashes and environment revision are pinned in
+[SIMD evidence](evidence/arm64e-vector-writeback-memory-2026-10-26.json).
+This remains a bounded Normal WB, nonoverflow explicit-IR qualification.
+
+Baseline AdvSIMD structure memory uses the same original-instruction contract.
+The shared structure decoder owns LD1–LD4/ST1–ST4 multiple and lane layouts,
+LD1R–LD4R replication, consecutive register lists with V31-to-V0 wrapping,
+Q=0 upper clearing, lane retention and immediate/register post-index roles.
+The lifter and native CPU memory-effects query reuse that decoder. Stores
+consume every complete vector; lane loads also consume the old vectors. Loads
+publish one complete 128-bit result per register and the completed base through
+private typed results. LLVM and both C projections execute one rebound original
+instruction. Finite tracing requires the complete footprint and every consumed
+value before publishing results or writes.
+
+Four-vector operations require eight LowIR inputs and five private intrinsic
+results. The shared representation limits live in `OperationLimits.def`;
+construction rejects excess inputs. Existing six-slot undefined-operation
+identities retain their v1 bytes when extension slots are default. Extended
+operands or stored extension bits select a separate v2 digest domain, including
+all eight slots. This does not extend the public native vector calling ABI.
+For x1 SP-based structure memory, analysis retains the original SP and nominal
+footprint. Image source conversion and execution reject the unsupported stack
+environment. Fixed-image bases using register post-index remain outside the
+materialization proof.
+
+The [structure-memory record](evidence/arm64e-structure-memory-2026-10-27.json)
+pins 1,134 independent samples, 58 completed source/projection tests and all
+60 official Arm model guest executions. Explicit and image-context integer
+bridges cover EL1 and EL0 through both C projections at O0/O2 and the actual
+LLVM ELF objects, under all four CPTA/CPTA0 settings. The matrix performs
+90,720 sample calls and 272,160 positive/negative/zero delta comparisons.
+Generated C uses its declared plain-pointer alias contract; compiler warnings,
+the 45-second model deadline and the 2 MiB mapping remain unchanged.
+
+This instruction preservation observes the execution host's controls; it does not model foreign
+EL/SCTLR2/translation state or preserve exception-PC and syndrome register
+identity. Automatic x1 GPR single-immediate lifting and initialized-image
+rebasing have the bounded qualification above. GPR single pre/post-index
+writeback has separate explicit-IR, automatic-lifting and image regression
+coverage; SIMD single pre/post-index accesses have separate explicit-IR,
+automatic-lifting and image regressions. Pair accesses have separate explicit-IR,
+automatic-lifting, nominal-frame and image regressions. Original-SP stack/call
+projection, fixed-image register post-index relocation and Apple native
+execution with CPTA enabled remain unqualified. Controlled Arm model execution
+qualifies the declared explicit-IR exports separately from an automatically
+lifted whole image. Native half and whole-vector C entry/return ABI and DWARF vector
+declarations remain separate, unqualified interfaces; integer bridges do not certify those native
+interfaces. Local scalable-vector interleaving uses the existing LLVM ELF
+profile, and does not qualify native Apple SVE or LLVMC scalable carriers.
+The owner follows the pinned
+[Arm 2025-09 AddressAdd and LDR specification](https://documentation-service.arm.com/documentation/ddi0602/2025-09?lang=en&rev=1).
+
+The loader decodes arm64e chained pointer formats 1, 7, 9, 10, 12 and 14, including
+their strides, multi-start pages, 16/24-bit import ordinals and signed addends.
+Segmented format 14 retains the original load-command segment indices and
+its full 12-bit next field. Targets use segment-relative offsets, with checked
+segment ownership, padding, bounds and address overflow.
+`ARM64_RELOC_AUTHENTICATED_POINTER` uses the same
+`MachOAuthenticatedPointer` model: target or symbol, key, diversity, address
+diversity and addend. Original authenticated slot bytes remain on-disk recipes;
+they are neither process-signed values nor ordinary raw-pointer/import proofs.
+Immutable readers reject every overlapping byte. Source projections keep
+storage containing recipes external rather than inventing global initializers.
+Metadata discovery has a separate `readMetadataPointerTarget` path. Validated
+local recipes can identify Objective-C classes, categories, methods, protocols,
+properties and runtime initializer/finalizer functions. The original encoded
+word must still match the loader's snapshot and signing fields; imported,
+conflicting, overlapping or stale storage cannot establish a local target.
+The Objective-C reader opts into this view explicitly. Plain runtime value
+readers and source object reconstruction do not acquire that permission.
+Recovered method names outrank synthesized function-start names while retaining
+existing stated, analysis and user function names.
+The formats follow Apple's [dyld definitions](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/fixup-chains.h)
+and LLVM's [pointer-authentication contract](https://llvm.org/docs/PointerAuth.html).
+
+This support covers static loading, lifting and C/LLVM inspection. Native
+rebuilding and source replacement of an arm64e image fail explicitly until
+ABI-aware signing and fixup emission are implemented; the emitted module
+retains that requirement. Checked emulation's existing disabled-key profile
+does not become an arm64e execution environment. Separate Apple Silicon tests
+compare both C projections with native PACGA. The full PAC/AUT/XPAC oracle
+requires an executable arm64e process and checks that each signing key changes
+pointer bits. Hosts that refuse arm64e execution explicitly skip that check;
+ordinary arm64 can leave PAC/AUT disabled despite advertising CPU support.
+These comparisons do not qualify a reconstructed arm64e ABI.
+
+`dwarf_eh::evaluateAArch64ReturnAddressState` owns static interpretation of
+the DWARF return-address signing column. It preserves absolute unsigned,
+SP and SP/PC states, legacy toggles, CIE initial rules, remembered states,
+key selection and the `N` non-HINT PAuth_LR augmentation. Constants,
+diagnostics and bounded-query defaults come from
+`AArch64ReturnAddressState.def`, which pins the Arm specification revision;
+the absolute-state extension is still Alpha. Runtime register/expression
+rules stay unknown, and incomplete or reserved CFI never supplies an unsigned
+default. The query validates the entire program before publishing a result.
+This describes a signing recipe, without authenticating a live return address.
+`queryAArch64UnwindSigning` owns admission of normalized image and function
+metadata, then returns independent DWARF state at the exact requested PC and
+compact completed-prologue recipes. Partial provenance cannot become a known
+state through a locally complete record. The C API, worker, CLI, Python and
+GUI preserve absent sources, unknown states and zero signing addresses. They
+never retry at a function entry or replace a failed DWARF result with compact
+metadata. The GUI binds responses to the selected PC, project and revision.
+Callback relocation rejects PC-dependent recipes and the new absolute-state
+operations until its code-position mapping is modelled. Mach-O metadata-only
+layout growth preserves original code addresses and CFI bytes, reencodes only
+FDE initial-location references, and compares every statically known signing
+recipe at each CFI boundary before publication. A cumulative comparison budget
+bounds repeated queries; unknown, incomplete, expression and language-dependent
+recipes remain inadmissible.
+
+Both public Mach-O native rewriting routes authenticate the actual input's
+arm64e subtype before compilation or publication, independently of caller
+metadata and LLVM annotations. Section rewriting binds its freshly loaded
+image to the input bytes; in-place rewriting loads its exact byte snapshot.
+These guards do not restrict the separately proven metadata-only relocation.
+
+SVE predicate values use a complete svbool representation across element
+widths. `AArch64SVEPredicate.def` owns PTRUE encodings, legal shapes and C
+projection contracts; LowIR, MedIR and both emitters reject malformed forms.
+LLVM converts typed predicates at the producer and consumer boundaries. All
+architectural PTRUE patterns are retained, including reserved empty patterns.
+Flag-setting PTRUES remains unsupported until its NZCV contract is modelled.
+This does not establish V/Z aliasing or an SVE call ABI.
+
+`AArch64SVEVector.def` owns typed DUP/INDEX/LASTB/ST1/STNT1 shapes. HighC
+stores local Z values as `svuint8_t` and reinterprets them at typed operation
+boundaries; LLVM retains its integer backing with scalable typed views.
+`AArch64SVECPA.def` owns all six scalable CPA forms: unpredicated and merging
+ADDPT/SUBPT, MADPT and MLAPT. Original words retain destructive inputs and
+MADPT's multiplicand versus MLAPT's addend. LLVM and HighC emit real checked
+instructions over active-width Z values and canonical predicates, preserving
+inactive destination lanes, signed multiply-overflow checks and runtime enable
+controls. The shared vector contract records every vector and predicate input;
+none may acquire a scalar or constant substitute. Dead results still execute
+the checking operation. This is local instruction preservation, without native
+SVE/CPA execution qualification or a scalable LLVM-to-C carrier.
+
+`AArch64SVEPrefix.def` owns all three MOVPRFX forms before compatible CPA
+consumers. Detailed decoding captures PC+4 from the same supplied byte buffer;
+the snapshot stays bound to the original prefix address and raw word.
+Missing, classification-only or mismatched occurrences confer no pair evidence.
+Raw admission checks matching destinations, predicates, .D elements and
+forbidden source aliases
+before emitting separate copy/selection dataflow. A branch into the consumer
+bypasses the prefix, and SSA keeps the two incoming destination values. Other
+SVE consumers remain refused until their pair contracts are owned. LLVM and
+HighC select the active .D source lanes, retaining old inactive lanes for /m
+and zeroing them for /z; the real CPA consumer retains runtime checks.
+
+IRMed's `validateAArch64SVEState` owns bounded, complete local Z/P definition
+and COPY/PHI closure for both Med-to-High and LLVM emission. It checks the
+executed CFG and every incoming definition before a consumer can use state.
+Validated PAuth operations reuse their explicit scalar output contract and
+preserve local Z/P state; unresolved PACM operations remain inadmissible.
+Unknown inputs, opaque calls, scalable ABI escape and overlapping V/Z use
+remain rejected. Standalone HighIR retains its own representation checks;
+LLVM-to-C rejects scalable carriers explicitly. These local value proofs do
+not establish a scalable calling convention or physical register aliasing.
+Serial and sharded LLVM pipelines both return semantic refusals through the
+pipeline result without publishing a partial module or source map.
+
+Plain ERET retains its legacy intrinsic identity for stored IR compatibility,
+but all lifting and emission entry points reject it until an ELR/SPSR/PSTATE
+contract is available. It cannot become an ordinary return or a zero-valued
+unimplemented intrinsic. Authenticated exception returns remain unsupported.
+
+Validated combined authenticated loads read memory and update only their
+explicit result pair. ABI recovery preserves earlier arguments in other
+registers across them; malformed load shapes remain recovery barriers.
+
+`macho_loader::DyldSharedCache` owns immutable main/subcache files, UUID and VM
+placement validation, sorted disjoint mappings, and the cache image catalogue.
+Its bounded slide reader retains v2 ordinary pointers and v3/v5 authentication
+recipes without rewriting bytes. V2 extra chains, v3's four keys and v5's
+IA/DA layout remain distinct. Embedded image file offsets resolve through that
+image's segments and the cache mappings; they are not relative to its header
+or necessarily in the same file. Cached section reads use their VM layout:
+some real signed images retain original section offsets in their headers.
+`MachOLoader` selects an exact catalogue install name and reuses the ordinary
+Mach-O readers through `prepareImage`. The bounded analysis projection retains
+virtual addresses, symbol indices and alias/module names while packing only
+referenced linkedit bytes and strings. Packed linkedit has no projected VM
+ownership. Its original addresses remain readable through the cache. The
+cache slide reader supplies pointer semantics before metadata and discovery;
+authenticated bytes remain encoded, and only unsigned slide slots are patched.
+Indirect-table names are separate cache symbol references, never ordinary
+import-storage proof. Optimized `__got`/`__auth_got` sections retain names only
+for nonzero surviving slots validated against slide records; coalesced holes
+are not pointers. This follows Apple's [cache binding](https://github.com/apple-oss-distributions/dyld/blob/main/cache_builder/CacheDylib.cpp)
+and [section adjustment](https://github.com/apple-oss-distributions/dyld/blob/main/cache_builder/NewAdjustDylibSegments.cpp). `InputFileSHA256` hashes the exact main file, while the
+image retains every input file digest and its install name. `Raw` is explicitly
+an analysis projection. Module and source-replacement guards apply even when
+a cached image's subtype is ordinary arm64. The layouts follow
+[Apple's cache definitions](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/dyld_cache_format.h).
+`BinaryImage::MachOSharedCache` retains that immutable address space for
+analysis-only metadata reads. Selected segment bytes take precedence; edits,
+overlapping ownership and stale signing recipes fail validation. Range slide
+queries validate complete intersecting pages without decoding the whole cache.
+Neither metadata access nor a signing recipe establishes runtime pointer trust.
+`parseObjCStorage` uses the metadata view for authenticated and cached images.
+Their `metadata_only` ivars retain file declarations, including bitfields,
+trailing arrays and absent Swift offset globals, without asserting a final
+runtime layout. Offline selector/class/ivar identities live in
+`ObjCMetadataReferences`, exported as `metadata_references`, separately from
+`ObjCSourceReferences`. Source object and receiver proofs consume only the
+latter. Plain-object admission also rejects ordinary-arm64 cache projections.
+Compact Objective-C selectors distinguish modern optimization versions 1/2
+and legacy versions 15/16, including the record-relative version-15 layout.
+Tagged relative method/property arrays retain each declaration's Objective-C
+image index and header address. The index uses the separate header-info table,
+including its 16-byte and 24-byte rows. JSON exposes `cache_origin` with an
+`image_loaded` condition; offline discovery does not assert loaded state or
+select an override. External cache IMPs remain declarations without local body
+proof. These layouts follow Apple's
+[Objective-C runtime structures](https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-runtime-new.h)
+and [header information](https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-private.h).
+The CLI lists catalogue entries with `neverd info CACHE --cache-images --json`
+and loads one with `--cache-image /exact/install/name`. The C SDK exposes the
+same catalogue and selection through `neverd_dyld_cache_images_json` and
+load-options JSON (`loader: "dyld-cache"`, `cache_image`). Project input records
+include `dyld_cache` identity. Address-bearing SDK sidecars and writer locks
+use an install-name SHA-256 namespace; the source file path stays unchanged,
+and the root load-options file remembers the selection. Namespace locks
+canonicalize the real cache input before appending the install-name namespace.
+An existing session and its reanalysis preserve their selected image when
+another session changes that root file. Cache provenance does
+not make a packed projection a runnable standalone dylib.
+For a selected dyld cache image, debug discovery does not inspect the container
+or automatically attach its adjacent companions. Explicit DWARF and MAP paths
+retain the existing selected-image architecture and identity checks.
+A packed cache remains an analysis input. Recognizing x1's header grants no
+runtime environment: whole-image execution still needs complete exception-level
+authentication, implicit-entry PACM and CPA2/stack contracts. The supported
+explicit-IR operations above do not certify that complete image ABI.
+
+## GUI project and search ownership
+
+`CFGBuilder` owns exact scalar branch recovery. It evaluates width-correct
+LowIR facts without inventing live-in register values. Exact ordinary scalar
+loads share `readImmutableImageScalar` with MedIR: only uniquely mapped,
+immutable data or supported instruction storage without overlapping fixups
+can supply bits, and pointer-width address candidates retain their separate
+relocation proof. Cold reads charge the image metadata inventory against the
+existing evidence budget; repeated reads cache successes and failures within
+one CFG build. An unaffordable read leaves arithmetic-only proofs usable.
+If ordinary constant propagation cannot resolve a target, a bounded,
+straight-block symbolic query may prove that its full-width scalar expression
+is constant for every input. `LowScalarSymbolic` shares integer semantics with
+the jump-table resolver; exact MBA derivations, register-byte identity and
+instruction-local temporary lifetime are required. Separate loads remain
+separate observations, and opaque effects clear register facts. The query
+charges the same function evidence budget and owns finite operation, node,
+atom and rewrite caps in `neverd/Limits.h`. It does not enable source-wide
+symbolic optimization or solver synthesis by default.
+Recovery revalidates the producer's basic block after discovering new paths.
+Lost or incomplete proofs retain the original indirect transfer. The native function
+disassembly API publishes these same instruction boundaries and targets; raw
+disassembly remains linear. The worker uses recovered bodies for function
+listings and replaces their linear reference-scan results, so skipped bytes do
+not swallow real code targets. Analyst Undefine overrides presentation inside
+a function without deleting the function or changing the original bytes.
+
+Exact scalar transfers may reach backward or discontiguous blocks beyond a
+next-entry search bound. Known independent entries retain tail-call ownership
+and the original transfer's instruction address. The worker indexes complete
+recovered instruction ranges separately from contiguous listing extents;
+explicit metadata chunks keep their own headers and share their parent's
+identity. Cold address navigation probes a bounded set of nearby entries and
+accepts only recovered instruction evidence, never proximity alone. Ambiguous
+ownership stays unresolved. The index survives display-cache eviction and is
+cleared when function discovery or edits rebuild the listing. Reference
+overlays cover recovered bytes without erasing unrelated functions in the gaps.
+New GUI jumps and invalidated cursors request this bounded lookup through the
+listing's optional `recover_address` when that cursor is not a known instruction
+start. Paging and scrolling reuse the existing presentation cache; explicit
+analyst items remain authoritative for display.
+
+The GUI owns the relationship between a packed `.nddb` and its unpacked working
+copy; the worker owns edit journals and their replay. Before a database opens a
+working copy with a pending journal, `ProjectDatabase` writes a local recovery
+marker bound to that database's canonical path and packed sidecar fingerprint.
+The marker survives consumption of the worker journal, so subsequent opens keep
+recovered edits and the GUI continues to require Save or Discard. Saving back to
+that database or explicitly discarding retires the marker. An externally changed
+pack must not overwrite a pending recovered working copy.
+
+A live worker may retry a failed Save only for the exact journal that its own
+history object published. The existing recovery checks validate every current
+sidecar and history against that transaction before completing it. Newer staged
+edits stay in memory and are committed afterwards. Unknown or changed journals
+continue to require reopening and foreign sidecars continue to be refused.
+
+History checkpoints share an immutable, validated committed snapshot; staged
+commands and the undo cursor remain independent. Every consistency check still
+reads the actual bounded sidecar files. Exact byte equality can reuse the
+snapshot's validation; changed bytes take the same parser and normalizer,
+including equivalent formatting, merge-conflict and foreign-edit checks. A row
+can reuse admission only when both its values and JSON types match the validated
+row. Non-finite numbers, binary values and invalid UTF-8 are refused before
+publication so the snapshot and its serialized representation cannot diverge.
+After changed rows pass admission, an unchanged canonical address sequence
+retains the snapshot's ordering, uniqueness and ordered-table positions. A
+changed address or row count takes the full ordering and duplicate checks.
+
+History publication encodes the target state once and composes the history and
+recovery journal from serializer-produced JSON and retained committed text.
+It retains byte ranges for encoded tables and formats those ranges for sidecar
+files without traversing their objects again. The formatter consumes only
+serializer-produced compact JSON and preserves scalar spelling, string escapes
+and the existing file layout. Ordered tables still omit synthetic addresses;
+ordinary typed sidecar writes retain their direct serializer.
+Loading a snapshot retains validated history-file bytes and defers journal
+encoding until a save needs it. Before embedding a loaded document, publication
+parses and serializes it, so a top-level BOM cannot enter nested JSON. Merely
+opening history does not pay these serialization costs.
+It retains owning before/after snapshots until all writes finish, constructing a
+full in-memory journal only after an interrupted write for same-session retry.
+This avoids a second whole-state tree and repeated state encoding on successful
+saves. Byte budgets, atomic write order and full recovery validation remain
+authoritative. Undo/redo replaces rows in sorted position; patch commands merge
+the SDK's complete, file-offset-ordered inventory with the committed rows.
+A committed patch command proves that reloading must invalidate analysis, so
+it does not produce two more complete inventories just to detect that change.
+Ordinary reloads still compare before and after.
+
+The SDK's versioned byte-patch snapshot copies canonical rows and raw bytes into
+independent owned storage. The worker compares these rows with independently
+owned, admitted history rows and shares unchanged row handles and their strict
+encodings. Each row also memoizes its sidecar layout through the existing
+formatter; publication joins these row spans and still checks the complete
+file's byte budget before any write. These derived strings belong only to the
+row and retire with it. Comparing the admitted strings borrows their storage
+instead of constructing temporary JSON values. Only changed rows build a new
+DOM. Reuse requires the complete
+canonical seven-field representation, including numeric types and hex spelling;
+unknown fields cannot survive the adapter's canonical projection.
+It resolves acquisition and release together and retains JSON compatibility with
+older SDKs. Snapshot storage survives session edits and destruction; the overlay
+still owns all admission, ordering and kind decisions. CLI JSON and sidecar
+formats remain unchanged.
+Paged worker inventories construct JSON and presentation addresses only for
+the requested row window. The owning SDK snapshot still contains the full
+inventory; total counts and completion come from that snapshot, including empty
+and zero-limit pages. Older SDKs retain the complete JSON parser and move only
+the selected rows into the response. History admission still requests all rows.
+Their shared writer reuses hexadecimal scratch storage and emits only
+formatter-produced hex directly; general strings retain JSON escaping and
+external input retains its existing validation.
+
+Shared transport JSON has separate entry points for bounded external frames
+and SDK-owned documents. Backend parsing preserves native JSON number types,
+rounding and last-duplicate-key behavior, with an owning SIMD conversion when
+possible and native fallback otherwise. External frames and sidecars retain
+their duplicate-key, nesting and byte admission. Neither path retains borrowed
+parser strings; temporary large parser storage is released before fallback.
+
+Find in view is a GUI text operation. Its modeless dialog captures the originating
+pane before taking keyboard focus; pseudocode/IR supplies its complete source
+and fold projection, while assembly supplies its bounded loaded rows and visible
+address prefixes. Both renderers and the dialog share literal case/word matching.
+Selecting a source match expands its enclosing folds without navigating another
+pane or asking the worker to analyze the function again. Function replacement,
+project closure and target destruction retire the old search snapshot.
+
+Binary search matching and cursor semantics are owned by the SDK's shared
+matcher (`neverd_search_page`, also used by the legacy search entry points).
+The worker adapts those pages to the transport. The GUI owns wraparound and
+retires results and callbacks on a new search or session change.
+
+Deep-link syntax and checked address arithmetic belong to `DeepLink`; instance
+matching and recent-input lookup belong to `LinkDispatch`. The Qt-independent
+`project_database::Reader` owns NDDB metadata admission, snapshot-consistent
+reads and streaming input authentication. Qt `ProjectDatabase` adapts that
+reader and owns transaction writes and normal recovery behavior. SHA-256 sinks
+adapt LLVM/Qt hashing; the shared reader owns digest comparison, chunk/framing
+validation, schema constants, the file allowlist and compression policy. SDK
+`ProjectInput` owns isolated extraction through the session/comparison lifetime;
+CLI and worker use the SDK load boundary. `FileStamp.h` owns external file/tree
+selection stamps shared by worker and saved debug choices. A metadata match is
+only a lookup hint. CLI clients and native
+URL events share the dispatcher. Native events dispatch off the GUI thread so
+the receiving window can answer its own local socket. Instance probes have
+bounded concurrency and one deadline; socket framing tracks incomplete JSON
+without repeatedly parsing its accumulated prefix, while Qt validates syntax.
+
+The worker owns chooser order, filtering and address-to-row resolution.
+`TablePage.h` locates `seek_address` in the final order and returns its bounded
+page, global row index and canonical row address. Segment and region queries
+match containing ranges; other tables match exact addresses. The GUI validates
+and caches that page rather than fetching every intervening row or independently
+sorting it. Navigation callbacks retire on session or navigation changes.
+The listing may reveal an item from already fetched rows only when
+their request serial, project revision and listing generation still match.
+The native executor publishes background state with each terminal reply as
+well as heartbeats. Its monotonic publication sequence orders these channels;
+listing generations and revisions remain opaque. The query dispatcher validates
+correlation and context, delivers subscribers, then publishes the snapshot.
+The primary Session alone adopts it, after open has installed its metadata,
+and rejects older heartbeats. Cached reads and analysis replicas cannot advance
+the primary Session's state. A listing already holding that generation keeps
+its rows instead of requesting them again.
+Cached and fetched jumps share cursor-placement rules; pending refreshes and
+partial item prefixes require a worker query.
+Function links can reuse a loaded item's worker-supplied function identity
+under the same context check; other addresses still resolve through the worker.
+The worker recovers distant function chunks through their owner's entry while
+keeping the decode cursor and cached projection inside the chunk. Reading a
+chunk must not register it as another function and churn the listing generation.
+Source, IR and graph requests share that bounded owner lookup before preparing
+analysis or choosing a document or layout cache key. Explicit function entries
+retain their identities; an unresolved address retains the ordinary entry
+request. Navigation keeps the requested byte address separately from its owner.
+GUI refreshes retain loaded context within the per-side query budget and keep a
+prefetch margin, so replacing unchanged rows does not shrink and regrow the
+window used to route branch arrows. Revision and navigation fences still apply.
+
+<!-- i18n-section: interactive-patch-ownership -->
+## Interactive patch ownership
+
+`lib/patch` owns byte admission, LLVM MC encoding, the immutable input snapshot, canonical overlay runs and exclusive export. The SDK proves source targets against exact emitted C, canonical LowIR occurrences and decoded operands; a navigation anchor alone does not authorize an edit. The worker journals optional `patches.json` rows with ordinary undo/redo and invalidates analysis after edits. Signature names read original bytes; patched routines lose identity-derived library effects. GUI, CLI and Python share these APIs. Whole-function replacement still uses `neverd_patch_source` and requires exporting and reopening any byte overlay first.
+
+Patch persistence reads typed, owning rows directly from a validated SIMD JSON tape when `NEVERD_ENABLE_SIMDJSON` is enabled. The LLVM reader remains available when acceleration is disabled or the input is outside the SIMD parser’s domain. Both readers share field admission and resource limits, including the existing last-duplicate-key and integer-only size rules; no borrowed parser strings escape. Overlay replay still validates every row against the immutable input.
+
+After full admission, an inventory with every byte changed and no mergeable
+neighbours keeps its owning canonical rows; other inventories use the existing
+complete normalization. `InputFile` captures owned file bytes so later writes or
+truncation cannot change the session's original patch input. Admission borrows
+bounded views of that immutable snapshot; callers needing independent mutable
+bytes still request an owning copy. Segment, relocation, overlap, original-byte
+and resource checks precede publication on both paths.
+
+`ProjectHistory` retains admitted commands as immutable shared values. Strict
+JSON encodings are computed when a write needs them and reused for byte-budget
+accounting and document assembly; rollback checkpoints do not copy command
+payloads. Pending sidecar writes and the next committed snapshot share the same
+owned text. Complete history/journal sizes are reserved before assembly, while
+all publication limits, external-byte comparisons and durable write ordering
+remain in their existing owners. Patch commits and undo/redo share admitted row
+values and unchanged non-patch tables through the same publication routine as
+generic state saves. Row handles retain neither SDK pointers nor entire previous
+snapshots or arrays. Sequence ordering and uniqueness are checked independently
+of row admission. Complete JSON views are materialized only for legacy callers;
+single-table reads do not construct the patch DOM. Generic saves own the supplied
+row representations anew: logical equality (including signed zero) can suppress
+a sidecar write but cannot authorize reuse of differently spelled JSON text.
+The transport budget counts cached strict row encodings, including extra fields
+and escaping from older SDK inventories, before considering a no-op.
+
+Source previews retain the live session’s load options, analysis policy, user metadata and an owning snapshot of signature evidence. Instruction display limits never limit full-range validation; truncated previews report this explicitly. Thumb edits must cover the complete IT block when removing its predicate.
+
+## Structural comparison ownership
+
+The loader's batch function naming owner returns both the selected name and its
+producer origin. Native discovery and pipeline publication consume that same
+owner: finding an entry does not promote an address-generated label into name
+evidence. Session name resolution retains the origin alongside `OriginalNames`
+before applying analyst renames, including accepted recognition names. Native
+comparison snapshots consume that unannotated pair and undo only display
+numbering recorded by the loader. Equal local symbol names stay equal evidence
+after link-order changes; a producer's literal numeric suffix remains intact.
+The SDK adapter separately owns presentation names under the extraction memory
+allowance. Bounded function projections use them for display, search and sort;
+the matcher, snapshot hash and saved evidence consume only the original name.
+The `sdk-native-decode-v2`
+extraction identity distinguishes this evidence contract from older snapshots;
+saved historical reports remain readable without rewriting their evidence.
+
+`programAnalysisIdentity` in `Program` supplies a versioned, length-delimited identity
+encoding shared by binding and offline lineage. Only the caller's path is
+excluded; the historical analyst-review digest format remains unchanged.
+`Lineage` owns immutable source retention, snapshot inventories, association
+edges, grouped contradictions and iterative witness traversal. `ComparisonJSON`
+is its sole saved-evidence reader. `LineageJSON` owns revision-bound bounded
+projections; C ABI handles own transactional publication and one trace cache.
+`LineageService` performs local file I/O through the worker's atomic writer;
+whole reports never use the bounded backend-reply parser or cross IPC. Qt owns
+navigation and presentation only. See [lineage contracts](binary-diff-lineage.md)
+for accounting, cooperative checkpoints and report-only provenance.
+
+`Lineage` also owns analyst-declared release aliases, parent validation and
+timeline ordering in the v2 envelope. Releases reference existing snapshots;
+they never add correspondence edges. Iterative topological admission propagates
+the latest known ancestor timestamp through undated releases. The same core
+release editor applies record and parent deltas through the same release reader
+and revision owner used by initial admission. It copies the admitted immutable
+association graph and shares the original evidence; metadata edits do not
+serialize, hash or parse the retained reports again. Current allowances still
+cover the old and candidate graphs and metadata. Source evidence retains its
+encoded string size from the shared JSON writer, so candidate persistence bounds
+can be checked without materializing another complete document. The C ABI alone
+publishes the result and invalidates trace caches. Bounded
+release pages expose relation counts; parent/child pages carry the individual
+records. Core focus-by-ID locates a page after timeline edits, so Qt need not
+scan the inventory or select a different release at an old offset. Optional
+symbol discovery gates worker advertisement and desktop editing while preserving
+older graph operations. V1 document revisions and source report bytes remain
+unchanged; projection schema versions are independent of the v2 document.
+
+`lib/diff` owns the immutable comparison model, normalization-independent matching,
+block/instruction deltas, correspondence overrides and versioned persistence.
+It depends on neutral decoded snapshots rather than Session, Qt or GUI objects.
+Its private `CallAlignment` owner finds mandatory call-position anchors by
+intersecting the two extreme optimal LCS paths. Dense tables and linear-frontier
+decomposition preserve that contract at every sequence size; opposite tie rules
+include alternatives that skip an equal call. `Comparison` verifies all proposed
+callee occurrences before admitting positional pairs, and retains exact
+similarity ties even at zero ambiguity margin. `Features` keeps unresolved calls
+as `NoIndex` positions while excluding them from graph edges and import sets.
+These are shared matching rules, independent of transport and UI.
+The same core owns ambiguity changes during manual correspondence edits. It
+removes groups exhausted on either side before rebuilding coverage and lookup
+indices. The override effect retains changed and removed groups at their
+original indices; undo merges them back in order without rematching functions.
+Persisted groups therefore always have candidates on both sides.
+Similarity alternatives are retained as overlapping stars, each backed by the
+measured near-best candidates of one endpoint. Combining both endpoints' rivals
+into a Cartesian group would invent pairs; removing an already-grouped endpoint
+would lose other candidates. Exact groups cover only their own edges. The
+legacy single-group lookup remains a coverage marker, not a candidate iterator.
+The C API's `functions_json` inventory projects the same accepted mappings and
+retained ambiguity groups. `ambiguous_with` binds an opposite-side function to
+the union of its groups' target-side members, with ordinary search/sort/paging;
+it does not run another matcher or promote a candidate. A cached membership
+index normalizes each group's members once. Single-group rows share those
+members; overlapping groups form a union for the requested row. Cache storage
+follows group membership, without expanding full Cartesian candidate sets.
+Pairing, undo, redo and restore share invalidation of mapping-dependent
+inventory, candidate, delta, source and observation caches. CLI and the Qt
+counterpart picker consume this projection; the picker keeps bounded pages and
+invalidates its selection when the worker's comparison revision changes.
+`ComparisonJSON` owns strict saved-report validation and transactional binding.
+Its optional `ComparisonControl` carries cooperative cancellation/deadlines
+through record readers, graph/native/region validators and measurement workers.
+`ComparisonInterrupted` distinguishes a stopped restore from invalid evidence;
+worker exceptions are joined and rethrown by the shared parallel owner. Progress
+callbacks remain on the coordinator, including the last checkpoint before
+publication. The C ABI admits one operation, parses one DOM and commits only a
+fully validated replacement; failure/stop leaves the prior result, histories and
+caches intact. Restore operation status is separate from the saved result state.
+The worker resolves the additive progress export at runtime and uses that same
+capability for advertisement and cancellation admission. Neither adapter owns a
+second evidence validator or a separate persistence format. JSON DOM parsing,
+individual allocations/copies and whole-value equality are explicit indivisible
+checkpoints, so this remains cooperative cancellation rather than a deadline
+for every host operation.
+`Comparison` applies the same transaction boundary to correspondence edits:
+controlled apply/undo stage the result and undo effect, pass cancellation into
+caller remeasurement, and publish only after the final checkpoint. The C ABI
+reserves history capacity before core publication and commits history and
+cache invalidation only after core publication. Cancelled edits retain both
+history branches and existing views. Edit status is separate from the retained
+snapshot's completeness. Worker capabilities resolve each additive progress
+export independently, and Qt consumes those capabilities. Copies, sorting and
+final publication remain indivisible; cancellation has no hard latency bound.
+`DataFlow` adds bounded SSA neighborhoods and forward/backward slices over an
+immutable dependency graph. `MedDataFlow` is its read-only adapter from the
+pipeline's verified MedIR; it reuses the IR owner's entry-live-in classification,
+preserves PHI predecessor labels and instruction origins, and distinguishes
+parameters from call clobbers. This adapter depends on `IRMed`, not SDK sessions.
+Call-argument metadata binds to an exact MedIR block/operation, with duplicate
+or stale owners rejected. Its arguments remain a distinct span of node inputs,
+separate from raw call operands and preserved clobber prefixes. Missing argument
+metadata stays unknown. This v2 observation does not assert ABI formal bindings.
+The comparison adapter requests `PipelineOptions::MedAnalysisOnly`: the existing
+machine ABI preparation, including omitted-callee summaries, ends after final
+MedIR verification and before LLVM emission. `usesMachineMedIR()` keeps source
+presentation hints out of analysis as it does for lifting. Deferred source
+HighIR is a different stage and may not yet contain System V call arguments.
+The opt-in `llvm-ssa-v1` comparison adapter instead requests ordinary machine
+`LiftMode` and `RetainLLVMSourceObservations`. It retains the strict native audit
+and final LLVM verification gates. `LLVMDataFlow` observes that optimized body;
+it neither implements stack promotion nor enables source-only ABI hints. Typed
+integer contracts are exact; unsupported effects/types/metadata refuse the
+projection with a reason. The EH owner supplies `hasUnloweredContract` for both
+this admission and existing scalar validation, avoiding two numeric decoders.
+`LLVMSourceObservation::ExpressionDerived` distinguishes library expression
+ancestry from direct emission observations through RAUW, cloning and shard
+serialization. The comparison graph retains only direct observations of values
+still in the selected function; deleted, detached or foreign values never acquire
+invented origins. Schema 3 keeps sorted plural origins and typed signatures;
+original Med schema 2, recipes and fingerprints stay unchanged. Region profile
+identity follows the requested graph profile even before extraction completes.
+Med-only change/call associations abstain explicitly for optimized graphs.
+The separate `llvm-parameter-ssa-v1` mode has the same `LLVMDataFlow` owner.
+After raw admission it may replace all origin-free, unflagged i64-to-i32 trunc
+uses of one native parameter with an exact low-bit leaf. `FlowParameterViews`
+owns shared signature and native-range admission; missing, stack, overlapping
+or invalid sites and any ineligible use prevent that argument's projection.
+Source widths, attributes, site and elision counts stay in schema 4 provenance;
+snapshot-local MedVar IDs bind on restore but do not enter correspondence keys.
+PHI predecessors survive substitution, and only detached node references and
+terminators are renumbered. `retainedItems()` counts parameter rows together
+with nodes for production, reading and collection validation without changing
+operation coverage. Legacy profiles retain their work and serialized contracts.
+`llvm-progress-ssa-v1` extends that projection with schema 5 progress provenance.
+`LLVMFlowSemantics` owns the finite scalar/intrinsic whitelist shared by original
+LLVM admission and saved proof checking. `FlowProgress` owns one linear,
+interruptible proof over detached graph nodes: acyclic control or direct
+nowrap-counter self loops whose removal leaves a DAG. Each nonzero fixed
+add/sub step exhausts its finite domain; a direct scalar comparison propagates
+poison to the branch, independently of its predicate or exit polarity. It never
+simulates iterations, assumes undef is fixed, or relies on existing progress
+attributes.
+Raw LLVM verification/admission and parameter elision precede this proof.
+`LLVMDataFlow` adds enum attributes to an AttributeSet copy, preserves both full
+contract prefixes, and changes only detached signatures. String attributes are
+never searched for flags or removed by text matching. `retainedItems()` includes
+the proof root and witnesses; work/cancellation stays within the original
+projection allowance. Graph validation reruns the same proof and finite-op
+admission; fresh source binding authenticates source-to-observed attributes.
+CLI, SDK, worker and Qt share this owner and do not derive their own loop facts.
+The separate `llvm-progress-ssa-v2` selects multi-block proof explicitly, before
+changing the detached graph profile. An iterative charged Tarjan traversal
+finds components, their unique external-entry target and exact internal header
+edge inventory. Only a single latch can reach PHI admission, preventing
+candidate-by-seed quadratic work. Header PHIs receive the exact nowrap update
+through the sole backedge, or outside seeds. The update is computed in the header
+or latch; the direct latch comparison/branch consumes its poison.
+The residual whole CFG must be a DAG. Schema 6 names header and latch separately;
+v1 keeps its original scanner, accounting and four-field schema 5 witnesses.
+No loader, optimizer, ABI or transport adapter acquires a second proof owner.
+`llvm-progress-ssa-v3` extends this owner to nested components. Each round cuts
+only newly proved latch-to-header edges before recomputing residual SCCs; entry
+inventory still uses every original CFG edge. An outer cut proves only finitely
+many traversals of that edge, not that an inner cycle terminates. Applying the
+same argument to residual components, followed by whole-graph acyclicity,
+establishes progress. Failed final acyclicity discards all tentative witnesses.
+Schema 7 keeps explicit header/latch records, canonically ordered by latch;
+validation derives all rounds from an empty cut set. Deep nesting can require
+quadratic work, charged to existing limits with graph-sized live storage and no
+recursion or separate depth limit. Published v1/v2 paths retain their exact
+single-pass accounting and encodings.
+`llvm-progress-ssa-v4` extends the same owner to groups of paths sharing one
+header counter. Precomputed original predecessors and per-candidate PHI maps
+require complete, unique incoming coverage. At most two counter candidates
+come from the first direct comparison; each header PHI and selected latch PHI
+is scanned once per candidate. The intersection of signed-increasing,
+signed-decreasing, unsigned-increasing and unsigned-decreasing domains must be
+nonempty across every exact update. All header backedges are cut atomically.
+An unconditional latch may carry one common update or one PHI of guarded
+updates; every predecessor must directly consume that counter or its own exact
+update and have its other successor outside the component. Current-counter
+guards permit one poison-carrying backedge before the next guard consumes it.
+Other residual cycles still invalidate all tentative witnesses and counts.
+Schema 8 observes each guard block and names its physical latch separately.
+`FlowProgress` owns distinct header/backedge counts; the witness-vector size is
+the guard count. Production and replay derive them independently. Metadata
+paging uses these totals in constant time; guard-sorted witnesses retain the
+existing logarithmic node lookup. Legacy scanners, charge order and wire
+fields remain exact, and frontend adapters introduce no new proof rules.
+`llvm-progress-ssa-v5` adds modular counter progress in the same owner. A guard
+may observe one direct fixed affine translation of the counter. The common
+nowrap domain takes priority; otherwise every recurrence arm must have the same
+nonzero width-normalized delta. Each guard compares against a literal or another
+fixed affine observation of that same counter.
+`ConstantRange` constructs each continuation region after operand/polarity
+normalization and affine translation. Ignoring observation overflow flags gives
+a continuation superset, so the complement of their union contains only common
+exits. Width+1 APInt endpoints retain 2^64 exactly. Sorted interval unions and
+their complemented gaps project onto residues modulo 2^ctz(delta); coverage of
+every residue proves that every possible counter orbit encounters a common exit.
+No iteration simulation, fixed seed or native noundef attribute is introduced.
+For an unfrozen undef seed, a defined continuation must hold for every
+contributing choice, including a coherent initial value following that orbit;
+at a common exit the selected guard exits or is undefined. Exact forwarding
+and final residual acyclicity prevent resets or an unrelated infinite suffix.
+For `(counter+A) pred (counter+B)`, the fixed difference `D=B-A` determines the
+wrap point `-D`; equal offsets give a constant comparison. Signed predicates
+rotate both observations by the sign bit. This yields an exact concrete region
+without treating independently varying undef uses as correlated; the proof
+uses the coherent choices included among all contributing undef choices.
+The new interval work is charged O(G log G), with O(G) scratch for G guards;
+residual component rounds retain their existing accounting and final DAG check.
+Schema 9 adds the canonical `proof` marker (`nowrap` or `modular`) to each guard
+witness. Replay rederives that marker with the complete group, and paged adapters
+only present it. The v1-v4 model default omits this field and preserves their
+published charge order and serialized bytes.
+`llvm-progress-ssa-v6` extends the same owner with parameter-relative EQ/NE
+guards. `FlowProgress` accepts only the same parameter index and exact bit view,
+directly or as P+K, K+P or P-K; it does not recognize parameters by names or
+register aliases. For X=counter-P, `(counter+A) pred (P+B)` becomes
+`X pred (B-A)` in the source-width ring. The original common-exit residue proof
+then covers every concrete parameter and seed without a separate odd-step
+restriction. All guards must share the relative domain; mixed absolute/relative
+or different-parameter groups refuse. Existing nowrap and v5 modular proofs
+retain priority and markers. Bound arithmetic may ignore overflow flags only
+because their poison is consumed by the direct guard, making the concrete
+continuation set a conservative superset.
+For a hypothetical infinite defined continuation, choose an admissible fixed
+parameter and seed. Independent undef uses include those coherent choices;
+the exact PHI recurrence preserves their relative orbit. At a shared exit every
+guard must exit or become undefined, contradicting defined infinite continuation.
+This uses LLVM's [undef/branch semantics](https://llvm.org/docs/LangRef.html#undefined-values),
+not an implicit freeze. Freeze/reset barriers are not traversed; a fresh freeze
+used only to select a guard does not change the counter or parameter proof.
+Schema 10 strictly gates `parameter_modular`. Saved validation rederives it;
+fresh native binding rejects changed parameters even when the changed graph
+still has a valid progress proof. CLI/SDK/worker/Qt only select or present this
+core contract, with no independent proof logic or new resource policy.
+`llvm-progress-ssa-v7` adds input-derived invariant expression bounds. The
+private `FlowInvariantBounds` helper observes only structurally validated,
+finite scalar graphs admitted by `LLVMFlowSemantics`. Its iterative memoized
+walk requires every dependency to terminate in parameters, constants or exact
+typed undef/poison leaves. Every PHI, freeze, control node and dependency cycle
+is a barrier, even in an unselected arm or outside the loop. It does not attempt
+general invariant analysis or duplicate LLVM verification. Fresh source binding
+remains the authority for authenticating saved attributes and expressions.
+
+For each admitted node, the helper caches its basis node identity and affine
+offset. Exact typed add/sub literal translations B+K, K+B and B-K are peeled
+with the source-width arithmetic and valid nowrap flag mask. K-B, casts and
+other operators can be complete bases but are not peeled. Different terminal
+nodes are not equated algebraically. Parameter translations remain whole nodes;
+the existing v6 proof is attempted first for **every** candidate counter in a
+group. Only if all legacy candidates fail may v7 allocate or charge its cache.
+Consequently existing-proof successes retain the same witnesses and charge
+sequence, including when the second comparison operand supplies the proof.
+
+Choose coherent fixed input/undef leaves: a pure freeze-free bound evaluates to
+a fixed B or UB/poison. Select can suppress an unselected poison operand; the
+argument concerns the resulting bound, not universal poison propagation.
+In coordinates X=counter-B, all strict EQ/NE guards over the same basis use the
+existing exact common-exit residue proof. Every recurrence arm must retain the
+same nonzero delta. Original entry inventories, complete PHIs, atomic backedge
+cuts, nested rounds and the final residual DAG check remain authoritative.
+No noundef, implicit freeze, trip count or normal-return promise is introduced.
+The cache charges initialization, visited nodes/edges, semantic bytes and affine
+normalization under the existing work/cancel allowance. Acceptance and rejection
+are both memoized, so shared DAG traversal is linear and independent of depth.
+Schema 11 gates `invariant_modular`; v1-v6 cannot accept it and retain exact
+saved encodings. All adapters expose this same derived core evidence.
+
+Fresh source binding first compares exact graph records. If LLVM PHI numbering
+changed, `FlowBinding` anchors every non-PHI operation in its existing order and
+block, then propagates a bidirectional map through ordered inputs. Every node
+must be bound; conflicts, unanchored PHI cycles and ordinary instruction
+reordering refuse. Fresh graph validation precedes reference traversal. Only
+node references, block terminators and progress counter/update/compare IDs are
+translated before complete graph equality, including origins, predecessor
+labels, attributes, contracts and counts. Saved nodes and report IDs remain
+untouched. This is exact source authentication under renumbering, not semantic
+equivalence. The additional binding pass charges allocation, traversal and
+copy/comparison payloads to the existing per-graph work allowance; validation
+retains its own bounded pass. Public restore remains synchronous.
+Data fingerprints report open dependency frontiers. Control slices use
+postdominators of observed exit paths; missing exits, aliases, opaque calls,
+exceptional flow and unknown inputs remain gaps rather than inferred effects.
+`FlowMatch` verifies finite SSA neighborhood candidates with a sparse definition
+bijection and exact operand/PHI edge checks after fingerprint nomination. Tied
+distinct definitions abstain; a matched neighborhood retains open control/data
+frontiers and supplies no unchanged-function or semantic-equivalence conclusion.
+`FlowMatchInput` validates a borrowed immutable graph/fingerprint view once for
+repeated root checks. The collection owns that lifetime. Region candidates do not
+rescan the whole graph for each root; external raw-graph calls still validate.
+`FlowRegions` owns bounded root indexing, exact neighborhood verification and
+overlap grouping. Its node/PHI-block pairs bind to immutable observations;
+coverage unions nodes rather than counting overlapping anchors twice. Native
+and SSA region paths share `regionExplanations` for topology/call/module facts.
+`FlowRegionsJSON` owns strict streaming persistence and bounded previews; restore
+recomputes mappings before publication. Neither frontend may infer equivalence
+from these hypotheses or replace the native function delta with them.
+The optional `FlowFragments` verifier owns finite-depth matching with explicit
+external definition pairs. It shares exact operation/operand contracts with
+`DataFlow` and `FlowMatch`; it does not rewrite the observations or relax their
+types, flags or function signatures. One bijection covers included and external
+nodes, while only included nodes contribute to origin admission and coverage.
+Depth-local fingerprints nominate candidates; exact verification decides them.
+`FlowRegions` prefers deeper candidates, counts each depth nomination, and owns
+cross-anchor binding ambiguity. New `med-fragments-v1` / `llvm-fragments-v1`
+recipes keep these boundaries separate from the unchanged legacy neighborhood
+contract. The C API, CLI, worker and Qt inspect the same retained frontier pairs.
+Saved work counters are bounded historical diagnostics; cache and host sort
+changes must not make identical observed mappings fail evidence binding.
+`CallImpact` indexes admitted native `Instruction::Callee` relations, including
+tail transfers and resolved import slots, and owns bounded breadth-first caller
+or callee witnesses. Global unresolved sites remain visible even without a path
+to the seed. Entry/export traits come from native discovery, never absence of
+callers. Depth/function frontiers, partial indexing and cancellation are separate
+from unknown call effects. This supplies possible call reachability; parameter,
+return and alias propagation and path feasibility are not inferred. The C API
+caches one exact query across page kinds; frontends only select/render records.
+`ChangeObservations` owns bounded review facts over accepted native alignments
+and their exact retained SSA graphs. Unique compatible native-origin families
+anchor local facts and unique direct synthetic arithmetic operands; synthetic
+addresses never supply original-code identities. Unchanged native instructions
+can expose rewritten operand changes, while ambiguous/unsupported associations
+retain native changes. Dependency contexts and priority are explicit heuristics,
+not security effects or fix verdicts. The C API binds one cached query to pair,
+snapshots and SSA recipes and shares cancellation/deadline with delta acquisition.
+Filtering/paging only select retained records; mapping edits and restore retire
+that derived cache. GUI/worker/CLI consume the same evidence and scope.
+`CallEffectReview` joins native CallImpact sites in reached callers to retained
+SSA calls with unique original origins. Only exact bodiless import identities
+and admitted native ABI metadata can ask the shared public
+`safety/CallEffects.h` interface for an applicability-checked contract. The
+existing Safety descriptor/catalog remains the sole owner of semantic families,
+arity/platform constraints, argument roles and fallible-release conditions.
+The diff consumer neither guesses external identity from names nor clears
+SSA effect/alias gaps. Native reachability and effect inspection have separate
+finite allowances, one request deadline and independent completion states.
+Cached pages retain original site/node identities; reopening recomputes them.
+This is call-contract review, not parameter/return/alias propagation or security
+validation. SDK, CLI, worker and Qt share the impact `effects` page.
+`ReviewJournal` owns manual case records independently of computed evidence and
+mapping override history. An append validates fields, current accepted pair,
+expected journal head, per-record/aggregate text budgets and content/analysis
+identity digests. Global and per-case/pair links are deterministic, unauthenticated
+integrity checks. They are never security proofs. History survives mapping edits;
+latest assessment and active pair binding are separate read-time properties.
+Schema 3 persists the journal; schema 2 migrates with an empty journal. Restore
+validates history and function ownership before publishing any result. The C API
+owns serialized append admission, and CLI/worker/Qt share those exact rules.
+`ScalarValidation` owns the optional `lifted-scalar-returns-v1` profile. Native
+admission is shared with the SDK before invoking the pipeline, so call and
+exception frontiers never trigger speculative interprocedural proof work.
+`ComparisonScalarValidation` uses fresh strict machine-ABI lifting with NoOpt
+and scaffold mem2reg, requires complete matching decode/lift audits, and locates
+definitions by original-entry metadata. Diff verifies exact ordered GPR input
+locations and widths, then copies the body while removing only checked native
+provenance packaging and the pointer-null policy. The SDK retains the selected
+MedIR's normalized exception record. Diff reuses `describesUnwindOnly()` and
+`WindowsEHMetadata` canonical encoding, binds the ABI and complete native code
+range, and admits that attachment only for a complete frame-only record. Its
+projection has a separate finite input allowance; language handlers and partial
+records stay unsupported. Unknown contracts remain
+refusals; the Analysis importer still refuses memory and pointer effects.
+The existing scalar prover owns arithmetic, definedness, termination and finite
+control partitions under an explicit defined-bitvector input domain. No other
+layer reimplements these semantics. Results report native/model identities,
+assumptions, budgets and proof scope; they neither certify lifting nor prove
+complete native state or security. Borrowed-session C API queries rebind both
+complete live native revisions, releasing each temporary snapshot before the
+next side. The additive `run_owned` API instead transfers exclusive session
+ownership into the comparison at initial capture, nulling the caller's slots.
+Those sources have no external mutation handle; only complete native capture
+permits the owned scalar query. CLI and worker use this path, preserving the
+loaded image, debug context and analysis settings without a second snapshot
+decode on every query. This is an ownership boundary, not a partial revision or
+path/timestamp cache. Both paths freshly lift and prove the selected pair, and
+reports identify the binding mode. Reopen constructs fresh sources; saved files
+never authorize proof reuse. Failed worker replacement retains the old comparison
+and its sources; destruction/close releases them. Other immutable snapshot
+queries retain their session-independent contract.
+`LoadProgress` in support owns borrowed loading progress and stop checkpoints.
+It carries no session state and is never retained in a `BinaryImage`.
+`Loader::readFileBuffer` supplies length-bounded binary bytes without requiring
+a trailing NUL. This lets LLVM map page-aligned inputs instead of copying the
+whole file solely to append a terminator. LLVM retains its small-file and
+failed-mapping read fallbacks. The image still owns its parsed bytes, and input
+hashing covers every file byte, including any unmapped overlay.
+Controlled loader calls restore the previous control on every exit and translate
+stops to `operation_canceled`; legacy calls retain their existing contracts.
+Hashing keeps the shared hardware-accelerated SHA-256 implementation and polls
+between bounded byte batches, as does raw-byte copying. Native parsers and
+load-time discovery poll at phase/loop boundaries; PDB work shares its existing
+progress checkpoints. The SDK latches stop requests only for the synchronous
+load and returns -2 before publishing any replacement. Its final preparation
+checkpoint precedes decoder initialization and session publication; once
+publication starts, completion wins. File I/O, allocations, individual metadata
+helpers and post-publication sidecar reads remain indivisible. These checkpoints
+set no input-size ceiling or hard latency guarantee. Worker input loading
+forwards actual per-side stages and preserves the old comparison on stop.
+`lib/sdk/capi/BinaryComparison` adapts the native loader and the shared
+`InstructionFlow` traversal; it must not introduce a second sized/unsized or
+exception-chunk traversal. The adapter preserves original bytes/operands and
+binds the snapshot to input content, ABI, settings and normalization revisions.
+The same owner binds active byte overlays by canonical file offsets and current
+bytes, including data outside the decoded inventory. Edit kinds and adjacent
+row partitioning do not affect this component; an empty overlay retains the
+historical identity. The original file hash and packed-project state keep their
+separate meanings. Overlay admission bounds this indivisible identity digest by
+the shared patch byte/run ceilings, before the normal snapshot stop checkpoint.
+Materialized analysis sections contribute a separate versioned digest of their
+canonical declarations, mappings, permissions and full owned bytes. Section and
+function declaration insertion order do not affect it. The SDK section owner
+supplies validated, bounded records; comparison does not duplicate admission.
+Data outside the selected function inventory still changes identity, and
+removing every addition restores the historical analysis identity.
+Incomplete decoding and unresolved control flow remain explicit coverage gaps.
+Profile selection and ISA/bitness admission belong to this adapter, with the
+default in `diff/Limits.h`; consumers do not guess an input's architecture.
+The AArch64 reader consumes its own typed operand details and ordinary lifted
+flow/reference facts. It binds transfer targets to their final operand rather
+than numeric equality with another immediate, uses lifted literal addresses,
+and retains ADRP page fragments relative to the exact image base. Mach-O subtype
+bits participate in AArch64 ABI identity. Existing x86 hash events and identity
+remain unchanged. Unsupported architectures do not enter another ISA's operand
+union, and structural admission does not qualify scalar or call-effect proofs.
+Native AArch64 operand decoding declines ambiguous writeback/load overlaps to
+the full decoder, preserving its illegal-instruction evidence. Every reused
+decoder occurrence resets that validity flag. `AArch64Lifter::lift` owns the
+refusal to emit semantics for a decoded illegal instruction, including permissive
+calls; ordinary flow queries and DIFF therefore retain bytes without inventing
+transfers or references. This is distinct from a decode failure: the original
+spelling remains inspectable.
+The shared unsized function traversal follows both successors of ordinary
+lifted conditional flow. A straight-line decoder terminator can end only a
+basic block (as with AArch64 B.cond); it does not discard the fallthrough path.
+The existing function-entry, instruction-mode and coverage boundaries still
+govern the walk, so reference queries and DIFF capture the same body.
+`ComparisonDataFlow` runs bounded selected-function native pipeline jobs, then
+projects their verified SSA into immutable `FlowEvidence` collections. It owns
+the session/loader boundary; graph validation, persistence and binding remain in
+`lib/diff`. Collection scope and every unsupported/limited function are explicit.
+Reopen compares saved graphs with fresh pipeline observations. Dependency graph
+pages and slices never supply semantic-equivalence claims or replace native
+function deltas. Pipeline cancellation is currently between functions; graph
+work cooperates with the shared control contract.
+The CFG builder marks virtual external-entry tail stubs with synthetic LowOp
+sequence numbers. Low-to-Med preserves this distinction in `OriginSeq`; consumers
+must not rebind such operations to bytes at the callee's entry. Actual decoded
+tail transfers keep their original instruction provenance.
+
+`NeverDCAPIDiff` owns operation admission, snapshot lifetime, cooperative stop,
+page caches and analyst history. CLI and `ComparisonService` in the Qt-free
+worker share that C ABI. Comparison inputs use separate sessions, and their
+mapping revision is independent of the current project's revision. Existing
+worker graph layout/indexing serves comparison topology as well. The desktop
+owns bounded display caches and navigation generations, not matching decisions.
+Function-detail measurement shares one bounded SDK cache across full, paged and
+CFG views. Its stop state is separate from native body coverage; cancelled or
+timed-out deltas do not acquire unchanged rows or block annotations. The worker
+owns the advertised cooperative-operation list consumed by the GUI. Explicit
+refresh retries a stopped query; paging itself does not restart it.
+`lib/diff/FunctionDelta` owns the weighted native instruction alignment used by
+matching, measurements, pages and saved-evidence verification. Large ranges use
+Hirschberg decomposition of the same 4/3/2 recurrence as bounded dense leaves.
+Maximum-weight common ends and a multiset upper-bound check admit only optimal
+fast paths; no adapter supplies an alternate greedy alignment. Frontier storage
+is released before recursion, and shared cancellation/deadline checks discard
+partial delta rows. Matcher revisions identify changed measurements without
+weakening saved-evidence verification.
+`ComparisonSource` adapts the ordinary selected-function source page API to the
+comparison's exclusively owned input sessions. It reuses their loader, analysis
+settings, dialect admission, emitter cache and canonical instruction provenance.
+The captured `lib/diff` programs remain immutable. Checked source anchors may
+reuse a completed native listing alignment, but never create source-line pairs
+or semantic claims. Source pages are transient and revision-bound; saved native
+evidence is independent of source inspection. Cancellation discards the page,
+with checkpoints around the existing indivisible analysis and rendering steps.
+`lib/diff/SourceAlignment` owns exact textual line alignment independently of
+native matching. It uses a linear-space bidirectional shortest-edit-path search
+with prefix/suffix stripping, deterministic ties, explicit work charging and
+cooperative cancellation. Sparse edits do not require a Cartesian line search;
+frontier buffers are released before solving the two smaller edit problems.
+`ComparisonSource` collects complete renderings through ordinary source pages,
+checks their coordinates and preserves exact text and original row evidence.
+The byte allowance covers text plus serialized evidence across both inputs.
+The SDK retains one pair keyed by function selection, representation, prelude
+scope and allowances; mapping changes invalidate it. Pages do not restart a
+stopped computation. Textual replacement pairing is a display convention and
+does not create native correspondences or proof results. The GUI adds aligned
+rows, original line gutters, markers and synchronized scrolling while retaining
+independent inspection. Worker capability discovery keeps older SDKs usable.
+See [binary comparison](binary-diff.md) for the current profile and limitations.
+
+## Checked alignment recovery
+
+`arch/x86_64` owns checked `RequireAligned` transitions for 64-bit addresses in the default address space. The common recovery engine charges the scalar proof operations and proves the rejection predicate is zero before retaining the original guard. Explicit nonfaulting execution does not supply that proof. Alignment does not require MXCSR state; segmented addresses and optional guards remain unsupported by this recovery adapter.
+
+## Legacy GS recovery
+
+`X64LegacyGSState` declares 64-bit CPL0 execution with CR4.FRED disabled under `KernelX64NoFaultV1` and explicit nonfaulting machine state. `arch/x86_64` owns SWAPGS, its arbitrary 64-bit active/inactive bases and the atomic update of GS address interpretation. Both bases may alias any memory; FS stays fixed. Segmented reads/writes still need their separate options. Projection forgets correlations while retaining the original intrinsic and the full input domain. The declaration is bound into raw receipts. Source/native/LLVM interfaces without authenticated GS/MSR inputs refuse it; concrete Unicorn/KVM/WHP/HVF execution gains no capability. Only exact `0F 01 F8` receives native undefined-output and separate opaque-bank receipts; neither receipt proves the execution preconditions.
+
+## Checked MXCSR recovery
+
+`X64MXCSRMask` enables raw MXCSR loads and scalar state reads/writes with an explicit effective mask (`0xffbf` or `0xffff`). The x64 adapter owns the legal initial-state domain and transitions. Core charges work and requires a proof that reserved bits are clear; the nonfaulting flag alone supplies no such proof. Original intrinsics remain observable. MXCSR memory stores, source wrapping and native/LLVM certificates still require their own contracts.
+
+`SourcePatchPreparation` owns the shared pre-installation layout and dependency transaction. `SourcePatchCallback` authenticates saved original entries and delegates instruction relocation and native unwind records to their architecture/format owners. `SourcePatchDependencies` plans explicit imports; format-owned ELF/PE/Mach-O writers preserve existing loader identities. Source, supplied IR and native objects consume these same plans. The final native-object section/permission proof and `publishSourcePatch` reload check remain authoritative; CLI, C API and Python do not duplicate loader or relocation decisions.
+
+Six selected native OS/ISA jobs passed with zero failed or skipped cases: 3669 GoogleTest executions, 1008 native process observations (504 functional and 504 C++ exception observations), 12 real loader rejections, 96 images and 84 publication receipts. [Exact native evidence](source-patching.md).
+
+## Runtime memory recovery
+
+`X64SegmentedWrites` separately admits ordinary 1/2/4/8-byte FS/GS stores with 64-bit offsets under explicit nonfaulting machine state. `arch/x86_64` owns runtime memory validation, admission and symbolic base initialization. Core uses complete linear addresses and ordinary alias invalidation; fixed arbitrary bases may alias the frame, other segments and live return cells. The capability is bound into raw receipts. Source and native proof interfaces without authenticated base inputs continue to refuse this domain.
 
 ## Source and object replacement boundary
 
@@ -72,6 +1941,1088 @@ the file through the strict PDB loader.
 or before the PDB they chose loads. Epoch and request guards retire downloads on
 document changes, and network errors do not change the image.
 
+## Debug information files
+
+`debug/DebugInfoDiscovery` owns which debug files an image is read with and how
+their names rank: a PDB or DWARF, which also carries types and lines, before a
+linker MAP, which names addresses and nothing more. The PDB or DWARF is the
+session's debug context; a MAP the caller names is a names-only supplement
+published after it (`applyDebugInfo`), so it fills only the addresses the PDB or
+DWARF leaves unnamed. The MAP beside an image is read only when no PDB or DWARF
+describes it. `debug/MapFile` reads a MAP in its linker's dialect against the
+image's layout, read from its headers: link.exe's segment:offset publics are
+placed through the image's section numbering, which also reads IDA's and
+Borland's MAPs without an Rva+Base column, and names made up from an address
+(`MapAutomaticNames.def`) are left out. It also holds the MAP against the image
+(`MapMatches.def`): link.exe and lld-link record the build stamp, the other
+dialects the output sections' addresses and sizes, and most functions outside
+the image's code mean another layout. Discovery passes over a MAP that
+mismatches; a named one fails the load unless the request takes it unchecked.
+
+DWARF companions are found in GDB's order (`DWARFLocation.def`): the image's own
+sections, a `.dSYM` beside a Mach-O image, the file a debug directory keeps under
+an ELF image's build ID, the file its `.gnu_debuglink` names with the CRC it
+records, then a `.debug` file named after it. `debug/DebugFileIdentity` reads
+the identities they share; a companion of another build ID is passed over, and
+a DWARF file the user names must be of the image's machine and build. A
+companion stays `UnauthenticatedCompanion` trust: its names and lines load, its
+object extents do not. `debug/CompressedSections` expands SHF_COMPRESSED
+sections before the DWARF reader sees them, since the LLVM NeverD links may
+lack the decompressors.
+
+A debug file loaded into an open session (`neverd_session_load_pdb_ex`,
+`neverd_session_load_dwarf`, `neverd_session_load_map`) reads the image again
+with the options it was loaded with and publishes the session's whole request
+in rank order (`reloadDebugInformation`), so the result is the one a load that
+named the file gives: a PDB loaded after a MAP replaces the MAP's names. User
+names, comments and edits are kept, and the session is left as it was when the
+input changed or a file fails to load.
+
+## Local types boundary
+
+`lib/types` (NeverDTypes) owns a program's named types as a reader sees and
+edits them. `TypeLibrary` holds structures, unions, enumerations, typedefs and
+function types under ordinals that survive replacement. Anonymous unions and
+structures stay in place, member offsets are bits from the record that holds
+them, and builtin sizes follow the data model (`BuiltinTypes.def`).
+Importers fill the library; renderers and frontends only read it.
+
+`importPDBTypes` reads every named record and enumeration of a PDB's TPI
+stream. MSVC flattens anonymous members into their parent, so
+`nestFlatMembers` rebuilds the nesting from offsets, bitfield storage units
+and alignment:
+- members that begin together are a union's alternatives;
+- a member in a union's tail padding belongs to the union;
+- a member that reaches back over earlier ones takes them into its union.
+
+The import infers `#pragma pack` from member offsets and the record size
+before nesting. It reports a record whose nesting does not flatten back to the
+stream's member list, or whose members cannot sit where they say
+(`layoutProblem`).
+
+`importDWARFTypes` reads every named structure, union, class, enumeration
+and typedef of a program's DWARF units, C's, C++'s, Rust's and Go's, which
+a session with DWARF reads as its local types (`DWARFDebugContext::
+withDWARFContext`). DWARF keeps a record as its source declares it, so
+nothing is rebuilt: anonymous members stay in place, bit-fields keep their
+bits, in the storage unit of their type that holds them as a declared
+record's layout gives it (`layOutRecord`), and a structure holds its members
+by offset, since Rust reorders its fields. Packing and a declared alignment
+are inferred from the offsets and the size, as for a PDB. Types are named as
+the DWARF debug context names the records the decompiler reads
+(`llvm::dumpTypeQualifiedName`): within their namespaces and records for C++
+and Rust (`crate::module::Type`), with their package for Go (`main.Point`).
+A typedef of an anonymous record names it, as C's declarations read; a
+typedef of a record of its own name is that record. The same name in many
+units, as a header's types are, is one type, the first definition, which a
+declaration elsewhere names; another unit's definition of another size is
+reported as a conflict. A Rust enumeration with data, whose variants local
+types do not spell, holds its bytes, as large and as aligned as DWARF says,
+so that what holds it lays out as the compiler laid it out. A member that
+holds no bytes, such as Rust's `()` or `PhantomData`, lies nowhere and is
+left out, and C defines no record of none: it declares one. A Go func value,
+a subroutine type of a pointer's size, is the address of its closure: a
+pointer to its function, whose one result Go lists as a parameter marked
+`DW_AT_variable_parameter`, or an untyped address for several results. Older
+Go writers instead append unmarked pointers to the results. For an anonymous
+function type, its recorded Go signature gives the input and result counts;
+the importer checks those counts against the parameter DIEs and removes
+exactly the result pointers' extra indirection. Input pointers remain inputs.
+Nested types and quoted struct tags stay together when reading the signature.
+An unmarked named function type without that signature keeps an untyped
+closure address, since its input and result pointers cannot be distinguished.
+Incomplete signatures, mismatched counts and non-pointer legacy results are
+reported through the normal skipped-type diagnostics. A
+name members share, as Go's blank fields `_` do, is numbered past the first
+(`_1`), and the member's comment keeps it. A record DWARF describes in a way
+local types do not hold, such as a virtual base, is left out with the reason
+(`DWARFTypeImportStats::Skipped`), as is one whose members cannot sit where
+they say. A base type local types do not spell, such as a complex number,
+holds its bytes.
+
+`renderType` and `renderTypes` spell types as C, C++, Rust, Go, Python,
+JavaScript or Lua (`TypeLanguages.def`), each member marked with its
+offset. Builtins take the spellings each language has (`TypeLanguages.def`
+lists them, `BuiltinSpellings.def` names them), and every language names
+them by exact widths unless asked: `uint32_t`, `u32`, `uint32`,
+`ctypes.c_uint32`, a JavaScript `number`. Each also takes Windows' names,
+which Rust, Go, Python, JavaScript and Lua declare as aliases as wdk-sys
+does (Lua's comments only, its values being its integers either way), and C
+and C++ the compiler's keywords too. IDA's own spelling, Microsoft's sized
+integers, reads in as C but does not render, being neither portable nor
+what the program's headers say. Every language
+reproduces the library's layout exactly. An explicit filler moves a member
+that the language's own rules would place earlier. Rust and Go read what they
+cannot express through accessors whose arithmetic follows C, signed bitfields
+included: unions in Go, bitfields, members Go cannot align, and flexible
+arrays. Names a language cannot spell, such as `std::pair<int,int>` or an
+enumerator two enumerations share, take one identifier per language
+(`renamedNames`). With asserts, the output checks every size and offset when
+it compiles. C's header compiles as C++ too, which the workbench shows it as:
+its checks are `static_assert`, and the character types C declares are left
+to C++'s keywords. Member names stay C's, so one C++ reserves, such as
+`class`, still needs the C++ rendering. Function prototypes render in C and
+C++ (`rendersPrototypes`); asked of another language, they fail.
+
+Python is ctypes: a `Structure` or `Union` per record, anonymous records
+promoted by `_anonymous_`, and each run of bitfields one storage field,
+named apart from the others the record promotes, read through properties.
+A module declares its classes first, binds each typedef after those it
+names (an array's after the layout of what it holds, since ctypes sizes an
+array type once), and lays each record out after what it holds by value.
+Python renders only; its declarations do not read back.
+
+JavaScript and Lua read a record as a view over its bytes, which
+`ViewPlan` plans for both: an accessor per member at the offset the library
+records, made on the bytes, the offset the record begins at and their byte
+order (little-endian unless the caller says). An anonymous record's members
+are the parent's, as C reaches them; a named member of a record defined in
+place reads through a class of its own. Array elements read through methods
+that take their index, bitfields through accessors whose arithmetic follows
+C. With asserts, a module reads and writes back every accessor in bytes of
+its record's size, which fails past their end. Each language only spells
+the plan:
+- JavaScript reads through a `DataView` class per record. Integers of up to
+  four bytes are numbers and wider ones bigints, as `DataView` reads them; a
+  pointer is its address. Bitfields take 32-bit arithmetic for units of up
+  to four bytes and bigints for eight. JSDoc types every accessor, so the
+  one module is the workbench's JS/TS: TypeScript checks it with `checkJs`.
+- Lua 5.3 and later read through `string.unpack` and `string.pack`, a
+  record type per record whose views share a bytes object. Values are Lua's
+  64-bit integers, an unsigned one of eight bytes past 2^63 wrapping as they
+  do, and bytes no integer holds, such as a 16-byte integer's, are the
+  string they are. LuaJIT, which lacks both, is not a target.
+
+Python, JavaScript and Lua render only, and no language but C and C++
+renders prototypes (`rendersPrototypes`, `readsDeclarations`; the C API's
+language list says both).
+
+`parseTypes` reads C, C++, Rust and Go declarations back into the library
+(`TypeParse.h`), and `layOutRecord` lays each record out as the library's
+record ABI does (`TypeLayout.h`):
+- C and C++ take every builtin spelling the renderers write, `#pragma pack`,
+  alignment specifiers and static assertions, which are checked;
+- Rust and Go take what their renderers write: records named `<Parent>_<n>`
+  that the parent holds go back in place, a `_bitfield` comment lists its
+  bitfields, and Go's unions, unaligned members and flexible arrays come
+  back from their accessor methods.
+
+A library's record ABI (`RecordABIs.def`) says what its data model does not:
+whether bit-fields go as Microsoft's compilers or the Itanium ABI place them,
+how far a scalar aligns in a record, four for long long and double under
+the i386 System V ABI, and how large wchar_t and long double are
+(`builtinBytes`). wchar_t is Windows' 16-bit character and four bytes
+elsewhere; long double is a double to Microsoft's compilers, 32-bit ARM's,
+Apple's 64-bit ARM and Android's i386, and the x87's 12 bytes on i386 System
+V and 16 on the 64-bit System V targets, as Clang's `__SIZEOF_LONG_DOUBLE__`
+says for each. The C API takes a program's from its platform and
+architecture (`recordABIOf`), so a 32-bit Linux program's records read,
+parse and render as GCC lays them out, and an ARM one's as the AAPCS does.
+Parsing and every renderer read the library's ABI; nothing else carries one.
+MinGW's compilers lay records out as Microsoft's but keep the x87's long
+double: 16 bytes on x64, and on x86 12 that align to four where a double
+aligns to eight (`LongDoubleAlign`). A Windows program whose own sections
+hold DWARF, which MinGW's GCC and Clang write and Microsoft's compilers do
+not, takes MinGW's ABI unless the DWARF's `long double` is a double, as
+clang-cl's `-gdwarf` is (`dwarfLongDoubleBytes`); the session reads that
+DWARF's types where no PDB describes the program, and nothing else of it.
+A stripped MinGW program tells nothing of its compiler and stays Microsoft's.
+Go's Windows programs hold DWARF too; Go has no long double, and their types
+read as any program's. A MinGW program joins the Windows libraries, whose
+records lay out as its own do (`libraryRecordABIOf`).
+
+C has no spelling of a long double that every compiler makes the same size:
+MSVC's is a double, MinGW's and GCC's on x86 the x87's. The portable and
+Windows spellings name one a record or a typedef holds
+`neverd_long_double_<n>`, which the
+prelude declares as the compiler's long double where `__SIZEOF_LONG_DOUBLE__`
+is `<n>`, and elsewhere as that many bytes aligned as the program aligns
+them, or for eight bytes as a double, so a MinGW program's records compile to
+their layout under MSVC and an MSVC program's under MinGW. A signature keeps
+`long double`, which its target's convention passes; the keywords spelling is
+the target's own, and a type shown alone, without the prelude, keeps the
+program's name; the C parser reads the name back as the long double of that
+size and refuses it in a program whose long double is another.
+
+A source reads whole or not at all. The C API keeps the user's declarations
+in order and reads them again over the program's types whenever those are
+read anew, as after loading another PDB. A declaration that no longer reads
+is left out and reported (`declarationProblems`), never silently dropped.
+The worker writes the declarations to the project folder's `types.json` at once,
+each a step of undo history: the history holds the file as a table whose rows
+lie at their places in the order made (`NEVERD_USER_STATE_ORDERED` in the
+worker's `UserStateTables.def`), and undo takes the last back off the file and
+the program's types.
+The CLI keeps `types --declare` local to its invocation by default. With a
+binary and `--save`, it persists the complete successfully parsed declaration
+batch through `neverd_type_declarations_save`, using the same sidecar and
+writer lock that the workbench uses.
+
+Header libraries (`HeaderLibraries.def`, `HeaderLibrary.h`) give a program
+the system's types and prototypes that its debug information lacks: the
+Windows kernel's PDB names records, but no typedefs and no prototypes.
+They are the one source of a known routine's declaration, which the call
+model's tables agree with, as IDA's type libraries are beside its signatures: signatures (`signatures/`)
+recognize a routine by its bytes and only name it. A platform or an
+architecture joins by a header under `lib/types/headers/`, a row of
+`HeaderLibraries.def` naming its data model, the record ABI its records are
+laid out by (a 32-bit Linux program's i386 System V ABI or AAPCS32, which
+its data model alone does not say) and the spelling its declarations are
+shown in, which states every builtin's width whatever system reads them:
+Windows' `ULONG`, which Windows fixes at 32 bits on every architecture, or
+exact widths elsewhere (`int64_t` for a 64-bit Darwin `long`, which a reader
+on Windows, where `long` is 32 bits, would misread),
+and rows of `HeaderLibraryImages.def`: how an image's headers tell its kind
+(a PE's subsystem, the C library an ELF image under Linux runs on), and the
+libraries an image of each kind and architecture joins, in order. Its calling convention's rules then place
+each parameter (`placeSourceParameters`, one file per convention).
+`IntegerCallArguments` adapts those placements to physical integer and stack
+positions. The LLVM call-contract owner maps them to actual operands using
+the call's recorded register-bank sizes and stack byte offsets. LLVMC shares
+that binding for record construction, scalar types and argument limits, so
+omitting unused register operands cannot shift a record's stack fields.
+Missing or ambiguous carriers fail before source emission.
+The small `LLVMCallContract` component owns metadata readers and writers for
+both backends; using it from C emission does not depend on machine lifting.
+Independent declaration providers use `types::importPrototypes` at generation
+time, through `neverd_types_convert` and the standalone CLI. It imports missing
+prototypes with their dependency closure, shares structurally identical types,
+and renames conflicting types and affected dependents without replacing earlier
+declarations. Type identity includes pointees, qualifiers, callbacks and enum
+values as well as layout. Exact prototype selections keep only the selected
+dependency closure; absent selected names and provider parse errors prevent
+an import. This owner
+is separate from the runtime priority merge of system and program types; the
+flattened generated headers add no provider merge during decompilation.
+When the runtime merge knows its Windows kernel provider, the `ntifs.h`
+opaque `PEPROCESS`/`PETHREAD` aliases can use a complete PDB executive record
+whose first member is the corresponding kernel prefix at offset zero. This
+preserves the [documented opaque pointer identity](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-obreferenceobjectbyhandle)
+while recovering the program's actual members. Existing program typedefs,
+`PKPROCESS`/`PKTHREAD`, unrelated providers and incomplete or mismatched records
+keep their original identity. The shared type library owns this association;
+both source emitters and the local-type views consume it.
+Callback types retain their source calling convention when local declarations
+become `NdType` values. The lightweight `CallingConvention.h` and existing
+`CallingConventions.def` own that identity; CodeView imports share one mapping.
+HighC and LLVMC use `declarationToC` to attach the convention to the correct
+function layer, including a function returning a callback. This display
+evidence does not authorize an ordinary-C source ABI projection for a callback
+with a different convention. Unsupported CodeView callback conventions remain
+unknown in debug types and opaque in local types, with an import count.
+`scripts/generate_windows_types.py` renders, from mingw-w64's headers, what
+a driver's `<ntifs.h>` and the NDIS, storage, USB, HID, filter and NETIO
+provider headers declare into `lib/types/headers/WindowsKernelX64.h`
+and `WindowsKernelX86.h`, and what a program's `<windows.h>`, the headers of
+the libraries programs most often call and phnt's native API (the `Nt`,
+`Zw`, `Rtl` and `Ldr` routines ntdll exports, the PEB and the TEB) declare
+into `WindowsUserX64.h`, `WindowsUserX86.h` and `WindowsUserARM64.h`;
+ARM64 drivers join `WindowsKernelARM64.h`, generated for AArch64 from the
+hash-pinned public-domain ReactOS core DDK and MinGW provider headers.
+The generator corrects checked ARM64 context and record alignment without
+defining x86 architecture macros. Microsoft C anonymous typedef members keep
+their storage and promoted members in the shared type parser. ARM64 records
+whose pinned layouts disagree with the independent WDK comparison remain
+opaque, along with their by-value dependents; pointers and import declarations
+remain available. Image-specific symbols can supply complete layouts.
+phnt is read with mingw-w64's SDK
+for Windows 11 24H2, in place of `<winternl.h>`; `scripts/windows_types`
+supplies what it takes from Microsoft's SDK that mingw-w64 lacks or spells
+otherwise. Kernel generation also reads a hash-pinned, public-domain ReactOS
+filter header and phnt's native information-class enum. Export inventories
+identify missing declarations; names or ordinals alone never imply an ABI.
+Libraries are parsed once per process and reused, without scanning a Windows
+installation or fetching declarations while decompiling.
+`scripts/generate_linux_types.py` renders what the GNU C
+Library's headers declare for a program built with `_GNU_SOURCE` into
+`LinuxX64.h`, `LinuxX86.h`, `LinuxARM64.h` and `LinuxARM.h`; a routine glibc
+gives an assembler name (`__isoc23_strtol` for strtol, as glibc 2.38 names
+it) takes its prototype under that name too, which a program imports. It
+renders what bionic's headers and the NDK's `<jni.h>` and `<android/log.h>`
+declare for Android API level 35 into `AndroidX64.h`, `AndroidX86.h`,
+`AndroidARM64.h` and `AndroidARM.h`, whose 32-bit records glibc's do not
+describe (bionic's `pthread_mutex_t` is one word there), and what musl's
+declare into `MuslX64.h`, `MuslX86.h`, `MuslARM64.h` and `MuslARM.h`, whose
+32-bit `time_t` is 64 bits: musl's `__REDIR` gives a 32-bit program's `stat`
+the name `__stat_time64`, which takes its prototype too. The loader records
+the dynamic linker an ELF image asks for and Android's identification note,
+and `linuxLibC` (`ELFOperatingSystem.h`) tells glibc's programs from
+bionic's (Android's linker, or the note an APK's native library carries
+alone) and musl's (musl's linker). `scripts/generate_darwin_types.py`
+renders what libSystem's headers declare for a program into `MacOSX64.h`,
+`MacOSARM64.h` and `IOSARM64.h`, from the projects whose source Apple
+publishes (Libc, xnu, libpthread, Libinfo, libmalloc, libplatform, dyld and
+AvailabilityVersions), laid out as each project's build installs its
+headers, with what those builds resolve by unifdef given as macros; an
+assembler name drops the underscore Mach-O gives C names, so that
+`stat$INODE64`, which an x64 macOS program imports, takes stat's prototype.
+The loader records the platforms a Mach-O image's build version commands
+name (`machOCommandPlatform`, `MachOPlatform.h`, which the emulator's images
+read too), and `darwinPlatform` (`DarwinOperatingSystem.h`) tells macOS
+programs from iOS ones; a program for Mac Catalyst, tvOS or watchOS, or one
+that names no platform or several, joins no library.
+`scripts/generate_freebsd_types.py` renders what FreeBSD's headers declare
+for a program into `FreeBSDX64.h`, `FreeBSDX86.h`, `FreeBSDARM64.h` and
+`FreeBSDARM.h`, from the /usr/include of FreeBSD 15.1-RELEASE's base.txz for
+amd64 and arm64: a 32-bit program reads the 64-bit base's headers, whose
+machine headers that differ take their i386 and arm forms, as FreeBSD builds
+its 32-bit libraries. The loader tells a FreeBSD program by the OS ABI byte
+FreeBSD's toolchains brand it with, or the ABI tag note naming the FreeBSD
+version it was built for (`runsUnderFreeBSD`, `ELFOperatingSystem.h`), which
+an image without the brand carries too; such a program runs under no Linux
+(`runsUnderLinux`), and joins its architecture's library
+(`NEVERD_HEADER_ELF_SYSTEM`), and the call model takes FreeBSD's C library's
+declarations (`LibCVariant::FreeBSD`).
+`scripts/generate_uefi_types.py` renders what EDK II's MdePkg declares for a
+UEFI module into `UefiX64.h`, `UefiX86.h` and `UefiARM64.h`: the UEFI and
+PI specifications, every protocol, GUID and industry standard, and the
+library classes but those of one kind of module, which each declare
+`_ModuleEntryPoint` their way. A PE image of an EFI subsystem joins its
+architecture's, and where the subsystem says which entry the image has
+(`NEVERD_HEADER_PE_ENTRY_TYPE`: an application's and a runtime driver's are
+the specification's `EFI_IMAGE_ENTRY_POINT`), the debug context gives the
+entry point that type, so that the system table the code reaches the
+firmware through is typed; a boot service driver's entry is not typed, as
+EDK II builds PEIMs and standalone MM drivers under that subsystem too. The
+reader refuses a routine one text declares again with another type, which
+it kept the last of. The build embeds each file in a unit of
+its own, and
+`headerLibrary` reads each once. The C API joins the libraries the table
+names to an image (an x64 or x86 PE of the native subsystem joins its
+kernel's; one of the Windows GUI or console subsystem joins its user mode's,
+then, on x64 and x86, its kernel's for the few ntdll exports only the
+kernel's headers declare, such as `RtlIsNameLegalDOS8Dot3`; a Linux
+program on glibc, bionic or musl joins its architecture's, a FreeBSD
+program FreeBSD's, a Mach-O program its platform's, a UEFI module
+MdePkg's) after the program's debug
+information and before the user's declarations, where the library's data
+model and record ABI are the program's:
+- a header type joins only where the program has no type of its name;
+- a typedef names the program's type, as C binds it;
+- a header record laid out with a type the program sizes otherwise is left
+  out and reported (`conflicts`).
+
+A project changes which libraries join (`neverd_type_libraries_set`, the
+workbench's Type libraries window): it adds a library whose data model and
+record ABI are the program's, or leaves out one the image joins, and the
+program's types are read again. The engine owns the choice, as it owns the
+debug files chosen: the session reads `libraries.json` from the project when
+it loads, `neverd_type_libraries_save` writes it (the worker writes it under
+the writer lock it holds, as it writes `load.json`), and undo history leaves
+it out. The image's libraries join in their rows' order but those left out,
+then those added in the order the user added them;
+`neverd_type_libraries_json` lists every library with what it joined, for a
+program or none.
+
+The call model (`lib/libc`) answers what a routine takes and returns before
+a program joins a header library, and where none joins: function discovery,
+the call analysis, MedIR's ABI pass and both C writers read it from layers
+that do not link the type libraries, as LLVM's TargetLibraryInfo stands
+beside the declarations Clang reads from headers. Its tables follow the GNU C
+Library's declarations. The C library a program links (`LibCVariant`: GNU,
+musl, bionic, Darwin's libSystem, FreeBSD's libc or a Windows C runtime,
+which `libcVariantOf` reads from the image) selects what `LibCVariants.def` gives
+a routine another library declares otherwise: Darwin's `sendfile` takes six
+arguments, and its `shm_open` is variadic, whose mode Apple's AArch64
+convention passes on the stack. On Darwin a routine's suffixed variants
+(`syslog$DARWIN_EXTSN`, `fcntl$NOCANCEL`) take its facts
+(`routineOfSymbol`). Every lookup names the variant. The header libraries
+hold the declarations themselves, and for every routine both know the
+tables agree with each library (`HeaderLibraryCallModelTests`): its arity,
+whether it is variadic and after how many named parameters, its result, and
+which parameters point to objects or to functions. The tables keep what no
+declaration says: routines that never return or return twice where a header
+does not mark them, format strings, fortified forms, the va_list forms
+variadic routines pass on to, and what copies and stack probes do.
+
+A header's `FunctionSym::IsVariadic` distinguishes a fixed prefix from an
+exact parameter count. `LibCVariadicArguments.h` admits the Windows x86, x64
+and native ARM64 scalar integer/pointer prefix shared by the pipeline and C
+writers. It rejects fixed FP parameters, records, split integer parameters,
+non-C conventions and missing provenance. The existing fixed FP and record
+adapters explicitly reject variadic declarations. The admitted prefix reads
+its physical registers before SSA; call setup supplies the open tail. An
+import slot reached through a loaded register contributes the same argument
+reads as a direct slot call, without fixing a writable slot's target.
+Image-wide omitted-callee facts and conversion cache comparisons retain the
+same prefix. LLVM declares its exact fixed types and return, with ellipsis;
+both C routes retain every recovered tail operand. A portable rendering of
+the original header declaration preserves qualifiers where its types are
+self-contained; the original declaration and provider remain available.
+
+This is a prefix contract, not an inference of arbitrary variadic tail types.
+Windows ARM64 varargs use integer registers and stack slots rather than the
+ordinary FP register bank ([Microsoft ARM64 ABI](https://learn.microsoft.com/en-us/cpp/build/arm64-windows-abi-conventions#addendum-variadic-functions)).
+The x64 convention duplicates variadic FP arguments in integer registers
+([Microsoft x64 ABI](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention#varargs)).
+A tail's machine carriers alone do not certify a portable source type or a
+complete function-pointer signature.
+
+Ordinary header imports also retain source qualifiers through the portable
+declaration. `c_library::portableScalarDeclaration` is shared by both C
+writers after their call-layout checks; by-value aggregates, custom entry
+locations, non-C conventions and undeclared type names retain their existing
+lowering. Outer cdecl/stdcall is carried separately from the declaration's
+type spelling, while qualifiers inside a returned or nested pointer stay.
+Pointer-to-record tags are still registered before LLVMC prints the original
+declaration, so a tag does not accidentally acquire prototype scope.
+The LLVM source route passes header declarations to the same return-contract
+owner as HighC; binary lifting does not gain source return contracts.
+LLVMC's printed-use check reads the shared no-value return contract even
+before per-function rendering. A machine return-register use cannot reject
+a void header prototype when that return is absent from C; an observed
+store or another real use still rejects the incompatible prototype.
+
+Low-to-Med applies a known callee's stack cleanup only to returning calls.
+A decoded tail jump has no local continuation; inserting a post-call stack
+adjustment would separate its synthetic CALL/RETURN pair and hide the
+incoming stack arguments from shared ABI recovery.
+
+A C or C++ header rendered for a program joined to a library of a system's
+headers (`HeaderLibrarySystems.def`: glibc's, bionic's, musl's and Apple's
+libSystem, whose platform `<TargetConditionals.h>` tells) takes
+that C library's types from the system's own headers where the compiler that
+reads it has them, rather than defining them again, and defines them itself
+everywhere else, Windows and macOS among them (`RenderOptions::SystemLibrary`,
+`renderCHeader`). A C library type is one whose name the library has: the
+program's own DWARF definition of `struct stat` is one too.
+- A probe ahead of every include defines `_GNU_SOURCE`, with which the
+  libraries were read, and `NEVERD_LIBC_FROM_SYSTEM` where the compiler
+  targets the library's platform and architecture and its C library is the
+  library's (`__GLIBC__`, `__BIONIC__`, or neither for musl). It fails
+  clearly where glibc's or bionic's headers came first without
+  `_GNU_SOURCE`; `NEVERD_OWN_LIBC_TYPES` asks for the definitions instead.
+- There, the header includes the headers its C library types come from:
+  each type of a library follows `#pragma neverd_header("stdio.h")`, the
+  header of the unit `generate_linux_types.py` reads (`UNIT_HEADERS`) that
+  brought it in, which the C parser keeps on the type (`LocalType::Header`).
+  The library's prototypes are declared only where its headers do not.
+- Elsewhere the definitions stand. The compiler's own headers may declare
+  some of their names otherwise (`PreludeNames.def`): reserved names, C's
+  `<stddef.h>` and `<stdint.h>` names, and those the Windows C runtimes'
+  `<corecrt.h>` declares take other names for the header's definitions
+  (`#define X neverd_X`, kept with `push_macro`), so that the program's
+  layouts hold and the names stay the compiler's after them; member names a
+  C library's `<sys/cdefs.h>` defines as macros (`__unused`) are undefined
+  meanwhile. The C parser reads such a rename as the system's own name. The
+  program's own types take the table's names likewise, wherever the header
+  is read: a Windows program's records of the C runtime, `tagLC_ID` among
+  them, stay MinGW's under MinGW.
+- Their size and offset checks stand after both, in C where the system
+  declares them, as glibc's C++ declares some otherwise.
+- A record C names only through a typedef (`typedef struct { ... } X`, or
+  `typedef struct X X`; `LocalType::TypedefNamed`, which the C parser and
+  the DWARF import keep) is declared `typedef struct X X;` and named `X`,
+  as the system's headers name it.
+- The i386 System V ABI aligns long long and double to four in a record:
+  such a record of i386's takes `#pragma pack(push, 4)`, which changes
+  nothing there and keeps the layout on compilers that align them to eight;
+  the parser reads that pack back as none. A record of GNU's bit-fields
+  takes `NEVERD_GNU_STRUCT`, MinGW's `gcc_struct`. Microsoft's compilers
+  lay bit-fields out no other way, so a few records glibc and musl declare
+  with them, `_IO_FILE` and `fenv_t`, take another layout there, which the
+  checks report.
+- A typedef of an array of a record whose members are unknown, as ARM's
+  glibc gives `jmp_buf` where local types do not hold its `__jmp_buf`, is
+  said in a comment, as are the prototypes that take it.
+
+`TypeFit.h` judges which records a pointer points at by what the code
+does through it, as an analyst checks a guess against the code.
+`memberAt` lands an access of some bytes at an offset on the member that
+holds it: exactly, at its start or inside it, on padding, or outside the
+record.  It prefers, among a union's alternatives, the one the access fits
+best, a named member over an array's element and a scalar over the record
+it begins.  `fitTypes` ranks the records:
+- those that hold every access come first;
+- then the better score, where an access landing exactly on a named member
+  counts most, on an array's element a little less, and one landing in part
+  or on padding counts against;
+- a pointer into a record, as a list entry's is, takes the member start that
+  explains accesses before it best (CONTAINING_RECORD's shift).
+It matches names as an editor's quick open does, a record's typedefs and
+`Type.member` paths included.  The evidence comes from MedIR
+(`MedPointerAccesses`): every load and store whose address is an SSA value
+plus a constant, through copies, and every such address the code passes on.
+
+A function's type, as IDA's Y sets it, is the user's C declaration of it,
+kept by its address among the function's attributes ("type",
+`FunctionAttributes.def`). `parseFunctionDeclaration` reads it against the
+library without changing it: one function, of the library's types only. The
+C API refuses a declaration that does not read, a variadic one, and one
+whose calling convention NeverD does not place the image's parameters by.
+`LocalTypesDebugContext` is the one layer that applies it: its
+`resolveFunction` gives the declared return and parameters ahead of the debug
+information's and the prototypes the library knows by name, and wraps a
+`NullDebugContext` for an image without debug information. The C backends
+then bind each declared parameter to the register or stack slot its
+convention passes it in (`placeSourceParameters`), as they bind a PDB's, and
+a function's callers see it. Analysis never reads a declaration, so a change
+drops only what the decompiler made (`Session::declarationsChanged`).
+`neverd_func_type_json` reports the declaration the user edits: theirs, else
+the signature the decompiler prints, which reads as C. It also gives the one
+Convert to struct * makes, with one parameter's type replaced, and the
+register or slot each parameter arrives in; `neverd_local_types_fit_json`
+ranks the records by what the code does through that register.
+`neverd_local_types_fit_json` joins the two for an instruction's memory
+operand, and `neverd_local_type_member_json` names one landing.  A
+structure offset is an operand format (`OperandFormats.def`) that names a
+local type and a delta; the worker spells it from the type's current
+layout, so an edited type renames its operands.
+Enum operand admission and rendering share the decoder's logical operand
+width. `neverd_disasm_json_ex` supplies `operand_bits` when
+`NEVERD_DISASM_OPERANDS` is requested; the worker carries those widths through
+classic operand folding with their original indices. It never infers an enum
+immediate's width from a different operand's register. Missing decoded widths
+leave numeric spelling, while `neverd_enum_value_json` owns enum aliases,
+signed extension and residual flag bits.
+
+`neverd_types_convert` and `neverd types --data-model` read and render
+declarations without a program, which is how the generator builds the
+library. `neverd_types_languages_json` says, also without a program, which
+builtin spellings each language takes and which it takes unless asked;
+`neverd types --json` names the one its source took, in every mode, so that
+an agent reads one object.
+
+`SessionSidecar.cpp` owns the shared atomic write for Session sidecars. Type
+declaration and persistence adapters use that same private helper. It also owns
+recording the project's input after a successful sidecar write.
+The same owner supplies private input/hash observations to the information
+queries, without a dependency on UI adapters. Private Session LLVM tests
+compile their actual type/debug owners and sidecar helper
+directly; the shared SDK keeps its existing public C boundary.
+
+The decompiler reads the local types through `LocalTypesDebugContext`
+(`lib/sdk/capi`), which wraps the program's debug context whenever the
+program has local types. The local types are the authority on the program's
+records:
+- A record the debug information names takes the library's members when
+  the library defines a record of its name and size (`completeType`), and
+  an enumeration of the library's name takes its enumerators. The
+  decompiler names its member accesses and the values it compares with or
+  stores to an enumeration by these, so a member or an enumerator the user
+  renames reads by its new name. Members the debug information gave give
+  way only where each lies where one of the library's does: a C++ class
+  whose bases a PDB flattens into it keeps its own. The records' ABI facts
+  stay, and the context gives back what the types held when it goes.
+- A decompiled unit, HighC's or LLVM-C's, holds the definitions of the
+  records it names (`CEmitterOptions::RecordDefinitions`), and of what they
+  hold by value, after its includes. Only a program whose library holds
+  types defines them: a context made for the user's declarations alone, or
+  over an empty library, as an image with no PDB, header library or
+  declared types has, defines none, and LLVM-C keeps its machine types
+  there. `renderEmbeddedC` renders them in exact
+  widths, with their checks, each under a guard of its own so that units
+  concatenate. A typedef of a name C reserves for the implementation (a
+  leading underscore and an uppercase letter or another underscore, as
+  Darwin's `__darwin_size_t`) is spelled as what it stands for, not
+  defined: the system headers the unit includes define it in their own
+  spelling, `unsigned long` on Darwin, which `uint64_t`, an
+  `unsigned long long` there, is not. A record whose members the unit, or the debug information
+  anywhere in the session, names otherwise than the library does stays
+  declared only: its definition would disagree with the code.
+- A type the system's header library declares, and lays out as the program
+  does, comes from its header: the unit includes the header and checks the
+  layout with `static_assert` instead of defining the type (`systemsOwn`).
+  A record such a header names by a typedef alone (bionic's
+  `typedef struct {...} pthread_mutex_t;`, glibc's `fd_set`) has no tag. The
+  unit spells it by that name in its checks and its records, and neither
+  HighC nor LLVM-C declares a `typedef struct X X;` of it
+  (`CRecordDefinitions::HeaderTypedefs`), which would contradict the
+  header's.
+- HighC asks for the records and enumerations its types reach before it
+  writes, and the typedefs and enumerators the definitions declare reserve
+  their names from the unit's own. LLVM-C asks after it writes for every
+  name its text spells: a record's or an enumeration's, or an enumerator of
+  an enumeration the decompiler displays, which stands for it. It declares a
+  typedef of each tag it spells, an enumeration's after its definition, and
+  leaves the definitions out where one of their names is one of the unit's
+  functions or objects.
+- A store to a pointer member of such a record casts the stored value to
+  the member's type (`__typeof__`), which C converts an address of another
+  type, or an integer, to only by a cast. LLVM-C computes with integers: a
+  parameter or a result that the debug information or a prototype types as
+  a pointer is declared as that pointer, and converts where the code
+  computes with it, as does a pointer member it reads.
+
+It also types the functions no debug information types from the prototype
+of the name each is shown under, as the kernel's exports are typed from
+`<ntifs.h>`, with a PDB of public symbols or with none. That name is the one
+the image states (`BinaryImage::statedFunctionNameAt`, as
+`getFunctionNameAt` chooses it): the export at the entry, else a symbol a
+producer stated, a PDB's function names among them; else the debug
+information's; else a signature identity admitted by independent image-symbol
+or exception-personality context (`SignatureDB::buildNameMap`). Byte/reference
+agreement alone remains a candidate (`buildCandidateNameMap`) and cannot
+authorize type lookup, safety sinks, automatic renaming or library folding.
+The signature database owns this decision; SDK, CLI and worker consume it.
+Native `!refs` candidates require all outgoing context before settlement;
+`!caller` records are separate name-indexed bodies requested only after that
+settlement by a complete, strong and unambiguous ordinary caller. Incoming
+requests never change their anchors' outgoing evidence. Complete, strong
+incoming bodies can extend a bounded rooted chain, with every generation
+validated against the same original outgoing result. Only new frontiers are
+visited. A short incoming body or confirmed required-reference root may query
+a child only when a unanimous direct reference also binds a nonoverlapping,
+complete ordinary callee from the frozen result. Every surviving claim at that
+callee must meet the ordinary fixed-byte floor. Short required roots need a
+complete source refinement; pruned clauses cannot supply omitted calls. The
+callee evidence is built lazily once and excludes addresses settled by earlier
+incoming rounds. Short bodies without that independent proof and unrooted
+cycles cannot extend inference. A separate linked-x64-PE rule may identify a
+finite code-address pair: a complete short `!refs` parent, matching unanimous
+unpruned `!caller` source, and a fully literal short leaf at its one canonical
+LEA target. Only the exact rel32 field is wildcarded; the disjoint complete
+bodies together meet the ordinary fixed-byte floor. Both entries must already
+exist. Competing pairs, outgoing leaf dependencies, overlapping code owners and
+conflicts with frozen names refuse this joint fingerprint. Pair results cannot
+bootstrap other pairs or supply independent ordinary anchors. Both forms
+remain candidate evidence under the same identity boundary. The shared name
+index reuses complete native `!refs` and `!caller` bodies; ordinary nominal
+claims are not opted into incoming inference merely by loading them. Source
+refinements of ordinary anchors share the frozen reference validation pass;
+contradicted refinements withdraw only the incoming names they supported.
+The signature component shares x64 address-field boundary checks between
+generation and matching. A prefix-looking predecessor invokes a bounded
+Capstone walk from the declared function entry; only a reachable canonical
+LEA with nonoverlapping decoded paths is accepted. Unsupported or exhausted
+walks remain unknown. This fallback supplies no identity or lifting semantics.
+Its single per-thread prefix cache compares every byte within the same bound;
+buffer addresses and hashes cannot preserve a proof after input changes.
+The matcher owns byte/index behavior, the database owns reference settlement, and the COFF
+loader owns validation of primary MSVC RTTI metadata. Native `!vtable` records
+are metadata outside the byte index. `SignatureVTableContext` combines exact
+source slots, immutable relocation-backed storage and loader-validated primary
+RTTI, then queries existing complete strong `!caller` bodies. Its candidates
+receive one frozen outgoing check after incoming inference and before the data
+pass; they cannot restart a chain or establish data anchors. The parser and
+cache share one table-record admission contract. `VTableEvidence` owns raw COFF
+source declarations, including incomplete records used as offline counterclaims.
+The COFF type reader also validates bounded x64 class/struct ThrowInfo graphs:
+read-only records, every catchable base, descriptor names, pointer roles,
+qualifiers, counts and nonoverlapping ownership must agree. Descriptor cache
+storage may be writable, but does not supply a type by itself. Exact source
+references to these records are metadata checks, never executable targets.
+The signature database caches validated graphs only within one reference pass;
+their agreement remains candidate evidence under the same identity gate.
+`SignatureDataContext` also owns frozen source-local data relations. The producer
+proves that two canonical zero-addend operands refer to one static address within
+the same COFF object. Their shared key names the exact operand of a uniquely
+defined typed function, external or static; no local variable spelling escapes
+its object. Static function names remain query keys rather than byte identities.
+Only that independently settled ordinary function can bind the relation, after
+all matching source refinements agree. The single data pass checks consumers
+without changing anchors. Complete, strong, settled data consumers can then
+request existing name-indexed caller bodies. This bounded continuation freezes
+both data bindings and the post-data candidate prefix; descendants cannot
+create bindings or alter the proof of their parents. A source/name-index gate
+avoids constructing another settlement map when no new parent has a query.
+Otherwise, the continuation settles only visited addresses from a sorted
+frozen-row index, retaining all competing claims at those addresses.
+The initial caller pass also retains ordinary parents whose complete incoming
+alternatives remain ambiguous and carry explicit data operands. These parents
+are revisited once through that same frozen-row index after bindings exist,
+including when no globally scanned data consumer matched. Recorded operand
+addresses exclude retries when all available bindings concern unrelated data.
+The retry reuses the
+ordinary admission and source-agreement checks; it cannot establish bindings or
+restart the data pass. Missing alternative bodies or unresolved constraints
+remain unknown. The deferred parent list belongs to one application only.
+The anchor-name index contains only complete source bodies meeting the ordinary
+fixed-byte floor. Once an anchor name is queried, every matching source variant,
+including weaker counterclaims, still participates in binding validation.
+The parser/cache preserve a separate local-data kind; `LocalDataReference` owns its canonical key syntax.
+An explicit source-layout mode also proves signed coordinate differences within
+one non-COMDAT data section. Only a canonical zero-addend static operand can
+establish the frozen base; defined consumer data and signed addends must fit
+the same complete source section. Runtime checks a consumer's inverse delta
+against that base and the same mapped segment/section. It creates no derived
+bindings and never feeds relative consumers back into anchor settlement.
+Missing source facts and external/local kind conflicts remain unresolved.
+Anchor-name lookup compares lengths before text, avoiding hashes of unrelated
+template spellings. Frozen reference checks visit only their new outgoing
+sites, skip entry work when no code target is referenced, and borrow sorted
+entry views. All competing claims at referenced addresses still participate.
+Native `!loadcfg` metadata pairs a source configuration field's external pointer
+variable with its default function. The COFF loader owns the role/field mapping;
+`SignatureRuntimePointerContext` queries only its recorded slots after the data
+pass. Immutable, relocation-backed storage and requested executable entries must
+agree with existing complete `!caller` bodies. This independent metadata gate
+can accept a short body only when all wildcards are bound canonical data operands
+and every reference names independently established storage. It does not lower
+the ordinary caller floor, restart incoming inference, or create data anchors.
+The resulting names remain candidates. `RuntimePointerEvidence` emits source
+configuration, pointer and explicitly typed function definitions, retaining
+incomplete counterclaims; the offline selector refines existing body references
+and publishes only missing metadata.
+The separately gated library-feature path retains its independent identity
+verifier before candidate settlement. A name analysis or the user gave otherwise
+says nothing of what the function is. A linked COFF image's section symbols,
+which GNU ld keeps at each object's first function or variable
+(`Symbol::IsSection`), name nothing there or in `findSymbolAt`; they only
+bound what each object contributed. Once discovery has found the code, such
+an image's symbol of no function type in an executable section is data
+among the code when no code metadata claims it, it is no import thunk, and it
+starts no instruction, as GNU ld's -1-headed `__CTOR_LIST__` in `.text`
+  (`recordSymbolTableDataInCode`). The relocated pointers to it, and those it
+holds, which the base relocations took for pointers in code, are then
+pointers of data. LLVM-C mirrors a code segment that holds such slots as a
+pointer table, so a constructor's address in it is no stale one. Past the
+embedding limit the segment has no such mirror, and LLVM-C refuses data whose
+raw copy would reach one of its slots (`tryResolveGlobalData`). A mirror built
+while an earlier one's initializer resolved follows that initializer in the
+module, so whole-module LLVM-C declares each global an earlier initializer
+  names before defining the globals in module order (`writeGlobals`).
+  Before heuristic discovery, x86/x64 relocated pointers to executable literal
+  regions are also classified as data when the shared literal decoder proves
+  every path through their text, zero bytes and padding traps. Function symbols,
+  runtime/unwind ranges, verified entries and exclusive function ends retain
+  precedence. The same `DataInCode` and data-pointer provenance is published for
+  full and restricted loads across PE, ELF and Mach-O; an unknown executable
+  target is not made data merely because it lacks a function symbol.
+A two-level switch reads a byte index table laid among the code
+(`movzx r, byte [sel + table]`) before the pointer-wide jump table it
+indexes. The byte table's displacement lands in an executable segment, so a
+base relocation and the link-address fixed displacement both call it code,
+yet a load narrower than a pointer cannot read a code pointer: such a base is
+data among the code, an index table, not a code address
+(`instructionRelocations`, `addFixedImageDisplacement`). The pointer-wide
+jump table beside it stays a code address.
+The jump-table resolver shares complete guest-address COPY/ZEXT tracing across
+ordinary, unscaled and two-level loads. Resolver lane projection retains an
+existing exact address when a wider internal container supplies the complete
+guest pointer with no changed bits. Partial lanes, non-fitting values and
+scalar/fragment provenance do not receive address authority. Linked PE32
+compact switches may name
+both bases by absolute displacements. Their immutable index bytes still need
+a bounded selector, a complete relocated target run and disjoint decoded code.
+LLVM may omit the exact authenticated index read only when all its value uses
+end at the same switch's authenticated target read and that target has no other
+observable use. Both use closures spend one finite evidence budget; extra
+reads, stores, calls, returns or selector uses keep the original read mandatory.
+When an index remains observable, the executable-data mirror includes the
+adjacent resolver-owned index span after its relocated target run. It derives
+one extent from the complete module inventory before materialization, retaining
+shared suffix aliases. Only contiguous immutable bytes without even a partial
+code/data/import/runtime pointer slot qualify; gaps and unproved extents cannot
+extend the object.
+MSVC places an i386 switch's jump table in `.text` after its function, where
+the base relocations record its slots as instruction operands. No instruction
+holds more pointer-wide relocated fields back to back than
+`maxAdjacentRelocatedFields` gives (two of four bytes, in
+`mov dword ptr [disp32], imm32`; one of eight), so a longer run is data among
+the code (`recordRelocatedPointerRunsInCode`): its slots become pointer slots
+of data, the operands naming it name data, and its start joins `DataInCode`.
+Function detection keeps a target such a table names inside the function of
+the instruction reading the table as that function's label, which the
+jump-table resolver reads; a target outside it is an entry. The reader, whose
+operand names the run, decides rather than the table's own slots: an entry
+between the cases and the table (a prologue match in dead code before it)
+bounds neither the dispatcher nor its cases. A function it takes the address of with a
+relocated immediate (`mov [obj+off], offset cb`, a callback stored into an
+object; `push offset filter`, a handler) is likewise a function
+(`scanCodeAddressImmediatesX86`): the base relocation makes the immediate an
+instruction operand, so the target is no call site and often has no prologue,
+yet it is still an entry the bounded decoder verifies, and symbolizing it
+corrects a function whose real entry carries a `/GS` or `/RTC` check the
+stored address skipped. Code an instruction names inside its own function
+is that function's label only where the function's code reaches it, when the
+instruction pushes or stores the address: MSVC places the constructor and
+destructor it pushes for an array iterator, and an `atexit` callback, right
+after the function pushing them, past its return, where nothing in it reaches
+them, so they are functions. A function with an indirect jump the walk cannot
+follow may reach any label, as a computed goto does, and an address loaded
+into a register, such as a catch block's `mov eax, offset continuation; ret`,
+keeps the label it names. Such a table roots no function's code
+(`exploreAddressTakenRoots`): the range of a function before the dispatcher
+reaches the dispatcher's cases when the dispatcher's entry is only a guess.
+A relocation run ends at the next table anchor among its own slots; an anchor
+past it names another object, aligned however its owner is
+(`boundCodePtrRunByNextAnchor`).
+MinGW's runtime defines a `__imp_X` variable for each function it supplies
+in place of an import (__MINGW_IMP_SYMBOL), initialized to that function, and
+calls through it. Such a variable of an x86 or x64 image's symbol table that
+holds one of the image's function entries is constant when nothing changes or
+lets it escape: every instruction a linear sweep of the code finds naming it,
+resynchronized at the entries the metadata gives, reads it, and no pointer in
+data or export names it (`recordConstantCodeSlots`, `ConstantCodeSlots`).
+LowToMed then lowers a call through it as a call to that function, which both
+C routes print. A lazy binding, which the function it starts at rewrites,
+stays a variable the call loads.
+
+Whole-module LLVM C is one translation unit a C compiler builds. Every
+definition is declared before the bodies, one an unwind record marks for
+exception analysis too (`neverd.windows.eh` holds an ELF FDE or a `.pdata`
+entry alike): those bodies print as code. A C library routine the code calls,
+directly or through the slot or symbol the loader binds for its import
+(`libraryCallee`), takes the declaration a header gives it, or the prototype
+the runtime's tables give it, which the unit declares itself, weak where the
+image's reference is weak (`__gmon_start__`). A call passes the parameters
+that declaration has, and its arguments convert to their types; a pointer it
+returns converts to the integer that holds it (`LibCReturnKinds.inc` records
+pointer results). The result of a callee the unit declares to return
+nothing, such a routine or a definition whose result MedIR settled as none,
+is never read, and where code reads the register it left that is zero, as
+for any undefined value (`callResult`). A definition named like such a
+routine is the image's own copy and takes its address (`atexit_140001234`),
+as a body lifted under an import's name does; in a Windows program so does
+one named like a routine the mingw-w64 headers declare (`__mingw_printf`,
+`MinGWHeaderFunctions.inc`), and in a whole module `main`, which C holds to
+the signature it gives main.
+An address into a byte array the module defines is an offset into it, in a
+global's initializer as in code, and an import a global names is declared
+before the globals. A function with Windows exception handling includes
+`<excpt.h>`, which names what its filters print. A value the writer spells
+by a cached text, as a volatile read by its own name, keeps its conversion
+where a cast moves it between an integer and a pointer (`castOfText`).
+`rep movs` copies element by element in its direction, as `rep stos`
+stores; a shape the lifter does not emit is refused, since an intrinsic
+would take its operands in the constraints' order. HighC and LLVM-C print a
+forward one over flat memory as `__builtin_memset` or `__builtin_memcpy` where
+that writes exactly its bytes, by the same rules (`c_memory::fillCall`): a fill
+whose value's bytes are alike, its count a number unless the elements are
+bytes, and a copy of a counted range between addresses proved apart, two frame
+slots or two places in one object, or two constant addresses, since an
+overlapping forward copy repeats what it already wrote. A store of what the
+statement before it loaded from the same address, as a stack probe's
+`or [rsp], 0` lifts, leaves memory as it was and prints nothing.
+Where a linker folded identical
+functions, one entry carries
+the names of each (`statedFunctionNamesAt`), and it takes the shown name's
+prototype only where every other name's that has one takes and returns
+alike (`passesAlike`): as many parameters, each of the same class and size,
+and the same return. `ExFreePool`'s one parameter is not `ExFreePoolWithTag`'s
+two, nor does `KeClearEvent` return `KeResetEvent`'s `LONG`, so which one the
+code follows is unknown, and such an entry keeps the signature its code
+gives. Another name's prototype is never borrowed. A function the debug
+information types keeps its own type, and a variadic prototype is not used,
+because its calls pass more than it declares. The signature records the
+library that declares the prototype and the declaration as it reads there,
+which HighC prints above the function (`neverd.prototype`). HighC's
+definition prints, after the parameters the code reads, the declared ones
+after them that it never reads, such as a system call stub's stack arguments
+its dispatcher takes (`unreadDeclaredParams`): integers and pointers after
+integers and pointers, which take the next slots in every convention. A call
+in the same unit passes them, or zero where the call site determined none,
+as the callee never reads it.
+
+Header-declared integer record arguments use `SourceParameterPlacement` through
+`integerCallArguments`, both when recovering the call and when printing it.
+The type-library adapter preserves the record's alignment and complete scalar
+layout. The arity tables retain source parameter counts: a System V
+`fopencookie` reads two integer registers and four stack words, while an
+`hsearch_r` reads five registers. `CallPrototypeArguments` lets those layouts
+and user declarations override the tables throughout the pipeline, including
+omitted-callee memoization. HighC and LLVM-C reassemble the same pieces as bits,
+and ordinary parameters after a record retain their source parameter types.
+The explicit-user subset, `CallUserPrototypes`, separately decides precedence
+over automatic Darwin SDK source bindings; header record layouts retain them.
+Unsupported record carriers fail explicitly. This does not add ARM32 record
+placement or general mixed floating record-call support.
+
+Selected platform headers have their own prototype provenance, separate from
+the host C-library inclusion policy. Windows SDK records therefore use the
+same placement adapter even when their definitions are embedded locally.
+Windows x86/x64 hidden record results consume the first physical argument;
+both C emitters write the returned bytes to that buffer and preserve the
+EAX/RAX pointer result. x86 `stdcall` retains its stack cleanup after record
+placement. LLVM-C does not redefine a record supplied by the included header
+of the adapted call.
+
+`floatingCallArguments` uses the same placement authority for complete fixed
+float/double signatures whose arguments and result use FP registers. LLVM
+import emission verifies those exact SSA operands and widths before declaring
+the typed callee, including immutable import identities absent from libc tables.
+Windows x64 and ARM64 publish these operands before SSA and record the scalar
+return width; later call setup recovery preserves them. Writable import slots
+retain their runtime target even when the declaration establishes its ABI.
+`floatingCallTypes` reconstructs and reclassifies complete scalar/HFA groups;
+bound call validation and cached-pointer analysis share it. `importedCallSlotFacts`
+uses exact import declarations to cross ABI-preserved registers, and delegates
+private spill identity to `SourceFrameAnalysis`. Queries share a work budget,
+require every reaching byte and reject frame escapes, partial writes and
+unproved intervening calls. The argument area, including slot padding, loses
+its old byte identities at each call. Low-to-Med snapshots the original loaded
+pointer and forwards only proven reloads before binding operands and building
+SSA; it does not replace a cached pointer with another read of the import slot.
+HighIR retains a named import for a constant-address copy followed by the
+original slot load only when its existing call-target memory proof establishes
+that the read still reaches the call. An intervening call or possibly aliasing
+write retains the captured indirect target instead.
+Omitted-callee conversion and its cache include the same signatures,
+independently of the selected functions. Forwarding recovery keeps each scalar
+argument width separate from the result width and admits incoming FP parameters
+only along an unclobbered entry path. Its existing bounded summary worklist
+propagates the resulting facts. `recoveredFloatingCallArguments` checks the
+complete fixed signature for both LLVM declarations and HighC call metadata;
+expression types alone do not establish a nonvariadic external signature.
+Mixed scalar arguments and dense AAPCS64 HFAs use the same checked placement
+model, with source groups retained separately from their physical scalar
+operands. A spilled HFA occupies one stack object; its float members remain
+four bytes apart and exhausting the FP bank does not exhaust the integer bank.
+The native LLVM adapter uses an array for each HFA parameter: flattening it,
+or using an LLVM literal struct, can split a record between registers and the
+stack. Both C routes rebuild the original source record and retain complete
+return fields, including a single float and a three-float result. MedIR keeps
+the packed result's machine identity; `MedToHighConverter` maps its checked HFA
+signature to a record of returned registers, and consumers read typed fields.
+HighC verifies that carrier's complete layout against the header before copying
+the result bytes. A three/four-double result therefore needs no 192/256-bit C
+integer on AArch64. Locally supplied header records get complete value
+definitions; records supplied by an included header are not redefined.
+LLVM C uses its validated import prototype for the record conversions even
+when a call through an import slot has no separate debug-function identity.
+Padded or over-aligned HFAs, special conventions and Apple stack packing remain
+outside this adapter. A source aggregate return for an untyped wrapper still
+needs independent source or caller evidence.
+
+LLVM-C also uses `integerCallArguments` to admit fixed scalar header import
+signatures. Every printed call of a symbol must agree before the writer uses
+one typed declaration and matching argument/result conversions. An unused
+machine result from a declared-void import is omitted; a live result, conflicting
+arity, unsupported carrier or preserved-LLVM mode retains the machine signature.
+The type library and shared placement authority decide the contract, not an
+emitter list of Windows API names.
+
+HighC places outgoing x86 stack arguments relative to the actual call SP.
+After one stack PHI, complete pointer-width copies and checked constant
+adjustments can prove those relative distances even when its incoming paths
+have different entry-SP offsets. They establish no entry coordinate or alias
+extent. A tail jump also forwards its own stack slots past unused register
+positions; unknown required values remain unknown.
+
+A call through an import's slot or stub reaches a routine another module
+exports, which takes the prototype of the import's name: `resolveFunction`
+gives it at the slot or stub to the C backends, which declare and call it
+so, and `resolvePrototype` gives it by name to the call analysis, which
+passes exactly its parameters where the libc tables know none of the name
+(`importPrototypeArguments`), and to the return contracts. A routine the image
+exports, whose name binds a prototype, is called with at least what the
+prototype declares, as its export fixes the convention for the callers within
+the image too: the declared parameters join what its body reads in its own
+summary, so that a system call stub's callers pass the stack arguments its
+dispatcher reads, and a body that reads past them keeps those.
+`CallPrototypeArguments` carries that declaration provenance through final
+call recovery for both selected and omitted callees. A narrower recovered
+gate body cannot truncate arguments already established by its entry summary;
+documented WDK entries use the same boundary.
+Where every
+argument is on the stack (i386), each argument takes the slots it fills, a
+record's by value too (a `LONGLONG`, a `double` and a `POINT` take two), and
+a fastcall or thiscall prototype, which passes leading arguments in
+registers, gives no count. A call to an import such a prototype counts
+passes exactly those slots and no register (`CallEntryStackSlots`): a store
+above them, a local the caller keeps there, is no argument. The arity
+tables count a `long long` as one argument, so their counts bound no i386
+call's slots. Where no declaration gives an import's arguments, the thunk an
+import library links for a stdcall routine, and its slot, spell the bytes it
+pops (`_NlsValidateLocale@8`, `stdcallArgumentBytes`), which count them
+slot by slot. A call reaches the import through either. A stdcall import,
+by its prototype or its decoration, pops its arguments as it returns
+(`CallEntryStackPops`): LowToMed raises the caller's stack pointer after
+the call as for a callee of the image whose `ret` pops, so the caller's
+stack accesses after it read the right slots. An i386 extern declares the convention its prototype states,
+as WINAPI's `__attribute__((stdcall))`, whose callee pops its arguments.
+Where the setup of each call gives it its arguments and no summary does
+(Windows on ARM64), a prototype of integer and pointer parameters counts
+them (`CallEntryArgumentCounts`): a call to the import passes that many, a
+register its caller passes on untouched included, and no register an
+earlier call left. A floating or record parameter gives no count, and
+neither does a variadic prototype, which the header libraries do not give.
+An exported routine's prototype gives its definition its parameters there,
+but not yet its callers within the image their count, as the register
+summaries do on x64.
+A callee the
+pipeline does not decompile returns what its declaration says, as the C
+writers read it, so that a caller returning what a `void` routine left in
+RAX returns nothing too. A routine never returns where its name says so, as
+the tables (`isNoReturnFunction`) or a `_Noreturn` prototype
+(`resolvePrototype`) do: an import, a symbol, or an export the image's own
+code calls (`NoReturnTargetIndex`). Its cached and demand-loaded lookups share
+the image's executable-veneer admission, exact IAT precedence and first
+non-section symbol rule; unregistered x86 thunks and tagged Thumb entries
+resolve through the same veneer owner. Function discovery reads no header, so
+the tables hold every routine a header library declares `_Noreturn`, as the
+SDK's `ExitProcess`, and its decode probe stops at a call through the import
+slot of one, as the CFG builder does. A whole program's output
+(`neverd_decompile_all`) reads the session's local types over its own image
+and debug information when the session holds the same file, as the command
+line loads it first. The prototype's types convert to the decompiler's
+types:
+- records become named records that C passes and returns by value, with
+  their members' names for display;
+- typedefs become what they name, keeping the typedef's name for display
+  (`NdType::TypedefName`) on what the conversion makes, a scalar, a pointer
+  or an enumeration: HighC and LLVM-C print a signature's parameter or
+  result by it where the unit defines the typedef, as IDA prints
+  `PKDEFERRED_ROUTINE DeferredRoutine` and `NTSTATUS`, and a unit asks for
+  the typedefs its types name. LLVM-C does so where the typedef holds what
+  its code does: a pointer it holds as an integer of the pointer's width, or
+  an integer of the width it holds;
+- a named enumeration becomes an integer of its underlying type's size and
+  sign that names its values by its enumerators, as a PDB's enumerations
+  do, so that HighC and LLVM-C compare with and store `PowerOn` rather than
+  `1`, and a unit that spells the enumeration by its tag declares that
+  name after defining it (`typedef enum X X;`); an anonymous one becomes
+  its underlying integer;
+- pointers to functions become pointers to C signatures of scalars and
+  opaque pointers.
+
+Win64 placement then binds each parameter by its location, and the
+signature prints with the prototype's names. A declaration changes the
+analysis only when it adds a prototype or changes a type a prototype names,
+through typedefs, pointers, arrays and members (`prototypeTypeNames`); such
+a declaration clears the pipeline. One that changes a record whose members
+the decompiler printed, or a type a unit held (`readTypes`, kept in the
+session as `ShownTypes` across contexts), drops only the kept text. The C
+API reports either as `"decompilation": true`, and the worker then
+refreshes its views as after loading signatures. Every declaration drops
+the context, which reads a copy of the library, and the context takes back
+the members it gave.
+
+On macOS and iOS, a supported user import prototype that already supplies the
+call's argument summary also takes precedence over automatic Darwin SDK
+source-call binding. LowToMed matches the import slot or direct-call stub and
+keeps the ordinary arguments for both C backends. Explicit call-site source
+contracts retain their authority. Prototypes without supported argument summaries
+keep the existing SDK binding.
+
+A RETURN hands back the parameter that arrived in the result register when
+no path from the function's entry to it writes any byte of that register,
+calls a routine, which clobbers it, or enters through an exceptional edge
+(`registerUntouchedFromEntry` in `NdOpReturnLowering.cpp`). AArch64 and ARM
+pass the first argument in the result register, so the bare `ret` beside the
+tail call of `if (b) return g(b); return a;` returns `a`. Whether the
+function returns a value at all stays with the return contracts
+(`settleReturnContracts`).
+An absent ordinary RETURN does not establish a void result. The shared
+no-return proof must also close exceptional paths; an external catch funclet
+can still supply the parent's value when its source body is attached later.
+
+A unit's member access names a member only where the access reads it
+(`NdType::displayFieldIndexAt`): a field of the access's width, a scalar's
+over a record's of the same width, which no scalar access reads whole, and
+a record in place only when the access reads all of it. A byte at the start
+of a header whose union's alternatives disagree names no member and stays a
+raw access. Of a union's scalar alternatives of the access's width, the one
+of the class of the value the code loads or stores names it
+(`NdAccessClass`, `NdType::scalarOfClassAt`): `v->i` for an integer,
+`v->d` for a double, the pointer for an address. The machine holds a pointer
+as an integer of its width, so an integer access takes a union's only
+pointer where it holds no integer, and the other way round; two
+alternatives of the class stay raw. HighC reads a float the code loads or
+stores as the bits of such a union as its floating alternative: `v->d`,
+not `__builtin_bit_cast(double, v->i)`.
+
+An array of no stated length holds no access whole. A flexible array
+member, the last of its record, holds every element from its start, so a
+store there names one (`v->array[0] = p`); no array is assignable. An
+indexed access through a record pointer (`typedIndexAccess`) reads the
+element only where it is that wide. A narrower one reads the member of
+that width at the element's start (`tree[n].freq`); union alternatives of
+the same width leave none, and the access stays raw. A pointer names a
+member as the array it indexes only where it holds an array member's
+address (`s->heap[i]`), never the first member of the record it points to.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and
@@ -89,6 +3040,105 @@ Cancelling its final subscriber retires the process, since a synchronous C API
 analysis call cannot be interrupted safely. Replica revisions and analysis
 discovery never advance the writable project's state. All workers use the
 same public C API; this split does not duplicate engine semantics.
+The process allocator is selected by `cmake/NeverDMimalloc.cmake` at the
+executable boundary. On Linux and macOS, NeverD tools and the headless worker
+embed one mimalloc object with standard allocation overrides; component
+archives, plugins and `libneverd` do not embed another allocator. Shared-library
+analysis allocations use the executable's process allocator. Windows MSVC ABI
+executables instead import a shared mimalloc before their other dependencies;
+the matching redirection DLL overrides the dynamic CRT (`/MD` or `/MDd`),
+including later-loaded plugins. Both runtime DLLs travel with the executable.
+Applications embedding the SDK continue to own their allocator policy.
+Linux executables preserve mimalloc's `MI_ALLOW_THP` build setting and the
+runtime `MIMALLOC_ALLOW_THP` override. Disabling transparent huge pages acts
+on that executable's process; loading the SDK does not impose this policy
+on its host or change system-wide kernel settings. On macOS, dependency
+initializers can allocate before the executable registers its malloc zone;
+those existing system allocations must remain valid through process shutdown.
+Allocator selection does not alter lifted-program semantics or generated code.
+The mimalloc worker returns free allocator pages after discovery, warming and
+foreground requests have paused for the allocator's configured purge delay.
+A queued request wakes this idle wait immediately. Temporary graph pages can
+return to the OS while live SDK caches retain their ownership and lifetimes.
+`cmake/NeverDWorkerAllocator.cmake` enables that executable-only integration
+from the selected allocator backend.
+
+`cmake/NeverDPerformance.cmake` owns the acceleration providers. The shared
+`cmake/NeverDForks.cmake` boundary resolves NeverSight default branches through
+`scripts/build.py` before each build, freezes one source snapshot throughout
+compilation and records the actual commits for qualification and installation.
+The private text helper uses Highway only after an inline short-run scan and
+simdutf only to prove that an entire UTF-8 span needs no repair. Existing string
+metadata and byte-preserving repair remain authoritative. Metadata normalization
+keeps already-valid UTF-8 in its existing string storage; both owned and copied
+text use the same valid-prefix scanner and malformed-byte escape implementation.
+Transport parsing
+copies validated simdjson values into the owned nlohmann DOM and checks decoded
+keys during object insertion. Floating-point tokens and negative zero retain
+the original numeric parser; refused SIMD input uses the original admission path.
+The CLI export-table adapter reuses this parser and owned DOM for the SDK's
+shallow export array. It validates every record before formatting and admits
+the full SDK response size, without applying the transport frame-size budget.
+The SDK remains responsible for export order, ordinal width and UTF-8 repair.
+The default task helper uses oneTBB with checked 8 MiB worker stacks. A caller
+with enough unused stack can coordinate directly; small callers get a native
+coordinator. Small batches and explicitly serial weighted batches also use
+this admission path with one worker; their size cannot bypass the stack
+contract. Nested work receives a fresh stack. It preserves per-batch
+thread limits and synchronous exception delivery, and supplies no allocator.
+`neverd_task_scheduler` is a component-facing facade. The shared core owns
+`neverd_task_scheduler_runtime` and a private static oneTBB archive. Targets
+linking `neverd_shared` select the shared callback boundary automatically;
+indirect SDK clients use `neverd_use_shared_task_scheduler` to select it
+explicitly. Component archives therefore do not embed another scheduler in
+SDK clients. Standalone tools own their runtime. The GUI
+uses the core through `neverd-worker`, so its engine uses the same scheduling
+policy as the CLI without adding TBB to the Qt process.
+Fork after initialization and dynamic SDK unloading are not supported by the
+retained backend; those embedding hosts must select the explicit native-thread
+baseline. Normal builds enable all four performance providers.
+
+The SDK exposes `neverd_session_discover_functions_step` for polling clients.
+Its single retained job owns a value snapshot of the image, including bytes
+and metadata, and never borrows or mutates the live session on its thread.
+Completion publishes both the discovered identities and the detector's
+verified-entry/code-reference facts on the session executor, only if the
+function-list revision still matches. The computation releases its image
+before the result waits for publication. A stale job is drained before another
+starts; edits/reload do not accumulate retired snapshots. Errors remain SDK
+diagnostics, and destruction joins the job before SDK code can unload.
+Explicit synchronous discovery can consume the same job and still returns
+only when discovery is complete. Worker polling waits for requests rather
+than busy-spinning while a snapshot is computing. Older SDKs retain the
+synchronous fallback.
+
+`FuncDetector` owns cooperative discovery stop across its metadata, native
+architecture scanners, candidate verification and overlap walks. Its controlled
+overload joins scan workers and returns no result on cancellation; verified entry
+publication occurs only after all filters and the final stop check. The SDK's
+additive cancellable discovery entry point shares that owner, distinguishes a
+stopped call from failure and preserves the prior inventory. A pending stepped
+job owns an atomic stop token; stale revisions and session destruction request
+stop before retirement or joining. DIFF forwards its cancellation/deadline probe
+to this same discovery path and retains the stopped extraction phase, without
+promoting a partial function list or treating it as a completed empty inventory.
+
+The worker polls stepped function discovery when the engine exports it;
+the client must also opt in through `open.step_discovery`. The default preserves
+synchronous discovery for older clients that do not coordinate image memory.
+Older engines retain synchronous discovery. Pending work yields to foreground
+requests without publishing a partial discovery result.
+
+Discovery completion is a worker scheduling boundary before the derived
+listing rebuild. The executor publishes an immediate heartbeat using the same
+state envelope as periodic liveness notifications, then waits for requests for
+at most its existing idle grace (waking on arrival). This lets a large-image
+GUI waiting for discovery publication export its analysis snapshot before
+further listing work. The GUI's large-image memory gate remains in force;
+completion does not claim reference-index readiness, and later listing reads
+still build from the published SDK functions. Errors publish an unavailable
+index without keeping replica startup blocked.
+
 Function preparation uses `neverd_prepare_function_view`, which shares the
 source route's ARM mode, exception-handler discovery and analysis-scope checks
 without emitting C. Source, IR and CFG views consume that prepared pipeline.
@@ -96,29 +3146,102 @@ Older engines retain `neverd_prepare_function` and the decompiler-based
 preparation fallback. A failed switch
 clears the worker's prepared-entry marker before another view can reuse it.
 
-Consecutive restricted x64 analyses may share a session-owned
-`PipelineAnalysisCache`. It owns the immutable entry snapshots and no-return,
+Consecutive restricted x64, i386, AArch64 and ARM analyses may share a
+session-owned `PipelineAnalysisCache`. It owns the immutable entry snapshots and no-return,
 relocation-root and executable-owner indexes borrowed by the bounded raw x87
 graph and machine-body caches. Each selection owns independent output IR,
 replays the ordinary proof obligations and recomputes caller-dependent
 register/argument summaries. Exact candidate and verified-entry inventories
 bind reuse; selection cannot silently change a cached function's boundaries.
-No-return proof and lazy-name memo entries are cleared between runs, so they
-do not accumulate across navigation. Image indexes scale with the loaded
-metadata; the existing graph/body payload allowances remain unchanged.
+No-return answers (proofs, screens and stated calls) depend only on the image
+and those facts, so later selections keep them, up to
+`kMaxRetainedNoReturnAnswers`; the screened instructions behind them and the
+lazy-name memo are cleared between runs and do not accumulate across
+navigation. Image indexes scale with the loaded
+metadata. The session cache finds graphs and bodies through a hash index and
+has its own allowances (`kMaxPipelineCallGraphEntries`,
+`kMaxPipelineCallGraphBytes` and `kMaxPipelineCallBodyBytes` in
+`Limits.h`); other x87 graph caches keep the smaller defaults.
+`neverd_warm_functions_json`, which the worker calls in idle steps when
+`open` asks for `warm`, builds a page of functions' graphs and bodies into
+that cache with the entries a selected run of a symbol start uses. Warming
+never evicts: it reports the cache full instead. It records the current
+feature generation, so the next selection keeps what it built, and scans the
+data access widths the first C view reads. A COFF image keeps it while handler
+discovery adds nothing, as after a full load, which decodes every table. A
+function that is not a symbol start adds its own entry to its run, which keys
+other facts. The cache keeps the latest such
+selection's facts beside the symbol inventory's, so passing through one
+leaves what the symbol starts share in place.
+The GUI owner no longer requests that pipeline warmup: source/CFG views use
+separate analysis sessions and cannot consume the owner's pipeline cache.
+With idle analysis enabled, native images with 4096–65536 functions and at most
+64 MiB of input instead prefetch one source entry in an analysis replica.
+Larger inputs prepare on demand, and fresh replicas wait for discovery to
+release its image snapshot. This bounds simultaneous image ownership while
+owner browsing reads continue. Foreground requests reuse that replica's image
+preparation; concurrent independent views retain the second lane. Prefetch is
+read-only and follows the existing revision, cancellation and replica reset
+rules. It overlaps computation with browsing, not a reduced analysis scope.
+The GUI opts in with `open.step_discovery`; older workers ignore that additive
+field. Clients without the same large-image memory gate keep the worker's
+synchronous-discovery default.
+Both kinds share the image's no-return-name, stack-probe, function-pointer,
+relocation-root and executable-owner indexes. The image, debug context, symbol
+inventory and exact verified entries bind that shared ownership. Each distinct
+candidate-entry set still owns its call proofs, graphs and body summaries;
+changing an unnamed selection cannot reuse another selection's boundaries.
+The shared lazy-name memo is cleared before every run, including a new selection.
 Reload, function edits, signature matching and analysis-policy changes retire
 the cache while its image/debug owners are alive. Feature generations are
 checked even after navigation cleared the preceding pipeline result. COFF
-handler discovery conservatively retires facts before expanding metadata.
+handler discovery retires the facts when it adds records or decodes language
+tables (`coff_loader::exceptionHandlerState` before and after it); moving
+between functions it adds nothing for keeps them.
 Other architectures and whole-image analyses retain run-local ownership.
+Within one LowIR build, module jump-table arbitration is reused while its
+function bodies remain unchanged. Any body rebuild retires that result before
+parallel builders run. Continuation discovery still runs normally, and image
+publication follows both fixed points; budget refusals and proof requirements
+remain the same.
 Core callers opt in through `PipelineOptions::AnalysisCache` and must reset it
 before input or policy mutation; image pointers alone do not establish validity.
+
+`importPrototypeArguments` owns import counts and exact stack-slot placement.
+Omitted i386 callees read those facts for all imports in the image, retained by
+the existing import-count cache. The selected function still reads the
+summaries of its own calls. Omitted conversion, memo validation and warming
+share the same complete import view, so an unrelated import in another
+selection cannot change a cached callee's inputs. Declaration changes retire
+that view through `forgetDeclarations`; reuse still checks the values read.
+
+Instruction-flow sweeps keep one `InstructionFlowScratch` per decoding worker.
+The workspace reuses only the temporary LowOp vector's storage: operations
+are cleared and the x87 state reset before every instruction, including after
+an unsupported lift. Returned references and transfer facts own their values.
+Disassembly pages own a workspace for that call; parallel access-width,
+reference and string-reference scans retire theirs with each worker. No TLS,
+session cache or cross-instruction state is involved. Width-only inventories
+omit LowIR for audited scalar x86 register/immediate forms with no memory
+operand. Memory, implicit-stack, string, system and other instruction families
+retain full lifting. Full flow/reference queries remain unchanged; the
+stateless full-lift width collector supplies an independent comparison oracle.
 
 Function selection also retains decoded image data-access widths. Their exact
 ordered function address/size inventory is checked after synchronization;
 changed extents rebuild the widths and discard source using the former names.
+Publishing only a recovered extent preserves current function-name derivation
+and lookup indexes, since the names and their list positions stay unchanged.
+Names, exports and list changes retain their ordinary invalidation guards.
 Image reloads, function edits, analysis-policy and signature changes retire
 these facts. Navigation still discards the preceding output IR and source.
+
+Reference and warmup pages share one address-ordered function index for each
+function-list revision. Page lookup is a lower bound plus the requested rows;
+it does not repeatedly sort the remaining image. Stateless access-width scans
+also order their inventory once per scan. Duplicate addresses select the
+first listed identity consistently, and list revisions/storage changes retire
+borrowed pointers before the next page.
 
 Each worker retains up to eight completed code documents under a 32 MiB
 conservative retained-size allowance. Exact function, representation, project
@@ -126,8 +3249,49 @@ revision, listing generation and source transformation options identify a
 document. A hit can answer before preparing the mutable single-function Session;
 it never marks that Session as
 holding the cached function. Graph and IR preparation keeps its own state.
+Background function discovery similarly stages cached chooser pages before
+replacing them, remapping persistent indexes by image address when rows move.
+Selected addresses that move beyond those pages use bounded address lookups
+before publication. Additional pages stay within the chooser cache allowance;
+an incomplete refresh preserves the previous inventory and selection.
+Explicit filters, sorts, semantic edits and session changes still retire those
+reads through their normal invalidation paths.
 Documents own text, rows and edit anchors, and project or presentation changes
-invalidate them. Oversized documents remain readable without being retained.
+invalidate their decorated pages. A confirmed local display-name edit retains
+the original source document within that same byte allowance and redecorates it
+without rerunning analysis or rebuilding the listing. Types, variable
+associations, stack corrections, image names and other edits keep their existing
+invalidation rules. The original is retained as serialized JSON and parsed only
+when redecorating; its string capacity counts toward the same byte allowance.
+Paging keeps one parsed display tree, so duplicate row allocations cannot force
+an otherwise fitting document to regenerate on every page.
+An idle replica can consume `analysis_update_names` only
+when every snapshot input and non-name edit is unchanged and the committed
+user tables still match, with no pending recovery transaction; otherwise the
+GUI restores a fresh replica. Committed-table parsing and validation remain
+owned by `ProjectHistory`, without loading its command log on each rename. Busy
+replicas retain the normal cancellation and retirement path. The optional
+`code_edit_prepare` read validates the owner's local target while the name
+dialog is open, without saving or changing revision. A GUI name refresh buffers
+all replacement pages before publishing them. The
+painted document remains intact during the read, and occurrence metadata maps
+the cursor and selection across changed spelling lengths. Folding and scroll
+positions survive publication. Cancellation, navigation and unload discard the
+buffer; a failed refresh keeps the old text readable but unavailable for edits
+or export. Settled assembly/list and graph views do not reload for a local name.
+After decoration, a
+document checks whether its row numbers
+and both ends of its name spans are monotone. Pages seek directly through those
+arrays when they are ordered; other producer orders and nested spans keep their
+original filtering order. Oversized documents remain readable without being
+retained.
+
+Completed documents also own encoded pages, with at most 64 pages per document
+and 8 MiB of page storage inside the same 32 MiB allowance. Encoded pages retire
+with their document and never keep an evicted document alive. Document retention
+takes priority over page retention. The protocol accepts only typed JSON
+serialization for a retained payload and constructs a fresh response envelope
+for each request, including its current revision and cancellation state.
 
 `SourceViewOptions` owns request-local native source policy. Ordinary HighIR
 conversion skips symbolic expression simplification. An explicit source request
@@ -138,11 +3302,488 @@ emitted source caches include the options in their identity. LLVM call-site
 preparation owns a separate MedIR copy so opening that view cannot change the
 prepared inputs used by a later HighC enhancement. The additive
 `neverd_ir_view_ex_json` API validates options before preparation; the legacy
-page API keeps default behavior and bytecode support. Source options never
-change the lifting, patching or general module optimizer defaults.
+page API keeps default behavior and bytecode support. Whole-program
+decompilation takes symbolic simplification as an explicit session choice
+(`neverd_session_set_source_symbolic`, the CLI's `--symbolic-simplify` without
+`--func`): HighIR conversion and the LLVM source optimizer, sharded or not,
+then simplify every function with whole-program evidence such as the wide
+returns its callers observe, which one function's view lacks. Source options
+never change the lifting, patching or general module optimizer defaults.
+
+The explicit source `symbolic` switch enables exact MBA derivations and
+proof-gated semantic synthesis in both HighC and LLVM-to-C. HighC tries
+synthesis after exact derivation, retaining the derivation if synthesis
+cannot improve it. Width conversions also start inner numeric regions, so
+extensions do not hide narrow arithmetic or change its overflow semantics.
+Empty block anchors left by dead-store removal retain available scalar
+definitions. A referenced jump or exception entry still clears them; child
+scopes, expressions and effects keep their existing boundaries. Serial and
+parallel source simplification share this classification.
+Generated wide constants retain explicit zero extensions when their 64-bit
+payload would otherwise be ambiguous to an enclosing symbolic region.
+LLVM source enables synthesis in the existing semantic fixed point. Both consume
+`SynthOptions::sourceView()` and `SolverOptions::sourceView()`: at most 20,000
+search-work units, candidate cost 32 and 64 independent validation samples per
+attempt, with finite bit-blasting/SAT allowances (262,144 gates, 20,000
+conflicts, 4,194,304 propagations and 16,777,216 watch visits per query).
+Samples only propose a
+rewrite; the full-width verifier must accept it before the normal type,
+effect and profitability checks can publish it. Exhaustion preserves the
+expression. GUI menu requests, CLI single-function options and whole-program
+source sessions all reach these same policies.
+Expression interning beneath these passes uses a flat hash table, avoiding a
+separate allocation for each distinct node hash. Reserved key pairs use
+separate context-owned heads, so every 64-bit hash remains representable. Colliding
+hashes still compare the complete operator, width, auxiliary value and operand
+sequence; context copies and moves own their complete tables and node arenas.
+Existing-node lookup stays separate from table insertion and arena growth;
+only a missing complete identity reaches the allocation path. Native evaluation
+slots remain normalized to their declared widths, so operations that preserve
+that invariant do not mask their results again. External variable values and
+arithmetic that can introduce high bits still receive their width mask.
+Long operand sequences use the existing LLVM block hash for lookup instead of
+a serial combine per handle, retaining complete ordered-operand comparison.
+That external hash call stays outside the short lookup's stack frame.
+Native literal construction normalizes its inline value before interning.
+Low-word decision proofs capture the smaller of their local and remaining
+request allowances. Each operation admits and counts the same work locally;
+every exit commits that count, including refusals. The completed-reading memo
+receives the committed request budget before it admits its own work.
+Decision and carry caches combine their bounded input and edge fields before
+hashing, retaining complete-key equality and the same storage/work accounts.
+Native sample guards index contiguous variable-ID windows directly. Sparse
+windows retain compact maps, and both paths preserve the same referenced-input
+order and random stream. Numeric node-order comparisons stay inside the sort.
+General operators retain the shared APInt semantics in a separate call, keeping
+their operand construction and cleanup out of the native evaluator's hot frame.
+The compact two-word hash key uses one 64-bit bucket mix, without hashing its
+halves independently. Sum construction collects small coefficient maps in
+inline storage and sorts completed entries by base-node index before rebuilding.
+Larger sums retain hashed lookup; cancellation, recollection and canonical node
+order are unchanged.
+Dense implicant rounds look up exact one-bit neighbors when that requires
+fewer probes than a complete pair scan. Neighbors retain the original index
+order before merging, preserving prime discovery and greedy-cover tie order.
+The existing quadratic work admission remains unchanged; merge storage stays
+outside the small-recipe synthesis path. Terms remain ordered by value after
+each merge round, so only zero-to-one neighbor flips need lookup; the reverse
+pair was already visited. Prepared Boolean recipes keep their reconstruction
+memo inline, with ordinary growth for optional larger recipes.
+Small implicant rounds also keep their temporary term and merge vectors inline;
+larger rounds grow normally. Their deduplication keys retain both complete
+value/care fields, and discovery order and work admission remain unchanged.
+The shared exact MBA layer also recombines weighted literal AND/OR/XOR/NOT
+views of one opaque word. It constructs per-bit coefficients and a constant,
+then independently checks the pointwise grammar, constant difference and every
+shifted bit contribution modulo the full word width. Arithmetic inside the
+word remains opaque; unrelated residual words must cancel exactly. Finite
+work, storage and literal-chain depth limits preserve the original region on
+refusal. This derivation uses the existing symbolic switch in both source
+emitters without an additional GUI or CLI option.
+When enclosing arithmetic interleaves several such words, the same layer
+certifies each changed group and independently proves distribution against
+the original region using modular arithmetic normalization. This composition
+preserves opaque residuals and their multiplicities without treating different
+words as interchangeable. All group and distribution proofs share the attempt's
+work and cumulative storage limits.
+The deep walk retains the factored whole-root proof as an alternative, so
+later local rewrites cannot discard a shorter result already established.
+Quadratic product recovery reads the minterm coefficient matrix directly.
+Diagonal entries identify the factors' intersection and fix the modular
+scale; off-diagonal entries partition the remaining minterms between the two
+factors. It checks every matrix entry, including absent edges and coefficients
+that wrap to zero, within shared work and storage limits. The independent
+polynomial difference verifier still authorizes the replacement.
+Polynomial synthesis also restricts the linear remainder's corner table to
+the inputs that remainder actually uses. Variables confined to higher-degree
+products no longer replicate its coefficients or dilute its synthesis budget.
+Support discovery consumes the shared work allowance, and constants keep a
+single coefficient with the minterm basis's negative sign. Projection does
+not authorize a replacement: the complete polynomial difference must still
+be proved before CLI or GUI source output uses the result.
+Cubic recovery uses a minterm shared by all three factors as an anchor. Its
+diagonal coefficient fixes the scale; coefficients with two copies of the
+anchor identify how many factors select each other minterm. Coefficients with
+one anchor then distinguish the selected or omitted factor. The candidate's
+entire expansion must match, including missing coefficients and modular zeros,
+before the independent polynomial difference proof can authorize it. This
+direct reading requires a scale with additive order at least four. Once this
+anchor determines the factors, a failed reconstruction does not repeat an
+exhaustive search. Already factored cubic and higher-degree components retain
+their exact spelling while other degrees improve.
+Unanchored cubic and quartic recovery can infer factor supports from the maximum
+degree in every subset of active minterms. Bounded subset transforms recover
+the number of factors with each exact support; negative multiplicities reject
+the single-product reading. Geometry only proposes a candidate: its complete
+coefficient expansion, including modular zeros, and the independent polynomial
+difference proof still govern replacement. Larger domains keep bounded search.
+Anchored searches also use necessary pair-membership coefficient bounds when
+the modular scale distinguishes membership counts. Ambiguous scales retain
+the original search; these bounds never authorize a replacement.
+Before a cubic or higher-degree single-product search expands its tensor, unequal
+nonzero lexicographic extremal coefficients can reject it: each extremal
+monomial of a product occurs exactly once and fixes the same scale. Equal
+extrema from separate terms are summed; cancellation declines this check.
+This admission is explicit and never applies to general polynomial difference
+verification. Unrecovered components remain exact residuals.
+Higher-degree roots first group terms sharing all but one or two factors.
+The existing semantic solver proves each small quotient, and an independent
+arithmetic proof checks the complete distribution before substituting those
+quotients. That proof leaves complements opaque: distribution depends on their
+exact identity, not on expanding them as `-1-x`. Equal scales and repeated
+factors remain exact, and identical proved quotients share a charged local
+cache. A bounded frontier and cumulative work/storage admission preserve the
+best completed root on refusal.
+Long cofactor keys use a commutative fingerprint to select comparisons, then
+compare every retained factor and its multiplicity before grouping. Only
+shared keys are materialized, in the original lexicographic order; short keys
+keep direct construction. Hash equality supplies no semantic evidence, and
+all comparisons, buckets and retained groups share the existing budgets.
+Small frontiers of long residuals instead intersect term pairs and enumerate
+only their shared keys. Exact multiplicities and the same lexicographic group
+order are retained. Cartesian completion materializes each complete corner
+once, avoiding repeated copies of invariant tails in intermediate prefixes.
+Large distribution proofs can cancel identical summands and extract a common
+nonconstant factor from both sides before normalizing the quotients. Proving
+quotient equality is sufficient even when the common word can be zero; no
+modular division or invertibility assumption is used. Every retained scale and
+coefficient difference still participates in the independent equality check.
+The shared expression builder inserts a nonconstant operand into an existing
+canonical product's sorted factors, preserving its leading coefficient and
+multiplicities. It snapshots operands before interning can relocate the arena.
+Batch substitution stores completed DAG replacements in a compact hash table,
+retaining simultaneous override semantics and sharing rebuilt subexpressions
+across all roots without allocating a separate hash node for each result.
+Both parsing and source expression reconstruction avoid re-flattening and
+re-sorting every growing product prefix; the resulting canonical node is
+unchanged. Canonical flat products and coefficient changes retain the same
+fast path when no unary shift fold can apply. Sum collection reuses an original
+scaled addend only while its coefficient is unchanged; merging another addend
+invalidates that reuse before modular cancellation or reconstruction.
+Arithmetic normalization reads flat monomials directly, preserves repeated
+complement coordinates and skips multiplication by unit coefficients. A deep
+request owns bounded caches of completed polynomial expansions, abstractions,
+region results and parity tables. Homogeneous high-degree partitions share that
+same request and work account, then undergo a final common-factor recovery.
+Refusals and unfinished results are not cached. Polynomial reuse requires the
+same context, width and coordinate meaning; an opaque-complement expansion may
+cross into another basis only after checking every retained coordinate.
+Candidate construction cannot mutate these tables, and emitted arithmetic
+candidates still require a separately expanded, complete coefficient equality.
+Factor-discovery fingerprints only propose candidates: full polynomial equality
+must succeed before reuse. All retained tables disappear with the request.
+Small binary partition cubes also factor their complete modular coefficient
+tensors, including absent corners and disturbed coefficients. A separate raw
+circuit retains the original partition sums for the distribution proof; only
+individually proved partition identities enter the value circuit. Quadratic
+row recovery groups corners with identical source-factor membership, while
+checking all diagonal and off-diagonal coefficients before synthesis.
+Complete optimal Boolean recipes through three inputs are generated from the
+same fixed-point search and stored as immutable data. Runtime work charges
+cover table interpretation and emitted nodes; larger explicitly requested
+truth-table searches retain their existing bounds.
+Already allocated monomial keys and coefficients move into polynomial tables;
+copying callers retain separate storage charges. This avoids allocating the
+same product entry twice without sharing mutable proof state.
+The product valuation proof enumerates the complete low-bit domain of up to
+six independent opaque inputs. Bitwise operators, addition and multiplication
+supply exact parity; every even factor contributes a trailing zero. Bit-sliced
+counters preserve repeated-factor correlations across all assignments. A
+product is zero only when these guaranteed zeros and its literal coefficient
+cover the full word width. The proof admits at most 64 factors, 128 reachable
+nodes and eight observable low bits, under the existing work/storage budget.
+Early sum pruning requires every long product to vanish, preserving incomplete
+factor bases. Generated products and residuals can use the proof after their
+complete distribution is established. No additional CLI or GUI switch is
+required: both source routes use the shared symbolic core.
+An additional residue proof groups factors with the same complete additive
+base and different literal offsets. It partitions all offsets by successive
+low bits, accumulating the number of matching factors on each path. The
+minimum over both branches bounds the product's trailing zeros for every value
+of the base; smaller branches can exclude larger branches without enumerating
+a Cartesian residue table. Bounds from different bases add without assuming
+those bases are independent. A zero replacement requires the sum of these
+bounds and the enclosing literal's trailing zeros to cover the full word width.
+This proof accepts opaque nonlinear bases, retains multiplicities and wrapped
+offsets, and never expands the product.
+A product whose complete bases are already identical uses one offset vector
+and avoids per-factor coefficient maps. Structural admission is reused across
+the zero proof and nonzero recovery for the same immutable product. Traversal, comparison, wide constants,
+scratch storage and final emission use the same request budgets. Partial
+proofs leave their products intact, while already proved zero summands can be
+removed safely before ordinary MBA recovery.
+Scaled affine factors are read as complete coefficient maps over exact opaque
+atoms, with bounded traversal of nested additions and scalar products. Fixed
+powers of two are removed first; checked odd inverses normalize the remaining
+low-bit coefficients and offsets. Only identical complete projected maps share
+a residue group. Prefix truncation weakens a bound and cannot invent equality
+of the original full-width factors. Unit copies and native scalar multiplies
+avoid unnecessary wide multiplication work.
+High-bit disturbances can preserve a common low-prefix relation through
+AND/OR/XOR, constant shifts, complements, low extracts and widening casts.
+Bounded constant-prefix queries peel only proved identities; unknown terms
+remain exact opaque atoms. These products try prefix maps before full-width
+affine recovery. Even factors can request additional precision individually,
+so removing their fixed zeros does not discard the needed observed bits. A
+zero prefix contributes only its proven width, never a full-word zero.
+Residue proofs try the precision suggested by the number of factors and the
+required zeros, then the remaining bounded prefixes if needed. This estimate
+only orders work: each attempt needs complete coefficient maps and a residue
+bound. It applies to arithmetic coefficients as well as bitwise wrappers,
+including scalar products retained around offset sums. Zero-valued prefixes
+of even factors can be reread at higher precision before removing their fixed
+zeros. Completed prefix queries are cached by handle and precision, while all
+attempts share cumulative work and scratch charges.
+Prefix queries retain both known-zero and known-one bits through arithmetic
+and bitwise nodes. Multiplication combines the guaranteed zero prefixes of
+its operands; addition keeps only the common known low prefix, including its
+carry. Unknown bits remain unknown, and the affine reader accepts a constant
+only when every bit of the requested prefix is proved. This lets independently
+masked factors establish a high-bit disturbance without assuming any relation
+between their inputs. Partial results use the same bounded request cache and
+cumulative work/storage charges. Nonlinear atoms with a fully known prefix can
+contribute a constant to an additive factor without expanding their product.
+Nonzero residue branches may keep an exact opaque factor. Every factor's
+complete coefficient map must first agree with the common modular base. In
+each base residue, the known low values give conservative trailing-zero bounds
+for all cofactors. A factor becomes a constant only when those bounds hide
+all of its unobserved bits. Several remaining factors can be retained when
+an independent valuation bound proves that every product of two or more
+unobserved remainders vanishes. Prefix and suffix products build their exact
+linear coefficients without division, including zero and noninvertible row
+values. The constant table corrects the repeated constant product. If any
+cross term remains observable, the whole row is refused. Each coefficient
+table can use a narrower proved reading without assuming a factor's upper
+bits are zero. Equal coefficient tables share one emitted lookup. The emitter
+compares retained factors with combined coefficient tables for shared atoms.
+Known low bits also reduce an
+atom's coefficient precision, with the discarded coefficient times its known
+value retained in the constant table. Disjoint residue branches can share
+arithmetic and bitwise structure while selecting their differing literals;
+complete table enumeration proves any affine lookup and its wrap period.
+Unsupported operations stay opaque. The complete-affine recovery runs first;
+once a full common base is proved, an unprofitable table leaves the remaining
+allowance for polynomial recovery instead of starting another residue search.
+The residual search shares the remaining work/storage allowance and accepts
+only a smaller completed result.
+For multiple retained factors, bounded Boolean decision graphs can prove the
+entire observed word directly or reduce the exact linearized reading. The
+graphs use complemented edges, shared word operations and known zero bits;
+unsupported operations remain exact opaque words. A shared odd branch is
+isolated only when the even branch is proved zero, and its selector is restored
+before emission. Sparse Boolean polynomials are derived from complete decision
+graphs and factored before emission, avoiding exponential printed expansion.
+Bitwise reconstruction projects shifted inputs to bit zero once at its output,
+using all-ones Boolean constants internally. A highest-bit coefficient can
+absorb that final projection; lower coefficients must retain it. Tiny observed
+words also retain their shared affine-coordinate alternative when an initial
+bitwise candidate improves, so that candidate cannot hide a shorter word form.
+Equal low-bit groups retain their complete linear and quadratic cross terms;
+the split makes all higher terms vanish modulo the observed word. The
+quadratic sum is computed with an extra bit before division by two. This does
+not assume that an even value has a modular inverse. Batched sums cancel exact
+complementary bits and combine multiplicities before carrying; full-adder
+carries share a direct majority decision. A proved parity input orders its
+low prefix before the remaining interleaved bits. Dense decision and carry
+caches prepay their bucket growth. Immutable word views avoid repeated copies
+and are discarded when the assumption changes; polynomial views remain valid
+throughout reconstruction.
+Decision identity hits and terminal Boolean operations return before entering
+the allocation and recursive expansion helpers. Cache misses alone need those
+larger stack frames. Lookup, depth admission, charging and insertion keep their
+original order, including failure paths.
+Application keys place their operation tag in the unused high bit of the
+low edge word, so the integer hash distinguishes AND and XOR for identical
+operands. Full edge identity and the existing node bound remain authoritative.
+A dominant exact low prefix may be proved separately from unmatched product
+factors. A majority vote, weighted by exact projected-word multiplicities,
+only nominates the prefix; complete decision equality and the exact factor
+count must prove that its even branch vanishes. Every
+unmatched factor remains a complete original word. Under the selected branch,
+proved trailing zeros in those factors and their joint product can reduce the
+precision needed for the group. The joint proof stops at the first possibly
+nonzero bit. Large products project their observed words before counting the
+input domain, so invisible high subtrees do not consume a second traversal.
+Neutral low-word constants bypass reconstruction of identity operations.
+Small products can group by parity alone after affine synthesis, retaining
+multiple independently valued residual words. A complete count must still
+prove the other branch zero; a majority by itself does not suffice. Large
+projected groups keep their stronger shared prefix for coalesced powers.
+Unaffordable mandatory scans decline before consuming their work.
+The complete group result may reuse a representative word only after all
+observed decision bits agree. Reconstruction restores both the selector and
+every retained factor. This avoids expanding an independent multiplication into
+Boolean carries, including at unit-period neighbors and with low-bit disturbances.
+These searches retain the existing cumulative work and storage bounds.
+Native literal prefix facts use the already-normalized stored value, and free
+variables supply no known bits. These leaves need neither a recursive walk nor
+a prefix-cache entry; wide literals retain their accounted APInt path.
+Ordinary HighIR expression cleanup also uses an iterative operand walk, keeping
+its large local-rewrite frame off nested worker stacks. Operand order, shared
+node visitation and ordered-memory guards remain unchanged.
+Long odd-product blocks can recursively pair exact modular signatures. A
+signature preserves the complete word except for its highest observed bit;
+that bit's correction may itself depend on the inputs. Addition, XOR, constant
+masks and products propagate the correction with complete identities. Products
+remove only proved trailing zeros and retain every normalized parity term;
+one-bit products keep an opaque identity because cross terms can survive.
+An odd pair shares a square of its lower word and one exact highest-bit
+correction. Collecting the squares permits recursion at one fewer bit. Every
+unpaired factor and every correction remains in the result. At the outermost
+level of an odd-sized source block, unpaired full words can remain outside
+the paired square and its correction. The original full factor count still
+proves the other parity branch zero; recursive squares retain all their own
+factors. Even blocks and projected groups keep their joint reconstruction. Degree-block
+admission only orders this search; it never establishes a pair or oddness.
+Pairing indexes are constructed only for an admitted search and are confined
+to its active odd assumption, avoiding setup in ordinary low-word searches.
+All signature, pairing and reconstruction work uses the existing cumulative
+work/storage allowances and decision-node limit.
+Full-block two-bit admission caches structural identities before constructing
+Boolean corrections. Partial cache entries can answer only identity queries
+and must be completed before arithmetic reads their correction. A full block
+can search past a failed positional probe without repeatedly materializing
+upper carries. Partial factor blocks retain complete probes, preserving their
+existing work headroom. These rules remain in the shared symbolic owner used
+by CLI and GUI source optimization.
+Boolean polynomial reconstruction can factor shared cofactors across groups
+with disjoint remaining variables. Exact symmetric differences retain every
+unmatched term. Larger decision graphs try this construction before expanding
+their branches into printed trees, and a completed polynomial is factored only
+once. A finished word search over real free variables is reused for its
+algebraically identical cofactor reconstruction; opaque inputs and incomplete
+searches retain the alternative. Completion does not assert global minimality.
+Optional refinement retains the last completed candidate. Completed attempts
+are request-local; storage refusals retry when a larger allowance is available.
+The deep walk keeps original opaque inputs and changed original products
+eligible. Their rewrites propagate through the canonical builder without
+repeated analysis of the emitted reading. Independent linear tails
+finish before walking a generated product reading. A concrete nonzero
+witness may reject further zero-proof attempts but never authorizes a rewrite.
+All-odd assignments retain their cheap parity path. If they fail, bounded
+native-width evaluations can count trailing zeros in even factors at complete
+input assignments. Their sum must be below the observed width. Evaluation
+reuses the ordinary word evaluator, keeps correlated inputs consistent, and
+shares the existing witness work and storage allowance.
+Native scalar affine coordinates retain their cheap complete-map path; the
+extra projected read is reserved for wrappers, nonlinear monomials and wide
+coefficients, avoiding duplicated searches on ordinary nonzero residuals.
+Products of unrestricted variables skip partial-bit queries that cannot add
+facts, retaining the existing affine work bound across independently scaled
+occurrences of the same monomial.
+For a nonzero product, a shared low-zero prefix can be factored through bitwise
+operations. Their remaining scalar units are reduced modulo the observed
+prefix under a bounded operand/work/storage charge. The opaque operands keep
+native widths, so source synthesis does not need sub-byte bitwise operations.
+Atoms exposed by casts regain the output word width before synthesis. All factor multiplicities and coefficient coordinates still
+participate in the proof; no sampled equality authorizes a replacement.
+When a nonzero product observes at most eight bits, the same maps can establish
+one common affine word by checking every present and absent coordinate. Its
+entire observed domain is then enumerated. Per-bit periodic lookups may widen
+byte-sized inputs to native 64-bit words; a common low-bit support condition
+also permits an exact lower-degree polynomial. If reassociation absorbs the
+scale into an additive factor, its complete coefficient map establishes the
+fixed zeros first. Re-reading the normalized maps at the remaining precision
+then recovers the same proof. The enclosing power of two restores full-width
+semantics. Candidates must beat both the original product
+and its normalized factored form, preserving simpler existing recovery paths.
+All candidates, wide constants and scratch consume the existing work/storage
+budgets; refusal retains the original product. These are shared symbolic-core
+rules, so CLI and GUI source optimization use them through their existing switches.
+The expression evaluation plan uses a compact handle-to-slot table and gathers
+its sorted, unique variable IDs during lowering. It avoids per-node hash
+allocations and a second reachable-DAG walk without changing evaluation steps,
+operand order, arbitrary-width semantics or the solver's work charges.
+Native evaluation starts associative folds with their two guaranteed operands
+and reuses already truncated literals, avoiding empty reductions and repeated
+constant masking in the sampling loop.
+HighC lowers a zero-extended sub-byte extract as a masked native-word operation
+with the exact extraction offset. The fragment is never materialized as a byte
+for signed extension, which would change its sign bit. Other unsupported
+non-byte-width operations retain the existing refusal.
+LLVM emission admits a generated variable shift only when bounded symbolic
+known-bit analysis proves every count below the operand width. The shared query
+allowance is finite, and failures retain the original IR. Existing input poison,
+opaque-leaf and instruction-profitability checks are unchanged.
+Available same-width scalar definitions also retain an exact source-local view
+for reconstruction, including the exact low view of a zero/sign-extended
+definition. Proof expansion can inspect the complete value while
+emission reuses the live local, avoiding repeated copies that erase a cost
+improvement. Existing mutation, alias and control-flow kills still determine
+which definitions are available; constants and bare input variables do not
+acquire compound aliases.
+Different coefficients can expose the same quotient after splitting off exact
+modular differences. The search prefers a coefficient repeated at the same degree
+as its common scale; every difference stays attached to its original factors. The quotient
+proof and complete distribution proof must both succeed, including for even
+scales and coefficients that wrap to zero. A failed or larger candidate retains
+the original weighted-quotient opportunity. Recovered products also get an
+independently checked arithmetic factoring alternative with complements opaque,
+so repeated complemented factors need not expand into duplicate summands.
+Larger distributed blocks also get one bounded completion attempt for each
+quotient degree. Proved two-piece relations define a local factor basis;
+completing its Cartesian product exposes a single whole product plus exact
+modular coefficient differences, including negative terms for absent corners.
+The complete unreduced distribution is checked independently before composing
+the factor proofs. A coefficient is never inferred for a missing term: its
+difference is retained explicitly. Models share an indexed relation lookup and
+are expanded only once per canonical product. Repeated coefficients share their
+frequency count, and a Cartesian plan exceeding the term bound is declined
+before allocating its prefixes. Small frontiers retain the local cofactor path.
+Work, cumulative storage, term and edge bounds cover proposal,
+residual construction and proof; only a shorter completed candidate is kept.
+If earlier arithmetic factoring hides that frontier, a bounded arithmetic
+normalization can restore it. A whole product word and one of its existing AND
+views supply the exact partition `W = (W & M) + (W & ~M)`; bitwise consumers
+stay opaque. At most six such words are split. Independent normalization checks
+the coefficients and repeated factors before and after distribution, and the
+same completion proof and budget apply. Larger intermediate forms are never
+published; this preserves recovery through source-emitter preprocessing.
+An allocation-free term-count guard rejects exponential syntactic frontiers
+before normalization, preserving the budget for ordinary child simplification.
+When a product is multiplied by `2^(width-1)`, only its lowest bit is observable.
+That product can therefore become a bitwise AND of its arbitrary word-valued
+factors. Smaller powers of two retain the multiplication because carries remain
+observable. This transfer shares the deep walk's work/storage limits and bounds
+the flattened operand frontier before constructing the AND.
+The same transfer applies to completed residuals and generated cubic-or-higher
+queries, including their immediate sum terms. Two-factor recovery quotients
+keep their original basis until the enclosing product is assembled; prematurely
+projecting them can hide a better whole-product reconstruction.
+Already factored higher components remain intact while other degrees improve.
+Unaffordable optional expansions leave work for the rest of the expression;
+an unrecovered degree is retained verbatim, never dropped. Exact opposing
+products cancel before the independent difference proof expands minterms.
+The remaining higher-degree search preflights complete candidate lists and
+uses anchored scale/multinomial bounds to reject impossible products early.
+These bounds only reject candidates; complete expansion and proof still
+authorize any recovered product.
+Each degree is expanded over only the variables in its factors, so unrelated
+linear inputs do not inflate a cubic table. Linear and nonlinear parts are
+recombined before the full original-expression proof.
+An expanded quadratic/cubic root gets a bounded whole-region reading before the
+deep walk can spend its allowance on incomplete local pieces. A structural hint
+only selects that attempt; the same degree check, coefficient reconstruction
+and polynomial proof must finish. Optional Boolean table searches preflight
+their full charge against the remaining shared work rather than consuming it
+on a refused query.
+The LLVM bridge admits compiler-created `or disjoint` only after independent
+literal-mask/OR/wrapping-add facts establish nonoverlap, then exposes that sum
+to the shared engine. The bounded check uses no flags or metadata as premises;
+hidden poison, width/depth limits and ordinary eligibility checks still apply.
+The source policy also enables modular quadratic oracle fitting: it can propose
+squares and pairwise products as well as affine terms. This is one shared core
+option, so the CLI flag and GUI menu cannot select different fitting engines.
+The source proof ceiling applies only to the newly enabled heuristic synthesis;
+existing split-word arithmetic recovery keeps its original proof allowance.
+`SymSimplifyOptions::SynthesisSolver` separates those policies in LLVM source.
 
 LLVMC defaults to LLVM O2 after ordinary frame and SSA promotion. Basic scalar
 cleanup, O0, O1, O3 and a bounded custom pass selection are explicit alternatives.
+A view's module holds some of the image's functions, so a writable table of
+code pointers is externally initialized while LLVM optimizes it: a call
+through a function pointer that code outside the module may rewrite, as a
+lazily bound `__imp_X`, stays a call through it.
 LLVM dispatcher recovery defaults on independently of the compiler level and
 optional symbolic fixed-point expression rewriting. Recovery retains its
 targeted constant proofs; `llvm_control_flow: false` explicitly disables that
@@ -155,10 +3796,43 @@ slots promoted to SSA only. It preserves the lifted control flow without the
 LLVMC optimization pipeline; the module cache distinguishes these inspection
 modules from optimized source modules. Native CFG, ABI and exception recovery
 still precede emission. EVM and SBF keep their own LLVM emission paths.
-Native LLVM view preparation postpones HighIR construction after the shared
-source MedIR call/return recovery. A later HighC request resumes only that
-projection through the ordinary HighIR completion boundary; it does not relift
-instructions or mutate the MedIR retained by LLVM emission.
+Native LowIR, MedIR and LLVM views postpone HighIR construction after the
+shared source MedIR call/return recovery. A later HighIR or HighC request resumes
+only that projection through the ordinary HighIR completion boundary; it does
+not relift instructions or mutate the MedIR retained by LLVM emission. The CFG
+(`neverd_cfg_json`, the `cfg` function view and the worker's graphs) reads the
+selected function's LowIR alone, so its run also postpones MedIR and the source
+analysis (`Pipeline::resumeMedIR`). Any other view of the same selection
+resumes that run from its LowIR, through the stages and options a straight run
+takes; a graph therefore neither builds discarded pseudocode nor the callee
+signatures only source recovery reads.
+
+The LLVM IR view of a function (`neverd_ir_llvm`, and the `llvm` pages of
+`neverd_ir_view_json`) is that function moved into a module of its own, as
+`llvm-extract` moves it (`lib/sdk/capi/LLVMFunctionView.cpp`). Every global its
+instructions, own operands and attached metadata reach, and those the
+declarations' metadata reach, is declared without an initializer; the body is
+cloned and the original module's flags kept, so the text verifies alone. Other
+named metadata stays with the whole module, and a slice that does not verify
+shows the function alone after a comment that says why. Comments read image
+addresses only from authoritative identities: NeverD's mirrors by their
+`__nd_data_`/`__nd_codeptr_` spelling plus constant offsets, functions by their
+source identity. Data is named as the listing names it (user names, import
+slots with the suffix `DataNames.def` shares with the listing, debug and image
+symbols, strings). Each mirror's declaration goes under a comment that says
+which image bytes it stands for and which addresses the body reaches through
+it, from a walk of the body before printing; the annotation writer offers no
+hook before a global, so these comments go in after printing and every later
+offset moves by their length. Pages publish where the prelude ends and the epilogue
+begins, and, line by line, the image address each spelled global stands for.
+A mirror an instruction reaches at several offsets maps its spellings in
+printing order only when the counts agree, otherwise to its first byte. The
+rendered view is kept with the inspection module and dropped with the user's
+names. Its rows stay unmapped (`unsupported_representation`), and the worker's
+named view renames the references' spellings with the text. Bytecode keeps its
+whole module as its text (`neverd_ir_llvm`), and its `llvm` pages report its
+architecture as unsupported, as its C pages do. A function another
+module only declares has no identity there, so the GUI resolves its name.
 
 The worker's `CodeEdits` owns pseudocode presentation aliases and unmapped line
 notes. `UserStateTables.def` includes this state in history, recovery, read-only
@@ -167,6 +3841,15 @@ edits from silently attaching to regenerated text. The GUI selects precise
 occurrences through the existing folded-source projection; image names and
 mapped comments continue to use engine address edits. Local presentation names
 do not establish variable, type or instruction semantics.
+
+Native HighIR pages and C navigation share `HighStatementSourceIndex`.
+Lowering records weak expression identity for assignments and calls, including
+multi-output intrinsics. Dropping an unused call result retains the call's
+anchor; a replacement, changed expression kind, ambiguous occurrence or PHI copy
+cannot borrow it. Other statements keep the unique address/kind contract.
+`HighIRPrint` streams individual structured rows for CLI text and SDK pages;
+structural delimiters do not inherit an enclosing instruction. The HighIR call
+printer includes every intrinsic output binding.
 
 Pseudocode navigation uses instruction anchors recorded during source emission.
 HighIR statement observations retain function, address, sequence and statement
@@ -192,6 +3875,9 @@ spans. Navigation projects only a complete, unambiguous recorded piece, ignoring
 surrounding whitespace; it never expands to an enclosing function or joins
 partial pieces. A function shown as C after a dialect refusal loses its
 statement anchors. Library folding retains its separate region projection.
+Private-frame forwarding keeps a call's observed expression identity when
+none of its inputs change. A rewritten input still rebuilds the call and
+cannot borrow the old node's instruction anchor.
 This supplies navigation evidence rather than complete expression provenance.
 Conditional runtime call evidence consumes these same exact occurrences through
 `CSourceEvidence`, independently of binary format or architecture. Producers
@@ -203,7 +3889,11 @@ escaped call-site comments without changing targets, arguments, types or
 effects. `SymValueIdentities` follows only complete fresh resolver values via
 the shared symbolic state, including nullable results; this provenance is not
 a loader import, immutable address, or rewriting certificate.
-Source and assembly cursors browse independently. Graph refreshes retain the
+A source cursor the user moves takes the assembly cursor to its row's
+primary address without recording a jump; an assembly move the user makes
+selects the mapped rows of a source pane already showing that function and
+never starts a decompile. Selections made to follow the other pane do not echo
+back. Graph refreshes retain the
 latest requested or selected instruction even while no layout is available.
 A new navigation cancels the preceding function-lookup callback so a late reply
 cannot replace the newer destination.
@@ -220,8 +3910,97 @@ runtime reads as C++ whatever its name. The C++ printer uses the shared symbol
 spelling rules for namespaces, STL aliases and qualified ATL types; non-default
 template arguments and explicit ABI arguments remain visible. DWARF record
 identities supply type spellings, not guessed layouts or implicit member-call
-conventions. The GUI offers a separate C choice for non-C images and omits it
-when only C is offered.
+conventions. Overloads that C numbers apart (`f` and `f_2`) read by their one
+C++ name, each linking its own symbol; two functions of one symbol, or a
+function and an object of one name, keep their C identifiers. C declares a
+record by the last component of its C++ name (`std::__ndk1::__sp_mut` is
+`__sp_mut`), which the C++ view names back, and spells one whose name a
+function of the unit or of the C library has by its tag (`struct stat`,
+`struct stat64`), or an object a C library header declares (`struct
+timezone` beside <time.h>'s `timezone`, `LibCDataObjects.def`): no typedef
+can declare the name beside the function or the object. The C
+the views read is C a compiler accepts. A local takes no name the unit gives
+a function, an object or a typedef at file scope (`td_ta_event_getmsg`'s
+result is no `msg` where the code calls `msg()`), and a bitwise, shift or
+multiplicative operator, an integer local and integer memory take a pointer as
+its address, an integer (`(uintptr_t)p & ~0xFF`): a local the text declares a
+pointer, a typed record's pointer member, a pointer object, or a value
+forwarded from one, or a pointer member of a record a frame slot holds, which
+the storage's record view reads (`(*(def *)&stack_storage.var_m114).opaque`).
+So does an integer result returning one, integer memory taking a member's
+address (`&s->bl_tree[18]`), and an integer local taking a call's pointer
+result. A local the text declares a pointer takes an integer,
+as an indirect call's result, as the address it is. A C library routine
+takes a pointer to a typedef of its header's (bionic's long time_t, which the
+unit's exact widths call int32_t) and an array parameter (jmp_buf) through
+void *, as it takes a pointer to a record of its header's. An indirect call
+whose callee is unknown names its own instruction (`lowerCallInd`), where
+debug information finds its caller: it takes no signature from there
+(`debugFunctionCalled`), so the caller's `void *` result is not the call's. A function the image defines under the name of a routine
+a C library declares is the image's copy of it and takes its address in
+HighC as in LLVM C (`strlen_5B130`): a C++ function whose C identifier would
+be the name (`sigaddset(unsigned long*, int)`), a routine of the call model's
+tables, and one whose prototype the debug context takes from a C library's
+header library (`__strlen_chk`, `FunctionSym::PrototypeFromCLibrary`). A call
+to a stub of such a routine names the routine where it passes the arguments
+the routine's header declares, and the stub otherwise. Both C routes spell
+x86's `ud2` `__builtin_trap()` and its `int3` `__builtin_debugtrap()` where no
+Windows header declares `__debugbreak`, and a variadic import's stub declares
+its fixed parameters as the program's C library does
+(`NEVERD_LIBC_VARIANT_FORWARD_FIXED`: bionic's and musl's ptrace and ioctl
+requests are ints, glibc's an enumeration and an unsigned long). The GUI offers a separate C choice for non-C
+images and omits it when only C is offered.
+
+The reader also recognizes the portable prototype-integer type queries emitted
+by `CTypeRender`: `__typeof__(__builtin_choose_expr(sizeof(T) == N, (T)0,
+(Fixed)0))`. It selects the operand's integer type using the target data model's
+`sizeof`, preserves the original C spelling, and applies no conditional-operator
+arithmetic conversion. An unknown condition, size or operand remains an explicit
+C fallback; it is not guessed from a function name or the host compiler's ABI.
+
+Dialect readers obtain referenced header declarations from the target type
+library, including program types the C emitter proved come from matching
+system headers (`EmbeddedC::HeaderTypes`, carried through `CSourceMap`). These
+declarations supply typedefs, record members and `offsetof` checks without
+inserting duplicate definitions into the displayed source. Definitions in the
+emitted unit override the external declarations. No host header or hard-coded
+pthread layout supplies this information.
+
+The reader also accepts the emitters' anonymous record compound literals,
+trailing field attributes, LLVM scalar spellings and GNU `__auto_type`
+initializers. A member `__typeof__` cast obtains its exact type from the
+unevaluated expression; that expression contributes no runtime operation in
+Rust or Go. Unknown inferred types and invalid bit-field queries stay explicit
+C fallbacks. Floating formats those languages do not support likewise remain
+C rather than acquiring a different format with the same storage width.
+C++ names an anonymous literal's type through an unevaluated `decltype`
+lambda, keeping its initializer outside the lambda and evaluated once.
+
+The reader reads the definitions a unit holds of the program's local types:
+unions, anonymous structures and unions, bit-fields, enumerations,
+`#pragma pack` and `DECLSPEC_ALIGN`, and their `static_assert` and `offsetof`
+checks. A member access reaches a field through anonymous members as C
+counts it. C and C++ keep the definitions as written, and C++ reads the code
+that uses them. A Rust or Go page, or a whole program spelled in Rust or Go, takes the
+definitions as Local Types renders them in its language
+(`renderEmbeddedSource`): the types the unit
+defines, the records it only points to as opaque types, and no module
+header, in place of the C bytes the source map records
+(`CSourceMap::LocalTypes`). The code reaches a member as that rendering
+names it: through the fields that hold its anonymous records, and in Go
+through the methods that read a union's members and the members Go cannot
+align, which return pointers. A bit-field reads through the getter and
+stores through the setter the renderings give the record that holds its
+storage (`MemberPath::Getter`, `Setter`); a compound assignment or an
+increment stores what it computes from the getter, and a `bool` bit-field,
+or one with no methods, stays C with its reason. Without the program's types, as
+the corpus reads a unit's text alone, Rust and Go spell a record whose
+fields their own structures lay out as C does, Rust's under its packing
+and alignment, and an enumeration as int constants, and show a union, an
+anonymous member, a bit-field or a volatile member as C with its reason,
+Go a packed or aligned record too. In Rust and Go, a typedef of a record by
+its own tag is the record: defined where the text defines it, opaque where
+the text only declares it.
 Explicit C keeps native throw calls and separate handler entries with unwind
 metadata in comments; C++ keeps structured exception syntax. Their caches are
 separate. The C exception view depends on the image's original runtime and
@@ -238,9 +4017,33 @@ take their bodies from the landing pad, as the pad runs for each clause's
 selector (`attachItaniumHandlerBodies`); `__cxa_begin_catch` becomes the catch
 parameter and `__cxa_end_catch` the end of the catch. A pad whose code this
 cannot follow exactly, or that also dispatches an enclosing try's clause,
-keeps the region in its commented form with the pad in place. In C, every
-landing pad of the call-site table keeps its label, so a pad that only runs
-cleanups is not read as dead code after a return.
+keeps the region in its commented form with the pad in place. The pad's
+copies of the exception are followed through the frame (`ExceptionTrack`): to
+a slot it is spilled to, through a variable holding that slot's address, and,
+in a frame too large for an immediate offset, through a copy of the base
+clang keeps in a slot; a write that may change what such an address reads
+ends the copy. A conditional cleanup that resumes the same exception is
+proved from the exception state at that branch's entry and ends with `throw;`.
+Its destructors and their order remain; an unrelated resume value or an
+observable use of the unwinder's state keeps the original pad explicit.
+A complete duplicated cleanup continuation can fall through to its shared
+tail; matching only its last destructor would run intervening cleanups twice.
+A pad that only cleans up, which every call site reaching it enters with no
+action, is such a
+scope around the calls of ordinary flow that its call sites cover. A call
+keeps the address of its call instruction (`HighExpr::CallSiteAddr`) when a
+tail is copied over a jump or into both arms of a branch, so the scopes hold
+exactly the covered calls and no other; a call that stands for the equal calls
+of two branches keeps none (`withMergedCallSites`). A call of no single
+instruction, a jump into a scope, or a covered call in a handler's code keeps
+the pad in place. In C, every landing pad of the
+call-site table keeps its label, so a pad that only runs cleanups is not read
+as dead code after a return. A pad stores the exception object and selector
+the unwinder hands it: HighC prints a store of an unread call result as the
+call (`var_m30 = f()`, as x86 code spills a result right after the call), but
+never at a statement that a jump or the unwinder enters, after a call that
+never returns, or of the exception values, which no call returns
+(`collectUnusedCallStoreAlias`).
 
 DWARF subprogram extents are collected, sorted and swept once before publication
 instead of comparing every pair during ingestion. Duplicate entries, overlaps
@@ -249,6 +4052,14 @@ units can parse disjoint unit groups in parallel using independent LLVM object
 and DWARF contexts, then merge facts in source order. Only immutable input bytes
 are shared. Small and compressed inputs stay serial to avoid setup costs and
 per-worker decompression memory; `NEVERD_THREADS=1` selects the serial path.
+
+A DWARF declaration's type is its own `DW_AT_type`. A DIE without one takes
+the type that the declarations its `DW_AT_specification` and
+`DW_AT_abstract_origin` chain names declare, resolved as return types are:
+conflicting declarations count as none. Function parameters, locals, record
+parameters and global objects read types this way. The out-of-line copy of an
+inlined function names its parameters and locals only by abstract origin, and
+a variable defined apart from its declaration names it only by specification.
 
 ```mermaid
 flowchart LR
@@ -292,6 +4103,11 @@ LLVM declaration materialization shares the direct-call ABI rules with exact
 immutable import targets, including FP, variadic and va_list signatures.
 Known integer parameters use the target's pointer-width carrier so narrow
 register aliases and shard order do not choose different declarations.
+A callee nothing describes is declared from its first call's arguments.
+Where the module's calls pass it different numbers of arguments, those past
+the ones every call passes are variadic (`DirectCallArgumentCounts`), so a
+longer later call keeps all of its arguments instead of being cut to the
+first call's.
 `LLVMCallContract` reconciles exact targets revealed by optimization or shard
 linking, drops surplus fixed arguments and adapts integer/pointer carriers.
 Missing arguments, incompatible observed results and musttail changes fail
@@ -311,10 +4127,196 @@ The COFF loader owns the checked SEH/FuncInfo records. LowIR's
 `analyzeRegistrationStates` owns reaching levels, callback roots and chain
 lifetime, including the untouched bytes of narrow state stores; HighIR and
 native LLVM lowering consume that same result.
+Published block states expose their complete level domain through
+`RegistrationBlockState::levels()`. Explicit domains use `ExplicitLevels`;
+unknown blocks can share one immutable, owning `SharedLevels` vector created
+by that solver run. Publication charges its construction once and every block
+reference separately. Frame facts, catch searches, callback identities and
+lifetime checks remain per block. Copies retain the domain after the solver
+and input function are destroyed. Sharing does not make an unknown state
+complete, remove an exceptional edge or change native admission.
+`ExceptionalEdge::contexts()` retains the correlated table-region and
+originating-state pairs for each transfer. Single contexts live inline;
+registration C++ cleanup edges for a shared level domain can own one immutable
+`ExceptionalEdgeContextDomain` per target. CFG construction skips empty unwind
+tails only after validating the strictly descending state graph, builds every
+pair once, and charges each published edge against the existing work limit.
+Catch searches remain the per-block solver result. The unwind table still
+owns action order; grouping reachability edges does not reorder cleanups.
+Frame proofs, undefined-input fingerprints and source-stack snapshots bind
+every context, and snapshot consumers reuse the domain's content digest.
+Exact singleton consumers reject multiple contexts. MedIR remaps endpoints and
+deduplicates predecessors within each uniquely numbered source, preserving
+distinct domains and throwing instructions without scanning all earlier
+sources of a shared handler. None of this supplies missing frame, lifetime,
+callee or native exception evidence.
+`X86CxxRuntimeABI` owns the shared PE32 provider selection for the FH3 cdecl
+dispatcher and the two-word stdcall throw entry: VCRUNTIME140,
+VCRUNTIME140D and MSVCR100. Both entry proofs still require their exact import
+names, slots and code. This provider identity does not authenticate a handler's
+GS prefix, its parent frame or its exception effects.
+`getCheckedX86CxxHandlerABI` retains each authenticated GS prefix condition:
+the cookie slot and XOR base relative to the registration node, the exact
+checker call and mismatch target, and the immutable code ranges. A second
+check can reuse the first XOR base or add twelve. The checker success-path
+decoder owns its register-preservation and image-cookie identity proof.
+`getCheckedX86CxxPersonalityABI` continues to require an unguarded dispatcher;
+the guarded description supplies no parent initialization, lifetime or check
+elision authority.
+The same LowIR state solver projects those C++ conditions into the source
+parent's established frame. It requires complete four-byte initialization
+before publication, the exact image-cookie XOR base, and intact conditions at
+every exceptional dispatch. Ordinary calls, cleanup footprints and catch-object
+construction must preserve both the image cookie and the parent slots.
+Catch entry preserves an encoded word only after every cleanup's write extent
+is known to be disjoint. Exact successful source checks preserve all GPRs and
+use their own call receipts rather than an ordinary callee-frame effect.
+If those receipts cannot be published, call, runtime-object and image-read
+closure also fail; the unchecked mismatch path has no summarized effects.
+`CxxCookieConditions` describes source values only; it grants no generated
+cookie layout or authority to erase observable encoded values. The native
+dispatcher API continues to reject guarded handlers until those output
+obligations have their own proof.
+SEH dispatch joins use an explicit pending queue. After ordinary propagation
+quiesces, equal source snapshots contribute their complete level domains to
+runtime roots together. `dispatchSource` owns the inherited facts used by both
+root construction and snapshot identity. Parent cells, initialized bytes,
+captures and unknown provenance remain distinct; registers and the invocation
+stack are replaced by runtime entry. The exact state cell is replaced by each
+selected root level, which remains in the pending level domain.
+Completed contributions are remembered only within the current solver run.
+An ordered index locates hash buckets before comparing complete snapshots.
+Hashing, lookup and collision comparisons consume the same work budget; only
+complete equality can suppress a contribution. Distinct snapshots do not
+require scanning every earlier frame.
+`RegistrationStateSEHDispatch` collects scope ancestry with finite bit sets;
+`RegistrationStateSEHDispatchWork` owns scheduling and duplicate suppression.
+`RegistrationStateSnapshot` hashes the projected facts; hash equality alone
+never establishes identity or suppresses a source contribution.
+Local unwind uses an iterative depth-first path with ancestors indexed by
+their proved level. A sibling's completed path cannot prove or reject a cycle
+on another path. These changes retain the existing cumulative work limit.
+`RegistrationStateTryLevel` binds each SEH store to its decoded extent,
+operation identity, width, literal and reaching-state transitions. Finally
+execution partitions frame outcomes by the resulting try level; local unwind
+reloads that level before selecting another cleanup. Joining frames first or
+recomputing narrow-write semantics downstream would lose that correlation.
+C++ state writes can also use complete reaching register values or a
+four-byte `AND`/`OR` update of the checked state slot. CFG cutting and state
+transfer share `stateStoreCandidate`; the latter still proves the actual
+address and resulting level on every path. The original load, store and
+arithmetic flags remain intact. `LowScalarConstant` owns width-correct
+`AND 0` and `OR all-ones` results even when a join loses the old scalar value.
+Supplied instruction operation slices use the same ownership check as LowIR
+structural validation, before an invalid operation address can erase temporary
+frame provenance.
 The implementation lives under `lib/ir/low/X86`: frame transfer, callee ABI,
 state initialization, ordinary transfers, C++ calls/objects, exceptional roots,
 cookies and result publication have separate translation units. The private
 state solver owns the shared lattice and cumulative work budget across them.
+MedIR's `X86/RegistrationSEHCall.cpp` binds ordinary finally invocations to
+checked near returns and continuations. Call-ABI recovery and LLVM callback
+lowering consume this one binding, so callback-private pushes cannot become
+cdecl arguments. Outlining exposes exact instruction clone identities for
+removing preflighted unused return transports without reopening the proof.
+`RegistrationStateSEHParentExit` owns the lifetime of an abandoned CRT unwind
+guard. Reconnecting the same live registration preserves its current try level
+and jump-buffer bindings. `SEHParentChainComplete` separately gates native parent
+resumption without invalidating otherwise complete logical source-state analysis.
+LLVM preparation and the independent COFF source check enforce that native gate;
+shared MedIR bindings retain the source exits for ABI recovery and decompilation.
+Once the native guard proof fails, guard-only lattice changes no longer reschedule
+logical state propagation; the native failure remains permanent. Native return
+projection still binds both near returns and parent branches independently.
+`RegistrationStateSEHParentOwnership` anchors acyclic continuation tails only
+when every physical successor leads to existing parent code. Its possible
+continuations remain separate from ordinary/except entries: they grant neither
+reaching state nor runtime-handler memory privileges before the exact SavedESP
+transfer succeeds. Callback roots, unanchored terminals and cycles are excluded.
+MedIR's `RegistrationSEHParentExit` binds the exact
+SavedESP restore and parent branch; callback ownership stops at this boundary.
+`RegistrationSEHParentRoots` gives an exclusively resumed parent block its own
+established EBP definition before SSA renaming. Every actual incoming edge must
+be a bound parent transfer; ordinary or independent entries keep their existing
+definitions. This prevents the callback's private runtime seed from escaping
+into parent code while preserving the current data registers and restored ESP.
+`MedLLVMRegistrationSEHParentExit` projects a private SjLj context transactionally,
+after checked PHI copies. `COFFRegistrationSEHParentExit` independently checks
+every context alias, capture and transfer; its source companion binds the
+resumption switch to exact source scope entries. Frame reaching-definition
+replay follows the authenticated callback transfers across this resumption,
+preserving current logical state instead of treating entry capture as a reset.
+`RegistrationSEHRegisters` inserts explicit data-register exchanges before SSA
+for checked ordinary finally calls. These intrinsics keep inputs and outputs in
+the ordinary def-use and partial-register passes. `MedLLVMRegistrationSEHRegisters`
+owns their private parent-frame slots and the separate runtime entry values;
+`COFFRegistrationSEHRegisters` authenticates storage and source execution order.
+These invocation slots are separate from the logical register snapshots of
+source setjmp calls and must not be restored by source longjmp resumptions.
+The shared scope-retention owner also includes rows used solely by authenticated
+ordinary calls, without making their source try levels active.
+`abi/MedABIPassI386.cpp` binds an authenticated EH4 or C++ cookie check to its
+current ECX value. Finally register exchanges and inferred callee signatures
+cannot add EDX, floating-point or stack arguments to that checked protocol.
+`X86/RegistrationSEHStateStore.cpp` binds complete source receipts to exact
+MedIR callback stores. Native writes require a checked byte, word or full-word
+constant store with a proved finite set of complete resulting states. Narrow
+writes preserve the untouched high bytes; physical state tokens name complete
+results. The binder orders these results and assigns consecutive write identities
+across source occurrences. The same helper computes
+retained scopes from all parent reaching levels and callback write results,
+including their enclosing scopes; an unexplained scope refuses emission.
+LLVM retains callback-only rows through an indexed entry chain of
+`llvm.donothing` invokes without activating those scopes. The original logical
+store remains available to independent source replay. Multiple results use one
+volatile full-word reload followed by a closed switch, one physical update per
+case, and a common continuation. `MedLLVMRegistrationSEHStateDispatch` emits
+this selection; `COFFRegistrationSEHStateDispatch` independently checks its
+complete domain, exact frame read, update identities and predecessor closure.
+Source-segment validation follows only these authenticated edges when a callback
+block is split, preserving source event order independently of physical block
+layout. Case and continuation addresses cannot escape.
+`X86/RegistrationSEHRuntimeReturn.cpp` proves when a callback's scalar return
+has no observer: the whole body is exclusively a runtime finally, with checked
+physical near returns and no ordinary callers or other entry kinds. The MedIR
+call-result binder uses that proof only for incidental `RaiseException` results;
+all other source observations retain the strict SSA-use checks. LLVM emission
+and independent COFF source replay consume the same decision.
+MedIR also owns the checked nonlocal-jump and bound-callee bindings. ABI
+recovery uses their exact stack-only capture/resume contracts; an incidental
+register value cannot shift the jump-buffer argument. LLVM emission and COFF
+source replay consume those same bindings.
+`MedLLVMRegistrationSEHDynamicScope` owns parent blocks with several proved
+incoming states. It keeps PHIs on the original predecessor edges and selects
+one scope around a single source body. With LLVM's dynamic-call capability,
+ordinary calls explicitly inherit the live physical state and remain noinline
+and notail. LLVM's x86 state analysis cannot use a later resetting call to infer
+the initial state before an inherited call. `COFFRegistrationSEHDynamicScope`
+independently checks selector storage, complete scope choices, source boundaries
+and every call marker; a marker on a function or outside the checked body grants
+no installation permission. Source-call identity, argument binding and frame
+privacy keep their existing owners.
+`RegistrationSourceCall` authenticates the owned PE32 E8 occurrence shared by
+jump-runtime and private-callee proofs. `RegistrationSEHPrivateCall` reuses the
+bounded private object graph with no object borrow or stack arguments to retain
+live parent captures across ordinary calls. Code, scope-table and import-write
+checks remain mandatory. The state transfer drops cells below call SP and keeps
+volatile results unknown; it grants no bound-helper or native argument ABI.
+Native admission independently replays the caller closure and caller-PC readback.
+`COFFRegistrationSEHCall` binds each dynamic call to its adjacent source receipt.
+The generic exception counter and PE32 replay share this check; the counted call
+set must equal the calls inside authenticated dynamic scope bodies.
+LLVM also models the x86 runtime's register clobber at SEH handler entry, so
+values used only after an exception cannot remain in callee-saved registers.
+With `LLVM_NEVERD_X86_REGISTRATION_SEH_STATE_WRITES`, LLVM maps each callback
+write's source semantic token to its physical parent registration and generated
+state. MC receipts bind parent/callback ownership, frame layout, write identity,
+instruction span and actual x86 address register. Codegen preserves these
+identities and source order across layout passes; final COFF validation checks
+unique code storage and the exact MOV32 displacement, immediate and base
+register. Rebased addresses and temporary symbols are not source identities.
+The pinned r5 compiler provides this capability; older r4 compilers refuse
+native callback state writes.
 The LLVM backend keeps registration lowering and callback preflight, scratch
 stack proof, outlining and security-check ABI under `lib/backend/llvm/X86`.
 `MedLLVMRegistrationIncoming` owns the transactional caller-frame projection
@@ -331,6 +4333,10 @@ This prevents unused PHI copies from reading unavailable register values in
 `optnone` code. Escaping slots, live values, source observations and volatile or
 atomic operations remain intact; no source-frame initialization is invented.
 Ordinary analysis IR retains its original value graph.
+
+`OptimizationGuards` supplements LLVM’s `optnone` instrumentation: optional module and call-graph passes are skipped when the module defines a protected function, because those passes can rewrite its CFG or replace callback arguments with poison. Required adaptors and ordinary function optimizations still run. Registration source projection retains prologue-save memory occurrences until native reconstruction can bind them.
+
+`COFFRegistrationEH4Wrapper` owns the retained EH4 forwarding proof. `COFFRegistrationScalarLeaf` checks a bounded forward-only scalar CFG, initialized registers and flags, private MXCSR storage and mapped runtime data. It rejects caller-frame reads, escaping addresses, unknown calls, overlapping instructions and incomplete returns. LLVM emission and independent COFF validation consume the same loader proof; the original wrapper, helper and dynamic data reads remain in place.
 `lib/ir/low/X86/RegistrationEntryABI.cpp` binds those returns to source bytes and
 keeps callback returns separate. The LLVM adapter selects cdecl, stdcall,
 thiscall or fastcall and independently validates its exact parameter attributes;
@@ -473,7 +4479,8 @@ state solver binds its actual registration pointer and target level at the
 source call. CFG construction splits the ordinary continuation at this state
 transition. Each traversed finally gets a bounded callback-stack analysis with
 the parent's established EBP, and every returning path must preserve the
-runtime fields and invocation stack before its frame effects can be joined.
+registration fields other than checked TryLevel writes, and restore its
+invocation stack before its frame effects can be joined.
 SEH filter and finally entries share the private invocation-stack coordinate
 used by C++ catches. A finally may save registers and allocate locals below
 its runtime return PC; loads require initialized bytes in the current
@@ -487,6 +4494,66 @@ reaching levels only after those independent transfers. An ordinary parent
 entry into callback code still requires a separate invocation-exit contract;
 moving ESP alone does not provide one. All activations share the original
 cumulative work budget.
+The suspended-finally interpreter partitions filter returns by disposition and
+written TryLevel, including joins at a shared return block. Search keeps the
+cursor captured before each filter call under the same EH3/EH4 protocol.
+EH4 search requires the checked
+image cookie and intact EH/GS slots both before the filter and at its returned
+frame; the shared scope graph supplies its -2 outside sentinel. Cookie and
+scope storage retain their separate write exclusions. Continued exceptions resume each
+resulting frame at the next instruction; instruction-local temporaries cannot
+cross an internal split. Ordinary callback propagation uses these same checked
+filter effects after a returning `RaiseException`, including changed parent
+cells. Each returned state supplies its own exceptional roots before the
+frames join, so a filter can establish the proof for a scope absent from
+ordinary parent flow. A failed search cannot publish a complete root proof.
+Handler selection keeps the captured scope separate from the written state.
+The iterative unwind owner finishes its local cleanup under that scope's bound,
+then publishes handler entry at the enclosing level. Its cycle key includes the
+bound and selected scope; nested selections share the original work budget.
+`RegistrationJumpContinuation` restores capture registers only for normal unwind
+outcomes. Selected paths use the canonical exceptional-entry owner, discarding
+suspended callback stacks and registers. LowIR records selected scopes separately
+from resumed states; MedIR checks their handler roots without inventing a
+resumption projection. COFF admission repeats the source analysis independently.
+Ordinary propagation can retain a conditional return from an external search;
+nonlocal unwind requires every path to close inside the proved registration.
+The COFF copy-edge owner accepts frozen poison only through a complete,
+unobserved private scalar transport graph. This includes cycles kept live by
+jump snapshots, but excludes return values, calls, escaping addresses and source
+memory. Other copy shapes retain their existing checks and work budget.
+Static addresses in unreached source blocks may join equivalent frame values
+through PHIs. Every ordinary and exceptional arm must have the same proved
+coordinate, including checked runtime frame definitions at handler entry. This
+address proof grants no execution or state-transition receipt.
+Unwind records the logical state left at entry or by
+the last completed callback together with the final runtime state. Remaining
+filter-only unwind steps may make those values differ. MedIR binds a variable
+resumption only when these pairs give a complete, unambiguous projection for
+every contributing path. LLVM reads the logical cell once after a returning
+capture and maps that original value to the final state. The independent COFF
+consumer checks the exact volatile read, projection keys/results, zero-return
+selector and contiguous restoration.
+For multi-state captures, `SEHFlowKey` partitions current states and saved buffer
+bounds while preserving existing frame joins within each partition. Publication
+unions only compatible source occurrences. MedIR maps the captured bound together
+with the last visible frame state to the final runtime state. LLVM saves the
+logical bound in a private volatile slot before the one physical capture; COFF
+replays its exact source-cell address, two uses, ordering and contiguous save and
+restore placement. The saved bound supplies no buffer initialization or callee
+privacy authority. All partitions and projections share the existing work budget.
+For preserved EH3/EH4 helpers, the conditional callee proof returns object effects in
+the caller's coordinates. The parent state owner checks allocation and excludes
+its registration and cookie cells from all effects and object-address arguments.
+EH4 callers additionally prove live cookie initialization before invoking this
+path; the MedIR call binder requires the complete cookie receipt before lowering.
+EH4 helpers use the same authenticated image cookie inputs and state owner as
+their callers. Conditional memory admits only the exact four-byte cookie read;
+the transfer owner checks each live GS call's ECX value. A borrowed resumption
+requires the helper's own outside-state sentinel and intact cookies. For an
+unchanged preserved helper, cookie-call coverage follows the proved invocation's
+reachable blocks. Unreachable calls grant no effects; a reconstructed parent
+still requires coverage of every source cookie-call occurrence.
 Registration no-return annotations and ordinary-edge removal bind the same
 current call occurrence, target, instruction extent and operation range. A
 conditional or malformed instruction cannot reuse that receipt. A separate
@@ -500,9 +4567,9 @@ the invocation's restored ESP and parent EBP. A conditional, malformed or
 unbalanced return cannot establish callback completeness or a continuation.
 The runtime advances the try level before invoking each finally, as described
 by [Wine's independent CRT implementation](https://github.com/wine-mirror/wine/blob/master/dlls/msvcrt/except_i386.c).
-Unknown callback calls, runtime-field writes and nonlocal callback exits still
-refuse this returning-path proof. These state facts grant no native call-frame
-or installation permission.
+Unknown callback calls, runtime-field writes without checked TryLevel receipts,
+and nonlocal callback exits still refuse this returning-path proof. These state
+facts grant no native call-frame or installation permission.
 MedIR distinguishes established parent EBP, private callback
 ESP and a continuation's checked saved ESP. Its shared root-shape and
 entry-stack-coordinate helpers are consumed by stack proofs, HighIR and LLVM;
@@ -535,6 +4602,24 @@ ordinary subgraph, while the checked
 RaiseException provider supplies its separate stdcall adjustment. These facts
 do not grant object borrows, memory-effect completeness or native EH authority;
 the existing call-frame and generated-code checks remain required.
+Exact, file-backed MSVCRT/MSVCR100 allocation, release and memory-copy/fill
+imports likewise supply only their cdecl returning-stack adjustment. Named
+PE32 scalar/array new/delete entries keep their exact decorated spelling.
+Direct IAT calls and authenticated jump veneers share the same provider and
+storage checks. Their allocation, deallocation, aliasing and callback effects
+remain outside this register-only proof.
+Cleanup relay caching uses the existing unwind-record bound, independently of
+the smaller ordinary-callee cache. Successful and failed lookups still consume
+the same cumulative work budget. Within one dispatch snapshot, each unwind
+action supplies its callback root once: its `ToState` and frame input do not
+depend on the originating level. Complete cleanup-effect proofs retain every
+originating level separately. Once that proof fails, no cleanup effects can be
+published, and already visited suffixes need no further traversal. Unknown
+states can then share a bounded index of the immutable callback target/state
+pairs present in the LowIR graph. Each dispatch still transfers its own frame
+snapshot; source frames and cleanup effects are never cached by that index.
+Known-state paths keep their exact unwind walks. Unknown states, all reachable
+callback roots and the existing output-work limit remain conservative.
 `getCheckedX86RegistrationLeafCalleeABI` uses the same affine transfer for
 callee-private stack and borrowed ECX object domains, with separate spill
 storage. Its exact object/image footprints describe a returning leaf; a caller
@@ -553,6 +4638,108 @@ or poisoned operations. It shares the frame proof's bounded work budget.
 ESI-based relays bind their base and saved entry EBP to each parent after cache
 lookup, again during caller ABI replay and during LLVM emission. LowIR owns
 the saved frame lifetime and object borrow proof.
+`getCheckedX86AllocatingStackProbeCall` authenticates an immutable PE32
+allocation constant, direct call and complete allocating page-probe helper.
+The fixed C++ installation proof uses its preserved EBP and below-node stores
+to identify a cookie-publishing frame. Entry recovery reuses that full layout
+proof before separating the frame from a preceding guessed owner. The exact
+handler/cookie operands may carry HIGHLOW fixups; allocation, call displacement
+and helper instructions may not. This description supplies no ordinary callee
+ABI or source lifetime proof. The original CALL remains in LowIR and MedIR,
+including page reads, faults, underflow clamping and return-PC movement;
+native reconstruction remains unavailable without their physical projection.
+`getCheckedX86CxxPrologueCall` shares the loader's exact EAX-handler helper
+decoder with entry discovery. It authenticates the current caller, allocation,
+helper, FuncInfo dispatch and any SafeSEH membership, then describes ordered
+live stack writes relative to the helper's established EBP. The description
+retains overlapping saves, the moved return PC's final ESP, cookie encoding and
+the returned register/flag effects. The loader uses its exact node and state
+offsets to collect source-store observations. `RegistrationStatePrologue`
+binds the actual stack word, EAX,
+incoming register identities and decoded occurrence at an unambiguous parent
+entry. Its cleanup-only transfer preserves ordered overlapping writes and
+publishes a distinct physical-call receipt, not an ordinary callee stack-pop
+contract. Catch entries and native reconstruction still require separate
+physical transfers; source-slot metadata alone grants neither.
+When a preceding padding guess prevents a closed-body boundary proof,
+`COFFRegistrationEHCallBoundary` requires two independent instruction witnesses:
+the guess lies inside a reached instruction, and a reached direct CALL names
+the complete checked prologue. Its bounded graph starts at the image entry and
+already authenticated physical registration entries. Actual witness paths
+must have immutable, unambiguous storage and valid absolute-operand fixups;
+indirect edges, byte-scan hits and the deferred candidates supply no roots.
+Stated boundaries remain authoritative. This fallback changes source ownership
+only and grants no ordinary callee, successful-return or native frame contract.
+The scoped `IndexedPE32CodeBytes` index avoids rescanning every image fixup for
+each witness span. It and the ordinary reader share one storage/fixup validator.
+Index construction, lookups and inspected records use the caller's existing
+budget; the image remains immutable for the index's lifetime. A completed
+traversal can publish independently checked boundaries even if a later witness
+exhausts the remaining allowance.
+`RegistrationPrologue` projects this checked physical entry into MedIR before
+stack analysis and SSA. It re-lifts the current three-instruction prefix and
+requires exact operations, boundaries and the source receipt to agree. The
+loader's ordered writes supply the save layout; the x86 lifter supplies XOR's
+arithmetic flags. Both return-PC stores, the cookie read and the FS chain
+transfer remain explicit. Scratch storage is separate from source temporaries,
+and all frame displacements keep their signed representation. This projection
+preserves the source EH metadata and needs a separate native frame binding.
+`RegistrationSharedCall` in LowIR binds each source occurrence to current
+immutable helper bytes, exact re-lifted caller operations, entry ownership,
+and a unique chain receipt. MedIR expansion and the parent's call/frame ABI
+query share this authority. The ABI closure treats these source invocations
+as physical frame operations; it still checks every ordinary callee and does
+not grant the shared helper an ordinary calling convention. Guarded exits
+remain outside this ABI projection until their checker is preserved.
+`RegistrationEpilogue` subsequently expands unguarded shared exits from the
+current helper instructions, using the same decoder, relocations and x86
+lifter as ordinary instructions. Exact caller boundaries and chain-removal
+receipts bind each occurrence. Explicit CALL/RET stack effects retain the
+moved return PC; EAX, EDX and flags are preserved by the helper's own dataflow.
+Guarded wrappers keep their original calls until the checker and its failure
+path have a physical projection.
+`RegistrationPhysicalFrame` independently replays the expanded private LowIR.
+Only the replay temporarily treats expanded helper boundaries as non-calls;
+source boundaries and state receipts, including `CxxPrologue`, stay unchanged.
+Every non-chain block, call, cleanup, incoming-frame, catch, runtime-object and
+image-read fact must agree. The separate immutable binding records the exact
+entry/exit occurrences and replayed chain operations. Consumers require each
+current MedIR FS access, a unique same-instruction zero-offset computation and
+fresh loader descriptors, including the entry's ordered writes. Native LLVM
+emission and independent COFF validation use that same binding and retain
+their other ABI, control, frame-privacy and output checks. Guarded handlers and
+guarded shared exits remain outside this physical native projection.
+Registration range recovery uses complete installing prefixes as local entry
+boundaries. A bounded instruction graph can disprove a heuristic start inside
+an operand while retaining stated, exported, relocated and conflicting direct
+entries. Data-pointer discovery marks an unrelocated address-valued word as
+the same weak candidate used for padding; a later relocated slot can confirm
+it independently of scan order. A complete stack-aligned C++ prefix establishes
+the installing function's start only. Its node displacement must account for
+the allocation, cookie and each actual EBX/ESI/EDI push; duplicated saves and a
+displacement for a different save count cannot establish an entry. This supplies
+no fixed EBP coordinates or native frame receipt. Cleanup-only C++ bodies can
+end at their closed return graph without absorbing the following function.
+The exact checked shared entry helper supplies its returning fallthrough to
+that ownership graph. Other calls, including later calls to the same target,
+retain the conservative control boundary; a function name alone proves no
+return edge.
+`getCheckedX86CxxEpilogueCall` authenticates the shared exit's immutable caller,
+complete restore body and optional GS-checking wrapper. `RegistrationCxxState` binds those
+current-image descriptions in the CFG layer; the state solver itself keeps no
+loader dependency. Its exit transfer requires the installed node, outside
+state, initialized pop words, exact saved register identities and intact parent
+return address. It preserves EAX, EDX and flags, models the helper PC separately
+from the parent's PC, restores ESP and retires the chain at the exact call
+boundary. Shared exits are chain removals, not ordinary callee stack-pop
+contracts. A guarded exit additionally requires the same live EBP-16 cookie
+condition owned by the checked exceptional handler, a current leaf checker
+and proven global-cookie preservation. Only then can the state solver follow
+the checker's equal-value return, model its nested return-PC store and replace
+the six arithmetic flags with CMP's actual result. Other register/flag
+provenance is retained. This physical wrapper never becomes an ordinary
+cookie-check receipt. Overlapping saves remain refused, and guarded exits still
+need a physical checker/failure-path projection before native reconstruction.
 `RegistrationCleanupABI` authenticates immutable MSVC tail-jump relays and
 Clang relays that save EBP, adjust the source frame and call one or more checked
 leaves before restoring EBP. The ordered call list retains every ECX object
@@ -642,6 +4829,17 @@ try and handler tables and bind each cleanup to its generated state and range.
 The COFF table validator reparses source metadata, checks all raw table edges,
 matches the physical catch subfield and authenticates every absolute pointer
 fixup. SEH and C++ share generated-section and pointer-field ownership checks.
+Parents with only cleanup actions obtain the same layout from their cleanup
+records. They retain a literal zero try count and pointer with no overlapping
+fixup; no empty table is allocated. The shared state-map proof checks every
+ordered cleanup and outer edge. Handler, SafeSEH, relocation and final PE graph
+validation apply equally to these parents.
+Their source unwind projection visits each descending edge once, retaining up
+to the shared 4,096-record limit while separately bounding nested cleanup
+funclets to 128. Empty transitions reuse the prior target and do not add
+funclet depth. Mixed try/catch graphs retain their smaller search bound.
+Generated state-map validation uses the shared record limit and still binds
+every native state and outer edge to the source projection.
 The emitter fixes original image storage identity before materializing any
 function or shard, including masked native C++ sources. Preserved callee
 footprints and ordinary helper bodies therefore share the same canonical image
@@ -672,6 +4870,11 @@ definition. The committed receipt retains sorted original/generated RVAs; final
 validation requires PE32 x86, an executable original entry and the exact E9
 target, in addition to the generated section hash. A complete language table
 cannot authorize an omitted or redirected entry trampoline.
+For a checked shared entry beginning with a narrow PUSH and MOV EAX, handler,
+the five-byte jump retires the MOV's complete HIGHLOW operand. Preparation
+authenticates that exact handler field and its original bytes before removing
+the relocation, including the operand bytes outside the jump. Other partially
+overwritten relocation fields still refuse.
 The same bounded COFF FuncInfo decoder exposes complete normalized wire graphs,
 record extents and callback-pointer fields without inventing a physical frame.
 Valid record aliases remain inspectable; distinct ownership is a separate
@@ -1143,6 +5346,11 @@ and its [schema](web-artifact-schema.md) for the current capability boundary.
 
 Library feature recognition reads the shared MedIR boundary before the source
 routes diverge. `SignatureDB` owns validated packs and the existing byte matcher;
+`loader/ImageProfile` separately owns metadata-based system, execution-domain
+and runtime evidence. Automatic pattern selection consumes that evidence and
+the reviewed bundled pack scopes before file/cache I/O. Unknown or conflicting
+dimensions retain coverage; mixed SDK and compiler helpers keep their broad
+scope. See [signature selection](signature-selection.md).
 MedIR analyses prove typed expressions and bounded COM ownership sequences.
 `PipelineLibraryRecognition` combines this evidence without changing names,
 operands, bodies or ABI contracts. The session publishes one display identity
@@ -1154,6 +5362,55 @@ Both source routes apply the same module-wide return modeling before recovering
 call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
 uses the two integer return registers; HighIR and LLVM emission must preserve
 both halves through callers and source returns.
+
+Explicit source declarations can bind entry and call carriers on HighC and on
+an LLVM-to-C source projection. Machine lifting, patching and analysis ignore
+these declarations, including when a patch request also sets the source-view
+flag. LLVM source projection does not enable runtime signature discovery.
+`MedTypePass` connects declared incoming stack bytes to raw entry-SP loads by
+initializing their local source frame once. Ordinary MedIR stores preserve
+subsequent writes and floating-point bit patterns; both emitters consume that
+same initialization. This transports an already supplied declaration and does
+not infer an original prototype or authorize a machine-code rewrite.
+
+`PipelineIncomingStack` also derives internal integer source declarations for
+bounded, complete x64/ARM64 PE/ELF leaves that read aligned incoming scalar
+carriers. Their exact 1/2/4/8-byte widths survive the omitted-callee memo,
+entry binding and outgoing-byte proof. Signed and unsigned extensions preserve
+the loaded bits; a narrow input never initializes adjacent stack bytes.
+Prefix loads at the same offset share one scalar carrier only when an original
+reachable load also reads its full declared width. The shared frame proof checks
+that maximum separately for each slot, so repeated narrow loads or a complete
+load from another slot cannot supply the missing bytes. Scalar byte extraction
+preserves its checked bounds during the source role walk.
+The shared entry-stack proof owns offsets, and a separate value walk rejects
+external memory, frame escape and undefined inputs. Private frame/link spills
+may survive in the leaf: `SourceFrameAnalysis` checks the original LowIR byte
+identities, complete SP restoration and the current format's preserved bank.
+Saved registers cannot become declared scalar inputs or return values. Incoming
+x64 slots start above the pushed return address; ARM64 slots start at entry SP.
+ARM64 return control in LR is proved independently of the result in X0. Both source routes bind these
+declarations before SSA and reconvert only affected definitions and callers.
+Every caller in a request must supply all outgoing bytes through the shared
+`SourceCallABI` write proof; otherwise the declaration is withdrawn as a unit.
+Ordinary signature bounds cannot truncate an already bound source call.
+HighIR also keeps every validated explicit source ABI operand unchanged:
+ordinary register and outgoing-stack scans cannot replace its values or append
+arguments, even when its stack-only declaration uses fewer parameters than the
+platform's positional calling convention.
+LLVM source exports retain the fixed declaration of such a call even when the
+selected output omits its callee, instead of falling back to unknown extern
+varargs. Explicit native stack-word source calls use the same declaration path.
+
+Exact register-call targets use the shared bounded LowIR scalar query. The original indirect occurrence remains the stack-proof key; only the source-bound MedIR call becomes a named call after its target, callee declaration and outgoing bytes agree. Loads, cross-block values, call clobbers and incomplete register bytes cannot supply a target.
+
+Selected callers use the existing omitted-callee reader and its image- and
+summary-sensitive memo. A bounded instruction preflight only avoids unnecessary
+CFG builds; the ordinary complete CFG and MedIR still establish the declaration.
+The memo accounts for cached stack locations and widths, and follows its existing reset
+contract when image bytes or analysis policy change. Work limits belong to
+`pipeline/Limits.h`. These projections do not infer arbitrary framed/VM state
+inputs, floating types, or an external calling convention.
 
 The `neverd-bytecode` tool and C/Python plugins accept externally specified
 instruction languages through the shared recovery pipeline. C/Python callers
@@ -1316,6 +5573,28 @@ queries retain their existing conditional-root policy.
 Numerical coordinate membership supplies neither input known bits nor negative
 dependency/origin authority. Other architecture/format admission remains with
 its existing proof owners.
+A proposal stage that exhausts its shared evidence rolls back and is retried.
+A candidate the stage never reached is as undecided as one whose own proof ran
+out: when an earlier resolution in the same build claimed it as table-shaped
+(`ShapeClaimedBranches`), it keeps the same opaque, unsafe branch identity
+across the retries, and only a completed stage can drop it. Otherwise one
+expensive candidate early in the inventory would let the ones after it fall
+back to tail calls.
+
+The AArch64 compact table (`tryAArch64CompactTable`) traces the shifted entry
+back to its byte or halfword load through copies, zero and sign extensions and
+low-byte views, and reads each entry as that chain leaves it: the entry itself,
+or its zero or sign extension, as GCC's `add xd, xa, wo, sxtb #2` makes it. A
+view narrower than the entry, or a zero extension of a sign extension, rejects
+the table. The table base is folded where the entry is loaded, because GCC
+reuses the base register for the anchor before the branch.
+A compact table carries no relocations, so its readable capacity is the rest
+of its data owner. That capacity bounds storage only for a selector no guard
+bounds. Once a precise guard authenticates the index domain, the capacity is
+cut to the guard bound: the owner's later bytes are adjacent data the dispatch
+cannot select. Decoding them would charge the fixed point for slots no runtime
+coordinate reaches and leave the guarded domain looking like a partial subset,
+which a case that calls a function cannot close.
 Guard identity can name a contained architectural register lane at its exact
 full-register writer. The shared reaching-value resolver names that complete
 definition and retains the lane's offset and width, so a comparison of AL or
@@ -1326,6 +5605,44 @@ Exact guard-occurrence queries use the expanded CFG value-reconstruction depth
 limit. Guard syntax collection and materialization keep their separate, smaller
 expression limit. This lets a shallow guard cross a longer predecessor graph
 without treating depth exhaustion as a completed proof or skipping replay.
+When separate predecessor arms guard one selector, scalar comparison literals
+can propose a finite envelope even though no single guard dominates the load.
+The joined-domain query must prove every incoming value and a dense prefix;
+the proposal supplies no table capacity or range authority. Equal incoming
+values keep their real predecessor-join provenance after deduplication, only
+for that query mode. Predicate disjunctions and SELECTs cannot manufacture it.
+A guard operand reloaded from memory may nominate the nearest literal STORE
+in its block. The shared value resolver must prove that exact literal reaches
+the exact operand use before guard materialization accepts it. Lexical
+proximity supplies no memory, frame or constant-value authority.
+Direct and reloaded guard constants reject address provenance and address
+owners: a relocation's small source value is not a numeric bound after relinking.
+Within one block, the value resolver can forward an equal-width literal STORE
+to a LOAD through the same unchanged full guest pointer, including complete
+address copies and zero-extension into the internal VA width. The first
+intervening writer, atomic, call, intrinsic or control transfer ends that
+search. Predicated stores and changed pointer lanes refuse it. This local
+identity does not require a function-entry SP offset and supplies no private
+frame, cross-block memory or authenticated-writer permission.
+Linked x64 PE RVA tables query the loader's image base at each exact address
+operand through that same all-path value resolver. The candidate does not
+depend on finding a nearby lexical LEA, and a different value folded from an
+unrelated block cannot shadow it. Single-level LOADs, both levels of compacted
+tables and target anchors share this query. A completed mismatch retains the
+ordinary relative-base path; an incomplete query stops the candidate and
+requests complete-graph replay. Every query consumes the enclosing candidate
+and stage evidence, preserves address provenance and replays after CFG growth.
+It grants no table storage, selector domain, target or SEH frame authority.
+Other table bases and target anchors use a constant-address query on that same
+graph. The reconstructed value proposes one pointer-width address, and the
+ordinary all-path matcher authenticates it against every reaching arm. Scalar
+collisions and address fragments cannot propose addresses. Ordinary relative,
+absolute, selected and two-level tables, AArch64 compact tables and Thumb
+register-based TBB/TBH share this query, independently of format or lexical
+distance. A completed refusal can retain legacy candidate folding; incomplete
+work cannot. Address results participate in the value cache's output identity,
+cold-work accounting and transactional failure clearing. Final storage, domain
+and target proofs still replay after graph growth.
 A failed optional consumer audit grants no relocation-root suppression. With
 its shared evidence budget intact, the resolver retains every root and replays
 the mandatory selector, address and target proofs under that stronger context.
@@ -1349,7 +5666,64 @@ The LLVM backend accepts a sparse table's logical address origin separately
 from its owned runtime slots. Eliding its target load still requires the exact
 operation witness, complete mapped slot and relocation ownership, and exclusive
 consumption by the recovered branch. The unused prefix gains no suppression
-authority from sharing that origin.
+authority from sharing that origin. A table among the code is data the loader
+found there (`DataInCode`); the base decomposition refuses bytes an executable
+section owns, so the witness matches the load's address against that table's
+own base alone (`jumpTableForLoad`). Where the target load is elided, the
+operations that only form its address are too: its forwarding copies and
+extensions back to the addition of the table's base, each read by nothing
+else (`collectSuppressedTableAddressOps`). The base is then never
+materialized, so a table in a code segment too large to mirror needs no
+global; the switch dispatches on its selector. Module arbitration decides which
+relocation slots the pointer mirror may leave out, and a large module's runs
+out of budget and protects every slot; the witness elides a table's LOAD only
+where its slots are suppressible, except for a table among the code, which
+often has no mirror at all, and whose LOAD only the switch reads needs none.
+
+A table among the code that is read as data, not elided, still mirrors. The
+whole executable segment cannot become one global past the single-global
+embed limit (1 MiB), but the table's own object can: the run of consecutive
+pointer-wide relocated slots from its `DataInCode` start, a few hundred bytes
+though its `.text` is megabytes. `buildCodePtrSegmentGlobal` mirrors that run
+when a data address inside it is resolved (`InCodeObjectAddr`), its slots
+becoming the mirror's relocatable fields and its bytes copied from the
+segment; the read GEPs into it at the slot's offset. A segment within the
+limit keeps its whole-segment mirror, and every code pointer in the run must
+still resolve to a lifted owner or the emission fails closed.
+An exact import veneer the loader registered (`jmp [IAT]` with a named
+import) stands for its import where code names it directly: a pointer-mirror
+slot and an instruction operand of code-address provenance, such as a
+destructor `push offset veneer` for an iterator, both take the module's
+symbol for that import (`importedSymbolIdentity`), since the veneer itself
+is absent from MedIR. A value the code computes from a veneer's address
+still needs a lifted owner, as the code-identity proof requires.
+
+The LLVM pointer-table role proof treats a frame slot as a PHI over the
+values stored to it (`collectFrameReloadSources`). As a PHI's recurrent arm
+does, a stored value that is the slot's reload advanced by a stable offset
+(`slot = &table[0]; ...; slot = slot + 4`, a loop's pointer spilled across the
+calls in its body) carries the role of the initializers, which alone prove it.
+A frame slot's key follows the stack pointer through each loop header that
+merges it, where a call's pushed arguments are popped on the way back
+(`canonicalFrameSlotKey`). The walk from one value closes a cycle only back
+to that value, and an inner loop's merge on an outer loop's back edge is a
+cycle that avoids it; every push in the inner loop then had no key and made
+each reload in it incomplete. An unbound walk that fails without running out
+therefore takes the function's affine frame keys (`affineFrameKey`): one
+optimistic fixed point over copies, extensions, constant additions and PHIs
+from the frame roots, under the walk's edge feasibility, which closes every
+cycle at once. A PHI that settled while an arm stayed unreached has no key.
+
+A pointer the code chooses between a runtime value and a static object of a
+mirrored segment (`p = i < n ? &buf[i] : &empty`) is no table address, so
+the role proof, which merges one role per PHI, refuses it as ambiguous. The
+address then stands as the code formed it when every static arm is either
+the mirror's own pointer (a pointer-table constant of the Symbolized model)
+or an address a relocation proved, which keeps its own route, and every
+other leaf is a runtime value: one memory holds, a call returns, a live-in
+register or argument, or arithmetic on those. A number that lands in the
+image without that proof would stand as an original address, so it keeps
+the refusal.
 
 MedIR binds a switch selector to its dispatch block as well as its machine
 address. CFG products can copy one instruction into distinct SSA lifetimes;
@@ -1372,6 +5746,33 @@ incomplete rather than supplying an unconstrained value or a negative dependency
 certificate. Validation debits the same shared graph work account on cold and
 cached queries; unsupported opcodes acquire no semantics from this check.
 
+The reaching-value graph distinguishes an opaque definition from an unresolved
+dependency, including an implicit caller-saved clobber. Copies, casts, partial
+register writes and predecessor joins retain that distinction. A stable
+occurrence can still prove equality with itself or supply unconstrained numeric
+bits, but cannot turn an incomplete dependency walk into a negative `MayDepend`
+certificate. A known producer beside an unknown input still establishes a
+positive dependency. Unresolved alternatives also keep the query incomplete;
+only separately authenticated producer occurrences can stand as direct roots.
+Closing an active cycle introduces no new source; the existing pending-walk
+owner still requires every incoming definition before its result can be reused.
+
+An immutable resolver graph may retain completed backward definition searches
+in a bounded, lazily allocated table. Exact block, use position, register view
+and target-register identity bind each entry. Value and affine-frame proofs
+reuse only the next possible definition, then perform their ordinary byte-lane,
+ABI, predicate and value checks. Calls remain candidates; an exhausted search is
+never retained. Hits debit every operation the original scan would visit,
+including the returned candidate, so reuse preserves evidence-budget outcomes.
+Short prefixes keep their ordinary scan. Graph replacement retires the table.
+
+Frame-memory proofs may similarly retain the next possible writer by exact
+block and use position. Stores, atomics, calls and all intrinsics remain
+candidates for the ordinary effect and alias checks. This bounded table stores
+only completed scans and charges every skipped operation on reuse. Queries
+with authenticated memcpy occurrences keep the full scan, including rejection
+of a claimed writer at a non-call operation and each inventory lookup charge.
+
 Frame-memory reaching values include an unknown entry arm at every active proof
 root, including roots with loop predecessors. A future back-edge STORE cannot
 certify first-iteration contents or an authenticated writer. Definite writers
@@ -1384,10 +5785,28 @@ same frame state for each query. Every incoming value must agree; unanchored
 cycles, nonzero loop deltas and overflowing intermediate offsets invalidate
 their users. The existing evidence allowance charges graph construction and
 propagation. Completed equations are immutable within a proof mode, so later
-queries solve only new dependencies. Register/memory transparent-cycle memo
-entries are reusable only until either resolver learns a concrete result;
-both share the invalidation generation because their walks recurse into each
-other. Neither cache bypasses incomplete-proof rejection.
+queries solve only new dependencies.
+
+Register and memory value reconstruction share a stack of active walks. A
+concrete merge that skipped a transparent backedge is still provisional: later
+loop definitions may add values. `ResolverPendingWalks` records the exact active
+dependencies through depth 255 in fixed storage, including dependencies
+inherited through memo hits. Greater caller-specified depths use a conservative
+interval there. Unrelated intermediate returns do not expire an exact snapshot.
+Retiring a dependency invalidates that snapshot; closing the state's own
+backedges removes only its own activation. Unique activation identities prevent
+a later walk at the same depth from reviving stale entries. Concrete results
+with no pending dependency retain their ordinary batch lifetime. Context-free
+transparent cycles retain the existing shared generation guard; memory-context
+resets also invalidate those entries in the value memo. Neither cache bypasses
+incomplete-proof rejection.
+
+Edge refinement shares one predicate policy with its local shape inspection.
+An exact, unguarded byte producer can establish that the current query cannot
+use a condition, avoiding reconstruction of its operands. Exact COPY and NOT
+transports preserve that classification. Needed predicates, guarded or partial
+definitions, and producers outside the local block retain the complete walk.
+All inspected definitions consume the ordinary evidence allowance.
 
 HighIR's call-argument projection uses the same checked affine equation core
 for entry-stack offsets in an immutable MedIR function. Each SSA definition is
@@ -1400,8 +5819,17 @@ leaves the coordinate unknown even when a more expensive path analysis might
 prove it within the bound.
 
 Proof graph indexes use a private arena that outlives their containers.
+Snapshot grouping advances through frozen group keys in order; a backward
+group start switches the remaining pass to ordinary ordered lookups.
 Ordered insertion hints preserve duplicate
-and out-of-order point handling. A fixed-size register lane cache checks the
+and out-of-order point handling. After construction and pruning, a frozen graph
+may retain point lookups in a lazily allocated table bounded to 13 KiB.
+Buckets of four entries retain colliding keys, including missing points, without
+reordering entries on every hit. Hits check the full instruction address and
+operation sequence; misses fall back to the ordered index.
+Returned block/operation coordinates are owned values, so later queries
+cannot overwrite a caller's result. Graph replacement retires the table.
+A fixed-size register lane cache checks the
 complete offset/width key and uses the query's immutable target metadata.
 These storage and lookup optimizations retain the original evidence charges;
 they do not reuse CFG or value proofs across changed snapshots. A builder may
@@ -1410,14 +5838,18 @@ exact instruction facts, LowOps, effective edges, block starts, proof roots,
 conditional roots and storage-owner inputs. Hits pay the complete original
 graph-construction charge. The graph may also retain up to 64 query outcomes
 under a separate 8 MiB retained-payload allowance. Within one read-only target
-role, load-address role or mask-domain invocation, a local scope can reuse its
-validated graph without recopying the instruction snapshot. It is bound to its
-builder and cannot cross instruction, block or storage-owner mutations.
+role, load-address role, address-discovery or mask-domain invocation, a local
+scope can reuse its validated graph without recopying the instruction snapshot.
+It is bound to its builder and cannot cross instruction, block or storage-owner
+mutations.
 Each query still compares roots and owned effective edge overrides, including
 temporary and empty overrides, and pays the original snapshot and graph work.
 One scope retains one bounded graph and at most 64 KiB of override keys;
 oversized keys keep the ordinary validation path. Nested queries own separate
 leases, and a new invocation validates its graph in full.
+Address discovery shares this scope across base candidates, relative anchors
+and both levels of a composite table. Its recognizers are const; each new
+recognizer invocation starts a fresh scope before any proposal is published.
 Exact ordered query fields, proof limits, output shape, function context and
 both relocation occurrence inventories bind each retained value result.
 Hits pay the complete cold value
@@ -1467,12 +5899,26 @@ owns the final publication decision.
 Module arbitration keeps input capacity, retained evidence and repeated work
 separate. The LowIR inventory admits at most 400000 operations; its queue still
 has 65536 debits, and block transfers share 1048576 operation debits across
-functions, fixed-point visits and final use recording. Address-occurrence
+functions, fixed-point visits and final use recording. A completed transfer is
+reused when its complete incoming state is unchanged; only a changed output
+schedules successors. The solver still saves changed incoming facts when a
+block kills them, because final use recording must observe those inputs.
+Address-occurrence
 screening uses the scan account. Retained anchors, field-index nodes and every
 source reference use the evidence account. One frozen field index preserves
-all matching contexts, including imprecise and conflicting sources; a missing
+all matching contexts, including imprecise and conflicting sources. Actual
+loader fields query it directly; an unmatched source key supplies no field
+authority and still spends retained evidence. A missing
 PC-relative occurrence retains the loader field's container rather than
-authorizing its approximate numeric target. Any exhaustion protects every
+authorizing its approximate numeric target. Loader fields and data pointers
+spend the scan account. Exact absolute targets outside every complete physical
+owner envelope are rejected before source lookup. A bounded index of starts
+and prefix-maximum ends also rejects space between disjoint owners, while
+preserving overlapping owners, sparse filler, internal gaps and one-past
+endpoints. PC-relative approximations cannot use this filter. An unreadable
+pointer still fails the inventory. The last proved gap is reusable within
+the frozen inventory, with a scan debit for every input. Only matching
+owner evidence spends the retained account. Any exhaustion protects every
 requested relocation slot and rejects writable dispatch owners.
 
 An x86/x64 absolute dispatch may name the preceding table's one-past address
@@ -1493,6 +5939,14 @@ are checked even when the final annotation is absent. A contiguous per-slot
 storage inventory must partition the freshly proved runtime envelope exactly.
 Other architectures and complex tables retain their existing conservative rules.
 
+ELF and COFF extent discovery reads DWARF frame headers through the same
+bounded decoder as full exception recovery, without constructing the unused
+CFI instruction programs. These private header records supply only code
+extents, never unwind rules or language metadata. Runtime-index extension
+records retain the complete decode their admission requires. Full recovery
+still reads the current bytes after symbol/import discovery and validates all
+CFI programs, personalities and LSDAs before publishing exception metadata.
+
 DWARF frame-section decoding failures remain structural failures on every
 FDE-backed function from that section in Itanium and Darwin. A later language
 refresh cannot clear them; complete sections add no new refresh authority.
@@ -1508,13 +5962,42 @@ incoming SP and link-word restoration under the existing native call ABI.
 Whole-word copies, bounded pointer-width stack arithmetic and exact spills
 carry these identities; all reaching predecessors and backedges must converge.
 Independent roots start unknown. Partial or overlapping writes invalidate whole
-restoration words; unknown memory writes and exposed frame storage invalidate
-spill evidence. Unsupported effects, incomplete graphs and exhausted work
-retain the original indirect branch. Call preservation comes from `TargetRegInfo`'s
-format-selected ranges. This condition supplies no callee identity or source
-ABI. Successful classification emits an explicit `INDIR_CALL + RETURN` pair;
-HighIR cannot infer another tail call from a successorless `INDIR_BR`. An
-unresolved transfer without a usable switch remains an explicit failure path.
+restoration words. A store the spills do not track exactly keeps the spills of
+the frame the function has allocated only when its address is not derived from
+the stack pointer and no frame address has escaped: under the native ABI
+nothing outside the function can name that frame. Through a frame-derived
+address, or after an escape, it invalidates all spill evidence. A frame address
+escapes when it is stored through an untracked address, stored outside the
+allocated frame or where no spill records it, or passed to a call; a load
+through a frame address that no exact spill answers carries the taint of every
+spilled word. Atomic read-modify-writes and exclusive loads and stores, whose
+operands `lowMemoryOperands` and `lowIntrinsicMemoryOperands` decode, write only
+their output and the memory at their address: a store among them is an
+untracked store, since its ordering and an exclusive store's possible failure
+keep that memory out of the spill facts, and the value one returns is
+untracked. Value-only intrinsics are ordinary values, a read of state no
+analysis tracks (`intrinsicWritesOnlyItsOutput`: `mrs`, FPSR and FPCR reads)
+writes only its output, and an unconditional trap ends its path. Other
+intrinsics, unsupported effects, incomplete graphs and exhausted work retain
+the original indirect branch. A frame description that only unwinds the frame
+(`ExceptionFunction::describesUnwindOnly`: no personality routine, handler
+data, LSDA or language table, as for the FDE every function of an ordinary
+shared library has) runs no handler, so it does not prevent the
+classification. A complete address-form Itanium table read by the C or C++
+personality allows a branch whose covering call site names no landing pad
+(`exceptionForwardsUnwindAt`): an exception there goes on to the caller either
+way. An address the table leaves out terminates under the C++ personality, as
+a `noexcept` destructor's empty table makes it, and keeps its branch, as does
+any other handler. A branch whose target derives
+from an address of the function's own code (an `adr` of a switch's case
+labels, which the jump-table resolver left unresolved) is a computed jump
+within the function and keeps its indirect branch; the function's own entry is
+no such address, since a branch there recurses. Call preservation comes from
+`TargetRegInfo`'s format-selected ranges. This condition supplies no callee
+identity or source ABI. Successful classification emits an explicit
+`INDIR_CALL + RETURN` pair; HighIR cannot infer another tail call from a
+successorless `INDIR_BR`. An unresolved transfer without a usable switch
+remains an explicit failure path.
 
 The CLI parses commands in `tools/neverd`, creates a `neverd_session_t`, and
 calls the public API in `include/neverd/sdk/NeverDCAPI.h`. Engine state lives in
@@ -1587,24 +6070,68 @@ unit scales shorten the expression without substituting C array arithmetic or
 assuming that a pointer is in bounds.
 Generic LLVM arithmetic and control builtins do not request target ISA headers.
 Both C routes reject string-literal replacement when loader fixup provenance
-overlaps any candidate byte, including its terminator.
+overlaps any candidate byte, including its terminator. Bytes in code are no
+candidate, as `BinaryImage::isCodeAddress` decides: by the section that holds
+them, so the read-only data a linker maps with the code (the single R+X
+segment of an Android image) still prints as its literals, and by the segment
+only without section headers.
 
 ELF GOT data identities come from the exact relocation symbol snapshot through
 `collectDataSymbolBindings`, shared by HighC and LLVM emission. The loader's
-relocation inventory owns addend rules; complete PT_GNU_RELRO coverage owns
-whether a slot load can become a symbolic address. Writable slots retain
+relocation inventory owns addend rules; whether the slot is read-only once
+relocated owns whether a slot load can become a symbolic address, as
+`BinaryImage::readOnlyAfterRelocations` decides by the address: a read-only
+segment, a segment or section of relocated constants (`.data.rel.ro`,
+`__DATA_CONST`), or complete PT_GNU_RELRO coverage. An ELF load segment keeps
+its `LOAD_n` name, since it holds sections of both kinds; no decision reads a
+linked image's segment name. Writable slots retain
 addressable storage and a symbolic initializer. Undefined data uses an opaque
 assembly-name alias in C, avoiding invented types and system-header conflicts.
 Defined data uses its existing image backing. TLS and IFUNC records are excluded.
+ELF string-table reads share `getLinkedStringTable` for original and reconstructed
+headers. Missing or malformed dynamic strings are diagnosed without invoking
+LLVM diagnostics that require an original section index. Relocation symbol
+snapshots retain their numeric fields with an absent name, so unavailable names
+cannot erase the symbol values needed to relocate the mapped bytes.
 This contract also works without section headers. In sectionless ARM ELF,
 immutable executable bytes can supply scalar literal reads without classifying
 unreached bytes as instructions; overlapping relocations prevent folding.
+
+An absolute symbol relocation (`NEVERD_ELF_ABSOLUTE_SYMBOL`: `R_386_32`,
+`R_X86_64_64`, `R_ARM_ABS32`, `R_AARCH64_ABS64`) with no addend against a strong
+undefined function starts an ordinary data word at that function, as
+`void (*sink)(int) = exit;` does. `collectExternalFunctionPointers` lists these
+words. They are not import storage: the program may store another function
+there, so the listing keeps the variable's name, and no call through the word
+takes the function's name or its no-return contract. LLVM emission treats the
+word as callable storage, loads it for each call, and starts its mirror field at
+the function's address rather than at the file's zero. Until a call proves the
+function's type, C names it through the same opaque assembly-name alias as
+undefined data. Weak symbols, addends and words two relocations name
+differently stay unknown, and a call through them still fails closed.
 
 The shared i386 get-PC recognizer requires the complete `mov r32,[esp]; ret`
 encoding, with bounded NOP padding. Its own HighC, LLVM and LLVM C bodies retain
 that instruction sequence in a naked helper, preserving the selected register,
 stack and flags. Caller rewriting continues to require CFG-authenticated
 occurrences; helper names alone prove nothing.
+A call to such a helper is lifted as a copy of its return address into the
+register the helper loads. That copy seeds an object file's GOTPC model as a
+call/pop does (`completeExactI386GOTBaseModels`), and needs no proof about the
+stack: the literal is the exact PC however control reaches the call. GCC adds
+the GOTPC immediate right after the call; when nothing else enters that add and
+none of its ops before the sum writes the register, the model needs no graph
+query either.
+An i386 ELF PIC switch reads a table of `case@GOTOFF` words through the
+register a get-PC sequence and an `add $_GLOBAL_OFFSET_TABLE_` filled, then adds
+the entry back to that register. A linked image keeps no relocation for either,
+so the relative-table recognizer takes the GOT address the loader recorded
+(`linkedI386GlobalOffsetTable`: DT_PLTGOT, or the `_GLOBAL_OFFSET_TABLE_`
+symbol, which must agree) as the table's separate target anchor. The get-PC
+value and the immediate are scalars, so the target-role and displaced-base
+proofs accept the scalar GOT address besides an address constant, and still
+prove that the register holds it on every path. An object file keeps its
+relocation-authenticated GOT-base model instead.
 
 For 32-bit ARM Mach-O, the loader seeds exact Thumb entries from executable
 `N_ARM_THUMB_DEF` symbols, including object address zero, then follows direct
@@ -1612,6 +6139,22 @@ control-flow edges through the shared reachable-mode analysis. A cross-state
 `BLX` can establish an ARM target without treating an unflagged symbol as ARM
 proof. Decoding is limited to reached instruction spans; an unproved gap in a
 mixed image retains unknown mode.
+The ELF loader pairs each ARM PLT entry with its import by decoding the GOT
+cell the entry's instructions compute (`findARMPLTVeneers`), in mixed ARM/Thumb
+images as in single-mode ones: the PLT is ARM code either way, and a Thumb
+caller's `blx` reaches the same stub. Without the pairing every import call of
+a Thumb library read as an unnamed local function, without its prototype or
+no-return contract.
+A long-branch or interworking thunk a linker wrote between a branch and an
+import's stub stands for that import too: a Thumb tail call enters the ARM PLT
+through lld's `__ThumbV7PILongThunk_*`, a distant A64 call through
+`__AArch64ADRPThunk_*`. `linkerThunkAt` (loader/LinkerThunk) decodes the forms
+`BranchEncoding.def` lists, and signature matching follows a reference
+through the same decoder. Function discovery pairs a thunk with an import
+only when its exact target is a paired stub and only for the
+multi-instruction forms a linker alone writes (`linkerLongBranchThunkAt`); a
+direct jump to a stub ends many a routine. Thunks to the image's own routines
+are not followed into calls yet.
 Validated ARM and Thumb instruction relocations can also seed their exact
 instruction addresses. This can recover an otherwise uncalled function when
 its entry instruction has such a relocation, without assuming that an
@@ -1639,6 +6182,20 @@ unreached function remains unknown until it has its own evidence or assertion.
 fixed-width read from a `$d` island inside executable storage. Both HighIR and
 LLVM emission require the whole read to stay in the island and reject writable
 or relocated bytes.
+
+The CFG builder proves an ARM `PC + literal` sum at the exact ADD output that
+forms it (`add rD, pc, rT`, or the address of `ldr rD, [pc, rT]`), on every
+path that reaches it, for three kinds of literal: an applied `R_ARM_REL32`
+field, an object's literal that no relocation writes, and a linked image's
+literal that no relocation writes (`ARMLinkedLiteral`). A linked image keeps
+its sections at the distances the static linker resolved such a literal
+against, so the sum is one image address, owned by the section (or the
+segment, without section headers) that holds it. LowToMed replaces the proven
+ADD with that exact address. This matters where the PC of the consuming
+instruction lands on the literal word itself, as in a getter whose literal
+follows its `bx lr`: the PC then equals a literal-pool address, and treating it
+as a reference to that word made the rebuilt access depend on where the copied
+code sat.
 
 After ARM call-arity recovery, MedIR propagates a proven pointer parameter
 through direct calls only when the argument is the exact incoming parameter;
@@ -1671,20 +6228,87 @@ the return address the call pushed. HighC prints it as
 Neither view gives the frame a slot holding that address, so the read would
 otherwise print as an unassigned local or a zero.
 
+The pipeline runs both annotations through `markSourceStackAccesses`, sharing
+one batch of entry-stack offset proofs and the resulting load/store ranges.
+Nontrapping scalar parity counts may precede an explicit scratch overwrite.
+A physical CALL return-slot write cannot substitute for a represented store:
+source C does not yet materialize that write, and later reads or escaping frame
+pointers could observe the missing value. Calls remain observation barriers.
+Only annotation flags change between the two consumers. The ranges are discarded
+before returning; no result survives a later IR mutation, and the proof's
+join, provenance, depth and work-limit rules are unchanged.
+
+`prepareMedStackAccesses` owns the post-conversion entry-kind, alignment and
+annotation sequence. Register-pair return recovery calls it again after
+reconverting a caller from LowIR: old operation flags cannot describe that new
+sequence. HighC and LLVM C request the source projection; machine lift,
+patching and analysis keep the original stack operations.
+
+The entry-stack proof keeps definitions, joins, ambiguity and transient active
+contexts in one index. A join's anchored induction assumption lets an interior
+stack definition be checked again on the backedge; every incoming arm must
+still agree. A cycle within the same assumption context remains unresolved.
+Each visit consumes its ordinary work and depth allowance. Completed joins
+that used no assumption may reuse their proof with its original work and depth
+charges. Conditional results and failed queries are not cached, and scoped
+active markers restore the outer query after each recursive check.
+Read-only offset queries lazily reuse the shared entry-register authenticator's
+answer for the canonical defining occurrence. Every use still checks exact
+register metadata; the fact lasts only for that immutable proof. Alignment
+rewrites continue to authenticate against the current entry COPY prefix.
+
+HighIR's call-result set uses the shared variable key for stores and indirect
+calls as well as definition indexing. Logical parameter numbers occupy a
+separate namespace from machine SSA values. A floating stack parameter whose
+number matches an intrinsic temporary therefore retains its source type and
+physical entry offset when stored; the actual call result stays a local value.
+
 When HighC must keep a frame whole, it declares the frame bytes as
-`stack_storage` with `frame_base` pointing into them. The storage prints as one
-record laid out exactly like those bytes, as the LLVM C route prints `frame0`.
-A displacement becomes a member when every access the writer can place there
-is a plain integer read or write of one width and signedness, at an aligned
-offset inside the storage, clear of every other access. The member keeps the
-slot's name from before the storage replaced it, else `var_mXX`, and prints as
-`stack_storage.var_m10`. Gaps are named `gapXX` by offset. A debug object of
-another type (a record, an array, a pointer or an enumeration) keeps its bytes
-raw, and a debug integer must have the access width. Every other access stays
-a raw access through `frame_base` to the same object, so a member and the bytes
-around it always alias. The record's tag is `frame_<entry>`: the C++, Go and
-Rust views parse the HighC text into one namespace of record tags, and the Go
-and Rust views print the record's type where the frame is declared.
+`stack_storage`, one record laid out exactly like those bytes, as the LLVM C
+route prints `frame0`. Every frame access and address the writer can certify
+names a member of it:
+
+- A scalar member holds the widest accesses at a displacement when they cover
+  every access overlapping them, at an offset aligned to their width. It has
+  the type the widest plain accesses agree on, else an integer of their width,
+  and the reads choose its signedness. On a 64-bit target a pointer of that
+  width is the bits of an unsigned integer member, and a 16-byte integer is a
+  member too.
+- An access narrower than its member, or of another kind, is a view of the
+  member's bytes, spelled as any other scalar access:
+  `*(uint32_t *)&stack_storage.var_m10`, or `*(_DWORD *)...` in the alias
+  spelling. A read of the member's width and the other signedness converts it.
+- Accesses that straddle each other share one byte array,
+  `uint8_t var_m30[10]`, which their views index.
+- A frame address taken outside every member names a byte array that runs to
+  the next member, access or address.
+
+Addresses print as the member holding them: `(uintptr_t)&stack_storage.var_m48`,
+`(CStringT*)&stack_storage.var_m48` for a pointer parameter, or
+`&stack_storage.var_m48[8]` inside an array. Frame aliases print the address
+they hold at each use, so a frame pointer joined across a try's normal and
+exceptional edges is one address and never a variable. A 16-byte integer that
+no member may hold at its alignment is one copy of its bytes:
+`__builtin_memset(&stack_storage.var_m50, 0, 16)`, or a `__builtin_memcpy` from
+a fresh carrier of its exact width. A member keeps the slot's name from before
+the storage replaced it, else `var_mXX` (`var_XX` above the entry stack
+pointer). Gaps are named `gapXX` by offset. A debug object of another type (a
+record, an array, a pointer or an enumeration) keeps its bytes raw, and a debug
+integer must have the access width. `frame_base`, the entry stack pointer's
+address in the storage, is declared only when the body reads it: for such raw
+bytes and for displacements outside the storage. The storage is aligned to
+sixteen bytes, and the entry stack pointer sits in it at the phase the target's
+callers keep (`syntheticEntryStackResidue`): 8 mod 16 on x86-64, and 12 mod 16
+on i386 under the System V psABI and on Darwin. A slot in which the code keeps
+a vector with `movaps` is then as aligned in C as on the machine, so its
+alignment guard holds there too. An address prints as the object the unit
+defines there, not as a string the object's first bytes spell, wherever the
+object holds more than that string (`(uintptr_t)&LCPI0_2 & 15`, not
+`L"\t" & 15`; `objectOutgrowsLiteral`). Every access reaches the same
+object, so a member and the bytes around it always alias. The record's tag is
+`frame_<entry>`: the C++, Go and Rust views parse the HighC text into one
+namespace of record tags, and the Go and Rust views print the record's type
+where the frame is declared.
 
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination
@@ -1790,7 +6414,77 @@ source call. Reports, writes and traps before termination remain observable.
 HighIR cleanup, trailing-return insertion, and source-flow validation share
 the same exact source-termination predicate. An unconditional architectural
 trap removes an otherwise synthetic unknown return only when no branch enters
-that return; resumable debugger traps preserve fallthrough.
+that return; resumable debugger traps preserve fallthrough inside the function.
+CFGBuilder checks the shared instruction-range end and function-entry ownership
+before decoding a trap's continuation. An adjacent function cannot become a
+synthetic tail call through a breakpoint; an explicitly owned adjacent fragment
+still continues. This does not make a resumable trap a no-return operation.
+The architecture classifiers also recognize long-encoded x86 `int 3`, `int1`
+and ARM/Thumb `bkpt`/`udf` debugger continuations. Conditional ARM paths can
+still skip a trap, and continuation peeks use a separate decoder so Thumb IT
+state remains unchanged. x86 `ud0`/`ud1` and AArch64 `udf` end ordinary decode;
+AArch64's fast word classifier agrees with the decoded-instruction path.
+Consecutive debugger breaks remain code inside an authoritative function range
+or an explicitly owned fragment. Without that ownership, a bounded look through
+trap/NOP alignment must find code before another function entry; reaching that
+entry or exhausting the lookahead keeps the original stop. Peeks cannot consume
+the caller's decoder state. Alignment recognition includes ARM, Thumb (narrow
+and wide) and AArch64 NOPs in the active instruction mode. A failed decode or
+missing byte inside an authoritative continuation remains a coverage failure;
+it cannot silently turn into a complete trap-terminated function. Explicit
+cold-fragment ends also bound calls and traps when no separate unwind record
+describes the fragment. An adjacent owned fragment still continues.
+Owned NOP suffixes also need observable code before the owner ends; a sized
+range containing alignment does not make the next function a continuation.
+Decoded NOP identity handles x86 prefixes and the architectural register NOP
+forms of `0F 1A/1B`, with mode-aware legacy alignment patterns shared by the
+decoder. Their memory forms retain BNDLDX/BNDSTX identity: neither decoding nor
+lifting assumes that MPX is disabled. Both peeking
+and ordinary exploration reject an instruction that starts in sized ownership
+but borrows bytes outside the primary and its explicitly owned fragments.
+Contiguous fragments may supply those bytes; an ownership gap may not.
+Coarse unwind spans do not declare a single function's end and cannot split
+an instruction or clip its continuation. These checks use the same endpoint
+policy as call termination.
+Candidate-proof lookahead consumes the same bounded allowance as exploration.
+The shared symbol inventory distinguishes confirmed
+entries from padding guesses in both live and indexed queries. A guess alone
+does not stop resumable fallthrough; explicit transfers still retain potential
+callee boundaries. A decoded continuation absorbs a guessed function at its
+instruction boundary, even inside a basic block.
+Debugger breaks define no return register: long x86 `int 3` has the short
+encoding's void, zero-argument intrinsic contract, and ARM `bkpt` and AArch64
+`brk` leave R0/X0 intact. Service interrupts keep their own result contracts.
+INT1/ICEBP retains its debug exception (#DB, vector 1) through LLVM and both
+C routes. It cannot use `llvm.debugtrap`, which emits INT3's breakpoint
+exception (#BP, vector 3) on x86. The shared assembly mapping emits byte F1;
+HighC uses the target toolchain's byte directive instead of an unsupported
+INT1 mnemonic. Both forms remain resumable and preserve the live return value.
+ARM/Thumb BKPT also remains assembly with its actual immediate; a debugtrap
+builtin would replace that code with the compiler's default breakpoint code.
+`support/ARMTrap.h` identifies UDF and its compiler aliases (`trap` and
+`__brkdiv0`) and their codes for lifting, discovery and exception-wrapper
+recognition. Thumb `__brkdiv0` remains UDF #249 with a void effect and the same
+owned-continuation rules as other UDF encodings; it cannot become BKPT or
+define R0.
+ARM/Thumb HLT shares the resumable boundary rule and retains its exact assembly
+in both C routes. It cannot manufacture an adjacent-function call or acquire
+the stronger non-returning contract of `__builtin_trap`.
+UDF codes above 255 use the unified-assembly `.w` suffix, which is required
+to assemble their wide Thumb form and is also accepted in ARM mode.
+Windows GS-wrapper recovery follows code after ARM UDF #254 and AArch64
+BRK #0xF000 instead of accepting those debugger breaks as terminal exits.
+A conflicting resumed path prevents inferring the wrapper's personality.
+`IntrinsicTermination.h` distinguishes the compiler's AArch64 `brk #0xF000`
+debugtrap from fatal BRK codes. Decode, LowIR/MedIR no-return propagation,
+HighIR effect classification and both C routes consume that code-sensitive
+policy. LLVM uses `debugtrap` for the resumable code and `trap` for fatal codes;
+the source projection retains the instruction code beside the builtin.
+Boolean-result normalization accepts only a void fatal BRK with its code
+present. Its image-backed proof matches that code against the current immutable
+instruction, so an absent successor or stale IR cannot make a debugger BRK fatal.
+LLVM-to-C preserves raw ARM UDF/HLT assembly and its continuation; a mnemonic
+alone cannot grant the non-returning contract of an explicit `llvm.trap`.
 
 At source-bound runtime calls, Low-to-Med lowering carries the authenticated
 external no-return declaration into the MedIR call effect.
@@ -1983,6 +6677,140 @@ For Win64 calls LowToMed publishes those argument registers as CALL inputs.
 SSA then sees a caller's pass-through argument, and HighC passes exactly the
 arguments the callee reads. Stack arguments follow the 32-byte home area.
 
+A complete scalar register summary also publishes an empty vector bank.
+Win64 does so only when no tracked vector family is read; a positional float
+or overlapping integer/vector input retains its existing contract. The shared
+MedIR ABI pass keeps this zero distinct from unknown vector demand when an
+omitted callee's FP metadata is unavailable. Incidental XMM writes and
+call-clobbered PHIs therefore cannot become extra source-call arguments.
+Count-only and unsummarized calls still use ordinary argument recovery.
+
+The same owner proves scalar exit constants for bounded, complete x64 bodies
+without calls, intrinsics, unresolved control flow or exceptional/independent
+entries. It uses the existing LowIR scalar evaluator within each return block
+and intersects the full-register constants at every return. It does not read
+image memory or turn an address identity into an integer fact. The operation
+budget lives in `Limits.h`; there is no inter-block symbolic search. LowToMed
+publishes these extra register definitions after the call, before SSA, for
+both C routes. Ordinary ABI result registers keep their existing return
+contract. Deferred source views, native session recovery and omitted-callee
+memo keys retain the same facts, including their memory accounting. Dynamic
+callee outputs and constants requiring predecessor reasoning remain separate
+machine-state recovery work.
+
+C source emission preserves a wholly unrecovered call-clobber or MedIR
+`Unspecified` value with an analysis-only LLVM call, rather than `freeze undef`
+whose result LLVM may choose as zero. `LLVMSourceUnknownValue.h` owns its
+creation and recognition. Inaccessible read/write effects prevent distinct
+observations from becoming equal while leaving ordinary memory aliasing alone.
+The marker's declaration and unused results are omitted from C; an observed
+value retains an explicit unsupported expression. HighC assignments and stores
+use the same expression rules as other observations, without a zero override.
+The serial pipeline, sharded source pipeline and deferred SDK views enable this
+source policy independently of analyst call-signature overrides. It supplies
+no dynamic callee result, native reconstruction contract or partially preserved
+vector-suffix proof. Ordinary LLVM undef/poison/freeze keep their own semantics.
+
+A call through a function-pointer variable passes the arguments of the routine
+the variable starts at (`collectPointerVariableCallees`): another module's
+routine, by the prototype the variable's absolute relocation names, or a
+routine of this image, by the summary or signature of the function a relocated
+code pointer holds. The variable has that routine's type, but the call never
+takes the routine's name or no-return contract, since the program may store
+another routine there. `PipelineResult::CallArgumentSources` keys the evidence
+by the variable's address: register-effect summaries read it in their fixed
+point (`RegisterStep::ArgumentsFrom`), LowToMed publishes the reads as CALL
+inputs, and `recoverCallAbi` takes the routine's arity for conventions whose
+calls take their arguments from the caller's setup. A caller's pass-through
+registers and incoming stack slots then become its parameters. Without such
+evidence an indirect call passes only the arguments its caller sets. It never
+passes a prologue save of a callee-saved or link register, a scratch register's
+undefined incoming value (an alignment `push rax`), a slot past a gap in its
+stack arguments, or the register that holds its own target, unless the routine
+takes that register (`cb(ctx, x, y, cb)` may pass and call through one).
+Recovery records where it ended the register arguments at the target
+(`MedCallInfo::TargetRegisterArgIdx`): HighIR's own scan does not extend them
+past it, since dead-code elimination leaves only stale earlier writes of that
+register (`add r0, pc; ldr r0, [r0]; blx r0`), and the C++ virtual-call rule
+that passes a two-load target's object finds none in a register that holds the
+target. HighIR's stack scan takes no prologue save for an indirect call either
+(`isIncomingRegisterSave`, shared with recovery).
+
+Dedicated indirect-result registers are separate from ordinary parameter
+registers. MedIR dead-code elimination keeps their reaching definitions at
+calls and tails until ABI recovery binds the hidden result argument. This
+includes AArch64 X8 setup in a predecessor block. Direct calls use the callee's
+result contract; an unknown indirect call requires frame-derived result
+storage. The same reaching value decides both argument recovery and whether
+Darwin's indirect-variadic heuristic applies.
+
+A caller-saved register holds, after a call, whatever that call left in it.
+Without a proved exit value, that residue alone supplies no evidence of an
+additional source argument. `ValuesLeftByCalls`
+(`MedCallLeftovers.h`) names such values: each call's clobber of a register it
+may change whole, and each join of nothing else, loops of joins included.
+Clobbers that keep a preserved low half do not count, nor do clobbers the
+struct-return recovery still holds as possible result fields, nor joins the
+exception dispatcher enters with another value. Past the register arguments
+the callee is known to take, the first such register ends a call's register
+arguments, or passes zero where stack arguments follow and need their places.
+An indirect call has no callee to vouch for its stack slots. Where integer
+arguments fill every register before the stack, an unset register below
+those slots shows they are no arguments (an -O0 spill near the call), so they
+end with it.
+That count is the named parameters of a variadic callee and zero for a callee
+nothing describes. Below it the callee reads the register, and the unknown
+value stays. The named count of an AAPCS64 or AAPCS32 variadic routine comes
+from its register save area, which spills the argument registers from the
+first unnamed one to the last (`MedFunc::VariadicFirstRegister`). Recovery
+applies the rule to `MedCallInfo::Args`, and HighIR's hole filling and
+positional fill use the same predicate, since x86-64 HighC builds its call
+arguments with its own scan. Because a variadic routine of the image keeps its
+arity open for its callers' overflow, that arity gives a tail jump to it no
+incoming stack slots to pass on. A call to such a routine records its named
+count (`MedCallInfo::VarArgFixedCount`), so an LLVM declaration of a routine
+the module does not emit stays variadic. A declaration made from one call's
+arguments would cut another call's.
+
+The search for the value an argument register holds at a call (MedABI's
+`findReachingArgReg`, HighIR's `reachingRegisterAtCall`) ends a path back from
+the call at a call that may change the register (`callClobbersRegister`, the
+rule SSA's call clobbers follow) as it ends it at a write, and at an exception
+handler's entry, where the unwinder leaves caller-saved registers unspecified.
+Where such ends close every path and none reaches the function's entry, the
+value is what the calls left (`valueLeftByCall`), which no parameter carries.
+It fills a slot only where the callee is known to read the register. In a slot
+it is not known to take, and for an import reached through its slot, which
+takes only proven incoming values, the arguments end there as where nothing
+was found. In the call's own block an intrinsic not proven to keep the call
+setup ends the search as well. That block's entry PHI for an argument
+register holds it at the call only where nothing before the call in the block
+writes the register or is a call that may change it (`argPhiReachingCall`);
+past such a call the register holds that call's leftover, which the search
+above finds.
+
+The Itanium C++ ABI declares the routines of its runtime and of the unwinder
+it runs on (`libc::kItaniumRuntimePrototypes`). An image's own copy of one
+takes the parameters of its declaration under the conventions of the
+platforms that follow the ABI (System V x86-64, AAPCS, AAPCS64 and Apple's
+arm64; `itaniumRuntimeArgCount`), as Win64 gives a WDK routine its
+prototype's, however its body reads argument registers: libgcc's
+`_Unwind_Resume` saves the exception-data registers (x0-x3, RAX and RDX) as
+it enters, for the `__builtin_eh_return` that ends it. Call-argument recovery
+promotes no incoming register past a prototyped routine's parameters.
+
+Where every variadic argument travels on the stack (Darwin AArch64, i386
+cdecl), no register save area shows that a routine is variadic. The routine
+is variadic when the `va_list` it passes to a known consumer (`vprintf` and
+the rest of `isVaListConsumer`) points into its own incoming arguments, and
+module recovery then keeps the routine's arity open for its callers. A stub
+the function names leave unnamed takes its import's name, so a wrapper still
+shows through a `sub_` name. A call that takes every argument from the stack
+passes nothing in a slot that holds a scratch register's incoming value where
+the caller takes no parameter in it (the alignment `push eax` above the
+arguments). Such a slot is dropped above the arguments, and below one it
+passes zero.
+
 `PipelineWideIntReturnEvidence` checks the high-word carrier on every return
 before the shared pipeline widens an x86/ARM32 function to a register-pair
 result. Caller liveness only proposes candidates. Independent entries, unknown
@@ -1991,6 +6819,20 @@ propagation starts from established results rather than mutually justifying
 forwarders. `MedSSA` publishes an explicit unspecified PHI input when a
 predecessor has no reaching definition, preventing constant propagation from
 borrowing a sibling's first version-zero write.
+
+A caller proposes a pair in three ways:
+- it reads both halves after the call (`modelCallWideIntReturn`);
+- it reads the high register after a direct call to an in-module function
+  before anything redefines it (`(uint32_t)(f() >> 32)`);
+- it passes the high register unchanged to the next call, whose callee takes
+  it as a parameter (ARM's `add64(add64(a, b), c)`).
+
+The high register is caller-saved, so nothing else of the caller's can be
+there, and the callee's body must still confirm the pair: a callee that
+leaves r1 alone, as `__aeabi_read_tp` does, fails. A function that returns
+whatever a pair returner left (`return add64(...)`) is no pair returner
+without such a caller: `return (int)(long long)x;` leaves
+`__aeabi_f2lz`'s high half in r1 the same way.
 
 `TargetRegInfo::floatingParamRegs(format)` owns the default ABI's floating
 argument bank. Entry recovery, outgoing call recovery, module propagation and
@@ -2012,12 +6854,21 @@ Summary publication and format-call collection retain the original order,
 depth and count limits. `NEVERD_THREADS=1` restricts this phase to one worker.
 
 Restricted pipeline runs may reuse machine blocks constructed for an x87 callee
-proof as `CallRegisterBody` inputs. This type contains only blocks and coverage
-facts; it is not a `LowFunc` and cannot become SSA or emitted code. Register,
+proof as `CallRegisterBody` inputs. This type contains blocks, coverage and
+the presence of independent roots; it is not a `LowFunc` and cannot become SSA
+or emitted code. Register,
 stack-argument and formatted-call analyses read the same block view for cold
 and reused bodies. Format-derived call reads are still collected at ordered
 publication, so overlapping call sites cannot inherit a different contract
 because a worker completed earlier.
+
+Constant printf formats may reach a shared call from several blocks. A bounded
+fixed point retains at most four constants per register and publishes only
+after convergence. Every possible format must assign the same argument
+registers, widths and classes; an argument is a pointer only if every format
+says so. Missing predecessors, partial writes, clobbering calls and exceptional
+entries discard incoming facts. Bodies with additional independent roots keep
+block-local format analysis, including when read from the callee cache.
 
 Initial default x64 construction can also reconstruct a complete `LowFunc`
 from this inventory when the full metadata payload was retained. Machine
@@ -2035,9 +6886,37 @@ Function starts follow the same evidence rule. An x64 `RUNTIME_FUNCTION` with
 chained unwind info continues its parent function (`BinaryImage::
 ContinuationCodeStarts`), and an entry guessed only from inter-function padding
 (`Symbol::IsBoundaryGuess`) may be a hot/cold split chunk. A direct jump to
-either stays inside the jumping function. A guessed entry that another function
+either stays inside the jumping function. A relocated pointer a PE keeps in
+its read-only data, a vtable's slot or a callback table's, confirms the start
+the padding scan guessed (`scanDataFuncPointers`): MSVC enters a cold chunk
+only by a jump, so a stored pointer names a function, which no neighbour
+absorbs through its address-taken roots. A guessed entry that another function
 absorbed this way is audited as `AbsorbedFunctionChunk` rather than decompiled
 twice.
+
+In a linked x86 PE, the prologue scan's matches (`scanX86UnsymbolizedEntries`)
+and the starts the loader only guessed from padding are weak entries. A
+function with other evidence (the image entry, an export, exception metadata,
+a stated symbol, a direct call or a relocated pointer) that reaches one as its
+own code, by falling into it, by a conditional branch or as a case of a table
+among its code, owns it, and the weak entry is dropped
+(`rejectX86InteriorEntries`). One only an unconditional jump reaches stays,
+since the jump may be a tail call, and so does a frame prologue right after a
+call that may not return. An int3 byte inside an instruction, a `jne` whose
+displacement is 0xcc or `mov eax, [ebp-34h]`, reads as padding to the loader;
+the descent decodes that instruction whole and falls into the guess, while
+real padding stops it at the int3. Off the 16-byte grid the scan takes only
+the frame setup itself, `push ebp; mov ebp, esp` (55 8B EC or 55 89 E5): a
+byte 0x55 followed by any move opcode starts no function inside an
+instruction.
+
+A whole unit (`neverd_decompile_all`, in every language) begins with a
+`/* neverd.not-decompiled: NAME at 0xENTRY: REASON */` line for each function
+the pipeline refused (`RejectedLowIR`, `RejectedIncomplete`,
+`RejectedUnwindlessNonLeaf`, `MedIRFailed`), where it would otherwise be
+missing with no word. The reason is the audit's disposition and its evidence,
+as `--func` reports it for that function (`rejected-incomplete; decode failure
+at 0xC`).
 
 An x86 function whose whole body is one direct unconditional jump, after an
 optional `endbr` marker, passes its caller's return address, stack and
@@ -2047,6 +6926,18 @@ register_tm_clones`) is the usual case: in a stripped image nothing else names
 the target, whose body the forwarder would otherwise absorb. A target between
 the forwarder and the next entry is the forwarder's own code, such as a loop
 entered at its test, and stays inside it.
+
+Linked x64 PE adapters can also establish a leaf tail entry when a complete
+primary v1/v2 unwind record describes one stack allocation and the entire
+recorded body proves that frame is restored before its final direct jump.
+The bounded proof accepts canonical matching `sub/add rsp, imm`, direct calls
+to existing entries with Win64 home space/alignment, and register moves into
+volatile integer registers. Other instructions, non-returning calls, frame
+pointers, chained/fragmented frames and incomplete records do not supply this
+evidence. Executable ownership must cover the whole source interval. The
+target must lie outside it and outside another known range's interior, and
+pass the shared entry and callable-exit checks. The metadata is visited once;
+this adds no whole-image byte sweep or signature-created function entries.
 
 At a validated source-call boundary, an exact integer constant zero may supply
 a pointer parameter even when the machine expression uses a narrower integer
@@ -2300,6 +7191,14 @@ not provide class facts. Source validation repeats the entire path against the
 current image. These facts describe declared types, not object identity or
 permission to remove memory operations.
 
+A native helper's single entry read of a runtime ivar-offset cell may be
+snapshotted before the call without changing its pointer ABI. The shared
+entry-read proof follows a validated original AArch64 read's inputs only when
+all sibling inputs are pure and no competing effect precedes the read.
+Duplicate reads, escapes, unsupported ordering and malformed instructions
+remain unproved. The snapshot reads current runtime metadata; it does not copy
+the offset stored in the analyzed image.
+
 When control flow selects among authenticated Objective-C ivar-offset cells,
 the source binding may move the runtime offset values to the predecessor edges
 and merge those values instead of merging cell addresses. Every reaching leaf
@@ -2435,9 +7334,271 @@ The loader validates bounded, acyclic graphs of Darwin constant strings, integer
 
 ## Owned x64 x87 context
 
-For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X87Context.h` owns encoding admission and `CFGBuilderX86Fpu` owns a function-local mutable context. It carries CW, SW, runtime TOP, abridged tags and all eight raw binary80 payloads. Entry and independent roots capture incoming state; ordinary edges publish before a root recaptures. Calls and extended-state save/restore export and refresh the context, including wrappers without local x87 instructions. Entry backedges keep their existing context. LLVM, HighC and LLVMC share this contract; HighC uses named helpers and fixed aligned storage. MMX bridges physical aliases; EMMS empties tags. Concrete execution requires authenticated state and memory, refuses unknown effects, and admits implementation-dependent results only in explicit native reference mode. The static TOP/tag proofs described above remain the projection for x86-32 and for System V x64, whose long double parameters and st0 results stay typed values; `x87ContextOwnsStack` chooses the model per image and `BinaryImage::X87ContextOverride` selects either one explicitly. These x64 regressions do not certify every CPU, instruction, fault priority or source-level floating return ABI.
+The [x87 semantic contracts](x87-semantics.md) and [generated capability
+inventory](x87-capabilities.md) separate encoding/lifting, numerical results,
+complete state, native references, portable execution and formal qualification.
+`X87Instructions.def` owns coverage metadata and the strict evaluator’s
+processor-dependent classification; `X87StateBoundaries.def` owns external-state
+synchronization membership. C API, CLI and Python queries use the same report.
+`X87Binary80.h` owns raw classification. `X87Arithmetic` owns exact finite
+arithmetic and pure integer conversion; `X87PortableContext` applies the
+explicit masked-state slice to the existing context. It neither creates a
+parallel stack nor changes native/translation admission. Undefined CPU fields,
+unknown incoming state and unsupported effects stay explicit in that profile.
+
+`X87GuardedValue.h` shares the typed raw-value/control-word contract for BCD
+and the native FPTAN/FSINCOS/FXTRACT result pairs. The CFG owner proves source
+payload and destination-tag preconditions; native emission enforces the
+finite/range/masked guards before committing a static push. LLVM and both C
+routes share authenticated assembly and atomic status sampling. This contract
+does not introduce another stack representation or qualify runtime TOP changes.
+
+For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X86/X87Context.h` owns encoding admission and `CFGBuilderX86Fpu` owns a function-local mutable context. It carries CW, SW, runtime TOP, abridged tags and all eight raw binary80 payloads. Entry and independent roots capture incoming state; ordinary edges publish before a root recaptures. Calls and extended-state save/restore export and refresh the context, including wrappers without local x87 instructions. Entry backedges keep their existing context. LLVM, HighC and LLVMC share this contract; HighC uses named helpers and fixed aligned storage. MMX bridges physical aliases; EMMS empties tags. The same selector contract admits FEMMS and marks its payload invalidation: concrete execution forgets every retained payload, while native context steps retain the original instruction. Context restore/step constraints declare both the MMX and x87 register banks. Concrete execution requires authenticated state and memory, refuses unknown effects, and admits implementation-dependent results only in explicit native reference mode. The static TOP/tag proofs described above remain the projection for x86-32 and for System V x64, whose long double parameters and st0 results stay typed values; `x87ContextOwnsStack` chooses the model per image and `BinaryImage::X87ContextOverride` selects either one explicitly. These x64 regressions do not certify every CPU, instruction, fault priority or source-level floating return ABI.
+
+The owned context also carries all 24 3DNow operations. `X86ThreeDNow.def`
+owns their suffix, source dependencies and enhanced-feature requirements;
+`X86LiftThreeDNow` authenticates the complete encoding before producing one
+context step. Its selector retains stack-reference provenance independently
+of FS/GS and uses the original-ModRM field for the suffix, since these
+instructions preserve FIP/FDP/FOP. LLVM and both C routes share the original
+instruction inside the context restore/step/save boundary. Concrete execution
+requires explicit native reference mode and CPUID support, retains unknown
+payload provenance after FEMMS, and establishes only the written destination.
+Typed/unowned and i386 projections remain explicit refusals; no duplicate
+scalar arithmetic model substitutes for the native operation.
 
 ## IR representations and routes
+
+`X86Virtualization.def` owns the implemented VMX/SVM operation inventory and
+operand roles. LowIR, MedIR verification, LLVM and both C routes consume its
+checked shape. The supported set is VMREAD/VMWRITE (register and memory),
+VMXON/OFF, VMCLEAR, VMPTRLD/ST, INVEPT, INVVPID, VMLAUNCH/RESUME, VMFUNC,
+VMLOAD/SAVE, STGI/CLGI and INVLPGA. Existing VMCALL/VMMCALL retain their separate
+hypercall contract. This inventory does not imply coverage of every newer
+SEV/SNP instruction.
+
+VMX completion carries CF/ZF and clears OF/SF/AF/PF. Failed register VMREAD
+preserves its destination; memory VMREAD/VMWRITE retain their address inside
+the instruction so access and fault ordering are not replaced by ordinary
+loads/stores. SVM operands retain address width and INVLPGA's ASID. These are
+opaque processor-state effects, never assumed-success values. Generated code
+emits the actual instruction with its compiler memory/flag constraints; host
+execution still requires its architectural privilege and machine state.
+VMLAUNCH/VMRESUME model the ordinary fallthrough on failed entry. VMRUN and
+SKINIT remain explicitly rejected: the former requires unsaved guest GPR/FPU
+state ownership and the latter nonlocal machine reinitialization. The strict
+scalar emulator refuses the new virtualization effects without a state provider.
+The reference contracts are Intel's
+[SDM](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
+and AMD's [AMD64 architecture manuals](https://www.amd.com/en/search/documentation/hub.html).
+
+CPUID retains EAX/ECX input values and all four 32-bit output bindings through
+HighIR and LLVM. The Windows C spelling uses `__cpuidex` when the subleaf is
+known, zero-extends signed intrinsic output cells, and retains compiler ordering
+around the query. Microsoft's
+[intrinsic documentation](https://learn.microsoft.com/en-us/cpp/intrinsics/cpuid-cpuidex)
+distinguishes this from `__cpuid`, which clears ECX.
+
+`X86SystemState.def` and `X86SystemState.h` own the bounded system-instruction
+inventory, scalar operand widths, memory roles and completion shapes. LowIR,
+Low-to-Med conversion, Med verification and emitters use this same authority.
+LLVM, HighC and LLVMC share `X86SystemStateAsm.h` for native operand constraints.
+LAR preserves its destination on failure; ARPL retains conditional memory
+writes; WAITPKG carries its deadline, address space and flag completion.
+Environment-dependent results remain unavailable to the scalar emulator.
+The existing CLAC/STAC and XEND IDs use this contract too. They produce no
+scalar result and remain ordered memory effects in both source routes. SMAP
+controls change hidden AC state while preserving arithmetic flags; transaction
+commit and its possible abort remain native. Native LLVM uses the corresponding
+intrinsics, and RTM intrinsic names select the code generator's RTM feature.
+CLZERO also retains its implicit address-sized AX/EAX/RAX input. The lifter
+wraps the offset before FS/GS base addition, and the shared instruction contract
+preserves the native cache-line effect and arithmetic flags. The CPU owns line
+size, alignment, store checks and weak ordering; an ordinary fixed-size clear
+cannot substitute for it. Native LLVM and C select the CLZERO target feature.
+
+Compact-memory shape and operand observation belong to
+`ir/intrinsics/X86/X86CompressExpand.h`; the LowIR/MedIR adapters and native
+LLVM/C renderers remain in their respective component's `X86/` directory.
+Native calls preserve original integer/FP kind, lane width, merging/zeroing
+and segment-relative addresses. Unknown observed inputs are retained during
+emission and rejected before executable publication. Suppressed inputs use
+the same shared observation rule in concrete execution and source projection.
+Their unknown-size volatile memory effects keep even zero-mask instructions.
+The control separately retains long-mode stack-default address provenance.
+`backend/llvm/X86/X86NativeMemoryAddress.h` owns the native `0x100` control and
+SDK capability check shared with AMX. Native LLVM and NeverC use that control;
+older SDKs and ordinary C retain RBP as the SIB base and compute the offset in
+RDX without changing RBP. An explicit DS override does not erase RSP/RBP stack
+provenance; FS/GS and address-size-32 operands do not acquire it. i386 segments
+use the separate compact control described below.
+
+`X86CompressExpand.h` retains i386 CS/ES/SS offsets in a two-byte control,
+with the architectural prefix in the high byte. The one-byte DS/FS/GS and
+long-mode stack-reference forms keep their existing layout. Known target modes,
+control size, address space and stack provenance must agree. The lifter retains
+implicit SS for SP/BP bases and performs effective-address wrapping before
+native transport. LLVM reuses the raw segment-offset materializer; MedIR and
+HighIR type inference do not promote these offsets into process pointers.
+Native instructions own descriptor checks and faults. Concrete execution
+refuses active accesses without a descriptor environment; zero-mask suppression
+still avoids observing the address or segment. Both C feature scans consume the
+emitter's actual architecture instead of assuming x64.
+
+Packed HighIR inputs in compact and four-source C projection have explicit
+integer storage at their complete declared widths. A narrow printed literal
+such as zero cannot create a four-byte temporary followed by a wider memcpy.
+LLVM-to-C's already typed vector inputs retain their vector storage.
+
+`X86FourSource.h` owns the explicit four-source memory shape and observation
+rules. The lifter snapshots independent register inputs into one packed SSA
+operand before an aliasing write; scalar forms retain only the four observed
+low dwords. Native LLVM expands that operand to four vector arguments, while
+the C renderer owns their native-builtin/checked-assembly projection. Numerical
+execution lives under `ir/low/X86/`, retaining the existing sequential FP and
+integer algorithms. Pure COPY/CONCAT transport cannot manufacture missing
+source bytes. Compact and four-source native functions share entry-unknown
+validation; their lifters share ordinary-SIB address admission and authenticated
+i386 segment selection in `lift/X86/X86NativeMemory.h`. Four-source controls
+also retain CS/ES/SS in a checked high byte, including implicit SS for SP/BP.
+`ir/med/X86/X86NativeMemory.h` owns the raw-offset role used by both MedIR and
+HighIR type inference for these families. Active accesses require native
+descriptor state; a zero mask suppresses that observation while scalar FMA
+still retains the accumulator's upper 96 bits. C scalar integer
+carriers accommodate the complete 256-byte source group, independently of the
+64-byte compiler vector limit. Legacy implicit-bank identities stay readable
+without acquiring an unproved native source-state contract.
+
+Both source routes retain a complete constant carried by an integer RETURN
+after copy propagation. A later synthetic low-register read is not another
+machine write and cannot truncate that reaching value. The shared
+`MedReturnValue` decision still requires the operand to cover the return width;
+narrow operands retain the existing ABI reconstruction checks.
+Med-to-High also retains a narrowing machine `COPY` as an explicit byte slice
+before substituting its expression. Removing the original assignment must not
+remove its truncation or widen a later zero extension.
+Unrepresented segment identities and malformed decode details are refused.
+The inventory also owns CLUI/STUI/TESTUI/SENDUIPI, LKGS, HRESET and
+INVLPGB/TLBSYNC. Long-mode-only forms are admitted by the shared shape. TESTUI
+returns CF and the lifter clears its other arithmetic flags. LKGS selector and
+descriptor reads remain inside the native instruction; active GS base is not
+changed. SENDUIPI's full-width index is scalar, as is INVLPGB's address/control
+descriptor. INVLPGB's input width selects native address size. HRESET's ignored
+imm8 is canonicalized to zero, while EAX remains an explicit input.
+`X86Sgx.h` separately owns bounded ENCLS/ENCLV completion: four natural-width
+GPR inputs, primary rAX and auxiliary rBX/CF-ZF outputs.
+`X86SgxLeaves.h` defines conditional register reads so unused leaf operands do
+not create source arguments or unknown-register traps; only EDBGRD publishes
+a changed rBX value. Call-graph register summaries evaluate
+constant selections with the shared LowIR scalar evaluator; MedIR folds the
+same chosen value before inferring SGX parameters, preserving its provenance.
+`X86SgxNative.h` selects the fork's natural-width register/status intrinsics;
+the C renderer validates their complete signature, code mode and unknown-memory
+effects, then selects NeverC builtins through its API capability marker.
+`X86SgxAsm.h` retains the owned assembly and early-clobber constraints for older
+SDKs and compilers. The lifter projects native CF/ZF for flag-writing leaves, preserves
+all arithmetic flags for ECREATE/EADD/EEXTEND/EPA/EAUG, and never changes DF.
+Implicit DS accesses and all enclave checks remain inside the instruction;
+address/segment/REX overrides do not change the operands. Native outputs use
+no stack scratch. Return inference accepts the validated primary completion,
+while strict scalar emulation refuses the environment-dependent operation.
+ENCLU's entry, exit, resume and asynchronous continuation remain unsupported.
+Far/interrupt returns do not use the bounded system contract or ordinary ABI
+RETURN. RETF/IRET strict lifting refuses until architectural frame restoration
+and its nonlocal continuation are represented.
+The same boundary excludes SYSENTER/SYSEXIT/SYSRET and RSM, including permissive
+decoding. Legacy nonlocal intrinsic IDs retain their serialized identities;
+LowIR validation, MedIR conversion, verification and both source routes reject
+them before an ordinary return, generic syscall or bare assembly can be emitted.
+The same contract owns CET shadow-stack writes and long-mode ENQCMD/ENQCMDS.
+Their historical intrinsic IDs remain stable. Both enqueue operands are
+addresses; only the command-source address inherits FS/GS, while the portal
+retains long mode's implicit flat ES. LLVM resolves both address identities
+without issuing a load or store, then executes the owned assembly and captures
+ZF. HighC and LLVMC use the same operand and effect constraints. The concrete
+enqueue executor keeps its explicit CPL/PASID admission and ordinary-memory
+retry behavior; CET writes still require an execution environment it lacks.
+Windows HighC retains the existing MSVC intrinsic spelling for unsegmented
+CET writes, after validating the same operand contract.
+The i386 forms of ENQCMD/ENQCMDS/MOVDIR64B instead use
+`X86SegmentedBlockMemory`. `X86SegmentedBlock.h` owns the serialized instruction,
+source-segment and address-size selector. The system shape requires a constant
+selector and two 32-bit offsets. Native lowering never resolves those offsets
+as process pointers: the hardware instruction owns source DS/ES/SS/CS/FS/GS and
+implicit destination ES, including descriptor rights and limits. Default SS
+selection happens in the lifter before changing the address register. The
+shared assembly plan uses SI/DI at the encoded address width. Static emulation
+refuses without descriptor state; it cannot inherit the flat x64 projection.
+MOVDIRI and long-mode MOVDIR64B also use the shared native memory contract.
+MOVDIRI retains its scalar width; MOVDIR64B carries both addresses, with FS/GS
+applying only to the source. No ordinary load, masked store or eager alignment
+check replaces the instruction's WC transaction and write-completion atomicity.
+The scalar emulator retains a single-threaded ordinary-memory projection,
+including a complete source snapshot before the block destination write. It
+does not model cache/WC protocol, feature faults or real device completion.
+X86 LLVM lowering preserves MFENCE/LFENCE/SFENCE as hardware instructions with
+compiler memory effects; generic acquire/release fences do not guarantee the
+barriers required by direct or non-temporal stores.
+LLVM-to-C collects ISA headers from the same intrinsic-rendering decision on
+all architectures, including x86 fence assembly rendered as `_mm_*` calls.
+Explicit-operand MSR operations retain their encoding family in `X86MsrAccess`.
+The shared shape owns selector constness/width, full-width data and read/write
+completion. The MSR plan in `X86SystemStateAsm.h` supplies exact native bytes,
+fixed RAX data/RCX selector constraints, side effects and memory ordering to all
+three output routes. Exact bytes preserve the Intel-defined URDMSR register
+roles despite an LLVM 23 assembler discrepancy, and retain APX requirements
+for EVEX forms even when operands are allocated low registers. Native hardware
+owns feature/CPL/bitmap/intercept checks; software emulation without that state
+continues to refuse the effect. LLVM-to-C admits only the complete owned
+assembly/signature/constraint/effect contract, including constant immediate
+selectors. No declaration-only helper or legacy serializing MSR substitution
+implements these forms.
+Operand-free WRMSRNS instead uses `X86WriteMsrNonSerializing` with three
+32-bit inputs (ECX, EAX, EDX) on x86 and x64. The system inventory also owns
+long-mode `X86ReadMsrList` and `X86WriteMsrList`: two linear table addresses
+and a 64-bit mask produce the real remaining mask. Their assembly binds RSI,
+RDI and read/write RCX without adding segment bases or preloading table entries.
+Native hardware retains privilege, alignment, MSR validation, load-ahead,
+ordering and partial-completion behavior. Restart at the faulting instruction
+uses the updated RCX in the machine exception frame. The scalar emulator has
+no MSR environment and refuses these effects, including an empty list mask.
+This bounded native contract does not emulate privileged MSR execution.
+Return-contract analysis also consumes the validated system, virtualization
+and explicit-MSR output shapes. Side effects do not make an explicit result
+undefined; a function returning RCX after MSRLIST must retain a scalar return
+in both C routes. Invalid outputs on a void operation receive no such evidence.
+SHA512 message and round instructions instead lower to integer LowIR and need
+no host SHA512 feature. The [x86 support audit](x86-instruction-support.md)
+separates tested encodings, native output and remaining machine-state gaps.
+
+`X86FPEncoding` owns legacy, REX/REX2 and VEX floating-point prefix admission
+and raw-byte/decoder-detail agreement. Instruction families retain opcode,
+width and reserved-field rules. Register selection distinguishes GPRs,
+vectors and addresses: REX2 extends GPR/address banks while ignoring R4/B4 for
+XMM operands; 32-bit VEX ignores the documented B and used-vvvv extension
+bits without relaxing unused-vvvv or LES/LDS disambiguation. The shared address
+tail validator retains wrapping and segment ownership.
+
+LLVM-to-C's i386 scalar carriers use signed/unsigned `_BitInt(128)` aliases
+when the target compiler has bit-precise integers but no native 128-bit aliases.
+This preserves 65..128-bit value operations, including packed numerical/MXCSR
+results. It does not establish every wide-integer runtime or calling convention.
+
+`IntrinsicValueEffects` defines positive, shape-validated contracts for operations
+whose effects are entirely explicit values. `LowIntrinsicEffects` additionally
+validates LowIR operands and memory annotations. Jump-table consumer analysis and
+module address-use collection share this classification: pure operations are
+neither escapes nor ABI call barriers, but their results retain input provenance.
+Unlisted, memory-reading and malformed intrinsics retain conservative effects,
+including address operands held in temporaries rather than ABI registers. This
+contract is stronger than eligibility for dead-code elimination.
+`intrinsicMemoryAccessRoles` names the operands of intrinsics whose effects are
+their output and one access to the memory at an explicit address: the AArch64
+exclusive loads and stores and the scalar LSE read-modify-writes.
+`lowIntrinsicMemoryOperands` checks their lifted shape (constant width and
+ordering operands, a loaded or stored value of that width, no segment
+annotation) and returns the view `lowMemoryOperands` gives LOAD, STORE and the
+atomic opcodes; any other intrinsic yields an incomplete view.
 
 COFF loading records validated DWARF FDE extents before heuristic function
 discovery. Those extents also bound named symbols with no size. Debug sections
@@ -2475,7 +7636,11 @@ relocation predicate for untagged constants; equal original VAs alone cannot
 establish equality between independently rebuilt objects.
 
 The x86 CFG builder proves local x87 call-stack effects before constructing
-TOP-state block copies. One LowIR analysis may share up to 128 immutable machine
+TOP-state block copies. A shape-checked integer DIV/IDIV precondition preserves
+x87 state on normal continuation. It remains in the emitted body and grants no
+permission to suppress divide faults; malformed guards and unknown state
+intrinsics still refuse the call summary.
+One LowIR analysis may share up to 128 immutable machine
 graphs or empty projection-refusal markers across its independent CFG builders,
 under an 8 MiB retained-payload allowance including the construction context.
 This bounds the shared cache, not active builders or their private graph
@@ -2502,11 +7667,30 @@ Cache locks cover lookup
 and publication, while graph construction runs outside the lock. Each query
 still independently bounds and pays for its complete call closure and dataflow
 work; caller-dependent answers are not shared. A completely lifted, nontruncated
-CFG with exceptional edges or a block without any successor, return or modeled
-stop may retain an empty refusal marker. It grants no effect and rejects before
-graph-work charging, exactly as the original projection did. Incomplete lifting,
-invalid boundaries or successors, and the fixed graph-size limit retain no
-marker; a caller's exhausted proof allowance also cannot create one. Every normal
+CFG with exceptional edges, a block without any successor, return or modeled
+stop, invalid boundaries or successors, or more work than the fixed graph-size
+limit may retain an empty refusal marker: each is a fact of that CFG, so a later
+builder reads the refusal instead of lifting the body again (Wine's 32-bit
+printf engine, which every heap and debug-output routine reaches through a call
+cycle, resolves its jump tables for seconds). It grants no effect and rejects
+before graph-work charging, exactly as the original projection did. Incomplete
+lifting retains no marker, since a proof that ran out or threw can cause it
+and another request may finish; a caller's exhausted proof allowance also
+cannot create one. The bodies a restricted run lifts for the signatures of the
+callees it omits (`omittedDirectCalleeSignatures`) share one cache of their
+own, whose construction context differs from the pipeline's. A kept body also
+keeps its forwarder probes (`propagateForwardedCallArities`): a later run
+takes one where the callee summaries, user prototypes and names hold what the
+probe read under every key `recoverCallAbi` noted, so a new summary read in
+`recoverCallAbi` must note its key, and it may write summaries only at the
+recovered function's entry. The body keeps its recoveries as an omitted
+callee the same way (`recoverModuleCallAbi`): a later run whose summaries hold
+what a recovery read takes the summaries it left at the entry and the
+parameter count that bounds the run's calls, and on i386 what the second
+regparm pass reads of the body and gives. Where only that second pass reads
+differently, the body is recovered again from the summaries the first pass
+read. A Darwin run, whose recovery also reads the leaf callees of its own
+selection, keeps none. Every normal
 return must agree on the stack change, and a pushed result must be initialized
 without reading an empty slot. Cycles in the call graph, incomplete lifting,
 environment restores, tag changes, unknown intrinsics and exceptional edges
@@ -2564,6 +7748,51 @@ explicit bit casts, including separately emitted callers. This proves stack
 transport, not complete x87 control-word or exception semantics. Shared import
 target tracing also rejects partial pointer writes, opaque call barriers and
 instruction temporaries borrowed from another instruction.
+
+An internal i386 helper may instead consume one incoming logical ST0 and
+return an integer. The same machine graph proves that every return consumes
+that value, that no path reads or changes the caller's lower stack entries,
+and how many empty scratch slots it needs above its argument. Unknown calls,
+ordinary ABI callees, divergent returns, control-word changes, environment
+resets and recursive closures cannot establish this contract. A caller must
+prove both the argument's payload/tag and the empty scratch slots before
+admission.
+LowIR binds the binary80 argument before SSA and advances TOP. MedIR transports
+it as a separate final parameter while retaining the integer return. Calls
+preserve lower ST values and the control word, invalidate the consumed and
+scratch payloads, and cannot infer a floating return from a later read of a
+retained ST value. Final signature matching removes surplus ordinary arguments
+before the separate binary80 argument, after forwarder promotion has settled.
+Missing ordinary values keep their positions and refuse native output.
+Definitions and declarations of omitted consumers retain the same binary80
+argument type; transport through integer temporaries uses bit casts.
+This is a typed internal-call contract. Patch output, exported or address-taken
+consumers, and consumers at the image's native entry still require a native
+x87 argument adapter and are refused until one is available.
+
+PE32 `_CI*` imports have a separate physical register-stack ABI. Exact ordinary
+imports from MSVCRT or MSVCR100 currently support `_CIsqrt`, `_CIsin`, `_CIcos`,
+`_CIatan`, `_CIacos` and `_CIpow`. The shared import contract binds one or two
+binary80 inputs in logical ST0/ST1 order and one binary80 result before SSA.
+Callers must prove every argument's full tag and payload and all other slots
+empty; no lower-stack or control-word preservation is inferred for the CRT.
+Ordinary argument recovery cannot collect spills or promote integer registers
+for these calls.
+Raw cached wrappers must still run x87 call binding, including calls whose net
+TOP change is zero; a cached integer-only body cannot erase stack arguments.
+
+LLVM calls a private adapter that places the operands in the original x87
+registers and calls the original import. Indirect calls pass the actual pointer
+loaded from the rebuilt IAT; its writable contents are not replaced by a fixed
+symbol. It preserves the external identity
+and runtime behavior, including precision, global state and error handlers;
+it does not substitute a C or LLVM mathematical operation. The assembly call
+declares caller clobbers and can unwind. Unsupported providers, delay imports,
+other recognized `_CI*` contracts and unproved input states remain refused.
+Native-context and no-return paths cannot bypass the argument contract.
+HighC and LLVMC source output also refuse these calls until they have native
+adapters of their own. Deferred MedIR analysis remains available; resuming its
+HighIR projection enforces the same refusal.
 
 FH3 catch-return evidence binds the source funclet, return instruction and
 owning continuation after module discovery converges. Shared SSA verifies the
@@ -2649,6 +7878,105 @@ Malformed contracts and unrepresented aggregate ABIs are refused explicitly.
 The C renderer retains volatile assembly and the original memory barrier for
 each query, including unused outputs and CPUID's ECX subleaf.
 
+`ir/intrinsics/IntrinsicInstructionText.h` owns the operand a trap, a
+breakpoint, a hypervisor or secure-monitor call and a barrier carry. The
+lifters keep the code (`brk #0x3e8`, which GCC's `__builtin_trap()` is and
+clang's `brk #1` is not; `udf`, `bkpt`, `hlt`, `hvc`, `smc`; the check kind
+of the `ud1 eax, [eax + kind]` clang's trapping sanitizers raise) or the
+option (`dmb ishld`, `ARMBarrierOptions.def`) as the intrinsic's first input.
+HighC prints a trap's or a breakpoint's builtin, which takes no code, with
+the instruction beside it (`__builtin_trap(); /* brk #0x3E8 */`), a
+barrier's ACLE intrinsic with its option and its name beside it, and an
+instruction without a C name as an `asm` statement that runs it. The LLVM
+emitters run HVC, SMC, BKPT, HLT, UDF, DSB and ISB as the instruction with
+its own operand; a trap stays `llvm.trap` and a DMB a sequentially
+consistent fence, each carrying the instruction as `neverd.instruction`
+metadata (`MachineInstructionText.h`) that LLVM C prints beside it, and
+LLVM C reads a barrier's ACLE value from its option. AArch64's `udf` raises
+an undefined-instruction exception (`Udf_A64`), not a breakpoint.
+
+An AArch64 MRS, MSR or SYS keeps its op0:op1:CRn:CRm:op2 field, bits [20:5]
+of the instruction, as the first input of `Mrs`, `Msr`, `Dc`, `Ic`, `Tlbi`
+or `At`; an MSR and a SYS write no general register, and SYSL reads into
+its own. `AArch64SystemOperands.def`, which
+`scripts/generate_aarch64_system_operands.py` generates from capstone's
+tables, names each system register, DC, IC, AT and TLBI operation and
+PSTATE field as the listing does, and `aarch64SystemInstructionAsm` spells
+the instruction with `$0` for its register. HighC prints an MRS or MSR of a
+register as ACLE's `__arm_rsr64("cntvct_el0")` or `__arm_wsr64`, and any
+other as an `asm` statement that runs it with its register operand; the
+LLVM emitters run each as that inline assembly, which LLVM C reads back the
+same way. SYSP, MRRS and MSRR move a register pair no intrinsic carries,
+and fail clearly.
+
+An ARM coprocessor register transfer keeps its numbers as one field of
+`ArmMrc`, `ArmMcr`, `ArmMrrc` or `ArmMcrr` (`armCoprocessorField`, one hex
+digit each for the coprocessor, opc1, CRn, CRm and opc2: TPIDRURO's
+`mrc p15, #0, r0, c13, c0, #3` is 0xF0D03). MRC writes its register, an
+MRRC's 64-bit value goes to Rt (low) and Rt2 (high), and MCR and MCRR
+write a system register from Rt, or Rt2:Rt. Both C routes call ACLE's
+`__arm_mrc(15, 0, 13, 0, 3)`, `__arm_mcr`, `__arm_mrrc` or `__arm_mcrr`
+(`ArmCoprocessorAcle.h`); the LLVM emitters run the instruction as inline
+assembly (`armCoprocessorInstructionAsm`), which LLVM C reads back to the
+same call. A read stays though its value goes unused, since reading a
+register can change state. The MRC that writes the condition flags
+(`apsr_nzcv`), a transfer of PC, an MRRC that writes one register twice,
+the unconditional MRC2 family, CDP, LDC and STC fail clearly. Capstone's
+`CS_MODE_V8` applies the Armv8.1-M rule against CP14 and CP15 only to
+M-class code (NeverSight/capstone#15), so A-profile code decodes them.
+
+ARM status register access follows its fields. The lift keeps N, Z, C, V
+and GE as flags (`ARMApsrFlags.def`), and the machine keeps the rest: Q,
+and the mode, interrupt-mask and other control bits a privileged mode
+reads. An MSR writes the fields of its mask (c 1, x 2, s 4, f 8): N, Z, C
+and V from bits 31:28 for f, GE from bits 19:16 for s, and `ArmMsr` with
+the machine's part (Q with f, and the c and x fields), so
+`msr cpsr_c, #0xd3` enters Supervisor mode and leaves the flags a
+comparison set. An MSR of SPSR is the machine's whole. An MRS of APSR merges
+the flags into the machine's word (`ArmMrs`), as x86's PUSHF does; where
+the function never set a flag since entry, which the procedure call
+standard leaves UNKNOWN, `foldMachineFlagsIntoStatusImages` takes that bit
+from the machine's word, so a kernel's `mrs r0, cpsr; cpsid i` reads CPSR
+whole. An MRS of SPSR is the machine's. CPS keeps its imod, masks and mode
+as one field (`armCpsField`). Both C routes run these as the instruction
+(`armStatusInstructionAsm`: `msr cpsr_c, %0`, `mrs %0, spsr`, `cpsid i`),
+and an MSR clobbers `cc`. A banked register's MRS or MSR, and an
+UNPREDICTABLE CPS, fail clearly. Saturating instructions set Q, which the
+lift does not model, so an MRS after one reads the Q the translated code
+left in the machine.
+
+A call to a compiler runtime routine whose whole contract one intrinsic
+models (`RuntimeRoutineIntrinsics.def`) is that intrinsic, which
+`liftRuntimeRoutineCalls` substitutes before SSA. It applies whether the
+routine is an import (its stub, its slot, or an object's extern item) or a
+function the image defines. The Arm run-time ABI's `__aeabi_read_tp`
+returns the thread pointer and corrupts only r0, ip, lr and the flags, so
+clang's `-mtp=soft` TLS access keeps values in r1-r3 across it. As an
+ordinary call it took phantom arguments, and its clobbers lost those
+values. As `ArmThreadPointer` it takes no argument and writes only r0, and
+both C routes print `(uint32_t)__builtin_thread_pointer()`, which LLVM
+(`llvm.thread.pointer`) lowers to an MRC or to the same call as the target
+needs.
+
+An SMC or HVC #0 follows Arm's SMC Calling Convention: the lift binds its
+results in x0-x3 (r0-r3) as the outputs of a multi-output intrinsic, and
+LowToMed gives it the registers it reads, its function identifier and
+arguments in x0-x7, or r0-r3 on ARM, whose procedure call standard preserves
+r4-r7 (`smcccArgumentRegisters`, `MedSmcccConvention.cpp`). Both C routes pin
+each value to its register for the instruction; a function returns a result
+its caller reads, as with a system call. An SMC or HVC of another immediate
+keeps no register contract.
+
+A Linux system call whose number its block sets reads only the argument
+registers of the kernel's handler (`LinuxSyscallArguments.def`, which
+`scripts/generate_linux_syscall_arguments.py` generates from a kernel tree's
+system call tables and handler prototypes, for x86-64, AArch64 and ARM EABI,
+where a 64-bit argument takes an even-aligned register pair); the rest are
+no parameters of a wrapper, and the C writers pass them as 0. x86-64 passes
+RDX:RSI and R8:R10 as one operand each, read whole once either half is
+(`x64SyscallOperandRead`). A number the table does not list keeps every
+argument register.
+
 `ir/FloatConversion.h` owns the result policy for scalar float-to-integer
 operations: saturation for the non-x86 path and x86 indefinite results for
 invalid conversions. HighC and the LLVM lowering select that same policy;
@@ -2725,6 +8053,16 @@ overflow behavior. The pure concrete integer-to-binary80 conversion uses exact
 APFloat semantics and preserves floating state independently of that machine
 instruction admission. General x87 TOP/tag/status and fault ordering remain
 outside this projection.
+
+Both typed x87 tag seeds and owned-context captures consume the final CFG's
+source-counted relocation-root suppression. A switch label whose every
+relocation source belongs to an active table inherits its predecessors' state,
+even if the loader's additive `CodeRefTargets` union still contains it.
+Independent address-taking instructions, unconsumed or protected slots,
+exception landings and other roots inside a block retain their independent
+entry semantics. Inline absolute sources qualify suppression only after their
+targets are decoded; they never seed otherwise unreachable table arms. The x87
+pass does not repeat table-ownership analysis.
 
 `ir/X86FPState.h` owns x86 numerical/state contracts. Legacy
 ADD/SUB/MUL/DIV in SS/SD forms import MXCSR, compute one explicit aggregate
@@ -2905,12 +8243,28 @@ provider owns immutable image evidence, `SymExec` owns instruction semantics,
 and the residual CFG reuses the ordinary SSA and source backends. Recovery
 evidence remains separate from native occurrence and binary patch certificates.
 
+`SymIntegerIntrinsics` owns exact bit-vector evaluation of LowIR SHUFPS.
+It selects 32-bit words within each 128-bit lane and captures both original
+inputs before publishing a possibly aliased output. The lifter continues to
+own memory-source loads and encoding-specific upper-register effects.
+Unsupported IDs and malformed shapes retain the unmodelled execution path.
+
 `InterpreterSpecialization` owns bounded backward propagation of pending bit
 demands after a failed attempt. It reuses the scalar evaluator without changing
 graph facts or allocating control fields or contexts; all work remains
 budgeted and publication requires a fresh complete proof.
 
 Context refinement may additionally nominate a tracked eight-byte address carrier when a later memory demand uses only its byte slice. The original narrow producer coordinates remain authoritative; only enqueue forms keys from proved constants or frame offsets.
+
+`ControlDependencyCache` reuses completed dependency walks only among sibling
+projections of one native transfer. Keys bind the append-only symbolic context,
+expression, frame root and byte order. Each hit revalidates every memory-input
+birth record consumed by the original walk; later load history cannot relabel
+an input. Missing or changed births invalidate the entry, and incomplete walks
+are never retained. Lookup, validation and result copying consume discovery
+work; retained metadata is bounded by the symbolic-node limit. Each successor
+still applies its own demand policy and proves values and feasible edges.
+The cache contains no memory values, alias facts, predicates or certificates.
 
 `LiftStateBase` allocates instruction-local temporary byte ranges for all three
 machine lifters. Each allocation reserves its complete size rounded up to the
@@ -2928,9 +8282,55 @@ remain separate; whole memory accesses and existing alias checks are retained.
 Raw completeness grants neither an undefined-output audit nor a wider source or
 native-proof contract.
 
+Raw specialization also accepts exact whole-byte `CONCAT` up to 16 bytes,
+including intermediate widths used by packed integer lowering. The first input
+supplies the high bits and the second supplies the low bits, independently of
+storage byte order. Complete scalar locations or constants must have nonzero
+widths, nonwrapping extents and an exact combined width. The existing explicit,
+nonfaulting, default-space and unordered-operation restrictions remain;
+`SymExec` owns evaluation, and aliasing outputs read both original inputs before
+writing. This adds no source layout or native-proof contract.
+
+For explicit, nonfaulting, little-endian raw recovery, the x64 owner recognizes the complete canonical `RDTSC` instruction and its five-operation multi-output bundle. Each occurrence gets one fresh 64-bit sample; three charged scalar operations evaluated by `SymExec` bind the complete primary result and the two instruction-local placeholders. The original runtime read, copies and zero extensions remain in the residual. Clock values and relations are unconstrained, timestamp-derived addresses keep unknown provenance, and native/source proof contracts remain unchanged.
+
+`RuntimeRegisterRead` is dispatched through the architecture adapter. Core owns
+fresh samples, operation/node accounting and conservative output provenance;
+the architecture owner authenticates the complete native instruction and its
+multi-output bundle. No register or opcode recognition is added to core.
+
+Under the same explicit, nonfaulting, little-endian raw domain, canonical x64
+`CPUID` retains its original EAX/ECX selectors and runtime intrinsic. Each
+occurrence gets four independent unconstrained 32-bit answers. Charged scalar
+operations connect those answers to the original placeholders, while the
+original zero extensions clear the four destination registers' upper halves.
+This permits neither host-CPU assumptions nor repeated-query correlation.
+Runtime-derived pointers keep unknown provenance. The retained read preserves
+the original instruction's observable ordering. Source consumers and default
+native proofs still refuse it; finite native proofs can separately opt into
+the audited scalar-query contract described below.
+
+Canonical x64 `RDMSR` additionally requires the explicit
+`KernelX64NoFaultV1` profile. The x64 owner authenticates its complete six-operation
+bundle and ECX selector before connecting one fresh unconstrained 64-bit sample
+to the original result temporary. The retained operations split it into EDX:EAX
+and clear both upper halves; other registers, flags and memory remain unchanged.
+The declared nonfaulting supervisor domain supplies neither an MSR value nor a
+relationship between reads, and unimplemented result bits remain unconstrained.
+The original instruction remains observable. This adds no MSR-accessibility
+proof, pointer provenance, exception handling or source/native proof contract;
+write instructions and incomplete or mismatched bundles still refuse.
+
 Finite-value enumeration may observe feasible tuples without changing the proof query. An observer refusal returns an incomplete result with no tuples. The cache retains only mathematical domain proofs; immutable-read certificates remain local until enumeration completes.
 
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
+
+`PEHeaderMapping` owns the optional file-backed `<PE headers>` mapping in linked PE images. It appends a normalized segment and region after real COFF sections, preserving their indexes, and copies original file bytes even when LLVM needs a zero-VirtualSize reader projection. Complete headers, target-width bounds, ordinary page alignment, and disjoint raw and virtual section ownership are required. Padding beyond SizeOfHeaders is not admitted. Unsupported layouts retain `pe.headers_unmapped` and grant no header read authority.
+
+Windows process and driver admission share `COFFLoader::hasExpectedPEMappingInventory` to validate the real-section count and the optional header's exact bytes, position and read-only identity; each retains its independent execution preflight and creates exactly one guest header region.
+
+`PEHeaderInitialization` bounds the loader write footprint before publishing this read-only mapping. Ordinary import lookup/IAT extents, scalar base relocations and legacy load-configuration cookie destinations must exclude header pages. `PELoaderWriteRanges` shares the metadata-overlap rule with the fixed-image reader, so one write cannot change a later descriptor, terminator or configuration field. A rebased cookie destination requires its own complete scalar fixup. TLS, delay/bound imports, extended load configurations and other unmodeled writer protocols retain the refusal. The four-million-unit budget charges visited metadata bytes and section/record queries; fixed-image validation also charges that work to its caller's limits. This proves storage initialization, not a callee's effects or an unreachable control branch.
+
+The optional-header ImageBase field keeps an absolute data-pointer identity in DataPtrRelocSlots and DataPtrRelocTargetOwners, separately from the file's explicit BaseRelocations. Ordinary immutable-read queries exclude this field, and mirrored headers retain their own base address; a rebasing loader may replace that field. Other header bytes still pass ordinary immutable-read and fixup checks. The fixed preferred-base view independently binds both mapped copies to the raw snapshot, and its v5 digest includes the changed mapping contract. Raw-environment evidence and external-exit encodings are unchanged.
 
 Raw recovery's explicit `X64TerminalImports` domain describes stable named PE
 bindings whose callees neither return nor reenter the residual graph, including
@@ -2970,7 +8370,11 @@ Control and guard refinement precedes optional frame-partition retries; necessar
 
 Shared `SymContext::constantWindow` reports a bitwise window only when every result bit is proved constant. It follows existing extracts, a window contained in one concatenation operand, zero extension, and bitwise operations; unknown XOR inputs and arithmetic carries remain opaque. Results are limited to 64 bits, recursion to 32 levels, and work to 256 units. Every visited node, depth rejection and inspected concatenation operand is charged; copying a constant also costs its complete 64-bit word count. An incomplete proof yields no constant. `SymState` uses this read-only query to export constant register and temporary bytes; stored expressions and whole-word reconstruction keep their original identities. Memory-region export retains literal byte facts: eagerly adding derived partial-memory facts can fragment later input provenance and increase control-discovery work.
 
-`SymState` owns per-STORE preservation of already materialized bytes under an explicit separation contract. The actual STORE still executes; other memory regions, invalidation epochs and unknown defaults retain their post-store state. No missing byte is loaded or initialized. `SymExec` applies the contract to one ordinary STORE only. Recovery separately retains bounded affine spills and origin facts; joins remain conservative.
+`SymState` owns per-STORE preservation of already materialized bytes under an explicit separation contract. The actual STORE still executes; other memory regions, invalidation epochs and unknown defaults retain their post-store state. No missing byte is loaded or initialized. `SymExec` applies the contract to one ordinary STORE or one supported atomic write phase. Recovery separately retains bounded affine spills and origin facts; joins remain conservative.
+
+`SymState::materializedRegionRanges` exports only the current extents of one exact symbolic region, charging its lookup and bytes before allocation. It reads no missing memory and constructs no expressions. Recovery splits those extents into bounded cells and uses the existing complete-write overlap proof before preserving each cell. Adjacent proved intervals may coalesce; a gap or possibly overlapping cell remains unprotected. Later writes and projection retain their normal invalidation rules. This precision strategy supplies no external-pointer identity or new alias premise; the binary adapter's ordinary ABI return-slot condition remains a separate documented domain.
+
+`SymStorePreservation::AdditionalRegions` extends that single-store contract to independently based current regions. `AdditionalRanges` remains relative to the primary base. Each declared exact symbolic base and half-open modular interval requires a caller-established separation proof for the complete actual write; no fixed relation among bases is inferred. References belong to the state context by caller contract: index, validity and width checks cannot authenticate an in-range reference from another context. A declaration naming the actual store's canonical base is rejected; ordinary same-region byte overlap already owns that region. Repeated or overlapping declarations form a union and are validated and scanned separately under the same budget. Complete validation and capture/restore accounting precede the one ordinary STORE. Only saved current byte views are restored afterward, without importing historical facts, materializing missing bytes or resetting the store's unknown epochs. Empty `AdditionalRegions` retains existing work accounting. Invalid or insufficient-budget `SymState::store` requests do not mutate state; `SymExec` retains its existing fail-closed behavior on refusal.
 
 `StringTransfer` owns bounded ordered scalar lowering. Recovery owns value proofs, shared budgets and re-certification of complete copied frame pointers; generated accesses reuse ordinary memory checks.
 
@@ -2993,6 +8397,16 @@ The shared LLVM model admits canonical scalar `llvm.bswap` at i16, i32 and i64 t
 The LLVM importer turns each reached guest load/store alignment above one into a sticky definedness obligation on its actual 64-bit address. Access widths and memory effects remain unchanged; masks, comparisons and accumulation use the existing construction budgets. Omitted textual alignment uses the parsed ABI alignment; `align 1` emits no guard. This adds no entry assumption or accessible bytes. State-object accesses retain their separate eight-byte alignment contract, and atomic/volatile accesses remain unsupported.
 
 `modelLLVMScalarFunction` reuses this importer for pure `noundef` integer arguments and integer returns (`i1/i8/i16/i32/i64`). The shared model handles funnel-shift endpoints and guarded multiplication with double-width products. `checkLLVMScalarEquivalence` executes both models through `SymExec`, discovers controlling input bits, exhausts their complete combinations and keeps all other bits symbolic. Every return must agree and every executed operation must remain defined; partition, path, node and cumulative work budgets bound the query. `SymContext::constantWindow` exposes cumulative query accounting without relaxing its existing per-query ceilings. Refusal permits no rewrite. This read-only C++ query neither changes default source output nor supplies a persistent native/ABI or compiler certificate.
+
+`LLVMScalarModelOptions` keeps strict `RequireNoUndef` as the default and
+allows an explicit `DefinedBitvectors` input precondition for read-only queries.
+Both model and proof results retain that domain; no input IR annotation changes.
+All source-definedness obligations, unknown-contract refusals and termination
+checks remain. A caller-supplied stop probe is polled during charged construction
+and proof work and before successful publication. Cancellation is separate from
+resource exhaustion; bounded LLVM verification and local algebra queries can
+delay a cooperative stop. Existing state-wrapper and source-recovery defaults
+are unchanged.
 
 `projectLLVMScalarResult` clones an explicitly selected integer return field and bit window through struct/array `insertvalue` packaging. It retains all arguments, control flow, scalar operations, annotations and `assume` calls, removes only dead aggregate packaging, and validates the result through the shared scalar model. Construction and model budgets are separate; unsupported contracts or exhausted limits publish no module and leave the input unchanged. Every required status, value and preserved-state observation still needs a complete proof; selecting a field establishes no entry, frame or native ABI contract.
 
@@ -3090,7 +8504,7 @@ The explicit native `DeferNativeConditionalEdges` contract collects conditional 
 
 Native immutable loads also accept exhaustively proved finite address sets, bounded by `MaxImmutableLoadAddresses`. Two-execution address equality is required before enumeration. Every candidate needs immutable bytes, mapping evidence and separation from the mutable frame; the selected value remains input-dependent. Missing candidates, writable or relocated data and exhausted enumeration refuse a certificate. Read witnesses and the address limit are bound into the certificate. Dynamic frame offsets and arbitrary external memory remain unsupported.
 
-The following behavior uses the default strict audit contract. `checkBinaryUndefinedIndependence` checks complete finite native x64 paths under the declared observations, collecting both arms of original direct branches before feasibility pruning. Physical near CALL pushes the real fallthrough address; internal RET loads the current stack word, including modified return targets. Indirect targets require exhaustive finite enumeration and two-execution equality before path restriction. Exact immutable loads require evidence and proven separation from the mutable frame. Every collected instruction, including untaken arms, needs immutable original bytes; apart from the strictly lifted `INT3`/`UD2` terminal boundaries and the explicit RDSSP/INCSSP profile projection described below, every instruction also requires complete architecture metadata. Strictly lifted `INT3`/`UD2` may remain as `Terminator` boundaries with their full original bytes and LowIR operation digest, without promoting a `Missing` undefined-output sidecar to `Complete`. A certificate may retain these traps only when symbolic execution proves them unreachable; any feasible path reaching one returns `ContractViolation`, with no certificate or residual code. This rule models neither fallthrough after a trap nor exception recovery, uses no `codeFollowsTrap` heuristic, and does not extend the static LowIR API’s support. Certificates bind bytes, mappings, effects, read witnesses, execution profile and proof limits. The explicit normal, nonfaulting, CET-disabled profile excludes every image mapping from the entry frame. Every feasible path must reach an outer return that preserves entry RSP and the original return slot before the native pop; an exhausted prefix proves nothing. Direct and indirect loops are accepted only by complete finite unrolling; nonterminating or over-budget paths and all other unaudited effects refuse a certificate. `specializeBinaryInterpreterWithIndependence` runs this proof before recovery and returns no residual on failure. Ordinary recovery does not enable the gate by default; loop invariants, exception dispatch, CET-enabled execution and native-to-C equivalence remain outside this certificate.
+The following behavior uses the default strict audit contract. `checkBinaryUndefinedIndependence` checks complete finite native x64 paths under the declared observations, collecting both arms of original direct branches before feasibility pruning. Physical near CALL pushes the real fallthrough address; internal RET loads the current stack word, including modified return targets. Indirect targets require exhaustive finite enumeration and two-execution equality before path restriction. Exact immutable loads require evidence and proven separation from the mutable frame. Every collected instruction, including untaken arms, needs immutable original bytes; apart from the strictly lifted `INT3`/`INT1`/`UD2` terminal boundaries and the explicit RDSSP/INCSSP profile projection described below, every instruction also requires complete architecture metadata. Strictly lifted `INT3`/`INT1`/`UD2` (including two-byte `INT 3`) may remain as `Terminator` boundaries with their full original bytes and LowIR operation digest, without promoting a `Missing` undefined-output sidecar to `Complete`. The x64 proof owner uses the shared decoder classification and relifts the full bytes to authenticate the operation, flags and missing audit; a self-consistent provider digest alone is insufficient. A certificate may retain these traps only when symbolic execution proves them unreachable; any feasible path reaching one returns `ContractViolation`, with no certificate or residual code. This rule models neither fallthrough after a trap nor exception recovery, uses no `codeFollowsTrap` heuristic, and does not extend the static LowIR API’s support. Certificates bind bytes, mappings, effects, read witnesses, execution profile and proof limits. The explicit normal, nonfaulting, CET-disabled profile excludes every image mapping from the entry frame. Every feasible path must reach an outer return that preserves entry RSP and the original return slot before the native pop; an exhausted prefix proves nothing. Direct and indirect loops are accepted only by complete finite unrolling; nonterminating or over-budget paths and all other unaudited effects refuse a certificate. `specializeBinaryInterpreterWithIndependence` runs this proof before recovery and returns no residual on failure. Ordinary recovery does not enable the gate by default; loop invariants, exception dispatch, CET-enabled execution and native-to-C equivalence remain outside this certificate.
 
 Native collection treats a CALL continuation as a stored return value, not an immediate edge. Direct callees and both conditional branch arms keep eager audits; actual RET destinations are collected after complete finite enumeration. Skipped inline bytes carry no instruction-evidence claim. Reached decode failures, traps, incomplete targets, nonterminating cycles and exhausted budgets still prevent certification.
 
@@ -3166,6 +8580,18 @@ identical in both paths.
 
 MedIR owns bounded invariant-constant propagation across same-width SSA copies and complete PHIs, including loops. Every incoming value must converge to the same bits, width, provenance and address owner. Unknown definitions, unseeded cycles, incomplete edges and conflicting constants prevent substitution; budget exhaustion leaves the function unchanged. The analysis substitutes operands without removing calls, loads, stores or their effects. Both HighIR and LLVM consume the same result.
 
+The constant worklist indexes complete nonconstant SSA identities. Node
+addresses become stable only after all definitions have been collected;
+the value solver retains its ordered visitation and work charges. Width-view
+origins then propagate through the same use graph, charging each reached node
+and outgoing use edge once instead of rescanning all inputs to convergence.
+Both analyses finish within the shared budget before any operand changes.
+
+HighIR's call-clobber index is local to each converter invocation and retains
+the first record for each full SSA identity, including its variable kind.
+Reusing a converter rebuilds that index before following any preserved-prefix
+chain.
+
 | User route | Representation path | Exit |
 |------------|---------------------|------|
 | Low/Med dump | Binary -> LowIR, optionally -> MedIR | Diagnostic text |
@@ -3215,6 +8641,23 @@ representation-specific logic in its owning IR or backend library; the pipeline
 should orchestrate those components rather than absorb their algorithms.
 
 ## LLVM C object storage
+
+Finite direct native memory accesses into pointer-bearing data use a canonical
+relocation-free byte interval in `MedLLVMEmitter`. A gap larger than the single
+embedding limit retains only demanded finite bytes, merging and rebinding
+overlapping intervals as demand grows within the same segment and
+relocation-free gap. Adjacent mappings retain their own bytes and mutability.
+Unobserved alignment padding preserves atomic alignment during backwards
+growth; the encoded global base includes that padding so source and patch
+projections retain the original addresses.
+These bounded intervals require a mapping aligned to the shared maximum
+embedded-data alignment. They do not recursively materialize unrelated pointer
+slots. An address-valued, indexed or pointer-slot
+access still demands the complete relocation mirror; its creation rebinds all
+earlier direct accesses to that same storage. Required unresolved pointers keep
+failing emission. Mergeable shards retain whole-run storage so masked bodies
+cannot give the same image bytes different identities across modules. Runtime
+callable and registration-owned storage keep their original-image contracts.
 
 `LLVMCStackAllocation` owns counted and non-entry stack allocations on the private C clone. It retains DataLayout allocation stride, unsigned count, alignment and execution position. A side-effecting private call renders plain `__builtin_alloca` at the original instruction, checks size overflow and aligns within extra bytes; allocation lifetime therefore reaches function return on Clang and GCC. Entry allocations of one object retain ordinary local declarations. Wider counts, scalable storage, non-default address spaces, inalloca/swifterror and explicit stack save/restore refuse before normalization. Private markers in input IR also refuse; caller IR is unchanged.
 
@@ -3315,6 +8758,89 @@ cancellation, generation tracking, and the `RejectExecutableWrites`,
 `InvalidateOnExecutableWrite`, and `ValidateBeforeDispatch` code-write policies
 also produce coherent typed records rather than implicit host-side behavior.
 
+Exact byte-span loads/stores use the same access-planning owner as scalar
+accesses. The complete nonempty range is checked before copying any byte,
+including operands such as binary80 that cross region boundaries. Stores need
+write permission only; failed accesses leave output bytes, guest storage and
+generations unchanged. Executable writes preserve the existing policy, including
+refusal across multiple executable regions. `SelfModification` denotes a
+completed store followed by invalidation/exit, so an instruction adapter must
+commit its corresponding architectural state before honoring that exit. This
+is failure atomicity within the runtime's confined execution thread, not an
+inter-thread atomic guest instruction or an expansion of translation admission.
+The scalar-v1 control protocol still rejects non-scalar data extents. The
+separate exact-span-v1 validator preserves the 128-byte layout and all other
+invariants while accepting bounded nonempty data extents. Its limit derives
+from `MemoryFaultExit::AccessWidthBits`; oversized spans fail before access.
+Protocol identity must be bound by a trusted profile/invocation and included in
+artifact/cache identity before activation. It cannot be inferred from a control
+record, including a successful or eight-byte record, or selected by retrying a
+failed scalar validation. This foundational validator enables no new profile;
+default integer dispatch, artifact admission and helpers remain scalar-v1.
+
+`X87PortableRuntime` adapts the existing portable semantic owner to this checked
+memory boundary. Its separate versioned state includes explicit environment
+and physical-payload provenance; the original integer state/frame is unchanged.
+Waiting-exception preflight precedes memory checks, and store preflight precedes
+operand evaluation without publishing bytes or generations. Final stores repeat
+those checks. A store fault keeps the current x87 state; a completed executable
+store commits the matching stack/pop state before returning self-modification.
+The result carries a stable refusal code, completion flag and success-only
+scalar validity, plus only this operation's memory result. Callers still own
+PC/accounting and profile admission. This C++ adapter alone does not enable a
+generated-code, JIT, public API or cross-architecture capability cell.
+
+`X87PortableABI.def` and `X87PortableStatus.def` own the separate generated-call
+C contract. IRLowValidation derives the emitter signature view from its C
+header without linking to Translate. The `neverd_x87_runtime` shared target
+exports only those helper symbols and adapts a trusted, explicitly constructed
+`PortableX87ExecutionV1` to the existing transactional owner. Scalar-result
+consumption is a stateful, single-use operation; failure and nonproducing steps
+invalidate it. The internal C++ embedding layout must match the runtime build.
+The bridge itself establishes no generated-code or translation qualification.
+
+`preparePortableX87Function` owns the alternate generated-function interface.
+It admits an ABI-recovered x64 integer leaf only after checking its direct CFG,
+SSA dominance, owned context and portable forms. Source arguments remain numeric
+guest values. An explicit runtime pointer and source-result pointer follow them;
+the function returns a status. Each step has an immediate failure return, and
+only its exclusive success edge may consume a scalar result. A complete known
+64-bit source return is required; unknown upper RAX bits are never zero-filled.
+The immutable prepared body uses private control labels, carries no original
+code-range proof and exposes no mutable IR or public qualification switch.
+Ordinary LLVM and HighC entry points reject its dedicated helper intrinsics.
+Their `emitPortableX87` entry points create isolated emitters, revalidate the
+prepared body and retain exact runtime declarations without source-call ABI
+inference. Only the explicit execution parameter is a host pointer; guest IP,
+DP and source arguments remain integers. LLVM-C consumes this module with
+`PreserveLLVMFunctionTypes`. The private C writer retains unused parameter
+positions and omits source-architecture intrinsic headers and original-address
+annotations. Output targets require 64-bit little-endian x64/AArch64 C layouts;
+runtime linking and profile qualification remain explicit requirements.
+
+`isPortableX87RuntimeInstruction` in the shared instruction inventory owns
+Step V1 instruction admission for generated preparation, translation and public
+queries. This boundary excludes the concrete interpreter's integer-flag x87
+forms. `RuntimeX87GuestState` composes the legacy integer state with the versioned
+portable image and separate last-step diagnostics; logical snapshots serialize
+only the named extension in explicit little-endian order.
+`RuntimeX87Helpers` owns terminal step execution and post-invocation validation.
+It reuses the existing transactional semantic/memory owner and never accesses
+host x87 state. Successful FNSTSW updates AX without changing upper RAX.
+
+The explicit C++ `TranslationRuntimeProfileV1::PortableX87` targets native Linux
+AArch64 ELF. Its block builder stops at the first x87 instruction, its lowerer
+flushes the integer prefix before the terminal helper, and its dispatcher resumes
+only after validating completion and the selected PC. Partial completion,
+cancellation, executable-store invalidation and budget resumption retain their
+separate outcomes. The profile owns exact-span validation and refuses
+`ValidateBeforeDispatch`; legacy integer invocation cannot enter its larger
+state ABI. Runtime profile, memory policy, state/helper layout, descriptor and
+actual native symbol bindings participate in object/registry/linker/cache checks.
+Object pipeline schema 17 and lowering schema 10 separate these artifacts from
+the old contracts. Credentials and dynamic state are invocation inputs, never
+host pointers embedded in reusable cache identities.
+
 `TranslationObjectCompilerV1` is the verified LLVM-IR-to-object boundary. It
 validates a const input module, clones it before applying any transformation,
 composes proof-gated semantic simplification with LLVM optimization at `O0`
@@ -3361,7 +8887,8 @@ forms compute their architecturally defined flags while preserving `AF` in the
 NeverD state model. Canonical `C3` `RET`
 and `C2 iw` `RET imm16` terminate return blocks; canonical `EB cb` and `E9 cd`
 direct-relative `JMP` encodings terminate direct-branch blocks. The published
-lowering schema is 9. Canonical, legacy-prefix-free traditional Jcc branches
+lowering schema is 10; the default scalar instruction subset is unchanged.
+Canonical, legacy-prefix-free traditional Jcc branches
 terminate blocks only in these forms: `JO`/`JNO` short `70/71 cb` or near
 `0F 80/81 cd`; `JB`/`JAE` short `72/73 cb` or near `0F 82/83 cd`; `JE`/`JNE`
 short `74/75 cb` or near `0F 84/85 cd`; `JBE`/`JA` short `76/77 cb` or near
@@ -3427,15 +8954,21 @@ remains exact across blocks, and successful guest stops commit executed state
 and authoritative memory together. Cancellation is linearized against that
 final commit.
 
-This is an executable vertical slice, not a complete translator. It does not
-yet cover ordinary guest-memory instructions, partial registers, conditional
-control flow outside the exact schema-9 traditional-Jcc slice above—including
+The default scalar profile is an executable vertical slice, not a complete
+translator. It does not cover ordinary guest-memory instructions, partial
+registers, conditional control flow outside the exact schema-9 traditional-Jcc slice above—including
 `JRCXZ`/`JECXZ`/`JCXZ` and `LOOP`/`LOOPE`/`LOOPNE`—indirect control flow, calls,
 floating-point, SIMD, x87, atomics, system instructions, general exception
 propagation, block caching, other guest/host pairs, or the reverse
 AArch64-to-x86-64 direction. The execution session has no C, Python, CLI, or
 JSON surface yet, and debugging remains separate and unsupported. The object
 APIs above remain useful without opting into native execution.
+The separately selected portable x87 profile adds only its admitted x64 owned
+instructions and authenticated extension on Linux AArch64. It does not widen
+these scalar object APIs, add a floating calling convention, or admit MMX,
+general environment operations, arbitrary memory instructions or other hosts.
+The [x87 contracts](x87-semantics.md) and [qualification record](x87-qualification.md)
+define that scope independently of complete state or formal proof.
 
 The generated-IR contract requires every translated block governed by it to be
 hidden and non-preemptible with the C ABI `i32 (ptr state, ptr runtime)`.
@@ -3462,6 +8995,87 @@ LLVM optimization; the policy does not supply an executable translation
 backend.
 
 ## CPU execution
+
+`ExecutionBackend::readRegisters` observes the stopped CPU through the shared
+`Registers.def` inventory, including vector lanes and extended x64 FP values.
+It publishes a complete packet or an error and never saves/restores a context,
+executes an instruction, or reads guest memory. Width validation rejects invalid
+backend values; architecture transports retain ownership of normalization.
+Its saved-context overload reads the same inventory directly from a context
+owned by that backend and its current address space. It uses the same register
+extraction and normalization as current-state reads, without restoring the
+context, accessing guest memory, or releasing faults or pending events. Expired,
+moved-from, foreign-owner and foreign-space contexts fail clearly; external
+backends without saved-state observation return an explicit unsupported error.
+Android's opt-in `observe_cpu_state` reserves its raw register-byte budget before
+execution and reports the current thread under `android.cpu_state`, even after a
+terminal CPU fault. Registers are named pairs of hexadecimal low/high 64-bit
+words. Capture failure has `registers: null` and a separate diagnostic, preserving
+the original workload stop. This is an observation of modeled architectural
+registers, not suspended-thread state or a resumable VM checkpoint.
+
+The separate `observe_thread_cpu_states` option reserves register bytes for the
+configured thread limit and emits `android.thread_cpu_states` in thread-creation
+order. It captures each unfinished thread: `current_cpu: true` reads the stopped
+CPU; other entries read the scheduler's saved context at its last switch. A
+failed capture retains that thread's diagnostic and does not prevent later
+observations or replace the workload stop. Completed and retired threads are
+omitted because their former contexts do not represent final state. An enabled
+option with no unfinished threads emits an empty array; the disabled option
+omits the field. Neither option captures guest memory or a resumable checkpoint.
+
+Android's separate `observe_memory_on_failure` option uses the existing
+`ExecutionBackend::snapshotBacking` owner for requested terminal RAM ranges.
+It never retries guest/model reads after a fault or accesses device callbacks.
+Each failed range retains its own bounded diagnostic and publishes no partial
+bytes, without changing the execution failure or preventing later captures.
+The default report and resumable-stop memory contract remain unchanged.
+
+`observe_memory_at_stop` explicitly selects the same diagnostic RAM capture
+at every final stop, including instruction/event limits and normal returns.
+A range unmapped by a completed thread retains its own diagnostic instead of
+turning the workload's stop into a runtime failure or discarding later ranges.
+Both diagnostic options share the stopped-backing reader, bounded errors and
+one per-range output reservation. They do not relax entry mapping requirements;
+ordinary final reads and the failure-only option retain their existing scope.
+
+The shared checked execution owner reuses successful run-entry mapping
+validation only for the same live address space and mapping generation.
+Its architecture and device-admission policy are fixed by the backend's
+execution contract. The startup instruction lease protects both validation
+and reuse; external mapping changes require another check, and a failed
+check never records a successful epoch. Instruction access checks and CPU
+state admission remain independent of this reuse.
+
+The checked Unicorn ARM64 transport installs and captures complete register
+packets using the shared register inventory. A read packet has private zeroed
+storage and uses the architecture's shared normalization directly after all
+transport reads succeed. Callback-based backends use the same normalization;
+neither route imports transport metadata as the configured privilege mode.
+Partial failures, cancellation and deadline expiry cannot publish a
+prefix. `normalizeAArch64State` remains the sole owner of architectural widths
+and NZCV normalization. Retrying a failed transfer reinstalls the entire input;
+instruction admission, RAM transactions and translation-cache invalidation
+retain their existing boundaries.
+
+After a successful EL0 capture, an identical input packet may reuse the engine's
+registers while its address space, mapping generation and transport base remain
+unchanged. The comparison includes every scalar and vector field from the raw
+capture; normalization remains owned by `normalizeAArch64State`. Any changed input,
+mapping change or failed step requires a complete install. Supervisor steps keep
+complete installs, and every step still captures the complete output packet.
+
+Serial checked ARM64 steps reuse Unicorn's one-instruction translation only
+after comparing all four executable bytes with a bounded transport cache.
+`execution_limits::UnicornInstructionCacheEntries` owns its 4,096-entry retention
+bound, covering larger instruction working sets without changing admission.
+Host and guest writes through any alias are therefore visible without relying
+on mapping generations as code-write epochs. Address-space identity, mapping
+generation and transport relocation invalidate the recorded identities; errors,
+device staging and maintenance/direct runs retire them too. Parallel execution
+keeps the existing per-entry retirement. This changes neither instruction
+admission nor observations, RAM transactions or architectural state capture.
+Variable-length x64 instructions keep their existing invalidation path.
 
 CPU execution is independent of the guest OS and binary format. Enable
 `NEVERD_ENABLE_CPU_EMULATION` to build it without the Windows driver model;
@@ -3503,16 +9117,29 @@ continuations have separate files; their shared admission preserves timer
 processing and driver/framework ownership checks. Splitting dispatch does not
 transfer ownership of execution, thread or callback state out of the model.
 
+Kernel provider residency belongs to that same model. After creating and
+protecting a provider's RAM, `KernelModel` marks its loaded-module identity as
+a resident provider. Input-driver module metadata does not carry this authority.
+The partial `MmIsAddressValid` query checks the exact provider extent and current
+readable RAM without device callbacks. This admits read-only export metadata
+while preserving opaque thunk/data checks, write protections and recovery
+dependencies. It neither infers ownership from an observed address nor extends
+provider identity to aliases.
+
 `os/linux/process/` and `os/darwin/process/` own image loading, initial stacks and execution continuations. `os/linux/kernel/` and `os/darwin/kernel/` own system-call ABI, services and memory policy, built as `NeverDEmulationLinuxKernel` and `NeverDEmulationDarwinKernel` with only the core memory/CPU boundary and LLVM Support. Their `MemoryLayout` contracts contain address policy, not executable images or startup ABIs. Android depends directly on the Linux kernel model; macOS and iOS retain separate platform profiles. Dependencies run from processes/platforms to kernel services. These kernel directories do not imply Linux/Darwin kernel-image or driver loading support. Shared OS vocabulary remains in the OS-level `.def` files.
 
 The Linux kernel component also owns validation and lookup of explicit
 clock observations in `LinuxTimeOptions`, plus time-service output ordering.
-`LinuxCPUClock` decodes process CPU identities and validates their released GKI
-task observations. It resolves current-task aliases to the process group and
+`LinuxCPUClock` decodes process CPU identities under a released GKI contract or
+an explicit closed task catalogue. `LinuxKernelAvailability` validates that
+catalogue independently of GKI, including task limits and thread-ID conflicts.
+It does not select pidfd or other version-specific rules. The CPU-clock owner
+validates the corresponding task observations. It resolves current-task aliases to the process group and
 checks foreign group leaders before output access. `LinuxClock` canonicalizes
 observations and rejects duplicate aliases. Process CPU samples stay fixed
-while the idle policy advances declared wall clocks; no execution accounting
-or host clock supplies an observation.
+while the idle policy advances declared wall clocks, including monotonic raw
+from its own epoch. No execution accounting or host clock supplies a CPU
+observation; missing raw-clock input never borrows monotonic time.
 The process wire parser validates representations and delegates value policy
 to that owner. Android reuses clock lookup and raw kernel services; Bionic
 alone owns errno conversion and `time`'s user-space destination store.
@@ -3522,11 +9149,28 @@ for the owning scheduler or advancing an otherwise single-threaded workload.
 Bionic's `usleep` narrows its scalar argument to unsigned 32-bit microseconds
 and admits the converted duration through that same owner. Completion and errno
 conversion share the kernel-call path, including suspended native events.
+Bionic's `sleep` admits at most `INT32_MAX` seconds and retains the original
+unsigned argument in a typed libc continuation. `LinuxSleep` alone computes the
+interrupted remainder, either copying it to a raw caller's guest address or
+retaining a typed value for the modeled libc automatic. The scheduler carries
+that continuation through both ordinary waits and nested signal-return frames;
+it does not interpret the seconds or create another deadline. After the handler,
+Bionic applies kernel errno conversion, narrows the libc return to `int`, and converts the
+retained remainder into rounded-up seconds with the unattempted excess. A signal
+context redirect leaves the abandoned native event incomplete.
 Android's typed waits retain the consumed request, complete CPU context and
 native-call versus raw-service event identity. `AndroidThreadWaits` owns wake
 readiness and completion; `GuestThreads` advances to the earliest deadline only
 when no thread is runnable. All clock reads share `LinuxClock`; no timestamp or
 successful sleep is synthesized in the Bionic dispatcher.
+
+`LinuxPriority` owns the optional initial nice observations and subsequent
+per-task changes. `GuestThreads` borrows this owner to inherit the creating
+thread's current value only after CPU/stack preparation, with rollback if handle
+publication fails. Unknown parent values stay unknown. Finished child tasks lose
+their kernel priority identity even while their joinable userspace handle remains;
+the entry/leader retains the same zombie lifetime as its proc record. Nice state
+does not change the cooperative scheduler's round-robin execution policy.
 
 Android's `AndroidSymbols.def` owns Bionic symbol spellings and handler bindings;
 `AndroidDiagnostics.def` owns native-model diagnostics. The entry point validates
@@ -3541,14 +9185,101 @@ with their existing Linux and report inventories. Keep control flow in C++ and
 independent test expectations in fixtures; ordinary punctuation and empty strings
 do not need vocabulary entries.
 
+`AndroidFormatting` owns both ordinary and fortify string formatting. Its
+entrypoint classification supplies the fixed-argument layout and object-size
+checks to one formatter and the shared AAPCS64 `ArgumentReader`; it does not
+duplicate conversion rules for checked imports, dynamic providers, SDK or CLI.
+Fortify paths requiring unmodeled process-abort effects stop before publishing
+output. Existing memory, deadline and representable-result limits still apply.
+
+`AndroidStrings` owns bounded copies, including `strlcpy` source scanning,
+termination and atomic refusal. `__strlcpy_chk` checks the supplied capacity
+against the destination object size before either pointer is accessed, then
+reuses the same copy and full-source-length result. A zero capacity still scans
+the source; a short source does not relax the fortify capacity check.
+`strcpy` and `__strcpy_chk` share this staging and access owner, copy through
+NUL without padding and return the destination. API 28 ARM64 uses the C
+`__strcpy_chk` implementation: it scans the source before comparing its
+NUL-inclusive length to the destination object size. Scan faults and budgets
+precede that fortify check; the destination and overlap checks follow it.
+Undefined overlap and unsupported abort paths refuse without partial writes.
+`memchr` and `__memchr_chk` share the character-search loop, unsigned-byte
+comparison and guest read owner. Memory searches pass embedded NUL bytes and
+return null only after exhausting the requested count; scan-budget exhaustion
+remains a failure. The checked entry admits the whole count against the object
+extent before pointer or deadline checks. Zero-count searches need no pointer
+access, and a first match does not require the unread suffix to be mapped.
+`memmem` reuses `strstr`'s linear prefix-table search with explicit 64-bit
+lengths and ordinary embedded NUL bytes. An empty needle returns the haystack;
+a shorter haystack returns null, both without reading either input. Otherwise
+the needle and prefix table must fit the model budget, and the haystack is
+read only through the first match or the declared count. Budget exhaustion
+is a failure rather than a guessed no-match. Both searches preserve errno
+and guest bytes and retain the common dynamic-provider lifetime boundary.
+`strcasestr` uses this same prefix table and scan with C-locale ASCII case
+folding. It retains NUL termination, first-match and empty-needle semantics;
+bytes above ASCII remain unchanged. Guest locale changes are not modeled,
+and host locale settings do not affect the search.
+`__strcat_chk` and `__strncat_chk` reuse the same checked-length owner as
+`__strlen_chk` for the existing destination, then stage only the appended
+bytes. API 28's zero-count `__strncat_chk` returns before any pointer access.
+Otherwise source reads and destination write checks precede each fortify
+capacity check; exhausting the terminator slot fails before another source
+read or the bounded-count exit. Only the appended tail requires write
+permission. Refusals preserve guest bytes, including on source, permission,
+overlap, memory-limit and deadline failures.
+`__read_chk` owns only the Bionic extent checks;
+descriptor state and suspended reads stay in the shared Linux read owner.
+Pathname-only `stat` and `lstat` aliases adapt arguments into the existing
+`fstatat` service rather than duplicating pathname resolution or status layouts.
+All these entries retain the common dynamic-provider lifetime boundary.
+
+`AndroidQueries` owns Bionic error text: one pinned process catalog and a
+separate reusable buffer in each guest thread's TLS allocation. Image setup
+creates the catalog for static imports and declared dynamic providers. Known
+lookups return a borrowed pointer; only unknown formatting performs a guest
+write. Placement policy lives with the emulation limits, and no host locale or
+libc owns guest-visible text or lifetime.
+
 `LinuxFiles` owns directory cursors, workload-local inode identities and the
 optional live proc FD namespace alongside regular and device descriptions.
-Mutable bytes are one object per granted catalogue path; independent opens
-have independent offsets, while dup shares its open description. Mutation
+Mutable bytes belong to stable file objects; independent opens
+have independent offsets, while dup shares its open description. Without a metadata provider, mutation
 invalidates captured stat observations, retaining only unchanged block-size
-facts for libc buffer selection. Directory and stdio buffers belong to Bionic,
+facts for libc buffer selection. Opt-in tracked memory files keep complete
+metadata and sparse allocated-page state in the same mutable object, borrowing
+time solely from LinuxClock. Directory and stdio buffers belong to Bionic,
 which delegates refill, write, seek and close to this same kernel owner. Neither
 the JSON adapter nor a private workload supplies a second descriptor table.
+
+`processOptionsFromJSON` owns request wire accounting for every frontend.
+Only validated DEX and Linux regular-file bytes earn hexadecimal payload
+capacity beyond the metadata ceiling. The Android and Linux input owners
+retain their independent decoded and aggregate budgets; strings, paths,
+other binary fields and JSON escape overhead remain metadata. The C ABI
+uses the same outer limit before scanning its NUL-terminated input.
+
+`LinuxFiles` also owns the opt-in directory creation provider, mutable directory
+metadata and append-stable directory cookies. LinuxClock supplies timestamps;
+JSON carries only initial snapshots, umask and bounds. Bionic `strstr` stays in
+the common string owner with bounded linear search and provider lifetime checks.
+`strpbrk` shares the bounded byte-set scan used by `strspn` and `strcspn`;
+it returns the first member's guest address or null at NUL, with unchanged errno.
+All three entries use the same guest access, deadline and provider checks.
+See [directory creation contracts](android-directory-creation.md).
+
+`LinuxFiles` also owns the explicit file creation, rename and unlink grants.
+`LinuxFileMutation` maintains live names separately from object keys; creation
+uses unique internal keys, while initial objects keep their original keys.
+Descriptions, mutable bytes, write reservations and metadata attach to those
+objects. Directory entries, status, proc FD links and fdinfo resolve the same
+names, so pathname reuse cannot revive the previous object's inode or grant.
+Retired objects retain their charged reservation. Input validation bounds all
+creation generations and shared file bytes before execution; JSON only imports
+the options. Namespace checks and clock availability precede publication.
+`LinuxFilePaths` owns open's component walk and its directory-FD origin;
+creation must not recheck ancestors already outside that walk. Unsupported
+mapping, link, open-parent and replacement lifetimes remain explicit boundaries.
 
 `LinuxFiles` also owns explicit device open descriptions in the file/link
 namespace. `LinuxDeviceFiles` validates and applies per-open ioctl transactions:
@@ -3631,6 +9362,13 @@ LLVM Support. All transports share its physical x87 state and FXSAVE64 layout;
 Unicorn does not depend on KVM/WHP. KVM and WHP transfer the complete FP/SSE
 state through XSAVE packets; the ISA codec owns the shared layout and init-state
 rules. Unicorn converts its full tag word at its boundary.
+The portable Unicorn adapter enforces its admitted absolute deadline in the
+mandatory instruction hook, before observers and again before guest effects.
+It disables Unicorn's optional per-entry timer thread, so short scheduling
+slices do not wait for a host timer to retire. A timed-out CPU remains resumable
+under a newly admitted CPU budget; the owning workload still retains its
+original `ExecutionBudget`.
+
 CPU snapshots preserve x87 control/status, the physical nonempty `FPTag` mask,
 TOP, opcode,
 instruction/data pointers and all eight 80-bit payloads. This state contract
@@ -3725,6 +9463,16 @@ while `LinuxServices.cpp` remains the authoritative kernel-service dispatcher
 for both Linux processes and Android native workloads. An optional runtime
 instruction observer receives only attempts admitted by `ExecutionSession`'s
 existing budget; OS models do not replace CPU hooks to collect traces.
+Selected Android execution observations instead use `ExecutionSession` watches
+to read stopped scalar state and explicit memory. `AndroidObservation` owns
+shared C++/JSON admission and capture, and the runtime owns watch continuation.
+Register-relative observations resolve the captured x0–x30/SP state in that
+same owner, with checked signed offsets and complete readable extents. They
+share fixed-read output reservation, snapshot ordering and fail-stop behavior;
+JSON only translates explicit register names and scalar inputs.
+Checked quantum boundaries precede a watch of the next instruction, so a
+cooperatively selected thread cannot inherit another thread's skipped watch.
+Observation stops preserve the current quantum and do not charge a service.
 The device API query reads the explicit immutable property catalogue and shares
 `AndroidStrings`' bounded decimal conversion with `atoi`. The reported property
 does not select a different Bionic ABI or infer a Linux kernel contract.
@@ -3734,8 +9482,15 @@ changing the allocator. Android preparation still accounts for every requested
 byte, and the existing final snapshot path checks current permissions. Terminal
 CPU/model faults retain their diagnostics without attempting observation reads.
 `LinuxResidency.cpp` owns bounded `mincore` validation within `LinuxMemory`.
-It uses `AddressSpace` mapping facts for first-page holes and does not maintain
-a second map or equate allocated backing storage with Linux page residency.
+It uses `AddressSpace` mapping facts for first-page holes. Optional ordered
+residency observations are matched against separately tracked anonymous
+allocation provenance, never VMA names or allocated RAM contents. `mapPages`
+publishes provenance only after complete mapping success; shared `unmapPages`
+retires it, including brk shrink and thread retirement. These intervals retain
+no RAM and confer no access permissions. Proc and residency share live VMA
+boundaries, while only residency admits device boundaries for explicit refusal.
+A monotonic query/output walk preserves complete vector chunks before errors;
+unknown partial-copy progress remains unsupported.
 Linux memory dispatch selects each operation before applying its own argument
 policy; raw and Bionic calls share that decision.
 `AndroidMemory` owns copies of caller-specified regular files into explicit
@@ -3759,8 +9514,67 @@ native import event without inventing another executed service instruction.
 and Bionic's `AndroidSignals` adapter use the same query/replacement operation;
 the Android adapter owns LP64 field order, reserved-mask filtering and errno.
 The kernel owner installs a new action before copying the old action out, so a
-copy fault does not undo the installation. No CPU backend or SDK interprets a
-handler address, queues a signal or delivers one.
+copy fault does not undo the installation. The same owner handles `kill` for
+self existence probes and uncatchable SIGKILL termination. It returns a typed
+`signaled` outcome without resuming the pending service; Android stops all live
+guest threads and records their termination separately from completed returns.
+`LinuxSignals` also owns per-thread masks, process-pending standard signals and
+live AArch64 signal-frame records. Thread creation inherits the creator's mask;
+retirement drops that thread's records. Both runners call the shared delivery
+owner before guest execution. `LinuxSignalFrame` materializes the Linux wire
+ABI using ordinary guest memory and backend register access; `LinuxMemory`
+owns allocation of the real guest return trampoline. `rt_sigreturn` restores
+the mutable guest frame and marks a control transfer, so runners do not overwrite
+the restored PC or x0 with an ordinary service return. CPU backends do not own
+signal policy or synthesize handlers. Unknown initial masks/alternate stacks,
+unsupported waiting recipients and context extensions remain explicit stops.
+No SDK or host signal mechanism participates.
+`KernelWait` owns each suspended operation's signal interruption contract.
+Relative sleeps retain copied deadlines and remaining-time output addresses in
+`LinuxSleep`; no second sleep state lives in the Android scheduler. Scheduling
+considers eligible process-pending signals before advancing idle time. The
+shared signal owner discards ignored signals and classifies default termination
+before a waiter can report EINTR. Poll, select and epoll owners perform their
+distinct interrupted copy-out rules. The receive owner alone decides whether
+its captured timeout and zero-progress state permit SA_RESTART. The scheduler
+then releases that wait and restores its trap PC, without installing a result;
+normal execution re-imports the mutable registers and descriptor identity.
+Other wait owners refuse interruption until their own contracts exist. For modeled native wrappers,
+the scheduler records a per-thread continuation at the import's post-trap PC
+and current signal-frame depth. After `rt_sigreturn`, Bionic converts the
+restored raw result, including guest edits, to errno/-1. A guest PC redirect
+bypasses that adapter without fabricating a returned native-call event.
+`AndroidEnvironment` owns Bionic lookup over an explicitly supplied guest
+environment vector. It reads live guest storage through the existing bounded
+memory helpers and returns borrowed value pointers. Imported and named calls,
+constructors and threads use that same owner; no host string map, cached
+environment copy or additional process state is maintained. The vector's
+presence is a public input fact, while pointer validity is checked only when
+the API needs to read it. Linux ELF startup still owns its independent initial
+stack construction; there is no kernel getenv service.
+
+`AndroidAuxv` owns admission and lookup of the native workload's explicit,
+complete auxiliary vector. Bionic alone applies `getauxval`'s full-width
+lookup and thread-local errno behavior; constructors and dynamic imports use
+that same owner. This does not replace Linux process startup's synthesized
+stack vector or expose host capability state. Supplied feature bits do not
+authorize instructions outside the checked CPU contract.
+
+`AndroidCalendar` owns fixed-zone admission, Gregorian conversion and the LP64
+`tm` layout. It initializes a dedicated process-owned guest arena only when a
+calendar import is present, including named dynamic providers. The shared
+non-reentrant result is separate from caller-owned `_r` storage, TLS, malloc
+ownership and immutable zone names. Backend selection and thread scheduling
+do not change that identity. Its explicit fixed zone is independent of the
+kernel's legacy `gettimeofday` timezone pair; neither inherits host tzdata.
+Calendar conversion reads caller timestamps and does not advance guest clocks.
+The same owner admits `mktime`, normalizes signed civil inputs and encodes the
+result through the forward conversion's field writer. It checks intermediate
+integer arithmetic and the complete output extent before publishing normalized
+fields; API 28's `-1`/errno and fixed-zone DST failure effects are explicit.
+Caller `tm_wday`, `tm_yday`, `tm_gmtoff` and `tm_zone` are not environmental
+inputs. The inverse never allocates a second zone or a separate static result.
+
 Bionic also owns the API 28 `pthread_once` control state. It requests guest
 initialization through an internal callback result; the native runner suspends
 the import and runs the callback on the same CPU and live stack. Pending
@@ -3784,6 +9598,14 @@ the pending service or quantum and charges all threads to one budget.
 Linux's optional `ThreadContext` is the sole identity and thread-exit input
 for named, variadic and raw services; an absent context retains the existing
 single-thread Linux contract. Bionic process state is never copied on a switch.
+Fixed foreign task observations cannot occupy the identity range reserved for
+Android children. `LinuxPIDFD` reads local task membership from the same live
+provider as `/proc`; the fixed catalogue does not freeze child existence.
+Local thread-bound pidfds remain unsupported until exit readiness is modeled.
+`AndroidAllocation` owns the optional `malloc_fill_byte` input: only explicit
+`malloc` and `realloc` requests use it, before preserving a reallocated prefix.
+`calloc` and internal allocations retain zero initialization. No CPU backend
+selects a fill value or treats it as evidence about a real allocator.
 Once ownership comes from active guest callback frames. Bionic writes the
 completion state before the scheduler wakes waiting threads; the scheduler
 rechecks guest memory before completing each original import. Unknown owners,
@@ -3797,6 +9619,13 @@ uniqueness; Bionic owns lookup order and resident versus open-handle lifetime.
 C, CLI and Python consume the same option parser. No dependency graph,
 namespace or caller-specific scope is inferred from these explicit inputs.
 
+
+`AndroidDlfcn` owns explicit positive `dladdr` observations. Typed and JSON
+inputs share one validator and the limits in `emulation/Limits.h`. An exact
+address selects an authored LP64 `Dl_info`; absent or unmatched observations
+stop explicitly. Names are interned in read-only guest memory, shared across
+threads and revalidated before output publication. Static imports and dynamic
+provider traps share this owner without inferring ELF membership or host state.
 
 `AndroidStrings` owns Bionic's mutating token scan over guest memory. Imported
 and dynamically named `strtok_r` calls use the same bounded byte reads and
@@ -3815,6 +9644,12 @@ mutex acquisition to Bionic, retaining the original event across repeated
 waits. Selection, context switching, wait resumption and result publication
 have separate helpers; wake never publishes a successful lock. Priority
 inheritance and external-process scheduling remain unsupported.
+
+`AndroidSemaphore` owns API 28 count-word validation and transitions in guest
+RAM. Static and dynamic import dispatch share it. `GuestThreads` retains only
+the suspended request, address, sharing bit and wake readiness; resumption
+reloads the word through Bionic. A wake does not allocate a token or publish a
+return. No host semaphore or second count registry participates.
 
 `LinuxMemory` owns anonymous placement, syscall errors and the process break.
 It queries `AddressSpace::mappings()` for current virtual ranges and permissions;
@@ -4036,6 +9871,29 @@ preparation reject memory-to-memory reads rather than consuming them early.
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
+The same admission owner accepts FP32/FP64 `FCCMP`/`FCCMPE`, baseline scalar
+and vector `FCMLE #0`, and equal-width scalar SIMD `SCVTF`/`UCVTF`. FCMLE
+accepts only its exact typed zero immediate; scalar conversions retain width
+and operand-class checks. Conditions, exception status, rounding and results
+come from the existing checked execution semantics. FP16, fixed-point, packed
+conversions and scalable forms remain unsupported.
+
+The shared checked ARM64 catalogue admits integer `CMLT #0` for scalar D and
+fixed 8B/16B/4H/8H/2S/4S/2D vectors. The existing vector-effect owner retains
+register and immediate-form validation. This admission adds no FP comparison
+semantics, scalable registers or reserved scalar/narrow forms.
+
+The same catalogue admits baseline `EXT` byte windows and `REV64` element
+reversal within each 64-bit block. Both 64-bit and 128-bit vectors use the
+existing vector-effect owner; narrow results clear the upper half. Reserved
+offsets, reserved element sizes and scalable encodings remain unsupported.
+
+Baseline integer CMEQ, UZP1, XTN/XTN2 and UMAXV use that same admission owner.
+The original instructions execute on the selected checked CPU transport; OS
+models do not replace them with scalar stubs. Optional/scalable forms still fail
+admission. Independent lane and full-state oracles cover both execution levels.
+
+
 ARM64 native adapters use 4 KiB, 48-bit virtual-address page tables and separate
 TTBR0/TTBR1 roots. Guest mappings cannot overlap the private vector and
 maintenance pages at `[0x1000, 0x3000)`. The backing arena stays below the
@@ -4140,6 +9998,15 @@ subset. CPU transport availability does not imply arbitrary OS compatibility.
 `driver-strict` supports KVM on matching Linux x64 hosts and WHP on matching Windows x64 hosts; `auto` selects that native transport, and cross-ISA execution selects Unicorn. Explicit Unicorn and the original V1 API retain the portable software profile. Native execution checks canonical addresses and instruction effects before entry; unavailable hardware fails without fallback. Unsupported instructions and OS behavior remain explicit errors. Native Windows x64 CI with Unicorn disabled passes all 359 required checks: 131 CPU checks, 224 driver outcomes from 26 built-in images, 46 WDK images and 40 scenario cases at both preferred and relocated bases, plus four SEH boundary checks ([`9d4c130c`](https://github.com/NeverSight/NeverD/actions/runs/36981864458)). Native ARM64 runtime evidence is still pending, and this does not establish arbitrary-driver or Android/Darwin compatibility.
 
 Use `executionCapabilities(Contract, ISA, Backend)` to query the selected profile. `NativeLegacyX64` describes native x64 driver execution. `NeverDNativeDriverTests` validates the original corpus and can run with Unicorn disabled.
+
+`UnicornStepper` invalidates translated blocks at each stopped entry because
+host backing writes can bypass the engine's store hooks. A one-instruction
+entry removes blocks covering its first byte through the current mapping;
+this also retires a cross-page instruction whose operand bytes changed. Each
+later entry performs the same check, including executable aliases. Direct
+runs and multi-instruction maintenance retain full invalidation, as does an
+entry whose exclusive invalidation end would wrap. This transport policy does
+not change instruction admission, memory transactions or stop/deadline checks.
 
 Checked ARM64 has one complete state boundary. `Registers.def` defines 39 scalar fields and 32 128-bit vectors; `captureAArch64State` stages every read, applies declared widths and NZCV normalization, then publishes once. Unicorn, KVM, WHP and HVF transfer the same inventory, including TPIDR_EL0, TPIDRRO_EL0, TPIDR_EL1, FPCR and FPSR. Native adapters enable FP/SIMD through CPACR_EL1. Any scalar/vector read failure or cancelled entry preserves all caller state.
 
@@ -4271,8 +10138,12 @@ primary replacement and secondary append preserve IRP association. Terminal
 completion preflights dependencies before automatic unlock/free. Partial MDLs
 retain independent descriptor, root-lock and borrowed-alias ownership.
 
-`KernelRegistry` owns the explicitly configured session tree, per-handle access
-rights and lifetime, value serialization, and mutations. Scenario preflight and
+`KernelRegistry` owns the explicitly configured session tree, key/body
+associations, key/value serialization, and mutations. `KernelModelObjects.cpp`
+owns handle rights and lifetime. Its explicit
+registry epoch is combined with the shared scheduler's elapsed time; it owns
+per-key timestamp validity and cached maximum lengths. Missing time never
+falls back to host time. Scenario preflight and
 runtime operations share its validation limits. The model does not consult a
 host registry; reports distinguish original configuration from the final live
 key/value snapshot. Closing a registry handle does not delete its key, and
@@ -4311,13 +10182,36 @@ thread/APC/spinlock scheduling, arbitrary concurrent request arrival, PnP
 cancellation, full PnP/power or general hardware. API IRQL ceilings come from `KernelAPIIRQL.def`, with
 argument-dependent checks in the owning model.
 
+`KernelModelLookaside` owns paged/nonpaged lookaside registration and the kernel-owned fields of the x64 header. WDK inline cache contents and counters remain in guest bytes; the existing SLIST operations and pool allocator retain their ownership. Default callback addresses come from the session export registry. Deletion preflights the entire cache and both registration neighbors before retiring anything; storage retirement and unload share the live-list and cached-entry guards. MDL admission prevents aliases and DMA borrows from bypassing header ownership. These bounded lifetimes retain an explicit unpack dependency.
+
+`KernelModelFastMutex` owns fast/guarded mutex holds by logical thread and validates
+IRQL/APC-region restoration against all remaining holds. `KernelDispatcher`
+remains the sole owner of the embedded synchronization event, including the
+verified initializer bytes; the fast-mutex layer never creates a second event
+state. Initialization/acquisition and MDL admission share storage-borrow guards
+with lookaside lists, so aliases cannot bypass held-object ownership. Guest
+returns, thread termination, memory retirement and unload check the same hold
+inventory. AutoBoost waiting and contended blocking acquisition stop explicitly;
+the uncontended model retains an unpack dependency.
+
+`KernelModelExecutiveResources` owns legacy ERESOURCE registration, logical-thread
+recursion, exclusive/shared mode, tagged owner transfers and private owner tables.
+The opaque guest bytes serialize that state, including table growth, reuse and
+retirement. Initialization and deletion preflight registration neighbors; MDL and
+storage-retirement guards cover both records and private tables. APC-region,
+IRQL, fast-mutex and final KMUTEX releases validate the remaining resource holds
+before changing state. Blocking contention and thread-referenced transfers are
+explicitly unsupported. Resource operations retain a recovery dependency.
+
 `KernelScheduler` owns live runtime priority and the shared priority/ready-order comparison. `KernelModelThreadPriorities` validates thread objects for `KeSetPriorityThread` and `KeQueryPriorityThread`; paused CPU contexts never copy priority state. `DriverSession` checks higher-priority readiness before callback synchronization and at API/event boundaries. See [driver scheduling](driver-scheduling.md) for the bounded policy and remaining limits.
 
 `KernelDispatcher` owns mutex recursion by logical thread. `KernelModel` captures the waiting thread for deferred `KeWaitForSingleObject` acquisition and uses the same identity for APC queries and `KeReleaseMutex`; nested stack retirement preserves ownership, while outermost return checks retain the lifetime guard.
 
 `KernelModelWaits` owns single/multiple wait registration, thread references, deadlines and opaque caller `KWAIT_BLOCK` lifetimes. `KernelDispatcher` validates the complete set before committing signal/count/mutex changes; `KernelScheduler` consumes selected synchronization-timer signals as one preflighted batch. `WaitRegistrations` retains this authoritative record. Each deferred wait has a never-reused identity and immutable captured state; polling a completed or altered wait fails before acquiring signals or releasing references.
 
-`KernelModelDeviceStack` keeps each device's driver owner, allocation, attachment neighbors, delete-pending state and internal references in one record. The guest `NextDevice` inventory and the host-owned attachment graph have different meanings. Namespace resolution retains the named lower device for `FILE_OBJECT` and reports, selects the current top for initial dispatch and READ/WRITE buffer flags, and captures a retained route. Detach/delete cannot expire devices still owned by a request or callback; the public `ReferenceCount` remains an open-handle count.
+`KernelModelDeviceStack` keeps each device's driver owner, allocation, attachment neighbors, delete-pending state and internal references in one record. The guest `NextDevice` inventory and the host-owned attachment graph have different meanings. Namespace resolution retains the named lower device for `FILE_OBJECT` and reports, selects the current top for initial dispatch and READ/WRITE buffer flags, and captures a retained route. Detach/delete cannot expire devices still owned by a request or callback; the public `ReferenceCount` counts associated file bodies.
+
+Attachment queries use the same topology and object-reference owner; returned pointer references retain allocation independently of driver-list membership and open-handle counts.
 
 `DriverUserMemory.h/.def` own explicit user-region and pointer-reference facts;
 `DriverScenario` validates the complete graph without interpreting private IOCTL
@@ -4536,6 +10430,20 @@ installed and the transaction may proceed only through the exact authenticated
 DWARF-FDE closure above; an existing but undersized or malformed final section
 still fails closed. A linked native throw/catch proof is still pending.
 
+ARM64 frame mode PAuth_LR retains the PACIBSPPC instruction offset relative to
+each compact recipe's start, including a present zero offset. The shared
+`CompactUnwindARM64.def` supplies payload masks and instruction units to the
+loader and native patcher. Both reject reserved bits, overflowing or unaligned
+signing PCs and signing instructions outside their complete code range.
+Preserved rows keep their original boundaries; splitting one would change its
+signing PC. Original callback preparation rejects these signed frames, including
+interior entries, until it can preserve the incoming signed LR state. This does
+not relax the arm64e native-rebuild restriction.
+Raw and semantic compact-page readers share offset, ordering and page-bound
+validation for every architecture. A malformed page contributes no recipes;
+its omission cannot extend a preceding valid row across the missing page.
+Discarded rows still consume the parser's work budget.
+
 External references are classified from the complete MC fixup contract. Calls
 may select only authenticated callable targets; generated compact-unwind
 personality fields may select only validated non-lazy pointer slots, whose file
@@ -4682,9 +10590,9 @@ cutoff was reached.
 ## Verified LowIR concolic branch flips
 
 `NeverDConcolic` follows one native LowIR trace from explicit entry-register
-byte ranges. Its concrete shadow is a second `SymExec`, so concrete and
+and optional entry-memory byte ranges. Its concrete shadow is a second `SymExec`, so concrete and
 symbolic execution share the same operation and bit-width semantics. Missing
-register bytes, unsupported operations, opaque effects, unsummarized calls,
+register or memory bytes, unsupported operations, opaque effects, unsummarized calls,
 and unresolved memory effects stop the exact trace; none is filled with an
 invented zero.
 
@@ -4692,7 +10600,7 @@ Each non-constant control decision has a stable occurrence identity containing
 its machine address, sequence, block, LowIR operation index, loop invocation,
 and kind. For a conditional decision, the engine asks the bounded bit-vector
 solver for the exact earlier constraint prefix plus the opposite polarity. A
-SAT model is projected only from epoch-zero register-input origins that are
+SAT model is projected only from epoch-zero register or absolute-memory input origins that are
 fully covered by the caller's baseline seed. The candidate is published only
 after the query evaluates true under the projected bytes and a fresh execution
 reaches the same earlier decisions and target occurrence with the target
@@ -4704,8 +10612,32 @@ The result is deliberately one trace, never path coverage: public reports use
 projection, replay, and candidate-budget failures retain typed statuses and do
 not publish an unverified seed. JSON image identity hashes `BinaryImage::Raw`,
 the exact snapshot parsed by the loader, rather than reopening the source path.
-The initial public slice is register-seeded and intraprocedural on x86-64 and
-AArch64 PE, ELF, and Mach-O images.
+The version 1 C/JSON interface remains register-seeded and intraprocedural on
+x86-64 and AArch64 PE, ELF, and Mach-O images.
+
+### Concrete entry-memory seeds
+
+The C++ `LowIRConcolicOptions::InitialMemory` API accepts owned RAM snapshots
+in increasing address order within each range, independently of target byte
+order. `MaxMemorySeedBytes` bounds their total size before copying or tracing;
+the default is 1 MiB and zero accepts no bytes. Empty, overlapping and wrapping
+ranges are rejected. The concrete shadow receives the snapshot while the
+primary symbolic state retains free entry-memory origins. Stores update the
+snapshot normally; missing bytes are never supplied implicitly.
+
+Reports requesting memory use version 2 and retain `InitialMemory` plus each
+candidate's `MemorySeed`. Projection, query evaluation, fresh replay and
+deduplication include both register and memory bytes. Symbolic-base loads
+without an absolute entry-input origin still refuse projection. A candidate
+certifies the selected decision occurrence and its earlier decision prefix;
+it does not certify the whole replay suffix, path coverage or equivalence.
+
+Emulation can supply snapshot bytes through `ProcessView::read` while the
+process is stopped. This reads committed RAM through the shared backend
+interface; pre-access write hooks alone are not a committed-memory snapshot.
+Concrete bytes establish no allocation ownership, lifetime, immutable data or
+disjointness. These remain separate proof obligations or explicit environment
+contracts. Symbolic execution depends on neither an emulator nor a loader.
 
 ## Component map
 
@@ -4745,7 +10677,9 @@ external solver dependency. It translates the expression DAG directly and
 caches nodes within a solver session. Permanent assertions and per-check
 assumptions remain separate. Expression synthesis selects its proof backend
 through the existing verifier boundary; inconclusive results never authorize a
-rewrite. See [bitvector proof backends](solver.md) for build and validation.
+rewrite. Repeated product factors share squared powers in the solver encoding;
+the existing scaled-product quotient restores the complete output word.
+See [bitvector proof backends](solver.md) for build and validation.
 
 Shared symbolic expression builders recover comparisons from bounded
 highest-bit Boolean networks. They check an exact modular subtraction relation
@@ -4768,7 +10702,11 @@ current memory contents, accessibility, or disjointness.
 
 Interpreter specialization also owns context keys for exact entry-frame-relative
 pointers. Full-width proven displacements stay distinct from numeric constants;
-no sampled root address enters a key. When an unsupported operation is reached,
+no sampled root address enters a key. An unresolved stack address at an ordinary
+return or native CALL/RET nominates memory dependencies through the same bounded
+discovery used for stores. A fresh complete retry must still prove the required
+stack displacement; nomination supplies no pointer value or separation premise.
+When an unsupported operation is reached,
 bounded reverse traversal can nominate fields from the nearest undecided
 predecessor guards for control-state refinement. This is a candidate heuristic,
 not an unreachability proof: a fresh complete specialization must still prove
@@ -4816,15 +10754,21 @@ carry identity removes a wide constant offset before proof. The HighIR and
 LLVM bridges translate exact concatenation and defined carry predicates into
 the shared expression; the LLVM bridge admits a disjoint packed OR and a
 widened no-wrap shift only when operand widths prove the flags for every input.
+For masked addition and multiplication, the LLVM bridge independently bounds
+both inputs before admitting no-wrap flags. Signed multiplication checks all
+four interval corners. The bounded range walk ignores annotations as evidence;
+hidden poison and unproved overflow still prevent translation.
 Unknown operators, incomplete proofs, and unprofitable output leave the
 original expression intact.
 Before HighIR algebra, private-frame forwarding uses source-local identities
 after renaming and the shared target-width frame-address proof. Exact integer
 reads in straight-line functions can reuse a stored value while its inputs and
-bytes remain unchanged. Unknown or overlapping writes invalidate facts;
-calls, ordered memory, malformed graphs and control-flow joins prevent this
-proof. Replayed operations must be total and explicitly typed, store/load
-truncation is retained, and budgets count rendered trees including repeated
+bytes remain unchanged. Unknown or overlapping writes invalidate facts. A
+statement's outermost direct call can consume forwarded arguments, then clears
+all stored-memory facts. Nested calls, indirect targets, ordered memory,
+malformed graphs and control-flow joins prevent this proof. Replayed operations
+must be total and explicitly typed; store/load truncation and the read's signed
+interpretation are retained. Budgets count rendered trees including repeated
 DAG edges. The proof applies to both 32-bit and 64-bit targets.
 HighIR's scalar-definition proof also survives an ordinary store whose address
 and value contain no hidden effects: the store changes memory, not an
@@ -4968,18 +10912,113 @@ extensions, and byte slices. It visits numeric regions beneath predicates and
 other opaque operations without moving their evaluation or removing effects.
 Within a straight-line HighIR statement sequence, the bridge may consult
 previous pure integer definitions while proving a shorter expression. Bindings
-use the emitted local's identity and matching integer types. Writes invalidate
-transitive dependencies; address escape, control flow, calls, and memory effects
-block propagation. Definitions remain in HighIR for the existing dead-store
+use the emitted local's identity and matching integer widths; a signedness
+change retains an explicit destination conversion so later widening keeps its
+meaning. Disjoint, unescaped stack locals are eligible. Overlapping or
+inconsistent frame views and frame-address escape exclude those bindings;
+unknown stores invalidate frame-dependent facts, including transitive uses.
+Writes, control flow and calls also invalidate affected facts. Definitions
+remain in HighIR for the existing dead-store
 analysis, and the published expression must be smaller than the original use.
 Integer views of one parameter share a widest symbolic carrier; narrower views
 extract its low bits without assuming any value for the remaining upper bits.
 
-Synthesis shares one candidate checker within a request. It remembers
-counterexamples and validation-grid mismatches for canonical candidates, but
-never caches inconclusive proof results or shares rejections across requests.
+Literal masks and their complete word complements share one abstract carrier.
+For regions exceeding the small optimal Boolean synthesis allowance, an
+additional bounded reading can hide complete masked XORs while retaining exact
+complements. Independent linear identity checking precedes source restoration;
+nearby masks and different widths never inherit that relation. This reading
+spends only the remaining work/storage allowance and keeps existing candidates.
+When the source DAG contains no nonlinear product, polynomial abstraction is
+redundant and is skipped. This avoids repeated analysis without removing a
+candidate the polynomial solver could produce. Both source renderers and the
+expression CLI use this shared core.
+
+Weighted literal-mask sums also have a direct full-word reading. Terms sharing
+one exact opaque carrier are grouped by their modular coefficient at each bit;
+equal coefficients merge their masks, including overlapping masks, negative
+weights and contributions that vanish through overflow. A separate checker
+parses the original and proposed expressions and compares every shifted
+single-bit contribution and the constant offset. Other opaque words must cancel
+exactly; incomplete work cannot authorize a rewrite. Scaled or negated additive
+groups receive an additional proof against the actual, unexpanded input, so
+LLVM reassociation cannot hide the common masked word. Flattened
+AND carriers and constant-scaled products retain exact operand matching.
+Only strictly smaller groups survive, within cumulative work and temporary
+storage bounds. The deep entry tries this reading before spending work on
+repeated masked uses, then continues simplifying the recovered carrier and
+other terms through the ordinary walk. CLI and GUI source toggles reach the
+same implementation without an additional enable flag.
+
+The LLVM translator admits `nuw`/`nsw` additions only when independent operand
+bounds prove every requested no-overflow condition. Literal masks and bounded
+additive groups supply those bounds without consulting flags, range metadata or
+path assumptions. Unknown operations retain their full value domain; depth,
+node and width ceilings keep admission finite. The normal operand traversal
+still rejects hidden poison, undef, freeze and unproved annotations.
+
+Private-frame forwarding accepts empty block anchors left by dead-store
+cleanup. Nonempty scopes, expression-bearing malformed anchors, memory effects,
+overlaps and address escapes retain their existing barriers. This lets the
+symbolic pass see already-proved frame values before source rendering.
+
+Opaque-input enumeration and sampling share one candidate checker within a
+request. It remembers counterexamples and validation-grid mismatches for
+canonical candidates, but never caches inconclusive proof results or shares
+rejections across requests.
 Repeated offers still spend search work; only actual verifier calls count as
 proof queries.
+
+Before composite grammar enumeration, semantic synthesis can fit an entire
+modular affine vector from the oracle's zero and unit-vector responses. Equal
+coefficients are grouped without modular division, including even coefficients
+and words wider than 64 bits. The existing search grid rejects nonlinear fits;
+the independent checker and selected full-width proof provider authorize every
+production replacement. Coefficients need not occur in the literal catalog,
+but candidate cost, restored readability and the shared work budget still
+bound the proposal.
+An unsuccessful fitting screen spends at most one eighth of the remaining
+search work; proof and independent validation use the same request allowance.
+Opaque-input refutations share the enumeration/sampler cache, and an incomplete
+proof stops the search. `SynthOptions::UseAffineFitting` can disable this
+proposal; `SynthResult::FromAffine` identifies it without claiming a grammar minimum.
+
+`SynthOptions::UseQuadraticFitting` adds a degree-two proposal over the ordinary
+grammar's independent word-sized inputs. Zero, unit, doubled-unit and paired-unit
+responses nominate a constant, linear coefficients, squares and cross products.
+The diagonal equation is solved modulo the complete word width: two is not
+invertible modulo a power of two. Its two coefficient representatives differ by
+a multiple of `2^(w-1)*x*(x-1)`, which vanishes modulo `2^w`; choosing a shorter
+representative still does not establish that the original oracle is quadratic.
+The complete training grid, independent checker and full-width proof remain
+mandatory gates. Affine and quadratic proposals share their publication checks.
+Quadratic proposals also try both orders of a factored spelling, preferring
+existing shared products when they do not increase readability cost. The
+built-in synthesis verifier cancels identical addends on both sides of its
+equality query before bit-blasting, with a shallow 64-term limit per side.
+This is exact cancellation over the complete modular word, not cancellation of
+merely similar terms or coefficients. Counterexamples still refute the original
+pair; cancelled-only inputs may take arbitrary values.
+Extra probes, the bounded DAG walk and word evaluations consume at most a quarter
+of the remaining search work before independent checking. Opaque conversions
+retain their original identities under substitution; the quadratic route does
+not assume correlations or move narrow overflow through a conversion.
+`SynthResult::FromQuadratic` identifies a successful proposal. It is enabled in
+`SynthOptions::sourceView()` and otherwise opt-in. Neither a degree-two fit nor
+a completed proof establishes a globally shortest expression; difficult
+nonlinear proofs can still exceed the selected solver budget.
+
+When narrow inputs are hidden behind conversions, a second affine proposal
+retains the complete original DAG, including narrow arithmetic, overlapping
+views and sign/zero extensions. It fits word-sized views of the actual inputs
+and proves the original expression directly; there are no assumed relations
+between independent placeholders. Signed one-bit views use the negative unit.
+The optional typed walk, context assignments and original-body evaluations
+reserve at most one quarter of the remaining work before fitting, including
+the independent validation grid. Incomplete construction reports a budget
+refusal. Inputs wider than the result are outside this search, and mixed
+signed/unsigned views may prevent a fit. The original opaque grammar
+remains available, including when this optional model exceeds its input limit.
 
 The expression builders own local word-mask normalization shared by execution,
 MBA simplification, and expression rebuilding. Constant-masked copies of an
@@ -5021,8 +11060,9 @@ libraries supplied by the CMake helper.
 | `lib/sdk` | Public C ABI, session lifecycle, queries, persistence, plugins, lift/decompile/patch/audit/hunt entry points | Aggregates the engine components into `libneverd` |
 | `lib/pass` | LLVM IR obfuscation passes and MIR pass runner | IR |
 | `lib/debug` | DWARF, PDB, and linker-map debug contexts | IR |
+| `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust, Go, Python, JavaScript and Lua | LLVM DebugInfo PDB |
 | `lib/sigs` | Signature parsing, databases, and matching | Loader |
-| `lib/libc` | Known libc names and call-model support | Standalone component |
+| `lib/libc` | The call model of library routines for each C library (arity, named parameters of variadic routines, results, no-return, formats), checked against the header libraries | Loader |
 | `lib/symbolic` | Width-exact symbolic execution, bounded path exploration, stable control-decision histories, and the exact concrete shadow | LowIR |
 | `lib/solver` | Bounded bit-vector encoding, incremental SAT solving, models, and typed unknown/invalid outcomes | Symbolic |
 | `lib/concolic` | Exact-prefix conditional branch flips with register-model projection and fresh replay receipts | Symbolic, Solver |
@@ -5030,7 +11070,9 @@ libraries supplied by the CMake helper.
 | `lib/support` | Shared binary-loading helpers and independent SHA-256 | Support: Loader; Digest: LLVM Support/TargetParser |
 | `lib/translate` | Versioned guest state/policy/exits, fixed runtime ABI, checked guest memory, generated-IR/object/LinkGraph audits, sealed native linking, and the experimental x86-64-to-AArch64 C++ dispatcher | IR, LLVM, LLVM Object, and JITLink contracts |
 
-`NeverDDigest` owns the existing one-shot SHA-256 implementation in `lib/support`, with unchanged runtime feature checks and portable fallback, and no Loader or IR dependency. `loader/InputDigest.h` remains a forwarding header. `NeverDIRLowValidation` owns `lowUndefinedOperationDigest`; Lift links that owner explicitly. The v1 identity retains the same domain, little-endian words, all six stored input slots, provenance and source coordinates. Serialization uses at most 64 KiB for up to 199 operations; larger spans use the original incremental path. Both paths enumerate the same fields and preserve evidence checks.
+`NeverDDigest` owns one-shot SHA-256 in `lib/support`, with no Loader or IR dependency. Runtime dispatch selects x86 SHA extensions or little-endian ARM64 SHA2 only when the host reports support, otherwise retaining LLVM's portable implementation. Linux ARM64 checks the kernel's `AT_HWCAP` SHA2/Advanced SIMD bits, including when `/proc` is unavailable; Windows uses LLVM's processor-feature mapping. Darwin ARM64 uses the documented `hw.optional.arm.FEAT_SHA256` sysctl because LLVM's host map is empty there. The decision is cached, unknown or failed queries fall back, and target-specific instructions stay inside the compression function. Both accelerated implementations share the `.def` constants, padding, digest encoding and bounded cancellation checkpoints. `loader/InputDigest.h` remains a forwarding header.
+
+`NeverDIRLowValidation` owns `lowUndefinedOperationDigest`; Lift links that owner explicitly. The v1 identity retains the same domain, little-endian words, all six stored input slots, provenance and source coordinates. Serialization uses at most 64 KiB for up to 199 operations; larger spans use the original incremental path. Both paths enumerate the same fields and preserve evidence checks.
 
 ### Analysis and simplification ownership
 
@@ -5065,6 +11107,26 @@ files.
 
 ## Strict lifting contract
 
+Function admission requires decoded instruction and control-flow evidence.
+Missing unwind metadata does not disprove a callable entry, even in an image
+with other unwind records. A padding guess is absorbed only when another
+function's decoded CFG owns it. Code admission grants no exception-rewrite
+authority; the format backend still checks that contract separately.
+
+The PE32 registration range map also retains the tail target of an exact
+`CALL rel32; JMP rel32` at the format-owned image entry. The prefix and target
+must have unique immutable instruction storage, without operand fixups, and
+the signed target calculation must stay in the PE32 address space. This is
+an ownership boundary only; ordinary function symbols do not acquire the
+same rule, and it grants no returning-call, callable ABI or frame proof.
+
+CFG block publication first builds a provisional control view from instruction
+membership and each block's terminal boundary. This view retains no copied
+LowOps; decoded instruction records remain authoritative. After final
+instruction reachability and relocation-root suppression settle, published
+blocks materialize every retained operation and instruction boundary. Root,
+exception-edge and jump-table publication retain their existing ordering.
+
 The pinned Capstone x86 decoder owns LOCK/MOV-to-CS encoding validity and UD1
 instruction extent and operand details. NeverD's detailed, lightweight and
 lifting decode routes consume that result, including REX2 forms. Illegal
@@ -5072,15 +11134,44 @@ encodings fail decoding even when strict lifting is disabled. UD1 remains an
 explicit invalid-opcode intrinsic; its encoded operands do not imply an
 ordinary memory access.
 
+With text and detail disabled, Capstone's native iterator uses generated
+operand terminals that share the full decoder's bounded readers and legality
+checks. Its prefix classifier and terminal selection avoid repeated dispatch;
+unsupported operand shapes retain ordinary decoding. ARM, AArch64 and RISC-V
+also use generated descriptor flags to skip operand postprocessing only when
+the owning traversal would perform no writes. Their feature-query bodies are
+visible at decoder and printer call sites, allowing constant feature numbers
+to fold into mode-bit checks. The inline and external definitions share one
+body and retain the existing mode policy. These optimizations reside in the
+Capstone `next` fork and are selected through the submodule revision.
+
+ARM, AArch64, RISC-V, LoongArch, SPARC, PowerPC and MIPS derive direct C
+branches from the same generated decoder tables. The lowering preserves
+predicate order, operand callbacks, soft failures and incomplete-decode
+rollback. Encoded widths remain separate from helper input widths, including
+PowerPC prefixed instructions and NanoMIPS 48-bit words. MIPS register-list
+metadata maps expanded operands back to the list, base and displacement
+descriptors; signed MicroMIPS offsets are scaled without negative shifts.
+
+NeverD's existing architecture-specific metadata corrections and fallback
+decoders remain authoritative after the Capstone call. The native batch API
+is available in the fork; this `dev` integration uses the existing iterator
+call sites and does not enable the experimental iced adapter.
+
 `Decoder` and every architecture lifter start in strict mode. If Capstone can
 decode an instruction but the selected lifter has no implementation, the
 lifter throws `UnliftedInstruction`. The exception records the instruction
 address, mnemonic, and operand string; unsupported semantics must therefore
 fail visibly instead of being omitted or guessed.
 
-The internal non-strict path emits `NdOp::NOP`, but it is a diagnostic escape
-hatch, not an acceptable implementation of an instruction. Contributor and CI
-tests should keep strict mode enabled. When a strict failure appears:
+x86 enforces that refusal in both strict and permissive modes. Missing decoded
+detail, unmapped registers and handled forms that emit no semantic operations
+also throw. A failed instruction retracts its
+entire appended LowIR transaction, preserving previously lifted instructions;
+it publishes no successful undefined-output or preserved-state certificate.
+Architectural NOP encodings still lift normally. Permissive mode continues to
+withhold complete semantic-audit certificates for otherwise supported lifts.
+Contributor and CI tests should keep strict mode enabled. When a failure appears:
 
 1. Reproduce it with the smallest architecture-specific fixture.
 2. Add the missing semantics in `lib/lift/<ISA>`.
@@ -5112,8 +11203,12 @@ inline architecture or format tests. A fact about an ISA is a `TargetRegInfo`
 trait set in its `lib/ir/TargetRegInfo<ISA>.cpp`. A calling-convention rule is a
 `CallArgumentConvention` entry in its own
 `lib/ir/med/abi/MedCallConvention<Name>.cpp`, listed in `MedCallConvention.cpp`.
+An entry for a format wins over one for every format of its architecture:
+Microsoft x64 is COFF's, and System V x86-64 that of ELF and Mach-O, whose
+x86-64 convention Apple took from it.
 Functions that never return are listed per runtime under `include/neverd/libc`
-(`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`).
+(`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`,
+`RustRuntimeNoReturn.inc`).
 Supporting another target then adds a file or a table entry instead of a branch
 in the shared pass.
 
@@ -5126,6 +11221,12 @@ pointers). The layer places them past the object's sections in a writable
 `extern` segment and a read-only cell segment. A called extern is an import
 there and data a symbol; a weak reference takes no address, since the null test
 its code makes is the program's.
+
+`ObjectExterns` also records each undefined callable identity in
+`BinaryImage::ObjectExternFunctionEntries`. CFG recovery uses that provenance
+for direct external tail calls in relocatable objects without admitting the
+extern storage as executable code. An IAT address or function symbol alone
+does not grant this exception.
 
 <a id="support-and-test-depth"></a>
 
@@ -5238,6 +11339,8 @@ The source ABI explicitly records 32-bit sign or zero extension for narrow integ
 
 At a bound Darwin ARM64 call, a 1- or 2-byte integer register argument reads the complete 32-bit `Wn` carrier before SSA and then extracts only its declared low bytes. This keeps converging `Wn` definitions in one SSA web without claiming that the call observes extra source bytes. x86-64 keeps its separate partial-register rules.
 
+Before SSA, source-call binding replaces a complete generic register-argument summary with the validated source ABI's argument order and lanes. The shared physical call-occurrence key must identify an original LowIR call with only its target operand; prototype argument counts alone do not authorize reconstruction. This also covers SysV x86-64 calls whose integer/vector uses were already published and Swift calls with a dedicated context register. Binding failure retains the generic operands. Explicit LowIR arguments and exact formatted calls keep their own contracts; source hints remain disabled for lifting and patching.
+
 Before an AAPCS64 call clobbers a full `Q8`–`Q15` carrier, MedIR materializes the low `D` view established by the latest full-vector write. The call preserves that exact 64-bit value while the upper half remains unknown. HighIR keeps ARM `FMINNM`/`FMAXNM` as IEEE number-selecting operations, and HighC emits the matching typed compiler builtins.
 
 Mach-O loading preserves the segment’s explicit read-only-after-fixups guarantee without changing its initial permissions. Source byte and pointer readers share unique, file-backed storage checks; section names alone provide no immutability proof. An ordinary full-width load may bind a resolved local data pointer to an independently validated constant-string object. The binding retains its originating slot for revalidation, and aliases share the target object’s generated identity. Mutable storage, conflicting fixups, partial or ordered loads, and the slot’s own address remain unsupported.
@@ -5245,6 +11348,33 @@ Mach-O loading preserves the segment’s explicit read-only-after-fixups guarant
 A bounded indexed load may rebuild an immutable Objective-C object-pointer table when its range proof covers a complete prefix, every eight-byte slot is either an authenticated relocation to a rebuildable constant object or exact relocation-free null, and every occurrence uses the same table contract. The generated table initializes each slot from the shared rebuilt object identity and publishes its address only to those contextual loads. An integer machine carrier is accepted only when direct local copies lead to a declared pointer parameter or pointer return and every use in that chain has pointer semantics. Publication revalidates the bounds, slot relocations, target objects, helper metadata and non-escaping use; arbitrary pointers, partial slots, arithmetic consumers, writable storage and unbounded indexes remain unresolved.
 
 For an immutable scalar byte table, a small fixed addition or subtraction in the address expression may be folded into the table base before the indexed range proof. The emitted offset then contains only the bounded index and stride. Publication rejects any later fixed-bias edit to that offset, so the helper's base and byte count continue to cover every load exactly.
+
+An immutable scalar table indexed by an unbounded runtime value, such as a field an object holds (`table[obj->field]`), has a proven base but no provable index bound, so the scalar-offset proof rejects the offset. When the literal-table audit has reached exactly one read-only base, and no pointer merge, PHI, frame reload or mutable base, the LLVM backend reads the table through its region's read-only run mirror at the table's own offset plus the runtime index (`tryResolveRuntimeIndexedReadOnlyTable`). The mirror keeps the region's byte layout, so an in-region index reads the original element and an out-of-region one is the program's own undefined behaviour, as for a pointer table's run redirect. The offset proof itself is unchanged: a loaded index is still a stable offset only under a dominating guard or a low-bit mask (`RuntimeScalarBoundsBelongToTheScaledDefinition`).
+
+A selection between computed addresses in one complete pointer-mirror run may
+retain an unbounded runtime offset without changing the scalar-offset proof.
+Every feasible arm must preserve its complete pointer and use the same
+symbolized address model. The shared runtime-source audit follows nested
+opaque loads, complete acyclic value selections and exact private-frame
+reloads through every reaching store. An ordinary mutable image word can also
+supply runtime bits when its complete load extent has one materialized writable
+owner and no relocation, pointer binding or runtime callable-storage contract
+overlaps it. Loader-materialized zero fill qualifies; an ELF object's complete
+relocation write footprint must independently exclude the field. This reads
+live storage, without freezing its initializer or inferring the loaded value's
+pointer target. The audit excludes reconstructed image pointers, hidden mapped
+bases, uninitialized or escaped stack storage and incomplete or cyclic value
+graphs. Load-address dependencies stay visible through every nesting
+level, and this proof grants neither a scalar bound nor a callable domain.
+The container audit requires the complete run, including any exact relocation
+owner. A mutable segment qualifies only when all its memory bytes are present,
+including any loader-authenticated zero fill, and direct accesses, selected
+accesses and stores share its canonical writable pointer mirror. Such an address
+keeps its emitted arithmetic and selection, with no raw-VA rebasing. A raw or
+mixed model, truncated pointer, incomplete storage or per-object embedding cannot
+acquire this permission. Indirect calls still need their independent complete
+callable-slot domain, and pointer recurrences retain
+their separate initialization and step proofs.
 
 Jump-table recovery emits transfers to ordinary successor blocks instead of rebuilding their statements through a separate path. Each block keeps one lowering owner, including shared cases, default targets and loop entries. Dispatch-edge PHI copies execute before the corresponding transfer, with parallel snapshots preserved; incomplete edge bindings remain explicit failures.
 
@@ -5554,7 +11684,7 @@ Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `Vi
 
 Execution-watch handoffs expose `ProcessView::watchedMemoryUnchanged()` only when RAM covered by the preceding write watches could not have changed. OS services and exception or invocation continuations conservatively withdraw that guarantee. The transfer observer reuses validated snapshots at clean handoffs, but a newly visited page still refreshes its possible fetch tail. WHP retains captured sticky debug status across acknowledged single steps and resets it before free execution, avoiding a redundant register installation for each checked instruction without weakening private-stop authentication.
 
-`arch/X64Imports.cpp` owns x64 import instruction decoding and emission. `dynamic/ProcessImports.cpp` proves pure export calls and address-load results from read-only process observations; the PE writer consumes that evidence without duplicating the instruction rules.
+`arch/x86_64/X64Imports.cpp` owns x64 import instruction decoding and emission. `dynamic/ProcessImports.cpp` proves pure export calls and address-load results from read-only process observations; the PE writer consumes that evidence without duplicating the instruction rules.
 
 Export addresses belong to one process. Helper evidence carries the module and export name or ordinal resolved in the proving run; the PE writer compares these identities by value. A discovery address may become bound after entry, but only its current export identity authorizes repair.
 
@@ -5606,7 +11736,7 @@ HighIR tail copying consults `SourceCallTypeHint::requiresUniqueSourceOccurrence
 
 The shared `SourceABI` owner distinguishes a logical by-value record from its physical address carrier. Darwin ARM64 C declarations for six or sixteen doubles keep the complete record type and use an eight-byte integer-register or naturally aligned stack carrier, independently of floating argument registers and the x8 result pointer. ABI equality and projection batching retain this distinction, calling convention and parameter roles. Partial, overlapping, incompatible or stale carriers are rejected. This declaration alone does not bind LowIR calls, project entries, emit HighC calls or authorize frame borrows: those require a separate copy-storage proof. Compiler and native ABI tests cover register exhaustion, stack packing, arbitrary floating bits, copy mutation isolation and independent indirect results; they are not a complete `setTransform:` recovery test.
 
-Debug signatures name recovered parameters by where they arrive, never by position. `SourceParameterPlacement` places each source parameter under the ordinary convention of its target: System V x86-64, Microsoft x64, AAPCS64 and i386 cdecl/stdcall, each in its own file. It returns the registers and stack slots that hold each parameter's pieces, and the hidden result pointer. HighC binds a recovered parameter to the piece at its register or entry stack offset. A later piece is named after its parameter and byte offset (`p_8`), and the declared type applies only where the location holds the whole value as its bytes. Placement stops at the first parameter whose place the rules cannot be sure of: a record whose passing the source does not state, a scalar wider than a register, a memory record of unknown alignment, or Apple arm64 stack packing. Later parameters keep their machine names, and functions of languages with their own conventions, such as Go, bind nothing. The DWARF loader gives parameter and result types alone a passing mode and scalar layout: C records pass by value, C++ classes as `DW_AT_calling_convention` states, and `_Complex` values as complex numbers. Rust records stay unknown, because Rust's own ABI and `extern "C"` pass some records differently. PDB records follow the Microsoft C++ ABI: i386 passes them as their bytes, while x64 passes them as their bytes or as an address in the same position. Call prototypes and argument casts still come only from signatures that map by position, whose parameters are all integers or all floating values.
+Debug signatures name recovered parameters by where they arrive, never by position. `SourceParameterPlacement` places each source parameter under the ordinary convention of its target: System V x86-64, Microsoft x64, AAPCS64 and i386 cdecl/stdcall, each in its own file. It returns the registers and stack slots that hold each parameter's pieces, and the hidden result pointer. HighC binds a recovered parameter to the piece at its register or entry stack offset; an i386 stack parameter's offset counts from the lowest stack parameter number, since MedABIPass numbers the stack parameters before it promotes a register parameter a call passes on. LLVM-C binds its arguments the same way, through the binding the two writers share (`bindDebugParams`, `lib/backend/c/DebugParamBinding`): the LLVM emitter records where each argument arrives in the `neverd.parameter-sites` function metadata, its register or the MedIR parameter index that numbers its stack slot. An argument of no recorded place binds by position only while every parameter before it fills one integer slot, as in every convention, and an MSVC indirect result keeps its arguments' positions in both writers. A later piece is named after its parameter and byte offset (`p_8`), and the declared type applies only where the location holds the whole value as its bytes. A DWARF pointer is as wide as its unit's addresses, four bytes on i386 and 32-bit ARM, so the parameter after it is the next slot's. An i386 function whose DWARF says its parameters enter it in registers is placed where it says (`FunctionSym::ParamEntryLocations`, `placeEnteredParameters`): GCC passes a local function's first three in EAX, EDX and ECX (regparm), clang its first two in ECX and EDX (fastcc), and the rest follow in stack slots while every parameter before has a known place. No call to such a function takes argument types by position. Unoptimized code locates parameters only in their spill slots, so it binds by cdecl's. Placement stops at the first parameter whose place the rules cannot be sure of: a record whose passing the source does not state, a scalar wider than a register, a memory record of unknown alignment, or Apple arm64 stack packing. Later parameters keep their machine names, and functions of languages with their own conventions, such as Go, bind nothing. The DWARF loader gives parameter and result types alone a passing mode and scalar layout: C records pass by value, C++ classes as `DW_AT_calling_convention` states, and `_Complex` values as complex numbers. Rust records stay unknown, because Rust's own ABI and `extern "C"` pass some records differently. PDB records follow the Microsoft C++ ABI: i386 passes them as their bytes, while x64 passes them as their bytes or as an address in the same position. Call prototypes and argument casts still come only from signatures that map by position, whose parameters are all integers or all floating values.
 
 The shared `SourceFrameAnalysis` can check initialized private by-value copies at an original call when independent effect certificates describe the consumer and any complete indirect-result producer. It checks all reaching paths and loop backedges, exact active ranges, other argument aliases and later uses. Consuming a copy invalidates its initialization and saved-byte identities; a later read requires a new definite write. Initialization facts also expire on possible writes and frame release, while retained Swift scratch obligations remain intact. The query returns parameter extents only after complete frame restoration; it grants no machine identity, SDK effect, call binding or source-publication permission. Tests include branches, loops, partial writes, aliases and retained scratch; native ARM64 fixtures with real ObjC/CALayer reject reads of consumed copies and accept independently initialized disposable copies.
 
@@ -5731,6 +11861,11 @@ fdopen access checks and buffer sizing; it does not reopen a path or duplicate
 a cursor. Unknown metadata remains unsupported. Each modeled call completes
 atomically within the cooperative scheduler, while errno stays in caller TLS.
 
+`AndroidLog` owns liblog list/logger identities and snapshot cursors. Its shared
+admission validates both JSON and C++ input; each read emits the same v4 packet
+from explicit visible records. Opaque guest tokens share the Linux memory owner.
+No logd transport or permission state is inferred. See [Android log readers](android-log-reader.md).
+
 `AndroidProperties` builds one immutable guest property table from explicit
 inputs. Name lookup, stable `prop_info` identities, serials, legacy reads and
 callback strings share those records; the device API-level query uses the same
@@ -5762,8 +11897,12 @@ observations. Bionic aliases enter this owner through the service registry.
 Guest path parsing retains a trailing separator's directory requirement
 separately from the catalogue key. Open, access and status share this lookup
 constraint. Directory creation resolves the parent and final name separately,
-so an existing final name still returns `EEXIST`. Catalogue configuration
-continues to require canonical file keys.
+so an existing final name still returns `EEXIST`. The same parser folds repeated
+separators after importing the original bounded guest string, as Linux's
+[`link_path_walk`](https://kernel.googlesource.com/pub/scm/linux/kernel/git/torvalds/linux/+/v4.9/fs/namei.c)
+does. Dot components and symbolic-link traversal retain their explicit
+unsupported boundaries. Catalogue configuration continues to require canonical
+file keys; no host path or filesystem participates in resolution.
 
 `LinuxFiles` shares pathname import and catalogue classification between open
 and existence queries. The catalogue's files, ancestor directories and root
@@ -5913,6 +12052,17 @@ See
 [released GKI contracts](android-gki-kernels.md) for pinned source evidence and
 the limits of this implemented subset.
 
+`LinuxKernelAvailability.cpp` owns the import order through `xattrQueryImport` for
+`getxattr`, `lgetxattr` and `fgetxattr`. An explicit
+`LinuxKernelOptions::XAttrQueryImport` selects target-before-name or
+name-before-target independently of a released GKI contract. Supplying both
+authorities is invalid even when they select the same order. The existing GKI
+table remains authoritative when only GKI is supplied. `LinuxFiles` consumes
+this shared decision for raw syscalls and Bionic imports; JSON only parses the
+explicit declaration. This option supplies no attribute values, symbolic-link
+traversal, namespace policy or other kernel capabilities. Unknown attributes
+retain their unsupported boundary without reading or writing the value buffer.
+
 Frame-offset proof keys normalize a top-level 64-bit address sum by removing its constant bias and subtracting the same entry root. Cold proofs retain the complete predicate and the existing remainder expression. Completed domains subtract the bias before insertion and restore the requested bias on lookup, preserving modular wrap, empty domains and nonuniqueness. Keys follow the original address so a change in the bounded remainder rewrite from a binary to an n-ary sum cannot change proof identity. All new nodes count against the existing node limit.
 
 ## Mobile source assembly
@@ -5969,7 +12119,7 @@ source effects or throwing calls fail the conversion explicitly.
 
 Ordinary internal returns preserve both the callee PC and the parent entry PC. The same reaching-write proof checks both coordinates; writes into known allocated parent storage remain allowed.
 
-The LLVM emitter reuses completed default-budget frame-slot queries only within the current immutable MedFunc. Entry-SP requirements and complete value identity partition the answers. Bound and shared-budget queries bypass reuse; feasible-edge rebuilds and module emission clear it, and a query spanning a rebuild cannot publish its result.
+The LLVM emitter reuses completed default-budget frame-slot queries only within the current immutable MedFunc. Entry-SP requirements and complete value identity partition the answers. A bound query keeps its own default budget, so its answer is reused only for the same bindings in the same order. A shared-budget walk reads the budget only to stop, and fails once the budget is spent: a walk that needs N nodes repeats under any budget of at least N and runs out, spending all of it, under a smaller one. Complete walks replay with their answer, nodes and cache hits; a walk that ran out records only that it needs more than its budget, and replays its running out for any budget no larger. The answer and the remaining budget are always those of a fresh walk; a replayed run-out does not reproduce the cache-hit counter. Feasible-edge rebuilds and module emission clear all three caches, and a query spanning a rebuild cannot publish its result.
 
 Registration returning-stack queries and x87 call queries share one registration
 callee index across nested CFG construction. Pending answers, recursion depth
@@ -5977,6 +12127,49 @@ and cumulative work survive that boundary. Query-local registration graphs
 bypass the shared x87 graph cache and parallel prefetch. The ordinary x87
 projection leaves a registration language graph opaque before constructing its
 callback closure; that graph needs a separate dispatcher invocation domain.
+
+`COFF/RuntimeProviders.def` owns the exact DLL sets used by PE runtime proofs;
+`RuntimeProviders.h` generates case-insensitive LLVM `StringSwitch` queries.
+PE32 and Win64 control-FP, legacy CRT, C++ exception, SEH handler, continuation
+and jump/local-unwind contracts retain their distinct provider sets.
+`X86/RegistrationRuntimeImports.def` owns registration cleanup, jump and
+local-unwind names; `Windows/SEHRuntimeImports.def` maps the Win64 CRT memory
+entries to their routine kinds and provider queries. Symbol names remain case
+sensitive. `X87CRTImports.def` keeps recognized x87 names and supported argument
+counts together: an unsupported transport remains recognized and rejected,
+never an ordinary zero-argument call. These identity tables grant no storage,
+veneer, frame, language-record or invocation authority; the existing query
+owners still establish every such fact from the current image.
+
+Every PE32 registration ABI proof builds its callee with the decoded x87 stack
+(`CFGBuilder::buildIntegerFrameProof`): returning-stack, leaf, member,
+initializer, throw, conditional-call and caller-frame proofs alike. These
+proofs read integer registers, frame and object memory and near-return
+cleanup, never x87 state, and a call clobbers the same integer registers
+whichever register carries its result. The caller's own registration analysis
+runs before its x87 normalization, so its calls keep their decoded EAX
+results; a leaf's scalar-return fact likewise describes EAX at its return,
+even when the leaf also leaves a value on the x87 stack. A normalized callee
+would start its own x87 call proof, whose graphs reach a registration index
+again with a fresh budget at every level. The only x87 operation these proofs
+previously gained through normalization was a proved FXAM lowered to ordinary
+operations; FXAM writes only the status word, so the shared frame-preserving
+intrinsic policy accepts it directly. Among nested proof builds, only
+`buildNoReturnProof`'s local-stack fallback still normalizes the x87 stack.
+
+LowIR construction shares stack-pop answers across its workers
+(`RegistrationStackPopMemo`). A fresh `getCheckedX86CalleeStackPop` answer
+depends on the image, the callee and `x86SEHStateAnalysisLevel()`: an SEH
+state analysis nested four deep no longer checks bound calls. The memo records
+each fresh answer with the work it charged under that key; a later query for
+the same image object, callee and level charges that work again before taking
+the answer, so the answer and the exhaustion of a caller's cumulative budget
+match a fresh proof. A query that exhausts the budget records nothing.
+
+The i64-caller re-conversion in `modelWideIntReturns` takes
+`RegistrationCallerCleanupABIComplete` and `RegistrationCxxEntryPopBytes` from
+the first conversion of the same LowFunc: they depend only on the LowFunc and
+the image, and no stage changes a LowFunc after MedIR.
 
 `_local_unwind2` uses an unsigned stopping bound: it stops at the -1 sentinel or a level no greater than the requested bound, even when an enclosing link skips that index. The shared PE32 EH3 solver joins the actual stopping levels and only the effects of traversed finally callbacks; a zero-step unwind preserves the incoming registration level and frame-memory facts. Existing frame-argument, runtime-field and callback-stack proofs remain mandatory.
 
@@ -6012,6 +12205,29 @@ without asserting a native frame-preservation contract across its CRT calls.
 Source frame checks also follow resolved switches only when every published
 target agrees with the CFG; absent, duplicate and unsafe dispatch records
 refuse. The saved-memory interpreter retains its independent stricter domain.
+
+A source-only SEH handler may also receive several protected or ordinary SP
+positions when a certified frame register survives and every handler path
+restores SP before explicitly reading it. That result retains an unresolved
+entry; it grants neither a native frame nor a single offset. The physical CALL
+return-slot reader separately unions every current protected SP and ordinary
+PHI input through query-local definition ranges. Missing sources, exceptional
+cycles without a seed and unbounded offsets retain refusal. The range proof
+can establish that a CALL write is disjoint, but cannot initialize storage or
+replace the exceptional-entry value. Ordinary exact-offset queries reject PHIs
+with an unproved exceptional input. Entry-register declarations survive
+MedIR dead-code cleanup when a renamed copy's incoming value still has readers.
+This preserves the existing callee-save proof for both C routes after copy
+propagation removes uses of the copy's renamed result.
+
+Changing stack PHIs can also receive a range from a companion unsigned loop
+counter. The current header must guard every iteration, its counter must not
+wrap, and every backedge must cross both the counter update and stack update
+exactly once. Single-entry CFG evidence excludes bypasses and independent or
+exceptional entries. Machine-width copies and zero-extension slices preserve
+the counter bits; signed guards and unbounded recurrences supply no bound.
+The range includes the final header visit and remains separate from exact
+offsets and executable stack values.
 
 `low/Windows/SEHScalarFormat` owns a scalar subset of the
 [Windows printf grammar](https://learn.microsoft.com/en-us/cpp/c-runtime-library/format-specification-syntax-printf-and-wprintf-functions)
@@ -6056,8 +12272,8 @@ near-return encodings. The interpreter follows actual arguments, every ordinary 
 private stack allocation and parent-frame writes, including changes to nominally
 preserved registers. This establishes state flow without granting a callable
 native ABI. Nonlocal restoration, calls inside a finally and jump-buffer
-resumption still require a separate invocation-exit contract; the PE32 xcpt4
-case remains incomplete.
+resumption use the separate invocation-exit and capture contracts described
+below. The PE32 xcpt4 state regression checks their combined source proof.
 
 `RegistrationSEHControl` authenticates the actual PE32 near CALL and RET bytes.
 When LowIR has folded the return continuation, it retains the complete immutable
@@ -6081,8 +12297,9 @@ to their exact callback, CALL and continuation block. Outlining replaces these
 with the callback's C return ABI; source-segment validation requires an actual
 return at that generated exit. Nonlocal parent jumps and jump-buffer resumptions
 still require their own CFG/SSA projection and native replacement receipts.
-The PE32 xcpt4 issue remains open, including jump-buffer and incoming-object
-effects.
+The PE32 xcpt4 source regression covers jump-buffer and incoming-object effects
+under the default work budget; this alone does not establish native rebuilding
+for every protocol in that executable.
 
 `RegistrationFrameEffects` owns the integer-frame effect of the exact void
 `X87Wait` intrinsic. WAIT retains its x87 side effect and possible exception
@@ -6107,7 +12324,7 @@ prove the replacement runtime objects. This supplies the exception-field part
 of the PE32 helper analysis; incoming object arguments and their caller bounds
 still require separate proof.
 
-`RegistrationConditionalCallee` specializes an original EH3 helper from the
+`RegistrationConditionalCallee` specializes an original EH3/EH4 helper from the
 caller's actual stack cells. It authenticates the physical CALL, complete
 immutable callee instructions and ordinary near returns. Incoming scalar words
 and four-byte caller objects occupy separate coordinates; object bounds exclude
@@ -6127,13 +12344,15 @@ returns that identity and its scalar value to the caller's unwind owner.
 These are source-analysis facts; native lowering rejects them until a replacement
 call and buffer plan is proved.
 
-`RegistrationJumpRuntime` authenticates the exact PE32 capture, resume and EH3
-unwind import bindings and immutable FF25 veneers. `RegistrationJumpCapture`
-checks a current source CALL, complete buffer separation, the installed canonical
-frame and the explicit two-argument unwind protocol. It retains actual captured
-nonvolatile values, including unknown pointer provenance. `RegistrationJumpBuffer`
-owns the ten initialized DWORDs; the six unused unwind-data words retain their
-original contents. `RegistrationStateJump` retains captures across checked
+`RegistrationJumpRuntime` authenticates the exact PE32 capture, resume and
+EH3/EH4 unwind import bindings and immutable FF25 veneers. `RegistrationJumpCapture`
+checks a current source CALL, complete buffer separation and the installed canonical
+frame. `RegistrationJumpEH4` binds the three-argument EH4 protocol to the encoded
+scope pointer and image cookie address; EH3 requires two unwind arguments. The
+state owner additionally proves cookie initialization, lifetime and disjoint slots.
+Captures retain actual nonvolatile values, including unknown pointer provenance.
+`RegistrationJumpBuffer` owns ten initialized DWORDs for EH3 and eleven for EH4;
+the remaining unwind-data words retain their original contents. `RegistrationStateJump` retains captures across checked
 transfers, withdraws them on overlapping writes, released storage or unknown
 calls, and rejects an altered runtime import slot. An authenticated resume walks
 the current unwind levels, preserves checked finally writes, restores captured
@@ -6205,9 +12424,17 @@ Interpreter specialization retains full-width guest addresses. At publication, i
 
 `X64CodeRegions` and `X64ImportBindings` add an explicit raw environment to binary specialization. The complete fixed PE owns its full image extent; supplemental immutable code must be disjoint and uses the existing strict decoder, symbolic executor and solver with physical CALL/RET semantics. Writable external data remains unknown. The caller supplies all machine, stack and stable-binding preconditions. An owned receipt binds the original options, image identity, exact graph and evidence to the entry requirement, including unused declarations. Preparation shares one allowance with the primary image; result validation uses independent expected limits. Integrity does not prove a live environment or grant source/native certification.
 
+`X64MachineExits` declares exact CALL, unconditional JMP, canonical near RET and resumable INT3/INT1 trap boundaries (including the two-byte INT 3 encoding) for a raw machine region. `NativeStackControl` strictly relifts the original bytes and retains the complete transfer: CALL captures its target before pushing the original fallthrough address; RET loads the actual stack word before advancing RSP by eight plus any unsigned cleanup. The final target remains a value, including for direct transfers. A trap instead retains its authenticated final intrinsic and ends the region without a next-PC or exception-continuation contract. Its missing exception-state audit stays missing; invented undefined effects or preservation claims are rejected. The architecture owner grants this terminal behavior, and ordinary trap intrinsics remain unsupported by the generic executor. This domain requires explicit nonfaulting CET-disabled x64 state and excludes the ordinary restored-return-slot and terminal-import contracts. Unknown stores retain their alias effects; every unlisted transfer still needs exhaustive internal analysis. The existing bounded raw requirement and receipt bind the declarations, graph and physical exit spans. Complete describes the declared region only. Callee effects, reentry, continuation composition, whole-function recovery and source/native certificates remain separate obligations; ordinary consumers reject this domain even when its declarations are unused.
+
 `ProveStoreReturnSlotSeparation` also proves preservation of individual live native return cells across ordinary non-frame stores with 64-bit addresses. Each complete eight-byte cell must be disjoint under the current path. Only existing bytes in the accepted range union survive; gaps, unproved cells and other banks keep normal alias invalidation. Proof and preservation share the existing budgets and add no stack-ownership assumption.
 
-`MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. This supplies no reachability or memory-ownership fact and never populates the finite-domain cache. Each attempt charges one unit per existing context node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation. If exact normalization changes the expression without exposing a structural offset, the ordinary frame prover retries once with a fresh encoding, the same predicate, root and solver settings, and the existing cumulative query and node limits. The retry disables normalization and does not cache its result.
+Current saved frame-address cells reuse this per-write separation proof. Successful proofs retain their materialized bytes and affine relations across ordinary or conditional writes. Later overlapping writes still invalidate those relations. Each cell is checked independently; no interval between accepted cells becomes protected, and no observation supplies a new alias premise.
+
+`MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. Alone, this supplies no reachability or memory-ownership fact and cannot populate the finite-domain cache. Each attempt charges one unit per uncached readability-prefix node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation. If exact normalization changes the expression without exposing a structural offset, the ordinary frame prover retries once with a fresh encoding, the same predicate, root and solver settings, and the existing cumulative query and node limits. The retry disables normalization. Completed enumeration or proved excess cardinality can populate the original query cache through the exact expression equality, retaining its constant-bias translation. Algebraic offsets alone and incomplete retries cannot populate finite domains.
+
+If the same cache already holds a completed empty-projection proof for the identical predicate at limit one, `FrameOffsets` can combine it with the exact algebraic offset and cache the original query, preserving modular bias translation. Feasible predicates yield a singleton; proved infeasibility stays empty. Missing, incomplete or unrelated proofs cannot enable this reuse. No additional solver query or memory premise is introduced.
+
+For constant-only projections, `InterpreterSpecialization` reuses a completed empty-projection proof under the identical predicate and tuple limit, then reconstructs the literal tuple. Constants do not establish reachability. Observers still validate every original address and extent, including cache hits; rejected observations and incomplete enumeration never supply a completed proof.
 
 ELF object parsing, native relocation writers and loader provenance share one field-width table. AArch64 `PREL64` consumes eight bytes and preserves signed `S + A - P`, including full-width implicit REL addends. Bounds, overlapping writers and signed overflow fail before publication.
 
@@ -6345,3 +12572,846 @@ DarwinFileSystems.cpp selects actual File/Directory/Link pointers and remains th
 ### Symbolic region coordinates across zero
 
 `SymState` uses modulo-2^64 relative coordinates only for regions with a 64-bit symbolic base. A read crossing relative zero splits into two nonwrapping spans, keeping each input origin within one span; a store writes the complete value. Absolute-memory, register and temporary bank range overflow still refuses. This indexing rule supplies no actual-address validity, nonalias or frame-separation premise; ordinary cross-region invalidation and per-STORE preservation proofs remain unchanged. Unicorn, KVM and WHP share this analysis rule.
+
+### Bounded libSystem imports
+
+`MachOProgramLinking` owns strict original-byte classic and generic64 chain facts, complete undefined-symbol closure and preparation bounds. The Darwin process owns provider/symbol admission, pointer publication, read-only-after-fixup protection, authenticated libSystem gates and main-thread errno. `DarwinLibSystemCalls.def` binds exact Mach-O names, arities and typed kernel effects; wrappers reuse `DarwinServices` without inventing raw traps. `DarwinMemory` owns resident model reservations and the original maximum protections. Preparation and execution share `ExecutionBudget`; `ProcessReport` alone serializes optional `darwin.native_calls`. No host dyld or library code is loaded.
+
+`MachOProgramLinking` normalizes one exact executable rebase/lazy-bind pair while charging both raw records. Every lazy program supplies its own destination, ordinal and symbol. `DarwinImage` resolves imports once to typed gate identities and prepared address/value fixups. The mapping loop publishes those values. The infrastructure binder is admitted only beside actual classic lazy calls and refuses execution before C ABI decoding, errno changes or native-call evidence.
+
+### Explicit Darwin startup graphs and TLS
+
+`MachOExecutionImage` owns dylib-identity counts and original TLS section facts;
+`MachOProgramLinking` owns dependency identities/versions, export-trie addresses,
+fixups and complete undefined-symbol closure. `DarwinImage` resolves the explicit
+catalogue into one bounded acyclic graph, checks every dependency edge and
+assigns disjoint placements. Its graph-wide input, metadata, record and resident
+ledgers charge shared nodes once and retain one preparation deadline.
+`MachOProgramLinking` retains the signed addend fact. `DarwinImage` alone
+combines the selected provider export, slide and ordinary import addend,
+rejecting arithmetic overflow/underflow and nonzero targets outside that
+provider's original mapped segments. It checks pointer-value membership without
+inferring a pointee width. These prepared values also relocate TLS template
+pointers before `DarwinTLS` copies their live bytes. Imported TLV descriptors,
+libSystem gates and classic lazy programs require zero addends.
+`DarwinTLSPreparation` admits exact descriptors and contiguous template storage,
+publishes keys and physically maps charged TLS reservations before execution.
+`DarwinTLS` alone owns main-thread instantiation and the authenticated TLV return:
+it copies live relocated bytes once, validates descriptor/frame identity and
+preserves non-result registers. `DarwinMemory` keeps TLS reservations resident;
+`ProcessReport` serializes named resolver events through the existing schema.
+Public `DarwinProcessOptions` and `darwin.modules` only supply original inputs;
+no host loader, search or second symbol-resolution owner is
+introduced. See [Darwin environments](darwin-emulation.md) for the finite contract.
+
+`MachOExecutionImage` also retains original constructor section/routines facts.
+`DarwinImage` alone admits local executable targets after relocation and orders
+shared dependencies once in postorder. `DarwinCallbacks` owns startup, main and
+main-thread TLS and global termination, authenticated return frames and private pending
+exit state. It reuses `IntegerABI`, the original process stack/return page and
+the existing `ExecutionSession` budget. `DarwinStack` owns bounded `ProgramVars`;
+`DarwinLibSystem` decodes the exact void TLS-registration and nonreturning exit
+ABIs before delegating their lifecycle effects. Runtime callback targets retain
+unrounded original executable spans, and termination preserves the current stack.
+`DarwinLibSystemCalls.def` declares C and C++ registration arities; one private
+classification is shared with image admission. Global registration returns int
+zero through the existing ABI owner and preserves errno. `DarwinCallbacks`
+interleaves C/C++ LIFO work after the TLS phase exactly once and removes each
+entry before invoking original code. The DSO carrier is event data only.
+An externally discriminated private union preserves the old callback base and
+TLS record stride: strong global imports select precharged combined storage
+with a separate 1,024-entry quota. Raw and constructor/TLS-only images retain
+their previous admission budgets. Selective finalization remains an explicit unsupported import.
+
+`DarwinLibSystemCalls.def` also owns each exact provider identity. The three
+static-guard operations belong only to libc++. `DarwinImage` admits that finite
+builtin alongside libSystem and reserves one shared pair of runtime pages,
+charging every fixup and unique gate without inventing callback storage for
+guard-only imports. `DarwinLibSystem` alone owns the single-main-thread guard
+state transitions in guest memory and consumes the explicit ThreadSelfPort;
+completed acquire reads only its initialized byte. The common IntegerABI return
+publisher preserves void results and emits the binding table's provider. No
+loader, emitter, thread scheduler or host-library lookup duplicates this rule.
+Baseline ARM64 fixtures use verified generic armv8-a output; RCpc remains outside
+the checked execution contract.
+
+
+### Sequential raw compare-and-exchange
+
+`SymExec` owns the value semantics of admitted raw `ATOMIC_CMPXCHG`: capture address, expected, desired and old value before publishing the output, then commit `ite(Old == Expected, Desired, Old)` once. `SymState` owns that write's byte effects, alias invalidation and preservation budget. `InterpreterSpecialization` owns admission and provenance: Old uses the pre-write memory origin; conditional writes conservatively combine Old, expected and desired origins and invalidate possibly overlapping affine spills. Even a failed comparison requires the complete write footprint to be separated from protected return cells. The original atomic operation, ordering and occurrence remain in the residual; refusal publishes no partial residual CFG.
+
+Scheduling and waits retain their own execution holds. Referenced exited threads preserve identity and exit priority, reused stacks get new identities, and processes remain session-owned. `KernelRegistry` owns live key data and per-open body associations; shared data storage does not introduce a second pointer/handle counter. `KernelModelObjects.cpp` alone owns caller references, handle access, process scope and retirement. Deleted data outlives its live path only through retained bodies. Reset requires all key bodies to retire, and opaque body storage rejects guest access.
+
+`KernelDataExports.def` owns the kernel data inventory and layout outside the PE forwarder span. `KernelExportRegistry` separates data addresses from function gates without consuming thunk slots. `KernelModelDataExports.cpp` initializes identities through the object owner and protects data pages before entry. `KernelModelMemory` observes successful model reads; CPU read hooks cover guest instructions. Preflight and diagnostic snapshots remain pure. Declared debugger facts and consumed data retain recovery dependencies; retained data pointers remain borrowed state.
+
+### Live proc and maintained file metadata
+
+`LinuxProc` classifies the optional live namespace, borrowing task snapshots
+directly from GuestThreads through LinuxServices. It owns no second scheduler.
+`LinuxProcRead` retains record buffering in the shared open description, and
+fdinfo reads per-description flags/cursors plus descriptor-owned CLOEXEC.
+`LinuxProcMaps` intersects optional backing identities and device aliases with
+AddressSpace's live mapping/permission snapshot; LinuxMemory retires backing
+labels on unmap. `LinuxVMAName` owns the explicitly selected legacy Android
+anonymous-name intervals and lazy guest-pointer reads, without retaining RAM.
+Raw syscalls and Bionic wrappers share that state. GuestThreads retires its
+mappings through LinuxMemory's shared munmap path so names and backing metadata
+cannot survive address reuse. JSON supplies explicit identity/provider
+declarations only.
+See [live proc](linux-live-proc.md) for the supported fields and boundaries.
+
+`AndroidJNI` owns an opt-in workload VM, thread attachments and immutable JNI
+function tables. JNI handle identities, references, frames and pending exceptions
+remain in that owner; the shared Dalvik heap retains object identity/storage,
+and string/array helpers implement value and copy-back
+semantics. Guest storage uses the existing allocator and address-space authority.
+`LinuxBinder` owns LP64 control/looper state within each device open description,
+shared by descriptor aliases and raw/Bionic calls. JSON adapters supply no
+alternate semantics or service responses. JNI object limits and Binder stream
+admission fail explicitly rather than borrowing a host VM or driver.
+`AndroidJNIRegistration` retains native bindings in the workload JNI owner and
+reports a sorted snapshot; the shared Program resolves declarations through the
+class/superclass chain without initializing them. The JSON adapter supplies
+explicit negative loader outcomes only; unknown inputs never imply absence.
+Neither FindClass nor registration executes a class initializer.
+`AndroidJNINativeCalls` admits ordinary registered native declarations reached
+through JNI method calls. It owns the JNI-to-AArch64 argument/reference mapping
+and implicit local-frame lifetime; the existing guest callback scheduler owns
+execution, waits and original-call resumption. Runtime retains class
+initialization and the shared heap. Binding lookup occurs at invocation, not
+method-ID resolution. DEX native calls enter this same transport through Runtime continuations.
+Floating and stack-passed native arguments and synchronized methods remain unsupported. See [the native call contract](android-application-runtime.md#calling-registered-native-methods-through-jni).
+`AndroidJNIMethods` owns JNI method identities and descriptor/argument binding;
+all JNI call forms and explicit DEX methods reuse it and Bionic's GP argument reader.
+The finite intrinsic catalogue and value semantics live in `dalvik::Library`;
+JNI retains opaque identities and argument/reference transport only.
+`dalvik::Runtime` also owns the explicit API 28 application projection in
+`AndroidFramework`: lifecycle phase, Application/Context identities and the
+separate boot/system/application loaders. JNI and DEX enter the same library
+boundary and heap; native thread detach never resets that process state. JSON
+supplies an optional snapshot, not inferred initialization or a second object
+owner. See [application snapshots](android-application-runtime.md) for the
+admitted methods, loader namespace and unsupported lifecycle transitions.
+AndroidFramework owns the prepared main queue's head; Message links and data
+remain ordinary fields in the shared heap. Posting and read-only snapshots
+consume that one list. RuntimeServices transports uptime observations from the
+existing LinuxClock, with cumulative ExecutionBudget accounting; it introduces
+no independent clock. The intrinsic catalog records final methods so Program
+admission can reject conflicting supplied declarations. Handler's virtual
+sendMessageAtTime override remains an explicit execution boundary.
+Program registers framework field ownership by declaration identity, independent
+of supplied source metadata. Runtime routes those instance fields to the same
+AndroidFramework state as library getters. Instrumentation starts from explicit
+optional state and retains compatible guest writes; JNI IDs do not own a copy.
+The attached Context's ApplicationInfo follows the same ownership rule. Its
+getter retains one instance shared by Application and base Context; `sourceDir`
+and `nativeLibraryDir` reads use independent nullable inputs until guest writes
+establish their values. Knowing one field does not supply the other.
+PackageManager ApplicationInfo queries match explicit own-user positive
+responses by exact package and flags. The same AndroidFramework field owner
+stores independent mutable slots per returned object; immutable response
+indices distinguish fresh parcel results from the Context's retained instance.
+The JSON adapter reuses one ApplicationInfo schema decoder, and the typed
+validator owns response bounds and preconditions. No JNI-side field copies or
+package service execution are introduced.
+The retained ApplicationInfo targetSdkVersion uses the same per-object owner
+and common Runtime int32 field conversion as PackageInfo integer fields. Its
+optional input is independent of platform Build.VERSION state; JSON only
+decodes and validates the explicit Context or query response.
+PackageInfo queries share exact query-key validation and matching, while
+retaining their own response inventory and per-object field slots. Their
+packageName, versionName and versionCode inputs are independently optional.
+Their nullable applicationInfo field retains one nested object per parcel
+result. It uses the existing ApplicationInfo field owner, with an immutable
+response source/index instead of aliasing the Context or a separate package
+query. Missing input remains unknown; explicit null and later reference writes
+are retained in the PackageInfo slot. JSON reuses the ApplicationInfo decoder
+and typed validation, and materialization charges the shared heap budget.
+Runtime validates reference writes and narrows primitive writes before
+dispatching to either ordinary DEX storage or framework field storage; field
+owners cannot introduce a second JNI-specific integer conversion.
+The inherited PackageItemInfo nonLocalizedLabel declaration uses this same
+per-object field storage. Label lookup returns the stored CharSequence only
+under explicitly known unsafe-label mode; it never caches a second copy or
+assumes the mutable static flag's initializer. Resource and safe-label paths
+remain unsupported.
+The shared `referenceAssignable` predicate owns the platform String to
+CharSequence relationship, including reference-array covariance. Program
+hierarchy checks, DEX field writes and JNI argument/field transport consume
+that relationship instead of relaxing individual field types.
+Framework String materialization shares one budgeted helper across methods and
+fields. File existence and APK contents remain separate filesystem inputs.
+The package resource path belongs to AndroidFramework's stable LoadedApk
+projection. Context getters share its retained nullable String independently of
+mutable ApplicationInfo fields; JSON and typed callers use one validator.
+Exact loader-scoped negative class lookup observations are admitted by the
+shared Android application validator and checked against the Runtime's actual
+Program visibility. AndroidFramework creates the shared throwable and message;
+JNI transports that identity, and DEX catches it through the existing Runtime.
+JSON does not execute or infer lookup outcomes, and a negative parent observation
+does not close a child namespace or change JNI FindClass.
+`Runtime::snapshot()` reads the existing class initialization owner and framework
+identities without guest work. Program records supplied declaration ownership
+independently of source labels; the shared framework owner supplies projected
+loader ownership for both execution and reporting. The explicit application
+loader stage is independent of Application object creation; lookup failures and
+reflection use that same stage. Native `observe_java_state`
+only transports this optional final directory and does not initialize classes.
+The retained application files directory and File path values use the same
+heap. Native setup validates its declared directory against LinuxFiles; Dalvik
+does not acquire an independent host filesystem. LinuxFiles owns getcwd bytes
+and user-copy outcomes; Bionic alone owns pointer returns, errno and allocation
+lifetimes. Both cwd and application paths require explicit input.
+`LinuxBinderTransactions` routes object-free messages between guest-owned opens;
+LinuxMemory owns their read-only arenas and every service body remains guest code.
+It preserves admitted libbinder request/status flags at this shared transport
+boundary. No frontend interprets a status payload or invents a service result.
+`LinuxGPUCommands` owns explicitly selected PM4 admission and execution, using
+MemoryView physical pins and the existing KGSL context/memstore owner.
+`LinuxGPUObjects` allocates retained RAM through `AddressSpace::allocateBacking`
+without publishing CPU mappings. The process GPU allocation table owns IDs,
+addresses and pending-free state; LinuxMemory owns the exact CPU VMAs and
+retains their device opens. Object mappings and PM4 reuse the same physical
+bytes. JSON
+adapters declare these contracts and never infer methods, services or commands.
+
+
+`KernelModelNamespace.cpp` resolves names through the shared reference and handle owner. Device names remain owned by device records; immutable driver/directory/link names belong to object records. Links retain captured target bytes and separate permanent/named state. Handle close removes temporary names before pointer-reference retirement. Device I/O holds control driver-list removal independently of object storage references. No transport owns a second namespace or reference count.
+
+KernelModelObjects owns file handle and pointer counts in the common object table. KernelModelFileObjects selects per-process unlock versus global cleanup, prepares the request before consuming a handle, and owns deferred CLOSE and caller waits. KernelModelIO retains scenario payloads and retires bodies only after packet completion and dispatch/continuation return. KernelFramework carries an optional effective-process override only for internal file lifecycle callbacks. DriverSession preserves the invoking thread and creating-process identity, activates the inherited address space, and restores the source context before final release. Independent scheduled callbacks retain their own context. Device and PnP holds inspect bodies rather than scenario identifiers.
+
+## Shared Dalvik decode and bounded execution
+
+`NeverDDalvik` owns the decoded declarations, DEX reader, signatures and input
+budget formerly confined to the mobile CLI. Mobile source recovery includes
+compatibility headers and consumes that same core; it owns Smali parsing and
+Java source emission. The shared module depends on LLVM Support and zlib, not
+CLI/session state or CPU transports. `cmake/NeverDZlib.cmake` owns the pinned,
+source-built static zlib provider shared with LLVM, the NDDB reader and web
+decoders. Root and standalone desktop builds initialize it before LLVM or Qt
+dependency discovery. The imported CMake facade preserves LLVM's library-location
+queries while the actual archive follows the active toolchain and configuration;
+zlib symbols remain private to each consumer. This does not add a second
+instruction decoder.
+
+`dalvik::Program` owns immutable explicit class declarations; `dalvik::Runtime`
+owns a workload's static fields, initialization states and execution
+over those decoded instructions. Frames own typed 32-bit register
+words and overlapping-wide invalidation; arithmetic has one unsigned-bit
+implementation of Java integer semantics. Calls share one owner-provided
+instruction/deadline callback and bounded frame storage. Missing semantics
+produce a typed stop, with method identity and code-unit PC.
+
+`AndroidDex` admits API-28 DEX bytes before native execution and binds Runtime's
+budget and exceptions to the existing Bionic workload VM. `AndroidJNIMethods`
+keeps opaque method IDs, call-form/type checks and argument transport; it never
+interprets instructions or stores caller-provided successful results. JSON only
+accepts strict explicit hex images. There is no host JVM, implicit classpath,
+network or phone dependency. JNI owns a single Runtime for the workload, separate
+from disposable local references and thread attachments. Initialization and
+static field instructions have one semantic owner in Runtime, including recursive
+initialization, persistent erroneous classes and terminal non-Java stops.
+Program's convenience execute creates a fresh Runtime; repeated calls must use
+the workload instance. Execution yields only at explicit external-call requests,
+without Java preemption or a concurrent Java memory-model claim. The supported class contract excludes
+floating/volatile fields, synchronization and default interface bodies.
+`Program` owns superclass/interface assignability and member resolution;
+Runtime selects virtual, super and direct targets, allocates inherited fields,
+and initializes supplied superclasses before child initializers. Explicit
+public abstract interfaces are admitted without inventing implementations.
+Constructor chaining retains an uninitialized identity until the outermost
+constructor returns; premature escape remains a clear stop.
+
+`lib/dalvik/AndroidVersion.cpp` supplies the fixed API 28 scalar `Build.VERSION`
+declarations and property-derived initial values when Android opts into JNI.
+Program keeps those declarations separate from untrusted supplied DEX; Runtime
+materializes their fields once into this same Heap. JNI does not maintain a
+second version cache. Nonempty property strings and interned defaults retain
+their distinct allocation rules. This projection does not execute the enclosing
+framework initializer or infer application state.
+
+`SystemProperties.getInt(String, int)` is a read-only API 28 projection over
+the existing Bionic property record owner. JNI and DEX use the same Runtime
+service; reads validate the guest record before conversion, so changed or
+unmapped property pages cannot fall back to the original input dictionary.
+Missing, empty, invalid and out-of-int32-range values use the caller's default;
+an absent Runtime service remains unsupported. `AndroidProperties.cpp` owns
+the integer parser shared with Build.VERSION. Heap's ART JNI encoder preserves
+NUL and surrogate key units for both JNI string APIs and property lookups.
+This projection does not expose property writes, callback lists, tracking or
+framework initializer bodies. Its contract follows API 28
+[SystemProperties](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/SystemProperties.java),
+the [native getter](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/jni/android_os_SystemProperties.cpp)
+and [integer conversion](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/base/include/android-base/parseint.h).
+
+`dalvik::Heap` is the single retained Java object/array owner for JNI and DEX.
+Its zero-filled array allocator supplies element widths, reference storage and
+budget accounting to DEX allocation, JNI array creation and framework arrays.
+Its bounded identities are separate from native reference handles and guest
+addresses. JNI borrows, object arrays and DEX array instructions all refer to the
+same storage; no import/export copy of the heap occurs at a method boundary.
+Runtime owns instance/static field semantics and construction. JNI field/method
+adapters only bind typed IDs, convert references and apply the common execution
+budget/stop mapping. Weak object-array edges and integer field identities avoid
+host ownership cycles while the heap retains objects until workload teardown.
+Java reference assignability, including array covariance, has one shared owner.
+Uninitialized construction and unsupported constructor escape fail explicitly.
+
+The API 28 `com.android.internal.util.StatLogger` constructor uses these arrays
+and the existing elapsed-realtime service. It retains the lock, private fields,
+seven independent zero arrays and the caller's labels array identity. Lock
+creation and the next-tick clock read precede the null-label exception, matching
+the field-initializer order; budget/service stops retain completed field writes
+without reporting a completed constructor. `getTime` converts the same boot
+clock to microseconds and needs no application snapshot. The modeled class is
+boot-owned and cannot be replaced by supplied Android DEX. This follows the
+[API 28 StatLogger contract](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/com/android/internal/util/StatLogger.java).
+Statistics updates, logging and dumps remain unsupported. ServiceManager's
+initializer reuses these operations; its separately supplied cache and Binder
+state are described below.
+
+`dalvik::Library` is the single implementation of the bounded UTF-16 String,
+Object, Class and Throwable value methods called by JNI and DEX. Heap owns
+class identity, literal/intern pools and retained storage accounting; JNI local
+handles do not duplicate those pools. DEX constants preserve NUL and isolated
+surrogate units. Library work shares the caller's budget and deadline.
+Runtime consumes decoded ordered try regions, routes only Java throws, and
+preserves the same heap throwable through move-exception, rethrow and JNI.
+Frame storage is released on every unwind, including caught exceptions;
+resource/unsupported stops remain terminal and cannot be caught by Java.
+This is neither a second decoder nor an ART/JVM class-loader implementation.
+
+`AndroidFramework` also owns the explicitly supplied, generation-stable Secure
+and Global settings caches of its attached resolver. The bounded `android_id`
+and redirected `adb_enabled` reads keep
+unknown, cached null, empty and nonempty values distinct, with the same retained
+String identity for JNI and DEX. Typed snapshots and JSON share admission;
+neither transport chooses a default identifier or setting. The defaulted
+integer getter reuses that String owner, checks ASCII decimal int32 bounds, and
+uses the caller's default only for known absence or invalid ASCII text. Unknown
+state and unmodeled Unicode digit semantics remain explicit stops.
+This projection requires an
+existing own-user cache and does not implement Binder/provider acquisition,
+generation changes, other users or writes. Its contract follows API 28
+[Settings.Secure and NameValueCache](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/provider/Settings.java).
+
+The API 28 value profile admits StringBuilder's empty constructor,
+`append(char)` and `toString()` through that same Library owner. Its retained
+UTF-16 value is mutable; append returns the original identity and charges its
+copy before mutation. Nonempty String results own independent bytes; the empty
+result uses the literal pool. Program declares the concrete, abstract-base and
+interface hierarchy. This bounded value projection does not expose ART backing
+arrays or capacity, and other overloads remain unsupported.
+The contract follows the public API 28
+[StringBuilder](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/StringBuilder.java)
+and its abstract base; no implementation bodies are incorporated.
+
+The same Library/Heap owners provide HashMap's default constructor, `size`,
+`isEmpty`, `get`, `put`, `containsKey`, `remove`, `clear` and `putAll`, including calls
+through the Map interface. Each constructed object retains independent entries
+with exact UTF-16 String or null keys and arbitrary reference/null values.
+Equal Strings replace a value without replacing its key; HashMap hash collisions
+do not merge different Strings. The bounded projection uses a linear entry
+search, charges traversal/copy work and retained storage before mutation, and
+does not expose bucket layout or iteration order. Raw AllocObject storage,
+subclass behavior and custom key hashCode/equals execution are unsupported;
+Map equality, hashing and rendering do not fall back to Object identity.
+The public contract follows API 28
+[HashMap](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/util/HashMap.java).
+`putAll` copies known HashMap entries through the same `put` operation, retaining
+value references and handling self-copy without aliasing the entry container.
+
+`AndroidServiceManager.cpp` owns the API 28 ServiceManager initializer and
+explicit Java service state. Runtime retains class preparation, initialization
+ownership, erroneous state and terminal failures, including the HashMap,
+SystemProperties and StatLogger dependencies. Static library calls from DEX,
+JNI method/field lookup and the direct Runtime library entry use that owner.
+The initializer retains static fields and reads all four property settings;
+slow thresholds multiply as Java int before widening to long. Budget or service
+failures retain completed writes without reporting initialization complete.
+
+The optional `application_snapshot.service_manager` supplies the initial cache,
+ServiceManagerProxy and context Binder independently. Missing state is unknown,
+not an empty cache or null manager. Initial cache entries use shared HashMap
+String/null key semantics and heap reference values. Positive Binder keys name
+retained Java BinderProxy identities, not native handles, kernel endpoints,
+liveness observations or RPC replies. Repeated keys across cache and manager
+references preserve one object; blocking-warning state can independently be
+unknown. `getService` and `checkService` return nonnull cache hits unchanged;
+null entries take the miss path. `initServiceCache` checks actual cache size
+before `putAll`; an empty installation is repeatable. Guest writes retain their
+ordinary Java effects, including casts and null exceptions.
+
+`Binder.allowBlocking` updates the retained proxy's warning flag;
+`BinderProxy.queryLocalInterface` returns null, and an admitted
+ServiceManagerProxy retains its `mRemote` field. Cache misses preserve the
+getService timing read and manager/context acquisition order, then stop at
+unmodeled Binder transactions. JNI remains a handle/ABI adapter. Linux Binder
+continues to own native device/transaction state; this Java projection cannot
+translate its keys into those handles. Local/custom Binder behavior, native
+object translation, Parcel RPC, statistics/logging and add/list service calls
+remain unsupported. The volatile warning field is admitted by shared framework
+field identity; supplied DEX volatile fields retain their existing guard.
+Observed Java state reports cache identity/completeness, retained entries,
+manager/logger identities and proxy warning states without manufacturing
+missing values. Contracts follow API 28
+[ServiceManager](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/ServiceManager.java),
+[ServiceManagerNative](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/ServiceManagerNative.java)
+and [Binder](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/Binder.java).
+See [application runtime inputs](android-application-runtime.md) for the schema.
+
+
+`KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
+
+KernelFileSystem retains one provider token per FILE_OBJECT. The private sharing operation accepts an already admitted node and mapped access, checks both directions, and excludes metadata-only opens from sharing conflicts. CLEANUP releases sharing without retiring the token; CLOSE removes the cleaned token. Cleaned retained bodies still count toward the 1024-open bound. Exact binding validation compares tokens with the file-object owner. `KernelModelFileCreate` owns CREATE and cancellation producers and reserves handle capacity before callbacks. `DriverSession` retains the original caller through pending work and nested CLOSE. The common object owner publishes the handle; namespace lookup retains a real directory body, and the terminal provider reads the admitted packet. Scenario close intent remains separate. Bidirectional token checks run on snapshot and unload.
+
+`KernelModelFileRequests` owns both borrowed IoQueryFileInformation and buffered ZwQueryInformationFile continuations, caller publication and packet disposal. KernelMode handle references reuse the object owner. Native SystemBuffer allocations register with the physical-memory owner; ordinary request retirement leaves them to the query owner. `KernelFileSystem::queryInformation` alone encodes declared metadata from retained open tokens. The terminal route consumes the actual admitted IRP class and length; adapters and reports do not reconstruct metadata.
+
+`KernelModelIO` retires transfer ownership without changing `FILE_OBJECT.CurrentByteOffset`. A request offset and completion byte count cannot substitute for a filesystem position update; synchronous native Position queries read the retained field.
+
+### Raw environment architecture ownership
+
+`RecoveryArchitecture` selects the native contract from `SpecializationOptions::Architecture`, independently of the build host. The existing default is x64; a target without an adapter refuses explicitly. `arch/x86_64` owns native option encoding, primary-image range rules, external-exit matching costs and physical-exit receipts. Core owns generic budgets, policy encoding and graph/evidence integrity. The x64 option and receipt digests retain their existing byte encoding; both expected and stored architecture identities are checked before validating the declaration. `RawArchitectureReceiptCompatibility` fixes pre-refactor digest values, and architecture-mismatch controls forbid relabeling x64 evidence as ARM64. This boundary does not implement ARM64 native recovery.
+
+`KernelModelFileRequests` also owns synchronous buffered `ZwReadFile` and `ZwWriteFile`. Handle scope, offset/key capture and copied write input belong to the producer. Shared completion publishes read bytes and IOSB in the eligible original caller, then disposes each owned packet and buffer once. Storage drivers own content and file-position changes.
+
+`KernelModelFileRequests` also owns bufferless `ZwFlushBuffersFile` production. Its granted-mask check and immediate publication/disposal differ from deferred native read/write/query packets; all reuse the original-caller notification and single-release owner.
+
+`KernelModelFileRequests` owns native device/filesystem control buffer capture and publication. Both use the same file hold, caller continuation and packet release; producer-specific deferral distinguishes device control from FSCTL. Control output limits are checked by the shared completion validator.
+
+`KernelModelRuntime` owns kernel CRT classification, in-place conversion and checked string writes. `KernelCStringAPIs.def` supplies export identity, argument count and IRQL admission to every caller surface. Unit accesses reuse guest-memory permissions and lifetime guards; reports and adapters do not repeat copy or error semantics.
+
+`KernelMemoryCalls` owns checked memory-copy admission and reuses its existing move/fill operations, including pool lifetime and user-memory checks. `KernelModelRuntime` owns the raw `RtlImageNtHeader` signature probe. This probe is distinct from the loader validation needed to execute an image; adapters do not duplicate either operation.
+
+### Darwin imported file calls
+
+DarwinLibSystemCalls.def adds exact open/lseek/pread/pwrite/dup/dup2 identities.
+DarwinLibSystem owns the sole argument reader, returning separate original
+carriers and kernel arguments. open has two fixed arguments; only low-32-bit
+O_CREAT reads its promoted int, from four defined bytes at entry SP on ARM64
+or the third GP argument on x64. The report retains that carrier and dynamic
+arity; the kernel receives an explicit zero or 16-bit mode_t. Missing argument
+bytes and transport errors precede call/errno/file publication. The existing
+return-frame and post-service transport contracts remain unchanged.
+DarwinFiles continues to own all file authority, effects and descriptor cursors;
+no loader, public transport, generic IntegerABI or report schema gains a second
+semantic owner. Native controls and direct boundary checks separate defined
+stack bytes, full carriers, kernel narrowing and final metadata.
+
+### Ordinary libSystem memory calls
+
+DarwinLibSystem prepares C mmap/mprotect/munmap carriers without changing the
+raw BSD entry. Its argument reader narrows C int protection/flags/descriptors,
+records mmap's early zero-length or missing-sharing-type EINVAL, and adds
+MAP_UNIX03 only to the separate kernel arguments. The common completion path
+owns errno and return-frame publication. DarwinMemory remains the sole owner
+of mappings, current/maximum rights, reserved pages and retained file leases.
+
+`KernelModelRuntime` owns Unicode hashing, the shared NLS-independent uppercase decision and conversion to 1980 epoch seconds. `KernelRuntimeCalls` owns uppercase allocation through the existing paged-string pool. The string/time API tables supply export identity, argument counts and APC_LEVEL admission; field access order remains inside these owners.
+
+`uppercaseCharacter` narrows scalar carriers before admission and delegates to the existing `uppercaseUnicodeUnit` owner. The CRT and counted-string API tables expose the same decision with independent ABI identities; no adapter or host locale supplies a second mapping.
+
+`KernelModelRuntime` owns scalar debug argument widths and the common prefix/buffer publication rule. Native variadic calls use the existing call-ABI reader; the explicit x64 `va_list` adapter checks each requested guest scalar with an eight-byte stride. Neither dispatcher nor adapter duplicates format parsing.
+
+Thread query aliases reuse the existing thread/process and execution-context owners, including during process attachment. `RtlPcToFileHeader` uses `LoadedModules`, alongside system module queries; `ImageRAM` describes mapped regions and is not a substitute for module identity. No host process, thread or module state is consulted.
+
+`KernelMDLCalls` normalizes the legacy mapping entry into the existing six-argument mapper. `KernelPhysicalMemory` and MDL records continue to own cache attributes, page identity, permissions and lifetime. Only fully released kernel image aliases remain recoverable without an environment dependency; user views retain that dependency.
+
+`queryFileDevice` in `KernelModelFileRequests` owns common file identity, header, mount and topology checks. Base queries return the owned file device; related queries additionally validate file-extension routing and select the attached top. Both borrow their result.
+
+
+### Linux ioctl observation ownership
+
+`LinuxIoctlTrace` surrounds the existing `LinuxFiles::deviceIoctl` decision at
+one shared raw/native service boundary. It owns bounded diagnostic reads and
+entry-resolved addresses, never device replies or a second ABI decoder.
+`LinuxServices` supplies the current task; Android supplies its native return
+address. `ProcessReport` serializes the optional stream. Trace limits and
+capture failures cannot replace the original service outcome.
+`linux_files.ioctl_trace.include_unlisted` defaults to `true`, retaining an
+event for every ioctl. Setting it to `false` records only numbers listed in
+`requests`, including entries with no memory ranges. The shared owner matches
+the LP64 ABI's low 32-bit request before charging either trace budget or reading
+diagnostic memory. Unlisted calls still execute and retain their normal service
+events and errors; an empty selection records nothing and is not truncation.
+
+`KernelModelFileCreate` owns device-pointer opens within the existing `FileOperation`. Namespace resolution, CREATE packets and final release share the ordinary file-open owner. The object manager acquires the file reference through the private handle; `queryFileDevice` supplies the related device, and the existing handle-close continuation performs CLEANUP. The original caller releases its critical region only after that continuation completes. Public output overlap cannot replace the private referenced object.
+
+`KernelModelIO` owns the process-probe wrapper and private attachment lifetime. It reuses the shared process-view switch and ordinary MDL probe; private attachments have no fabricated guest APC storage and cannot be detached with a public zero token. The ordinary attachment owner retains admission and nesting. A probe exception reaches the guest only after successful restoration; restoration errors remain model failures.
+
+`KernelObjectAPIs.def` owns the fixed callback-version query’s identity, arity, value and IRQL ceiling. No callback registry or host operating-system query is introduced.
+
+`KernelPhysicalMemory::resolveAddress` matches the current `MemoryView` to exact retained allocation slices and existing page identities, including aliases. `KernelModel` separately admits readable mappings, process context and residency. A query neither allocates an identity nor pins a page; surviving mapped page padding cannot revive retired bytes.
+
+`KernelModel::queryPrimaryVirtualAddress` derives the primary VA from existing live nonpaged `PoolAllocation` records and `KernelPhysicalMemory::describe`, then authenticates it through the forward query. It adds no reverse-alias registry, physical identity or pin; generic backing addresses do not establish a primary mapping.
+
+`activateStack` and `retireStack` own `ExecutionStacks`; queries bind that extent to the current `ExecutionThreadKeys` identity. Exact reactivation preserves the extent, while overlapping live stacks and mismatched retirement fail before mutation. Nested executions keep separate bounds even when sharing a thread. These environment queries remain opaque to native unpack reconstruction.
+
+`LockedMdl::StorageKind` separates descriptor storage from page provenance. Pool allocation and live execution-stack owners supply exact storage; shared release preflight checks all ranges before descriptor records retire. Pool free checks write permission before changing state. Partial construction and unlock retain the descriptor owner. Kernel memory borrowing refuses intersections with live MDL metadata. MmCreateMdl retains the default opaque unpack boundary.
+
+`LockedMdl::AdvanceRange` retains the original locked byte range and system mapping base independently of the current data window. Alias allocation, access validation, borrowing and retirement use that owner. The same MDL owner rotates and restores PFNs; page ownership and descriptor storage are unchanged. Existing pins stay live until cleanup, matching the inspected fixed-version producer and restoration consumer. No immediate physical unpin is inferred from generic API prose. MmAdvanceMdl remains opaque to unpack reconstruction.
+
+## Offline network ownership
+
+`LinuxFiles` owns virtual TCP/UDP descriptions and their descriptor aliases,
+connection attempts, stream/packet cursors and explicit receive completions.
+`LinuxDatagram` implements packet effects on that same owner. Raw services and Bionic wrappers use that
+same owner. Bionic owns LP64 resolver allocations and libc error conversion;
+`ProcessNetworkJSON` parses explicit inputs and invokes the same admission
+validators as C++ sessions. Neither layer invokes a host resolver or transport.
+Send prerequisites gate receive input availability; application acknowledgement
+state remains owned by guest code, never inferred by an OS send result.
+See [offline network contracts](linux-network-contracts.md).
+
+`LinuxSelect` owns LP64 `pselect6` admission and ordered user copies. Its socket
+readiness query borrows the same `LinuxFiles` descriptions and receive/send
+cursors as transfers; it does not consume input or create a parallel socket
+registry. `LinuxSocketReadiness` projects declared arrivals and quiet intervals
+onto those same cursors. `SelectWait` retains copied arguments and description
+identities, rechecks live readiness and output access, and computes remaining
+time from `LinuxClock`. `KernelWait` exposes readiness, the next wake,
+completion and operation-owned signal policy to `GuestThreads`; it introduces no second scheduler or socket
+registry. Runnable threads precede idle advancement; sleep and I/O deadlines
+compete in one ordering. Resume completes the original service event, and Bionic
+alone converts errors using the resumed thread's errno. Unknown observations
+and changed descriptor owners remain explicit stops.
+Android's raw and variadic syscall routes reuse this kernel owner; checked
+Bionic bitmap helpers own only guest memory operations and FORTIFY checks.
+
+`LinuxSocketReceive::ReceiveWait` retains the original socket description,
+scalar receive arguments and timeout independently of descriptor-number reuse.
+It projects the same arrival cursors as select, admits explicit receive errors
+without turning them into poll observations, and delegates completed copies to
+the existing TCP/UDP transfer owners. Competing reads can change the next wake
+but cannot reset a suspended deadline. Guest memory access is revalidated at
+completion. Raw read/recvfrom and Bionic read/recv/recvfrom all enter this owner
+and finish their original scheduler event once; no import adapter waits or
+advances a separate clock.
+
+
+### Buffered libc and descriptor waits
+
+`LinuxFiles` owns poll/epoll admission, interest sets and non-consuming
+readiness. `LinuxSocketReadiness` is shared with select and receive; every wait
+uses the same `LinuxClock` and scheduler. Epoll registrations borrow description
+identity weakly while a pending epoll operation owns its set. No backend owns
+these semantics. `AndroidKernelCalls` adapts libc timeout-copy and errno rules.
+`NativeWait` gives `GuestThreads` only readiness, deadline and resume operations;
+`Bionic::StreamReadWait` owns FILE progress across nested reads. Kernel byte
+counts never directly complete an enclosing fread/fgets import. The FILE
+reservation explicitly excludes unsupported concurrent operations.
+
+`X86LegacyVectorMoveAudit` admits legacy MOVSS/MOVSD register and unsegmented memory forms through the same raw-prefix, opcode, ModRM/SIB and decoder-detail checks as packed moves. XMM operands remain 16 bytes while memory operands are exactly 4 or 8 bytes. The existing scalar move owners merge register sources and zero the remaining low-128-bit destination bytes on memory loads, preserving higher vector bits. Complete emitted spans bind the undefined-output receipt. This does not admit string MOVSD, VEX/EVEX forms, segmented memory or an opaque-state preservation contract.
+
+`SymState::storeConditional` optionally applies one STORE or atomic write phase without a nonalias contract. It constructs byte-equality conditions for current materialized bytes in other absolute or 64-bit symbolic banks; the actual bank uses ordinary overlap handling. Missing bytes retain the write's new unknown epochs, and historical facts are never imported. Complete plan validation and work charges precede conditional expression construction and the single store. Owner refusal leaves state unchanged. `SymExec::stepWithConditionalStore` uses this only for STORE and strictly admitted scalar CMPXCHG, retaining existing refusal havoc and publishing Old only after success. Other operations leave the policy Invalid. This does not prove access validity or initial alias consistency, or guarantee inexpensive downstream solving.
+
+## Analyst call-site source contracts
+
+Windows ARM64 fixed scalar/pointer call-site types reuse `placeAAPCS64` through
+`SourceCallABI`: integer and floating register banks advance independently,
+with overflowing values in eight-byte stack slots. This follows the
+[Microsoft ARM64 ABI](https://learn.microsoft.com/en-us/cpp/build/arm64-windows-abi-conventions).
+Windows ARM64 variadic scalar/pointer calls use the same placement owner with
+one integer bank, including named floating arguments, then eight-byte stack
+slots. Explicit AArch64 source parameters can describe complete floating bits
+in integer registers; both C routes reinterpret those bits at the call boundary.
+Inferred signatures and floating result carriers retain their restrictions.
+This does not admit ARM64EC, aggregate call-site types or a native Windows driver
+execution contract.
+
+`SourceCallOccurrenceKey` owns original instruction/sequence/opcode/target
+identity; names and source anchors cannot bind a per-call policy.
+`SourceCallABI` uses the existing platform parameter/variadic placement owners
+and bounds outgoing stack-write and SSA-carrier proofs. `LowToMedSourceCalls`
+publishes these physical inputs before SSA and argument pruning, with discovery
+of platform runtime calls still restricted to its original supported formats.
+
+`Pipeline::rebuildSourceCalls` builds a private source variant from retained
+LowIR and existing callee summaries. The SDK scopes this variant to one C-view
+request, keeps source fingerprints dependent on the policy, and restores the
+ordinary pipeline afterwards. Worker `code.json` transactions own persistence,
+history and replicas. HighC and LLVM C consume the same selected occurrence and
+actual carriers. LLVM C retains ordinary target declarations and uses a typed
+call instruction/pointer cast for the selected occurrence only.
+
+When the LLVM call type differs from the named function declaration, LLVM C evaluates its cast through a scalar compound literal. This preserves the call-site ABI during C compilation, including Windows x64 variadic floating-register duplication, without changing the declaration or adding volatile accesses.
+
+Analyst declarations do not establish library effects, no-return control flow,
+native patch/lift contracts or safety receipts. Native LLVM call normalization
+and validation remain strict by default; only the private source emitter opts
+into occurrence-specific call types. A policy that cannot prove every required
+carrier reports refusal instead of manufacturing operands or changing the
+original analysis.
+
+HighIR consumes the proved analyst call operands directly. Platform heuristics
+for incomplete imported-call signatures cannot replace those carriers with
+wider register values or append arguments beyond the selected declaration.
+
+Stack-frame policies use the same private source variant. `SourceStackFrame`
+owns bounded entry-relative offsets, full temporary lifetimes and admission
+of a single, non-reentered entry-SP carrier. SDK source emission checks every
+requested stack binding against its actual variable inventory before exposing
+the C text. GUI worker previews and CLI `--stack-frame` requests use this same
+check for both C routes. The SDK checks optional input digests and original
+graph snapshots; the worker owns project history while CLI policies are
+explicit JSON inputs. See [stack-frame corrections](gui-stack-frame.md).
+
+For validated original AArch64 memory operations, a constant raw index supplies
+the encoded nominal byte displacement through the instruction owner. The same
+must-analysis records the exact instruction/sequence, original word, width and
+read/write direction, including SP origin. LowToMed frame bounds reuse these
+observations instead of its flow-insensitive address map. Unknown indices,
+conflicting predecessors, independent roots and expired temporaries grant no
+access. Nominal extents grant no checked-address, incoming-byte, translation or
+no-fault proof; opaque operations remain incomplete to generic memory analyses.
+
+## Explicit runtime modules and persistent execution
+
+`modules/ModuleSet` owns caller-declared files and debug identity independently
+of CPU or OS models. `emulation/runtime/ModuleBinding` owns transactional guest
+instances; environments contribute their publication transaction through that
+boundary. `ExecutionRun` owns persistent stage, resource pause and finite call
+control over one `ExecutionSession`. Transport adapters delegate to these owners.
+The registered raw-buffer factory requires CPU emulation only. See
+[runtime modules](runtime-modules.md) for contracts, bounds and C/CLI entry points.
+
+### Resumable Java activations
+
+`dalvik::Runtime` owns retained interpreter activations, original PCs/registers,
+exception handlers, construction and class-initialization state. Private C++20
+coroutines transfer between those activations; only explicit external requests
+yield to the native owner. Resume tokens authenticate one occurrence and owner,
+and same-owner nested entries consume the parent's remaining stack allowance.
+Class initialization records its owner: another thread cannot observe partial
+static state as initialized. Existing synchronous callers use the same executor
+and refuse an external request rather than replaying effects.
+
+`AndroidDex` transports requests and applies retained JNI operation completions.
+`AndroidJNINativeCalls` alone owns native ABI/reference transport. The image loader
+resolves the original `JNI_OnLoad` export for an explicitly named current ELF;
+`AndroidJavaLibrary` owns its single-namespace load state and on-load callback
+lifetime. The callback scheduler remains the owner of guest execution and waits.
+Immediate completed loads are resumed in a loop, without growing the host call
+stack. No Java frontend or private input adapter supplies method bodies or
+loader success. See the [execution boundary](android-application-runtime.md#java-library-loading-and-dexnative-continuation).
+
+
+`SymStorePreservation` uses an empty base for current absolute memory; a nonempty base still requires a nonconstant 64-bit value in the state context. The actual write bank cannot be declared protected. With `ProveStoreFrameSeparation`, recovery also proves each current absolute cell disjoint from the complete symbolic write before preserving it. Projection carries only surviving constant bytes, intersects them at joins and rebinds them together with frame facts. Missing, conflicting or invalidated bytes stay unknown. This grants neither an initial memory value nor immutable storage, access validity or a global nonalias premise.
+
+A complete frame write contained in the declared nonwrapping bounds is disjoint from a complete cell contained in an existing excluded interval. Recovery uses that implication directly; partial containment still requires a solver proof. Same-bank ranges form one union, and ordered nonwrapping unions share a bounded byte/range cursor. Other modular unions retain their original membership semantics.
+
+## Finite ordinary RAM read proofs
+
+`LowIRUndefinedIndependence` owns the opt-in `OrderedOrdinaryRAMV1` contract for finite proofs. Each non-frame read shares an input by occurrence; complete path coverage and address, width and order agreement remain proof obligations. Exact byte-address comparisons apply prior frame writes, including possible aliases. Repeated reads conservatively use independent inputs, and even immutable reads must remain in the candidate trace. Writes stay inside the declared frame. The contract explicitly requires ordinary nonfaulting RAM; it supplies no observed-address constants, nonalias facts, MMIO, atomic or concurrent-writer semantics. Loop proof and inference reject this model. Existing observation/node limits bound the added work, and certificates bind the model while default contracts keep their digest. This adds no concrete backend capability.
+
+## Finite native scalar query proofs
+
+`OrderedScalarV1` explicitly enables finite native independence and native-to-LowIR refinement for architecture-described queries. Core owns shared defined inputs, complete terminal coverage and equality of identity, version, selectors, result widths, count and order, including order relative to ordinary RAM reads. Repeated queries use independent answers; selector independence is proved before writing any result. Descriptor shape, observation and node limits bound the work. Actual descriptor and operation digests bind each executed receipt and both proof inputs; disabled contracts keep their prior digest. Static APIs without a native provider and all inductive proof/inference APIs refuse the model.
+
+The x64 adapter admits only the complete canonical `CPUID` bundle; the lifter independently audits its exact bare encoding, defined outputs and closed opaque-bank preservation. EAX/ECX select four 32-bit results and all four destination upper halves are cleared. The original query event remains observable. This supplies no host values, CPU feature profile or repeated-query correlation. CPUID's `IA32_BIOS_SIGN_ID` update is outside `LegacyIntegerOpaqueV1`; retaining the event does not assert MSR preservation. [Intel SDM, CPUID](https://cdrdv2-public.intel.com/868140/253666-089-sdm-vol-2a.pdf). RDTSC/RDMSR, source wrapping, exact LLVM proofs and concrete backends gain no new capability.
+
+
+`EntryFrameExcludedObjects` declares complete x64 entry GPR values as symbolic object roots with signed, nonempty `[Begin, End)` bounds. The x64 raw owner validates distinct bindings, excludes RSP and overlapping entry constants, and requires explicit nonfaulting, CET-disabled state with entry-frame bounds. Each complete object and the frame must be nonwrapping and disjoint. Objects may alias each other; equal object/frame root values are allowed when their relative ranges are disjoint. The declaration supplies no accessibility, initial bytes or loaded-pointer facts.
+
+Core retains exact root/offset relations through complete registers and frame spills, intersects them at joins and forgets overwritten or possibly corrupted relations. Fresh node roots restore only retained relations; lost entry bindings are never recreated. Physical frame addresses and native stack offsets remain frame-only. `ProveStoreFrameSeparation` separately proves that each complete executed write misses the frame, including wide, conditional atomic and full segmented addresses. Declarations grant no unchecked store exemption. Preparation, operations and symbolic nodes use existing budgets. Raw integrity binds every declaration field and order; an empty vector preserves the prior digest encoding. Ordinary source and native proof consumers still refuse this raw domain.
+
+Before original calls, `SourceFrameAnalysis` can observe proven private bytes on x64/ARM64 in a bounded, call-free, acyclic prefix. `observeSourceFrameBytes` authenticates immutable image loads without relocations; HighC and LLVM C show terminated text as comments without changing operations. Exact alignment guards remain active. These observations grant no ABI or native-rewrite authority.
+
+Entry-stack offset recovery accepts a narrower scalar displacement only when
+its nonnegative value is independent of sign or zero extension. Pointer
+provenance and negative narrow constants cannot certify a frame offset. The
+same proof supplies stack annotations and saved-register recovery.
+
+Shared source stack preparation rejects exact entry-relative loads reached by
+an x86 CALL return-slot write that the reconstructed C frame does not contain.
+It reuses the ABI owner's current-SP walk and original call/jump encoding
+policy; a synthetic tail call supplies no push. Explicit later stores kill only
+the bytes they write on each incoming path. Unknown call positions, incomplete
+candidate graphs and exhausted observation budgets cannot grant separation.
+Both source routes receive the same conversion diagnostic before cleanup can
+forward an old constant. This guard neither materializes a relocatable return
+PC nor certifies unresolved addresses, callee memory effects or other targets.
+
+SSA liveness includes the implicit full-width SP read of a physical x86 CALL.
+This keeps an exception handler's frame live when its continuation calls before
+explicitly restoring SP. The existing establisher-frame proof supplies that
+root's value; liveness alone grants no offset or new exception-frame contract.
+The original call/jump encoding owner excludes synthetic tail calls.
+
+Exceptional memory histories follow the source instruction's possible prefixes,
+including before and after a throwing CALL or STORE. A complete local store
+ends only its own bytes. Completed byte histories are shared across later
+queries within the same immutable function, keeping repeated reads bounded
+without publishing a partially explored cycle. Exceptional predecessor and
+successor identities must agree.
+
+Immediately after conversion, the guard can bind complete PE32 SEH state facts
+from that exact LowIR input. Current source occurrences locate restored ESP
+definitions and prove unreachable calls; the shared stack-offset proof carries
+those definitions through synthetic stack cleanup and joins. These facts stay
+local to the query and never become reusable annotations on mutable MedIR.
+Checked SEH callback ownership separates a CALL below its private callback ESP
+from the parent frame. A relative-origin query rejects joins with the parent
+stack, another callback, or an unresolved restore. Native memory effects and
+the emitted source operations remain intact.
+
+Source register-call recovery runs after that original CALL-slot guard. The
+callee-effect owner retains a bounded, complete, straight-line x64 scalar/CPUID
+body only when it has no memory operations, internal calls, exceptional roots,
+unmodeled exception metadata, direction-flag writes or nonordinary return.
+`PipelineRegisterCalls.cpp` uses the ordinary LowIR
+converter to capture the caller's extra result registers; it does not duplicate
+partial-register or intrinsic semantics. Required results must have no remaining
+entry-state dependencies, and every written ABI-preserved GPR must equal its
+incoming value. Each original query is then expanded once, in order, with fresh
+SSA values shared by all outputs. Native lifting retains the original CALL.
+The cache accounts for retained leaf bodies, and per-body/per-function work
+bounds prevent unbounded expansion. Incoming-state-dependent, memory-using and
+other hardware leaves retain the ordinary unavailable-state behavior. This is
+not a general machine-state calling convention or a proof of unresolved frame
+aliases.
+
+The shared entry-stack offset proof follows the lifter's exact zero-extension
+of a native 32-bit address into its 64-bit memory-address container. It does
+not authenticate a wider incoming SP, a signed extension, a truncated 64-bit
+pointer or an ambiguous definition. Alignment rewrites keep their existing
+native-width rules. Source call-slot observation therefore sees the same frame
+bytes for direct pointer-width addresses and canonical widened addresses.
+
+ApplicationInfo.splitSourceDirs and splitPublicSourceDirs are owned by the existing shared framework
+field state. Explicit input distinguishes unknown, null and ordered nullable
+String arrays; per-result arrays are independently allocated in the shared
+heap, and JNI/DEX field and element writes retain reference identity. Missing
+paths are not inferred from sourceDir or the other array field, and no split APK bytes, package parsing
+or service execution are implied.
+
+Android message removal belongs to the same Dalvik framework owner as posting
+and queue inspection. Its private head and real Message fields are authoritative;
+JNI getters create ordinary references to these identities. A declared empty
+native callback set admits only a nonblocking initial poll and immediately due
+removal. The shared monotonic service supplies uptime, and the common Dalvik
+message-count limit bounds traversal. Unsupported waits or malformed state
+cannot partially unlink a message. Retrieval does not dispatch a callback or
+create a Java thread; JNI access to package-private next does not make that
+method public to application DEX.
+
+The bounded Java URL value profile admits explicit lowercase `http://` and
+`https://` strings up to 4096 ASCII units, with a nonempty ASCII hostname,
+optional canonical decimal port 0–65535, and unchanged path/query/fragment.
+The shared Library owner retains independent UTF-16 bytes and renders them
+through `toString` and `toExternalForm`. Program declares URL's final Object /
+Serializable hierarchy. Other URL forms, null-input exception state, protocol
+handlers, successful connections, DNS, URL equality and hashing remain explicit
+unsupported boundaries unless separately declared below. Inherited virtual Object.equals must not become identity equality
+for URL; a deliberately nonvirtual Object.equals call retains identity semantics.
+JNI validates its nonvirtual lookup against the same method catalog. This value
+subset carries no host network or filesystem authority and does not claim full
+Android libcore behavior or physical-device equivalence.
+
+The optional application snapshot `url_open_failure_handlers` declares an
+already-installed custom URLStreamHandler for each listed lowercase HTTP scheme.
+It is synthetic initial handler state, independent of application attachment;
+it does not describe the default HTTP handler, network availability, or factory
+installation execution. Shared Library validates the retained URL and selects
+its scheme. AndroidFramework owns the immutable policy and retained nullable
+message; every invocation throws a fresh checked IOException with that message
+identity. Work/heap stops remain terminal resource stops. Missing schemes remain
+unsupported. URLConnection is an abstract type only; no connection, DNS or host
+network access is performed. The typed and JSON adapters share one validator:
+at most two distinct http/https entries, each with an explicit null or bounded
+4096-byte UTF-8/WTF-8 message. Empty, null and absent handler state are distinct.
+
+
+DEX member visibility has one Runtime owner shared by calls and field accesses.
+Within the single supplied-class namespace represented by Program,
+package-visible static methods and fields admit another caller in the exact
+same package, including compiler-generated static accessors. Declaring-class
+visibility remains required. Private access remains confined to the declaring
+class; protected resolution and nonpublic instance dispatch remain explicitly
+unsupported across classes. This does not merge independent class-loader
+namespaces or change JNI access and nonpublic framework-library restrictions.
+
+## Named UTF-8 String encoding
+
+`dalvik::Library` owns `String.getBytes(String)` for the ASCII case-insensitive
+canonical name `UTF-8`. It reads retained UTF-16 units, preserves NUL, combines
+valid surrogate pairs and replaces isolated surrogates with byte `0x3f`. DEX
+and JNI receive fresh mutable `[B` objects, including empty results. Both
+conversion passes are charged before allocating an exact-size heap array.
+Null names throw NullPointerException; other names, aliases and overloads
+remain explicit unsupported boundaries. No default charset or host codec is
+inferred, and this does not add a Java charset provider.
+
+Anonymous allocation provenance is owned by LinuxMemory for every successful
+private anonymous mmap or brk growth, independently of optional observations and
+VMA names. Shared unmap retires it; mincore admission and MADV_DONTNEED both use
+this authority. Discard replaces each target page through AddressSpace while
+retaining permissions and VMA policy; old physical aliases and pinned views
+keep their bytes. Device/GPU admission remains in the shared service dispatch.
+
+`LowScalarConstant` owns both exact register-call targets and the System V
+variadic AL count. Their byte facts share fixed-width arithmetic, temporary
+lifetimes, opaque-effect invalidation and one bounded work policy. Ambiguous
+original call occurrences or exhausted work publish no constant. The outgoing
+stack-write proof independently tracks affine addresses, expires temporaries
+at instruction boundaries and discards earlier writes across opaque effects.
+No cross-block values or implicit memory contents are introduced.
+
+`MedCallTarget` observes cached callable values through the Med ABI owner's
+exact address, width and overlap proof. The machine call-summary adapter,
+pre-SSA Low-to-Med conversion, ABI recovery and HighIR reuse this proof.
+An observation retains the original LOAD index, including through private SSA
+versions. HighIR names an imported call only when the same memory-reachability
+proof used for callee-read inlining proves that original observation can reach
+the call unchanged. Copies and private spills share this decision. The same
+proof follows a bounded single-predecessor chain and checks every intervening
+operation. Joins, exceptional entries and cycles retain the captured callable's
+signature and runtime value without authorizing a new slot read. Barriers,
+partial writes and uncertain aliases stop spill/reload
+proofs; exhausted work publishes no partial observation. Pre-SSA queries of one
+growing block share its versioned prefix. Win64's single-register results and
+WDK operand widths belong to its `CallArgumentConvention` entry, not to generic
+lowering or pipeline code.
+
+`HighFrameStoreForwarding` owns exact scalar forwarding, captured values,
+redundant writebacks and complete-overwrite proofs within independent regions
+and bounded acyclic branches. Calls, uncertain aliases, partial writes, cycles
+and exceptional/ordered observations retain their memory effects. Forwarding
+retains an unchanged call expression's instruction-navigation identity.
+Changed call inputs rebuild the shared expression without rebinding
+old observations by address. Prologue
+cleanup preserves saved register values still observed as data. Word zero-test
+normalization retains operand widths, signedness, effects and source truth.
+
+HighIR pointer type facts follow exact private scalar copies and memory cells,
+joining only agreed predecessor facts and revoking clobbered or escaped cells.
+Source parameter binding can supply display types without mutating machine IR.
+C frame records use validated display alignment and bounded member layouts;
+these declarations grant no ABI, nonalias or lifetime facts. Both C writers
+share record/member-path validation and preserve captured callable values.
+
+Analysis-image additions are owned by Session's C ABI in `NeverDCAPISections.cpp`.
+It validates and atomically extends existing BinaryImage segments, sections and
+function roots, then retires derived caches. Worker and CLI own writer leases
+and source-bound sidecar persistence; GUI owns the dialog and view refreshes.
+Read-only batch views use `PipelineRunner::loadAnalysis` to retain additions
+for the same input. File rewriting retains the original file-backed load.
+See [analysis sections](analysis-sections.md).
+
+`LowScalarConstant` also recognizes fixed-width integer self-subtraction of the same register or instruction-local temporary. Branch recovery and call-site ABI checks share this constant-time identity, so an unknown incoming value can still establish a zero result. Different occurrences, memory operands and malformed widths remain unproved.
+
+The x86 lifter treats integer SUB/CMP with identical register operands as `0 - 0` before taking flag snapshots. This removes false incoming-register dependencies while retaining partial-register writes, CMP preservation, APX NDD sources and NF flag preservation.
+
+`MedCallTarget` retains the original import-load index through private spills. HighIR reuses the source memory-read proof before naming the import directly; a changed slot keeps the captured callable. `MedABIPass` splits wide outgoing stores according to a proven import ABI even when the machine call is indirect.
+
+Shared MedIR flag folding keeps both subtraction operands, including `A-A`. A self-comparison must not become a comparison with zero; logical self-tests retain their separate input-dependent rule.
+
+Integer conditions comparing one SSA value with itself become boolean constants before source emission. This includes subtraction overflow; unspecified operands remain explicit.
+
+Captured HFA call targets use the same checked source signature as record argument and result reconstruction. The prototype keeps the original callable value and the complete record types, including flattened register groups and stack arguments.
+
+## Selected callable declarations
+
+HighC represents an address-only function symbol without a known signature as a linker-labelled byte alias. The address supplies no guessed return type; typed callback arguments retain their declared function-pointer conversion and source navigation retains the original symbol and address. Source LLVM requests the existing bounded omitted-callee reader even when an arity summary is complete. It retains fixed x64/ARM64 machine-word integer/pointer declarations only when recovery leaves the carriers and types unchanged. Explicit source contracts keep precedence; bodies, exception contracts and native lifting permissions are not supplied. The memo distinguishes source-type reads and retains the same declaration decision on warm recovery.
+
+Known exception metadata rejects a source-only declaration before its body is read; ordinary signature reads remain unchanged.

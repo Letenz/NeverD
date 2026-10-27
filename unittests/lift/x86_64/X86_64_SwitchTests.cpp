@@ -8,8 +8,31 @@
 
 class X86_64_SwitchTest : public NeverDLiftTest {};
 
-static fs::path switchObj() {
-  return fs::path(TEST_OBJ_DIR) / "test_switch.o";
+static fs::path switchObj() { return fs::path(TEST_OBJ_DIR) / "test_switch.o"; }
+
+static fs::path breakOnlyCasesObj() {
+  return fs::path(TEST_OBJ_DIR) / "test_o0_switch_break.o";
+}
+
+// clang -O0 lowers `case ...: break;` to a block that holds only a jump, which
+// MedIR removes by sending its edges to the jump's target. The cases must come
+// from the MedIR jump table: with the LowIR targets, the edge to the code
+// after the switch matched no case, and its PHI copies replaced the default
+// arm with a trap.
+TEST_F(X86_64_SwitchTest, BreakOnlyCasesKeepTheDefaultArm) {
+  auto R = decompileToHighC(breakOnlyCasesObj());
+  ASSERT_EQ(R.exitCode, 0) << R.err;
+  std::ifstream Input(tmpFile("decompiled_high.c"));
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+  EXPECT_EQ(C.find("unresolved indirect branch"), std::string::npos) << C;
+  const size_t Default = C.find("default:");
+  ASSERT_NE(Default, std::string::npos) << C;
+  const size_t End = C.find('}', Default);
+  ASSERT_NE(End, std::string::npos) << C;
+  EXPECT_NE(C.substr(Default, End - Default).find("convert_error("),
+            std::string::npos)
+      << C;
 }
 
 TEST_F(X86_64_SwitchTest, LowIRProduced) {

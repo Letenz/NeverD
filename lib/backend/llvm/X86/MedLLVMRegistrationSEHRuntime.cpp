@@ -48,7 +48,26 @@ llvm::Function *MedLLVMEmitter::prepareX86RegistrationSEHRuntimeCall(
   if (!Callee)
     return nullptr;
   const auto Calls = getX86RegistrationSEHBoundCalls(*CurMedFunc);
-  const auto &Source = *Calls->at(Op.Addr).Source;
+  const auto &Bound = Calls->at(Op.Addr);
+  const auto &Source = *Bound.Source;
+  if (Bound.StackRoot) {
+    auto *SP = getVar(Bound.StackRoot->Output, Builder);
+    assert(SP->getType()->isIntegerTy(32) && "checked callback ESP is PE32");
+    Arguments.clear();
+    for (const auto &Arg : Source.Arguments) {
+      if (Arg.ArgumentKind == RegistrationSEHBoundArgument::Kind::NullPointer) {
+        Arguments.push_back(llvm::ConstantPointerNull::get(Builder.getPtrTy()));
+        continue;
+      }
+      auto *Address = Builder.CreateAdd(SP, Builder.getInt32(Arg.Offset));
+      auto *Pointer = Builder.CreateIntToPtr(Address, Builder.getPtrTy());
+      auto *Value = Builder.CreateLoad(Builder.getInt32Ty(), Pointer);
+      Value->setAlignment(llvm::Align(1));
+      Value->setVolatile(true);
+      Arguments.push_back(Value);
+    }
+    return Callee;
+  }
   const auto Projected = x86_registration::projectSEHBoundArguments(
       Source, Builder, *FrameAlloca, FrameEntrySPOffset, {});
   Arguments.assign(Projected.begin(), Projected.end());

@@ -12,6 +12,8 @@
 
 #include "NeverDLiftFixture.h"
 
+#include "neverd/ir/intrinsics/X86/X64Syscall.h"
+
 #include <fstream>
 #include <sstream>
 
@@ -40,6 +42,76 @@ std::string cFunction(const std::string &C, const std::string &Name) {
 
 } // namespace
 
+// The arities the kernel's handlers take: one register per argument, and on
+// ARM an even-aligned pair per 64-bit one.
+TEST(LinuxSyscallArguments, CountTheKernelHandlersRegisters) {
+  using neverd::Arch;
+  using neverd::linuxSyscallArgumentCount;
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::X64, 0), 3u);       // read
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::X64, 39), 0u);      // getpid
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::X64, 9), 6u);       // mmap
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::AArch64, 56), 4u);  // openat
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::AArch64, 172), 0u); // getpid
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 180), 6u);     // pread64
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 194), 4u);     // ftruncate64
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 192), 6u);     // mmap2
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::X64, 100000), std::nullopt);
+  // RDX:RSI and R8:R10 are read whole once either half is.
+  EXPECT_EQ(neverd::x64SyscallRegistersRead(2), 3u);
+  EXPECT_EQ(neverd::x64SyscallRegistersRead(4), 5u);
+}
+
+// Linux 7.2 at 8d3ae59288f1e7d58d76558a6ee96d533bc5019f.
+// These calls have no by-value 64-bit scalar on ARM EABI: u64 pointers
+// (listmount, lsm_list_modules, listns) still occupy one register.
+TEST(LinuxSyscallArguments, Linux72IncrementalMetadata) {
+  using neverd::Arch;
+  using neverd::linuxSyscallArgumentCount;
+  constexpr unsigned Counts[] = {4, 4, 3, 4, 6, 4, 4, 4, 4, 4, 3,
+                                 3, 6, 6, 5, 4, 5, 5, 5, 4, 0};
+  for (const Arch Target : {Arch::X64, Arch::AArch64, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<unsigned>(Target));
+    for (unsigned I = 0; I < sizeof(Counts) / sizeof(Counts[0]); ++I) {
+      SCOPED_TRACE(451 + I);
+      EXPECT_EQ(linuxSyscallArgumentCount(Target, 451 + I), Counts[I]);
+    }
+    EXPECT_EQ(linuxSyscallArgumentCount(Target, 472), std::nullopt);
+    EXPECT_EQ(linuxSyscallArgumentCount(Target, 100000), std::nullopt);
+  }
+  // The syscall is SYSCALL_DEFINE5(bpf), not the three-argument internal
+  // BPF helper. Keeping five inputs is conservative for older kernels.
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::X64, 321), 5u);
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::AArch64, 280), 5u);
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 386), 5u);
+  // Architecture-specific holes must not inherit another ABI's definition.
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 447), std::nullopt);
+  // Native x86-64 metadata must not silently adopt x32 entries.
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::X64, 512), std::nullopt);
+}
+
+TEST(LinuxSyscallArguments, AArch64NativeNotCompat) {
+  using neverd::Arch;
+  using neverd::linuxSyscallArgumentCount;
+  constexpr unsigned Numbers[] = {43,  44,  45,  46,  84,  86,  87,  99, 100,
+                                  115, 122, 123, 127, 137, 138, 183, 240};
+  constexpr unsigned Counts[] = {2, 2, 2, 2, 4, 4, 2, 2, 3,
+                                 4, 3, 3, 2, 4, 3, 5, 4};
+  for (unsigned I = 0; I < sizeof(Numbers) / sizeof(Numbers[0]); ++I) {
+    SCOPED_TRACE(Numbers[I]);
+    EXPECT_EQ(linuxSyscallArgumentCount(Arch::AArch64, Numbers[I]), Counts[I]);
+  }
+  for (unsigned Number = 403; Number <= 423; ++Number) {
+    SCOPED_TRACE(Number);
+    EXPECT_EQ(linuxSyscallArgumentCount(Arch::AArch64, Number), std::nullopt);
+  }
+  // These really are assigned in the 32-bit EABI and must remain intact.
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 403), 2u);
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 422), 6u);
+  // A removed kernel implementation does not erase the historical ABI.
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::AArch64, 18), 3u);
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 249), 4u);
+}
+
 class LinuxSyscall : public NeverDLiftTest {
 protected:
   std::string highC(const fs::path &Object) {
@@ -52,11 +124,12 @@ protected:
 TEST_F(LinuxSyscall, AArch64CallsPassTheirRegisters) {
   const std::string C = highC(a64Obj());
   EXPECT_NE(cFunction(C, "a64_linux_exit_group")
-                .find("neverd_a64_linux_syscall(94, 5, 0, 0, 0, 0, 0)"),
+                .find("neverd_a64_linux_syscall(0x5E, 5, 0, 0, 0, 0, 0)"),
             std::string::npos)
       << C;
   EXPECT_NE(cFunction(C, "a64_linux_six")
-                .find("neverd_a64_linux_syscall(63, 20, 21, 22, 23, 24, 25)"),
+                .find("neverd_a64_linux_syscall(0x5AB, 0x14, 0x15, 0x16, 0x17, "
+                      "0x18, 0x19)"),
             std::string::npos)
       << C;
   EXPECT_EQ(cFunction(C, "a64_other_immediate").find("linux_syscall"),
@@ -76,7 +149,8 @@ TEST_F(LinuxSyscall, ARMCallsPassTheirRegisters) {
       << C;
   EXPECT_NE(
       cFunction(C, "arm_linux_seven")
-          .find("neverd_arm_linux_syscall(4, 10, 11, 12, 13, 14, 15, 16)"),
+          .find("neverd_arm_linux_syscall(0x5AB, 10, 0xB, 0xC, 0xD, 0xE, 0xF, "
+                "0x10)"),
       std::string::npos)
       << C;
   EXPECT_EQ(cFunction(C, "arm_oabi_call").find("linux_syscall"),
@@ -98,7 +172,7 @@ TEST_F(LinuxSyscall, AnExitReadsOnlyItsStatus) {
 // not an SVC result it must refuse.
 TEST_F(LinuxSyscall, AnExitAfterACallDecompiles) {
   const std::string C = highC(exitAfterCallObj());
-  EXPECT_NE(C.find("neverd_a64_linux_syscall(93, "), std::string::npos) << C;
+  EXPECT_NE(C.find("neverd_a64_linux_syscall(0x5D, "), std::string::npos) << C;
 }
 
 TEST_F(LinuxSyscall, LLVMIRBindsEachRegister) {
@@ -123,7 +197,7 @@ TEST_F(LinuxSyscall, LLVMCCallsTheHelper) {
   EXPECT_NE(C.find("static inline uint64_t neverd_a64_linux_syscall("),
             std::string::npos)
       << C;
-  EXPECT_NE(C.find("neverd_a64_linux_syscall(63, "), std::string::npos) << C;
+  EXPECT_NE(C.find("neverd_a64_linux_syscall(0x5AB, "), std::string::npos) << C;
 }
 
 // The helpers build for the system the code was lifted from.

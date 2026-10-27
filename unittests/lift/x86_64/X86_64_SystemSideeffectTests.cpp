@@ -5,7 +5,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/NdOpEmulator.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include <algorithm>
@@ -144,8 +144,9 @@ TEST(X86SystemSideeffect, SystemInstructionsKeepTheirRegisterOperands) {
   EXPECT_EQ(findIntrinsic(Verw.Ops, Intrinsic::Hlt), nullptr);
 
   const LiftedInstruction Lsl = liftX64({0x0f, 0x03, 0xc0}); // lsl eax, eax
-  ASSERT_NE(findIntrinsic(Lsl.Ops, Intrinsic::SegmentLimit), nullptr);
-  ASSERT_NE(findIntrinsic(Lsl.Ops, Intrinsic::SegmentLimitValid), nullptr);
+  ASSERT_NE(findIntrinsic(Lsl.Ops, Intrinsic::X86LoadSegmentLimit), nullptr);
+  EXPECT_EQ(findIntrinsic(Lsl.Ops, Intrinsic::SegmentLimit), nullptr);
+  EXPECT_EQ(findIntrinsic(Lsl.Ops, Intrinsic::SegmentLimitValid), nullptr);
   EXPECT_TRUE(writes(Lsl.Ops, x86reg::RAX));
 
   const LiftedInstruction Monitor = liftX64({0x0f, 0x01, 0xc8});
@@ -198,13 +199,10 @@ TEST(X86SystemSideeffect, SegmentRegisterMovesReadAndWriteSelectors) {
 }
 
 TEST(X86SystemSideeffect, UnmodeledSystemInstructionsStayUnlifted) {
-  // CLTS, VMFUNC, ENCLS and RDGSBASE need state LowIR does not model; none
-  // of them may become another instruction.
+  // Complete machine transitions still require an explicit state contract.
   for (const std::vector<uint8_t> &Bytes :
-       {std::vector<uint8_t>{0x0f, 0x06},
-        std::vector<uint8_t>{0x0f, 0x01, 0xd4},
-        std::vector<uint8_t>{0x0f, 0x01, 0xcf},
-        std::vector<uint8_t>{0xf3, 0x48, 0x0f, 0xae, 0xc8}}) {
+       {std::vector<uint8_t>{0x0f, 0x01, 0xd8},    // VMRUN
+        std::vector<uint8_t>{0x0f, 0x01, 0xde}}) { // SKINIT
     Decoder Dec;
     ASSERT_TRUE(Dec.init(Arch::X64));
     DecodedInsn Insn{};

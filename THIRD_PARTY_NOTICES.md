@@ -1,5 +1,22 @@
 # Third-Party Notices
 
+## Desktop fonts
+
+The desktop embeds unmodified Noto Sans, Noto Sans Arabic, Noto Sans Symbols 2,
+the Noto Sans CJK collection and JetBrains Mono NL under the SIL Open Font
+License 1.1. [Source revisions, hashes and original license notices](tools/neverd-gui/resources/fonts/README.md)
+are kept with the font resources. The notices also ship beside the executable
+under `licenses/fonts` and in installed desktop packages.
+
+## SQLite
+
+The SDK and desktop share a native NDDB reader built with the unchanged SQLite
+3.54.1 amalgamation. Its archive is pinned by SHA-256. Source provenance and the
+public-domain dedication are preserved in
+[`LICENSES/sqlite/SOURCE.md`](LICENSES/sqlite/SOURCE.md), installed under
+`share/neverd/licenses/sqlite`. Loadable extensions are disabled. The GUI writer
+continues to use Qt SQL's driver and Qt's distributed notices.
+
 ## Capstone
 
 NeverD links the Capstone fork at the exact submodule revision recorded by its
@@ -16,6 +33,32 @@ SHA-256 `d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d`.
 The unchanged [MIT notice](LICENSES/nlohmann-json/LICENSE.MIT) is staged
 beside both executables and installed under `share/neverd/licenses`.
 No external JSON executable or language runtime is invoked.
+
+## mimalloc
+
+Linux and macOS executables embed the NeverSight mimalloc fork's single-object
+allocator by default. Windows MSVC ABI builds ship its shared allocator and the
+architecture-matched redirection DLL from the same source snapshot. Original
+Microsoft Research and Daan Leijen copyrights and the MIT license remain intact.
+See [the fork source](https://github.com/NeverSight/mimalloc) and
+[the source notice](LICENSES/mimalloc/SOURCE.md).
+
+Each build resolves the fork's default branch, currently `main3`, and records
+its exact commit and archive SHA-256 in `neverd-dependency-inputs.json`. The build
+stages and installs the license from that source. NeverSight's 2026-10-19 change
+normalizes tiny allocations in the macOS allocator override before size-class
+selection and debug padding, preserving the platform minimum required by
+libffi during embedded CPython ctypes initialization. The fork retains the
+upstream macOS fork callbacks. No local backport or old release is selected.
+
+The executable-level integration follows NeverC's host allocator design in
+`neverc/cmake/modules/AddMimalloc.cmake` at revision
+`52e83efb3e3902c97130b9e3c83611080fa18ac4` (Copyright (C) 2026 NeverC contributors,
+AGPL-3.0-only, [project source](https://github.com/NeverSight/NeverC)). NeverD
+uses object linkage on Unix and DLL redirection on Windows, confines allocator
+selection to executables, verifies
+archive bytes and expands sanitizer detection. No NeverC compiler or generated
+program runtime is included.
 
 ## Ada URL parser
 
@@ -187,14 +230,19 @@ parameter attributes assigned to `swift_willThrow` by
 
 `lib/loader/COFF/RichCompIds.inc` derives the tool kind, Visual Studio year
 and description of each @comp.id record from richprint's
-[`comp_id.txt`](https://github.com/dishather/richprint/blob/49f2dc93504db4a669c968fa80eb9b34591cb557/comp_id.txt),
-and `lib/loader/COFF/RichHeader.cpp` decodes the Rich header as
+[`comp_id.txt`](https://github.com/dishather/richprint/blob/b0a4f598cc076a8c2ff4b1b90850004bc17da31c/comp_id.txt)
+at revision `b0a4f598cc076a8c2ff4b1b90850004bc17da31c`.
+The table was updated on 2026-10-19 by
+`scripts/generate_rich_comp_ids.py`'s deterministic record mapping.
+
+`lib/loader/COFF/RichHeader.cpp` decodes the Rich header as
 [`richprint.cpp`](https://github.com/dishather/richprint/blob/49f2dc93504db4a669c968fa80eb9b34591cb557/richprint.cpp)
-does, at revision `49f2dc93504db4a669c968fa80eb9b34591cb557`.
+does, at revision `49f2dc93504db4a669c968fa80eb9b34591cb557`;
+the decoder adds a check of the header's checksum. Adapted on 2026-09-28.
+
 Copyright (c) 2015-2024 dishather. The original BSD 2-Clause license is
 preserved in [LICENSES/richprint.txt](LICENSES/richprint.txt).
-`scripts/generate_rich_comp_ids.py` regenerates the table from that file; the
-decoder adds a check of the header's checksum. Adapted on 2026-09-28.
+`scripts/generate_rich_comp_ids.py` regenerates the table from its pinned file.
 
 ## WHATWG Encoding Standard indexes
 
@@ -211,6 +259,194 @@ the BSD 3-Clause License; both are preserved in
 [LICENSES/WHATWG-Encoding.txt](LICENSES/WHATWG-Encoding.txt).
 `lib/support/TextCodec.cpp` implements the standard's decoders for these
 encodings. Generated on 2026-10-06.
+
+## Windows type libraries
+
+Local builds may use Microsoft's SDK/WDK declarations as the primary ARM64
+libraries. `scripts/generate_microsoft_windows_types.py` uses the official
+NuGet packages and hashes in `scripts/WDKDriverFixtures.def`. The original
+headers, generated declarations and Microsoft licenses remain outside this
+repository, in the selected local directory. They retain Microsoft's terms;
+they are not ReactOS or MIT-licensed headers. The build records their hashes
+and copies their notices beside the local SDK. The bundled compatibility
+libraries below supply only declarations absent from the official inputs,
+without replacing official types or prototypes. See
+[local Microsoft type libraries](docs/microsoft-windows-types.md).
+
+`lib/types/headers/WindowsKernelX64.h` and `WindowsKernelX86.h` hold the
+types and prototypes that `<ntifs.h>`, `<ntddk.h>`, `<wdm.h>` and the NDIS,
+storage, USB, HID, filter and NETIO provider headers declare for
+x64 and x86 drivers of Windows 10 2004, and `lib/types/headers/WindowsUserX64.h`,
+`WindowsUserX86.h` and `WindowsUserARM64.h` those that `<windows.h>`, the
+headers of the libraries programs most often call and phnt's native API
+declare for x64, x86 and ARM64 programs of Windows 11 24H2, as
+`scripts/generate_windows_types.py` renders them from the headers of
+mingw-w64 13.0.0 (the Ubuntu package mingw-w64-common 13.0.0-2ubuntu1) and,
+for the native API, of phnt (below). The
+DDK and PSDK headers they read that come from ReactOS (contributors include
+Amine Khaldi and Timo Kreuzer) state that they are not copyrighted and
+offered for use in the public domain; `ddk/csq.h` (Copyright 2004 Vizzini)
+states the same, and the SDK headers of the mingw-w64 runtime package that
+say so state that they are placed in the public domain. The other mingw-w64
+runtime headers they read (`basetsd.h`, `guiddef.h`, `winnt.h`, `winbase.h`,
+`winuser.h` and others), and those WIDL generates from its IDL files, are
+Copyright 2009-2016 the mingw-w64 project under the Zope Public License 2.1.
+The notices and the license are preserved in
+[LICENSES/mingw-w64-headers.txt](LICENSES/mingw-w64-headers.txt). The
+generated files are changed from the headers -- NeverD reads their
+declarations and renders them again -- and say so with their date. The C
+runtime's, winpthreads' and the compiler's own headers, some under the GPL
+or the LGPL, are left out, and so are the SDK headers mingw-w64 takes from
+Wine under the LGPL (`msxml.h`, `propsys.h`, `objectarray.h`,
+`structuredquerycondition.h`, `knownfolders.h`, `devpkey.h`) with the
+declarations that name their types. Generated on 2026-10-16.
+
+The user mode libraries' native API -- the `Nt`, `Zw`, `Rtl` and `Ldr`
+routines ntdll exports and the records they take, the PEB and the TEB among
+them -- is rendered from the headers of
+[phnt](https://github.com/winsiderss/phnt) at commit
+53fbbdc5b5d2b08761db1c7b26bfa8c820924356, Copyright (c) 2022 Winsider
+Seminars & Solutions, Inc., under the MIT License, which is preserved in
+[LICENSES/phnt.txt](LICENSES/phnt.txt). The generated files are changed
+from them as from mingw-w64's headers. phnt's `ntintsafe.h` and
+`ntstrsafe.h`, which are Microsoft's, are left out;
+`scripts/windows_types` holds the few macros and types phnt takes from
+Microsoft's SDK that mingw-w64 lacks. Generated on 2026-10-17.
+
+The filter provider declarations also read ReactOS's public-domain
+[`sdk/include/ddk/fltkernel.h`](https://github.com/reactos/reactos/blob/b6224c3165811265422dacd5ed0de36b1c2311c9/sdk/include/ddk/fltkernel.h)
+at commit `b6224c3165811265422dacd5ed0de36b1c2311c9`. Its original notice is
+preserved in [LICENSES/reactos-ddk.txt](LICENSES/reactos-ddk.txt); generation
+verifies the input's SHA-256. The kernel libraries also use phnt's
+`SYSTEM_INFORMATION_CLASS` enumeration under its MIT license. Provider
+libraries regenerated on 2026-10-22.
+
+`WindowsKernelARM64.h` also reads the public-domain core DDK templates under
+ReactOS `sdk/include/xdk` at that revision, plus its public-domain driver
+annotation headers. `scripts/windows_types/reactos-arm64.sha256` records all
+inputs. Generation uses ReactOS's GPL header-preprocessing tool locally;
+the tool's implementation is not embedded or redistributed in NeverD.
+The generated declarations retain their DDK notices in
+[LICENSES/reactos-ddk.txt](LICENSES/reactos-ddk.txt).
+
+## Linux type libraries
+
+`lib/types/headers/LinuxX64.h`, `LinuxX86.h`, `LinuxARM64.h` and
+`LinuxARM.h` hold the types and prototypes that the GNU C Library's headers
+declare for x64, x86, ARM64 and ARM programs built with `_GNU_SOURCE`, as
+`scripts/generate_linux_types.py` renders them from the headers of glibc
+2.43 (the Ubuntu packages libc6-dev, libc6-dev-i386, libc6-dev-arm64-cross
+and libc6-dev-armhf-cross) and the Linux kernel's user-space API headers
+they include (linux-libc-dev). glibc's headers are Copyright 1991-2026 the
+Free Software Foundation, Inc. and others, under the GNU Lesser General
+Public License 2.1 or later; the kernel's are under the GNU General Public
+License 2.0 with the Linux syscall note. The libraries hold only what NeverD
+reads from the headers and renders again: data structure layouts, the
+values of enumerations and function declarations, whose use section 5 of
+the LGPL 2.1 leaves unrestricted ("numerical parameters, data structure
+layouts and accessors, and small macros and small inline functions"); the
+syscall note puts programs that use the kernel's interfaces outside the
+GPL. The licenses and the note are preserved in
+[LICENSES/glibc-headers.txt](LICENSES/glibc-headers.txt). Generated on
+2026-10-18.
+
+## UEFI type libraries
+
+`lib/types/headers/UefiX64.h`, `UefiX86.h` and `UefiARM64.h` hold the types
+and prototypes that EDK II's MdePkg headers declare for UEFI modules on x64,
+x86 and ARM64: the UEFI and Platform Initialization specifications, their
+protocols and GUIDs, the industry standards and the library classes, as
+`scripts/generate_uefi_types.py` renders them from `MdePkg/Include` of
+https://github.com/tianocore/edk2 at edk2-stable202608 (commit
+2970e5699ba6267f3384ffab20f96647578aebc8). The headers are Copyright (c)
+TianoCore and contributors, under the BSD-2-Clause-Patent license, which is
+preserved in [LICENSES/edk2-headers.txt](LICENSES/edk2-headers.txt). The
+libraries hold only what NeverD reads from the headers and renders again:
+data structure layouts, the values of enumerations and function
+declarations. Generated on 2026-10-18.
+
+## Darwin type libraries
+
+`lib/types/headers/MacOSX64.h`, `MacOSARM64.h` and `IOSARM64.h` hold the
+types and prototypes that libSystem's headers declare for macOS programs on
+x64 and ARM64 and iOS programs on ARM64, as
+`scripts/generate_darwin_types.py` renders them from the headers of Libc
+1752.120.2, xnu 12377.121.6, libpthread 539, Libinfo 600, libmalloc
+812.100.31, libplatform 375.120.2, dyld 1378 and AvailabilityVersions 157.2
+(https://github.com/apple-oss-distributions), installed as each project's
+build installs them. The headers are Copyright Apple Inc. and others, under
+the Apple Public Source License 2.0, and some under the BSD licenses of the
+code Apple takes from FreeBSD, NetBSD and others. The libraries are
+Modifications of Original Code under the Apple Public Source License 2.0,
+carry its notice, and hold only what NeverD reads from the headers and
+renders again: data structure layouts, the values of enumerations and
+function declarations. The license, and each notice the headers state, are
+in [LICENSES/darwin-headers.txt](LICENSES/darwin-headers.txt). Generated on
+2026-10-18.
+
+## FreeBSD type libraries
+
+`lib/types/headers/FreeBSDX64.h`, `FreeBSDX86.h`, `FreeBSDARM64.h` and
+`FreeBSDARM.h` hold the types and prototypes that FreeBSD's headers declare
+for x64, x86, ARM64 and ARM programs, as
+`scripts/generate_freebsd_types.py` renders them from the headers that
+FreeBSD 15.1-RELEASE's base.txz for amd64 and arm64 installs in
+/usr/include (https://download.freebsd.org/releases/), whose 32-bit
+machine headers serve x86 and ARM programs. The headers are Copyright The
+Regents of the University of California, The FreeBSD Foundation and many
+others, under BSD licenses: most under the 2-clause and 3-clause licenses,
+and a few under the 4-clause license, whose acknowledgements their notices
+keep. The libraries hold only what NeverD reads from the headers and renders
+again: data structure layouts, the values of enumerations and function
+declarations. Each notice the headers state is in
+[LICENSES/freebsd-headers.txt](LICENSES/freebsd-headers.txt). Generated on
+2026-10-18.
+
+## musl type libraries
+
+`lib/types/headers/MuslX64.h`, `MuslX86.h`, `MuslARM64.h` and `MuslARM.h`
+hold the types and prototypes that the headers of musl 1.2.5
+(https://musl.libc.org/) declare for x64, x86, ARM64 and ARM programs built
+with `_GNU_SOURCE`, as `scripts/generate_linux_types.py` renders them from
+the headers a checkout of musl installs for each architecture. musl is
+Copyright 2005-2020 Rich Felker, et al., under the MIT license, which is
+preserved with its list of contributors in
+[LICENSES/musl-headers.txt](LICENSES/musl-headers.txt). The libraries hold
+only what NeverD reads from the headers and renders again: data structure
+layouts, the values of enumerations and function declarations. Generated
+on 2026-10-17.
+
+## Android type libraries
+
+`lib/types/headers/AndroidX64.h`, `AndroidX86.h`, `AndroidARM64.h` and
+`AndroidARM.h` hold the types and prototypes that the headers of bionic,
+Android's C library, declare for x64, x86, ARM64 and ARM programs of API
+level 35 built with `_GNU_SOURCE`, as `scripts/generate_linux_types.py`
+renders them from bionic's `libc/include` and its processed copies of the
+Linux kernel's user-space API headers (`libc/kernel`), at commit
+731631f300090436d7f5df80d50b6275c8c60a93 of
+https://android.googlesource.com/platform/bionic. bionic's C library
+headers are under the BSD and similar licenses its `libc/NOTICE` gathers,
+with the copyright notices of their authors (the Android Open Source
+Project, the NetBSD, OpenBSD and FreeBSD projects, the Regents of the
+University of California and others); bionic's kernel README says the
+processed kernel headers "only contain type and macro definitions", whose
+originals are under the GPL 2.0 with the Linux syscall note. The libraries
+hold only what NeverD reads from the headers and renders again: data
+structure layouts, the values of enumerations and function declarations.
+bionic's `libc/NOTICE` is preserved in
+[LICENSES/bionic-headers.txt](LICENSES/bionic-headers.txt). Generated on
+2026-10-18.
+
+The same libraries hold what two headers the NDK ships declare: `<jni.h>`,
+from `include_jni` of
+https://android.googlesource.com/platform/libnativehelper at commit
+aef2939781fc0b57b4477df7160935cdf5697919, and `<android/log.h>`, from
+`liblog/include` of https://android.googlesource.com/platform/system/logging
+at commit bcac7c30d88a3773a7c0bc9f5617a23a886331fd. Both are Copyright (C)
+2006-2009 The Android Open Source Project, under the Apache License,
+Version 2.0, which is preserved with libnativehelper's NOTICE in
+[LICENSES/android-ndk-headers.txt](LICENSES/android-ndk-headers.txt).
 
 ## FPREM anti-emulation regression
 
@@ -289,28 +525,35 @@ executed by this implementation.
 
 ## zlib
 
-Offline package gzip admission links the installed native zlib library when
-available, using only its in-process stream decoder and checksum validation.
-No zlib executable or upstream implementation source is copied into the web
-component. Gzip capability is unavailable when this dependency is omitted;
-plain tar and original SRI verification remain independent.
+LLVM, the shared NDDB reader, mobile ZIP extraction and offline package gzip
+admission use the unchanged, hash-pinned zlib 1.3.2 source archive. The common
+CMake provider builds a static library with the selected target toolchain;
+system zlib discovery does not replace it. Standalone Qt desktop builds use
+that same provider for NeverD's reader. No zlib executable is invoked.
 
-Mobile ZIP extraction links zlib for DEFLATE and CRC-32. CMake uses an installed
-library when available, or builds the unchanged, hash-pinned zlib 1.3.2 source
-archive as a static dependency. Its copyright and license remain in the source
-distribution. See the [zlib license](https://zlib.net/zlib_license.html) and
-[source releases](https://zlib.net/fossils/).
-The Windows Web product includes the unchanged 1.3.2 notice under
-`share/neverd/licenses/zlib`; its exact source archive and hash are recorded
-in the product dependency manifest.
+The upstream copyright and license remain in the source distribution and are
+installed under `share/neverd/licenses/zlib`. See the
+[zlib license](https://zlib.net/zlib_license.html) and
+[source releases](https://zlib.net/fossils/). The Windows Web product also
+records the exact source archive and hash in its dependency manifest.
+
+A prebuilt Qt SDK may itself depend on a shared zlib. Desktop deployment keeps
+that dependency alongside Qt; statically linking NeverD's copy does not alter
+the independently built Qt libraries.
+
+The test fixture `unittests/lift/aarch64/test_jumptable_inflate_gcc_a64.s` is
+the AArch64 assembly GCC 15.2.0 produces for `inflate()` from the unchanged
+zlib 1.3.1 `inflate.c`, kept with only that function and the data it reads.
+The fixture retains zlib's copyright and license notice. It is assembled into a
+test object and is not shipped.
 
 ## Intel x86 approximation reference implementations
 
 The following files incorporate publicly released x86 approximation reference
 implementations:
 
-- `lib/ir/low/X86ApproxReference.c`
-- `lib/ir/low/X86ApproxReference28.c`
+- `lib/ir/low/X86/X86ApproxReference.c`
+- `lib/ir/low/X86/X86ApproxReference28.c`
 
 Copyright (c) 2015, Intel Corporation
 
@@ -344,3 +587,34 @@ against the [Intel architecture manuals](https://www.intel.com/content/www/us/en
 and the pinned Unicorn register ABI. The implementation retains full 80-bit
 lanes, physical abridged tags and FXSAVE64 logical stack rotation. No code from
 QEMU or Wine was copied into this implementation.
+
+## Performance libraries
+
+NeverD uses Highway (Apache-2.0 OR BSD-3-Clause), simdutf
+(Apache-2.0 OR MIT) and simdjson (Apache-2.0 OR MIT) for bounded byte
+scans, valid UTF-8 fast paths and transport admission. The optional oneTBB
+scheduler is Apache-2.0 licensed. No allocator proxy is built.
+All four sources follow the default branches of the NeverSight forks.
+The oneTBB fork adds a Windows Unicode build fix and loader regression coverage.
+Each build records actual fork commit IDs and archive hashes in
+`neverd-dependency-inputs.json`; `cmake/NeverDForks.cmake` owns their acquisition.
+Original copyrights, licenses and source references are
+retained under [Highway](LICENSES/highway/SOURCE.md),
+[simdutf](LICENSES/simdutf/SOURCE.md), [simdjson](LICENSES/simdjson/SOURCE.md)
+and [oneTBB](LICENSES/oneTBB/SOURCE.md). Enabled dependencies' notices are
+installed under `share/neverd/licenses` and staged with the SDK/CLI.
+
+## Android error string catalog
+
+The error-number/text catalog in `AndroidErrorStrings.def` is transcribed from
+Android NDK 26.2.11394342, ARM64 `libc.a(strerror.o)`, `__sys_error_strings`.
+It was converted into a macro catalog on 2026-10-22. The complete original
+[sysroot notices](LICENSES/android-bionic/NOTICE) are retained.
+The guest memory layout and model implementation are authored for NeverD.
+
+## 3DNow verification guest bootstrap
+
+The owned-context QEMU guest adapts three NeverC bootstrap/linker fixture files
+at `880d1e96ff48f41c5069c6d8f9839eaa8f37d64a` (Copyright (C) 2026 NeverC
+contributors, AGPL-3.0-only). [Source and modifications](unittests/fixtures/x86/3dnow-context/README.md)
+are retained beside the fixtures. They are test inputs, not a runtime dependency.

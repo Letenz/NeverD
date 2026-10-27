@@ -7,10 +7,14 @@
 #include "neverd/solver/SymSynthVerifier.h"
 
 #include "neverd/solver/BitVectorSolver.h"
+#include "neverd/solver/Limits.h"
 #include "neverd/solver/SatTypes.h"
 #include "neverd/solver/Z3Solver.h"
 #include "neverd/symbolic/SymExpr.h"
 #include "neverd/symbolic/SymSynth.h"
+
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallVector.h"
 
 #include <cstdint>
 #include <limits>
@@ -28,6 +32,46 @@ void addSaturating(uint64_t &Total, uint64_t Delta) {
 
 bool isValidRef(const symbolic::SymContext &Ctx, symbolic::SymRef R) {
   return R.isValid() && R.index() < Ctx.numNodes();
+}
+
+// Removing an identical addend from both sides is an equivalence over the
+// complete modular word, even if that addend contains nonlinear operations.
+// Keep this bounded and shallow; no sampled relation or partial coefficient
+// match is sufficient. A model of the remaining inequality also refutes the
+// original pair, with any cancelled-only inputs assigned arbitrary values.
+void cancelCommonAddends(symbolic::SymContext &Ctx, symbolic::SymRef &A,
+                         symbolic::SymRef &B) {
+  using namespace symbolic;
+  auto count = [&](SymRef R) {
+    return Ctx.op(R) == SymOp::Add ? Ctx.numOperands(R) : size_t(1);
+  };
+  if (count(A) > ::neverd::limits::solver::kSymSynthVerifierMaxTerms ||
+      count(B) > ::neverd::limits::solver::kSymSynthVerifierMaxTerms)
+    return;
+  auto terms = [&](SymRef R) {
+    llvm::SmallVector<SymRef, 8> Result;
+    if (Ctx.op(R) == SymOp::Add)
+      Result.append(Ctx.operands(R).begin(), Ctx.operands(R).end());
+    else
+      Result.push_back(R);
+    return Result;
+  };
+  const auto Left = terms(A), Right = terms(B);
+  llvm::DenseSet<uint32_t> Remaining;
+  for (SymRef R : Right)
+    Remaining.insert(R.index());
+  llvm::SmallVector<SymRef, 8> NewLeft, NewRight;
+  for (SymRef R : Left)
+    if (!Remaining.erase(R.index()))
+      NewLeft.push_back(R);
+  if (NewLeft.size() == Left.size())
+    return;
+  for (SymRef R : Right)
+    if (Remaining.contains(R.index()))
+      NewRight.push_back(R);
+  const uint32_t Width = Ctx.width(A);
+  A = NewLeft.empty() ? Ctx.mkZero(Width) : Ctx.mkAdd(NewLeft);
+  B = NewRight.empty() ? Ctx.mkZero(Width) : Ctx.mkAdd(NewRight);
 }
 
 } // namespace
@@ -109,7 +153,9 @@ SymSynthVerifier::operator()(symbolic::SymContext &Ctx,
       Result = EquivResult::Equal;
     } else {
       BitVectorSolver Solver(Ctx, Options);
-      Solver.assertDistinct(Original, Candidate);
+      symbolic::SymRef Left = Original, Right = Candidate;
+      cancelCommonAddends(Ctx, Left, Right);
+      Solver.assertDistinct(Left, Right);
       switch (Solver.check()) {
       case SatResult::Unsat:
         Result = EquivResult::Equal;

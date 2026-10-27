@@ -6,6 +6,7 @@
 
 #include "MachODyldFixups.h"
 
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -37,7 +38,6 @@ void parseRebaseStream(const uint8_t *BasePtr, size_t FileSize,
   std::optional<uint8_t> SegmentIndex;
   uint64_t SegmentOffset = 0;
   uint64_t NumRebases = 0;
-  constexpr uint64_t MaxRebases = 1u << 22;
 
   auto ReadULEB = [&](uint64_t &Value) {
     if (Cursor >= End)
@@ -64,7 +64,9 @@ void parseRebaseStream(const uint8_t *BasePtr, size_t FileSize,
     if (Count == 0)
       return true;
     if (!SegmentIndex || *SegmentIndex >= Img.Segments.size() ||
-        Count > MaxRebases - NumRebases || Skip > InvalidVA - PtrSize)
+        Count >
+            ::neverd::limits::loader::kMachODyldRebaseMaxRebases - NumRebases ||
+        Skip > InvalidVA - PtrSize)
       return false;
 
     const Segment &Seg = Img.Segments[*SegmentIndex];

@@ -5,12 +5,12 @@
 //===----------------------------------------------------------------------===//
 #include "AndroidInternal.h"
 
+#include "neverd/emulation/Limits.h"
+
 namespace neverd::emulation::android_model {
 BionicResult Bionic::registerExit(const NativeCallEvent &Call) {
-  // A finite model limit, not a claim about Bionic's allocation capacity.
-  // Null callbacks are inert in API 28 but still consume registration space.
-  constexpr size_t MaxExitCallbacks = 4096;
-  if (ExitCallbacks.size() == MaxExitCallbacks)
+  if (ExitCallbacks.size() ==
+      ::neverd::limits::emulation::kAndroidFinalizersMaxExitCallbacks)
     return failure(diagnostic::ExitCallbackLimit);
   const auto &A = Call.Arguments;
   ExitCallbacks.push_back({A[0], A[1], A[2]});

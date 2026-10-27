@@ -3,8 +3,9 @@
 #include "../MachO/ImmutableNativeFrame.h"
 #include "../MachO/SourceLocalCall.h"
 
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/MachO/DarwinImportVeneer.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/ReadOnlyBytes.h"
@@ -90,7 +91,8 @@ buildSwiftConsumedInputCallHints(const BinaryImage &Image,
     return Result;
   const auto Calls = sourceLocalCalls(Image, Caller);
   bool CheckedMachine = false;
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::loader::
+      kSwiftConsumedInputEffectsBuildSwiftConsumedInputCallHintsBudget;
   for (const auto &[Site, Word] : Calls) {
     if (Site.Instruction < 20)
       continue;

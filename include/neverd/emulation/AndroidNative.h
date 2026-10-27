@@ -6,8 +6,13 @@
 #ifndef NEVERD_EMULATION_ANDROIDNATIVE_H
 #define NEVERD_EMULATION_ANDROIDNATIVE_H
 
+#include "neverd/dalvik/AndroidApplication.h"
+#include "neverd/dalvik/RuntimeSnapshot.h"
+#include "neverd/emulation/AndroidResolverOptions.h"
 #include "neverd/emulation/ProcessCall.h"
+#include "neverd/emulation/Registers.h"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -29,13 +34,86 @@ struct NativeMemoryRegion {
 struct NativeMemoryRead {
   uint64_t Address = 0, Size = 0;
   /// Require a readable mapping before guest execution. False permits memory
-  /// allocated during the call; the complete range must be readable at the
-  /// final resumable stop. Neither setting creates or preserves mappings.
+  /// allocated during the call. Ordinary final reads require the complete
+  /// range to remain readable; diagnostic RAM snapshots report failures per
+  /// range instead. Neither setting creates or preserves mappings.
   bool RequireMappedAtEntry = true;
 };
 struct NativeMemorySnapshot {
   uint64_t Address;
   std::vector<uint8_t> Bytes;
+  /// Nonempty only when an opted-in diagnostic snapshot could not read RAM.
+  /// Bytes is then empty; the process's original stop remains unchanged.
+  std::string Diagnostic;
+};
+
+/// Resolve a read from the stopped register state at each observation. Register
+/// 0..30 selects x0..x30; 31 selects SP, never the architectural zero register.
+/// Offset is signed and address arithmetic must not wrap. No entry-time mapping
+/// or pointer lifetime is inferred.
+struct NativeRegisterMemoryRead {
+  uint32_t Register = 0;
+  int64_t Offset = 0;
+  uint64_t Size = 0;
+};
+
+struct AndroidAuxiliaryValue {
+  uint64_t Type = 0, Value = 0;
+};
+
+/// A complete fixed zone with no transitions or leap-second corrections.
+/// OffsetSeconds is east of UTC; Name is an abbreviation, not a tzdb lookup.
+struct AndroidFixedTimeZone {
+  int32_t OffsetSeconds = 0;
+  std::string Name;
+};
+
+/// Read-only observations immediately before selected guest instructions.
+/// PCs are absolute guest addresses, not image-relative offsets. At most 64
+/// distinct aligned PCs; Limit bounds the retained records across all threads.
+struct NativeExecutionObservationOptions {
+  std::vector<uint64_t> PCs;
+  uint64_t Limit = 0;
+  /// The same explicit ranges are copied at each point. Deferred mappings
+  /// must be readable when observed; no mapping or provider is synthesized.
+  std::vector<NativeMemoryRead> ReadMemory;
+  /// Appended after fixed reads, in input order, with resolved guest addresses.
+  std::vector<NativeRegisterMemoryRead> ReadRegisterMemory;
+};
+struct NativeExecutionObservation {
+  uint64_t PC = 0, ThreadID = 0, Instructions = 0, SP = 0, NZCV = 0;
+  std::array<uint64_t, 31> Registers{};
+  std::vector<NativeMemorySnapshot> Memory;
+};
+/// Complete modeled registers observed from a CPU or saved thread context.
+/// Memory and backend-private state are not captured.
+/// A failed read leaves Registers absent and records its separate diagnostic.
+struct NativeCPUState {
+  uint64_t ThreadID = 0;
+  std::optional<std::vector<RegisterSnapshot>> Registers;
+  std::string Diagnostic;
+};
+/// A thread that has not completed at the final stop. Current reads the CPU;
+/// other entries observe the scheduler's saved context without restoring it.
+/// Completed/retired threads have no retained final context and are omitted.
+struct NativeThreadCPUState {
+  NativeCPUState State;
+  bool Current = false;
+};
+
+/// One visible logd v4 entry. Payload is opaque; no host log is consulted.
+struct NativeLogRecord {
+  uint32_t ID = 0, PID = 0, TID = 0, Seconds = 0, Nanoseconds = 0, UID = 0;
+  std::vector<uint8_t> Payload;
+};
+
+/// One explicit successful LP64 dladdr observation. Address matches exactly;
+/// image membership and symbol selection are supplied, never inferred.
+struct NativeDladdrObservation {
+  uint64_t Address = 0, ImageBase = 0;
+  std::string ImageName;
+  std::optional<std::string> SymbolName;
+  uint64_t SymbolAddress = 0;
 };
 
 /// Android 9 / API 28, little-endian AArch64. Function
@@ -51,6 +129,23 @@ struct AndroidNativeOptions {
   /// Find/read/enumeration share stable guest records with generation zero;
   /// enumeration uses name order, not an inferred device-area traversal order.
   std::map<std::string, std::string> Properties;
+  /// Complete immutable getauxval input, excluding the implicit AT_NULL
+  /// terminator. Absent means unknown; empty means no entries. At most 128
+  /// unique nonzero types. Values are guest bits, never host pointers or CPU
+  /// capability queries, and do not authorize otherwise unsupported execution.
+  std::optional<std::vector<AndroidAuxiliaryValue>> AuxiliaryVector;
+  /// localtime and mktime require this explicit fixed zone. gmtime uses GMT
+  /// without consulting it. Neither queries host time, TZ, properties or
+  /// tzdata. The admitted calendar range is years 1..9999; other years stop
+  /// clearly.
+  std::optional<AndroidFixedTimeZone> FixedTimeZone;
+  /// Exact offline getaddrinfo observations. Missing queries remain unknown.
+  std::optional<std::vector<AndroidResolverQuery>> ResolverQueries;
+  /// Complete, timestamp-ordered visible snapshot for the bounded liblog
+  /// reader. Absent is unknown; an empty vector explicitly supplies no logs.
+  /// IDs 0..5, at most 4096 entries and 1 MiB including v4 headers. This does
+  /// not infer permissions, logd sockets, live producers or persistent logs.
+  std::optional<std::vector<NativeLogRecord>> LogRecords;
   std::vector<NativeMemoryRegion> Memory;
   std::vector<NativeMemoryRead> ReadMemory;
   /// Constructors normally execute before the call, sharing its budget.
@@ -58,6 +153,26 @@ struct AndroidNativeOptions {
   bool Initialize = true;
   /// Retain this many admitted instruction PCs. Zero disables tracing.
   uint64_t TraceLimit = 0;
+  std::optional<NativeExecutionObservationOptions> ObserveExecution;
+  /// Read the final current-thread architectural registers without executing
+  /// or switching contexts. Failure never replaces the original stop reason.
+  bool ObserveCPUState = false;
+  /// Observe all unfinished threads, including waiting saved contexts. Each
+  /// capture failure has its own diagnostic and preserves the workload stop.
+  bool ObserveThreadCPUStates = false;
+  /// Also snapshot ReadMemory from stopped RAM backing after CPU/runtime
+  /// failures. Ignores guest read permissions, never reads devices or resumes
+  /// execution, and records per-region errors without replacing the stop.
+  bool ObserveMemoryOnFailure = false;
+  /// Snapshot ReadMemory from stopped RAM backing at every final stop. Each
+  /// unreadable range retains its diagnostic without replacing the original
+  /// stop or preventing later captures. Entry mapping requirements still apply.
+  bool ObserveMemoryAtStop = false;
+  /// Concrete analysis choice for bytes returned by malloc and the new tail
+  /// of realloc. Zero preserves the default. This is not a claim about an
+  /// Android allocator or proof that reading uninitialized bytes is valid.
+  /// calloc and model-owned allocations remain zeroed; padding is excluded.
+  uint8_t MallocFillByte = 0;
   /// One preserves the single-thread contract. Values 2..256 opt into bounded
   /// cooperative guest threads. Counts all created identities, including the
   /// entry thread; retired identities are never reused within a workload.
@@ -66,6 +181,28 @@ struct AndroidNativeOptions {
   /// stop at that return and report the remaining thread states. Requires
   /// ThreadLimit > 1; never replenishes execution limits.
   bool DrainThreads = false;
+  /// Opt into a bounded JNI 1.6 native-interface model. Threads initially
+  /// remain detached. Intrinsic classes and explicitly supplied DEX bodies
+  /// share this workload VM. Scalar API 28 Build.VERSION fields project the
+  /// explicit Properties snapshot; framework services are not inferred.
+  bool JNI = false;
+  /// Opt-in final, read-only declaration/initialization/framework directory.
+  /// Requires JNI; never initializes Java classes or materializes identities.
+  bool ObserveJavaState = false;
+  /// Bind this already mapped ELF to one logical System.loadLibrary name in
+  /// the supplied DEX namespace. Requires JNI and ELF initialization. The
+  /// original exported JNI_OnLoad is called once; no host library is loaded.
+  std::optional<std::string> JavaLibrary;
+  /// Explicit API 28 framework snapshot. Absent means unknown, not unattached.
+  std::optional<mobile::dalvik::AndroidApplicationSnapshot> Application;
+  /// Explicit negative results from the workload's class loader. Keys are
+  /// slash-separated non-array names, values are ClassNotFoundException or
+  /// NoClassDefFoundError binary names. Unlisted unknown classes still stop.
+  /// These declarations cannot shadow intrinsic or supplied DEX classes.
+  std::map<std::string, std::string> JNIClassLookupFailures;
+  /// Complete explicit DEX 035/037/038/039 images (Android API 28). No host
+  /// classpath is consulted. Requires JNI; bounded integral static bodies only.
+  std::vector<std::vector<uint8_t>> DexImages;
   /// Exact library names and available function names for the local dlfcn
   /// model. No host files are loaded. Calling an unmodeled function still
   /// stops.
@@ -75,6 +212,17 @@ struct AndroidNativeOptions {
   /// scope or unload them. Absent means unknown (unsupported); empty means
   /// explicitly no providers. No namespace or dependency order is inferred.
   std::optional<std::vector<std::string>> DefaultScope;
+  /// Immutable positive query observations. Absent, empty and unmatched
+  /// queries remain unsupported; negative linker outcomes are not modeled.
+  /// Names become borrowed read-only guest strings with stable identities.
+  /// This does not populate Libraries, resolve ELF symbols, or load host files.
+  std::optional<std::vector<NativeDladdrObservation>> DladdrObservations;
+  /// Guest address of the complete, NUL-terminated LP64 environ pointer
+  /// vector used by getenv. Absent means unknown; zero supplies a null
+  /// environment. The vector and strings remain live guest memory, including
+  /// duplicate names and mutable values. No host environment is inherited.
+  /// This does not expose a writable environ global or environment mutators.
+  std::optional<uint64_t> EnvironmentVector;
 };
 
 /// Model-owned identity and placement, not a public pthread_internal_t layout.
@@ -82,6 +230,13 @@ struct NativeThreadSnapshot {
   uint64_t ID, Handle, TLS, StackBase, StackSize, GuardSize;
   bool Finished = false, Detached = false, Retired = false, Waiting = false;
   std::optional<uint64_t> ReturnValue;
+  /// Process-wide termination of a still-live thread; no return or cleanup.
+  std::optional<uint32_t> TerminationSignal;
+};
+/// Retained RegisterNatives binding, independent of JNI reference lifetime.
+struct NativeJNIRegistration {
+  std::string Class, Name, Signature;
+  uint64_t Address;
 };
 struct NativeTraceThread {
   uint64_t Index, ID;

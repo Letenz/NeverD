@@ -1,6 +1,7 @@
 #include "GraphSnapshot.h"
 
 #include "GraphLayout.h"
+#include "ResourceLimits.h"
 
 #include <algorithm>
 #include <cmath>
@@ -13,10 +14,15 @@
 
 namespace neverd::worker {
 namespace {
-constexpr std::size_t MaxNodes = 20000, MaxEdges = 100000;
-constexpr std::size_t NodePage = 256, EdgePage = 512;
+constexpr std::size_t MaxNodes =
+                          ::neverd::limits::worker::kGraphSnapshotMaxNodes,
+                      MaxEdges =
+                          ::neverd::limits::worker::kGraphSnapshotMaxEdges;
+constexpr std::size_t NodePage =
+                          ::neverd::limits::worker::kGraphSnapshotNodePage,
+                      EdgePage =
+                          ::neverd::limits::worker::kGraphSnapshotEdgePage;
 constexpr double NodeWidth = 300, NodeHeight = 180;
-constexpr double MaxNodeExtent = 1e6;
 constexpr double ScaleForText = 0.6;
 struct Rect {
   double x = 0, y = 0, width = 0, height = 0;
@@ -113,7 +119,8 @@ public:
 std::string id(const Json &value) {
   if (value.is_string()) {
     auto text = value.get<std::string>();
-    if (text.empty() || text.size() > 128)
+    if (text.empty() ||
+        text.size() > ::neverd::limits::worker::kGraphSnapshotIdTextSizeLimit)
       throw Error("invalid_graph", "Invalid graph identifier");
     return text;
   }
@@ -144,10 +151,38 @@ bool segmentVisible(Point a, Point b, const Rect &r) {
 }
 } // namespace
 
+GraphMetrics GraphMetrics::fromRequest(const Json &request) {
+  GraphMetrics metrics;
+  if (const auto it = request.find("metrics");
+      it != request.end() && it->is_object()) {
+    const auto number = [&](const char *field) {
+      const auto value = it->find(field);
+      if (value == it->end())
+        return 0.0;
+      if (!value->is_number() || !std::isfinite(value->get<double>()) ||
+          value->get<double>() < 0 ||
+          value->get<double>() > ::neverd::limits::worker::kMaxGraphMetric)
+        throw Error("invalid_request",
+                    std::string("metrics.") + field + " is out of range");
+      return value->get<double>();
+    };
+    metrics.charWidth = number("char_width");
+    metrics.lineHeight = number("line_height");
+    metrics.padding = number("padding");
+    metrics.titleHeight = number("title_height");
+  }
+  return metrics;
+}
+
+std::string GraphMetrics::key() const {
+  return std::to_string(charWidth) + "/" + std::to_string(lineHeight) + "/" +
+         std::to_string(padding) + "/" + std::to_string(titleHeight);
+}
+
 struct GraphSnapshot::Impl {
   struct Node {
     std::string id, address, end;
-    Json lines, rows;
+    Json lines, rows, comparison;
     std::size_t instructionCount = 0;
     bool linesTruncated = false;
     Rect box;
@@ -173,17 +208,22 @@ struct GraphSnapshot::Impl {
         input.nodes.push_back({NodeWidth, NodeHeight});
         continue;
       }
-      std::size_t columns = 0;
+      std::size_t columns = node.address.size();
       for (const auto &row : node.rows)
         columns = std::max(columns, row.value("text", std::string()).size());
+      if (node.rows.empty())
+        for (const auto &line : node.lines)
+          columns =
+              std::max(columns, line.get_ref<const std::string &>().size());
       const double width =
-          std::min(MaxNodeExtent,
+          std::min(::neverd::limits::worker::kGraphSnapshotMaxNodeExtent,
                    static_cast<double>(std::max<std::size_t>(columns, 8)) *
                            metrics.charWidth +
                        2 * metrics.padding);
       const double height = std::min(
-          MaxNodeExtent,
-          static_cast<double>(std::max<std::size_t>(node.rows.size(), 1)) *
+          ::neverd::limits::worker::kGraphSnapshotMaxNodeExtent,
+          static_cast<double>(std::max<std::size_t>(
+              node.rows.empty() ? node.lines.size() : node.rows.size(), 1)) *
                   metrics.lineHeight +
               2 * metrics.padding + metrics.titleHeight);
       input.nodes.push_back({width, height});
@@ -243,10 +283,14 @@ GraphSnapshot::GraphSnapshot(Json graph, std::string address,
   for (const auto &source : graph["nodes"]) {
     Impl::Node node;
     node.id = id(source.at("id"));
-    node.address =
-        hexAddress(parseAddress(stringField(source, "start", {}, 32)));
-    node.end =
-        hexAddress(parseAddress(stringField(source, "end", node.address, 32)));
+    node.address = hexAddress(parseAddress(stringField(
+        source, "start", {},
+        ::neverd::limits::worker::
+            kGraphSnapshotGraphSnapshotNodeAddressStartStringFieldMax)));
+    node.end = hexAddress(parseAddress(
+        stringField(source, "end", node.address,
+                    ::neverd::limits::worker::
+                        kGraphSnapshotGraphSnapshotNodeEndEndStringFieldMax)));
     node.instructionCount = sizeField(source, "insn_count", 0,
                                       std::numeric_limits<std::size_t>::max());
     node.lines = Json::array();
@@ -259,7 +303,10 @@ GraphSnapshot::GraphSnapshot(Json graph, std::string address,
           throw Error("invalid_graph",
                       "Node disassembly lines must be strings");
         const auto &text = line.get_ref<const std::string &>();
-        if (node.lines.size() == 6 || bytes + text.size() > 2048) {
+        if (node.lines.size() == ::neverd::limits::worker::kMaxGraphNodeLines ||
+            bytes + text.size() >
+                ::neverd::limits::worker::
+                    kGraphSnapshotGraphSnapshotBytesTextSizeLimit) {
           node.linesTruncated = true;
           break;
         }
@@ -269,6 +316,9 @@ GraphSnapshot::GraphSnapshot(Json graph, std::string address,
     }
     node.rows = rows ? rows(parseAddress(node.address), parseAddress(node.end))
                      : Json::array();
+    node.comparison = source.value("comparison", Json::object());
+    if (!node.comparison.is_object())
+      throw Error("invalid_graph", "Invalid comparison block evidence");
     out.nodes.push_back(std::move(node));
   }
   // Stable layout does not depend on backend container iteration order.
@@ -291,12 +341,15 @@ GraphSnapshot::GraphSnapshot(Json graph, std::string address,
       ++out.unresolvedEdges;
       continue;
     }
-    out.edges.push_back({{},
-                         stringField(source, "type", "unconditional", 64),
-                         f->second,
-                         t->second,
-                         {},
-                         {}});
+    out.edges.push_back(
+        {{},
+         stringField(source, "type", "unconditional",
+                     ::neverd::limits::worker::
+                         kGraphSnapshotGraphSnapshotTypeStringFieldMax),
+         f->second,
+         t->second,
+         {},
+         {}});
   }
   std::sort(
       out.edges.begin(), out.edges.end(), [](const auto &a, const auto &b) {
@@ -323,9 +376,22 @@ Json GraphSnapshot::summary() const {
           {"complete", true},
           {"snapshot_complete", true}};
 }
+Json GraphSnapshot::locate(const std::string &address) const {
+  for (const auto &node : impl_->nodes) {
+    if (node.address != address)
+      continue;
+    auto out = node.box.json();
+    out["address"] = address;
+    return out;
+  }
+  return nullptr;
+}
 Json GraphSnapshot::viewport(const Json &request) const {
   const auto &g = *impl_;
-  if (stringField(request, "layout_revision", {}, 256) != g.revision)
+  if (stringField(request, "layout_revision", {},
+                  ::neverd::limits::worker::
+                      kGraphSnapshotViewportLayoutRevisionStringFieldMax) !=
+      g.revision)
     throw Error("stale_layout",
                 "Graph layout changed; request cfg_summary again");
   for (const auto *field : {"x", "y", "width", "height"})
@@ -363,6 +429,8 @@ Json GraphSnapshot::viewport(const Json &request) const {
                   {"rows", scale >= ScaleForText ? node.rows : Json::array()},
                   {"lines_truncated", node.linesTruncated},
                   {"insn_count", node.instructionCount}});
+    if (!node.comparison.empty())
+      value["comparison"] = node.comparison;
     visibleNodes.push_back(std::move(value));
   }
   for (auto i = edgeOffset; i < edgeEnd; ++i) {

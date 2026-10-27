@@ -18,6 +18,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 
@@ -133,7 +134,7 @@ bool MedLLVMEmitter::constUsedAsPointerImpl(uint64_t Val) const {
           continue;
         std::vector<MedVar> Work{Op.Inputs[0]};
         std::set<std::tuple<int, int, int>> Seen;
-        int Budget = 256;
+        int Budget = ::neverd::limits::backend::kMedLLVMConstUseReachesBudget;
         while (!Work.empty() && Budget-- > 0) {
           MedVar Cur = Work.back();
           Work.pop_back();
@@ -277,7 +278,8 @@ bool MedLLVMEmitter::constValueUsedAsIntegerImpl(uint64_t Val) const {
           continue;
         std::vector<MedVar> Work{Op.Inputs[0]};
         std::set<std::tuple<int, int, int>> Seen;
-        int Budget = 256;
+        int Budget =
+            ::neverd::limits::backend::kMedLLVMConstUseReachesMemAddrBudget;
         while (!Work.empty() && Budget-- > 0) {
           MedVar Cur = Work.back();
           Work.pop_back();
@@ -337,7 +339,8 @@ bool MedLLVMEmitter::constValueUsedAsIntegerImpl(uint64_t Val) const {
   auto reachesOperation = [&](const MedVar &X) {
     std::vector<MedVar> Work{X};
     std::set<std::tuple<int, int, int>> Seen;
-    int Budget = 256;
+    int Budget =
+        ::neverd::limits::backend::kMedLLVMConstUseReachesOperationBudget;
     while (!Work.empty() && Budget-- > 0) {
       const MedVar Cur = Work.back();
       Work.pop_back();

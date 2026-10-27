@@ -15,7 +15,7 @@
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 #include "llvm/Support/Debug.h"
 
@@ -51,8 +51,7 @@ uint32_t readImmediate32(const uint8_t *Bytes) {
 
 bool hasCanonicalRegisterOnlyDetail(const cs_x86 &X86) {
   return X86.encoding.disp_offset == 0 && X86.encoding.disp_size == 0 &&
-         X86.disp == 0 && X86.sib == 0 &&
-         X86.sib_base == X86_REG_INVALID &&
+         X86.disp == 0 && X86.sib == 0 && X86.sib_base == X86_REG_INVALID &&
          X86.sib_index == X86_REG_INVALID && X86.sib_scale == 0;
 }
 
@@ -62,10 +61,9 @@ bool hasCanonicalRegisterOnlyDetail(const cs_x86 &X86) {
 /// environment can own feature, XCR0, CPL, bitmap, interception, validation,
 /// and exception-order semantics.
 std::optional<X86MsrAccessKind>
-classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86,
-                    Arch TargetArch) {
-  if (!Insn || !Insn->detail || TargetArch != Arch::X64 ||
-      Insn->size == 0 || Insn->size > 15 || X86.op_count != 2 ||
+classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86, Arch TargetArch) {
+  if (!Insn || !Insn->detail || TargetArch != Arch::X64 || Insn->size == 0 ||
+      Insn->size > 15 || X86.op_count != 2 ||
       !hasCanonicalRegisterOnlyDetail(X86))
     return std::nullopt;
 
@@ -89,8 +87,8 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86,
         (ImmediateForm && (Encoding.ModRM & 0x38) != 0))
       return std::nullopt;
 
-    BNumber = ((~Encoding.P0 & 0x20) >> 2) |
-              ((Encoding.P0 & 0x08) << 1) | (Encoding.ModRM & 7);
+    BNumber = ((~Encoding.P0 & 0x20) >> 2) | ((Encoding.P0 & 0x08) << 1) |
+              (Encoding.ModRM & 7);
     if (ImmediateForm) {
       if (!validateCanonicalEvexRegisterTail(Insn, X86, Encoding, 4) ||
           X86.encoding.imm_offset != Encoding.Offset + 6 ||
@@ -101,8 +99,7 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86,
       if (Encoding.Opcode == 0xf6) {
         Kind = Write ? X86MsrAccessKind::WrmsrnsImmediate
                      : X86MsrAccessKind::RdmsrImmediate;
-      } else if (Encoding.Opcode == 0xf8 &&
-                 (Encoding.P1 & 0x80) == 0) {
+      } else if (Encoding.Opcode == 0xf8 && (Encoding.P1 & 0x80) == 0) {
         Kind = Write ? X86MsrAccessKind::UwrmsrEvexImmediate
                      : X86MsrAccessKind::UrdmsrEvexImmediate;
       } else {
@@ -113,17 +110,17 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86,
           !validateCanonicalEvexRegisterTail(Insn, X86, Encoding) ||
           X86.encoding.imm_offset != 0 || X86.encoding.imm_size != 0)
         return std::nullopt;
-      RNumber = ((~Encoding.P0 & 0x80) >> 4) |
-                (~Encoding.P0 & 0x10) | ((Encoding.ModRM >> 3) & 7);
+      RNumber = ((~Encoding.P0 & 0x80) >> 4) | (~Encoding.P0 & 0x10) |
+                ((Encoding.ModRM >> 3) & 7);
       Kind = Write ? X86MsrAccessKind::UwrmsrEvexRegister
                    : X86MsrAccessKind::UrdmsrEvexRegister;
     }
   } else if (Insn->bytes[0] == 0xc4 || X86.opcode[0] == 0xc4) {
     CanonicalVex3EncodingInfo Encoding;
     if (!parseCanonicalVex3EncodingInfo(Insn, X86, TargetArch, Encoding) ||
-        (Encoding.P0 & 0x1f) != 7 || Encoding.Opcode != 0xf8 ||
-        (Encoding.P1 & 0xfc) != 0x78 ||
-        (Encoding.ModRM & 0xf8) != 0xc0 ||
+        (Encoding.P0 & 0x1f) != 7 ||
+        (Encoding.Opcode != 0xf8 && Encoding.Opcode != 0xf6) ||
+        (Encoding.P1 & 0xfc) != 0x78 || (Encoding.ModRM & 0xf8) != 0xc0 ||
         !validateCanonicalVex3RegisterTail(Insn, X86, Encoding, 4) ||
         X86.encoding.imm_offset != Encoding.Offset + 5 ||
         X86.encoding.imm_size != 4)
@@ -132,10 +129,14 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86,
     const bool Write = (Encoding.P1 & 3) == 2;
     if (!Write && (Encoding.P1 & 3) != 3)
       return std::nullopt;
-    BNumber = ((~Encoding.P0 & 0x20) >> 2) | (Encoding.ModRM & 7);
+    BNumber = Encoding.rmIndex();
     Immediate = readImmediate32(&Insn->bytes[Encoding.Offset + 5]);
-    Kind = Write ? X86MsrAccessKind::UwrmsrVexImmediate
-                 : X86MsrAccessKind::UrdmsrVexImmediate;
+    if (Encoding.Opcode == 0xf6)
+      Kind = Write ? X86MsrAccessKind::WrmsrnsVexImmediate
+                   : X86MsrAccessKind::RdmsrVexImmediate;
+    else
+      Kind = Write ? X86MsrAccessKind::UwrmsrVexImmediate
+                   : X86MsrAccessKind::UrdmsrVexImmediate;
   } else {
     size_t OpcodeOffset = 0;
     uint8_t SegmentPrefix = 0;
@@ -143,8 +144,7 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86,
     uint8_t Rex = 0;
     bool OperandSize = false;
     bool AddressSize = false;
-    while (OpcodeOffset < Insn->size &&
-           Insn->bytes[OpcodeOffset] != 0x0f) {
+    while (OpcodeOffset < Insn->size && Insn->bytes[OpcodeOffset] != 0x0f) {
       const uint8_t Prefix = Insn->bytes[OpcodeOffset];
       switch (Prefix) {
       case 0x26:
@@ -184,19 +184,16 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86,
 
     if (MandatoryPrefix != 0xf2 && MandatoryPrefix != 0xf3)
       return std::nullopt;
-    if (Rex != 0 &&
-        (OpcodeOffset == 0 || Insn->bytes[OpcodeOffset - 1] != Rex))
+    if (Rex != 0 && (OpcodeOffset == 0 || Insn->bytes[OpcodeOffset - 1] != Rex))
       return std::nullopt;
-    if (OpcodeOffset + 4 != Insn->size ||
-        Insn->bytes[OpcodeOffset] != 0x0f ||
+    if (OpcodeOffset + 4 != Insn->size || Insn->bytes[OpcodeOffset] != 0x0f ||
         Insn->bytes[OpcodeOffset + 1] != 0x38 ||
         Insn->bytes[OpcodeOffset + 2] != 0xf8 ||
         (Insn->bytes[OpcodeOffset + 3] & 0xc0) != 0xc0)
       return std::nullopt;
 
     const uint8_t ModRM = Insn->bytes[OpcodeOffset + 3];
-    if (X86.prefix[0] != MandatoryPrefix ||
-        X86.prefix[1] != SegmentPrefix ||
+    if (X86.prefix[0] != MandatoryPrefix || X86.prefix[1] != SegmentPrefix ||
         X86.prefix[2] != (OperandSize ? 0x66 : 0) ||
         X86.prefix[3] != (AddressSize ? 0x67 : 0) || X86.rex != Rex ||
         X86.opcode[0] != 0x0f || X86.opcode[1] != 0x38 ||
@@ -208,9 +205,8 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86,
 
     BNumber = (ModRM & 7) | ((Rex & 1) ? 8 : 0);
     RNumber = ((ModRM >> 3) & 7) | ((Rex & 4) ? 8 : 0);
-    Kind = MandatoryPrefix == 0xf3
-               ? X86MsrAccessKind::UwrmsrLegacyRegister
-               : X86MsrAccessKind::UrdmsrLegacyRegister;
+    Kind = MandatoryPrefix == 0xf3 ? X86MsrAccessKind::UwrmsrLegacyRegister
+                                   : X86MsrAccessKind::UrdmsrLegacyRegister;
   }
 
   if (!Kind)
@@ -219,8 +215,7 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86,
   const bool ImmediateForm = x86MsrAccessHasImmediateSelector(*Kind);
   const cs_x86_op &BOperand = X86.operands[Write ? 1 : 0];
   const cs_x86_op &Selector = X86.operands[Write ? 0 : 1];
-  if (!isExactGpr64Operand(BOperand, BNumber,
-                           Write ? CS_AC_READ : CS_AC_WRITE))
+  if (!isExactGpr64Operand(BOperand, BNumber, Write ? CS_AC_READ : CS_AC_WRITE))
     return std::nullopt;
   if (ImmediateForm) {
     if (Selector.type != X86_OP_IMM || Selector.size != 4 ||
@@ -231,9 +226,10 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86,
     return std::nullopt;
   }
 
-  const bool Privileged =
-      *Kind == X86MsrAccessKind::RdmsrImmediate ||
-      *Kind == X86MsrAccessKind::WrmsrnsImmediate;
+  const bool Privileged = *Kind == X86MsrAccessKind::RdmsrImmediate ||
+                          *Kind == X86MsrAccessKind::WrmsrnsImmediate ||
+                          *Kind == X86MsrAccessKind::RdmsrVexImmediate ||
+                          *Kind == X86MsrAccessKind::WrmsrnsVexImmediate;
   if (Privileged) {
     if (Insn->detail->groups_count != 1 ||
         Insn->detail->groups[0] != X86_GRP_PRIVILEGE)
@@ -244,8 +240,10 @@ classifyExplicitMsr(const cs_insn *Insn, const cs_x86 &X86,
 
   switch (*Kind) {
   case X86MsrAccessKind::RdmsrImmediate:
+  case X86MsrAccessKind::RdmsrVexImmediate:
     return Insn->id == X86_INS_RDMSR ? Kind : std::nullopt;
   case X86MsrAccessKind::WrmsrnsImmediate:
+  case X86MsrAccessKind::WrmsrnsVexImmediate:
     return Insn->id == X86_INS_WRMSRNS ? Kind : std::nullopt;
   case X86MsrAccessKind::UrdmsrLegacyRegister:
   case X86MsrAccessKind::UrdmsrVexImmediate:
@@ -284,14 +282,19 @@ void writeEdxEax(X86Lifter::LiftState &S, Arch TargetArch, NdVar Value) {
 } // namespace
 
 bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
+  if (liftVirtualization(*this, S, Insn, X86))
+    return true;
   unsigned InsnId = Insn->id;
   auto LiftOuts = [&](Intrinsic Id, unsigned ElemSz) {
     const uint16_t AddrSz = S.AddressSize;
     bool Repeat = false;
     for (uint8_t Prefix : X86.prefix)
       Repeat |= Prefix == X86_PREFIX_REP || Prefix == X86_PREFIX_REPNE;
-    NdVar Count =
-        Repeat ? NdVar::reg(x86reg::RCX, AddrSz) : NdVar::scalar(1, AddrSz);
+    if (Repeat) {
+      liftRepState(*this, S, X86, Intrinsic::X86RepOutsState, ElemSz);
+      return;
+    }
+    NdVar Count = NdVar::scalar(1, AddrSz);
     NdVar Df = NdVar::reg(x86reg::DF, 1);
     S.emitIntrinsic(Id, NdVar(),
                     {NdVar::reg(x86reg::RSI, AddrSz), Count,
@@ -307,17 +310,17 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     NdVar NewSi = S.makeTemp(AddrSz);
     S.emit(NdOp::INT_ADD, NewSi, {NdVar::reg(x86reg::RSI, AddrSz), Delta});
     S.emit(NdOp::COPY, NdVar::reg(x86reg::RSI, AddrSz), {NewSi});
-    if (Repeat)
-      S.emit(NdOp::COPY, NdVar::reg(x86reg::RCX, AddrSz),
-             {NdVar::scalar(0, AddrSz)});
   };
   auto LiftIns = [&](Intrinsic Id, unsigned ElemSz) {
     const uint16_t AddrSz = S.AddressSize;
     bool Repeat = false;
     for (uint8_t Prefix : X86.prefix)
       Repeat |= Prefix == X86_PREFIX_REP || Prefix == X86_PREFIX_REPNE;
-    NdVar Count =
-        Repeat ? NdVar::reg(x86reg::RCX, AddrSz) : NdVar::scalar(1, AddrSz);
+    if (Repeat) {
+      liftRepState(*this, S, X86, Intrinsic::X86RepInsState, ElemSz);
+      return;
+    }
+    NdVar Count = NdVar::scalar(1, AddrSz);
     NdVar Df = NdVar::reg(x86reg::DF, 1);
     S.emitIntrinsic(Id, NdVar(),
                     {NdVar::reg(x86reg::RDI, AddrSz), Count,
@@ -332,25 +335,28 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     NdVar NewDi = S.makeTemp(AddrSz);
     S.emit(NdOp::INT_ADD, NewDi, {NdVar::reg(x86reg::RDI, AddrSz), Delta});
     S.emit(NdOp::COPY, NdVar::reg(x86reg::RDI, AddrSz), {NewDi});
-    if (Repeat)
-      S.emit(NdOp::COPY, NdVar::reg(x86reg::RCX, AddrSz),
-             {NdVar::scalar(0, AddrSz)});
   };
   switch (InsnId) {
 
-  // --- SYSENTER / SYSEXIT / SYSRET ---
+  // --- SYSENTER / RSM ---
   case X86_INS_SYSENTER:
-  case X86_INS_SYSEXIT:
-  case X86_INS_SYSRET:
-    S.emitIntrinsic(Intrinsic::Syscall);
-    break;
+  case X86_INS_RSM:
+    // SYSENTER's entry point and stack come from MSRs and RSM restores state
+    // from SMRAM: neither target is a named operand, so there is no faithful
+    // ordinary-C projection.
+    return false;
 
-  // --- RSM (return from SMM) ---
-  case X86_INS_RSM: {
-    uint16_t PtrSize = (TargetArch == Arch::X64) ? 8 : 4;
-    S.emit(NdOp::RETURN, {}, {NdVar::reg(x86reg::RAX, PtrSize)});
+  // --- SYSEXIT / SYSRET (compat-mode syscall returns) ---
+  case X86_INS_SYSEXIT:
+    // SYSEXIT transfers to EDX with stack ECX; terminal, never resumes here.
+    S.emitVoidIntrinsic(Intrinsic::Sysexitq,
+                        {NdVar::reg(x86reg::RDX, 4), NdVar::reg(x86reg::RCX, 4)});
     break;
-  }
+  case X86_INS_SYSRET:
+    // SYSRET transfers to ECX with EFLAGS from R11D; terminal.
+    S.emitVoidIntrinsic(Intrinsic::Sysretq,
+                        {NdVar::reg(x86reg::RCX, 4), NdVar::reg(x86reg::R11, 4)});
+    break;
 
   // --- INT1 (ICEBP) ---
   case X86_INS_INT1:
@@ -366,10 +372,29 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     break;
 
   // --- UD0 / UD1 ---
+  // clang's trapping sanitizers raise #UD with `ud1 eax, [eax + kind]`
+  // (llvm.ubsantrap), whose displacement names the check that failed: keep
+  // it as the code the C writers print, as a breakpoint's.
   case X86_INS_UD0:
-  case X86_INS_UD1:
-    S.emitIntrinsic(InsnId == X86_INS_UD0 ? Intrinsic::Ud0 : Intrinsic::Ud1);
+  case X86_INS_UD1: {
+    const Intrinsic Id =
+        InsnId == X86_INS_UD0 ? Intrinsic::Ud0 : Intrinsic::Ud1;
+    const bool SanitizerForm =
+        X86.op_count == 2 && X86.operands[0].type == X86_OP_REG &&
+        X86.operands[0].reg == X86_REG_EAX &&
+        X86.operands[1].type == X86_OP_MEM &&
+        X86.operands[1].mem.base == X86_REG_EAX &&
+        X86.operands[1].mem.index == X86_REG_INVALID &&
+        X86.operands[1].mem.segment == X86_REG_INVALID &&
+        X86.operands[1].mem.disp >= 0 && X86.operands[1].mem.disp <= 0xFF;
+    if (SanitizerForm)
+      S.emitIntrinsic(
+          Id, NdVar::reg(x86reg::RAX, 8),
+          {NdVar::cst(static_cast<uint64_t>(X86.operands[1].mem.disp), 1)});
+    else
+      S.emitIntrinsic(Id);
     break;
+  }
 
   // --- INSD / OUTSD ---
   case X86_INS_INSD:
@@ -416,9 +441,8 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
 
   // ========================================================================
   // Descriptor-table loads/stores + INVLPG — capture the memory-address
-  // operand (best-effort: base register, as CLFLUSH does) so codegen can
-  // re-emit `mnemonic (addr)`.  A bare mnemonic would be rejected by the
-  // assembler (too few operands).
+  // operand as an instruction-owned access. Retain the legacy 16-bit
+  // descriptor-table operand size independently of effective-address size.
   // ========================================================================
   case X86_INS_LGDT:
   case X86_INS_LIDT:
@@ -443,8 +467,25 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
       Id = Intrinsic::Invlpg;
       break;
     }
-    if (X86.op_count < 1 ||
-        !S.emitMemoryIntrinsic(Id, X86.operands[0]))
+    if (TargetArch == Arch::X86 && X86.prefix[2] == 0x66) {
+      switch (Id) {
+      case Intrinsic::Lgdt:
+        Id = Intrinsic::X86Lgdt16;
+        break;
+      case Intrinsic::Lidt:
+        Id = Intrinsic::X86Lidt16;
+        break;
+      case Intrinsic::Sgdt:
+        Id = Intrinsic::X86Sgdt16;
+        break;
+      case Intrinsic::Sidt:
+        Id = Intrinsic::X86Sidt16;
+        break;
+      default:
+        break;
+      }
+    }
+    if (X86.op_count < 1 || !S.emitMemoryIntrinsic(Id, X86.operands[0]))
       return false;
     break;
   }
@@ -452,10 +493,10 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   // ========================================================================
   // r/m16 system-register loads/stores: LLDT/LTR/LMSW read r/m16, while the
   // memory forms of SLDT/STR/SMSW write 16 bits.  Their register-destination
-  // forms retain the decoded register width so r32/r64 receive the selector or
-  // machine-status word zero-extended to the full destination.  A memory base
-  // is captured as an 8-byte pointer input; a register destination becomes the
-  // INTRINSIC output.
+  // forms retain the decoded width, including native undefined upper SMSW
+  // result bits; a narrow read followed by zero extension is not equivalent.  A
+  // memory base is captured as an 8-byte pointer input; a register destination
+  // becomes the INTRINSIC output.
   // ========================================================================
   case X86_INS_LLDT:
   case X86_INS_LTR:
@@ -578,12 +619,6 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
         NdMemoryOrdering::None, LiftState::memoryAddressSpace(Descriptor));
     break;
   }
-  // VMX invalidation requires VMCS/VMX state that LowIR does not model.  Keep
-  // these instructions unlifted instead of collapsing them into INVPCID or a
-  // generic system placeholder.
-  case X86_INS_INVEPT:
-  case X86_INS_INVVPID:
-    return false;
   // Explicit-operand MSR forms retain their exact encoding family so an
   // authenticated executor can apply the correct feature, privilege, bitmap,
   // interception, and exception-order rules. The legacy operand-free RDMSR
@@ -599,6 +634,9 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     }
     [[fallthrough]];
   case X86_INS_WRMSRNS:
+    if (InsnId == X86_INS_WRMSRNS && X86.op_count == 0)
+      return liftSystemState(*this, S, Insn, X86);
+    [[fallthrough]];
   case X86_INS_URDMSR:
   case X86_INS_UWRMSR: {
     const std::optional<X86MsrAccessKind> Kind =
@@ -613,15 +651,14 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
         ImmediateForm
             ? NdVar::scalar(static_cast<uint32_t>(SelectorOperand.imm), 4)
             : operandRead(S, SelectorOperand);
-    const NdVar KindValue =
-        NdVar::scalar(static_cast<uint64_t>(*Kind), 1);
+    const NdVar KindValue = NdVar::scalar(static_cast<uint64_t>(*Kind), 1);
     if (Write) {
       const NdVar Value = operandRead(S, X86.operands[1]);
       S.emitIntrinsic(Intrinsic::X86MsrAccess, NdVar(),
                       {KindValue, Selector, Value});
     } else {
-      const RegInfo Destination = mapCapstoneReg(
-          static_cast<x86_reg>(X86.operands[0].reg));
+      const RegInfo Destination =
+          mapCapstoneReg(static_cast<x86_reg>(X86.operands[0].reg));
       S.emitIntrinsic(Intrinsic::X86MsrAccess,
                       NdVar::reg(Destination.Offset, Destination.Size),
                       {KindValue, Selector});
@@ -678,37 +715,6 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     } else {
       return false;
     }
-    break;
-  }
-
-  // LSL loads the limit of the segment a selector names, as MSVC's
-  // __segmentlimit does, and sets ZF when the selector is valid.
-  case X86_INS_LSL: {
-    if (X86.op_count < 2 || X86.operands[0].type != X86_OP_REG)
-      return false;
-    NdVar Selector;
-    if (X86.operands[1].type == X86_OP_REG) {
-      const RegInfo Source =
-          mapCapstoneReg(static_cast<x86_reg>(X86.operands[1].reg));
-      Selector = NdVar::reg(Source.Offset, 2);
-    } else if (X86.operands[1].type == X86_OP_MEM) {
-      Selector = operandRead(S, X86.operands[1]);
-      if (Selector.Size != 2)
-        return false;
-    } else {
-      return false;
-    }
-    const NdVar Limit = S.makeTemp(4);
-    S.emitIntrinsic(Intrinsic::SegmentLimit, Limit, {Selector});
-    const NdVar Dst = operandWrite(X86.operands[0]);
-    if (Dst.Size == 4)
-      S.emit(NdOp::COPY, Dst, {Limit});
-    else if (Dst.Size > 4)
-      S.emit(NdOp::INT_ZEXT, Dst, {Limit});
-    else
-      S.emit(NdOp::SUBBYTES, Dst, {Limit, NdVar::cst(0, 4)});
-    S.emitIntrinsic(Intrinsic::SegmentLimitValid, NdVar::reg(x86reg::ZF, 1),
-                    {Selector});
     break;
   }
 
@@ -770,40 +776,47 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     break;
   }
 
-  // The rest need processor state LowIR does not model: virtual-machine and
-  // enclave control, segment and FS/GS base registers, SMX, user waits.
-  // Keep them unlifted rather than collapsing them into another instruction.
+  case X86_INS_XBEGIN:
+  case X86_INS_XABORT:
+  case X86_INS_XEND:
+  case X86_INS_XTEST:
+    return liftTransactions(*this, S, Insn, X86);
+
   case X86_INS_RDPID:
+  case X86_INS_CLUI:
+  case X86_INS_STUI:
+  case X86_INS_TESTUI:
+  case X86_INS_SENDUIPI:
+  case X86_INS_LKGS:
+  case X86_INS_HRESET:
+  case X86_INS_INVLPGB:
+  case X86_INS_TLBSYNC:
+  case X86_INS_RDMSRLIST:
+  case X86_INS_WRMSRLIST:
   case X86_INS_RDFSBASE:
   case X86_INS_RDGSBASE:
   case X86_INS_WRFSBASE:
   case X86_INS_WRGSBASE:
-  case X86_INS_VMRUN:
-  case X86_INS_VMSAVE:
-  case X86_INS_VMLOAD:
-  case X86_INS_VMLAUNCH:
-  case X86_INS_VMRESUME:
-  case X86_INS_VMXOFF:
-  case X86_INS_VMXON:
-  case X86_INS_VMCLEAR:
-  case X86_INS_VMPTRLD:
-  case X86_INS_VMPTRST:
-  case X86_INS_VMREAD:
-  case X86_INS_VMWRITE:
-  case X86_INS_VMFUNC:
-  case X86_INS_STGI:
-  case X86_INS_CLGI:
-  case X86_INS_SKINIT:
   case X86_INS_LAR:
+  case X86_INS_LSL:
   case X86_INS_ARPL:
   case X86_INS_CLTS:
-  case X86_INS_GETSEC:
-  case X86_INS_ENCLS:
-  case X86_INS_ENCLU:
-  case X86_INS_ENCLV:
   case X86_INS_TPAUSE:
   case X86_INS_UMONITOR:
   case X86_INS_UMWAIT:
+    return liftSystemState(*this, S, Insn, X86);
+
+  case X86_INS_ENCLS:
+  case X86_INS_ENCLV:
+    return liftSgx(*this, S, Insn, X86);
+
+  case X86_INS_GETSEC:
+  case X86_INS_ENCLU:
+    return liftBoundedLeaf(*this, S, Insn, X86);
+
+  // Machine transitions need a complete-state continuation contract.
+  case X86_INS_VMRUN:
+  case X86_INS_SKINIT:
     return false;
 
   // These change processor state only; none of them produces a value, so
@@ -855,7 +868,7 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   }
 
   default:
-    return liftExtBMI(*this, S, Insn, X86);
+    return liftExtBMI(*this, S, Insn);
   }
   return true;
 }

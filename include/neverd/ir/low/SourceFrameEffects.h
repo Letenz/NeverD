@@ -1,6 +1,7 @@
 #ifndef NEVERD_IR_LOW_SOURCEFRAMEEFFECTS_H
 #define NEVERD_IR_LOW_SOURCEFRAMEEFFECTS_H
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 
 #include <map>
@@ -137,7 +138,10 @@ sourceFrameEffectsMatchABI(const SourceFrameEffects &Effects,
       return false;
   for (const auto &[Index, Value] : Effects.OpaqueValueParameters) {
     using Action = SourceFrameValueEffect::Action;
-    if (Value.Identity.empty() || Value.Identity.size() > 256 ||
+    if (Value.Identity.empty() ||
+        Value.Identity.size() >
+            ::neverd::limits::ir::
+                kSourceFrameEffectsMatchABIValueIdentitySizeLimit ||
         !Parameter(Index, Value.Bytes) || Effects.Scratch ||
         Effects.InitializedFrameParameters.count(Index) ||
         (Value.TheAction != Action::Initialize &&

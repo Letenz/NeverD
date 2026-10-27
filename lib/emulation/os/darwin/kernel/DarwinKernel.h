@@ -34,6 +34,7 @@ struct MaximumProtection {
 struct MemoryLayout {
   uint64_t PageSize, MinimumAddress;
   std::vector<MaximumProtection> Maximum;
+  std::vector<MaximumProtection> Reserved;
 };
 enum class ServiceConvention { BSD, Mach };
 struct ServiceResult {
@@ -60,5 +61,12 @@ llvm::Expected<std::optional<ServiceResult>>
 handleService(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
               DarwinEntropy &Entropy, const ProcessServiceEvent &Event,
               const ProcessOptions &Options, ProcessResult &Result);
+/// Select a shared kernel effect for a named wrapper without fabricating a
+/// raw trap or changing guest syscall registers.
+llvm::Expected<std::optional<ServiceResult>>
+handleService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
+              DarwinFiles &Files, DarwinEntropy &Entropy,
+              const ProcessServiceEvent &Event, const ProcessOptions &Options,
+              ProcessResult &Result);
 } // namespace neverd::emulation::darwin_model
 #endif

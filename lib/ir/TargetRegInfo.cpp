@@ -8,9 +8,9 @@
 
 #include "TargetRegInfoDetail.h"
 
-#include "neverd/lift/AArch64Regs.h"
-#include "neverd/lift/ARMRegs.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
+#include "neverd/lift/ARM/ARMRegs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/ADT/DenseMap.h"
 
@@ -142,6 +142,15 @@ void visitNarrowView(const TargetRegInfo &TRI, uint64_t Off, uint16_t Size,
 }
 
 } // namespace
+
+void forEachSubRegOfNarrowView(
+    const TargetRegInfo &TRI, uint64_t NarrowOff, uint16_t NarrowSize,
+    llvm::function_ref<void(const SubRegEntry &)> Visit) {
+  visitNarrowView(TRI, NarrowOff, NarrowSize, [&](const SubRegEntry &E) {
+    Visit(E);
+    return true;
+  });
+}
 
 bool TargetRegInfo::isSubRegOf(uint64_t NarrowOff, uint16_t NarrowSz,
                                uint64_t WideOff, uint16_t WideSz) const {

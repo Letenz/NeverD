@@ -95,3 +95,7 @@ LIBC_STRING_PARAM("execlp", 0)
 LIBC_STRING_PARAM("execlp", 1)
 LIBC_STRING_PARAM("dlopen", 0)
 LIBC_STRING_PARAM("dlsym", 1)
+
+// semaphore.h
+LIBC_STRING_PARAM("sem_open", 0)
+LIBC_STRING_PARAM("sem_unlink", 0)

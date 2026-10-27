@@ -8,13 +8,16 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/loader/Swift/SwiftConsumedInputEffects.h"
 #include "neverd/pipeline/NativeSourceHints.h"
+#include "neverd/sdk/Limits.h"
 
 namespace neverd::sdk {
 namespace swift_consumed_input_detail {
 inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
                            const BinaryImage &Image, size_t &Budget,
                            unsigned Depth = 0) {
-  if (!Expected || !Actual || !Budget || Depth >= 64)
+  if (!Expected || !Actual || !Budget ||
+      Depth >= ::neverd::sdk::
+                   kSourceSwiftConsumedInputProjectionSameExpressionDepthLimit)
     return false;
   --Budget;
   HighExpr E = *Expected, A = *Actual;
@@ -69,7 +72,7 @@ inline bool sameBody(const HighFunc &Expected, const HighFunc &Actual,
   for (size_t I = 0; I < Expected.Params.size(); ++I)
     if (!equalSourceTypes(Expected.Params[I].Type, Actual.Params[I].Type))
       return false;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   return sameStraightLineSourceBody(
       Expected, Actual,
       [&](const ExprPtr &E, const ExprPtr &A) {
@@ -107,7 +110,7 @@ public:
   }
 
   bool valid(const HighFunc &Function) const {
-    size_t Budget = 100000;
+    size_t Budget = kSourceExpressionWork;
     bool Marked = false;
     std::vector<ExprPtr> Pending;
     walkStmts(Function.Body, [&](const HighStmt &S) {
@@ -137,7 +140,9 @@ public:
     if (Hints.empty())
       return !Marked; // An ordinary generic call has no new input permission.
     if (Hints.size() != 1 || Current->Low->Blocks.size() != 1 ||
-        Current->Low->DecodedInstructionCount > 256)
+        Current->Low->DecodedInstructionCount >
+            ::neverd::sdk::
+                kSourceSwiftConsumedInputProjectionValidCurrentLowDecodedInstructionCountLimit)
       return false;
     unsigned Calls = 0;
     for (const auto &Op : Current->Low->Blocks.front().Ops)
@@ -176,7 +181,6 @@ public:
     for (const auto &F : Result.MedFuncs)
       Names.emplace(F.Entry, F.Name);
     Converter.setFuncNames(&Names);
-    Converter.setJumpTables(Current->Low->JumpTables);
     const auto MedReplay = Converter.convert(*Current->Med, Image.Arch);
     using namespace swift_consumed_input_detail;
     if (!sameBody(*Rebuilt->High, *Current->High, Image) ||

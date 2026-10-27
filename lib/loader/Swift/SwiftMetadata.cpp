@@ -4,7 +4,9 @@
 
 #include "../ObjC/ObjCRuntimeData.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -59,11 +61,11 @@ std::optional<uint64_t> staticScalarStorageWidth(llvm::StringRef MangledSymbol,
   if (!MangledSymbol.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = ::neverd::limits::loader::kSwiftBindingInputBytes;
+  Options.MaxNodes = ::neverd::limits::loader::kSwiftBindingNodes;
+  Options.MaxDepth = ::neverd::limits::loader::kSwiftBindingDepth;
+  Options.MaxMemoryBytes = ::neverd::limits::loader::kSwiftBindingMemoryBytes;
+  Options.MaxOperations = ::neverd::limits::loader::kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(MangledSymbol, Options);
   const auto Shape = [](const llvm::SwiftDemangleNode &Node, const char *Kind,
                         size_t Children) {
@@ -175,11 +177,11 @@ bool reflectionText(const ReflectionNode &N, llvm::StringRef Kind,
 }
 std::optional<ReflectionNode> reflectionTree(llvm::StringRef Name) {
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = ::neverd::limits::loader::kSwiftIdentityInputBytes;
+  Options.MaxNodes = ::neverd::limits::loader::kSwiftIdentityNodes;
+  Options.MaxDepth = ::neverd::limits::loader::kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = ::neverd::limits::loader::kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = ::neverd::limits::loader::kSwiftIdentityOperations;
   auto Parsed = llvm::swiftDemangle(Name, Options);
   return Parsed.Root && Parsed.Error.empty()
              ? std::optional<ReflectionNode>(*Parsed.Root)
@@ -218,7 +220,10 @@ std::optional<va_t> reflectionRelative(const BinaryImage &Image, va_t Address) {
 std::optional<std::string> reflectionString(const BinaryImage &Image,
                                             va_t Address) {
   const auto Text = objc::RuntimeData(Image).string(Address);
-  return Text && Text->size() <= 1024 &&
+  return Text &&
+                 Text->size() <=
+                     ::neverd::limits::loader::
+                         kSwiftMetadataReflectionStringTextSizeLimit &&
                  readImmutableImageBytes(Image, Address, Text->size() + 1)
              ? Text
              : std::nullopt;
@@ -370,11 +375,11 @@ swiftLocalRegisteredTypeIdentity(const BinaryImage &Image, va_t Address,
   llvm::StringRef SymbolName(Descriptor->Name);
   SymbolName.consume_front("_");
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = ::neverd::limits::loader::kSwiftBindingInputBytes;
+  Options.MaxNodes = ::neverd::limits::loader::kSwiftBindingNodes;
+  Options.MaxDepth = ::neverd::limits::loader::kSwiftBindingDepth;
+  Options.MaxMemoryBytes = ::neverd::limits::loader::kSwiftBindingMemoryBytes;
+  Options.MaxOperations = ::neverd::limits::loader::kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(SymbolName, Options);
   const auto Shape = [](const llvm::SwiftDemangleNode &Node,
                         llvm::StringRef Kind, size_t Children) {
@@ -401,7 +406,9 @@ swiftLocalRegisteredTypeIdentity(const BinaryImage &Image, va_t Address,
                              llvm::StringRef ExpectedKind) {
     return Node.Kind == ExpectedKind && Node.Text && !Node.Index &&
            Node.Children.empty() && !Node.Text->empty() &&
-           Node.Text->size() <= 128 &&
+           Node.Text->size() <=
+               ::neverd::limits::loader::
+                   kSwiftMetadataSwiftLocalRegisteredTypeIdentityIdentifierNodeTextSizeLimit &&
            std::all_of(Node.Text->begin(), Node.Text->end(),
                        [](char C) { return llvm::isAlnum(C) || C == '_'; });
   };
@@ -503,7 +510,10 @@ swiftLocalRegisteredTypeIdentity(const BinaryImage &Image, va_t Address,
       Records = &Candidate;
     }
   if (!Records || !Records->isReadable() || Records->isWritable() ||
-      !Records->Size || Records->Size % 4 || Records->Size / 4 > 65536)
+      !Records->Size || Records->Size % 4 ||
+      Records->Size / 4 >
+          ::neverd::limits::loader::
+              kSwiftMetadataSwiftLocalRegisteredTypeIdentityRecordsSize4Limit)
     return std::nullopt;
   const auto Bytes = reflectionRecordBytes(Image, Records->VA, Records->Size);
   if (!Bytes)
@@ -547,7 +557,7 @@ swiftLocalRegisteredProtocolType(const BinaryImage &Image, va_t Address) {
     return std::nullopt;
   const uint32_t Requirements =
       llvm::support::endian::read32le(Header->data() + 16);
-  if (Requirements > 512 ||
+  if (Requirements > ::neverd::limits::loader::kMaxSwiftProtocolRequirements ||
       !reflectionRecordBytes(Image, Address, 24 + Requirements * 8))
     return std::nullopt;
   return swiftLocalRegisteredTypeIdentity(Image, Address, true);
@@ -678,7 +688,10 @@ swiftFixedRecordStorage(const BinaryImage &Image, va_t Descriptor) {
                                ? reflectionString(Image, *FieldNameAddress)
                                : std::nullopt;
     if ((Flags & ~2u) || Offset != I * 8 || !Type || !FieldName ||
-        FieldName->empty() || FieldName->size() > 128 ||
+        FieldName->empty() ||
+        FieldName->size() >
+            ::neverd::limits::loader::
+                kSwiftMetadataSwiftFixedRecordStorageFieldNameSizeLimit ||
         !reflectionRecordBytes(Image, *FieldNameAddress, FieldName->size() + 1,
                                true) ||
         !(llvm::isAlpha(FieldName->front()) || FieldName->front() == '_') ||
@@ -753,7 +766,9 @@ swiftObjCClassIdentity(const BinaryImage &Image, va_t Metadata) {
   // or dynamic metadata initialization. Vtable/override trailers add no
   // authority to this declaration-only proof.
   if ((Word(0) & ~0xc0000050u) || (Word(0) & 0xffffu) != 0x50u ||
-      Word(24) > 512 || Word(28) > 512 || Word(36) > 64 ||
+      Word(24) > ::neverd::limits::loader::kMaxSwiftClassMetadataWords ||
+      Word(28) > ::neverd::limits::loader::kMaxSwiftClassMetadataWords ||
+      Word(36) > ::neverd::limits::loader::kMaxSwiftClassStoredProperties ||
       Word(40) > Word(28) || Word(36) > Word(28) - Word(40) ||
       Data.u32(Metadata + 60) != uint64_t(Word(24)) * 8 ||
       Data.u32(Metadata + 56) != uint64_t(Word(24) + Word(28)) * 8 ||
@@ -838,7 +853,10 @@ swiftFixedRootClassStorage(const BinaryImage &Image, va_t Metadata) {
   if (!Identity || !Class || Class->RootClass || Class->SuperclassAddress ||
       Class->SuperclassName != "_TtCs12_SwiftObject" ||
       Class->IvarStatus != "recovered" || Class->InstanceStart != 16 ||
-      Class->InstanceSize < 16 || Class->InstanceSize > 4096 ||
+      Class->InstanceSize < 16 ||
+      Class->InstanceSize >
+          ::neverd::limits::loader::
+              kSwiftMetadataSwiftFixedRootClassStorageClassInstanceSizeLimit ||
       !reflectionRecordStorage(Image, Metadata, 80))
     return std::nullopt;
   const auto Registered =
@@ -856,8 +874,10 @@ swiftFixedRootClassStorage(const BinaryImage &Image, va_t Metadata) {
   const auto RO = Data.classRO(Metadata);
   const auto Ivars =
       RO ? readInitialImagePointer(Image, *RO + 48) : std::nullopt;
-  if (!Count || !*Count || *Count > 32 || !Vector || *Vector != 10 ||
-      Data.u32(D + 28).value_or(0) < 10 + *Count ||
+  if (!Count || !*Count ||
+      *Count > ::neverd::limits::loader::
+                   kSwiftMetadataSwiftFixedRootClassStorageCountLimit ||
+      !Vector || *Vector != 10 || Data.u32(D + 28).value_or(0) < 10 + *Count ||
       Data.u32(D + 32) != Data.u32(D + 28).value_or(0) - 10 || !Fields || !RO ||
       !Ivars || Class->Ivars.size() != *Count ||
       !reflectionRecordStorage(Image, *RO, 72) ||
@@ -1038,11 +1058,11 @@ swiftPrivateScalarStorageWidth(llvm::StringRef MangledSymbol) {
   if (!MangledSymbol.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = ::neverd::limits::loader::kSwiftBindingInputBytes;
+  Options.MaxNodes = ::neverd::limits::loader::kSwiftBindingNodes;
+  Options.MaxDepth = ::neverd::limits::loader::kSwiftBindingDepth;
+  Options.MaxMemoryBytes = ::neverd::limits::loader::kSwiftBindingMemoryBytes;
+  Options.MaxOperations = ::neverd::limits::loader::kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(MangledSymbol, Options);
   if (!Parsed.Root || !Parsed.Error.empty() || Parsed.Root->Kind != "Global" ||
       Parsed.Root->Text || Parsed.Root->Index ||
@@ -1110,9 +1130,6 @@ class Reader {
   void requirePlainEmptyStructLayout(va_t Metadata) const {
     if (Metadata < 8 || Metadata % 8)
       throw Unsupported("Swift empty struct metadata header is misaligned");
-    if (Image.MachOChainedFixupsAmbiguous)
-      throw Unsupported("Swift empty struct value-witness table has "
-                        "ambiguous fixups");
     const va_t Slot = Metadata - 8;
     if (!Data.bytes(Slot, 8))
       throw Unsupported(
@@ -1232,6 +1249,10 @@ class Reader {
   }
 
   va_t metadata(va_t Descriptor, bool IsClass) const {
+    // RuntimeData refuses ambiguous pointer fixups while building the index.
+    // Preserve that cause instead of reporting the rejected entry as absent.
+    if (Image.MachOChainedFixupsAmbiguous)
+      throw Unsupported("Swift type metadata has ambiguous fixups");
     const auto &Index = IsClass ? ClassMetadata : StructMetadata;
     auto It = Index.find(Descriptor);
     if (It == Index.end() || It->second.size() != 1)
@@ -1275,7 +1296,8 @@ class Reader {
         throw Unsupported("Swift metadata requires dynamic initialization");
       const uint32_t Count = u32(Descriptor + (IsClass ? 36 : 20));
       const uint32_t VectorWords = u32(Descriptor + (IsClass ? 40 : 24));
-      if (Count > 4096 || VectorWords > 1048576)
+      if (Count > ::neverd::limits::loader::kSwiftMetadataTypeCountLimit ||
+          VectorWords > ::neverd::limits::loader::kMaxSwiftMetadataVectorWords)
         throw Unsupported(
             "Swift field layout exceeds the bounded metadata budget");
       const va_t Fields = relative(Descriptor + 16);
@@ -1314,7 +1336,7 @@ class Reader {
                 ? 1
                 : Field.Type.Bits / 8;
         if (Field.Offset < PreviousEnd || Field.Offset % Size ||
-            Field.Offset > 1048576 - Size)
+            Field.Offset > ::neverd::limits::ir::kMaxSourceObjectBytes - Size)
           throw Unsupported("Swift scalar fields overlap, misalign, or exceed "
                             "the layout bound");
         // A declaration can reproduce this scalar layout only when the actual
@@ -1372,7 +1394,9 @@ public:
     if (!Section)
       return Result;
     if (Image.Format != BinaryFormat::MachO || Image.Bits != Bitness::Bits64 ||
-        Image.IsRelocatable || Section->Size % 4 || Section->Size / 4 > 65536 ||
+        Image.IsRelocatable || Section->Size % 4 ||
+        Section->Size / 4 >
+            ::neverd::limits::loader::kSwiftMetadataReadSectionSize4Limit ||
         !Data.bytes(Section->VA, Section->Size)) {
       SwiftRecoveredType Error;
       Error.Reason = "unsupported or malformed Swift type-reference section";

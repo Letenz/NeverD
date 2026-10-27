@@ -9,16 +9,24 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "LibCVariantRows.h"
+
 #include "neverd/Common.h"
 #include "neverd/libc/LibCFortify.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/NoReturnLoadedTarget.h"
+#include "neverd/libc/StackProbeIndex.h"
 #include "neverd/libc/WindowsCRT.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/LanguageRuntime.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringSwitch.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <set>
 #include <string_view>
 #include <unordered_map>
 
@@ -41,12 +49,19 @@ unsigned fortifiedChkFixedCount(std::string_view Core) {
       .Default(0);
 }
 
-unsigned irregularVarArgFixedCount(std::string_view Name) {
-  return llvm::StringSwitch<unsigned>(Name)
-#define LIBC_IRREGULAR_VARARG(Name, Count) .Case(Name, Count)
+/// The category of each fixed parameter of the irregular variadic routine
+/// \p Name, or none for any other routine.
+llvm::ArrayRef<VarArgFixedParamKind>
+irregularVarArgFixedKinds(std::string_view Name) {
+  using enum VarArgFixedParamKind;
+#define LIBC_IRREGULAR_VARARG(Routine, ...)                                    \
+  if (Name == Routine) {                                                       \
+    static constexpr VarArgFixedParamKind Kinds[] = {__VA_ARGS__};             \
+    return Kinds;                                                              \
+  }
 #include "neverd/libc/LibCIrregularVarArg.inc"
 #undef LIBC_IRREGULAR_VARARG
-      .Default(0);
+  return {};
 }
 
 /// The standard routine whose arguments a C library's variant \p Name takes
@@ -58,16 +73,29 @@ std::string_view isoAliasTarget(std::string_view Name) {
   for (const std::string_view Prefix : kIsoAliasPrefixes)
     if (Bare.starts_with(Prefix))
       return Bare.substr(Prefix.size());
-  if (Bare.starts_with(kUCRTStdioPrefix))
-    return Bare.substr(kUCRTStdioPrefix.size());
+  for (const auto Prefix : kUCRTCommonPrefixes)
+    if (Bare.starts_with(Prefix)) {
+      std::string_view Routine = Bare.substr(Prefix.size());
+      for (const auto Suffix : kUCRTCommonSuffixes)
+        if (Routine.ends_with(Suffix))
+          Routine.remove_suffix(Suffix.size());
+      return Routine;
+    }
   return Name;
 }
 
 } // anonymous namespace
 
-unsigned varArgFixedCount(std::string_view Name) {
+unsigned varArgFixedCount(std::string_view Name, LibCVariant Variant) {
+  Name = routineOfSymbol(Name, Variant);
+  if (const std::string_view Routine = largeFileRoutine(Name); !Routine.empty())
+    Name = Routine;
   if (const std::string_view Standard = isoAliasTarget(Name); Standard != Name)
-    return varArgFixedCount(Standard);
+    return varArgFixedCount(Standard, Variant);
+  if (Variant != LibCVariant::GNU)
+    if (const auto Kinds =
+            variant_rows::variadic(stripLeadingUnderscores(Name), Variant))
+      return Kinds->size();
   // Modern Darwin linkers specialize Objective-C dispatch through local
   // `_objc_msgSend$<selector>` stubs.  The stub materializes `_cmd` in x1,
   // while the caller supplies the receiver in x0 and one argument per colon
@@ -85,6 +113,11 @@ unsigned varArgFixedCount(std::string_view Name) {
         ++Fixed;
     return Fixed;
   }
+
+  // A routine that takes its further arguments as a va_list is not variadic,
+  // whatever its name ends in: obstack_vprintf, Darwin's __svfscanf.
+  if (isVaListConsumer(stripLeadingUnderscores(Name)))
+    return 0;
 
   // Fortified _FORTIFY_SOURCE variants: __<core>_chk.  clang emits these for
   // the buffer-bounded printf family when the destination size is known
@@ -128,13 +161,18 @@ unsigned varArgFixedCount(std::string_view Name) {
   }
 
   // Irregular variadic functions with no printf/scanf suffix.
-  return irregularVarArgFixedCount(Name);
+  return irregularVarArgFixedKinds(Name).size();
 }
 
-VarArgFixedParamKind varArgFixedParamKind(std::string_view Name,
-                                          unsigned Index) {
-  Name = isoAliasTarget(stripLeadingUnderscores(Name));
-  const unsigned FixedCount = varArgFixedCount(Name);
+VarArgFixedParamKind varArgFixedParamKind(std::string_view Name, unsigned Index,
+                                          LibCVariant Variant) {
+  Name =
+      isoAliasTarget(stripLeadingUnderscores(routineOfSymbol(Name, Variant)));
+  if (Variant != LibCVariant::GNU)
+    if (const auto Kinds = variant_rows::variadic(Name, Variant))
+      return Index < Kinds->size() ? (*Kinds)[Index]
+                                   : VarArgFixedParamKind::Unknown;
+  const unsigned FixedCount = varArgFixedCount(Name, Variant);
   if (Index >= FixedCount)
     return VarArgFixedParamKind::Unknown;
 
@@ -185,21 +223,12 @@ VarArgFixedParamKind varArgFixedParamKind(std::string_view Name,
     }
   }
 
-  // The irregular registry intentionally carries only the fixed prefix the
-  // recovery pass can prove.  Classify that prefix without guessing the types
-  // of any optional tail arguments.
-  if (Name == "open")
-    return Index == 0 ? VarArgFixedParamKind::Pointer
-                      : VarArgFixedParamKind::Integer;
-  if (Name == "syslog" || Name == "err" || Name == "errx" || Name == "openat" ||
-      Name == "fcntl" || Name == "ioctl")
-    return VarArgFixedParamKind::Integer;
-  if (Name == "warn" || Name == "warnx" || Name == "execl" ||
-      Name == "execlp" || Name == "execle" || Name == "mq_open" ||
-      Name == "sem_open")
-    return VarArgFixedParamKind::Pointer;
-
-  return VarArgFixedParamKind::Unknown;
+  // The irregular registry lists every fixed parameter its declaration names,
+  // and no optional tail argument.
+  const llvm::ArrayRef<VarArgFixedParamKind> Irregular =
+      irregularVarArgFixedKinds(Name);
+  return Index < Irregular.size() ? Irregular[Index]
+                                  : VarArgFixedParamKind::Unknown;
 }
 
 bool isVaListConsumer(std::string_view Name) {
@@ -231,15 +260,22 @@ bool isCStringParameter(std::string_view Name, unsigned Index) {
 #include "neverd/libc/LibCStringParams.inc"
 #undef LIBC_STRING_PARAM
   };
-  const std::string_view Bare = stripLeadingUnderscores(Name);
+  // A row names the routine as its header declares it (`__fwriting`); the
+  // lookup ignores leading underscores on both sides, as the variant rows'.
+  // A large-file routine takes its strings where its routine does.
+  std::string_view Bare = stripLeadingUnderscores(Name);
+  if (const std::string_view Routine = largeFileRoutine(Bare); !Routine.empty())
+    Bare = Routine;
   for (const StringParam &Param : StringParams)
-    if (Param.Index == Index && Param.Name == Bare)
+    if (Param.Index == Index &&
+        std::string_view(stripLeadingUnderscores(Param.Name)) == Bare)
       return true;
   return false;
 }
 
 std::optional<std::string_view> functionPointerParameter(std::string_view Name,
-                                                         unsigned Index) {
+                                                         unsigned Index,
+                                                         LibCVariant Variant) {
   struct FunctionPointerParam {
     std::string_view Name;
     unsigned Index;
@@ -250,46 +286,88 @@ std::optional<std::string_view> functionPointerParameter(std::string_view Name,
 #include "neverd/libc/LibCFunctionPointerParams.inc"
 #undef LIBC_FUNCTION_POINTER_PARAM
   };
-  const std::string_view Bare = stripLeadingUnderscores(Name);
+  // A large-file routine has rows of its own: its function's type names the
+  // large-file records (scandir64's comparison takes struct dirent64).
+  const std::string_view Bare =
+      stripLeadingUnderscores(routineOfSymbol(Name, Variant));
+  if (Variant != LibCVariant::GNU)
+    if (const auto Pointers = variant_rows::pointers(Bare, Variant))
+      return Pointers->FunctionPointer == static_cast<int>(Index)
+                 ? std::optional<std::string_view>(Pointers->Type)
+                 : std::nullopt;
   for (const FunctionPointerParam &Param : FunctionPointerParams)
-    if (Param.Index == Index && Param.Name == Bare)
+    if (Param.Index == Index &&
+        std::string_view(stripLeadingUnderscores(Param.Name)) == Bare)
       return Param.Type;
   return std::nullopt;
 }
 
-bool isObjectPointerParameter(std::string_view Name, unsigned Index) {
-  // Each function's object pointer parameters, as a mask of positions.
+bool isObjectPointerParameter(std::string_view Name, unsigned Index,
+                              LibCVariant Variant) {
+  // Each function's object pointer parameters, as a mask of positions, by
+  // its name without leading underscores: a row names the routine as its
+  // header declares it (`__fwriting`), and the lookup strips the query's.
   static const std::unordered_map<std::string_view, uint64_t> Masks = [] {
     std::unordered_map<std::string_view, uint64_t> Map;
 #define LIBC_OBJECT_POINTER_PARAM(Name, Index)                                 \
-  Map[Name] |= uint64_t(1) << (Index);
+  Map[std::string_view(stripLeadingUnderscores(Name))] |= uint64_t(1)          \
+                                                          << (Index);
 #include "neverd/libc/LibCObjectPointerParams.inc"
 #undef LIBC_OBJECT_POINTER_PARAM
     return Map;
   }();
   if (Index >= 64)
     return false;
-  const auto It = Masks.find(stripLeadingUnderscores(Name));
+  std::string_view Bare =
+      stripLeadingUnderscores(routineOfSymbol(Name, Variant));
+  if (const std::string_view Routine = largeFileRoutine(Bare); !Routine.empty())
+    Bare = Routine;
+  if (Variant != LibCVariant::GNU)
+    if (const auto Pointers = variant_rows::pointers(Bare, Variant))
+      return Pointers->ObjectPointers >> Index & 1;
+  const auto It = Masks.find(Bare);
   return It != Masks.end() && (It->second >> Index & 1);
 }
 
-std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
-                                                 va_t Target) {
-  struct Routine {
-    BinaryFormat Format;
-    Arch Architecture;
-    std::string_view Symbol;
-    StackProbeEffect Effect;
-  };
-  static constexpr Routine Routines[] = {
+namespace {
+struct StackProbeRoutine {
+  BinaryFormat Format;
+  Arch Architecture;
+  std::string_view Symbol;
+  StackProbeEffect Effect;
+};
+
+constexpr StackProbeRoutine StackProbeRoutines[] = {
 #define STACK_PROBE(Format, Architecture, Symbol, Effect)                      \
   {BinaryFormat::Format, Arch::Architecture, Symbol, StackProbeEffect::Effect},
 #include "neverd/libc/StackProbeRoutines.inc"
-  };
-  const auto Applies = [&](const Routine &R) {
-    return R.Format == Img.abiFormat() && R.Architecture == Img.Arch;
-  };
-  if (std::none_of(std::begin(Routines), std::end(Routines), Applies))
+};
+
+bool stackProbeApplies(const StackProbeRoutine &R, const BinaryImage &Img) {
+  return R.Format == Img.abiFormat() && R.Architecture == Img.Arch;
+}
+
+bool hasStackProbeRoutines(const BinaryImage &Img) {
+  return std::any_of(
+      std::begin(StackProbeRoutines), std::end(StackProbeRoutines),
+      [&](const StackProbeRoutine &R) { return stackProbeApplies(R, Img); });
+}
+
+/// The helper \p Name spells for \p Img's format and architecture.
+std::optional<StackProbeEffect> stackProbeNamed(const BinaryImage &Img,
+                                                std::string_view Name) {
+  for (const StackProbeRoutine &R : StackProbeRoutines)
+    if (!Name.empty() && stackProbeApplies(R, Img) && R.Symbol == Name)
+      return R.Effect;
+  return std::nullopt;
+}
+} // namespace
+
+std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
+                                                 va_t Target) {
+  if (Img.functionHasBytePatch(Target))
+    return std::nullopt;
+  if (!hasStackProbeRoutines(Img))
     return std::nullopt;
   // Only a name the binary or its debug information states proves the
   // helper; one an analysis guessed does not drop a call.
@@ -299,11 +377,65 @@ std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
   else if (const Symbol *Sym = Img.findSymbolAt(Target);
            Sym && Sym->Origin >= NameOrigin::Stated)
     Name = Sym->Name;
-  for (const Routine &R : Routines)
-    if (!Name.empty() && Applies(R) && R.Symbol == Name)
-      return R.Effect;
-  return std::nullopt;
+  return stackProbeNamed(Img, Name);
 }
+
+StackProbeIndex::StackProbeIndex(const BinaryImage &Img) : Image(&Img) {
+  if (!hasStackProbeRoutines(Img))
+    return;
+  std::set<va_t> Named;
+  for (const Export &Exp : Img.Exports)
+    if (stackProbeNamed(Img, Exp.Name))
+      Named.insert(Exp.Addr);
+  for (const Symbol &Sym : Img.Symbols)
+    if (stackProbeNamed(Img, Sym.Name))
+      Named.insert(Sym.Addr);
+  for (va_t Addr : Named)
+    if (const auto Effect = stackProbeEffect(Img, Addr))
+      Probes.emplace(Addr, *Effect);
+}
+
+std::optional<StackProbeEffect> StackProbeIndex::effect(const BinaryImage &Img,
+                                                        va_t Target) const {
+  if (Image != &Img)
+    return stackProbeEffect(Img, Target);
+  const auto It = Probes.find(Target);
+  if (It == Probes.end())
+    return std::nullopt;
+  return It->second;
+}
+
+std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
+                                                 va_t Target,
+                                                 const StackProbeIndex *Index) {
+  return Index ? Index->effect(Img, Target) : stackProbeEffect(Img, Target);
+}
+
+namespace {
+/// Whether \p Name names a routine of Rust's standard library whose
+/// declaration returns `!` (RustRuntimeNoReturn.inc).  A mangled name is
+/// matched by its demangled path without generic arguments; an unmangled one
+/// by its name.
+bool isRustNoReturnRoutine(std::string_view Name) {
+  const llvm::StringRef Symbol(Name.data(), Name.size());
+  const std::string Demangled = demangleRustName(Symbol);
+  llvm::StringRef Path = Demangled;
+  if (Demangled.empty()) {
+    const std::string_view Bare = stripLeadingUnderscores(Name);
+    Path = llvm::StringRef(Bare.data(), Bare.size());
+  } else if (const size_t Generic = Path.find("::<");
+             Generic != llvm::StringRef::npos) {
+    Path = Path.take_front(Generic);
+  }
+  return llvm::StringSwitch<bool>(Path)
+#define RUST_NO_RETURN_PATH(Path) .Case(Path, true)
+#define RUST_NO_RETURN_PATH_PREFIX(Prefix) .StartsWith(Prefix, true)
+#include "neverd/libc/RustRuntimeNoReturn.inc"
+#undef RUST_NO_RETURN_PATH_PREFIX
+#undef RUST_NO_RETURN_PATH
+      .Default(false);
+}
+} // namespace
 
 bool isNoReturnFunction(std::string_view Name) {
   // Every entry is unconditionally __attribute__((noreturn)) in its standard
@@ -312,13 +444,14 @@ bool isNoReturnFunction(std::string_view Name) {
   // that only *sometimes* return (warn/warnx, GNU error/error_at_line) are
   // deliberately excluded so the CFG builder never drops genuinely reachable
   // fall-through code.
-  return llvm::StringSwitch<bool>(stripLeadingUnderscores(Name))
+  const bool Listed = llvm::StringSwitch<bool>(stripLeadingUnderscores(Name))
 #define LIBC_NO_RETURN_SYMBOL(Name) .Case(Name, true)
 #include "neverd/libc/CxxRuntimeNoReturn.inc"
 #include "neverd/libc/LibCNoReturn.inc"
 #include "neverd/libc/WindowsNoReturn.inc"
 #undef LIBC_NO_RETURN_SYMBOL
-      .Default(false);
+                          .Default(false);
+  return Listed || isRustNoReturnRoutine(Name);
 }
 
 namespace {
@@ -340,11 +473,16 @@ constexpr WindowsKernelPrototype WindowsKernelPrototypes[] = {
 } // namespace
 
 const WindowsKernelPrototype *windowsKernelPrototype(std::string_view Name) {
-  Name = stripLeadingUnderscores(Name);
-  for (const WindowsKernelPrototype &P : WindowsKernelPrototypes)
-    if (P.Name == Name)
-      return &P;
-  return nullptr;
+  // The first prototype the table gives each name; a run asks for every
+  // callee and import it summarizes.
+  static const auto ByName = [] {
+    std::unordered_map<std::string_view, const WindowsKernelPrototype *> Index;
+    for (const WindowsKernelPrototype &P : WindowsKernelPrototypes)
+      Index.try_emplace(P.Name, &P);
+    return Index;
+  }();
+  const auto Found = ByName.find(stripLeadingUnderscores(Name));
+  return Found == ByName.end() ? nullptr : Found->second;
 }
 
 bool isIndirectCallDispatchThunk(std::string_view Name) {
@@ -363,56 +501,76 @@ bool isNoReturnTarget(const BinaryImage &Img, va_t Target) {
   // The user's statement decides over every name.
   if (const auto Stated = Img.userNoReturnAt(Target))
     return *Stated;
-  if (const Import *Imp = Img.findImportAt(Target))
+  if (Img.functionHasBytePatch(Target))
+    return false;
+  const Import *Imp = Img.findImportAt(Target);
+  if (Imp)
     if (isNoReturnFunction(Imp->Name))
       return true;
   // A pointer slot the loader binds to an import (an ELF GLOB_DAT or
   // JUMP_SLOT, a Mach-O bind): x86 calls through it as `call [slot]`.
-  const ImportStorageSlotCollection Storage =
-      Img.collectImportStorageSlot(Target);
-  if (auto It = Storage.Slots.find(Target);
-      It != Storage.Slots.end() && !Storage.Conflicts.count(Target) &&
-      It->second.Addend == 0 && isNoReturnFunction(It->second.Name))
-    return true;
+  // An exact IAT identity takes precedence over another storage spelling,
+  // including a conflicting no-return name, as in NoReturnTargetIndex.
+  if (!Imp || Imp->IATAddr != Target) {
+    const ImportStorageSlotCollection Storage =
+        Img.collectImportStorageSlot(Target);
+    if (auto It = Storage.Slots.find(Target);
+        It != Storage.Slots.end() && !Storage.Conflicts.count(Target) &&
+        It->second.Addend == 0 && isNoReturnFunction(It->second.Name))
+      return true;
+  }
   if (const Symbol *Sym = Img.findSymbolAt(Target))
     if (isNoReturnFunction(Sym->Name))
+      return true;
+  // A routine the image exports, which its own code calls.
+  if (const Export *Exp = Img.findExportAt(Target))
+    if (isNoReturnFunction(Exp->Name))
       return true;
   return false;
 }
 
 NoReturnTargetIndex::NoReturnTargetIndex(const BinaryImage &Img,
-                                         NameResolver ResolveName)
+                                         NameResolver ResolveName,
+                                         DeclaredNoReturn Declared)
     : Image(&Img), SymbolsIndexed(Img.LoadOnlyFunctionEntries.empty()),
-      ResolveName(std::move(ResolveName)) {
+      ResolveName(std::move(ResolveName)), Declared(std::move(Declared)) {
+  const auto NoReturn = [&](llvm::StringRef Name) {
+    return isNoReturnFunction(Name) ||
+           (this->Declared && !Name.empty() && this->Declared(Name));
+  };
   // Preserve first-IAT precedence even when its name is empty or returning.
   // Only an address absent from the IAT map can use an exact stub spelling.
-  std::set<va_t> ImportAddresses;
   for (const Import &Imp : Img.Imports)
-    if (ImportAddresses.insert(Imp.IATAddr).second &&
-        isNoReturnFunction(Imp.Name))
+    if (ImportAddresses.insert(Imp.IATAddr).second && NoReturn(Imp.Name))
       Targets.insert(Imp.IATAddr);
   for (const auto &[Address, Index] : Img.ImportStubIndices)
     if (!ImportAddresses.count(Address) && Index < Img.Imports.size() &&
-        isNoReturnFunction(Img.Imports[Index].Name))
+        NoReturn(Img.Imports[Index].Name) && Img.findImportStubAt(Address))
       Targets.insert(Address);
   // Pointer slots the loader binds to imports, which x86 calls through as
   // `call [slot]`; an import directory entry for the same slot decides.
   const ImportStorageSlotCollection Storage = Img.collectImportStorageSlots();
   for (const auto &[SlotVA, Slot] : Storage.Slots)
     if (!ImportAddresses.count(SlotVA) && !Storage.Conflicts.count(SlotVA) &&
-        Slot.Addend == 0 && isNoReturnFunction(Slot.Name))
+        Slot.Addend == 0 && NoReturn(Slot.Name))
       Targets.insert(SlotVA);
 
   // A returning import still permits the first same-address symbol to prove
   // no-return. Later symbol aliases do not override that first symbol.
   // `--func` already has the IAT map; walking every image symbol is the
-  // whole-PE cost that single-function export is trying to skip.
+  // whole-PE cost that single-function export is trying to skip.  The first
+  // export at an address proves it too: the image's own code calls the
+  // routines it exports, such as the kernel's ExRaiseStatus.
   if (SymbolsIndexed) {
     std::set<va_t> SymbolAddresses;
     for (const Symbol &Sym : Img.Symbols)
-      if (SymbolAddresses.insert(Sym.Addr).second &&
-          isNoReturnFunction(Sym.Name))
+      if (!Sym.IsSection && SymbolAddresses.insert(Sym.Addr).second &&
+          NoReturn(Sym.Name))
         Targets.insert(Sym.Addr);
+    std::set<va_t> ExportAddresses;
+    for (const Export &Exp : Img.Exports)
+      if (ExportAddresses.insert(Exp.Addr).second && NoReturn(Exp.Name))
+        Targets.insert(Exp.Addr);
   }
   Targets.erase(InvalidVA);
 }
@@ -425,11 +583,22 @@ void NoReturnTargetIndex::clearMemoizedNames() {
 bool NoReturnTargetIndex::contains(const BinaryImage &Img, va_t Target) const {
   if (Image != &Img)
     return isNoReturnTarget(Img, Target);
+  if (Target == InvalidVA)
+    return false;
   if (const auto Stated = Img.userNoReturnAt(Target))
     return *Stated;
+  if (Img.functionHasBytePatch(Target))
+    return false;
   if (Targets.count(Target))
     return true;
-  if (SymbolsIndexed || Target == InvalidVA)
+  // A restricted x86 load may not have registered this decoded veneer, and
+  // Thumb callers can use its mode-tagged spelling. Ask the same veneer owner
+  // as the live lookup, retaining exact IAT precedence and memoizing the work.
+  const bool ResolveImport =
+      !ImportAddresses.count(Target) &&
+      (Img.decodesImportThunks() ||
+       normalizeCodeAddress(Target, Img.Arch, Img.Mode) != Target);
+  if (SymbolsIndexed && !ResolveImport)
     return false;
   // The first symbol at Target decides, as in the whole-image walk; a name
   // the restricted load has not ingested comes from the resolver.
@@ -437,12 +606,35 @@ bool NoReturnTargetIndex::contains(const BinaryImage &Img, va_t Target) const {
   auto [It, Inserted] = LazyAnswers.try_emplace(Target, false);
   if (!Inserted)
     return It->second;
+  const auto NoReturn = [&](llvm::StringRef Name) {
+    return isNoReturnFunction(Name) ||
+           (Declared && !Name.empty() && Declared(Name));
+  };
+  if (ResolveImport)
+    if (const Import *Imp = Img.findImportStubAt(Target))
+      It->second = NoReturn(Imp->Name);
+  if (SymbolsIndexed || It->second)
+    return It->second;
   if (const Symbol *Sym = Img.findSymbolAt(Target))
-    It->second = isNoReturnFunction(Sym->Name);
+    It->second = NoReturn(Sym->Name);
   else if (ResolveName)
     if (std::optional<std::string> Name = ResolveName(Target))
-      It->second = isNoReturnFunction(*Name);
+      It->second = NoReturn(*Name);
+  if (!It->second)
+    if (const Export *Exp = Img.findExportAt(Target))
+      It->second = NoReturn(Exp->Name);
   return It->second;
+}
+
+bool isNoReturnLoadedTarget(const BinaryImage &Image, va_t Slot,
+                            const NoReturnTargetIndex *Index) {
+  if (const auto Stated = Image.userNoReturnAt(Slot))
+    return *Stated;
+  if (isNoReturnTarget(Image, Slot, Index))
+    return true;
+  if (const auto Target = readImmutableImageCodePointer(Image, Slot))
+    return isNoReturnTarget(Image, *Target, Index);
+  return false;
 }
 
 bool isNoReturnTarget(const BinaryImage &Img, va_t Target,
@@ -492,6 +684,30 @@ const LibCPrintfFormat *libcPrintfFormat(std::string_view Name) {
   return nullptr;
 }
 
+bool variadicIn(const LibCVariadicForward &Forward, LibCVariant Variant) {
+  switch (Forward.Format) {
+  case BinaryFormat::Unknown:
+    return true;
+  case BinaryFormat::ELF:
+    return Variant == LibCVariant::GNU || Variant == LibCVariant::Musl ||
+           Variant == LibCVariant::Bionic;
+  case BinaryFormat::MachO:
+    return Variant == LibCVariant::Darwin;
+  case BinaryFormat::COFF:
+    return Variant == LibCVariant::Windows;
+  default:
+    return false;
+  }
+}
+
+std::string_view forwardFixedType(const LibCVariadicForward &Forward,
+                                  size_t Index, LibCVariant Variant) {
+  if (const auto Types = variant_rows::forwardFixed(Forward.Name, Variant);
+      Types && Index < Types->size())
+    return (*Types)[Index];
+  return Forward.Fixed[Index];
+}
+
 const LibCVariadicForward *libcVariadicForward(std::string_view Name) {
   using Kind = LibCVariadicForward::Kind;
 #define NEVERD_FIXED_PARAMETERS(...)                                           \
@@ -514,6 +730,13 @@ const LibCVariadicForward *libcVariadicForward(std::string_view Name) {
   {Kind::Bounded, Routine,  ReturnType,                                        \
    TypeHeader,    Routine,  NEVERD_FIXED_PARAMETERS(__VA_ARGS__),              \
    Read,          ReadType, false},
+#define LIBC_ELF_BOUNDED_VARARGS(Routine, ReturnType, TypeHeader, Read,        \
+                                 ReadType, ...)                                \
+  {Kind::Bounded, Routine,                                                     \
+   ReturnType,    TypeHeader,                                                  \
+   Routine,       NEVERD_FIXED_PARAMETERS(__VA_ARGS__),                        \
+   Read,          ReadType,                                                    \
+   false,         BinaryFormat::ELF},
 #define LIBC_SENTINEL_VARARGS(Routine, ReturnType, TypeHeader, Vector,         \
                               WithEnvironment, ...)                            \
   {Kind::Sentinel,                                                             \
@@ -532,6 +755,24 @@ const LibCVariadicForward *libcVariadicForward(std::string_view Name) {
     if (Forward.Name == Name)
       return &Forward;
   return nullptr;
+}
+
+std::optional<unsigned> vaListParameter(std::string_view Name) {
+  // A va_list form takes the variadic routine's fixed parameters, then the
+  // va_list.
+  static const std::unordered_map<std::string_view, unsigned> Positions = [] {
+    std::unordered_map<std::string_view, unsigned> Map;
+#define LIBC_VA_LIST_FORM(Routine, ReturnType, TypeHeader, Form, ...)          \
+  Map.emplace(                                                                 \
+      Form, static_cast<unsigned>(                                             \
+                std::initializer_list<std::string_view>{__VA_ARGS__}.size()));
+#include "neverd/libc/LibCVariadicForwards.inc"
+    return Map;
+  }();
+  const auto It = Positions.find(Name);
+  if (It == Positions.end())
+    return std::nullopt;
+  return It->second;
 }
 
 } // namespace neverd::libc

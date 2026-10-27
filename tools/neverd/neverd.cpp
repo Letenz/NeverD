@@ -17,8 +17,10 @@
 #include "NeverDSymbolDownload.h"
 
 #include "neverd/Common.h"
-#include "neverd/loader/ARMModeCLIStrings.h"
+#include "neverd/loader/ARM/ARMModeCLIStrings.h"
+#include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/support/FilePath.h"
+#include "neverd/support/ProjectWriteLock.h"
 #include "neverd/support/StackSizeMain.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -34,6 +36,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <set>
 #include <utility>
 
@@ -92,8 +95,14 @@ static int realMain(int Argc, char *Argv[]) {
     return runIdentify();
   if (DiffCmd)
     return runDiff();
+  if (LineageCmd)
+    return runLineage();
   if (SimplifyCmd)
     return runSimplify();
+  if (MergeProjectCmd)
+    return runMergeProject();
+  if (SetupGitCmd)
+    return runSetupGit(Argv[0]);
   if (OptimizeIRCmd)
     return runOptimizeIR();
   if (TranslateObjectCmd)
@@ -102,6 +111,12 @@ static int realMain(int Argc, char *Argv[]) {
     return runEmulateDriver();
   if (CPUCapabilitiesCmd)
     return runCPUCapabilities();
+  if (X87CapabilitiesCmd)
+    return runX87Capabilities();
+  if (ModulesCmd)
+    return runModules();
+  if (ExecutionCmd)
+    return runExecution();
   if (EmulateProcessCmd)
     return runEmulateProcess();
   if (UnpackCmd)
@@ -112,6 +127,12 @@ static int realMain(int Argc, char *Argv[]) {
     return runMobile(Argv[0]);
   if (WebCmd)
     return runWeb();
+  // types reads a program's types, or converts declarations without one.
+  if (TypesCmd) {
+    if (TypesInput.empty())
+      return runTypesConvert();
+    InputFile.setValue(TypesInput);
+  }
 
   // The active subcommand's registered name feeds the banner below.  Plugins
   // and diff returned already, so exactly one of the remaining named
@@ -133,8 +154,53 @@ static int realMain(int Argc, char *Argv[]) {
     return 1;
   }
 
+  // Protect the complete sidecar read/modify/write transaction, including
+  // restoration before the edit. The GUI holds the same project lock.
+  std::unique_ptr<ProjectWriteLock> SectionWriter;
+  if (AnalysisSectionsCmd &&
+      (!AnalysisSectionAdd.empty() || !AnalysisSectionRemove.empty())) {
+    SectionWriter = std::make_unique<ProjectWriteLock>(Path);
+    if (!*SectionWriter) {
+      WithColor::error() << "cannot acquire project writer lock: "
+                         << SectionWriter->error() << "\n";
+      return 1;
+    }
+  }
+  if (ListCacheImages) {
+    const char *Reply =
+        neverd_dyld_cache_images_json(InputFile.getValue().c_str());
+    const std::string Text = Reply ? Reply : "";
+    neverd_free_string(Reply);
+    auto Parsed = json::parse(Text);
+    if (!Parsed) {
+      logAllUnhandledErrors(Parsed.takeError(), errs());
+      return 1;
+    }
+    const auto *Object = Parsed->getAsObject();
+    if (JsonOutput) {
+      outs() << Text << '\n';
+    } else if (Object) {
+      if (auto Error = Object->getString(macho_loader::cache_load::kErrorKey))
+        errs() << *Error << '\n';
+      if (const auto *Images =
+              Object->getArray(macho_loader::cache_load::kImagesKey))
+        for (const auto &Image : *Images)
+          outs() << *Image.getAsObject()->getString(
+                        macho_loader::cache_load::kAddressKey)
+                 << " "
+                 << *Image.getAsObject()->getString(
+                        macho_loader::cache_load::kPathKey)
+                 << '\n';
+    }
+    return !Object || Object->get(macho_loader::cache_load::kErrorKey) ? 1 : 0;
+  }
+
   if (PdbUnverified && PdbFile.getValue().empty()) {
     WithColor::error() << "--pdb-unverified needs the PDB named by --pdb\n";
+    return 1;
+  }
+  if (MapUnchecked && MapFile.getValue().empty()) {
+    WithColor::error() << "--map-unchecked needs the MAP named by --map\n";
     return 1;
   }
 
@@ -144,17 +210,22 @@ static int realMain(int Argc, char *Argv[]) {
   // The debug-symbol search is part of loading, so its policy has to be in
   // place before the load rather than adjusted afterwards.
   neverd_session_set_debug_info_enabled(Sess, NoDebug ? 0 : 1);
+  neverd_session_set_pdb_search(Sess, NoPdb ? 0 : 1);
   neverd_session_set_dwarf_search(Sess, NoDwarf ? 0 : 1);
+  neverd_session_set_map_search(Sess, NoMap ? 0 : 1);
   neverd_session_set_symbol_table(Sess, NoSymtab ? 0 : 1);
   if (!PdbFile.getValue().empty())
     neverd_session_set_pdb_path_ex(Sess, PdbFile.getValue().c_str(),
                                    PdbUnverified ? 1 : 0);
+  if (!DwarfFile.getValue().empty())
+    neverd_session_set_dwarf_path(Sess, DwarfFile.getValue().c_str());
   if (!MapFile.getValue().empty())
-    neverd_session_set_map_path(Sess, MapFile.getValue().c_str());
+    neverd_session_set_map_path_ex(Sess, MapFile.getValue().c_str(),
+                                   MapUnchecked ? 1 : 0);
   if (SymbolPathOption.getNumOccurrences())
     neverd_session_set_symbol_path(Sess, SymbolPathOption.getValue().c_str());
   // The download goes into a store the load then searches.
-  if (DownloadSymbols && !NoDebug && PdbFile.getValue().empty()) {
+  if (DownloadSymbols && !NoDebug && !NoPdb && PdbFile.getValue().empty()) {
     const auto Report = [](const std::string &Line) {
       if (!JsonOutput)
         errs() << "\r" << Line << "                    \n";
@@ -253,8 +324,13 @@ static int realMain(int Argc, char *Argv[]) {
         nullptr);
   }
   // A binary file reads as --loader and its placement say.
-  if (!LoadLoader.empty()) {
-    json::Object Options{{"loader", LoadLoader.getValue()}};
+  if (!LoadLoader.empty() || !LoadCacheImage.empty()) {
+    json::Object Options{{macho_loader::cache_load::kLoaderKey,
+                          LoadLoader.empty()
+                              ? std::string(macho_loader::cache_load::kLoader)
+                              : LoadLoader.getValue()}};
+    if (!LoadCacheImage.empty())
+      Options[macho_loader::cache_load::kImageKey] = LoadCacheImage.getValue();
     if (!LoadProcessor.empty())
       Options["processor"] = LoadProcessor.getValue();
     if (!LoadPlatform.empty())
@@ -287,7 +363,8 @@ static int realMain(int Argc, char *Argv[]) {
     return 1;
   }
   // The input is read this way from now on, as the GUI keeps it.
-  if (!LoadLoader.empty() && neverd_load_options_save(Sess) != 0)
+  if ((!LoadLoader.empty() || !LoadCacheImage.empty()) &&
+      neverd_load_options_save(Sess) != 0)
     WithColor::warning() << "load options were not kept: "
                          << takeLastError(Sess) << "\n";
   if (NameHint) {
@@ -302,6 +379,11 @@ static int realMain(int Argc, char *Argv[]) {
       }
     }
   }
+  // Analysis sections are database overlays, never implicit input to binary
+  // rewriting or runtime execution. Shared native read commands see them.
+  if (!PatchCmd && !AnnotateCmd && !RenameCmd && !SigsCmd &&
+      !loadAnalysisSections(Sess))
+    return 1;
   if ((LiftCmd || DecompileCmd || DisasmCmd || CfgCmd || SymbolicCmd ||
        AuditCmd || HuntCmd) &&
       !configureAnalysisSession(Sess))
@@ -319,7 +401,7 @@ static int realMain(int Argc, char *Argv[]) {
     }
   }
 
-  if (!JsonOutput && !SymbolicCmd && !AuditCmd && !HuntCmd &&
+  if (!PatchBytesCmd && !JsonOutput && !SymbolicCmd && !AuditCmd && !HuntCmd &&
       !(PatchCmd && PatchReport)) {
     const char *ArchStr = neverd_session_arch_name(Sess);
     outs() << "=== " << ProjectName << " v" << VersionString << " (" << Command
@@ -331,14 +413,27 @@ static int realMain(int Argc, char *Argv[]) {
     // Which names the run is working from is worth stating up front: it
     // explains why a function reads as `parse_header` in one run and
     // `sub_140001A20` in the next.
-    const char *DbgKind = neverd_session_debug_info_kind(Sess);
-    const char *DbgPath = neverd_session_debug_info_path(Sess);
-    if (DbgPath[0] != '\0')
-      outs() << "Debug: " << DbgKind << " ("
-             << pathToUTF8(std::filesystem::u8path(DbgPath).filename())
-             << ")\n";
-    neverd_free_string(DbgKind);
-    neverd_free_string(DbgPath);
+    // A MAP read beside a PDB or DWARF follows it.
+    const char *DbgFiles = neverd_session_debug_info_json(Sess);
+    if (auto Parsed = llvm::json::parse(DbgFiles)) {
+      std::string Line;
+      if (const auto *Files = Parsed->getAsObject()->getArray("files"))
+        for (const auto &File : *Files) {
+          const auto *Entry = File.getAsObject();
+          if (!Line.empty())
+            Line += ", ";
+          Line += Entry->getString("kind").value_or("").str() + " (" +
+                  pathToUTF8(std::filesystem::u8path(
+                                 Entry->getString("path").value_or("").str())
+                                 .filename()) +
+                  ")";
+        }
+      if (!Line.empty())
+        outs() << "Debug: " << Line << "\n";
+    } else {
+      consumeError(Parsed.takeError());
+    }
+    neverd_free_string(DbgFiles);
   }
 
   // Dispatch to the category handler for the active subcommand.  Each reads its
@@ -357,6 +452,8 @@ static int realMain(int Argc, char *Argv[]) {
     return runSegments(Sess);
   if (SectionsCmd)
     return runSections(Sess);
+  if (AnalysisSectionsCmd)
+    return runAnalysisSections(Sess);
   if (SymbolsCmd)
     return runSymbols(Sess);
   if (RelocsCmd)
@@ -365,6 +462,8 @@ static int realMain(int Argc, char *Argv[]) {
     return runEntryPoints(Sess);
   if (SwitchesCmd)
     return runSwitches(Sess);
+  if (TypesCmd)
+    return runTypes(Sess);
   if (StringsCmd)
     return runStrings(Sess);
   if (FuncsCmd)
@@ -385,6 +484,10 @@ static int realMain(int Argc, char *Argv[]) {
     return runXrefs(Sess);
   if (CallGraphCmd)
     return runCallGraph(Sess);
+  if (PathsCmd)
+    return runPaths(Sess);
+  if (CallTreeCmd)
+    return runCallTree(Sess);
   if (BookmarksCmd)
     return runBookmarks();
   if (AnnotateCmd)
@@ -407,6 +510,8 @@ static int realMain(int Argc, char *Argv[]) {
     return runLift(Sess);
   if (DecompileCmd)
     return runDecompile(Sess);
+  if (PatchBytesCmd)
+    return runPatchBytes(Sess);
   if (PatchCmd)
     return runPatch(Sess);
 

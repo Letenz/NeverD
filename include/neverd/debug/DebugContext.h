@@ -15,7 +15,9 @@
 #define NEVERD_DEBUG_DEBUGCONTEXT_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/SourceTypeHint.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/support/LoadProgress.h"
 
 #include <cstdint>
 #include <map>
@@ -25,20 +27,6 @@
 #include <vector>
 
 namespace neverd {
-
-/// Optional load-time progress.  Image parse and PDB publics must not look
-/// idle.
-struct LoadProgress {
-  using Fn = void (*)(void *User, const char *Phase, unsigned long long Done,
-                      unsigned long long Total, const char *Detail);
-  Fn Callback = nullptr;
-  void *User = nullptr;
-  void report(const char *Phase, unsigned long long Done,
-              unsigned long long Total, const char *Detail = "") const {
-    if (Callback)
-      Callback(User, Phase, Done, Total, Detail ? Detail : "");
-  }
-};
 
 struct SourceLoc {
   std::string File;
@@ -64,12 +52,41 @@ struct FunctionSym {
   SourceLoc DeclLoc;
   TypeRef ReturnType;
   std::vector<std::pair<std::string, TypeRef>> Params;
+  /// Params names only the fixed prefix of a variadic declaration.
+  bool IsVariadic = false;
   DebugCallConv CallConv = DebugCallConv::Unknown;
   /// The function follows the platform's C calling convention, as C, C++,
   /// Objective-C and Rust code does.  False for a language with conventions
   /// of its own, such as Go's register ABI, or one the debug information
   /// does not name: no C placement rules locate its parameters.
   bool PlatformConvention = true;
+  /// Where each parameter enters the function, for one the debug information
+  /// places in a register at the entry where the platform's convention would
+  /// not: an i386 function GCC passes EAX, EDX and ECX (regparm), or clang
+  /// ECX and EDX (fastcc).  Parallel to Params: an IntegerRegister location
+  /// names its register, a Stack one says only that the value is in the
+  /// caller's slots, and None that the information does not say.  Empty for
+  /// every other function.
+  std::vector<SourceABIValueLocation> ParamEntryLocations;
+  /// Where a known routine's return and parameters come from when neither
+  /// the debug information nor the user gives them: the type library whose
+  /// prototype of the function's name gives them (windows-kernel-x64), and
+  /// that prototype as the library declares it, in C.  Empty otherwise.
+  std::string PrototypeLibrary;
+  std::string PrototypeDeclaration;
+  /// The same declaration with portable scalar spellings, retaining source
+  /// qualifiers for C output that does not include the target platform SDK.
+  /// Its outer cdecl/stdcall is carried by CallConv, not the spelling.
+  std::string PortablePrototypeDeclaration;
+  /// The prototype comes from a selected platform header library, including
+  /// Windows SDK/WDK headers that are rendered without a host header include.
+  bool PrototypeFromHeader = false;
+  /// The library is a C library's headers (glibc's, bionic's, musl's,
+  /// libSystem's), which a unit's C includes: a definition of the name in
+  /// the image is a copy of the routine they declare, not that routine.
+  bool PrototypeFromCLibrary = false;
+  /// The function never returns, as its declaration says (`_Noreturn`).
+  bool NoReturn = false;
 
   bool contains(va_t Address) const {
     return Address >= Addr && Address - Addr < Size;
@@ -198,6 +215,15 @@ public:
   virtual ~DebugContext() = default;
 
   virtual std::optional<FunctionSym> resolveFunction(va_t Addr) const = 0;
+  /// The prototype of the routine named \p Name, by its C name, as the
+  /// program's types declare it: a header library's for a routine another
+  /// module exports, as the Windows kernel's headers declare what drivers
+  /// import.  None where none declares one the decompiler can describe.
+  virtual std::optional<FunctionSym>
+  resolvePrototype(llvm::StringRef Name) const {
+    (void)Name;
+    return std::nullopt;
+  }
   /// Public name only.  PDB `--func` must not walk the owning module's
   /// S_LOCAL stream just to replace `sub_<va>`.
   virtual std::optional<std::string> functionName(va_t Addr) const {

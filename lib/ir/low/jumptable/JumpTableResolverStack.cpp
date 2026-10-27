@@ -14,10 +14,11 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "JumpTableResolverDetail.h"
 #include "../../AffineFrameState.h"
+#include "JumpTableResolverDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/libc/LibCNames.h"
@@ -824,7 +825,8 @@ va_t CFGBuilder::resolveStackMaterializedTableSource(
                Occurrence.DereferenceOpSeq >= 0 &&
                (Occurrence.DereferenceOpcode == NdOp::LOAD ||
                 Occurrence.DereferenceOpcode == NdOp::STORE ||
-                Occurrence.DereferenceOpcode == NdOp::CALL) &&
+                Occurrence.DereferenceOpcode == NdOp::CALL ||
+                Occurrence.DereferenceOpcode == NdOp::INTRINSIC) &&
                Occurrence.DereferenceAccessSize != 0;
       };
   auto exactStaticAddressMetadata =
@@ -929,7 +931,8 @@ va_t CFGBuilder::resolveStackMaterializedTableSource(
             Occurrence.OutputMayDepend ||
             Occurrence.TargetOwnerVA == InvalidVA ||
             !Img.relocatedTargetBelongsToOwner(Occurrence.TargetVA,
-                                               Occurrence.TargetOwnerVA) ||
+                                               Occurrence.TargetOwnerVA,
+                                               ExecutableCodeOwners) ||
             !exactImmutableDataSpanOwner(Img, StaticAddress, AccessSize,
                                          Occurrence.TargetOwnerVA))
           continue;
@@ -1006,7 +1009,9 @@ va_t CFGBuilder::resolveStackMaterializedTableSource(
                   *SourceValues) -> std::optional<va_t> {
     if (!chargeEvidence())
       return std::nullopt;
-    if (Depth > 4)
+    if (Depth >
+        ::neverd::limits::ir::
+            kJumpTableResolverStackCFGBuilderResolveStackMaterializedTableSourceTraceValToConstSrcDepthLimit)
       return std::nullopt;
     int LdD = -1;
     {

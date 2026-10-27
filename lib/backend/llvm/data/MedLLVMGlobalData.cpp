@@ -20,10 +20,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Common.h"
+#include "neverd/backend/DataSymbolMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/ir/med/I386PicAddress.h"
+#include "neverd/ir/med/X86/I386PicAddress.h"
 #include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/Diagnostic.h"
@@ -60,6 +61,18 @@
 
 namespace neverd {
 
+namespace {
+bool isMachORuntimeDataAddress(const BinaryImage &Image, uint64_t Address) {
+  if (!Image.isMachO())
+    return false;
+  const auto *Section = Image.getSectionFor(Address);
+  return Section &&
+         (llvm::StringRef(Section->Name)
+              .starts_with(section_names::macho::ObjCMetadataPrefix) ||
+          Section->Name == section_names::macho::CfString);
+}
+} // namespace
+
 //===----------------------------------------------------------------------===//
 // Global data resolution
 //===----------------------------------------------------------------------===//
@@ -94,7 +107,7 @@ MedLLVMEmitter::resolveDataSymbolAddress(const DataSymbolBinding &Binding) {
                                 Binding.Name);
   if (!Binding.Definition)
     if (auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Target))
-      Global->setMetadata("neverd.data-symbol", llvm::MDNode::get(*Ctx, {}));
+      data_symbol::mark(*Global);
   auto *Integer = llvm::IntegerType::get(*Ctx, Img->getPointerSize() * 8);
   auto *Address = llvm::ConstantExpr::getPtrToInt(Target, Integer);
   return Binding.Addend
@@ -181,15 +194,13 @@ bool MedLLVMEmitter::canResolveGlobalDataConstant(uint64_t Addr) const {
   if (!Seg->isReadable())
     return false;
 
+  if (OriginalImageStorageForSource && !Img->IsRelocatable)
+    return true;
+
   // Objective-C runtime objects intentionally remain external identities and
   // therefore do not require file-backed bytes in the rebuilt module.
-  if (Img->isMachO()) {
-    const Section *Sec = Img->getSectionFor(Addr);
-    if (Sec && (llvm::StringRef(Sec->Name).starts_with(
-                    section_names::macho::ObjCMetadataPrefix) ||
-                Sec->Name == section_names::macho::CfString))
-      return true;
-  }
+  if (isMachORuntimeDataAddress(*Img, Addr))
+    return true;
 
   if (isMutableDataSeg(Seg)) {
     uint64_t RunStart = 0, RunEnd = 0;
@@ -216,6 +227,9 @@ MedLLVMEmitter::tryResolveDirectGlobalDataAddress(const MedVar &Address,
     const unsigned AddressBits = Address.Size > 0 ? Address.Size * 8 : 64;
     if (isFrameRelativeDisplacement(OwnedAddress, AddressBits))
       return nullptr;
+    if (llvm::Constant *Bytes =
+            tryResolveDirectDataBytes(OwnedAddress, DataSizeHint, OwnerVA))
+      return Bytes;
     return tryResolveOwnedGlobalData(OwnedAddress, OwnerVA, DataSizeHint);
   }
 
@@ -249,12 +263,16 @@ MedLLVMEmitter::tryResolveDirectGlobalDataAddress(const MedVar &Address,
   const unsigned AddressBits = Address.Size > 0 ? Address.Size * 8 : 64;
   if (isFrameRelativeDisplacement(*NumericAddress, AddressBits))
     return nullptr;
+  if (llvm::Constant *Bytes =
+          tryResolveDirectDataBytes(*NumericAddress, DataSizeHint))
+    return Bytes;
   return tryResolveGlobalData(*NumericAddress, DataSizeHint);
 }
 
-llvm::Constant *
-MedLLVMEmitter::tryResolveOwnedGlobalData(uint64_t Addr, uint64_t OwnerVA,
-                                          uint16_t DataSizeHint) {
+llvm::Constant *MedLLVMEmitter::tryResolveOwnedGlobalData(uint64_t Addr,
+                                                          uint64_t OwnerVA,
+                                                          uint16_t DataSizeHint,
+                                                          bool WholeOwner) {
   if (!Img || OwnerVA == InvalidVA)
     return tryResolveGlobalData(Addr, DataSizeHint);
 
@@ -287,12 +305,18 @@ MedLLVMEmitter::tryResolveOwnedGlobalData(uint64_t Addr, uint64_t OwnerVA,
   if (Addr < OwnerBegin || Addr > OwnerEnd)
     return nullptr;
 
+  if (auto [Storage, Base] = originalImageStorage(OwnerVA); Storage)
+    return llvm::ConstantExpr::getGetElementPtr(
+        llvm::Type::getInt8Ty(*Ctx), Storage,
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx), Addr - Base));
+
   // Interior addresses keep every established special case (Objective-C
   // runtime identities, compact strings, pointer mirrors).  The owner-aware
   // path is required when zero denotes NOBITS storage or when one-past lands
   // in another section and value-only lookup would choose that neighbour.
   const Section *NumericSec = Img->getSectionFor(Addr);
-  if (Addr < OwnerEnd && NumericSec == OwnerSec &&
+  if ((!WholeOwner || isMachORuntimeDataAddress(*Img, Addr)) &&
+      Addr < OwnerEnd && NumericSec == OwnerSec &&
       !(Addr == 0 && !Img->hasObjectDataProvenance(0)))
     if (llvm::Constant *Direct = tryResolveGlobalData(Addr, DataSizeHint))
       return Direct;
@@ -322,6 +346,11 @@ MedLLVMEmitter::tryResolveOwnedGlobalData(uint64_t Addr, uint64_t OwnerVA,
 
 llvm::Constant *MedLLVMEmitter::tryResolveGlobalData(uint64_t Addr,
                                                      uint16_t DataSizeHint) {
+  if (Addr != 0)
+    if (auto [Storage, Base] = originalImageStorage(Addr); Storage)
+      return llvm::ConstantExpr::getGetElementPtr(
+          llvm::Type::getInt8Ty(*Ctx), Storage,
+          llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx), Addr - Base));
   if (!canResolveGlobalDataConstant(Addr))
     return nullptr;
 
@@ -421,21 +450,16 @@ llvm::Constant *MedLLVMEmitter::tryResolveGlobalData(uint64_t Addr,
   // still encoded for the on-disk image.  Keep every direct reference into
   // these sections anchored at its original VA; the patch resolver turns the
   // synthetic symbol back into that slid address.
-  if (Img->isMachO()) {
-    const Section *Sec = Img->getSectionFor(Addr);
-    if (Sec && (llvm::StringRef(Sec->Name).starts_with(
-                    section_names::macho::ObjCMetadataPrefix) ||
-                Sec->Name == section_names::macho::CfString)) {
-      std::string Name = makeNdDataSymbol(Addr);
-      llvm::GlobalVariable *GV = Mod->getNamedGlobal(Name);
-      if (!GV)
-        GV = new llvm::GlobalVariable(
-            *Mod, llvm::Type::getInt8Ty(*Ctx), /*isConstant=*/false,
-            llvm::GlobalValue::ExternalLinkage, /*Initializer=*/nullptr, Name);
-      GV->setDSOLocal(true);
-      GlobalDataCache[Addr] = GV;
-      return GV;
-    }
+  if (isMachORuntimeDataAddress(*Img, Addr)) {
+    std::string Name = makeNdDataSymbol(Addr);
+    llvm::GlobalVariable *GV = Mod->getNamedGlobal(Name);
+    if (!GV)
+      GV = new llvm::GlobalVariable(
+          *Mod, llvm::Type::getInt8Ty(*Ctx), /*isConstant=*/false,
+          llvm::GlobalValue::ExternalLinkage, /*Initializer=*/nullptr, Name);
+    GV->setDSOLocal(true);
+    GlobalDataCache[Addr] = GV;
+    return GV;
   }
 
   // Writable data (.data / .bss): recreate the WHOLE segment as one cohesive
@@ -471,7 +495,8 @@ llvm::Constant *MedLLVMEmitter::tryResolveGlobalData(uint64_t Addr,
   // the stale original VA this boundary exists to eliminate.
   if (segHasPtrRelocSlots(Seg)) {
     uint64_t SegOut = 0;
-    if (llvm::Constant *Tbl = buildCodePtrSegmentGlobal(Seg->VA, SegOut)) {
+    if (llvm::Constant *Tbl = buildCodePtrSegmentGlobal(
+            Seg->VA, SegOut, /*InCodeObjectAddr=*/Addr)) {
       // GEP relative to the mirror's run base (SegOut), which may start before
       // Seg->VA when the run extends backward over an adjacent read-only
       // neighbour.
@@ -490,6 +515,32 @@ llvm::Constant *MedLLVMEmitter::tryResolveGlobalData(uint64_t Addr,
   size_t Off = static_cast<size_t>(Addr - Seg->VA);
   if (Off >= Seg->Data.size())
     return nullptr;
+
+  // A data object among code holds relocated pointers (GNU ld's
+  // __CTOR_LIST__) that only the code segment's pointer-table mirror
+  // relocates.  Without that mirror, past the embedding limit, every copy
+  // below starts at Addr and takes at most kMaxEmbeddedDataLen bytes; one
+  // that reaches such a pointer would keep its original address.
+  if (Seg->isExecutable()) {
+    const uint64_t PtrSz = Img->getPointerSize();
+    const uint64_t Begin = Addr - std::min<uint64_t>(Addr, PtrSz - 1);
+    const uint64_t End = Addr + std::min<uint64_t>(Seg->Data.size() - Off,
+                                                   limits::kMaxEmbeddedDataLen);
+    auto reaches = [&](const std::set<uint64_t> &Slots) {
+      auto It = Slots.lower_bound(Begin);
+      return It != Slots.end() && *It < End;
+    };
+    if (PtrSz != 0 &&
+        (reaches(Img->CodePtrRelocSlots) || reaches(Img->DataPtrRelocSlots))) {
+      if (!FatalDataPointerResolution)
+        syncError() << "med_llvm_emitter: data at 0x" << llvm::utohexstr(Addr)
+                    << " among code holds a relocated pointer its code "
+                       "segment cannot mirror; refusing stale-address "
+                       "fallback\n";
+      FatalDataPointerResolution = true;
+      return nullptr;
+    }
+  }
 
   const uint8_t *Start = Seg->Data.data() + Off;
   size_t MaxLen = Seg->Data.size() - Off;
@@ -550,6 +601,7 @@ llvm::Constant *MedLLVMEmitter::tryResolveGlobalData(uint64_t Addr,
       Img->DataPtrRelocSlots.count(Addr) != 0 ||
       EffectiveImportStorageSlots.count(Addr) != 0 ||
       ConflictingImportStorageSlots.count(Addr) != 0 ||
+      ExternalFunctionPointerSlots.count(Addr) != 0 ||
       Img->hasRuntimeCallablePointerSlotAt(Addr);
   bool IsInductionStringBase = isInductionRodataStringBase(Addr);
   if (IsString && StrLen > 0 && AtStringStart && !SizedObjectBeyondString &&

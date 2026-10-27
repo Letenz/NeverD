@@ -1,11 +1,13 @@
 #include "neverd/loader/ObjC/ObjCBlockCallHints.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/libc/LibCNames.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/MachO/DarwinImportVeneer.h"
 #include "neverd/loader/ObjC/ObjCBlocks.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
@@ -399,8 +401,9 @@ stackBlockSignature(const BinaryImage &Image,
                     const Value &Argument) {
   // The descriptor provides only a call ABI here. Source projection proves
   // the stack isa, capture ownership, and consumer lifetime independently.
-  if (Argument.K != Value::Kind::Frame || Argument.Offset < -1048576 ||
-      Argument.Offset > 1048576)
+  if (Argument.K != Value::Kind::Frame ||
+      Argument.Offset < -::neverd::limits::ir::kMaxSourceFrameDisplacement ||
+      Argument.Offset > ::neverd::limits::ir::kMaxSourceFrameDisplacement)
     return std::nullopt;
   const auto Field = [&](int64_t Offset) -> const Value * {
     const auto It = Slots.find({Argument.Offset + Offset, 8});
@@ -520,7 +523,9 @@ bool discardedResultAcrossCFG(
     const SourceFunctionTypeHint *EntrySignature) {
   if (Image.Arch != Arch::AArch64 || !BoundCalls ||
       TRI.IntReturnRegs.size() < 2 || TRI.FPReturnRegs.empty() ||
-      Function.Blocks.size() > 64)
+      Function.Blocks.size() >
+          ::neverd::limits::loader::
+              kObjCBlockCallHintsDiscardedResultAcrossCFGFunctionBlocksSizeLimit)
     return false;
   std::string EntryError;
   const bool VoidBlockEntry =
@@ -557,7 +562,8 @@ bool discardedResultAcrossCFG(
   };
   std::vector<Cursor> Work{
       {CallBlock, CallIndex + 1, true, true, {CallBlock->Id}}};
-  size_t Budget = 4096;
+  size_t Budget = ::neverd::limits::loader::
+      kObjCBlockCallHintsDiscardedResultAcrossCFGBudget;
   while (!Work.empty()) {
     auto State = std::move(Work.back());
     Work.pop_back();
@@ -673,7 +679,9 @@ bool discardedResultAcrossCFG(
       Next.Index = 0;
       Next.Visited.insert(SuccessorId);
       Work.push_back(std::move(Next));
-      if (Work.size() > 64)
+      if (Work.size() >
+          ::neverd::limits::loader::
+              kObjCBlockCallHintsDiscardedResultAcrossCFGWorkSizeLimit)
         return false;
     }
   }
@@ -684,9 +692,12 @@ std::vector<uint64_t> preservedEntryContextRegisters(
     const LowFunc &Function, const LowBlock &Entry, const LowBlock &Candidate,
     const TargetRegInfo &TRI,
     const std::map<va_t, SourceCallTypeHint> *BoundCalls, Arch Architecture) {
-  if (!BoundCalls || Function.Blocks.size() > 64 || !Entry.Preds.empty() ||
-      !Entry.ExceptionalPreds.empty() || !Candidate.ExceptionalPreds.empty() ||
-      &Entry == &Candidate)
+  if (!BoundCalls ||
+      Function.Blocks.size() >
+          ::neverd::limits::loader::
+              kObjCBlockCallHintsPreservedEntryContextRegistersFunctionBlocksSizeLimit ||
+      !Entry.Preds.empty() || !Entry.ExceptionalPreds.empty() ||
+      !Candidate.ExceptionalPreds.empty() || &Entry == &Candidate)
     return {};
   std::map<int, const LowBlock *> ById;
   for (const auto &Block : Function.Blocks)
@@ -833,7 +844,8 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
              std::map<va_t, std::set<size_t>> *ZeroArguments = nullptr,
              std::optional<uint64_t> CarriedEntryContext = std::nullopt) {
   std::map<va_t, SourceCallTypeHint> Result;
-  if (Block.Ops.size() > 65536)
+  if (Block.Ops.size() >
+      ::neverd::limits::loader::kObjCBlockCallHintsAnalyzeBlockOpsSizeLimit)
     return Result;
   const auto &TRI = getTargetRegInfo(Image.Arch);
   std::string EntryError;
@@ -1022,8 +1034,11 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
               if (Gap || !Argument || !scalar(Argument->Type) ||
                   Argument->K == Value::Kind::Invoke ||
                   (Argument->K == Value::Kind::Frame &&
-                   (FrameEscaped || Argument->Offset < -1048576 ||
-                    Argument->Offset > 1048576))) {
+                   (FrameEscaped ||
+                    Argument->Offset <
+                        -::neverd::limits::ir::kMaxSourceFrameDisplacement ||
+                    Argument->Offset >
+                        ::neverd::limits::ir::kMaxSourceFrameDisplacement))) {
                 Valid = false;
                 break;
               }
@@ -1224,7 +1239,9 @@ analyzeBlock(const BinaryImage &Image, const LowBlock &Block,
           ++It;
       if (FrameEscaped || !Address || Address->K != Value::Kind::Frame ||
           !Stored || Stored->K == Value::Kind::Frame ||
-          Address->Offset < -1048576 || Address->Offset > 1048576) {
+          Address->Offset <
+              -::neverd::limits::ir::kMaxSourceFrameDisplacement ||
+          Address->Offset > ::neverd::limits::ir::kMaxSourceFrameDisplacement) {
         FrameSlots.clear();
       } else {
         const auto Size = Op.Inputs[1].Size;
@@ -1361,7 +1378,10 @@ buildObjCBlockCallHints(const BinaryImage &Image, const LowFunc &Function,
     return Result;
   Result = analyzeBlock(Image, *Entry, EntrySignature, BoundCalls, Captures,
                         &Function, false);
-  if (Function.Blocks.size() == 1 || Function.Blocks.size() > 64)
+  if (Function.Blocks.size() == 1 ||
+      Function.Blocks.size() >
+          ::neverd::limits::loader::
+              kObjCBlockCallHintsBuildObjCBlockCallHintsFunctionBlocksSizeLimit)
     return Result;
 
   // A successor with one ordinary predecessor has one proven incoming state.
@@ -1377,7 +1397,9 @@ buildObjCBlockCallHints(const BinaryImage &Image, const LowFunc &Function,
   for (size_t PathIndex = 0; PathIndex < Paths.size(); ++PathIndex) {
     const auto Path = Paths[PathIndex];
     const auto *Parent = Path.back();
-    if (Path.size() >= 64)
+    if (Path.size() >=
+        ::neverd::limits::loader::
+            kObjCBlockCallHintsBuildObjCBlockCallHintsPathSizeLimit)
       continue;
     bool Transferable = true;
     for (size_t I = 0; I < Parent->Ops.size(); ++I) {
@@ -1415,7 +1437,9 @@ buildObjCBlockCallHints(const BinaryImage &Image, const LowFunc &Function,
         bool Valid = true;
         for (size_t I = 0; I < Extended.size(); ++I) {
           const auto *Part = Extended[I];
-          if (Linear.Ops.size() + Part->Ops.size() + 1 > 65536) {
+          if (Linear.Ops.size() + Part->Ops.size() + 1 >
+              ::neverd::limits::loader::
+                  kObjCBlockCallHintsBuildObjCBlockCallHintsLinearOpsSizePartOpsSize1Limit) {
             Valid = false;
             break;
           }
@@ -1439,7 +1463,9 @@ buildObjCBlockCallHints(const BinaryImage &Image, const LowFunc &Function,
             Result.emplace(*Found);
         }
       }
-      if (Paths.size() < 64)
+      if (Paths.size() <
+          ::neverd::limits::loader::
+              kObjCBlockCallHintsBuildObjCBlockCallHintsPathsSizeLimit)
         Paths.push_back(std::move(Extended));
     }
   }
@@ -1467,7 +1493,9 @@ buildObjCBlockCallHints(const BinaryImage &Image, const LowFunc &Function,
         continue;
       }
       if (Current->Preds.empty() || !Current->ExceptionalPreds.empty() ||
-          Reverse.size() >= 64) {
+          Reverse.size() >=
+              ::neverd::limits::loader::
+                  kObjCBlockCallHintsBuildObjCBlockCallHintsReverseSizeLimit) {
         Complete = false;
         break;
       }
@@ -1512,7 +1540,9 @@ buildObjCBlockCallHints(const BinaryImage &Image, const LowFunc &Function,
       LowBlock Linear;
       for (size_t I = 0; I < Path.size(); ++I) {
         const auto *Part = Path[I];
-        if (Linear.Ops.size() + Part->Ops.size() + 1 > 65536) {
+        if (Linear.Ops.size() + Part->Ops.size() + 1 >
+            ::neverd::limits::loader::
+                kObjCBlockCallHintsBuildObjCBlockCallHintsLinearOpsSizePartOpsSize1Limit) {
           Complete = false;
           break;
         }

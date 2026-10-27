@@ -4,6 +4,7 @@
 #include "SwiftSourceSignatures.h"
 
 #include "neverd/loader/Swift/SwiftRuntimeSource.h"
+#include "neverd/sdk/Limits.h"
 
 namespace neverd::sdk::swift_source {
 
@@ -59,9 +60,11 @@ inline std::optional<SwiftRuntimeSourceRequest> emptyValueInitializerRequest(
 inline bool sameRuntimePropertyType(const SwiftSourceType &A,
                                     const SwiftSourceType &B,
                                     unsigned Depth = 0) {
-  return Depth <= 8 && A.TheKind == B.TheKind && A.Name == B.Name &&
-         A.Bits == B.Bits && A.IsSigned == B.IsSigned &&
-         bool(A.Pointee) == bool(B.Pointee) &&
+  return Depth <=
+             ::neverd::sdk::
+                 kSwiftRuntimeSignaturesSameRuntimePropertyTypeDepthLimit &&
+         A.TheKind == B.TheKind && A.Name == B.Name && A.Bits == B.Bits &&
+         A.IsSigned == B.IsSigned && bool(A.Pointee) == bool(B.Pointee) &&
          (!A.Pointee ||
           sameRuntimePropertyType(*A.Pointee, *B.Pointee, Depth + 1));
 }

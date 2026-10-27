@@ -7,13 +7,16 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/ir/X86FPState.h"
-#include "neverd/ir/intrinsics/X64Syscall.h"
+#include "neverd/ir/X86/X86FPState.h"
+#include "neverd/ir/intrinsics/X86/X64Syscall.h"
 #include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/libc/LibCNames.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/libc/StackProbeIndex.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ELF/ELFOperatingSystem.h"
 
@@ -68,6 +71,66 @@ std::optional<unsigned> wholeVectorFamily(Arch A, const NdVar &V) {
 void joinReads(GPRReadWidths &Into, const GPRReadWidths &From) {
   for (size_t I = 0; I < Into.size(); ++I)
     Into[I] = std::max(Into[I], From[I]);
+}
+
+/// Copies whose destination is overwritten before any observation in this
+/// block. A syntactic read is not an argument use when, for example, XCHG
+/// copies an incoming scratch register into RBX just before CPUID defines
+/// EBX. Keep all bytes live at block exits and calls: this local proof never
+/// assumes a return convention or an omitted callee's register contract.
+std::set<size_t>
+overwrittenRegisterCopies(Arch A, const LowBlock &Block,
+                          const std::map<size_t, uint8_t> &MergeWrites) {
+  std::set<size_t> Copies;
+  if (A != Arch::X64 || !Block.ExceptionalSuccs.empty())
+    return Copies;
+  std::array<uint8_t, kX64GPRBytes / 8> Dead{};
+  auto Slice =
+      [&](const NdVar &V) -> std::optional<std::pair<unsigned, uint8_t>> {
+    const auto Family = V.isReg() ? gprFamilyOf(A, V.Offset) : std::nullopt;
+    if (!Family || !V.Size || V.Size > 8 || V.Offset % 8 + V.Size > 8)
+      return std::nullopt;
+    return std::pair{
+        *Family, static_cast<uint8_t>(((1u << V.Size) - 1) << (V.Offset % 8))};
+  };
+  for (size_t I = Block.Ops.size(); I-- > 0;) {
+    const LowOp &Op = Block.Ops[I];
+    switch (Op.Opcode) {
+    case NdOp::CALL:
+    case NdOp::INDIR_CALL:
+    case NdOp::BRANCH:
+    case NdOp::COND_BR:
+    case NdOp::INDIR_BR:
+    case NdOp::RETURN:
+      Dead.fill(0);
+      continue;
+    default:
+      break;
+    }
+    const auto Output = Slice(Op.Output);
+    const bool Unobserved =
+        Output && Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+        Op.Inputs[0].isReg() && Op.Output.Size == Op.Inputs[0].Size &&
+        Op.MemoryOrdering == NdMemoryOrdering::None &&
+        Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        !MergeWrites.count(I) &&
+        (Dead[Output->first] & Output->second) == Output->second;
+    if (Unobserved)
+      Copies.insert(I);
+    if (Output) {
+      uint8_t Written = Output->second;
+      if (const auto Merge = MergeWrites.find(I); Merge != MergeWrites.end())
+        Written = static_cast<uint8_t>((1u << Merge->second) - 1);
+      else if (Op.Output.Offset % 8 == 0 && Op.Output.Size == 4)
+        Written = 0xFF; // x86-64's 32-bit writes also define the high half.
+      Dead[Output->first] |= Written;
+    }
+    if (!Unobserved)
+      for (unsigned In = 0; In < Op.NumInputs; ++In)
+        if (const auto Input = Slice(Op.Inputs[In]))
+          Dead[Input->first] &= ~Input->second;
+  }
+  return Copies;
 }
 
 // MSVC 19.44 crashes when these helper types are function-local. Keep their
@@ -375,8 +438,11 @@ unreadSyscallArguments(const BinaryImage &Img, const LowBlock &Block) {
         Number ? linuxX64SyscallArgumentCount(*Number) : std::nullopt;
     if (!Count || *Count >= std::size(kLinuxX64SyscallArgumentRegisters))
       continue;
+    // The lift passes RDX:RSI and R8:R10 as one operand each, which the call
+    // reads whole once it reads either half.
     const llvm::ArrayRef<uint64_t> Rest =
-        llvm::ArrayRef(kLinuxX64SyscallArgumentRegisters).drop_front(*Count);
+        llvm::ArrayRef(kLinuxX64SyscallArgumentRegisters)
+            .drop_front(x64SyscallRegistersRead(*Count));
     for (size_t I = First; I < End; ++I)
       Unread[I] = Rest;
   }
@@ -496,6 +562,8 @@ StackValue stackValueOf(const StackState &S, const NdVar &V) {
 void summarizeIncomingStackReads(const BinaryImage &Img, CallRegisterBodyView F,
                                  const std::map<int, size_t> &IndexOfId,
                                  const std::set<va_t> &BlockStarts,
+                                 const std::map<va_t, va_t> *ArgumentSources,
+                                 const libc::StackProbeIndex *StackProbes,
                                  LocalRegisterEffect &Effect) {
   if (Img.Arch != Arch::X64) {
     Effect.UnknownStackReads = true;
@@ -713,7 +781,7 @@ void summarizeIncomingStackReads(const BinaryImage &Img, CallRegisterBodyView F,
       if (!LeavesFunction)
         continue;
       if (Op.Opcode == NdOp::CALL && DirectTarget && !TailCall &&
-          libc::stackProbeEffect(Img, Op.Inputs[0].Offset) ==
+          libc::stackProbeEffect(Img, Op.Inputs[0].Offset, StackProbes) ==
               libc::StackProbeEffect::Probe)
         continue;
       Unknown |= ArgumentsEscape();
@@ -735,11 +803,18 @@ void summarizeIncomingStackReads(const BinaryImage &Img, CallRegisterBodyView F,
           DirectTarget && Op.Opcode != NdOp::INDIR_BR &&
           (Op.Opcode == NdOp::INDIR_CALL
                ? !importCalleeName(Img, Op.Inputs[0].Offset).empty()
-               : Img.findImportAt(Op.Inputs[0].Offset) != nullptr);
+               : Img.findImportAt(Op.Inputs[0].Offset) != nullptr) &&
+          !importOwnRoutine(Img, ArgumentSources, Op.Inputs[0].Offset);
+      const std::optional<va_t> ArgumentsFrom =
+          ImportTarget ? std::nullopt
+                       : pointerVariableArgumentsFrom(ArgumentSources, F.Blocks,
+                                                      Block, I, Op);
       if (DirectTarget && EntryStack &&
           (ImportTarget ||
            (Op.Opcode != NdOp::INDIR_CALL && Op.Opcode != NdOp::INDIR_BR)))
         Effect.StackTailCallees.insert(Op.Inputs[0].Offset);
+      else if (EntryStack && ArgumentsFrom)
+        Effect.StackTailCallees.insert(*ArgumentsFrom);
       else
         Unknown = true;
     }
@@ -823,6 +898,268 @@ void summarizeIncomingStackReads(const BinaryImage &Img, CallRegisterBodyView F,
   Effect.UnknownStackReads |= Unknown;
   Effect.StackArgs = StackArgs;
 }
+// A constant SELECT consumes just one arm. Track scalar facts within a block
+// using the shared LowIR evaluator, so call-graph summaries and MedIR agree
+// about conditional implicit inputs. Memory and relocated addresses are never
+// sampled, and calls/opaque effects invalidate register facts.
+struct BlockScalarFacts {
+  using Fact = std::pair<uint16_t, uint64_t>;
+  std::map<size_t, unsigned> SelectedArms;
+  std::map<uint64_t, Fact> Registers;
+};
+
+BlockScalarFacts blockScalarFacts(const BinaryImage &Img, const LowBlock &Block,
+                                  bool KeepExit) {
+  BlockScalarFacts Facts;
+  if (!KeepExit &&
+      std::none_of(Block.Ops.begin(), Block.Ops.end(),
+                   [](const LowOp &O) { return O.Opcode == NdOp::SELECT; }))
+    return Facts;
+  auto &Registers = Facts.Registers;
+  std::map<uint64_t, BlockScalarFacts::Fact> Temps;
+  auto Value = [&](const NdVar &V) -> std::optional<uint64_t> {
+    if (!V.Size || V.Size > 8)
+      return std::nullopt;
+    const uint64_t Mask = UINT64_MAX >> ((8 - V.Size) * 8);
+    if (V.isConst()) {
+      if (isAddressProvenance(V.Provenance) ||
+          (V.Provenance == ConstantAddressProvenance::Unknown &&
+           Img.isPotentiallyRelocatableAddress(V.Offset)))
+        return std::nullopt;
+      return V.Offset & Mask;
+    }
+    if (V.isTemp()) {
+      const auto It = Temps.find(V.Offset);
+      return It != Temps.end() && It->second.first == V.Size
+                 ? std::optional<uint64_t>{It->second.second}
+                 : std::nullopt;
+    }
+    if (V.isReg()) {
+      auto It = Registers.upper_bound(V.Offset);
+      if (It != Registers.begin()) {
+        --It;
+        const auto [Width, Bits] = It->second;
+        const uint64_t Delta = V.Offset - It->first;
+        if (V.Size <= Width && Delta <= Width - V.Size)
+          return (Bits >> (Delta * 8)) & Mask;
+      }
+    }
+    return std::nullopt;
+  };
+  va_t Address = InvalidVA;
+  for (size_t I = 0; I < Block.Ops.size(); ++I) {
+    const auto &O = Block.Ops[I];
+    if (O.Addr != Address) {
+      Temps.clear();
+      Address = O.Addr;
+    }
+    std::optional<uint64_t> Result;
+    if (O.MemoryOrdering == NdMemoryOrdering::None &&
+        O.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+      if (O.Opcode == NdOp::SELECT && O.NumInputs == 3 && O.Output.Size &&
+          (O.Output.isReg() || O.Output.isTemp()) &&
+          O.Inputs[1].Size == O.Output.Size &&
+          O.Inputs[2].Size == O.Output.Size) {
+        if (auto C = Value(O.Inputs[0])) {
+          Facts.SelectedArms[I] = *C ? 1 : 2;
+          Result = Value(O.Inputs[Facts.SelectedArms[I]]);
+        }
+      } else
+        Result = lowScalarConstantResult(O, Value);
+    }
+    if (O.Opcode == NdOp::CALL || O.Opcode == NdOp::INDIR_CALL ||
+        O.Opcode == NdOp::INTRINSIC)
+      Registers.clear();
+    if (O.Output.isReg()) {
+      const auto &V = O.Output;
+      for (auto It = Registers.begin(); It != Registers.end();) {
+        const auto Base = It->first;
+        const bool Overlap = Base >= V.Offset
+                                 ? Base - V.Offset < V.Size
+                                 : V.Offset - Base < It->second.first;
+        It = Overlap ? Registers.erase(It) : std::next(It);
+      }
+      if (Result)
+        Registers[V.Offset] = {V.Size, *Result};
+    } else if (O.Output.isTemp()) {
+      Temps.erase(O.Output.Offset);
+      if (Result)
+        Temps[O.Output.Offset] = {O.Output.Size, *Result};
+    }
+  }
+  return Facts;
+}
+
+/// A constant set within every return block needs no inter-block search.
+/// Inspect only complete call-free bodies, with ordinary internal edges and
+/// no independent or exceptional entries. Other bodies keep unknown state.
+bool canSummarizeExitConstants(const BinaryImage &Img, CallRegisterBodyView F) {
+  if (Img.Arch != Arch::X64 || !F.Complete || F.UnsafeIndirectBranches ||
+      F.HasIndependentRoots || F.Blocks.empty())
+    return false;
+  size_t Operations = 0;
+  std::set<int> Blocks;
+  for (const LowBlock &Block : F.Blocks) {
+    if (Block.Ops.empty() || !Block.ExceptionalSuccs.empty() ||
+        Block.Ops.size() > limits::kMaxCallExitConstantOps - Operations ||
+        !Blocks.insert(Block.Id).second)
+      return false;
+    Operations += Block.Ops.size();
+  }
+  bool Returns = false;
+  bool WritesExtraRegister = false;
+  const TargetRegInfo &Registers = getTargetRegInfo(Img.Arch);
+  for (const LowBlock &Block : F.Blocks) {
+    const auto Last = Block.Ops.back().Opcode;
+    if (Last == NdOp::RETURN) {
+      if (!Block.Succs.empty())
+        return false;
+      Returns = true;
+    } else if ((Last != NdOp::BRANCH && Last != NdOp::COND_BR) ||
+               Block.Succs.empty())
+      return false;
+    for (int Succ : Block.Succs)
+      if (!Blocks.count(Succ))
+        return false;
+    for (size_t I = 0; I < Block.Ops.size(); ++I) {
+      const NdVar &Output = Block.Ops[I].Output;
+      if (Output.isReg() && Output.Size == sizeof(uint64_t) &&
+          gprFamilyOf(Img.Arch, Output.Offset) &&
+          Output.Offset % sizeof(uint64_t) == 0 &&
+          Output.Offset != Registers.StackPointer &&
+          !Registers.isReturnReg(Output.Offset))
+        WritesExtraRegister = true;
+      const auto Opcode = Block.Ops[I].Opcode;
+      if (Opcode == NdOp::CALL || Opcode == NdOp::INDIR_CALL ||
+          Opcode == NdOp::INTRINSIC || Opcode == NdOp::INDIR_BR ||
+          ((Opcode == NdOp::RETURN || Opcode == NdOp::BRANCH ||
+            Opcode == NdOp::COND_BR) &&
+           I + 1 != Block.Ops.size()))
+        return false;
+    }
+  }
+  return Returns && WritesExtraRegister;
+}
+
+// Keep only self-contained scalar query bodies. CPUID is ordered and must run
+// exactly once; source expansion will clone its multi-result definition rather
+// than independently recompute any of its returned words.
+std::shared_ptr<const std::vector<LowOp>>
+registerLeaf(const BinaryImage &Image, CallRegisterBodyView Body) {
+  if (Image.Arch != Arch::X64 || !Body.Complete ||
+      Body.UnsafeIndirectBranches || Body.HasIndependentRoots ||
+      Body.Blocks.size() != 1)
+    return {};
+  const auto &Block = Body.Blocks.front();
+  if (const auto *Exception =
+          Image.ExceptionMetadata.findFunction(Block.StartAddr);
+      Exception && (Exception->Personality != ExceptionPersonality::None ||
+                    Exception->ParseStatus != ExceptionParseStatus::Complete))
+    return {};
+  if (!Block.Preds.empty() || !Block.Succs.empty() ||
+      !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty() ||
+      Block.Ops.empty() ||
+      Block.Ops.size() > limits::ir::kSourceRegisterLeafOps)
+    return {};
+  const auto &Return = Block.Ops.back();
+  const auto *Encoding = Image.readVA(Return.Addr, 1);
+  if (Return.Opcode != NdOp::RETURN || Return.NumInputs != 1 ||
+      Return.Inputs[0] != NdVar::reg(x86reg::RAX, 8) || !Encoding ||
+      *Encoding != 0xC3)
+    return {};
+  const auto &Registers = getTargetRegInfo(Image.Arch);
+  auto Scalar = [&](const NdVar &Value) {
+    if (!Value.Size)
+      return true;
+    if (Value.Size > sizeof(uint64_t))
+      return false;
+    if (Value.isConst())
+      return Value.Provenance != ConstantAddressProvenance::Address &&
+             Value.Provenance != ConstantAddressProvenance::CodeAddress &&
+             Value.Provenance != ConstantAddressProvenance::DataAddress &&
+             Value.Provenance != ConstantAddressProvenance::AddressFragment &&
+             !Image.isPotentiallyRelocatableAddress(Value.Offset);
+    return Value.isTemp() ||
+           (Value.isReg() && ((gprFamilyOf(Image.Arch, Value.Offset) &&
+                               Value.Offset / 8 != x86reg::RSP / 8) ||
+                              Registers.isFlag(Value.Offset, Value.Size)));
+  };
+  bool HasQuery = false;
+  for (size_t I = 0; I + 1 < Block.Ops.size(); ++I) {
+    const auto &Op = Block.Ops[I];
+    // CLD/STD change control state outside the projected GPR results, even
+    // when this caller has no explicit read of the direction flag.
+    if (Op.Output.isReg() && Op.Output.Offset == x86reg::DF)
+      return {};
+    if (Op.MemoryOrdering != NdMemoryOrdering::None ||
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        !Scalar(Op.Output))
+      return {};
+    for (unsigned K = 0; K < Op.NumInputs; ++K)
+      if (!Scalar(Op.Inputs[K]))
+        return {};
+    switch (Op.Opcode) {
+    case NdOp::COPY:
+    case NdOp::INT_ADD:
+    case NdOp::INT_SUB:
+    case NdOp::INT_AND:
+    case NdOp::INT_OR:
+    case NdOp::INT_XOR:
+    case NdOp::INT_LEFT:
+    case NdOp::INT_RIGHT:
+    case NdOp::INT_ASHR:
+    case NdOp::INT_MULT:
+    case NdOp::INT_EQUAL:
+    case NdOp::INT_NOTEQUAL:
+    case NdOp::INT_LESS:
+    case NdOp::INT_SLESS:
+    case NdOp::INT_LESSEQUAL:
+    case NdOp::INT_SLESSEQUAL:
+    case NdOp::INT_ZEXT:
+    case NdOp::INT_SEXT:
+    case NdOp::INT_NEGATE:
+    case NdOp::INT_NOT:
+    case NdOp::INT_CARRY:
+    case NdOp::INT_SOVF:
+    case NdOp::INT_SBOR:
+    case NdOp::BOOL_AND:
+    case NdOp::BOOL_OR:
+    case NdOp::BOOL_XOR:
+    case NdOp::BOOL_NOT:
+    case NdOp::SUBBYTES:
+    case NdOp::CONCAT:
+    case NdOp::POPCOUNT:
+    case NdOp::SELECT:
+      break;
+    case NdOp::INTRINSIC:
+      if (Op.NumInputs != 3 || !Op.Inputs[0].isConst() ||
+          Op.Inputs[0].Offset != static_cast<unsigned>(Intrinsic::Cpuid))
+        return {};
+      HasQuery = true;
+      break;
+    default:
+      return {};
+    }
+  }
+  return HasQuery ? std::make_shared<const std::vector<LowOp>>(Block.Ops)
+                  : nullptr;
+}
+
+GPRExitConstants scalarExitConstants(const BinaryImage &Img,
+                                     const BlockScalarFacts &Facts) {
+  GPRExitConstants Constants;
+  const TargetRegInfo &Registers = getTargetRegInfo(Img.Arch);
+  for (const auto &[Register, Fact] : Facts.Registers) {
+    const auto Family = gprFamilyOf(Img.Arch, Register);
+    if (Family && Register == *Family * sizeof(uint64_t) &&
+        Register != Registers.StackPointer &&
+        !Registers.isReturnReg(Register) && Fact.first == sizeof(uint64_t) &&
+        !Img.isPotentiallyRelocatableAddress(Fact.second))
+      Constants.emplace_back(Register, Fact.second);
+  }
+  return Constants;
+}
+
 } // namespace
 
 std::optional<unsigned> gprFamilyOf(Arch A, uint64_t RegOff) {
@@ -856,19 +1193,76 @@ bool callPreservesRegisterBytes(Arch A, uint32_t Preserved, uint64_t RegOff,
          ((Preserved >> Family->first) & 1) && Family->second + Size <= 16;
 }
 
+namespace {
+/// Whether \p Step only reads and writes registers: it names no routine,
+/// leaves for nowhere and copies no vector register.
+bool isPlainStep(const RegisterStep &Step) {
+  return Step.Callee == InvalidVA && !Step.TailCallee &&
+         !Step.UnknownTailCall && !Step.VectorCopy && !Step.UnknownCall &&
+         Step.ImportCallee == InvalidVA && Step.ArgumentsFrom == InvalidVA &&
+         !Step.Exits && !Step.FixedArguments && !Step.FixedTailCall;
+}
+} // namespace
+
+/// Join each run of plain steps into one step with the same effect on the
+/// bytes live before it.  Backward, a plain step ends the life of the
+/// families it kills and of a read no wider than its low write there, then
+/// makes each family live as wide as it reads it.  For one family, with \c T
+/// its low-write width (the whole family where killed), that is
+/// \c max(R, w > T ? w : 0) of the width \c w live after it.  Two such steps,
+/// \c First then \c Second, are the one step whose \c T is the larger of
+/// theirs and whose \c R is \c First's read joined with \c Second's where
+/// \c First does not satisfy it.  entryLiveWidths reads plain steps only so,
+/// and every other reader of a summary looks only at steps that are not
+/// plain, so the summary answers as before with a step per run instead of
+/// one per instruction.
+void joinPlainSteps(LocalRegisterEffect &Effect) {
+  for (RegisterBlock &Block : Effect.Blocks) {
+    std::vector<RegisterStep> &Steps = Block.Steps;
+    size_t Kept = 0;
+    for (size_t I = 0; I < Steps.size(); ++I) {
+      if (Kept && isPlainStep(Steps[Kept - 1]) && isPlainStep(Steps[I])) {
+        RegisterStep &First = Steps[Kept - 1];
+        const RegisterStep &Second = Steps[I];
+        for (size_t Family = 0; Family < First.Reads.size(); ++Family) {
+          const bool Killed = (First.Kills >> Family) & 1;
+          if (!Killed && Second.Reads[Family] > First.LowWrites[Family])
+            First.Reads[Family] =
+                std::max(First.Reads[Family], Second.Reads[Family]);
+          First.LowWrites[Family] =
+              std::max(First.LowWrites[Family], Second.LowWrites[Family]);
+        }
+        First.Kills |= Second.Kills;
+        continue;
+      }
+      if (Kept != I)
+        Steps[Kept] = std::move(Steps[I]);
+      ++Kept;
+    }
+    // A summary is kept across runs: release the steps it no longer has.
+    Steps.resize(Kept);
+    Steps.shrink_to_fit();
+  }
+}
+
 LocalRegisterEffect
 localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
                     const libc::NoReturnTargetIndex *NoReturnTargets,
-                    const std::map<va_t, GPRReadWidths> *FixedCallReads) {
+                    const std::map<va_t, GPRReadWidths> *FixedCallReads,
+                    const std::map<va_t, va_t> *ArgumentSources,
+                    const libc::StackProbeIndex *StackProbes) {
   return localRegisterEffect(Img, CallRegisterBodyView(F), NoReturnTargets,
-                             FixedCallReads);
+                             FixedCallReads, ArgumentSources, StackProbes);
 }
 
 LocalRegisterEffect
 localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
                     const libc::NoReturnTargetIndex *NoReturnTargets,
-                    const std::map<va_t, GPRReadWidths> *FixedCallReads) {
+                    const std::map<va_t, GPRReadWidths> *FixedCallReads,
+                    const std::map<va_t, va_t> *ArgumentSources,
+                    const libc::StackProbeIndex *StackProbes) {
   LocalRegisterEffect Effect;
+  Effect.UnknownObservers = F.HasIndependentRoots;
   if (!F.Complete || F.UnsafeIndirectBranches || F.Blocks.empty()) {
     Effect.Unknown = true;
     Effect.Incomplete = true;
@@ -885,10 +1279,14 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
   std::map<int, size_t> IndexOfId;
   std::set<va_t> BlockStarts;
   for (size_t I = 0; I < F.Blocks.size(); ++I) {
+    Effect.UnknownObservers |= IndexOfId.count(F.Blocks[I].Id) != 0;
     IndexOfId[F.Blocks[I].Id] = I;
     BlockStarts.insert(F.Blocks[I].StartAddr);
   }
+  Effect.RegisterLeaf = registerLeaf(Img, F);
   Effect.Blocks.resize(F.Blocks.size());
+  const bool SummarizeExit = canSummarizeExitConstants(Img, F);
+  bool FirstReturn = true;
   const uint64_t FPReturn = getTargetRegInfo(Img.Arch).FPReturnReg;
   auto WritesFPReturn = [&](const NdVar &Out) {
     return FPReturn != 0 && Out.isReg() && Out.Size != 0 &&
@@ -898,16 +1296,35 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
       findRegisterSaveAreaSpills(Img, F, IndexOfId);
   for (size_t BI = 0; BI < F.Blocks.size(); ++BI) {
     const LowBlock &Block = F.Blocks[BI];
+    Effect.UnknownObservers |= !Block.ExceptionalSuccs.empty();
     RegisterBlock &Out = Effect.Blocks[BI];
     for (int Succ : Block.Succs)
       if (auto It = IndexOfId.find(Succ); It != IndexOfId.end())
         Out.Succs.push_back(It->second);
+      else
+        Effect.UnknownObservers = true;
     std::map<size_t, uint8_t> MergeWrites;
     std::set<size_t> MergeReads;
     findMaskedMerges(Block, MergeWrites, MergeReads);
     findLaneMerges(Img.Arch, Block, MergeWrites, MergeReads);
+    const std::set<size_t> OverwrittenCopies =
+        overwrittenRegisterCopies(Img.Arch, Block, MergeWrites);
     const std::map<size_t, llvm::ArrayRef<uint64_t>> UnreadArguments =
         unreadSyscallArguments(Img, Block);
+    const bool AtReturn =
+        SummarizeExit && Block.Ops.back().Opcode == NdOp::RETURN;
+    const auto ScalarFacts = blockScalarFacts(Img, Block, AtReturn);
+    const auto &SelectedArms = ScalarFacts.SelectedArms;
+    if (AtReturn) {
+      const auto Constants = scalarExitConstants(Img, ScalarFacts);
+      if (FirstReturn) {
+        Effect.ExitConstants = Constants;
+        FirstReturn = false;
+      } else
+        llvm::erase_if(Effect.ExitConstants, [&](const auto &Value) {
+          return !llvm::is_contained(Constants, Value);
+        });
+    }
     auto ControlOf = [&](size_t OpIndex) {
       for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries)
         if (OpIndex >= Boundary.FirstOp &&
@@ -918,6 +1335,10 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
     };
     for (size_t I = 0; I < Block.Ops.size(); ++I) {
       const LowOp &Op = Block.Ops[I];
+      if (const auto Arm = SelectedArms.find(I);
+          Arm != SelectedArms.end() && Op.Output.isReg() &&
+          Op.Output == Op.Inputs[Arm->second])
+        continue; // A proven identity neither reads nor overwrites the GPR.
       const auto [Control, Flags] = ControlOf(I);
       const bool TailCall = Control == LowInstructionControl::TailCall;
       const bool DirectTarget = Op.NumInputs > 0 && Op.Inputs[0].isConst();
@@ -937,7 +1358,7 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
            (TailCall && EntersNoReturnFunction));
       // A stack probe changes no register its caller can observe.
       if (Op.Opcode == NdOp::CALL && DirectTarget && !TailCall &&
-          libc::stackProbeEffect(Img, Op.Inputs[0].Offset) ==
+          libc::stackProbeEffect(Img, Op.Inputs[0].Offset, StackProbes) ==
               libc::StackProbeEffect::Probe)
         continue;
       // A vector register widened from its own low bytes (`vzeroupper`, or
@@ -974,13 +1395,16 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
            ++In) {
         if (!Op.Inputs[In].isReg() || (In == 0 && MergeReads.count(I)) ||
             (In == 1 && SaveAreaSpills.count({BI, I})) ||
-            (In == 0 && Step.VectorCopy))
+            (In == 0 && (Step.VectorCopy || OverwrittenCopies.count(I))))
           continue;
         if (const auto Unread = UnreadArguments.find(I);
             Unread != UnreadArguments.end() &&
             llvm::any_of(Unread->second, [&](uint64_t Register) {
               return Register / 8 == Op.Inputs[In].Offset / 8;
             }))
+          continue;
+        if (const auto Arm = SelectedArms.find(I);
+            Arm != SelectedArms.end() && In != 0 && In != Arm->second)
           continue;
         // A zero idiom (`pxor xmm0, xmm0`) or an absorbing constant reads
         // nothing of the register, as LowToMed folds it.
@@ -1045,8 +1469,14 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
         // the slot is an import's and its prototype says what that reads.
         Effect.Unknown = true;
         (TailCall ? Step.UnknownTailCall : Step.UnknownCall) = true;
-        if (DirectTarget && !importCalleeName(Img, Op.Inputs[0].Offset).empty())
+        if (DirectTarget &&
+            !importCalleeName(Img, Op.Inputs[0].Offset).empty() &&
+            !importOwnRoutine(Img, ArgumentSources, Op.Inputs[0].Offset))
           Step.ImportCallee = Op.Inputs[0].Offset;
+        else if (const std::optional<va_t> Source =
+                     pointerVariableArgumentsFrom(ArgumentSources, F.Blocks,
+                                                  Block, I, Op))
+          Step.ArgumentsFrom = *Source;
         break;
       case NdOp::INDIR_BR:
         // A resolved jump table has successors; an indirect tail jump leaves
@@ -1074,34 +1504,44 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
         break;
       case NdOp::CALL: {
         // A call that never returns cannot change a register its caller
-        // reads, but it still receives this function's registers.
+        // reads, but it still receives this function's registers.  A stub
+        // of an import the loader starts at this image's own routine calls
+        // that routine.
         Step.Exits = NoReturnCall;
-        if (!DirectTarget || Img.findImportAt(Op.Inputs[0].Offset)) {
+        const std::optional<va_t> OwnRoutine =
+            DirectTarget
+                ? importOwnRoutine(Img, ArgumentSources, Op.Inputs[0].Offset)
+                : std::nullopt;
+        if (!DirectTarget ||
+            (!OwnRoutine && Img.findImportAt(Op.Inputs[0].Offset))) {
           if (!NoReturnCall)
             Effect.Unknown = true;
           (TailCall ? Step.UnknownTailCall : Step.UnknownCall) = true;
           if (DirectTarget)
             Step.ImportCallee = Op.Inputs[0].Offset;
         } else {
-          Step.Callee = Op.Inputs[0].Offset;
+          const va_t Callee = OwnRoutine ? *OwnRoutine : Op.Inputs[0].Offset;
+          Step.Callee = Callee;
           Step.TailCallee = TailCall;
           if (!NoReturnCall)
-            Effect.Callees.insert(Op.Inputs[0].Offset);
-          else if (!EntersNoReturnFunction ||
-                   Img.userNoReturnAt(Op.Inputs[0].Offset))
-            Effect.NoReturnCallees.insert(Op.Inputs[0].Offset);
+            Effect.Callees.insert(Callee);
+          else if (!EntersNoReturnFunction || Img.userNoReturnAt(Callee))
+            Effect.NoReturnCallees.insert(Callee);
         }
         break;
       }
       default:
         break;
       }
-      Effect.UnknownEntryReads |=
-          Step.UnknownTailCall && Step.ImportCallee == InvalidVA;
+      Effect.UnknownEntryReads |= Step.UnknownTailCall &&
+                                  Step.ImportCallee == InvalidVA &&
+                                  Step.ArgumentsFrom == InvalidVA;
       Out.Steps.push_back(Step);
     }
   }
-  summarizeIncomingStackReads(Img, F, IndexOfId, BlockStarts, Effect);
+  summarizeIncomingStackReads(Img, F, IndexOfId, BlockStarts, ArgumentSources,
+                              StackProbes, Effect);
+  joinPlainSteps(Effect);
   return Effect;
 }
 
@@ -1122,9 +1562,14 @@ GPRReadWidths entryLiveWidths(const LocalRegisterEffect &F,
   auto Transfer = [&](const RegisterBlock &Block, GPRReadWidths Live) {
     for (auto It = Block.Steps.rbegin(); It != Block.Steps.rend(); ++It) {
       const RegisterStep &Step = *It;
-      // An import with a prototype reads exactly its parameters.
-      const auto ImportReads = Step.ImportCallee != InvalidVA
-                                   ? EntryReads.find(Step.ImportCallee)
+      // An import with a prototype reads exactly its parameters, and a call
+      // through a function-pointer variable reads those of the routine the
+      // variable starts at.
+      const va_t ReadsFrom = Step.ImportCallee != InvalidVA
+                                 ? Step.ImportCallee
+                                 : Step.ArgumentsFrom;
+      const auto ImportReads = ReadsFrom != InvalidVA
+                                   ? EntryReads.find(ReadsFrom)
                                    : EntryReads.end();
       if (Step.Exits)
         Live.fill(0);
@@ -1170,6 +1615,13 @@ GPRReadWidths entryLiveWidths(const LocalRegisterEffect &F,
     return Live;
   };
   std::vector<GPRReadWidths> LiveIn(F.Blocks.size(), GPRReadWidths{});
+  // Where every successor follows its block, the pass from the last block
+  // reads each block's successors at their fixed point already, and a second
+  // pass would change nothing.
+  bool Forward = true;
+  for (size_t B = 0; B < F.Blocks.size() && Forward; ++B)
+    for (size_t S : F.Blocks[B].Succs)
+      Forward &= S > B;
   for (bool Changed = true; Changed;) {
     Changed = false;
     for (size_t B = F.Blocks.size(); B-- > 0;) {
@@ -1183,6 +1635,8 @@ GPRReadWidths entryLiveWidths(const LocalRegisterEffect &F,
         Changed = true;
       }
     }
+    if (Forward)
+      break;
   }
   return LiveIn.empty() ? GPRReadWidths{} : LiveIn[0];
 }
@@ -1195,18 +1649,36 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
                          const std::set<va_t> &DispatchThunks,
                          const std::map<va_t, GPRReadWidths> &FixedEntryReads,
                          const std::map<va_t, int> &FixedEntryStackArgs) {
+  LocalRegisterEffectRefs Refs;
+  for (const auto &[Entry, Effect] : Funcs)
+    Refs.emplace_hint(Refs.end(), Entry, &Effect);
+  return solveCallRegisterEffects(Refs, VolatileFamilies, ArgumentFamilies,
+                                  DispatchThunks, FixedEntryReads,
+                                  FixedEntryStackArgs);
+}
+
+CallRegisterSummaries solveCallRegisterEffects(
+    const LocalRegisterEffectRefs &Funcs, GPRFamilyMask VolatileFamilies,
+    GPRFamilyMask ArgumentFamilies, const std::set<va_t> &DispatchThunks,
+    const std::map<va_t, GPRReadWidths> &FixedEntryReads,
+    const std::map<va_t, int> &FixedEntryStackArgs) {
   CallRegisterSummaries Result;
+  Result.Unread = proveUnreadCallRegisters(Funcs);
+  for (const auto &[Entry, Effect] : Funcs)
+    if (!Effect->Incomplete && !Effect->ExitConstants.empty() &&
+        !DispatchThunks.count(Entry))
+      Result.ExitConstants.emplace(Entry, Effect->ExitConstants);
   // Unknown is absorbing: a function is unknown if it or any callee is.
   std::set<va_t> Unknown;
   for (const auto &[Entry, Effect] : Funcs)
-    if (Effect.Unknown)
+    if (Effect->Unknown)
       Unknown.insert(Entry);
   for (bool Changed = true; Changed;) {
     Changed = false;
     for (const auto &[Entry, Effect] : Funcs) {
       if (Unknown.count(Entry))
         continue;
-      for (va_t Callee : Effect.Callees)
+      for (va_t Callee : Effect->Callees)
         if (!Funcs.count(Callee) || Unknown.count(Callee)) {
           Unknown.insert(Entry);
           Changed = true;
@@ -1222,12 +1694,12 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
   for (const auto &[Entry, Effect] : Funcs)
     if (!Unknown.count(Entry))
       Writes[Entry] =
-          Effect.Writes | (Effect.CallsFixedContract ? VolatileFamilies : 0);
+          Effect->Writes | (Effect->CallsFixedContract ? VolatileFamilies : 0);
   for (bool Changed = true; Changed;) {
     Changed = false;
     for (auto &[Entry, Mask] : Writes) {
       GPRFamilyMask Next = Mask;
-      for (va_t Callee : Funcs.at(Entry).Callees)
+      for (va_t Callee : Funcs.at(Entry)->Callees)
         Next |= Writes.at(Callee);
       if (Next != Mask) {
         Mask = Next;
@@ -1244,15 +1716,19 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
   auto TailCallsUnknownImport = [&](const LocalRegisterEffect &Effect) {
     return llvm::any_of(Effect.Blocks, [&](const RegisterBlock &Block) {
       return llvm::any_of(Block.Steps, [&](const RegisterStep &Step) {
-        return Step.UnknownTailCall && Step.ImportCallee != InvalidVA &&
-               !FixedEntryReads.count(Step.ImportCallee);
+        return Step.UnknownTailCall &&
+               ((Step.ImportCallee != InvalidVA &&
+                 !FixedEntryReads.count(Step.ImportCallee)) ||
+                (Step.ArgumentsFrom != InvalidVA &&
+                 !FixedEntryReads.count(Step.ArgumentsFrom) &&
+                 !Funcs.count(Step.ArgumentsFrom)));
       });
     });
   };
   for (const auto &[Entry, Effect] : Funcs)
     if (!FixedEntryReads.count(Entry) &&
-        (Effect.Incomplete || Effect.UnknownEntryReads ||
-         TailCallsUnknownImport(Effect)))
+        (Effect->Incomplete || Effect->UnknownEntryReads ||
+         TailCallsUnknownImport(*Effect)))
       UnknownReads.insert(Entry);
   for (bool Changed = true; Changed;) {
     Changed = false;
@@ -1260,8 +1736,13 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
       if (UnknownReads.count(Entry) || FixedEntryReads.count(Entry))
         continue;
       const bool ForwardsToUnknown =
-          llvm::any_of(Effect.Blocks, [&](const RegisterBlock &Block) {
+          llvm::any_of(Effect->Blocks, [&](const RegisterBlock &Block) {
             return llvm::any_of(Block.Steps, [&](const RegisterStep &Step) {
+              // A tail call through a function-pointer variable forwards to
+              // the routine the variable starts at.
+              if (Step.UnknownTailCall && Step.ArgumentsFrom != InvalidVA &&
+                  !FixedEntryReads.count(Step.ArgumentsFrom))
+                return UnknownReads.count(Step.ArgumentsFrom) != 0;
               return Step.TailCallee && !FixedEntryReads.count(Step.Callee) &&
                      (!Funcs.count(Step.Callee) ||
                       UnknownReads.count(Step.Callee));
@@ -1279,20 +1760,73 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
       Reads[Entry] = GPRReadWidths{};
   for (const auto &[Entry, Widths] : FixedEntryReads)
     Reads[Entry] = Widths;
-  for (bool Changed = true; Changed;) {
-    Changed = false;
-    for (auto &[Entry, Widths] : Reads) {
-      if (FixedEntryReads.count(Entry) || !Funcs.count(Entry))
-        continue;
-      GPRReadWidths Next = Widths;
-      joinReads(Next, entryLiveWidths(Funcs.at(Entry), Writes, Reads,
-                                      VolatileFamilies, ArgumentFamilies,
-                                      DispatchThunks));
-      if (Next != Widths) {
-        Widths = Next;
-        Changed = true;
-      }
+  // A function's entry reads depend only on those of the routines its steps
+  // name, so a change revisits just their readers.  Visiting callees before
+  // their callers reaches the same least fixed point while visiting most
+  // functions once.
+  std::vector<va_t> Solved;
+  std::map<va_t, size_t> SolvedIndex;
+  for (const auto &[Entry, Widths] : Reads)
+    if (!FixedEntryReads.count(Entry) && Funcs.count(Entry)) {
+      SolvedIndex.emplace(Entry, Solved.size());
+      Solved.push_back(Entry);
     }
+  std::vector<std::vector<size_t>> Named(Solved.size()), Readers(Solved.size());
+  for (size_t I = 0; I < Solved.size(); ++I) {
+    for (const RegisterBlock &Block : Funcs.at(Solved[I])->Blocks)
+      for (const RegisterStep &Step : Block.Steps)
+        for (va_t Routine :
+             {Step.Callee, Step.ImportCallee, Step.ArgumentsFrom})
+          if (Routine != InvalidVA)
+            if (const auto Found = SolvedIndex.find(Routine);
+                Found != SolvedIndex.end())
+              Named[I].push_back(Found->second);
+    llvm::sort(Named[I]);
+    Named[I].erase(std::unique(Named[I].begin(), Named[I].end()),
+                   Named[I].end());
+    for (size_t Callee : Named[I])
+      Readers[Callee].push_back(I);
+  }
+  // Depth-first post-order puts every callee outside a cycle first.
+  std::deque<size_t> Pending;
+  std::vector<uint8_t> Queued(Solved.size(), 0);
+  for (size_t Root = 0; Root < Solved.size(); ++Root) {
+    if (Queued[Root])
+      continue;
+    Queued[Root] = 1;
+    std::vector<std::pair<size_t, size_t>> Stack{{Root, 0}};
+    while (!Stack.empty()) {
+      const size_t Node = Stack.back().first;
+      size_t &Next = Stack.back().second;
+      if (Next < Named[Node].size()) {
+        const size_t Callee = Named[Node][Next++];
+        if (!Queued[Callee]) {
+          Queued[Callee] = 1;
+          Stack.emplace_back(Callee, 0);
+        }
+        continue;
+      }
+      Pending.push_back(Node);
+      Stack.pop_back();
+    }
+  }
+  while (!Pending.empty()) {
+    const size_t I = Pending.front();
+    Pending.pop_front();
+    Queued[I] = 0;
+    GPRReadWidths &Widths = Reads[Solved[I]];
+    GPRReadWidths Next = Widths;
+    joinReads(Next, entryLiveWidths(*Funcs.at(Solved[I]), Writes, Reads,
+                                    VolatileFamilies, ArgumentFamilies,
+                                    DispatchThunks));
+    if (Next == Widths)
+      continue;
+    Widths = Next;
+    for (size_t Reader : Readers[I])
+      if (!Queued[Reader]) {
+        Queued[Reader] = 1;
+        Pending.push_back(Reader);
+      }
   }
 
   // Incoming stack arguments, also a least fixed point: a tail call at the
@@ -1300,14 +1834,14 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
   // function's too. A tail callee without a bounded summary leaves none.
   std::set<va_t> UnknownStack;
   for (const auto &[Entry, Effect] : Funcs)
-    if (Effect.UnknownStackReads)
+    if (Effect->UnknownStackReads && !FixedEntryStackArgs.count(Entry))
       UnknownStack.insert(Entry);
   for (bool Changed = true; Changed;) {
     Changed = false;
     for (const auto &[Entry, Effect] : Funcs) {
-      if (UnknownStack.count(Entry))
+      if (UnknownStack.count(Entry) || FixedEntryStackArgs.count(Entry))
         continue;
-      if (llvm::any_of(Effect.StackTailCallees, [&](va_t Callee) {
+      if (llvm::any_of(Effect->StackTailCallees, [&](va_t Callee) {
             return Funcs.count(Callee) ? UnknownStack.count(Callee) != 0
                                        : !FixedEntryStackArgs.count(Callee);
           })) {
@@ -1317,22 +1851,26 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
     }
   }
   for (const auto &[Entry, Effect] : Funcs)
-    if (Effect.VariadicFrom >= 0)
-      Result.VariadicFrom[Entry] = Effect.VariadicFrom;
+    if (Effect->VariadicFrom >= 0)
+      Result.VariadicFrom[Entry] = Effect->VariadicFrom;
   std::map<va_t, int> &StackArgs = Result.EntryStackArgs;
   for (const auto &[Entry, Effect] : Funcs)
     if (!UnknownStack.count(Entry))
-      StackArgs[Entry] = Effect.StackArgs;
+      StackArgs[Entry] = Effect->StackArgs;
   for (const auto &[Entry, Count] : FixedEntryStackArgs)
-    if (!Funcs.count(Entry))
-      StackArgs[Entry] = Count;
+    StackArgs[Entry] = Count;
   for (bool Changed = true; Changed;) {
     Changed = false;
     for (auto &[Entry, Count] : StackArgs) {
+      // A fixed entry contract owns stack arguments as well as register
+      // reads. Its machine stub may switch stacks or forward into a
+      // dispatcher whose private frame is not this source call's ABI.
+      if (FixedEntryStackArgs.count(Entry))
+        continue;
       auto Func = Funcs.find(Entry);
       if (Func == Funcs.end())
         continue;
-      for (va_t Callee : Func->second.StackTailCallees)
+      for (va_t Callee : Func->second->StackTailCallees)
         if (StackArgs.at(Callee) > Count) {
           Count = StackArgs.at(Callee);
           Changed = true;

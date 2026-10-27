@@ -32,44 +32,6 @@
 
 namespace neverd {
 
-namespace {
-
-//===----------------------------------------------------------------------===//
-// Format detection
-//===----------------------------------------------------------------------===//
-
-enum class MapFormat { ELF, COFFStandard, COFFLLDMap, MachO, GNUld };
-
-MapFormat detectFormat(llvm::StringRef Content) {
-  if (Content.starts_with("# Path:") || Content.ltrim().starts_with("# Path:"))
-    return MapFormat::MachO;
-
-  llvm::StringRef Remaining = Content;
-  while (!Remaining.empty()) {
-    auto [Line, Rest] = Remaining.split('\n');
-    Remaining = Rest;
-
-    if (isGNUldMapHeader(Line))
-      return MapFormat::GNUld;
-
-    if (isELFMapHeader(Line))
-      return MapFormat::ELF;
-
-    if (isLLDMapHeader(Line))
-      return MapFormat::COFFLLDMap;
-
-    if (MapDebugContextBase::isCOFFMapHeader(Line))
-      return MapFormat::COFFStandard;
-  }
-
-  if (Content.contains("VMA") && Content.contains("LMA"))
-    return MapFormat::ELF;
-
-  return MapFormat::COFFStandard;
-}
-
-} // anonymous namespace
-
 //===----------------------------------------------------------------------===//
 // Public API
 //===----------------------------------------------------------------------===//
@@ -87,30 +49,23 @@ LLDMapDebugContext::load(const std::filesystem::path &MapPath,
   }
 
   llvm::StringRef Content = (*BufOr)->getBuffer();
-  MapFormat Fmt = detectFormat(Content);
-
-  [[maybe_unused]] const char *FmtName = "";
-  switch (Fmt) {
-  case MapFormat::ELF:
+  const MapDialect Dialect = detectMapDialect(Content);
+  switch (Dialect) {
+  case MapDialect::LLD:
     parseELFMap(Content, Ctx->Functions);
-    FmtName = "ELF";
     break;
-  case MapFormat::COFFStandard:
+  case MapDialect::MSVC:
     MapDebugContextBase::parseCOFFMapContent(Content, Ctx->Functions, ImageBase,
                                              &Ctx->DataObjects);
-    FmtName = "COFF /MAP";
     break;
-  case MapFormat::COFFLLDMap:
+  case MapDialect::LLDCOFF:
     parseCOFFLLDMap(Content, Ctx->Functions, ImageBase);
-    FmtName = "COFF /lldmap";
     break;
-  case MapFormat::MachO:
+  case MapDialect::LD64:
     parseMachOMap(Content, Ctx->Functions);
-    FmtName = "MachO";
     break;
-  case MapFormat::GNUld:
+  case MapDialect::GNU:
     parseGNUldMap(Content, Ctx->Functions);
-    FmtName = "GNU ld";
     break;
   }
 
@@ -118,8 +73,8 @@ LLDMapDebugContext::load(const std::filesystem::path &MapPath,
   Ctx->Loaded = !Ctx->Functions.empty();
   LLVM_DEBUG(llvm::dbgs() << "lld-map: loaded " << Ctx->Functions.size()
                           << " function symbols from "
-                          << pathToUTF8(MapPath.filename()) << " (" << FmtName
-                          << " style)\n");
+                          << pathToUTF8(MapPath.filename()) << " ("
+                          << mapDialectName(Dialect) << " style)\n");
   return Ctx;
 }
 

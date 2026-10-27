@@ -25,6 +25,7 @@
 #include "neverd/sbf/image/SBFVersion.h"
 #include "neverd/sbf/runtime/SBFRuntimeProfile.h"
 #include "neverd/sdk/NeverDCAPI.h"
+#include "neverd/support/NumericInput.h"
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
@@ -33,6 +34,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <type_traits>
 
 namespace neverd::cli {
 
@@ -92,6 +94,34 @@ public:
 using OptionalStringList =
     llvm::cl::list<std::string, bool, OptionalStringParser>;
 using ConcolicStringList = OptionalStringList;
+
+/// Numeric presentation fields match the GUI: decimal unless 0x is explicit.
+template <typename T> class NumericInputParser : public llvm::cl::parser<T> {
+public:
+  explicit NumericInputParser(llvm::cl::Option &Option)
+      : llvm::cl::parser<T>(Option) {}
+
+  bool parse(llvm::cl::Option &Option, llvm::StringRef,
+             llvm::StringRef Argument, T &Value) {
+    const std::string_view Text(Argument.data(), Argument.size());
+    const auto Parsed = [&] {
+      if constexpr (std::is_signed_v<T>)
+        return parseSignedDecimalOrHex(Text);
+      else
+        return parseUnsignedDecimalOrHex(Text);
+    }();
+    if (!Parsed || *Parsed < std::numeric_limits<T>::min() ||
+        *Parsed > std::numeric_limits<T>::max())
+      return Option.error("expected an in-range decimal integer or 0x hex");
+    Value = static_cast<T>(*Parsed);
+    return false;
+  }
+};
+
+using UnsignedNumericOption =
+    llvm::cl::opt<unsigned, false, NumericInputParser<unsigned>>;
+using SignedNumericOption =
+    llvm::cl::opt<long long, false, NumericInputParser<long long>>;
 
 #define NEVERD_CLI_LITERAL(OPTION, SPELLING)                                   \
   inline constexpr llvm::StringLiteral OPTION##RequiredValue = SPELLING;
@@ -164,6 +194,8 @@ llvm::Expected<int> applyRequestedSignatures(neverd_session_t Sess,
 extern llvm::cl::SubCommand LiftCmd;
 extern llvm::cl::SubCommand DecompileCmd;
 extern llvm::cl::SubCommand PatchCmd;
+extern llvm::cl::SubCommand PatchBytesCmd;
+int runPatchBytes(neverd_session_t Sess);
 extern llvm::cl::SubCommand InfoCmd;
 extern llvm::cl::SubCommand StringsCmd;
 extern llvm::cl::SubCommand XrefsCmd;
@@ -179,7 +211,10 @@ extern llvm::cl::SubCommand ExportCmd;
 extern llvm::cl::SubCommand BookmarksCmd;
 extern llvm::cl::SubCommand AnnotateCmd;
 extern llvm::cl::SubCommand DiffCmd;
+extern llvm::cl::SubCommand LineageCmd;
 extern llvm::cl::SubCommand CallGraphCmd;
+extern llvm::cl::SubCommand PathsCmd;
+extern llvm::cl::SubCommand CallTreeCmd;
 extern llvm::cl::SubCommand RenameCmd;
 extern llvm::cl::SubCommand FunctionEditsCmd;
 extern llvm::cl::SubCommand ItemsCmd;
@@ -187,19 +222,32 @@ extern llvm::cl::SubCommand IdentifyCmd;
 extern llvm::cl::SubCommand OperandsCmd;
 extern llvm::cl::SubCommand SearchCmd;
 extern llvm::cl::SubCommand SectionsCmd;
+extern llvm::cl::SubCommand AnalysisSectionsCmd;
+extern llvm::cl::opt<std::string> AnalysisSectionAdd;
+extern llvm::cl::opt<std::string> AnalysisSectionData;
+extern llvm::cl::opt<std::string> AnalysisSectionRemove;
 extern llvm::cl::SubCommand SymbolsCmd;
 extern llvm::cl::SubCommand RelocsCmd;
 extern llvm::cl::SubCommand HeadersCmd;
 extern llvm::cl::SubCommand EntryPointsCmd;
 extern llvm::cl::SubCommand SwitchesCmd;
+extern llvm::cl::SubCommand TypesCmd;
 extern llvm::cl::SubCommand DashboardCmd;
 extern llvm::cl::SubCommand SigsCmd;
 extern llvm::cl::SubCommand SimplifyCmd;
+extern llvm::cl::SubCommand MergeProjectCmd;
+extern llvm::cl::SubCommand SetupGitCmd;
 extern llvm::cl::SubCommand SymbolicCmd;
 extern llvm::cl::SubCommand OptimizeIRCmd;
 extern llvm::cl::SubCommand TranslateObjectCmd;
 extern llvm::cl::SubCommand EmulateDriverCmd;
+extern llvm::cl::SubCommand ModulesCmd;
+extern llvm::cl::SubCommand ExecutionCmd;
+extern llvm::cl::opt<std::string> ExecutionConfiguration, ExecutionModules;
+extern llvm::cl::opt<std::string> ModulesAction, ModulesConfiguration,
+    ModulesID, ModulesSymbol;
 extern llvm::cl::SubCommand CPUCapabilitiesCmd;
+extern llvm::cl::SubCommand X87CapabilitiesCmd;
 extern llvm::cl::SubCommand EmulateProcessCmd;
 extern llvm::cl::SubCommand UnpackCmd;
 extern llvm::cl::SubCommand AuditCmd;
@@ -276,8 +324,10 @@ extern llvm::cl::opt<std::string> InputFile;
 extern llvm::cl::opt<std::string> OutputFile;
 extern llvm::cl::opt<bool> Verbose;
 extern llvm::cl::opt<bool> JsonOutput;
+extern llvm::cl::opt<std::string> InfoUnwindFrame;
 extern llvm::cl::opt<bool> NoDebug;
 extern llvm::cl::opt<bool> NoDwarf;
+extern llvm::cl::opt<bool> NoPdb;
 extern llvm::cl::opt<bool> NoSymtab;
 extern llvm::cl::list<std::string> ARMFunctionModeHints;
 extern llvm::cl::opt<std::string> PdbFile;
@@ -285,6 +335,9 @@ extern llvm::cl::opt<bool> PdbUnverified;
 extern llvm::cl::opt<std::string> SymbolPathOption;
 extern llvm::cl::opt<bool> DownloadSymbols;
 extern llvm::cl::opt<std::string> MapFile;
+extern llvm::cl::opt<bool> MapUnchecked;
+extern llvm::cl::opt<bool> NoMap;
+extern llvm::cl::opt<std::string> DwarfFile;
 extern llvm::cl::opt<bool> NoOpt;
 extern llvm::cl::opt<size_t> MaxFunc;
 
@@ -313,6 +366,8 @@ extern llvm::cl::opt<bool> DumpHigh;
 // Decompile.
 extern llvm::cl::opt<bool> LlvmRoute;
 extern llvm::cl::opt<bool> SourceSymbolic;
+extern llvm::cl::opt<bool> StackFrameInfo;
+extern llvm::cl::opt<std::string> StackFrameFile;
 extern llvm::cl::opt<bool> SourceLLVMControlFlow;
 extern llvm::cl::opt<std::string> SourceLLVMLevel;
 extern llvm::cl::list<std::string> SourceLLVMPasses;
@@ -333,6 +388,42 @@ extern llvm::cl::list<std::string> StringEncodings;
 extern llvm::cl::opt<std::string> StringCodePage;
 extern llvm::cl::opt<bool> StringRefs;
 extern llvm::cl::opt<std::string> StringFilter;
+
+// Types
+extern llvm::cl::list<std::string> TypeNames;
+extern llvm::cl::opt<bool> TypesAll;
+extern llvm::cl::opt<bool> TypesAlone;
+extern llvm::cl::opt<bool> TypesLayout;
+extern llvm::cl::opt<std::string> TypesFilter;
+extern llvm::cl::opt<std::string> TypesLanguage;
+extern llvm::cl::opt<std::string> TypesSpelling;
+extern llvm::cl::opt<bool> TypesAsserts;
+extern llvm::cl::opt<bool> TypesDecimalOffsets;
+extern llvm::cl::opt<bool> TypesNoOffsets;
+extern llvm::cl::list<std::string> TypesDeclare;
+extern llvm::cl::opt<bool> TypesMergePrototypes;
+extern llvm::cl::list<std::string> TypesImportPrototypes;
+extern llvm::cl::opt<bool> TypesSave;
+extern llvm::cl::opt<bool> TypesSaveDeclarations;
+extern llvm::cl::opt<std::string> TypesInput;
+extern llvm::cl::opt<std::string> TypesOrigin;
+extern llvm::cl::opt<std::string> TypesDataModel;
+extern llvm::cl::opt<std::string> TypesRecordABI;
+extern llvm::cl::opt<bool> TypesKeepGoing;
+extern llvm::cl::opt<bool> TypesPrototypes;
+extern llvm::cl::opt<std::string> TypesSystemLibrary;
+extern llvm::cl::opt<bool> TypesHeaderPragmas;
+extern llvm::cl::opt<bool> TypesLibraries;
+extern llvm::cl::list<std::string> TypesAddLibrary;
+extern llvm::cl::list<std::string> TypesRemoveLibrary;
+extern llvm::cl::opt<bool> TypesFit;
+extern llvm::cl::opt<std::string> TypesFunc;
+extern llvm::cl::opt<int> TypesParam;
+extern llvm::cl::opt<std::string> TypesAt;
+extern llvm::cl::list<std::string> TypesAccess;
+extern llvm::cl::opt<std::string> TypesMatch;
+extern llvm::cl::opt<unsigned> TypesLimit;
+extern llvm::cl::opt<std::string> TypesMember;
 
 // Xrefs.
 extern llvm::cl::opt<std::string> XrefAddr;
@@ -390,11 +481,40 @@ extern llvm::cl::opt<std::string> BookmarkAdd;
 extern llvm::cl::opt<std::string> BookmarkName;
 extern llvm::cl::opt<std::string> BookmarkRemove;
 
+// merge-project and setup-git.
+extern llvm::cl::list<std::string> MergeProjectFiles;
+extern llvm::cl::opt<std::string> MergeProjectPath;
+extern llvm::cl::opt<std::string> SetupGitFolder;
+
 // Diff.
 extern llvm::cl::opt<std::string> DiffFileA;
 extern llvm::cl::opt<std::string> DiffFileB;
 extern llvm::cl::opt<std::string> DiffFunc;
 extern llvm::cl::opt<bool> DiffJson;
+extern llvm::cl::opt<bool> DiffStructural;
+extern llvm::cl::opt<std::string> DiffProfile, DiffOptions, DiffSave,
+    DiffReopen, DiffOverrides, DiffList, DiffRegion, DiffRegionKind,
+    DiffFlowFunction, DiffFlowSide, DiffFlowKind, DiffSliceDirection,
+    DiffFlowRegion, DiffFlowRegionCoordinates, DiffImpactFunction,
+    DiffImpactSide, DiffImpactDirection, DiffImpactKind, DiffChangesFunction,
+    DiffChangesSide, DiffChangesContext, DiffReviewRecord, DiffReviewCase,
+    DiffReviewFunction, DiffReviewSide, DiffValidationFunction,
+    DiffValidationSide, DiffListSide, DiffListSearch, DiffListSort,
+    DiffAmbiguousWith, DiffSourceFunction, DiffSourceSide,
+    DiffSourceRepresentation, DiffDataFlowProfile;
+extern llvm::cl::opt<bool> DiffIgnoreNames, DiffRegions, DiffDataFlow,
+    DiffSliceDataOnly, DiffFlowRegions, DiffFlowFragments, DiffReviewLatest,
+    DiffListDescending, DiffSourceDifference, DiffSourcePrelude;
+extern llvm::cl::opt<double> DiffMinSimilarity;
+extern llvm::cl::opt<unsigned long long> DiffTimeout;
+extern llvm::cl::opt<unsigned long long> DiffImpactWork, DiffChangesWork,
+    DiffEffectWork, DiffValidationWork, DiffSourceWork, DiffSourceBytes;
+extern llvm::cl::opt<unsigned> DiffOffset, DiffLimit, DiffRegionAnchor,
+    DiffSliceNode, DiffFlowRegionAnchor, DiffImpactDepth, DiffImpactFunctions,
+    DiffImpactSites, DiffImpactWitness, DiffChangesRows, DiffChangesCount,
+    DiffEffectRecords, DiffValidationInstructions, DiffSourceInstructions;
+int runStructuralDiff();
+int runLineage();
 
 // Annotate.
 extern llvm::cl::opt<bool> AnnotateList;
@@ -406,6 +526,18 @@ extern llvm::cl::opt<std::string> AnnotateRemove;
 extern llvm::cl::opt<ExportFormat> ExportFmt;
 extern llvm::cl::opt<std::string> ExportOutput;
 extern llvm::cl::opt<std::string> ExportFunc;
+extern llvm::cl::opt<bool> DecompileCallees;
+extern llvm::cl::opt<std::string> PathsFrom;
+extern llvm::cl::opt<std::string> PathsTo;
+extern llvm::cl::list<std::string> PathsVia;
+extern llvm::cl::opt<bool> PathsShortest;
+extern llvm::cl::opt<unsigned> PathsMaxPaths;
+extern llvm::cl::list<std::string> GraphExclude;
+extern llvm::cl::opt<unsigned> GraphMaxDepth;
+extern llvm::cl::opt<bool> GraphDataRefs;
+extern llvm::cl::opt<std::string> CallTreeFunc;
+extern llvm::cl::opt<bool> CallTreeCallers;
+extern llvm::cl::opt<bool> CallTreeExpandLibrary;
 extern llvm::cl::opt<std::string> ExportSourceSignatures;
 
 // Rename.
@@ -421,26 +553,42 @@ extern llvm::cl::opt<std::string> FunctionDelete;
 extern llvm::cl::opt<std::string> FunctionEdit;
 extern llvm::cl::list<std::string> FunctionSet;
 extern llvm::cl::opt<std::string> FunctionShow;
+extern llvm::cl::opt<std::string> FunctionDeclaration;
+extern llvm::cl::opt<std::string> FunctionCheck;
+extern llvm::cl::opt<std::string> FunctionRetype;
+extern llvm::cl::opt<bool> FunctionApply;
 extern llvm::cl::opt<bool> FunctionEditsList;
 extern llvm::cl::opt<std::string> ItemData;
 extern llvm::cl::opt<std::string> ItemString;
 extern llvm::cl::opt<std::string> ItemUndefine;
 extern llvm::cl::opt<std::string> ItemClear;
-extern llvm::cl::opt<unsigned> ItemSize;
+extern llvm::cl::opt<std::string> ItemArray;
+extern llvm::cl::opt<std::string> ItemAlignment;
+extern UnsignedNumericOption ItemCount;
+extern llvm::cl::opt<std::string> ItemType;
+extern UnsignedNumericOption ItemBoundary;
+extern UnsignedNumericOption ItemSize;
+extern UnsignedNumericOption ItemElementSize;
 extern llvm::cl::opt<std::string> ItemEncoding;
 extern llvm::cl::opt<std::string> OperandAddr;
 extern llvm::cl::opt<std::string> LoadLoader;
+extern llvm::cl::opt<std::string> LoadCacheImage;
+extern llvm::cl::opt<bool> ListCacheImages;
 extern llvm::cl::opt<std::string> LoadProcessor;
 extern llvm::cl::opt<std::string> LoadPlatform;
 extern llvm::cl::opt<std::string> LoadBase;
 extern llvm::cl::opt<std::string> LoadOffset;
 extern llvm::cl::opt<std::string> LoadSize;
 extern llvm::cl::opt<std::string> LoadEntry;
-extern llvm::cl::opt<unsigned> OperandIndex;
+extern UnsignedNumericOption OperandIndex;
 extern llvm::cl::opt<std::string> OperandBase;
 extern llvm::cl::opt<bool> OperandNegate;
 extern llvm::cl::opt<bool> OperandInvert;
 extern llvm::cl::opt<bool> OperandClear;
+extern llvm::cl::opt<std::string> OperandStruct;
+extern llvm::cl::opt<std::string> OperandEnum;
+extern llvm::cl::opt<bool> OperandFlags;
+extern SignedNumericOption OperandDelta;
 
 // Search.
 extern llvm::cl::opt<std::string> SearchText;
@@ -465,6 +613,7 @@ extern llvm::cl::opt<std::string> PatchCompileMode;
 extern llvm::cl::opt<std::string> PatchEntry;
 extern llvm::cl::list<std::string> PatchCompilerArgs;
 extern llvm::cl::list<std::string> PatchBindings;
+extern llvm::cl::list<std::string> PatchDependencies;
 extern llvm::cl::opt<unsigned> PatchCompilerTimeout;
 extern llvm::cl::opt<bool> PatchReport;
 extern llvm::cl::opt<std::string> PatchFuncAddr;
@@ -581,10 +730,20 @@ int runImports(neverd_session_t Sess);
 int runExports(neverd_session_t Sess);
 int runSegments(neverd_session_t Sess);
 int runSections(neverd_session_t Sess);
+bool loadAnalysisSections(neverd_session_t Sess);
+int runAnalysisSections(neverd_session_t Sess);
 int runSymbols(neverd_session_t Sess);
 int runRelocs(neverd_session_t Sess);
 int runEntryPoints(neverd_session_t Sess);
 int runSwitches(neverd_session_t Sess);
+int runTypes(neverd_session_t Sess);
+/// `neverd types --data-model`: --declare files converted without a binary.
+int runTypesConvert();
+/// `neverd types --fit`: the records a pointer may point at, best first
+/// (NeverDCmdTypeFit.cpp).
+int runTypesFit(neverd_session_t Sess, llvm::raw_ostream &Out);
+/// `neverd types --type T --member offset[:size]`: where an access lands.
+int runTypesMember(neverd_session_t Sess, llvm::raw_ostream &Out);
 int runStrings(neverd_session_t Sess);
 
 // NeverDCmdDisasm.cpp — code views.
@@ -594,6 +753,8 @@ int runHex(neverd_session_t Sess);
 int runCfg(neverd_session_t Sess);
 int runXrefs(neverd_session_t Sess);
 int runCallGraph(neverd_session_t Sess);
+int runPaths(neverd_session_t Sess);
+int runCallTree(neverd_session_t Sess);
 int runSymbolicExplore(neverd_session_t Sess);
 
 // NeverDCmdSafety.cpp — memory-safety audit and hunt over the lifted IR.
@@ -626,6 +787,11 @@ int runIdentify();
 // Takes no session: its input is text, not a binary.
 int runSimplify();
 
+// NeverDCmdProject.cpp — a project's files under version control: git's
+// merge driver for them, and a repository's setup.
+int runMergeProject();
+int runSetupGit(const char *Argv0);
+
 // NeverDCmdOptimizeIR.cpp — transactional semantic + LLVM optimization.
 // Takes textual IR rather than a binary session.
 int runOptimizeIR();
@@ -650,7 +816,10 @@ int runOptimizeIR();
 // publish, dispatch, execute, or debug.
 int runTranslateObject();
 int runEmulateDriver();
+int runModules();
+int runExecution();
 int runCPUCapabilities();
+int runX87Capabilities();
 int runEmulateProcess();
 int runUnpack();
 

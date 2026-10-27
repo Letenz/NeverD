@@ -14,6 +14,7 @@
 #include "SourceModel.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceOrigins.h"
 
 #include <algorithm>
@@ -78,7 +79,9 @@ class Inventory {
   void diagnostic(const char *Code, uint32_t I) {
     Result.Status = "partial";
     ++Result.DiagnosticCount;
-    if (Result.Diagnostics.size() < 32)
+    if (Result.Diagnostics.size() <
+        ::neverd::limits::web::
+            kSourceModulesDiagnosticResultDiagnosticsSizeLimit)
       Result.Diagnostics.push_back(
           {Code, I == None ? -1 : int64_t(node(I).Start)});
   }

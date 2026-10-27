@@ -12,7 +12,9 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../ExportTable.h"
 #include "../NeverDCLI.h"
+#include "../ResourceLimits.h"
 
 #include "neverd/support/CaseList.h"
 
@@ -59,30 +61,15 @@ int runImports(neverd_session_t Sess) {
 
 int runExports(neverd_session_t Sess) {
   const char *Json = neverd_exports_json(Sess);
+  int Status = 0;
   if (JsonOutput) {
     outs() << (Json ? Json : "[]") << "\n";
-  } else {
-    auto Parsed = json::parse(Json ? Json : "[]");
-    if (Parsed) {
-      if (auto *Arr = Parsed->getAsArray()) {
-        outs() << "\nExports (" << Arr->size() << "):\n";
-        outs() << format("  %-40s %-8s %s\n", "Name", "Ordinal", "Addr");
-        outs() << "  " << std::string(60, '-') << "\n";
-        for (const auto &V : *Arr) {
-          auto *Obj = V.getAsObject();
-          if (!Obj)
-            continue;
-          outs() << format(
-              "  %-40s %-8lld %s\n",
-              std::string(Obj->getString("name").value_or("")).c_str(),
-              Obj->getInteger("ordinal").value_or(0),
-              std::string(Obj->getString("addr").value_or("")).c_str());
-        }
-      }
-    }
+  } else if (auto Err = printExportTable(Json ? Json : "[]", outs())) {
+    WithColor::error(errs(), "exports") << toString(std::move(Err)) << '\n';
+    Status = 1;
   }
   neverd_free_string(Json);
-  return 0;
+  return Status;
 }
 
 int runSegments(neverd_session_t Sess) {
@@ -251,11 +238,10 @@ int runSwitches(neverd_session_t Sess) {
     WithColor::error() << "analysis failed: " << takeLastError(Sess) << "\n";
     return 1;
   }
-  // Every page, in function entry order.
-  constexpr int FunctionsPerPage = 4096;
   json::Array Switches;
   for (std::optional<neverd_va_t> Cursor = 0; Cursor;) {
-    const char *Raw = neverd_switches_json(Sess, *Cursor, FunctionsPerPage);
+    const char *Raw = neverd_switches_json(
+        Sess, *Cursor, ::neverd::limits::cli::kNeverDCmdTablesFunctionsPerPage);
     if (!Raw) {
       WithColor::error() << "switches: " << takeLastError(Sess) << "\n";
       return 1;

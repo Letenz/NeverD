@@ -12,6 +12,7 @@
 #include "Reader.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 
 #include <algorithm>
 #include <array>
@@ -19,7 +20,6 @@
 namespace neverd::web::pkg_detail {
 namespace {
 constexpr std::string_view Marker = "    var PAYLOAD_POSITION = '";
-constexpr uint64_t LocatorWindow = 512;
 
 struct Declarations {
   std::array<uint64_t, 4> Values{};
@@ -85,11 +85,13 @@ Layout locate(const Artifact &Input, PkgExtraction &E) {
       const auto Found = Text.find(Marker, Search);
       if (Found == Text.npos)
         break;
-      if (!Last && Text.size() - Found < LocatorWindow)
+      if (!Last &&
+          Text.size() - Found < ::neverd::limits::web::kLocatorLocatorWindow)
         break;
       if (++Candidates > 1)
         throw Error("pkg_ambiguous_locator");
-      D = read(std::string_view(Text).substr(Found, LocatorWindow));
+      D = read(std::string_view(Text).substr(
+          Found, ::neverd::limits::web::kLocatorLocatorWindow));
       E.LocatorOffset = Start + Found;
       E.LocatorSize = D.Size;
       step(E, D.Size);
@@ -98,7 +100,8 @@ Layout locate(const Artifact &Input, PkgExtraction &E) {
     // Matches entirely before the retained suffix were already considered.
     // Keep exactly the undecided starting positions, plus a marker's overlap.
     if (!Last) {
-      const auto Keep = std::min<uint64_t>(Text.size(), LocatorWindow - 1);
+      const auto Keep = std::min<uint64_t>(
+          Text.size(), ::neverd::limits::web::kLocatorLocatorWindow - 1);
       Carry = Text.substr(Text.size() - Keep);
     }
     At += Count;

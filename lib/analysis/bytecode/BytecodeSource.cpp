@@ -8,11 +8,13 @@
 
 #include "BytecodeInternal.h"
 
+#include "neverd/analysis/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/lift/AArch64Regs.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
+#include <iterator>
 #include <map>
 
 using namespace neverd;
@@ -37,8 +39,11 @@ llvm::Expected<BytecodeStateFunction> neverd::analysis::lowerBytecodeState(
     const LowFunc &Function, uint32_t RegisterBytes, Arch SourceArch,
     uint64_t MaxOperations, llvm::ArrayRef<va_t> BoundCalls, bool WithContext) {
   if ((SourceArch != Arch::X64 && SourceArch != Arch::AArch64) ||
-      !RegisterBytes || RegisterBytes > 65536 || Function.Blocks.empty() ||
-      !Function.hasCompleteLiftCoverage() || !MaxOperations)
+      !RegisterBytes ||
+      RegisterBytes >
+          ::neverd::limits::analysis::kMaxBytecodeRegisterBankBytes ||
+      Function.Blocks.empty() || !Function.hasCompleteLiftCoverage() ||
+      !MaxOperations)
     return invalid("invalid function, bank or architecture");
   uint64_t Parameter = SourceArch == Arch::AArch64 ? a64reg::X0 : x86reg::RDI;
   uint64_t ContextParameter =
@@ -124,7 +129,8 @@ llvm::Expected<BytecodeStateFunction> neverd::analysis::lowerBytecodeState(
           Original.Opcode == NdOp::INTRINSIC)
         return invalid("unbound call, indirect control or intrinsic");
       LowOp O = Original;
-      if (O.NumInputs > 6 || O.MemoryOrdering != NdMemoryOrdering::None ||
+      if (O.NumInputs > std::size(O.Inputs) ||
+          O.MemoryOrdering != NdMemoryOrdering::None ||
           O.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         return invalid("unsupported operation metadata");
       if (O.Opcode == NdOp::CALL) {

@@ -67,7 +67,7 @@ void KernelModel::configureFrameworkInterruptHost() {
       -> llvm::Expected<std::optional<KernelInterrupts::Connection>> {
     const auto *Device = Resources.find(Input.PDO);
     if (!Device) {
-      if (isProviderDevice(Input.PDO) && !Input.ResourceIndex)
+      if (isPnpProviderDevice(Input.PDO) && !Input.ResourceIndex)
         return std::optional<KernelInterrupts::Connection>{};
       return frameworkInterruptError("selection requires a resource provider");
     }
@@ -144,7 +144,7 @@ void KernelModel::configureFrameworkInterruptHost() {
     if (!*Selected)
       return std::optional<Connection>{};
     auto &Candidate = **Selected;
-    if (Candidate.SpinLock && ExecutiveSpinLocks.contains(Candidate.SpinLock))
+    if (Candidate.SpinLock && spinLockHeldAt(Candidate.SpinLock))
       return frameworkInterruptError("interrupt spin lock is already held");
     const uint64_t Aligned = (NextAllocation + interrupts::TokenSize - 1) &
                              ~(interrupts::TokenSize - 1);

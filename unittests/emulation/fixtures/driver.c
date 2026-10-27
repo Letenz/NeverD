@@ -49,8 +49,7 @@ __declspec(dllimport) NTSTATUS IoCreateDevice(DRIVER_OBJECT *, U32,
                                               void **);
 __declspec(dllimport) NTSTATUS IoCreateSymbolicLink(UNICODE_STRING *,
                                                     UNICODE_STRING *);
-__declspec(dllimport) NTSTATUS ZwOpenFile(void *, U32, void *, void *, U32,
-                                          U32);
+__declspec(dllimport) NTSTATUS NeverDUnsupportedFixtureAPI(void);
 
 static void Unload(DRIVER_OBJECT *Driver) { (void)Driver; }
 static NTSTATUS Dispatch(void *Device, void *Irp) {
@@ -68,7 +67,7 @@ NTSTATUS DriverEntry(DRIVER_OBJECT *Driver, UNICODE_STRING *RegistryPath) {
 #if DRIVER_CASE == 1
   return (NTSTATUS)0xc0000001U;
 #elif DRIVER_CASE == 2
-  return ZwOpenFile(0, 0, 0, 0, 0, 0);
+  return NeverDUnsupportedFixtureAPI();
 #elif DRIVER_CASE == 3
   *(volatile U64 *)0x12345000ULL = 0x8877665544332211ULL;
   return 0;

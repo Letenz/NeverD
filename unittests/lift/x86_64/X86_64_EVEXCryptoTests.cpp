@@ -8,7 +8,7 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/NdOpEmulator.h"
 #include "neverd/ir/med/MedIR.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/APInt.h"
@@ -478,6 +478,40 @@ TEST(X86EVEXCrypto, ReservedMaskEncodingFailsClosed) {
     return;
   std::vector<LowOp> Ops;
   EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
+}
+
+TEST(X86EVEXCrypto, WideIntrinsicsSpellTheirOwnForms) {
+  // coreutils' cksum carries vpclmulqdq and vpshufb at 256 and 512 bits in
+  // its AVX2 and AVX-512 CRC paths.  A lane-wise form's C intrinsic is no
+  // SSE one under the wider prefix: _mm256_clmulepi64_epi128, where
+  // _mm256_clmulepi64_si128 names none.  Each needs the features its header
+  // declares it with, which the compiler checks as it builds the unit.
+  std::vector<HighFunc> HighFunctions;
+  unsigned HighFunctionIndex = 0;
+  for (uint16_t Width : {uint16_t{32}, uint16_t{64}}) {
+    HighFunctions.push_back(
+        vectorHighCFunction(Intrinsic::Pclmulqdq, Width, HighFunctionIndex++));
+    for (Intrinsic Id :
+         {Intrinsic::AesEnc, Intrinsic::AesDecLast, Intrinsic::Pshufb}) {
+      HighFunc Function = vectorHighCFunction(Id, Width, HighFunctionIndex++);
+      // These take no immediate.
+      Function.Body.front().RetVal->Operands.pop_back();
+      HighFunctions.push_back(std::move(Function));
+    }
+  }
+  std::string HighC;
+  llvm::raw_string_ostream HighCOS(HighC);
+  CEmitterOptions HighCOptions;
+  HighCOptions.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit(HighFunctions, HighCOS, HighCOptions));
+  HighCOS.flush();
+  for (const char *Name :
+       {"_mm256_clmulepi64_epi128", "_mm512_clmulepi64_epi128",
+        "_mm256_aesenc_epi128", "_mm512_aesdeclast_epi128",
+        "_mm256_shuffle_epi8", "_mm512_shuffle_epi8"})
+    EXPECT_NE(HighC.find(Name), std::string::npos) << Name << "\n" << HighC;
+  EXPECT_EQ(HighC.find("_si128"), std::string::npos) << HighC;
+  EXPECT_TRUE(validGfniHighC(HighC));
 }
 
 TEST(X86EVEXCrypto, GfniEvexMaskedRegistersAndZmmBackendAreExact) {

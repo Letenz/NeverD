@@ -183,6 +183,23 @@ collectExactSourceCallAddresses(const llvm::Function &Function,
   return MarkedCalls;
 }
 
+/// The entries of \p Calls, which mark calls of \p Function (as
+/// collectExactSourceCallAddresses requires), in the function's order.
+/// The calls' addresses order the map, and differ between runs: an order
+/// in which lowering them names what it creates must not follow them.
+inline std::vector<std::pair<const llvm::CallInst *, va_t>>
+sourceCallsInFunctionOrder(const llvm::Function &Function,
+                           const SourceCallAddressMap &Calls) {
+  std::vector<std::pair<const llvm::CallInst *, va_t>> Ordered;
+  Ordered.reserve(Calls.size());
+  for (const llvm::BasicBlock &Block : Function)
+    for (const llvm::Instruction &Instruction : Block)
+      if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction))
+        if (const auto Found = Calls.find(Call); Found != Calls.end())
+          Ordered.push_back(*Found);
+  return Ordered;
+}
+
 enum class I32ModuleFlagState { Absent, Compatible, Conflict };
 
 /// Classify a scalar i32 module flag without using Module's unchecked flag

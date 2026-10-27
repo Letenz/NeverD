@@ -60,6 +60,20 @@ KernelModel::isResidentKernelAddress(uint64_t Address) const {
   for (const auto &[Base, Size] : FreedRanges)
     if (Contains(Base, Size))
       return modelError("MmIsAddressValid does not model retired allocations");
+  for (const auto &Module : LoadedModules) {
+    if (!Module.ResidentProvider || !Contains(Module.Base, Module.Size))
+      continue;
+    // Provider headers and export tables are deliberately read-only. Their
+    // model-owned RAM is resident, but the query must not expose opaque code
+    // or data, grant writes, or admit aliases outside the owned mapping.
+    auto Accessible = Memory.canAccess(Address, 1, Read);
+    if (!Accessible)
+      return Accessible.takeError();
+    if (!*Accessible)
+      return modelError("MmIsAddressValid requires resident readable "
+                        "provider RAM");
+    return 1;
+  }
   auto Arena = ArenaAllocations.upper_bound(Address);
   if (Arena != ArenaAllocations.begin())
     --Arena;
@@ -85,6 +99,34 @@ KernelModel::isResidentKernelAddress(uint64_t Address) const {
     return modelError("MmIsAddressValid requires resident readable and "
                       "writable RAM");
   return 1;
+}
+
+llvm::Expected<uint64_t>
+KernelModel::checkedMemoryCopy(llvm::ArrayRef<uint64_t> A, bool ClearOnError) {
+  // Pinned kernel memcpy_s and memmove_s (RVA 0x3d73f0 / 0x3d7490)
+  // both use memmove for successful copies, including overlapping buffers.
+  const uint64_t Destination = A[0], Capacity = A[1], Source = A[2],
+                 Count = A[3];
+  if (!Count)
+    return 0;
+  if (!Destination)
+    return 22;
+  if (Source && Capacity >= Count) {
+    auto Copied =
+        memoryCall(KernelAPIKind::memmove, {Destination, Source, Count});
+    if (!Copied)
+      return Copied.takeError();
+    return 0;
+  }
+  // Unlike memmove_s, memcpy_s clears the complete supplied capacity. Source
+  // validity is not tested on an error branch; the original handler is a RET.
+  if (ClearOnError) {
+    auto Cleared =
+        memoryCall(KernelAPIKind::memset, {Destination, 0, Capacity});
+    if (!Cleared)
+      return Cleared.takeError();
+  }
+  return Source ? 34 : 22;
 }
 
 llvm::Expected<uint64_t> KernelModel::memoryCall(KernelAPIKind Kind,

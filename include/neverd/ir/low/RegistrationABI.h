@@ -13,12 +13,15 @@
 
 #include <array>
 #include <map>
+#include <mutex>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace neverd {
 struct BinaryImage;
 struct LowFunc;
+struct LowOp;
 struct RegistrationStateAnalysis;
 class RegistrationCallCalleeIndex;
 
@@ -28,6 +31,12 @@ RegistrationStateAnalysis analyzeCheckedX86SEHStates(
     const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
     const std::vector<RegistrationSEHControlContract> *Controls,
     RegistrationCallCalleeIndex *Index = nullptr);
+
+/// The nesting of the analyzeCheckedX86SEHStates calls active on this thread,
+/// as far as it changes them: an analysis nested this deep or deeper no longer
+/// checks bound SEH calls, so every deeper nesting answers alike. A proof that
+/// builds a registration callee answers per level.
+unsigned x86SEHStateAnalysisLevel();
 
 /// Prove the entry ESP is restored at every ordinary near return and that
 /// all return-pop immediates agree. Unchecked calls invalidate ESP; an explicit
@@ -42,11 +51,62 @@ std::optional<uint32_t>
 getCheckedX86CalleeStackPop(const BinaryImage &Image, va_t Target,
                             size_t *CumulativeWork = nullptr);
 
-/// Authenticate the exact PE32 _local_unwind2 import or immutable IAT veneer.
+/// The answers of getCheckedX86CalleeStackPop for one unchanged image, each
+/// with the work its computation charged, per callee and
+/// x86SEHStateAnalysisLevel. A repeated query replays the answer and charges
+/// the same work, so both the answer and the caller's cumulative budget,
+/// including its exhaustion, are those of a fresh computation. Only
+/// computations that stayed within the budget are kept. The image must not
+/// change while a scope uses the memo.
+class RegistrationStackPopMemo {
+public:
+  struct Answer {
+    std::optional<uint32_t> Pop;
+    size_t Work = 0;
+  };
+
+  explicit RegistrationStackPopMemo(const BinaryImage &Image) : Image(Image) {}
+  RegistrationStackPopMemo(const RegistrationStackPopMemo &) = delete;
+  RegistrationStackPopMemo &
+  operator=(const RegistrationStackPopMemo &) = delete;
+
+  std::optional<Answer> find(const BinaryImage &Other, va_t Target,
+                             unsigned Level);
+  void record(const BinaryImage &Other, va_t Target, unsigned Level,
+              const Answer &Value);
+
+private:
+  const BinaryImage &Image;
+  std::mutex Mutex;
+  std::map<std::pair<va_t, unsigned>, Answer> Answers;
+};
+
+/// Answer this thread's getCheckedX86CalleeStackPop queries from \p Memo
+/// while the scope lives. The innermost scope wins.
+class RegistrationStackPopMemoScope {
+public:
+  explicit RegistrationStackPopMemoScope(RegistrationStackPopMemo &Memo);
+  ~RegistrationStackPopMemoScope();
+  RegistrationStackPopMemoScope(const RegistrationStackPopMemoScope &) = delete;
+  RegistrationStackPopMemoScope &
+  operator=(const RegistrationStackPopMemoScope &) = delete;
+
+private:
+  RegistrationStackPopMemo *Previous;
+};
+
+/// Authenticate a PE32 _local_unwind2/4 import or immutable IAT veneer.
 /// This identifies its runtime protocol, not its caller's frame or callbacks.
 std::optional<RegistrationLocalUnwindContract>
 getCheckedX86LocalUnwindContract(const BinaryImage &Image, va_t Target,
                                  bool Indirect);
+
+/// Recheck one local-unwind receipt against its current physical CALL and
+/// import binding. Argument and callback effects remain the state owner's.
+bool hasCheckedX86LocalUnwindCall(const BinaryImage &Image,
+                                  const LowFunc &Function, const LowOp &Op,
+                                  const RegistrationSEHLocalUnwind &Call,
+                                  size_t &Work);
 
 /// A leaf's two separate address domains: its private invocation frame and
 /// the bounded object borrowed through entry ECX. Object offsets are relative

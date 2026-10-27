@@ -17,7 +17,7 @@
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 #include <iterator>
 
@@ -196,10 +196,11 @@ bool liftSystem(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     break;
   }
   case X86_INS_INT: {
-    Intrinsic Id = Intrinsic::IntN;
     if (InsnId == X86_INS_INT && X86.op_count >= 1 &&
         X86.operands[0].type == X86_OP_IMM && X86.operands[0].imm == 3) {
-      Id = Intrinsic::Int3;
+      // The long encoding has the same void, zero-argument contract as CC.
+      S.emitVoidIntrinsic(Intrinsic::Int3);
+      break;
     }
     if (InsnId == X86_INS_INT && X86.op_count >= 1 &&
         X86.operands[0].type == X86_OP_IMM) {
@@ -219,15 +220,14 @@ bool liftSystem(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       } else if (Vector == 0x29) {
         // Windows `int 0x29` is `__fastfail(ecx)`; it does not return a value
         // in RAX.
-        S.emitVoidIntrinsic(Intrinsic::IntN,
-                            {NdVar::cst(Vector, 1),
-                             NdVar::reg(x86reg::RCX, 4)});
+        S.emitVoidIntrinsic(Intrinsic::IntN, {NdVar::cst(Vector, 1),
+                                              NdVar::reg(x86reg::RCX, 4)});
       } else {
-        S.emitIntrinsic(Id, NdVar::reg(x86reg::RAX, 8),
+        S.emitIntrinsic(Intrinsic::IntN, NdVar::reg(x86reg::RAX, 8),
                         {NdVar::cst(Vector, 1)});
       }
     } else {
-      S.emitIntrinsic(Id);
+      S.emitIntrinsic(Intrinsic::IntN);
     }
     break;
   }

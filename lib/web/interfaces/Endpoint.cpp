@@ -13,6 +13,7 @@
 #include "ada.h"
 
 #include "neverd/web/Interfaces.h"
+#include "neverd/web/Limits.h"
 
 namespace neverd::web {
 namespace {
@@ -53,7 +54,8 @@ bool interfaceForbiddenMethod(std::string_view Method) {
 }
 
 std::string interfaceHeaderKind(std::string_view Name) {
-  if (Name.size() > 64)
+  if (Name.size() >
+      ::neverd::limits::web::kEndpointInterfaceHeaderKindNameSizeLimit)
     return "other";
   const auto Lower = asciiLower(Name);
   for (const auto *Sensitive : {"authorization", "proxy-authorization",

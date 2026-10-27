@@ -112,7 +112,10 @@ bool CFGBuilder::detectUnscaledRelocTableLoad(
     const BinaryImage &Img, const InsnRecord &Rec, uint64_t &BaseReg,
     uint64_t &IndexReg, uint16_t &LoadWidth, uint64_t &Disp, va_t &TableAddr,
     NdVar *LoadOutput, va_t *LoadAddr, int *LoadSeq, NdVar *IndexValue,
-    va_t *IndexUseAddr, int *IndexUseSeq) const {
+    va_t *IndexUseAddr, int *IndexUseSeq, size_t *CandidateEvidenceBudget,
+    bool *AnalysisComplete, ResolverQueryScope *ReadOnlyScope) const {
+  if (AnalysisComplete)
+    *AnalysisComplete = true;
   // Flatten the whole function prefix up to the dispatch so the pre-scaling
   // mask (often hoisted into a register in the loop preheader) is in scope.
   std::vector<LowOp> Ops;
@@ -136,21 +139,8 @@ bool CFGBuilder::detectUnscaledRelocTableLoad(
     // defining INT_ADD.  The i386 lifter zero-extends a complete 32-bit guest
     // address to the host address width immediately before LOAD; that is an
     // address-container conversion, not a different provenance root.
-    auto isAddressTransport = [&](const LowOp &Op) {
-      if (Op.NumInputs < 1 || (!Op.Inputs[0].isReg() && !Op.Inputs[0].isTemp()))
-        return false;
-      if (Op.Opcode == NdOp::COPY)
-        return true;
-      return Op.Opcode == NdOp::INT_ZEXT &&
-             Op.Inputs[0].Size == Img.getPointerSize() &&
-             Op.Output.Size > Op.Inputs[0].Size;
-    };
-    int AddIdx = reachingDefIdx(Ops, I - 1, AddrV);
-    for (int G = 0; AddIdx >= 0 && isAddressTransport(Ops[AddIdx]) &&
-                    G < limits::kMaxQuasiCopyDepth;
-         ++G) {
-      AddIdx = reachingDefIdx(Ops, AddIdx - 1, Ops[AddIdx].Inputs[0]);
-    }
+    const int AddIdx =
+        jumpTableAddressDef(Ops, I - 1, AddrV, Img.getPointerSize());
     if (AddIdx < 0 || Ops[AddIdx].Opcode != NdOp::INT_ADD ||
         Ops[AddIdx].NumInputs < 2)
       continue;
@@ -167,14 +157,8 @@ bool CFGBuilder::detectUnscaledRelocTableLoad(
         continue;
       DispSide = Which;
       LocalDisp = Ops[AddIdx].Inputs[Which].Offset;
-      int Inner =
-          reachingDefIdx(Ops, AddIdx - 1, Ops[AddIdx].Inputs[1 - Which]);
-      for (int G = 0; Inner >= 0 && isAddressTransport(Ops[Inner]) &&
-                      G < limits::kMaxQuasiCopyDepth;
-           ++G) {
-        Inner = reachingDefIdx(Ops, Inner - 1, Ops[Inner].Inputs[0]);
-      }
-      InnerIdx = Inner;
+      InnerIdx = jumpTableAddressDef(
+          Ops, AddIdx - 1, Ops[AddIdx].Inputs[1 - Which], Img.getPointerSize());
       break;
     }
     if (InnerIdx < 0 || Ops[InnerIdx].Opcode != NdOp::INT_ADD ||
@@ -212,7 +196,16 @@ bool CFGBuilder::detectUnscaledRelocTableLoad(
       // verifiable label-table signature no ordinary load shares.
       va_t Table = LocalDisp;
       if (LocalDisp == 0) {
-        auto BaseAddrOpt = foldRegConstant(Img, Rec, Base, LoadInsnAddr);
+        bool Complete = false;
+        auto BaseAddrOpt = foldTableAddressAtUse(
+            Img, Rec, {Sum.Inputs[1 - Side], Sum.Addr, Sum.Seq, false}, Base,
+            LoadInsnAddr, CandidateEvidenceBudget, Complete,
+            /*AllowUnmappedCOFFImageBase=*/false, ReadOnlyScope);
+        if (!Complete) {
+          if (AnalysisComplete)
+            *AnalysisComplete = false;
+          return false;
+        }
         if (!BaseAddrOpt)
           continue;
         Table = *BaseAddrOpt;
@@ -246,9 +239,91 @@ bool CFGBuilder::detectUnscaledRelocTableLoad(
 // tryCrossInstrRelativeTable — table base materialized in a prior instruction
 //===----------------------------------------------------------------------===//
 
-bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
-                                            const InsnRecord &Rec,
-                                            JumpTableInfo &Info) {
+// Whether Ops[Def] computes a constant: it copies, zero-extends, adds or
+// subtracts values that are constants or are computed that way earlier in
+// Ops. Only temporaries and Reg's own lanes are followed (`mov $imm,%ebp`
+// writes RBP's low lane before widening it).
+static bool computesConstant(const std::vector<LowOp> &Ops, int Def,
+                             uint64_t Reg, int Depth) {
+  const LowOp &Op = Ops[Def];
+  auto isConstant = [&](const NdVar &Input) {
+    if (Input.isConst())
+      return true;
+    if (Depth + 1 >= limits::kMaxQuasiCopyDepth ||
+        !(Input.isTemp() || (Input.isReg() && Input.Offset == Reg)))
+      return false;
+    const int InputDef = reachingDefIdx(Ops, Def - 1, Input);
+    return InputDef >= 0 && computesConstant(Ops, InputDef, Reg, Depth + 1);
+  };
+  switch (Op.Opcode) {
+  case NdOp::COPY:
+  case NdOp::INT_ZEXT:
+    return Op.NumInputs >= 1 && isConstant(Op.Inputs[0]);
+  case NdOp::INT_ADD:
+  case NdOp::INT_SUB:
+    return Op.NumInputs >= 2 && isConstant(Op.Inputs[0]) &&
+           isConstant(Op.Inputs[1]);
+  default:
+    return false;
+  }
+}
+
+// Whether the last write to register Reg before Ops[Before] sets the whole
+// register to a constant (`lea table(%rip),%rbp`).
+static bool lastWriteMakesConstant(const std::vector<LowOp> &Ops, int Before,
+                                   uint64_t Reg, uint16_t RegSize) {
+  const int Def = reachingDefIdx(Ops, Before - 1, NdVar::reg(Reg, RegSize));
+  return Def >= 0 && Ops[Def].Output.Size == RegSize &&
+         computesConstant(Ops, Def, Reg, 0);
+}
+
+// Whether the last write to register Reg before Ops[Before] reloads the whole
+// register from a frame cell (`mov 0x54(%esp),%eax`, a spill read back).
+static bool lastWriteReloadsFrameCell(const std::vector<LowOp> &Ops, int Before,
+                                      uint64_t Reg, uint16_t RegSize,
+                                      const TargetRegInfo &TRI) {
+  int Def = reachingDefIdx(Ops, Before - 1, NdVar::reg(Reg, RegSize));
+  for (int Depth = 0; Def >= 0 && Ops[Def].Opcode == NdOp::COPY &&
+                      Ops[Def].NumInputs >= 1 && Ops[Def].Inputs[0].isTemp();
+       ++Depth) {
+    if (Depth >= limits::kMaxQuasiCopyDepth)
+      return false;
+    Def = reachingDefIdx(Ops, Def - 1, Ops[Def].Inputs[0]);
+  }
+  if (Def < 0 || Ops[Def].Opcode != NdOp::LOAD || Ops[Def].NumInputs < 1 ||
+      Ops[Def].Output.Size != RegSize)
+    return false;
+  NdVar Address =
+      Ops[Def].NumInputs >= 2 ? Ops[Def].Inputs[1] : Ops[Def].Inputs[0];
+  int From = Def - 1;
+  for (int Depth = 0; Depth < limits::kMaxQuasiCopyDepth; ++Depth) {
+    if (Address.isReg())
+      return TRI.isFrameReg(Address.Offset);
+    if (!Address.isTemp())
+      return false;
+    const int AddressDef = reachingDefIdx(Ops, From, Address);
+    if (AddressDef < 0)
+      return false;
+    const LowOp &Op = Ops[AddressDef];
+    // The x86 lifter widens a 32-bit address before the access.
+    const bool Copy =
+        (Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT) &&
+        Op.NumInputs >= 1;
+    const bool Offset =
+        (Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
+        Op.NumInputs >= 2 && Op.Inputs[1].isConst();
+    if (!Copy && !Offset)
+      return false;
+    Address = Op.Inputs[0];
+    From = AddressDef - 1;
+  }
+  return false;
+}
+
+bool CFGBuilder::tryCrossInstrRelativeTable(
+    const BinaryImage &Img, const InsnRecord &Rec, JumpTableInfo &Info,
+    size_t *CandidateEvidenceBudget) const {
+  ResolverQueryScope AddressScope(*this);
   // A memory-indirect jump (`jmp *(base,idx,8)`, the computed-goto / threaded
   // dispatch shape) lifts to a LOAD feeding an INDIR_BR whose input is a
   // *temp*; a register-indirect jump (`jmp *rax`) feeds a register.  The table
@@ -402,11 +477,17 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
   NdVar UnscaledLoadOutput;
   va_t UnscaledLoadAddr = InvalidVA;
   int UnscaledLoadSeq = -1;
+  bool UnscaledComplete = true;
   if (BaseReg == InvalidVA)
     Unscaled = detectUnscaledRelocTableLoad(
         Img, Rec, BaseReg, IndexReg, LoadWidth, Disp, UnscaledTableAddr,
         &UnscaledLoadOutput, &UnscaledLoadAddr, &UnscaledLoadSeq,
-        &IndexValueAtUse, &IndexUseAddr, &IndexUseSeq);
+        &IndexValueAtUse, &IndexUseAddr, &IndexUseSeq, CandidateEvidenceBudget,
+        &UnscaledComplete, &AddressScope);
+  if (!UnscaledComplete) {
+    Info.IncompleteGuardDomain = true;
+    return false;
+  }
 
   if (BaseReg == InvalidVA || LoadWidth == 0 || (!HasScaledIndex && !Unscaled))
     return false;
@@ -463,8 +544,16 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
   // data segment.  (A genuine non-frame GOT-base table keeps GotOff
   // regardless.)
   const TargetRegInfo &TRIcg = getTargetRegInfo(Img.Arch);
-  bool BaseIsFrame = BaseReg != InvalidVA && TRIcg.isFrameReg(BaseReg);
-  if (!BaseIsFrame) {
+  // A base register this block sets to a constant before the table read
+  // holds that constant there, not a frame address, even when it is a frame
+  // register: optimized x86-64 code keeps RBP as an ordinary register (`lea
+  // table(%rip),%rbp`).
+  const bool BaseHoldsConstant =
+      BaseReg != InvalidVA && LoadIdx > 0 &&
+      lastWriteMakesConstant(BlockOps, LoadIdx, BaseReg, Img.getPointerSize());
+  bool BaseIsFrame =
+      BaseReg != InvalidVA && !BaseHoldsConstant && TRIcg.isFrameReg(BaseReg);
+  if (!BaseIsFrame && !BaseHoldsConstant) {
     // AArch64/ARM commonly materialise a local table base in a scratch
     // register (`add x8, sp, #off`) before combining it with the scaled index.
     // This preflight only decides whether the full all-path stack-table
@@ -669,11 +758,24 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
       // than dispatching on the now-stale index->target map.
       Info.MutatedUnsafe = StackTableMutated;
     } else {
-      std::optional<uint64_t> RelBaseOpt =
-          foldRegConstant(Img, Rec, BaseReg, FoldAt, {},
-                          /*RequireMappedValue=*/true,
-                          /*AllowUnmappedCOFFImageBase=*/
-                          Disp != 0 && Img.isCOFF());
+      bool BaseComplete = false;
+      auto RelBaseOpt = foldTableAddressAtUse(
+          Img, Rec, FrameRuntimeBase.Use, BaseReg, FoldAt,
+          CandidateEvidenceBudget, BaseComplete,
+          /*AllowUnmappedCOFFImageBase=*/Disp != 0 && Img.isCOFF(),
+          &AddressScope);
+      if (!BaseComplete) {
+        Info.IncompleteGuardDomain = true;
+        return false;
+      }
+      // Clang -O0 spills the GOT register and reloads it for the dispatch,
+      // which no block-local fold follows.  In a linked i386 image, propose
+      // the GOT address the image records; the displaced-base role must still
+      // prove that the reload holds it on every path.
+      if (!RelBaseOpt && Disp != 0 && LoadWidth == 4 && LoadIdx > 0 &&
+          lastWriteReloadsFrameCell(BlockOps, LoadIdx, BaseReg,
+                                    Img.getPointerSize(), TRIcg))
+        RelBaseOpt = Img.linkedI386GlobalOffsetTable();
       if (!RelBaseOpt)
         return false;
       FoldedTableBase = RelBaseOpt;
@@ -1158,6 +1260,16 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
       };
       auto traceConstAnchor = [&](NdVar V,
                                   int From) -> std::optional<uint64_t> {
+        bool AddressComplete = false;
+        const auto Address = queryConstantAddressAtUse(
+            Img, {V, BlockOps[AddD].Addr, BlockOps[AddD].Seq, false},
+            CandidateEvidenceBudget, AddressComplete, &AddressScope);
+        if (!AddressComplete) {
+          Info.IncompleteGuardDomain = true;
+          return std::nullopt;
+        }
+        if (Address)
+          return Address;
         const std::optional<bool> LoadFree = isLoadFreeAnchor(V, From);
         // A Win64 switch can keep the image base it located the table with in
         // a register set before an earlier dispatch, so the anchor has no
@@ -1203,8 +1315,20 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
         }
         return std::nullopt;
       };
+      const std::optional<va_t> I386GOT = Img.linkedI386GlobalOffsetTable();
       for (int W = 0; W < 2; ++W) {
-        auto Anchor = traceConstAnchor(BlockOps[AddD].Inputs[W], AddD - 1);
+        const NdVar &Input = BlockOps[AddD].Inputs[W];
+        auto Anchor = traceConstAnchor(Input, AddD - 1);
+        if (Info.IncompleteGuardDomain)
+          return false;
+        // Linked i386 PIC code adds each entry to the GOT register it read
+        // the table through.  Clang computes that register from the return
+        // address its call/pop pushed, which the load-free walk rejects but
+        // the base fold above emulated.  branchTargetDependsOnTableLoad
+        // proves that the register holds the GOT address on every path.
+        if (!Anchor && I386GOT && FoldedTableBase == *I386GOT &&
+            Input.isReg() && Input.Offset == BaseReg)
+          Anchor = *I386GOT;
         if (!Anchor || *Anchor == TableAddr)
           continue;
         const bool IsCOFFImageBaseRVA =
@@ -1212,7 +1336,11 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
             Img.getPointerSize() == 8 && Info.EntrySize == sizeof(uint32_t) &&
             SawZext && !SawSext && !Info.IsSigned && *Anchor == Img.Base &&
             Info.EntryScale == 1;
-        if (Img.hasExecutableCodeOwnerAt(*Anchor) || IsCOFFImageBaseRVA) {
+        const bool IsI386GOTRelative = I386GOT && *Anchor == *I386GOT &&
+                                       Info.EntrySize == sizeof(uint32_t) &&
+                                       Info.EntryScale == 1;
+        if (Img.hasExecutableCodeOwnerAt(*Anchor, ExecutableCodeOwners) ||
+            IsCOFFImageBaseRVA || IsI386GOTRelative) {
           Info.setTargetBase(*Anchor);
           Info.EntryScale = 1;
           Info.IsPEImageRelativeRVA = IsCOFFImageBaseRVA;

@@ -1,0 +1,11 @@
+//===- ModuleInputLimits.def - Shared module input bounds ----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_MODULE_INPUT_LIMIT
+NEVERD_MODULE_INPUT_LIMIT(JSONBytes, NEVERD_MODULE_JSON_LIMIT, 2097152)
+NEVERD_MODULE_INPUT_LIMIT(PathBytes, NEVERD_MODULE_PATH_LIMIT, 4096)
+NEVERD_MODULE_INPUT_LIMIT(IDBytes, NEVERD_MODULE_ID_LIMIT, 128)
+NEVERD_MODULE_INPUT_LIMIT(SymbolBytes, NEVERD_MODULE_SYMBOL_LIMIT, 4096)
+#endif

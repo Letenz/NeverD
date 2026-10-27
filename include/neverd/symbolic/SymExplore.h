@@ -34,6 +34,8 @@
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/symbolic/SymExec.h"
 
+#include "llvm/ADT/ArrayRef.h"
+
 #include <cstddef>
 #include <functional>
 #include <optional>
@@ -81,6 +83,14 @@ struct SymConcreteRegister {
   uint64_t Value = 0;
 };
 
+/// Owned bytes from one concrete entry-memory snapshot. Addresses are linear
+/// guest addresses; bytes are in address order, independent of target byte
+/// order. A snapshot is input data, not a mapping or nonaliasing contract.
+struct SymConcreteMemory {
+  uint64_t Address = 0;
+  std::vector<uint8_t> Bytes;
+};
+
 /// Identity of one executed call, including its zero-based repetition on this
 /// path.  Address plus sequence distinguishes multiple LowIR calls emitted for
 /// one machine instruction; Invocation distinguishes loop iterations.
@@ -121,6 +131,10 @@ public:
   /// Give \p Bytes of the register file at \p Offset the value \p Value.
   /// False rejects an invalid or conflicting seed before execution begins.
   virtual bool setRegister(uint64_t Offset, uint16_t Bytes, uint64_t Value) = 0;
+
+  /// Supply nonempty, nonwrapping entry-memory bytes before execution. Shadows
+  /// without memory-seed support reject the request rather than ignore it.
+  virtual bool setMemory(uint64_t, llvm::ArrayRef<uint8_t>) { return false; }
 
   /// Carry \p Op out concretely.  A false result means the shadow could not,
   /// and the walk stops consulting it from there on rather than following a
@@ -182,6 +196,9 @@ struct ExploreOptions {
   /// is the concrete input the walk follows; the symbolic side is left free,
   /// which is what makes the recorded condition worth having.
   std::vector<SymConcreteRegister> ConcolicSeed;
+  /// Concrete memory input, written only into the shadow. The symbolic state
+  /// retains its entry-memory origins, including all possible aliases.
+  std::vector<SymConcreteMemory> ConcolicMemory;
 };
 
 struct SymCallResult {

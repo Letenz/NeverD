@@ -4,13 +4,20 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/med/MedConstantPropagation.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
+
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -18,14 +25,12 @@
 
 namespace neverd {
 namespace {
-constexpr size_t MaxEvaluationWork = 65536;
-constexpr unsigned MaxEvaluationDepth = 64;
-constexpr unsigned MaxScanIterations = 4096;
-constexpr unsigned MaxFoldRounds = 4;
 
+// A value's identity.  No variable is as wide as the sizes DenseMap reserves
+// for its empty and erased keys.
 using Key = std::tuple<MedVar::VarKind, int, int, uint16_t>;
 Key key(const MedVar &V) { return {V.Kind, V.Id, V.SSAVer, V.Size}; }
-using Values = std::map<Key, MedVar>;
+using Values = llvm::DenseMap<Key, MedVar>;
 uint64_t mask(unsigned Size) {
   return Size >= 8 ? ~uint64_t{0} : (uint64_t{1} << (Size * 8)) - 1;
 }
@@ -49,14 +54,39 @@ bool independentEntry(const MedFunc &Func, const MedBlock &Block,
 class Evaluator {
   const MedFunc &Func;
   const BinaryImage &Image;
-  std::map<Key, const MedOp *> Defs;
-  std::map<Key, std::pair<const MedBlock *, const PhiNode *>> Phis;
-  std::map<int, const MedBlock *> Blocks;
-  std::set<Key> CompletePhis;
-  std::set<Key> Active;
-  Values Memo;
+  /// What the evaluator knows of one value: the operation or the PHI that
+  /// defines it, whether that PHI's inputs are complete, and what the value
+  /// evaluated to, while MemoGeneration is the evaluator's Generation.  One
+  /// lookup answers all of them.
+  struct Node {
+    const MedOp *Def = nullptr;
+    const MedBlock *PhiBlock = nullptr;
+    const PhiNode *Phi = nullptr;
+    bool CompletePhi = false;
+    uint64_t MemoGeneration = 0;
+    MedVar Memo = {};
+  };
+  llvm::DenseMap<Key, Node> Nodes;
+  /// Forgetting what was evaluated starts a new generation.
+  uint64_t Generation = 1;
+  llvm::DenseMap<int, const MedBlock *> Blocks;
+  /// The values being evaluated, innermost last: a value its own evaluation
+  /// reaches again has no value.  Evaluation nests at most
+  /// MaxEvaluationDepth deep, so finding one is a short scan.
+  llvm::SmallVector<Key, 16> Active;
   size_t &Budget;
   bool Complete = false;
+  /// The work building the evaluator charged.
+  size_t Built = 0;
+
+  /// The block \p Id names, where the function has one.  Blocks are numbered
+  /// from zero; DenseMap reserves the largest and smallest ints.
+  const MedBlock *block(int Id) const {
+    if (Id < 0 || Id == std::numeric_limits<int>::max())
+      return nullptr;
+    const auto Found = Blocks.find(Id);
+    return Found == Blocks.end() ? nullptr : Found->second;
+  }
 
   bool spend(size_t Work = 1) {
     if (Work > Budget) {
@@ -91,20 +121,46 @@ class Evaluator {
 public:
   Evaluator(const MedFunc &F, const BinaryImage &I, size_t &Remaining)
       : Func(F), Image(I), Budget(Remaining) {
+    const size_t Before = Budget;
+    build();
+    Built = Before - Budget;
+  }
+
+  /// Charges the work of building the evaluator over the unchanged function
+  /// again and forgets what it evaluated: it then answers, and charges, as a
+  /// new evaluator would.  Where that work does not fit, none is left and the
+  /// evaluator is incomplete, as a new one would be.
+  void renew() {
+    ++Generation;
+    if (Built > Budget) {
+      Budget = 0;
+      Complete = false;
+      return;
+    }
+    Budget -= Built;
+  }
+
+private:
+  void build() {
     std::map<int, std::set<int>> Incoming;
-    std::set<Key> Outputs;
-    for (const auto &B : F.Blocks) {
+    for (const auto &B : Func.Blocks) {
       if (!spend(1 + B.Phis.size() + B.Ops.size()) || B.Id < 0 ||
-          !Blocks.emplace(B.Id, &B).second)
+          B.Id == std::numeric_limits<int>::max() ||
+          !Blocks.try_emplace(B.Id, &B).second)
         return;
       for (int S : B.Succs) {
         if (!spend() || !Incoming[S].insert(B.Id).second)
           return;
       }
       for (const auto &P : B.Phis) {
-        if (!spend(P.Args.size()) || !Outputs.insert(key(P.Output)).second)
+        if (!spend(P.Args.size()))
           return;
-        Phis.emplace(key(P.Output), std::pair{&B, &P});
+        // Each value has one definition.
+        auto [It, Added] = Nodes.try_emplace(key(P.Output));
+        if (!Added)
+          return;
+        It->second.PhiBlock = &B;
+        It->second.Phi = &P;
       }
       for (const auto &Op : B.Ops) {
         // Source-call certificates authenticate this value graph and frame,
@@ -113,36 +169,41 @@ public:
         if (Op.NumInputs > Op.Inputs.size() || Op.SourceCallHint)
           return;
         if (Op.Output.Size && !Op.Output.isConst()) {
-          if (!Outputs.insert(key(Op.Output)).second)
+          auto [It, Added] = Nodes.try_emplace(key(Op.Output));
+          if (!Added)
             return;
-          Defs.emplace(key(Op.Output), &Op);
+          It->second.Def = &Op;
         }
       }
     }
     for (const auto &[Id, Preds] : Incoming)
-      if (!Blocks.count(Id))
+      if (!block(Id))
         return;
-    for (const auto &B : F.Blocks)
+    for (const auto &B : Func.Blocks)
       for (const auto &P : B.Phis) {
         if (!spend(B.Preds.size() + P.Args.size()))
           return;
         if (hasCompleteOrdinaryPhiInputs(B, P, Incoming[B.Id]))
-          CompletePhis.insert(key(P.Output));
+          Nodes[key(P.Output)].CompletePhi = true;
       }
     Complete = true;
   }
 
+public:
   bool exhausted() const { return !Budget; }
   bool complete() const { return Complete; }
   bool hasCompletePhi(const PhiNode &P) const {
-    return CompletePhis.count(key(P.Output));
+    const auto It = Nodes.find(key(P.Output));
+    return It != Nodes.end() && It->second.CompletePhi;
   }
-  void clearMemo() { Memo.clear(); }
+  void clearMemo() { ++Generation; }
 
   std::optional<MedVar> value(const MedVar &V, const Values *Bindings = nullptr,
                               unsigned Depth = 0) {
-    if (!Complete || !Budget || Depth > MaxEvaluationDepth || !V.Size ||
-        V.Size > 8)
+    if (!Complete || !Budget ||
+        Depth >
+            ::neverd::limits::ir::kMedImmutableTableScansMaxEvaluationDepth ||
+        !V.Size || V.Size > 8)
       return std::nullopt;
     --Budget;
     if (V.isConst()) {
@@ -154,32 +215,43 @@ public:
         return std::nullopt;
       return V;
     }
+    const Key K = key(V);
     if (Bindings)
-      if (auto It = Bindings->find(key(V)); It != Bindings->end())
+      if (auto It = Bindings->find(K); It != Bindings->end())
         return It->second;
-    if (!Bindings)
-      if (auto It = Memo.find(key(V)); It != Memo.end())
-        return It->second;
-    if (!Active.insert(key(V)).second)
+    const auto Known = Nodes.find(K);
+    if (!Bindings && Known != Nodes.end() &&
+        Known->second.MemoGeneration == Generation)
+      return Known->second.Memo;
+    if (llvm::is_contained(Active, K))
       return std::nullopt;
+    Active.push_back(K);
+    // Memoizing an external input below adds its node, which can move the
+    // others: keep what this one says.
+    const MedOp *Def = nullptr;
+    const MedBlock *Block = nullptr;
+    const PhiNode *Phi = nullptr;
+    bool CompletePhi = false;
+    if (Known != Nodes.end()) {
+      Def = Known->second.Def;
+      Block = Known->second.PhiBlock;
+      Phi = Known->second.Phi;
+      CompletePhi = Known->second.CompletePhi;
+    }
     std::optional<MedVar> Result;
-    if (auto It = Phis.find(key(V)); It != Phis.end()) {
-      const auto &[Block, Phi] = It->second;
+    if (Phi) {
       // An independently enterable root has an implicit incoming value that
       // no ordinary PHI arm describes.
-      if (CompletePhis.count(key(V)) &&
-          !independentEntry(Func, *Block, Image)) {
+      if (CompletePhi && !independentEntry(Func, *Block, Image)) {
         bool AllValues = true;
         for (const auto &[Pred, Arg] : Phi->Args) {
-          const auto Found = Blocks.find(Pred);
-          if (Found == Blocks.end() ||
-              std::find(Found->second->Succs.begin(),
-                        Found->second->Succs.end(),
-                        Block->Id) == Found->second->Succs.end()) {
+          const MedBlock *Found = block(Pred);
+          if (!Found || std::find(Found->Succs.begin(), Found->Succs.end(),
+                                  Block->Id) == Found->Succs.end()) {
             AllValues = false;
             break;
           }
-          if (auto Chosen = successor(*Found->second, Bindings, Depth + 1);
+          if (auto Chosen = successor(*Found, Bindings, Depth + 1);
               Chosen && *Chosen != Block->Id)
             continue;
           auto A = value(Arg, Bindings, Depth + 1);
@@ -192,10 +264,10 @@ public:
         if (!AllValues)
           Result.reset();
       }
-    } else if (auto It = Defs.find(key(V)); It != Defs.end()) {
-      const auto &Op = *It->second;
+    } else if (Def) {
+      const auto &Op = *Def;
       if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
-          !Op.Inputs[0].isConst() && key(Op.Inputs[0]) == key(V))
+          !Op.Inputs[0].isConst() && key(Op.Inputs[0]) == K)
         Result = V;
       else
         Result = operation(Op, Bindings, Depth + 1);
@@ -204,9 +276,13 @@ public:
       // concrete value for it. Only copies and invariant PHIs can carry it.
       Result = V;
     }
-    Active.erase(key(V));
-    if (Result && !Bindings)
-      Memo.emplace(key(V), *Result);
+    Active.pop_back();
+    // Nothing memoized K meanwhile: it was active.
+    if (Result && !Bindings) {
+      Node &Memoized = Nodes[K];
+      Memoized.MemoGeneration = Generation;
+      Memoized.Memo = *Result;
+    }
     return Result;
   }
 
@@ -225,9 +301,8 @@ public:
     if (!Cond || !scalar(*Cond))
       return std::nullopt;
     for (int S : B.Succs) {
-      const auto It = Blocks.find(S);
-      if (It != Blocks.end() &&
-          It->second->StartAddr == Branch.Inputs[0].ConstVal)
+      const MedBlock *Target = block(S);
+      if (Target && Target->StartAddr == Branch.Inputs[0].ConstVal)
         return Cond->ConstVal ? S : (B.Succs[0] == S ? B.Succs[1] : B.Succs[0]);
     }
     return std::nullopt;
@@ -236,8 +311,11 @@ public:
   std::optional<MedVar> operation(const MedOp &Op,
                                   const Values *Bindings = nullptr,
                                   unsigned Depth = 0) {
-    if (!Complete || !Budget || Depth > MaxEvaluationDepth || !Op.Output.Size ||
-        Op.Output.Size > 8 || Op.MemoryOrdering != NdMemoryOrdering::None ||
+    if (!Complete || !Budget ||
+        Depth >
+            ::neverd::limits::ir::kMedImmutableTableScansMaxEvaluationDepth ||
+        !Op.Output.Size || Op.Output.Size > 8 ||
+        Op.MemoryOrdering != NdMemoryOrdering::None ||
         Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
         Op.SourceCallHint || !Op.IntrinsicOutputs.empty())
       return std::nullopt;
@@ -275,19 +353,9 @@ public:
         if (auto Target = readImmutableImageCodePointer(Image, Slot))
           return address(*Target, true);
       }
-      auto Bytes = readImmutableImageBytes(Image, Slot, Size);
-      if (!Bytes)
-        return std::nullopt;
-      uint64_t Bits = 0;
-      for (unsigned I = 0; I < Size; ++I)
-        Bits |= uint64_t{(*Bytes)[I]} << (I * 8);
-      // Exact bytes alone cannot distinguish an address from an integer with
-      // the same bits. Only the pointer readers above may publish an address;
-      // retaining this LOAD preserves the backend's relocation proof.
-      if (Size == Image.getPointerSize() &&
-          Image.isPotentiallyRelocatableAddress(Bits))
-        return std::nullopt;
-      return literal(Bits, Size);
+      if (auto Bits = readImmutableImageScalar(Image, Slot, Size))
+        return literal(*Bits, Size);
+      return std::nullopt;
     }
     auto B = Op.NumInputs >= 2 ? value(Op.Inputs[1], Bindings, Depth + 1)
                                : std::nullopt;
@@ -390,8 +458,10 @@ public:
   }
 };
 
+/// Folds the scan loop \p Block where it can prove its exit; \p Shared is an
+/// evaluator over \p Func as it is, which a scan that folds nothing leaves.
 bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image,
-              size_t &Budget) {
+              size_t &Budget, std::optional<Evaluator> &Shared) {
   if (Block.Id == 0 || Block.Preds.size() != 2 || Block.Succs.size() != 2 ||
       Block.Phis.empty() || Block.Ops.empty() ||
       !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty() ||
@@ -407,7 +477,7 @@ bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image,
       Block.Ops.size() > Budget - Block.Phis.size())
     return false;
   Budget -= Block.Phis.size() + Block.Ops.size();
-  std::set<Key> Local;
+  llvm::DenseSet<Key> Local;
   for (const auto &P : Block.Phis)
     Local.insert(key(P.Output));
   for (size_t I = 0; I + 1 < Block.Ops.size(); ++I) {
@@ -418,7 +488,11 @@ bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image,
       return false;
     Local.insert(key(Op.Output));
   }
-  Evaluator Eval(Func, Image, Budget);
+  if (Shared)
+    Shared->renew();
+  else
+    Shared.emplace(Func, Image, Budget);
+  Evaluator &Eval = *Shared;
   if (!Eval.complete())
     return false;
   Values State;
@@ -435,14 +509,17 @@ bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image,
         // A lowered register PHI can carry a dead incoming ABI value that the
         // first iteration overwrites. Keep it explicitly unknown while
         // simulating; it may neither decide control nor survive the exit.
-        State.emplace(key(P.Output), V.value_or(MedVar::makeUnspecified(
-                                         P.Output.Size, Image.Arch)));
+        State.try_emplace(key(P.Output), V.value_or(MedVar::makeUnspecified(
+                                             P.Output.Size, Image.Arch)));
         Found = true;
       }
     if (!Found)
       return false;
   }
-  for (unsigned Iteration = 0; Iteration < MaxScanIterations; ++Iteration) {
+  for (unsigned Iteration = 0;
+       Iteration <
+       ::neverd::limits::ir::kMedImmutableTableScansMaxScanIterations;
+       ++Iteration) {
     Values Current = State;
     for (size_t I = 0; I + 1 < Block.Ops.size(); ++I) {
       const auto &Op = Block.Ops[I];
@@ -500,7 +577,7 @@ bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image,
           auto V = Eval.value(Arg, &Current);
           if (!V)
             return false;
-          NextState.emplace(key(P.Output), *V);
+          NextState.try_emplace(key(P.Output), *V);
           Found = true;
         }
       if (!Found)
@@ -518,8 +595,11 @@ bool foldImmutableTableScans(MedFunc &Func, const BinaryImage &Image) {
   if (!supportsImmutableImageReads(Image) || Func.SkippedSSA)
     return false;
   bool Changed = false;
-  size_t Budget = MaxEvaluationWork;
-  for (unsigned Round = 0; Round != MaxFoldRounds; ++Round) {
+  size_t Budget =
+      ::neverd::limits::ir::kMedImmutableTableScansMaxEvaluationWork;
+  for (unsigned Round = 0;
+       Round != ::neverd::limits::ir::kMedImmutableTableScansMaxFoldRounds;
+       ++Round) {
     bool Progress = false;
     Evaluator Eval(Func, Image, Budget);
     if (!Eval.complete())
@@ -552,10 +632,15 @@ bool foldImmutableTableScans(MedFunc &Func, const BinaryImage &Image) {
         Op.Inputs[0] = *Value;
         Progress = true;
       }
+    // An evaluator over the function as the scans tried so far left it.
+    std::optional<Evaluator> Shared;
     for (auto &Block : Func.Blocks) {
       if (!Budget)
         break;
-      Progress |= foldScan(Func, Block, Image, Budget);
+      if (foldScan(Func, Block, Image, Budget, Shared)) {
+        Progress = true;
+        Shared.reset();
+      }
     }
     Changed |= Progress;
     if (!Progress)

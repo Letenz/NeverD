@@ -10,6 +10,7 @@
 #include "RegistrationABIPrivate.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/loader/BinaryImage.h"
@@ -41,7 +42,8 @@ getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target,
   if (!Decoder.init(Image))
     return std::nullopt;
   CFGBuilder Builder;
-  const LowFunc Callee = Builder.build(Image, Decoder, Target, "abi-throw");
+  const LowFunc Callee =
+      Builder.buildIntegerFrameProof(Image, Decoder, Target, "abi-throw");
   if (!chargeDecodedCallee(Work, Callee) || Callee.CalleePopBytes ||
       !Callee.hasCompleteLiftCoverage() || Callee.Blocks.empty() ||
       Callee.ExceptionMetadata || !lowFunctionNeverReturns(Callee, Arch::X86))
@@ -61,7 +63,9 @@ getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target,
       const auto Import = getCheckedX86RegistrationThrowImportABI(
           Image, Op.Inputs[0].Offset, &Work);
       if (!Import) {
-        if (Initializers.size() == 256)
+        if (Initializers.size() ==
+            ::neverd::limits::ir::
+                kRegistrationThrowABIGetCheckedX86RegistrationThrowCalleeABIInitializersSizeLimit)
           return std::nullopt;
         auto Initializer = getCheckedX86RegistrationInitializerCalleeABI(
             Image, Op.Inputs[0].Offset, &Work);

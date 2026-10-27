@@ -10,10 +10,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/ir/low/X86/FrameEffects.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/ExceptionFunction.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -230,6 +232,80 @@ TEST(OwnInteriorCall, SubroutineThatReturnsStaysACall) {
   EXPECT_EQ(L.Source.find("return 5"), std::string::npos) << L.Source;
 }
 
+TEST(OwnInteriorCall, ClosedRecursiveNearCallsPreserveEachInvocation) {
+  for (const Platform &P : {Win64, SysV64}) {
+    // Two mutually recursive internal routines. The second decrements the
+    // argument and tail-enters the first until zero; each ordinary RET then
+    // consumes precisely its own CALL's PC.
+    std::vector<uint8_t> Code = {0xB9, 5,    0, 0,   0, // mov ecx,5
+                                 0xE8, 6,    0, 0,   0, // call +0x10
+                                 0x83, 0xC0, 7, 0xC3};  // add eax,7; ret
+    Code.resize(0x10, 0xCC);
+    Code.insert(Code.end(), {0xE8, 0x0B, 0, 0, 0, 0xC3}); // call +0x20; ret
+    Code.resize(0x20, 0xCC);
+    Code.insert(Code.end(), {0x31, 0xC0,    // xor eax,eax
+                             0x83, 0xE9, 1, // sub ecx,1
+                             0x75, 0xE9,    // jne +0x10
+                             0xC3});        // ret
+    BinaryImage Image = makeImage(Code, P);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Image));
+    const auto Low = CFGBuilder().build(Image, Dec, P.Entry);
+    EXPECT_TRUE(Low.hasCompleteLiftCoverage());
+    EXPECT_TRUE(Low.UnprovenReturnAddresses.empty());
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(static_cast<int>(P.Format));
+        SCOPED_TRACE(LLVM);
+        SCOPED_TRACE(NoOpt);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = true;
+        Options.NoOpt = NoOpt;
+        Options.OnlyFunctionEntries = {P.Entry, P.Entry + 0x10, P.Entry + 0x20};
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        std::string Source;
+        llvm::raw_string_ostream Output(Source);
+        CEmitterOptions COptions;
+        COptions.TheArch = P.TheArch;
+        COptions.Format = P.Format;
+        COptions.Image = &Image;
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+          ASSERT_TRUE(
+              LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+        } else
+          ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+        EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+        compileAndRun(Source + ReturnsSeven);
+      }
+  }
+}
+
+TEST(OwnInteriorCall, ClosedRecursionCannotRepairUnknownOrUnbalancedEffects) {
+  for (const std::vector<uint8_t> &Effect : {
+           std::vector<uint8_t>{0x48, 0x89, 0x04, 0x24}, // replace this PC
+           std::vector<uint8_t>{0x48, 0x89, 0x01},       // arbitrary write
+           std::vector<uint8_t>{0xFF, 0xD0},             // unknown call
+           std::vector<uint8_t>{0x48, 0x83, 0xEC, 8},    // unbalanced frame
+       }) {
+    std::vector<uint8_t> Code = {0xB9, 5, 0, 0, 0, 0xE8, 6, 0, 0, 0, 0xC3};
+    Code.resize(0x10, 0xCC);
+    Code.insert(Code.end(), {0xE8, 0x0B, 0, 0, 0, 0xC3});
+    Code.resize(0x20, 0xCC);
+    Code.insert(Code.end(), Effect.begin(), Effect.end());
+    Code.insert(Code.end(), {0x83, 0xE9, 1, 0x75});
+    Code.push_back(uint8_t(0x10 - (Code.size() + 1)));
+    Code.push_back(0xC3);
+    const auto Result = lift(Code);
+    EXPECT_FALSE(Result.UnprovenReturns.empty());
+  }
+}
+
 TEST(OwnInteriorCall, ReturnBelowTheEntryStackPointerIsRefused) {
   // Only one of the two return addresses is discarded, so `pop rbp` takes
   // the other and `ret` pops the saved frame pointer.
@@ -375,6 +451,290 @@ TEST(OwnInteriorCall, OnlyDeclaredSingleFunctionRecordsBoundTheBody) {
 constexpr Platform Darwin64 = {Arch::X64, BinaryFormat::MachO,
                                ExceptionEncoding::DwarfFDE, Entry};
 
+void expectSourceRefused(const BinaryImage &Img) {
+  for (bool LLVM : {false, true})
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << LLVM << '/' << NoOpt);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.OnlyFunctionEntries = {Img.Entry};
+      Options.SourceProjection = true;
+      Options.LiftMode = LLVM;
+      Options.NoOpt = NoOpt;
+      auto Result = Pipeline().run(Img, Context, Options);
+      ASSERT_EQ(Result.FunctionAudits.size(), 1u);
+      const auto &Audit = Result.FunctionAudits.front();
+      EXPECT_EQ(Audit.Disposition,
+                PipelineFunctionDisposition::RejectedIncomplete);
+      EXPECT_FALSE(Audit.UnprovenReturns.empty());
+      EXPECT_FALSE(Audit.HasLLVMDefinition);
+      EXPECT_TRUE(Result.HighFuncs.empty());
+    }
+}
+
+TEST(OwnInteriorCall, IndirectTailMustRestoreTheParentsStack) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386})
+    for (uint8_t Restore : {0, 32, 40}) {
+      const bool Restored = Restore == 32;
+      SCOPED_TRACE(::testing::Message()
+                   << int(P.TheArch) << '/' << int(P.Format) << '/'
+                   << int(Restore));
+      std::vector<uint8_t> Code;
+      if (P.TheArch == Arch::X64)
+        Code.push_back(0x48);
+      // Allocate a frame, call the next label, then discard that internal PC.
+      Code.insert(Code.end(), {0x83, 0xec, 32, 0xe8, 1, 0, 0, 0, 0xcc, 0x58});
+      if (Restore) {
+        if (P.TheArch == Arch::X64)
+          Code.push_back(0x48);
+        Code.insert(Code.end(), {0x83, 0xc4, Restore});
+      }
+      // A callback can receive the parent's PC only after its frame is gone.
+      // The CALL + RETURN used to represent this JMP must not lose that fact.
+      const va_t Tail = P.Entry + Code.size();
+      Code.insert(Code.end(), {0xff, 0xe1}); // jmp ecx/rcx
+      auto Img = makeImage(std::move(Code), P);
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Img));
+      CFGBuilder Builder;
+      const auto Low = Builder.build(Img, Dec, P.Entry, "tail_frame");
+      EXPECT_EQ(Low.hasCompleteLiftCoverage(), Restored);
+      EXPECT_EQ(Low.UnprovenReturnAddresses,
+                Restored ? std::vector<va_t>{} : std::vector<va_t>{Tail});
+      if (!Restored)
+        expectSourceRefused(Img);
+    }
+}
+
+TEST(OwnInteriorCall, DiscardedCallMustRetainTheParentsReturnPC) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386})
+    for (bool Tail : {false, true})
+      for (bool OverwriteParent : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << int(P.TheArch) << '/' << int(P.Format) << '/' << Tail
+                     << '/' << OverwriteParent);
+        const uint8_t Width = P.TheArch == Arch::X64 ? 8 : 4;
+        // Overwriting the discarded internal PC is harmless; overwriting
+        // the parent's PC cannot become an ordinary return or callback.
+        std::vector<uint8_t> Code{
+            0xe8, 1,    0,    0,    0,
+            0xcc, 0xc7, 0x44, 0x24, uint8_t(OverwriteParent ? Width : 0),
+            0,    0,    0,    0};
+        if (P.TheArch == Arch::X64)
+          Code.push_back(0x48);
+        Code.insert(Code.end(), {0x83, 0xc4, Width});
+        if (Tail)
+          Code.insert(Code.end(), {0xff, 0xe1}); // jmp ecx/rcx
+        else
+          Code.insert(Code.end(), {0xb8, 7, 0, 0, 0, 0xc3}); // mov eax,7; ret
+        auto Img = makeImage(std::move(Code), P);
+        Decoder Dec;
+        ASSERT_TRUE(Dec.init(Img));
+        CFGBuilder Builder;
+        const auto Low = Builder.build(Img, Dec, P.Entry, "parent_pc");
+        EXPECT_EQ(Low.hasCompleteLiftCoverage(), !OverwriteParent);
+        EXPECT_EQ(Low.UnprovenReturnAddresses.empty(), !OverwriteParent);
+        if (OverwriteParent)
+          expectSourceRefused(Img);
+      }
+}
+
+TEST(OwnInteriorCall, FrameReadsDoNotHideTheirExplicitStores) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386})
+    for (bool Flags : {false, true})
+      for (bool ParentStore : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << int(P.TheArch) << '/' << int(P.Format) << '/' << Flags
+                     << '/' << ParentStore);
+        std::vector<uint8_t> Code;
+        if (P.TheArch == Arch::X64)
+          Code.push_back(0x48);
+        Code.insert(Code.end(), {0x83, 0xec, 32, 0xe8, 1, 0, 0, 0, 0xcc, 0x58});
+        const uint8_t Offset = ParentStore ? 32 : 4;
+        if (Flags) {
+          const uint8_t AboveParent = 32 + (P.TheArch == Arch::X64 ? 8 : 4);
+          if (ParentStore) {
+            if (P.TheArch == Arch::X64)
+              Code.push_back(0x48);
+            Code.insert(Code.end(), {0x83, 0xc4, AboveParent});
+          }
+          Code.insert(Code.end(),
+                      {0xf9, 0x9c, 0x58}); // stc; pushf; pop eax/rax
+          if (ParentStore) {
+            if (P.TheArch == Arch::X64)
+              Code.push_back(0x48);
+            Code.insert(Code.end(), {0x83, 0xec, AboveParent});
+          }
+        } else
+          Code.insert(Code.end(),
+                      {0x0f, 0xae, 0x5c, 0x24, Offset}); // stmxcsr [sp+offset]
+        if (P.TheArch == Arch::X64)
+          Code.push_back(0x48);
+        Code.insert(Code.end(), {0x83, 0xc4, 32, 0xb8, 7, 0, 0, 0, 0xc3});
+        const auto Img = makeImage(std::move(Code), P);
+        Decoder Dec;
+        ASSERT_TRUE(Dec.init(Img));
+        CFGBuilder Builder;
+        const auto Low = Builder.build(Img, Dec, P.Entry, "frame_read");
+        EXPECT_EQ(Low.hasCompleteLiftCoverage(), !ParentStore);
+        EXPECT_EQ(Low.UnprovenReturnAddresses.empty(), !ParentStore);
+        if (ParentStore)
+          expectSourceRefused(Img);
+      }
+}
+
+TEST(OwnInteriorCall, FrameReadProofRequiresTheCompleteIntrinsicShape) {
+  for (Arch Architecture : {Arch::X86, Arch::X64})
+    for (auto Id : {Intrinsic::Pushf, Intrinsic::X86ReadMXCSR}) {
+      LowOp Read;
+      Read.Opcode = NdOp::INTRINSIC;
+      Read.addInput(NdVar::cst(static_cast<unsigned>(Id), 2));
+      Read.Output = NdVar::tmp(1, Id == Intrinsic::X86ReadMXCSR ? 4
+                                  : Architecture == Arch::X64   ? 8
+                                                                : 4);
+      ASSERT_TRUE(isX86FrameReadIntrinsic(Read, Architecture));
+      EXPECT_FALSE(isX86FrameReadIntrinsic(Read, Arch::AArch64));
+      if (Id == Intrinsic::Pushf) {
+        auto Narrow = Read;
+        Narrow.Output.Size = 2;
+        EXPECT_TRUE(isX86FrameReadIntrinsic(Narrow, Architecture));
+        Narrow.Output.Size = Architecture == Arch::X64 ? 4 : 8;
+        EXPECT_FALSE(isX86FrameReadIntrinsic(Narrow, Architecture));
+      }
+      for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+        auto Changed = Read;
+        if (Mutation == 0)
+          Changed.Output = NdVar::reg(x86reg::RSP, Read.Output.Size);
+        if (Mutation == 1)
+          Changed.Output.Size = 1;
+        if (Mutation == 2)
+          Changed.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+        if (Mutation == 3)
+          Changed.Inputs[0].Size = 4;
+        if (Mutation == 4)
+          Changed.NumInputs = 0;
+        if (Mutation == 5)
+          Changed.addInput(NdVar::cst(0, 4));
+        if (Mutation == 6)
+          Changed.Inputs[0] =
+              NdVar::cst(static_cast<unsigned>(Intrinsic::Popf), 2);
+        if (Mutation == 7)
+          Changed.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+        EXPECT_FALSE(isX86FrameReadIntrinsic(Changed, Architecture))
+            << int(Id) << '/' << Mutation;
+      }
+    }
+}
+
+TEST(OwnInteriorCall, FrameReadValuesSurviveBothSourceRoutes) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP()
+      << "the source execution oracle requires native x64 flags and MXCSR";
+#else
+  for (bool Flags : {false, true})
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Flags << '/' << LLVM << '/' << NoOpt);
+        std::vector<uint8_t> Code{0x48, 0x83, 0xec, 32,   0xe8, 1,
+                                  0,    0,    0,    0xcc, 0x58};
+        if (Flags)
+          Code.insert(Code.end(), {0x83, 0xff, 42, 0x9c, 0x58, 0x83, 0xe0,
+                                   1}); // cmp edi,42; pushf; pop rax; and eax,1
+        else
+          Code.insert(Code.end(), {0x0f, 0xae, 0x5c, 0x24, 4, 0x8b, 0x44, 0x24,
+                                   4}); // stmxcsr; load result
+        Code.insert(Code.end(), {0x48, 0x83, 0xc4, 32, 0xc3});
+        auto Img = makeImage(std::move(Code), SysV64);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Img.Entry};
+        Options.SourceProjection = true;
+        Options.LiftMode = LLVM;
+        Options.NoOpt = NoOpt;
+        auto Result = Pipeline().run(Img, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        ASSERT_FALSE(Result.MedFuncs.empty());
+        for (const auto &Audit : Result.FunctionAudits)
+          EXPECT_TRUE(Audit.UnprovenReturns.empty());
+        std::string Source;
+        llvm::raw_string_ostream Stream(Source);
+        CEmitterOptions COptions;
+        COptions.TheArch = Img.Arch;
+        COptions.Format = Img.Format;
+        COptions.Image = &Img;
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+          ASSERT_TRUE(
+              LLVMCEmitter().emit(*Result.LlvmModule, Stream, COptions));
+        } else
+          ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Stream, COptions));
+        EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+        EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
+        compileAndRun(Source + (Flags ? R"C(
+int main(void) {
+  for (unsigned value = 0; value != 256; ++value)
+    if (sub_140001000(value) != (value < 42))
+      return 1;
+  return 0;
+}
+)C"
+                                      : R"C(
+#include <immintrin.h>
+int main(void) {
+  unsigned original = _mm_getcsr();
+  int failed = 0;
+  for (unsigned mode = 0; mode != 4; ++mode) {
+    unsigned expected = (original & ~0x6000u) | (mode << 13);
+    _mm_setcsr(expected);
+    failed |= sub_140001000() != expected;
+  }
+  _mm_setcsr(original);
+  return failed;
+}
+)C"));
+      }
+#endif
+}
+
+TEST(OwnInteriorCall, FrameReadStoreRequiresAnExactUnsegmentedAccess) {
+  for (Arch Architecture : {Arch::X86, Arch::X64}) {
+    LowOp Store;
+    Store.Opcode = NdOp::INTRINSIC;
+    Store.addInput(NdVar::cst(static_cast<unsigned>(Intrinsic::Stmxcsr), 2));
+    Store.addInput(NdVar::tmp(1, 8));
+    const auto Memory = x86FrameStateStore(Store, Architecture);
+    ASSERT_TRUE(Memory.Complete);
+    EXPECT_EQ(Memory.Address, &Store.Inputs[1]);
+    EXPECT_EQ(Memory.AccessSize, 4);
+    EXPECT_EQ(Memory.StoredValue, nullptr);
+    EXPECT_FALSE(x86FrameStateStore(Store, Arch::AArch64).Complete);
+    for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+      auto Changed = Store;
+      if (Mutation == 0)
+        Changed.Output = NdVar::tmp(2, 4);
+      if (Mutation == 1)
+        Changed.Inputs[1].Size = 4;
+      if (Mutation == 2)
+        Changed.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+      if (Mutation == 3)
+        Changed.Inputs[0].Size = 4;
+      if (Mutation == 4)
+        Changed.addInput(NdVar::cst(0, 4));
+      if (Mutation == 5)
+        Changed.Inputs[0] =
+            NdVar::cst(static_cast<unsigned>(Intrinsic::Ldmxcsr), 2);
+      if (Mutation == 6)
+        Changed.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      EXPECT_FALSE(x86FrameStateStore(Changed, Architecture).Complete)
+          << Mutation;
+    }
+  }
+}
+
 Lifted liftOwnReturnBody(const Platform &P, llvm::ArrayRef<uint8_t> Body) {
   std::vector<uint8_t> Code = {0xe8, 0x0b, 0, 0, 0, 0xc3};
   Code.resize(0x10, 0xcc);
@@ -390,6 +750,106 @@ TEST(OwnInteriorCall, OverwrittenReturnSlotCannotProveAnOrdinaryReturn) {
     const auto L = liftOwnReturnBody(P, {0xc7, 0x04, 0x24, 0, 0, 0, 0, 0xc3});
     EXPECT_TRUE(L.Source.empty()) << L.Source;
     EXPECT_FALSE(L.UnprovenReturns.empty());
+  }
+}
+
+void checkRecoveredTailSource(bool DiscardFrame) {
+  for (const auto &P : {Win64, SysV64, Darwin64})
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << int(P.Format) << '/' << LLVM << '/' << NoOpt);
+        // Both a replaced-PC RET and a JMP after discarding a frame must
+        // pass the original parent's stack and the same callback arguments.
+        const uint8_t Input = P.Format == BinaryFormat::COFF ? 0xc8 : 0xf8;
+        std::vector<uint8_t> Code{0x48, 0x89, Input};
+        if (DiscardFrame)
+          Code.insert(Code.end(), {0x48, 0x83, 0xec, 32}); // sub rsp,32
+        Code.insert(Code.end(), {0xe8, 1, 0, 0, 0, 0xcc});
+        const std::vector<uint8_t> Setup =
+            P.Format == BinaryFormat::COFF
+                ? std::vector<uint8_t>{0xb9, 17,   0,    0,    0,    0x48,
+                                       0x83, 0xc2, 1,    0x49, 0x83, 0xc0,
+                                       2,    0x49, 0x83, 0xc1, 3}
+                : std::vector<uint8_t>{0xbf, 17,   0,    0,    0,    0x48,
+                                       0x83, 0xc6, 1,    0x48, 0x83, 0xc2,
+                                       2,    0x48, 0x83, 0xc1, 3};
+        Code.insert(Code.end(), Setup.begin(), Setup.end());
+        if (DiscardFrame)
+          Code.insert(Code.end(), {0x48, 0x83, 0xc4, 40, 0xff,
+                                   0xe0}); // add rsp,40; jmp rax
+        else
+          Code.insert(Code.end(),
+                      {0x48, 0x89, 0x04, 0x24, 0xc3}); // mov [rsp],rax; ret
+        auto Img = makeImage(std::move(Code), P);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Img.Entry};
+        Options.SourceProjection = true;
+        Options.LiftMode = LLVM;
+        Options.NoOpt = NoOpt;
+        auto Result = Pipeline().run(Img, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        ASSERT_FALSE(Result.MedFuncs.empty());
+        for (const auto &Audit : Result.FunctionAudits)
+          EXPECT_TRUE(Audit.UnprovenReturns.empty());
+        std::string Source;
+        llvm::raw_string_ostream Stream(Source);
+        CEmitterOptions COptions;
+        COptions.TheArch = Img.Arch;
+        COptions.Format = Img.Format;
+        COptions.Image = &Img;
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+          ASSERT_TRUE(
+              LLVMCEmitter().emit(*Result.LlvmModule, Stream, COptions));
+        } else
+          ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Stream, COptions));
+        EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+        const char *CallbackValue =
+            DiscardFrame ? "#define CALLBACK_VALUE ((void *)&callback)\n"
+                         : "#define CALLBACK_VALUE ((uintptr_t)&callback)\n";
+        compileAndRun(Source + CallbackValue + R"C(
+static unsigned calls;
+static uint64_t callback(uint64_t first, uint64_t a, uint64_t b, uint64_t c) {
+  ++calls;
+  return first == 17 ? ((a + 17) ^ b) - c : 0;
+}
+int main(void) {
+  for (unsigned i = 0; i != 256; ++i) {
+    uint64_t expected = ((i + 18) ^ (3 * i + 2)) - (uint64_t)(5 * i + 3);
+    if ((uint64_t)sub_140001000(CALLBACK_VALUE, i, 3*i, 5*i) != expected)
+      return 1;
+  }
+  return calls != 256;
+}
+)C");
+      }
+}
+
+TEST(OwnInteriorCall, ReplacedPCIsAnIndirectTailTransferOnBothSourceRoutes) {
+  checkRecoveredTailSource(false);
+}
+
+TEST(OwnInteriorCall, RestoredParentStackReachesTheCallbackOnBothSourceRoutes) {
+  checkRecoveredTailSource(true);
+}
+
+TEST(OwnInteriorCall, ReplacedPCDoesNotRepairParentCorruptionOrAnExtraFrame) {
+  for (const auto &P : {Win64, SysV64, Darwin64}) {
+    // A complete replacement of the internal PC still cannot authorize a
+    // tail call when the parent PC was overwritten, or when its stack frame
+    // is not restored by this pop.
+    const auto Corrupt = liftOwnReturnBody(
+        P, {0x48, 0x89, 0x4c, 0x24, 8, 0x48, 0x89, 0x04, 0x24, 0xc3});
+    EXPECT_TRUE(Corrupt.Source.empty()) << Corrupt.Source;
+    EXPECT_FALSE(Corrupt.UnprovenReturns.empty());
+    const auto Allocated = liftOwnReturnBody(
+        P, {0x48, 0x83, 0xec, 8, 0x48, 0x89, 0x04, 0x24, 0xc3});
+    EXPECT_TRUE(Allocated.Source.empty()) << Allocated.Source;
+    EXPECT_FALSE(Allocated.UnprovenReturns.empty());
   }
 }
 

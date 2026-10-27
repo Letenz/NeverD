@@ -10,6 +10,7 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/loader/Swift/SwiftOpaqueValueEffects.h"
 #include "neverd/pipeline/NativeSourceHints.h"
+#include "neverd/sdk/Limits.h"
 
 namespace neverd::sdk {
 namespace swift_opaque_value_detail {
@@ -35,7 +36,9 @@ inline bool plainHint(const SourceCallTypeHint &H) {
 inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
                            const BinaryImage &Image, size_t &Budget,
                            unsigned Depth = 0) {
-  if (!Expected || !Actual || !Budget || Depth >= 64)
+  if (!Expected || !Actual || !Budget ||
+      Depth >= ::neverd::sdk::
+                   kSourceSwiftOpaqueValueProjectionSameExpressionDepthLimit)
     return false;
   --Budget;
   HighExpr E = *Expected, A = *Actual;
@@ -82,7 +85,7 @@ inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
 }
 inline bool sameBody(const HighFunc &E, const HighFunc &A,
                      const BinaryImage &Image) {
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   return sameCompleteSourceBody(
       E, A,
       [&](const ExprPtr &X, const ExprPtr &Y) {
@@ -142,7 +145,13 @@ public:
       return !Marked && Published->empty();
     const auto Current =
         native_source_detail::currentFunction(Result, Function.Entry);
-    if (!Current || Low->DecodedInstructionCount > 256 || Hints.size() > 16 ||
+    if (!Current ||
+        Low->DecodedInstructionCount >
+            ::neverd::sdk::
+                kSourceSwiftOpaqueValueProjectionValidLowDecodedInstructionCountLimit ||
+        Hints.size() >
+            ::neverd::sdk::
+                kSourceSwiftOpaqueValueProjectionValidHintsSizeLimit ||
         !validateSwiftOpaqueValueBindings(Image, Low, *Med, &Contracts))
       return false;
     std::set<SourceCallOccurrenceKey> Required;
@@ -154,7 +163,10 @@ public:
       if (H.CallKind == SourceCallTypeHint::Kind::Native)
         Options.OnlyFunctionEntries.insert(H.TargetAddress);
     }
-    if (*Published != Required || Options.OnlyFunctionEntries.size() > 5)
+    if (*Published != Required ||
+        Options.OnlyFunctionEntries.size() >
+            ::neverd::sdk::
+                kSourceSwiftOpaqueValueProjectionValidOptionsOnlyFunctionEntriesSizeLimit)
       return false;
     Options.MaxFunctions = Options.OnlyFunctionEntries.size();
     llvm::LLVMContext Context;
@@ -240,7 +252,6 @@ public:
     for (const auto &F : Result.MedFuncs)
       Names.emplace(F.Entry, F.Name);
     Converter.setFuncNames(&Names);
-    Converter.setJumpTables(Current->Low->JumpTables);
     const auto MedReplay = Converter.convert(*Current->Med, Image.Arch);
     if (!sameBody(*Rebuilt->High, *Current->High, Image) ||
         !sameBody(*Rebuilt->High, MedReplay, Image))

@@ -68,18 +68,22 @@ enum class X86MsrAccessKind : uint8_t {
   UwrmsrEvexRegister,
   UrdmsrEvexImmediate,
   UwrmsrEvexImmediate,
+  RdmsrVexImmediate,
+  WrmsrnsVexImmediate,
   Count,
 };
 
 constexpr bool x86MsrAccessIsWrite(X86MsrAccessKind Kind) {
   switch (Kind) {
   case X86MsrAccessKind::WrmsrnsImmediate:
+  case X86MsrAccessKind::WrmsrnsVexImmediate:
   case X86MsrAccessKind::UwrmsrLegacyRegister:
   case X86MsrAccessKind::UwrmsrVexImmediate:
   case X86MsrAccessKind::UwrmsrEvexRegister:
   case X86MsrAccessKind::UwrmsrEvexImmediate:
     return true;
   case X86MsrAccessKind::RdmsrImmediate:
+  case X86MsrAccessKind::RdmsrVexImmediate:
   case X86MsrAccessKind::UrdmsrLegacyRegister:
   case X86MsrAccessKind::UrdmsrVexImmediate:
   case X86MsrAccessKind::UrdmsrEvexRegister:
@@ -93,7 +97,9 @@ constexpr bool x86MsrAccessIsWrite(X86MsrAccessKind Kind) {
 constexpr bool x86MsrAccessHasImmediateSelector(X86MsrAccessKind Kind) {
   switch (Kind) {
   case X86MsrAccessKind::RdmsrImmediate:
+  case X86MsrAccessKind::RdmsrVexImmediate:
   case X86MsrAccessKind::WrmsrnsImmediate:
+  case X86MsrAccessKind::WrmsrnsVexImmediate:
   case X86MsrAccessKind::UrdmsrVexImmediate:
   case X86MsrAccessKind::UwrmsrVexImmediate:
   case X86MsrAccessKind::UrdmsrEvexImmediate:
@@ -341,10 +347,10 @@ enum class Intrinsic : uint16_t {
   /// Its exact LowIR contract is owned by LowRawEnvironment.h.
   RawEnvironmentRequirementV1 = 2,
 
-#include "neverd/ir/intrinsics/intrinsics_aarch64.inc"
-#include "neverd/ir/intrinsics/intrinsics_arm.inc"
-#include "neverd/ir/intrinsics/intrinsics_x86.inc"
-#include "neverd/ir/intrinsics/intrinsics_x86_fp_state.inc"
+#include "neverd/ir/intrinsics/AArch64/intrinsics_aarch64.inc"
+#include "neverd/ir/intrinsics/ARM/intrinsics_arm.inc"
+#include "neverd/ir/intrinsics/X86/intrinsics_x86.inc"
+#include "neverd/ir/intrinsics/X86/intrinsics_x86_fp_state.inc"
 
   // Append after the existing x86 FP family to preserve every published ID.
   // LoadConstant retains its ROM selector and explicit incoming control word.
@@ -368,8 +374,225 @@ enum class Intrinsic : uint16_t {
   X87ContextMMXWrite,
   X87ContextMMXEnter,
 
+  /// Compiler-private register exchange for a checked, shared-frame x86 SEH
+  /// finally invocation. These are introduced by MedIR, never by decoding.
+  X86SEHRegisterRead,
+  X86SEHRegisterWrite,
+
+// Append after every existing family: serialized intrinsic IDs are stable.
+#define NEVERD_X86_VIRTUALIZATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/X86/X86Virtualization.def"
+#undef NEVERD_X86_VIRTUALIZATION
+
+#define NEVERD_X86_SYSTEM_STATE(Id, ...) Id,
+#include "neverd/ir/intrinsics/X86/X86SystemState.def"
+#undef NEVERD_X86_SYSTEM_STATE
+
+  // Append-only: bounded SGX supervisor/VMM completion.
+  X86Encls,
+  X86Enclv,
+  // Append-only: i386 source-segment/implicit-ES block transaction.
+  X86SegmentedBlockMemory,
+  X86AMXState,
+
+// Append after existing families to preserve serialized intrinsic IDs.
+#define NEVERD_A64_CPA(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64/AArch64CPA.def"
+
+#define NEVERD_A64_PAUTH_LR_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuthLR.def"
+
+  // Append-only: typed x87 rotation and free/pop. FFREEP carries the same
+  // physical-slot and decoded-relative-index operands as FFREE.
+  X87Fdecstp,
+  X87Ffreep,
+  // Append-only: raw packed-BCD/binary80 conversion under an explicit CW.
+  X87LoadPackedBCD,
+  X87StorePackedBCD,
+  // Append-only: one native operation returns ST(0), then ST(1), under
+  // explicit finite/masked guards before the typed stack commits its push.
+  X87FptanPair,
+  X87FsincosPair,
+  X87FxtractPair,
+
+  // CFG consumes the pending prefix before publishing a native operation.
+  A64_PACMPending,
+#define NEVERD_A64_PAUTH_M_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuthM.def"
+
+// Compiler-private portable runtime calls. Append to preserve serialized IDs.
+#define NEVERD_X87_PORTABLE_HELPER(Role, ...) PortableX87##Role,
+#include "neverd/ir/X86/X87PortableABI.def"
+#undef NEVERD_X87_PORTABLE_HELPER
+
+  // Append-only: one descriptor query owns the value, ZF and selector access.
+  X86LoadSegmentLimit,
+  X86LoadSegmentLimitMemory,
+
+  // Append-only: legacy descriptor-table operand-size attribute.
+  X86Lgdt16,
+  X86Lidt16,
+  X86Sgdt16,
+  X86Sidt16,
+
+// Append-only: combined authentication, memory access and base writeback.
+#define NEVERD_A64_PAUTH_LOAD_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.def"
+
+// Append-only: scalable checked pointer operations.
+#define NEVERD_A64_SVE_CPA_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64/AArch64SVECPA.def"
+
+// Append-only: predicated copies of validated MOVPRFX/CPA pairs.
+#define NEVERD_A64_SVE_PREFIX_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64/AArch64SVEPrefix.def"
+
+// Append-only: natural-register REP completion.
+#define NEVERD_X86_REP_STATE(Id, ...) Id,
+#include "neverd/ir/intrinsics/X86/X86RepState.def"
+#undef NEVERD_X86_REP_STATE
+
+  // Append-only: CFG proves a bounded leaf before publishing native state.
+  X86EncluPending,
+  X86GetsecPending,
+  X86EncluBounded,
+  X86GetsecBounded,
+
+// Append-only: original memory instructions retain CPA2 address semantics.
+#define NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, ...) Id,
+#define NEVERD_A64_ADDRESS_VECTOR_MEMORY_OPERATION(...)
+#define NEVERD_A64_ADDRESS_IMMEDIATE_MEMORY_OPERATION(...)
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemoryOperations.def"
+
+  // Append-only: all four vector sources are explicit SSA values in one
+  // packed operand. Legacy physical-block IDs retain their serialized values.
+  X86FourSourceMemory,
+
+// Append-only: keep every previously published scalar and x86 identity.
+#define NEVERD_A64_ADDRESS_VECTOR_MEMORY_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemoryOperations.def"
+
+  // Append-only: preserve legacy RAO/VEX encoding independently of APX.
+  X86LegacyRaoAdd,
+  X86LegacyRaoAnd,
+  X86LegacyRaoOr,
+  X86LegacyRaoXor,
+  X86LegacyCmpccXadd,
+
+#define NEVERD_A64_ADDRESS_IMMEDIATE_MEMORY_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemoryOperations.def"
+
+// Append-only: one memory instruction returns its completed writeback.
+#define NEVERD_A64_WRITEBACK_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.def"
+
   _Count = 16000
 };
+
+constexpr bool isPortableX87Intrinsic(Intrinsic Id) {
+  switch (Id) {
+#define NEVERD_X87_PORTABLE_HELPER(Role, ...) case Intrinsic::PortableX87##Role:
+#include "neverd/ir/X86/X87PortableABI.def"
+#undef NEVERD_X87_PORTABLE_HELPER
+    return true;
+  default:
+    return false;
+  }
+}
+
+enum class X86SystemStateKind : uint8_t {
+  ReadPid,
+  ReadBase,
+  WriteBase,
+  Void,
+  Monitor,
+  Wait,
+  AccessRights,
+  AdjustRpl,
+  ShadowWrite,
+  Enqueue,
+  DirectStore,
+  DirectStore64B,
+  WriteMsr,
+  MsrList,
+  Void64,
+  TestUserInterrupt,
+  SendUserInterrupt,
+  LoadKernelGs,
+  HistoryReset,
+  InvalidateBroadcast,
+  SegmentedBlock,
+  CacheZero,
+  TransactionAbort
+};
+
+struct X86SystemStateContract {
+  const char *Mnemonic = nullptr;
+  X86SystemStateKind Kind = X86SystemStateKind::Void;
+  int8_t MemoryArgument = -1;
+};
+
+constexpr X86SystemStateContract x86SystemStateContract(Intrinsic Id) {
+  switch (Id) {
+#define NEVERD_X86_SYSTEM_STATE(Id, Mnemonic, Kind, MemoryArgument)            \
+  case Intrinsic::Id:                                                          \
+    return {Mnemonic, X86SystemStateKind::Kind, MemoryArgument};
+#define NEVERD_X86_EXISTING_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
+#define NEVERD_X86_APPENDED_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
+#include "neverd/ir/intrinsics/X86/X86SystemState.def"
+#undef NEVERD_X86_APPENDED_SYSTEM_STATE
+#undef NEVERD_X86_EXISTING_SYSTEM_STATE
+#undef NEVERD_X86_SYSTEM_STATE
+  default:
+    return {};
+  }
+}
+
+constexpr bool isX86SystemStateIntrinsic(Intrinsic Id) {
+  return x86SystemStateContract(Id).Mnemonic != nullptr;
+}
+
+/// Enqueue, block direct stores and MSR lists take a second address. Only the
+/// first address may have a segment override; MSR lists use linear addresses.
+constexpr bool isX86SystemStateAddressArgument(Intrinsic Id, unsigned Index) {
+  const auto C = x86SystemStateContract(Id);
+  return (C.MemoryArgument >= 0 && Index == unsigned(C.MemoryArgument)) ||
+         ((C.Kind == X86SystemStateKind::Enqueue ||
+           C.Kind == X86SystemStateKind::DirectStore64B ||
+           C.Kind == X86SystemStateKind::MsrList) &&
+          Index == 1);
+}
+
+enum class X86VirtualizationResult : uint8_t { None, Flags, Read };
+
+struct X86VirtualizationContract {
+  const char *Mnemonic = nullptr;
+  X86VirtualizationResult Result = X86VirtualizationResult::None;
+  uint8_t Arguments = 0;
+  int8_t MemoryArgument = -1;
+  uint16_t MemoryBytes = 0;
+  bool PhysicalAddress = false;
+};
+
+constexpr X86VirtualizationContract x86VirtualizationContract(Intrinsic Id) {
+  using R = X86VirtualizationResult;
+  switch (Id) {
+#define NEVERD_X86_VIRTUALIZATION(Id, Mnemonic, Result, Arguments,             \
+                                  MemoryArgument, MemoryBytes,                 \
+                                  PhysicalAddress)                             \
+  case Intrinsic::Id:                                                          \
+    return {Mnemonic,       R::Result,   Arguments,                            \
+            MemoryArgument, MemoryBytes, PhysicalAddress};
+#include "neverd/ir/intrinsics/X86/X86Virtualization.def"
+#undef NEVERD_X86_VIRTUALIZATION
+  default:
+    return {};
+  }
+}
+
+constexpr bool isX86VirtualizationIntrinsic(Intrinsic Id) {
+  return x86VirtualizationContract(Id).Mnemonic != nullptr;
+}
 
 /// True for the complete architectural AMX state surface represented in
 /// LowIR.  Keep this classification centralized: AMX operations mix ordinary
@@ -377,6 +600,7 @@ enum class Intrinsic : uint16_t {
 /// memory forms as a family is not sufficient at backend boundaries.
 constexpr bool isAMXIntrinsic(Intrinsic Id) {
   switch (Id) {
+  case Intrinsic::X86AMXState:
   case Intrinsic::AMXLoadConfig:
   case Intrinsic::AMXStoreConfig:
   case Intrinsic::AMXTileLoad:
@@ -389,6 +613,30 @@ constexpr bool isAMXIntrinsic(Intrinsic Id) {
   default:
     return false;
   }
+}
+
+/// Map encoding identities to the shared arithmetic/transaction contract.
+constexpr Intrinsic x86AtomicSemanticId(Intrinsic Id) {
+  switch (Id) {
+  case Intrinsic::X86LegacyRaoAdd:
+    return Intrinsic::ApxRaoAdd;
+  case Intrinsic::X86LegacyRaoAnd:
+    return Intrinsic::ApxRaoAnd;
+  case Intrinsic::X86LegacyRaoOr:
+    return Intrinsic::ApxRaoOr;
+  case Intrinsic::X86LegacyRaoXor:
+    return Intrinsic::ApxRaoXor;
+  case Intrinsic::X86LegacyCmpccXadd:
+    return Intrinsic::ApxCmpccXadd;
+  default:
+    return Id;
+  }
+}
+constexpr bool isX86LegacyAtomicIntrinsic(Intrinsic Id) {
+  return x86AtomicSemanticId(Id) != Id;
+}
+constexpr bool isX86CmpccXaddIntrinsic(Intrinsic Id) {
+  return x86AtomicSemanticId(Id) == Intrinsic::ApxCmpccXadd;
 }
 
 constexpr bool isApxAtomicIntrinsic(Intrinsic Id) {
@@ -404,52 +652,8 @@ constexpr bool isApxAtomicIntrinsic(Intrinsic Id) {
   }
 }
 
-/// Representation-neutral APX atomic operand facts.  LowIR and MedIR use
-/// different value kinds, so each caller classifies its own variables and
-/// passes only the semantic facts which the shared contract owns.  Unknown is
-/// accepted only where the containing IR has no target field; every known
-/// target must be x86-64.
-struct ApxAtomicIntrinsicShape {
-  Arch TargetArch = Arch::Unknown;
-  NdMemoryOrdering MemoryOrdering = NdMemoryOrdering::None;
-  uint8_t NumInputs = 0;
-  bool IntrinsicIdIsConst = false;
-  uint16_t IntrinsicIdSize = 0;
-  bool OutputIsWritableScalar = false;
-  uint16_t OutputSize = 0;
-  bool AddressIsScalar = false;
-  uint16_t AddressSize = 0;
-  bool SourceIsScalar = false;
-  uint16_t SourceSize = 0;
-  bool CompareIsScalar = false;
-  uint16_t CompareSize = 0;
-  bool ConditionIsConst = false;
-  uint64_t Condition = 0;
-  uint16_t ConditionSize = 0;
-};
-
-constexpr bool
-intrinsicApxAtomicShapeIsValid(Intrinsic Id,
-                               const ApxAtomicIntrinsicShape &Shape) {
-  if (!isApxAtomicIntrinsic(Id) ||
-      (Shape.TargetArch != Arch::Unknown && Shape.TargetArch != Arch::X64) ||
-      !Shape.IntrinsicIdIsConst || Shape.IntrinsicIdSize != 2 ||
-      !Shape.AddressIsScalar || Shape.AddressSize != 8)
-    return false;
-
-  if (Id != Intrinsic::ApxCmpccXadd)
-    return Shape.NumInputs == 3 && Shape.OutputSize == 0 &&
-           Shape.SourceIsScalar &&
-           (Shape.SourceSize == 4 || Shape.SourceSize == 8) &&
-           Shape.MemoryOrdering == NdMemoryOrdering::Relaxed;
-
-  return Shape.NumInputs == 5 && Shape.OutputIsWritableScalar &&
-         (Shape.OutputSize == 4 || Shape.OutputSize == 8) &&
-         Shape.SourceIsScalar && Shape.SourceSize == Shape.OutputSize &&
-         Shape.CompareIsScalar && Shape.CompareSize == Shape.OutputSize &&
-         Shape.ConditionIsConst && Shape.ConditionSize == 1 &&
-         Shape.Condition < 16 &&
-         Shape.MemoryOrdering == NdMemoryOrdering::SequentiallyConsistent;
+constexpr bool isX86AtomicIntrinsic(Intrinsic Id) {
+  return isApxAtomicIntrinsic(x86AtomicSemanticId(Id));
 }
 
 /// Representation-neutral contract for architectural x86 translation-cache
@@ -497,8 +701,8 @@ intrinsicX86InvalidateShapeIsValid(Intrinsic Id,
 }
 
 /// Representation-neutral contract for explicit-operand MSR instructions.
-/// No ordinary host operation may implement this intrinsic: an authenticated
-/// architectural environment owns CPUID/XCR0/CPL, USER_MSR_CTL bitmap,
+/// Native execution retains the encoding family; the CPU owns
+/// CPUID/XCR0/CPL, USER_MSR_CTL bitmap,
 /// virtualization interception, MSR-specific validation, and exception order.
 struct X86MsrAccessIntrinsicShape {
   Arch TargetArch = Arch::Unknown;
@@ -513,6 +717,7 @@ struct X86MsrAccessIntrinsicShape {
   uint64_t Kind = 0;
   uint16_t KindSize = 0;
   bool SelectorIsScalar = false;
+  bool SelectorIsConst = false;
   uint16_t SelectorSize = 0;
   bool ValueIsScalar = false;
   uint16_t ValueSize = 0;
@@ -532,8 +737,9 @@ intrinsicX86MsrAccessShapeIsValid(Intrinsic Id,
     return false;
 
   const auto Kind = static_cast<X86MsrAccessKind>(Shape.Kind);
-  if (Shape.SelectorSize !=
-      (x86MsrAccessHasImmediateSelector(Kind) ? uint16_t{4} : uint16_t{8}))
+  if ((x86MsrAccessHasImmediateSelector(Kind) && !Shape.SelectorIsConst) ||
+      Shape.SelectorSize !=
+          (x86MsrAccessHasImmediateSelector(Kind) ? uint16_t{4} : uint16_t{8}))
     return false;
   if (x86MsrAccessIsWrite(Kind))
     return Shape.NumInputs == 4 && Shape.OutputSize == 0 &&
@@ -645,7 +851,16 @@ intrinsicPdepPextShapeIsValid(Intrinsic Id,
 /// value so a new or unsupported opcode cannot accidentally drop FS/GS
 /// semantics in a backend fallback.
 constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
+  if (isX86VirtualizationIntrinsic(Id))
+    return x86VirtualizationContract(Id).MemoryArgument >= 0;
+  if (isX86SystemStateIntrinsic(Id))
+    return x86SystemStateContract(Id).MemoryArgument >= 0;
   switch (Id) {
+  case Intrinsic::EVEXCompressStore:
+  case Intrinsic::EVEXExpandLoad:
+  case Intrinsic::X86FourSourceMemory:
+  case Intrinsic::X86AMXState:
+    return true;
   case Intrinsic::X86FPRoundMemoryState:
   case Intrinsic::X86FPMaskCompareMemoryState:
   case Intrinsic::X86FPComiMemoryState:
@@ -712,6 +927,10 @@ constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   case Intrinsic::X87Fnstenv:
   case Intrinsic::X87Frstor:
   case Intrinsic::X87Fnsave:
+  case Intrinsic::X86Lgdt16:
+  case Intrinsic::X86Lidt16:
+  case Intrinsic::X86Sgdt16:
+  case Intrinsic::X86Sidt16:
   case Intrinsic::Lgdt:
   case Intrinsic::Lidt:
   case Intrinsic::Sgdt:
@@ -732,10 +951,15 @@ constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   case Intrinsic::X86FourFMA:
   case Intrinsic::X86VP4DPWSSD:
   case Intrinsic::X86VP4DPWSSDS:
+  case Intrinsic::X86LegacyRaoAdd:
   case Intrinsic::ApxRaoAdd:
+  case Intrinsic::X86LegacyRaoAnd:
   case Intrinsic::ApxRaoAnd:
+  case Intrinsic::X86LegacyRaoOr:
   case Intrinsic::ApxRaoOr:
+  case Intrinsic::X86LegacyRaoXor:
   case Intrinsic::ApxRaoXor:
+  case Intrinsic::X86LegacyCmpccXadd:
   case Intrinsic::ApxCmpccXadd:
   case Intrinsic::CetWrss:
   case Intrinsic::CetWruss:
@@ -858,6 +1082,27 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
     Intrinsic Id, uint8_t NumInputs, uint16_t OutputSize, uint16_t AddressSize,
     uint16_t MaskSize, uint16_t DataSize) {
   switch (Id) {
+  case Intrinsic::EVEXCompressStore:
+  case Intrinsic::EVEXExpandLoad:
+    // Control, architecture and scalar kinds are validated by X86CompactShape.
+    return NumInputs == 5 && AddressSize == 8 && MaskSize && MaskSize <= 8 &&
+           (DataSize == 16 || DataSize == 32 || DataSize == 64) &&
+           OutputSize == (Id == Intrinsic::EVEXExpandLoad ? DataSize : 0);
+
+  case Intrinsic::X86FourSourceMemory:
+    // [id,address,accumulator,packed four sources,mask,control].
+    // The shared X86FourSourceShape owns the remaining control/type checks.
+    return NumInputs == 6 && AddressSize == 8 &&
+           (OutputSize == 16 || OutputSize == 64) && MaskSize == OutputSize &&
+           DataSize == (OutputSize == 16 ? 16 : 4 * OutputSize);
+
+  case Intrinsic::X86AMXState:
+    // [id, base, versioned descriptor, optional stride]. The shared AMX
+    // shape additionally validates the descriptor and owns non-memory forms.
+    return (NumInputs == 3 || NumInputs == 4) && OutputSize == 0 &&
+           AddressSize == 8 && MaskSize == 4 &&
+           (DataSize == 0 || DataSize == 8);
+
   case Intrinsic::X87ContextStep:
     // [id,context,selector,address,flags,source-PC]; the full selector and
     // architecture contract belongs to X87Context.h.
@@ -962,6 +1207,10 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
   case Intrinsic::X87Fnstenv:
   case Intrinsic::X87Frstor:
   case Intrinsic::X87Fnsave:
+  case Intrinsic::X86Lgdt16:
+  case Intrinsic::X86Lidt16:
+  case Intrinsic::X86Sgdt16:
+  case Intrinsic::X86Sidt16:
   case Intrinsic::Lgdt:
   case Intrinsic::Lidt:
   case Intrinsic::Sgdt:
@@ -1023,12 +1272,17 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
   case Intrinsic::X86VP4DPWSSDS:
     return NumInputs == 6 && OutputSize == 64 && AddressSize == 8 &&
            MaskSize == 64 && DataSize == 1;
+  case Intrinsic::X86LegacyRaoAdd:
   case Intrinsic::ApxRaoAdd:
+  case Intrinsic::X86LegacyRaoAnd:
   case Intrinsic::ApxRaoAnd:
+  case Intrinsic::X86LegacyRaoOr:
   case Intrinsic::ApxRaoOr:
+  case Intrinsic::X86LegacyRaoXor:
   case Intrinsic::ApxRaoXor:
     return NumInputs == 3 && OutputSize == 0 && AddressSize == 8 &&
            (MaskSize == 4 || MaskSize == 8) && DataSize == 0;
+  case Intrinsic::X86LegacyCmpccXadd:
   case Intrinsic::ApxCmpccXadd:
     return NumInputs == 5 && (OutputSize == 4 || OutputSize == 8) &&
            AddressSize == 8 && MaskSize == OutputSize && DataSize == OutputSize;
@@ -1089,8 +1343,10 @@ constexpr bool isRawEnvironmentRequirementId(uint64_t Id) {
 const char *intrinsicName(Intrinsic Id);
 /// True only for intrinsic spellings that unconditionally terminate in C.
 /// Debugger breakpoints such as Int3 and ArmBkpt are excluded.
-bool isUnconditionalTrapIntrinsic(Intrinsic Id);
-const char *intrinsicCName(Intrinsic Id);
+bool isUnconditionalTrapIntrinsic(
+    Intrinsic Id, std::optional<uint64_t> Operand = std::nullopt);
+const char *intrinsicCName(Intrinsic Id,
+                           std::optional<uint64_t> Operand = std::nullopt);
 const char *intrinsicAsmMnemonic(Intrinsic Id);
 const char *llvmIntrinsicToCName(const char *LLVMName);
 Intrinsic intrinsicFromName(const char *Name);
@@ -1109,7 +1365,7 @@ constexpr bool preservesCallSetup(Intrinsic Id) {
 
 /// The control or debug register (`%cr8`, `%dr7`) that a ReadCr*/WriteCr*
 /// intrinsic names, or that ReadDr/WriteDr names by its constant first
-/// operand \p DebugIndex; nullopt for any other intrinsic.
+/// operand \p DebugIndex (DR0..7); nullopt for any other intrinsic or index.
 std::optional<std::string> x86SystemRegisterName(Intrinsic Id,
                                                  uint64_t DebugIndex);
 

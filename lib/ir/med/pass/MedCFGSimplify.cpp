@@ -14,26 +14,53 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <set>
 
 namespace neverd {
 
+std::vector<va_t> codePointerTargetsOf(const BinaryImage &Img) {
+  std::vector<va_t> Targets;
+  const unsigned PointerSize = Img.getPointerSize();
+  if (PointerSize != 0)
+    for (va_t Slot : Img.CodePtrRelocSlots)
+      if (const uint8_t *Bytes = Img.readVA(Slot, PointerSize))
+        Targets.push_back(normalizeCodeAddress(
+            static_cast<va_t>(readPtr(Bytes, Img.is64Bit())), Img.Arch,
+            Img.Mode));
+  llvm::sort(Targets);
+  Targets.erase(std::unique(Targets.begin(), Targets.end()), Targets.end());
+  return Targets;
+}
+
 void LowToMedConverter::simplifyCfg(MedFunc &Func) {
-  std::set<va_t> AddressTakenTargets;
-  if (Image) {
-    for (va_t Target : Image->CodeRefTargets)
-      AddressTakenTargets.insert(
-          normalizeCodeAddress(Target, Image->Arch, Image->Mode));
-    const unsigned PointerSize = Image->getPointerSize();
-    if (PointerSize != 0)
-      for (va_t Slot : Image->CodePtrRelocSlots)
-        if (const uint8_t *Bytes = Image->readVA(Slot, PointerSize))
-          AddressTakenTargets.insert(normalizeCodeAddress(
-              static_cast<va_t>(readPtr(Bytes, Image->is64Bit())), Image->Arch,
-              Image->Mode));
-  }
+  // Whether code the image takes the address of starts at \p Address: a
+  // published code reference, or the value of a relocated code pointer.  An
+  // image holds tens of thousands of each, and most functions have no
+  // jump-only block to ask about, so the pointers are read only once one
+  // asks, once for the converter or once for the run that shares them.
+  auto AddressTaken = [&](va_t Address) {
+    if (!Image)
+      return false;
+    // normalizeCodeAddress clears at most the Thumb bit, so only these two
+    // references can normalize to Address.
+    for (auto Target = Image->CodeRefTargets.lower_bound(Address);
+         Target != Image->CodeRefTargets.end() && *Target - Address <= 1;
+         ++Target)
+      if (normalizeCodeAddress(*Target, Image->Arch, Image->Mode) == Address)
+        return true;
+    if (!SharedCodePointerTargets && !CodePointerTargets)
+      CodePointerTargets = codePointerTargetsOf(*Image);
+    const std::vector<va_t> &PointerTargets = SharedCodePointerTargets
+                                                  ? *SharedCodePointerTargets
+                                                  : *CodePointerTargets;
+    return std::binary_search(PointerTargets.begin(), PointerTargets.end(),
+                              Address);
+  };
 
   // Native registration reconstruction replays exact source intervals and
   // their ordinary edges. Retain every reached interval until that replay;
@@ -89,9 +116,9 @@ void LowToMedConverter::simplifyCfg(MedFunc &Func) {
       const va_t BlockAddress = Blk.StartAddr != 0 || Blk.Ops.empty()
                                     ? Blk.StartAddr
                                     : Blk.Ops.front().Addr;
-      if (AddressTakenTargets.count(normalizeCodeAddress(
-              BlockAddress, TargetArch,
-              Image ? Image->Mode : InstructionMode::Default)) != 0)
+      if (AddressTaken(normalizeCodeAddress(BlockAddress, TargetArch,
+                                            Image ? Image->Mode
+                                                  : InstructionMode::Default)))
         continue;
 
       int Target = Blk.Succs[0];
@@ -214,16 +241,20 @@ void LowToMedConverter::simplifyCfg(MedFunc &Func) {
   // Exceptional predecessors are likewise derived from the successor graph.
   // Rebuild them after renumbering so SSA recognizes every landing pad as an
   // independent root and the LLVM emitter targets the prologue block itself.
-  for (const auto &Blk : NewBlocks)
+  for (const auto &Blk : NewBlocks) {
+    // Renumbering gives each source a unique ID. Only edges from this source
+    // can duplicate one of its predecessors, so do not scan every earlier
+    // source already entering a shared cleanup or landing pad.
+    std::set<ExceptionalEdge> Seen;
     for (const ExceptionalEdge &Edge : Blk.ExceptionalSuccs)
       if (Edge.BlockId >= 0 &&
-          Edge.BlockId < static_cast<int>(NewBlocks.size())) {
+          Edge.BlockId < static_cast<int>(NewBlocks.size()) &&
+          Seen.insert(Edge).second) {
         ExceptionalEdge Pred = Edge;
         Pred.BlockId = Blk.Id;
-        auto &Preds = NewBlocks[Edge.BlockId].ExceptionalPreds;
-        if (std::find(Preds.begin(), Preds.end(), Pred) == Preds.end())
-          Preds.push_back(Pred);
+        NewBlocks[Edge.BlockId].ExceptionalPreds.push_back(Pred);
       }
+  }
   Func.Blocks = std::move(NewBlocks);
 }
 

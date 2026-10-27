@@ -10,6 +10,7 @@
 #include "RegistrationABIPrivate.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/X86CxxRuntimeABI.h"
 #include "neverd/support/BinaryEncoding.h"
 
 namespace neverd {
@@ -25,10 +26,7 @@ getCheckedX86RegistrationThrowImportABI(const BinaryImage &Image, va_t Target,
   const auto *Import = Image.findImportStubAt(Target);
   const auto *Stub = Image.readVA(Target, 6);
   if (!Import || Import->Name != "_CxxThrowException" ||
-      (!llvm::StringRef(Import->Module)
-            .equals_insensitive("vcruntime140.dll") &&
-       !llvm::StringRef(Import->Module)
-            .equals_insensitive("vcruntime140d.dll")) ||
+      !coff_loader::hasKnownX86CxxExceptionRuntimeABI(Import->Module) ||
       !Import->IATAddr || Import->IATAddr > uint64_t(UINT32_MAX) - 3 ||
       !Image.readVA(Import->IATAddr, 4) || !Stub || Stub[0] != 0xff ||
       Stub[1] != 0x25 || readLE<uint32_t>(Stub + 2) != Import->IATAddr)

@@ -295,6 +295,28 @@ class Allowance:
 
 ALLOWED: tuple[Allowance, ...] = (
     Allowance(
+        path="unittests/fixtures/x86/3dnow-context/README.md",
+        rule="provenance-phrase",
+        reason=(
+            "The bootstrap attribution links NeverC's 3DNow fixture at "
+            "880d1e96ff48f41c5069c6d8f9839eaa8f37d64a, credits NeverC "
+            "contributors under AGPL-3.0-only, and documents the stack and "
+            "CR0.NE changes. The three source headers preserve those notices; "
+            "THIRD_PARTY_NOTICES.md also records the adaptation."
+        ),
+    ),
+    Allowance(
+        path="cmake/NeverDMimalloc.cmake",
+        rule="provenance-phrase",
+        reason=(
+            "The allocator integration credits NeverC contributors and "
+            "AGPL-3.0-only, with a source permalink at revision "
+            "52e83efb3e3902c97130b9e3c83611080fa18ac4. "
+            "THIRD_PARTY_NOTICES.md records the source file and the changes "
+            "to allocator linkage, ownership and sanitizer detection."
+        ),
+    ),
+    Allowance(
         path="lib/web/desktop/tauri/PHF.cpp",
         rule="provenance-phrase",
         reason=(
@@ -392,6 +414,104 @@ class HistoryAllowance:
 
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
+    HistoryAllowance(
+        path="docs/evidence/arm64e-raw-sp-memory-2026-10-27.json",
+        rule="private-path",
+        commits=frozenset({
+            "85900e61461ed155a102148df6cddb682f7834b4",
+            "ec76b47c855209573e6e6a6f972af2c7c5749311",
+        }),
+        line="",
+        reason=(
+            "Reviewed removal of developer checkout prefixes from six arm64e "
+            "skipped-case outputs, including the identical cherry-pick. Only "
+            "exact deleted line digests in these cleanup commits are covered. "
+            "Test outcomes, timings and artifact hashes are unchanged; current "
+            "and future private paths remain findings."
+        ),
+        line_sha256=frozenset({
+            "0595402c250fe956e45823809ba272953422559436c8ca711148d49bb6b6f58f",
+            "2245215fc74effce3d47cbd2f87ecd822e22e8741215e103155ff9f0ef93452d",
+            "697a5b27da22d738d44e4cef7dd7f903dc8e7f30085d4271894ef998f60284b0",
+            "6b1c07f536c8584bd39145bbd7f7fbd315742348b10b8f9fc1ff90e273d47953",
+            "bb7f915de1f2a18f191a40ffb4f5292a5e401394ecd987dff4809e49adb3fa22",
+            "d29c8ee4b68292d61a4ba827d10f0c39bd431a2d22b78ecba997172a536bf08c",
+        }),
+    ),
+    HistoryAllowance(
+        path="docs/evidence/patch-scaling-2026-10-25.json",
+        rule="private-path",
+        commits=frozenset({
+            "6e662ff3f1b4b3c6e457c11b2580392dc4e4511f",
+            "5c153451f79ed2161c16405f7db377263dcbdeb9",
+        }),
+        line="",
+        reason=(
+            "Reviewed normalization of published delivery command checkout "
+            "prefixes. Repository-relative filenames, outcomes, timings and "
+            "artifact hashes are retained. Only the exact publication and "
+            "cleanup commits and line digests are covered; current and future "
+            "private paths remain findings."
+        ),
+        line_sha256=frozenset({
+            "7cefd0889458e4fabb7baeeece0756eae7fe277fdb911658dcc0fe0722b27fbe",
+            "d3ada58b4f339865b8016cda1ac1fc42c4a4b64bf19fa24c84ac0f62293230db",
+        }),
+    ),
+    HistoryAllowance(
+        path="docs/evidence/patch-history-2026-10-25.json",
+        rule="private-path",
+        commits=frozenset({"2388152e9b28a5b613b55e2897be2699950c0ece"}),
+        line="",
+        reason=(
+            "Reviewed deletion of checkout-specific benchmark command paths. "
+            "The cleanup uses the current checkout and relative build paths; "
+            "measurements and artifact hashes are unchanged. Only exact removed "
+            "line digests in this published cleanup commit are covered. "
+            "Current source and future occurrences remain forbidden."
+        ),
+        line_sha256=frozenset({
+            "08d11975c9bcb42f8c9c815588e1b6733c25c07dd7a969fec05fe8edfaae45f2",
+            "7cefd0889458e4fabb7baeeece0756eae7fe277fdb911658dcc0fe0722b27fbe",
+            "d3ada58b4f339865b8016cda1ac1fc42c4a4b64bf19fa24c84ac0f62293230db",
+        }),
+    ),
+    HistoryAllowance(
+        path="docs/evidence/patch-scaling-2026-10-25.json",
+        rule="private-path",
+        commits=frozenset({"2388152e9b28a5b613b55e2897be2699950c0ece"}),
+        line="",
+        reason=(
+            "Reviewed deletion of checkout-specific delivered-test paths. "
+            "The cleanup retains command arguments, measurements and hashes "
+            "while making build paths relative. Only the exact removed line "
+            "digests in this published cleanup commit are covered; current "
+            "source and future occurrences remain forbidden."
+        ),
+        line_sha256=frozenset({
+            "7cefd0889458e4fabb7baeeece0756eae7fe277fdb911658dcc0fe0722b27fbe",
+            "d3ada58b4f339865b8016cda1ac1fc42c4a4b64bf19fa24c84ac0f62293230db",
+        }),
+    ),
+    HistoryAllowance(
+        path="docs/web-analysis-implementation.md",
+        rule="private-path",
+        commits=frozenset({
+            "2a5d6f60dc231c1e2c90516e762a1a407ae78ce9",
+            "f5c1f1c145767f8da374c3a0449076ea00200cea",
+            "3274140f8d21928e1c7c930203472762c5cab9ce",
+        }),
+        line="",
+        reason=(
+            "Reviewed removal of a local evidence directory from the issue "
+            "closure notes. The exact line digest and introduction/removal "
+            "commits record the cleanup without republishing the path. "
+            "Current files and future occurrences remain forbidden."
+        ),
+        line_sha256=frozenset({
+            "90101851e50b6c41cdb14014f7669182fa5deef52e4d6214bba21b6be517581e",
+        }),
+    ),
     HistoryAllowance(
         path="docs/web-claude-code-qualification.md",
         rule="private-path",

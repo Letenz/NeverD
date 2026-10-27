@@ -1,0 +1,93 @@
+//===- LibCLargeFile.def - The GNU C Library's large-file names -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// The routines the GNU C Library declares for large files (_LARGEFILE64_SOURCE,
+// which _GNU_SOURCE implies), each the 64-bit-offset variant of another one
+// the same header declares: `open64` of `open`, `fopen64` of `fopen`.  A call
+// to one passes what the routine does in the same parameters, objects and
+// strings where it takes them, and returns what it does.  The count of its
+// arguments is its own: an off64_t takes two slots where off_t takes one on a
+// 32-bit target, so the arity tables are not read through this one.  Nor are
+// the function-pointer rows: a function it takes names the large-file records
+// (scandir64's comparison takes struct dirent64), so its rows are its own.
+//
+// NEVERD_LIBC_LARGE_FILE(Name, Routine)
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_LIBC_LARGE_FILE
+#error "define NEVERD_LIBC_LARGE_FILE(Name, Routine) first"
+#endif
+
+// fcntl.h
+NEVERD_LIBC_LARGE_FILE("creat64", "creat")
+NEVERD_LIBC_LARGE_FILE("fcntl64", "fcntl")
+NEVERD_LIBC_LARGE_FILE("open64", "open")
+NEVERD_LIBC_LARGE_FILE("openat64", "openat")
+NEVERD_LIBC_LARGE_FILE("posix_fadvise64", "posix_fadvise")
+NEVERD_LIBC_LARGE_FILE("posix_fallocate64", "posix_fallocate")
+NEVERD_LIBC_LARGE_FILE("fallocate64", "fallocate")
+// stdio.h
+NEVERD_LIBC_LARGE_FILE("fgetpos64", "fgetpos")
+NEVERD_LIBC_LARGE_FILE("fopen64", "fopen")
+NEVERD_LIBC_LARGE_FILE("freopen64", "freopen")
+NEVERD_LIBC_LARGE_FILE("fseeko64", "fseeko")
+NEVERD_LIBC_LARGE_FILE("fsetpos64", "fsetpos")
+NEVERD_LIBC_LARGE_FILE("ftello64", "ftello")
+NEVERD_LIBC_LARGE_FILE("tmpfile64", "tmpfile")
+// stdlib.h
+NEVERD_LIBC_LARGE_FILE("mkostemp64", "mkostemp")
+NEVERD_LIBC_LARGE_FILE("mkostemps64", "mkostemps")
+NEVERD_LIBC_LARGE_FILE("mkstemp64", "mkstemp")
+NEVERD_LIBC_LARGE_FILE("mkstemps64", "mkstemps")
+// unistd.h
+NEVERD_LIBC_LARGE_FILE("ftruncate64", "ftruncate")
+NEVERD_LIBC_LARGE_FILE("lockf64", "lockf")
+NEVERD_LIBC_LARGE_FILE("lseek64", "lseek")
+NEVERD_LIBC_LARGE_FILE("pread64", "pread")
+NEVERD_LIBC_LARGE_FILE("pwrite64", "pwrite")
+NEVERD_LIBC_LARGE_FILE("truncate64", "truncate")
+// sys/stat.h
+NEVERD_LIBC_LARGE_FILE("fstat64", "fstat")
+NEVERD_LIBC_LARGE_FILE("fstatat64", "fstatat")
+NEVERD_LIBC_LARGE_FILE("lstat64", "lstat")
+NEVERD_LIBC_LARGE_FILE("stat64", "stat")
+// sys/statfs.h and sys/statvfs.h
+NEVERD_LIBC_LARGE_FILE("fstatfs64", "fstatfs")
+NEVERD_LIBC_LARGE_FILE("fstatvfs64", "fstatvfs")
+NEVERD_LIBC_LARGE_FILE("statfs64", "statfs")
+NEVERD_LIBC_LARGE_FILE("statvfs64", "statvfs")
+// sys/mman.h, sys/resource.h, sys/sendfile.h, sys/uio.h
+NEVERD_LIBC_LARGE_FILE("mmap64", "mmap")
+NEVERD_LIBC_LARGE_FILE("getrlimit64", "getrlimit")
+NEVERD_LIBC_LARGE_FILE("prlimit64", "prlimit")
+NEVERD_LIBC_LARGE_FILE("setrlimit64", "setrlimit")
+NEVERD_LIBC_LARGE_FILE("sendfile64", "sendfile")
+NEVERD_LIBC_LARGE_FILE("preadv64", "preadv")
+NEVERD_LIBC_LARGE_FILE("pwritev64", "pwritev")
+// dirent.h
+NEVERD_LIBC_LARGE_FILE("alphasort64", "alphasort")
+NEVERD_LIBC_LARGE_FILE("readdir64", "readdir")
+NEVERD_LIBC_LARGE_FILE("readdir64_r", "readdir_r")
+NEVERD_LIBC_LARGE_FILE("scandir64", "scandir")
+NEVERD_LIBC_LARGE_FILE("scandirat64", "scandirat")
+NEVERD_LIBC_LARGE_FILE("versionsort64", "versionsort")
+// ftw.h and glob.h
+NEVERD_LIBC_LARGE_FILE("ftw64", "ftw")
+NEVERD_LIBC_LARGE_FILE("nftw64", "nftw")
+NEVERD_LIBC_LARGE_FILE("glob64", "glob")
+NEVERD_LIBC_LARGE_FILE("globfree64", "globfree")
+// aio.h
+NEVERD_LIBC_LARGE_FILE("aio_cancel64", "aio_cancel")
+NEVERD_LIBC_LARGE_FILE("aio_error64", "aio_error")
+NEVERD_LIBC_LARGE_FILE("aio_fsync64", "aio_fsync")
+NEVERD_LIBC_LARGE_FILE("aio_read64", "aio_read")
+NEVERD_LIBC_LARGE_FILE("aio_return64", "aio_return")
+NEVERD_LIBC_LARGE_FILE("aio_suspend64", "aio_suspend")
+NEVERD_LIBC_LARGE_FILE("aio_write64", "aio_write")
+NEVERD_LIBC_LARGE_FILE("lio_listio64", "lio_listio")
+
+#undef NEVERD_LIBC_LARGE_FILE

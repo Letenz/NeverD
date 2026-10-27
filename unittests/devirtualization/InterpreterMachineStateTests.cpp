@@ -14,7 +14,7 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedTypePass.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -535,16 +535,62 @@ int main(void) {
             {}, nullptr, InterpreterEntryAlignment{16, 3});
 }
 
-TEST(InterpreterMachineStateTest, V1RefusesRetainedSegmentedReads) {
+TEST(InterpreterMachineStateTest, V1RefusesRetainedSegmentedMemory) {
   for (auto Space :
        {NdMemoryAddressSpace::X86FS, NdMemoryAddressSpace::X86GS}) {
-    auto Load = operation(NdOp::LOAD, NdVar::reg(x86reg::RAX, 8),
-                          {NdVar::scalar(16, 8)});
-    Load.MemoryAddressSpace = Space;
-    const auto F = function({{Load}, {operation(NdOp::RETURN, {}, {})}});
-    auto Wrapped = wrapInterpreterMachineStateX64(F);
-    ASSERT_FALSE(static_cast<bool>(Wrapped));
-    EXPECT_NE(llvm::toString(Wrapped.takeError()).find("special memory"),
+    for (bool Write : {false, true}) {
+      auto Access =
+          Write ? operation(NdOp::STORE, {},
+                            {NdVar::scalar(16, 8), NdVar::reg(x86reg::RAX, 8)})
+                : operation(NdOp::LOAD, NdVar::reg(x86reg::RAX, 8),
+                            {NdVar::scalar(16, 8)});
+      Access.MemoryAddressSpace = Space;
+      const auto F = function({{Access}, {operation(NdOp::RETURN, {}, {})}});
+      auto Wrapped = wrapInterpreterMachineStateX64(F);
+      ASSERT_FALSE(static_cast<bool>(Wrapped));
+      EXPECT_NE(llvm::toString(Wrapped.takeError()).find("special memory"),
+                std::string::npos);
+    }
+  }
+}
+
+TEST(InterpreterMachineStateTest, OrderedCmpxchgStillRefusesSourceWrapping) {
+  const auto Address = NdVar::reg(x86reg::RCX, 8);
+  const auto Expected = NdVar::reg(x86reg::RDX, 8);
+  const auto Desired = NdVar::reg(x86reg::R8, 8);
+  const auto Old = NdVar::reg(x86reg::RAX, 8);
+  auto Control =
+      function({{operation(NdOp::COPY, Address, {NdVar::scalar(0x4000, 8)}),
+                 operation(NdOp::COPY, Expected, {NdVar::scalar(7, 8)}),
+                 operation(NdOp::COPY, Desired, {NdVar::scalar(11, 8)}),
+                 operation(NdOp::STORE, {}, {Address, Expected})},
+                {operation(NdOp::LOAD, Old, {Address})},
+                {operation(NdOp::RETURN, {}, {Old})}});
+  auto Ordered = Control;
+  auto &Access = Ordered.Blocks.front().Ops[4];
+  Access.Opcode = NdOp::ATOMIC_CMPXCHG;
+  Access.addInput(Expected);
+  Access.addInput(Desired);
+  Access.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  auto Boundaries = validateLowInstructionBoundaries(
+      Ordered, LowInstructionBoundaryRequirement::Required);
+  ASSERT_FALSE(bool(Boundaries)) << llvm::toString(std::move(Boundaries));
+
+  // The ordinary control establishes valid operands, initialization and CFG.
+  // A raw atomic operation alone must not expand this source ABI contract.
+  for (auto Layout : {InterpreterMachineStateLayout::InlineReturns,
+                      InterpreterMachineStateLayout::SharedGPRExit}) {
+    auto WrappedControl = wrapInterpreterMachineStateX64(
+        Control, BinaryFormat::ELF,
+        InterpreterMachineStateProfile::UserX64NoFaultV1, std::nullopt, Layout);
+    ASSERT_TRUE(bool(WrappedControl))
+        << llvm::toString(WrappedControl.takeError());
+    auto Wrapped = wrapInterpreterMachineStateX64(
+        Ordered, BinaryFormat::ELF,
+        InterpreterMachineStateProfile::UserX64NoFaultV1, std::nullopt, Layout);
+    ASSERT_FALSE(bool(Wrapped));
+    EXPECT_NE(llvm::toString(Wrapped.takeError())
+                  .find("cannot wrap ordered or special memory"),
               std::string::npos);
   }
 }
@@ -560,6 +606,23 @@ TEST(InterpreterMachineStateTest, V1RefusesTaskPriorityIntrinsics) {
     auto Wrapped = wrapInterpreterMachineStateX64(
         function({{Op}, {operation(NdOp::RETURN, {}, {})}}));
     ASSERT_FALSE(static_cast<bool>(Wrapped));
+    llvm::consumeError(Wrapped.takeError());
+  }
+}
+
+TEST(InterpreterMachineStateTest, V1RefusesMXCSRIntrinsics) {
+  for (auto Op :
+       {operation(NdOp::INTRINSIC, {},
+                  {NdVar::scalar(uint64_t(Intrinsic::Ldmxcsr), 2),
+                   NdVar::reg(x86reg::RBX, 8)}),
+        operation(NdOp::INTRINSIC, NdVar::reg(x86reg::RAX, 4),
+                  {NdVar::scalar(uint64_t(Intrinsic::X86ReadMXCSR), 2)}),
+        operation(NdOp::INTRINSIC, {},
+                  {NdVar::scalar(uint64_t(Intrinsic::X86WriteMXCSR), 2),
+                   NdVar::scalar(0x1f80, 4)})}) {
+    auto Wrapped = wrapInterpreterMachineStateX64(
+        function({{Op}, {operation(NdOp::RETURN, {}, {})}}));
+    ASSERT_FALSE(bool(Wrapped));
     llvm::consumeError(Wrapped.takeError());
   }
 }
@@ -604,18 +667,24 @@ TEST(InterpreterMachineStateTest, PipelineRefusesUnmappedSegmentEnvironment) {
   Options.InterpreterSpecialization->ExplicitMachineState = true;
   Options.InterpreterSpecialization->NormalNonfaultingExecution = true;
   llvm::LLVMContext Context;
-  for (bool Segmented : {false, true}) {
-    SCOPED_TRACE(Segmented);
-    Options.InterpreterSpecialization->X64SegmentedReads = Segmented;
-    Options.InterpreterSpecialization->X64CR8State = !Segmented;
+  const char *Diagnostics[] = {
+      "task-priority source interface", "FS/GS base source interface",
+      "FS/GS base source interface", "MXCSR source interface",
+      "legacy GS source interface"};
+  for (unsigned Kind = 0; Kind != 5; ++Kind) {
+    SCOPED_TRACE(Kind);
+    Options.InterpreterSpecialization->X64SegmentedReads = Kind == 1;
+    Options.InterpreterSpecialization->X64SegmentedWrites = Kind == 2;
+    Options.InterpreterSpecialization->X64CR8State = Kind == 0;
+    Options.InterpreterSpecialization->X64LegacyGSState = Kind == 4;
+    Options.InterpreterSpecialization->X64MXCSRMask =
+        Kind == 3 ? std::optional<uint32_t>(0xffbf) : std::nullopt;
     Options.InterpreterSpecialization->X64FlagsProfile =
         InterpreterMachineStateProfile::KernelX64NoFaultV1;
     Pipeline P;
     const auto Result = P.run(Image, Context, Options);
     EXPECT_FALSE(Result.Success);
-    EXPECT_NE(Result.Error.find(Segmented ? "FS/GS base source interface"
-                                          : "task-priority source interface"),
-              std::string::npos);
+    EXPECT_NE(Result.Error.find(Diagnostics[Kind]), std::string::npos);
     EXPECT_FALSE(Result.LlvmModule);
   }
 }

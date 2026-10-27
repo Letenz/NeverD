@@ -16,6 +16,7 @@
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImageModel.h"
+#include "neverd/safety/Limits.h"
 #include "neverd/safety/SinkScanner.h"
 #include "neverd/solver/BitVectorSolver.h"
 #include "neverd/symbolic/SymExplore.h"
@@ -153,7 +154,8 @@ struct MemModel {
   llvm::DenseMap<int, unsigned> BlockIdCounts;
   llvm::DenseMap<int, llvm::DenseSet<int>> NormalPredecessors;
   llvm::DenseSet<int> BlocksWithDuplicateIncomingEdges;
-  static constexpr unsigned MaxProofSteps = 4096;
+  static constexpr unsigned MaxProofSteps =
+      ::neverd::limits::safety::kAllocLifetimeMaxProofSteps;
 
   MemModel(const MedFunc &Fn, const AnalysisInput &In) : F(Fn) {
     SP = In.StackPointerReg;
@@ -444,7 +446,10 @@ struct MemModel {
         Cache[Key] = true;
         return true;
       }
-      if (Depth > 64 || Remaining == 0) {
+      if (Depth >
+              ::neverd::limits::safety::
+                  kAllocLifetimeMayBeStackAddressThroughReloadsMayBeDepthLimit ||
+          Remaining == 0) {
         Incomplete = true;
         return true;
       }
@@ -529,7 +534,9 @@ struct MemModel {
 
   std::optional<int64_t> stackOffsetRec(const MedVar &V, int Depth,
                                         llvm::DenseSet<ValueKey> &Seen) const {
-    if (!Have || V.isConst() || Depth > 48)
+    if (!Have || V.isConst() ||
+        Depth >
+            ::neverd::limits::safety::kAllocLifetimeStackOffsetRecDepthLimit)
       return std::nullopt;
     const ValueKey Key = keyOf(V);
     if (AmbiguousDefs.count(Key) || !Seen.insert(Key).second)
@@ -626,7 +633,9 @@ struct MemModel {
         Incomplete = true;
         return true;
       }
-      if (Depth > 64 || Remaining == 0) {
+      if (Depth > ::neverd::limits::safety::
+                      kAllocLifetimeMayBeStackAddressProveDepthLimit ||
+          Remaining == 0) {
         Incomplete = true;
         return true;
       }
@@ -1965,7 +1974,10 @@ private:
     // lifetime facts.  The input-scaled cap is only a termination guard for a
     // malformed or unexpectedly non-monotone summary cycle; exhausting it is
     // reported as UNKNOWN rather than publishing a partial fixed point.
-    const size_t MaxChanges = std::max<size_t>(1024, SummaryStateUnits * 8 + 1);
+    const size_t MaxChanges =
+        std::max<size_t>(::neverd::limits::safety::
+                             kAllocLifetimeBuildSummariesMaxChangesMaxArgument1,
+                         SummaryStateUnits * 8 + 1);
     size_t Changes = 0;
 
     while (!Work.empty()) {
@@ -2236,9 +2248,16 @@ private:
     }
     symbolic::SymContext Ctx;
     symbolic::ExploreOptions Opts;
-    Opts.MaxPaths = Budgets.MaxPaths ? Budgets.MaxPaths : 64;
-    Opts.MaxSteps = Budgets.MaxSteps ? Budgets.MaxSteps : (1u << 16);
-    Opts.MaxLoopIterations = Budgets.MaxLoop ? Budgets.MaxLoop : 3;
+    Opts.MaxPaths = Budgets.MaxPaths
+                        ? Budgets.MaxPaths
+                        : ::neverd::limits::safety::kDefaultExplorationPaths;
+    Opts.MaxSteps = Budgets.MaxSteps
+                        ? Budgets.MaxSteps
+                        : ::neverd::limits::safety::kDefaultExplorationSteps;
+    Opts.MaxLoopIterations =
+        Budgets.MaxLoop
+            ? Budgets.MaxLoop
+            : ::neverd::limits::safety::kDefaultExplorationLoopVisits;
     if (In.Img) {
       const TargetRegInfo &TRI = getTargetRegInfo(In.Img->Arch);
       const uint16_t Bytes = TRI.PointerSize ? TRI.PointerSize : 8;
@@ -3025,7 +3044,9 @@ private:
             Formatted = Effects.family() == CallEffectFamily::FormattedInput
                             ? safety::detail::formattedSourceName(Name)
                             : std::nullopt) {
-      const unsigned FixedCount = libc::varArgFixedCount(Formatted->first);
+      const unsigned FixedCount = libc::varArgFixedCount(
+          Formatted->first,
+          In.Img ? libc::libcVariantOf(*In.Img) : libc::LibCVariant::GNU);
       return ArgIndex < static_cast<int>(FixedCount)
                  ? (argumentHasPointerWidth(CI, ArgIndex) ? CallUse::Definite
                                                           : CallUse::Possible)

@@ -7,6 +7,9 @@
 #include "neverd/loader/COFF/PEFixedImage.h"
 
 #include "COFFObjectView.h"
+#include "PEHeaderInitialization.h"
+#include "PEHeaderMapping.h"
+#include "PELoaderWriteRanges.h"
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
@@ -51,10 +54,7 @@ llvm::Error exhausted() {
       "PE fixed image: metadata budget exhausted");
 }
 
-struct Range {
-  uint64_t Begin = 0;
-  uint64_t End = 0;
-};
+using Range = coff_loader::LoaderRange;
 
 bool overlaps(Range A, Range B) { return A.Begin < B.End && B.Begin < A.End; }
 
@@ -372,10 +372,7 @@ relocations(RawImage &Raw, RelocationAlignment BlockAlignment) {
   return Result;
 }
 
-struct ProtectedRead {
-  Range Bytes;
-  std::optional<uint64_t> InPlaceWriter;
-};
+using ProtectedRead = coff_loader::LoaderProtectedRead;
 
 struct ImportInventory {
   std::vector<Range> Writes;
@@ -575,13 +572,8 @@ llvm::Error validateLoaderWrites(RawImage &Raw, ImportInventory &Imports,
   for (const auto &Read : Imports.Reads) {
     if (auto Error = Raw.account(0))
       return Error;
-    auto It = std::lower_bound(
-        Imports.Writes.begin(), Imports.Writes.end(), Read.Bytes.Begin,
-        [](Range Write, uint64_t Begin) { return Write.End <= Begin; });
-    for (; It != Imports.Writes.end() && It->Begin < Read.Bytes.End; ++It)
-      if (!Read.InPlaceWriter || *Read.InPlaceWriter != It->Begin ||
-          Read.Bytes.Begin != It->Begin || Read.Bytes.End != It->End)
-        return invalid("loader writes overlap loader metadata");
+    if (!coff_loader::loaderWritesPreserveRead(Imports.Writes, Read))
+      return invalid("loader writes overlap loader metadata");
   }
   return llvm::Error::success();
 }
@@ -686,9 +678,24 @@ PEFixedImageView::create(const BinaryImage &Image,
     return std::move(Error);
   if (!Image.Relocations.empty() || !Image.DyldBindSlots.empty())
     return unsupported("additional relocation or runtime writer metadata");
-  if (Raw.Sections.size() != Image.Segments.size() ||
-      Raw.Sections.size() != Image.Sections.size())
+  coff_loader::PEHeaderInitializationWork HeaderWork;
+  auto HeaderMapping = coff_loader::getPEHeaderMapping(Image.Raw, &HeaderWork);
+  const bool HasHeaderMapping = bool(HeaderMapping);
+  if (!HeaderMapping)
+    llvm::consumeError(HeaderMapping.takeError());
+  if (auto Error = Raw.account(HeaderWork.Bytes, HeaderWork.Records))
+    return std::move(Error);
+  const size_t MappingCount = Raw.Sections.size() + HasHeaderMapping;
+  if (MappingCount != Image.Segments.size() ||
+      MappingCount != Image.Sections.size())
     return invalid("mapped sections differ from the PE section inventory");
+  if (HasHeaderMapping) {
+    if (auto Error = Raw.account(uint64_t(HeaderMapping->Size) * 2, 2))
+      return std::move(Error);
+    if (!coff_loader::matchesPEHeaderMapping(Image, Raw.Sections.size(),
+                                             *HeaderMapping, Image.Raw))
+      return invalid("mapped PE headers differ from the fixed file snapshot");
+  }
   for (size_t I = 0; I < Raw.Sections.size(); ++I) {
     const auto &R = Raw.Sections[I];
     const auto &M = Image.Segments[I];
@@ -780,6 +787,11 @@ PEFixedImageView::create(const BinaryImage &Image,
   std::set<va_t> CodeSlots, DataSlots;
   std::map<va_t, va_t> DataOwners;
   std::map<va_t, RelocatedAddressField> CodeOperands, DataOperands;
+  if (HasHeaderMapping) {
+    const va_t Slot = Image.Base + HeaderMapping->ImageBaseOffset;
+    DataSlots.insert(Slot);
+    DataOwners.emplace(Slot, Image.Base);
+  }
   for (const auto &R : Relocations->Entries) {
     if (ImportSlots.contains(R.Address))
       continue;
@@ -834,6 +846,8 @@ PEFixedImageView::create(const BinaryImage &Image,
   Data->Image = &Image;
   Data->ImageExtent = {Image.Base, Image.Base + ImageSize};
   Data->Mappings = Raw.ByRVA;
+  if (HasHeaderMapping)
+    Data->Mappings.insert(Data->Mappings.begin(), Raw.Sections.size());
   Data->Writes = std::move(Imports->Writes);
   Data->IAT = Imports->IAT;
   if (auto Error = Raw.account(0, Imports->Names.size() + Relocations->Fields.size()))
@@ -859,7 +873,7 @@ PEFixedImageView::create(const BinaryImage &Image,
   // complete fixup values and file bytes. Mapping validation above proves its
   // identity with the current image. The bounded parser owns derived ranges.
   llvm::SHA256 Hash;
-  Hash.update("neverd-pe-preferred-base-snapshot-v4");
+  Hash.update("neverd-pe-preferred-base-snapshot-v5");
   Hash.update(Image.Raw);
   uint8_t Budget[16];
   llvm::support::endian::write64le(Budget, Limits.MaxBytes);

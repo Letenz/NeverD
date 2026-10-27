@@ -17,6 +17,7 @@
 #include "compression/Zstd.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 
 #include "llvm/Support/JSON.h"
 
@@ -96,10 +97,12 @@ uint64_t frameSize(std::string_view Bytes, uint64_t Budget) {
     Window = Size;
   if (Size > Budget || Window > MaxBunMapDecodedBytes)
     throw Error("bun_map_decompression_budget_exceeded");
-  const auto MaxBlock = std::min<uint64_t>(128 * 1024, Window);
+  const auto MaxBlock = std::min<uint64_t>(
+      ::neverd::limits::web::kBunSourceMapFrameSizeMaxBlockMinArgument1,
+      Window);
   uint64_t Blocks = 0;
   do {
-    if (++Blocks > 100000)
+    if (++Blocks > ::neverd::limits::web::kBunSourceMapFrameSizeBlocksLimit)
       throw Error("bun_map_zstd_block_budget_exceeded");
     const auto Header = R.number(3);
     const auto Type = (Header >> 1) & 3, Size = Header >> 3;
@@ -295,7 +298,9 @@ SourceMap decodeBunSourceMap(const BunExtraction &E, const BunModule &M) {
       throw Error("bun_map_invalid_pointer");
     Next += P.Size;
     if (I < Count) {
-      if (P.Size > 32768 || P.Size > MaxBunNameBytes - NameBytes)
+      if (P.Size > ::neverd::limits::web::
+                       kBunSourceMapDecodeBunSourceMapPSizeLimit ||
+          P.Size > MaxBunNameBytes - NameBytes)
         throw Error("bun_map_name_budget_exceeded");
       NameBytes += P.Size;
       if (!llvm::json::isUTF8(std::string_view(Bytes).substr(P.Offset, P.Size)))

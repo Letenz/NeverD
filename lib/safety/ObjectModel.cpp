@@ -13,6 +13,7 @@
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImageModel.h"
+#include "neverd/safety/Limits.h"
 #include "neverd/safety/SinkScanner.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -303,7 +304,8 @@ private:
   // Memoization makes ordinary queries linear in the reachable SSA graph.
   // The cap is a final fail-closed guard for malformed, exceptionally large
   // graphs; incomplete walks are never published into the negative caches.
-  static constexpr unsigned MaxProofSteps = 4096;
+  static constexpr unsigned MaxProofSteps =
+      ::neverd::limits::safety::kObjectModelMaxProofSteps;
 
   void resetConstantProof() {
     ConstantCache.clear();
@@ -353,7 +355,9 @@ private:
     if (auto It = ExactDataIdentityCache.find(Key);
         It != ExactDataIdentityCache.end())
       return It->second;
-    if (Depth > 32 || ExactDataIdentityProofBudget == 0 ||
+    if (Depth >
+            ::neverd::limits::safety::kObjectModelExactDataIdentityDepthLimit ||
+        ExactDataIdentityProofBudget == 0 ||
         !ExactDataIdentityActive.insert(Key).second) {
       ExactDataIdentityProofIncomplete = true;
       return std::nullopt;
@@ -433,7 +437,9 @@ private:
     const ValueKey Key = keyOf(V);
     if (auto It = Cache.find(Key); It != Cache.end())
       return It->second;
-    if (Depth > 64 || Remaining == 0 || !Active.insert(Key).second) {
+    if (Depth > ::neverd::limits::safety::
+                    kObjectModelScalarConstantValueDepthLimit ||
+        Remaining == 0 || !Active.insert(Key).second) {
       Incomplete = true;
       return std::nullopt;
     }
@@ -734,7 +740,7 @@ private:
     const ValueKey Key = keyOf(V);
     if (auto It = ConstantCache.find(Key); It != ConstantCache.end())
       return It->second;
-    if (Depth > 32) {
+    if (Depth > ::neverd::limits::safety::kObjectModelConstantValueDepthLimit) {
       ConstantProofIncomplete = true;
       return std::nullopt;
     }
@@ -856,7 +862,8 @@ private:
     const ValueKey Key = keyOf(V);
     if (auto It = AllocationCache.find(Key); It != AllocationCache.end())
       return It->second;
-    if (Depth > 32) {
+    if (Depth >
+        ::neverd::limits::safety::kObjectModelAllocationObjectDepthLimit) {
       AllocationProofIncomplete = true;
       return std::nullopt;
     }
@@ -1075,7 +1082,8 @@ private:
     }
     if (auto It = StackAddressCache.find(Key); It != StackAddressCache.end())
       return It->second;
-    if (Depth > 64) {
+    if (Depth >
+        ::neverd::limits::safety::kObjectModelMayBeStackAddressDepthLimit) {
       StackAddressProofIncomplete = true;
       return true;
     }
@@ -1172,7 +1180,8 @@ private:
   // Signed offset of a pointer from the incoming stack pointer, or nullopt when
   // the value is not a stack address this walk can prove.
   std::optional<int64_t> stackOffset(const MedVar &V, int Depth) {
-    if (Depth > 64 || V.isConst())
+    if (Depth > ::neverd::limits::safety::kObjectModelStackOffsetDepthLimit ||
+        V.isConst())
       return std::nullopt;
 
     ValueKey K = keyOf(V);

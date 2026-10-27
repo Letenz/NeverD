@@ -173,9 +173,13 @@ Signature evaluateOnGrid(const SymContext &Ctx, SymRef R,
 //===----------------------------------------------------------------------===//
 
 /// An expression reduced to something the search can work on: a body over
-/// independent inputs, the terminals it may be rebuilt from, and what it
-/// produces at the points it will be measured at.
+/// inputs, the terminals it may be rebuilt from, and what it produces at the
+/// points it will be measured at. Grammar inputs are independent word-sized
+/// placeholders; typed affine terminals are views of the actual input widths.
 struct SynthProblem {
+  /// The complete expression before opaque subterms were replaced.
+  SymRef Original;
+  bool HasNarrowInputs = false;
   /// The input rewritten over inputs the grammar can drive.
   SymRef Body;
   /// Those inputs, in the order a \c SamplePoint assigns to them.
@@ -201,10 +205,18 @@ enum class ProblemStatus : uint8_t {
   Trivial,
   /// More inputs than \c SynthOptions::MaxLeaves allows.
   TooManyLeaves,
+  /// Optional typed problem construction exceeded its share of search work.
+  BudgetExhausted,
 };
 
 ProblemStatus buildProblem(SymContext &Ctx, SymRef Root,
                            const SynthOptions &Opts, SynthProblem &Out);
+
+/// Optional full-semantics problem over narrow inputs and their typed views.
+/// Used only for affine proposals; the opaque-input grammar remains available.
+ProblemStatus buildTypedProblem(SymContext &Ctx, SymRef Root,
+                                const SynthOptions &Opts, SynthProblem &Out,
+                                size_t MaxWork, size_t &Work);
 
 /// The terminals a candidate may start from: every leaf, then every literal.
 llvm::SmallVector<SymRef, 16> terminalsOf(const SynthProblem &P);
@@ -218,18 +230,16 @@ std::vector<Signature> terminalSignatures(const SymContext &Ctx,
 // Budget
 //===----------------------------------------------------------------------===//
 
-/// A bounded number of candidates.
+/// A bounded amount of search work.
 ///
-/// Both searches grow faster than any description of expression shape can
-/// bound, so what stops them is a count of candidates considered rather than a
-/// limit on which candidates are allowed.  One counter spans both, which is
-/// what makes the split between them a scheduling decision rather than a
-/// second number to tune against the first.
+/// Enumeration and sampling charge candidates; affine fitting also charges
+/// word evaluations and typed-problem construction. One counter spans these
+/// routes, so an optional proposal spends the same allowance as its fallback.
 class SearchEffort {
 public:
   explicit SearchEffort(size_t Limit) : Left(Limit) {}
 
-  /// Charge \p Units candidates.  False once nothing is left, and from then
+  /// Charge \p Units of work. False once nothing is left, and from then
   /// on for good.
   bool spend(size_t Units = 1) {
     if (Units > Left) {
@@ -323,14 +333,48 @@ struct SearchOutcome {
   /// The search must stop because its proof procedure returned Unknown.
   /// Trying another candidate cannot make an incomplete procedure complete.
   bool StopForProof = false;
+  bool SawBudgetExhausted = false;
+  bool FromAffine = false;
+  bool FromQuadratic = false;
+  /// A typed proposal may use a different number of inputs than the grammar.
+  unsigned NumLeaves = 0;
 };
 
-/// Build candidates in ascending cost until one behaves like the body and
-/// survives \p Check.
+/// Apply the shared cost, restored readability, independent-sample and proof
+/// gates to an oracle fit. No fitting route may publish its samples as proof.
+SearchOutcome checkFittedCandidate(SymContext &Ctx, SymRef Candidate,
+                                   const SynthProblem &P,
+                                   const SynthOptions &Opts,
+                                   SearchEffort &Effort, Checker &Check,
+                                   const std::optional<SynthVerifyFn> &Verify,
+                                   uint64_t &ProofQueries);
+
+/// Propose a modular affine reading from the oracle's zero/unit-vector grid.
+/// Uses the same independent checker and budget as the grammar searches.
+SearchOutcome fitAffine(SymContext &Ctx, const SynthProblem &P,
+                        const SynthOptions &Opts, SearchEffort &Effort,
+                        Checker &Check,
+                        const std::optional<SynthVerifyFn> &Verify,
+                        uint64_t &ProofQueries);
+
+SearchOutcome fitTypedAffine(SymContext &Ctx, const SynthProblem &P,
+                             const SynthOptions &Opts, SearchEffort &Effort,
+                             const std::optional<SynthVerifyFn> &Verify,
+                             uint64_t &ProofQueries);
+
+/// Propose a degree-two polynomial over the independent, word-sized inputs.
+SearchOutcome fitQuadratic(SymContext &Ctx, const SynthProblem &P,
+                           const SynthOptions &Opts, SearchEffort &Effort,
+                           Checker &Check,
+                           const std::optional<SynthVerifyFn> &Verify,
+                           uint64_t &ProofQueries);
+
+/// Check terminals, try the optional coefficient fits, then build grammar
+/// candidates in ascending cost until one survives \p Check.
 ///
-/// Because the enumeration is exhaustive up to the cost it reaches, the first
-/// candidate it accepts is the shortest one the grammar can express — up to
-/// the one liberty the cost model takes, which is that it counts the tree a
+/// With coefficient fitting disabled, enumeration is exhaustive up to the cost
+/// it reaches, and the first accepted candidate is shortest in the grammar up
+/// to the one liberty the cost model takes, which is that it counts the tree a
 /// candidate is written as before the builders canonicalize it.
 SearchOutcome enumerateShortest(SymContext &Ctx, const SynthProblem &P,
                                 const SynthOptions &Opts,

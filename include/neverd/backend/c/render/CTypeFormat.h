@@ -15,6 +15,7 @@
 #include "neverd/ir/NdTypes.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
@@ -31,11 +32,28 @@ class StructType;
 namespace neverd {
 
 struct BinaryImage;
+struct SourceFrameBytes;
 class DebugContext;
 
 /// \p Ty as C.  Throws std::invalid_argument for a type C cannot spell, such
 /// as a record with neither a source name nor a supported layout.
 std::string typeToC(const TypeRef &Ty);
+
+/// While one lives, typeToC spells a named record by its tag where
+/// \p Keyword gives the tag's keyword for the record's name (`struct stat`):
+/// a C emitter holds one for the unit it writes, whose functions or objects
+/// may have the names of records, which then have no typedef beside them.
+class CRecordTagSpelling {
+public:
+  explicit CRecordTagSpelling(
+      llvm::function_ref<const char *(llvm::StringRef)> Keyword);
+  ~CRecordTagSpelling();
+  CRecordTagSpelling(const CRecordTagSpelling &) = delete;
+  CRecordTagSpelling &operator=(const CRecordTagSpelling &) = delete;
+
+private:
+  llvm::function_ref<const char *(llvm::StringRef)> Outer;
+};
 
 /// Whether typeToC spells \p Ty, for a caller that has another type to use
 /// when it does not, such as the machine type of a debug parameter.
@@ -52,9 +70,12 @@ bool hasCValueLayout(const TypeRef &Ty);
 /// that belong to a data object the image's symbols size stay unnamed too,
 /// unless the object is the string: an address inside the object points
 /// into it, and an object whose bytes go on past the terminator with more
-/// than zeros holds more than the text.
+/// than zeros holds more than the text.  \p Narrow reads the bytes as a
+/// narrow string only: a narrow string parameter's "r", whose terminator and
+/// the zeros after it read as UTF-16 L"r" too.
 std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
-                                              bool AllowEmpty = false);
+                                              bool AllowEmpty = false,
+                                              bool Narrow = false);
 
 /// A string literal at \p Addr as C: the image's read-only printable text
 /// (imageStringLiteral), or the literal a symbol's name spells there (MSVC's
@@ -83,6 +104,11 @@ bool isStringLiteralText(llvm::StringRef Text);
 std::optional<std::string> imageStringComment(const BinaryImage *Img,
                                               va_t Addr);
 
+/// Readable text in proven stack bytes, with its original observation address.
+/// A comment only: the source retains every original load and store.
+std::optional<std::string>
+sourceFrameStringComment(const SourceFrameBytes &Value);
+
 /// A string the image holds, as a C literal of exactly its bytes.
 struct ImageCString {
   /// The element type: `char`, `char16_t` or `char32_t`, and its bytes.
@@ -109,9 +135,14 @@ std::optional<ImageCString> imageCString(const BinaryImage *Img, va_t Addr);
 /// have Size 0.
 inline bool isMsvcClassValueReturn(const TypeRef &Ty, Arch Architecture,
                                    BinaryFormat Format) {
+  // A record the source says is C's (NdRecordPassing::ByValue) returns in
+  // RAX when it fills one, two, four or eight bytes, as Win64 placement
+  // reads it too; a class may not.
   return Architecture == Arch::X64 && Format == BinaryFormat::COFF && Ty &&
          Ty->Kind == NdTypeKind::Struct && !Ty->SourceName.empty() &&
-         !Ty->IsEnum;
+         !Ty->IsEnum &&
+         !(Ty->Passing == NdRecordPassing::ByValue &&
+           (Ty->Size == 1 || Ty->Size == 2 || Ty->Size == 4 || Ty->Size == 8));
 }
 
 /// TPI sometimes writes `CStringT*` for a class-by-value return, and sometimes
@@ -120,10 +151,12 @@ inline bool isMsvcClassValueReturn(const TypeRef &Ty, Arch Architecture,
 inline bool isMsvcPointerEncodedClassReturn(const TypeRef &Ty,
                                             Arch Architecture,
                                             BinaryFormat Format) {
+  // A C declaration's pointer to a record is a pointer, in RAX.
   return Architecture == Arch::X64 && Format == BinaryFormat::COFF && Ty &&
          Ty->Kind == NdTypeKind::Ptr && Ty->Pointee &&
          Ty->Pointee->Kind == NdTypeKind::Struct &&
-         !Ty->Pointee->SourceName.empty() && !Ty->Pointee->IsEnum;
+         !Ty->Pointee->SourceName.empty() && !Ty->Pointee->IsEnum &&
+         Ty->Pointee->Passing != NdRecordPassing::ByValue;
 }
 
 /// MSVC x64 returns a named C++ class/struct through a hidden pointer in RCX.

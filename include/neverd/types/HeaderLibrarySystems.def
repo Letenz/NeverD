@@ -1,0 +1,74 @@
+//===- HeaderLibrarySystems.def - Systems' own headers ----------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The header libraries (HeaderLibraries.def) whose types a system's own
+/// headers declare.  A C or C++ header NeverD renders for a program joined to
+/// one takes those types from the system's headers where the compiler that
+/// reads it has them, and defines them itself elsewhere: these rows say how
+/// C's preprocessor tells the system, and what its headers need first.
+///
+/// NEVERD_HEADER_SYSTEM(Kind, Name, Platform, Test, Probe, Feature,
+///                      Configured)
+///   Kind        An image kind of HeaderLibraryImages.def, whose libraries'
+///               types are the system's.
+///   Name        The system's C library, as a message names it.
+///   Platform    Whether a compiler targets the system's platform.
+///   Test        Whether its C library is the system's, once Probe is read.
+///   Probe       A header that defines what Test reads, included where the
+///               compiler has it.
+///   Feature     The macro the libraries were read with, defined first.
+///   Configured  Whether the C library's headers took Feature, where they
+///               tell; empty where they do not.
+///
+/// NEVERD_HEADER_SYSTEM_ARCH(Arch, Test)
+///   Whether a compiler targets the architecture HeaderLibraryImages.def
+///   names so.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_HEADER_SYSTEM
+#define NEVERD_HEADER_SYSTEM(Kind, Name, Platform, Test, Probe, Feature,       \
+                             Configured)
+#endif
+#ifndef NEVERD_HEADER_SYSTEM_ARCH
+#define NEVERD_HEADER_SYSTEM_ARCH(Arch, Test)
+#endif
+
+// uClibc defines __GLIBC__ too.
+NEVERD_HEADER_SYSTEM(GNULinux, "glibc", "defined(__linux__)",
+                     "defined(__GLIBC__) && !defined(__UCLIBC__)", "features.h",
+                     "_GNU_SOURCE", "defined(__USE_GNU)")
+NEVERD_HEADER_SYSTEM(Android, "bionic", "defined(__ANDROID__)",
+                     "defined(__BIONIC__)", "features.h", "_GNU_SOURCE",
+                     "defined(__USE_GNU)")
+// musl defines no macro of its own: it is the Linux C library that is none
+// of the others.
+NEVERD_HEADER_SYSTEM(MuslLinux, "musl",
+                     "defined(__linux__) && !defined(__ANDROID__)",
+                     "!defined(__GLIBC__) && !defined(__BIONIC__) && "
+                     "!defined(__UCLIBC__)",
+                     "features.h", "_GNU_SOURCE", "")
+
+// Apple's: libSystem, whose platform <TargetConditionals.h> tells, which
+// clang defines too; the iOS library holds the simulator's.
+NEVERD_HEADER_SYSTEM(MacOS, "libSystem", "defined(__APPLE__)",
+                     "defined(TARGET_OS_OSX) && TARGET_OS_OSX",
+                     "TargetConditionals.h", "", "")
+NEVERD_HEADER_SYSTEM(IOS, "libSystem", "defined(__APPLE__)",
+                     "defined(TARGET_OS_IOS) && TARGET_OS_IOS && "
+                     "!(defined(TARGET_OS_MACCATALYST) && "
+                     "TARGET_OS_MACCATALYST)",
+                     "TargetConditionals.h", "", "")
+
+NEVERD_HEADER_SYSTEM_ARCH(X64, "defined(__x86_64__) && !defined(__ILP32__)")
+NEVERD_HEADER_SYSTEM_ARCH(X86, "defined(__i386__)")
+NEVERD_HEADER_SYSTEM_ARCH(AArch64,
+                          "defined(__aarch64__) && !defined(__ILP32__)")
+NEVERD_HEADER_SYSTEM_ARCH(ARM, "defined(__arm__)")
+
+#undef NEVERD_HEADER_SYSTEM
+#undef NEVERD_HEADER_SYSTEM_ARCH

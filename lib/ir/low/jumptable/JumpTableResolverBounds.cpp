@@ -20,6 +20,7 @@
 #include "JumpTableResolverDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 
@@ -151,33 +152,21 @@ static size_t orderedEvidenceLookupWork(size_t Count) {
   return Work;
 }
 
-// Keep attacker-controlled work in independent accounts so an intentionally
-// expensive proposal scan cannot consume the memory needed for final all-path
-// replay.  Phase caps overlap, but every charge also debits one shared public
-// 4096-unit invocation ceiling; this lets a large real proposal borrow unused
-// direct/replay capacity without increasing total work.  The
-// exact structural relation in JumpTableResolverSlice also has a per-batch
-// symbolization ceiling, while its CFG snapshot, value reconstruction and
-// every expression visit debit the same candidate-wide aggregate account as
-// target/address roles and mask-domain recovery.
-static constexpr size_t kModuloProposalWork = 3072;
-static constexpr size_t kModuloStructuralRetentionWork = 1536;
-static constexpr size_t kModuloDirectWork = 512;
-static constexpr size_t kModuloReplayWork = 1024;
-static_assert(kModuloProposalWork <= limits::kMaxJumpTableEvidenceWork);
-static_assert(kModuloStructuralRetentionWork <=
+static_assert(
+    ::neverd::limits::ir::kJumpTableResolverBoundsModuloProposalWork <=
+    limits::kMaxJumpTableEvidenceWork);
+static_assert(::neverd::limits::ir::
+                  kJumpTableResolverBoundsModuloStructuralRetentionWork <=
               limits::kMaxJumpTableEvidenceWork);
-static_assert(kModuloDirectWork <= limits::kMaxJumpTableEvidenceWork);
-static_assert(kModuloReplayWork <= limits::kMaxJumpTableEvidenceWork);
+static_assert(::neverd::limits::ir::kJumpTableResolverBoundsModuloDirectWork <=
+              limits::kMaxJumpTableEvidenceWork);
+static_assert(::neverd::limits::ir::kJumpTableResolverBoundsModuloReplayWork <=
+              limits::kMaxJumpTableEvidenceWork);
 
-// Proposal discovery is an under-approximation: retain at most this
-// instruction-prefix worth of ops, prepaid before each append.  Candidate
-// scanning charges the same ops a second time; the remaining quarter covers
-// compact instruction-span records and bounded reaching-definition/evaluator
-// visits.  Structural authentication retains its own independent account, and
-// final all-path replay keeps the full 1024-unit reserve below.
-static constexpr size_t kMaxRetainedModuloProposalOps = 512;
-static_assert(kMaxRetainedModuloProposalOps * 2 <= kModuloProposalWork);
+static_assert(
+    ::neverd::limits::ir::kJumpTableResolverBoundsMaxRetainedModuloProposalOps *
+        2 <=
+    ::neverd::limits::ir::kJumpTableResolverBoundsModuloProposalWork);
 
 static constexpr std::optional<size_t>
 moduloDomainEvidenceWork(uint32_t Bound, size_t ProducerCount,
@@ -213,8 +202,10 @@ moduloDomainEvidenceWork(uint32_t Bound, size_t ProducerCount,
 constexpr std::optional<size_t> Modulo140ReplayWork =
     moduloDomainEvidenceWork(140, 1, 1, true);
 static_assert(Modulo140ReplayWork && *Modulo140ReplayWork == 570);
-static_assert(Modulo140ReplayWork &&
-              *Modulo140ReplayWork + 140 + 2 <= kModuloReplayWork);
+static_assert(
+    Modulo140ReplayWork &&
+    *Modulo140ReplayWork + 140 + 2 <=
+        ::neverd::limits::ir::kJumpTableResolverBoundsModuloReplayWork);
 constexpr std::optional<size_t> Modulo2048BootstrapWork =
     moduloDomainEvidenceWork(2048, 1, 1, false);
 static_assert(Modulo2048BootstrapWork &&
@@ -327,7 +318,8 @@ bool authenticatedSourceAnchorExemptionMatches(
       Occurrence.DereferenceInstructionAddr == InvalidVA ||
       Occurrence.DereferenceOpSeq < 0 ||
       (Occurrence.DereferenceOpcode != NdOp::LOAD &&
-       Occurrence.DereferenceOpcode != NdOp::STORE) ||
+       Occurrence.DereferenceOpcode != NdOp::STORE &&
+       Occurrence.DereferenceOpcode != NdOp::INTRINSIC) ||
       Occurrence.DereferenceAccessSize == 0)
     return false;
   const RelocatedInstructionAddressArithmeticStep &Final =
@@ -363,17 +355,19 @@ uint32_t boundCodePtrRunByNextAnchor(
       Anchors.insert(Field.TargetVA);
   }
 
+  // Only an anchor among the run's own slots can end it.  One past them names
+  // another object, aligned however its owner is: MSVC places an i386 jump
+  // table at whatever offset its function's code ends.
   for (auto It = Anchors.upper_bound(BaseAddr); It != Anchors.end(); ++It) {
     const va_t NextAnchor = *It;
+    const uint64_t Delta = NextAnchor - BaseAddr;
+    if (Delta / EntryStride >= Run)
+      break;
     if (!Img.CodePtrRelocSlots.count(NextAnchor))
       continue;
-    const uint64_t Delta = NextAnchor - BaseAddr;
     if (Delta % EntryStride != 0)
       return 0;
-    const uint64_t Slots = Delta / EntryStride;
-    if (Slots > std::numeric_limits<uint32_t>::max())
-      return 0;
-    return std::min(Run, static_cast<uint32_t>(Slots));
+    return static_cast<uint32_t>(Delta / EntryStride);
   }
   return Run;
 }
@@ -1713,7 +1707,10 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
           // A long physical run may still use only a small exact selector
           // domain. The query must prove this ceiling before enumerating it;
           // a feasible value outside the ceiling rejects the entire proof.
-          const uint32_t QueryCapacity = std::min(CandidateCapacity, 64u);
+          const uint32_t QueryCapacity = std::min(
+              CandidateCapacity,
+              ::neverd::limits::ir::
+                  kJumpTableResolverBoundsCFGBuilderInferBoundsFromMaskWithAbsoluteProofExactFiniteCoordinatesForTargetsQueryCapacityMinArgument2);
           if (OccurrenceBranches &&
               OccurrenceBranches->size() != Occurrences.size()) {
             if (IncompleteIndexDomain)
@@ -2932,13 +2929,50 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
     return 0;
   }
 
+  const bool ProposeByteZeroExtensions =
+      Info.AuthenticatedGuardBound == 0 && Info.AuthenticatedModuloBound == 0;
+  auto isByteZeroExtension = [](const LowOp &Op) {
+    return Op.Opcode == NdOp::INT_ZEXT && Op.NumInputs >= 1 &&
+           Op.Inputs[0].Size == 1 && !Op.Inputs[0].isConst() &&
+           Op.Output.Size > 1;
+  };
+  // Masks are proposed from the code between the entry and the dispatch, and
+  // elsewhere only by writes to the index register itself: a loop that
+  // fetches and masks its next opcode at the end of a handler writes the
+  // register the dispatch reads and jumps back.  A proposal is no evidence;
+  // the occurrence queries below decide which producers reach the index.
+  const TargetRegInfo &IndexTRI = getTargetRegInfo(CurrentImg->Arch);
+  std::optional<std::pair<uint64_t, uint16_t>> IndexContainer;
+  if (Info.IndexValueAtUse.isReg())
+    IndexContainer = IndexTRI.findWideReg(Info.IndexValueAtUse.Offset,
+                                          Info.IndexValueAtUse.Size);
+  auto proposesMasks = [&](va_t Addr,
+                           const InsnRecord &Insn) -> std::optional<bool> {
+    if (Addr >= CurrentFuncEntry && Addr <= Rec.Addr)
+      return true;
+    if (!IndexContainer)
+      return false;
+    if (!consumeWork(Insn.Ops.size()))
+      return std::nullopt;
+    return std::any_of(Insn.Ops.begin(), Insn.Ops.end(), [&](const LowOp &Op) {
+      return (Op.Opcode == NdOp::INT_AND ||
+              (ProposeByteZeroExtensions && isByteZeroExtension(Op))) &&
+             Op.Output.isReg() &&
+             IndexTRI.findWideReg(Op.Output.Offset, Op.Output.Size) ==
+                 *IndexContainer;
+    });
+  };
   if (!consumeWork(orderedEvidenceLookupWork(Insns.size())))
     return failGraphIncomplete();
   size_t RetainedOpCount = 0;
-  for (auto It = Insns.lower_bound(CurrentFuncEntry);
-       It != Insns.end() && It->first <= Rec.Addr; ++It) {
+  for (auto It = Insns.begin(); It != Insns.end(); ++It) {
     if (!consumeWork(1))
       return failGraphIncomplete();
+    const std::optional<bool> Proposes = proposesMasks(It->first, It->second);
+    if (!Proposes)
+      return failGraphIncomplete();
+    if (!*Proposes)
+      continue;
     if (ReachableInstructions &&
         !consumeWork(orderedEvidenceLookupWork(ReachableInstructions->size())))
       return failGraphIncomplete();
@@ -2957,10 +2991,14 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
     return failGraphIncomplete();
   std::vector<LowOp> Ops;
   Ops.reserve(RetainedOpCount);
-  for (auto It = Insns.lower_bound(CurrentFuncEntry);
-       It != Insns.end() && It->first <= Rec.Addr; ++It) {
+  for (auto It = Insns.begin(); It != Insns.end(); ++It) {
     if (!consumeWork(1))
       return failGraphIncomplete();
+    const std::optional<bool> Proposes = proposesMasks(It->first, It->second);
+    if (!Proposes)
+      return failGraphIncomplete();
+    if (!*Proposes)
+      continue;
     if (ReachableInstructions &&
         !consumeWork(orderedEvidenceLookupWork(ReachableInstructions->size())))
       return failGraphIncomplete();
@@ -2976,7 +3014,8 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
     std::vector<uint32_t> Coordinates;
     bool CompleteDomain = false;
     bool NonContiguous = false;
-    JumpTableValueQuery ConstantProof;
+    // A zero extension's mask is its input width: it has no constant to prove.
+    std::optional<JumpTableValueQuery> ConstantProof;
   };
   std::vector<MaskCandidate> Candidates;
   std::vector<JumpTableValueOccurrence> RelevantMaskRoots;
@@ -3068,6 +3107,47 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
     if (!consumeWork(1))
       return FailIncomplete();
     const LowOp &Op = Ops[I];
+    // A zero extension from a byte bounds its output as `& 0xff` does.  Only
+    // an index that is exactly such an output proves its domain this way;
+    // functions zero-extend byte loads and flags everywhere, so these are no
+    // evidence that some other index depends on a mask.  They are proposed
+    // only when no guard or modulo proof bounds the index: such a domain is
+    // never wider than a byte's, and the proposals cost a proof each.
+    if (isByteZeroExtension(Op)) {
+      if (!ProposeByteZeroExtensions)
+        continue;
+      if (!consumeWork(orderedEvidenceLookupWork(Insns.size())))
+        return FailIncomplete();
+      const auto InsnIt = Insns.find(Op.Addr);
+      if (InsnIt == Insns.end())
+        continue;
+      constexpr uint32_t ByteMask = 0xff;
+      std::vector<uint32_t> Coordinates;
+      if (!consumeWork(ByteMask + 1))
+        return FailIncomplete();
+      for (uint32_t Value = 0; Value <= ByteMask; ++Value) {
+        if (!ensureAppendCapacity(Coordinates) || !consumeWork(1))
+          return FailIncomplete();
+        Coordinates.push_back(Value);
+      }
+      if (!consumeWork(InsnIt->second.Ops.size()))
+        return FailIncomplete();
+      const bool IncompleteProducer =
+          InsnIt->second.IsInstructionGuard ||
+          conditionalMergeOutput(Op, InsnIt->second).has_value();
+      if (!ensureAppendCapacity(Candidates) || !consumeWork(1))
+        return FailIncomplete();
+      Candidates.push_back({{Op.Output, Op.Addr, Op.Seq,
+                             /*DefinedAtPoint=*/true},
+                            Op.Inputs[0],
+                            ByteMask + 1,
+                            ByteMask,
+                            std::move(Coordinates),
+                            !IncompleteProducer,
+                            /*NonContiguous=*/false,
+                            /*ConstantProof=*/std::nullopt});
+      continue;
+    }
     if (Op.Opcode != NdOp::INT_AND || Op.NumInputs < 2 || Op.Output.Size == 0)
       continue;
     if (detail::isConstantOnlyScalarMask(Op))
@@ -3182,18 +3262,25 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
 
   std::vector<JumpTableValueQuery> ConstantQueries;
   // Each retained constant-proof query owns unclassified and scalar forms.
-  if (!consumeWorkProducts({{Candidates.size(), 3}}))
+  if (!consumeWorkProducts({{Candidates.size(), 3}, {Candidates.size(), 1}}))
     return FailIncomplete();
   ConstantQueries.reserve(Candidates.size());
   for (const MaskCandidate &Candidate : Candidates)
-    ConstantQueries.push_back(Candidate.ConstantProof);
-  std::vector<bool> ConstantsMatch;
+    if (Candidate.ConstantProof)
+      ConstantQueries.push_back(*Candidate.ConstantProof);
+  std::vector<bool> ConstantMatches;
   if (!ConstantQueries.empty()) {
     bool ConstantAnalysisComplete = false;
-    ConstantsMatch = matchAtUses(ConstantQueries, &ConstantAnalysisComplete);
-    if (!ConstantAnalysisComplete || ConstantsMatch.size() != Candidates.size())
+    ConstantMatches = matchAtUses(ConstantQueries, &ConstantAnalysisComplete);
+    if (!ConstantAnalysisComplete ||
+        ConstantMatches.size() != ConstantQueries.size())
       return FailIncomplete();
   }
+  std::vector<bool> ConstantsMatch;
+  ConstantsMatch.reserve(Candidates.size());
+  for (size_t I = 0, Next = 0; I < Candidates.size(); ++I)
+    ConstantsMatch.push_back(!Candidates[I].ConstantProof ||
+                             ConstantMatches[Next++]);
 
   // A negative translation after a mask is safe only when every feasible mask
   // coordinate is at least the translation magnitude.  Clang commonly proves
@@ -5550,7 +5637,9 @@ bool CFGBuilder::inferBoundsFromModulo(
        (RequiredProducerBound < limits::kMinJumpTableEntries ||
         RequiredProducerBound > limits::kMaxJumpTableEntries ||
         RequiredProducers->empty() ||
-        RequiredProducers->size() > kMaxRetainedModuloProposalOps ||
+        RequiredProducers->size() >
+            ::neverd::limits::ir::
+                kJumpTableResolverBoundsMaxRetainedModuloProposalOps ||
         (Info.PhysicalCapacity != 0 &&
          RequiredProducerBound > Info.PhysicalCapacity) ||
         std::any_of(RequiredProducers->begin(), RequiredProducers->end(),
@@ -5619,18 +5708,19 @@ bool CFGBuilder::inferBoundsFromModulo(
   // candidate-wide account.  Replaying modulo evidence across candidates or
   // final-root stages therefore cannot refresh four unmetered 4096-unit pools.
   size_t LocalAggregateEvidenceBudget = limits::kMaxJumpTableEvidenceWork;
-  ModuloEvidenceBudget ProposalBudget(kModuloProposalWork,
-                                      &LocalAggregateEvidenceBudget,
-                                      AggregateEvidenceBudget);
-  ModuloEvidenceBudget StructuralBudget(kModuloStructuralRetentionWork,
-                                        &LocalAggregateEvidenceBudget,
-                                        AggregateEvidenceBudget);
-  ModuloEvidenceBudget DirectBudget(kModuloDirectWork,
-                                    &LocalAggregateEvidenceBudget,
-                                    AggregateEvidenceBudget);
-  ModuloEvidenceBudget ReplayBudget(kModuloReplayWork,
-                                    &LocalAggregateEvidenceBudget,
-                                    AggregateEvidenceBudget);
+  ModuloEvidenceBudget ProposalBudget(
+      ::neverd::limits::ir::kJumpTableResolverBoundsModuloProposalWork,
+      &LocalAggregateEvidenceBudget, AggregateEvidenceBudget);
+  ModuloEvidenceBudget StructuralBudget(
+      ::neverd::limits::ir::
+          kJumpTableResolverBoundsModuloStructuralRetentionWork,
+      &LocalAggregateEvidenceBudget, AggregateEvidenceBudget);
+  ModuloEvidenceBudget DirectBudget(
+      ::neverd::limits::ir::kJumpTableResolverBoundsModuloDirectWork,
+      &LocalAggregateEvidenceBudget, AggregateEvidenceBudget);
+  ModuloEvidenceBudget ReplayBudget(
+      ::neverd::limits::ir::kJumpTableResolverBoundsModuloReplayWork,
+      &LocalAggregateEvidenceBudget, AggregateEvidenceBudget);
   bool Succeeded = false;
   bool ExplicitlyIncomplete = false;
   struct ModuloIncompleteOnExit {
@@ -5765,8 +5855,12 @@ bool CFGBuilder::inferBoundsFromModulo(
     }
     const size_t InstructionOps = Instruction.Ops.size();
     if (InstructionOps >
-        kMaxRetainedModuloProposalOps -
-            std::min(Ops.size(), kMaxRetainedModuloProposalOps)) {
+        ::neverd::limits::ir::
+                kJumpTableResolverBoundsMaxRetainedModuloProposalOps -
+            std::min(
+                Ops.size(),
+                ::neverd::limits::ir::
+                    kJumpTableResolverBoundsMaxRetainedModuloProposalOps)) {
       return false;
     }
     // Retain one compact instruction span beside the flattened LowOps.  This

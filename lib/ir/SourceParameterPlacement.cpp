@@ -6,17 +6,15 @@
 
 #include "SourceParameterPlacementDetail.h"
 
+#include "neverd/ir/Limits.h"
+
 #include <algorithm>
 #include <functional>
 
 using namespace neverd;
 using namespace neverd::source_placement;
 
-namespace {
-/// More scalars than any value a convention passes in registers holds: a
-/// value with more is placed by its size alone or not at all.
-constexpr unsigned kMaxScalarLeaves = 64;
-} // namespace
+namespace {} // namespace
 
 bool source_placement::isIntegerScalar(const TypeRef &Type) {
   if (!Type || !Type->Size)
@@ -36,7 +34,8 @@ bool source_placement::isRecord(const TypeRef &Type) {
 std::optional<std::vector<NdScalarLeaf>>
 source_placement::scalarLeaves(const TypeRef &Type) {
   std::vector<NdScalarLeaf> Leaves;
-  unsigned Budget = kMaxScalarLeaves;
+  unsigned Budget =
+      ::neverd::limits::ir::kSourceParameterPlacementMaxScalarLeaves;
   std::function<bool(const TypeRef &, uint64_t)> Add = [&](const TypeRef &Part,
                                                            uint64_t Base) {
     if (!Part || !Budget || Base + Part->Size > UINT16_MAX)
@@ -49,7 +48,8 @@ source_placement::scalarLeaves(const TypeRef &Type) {
     }
     if (Part->Kind == NdTypeKind::Array) {
       if (!Part->ElemType || !Part->ElemType->Size ||
-          Part->ArrayCount > kMaxScalarLeaves)
+          Part->ArrayCount >
+              ::neverd::limits::ir::kSourceParameterPlacementMaxScalarLeaves)
         return false;
       for (uint32_t I = 0; I < Part->ArrayCount; ++I)
         if (!Add(Part->ElemType, Base + uint64_t(I) * Part->ElemType->Size))
@@ -67,7 +67,8 @@ source_placement::scalarLeaves(const TypeRef &Type) {
       return true;
     }
     if (Part->ScalarLeaves.empty() ||
-        Leaves.size() + Part->ScalarLeaves.size() > kMaxScalarLeaves)
+        Leaves.size() + Part->ScalarLeaves.size() >
+            ::neverd::limits::ir::kSourceParameterPlacementMaxScalarLeaves)
       return false;
     for (const NdScalarLeaf &Leaf : Part->ScalarLeaves) {
       if (Leaf.Offset + Leaf.Size > Part->Size)
@@ -115,17 +116,31 @@ SourceParameterPiece source_placement::stackPiece(int64_t EntryOffset,
 
 std::optional<SourceParameterPlacement>
 neverd::placeSourceParameters(Arch A, BinaryFormat F, const TypeRef &ReturnType,
-                              llvm::ArrayRef<TypeRef> ParamTypes) {
+                              llvm::ArrayRef<TypeRef> ParamTypes,
+                              bool Variadic) {
+  if (Variadic && (A != Arch::AArch64 || F != BinaryFormat::COFF))
+    return std::nullopt;
   const TargetRegInfo &TRI = getTargetRegInfo(A);
   switch (A) {
   case Arch::X64:
     return F == BinaryFormat::COFF ? placeWin64(TRI, ReturnType, ParamTypes)
                                    : placeSysV(TRI, F, ReturnType, ParamTypes);
   case Arch::AArch64:
-    return placeAAPCS64(TRI, F, ReturnType, ParamTypes);
+    return placeAAPCS64(TRI, F, ReturnType, ParamTypes, Variadic);
   case Arch::X86:
     return placeI386(TRI, F, ReturnType, ParamTypes);
   default:
     return std::nullopt;
   }
+}
+
+std::optional<SourceParameterPlacement>
+neverd::placeEnteredParameters(Arch A, BinaryFormat F,
+                               const TypeRef &ReturnType,
+                               llvm::ArrayRef<TypeRef> ParamTypes,
+                               llvm::ArrayRef<SourceABIValueLocation> Entries) {
+  if (A != Arch::X86)
+    return std::nullopt;
+  return placeI386Entered(getTargetRegInfo(A), F, ReturnType, ParamTypes,
+                          Entries);
 }

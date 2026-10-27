@@ -18,6 +18,8 @@
 #ifndef NEVERD_SAFETY_SANITIZERPUBLICATIONMETADATA_H
 #define NEVERD_SAFETY_SANITIZERPUBLICATIONMETADATA_H
 
+#include "neverd/safety/Limits.h"
+
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -30,10 +32,6 @@ inline constexpr std::string_view kSanitizerPublicationMetadataAdapter =
     "security-metadata-plan-v1";
 inline constexpr uint32_t kSanitizerPublicationMetadataSchemaVersion = 1;
 
-inline constexpr uint32_t kSanitizerPublicationMetadataMaxRecords = 64;
-inline constexpr uint32_t kSanitizerPublicationMetadataMaxActions = 64;
-inline constexpr uint64_t kSanitizerPublicationMetadataMaxEncodedBytes =
-    uint64_t{1} << 24;
 inline constexpr uint64_t kSanitizerPublicationPOSIXModeEncodedBytes = 4;
 
 enum class PublicationPlatform : uint8_t {

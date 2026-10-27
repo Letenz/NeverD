@@ -15,13 +15,18 @@
 #define NEVERD_IR_HIGH_MEDTOHIGH_H
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
+
 #include <functional>
 #include <map>
+#include <optional>
 #include <set>
 #include <tuple>
 
@@ -74,8 +79,12 @@ void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med = nullptr);
 /// With \p PrintedSize, a temporary read once later in the tail does not
 /// count toward the limit, since it prints inside that read; that is meant
 /// for the jumps left once structuring is done, where each copy removes one.
+/// A label in \p DispatcherEntries starts no tail: the dispatcher enters it
+/// without a jump, so copying its code to every jump would leave the
+/// original unreferenced.
 bool duplicateSmallReturnTails(std::vector<HighStmt> &Body,
-                               bool PrintedSize = false);
+                               bool PrintedSize = false,
+                               const std::set<va_t> &DispatcherEntries = {});
 
 /// Move the jump that ends a `__try` body after the try statement when every
 /// `__except` body ends in a jump or return of its own, so the protected code
@@ -87,8 +96,12 @@ bool hoistTryExitJumps(std::vector<HighStmt> &Body);
 /// fall-through path into `if`/`else`.  Returns true when anything changed.
 /// With \p SpliceRegions, a single-use label may also start a multi-block
 /// region that is entered only from inside itself; that region moves too.
+/// \p DispatcherEntries names the addresses that something other than a jump
+/// in \p Body enters, such as the landing pads the unwinder runs.  Each keeps
+/// its place and its label, as an `__except` handler does.
 bool reduceSingleUseGotos(std::vector<HighStmt> &Body,
-                          bool SpliceRegions = false);
+                          bool SpliceRegions = false,
+                          const std::set<va_t> &DispatcherEntries = {});
 /// Share one body among switch cases that go to the same place, and drop
 /// cases that go where `default` goes.
 bool groupSwitchCases(std::vector<HighStmt> &Body);
@@ -98,8 +111,11 @@ bool groupSwitchCases(std::vector<HighStmt> &Body);
 bool flattenBlocks(std::vector<HighStmt> &Body);
 /// Replace each jump to a label nothing falls into with a copy of its tail
 /// when that tail is a few pure assignments followed by a forward jump or by
-/// the next label. Returns true when a jump was replaced.
-bool duplicateSmallJumpTails(std::vector<HighStmt> &Body);
+/// the next label. Returns true when a jump was replaced.  A label in
+/// \p DispatcherEntries starts no tail, and a jump at one of those addresses
+/// leaves an anchor ahead of its copy.
+bool duplicateSmallJumpTails(std::vector<HighStmt> &Body,
+                             const std::set<va_t> &DispatcherEntries = {});
 /// Remove a goto whose target is exactly the next statement in its list,
 /// when no other statement starts at that address. Returns true when a goto
 /// was removed.
@@ -210,6 +226,12 @@ void chooseIntegerSignedness(HighFunc &Func);
 /// local before it, when evaluating the value earlier cannot fault or have
 /// an effect.  The C writer prints each read of a shared node in full.
 bool nameRepeatedValues(HighFunc &Func);
+/// Marks a System V x86-64 variadic function whose va_start builds a va_list
+/// only to pass it on (HighFunc::VaStart): every access to the va_list, the
+/// register save area and the overflow homes is va_start's own, the va_list's
+/// address reaches nothing but call arguments, and no saved parameter is read
+/// elsewhere.
+void recognizeVaStartForwarder(HighFunc &Func, Arch Architecture);
 /// `if (a) {..} else { ..; jump; X: S.. }` followed by `if (c) goto X;`
 /// becomes `while (c) { S.. }` in place of the test.
 bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);
@@ -245,8 +267,45 @@ void fillUnstructuredGotoSkeleton(HighFunc &Func, const MedFunc &Med);
 /// arguments for finalizeVariadicCallees to count.
 void sizeVariadicOverflowFromStores(std::vector<MedFunc> &Funcs, Arch TheArch);
 
+/// What its name says of a call target outside \p Funcs, or of one named as
+/// a C library routine (markVaListCalls): how many integer parameters it
+/// has, where its declaration fixes them, and which of them takes a va_list,
+/// where it is the va_list form of a variadic routine
+/// (libc::vaListParameter).
+struct NamedCallee {
+  std::optional<unsigned> IntegerParams;
+  std::optional<unsigned> VaList;
+};
+
+/// System V x86-64: in each function whose prologue builds a va_list
+/// (MedFunc::VaListDisplacement), mark each call that passes the list's
+/// address in an integer argument register by whether it passes the va_list
+/// (MedFunc::VaListCalls).  A call that alone takes the address does, unless
+/// its routine's declaration has no va_list there (\p Named).  Where more
+/// calls take it, each parameter taking it must take a va_list: where its
+/// routine's name says so, or, for a function in \p Funcs, where it reads
+/// and writes only within the list and passes it on only to parameters that
+/// take one.
+void markVaListCalls(std::vector<MedFunc> &Funcs, Arch TheArch,
+                     BinaryFormat Format,
+                     llvm::function_ref<NamedCallee(va_t)> Named);
+
+/// A variadic function whose register save area holds the vector argument
+/// registers (System V): a call passes it every argument register, then
+/// OverflowCount stack slots.  Its named parameters take the first
+/// NamedIntegerRegisters integer registers (MedFunc::VaNamedIntegerRegisters),
+/// -1 where its va_start says nothing of them.
+struct VariadicVectorCallee {
+  int OverflowCount = 0;
+  int NamedIntegerRegisters = -1;
+};
+
 class MedToHighConverter {
 public:
+  /// Reject native call contracts that HighC cannot express, before a batch
+  /// worker's best-effort structural recovery can replace a failed body.
+  static void validateCallContracts(const MedFunc &Med);
+
   /// Convert \p Med.  A frame with only Windows SEH scopes is laid out in
   /// reverse postorder; when that leaves a guarded range unstructured, it is
   /// converted again in address order, which is kept only if it leaves fewer
@@ -254,6 +313,13 @@ public:
   HighFunc convert(const MedFunc &Med, Arch TheArch = Arch::Unknown);
 
   void setBinaryImage(const BinaryImage *Img) { Image = Img; }
+  /// The 4-byte i386 values a conversion of \p Med reads as numbers, by
+  /// varKey: the PC an authenticated get-PC sequence leaves, a constant added
+  /// to it, and copies, joins and reloads of its proven spills
+  /// (collectI386PcRootedValues).  The return contract, which settles on
+  /// MedIR, reads the GOT address from the same proof.
+  static std::map<VarKey, uint32_t>
+  i386PcRootedNumbers(const MedFunc &Med, Arch TheArch, const BinaryImage *Img);
 
   /// Reserve workers for semantic rewriting inside this conversion. Keep the
   /// default serial setting when conversions themselves already run in
@@ -281,9 +347,21 @@ public:
       std::function<void(const MedOp &, const HighStmt &)> Observer) {
     StatementObserver = std::move(Observer);
   }
+  /// Forget what the observers recorded for the function being converted.
+  /// With it, convert() lets the observers watch the conversion it most
+  /// likely keeps instead of converting once more only for them.
+  void setObservationReset(std::function<void()> Reset) {
+    ObservationReset = std::move(Reset);
+  }
 
   void setFuncNames(const std::map<va_t, std::string> *Names) {
     FuncNames = Names;
+  }
+  /// The name of the function at every address an export or a symbol of the
+  /// image names, as functionNamesAt() gives it: resolveCalleeNames() reads
+  /// it rather than scanning the image's symbols for its targets.
+  void setImageFunctionNames(const std::map<va_t, std::string> *Names) {
+    ImageFunctionNames = Names;
   }
   /// Resolve call targets once before parallel conversion. Workers read the
   /// resulting snapshot while lowering functions from the same image.
@@ -296,10 +374,18 @@ public:
   /// argument registers too (MedFunc::VariadicFirstVectorRegister), each
   /// with its overflow parameter count: a call passes each of them every
   /// argument register, then that many stack slots.
-  void setVariadicVectorCallees(const std::map<va_t, int> *Entries) {
+  void setVariadicVectorCallees(
+      const std::map<va_t, VariadicVectorCallee> *Entries) {
     VariadicVectorCallees = Entries;
   }
-  void setJumpTables(const std::vector<JumpTable> &JTs) { JumpTables = JTs; }
+  /// The imports, by the stub or slot a call names each by, whose prototype
+  /// a user declaration or header record layout specifies
+  /// (PipelineResult::CallPrototypeArguments): a call to one
+  /// passes what call-ABI recovery gave it, however many arguments a
+  /// platform prototype or the arity tables give a routine of the name.
+  void setPrototypeArgumentCallees(const std::set<va_t> *Callees) {
+    PrototypeArgumentCallees = Callees;
+  }
 
   struct CallIndTarget {
     std::string Name = "indirect";
@@ -358,6 +444,20 @@ private:
   ExprPtr i386GotRelativeAddress(const MedOp &Op, unsigned Displacement);
   VarKeySet I386GotBase;
   VarKeySet I386GotRooted;
+  /// i386 PIC (I386PicAddresses.cpp): the values the CFG proved to be the
+  /// return address a get-PC call pushed, outside unlinked ELF objects, and
+  /// the exact sums of them and constants, such as the GOT address.
+  void collectI386PcRootedValues(const MedFunc &Med);
+  /// The PC-rooted value \p Op computes, or null.
+  ExprPtr i386PcRootedValue(const MedOp &Op) const;
+  /// \p Value, a PC-rooted value of \p Size bytes, as an expression.
+  ExprPtr i386PcRootedConstant(uint32_t Value, uint16_t Size) const;
+  std::unordered_map<VarKey, std::pair<uint32_t, uint16_t>, VarKeyHash>
+      I386PcRootedValues;
+  /// Stores, by address and origin sequence, that only reads of a PC-rooted
+  /// value observe, which read the value above instead: a get-PC call's push,
+  /// which only its pop reads, and a spill only reloads read.
+  std::set<std::pair<va_t, int>> I386PcRootedStores;
   /// Recover a target-width memory address from the wider LowIR VA carrier
   /// only when an explicit zero extension proves that no high bits are lost.
   ExprPtr memoryAddressExpr(const MedVar &V, bool InlineDefinition = true);
@@ -430,8 +530,7 @@ private:
   void lowerStore(HighFunc &Func, const MedOp &CurOp);
   void lowerCall(HighFunc &Func, const MedBlock &CurBlock, const MedOp &CurOp);
   void lowerIntrinsic(HighFunc &Func, const MedBlock &CurBlock,
-                      const MedOp &CurOp, size_t OpIdx,
-                      std::set<size_t> &IntrinsicSkip);
+                      const MedOp &CurOp, size_t OpIdx);
   void lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
                     const MedOp &CurOp);
   void lowerCBranch(HighFunc &Func, const MedOp &CurOp);
@@ -490,9 +589,15 @@ private:
   TypeRef sourceCallResultType(const MedOp &Op) const;
   VarKeyMap<ExprPtr> DefExpr;
   VarKeyMap<TypeRef> SourceRecordValues;
+  VarKeyMap<TypeRef> SourceFloatCallValues;
   std::vector<SourceABIParameter> SourceParameters;
   VarKeySet CallOutputs;
   VarKeySet PhiOutputVars;
+  /// First clobber for each full nonconstant SSA identity. Rebuilt for each
+  /// conversion; its pointers borrow the current immutable MedFunc only.
+  std::map<std::tuple<MedVar::VarKind, int, int>, const MedCallClobber *>
+      CallClobberIndex;
+  const MedCallClobber *findCallClobber(const MedVar &V) const;
   /// Per-function indexes for the Win64 callee-save parameter mapping in
   /// medvarToExpr: register COPYs whose source is an entry parameter (in
   /// block/op order, with that parameter's index), and every (Id, SSAVer)
@@ -511,12 +616,23 @@ private:
   /// Late goto reduction on the finished statement tree (tail duplication,
   /// splices, if/else joins, loop recovery), bounded by statement count.
   void reduceLateGotos(HighFunc &Func);
+  /// The start of each CurMed block that the exception dispatcher enters:
+  /// a landing pad, a handler or a cleanup.  No jump in the body names one.
+  std::set<va_t> dispatcherEntries() const;
+  /// Give each such block whose start address no statement carries an empty
+  /// anchor ahead of its first top-level statement, so its label stays.
+  void anchorDispatcherEntries(HighFunc &Func) const;
   const MedFunc *CurMed = nullptr;
+  std::set<const MedOp *> ReturnProtectionOps;
   /// Entry-relative stack slots CurMed loads anywhere or whose address
   /// escapes; such a slot is a local, not an outgoing argument (cached per
   /// function).
   std::set<int64_t> LoadedEntrySlots;
   const MedFunc *LoadedEntrySlotsFor = nullptr;
+  /// What earlier calls left in CurMed's registers, which no call passes on
+  /// (cached per function).
+  std::optional<ValuesLeftByCalls> LeftByCalls;
+  const MedFunc *LeftByCallsFor = nullptr;
   /// Definition index and complete frame-coordinate proofs for one immutable
   /// conversion. A second conversion of the same MedFunc starts fresh.
   std::shared_ptr<detail::HighEntryStackOffsets> EntryStackOffsets;
@@ -525,16 +641,19 @@ private:
   std::function<void(const MedOp &, const ExprPtr &)> ExpressionObserver;
   std::function<void(const ExprPtr &, const ExprPtr &)> ExpressionCloneObserver;
   std::function<void(const MedOp &, const HighStmt &)> StatementObserver;
+  std::function<void()> ObservationReset;
   Arch TargetArch = Arch::Unknown;
   const std::map<va_t, std::string> *FuncNames = nullptr;
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;
-  const std::map<va_t, int> *VariadicVectorCallees = nullptr;
-  std::vector<JumpTable> JumpTables;
+  const std::map<va_t, std::string> *ImageFunctionNames = nullptr;
+  const std::map<va_t, VariadicVectorCallee> *VariadicVectorCallees = nullptr;
+  const std::set<va_t> *PrototypeArgumentCallees = nullptr;
   int NextHighTempId = 0;
   std::optional<MedVar> SwiftErrorEntryInput;
   int ExprRecurseDepth = 0;
   static constexpr int kMaxExprDepth = limits::kMaxExprDepth;
-  unsigned SemanticThreadLimit = 1;
+  unsigned SemanticThreadLimit =
+      ::neverd::limits::ir::kMedToHighSemanticThreadLimit;
   bool SymbolicSimplification = false;
 };
 

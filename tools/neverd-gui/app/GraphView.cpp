@@ -1,5 +1,6 @@
 #include "GraphView.h"
 
+#include "../Config.h"
 #include "Session.h"
 #include "Theme.h"
 
@@ -14,17 +15,8 @@
 
 namespace neverd::gui {
 namespace {
-constexpr qreal MaxOverviewScale = 0.5;
-constexpr double NodePadding = 6;
 constexpr double TitleRatio = 0.8;
 constexpr double WholeGraphOrigin = -1e6;
-constexpr double WholeGraphExtent = 9e8;
-constexpr qreal MinimumZoom = 0.02;
-constexpr qreal MaximumZoom = 4.0;
-constexpr qreal WheelZoomStep = 1.15;
-constexpr qreal TextPixelThreshold = 5.0;
-constexpr qreal ArrowLength = 9.0;
-constexpr qreal ArrowHalfWidth = 4.5;
 constexpr int PanStep = 40;
 
 QColor edgeColor(const QString &type) {
@@ -59,7 +51,7 @@ GraphView::GraphView(Session &session, QWidget *parent)
     update();
   });
   connect(&session_, &Session::revisionChanged, this, [this] {
-    if (function_)
+    if (function_ && (!session_.queries().localNamesOnly() || waiting_))
       showFunction(*function_, pendingCursor_);
   });
   connect(&session_, &Session::generationChanged, this, [this] {
@@ -88,7 +80,7 @@ GraphView::GraphView(Session &session, QWidget *parent)
 QJsonObject GraphView::metrics() const {
   return {{"char_width", charWidth_},
           {"line_height", lineHeight_},
-          {"padding", NodePadding},
+          {"padding", ::neverd::limits::gui_config::kGraphViewNodePadding},
           {"title_height", std::round(lineHeight_ * TitleRatio)}};
 }
 
@@ -120,15 +112,16 @@ void GraphView::request(int nodeOffset, int edgeOffset, const QString &layout,
                         quint64 serial) {
   if (!function_)
     return;
-  QJsonObject payload{{"address", hexAddress(*function_)},
-                      {"metrics", metrics()},
-                      {"x", WholeGraphOrigin},
-                      {"y", WholeGraphOrigin},
-                      {"width", WholeGraphExtent},
-                      {"height", WholeGraphExtent},
-                      {"scale", 1},
-                      {"node_offset", nodeOffset},
-                      {"edge_offset", edgeOffset}};
+  QJsonObject payload{
+      {"address", hexAddress(*function_)},
+      {"metrics", metrics()},
+      {"x", WholeGraphOrigin},
+      {"y", WholeGraphOrigin},
+      {"width", ::neverd::limits::gui_config::kGraphViewWholeGraphExtent},
+      {"height", ::neverd::limits::gui_config::kGraphViewWholeGraphExtent},
+      {"scale", 1},
+      {"node_offset", nodeOffset},
+      {"edge_offset", edgeOffset}};
   if (!layout.isEmpty())
     payload["layout_revision"] = layout;
   auto &queries = session_.analysisQueries(payload, this);
@@ -218,8 +211,11 @@ void GraphView::accept(const QJsonObject &payload, quint64 serial) {
     if (edge.points.size() < 2)
       continue;
     QPolygonF polygon(edge.points);
-    edge.box = polygon.boundingRect().adjusted(-ArrowLength, -ArrowLength,
-                                               ArrowLength, ArrowLength);
+    edge.box = polygon.boundingRect().adjusted(
+        -::neverd::limits::gui_config::kGraphViewArrowLength,
+        -::neverd::limits::gui_config::kGraphViewArrowLength,
+        ::neverd::limits::gui_config::kGraphViewArrowLength,
+        ::neverd::limits::gui_config::kGraphViewArrowLength);
     edges_.append(std::move(edge));
   }
   if (!viewport.value("complete").toBool(true)) {
@@ -341,7 +337,8 @@ void GraphView::centerOn(QPointF scene) {
 }
 
 void GraphView::setZoom(qreal scale, std::optional<QPointF> anchor) {
-  scale = std::clamp(scale, MinimumZoom, MaximumZoom);
+  scale = std::clamp(scale, ::neverd::limits::gui_config::kGraphViewMinimumZoom,
+                     ::neverd::limits::gui_config::kGraphViewMaximumZoom);
   const QPointF fixed =
       anchor ? *anchor : QPointF(width() / 2.0, height() / 2.0);
   const QPointF scene = toScene(fixed);
@@ -356,7 +353,8 @@ void GraphView::zoomToFit() {
     return;
   const qreal fit =
       std::min(width() / bounds_.width(), height() / bounds_.height());
-  scale_ = std::clamp(fit * 0.95, MinimumZoom, 1.0);
+  scale_ = std::clamp(fit * 0.95,
+                      ::neverd::limits::gui_config::kGraphViewMinimumZoom, 1.0);
   centerOn(bounds_.center());
 }
 
@@ -364,7 +362,8 @@ void GraphView::ensureCursorVisible() {
   if (cursorNode_ < 0 || cursorNode_ >= nodes_.size())
     return;
   const auto &node = nodes_[cursorNode_];
-  const qreal rowTop = node.box.top() + NodePadding +
+  const qreal rowTop = node.box.top() +
+                       ::neverd::limits::gui_config::kGraphViewNodePadding +
                        std::round(lineHeight_ * TitleRatio) +
                        std::max(0, cursorRow_) * lineHeight_;
   const QRectF row(node.box.left(), rowTop, node.box.width(), lineHeight_);
@@ -400,8 +399,9 @@ std::pair<int, int> GraphView::hit(QPointF widget) const {
     const auto &node = nodes_[n];
     if (!node.box.contains(scene))
       continue;
-    const qreal top =
-        node.box.top() + NodePadding + std::round(lineHeight_ * TitleRatio);
+    const qreal top = node.box.top() +
+                      ::neverd::limits::gui_config::kGraphViewNodePadding +
+                      std::round(lineHeight_ * TitleRatio);
     if (scene.y() < top)
       return {n, -1};
     const int row = int((scene.y() - top) / lineHeight_);
@@ -416,7 +416,9 @@ int GraphView::columnAt(const Row &row, const Node &node, QPointF scene) const {
       [](int role) { return Theme::instance().listingRole(role); });
   if (!layout.lineCount())
     return 0;
-  return layout.lineAt(0).xToCursor(scene.x() - node.box.left() - NodePadding);
+  return layout.lineAt(0).xToCursor(
+      scene.x() - node.box.left() -
+      ::neverd::limits::gui_config::kGraphViewNodePadding);
 }
 
 void GraphView::resizeEvent(QResizeEvent *event) {
@@ -438,22 +440,26 @@ void GraphView::paintNode(QPainter &painter, int index, bool text) const {
                            : theme.color(ColorRole::GraphNodeTitle));
   if (!text) {
     // Low zoom: a bar per row stands in for its text.
-    const qreal top = box.top() + NodePadding + title;
+    const qreal top =
+        box.top() + ::neverd::limits::gui_config::kGraphViewNodePadding + title;
     QColor bar = theme.color(ColorRole::ListingPlain);
     bar.setAlphaF(0.35);
     for (int r = 0; r < node.rows.size(); ++r) {
-      const qreal width =
-          std::min(box.width() - 2 * NodePadding,
-                   node.rows[r].styled.text.trimmed().size() * charWidth_);
-      painter.fillRect(QRectF(box.left() + NodePadding,
-                              top + r * lineHeight_ + lineHeight_ * 0.25, width,
-                              lineHeight_ * 0.5),
-                       bar);
+      const qreal width = std::min(
+          box.width() - 2 * ::neverd::limits::gui_config::kGraphViewNodePadding,
+          node.rows[r].styled.text.trimmed().size() * charWidth_);
+      painter.fillRect(
+          QRectF(box.left() +
+                     ::neverd::limits::gui_config::kGraphViewNodePadding,
+                 top + r * lineHeight_ + lineHeight_ * 0.25, width,
+                 lineHeight_ * 0.5),
+          bar);
     }
   } else {
     const QFont font = Theme::instance().codeFont();
     const auto colorOf = [&theme](int role) { return theme.listingRole(role); };
-    const qreal top = box.top() + NodePadding + title;
+    const qreal top =
+        box.top() + ::neverd::limits::gui_config::kGraphViewNodePadding + title;
     for (int r = 0; r < node.rows.size(); ++r) {
       const auto &row = node.rows[r];
       const qreal y = top + r * lineHeight_;
@@ -462,7 +468,8 @@ void GraphView::paintNode(QPainter &painter, int index, bool text) const {
             QRectF(box.left() + 1, y, box.width() - 2, lineHeight_),
             theme.color(ColorRole::ListingCurrentLine));
       auto &layout = row.styled.layout(font, styleStamp_, colorOf);
-      const qreal x = box.left() + NodePadding;
+      const qreal x =
+          box.left() + ::neverd::limits::gui_config::kGraphViewNodePadding;
       if (!highlight_.isEmpty() && layout.lineCount()) {
         const QTextLine line = layout.lineAt(0);
         for (const int at : tokenOccurrences(row.styled.text, highlight_)) {
@@ -490,6 +497,26 @@ void GraphView::drawWaiting(QPainter &painter, const QRect &area) const {
   painter.setPen(Theme::instance().chrome(QStringLiteral("PlaceholderText")));
   painter.drawText(area, Qt::AlignCenter, tr("Laying out graph…"));
   painter.restore();
+}
+
+QRect GraphView::cursorViewportRect() const {
+  if (cursorNode_ < 0 || cursorNode_ >= nodes_.size())
+    return {};
+  const auto &node = nodes_[cursorNode_];
+  if (cursorRow_ < 0 || cursorRow_ >= node.rows.size())
+    return {};
+  auto &theme = Theme::instance();
+  auto &layout = node.rows[cursorRow_].styled.layout(
+      theme.codeFont(), styleStamp_,
+      [&theme](int role) { return theme.listingRole(role); });
+  const qreal x =
+      node.box.left() + ::neverd::limits::gui_config::kGraphViewNodePadding +
+      (layout.lineCount() ? layout.lineAt(0).cursorToX(cursorColumn_) : 0);
+  const qreal y =
+      node.box.top() + ::neverd::limits::gui_config::kGraphViewNodePadding +
+      std::round(lineHeight_ * TitleRatio) + cursorRow_ * lineHeight_;
+  return QRect(toWidget(QPointF(x, y)).toPoint(),
+               QSize(1, qRound(lineHeight_ * scale_)));
 }
 
 void GraphView::paintEvent(QPaintEvent *) {
@@ -525,8 +552,10 @@ void GraphView::paintEvent(QPaintEvent *) {
       return;
     direction /= length;
     const QPointF normal(-direction.y(), direction.x());
-    const qreal arrow = ArrowLength / std::max<qreal>(scale_, 0.5);
-    const qreal half = ArrowHalfWidth / std::max<qreal>(scale_, 0.5);
+    const qreal arrow = ::neverd::limits::gui_config::kGraphViewArrowLength /
+                        std::max<qreal>(scale_, 0.5);
+    const qreal half = ::neverd::limits::gui_config::kGraphViewArrowHalfWidth /
+                       std::max<qreal>(scale_, 0.5);
     const QPointF head[] = {tip, tip - direction * arrow + normal * half,
                             tip - direction * arrow - normal * half};
     painter.setPen(Qt::NoPen);
@@ -539,7 +568,8 @@ void GraphView::paintEvent(QPaintEvent *) {
   for (const auto &edge : edges_)
     if (edge.from == cursorNode_ || edge.to == cursorNode_)
       drawEdge(edge, true);
-  const bool text = scale_ * lineHeight_ >= TextPixelThreshold;
+  const bool text = scale_ * lineHeight_ >=
+                    ::neverd::limits::gui_config::kGraphViewTextPixelThreshold;
   for (int i = 0; i < nodes_.size(); ++i)
     if (nodes_[i].box.adjusted(-4, -4, 4, 4).intersects(view))
       paintNode(painter, i, text);
@@ -552,9 +582,11 @@ void GraphView::paintEvent(QPaintEvent *) {
           theme.codeFont(), styleStamp_,
           [&theme](int role) { return theme.listingRole(role); });
       if (layout.lineCount()) {
-        const qreal x = node.box.left() + NodePadding +
+        const qreal x = node.box.left() +
+                        ::neverd::limits::gui_config::kGraphViewNodePadding +
                         layout.lineAt(0).cursorToX(cursorColumn_);
-        const qreal y = node.box.top() + NodePadding +
+        const qreal y = node.box.top() +
+                        ::neverd::limits::gui_config::kGraphViewNodePadding +
                         std::round(lineHeight_ * TitleRatio) +
                         cursorRow_ * lineHeight_;
         const QPointF a = toWidget(QPointF(x, y));
@@ -569,7 +601,9 @@ void GraphView::paintEvent(QPaintEvent *) {
 void GraphView::wheelEvent(QWheelEvent *event) {
   const QPoint angle = event->angleDelta();
   if (event->modifiers() & Qt::ControlModifier) {
-    const qreal factor = std::pow(WheelZoomStep, angle.y() / 120.0);
+    const qreal factor =
+        std::pow(::neverd::limits::gui_config::kGraphViewWheelZoomStep,
+                 angle.y() / 120.0);
     setZoom(scale_ * factor, event->position());
     return;
   }
@@ -680,10 +714,10 @@ void GraphView::keyPressEvent(QKeyEvent *event) {
     return;
   case Qt::Key_Plus:
   case Qt::Key_Equal:
-    setZoom(scale_ * WheelZoomStep);
+    setZoom(scale_ * ::neverd::limits::gui_config::kGraphViewWheelZoomStep);
     return;
   case Qt::Key_Minus:
-    setZoom(scale_ / WheelZoomStep);
+    setZoom(scale_ / ::neverd::limits::gui_config::kGraphViewWheelZoomStep);
     return;
   case Qt::Key_Home:
     for (int i = 0; i < nodes_.size(); ++i)
@@ -726,9 +760,9 @@ QTransform GraphOverview::transform() const {
     return result;
   const QRectF bounds = graph_->sceneBounds();
   // An overview never magnifies: a small graph stays a miniature.
-  const qreal scale =
-      std::min({(width() - 8) / bounds.width(),
-                (height() - 8) / bounds.height(), MaxOverviewScale});
+  const qreal scale = std::min(
+      {(width() - 8) / bounds.width(), (height() - 8) / bounds.height(),
+       ::neverd::limits::gui_config::kGraphViewMaxOverviewScale});
   const qreal x = (width() - bounds.width() * scale) / 2;
   const qreal y = (height() - bounds.height() * scale) / 2;
   result.translate(x, y);

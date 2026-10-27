@@ -1,8 +1,28 @@
 **Langues**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](../ja/testing.md) | [한국어](../ko/testing.md) | [Français](testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` vérifie les arguments de pile entiers, flottants et mixtes des Mach-O x64/ARM64 dans le pipeline source. `IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` conserve le stockage initial pour les lectures mémoire, appels, adresses de pile échappées et intrinsèques opaques ou mémoire. Les chemins de valeurs utilisent les paramètres déclarés sans inventer des écritures dans le SP physique et conservent les effets d’état flottant des registres. La matrice mobile macOS compile et exécute indépendamment le Swift reconstruit ; une émission réussie ne prouve pas son exécution.
+
+`NeverDLLVMCValueTests` compile et exécute un appel variadique converti avec une fonction Windows x64 ABI séparée, à O0/O2 et avec les deux réglages de conservation des types. Le lecteur va_arg vérifie la valeur sur x64 natif ; les autres architectures ignorent explicitement cette exécution.
+
 [← Index de la documentation](README.md)
 
 # Tester NeverD
+
+## Récupération des valeurs de pile à l’entrée
+
+`NeverDSourceEntryBindingTests` compile et exécute la matrice x64/ARM64, PE/ELF, HighC/LLVMC : modules complets, appelants sélectionnés, transport explicite des bits flottants, réutilisation et remise à zéro du cache. Les contrôles négatifs refusent les écritures partielles, paramètres non alignés, adresses de cadre échappées et entrées indéfinies. Des définitions indépendantes des appelés vérifient les déclarations fixes. Ces exécutions sur l’hôte ne qualifient pas les pilotes Windows ARM64 natifs. La matrice couvre les cadres RBP et x29/x30 équilibrés. Elle refuse les sauvegardes écrasées, RBP modifié malgré SP restauré et l’adresse de retour utilisée comme paramètre, et distingue les registres préservés d’ELF et de Windows.
+
+La nouvelle matrice exécute les lectures signées et non signées de 1/2/4 octets par les deux voies C à O0/O2 avec UBSan, pour la sortie complète ou le seul appelant. Les appelants écrivent uniquement les octets lus ; les lectures dépassant la largeur déclarée sont refusées.
+
+La matrice de largeurs mixtes exécute les lectures de préfixe et de case complète à O0/O2 avec UBSan. Les contrôles du cadre natif couvrent les deux ordres et refusent les seules lectures étroites ou une lecture complète appartenant à une autre case.
+
+Les appels par registre connus sont exécutés dans les deux sorties C pour x64/ARM64 PE/ELF, en module complet et avec appelant seul. Le LowIR original reste indirect. Les contrôles refusent les écritures partielles périmées, effets opaques, temporaires réutilisés, cellules mémoire et budgets épuisés.
+
+`PEFunctionAddresses.*` vérifie les feuilles PE x64 sans cadre, la propriété et les limites des instructions, les préfixes et opérandes étroits refusés, les sorties, l’annulation et la parité avec 1/2/4/16 workers. Les tests de signatures couvrent les 16 conditions rel32 dans les deux sens, les entrées explicites et les contraintes de relocation source. Les tests Python préservent les alternatives et les sites conjointement nécessaires, vérifient chaque contre-exemple brut et évitent les doublons.
+
+`DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
+
+`DriverMSRExecution.*` et `DriverMSRDeclaration.*` vérifient les valeurs MSR explicites, leur séparation complète, l’état préservé, les lectures répétées, les limites exactes, les entrées absentes/invalides et l’absence de droits mémoire sur les backends disponibles. `KernelMSRRead.*` conserve les dépendances inutilisées. Exécuter les suites pilote natif, émulation du pilote et instantané noyau ; WHP/HVF indisponibles sont ignorés, sans qualification native.
 
 Les tests de NeverD répondent à trois questions distinctes : la représentation
 a-t-elle la forme attendue, un parcours complet fonctionne-t-il avec une
@@ -11,6 +31,22 @@ plus petite suite qui répond à la question du changement, puis exécutez
 l’agrégat plus large avant une pull request à haut risque.
 
 `PipelineOutcome.ResolvedCalls*` vérifie les groupes de registres, l’identité call/invoke, le regroupement et la division des octets de pile, les valeurs étroites dans leurs propres emplacements, ainsi que le refus d’octets manquants. `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` vérifie les décalages enregistrés. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` couvre x64, ARM32 et AArch64 en ELF, PE et Mach-O. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` couvre ces trois formats et rejette les longueurs écrasées, les plages modifiables ou débordantes, les fonctions locales homonymes, les mauvais registres source, les entrées alternatives et les images relogeables. Les tests différentiels C compilent la référence séparément à O0 et le C généré à O2, afin qu’une erreur d’optimisation d’une récurrence sur l’hôte ne corrompe pas l’oracle. Le test FMA AArch64 ne demande `-mfma` que sur les hôtes x86.
+
+## Tests de récupération de GS legacy
+
+`NeverDX86LegacyGSRecoveryTests` vérifie les postconditions universelles d’échange/double échange, les adresses segmentées complètes, les alias, la conservation de FS/mémoire/drapeaux, la coexistence avec MXCSR, les états et temporaires malformés, le refus atomique, les effets conservés et les budgets. `PEFixedImageTest.RawLegacyGS*` vérifie l’admission native et les attestations. Les tests d’état machine et de raffinement natif/LLVM refusent les contrats source non pris en charge, même inutilisés. `LegacyGSExecutionPolicy.RemainsUnmodeled` maintient le refus concret. Ces tests symboliques et de politique ne constituent pas une exécution native privilégiée.
+
+## Tests de récupération MXCSR
+
+`InterpreterSpecialization.MXCSR*` couvre l’état initial arbitraire, les valeurs mémoire exactes, les bits réservés, DAZ, les alias, les formes invalides, la projection et les limites de budget. `PEFixedImageTest.RawMXCSR*` vérifie les octets legacy/VEX et les attestations liées au masque. Les tests d’état machine et de raffinement natif/LLVM refusent toute extension implicite des interfaces, même pour une capacité inutilisée.
+
+## Tests de restauration des écritures segmentées
+
+`InterpreterSpecialization.SegmentedWrite*` vérifie les résultats mémoire octet par octet indépendants, toutes les largeurs scalaires, le rebouclage des adresses, les alias de pile, les origines de pointeurs écrasées, l’invalidation entre nœuds et les budgets exacts ou insuffisants. `SegmentedWritesAndReadsShareLinearMemory` couvre les bases identiques ou distinctes. `PEFixedImageTest.RawSegmented*` vérifie les octets natifs, le refus des alias de retour et les justificatifs modifiés. Les valeurs de compatibilité existantes restent stables. Construire les tests de spécialisation, d’image PE fixe, d’état machine et de raffinement natif/LLVM ; les refus couvrent aussi une capacité d’écriture inutilisée.
+
+## Graines concrètes de mémoire initiale
+
+Exécuter `NeverDSymbolicTests`, `NeverDConcolicTests` et `NeverDConcolicIntegrationTests`. `LowIRConcolicMemory.*` et les tests symboliques couvrent les deux ordres d’octets, alias d’écriture, banques séparées, plages absentes/invalides, réinitialisation et graines tardives, budgets limites, époques, largeurs du modèle, rejeu et déduplication. La matrice native des formats et architectures est conservée.
 
 ## Configurer une compilation de test
 
@@ -1261,6 +1297,10 @@ Les tests à deux valeurs couvrent aussi les masques de conjonctions imbriquées
 
 `SymExpr.*` vérifie les tranches constantes au-dessus du bit inférieur avec tous les masques et entrées sur quatre bits, des valeurs larges, des structures imbriquées, la recomposition de bits connus et inconnus et des contre-exemples de retenue. Les régressions de budget placent un nœud large à la limite de récursion et refusent la copie de constantes trop grandes. Les tranches inconnues doivent rester symboliques sans agrandir le DAG. `SymState.*` distingue aussi les constantes scalaires déduites des constantes littérales des régions, dans les deux ordres des octets, sans agrandir le DAG ni modifier les mots stockés.
 
+`SymMBAWitness.*` vérifie les produits de degré 96/128 à entrées complémentées sans changer le budget, énumère les entrées de retenue sur les six bits faibles et couvre les mots jusqu’à 257 bits, les variations de parité et les refus de budget. Un témoin concret non nul arrête seulement une recherche de zéro inutile ; il n’autorise aucune réécriture. `--family complemented-carry-product --count 108` génère 432 cas de degré 48–256 avec entrées complémentées, facteurs inversés et variantes de parité. Conserver tous les corpus antérieurs comme contrôles de performance et de coût. Les tests de source CLI et GUI worker exécutent les deux fixtures de degré 96 par les six chemins à O0/O2.
+
+`SymMBAResiduePowers.*` vérifie les périodes des puissances modulaires, les entrées paires, les petits exposants, la parité indépendante du multiplicateur et les budgets exacts ou insuffisants d’une unité. Il compare des produits sur des mots complets jusqu’à 257 bits et utilise des preuves indépendantes du solveur aux largeurs natives. `--family residue-power --count 81` ajoute 324 cas de degré 16–512, avec des voisins immédiats des périodes et la perturbation d’un seul facteur. Les refus liés aux limites restent dans les résultats. La CLI et le worker réel exécutent des groupes de degré 16/64 avec un multiplicateur indépendant par les six chemins de code source en O0/O2.
+
 `SymReadability.*` couvre l’écriture des soustractions et compléments, le coût des opérateurs associatifs, les littéraux sur un bit ou larges, la saturation des arbres partagés, la sélection bornée des candidats et l’équivalence exhaustive sur trois bits sans échantillonnage. `SymMBASample.*` compare les vérifications étroites et à précision arbitraire à l’évaluateur AP, pour tous les opérateurs, les affectations déterministes et les entrées larges inutilisées. Pour comparer des versions du score, recomptez les deux sorties avec la même mesure ; les compteurs de taille de l’API SDK sont seulement diagnostiques.
 
 ## Matrice de tests ARM32 et propagation de pile
@@ -1387,9 +1427,11 @@ La validation KVM exige l’annulation d’un véritable vCPU sans sortie sponta
 
 `windows-alignment-oracle.yml` utilise `check_windows_alignment.py` et `WindowsAlignmentCases.def` pour recueillir 72 observations originales d’exceptions Windows x64 : neuf formes SSE alignées, chacune dans sept cas d’adresse/droits non alignés et un cas témoin aligné sur une page inaccessible. Les codes, paramètres, PC fautifs, contextes sauvegardés, sorties brutes et empreintes des sources/binaires sont conservés ; les entrées et la RAM doivent rester inchangées. Ces observations établissent uniquement le comportement du système ; elles ne valident pas l’exécution KVM/WHP et n’ajoutent pas de prise en charge SEH.
 
-Avec `native_cpu_only=true`, `native_driver_tests=true` active `NeverDNativeDriverTests` sans Unicorn. Avant la configuration, `build_wdk_driver_fixtures.py` vérifie le SHA-256 intégral des paquets Microsoft officiels WDK/SDK 10.0.26100.6584 et reconstruit 48 images de pilotes normales/CFG/DBG depuis les sources originales. `WDKDriverFixtures.def` déclare les paquets, les arguments de compilation et d’édition de liens et les associations des fixtures. Les fichiers Microsoft non modifiés et leurs licences restent dans les répertoires locaux de compilation/cache ; la CI ne publie que les métadonnées et journaux de compilation. Le manifeste conserve versions des outils, commandes, empreintes des sources/en-têtes et empreintes des images produites.
+Avec `native_cpu_only=true`, `native_driver_tests=true` active `NeverDNativeDriverTests` sans Unicorn. Avant la configuration, `build_wdk_driver_fixtures.py` vérifie le SHA-256 intégral des paquets Microsoft officiels WDK/SDK 10.0.26100.6584 et reconstruit 68 images de pilotes normales/CFG/DBG depuis les sources originales. `WDKDriverFixtures.def` déclare les paquets, les arguments de compilation et d’édition de liens et les associations des fixtures. Les fichiers Microsoft non modifiés et leurs licences restent dans les répertoires locaux de compilation/cache ; la CI ne publie que les métadonnées et journaux de compilation. Le manifeste conserve versions des outils, commandes, empreintes des sources/en-têtes et empreintes des images produites.
 
-`NativeDriverTests.def` exige 230 résultats WHP pour les 115 charges de `DriverBuiltinImages.def` et `DriverBackendParityCases.def` : 27 images intégrées, 48 images WDK et 40 scénarios de requêtes, aux adresses initiales et relocalisées. L’inventaire obligatoire complet est `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 28 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks = 5615`. Les 30 contrôles d’ensembles d’attente comprennent seize cas de modèle portables et quatorze cas de pilotes natifs originaux. `run_native_cpu_ci.py --with-drivers` conserve les identités exactes et preuves JUnit avec Unicorn désactivé. Tout fixture requis absent ou ignoré fait échouer cette validation facultative ; les builds ordinaires gardent les fixtures externes facultatifs. Les images fixes conservent leur rejet de relocalisation attendu. L’exécution native de guests ARM64 reste non vérifiée.
+`NativeDriverTests.def` exige 270 résultats WHP pour les 135 charges de `DriverBuiltinImages.def` et `DriverBackendParityCases.def` : 27 images intégrées, 68 images WDK et 40 scénarios de requêtes, aux adresses initiales et relocalisées. L’inventaire obligatoire complet est `5085 CPU + 270 WHP + 32 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 126 driver environment checks + 116 driver API checks = 5802`. Les 30 contrôles d’ensembles d’attente comprennent seize cas de modèle portables et quatorze cas de pilotes natifs originaux. `run_native_cpu_ci.py --with-drivers` conserve les identités exactes et preuves JUnit avec Unicorn désactivé. Tout fixture requis absent ou ignoré fait échouer cette validation facultative ; les builds ordinaires gardent les fixtures externes facultatifs. Les images fixes conservent leur rejet de relocalisation attendu. L’exécution native de guests ARM64 reste non vérifiée.
+
+L’inventaire WDK compile aussi `driver_device_queries.c`, `driver_file_objects.c` et `driver_file_handles.c` en versions normale et CFG. `DriverDeviceQueryTests.cpp` et `DriverFileObjectTests.cpp` réutilisent les assertions des appelants portables pour les références retenues, CREATE en échec, identité du processus, dernier handle CLEANUP et CLOSE différé, sur les deux contrats, bases et ordonnancements. Les trois familles sont obligatoires en natif ; l’inventaire découvre indépendamment les sources `NEVERD_WDK_FIXTURE` pour détecter une compilation WDK omise.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injecte expiration, arrêt et combinaison des deux avant deux instructions initiales distinctes. Le test vérifie la phase exacte, la durée de vie du message possédé, le type et les causes de l’erreur, une échéance inchangée et la libération de la mémoire. Les vrais échecs de transport et les divergences d’état restent distincts. Le budget de validation initiale x64 native est `5 s` ; les échéances invitées et marges de pas unique restent inchangées.
 
@@ -1829,6 +1871,10 @@ Les régressions de surveillance des écritures vérifient leur visibilité avan
 
 `SafeSEHReference.*` vérifie l’appartenance à une table SafeSEH immuable, les stockages malformés ou ambigus, les relocalisations, les autres architectures/formats et l’ordre des déclarations entre fragments. `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` utilise `NEVERD_NONLOCAL_FINALLY_INPUTS` pour vérifier 32 combinaisons LLVM des fixtures MSVC natives x86/x64, O0/O2 et GS, avec ou sans optimisation source. LLVM et les signatures des appels résolus sont vérifiés ; la reconstruction native x86 non prise en charge doit toujours être refusée. Le job Windows EH dédié télécharge l’artefact natif et exécute cette matrice ; sans répertoire d’entrée, le test est explicitement ignoré.
 
+`RegistrationPrologueSaves.*` et `PipelineOptNone.*` vérifient la mémoire source, les arguments et sélecteurs protégés, ainsi que l’optimisation du code ordinaire. La matrice MSVC valide l’export x86 `/Od` (`/GS-`, `/GS`) `nonlocal_finally_return` avec contrôle COFF indépendant. `check_windows_finally_rewrite.py` compare les IR brut et optimisé dans les deux modes de patch à deux bases imposées : 24 exécutions, 1536 appels, gardes de pile et de chaîne, et témoin négatif. L’adaptation EXE vers DLL ne change que les en-têtes, exige l’absence de TLS et conserve le code ; un observateur SEH extérieur fournit la recherche d’exception. Les autres formes MSVC restent des tests d’analyse et de refus.
+
+`RegistrationEH4Wrapper.*` couvre les deux bases, les données mutables ou immuables, les branches MXCSR, les définitions sur chaque chemin, l’isolation du cadre, les chevauchements et les relocations PE exactes. Chaque profil MSVC possède un témoin négatif indépendant.
+
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` vérifie les appels de déroulement local depuis un gestionnaire SEH Windows x64 certifié et les entrées ordinaires/exceptionnelles partagées. Les contre-exemples couvrent allocation incohérente, SP instable ou partiel, racines indépendantes, entrée incomplète, arcs exceptionnels absents ou falsifiés, budget épuisé, mémoire de pile inconnue, relocalisations externes et runtime non fiable. La preuve LowIR et le certificat du module alimentent la vérification SSA ; les tests de continuation retournée gardent leurs règles d’entrée distinctes.
 
 `OrdinaryInternalReturnsRetainTheParentsReturnPC` et `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` vérifient la corruption du PC du parent et les écritures locales disjointes sur PE, ELF et Mach-O x64, ainsi que ELF i386. Préserver seulement le PC de l’appelé ne suffit pas à autoriser un appel ordinaire.
@@ -1857,11 +1903,28 @@ Le refus contrôlé des doubles décalages indique le compteur masqué et la lar
 
 ## Correctifs de source et objets natifs
 
-[source-patching.md](source-patching.md): `CPU` — source / IR / object, 154 checks.
+L'inventaire actuel `unittests/Inputs/source-patch-expansion.json` contient 283 cas CPU, 14 de disposition, 16 de rappels, 265 de contrats d'exceptions et la liste C API exacte de l'hôte. `scripts/qualify_source_patch_expansion.py` exige cet inventaire complet, sans échec ni saut, sur un commit source exact et propre. `scripts/check_source_patch_expansion_runtime.py` exécute séparément rappels, dépendances et combinaisons IR/objet via le chargeur natif : 84 observations fonctionnelles, 84 d'exceptions et deux contrôles de bibliothèque/symbole absent par hôte. Il vérifie de vraies bibliothèques anciennes/nouvelles, les arguments flottants/sur pile, les appels répétés à l'original, le nettoyage unique, les métadonnées du chargeur et les empreintes de publication. CPU, compatibilité et processus OS natifs restent des preuves distinctes.
+
+Les six jobs natifs OS/ISA sélectionnés ont réussi sans échec ni saut : 3669 exécutions GoogleTest, 1008 observations de processus natifs (504 fonctionnelles et 504 d’exceptions C++), 12 refus réels du chargeur, 96 images et 84 reçus de publication.
+
+| Hôte | Source | Harness | Job CI | Tests | Observations / refus |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+Ces artefacts qualifient exactement les commits source et harness ci-dessous. Les commits ultérieurs d’intégration dev et de documentation ont leurs propres contrôles locaux et documentaires. Les anciens échecs ou annulations restent des échecs. Les 216 observations supplémentaires historiques, PE ARM32 et les résultats CPU/compatibilité Apple 32 bits anciens ne prouvent aucune nouvelle couverture matérielle native ou d’exceptions C++.
+
+La qualification Windows ARM64 utilise une DLL C Unicorn ARM64 native, réellement construite à partir du sous-module fixé avec LLVM-MinGW vérifié, une bibliothèque d'import MSVC et une cible CMake explicitement substituée. La copie de compilation isolée authentifie trois corrections d'hôte : paire de sauts sans SEH, callback ARM64 de validation des pages avec synchronisation du cache d'instructions et masques immédiats 64 bits pour Windows LLP64. Les sources et la révision du sous-module restent inchangées. Cela qualifie l'hôte de la matrice CPU, sans établir la prise en charge du JIT MSVC ARM64 par défaut. Les cinq contrôles de reprise de l'hôte restent distincts des preuves des processus patchés natifs et des exceptions C++.
+
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 283 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
 
-`sourcePatchTargetTriple` choisit le mode ARM, l’ABI flottante ELF et le sous-type CPU Mach-O à partir de l’image. `COFFPatchObject` et `MachOPatchObject` authentifient les symboles, définitions auxiliaires／de section et enregistrements natifs sans inventer d’ID MC. Les installateurs de format enregistrent les tables réelles. Les 154 tests CPU exigent source／IR／objets, quatre architectures, trois formats, état, arguments flottants／de pile et deux rebasages non nuls. Les conteneurs Mach-O 32 bits anciens gardent du vrai code compilateur ; ils ne certifient pas un OS.
+`sourcePatchTargetTriple` choisit le mode ARM, l’ABI flottante ELF et le sous-type CPU Mach-O à partir de l’image. `COFFPatchObject` et `MachOPatchObject` authentifient les symboles, définitions auxiliaires／de section et enregistrements natifs sans inventer d’ID MC. Les installateurs de format enregistrent les tables réelles. Les 283 tests CPU exigent source／IR／objets, quatre architectures, trois formats, état, arguments flottants／de pile et deux rebasages non nuls. Les conteneurs Mach-O 32 bits anciens gardent du vrai code compilateur ; ils ne certifient pas un OS.
 
 [Correctifs de source et objets natifs](source-patching.md)
 
@@ -1909,6 +1972,16 @@ Les 204 observations de l’ancien profil de traduction sont historiques et ne p
 
 `FrameOffsets.*Normalization*` couvre identités exactes, entrées supplémentaires, identité de racine, prédicats infaisables sans témoin mis en cache, comportement par défaut, coûts de structure et de mesure et refus après dépassement des nœuds. `FrameNormalizationPreservesStoresAndNativeReturns` et `RawCodeFrameNormalization*` vérifient les effets mémoire originaux et retours physiques avec des oracles d’octets indépendants, les deux ordres d’octets applicables, budgets exacts ou insuffisants et reçus modifiés. `FrameNormalizationStrategyBindsIndependentProof` vérifie les deux identités de preuve binaire.
 
+`NormalizationRetryReusesOriginalTranslatedQuery` · `IncompleteNormalizationRetryNeverSuppliesCachedEvidence` · `NormalizationTheoremsNeverPopulateFiniteDomains`.
+
+`NormalizationFeasibilityCachesExactTranslatedTheorems` · `NormalizationFeasibilityRejectsIncompleteAndUnrelatedProofs` · `NormalizationFeasibilityRetainsStorageAndWorkLimits`.
+
+`MachineExitRetReadsAliasedBytesBeforePhysicalPop` · `MachineExitCallCapturesTargetBeforeAliasingPush` · `MachineExitJumpRetainsDynamicAndOriginalDirectTargets` · `MachineExitKeepsInternalCallsAndReturnProofs` · `MachineExitRequiresExactDomainBytesAndTransferKind` · `MachineExitIntegrityBudgetsAndOrdinaryConsumers` · `MachineExitProvesLiveInternalReturnCells`.
+
+`ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
+
+`NormalizationChargesOnlyTheUncachedReadabilityPrefix` / `ReadabilityPrefixInspectionPreservesLazyAndCopiedCaches` vérifie que l’historique en cache n’est pas facturé à nouveau, que les constantes larges ajoutées restent facturées, que les budgets insuffisants de travail et de nœuds refusent et que les copies du cache de lisibilité restent indépendantes.
+
 ## Qualification native de Lift
 
 Le workflow `Lift native qualification` couvre les 108 cas auparavant non validés (62 échecs et 46 tests ignorés). Il installe Clang 23 ou ultérieur, GNU GCC et les bibliothèques de développement i386 sur un exécuteur Linux x86-64 natif, puis initialise le corpus binaire épinglé. `unittests/Inputs/lift-qualification.json` conserve chaque identité de test originale. `scripts/run_lift_qualification.py` rejette les cas absents, dupliqués, désactivés, ignorés ou en échec, ainsi que toute sortie de processus non nulle. `qualification.json` enregistre chaque réussite, les révisions du code et du corpus, les versions des compilateurs et les empreintes des binaires.
@@ -1929,6 +2002,12 @@ Le profil natif exige aussi les contrôles des constantes et écritures d’enti
 Le job Linux x64 natif exige aussi trois vérifications de remplacement C++ avec exceptions : IR Clang, objets natifs Clang et objets natifs GCC. XML et code de sortie sont audités séparément ; tout échec ou saut invalide la qualification. NeverC ne traite pas ces entrées C++.
 
 Le travail de qualification natif compile depuis les sources la révision épinglée du fork LLVM, avec la correction de portée des spécificateurs x64 PLT/AArch64. Le paquet précompilé r4 seul ne qualifie pas le chemin des exceptions Clang IR.
+
+## Décalages des imports dylib Darwin
+
+`StartupDylibAddendsPreserveDataAndTLSAliasing` vérifie +8/-4, la modification du pointeur TLS et un nouvel état par processus. C, CLI et Python réel couvrent les profils. L’inventaire obligatoire contient 101 méthodes par profil et 303 cas ARM64 correspondants ; le catalogue natif commun reste 82. Le matériel indisponible ne vaut pas exécution native.
+
+[Darwin](../darwin-emulation.md#explicit-startup-dylibs-and-main-thread-tls)
 
 ## Ordinary Darwin whole-file lock coverage
 
@@ -2069,3 +2148,189 @@ La qualification native Linux exécute aussi toute la suite `HighSwiftEmitter` :
 ### Coordonnées de région symbolique traversant zéro
 
 `SymRegionWrap.*` vérifie les deux ordres d’octets, les accès complets et partiels traversant le zéro relatif, les origines d’entrée sans rebouclage, les époques inconnues copiées, les budgets de préservation exacts et insuffisants, ainsi que le refus des dépassements absolus/scalaires. `InterpreterSpecialization.NativeReturnCellProofKeepsStoreAcrossRelativeZero` affirme la forme d’adresse symbolique `base - 1` et vérifie les effets complets du STORE, les mots d’adresse de retour natifs et l’état restauré de la pile avec un oracle d’octets indépendant. L’absence de preuve de séparation ou d’alignement d’entrée doit toujours entraîner un refus.
+
+### Comparaison et échange dans le modèle raw séquentiel
+
+`SymAtomicCmpxchg.*` et `InterpreterSpecialization.AtomicCmpxchg*` couvrent tous les effets par octet, les deux ordres d’octets, la provenance de l’ancienne valeur, les alias entrée/sortie, les cellules de retour natives, l’invalidation des spills affines aux jonctions, la conservation des occurrences ordonnées, l’admission stricte et les budgets exacts/insuffisants. L’oracle indépendant par octet ne modélise que les valeurs séquentielles. Les contrôles d’enveloppe source exigent un refus de mémoire ordonnée pour des graphes initialisés et structurellement valides. Les contrôles LowIR indépendants lient aussi des sidecars complets et exigent l’absence de certificat. Les preuves binaires natives peuvent refuser plus tôt, faute d’un audit complet des sorties architecturalement indéfinies de LOCK CMPXCHG. Les reçus raw lient ordre, espace d’adressage et opérandes souhaités. Exécutez les suites responsables avant d’annoncer le support ; les définitions seules ne prouvent aucune exécution.
+
+`InterpreterSpecialization.WideIntegerConcat*` vérifie les deux ordres d’octets, les mots hauts/bas, les constantes, les sorties chevauchantes, le contrôle par le mot haut, les formes invalides, les budgets exacts/insuffisants et la provenance mémoire inconnue. `PSHUFD`, décodé strictement, couvre les 256 sélecteurs et les destinations identiques/distinctes avec un oracle indépendant par indices de mots 32 bits. `BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` conserve les refus de preuve native et des deux dispositions source.
+
+`InterpreterSpecialization.Timestamp*` vérifie les échantillons complets, les moitiés hautes nulles, les lectures indépendantes/répétées, la préservation des registres/drapeaux/mémoire/bases de segments, les budgets exacts/insuffisants, les groupes malformés et les origines inconnues avec des oracles indépendants de valeur et d’état. `BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` vérifie la récupération brute et le maintien des refus natifs/source. Les cas existants `X86_64_Intrinsics` vérifient l’émission source et tous les bits en une seule lecture ; `DriverTimestamp` vérifie séparément l’horloge commune Unicorn/KVM/WHP, l’état, les budgets et le débordement. Une exclusion de plateforme ne prouve pas l’exécution du backend.
+
+`KernelObjectTests.cpp` vérifie ID connus, erreurs de type/droits/mode, informations de handle, sorties invalides sans fuite, déchargement et réutilisation des piles. `DriverObjectTests.cpp` exécute le fixture original `driver_objects.c` sur Unicorn/KVM/WHP/HVF disponibles, Legacy/CheckedX64, adresses préférées/rebasées et ordonnancement coopératif/par 17 instructions. `NativeDriverTests.def` impose les résultats KVM/WHP ; absence et saut restent des lacunes. Ces fixtures ne certifient ni ACL, ni sortie générale de processus, ni classes non implémentées.
+
+`KernelDataExportTests.cpp` vérifie identité, disponibilité, capacité des thunks, lecture seule/NX, débogueur non déclaré et reconstruction. `DriverDataExportTests.cpp` exécute le pilote original `driver_data.c` avec de vrais imports DATA sur les backends disponibles, deux contrats et deux bases, avec déchargement et refus d’écriture/exécution. Scénario, ABI C, CLI et Python testent les booléens et les rapports. `NativeDriverTests.def` exige des résultats natifs ; les backends indisponibles restent des lacunes.
+
+`KernelNamespaceTests.cpp` vérifie types, noms relatifs/casse, tailles/ordre de copie, octets de fin, droits, portée processus, IRQL, sorties invalides et suppression retenue. `DriverNamespaceTests.cpp` exécute le pilote original `driver_namespace.c` sur les Unicorn/KVM/WHP/HVF disponibles, deux contrats, deux adresses et ordonnanceurs coopératif/17 instructions. `NativeDriverTests.def` exige les résultats natifs ; backends indisponibles et classes information/sécurité non prises en charge restent des lacunes.
+
+`KernelRegistryTests.cpp` couvre ouvertures distinctes, références typées, handles copiés, portée processus, droits génériques, identités supprimées, tampons courts/impairs, sorties aliasées et limites d’échec/capacité. `DriverRegistryObjectTests.cpp` exécute l’original `fixtures/driver_registry_objects.c` sur les moteurs disponibles, deux contrats et deux bases, avec ordonnanceur coopératif ou quantum de 17 instructions. Une fuite volontaire vérifie le refus de déchargement ; les quatre combinaisons sont obligatoires pour l’acceptation native.
+
+`KernelDeviceStackTests.cpp` vérifie les voisins actuels, les résultats empruntés ou retenus, la suppression de la cible ou du voisin, la dernière référence, les entrées invalides ou corrompues et le rejet IRQL avant acquisition. Le pilote original `fixtures/driver_device_queries.c` est exécuté par `DriverDeviceQueryTests.cpp` sur les backends disponibles, avec les deux contrats et adresses de chargement, en ordonnancement coopératif et préemptif de 17 instructions. Il vérifie le stockage conservé après detach/delete et le refus de déchargement en cas de fuite volontaire ; les quatre combinaisons natives contrat/adresse sont requises.
+
+KernelFileObjectTests et KernelObjectTests couvrent types, sortie remise à zéro, droits génériques, compteurs par processus et globaux, refus de réouverture en callback, reprise après route invalide, sortie du demandeur, nettoyages répétés et CLOSE en attente. KernelPnpRequestTests conserve la réponse différée ; KernelFrameworkFileTests vérifie processus et LOCK_CONTROL. driver_file_objects.c conserve ses tests de pointeurs. Le code original driver_file_handles.c couvre CLEANUP/CLOSE synchrones et différés, libération par worker système, numéros réutilisés et fuites, en coopération et par tranches de 17 instructions. Le véritable WDK driver_kmdf_file_handles.c vérifie processus système, restauration du demandeur et nettoyage sans callback : configurer NEVERD_KMDF_FILE_HANDLES_FIXTURE et éventuellement NEVERD_KMDF_FILE_HANDLES_CFG_FIXTURE. DriverFileObjectTests utilise les backends disponibles, les deux contrats et bases. WDK ou backends manquants sont explicitement ignorés. Le système de fichiers exige une couverture distincte. Les CLEANUP/CLOSE KMDF issus du scénario conservent le processus, le thread et PreviousMode du demandeur ; le mode F ferme un handle conservé depuis le CLEANUP d’un autre fichier et vérifie le contexte restauré.
+
+`KernelFileQueryTests.cpp` vérifie paquets empruntés/natifs, publication immédiate/en attente, alias et remplissage IOSB, achèvement worker, durée de vie, classes locales, portée des handles et refus IRQL/APC. `KernelFileCreateTests.cpp` et `DriverFileSystemTests.cpp` couvrent six classes et les limites des noms. driver_file_queries.c et driver_filesystem_provider.c parcourent les backends, contrats, bases et ordonnancements coopératif/17 instructions disponibles. Les images WDK normales/CFG utilisent NEVERD_WDM_FILE_QUERIES_FIXTURE, NEVERD_WDM_FILE_QUERIES_CFG_FIXTURE, NEVERD_WDM_FILESYSTEM_FIXTURE et NEVERD_WDM_FILESYSTEM_CFG_FIXTURE. C API/CLI/Python vérifient origines, octets complets et erreurs traitées. Les sondes du noyau original couvrent 156 cas de production et 18 d’achèvement, avec frontières explicites d’allocation, dispatch et notification ; elles ne prouvent ni système de fichiers complet ni APC général. Matériel et images absents restent des skips explicites.
+
+`KernelIRPStack.ReadWriteCompletionPreservesStoredFilePosition` vérifie une position 64 bits indépendante pour les fichiers synchrones/asynchrones, les fins immédiates/en attente, les succès/avertissements/erreurs et les longueurs nulles/non nulles. Les images WDK normales/CFG de `driver_wdm_stack.c` relisent la position entre READ, WRITE et le nettoyage.
+
+Les régressions vérifient bornes de sortie, NULL, restaurations imbriquées, IRQL invalide et identité des imports. L’original `driver_processors.c` exécute entrée, worker et DPC selon backend, contrat, base et ordonnancement. `NEVERD_WDM_PROCESSORS_FIXTURE` et `NEVERD_WDM_PROCESSORS_CFG_FIXTURE` ajoutent de véritables images WDK normales/CFG pour les appels inline et exports dynamiques ; les backends indisponibles sont explicitement ignorés.
+
+Les régressions vérifient toute la largeur, les bases admises, les capacités limites, l’ordre de traitement des bases invalides, les alias de sortie et les défauts du terminateur. Le pilote original `driver_int64_strings.c` teste les imports et la résolution dynamique à l’entrée, dans le travail différé et au déchargement, ainsi que le refus à IRQL élevé. Les options `NEVERD_WDM_INT64_STRINGS_FIXTURE` et `NEVERD_WDM_INT64_STRINGS_CFG_FIXTURE` couvrent de véritables images WDK normales/CFG selon les moteurs, contrats, adresses de chargement et modes de planification disponibles.
+
+
+`DriverFileSystemTests.cpp` / `KernelFileSystemTests.cpp` / `DriverFileSystemExecutionTests.cpp` / `DriverScenarioPublic` / `test_driver_filesystem_integration.py`: Le champ facultatif `filesystem` déclare les volumes de session avant DriverEntry. Son omission laisse la disponibilité inconnue ; `[]` indique zéro fournisseur. Chaque volume déclare sa racine. `ZwOpenFile` et les formes FILE_OPEN de `ZwCreateFile` et `IoCreateFile` ouvrent les nœuds existants par de véritables requêtes CREATE. Noms, filtres invités, partage, handles et références utilisent les propriétaires communs, sans consulter les fichiers hôtes. Création, remplacement, suppression, métadonnées, I/O de données, énumération et contrôles restent non pris en charge. `NEVERD_WDM_FILESYSTEM_FIXTURE`, `NEVERD_WDM_FILESYSTEM_CFG_FIXTURE`, `NEVERD_TEST_DRIVER_FILESYSTEM_FIXTURE`, `NEVERD_TEST_LIBNEVERD`. `UnusedFileSystemDeclarationCannotAuthorizeRuntimeRecovery`: `configuration.filesystem` conserve l’entrée ; `filesystem` publie l’état indépendant avec `device_object` et `end_of_file`, même après arrêt ou erreur de projection. `devices` contient seulement les périphériques invités. Les volumes de session peuvent subsister après déchargement, mais références, handles, attachements et IRP invités doivent disparaître. Toute déclaration, même `[]`, empêche la restauration exécutable UNPACK. Unicorn historique peut appliquer une écriture refusée avant l’arrêt ; le diagnostic conserve l’erreur de projection.
+
+`KernelFileCreateTests.cpp` vérifie rétention des paquets, conflits, racines conservées pendant l’attente, annulation explicite, sorties en échec/alias et déchargement. `DriverFileSystemExecutionTests.cpp` exécute les appelants originaux et WDK normal/CFG sur les contrats, bases et backends disponibles avec les deux ordonnancements. C API/CLI/Python gardent les mêmes identités. Les indisponibilités restent des skips ; les frontières événement/APC des sondes ne prouvent pas un noyau complet.
+
+`KernelFileTransfers` vérifie paquets, déplacements spéciaux, ajout seul, longueur nulle, alias de sortie, états immédiats/en attente, notification du worker et refus avant publication. `OriginalBufferedNativeFileTransfers` / `GenuineWdkBufferedNativeFileTransfers` exécutent les appels importés et résolus dynamiquement selon backend, contrat, adresse et ordonnancement. Configurer `NEVERD_WDM_FILE_TRANSFERS_FIXTURE` / `NEVERD_WDM_FILE_TRANSFERS_CFG_FIXTURE` pour les images WDK normales/CFG ; les backends indisponibles sont explicitement ignorés.
+
+Les régressions CRT couvrent tous les octets/unités UTF-16, les largeurs, les buffers en lecture seule sans modification, compte/capacité, troncature, ordre NULL, alias successifs, fautes partielles, mémoire libérée et limite de parcours. L’original `driver_crt_strings.c` et les images WDK authentiques `NEVERD_WDM_CRT_STRINGS_FIXTURE`/`NEVERD_WDM_CRT_STRINGS_CFG_FIXTURE` vérifient imports et résolution dynamique à l’entrée, dans un worker et au déchargement, aux IRQL passif/dispatch et avec les deux ordonnancements. La porte native exige les deux contrats et bases ; les backends indisponibles restent explicitement ignorés.
+
+Les régressions distinguent l’effacement complet de la conservation en erreur, les comptes nuls, la largeur complète, le chevauchement, les zones paginées/libérées/en lecture seule et les limites. Les sondes PE vérifient les décalages DOS non signés, résultats 64 bits, frontières, acceptation de signature seule et ordre des fautes. Les fixtures CRT originales et WDK authentiques testent import/résolution dynamique à l’entrée, en worker et au déchargement. L’export `RtlImageNtHeader` absent des en-têtes WDK fixés reçoit une déclaration ABI locale ; types PE et bibliothèques d’import restent ceux du kit. Le ntoskrnl.lib WDK fixé lie memcpy_s comme code invité. La fixture originale vérifie son import direct ; les deux vérifient les appels dynamiques à l’export.
+
+`KernelFileTransfers` vérifie les droits de flush, les paquets sans tampon pour chaque mode de transfert, Information sur 64 bits, la publication/libération avant retour, les notifications worker/région protégée et le rejet des appels asynchrones/concurrents. Les fixtures originales et WDK existantes exécutent aussi les flushes importés et résolus dynamiquement, avec IOSB utilisateur et neuf modes d’achèvement.
+
+`KernelFileTransfers` vérifie les paquets de contrôle, la troncature ULONG, les pointeurs de longueur nulle, la copie d’entrées en lecture seule, les alias IOSB, les bornes séparées, le report et la notification du thread appelant. Les fixtures originales et WDK existantes exécutent les deux API par import et recherche dynamique avec quatre formes de tampon et neuf modes de complétion.
+
+Les régressions couvrent les alias de sortie, les arguments étroits, les longueurs impaires, les descripteurs relus, les chevauchements, les échecs d’allocation, le refus NLS, les fautes partielles, les durées de vie et APC_LEVEL. Les tests temporels couvrent les fractions de seconde, la limite ULONG et les alias. Les pilotes CRT originaux et WDK authentiques exécutent les appels statiques et dynamiques à l’entrée, dans le worker et au déchargement ; l’entrée teste aussi APC_LEVEL.
+
+Les régressions parcourent ASCII et la plage large indépendante de NLS avec des bits hauts, puis vérifient refus, arité et APC_LEVEL. Les pilotes CRT originaux et WDK authentiques vérifient les trois imports et résolutions dynamiques à l’entrée, dans le worker et au déchargement. Le wint_t de ctype.h du WDK reste sur 16 bits ; les attentes ne viennent pas du CRT hôte.
+
+Les régressions vérifient les règles short des trois entrées, les lectures aux limites invitées, les tampons successifs, les NUL intégrés, les entrées libérées ou paginées et IRQL. Les fixtures CRT originales et WDK réelles exécutent les appels statiques et dynamiques à l’entrée, dans le worker et au déchargement, pour les deux ordonnancements, contrats et bases. Les backends indisponibles restent explicitement ignorés.
+
+Les régressions couvrent threads conservés/périmés, contextes demandeur/worker/attaché, limites et trous des modules, largeur de sortie, durée de vie, droits et IRQL. Les fixtures CRT originales et WDK réelles exécutent des requêtes KernelMode statiques/dynamiques ; les fixtures de fichiers vérifient aussi les appelants UserMode. Les deux familles WDK incluent normal/CFG. Deux déclarations absentes utilisent des ABI locales avec les types du kit. Les backends indisponibles restent ignorés.
+
+Les contrôles MDL historiques couvrent les appels WDK réels statiques et dynamiques, un worker attaché, les alias d’image originaux, la réduction du mode, l’IRQL, les changements de processus, les descripteurs périmés, les doubles mappages et la pénurie de budget injectée. La pénurie noyau préserve le MDL et signale le bugcheck non modélisé ; celle en mode utilisateur reste interceptable. Les sondes du wrapper original prouvent seulement les arguments transmis et la largeur du retour, pas le mappeur injecté.
+
+`KernelFileQueries.BaseDevice*` vérifie la base sous deux filtres, les références inchangées, les pointeurs d’extension ignorés, les phases de création/nettoyage/fermeture, les enregistrements corrompus et l’IRQL. Les fixtures originales et WDK réelles normales/CFG exécutent les requêtes statiques et dynamiques dans la matrice existante de moteurs, relocalisation, ordonnancement et durée de vie des appelants.
+
+`KernelDevicePointer.*` vérifie références, sorties superposées, échecs et statuts informatifs, restauration du thread et des APC après CREATE/CLEANUP différés, largeur des arguments, partage, ordre des écritures en cas de faute, admission et déchargement. Les fixtures originale et WDK ajoutent des modes immédiat, CREATE/CLEANUP terminés par worker et référence gardée jusqu’au déchargement, avec recherche dynamique. `KernelFileSystemExecution.*OpensExistingFiles` couvre les deux ordonnanceurs, contrats et bases ; les transports indisponibles restent des sauts explicites.
+
+`KernelMDLUserMapping.ProcessProbe*` vérifie largeurs, normalisation, IRQL, admission des processus vivants, identité du thread pendant la sonde, restauration imbriquée, reprise après exception et pénuries à l’attachement/restauration. Le véritable pilote WDK exécute appels statiques/dynamiques, gestionnaire d’exception après détachement, appels au même processus attaché, partage des pages physiques et libération des verrous. Les sondes du wrapper original et de sa fonction de terminaison prouvent le contrôle entre auxiliaires explicitement injectés, pas le noyau entier.
+
+`KernelObjects.FilterVersion*` vérifie arité exacte, résultat indépendant de l’appelant et limite IRQL du code paginable. Les fixtures CRT originales et WDK authentiques utilisent imports statiques et résolution dynamique à l’entrée, dans le worker et au déchargement, avec entrée à APC_LEVEL. Les sondes des deux instructions originales vérifient le registre de retour complet et l’absence d’effets sur la mémoire de données, sans auxiliaire injecté.
+
+`KernelPhysicalRAM.AddressQueries*` et `KernelMDLUserMapping.PhysicalQuery*` vérifient alias, espaces d’adresses, réutilisation des VA, limites, PFN complets, IRQL, verrous et révocation. Le pilote WDK réel compare les appels statiques et dynamiques à `MmGetPhysicalAddress` aux PFN des MDL, avec vues utilisateur en lecture seule, vues système au niveau DPC et remappage conservant un ancien alias verrouillé.
+
+`KernelMDLUserMapping.PrimaryQuery*` couvre les octets exacts, les propriétaires voisins sur une page, les adresses complètes, l’IRQL, la libération, les alias, les mappings remplacés, la protection en lecture et les projections principales non prises en charge. Le pilote WDK réel exécute `MmGetVirtualForPhysical` statiquement et dynamiquement, avec une vue système au niveau DPC et la réaffectation d’une VA utilisateur conservant un ancien alias verrouillé.
+
+`DriverKernelModel.StackQuery*` / `KernelMDLUserMapping.StackQuery*` couvre activation, retrait, restauration imbriquée, limites complètes, IRQL, attachement, chevauchement des sorties et ordre des écritures High puis Low en cas de faute. Les pilotes CRT original et WDK réel appellent les API statiquement et dynamiquement à l’entrée, au travail et au déchargement, vérifient une variable locale et interrogent les limites à DISPATCH_LEVEL.
+
+`KernelMDLChain.CreateMdl*` et `KernelMDLUserMapping.CreateMdl*` vérifient largeurs, octets conservés, métadonnées vides ou débordantes, durées de vie, verrous, alias, échecs de libération, réemploi partiel, refus IRP et IRQL. Le pilote WDK réel couvre appels statiques/dynamiques, pool propre, stockage intérieur et pile, identité physique et déchargement complet. Les sondes originales distinguent écritures, traduction des drapeaux et frontières d’allocation/libération injectées.
+
+`KernelMDLChain.AdvanceMdl*` et `KernelMDLUserMapping.AdvanceMdl*` vérifient les franchissements répétés, la marque PFN, les refus en fin, la largeur des arguments, le mapping complet, les échecs de nettoyage, les droits et les durées de vie. Le vrai WDK exécute les appels statiques/dynamiques et les deux nettoyages. Les sondes distinguent la routine complète, la restauration et le wrapper de démontage avec frontières type de mapping/libération PTE injectées, sans exécuter la base de pages du système.
+
+## Transferts vectoriels alignés classiques
+
+`NeverDX86LegacyAlignedMoveTests` vérifie la préservation des registres de MOVDQA, MOVAPS et MOVAPD et leur alignement de 16 octets avant tout accès mémoire, y compris le débordement de largeur d’adresse et les bases FS/GS explicites. Un accès non aligné doit préserver les registres de destination et la mémoire. Une base de segment absente reste refusée. Ces tests couvrent le lifting et l’émulateur ; la récupération symbolique exacte doit prouver séparément la garde d’alignement conservée.
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` et `PEFixedImageTest.RawAlign*` vérifient une preuve indépendante par reste, les entrées invalides, les budgets exacts, la conservation des gardes natives et la falsification des reçus. Les audits des déplacements classiques lient toutes les opérations, garde d’alignement comprise, sans certifier la conservation des banques d’état opaques.
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`NeverDX86NativeStateAuditTests` vérifie strictement les octets natifs et les détails du décodeur pour REP MOVSQ x64 canonique et LDMXCSR classique. Les reçus des sorties indéfinies lient toutes les opérations. Des oracles indépendants d’état complet et de copie ordonnée couvrent chevauchement, compte nul, adressage, octets manquants et bits réservés. Les preuves existantes du compte, de la direction, de la mémoire, du masque MXCSR effectif et de la validité restent nécessaires. Cet audit ne certifie ni la reprise après faute partielle ni la conservation de l’état opaque.
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```
+
+`NeverDX86ScalarMoveAuditTests` vérifie strictement MOVSS/MOVSD classique contre les octets originaux et tous les détails du décodeur. Des oracles indépendants par octet couvrent fusion des registres, extension à zéro des chargements, écritures scalaires, tous les résidus d’alignement, adressage 16/32/64 bits et conservation complète des registres, indicateurs et MXCSR. Des octets absents ou une écriture en mémoire non modifiable ne doivent valider aucune sortie architecturale. Les formes chaîne, VEX/EVEX, segmentées et malformées restent refusées ; les reçus lient toutes les opérations sans certifier la conservation de l’état opaque.
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`SymStorePreservation.Independent*`, `RepeatedRegionsFormAUnionAndChargeEveryScan`, `EmptyIndependentRegionsKeepOriginalWorkAccounting` et `ExecutorUsesIndependentRegionsForOnlyOneStore` couvrent un STORE conservant deux ou trois racines courantes indépendantes, les deux ordres des octets, les plages partielles traversant le zéro relatif, les déclarations chevauchantes, les lacunes non protégées et les générations inconnues après écriture. Les budgets exacts et inférieurs d’une unité vérifient le coût complet ; les régions absentes ne doivent pas être matérialisées. Références invalides ou hors limites, bases étroites ou constantes, intervalles vides ou inversés et base propre à l’écriture sont refusés sans modifier l’état. Un `AdditionalRegions` vide conserve les coûts existants de la racine unique et de `AdditionalRanges`. L’exécuteur vérifie l’événement unique, les octets voisins de la même région et l’invalidation par une écriture ordinaire ultérieure. `SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget` couvre les comparaisons égales ou différentes, les budgets exacts ou insuffisants, deux racines protégées, la sortie de l’ancienne valeur et le refus conservateur existant.
+
+`NeverDSymConditionalStoreTests` couvre les effets conditionnels sur les octets courants de racines indépendantes, les écritures de 128 bits, les deux ordres d'octets, les recouvrements partiels, le bouclage des coordonnées symboliques relatives et la mémoire absolue. Il vérifie les voisins dans la banque cible, les faits courants et historiques, les époques inconnues après écriture, les entrées non prises en charge et les budgets exacts ou inférieurs d'une unité. Les cas d'exécution couvrent STORE avec le traitement existant des bases de segment, les succès et refus de CMPXCHG strict, la publication différée de Old, le havoc et le maintien d'Invalid pour les autres opérations. Les comportements par défaut des écritures ordinaires et des contrats de préservation restent inchangés. Ces tests valident une sémantique mémoire bornée, pas les droits d'accès ni la récupération complète d'un programme.
+
+
+`AbsoluteMemoryFactsTests.inc` couvre les cibles absolues entre nœuds, les jonctions contradictoires, les écritures alias partielles ou inconnues et la séparation de pile dans les deux ordres d’octets, avec ou sans chaînage. Un exécuteur indépendant vérifie les effets ; exclusions absentes et budgets courts doivent refuser. `SymStorePreservation.Absolute*` et `SymState.AbsoluteProjections*` couvrent coexistence, adresses hautes, projections pures bornées, époques inconnues et refus transactionnel. Exécuter `NeverDInterpreterSpecializationTests`, `NeverDSymbolicIntegerIntrinsicTests`, `NeverDSymMemoryKnowledgeTests`, puis les suites d’indépendance native et de raffinement LowIR.
+
+Les régressions de mémoire absolue couvrent des lots bornés contigus et dispersés, l’inclusion complète des écritures et cellules, et des alias concrets aux deux limites du cadre et des exclusions. Les unions ordonnées et inversées doivent conserver les mêmes cellules, abandonner les intervalles vides et laisser l’état inchangé lorsqu’il manque une unité de travail à la préservation.
+
+## Régressions des lectures finies en RAM ordinaire
+
+`LowIRReadTrace.*` vérifie les entrées partagées, les deux ordres d’octets, les changements d’adresse/largeur/ordre/nombre, toutes les branches, les chevauchements partiels avec les écritures antérieures du cadre, les valeurs indéfinies, les lectures répétées indépendantes, les budgets exacts/insuffisants et le refus des boucles. `OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` vérifie l’indépendance native originale, le raffinement natif vers LowIR et le refus d’un pointeur modifié. Exécuter `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDPEFixedImageTests` et `NeverDInterpreterSpecializationTests`. Ces preuves seules ne qualifient ni le C compilé ni un backend CPU concret.
+
+## Régressions des requêtes scalaires natives
+
+`NativeQueryTrace.*` couvre réponses indépendantes, quatre extensions par zéro, mutations des sélecteurs/nombres/ordres, sélecteurs indéfinis, lectures entrelacées, toutes les branches, état préservé, audits de codage/détails, groupes malformés, budgets, empreintes et refus statiques/inductifs. `NativeScalarQueryDescriptor.*` vérifie les limites génériques et les reçus effectifs.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
+
+Les régressions couvrent la conservation exacte de CC, F1 et CD 03, le refus des métadonnées forgées, les sorties sans successeur et les budgets d’opérations exacts ou insuffisants. Un piège fourni comme opération ordinaire ne peut pas continuer vers un RETURN dans la même instruction ou la suivante. La preuve originale couvre aussi UD2 : les pièges inaccessibles gardent l’audit Missing et les divergences d’exception, d’octets ou d’audit sont refusées. Un piège accessible empêche la preuve originale et le raffinement vers un candidat à retour ordinaire.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+`NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
+
+Ces vérifications qualifient les régions déclarées, sans prouver la gestion des exceptions ni l’équivalence source/native.
+
+
+`PEFixedImageTest.EntryObject*`, `InterpreterSpecialization.EntryObject*`, `FrameOffsets.DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes`.
+
+Les régressions des objets d’entrée vérifient copies symboliques, sauvegardes et cases copiées, boucles à l’exécution, liaisons perdues et jonctions, alias, écritures larges/atomiques/segmentées complètes, bornes relatives, déclarations malformées, mutations des reçus et budgets exacts ou insuffisants de préparation et d’opérations, ainsi que l’épuisement des budgets de nœuds. Des oracles indépendants d’octets et de registres vérifient les effets conservés. Exécuter ensemble les suites propriétaires et les refus des consommateurs raw ; aucun certificat de fonction entière, C compilé ou ABI ordinaire n’en découle.
+
+`NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
+
+Exécutez `NeverDObjCSourceCallTests` (`SourceFrameAnalysis.*`) et `NeverDCSourcePresentationTests` pour vérifier la provenance des octets, l’accord des chemins, les stockages écrasés ou échappés, les plages d’image immuables, les budgets, les encodages et les limites des métadonnées. `NeverDWorkerStackText` compile des cas PE publics x64/ARM64 dans les deux voies C, y compris les écrasements inconnus. Clang et lld-link sont requis ; l’exécution Windows native est une validation distincte.
+
+<!-- i18n-section: interactive-byte-patches -->
+## Responsabilité des correctifs interactifs
+
+`NeverDBytePatchTests` vérifie la couche de modifications, le refus des relocalisations, l’assemblage relatif au PC, la signature PE et la somme de contrôle. `NeverDWorkerPatch` vérifie l’aperçu, les entrées périmées, l’annulation et le rétablissement, la restauration groupée, les répliques en lecture seule, la réouverture et l’export exclusif.
+
+`NeverDWorkerNativePatch` répète ces vérifications avec le SDK réel. `NeverDWorkerSourceBytePatch` vérifie sous Linux la preuve source, la prévisualisation isolée, les symboles de pile et le remplacement natif en C.
+
+`NeverDGuiPatchKeys` vérifie toutes les secondes touches via les raccourcis de `QWindow`, y compris les menus en attente, l’annulation et la saisie dans l’éditeur. `NeverDGuiNativePatchKeys` vérifie les octets du SDK réel, Hex, les fenêtres flottantes et les opérations annuler, rétablir et restaurer. Exécuter le même programme sous X11 couvre aussi les menus natifs.
+
+```sh
+cmake --build build-gui --target neverd-gui-patch-tests
+ctest --test-dir build-gui -R 'NeverDGui(Native)?PatchKeys$' --output-on-failure
+NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  python3 tools/neverd-gui/tests/run_wayland_docking.py \
+  build-gui/bin/neverd-gui-patch-tests
+ctest --test-dir build-release/unittests/patch --output-on-failure
+ctest --test-dir build-gui -R 'NeverDWorker(Patch|NativePatch|SourceBytePatch)$' --output-on-failure
+PYTHONPATH=pluginsdk/python NEVERD_TEST_LIBNEVERD="$PWD/build-release/bin/libneverd.so" \
+  NEVERD_TEST_CLI="$PWD/build-release/bin/neverd" \
+  python3 -m unittest discover -s pluginsdk/python/tests -p test_byte_patch_integration.py -v
+QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNotTakeHexRaysKeys patchMenuUsesEngineChoicesAndFixedKeys cancelledPatchMenuDiscardsItsPendingKey
+QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
+```
+
+`NeverDSourceCallABITests` vérifie les supports fixes et variadiques Windows ARM64, largeurs, épuisement des registres et positions de pile. `NeverDWorkerCallSiteTypes` exécute les deux sorties C avec des fonctions séparées à O0/O2 : float nommé, double en registres et sur la pile, entiers et résultat flottant. Les arguments non promus et écritures partielles sont refusés sans modifier l’instantané d’analyse. Cela ne valide pas l’exécution native Windows ARM64.
+
+Cette régression worker couvre aussi dix-huit paramètres mixtes registre/pile, un retour flottant et le refus d’un argument de pile écrit seulement à moitié.
+
+`SourceCallABI` et `CallRegisterConstant` vérifient temporaires expirés, effets opaques, plages d’octets, occurrences ambiguës et limites exactes du budget. Le worker exécute aussi les deux sorties C d’un appelant calculant son compteur variadique par soustraction.
+
+`LowScalarConstant.SelfDifference*` compare cette récupération à une exécution concrète de motifs d’octets pour les largeurs de un à huit octets, avec refus des occurrences distinctes, de la mémoire et des formes invalides. `ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` couvre x86, x64 et AArch64 sous ELF, COFF et Mach-O. Les tests worker exécutent la branche récupérée et le compteur vectoriel System V obtenu par auto-soustraction via HighC et LLVMC à O0/O2.
+
+`X86CarryArithmeticFlags.SelfSubtract*` et `APXSelfSubtract*` vérifient le résultat, les indicateurs arithmétiques et les registres préservés. Les tests de branches scalaires du worker comparent l’exécution native à HighC/LLVMC en O0/O2, y compris les branches issues de SUB/CMP sur un même registre.
+
+`BinaryRewriteRelocationTest`, dans le fork LLVM NeverSight, vérifie les octets finaux de x64 PLT, GOT i386, GOTPCREL Mach-O et PAGE/PAGEOFF AArch64. La compilation intégrée de NeverD compile directement le fork enregistré. Ces contrôles MC ne valident pas l’exécution native des exceptions.
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` couvre les captures en registre et les sauvegardes privées. `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` exécute HighC et LLVMC en O0/O2 sur Linux x86 avec deux arguments scalaires distincts, pour des cibles en mémoire et en registre. L’inventaire ABI Python et le contrôle des catalogues GUI incluent les interfaces et messages des sections d’analyse.
+
+`NeverDSelfCompareFlagTests` exécute les fonctions originales et reconstruites pour x86, x64, ARM32 et AArch64. Exécuter séparément la voie machine par défaut, `NEVERD_SEMANTIC_HIGHC=1` et `NEVERD_SEMANTIC_LLVMC=1`. La matrice couvre les indicateurs CMP/SUB sur un même opérande, les branches et les valeurs conditionnelles, avec des tests logiques et des opérandes décalés comme témoins, ainsi que les régressions existantes de débordement signé.
+
+La matrice exécute aussi des cas sans argument d’égalité et de débordement de soustraction. Ils ne nécessitent aucune valeur de registre entrante et ne doivent acquérir aucun piège d’état inconnu dans les deux voies C.
+
+Les tests des entrées d’importation HFA compilent des prototypes C stricts et exécutent les arguments et résultats complets des déclarations locales et des en-têtes. Les deux voies C couvrent les structures float et double, les appels en chaîne et l’exécution AArch64.
+
+## Vérification des déclarations sélectionnées
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` combine les adresses avec des fournisseurs retournant entier, pointeur, flottant ou void. `AddressOnlyCallbackConvertsToItsKnownParameterType` exécute un callback typé. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` compare les sélections séparées, l’unité complète et les caches froid/chaud. Le C produit depuis les modèles x64/ARM64 PE, ELF et Mach-O est exécuté sur l’hôte à O0/O2 avec UBSan ; cela ne qualifie pas l’exécution native de toutes les cibles. Relancer les tests des contrats d’appel, projections de pointeurs, ABI source et cache des appelés.

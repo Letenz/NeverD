@@ -126,6 +126,11 @@ llvm::Expected<uint64_t> KernelModel::freePool(llvm::ArrayRef<uint64_t> A,
     return modelError("ExFreePoolWithTag tag does not match allocation");
   if (!It->second.NonPaged && CurrentIRQL > APCLevel)
     return modelError("paged pool free requires IRQL <= APC_LEVEL");
+  auto Writable = Memory.canAccess(A[0], It->second.Size, Write);
+  if (!Writable)
+    return Writable.takeError();
+  if (!*Writable)
+    return modelError("pool free requires writable allocation storage");
   if (auto E = Physical.canRetire(A[0]))
     return E;
   if (auto E = prepareReleaseRange(A[0], It->second.Size))

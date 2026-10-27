@@ -47,6 +47,14 @@ void process_main(U64 *Stack) {
     finish(FailureStatus);
   const char **Args = (const char **)(Stack + 1);
   const char **Env = Args + Stack[0] + 1;
+  if (Args[1][0] == EchoEnvironment) {
+    if (Args[Stack[0]] || !Env[0] || Env[1])
+      finish(FailureStatus);
+    if (linux_service(ServiceWrite, StandardOutput, (U64)Env[0],
+                      EchoEnvironmentSize) != EchoEnvironmentSize)
+      finish(FailureStatus);
+    finish(ExitStatus);
+  }
   if (!equal(Args[0], ExecutableName) || Args[Stack[0]] || !Env[0] ||
       !equal(Env[0], Environment) || Env[1])
     finish(FailureStatus);

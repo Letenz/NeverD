@@ -46,6 +46,18 @@ void RegistrationStateSolver::preserveCxxFrameCells(Domain &Root,
       if (Value.EntryOffset && Untouched(Offset))
         Root.Frame.Cells[Offset] = Value;
     }
+  // Handler cookies survive catch entry only when every cleanup leaves the
+  // complete encoded word intact. Catch-object construction below still has
+  // to prove that its own destination is disjoint from these cells.
+  if (CxxCookies && CompleteCatchObjects)
+    for (const auto &Condition : CxxCookieConditions) {
+      if (!charge(Writes.size() + 1))
+        return;
+      const auto Value = Source.Frame.Cells.find(Condition.FrameOffset);
+      if (Value != Source.Frame.Cells.end() && Value->second.SecurityCookie &&
+          Untouched(Condition.FrameOffset))
+        Root.Frame.Cells[Condition.FrameOffset] = Value->second;
+    }
   // A retained outer exception remains alive during a nested catch. Its
   // aliases survive only when every authenticated cleanup leaves all four
   // bytes intact. Unknown callbacks and ended invocations retain only taint.

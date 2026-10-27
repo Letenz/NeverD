@@ -9,6 +9,10 @@
 #     [LINK_COMPONENTS comp1 ...]
 #     [LINK_LIBS lib1 ...])
 
+include(${CMAKE_CURRENT_LIST_DIR}/NeverDMimalloc.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/NeverDPerformance.cmake)
+neverd_add_task_scheduler()
+
 # Global list that accumulates every component library target.
 define_property(GLOBAL PROPERTY NEVERD_COMPONENT_LIBS
   BRIEF_DOCS "List of all NeverD component library targets"
@@ -19,7 +23,7 @@ define_property(GLOBAL PROPERTY NEVERD_COMPONENT_LIBS
 # so transitive consumers inherit them automatically.
 set(NEVERD_COMMON_LIBS
   ${LLVM_LIBS}
-  capstone_static)
+  capstone_static neverd_task_scheduler)
 
 # Place native plugins below the executable directory on every generator.  A
 # multi-configuration generator otherwise appends the configuration after the
@@ -62,7 +66,7 @@ function(add_neverd_component_library name)
   set(_common_libs ${NEVERD_COMMON_LIBS})
   if(ARG_LLVM_COMPONENTS)
     llvm_map_components_to_libnames(_llvm_libs ${ARG_LLVM_COMPONENTS})
-    set(_common_libs ${_llvm_libs} capstone_static)
+    set(_common_libs ${_llvm_libs} capstone_static neverd_task_scheduler)
   endif()
 
   target_link_libraries(${name}
@@ -85,6 +89,8 @@ function(add_neverd_tool name)
     ${ARGN})
 
   add_executable(${name} ${ARG_UNPARSED_ARGUMENTS})
+  neverd_link_mimalloc(${name})
+  neverd_stage_performance_notices(${name})
 
   target_compile_features(${name} PRIVATE cxx_std_20)
 
@@ -153,6 +159,7 @@ function(add_neverd_unittest name)
   endif()
 
   add_executable(${name} ${ARG_UNPARSED_ARGUMENTS})
+  neverd_link_mimalloc(${name})
 
   target_compile_features(${name} PRIVATE cxx_std_20)
 

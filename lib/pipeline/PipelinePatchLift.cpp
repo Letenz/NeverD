@@ -5,19 +5,22 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// MedIR-to-LLVM shortcut used by patch and lift modes.
+/// Machine ABI preparation shared by analysis and the MedIR-to-LLVM route.
 ///
 //===----------------------------------------------------------------------===//
 
 #include "PipelineCallAbiDetail.h"
+#include "PipelineFunctionNames.h"
 #include "PipelineLLVMDetail.h"
 #include "PipelineMedAudit.h"
 #include "PipelineReturnModelingDetail.h"
+#include "PipelineSourceStackAccesses.h"
 
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedNoReturn.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -25,6 +28,7 @@
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/Parallel.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/LLVMContext.h"
@@ -37,6 +41,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <map>
 #include <set>
 #include <string>
@@ -52,6 +57,24 @@ namespace {
 bool isFatalOptimizationStop(OptimizationStopReason Stop) {
   return Stop == OptimizationStopReason::InputInvalid ||
          Stop == OptimizationStopReason::VerificationFailed;
+}
+
+std::string functionAdmissionDiagnostic(va_t Entry,
+                                        const PipelineFunctionAudit *Audit) {
+  std::string Message =
+      "function 0x" + llvm::utohexstr(Entry) + " was not admitted";
+  if (!Audit)
+    return Message;
+  Message += " (" +
+             std::string(pipelineFunctionDispositionName(Audit->Disposition)) +
+             ")";
+  if (!Audit->DecodeFailures.empty())
+    Message += "; decode failure at 0x" +
+               llvm::utohexstr(Audit->DecodeFailures.front());
+  else if (!Audit->UnsupportedInstructions.empty())
+    Message += "; unsupported instruction at 0x" +
+               llvm::utohexstr(Audit->UnsupportedInstructions.front());
+  return Message;
 }
 
 } // namespace
@@ -83,18 +106,88 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                                 const PipelineOptions &Opts,
                                 PipelineResult &Result,
                                 const DebugContext *Dbg) {
-  [[maybe_unused]] const char *ModeName = Opts.PatchMode ? "patch" : "lift";
+  [[maybe_unused]] const char *ModeName = Opts.MedAnalysisOnly ? "analysis"
+                                          : Opts.PatchMode     ? "patch"
+                                                               : "lift";
   LLVM_DEBUG(llvm::dbgs() << "pipeline: " << ModeName
-                          << " mode -- MedIR -> LLVM IR, skipping HighIR\n");
+                          << " mode -- shared machine ABI preparation\n");
+
+  // A selected parent may fail instruction admission while its automatically
+  // included cleanup bodies survive. Emitting those bodies is not a successful
+  // export of the requested entry. Analysis views retain their partial results.
+  std::set<va_t> AdmittedEntries;
+  for (const auto &Function : Result.MedFuncs)
+    AdmittedEntries.insert(
+        normalizeCodeAddress(Function.Entry, Img.Arch, Img.Mode));
+  for (va_t Requested : Opts.OnlyFunctionEntries) {
+    const va_t Entry = normalizeCodeAddress(Requested, Img.Arch, Img.Mode);
+    if (AdmittedEntries.count(Entry))
+      continue;
+    const auto Audit =
+        std::find_if(Result.FunctionAudits.begin(), Result.FunctionAudits.end(),
+                     [&](const PipelineFunctionAudit &Candidate) {
+                       return normalizeCodeAddress(Candidate.Entry, Img.Arch,
+                                                   Img.Mode) == Entry;
+                     });
+    Result.Error =
+        "selected " + std::string(ModeName) + " " +
+        functionAdmissionDiagnostic(
+            Requested,
+            Audit != Result.FunctionAudits.end() ? &*Audit : nullptr);
+    return false;
+  }
+  // A whole-module request can reject every body before reaching LLVM. An
+  // empty module is not a successful lift of those instructions. Intentional
+  // runtime/import skips and read-only analysis retain their existing outcome.
+  if (!Opts.MedAnalysisOnly && Result.MedFuncs.empty())
+    for (const auto &Audit : Result.FunctionAudits)
+      if (Audit.Disposition == PipelineFunctionDisposition::RejectedLowIR ||
+          Audit.Disposition ==
+              PipelineFunctionDisposition::RejectedIncomplete ||
+          Audit.Disposition == PipelineFunctionDisposition::MedIRFailed) {
+        Result.Error = "no " + std::string(ModeName) +
+                       " functions were admitted; " +
+                       functionAdmissionDiagnostic(Audit.Entry, &Audit);
+        return false;
+      }
+  if (Opts.PatchMode)
+    for (const MedFunc &Function : Result.MedFuncs) {
+      bool NeedsAdapter = Function.ConsumesX87Argument;
+      for (const MedBlock &Block : Function.Blocks)
+        for (const MedOp &Op : Block.Ops)
+          NeedsAdapter |= Op.X87ArgumentInput != 0 && !Op.X87ImportArguments;
+      if (NeedsAdapter) {
+        Result.Error =
+            "patch output requires a native x87 argument adapter for "
+            "function 0x" +
+            llvm::utohexstr(Function.Entry);
+        return false;
+      }
+    }
+  for (const MedFunc &Function : Result.MedFuncs)
+    if (Function.ConsumesX87Argument &&
+        (Img.CodeRefTargets.count(Function.Entry) ||
+         Img.findExportAt(Function.Entry) || Img.Entry == Function.Entry)) {
+      Result.Error =
+          "native entry/address use requires an x87 argument adapter for "
+          "function 0x" +
+          llvm::utohexstr(Function.Entry);
+      return false;
+    }
 
   auto AllFuncNames = buildFuncNameMap(Img, Result);
+  if (Opts.SourceProjection)
+    for (auto &[Address, Name] :
+         pipeline_detail::debugFunctionNames(Result, AllFuncNames, Dbg))
+      AllFuncNames[Address] = std::move(Name);
 
   // Infer types for every function first: call-ABI recovery
   // (recoverModuleCallAbi) bounds each call by its callee's inferred
   // signature, its return class (FP-in-vector-register vs integer) and its
   // argument counts.
   for (auto &MF : Result.MedFuncs)
-    inferMedTypes(MF, Img.Arch);
+    if (!MF.SourceParametersBound)
+      inferMedTypes(MF, Img.Arch);
 
   // A callee that merely forwards an indirect scalar-FP call has no explicit
   // post-call D0/V0 read: the native RET returns whatever BLR left in V0, so
@@ -143,7 +236,7 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     }
   }
 
-  modelWideIntReturns(Img, Result);
+  modelWideIntReturns(Img, Result, medStackProjection(Opts));
 
   recoverStructReturnFromCallers(Img, Result);
 
@@ -156,9 +249,15 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
 
   materializeKnownStructReturnCallSites(Img, Result);
 
-  settleReturnContracts(Img, Result);
+  bindFloatCallResults(Img, Result);
 
-  recoverModuleCallAbi(Img, Result, AllFuncNames);
+  // LLVM-to-C uses the same declared source returns as HighC. Binary lifting
+  // keeps its machine contract; a display prototype cannot authorize a
+  // different executable return ABI.
+  settleReturnContracts(Img, Result, Opts.SourceProjection ? Dbg : nullptr);
+
+  recoverModuleCallAbi(Img, Result, AllFuncNames,
+                       Opts.SourceProjection && !Opts.PatchMode);
 
   remodelStructReturnForwarderCalls(Img, Result);
 
@@ -171,12 +270,39 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
   // Late ABI remodelling may reconvert a function from LowIR.  Refresh the
   // interprocedural facts before either serial or sharded LLVM emission.
-  propagateInternalNoReturn(Result.MedFuncs, Img.Arch, Img.UserNoReturn);
+  propagateInternalNoReturn(Result.MedFuncs, Img.Arch, Img.UserNoReturn,
+                            importCallAddresses(Img));
+
+  for (const MedFunc &Function : Result.MedFuncs)
+    for (const MedBlock &Block : Function.Blocks)
+      for (size_t I = 0; I < Block.Ops.size(); ++I) {
+        if (!Block.Ops[I].X87ArgumentInput)
+          continue;
+        const auto Call =
+            llvm::find_if(Function.CallInfos, [&](const MedCallInfo &CI) {
+              return CI.BlockId == Block.Id && CI.OpIdx == I;
+            });
+        if (Call == Function.CallInfos.end() || Call->Args.empty() ||
+            llvm::any_of(Call->Args, [](const MedVar &Arg) {
+              return Arg.Kind == MedVar::Unspecified;
+            })) {
+          Result.Error = "checked x87 call is missing an ordinary argument in "
+                         "function 0x" +
+                         llvm::utohexstr(Function.Entry);
+          return false;
+        }
+      }
 
   if (!recordMedIRVerification(Result, "pipeline-backend-input")) {
     Result.Error = "MedIR verification failed before backend emission";
     return false;
   }
+
+  if (Opts.MedAnalysisOnly)
+    return true;
+
+  if (medStackProjection(Opts) == MedStackProjection::Source)
+    prepareRecoveredSourceStackAccesses(Img, Result);
 
   std::vector<std::pair<va_t, std::string>> ImportMap;
   for (const auto &[Addr, Name] : Img.getImportAddressNames())
@@ -201,10 +327,16 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                    !requiresSerialLLVMEmission(Result.MedFuncs, Img);
 
   if (UseShards) {
-    LLVMEmissionResult Emission = emitLLVMSharded(
-        Result.MedFuncs, Ctx, Img.Arch, ImportMap, Img, Img.abiFormat(),
-        Opts.NoOpt, Workers, !Result.LibraryRecognitions.empty(),
-        Result.LibraryRecognitions, Dbg);
+    LLVMEmissionResult Emission =
+        emitLLVMSharded(Result.MedFuncs, Ctx, Img.Arch, ImportMap, Img,
+                        Img.abiFormat(), Opts.NoOpt, Workers,
+                        Opts.RetainLLVMSourceObservations ||
+                            !Result.LibraryRecognitions.empty(),
+                        Result.LibraryRecognitions, Dbg,
+                        SourceViewOptions{.Symbolic = Opts.SymbolicLLVMSource},
+                        &Result.CallPrototypeArguments,
+                        Opts.SourceProjection && !Opts.PatchMode,
+                        Result.OmittedCalleeDeclarations);
     Result.BackendUnhandledValueIntrinsics = Emission.UnhandledValueIntrinsics;
     Result.LLVMVerifierFailed = Emission.LLVMVerifierFailed;
     Result.LlvmModule = std::move(Emission.Module);
@@ -215,8 +347,13 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     }
   } else {
     MedLLVMEmitter MedEmitter;
+    MedEmitter.setPreserveUnknownSourceValues(Opts.SourceProjection &&
+                                              !Opts.PatchMode);
+    MedEmitter.setSourceCalleeDeclarations(Result.OmittedCalleeDeclarations);
     MedEmitter.setDebugContext(Dbg);
-    if (!Result.LibraryRecognitions.empty()) {
+    MedEmitter.setPrototypeArgumentCallees(&Result.CallPrototypeArguments);
+    if (Opts.RetainLLVMSourceObservations ||
+        !Result.LibraryRecognitions.empty()) {
       Result.LLVMSources = std::make_shared<LLVMSourceMap>();
       MedEmitter.setSourceMap(Result.LLVMSources.get());
     }
@@ -226,9 +363,18 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     // route has one call-free function, with its source ABI already bound.
     const BinaryImage *EmissionImage =
         Result.InterpreterMachineSourceABI ? nullptr : &Img;
-    Result.LlvmModule =
-        MedEmitter.emit(Result.MedFuncs, Ctx, "neverd_output", Img.Arch,
-                        ImportMap, EmissionImage, Img.abiFormat());
+    try {
+      Result.LlvmModule =
+          MedEmitter.emit(Result.MedFuncs, Ctx, "neverd_output", Img.Arch,
+                          ImportMap, EmissionImage, Img.abiFormat());
+    } catch (const std::exception &Error) {
+      // Keep semantic refusals inside the pipeline result, as the sharded
+      // path does. No partially observed module may escape through the SDK.
+      Result.LlvmModule.reset();
+      Result.LLVMSources.reset();
+      Result.Error = Error.what();
+      return false;
+    }
     Result.BackendUnhandledValueIntrinsics =
         MedEmitter.unhandledValueIntrinsicCount();
     if (Result.LLVMSources)
@@ -256,9 +402,11 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       Options.Conservative = Opts.PatchMode;
       const bool SourceOnly = Opts.SourceProjection && !Opts.PatchMode;
       OptimizationResult Optimization =
-          SourceOnly ? optimizeOrPromoteModule(*Result.LlvmModule,
-                                               Result.LLVMSources.get())
-                     : optimizeModule(*Result.LlvmModule, Options);
+          SourceOnly
+              ? optimizeOrPromoteModule(
+                    *Result.LlvmModule, Result.LLVMSources.get(),
+                    SourceViewOptions{.Symbolic = Opts.SymbolicLLVMSource})
+              : optimizeModule(*Result.LlvmModule, Options);
       // Match the source SDK and sharded C route: a verified analysis module
       // keeps its explicit incomplete native EH contract and only promotes
       // temporary allocas. Binary rewriting still requires native lowering.

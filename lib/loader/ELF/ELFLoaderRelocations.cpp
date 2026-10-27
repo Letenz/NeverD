@@ -112,19 +112,16 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
       continue;
 
     const Elf_Shdr *SymSH = getShdr<ELFT>(Sections, SH.sh_link);
+    if (SymSH && SymSH->sh_type != SHT_SYMTAB && SymSH->sh_type != SHT_DYNSYM)
+      SymSH = nullptr;
     // strip also removes the relocations --emit-relocs keeps in a linked
     // image, which name .symtab's symbols.
     if (SymSH && SymSH->sh_type == SHT_SYMTAB && !IsRelocatable &&
         !Img.ReadsStaticSymbols)
       continue;
     llvm::StringRef StrTab;
-    if (SymSH) {
-      auto TabOr = ELF.getStringTableForSymtab(*SymSH, Sections);
-      if (TabOr)
-        StrTab = *TabOr;
-      else
-        llvm::consumeError(TabOr.takeError());
-    }
+    if (SymSH)
+      StrTab = getLinkedStringTable<ELFT>(ELF, Sections, *SymSH);
 
     llvm::StringRef SecName = getSectionName<ELFT>(ShStrTab, SH);
     uint64_t Ordinal = 0;
@@ -144,7 +141,7 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
         RE.SectionName = SecName.str();
 
       bool Undefined = false;
-      if (SymSH && SymIdx > 0 && !StrTab.empty()) {
+      if (SymSH && SymIdx > 0) {
         auto SymsOr = ELF.symbols(SymSH);
         if (!SymsOr) {
           llvm::consumeError(SymsOr.takeError());
@@ -162,12 +159,14 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
               Sym.st_value,
               Sym.st_size,
               std::nullopt};
-          auto SymNameOr = Sym.getName(StrTab);
-          if (SymNameOr)
-            RE.SymbolName = SymNameOr->str();
-          else
-            llvm::consumeError(SymNameOr.takeError());
-          RE.ELF->Symbol->Name = RE.SymbolName;
+          if (!StrTab.empty()) {
+            auto SymNameOr = Sym.getName(StrTab);
+            if (SymNameOr) {
+              RE.SymbolName = SymNameOr->str();
+              RE.ELF->Symbol->Name = RE.SymbolName;
+            } else
+              llvm::consumeError(SymNameOr.takeError());
+          }
           Undefined = Sym.st_shndx == SHN_UNDEF;
         }
       }
@@ -1166,17 +1165,37 @@ llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
             }
             break;
           }
-          case R_386_32:
+          case R_386_32: {
             // Absolute 32-bit slot — a data word or a function-pointer
             // *table* entry (handled by the code-pointer table mirror), not a
             // register materialization, so it is not recorded as a scalar
             // code ref.
-            Put32(static_cast<uint32_t>(S + InPlace));
-            if (HasUniqueValueWriter)
-              RecordAbsoluteField(static_cast<uint32_t>(S + InPlace),
-                                  static_cast<uint32_t>(S + InPlace),
-                                  SymOwnerVA, 4);
+            const uint32_t Folded = static_cast<uint32_t>(S + InPlace);
+            Put32(Folded);
+            if (!HasUniqueValueWriter)
+              break;
+            RecordAbsoluteField(Folded, Folded, SymOwnerVA, 4);
+            // Non-PIC code folds a lookup table's selector bias into the
+            // operand as GOTOFF does (`lea T-0x20(,%esi,4)` is the j >= 8 arm
+            // of `T[(j + 5) % 13]`), placing S+A before the symbol's rodata
+            // segment.  Anchor that exact instruction operand to the segment
+            // under the same rule; a data slot is a pointer, not a table base.
+            const Segment *SymSeg = SymOwnerVA != InvalidVA
+                                        ? Img.getSegmentFor(SymOwnerVA)
+                                        : nullptr;
+            const uint32_t AnchorBackDistance =
+                SymSeg ? static_cast<uint32_t>(SymSeg->VA) - Folded : 0;
+            if (Img.hasExecutableCodeOwnerAt(P) && SymSeg &&
+                SymSeg->isReadable() && !SymSeg->isWritable() &&
+                !Img.hasExecutableCodeOwnerAt(SymOwnerVA) &&
+                Img.hasObjectDataProvenance(static_cast<uint32_t>(S)) &&
+                !SymSeg->Data.empty() && AnchorBackDistance != 0 &&
+                AnchorBackDistance <= limits::kMaxRodataAnchorBackDistance) {
+              Img.RodataAnchorSeg[Folded] = SymSeg->VA;
+              Img.DataAddressRelocOperands[P] = {Folded, Folded, 4, SymOwnerVA};
+            }
             break;
+          }
           case R_386_PC32:
           case R_386_PLT32:
             Put32(static_cast<uint32_t>(S + InPlace - P));

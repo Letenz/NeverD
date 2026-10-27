@@ -4,10 +4,15 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../../../runtime/RuntimeValues.h"
+#include "AndroidDlfcn.h"
 #include "AndroidInternal.h"
+#include "AndroidLog.h"
+#include "AndroidObservation.h"
+#include "AndroidResolver.h"
 #include "AndroidThreads.h"
 
 #include "neverd/emulation/ExecutionSession.h"
+#include "neverd/emulation/Limits.h"
 #include "neverd/loader/ELF/ELFLoader.h"
 
 #include <set>
@@ -19,6 +24,17 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       !Options.Environment.empty())
     return failure(diagnostic::NativeOptions);
   const auto &Native = *Options.Android;
+  if (auto E = validateAuxiliaryVector(Native))
+    return std::move(E);
+  if (auto E = validateCalendar(Native))
+    return std::move(E);
+  if (auto E = validateDladdrObservations(Native.DladdrObservations))
+    return std::move(E);
+  if (Native.ResolverQueries)
+    if (auto E = validateResolverQueries(*Native.ResolverQueries))
+      return std::move(E);
+  if (auto E = validateLogRecords(Native.LogRecords))
+    return std::move(E);
   if (!Native.ThreadLimit ||
       Native.ThreadLimit > thread_model::MaximumIdentities ||
       (Native.DrainThreads && Native.ThreadLimit == 1))
@@ -43,6 +59,21 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     return Budget.takeError();
   std::shared_ptr<ExecutionBudget> Resources(std::move(*Budget));
   uint64_t ReportSize = Native.TraceLimit * 8;
+  const uint64_t CPUStateBytes =
+      sizeof(uint64_t) +
+      architectureRegisters(GuestArchitecture::AArch64).size() *
+          sizeof(RegisterValue);
+  if (Native.ObserveCPUState) {
+    if (CPUStateBytes > Options.OutputLimit - ReportSize)
+      return failure(diagnostic::SnapshotLimits);
+    ReportSize += CPUStateBytes;
+  }
+  if (Native.ObserveThreadCPUStates) {
+    const uint64_t Bytes = Native.ThreadLimit * (CPUStateBytes + sizeof(bool));
+    if (Bytes > Options.OutputLimit - ReportSize)
+      return failure(diagnostic::SnapshotLimits);
+    ReportSize += Bytes;
+  }
   if (Native.ThreadLimit > 1) {
     const uint64_t ThreadBytes = Native.ThreadLimit * thread_model::ReportBytes;
     if (ThreadBytes > Options.OutputLimit - ReportSize)
@@ -50,22 +81,46 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     ReportSize += ThreadBytes;
   }
   for (const auto &Read : Native.ReadMemory) {
+    if (Native.ObserveMemoryOnFailure || Native.ObserveMemoryAtStop) {
+      constexpr uint64_t DiagnosticBytes =
+          ::neverd::limits::emulation::kAndroidFailureMemoryDiagnosticBytes;
+      if (DiagnosticBytes > Options.OutputLimit - ReportSize)
+        return failure(diagnostic::SnapshotLimits);
+      ReportSize += DiagnosticBytes;
+    }
     if (!Read.Size || Read.Size > Options.OutputLimit - ReportSize ||
         Read.Address > UINT64_MAX - Read.Size)
       return failure(diagnostic::SnapshotLimits);
     ReportSize += Read.Size;
   }
+  if (Native.ObserveExecution) {
+    auto Bytes = executionObservationBytes(*Native.ObserveExecution,
+                                           Options.OutputLimit - ReportSize);
+    if (!Bytes)
+      return Bytes.takeError();
+    ReportSize += *Bytes;
+  }
   uint64_t SymbolCount = 0, CatalogBytes = 0;
-  if (Native.Libraries.size() > 256)
+  if (Native.LogRecords)
+    for (const auto &Record : *Native.LogRecords)
+      CatalogBytes += 28 + Record.Payload.size();
+  if (Native.Libraries.size() >
+      ::neverd::limits::emulation::kAndroidNativeRunNativeLibrariesSizeLimit)
     return failure(diagnostic::LibraryCount);
   for (const auto &[Library, Symbols] : Native.Libraries) {
-    if (Library.empty() || Library.size() > 1024 ||
+    if (Library.empty() ||
+        Library.size() > ::neverd::limits::emulation::
+                             kAndroidNativeRunNativeLibrarySizeLimit ||
         Library.find('\0') != std::string::npos)
       return failure(diagnostic::LibraryName);
     CatalogBytes += Library.size();
     std::set<std::string> Unique;
     for (const auto &Symbol : Symbols) {
-      if (++SymbolCount > 4096 || Symbol.empty() || Symbol.size() > 1024 ||
+      if (++SymbolCount > ::neverd::limits::emulation::
+                              kAndroidNativeRunNativeSymbolCountLimit ||
+          Symbol.empty() ||
+          Symbol.size() > ::neverd::limits::emulation::
+                              kAndroidNativeRunNativeSymbolSizeLimit ||
           Symbol.find('\0') != std::string::npos ||
           !Unique.insert(Symbol).second)
         return failure(diagnostic::SymbolCatalogue);
@@ -119,7 +174,12 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     if (auto E = initializeMemoryRegion(**Space, Region, *Resources))
       return std::move(E);
   }
-  for (const auto &Read : Native.ReadMemory) {
+  auto EntryReads = Native.ReadMemory;
+  if (Native.ObserveExecution)
+    EntryReads.insert(EntryReads.end(),
+                      Native.ObserveExecution->ReadMemory.begin(),
+                      Native.ObserveExecution->ReadMemory.end());
+  for (const auto &Read : EntryReads) {
     if (!Read.RequireMappedAtEntry)
       continue;
     auto Accessible = (*Space)->canAccess(Read.Address, Read.Size,
@@ -170,14 +230,28 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   if (!Session)
     return Session.takeError();
   auto &CPU = (*Session)->cpu();
+  if (Native.ObserveExecution) {
+    Result.ExecutionObservationsEnabled = true;
+    std::vector<ExecutionWatch> Watches;
+    for (uint64_t PC : Native.ObserveExecution->PCs)
+      Watches.push_back({PC, 4});
+    if (auto E = (*Session)->watchExecution(std::move(Watches)))
+      return std::move(E);
+  }
   linux_model::LinuxServices Kernel(CPU, Layout, Linked->InitialBreak, Options,
                                     Result);
-  GuestThreads Threads(CPU, *Calls, Options, Result, Kernel.clock());
+  GuestThreads Threads(CPU, *Calls, Options, Result, Kernel);
   if (auto E = Threads.initialize(StackBase))
     return std::move(E);
+  if (auto E = Kernel.initializeProc())
+    return std::move(E);
+  Kernel.setTaskProvider([&] { return Threads.procTasks(); });
   Bionic LibC(CPU, Kernel, Layout, Options, Result, *Resources, *Linked,
               &Threads);
+  if (auto E = LibC.initializeDex())
+    return std::move(E);
   size_t NextConstructor = 0;
+  uint64_t EntryReturnSP = 0;
   bool MainCall = false;
   auto Prepare = [&]() -> llvm::Error {
     std::vector<uint64_t> Arguments;
@@ -194,7 +268,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
                                     Arguments);
     if (!Frame)
       return Frame.takeError();
-    Threads.setReturnSP(Frame->ReturnStackPointer);
+    EntryReturnSP = Frame->ReturnStackPointer;
     return CPU.writeRegister(CPURegister::AArch64PC, {Result.PC, 0});
   };
   if (auto E = Prepare())
@@ -205,10 +279,15 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   };
   bool NeedSchedule = false;
   uint64_t QuantumRemaining = Options.InstructionQuantum;
+  bool ResumeObservation = false;
   auto FinishThread = [&](uint64_t Value, uint32_t ExitStatus = 0) {
     if (!Threads.callbacks().empty()) {
       Result.Stop = ProcessStopReason::UnsupportedService;
       Result.Diagnostic = diagnostic::ThreadCallbackExit;
+      return false;
+    }
+    if (auto E = LibC.jniThreadExit()) {
+      RuntimeFailure(std::move(E));
       return false;
     }
     if (auto E = Threads.finish(Value, ExitStatus)) {
@@ -254,6 +333,23 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       NeedSchedule = false;
       QuantumRemaining = Options.InstructionQuantum;
     }
+    if (!QuantumRemaining || (!Threads.enabled() && !ResumeObservation))
+      QuantumRemaining = Options.InstructionQuantum;
+    ResumeObservation = false;
+    auto Delivery = Kernel.deliverSignals(Threads.id());
+    if (!Delivery) {
+      RuntimeFailure(Delivery.takeError());
+      break;
+    }
+    if (!*Delivery)
+      break;
+    // A sigreturn can expose another pending signal before user-mode libc
+    // resumes. Convert interrupted wrapper results only after that delivery
+    // boundary, using the restored frame depth and PC.
+    if (auto E = Threads.resumeSignal(LibC)) {
+      RuntimeFailure(std::move(E));
+      break;
+    }
     if (auto E = Kernel.synchronizeDevices()) {
       RuntimeFailure(std::move(E));
       break;
@@ -261,12 +357,9 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     TraceThreadID = Threads.id();
     auto &Callbacks = Threads.callbacks();
     const uint64_t Before = Resources->instructions();
-    auto Exit = (*Session)->run(Result.PC, Threads.enabled()
-                                               ? QuantumRemaining
-                                               : Options.InstructionQuantum);
-    if (Threads.enabled())
-      QuantumRemaining -=
-          std::min(QuantumRemaining, Resources->instructions() - Before);
+    auto Exit = (*Session)->run(Result.PC, QuantumRemaining);
+    QuantumRemaining -=
+        std::min(QuantumRemaining, Resources->instructions() - Before);
     if (!Exit) {
       RuntimeFailure(Exit.takeError());
       break;
@@ -278,6 +371,29 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       break;
     }
     Result.PC = (*PC)[0];
+    if (Exit->Kind == SessionExitKind::ExecutionWatch) {
+      const auto &Observation = *Native.ObserveExecution;
+      if (Result.ExecutionObservations.size() == Observation.Limit) {
+        Result.ExecutionObservationsTruncated = true;
+        if (auto E = (*Session)->watchExecution({})) {
+          RuntimeFailure(std::move(E));
+          break;
+        }
+      } else {
+        auto Captured = captureExecutionObservation(CPU, Observation, Result.PC,
+                                                    Threads.id(),
+                                                    Resources->instructions());
+        if (!Captured) {
+          RuntimeFailure(Captured.takeError());
+          break;
+        }
+        Result.ExecutionObservations.push_back(std::move(*Captured));
+      }
+      // A read-only stop consumes neither a scheduling quantum nor a service
+      // event. Resume the watched instruction in this same thread.
+      ResumeObservation = true;
+      continue;
+    }
     if ((Exit->Kind == SessionExitKind::Quantum ||
          (Exit->Kind == SessionExitKind::CPU && Result.LastCPUExit &&
           Result.LastCPUExit->Kind == ExecutionExitKind::ServiceRequest)) &&
@@ -370,18 +486,20 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         RuntimeFailure(Value.takeError());
         break;
       }
-      if (Threads.enabled()) {
+      const bool Entry = Threads.isEntry();
+      // A child start routine's return is implicit pthread_exit(value). Its
+      // stack is not a caller frame to resume; FinishThread owns completion.
+      if (Threads.enabled() && Entry) {
         auto SP = CPU.readRegister(Calls->info().StackPointer);
         if (!SP) {
           RuntimeFailure(SP.takeError());
           break;
         }
-        if ((*SP)[0] != Threads.returnSP()) {
+        if ((*SP)[0] != EntryReturnSP) {
           RuntimeFailure(failure(diagnostic::ThreadStack));
           break;
         }
       }
-      const bool Entry = Threads.isEntry();
       if (Entry)
         Result.ReturnValue = (*Value)[0];
       if (!Threads.enabled() || (Entry && !Native.DrainThreads)) {
@@ -399,6 +517,16 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     auto Import = Linked->Imports.find(Request->PC);
     if (Request->Immediate == ModelTrap && Import != Linked->Imports.end()) {
       NativeCallEvent Event{Request->PC, Import->second};
+      if (Options.LinuxFiles && Options.LinuxFiles->IoctlTrace &&
+          (Event.Name == "ioctl" || Event.Name == "syscall")) {
+        // AArch64 reads the link register, not guest stack memory. Missing
+        // observation must not change the native call's result.
+        auto Return = Calls->readReturnAddress(CPU, 0);
+        if (Return)
+          Event.ReturnAddress = *Return;
+        else
+          llvm::consumeError(Return.takeError());
+      }
       if (Threads.enabled())
         Event.ThreadID = Threads.id();
       auto Provider = Linked->DynamicProviders.find(Request->PC);
@@ -424,6 +552,8 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
           Result.Stop = ProcessStopReason::Timeout;
         break;
       }
+      if (Kernel.takeSignalRestore())
+        continue;
       if (!*Value && Threads.kernel() && Threads.kernel()->Exit) {
         if (!FinishThread(0, *Threads.kernel()->Exit))
           break;
@@ -493,12 +623,14 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         RuntimeFailure(Value.takeError());
         break;
       }
+      if (Kernel.takeSignalRestore())
+        continue;
       if (!*Value && Threads.kernel() && Threads.kernel()->Exit) {
         if (!FinishThread(0, *Threads.kernel()->Exit))
           break;
         continue;
       }
-      if (!*Value && Threads.waitSleep()) {
+      if (!*Value && Threads.waitKernel()) {
         Threads.suspend(*Request, Result.Services.size() - 1,
                         GuestThreads::WaitSource::KernelService);
         NeedSchedule = true;
@@ -517,10 +649,32 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   Result.Instructions = Resources->instructions();
   Result.Events = Resources->events();
   Threads.report();
-  // A terminal CPU fault can prohibit model memory access. Preserve that
-  // original failure; memory snapshots are produced only at resumable stops.
-  if (Result.Stop != ProcessStopReason::CPUFailure &&
-      Result.Stop != ProcessStopReason::RuntimeFailure) {
+  LibC.reportJNIState();
+  // Guest/model reads can be prohibited after a terminal fault. Explicit
+  // forensic snapshots use the existing stopped-RAM owner, without executing
+  // device callbacks, changing permissions or replacing the original stop.
+  const bool Failed = Result.Stop == ProcessStopReason::CPUFailure ||
+                      Result.Stop == ProcessStopReason::RuntimeFailure;
+  if (Native.ObserveMemoryAtStop || (Failed && Native.ObserveMemoryOnFailure)) {
+    constexpr size_t DiagnosticBytes =
+        ::neverd::limits::emulation::kAndroidFailureMemoryDiagnosticBytes;
+    const llvm::StringRef Suffix(diagnostic::SnapshotDiagnosticTruncated);
+    static_assert(DiagnosticBytes >
+                  sizeof(diagnostic::SnapshotDiagnosticTruncated));
+    for (const auto &Read : Native.ReadMemory) {
+      NativeMemorySnapshot Snapshot{Read.Address,
+                                    std::vector<uint8_t>(Read.Size)};
+      if (auto E = CPU.snapshotBacking(Read.Address, Snapshot.Bytes)) {
+        Snapshot.Bytes.clear();
+        Snapshot.Diagnostic = llvm::toString(std::move(E));
+        if (Snapshot.Diagnostic.size() > DiagnosticBytes) {
+          Snapshot.Diagnostic.resize(DiagnosticBytes - Suffix.size());
+          Snapshot.Diagnostic += Suffix.str();
+        }
+      }
+      Result.MemorySnapshots.push_back(std::move(Snapshot));
+    }
+  } else if (!Failed) {
     for (const auto &Read : Native.ReadMemory) {
       auto Access = CPU.canAccess(Read.Address, Read.Size,
                                   emulation::Read | UserAccessible);
@@ -541,6 +695,17 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       Result.MemorySnapshots.push_back(std::move(Snapshot));
     }
   }
+  if (Native.ObserveCPUState) {
+    auto &State = Result.CPUState.emplace();
+    State.ThreadID = Threads.id();
+    auto Registers = CPU.readRegisters();
+    if (Registers)
+      State.Registers = std::move(*Registers);
+    else
+      State.Diagnostic = llvm::toString(Registers.takeError());
+  }
+  if (Native.ObserveThreadCPUStates)
+    Result.ThreadCPUStates = Threads.observeCPUStates();
   return Result;
 }
 } // namespace neverd::emulation::android_model

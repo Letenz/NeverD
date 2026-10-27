@@ -1,21 +1,49 @@
+//===- MedConstantPropagation.cpp - Stable MedIR value propagation --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file Propagates invariant SSA constants and their width-view origins.
+///
+//===----------------------------------------------------------------------===//
+
 #include "neverd/ir/med/MedConstantPropagation.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <deque>
+#include <map>
 #include <optional>
+#include <set>
 #include <tuple>
+#include <utility>
+#include <vector>
 
 namespace neverd {
 namespace {
 using Key = std::tuple<MedVar::VarKind, int, int>;
+// Constant operands never enter the definition map. Reserve that kind for
+// sentinels so every nonconstant id/SSA version, including INT_MAX, stays
+// legal.
+struct ConstantKeyInfo : llvm::DenseMapInfo<Key> {
+  static constexpr Key getEmptyKey() { return {MedVar::Const, -1, -1}; }
+  static constexpr Key getTombstoneKey() { return {MedVar::Const, -2, -2}; }
+};
 Key key(const MedVar &Value) { return {Value.Kind, Value.Id, Value.SSAVer}; }
 
 enum class Knowledge { Pending, Constant, Varying };
 struct ConstantNode {
   MedVar Output;
   std::vector<MedVar> Inputs;
-  std::vector<Key> Users;
+  llvm::SmallVector<ConstantNode *, 1> Users;
   Knowledge State = Knowledge::Pending;
   MedVar Value;
   bool Queued = false;
@@ -51,36 +79,75 @@ std::optional<MedVar> viewOfConstant(NdOp View, uint64_t ViewOffset,
 }
 } // namespace
 
+std::optional<bool> selfComparisonConstant(NdOp Opcode, const MedVar &A,
+                                           const MedVar &B) {
+  if ((A.Kind != MedVar::Reg && A.Kind != MedVar::Temp &&
+       A.Kind != MedVar::Param && A.Kind != MedVar::Const) ||
+      (!A.isConst() && A.Id < 0) || !A.Size || A.Size != B.Size || A != B)
+    return std::nullopt;
+  switch (Opcode) {
+  case NdOp::INT_EQUAL:
+  case NdOp::INT_LESSEQUAL:
+  case NdOp::INT_SLESSEQUAL:
+    return true;
+  case NdOp::INT_NOTEQUAL:
+  case NdOp::INT_LESS:
+  case NdOp::INT_SLESS:
+  case NdOp::INT_SBOR:
+    return false;
+  default:
+    return std::nullopt;
+  }
+}
+
+namespace {
+bool hasCompleteOrdinaryPredecessors(const MedBlock &Block,
+                                     const std::set<int> &Incoming) {
+  if (Block.Preds.empty() || Block.Preds.size() != Incoming.size())
+    return false;
+  llvm::SmallVector<int, 4> Predecessors(Block.Preds.begin(),
+                                         Block.Preds.end());
+  std::sort(Predecessors.begin(), Predecessors.end());
+  return std::equal(Predecessors.begin(), Predecessors.end(), Incoming.begin());
+}
+
+bool hasCompleteOrdinaryPhiArguments(const PhiNode &Phi,
+                                     const std::set<int> &Incoming) {
+  if (Phi.ExceptionalEntry || !Phi.Output.Size ||
+      Phi.Args.size() != Incoming.size())
+    return false;
+  llvm::SmallVector<int, 4> Edges;
+  for (const auto &[Pred, Value] : Phi.Args) {
+    if (Value.Size != Phi.Output.Size)
+      return false;
+    Edges.push_back(Pred);
+  }
+  std::sort(Edges.begin(), Edges.end());
+  // Equality with the unique incoming edges also rejects duplicate arguments.
+  return std::equal(Edges.begin(), Edges.end(), Incoming.begin());
+}
+} // namespace
+
 bool hasCompleteOrdinaryPhiInputs(const MedBlock &Block, const PhiNode &Phi,
                                   const std::set<int> &Incoming) {
-  if (Phi.ExceptionalEntry || !Phi.Output.Size || Block.Preds.empty() ||
-      Block.Preds.size() != Incoming.size() ||
-      Phi.Args.size() != Block.Preds.size())
-    return false;
-  const std::set<int> Predecessors(Block.Preds.begin(), Block.Preds.end());
-  if (Predecessors.size() != Block.Preds.size() || Predecessors != Incoming ||
-      Phi.Args.size() != Predecessors.size())
-    return false;
-  std::set<int> Edges;
-  for (const auto &[Pred, Value] : Phi.Args)
-    if (Value.Size != Phi.Output.Size || !Predecessors.count(Pred) ||
-        !Edges.insert(Pred).second)
-      return false;
-  return Edges == Predecessors;
+  return hasCompleteOrdinaryPredecessors(Block, Incoming) &&
+         hasCompleteOrdinaryPhiArguments(Phi, Incoming);
 }
 
 bool propagateInvariantConstants(MedFunc &Func) {
-  constexpr size_t MaxDefinitions = 65536;
-  if (Func.Blocks.size() > MaxDefinitions)
+  if (Func.Blocks.size() >
+      ::neverd::limits::ir::kMedConstantPropagationMaxDefinitions)
     return false;
-  size_t Budget = 1000000;
+  size_t Budget = ::neverd::limits::ir::
+      kMedConstantPropagationPropagateInvariantConstantsBudget;
   size_t Definitions = 0;
   std::map<int, const MedBlock *> Blocks;
   std::map<int, std::set<int>> Incoming;
   for (const auto &Block : Func.Blocks) {
     Definitions += Block.Ops.size() + Block.Phis.size();
-    if (Definitions > MaxDefinitions || Block.Id < 0 ||
-        !Blocks.emplace(Block.Id, &Block).second ||
+    if (Definitions >
+            ::neverd::limits::ir::kMedConstantPropagationMaxDefinitions ||
+        Block.Id < 0 || !Blocks.emplace(Block.Id, &Block).second ||
         !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
       return false;
     for (int Successor : Block.Succs) {
@@ -93,12 +160,23 @@ bool propagateInvariantConstants(MedFunc &Func) {
     if (!Blocks.count(Id))
       return false;
 
-  std::map<Key, ConstantNode> Nodes;
+  // Keep the large nodes outside the hash table: resizing the SSA index need
+  // only move keys and positions, while node storage stays contiguous.
+  llvm::DenseMap<Key, size_t, ConstantKeyInfo> DefinitionIndex;
+  std::vector<ConstantNode> Nodes;
+  Nodes.reserve(Definitions);
+  auto Find = [&](const MedVar &Value) -> ConstantNode * {
+    auto It = DefinitionIndex.find(key(Value));
+    return It == DefinitionIndex.end() ? nullptr : &Nodes[It->second];
+  };
   auto Add = [&](const MedVar &Output, std::vector<MedVar> Inputs, bool Valid) {
     if (Output.isConst() || Output.Id < 0 || !Output.Size)
       return;
-    auto [It, Inserted] = Nodes.try_emplace(key(Output));
-    auto &Node = It->second;
+    auto [It, Inserted] =
+        DefinitionIndex.try_emplace(key(Output), Nodes.size());
+    if (Inserted)
+      Nodes.emplace_back();
+    auto &Node = Nodes[It->second];
     if (!Inserted) {
       Node.State = Knowledge::Varying;
       Node.Inputs.clear();
@@ -110,17 +188,23 @@ bool propagateInvariantConstants(MedFunc &Func) {
       Node.State = Knowledge::Varying;
   };
   for (const auto &Block : Func.Blocks) {
-    for (const auto &Phi : Block.Phis) {
-      if (Phi.Args.size() > Budget)
-        return false;
-      Budget -= Phi.Args.size();
-      std::vector<MedVar> Values;
-      for (const auto &[Predecessor, Value] : Phi.Args) {
-        Values.push_back(Value);
+    if (!Block.Phis.empty()) {
+      const auto &Predecessors = Incoming[Block.Id];
+      // Every PHI in this block shares the same control-flow predecessors.
+      // Prove that invariant once, then check each PHI's own arguments.
+      const bool Complete =
+          hasCompleteOrdinaryPredecessors(Block, Predecessors);
+      for (const auto &Phi : Block.Phis) {
+        if (Phi.Args.size() > Budget)
+          return false;
+        Budget -= Phi.Args.size();
+        std::vector<MedVar> Values;
+        for (const auto &[Predecessor, Value] : Phi.Args)
+          Values.push_back(Value);
+        // The dispatcher's entry brings a value no predecessor supplies.
+        Add(Phi.Output, std::move(Values),
+            Complete && hasCompleteOrdinaryPhiArguments(Phi, Predecessors));
       }
-      // The dispatcher's entry brings a value no predecessor supplies.
-      Add(Phi.Output, std::move(Values),
-          hasCompleteOrdinaryPhiInputs(Block, Phi, Incoming[Block.Id]));
     }
     for (const auto &Op : Block.Ops) {
       if (Op.NumInputs > Op.Inputs.size())
@@ -146,36 +230,46 @@ bool propagateInvariantConstants(MedFunc &Func) {
       Add(Op.Output,
           Tracked ? std::vector{Op.Inputs[0]} : std::vector<MedVar>{}, Tracked);
       if ((Extend || Slice) && !Op.Output.isConst() && Op.Output.Id >= 0)
-        if (auto It = Nodes.find(key(Op.Output)); It != Nodes.end()) {
-          It->second.View = Op.Opcode;
-          It->second.ViewOffset = Slice ? Op.Inputs[1].ConstVal : 0;
+        if (auto *Node = Find(Op.Output)) {
+          Node->View = Op.Opcode;
+          Node->ViewOffset = Slice ? Op.Inputs[1].ConstVal : 0;
         }
     }
   }
 
-  std::deque<Key> Work;
-  auto Enqueue = [&](const Key &Id) {
-    auto &Node = Nodes.at(Id);
-    if (!Node.Queued) {
-      Node.Queued = true;
-      Work.push_back(Id);
+  // No nodes are inserted after this point, so their addresses stay stable.
+  // Preserve the ordered-map visitation order, including users and pending
+  // cycles: it also determines when the existing shared budget is exhausted.
+  std::vector<ConstantNode *> Ordered;
+  Ordered.reserve(Nodes.size());
+  for (auto &Node : Nodes)
+    Ordered.push_back(&Node);
+  std::sort(Ordered.begin(), Ordered.end(), [](const auto *A, const auto *B) {
+    return key(A->Output) < key(B->Output);
+  });
+  std::deque<ConstantNode *> Work;
+  auto Enqueue = [&](ConstantNode *Node) {
+    if (!Node->Queued) {
+      Node->Queued = true;
+      Work.push_back(Node);
     }
   };
-  for (auto &[Id, Node] : Nodes) {
+  for (auto *Item : Ordered) {
+    auto &Node = *Item;
     for (const auto &Input : Node.Inputs) {
       if (!Budget--)
         return false;
       if (!Input.isConst())
-        if (auto It = Nodes.find(key(Input)); It != Nodes.end())
-          It->second.Users.push_back(Id);
+        if (auto *Definition = Find(Input))
+          Definition->Users.push_back(&Node);
     }
-    Enqueue(Id);
+    Enqueue(&Node);
   }
   auto Drain = [&] {
     while (!Work.empty()) {
       if (!Budget--)
         return false;
-      auto &Node = Nodes.at(Work.front());
+      auto &Node = *Work.front();
       Work.pop_front();
       Node.Queued = false;
       if (Node.State == Knowledge::Varying)
@@ -191,15 +285,15 @@ bool propagateInvariantConstants(MedFunc &Func) {
         }
         const MedVar *Constant = &Input;
         if (!Input.isConst()) {
-          const auto It = Nodes.find(key(Input));
-          if (It == Nodes.end() || It->second.Output.Size != Input.Size ||
-              It->second.State == Knowledge::Varying) {
+          const auto *Definition = Find(Input);
+          if (!Definition || Definition->Output.Size != Input.Size ||
+              Definition->State == Knowledge::Varying) {
             State = Knowledge::Varying;
             break;
           }
-          if (It->second.State == Knowledge::Pending)
+          if (Definition->State == Knowledge::Pending)
             continue;
-          Constant = &It->second.Value;
+          Constant = &Definition->Value;
         }
         const std::optional<MedVar> Viewed =
             Node.View == NdOp::COPY
@@ -230,12 +324,14 @@ bool propagateInvariantConstants(MedFunc &Func) {
   // An unseeded cycle cannot contribute a defined value. Make every remaining
   // pending component opaque, then invalidate any provisional constants that
   // depended on it. No operand is changed before both fixed points converge.
-  for (auto &[Id, Node] : Nodes)
+  for (auto *Item : Ordered) {
+    auto &Node = *Item;
     if (Node.State == Knowledge::Pending) {
       Node.State = Knowledge::Varying;
       for (const auto &User : Node.Users)
         Enqueue(User);
     }
+  }
   if (!Drain())
     return false;
 
@@ -248,23 +344,26 @@ bool propagateInvariantConstants(MedFunc &Func) {
   // - a shift or a multiplication: a shifted word reads as an int literal in
   //   C (`(uint32_t)(0 >> 32)`), and a scaled index keeps the selector of the
   //   jump table it addresses.
-  for (bool Grew = true; Grew;) {
-    Grew = false;
-    for (auto &[Id, Node] : Nodes) {
-      if (Node.FromView)
-        continue;
-      bool FromView = Node.View != NdOp::COPY;
-      for (const auto &Input : Node.Inputs) {
-        if (!Budget--)
-          return false;
-        if (!Input.isConst())
-          if (auto It = Nodes.find(key(Input));
-              It != Nodes.end() && It->second.FromView)
-            FromView = true;
-      }
-      if (FromView) {
-        Node.FromView = true;
-        Grew = true;
+  // The value solver has drained Work. Reuse its dependency graph to visit
+  // each reachable node and use edge once, including cycles and shared tails.
+  // Rescanning every input would take quadratic work on a reverse-ID chain.
+  for (auto *Node : Ordered) {
+    if (Node->View != NdOp::COPY) {
+      Node->FromView = true;
+      Work.push_back(Node);
+    }
+  }
+  while (!Work.empty()) {
+    if (!Budget--)
+      return false;
+    auto *Node = Work.front();
+    Work.pop_front();
+    for (auto *User : Node->Users) {
+      if (!Budget--)
+        return false;
+      if (!User->FromView) {
+        User->FromView = true;
+        Work.push_back(User);
       }
     }
   }
@@ -273,12 +372,12 @@ bool propagateInvariantConstants(MedFunc &Func) {
   auto Replace = [&](MedVar &Input, bool Numeric, bool KeepsViews) {
     if (Input.isConst())
       return;
-    auto It = Nodes.find(key(Input));
-    if (It == Nodes.end() || It->second.State != Knowledge::Constant ||
-        It->second.Output.Size != Input.Size ||
-        (KeepsViews && It->second.FromView))
+    const auto *Definition = Find(Input);
+    if (!Definition || Definition->State != Knowledge::Constant ||
+        Definition->Output.Size != Input.Size ||
+        (KeepsViews && Definition->FromView))
       return;
-    Input = It->second.Value;
+    Input = Definition->Value;
     if (Numeric && Input.Provenance == ConstantAddressProvenance::Unknown)
       Input.Provenance = ConstantAddressProvenance::Scalar;
     Changed = true;

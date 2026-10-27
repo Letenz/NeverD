@@ -59,6 +59,12 @@ enum class PDBIdentityState : uint8_t { Absent, Unique, Ambiguous };
 // ===--------------------------------------------------------------------===//
 
 struct DynamicInfo {
+  /// Original PE header facts, also retained by restricted loads without Raw.
+  /// No subsystem is invented for a relocatable COFF object.
+  std::optional<uint16_t> PESubsystem;
+  uint16_t PECharacteristics = 0;
+  /// Original Mach-O file type, distinct from its build platform.
+  std::optional<uint32_t> MachOFileType;
   std::string SOName;
   std::vector<std::string> NeededLibs;
   std::vector<std::string> RPaths;
@@ -86,6 +92,10 @@ struct DynamicInfo {
 
   /// Mach-O: LC_BUILD_VERSION min OS version string (e.g. "14.0.0").
   std::string MinOSVersion;
+
+  /// Mach-O: the platforms (llvm::MachO::PlatformType) its build version
+  /// commands name, in order (machOCommandPlatform, MachOPlatform.h).
+  std::vector<uint32_t> MachOPlatforms;
 
   /// PE/COFF: security cookie RVA from Load Configuration directory.
   va_t SecurityCookieRVA = 0;

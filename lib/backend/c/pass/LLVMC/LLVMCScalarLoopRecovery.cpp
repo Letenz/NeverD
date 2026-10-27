@@ -6,6 +6,7 @@
 
 #include "LLVMCScalarLoopRecovery.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 
 #include "llvm/Analysis/LoopInfo.h"
@@ -20,7 +21,9 @@ using namespace llvm;
 // This only bounds and filters discovery. The shared scalar importer owns
 // admission, definedness and the input contract; this scan authorizes nothing.
 bool hasScalarLoop(Function &F, uint64_t &ScanWork) {
-  if (F.isDeclaration() || F.isVarArg() || F.size() > 1024 ||
+  if (F.isDeclaration() || F.isVarArg() ||
+      F.size() > ::neverd::limits::backend::
+                     kLLVMCScalarLoopRecoveryHasScalarLoopFSizeLimit ||
       !F.getReturnType()->isIntegerTy() || F.hasMetadata() ||
       F.hasPersonalityFn())
     return false;
@@ -105,8 +108,10 @@ recoverScalarLoops(llvm::Module &Module, const llvm::Function *Only,
   if (Module.getNamedMetadata(windows_eh_md::FunctionTable))
     return 0;
   auto Remaining = Limits;
-  uint64_t ScanWork =
-      std::min<uint64_t>(65536, Limits.Search.MaxConstructionWork);
+  uint64_t ScanWork = std::min<uint64_t>(
+      ::neverd::limits::backend::
+          kLLVMCScalarLoopRecoveryRecoverScalarLoopsScanWorkMinArgument1,
+      Limits.Search.MaxConstructionWork);
   SmallVector<Function *, 16> Functions;
   if (Only) {
     if (Only->getParent() != &Module)

@@ -104,6 +104,38 @@ DECOMPILE_TEST(GlobalVolatile, "test_global_volatile.o")
 
 #undef DECOMPILE_TEST
 
+// MinGW-w64's startup code guards its call with a scope that resumes at the
+// `nop` the call falls into, and the callee's _fpreset carries x87 state back
+// across the call. The x87 context handle must not keep the establisher frame
+// from being proved, and the __except arm must not jump to a label that no
+// statement carries.
+TEST_F(X86_64_PipelineE2E, DecompileC_MinGWStartupSEHWithX87Callee) {
+  const auto PE = obj("test_mingw_startup_seh.exe");
+  if (!fs::exists(PE))
+    GTEST_SKIP() << "MinGW-style SEH fixture not built (lld-link unavailable)";
+  const auto Whole = decompileToHighC(PE);
+  ASSERT_EQ(Whole.exitCode, 0) << Whole.err;
+
+  const auto Out = tmpFile("mingw_entry.c");
+  const auto R = exec(ndBin(), {"decompile", "--func", "mingw_entry", "-o",
+                                Out.string(), PE.string()});
+  ASSERT_EQ(R.exitCode, 0) << R.err;
+  std::ifstream Input(Out);
+  ASSERT_TRUE(Input.good());
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+  EXPECT_NE(C.find("__try {"), std::string::npos) << C;
+  EXPECT_NE(C.find("} __except ("), std::string::npos) << C;
+  // The handle the x87 state travels in, the temporary the proof admits.
+  EXPECT_NE(C.find("neverd_x87_export_context"), std::string::npos) << C;
+  const std::regex Goto(R"(goto (L_[0-9A-F]+);)");
+  for (auto It = std::sregex_iterator(C.begin(), C.end(), Goto);
+       It != std::sregex_iterator(); ++It)
+    EXPECT_NE(C.find((*It)[1].str() + ":"), std::string::npos)
+        << (*It)[1].str() << " has no label:\n"
+        << C;
+}
+
 TEST_F(X86_64_PipelineE2E,
        DecompileC_InteriorCodeAddressRefusesWithoutReplacingOutput) {
   for (bool NoOpt : {false, true})

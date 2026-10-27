@@ -16,13 +16,13 @@
 #ifndef NEVERD_LOADER_EXCEPTIONFUNCTION_H
 #define NEVERD_LOADER_EXCEPTIONFUNCTION_H
 
+#include "neverd/loader/ARM/LanguageEHARM.h"
 #include "neverd/loader/ExceptionCommon.h"
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionModel.h"
 #include "neverd/loader/ExceptionPersonality.h"
 #include "neverd/loader/ExceptionUnwindOp.h"
 #include "neverd/loader/ExceptionWindowsEH.h"
-#include "neverd/loader/LanguageEHARM.h"
 #include "neverd/loader/LanguageEHCompact.h"
 #include "neverd/loader/LanguageEHDelphi.h"
 #include "neverd/loader/LanguageEHDwarf.h"
@@ -199,6 +199,17 @@ struct ExceptionFunction {
     return SEH.has_value() || Cxx.has_value() || Itanium.has_value() ||
            Registration.has_value() || Delphi.has_value() ||
            DelphiScopes.has_value() || Go.has_value() || GSCookie.has_value();
+  }
+
+  /// True when this record only says how to unwind the frame: it is fully
+  /// parsed and names no personality routine, handler data or language table,
+  /// so no handler or cleanup of this function runs during an unwind.
+  bool describesUnwindOnly() const {
+    return ParseStatus == ExceptionParseStatus::Complete &&
+           !hasLanguageTable() && !Rust && !ObjC &&
+           Personality == ExceptionPersonality::None && PersonalityVA == 0 &&
+           PersonalityName.empty() && HandlerDataVA == 0 &&
+           (!Dwarf || Dwarf->LSDAVA == 0);
   }
 
   bool canRegenerateLanguageMetadata() const {

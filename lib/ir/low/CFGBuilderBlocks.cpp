@@ -16,8 +16,10 @@
 
 #include "X86/RegistrationJumpRuntime.h"
 #include "X86/RegistrationSEHControl.h"
+#include "X86/RegistrationTryLevel.h"
 
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/loader/COFF/COFFCxxEpilogue.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/Support/ErrorHandling.h"
@@ -75,7 +77,8 @@ void detail::mergeRelativeRelocationRootSources(
 
 void CFGBuilder::splitBlocks() {
   const ExceptionFunction *EH =
-      CurrentImg ? CurrentImg->ExceptionMetadata.findFunction(CurrentFuncEntry)
+      CurrentImg ? registration_state::installedRegistration(*CurrentImg,
+                                                             CurrentFuncEntry)
                  : nullptr;
   const bool Registration =
       CurrentImg && CurrentImg->Arch == Arch::X86 && EH && EH->Registration;
@@ -88,6 +91,12 @@ void CFGBuilder::splitBlocks() {
                  Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS;
         }))
       BlockStarts.insert(Addr + Rec.Size);
+    if (Registration && EH->Cxx &&
+        registration_state::stateStoreCandidate(*EH->Registration, Rec.Ops))
+      BlockStarts.insert(Addr + Rec.Size);
+    if (Registration && EH->Cxx && Rec.IsCall && !Rec.IsIndirect &&
+        coff_loader::getCheckedX86CxxEpilogueCall(*CurrentImg, *EH, Addr))
+      BlockStarts.insert(Addr + Rec.Size);
     if (Registration && !EH->Cxx &&
         (EH->Encoding == ExceptionEncoding::X86ScopeTableEH3 ||
          EH->Encoding == ExceptionEncoding::X86ScopeTableEH4) &&
@@ -95,9 +104,8 @@ void CFGBuilder::splitBlocks() {
         !Rec.IsNoReturnCall && !Rec.IsInstructionGuard &&
         Rec.Mode == InstructionMode::Default &&
         Rec.TargetMode == LowInstructionTargetMode::Preserve &&
-        ((EH->Encoding == ExceptionEncoding::X86ScopeTableEH3 &&
-          registration_state::isEH3JumpRuntimeInstruction(*CurrentImg, Addr,
-                                                          Rec.Size, Rec.Ops)) ||
+        (registration_state::isSEHJumpRuntimeInstruction(*CurrentImg, Addr,
+                                                         Rec.Size, Rec.Ops) ||
          registration_state::isSEHFinallyCallInstruction(
              *CurrentImg, *EH->Registration, Addr, Rec.Size, Rec.Ops)))
       BlockStarts.insert(Addr + Rec.Size);
@@ -225,31 +233,38 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
   // entry survives unconditionally — the function is defined by it.
   std::vector<va_t> Starts;
   Starts.reserve(BlockStarts.size());
+  // Filtering the ordered BlockStarts set preserves address order.
   for (va_t Start : BlockStarts)
     if (Start == Func.Entry || Insns.count(Start))
       Starts.push_back(Start);
-  std::sort(Starts.begin(), Starts.end());
 
+  // Owner reachability needs instruction membership and ordinary edges.
+  // Only the last boundary of each provisional block is needed to link its
+  // successors. This control view is never published; final blocks materialize
+  // all retained boundaries and LowOps after instruction filtering below.
   std::map<va_t, int> AddrToBlock;
+  std::map<va_t, int> InsnToBlock;
   for (size_t I = 0; I < Starts.size(); ++I) {
     LowBlock Blk;
     Blk.Id = static_cast<int>(I);
     Blk.StartAddr = Starts[I];
 
     va_t End = (I + 1 < Starts.size()) ? Starts[I + 1] : InvalidVA;
+    const InsnRecord *Last = nullptr;
 
     for (auto It = Insns.lower_bound(Starts[I]); It != Insns.end(); ++It) {
       if (It->first >= End)
         break;
-      const uint64_t FirstOp = static_cast<uint64_t>(Blk.Ops.size());
-      for (auto &Op : It->second.Ops)
-        Blk.Ops.push_back(Op);
-      Blk.InstructionBoundaries.push_back(
-          makeInstructionBoundary(It->second, FirstOp));
+      // The hint accelerates ordered records; assignment still preserves the
+      // last block for repeated or out-of-order record addresses.
+      InsnToBlock.insert_or_assign(InsnToBlock.end(), It->second.Addr, Blk.Id);
+      Last = &It->second;
       Blk.EndAddr = It->first + It->second.Size;
     }
+    if (Last)
+      Blk.InstructionBoundaries.push_back(makeInstructionBoundary(*Last, 0));
 
-    AddrToBlock[Starts[I]] = Blk.Id;
+    AddrToBlock.emplace_hint(AddrToBlock.end(), Starts[I], Blk.Id);
     Func.Blocks.push_back(std::move(Blk));
   }
 
@@ -265,10 +280,6 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
   // before exceptional edges and jump-table metadata are published.
   std::vector<bool> Reachable(Func.Blocks.size(), false);
   std::queue<int> Worklist;
-  std::map<va_t, int> InsnToBlock;
-  for (const LowBlock &Block : Func.Blocks)
-    for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries)
-      InsnToBlock[Boundary.Address] = Block.Id;
   auto Flood = [&] {
     while (!Worklist.empty()) {
       const int Block = Worklist.front();
@@ -287,7 +298,8 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
     for (const auto &[InsnAddr, BlockId] : InsnToBlock)
       if (BlockId >= 0 && BlockId < static_cast<int>(Reachable.size()) &&
           Reachable[BlockId])
-        CurrentReachableInsns.insert(InsnAddr);
+        CurrentReachableInsns.emplace_hint(CurrentReachableInsns.end(),
+                                           InsnAddr);
   };
   // Resolve conditional code roots and inline-table ownership together.  A
   // purely additive closure is order-dependent: adding a code root can make a
@@ -387,33 +399,7 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
       break;
   }
 
-  if (std::find(Reachable.begin(), Reachable.end(), false) != Reachable.end()) {
-    std::vector<int> OldToNew(Func.Blocks.size(), -1);
-    std::vector<LowBlock> Pruned;
-    Pruned.reserve(static_cast<size_t>(
-        std::count(Reachable.begin(), Reachable.end(), true)));
-    for (size_t Old = 0; Old < Func.Blocks.size(); ++Old) {
-      if (!Reachable[Old])
-        continue;
-      OldToNew[Old] = static_cast<int>(Pruned.size());
-      Pruned.push_back(std::move(Func.Blocks[Old]));
-    }
-    for (LowBlock &Block : Pruned) {
-      std::vector<int> Succs;
-      Succs.reserve(Block.Succs.size());
-      for (int Succ : Block.Succs)
-        if (Succ >= 0 && Succ < static_cast<int>(OldToNew.size()) &&
-            OldToNew[Succ] >= 0)
-          Succs.push_back(OldToNew[Succ]);
-      Block.Succs = std::move(Succs);
-      Block.Preds.clear();
-      Block.Id = OldToNew[Block.Id];
-    }
-    for (LowBlock &Block : Pruned)
-      for (int Succ : Block.Succs)
-        Pruned[Succ].Preds.push_back(Block.Id);
-    Func.Blocks = std::move(Pruned);
-  }
+  Func.Blocks.clear();
 
   // Relative code relocations carry S+A-P in each physical slot.  During
   // speculative table recovery the relocation coordinate P+(S+A-P) can be
@@ -421,7 +407,7 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
   // dispatches through its base.  If that coordinate lands inside a real
   // instruction, forming blocks before removing the stale root makes the real
   // case fall through into the overlapping decode stream and defeats the
-  // block-level reachability pruning above.
+  // block-level reachability view above.
   //
   // Build a final, instruction-level view instead.  Relocation evidence is
   // source-counted: a root is hidden only when every absolute or relative
@@ -433,6 +419,40 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
   detail::mergeRelativeRelocationRootSources(RelativeRelocationRootSourceCache,
                                              BlockStarts,
                                              FinalRelocationRootSources);
+  auto SuppressionRelocationRootSources = FinalRelocationRootSources;
+  // Inline absolute tables do not seed discovery: their enclosing executable
+  // range may belong to another function. Once their targets are decoded,
+  // however, retain every source for final ownership arbitration. Otherwise a
+  // table-only CodeRefTarget survives in downstream entry-state analysis even
+  // though this CFG has consumed its exact slots. These extra sources only
+  // qualify suppression; they must not seed otherwise unreachable table arms.
+  if (CurrentImg && CurrentFuncRange) {
+    std::map<va_t, std::set<va_t>> AbsoluteSources;
+    if (!AbsoluteRelocationRoots ||
+        !AbsoluteRelocationRoots->collectSources(
+            *CurrentImg, CurrentFuncRange->first, CurrentFuncRange->second,
+            AbsoluteSources)) {
+      const detail::AbsoluteRelocationRootIndex LocalIndex(*CurrentImg);
+      LocalIndex.collectSources(*CurrentImg, CurrentFuncRange->first,
+                                CurrentFuncRange->second, AbsoluteSources);
+    }
+    for (const auto &[Target, Sources] : AbsoluteSources) {
+      if (!Insns.count(Target))
+        continue;
+      for (va_t Slot : Sources)
+        if (CurrentImg->hasExecutableCodeOwnerAt(Slot, ExecutableCodeOwners))
+          SuppressionRelocationRootSources[Target].insert(Slot);
+    }
+    // An actual address operand is a separate source even when an inline
+    // table also points at its target. Loader reclassification has removed
+    // proved inline table fields from this operand inventory.
+    for (const auto &[Slot, Field] : CurrentImg->CodeAddressRelocOperands) {
+      const va_t Target = normalizeCodeAddress(Field.TargetVA, CurrentImg->Arch,
+                                               CurrentImg->Mode);
+      if (Insns.count(Target))
+        SuppressionRelocationRootSources[Target].insert(Slot);
+    }
+  }
 
   struct EffectiveCFGView {
     std::set<va_t> ReachableInsns;
@@ -498,7 +518,7 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
       }
     }
 
-    for (const auto &[Root, Sources] : FinalRelocationRootSources) {
+    for (const auto &[Root, Sources] : SuppressionRelocationRootSources) {
       if (DurableCFGRoots.count(Root) || Sources.empty())
         continue;
       if (std::all_of(Sources.begin(), Sources.end(), [&](va_t Slot) {
@@ -661,8 +681,6 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
       continue;
     EffectiveStarts.push_back(Start);
   }
-  std::sort(EffectiveStarts.begin(), EffectiveStarts.end());
-
   Func.Blocks.clear();
   std::map<va_t, int> EffectiveAddrToBlock;
   for (size_t I = 0; I < EffectiveStarts.size(); ++I) {
@@ -684,7 +702,8 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
           makeInstructionBoundary(It->second, FirstOp));
       Block.EndAddr = It->first + It->second.Size;
     }
-    EffectiveAddrToBlock[Block.StartAddr] = Block.Id;
+    EffectiveAddrToBlock.emplace_hint(EffectiveAddrToBlock.end(),
+                                      Block.StartAddr, Block.Id);
     Func.Blocks.push_back(std::move(Block));
   }
   linkSuccessors(Func, EffectiveAddrToBlock);
@@ -753,7 +772,9 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
   }
   linkExceptionalSuccessors(Func);
   extractJumpTables(Func);
-  fixupFpuStack(Func);
+  resolveAArch64PAuthPrefixes(Func);
+  resolveX86BoundedLeaves(Func);
+  fixupFpuStack(Func, FinalView.SuppressedRelocationRoots);
 }
 
 //===----------------------------------------------------------------------===//

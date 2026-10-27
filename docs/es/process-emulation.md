@@ -1,5 +1,7 @@
 **Idiomas**: [English](../process-emulation.md) | [简体中文](../zh-CN/process-emulation.md) | [繁體中文](../zh-TW/process-emulation.md) | [日本語](../ja/process-emulation.md) | [한국어](../ko/process-emulation.md) | [Français](../fr/process-emulation.md) | [Deutsch](../de/process-emulation.md) | [Español](process-emulation.md) | [Italiano](../it/process-emulation.md) | [Русский](../ru/process-emulation.md) | [العربية](../ar/process-emulation.md)
 
+> Actualización: consulte el [contrato actual](../linux-network-contracts.md#poll-and-epoll-waits) para poll/epoll y stdio con búfer. Las restricciones de esta página a espera cero y GKI describen el subconjunto anterior de poll.
+
 [← Índice de documentación](README.md)
 
 # Emulación de procesos invitados

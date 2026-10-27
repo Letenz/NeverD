@@ -9,7 +9,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#pragma once
+#ifndef NEVERD_WEB_PRIVATE_BUNPROJECTREQUIRE_H
+#define NEVERD_WEB_PRIVATE_BUNPROJECTREQUIRE_H
 
 #include "BunProjectSource.h"
 
@@ -104,3 +105,5 @@ BunProjectRequireCalls proveBunProjectRequireCalls(
 /// Structural check for an immutable private owner result. Default is invalid.
 bool validBunProjectRequireCall(const BunProjectRequireCall &Call);
 } // namespace neverd::web
+
+#endif // NEVERD_WEB_PRIVATE_BUNPROJECTREQUIRE_H

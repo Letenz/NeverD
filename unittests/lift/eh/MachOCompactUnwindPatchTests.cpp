@@ -12,6 +12,7 @@
 #include "neverd/backend/codegen/MachO/MachOCompactUnwindPatch.h"
 #include "neverd/backend/codegen/MachO/MachOExceptionPatch.h"
 #include "neverd/backend/codegen/MachO/MachOPatch.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/loader/MachO/CompactUnwind.h"
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
@@ -60,6 +61,40 @@ constexpr uint64_t kCodeVA = kImageBase + 0x1000;
 constexpr uint64_t kLSDAVA = kImageBase + 0x2000;
 constexpr uint64_t kPersonalitySlotVA = kImageBase + 0x3000;
 constexpr uint64_t kMachO32Base = 0x10000000;
+
+#define NEVERD_COMPACT_PAUTH_LR_VALUE(Type, Name, Value)                       \
+  constexpr Type Name = Value;
+#include "MachOCompactPAuthLRFixtures.def"
+
+struct CompactPAuthLRCase {
+  const char *Name;
+  uint32_t Encoding;
+  uint32_t BeginDelta;
+  uint32_t Length;
+  uint32_t SigningOffset;
+  bool Valid;
+};
+
+constexpr CompactPAuthLRCase kCompactPAuthLRCases[] = {
+#define NEVERD_COMPACT_PAUTH_LR_CASE(Name, Encoding, BeginDelta, Length,       \
+                                     Offset, Valid)                            \
+  {#Name, Encoding, BeginDelta, Length, Offset, Valid},
+#include "MachOCompactPAuthLRFixtures.def"
+};
+
+#define NEVERD_NATIVE_ABI_VALUE(Type, Name, Value) constexpr Type Name = Value;
+#define NEVERD_NATIVE_ABI_TEXT(Name, Value) constexpr char Name[] = Value;
+#include "MachONativeABIPatchFixtures.def"
+
+struct Arm64eNativeABICase {
+  const char *Name;
+  uint32_t Subtype;
+};
+
+constexpr Arm64eNativeABICase kArm64eNativeABICases[] = {
+#define NEVERD_NATIVE_ABI_CASE(Name, Subtype) {#Name, Subtype},
+#include "MachONativeABIPatchFixtures.def"
+};
 
 void setMachOName(char (&Destination)[16], llvm::StringRef Name) {
   ASSERT_LE(Name.size(), sizeof(Destination));
@@ -1014,12 +1049,16 @@ struct MachOPatchTransactionFixture {
 };
 
 MachOPatchTransactionFixture
-makeMachOPatchTransactionFixture(size_t CompactCapacity) {
+makeMachOPatchTransactionFixture(size_t CompactCapacity,
+                                 Arch Architecture = Arch::AArch64) {
   using namespace llvm::MachO;
 
   MachOPatchTransactionFixture Fixture;
   Fixture.OriginalCompact = makeRawOriginal(
-      {{kTransactionTextOff, macho_unwind::kARM64ModeFrame, std::nullopt}},
+      {{kTransactionTextOff,
+        Architecture == Arch::X64 ? macho_unwind::kX86_64ModeStackImmediate
+                                  : macho_unwind::kARM64ModeFrame,
+        std::nullopt}},
       kTransactionTextOff + kTransactionTextSize);
   if (CompactCapacity < Fixture.OriginalCompact.OriginalBytes.size() ||
       CompactCapacity > kTransactionTextSegmentSize - kTransactionUnwindOff) {
@@ -1043,8 +1082,11 @@ makeMachOPatchTransactionFixture(size_t CompactCapacity) {
 
   auto *Header = reinterpret_cast<mach_header_64 *>(Fixture.Binary.data());
   Header->magic = MH_MAGIC_64;
-  Header->cputype = CPU_TYPE_ARM64;
-  Header->cpusubtype = CPU_SUBTYPE_ARM64_ALL;
+  Header->cputype =
+      Architecture == Arch::X64 ? CPU_TYPE_X86_64 : CPU_TYPE_ARM64;
+  Header->cpusubtype = Architecture == Arch::X64
+                           ? static_cast<uint32_t>(CPU_SUBTYPE_X86_64_ALL)
+                           : static_cast<uint32_t>(CPU_SUBTYPE_ARM64_ALL);
   Header->filetype = MH_EXECUTE;
   Header->ncmds = 5;
   Header->sizeofcmds = CommandSize;
@@ -1145,9 +1187,15 @@ makeMachOPatchTransactionFixture(size_t CompactCapacity) {
   Dysymtab->indirectsymoff = kTransactionIndirectTableOff;
   Dysymtab->nindirectsyms = 2;
 
-  for (uint32_t Off = kTransactionTextOff;
-       Off < kTransactionTextOff + kTransactionTextSize; Off += 4)
-    llvm::support::endian::write32le(Fixture.Binary.data() + Off, 0xd503201f);
+  if (Architecture == Arch::X64) {
+    std::fill_n(Fixture.Binary.begin() + kTransactionTextOff,
+                kTransactionTextSize, 0x90);
+    Fixture.Binary[kTransactionTextOff + kTransactionTextSize - 1] = 0xc3;
+  } else {
+    for (uint32_t Off = kTransactionTextOff;
+         Off < kTransactionTextOff + kTransactionTextSize; Off += 4)
+      llvm::support::endian::write32le(Fixture.Binary.data() + Off, 0xd503201f);
+  }
   std::fill(Fixture.Binary.begin() + kTransactionUnwindOff,
             Fixture.Binary.begin() + kTransactionUnwindOff + CompactCapacity,
             0xa5);
@@ -1189,7 +1237,7 @@ makeMachOPatchTransactionFixture(size_t CompactCapacity) {
       INDIRECT_SYMBOL_LOCAL);
 
   Fixture.Image.Format = BinaryFormat::MachO;
-  Fixture.Image.Arch = Arch::AArch64;
+  Fixture.Image.Arch = Architecture;
   Fixture.Image.Bits = Bitness::Bits64;
   Fixture.Image.Base = kImageBase;
   Fixture.Image.Raw = Fixture.Binary;
@@ -4072,6 +4120,117 @@ TEST(MachOCompactUnwindInstall,
   EXPECT_EQ(Binary, BeforeApply);
 }
 
+void checkMachONativeABIPatch(uint32_t Subtype, bool UseOptions,
+                              bool ExistingOutput, bool ExpectSuccess) {
+  std::vector<uint8_t> Binary =
+      makeClassicDyldStubAndZeroGOTFixture(kNativeABICompactCapacity);
+  ASSERT_FALSE(Binary.empty());
+  auto *Header = reinterpret_cast<llvm::MachO::mach_header_64 *>(Binary.data());
+  Header->cpusubtype = Subtype;
+
+  llvm::SmallString<kNativeABIPathBytes> InputPath;
+  llvm::SmallString<kNativeABIPathBytes> OutputPath;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile(
+      kNativeABIInputPrefix, kNativeABIExtension, InputPath));
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile(
+      kNativeABIOutputPrefix, kNativeABIExtension, OutputPath));
+  llvm::FileRemover RemoveInput(InputPath);
+  llvm::FileRemover RemoveOutput(OutputPath);
+  ASSERT_TRUE(writeFixtureFile(InputPath, Binary));
+  const llvm::StringRef Sentinel(kNativeABIOutputSentinel);
+  const std::vector<uint8_t> OutputSentinel(Sentinel.bytes_begin(),
+                                            Sentinel.bytes_end());
+  if (ExistingOutput)
+    ASSERT_TRUE(writeFixtureFile(OutputPath, OutputSentinel));
+  else
+    ASSERT_FALSE(llvm::sys::fs::remove(OutputPath));
+
+  auto Loaded = MachOLoader().load(InputPath.str().str());
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  ASSERT_EQ(Loaded->isArm64e(), !ExpectSuccess);
+  EXPECT_EQ(Loaded->MachOCPUSubtype, Subtype);
+
+  llvm::LLVMContext Context;
+  auto Module = makeMachOPatchTransactionModule(Context);
+  auto *Lifted = Module->getFunction(kNativeABIFunction);
+  auto *Personality = Module->getFunction(kNativeABIPersonality);
+  ASSERT_NE(Lifted, nullptr);
+  ASSERT_NE(Personality, nullptr);
+  llvm::IRBuilder<> Builder(&*Lifted->getEntryBlock().getFirstInsertionPt());
+  Builder.CreateCall(Personality);
+  ASSERT_EQ(Module->getModuleFlag(kArm64eAnalysisModuleFlag), nullptr);
+
+  // Neither public entry requires a pipeline-produced Module or cached image.
+  // The fresh input's subtype must authorize this transaction independently.
+  PatchResult Result;
+  testing::internal::CaptureStderr();
+  if (UseOptions) {
+    MachOPatcher Patcher;
+    Result = Patcher.patch(InputPath.str().str(), OutputPath.str().str(),
+                           *Module, Arch::AArch64, MachOPatchOptions{});
+  } else {
+    auto Patcher = BinaryPatcher::create(BinaryFormat::MachO);
+    Result = Patcher->patch(InputPath.str().str(), OutputPath.str().str(),
+                            *Module, Arch::AArch64);
+  }
+  const std::string Diagnostic = testing::internal::GetCapturedStderr();
+
+  EXPECT_EQ(readFixtureFile(InputPath), Binary);
+  if (!ExpectSuccess) {
+    EXPECT_FALSE(Result.Success);
+    EXPECT_NE(Diagnostic.find(kArm64eRebuildUnsupported), std::string::npos)
+        << Diagnostic;
+    EXPECT_EQ(Result.CodeSize, 0u);
+    EXPECT_EQ(Result.TrampolineCount, 0u);
+    EXPECT_TRUE(Result.OutputPath.empty());
+    EXPECT_TRUE(Result.PatchedFunctions.empty());
+    EXPECT_TRUE(Result.PatchedOriginalEntries.empty());
+    EXPECT_TRUE(Result.OriginalCallbacks.empty());
+    if (ExistingOutput)
+      EXPECT_EQ(readFixtureFile(OutputPath), OutputSentinel);
+    else
+      EXPECT_FALSE(llvm::sys::fs::exists(OutputPath));
+    return;
+  }
+
+  ASSERT_TRUE(Result.Success) << Diagnostic;
+  EXPECT_EQ(Result.TrampolineCount, 1u);
+  EXPECT_GT(Result.CodeSize, 0u);
+  EXPECT_EQ(Result.PatchedOriginalEntries,
+            (std::vector<va_t>{kTransactionFunctionVA}));
+  const std::vector<uint8_t> Output = readFixtureFile(OutputPath);
+  ASSERT_GT(Output.size(), Binary.size());
+  expectStrictInjectedSegmentLayout(Output, kDefaultNdTextSegment,
+                                    Arch::AArch64);
+  EXPECT_NE(
+      llvm::support::endian::read32le(Output.data() + kTransactionTextOff),
+      llvm::support::endian::read32le(Binary.data() + kTransactionTextOff));
+}
+
+TEST(MachOPatchTransaction,
+     RejectsArm64eAtPublicEntryWithoutAnalysisAnnotation) {
+  for (const Arm64eNativeABICase &Case : kArm64eNativeABICases) {
+    SCOPED_TRACE(Case.Name);
+    for (bool UseOptions : {false, true}) {
+      SCOPED_TRACE(UseOptions);
+      for (bool ExistingOutput : {false, true}) {
+        SCOPED_TRACE(ExistingOutput);
+        ASSERT_NO_FATAL_FAILURE(checkMachONativeABIPatch(
+            Case.Subtype, UseOptions, ExistingOutput, false));
+      }
+    }
+  }
+}
+
+TEST(MachOPatchTransaction,
+     AllowsOrdinaryARM64AtPublicEntryWithoutAnalysisAnnotation) {
+  for (bool UseOptions : {false, true}) {
+    SCOPED_TRACE(UseOptions);
+    ASSERT_NO_FATAL_FAILURE(checkMachONativeABIPatch(kNativeABIOrdinarySubtype,
+                                                     UseOptions, true, true));
+  }
+}
+
 TEST(MachOPatchTransaction,
      ResolvesSameClassicBindSymbolAsStubAndZeroFilledPersonalitySlot) {
   const std::vector<uint8_t> Binary =
@@ -4457,9 +4616,23 @@ TEST(MachOPatchTransaction,
 TEST(MachOPatchTransaction,
      PreservedExactNoOpPublishesNoInstalledOriginalEntries) {
   MachOPatchTransactionFixture Fixture =
-      makeMachOPatchTransactionFixture(/*CompactCapacity=*/0x2000);
+      makeMachOPatchTransactionFixture(/*CompactCapacity=*/0x2000, Arch::X64);
   ASSERT_FALSE(Fixture.Binary.empty());
-  Fixture.Image.VerifiedFunctionEntries.insert(kTransactionFunctionVA + 1);
+  // Two adjacent x64 RET functions are valid independent entries, but the
+  // first cannot host a five-byte trampoline. An ARM64 byte-interior address
+  // cannot authenticate a second entry and must not force preservation.
+  auto *Header =
+      reinterpret_cast<llvm::MachO::mach_header_64 *>(Fixture.Binary.data());
+  Header->cputype = llvm::MachO::CPU_TYPE_X86_64;
+  Header->cpusubtype = llvm::MachO::CPU_SUBTYPE_X86_64_ALL;
+  auto *TextSegment =
+      reinterpret_cast<llvm::MachO::segment_command_64 *>(Header + 1);
+  auto *TextSections =
+      reinterpret_cast<llvm::MachO::section_64 *>(TextSegment + 1);
+  setMachOName(TextSections[1].sectname, "__unused_eh");
+  setMachOName(TextSections[2].sectname, "__unused_unwind");
+  std::fill_n(Fixture.Binary.begin() + kTransactionTextOff,
+              kTransactionTextSize, uint8_t{0xc3});
 
   llvm::SmallString<128> InputPath;
   llvm::SmallString<128> OutputPath;
@@ -4470,13 +4643,24 @@ TEST(MachOPatchTransaction,
   llvm::FileRemover RemoveInput(InputPath);
   llvm::FileRemover RemoveOutput(OutputPath);
   ASSERT_TRUE(writeFixtureFile(InputPath, Fixture.Binary));
+  auto Loaded = MachOLoader().load(InputPath.str().str());
+  ASSERT_TRUE(bool(Loaded));
+  Fixture.Image = std::move(*Loaded);
+  Fixture.Image.VerifiedFunctionEntries.insert(kTransactionFunctionVA);
+  Fixture.Image.VerifiedFunctionEntries.insert(kTransactionFunctionVA + 1);
+  ASSERT_TRUE(
+      Fixture.Image.hasAuthenticatedFunctionEntryAt(kTransactionFunctionVA));
+  ASSERT_TRUE(Fixture.Image.hasAuthenticatedFunctionEntryAt(
+      kTransactionFunctionVA + 1));
+  ASSERT_FALSE(
+      sourceEntryCanHostTrampoline(Fixture.Image, kTransactionFunctionVA));
 
   llvm::LLVMContext Context;
   auto Module = makeMachOPatchNoUnwindModule(Context);
   MachOPatcher Patcher;
   Patcher.setImageContext(&Fixture.Image);
   PatchResult Result = Patcher.patch(
-      InputPath.str().str(), OutputPath.str().str(), *Module, Arch::AArch64);
+      InputPath.str().str(), OutputPath.str().str(), *Module, Arch::X64);
 
   ASSERT_TRUE(Result.Success);
   EXPECT_EQ(Result.TrampolineCount, 0u);
@@ -4659,6 +4843,268 @@ TEST(MachOCompactUnwindInstall,
   EXPECT_TRUE(std::equal(Plan.encodedBytes().begin(), Plan.encodedBytes().end(),
                          EncodedBefore.begin(), EncodedBefore.end()));
   EXPECT_EQ(Plan.expectedSemantics(), SemanticsBefore);
+}
+
+TEST(MachOGeneratedCompactUnwind, ValidatesPAuthLRInstructionRange) {
+  for (const CompactPAuthLRCase &Case : kCompactPAuthLRCases) {
+    SCOPED_TRACE(Case.Name);
+    GeneratedFixture Fixture(Arch::AArch64, Bitness::Bits64);
+    Fixture.addRecord(kCodeVA + Case.BeginDelta, Case.Length, Case.Encoding);
+    auto Parsed = parseGeneratedFixture(Fixture.Compiled, Fixture.Source,
+                                        llvm::endianness::little);
+    if (!Case.Valid) {
+      expectFailure(std::move(Parsed), Failure::UnsupportedEncoding, 0);
+      continue;
+    }
+    ASSERT_TRUE(static_cast<bool>(Parsed))
+        << llvm::toString(Parsed.takeError());
+    ASSERT_EQ(Parsed->Records.size(), 1u);
+    EXPECT_EQ(Parsed->Records.front().Encoding, Case.Encoding);
+    EXPECT_EQ(macho_unwind::returnAddressSigningOffset(
+                  Arch::AArch64, Parsed->Records.front().Encoding),
+              Case.SigningOffset);
+  }
+}
+
+TEST(MachOCompactUnwindMerge, ValidatesOriginalPAuthLRInstructionRange) {
+  for (const CompactPAuthLRCase &Case : kCompactPAuthLRCases) {
+    SCOPED_TRACE(Case.Name);
+    const uint32_t Begin = kPAuthLRSourceRVA + Case.BeginDelta;
+    const auto Original = makeRawOriginal(
+        {{Begin, Case.Encoding, std::nullopt}}, Begin + Case.Length);
+    auto Merged = mergeMachOCompactUnwind(Arch::AArch64, kImageBase, Original,
+                                          makeGeneratedRecords({}), {});
+    if (!Case.Valid) {
+      expectMergeFailure(std::move(Merged), MergeFailure::UnsupportedEncoding,
+                         MachOCompactUnwindMergeInputKind::OriginalRecord, 0);
+      continue;
+    }
+    ASSERT_TRUE(static_cast<bool>(Merged))
+        << llvm::toString(Merged.takeError());
+    ASSERT_EQ(Merged->Records.size(), 1u);
+    EXPECT_EQ(Merged->Records.front().Encoding, Case.Encoding);
+  }
+}
+
+TEST(MachOCompactUnwindMerge, RejectsPAuthLRImageAddressOverflow) {
+  const auto Original = makeRawOriginal(
+      {{kPAuthLRSourceRVA, kPAuthLRRecipeEncoding, std::nullopt}},
+      kPAuthLRSourceRVA + kPAuthLRRecipeLength);
+  expectMergeFailure(
+      mergeMachOCompactUnwind(Arch::AArch64, kPAuthLROverflowImageBase,
+                              Original, makeGeneratedRecords({}), {}),
+      MergeFailure::InvalidOriginalTable,
+      MachOCompactUnwindMergeInputKind::OriginalRecord, 0);
+}
+
+TEST(MachOCompactUnwindMerge, RejectsInvalidGeneratedPAuthLRInstructionRange) {
+  const auto Original = makeRawOriginal(
+      {{kPAuthLRSourceRVA, kPAuthLRRecipeEncoding, std::nullopt}},
+      kPAuthLRSourceRVA + kPAuthLRRecipeLength);
+  for (const CompactPAuthLRCase &Case : kCompactPAuthLRCases) {
+    if (Case.Valid)
+      continue;
+    SCOPED_TRACE(Case.Name);
+    const uint64_t Begin =
+        kImageBase + kPAuthLRDestinationRVA + Case.BeginDelta;
+    const auto Generated = makeGeneratedRecords(
+        {makeGeneratedRecord(Begin, Begin + Case.Length, Case.Encoding)});
+    expectMergeFailure(mergeMachOCompactUnwind(Arch::AArch64, kImageBase,
+                                               Original, Generated, {}),
+                       MergeFailure::UnsupportedEncoding,
+                       MachOCompactUnwindMergeInputKind::GeneratedRecord, 0);
+  }
+}
+
+TEST(MachOCompactUnwindRangeMap, InteriorPAuthLRSourceKeepsOriginalSigningPC) {
+  const uint32_t EndRVA = kPAuthLRSourceRVA + kPAuthLRRecipeLength;
+  const auto Original = makeRawOriginal(
+      {{kPAuthLRSourceRVA, kPAuthLRRecipeEncoding, std::nullopt}}, EndRVA);
+  const auto Binary =
+      makeInstallableUnwindInfoMachO(Original, Original.OriginalBytes.size());
+  const auto Generated = makeGeneratedRecords({makeGeneratedRecord(
+      kImageBase + kPAuthLRDestinationRVA,
+      kImageBase + kPAuthLRDestinationRVA + kPAuthLRRecipeLength,
+      kPAuthLRRecipeEncoding)});
+  const auto &GeneratedRecord = Generated.Records.front();
+  const PatchedFunctionEntry Installed{GeneratedRecord.OwnerSymbol,
+                                       kImageBase + kPAuthLRSourceRVA +
+                                           kPAuthLRSubentryDelta,
+                                       GeneratedRecord.OwnerVA};
+  auto Mappings = buildMachOCompactUnwindRangeMappings(
+      Binary, Arch::AArch64, Generated, {Installed}, llvm::endianness::little);
+  ASSERT_TRUE(static_cast<bool>(Mappings))
+      << llvm::toString(Mappings.takeError());
+  ASSERT_EQ(Mappings->size(), 1u);
+  EXPECT_EQ(Mappings->front().SourceVA, Installed.OriginalVA);
+  EXPECT_EQ(Mappings->front().SourceEndVA, kImageBase + EndRVA);
+
+  auto Merged = mergeMachOCompactUnwind(Arch::AArch64, kImageBase, Original,
+                                        Generated, *Mappings);
+  ASSERT_TRUE(static_cast<bool>(Merged)) << llvm::toString(Merged.takeError());
+  ASSERT_FALSE(Merged->Records.empty());
+  const auto &Preserved = Merged->Records.front();
+  EXPECT_EQ(Preserved.FunctionRVA, kPAuthLRSourceRVA);
+  EXPECT_EQ(Preserved.FunctionEndRVA, EndRVA);
+  EXPECT_EQ(Preserved.Encoding, kPAuthLRRecipeEncoding);
+  const auto Offset = macho_unwind::returnAddressSigningOffset(
+      Arch::AArch64, Preserved.Encoding);
+  ASSERT_TRUE(Offset.has_value());
+  const uint64_t SigningPC = kImageBase + Preserved.FunctionRVA + *Offset;
+  EXPECT_EQ(SigningPC, kImageBase + kPAuthLRSourceRVA + kPAuthLRSigningOffset);
+  EXPECT_LT(SigningPC, Mappings->front().SourceVA);
+}
+
+TEST(MachOCompactUnwindMerge, RejectsInplaceSplitOfPAuthLRSourceRecipe) {
+  const uint32_t EndRVA = kPAuthLRSourceRVA + kPAuthLRRecipeLength;
+  const uint32_t SubentryRVA = kPAuthLRSourceRVA + kPAuthLRSubentryDelta;
+  const auto Original = makeRawOriginal(
+      {{kPAuthLRSourceRVA, kPAuthLRRecipeEncoding, std::nullopt}}, EndRVA);
+  const auto Generated = makeGeneratedRecords({makeGeneratedRecord(
+      kImageBase + SubentryRVA, kImageBase + EndRVA, kPAuthLRRecipeEncoding)});
+  const auto Mapping = makeMapping(SubentryRVA, EndRVA, SubentryRVA, EndRVA,
+                                   MachOCompactUnwindRangeMode::SameVAInPlace);
+  expectMergeFailure(mergeMachOCompactUnwind(Arch::AArch64, kImageBase,
+                                             Original, Generated, {Mapping}),
+                     MergeFailure::SourceRangeNotExact,
+                     MachOCompactUnwindMergeInputKind::RangeMapping, 0);
+}
+
+TEST(MachOCompactUnwindEncode, RejectsPAuthLRInstructionPastRecipeEnd) {
+  auto Input = makeMergedResult(Arch::AArch64, 1);
+  Input.Records.front().Encoding = kPAuthLRRecipeEncoding;
+  Input.Records.front().FunctionEndRVA =
+      Input.Records.front().FunctionRVA + kPAuthLRTooShortLength;
+  Input.TerminalFunctionRVA = Input.Records.front().FunctionEndRVA;
+  const auto Before = Input;
+  expectEncodeFailure(
+      encodeMachOCompactUnwindRegular(Input, llvm::endianness::little),
+      EncodeFailure::InvalidRecordRange,
+      MachOCompactUnwindEncodeInputKind::Record, 0);
+  EXPECT_EQ(Input, Before);
+}
+
+TEST(MachOCompactUnwindInstall, PreservesPAuthLRSigningPCPerRecipe) {
+  const uint32_t SecondRVA = kPAuthLRSourceRVA + kPAuthLRRecipeLength;
+  const uint32_t OriginalEnd = SecondRVA + kPAuthLRRecipeLength;
+  const auto Original = makeRawOriginal(
+      {{kPAuthLRSourceRVA, kPAuthLRRecipeEncoding, std::nullopt},
+       {SecondRVA, kPAuthLRRecipeEncoding, std::nullopt}},
+      OriginalEnd);
+  const auto Generated = makeGeneratedRecords({makeGeneratedRecord(
+      kImageBase + kPAuthLRDestinationRVA,
+      kImageBase + kPAuthLRDestinationRVA + kPAuthLRRecipeLength,
+      kPAuthLRRecipeEncoding)});
+  const auto Mapping =
+      makeMapping(kPAuthLRSourceRVA, SecondRVA, kPAuthLRDestinationRVA,
+                  kPAuthLRDestinationRVA + kPAuthLRRecipeLength,
+                  MachOCompactUnwindRangeMode::NewSegment);
+  auto Merged = mergeMachOCompactUnwind(Arch::AArch64, kImageBase, Original,
+                                        Generated, {Mapping});
+  ASSERT_TRUE(static_cast<bool>(Merged)) << llvm::toString(Merged.takeError());
+  const std::array<uint32_t, 3> SignedStarts = {kPAuthLRSourceRVA, SecondRVA,
+                                                kPAuthLRDestinationRVA};
+  auto Encoded =
+      encodeMachOCompactUnwindRegular(*Merged, llvm::endianness::little);
+  ASSERT_TRUE(static_cast<bool>(Encoded))
+      << llvm::toString(Encoded.takeError());
+  auto Binary = makeInstallableUnwindInfoMachO(Original, Encoded->size());
+  auto Plan = prepareMachOCompactUnwindInstall(
+      Binary, Arch::AArch64, Generated, {Mapping}, llvm::endianness::little);
+  ASSERT_TRUE(static_cast<bool>(Plan)) << llvm::toString(Plan.takeError());
+  auto Receipt = applyMachOCompactUnwindInstall(Binary, *Plan);
+  ASSERT_TRUE(static_cast<bool>(Receipt))
+      << llvm::toString(Receipt.takeError());
+  ASSERT_TRUE(Receipt->Region.has_value());
+  const auto &Region = *Receipt->Region;
+  auto Installed =
+      macho_unwind::parseCompactUnwindRaw(llvm::ArrayRef<uint8_t>(Binary).slice(
+          Region.SectionFileOff, Region.SectionSize));
+  ASSERT_TRUE(static_cast<bool>(Installed))
+      << llvm::toString(Installed.takeError());
+  size_t SignedIndex = 0;
+  for (const auto &Page : Installed->Pages) {
+    for (const auto &Recipe : Page.RegularEntries) {
+      if (Recipe.Encoding == 0)
+        continue;
+      ASSERT_LT(SignedIndex, SignedStarts.size());
+      EXPECT_EQ(Recipe.FunctionOffset, SignedStarts[SignedIndex]);
+      EXPECT_EQ(Recipe.Encoding, kPAuthLRRecipeEncoding);
+      const auto Offset = macho_unwind::returnAddressSigningOffset(
+          Arch::AArch64, Recipe.Encoding);
+      ASSERT_TRUE(Offset.has_value());
+      EXPECT_EQ(*Offset, kPAuthLRSigningOffset);
+      EXPECT_EQ(Region.MachHeaderVA + Recipe.FunctionOffset + *Offset,
+                kImageBase + SignedStarts[SignedIndex] + kPAuthLRSigningOffset);
+      ++SignedIndex;
+    }
+  }
+  EXPECT_EQ(SignedIndex, SignedStarts.size());
+}
+
+TEST(MachOCompactUnwindInstall, NativePAuthLRRetainsSigningOffset) {
+  const auto Inputs = makeCompactUnwindInstallInputs();
+  ASSERT_FALSE(Inputs.Encoded.empty());
+  auto Binary =
+      makeInstallableUnwindInfoMachO(Inputs.Original, Inputs.Encoded.size());
+  const uint64_t Begin = kImageBase + kPAuthLRDestinationRVA;
+  const NativeMachOCompactRange Range = {Begin, Begin + kPAuthLRRecipeLength,
+                                         kPAuthLRRecipeEncoding};
+  auto Error = installNativeMachOCompactUnwind(Binary, Arch::AArch64, {Range});
+  ASSERT_FALSE(static_cast<bool>(Error)) << llvm::toString(std::move(Error));
+  auto Located = findMachOCompactUnwindRegion(Binary);
+  ASSERT_TRUE(static_cast<bool>(Located))
+      << llvm::toString(Located.takeError());
+  ASSERT_TRUE(Located->has_value());
+  const auto &Region = **Located;
+  auto Installed =
+      macho_unwind::parseCompactUnwindRaw(llvm::ArrayRef<uint8_t>(Binary).slice(
+          Region.SectionFileOff, Region.SectionSize));
+  ASSERT_TRUE(static_cast<bool>(Installed))
+      << llvm::toString(Installed.takeError());
+  ASSERT_FALSE(Installed->Pages.empty());
+  const auto &LastPage = Installed->Pages.back();
+  ASSERT_FALSE(LastPage.RegularEntries.empty());
+  const auto &Recipe = LastPage.RegularEntries.back();
+  EXPECT_EQ(Recipe.FunctionOffset, kPAuthLRDestinationRVA);
+  EXPECT_EQ(Recipe.Encoding, kPAuthLRRecipeEncoding);
+  EXPECT_EQ(
+      macho_unwind::returnAddressSigningOffset(Arch::AArch64, Recipe.Encoding),
+      kPAuthLRSigningOffset);
+}
+
+TEST(MachOCompactUnwindInstall, RejectsInvalidPAuthLRBeforeMutation) {
+  auto Inputs = makeCompactUnwindInstallInputs();
+  ASSERT_FALSE(Inputs.Encoded.empty());
+  Inputs.Generated.Records.front().Encoding = kPAuthLRRecipeEncoding;
+  Inputs.Generated.Records.front().FunctionEndVA =
+      Inputs.Generated.Records.front().FunctionVA + kPAuthLRTooShortLength;
+  Inputs.Generated.Records.front().RangeLength = kPAuthLRTooShortLength;
+  auto Binary =
+      makeInstallableUnwindInfoMachO(Inputs.Original, Inputs.Encoded.size());
+  const auto Before = Binary;
+  auto Plan = prepareMachOCompactUnwindInstall(
+      Binary, Arch::AArch64, Inputs.Generated, Inputs.Mappings,
+      llvm::endianness::little);
+  ASSERT_FALSE(static_cast<bool>(Plan));
+  llvm::consumeError(Plan.takeError());
+  EXPECT_EQ(Binary, Before);
+}
+
+TEST(MachOCompactUnwindInstall,
+     NativePAuthLRRejectsTruncatedSigningInstruction) {
+  const auto Inputs = makeCompactUnwindInstallInputs();
+  ASSERT_FALSE(Inputs.Encoded.empty());
+  auto Binary =
+      makeInstallableUnwindInfoMachO(Inputs.Original, Inputs.Encoded.size());
+  const auto Before = Binary;
+  const uint64_t Begin = kImageBase + kPAuthLRDestinationRVA;
+  const NativeMachOCompactRange Range = {Begin, Begin + kPAuthLRTruncatedLength,
+                                         kPAuthLRRecipeEncoding};
+  auto Error = installNativeMachOCompactUnwind(Binary, Arch::AArch64, {Range});
+  ASSERT_TRUE(static_cast<bool>(Error));
+  llvm::consumeError(std::move(Error));
+  EXPECT_EQ(Binary, Before);
 }
 
 } // namespace

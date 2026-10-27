@@ -4,8 +4,9 @@
 #include "ObjCUnwindSource.h"
 
 #include "neverd/decode/Decoder.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/Support/Endian.h"
 
@@ -31,7 +32,10 @@ proveObjCSynchronizedPrivateFrame(const BinaryImage &Image, va_t Entry,
                                   va_t NormalExit) {
   if (Image.Arch != Arch::AArch64 || Image.Bits != Bitness::Bits64 ||
       Entry > InvalidVA - 32 || Entry % 4 || NormalExit < Entry + 32 ||
-      NormalExit - Entry > 16384 || NormalExit % 4)
+      NormalExit - Entry >
+          ::neverd::sdk::
+              kObjCSynchronizedFrameSourceProveObjCSynchronizedPrivateFrameNormalExitEntryLimit ||
+      NormalExit % 4)
     return std::nullopt;
   const auto Word = [&](va_t Address) -> std::optional<uint32_t> {
     const auto *Bytes = Image.readVA(Address, 4);
@@ -42,7 +46,11 @@ proveObjCSynchronizedPrivateFrame(const BinaryImage &Image, va_t Entry,
   if (!Allocation || (*Allocation & ~0x003ffc00U) != 0xd10003ffU)
     return std::nullopt;
   const uint16_t Bytes = (*Allocation >> 10) & 0xfff;
-  if (Bytes < 80 || Bytes > 512 || Bytes % 16 ||
+  if (Bytes < 80 ||
+      Bytes >
+          ::neverd::sdk::
+              kObjCSynchronizedFrameSourceProveObjCSynchronizedPrivateFrameBytesLimit ||
+      Bytes % 16 ||
       Word(Entry + 4) != (0xa9004ff4U | ((Bytes - 32) / 8 << 15)) ||
       Word(Entry + 8) != (0xa9007bfdU | ((Bytes - 16) / 8 << 15)) ||
       Word(Entry + 12) != (0x910003fdU | ((Bytes - 16) << 10)) ||
@@ -134,7 +142,7 @@ inline bool projectObjCSynchronizedFrameReceiver(
     return false;
   std::vector<HighStmt *> Statements;
   std::vector<std::pair<MedVar, HighStmt *>> Definitions;
-  size_t Budget = 4096;
+  size_t Budget = kSourceValueWork;
   std::vector<HighStmt *> Pending;
   for (auto &S : Function.Body)
     if (S.Addr < Landing)
@@ -181,7 +189,11 @@ inline bool projectObjCSynchronizedFrameReceiver(
   };
   auto FrameOffset = [&](auto &&Self, const ExprPtr &E,
                          unsigned Depth) -> std::optional<int64_t> {
-    if (!Budget || Depth > 32 || !Scalar(E))
+    if (!Budget ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSynchronizedFrameSourceProjectObjCSynchronizedFrameReceiverFrameOffsetDepthLimit ||
+        !Scalar(E))
       return std::nullopt;
     --Budget;
     if (E->Kind == ExprKind::Var && E->Operands.empty()) {
@@ -210,13 +222,20 @@ inline bool projectObjCSynchronizedFrameReceiver(
       return std::nullopt;
     const auto Offset = Self(Self, A, Depth + 1);
     int64_t Delta = static_cast<int64_t>(B->ConstVal);
-    if (!Offset || Delta < -8192 || Delta > 8192)
+    if (!Offset || Delta < -8192 ||
+        Delta >
+            ::neverd::sdk::
+                kObjCSynchronizedFrameSourceProjectObjCSynchronizedFrameReceiverFrameOffsetDeltaLimit)
       return std::nullopt;
     if (E->Op == NdOp::INT_SUB)
       Delta = -Delta;
     const int64_t Result = *Offset + Delta;
-    return Result >= -8192 && Result <= 8192 ? std::optional(Result)
-                                             : std::nullopt;
+    return Result >= -8192 &&
+                   Result <=
+                       ::neverd::sdk::
+                           kObjCSynchronizedFrameSourceProjectObjCSynchronizedFrameReceiverFrameOffsetResultLimit
+               ? std::optional(Result)
+               : std::nullopt;
   };
   std::optional<MedVar> Receiver;
   size_t Stores = 0;
@@ -231,7 +250,7 @@ inline bool projectObjCSynchronizedFrameReceiver(
                           Proof.ReceiverOffset < *Offset + Width;
     if (S->Addr != Proof.Store && !Overlaps)
       continue;
-    size_t SliceBudget = 128;
+    size_t SliceBudget = kSourceSliceWork;
     const auto Value =
         objcUnwindScalarSlice(S->StoreVal, {}, false, SliceBudget);
     if (++Stores != 1 || S->Addr != Proof.Store || !Offset ||
@@ -245,7 +264,11 @@ inline bool projectObjCSynchronizedFrameReceiver(
     return false;
   auto IsReceiver = [&](auto &&Self, const ExprPtr &E, va_t Address,
                         unsigned Depth) -> bool {
-    if (!Budget || Depth > 32 || !Scalar(E))
+    if (!Budget ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSynchronizedFrameSourceProjectObjCSynchronizedFrameReceiverIsReceiverDepthLimit ||
+        !Scalar(E))
       return false;
     --Budget;
     if (E->Kind == ExprKind::Var && E->Operands.empty()) {

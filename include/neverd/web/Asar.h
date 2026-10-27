@@ -12,14 +12,10 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 
 namespace neverd::web {
 inline constexpr std::string_view AsarProfile = "asar-pickle-json-v1";
-inline constexpr uint64_t MaxAsarHeaderBytes = 8 * 1024 * 1024;
-inline constexpr uint64_t MaxAsarMembers = 10000;
-inline constexpr uint64_t MaxAsarDepth = 24;
-inline constexpr uint64_t MaxAsarPathBytes = 8 * 1024 * 1024;
-inline constexpr uint64_t MaxAsarPayloadBytes = 512ULL * 1024 * 1024;
 
 /// Paths/link targets are private evidence, never ordinary output fields.
 struct AsarMember {

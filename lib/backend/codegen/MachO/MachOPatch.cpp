@@ -22,7 +22,9 @@
 #include "neverd/backend/codegen/BinaryUtils.h"
 #include "neverd/backend/codegen/MachO/MachOCompactUnwindPatch.h"
 #include "neverd/backend/codegen/MachO/MachOExceptionPatch.h"
+#include "neverd/backend/codegen/MachO/MachOLayoutGrowth.h"
 #include "neverd/backend/codegen/PatchStorage.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/MachOARM32Mode.h"
 #include "neverd/loader/MachO/MachOLoader.h"
@@ -536,7 +538,14 @@ resolveMachORewriteTarget(llvm::ArrayRef<uint8_t> Binary, Arch TargetArch,
     return llvm::createStringError(
         llvm::errc::not_supported,
         "ARMv7k rewrite currently requires positive Thumb function evidence");
-  if (RequestedMode != InstructionMode::Default && RequestedMode != *Mode)
+  // An iOS executable can contain ARM import stubs alongside Thumb source
+  // functions. Replacement IR owns only the authenticated mapped functions;
+  // the image-wide mixed mode must not override their exact nlist evidence.
+  const bool MixedReplacement =
+      RequestedMode == InstructionMode::MixedARMThumb &&
+      InputKind == RewriteInputKind::ReplacementIR;
+  if (RequestedMode != InstructionMode::Default && RequestedMode != *Mode &&
+      !MixedReplacement)
     return llvm::createStringError(
         llvm::errc::invalid_argument,
         "cached ARM code mode disagrees with authenticated nlist metadata");
@@ -805,42 +814,12 @@ bool isAuthenticatedSourceFunctionEntry(const BinaryImage &Image,
   return Image.hasAuthenticatedFunctionEntryAt(Address);
 }
 
-llvm::Error validateSourceFunctionIdentities(const CompiledImage &Compiled,
-                                             const llvm::Module &Module,
-                                             const BinaryImage *Image) {
-  if (!Image)
-    return sourceIdentityError(
-        "an exact loader-authenticated image context is required");
+llvm::Error
+validateSourceFunctionExceptionIdentities(const CompiledImage &Compiled,
+                                          const llvm::Module &Module) {
   if (Compiled.SourceFunctionOriginalVAs.empty())
     return sourceIdentityError(
         "the compiled image has no exact original function entries");
-  if (!llvm::mc_rewrite::validateRewriteSourceFunctionOwners(
-          Compiled.SourceFunctionOwners))
-    return sourceIdentityError("compiler source-owner provenance is invalid");
-
-  const uint64_t TrampolineSize =
-      getTargetCodegenInfo(Image->Arch, Image->Mode).trampolineSize();
-  if (TrampolineSize == 0)
-    return sourceIdentityError("the target has no supported entry trampoline");
-
-  std::set<uint64_t> SeenOriginalEntries;
-  for (const auto &[SourceFunction, OriginalVA] :
-       Compiled.SourceFunctionOriginalVAs) {
-    const size_t OwnerCount = std::count_if(
-        Compiled.SourceFunctionOwners.begin(),
-        Compiled.SourceFunctionOwners.end(), [&](const auto &Owner) {
-          return Owner.SourceFunction == SourceFunction;
-        });
-    if (OwnerCount != 1)
-      return sourceIdentityError(
-          "an original entry does not have exactly one compiler owner");
-    if (!SeenOriginalEntries.insert(OriginalVA).second)
-      return sourceIdentityError(
-          "two source functions share an original entry");
-    if (!isAuthenticatedSourceFunctionEntry(*Image, OriginalVA))
-      return sourceIdentityError(
-          "an original entry is not a loader-authenticated function start");
-  }
 
   auto Requirements =
       exception_rewrite::validateExceptionRewriteContracts(Module);
@@ -1211,7 +1190,7 @@ bool MachOPatcher::validateExecSegmentInstall(
                    Segment.FileSize == Receipt.SegmentFileSize &&
                    Segment.MaxProt == (VM_PROT_READ | VM_PROT_EXECUTE) &&
                    Segment.InitProt == (VM_PROT_READ | VM_PROT_EXECUTE) &&
-                   Segment.NSects == 0;
+                   Segment.NSects == Receipt.SegmentNSects;
         }
         if (Name == section_names::macho::LinkeditSeg) {
           ++LinkeditCount;
@@ -1317,8 +1296,6 @@ uint64_t MachOPatcher::appendExecSegmentImpl(std::vector<uint8_t> &Binary,
                   kPatchDataSegment)))
           SegmentNameConflict = true;
       });
-  if (SegmentNameConflict)
-    return 0;
 
   const bool Is64 = Layout.Is64;
   const uint32_t SegCmdID = getMachOSegmentCmdID(Is64);
@@ -1411,10 +1388,51 @@ uint64_t MachOPatcher::appendExecSegmentImpl(std::vector<uint8_t> &Binary,
         !checkedAddU32(Freed, Command.Size, Freed))
       return 0;
   uint64_t AvailableWithFreed = 0;
-  if (!macho_patch_detail::checkedAdd(Avail, Freed, AvailableWithFreed) ||
-      AvailableWithFreed < NewSegCmdSize * AddedSegmentCount) {
-    llvm::WithColor::error() << "macho_patch: no header space\n";
+  if (!macho_patch_detail::checkedAdd(Avail, Freed, AvailableWithFreed))
     return 0;
+  std::optional<uint64_t> ExtendCommand;
+  MachOSegFields Extended{};
+  const uint64_t Needed = NewSegCmdSize * AddedSegmentCount;
+  const bool CleanPadding =
+      Needed <= Avail &&
+      llvm::all_of(llvm::ArrayRef<uint8_t>(Binary).slice(HdrPlusCmds, Needed),
+                   [](uint8_t B) { return B == 0; });
+  if (SegmentNameConflict || AvailableWithFreed < Needed ||
+      (Needed > Freed && !CleanPadding)) {
+    // With no command capacity, grow an adjacent existing RX mapping instead.
+    // The Mach header and every live original VA stay fixed. Only __LINKEDIT
+    // moves; a DATA segment between the RX tail and __LINKEDIT prevents this
+    // operation, rather than being silently relocated across code references.
+    if (WritableOffset || InputKind == RewriteInputKind::LiftedIR)
+      return 0;
+    for (const auto &Command : Cmds) {
+      if (Command.Cmd != SegCmdID)
+        continue;
+      auto SF = readMachOSegment(Binary.data() + Command.Off, Is64);
+      if ((SegmentNameConflict && readMachOName(SF.SegName) != SegStr) ||
+          SF.InitProt != (VM_PROT_READ | VM_PROT_EXECUTE) ||
+          SF.MaxProt != (VM_PROT_READ | VM_PROT_EXECUTE) ||
+          SF.VMSize > UINT64_MAX - SF.VMAddr ||
+          SF.FileSize > UINT64_MAX - SF.FileOff ||
+          SF.VMAddr + SF.VMSize != Layout.LinkeditVA ||
+          SF.FileOff + SF.FileSize != Layout.LinkeditFileOff ||
+          SF.VMSize != SF.FileSize)
+        continue;
+      if (ExtendCommand)
+        return 0;
+      ExtendCommand = Command.Off;
+      Extended = SF;
+    }
+    if (!ExtendCommand ||
+        (!Is64 && Extended.VMSize + CodePadded > UINT32_MAX)) {
+      llvm::WithColor::error()
+          << "macho_patch: tight commands need an adjacent RX tail or a "
+             "complete relocation contract\n";
+      return 0;
+    }
+    SegStr = readMachOName(Extended.SegName);
+    Extended.VMSize += CodePadded;
+    Extended.FileSize += CodePadded;
   }
 
   std::vector<std::vector<uint8_t>> OutCmds;
@@ -1430,7 +1448,7 @@ uint64_t MachOPatcher::appendExecSegmentImpl(std::vector<uint8_t> &Binary,
       IsLinkedit =
           (readMachOName(SF.SegName) == section_names::macho::LinkeditSeg);
     }
-    if (IsLinkedit) {
+    if (IsLinkedit && !ExtendCommand) {
       OutCmds.push_back(NewSegBuf);
       if (WritableOffset)
         OutCmds.push_back(DataSegBuf);
@@ -1441,6 +1459,10 @@ uint64_t MachOPatcher::appendExecSegmentImpl(std::vector<uint8_t> &Binary,
     }
     std::vector<uint8_t> CmdData(Command.Size);
     std::memcpy(CmdData.data(), Binary.data() + Command.Off, Command.Size);
+    if (ExtendCommand && Command.Off == *ExtendCommand) {
+      writeMachOSegment(CmdData.data(), Is64, Extended);
+      ++InsertedSegments;
+    }
     if (IsLinkedit) {
       auto SF = readMachOSegment(CmdData.data(), Is64);
       SF.VMAddr = NewLinkeditVMAddr;
@@ -1473,6 +1495,13 @@ uint64_t MachOPatcher::appendExecSegmentImpl(std::vector<uint8_t> &Binary,
   Expected.SegmentVMSize = NewSF.VMSize;
   Expected.SegmentFileOff = InsertOff;
   Expected.SegmentFileSize = NewSF.FileSize;
+  if (ExtendCommand) {
+    Expected.SegmentVA = Extended.VMAddr;
+    Expected.SegmentVMSize = Extended.VMSize;
+    Expected.SegmentFileOff = Extended.FileOff;
+    Expected.SegmentFileSize = Extended.FileSize;
+    Expected.SegmentNSects = Extended.NSects;
+  }
   Expected.WritableSize = WritableOffset ? CodePadded - WritableOffset : 0;
   Expected.LinkeditVA = NewLinkeditVMAddr;
   Expected.LinkeditVMSize = Layout.LinkeditVMSize;
@@ -1505,9 +1534,9 @@ uint64_t MachOPatcher::appendExecSegmentImpl(std::vector<uint8_t> &Binary,
                 Command.data(), Command.size());
     WriteOff += Command.size();
   }
-  if (WriteOff < FirstDataOff)
+  if (WriteOff < HdrPlusCmds)
     std::memset(Candidate.data() + static_cast<size_t>(WriteOff), 0,
-                static_cast<size_t>(FirstDataOff - WriteOff));
+                static_cast<size_t>(HdrPlusCmds - WriteOff));
 
   if (!validateExecSegmentInstall(Candidate, TargetArch, Expected))
     return 0;
@@ -1528,7 +1557,10 @@ PatchResult MachOPatcher::patch(const std::filesystem::path &InputPath,
                                 const std::filesystem::path &OutputPath,
                                 llvm::Module &Mod, Arch TargetArch,
                                 const MachOPatchOptions &Opts) {
-  if (!isSingleInstructionMode(CachedMode)) {
+  const bool MixedReplacement = TargetArch == Arch::ARM &&
+                                CachedMode == InstructionMode::MixedARMThumb &&
+                                InputKind == RewriteInputKind::ReplacementIR;
+  if (!isSingleInstructionMode(CachedMode) && !MixedReplacement) {
     llvm::WithColor::error()
         << "macho_patch: rewriting requires a single instruction mode (got "
         << getInstructionModeName(CachedMode) << ")\n";
@@ -1548,6 +1580,10 @@ PatchResult MachOPatcher::patch(const std::filesystem::path &InputPath,
     return PatchResult{};
   }
   BinaryImage AuthenticatedImage = std::move(*LoadedImage);
+  if (AuthenticatedImage.isArm64e()) {
+    llvm::WithColor::error() << kArm64eRebuildUnsupported;
+    return PatchResult{};
+  }
 
   std::vector<PatchedFunctionEntry> InstalledFunctions;
   PatchResult Patch = readPatchWrite(
@@ -1585,7 +1621,9 @@ PatchResult MachOPatcher::patch(const std::filesystem::path &InputPath,
           }
           if (TargetArch == Arch::ARM &&
               CachedImage->Mode != InstructionMode::Default &&
-              CachedImage->Mode != AuthenticatedImage.Mode) {
+              CachedImage->Mode != AuthenticatedImage.Mode &&
+              !(InputKind == RewriteInputKind::ReplacementIR &&
+                CachedImage->Mode == InstructionMode::MixedARMThumb)) {
             llvm::WithColor::error()
                 << "macho_patch: cached ARM code mode disagrees with "
                    "authenticated nlist metadata\n";
@@ -1787,7 +1825,7 @@ PatchResult MachOPatcher::patch(const std::filesystem::path &InputPath,
               << llvm::toString(CompactRegion.takeError()) << "\n";
           return false;
         }
-        const bool HasFinalCompactSection = CompactRegion->has_value();
+        bool HasFinalCompactSection = CompactRegion->has_value();
 
         // dyld exposes the image's __TEXT,__eh_frame to libunwind.  Keep the
         // original records and compile regenerated records directly into the
@@ -1826,6 +1864,57 @@ PatchResult MachOPatcher::patch(const std::filesystem::path &InputPath,
           });
           return false;
         }
+        if (InputKind == RewriteInputKind::ReplacementIR) {
+          uint64_t ExtraEH = 0, ExtraFunctions = 0;
+          for (const auto &Section : Img.Sections) {
+            if (Section.Name == section_names::macho::EhFrame && EHRegion)
+              ExtraEH = Section.Size;
+            if (Section.Name == section_names::macho::CompactUnwind)
+              ExtraFunctions = Section.Size / (3 * Img.PointerWidth + 8);
+          }
+          auto Grown = reserveMachOSourceUnwind(Binary, TargetArch, ExtraEH,
+                                                ExtraFunctions);
+          if (!Grown) {
+            llvm::WithColor::error()
+                << llvm::toString(Grown.takeError()) << "\n";
+            return false;
+          }
+          if (*Grown) {
+            if (!parseLayout(Binary, Layout, TargetArch))
+              return false;
+            auto Reloaded = Loader.loadBuffer(llvm::MemoryBufferRef(
+                llvm::StringRef(reinterpret_cast<const char *>(Binary.data()),
+                                Binary.size()),
+                "grown-source-image"));
+            if (!Reloaded) {
+              llvm::consumeError(Reloaded.takeError());
+              return false;
+            }
+            Reloaded->VerifiedFunctionEntries =
+                AuthenticatedImage.VerifiedFunctionEntries;
+            AuthenticatedImage = std::move(*Reloaded);
+            // A real second compilation uses the final native addresses.
+            // Never repair an MC summary around bytes compiled elsewhere.
+            EHRegion = findMachOEHFrameRegion(Binary);
+            CompactRegion = findMachOCompactUnwindRegion(Binary);
+            if (!CompactRegion) {
+              llvm::WithColor::error()
+                  << llvm::toString(CompactRegion.takeError()) << "\n";
+              return false;
+            }
+            HasFinalCompactSection = CompactRegion->has_value();
+            NewSegVMAddr = plannedExecSegmentVA(Binary, TargetArch);
+            Img = compileImageForPatchWithFixedSectionVAs(
+                *CompileMod, TargetArch, BinaryFormat::MachO, NewSegVMAddr,
+                Resolve, FixedSectionVA, 0, RewriteTarget->Triple, InputKind);
+            if (!Img.Success || Img.Bytes.empty() || !Img.Unresolved.empty() ||
+                SymbolResolutionFailure) {
+              llvm::WithColor::error()
+                  << "macho_patch: final-layout compilation failed\n";
+              return false;
+            }
+          }
+        }
         if (!RewriteTarget->Triple.empty() &&
             (Img.TargetTriple != RewriteTarget->Triple ||
              Img.TargetMode != RewriteTarget->Mode)) {
@@ -1834,8 +1923,14 @@ PatchResult MachOPatcher::patch(const std::filesystem::path &InputPath,
                  "authenticated input ABI\n";
           return false;
         }
-        if (llvm::Error Error = validateSourceFunctionIdentities(
-                Img, *CompileMod, &AuthenticatedImage)) {
+        if (!validateSourceFunctionPatchPlan(Img, &AuthenticatedImage,
+                                             AuthenticatedDetail)) {
+          llvm::WithColor::error()
+              << "macho patch source identity: " << AuthenticatedDetail << "\n";
+          return false;
+        }
+        if (llvm::Error Error =
+                validateSourceFunctionExceptionIdentities(Img, *CompileMod)) {
           llvm::WithColor::error() << llvm::toString(std::move(Error)) << "\n";
           return false;
         }

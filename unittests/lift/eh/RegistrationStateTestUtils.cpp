@@ -6,7 +6,7 @@
 
 #include "RegistrationStateTestUtils.h"
 
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 namespace neverd::registration_test {
 
@@ -37,6 +37,74 @@ void addSlotStore(LowBlock &Block, int32_t Value, uint16_t Width) {
   Store.addInput(NdVar::cst(uint32_t(Value), Width));
   Store.Addr = Block.StartAddr;
   Block.Ops.push_back(Store);
+}
+
+void addFinallyCallTrailingEffect(LowBlock &Call) {
+  auto &Instruction = Call.InstructionBoundaries.back();
+  emitOp(Call, Instruction.Address, NdOp::COPY, NdVar::reg(x86reg::RBP, 4),
+         {NdVar::cst(0, 4)});
+  ++Instruction.OpCount;
+}
+
+void addFinallyTailJump(LowBlock &Call, LowBlock &Resume,
+                        std::vector<RegistrationSEHControlContract> &Controls,
+                        unsigned Mutation) {
+  const va_t OriginalBegin = Resume.StartAddr;
+  const va_t OriginalEnd = Resume.EndAddr;
+  Resume.StartAddr += 0x10;
+  Resume.EndAddr += 0x10;
+  for (auto &Op : Resume.Ops)
+    Op.Addr += 0x10;
+  for (auto &Boundary : Resume.InstructionBoundaries)
+    Boundary.Address += 0x10;
+  for (auto &Control : Controls)
+    if (Control.Address >= OriginalBegin && Control.Address < OriginalEnd) {
+      Control.Address += 0x10;
+      Control.EndAddress += 0x10;
+    }
+  const va_t ReturnPC = Call.EndAddr;
+  const size_t First = Call.Ops.size();
+  emitOp(Call, ReturnPC, NdOp::BRANCH, {}, {NdVar::cst(Resume.StartAddr, 8)});
+  Call.EndAddr += 2;
+  Call.InstructionBoundaries.push_back({ReturnPC, 2, First, 1});
+  auto &Tail = Call.InstructionBoundaries.back();
+  Tail.Control = LowInstructionControl::Branch;
+  Tail.ControlFlags = LowInstructionControlFlag::Branch;
+  Tail.Immediate = Resume.StartAddr;
+  Controls.push_back({RegistrationSEHControlContract::Kind::NearJump, ReturnPC,
+                      Call.EndAddr, Resume.StartAddr});
+  switch (Mutation) {
+  case 0:
+    break;
+  case 1:
+    Controls.pop_back();
+    break;
+  case 2:
+    ++Controls.back().Target;
+    break;
+  case 3:
+    Tail.ControlFlags |= LowInstructionControlFlag::Conditional;
+    break;
+  case 4:
+    Tail.ControlFlags |= LowInstructionControlFlag::InstructionGuard;
+    break;
+  case 5:
+    Call.Ops.back().Opcode = NdOp::COPY;
+    Call.Ops.back().Output = NdVar::reg(x86reg::RBP, 4);
+    Call.Ops.back().Inputs[0] = NdVar::cst(0, 4);
+    emitOp(Call, ReturnPC, NdOp::BRANCH, {}, {NdVar::cst(Resume.StartAddr, 8)});
+    Tail.OpCount = 2;
+    break;
+  case 6:
+    Call.Ops.back().MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+    break;
+  case 7:
+    Call.Ops.back().MemoryOrdering = NdMemoryOrdering::Acquire;
+    break;
+  case 8:
+    --Controls.back().EndAddress;
+    break;
+  }
 }
 
 LowFunc makeBranchingFrame() {
@@ -95,6 +163,60 @@ LowFunc makeBranchingFrame() {
   F.Blocks[0].Ops.push_back(Install);
   addSlotStore(F.Blocks[1], 0);
   addSlotStore(F.Blocks[2], -1);
+  return F;
+}
+
+LowFunc makeCookieFrame(bool GS) {
+  auto F = makeBranchingFrame();
+  auto &EH = *F.ExceptionMetadata;
+  EH.Personality = ExceptionPersonality::ExceptHandler4;
+  EH.Encoding = ExceptionEncoding::X86ScopeTableEH4;
+  auto &Chain = *EH.Registration;
+  Chain.SeededTryLevel = -2;
+  Chain.ScopeTableVA = 0x3000;
+  Chain.EHCookieOffset = -28;
+  Chain.GSCookieOffset = GS ? -36 : -2;
+  Chain.GSCookieXOROffset = GS ? 4 : 0;
+  Chain.HasSecurityCookies = GS;
+  Chain.Scopes.front().EnclosingLevel = -2;
+  Chain.TryLevelStores.back().Level = -2;
+  F.Blocks[2].Ops.back().Inputs[1] = NdVar::cst(uint32_t(-2), 4);
+  auto &Entry = F.Blocks.front();
+  auto Install = Entry.Ops.back();
+  Entry.Ops.pop_back();
+  emitOp(Entry, 0x1000, NdOp::COPY, NdVar::tmp(20, 4),
+         {NdVar::reg(x86reg::RSP, 4)});
+  emitOp(Entry, 0x1000, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
+         {NdVar::reg(x86reg::RSP, 4), NdVar::cst(24, 4)});
+  emitOp(Entry, 0x1000, NdOp::LOAD, NdVar::tmp(21, 4), {NdVar::cst(0x4000, 4)});
+  emitOp(Entry, 0x1000, NdOp::INT_XOR, NdVar::tmp(22, 4),
+         {NdVar::tmp(21, 4), NdVar::cst(0x3000, 4)});
+  auto Store = [&](int32_t Slot, NdVar Value) {
+    emitOp(Entry, 0x1000, NdOp::INT_ADD, NdVar::tmp(24, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(Slot), 4)});
+    emitOp(Entry, 0x1000, NdOp::STORE, {}, {NdVar::tmp(24, 4), Value});
+  };
+  Store(-8, NdVar::tmp(22, 4));
+  emitOp(Entry, 0x1000, NdOp::INT_XOR, NdVar::tmp(23, 4),
+         {NdVar::tmp(21, 4), NdVar::reg(x86reg::RBP, 4)});
+  Store(-28, NdVar::tmp(23, 4));
+  if (GS) {
+    emitOp(Entry, 0x1000, NdOp::INT_ADD, NdVar::tmp(25, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(4, 4)});
+    emitOp(Entry, 0x1000, NdOp::INT_XOR, NdVar::tmp(26, 4),
+           {NdVar::tmp(21, 4), NdVar::tmp(25, 4)});
+    Store(-36, NdVar::tmp(26, 4));
+  }
+  Install.Seq = Entry.Ops.size();
+  Install.Inputs[1] = NdVar::tmp(20, 4);
+  Entry.Ops.push_back(Install);
+  auto &Exit = F.Blocks.back();
+  emitOp(Exit, Exit.StartAddr, NdOp::INT_ADD, NdVar::tmp(30, 4),
+         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-16), 4)});
+  emitOp(Exit, Exit.StartAddr, NdOp::LOAD, NdVar::tmp(31, 4),
+         {NdVar::tmp(30, 4)});
+  emitOp(Exit, Exit.StartAddr, NdOp::STORE, {},
+         {NdVar::cst(0, 4), NdVar::tmp(31, 4)}, NdMemoryAddressSpace::X86FS);
   return F;
 }
 

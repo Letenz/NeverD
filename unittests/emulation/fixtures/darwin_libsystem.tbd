@@ -1,0 +1,10 @@
+--- !tapi-tbd
+tbd-version: 4
+targets: [ arm64-macos, x86_64-macos, arm64-ios, arm64-ios-simulator, x86_64-ios-simulator ]
+install-name: /usr/lib/libSystem.B.dylib
+current-version: 1.0
+compatibility-version: 1.0
+exports:
+  - targets: [ arm64-macos, x86_64-macos, arm64-ios, arm64-ios-simulator, x86_64-ios-simulator ]
+    symbols: [ _read, _write, _close, _getpid, __exit, ___error ]
+...

@@ -10,18 +10,26 @@
 //===----------------------------------------------------------------------===//
 
 #include "PipelineCallAbiDetail.h"
+#include "PipelineFunctionNames.h"
 #include "PipelineHighIRDetail.h"
+#include "PipelineLowIRDetail.h"
 #include "PipelineReturnModelingDetail.h"
+#include "PipelineSourceStackAccesses.h"
 
 #include "neverd/Common.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/low/ImportCallee.h"
+#include "neverd/ir/low/SourceFrameBytes.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedTypePass.h"
+#include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/SymbolDecoration.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/Parallel.h"
 
@@ -32,6 +40,7 @@
 #include <cstdint>
 #include <exception>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -40,7 +49,6 @@
 
 namespace neverd {
 
-namespace {
 /// A call whose callee returns a scalar float in the vector return register
 /// defines that register, not the integer one (promoteFloatCallResult). The
 /// callees are the imports their C declarations describe and the functions
@@ -88,6 +96,69 @@ void bindFloatCallResults(const BinaryImage &Img, PipelineResult &Result) {
       break;
   }
 }
+
+namespace {
+/// The import-address names of one run, plus the names of the functions it
+/// lifts. When those imports come from the session cache, every name this run
+/// adds is removed afterwards: the next run must still see imports only. A
+/// fresh map already belongs to this run and is left as it is.
+struct ImportNameOverlay {
+  std::map<va_t, std::string> *Names = nullptr;
+  std::map<va_t, std::string> Owned;
+  std::vector<std::pair<va_t, std::optional<std::string>>> Undo;
+  std::set<va_t> Recorded;
+  bool Rollback = false;
+
+  ~ImportNameOverlay() {
+    if (!Rollback || !Names)
+      return;
+    for (auto It = Undo.rbegin(); It != Undo.rend(); ++It) {
+      if (!It->second)
+        Names->erase(It->first);
+      else
+        (*Names)[It->first] = std::move(*It->second);
+    }
+  }
+
+  ImportNameOverlay() = default;
+  ImportNameOverlay(const ImportNameOverlay &) = delete;
+  ImportNameOverlay &operator=(const ImportNameOverlay &) = delete;
+
+  std::map<va_t, std::string> &names() { return *Names; }
+
+  void adoptOwned(std::map<va_t, std::string> Map) {
+    Owned = std::move(Map);
+    Names = &Owned;
+    Rollback = false;
+  }
+
+  /// Imports already in \p Shared win, as buildFuncNameMap writes them last.
+  void adoptShared(std::map<va_t, std::string> *Shared,
+                   const std::vector<LowFunc> &LowFuncs) {
+    Names = Shared;
+    Rollback = true;
+    for (const LowFunc &LF : LowFuncs)
+      if (!Names->contains(LF.Entry))
+        assign(LF.Entry, LF.Name);
+  }
+
+  /// Remember \p Key's current value once, so a later direct write (a thunk
+  /// stub's assignment) still restores the import map.
+  void remember(va_t Key) {
+    if (!Rollback || !Recorded.insert(Key).second)
+      return;
+    const auto It = Names->find(Key);
+    if (It == Names->end())
+      Undo.emplace_back(Key, std::nullopt);
+    else
+      Undo.emplace_back(Key, It->second);
+  }
+
+  void assign(va_t Key, const std::string &Value) {
+    remember(Key);
+    (*Names)[Key] = Value;
+  }
+};
 } // namespace
 
 //===----------------------------------------------------------------------===//
@@ -95,7 +166,8 @@ void bindFloatCallResults(const BinaryImage &Img, PipelineResult &Result) {
 //===----------------------------------------------------------------------===//
 
 void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
-                                  PipelineResult &Result, DebugContext *Dbg) {
+                                  PipelineResult &Result, DebugContext *Dbg,
+                                  PipelineAnalysisCache *Cache) {
   // The HighIR route needs the same call-site evidence for register-pair
   // integer returns as direct MedIR -> LLVM emission.  In particular, a
   // 32-bit callee may look low-word-only until another function reads both
@@ -107,7 +179,7 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
   for (MedFunc &MF : Result.MedFuncs)
     if (!MF.SourceParametersBound)
       inferMedTypes(MF, Img.Arch);
-  modelWideIntReturns(Img, Result);
+  modelWideIntReturns(Img, Result, MedStackProjection::Source);
   // Calls remodeled to return a packed register pair must agree with the
   // corresponding definition on the HighIR route as well as the LLVM route.
   recoverStructReturnFromCallers(Img, Result);
@@ -118,15 +190,27 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
   bindFloatCallResults(Img, Result);
   settleReturnContracts(Img, Result, Dbg);
 
-  auto AllFuncNames = buildFuncNameMap(Img, Result);
-  // Without callee summaries, a convention's call arguments, and the
-  // parameters a forwarder passes straight through, are the setup each caller
-  // writes, as the LLVM route recovers them.
+  // Imports name every selection the same way. The cache keeps that map;
+  // this run's function names sit on it only until Names is destroyed.
+  ImportNameOverlay Names;
+  if (std::map<va_t, std::string> *Shared = importAddressNames(Img, Cache))
+    Names.adoptShared(Shared, Result.LowFuncs);
+  else
+    Names.adoptOwned(buildFuncNameMap(Img, Result));
+  std::map<va_t, std::string> &AllFuncNames = Names.names();
+  for (const auto &[Address, Name] :
+       pipeline_detail::debugFunctionNames(Result, AllFuncNames, Dbg))
+    Names.assign(Address, Name);
+  // A positional register/stack ABI needs one final argument prefix on both
+  // source routes. Independent register banks keep their existing source
+  // recovery, including floating return veneers and variadic format joins.
   const CallArgumentConvention *Convention =
       callArgumentConvention(Img.Arch, Img.abiFormat());
-  if (Convention && Convention->ArgumentsFromCallSetup) {
+  if (Convention &&
+      (Convention->ArgumentsFromCallSetup ||
+       (Convention->StackArgumentSummary &&
+        Convention->PositionalArgumentSlots))) {
     recoverModuleCallAbi(Img, Result, AllFuncNames);
-    matchCallsToCalleeSignatures(Img, Result);
     propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
     // A variadic callee takes its call sites' overflow arguments as trailing
     // stack parameters, which MedToHigh seeds where its va_arg walk reads
@@ -138,11 +222,54 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
     // is the stack its calls store.
     sizeVariadicOverflowFromStores(Result.MedFuncs, Img.Arch);
   }
+  // A tail call that forwards a multi-register return (`return g(x);`, an
+  // import's stub) returns every register its callee returns, as in lift
+  // mode; without the remodel the RETURN finds the trailing registers only
+  // before the call, which may change them.
+  remodelStructReturnForwarderCalls(Img, Result);
+  // A va_start forwarder passes C's own va_list only to a parameter that
+  // takes one: an import's or a function's named as a routine's va_list form,
+  // or one of a function in this image the analysis follows.
+  if (llvm::any_of(Result.MedFuncs, [](const MedFunc &MF) {
+        return MF.VaListDisplacement.has_value();
+      })) {
+    const libc::LibCVariant Variant = libc::libcVariantOf(Img);
+    markVaListCalls(
+        Result.MedFuncs, Img.Arch, Img.abiFormat(), [&](va_t Target) {
+          std::string Name = importCalleeCName(Img, Target);
+          if (const auto It = AllFuncNames.find(Target);
+              Name.empty() && It != AllFuncNames.end() &&
+              !isSynthesizedFuncName(It->second))
+            Name = cNameOfSymbol(It->second, Img.Format, Img.Arch).str();
+          NamedCallee Callee;
+          if (const auto Arity = libc::libcArityForSymbol(Name, Variant))
+            Callee.IntegerParams = static_cast<unsigned>(Arity->IntArgs);
+          Callee.VaList = libc::vaListParameter(Name);
+          return Callee;
+        });
+  }
+  prepareRecoveredSourceStackAccesses(Img, Result);
+  // Both C projections consume these original-machine observations after
+  // source ABI remodeling. They never participate in type or call recovery.
+  std::map<va_t, const LowFunc *> OriginalFunctions;
+  for (const auto &Function : Result.LowFuncs) {
+    auto [Found, Inserted] =
+        OriginalFunctions.emplace(Function.Entry, &Function);
+    if (!Inserted)
+      Found->second = nullptr;
+  }
+  for (auto &Function : Result.MedFuncs) {
+    Function.FrameBytes.clear();
+    if (const auto Original = OriginalFunctions.find(Function.Entry);
+        !Function.AnalystStackFrame && Original != OriginalFunctions.end() &&
+        Original->second)
+      Function.FrameBytes = observeSourceFrameBytes(*Original->second, Img);
+  }
 }
 
 void Pipeline::buildHighIR(const BinaryImage &Img, const PipelineOptions &Opts,
                            PipelineResult &Result, DebugContext *Dbg) {
-  prepareSourceMedIR(Img, Result, Dbg);
+  prepareSourceMedIR(Img, Result, Dbg, sharedAnalysisCache(Img, Opts));
   rebuildHighIR(Img, Opts, Result, Dbg);
 }
 
@@ -165,34 +292,25 @@ bool Pipeline::resumeHighIR(const BinaryImage &Img, const PipelineOptions &Opts,
 void Pipeline::rebuildHighIR(const BinaryImage &Img,
                              const PipelineOptions &Opts,
                              PipelineResult &Result, DebugContext *Dbg) {
-  auto AllFuncNames = buildFuncNameMap(Img, Result);
-  if (Dbg && Dbg->hasInfo()) {
-    for (const MedFunc &MF : Result.MedFuncs) {
-      if (auto DF = Dbg->functionName(MF.Entry); DF && !DF->empty()) {
-        auto It = AllFuncNames.find(MF.Entry);
-        if (It == AllFuncNames.end() || It->second.empty() ||
-            isSynthesizedFuncName(It->second))
-          AllFuncNames[MF.Entry] = *DF;
-      }
-      for (const MedBlock &B : MF.Blocks) {
-        for (const MedOp &Op : B.Ops) {
-          if (Op.Opcode != NdOp::CALL || Op.NumInputs < 1 ||
-              !Op.Inputs[0].isConst())
-            continue;
-          const va_t Target = static_cast<va_t>(Op.Inputs[0].ConstVal);
-          if (!Target)
-            continue;
-          auto It = AllFuncNames.find(Target);
-          if (It != AllFuncNames.end() && !It->second.empty() &&
-              !isSynthesizedFuncName(It->second))
-            continue;
-          if (auto DF = Dbg->functionName(Target); DF && !DF->empty())
-            AllFuncNames[Target] = *DF;
-        }
-      }
-    }
-  }
+  for (const MedFunc &Function : Result.MedFuncs)
+    MedToHighConverter::validateCallContracts(Function);
+  PipelineAnalysisCache *Cache = sharedAnalysisCache(Img, Opts);
+  // Same import map as prepareSourceMedIR. Debug and thunk names are this
+  // run's overlay; Names removes them after the workers below have joined.
+  ImportNameOverlay Names;
+  if (std::map<va_t, std::string> *Shared = importAddressNames(Img, Cache))
+    Names.adoptShared(Shared, Result.LowFuncs);
+  else
+    Names.adoptOwned(buildFuncNameMap(Img, Result));
+  std::map<va_t, std::string> &AllFuncNames = Names.names();
+  for (const auto &[Address, Name] :
+       pipeline_detail::debugFunctionNames(Result, AllFuncNames, Dbg))
+    Names.assign(Address, Name);
 
+  // detectThunkStubs writes LowFunc entries itself. Remember those values
+  // first so an overwrite of an import name is undone with the rest.
+  for (const LowFunc &LF : Result.LowFuncs)
+    Names.remember(LF.Entry);
   detectThunkStubs(Result.LowFuncs, AllFuncNames);
 
   // The same direct and indirect targets recur across MedIR operations.
@@ -211,11 +329,19 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
   MedToHighConverter NameResolver;
   NameResolver.setBinaryImage(&Img);
   NameResolver.setFuncNames(&AllFuncNames);
+  // A run that shares the analysis cache names them from its symbol
+  // inventory, read once for every run.
+  std::shared_ptr<const PipelineAnalysisCache::SymbolInventory> Inventory;
+  if (Cache) {
+    Inventory = PipelineAnalysisCache::SymbolInventory::of(Img, *Cache);
+    NameResolver.setImageFunctionNames(&Inventory->functionNames(Img));
+  }
   NameResolver.resolveCalleeNames(CallTargets, ResolvedCalleeNames);
-  std::map<va_t, int> VariadicVectorCallees;
+  std::map<va_t, VariadicVectorCallee> VariadicVectorCallees;
   for (const MedFunc &MF : Result.MedFuncs)
     if (MF.takesVectorArgumentRegisters())
-      VariadicVectorCallees[MF.Entry] = MF.VariadicOverflowCount;
+      VariadicVectorCallees[MF.Entry] = {MF.VariadicOverflowCount,
+                                         MF.VaNamedIntegerRegisters};
 
   const size_t Total = Result.MedFuncs.size();
   // A worker failure invalidates the whole stage. Keep output private until
@@ -248,14 +374,17 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
     Local.setFuncNames(&AllFuncNames);
     Local.setResolvedCalleeNames(&ResolvedCalleeNames);
     Local.setVariadicVectorCallees(&VariadicVectorCallees);
+    Local.setPrototypeArgumentCallees(&Result.CallPrototypeArguments);
     for (size_t FI; (FI = Claim()) < N;) {
       const MedFunc &MF = Result.MedFuncs[FI];
       Local.setExpressionObserver({});
       Local.setExpressionCloneObserver({});
       Local.setStatementObserver({});
+      Local.setObservationReset({});
       std::map<const HighExpr *, std::vector<size_t>> SourceIndex;
       bool SourceOverflow = false;
-      size_t SourceWork = 250000;
+      size_t SourceWork =
+          ::neverd::limits::pipeline::kPipelineHighIRSourceWorkBudget;
       std::vector<const sigs::LibraryRecognition *> SourceRegions;
       for (const auto &R : Result.LibraryRecognitions)
         if (R.Function == MF.Entry && R.Isolated &&
@@ -263,19 +392,22 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
           SourceRegions.push_back(&R);
       auto Append = [&](sigs::LibraryOccurrence Occurrence, const ExprPtr &Expr,
                         HighSourceKind Kind = HighSourceKind::Expression,
-                        std::optional<StmtKind> StatementKind = std::nullopt) {
+                        std::optional<StmtKind> StatementKind = std::nullopt,
+                        std::optional<uint8_t> ExpressionKind = std::nullopt) {
         if (SourceOverflow)
           return;
-        if (Sources[FI].size() >= 100000) {
+        if (Sources[FI].size() >=
+            ::neverd::limits::pipeline::
+                kPipelineHighIRPipelineRebuildHighIRAppendSourcesFISizeLimit) {
           Sources[FI].clear();
           SourceIndex.clear();
           SourceOverflow = true;
           return;
         }
-        if (Expr)
+        if (Expr && Kind == HighSourceKind::Expression)
           SourceIndex[Expr.get()].push_back(Sources[FI].size());
         Sources[FI].push_back(
-            {MF.Entry, Occurrence, Expr, Kind, StatementKind});
+            {MF.Entry, Occurrence, Expr, Kind, StatementKind, ExpressionKind});
       };
       auto Observe = [&](sigs::LibraryOccurrence Occurrence,
                          const ExprPtr &Expr) {
@@ -321,10 +453,20 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
         }
       };
       Local.setStatementObserver([&](const MedOp &Op, const HighStmt &S) {
-        Append({Op.Addr, Op.OriginSeq}, {},
-               S.Kind == StmtKind::Store ? HighSourceKind::Store
-                                         : HighSourceKind::Statement,
-               S.Kind);
+        const auto Source =
+            observeHighStatement(MF.Entry, {Op.Addr, Op.OriginSeq}, S);
+        const ExprPtr Call = S.Kind == StmtKind::Assign ? S.Val : S.CallExpr;
+        Append(Source.Occurrence,
+               Source.Kind == HighSourceKind::StatementExpression ? Call
+                                                                  : ExprPtr(),
+               Source.Kind, Source.StatementKind, Source.ExpressionKind);
+      });
+      Local.setObservationReset([&] {
+        Sources[FI].clear();
+        SourceIndex.clear();
+        SourceOverflow = false;
+        SourceWork =
+            ::neverd::limits::pipeline::kPipelineHighIRSourceWorkBudget;
       });
       if (RecognizedFunctions.contains(MF.Entry)) {
         Local.setExpressionObserver(
@@ -390,10 +532,6 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
         continue;
       }
       try {
-        if (FI < Result.LowFuncs.size())
-          Local.setJumpTables(Result.LowFuncs[FI].JumpTables);
-        else
-          Local.setJumpTables({});
         Pending[FI] = Local.convert(MF, Img.Arch);
         auto &HF = Pending[FI];
         // Structuring may invert or simplify an If condition. Its statement

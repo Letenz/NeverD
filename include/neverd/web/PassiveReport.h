@@ -12,6 +12,7 @@
 #pragma once
 
 #include "neverd/web/InterfaceRelations.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceFeatures.h"
 #include "neverd/web/Streams.h"
 
@@ -21,11 +22,6 @@
 namespace neverd::web {
 inline constexpr std::string_view PassiveReportProfile =
     "passive-evidence-shape-report-v2";
-inline constexpr uint64_t MaxPassiveReportRecords = 16384;
-inline constexpr uint64_t MaxPassiveReportSteps = 8000000;
-inline constexpr uint64_t MaxPassiveShapeBytes = 65536;
-inline constexpr uint64_t MaxPassiveShapeNodes = 200000;
-inline constexpr uint64_t MaxPassiveShapePrivateBytes = 2 * 1024 * 1024;
 
 /// IDs encode public anchors and structural ordinals, never private names.
 /// Schema nodes share a capture-local field dictionary; value nodes keep each

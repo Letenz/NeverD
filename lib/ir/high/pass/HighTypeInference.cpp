@@ -11,7 +11,10 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/MedTypePass.h"
+#include "neverd/ir/med/X86/X86NativeMemory.h"
 
 #include <functional>
 #include <set>
@@ -83,9 +86,13 @@ void MedToHighConverter::inferTypes(HighFunc &Func) {
   std::set<int> AddrParams;
   auto Unwrap = [](const HighExpr *E) -> const HighExpr * {
     unsigned Depth = 0;
-    while (E && !E->Operands.empty() && Depth++ < 8 &&
-           (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast ||
-            E->Kind == ExprKind::UnaryOp))
+    while (
+        E && !E->Operands.empty() &&
+        Depth++ <
+            ::neverd::limits::ir::
+                kHighTypeInferenceMedToHighConverterInferTypesUnwrapDepthLimit &&
+        (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast ||
+         E->Kind == ExprKind::UnaryOp))
       E = E->Operands[0].get();
     return E;
   };
@@ -211,6 +218,10 @@ std::set<uint64_t> detectPtrParamRegs(const MedFunc &Med) {
   };
   for (auto &Blk : Med.Blocks) {
     for (auto &Op : Blk.Ops) {
+      if (visitOriginalMemoryPointerInputs(Op, [&](const MedVar &Address) {
+            recordAddressRegs(Address, PtrRegs);
+          }))
+        continue;
       if (Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::INDIR_CALL) {
         if (Op.NumInputs >= 1 && Op.Inputs[0].Kind == MedVar::Reg)
           PtrRegs.insert(Op.Inputs[0].RegOff);
@@ -230,7 +241,9 @@ std::set<uint64_t> detectPtrParamRegs(const MedFunc &Med) {
         MemoryAddress = &Op.Inputs[1];
       if (MemoryAddress) {
         recordAddressRegs(*MemoryAddress,
-                          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default
+                          Op.MemoryAddressSpace ==
+                                      NdMemoryAddressSpace::Default &&
+                                  !x86NativeMemoryHasSegmentOffset(Op)
                               ? PtrRegs
                               : SegmentOffsetRegs);
       }
@@ -266,6 +279,8 @@ std::set<int> detectPtrParamIds(const MedFunc &Med) {
   };
   for (const MedBlock &Blk : Med.Blocks) {
     for (const MedOp &Op : Blk.Ops) {
+      if (visitOriginalMemoryPointerInputs(Op, recordAddressParams))
+        continue;
       const MedVar *MemoryAddress = nullptr;
       if ((Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE ||
            Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
@@ -278,7 +293,8 @@ std::set<int> detectPtrParamIds(const MedFunc &Med) {
                    static_cast<Intrinsic>(Op.Inputs[0].ConstVal)))
         MemoryAddress = &Op.Inputs[1];
       if (MemoryAddress &&
-          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          !x86NativeMemoryHasSegmentOffset(Op))
         recordAddressParams(*MemoryAddress);
     }
   }

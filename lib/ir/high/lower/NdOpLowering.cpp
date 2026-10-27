@@ -20,9 +20,11 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedIntrinsicOutputs.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/DataSymbolBinding.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -102,7 +104,7 @@ void MedToHighConverter::lowerStore(HighFunc &Func, const MedOp &CurOp) {
   if (CurOp.NumInputs >= 2) {
     S.StoreAddr = memoryAddressExpr(CurOp.Inputs[0]);
 
-    auto ValKey = std::make_pair(CurOp.Inputs[1].Id, CurOp.Inputs[1].SSAVer);
+    const auto ValKey = varKey(CurOp.Inputs[1]);
     if (CallOutputs.count(ValKey))
       S.StoreVal = HighExpr::makeVar(CurOp.Inputs[1]);
     else
@@ -120,7 +122,18 @@ void MedToHighConverter::lowerCall(HighFunc &Func, const MedBlock &CurBlock,
   va_t Target = 0;
   if (CurOp.NumInputs >= 1 && CurOp.Inputs[0].isConst())
     Target = CurOp.Inputs[0].ConstVal;
-  std::string Callee = calleeDisplayName(Target);
+  // The stub of a symbol the image defines itself, `g@plt`, jumps through the
+  // slot the loader starts at that routine: the call reaches the routine, by
+  // the name the slot is bound by (__lttf2 and __letf2 may name one routine).
+  std::string Callee;
+  if (Image && Target)
+    if (const Import *Imp = Image->findImportStubAt(Target))
+      if (const std::optional<va_t> Own = ownRoutineOfImport(*Image, *Imp)) {
+        Target = *Own;
+        Callee = Imp->Name;
+      }
+  if (Callee.empty())
+    Callee = calleeDisplayName(Target);
 
   size_t CallIdx = 0;
   for (size_t K = 0; K < CurBlock.Ops.size(); ++K) {
@@ -159,12 +172,27 @@ void MedToHighConverter::lowerCall(HighFunc &Func, const MedBlock &CurBlock,
                                 ConstantAddressProvenance::DataAddress);
     }
   auto CallExpr = HighExpr::makeCall(Callee, Target, std::move(Args));
+  CallExpr->CallSiteAddr = CurOp.Addr;
   CallExpr->SourceCallHint = CurOp.SourceCallHint;
+  if (auto Signature = boundFloatingCallArguments(
+          CurOp, TargetArch,
+          Image ? Image->abiFormat() : BinaryFormat::Unknown))
+    CallExpr->FloatingCallSignature =
+        std::make_shared<FloatingCallArguments>(std::move(*Signature));
+  else if (CurOp.CalleeFloatReturnBytes && CurMed)
+    if (const auto *Info = CurMed->findCall(CurBlock.Id, CallIdx))
+      if (auto Signature = recoveredFloatingCallArguments(
+              CurOp, *Info, TargetArch,
+              Image ? Image->abiFormat() : BinaryFormat::Unknown))
+        CallExpr->FloatingCallSignature =
+            std::make_shared<FloatingCallArguments>(std::move(*Signature));
   CallExpr->DoesNotReturn = CurOp.DoesNotReturn;
   const bool X87Result =
       CurOp.Output.Kind == MedVar::Reg && CurOp.Output.Size == 10 &&
       getTargetRegInfo(TargetArch).isX87StackReg(CurOp.Output.RegOff);
-  if (CurOp.SourceCallHint || X87Result)
+  if (CurOp.SourceCallHint || X87Result || CurOp.CalleeFloatReturnBytes ||
+      (CallExpr->FloatingCallSignature &&
+       CallExpr->FloatingCallSignature->ReturnElements))
     CallExpr->Type = sourceCallResultType(CurOp);
   // A call remodeled to return a struct across several registers writes
   // every field into one packed temporary.
@@ -177,17 +205,24 @@ void MedToHighConverter::lowerCall(HighFunc &Func, const MedBlock &CurBlock,
     HighStmt S;
     S.Kind = StmtKind::Assign;
     S.Addr = CurOp.Addr;
-    S.Dst = HighExpr::makeVar(CurOp.Output,
-                              CallExpr->Type &&
-                                      CallExpr->Type->Kind == NdTypeKind::Struct
-                                  ? CallExpr->Type
-                                  : nullptr);
+    const bool SourceFloat = SourceFloatCallValues.count(varKey(CurOp.Output));
+    S.Dst = HighExpr::makeVar(
+        CurOp.Output, SourceFloat || (CallExpr->Type && CallExpr->Type->Kind ==
+                                                            NdTypeKind::Struct)
+                          ? CallExpr->Type
+                          : nullptr);
     // All machine consumers read the x87 carrier as eighty raw bits. Keep
     // that representation at the assignment boundary, including when a
     // later pass inlines the call into an arithmetic operand or return.
-    S.Val = X87Result ? HighExpr::makeBitCast(
-                            CallExpr, NdType::makeInt(CurOp.Output.Size, false))
-                      : CallExpr;
+    S.Val = CallExpr;
+    if (X87Result && !SourceFloat) {
+      if (CallExpr->Type && CallExpr->Type->Size != CurOp.Output.Size) {
+        S.Val = HighExpr::makeUnary(NdOp::FLOAT_FLOAT2FLOAT, S.Val);
+        S.Val->Type = NdType::makeFloat(CurOp.Output.Size);
+      }
+      S.Val = HighExpr::makeBitCast(S.Val,
+                                    NdType::makeInt(CurOp.Output.Size, false));
+    }
     Func.Body.push_back(std::move(S));
   } else {
     HighStmt S;
@@ -204,12 +239,15 @@ void MedToHighConverter::lowerCall(HighFunc &Func, const MedBlock &CurBlock,
 
 void MedToHighConverter::lowerIntrinsic(HighFunc &Func,
                                         const MedBlock &CurBlock,
-                                        const MedOp &CurOp, size_t OpIdx,
-                                        std::set<size_t> &IntrinsicSkip) {
+                                        const MedOp &CurOp, size_t OpIdx) {
   Intrinsic IID = Intrinsic::None;
   if (CurOp.NumInputs >= 1 && CurOp.Inputs[0].isConst())
     IID = static_cast<Intrinsic>(CurOp.Inputs[0].ConstVal);
-  const char *CName = intrinsicCName(IID);
+  const std::optional<uint64_t> Code =
+      CurOp.NumInputs >= 2 && CurOp.Inputs[1].isConst()
+          ? std::optional<uint64_t>(CurOp.Inputs[1].ConstVal)
+          : std::nullopt;
+  const char *CName = intrinsicCName(IID, Code);
   std::string Name = CName ? CName : intrinsicName(CurOp);
   if (Name.empty())
     Name = "unknown_intrinsic";
@@ -222,11 +260,11 @@ void MedToHighConverter::lowerIntrinsic(HighFunc &Func,
   CallExpr->MemoryAddressSpace = CurOp.MemoryAddressSpace;
   // A terminating instruction has no observable return value, even when
   // the generic intrinsic carrier contains a synthetic output temporary.
-  const bool HasResult =
-      CurOp.Output.Size > 0 && !isUnconditionalTrapIntrinsic(IID);
+  const bool Terminates = isUnconditionalTrapIntrinsic(IID, Code);
+  const bool HasResult = CurOp.Output.Size > 0 && !Terminates;
   if (HasResult)
     CallExpr->Type = NdType::makeInt(CurOp.Output.Size, false);
-  else if (isUnconditionalTrapIntrinsic(IID))
+  else
     CallExpr->Type = NdType::makeVoid();
 
   uint8_t NumOut = intrinsicOutputCount(IID);
@@ -235,10 +273,8 @@ void MedToHighConverter::lowerIntrinsic(HighFunc &Func,
     for (const MedIntrinsicOutputBinding &Binding :
          collectMedIntrinsicOutputBindings(CurBlock, OpIdx, NumOut)) {
       CoOutputs.push_back(Binding.Source);
-      // COPY only forwards the pending value.  Sub-register normalization
-      // still feeds later stores and returns and must be lowered normally.
-      if (Binding.IsCopy)
-        IntrinsicSkip.insert(Binding.OpIndex);
+      // The intrinsic defines Source. Its following COPY defines another
+      // value and must be lowered before ordinary source copy propagation.
     }
     CallExpr->IntrinsicOutputs = std::move(CoOutputs);
   }

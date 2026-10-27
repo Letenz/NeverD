@@ -1,0 +1,32 @@
+//===- BuiltinSpellings.def - How local types name builtins -----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The ways rendered source names builtin types.  TypeLanguages.def says
+/// which each language takes, and which it takes unless another is asked.
+///
+/// NEVERD_BUILTIN_SPELLING(Name, Id)
+///   Id  How APIs, the CLI and settings name the spelling.
+///
+/// Portable  Exact widths: uint32_t in C, u32 in Rust, uint32 in Go,
+///           ctypes.c_uint32 in Python; JavaScript's number or bigint.
+/// Windows   ULONG and UCHAR, as the Windows headers name them; Rust, Go,
+///           Python and JavaScript declare them as aliases of exact widths,
+///           as wdk-sys does (pub type ULONG = u32, type ULONG = uint32,
+///           ULONG = ctypes.c_uint32, @typedef {number} ULONG).
+/// Keywords  unsigned long, as the compiler recorded it.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_BUILTIN_SPELLING
+#define NEVERD_BUILTIN_SPELLING(Name, Id)
+#endif
+
+NEVERD_BUILTIN_SPELLING(Portable, "portable")
+NEVERD_BUILTIN_SPELLING(Windows, "windows")
+NEVERD_BUILTIN_SPELLING(Keywords, "keywords")
+
+#undef NEVERD_BUILTIN_SPELLING

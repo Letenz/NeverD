@@ -11,8 +11,6 @@
 
 #include "neverd/web/SourceLimits.h"
 
-#include "RecoveryParser.h"
-
 #include "neverd/web/Error.h"
 
 #include <limits>
@@ -22,38 +20,11 @@ namespace neverd::web {
 SourceLimits sourceLimits(SourceAnalysisMode Mode) {
   switch (Mode) {
   case SourceAnalysisMode::Interactive:
-    return {JavaScriptParserProfile,
-            MaxJavaScriptBytes,
-            MaxJavaScriptNodes,
-            MaxJavaScriptLexemes,
-            MaxJavaScriptStringUnits,
-            128 * 1024 * 1024,
-            1,
-            32 * 1024 * 1024,
-            200000,
-            5};
+    return InteractiveSourceLimits;
   case SourceAnalysisMode::Large:
-    return {LargeJavaScriptParserProfile,
-            8 * 1024 * 1024,
-            1500000,
-            2000000,
-            16 * 1024 * 1024,
-            768 * 1024 * 1024,
-            16,
-            256 * 1024 * 1024,
-            1600000,
-            30};
+    return LargeSourceLimits;
   case SourceAnalysisMode::Recovery:
-    return {JavaScriptRecoveryProfile,
-            MaxRecoverySourceBytes,
-            MaxRecoveryNodes,
-            MaxRecoveryLexemes,
-            MaxRecoveryStringUnits,
-            1024 * 1024 * 1024,
-            1,
-            256 * 1024 * 1024,
-            1600000,
-            30};
+    return RecoverySourceLimits;
   }
   throw Error("unsupported_source_analysis_mode");
 }

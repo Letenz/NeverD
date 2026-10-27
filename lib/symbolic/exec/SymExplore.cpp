@@ -647,6 +647,10 @@ SymExploration explorePathsDetailed(SymContext &Ctx, const LowFunc &Func,
           !Shadow->setRegister(Seed.Offset, Seed.Bytes, Seed.Value))
         ShadowTrusted = false;
     }
+    for (const SymConcreteMemory &Seed : Opts.ConcolicMemory) {
+      if (ShadowTrusted && !Shadow->setMemory(Seed.Address, Seed.Bytes))
+        ShadowTrusted = false;
+    }
   }
 
   llvm::SmallVector<Frontier, 8> Pending;

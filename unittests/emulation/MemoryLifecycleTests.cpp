@@ -46,6 +46,47 @@ std::vector<uint8_t> instructionBytes(GuestArchitecture ISA,
                                      ARM[N]);
   return Bytes;
 }
+TEST(MemoryLifecycle, UnmappedBackingRetainsCapacityAndIdentity) {
+  auto RAM = ram(PageSize * 2);
+  auto A = space(RAM), B = space(RAM);
+  const auto Generation = A->mappingGeneration();
+  auto View = llvm::cantFail(A->allocateBacking(PageSize * 2));
+  EXPECT_EQ(View.addressSpaceIdentity(), A->identity());
+  EXPECT_EQ(A->mappedBytes(), 0u);
+  EXPECT_EQ(A->mappingGeneration(), Generation);
+  std::vector<uint8_t> Bytes(PageSize * 2, 0xff);
+  ASSERT_EQ(llvm::toString(View.read(0, Bytes)), "");
+  EXPECT_EQ(Bytes, std::vector<uint8_t>(PageSize * 2));
+  auto Full = B->allocateBacking(PageSize);
+  ASSERT_FALSE(bool(Full));
+  auto Error = Full.takeError();
+  EXPECT_TRUE(Error.isA<GuestMemoryLimitError>());
+  llvm::consumeError(std::move(Error));
+  auto Invalid = A->allocateBacking(1);
+  ASSERT_FALSE(bool(Invalid));
+  llvm::consumeError(Invalid.takeError());
+  {
+    auto Slice = View.slices().front();
+    ASSERT_EQ(llvm::toString(
+                  B->mapRegion(Data, Slice.Region, 0, PageSize, Read | Write)),
+              "");
+  }
+  const uint8_t Value[] = {1, 2, 3, 4};
+  ASSERT_EQ(llvm::toString(View.write(0, Value)), "");
+  EXPECT_EQ(llvm::cantFail(B->readInteger(Data, 4)), 0x04030201u);
+  View = {};
+  A.reset();
+  EXPECT_EQ(RAM->allocatedBytes(), PageSize * 2);
+  ASSERT_EQ(llvm::toString(B->unmap(Data, PageSize)), "");
+  EXPECT_EQ(RAM->allocatedBytes(), 0u);
+  auto Reused = llvm::cantFail(B->allocateBacking(PageSize));
+  ASSERT_EQ(llvm::toString(
+                Reused.read(0, llvm::MutableArrayRef(Bytes).take_front(4))),
+            "");
+  EXPECT_EQ(std::vector<uint8_t>(Bytes.begin(), Bytes.begin() + 4),
+            std::vector<uint8_t>(4));
+}
+
 TEST(MemoryLifecycle, DistinctSpacesAndSharedRegionsHaveIndependentLifetimes) {
   auto RAM = ram();
   auto A = space(RAM), B = space(RAM);
@@ -581,10 +622,32 @@ TEST_P(SharedCPU, ChecksExternalMappingsAtAttachmentAndBeforeExecution) {
   llvm::consumeError(Attach.takeError());
   EXPECT_NE(llvm::toString(First->bindAddressSpace(Bad)), "");
   ASSERT_EQ(llvm::toString(program(FirstX64, FirstARM)), "");
+  ASSERT_EQ(llvm::toString(steps(*First, 1)), "");
+  EXPECT_EQ((*First->readRegister(resultRegister()))[0], Value);
+  ASSERT_EQ(
+      llvm::toString(First->writeRegister(resultRegister(), {Updated, 0})), "");
   ASSERT_EQ(llvm::toString(A->map(Invalid, PageSize, Read | Execute)), "");
-  EXPECT_NE(llvm::toString(First->run(Code, Timeout)), "");
-  EXPECT_EQ((*First->readRegister(resultRegister()))[0], 0u);
+  // A peer can add an inadmissible mapping after a successful run. Repeated
+  // failures on that unchanged mapping must never authorize execution.
+  for (unsigned Attempt = 0; Attempt < 2; ++Attempt) {
+    EXPECT_NE(llvm::toString(First->run(Code, Timeout)), "");
+    EXPECT_EQ((*First->readRegister(resultRegister()))[0], Updated);
+  }
   ASSERT_EQ(llvm::toString(A->unmap(Invalid, PageSize)), "");
+  ASSERT_EQ(llvm::toString(steps(*First, 1)), "");
+  EXPECT_EQ((*First->readRegister(resultRegister()))[0], Value);
+  // Bind a valid space one epoch behind A, then let a peer add an invalid
+  // page. Its epoch now matches A's successful run, but its mappings do not.
+  ASSERT_EQ(llvm::toString(B->protect(Alias, PageSize, Read | Write)), "");
+  ASSERT_EQ(B->mappingGeneration() + 1, A->mappingGeneration());
+  ASSERT_EQ(llvm::toString(First->bindAddressSpace(B)), "");
+  ASSERT_EQ(llvm::toString(B->map(Invalid, PageSize, Read | Execute)), "");
+  ASSERT_EQ(B->mappingGeneration(), A->mappingGeneration());
+  ASSERT_EQ(
+      llvm::toString(First->writeRegister(resultRegister(), {Updated, 0})), "");
+  EXPECT_NE(llvm::toString(First->run(Code, Timeout)), "");
+  EXPECT_EQ((*First->readRegister(resultRegister()))[0], Updated);
+  ASSERT_EQ(llvm::toString(B->unmap(Invalid, PageSize)), "");
   ASSERT_EQ(llvm::toString(steps(*First, 1)), "");
   EXPECT_EQ((*First->readRegister(resultRegister()))[0], Value);
 }

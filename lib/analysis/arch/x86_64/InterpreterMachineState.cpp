@@ -12,12 +12,13 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/Support/Errc.h"
 
 #include <algorithm>
 #include <initializer_list>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <set>
@@ -524,7 +525,7 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
         };
         if (auto Error = Remap(Op.Output, false))
           return std::move(Error);
-        if (Op.NumInputs > 6)
+        if (Op.NumInputs > std::size(Op.Inputs))
           return invalid("machine source has an invalid operation arity");
         for (unsigned Input = 0; Input != Op.NumInputs; ++Input) {
           // Machine-state values name the original guest mapping, not a

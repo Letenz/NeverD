@@ -11,17 +11,15 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceOrigins.h"
 #include "neverd/web/SourceValues.h"
 
 namespace neverd::web {
 inline constexpr std::string_view ElectronSourceProfile =
     "electron-static-boundaries-v1";
-inline constexpr uint64_t MaxElectronRecords = 10000;
-inline constexpr uint64_t MaxElectronSteps = 2000000;
 inline constexpr std::string_view ElectronManifestProfile =
     "electron-40-package-entry-candidates-v1";
-inline constexpr uint64_t MaxElectronManifestBytes = 1024 * 1024;
 
 struct ElectronManifest {
   std::string ID, ArtifactID, MainValueStatus, MainLinkStatus, MainArtifactID;

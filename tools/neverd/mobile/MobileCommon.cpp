@@ -1,6 +1,7 @@
 //===- MobileCommon.cpp - Native mobile filesystem and budgets ------------===//
 #include "MobileCommon.h"
 
+#include "../ResourceLimits.h"
 #include "MobileFile.h"
 
 #include "llvm/ADT/StringRef.h"
@@ -26,43 +27,6 @@
 #endif
 
 namespace neverd::mobile {
-
-void Limits::validate() const {
-  if (!timeout || !max_files || !max_bytes ||
-      timeout > uint64_t(std::numeric_limits<int64_t>::max() / 1000000000))
-    throw Error("timeout and input limits must be positive and representable");
-}
-
-Budget::Budget(Limits configured) : limits(configured) {
-  limits.validate();
-  auto now = std::chrono::steady_clock::now();
-  auto available = std::chrono::duration_cast<std::chrono::seconds>(
-      std::chrono::steady_clock::time_point::max() - now);
-  if (limits.timeout > static_cast<uint64_t>(available.count()))
-    throw Error("mobile analysis deadline is not representable");
-  deadline = now + std::chrono::seconds(limits.timeout);
-  remaining = std::min<uint64_t>(
-      20000000, std::max<uint64_t>(100000, limits.max_bytes > 5000000
-                                               ? 20000000
-                                               : limits.max_bytes * 4));
-}
-
-void Budget::check() const {
-  if (std::chrono::steady_clock::now() > deadline)
-    throw Error("mobile analysis exceeded its time budget");
-}
-
-void Budget::tick(uint64_t count) {
-  check();
-  consumeWork(count);
-}
-
-void Budget::output(uint64_t count) {
-  check();
-  if (count > limits.max_bytes - output_bytes)
-    throw Error("mobile generated source exceeded its byte budget");
-  output_bytes += count;
-}
 
 std::string lowerASCII(std::string_view value) {
   std::string result(value);
@@ -218,8 +182,9 @@ void OutputFile::write(std::string_view bytes) {
   size_t cursor = 0;
   while (cursor < bytes.size()) {
     DWORD written = 0;
-    DWORD count =
-        static_cast<DWORD>(std::min<size_t>(65536, bytes.size() - cursor));
+    DWORD count = static_cast<DWORD>(std::min<size_t>(
+        ::neverd::limits::cli::kMobileCommonOutputFileWriteCountMinArgument1,
+        bytes.size() - cursor));
     if (!WriteFile(reinterpret_cast<HANDLE>(handle), bytes.data() + cursor,
                    count, &written, nullptr) ||
         !written) {
@@ -230,8 +195,11 @@ void OutputFile::write(std::string_view bytes) {
 #else
   size_t cursor = 0;
   while (cursor < bytes.size()) {
-    auto written = ::write(static_cast<int>(handle), bytes.data() + cursor,
-                           std::min<size_t>(65536, bytes.size() - cursor));
+    auto written = ::write(
+        static_cast<int>(handle), bytes.data() + cursor,
+        std::min<size_t>(::neverd::limits::cli::
+                             kMobileCommonOutputFileWriteWrittenMinArgument1,
+                         bytes.size() - cursor));
     if (written < 0 && errno == EINTR)
       continue;
     if (written <= 0) {

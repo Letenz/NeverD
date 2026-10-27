@@ -6,6 +6,7 @@
 #ifndef NEVERD_EMULATION_ANDROIDINTERNAL_H
 #define NEVERD_EMULATION_ANDROIDINTERNAL_H
 #include "../kernel/LinuxServices.h"
+#include "AndroidJNI.h"
 #include "AndroidProperties.h"
 
 #include "neverd/emulation/AndroidNative.h"
@@ -14,6 +15,7 @@
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 
+#include <array>
 #include <map>
 #include <variant>
 
@@ -68,7 +70,22 @@ struct LinkedImage {
   std::map<uint64_t, std::string> DynamicProviders;
   std::map<std::string, std::map<std::string, uint64_t>> Libraries;
   PropertyTable Properties;
+  std::vector<uint8_t> JNIImage;
+  uint64_t JNIThunkBegin = 0, JNIThunkEnd = 0;
+  std::optional<uint64_t> JNIOnLoad;
+  std::map<uint64_t, std::array<uint64_t, 4>> DladdrObservations;
 };
+llvm::Error validateAuxiliaryVector(const AndroidNativeOptions &Options);
+llvm::Error validateCalendar(const AndroidNativeOptions &Options);
+llvm::Error initializeCalendar(AddressSpace &Space,
+                               const AndroidNativeOptions &Options,
+                               const LinkedImage &Linked);
+llvm::Error initializeDladdrObservations(AddressSpace &Space,
+                                         const AndroidNativeOptions &Options,
+                                         LinkedImage &Linked);
+llvm::Error initializeErrorStrings(AddressSpace &Space,
+                                   const LinkedImage &Linked);
+llvm::Error initializeJNI(AddressSpace &Space, LinkedImage &Linked);
 llvm::Expected<PropertyTable>
 initializeProperties(AddressSpace &Space, const ProcessOptions &Options,
                      const ExecutionBudget &Budget);
@@ -91,21 +108,54 @@ struct PropertyCallback {
   uint64_t Entry, Cookie;
 };
 struct PropertyReadCallback {};
+struct DexContinuation;
+struct JNINativeCallback {
+  const mobile::dalvik::Method *Method;
+  uint64_t Thread, Frame;
+  size_t FrameDepth;
+  std::shared_ptr<DexContinuation> Dex;
+};
+struct JNIOnLoadCallback {
+  uint64_t Thread, Frame;
+  size_t FrameDepth;
+  std::shared_ptr<DexContinuation> Dex;
+};
 struct GuestCallback {
   uint64_t Entry;
   std::vector<uint64_t> Arguments;
   std::variant<OnceCallback, FinalizeCallback, PropertyCallback,
-               PropertyReadCallback>
+               PropertyReadCallback, JNINativeCallback, JNIOnLoadCallback>
       Continuation;
 };
 struct GuestThreadWait {};
 struct GuestThreadExit {
   uint64_t Value;
 };
+/// Libc-only state carried unchanged by the scheduler through kernel waits
+/// and signal returns. Linux owns the copied remainder; Bionic owns rounding.
+struct SleepContinuation {
+  uint32_t Seconds, Excess;
+  std::shared_ptr<LinuxTimespec> Remaining;
+};
 /// A returning model either completes now or suspends for a guest callback.
 using BionicValue =
     std::variant<uint64_t, GuestCallback, GuestThreadWait, GuestThreadExit>;
 using BionicResult = llvm::Expected<std::optional<BionicValue>>;
+using DexCompletion = std::function<BionicResult(uint64_t)>;
+struct DexContinuation {
+  uint64_t ID, Thread;
+  DexCompletion Complete;
+};
+class Bionic;
+/// A libc operation may suspend more than once before its original import
+/// completes. Its byte/element accounting belongs to libc, not the scheduler.
+class NativeWait {
+public:
+  virtual ~NativeWait() = default;
+  virtual bool ready() const = 0;
+  virtual std::optional<uint64_t> nextWake() const = 0;
+  virtual BionicResult resume(Bionic &LibC) = 0;
+};
 class GuestThreads;
 class Bionic {
 public:
@@ -118,7 +168,15 @@ public:
   bool timedOut() const { return Expired; }
   BionicResult invoke(NativeCallEvent &Call);
   BionicResult finishCallback(const GuestCallback &Callback);
+  void reportJNIState();
   BionicResult resumeMutex(uint64_t Address, uint16_t Attributes);
+  /// Complete a shared kernel result using the current thread's libc errno.
+  BionicResult
+  kernelResult(std::optional<uint64_t> Returned,
+               const std::optional<SleepContinuation> &Sleep = std::nullopt);
+  BionicResult resumeSemaphore(uint64_t Address, bool Shared);
+  llvm::Error jniThreadExit();
+  llvm::Error initializeDex();
 
 private:
   ExecutionBackend &CPU;
@@ -132,6 +190,14 @@ private:
   uint64_t tlsAddress() const;
   uint64_t threadID() const;
   bool Expired = false;
+  // Bionic's default generator belongs to the guest process, not a thread or
+  // the host C library. Calls run atomically inside the guest scheduler.
+  uint32_t RandomWords[31] = {};
+  unsigned RandomRear = 0;
+  bool RandomInitialized = false;
+  void seedRandom(uint32_t Seed);
+  uint32_t nextRandom();
+  BionicResult randomCall(const NativeCallEvent &Call);
   struct LibraryState {
     uint64_t Handle = 0, References = 0;
   };
@@ -147,26 +213,93 @@ private:
     uint64_t Entry, Argument, DSO;
   };
   std::vector<ExitCallback> ExitCallbacks;
+  JNIState JNI;
+  enum class JavaLibraryStatus { Unloaded, Loading, Loaded, Failed };
+  JavaLibraryStatus JavaLibraryState = JavaLibraryStatus::Unloaded;
+  uint64_t JavaLibraryThread = 0;
+  BionicResult jniCall(const NativeCallEvent &Call);
+  BionicResult jniVM(const NativeCallEvent &Call);
+  BionicResult jniObjects(unsigned Slot, const NativeCallEvent &Call);
+  BionicResult jniRegistration(unsigned Slot, const NativeCallEvent &Call);
+  BionicResult jniStrings(unsigned Slot, const NativeCallEvent &Call);
+  BionicResult jniArrays(unsigned Slot, const NativeCallEvent &Call);
+  bool jniAssignable(llvm::StringRef Source, llvm::StringRef Destination) const;
+  BionicResult jniMethods(unsigned Slot, const NativeCallEvent &Call);
+  BionicResult callNativeJNI(const mobile::dalvik::Method &Method,
+                             llvm::ArrayRef<uint64_t> Arguments,
+                             std::shared_ptr<DexContinuation> Continuation);
+  BionicResult finishNativeJNI(const JNINativeCallback &Continuation);
+  BionicResult finishJavaLibrary(const JNIOnLoadCallback &Continuation);
+  llvm::Expected<std::variant<mobile::dalvik::ExecutionResult, GuestCallback>>
+  loadJavaLibrary(const mobile::dalvik::ExternalCall &Call,
+                  std::shared_ptr<DexContinuation> Continuation);
+  BionicResult resumeDex(std::shared_ptr<DexContinuation> Continuation,
+                         mobile::dalvik::ExecutionResult Result);
+  BionicResult finishDex(mobile::dalvik::ExecutionResult Executed,
+                         DexCompletion Complete = {});
+  BionicResult dexReference(uint64_t Identity);
+  BionicResult jniFields(unsigned Slot, const NativeCallEvent &Call);
+  BionicResult
+  runDex(const std::function<mobile::dalvik::ExecutionResult(
+             const mobile::dalvik::AdmitInstruction &, uint64_t)> &Body,
+         DexCompletion Complete = {});
+  BionicResult allocateDex(llvm::StringRef Class, bool Initialized,
+                           DexCompletion Complete = {});
+  // Null Method requests class initialization without a method invocation.
+  BionicResult executeDex(const mobile::dalvik::Method *Method,
+                          llvm::ArrayRef<uint64_t> Arguments,
+                          llvm::StringRef Class = {},
+                          DexCompletion Complete = {});
+  llvm::Error jniIdentity(uint64_t Address, uint64_t Expected);
+  llvm::Expected<JNIState::Thread *> jniThread(uint64_t Environment);
+  llvm::Expected<std::shared_ptr<JNIObject>> jniObject(uint64_t Reference);
+  llvm::Expected<uint64_t> jniReference(std::shared_ptr<JNIObject> Object,
+                                        bool Global = false);
+  llvm::Expected<std::shared_ptr<JNIObject>> jniClass(llvm::StringRef Name);
+  llvm::Expected<std::shared_ptr<JNIObject>>
+  jniNewObject(JNIObject::Kind Kind, llvm::StringRef Class, uint64_t Bytes);
+  llvm::Error
+  jniException(llvm::StringRef Class,
+               std::optional<llvm::StringRef> Message = std::nullopt);
+  llvm::Expected<uint64_t> jniBorrow(std::shared_ptr<JNIObject> Object,
+                                     llvm::ArrayRef<uint8_t> Bytes,
+                                     uint64_t IsCopy, unsigned Slot);
+  BionicResult jniRelease(unsigned Slot, const NativeCallEvent &Call);
+  llvm::Error jniPut(uint64_t Address, uint64_t Value, unsigned Size);
   llvm::Error access(uint64_t Address, uint64_t Size, unsigned Permissions);
   llvm::Expected<uint8_t> byte(uint64_t Address);
   llvm::Expected<std::string> string(uint64_t Address);
-  llvm::Expected<uint64_t> allocate(uint64_t Size);
+  llvm::Expected<uint64_t> allocate(uint64_t Size, uint8_t FillByte = 0);
   llvm::Error release(uint64_t Address);
   llvm::Error setErrno(uint32_t Value);
+  llvm::Expected<uint32_t> errnoValue();
   BionicResult linkerError(llvm::StringRef Message, uint64_t ReturnValue = 0);
   static std::optional<BionicValue> value(uint64_t Value) {
     return BionicValue(Value);
   }
   BionicResult unsupportedLinking(llvm::StringRef Detail);
   BionicResult signalAction(const NativeCallEvent &Call);
+  BionicResult signalMask(const NativeCallEvent &Call);
+  BionicResult signalPending(const NativeCallEvent &Call);
+  BionicResult signalHandler(const NativeCallEvent &Call);
+  BionicResult signalSet(const NativeCallEvent &Call);
+  llvm::Expected<std::optional<uint64_t>>
+  kernelService(linux_model::ServiceKind Kind,
+                const ProcessServiceEvent &Event);
   BionicResult kernelCall(std::optional<linux_model::ServiceKind> Kind,
                           const NativeCallEvent &Call);
-  BionicResult kernelResult(std::optional<uint64_t> Returned);
+  BionicResult checkedRead(const NativeCallEvent &Call);
   BionicResult usleep(const NativeCallEvent &Call);
+  BionicResult sleep(const NativeCallEvent &Call);
+  BionicResult sleepResult(uint64_t Returned,
+                           const SleepContinuation &Continuation);
+  BionicResult getcwd(const NativeCallEvent &Call);
+  BionicResult pollCall(const NativeCallEvent &Call);
   BionicResult openLibrary(NativeCallEvent &Call);
   BionicResult lookupSymbol(NativeCallEvent &Call);
   BionicResult closeLibrary(NativeCallEvent &Call);
   BionicResult getLinkerError(NativeCallEvent &Call);
+  BionicResult queryDladdr(const NativeCallEvent &Call);
   BionicResult unsupportedImport(const NativeCallEvent &Call);
   BionicResult failCall(const NativeCallEvent &Call);
   struct DirectoryStream {
@@ -176,7 +309,18 @@ private:
   std::map<uint64_t, DirectoryStream> DirectoryStreams;
   BionicResult openDirectory(const NativeCallEvent &Call);
   BionicResult directoryCall(const NativeCallEvent &Call);
-  llvm::Error opaqueHandle(uint64_t Handle);
+  llvm::Error opaqueHandle(uint64_t Handle, llvm::StringRef Kind = "FILE");
+  struct LogList {
+    uint32_t Mode = 0, Tail = 0, PID = 0, Seconds = 0, Nanoseconds = 0;
+    std::map<uint32_t, uint64_t> Loggers;
+    std::vector<size_t> Selected;
+    size_t Position = 0;
+    bool Started = false;
+  };
+  std::map<uint64_t, LogList> LogLists;
+  llvm::Expected<uint64_t> logToken();
+  BionicResult logCall(const NativeCallEvent &Call);
+  BionicResult unsupportedLog(llvm::StringRef Detail);
   struct InputStream {
     uint32_t FD;
     uint64_t Token, Buffer = 0, Capacity = 0, Begin = 0, End = 0;
@@ -184,24 +328,26 @@ private:
     bool CanRead = true, CanWrite = false, Writing = false;
     uint32_t BufferMode = 0;
     uint64_t Pending = 0;
+    std::optional<uint64_t> Reader;
   };
   std::map<uint64_t, InputStream> InputStreams;
   BionicResult openStream(const NativeCallEvent &Call);
   BionicResult streamCall(const NativeCallEvent &Call);
   BionicResult readStream(const NativeCallEvent &Call);
+  class StreamReadWait;
   BionicResult writeStream(const NativeCallEvent &Call);
   llvm::Expected<std::optional<bool>> flushStream(InputStream &Stream);
   llvm::Expected<std::optional<bool>> prepareStreamRead(InputStream &Stream);
   BionicResult bufferStream(const NativeCallEvent &Call);
   llvm::Expected<InputStream *> inputStream(uint64_t Handle);
-  llvm::Expected<std::optional<uint64_t>> streamBufferSize(uint32_t FD);
+  llvm::Expected<std::optional<uint64_t>>
+  streamBufferSize(uint32_t FD,
+                   std::optional<uint64_t> SuppliedSize = std::nullopt);
   llvm::Expected<bool> prepareStreamBuffer(InputStream &Stream);
   llvm::Expected<std::optional<uint64_t>>
   streamService(linux_model::ServiceKind Kind, uint32_t FD, uint64_t A1 = 0,
                 uint64_t A2 = 0);
-  llvm::Expected<std::optional<uint64_t>>
-  streamRead(InputStream &Stream, uint64_t Output, uint64_t Size);
-  llvm::Expected<bool> refillStream(InputStream &Stream);
+  llvm::Expected<std::optional<bool>> prepareStreamRefill(InputStream &Stream);
   llvm::Error copyStream(InputStream &Stream, uint64_t Output, uint64_t Size);
   BionicResult streamError(uint32_t Error, uint64_t ReturnValue);
   BionicResult malloc(const NativeCallEvent &Call);
@@ -211,17 +357,24 @@ private:
   BionicResult copyMemory(const NativeCallEvent &Call);
   BionicResult setMemory(const NativeCallEvent &Call);
   BionicResult compareMemory(const NativeCallEvent &Call);
+  BionicResult descriptorSet(const NativeCallEvent &Call);
   BionicResult stringLength(const NativeCallEvent &Call);
+  llvm::Expected<uint64_t> stringLengthValue(uint64_t Address, uint64_t Size,
+                                             llvm::StringRef Name);
   BionicResult decimalInteger(const NativeCallEvent &Call);
   llvm::Expected<std::optional<uint64_t>>
   decimalValue(bool Narrow,
                llvm::function_ref<llvm::Expected<uint8_t>(uint64_t)> ReadByte);
   BionicResult compareString(const NativeCallEvent &Call);
   BionicResult getErrno(const NativeCallEvent &Call);
+  BionicResult errorString(const NativeCallEvent &Call);
   BionicResult getPageSize(const NativeCallEvent &Call);
   BionicResult getAPILevel(const NativeCallEvent &Call);
   BionicResult queryConfiguration(const NativeCallEvent &Call);
+  BionicResult queryAuxiliaryVector(const NativeCallEvent &Call);
+  BionicResult queryEnvironment(const NativeCallEvent &Call);
   BionicResult getTime(const NativeCallEvent &Call);
+  BionicResult calendarTime(const NativeCallEvent &Call);
   BionicResult getProperty(const NativeCallEvent &Call);
   llvm::Expected<const PropertyRecord *> propertyAt(uint64_t Address);
   llvm::Expected<const PropertyRecord *> propertyNamed(llvm::StringRef Name);
@@ -235,6 +388,11 @@ private:
   BionicResult nextProperty(const PropertyCallback &Callback);
   llvm::Error propertyCallbackEntry(uint64_t Entry);
   BionicResult syscall(const NativeCallEvent &Call);
+  BionicResult socketTransfer(const NativeCallEvent &Call);
+  BionicResult addressText(const NativeCallEvent &Call);
+  BionicResult resolveAddress(const NativeCallEvent &Call);
+  BionicResult freeAddresses(const NativeCallEvent &Call);
+  std::map<uint64_t, uint64_t> ResolverNodes;
   BionicResult threadCall(const NativeCallEvent &Call);
   BionicResult finalizeCall(const NativeCallEvent &Call);
   BionicResult once(const NativeCallEvent &Call);
@@ -244,6 +402,10 @@ private:
   BionicResult registerExit(const NativeCallEvent &Call);
   BionicResult finalize(uint64_t DSO);
   BionicResult tokenize(const NativeCallEvent &Call);
+  BionicResult findSubstring(const NativeCallEvent &Call);
+  BionicResult spanString(const NativeCallEvent &Call);
+  BionicResult copyBoundedString(const NativeCallEvent &Call);
+  BionicResult appendCheckedString(const NativeCallEvent &Call);
   BionicResult findCharacter(const NativeCallEvent &Call);
   class ArgumentReader;
   class StringFormatter;
@@ -251,6 +413,11 @@ private:
   class IntegerScanner;
   BionicResult scan(const NativeCallEvent &Call);
   class Mutex;
+  BionicResult semaphore(const NativeCallEvent &Call);
+  BionicResult semaphoreWait(uint64_t Address, uint32_t Word, bool TryOnly);
+  llvm::Error semaphoreAccess(uint64_t Address, unsigned Permissions);
+  llvm::Expected<uint32_t> readSemaphore(uint64_t Address);
+  llvm::Error writeSemaphore(uint64_t Address, uint32_t Word);
   BionicResult mutex(const NativeCallEvent &Call);
   BionicResult resetMutexAttribute(const NativeCallEvent &Call, uint64_t Value);
   BionicResult initializeMutexAttribute(const NativeCallEvent &Call);

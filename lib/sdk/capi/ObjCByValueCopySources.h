@@ -4,6 +4,9 @@
 #include "ObjCNativeDependencies.h"
 #include "ObjCNativeSwiftReceiverSources.h"
 
+#include "neverd/ir/med/MedPrologueSaves.h"
+#include "neverd/sdk/Limits.h"
+
 namespace neverd::sdk {
 namespace objc_value_copy_detail {
 // These ordinary declaration owners may accompany a private copy. Other
@@ -68,7 +71,8 @@ inline bool sameHint(const SourceCallTypeHint &A, const SourceCallTypeHint &B,
 inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
                            size_t &Budget, unsigned Depth = 0,
                            bool BlockAddresses = false) {
-  if (!Expected || !Actual || !Budget || Depth >= 64)
+  if (!Expected || !Actual || !Budget ||
+      Depth >= ::neverd::sdk::kObjCByValueCopySourcesSameExpressionDepthLimit)
     return false;
   --Budget;
   HighExpr E = *Expected, A = *Actual;
@@ -98,7 +102,7 @@ inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
 }
 inline bool sameBody(const HighFunc &Expected, const HighFunc &Actual,
                      bool BlockAddresses = false) {
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   return sameCompleteSourceBody(
       Expected, Actual,
       [&](const ExprPtr &E, const ExprPtr &A) {
@@ -139,8 +143,12 @@ replayCurrentFunction(const BinaryImage &Image, const PipelineResult &Result,
       continue;
     const auto I = Bodies.find(Entry);
     if (I == Bodies.end() || !I->second->hasCompleteLiftCoverage() ||
-        I->second->DecodedInstructionCount > 1024 ||
-        Options.OnlyFunctionEntries.size() > 32)
+        I->second->DecodedInstructionCount >
+            ::neverd::sdk::
+                kObjCByValueCopySourcesReplayCurrentFunctionISecondDecodedInstructionCountLimit ||
+        Options.OnlyFunctionEntries.size() >
+            ::neverd::sdk::
+                kObjCByValueCopySourcesReplayCurrentFunctionOptionsOnlyFunctionEntriesSizeLimit)
       return std::nullopt;
     for (const auto &B : I->second->Blocks)
       for (const auto &Op : B.Ops)
@@ -152,7 +160,8 @@ replayCurrentFunction(const BinaryImage &Image, const PipelineResult &Result,
   llvm::LLVMContext Context;
   PipelineResult Fresh;
   bool Complete = false;
-  for (unsigned Round = 0; Round != 16; ++Round) {
+  for (unsigned Round = 0; Round != ::neverd::sdk::kMaxObjCByValueCopyRounds;
+       ++Round) {
     Fresh = Pipeline().run(Image, Context, Options);
     if (!Fresh.Success)
       return std::nullopt;
@@ -174,8 +183,12 @@ replayCurrentFunction(const BinaryImage &Image, const PipelineResult &Result,
   for (const auto &F : Result.MedFuncs)
     Names.emplace(F.Entry, F.Name);
   Converter.setFuncNames(&Names);
-  Converter.setJumpTables(Current->Low->JumpTables);
-  const auto MedReplay = Converter.convert(*Current->Med, Image.Arch);
+  // Revalidate source-only stack annotations before projecting the saved
+  // body. A changed prologue store must remain visible to machine replay.
+  MedFunc CurrentMed = *Current->Med;
+  markSourceStackAccesses(CurrentMed, Image.Arch, Image.abiFormat(),
+                          CurrentMed.EntryKind);
+  const auto MedReplay = Converter.convert(CurrentMed, Image.Arch);
   if (!objc_value_copy_detail::sameBody(*Rebuilt->High, *Current->High) ||
       !objc_value_copy_detail::sameBody(*Rebuilt->High, MedReplay))
     return std::nullopt;

@@ -813,37 +813,103 @@ TEST(COFFExceptionParser,
 }
 
 TEST(COFFExceptionParser, InfersStrippedARM32GSWrapperWithTerminalTrapExit) {
-  BinaryImage Img = makeX64ExceptionImage();
-  Img.Arch = Arch::ARM;
-  Img.Bits = Bitness::Bits32;
-  const va_t OldBase = Img.Base;
-  Img.Base = 0x400000;
-  for (Segment &Seg : Img.Segments)
-    Seg.VA = Img.Base + (Seg.VA - OldBase);
-  addPersonalityImport(Img, Img.Base + 0x1180, "__C_specific_handler");
+  for (uint8_t Code : {0x00, 0xf9, 0xff}) {
+    SCOPED_TRACE(unsigned(Code));
+    BinaryImage Img = makeX64ExceptionImage();
+    Img.Arch = Arch::ARM;
+    Img.Bits = Bitness::Bits32;
+    const va_t OldBase = Img.Base;
+    Img.Base = 0x400000;
+    for (Segment &Seg : Img.Segments)
+      Seg.VA = Img.Base + (Seg.VA - OldBase);
+    addPersonalityImport(Img, Img.Base + 0x1180, "__C_specific_handler");
 
-  uint8_t *Text = Img.Segments[0].Data.data();
-  const uint8_t WrapperCode[] = {
-      0x02, 0xd1,             // bne 0x1108
-      0x00, 0xf0, 0x3d, 0xf8, // bl 0x1180
-      0x70, 0x47,             // bx lr
-      0x00, 0xde,             // udf #0
-      0x00, 0xf0, 0x41, 0xf8, // dead bl 0x1190
-  };
-  std::copy(std::begin(WrapperCode), std::end(WrapperCode), Text + 0x100);
+    uint8_t *Text = Img.Segments[0].Data.data();
+    const uint8_t WrapperCode[] = {
+        0x02, 0xd1,             // bne 0x1108
+        0x00, 0xf0, 0x3d, 0xf8, // bl 0x1180
+        0x70, 0x47,             // bx lr
+        Code, 0xde,             // udf #imm8, including __brkdiv0
+        0x00, 0xf0, 0x41, 0xf8, // dead bl 0x1190
+    };
+    std::copy(std::begin(WrapperCode), std::end(WrapperCode), Text + 0x100);
 
-  uint8_t *X = Img.Segments[1].Data.data();
-  writeLE<uint32_t>(X, 0);        // no SEH scopes
-  writeLE<uint32_t>(X + 4, 0x20); // cookie offset
-  addStrippedGSFrame(Img, {Img.Base + 0x1100, Img.Base + 0x110e},
-                     Img.Base + 0x1101);
+    uint8_t *X = Img.Segments[1].Data.data();
+    writeLE<uint32_t>(X, 0);        // no SEH scopes
+    writeLE<uint32_t>(X + 4, 0x20); // cookie offset
+    addStrippedGSFrame(Img, {Img.Base + 0x1100, Img.Base + 0x110e},
+                       Img.Base + 0x1101);
 
-  coff_loader::resolveExceptionHandlers(Img);
-  const ExceptionFunction &Decoded = Img.ExceptionMetadata.Functions[0];
-  EXPECT_EQ(Decoded.Personality, ExceptionPersonality::GSHandlerCheckSEH);
-  ASSERT_TRUE(Decoded.SEH.has_value());
-  ASSERT_TRUE(Decoded.GSCookie.has_value());
-  EXPECT_EQ(Decoded.ParseStatus, ExceptionParseStatus::Complete);
+    coff_loader::resolveExceptionHandlers(Img);
+    const ExceptionFunction &Decoded = Img.ExceptionMetadata.Functions[0];
+    EXPECT_EQ(Decoded.Personality, ExceptionPersonality::GSHandlerCheckSEH);
+    ASSERT_TRUE(Decoded.SEH.has_value());
+    ASSERT_TRUE(Decoded.GSCookie.has_value());
+    EXPECT_EQ(Decoded.ParseStatus, ExceptionParseStatus::Complete);
+  }
+}
+
+TEST(COFFExceptionParser, ResumableDebugBreaksKeepAllGSWrapperPaths) {
+  for (const auto &[Architecture, Trap] :
+       std::vector<std::pair<Arch, std::vector<uint8_t>>>{
+           {Arch::ARM, {0xfe, 0xde}},             // Thumb UDF #254
+           {Arch::ARM, {0xf0, 0xf7, 0xfe, 0xa0}}, // Thumb UDF.W #254
+           {Arch::ARM, {0xab, 0xbe}},             // Thumb BKPT #171
+           {Arch::AArch64, {0x00, 0x00, 0x3e, 0xd4}}})
+    for (bool SamePersonality : {false, true}) {
+      SCOPED_TRACE(::testing::Message()
+                   << int(Architecture) << "/" << Trap.size() << "/"
+                   << SamePersonality);
+      BinaryImage Img = makeX64ExceptionImage();
+      Img.Arch = Architecture;
+      if (Architecture == Arch::ARM) {
+        Img.Bits = Bitness::Bits32;
+        const va_t OldBase = Img.Base;
+        Img.Base = 0x400000;
+        for (Segment &Seg : Img.Segments)
+          Seg.VA = Img.Base + (Seg.VA - OldBase);
+      }
+      addPersonalityImport(Img, Img.Base + 0x1180, "__C_specific_handler");
+      auto Conflict = Symbol::makeFunc(Img.Base + 0x1190);
+      Conflict.Name = "__CxxFrameHandler3";
+      Img.Symbols.push_back(std::move(Conflict));
+      uint8_t *Text = Img.Segments[0].Data.data();
+      if (Architecture == Arch::ARM) {
+        const uint8_t Prefix[] = {0x02, 0xd1,             // bne 0x1108
+                                  0x00, 0xf0, 0x3d, 0xf8, // bl 0x1180
+                                  0x70, 0x47};            // bx lr
+        std::copy(std::begin(Prefix), std::end(Prefix), Text + 0x100);
+        std::copy(Trap.begin(), Trap.end(), Text + 0x108);
+        const size_t After = 0x108 + Trap.size();
+        Text[After] = 0x00; // bl, reached when the debugger resumes
+        Text[After + 1] = 0xf0;
+        const size_t Target = SamePersonality ? 0x180 : 0x190;
+        Text[After + 2] = static_cast<uint8_t>((Target - After - 4) / 2);
+        Text[After + 3] = 0xf8;
+        Text[After + 4] = 0x70; // bx lr
+        Text[After + 5] = 0x47;
+        addStrippedGSFrame(Img,
+                           {Img.Base + 0x1100, Img.Base + 0x1000 + After + 6},
+                           Img.Base + 0x1101);
+      } else {
+        writeLE<uint32_t>(Text + 0x100, 0x54000060); // b.eq 0x110c
+        writeLE<uint32_t>(Text + 0x104, 0x9400001f); // bl 0x1180
+        writeLE<uint32_t>(Text + 0x108, 0xd65f03c0); // ret
+        std::copy(Trap.begin(), Trap.end(), Text + 0x10c);
+        writeLE<uint32_t>(Text + 0x110,
+                          SamePersonality ? 0x9400001c : 0x94000020);
+        writeLE<uint32_t>(Text + 0x114, 0xd65f03c0); // ret
+        addStrippedGSFrame(Img, {Img.Base + 0x1100, Img.Base + 0x1118});
+      }
+      addX64SEHGSPayload(Img);
+      coff_loader::resolveExceptionHandlers(Img);
+      const ExceptionFunction &Decoded = Img.ExceptionMetadata.Functions[0];
+      EXPECT_EQ(Decoded.Personality,
+                SamePersonality ? ExceptionPersonality::GSHandlerCheckSEH
+                                : ExceptionPersonality::Unknown);
+      EXPECT_EQ(Decoded.SEH.has_value(), SamePersonality);
+      EXPECT_EQ(Decoded.GSCookie.has_value(), SamePersonality);
+    }
 }
 
 TEST(COFFExceptionParser, DoesNotInferStrippedARM32GSWrapperThroughThumbIT) {

@@ -8,6 +8,11 @@
 #ifdef NEVERD_DARWIN_VALUE
 NEVERD_DARWIN_VALUE(StackTop, 0x00007fffffe00000ULL)
 NEVERD_DARWIN_VALUE(ReturnGate, 0x00007fffffc00000ULL)
+NEVERD_DARWIN_VALUE(LibSystemGate, 0x00007fffffbf0000ULL)
+NEVERD_DARWIN_VALUE(LibSystemSVC, 0x7f)
+NEVERD_DARWIN_VALUE(LibSystemGateStride, 8)
+NEVERD_DARWIN_VALUE(LibSystemCompatibilityVersion, 0x10000)
+NEVERD_DARWIN_VALUE(LibCxxCompatibilityVersion, 0x10000)
 NEVERD_DARWIN_VALUE(MaxStackSize, 1024 * 1024)
 NEVERD_DARWIN_VALUE(UserLimit, 0x0000800000000000ULL)
 NEVERD_DARWIN_VALUE(MinimumAddress, 0x10000)
@@ -169,6 +174,8 @@ NEVERD_DARWIN_VALUE(ProtExecute, 4)
 #ifdef NEVERD_DARWIN_TEXT
 NEVERD_DARWIN_TEXT(PageZeroSegment, "__PAGEZERO")
 NEVERD_DARWIN_TEXT(DyldPath, "/usr/lib/dyld")
+NEVERD_DARWIN_TEXT(LibSystemPath, "/usr/lib/libSystem.B.dylib")
+NEVERD_DARWIN_TEXT(LibCxxPath, "/usr/lib/libc++.1.dylib")
 NEVERD_DARWIN_TEXT(ExecutablePathPrefix, "executable_path=")
 #endif
 #ifdef NEVERD_DARWIN_SERVICE
@@ -926,8 +933,20 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(
     ImageEntry, "unsupported or ambiguous Mach-O entry/thread/stack contract")
 NEVERD_DARWIN_DIAGNOSTIC(ImageDependencies,
-                         "Darwin profile does not implement dynamic "
-                         "dependencies, fixups, initializers or TLS")
+                         "unsupported Darwin dependency, fixup, initializer "
+                         "or TLS contract")
+NEVERD_DARWIN_DIAGNOSTIC(LibSystemNamespace,
+                         "Darwin imports require LC_MAIN and two-level names")
+NEVERD_DARWIN_DIAGNOSTIC(LibSystemProvider,
+                         "unsupported Darwin imported provider")
+NEVERD_DARWIN_DIAGNOSTIC(LibSystemImport,
+                         "unsupported Darwin libSystem import: ")
+NEVERD_DARWIN_DIAGNOSTIC(LibSystemFrame,
+                         "invalid Darwin libSystem return frame")
+NEVERD_DARWIN_DIAGNOSTIC(
+    LibSystemResolver, "Darwin lazy binding resolver execution is unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(PreparationDeadline,
+                         "Darwin process preparation deadline exhausted")
 NEVERD_DARWIN_DIAGNOSTIC(
     ImageCommands, "unsupported Mach-O execution flags, commands or encryption")
 NEVERD_DARWIN_DIAGNOSTIC(ImageInterpreter,

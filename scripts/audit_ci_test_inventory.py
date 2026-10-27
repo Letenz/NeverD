@@ -146,7 +146,9 @@ def audit_inventory(
     profile: str,
     exclude_label_regex: str,
     *,
-    semantic_minimum: int = 20_000,
+    # 37ab04f1 removed 4,731 repeated runs and 37 duplicate cases from 20,249
+    # registrations. Keep the complete deduplicated baseline as the floor.
+    semantic_minimum: int = 15_481,
     patch_minimum: int = 22_000,
 ) -> AuditResult:
     expected_expression = PROFILE_EXCLUSIONS.get(profile)

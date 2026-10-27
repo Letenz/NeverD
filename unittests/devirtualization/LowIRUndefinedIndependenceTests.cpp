@@ -9,6 +9,8 @@
 
 #include "neverd/analysis/LowIRUndefinedIndependence.h"
 
+#include <iterator>
+
 using namespace neverd;
 using namespace neverd::analysis;
 
@@ -256,6 +258,45 @@ TEST(LowIRUndefinedIndependence, UnreachableUnsupportedArmDoesNotPoisonProof) {
   expectStatus(P, Status::Unsupported);
 }
 
+TEST(LowIRUndefinedIndependence, FingerprintBindsEveryExceptionalContextPair) {
+  auto P = diamond(number(0, 1));
+  auto &Edges = P.Function.Blocks[1].ExceptionalSuccs;
+  Edges.emplace_back(-1, 0x8000, ExceptionalEdgeKind::CxxCleanup);
+  Edges.front().SharedContexts =
+      std::make_shared<const ExceptionalEdgeContextDomain>(
+          std::vector<ExceptionalEdgeContext>{{0, 3}, {1, 4}});
+  // The exceptional block is infeasible. Its full metadata still belongs to
+  // this input fingerprint, without granting support to a reachable edge.
+  auto A = P.check();
+  ASSERT_TRUE(A.proved()) << A.Diagnostic;
+  ASSERT_TRUE(A.Certificate);
+  Edges.front().SharedContexts =
+      std::make_shared<const ExceptionalEdgeContextDomain>(
+          std::vector<ExceptionalEdgeContext>{{1, 4}, {0, 3}, {1, 4}});
+  auto B = P.check();
+  ASSERT_TRUE(B.proved()) << B.Diagnostic;
+  EXPECT_EQ(A.Certificate->InputDigest, B.Certificate->InputDigest);
+  Edges.front().SharedContexts =
+      std::make_shared<const ExceptionalEdgeContextDomain>(
+          std::vector<ExceptionalEdgeContext>{{0, 4}, {1, 3}});
+  auto C = P.check();
+  ASSERT_TRUE(C.proved()) << C.Diagnostic;
+  EXPECT_NE(A.Certificate->InputDigest, C.Certificate->InputDigest);
+  Edges.front().SharedContexts =
+      std::make_shared<const ExceptionalEdgeContextDomain>(
+          std::vector<ExceptionalEdgeContext>{{0, 3}});
+  auto D = P.check();
+  ASSERT_TRUE(D.proved()) << D.Diagnostic;
+  Edges.front().SharedContexts.reset();
+  Edges.front().ExplicitContext = {0, 3};
+  auto E = P.check();
+  ASSERT_TRUE(E.proved()) << E.Diagnostic;
+  EXPECT_EQ(D.Certificate->InputDigest, E.Certificate->InputDigest);
+  P.Function.Blocks[0].Ops[0].Inputs[1] = number(1, 1);
+  P.rebind();
+  expectStatus(P, Status::Unsupported);
+}
+
 TEST(LowIRUndefinedIndependence, ReachableCyclesRefuseWithoutUnrolling) {
   Program P;
   P.Function.Blocks[0].Succs = {0, 1};
@@ -462,11 +503,26 @@ TEST(LowIRUndefinedIndependence,
   Program P;
   P.instruction({op(NdOp::COPY, reg(0), {number(0)})});
   P.finish();
-  P.Function.Blocks[0].Ops[0].NumInputs = 7;
+  auto &Malformed = P.Function.Blocks[0].Ops[0];
+  Malformed.NumInputs = std::size(Malformed.Inputs) + 1;
   expectStatus(P, Status::Invalid);
   P.Function.Blocks[0].Ops[0].NumInputs = 1;
   P.Function.Blocks[0].Ops[0].Inputs[0] = NdVar::tmp(UINT64_MAX, 1);
   P.rebind();
+  expectStatus(P, Status::Invalid);
+}
+
+TEST(LowIRUndefinedIndependence,
+     ExtendedOperandStorageRetainsUnsupportedEffectRefusal) {
+  LowOp Opaque = op(NdOp::INTRINSIC, reg(0));
+  for (size_t I = 0; I != std::size(Opaque.Inputs); ++I)
+    Opaque.addInput(number(0));
+  Program P;
+  P.instruction({Opaque});
+  P.finish();
+  expectStatus(P, Status::Unsupported);
+  auto &Malformed = P.Function.Blocks[0].Ops[0];
+  Malformed.NumInputs = std::size(Malformed.Inputs) + 1;
   expectStatus(P, Status::Invalid);
 }
 
@@ -886,6 +942,46 @@ TEST(LowIRUndefinedIndependence, ExclusionsPermitRedundancyAndBindExactInput) {
   ASSERT_TRUE(F.proved()) << F.Diagnostic;
   EXPECT_NE(E.Certificate->InputDigest, F.Certificate->InputDigest);
 }
+TEST(LowIRUndefinedIndependence, OrderedCmpxchgStillRefusesIndependentProof) {
+  Program P;
+  P.frame();
+  P.Contract.EntryConstants.push_back({reg(32), 0x1000});
+  P.instruction({op(NdOp::COPY, reg(8), {number(7)}),
+                 op(NdOp::COPY, reg(16), {number(11)}),
+                 op(NdOp::STORE, {}, {reg(32), reg(8)})});
+  P.instruction({op(NdOp::LOAD, reg(0), {reg(32)})});
+  P.finish();
+  const auto Control = P.check();
+  ASSERT_TRUE(Control.proved()) << Control.Diagnostic;
+  ASSERT_TRUE(Control.Certificate);
+
+  auto &Access = P.Function.Blocks.front().Ops[3];
+  Access.Opcode = NdOp::ATOMIC_CMPXCHG;
+  Access.addInput(reg(8));
+  Access.addInput(reg(16));
+  Access.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  // Keep complete instruction coverage and bind the changed three-input CAS.
+  // Reusing the LOAD digest would test stale evidence instead of this boundary.
+  P.rebind();
+  for (const auto &Record : P.Records) {
+    ASSERT_EQ(Record.Effects.Coverage, LowUndefinedCoverage::Complete);
+    ASSERT_EQ(Record.Effects.OpCount, Record.Boundary.OpCount);
+    ASSERT_EQ(
+        Record.Effects.OperationDigest,
+        lowUndefinedOperationDigest(
+            llvm::ArrayRef<LowOp>(P.Function.Blocks.front().Ops)
+                .slice(Record.Boundary.FirstOp, Record.Boundary.OpCount)));
+  }
+  const auto Result = P.check();
+  EXPECT_EQ(Result.Status, Status::Unsupported) << Result.Diagnostic;
+  EXPECT_FALSE(Result.Certificate);
+  EXPECT_NE(Result.Diagnostic.find("ordered or nondefault memory"),
+            std::string::npos);
+  EXPECT_EQ(Result.BlockId, 0);
+  EXPECT_EQ(Result.InstructionAddress, Access.Addr);
+  EXPECT_EQ(Result.OpSeq, Access.Seq);
+}
+
 TEST(LowIRUndefinedIndependence, NativeFlagsProfileCannotAuthorizeStaticProof) {
   Program P;
   P.finish();

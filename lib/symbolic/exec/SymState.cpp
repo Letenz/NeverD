@@ -83,6 +83,16 @@ SymState::constantRegionBytes(SymRef Base) const {
   return Result;
 }
 
+llvm::SmallVector<SymConstantRegionByte, 32>
+SymState::constantAbsoluteBytes() const {
+  llvm::SmallVector<SymConstantRegionByte, 32> Result;
+  for (const auto &[Offset, View] : AbsoluteMemory.Bytes)
+    if (const auto Constant = Ctx->constantWindow(View.Value, View.Low, 8))
+      Result.push_back(
+          {Offset, static_cast<uint8_t>(Constant->getZExtValue())});
+  return Result;
+}
+
 namespace {
 constexpr uint32_t kByteBits = 8;
 
@@ -394,6 +404,128 @@ void SymState::clobberMemory() {
   MemoryClobbered = true;
 }
 
+bool SymState::bindLoadOrigins(llvm::ArrayRef<LoadOriginBinding> Bindings) {
+  for (const auto &Binding : Bindings)
+    if (!Binding.Value || !Binding.Origin.Address || !Binding.Origin.Bytes ||
+        Binding.Value.index() >= Ctx->numNodes() ||
+        Binding.Origin.Address.index() >= Ctx->numNodes() ||
+        Ctx->width(Binding.Value) != unsigned(Binding.Origin.Bytes) * 8)
+      return false;
+  for (const auto &Binding : Bindings)
+    recordLoadOrigin(Binding.Value, Binding.Origin);
+  return true;
+}
+
+std::optional<llvm::SmallVector<SymState::MaterializedRange, 8>>
+SymState::materializedRegionRanges(SymRef Base, uint64_t &WorkBudget) const {
+  if (!WorkBudget)
+    return std::nullopt;
+  --WorkBudget;
+  llvm::SmallVector<MaterializedRange, 8> Result;
+  if (!Base || Base.index() >= Ctx->numNodes())
+    return Result;
+  const auto Found = Regions.find(Base.index());
+  if (Found == Regions.end())
+    return Result;
+  return materializedBankRanges(Found->second, WorkBudget);
+}
+
+std::optional<llvm::SmallVector<SymState::MaterializedRange, 8>>
+SymState::materializedAbsoluteRanges(uint64_t &WorkBudget) const {
+  if (!WorkBudget)
+    return std::nullopt;
+  --WorkBudget;
+  return materializedBankRanges(AbsoluteMemory, WorkBudget);
+}
+
+std::optional<llvm::SmallVector<SymState::MaterializedRange, 8>>
+SymState::materializedBankRanges(const Bank &B, uint64_t &WorkBudget) const {
+  llvm::SmallVector<MaterializedRange, 8> Result;
+  const auto &Bytes = B.Bytes;
+  if (Bytes.size() > WorkBudget)
+    return std::nullopt;
+  WorkBudget -= Bytes.size();
+  for (const auto &[Offset, View] : Bytes) {
+    if (!Result.empty()) {
+      auto &Last = Result.back();
+      if (Last.Offset <= std::numeric_limits<uint64_t>::max() - Last.Bytes &&
+          Offset == Last.Offset + Last.Bytes) {
+        ++Last.Bytes;
+        continue;
+      }
+    }
+    Result.push_back({Offset, 1});
+  }
+  return Result;
+}
+
+SymState::MemoryKnowledge SymState::memoryKnowledge() const {
+  MemoryKnowledge Out{Ctx, Order, {}};
+  auto Export = [&](SymRef Base, const Bank &B) {
+    auto It = B.Bytes.begin();
+    while (It != B.Bytes.end()) {
+      const uint64_t Offset = It->first;
+      llvm::SmallVector<SymRef, 8> Bytes;
+      while (It != B.Bytes.end() && Bytes.size() < 8 &&
+             Offset <= std::numeric_limits<uint64_t>::max() - Bytes.size() &&
+             It->first == Offset + Bytes.size()) {
+        Bytes.push_back(
+            Ctx->mkExtract(It->second.Value, It->second.Low, kByteBits));
+        ++It;
+      }
+      Out.Facts.push_back({Base, Offset, joinBytes(Bytes)});
+    }
+  };
+  Export({}, AbsoluteMemory);
+  for (const auto &[Base, B] : Regions)
+    Export(SymRef(Base), B);
+  return Out;
+}
+
+bool SymState::restoreMemoryKnowledge(const MemoryKnowledge &Knowledge) {
+  if (Knowledge.Owner != Ctx || Knowledge.Order != Order)
+    return false;
+  SymState Draft(*this);
+  Draft.clobberMemory();
+  // Historical load provenance remains true of unchanged value identities
+  // even when memory knowledge is replaced. It is not used to seed facts.
+  for (const auto &Fact : Knowledge.Facts) {
+    if (!Fact.Value || Fact.Value.index() >= Ctx->numNodes() ||
+        (Fact.Base && Fact.Base.index() >= Ctx->numNodes()))
+      return false;
+    const uint32_t Width = Ctx->width(Fact.Value);
+    if (!Width || Width % kByteBits ||
+        Width / kByteBits > std::numeric_limits<uint16_t>::max())
+      return false;
+    const uint16_t Bytes = uint16_t(Width / kByteBits);
+    // A rebind may make a base absolute or expose a constant displacement.
+    // Canonical region selection remains owned by locate(), as for loads.
+    Location Where = Fact.Base ? Draft.locate(Fact.Base) : Location{};
+    if (!Where.Base &&
+        Fact.Offset > std::numeric_limits<uint64_t>::max() - Where.Offset)
+      return false;
+    Where.Offset += Fact.Offset;
+    if (!validBankWrite(*Ctx, Where.Base, Where.Offset, Fact.Value))
+      return false;
+    Bank &B = Draft.bankFor(Where);
+    for (uint16_t I = 0; I < Bytes; ++I) {
+      const uint32_t Low = Order == llvm::endianness::little
+                               ? uint32_t(I) * kByteBits
+                               : Width - (uint32_t(I) + 1) * kByteBits;
+      auto Value = Ctx->mkExtract(Fact.Value, Low, kByteBits);
+      if (auto Found = B.Bytes.find(Where.Offset + I);
+          Found != B.Bytes.end() &&
+          Ctx->mkExtract(Found->second.Value, Found->second.Low, kByteBits) !=
+              Value)
+        return false;
+    }
+    if (!Draft.writeBank(B, Where.Offset, Fact.Value))
+      return false;
+  }
+  *this = std::move(Draft);
+  return true;
+}
+
 llvm::ArrayRef<SymState::LoadOrigin> SymState::loadOrigins(SymRef Value) const {
   auto It = LoadOrigins.find(Value.index());
   return It == LoadOrigins.end() ? llvm::ArrayRef<LoadOrigin>()
@@ -490,9 +622,15 @@ bool SymState::store(SymRef Addr, SymRef Value,
                      SymStorePreservation &Preservation) {
   Preservation.WorkUsed = 0;
   Preservation.Status = SymStorePreservationStatus::Invalid;
-  if (!Addr || Ctx->width(Addr) != 64 || !Preservation.Base ||
-      Ctx->width(Preservation.Base) != 64 || Ctx->isConst(Preservation.Base) ||
-      Preservation.Begin >= Preservation.End)
+  const auto ValidRef = [&](SymRef Ref) {
+    return Ref && Ref.index() < Ctx->numNodes();
+  };
+  const auto ValidBase = [&](SymRef Base) {
+    return !Base ||
+           (ValidRef(Base) && Ctx->width(Base) == 64 && !Ctx->isConst(Base));
+  };
+  if (!ValidRef(Addr) || Ctx->width(Addr) != 64 || !ValidRef(Value) ||
+      !ValidBase(Preservation.Base) || Preservation.Begin >= Preservation.End)
     return false;
   const Location Where = locate(Addr);
   if (Where.Base == Preservation.Base ||
@@ -511,20 +649,71 @@ bool SymState::store(SymRef Addr, SymRef Value,
   // The old single-range path pays no new work.
   if (!Charge(Preservation.AdditionalRanges.size()))
     return false;
-  for (const auto &Range : Preservation.AdditionalRanges)
+  uint64_t PreviousLast = static_cast<uint64_t>(Preservation.End) - 1;
+  bool OrderedRanges =
+      static_cast<uint64_t>(Preservation.Begin) <= PreviousLast;
+  for (const auto &Range : Preservation.AdditionalRanges) {
     if (Range.Begin >= Range.End)
       return false;
-  llvm::SmallVector<std::pair<uint64_t, ByteView>, 32> Saved;
-  auto Found = Regions.find(Preservation.Base.index());
-  if (Found != Regions.end()) {
-    const uint64_t Begin = static_cast<uint64_t>(Preservation.Begin);
-    const uint64_t Size = static_cast<uint64_t>(Preservation.End) - Begin;
-    for (const auto &[Offset, Byte] : Found->second.Bytes) {
+    const auto First = static_cast<uint64_t>(Range.Begin);
+    const auto Last = static_cast<uint64_t>(Range.End) - 1;
+    OrderedRanges &= First <= Last && PreviousLast < First;
+    PreviousLast = Last;
+  }
+  if (!Charge(Preservation.AdditionalRegions.size()))
+    return false;
+  for (const auto &Region : Preservation.AdditionalRegions)
+    if (!ValidBase(Region.Base) || Region.Begin >= Region.End ||
+        Region.Base == Where.Base)
+      return false;
+
+  struct SavedByte {
+    Bank *Storage;
+    uint64_t Offset;
+    ByteView Byte;
+  };
+  llvm::SmallVector<SavedByte, 32> Saved;
+  const auto SaveRegion = [&](SymRef Base, int64_t Lower, int64_t Upper,
+                              llvm::ArrayRef<SymStorePreservationRange> More) {
+    Bank *Storage = &AbsoluteMemory;
+    if (Base) {
+      auto Found = Regions.find(Base.index());
+      if (Found == Regions.end())
+        return true;
+      Storage = &Found->second;
+    }
+    const uint64_t Begin = static_cast<uint64_t>(Lower);
+    const uint64_t Size = static_cast<uint64_t>(Upper) - Begin;
+    // Already ordered, nonwrapping ranges and byte keys share one cursor.
+    // Other modular unions retain their original membership semantics.
+    if (!More.empty() && OrderedRanges) {
+      uint64_t First = Begin;
+      uint64_t Last = static_cast<uint64_t>(Upper) - 1;
+      size_t Next = 0;
+      for (const auto &[Offset, Byte] : Storage->Bytes) {
+        if (!Charge(1))
+          return false;
+        while (Offset > Last && Next != More.size()) {
+          if (!Charge(1))
+            return false;
+          const auto &Range = More[Next++];
+          First = static_cast<uint64_t>(Range.Begin);
+          Last = static_cast<uint64_t>(Range.End) - 1;
+        }
+        if (Offset >= First && Offset <= Last) {
+          if (!Charge(2))
+            return false;
+          Saved.push_back({Storage, Offset, Byte});
+        }
+      }
+      return true;
+    }
+    for (const auto &[Offset, Byte] : Storage->Bytes) {
       if (!Charge(1))
         return false;
       bool Protected = Offset - Begin < Size;
       if (!Protected)
-        for (const auto &Range : Preservation.AdditionalRanges) {
+        for (const auto &Range : More) {
           if (!Charge(1))
             return false;
           if (Offset - static_cast<uint64_t>(Range.Begin) <
@@ -537,19 +726,102 @@ bool SymState::store(SymRef Addr, SymRef Value,
       if (Protected) {
         if (!Charge(2))
           return false;
-        Saved.emplace_back(Offset, Byte);
+        Saved.push_back({Storage, Offset, Byte});
       }
     }
-  }
+    return true;
+  };
+  if (!SaveRegion(Preservation.Base, Preservation.Begin, Preservation.End,
+                  Preservation.AdditionalRanges))
+    return false;
+  for (const auto &Region : Preservation.AdditionalRegions)
+    if (!SaveRegion(Region.Base, Region.Begin, Region.End, {}))
+      return false;
 
   const bool Absolute = store(Addr, Value);
   // Restore only known bytes. The real STORE owns the new epochs, unknown
   // defaults, other banks and provenance; rolling back a whole bank would
   // incorrectly reintroduce untouched entry-memory identities outside bounds.
-  if (Found != Regions.end())
-    for (const auto &[Offset, Byte] : Saved)
-      Found->second.Bytes.emplace(Offset, Byte);
+  for (const auto &Entry : Saved)
+    Entry.Storage->Bytes.emplace(Entry.Offset, Entry.Byte);
   Preservation.Status = SymStorePreservationStatus::Applied;
+  return Absolute;
+}
+
+bool SymState::storeConditional(SymRef Addr, SymRef Value,
+                                SymConditionalStore &Control) {
+  Control.WorkUsed = 0;
+  Control.Status = SymConditionalStoreStatus::Invalid;
+  const auto ValidRef = [&](SymRef Ref) {
+    return Ref && Ref.index() < Ctx->numNodes();
+  };
+  if (!ValidRef(Addr) || Ctx->width(Addr) != 64 || !ValidRef(Value))
+    return false;
+  const Location Where = locate(Addr);
+  if (!validBankWrite(*Ctx, Where.Base, Where.Offset, Value))
+    return false;
+  const uint32_t Width = Ctx->width(Value);
+  const uint64_t Bytes = Width / kByteBits;
+  const auto Charge = [&](uint64_t Work) {
+    if (Work > Control.MaxWork - Control.WorkUsed) {
+      Control.Status = SymConditionalStoreStatus::BudgetExceeded;
+      return false;
+    }
+    Control.WorkUsed += Work;
+    return true;
+  };
+  if (!Charge(Bytes))
+    return false;
+
+  struct PlannedByte {
+    Bank *Storage;
+    SymRef Base;
+    uint64_t Offset;
+    ByteView Byte;
+  };
+  llvm::SmallVector<PlannedByte, 32> Plan;
+  const auto Inspect = [&](SymRef Base, Bank &Storage) {
+    if (!Charge(1))
+      return false;
+    if (Base == Where.Base || Storage.Bytes.empty())
+      return true;
+    if (Base && (!ValidRef(Base) || Ctx->width(Base) != 64))
+      return false;
+    for (const auto &[Offset, Byte] : Storage.Bytes) {
+      if (!Charge(Bytes + 3))
+        return false;
+      Plan.push_back({&Storage, Base, Offset, Byte});
+    }
+    return true;
+  };
+  if (!Inspect({}, AbsoluteMemory))
+    return false;
+  for (auto &[Base, Storage] : Regions)
+    if (!Inspect(SymRef(Base), Storage))
+      return false;
+
+  // Every charge and candidate validation has succeeded. Nothing below reads
+  // missing memory or reconstructs historical facts.
+  llvm::SmallVector<std::pair<SymRef, SymRef>, 8> WriteBytes;
+  for (uint64_t I = 0; I != Bytes; ++I) {
+    const auto Address = Ctx->mkAdd(Addr, Ctx->mkConst(64, I));
+    const uint32_t Low = Order == llvm::endianness::little
+                             ? uint32_t(I) * kByteBits
+                             : Width - (uint32_t(I) + 1) * kByteBits;
+    WriteBytes.emplace_back(Address, Ctx->mkExtract(Value, Low, kByteBits));
+  }
+  for (auto &Entry : Plan) {
+    const auto Offset = Ctx->mkConst(64, Entry.Offset);
+    const auto Address = Entry.Base ? Ctx->mkAdd(Entry.Base, Offset) : Offset;
+    auto Updated = Ctx->mkExtract(Entry.Byte.Value, Entry.Byte.Low, kByteBits);
+    for (const auto &[WriteAddress, Byte] : WriteBytes)
+      Updated = Ctx->mkIte(Ctx->mkEq(Address, WriteAddress), Byte, Updated);
+    Entry.Byte = {Updated};
+  }
+  const bool Absolute = store(Addr, Value);
+  for (const auto &Entry : Plan)
+    Entry.Storage->Bytes.emplace(Entry.Offset, Entry.Byte);
+  Control.Status = SymConditionalStoreStatus::Applied;
   return Absolute;
 }
 

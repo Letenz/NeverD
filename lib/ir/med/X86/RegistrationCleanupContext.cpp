@@ -8,7 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Limits.h"
-#include "neverd/ir/med/X86RegistrationCallback.h"
+#include "neverd/ir/med/X86/X86RegistrationCallback.h"
 
 namespace neverd {
 std::optional<std::map<uint32_t, std::optional<RegistrationCatchIdentity>>>
@@ -34,7 +34,7 @@ registrationCleanupParents(const MedFunc &Function) {
     if (!Block.Reached || Block.Unknown ||
         Block.Range.Begin != Effect.Range.Begin ||
         Block.Range.End != Effect.Range.End ||
-        !llvm::is_contained(Block.Levels, Effect.DispatchLevel))
+        !llvm::is_contained(Block.levels(), Effect.DispatchLevel))
       return std::nullopt;
     std::optional<RegistrationCatchIdentity> Parent;
     if (Block.CallbackOnly) {

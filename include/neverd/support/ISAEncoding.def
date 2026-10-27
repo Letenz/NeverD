@@ -238,7 +238,10 @@ NEVERD_MACHO_ENCODING(uint32_t, kDefaultStubSize, 6)
 
 NEVERD_ARM_ENCODING(uint32_t, kLdrPC, branch::ArmLoadPCFromNextWord.Match)
 NEVERD_ARM_ENCODING(uint32_t, kArmNop, 0xE1A00000u) // MOV r0, r0
+NEVERD_ARM_ENCODING(uint32_t, kArmHintNop, 0xE320F000u)
 NEVERD_ARM_ENCODING(uint16_t, kThumbNop, 0xBF00)
+NEVERD_ARM_ENCODING(uint16_t, kThumbLegacyNop, 0x46C0) // MOV r8, r8
+NEVERD_ARM_ENCODING(uint32_t, kThumbWideNop, 0x8000F3AFu) // NOP.W, little endian
 NEVERD_ARM_ENCODING(uint32_t, kPCBias, branch::ArmPCOffset)
 NEVERD_ARM_ENCODING(size_t, kInsnSize, branch::ArmInstructionBytes)
 NEVERD_ARM_ENCODING(size_t, kThumbInsnSize, branch::ThumbHalfwordBytes)

@@ -1,3 +1,12 @@
+//===- HighCSourceCallTests.cpp - Source call contracts -----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Source calls, typed argument transport and C value carrier boundaries.
+//===----------------------------------------------------------------------===//
+
 #include "../../../lib/loader/Swift/SwiftBooleanSourceBinding.h"
 #include "../../../lib/loader/Swift/SwiftMangledClassMethodABI.h"
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
@@ -8,6 +17,7 @@
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
@@ -171,6 +181,111 @@ HighFunc lowerSavedFloatingRecord(const MedFunc &Med) {
   return Converter.convert(Med, Arch::AArch64);
 }
 
+TEST(HighCSourceCalls, UserAndIndirectCalleesKeepOpaqueUnionTags) {
+  // Neither the integer argument nor the caller's signature names Token.
+  // Its union tag must come from the resolved callee, even when that callee
+  // has the name of a routine normally declared by a system header.
+  class CalleeDebug : public NullDebugContext {
+  public:
+    FunctionSym Callee;
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      return Address == Callee.Addr ? std::optional(Callee) : std::nullopt;
+    }
+    bool hasInfo() const override { return true; }
+  };
+  for (bool Indirect : {false, true}) {
+    SCOPED_TRACE(Indirect);
+    CalleeDebug Debug;
+    Debug.Callee.Name = "read";
+    Debug.Callee.Addr = 0x2000;
+    Debug.Callee.ReturnType = NdType::makeInt(8, true);
+    Debug.Callee.Params = {
+        {"value", NdType::makePtr(NdType::makeNamedRecord("Token"))}};
+    Debug.Callee.PrototypeFromCLibrary = true;
+    if (!Indirect)
+      Debug.Callee.PrototypeLibrary = UserPrototypeLibrary.str();
+    auto Call = HighExpr::makeCall("read", Debug.Callee.Addr,
+                                   {HighExpr::makeConst(0, 8)});
+    Call->Type = Debug.Callee.ReturnType;
+    Call->IsIndirectCall = Indirect;
+    if (Indirect) {
+      Call->IndirectParamIdx = 0;
+      Call->IndirectTarget = parameter(0, NdType::makeInt(8, false));
+    }
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::ELF;
+    Options.RecordDefinitions = [](const std::vector<TypeRef> &Types) {
+      CRecordDefinitions Result;
+      for (const TypeRef &Type : Types)
+        if (Type->Kind == NdTypeKind::Ptr && Type->Pointee &&
+            Type->Pointee->SourceName == "Token")
+          Result.Tags["Token"] = true;
+      return Result;
+    };
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    const auto Caller =
+        returning("read_token", Call,
+                  Indirect ? std::vector{NdType::makeInt(8, false)}
+                           : std::vector<TypeRef>{});
+    ASSERT_TRUE(HighCEmitter().emit({Caller}, OS, Options, &Debug));
+    EXPECT_EQ(Source.find("#include <unistd.h>"), std::string::npos) << Source;
+    EXPECT_NE(Source.find("typedef union Token Token;"), std::string::npos)
+        << Source;
+    EXPECT_EQ(Source.find("struct Token"), std::string::npos) << Source;
+    source_call_execution_test::checkSyntax(Source);
+  }
+}
+
+TEST(HighCSourceCalls, PortableDeclarationsOwnObjectPointerConversions) {
+  class CalleeDebug final : public NullDebugContext {
+  public:
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != 0x2000)
+        return std::nullopt;
+      FunctionSym Function;
+      Function.Addr = Address;
+      Function.Name = "read_mask";
+      Function.ReturnType = NdType::makeInt(4);
+      auto Integer = NdType::makeInt(4, false);
+      Integer->SourceName =
+          "__typeof__(__builtin_choose_expr(sizeof(unsigned long) == 4, "
+          "(unsigned long)0, (uint32_t)0))";
+      Function.Params = {{"mask", NdType::makePtr(Integer)}};
+      Function.PrototypeFromHeader = true;
+      Function.PortablePrototypeDeclaration =
+          "int read_mask(__typeof__(__builtin_choose_expr("
+          "sizeof(unsigned long) == 4, (unsigned long)0, (uint32_t)0)) *mask)";
+      return Function;
+    }
+    bool hasInfo() const override { return true; }
+  } Debug;
+  const auto Pointer = NdType::makePtr(NdType::makeInt(4, false));
+  auto Call = HighExpr::makeCall("read_mask", 0x2000, {parameter(0, Pointer)});
+  Call->Type = NdType::makeInt(4);
+  const auto Caller = returning("use_mask", Call, {Pointer});
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Caller}, OS, Options, &Debug));
+  EXPECT_NE(Source.find("read_mask((void*)arg0)"), std::string::npos) << Source;
+  // LLP64 keeps unsigned long and uint32_t distinct even though both have
+  // four bytes. The native LP64 compile also checks the declaration's other
+  // branch, and execution verifies the original address reaches the callee.
+  source_call_execution_test::checkSyntax(
+      Source, {"--target=x86_64-w64-windows-gnu",
+               "-Werror=incompatible-pointer-types"});
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
+int read_mask(uint32_t *mask) { return *mask == 0x1234; }
+int main(void) { uint32_t mask = 0x1234; return use_mask(&mask) != 1; }
+)",
+                  {Optimization, "-Werror=incompatible-pointer-types"});
+}
+
 TEST(HighCSourceCalls, UnnamedFixedParametersShareDeclarationAndBodyNames) {
   const auto Word = NdType::makeInt(8, false);
   for (bool Collision : {false, true}) {
@@ -299,6 +414,39 @@ TEST(HighCSourceCalls, BrokenPreservedPrefixChainsRemainUnknown) {
     const auto Source =
         emit({lowerSavedFloatingRecord(Med)}, true, Arch::AArch64);
     EXPECT_NE(Source.find("unknown value"), std::string::npos) << Source;
+  }
+}
+
+TEST(HighCSourceCalls, ReusedConverterRebuildsClobberIdentityAndOrder) {
+  auto Med = savedFloatingRecord(3);
+  const auto Original = Med.CallClobbers;
+  const std::map<va_t, std::string> Names{{0x2000, "observe_call"}};
+  MedToHighConverter Converter;
+  Converter.setFuncNames(&Names);
+  for (unsigned Round = 0; Round < 4; ++Round) {
+    SCOPED_TRACE(Round);
+    if (Round == 1) {
+      // Duplicate identities keep the first record's conservative answer.
+      auto Broken = Original;
+      for (auto &Clobber : Broken) {
+        Clobber.PreservedInput = {};
+        Clobber.PreservedPrefixSize = 0;
+      }
+      Med.CallClobbers.insert(Med.CallClobbers.begin(), Broken.begin(),
+                              Broken.end());
+    } else if (Round == 2) {
+      Med.CallClobbers.clear();
+    } else if (Round == 3) {
+      Med.CallClobbers = Original;
+    }
+    const auto Source =
+        emit({Converter.convert(Med, Arch::AArch64)}, true, Arch::AArch64);
+    EXPECT_EQ(Source,
+              emit({lowerSavedFloatingRecord(Med)}, true, Arch::AArch64));
+    if (Round == 0 || Round == 3)
+      EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+    if (Round == 1)
+      EXPECT_NE(Source.find("unknown value"), std::string::npos) << Source;
   }
 }
 
@@ -2217,6 +2365,41 @@ TEST(HighCSourceCalls, CallbackDeclaratorsPreserveArgumentsAndReturnTypes) {
   EXPECT_EQ(
       declarationToC(NdType::makePtr(NdType::makeFunc(Callback)), "factory"),
       "void (*(*factory)(void))(void*)");
+  // An i386 callback's pointers are four bytes: EnumDateFormatsExA's
+  // DATEFMT_ENUMPROCEXA takes a string and a calendar.
+  auto Narrow = NdType::makePtr(NdType::makeVoid());
+  Narrow->Size = 4;
+  auto Enumerator = NdType::makePtr(NdType::makeFunc(
+      NdType::makeInt(4, true), {Narrow, NdType::makeInt(4, false)}));
+  Enumerator->Size = 4;
+  EXPECT_EQ(declarationToC(Enumerator, "proc"),
+            "int32_t (*proc)(void*, uint32_t)");
+  Enumerator->Pointee->FunctionConvention = types::CallingConvention::Stdcall;
+  EXPECT_EQ(declarationToC(Enumerator, "proc"),
+            "int32_t (__attribute__((stdcall)) *proc)(void*, uint32_t)");
+  auto CallbackFactory =
+      NdType::makePtr(NdType::makeFunc(Enumerator, {Enumerator}));
+  EXPECT_EQ(declarationToC(CallbackFactory, "factory"),
+            "int32_t (__attribute__((stdcall)) *(*factory)(int32_t "
+            "(__attribute__((stdcall)) *)(void*, uint32_t)))(void*, uint32_t)");
+  // Clang checks which function owns the convention. Putting the returned
+  // callback's attribute before the entire declaration changes the factory.
+  source_call_execution_test::checkSyntax(
+      std::string(
+          "#include <stdint.h>\n"
+          "typedef int32_t (__attribute__((stdcall)) *ExpectedCallback)(void*, "
+          "uint32_t);\n"
+          "typedef ExpectedCallback (*ExpectedFactory)(ExpectedCallback);\n") +
+          declarationToC(Enumerator, "handler") + ";\n" +
+          declarationToC(CallbackFactory, "factory") +
+          ";\n"
+          "_Static_assert(__builtin_types_compatible_p(__typeof__(handler), "
+          "ExpectedCallback), \"callback\");\n"
+          "_Static_assert(__builtin_types_compatible_p(__typeof__(factory), "
+          "ExpectedFactory), \"factory\");\n",
+      {"--target=i686-pc-windows-msvc", "-ffreestanding"});
+  Enumerator->Pointee->FunctionConvention.reset();
+  EXPECT_THROW(typeToC(Enumerator), std::invalid_argument);
   auto Cycle = NdType::makePtr();
   Cycle->Pointee = Cycle;
   EXPECT_THROW(typeToC(Cycle), std::invalid_argument);
@@ -4073,7 +4256,7 @@ int main(void) {
 )");
 }
 
-TEST(HighCSourceCalls, PointerValuesAssignedToIntegerTempsUsePointerBits) {
+TEST(HighCSourceCalls, PointerTempsPreserveTheirBitsOnIntegerReturn) {
   const auto I64 = NdType::makeInt(8);
   const auto BytePointer = NdType::makePtr(NdType::makeInt(1, false));
   MedVar Bits;
@@ -4096,18 +4279,22 @@ TEST(HighCSourceCalls, PointerValuesAssignedToIntegerTempsUsePointerBits) {
   Function.Body = {Assign, Return};
 
   const auto Source = emit({Function});
-  EXPECT_NE(Source.find("t17 = (int64_t)(uintptr_t)((uintptr_t)value);"),
-            std::string::npos)
-      << Source;
-  compileAndRun(Source + R"(
+  // Pointer inference may retain the pointer in the copied local. Its bits
+  // must pass through uintptr_t at the integer boundary, wherever the copy
+  // is converted; the temporary's declaration is not that contract.
+  EXPECT_NE(Source.find("(int64_t)(uintptr_t)"), std::string::npos) << Source;
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
 int main(void) {
-    int object = 0;
-    return (uintptr_t)pointer_temp_bits((uint8_t *)&object) ==
-                   (uintptr_t)&object
-               ? 0
-               : 1;
+    uint8_t objects[17];
+    if (pointer_temp_bits((uint8_t *)0) != 0) return 1;
+    for (unsigned i = 0; i <= sizeof(objects); ++i)
+        if ((uintptr_t)pointer_temp_bits(objects + i) !=
+                (uintptr_t)(objects + i)) return 2;
+    return 0;
 }
-)");
+)",
+                  {Optimization});
 }
 
 TEST(HighCSourceCalls, PartialIntegerCarriersPreserveWideValuesAndShiftBounds) {
@@ -4170,7 +4357,8 @@ int main(void) {
 }
 
 TEST(HighCSourceCalls, PartialIntegerAtomicsRejectWidenedMemoryAccess) {
-  EXPECT_THROW(typeToC(NdType::makeInt(65)), std::invalid_argument);
+  EXPECT_EQ(typeToC(NdType::makeInt(256)), "_BitInt(2048)");
+  EXPECT_THROW(typeToC(NdType::makeInt(257)), std::invalid_argument);
   const auto Partial = NdType::makeInt(3, false);
   const auto Pointer = NdType::makePtr(NdType::makeInt(1, false));
   auto Load = HighExpr::makeLoad(parameter(0, Pointer), Partial);

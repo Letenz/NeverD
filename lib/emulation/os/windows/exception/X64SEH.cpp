@@ -39,8 +39,27 @@ bool hasLanguageHandler(const ExceptionFunction &Frame, bool Unwinding) {
 llvm::Error validateFrame(const ExceptionFunction &F) {
   if (F.ParseStatus != ExceptionParseStatus::Complete)
     return invalid(seh::text::EncounteredIncompleteExceptionMetadata);
-  if (F.Encoding != ExceptionEncoding::X64UnwindV1 || F.UnwindVersion != 1)
-    return invalid(seh::text::OnlyX64V1UnwindRecordsAreSupported);
+  if (!((F.Encoding == ExceptionEncoding::X64UnwindV1 &&
+         F.UnwindVersion == 1) ||
+        (F.Encoding == ExceptionEncoding::X64UnwindV2 && F.UnwindVersion == 2)))
+    return invalid(seh::text::OnlyMatchingX64V1V2RecordsAreSupported);
+  if ((F.UnwindVersion == 1 && !F.Epilogs.empty()) ||
+      F.Epilogs.size() > seh::MaxUnwindOperations)
+    return invalid(seh::text::InvalidV2EpilogueMetadata);
+  uint64_t PreviousEnd = F.PrologueSize;
+  for (const auto &Epilog : F.Epilogs) {
+    if (Epilog.StartOffset < 0 || uint64_t(Epilog.StartOffset) < PreviousEnd ||
+        uint64_t(Epilog.StartOffset) >= F.CodeRange.size() ||
+        Epilog.LastInstructionOffset >=
+            F.CodeRange.size() - uint64_t(Epilog.StartOffset) ||
+        Epilog.LastInstructionOffset !=
+            F.Epilogs.front().LastInstructionOffset ||
+        Epilog.LastInstructionOffset >= UINT8_MAX || Epilog.Flags ||
+        Epilog.FirstOperationOffset || !Epilog.Operations.empty())
+      return invalid(seh::text::InvalidV2EpilogueMetadata);
+    PreviousEnd =
+        uint64_t(Epilog.StartOffset) + Epilog.LastInstructionOffset + 1;
+  }
   const bool Chained = F.Kind == RuntimeFunctionKind::Chained;
   if (Chained != bool(F.UnwindFlags & seh::ChainFlag) ||
       Chained != F.ChainedPrimaryRange.has_value() ||
@@ -494,7 +513,8 @@ X64SEH::advanceImpl(Dispatch &State,
         State.ControlOffset = State.OriginalPC - Frame.CodeRange.Begin;
         State.InPrologue = State.ControlOffset < Frame.PrologueSize;
         if (!State.InPrologue) {
-          auto Epilogue = unwindEpilogue(Frame, Current, State.Bounds, Owner);
+          auto Epilogue = unwindEpilogue(Frame, *State.UnwindFrames.back(),
+                                         Current, State.Bounds, Owner);
           if (!Epilogue)
             return Epilogue.takeError();
           if (*Epilogue) {

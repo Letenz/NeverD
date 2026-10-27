@@ -10,6 +10,8 @@
 #include "../UnalignedMemory.h"
 #include "LLVMCWriter.h"
 
+#include "neverd/backend/Limits.h"
+
 #include "llvm/Analysis/ValueTracking.h"
 
 namespace neverd {
@@ -85,7 +87,7 @@ void LLVMCWriter::planRawMemoryUpdates(llvm::Function &Fn) {
     const auto Size = llvmAccessSize(Load->getType());
     if ((!llvm::isa<llvm::Argument>(Base) &&
          !llvm::isa<llvm::IntToPtrInst>(Base)) ||
-        imageDataVA(Pointer) || typedRecordAccess(Pointer, Size) ||
+        imageDataVA(Pointer) || typedLoadAccess(*Load) ||
         frameSlotAccess(Pointer, Size, false, false))
       return nullptr;
     return Load;
@@ -102,7 +104,7 @@ void LLVMCWriter::planRawMemoryUpdates(llvm::Function &Fn) {
       if (!Update || Update->getParent() != &Block)
         continue;
       const auto *Load = RawLoad(*Update);
-      unsigned Work = 128;
+      unsigned Work = ::neverd::limits::backend::kLLVMCMemoryUpdateAddressWork;
       if (!Load || Load->getPointerOperand() != Store->getPointerOperand() ||
           !effectFreeBetween(*Load, *Store, Work))
         continue;
@@ -144,7 +146,7 @@ void LLVMCWriter::planRawMemoryUpdates(llvm::Function &Fn) {
           RawMemoryUpdateInputs.count(Update))
         continue;
       const auto *Load = RawLoad(*Update);
-      unsigned Work = 128;
+      unsigned Work = ::neverd::limits::backend::kLLVMCMemoryUpdateValueWork;
       if (!Load || !effectFreeBetween(*Load, *Update, Work))
         continue;
       RawMemoryExpressionLoads.insert(Load);

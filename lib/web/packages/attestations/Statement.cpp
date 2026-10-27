@@ -12,6 +12,8 @@
 
 #include "Internal.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 
 namespace neverd::web::package_attestations {
@@ -66,8 +68,12 @@ void Reader::subject(const Object &O) {
     for (const auto &[Key, Value] : *Digests) {
       const auto Algorithm = llvm::StringRef(Key);
       const auto Digest = Value.getAsString();
-      if (Algorithm.empty() || Algorithm.size() > 64 || !Digest ||
-          Digest->size() > 1024)
+      if (Algorithm.empty() ||
+          Algorithm.size() > ::neverd::limits::web::
+                                 kStatementReaderSubjectAlgorithmSizeLimit ||
+          !Digest ||
+          Digest->size() >
+              ::neverd::limits::web::kStatementReaderSubjectDigestSizeLimit)
         throw Error("package_attestation_invalid_digest_field");
       Work.charge(Algorithm.size() + Digest->size());
       Ordered.emplace_back(Algorithm.str(), Digest->str());

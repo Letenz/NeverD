@@ -15,6 +15,7 @@
 #define NEVERD_EMULATION_KERNELGUESTCALL_H
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace neverd::emulation {
@@ -31,6 +32,9 @@ struct KernelGuestCall {
   uint64_t PC = 0;
   std::vector<uint64_t> Arguments;
   uint64_t SynchronizationObject = 0;
+  /// Internal object callbacks can attach this same thread to the handle's
+  /// process. This does not change its creating process or PreviousMode.
+  std::optional<uint32_t> ProcessID;
 };
 
 } // namespace neverd::emulation

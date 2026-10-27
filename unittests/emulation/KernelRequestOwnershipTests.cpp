@@ -920,6 +920,10 @@ TEST_F(KernelRequestOwnership,
   call("IoMarkIrpPending", {OtherIRP});
   success(Model->setUserRequestContext(false));
   success(Model->recordDispatchReturn(OtherIRP, Pending));
+  EXPECT_EQ(call("PsLookupProcessByProcessId",
+                 {Input.RequestorProcessID, Scratch + 0x400}),
+            0u);
+  const uint64_t RetainedProcess = integer(Scratch + 0x400);
   success(Model->exitRequestorProcess(IRP));
   rejected(Model->exitRequestorProcess(IRP));
   success(Model->setUserRequestContext(true, Other.RequestorProcessID));
@@ -931,6 +935,17 @@ TEST_F(KernelRequestOwnership,
   auto ExitedRead = Memory->canAccess(UserInput, 1, Read);
   ASSERT_TRUE(bool(ExitedRead));
   EXPECT_FALSE(*ExitedRead);
+  EXPECT_EQ(call("PsLookupProcessByProcessId",
+                 {Input.RequestorProcessID, Scratch + 0x400}),
+            0u);
+  EXPECT_EQ(integer(Scratch + 0x400), RetainedProcess);
+  EXPECT_EQ(call("PsGetProcessId", {RetainedProcess}),
+            Input.RequestorProcessID);
+  auto StillRevoked = Memory->canAccess(UserInput, 1, Read);
+  ASSERT_TRUE(bool(StillRevoked));
+  EXPECT_FALSE(*StillRevoked);
+  call("ObfDereferenceObject", {RetainedProcess});
+  call("ObfDereferenceObject", {RetainedProcess});
   success(Model->setUserRequestContext(false));
   EXPECT_EQ(integer(InAlias, 2), 0x2211u);
   guestWrite(OutAlias, 0x42, 1);
@@ -1050,6 +1065,9 @@ TEST_F(KernelRequestOwnership,
             Input.RequestorProcessID);
   EXPECT_EQ(call("PsGetCurrentProcessId", {}), 4u);
   success(Model->validateGuestAccess(UserInput, 1, false));
+  EXPECT_EQ(call("KeGetCurrentProcessorNumberEx", {0}), 0u);
+  EXPECT_EQ(call("KeGetCurrentProcessorNumberEx", {Scratch + 0x280}), 0u);
+  EXPECT_EQ(bytes(Scratch + 0x280, 4), (std::vector<uint8_t>(4, 0)));
   EXPECT_EQ(bytes(UserInput, 1), (std::vector<uint8_t>{0x11}));
   auto CanReadOther = Memory->canAccess(OtherInput, 1, Read);
   ASSERT_TRUE(bool(CanReadOther));

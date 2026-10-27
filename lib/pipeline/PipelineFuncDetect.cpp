@@ -11,6 +11,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "PipelineLowIRDetail.h"
+
 #include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/CFGBuilder.h"
@@ -206,15 +208,27 @@ Pipeline::detectFunctions(const BinaryImage &Img, Decoder &Dec,
       }
     }
     FuncEntries.reserve(Wanted.size());
+    // A run that shares the analysis cache names them from its symbol
+    // inventory (getFunctionNameAt() scans every export and symbol).
+    std::shared_ptr<const PipelineAnalysisCache::SymbolInventory> Inventory;
+    if (PipelineAnalysisCache *Shared = sharedAnalysisCache(Img, Opts))
+      Inventory = PipelineAnalysisCache::SymbolInventory::of(Img, *Shared);
+    const auto NameAt = [&](va_t Addr) {
+      if (!Inventory)
+        return Img.getFunctionNameAt(Addr);
+      const std::map<va_t, std::string> &Names = Inventory->functionNames(Img);
+      if (const auto It = Names.find(Addr); It != Names.end())
+        return It->second;
+      return (kAutoFuncPrefix + llvm::utohexstr(Addr)).str();
+    };
     for (va_t Addr : Wanted) {
       // `--func` already chose the work set.  Do not scan every image
       // symbol to prove the VA is a "known" start: C++ unwind ActionVAs
       // are often outside RuntimeFunctionAddrs, and that walk dominates
       // single-function export on a large PE.
-      const Segment *Seg = Img.getSegmentFor(Addr);
-      if (!Seg || !Seg->isExecutable())
+      if (!Img.hasExecutableCodeOwnerAt(Addr))
         continue;
-      FuncEntries.push_back({Addr, Img.getFunctionNameAt(Addr)});
+      FuncEntries.push_back({Addr, NameAt(Addr)});
     }
     LLVM_DEBUG(llvm::dbgs() << "pipeline: only-function filter kept "
                             << FuncEntries.size() << " entries\n");
@@ -269,8 +283,7 @@ Pipeline::detectFunctions(const BinaryImage &Img, Decoder &Dec,
       return Edit != Opts.FunctionEdits.end() && !Edit->second;
     });
     for (const auto &[Entry, Created] : Opts.FunctionEdits) {
-      const Segment *Code = Img.getSegmentFor(Entry);
-      if (!Created || !Code || !Code->isExecutable() ||
+      if (!Created || !Img.hasExecutableCodeOwnerAt(Entry) ||
           llvm::any_of(FuncEntries,
                        [&](const std::pair<va_t, std::string> &Known) {
                          return Known.first == Entry;
@@ -312,6 +325,8 @@ Pipeline::detectFunctions(const BinaryImage &Img, Decoder &Dec,
     // Preserve linker/dynamic-loader import veneers.  Loaders register section
     // ranges (ELF PLT, Mach-O stubs/helper), while architecture scanners map
     // exact COFF/ELF thunks back to their Import without changing IATAddr.
+    // Read-only analysis can observe these bodies; only replacement output
+    // must leave the existing linker/runtime scaffolding intact.
     if ((Opts.PatchMode || Opts.LiftMode) && Img.isImportStubAt(Entry)) {
       Audit.Disposition = PipelineFunctionDisposition::SkippedImportStub;
       Result.FunctionAudits.push_back(std::move(Audit));

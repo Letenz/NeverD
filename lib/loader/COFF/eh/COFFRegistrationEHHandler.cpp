@@ -8,7 +8,9 @@
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/loader/COFF/RuntimeProviders.h"
 #include "neverd/loader/LanguageRuntime.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/ISAEncoding.h"
 
@@ -22,17 +24,19 @@
 
 namespace neverd::coff_loader {
 
-bool hasCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA) {
+std::optional<X86CookieCheckSuccessPath>
+getCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA) {
   if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF ||
-      Img.Base > UINT32_MAX || CheckVA > UINT32_MAX - 14 ||
-      !Img.DynInfo.SecurityCookieRVA)
-    return false;
+      Img.Bits != Bitness::Bits32 || Img.Base > UINT32_MAX ||
+      CheckVA > UINT32_MAX - 14 || !Img.DynInfo.SecurityCookieRVA ||
+      Img.DynInfo.SecurityCookieRVA > UINT32_MAX - Img.Base)
+    return std::nullopt;
   const va_t Cookie = Img.Base + Img.DynInfo.SecurityCookieRVA;
   const auto *Code = Img.readVA(CheckVA, 9);
   if (Cookie > UINT32_MAX - 3 || !Img.readVA(Cookie, 4) || !Code ||
       Code[0] != 0x3b || Code[1] != 0x0d ||
       readLE<uint32_t>(Code + 2) != Cookie)
-    return false;
+    return std::nullopt;
   size_t Success = 0;
   int64_t Failure = 0;
   if (Code[6] == 0x75) {
@@ -41,7 +45,7 @@ bool hasCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA) {
   } else {
     Code = Img.readVA(CheckVA, 13);
     if (!Code || Code[6] != 0x0f || Code[7] != 0x85)
-      return false;
+      return std::nullopt;
     Success = 12;
     Failure = int64_t(CheckVA) + Success + readLE<int32_t>(Code + 8);
   }
@@ -50,20 +54,32 @@ bool hasCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA) {
     ++Extent;
     Code = Img.readVA(CheckVA, Extent);
     if (!Code || Code[Success + 1] != 0xc3)
-      return false;
+      return std::nullopt;
   } else if (Code[Success] != 0xc3)
-    return false;
-  return Img.hasExecutableCodeOwnerRange(CheckVA, Extent) && Failure > 0 &&
-         Failure <= UINT32_MAX && Img.isCodeAddress(va_t(Failure)) &&
-         Img.readVA(va_t(Failure), 1) &&
-         (uint64_t(Failure) < CheckVA || uint64_t(Failure) >= CheckVA + Extent);
+    return std::nullopt;
+  // Eliding this call relies on these instructions remaining unchanged after
+  // loading. Only CMP's absolute cookie operand can carry a PE32 base fixup;
+  // opcode, branch and return fixups cannot certify this success path.
+  if (!readImmutablePE32CodeBytes(Img, CheckVA, Extent, {CheckVA + 2}) ||
+      !Img.hasExecutableCodeOwnerRange(CheckVA, Extent) || Failure <= 0 ||
+      Failure > UINT32_MAX || !Img.isCodeAddress(va_t(Failure)) ||
+      !Img.readVA(va_t(Failure), 1) ||
+      (uint64_t(Failure) >= CheckVA && uint64_t(Failure) < CheckVA + Extent))
+    return std::nullopt;
+  return X86CookieCheckSuccessPath{
+      Cookie, va_t(Failure), {CheckVA, CheckVA + Extent}};
+}
+
+bool hasCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA) {
+  return getCheckedX86CookieCheckSuccessPath(Img, CheckVA).has_value();
 }
 
 bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA) {
   if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF)
     return false;
   std::set<va_t> Seen;
-  for (unsigned Hop = 0; Hop != 4; ++Hop) {
+  for (unsigned Hop = 0;
+       Hop != ::neverd::limits::loader::kMaxRegistrationHandlerHops; ++Hop) {
     if (!Seen.insert(HandlerVA).second)
       return false;
     const auto *Code = Img.readVA(HandlerVA, 5);
@@ -83,61 +99,15 @@ bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA) {
     const auto *Import = Img.findImportAt(readLE<uint32_t>(Code + 2));
     return Import && Import->Name == "_except_handler3" &&
            Img.readVA(Import->IATAddr, 4) &&
-           (llvm::StringRef(Import->Module).equals_insensitive("msvcrt.dll") ||
-            llvm::StringRef(Import->Module)
-                .equals_insensitive("ucrtbase.dll") ||
-            llvm::StringRef(Import->Module)
-                .equals_insensitive("vcruntime140.dll") ||
-            llvm::StringRef(Import->Module)
-                .equals_insensitive("vcruntime140d.dll"));
+           isX86SEHHandlerProvider(Import->Module);
   }
   return false;
-}
-
-std::optional<va_t> getCheckedX86EH4CookieCheck(const BinaryImage &Img,
-                                                va_t HandlerVA) {
-  if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF ||
-      Img.Base > UINT32_MAX || !Img.DynInfo.SecurityCookieRVA)
-    return std::nullopt;
-  const va_t CookieVA = Img.Base + Img.DynInfo.SecurityCookieRVA;
-  const auto *Code = Img.readVA(HandlerVA, 36);
-  if (!Code || !Img.hasExecutableCodeOwnerRange(HandlerVA, 36) ||
-      CookieVA > UINT32_MAX - 3 || !Img.readVA(CookieVA, 4) ||
-      Code[0] != 0x55 ||
-      !((Code[1] == 0x89 && Code[2] == 0xe5) ||
-        (Code[1] == 0x8b && Code[2] == 0xec)))
-    return std::nullopt;
-  for (unsigned Arg = 0; Arg != 4; ++Arg)
-    if (Code[3 + Arg * 3] != 0xff || Code[4 + Arg * 3] != 0x75 ||
-        Code[5 + Arg * 3] != 20 - Arg * 4)
-      return std::nullopt;
-  if (Code[15] != 0x68 || Code[20] != 0x68 ||
-      readLE<uint32_t>(Code + 21) != CookieVA || Code[25] != 0xff ||
-      Code[26] != 0x15 || Code[31] != 0x83 || Code[32] != 0xc4 ||
-      Code[33] != 24 || Code[34] != 0x5d || Code[35] != 0xc3)
-    return std::nullopt;
-  const va_t CheckVA = readLE<uint32_t>(Code + 16);
-  const auto *Import = Img.findImportAt(readLE<uint32_t>(Code + 27));
-  if (!Img.isCodeAddress(CheckVA) || !Img.readVA(CheckVA, 1) || !Import ||
-      !Img.readVA(Import->IATAddr, 4) ||
-      Import->Name != "_except_handler4_common" ||
-      (!llvm::StringRef(Import->Module).equals_insensitive("msvcrt.dll") &&
-       !llvm::StringRef(Import->Module).equals_insensitive("ucrtbase.dll") &&
-       !llvm::StringRef(Import->Module)
-            .equals_insensitive("vcruntime140.dll") &&
-       !llvm::StringRef(Import->Module)
-            .equals_insensitive("vcruntime140d.dll")))
-    return std::nullopt;
-  return CheckVA;
 }
 
 } // namespace neverd::coff_loader
 
 namespace neverd::coff_loader::registration_detail {
 namespace {
-
-/// Bound on veneer/thunk chasing when naming a handler.
-constexpr unsigned MaxHandlerThunkHops = 4;
 
 /// Follow one `jmp rel32` / `jmp [iat]` veneer and name what it reaches.
 /// Returns an empty string when \p Address is not a veneer or its destination
@@ -182,13 +152,10 @@ std::string resolveVeneerTargetName(const BinaryImage &Img, va_t Address) {
 /// address appears.
 bool decodeCxxHandlerThunk(const BinaryImage &Img, va_t HandlerVA,
                            HandlerIdentity &Identity) {
-  // The `mov`/`jmp` pair is the tail of the thunk, not necessarily its first
-  // instruction: a /GS build prefixes a cookie check, and an /hotpatch or /Gy
-  // build prefixes padding.  Scanning for the pair, and requiring the `jmp` to
-  // sit immediately after the `mov`, keeps both variants readable without
-  // accepting an unrelated `mov eax, imm32` somewhere in a real function.
-  constexpr size_t MaxThunkBytes = 64;
-  for (size_t Offset = 0; Offset < MaxThunkBytes; ++Offset) {
+  for (size_t Offset = 0;
+       Offset <
+       ::neverd::limits::loader::kCOFFRegistrationEHHandlerMaxThunkBytes;
+       ++Offset) {
     const va_t Cursor = HandlerVA + Offset;
     auto Opcode = readScalar<uint8_t>(Img, Cursor);
     if (!Opcode)
@@ -281,16 +248,16 @@ bool decodeCxxHandlerThunk(const BinaryImage &Img, va_t HandlerVA,
 /// both facts the image states about itself rather than shapes guessed from
 /// bytes.
 bool isExceptHandler4Wrapper(const BinaryImage &Img, va_t HandlerVA) {
-  // Longest wrapper MSVC emits is well inside this; scanning further would
-  // start reading whatever routine follows it.
-  constexpr size_t MaxWrapperBytes = 96;
   const va_t CookieVA = Img.DynInfo.SecurityCookieRVA == 0
                             ? 0
                             : Img.Base + Img.DynInfo.SecurityCookieRVA;
   bool ForwardsToCommon = false;
   bool UsesSecurityCookie = false;
 
-  for (size_t Offset = 0; Offset < MaxWrapperBytes; ++Offset) {
+  for (size_t Offset = 0;
+       Offset <
+       ::neverd::limits::loader::kCOFFRegistrationEHHandlerMaxWrapperBytes;
+       ++Offset) {
     const va_t VA = HandlerVA + Offset;
     auto Opcode = readScalar<uint8_t>(Img, VA);
     if (!Opcode)
@@ -339,7 +306,10 @@ HandlerIdentity identifyHandler(const BinaryImage &Img, va_t HandlerVA) {
   HandlerIdentity Identity;
   va_t Cursor = HandlerVA;
   std::vector<va_t> Seen;
-  for (unsigned Hop = 0; Hop < MaxHandlerThunkHops; ++Hop) {
+  for (unsigned Hop = 0;
+       Hop <
+       ::neverd::limits::loader::kCOFFRegistrationEHHandlerMaxHandlerThunkHops;
+       ++Hop) {
     if (std::find(Seen.begin(), Seen.end(), Cursor) != Seen.end())
       break;
     Seen.push_back(Cursor);

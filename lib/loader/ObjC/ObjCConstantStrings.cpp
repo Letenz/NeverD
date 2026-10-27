@@ -2,6 +2,8 @@
 
 #include "ObjCRuntimeData.h"
 
+#include "neverd/loader/Limits.h"
+
 #include <algorithm>
 
 namespace neverd {
@@ -56,8 +58,10 @@ readObjCConstantString(const BinaryImage &Image, va_t Address) {
   const uint64_t Flags = llvm::support::endian::read64le(Record + 8);
   const uint64_t Length = llvm::support::endian::read64le(Record + 24);
   const auto Contents = Data.pointer(Address + 16);
-  if ((Flags != 0x7c8 && Flags != 0x7d0) || Length > 1024 * 1024 || !Contents ||
-      !*Contents)
+  if ((Flags != 0x7c8 && Flags != 0x7d0) ||
+      Length > ::neverd::limits::loader::
+                   kObjCConstantStringsReadObjCConstantStringLengthLimit ||
+      !Contents || !*Contents)
     return std::nullopt;
   const bool UTF16 = Flags == 0x7d0;
   const uint64_t Width = UTF16 ? 2 : 1;

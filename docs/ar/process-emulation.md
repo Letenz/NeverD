@@ -1,5 +1,7 @@
 **اللغات**: [English](../process-emulation.md) | [简体中文](../zh-CN/process-emulation.md) | [繁體中文](../zh-TW/process-emulation.md) | [日本語](../ja/process-emulation.md) | [한국어](../ko/process-emulation.md) | [Français](../fr/process-emulation.md) | [Deutsch](../de/process-emulation.md) | [Español](../es/process-emulation.md) | [Italiano](../it/process-emulation.md) | [Русский](../ru/process-emulation.md) | [العربية](process-emulation.md)
 
+> تحديث: راجع [العقد الحالي](../linux-network-contracts.md#poll-and-epoll-waits) لسلوك poll/epoll وstdio المخزن مؤقتًا. ملاحظات هذه الصفحة التي تقصر poll على مهلة صفرية وGKI تصف المجموعة الفرعية السابقة.
+
 [← فهرس التوثيق](README.md)
 
 # محاكاة عمليات الضيف

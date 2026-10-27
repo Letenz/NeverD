@@ -14,12 +14,17 @@
 #include <algorithm>
 #include <compare>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace neverd {
+namespace coff_loader {
+struct X86CxxHandlerABI;
+struct X86CxxPrologueCall;
+}
 
 struct LowFunc;
 
@@ -39,7 +44,9 @@ struct RegistrationCxxSearch {
 struct RegistrationBlockState {
   int BlockId = -1;
   ExceptionAddressRange Range;
-  std::vector<int32_t> Levels;
+  /// Individually owned levels when SharedLevels is absent. Consumers use
+  /// levels() so an unknown domain need not be copied into every block.
+  std::vector<int32_t> ExplicitLevels;
   bool Unknown = false;
   /// Runtime-invoked filter/cleanup code has its own dispatch context. Its
   /// instructions must not be included in the parent's lexical try interval.
@@ -61,6 +68,14 @@ struct RegistrationBlockState {
   /// still keeps their frame facts separate. Native projection requires a
   /// unique stack and checks every ordinary and runtime continuation edge.
   std::vector<std::vector<std::pair<uint32_t, uint32_t>>> CxxCatchStacks;
+  /// Immutable storage owned by the published result, never borrowed from a
+  /// solver or loader. Sharing levels does not share frame, search or lifetime
+  /// facts and does not change Unknown or any native-admission requirement.
+  std::shared_ptr<const std::vector<int32_t>> SharedLevels;
+
+  const std::vector<int32_t> &levels() const {
+    return SharedLevels ? *SharedLevels : ExplicitLevels;
+  }
 };
 
 /// A PE32 C++ catch returns a continuation code pointer to the runtime. This
@@ -124,12 +139,20 @@ struct RegistrationIncomingFrameAccess {
 };
 
 /// A source call whose authenticated leaf checker receives the exact decoded
-/// image cookie in ECX on every reaching path. Only this occurrence may be
-/// replaced by a compiler-owned physical cookie check.
+/// image cookie in ECX on every reaching path. Replacing this occurrence still
+/// requires the native frame protocol's independent output proof.
 struct RegistrationCookieCheck {
   va_t Address = InvalidVA;
   va_t EndAddress = InvalidVA;
   int OpSeq = -1;
+};
+
+/// A C++ handler's decoded cookie condition projected into the parent's
+/// established frame coordinate. This is not a physical output-frame offset.
+struct RegistrationCxxCookieCondition {
+  int32_t FrameOffset = 0;
+  int32_t XORFrameOffset = 0;
+  bool operator==(const RegistrationCxxCookieCondition &) const = default;
 };
 
 /// A typed scalar catch whose runtime object width follows the checked
@@ -178,7 +201,11 @@ struct RegistrationSEHExceptionAccess {
 /// exact parent instruction. CallVA is zero for a runtime invocation. These
 /// facts authorize state/CFG flow, not native replacement of the invocation.
 struct RegistrationSEHInvocationExit {
-  enum class Kind : uint8_t { NearReturn, ParentJump } Exit = Kind::NearReturn;
+  enum class Kind : uint8_t {
+    NearReturn,
+    ParentJump,
+    ParentFallthrough
+  } Exit = Kind::NearReturn;
   va_t EntryVA = InvalidVA;
   va_t CallVA = 0;
   va_t Address = InvalidVA;
@@ -188,13 +215,17 @@ struct RegistrationSEHInvocationExit {
   va_t StackRestoreVA = InvalidVA;
   int StackRestoreSeq = -1;
   int32_t StackOffset = 0;
+  bool isParentExit() const {
+    return Exit == Kind::ParentJump || Exit == Kind::ParentFallthrough;
+  }
   bool operator==(const RegistrationSEHInvocationExit &) const = default;
 };
 
-/// Exact source invocation of the EH3 capture protocol. Native reconstruction
-/// must replace its physical register/PC contents and CRT state arguments;
-/// copying the original jump buffer is not a continuation contract.
+/// Exact source invocation of the EH3/EH4 capture protocol. Native
+/// reconstruction must replace its physical register/PC contents and CRT state
+/// arguments; copying the original jump buffer is not a continuation contract.
 struct RegistrationSEHJumpCapture {
+  enum class Kind : uint8_t { EH3, EH4 };
   static constexpr uint16_t BufferBytes = 64;
   va_t Address = InvalidVA;
   va_t EndAddress = InvalidVA;
@@ -203,13 +234,40 @@ struct RegistrationSEHJumpCapture {
   va_t UnwindVA = InvalidVA;
   int32_t BufferOffset = 0;
   int32_t StackOffset = 0;
-  int32_t Level = -1;
+  /// Sorted unique source states independently proved at this occurrence.
+  std::vector<int32_t> Levels{-1};
+  Kind Protocol = Kind::EH3;
+  /// EH4's third unwind argument names the image's load-config cookie.
+  /// It is an address, never the runtime value or an invented replacement.
+  va_t SecurityCookieVA = 0;
   bool operator==(const RegistrationSEHJumpCapture &) const = default;
 };
 
-/// A live EH3 buffer supplies one physical capture PC and restored ESP. The
-/// source invocation is retired by the authenticated nonlocal runtime call;
-/// this is distinct from an ordinary CALL return or a target-wide noreturn.
+/// The logical state left by the last callback (or at unwind entry) and the
+/// final runtime state after any remaining filter-only unwind steps.
+struct RegistrationSEHJumpState {
+  int32_t FrameLevel = -1;
+  int32_t ResumeLevel = -1;
+  /// The unwind bound saved by this invocation of the source capture.
+  int32_t CaptureLevel = -1;
+  auto operator<=>(const RegistrationSEHJumpState &) const = default;
+};
+
+/// A checked callback jump which abandons a pending jump for another live
+/// capture. Bind the exact source occurrence and callback owner, never only
+/// the runtime helper's address or the replacement capture's destination.
+struct RegistrationSEHJumpReplacement {
+  va_t Address = InvalidVA;
+  int OpSeq = -1;
+  va_t EntryVA = InvalidVA;
+  va_t CaptureCall = InvalidVA;
+  auto operator<=>(const RegistrationSEHJumpReplacement &) const = default;
+};
+
+/// A live SEH buffer supplies one physical capture PC and restored ESP. The
+/// source invocation is retired by the authenticated nonlocal runtime call.
+/// Unwind may restore the capture, select a handler or transfer to another
+/// capture. None is an ordinary CALL return or a target-wide noreturn.
 struct RegistrationSEHJumpResume {
   va_t Address = InvalidVA;
   int OpSeq = -1;
@@ -230,6 +288,17 @@ struct RegistrationSEHJumpResume {
   /// Actual source states after local unwind. A capture inside a retired
   /// scope does not reactivate that scope when the continuation resumes.
   std::vector<int32_t> ResumedLevels;
+  /// Sorted unique observations from every completed unwind path. Native
+  /// resumption requires a single final state for each captured bound and
+  /// observable logical frame state.
+  std::vector<RegistrationSEHJumpState> StateRestores;
+  /// Sorted unique source scopes selected by an exception raised during
+  /// unwind. These paths enter their handlers and abandon this capture;
+  /// they never contribute a restored register or state projection.
+  std::vector<uint32_t> SelectedScopes;
+  /// Sorted unique callback transfers which resume a different capture.
+  /// Their frame and register effects never become this capture's outcomes.
+  std::vector<RegistrationSEHJumpReplacement> Replacements;
   bool operator==(const RegistrationSEHJumpResume &) const = default;
 };
 
@@ -254,9 +323,37 @@ struct RegistrationSEHBoundCall {
   int OpSeq = -1;
   va_t TargetVA = InvalidVA;
   int32_t StackOffset = 0;
+  /// Zero for the parent frame; otherwise the private callback stack owner.
+  va_t EntryVA = 0;
   bool HasOrdinaryReturn = true;
   std::vector<RegistrationSEHBoundArgument> Arguments;
   bool operator==(const RegistrationSEHBoundCall &) const = default;
+};
+
+/// One installed SEH TryLevel store, bound to its decoded source operation.
+/// Transitions preserve the whole state before and after a byte, word or dword
+/// write; consumers do not infer untouched bytes from the encoded payload.
+struct RegistrationSEHStateStore {
+  int BlockId = -1;
+  va_t Address = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  int OpSeq = -1;
+  uint8_t Width = 0;
+  uint32_t Value = 0;
+  std::vector<std::pair<int32_t, int32_t>> Transitions;
+  bool operator==(const RegistrationSEHStateStore &) const = default;
+};
+
+/// A checked physical shared-prologue invocation. This is separate from an
+/// ordinary callee ABI: it establishes EBP, allocates the node, preserves five
+/// GPRs and publishes FS:[0]. Native reconstruction requires its own transfer.
+struct RegistrationCxxPrologueEffect {
+  va_t Address = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  va_t HelperVA = InvalidVA;
+  int OpSeq = -1;
+  int32_t StackOffset = 0;
+  bool operator==(const RegistrationCxxPrologueEffect &) const = default;
 };
 
 struct RegistrationStateAnalysis {
@@ -267,17 +364,26 @@ struct RegistrationStateAnalysis {
   bool CxxContinuationsComplete = true;
   std::vector<RegistrationCxxContinuation> CxxContinuations;
   bool SEHInvocationExitsComplete = true;
+  /// Direct parent exits do not expose a stale CRT unwind guard to another
+  /// call or faulting access. Logical source-state analysis can remain complete
+  /// without this proof, but native parent-context reconstruction cannot.
+  bool SEHParentChainComplete = true;
   std::vector<RegistrationSEHControlContract> SEHControls;
   std::vector<RegistrationSEHInvocationExit> SEHInvocationExits;
+  bool SEHStateStoresComplete = true;
+  std::vector<RegistrationSEHStateStore> SEHStateStores;
   bool SEHExceptionAccessesComplete = true;
   std::vector<RegistrationSEHExceptionAccess> SEHExceptionAccesses;
   /// Invocation-specialized original helpers require a separate native plan.
   bool HasBoundSEHCallees = false;
   bool SEHBoundCallsComplete = true;
   std::vector<RegistrationSEHBoundCall> SEHBoundCalls;
-  /// Original EH3 captures retain their physical buffer and invocation. Native
+  bool HasSEHLocalUnwinds = false;
+  bool SEHLocalUnwindsComplete = true;
+  std::vector<RegistrationSEHLocalUnwind> SEHLocalUnwinds;
+  /// Original SEH captures retain their physical buffer and invocation. Native
   /// reconstruction requires a separate replacement-buffer contract.
-  bool HasEH3JumpCaptures = false;
+  bool HasSEHJumpCaptures = false;
   bool SEHJumpCapturesComplete = true;
   std::vector<RegistrationSEHJumpCapture> SEHJumpCaptures;
   bool SEHJumpResumptionsComplete = true;
@@ -287,6 +393,7 @@ struct RegistrationStateAnalysis {
   /// lifetime and callback state proof. This is not a native output receipt.
   bool ChainOperationsComplete = false;
   std::vector<RegistrationChainAccess> ChainAccesses;
+  std::optional<RegistrationCxxPrologueEffect> CxxPrologue;
   std::vector<RegistrationFrameValue> FrameValues;
   bool IncomingFrameAccessesComplete = true;
   std::vector<RegistrationIncomingFrameAccess> IncomingFrameAccesses;
@@ -302,13 +409,14 @@ struct RegistrationStateAnalysis {
   std::vector<RegistrationCxxCatchObject> CxxCatchObjects;
   bool RuntimeObjectAccessesComplete = false;
   std::vector<RegistrationRuntimeObjectAccess> RuntimeObjectAccesses;
-  /// EH4 source initialization, encoding and immutable cookie lifetime have
-  /// been checked across every ordinary and runtime path. This does not prove
-  /// the compiler's physical cookie; native codegen validates that separately.
+  /// EH4 source encoding or authenticated C++ handler cookie conditions have
+  /// been checked across ordinary and runtime paths. This grants no physical
+  /// output-cookie layout or permission to erase an observable encoded value.
   bool SecurityCookiesComplete = false;
   va_t SecurityCookieVA = 0;
   va_t CookieCheckVA = 0;
   std::vector<RegistrationCookieCheck> CookieChecks;
+  std::vector<RegistrationCxxCookieCondition> CxxCookieConditions;
   /// May-read image extents across all reachable ordinary and runtime roots.
   /// Exact frame-relative reads cannot alias these extents. Unknown addresses
   /// make the set incomplete rather than silently omitting a possible alias.
@@ -375,13 +483,18 @@ struct RegistrationStateAnalysis {
 /// Solve ordinary and runtime-dispatch state transfers together. Stores take
 /// effect only after their exact decoded instruction retires. A union at a
 /// join is retained; address order never selects a predecessor's state.
+/// CxxHandler and CxxPrologue, when supplied, must be the loader's checked
+/// descriptions for this source function and image; their conditions alone
+/// do not prove the parent.
 RegistrationStateAnalysis analyzeRegistrationStates(
     const LowFunc &Function, va_t SecurityCookieVA = 0, va_t CookieCheckVA = 0,
     const std::vector<RegistrationCalleeFrameContract> *Callees = nullptr,
     const std::vector<RegistrationCleanupFrameContract> *Cleanups = nullptr,
     const std::vector<RegistrationCalleeStackContract> *Stacks = nullptr,
     const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds = nullptr,
-    const std::vector<RegistrationSEHControlContract> *SEHControls = nullptr);
+    const std::vector<RegistrationSEHControlContract> *SEHControls = nullptr,
+    const coff_loader::X86CxxHandlerABI *CxxHandler = nullptr,
+    const coff_loader::X86CxxPrologueCall *CxxPrologue = nullptr);
 
 /// Return exact address intervals only if every reaching state agrees about
 /// membership. An ambiguous join cannot be flattened into a lexical try range.
@@ -397,10 +510,10 @@ registrationRangesWhere(const RegistrationStateAnalysis &Analysis,
       continue;
     if (Block.Unknown)
       return std::nullopt;
-    if (Block.Levels.empty())
+    if (Block.levels().empty())
       continue;
-    const bool Included = Contains(Block.Levels.front());
-    for (int32_t Level : Block.Levels)
+    const bool Included = Contains(Block.levels().front());
+    for (int32_t Level : Block.levels())
       if (Contains(Level) != Included)
         return std::nullopt;
     if (Included)

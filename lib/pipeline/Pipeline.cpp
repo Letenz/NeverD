@@ -11,7 +11,9 @@
 
 #include "neverd/pipeline/Pipeline.h"
 
+#include "PipelineCallAbiDetail.h"
 #include "PipelineHighIRDetail.h"
+#include "PipelineLowIRDetail.h"
 
 #include "neverd/analysis/BinaryInterpreterSpecialization.h"
 #include "neverd/analysis/InterpreterMachineState.h"
@@ -19,9 +21,10 @@
 #include "neverd/evm/analysis/EVMAnalyzer.h"
 #include "neverd/evm/bytecode/EVMBytecode.h"
 #include "neverd/evm/emit/EVMLLVMEmitter.h"
-#include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/MedNoReturn.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/sbf/emit/SBFLLVMEmitter.h"
 
@@ -49,24 +52,6 @@
 namespace neverd {
 
 namespace {
-/// True when \p LF adjusts the stack pointer or makes a call that returns,
-/// either of which needs x64 unwind data.  Tail calls and returns do not.
-bool movesStackOrCalls(const LowFunc &LF) {
-  const auto &TRI = getTargetRegInfo(Arch::X64);
-  for (const LowBlock &Block : LF.Blocks) {
-    for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries)
-      if (Boundary.Control == LowInstructionControl::Call ||
-          Boundary.Control == LowInstructionControl::ConditionalCall)
-        return true;
-    for (const LowOp &Op : Block.Ops)
-      if (Op.Output.isReg() && TRI.isStackPointer(Op.Output.Offset))
-        return true;
-  }
-  return false;
-}
-} // namespace
-
-namespace {
 
 class NativePipelineTrace {
 public:
@@ -77,6 +62,7 @@ public:
     CandidateCleanup,
     MedIR,
     NoReturnVerify,
+    MachineMedIR,
     HighIR,
     LLVMEmission
   };
@@ -103,6 +89,8 @@ private:
       return "med_ir";
     case Stage::NoReturnVerify:
       return "noreturn_verify";
+    case Stage::MachineMedIR:
+      return "machine_med_ir";
     case Stage::HighIR:
       return "high_ir";
     case Stage::LLVMEmission:
@@ -128,7 +116,8 @@ private:
       OS << "[neverd-pipeline-stage] invocation=" << Invocation
          << " stage=" << name() << " event=" << Event
          << " elapsed_ms=" << Elapsed << '\n';
-      if (Line.size() <= 192) {
+      if (Line.size() <=
+          ::neverd::limits::pipeline::kPipelineRecordLineSizeLimit) {
         llvm::raw_fd_ostream Sink(2, /*shouldClose=*/false,
                                   /*unbuffered=*/true);
         llvm::scope_exit ClearError([&Sink]() noexcept { Sink.clear_error(); });
@@ -150,7 +139,9 @@ public:
       // stage pairs, including one of the mutually exclusive final branches.
       static std::atomic<unsigned> Used{0};
       unsigned Count = Used.load(std::memory_order_relaxed);
-      while (Count < 32) {
+      while (
+          Count <
+          ::neverd::limits::pipeline::kPipelineNativePipelineTraceCountLimit) {
         if (Used.compare_exchange_strong(Count, Count + 1,
                                          std::memory_order_relaxed)) {
           Invocation = Count + 1;
@@ -198,6 +189,22 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                              const PipelineOptions &Opts, DebugContext *Dbg) {
   PipelineResult Result;
   Result.SourceImage = &Img;
+  if (Opts.MedAnalysisOnly &&
+      (Opts.PatchMode || Opts.LiftMode || Opts.DeferHighIR || Opts.DeferMedIR ||
+       Opts.DumpHigh || Opts.DumpLlvm || Opts.SourceProjection ||
+       Opts.InterpreterSpecialization || Img.Arch == Arch::EVM ||
+       Img.Arch == Arch::SBF)) {
+    Result.Error = "MedIR analysis requires a native input and no output mode";
+    return Result;
+  }
+  // Restricted runs of an image read the same callees for their signatures.
+  if (Opts.AnalysisCache &&
+      (!Opts.OnlyFunctionEntries.empty() || Opts.MaxFunctions != 0)) {
+    auto &Memo = Opts.AnalysisCache->CalleeSignatures;
+    if (!Memo)
+      Memo = std::make_shared<OmittedCalleeMemo>();
+    Result.CalleeSignatureMemo = Memo;
+  }
 
   if (Opts.InterpreterSpecialization &&
       (Opts.PatchMode || Opts.OnlyFunctionEntries.size() != 1 ||
@@ -315,7 +322,20 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       return Result;
     }
     if (!Opts.InterpreterSpecialization->X64TerminalImports.empty()) {
-      Result.Error = "machine-state source does not support terminal import domains";
+      Result.Error =
+          "machine-state source does not support terminal import domains";
+      Trace.finish(false);
+      return Result;
+    }
+    if (Opts.InterpreterSpecialization->X64LegacyGSState) {
+      Result.Error = "machine-state recovery requires a versioned legacy GS "
+                     "source interface";
+      Trace.finish(false);
+      return Result;
+    }
+    if (Opts.InterpreterSpecialization->X64MXCSRMask) {
+      Result.Error =
+          "machine-state recovery requires a versioned MXCSR source interface";
       Trace.finish(false);
       return Result;
     }
@@ -326,7 +346,8 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       Trace.finish(false);
       return Result;
     }
-    if (Opts.InterpreterSpecialization->X64SegmentedReads) {
+    if (Opts.InterpreterSpecialization->X64SegmentedReads ||
+        Opts.InterpreterSpecialization->X64SegmentedWrites) {
       Result.Error = "machine-state recovery requires a versioned FS/GS "
                      "base source interface";
       Trace.finish(false);
@@ -415,49 +436,40 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       }
     }
 
-    // A padding-boundary guess that another function reaches by a direct jump
-    // is that function's split chunk, now lifted as part of it (see
+    // A padding-boundary guess that another function actually decodes is
+    // part of that function, including resumable fallthrough (see
     // BinaryImage::boundaryGuessFunctionStarts).  Keep it as a separate
     // function only when nothing absorbed it.
     {
-      const std::set<va_t> Guesses = Img.boundaryGuessFunctionStarts();
+      // A run that shares the analysis cache read them from it (buildLowIR).
+      PipelineAnalysisCache *Shared = sharedAnalysisCache(Img, Opts);
+      const std::shared_ptr<const PipelineAnalysisCache::SymbolInventory>
+          Inventory =
+              Shared ? PipelineAnalysisCache::SymbolInventory::of(Img, *Shared)
+                     : nullptr;
+      std::set<va_t> OwnGuesses;
+      if (!Inventory)
+        OwnGuesses = Img.boundaryGuessFunctionStarts();
+      const std::set<va_t> &Guesses =
+          Inventory ? Inventory->BoundaryGuesses : OwnGuesses;
       std::set<va_t> Absorbed;
       if (!Guesses.empty())
         for (const auto &LF : Result.LowFuncs)
           for (const auto &Block : LF.Blocks)
-            if (Block.StartAddr != LF.Entry && Guesses.count(Block.StartAddr))
-              Absorbed.insert(Block.StartAddr);
-      // Win64 requires unwind data for every function that moves RSP or calls
-      // (a tail jump needs neither).  In an image with an exception directory,
-      // a guess that does either without a RUNTIME_FUNCTION is not a function:
-      // usually data in a code section or the remnant of a split chunk.
-      // This holds for any start that neither a primary unwind record nor a
-      // real name (PDB, export) vouches for, however it was discovered.
-      std::set<va_t> NonLeaf;
-      if (Img.Arch == Arch::X64 && Img.Format == BinaryFormat::COFF &&
-          !Img.KnownCodeRanges.empty()) {
-        std::set<va_t> UnwindStarts;
-        for (const auto &[Start, End] : Img.KnownCodeRanges)
-          if (!Img.ContinuationCodeStarts.count(Start))
-            UnwindStarts.insert(Start);
-        for (const auto &LF : Result.LowFuncs)
-          if (!Absorbed.count(LF.Entry) && !UnwindStarts.count(LF.Entry) &&
-              isSynthesizedFuncName(LF.Name) && movesStackOrCalls(LF))
-            NonLeaf.insert(LF.Entry);
-      }
-      if (!Absorbed.empty() || !NonLeaf.empty()) {
+            for (const auto &Insn : Block.InstructionBoundaries)
+              if (Insn.Address != LF.Entry && Guesses.count(Insn.Address))
+                Absorbed.insert(Insn.Address);
+      // Missing unwind metadata is not evidence that decoded code is data.
+      // Only an actual CFG owner can absorb a guessed entry. Instruction
+      // completeness and exception-rewrite admission remain separate checks.
+      if (!Absorbed.empty()) {
         for (auto &Audit : Result.FunctionAudits) {
           if (Absorbed.count(Audit.Entry)) {
             Audit.Disposition =
                 PipelineFunctionDisposition::AbsorbedFunctionChunk;
             Audit.HasLowIR = false;
-          } else if (NonLeaf.count(Audit.Entry)) {
-            Audit.Disposition =
-                PipelineFunctionDisposition::RejectedUnwindlessNonLeaf;
-            Audit.HasLowIR = false;
           }
         }
-        Absorbed.insert(NonLeaf.begin(), NonLeaf.end());
         Result.LowFuncs.erase(std::remove_if(Result.LowFuncs.begin(),
                                              Result.LowFuncs.end(),
                                              [&](const LowFunc &LF) {
@@ -481,6 +493,17 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   if (Opts.DumpLow && Opts.EmitDumpOutput)
     dumpLowIR(Result.LowFuncs);
 
+  // A native view of the control-flow graphs alone reads nothing after
+  // LowIR.  A deeper view of the same run takes the stages below then
+  // (resumeMedIR), which keep this order.
+  if (Opts.DeferMedIR && !Opts.DumpLow && !Opts.DumpMed && !Opts.DumpHigh &&
+      !Opts.PatchMode && !Opts.LiftMode && !Opts.InterpreterSpecialization) {
+    Result.MedIRDeferred = true;
+    Result.Success = true;
+    Trace.finish(true);
+    return Result;
+  }
+
   // Phase 2: LowIR -> MedIR (parallel).
   Trace.start(NativePipelineTrace::Stage::MedIR);
   buildMedIR(Img, Opts, Result);
@@ -490,7 +513,8 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     return Result;
   }
   Trace.start(NativePipelineTrace::Stage::NoReturnVerify);
-  propagateInternalNoReturn(Result.MedFuncs, Img.Arch, Img.UserNoReturn);
+  propagateInternalNoReturn(Result.MedFuncs, Img.Arch, Img.UserNoReturn,
+                            importCallAddresses(Img));
 
   // One read-only proof boundary serves both C routes. Neither annotation nor
   // its display name becomes input to ABI recovery or instruction semantics.
@@ -500,7 +524,7 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     dumpMedIR(Result.MedFuncs);
 
   if (Result.MedIRVerifierFailures != 0 &&
-      (Opts.PatchMode || Opts.LiftMode || Opts.InterpreterSpecialization)) {
+      (Opts.usesMachineMedIR() || Opts.InterpreterSpecialization)) {
     Result.Error = "MedIR verification failed";
     Result.Success = false;
     Trace.finish(false);
@@ -510,35 +534,28 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   // If only dumping intermediate IR (LowIR/MedIR), skip LLVM emission
   // entirely.  The dump flags are handled above; return early to avoid
   // hitting the LLVM PassManager (which may crash on certain LLVM builds).
-  if ((Opts.DumpLow || Opts.DumpMed) && !Opts.DumpHigh && !Opts.PatchMode &&
-      !Opts.LiftMode) {
+  if ((Opts.DumpLow || Opts.DumpMed) && !Opts.DumpHigh &&
+      !Opts.usesMachineMedIR()) {
     Result.Success = true;
     Trace.finish(true);
     return Result;
   }
 
-  // Patch/Lift mode: MedIR -> LLVM IR, skip HighIR.
-  if (Opts.PatchMode || Opts.LiftMode) {
-    Trace.start(NativePipelineTrace::Stage::LLVMEmission);
+  // Machine ABI preparation is shared by analysis and LLVM emission.
+  if (Opts.usesMachineMedIR()) {
+    Trace.start(Opts.MedAnalysisOnly
+                    ? NativePipelineTrace::Stage::MachineMedIR
+                    : NativePipelineTrace::Stage::LLVMEmission);
     Result.Success = runPatchLiftMode(Img, Ctx, Opts, Result, Dbg);
     Trace.finish(Result.Success);
     return Result;
   }
 
-  // Both source routes need the same ABI/return recovery. LLVM views can
-  // postpone only the HighIR projection; they must not bypass those proofs.
+  // Source and analysis views share ABI/return recovery. Views that do not
+  // consume HighIR postpone only that projection, retaining those proofs.
   if (Opts.DeferHighIR && !Opts.DumpHigh) {
     Trace.start(NativePipelineTrace::Stage::HighIR);
-    try {
-      prepareSourceMedIR(Img, Result, Dbg);
-      Result.HighIRDeferred = true;
-      Result.Success = true;
-    } catch (const std::exception &Error) {
-      Result.Error =
-          std::string("source MedIR preparation failed: ") + Error.what();
-    } catch (...) {
-      Result.Error = "source MedIR preparation failed: unknown exception";
-    }
+    prepareDeferredSource(Img, Result, Dbg, sharedAnalysisCache(Img, Opts));
     Trace.finish(Result.Success);
     return Result;
   }
@@ -561,6 +578,54 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   Result.Success = true;
   Trace.finish(true);
   return Result;
+}
+
+void Pipeline::prepareDeferredSource(const BinaryImage &Img,
+                                     PipelineResult &Result, DebugContext *Dbg,
+                                     PipelineAnalysisCache *Cache) {
+  try {
+    prepareSourceMedIR(Img, Result, Dbg, Cache);
+    Result.HighIRDeferred = true;
+    Result.Success = true;
+  } catch (const std::exception &Error) {
+    Result.Error =
+        std::string("source MedIR preparation failed: ") + Error.what();
+  } catch (...) {
+    Result.Error = "source MedIR preparation failed: unknown exception";
+  }
+}
+
+bool Pipeline::resumeMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
+                           PipelineResult &Result, DebugContext *Dbg) {
+  if (!Result.Success || !Result.MedIRDeferred)
+    return Result.Success;
+  if (Result.SourceImage != &Img) {
+    Result.Success = false;
+    Result.Error = "deferred MedIR belongs to a different image";
+    return false;
+  }
+  Result.MedIRDeferred = false;
+  Result.Success = false;
+  // The stages run() takes after LowIR for a native source or analysis view.
+  NativePipelineTrace Trace;
+  Trace.start(NativePipelineTrace::Stage::MedIR);
+  buildMedIR(Img, Opts, Result);
+  if (!Result.Error.empty()) {
+    Trace.finish(false);
+    return false;
+  }
+  Trace.start(NativePipelineTrace::Stage::NoReturnVerify);
+  propagateInternalNoReturn(Result.MedFuncs, Img.Arch, Img.UserNoReturn,
+                            importCallAddresses(Img));
+  recognizeLibraries(Img, Opts, Result, Dbg);
+  Trace.start(NativePipelineTrace::Stage::HighIR);
+  if (Opts.DeferHighIR)
+    prepareDeferredSource(Img, Result, Dbg, sharedAnalysisCache(Img, Opts));
+  else
+    Result.Success = pipeline_detail::runHighIRStage(
+        Result, [&] { buildHighIR(Img, Opts, Result, Dbg); });
+  Trace.finish(Result.Success);
+  return Result.Success;
 }
 
 } // namespace neverd

@@ -154,6 +154,8 @@ Se una destinazione rimane irrisolta dopo l’esaurimento dei candidati di raffi
 
 `EntryFrameBounds` dichiara esplicitamente un intervallo `[Begin, End)` senza riavvolgimento rispetto al valore iniziale di `FrameBaseRegister`. Non autorizza accessi alla memoria né assenza di alias. Se omesso, le radici restano modulari. La prova nativa richiede gli stessi limiti nel contratto del chiamante e li vincola alla ricevuta; la prova LLVM conserva il dominio esistente del frame. Il solo recupero non certifica l’equivalenza.
 
+`EntryFrameBounds::ExcludedAddressRanges` può inoltre dichiarare intervalli assoluti, non vuoti e senza riavvolgimento, disgiunti dall’intero frame iniziale. Sono precondizioni esplicite del chiamante, mai dedotte da indirizzi osservati o dalla provenienza dei puntatori. `ProveStoreFrameSeparation` conserva i byte correnti del frame e i puntatori affini salvati solo dopo aver provato la separazione dell’intera scrittura. Le scritture non provate mantengono la normale invalidazione degli alias; prove sconosciute o budget esauriti causano un rifiuto. È inclusa tutta la fase di scrittura CMPXCHG. La prova nativa richiede lo stesso elenco di esclusioni nel contratto del frame. Le ricevute grezze vincolano elenco e strategia; chi usa il codice residuo deve mantenere le precondizioni.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contratto di esecuzione
@@ -162,7 +164,7 @@ L’adattatore binario accetta attualmente immagini x64 ELF e PE già collegate,
 agli indirizzi in cui sono mappate. Mappature, byte e permessi devono restare
 invariati, senza modifiche concorrenti. Il lifting rigoroso su richiesta segue
 il codice macchina raggiungibile. Istruzioni non supportate, chiamate,
-operazioni opache, accessi alla memoria ordinati, controllo non risolto e
+operazioni opache, accessi alla memoria ordinati fuori dal dominio raw CAS ristretto descritto sotto, controllo non risolto e
 gestione delle eccezioni del linguaggio interrompono il recupero.
 
 Il recupero PE richiede tutti i metadati dell’immagine, comprese le rilocazioni globali e i record delle eccezioni. La CLI li carica prima di applicare `--func`; chi usa l’API C non deve prima limitare la sessione con `neverd_session_restrict_function()`. L’adattatore rifiuta immagini caricate con un insieme ristretto di funzioni, perché i metadati omessi non dimostrano l’assenza di correzioni del loader o archi di eccezione.
@@ -202,6 +204,22 @@ Le forme x64 esatte di `PUSHFQ`/`POPFQ` restano nel programma residuo. L’anali
 Prima di acquisire l’intera immagine dei flag, ogni flag aritmetico o di direzione modellato deve essere definito nella funzione recuperata. Ogni lettura diretta di un flag richiede inoltre una definizione su tutti i percorsi predecessori raggiungibili, anche se la semplificazione simbolica ne annulla il valore. Altrimenti il recupero viene rifiutato, invece di emettere C con una trappola per un registro sconosciuto.
 
 I temporanei LowIR sono locali a una sola istruzione nativa sollevata. Ogni byte letto deve essere stato definito prima nella stessa istruzione; il riuso di un offset da un’istruzione precedente o l’annullamento algebrico di un valore indefinito non dimostrano la validità del sorgente. Le costanti d’ingresso possono vincolare solo registri fisici.
+
+<!-- i18n-section: supervisor-interrupt-control -->
+
+## Controllo del flag di interrupt in modalità supervisore
+
+Il recupero LowIR grezzo e le prove di relazione nativa ammettono le forme canoniche x64 di `CLI`/`STI` solo con il profilo esplicito `KernelX64NoFaultV1`. Il componente condiviso dei flag x64 azzera o imposta IF preservando tutti gli altri flag, registri generali e byte di memoria. Il recupero mantiene l’operazione intrinseca originale; le prove registrano la transizione e confrontano sempre i flag di sistema finali, anche senza osservazioni dei registri ordinari.
+
+Il profilo fissa CPL0/IOPL0 ed esclude eventi asincroni, consegna di eventi di debug e transizioni di privilegio. Non osserva quindi l’inibizione temporanea degli interrupt di STI. Un profilo assente o utente rifiuta queste istruzioni; l’ABI sorgente esistente resta limitata al proprio profilo utente. Questo supporto non fornisce un modello di consegna degli interrupt o di transizione di privilegio.
+
+<!-- i18n-section: raw-cmpxchg -->
+
+## Confronto e scambio nel modello raw sequenziale
+
+La specializzazione raw ammette `ATOMIC_CMPXCHG` solo con `ExplicitMachineState=true` e `NormalNonfaultingExecution=true`, memoria `Default`, indirizzo a 64 bit, valori della stessa larghezza di 1/2/4/8 byte e ordine `SequentiallyConsistent`. Conserva operazione atomica, ordine, spazio di indirizzi e occorrenze. Usa il dominio sequenziale esistente senza modifiche concorrenti o asincrone; non fornisce un modello di concorrenza o MMIO. Altre operazioni atomiche, CAS da 16 byte, altri ordini, CAS segmentati e LOAD/STORE ordinati restano non supportati da questo percorso.
+
+I contratti esistenti `ExternalStoresPreserveEntryReturnSlot` e `ExternalStoresDisjointEntryFrame` si applicano all’intera fase di scrittura, anche quando il confronto fallisce o il valore non cambia. `ExternalStoresPreserveEntryReturnSlot` protegge solo lo slot di ritorno all’ingresso. `ExternalStoresDisjointEntryFrame` protegge solo i limiti del frame dichiarati; le celle di ritorno native attive esterne richiedono ancora prove di separazione indipendenti. Non viene dedotta alcuna premessa aggiuntiva di assenza di alias. L’involucro sorgente dello stato macchina e i percorsi indipendenti di prova LowIR/nativa/LLVM continuano a rifiutare CAS ordinati raggiungibili; un risultato raw completo non è un certificato del sorgente o di equivalenza.
 
 <!-- i18n-section: machine-state -->
 
@@ -348,3 +366,17 @@ La riesecuzione dei prefissi di ingresso visita i rami in attesa prima di espand
 
 
 La ricerca di allineamento passa `MaxCuts` al motore comune di inferenza. Dopo la convalida dell’ingresso e la selezione di un insieme che copre tutti i cicli, gli insiemi troppo grandi vengono rifiutati prima dell’esplorazione simbolica dell’ingresso o dell’allargamento. Il limite per piano non riduce `MaxCutpointAttempts` né i tentativi validi con un singolo taglio. Il lavoro di selezione delle famiglie filtrate resta conteggiato. L’inferenza autonoma e nativa mantiene i propri limiti; ogni relazione accettata richiede ancora il verificatore completo invariato.
+
+<!-- i18n-section: immutable-wide-reads -->
+
+## Letture immutabili larghe complete
+
+Con `ExplicitMachineState` e `NormalNonfaultingExecution`, un `LOAD` ammesso di 16 byte usa l’immagine immutabile solo se ogni indirizzo possibile ha una prova completa di 16 byte. L’esecuzione simbolica conserva tutti i 128 bit. Il residuo materializza parti scalari nell’ordine di memorizzazione e cattura l’indirizzo potenzialmente sovrapposto prima di scrivere qualunque byte di destinazione. Entrambi gli ordini dei byte condividono la regola; ogni operazione emessa consuma il budget esistente.
+
+Un dominio incompleto o un intervallo immutabile non disponibile mantiene l’intera lettura a runtime senza prove parziali. Una lunghezza errata restituita dal provider causa il rifiuto. Memoria scrivibile e osservazioni runtime non conferiscono autorità di immutabilità. Le ricevute grezze vincolano tutti i byte della prova, compresa la metà superiore. Wrapping sorgente e prove native indipendenti mantengono i requisiti esistenti di larghezza e ambiente.
+
+<!-- i18n-section: unrooted-native-stack -->
+
+## Trasferimenti interni dopo il cambio dello stack
+
+Le regioni macchina grezze esplicite possono seguire istruzioni near CALL e RET interne anche quando il puntatore dello stack corrente non è più esprimibile rispetto a quello di ingresso. L’adattatore dell’architettura mantiene la cattura effettiva della destinazione, il push, la lettura della parola di ritorno e il pop. Ogni ritorno interno richiede ancora una prova esaustiva dell’insieme finito di destinazioni dalla parola effettiva sullo stack. Solo le celle di ritorno dimostrate relative all’ingresso entrano nella proiezione e nell’inventario di conservazione del frame; perdere altre relazioni sullo stack a un confine del grafo può ancora causare un rifiuto. Il recupero delle funzioni ordinarie mantiene i requisiti di ripristino del frame. Il risultato descrive una regione grezza; la composizione dell’intera funzione e l’equivalenza del sorgente o del codice nativo richiedono prove separate.

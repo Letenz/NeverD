@@ -14,10 +14,13 @@
 #include "neverd/ir/med/MedIR.h"
 
 #include <algorithm>
+#include <bit>
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace neverd::detail {
@@ -59,10 +62,89 @@ public:
   }
 
   std::optional<int64_t> offset(const MedVar &Value) {
+    // Only an offset from the incoming stack pointer is an entry offset.
+    const auto At = coordinate(Value);
+    if (!At || At->first != 0)
+      return std::nullopt;
+    return At->second;
+  }
+
+  /// The offset of \p Value from \p Base where both are exact offsets from
+  /// one anchor: the incoming stack pointer, or the value an alignment of it
+  /// produced (`and esp, -16`), below which no entry offset is known.
+  std::optional<int64_t> offsetFrom(const MedVar &Value, const MedVar &Base) {
+    const auto From = coordinate(Value), To = coordinate(Base);
+    if (!From || !To || From->first != To->first)
+      return std::nullopt;
+    return checkedAffineOffset(From->second, To->second, /*Subtract=*/true);
+  }
+
+  /// Call-SP-relative coordinates may remain known after an entry-relative
+  /// stack join becomes unknown. They never establish an entry coordinate.
+  std::optional<int64_t> callOffsetFrom(const MedVar &Value,
+                                        const MedVar &Base) {
+    if (const auto Offset = offsetFrom(Value, Base))
+      return Offset;
+    const auto From = coordinateAfterJoin(Value),
+               To = coordinateAfterJoin(Base);
+    if (!From || !To || From->first != To->first)
+      return std::nullopt;
+    return checkedAffineOffset(From->second, To->second, /*Subtract=*/true);
+  }
+
+  /// Whether \p ABytes at \p A and \p BBytes at \p B may share a byte: not
+  /// where both are offsets of one anchor and apart, or of anchors whose
+  /// possible incoming-SP offsets keep them apart.
+  bool mayOverlap(const MedVar &A, uint64_t ABytes, const MedVar &B,
+                  uint64_t BBytes) {
+    const auto From = coordinate(A), To = coordinate(B);
+    if (!From || !To)
+      return true;
+    const auto First = extent(*From, ABytes), Second = extent(*To, BBytes);
+    if (From->first == To->first && First && Second)
+      return First->first < Second->first + static_cast<int64_t>(BBytes) &&
+             Second->first < First->first + static_cast<int64_t>(ABytes);
+    return !First || !Second ||
+           (First->first < Second->second && Second->first < First->second);
+  }
+
+private:
+  using Identity = std::tuple<int, int, int>;
+  using View = std::tuple<int, int, int, uint16_t, uint64_t>;
+  using Frame = AffineFrameState;
+  /// An anchor and the exact offset from it.
+  using Coordinate = std::pair<uint32_t, int64_t>;
+  struct Node {
+    MedVar Value;
+    Frame::Result Equation;
+    std::vector<size_t> Inputs;
+    std::vector<size_t> Users;
+    std::optional<Coordinate> At;
+    size_t Depth = 0;
+  };
+
+  /// The incoming-SP bytes, from first to past the last, that \p Bytes at
+  /// \p At may cover.
+  std::optional<std::pair<int64_t, int64_t>> extent(Coordinate At,
+                                                    uint64_t Bytes) const {
+    const auto Bounds = Equations.anchorBounds(At.first);
+    if (!Bounds || Bytes > static_cast<uint64_t>(INT64_MAX))
+      return std::nullopt;
+    const auto Low = checkedAffineOffset(Bounds->first, At.second);
+    const auto HighStart = checkedAffineOffset(Bounds->second, At.second);
+    const auto High =
+        HighStart ? checkedAffineOffset(*HighStart, static_cast<int64_t>(Bytes))
+                  : std::nullopt;
+    if (!Low || !High)
+      return std::nullopt;
+    return std::pair(*Low, *High);
+  }
+
+  std::optional<Coordinate> coordinate(const MedVar &Value) {
     if (!carrier(Value))
       return std::nullopt;
     if (entryStack(Value))
-      return 0;
+      return Coordinate{0, 0};
     if (!Built)
       build();
     const auto Found = NodesByValue.find(view(Value));
@@ -73,21 +155,8 @@ public:
     // Another query cannot turn a too-deep definition into a constant leaf.
     if (N.Depth > static_cast<size_t>(limits::kCallArgStoreAddressDepth))
       return std::nullopt;
-    return N.Offset;
+    return N.At;
   }
-
-private:
-  using Identity = std::tuple<int, int, int>;
-  using View = std::tuple<int, int, int, uint16_t, uint64_t>;
-  using Frame = AffineFrameState;
-  struct Node {
-    MedVar Value;
-    Frame::Result Equation;
-    std::vector<size_t> Inputs;
-    std::vector<size_t> Users;
-    std::optional<int64_t> Offset;
-    size_t Depth = 0;
-  };
 
   static Identity identity(const MedVar &V) {
     return {static_cast<int>(V.Kind), V.Id, V.SSAVer};
@@ -123,6 +192,59 @@ private:
     const uint64_t Sign = uint64_t{1} << (Width * 8 - 1);
     return Bits & Sign ? -1 - static_cast<int64_t>((~Bits) & Mask(Width))
                        : static_cast<int64_t>(Bits);
+  }
+
+  /// A join's current SSA value is one exact anchor for operations after it,
+  /// even when its incoming paths have different entry-SP coordinates. Do not
+  /// walk through the join or assert that any incoming path has offset zero.
+  /// This proof only compares full-width constant adjustments after the same
+  /// join; entry coordinates and alias extents keep their complete proof.
+  std::optional<std::pair<View, int64_t>>
+  coordinateAfterJoin(MedVar Value) const {
+    std::vector<std::pair<int64_t, bool>> Steps;
+    std::set<View> Seen;
+    for (int Depth = 0; Depth <= limits::kCallArgStoreAddressDepth; ++Depth) {
+      if (!carrier(Value) || Value.Size != PointerSize ||
+          !Seen.insert(view(Value)).second)
+        return std::nullopt;
+      const auto Phi = Phis.find(identity(Value));
+      const auto Definition = Definitions.find(identity(Value));
+      if (Phi != Phis.end()) {
+        if (!Phi->second || Definition != Definitions.end() ||
+            !sameView(Value, Phi->second->Output) ||
+            Phi->second->ExceptionalEntry || Phi->second->Args.empty())
+          return std::nullopt;
+        int64_t Offset = 0;
+        for (auto It = Steps.rbegin(); It != Steps.rend(); ++It) {
+          const auto Next = checkedAffineOffset(Offset, It->first, It->second);
+          if (!Next)
+            return std::nullopt;
+          Offset = *Next;
+        }
+        return std::pair(view(Value), Offset);
+      }
+      const MedOp *Def =
+          Definition == Definitions.end() ? nullptr : Definition->second;
+      if (!Def || !sameView(Value, Def->Output) ||
+          Def->MemoryOrdering != NdMemoryOrdering::None ||
+          Def->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+          !Def->IntrinsicOutputs.empty() || Def->NumInputs == 0 ||
+          Def->Inputs[0].Size != PointerSize)
+        return std::nullopt;
+      if (Def->Opcode == NdOp::COPY && Def->NumInputs == 1) {
+        Value = Def->Inputs[0];
+        continue;
+      }
+      if ((Def->Opcode != NdOp::INT_ADD && Def->Opcode != NdOp::INT_SUB) ||
+          Def->NumInputs != 2)
+        return std::nullopt;
+      const auto Delta = delta(Def->Inputs[1], PointerSize);
+      if (!Delta)
+        return std::nullopt;
+      Steps.emplace_back(*Delta, Def->Opcode == NdOp::INT_SUB);
+      Value = Def->Inputs[0];
+    }
+    return std::nullopt;
   }
 
   size_t node(const MedVar &Value) {
@@ -195,7 +317,16 @@ private:
           Def->NumInputs == 2 && Def->Inputs[0].Size == Value.Size;
       const auto Delta =
           Arithmetic ? delta(Def->Inputs[1], Value.Size) : std::nullopt;
-      if (!Copy && !Extend && !Delta) {
+      // `and sp, -2^k` realigns the frame: what derives from the aligned value
+      // is exact from it, a new anchor.
+      const auto Mask = Def->Opcode == NdOp::INT_AND && Def->NumInputs == 2 &&
+                                Def->Inputs[0].Size == Value.Size
+                            ? delta(Def->Inputs[1], Value.Size)
+                            : std::nullopt;
+      const uint64_t Alignment =
+          Mask && *Mask < 0 ? uint64_t{0} - static_cast<uint64_t>(*Mask) : 0;
+      const bool Align = Alignment >= 2 && std::has_single_bit(Alignment);
+      if (!Copy && !Extend && !Delta && !Align) {
         Equations.define(Target, Frame::invalid());
         continue;
       }
@@ -204,16 +335,17 @@ private:
       Frame::Result Input = Nodes[Dependency].Equation;
       if (Arithmetic)
         Input = Equations.adjust(Input, *Delta, Def->Opcode == NdOp::INT_SUB);
+      else if (Align)
+        Input = Equations.align(Input, Alignment);
       Equations.define(Target, Input);
     }
     for (size_t I = 0; I < Nodes.size(); ++I)
       for (size_t Input : Nodes[I].Inputs)
         Nodes[Input].Users.push_back(I);
-    for (Node &N : Nodes) {
-      const auto Value = Equations.value(N.Equation);
-      if (Value.K == Frame::Kind::Value)
-        N.Offset = Value.Offset;
-    }
+    for (Node &N : Nodes)
+      if (const auto Value = Equations.value(N.Equation);
+          Value.K == Frame::Kind::Value)
+        N.At = Coordinate{Value.Anchor, Value.Offset};
     depths();
   }
 

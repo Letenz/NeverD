@@ -57,7 +57,7 @@ TEST(DriverBranchPolicy, RelativeExtentsFollowTheSelectedCPUModel) {
     ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());           \
     EXPECT_FALSE(*Result);                                                     \
   }
-#include "X64BranchCases.def"
+#include "x86_64/X64BranchCases.def"
 #undef NEVERD_BRANCH_POLICY
 }
 
@@ -77,6 +77,26 @@ TEST_F(DriverExecutionPolicy, CPUIDRequiresAnEnvironmentAction) {
     ASSERT_FALSE(bool(Rejected));
     llvm::consumeError(Rejected.takeError());
   }
+}
+
+TEST_F(DriverExecutionPolicy, CanonicalMSRReadRequiresAnEnvironmentAction) {
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto Action = Policy.inspect({0x0f, 0x32}, 0x1000);
+    ASSERT_TRUE(bool(Action)) << llvm::toString(Action.takeError());
+    ASSERT_TRUE(*Action);
+    EXPECT_EQ((**Action).Source,
+              WindowsX64ExecutionPolicy::Action::Kind::ReadMSR);
+    EXPECT_FALSE((**Action).Destination);
+  }
+  for (const auto &Bytes : {std::vector<uint8_t>{0x66, 0x0f, 0x32},
+                            std::vector<uint8_t>{0x48, 0x0f, 0x32},
+                            std::vector<uint8_t>{0xf0, 0x0f, 0x32},
+                            std::vector<uint8_t>{0x0f, 0x32, 0x90}}) {
+    auto Action = Policy.inspect(Bytes, 0x1000);
+    ASSERT_FALSE(bool(Action));
+    llvm::consumeError(Action.takeError());
+  }
+  rejectsEnvironment({0x0f, 0x30}, "wrmsr");
 }
 
 TEST_F(DriverExecutionPolicy, DisabledShadowStackReadsUseExactRegisterForms) {
@@ -388,7 +408,6 @@ TEST_F(DriverExecutionPolicy, TimestampReadsRequireModeledEnvironmentActions) {
     ASSERT_FALSE(bool(Action));
     llvm::consumeError(Action.takeError());
   }
-  rejectsEnvironment({0x0f, 0x32}, "rdmsr");
   rejectsEnvironment({0x0f, 0x30}, "wrmsr");
   rejectsEnvironment({0x0f, 0x33}, "rdpmc");
 }

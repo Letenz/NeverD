@@ -8,7 +8,7 @@
 
 #include "RegistrationStateSolver.h"
 
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 namespace neverd::registration_state {
 
@@ -30,6 +30,9 @@ bool RegistrationStateSolver::checkConditionalMemory(
     return (Address.Constant == 0 && Memory.AccessSize == 4) || Refuse();
   if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return Refuse();
+  if (EH4 && CompleteCookies && Op.Opcode == NdOp::LOAD &&
+      Memory.AccessSize == 4 && Address.Constant == SecurityCookieVA)
+    return true;
   if (Address.SEHException)
     return (Op.Opcode == NdOp::LOAD &&
             State.sehExceptionLoad(*Address.SEHException, Memory.AccessSize)
@@ -122,6 +125,11 @@ bool RegistrationStateSolver::conditionalCall(const FrameState &State,
   if (Op.NumInputs != 1 || !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4)
     return Refuse();
   const va_t Target = Op.Inputs[0].Offset;
+  // The transfer owner checks the actual ECX cookie and records the call.
+  // The callee proof requires that complete cookie receipt before publishing.
+  if (EH4 && CompleteCookies && CookieCheckVA && Op.Opcode == NdOp::CALL &&
+      Target == CookieCheckVA)
+    return true;
   if (LocalUnwindTargets.count({Target, Op.Opcode == NdOp::INDIR_CALL}) ||
       (Op.Opcode == NdOp::CALL && FinallyTargets.count(Target)))
     return true;

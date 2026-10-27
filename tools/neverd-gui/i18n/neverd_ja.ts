@@ -4,6 +4,14 @@
 <context>
     <name>Actions</name>
     <message>
+        <source>Toggle a floating workspace with disassembly, pseudocode and output</source>
+        <translation>逆アセンブリ、疑似コード、出力を含むフローティング作業領域を切り替える</translation>
+    </message>
+    <message>
+        <source>&amp;Focus mode</source>
+        <translation>集中モード(&amp;F)</translation>
+    </message>
+    <message>
         <source>&amp;Open...</source>
         <translation>開く(&amp;O)...</translation>
     </message>
@@ -58,6 +66,14 @@
     <message>
         <source>Save comments and history beside the binary</source>
         <translation>コメントと履歴をバイナリと同じ場所に保存します</translation>
+    </message>
+    <message>
+        <source>Pac&amp;k database...</source>
+        <translation>データベースにパック(&amp;K)...</translation>
+    </message>
+    <message>
+        <source>Write the project and its binary into one NeverD database file</source>
+        <translation>プロジェクトとそのバイナリを 1 つの NeverD データベースファイルに書き込みます</translation>
     </message>
     <message>
         <source>&amp;Close</source>
@@ -116,6 +132,14 @@
         <translation>現在のアドレスをコピーします</translation>
     </message>
     <message>
+        <source>Copy &amp;link</source>
+        <translation>リンクをコピー(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Copy a neverd:// link to the place under the cursor, which NeverD opens there</source>
+        <translation>カーソル位置を指す neverd:// リンクをコピーします。NeverD はその場所で開きます</translation>
+    </message>
+    <message>
         <source>Re&amp;name...</source>
         <translation>名前の変更(&amp;N)...</translation>
     </message>
@@ -124,16 +148,8 @@
         <translation>現在のアドレスの名前を変更します</translation>
     </message>
     <message>
-        <source>Enter &amp;comment...</source>
-        <translation>コメントを入力(&amp;C)...</translation>
-    </message>
-    <message>
         <source>Comment the current address</source>
         <translation>現在のアドレスにコメントを追加します</translation>
-    </message>
-    <message>
-        <source>Enter re&amp;peatable comment...</source>
-        <translation>リピータブルコメントを入力(&amp;P)...</translation>
     </message>
     <message>
         <source>Mar&amp;k position...</source>
@@ -165,7 +181,7 @@
     </message>
     <message>
         <source>Go back in the navigation history</source>
-        <translation>ナビゲーション履歴を戻ります</translation>
+        <translation>ナビゲーション履歴で前の位置に戻ります</translation>
     </message>
     <message>
         <source>Jump to &amp;next position</source>
@@ -173,7 +189,7 @@
     </message>
     <message>
         <source>Go forward in the navigation history</source>
-        <translation>ナビゲーション履歴を進みます</translation>
+        <translation>ナビゲーション履歴で次の位置に進みます</translation>
     </message>
     <message>
         <source>Next f&amp;unction</source>
@@ -270,6 +286,14 @@
     <message>
         <source>Choose a bookmark to jump to</source>
         <translation>ジャンプ先のブックマークを選択します</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;link...</source>
+        <translation>リンクへジャンプ(&amp;L)...</translation>
+    </message>
+    <message>
+        <source>Go to the place a neverd:// or ida:// link names</source>
+        <translation>neverd:// または ida:// リンクが示す場所へ移動します</translation>
     </message>
     <message>
         <source>&amp;Text...</source>
@@ -401,11 +425,11 @@
     </message>
     <message>
         <source>&amp;Hex dump</source>
-        <translation>16進ダンプ(&amp;H)</translation>
+        <translation>16 進ダンプ(&amp;H)</translation>
     </message>
     <message>
         <source>Show the hex view</source>
-        <translation>16進ビューを表示します</translation>
+        <translation>16 進ビューを表示します</translation>
     </message>
     <message>
         <source>E&amp;xports</source>
@@ -464,6 +488,30 @@
         <translation>現在の項目への参照を表示します</translation>
     </message>
     <message>
+        <source>Pathfinder</source>
+        <translation>パスファインダー</translation>
+    </message>
+    <message>
+        <source>Find the call paths between functions</source>
+        <translation>関数間の呼び出しパスを探索します</translation>
+    </message>
+    <message>
+        <source>Create a new &amp;path</source>
+        <translation>新しいパスを作成(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Start a new call path at the function under the cursor</source>
+        <translation>カーソル位置の関数から新しい呼び出しパスを開始します</translation>
+    </message>
+    <message>
+        <source>&amp;Add to the path</source>
+        <translation>パスに追加(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Add the function under the cursor to the call path as its last waypoint</source>
+        <translation>カーソル位置の関数を呼び出しパスの最後の経由点として追加します</translation>
+    </message>
+    <message>
         <source>&amp;Bookmarks</source>
         <translation>ブックマーク(&amp;B)</translation>
     </message>
@@ -496,12 +544,12 @@
         <translation>MCP 接続とセッション共有を管理します</translation>
     </message>
     <message>
-        <source>Ex&amp;tensions</source>
-        <translation>拡張機能(&amp;T)</translation>
+        <source>Analysis queries</source>
+        <translation>解析クエリ</translation>
     </message>
     <message>
-        <source>Manage declarative extensions</source>
-        <translation>宣言型拡張機能を管理します</translation>
+        <source>Run built-in or imported analysis queries</source>
+        <translation>組み込みまたはインポートした解析クエリを実行</translation>
     </message>
     <message>
         <source>&amp;Undo history</source>
@@ -701,7 +749,7 @@
     </message>
     <message>
         <source>Choose the encodings and minimum length of the strings the listing shows</source>
-        <translation>リストに表示する文字列のエンコーディングと最小長を選択します</translation>
+        <translation>リスティングに表示する文字列のエンコーディングと最小長を選択します</translation>
     </message>
     <message>
         <source>String &amp;references</source>
@@ -717,7 +765,7 @@
     </message>
     <message>
         <source>Start a function at the current address</source>
-        <translation>現在のアドレスから関数を開始します</translation>
+        <translation>現在のアドレスを先頭とする関数を作成します</translation>
     </message>
     <message>
         <source>&amp;Delete function</source>
@@ -748,8 +796,8 @@
         <translation>定義解除(&amp;I)</translation>
     </message>
     <message>
-        <source>Show the current item&apos;s bytes as bytes</source>
-        <translation>現在の項目をバイトとして表示します</translation>
+        <source>Turn the current item back into undefined bytes</source>
+        <translation>現在の項目を未定義のバイトに戻します</translation>
     </message>
     <message>
         <source>&amp;Number</source>
@@ -757,7 +805,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number as the listing chooses</source>
-        <translation>オペランドの数値をリストの既定の形式で表示します</translation>
+        <translation>オペランドの数値をリスティングの既定の形式で表示します</translation>
     </message>
     <message>
         <source>&amp;Hexadecimal</source>
@@ -797,7 +845,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number as the address it names</source>
-        <translation>オペランドの数値を指すアドレスの名前で表示します</translation>
+        <translation>オペランドの数値を、それが指すアドレスとして表示します</translation>
     </message>
     <message>
         <source>Change &amp;sign</source>
@@ -805,7 +853,7 @@
     </message>
     <message>
         <source>Show the operand&apos;s number with its sign changed</source>
-        <translation>オペランドの数値を符号を反転して表示します</translation>
+        <translation>オペランドの数値の符号を反転して表示します</translation>
     </message>
     <message>
         <source>Bitwise ne&amp;gate</source>
@@ -825,11 +873,11 @@
     </message>
     <message>
         <source>Offline package &amp;review...</source>
-        <translation>オフラインのパッケージレビュー(&amp;R)...</translation>
+        <translation>パッケージのオフラインレビュー(&amp;R)...</translation>
     </message>
     <message>
         <source>Inspect local package evidence and analyst reviews</source>
-        <translation>ローカルのパッケージの証拠とアナリストのレビューを調べます</translation>
+        <translation>ローカルにあるパッケージの証拠とアナリストのレビューを確認します</translation>
     </message>
     <message>
         <source>&amp;PDB file...</source>
@@ -837,7 +885,7 @@
     </message>
     <message>
         <source>Load symbols from a selected PDB file</source>
-        <translation>選択した PDB ファイルからシンボルを読み込む</translation>
+        <translation>選択した PDB ファイルからシンボルを読み込みます</translation>
     </message>
     <message>
         <source>&amp;Edit function...</source>
@@ -846,6 +894,386 @@
     <message>
         <source>Change the name of the current function and what it is</source>
         <translation>現在の関数の名前と属性を変更します</translation>
+    </message>
+    <message>
+        <source>Local t&amp;ypes</source>
+        <translation>ローカル型(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>Show the program's types with their layouts and source</source>
+        <translation>プログラムの型をレイアウトとソースとともに表示</translation>
+    </message>
+    <message>
+        <source>D&amp;WARF file...</source>
+        <translation>DWARF ファイル(&amp;W)...</translation>
+    </message>
+    <message>
+        <source>Load debug information from a separate DWARF file, unstripped copy or .dSYM</source>
+        <translation>別の DWARF ファイル、ストリップしていないコピー、または .dSYM からデバッグ情報を読み込みます</translation>
+    </message>
+    <message>
+        <source>&amp;MAP file...</source>
+        <translation>MAP ファイル(&amp;M)...</translation>
+    </message>
+    <message>
+        <source>Load names from a linker MAP file</source>
+        <translation>リンカーの MAP ファイルから名前を読み込みます</translation>
+    </message>
+    <message>
+        <source>C &amp;header file...</source>
+        <translation>C ヘッダー ファイル(&amp;H)...</translation>
+    </message>
+    <message>
+        <source>Declare the types a C or C++ header declares, in the Local Types editor</source>
+        <translation>C または C++ のヘッダーが宣言する型を、ローカル型のエディターで宣言します</translation>
+    </message>
+    <message>
+        <source>S&amp;tructure offset...</source>
+        <translation>構造体オフセット(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Show the operand as a member of a local type, the types ranked by how the code&apos;s accesses fit them</source>
+        <translation>オペランドをローカル型のメンバーとして表示します。型はコードのアクセスとの一致度で並べ替えられます</translation>
+    </message>
+    <message>
+        <source>Con&amp;vert to struct *...</source>
+        <translation>struct * に変換(&amp;V)...</translation>
+    </message>
+    <message>
+        <source>Give the current function, or the parameter under the cursor, a C type, checked as you type</source>
+        <translation>現在の関数、またはカーソル位置のパラメーターに C の型を付けます。入力中に検証されます</translation>
+    </message>
+    <message>
+        <source>Make the parameter under the cursor a pointer to a local type, the types ranked by how its accesses fit them</source>
+        <translation>カーソル位置のパラメーターをローカル型へのポインターにします。型はそのアクセスとの一致度で並べ替えられます</translation>
+    </message>
+    <message>
+        <source>Set t&amp;ype...</source>
+        <translation>型を設定(&amp;Y)...</translation>
+    </message>
+    <message>
+        <source>Type libr&amp;aries</source>
+        <translation>型ライブラリ(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
+        <translation>プログラムの型に結合される型ライブラリを表示し、追加または除外します</translation>
+    </message>
+    <message>
+        <source>Split variable</source>
+        <translation>変数を分割</translation>
+    </message>
+    <message>
+        <source>Separate independent local variable lifetimes</source>
+        <translation>ローカル変数の独立した生存期間を分離する</translation>
+    </message>
+    <message>
+        <source>Map to variable...</source>
+        <translation>変数にマッピング...</translation>
+    </message>
+    <message>
+        <source>Associate copy-related variables with compatible live ranges</source>
+        <translation>コピー関係にあり生存区間が互換の変数を関連付ける</translation>
+    </message>
+    <message>
+        <source>Unmap variable</source>
+        <translation>変数のマッピングを解除</translation>
+    </message>
+    <message>
+        <source>Remove a variable mapping</source>
+        <translation>変数のマッピングを削除する</translation>
+    </message>
+    <message>
+        <source>Unsplit variable</source>
+        <translation>変数の分割を解除</translation>
+    </message>
+    <message>
+        <source>Restore the original variable lifetime grouping</source>
+        <translation>元の変数の生存期間のグループを復元する</translation>
+    </message>
+    <message>
+        <source>Reset variable associations</source>
+        <translation>変数の関連付けをリセット</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without variable associations</source>
+        <translation>変数の関連付けを適用せずにこの関数を再生成する</translation>
+    </message>
+    <message>
+        <source>Declare the prototype and actual variadic argument types for this call only</source>
+        <translation>この呼び出しにのみプロトタイプと実際の可変引数の型を宣言</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without call-site declarations</source>
+        <translation>呼び出し箇所の宣言を使わずにこの関数を再生成</translation>
+    </message>
+    <message>
+        <source>Reset call-site declarations</source>
+        <translation>呼び出し箇所の宣言をリセット</translation>
+    </message>
+    <message>
+        <source>Set call type...</source>
+        <translation>呼び出しの型を設定...</translation>
+    </message>
+    <message>
+        <source>Change stack pointer...</source>
+        <translation>スタックポインターを変更...</translation>
+    </message>
+    <message>
+        <source>Correct the entry-relative SP after this instruction</source>
+        <translation>この命令の実行後の SP を関数入口からの相対値で修正</translation>
+    </message>
+    <message>
+        <source>Define a bounded array of typed elements</source>
+        <translation>型付き要素の範囲が限定された配列を定義</translation>
+    </message>
+    <message>
+        <source>Enum operand...</source>
+        <translation>列挙型オペランド...</translation>
+    </message>
+    <message>
+        <source>Immediate...</source>
+        <translation>即値...</translation>
+    </message>
+    <message>
+        <source>Inspect and correct local stack variables</source>
+        <translation>ローカルスタック変数を確認して修正</translation>
+    </message>
+    <message>
+        <source>Inspect the proven static value before this instruction</source>
+        <translation>この命令の実行前に証明された静的値を確認</translation>
+    </message>
+    <message>
+        <source>List reaching physical register definitions</source>
+        <translation>この位置に到達する物理レジスターの定義を一覧表示</translation>
+    </message>
+    <message>
+        <source>List uses of the register value after this instruction</source>
+        <translation>この命令の実行後のレジスター値の使用箇所を一覧表示</translation>
+    </message>
+    <message>
+        <source>Make alignment...</source>
+        <translation>アラインメントを作成...</translation>
+    </message>
+    <message>
+        <source>Make array...</source>
+        <translation>配列を作成...</translation>
+    </message>
+    <message>
+        <source>Mark padding ending on an alignment boundary</source>
+        <translation>アラインメント境界で終わるパディングをマーク</translation>
+    </message>
+    <message>
+        <source>Name a proven stack operand without changing its address</source>
+        <translation>証明されたスタックオペランドにアドレスを変更せず名前を付ける</translation>
+    </message>
+    <message>
+        <source>Next immediate</source>
+        <translation>次の即値</translation>
+    </message>
+    <message>
+        <source>Register definitions...</source>
+        <translation>レジスターの定義...</translation>
+    </message>
+    <message>
+        <source>Register uses...</source>
+        <translation>レジスターの使用箇所...</translation>
+    </message>
+    <message>
+        <source>Repeat the immediate search</source>
+        <translation>即値の検索を繰り返す</translation>
+    </message>
+    <message>
+        <source>Search decoded executable instructions for an immediate</source>
+        <translation>デコード済みの実行可能命令から即値を検索</translation>
+    </message>
+    <message>
+        <source>Show an immediate as enumeration members or flags</source>
+        <translation>即値を列挙型のメンバーまたはフラグとして表示</translation>
+    </message>
+    <message>
+        <source>Stack variable operand...</source>
+        <translation>スタック変数オペランド...</translation>
+    </message>
+    <message>
+        <source>Stack variables...</source>
+        <translation>スタック変数...</translation>
+    </message>
+    <message>
+        <source>Static register value...</source>
+        <translation>レジスターの静的値...</translation>
+    </message>
+    <message>
+        <source>Compare &amp;binaries…</source>
+        <translation>バイナリを比較(&amp;B)…</translation>
+    </message>
+    <message>
+        <source>Compare two binaries, inspect changes and review function correspondence</source>
+        <translation>2 つのバイナリを比較し、変更と関数の対応関係を確認</translation>
+    </message>
+    <message>
+        <source>Inspect x87 support and requirements</source>
+        <translation>x87 の対応状況と要件を確認</translation>
+    </message>
+    <message>
+        <source>x87 &amp;support…</source>
+        <translation>x87 の対応状況(&amp;S)…</translation>
+    </message>
+    <message>
+        <source>Unwind information…</source>
+        <translation>アンワインド情報…</translation>
+    </message>
+    <message>
+        <source>Inspect unwind metadata at the selected instruction</source>
+        <translation>選択した命令位置のアンワインドメタデータを調べる</translation>
+    </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>選択したバイトをコピーまたは保存</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>データをエクスポート...</translation>
+    </message>
+    <message>
+        <source>Always branch</source>
+        <translation>常に分岐</translation>
+    </message>
+    <message>
+        <source>Assemble…</source>
+        <translation>アセンブル…</translation>
+    </message>
+    <message>
+        <source>Change a uniquely encoded immediate operand</source>
+        <translation>一意に符号化された即値オペランドを変更</translation>
+    </message>
+    <message>
+        <source>Change bytes…</source>
+        <translation>バイトを変更…</translation>
+    </message>
+    <message>
+        <source>Change immediate…</source>
+        <translation>即値を変更…</translation>
+    </message>
+    <message>
+        <source>Compile a replacement function into a new binary</source>
+        <translation>置換関数を新しいバイナリにコンパイル</translation>
+    </message>
+    <message>
+        <source>Edit an instruction with a live byte preview</source>
+        <translation>バイトをライブプレビューしながら命令を編集</translation>
+    </message>
+    <message>
+        <source>Edit the bytes at the current address</source>
+        <translation>現在のアドレスのバイトを編集</translation>
+    </message>
+    <message>
+        <source>Fill a whole instruction range with NOPs</source>
+        <translation>命令単位の範囲を NOP で埋める</translation>
+    </message>
+    <message>
+        <source>Fill selection with NOPs</source>
+        <translation>選択範囲を NOP で埋める</translation>
+    </message>
+    <message>
+        <source>Inspect and selectively revert byte patches</source>
+        <translation>バイト変更を確認し、選択して元に戻す</translation>
+    </message>
+    <message>
+        <source>Invert condition</source>
+        <translation>条件を反転</translation>
+    </message>
+    <message>
+        <source>NOP instruction</source>
+        <translation>NOP 命令</translation>
+    </message>
+    <message>
+        <source>Never branch</source>
+        <translation>分岐しない</translation>
+    </message>
+    <message>
+        <source>Open the patch menu</source>
+        <translation>パッチメニューを開く</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>パッチ</translation>
+    </message>
+    <message>
+        <source>Patched binary…</source>
+        <translation>パッチ済みバイナリ…</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>変更済みバイト</translation>
+    </message>
+    <message>
+        <source>Replace the call with NOPs</source>
+        <translation>呼び出しを NOP に置換</translation>
+    </message>
+    <message>
+        <source>Replace the call with a return-register assignment</source>
+        <translation>呼び出しを戻り値レジスタへの代入に置換</translation>
+    </message>
+    <message>
+        <source>Replace the conditional branch with NOPs</source>
+        <translation>条件分岐を NOP に置換</translation>
+    </message>
+    <message>
+        <source>Replace the current instruction with NOPs</source>
+        <translation>現在の命令を NOP に置換</translation>
+    </message>
+    <message>
+        <source>Replay all byte patches into a new binary</source>
+        <translation>すべてのバイト変更を新しいバイナリに再適用</translation>
+    </message>
+    <message>
+        <source>Restore original bytes</source>
+        <translation>元のバイトに戻す</translation>
+    </message>
+    <message>
+        <source>Restore the input bytes for this patch</source>
+        <translation>このパッチの入力バイトを復元</translation>
+    </message>
+    <message>
+        <source>Reverse the conditional branch</source>
+        <translation>条件分岐を反転</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C…</source>
+        <translation>C で関数を書き換え…</translation>
+    </message>
+    <message>
+        <source>Skip call</source>
+        <translation>呼び出しをスキップ</translation>
+    </message>
+    <message>
+        <source>Skip call and return value…</source>
+        <translation>呼び出しをスキップして値を返す…</translation>
+    </message>
+    <message>
+        <source>Take the conditional branch unconditionally</source>
+        <translation>条件分岐を無条件に実行</translation>
+    </message>
+    <message>
+        <source>Trace functions and inspect conflicting evidence across saved comparisons</source>
+        <translation>保存済み比較をまたいで関数を追跡し、矛盾する証拠を調べます</translation>
+    </message>
+    <message>
+        <source>Version comparison &amp;graph…</source>
+        <translation>バージョン比較グラフ(&amp;G)…</translation>
+    </message>
+    <message>
+        <source>Add analysis section...</source>
+        <translation>解析セクションを追加...</translation>
+    </message>
+    <message>
+        <source>Map new code or data into this analysis</source>
+        <translation>新しいコードまたはデータをこの解析にマップします</translation>
+    </message>
+    <message>
+        <source>Enter &amp;comment...</source>
+        <translation>コメントを入力(&amp;C)...</translation>
     </message>
 </context>
 <context>
@@ -982,6 +1410,18 @@
         <source>Disassembly</source>
         <translation>逆アセンブル</translation>
     </message>
+    <message>
+        <source>Action</source>
+        <translation>操作</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>元のバイト</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>変更済みバイト</translation>
+    </message>
 </context>
 <context>
     <name>GuiSessionBroker</name>
@@ -1038,7 +1478,7 @@
     </message>
     <message>
         <source>Choose an absolute MCP executable path</source>
-        <translation>MCP 実行ファイルの絶対パスを選択してください</translation>
+        <translation>MCP 実行ファイルの絶対パスを指定してください</translation>
     </message>
     <message>
         <source>Connecting</source>
@@ -1046,7 +1486,7 @@
     </message>
     <message>
         <source>MCP HTTP requires HTTPS, or HTTP on localhost</source>
-        <translation>MCP HTTP は HTTPS、または localhost の HTTP が必要です</translation>
+        <translation>MCP HTTP には HTTPS、または localhost の HTTP が必要です</translation>
     </message>
     <message>
         <source>Invalid authentication token</source>
@@ -1062,7 +1502,7 @@
     </message>
     <message>
         <source>MCP outgoing message budget exceeded</source>
-        <translation>MCP 送信メッセージがサイズ制限を超えています</translation>
+        <translation>MCP の送信データ量が上限を超えました</translation>
     </message>
     <message>
         <source>MCP server is disconnected</source>
@@ -1070,7 +1510,7 @@
     </message>
     <message>
         <source>MCP session expired; reconnecting</source>
-        <translation>MCP セッションが期限切れです。再接続中</translation>
+        <translation>MCP セッションの有効期限が切れたため、再接続しています</translation>
     </message>
     <message>
         <source>MCP HTTP error %1: %2</source>
@@ -1078,7 +1518,7 @@
     </message>
     <message>
         <source>MCP event stream ended before its response</source>
-        <translation>応答前に MCP イベントストリームが終了しました</translation>
+        <translation>応答を受信する前に MCP イベントストリームが終了しました</translation>
     </message>
     <message>
         <source>Invalid MCP HTTP response</source>
@@ -1118,11 +1558,11 @@
     </message>
     <message>
         <source>Connected; tool list is partial</source>
-        <translation>接続済み。ツール一覧は一部のみ表示されています</translation>
+        <translation>接続済み（ツール一覧は一部のみ）</translation>
     </message>
     <message>
         <source>Connected; resource list is partial</source>
-        <translation>接続済み。リソース一覧は一部のみ表示されています</translation>
+        <translation>接続済み（リソース一覧は一部のみ）</translation>
     </message>
     <message>
         <source>MCP tool reported an error</source>
@@ -1138,7 +1578,7 @@
     </message>
     <message>
         <source>Tool arguments must be a JSON object</source>
-        <translation>ツール引数は JSON オブジェクトにしてください</translation>
+        <translation>ツール引数は JSON オブジェクトで指定してください</translation>
     </message>
 </context>
 <context>
@@ -1188,6 +1628,10 @@
         <translation>グラフ(&amp;G)</translation>
     </message>
     <message>
+        <source>&amp;Pathfinding</source>
+        <translation>経路探索(&amp;P)</translation>
+    </message>
+    <message>
         <source>&amp;Toolbars</source>
         <translation>ツールバー(&amp;T)</translation>
     </message>
@@ -1217,7 +1661,11 @@
     </message>
     <message>
         <source>Operand &amp;type</source>
-        <translation>オペランドの型(&amp;T)</translation>
+        <translation>オペランドの表示形式(&amp;T)</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>パッチ</translation>
     </message>
 </context>
 <context>
@@ -1255,7 +1703,7 @@
     </message>
     <message>
         <source>Cannot read %1: %2</source>
-        <translation>%1 を読み込めません: %2</translation>
+        <translation>%1 を読み込めません：%2</translation>
     </message>
     <message>
         <source>Cannot read %1</source>
@@ -1274,28 +1722,28 @@
         <translation>%1 は NeverD データベースではありません。</translation>
     </message>
     <message>
-        <source>%1 does not exist.</source>
-        <translation>%1 は存在しません。</translation>
-    </message>
-    <message>
-        <source>%1 uses database format %2, which this NeverD cannot read.</source>
-        <translation>%1 はデータベース形式 %2 を使用しており、この NeverD では読み込めません。</translation>
-    </message>
-    <message>
-        <source>%1 names an invalid input file.</source>
-        <translation>%1 に無効な入力ファイルが指定されています。</translation>
-    </message>
-    <message>
         <source>Cannot write %1: %2</source>
-        <translation>%1 に書き込めません: %2</translation>
-    </message>
-    <message>
-        <source>The input stored in %1 is damaged.</source>
-        <translation>%1 に保存されている入力が破損しています。</translation>
+        <translation>%1 に書き込めません：%2</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
         <translation>%1 に書き込めません</translation>
+    </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>復元マーカーのディレクトリを作成できません。</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>%1 を削除できません: %2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>復元した編集が保留中にデータベースが変更されました。再度開く前に作業コピーを保存してください。</translation>
+    </message>
+    <message>
+        <source>The input filename cannot be stored in a portable project.</source>
+        <translation>この入力ファイル名は、他の環境でも使用できるプロジェクトには保存できません。</translation>
     </message>
 </context>
 <context>
@@ -1382,6 +1830,18 @@
 <context>
     <name>neverd::gui::ChooserModel</name>
     <message>
+        <source>The table changed before the address was selected.</source>
+        <translation>アドレスが選択される前にテーブルが変更されました。</translation>
+    </message>
+    <message>
+        <source>Another address selection took this one's place.</source>
+        <translation>別のアドレス選択に置き換えられました。</translation>
+    </message>
+    <message>
+        <source>The worker did not locate the requested address.</source>
+        <translation>ワーカープロセスは要求されたアドレスを見つけられませんでした。</translation>
+    </message>
+    <message>
         <source>References are still being indexed…</source>
         <translation>参照のインデックスを作成しています…</translation>
     </message>
@@ -1392,6 +1852,18 @@
     <message>
         <source>Down</source>
         <translation>下</translation>
+    </message>
+    <message>
+        <source>Functions changed while refreshing the table.</source>
+        <translation>テーブルの更新中に関数が変更されました。</translation>
+    </message>
+    <message>
+        <source>Selected functions exceed the table page budget.</source>
+        <translation>選択した関数がテーブルのページ数の上限を超えています。</translation>
+    </message>
+    <message>
+        <source>Too many selection changes while refreshing the table.</source>
+        <translation>テーブルの更新中に選択が変更された回数が多すぎます。</translation>
     </message>
 </context>
 <context>
@@ -1445,6 +1917,30 @@ Recognized library operation; click to show its code.</source>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>このコードのコンパイルに使うインクルード、補助型、宣言です。クリックで表示し、テンキーの - で再び折りたたみます。</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of declarations</source>
+        <translation>
+            <numerusform>宣言 %n 行</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n lines of attributes and metadata</source>
+        <translation>
+            <numerusform>属性とメタデータ %n 行</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The target, types, globals and functions this function refers to; click to show them, Keypad - to fold them again.</source>
+        <translation>この関数が参照するターゲット情報、型、グローバル変数、関数です。クリックで表示し、テンキーの - で再び折りたたみます。</translation>
+    </message>
+    <message>
+        <source>The attribute groups and metadata this function uses; click to show them, Keypad - to fold them again.</source>
+        <translation>この関数が使う属性グループとメタデータです。クリックで表示し、テンキーの - で再び折りたたみます。</translation>
+    </message>
+    <message>
+        <source>Double-click to go to %1.</source>
+        <translation>ダブルクリックで %1 に移動します。</translation>
+    </message>
     <message>
         <source>%1
 Double-click to go to the declaration.</source>
@@ -1470,12 +1966,12 @@ Double-click to go to the declaration.</source>
         <translation>保存された変数名は別のソース表示のものです</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>ブロックを展開 (Ctrl+Shift+])</translation>
+        <source>Expand block (%1)</source>
+        <translation>ブロックを展開 (%1)</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>ブロックを折りたたむ (Ctrl+Shift+[)</translation>
+        <source>Collapse block (%1)</source>
+        <translation>ブロックを折りたたむ (%1)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -1483,7 +1979,23 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Transformation failed: %1</source>
-        <translation>変換に失敗しました: %1</translation>
+        <translation>変換に失敗しました：%1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>保存した変数の型を確認してください: 解析結果またはローカル型が変更されました</translation>
+    </message>
+    <message>
+        <source>Saved variable associations need review: </source>
+        <translation>保存した変数の関連付けを確認してください: </translation>
+    </message>
+    <message>
+        <source>Saved call-site declaration needs review: </source>
+        <translation>保存された呼び出し箇所の宣言を確認してください: </translation>
+    </message>
+    <message>
+        <source>Could not refresh source: %1</source>
+        <translation>ソースコードを更新できませんでした: %1</translation>
     </message>
 </context>
 <context>
@@ -1509,8 +2021,12 @@ Double-click to go to the declaration.</source>
         <translation>現在の関数を変換します</translation>
     </message>
     <message>
-        <source>Symbolically simplify this function</source>
-        <translation>この関数をシンボリックに簡約します</translation>
+        <source>Symbolic simplification</source>
+        <translation>シンボリック簡約</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>すべての関数でシンボリック簡約</translation>
     </message>
     <message>
         <source>Recover LLVM control flow</source>
@@ -1526,7 +2042,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>O2 (default)</source>
-        <translation>O2 (既定)</translation>
+        <translation>O2（既定）</translation>
     </message>
     <message>
         <source>Choose passes…</source>
@@ -1538,7 +2054,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Choose scalar cleanup passes. Symbolic simplification is controlled separately.</source>
-        <translation>スカラーのクリーンアップパスを選択します。シンボリック簡約は別に制御します。</translation>
+        <translation>スカラーのクリーンアップパスを選択します。シンボリック簡約は別途設定します。</translation>
     </message>
     <message>
         <source>Restore default source</source>
@@ -1576,15 +2092,15 @@ Double-click to go to the declaration.</source>
         <translation>切断済み</translation>
     </message>
     <message>
-        <source>MCP Connections</source>
+        <source>MCP connections</source>
         <translation>MCP 接続</translation>
     </message>
     <message>
-        <source>Current GUI session</source>
-        <translation>現在の GUI セッション</translation>
+        <source>This NeverD session</source>
+        <translation>この NeverD セッション</translation>
     </message>
     <message>
-        <source>Copy Credential Path</source>
+        <source>Copy credential path</source>
         <translation>認証情報のパスをコピー</translation>
     </message>
     <message>
@@ -1632,11 +2148,11 @@ Double-click to go to the declaration.</source>
         <translation>スキーマ</translation>
     </message>
     <message>
-        <source>Call Tool</source>
+        <source>Call tool</source>
         <translation>ツールを呼び出す</translation>
     </message>
     <message>
-        <source>Cancel Call</source>
+        <source>Cancel call</source>
         <translation>呼び出しをキャンセル</translation>
     </message>
     <message>
@@ -1644,11 +2160,11 @@ Double-click to go to the declaration.</source>
         <translation>リソースを選択するかツールを呼び出すと、応答を確認できます。</translation>
     </message>
     <message>
-        <source>Disable Sharing</source>
+        <source>Disable sharing</source>
         <translation>共有を無効化</translation>
     </message>
     <message>
-        <source>Enable Sharing</source>
+        <source>Enable sharing</source>
         <translation>共有を有効化</translation>
     </message>
     <message>
@@ -1685,10 +2201,10 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Arguments must be a JSON array of strings.</source>
-        <translation>引数は文字列の JSON 配列にしてください。</translation>
+        <translation>引数は文字列の JSON 配列で指定してください。</translation>
     </message>
     <message>
-        <source>Tool Input Schema</source>
+        <source>Tool input schema</source>
         <translation>ツール入力スキーマ</translation>
     </message>
 </context>
@@ -1700,7 +2216,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source> (Synchronized with %1)</source>
-        <translation> (%1 と同期)</translation>
+        <translation>（%1 と同期）</translation>
     </message>
 </context>
 <context>
@@ -1731,38 +2247,42 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Division by zero</source>
-        <translation>0 で除算しました</translation>
+        <translation>0 で割ることはできません</translation>
     </message>
 </context>
 <context>
     <name>neverd::gui::ExtensionsView</name>
     <message>
-        <source>Import Manifest…</source>
-        <translation>マニフェストをインポート…</translation>
+        <source>Import queries…</source>
+        <translation>クエリをインポート…</translation>
     </message>
     <message>
         <source>Run</source>
         <translation>実行</translation>
     </message>
     <message>
-        <source>Unload</source>
-        <translation>アンロード</translation>
+        <source>Remove group</source>
+        <translation>グループを削除</translation>
     </message>
     <message>
-        <source>Import a declarative manifest to add analysis commands and views.</source>
-        <translation>宣言型マニフェストをインポートして、解析コマンドとビューを追加します。</translation>
+        <source>Run built-in analysis queries or import query definitions from a JSON file.</source>
+        <translation>組み込みの解析クエリを実行するか、JSON ファイルからクエリ定義をインポートします。</translation>
     </message>
     <message>
-        <source>Select an extension command to inspect its result.</source>
-        <translation>拡張機能のコマンドを選択すると、結果を確認できます。</translation>
+        <source>Select a query and choose Run to view its result.</source>
+        <translation>クエリを選択して「実行」をクリックすると結果が表示されます。</translation>
     </message>
     <message>
-        <source>Import extension manifest</source>
-        <translation>拡張機能マニフェストのインポート</translation>
+        <source>Import analysis queries</source>
+        <translation>解析クエリをインポート</translation>
     </message>
     <message>
-        <source>Manifests (*.json)</source>
-        <translation>マニフェスト (*.json)</translation>
+        <source>Query definitions (*.json)</source>
+        <translation>クエリ定義 (*.json)</translation>
+    </message>
+    <message>
+        <source>Remove all queries in the selected group.</source>
+        <translation>選択したグループのクエリをすべて削除します。</translation>
     </message>
 </context>
 <context>
@@ -1780,7 +2300,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Copy takes at most %1 bytes; select fewer.</source>
-        <translation>コピーできるのは最大 %1 バイトです。選択を減らしてください。</translation>
+        <translation>コピーできるのは最大 %1 バイトです。選択範囲を狭めてください。</translation>
     </message>
     <message>
         <source>The selection holds bytes no segment maps; nothing was copied.</source>
@@ -1795,7 +2315,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Address, name or expression (0x401000, main, sub_401000+10)</source>
-        <translation>アドレス、名前、または式 (0x401000, main, sub_401000+10)</translation>
+        <translation>アドレス、名前、または式（0x401000, main, sub_401000+10）</translation>
     </message>
     <message>
         <source>Enter jumps to the expression; arrows choose a match.</source>
@@ -1811,6 +2331,10 @@ Double-click to go to the declaration.</source>
 <context>
     <name>neverd::gui::MainWindow</name>
     <message>
+        <source>Could not restore the layout before focus mode.</source>
+        <translation>集中モードに入る前のレイアウトを復元できませんでした。</translation>
+    </message>
+    <message>
         <source>Reload the input file</source>
         <translation>入力ファイルの再読み込み</translation>
     </message>
@@ -1819,12 +2343,12 @@ Double-click to go to the declaration.</source>
         <translation>ナビゲーションバンド</translation>
     </message>
     <message>
-        <source>Extensions</source>
-        <translation>拡張機能</translation>
+        <source>Analysis queries</source>
+        <translation>解析クエリ</translation>
     </message>
     <message>
         <source>Hex View-1</source>
-        <translation>16進ビュー-1</translation>
+        <translation>16 進ビュー-1</translation>
     </message>
     <message>
         <source>NeverD View-A</source>
@@ -1855,6 +2379,10 @@ Double-click to go to the declaration.</source>
         <translation>コメントが変更されました。続行する前に保存しますか？</translation>
     </message>
     <message>
+        <source>%1 lacks the latest changes. Save them into it before continuing?</source>
+        <translation>%1 には最新の変更が含まれていません。続行する前に保存しますか？</translation>
+    </message>
+    <message>
         <source>Cannot jump to %1: %2</source>
         <translation>%1 へジャンプできません：%2</translation>
     </message>
@@ -1863,8 +2391,8 @@ Double-click to go to the declaration.</source>
         <translation>シグネチャパックを読み込む</translation>
     </message>
     <message>
-        <source>Signature packs (*.pat *.json);;All files (*)</source>
-        <translation>シグネチャパック (*.pat *.json);;すべてのファイル (*)</translation>
+        <source>Signature packs (*.pat *.npat *.json);;All files (*)</source>
+        <translation>シグネチャパック (*.pat *.npat *.json);;すべてのファイル (*)</translation>
     </message>
     <message>
         <source>Signature directory</source>
@@ -1877,18 +2405,6 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Description:</source>
         <translation>説明：</translation>
-    </message>
-    <message>
-        <source>Find in view</source>
-        <translation>ビュー内を検索</translation>
-    </message>
-    <message>
-        <source>Text:</source>
-        <translation>テキスト：</translation>
-    </message>
-    <message>
-        <source>&apos;%1&apos; was not found among the loaded lines</source>
-        <translation>読み込み済みの行に &apos;%1&apos; が見つかりません</translation>
     </message>
     <message>
         <source>History: %1 entries, cursor %2</source>
@@ -1915,8 +2431,8 @@ Double-click to go to the declaration.</source>
         <translation>上方向</translation>
     </message>
     <message>
-        <source>Disk: %1GB</source>
-        <translation>ディスク：%1GB</translation>
+        <source>Disk: %1 GB</source>
+        <translation>ディスク：%1 GB</translation>
     </message>
     <message>
         <source> · read-only</source>
@@ -1956,7 +2472,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Binary search</source>
-        <translation>バイナリ検索</translation>
+        <translation>バイト列検索</translation>
     </message>
     <message>
         <source>String:</source>
@@ -1964,7 +2480,7 @@ Double-click to go to the declaration.</source>
     </message>
     <message>
         <source>Hex bytes (e.g. 48 8B 05):</source>
-        <translation>16進バイト列（例：48 8B 05）：</translation>
+        <translation>16 進バイト列（例：48 8B 05）：</translation>
     </message>
     <message>
         <source>Search failed: %1 not found</source>
@@ -1983,9 +2499,9 @@ Double-click to go to the declaration.</source>
 Decimal: %2
 Octal: %3
 Signed: %4</source>
-        <translation>16進：%1h
-10進：%2
-8進：%3
+        <translation>16 進：%1h
+10 進：%2
+8 進：%3
 符号付き：%4</translation>
     </message>
     <message>
@@ -2002,11 +2518,11 @@ Signed: %4</source>
     </message>
     <message>
         <source>Dark (Visual Studio Code Dark+)</source>
-        <translation>ダーク (Visual Studio Code Dark+)</translation>
+        <translation>ダーク（Visual Studio Code Dark+）</translation>
     </message>
     <message>
         <source>Light (Visual Studio Code Light+)</source>
-        <translation>ライト (Visual Studio Code Light+)</translation>
+        <translation>ライト（Visual Studio Code Light+）</translation>
     </message>
     <message>
         <source>Colors</source>
@@ -2027,6 +2543,10 @@ Signed: %4</source>
     <message>
         <source>Show segment:address line prefixes</source>
         <translation>行頭に「セグメント:アドレス」を表示</translation>
+    </message>
+    <message>
+        <source>Symbolic simplification for every function</source>
+        <translation>すべての関数でシンボリック簡約</translation>
     </message>
     <message>
         <source>Shortcuts</source>
@@ -2055,6 +2575,14 @@ Signed: %4</source>
     <message>
         <source>Create LST file</source>
         <translation>LST ファイルを作成</translation>
+    </message>
+    <message>
+        <source>Pack database</source>
+        <translation>データベースにパック</translation>
+    </message>
+    <message>
+        <source>NeverD databases (*%1)</source>
+        <translation>NeverD データベース (*%1)</translation>
     </message>
     <message>
         <source>Cannot write %1</source>
@@ -2109,11 +2637,11 @@ Signed: %4</source>
         <translation>一般的なコードページを検出</translation>
     </message>
     <message>
-        <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
-        <translation>UTF-8 でない C 文字列を %1 でも読み取ります（いずれかがテキストとして読み取り、別の文字体系のコードページが読み取らない場合）</translation>
+        <source>Also read C strings that are not UTF-8 in %1, when the code pages of only one script read them as text</source>
+        <translation>UTF-8 でない C 文字列を %1 でも読み取ります（1 つの文字体系のコードページだけがテキストとして読める場合）</translation>
     </message>
     <message>
-        <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
+        <source>Try this code page first for C strings that are not UTF-8; it wins when other code pages read them too</source>
         <translation>UTF-8 でない C 文字列をまずこのコードページで読み取り、他のコードページも読み取れる場合はこちらを優先します</translation>
     </message>
     <message>
@@ -2149,8 +2677,8 @@ Signed: %4</source>
         <translation>ライブラリ操作を折りたたむ</translation>
     </message>
     <message>
-        <source>The ways to load %1 are unknown: %2</source>
-        <translation>%1 の読み込み方法が不明です: %2</translation>
+        <source>Cannot determine how to load %1: %2</source>
+        <translation>%1 の読み込み方法を判別できません：%2</translation>
     </message>
     <message>
         <source>Comment this source line:</source>
@@ -2182,7 +2710,7 @@ Signed: %4</source>
     </message>
     <message>
         <source>This source line has no instruction address mapping; showing the function entry</source>
-        <translation>このソース行には命令アドレスへの対応がありません。関数の入口を表示します</translation>
+        <translation>このソース行には命令アドレスへの対応がありません。関数の先頭を表示します</translation>
     </message>
     <message>
         <source>Load PDB file</source>
@@ -2197,10 +2725,10 @@ Signed: %4</source>
         <translation>未検証の PDB を解析に使用</translation>
     </message>
     <message>
-        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+        <source>This PE has no PDB identity (GUID/age) to match against. The selected PDB&apos;s machine and section layout match, but its build cannot be verified.
 
 Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
-        <translation>この PE には PDB の照合識別情報（GUID/age）がありません。選択した PDB のアーキテクチャとセクション配置は一致しますが、同じビルドのものか確認できません。
+        <translation>この PE には PDB を照合するための識別情報（GUID/age）がありません。選択した PDB のアーキテクチャとセクション配置は一致しますが、同じビルドのものか確認できません。
 
 この PDB を解析に使用しますか？シンボル、型、関数シグネチャ、アドレス範囲を解析の入力として使用します。誤った PDB を選ぶと解析結果が不正確になる可能性があります。</translation>
     </message>
@@ -2234,7 +2762,537 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Could not tell whether %1 has a symbol table: %2</source>
-        <translation>%1 にシンボル テーブルがあるかどうか判別できませんでした：%2</translation>
+        <translation>%1 にシンボルテーブルがあるかどうか判別できませんでした：%2</translation>
+    </message>
+    <message>
+        <source>Local Types</source>
+        <translation>ローカル型</translation>
+    </message>
+    <message>
+        <source>Cannot convert the parameter: %1</source>
+        <translation>パラメーターを変換できません: %1</translation>
+    </message>
+    <message>
+        <source>Put the cursor in a function to set its type</source>
+        <translation>型を設定するには関数内にカーソルを置いてください</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a parameter of the function to convert it</source>
+        <translation>変換するには関数のパラメーターにカーソルを置いてください</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>すべて選択(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Jump to disassembly</source>
+        <translation>逆アセンブルへジャンプ</translation>
+    </message>
+    <message>
+        <source>Synchronize with disassembly</source>
+        <translation>逆アセンブルと同期</translation>
+    </message>
+    <message>
+        <source>Octa&amp;l</source>
+        <translation>8 進数(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a number of the pseudocode to change its base</source>
+        <translation>基数を変更するには疑似コードの数値にカーソルを置いてください</translation>
+    </message>
+    <message>
+        <source>%1 has no spelling in that base with the same type</source>
+        <translation>%1 はその基数では同じ型で表記できません</translation>
+    </message>
+    <message>
+        <source>Could not tell whether %1 has a MAP file: %2</source>
+        <translation>%1 に MAP ファイルがあるかどうか判別できませんでした：%2</translation>
+    </message>
+    <message>
+        <source>Load DWARF file</source>
+        <translation>DWARF ファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>Load MAP file</source>
+        <translation>MAP ファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>MAP files (*.map);;All files (*)</source>
+        <translation>MAP ファイル (*.map);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>Parse C header file</source>
+        <translation>C ヘッダー ファイルの解析</translation>
+    </message>
+    <message>
+        <source>C and C++ headers (*.h *.hh *.hpp *.hxx);;All files (*)</source>
+        <translation>C/C++ ヘッダー (*.h *.hh *.hpp *.hxx);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>%1 is larger than 4 MiB.</source>
+        <translation>%1 が 4 MiB を超えています。</translation>
+    </message>
+    <message>
+        <source>Cannot read %1: %2</source>
+        <translation>%1 を読み込めません：%2</translation>
+    </message>
+    <message>
+        <source>Parse %1</source>
+        <translation>%1 の解析</translation>
+    </message>
+    <message>
+        <source>Load a MAP file of another build</source>
+        <translation>別のビルドの MAP ファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>%1
+
+Load its names anyway? Names at the wrong addresses mislead the analysis.</source>
+        <translation>%1
+
+それでも名前を読み込みますか？誤ったアドレスの名前は解析を誤らせます。</translation>
+    </message>
+    <message>
+        <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
+        <translation>DWARF ファイル (*.debug *.dSYM);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>Type Libraries</source>
+        <translation>型ライブラリ</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>これ以上逆アセンブリビューを開けません。</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>ソースをエクスポートできませんでした: %1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>NeverD ビュー-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>%1 件の一致を表示しています。「次へ」で検索を続行してください。</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>エンジンはこのソース変数を一意に識別できません</translation>
+    </message>
+    <message>
+        <source>Map variable</source>
+        <translation>変数をマッピング</translation>
+    </message>
+    <message>
+        <source>Destination variable (the engine checks copy relationships and live ranges):</source>
+        <translation>マッピング先の変数（エンジンがコピー関係と生存区間を検証します）:</translation>
+    </message>
+    <message>
+        <source>No other unambiguous local variable is available</source>
+        <translation>他に一意に識別できるローカル変数がありません</translation>
+    </message>
+    <message>
+        <source>The source analysis changed; select the variable again</source>
+        <translation>ソース解析が変更されました。変数を再選択してください</translation>
+    </message>
+    <message>
+        <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
+        <translation>この変数に一致する関連付けはありません。「変数の関連付けをリセット」で古い編集を削除してください。</translation>
+    </message>
+    <message>
+        <source>Actual variadic argument types for this call, one per line (use int or double after default promotions):</source>
+        <translation>この呼び出しの実際の可変引数の型を1行に1つ入力（デフォルト引数拡張後の int または double を使用）:</translation>
+    </message>
+    <message>
+        <source>C declaration (include ... for a variadic call):</source>
+        <translation>C 宣言（可変引数の呼び出しには ... を含める）:</translation>
+    </message>
+    <message>
+        <source>Call at %1. This declaration applies to this call only in both C views.</source>
+        <translation>%1 の呼び出し。この宣言は両方の C ビューでこの呼び出しにのみ適用されます。</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a pseudocode row mapped to an original call instruction</source>
+        <translation>元の呼び出し命令に対応する疑似コード行にカーソルを置いてください</translation>
+    </message>
+    <message>
+        <source>Select call instruction</source>
+        <translation>呼び出し命令を選択</translation>
+    </message>
+    <message>
+        <source>Set call type</source>
+        <translation>呼び出しの型を設定</translation>
+    </message>
+    <message>
+        <source>This source row contains multiple calls:</source>
+        <translation>このソース行には複数の呼び出しがあります:</translation>
+    </message>
+    <message>
+        <source>indirect call</source>
+        <translation>間接呼び出し</translation>
+    </message>
+    <message>
+        <source>. Reset the obsolete corrections before editing.</source>
+        <translation>。編集する前に古い修正をリセットしてください。</translation>
+    </message>
+    <message>
+        <source>Absolute offset after instruction, relative to entry SP</source>
+        <translation>命令実行後の絶対オフセット（関数入口の SP を基準）</translation>
+    </message>
+    <message>
+        <source>Address: %1</source>
+        <translation>アドレス: %1</translation>
+    </message>
+    <message>
+        <source>Alignment boundary (the marked span ends on this boundary):</source>
+        <translation>アラインメント境界（マークする範囲はこの境界で終了）:</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>バイト</translation>
+    </message>
+    <message>
+        <source>C type (optional)</source>
+        <translation>C 型（任意）</translation>
+    </message>
+    <message>
+        <source>Change stack pointer</source>
+        <translation>スタックポインターを変更</translation>
+    </message>
+    <message>
+        <source>Combine bit flags; preserve unknown bits numerically</source>
+        <translation>ビットフラグを組み合わせ、不明なビットは数値として保持</translation>
+    </message>
+    <message>
+        <source>Definitions and static values are before the instruction; uses start after it.</source>
+        <translation>定義と静的値は命令実行前の状態、使用箇所は実行後からのものです。</translation>
+    </message>
+    <message>
+        <source>Element count (complete initialized span, at most 64 MiB):</source>
+        <translation>要素数（初期化済みの範囲全体、最大 64 MiB）:</translation>
+    </message>
+    <message>
+        <source>Element size in bytes:</source>
+        <translation>要素のサイズ（バイト）:</translation>
+    </message>
+    <message>
+        <source>Enter a signed SP offset within one MiB</source>
+        <translation>1 MiB 以内の符号付き SP オフセットを入力</translation>
+    </message>
+    <message>
+        <source>Entry offset</source>
+        <translation>入口オフセット</translation>
+    </message>
+    <message>
+        <source>Enum operand</source>
+        <translation>列挙型オペランド</translation>
+    </message>
+    <message>
+        <source>Enumeration declared in Local Types:</source>
+        <translation>ローカル型で宣言された列挙型:</translation>
+    </message>
+    <message>
+        <source>Immediate search</source>
+        <translation>即値の検索</translation>
+    </message>
+    <message>
+        <source>Immediate search has undecoded ranges; results cover decoded executable ranges only.</source>
+        <translation>即値の検索には未デコードの範囲があります。結果はデコード済みの実行可能範囲のみを対象とします。</translation>
+    </message>
+    <message>
+        <source>Instruction: %1; SP before: %2; SP after: %3</source>
+        <translation>命令: %1、実行前の SP: %2、実行後の SP: %3</translation>
+    </message>
+    <message>
+        <source>Integer (decimal or 0x hex; negative allowed):</source>
+        <translation>整数（10 進数または 0x 付きの 16 進数、負数可）:</translation>
+    </message>
+    <message>
+        <source>Invalid stack slot offset or width</source>
+        <translation>スタックスロットのオフセットまたは幅が無効です</translation>
+    </message>
+    <message>
+        <source>Local type name (optional; its layout must match the element size):</source>
+        <translation>ローカル型名（任意、レイアウトは要素サイズと一致する必要があります）:</translation>
+    </message>
+    <message>
+        <source>Make alignment</source>
+        <translation>アラインメントを作成</translation>
+    </message>
+    <message>
+        <source>Make array</source>
+        <translation>配列を作成</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名前</translation>
+    </message>
+    <message>
+        <source>Net SP change made by this instruction</source>
+        <translation>この命令による SP の正味の変化</translation>
+    </message>
+    <message>
+        <source>No exact local stack access is available here. Repair unknown SP first.</source>
+        <translation>この位置には正確なローカルスタックアクセスがありません。まず不明な SP を修正してください。</translation>
+    </message>
+    <message>
+        <source>No register flow sites within this function.</source>
+        <translation>この関数内にレジスターデータフローの箇所がありません。</translation>
+    </message>
+    <message>
+        <source>Offsets are relative to SP at function entry. Corrections apply to source analysis. Reset restores automatic analysis. Naming physical stack storage pauses LLVM optimizations for that function's C view.</source>
+        <translation>オフセットは関数入口の SP を基準とします。修正はソース解析に適用されます。リセットすると自動解析に戻ります。物理スタック領域に名前を付けると、この関数の C ビューで LLVM 最適化が一時停止します。</translation>
+    </message>
+    <message>
+        <source>Physical register</source>
+        <translation>物理レジスター</translation>
+    </message>
+    <message>
+        <source>Select a retained non-branch instruction in the disassembly</source>
+        <translation>逆アセンブリ内で保持されている非分岐命令を選択</translation>
+    </message>
+    <message>
+        <source>Stack variables</source>
+        <translation>スタック変数</translation>
+    </message>
+    <message>
+        <source>Static register value</source>
+        <translation>レジスターの静的値</translation>
+    </message>
+    <message>
+        <source>This instruction has no retained physical register operands.</source>
+        <translation>この命令には保持されている物理レジスターのオペランドがありません。</translation>
+    </message>
+    <message>
+        <source>Unknown: </source>
+        <translation>不明: </translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>不明</translation>
+    </message>
+    <message>
+        <source>Pathfinder</source>
+        <translation>パスファインダー</translation>
+    </message>
+    <message>
+        <source>Pathfinding</source>
+        <translation>経路探索</translation>
+    </message>
+    <message>
+        <source>Other programs cannot open links in this window: %1</source>
+        <translation>他のプログラムはこのウィンドウでリンクを開けません: %1</translation>
+    </message>
+    <message>
+        <source>Copied link: %1</source>
+        <translation>リンクをコピーしました: %1</translation>
+    </message>
+    <message>
+        <source>Jump to link</source>
+        <translation>リンクへジャンプ</translation>
+    </message>
+    <message>
+        <source>Link (neverd:// or ida://):</source>
+        <translation>リンク (neverd:// または ida://):</translation>
+    </message>
+    <message>
+        <source>Not a link to follow: %1</source>
+        <translation>たどれるリンクではありません: %1</translation>
+    </message>
+    <message>
+        <source>No program is open to follow the link in.</source>
+        <translation>リンクを開くプログラムが開かれていません。</translation>
+    </message>
+    <message>
+        <source>The link names another build of the input: its SHA-256 starts %1, and that of %2 starts %3.</source>
+        <translation>このリンクは入力ファイルの別のビルドを指しています。リンクの SHA-256 は %1 で始まり、%2 のものは %3 で始まります。</translation>
+    </message>
+    <message>
+        <source>The link names %1, not %2; following it here.</source>
+        <translation>リンクは %2 ではなく %1 を指しています。ここで開きます。</translation>
+    </message>
+    <message>
+        <source>The program changed before the link opened.</source>
+        <translation>リンクを開く前にプログラムが変わりました。</translation>
+    </message>
+    <message>
+        <source>No local type is named %1.</source>
+        <translation>%1 という名前のローカル型はありません。</translation>
+    </message>
+    <message>
+        <source>The link's address %1 is not in %2.</source>
+        <translation>リンクのアドレス %1 は %2 にありません。</translation>
+    </message>
+    <message>
+        <source>No bookmark is at %1.</source>
+        <translation>%1 にブックマークはありません。</translation>
+    </message>
+    <message>
+        <source>No function is at %1.</source>
+        <translation>%1 に関数はありません。</translation>
+    </message>
+    <message>
+        <source>Another link took this one's place.</source>
+        <translation>別のリンクがこのリンクに代わりました。</translation>
+    </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>リストにフォーカスがある間は、リストのコマンドが優先されます。</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>操作、ショートカット、適用範囲で絞り込み</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>適用範囲</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>未割り当て</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>解析ビュー</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>ワークベンチ</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>クイックフィルター</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>リスト</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>型を追加…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>型を編集…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>型を削除…</translation>
+    </message>
+    <message>
+        <source>Apply byte patch</source>
+        <translation>バイトパッチを適用</translation>
+    </message>
+    <message>
+        <source>Before:
+%1
+After:
+%2</source>
+        <translation>変更前:
+%1
+変更後:
+%2</translation>
+    </message>
+    <message>
+        <source>Checking available patches…</source>
+        <translation>利用可能なパッチを確認中…</translation>
+    </message>
+    <message>
+        <source>Export unsigned binary</source>
+        <translation>署名なしバイナリを出力</translation>
+    </message>
+    <message>
+        <source>Invalid patch value.</source>
+        <translation>パッチの値が無効です。</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>元: %1</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>パッチ</translation>
+    </message>
+    <message>
+        <source>Patch value</source>
+        <translation>パッチの値</translation>
+    </message>
+    <message>
+        <source>Patched binary written to %1</source>
+        <translation>パッチ済みバイナリを %1 に保存しました</translation>
+    </message>
+    <message>
+        <source>Patched: %1</source>
+        <translation>変更後: %1</translation>
+    </message>
+    <message>
+        <source>Produce patched binary</source>
+        <translation>パッチ済みバイナリを生成</translation>
+    </message>
+    <message>
+        <source>Remove the signature metadata and export an unsigned copy?</source>
+        <translation>署名メタデータを削除し、署名なしのコピーを出力しますか？</translation>
+    </message>
+    <message>
+        <source>Restore selected original bytes</source>
+        <translation>選択した元のバイトを復元</translation>
+    </message>
+    <message>
+        <source>Unsigned patched binary written to %1</source>
+        <translation>署名なしのパッチ済みバイナリを %1 に保存しました</translation>
+    </message>
+    <message>
+        <source>Unsigned value (decimal or 0x hexadecimal):</source>
+        <translation>符号なしの値（10 進数または 0x 16 進数）:</translation>
+    </message>
+    <message>
+        <source>Add analysis section</source>
+        <translation>解析セクションの追加</translation>
+    </message>
+    <message>
+        <source>Binary bytes:</source>
+        <translation>バイナリバイト:</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>参照…</translation>
+    </message>
+    <message>
+        <source>Define a function covering these bytes</source>
+        <translation>これらのバイトを覆う関数を定義する</translation>
+    </message>
+    <message>
+        <source>Function name:</source>
+        <translation>関数名:</translation>
+    </message>
+    <message>
+        <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
+        <translation>バイナリファイルを現在のイメージの仮想アドレスにマップします。保持するにはプロジェクトを保存してください。入力バイナリは変更されません。</translation>
+    </message>
+    <message>
+        <source>Permissions:</source>
+        <translation>アクセス権:</translation>
+    </message>
+    <message>
+        <source>Section name:</source>
+        <translation>セクション名:</translation>
+    </message>
+    <message>
+        <source>Select binary bytes</source>
+        <translation>バイナリバイトを選択</translation>
+    </message>
+    <message>
+        <source>The project changed. Open this dialog again.</source>
+        <translation>プロジェクトが変更されました。このダイアログをもう一度開いてください。</translation>
+    </message>
+    <message>
+        <source>Virtual address:</source>
+        <translation>仮想アドレス:</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>1 バイトから %1 までのファイル、16 進数のアドレス、セクション名を指定してください。関数には名前と実行権限が必要です。</translation>
     </message>
 </context>
 <context>
@@ -2246,6 +3304,18 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Expression or command (help)</source>
         <translation>式またはコマンド (help)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>コピー(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Select &amp;all</source>
+        <translation>すべて選択(&amp;A)</translation>
+    </message>
+    <message>
+        <source>C&amp;lear</source>
+        <translation>クリア(&amp;L)</translation>
     </message>
     <message>
         <source>Commands:</source>
@@ -2277,7 +3347,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>  graph, hex        show the graph or hex view</source>
-        <translation>  graph, hex        グラフビューまたは16進ビューを表示</translation>
+        <translation>  graph, hex        グラフビューまたは 16 進ビューを表示</translation>
     </message>
     <message>
         <source>  analyze, save     whole-program analysis, save comments</source>
@@ -2290,6 +3360,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>  strref [text]     list the instructions that refer to strings</source>
         <translation>  strref [text]     文字列を参照する命令を一覧表示</translation>
+    </message>
+    <message>
+        <source>  t [name]          show the local types, or the type named</source>
+        <translation>  t [name]          ローカル型、または指定した型を表示</translation>
     </message>
 </context>
 <context>
@@ -2376,7 +3450,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Last opened: %1</source>
-        <translation>最終オープン：%1</translation>
+        <translation>最後に開いた日時：%1</translation>
     </message>
 </context>
 <context>
@@ -2407,15 +3481,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>%1: %2 %3, %4 functions</source>
-        <translation>%1: %2 %3、関数 %4 個</translation>
+        <translation>%1：%2 %3、関数 %4 個</translation>
     </message>
     <message>
         <source>Reloaded the input file</source>
         <translation>入力ファイルを再読み込みしました</translation>
-    </message>
-    <message>
-        <source>Comments and history saved</source>
-        <translation>コメントと履歴を保存しました</translation>
     </message>
     <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
@@ -2423,7 +3493,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Edits are paused while the pending save, open or close completes.</source>
-        <translation>保留中の保存・オープン・クローズが完了するまで、編集は一時停止されます。</translation>
+        <translation>保留中の保存、読み込み、または閉じる処理が完了するまで、編集は一時停止されます。</translation>
     </message>
     <message>
         <source>Renamed %1 to %2</source>
@@ -2455,15 +3525,31 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Database saved: %1</source>
-        <translation>データベースを保存しました: %1</translation>
+        <translation>データベースを保存しました：%1</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files describe another build of %1 (SHA-256 %2…); their addresses may not match this one. The next edit records this build.</source>
+        <translation>プロジェクトのファイルは %1 の別のビルド（SHA-256 %2…）を記述しています。アドレスがこのビルドと一致しない可能性があります。次の編集でこのビルドが記録されます。</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here.</source>
+        <translation>プロジェクトのファイルがディスク上で変更されたため読み込みました。元に戻す操作はここから始まります。</translation>
+    </message>
+    <message>
+        <source>The project&apos;s files changed on disk and were loaded; undo starts here. Unsaved comments kept on top: %1</source>
+        <translation>プロジェクトのファイルがディスク上で変更されたため読み込みました。元に戻す操作はここから始まります。その上に保持した未保存のコメント：%1</translation>
+    </message>
+    <message>
+        <source>The input file changed on disk; reload it to continue editing.</source>
+        <translation>入力ファイルがディスク上で変更されました。編集を続けるには再読み込みしてください。</translation>
     </message>
     <message>
         <source>Could not save the database: %1</source>
-        <translation>データベースを保存できませんでした: %1</translation>
+        <translation>データベースを保存できませんでした：%1</translation>
     </message>
     <message>
         <source>Could not update the database: %1</source>
-        <translation>データベースを更新できませんでした: %1</translation>
+        <translation>データベースを更新できませんでした：%1</translation>
     </message>
     <message>
         <source>Strings: %1, at least %2 columns</source>
@@ -2495,11 +3581,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Platform: %1, as chosen</source>
-        <translation>プラットフォーム: %1（指定どおり）</translation>
+        <translation>プラットフォーム：%1（指定どおり）</translation>
     </message>
     <message>
         <source>Platform: %1, read from the code: %2</source>
-        <translation>プラットフォーム: %1（コードから判定: %2）</translation>
+        <translation>プラットフォーム：%1（コードから判定：%2）</translation>
     </message>
     <message>
         <source>An instruction is already defined at %1</source>
@@ -2507,15 +3593,15 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>PDB loaded: %1 (%2 names, identity verified)</source>
-        <translation>PDB を読み込みました: %1（%2 個の名前、識別情報を検証済み）</translation>
+        <translation>PDB を読み込みました：%1（%2 個の名前、識別情報を検証済み）</translation>
     </message>
     <message>
         <source>PDB display names imported: %1 (%2 names, unverified)</source>
-        <translation>PDB の表示名をインポートしました: %1（%2 個の名前、未検証）</translation>
+        <translation>PDB の表示名をインポートしました：%1（%2 個の名前、未検証）</translation>
     </message>
     <message>
         <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
-        <translation>解析用 PDB を読み込みました: %1（%2 個の名前、ユーザー確認済み、識別情報は未検証）</translation>
+        <translation>解析用 PDB を読み込みました：%1（%2 個の名前、ユーザー確認済み、識別情報は未検証）</translation>
     </message>
     <message>
         <source>Opened without the PDB the input names, as chosen</source>
@@ -2531,11 +3617,65 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Opened without its symbol table, as chosen</source>
-        <translation>選択どおり、シンボル テーブルを読み込まずに開きました</translation>
+        <translation>選択どおり、シンボルテーブルを読み込まずに開きました</translation>
     </message>
     <message>
         <source>DWARF loaded: %1</source>
         <translation>DWARF を読み込みました：%1</translation>
+    </message>
+    <message>
+        <source>Opened without the MAP file beside the input, as chosen</source>
+        <translation>選択どおり、入力ファイルの横にある MAP ファイルを読み込まずに開きました</translation>
+    </message>
+    <message>
+        <source>MAP loaded unchecked: %1 (%2 names added, of another build)</source>
+        <translation>MAP を照合せずに読み込みました：%1（追加した名前 %2 個、別のビルドのもの）</translation>
+    </message>
+    <message>
+        <source>MAP loaded: %1 (%2 names added)</source>
+        <translation>MAP を読み込みました：%1（追加した名前 %2 個）</translation>
+    </message>
+    <message>
+        <source>MAP not loaded: %1 does not fit the image as loaded</source>
+        <translation>MAP を読み込みませんでした：%1 は読み込んだイメージと一致しません</translation>
+    </message>
+    <message numerus="yes">
+        <source>Showed %n operands as members of %1</source>
+        <translation>
+            <numerusform>%n 個のオペランドを %1 のメンバーとして表示しました</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Applied patch at %1 (bytes: %2): %3 → %4</source>
+        <translation>%1 にパッチを適用しました（%2 バイト）：%3 → %4</translation>
+    </message>
+    <message>
+        <source>Instructions: %1 → %2</source>
+        <translation>命令：%1 → %2</translation>
+    </message>
+    <message>
+        <source>Restored original bytes at %1 (%2 ranges).</source>
+        <translation>%1 の元のバイトを復元しました（%2 範囲）。</translation>
+    </message>
+    <message>
+        <source>Patch at %1 made no changes.</source>
+        <translation>%1 のパッチによる変更はありません。</translation>
+    </message>
+    <message>
+        <source>Undid edit at %1.</source>
+        <translation>%1 の編集を元に戻しました。</translation>
+    </message>
+    <message>
+        <source>Redid edit at %1.</source>
+        <translation>%1 の編集をやり直しました。</translation>
+    </message>
+    <message>
+        <source>Rewritten function at %1 saved to %2</source>
+        <translation>%1 の書き換えた関数を %2 に保存しました</translation>
+    </message>
+    <message>
+        <source>Project changes saved</source>
+        <translation>プロジェクトの変更を保存しました</translation>
     </message>
 </context>
 <context>
@@ -2594,19 +3734,19 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>NeverD cannot load this file: %1</source>
-        <translation>NeverD はこのファイルを読み込めません: %1</translation>
+        <translation>NeverD はこのファイルを読み込めません：%1</translation>
     </message>
     <message>
         <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
-        <translation>ファイル名だけで一覧に挙がっています。内容はこの形式を示していません</translation>
+        <translation>ファイル名のみに基づいて表示されています。内容はこの形式を示していません</translation>
     </message>
     <message>
         <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
-        <translation>形式を示しているのはファイル名だけです。その方法で読み込むには行を選んでください</translation>
+        <translation>形式を示しているのはファイル名だけです。その形式で読み込むには、行を選択してください</translation>
     </message>
     <message>
         <source>Processor: %1</source>
-        <translation>プロセッサ: %1</translation>
+        <translation>プロセッサ：%1</translation>
     </message>
     <message>
         <source>%1 is not a hexadecimal number</source>
@@ -2666,11 +3806,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>The platform the code was built for, whose conventions it follows: how calls pass arguments, which registers they keep, and the sizes of C types</source>
-        <translation>コードのビルド対象プラットフォーム。その規約に従います：呼び出しの引数の渡し方、保持されるレジスタ、C の型のサイズ</translation>
+        <translation>コードのビルド対象のプラットフォームです。コードはその規約（呼び出し時の引数の渡し方、呼び出しで保持されるレジスタ、C の型のサイズ）に従います</translation>
     </message>
     <message>
         <source>No part of the file looks like code of an instruction set NeverD knows; choose the processor its code runs on</source>
-        <translation>ファイルのどの部分も NeverD が知っている命令セットのコードに見えません。コードが動作するプロセッサを選択してください</translation>
+        <translation>ファイルのどの部分も、NeverD が対応している命令セットのコードには見えません。コードが動作するプロセッサを選択してください</translation>
     </message>
     <message>
         <source>The code looks like %1 or %2, and its instructions do not tell which; choose the processor its code runs on</source>
@@ -2678,11 +3818,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Read from the bytes: %1</source>
-        <translation>バイトから判定: %1</translation>
+        <translation>バイトから判定：%1</translation>
     </message>
     <message>
         <source>Read from the bytes: %1, entry %2, base %3</source>
-        <translation>バイトから判定: %1、エントリ %2、ベース %3</translation>
+        <translation>バイトから判定：%1、エントリ %2、ベース %3</translation>
     </message>
     <message>
         <source>The code looks like %1, which NeverD cannot decode; choose a processor to read it as one anyway</source>
@@ -2767,7 +3907,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Restore</source>
-        <translation>元に戻す</translation>
+        <translation>元のサイズに戻す</translation>
     </message>
     <message>
         <source>Close</source>
@@ -2782,7 +3922,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Only analysis reads are allowed.</source>
-        <translation>解析の読み取りのみが許可されています。</translation>
+        <translation>解析結果の読み取りのみが許可されています。</translation>
     </message>
     <message>
         <source>The worker cannot restore analysis state.</source>
@@ -2797,7 +3937,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>The input file was linked with debug information stored here:</source>
-        <translation>入力ファイルにリンクされたデバッグ情報の保存先：</translation>
+        <translation>入力ファイルは、次の場所に保存されたデバッグ情報とリンクされています：</translation>
     </message>
     <message>
         <source>&amp;Browse…</source>
@@ -2805,7 +3945,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>The download was cancelled.</source>
-        <translation>ダウンロードを取り消しました。</translation>
+        <translation>ダウンロードはキャンセルされました。</translation>
     </message>
     <message>
         <source>A matching copy is at that path.</source>
@@ -2904,7 +4044,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Cannot open a temporary symbol file in %1: %2</source>
-        <translation>%1 に一時シンボルファイルを開けません: %2</translation>
+        <translation>%1 に一時シンボルファイルを開けません：%2</translation>
     </message>
     <message>
         <source>The symbol file exceeds the 2 GiB download limit.</source>
@@ -2912,7 +4052,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Cannot write the symbol file %1: %2</source>
-        <translation>シンボルファイル %1 に書き込めません: %2</translation>
+        <translation>シンボルファイル %1 に書き込めません：%2</translation>
     </message>
     <message>
         <source>%1 has no matching symbols for this build.</source>
@@ -2932,7 +4072,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Cannot create a temporary symbol directory in %1: %2</source>
-        <translation>%1 に一時シンボルディレクトリを作成できません: %2</translation>
+        <translation>%1 に一時シンボルディレクトリを作成できません：%2</translation>
     </message>
     <message>
         <source>Could not expand the compressed symbol file.</source>
@@ -2945,6 +4085,95 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>シンボルファイルを %1 に保存できません：%2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FindInViewDialog</name>
+    <message>
+        <source>Find in view</source>
+        <translation>ビュー内を検索</translation>
+    </message>
+    <message>
+        <source>Find text</source>
+        <translation>検索テキスト</translation>
+    </message>
+    <message>
+        <source>Match case</source>
+        <translation>大文字と小文字を区別</translation>
+    </message>
+    <message>
+        <source>Whole words</source>
+        <translation>単語全体を一致</translation>
+    </message>
+    <message>
+        <source>Wrap around</source>
+        <translation>末尾から先頭に戻る</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>前へ</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>次へ</translation>
+    </message>
+    <message>
+        <source>Previous match (%1 or %2)</source>
+        <translation>前の一致（%1 または %2）</translation>
+    </message>
+    <message>
+        <source>Next match (%1 or %2)</source>
+        <translation>次の一致（%1 または %2）</translation>
+    </message>
+    <message>
+        <source>&amp;Text:</source>
+        <translation>テキスト(&amp;T):</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>閉じる</translation>
+    </message>
+    <message>
+        <source>%1: current function, including folded code</source>
+        <translation>%1: 現在の関数（折りたたまれたコードを含む）</translation>
+    </message>
+    <message>
+        <source>Disassembly: loaded lines, including visible addresses</source>
+        <translation>逆アセンブリ: 読み込み済みの行（表示中のアドレスを含む）</translation>
+    </message>
+    <message>
+        <source>End of search range</source>
+        <translation>検索範囲の末尾です</translation>
+    </message>
+    <message>
+        <source>Start of search range</source>
+        <translation>検索範囲の先頭です</translation>
+    </message>
+    <message>
+        <source>Waiting for source…</source>
+        <translation>ソースコードを待機中…</translation>
+    </message>
+    <message>
+        <source>No searchable text available</source>
+        <translation>検索可能なテキストがありません</translation>
+    </message>
+    <message>
+        <source>Enter text to find</source>
+        <translation>検索するテキストを入力</translation>
+    </message>
+    <message>
+        <source>No matches</source>
+        <translation>一致なし</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>%n 件の一致</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -2962,8 +4191,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>関数名(&amp;N)</translation>
     </message>
     <message>
-        <source>Analysis decodes where the function ends</source>
-        <translation>関数の終わりは解析が決定します</translation>
+        <source>Analysis decides where the function ends</source>
+        <translation>関数の終了位置は解析によって決まります</translation>
     </message>
     <message>
         <source>&amp;Start address</source>
@@ -2991,7 +4220,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>Enter size of (in bytes)</source>
-        <translation>サイズ (バイト単位)</translation>
+        <translation>サイズ（バイト単位）</translation>
     </message>
     <message>
         <source>Local &amp;variables area</source>
@@ -3022,8 +4251,8 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>戻らない(&amp;O)</translation>
     </message>
     <message>
-        <source>Analysis ends every call to the function</source>
-        <translation>解析はこの関数への呼び出しをすべて終端として扱います</translation>
+        <source>Analysis stops control flow at every call to the function</source>
+        <translation>解析では、この関数への各呼び出しで制御フローが終了します</translation>
     </message>
     <message>
         <source>&amp;Far function</source>
@@ -3047,7 +4276,7 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     </message>
     <message>
         <source>BP e&amp;quals to SP</source>
-        <translation>BP は SP と等しい(&amp;Q)</translation>
+        <translation>BP と SP が等しい(&amp;Q)</translation>
     </message>
     <message>
         <source>Fuzzy SP</source>
@@ -3089,11 +4318,11 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <name>neverd::gui::SymbolTablePromptDialog</name>
     <message>
         <source>Symbol table found</source>
-        <translation>シンボル テーブルが見つかりました</translation>
+        <translation>シンボルテーブルが見つかりました</translation>
     </message>
     <message>
         <source>Load the symbol table?</source>
-        <translation>シンボル テーブルを読み込みますか？</translation>
+        <translation>シンボルテーブルを読み込みますか？</translation>
     </message>
     <message>
         <source>(%1: %2)</source>
@@ -3102,6 +4331,5449 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>(%1)</source>
         <translation>（%1）</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::FindingModel</name>
+    <message>
+        <source>Kind</source>
+        <translation>種類</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>証拠</translation>
+    </message>
+    <message>
+        <source>Binding</source>
+        <translation>バインディング</translation>
+    </message>
+    <message>
+        <source>Confidence</source>
+        <translation>信頼度</translation>
+    </message>
+    <message>
+        <source>Analyst disposition</source>
+        <translation>アナリストの判定</translation>
+    </message>
+    <message>
+        <source>Disposition source</source>
+        <translation>判定元</translation>
+    </message>
+    <message>
+        <source>Finding ID</source>
+        <translation>検出結果 ID</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::web::PackageReviewDialog</name>
+    <message>
+        <source>Not selected</source>
+        <translation>未選択</translation>
+    </message>
+    <message>
+        <source>Offline package review</source>
+        <translation>パッケージのオフラインレビュー</translation>
+    </message>
+    <message>
+        <source>Evidence coverage is partial. Analyst dispositions are caller assertions; package safety, publisher authentication and runtime behavior are not verified.</source>
+        <translation>証拠の網羅範囲は部分的です。アナリストの判定は呼び出し元による主張であり、パッケージの安全性、発行元の認証、実行時の動作は検証されていません。</translation>
+    </message>
+    <message>
+        <source>Preview file…</source>
+        <translation>ファイルをプレビュー…</translation>
+    </message>
+    <message>
+        <source>Preview directory…</source>
+        <translation>ディレクトリをプレビュー…</translation>
+    </message>
+    <message>
+        <source>Capture preview</source>
+        <translation>プレビュー内容をキャプチャ</translation>
+    </message>
+    <message>
+        <source>Select local evidence</source>
+        <translation>ローカルの証拠を選択</translation>
+    </message>
+    <message>
+        <source>Select local evidence directory</source>
+        <translation>ローカルの証拠ディレクトリを選択</translation>
+    </message>
+    <message>
+        <source>Loose manifest / lock file</source>
+        <translation>単体のマニフェスト／ロックファイル</translation>
+    </message>
+    <message>
+        <source>Inspect archive</source>
+        <translation>アーカイブを検査</translation>
+    </message>
+    <message>
+        <source>Captured artifact</source>
+        <translation>キャプチャしたアーティファクト</translation>
+    </message>
+    <message>
+        <source>Container</source>
+        <translation>コンテナー</translation>
+    </message>
+    <message>
+        <source>Manifest member</source>
+        <translation>アーカイブ内のマニフェスト</translation>
+    </message>
+    <message>
+        <source>Manifest format</source>
+        <translation>マニフェストの形式</translation>
+    </message>
+    <message>
+        <source>Include captured registry declarations</source>
+        <translation>キャプチャしたレジストリ宣言を含める</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>元のバイト列</translation>
+    </message>
+    <message>
+        <source>Registry metadata</source>
+        <translation>レジストリのメタデータ</translation>
+    </message>
+    <message>
+        <source>Capture descriptor</source>
+        <translation>キャプチャ記述子</translation>
+    </message>
+    <message>
+        <source>Assess selected evidence</source>
+        <translation>選択した証拠を評価</translation>
+    </message>
+    <message>
+        <source>Filter evidence, confidence, disposition or ID</source>
+        <translation>証拠、信頼度、判定、または ID で絞り込み</translation>
+    </message>
+    <message>
+        <source>Filter findings</source>
+        <translation>検出結果の絞り込み</translation>
+    </message>
+    <message>
+        <source>Selected finding evidence anchors</source>
+        <translation>選択した検出結果の証拠アンカー</translation>
+    </message>
+    <message>
+        <source>Unreviewed</source>
+        <translation>未レビュー</translation>
+    </message>
+    <message>
+        <source>Needs review</source>
+        <translation>要レビュー</translation>
+    </message>
+    <message>
+        <source>Accepted risk (analyst assertion)</source>
+        <translation>リスク受容（アナリストの主張）</translation>
+    </message>
+    <message>
+        <source>False positive (analyst assertion)</source>
+        <translation>誤検知（アナリストの主張）</translation>
+    </message>
+    <message>
+        <source>Record disposition</source>
+        <translation>判定を記録</translation>
+    </message>
+    <message>
+        <source>Save review…</source>
+        <translation>レビューを保存…</translation>
+    </message>
+    <message>
+        <source>Load review…</source>
+        <translation>レビューを読み込む…</translation>
+    </message>
+    <message>
+        <source>Restore loaded review</source>
+        <translation>読み込んだレビューを復元</translation>
+    </message>
+    <message>
+        <source>Stop worker</source>
+        <translation>解析プロセスを停止</translation>
+    </message>
+    <message>
+        <source>Starting NeverD analysis worker…</source>
+        <translation>NeverD の解析プロセスを起動中…</translation>
+    </message>
+    <message>
+        <source>Offline evidence analysis in progress</source>
+        <translation>オフラインで証拠を解析中</translation>
+    </message>
+    <message>
+        <source>Operation refused: %1</source>
+        <translation>操作が拒否されました：%1</translation>
+    </message>
+    <message>
+        <source>Reading bounded offline evidence…</source>
+        <translation>オフラインの証拠を上限付きで読み取り中…</translation>
+    </message>
+    <message>
+        <source>Preview: %1 artifacts, %2 bytes. Capture reads local bytes; source and names remain private.</source>
+        <translation>プレビュー：アーティファクト %1 個、%2 バイト。キャプチャではローカルのバイトを読み取ります。ソースと名前は非公開のままです。</translation>
+    </message>
+    <message>
+        <source>%1 findings · %2 analyst decisions · partial coverage · head %3</source>
+        <translation>検出結果 %1 件 · アナリストの判断 %2 件 · 網羅範囲は部分的 · ヘッド %3</translation>
+    </message>
+    <message>
+        <source>Select local evidence to preview or assess.</source>
+        <translation>プレビューまたは評価するローカルの証拠を選択してください。</translation>
+    </message>
+    <message>
+        <source>Save local review</source>
+        <translation>レビューをローカルに保存</translation>
+    </message>
+    <message>
+        <source>NeverD review (*.ndreview)</source>
+        <translation>NeverD レビュー (*.ndreview)</translation>
+    </message>
+    <message>
+        <source>Review save refused: %1</source>
+        <translation>レビューの保存が拒否されました：%1</translation>
+    </message>
+    <message>
+        <source>Saved opaque evidence IDs and analyst assertions locally.</source>
+        <translation>不透明な証拠 ID とアナリストの主張をローカルに保存しました。</translation>
+    </message>
+    <message>
+        <source>Load local review</source>
+        <translation>ローカルのレビューを読み込む</translation>
+    </message>
+    <message>
+        <source>Review load refused: %1</source>
+        <translation>レビューの読み込みが拒否されました：%1</translation>
+    </message>
+    <message>
+        <source>Loaded %1 assertions. Restore validates the entire chain against the current assessment; nothing has been applied.</source>
+        <translation>%1 件の主張を読み込みました。復元時には、チェーン全体を現在の評価と照合して検証します。まだ何も適用されていません。</translation>
+    </message>
+    <message>
+        <source>Unsaved review</source>
+        <translation>未保存のレビュー</translation>
+    </message>
+    <message>
+        <source>Discard unsaved analyst assertions and continue?</source>
+        <translation>未保存のアナリストの主張を破棄して続行しますか？</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LocalTypesView</name>
+    <message>
+        <source>C/C++ header (*.h)</source>
+        <translation>C/C++ ヘッダー (*.h)</translation>
+    </message>
+    <message>
+        <source>Rust (*.rs)</source>
+        <translation>Rust (*.rs)</translation>
+    </message>
+    <message>
+        <source>Go (*.go)</source>
+        <translation>Go (*.go)</translation>
+    </message>
+    <message>
+        <source>Windows names (ULONG)</source>
+        <translation>Windows の名前（ULONG）</translation>
+    </message>
+    <message>
+        <source>C keywords (unsigned long)</source>
+        <translation>C のキーワード（unsigned long）</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32_t)</source>
+        <translation>正確な幅（uint32_t）</translation>
+    </message>
+    <message>
+        <source>Exact widths (u32)</source>
+        <translation>正確な幅（u32）</translation>
+    </message>
+    <message>
+        <source>Exact widths (uint32)</source>
+        <translation>正確な幅（uint32）</translation>
+    </message>
+    <message>
+        <source>Filter types by name</source>
+        <translation>名前で型を絞り込み</translation>
+    </message>
+    <message>
+        <source>#</source>
+        <translation>#</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名前</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>種類</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>サイズ</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>メンバー</translation>
+    </message>
+    <message>
+        <source>Back to the type shown before (Esc)</source>
+        <translation>前に表示した型に戻る（Esc）</translation>
+    </message>
+    <message>
+        <source>Layout</source>
+        <translation>レイアウト</translation>
+    </message>
+    <message>
+        <source>Copy the layout or the source</source>
+        <translation>レイアウトまたはソースをコピー</translation>
+    </message>
+    <message>
+        <source>Export types as source</source>
+        <translation>型をソースとしてエクスポート</translation>
+    </message>
+    <message>
+        <source>Export this type…</source>
+        <translation>この型をエクスポート…</translation>
+    </message>
+    <message>
+        <source>Export selected types…</source>
+        <translation>選択した型をエクスポート…</translation>
+    </message>
+    <message>
+        <source>Export all types…</source>
+        <translation>すべての型をエクスポート…</translation>
+    </message>
+    <message>
+        <source>How the source names builtin types</source>
+        <translation>ソースでの組み込み型の名前</translation>
+    </message>
+    <message>
+        <source>Hex offsets</source>
+        <translation>16 進オフセット</translation>
+    </message>
+    <message>
+        <source>With dependencies</source>
+        <translation>依存する型を含める</translation>
+    </message>
+    <message>
+        <source>Also declare every type this one needs, so the source compiles</source>
+        <translation>この型が必要とするすべての型も宣言し、ソースがコンパイルできるようにする</translation>
+    </message>
+    <message>
+        <source>Layout checks</source>
+        <translation>レイアウト検査</translation>
+    </message>
+    <message>
+        <source>Follow each type with checks of its size and offsets that the compiler verifies</source>
+        <translation>各型の後に、コンパイラーが検証するサイズとオフセットのチェックを付ける</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>メンバー</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>オフセット</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>型</translation>
+    </message>
+    <message>
+        <source>This engine has no local types.</source>
+        <translation>この解析エンジンにはローカル型がありません。</translation>
+    </message>
+    <message>
+        <source>Reading the program's types…</source>
+        <translation>プログラムの型を読み込み中…</translation>
+    </message>
+    <message>
+        <source>Cannot read the types: %1</source>
+        <translation>型を読み込めません：%1</translation>
+    </message>
+    <message>
+        <source>The PDB defines no types.</source>
+        <translation>この PDB には型が定義されていません。</translation>
+    </message>
+    <message>
+        <source>Types that do not lay out as the PDB lists them: %1</source>
+        <translation>PDB の一覧どおりに配置できない型：%1</translation>
+    </message>
+    <message>
+        <source>Cannot lay the type out: %1</source>
+        <translation>型を配置できません：%1</translation>
+    </message>
+    <message>
+        <source>// Cannot render the type: %1</source>
+        <translation>// 型のソースを生成できません：%1</translation>
+    </message>
+    <message>
+        <source>structure</source>
+        <translation>構造体</translation>
+    </message>
+    <message>
+        <source>union</source>
+        <translation>共用体</translation>
+    </message>
+    <message>
+        <source>enumeration</source>
+        <translation>列挙型</translation>
+    </message>
+    <message>
+        <source>typedef</source>
+        <translation>型の別名</translation>
+    </message>
+    <message>
+        <source>function type</source>
+        <translation>関数型</translation>
+    </message>
+    <message>
+        <source>%1 (%2) bytes</source>
+        <translation>%1（%2）バイト</translation>
+    </message>
+    <message>
+        <source>aligned to %1</source>
+        <translation>%1 にアライン</translation>
+    </message>
+    <message>
+        <source>packed to %1</source>
+        <translation>%1 にパック</translation>
+    </message>
+    <message>
+        <source>declared only</source>
+        <translation>宣言のみ</translation>
+    </message>
+    <message>
+        <source>Enumerator</source>
+        <translation>列挙子</translation>
+    </message>
+    <message>
+        <source>Value</source>
+        <translation>値</translation>
+    </message>
+    <message>
+        <source>(padding)</source>
+        <translation>（パディング）</translation>
+    </message>
+    <message>
+        <source>Export local types</source>
+        <translation>ローカル型のエクスポート</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>%1 に書き込めません</translation>
+    </message>
+    <message>
+        <source>Exported to %1</source>
+        <translation>%1 にエクスポートしました</translation>
+    </message>
+    <message>
+        <source>Cannot export the types: %1</source>
+        <translation>型をエクスポートできません：%1</translation>
+    </message>
+    <message>
+        <source>Add types from a declaration</source>
+        <translation>宣言から型を追加</translation>
+    </message>
+    <message>
+        <source>Edit the type's declaration</source>
+        <translation>型の宣言を編集</translation>
+    </message>
+    <message>
+        <source>Delete the selected types</source>
+        <translation>選択した型を削除</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>型を追加…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>型を編集…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>型を削除…</translation>
+    </message>
+    <message>
+        <source>A declaration of yours no longer reads: %1</source>
+        <translation>宣言の 1 つが読み込めなくなりました：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations of yours no longer read: %1</source>
+        <translation>
+            <numerusform>宣言のうち %n 件が読み込めなくなりました：%1</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add types</source>
+        <translation>型の追加</translation>
+    </message>
+    <message>
+        <source>Cannot read the type: %1</source>
+        <translation>型を読み込めません：%1</translation>
+    </message>
+    <message>
+        <source>Edit %1</source>
+        <translation>%1 の編集</translation>
+    </message>
+    <message>
+        <source>Declared %1</source>
+        <translation>%1 を宣言しました</translation>
+    </message>
+    <message numerus="yes">
+        <source>Declared %n types</source>
+        <translation>
+            <numerusform>%n 個の型を宣言しました</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete the type %1?</source>
+        <translation>型 %1 を削除しますか？</translation>
+    </message>
+    <message numerus="yes">
+        <source>Delete %n types?</source>
+        <translation>
+            <numerusform>%n 個の型を削除しますか？</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Delete types</source>
+        <translation>型の削除</translation>
+    </message>
+    <message>
+        <source>Deleted %1</source>
+        <translation>%1 を削除しました</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n types</source>
+        <translation>
+            <numerusform>%n 個の型を削除しました</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(%1 still names it)</source>
+        <translation>（%1 がまだ参照しています）</translation>
+    </message>
+    <message numerus="yes">
+        <source>(%n types still name it)</source>
+        <translation>
+            <numerusform>（%n 個の型がまだ参照しています）</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Cannot delete the types: %1</source>
+        <translation>型を削除できません：%1</translation>
+    </message>
+    <message>
+        <source>The window closed</source>
+        <translation>ウィンドウが閉じられました</translation>
+    </message>
+    <message>
+        <source>All types</source>
+        <translation>すべての型</translation>
+    </message>
+    <message>
+        <source>From the PDB</source>
+        <translation>PDB から</translation>
+    </message>
+    <message>
+        <source>From system headers</source>
+        <translation>システムヘッダーから</translation>
+    </message>
+    <message>
+        <source>Declared</source>
+        <translation>宣言したもの</translation>
+    </message>
+    <message>
+        <source>Show the types of one origin</source>
+        <translation>一つの出所の型だけを表示</translation>
+    </message>
+    <message>
+        <source>Types: %1</source>
+        <translation>型：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from the PDB</source>
+        <translation>
+            <numerusform>PDB から %n 個</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from system headers</source>
+        <translation>
+            <numerusform>システムヘッダーから %n 個</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declared</source>
+        <translation>
+            <numerusform>宣言 %n 個</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Select a type to see its layout and source</source>
+        <translation>型を選択すると、そのレイアウトとソースを表示します</translation>
+    </message>
+    <message>
+        <source>No local type is named %1</source>
+        <translation>%1 という名前のローカル型はありません</translation>
+    </message>
+    <message>
+        <source>Python (*.py)</source>
+        <translation>Python (*.py)</translation>
+    </message>
+    <message>
+        <source>Exact widths (c_uint32)</source>
+        <translation>正確な幅（c_uint32）</translation>
+    </message>
+    <message>
+        <source>JavaScript module (*.js *.mjs)</source>
+        <translation>JavaScript モジュール (*.js *.mjs)</translation>
+    </message>
+    <message>
+        <source>JavaScript types (number, bigint)</source>
+        <translation>JavaScript の型（number、bigint）</translation>
+    </message>
+    <message>
+        <source>Lua (*.lua)</source>
+        <translation>Lua (*.lua)</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n members</source>
+        <translation>
+            <numerusform>メンバー %n 個</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1click to open</source>
+        <translation>%1クリックで開く</translation>
+    </message>
+    <message>
+        <source>Double-click or %2click to open %1</source>
+        <translation>ダブルクリックまたは %2クリックで %1 を開く</translation>
+    </message>
+    <message>
+        <source>bits %1 of the unit at %2</source>
+        <translation>%2 のユニットの %1 ビット</translation>
+    </message>
+    <message>
+        <source>at %1, %2 bytes</source>
+        <translation>%1、%2 バイト</translation>
+    </message>
+    <message>
+        <source>From DWARF</source>
+        <translation>DWARF から</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n from DWARF</source>
+        <translation>
+            <numerusform>DWARF から %n 個</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The DWARF defines no types.</source>
+        <translation>DWARF は型を定義していません。</translation>
+    </message>
+    <message>
+        <source>No local types: this program has no PDB or DWARF with types.</source>
+        <translation>ローカル型がありません: このプログラムには型を含む PDB も DWARF もありません。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DeclareTypesDialog</name>
+    <message>
+        <source>Declare types</source>
+        <translation>型の宣言</translation>
+    </message>
+    <message>
+        <source>Declare structures, unions, enumerations and typedefs. A type named as one of the program's replaces it.</source>
+        <translation>構造体、共用体、列挙型、typedef を宣言します。プログラムの型と同じ名前の型はそれを置き換えます。</translation>
+    </message>
+    <message>
+        <source>Declare</source>
+        <translation>宣言</translation>
+    </message>
+    <message>
+        <source>Read the declarations (%1)</source>
+        <translation>宣言を読み込む（%1）</translation>
+    </message>
+    <message>
+        <source>Line %1, column %2: %3</source>
+        <translation>%1 行 %2 列：%3</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MapPromptDialog</name>
+    <message>
+        <source>%1 MAP, %2 names. Its build stamp matches the input file.</source>
+        <translation>%1 の MAP、名前 %2 個。ビルドのタイムスタンプが入力ファイルと一致します。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. Its sections are where the input file has them.</source>
+        <translation>%1 の MAP、名前 %2 個。セクションの位置が入力ファイルと一致します。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records nothing to check against the input file.</source>
+        <translation>%1 の MAP、名前 %2 個。入力ファイルと照合できる情報は記録されていません。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It records the build stamp %3, but the input file&apos;s is %4: it belongs to another build.</source>
+        <translation>%1 の MAP、名前 %2 個。記録されたビルドのタイムスタンプは %3 ですが、入力ファイルは %4 です：別のビルドのものです。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. It places %3 at %4, %5 bytes, but the input file has it at %6, %7 bytes: it belongs to another build.</source>
+        <translation>%1 の MAP、名前 %2 個。%3 を %4（%5 バイト）に配置していますが、入力ファイルでは %6（%7 バイト）にあります：別のビルドのものです。</translation>
+    </message>
+    <message>
+        <source>%1 MAP, %2 names. %3 of its %4 functions lie outside the input file&apos;s code: it belongs to another build.</source>
+        <translation>%1 の MAP、名前 %2 個。関数 %4 個のうち %3 個が入力ファイルのコードの外にあります：別のビルドのものです。</translation>
+    </message>
+    <message>
+        <source>MAP file found</source>
+        <translation>MAP ファイルが見つかりました</translation>
+    </message>
+    <message>
+        <source>Load the MAP file anyway?</source>
+        <translation>それでも MAP ファイルを読み込みますか？</translation>
+    </message>
+    <message>
+        <source>Load the MAP file?</source>
+        <translation>MAP ファイルを読み込みますか？</translation>
+    </message>
+    <message>
+        <source>(%1)</source>
+        <translation>（%1）</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypePickerDialog</name>
+    <message numerus="yes">
+        <source>%1 of %n offsets land exactly on members</source>
+        <translation>
+            <numerusform>%n 個のオフセットのうち %1 個がメンバーにちょうど一致</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n types</source>
+        <translation>
+            <numerusform>%n 個中 %1 個の型</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n bytes</source>
+        <translation>
+            <numerusform>%n バイト</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n types</source>
+        <translation>
+            <numerusform>%n 個の型</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>アクセス</translation>
+    </message>
+    <message numerus="yes">
+        <source>Also show the %n other instructions that go through %1 as members</source>
+        <translation>
+            <numerusform>%1 を経由するほかの %n 個の命令もメンバーとして表示</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>適用</translation>
+    </message>
+    <message>
+        <source>At %1</source>
+        <translation>場所：%1</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>バイト</translation>
+    </message>
+    <message>
+        <source>Member</source>
+        <translation>メンバー</translation>
+    </message>
+    <message>
+        <source>No member holds this byte</source>
+        <translation>このバイトを含むメンバーはありません</translation>
+    </message>
+    <message>
+        <source>No type matches.</source>
+        <translation>一致する型はありません。</translation>
+    </message>
+    <message>
+        <source>Offset</source>
+        <translation>オフセット</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the operand&apos;s pointer…</source>
+        <translation>オペランドのポインター経由でコードが行うアクセスを読み取っています…</translation>
+    </message>
+    <message>
+        <source>Search types: a name, a typedef, Type.member or .member</source>
+        <translation>型を検索：名前、typedef、Type.member、.member</translation>
+    </message>
+    <message>
+        <source>Structure offset</source>
+        <translation>構造体オフセット</translation>
+    </message>
+    <message>
+        <source>The number %1 as an offset into a structure or union.</source>
+        <translation>数値 %1 を構造体または共用体内のオフセットとして扱います。</translation>
+    </message>
+    <message>
+        <source>The operand keeps its number.</source>
+        <translation>オペランドは数値のままです。</translation>
+    </message>
+    <message>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>プログラムには構造体も共用体もありません。ローカル型（%1）で宣言してください。</translation>
+    </message>
+    <message>
+        <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
+        <translation>レジスタは %2 の先頭から %1 バイトの位置（%3）を指しています。それより前へのアクセスは、CONTAINING_RECORD が戻すように、レコードの前方のメンバーを読み取ります。</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>型</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1 land on their members.</source>
+        <translation>
+            <numerusform>関数内で %1 を経由する %n 回のアクセスがメンバーにどう一致するかで型を並べています。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>address</source>
+        <translation>アドレス</translation>
+    </message>
+    <message>
+        <source>header</source>
+        <translation>ヘッダー</translation>
+    </message>
+    <message>
+        <source>outside the type</source>
+        <translation>型の範囲外</translation>
+    </message>
+    <message>
+        <source>padding</source>
+        <translation>パディング</translation>
+    </message>
+    <message>
+        <source>read</source>
+        <translation>読み取り</translation>
+    </message>
+    <message>
+        <source>the pointer</source>
+        <translation>ポインター</translation>
+    </message>
+    <message>
+        <source>user</source>
+        <translation>ユーザー</translation>
+    </message>
+    <message>
+        <source>write</source>
+        <translation>書き込み</translation>
+    </message>
+    <message>
+        <source>&amp;Name:</source>
+        <translation>名前(&amp;N):</translation>
+    </message>
+    <message numerus="yes">
+        <source>A pointer to %1, a record of %n bytes</source>
+        <translation>
+            <numerusform>%1 へのポインター（%n バイトの構造）</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Convert to struct *</source>
+        <translation>struct * に変換</translation>
+    </message>
+    <message>
+        <source>Reading what the code does through the parameter…</source>
+        <translation>コードがパラメーター経由で行う処理を読み込んでいます…</translation>
+    </message>
+    <message>
+        <source>The parameter&apos;s name, which the declaration keeps</source>
+        <translation>宣言に残るパラメーター名</translation>
+    </message>
+    <message numerus="yes">
+        <source>Types ranked by how the function&apos;s %n accesses through %1, where %2 arrives, land on their members.</source>
+        <translation>
+            <numerusform>%2 が渡される %1 経由の関数のアクセス %n 件が、メンバーにどう当たるかで型を並べ替えています。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>the register</source>
+        <translation>レジスター</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SetTypeDialog</name>
+    <message numerus="yes">
+        <source>%1, %n bytes</source>
+        <translation>
+            <numerusform>%1、%n バイト</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3, arrives in %4.</source>
+        <translation>%1 は %3 のパラメーター %2 で、%4 で渡されます。</translation>
+    </message>
+    <message>
+        <source>%1, parameter %2 of %3.</source>
+        <translation>%1 は %3 のパラメーター %2 です。</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>適用</translation>
+    </message>
+    <message>
+        <source>Arrives in</source>
+        <translation>渡し先</translation>
+    </message>
+    <message>
+        <source>At column %1: %2</source>
+        <translation>%1 列目: %2</translation>
+    </message>
+    <message>
+        <source>Hand the function&apos;s declaration back to its debug information and analysis</source>
+        <translation>関数の宣言をデバッグ情報と解析の結果に戻します</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名前</translation>
+    </message>
+    <message>
+        <source>Reading the declaration…</source>
+        <translation>宣言を読み込んでいます…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Reads: %n parameters</source>
+        <translation>
+            <numerusform>読み込み OK: パラメーター %n 個</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set the type of %1</source>
+        <translation>%1 の型を設定</translation>
+    </message>
+    <message>
+        <source>The declaration of %1 as the decompiler prints it, read against the local types as you type.</source>
+        <translation>デコンパイラーが出力する %1 の宣言です。入力中にローカル型に照らして読み込まれます。</translation>
+    </message>
+    <message>
+        <source>The declaration you gave %1, read against the local types as you type.</source>
+        <translation>%1 に指定した宣言です。入力中にローカル型に照らして読み込まれます。</translation>
+    </message>
+    <message>
+        <source>The function&apos;s declaration does not read, so its parameters cannot be typed one by one. Set the function&apos;s type instead.</source>
+        <translation>関数の宣言を読み込めないため、パラメーターを個別に型付けできません。代わりに関数の型を設定してください。</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>型</translation>
+    </message>
+    <message>
+        <source>Use the &amp;analysis&apos; type</source>
+        <translation>解析の型を使用(&amp;A)</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1 は %2 バイトのソース変数です。ローカル型からスカラー型またはポインター型を入力してください。</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>このソース型の指定を削除し、解析で得られた型を使用する</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypeLibrariesView</name>
+    <message>
+        <source>Add a type library</source>
+        <translation>型ライブラリを追加</translation>
+    </message>
+    <message>
+        <source>Leave the selected library out</source>
+        <translation>選択したライブラリを除外</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>ライブラリ</translation>
+    </message>
+    <message>
+        <source>Origin</source>
+        <translation>由来</translation>
+    </message>
+    <message>
+        <source>Data model</source>
+        <translation>データモデル</translation>
+    </message>
+    <message>
+        <source>Record ABI</source>
+        <translation>レコードレイアウト ABI</translation>
+    </message>
+    <message>
+        <source>Types</source>
+        <translation>型</translation>
+    </message>
+    <message>
+        <source>Prototypes</source>
+        <translation>プロトタイプ</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>競合</translation>
+    </message>
+    <message>
+        <source>Add a type library...</source>
+        <translation>型ライブラリを追加...</translation>
+    </message>
+    <message>
+        <source>Leave the library out</source>
+        <translation>このライブラリを除外</translation>
+    </message>
+    <message>
+        <source>Open a program to see the type libraries its types join.</source>
+        <translation>プログラムを開くと、その型に結合される型ライブラリが表示されます。</translation>
+    </message>
+    <message>
+        <source>This engine joins no type libraries.</source>
+        <translation>このエンジンは型ライブラリに対応していません。</translation>
+    </message>
+    <message>
+        <source>The program</source>
+        <translation>プログラム</translation>
+    </message>
+    <message>
+        <source>Added</source>
+        <translation>追加</translation>
+    </message>
+    <message>
+        <source>%1 joined nothing: %2</source>
+        <translation>%1 は何も結合されませんでした: %2</translation>
+    </message>
+    <message>
+        <source>Left out, as the program sizes a type they hold otherwise: %1</source>
+        <translation>プログラムでのサイズが異なる型を含むため除外: %1</translation>
+    </message>
+    <message>
+        <source>1 type library joins the program&apos;s types.</source>
+        <translation>1 個の型ライブラリがプログラムの型に結合されています。</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n type libraries join the program&apos;s types.</source>
+        <translation>
+            <numerusform>%n 個の型ライブラリがプログラムの型に結合されています。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No type library joins the program&apos;s types.</source>
+        <translation>プログラムの型に結合されている型ライブラリはありません。</translation>
+    </message>
+    <message>
+        <source>Left out: %1.</source>
+        <translation>除外: %1。</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be listed: %1</source>
+        <translation>型ライブラリを一覧表示できませんでした: %1</translation>
+    </message>
+    <message>
+        <source>Add a Type Library</source>
+        <translation>型ライブラリの追加</translation>
+    </message>
+    <message>
+        <source>Libraries whose records lay out as the program&apos;s:</source>
+        <translation>レコードのレイアウトがプログラムと同じライブラリ:</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>追加</translation>
+    </message>
+    <message>
+        <source>Reading the program&apos;s types again...</source>
+        <translation>プログラムの型を再読み込みしています...</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be changed: %1</source>
+        <translation>型ライブラリを変更できませんでした: %1</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PathfinderView</name>
+    <message>
+        <source>Add a waypoint</source>
+        <translation>経由点を追加</translation>
+    </message>
+    <message>
+        <source>Exclude a function</source>
+        <translation>関数を除外</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>削除</translation>
+    </message>
+    <message>
+        <source>Move the waypoint up</source>
+        <translation>経由点を上へ移動</translation>
+    </message>
+    <message>
+        <source>Move the waypoint down</source>
+        <translation>経由点を下へ移動</translation>
+    </message>
+    <message>
+        <source>Clear the waypoints</source>
+        <translation>経由点をすべて削除</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>関数</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>アドレス</translation>
+    </message>
+    <message>
+        <source>Reference</source>
+        <translation>参照</translation>
+    </message>
+    <message>
+        <source>Exclusions</source>
+        <translation>除外リスト</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>オプション</translation>
+    </message>
+    <message>
+        <source>Include data references</source>
+        <translation>データ参照を含める</translation>
+    </message>
+    <message>
+        <source>Shortest paths only</source>
+        <translation>最短経路のみ</translation>
+    </message>
+    <message>
+        <source>Maximum depth:</source>
+        <translation>最大深さ:</translation>
+    </message>
+    <message>
+        <source>Exclude a function...</source>
+        <translation>関数を除外...</translation>
+    </message>
+    <message>
+        <source>No function or import is at %1.</source>
+        <translation>%1 には関数もインポートもありません。</translation>
+    </message>
+    <message>
+        <source>%1 is a waypoint already.</source>
+        <translation>%1 はすでに経由点です。</translation>
+    </message>
+    <message numerus="yes">
+        <source>A path takes at most %n waypoints.</source>
+        <translation>
+            <numerusform>1 つのパスに指定できる経由点は最大 %n 個です。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add a Waypoint</source>
+        <translation>経由点の追加</translation>
+    </message>
+    <message>
+        <source>Exclude a Function</source>
+        <translation>関数の除外</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>関数</translation>
+    </message>
+    <message>
+        <source>Imports</source>
+        <translation>インポート</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>追加</translation>
+    </message>
+    <message>
+        <source>Exclude</source>
+        <translation>除外</translation>
+    </message>
+    <message>
+        <source>The call paths could not be found: %1</source>
+        <translation>呼び出しパスを探索できませんでした: %1</translation>
+    </message>
+    <message>
+        <source>No path</source>
+        <translation>経路なし</translation>
+    </message>
+    <message numerus="yes">
+        <source>Neither waypoint reaches the other in %n references.</source>
+        <translation>
+            <numerusform>どちらの経由点も %n 個以内の参照で相手に到達しません。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Direct reference, the other way round</source>
+        <translation>直接参照、逆方向</translation>
+    </message>
+    <message>
+        <source>Direct reference</source>
+        <translation>直接参照</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1), the other way round</source>
+        <translation>
+            <numerusform>%n 個のノード (最短: %1)、逆方向</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1)</source>
+        <translation>
+            <numerusform>%n 個のノード (最短: %1)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(more paths than listed)</source>
+        <translation>(一覧にない経路があります)</translation>
+    </message>
+    <message>
+        <source>jump at %1</source>
+        <translation>%1 でのジャンプ</translation>
+    </message>
+    <message>
+        <source>call through a slot at %1</source>
+        <translation>%1 でのポインター経由の呼び出し</translation>
+    </message>
+    <message>
+        <source>address taken at %1</source>
+        <translation>%1 でのアドレス取得</translation>
+    </message>
+    <message>
+        <source>call at %1</source>
+        <translation>%1 での呼び出し</translation>
+    </message>
+    <message>
+        <source>Path %1: %2</source>
+        <translation>パス %1: %2</translation>
+    </message>
+    <message>
+        <source>Exclusions (%1)</source>
+        <translation>除外リスト (%1)</translation>
+    </message>
+    <message>
+        <source>Open a program to find the call paths between its functions.</source>
+        <translation>プログラムを開くと、その関数間の呼び出しパスを探索できます。</translation>
+    </message>
+    <message>
+        <source>This engine does not find call paths.</source>
+        <translation>このエンジンは呼び出しパスを探索できません。</translation>
+    </message>
+    <message>
+        <source>Add two waypoints or more to find the call paths between them: %1 adds the function under the cursor.</source>
+        <translation>2 つ以上の経由点を追加すると、その間の呼び出しパスを探索します。%1 でカーソル位置の関数を追加します。</translation>
+    </message>
+    <message>
+        <source>Finding call paths...</source>
+        <translation>呼び出しパスを探索しています...</translation>
+    </message>
+    <message>
+        <source>No path found.</source>
+        <translation>経路が見つかりませんでした。</translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n segments have no path.</source>
+        <translation>
+            <numerusform>%n 個の区間のうち %1 個に経路がありません。</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Found %n nodes on the paths.</source>
+        <translation>
+            <numerusform>パス上に %n 個のノードが見つかりました。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Not every path is listed: lower the maximum depth or exclude functions.</source>
+        <translation>すべての経路は表示されていません。最大深さを下げるか、関数を除外してください。</translation>
+    </message>
+    <message>
+        <source>Add a waypoint...</source>
+        <translation>経由点を追加...</translation>
+    </message>
+    <message>
+        <source>Promote to waypoint</source>
+        <translation>経由点に昇格</translation>
+    </message>
+    <message>
+        <source>Exclude from paths</source>
+        <translation>パスから除外</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation>上へ移動</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation>下へ移動</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>コピー</translation>
+    </message>
+</context>
+<context>
+    <name>DeepLink</name>
+    <message>
+        <source>A link starts with neverd:// or ida://.</source>
+        <translation>リンクは neverd:// または ida:// で始まります。</translation>
+    </message>
+    <message>
+        <source>A Knowledge Exchange link names a file to download, not a place in a program.</source>
+        <translation>Knowledge Exchange リンクはダウンロードするファイルを指し、プログラム内の場所ではありません。</translation>
+    </message>
+    <message>
+        <source>A link names its input before its resource.</source>
+        <translation>リンクではリソースの前に入力ファイル名を指定します。</translation>
+    </message>
+    <message>
+        <source>A link names one resource, after its input's name when it has one.</source>
+        <translation>リンクではリソースを 1 つ指定します。入力ファイル名がある場合はその後に置きます。</translation>
+    </message>
+    <message>
+        <source>A link names functions, addresses, strings, segments, names, imports, exports, types or bookmarks, not "%1".</source>
+        <translation>リンクで指定できるのは functions、addresses、strings、segments、names、imports、exports、types、bookmarks です。"%1" ではありません。</translation>
+    </message>
+    <message>
+        <source>A link gives %1 once.</source>
+        <translation>リンクで %1 を指定できるのは 1 回だけです。</translation>
+    </message>
+    <message>
+        <source>%1 is a number, decimal or after 0x, not "%2".</source>
+        <translation>%1 は 10 進数または 0x に続く数値です。"%2" ではありません。</translation>
+    </message>
+    <message>
+        <source>A link has no view "%1".</source>
+        <translation>リンクにビュー "%1" はありません。</translation>
+    </message>
+    <message>
+        <source>sha256 is 8 to 64 hexadecimal digits of the input's SHA-256, not "%1".</source>
+        <translation>sha256 は入力ファイルの SHA-256 の 16 進 8～64 桁です。"%1" ではありません。</translation>
+    </message>
+    <message>
+        <source>A link gives rva or ea, not both.</source>
+        <translation>リンクでは rva と ea のどちらか一方を指定します。</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=, not an address.</source>
+        <translation>types リンクではアドレスではなく name= で型を指定します。</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=.</source>
+        <translation>types リンクでは name= で型を指定します。</translation>
+    </message>
+    <message>
+        <source>%1 links give their address with rva= or ea=.</source>
+        <translation>%1 リンクはアドレスを rva= または ea= で指定します。</translation>
+    </message>
+    <message>
+        <source>%1 links name an address, not a type.</source>
+        <translation>%1 リンクは型ではなくアドレスを指定します。</translation>
+    </message>
+    <message>
+        <source>%1 links show in %2, not in %3.</source>
+        <translation>%1 リンクは %3 ではなく %2 で表示します。</translation>
+    </message>
+</context>
+<context>
+    <name>LinkDispatch</name>
+    <message numerus="yes">
+        <source>%n running NeverDs have programs open, and the link names none of them; give it the input's name.</source>
+        <translation>
+            <numerusform>実行中の %n 個の NeverD がプログラムを開いていますが、リンクはどれも指していません。入力ファイル名を指定してください。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The NeverD that has %1 open did not answer.</source>
+        <translation>%1 を開いている NeverD が応答しませんでした。</translation>
+    </message>
+    <message>
+        <source>Opened in the NeverD that has %1 open (process %2).</source>
+        <translation>%1 を開いている NeverD で開きました (プロセス %2)。</translation>
+    </message>
+    <message>
+        <source>%1	(does not answer)</source>
+        <translation>%1	(応答なし)</translation>
+    </message>
+    <message>
+        <source>%1	(no program open)</source>
+        <translation>%1	(プログラムを開いていません)</translation>
+    </message>
+    <message>
+        <source>analysis complete</source>
+        <translation>解析完了</translation>
+    </message>
+    <message>
+        <source>analyzing</source>
+        <translation>解析中</translation>
+    </message>
+    <message>
+        <source>NeverD is not running.</source>
+        <translation>NeverD は実行されていません。</translation>
+    </message>
+    <message>
+        <source>neverd:// links no longer open in NeverD.</source>
+        <translation>neverd:// リンクは NeverD で開かなくなりました。</translation>
+    </message>
+    <message>
+        <source>The registry did not take the neverd:// handler.</source>
+        <translation>レジストリに neverd:// のハンドラーを登録できませんでした。</translation>
+    </message>
+    <message>
+        <source>neverd:// links now open in %1.</source>
+        <translation>neverd:// リンクは %1 で開くようになりました。</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; they open in it once it is in Applications.</source>
+        <translation>macOS では NeverD アプリケーションが neverd:// リンクを宣言します。アプリケーションフォルダーに置くと、リンクはそこで開きます。</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; remove the application to stop that.</source>
+        <translation>macOS では NeverD アプリケーションが neverd:// リンクを宣言します。やめるにはアプリケーションを削除してください。</translation>
+    </message>
+    <message>
+        <source>Could not remove %1.</source>
+        <translation>%1 を削除できませんでした。</translation>
+    </message>
+    <message>
+        <source>Could not write %1.</source>
+        <translation>%1 を書き込めませんでした。</translation>
+    </message>
+    <message>
+        <source>Wrote %1, but xdg-mime did not make it the handler of neverd:// links.</source>
+        <translation>%1 を書き込みましたが、xdg-mime はこれを neverd:// リンクのハンドラーにしませんでした。</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open.</source>
+        <translation>実行中の NeverD でリンクのプログラムを開いているものはありません。</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open, and no recently opened file is it; name the file too: neverd-gui FILE LINK</source>
+        <translation>実行中の NeverD でリンクのプログラムを開いているものはなく、最近開いたファイルにも該当するものがありません。ファイルも指定してください: neverd-gui FILE LINK</translation>
+    </message>
+</context>
+<context>
+    <name>ComparisonDialog</name>
+    <message>
+        <source>Applying debug symbols</source>
+        <translation>デバッグシンボルを適用中</translation>
+    </message>
+    <message>
+        <source>Checking ambiguous matches</source>
+        <translation>曖昧な対応を確認中</translation>
+    </message>
+    <message>
+        <source>Checking file identity</source>
+        <translation>ファイルの同一性を確認中</translation>
+    </message>
+    <message>
+        <source>Comparing binaries</source>
+        <translation>バイナリを比較中</translation>
+    </message>
+    <message>
+        <source>Comparing function context</source>
+        <translation>関数のコンテキストを比較中</translation>
+    </message>
+    <message>
+        <source>Comparing function features</source>
+        <translation>関数の特徴を比較中</translation>
+    </message>
+    <message>
+        <source>Discovering functions</source>
+        <translation>関数を検出中</translation>
+    </message>
+    <message>
+        <source>Finding function entries</source>
+        <translation>関数エントリを検索中</translation>
+    </message>
+    <message>
+        <source>Finding similar functions</source>
+        <translation>類似関数を検索中</translation>
+    </message>
+    <message>
+        <source>Identifying file format</source>
+        <translation>ファイル形式を識別中</translation>
+    </message>
+    <message>
+        <source>Input ready</source>
+        <translation>入力準備完了</translation>
+    </message>
+    <message>
+        <source>Loading input</source>
+        <translation>入力を読み込み中</translation>
+    </message>
+    <message>
+        <source>Matching exact features</source>
+        <translation>完全一致する特徴を照合中</translation>
+    </message>
+    <message>
+        <source>Measuring function changes</source>
+        <translation>関数の変更を測定中</translation>
+    </message>
+    <message>
+        <source>Preparing image metadata</source>
+        <translation>イメージのメタデータを準備中</translation>
+    </message>
+    <message>
+        <source>Preparing input bytes</source>
+        <translation>入力バイトを準備中</translation>
+    </message>
+    <message>
+        <source>Primary: %1</source>
+        <translation>主入力: %1</translation>
+    </message>
+    <message>
+        <source>Reading debug symbols</source>
+        <translation>デバッグシンボルを読み取り中</translation>
+    </message>
+    <message>
+        <source>Reading file</source>
+        <translation>ファイルを読み取り中</translation>
+    </message>
+    <message>
+        <source>Reading format metadata</source>
+        <translation>形式のメタデータを読み取り中</translation>
+    </message>
+    <message>
+        <source>Reading instructions</source>
+        <translation>命令を読み取り中</translation>
+    </message>
+    <message>
+        <source>Resolving calling convention</source>
+        <translation>呼び出し規約を解決中</translation>
+    </message>
+    <message>
+        <source>Secondary: %1</source>
+        <translation>副入力: %1</translation>
+    </message>
+    <message>
+        <source>Opening saved project</source>
+        <translation>保存済みプロジェクトを開いています</translation>
+    </message>
+    <message>
+        <source>Reading saved project settings</source>
+        <translation>保存済みプロジェクトの設定を読み込んでいます</translation>
+    </message>
+    <message>
+        <source>Unpacking and checking saved input</source>
+        <translation>保存済み入力を展開して検証しています</translation>
+    </message>
+    <message>
+        <source>Applying saved analysis</source>
+        <translation>保存済みの解析を適用しています</translation>
+    </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>保存済みの根拠を確認中</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>保存済みの比較を読み込み中</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>保存済みの比較を確認中</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>保存済みの測定値を再計算中</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>比較を復元中</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonChangesDialog</name>
+    <message>
+        <source>  %1 bytes · %2</source>
+        <translation>  %1 バイト · %2</translation>
+    </message>
+    <message>
+        <source>%1 slice · %2 operations · %3 · gaps: %4</source>
+        <translation>%1 スライス · %2 操作 · %3 · 未解決事項: %4</translation>
+    </message>
+    <message>
+        <source>%1 ↔ %2 · %3 · %4 matching / %5 retained observations
+Native rows %6 / %7; coverage %8; ambiguous associations %9. SSA: primary %10; secondary %11.
+Boundaries: primary %12; secondary %13.</source>
+        <translation>%1 ↔ %2 · %3 · 一致 %4 / 保持された観測 %5 件
+ネイティブ行 %6 / %7; カバレッジ %8; 曖昧な関連付け %9。SSA: 主入力 %10; 副入力 %11。
+境界: 主入力 %12; 副入力 %13。</translation>
+    </message>
+    <message>
+        <source>; indexing incomplete</source>
+        <translation>; 索引作成は不完全</translation>
+    </message>
+    <message>
+        <source>All local changes</source>
+        <translation>すべての局所的な変更</translation>
+    </message>
+    <message>
+        <source>Association: %1; native row: %2 (%3)</source>
+        <translation>関連付け: %1; ネイティブ行: %2 (%3)</translation>
+    </message>
+    <message>
+        <source>Call argument dependencies</source>
+        <translation>呼び出し引数の依存関係</translation>
+    </message>
+    <message>
+        <source>Call paths…</source>
+        <translation>呼び出し経路…</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
+    </message>
+    <message>
+        <source>Change context filter</source>
+        <translation>変更コンテキストのフィルター</translation>
+    </message>
+    <message>
+        <source>Change review — NeverD</source>
+        <translation>変更レビュー — NeverD</translation>
+    </message>
+    <message>
+        <source>Changes: %1</source>
+        <translation>変更: %1</translation>
+    </message>
+    <message>
+        <source>Choose an accepted function pair to review its changes.</source>
+        <translation>承認済みの関数ペアを選択して変更を確認してください。</translation>
+    </message>
+    <message>
+        <source>Comparison changed. Choose a function pair for a fresh review.</source>
+        <translation>比較が変更されました。関数ペアを選択して再度レビューしてください。</translation>
+    </message>
+    <message>
+        <source>Context: %1</source>
+        <translation>コンテキスト: %1</translation>
+    </message>
+    <message>
+        <source>Dependency slice</source>
+        <translation>依存関係スライス</translation>
+    </message>
+    <message>
+        <source>Evidence input</source>
+        <translation>根拠となる入力</translation>
+    </message>
+    <message>
+        <source>Inspect function</source>
+        <translation>関数を調査</translation>
+    </message>
+    <message>
+        <source>Memory write dependencies</source>
+        <translation>メモリ書き込みの依存関係</translation>
+    </message>
+    <message>
+        <source>Native evidence only; no unique SSA association.</source>
+        <translation>ネイティブの根拠のみです。一意な SSA 関連付けはありません。</translation>
+    </message>
+    <message>
+        <source>No original instruction on this side</source>
+        <translation>この側には元の命令がありません</translation>
+    </message>
+    <message>
+        <source>Operation gaps: %1</source>
+        <translation>操作の未解決事項: %1</translation>
+    </message>
+    <message>
+        <source>Original evidence</source>
+        <translation>元の根拠</translation>
+    </message>
+    <message>
+        <source>Predicate dependencies</source>
+        <translation>述語の依存関係</translation>
+    </message>
+    <message>
+        <source>Primary input</source>
+        <translation>主入力</translation>
+    </message>
+    <message>
+        <source>Priority orders review leads; it is not severity or confidence. Context is an observed dependency. Local operands and unique direct synthetic operands are compared; deeper expressions, security effects and fix presence remain unassessed.</source>
+        <translation>優先度はレビューの手掛かりの順序を示し、深刻度や信頼度ではありません。コンテキストは観測された依存関係です。局所オペランドと一意な直接合成オペランドを比較します。より深い式、セキュリティへの影響、修正の存在は未評価です。</translation>
+    </message>
+    <message>
+        <source>Refresh review</source>
+        <translation>レビューを更新</translation>
+    </message>
+    <message>
+        <source>Return dependencies</source>
+        <translation>戻り値の依存関係</translation>
+    </message>
+    <message>
+        <source>Reviewing local changes…</source>
+        <translation>局所的な変更を確認中…</translation>
+    </message>
+    <message>
+        <source>SSA node %1: %2, result %3 bytes; native anchor node %4</source>
+        <translation>SSA ノード %1: %2、結果 %3 バイト; ネイティブアンカーノード %4</translation>
+    </message>
+    <message>
+        <source>Secondary input</source>
+        <translation>副入力</translation>
+    </message>
+    <message>
+        <source>Select a change, then trace its inputs or uses.</source>
+        <translation>変更を選択し、入力または使用箇所を追跡してください。</translation>
+    </message>
+    <message>
+        <source>Synthetic operation: linked by a direct operand; its address is not an original instruction.</source>
+        <translation>合成操作: 直接オペランドで関連付けられています。アドレスは元の命令ではありません。</translation>
+    </message>
+    <message>
+        <source>Trace inputs</source>
+        <translation>入力を追跡</translation>
+    </message>
+    <message>
+        <source>Trace uses</source>
+        <translation>使用箇所を追跡</translation>
+    </message>
+    <message>
+        <source>Tracing %1 dependencies…</source>
+        <translation>%1 の依存関係を追跡中…</translation>
+    </message>
+    <message>
+        <source>complete</source>
+        <translation>完了</translation>
+    </message>
+    <message>
+        <source>constant %1</source>
+        <translation>定数 %1</translation>
+    </message>
+    <message>
+        <source>node %1</source>
+        <translation>ノード %1</translation>
+    </message>
+    <message>
+        <source>none recorded</source>
+        <translation>記録なし</translation>
+    </message>
+    <message>
+        <source>parameter</source>
+        <translation>パラメータ</translation>
+    </message>
+    <message>
+        <source>partial</source>
+        <translation>部分的</translation>
+    </message>
+    <message>
+        <source>unknown input</source>
+        <translation>不明な入力</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonCounterpartDialog</name>
+    <message>
+        <source>
+Removes the candidate&apos;s existing pair %1 ↔ %2 · %3.</source>
+        <translation>
+候補の既存のペア %1 ↔ %2 · %3 を解除します。</translation>
+    </message>
+    <message>
+        <source>
+Removes the existing pair %1 ↔ %2.</source>
+        <translation>
+既存のペア %1 ↔ %2 を解除します。</translation>
+    </message>
+    <message>
+        <source>
+This function has incomplete analysis.</source>
+        <translation>
+この関数の解析は不完全です。</translation>
+    </message>
+    <message>
+        <source>
+This records your chosen correspondence. Undo restores previous pairs.</source>
+        <translation>
+選択した対応を記録します。元に戻す操作で以前のペアを復元できます。</translation>
+    </message>
+    <message>
+        <source>%1 functions · Select a row to review its current pairing.</source>
+        <translation>%1 関数 · 行を選択して現在のペアを確認してください。</translation>
+    </message>
+    <message>
+        <source>%1 is already paired with this function.</source>
+        <translation>%1 はすでにこの関数とペアになっています。</translation>
+    </message>
+    <message>
+        <source>%1 of %2 candidates · These are hypotheses; choose using your analysis.
+%3</source>
+        <translation>%2 候補中 %1 件 · これらは仮説です。ご自身の解析に基づいて選択してください。
+%3</translation>
+    </message>
+    <message>
+        <source>Address: high to low</source>
+        <translation>アドレス: 降順</translation>
+    </message>
+    <message>
+        <source>Address: low to high</source>
+        <translation>アドレス: 昇順</translation>
+    </message>
+    <message>
+        <source>All functions</source>
+        <translation>すべての関数</translation>
+    </message>
+    <message>
+        <source>Ambiguity candidates</source>
+        <translation>曖昧な候補</translation>
+    </message>
+    <message>
+        <source>Candidate scope</source>
+        <translation>候補の範囲</translation>
+    </message>
+    <message>
+        <source>Choose a %1 counterpart for %2 · %3.</source>
+        <translation>%2 · %3 に対応する %1 側の関数を選択してください。</translation>
+    </message>
+    <message>
+        <source>Choose a %1 counterpart for %2.</source>
+        <translation>%2 に対応する %1 側の関数を選択してください。</translation>
+    </message>
+    <message>
+        <source>Choose counterpart — NeverD</source>
+        <translation>対応する関数を選択 — NeverD</translation>
+    </message>
+    <message>
+        <source>Could not load candidates. %1</source>
+        <translation>候補を読み込めませんでした。%1</translation>
+    </message>
+    <message>
+        <source>Counterpart functions</source>
+        <translation>対応する関数</translation>
+    </message>
+    <message>
+        <source>Current counterpart: %1. Select a replacement; Undo restores previous pairs.</source>
+        <translation>現在の対応する関数: %1。置き換える関数を選択してください。元に戻す操作で以前のペアを復元できます。</translation>
+    </message>
+    <message>
+        <source>Loading functions…</source>
+        <translation>関数を読み込み中…</translation>
+    </message>
+    <message>
+        <source>Name: A to Z</source>
+        <translation>名前: 昇順</translation>
+    </message>
+    <message>
+        <source>Name: Z to A</source>
+        <translation>名前: 降順</translation>
+    </message>
+    <message>
+        <source>No ambiguity candidates match. Clear the search or choose All functions.</source>
+        <translation>一致する曖昧な候補はありません。検索をクリアするか、「すべての関数」を選択してください。</translation>
+    </message>
+    <message>
+        <source>No functions match. Try another name or address.</source>
+        <translation>一致する関数はありません。別の名前またはアドレスを試してください。</translation>
+    </message>
+    <message>
+        <source>Pair %1 with %2 · %3.</source>
+        <translation>%1 を %2 · %3 とペアにします。</translation>
+    </message>
+    <message>
+        <source>Pair functions</source>
+        <translation>関数をペアにする</translation>
+    </message>
+    <message>
+        <source>Search by function name or hexadecimal address</source>
+        <translation>関数名または 16 進アドレスで検索</translation>
+    </message>
+    <message>
+        <source>Search counterpart functions</source>
+        <translation>対応する関数を検索</translation>
+    </message>
+    <message>
+        <source>Searching…</source>
+        <translation>検索中…</translation>
+    </message>
+    <message>
+        <source>Select a function to pair. Browsing leaves your comparison unchanged.</source>
+        <translation>ペアにする関数を選択してください。閲覧によって比較は変更されません。</translation>
+    </message>
+    <message>
+        <source>Size: large to small</source>
+        <translation>サイズ: 大きい順</translation>
+    </message>
+    <message>
+        <source>Size: small to large</source>
+        <translation>サイズ: 小さい順</translation>
+    </message>
+    <message>
+        <source>Sort functions</source>
+        <translation>関数を並べ替え</translation>
+    </message>
+    <message>
+        <source>The comparison changed. Close this window and choose the function again.</source>
+        <translation>比較が変更されました。このウィンドウを閉じて関数を選択し直してください。</translation>
+    </message>
+    <message>
+        <source>The comparison worker is unavailable. Close this window and retry the comparison.</source>
+        <translation>比較ワーカーは利用できません。このウィンドウを閉じて比較を再試行してください。</translation>
+    </message>
+    <message>
+        <source>This function has no retained ambiguity group. Choose All functions to select a counterpart.</source>
+        <translation>この関数には保持された曖昧性グループがありません。「すべての関数」を選んで対応する関数を選択してください。</translation>
+    </message>
+    <message>
+        <source>primary</source>
+        <translation>主入力</translation>
+    </message>
+    <message>
+        <source>secondary</source>
+        <translation>副入力</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonDialog</name>
+    <message>
+        <source>
+
+Primary identity: %1
+Secondary identity: %2
+
+Structural correspondence does not establish semantic equivalence or patch presence.</source>
+        <translation>
+
+主入力の識別情報: %1
+副入力の識別情報: %2
+
+構造上の対応は、意味的な等価性やパッチの存在を証明するものではありません。</translation>
+    </message>
+    <message>
+        <source> (difference %1)</source>
+        <translation> (差分 %1)</translation>
+    </message>
+    <message>
+        <source> Function discovery is partial.</source>
+        <translation> 関数の検出は一部のみ完了しています。</translation>
+    </message>
+    <message>
+        <source> image base</source>
+        <translation> イメージベース</translation>
+    </message>
+    <message>
+        <source> input format</source>
+        <translation> 入力形式</translation>
+    </message>
+    <message>
+        <source> s</source>
+        <translation> 秒</translation>
+    </message>
+    <message>
+        <source>%1  %2 / %3</source>
+        <translation>%1  %2 / %3</translation>
+    </message>
+    <message>
+        <source>%1 %2  ↔  %3 %4</source>
+        <translation>%1 %2  ↔  %3 %4</translation>
+    </message>
+    <message>
+        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete</source>
+        <translation>一致 %1 件  ·  変更 %2 件  ·  曖昧 %3 件  ·  不一致 %4 / %5 件  ·  不完全 %6 / %7 件</translation>
+    </message>
+    <message>
+        <source>All functions</source>
+        <translation>すべての関数</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>曖昧</translation>
+    </message>
+    <message>
+        <source>Analyst review…</source>
+        <translation>解析者によるレビュー…</translation>
+    </message>
+    <message>
+        <source>Auto format</source>
+        <translation>形式を自動判定</translation>
+    </message>
+    <message>
+        <source>Binary comparison</source>
+        <translation>バイナリ比較</translation>
+    </message>
+    <message>
+        <source>Bounded native instruction-run analysis for split, merge, inline and clone hypotheses. This does not validate behavior.</source>
+        <translation>分割、統合、インライン展開、複製の仮説に対する、上限付きネイティブ命令列解析です。動作は検証しません。</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>参照…</translation>
+    </message>
+    <message>
+        <source>Call paths…</source>
+        <translation>呼び出し経路…</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
+    </message>
+    <message>
+        <source>Cancellation requested — waiting for computation to stop…</source>
+        <translation>キャンセルを要求しました — 計算の停止を待機中…</translation>
+    </message>
+    <message>
+        <source>Capture bounded SSA observations in address order. Pipeline cancellation is checked between functions. See Dependencies for omitted and unsupported functions.</source>
+        <translation>アドレス順に上限付き SSA 観測を収集します。パイプラインのキャンセルは関数間で確認します。省略された関数と未対応の関数については「依存関係」を参照してください。</translation>
+    </message>
+    <message>
+        <source>Change review…</source>
+        <translation>変更レビュー…</translation>
+    </message>
+    <message>
+        <source>Changed</source>
+        <translation>変更あり</translation>
+    </message>
+    <message>
+        <source>Compare</source>
+        <translation>比較</translation>
+    </message>
+    <message>
+        <source>Compare two x86, x64 or AArch64 inputs with the same architecture and ABI. Matching scores are heuristic.</source>
+        <translation>同じアーキテクチャと ABI の x86、x64 または AArch64 入力を 2 つ比較します。マッチングスコアはヒューリスティックな評価です。</translation>
+    </message>
+    <message>
+        <source>Comparison complete. Scores are heuristic; inspect coverage and evidence.</source>
+        <translation>比較が完了しました。スコアはヒューリスティックです。カバレッジと根拠を確認してください。</translation>
+    </message>
+    <message>
+        <source>Comparison deadline</source>
+        <translation>比較の期限</translation>
+    </message>
+    <message>
+        <source>Computation stopped: %1. Partial results retained.</source>
+        <translation>計算を停止しました: %1。部分的な結果は保持されています。</translation>
+    </message>
+    <message>
+        <source>Confirm pair</source>
+        <translation>ペアを確定</translation>
+    </message>
+    <message>
+        <source>Control flow</source>
+        <translation>制御フロー</translation>
+    </message>
+    <message>
+        <source>Counterpart</source>
+        <translation>対応する関数</translation>
+    </message>
+    <message>
+        <source>Deadline</source>
+        <translation>期限</translation>
+    </message>
+    <message>
+        <source>Dependencies…</source>
+        <translation>依存関係…</translation>
+    </message>
+    <message>
+        <source>Dependency evidence</source>
+        <translation>依存関係の根拠</translation>
+    </message>
+    <message>
+        <source>Disassembly</source>
+        <translation>逆アセンブル</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>証拠</translation>
+    </message>
+    <message>
+        <source>Filter by name or address</source>
+        <translation>名前またはアドレスで絞り込み</translation>
+    </message>
+    <message>
+        <source>Filter functions</source>
+        <translation>関数を絞り込み</translation>
+    </message>
+    <message>
+        <source>Fit graphs</source>
+        <translation>グラフを画面に合わせる</translation>
+    </message>
+    <message>
+        <source>Function difference %1. No completed instruction comparison is available. Use Retry difference to recompute.
+
+</source>
+        <translation>関数差分 %1。完了した命令比較はありません。「差分を再試行」で再計算してください。
+
+</translation>
+    </message>
+    <message>
+        <source>Function difference stopped. Use Retry difference to recompute; no completed instruction comparison is shown.</source>
+        <translation>関数差分を停止しました。「差分を再試行」で再計算してください。完了した命令比較は表示されていません。</translation>
+    </message>
+    <message>
+        <source>Function state</source>
+        <translation>関数の状態</translation>
+    </message>
+    <message>
+        <source>Functions per input</source>
+        <translation>入力ごとの関数数</translation>
+    </message>
+    <message>
+        <source>Image base</source>
+        <translation>イメージベース</translation>
+    </message>
+    <message>
+        <source>Index and verify finite dependency neighborhoods across functions. Includes dependency evidence.</source>
+        <translation>関数間の有限な依存関係近傍に索引を作成し、検証します。依存関係の根拠を含みます。</translation>
+    </message>
+    <message>
+        <source>Inputs changed. Reload before continuing review.</source>
+        <translation>入力が変更されました。レビューを続ける前に再読み込みしてください。</translation>
+    </message>
+    <message>
+        <source>Inspect overlapping region and transformation hypotheses. Enable analysis in Settings before comparing.</source>
+        <translation>重複領域と変換仮説を確認します。比較前に設定で解析を有効にしてください。</translation>
+    </message>
+    <message>
+        <source>Inventory side</source>
+        <translation>一覧の対象側</translation>
+    </message>
+    <message>
+        <source>Loading %1…</source>
+        <translation>%1 を読み込み中…</translation>
+    </message>
+    <message>
+        <source>Loading comparison inputs…</source>
+        <translation>比較入力を読み込み中…</translation>
+    </message>
+    <message>
+        <source>Match: %1
+%2
+
+Similarity: %3
+Heuristic confidence: %4%
+Changes: %5
+Analyst confirmed: %6
+Coverage: %7</source>
+        <translation>対応: %1
+%2
+
+類似度: %3
+ヒューリスティックな信頼度: %4%
+変更: %5
+解析者による確認: %6
+カバレッジ: %7</translation>
+    </message>
+    <message>
+        <source>Matched</source>
+        <translation>一致</translation>
+    </message>
+    <message>
+        <source>Matching evidence appears here.</source>
+        <translation>対応の根拠がここに表示されます。</translation>
+    </message>
+    <message>
+        <source>Maximum dependency functions per input</source>
+        <translation>入力ごとの依存関係関数数の上限</translation>
+    </message>
+    <message>
+        <source>Minimum similarity</source>
+        <translation>最小類似度</translation>
+    </message>
+    <message>
+        <source>Native instruction regions…</source>
+        <translation>ネイティブ命令領域…</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff)</source>
+        <translation>NeverD 比較 (*.nddiff)</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff);;JSON (*.json)</source>
+        <translation>NeverD 比較 (*.nddiff);;JSON (*.json)</translation>
+    </message>
+    <message>
+        <source>No accepted counterpart. Inspect ambiguity candidates or choose a pair manually.</source>
+        <translation>承認済みの対応する関数がありません。曖昧な候補を調べるか、手動でペアを選択してください。</translation>
+    </message>
+    <message>
+        <source>No deadline</source>
+        <translation>期限なし</translation>
+    </message>
+    <message>
+        <source>Pair with…</source>
+        <translation>ペアにする…</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>主入力</translation>
+    </message>
+    <message>
+        <source>Pseudocode</source>
+        <translation>疑似コード</translation>
+    </message>
+    <message>
+        <source>Raw AArch64</source>
+        <translation>生バイナリ AArch64</translation>
+    </message>
+    <message>
+        <source>Raw x64</source>
+        <translation>生バイナリ x64</translation>
+    </message>
+    <message>
+        <source>Raw x86</source>
+        <translation>生バイナリ x86</translation>
+    </message>
+    <message>
+        <source>Ready to compare two native binaries.</source>
+        <translation>2 つのネイティブバイナリを比較する準備ができました。</translation>
+    </message>
+    <message>
+        <source>Recompute a cancelled or timed-out function difference.</source>
+        <translation>キャンセルまたはタイムアウトした関数差分を再計算します。</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <translation>やり直す</translation>
+    </message>
+    <message>
+        <source>Region hypotheses</source>
+        <translation>領域の仮説</translation>
+    </message>
+    <message>
+        <source>Regions…</source>
+        <translation>領域…</translation>
+    </message>
+    <message>
+        <source>Reopen comparison</source>
+        <translation>比較を再度開く</translation>
+    </message>
+    <message>
+        <source>Reopen…</source>
+        <translation>再度開く…</translation>
+    </message>
+    <message>
+        <source>Retry difference</source>
+        <translation>差分を再試行</translation>
+    </message>
+    <message>
+        <source>SSA dependency regions…</source>
+        <translation>SSA 依存関係領域…</translation>
+    </message>
+    <message>
+        <source>SSA region hypotheses</source>
+        <translation>SSA 領域の仮説</translation>
+    </message>
+    <message>
+        <source>Save / export…</source>
+        <translation>保存 / エクスポート…</translation>
+    </message>
+    <message>
+        <source>Save comparison</source>
+        <translation>比較を保存</translation>
+    </message>
+    <message>
+        <source>Saved %1</source>
+        <translation>%1 を保存しました</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>副入力</translation>
+    </message>
+    <message>
+        <source>Select %1 input</source>
+        <translation>%1 を選択</translation>
+    </message>
+    <message>
+        <source>Select a function to inspect its counterpart.</source>
+        <translation>関数を選択して対応する関数を調べてください。</translation>
+    </message>
+    <message>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>ブロックを選択して対応先を追跡します。%1ホイールで拡大縮小できます。</translation>
+    </message>
+    <message>
+        <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
+        <translation>両方の入力と元の設定を選択してから、保存した比較を開いてください。入力ハッシュと解析リビジョンを確認します。</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>設定</translation>
+    </message>
+    <message>
+        <source>Starting comparison worker…</source>
+        <translation>比較ワーカーを起動中…</translation>
+    </message>
+    <message>
+        <source>Trace observed callers, callees and entry points of this function.</source>
+        <translation>この関数で観測された呼び出し元、呼び出し先、エントリポイントを追跡します。</translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation>元に戻す</translation>
+    </message>
+    <message>
+        <source>Unmatch</source>
+        <translation>対応を解除</translation>
+    </message>
+    <message>
+        <source>Unmatched</source>
+        <translation>不一致</translation>
+    </message>
+    <message>
+        <source>Use symbol names</source>
+        <translation>シンボル名を使用</translation>
+    </message>
+    <message>
+        <source>Validate returns…</source>
+        <translation>戻り値を検証…</translation>
+    </message>
+    <message>
+        <source>decoded bodies complete</source>
+        <translation>デコード済み本体は完全</translation>
+    </message>
+    <message>
+        <source>identity only; no bodies available</source>
+        <translation>識別情報のみ; 本体なし</translation>
+    </message>
+    <message>
+        <source>incomplete</source>
+        <translation>不完全</translation>
+    </message>
+    <message>
+        <source>no</source>
+        <translation>いいえ</translation>
+    </message>
+    <message>
+        <source>not applicable</source>
+        <translation>該当なし</translation>
+    </message>
+    <message>
+        <source>yes</source>
+        <translation>はい</translation>
+    </message>
+    <message>
+        <source>New binary or saved project</source>
+        <translation>新しいバイナリまたは保存済みプロジェクト</translation>
+    </message>
+    <message>
+        <source>Original binary or saved project</source>
+        <translation>元のバイナリまたは保存済みプロジェクト</translation>
+    </message>
+    <message>
+        <source>Select a binary or an NDDB saved project. Saved projects use their stored load settings and a private working copy.</source>
+        <translation>バイナリまたは保存済みの NDDB プロジェクトを選択します。保存済みプロジェクトでは、保存された読み込み設定と専用の作業コピーを使用します。</translation>
+    </message>
+    <message>
+        <source>SSA representation</source>
+        <translation>SSA 表現</translation>
+    </message>
+    <message>
+        <source>Original SSA</source>
+        <translation>元の SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA</source>
+        <translation>最適化後の SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA reduces compiler scaffolding for comparison. Functions outside its supported scope remain listed with a reason.</source>
+        <translation>最適化後の SSA は、比較のためにコンパイラーが追加した補助構造を簡略化します。対応範囲外の関数も理由とともに一覧に表示されます。</translation>
+    </message>
+    <message>
+        <source>Shared SSA fragments</source>
+        <translation>共通 SSA フラグメント</translation>
+    </message>
+    <message>
+        <source>Find shared computations across changed dependencies. External input producers remain unverified. Includes SSA region hypotheses.</source>
+        <translation>依存関係が変化しても共通する計算を検索します。外部入力の生成ノードは未検証のままです。SSA 領域の仮説を含みます。</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>パラメータビュー付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
+        <translation>パラメータビューは、条件を満たす 64 ビットのネイティブパラメータの下位 32 ビットを比較します。元のビット幅と出所も確認できます。</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>ループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
+        <translation>ループ解析は、対応する範囲で終了性を証明してから計算を比較します。パラメータビューを含み、証明できないループの元の契約は保持します。</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>複数ブロックのループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with nested loop analysis</source>
+        <translation>入れ子ループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>分岐ループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>ラップアラウンドループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter-bound loop analysis</source>
+        <translation>パラメーターを境界とするループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with expression-bound loop analysis</source>
+        <translation>式を境界とするループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>
+
+Primary name: %1
+Secondary name: %2</source>
+        <translation>
+
+比較元の名前: %1
+比較先の名前: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonFlowDialog</name>
+    <message>
+        <source>%1 slice · %2 nodes · %3
+Gaps: %4</source>
+        <translation>%1 スライス · %2 ノード · %3
+未解決事項: %4</translation>
+    </message>
+    <message>
+        <source>%1 · %2
+%3</source>
+        <translation>%1 · %2
+%3</translation>
+    </message>
+    <message>
+        <source>%1 · %2 available / %3 processed / %4 eligible functions · %5 unprocessed
+%6 unsupported, %7 resource limited, %8 failed. Collection state: %9.</source>
+        <translation>%1 · 利用可能 %2 / 処理済み %3 / 対象 %4 関数 · 未処理 %5
+未対応 %6、リソース制限 %7、失敗 %8。収集状態: %9。</translation>
+    </message>
+    <message>
+        <source>%1 · %2 · %3 SSA operations
+Select an operation to follow dependencies. Synthetic operations have block provenance.</source>
+        <translation>%1 · %2 · SSA 操作 %3 件
+操作を選択して依存関係を追跡してください。合成操作には出所のブロック情報があります。</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
+    </message>
+    <message>
+        <source>Dependency evidence — NeverD</source>
+        <translation>依存関係の根拠 — NeverD</translation>
+    </message>
+    <message>
+        <source>Enable dependency evidence in comparison settings, then compare the inputs.</source>
+        <translation>比較の設定で依存関係の根拠を有効にしてから、入力を比較してください。</translation>
+    </message>
+    <message>
+        <source>Enable dependency evidence in comparison settings.</source>
+        <translation>比較の設定で依存関係の根拠を有効にしてください。</translation>
+    </message>
+    <message>
+        <source>Include control dependencies</source>
+        <translation>制御依存関係を含める</translation>
+    </message>
+    <message>
+        <source>Inspect original function</source>
+        <translation>元の関数を調査</translation>
+    </message>
+    <message>
+        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. These observations do not prove whole-function equivalence.</source>
+        <translation>観測された SSA 依存関係です。呼び出し、エイリアス、未解決の制御フローは明示的な未解決事項として残っています。これらの観測結果は、関数全体の等価性を証明するものではありません。</translation>
+    </message>
+    <message>
+        <source>Primary input</source>
+        <translation>主入力</translation>
+    </message>
+    <message>
+        <source>Secondary input</source>
+        <translation>副入力</translation>
+    </message>
+    <message>
+        <source>Select a function to inspect its SSA operations.</source>
+        <translation>関数を選択して SSA 操作を調べてください。</translation>
+    </message>
+    <message>
+        <source>Select an operation, then trace its inputs or uses.</source>
+        <translation>操作を選択し、入力または使用箇所を追跡してください。</translation>
+    </message>
+    <message>
+        <source>Trace inputs</source>
+        <translation>入力を追跡</translation>
+    </message>
+    <message>
+        <source>Trace uses</source>
+        <translation>使用箇所を追跡</translation>
+    </message>
+    <message>
+        <source>Tracing %1 dependencies…</source>
+        <translation>%1 の依存関係を追跡中…</translation>
+    </message>
+    <message>
+        <source>none observed within this model</source>
+        <translation>このモデル内では観測なし</translation>
+    </message>
+    <message>
+        <source>Original SSA</source>
+        <translation>元の SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA</source>
+        <translation>最適化後の SSA</translation>
+    </message>
+    <message>
+        <source>SSA representation: %1</source>
+        <translation>SSA 表現：%1</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter views</source>
+        <translation>パラメータビュー付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>ループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Return progress proved: acyclic control flow.</source>
+        <translation>終了性を証明済み：循環のない制御フロー。</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1</source>
+        <translation>終了性を証明済み · カウンターループ：%1</translation>
+    </message>
+    <message>
+        <source>Return progress unproved: original contracts retained.</source>
+        <translation>終了性は未証明：元の契約を保持。</translation>
+    </message>
+    <message>
+        <source>Source contract:
+%1
+Observed contract:
+%2
+Progress does not establish equal loop counts or function results.</source>
+        <translation>元の契約：
+%1
+観測された契約：
+%2
+終了性はループ回数や関数の結果の一致を証明するものではありません。</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>複数ブロックのループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with nested loop analysis</source>
+        <translation>入れ子ループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>証明済みループ：ヘッダーブロック %1 → ラッチブロック %2 · カウンター #%3 → 更新 #%4 · 条件 #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>分岐ループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1 · Backedges: %2 · Guards: %3</source>
+        <translation>復帰の進行を証明済み · カウンターループ: %1 · 後退辺: %2 · ガード: %3</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
+        <translation>証明済みループ: ヘッダーブロック %1 → ラッチブロック %2 · カウンター #%3 → 更新 #%4 · ブロック %6 のガード #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>ラップアラウンドループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>証明根拠：オーバーフローしない契約を持つ単調カウンター。</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>証明根拠：ラップアラウンド後も、すべてのカウンター周期が共通の出口に到達します。</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter-bound loop analysis</source>
+        <translation>パラメーターを境界とするループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with expression-bound loop analysis</source>
+        <translation>式を境界とするループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit relative to an input parameter. Undefined behavior may occur before exit.</source>
+        <translation>証明：すべてのカウンター周期が入力パラメーターに対する共通の出口に到達します。終了前に未定義動作が発生する可能性があります。</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit relative to an input-derived expression. Undefined behavior may occur before exit.</source>
+        <translation>証明：カウンターの各周期は、入力から導出された式に対する共通の出口に到達します。終了前に未定義動作が発生する場合があります。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonGraph</name>
+    <message>
+        <source>%1 control-flow graph</source>
+        <translation>%1 の制御フローグラフ</translation>
+    </message>
+    <message>
+        <source>Control-flow graph</source>
+        <translation>制御フローグラフ</translation>
+    </message>
+    <message>
+        <source>Incomplete control flow</source>
+        <translation>不完全な制御フロー</translation>
+    </message>
+    <message>
+        <source>Laying out control flow…</source>
+        <translation>制御フローを配置中…</translation>
+    </message>
+    <message>
+        <source>No counterpart</source>
+        <translation>対応する関数なし</translation>
+    </message>
+    <message>
+        <source>Viewport limit reached — zoom in to inspect remaining blocks</source>
+        <translation>表示領域の上限に到達しました — 拡大して残りのブロックを確認してください</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonImpactDialog</name>
+    <message>
+        <source>%1 qualified call contracts in %2 retained sites; inspection %3. Scope: calls in reached functions, including unresolved and frontier targets. Native coverage remains independent. Select a row and open Selected call for roles and assumptions.</source>
+        <translation>保持された %2 箇所に認定済み呼び出し契約 %1 件; 調査 %3。対象範囲: 到達した関数内の呼び出し（未解決の対象と探索境界の対象を含む）。ネイティブコードのカバレッジは独立しています。行を選択し「選択した呼び出し」を開くと役割と仮定を確認できます。</translation>
+    </message>
+    <message>
+        <source>%1 · %2 functions · %3 entries/exports · %4 call sites · %5 unresolved or coverage boundaries · %6 frontier sites
+Indexed %7 / %8 functions; %9; %10.</source>
+        <translation>%1 · %2 関数 · エントリ/エクスポート %3 件 · 呼び出し箇所 %4 件 · 未解決またはカバレッジ境界 %5 件 · 探索境界の箇所 %6 件
+索引作成済み %7 / %8 関数; %9; %10。</translation>
+    </message>
+    <message>
+        <source>%1: argument %2</source>
+        <translation>%1: 引数 %2</translation>
+    </message>
+    <message>
+        <source>All reached functions</source>
+        <translation>到達したすべての関数</translation>
+    </message>
+    <message>
+        <source>All traversed call sites</source>
+        <translation>探索したすべての呼び出し箇所</translation>
+    </message>
+    <message>
+        <source>Analysis limit reached</source>
+        <translation>解析上限に到達</translation>
+    </message>
+    <message>
+        <source>Assumption: the imported function resolves to the declared built-in call contract.</source>
+        <translation>仮定: インポートされた関数は、宣言された組み込み呼び出し契約に解決されます。</translation>
+    </message>
+    <message>
+        <source>Bytes: %1</source>
+        <translation>バイト: %1</translation>
+    </message>
+    <message>
+        <source>Call contracts in reached functions</source>
+        <translation>到達した関数内の呼び出し契約</translation>
+    </message>
+    <message>
+        <source>Call paths and possible impact — NeverD</source>
+        <translation>呼び出し経路と潜在的な影響 — NeverD</translation>
+    </message>
+    <message>
+        <source>Call sites</source>
+        <translation>呼び出し箇所</translation>
+    </message>
+    <message>
+        <source>Caller: %1 (%2)</source>
+        <translation>呼び出し元: %1 (%2)</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>キャンセル済み</translation>
+    </message>
+    <message>
+        <source>Capacity</source>
+        <translation>容量</translation>
+    </message>
+    <message>
+        <source>Choose a starting function, then trace its callers or callees.</source>
+        <translation>開始関数を選択し、呼び出し元または呼び出し先を追跡してください。</translation>
+    </message>
+    <message>
+        <source>Complete</source>
+        <translation>完了</translation>
+    </message>
+    <message>
+        <source>Destination</source>
+        <translation>宛先</translation>
+    </message>
+    <message>
+        <source>Format</source>
+        <translation>形式</translation>
+    </message>
+    <message>
+        <source>Function entry, e.g. 0x401000</source>
+        <translation>関数エントリ（例: 0x401000）</translation>
+    </message>
+    <message>
+        <source>Global scanned scope, including functions with no known path to the starting function. Unknown callers may be missing.</source>
+        <translation>走査した全体範囲です。開始関数への既知の経路がない関数も含みます。未知の呼び出し元が欠けている場合があります。</translation>
+    </message>
+    <message>
+        <source>Input buffer</source>
+        <translation>入力バッファ</translation>
+    </message>
+    <message>
+        <source>Inspect original function</source>
+        <translation>元の関数を調査</translation>
+    </message>
+    <message>
+        <source>Known edges beyond the depth or function limit</source>
+        <translation>深さまたは関数数の上限を超える既知の辺</translation>
+    </message>
+    <message>
+        <source>Known targets omitted by the depth or function limit. Work or index stops can leave further targets unobserved.</source>
+        <translation>深さまたは関数数の上限により省略された既知の対象です。作業や索引作成の停止により、さらに未観測の対象が残る場合があります。</translation>
+    </message>
+    <message>
+        <source>Length</source>
+        <translation>長さ</translation>
+    </message>
+    <message>
+        <source>Maximum depth</source>
+        <translation>最大深さ</translation>
+    </message>
+    <message>
+        <source>Native-associated SSA node: %1</source>
+        <translation>ネイティブに関連付けられた SSA ノード: %1</translation>
+    </message>
+    <message>
+        <source>No parameter/return propagation, alias, capacity, path-safety or fix-presence proof. Use the original function and SSA dependency views to continue review.</source>
+        <translation>パラメータや戻り値の伝播、エイリアス、容量、経路の安全性、修正の存在は証明されていません。元の関数と SSA 依存関係ビューでレビューを続けてください。</translation>
+    </message>
+    <message>
+        <source>Object / handle</source>
+        <translation>オブジェクト / ハンドル</translation>
+    </message>
+    <message>
+        <source>Observed call paths provide possible impact context. Path feasibility, parameter and return binding, memory aliases and external callers are not modeled. Semantic validation has not been performed.</source>
+        <translation>観測された呼び出し経路は、潜在的な影響のコンテキストを提供します。経路の実行可能性、パラメータと戻り値の結合、メモリエイリアス、外部の呼び出し元はモデル化されていません。意味的な検証は行われていません。</translation>
+    </message>
+    <message>
+        <source>Observed program entries and exports</source>
+        <translation>観測されたプログラムエントリとエクスポート</translation>
+    </message>
+    <message>
+        <source>Observed relations include admitted tail transfers and resolved imports. Double-click to inspect the caller.</source>
+        <translation>観測された関係には、受け入れられた末尾転送と解決済みインポートが含まれます。ダブルクリックして呼び出し元を調べてください。</translation>
+    </message>
+    <message>
+        <source>One shortest observed witness; alternate paths remain in all call sites. Seeds have an empty path.</source>
+        <translation>観測された最短の証拠経路を 1 つ表示します。代替経路は呼び出し箇所全体に残っています。シードの経路は空です。</translation>
+    </message>
+    <message>
+        <source>Original instruction: %1  %2 %3</source>
+        <translation>元の命令: %1  %2 %3</translation>
+    </message>
+    <message>
+        <source>Primary input</source>
+        <translation>主入力</translation>
+    </message>
+    <message>
+        <source>Recovered arguments: %1</source>
+        <translation>復元された引数: %1</translation>
+    </message>
+    <message>
+        <source>Release can fail; successful release has not been proved.</source>
+        <translation>解放は失敗する可能性があります。解放の成功は証明されていません。</translation>
+    </message>
+    <message>
+        <source>Retained SSA boundaries: %1</source>
+        <translation>保持された SSA 境界: %1</translation>
+    </message>
+    <message>
+        <source>Reviewing exact import identities and recovered call arguments. Collect SSA dependencies when starting the comparison to qualify contracts. Missing or ambiguous evidence remains visible.</source>
+        <translation>正確なインポート識別情報と復元された呼び出し引数を確認中です。契約を認定するには、比較開始時に SSA 依存関係を収集してください。欠落または曖昧な根拠は表示されたままです。</translation>
+    </message>
+    <message>
+        <source>Roles (zero-based): %1</source>
+        <translation>役割（0 始まり）: %1</translation>
+    </message>
+    <message>
+        <source>Secondary input</source>
+        <translation>副入力</translation>
+    </message>
+    <message>
+        <source>Selected call</source>
+        <translation>選択した呼び出し</translation>
+    </message>
+    <message>
+        <source>Shortest witness for the selected function</source>
+        <translation>選択した関数の最短証拠経路</translation>
+    </message>
+    <message>
+        <source>Source</source>
+        <translation>ソース</translation>
+    </message>
+    <message>
+        <source>Starting function entry</source>
+        <translation>開始関数のエントリ</translation>
+    </message>
+    <message>
+        <source>Target: %1 (%2)</source>
+        <translation>対象: %1 (%2)</translation>
+    </message>
+    <message>
+        <source>The contract accepts unbounded input; destination capacity has not been assessed.</source>
+        <translation>契約は上限のない入力を受け入れます。宛先容量は未評価です。</translation>
+    </message>
+    <message>
+        <source>Time limit reached</source>
+        <translation>制限時間に到達</translation>
+    </message>
+    <message>
+        <source>Trace</source>
+        <translation>追跡</translation>
+    </message>
+    <message>
+        <source>Trace callees</source>
+        <translation>呼び出し先を追跡</translation>
+    </message>
+    <message>
+        <source>Trace callers</source>
+        <translation>呼び出し元を追跡</translation>
+    </message>
+    <message>
+        <source>Tracing observed call paths…</source>
+        <translation>観測された呼び出し経路を追跡中…</translation>
+    </message>
+    <message>
+        <source>Unknown indirect call</source>
+        <translation>不明な間接呼び出し</translation>
+    </message>
+    <message>
+        <source>Unresolved sites and coverage gaps across the input</source>
+        <translation>入力全体の未解決箇所とカバレッジの欠落</translation>
+    </message>
+    <message>
+        <source>complete</source>
+        <translation>完了</translation>
+    </message>
+    <message>
+        <source>index scan complete</source>
+        <translation>索引走査完了</translation>
+    </message>
+    <message>
+        <source>index scan partial</source>
+        <translation>索引走査は部分的</translation>
+    </message>
+    <message>
+        <source>input discovery complete</source>
+        <translation>入力検出完了</translation>
+    </message>
+    <message>
+        <source>input discovery partial</source>
+        <translation>入力検出は部分的</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonModel</name>
+    <message>
+        <source> @b%1</source>
+        <translation> @b%1</translation>
+    </message>
+    <message>
+        <source>%1 / %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message>
+        <source>%1 B</source>
+        <translation>%1 B</translation>
+    </message>
+    <message>
+        <source>Accepted pair</source>
+        <translation>承認済みペア</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>アドレス</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>曖昧</translation>
+    </message>
+    <message>
+        <source>Ambiguous SSA call association</source>
+        <translation>SSA 呼び出しの関連付けが曖昧</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>評価</translation>
+    </message>
+    <message>
+        <source>Association</source>
+        <translation>関連付け</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>作成者</translation>
+    </message>
+    <message>
+        <source>Availability</source>
+        <translation>利用可否</translation>
+    </message>
+    <message>
+        <source>Binding / history</source>
+        <translation>紐付け / 履歴</translation>
+    </message>
+    <message>
+        <source>Block %1 · Original operation %2
+%3</source>
+        <translation>ブロック %1 · 元の操作 %2
+%3</translation>
+    </message>
+    <message>
+        <source>Blocks</source>
+        <translation>ブロック</translation>
+    </message>
+    <message>
+        <source>Boundaries</source>
+        <translation>境界</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>バイト</translation>
+    </message>
+    <message>
+        <source>Callee</source>
+        <translation>呼び出し先</translation>
+    </message>
+    <message>
+        <source>Caller</source>
+        <translation>呼び出し元</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>案件</translation>
+    </message>
+    <message>
+        <source>Change</source>
+        <translation>変更</translation>
+    </message>
+    <message>
+        <source>Changed</source>
+        <translation>変更あり</translation>
+    </message>
+    <message>
+        <source>Confidence</source>
+        <translation>信頼度</translation>
+    </message>
+    <message>
+        <source>Context</source>
+        <translation>コンテキスト</translation>
+    </message>
+    <message>
+        <source>Contract / gaps</source>
+        <translation>契約 / 未解決事項</translation>
+    </message>
+    <message>
+        <source>Control</source>
+        <translation>制御</translation>
+    </message>
+    <message>
+        <source>Counterpart</source>
+        <translation>対応する関数</translation>
+    </message>
+    <message>
+        <source>Coverage A / B</source>
+        <translation>カバレッジ A / B</translation>
+    </message>
+    <message>
+        <source>Current counterpart</source>
+        <translation>現在の対応する関数</translation>
+    </message>
+    <message>
+        <source>Data + control</source>
+        <translation>データ + 制御</translation>
+    </message>
+    <message>
+        <source>Depth</source>
+        <translation>深さ</translation>
+    </message>
+    <message>
+        <source>Direct callee unavailable</source>
+        <translation>直接呼び出し先は利用できません</translation>
+    </message>
+    <message>
+        <source>Earlier</source>
+        <translation>以前</translation>
+    </message>
+    <message>
+        <source>Entry evidence</source>
+        <translation>エントリの根拠</translation>
+    </message>
+    <message>
+        <source>Event</source>
+        <translation>イベント</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>証拠</translation>
+    </message>
+    <message>
+        <source>Exception flow</source>
+        <translation>例外フロー</translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation>エクスポート</translation>
+    </message>
+    <message>
+        <source>External function body</source>
+        <translation>外部関数の本体</translation>
+    </message>
+    <message>
+        <source>Finite SSA correspondence; open effects and control require review.
+%1</source>
+        <translation>有限範囲の SSA 対応です。未解決の効果と制御は確認が必要です。
+%1</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>関数</translation>
+    </message>
+    <message>
+        <source>Function entry</source>
+        <translation>関数エントリ</translation>
+    </message>
+    <message>
+        <source>Gaps</source>
+        <translation>未解決事項</translation>
+    </message>
+    <message>
+        <source>Heuristic confidence; structural similarity does not prove semantic equivalence.</source>
+        <translation>ヒューリスティックな信頼度です。構造上の類似性は意味的な等価性を証明しません。</translation>
+    </message>
+    <message>
+        <source>Hypothesis</source>
+        <translation>仮説</translation>
+    </message>
+    <message>
+        <source>Identity only</source>
+        <translation>識別情報のみ</translation>
+    </message>
+    <message>
+        <source>Incomplete</source>
+        <translation>不完全</translation>
+    </message>
+    <message>
+        <source>Incomplete discovery</source>
+        <translation>不完全な検出</translation>
+    </message>
+    <message>
+        <source>Incomplete native coverage</source>
+        <translation>不完全なネイティブカバレッジ</translation>
+    </message>
+    <message>
+        <source>Inputs</source>
+        <translation>入力</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>命令</translation>
+    </message>
+    <message>
+        <source>Instructions</source>
+        <translation>命令</translation>
+    </message>
+    <message>
+        <source>Internal callee; review its body</source>
+        <translation>内部の呼び出し先です。本体を確認してください</translation>
+    </message>
+    <message>
+        <source>Latest</source>
+        <translation>最新</translation>
+    </message>
+    <message>
+        <source>Loading…</source>
+        <translation>読み込み中…</translation>
+    </message>
+    <message>
+        <source>No applicable call contract</source>
+        <translation>適用可能な呼び出し契約はありません</translation>
+    </message>
+    <message>
+        <source>No native-associated SSA call</source>
+        <translation>ネイティブに関連付けられた SSA 呼び出しはありません</translation>
+    </message>
+    <message>
+        <source>No qualified import identity</source>
+        <translation>認定済みのインポート識別情報はありません</translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation>ノード</translation>
+    </message>
+    <message>
+        <source>Node pairs</source>
+        <translation>ノードペア</translation>
+    </message>
+    <message>
+        <source>Nodes</source>
+        <translation>ノード</translation>
+    </message>
+    <message>
+        <source>None</source>
+        <translation>なし</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation>メモ</translation>
+    </message>
+    <message>
+        <source>Observed SSA</source>
+        <translation>観測された SSA</translation>
+    </message>
+    <message>
+        <source>Observed call paths; feasibility and data effects remain unverified.
+%1</source>
+        <translation>観測された呼び出し経路です。実行可能性とデータへの影響は未検証です。
+%1</translation>
+    </message>
+    <message>
+        <source>Operation</source>
+        <translation>操作</translation>
+    </message>
+    <message>
+        <source>Original address</source>
+        <translation>元のアドレス</translation>
+    </message>
+    <message>
+        <source>Pair inactive</source>
+        <translation>無効なペア</translation>
+    </message>
+    <message>
+        <source>Paired</source>
+        <translation>ペア設定済み</translation>
+    </message>
+    <message>
+        <source>Pairing</source>
+        <translation>ペア設定</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>主入力</translation>
+    </message>
+    <message>
+        <source>Primary address</source>
+        <translation>主入力のアドレス</translation>
+    </message>
+    <message>
+        <source>Primary function</source>
+        <translation>主入力の関数</translation>
+    </message>
+    <message>
+        <source>Primary functions: %1
+Secondary functions: %2
+Heuristic explanations, not validated behavior.
+%3</source>
+        <translation>主入力の関数: %1
+副入力の関数: %2
+ヒューリスティックな説明であり、動作は未検証です。
+%3</translation>
+    </message>
+    <message>
+        <source>Primary instruction</source>
+        <translation>主入力の命令</translation>
+    </message>
+    <message>
+        <source>Primary node</source>
+        <translation>主入力のノード</translation>
+    </message>
+    <message>
+        <source>Primary operation</source>
+        <translation>主入力の操作</translation>
+    </message>
+    <message>
+        <source>Primary origin</source>
+        <translation>主入力の出所</translation>
+    </message>
+    <message>
+        <source>Primary root</source>
+        <translation>主入力のルート</translation>
+    </message>
+    <message>
+        <source>Primary span</source>
+        <translation>主入力の区間</translation>
+    </message>
+    <message>
+        <source>Priority</source>
+        <translation>優先度</translation>
+    </message>
+    <message>
+        <source>Program entry</source>
+        <translation>プログラムエントリ</translation>
+    </message>
+    <message>
+        <source>Qualified %1 contract</source>
+        <translation>認定済み %1 契約</translation>
+    </message>
+    <message>
+        <source>Qualified %1 contract; release may fail</source>
+        <translation>認定済み %1 契約; 解放は失敗する可能性があります</translation>
+    </message>
+    <message>
+        <source>Reason</source>
+        <translation>理由</translation>
+    </message>
+    <message>
+        <source>Recovered arguments unavailable</source>
+        <translation>復元された引数は利用できません</translation>
+    </message>
+    <message>
+        <source>Repeated seed</source>
+        <translation>繰り返しシード</translation>
+    </message>
+    <message>
+        <source>SSA unavailable in collected scope</source>
+        <translation>収集範囲に SSA はありません</translation>
+    </message>
+    <message>
+        <source>Scan incomplete</source>
+        <translation>走査が不完全</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>副入力</translation>
+    </message>
+    <message>
+        <source>Secondary address</source>
+        <translation>副入力のアドレス</translation>
+    </message>
+    <message>
+        <source>Secondary function</source>
+        <translation>副入力の関数</translation>
+    </message>
+    <message>
+        <source>Secondary instruction</source>
+        <translation>副入力の命令</translation>
+    </message>
+    <message>
+        <source>Secondary node</source>
+        <translation>副入力のノード</translation>
+    </message>
+    <message>
+        <source>Secondary operation</source>
+        <translation>副入力の操作</translation>
+    </message>
+    <message>
+        <source>Secondary origin</source>
+        <translation>副入力の出所</translation>
+    </message>
+    <message>
+        <source>Secondary root</source>
+        <translation>副入力のルート</translation>
+    </message>
+    <message>
+        <source>Secondary span</source>
+        <translation>副入力の区間</translation>
+    </message>
+    <message>
+        <source>Seed evidence</source>
+        <translation>シードの根拠</translation>
+    </message>
+    <message>
+        <source>Shared instructions</source>
+        <translation>共通命令</translation>
+    </message>
+    <message>
+        <source>Shared nodes</source>
+        <translation>共通ノード</translation>
+    </message>
+    <message>
+        <source>Shared normalized instruction runs are evidence for competing transformation hypotheses. They do not validate behavior, calls, memory effects or patch presence.</source>
+        <translation>正規化された共通命令列は、競合する変換仮説の根拠です。動作、呼び出し、メモリへの影響、パッチの存在を検証するものではありません。</translation>
+    </message>
+    <message>
+        <source>Similarity</source>
+        <translation>類似度</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>状態</translation>
+    </message>
+    <message>
+        <source>Synthetic</source>
+        <translation>合成</translation>
+    </message>
+    <message>
+        <source>Unchanged</source>
+        <translation>変更なし</translation>
+    </message>
+    <message>
+        <source>Unique seed</source>
+        <translation>一意なシード</translation>
+    </message>
+    <message>
+        <source>Unknown</source>
+        <translation>不明</translation>
+    </message>
+    <message>
+        <source>Unknown indirect call</source>
+        <translation>不明な間接呼び出し</translation>
+    </message>
+    <message>
+        <source>Unknown indirect transfer</source>
+        <translation>不明な間接転送</translation>
+    </message>
+    <message>
+        <source>Unmeasured</source>
+        <translation>未測定</translation>
+    </message>
+    <message>
+        <source>Unpaired</source>
+        <translation>ペア未設定</translation>
+    </message>
+    <message>
+        <source>Unresolved / boundary</source>
+        <translation>未解決 / 境界</translation>
+    </message>
+    <message>
+        <source>Unresolved call target</source>
+        <translation>未解決の呼び出し対象</translation>
+    </message>
+    <message>
+        <source>Unsupported ABI or input profile</source>
+        <translation>未対応の ABI または入力プロファイル</translation>
+    </message>
+    <message>
+        <source>Width</source>
+        <translation>幅</translation>
+    </message>
+    <message>
+        <source>Witness instruction</source>
+        <translation>証拠となる命令</translation>
+    </message>
+    <message>
+        <source>arg %1: %2</source>
+        <translation>引数 %1: %2</translation>
+    </message>
+    <message>
+        <source>n%1</source>
+        <translation>n%1</translation>
+    </message>
+    <message>
+        <source>param %1</source>
+        <translation>パラメータ %1</translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>不明</translation>
+    </message>
+    <message>
+        <source>—</source>
+        <translation>—</translation>
+    </message>
+    <message>
+        <source>Block %1 · Original addresses: %2
+%3</source>
+        <translation>ブロック %1 · 元のアドレス：%2
+%3</translation>
+    </message>
+    <message>
+        <source>External input binding; the producers have not been compared.
+%1</source>
+        <translation>外部入力の対応付けです。生成ノードは比較されていません。
+%1</translation>
+    </message>
+    <message>
+        <source>param %1: low %2 of %3 bits</source>
+        <translation>パラメータ %1：%3 ビット中の下位 %2 ビット</translation>
+    </message>
+    <message>
+        <source>Primary: %1
+Secondary: %2
+Every use of a projected parameter reads the same low bits. Whole-function behavior remains unverified.
+%3</source>
+        <translation>プライマリ：%1
+セカンダリ：%2
+投影されたパラメータは、すべての使用箇所で同じ下位ビットを読み取ります。関数全体の動作は未検証です。
+%3</translation>
+    </message>
+    <message>
+        <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
+        <translation>このパラメータは、すべての使用箇所で同じ下位ビットを読み取ります。元のビット幅とネイティブ位置は保持されます。</translation>
+    </message>
+    <message>
+        <source>%1 (analyzed name: %2)</source>
+        <translation>%1（解析時の名前: %2）</translation>
+    </message>
+    <message>
+        <source>Counterpart: %1</source>
+        <translation>対応する関数: %1</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonRegionsDialog</name>
+    <message>
+        <source>
+Dependency scope: %1 / %2 · %3 ambiguous candidates · %4 graphs exceeded analysis allowance</source>
+        <translation>
+依存関係の範囲: %1 / %2 · 曖昧な候補 %3 件 · 解析上限を超えたグラフ %4 件</translation>
+    </message>
+    <message>
+        <source>%1 hypotheses · %2 anchors · %3 frequent seed groups skipped · %4 oversized groups suppressed · %5 weak candidates skipped · %6</source>
+        <translation>仮説 %1 件 · アンカー %2 件 · 高頻度のシードグループ %3 件を省略 · 過大なグループ %4 件を除外 · 根拠の弱い候補 %5 件を省略 · %6</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 shared spans
+Coverage: %4% / %5% of decoded non-transfer instructions. Calls and control transfers need separate review.</source>
+        <translation>主入力 %1 / 副入力 %2 関数 · 共通区間 %3 件
+カバレッジ: デコード済みの非転送命令の %4% / %5%。呼び出しと制御転送は別途確認が必要です。</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 verified neighborhoods
+Coverage: %4% / %5% of observed SSA nodes in these functions. Control and external effects remain open; hover for original bytes.</source>
+        <translation>主入力 %1 / 副入力 %2 関数 · 検証済み近傍 %3 件
+カバレッジ: これらの関数で観測された SSA ノードの %4% / %5%。制御と外部への影響は未解決です。ポインターを重ねると元のバイトを表示します。</translation>
+    </message>
+    <message>
+        <source>%1 shared spans. These include unfinished or unclassified candidate groups. Select a span to inspect its original instructions.</source>
+        <translation>共通区間 %1 件。未完了または未分類の候補グループを含みます。区間を選択すると元の命令を確認できます。</translation>
+    </message>
+    <message>
+        <source>%1 verified SSA neighborhoods, including unclassified groups. Select one for paired nodes; hover for operands and original bytes.</source>
+        <translation>検証済み SSA 近傍 %1 件（未分類グループを含む）。選択するとペアのノードを表示します。ポインターを重ねるとオペランドと元のバイトを表示します。</translation>
+    </message>
+    <message>
+        <source>All hypotheses</source>
+        <translation>すべての仮説</translation>
+    </message>
+    <message>
+        <source>All shared spans (including unclassified)</source>
+        <translation>すべての共通区間（未分類を含む）</translation>
+    </message>
+    <message>
+        <source>Clone</source>
+        <translation>複製</translation>
+    </message>
+    <message>
+        <source>Enable SSA region hypotheses in comparison Settings, then compare again.</source>
+        <translation>比較の設定で SSA 領域の仮説を有効にしてから、再度比較してください。</translation>
+    </message>
+    <message>
+        <source>Enable region analysis in comparison Settings, then compare again.</source>
+        <translation>比較の設定で領域解析を有効にしてから、再度比較してください。</translation>
+    </message>
+    <message>
+        <source>Inline</source>
+        <translation>インライン展開</translation>
+    </message>
+    <message>
+        <source>Inputs changed. Reload the comparison.</source>
+        <translation>入力が変更されました。比較を再読み込みしてください。</translation>
+    </message>
+    <message>
+        <source>Inspect primary function</source>
+        <translation>主入力の関数を調査</translation>
+    </message>
+    <message>
+        <source>Inspect secondary function</source>
+        <translation>副入力の関数を調査</translation>
+    </message>
+    <message>
+        <source>Merge</source>
+        <translation>統合</translation>
+    </message>
+    <message>
+        <source>Module movement</source>
+        <translation>モジュールの移動</translation>
+    </message>
+    <message>
+        <source>Outline</source>
+        <translation>概要</translation>
+    </message>
+    <message>
+        <source>Possible transformation</source>
+        <translation>可能性のある変換</translation>
+    </message>
+    <message>
+        <source>Redistribution</source>
+        <translation>再配置</translation>
+    </message>
+    <message>
+        <source>Region hypotheses — Binary comparison</source>
+        <translation>領域の仮説 — バイナリ比較</translation>
+    </message>
+    <message>
+        <source>SSA region hypotheses — Binary comparison</source>
+        <translation>SSA 領域の仮説 — バイナリ比較</translation>
+    </message>
+    <message>
+        <source>Select a hypothesis to inspect its shared spans.</source>
+        <translation>仮説を選択して共通区間を調べてください。</translation>
+    </message>
+    <message>
+        <source>Shared native instruction runs suggest possible transformations. Review competing explanations and uncovered code; these results do not validate behavior or patch presence.</source>
+        <translation>共通のネイティブ命令列は、変換の可能性を示唆します。競合する説明と未カバーのコードを確認してください。この結果は動作やパッチの存在を検証しません。</translation>
+    </message>
+    <message>
+        <source>Shared region</source>
+        <translation>共通領域</translation>
+    </message>
+    <message>
+        <source>Shared tail</source>
+        <translation>共通末尾</translation>
+    </message>
+    <message>
+        <source>Split</source>
+        <translation>分割</translation>
+    </message>
+    <message>
+        <source>Verified finite SSA neighborhoods suggest possible transformations. Review gaps and open dependencies; correspondence does not validate behavior or patch presence.</source>
+        <translation>検証済みの有限な SSA 近傍は、変換の可能性を示唆します。未解決事項と開いた依存関係を確認してください。対応は動作やパッチの存在を検証しません。</translation>
+    </message>
+    <message>
+        <source>Waiting for comparison to finish…</source>
+        <translation>比較の完了を待機中…</translation>
+    </message>
+    <message>
+        <source>complete</source>
+        <translation>完了</translation>
+    </message>
+    <message>
+        <source>partial</source>
+        <translation>部分的</translation>
+    </message>
+    <message>
+        <source>Fragment evidence</source>
+        <translation>フラグメントの根拠</translation>
+    </message>
+    <message>
+        <source>Matched operations</source>
+        <translation>一致した演算</translation>
+    </message>
+    <message>
+        <source>External inputs</source>
+        <translation>外部入力</translation>
+    </message>
+    <message>
+        <source>Depth %1 · Matched operations: %2 · External inputs: %3
+External input producers are not compared or counted as shared code.</source>
+        <translation>深さ %1 · 一致した演算: %2 · 外部入力: %3
+外部入力の生成ノードは比較されず、共通コードにも数えられません。</translation>
+    </message>
+    <message>
+        <source>
+SSA recipe: %1</source>
+        <translation>
+SSA 分析方式: %1</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonReviewDialog</name>
+    <message>
+        <source>%1 matching / %2 total events · newest first · manual assessments</source>
+        <translation>該当 %1 / 全 %2 イベント · 新しい順 · 手動の評価</translation>
+    </message>
+    <message>
+        <source>Analyst review — NeverD</source>
+        <translation>解析者によるレビュー — NeverD</translation>
+    </message>
+    <message>
+        <source>Analyst statements do not change computed matching or validate patch behavior. Authors are self-described. Save/export the comparison to keep this history on disk.</source>
+        <translation>解析者の記述は、計算された対応を変更せず、パッチの動作を検証するものでもありません。作成者情報は自己申告です。比較を保存またはエクスポートすると、この履歴をディスクに保持できます。</translation>
+    </message>
+    <message>
+        <source>Append assessment</source>
+        <translation>評価を追加</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>評価</translation>
+    </message>
+    <message>
+        <source>Assessment note</source>
+        <translation>評価メモ</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>作成者</translation>
+    </message>
+    <message>
+        <source>Candidate fix</source>
+        <translation>修正候補</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>案件</translation>
+    </message>
+    <message>
+        <source>Case filter</source>
+        <translation>案件フィルター</translation>
+    </message>
+    <message>
+        <source>Case: %1
+Author (self-described): %2
+Assessment: %3
+Pair: %4 ↔ %5
+Pair binding: %6 · %7 assessment
+Reference: %8
+
+%9
+
+Event: %10
+Supersedes: %11</source>
+        <translation>案件: %1
+作成者（自己申告）: %2
+評価: %3
+ペア: %4 ↔ %5
+ペアの紐付け: %6 · %7 評価
+参照: %8
+
+%9
+
+イベント: %10
+置き換え対象: %11</translation>
+    </message>
+    <message>
+        <source>Draft exceeds the UTF-8 text allowance.</source>
+        <translation>下書きが UTF-8 テキストの上限を超えています。</translation>
+    </message>
+    <message>
+        <source>Draft retained for %1 ↔ %2 on its original inputs. Choose New draft to use the selected pair.</source>
+        <translation>元の入力に対する %1 ↔ %2 の下書きを保持しています。選択したペアを使用するには「新しい下書き」を選択してください。</translation>
+    </message>
+    <message>
+        <source>Exact case identifier (empty: all cases)</source>
+        <translation>正確な案件識別子（空欄: すべての案件）</translation>
+    </message>
+    <message>
+        <source>Inconclusive</source>
+        <translation>結論なし</translation>
+    </message>
+    <message>
+        <source>Investigating</source>
+        <translation>調査中</translation>
+    </message>
+    <message>
+        <source>Latest assessments only</source>
+        <translation>最新の評価のみ</translation>
+    </message>
+    <message>
+        <source>Loading analyst history…</source>
+        <translation>解析者の履歴を読み込み中…</translation>
+    </message>
+    <message>
+        <source>Manual assessment of %1 ↔ %2</source>
+        <translation>%1 ↔ %2 の手動評価</translation>
+    </message>
+    <message>
+        <source>New assessment</source>
+        <translation>新しい評価</translation>
+    </message>
+    <message>
+        <source>New draft for selected pair</source>
+        <translation>選択したペアの新しい下書き</translation>
+    </message>
+    <message>
+        <source>Partial patch</source>
+        <translation>部分的なパッチ</translation>
+    </message>
+    <message>
+        <source>Patch absent</source>
+        <translation>パッチなし</translation>
+    </message>
+    <message>
+        <source>Patch present</source>
+        <translation>パッチあり</translation>
+    </message>
+    <message>
+        <source>Record the evidence and limitations behind your assessment.</source>
+        <translation>評価の根拠と制限を記録してください。</translation>
+    </message>
+    <message>
+        <source>Reference</source>
+        <translation>参照</translation>
+    </message>
+    <message>
+        <source>Refresh history</source>
+        <translation>履歴を更新</translation>
+    </message>
+    <message>
+        <source>Relevant change</source>
+        <translation>関連する変更</translation>
+    </message>
+    <message>
+        <source>Reverted patch</source>
+        <translation>取り消されたパッチ</translation>
+    </message>
+    <message>
+        <source>Save comparison…</source>
+        <translation>比較を保存…</translation>
+    </message>
+    <message>
+        <source>Select an accepted function pair to append an assessment.</source>
+        <translation>承認済みの関数ペアを選択して評価を追加してください。</translation>
+    </message>
+    <message>
+        <source>Selected record</source>
+        <translation>選択した記録</translation>
+    </message>
+    <message>
+        <source>Unrelated change</source>
+        <translation>関連のない変更</translation>
+    </message>
+    <message>
+        <source>accepted</source>
+        <translation>承認済み</translation>
+    </message>
+    <message>
+        <source>earlier</source>
+        <translation>以前</translation>
+    </message>
+    <message>
+        <source>inactive</source>
+        <translation>無効</translation>
+    </message>
+    <message>
+        <source>latest</source>
+        <translation>最新</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonSession</name>
+    <message>
+        <source>Comparison worker: %1</source>
+        <translation>比較ワーカー: %1</translation>
+    </message>
+    <message>
+        <source>Could not replace the comparison. Your previous comparison is still available. %1</source>
+        <translation>比較を置き換えられませんでした。以前の比較は引き続き利用できます。%1</translation>
+    </message>
+    <message>
+        <source>Loading stopped. Ready to try again.</source>
+        <translation>読み込みを停止しました。再試行できます。</translation>
+    </message>
+    <message>
+        <source>Loading stopped. Your previous comparison is still available.</source>
+        <translation>読み込みを停止しました。以前の比較は引き続き利用できます。</translation>
+    </message>
+    <message>
+        <source>The worker could not acknowledge cancellation.</source>
+        <translation>ワーカーはキャンセルを確認できませんでした。</translation>
+    </message>
+    <message>
+        <source>This worker does not support binary comparison.</source>
+        <translation>このワーカーはバイナリ比較に対応していません。</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>復元を停止しました。再試行できます。</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>復元を停止しました。以前の比較は引き続き利用できます。</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>比較を復元できませんでした。以前の比較は引き続き利用できます。%1</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonValidationDialog</name>
+    <message>
+        <source>
+Proof work: %1; completed partitions: %2; attempts: %3
+</source>
+        <translation>
+証明作業: %1; 完了した分割: %2; 試行: %3
+</translation>
+    </message>
+    <message>
+        <source>Argument %1: %2 bits, register offset %3
+</source>
+        <translation>引数 %1: %2 ビット、レジスタオフセット %3
+</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
+    </message>
+    <message>
+        <source>Cancelled. No equivalence conclusion.</source>
+        <translation>キャンセル済み。等価性についての結論はありません。</translation>
+    </message>
+    <message>
+        <source>Check again</source>
+        <translation>再確認</translation>
+    </message>
+    <message>
+        <source>Check equal integer returns and defined termination in the lifted models, for all defined input bitvectors at matching register locations. Native-state equivalence and security are outside this check.</source>
+        <translation>対応するレジスタ位置のすべての定義済み入力ビットベクトルに対して、リフトされたモデル内の整数戻り値の一致と定義された終了を確認します。ネイティブ状態の等価性とセキュリティは対象外です。</translation>
+    </message>
+    <message>
+        <source>Detail: %1
+
+</source>
+        <translation>詳細: %1
+
+</translation>
+    </message>
+    <message>
+        <source>Equal returns proved in the lifted scalar models.</source>
+        <translation>リフトされたスカラーモデルで戻り値の一致が証明されました。</translation>
+    </message>
+    <message>
+        <source>Equivalence remains unproved; this does not establish a difference.</source>
+        <translation>等価性は未証明のままです。これは差異の存在を示すものではありません。</translation>
+    </message>
+    <message>
+        <source>Full report</source>
+        <translation>完全なレポート</translation>
+    </message>
+    <message>
+        <source>Input assumption: defined integer bitvectors at identical register locations.
+Lift correctness is assumed. Complete native state, memory and call effects are not proved.
+This result does not assess vulnerability or fix status.
+
+</source>
+        <translation>入力の仮定: 同一のレジスタ位置にある定義済み整数ビットベクトル。
+リフトの正しさを仮定します。完全なネイティブ状態、メモリおよび呼び出しの効果は証明されていません。
+この結果は脆弱性や修正状態を評価しません。
+
+</translation>
+    </message>
+    <message>
+        <source>Inputs or pairing changed. Select the function pair again.</source>
+        <translation>入力またはペアが変更されました。関数ペアを選択し直してください。</translation>
+    </message>
+    <message>
+        <source>Inputs: retained comparison sources.
+</source>
+        <translation>入力: 保持された比較元。
+</translation>
+    </message>
+    <message>
+        <source>Lifting and checking this pair… Cancellation is cooperative.</source>
+        <translation>このペアをリフトして確認中…キャンセルは協調的に処理されます。</translation>
+    </message>
+    <message>
+        <source>Limits changed. Check again.</source>
+        <translation>上限が変更されました。再確認してください。</translation>
+    </message>
+    <message>
+        <source>Live input versions rechecked: %1
+</source>
+        <translation>現在の入力バージョンを再確認済み: %1
+</translation>
+    </message>
+    <message>
+        <source>Maximum native instructions per function.</source>
+        <translation>関数ごとのネイティブ命令数の上限。</translation>
+    </message>
+    <message>
+        <source>Maximum work units for the scalar proof.</source>
+        <translation>スカラー証明の作業単位数の上限。</translation>
+    </message>
+    <message>
+        <source>Native instructions</source>
+        <translation>ネイティブ命令</translation>
+    </message>
+    <message>
+        <source>Pairing changed. Select the function pair again.</source>
+        <translation>ペアが変更されました。関数ペアを選択し直してください。</translation>
+    </message>
+    <message>
+        <source>Primary %1 (%2) ↔ Secondary %3 (%4)</source>
+        <translation>主入力 %1 (%2) ↔ 副入力 %3 (%4)</translation>
+    </message>
+    <message>
+        <source>Profile: %1
+
+Primary SHA-256: %2
+Secondary SHA-256: %3
+</source>
+        <translation>プロファイル: %1
+
+主入力の SHA-256: %2
+副入力の SHA-256: %3
+</translation>
+    </message>
+    <message>
+        <source>Proof work</source>
+        <translation>証明作業</translation>
+    </message>
+    <message>
+        <source>Result and assumptions</source>
+        <translation>結果と仮定</translation>
+    </message>
+    <message>
+        <source>Return width: %1 bits
+</source>
+        <translation>戻り値の幅: %1 ビット
+</translation>
+    </message>
+    <message>
+        <source>Select an accepted function pair.</source>
+        <translation>承認済みの関数ペアを選択してください。</translation>
+    </message>
+    <message>
+        <source>Selected %1 function: %2</source>
+        <translation>選択した %1 の関数: %2</translation>
+    </message>
+    <message>
+        <source>This pair is outside the supported scalar model.</source>
+        <translation>このペアは対応しているスカラーモデルの範囲外です。</translation>
+    </message>
+    <message>
+        <source>Time limit (ms)</source>
+        <translation>制限時間（ms）</translation>
+    </message>
+    <message>
+        <source>Time limit reached. No equivalence conclusion.</source>
+        <translation>制限時間に到達しました。等価性についての結論はありません。</translation>
+    </message>
+    <message>
+        <source>Validate scalar returns — NeverD</source>
+        <translation>スカラー戻り値を検証 — NeverD</translation>
+    </message>
+    <message>
+        <source>Validation limit reached. Adjust the limits and check again.</source>
+        <translation>検証上限に到達しました。上限を調整して再確認してください。</translation>
+    </message>
+    <message>
+        <source>no</source>
+        <translation>いいえ</translation>
+    </message>
+    <message>
+        <source>yes</source>
+        <translation>はい</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ComparisonSourceView</name>
+    <message>
+        <source>View:</source>
+        <translation>表示：</translation>
+    </message>
+    <message>
+        <source>Input language</source>
+        <translation>入力の言語</translation>
+    </message>
+    <message>
+        <source>Reload source</source>
+        <translation>ソースを再読み込み</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>オプション</translation>
+    </message>
+    <message>
+        <source>Remove instruction allowance</source>
+        <translation>命令数の制限を解除</translation>
+    </message>
+    <message>
+        <source>Each pane shows its own source lines. Select a line to inspect its original instructions.</source>
+        <translation>各ペインにはそれぞれのソース行が表示されます。行を選択すると、元の命令を確認できます。</translation>
+    </message>
+    <message>
+        <source>Secondary source</source>
+        <translation>比較先のソース</translation>
+    </message>
+    <message>
+        <source>Primary source</source>
+        <translation>比較元のソース</translation>
+    </message>
+    <message>
+        <source>Previous source page</source>
+        <translation>ソースの前のページ</translation>
+    </message>
+    <message>
+        <source>Next source page</source>
+        <translation>ソースの次のページ</translation>
+    </message>
+    <message>
+        <source>Go to source line</source>
+        <translation>ソース行に移動</translation>
+    </message>
+    <message>
+        <source>Original instruction anchors</source>
+        <translation>元の命令のアンカー</translation>
+    </message>
+    <message>
+        <source>Show instruction</source>
+        <translation>命令を表示</translation>
+    </message>
+    <message>
+        <source>Secondary: %1 %2</source>
+        <translation>比較先：%1 %2</translation>
+    </message>
+    <message>
+        <source>Primary: %1 %2</source>
+        <translation>比較元：%1 %2</translation>
+    </message>
+    <message>
+        <source>No function selected on this side.</source>
+        <translation>この側では関数が選択されていません。</translation>
+    </message>
+    <message>
+        <source>Source is ready to load.</source>
+        <translation>ソースを読み込めます。</translation>
+    </message>
+    <message>
+        <source>This worker does not support source inspection.</source>
+        <translation>このワーカーはソースの表示に対応していません。</translation>
+    </message>
+    <message>
+        <source>Preparing source… Cancellation waits for the current analysis step.</source>
+        <translation>ソースを準備中…キャンセルは現在の解析ステップの終了を待ちます。</translation>
+    </message>
+    <message>
+        <source>Source exceeds the instruction allowance. Adjust Options to inspect this function.</source>
+        <translation>ソースが命令数の制限を超えています。この関数を確認するにはオプションを調整してください。</translation>
+    </message>
+    <message>
+        <source>Source inspection stopped. Reload source to try again.</source>
+        <translation>ソースの表示を停止しました。再試行するにはソースを再読み込みしてください。</translation>
+    </message>
+    <message>
+        <source>Source unavailable: %1</source>
+        <translation>ソースを表示できません：%1</translation>
+    </message>
+    <message>
+        <source>Lines %1–%2 of %3</source>
+        <translation>%1–%2 行目／全 %3 行</translation>
+    </message>
+    <message>
+        <source> · Native coverage is incomplete</source>
+        <translation> · ネイティブ命令の解析範囲が不完全です</translation>
+    </message>
+    <message>
+        <source>Unmapped line</source>
+        <translation>対応付けのない行</translation>
+    </message>
+    <message>
+        <source>Align source lines</source>
+        <translation>ソース行を整列</translation>
+    </message>
+    <message>
+        <source>Remove alignment work allowance</source>
+        <translation>整列の処理量制限を解除</translation>
+    </message>
+    <message>
+        <source>Remove source evidence byte allowance</source>
+        <translation>ソース証拠のバイト数制限を解除</translation>
+    </message>
+    <message>
+        <source>Include declarations in alignment</source>
+        <translation>宣言を含めて整列</translation>
+    </message>
+    <message>
+        <source>Go to aligned row</source>
+        <translation>整列行に移動</translation>
+    </message>
+    <message>
+        <source>Text differences: + inserted, − deleted, ~ changed. Select a line to inspect its original instructions.</source>
+        <translation>テキストの差分：+ 追加、− 削除、~ 変更。行を選択すると元の命令を確認できます。</translation>
+    </message>
+    <message>
+        <source>Aligning source… Cancellation waits for the current analysis step.</source>
+        <translation>ソースを整列中…キャンセルは現在の解析処理が終わるまで待機します。</translation>
+    </message>
+    <message>
+        <source>Source alignment exceeds its allowance. Adjust Options or view independent source.</source>
+        <translation>ソースの整列が制限を超えました。オプションを調整するか、ソースを個別に表示してください。</translation>
+    </message>
+    <message>
+        <source>Source alignment stopped. Reload source to try again.</source>
+        <translation>ソースの整列を停止しました。ソースを再読み込みして再試行してください。</translation>
+    </message>
+    <message>
+        <source>Aligned rows %1–%2 of %3</source>
+        <translation>整列行 %1–%2 / %3</translation>
+    </message>
+    <message>
+        <source> · Source line %1</source>
+        <translation> · ソース行 %1</translation>
+    </message>
+    <message>
+        <source> · No line on this side</source>
+        <translation> · この側には行がありません</translation>
+    </message>
+    <message>
+        <source> · Changed</source>
+        <translation> · 変更</translation>
+    </message>
+    <message>
+        <source> · Inserted</source>
+        <translation> · 追加</translation>
+    </message>
+    <message>
+        <source> · Deleted</source>
+        <translation> · 削除</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesDialog</name>
+    <message>
+        <source>%1 instruction forms. Static inventory; no host probe, execution or proof.</source>
+        <translation>%1 種の命令形式。静的な一覧です。ホストの調査、実行、証明は行っていません。</translation>
+    </message>
+    <message>
+        <source>&amp;Backend:</source>
+        <translation>バックエンド(&amp;B):</translation>
+    </message>
+    <message>
+        <source>&amp;Consumer:</source>
+        <translation>利用側(&amp;C):</translation>
+    </message>
+    <message>
+        <source>&amp;Destination:</source>
+        <translation>出力先(&amp;D):</translation>
+    </message>
+    <message>
+        <source>&amp;Reload</source>
+        <translation>再読み込み(&amp;R)</translation>
+    </message>
+    <message>
+        <source>&amp;Source mode:</source>
+        <translation>ソースモード(&amp;S):</translation>
+    </message>
+    <message>
+        <source>Call contract: %1</source>
+        <translation>呼び出し契約: %1</translation>
+    </message>
+    <message>
+        <source>Could not load x87 support: %1</source>
+        <translation>x87 の対応情報を読み込めませんでした: %1</translation>
+    </message>
+    <message>
+        <source>Filter instructions, operands or support…</source>
+        <translation>命令、オペランド、対応状況を絞り込み…</translation>
+    </message>
+    <message>
+        <source>Filter x87 instructions</source>
+        <translation>x87 命令を絞り込み</translation>
+    </message>
+    <message>
+        <source>Inspect support for an instruction and execution profile. Numerical results and architectural state are qualified separately.</source>
+        <translation>命令と実行プロファイルの対応状況を確認します。数値結果とアーキテクチャ状態は個別に検証されます。</translation>
+    </message>
+    <message>
+        <source>Loading x87 support…</source>
+        <translation>x87 の対応情報を読み込み中…</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>いいえ</translation>
+    </message>
+    <message>
+        <source>Reason: %1</source>
+        <translation>理由: %1</translation>
+    </message>
+    <message>
+        <source>Regression sources: %1</source>
+        <translation>回帰テストのソース: %1</translation>
+    </message>
+    <message>
+        <source>Requirements: %1</source>
+        <translation>要件: %1</translation>
+    </message>
+    <message>
+        <source>Select an instruction to inspect its requirements. Clear the filter if no forms are visible.</source>
+        <translation>命令を選択して要件を確認してください。形式が表示されない場合はフィルターを解除してください。</translation>
+    </message>
+    <message>
+        <source>Selected instruction requirements and limits</source>
+        <translation>選択した命令の要件と制限</translation>
+    </message>
+    <message>
+        <source>Source &amp;ABI:</source>
+        <translation>ソース ABI(&amp;A):</translation>
+    </message>
+    <message>
+        <source>Source path available: %1; default for this ABI: %2</source>
+        <translation>ソース生成経路が利用可能: %1、この ABI の既定: %2</translation>
+    </message>
+    <message>
+        <source>State &amp;path:</source>
+        <translation>状態処理経路(&amp;P):</translation>
+    </message>
+    <message>
+        <source>The analysis worker is disconnected.</source>
+        <translation>解析ワーカーとの接続が切れています。</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>この組み合わせは一覧になく、未対応です。</translation>
+    </message>
+    <message>
+        <source>This engine does not provide an x87 support report.</source>
+        <translation>このエンジンは x87 の対応レポートを提供しません。</translation>
+    </message>
+    <message>
+        <source>This source mode / ABI / state path is not listed.</source>
+        <translation>このソースモード／ABI／状態処理経路は一覧にありません。</translation>
+    </message>
+    <message>
+        <source>Waiting for the analysis worker.</source>
+        <translation>解析ワーカーを待機中です。</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>はい</translation>
+    </message>
+    <message>
+        <source>long double: %1</source>
+        <translation>long double: %1</translation>
+    </message>
+    <message>
+        <source>x87 instruction support</source>
+        <translation>x87 命令の対応状況</translation>
+    </message>
+    <message>
+        <source>x87 support</source>
+        <translation>x87 の対応状況</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::X87CapabilitiesModel</name>
+    <message>
+        <source>Architectural state</source>
+        <translation>アーキテクチャ状態</translation>
+    </message>
+    <message>
+        <source>Implemented</source>
+        <translation>実装済み</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>命令</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>いいえ</translation>
+    </message>
+    <message>
+        <source>Numerical result</source>
+        <translation>数値結果</translation>
+    </message>
+    <message>
+        <source>Operands</source>
+        <translation>オペランド</translation>
+    </message>
+    <message>
+        <source>Profile</source>
+        <translation>プロファイル</translation>
+    </message>
+    <message>
+        <source>The engine returned an incompatible x87 capability report.</source>
+        <translation>エンジンが互換性のない x87 機能レポートを返しました。</translation>
+    </message>
+    <message>
+        <source>This combination is not listed; it is unsupported.</source>
+        <translation>この組み合わせは一覧になく、未対応です。</translation>
+    </message>
+    <message>
+        <source>Unlisted</source>
+        <translation>一覧に記載なし</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>はい</translation>
+    </message>
+    <message>
+        <source>unqualified</source>
+        <translation>未検証</translation>
+    </message>
+    <message>
+        <source>unsupported</source>
+        <translation>未対応</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>メインウィンドウに戻してドッキング</translation>
+    </message>
+    <message>
+        <source>Move window</source>
+        <translation>ウィンドウを移動</translation>
+    </message>
+    <message>
+        <source>Lock floating window</source>
+        <translation>フローティングウィンドウを固定</translation>
+    </message>
+    <message>
+        <source>Unlock floating window</source>
+        <translation>フローティングウィンドウの固定を解除</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 バイトの準備ができました。</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 バイトの準備ができました。プレビューは先頭 %2 バイトです。コピーと保存には範囲全体を使用します。</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>C バイト配列（10進数）</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>C バイト配列（16進数）</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>C 文字列リテラル</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>%1 の範囲全体を読み取れません。何もエクスポートされませんでした。</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>コピー</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>%1 を保存できませんでした：%2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>終了アドレス（含む）：</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>有効なアドレス範囲を入力してください。</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>データをエクスポート</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>エクスポートは最大 %1 バイトです。範囲を狭めてください。</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>形式：</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>16進数文字列</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>生バイト（ファイルのみ）</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>バイトを読み取り中...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>バイトを読み取り中：%1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>名前を付けて保存...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>%1 バイトを %2 に保存しました</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>空白区切りの16進数文字列</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>開始アドレス：</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PatchEditor</name>
+    <message>
+        <source>AT&amp;T</source>
+        <translation>AT&amp;T</translation>
+    </message>
+    <message>
+        <source>Apply patch</source>
+        <translation>パッチを適用</translation>
+    </message>
+    <message>
+        <source>Assembly dialect</source>
+        <translation>アセンブリ構文</translation>
+    </message>
+    <message>
+        <source>Assembly instruction</source>
+        <translation>アセンブリ命令</translation>
+    </message>
+    <message>
+        <source>Byte display truncated; the full range is %1 bytes.</source>
+        <translation>バイト表示を省略しています。全範囲は %1 バイトです。</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
+    </message>
+    <message>
+        <source>Fill with NOPs</source>
+        <translation>NOP で埋める</translation>
+    </message>
+    <message>
+        <source>Hexadecimal bytes</source>
+        <translation>16 進数のバイト</translation>
+    </message>
+    <message>
+        <source>Intel</source>
+        <translation>Intel</translation>
+    </message>
+    <message>
+        <source>New: %1</source>
+        <translation>新: %1</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>元: %1</translation>
+    </message>
+    <message>
+        <source>Patch at %1 — Enter applies, Esc cancels</source>
+        <translation>%1 のパッチ — Enter で適用、Esc でキャンセル</translation>
+    </message>
+    <message>
+        <source>Preparing preview…</source>
+        <translation>プレビューを準備中…</translation>
+    </message>
+    <message>
+        <source>Replace following instructions</source>
+        <translation>後続の命令を置換</translation>
+    </message>
+    <message>
+        <source>Review the covered instructions and enable replacement to apply.</source>
+        <translation>上書きする命令を確認し、置換を有効にして適用してください。</translation>
+    </message>
+    <message>
+        <source>The input changed. Reopen the patch editor.</source>
+        <translation>入力が変わりました。パッチエディターを開き直してください。</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>閉じる</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::RewriteFunctionDialog</name>
+    <message>
+        <source>%1 original symbol bindings prepared. Output uses a new file.</source>
+        <translation>元のシンボルのバインドを %1 件準備しました。出力には新しいファイルを使います。</translation>
+    </message>
+    <message>
+        <source>Compare with original</source>
+        <translation>元と比較</translation>
+    </message>
+    <message>
+        <source>Compile to new binary…</source>
+        <translation>新しいバイナリにコンパイル…</translation>
+    </message>
+    <message>
+        <source>Compiler path:</source>
+        <translation>コンパイラーのパス:</translation>
+    </message>
+    <message>
+        <source>Compiler:</source>
+        <translation>コンパイラー:</translation>
+    </message>
+    <message>
+        <source>Compiling and validating the replacement…</source>
+        <translation>置換をコンパイルして検証中…</translation>
+    </message>
+    <message>
+        <source>Empty selects the sole external definition</source>
+        <translation>空欄の場合、一意の外部定義を選択</translation>
+    </message>
+    <message>
+        <source>Executable name or full path</source>
+        <translation>実行ファイル名または完全なパス</translation>
+    </message>
+    <message>
+        <source>Open new binary</source>
+        <translation>新しいバイナリを開く</translation>
+    </message>
+    <message>
+        <source>Optional external function name to call the saved original body</source>
+        <translation>保存した元の関数本体を呼ぶ外部関数名（任意）</translation>
+    </message>
+    <message>
+        <source>Original-body binding:</source>
+        <translation>元の関数本体のバインド:</translation>
+    </message>
+    <message>
+        <source>Preparing compilable C and original bindings…</source>
+        <translation>コンパイル可能な C と元のバインドを準備中…</translation>
+    </message>
+    <message>
+        <source>Produce replacement binary</source>
+        <translation>置換バイナリを生成</translation>
+    </message>
+    <message>
+        <source>Publication receipt</source>
+        <translation>公開結果</translation>
+    </message>
+    <message>
+        <source>Replacement C source</source>
+        <translation>置換用の C ソース</translation>
+    </message>
+    <message>
+        <source>Replacement function:</source>
+        <translation>置換関数:</translation>
+    </message>
+    <message>
+        <source>Replacement published to %1</source>
+        <translation>置換を %1 に公開しました</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C</source>
+        <translation>C で関数を書き換え</translation>
+    </message>
+    <message>
+        <source>The analysis changed. Reopen this editor before compiling.</source>
+        <translation>解析が変わりました。コンパイル前にこのエディターを開き直してください。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageDialog</name>
+    <message>
+        <source> · unsaved</source>
+        <translation> · 未保存</translation>
+    </message>
+    <message>
+        <source>%1 snapshots · %2 source comparisons · %3 functions · %4 conflict groups · %5 incomplete reports%6</source>
+        <translation>スナップショット %1 · 元の比較 %2 · 関数 %3 · 競合グループ %4 · 不完全なレポート %5%6</translation>
+    </message>
+    <message>
+        <source>&amp;Add comparisons…</source>
+        <translation>比較を追加(&amp;A)…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>ブランチ(&amp;B)</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>ラベル(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Open graph…</source>
+        <translation>グラフを開く(&amp;O)…</translation>
+    </message>
+    <message>
+        <source>&amp;Save graph…</source>
+        <translation>グラフを保存(&amp;S)…</translation>
+    </message>
+    <message>
+        <source>&amp;Trace selected function</source>
+        <translation>選択した関数を追跡(&amp;T)</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons</source>
+        <translation>保存済み比較を追加</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons between releases to trace functions, inspect conflicting paths and review the original evidence.</source>
+        <translation>リリース間の保存済み比較を追加して、関数の追跡、矛盾する経路の調査、元の証拠の確認を行います。</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>アドレス</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>曖昧</translation>
+    </message>
+    <message>
+        <source>Ambiguous candidates</source>
+        <translation>曖昧な候補</translation>
+    </message>
+    <message>
+        <source>Analyzed snapshots</source>
+        <translation>解析済みスナップショット</translation>
+    </message>
+    <message>
+        <source>Anchor</source>
+        <translation>アンカー</translation>
+    </message>
+    <message>
+        <source>Anchors</source>
+        <translation>アンカー</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>評価</translation>
+    </message>
+    <message>
+        <source>Assessment history</source>
+        <translation>評価履歴</translation>
+    </message>
+    <message>
+        <source>Assessments</source>
+        <translation>評価</translation>
+    </message>
+    <message>
+        <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
+        <translation>関連付けは保存済みレポートに基づきます。リリース順序やパッチの有無は推定しません。</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>作成者</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>ブランチ</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
+    </message>
+    <message>
+        <source>Candidates are not accepted associations. Both sides retain every listed candidate.</source>
+        <translation>候補は承認済みの関連付けではありません。両側とも、列挙されたすべての候補を保持します。</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>案件</translation>
+    </message>
+    <message>
+        <source>Changes</source>
+        <translation>変更</translation>
+    </message>
+    <message>
+        <source>Checking saved evidence…</source>
+        <translation>保存済みの証拠を確認中…</translation>
+    </message>
+    <message>
+        <source>Conflict</source>
+        <translation>競合</translation>
+    </message>
+    <message>
+        <source>Conflicting function associations</source>
+        <translation>矛盾する関数の関連付け</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>競合</translation>
+    </message>
+    <message>
+        <source>Deadline (milliseconds, 0: none)</source>
+        <translation>期限（ミリ秒、0：なし）</translation>
+    </message>
+    <message>
+        <source>Decision</source>
+        <translation>判断</translation>
+    </message>
+    <message>
+        <source>Decision history</source>
+        <translation>判断履歴</translation>
+    </message>
+    <message>
+        <source>Diagram of the current source-report page; layout does not indicate release order.</source>
+        <translation>現在の元レポートページの図です。配置はリリース順序を表しません。</translation>
+    </message>
+    <message>
+        <source>Direct evidence</source>
+        <translation>直接の証拠</translation>
+    </message>
+    <message>
+        <source>Distance</source>
+        <translation>距離</translation>
+    </message>
+    <message>
+        <source>Distance counts report links. It is not a confidence score. Double-click a conflict to inspect its members.</source>
+        <translation>距離はレポート間のリンク数です。信頼度ではありません。競合をダブルクリックするとメンバーを調べられます。</translation>
+    </message>
+    <message>
+        <source>Edge</source>
+        <translation>エッジ</translation>
+    </message>
+    <message>
+        <source>Edit &amp;label / branch…</source>
+        <translation>ラベル / ブランチを編集(&amp;L)…</translation>
+    </message>
+    <message>
+        <source>Enter a value from %1 to %2 for the highlighted field.</source>
+        <translation>強調表示されたフィールドに %1 から %2 までの値を入力してください。</translation>
+    </message>
+    <message>
+        <source>Event</source>
+        <translation>イベント</translation>
+    </message>
+    <message>
+        <source>Explanation</source>
+        <translation>説明</translation>
+    </message>
+    <message>
+        <source>Export original comparison</source>
+        <translation>元の比較をエクスポート</translation>
+    </message>
+    <message>
+        <source>Export original report…</source>
+        <translation>元のレポートをエクスポート…</translation>
+    </message>
+    <message>
+        <source>Find a function by name or address</source>
+        <translation>名前またはアドレスで関数を検索</translation>
+    </message>
+    <message>
+        <source>Fit</source>
+        <translation>全体を表示</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>関数</translation>
+    </message>
+    <message>
+        <source>Function filter</source>
+        <translation>関数フィルター</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>関数</translation>
+    </message>
+    <message>
+        <source>Functions &amp; witnesses</source>
+        <translation>関数と経路の証拠</translation>
+    </message>
+    <message>
+        <source>Functions in %1</source>
+        <translation>%1 の関数</translation>
+    </message>
+    <message>
+        <source>Graph / sources</source>
+        <translation>グラフ / 出典</translation>
+    </message>
+    <message>
+        <source>Group</source>
+        <translation>グループ</translation>
+    </message>
+    <message>
+        <source>Hypothesis</source>
+        <translation>仮説</translation>
+    </message>
+    <message>
+        <source>Incomplete</source>
+        <translation>不完全</translation>
+    </message>
+    <message>
+        <source>Inspect conflict &amp;members…</source>
+        <translation>競合メンバーを調べる(&amp;M)…</translation>
+    </message>
+    <message>
+        <source>Inspect source &amp;evidence…</source>
+        <translation>元の証拠を調べる(&amp;E)…</translation>
+    </message>
+    <message>
+        <source>Instructions</source>
+        <translation>命令</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>種類</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>ラベル</translation>
+    </message>
+    <message>
+        <source>Latest</source>
+        <translation>最新</translation>
+    </message>
+    <message>
+        <source>Latest manual assessments stay attached to their original report and function pair. They do not establish a patch verdict in other snapshots.</source>
+        <translation>最新の手動評価は、元のレポートと関数ペアに結び付いたままです。他のスナップショットのパッチ判定を確立するものではありません。</translation>
+    </message>
+    <message>
+        <source>Matches</source>
+        <translation>対応</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>メンバー</translation>
+    </message>
+    <message>
+        <source>Method</source>
+        <translation>方法</translation>
+    </message>
+    <message>
+        <source>Multiple functions from one snapshot, or an explicitly rejected pair reached through other reports, remain visible as conflicting evidence.</source>
+        <translation>同じスナップショット内の複数の関数や、他のレポート経由で接続された明示的な拒否済みペアは、矛盾する証拠として表示され続けます。</translation>
+    </message>
+    <message>
+        <source>Native regions</source>
+        <translation>ネイティブコード領域</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff)</source>
+        <translation>NeverD 比較 (*.nddiff)</translation>
+    </message>
+    <message>
+        <source>NeverD comparisons (*.nddiff);;All files (*)</source>
+        <translation>NeverD 比較 (*.nddiff);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage)</source>
+        <translation>NeverD バージョングラフ (*.ndlineage)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage);;All files (*)</source>
+        <translation>NeverD バージョングラフ (*.ndlineage);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation>ノード</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation>メモ</translation>
+    </message>
+    <message>
+        <source>Note: %1
+Reference: %2
+Primary: %3  Secondary: %4
+Supersedes: %5</source>
+        <translation>メモ：%1
+参照：%2
+プライマリ：%3  セカンダリ：%4
+置換対象：%5</translation>
+    </message>
+    <message>
+        <source>Open control frontier</source>
+        <translation>未閉鎖の制御境界</translation>
+    </message>
+    <message>
+        <source>Open version comparison graph</source>
+        <translation>バージョン比較グラフを開く</translation>
+    </message>
+    <message>
+        <source>Original assessment note and reference</source>
+        <translation>元の評価メモと参照</translation>
+    </message>
+    <message>
+        <source>Original comparison evidence</source>
+        <translation>元の比較証拠</translation>
+    </message>
+    <message>
+        <source>Original region anchors</source>
+        <translation>元の領域アンカー</translation>
+    </message>
+    <message>
+        <source>Pair active</source>
+        <translation>有効なペア</translation>
+    </message>
+    <message>
+        <source>Predecessor</source>
+        <translation>先行ノード</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>主入力</translation>
+    </message>
+    <message>
+        <source>Primary candidates</source>
+        <translation>プライマリ候補</translation>
+    </message>
+    <message>
+        <source>Primary function</source>
+        <translation>主入力の関数</translation>
+    </message>
+    <message>
+        <source>Primary function index</source>
+        <translation>プライマリ関数インデックス</translation>
+    </message>
+    <message>
+        <source>Primary instructions</source>
+        <translation>プライマリ命令</translation>
+    </message>
+    <message>
+        <source>Primary node</source>
+        <translation>主入力のノード</translation>
+    </message>
+    <message>
+        <source>Primary snapshot</source>
+        <translation>プライマリスナップショット</translation>
+    </message>
+    <message>
+        <source>Processing work allowance</source>
+        <translation>処理作業量の予算</translation>
+    </message>
+    <message>
+        <source>Reading saved evidence…</source>
+        <translation>保存済みの証拠を読み込み中…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>準備完了</translation>
+    </message>
+    <message>
+        <source>Replacement accounts for the current collection, its trace and the candidate. A limit stops the operation and preserves the current graph. Report text allowance is not a process-memory limit.</source>
+        <translation>置換時には現在のコレクション、その追跡結果、候補コレクションを計上します。上限に達すると操作を停止し、現在のグラフを保持します。レポートテキストの予算はプロセスメモリの上限ではありません。</translation>
+    </message>
+    <message>
+        <source>Report</source>
+        <translation>レポート</translation>
+    </message>
+    <message>
+        <source>Report and history warnings</source>
+        <translation>レポートと履歴の警告</translation>
+    </message>
+    <message>
+        <source>Report text and labels (bytes)</source>
+        <translation>レポートテキストとラベル（バイト）</translation>
+    </message>
+    <message>
+        <source>Resource settings will apply to subsequent loads and queries.</source>
+        <translation>リソース設定は以降の読み込みとクエリに適用されます。</translation>
+    </message>
+    <message>
+        <source>Resource settings…</source>
+        <translation>リソース設定…</translation>
+    </message>
+    <message>
+        <source>SSA nodes</source>
+        <translation>SSA ノード</translation>
+    </message>
+    <message>
+        <source>SSA regions</source>
+        <translation>SSA 領域</translation>
+    </message>
+    <message>
+        <source>Save current graph?</source>
+        <translation>現在のグラフを保存しますか？</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before closing?</source>
+        <translation>閉じる前に現在のグラフとスナップショットのラベルを保存しますか？</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before opening another graph?</source>
+        <translation>別のグラフを開く前に現在のグラフとスナップショットのラベルを保存しますか？</translation>
+    </message>
+    <message>
+        <source>Save version comparison graph</source>
+        <translation>バージョン比較グラフを保存</translation>
+    </message>
+    <message>
+        <source>Save version graph?</source>
+        <translation>バージョングラフを保存しますか？</translation>
+    </message>
+    <message>
+        <source>Saved region evidence is not an accepted function association. Copy a row to inspect all retained fields; export the source for complete SSA node mappings.</source>
+        <translation>保存済みの領域証拠は承認済みの関数関連付けではありません。行をコピーすると保持された全フィールドを確認できます。完全な SSA ノード対応を得るには元レポートをエクスポートしてください。</translation>
+    </message>
+    <message>
+        <source>Saving evidence…</source>
+        <translation>証拠を保存中…</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>副入力</translation>
+    </message>
+    <message>
+        <source>Secondary candidates</source>
+        <translation>セカンダリ候補</translation>
+    </message>
+    <message>
+        <source>Secondary function</source>
+        <translation>副入力の関数</translation>
+    </message>
+    <message>
+        <source>Secondary function index</source>
+        <translation>セカンダリ関数インデックス</translation>
+    </message>
+    <message>
+        <source>Secondary instructions</source>
+        <translation>セカンダリ命令</translation>
+    </message>
+    <message>
+        <source>Secondary node</source>
+        <translation>副入力のノード</translation>
+    </message>
+    <message>
+        <source>Secondary snapshot</source>
+        <translation>セカンダリスナップショット</translation>
+    </message>
+    <message>
+        <source>Select a snapshot to browse all retained functions.</source>
+        <translation>スナップショットを選択すると、保持されたすべての関数を参照できます。</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>サイズ</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>スナップショット</translation>
+    </message>
+    <message>
+        <source>Snapshot label and branch</source>
+        <translation>スナップショットのラベルとブランチ</translation>
+    </message>
+    <message>
+        <source>Source report</source>
+        <translation>元レポート</translation>
+    </message>
+    <message>
+        <source>Source report: %1
+Ambiguities and manual decisions remain report-local. Region hypotheses retain their original coordinates; full records remain in the exported report.</source>
+        <translation>元レポート：%1
+曖昧さと手動判断の有効範囲は元のレポート内です。領域仮説は元の座標を保持し、完全なレコードはエクスポートしたレポートに残ります。</translation>
+    </message>
+    <message>
+        <source>Starting version graph worker…</source>
+        <translation>バージョングラフのワーカーを起動中…</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>状態</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>停止中…</translation>
+    </message>
+    <message>
+        <source>These labels describe your analysis. They do not assert release ancestry.</source>
+        <translation>これらのラベルは解析内容を記述するものです。リリースの系譜を表明するものではありません。</translation>
+    </message>
+    <message>
+        <source>These members remain in conflict. No counterpart or patch assessment is selected automatically. Activate a member to trace its evidence.</source>
+        <translation>これらのメンバーは競合したままです。対応先やパッチ評価は自動選択されません。メンバーをアクティブにすると証拠を追跡できます。</translation>
+    </message>
+    <message>
+        <source>Trace</source>
+        <translation>追跡</translation>
+    </message>
+    <message>
+        <source>Trace a function to see every reachable association and its shortest-path witness.</source>
+        <translation>関数を追跡して、到達可能なすべての関連付けと最短経路の証拠を確認します。</translation>
+    </message>
+    <message>
+        <source>Trace from %1 in %2</source>
+        <translation>%2 の %1 からの追跡</translation>
+    </message>
+    <message>
+        <source>Tracing function associations…</source>
+        <translation>関数の関連付けを追跡中…</translation>
+    </message>
+    <message>
+        <source>Unresolved candidates</source>
+        <translation>未解決の候補</translation>
+    </message>
+    <message>
+        <source>Version comparison graph</source>
+        <translation>バージョン比較グラフ</translation>
+    </message>
+    <message>
+        <source>Version graph resource settings</source>
+        <translation>バージョングラフのリソース設定</translation>
+    </message>
+    <message>
+        <source>Warnings</source>
+        <translation>警告</translation>
+    </message>
+    <message>
+        <source>Witness edge</source>
+        <translation>経路を示すエッジ</translation>
+    </message>
+    <message>
+        <source>Zoom in</source>
+        <translation>拡大</translation>
+    </message>
+    <message>
+        <source>Zoom out</source>
+        <translation>縮小</translation>
+    </message>
+    <message>
+        <source>Association and parent link records</source>
+        <translation>関連付けと親リンクのレコード数</translation>
+    </message>
+    <message>
+        <source>Function and release records</source>
+        <translation>関数とリリースのレコード数</translation>
+    </message>
+    <message>
+        <source>Releases</source>
+        <translation>リリース</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageGraph</name>
+    <message>
+        <source>Source report: %1
+Comparison direction: %2 → %3</source>
+        <translation>元レポート：%1
+比較方向：%2 → %3</translation>
+    </message>
+    <message>
+        <source>Version comparison diagram for the current report page</source>
+        <translation>現在のレポートページのバージョン比較図</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineagePageView</name>
+    <message>
+        <source> Try fewer rows or adjust Resource settings.</source>
+        <translation> 行数を減らすか、リソース設定を調整してください。</translation>
+    </message>
+    <message>
+        <source>%1 — previous page retained</source>
+        <translation>%1 — 前のページを保持しました</translation>
+    </message>
+    <message>
+        <source>%1–%2 of %3</source>
+        <translation>%3 件中 %1–%2 件</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>キャンセル済み</translation>
+    </message>
+    <message>
+        <source>Candidate fix</source>
+        <translation>修正候補</translation>
+    </message>
+    <message>
+        <source>Choose a collection to begin.</source>
+        <translation>コレクションを選択して開始してください。</translation>
+    </message>
+    <message>
+        <source>Complete</source>
+        <translation>完了</translation>
+    </message>
+    <message>
+        <source>Confirm</source>
+        <translation>確認</translation>
+    </message>
+    <message>
+        <source>Conflicting counterparts</source>
+        <translation>矛盾する対応先</translation>
+    </message>
+    <message>
+        <source>Copy full value</source>
+        <translation>完全な値をコピー</translation>
+    </message>
+    <message>
+        <source>Copy row evidence</source>
+        <translation>行の証拠をコピー</translation>
+    </message>
+    <message>
+        <source>Deadline reached</source>
+        <translation>期限に達しました</translation>
+    </message>
+    <message>
+        <source>Inconclusive</source>
+        <translation>結論なし</translation>
+    </message>
+    <message>
+        <source>Investigating</source>
+        <translation>調査中</translation>
+    </message>
+    <message>
+        <source>Loading evidence…</source>
+        <translation>証拠を読み込み中…</translation>
+    </message>
+    <message>
+        <source>Match</source>
+        <translation>対応付け</translation>
+    </message>
+    <message>
+        <source>Next page</source>
+        <translation>次のページ</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>いいえ</translation>
+    </message>
+    <message>
+        <source>Partial patch</source>
+        <translation>部分的なパッチ</translation>
+    </message>
+    <message>
+        <source>Patch absent</source>
+        <translation>パッチなし</translation>
+    </message>
+    <message>
+        <source>Patch present</source>
+        <translation>パッチあり</translation>
+    </message>
+    <message>
+        <source>Previous page</source>
+        <translation>前のページ</translation>
+    </message>
+    <message>
+        <source>Refresh page</source>
+        <translation>ページを更新</translation>
+    </message>
+    <message>
+        <source>Rejected pair connected</source>
+        <translation>拒否したペアが接続されています</translation>
+    </message>
+    <message>
+        <source>Relevant change</source>
+        <translation>関連する変更</translation>
+    </message>
+    <message>
+        <source>Resource limit reached</source>
+        <translation>リソース上限に達しました</translation>
+    </message>
+    <message>
+        <source>Reverted patch</source>
+        <translation>取り消されたパッチ</translation>
+    </message>
+    <message>
+        <source>Rows per page</source>
+        <translation>ページあたりの行数</translation>
+    </message>
+    <message>
+        <source>Rows per page. Reduce this value if a page exceeds its byte allowance.</source>
+        <translation>ページあたりの行数。ページがバイト予算を超えた場合は、この値を減らしてください。</translation>
+    </message>
+    <message>
+        <source>Rows: </source>
+        <translation>行数：</translation>
+    </message>
+    <message>
+        <source>Select evidence to view.</source>
+        <translation>表示する証拠を選択してください。</translation>
+    </message>
+    <message>
+        <source>The graph changed. Refresh this page.</source>
+        <translation>グラフが変更されました。このページを更新してください。</translation>
+    </message>
+    <message>
+        <source>Unmatch</source>
+        <translation>対応を解除</translation>
+    </message>
+    <message>
+        <source>Unrelated change</source>
+        <translation>関連のない変更</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>はい</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageSession</name>
+    <message>
+        <source>
+Your previous graph is still available.</source>
+        <translation>
+前のグラフは引き続き利用できます。</translation>
+    </message>
+    <message>
+        <source>Loading stopped. You can retry.</source>
+        <translation>読み込みを停止しました。再試行できます。</translation>
+    </message>
+    <message>
+        <source>Saved %1</source>
+        <translation>%1 を保存しました</translation>
+    </message>
+    <message>
+        <source>The worker could not acknowledge cancellation.</source>
+        <translation>ワーカーはキャンセルを確認できませんでした。</translation>
+    </message>
+    <message>
+        <source>This worker does not support version comparison graphs.</source>
+        <translation>このワーカーはバージョン比較グラフに対応していません。</translation>
+    </message>
+    <message>
+        <source>Version graph loaded.</source>
+        <translation>バージョングラフを読み込みました。</translation>
+    </message>
+    <message>
+        <source>Version graph worker is unavailable or stopping.</source>
+        <translation>バージョングラフのワーカーは利用できないか、停止中です。</translation>
+    </message>
+    <message>
+        <source>Version graph worker: %1</source>
+        <translation>バージョングラフのワーカー：%1</translation>
+    </message>
+    <message>
+        <source>The version graph file is not valid UTF-8 JSON. Check the file and try again.</source>
+        <translation>バージョングラフファイルは有効な UTF-8 JSON ではありません。ファイルを確認して再試行してください。</translation>
+    </message>
+    <message>
+        <source>Release metadata saved in the current graph.</source>
+        <translation>リリースのメタデータを現在のグラフに保存しました。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageReleaseView</name>
+    <message>
+        <source>%1 releases · %2 declared parent links. Dates and ancestry are your declarations; patch presence is not inferred.</source>
+        <translation>%1 リリース · %2 件の宣言済み親リンク。日時と系譜はユーザーの宣言であり、パッチの存在は推論されません。</translation>
+    </message>
+    <message>
+        <source>&amp;Add release…</source>
+        <translation>リリースを追加(&amp;A)…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>ブランチ(&amp;B)</translation>
+    </message>
+    <message>
+        <source>&amp;Edit release…</source>
+        <translation>リリースを編集(&amp;E)…</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>ラベル(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Add parent…</source>
+        <translation>親リリースを追加…</translation>
+    </message>
+    <message>
+        <source>Add release</source>
+        <translation>リリースを追加</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>ブランチ</translation>
+    </message>
+    <message>
+        <source>Children</source>
+        <translation>子リリース</translation>
+    </message>
+    <message>
+        <source>Choose analyzed snapshot</source>
+        <translation>解析済みスナップショットを選択</translation>
+    </message>
+    <message>
+        <source>Choose parent release</source>
+        <translation>親リリースを選択</translation>
+    </message>
+    <message>
+        <source>Choose…</source>
+        <translation>選択…</translation>
+    </message>
+    <message>
+        <source>Declared children</source>
+        <translation>宣言済みの子リリース</translation>
+    </message>
+    <message>
+        <source>Declared parents</source>
+        <translation>宣言済みの親リリース</translation>
+    </message>
+    <message>
+        <source>Edit release</source>
+        <translation>リリースを編集</translation>
+    </message>
+    <message>
+        <source>Find a release or branch</source>
+        <translation>リリースまたはブランチを検索</translation>
+    </message>
+    <message>
+        <source>ID</source>
+        <translation>ID</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>ラベル</translation>
+    </message>
+    <message>
+        <source>Open snapshot</source>
+        <translation>スナップショットを開く</translation>
+    </message>
+    <message>
+        <source>Parents</source>
+        <translation>親リリース</translation>
+    </message>
+    <message>
+        <source>Publication time is known (UTC)</source>
+        <translation>公開日時が既知（UTC）</translation>
+    </message>
+    <message>
+        <source>Published (UTC)</source>
+        <translation>公開日時（UTC）</translation>
+    </message>
+    <message>
+        <source>Release</source>
+        <translation>リリース</translation>
+    </message>
+    <message>
+        <source>Release ID</source>
+        <translation>リリースID</translation>
+    </message>
+    <message>
+        <source>Release filter</source>
+        <translation>リリースフィルター</translation>
+    </message>
+    <message>
+        <source>Remove %1 from this graph? Its snapshot and saved comparisons remain available.</source>
+        <translation>このグラフから %1 を削除しますか？スナップショットと保存済みの比較は保持されます。</translation>
+    </message>
+    <message>
+        <source>Remove parent link</source>
+        <translation>親リンクを削除</translation>
+    </message>
+    <message>
+        <source>Remove release?</source>
+        <translation>リリースを削除しますか？</translation>
+    </message>
+    <message>
+        <source>Remove release…</source>
+        <translation>リリースを削除…</translation>
+    </message>
+    <message>
+        <source>Remove this release's parent links from its children before deleting it.</source>
+        <translation>削除する前に、子リリースからこのリリースへの親リンクを削除してください。</translation>
+    </message>
+    <message>
+        <source>Select a release to inspect its declared parents and children.</source>
+        <translation>リリースを選択して、宣言された親と子を確認します。</translation>
+    </message>
+    <message>
+        <source>Selected release: %1 · %2</source>
+        <translation>選択中のリリース: %1 · %2</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>スナップショット</translation>
+    </message>
+    <message>
+        <source>This engine does not support release timelines.</source>
+        <translation>このエンジンはリリースのタイムラインに対応していません。</translation>
+    </message>
+    <message>
+        <source>Timeline</source>
+        <translation>タイムライン</translation>
     </message>
 </context>
 </TS>

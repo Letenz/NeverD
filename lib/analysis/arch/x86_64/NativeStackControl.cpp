@@ -7,10 +7,12 @@
 #include "NativeStackControl.h"
 
 #include "neverd/decode/Decoder.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Errc.h"
 
+#include <iterator>
 #include <limits>
 #include <set>
 
@@ -81,7 +83,8 @@ llvm::Error validateBoundary(const SpecializationInstruction &Instruction) {
     return invalid("native stack control requires an exact instruction extent");
   for (size_t I = 0; I < Instruction.Ops.size(); ++I) {
     const auto &Op = Instruction.Ops[I];
-    if (Op.NumInputs > 6 || Op.Seq != static_cast<int>(I) || !ordinary(Op))
+    if (Op.NumInputs > std::size(Op.Inputs) || Op.Seq != static_cast<int>(I) ||
+        !ordinary(Op))
       return invalid("native stack control has malformed operation metadata");
     if (Op.Output.Size && !validValue(Op.Output))
       return invalid("native stack control has an invalid output operand");
@@ -365,6 +368,142 @@ expandNativeStackControl(const SpecializationInstruction &Instruction,
   Result.Boundary.OpCount = Result.Ops.size();
   Result.UndefinedEffects = Effects;
   Result.UndefinedEffects.OpCount = Result.Ops.size();
+  Result.UndefinedEffects.OperationDigest =
+      lowUndefinedOperationDigest(Result.Ops);
+  Result.Receipt.ExpandedOperationDigest =
+      Result.UndefinedEffects.OperationDigest;
+  return Result;
+}
+
+llvm::Expected<NativeStackExpansion>
+expandX64MachineExit(const SpecializationInstruction &Instruction,
+                     const SpecializationX64MachineExit &Declaration,
+                     NdVar Scratch, llvm::ArrayRef<NdVar> ReservedTemporaries) {
+  if (Declaration.Version != 1 ||
+      Declaration.Address != Instruction.Origin.Address ||
+      Instruction.TerminalImport ||
+      Instruction.ProfileProjection != InterpreterProfileProjection::None ||
+      Instruction.NativeBytes.empty() || Instruction.NativeBytes.size() > 15)
+    return invalid("machine exit requires its exact declared native transfer");
+  if (auto Error = validateBoundary(Instruction))
+    return std::move(Error);
+  Decoder Decode;
+  Decode.init(Arch::X64);
+  Decode.setStrict(true);
+  DecodedInsn Insn{};
+  if (!Decode.decodeOneForLift(Instruction.NativeBytes.data(),
+                               Instruction.NativeBytes.size(),
+                               Instruction.Origin.Address, Insn) ||
+      Insn.Size != Instruction.NativeBytes.size())
+    return invalid("machine exit could not be strictly decoded");
+  using Kind = SpecializationX64MachineExitKind;
+  const auto Native = Instruction.NativeStackControl;
+  const auto &B = Instruction.Origin;
+  switch (Declaration.Kind) {
+  case Kind::Call:
+    if (Insn.Id != X86_INS_CALL || !Instruction.IsNativeCall ||
+        Native != SpecializationNativeStackControl::Call)
+      return invalid("machine CALL exit does not match a physical near call");
+    break;
+  case Kind::Return:
+    if (Insn.Id != X86_INS_RET || Instruction.IsNativeCall ||
+        Native != SpecializationNativeStackControl::Return ||
+        !((Instruction.NativeBytes.size() == 1 &&
+           Instruction.NativeBytes[0] == 0xc3) ||
+          (Instruction.NativeBytes.size() == 3 &&
+           Instruction.NativeBytes[0] == 0xc2)) ||
+        B.Immediate != Decode.returnImmediate(Insn))
+      return invalid("machine RET exit requires its canonical near return");
+    break;
+  case Kind::Jump:
+    if (Insn.Id != X86_INS_JMP || Instruction.IsNativeCall ||
+        Native != SpecializationNativeStackControl::None ||
+        B.Control != LowInstructionControl::Branch ||
+        (B.ControlFlags != LowInstructionControlFlag::Branch &&
+         B.ControlFlags != (LowInstructionControlFlag::Branch |
+                            LowInstructionControlFlag::Indirect)))
+      return invalid("machine JMP exit requires an unconditional near jump");
+    break;
+  case Kind::Trap:
+    if (!Decode.isResumableTrap(Insn) || Instruction.IsNativeCall ||
+        Native != SpecializationNativeStackControl::None ||
+        B.Control != LowInstructionControl::Terminator || B.Immediate ||
+        B.ControlFlags != (LowInstructionControlFlag::Terminator |
+                           LowInstructionControlFlag::Resumable))
+      return invalid("machine trap exit requires a resumable trap terminator");
+    break;
+  default:
+    return invalid("unknown machine-exit kind");
+  }
+  std::vector<LowOp> Expected;
+  LowInstructionUndefinedEffects Effects;
+  try {
+    if (Declaration.Kind != Kind::Call ||
+        !Decode.liftX64MemoryCallToLow(Insn, Expected, &Effects))
+      Decode.liftToLow(Insn, Expected, {}, {}, &Effects);
+  } catch (const UnliftedInstruction &) {
+    return invalid("machine exit has no complete strict lift");
+  }
+  const auto OriginalDigest = lowUndefinedOperationDigest(Instruction.Ops);
+  if (Declaration.Kind == Kind::Trap) {
+    // The trap has no exception-state audit. Authenticate the retained effect
+    // without upgrading Missing coverage or accepting invented arbitrary
+    // outputs or preservation claims from the provider.
+    if (lowUndefinedOperationDigest(Expected) != OriginalDigest ||
+        Instruction.UndefinedEffects.Coverage != Effects.Coverage ||
+        Instruction.UndefinedEffects.OpCount != Effects.OpCount ||
+        Instruction.UndefinedEffects.OperationDigest != OriginalDigest ||
+        !Effects.Effects.empty() ||
+        !Instruction.UndefinedEffects.Effects.empty() ||
+        Instruction.PreservedState != LowInstructionPreservedState{})
+      return invalid("machine trap exit bytes differ from the complete lifted "
+                     "span");
+    NativeStackExpansion Result;
+    Result.Ops = Instruction.Ops;
+    Result.Boundary = B;
+    Result.UndefinedEffects = Instruction.UndefinedEffects;
+    Result.Receipt.OriginalBoundary = B;
+    Result.Receipt.OriginalOperationDigest = OriginalDigest;
+    Result.Receipt.ExpandedOperationDigest = OriginalDigest;
+    Result.Receipt.ReturnMode = NativeReturnExpansion::OuterFunctionBoundary;
+    Result.RetainedTerminator = true;
+    return Result;
+  }
+  if (lowUndefinedOperationDigest(Expected) != OriginalDigest ||
+      Effects.Coverage != LowUndefinedCoverage::Complete ||
+      !Effects.Effects.empty() ||
+      Instruction.UndefinedEffects.Coverage != Effects.Coverage ||
+      Instruction.UndefinedEffects.OpCount != Effects.OpCount ||
+      Instruction.UndefinedEffects.OperationDigest != OriginalDigest ||
+      !Instruction.UndefinedEffects.Effects.empty())
+    return invalid("machine-exit bytes differ from the complete lifted span");
+  NativeStackExpansion Result;
+  if (Declaration.Kind == Kind::Jump) {
+    if (Instruction.PreservedState.Audit != LowPreservedStateAudit::Missing ||
+        Instruction.PreservedState != LowInstructionPreservedState{})
+      return invalid("machine JMP exit has unsupported preservation evidence");
+    Result.Ops = Instruction.Ops;
+    Result.Boundary = B;
+    Result.UndefinedEffects = Instruction.UndefinedEffects;
+    Result.Receipt.OriginalBoundary = B;
+    Result.Receipt.OriginalOperationDigest = OriginalDigest;
+    Result.Receipt.ReturnMode = NativeReturnExpansion::InternalTransfer;
+  } else {
+    auto Expanded = expandNativeStackControl(
+        Instruction, NdVar::reg(x86reg::RSP, 8), Scratch,
+        NativeReturnExpansion::InternalTransfer, ReservedTemporaries);
+    if (!Expanded)
+      return Expanded.takeError();
+    Result = std::move(*Expanded);
+  }
+  if (Result.Ops.empty() || (Result.Ops.back().Opcode != NdOp::BRANCH &&
+                             Result.Ops.back().Opcode != NdOp::INDIR_BR))
+    return invalid("machine exit lacks its exact final transfer");
+  Result.Ops.back().Opcode = NdOp::INDIR_BR;
+  Result.Boundary.Control = LowInstructionControl::Branch;
+  Result.Boundary.ControlFlags =
+      LowInstructionControlFlag::Branch | LowInstructionControlFlag::Indirect;
+  Result.Boundary.Immediate.reset();
   Result.UndefinedEffects.OperationDigest =
       lowUndefinedOperationDigest(Result.Ops);
   Result.Receipt.ExpandedOperationDigest =

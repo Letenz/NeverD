@@ -17,6 +17,7 @@
 #include "PHF.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/Tauri.h"
 
 #include <algorithm>
@@ -68,7 +69,8 @@ struct Reader {
   }
   void admitMappings() {
     const auto &Maps = E.Initializer.Mappings;
-    if (Maps.empty() || Maps.size() > 128)
+    if (Maps.empty() ||
+        Maps.size() > ::neverd::limits::web::kReaderAdmitMappingsMapsSizeLimit)
       throw Error("tauri_mapping_budget_exceeded");
     for (size_t I = 0; I < Maps.size(); ++I) {
       const auto &M = Maps[I];
@@ -135,9 +137,14 @@ TauriExtraction extractTauri(const Artifact &Input,
       F[3].ExactAddress || F[4].ExactAddress || !F[1].Value || !F[3].Value ||
       F[1].Value > Limits.Members || F[3].Value > Limits.Members)
     throw Error("tauri_invalid_initializer_fields");
-  if (Init.End <= Init.Start || Init.End - Init.Start > 256 ||
-      Init.Instructions > 32 || !Init.Instructions ||
-      Init.Function > Init.Start || Init.Start - Init.Function > 65536 ||
+  if (Init.End <= Init.Start ||
+      Init.End - Init.Start >
+          ::neverd::limits::web::kMaxTauriInitializerBytes ||
+      Init.Instructions >
+          ::neverd::limits::web::kReaderExtractTauriInitInstructionsLimit ||
+      !Init.Instructions || Init.Function > Init.Start ||
+      Init.Start - Init.Function >
+          ::neverd::limits::web::kMaxTauriInitializerDistance ||
       !within(Init.Offset, Init.End - Init.Start, Input.Content.size()))
     throw Error("tauri_invalid_initializer_range");
   for (size_t I = 0; I < F.size(); ++I)
@@ -172,7 +179,9 @@ TauriExtraction extractTauri(const Artifact &Input,
     const auto At = I * 32;
     const auto KeySize = number(Rows, At + 8, 8);
     const auto StoredSize = number(Rows, At + 24, 8);
-    if (KeySize < 2 || KeySize > 4096 || StoredSize > MaxBlobReadBytes ||
+    if (KeySize < 2 ||
+        KeySize > ::neverd::limits::web::kReaderExtractTauriKeySizeLimit ||
+        StoredSize > MaxBlobReadBytes ||
         StoredSize > Limits.StoredBytes - E.StoredBytes)
       throw Error("tauri_member_budget_exceeded");
     TauriMember M;

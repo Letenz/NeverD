@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: e9f75b83d2e57f9899d8319d6750fa790f310da19f83d7c653dfc2c987ea3621 -->
+<!-- i18n-source: 40bc95b0497bcc23428886f1765116ce87275a1507ae139a70be4896271650a7 -->
 
 [← Documentation Index](README.md)
 
@@ -65,9 +65,9 @@ neverd patch app --from-source=replacement.c --compiler=neverc \
 
 | المترجم | الناتج | ملف تنفيذ نظام التشغيل المتحقق |
 |---|---|---|
-| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++؛ Mach-O x64/ARM64 C/C++؛ PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| Clang 22.1.6 | كائن أصلي | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| GCC/G++ 13.3.0 | كائن أصلي | ELF x64/ARM64 C/C++ مع بيئة Itanium متوافقة; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++؛ Mach-O x64/ARM64 C/C++؛ PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
+| Clang 22.1.6 | كائن أصلي | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
+| GCC/G++ 13.3.0 | كائن أصلي | ELF x64/ARM64 C/C++ مع بيئة Itanium متوافقة; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
 | NeverC 3389.1.5 الوضع العادي | LLVM IR | ELF x64 C؛ Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 الوضع العادي | كائن أصلي | ELF x64 C |
 | NeverC 3389.1.5 C | LLVM IR / كائن أصلي | ELF / PE / Mach-O x64/ARM64: مصدر C خالص |
@@ -92,21 +92,48 @@ neverd patch app --from-source=replacement.c --compiler=neverc \
 ثُبتت كائنات GCC C ونُفذت أيضًا على ELF x86 وARM32 وARM64 عبر Linux QEMU user mode. يختار المحول ARM/Thumb من الصورة، وتُحاذى سجلات GNU property حسب عرض مؤشر ELF.
 
 <!-- i18n-section: references -->
-## مراجع البرنامج الأصلي والتخزين
+## استدعاء التنفيذ الأصلي وتوسيع التخطيط والتبعيات
 
-تطابق الروابط تصريحات خارجية: يتطلب `function` دالة أصلية أو مدخل استيراد مؤكداً؛ ويتطلب `data` تخزيناً قابلاً للكتابة؛ ويتطلب `const` تصريح IR ثابتاً. تحتاج روابط بيانات الكائن إلى امتداد غير صفري. لا يجوز تجاوز حدود التخزين أو منح الكتابة إلى RELRO. يرفض استدعاء الجسم الأصلي للدالة المستبدلة؛ لا يحتوي هذا الملف على قفزة رد تحفظ مقدمة الدالة.
+تسمّي الروابط تصريحات خارجية: يتحقق `function` من الدالة الأصلية أو وسيط الاستيراد، ويتطلب `data` تخزيناً قابلاً للكتابة و`const` تصريح IR ثابتاً. تحتاج بيانات الكائن إلى نطاق غير صفري لا يتجاوز حدود التخزين ولا يمنح الكتابة إلى RELRO. استخدم `original` صراحة لاستدعاء الجسم المحفوظ للدالة المستبدلة. يستدعي المدخل العام البديل، بينما ينفذ المدخل المحفوظ بادئة من تعليمات كاملة أُعيد تحديد مواقعها ثم يتابع في الجسم الأصلي. تشترك الشيفرة وIR المقدم والكائنات الأصلية في هذا العقد، بما فيه معاملات الفاصلة العائمة والمكدس وتعدد الاستدعاءات الراجعة.
 
-تبقى الشيفرة الجديدة RX والحالة القابلة للتعديل RW. يعاد استخدام الاستيرادات الموجودة فقط، مع التمييز بين خانات GOT/IAT ومداخل الاستدعاء. يحتاج Mach-O إلى مساحة لأوامر التحميل مثل `-Wl,-headerpad,0x400`؛ ويحتاج PE إلى مساحة لرؤوس الأقسام. يفشل نقص المساحة. تتطلب ELF `.data.rel.ro` وحماية CET/IBT الأصلية عقوداً إضافية وترفض حالياً.
+يتطلب الاستدعاء الراجع حدود دالة ونمط تعليمات وعنوان متابعة وأدلة فك مكدس موثقة. تُرفض قبل النشر التعليمات المجهولة ومراجع PC النسبية غير الآمنة والفروع إلى داخل البادئة المنسوخة وإعادات التموضع غير المدعومة للمحمّل والاستدعاءات المتداخلة والمقدمات ذات المعالجات غير الممثلة. يبقى توفير تصريح مطابق لـABI مسؤولية المستدعي. يسجل الإيصال المداخل المحفوظة في `original_callbacks`.
+
+يمكن لـPE32/PE32+ توسيع جدول رؤوس أقسام ممتلئ بنقل نطاقات الملف وتحديث مؤشرات التصحيح والرموز والشهادات والبيانات الملحقة الممثلة، مع حفظ عناوين RVA الأصلية. يمكن لصور Mach-O x64/ARM64 PIE توفير مساحة الأوامر وفك المكدس عبر تمديد مدقق لبادئة الرأس إذا سمحت حماية page-zero المجاورة ومقطع linkedit الأخير؛ تبقى عناوين الشيفرة والبيانات الأصلية ثابتة. لا يتطلب هذا النمط `-Wl,-headerpad,0x400` أو صفحات مجاورة فارغة لفك المكدس. تُرفض مراجع عنوان الرأس الصريحة وأوامر التحميل المجهولة وملكية الشيفرة/البيانات المختلطة والنطاقات التالفة والتخطيطات غير المدعومة. تُخطط سعتا الرأس وفك المكدس معاً قبل التثبيت.
+
+تبقى الشيفرة الجديدة RX والحالة المتغيرة RW. تضيف طلبات `--dependency` الصريحة دوال أو بيانات عبر بيانات ELF الديناميكية أو واصفات استيراد PE/IAT أو بيانات Mach-O dylib/bind. تبقى هويات الاستيراد وأرقامه وإصداراته الحالية ثابتة، وتحتفظ الخانات ووسطاء الاستدعاء بمعانيها المنفصلة. اختر اسم المكتبة أو مسارها وفق محمّل OS المستهدف. يستخدم المثال اسم مكتبة ELF مشتركة. يجب أن يؤدي غياب المكتبة أو الرمز إلى خطأ حقيقي من المحمّل وقت التنفيذ. تظل TLS وIFUNC وعقود إصدارات الرموز الجديدة وبواني وقت التحميل وإعادات التموضع غير الممثلة غير مدعومة؛ وتتطلب ELF `.data.rel.ro` وCET/IBT عقوداً إضافية. في كائنات COFF الأصلية، صرّح عن استيرادات الدوال والبيانات الجديدة باستخدام `__declspec(dllimport)` كي تحدد إعادات التموضع جدول IAT. تُرفض المراجع الخارجية المباشرة العادية.
 
 ```sh
+# ELF example: the original target is at 0x401140.
 neverd patch app --from-source=replacement.c --entry=replacement --func=0x401140 \
+  --bind=original:saved_target=0x401140 \
   --bind=function:original_helper=0x401190 \
   --bind=data:shared_counter=0x404020:4 \
   --bind=const:lookup_table=0x402040:64 \
+  --dependency=function:extra_function=libpatch_extra.so \
+  --dependency=data:extra_state=libpatch_extra.so \
   --patch-report -o app.bound
 ```
 
-يتطلب نمو جداول فك المكدس Mach-O أيضاً مساحة ملف ومساحة افتراضية مجاورتين غير مستخدمتين؛ لا تحجزها مساحة الرأس وحدها. تميز العينات المتحققة بين الشرطين.
+تُضاف خيارات التبعيات إلى نهاية البنية وتُفحص بحسب حجمها، وتسري على الشيفرة وIR المقدم والكائنات الأصلية. يتضمن الإيصال `added_imports`؛ وبعد إعادة تحميل المرشح يعاد فحص جميع الاستدعاءات والاستيرادات وصلاحيات التخزين والبايتات المثبتة. يحفظ الفشل المدخل وأي وجهة موجودة.
+
+<!-- i18n-section: examples -->
+## أمثلة قابلة للتشغيل
+
+[أمثلة كاملة لـ Windows/macOS/Linux](../../examples/source-patch/README.md) تتضمن مصادر البرنامج الأصلي والدالة البديلة والمكتبة، وأوامر البناء وإضافة Python SDK تعمل داخل المضيف الحقيقي. شغّلها من جذر المستودع باستخدام بناء NeverD يدعم Python ومجلد إخراج جديد.
+
+```sh
+# Linux / macOS
+python3 examples/source-patch/run.py --neverd build-example-host/bin/neverd --clang clang --output build-example-native
+```
+
+```powershell
+# Windows: Visual Studio developer PowerShell
+python examples/source-patch/run.py --neverd build-example-host/bin/neverd.exe --clang clang --output build-example-native
+```
+
+يعمل المساران افتراضيًا؛ أضف `--api cli` أو `--api sdk` لاختيار أحدهما. يُكتشف عنوان الهدف تلقائيًا. عند الإدخال `7` يطبع الأصل `8` وتطبع النسختان المعدلتان `36`. يتحقق المشغّل من التنفيذ والإيصالات وفشل المحمّل الفعلي عند غياب المكتبة، ويحفظ الأوامر الكاملة في `commands.json`.
+
+نجحت أمثلة CLI وPython SDK المستضاف على Linux وmacOS وWindows بمعماريتي x64 وARM64 بشكل أصلي: 54 تنفيذًا و12 رفض تحميل فعليًا عند غياب المكتبة. [CI والمصادر الدقيقة لكل مضيف](../../examples/source-patch/README.md#native-validation).
 
 <!-- i18n-section: exceptions -->
 ## استثناءات C++
@@ -128,15 +155,37 @@ neverd patch app --from-source=replacement.c --entry=replacement --func=0x401140
 report = session.patch_source(
     replacement_source, "app.patched",
     mappings={"replacement": original_address},
-    compiler="gcc", compiler_path="/path/to/gcc", artifact="object",
-    bindings={"shared_counter": ("data", original_counter_address, 4)},
+    compiler="clang", compiler_path="/path/to/clang", artifact="object",
+    bindings={
+        "saved_target": ("original", original_address),
+        "shared_counter": ("data", original_counter_address, 4),
+    },
+    dependencies={
+        "extra_function": ("libpatch_extra.so", "function"),
+        "extra_state": ("libpatch_extra.so", "data"),
+    },
 )
 ```
 
 <!-- i18n-section: verification -->
 ## البناء والتحقق
 
-حدد مترجماً متوافقاً عبر `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` (جرى اختبار Clang 22.1.6). يصحح البناء المتكامل نسخة LLVM داخل دليل البناء فقط، دون تعديل الوحدة الفرعية أو ذاكرة الحزم المشتركة. قد يرفض خطأ x64 PLT في حزم r3/r4 تصحيح IR؛ تتجنب الكائنات الأصلية هذا المسار MC. يشترط `NEVERD_TEST_REQUIRE_FIXED_LLVM=1` إنتاج PLT الدقيق المصحح.
+نجحت المهام الست المختارة لأنظمة التشغيل والمعماريات الأصلية بلا إخفاق أو تخطٍّ: 3669 تنفيذ GoogleTest، و1008 ملاحظات لعمليات أصلية (504 وظيفية و504 لاستثناءات C++)، و12 رفضاً فعلياً من المحمّل، و96 صورة و84 إيصال نشر.
+
+| المضيف | المصدر | Harness | مهمة CI | الاختبارات | الملاحظات / الرفض |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+تؤهّل هذه الآثار تحديداً مراجعات المصدر وharness المدرجة أدناه. تخضع مراجعات دمج dev والتوثيق اللاحقة لفحوص محلية وتوثيقية مستقلة. تظل المهام السابقة الفاشلة أو الملغاة إخفاقات. لا تثبت الملاحظات التكميلية التاريخية الـ216 ولا نتائج CPU/التوافق لـPE ARM32 وApple القديمة ذات32بت تغطية عتاد أصلي أو استثناءات C++ للقدرات الجديدة.
+
+يستخدم تأهيل Windows ARM64 مكتبة Unicorn C DLL أصلية لمعمارية ARM64، بُنيت فعلياً من الوحدة الفرعية المثبتة بأدوات LLVM-MinGW المتحقق منها، مع مكتبة استيراد MSVC وتجاوز صريح لهدف CMake. توثّق نسخة البناء المعزولة ثلاثة إصلاحات للمضيف: زوج انتقالات بلا SEH، ورد نداء ARM64 لتخصيص الصفحات مع مزامنة ذاكرة التعليمات المخبأة، وأقنعة قيم فورية 64 بت لـ Windows LLP64. لا تتغير مصادر الوحدة الفرعية أو مراجعتها. هذا يؤهل مضيف الاختبار لمصفوفة CPU ولا يثبت دعم JIT MSVC ARM64 الافتراضي. تُسجّل فحوص استعادة المضيف الخمسة منفصلة عن أدلة التنفيذ الأصلي للعمليات المعدلة واستثناءات C++.
+
+حدد مترجماً متوافقاً عبر `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` (جرى اختبار Clang 22.1.6). يترجم البناء المتكامل مباشرة مراجعة فرع LLVM الخاص بـ NeverSight المسجلة. تبقى تصحيحات إعادة التموضع في الفرع، ولا يطبق NeverD رقعاً على مصدر LLVM. قد يرفض خطأ x64 PLT في حزم r3/r4 تصحيح IR؛ تتجنب الكائنات الأصلية هذا المسار MC. يشترط `NEVERD_TEST_REQUIRE_FIXED_LLVM=1` إنتاج PLT الدقيق المصحح.
 
 تحتوي `NeverDSourcePatchTests` على حالات C/API/الكائنات/الاستثناءات الأصلية؛ وتفحص `NeverDSourcePatchMatrixTests` كل التركيبات باستخدام Unicorn. تنفذ `SourcePatchPE` سبعة سيناريوهات C++ عند تحديد `NEVERD_TEST_WINDOWS_CRT_LIB` و`NEVERD_TEST_WINDOWS_UCRT_LIB` و`NEVERD_TEST_WINDOWS_SDK_LIB`. يحتاج المضيف غير Windows أيضاً إلى `NEVERD_TEST_WINDOWS_RUNNER`. يجعل `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` المدخلات الناقصة فشلاً. يشترط سير عمل Windows المخصص التنفيذ الأصلي ويرفض الحالات المتخطاة.
 
@@ -154,7 +203,7 @@ ctest --test-dir build-source -L \
   --output-on-failure --parallel 4
 ```
 
-تصحح نسخة LLVM أيضاً مراجع بيانات GOT في Mach-O x64؛ تقاس جداول catch ذات النوع في Clang من نهاية حقل إعادة التموضع ذي أربعة بايتات. تزحزحه r3/r4 أربعة بايتات، وترفضه مراجعة ما قبل النشر. تنفذ حالات x64 على Mac عبر Rosetta 2، وحالات ARM64 مباشرةً.
+يصحح فرع LLVM أيضاً مراجع بيانات GOT في Mach-O x64؛ تقاس جداول catch ذات النوع في Clang من نهاية حقل إعادة التموضع ذي أربعة بايتات. تزحزحه r3/r4 أربعة بايتات، وترفضه مراجعة ما قبل النشر. تنفذ حالات x64 على Mac عبر Rosetta 2، وحالات ARM64 مباشرةً.
 
 اجتاز التحقق في بيئة Windows x64 الأصلية [2ed7e78fc](https://github.com/NeverSight/NeverD/actions/runs/38307461805) جميع الاختبارات المتخصصة وعددها 16 لمسارات PE والكائنات وtrampoline، وجميع اختبارات مصفوفة أهداف CPU وعددها 143، دون تخطي أي حالة. نفّذ اختبار FH3 سبعة سيناريوهات تشغيل C++؛ وتستخدم مصفوفة الأهداف Unicorn. استُخدم Clang 22.1.6 مع MSVC وWindows SDK الأصليين وLLVM المدمج.
 
@@ -187,10 +236,33 @@ ctest --test-dir build-source -L \
 
 يتطلب المسار نفسه 30 ملاحظة Windows x86 على Windows x64، و48 ملاحظة Linux x86 على Linux x64، و96 ملاحظة Linux ARM32 عبر QEMU في نمط المستخدم، موزعة بالتساوي بين ARM وThumb. تشمل اختبارات Linux كائنات GCC المطابقة للهدف. يتكرر كل سيناريو ثلاث مرات. تميز التقارير بين `native` و`compatibility` و`rosetta` و`qemu-user`، وتسجل بنية الهدف وبنية المضيف الفعلية. لا يفي Rosetta بشرط تشغيل Intel الأصلي.
 
-تظل ملفات أهداف CPU الأربعة عشر مغطاة بمصفوفة 154 اختبارًا للمصدر وIR والكائنات. يتوفر حاليًا تحقق CPU لـ PE ARM32 وMach-O i386 وARMv7 iOS وARMv7k watchOS، دون ادعاء تحقق محمل OS أصلي أو آلية فك استثناءات C++. يبقى NeverC مخصصًا للغة C الخالصة على x64 وARM64؛ ويتولى Clang وبرامج تشغيل ELF GCC المطابقة إنتاج أهداف 32 بت. لا يبني المتحقق NeverC ولا يعدله.
+تظل ملفات أهداف CPU الأربعة عشر مغطاة بمصفوفة 283 اختبارًا للمصدر وIR والكائنات. يتوفر حاليًا تحقق CPU لـ PE ARM32 وMach-O i386 وARMv7 iOS وARMv7k watchOS، دون ادعاء تحقق محمل OS أصلي أو آلية فك استثناءات C++. يبقى NeverC مخصصًا للغة C الخالصة على x64 وARM64؛ ويتولى Clang وبرامج تشغيل ELF GCC المطابقة إنتاج أهداف 32 بت. لا يبني المتحقق NeverC ولا يعدله.
 
 ينفذ كل من Windows x64 وARM64 أيضًا 36 ملاحظة لاستثناءات Clang C++ FH3.
 
 تُهيأ مؤشرات Mach-O القابلة للكتابة أثناء التنفيذ؛ وما زالت تهيئة العناوين الثابتة تحتاج إلى تسجيل إعادة تموضع وقت التحميل غير المدعوم، مع اختبار صريح للرفض. لا تُقبل دوال COMDAT في ELF ذات الحجم الصفري إلا إذا كان رمز التوقيع هو الدالة الوحيدة عند بداية قسمها التنفيذي وطابقت CFI القسم كاملًا بدقة. وتظل حالات الإزاحة الداخلية والقسم المشترك والحشو وغياب المجموعة أو CFI مرفوضة.
 
 لـ ELF ARM وThumb ملفا تحقق منفصلان. تتلقى أدوات إنتاج المصدر صراحةً `-marm` أو `-mthumb`، وتحافظ روابط الدوال الأصلية على بت حالة التعليمات. تستخدم عمليات ELF ذات 32 بت صور PIE بإعادة تموضع ديناميكية فعلية. يسجل تشغيل ARM32 عبر QEMU محمل glibc صريحًا `--loader` وsysroot؛ فحساب AUXV في QEMU لا يتبع رؤوس البرنامج المنقولة بالطريقة نفسها التي تتبعها نواة Linux. يتحقق هذا المسار من تحميل glibc والتنفيذ تحت QEMU، ولا يثبت التنفيذ على عتاد ARM32 أو بمحمل نواة أصلي.
+
+بالنسبة إلى صور ELF هذه بعد تطبيق التصحيحات، يتطلب كل من مساري Linux x86 وARM32 عبر `qemu-user` محمل glibc صريحًا `--loader` من sysroot المطابق لبنية الهدف. يستخدم مسار Linux x86 في وضع `compatibility` دعم 32 بت في نواة مضيف Linux x64، ويُسجَّل منفصلًا عن تنفيذ QEMU؛ ولا يثبت التنفيذ على مضيف x86 أصلي ذي 32 بت.
+
+اجتاز [تحقق العمليات](https://github.com/NeverSight/NeverD/actions/runs/38694434082) للإصدار `fcee81c9a5e2f20a71090ade23ae833175f64c59` جميع المشاهدات البالغ عددها 750: منها 576 على مضيفين أصليين بمعمارية مطابقة، و78 في وضع توافق x86، و96 لمعمارية ARM/Thumb عبر وضع المستخدم في QEMU. تحقق تدقيق مستقل من بصمات الصور الـ126، وبيئات التنفيذ، وقائمة السيناريوهات كاملة. اجتازت [إعادة البناء على Windows](https://github.com/NeverSight/NeverD/actions/runs/38694628242) عدد 194 من الاختبارات المركزة و474 مشاهدة لعمليات Windows/Linux. واجتازت [إعادة البناء على Linux](https://github.com/NeverSight/NeverD/actions/runs/38694638358) عدد 444 من الاختبارات، بما فيها جميع الحالات الأصلية البالغ عددها 62 حالة فشل و46 حالة تخطٍ، دون فشل أو تخطٍ. تظل حدود التحقق من العتاد ومحمّلات النظام المذكورة أعلاه سارية. يبقى NeverC مخصصًا للغة C الخالصة ولم يُعدّل مستودعه.
+
+نجح [التحقق الإضافي من ARM/Thumb](https://github.com/gmh5225/test_mac_intel/actions/runs/38750504263) في جميع الملاحظات البالغ عددها 96 (48 لكل من ARM وThumb) للصور الاختبارية الـ32 الخاصة بلغة C من `fcee81c9a5e2f20a71090ade23ae833175f64c59` على `ubuntu-24.04-arm`. حمّلت نواة Linux كل صورة مباشرة عبر `/lib/ld-linux-armhf.so.3`، دون QEMU أو أمر تحميل صريح. هذا وضع `compatibility` على مضيف ARM64، وليس تحققًا على مضيف أصلي من فئة 32 بت. يُسجَّل التزام برنامج الاختبار `3ad17ac9608d6bd9f5a4d44953ec375524e5730b` والتزام الصور كلٌّ على حدة. تحققت عمليات تدقيق مستقلة من بصمات الصور، وإيصالات النشر الثلاثين كاملة، وجميع السيناريوهات والتكرارات، وعدم وجود قواعد مفسّر `binfmt_misc` مطابقة.
+
+أظهرت [فحوص بيئات التشغيل المستضافة المنفصلة](https://github.com/gmh5225/test_mac_intel/actions/runs/38749138719) أن بيئة Windows 11 ARM64 المقدَّمة ترفض برامج ARM32 بالخطأ `WinError 216`. في macOS 15.7.9 مع Xcode 16.4، لم تتمكن حزم SDK المتاحة من ربط برامج macOS i386 أو iOS ARMv7. نجح ربط برنامج watchOS ARMv7k، لكن لم يُثبت تشغيله على جهاز فعلي. نجاح مهام الفحص لا يعني اعتماد هذه المنصات؛ فما زالت تغطية العتاد الأصلي غير مكتملة. لم يُبنَ NeverC ولم يُعدَّل.
+
+نجحت [فحوص Linux الإضافية في Actions الشخصي](https://github.com/gmh5225/test_mac_intel/actions/runs/38773830274) في 96 تشغيلًا لـ ARM/Thumb داخل ضيف ARM32 كامل عبر QEMU TCG، بنواة Linux ذات 32 بت وglibc، إضافة إلى 30 تشغيلًا لـ PE ARM32 عبر Wine داخل الضيف نفسه. تحمّل نواة الضيف صور ELF مباشرة؛ وهذه محاكاة للنظام الكامل تُسجّل منفصلة عن مسار `qemu-user` ذي المحمّل الصريح. يُسجّل تثبيت سجل Wine على طبقة توافق المضيف ARM64 بصورة مستقلة ولا يُحتسب ضمن مرات تشغيل الرقع. يجب أن تنجح تهيئة Wine داخل الضيف وكل عملية تشغيل مقاسة ضمن المهل الأصلية.
+
+نجحت [فحوص توافق Apple](https://github.com/gmh5225/test_mac_intel/actions/runs/38771214358) في 30 تشغيلًا لـ Mach-O i386 عبر Darling على Linux، و60 تشغيلًا لـ ARMv7/ARMv7k عبر touchHLE على macOS Intel. يُشغّل كل أصل وكل بديل ناتج من IR المصدر أو ملف كائن مُترجم أو ملف كائن مُقدّم ثلاث مرات. تحققت مراجعات مستقلة من الصور الـ 72، وسجلات نشر الرقع الـ 66، وعمليات التشغيل الـ 216 في هذه الفحوص الإضافية، بما فيها أحجام نواتج GitHub وبصمات SHA256 والالتزامات الدقيقة وقوائم الحالات الكاملة. تبقى مدخلات Linux مثبتة عند `fcee81c9a5`؛ أُنتجت مدخلات PE عند `a542f97ba` ومدخلات Mach-O عند `8f5f06762`. تُسجّل التزامات أدوات الاختبار منفصلة في عمليات التشغيل المرتبطة.
+
+تتحقق إصلاحات Mach-O من دوال Thumb المختارة بصورة مستقلة عن وصف الصورة العام المختلط ARM/Thumb، وتوحّد مؤشرات تصدير Thumb المثبتة وعناوين شيفرة فك المكدس في ARM32 دون تغيير مؤشرات البيانات أو أطوال النطاقات. اجتاز البناء باستخدام مصادر LLVM المدمجة محليًا جميع فحوص مصفوفة CPU البالغ عددها 283 وفحوص عقود الاستثناءات البالغ عددها 258، دون إخفاق أو تخطٍ. تستخدم اختبارات Mach-O القديمة رابطًا مفتوح المصدر موثقًا وتحجز سعة لبيانات فك المكدس؛ ولـ i386 نقطة بدء بمحاذاة صحيحة ومقطع صفحة صفر بحجم 64 KiB.
+
+تثبت هذه النتائج تنفيذ C ضمن المحاكيات وطبقات التوافق المذكورة. Wine ليس Microsoft Windows، وDarling ليس macOS، وتنفيذ ARMv7k داخل محاكاة iOS عالية المستوى لا يثبت دعم watchOS أو WatchKit أو أجهزة Apple الفعلية. لا يُستنتج منها تحقق من SDK قديم لـ Apple أو عتاد أصلي ذي 32 بت، كما لا تثبت هذه الاختبارات فك مكدس استثناءات C++. تبقى أدلة التشغيل الأصلي والتوافق السابقة منفصلة. لم يُبنَ NeverC ولم يُعدّل.
+
+<!-- i18n-section: interactive-byte-patches -->
+## مسؤولية التصحيحات التفاعلية
+
+تتولى `lib/patch` التحقق من البايتات وترميز LLVM MC ولقطة الإدخال الثابتة وسجلات التغييرات الموحدة والتصدير الحصري. تتحقق SDK من أهداف المصدر باستخدام نص C الفعلي ومواضع LowIR الأصلية والمعاملات المفكوكة؛ لا تكفي علامة التنقل وحدها للسماح بالتعديل. يدمج العامل ملف `patches.json` الاختياري مع التراجع والإعادة ويبطل التحليل بعد التعديل. تقرأ التواقيع البايتات الأصلية، وتفقد الدوال المعدلة آثار المكتبة المستنتجة من هويتها. تستخدم GUI وCLI وPython واجهات API نفسها. يظل استبدال الدالة كاملة عبر `neverd_patch_source` ويتطلب تصدير تغييرات البايتات وإعادة فتحها أولاً.
+
+[GUI](../gui.md) · `neverd patch-bytes` · `Session.byte_patches` · `Session.apply_byte_patch` · `Session.export_byte_patches`

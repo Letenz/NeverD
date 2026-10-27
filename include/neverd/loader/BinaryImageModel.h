@@ -24,6 +24,8 @@
 #include "neverd/loader/COFF/RichHeader.h"
 #include "neverd/loader/ELF/ELFImageMetadata.h"
 #include "neverd/loader/ExceptionTable.h"
+#include "neverd/loader/Limits.h"
+#include "neverd/loader/MachO/MachOArm64e.h"
 #include "neverd/loader/ObjC/ObjCMethods.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/sbf/SBFMetadata.h"
@@ -33,6 +35,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -43,6 +46,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -52,6 +56,9 @@
 namespace neverd {
 
 class ExecutableCodeOwnerIndex;
+namespace macho_loader {
+class DyldSharedCache;
+}
 
 /// One concrete pointer slot bound by Mach-O dyld metadata.  This native view
 /// is retained for patch provenance; collectImportStorageSlots() combines it
@@ -63,6 +70,27 @@ struct ImportBindSlot {
   /// means no specific dependency is known; it is never an aggregate lookup.
   std::string Module = {};
   bool WeakImport = false;
+  /// Exact dyld lookup scope, including SELF=0 and negative special ordinals.
+  /// Absent means legacy evidence did not record the scope, never SELF.
+  std::optional<int64_t> LibraryOrdinal;
+};
+
+/// A dyld signing recipe, not a runtime pointer value. The original slot bytes
+/// remain encoded: offline loading cannot manufacture the process's PAC.
+struct MachOAuthenticatedPointer {
+  va_t Target = InvalidVA;
+  /// Exact on-disk recipe, retained to invalidate analysis after byte edits.
+  std::optional<uint64_t> EncodedValue;
+  std::string Symbol;
+  std::string Module;
+  int64_t Addend = 0;
+  uint16_t Diversity = 0;
+  uint8_t Key = 0;
+  bool AddressDiversity = false;
+  bool WeakImport = false;
+  /// Present only for a dyld import recipe, not a local rebase or object
+  /// relocation. It distinguishes special lookups with an empty Module.
+  std::optional<int64_t> LibraryOrdinal;
 };
 
 /// One dependency load command, including duplicate names and invalid-name
@@ -303,10 +331,11 @@ struct BinaryImage {
   std::vector<LoadDiagnostic> LoadDiagnostics;
 
   void addLoadDiagnostic(std::string Code, std::string Message) {
-    constexpr size_t MaxDiagnostics = 64;
-    if (LoadDiagnostics.size() < MaxDiagnostics)
+    if (LoadDiagnostics.size() <
+        ::neverd::limits::loader::kBinaryImageModelMaxDiagnostics)
       LoadDiagnostics.push_back({std::move(Code), std::move(Message)});
-    else if (LoadDiagnostics.size() == MaxDiagnostics)
+    else if (LoadDiagnostics.size() ==
+             ::neverd::limits::loader::kBinaryImageModelMaxDiagnostics)
       LoadDiagnostics.push_back({"loader.diagnostics_truncated",
                                  "Further loader diagnostics omitted."});
   }
@@ -334,6 +363,9 @@ struct BinaryImage {
   std::vector<ObjCProtocol> ObjCProtocols;
   std::vector<ObjCProperty> ObjCProperties;
   std::map<va_t, ObjCSourceReference> ObjCSourceReferences;
+  /// Offline reference identities from authenticated or cache metadata. These
+  /// declarations do not establish runtime values or source object ownership.
+  std::map<va_t, ObjCSourceReference> ObjCMetadataReferences;
   std::vector<std::string> ObjCMetadataDiagnostics;
   /// A valid LC_FUNCTION_STARTS stream supplied linked Mach-O function
   /// identities.  Raw read-only metadata must not then be rescanned as an
@@ -345,11 +377,37 @@ struct BinaryImage {
   /// be loaded away from address zero, so unrelocated absolute instruction
   /// immediates cannot denote its own link-time image addresses.
   bool MachOIsDylib = false;
+  uint32_t MachOCPUSubtype = 0;
+  bool isArm64e() const {
+    return isMachO() && Arch == Arch::AArch64 &&
+           macho_loader::arm64e::isSubtype(MachOCPUSubtype);
+  }
   /// Exact slots decoded by the supported chained-fixup reader. A raw nonzero
   /// slot in a chained image is not a pointer merely because it looks mapped.
   bool MachOHasChainedFixups = false;
   bool MachOChainedFixupsAmbiguous = false;
   std::set<va_t> MachOResolvedChainedPointerSlots;
+  std::map<va_t, MachOAuthenticatedPointer> MachOAuthenticatedPointers;
+  /// Immutable cache address space for analysis-only cross-image metadata.
+  /// It does not extend readVA or establish a runtime pointer value.
+  std::shared_ptr<const macho_loader::DyldSharedCache> MachOSharedCache;
+  /// Exact catalogue selection and hashes of all cache files, in file order.
+  /// Raw is a packed analysis view, while segment VAs retain cache addresses.
+  std::string MachOSharedCacheImagePath;
+  std::vector<std::array<uint8_t, 32>> MachOSharedCacheFileSHA256;
+  /// Indirect-table names on cache-owned slide slots. These are symbolic
+  /// references, not ordinary import-storage or unsigned-pointer proofs.
+  std::map<va_t, std::string> MachOSharedCacheSymbolPointers;
+  std::string MachOChainedFixupsError;
+  /// Any byte of an encoded signing recipe overlaps this storage range.
+  bool hasMachOAuthenticatedPointerIn(va_t Address, uint64_t Size) const {
+    if (!Size)
+      return false;
+    const auto It =
+        MachOAuthenticatedPointers.lower_bound(Address >= 7 ? Address - 7 : 0);
+    return It != MachOAuthenticatedPointers.end() &&
+           (It->first <= Address || It->first - Address < Size);
+  }
   std::vector<MachODylibReference> MachODylibReferences;
   /// A requested module is not a specific-provider proof under flat lookup.
   /// Filled from MH_TWOLEVEL only when MH_FORCE_FLAT is absent.
@@ -446,8 +504,9 @@ struct BinaryImage {
   /// resolves to the wrong segment (or is rejected as code); this map lets the
   /// emitter pin such a base to the symbol's own rodata global with a (possibly
   /// negative) byte offset, so `base + runtime_index` lands back inside the
-  /// table.  Filled by the loader for i386 R_386_GOTOFF whose symbol is in
-  /// clean rodata.
+  /// table.  Filled by the loader for an i386 instruction operand, GOTOFF or
+  /// absolute (non-PIC `lea T-0x20(,%esi,4)`), whose symbol is in clean
+  /// rodata.
   std::map<uint64_t, uint64_t> RodataAnchorSeg;
   /// Virtual addresses of relocation slots that hold an absolute pointer into
   /// an executable segment (filled by the loader for R_X86_64_64 /
@@ -466,6 +525,8 @@ struct BinaryImage {
   /// emitter rebuilds such a table with `ptrtoint(@recompiled_data)` fields so
   /// the pointers survive relinking (the data analogue of CodePtrRelocSlots),
   /// instead of leaving the stale original VAs that would read unmapped memory.
+  /// Linked PE header mappings also record their format-owned ImageBase field
+  /// here. It remains distinct from the file's explicit BaseRelocations.
   std::set<uint64_t> DataPtrRelocSlots;
   /// Data-pointer slot -> address inside the relocation symbol's owning
   /// section/segment.  Slot bytes alone cannot disambiguate a one-past target
@@ -552,6 +613,12 @@ struct BinaryImage {
   /// writable segment holds them among plain data, which they do not make
   /// pointer storage.
   std::set<va_t> IndirectFunctionSlots;
+  /// Pointer slots the image initializes with one of its own functions and
+  /// no instruction of it changes or lets escape, slot -> function: MinGW's
+  /// `__imp_X` variables (__MINGW_IMP_SYMBOL), initialized to the function
+  /// its runtime supplies in place of an import.  A call through one calls
+  /// that function (coff_loader::recordConstantCodeSlots).
+  std::map<va_t, va_t> ConstantCodeSlots;
   /// Concrete Mach-O pointer bindings decoded from LC_DYLD_INFO bind bytecode
   /// or LC_DYLD_CHAINED_FIXUPS chains.  Kept separate from ImportPtrSlots so
   /// patch provenance remains an exact view of the indirect symbol table.
@@ -561,6 +628,10 @@ struct BinaryImage {
   /// slot, historically a Mach-O stub); recording another executable spelling
   /// of the import must never repurpose that field.
   std::map<va_t, size_t> ImportStubIndices;
+  /// Callable identities synthesized for undefined functions of relocatable
+  /// objects by ObjectExterns. Their extern storage is not executable code or
+  /// an IAT pointer slot, but a relocated direct branch may tail-call them.
+  std::set<va_t> ObjectExternFunctionEntries;
   /// Half-open executable intervals occupied by linker/dynamic-loader import
   /// machinery whose individual entries may not be recoverable (ELF PLT
   /// families, Mach-O symbol stubs and stub helper).
@@ -620,6 +691,32 @@ struct BinaryImage {
   /// restricted load omits Raw; never recomputed by reopening a mutable path.
   /// Absent for in-memory synthetic images or loaders without file evidence.
   std::optional<std::array<uint8_t, 32>> InputFileSHA256;
+  /// Immutable pre-edit image for byte-based identity only. lib/patch owns
+  /// publication and retirement alongside the materialized byte overlay.
+  std::shared_ptr<const BinaryImage> BytePatchOriginal;
+  std::vector<std::pair<va_t, uint64_t>> BytePatchRanges;
+
+  bool hasBytePatchIn(va_t Address, uint64_t Size) const {
+    for (const auto &[Start, Width] : BytePatchRanges)
+      if (Size && Width &&
+          (Address <= Start ? Start - Address < Size : Address - Start < Width))
+        return true;
+    return false;
+  }
+  /// Conservative contiguous extent for identity-derived call traits. The
+  /// pipeline additionally checks its recovered discontiguous basic blocks.
+  bool functionHasBytePatch(va_t Address) const {
+    if (BytePatchRanges.empty())
+      return false;
+    const auto *Segment = getSegmentFor(Address);
+    if (!Segment || !isCodeAddress(Address))
+      return false;
+    va_t End = Segment->VA + Segment->Size;
+    const va_t Next = nextKnownFunctionEntryAfter(Address);
+    if (Next != InvalidVA)
+      End = std::min(End, Next);
+    return End > Address && hasBytePatchIn(Address, End - Address);
+  }
 
   bool is64Bit() const { return neverd::is64Bit(Bits); }
   bool is32Bit() const { return neverd::is32Bit(Bits); }
@@ -720,24 +817,29 @@ struct BinaryImage {
     return std::set<va_t>(Addrs.begin(), Addrs.end());
   }
 
-  /// Function starts whose only evidence is a padding-boundary guess: no
-  /// other symbol names the address and no primary unwind record begins
-  /// there.  See Symbol::IsBoundaryGuess.
+  /// Function starts supported only by a prologue heuristic: no other symbol
+  /// names the address and no primary unwind record begins there. Padding or
+  /// an unrelocated data word alone cannot confirm it. See IsBoundaryGuess.
   std::set<va_t> boundaryGuessFunctionStarts() const {
-    std::set<va_t> Guesses, Confirmed;
     // Debug info renames a guessed symbol in place; a real name confirms it.
+    const auto Guessed = [](const Symbol &Sym) {
+      return Sym.IsBoundaryGuess && isSynthesizedFuncName(Sym.Name);
+    };
+    std::set<va_t> Guesses;
     for (const auto &Sym : Symbols)
-      (Sym.IsBoundaryGuess && isSynthesizedFuncName(Sym.Name) ? Guesses
-                                                              : Confirmed)
-          .insert(Sym.Addr);
+      if (Guessed(Sym))
+        Guesses.insert(Sym.Addr);
+    // Most images have no guesses, and those that do have few: drop the
+    // confirmed ones rather than collecting every confirmed address.
+    if (Guesses.empty())
+      return Guesses;
+    for (const auto &Sym : Symbols)
+      if (!Guessed(Sym))
+        Guesses.erase(Sym.Addr);
     for (const auto &[Start, End] : KnownCodeRanges)
-      if (!ContinuationCodeStarts.count(Start))
-        Confirmed.insert(Start);
-    std::set<va_t> Result;
-    for (va_t Addr : Guesses)
-      if (!Confirmed.count(Addr))
-        Result.insert(Addr);
-    return Result;
+      if (Guesses.count(Start) && !isFunctionContinuationAt(Start))
+        Guesses.erase(Start);
+    return Guesses;
   }
 
   const uint8_t *readVA(va_t Addr, size_t Len) const {
@@ -897,6 +999,15 @@ struct BinaryImage {
     return nullptr;
   }
 
+  /// Whether the \p Width bytes at \p Addr keep, once loading is done, what
+  /// the loader left there: they lie in a read-only segment, in one the
+  /// format makes read-only once relocated (Segment::ReadOnlyAfterRelocations),
+  /// in a segment or section of relocated constants (`.data.rel.ro`,
+  /// `__DATA_CONST`), or in a range ELF's PT_GNU_RELRO covers.  A linked
+  /// ELF's load segment holds sections of both kinds, so its name says
+  /// nothing of the bytes.
+  bool readOnlyAfterRelocations(va_t Addr, uint64_t Width) const;
+
   /// Return the mapped format-native section that owns \p Addr.
   ///
   /// Relocatable ELF metadata sections do not have runtime addresses.  Their
@@ -918,8 +1029,11 @@ struct BinaryImage {
   /// owner retained by the loader.  Code addresses must lie strictly inside
   /// their owner; data addresses may name the one-past value used by C/C++
   /// address arithmetic.  Numeric adjacency is not ownership: a target equal
-  /// to the next section's base remains one-past the recorded owner.
-  bool relocatedTargetBelongsToOwner(va_t TargetVA, va_t OwnerVA) const {
+  /// to the next section's base remains one-past the recorded owner.  The
+  /// optional index serves the executable-owner queries, with the same rules.
+  bool relocatedTargetBelongsToOwner(
+      va_t TargetVA, va_t OwnerVA,
+      const ExecutableCodeOwnerIndex *Index = nullptr) const {
     if (OwnerVA == InvalidVA)
       return false;
     for (const Section &Sec : Sections) {
@@ -927,22 +1041,37 @@ struct BinaryImage {
           Sec.Size > InvalidVA - Sec.VA)
         continue;
       const va_t End = Sec.VA + Sec.Size;
-      const bool OwnerIsCode = hasExecutableCodeOwnerAt(OwnerVA);
+      const bool OwnerIsCode = hasExecutableCodeOwnerAt(OwnerVA, Index);
       return TargetVA >= Sec.VA &&
-             (OwnerIsCode ? TargetVA < End && hasExecutableCodeOwnerAt(TargetVA)
-                          : TargetVA <= End);
+             (OwnerIsCode
+                  ? TargetVA < End && hasExecutableCodeOwnerAt(TargetVA, Index)
+                  : TargetVA <= End);
     }
     for (const Segment &Seg : Segments) {
       if (!Seg.isReadable() || Seg.VA != OwnerVA ||
           Seg.Size > InvalidVA - Seg.VA)
         continue;
       const va_t End = Seg.VA + Seg.Size;
-      const bool OwnerIsCode = hasExecutableCodeOwnerAt(OwnerVA);
+      const bool OwnerIsCode = hasExecutableCodeOwnerAt(OwnerVA, Index);
       return TargetVA >= Seg.VA &&
-             (OwnerIsCode ? TargetVA < End && hasExecutableCodeOwnerAt(TargetVA)
-                          : TargetVA <= End);
+             (OwnerIsCode
+                  ? TargetVA < End && hasExecutableCodeOwnerAt(TargetVA, Index)
+                  : TargetVA <= End);
     }
     return false;
+  }
+
+  /// The owner of an address the image computes from its own fixed layout,
+  /// as relocatedTargetBelongsToOwner checks it: the mapped section that
+  /// holds \p Addr, or a readable section-less segment.  A gap in a segment
+  /// that otherwise has section metadata has no owner.
+  va_t layoutAddressOwner(va_t Addr) const {
+    if (const Section *Sec = getSectionFor(Addr))
+      return Sec->VA;
+    const Segment *Seg = getSegmentFor(Addr);
+    if (!Seg || !Seg->isReadable() || segmentHasReadableSectionMetadata(*Seg))
+      return InvalidVA;
+    return Seg->VA;
   }
 
   /// True when this relocatable ELF object's complete relocation write
@@ -956,14 +1085,14 @@ struct BinaryImage {
     return Writer == ObjectRelocationWriteBytes->end() || *Writer >= VA + Width;
   }
 
-  /// Verify the symbol owner retained for an i386 ELF R_386_GOTOFF field.
-  /// Most GOTOFF addends resolve inside (or one-past) their symbol's ordinary
-  /// section owner and use relocatedTargetBelongsToOwner directly.  Clang may
-  /// instead fold a negative selector bias into the relocation, placing S+A
-  /// before the symbol's rodata load segment.  The ELF loader records that
-  /// exceptional relation in RodataAnchorSeg; accept it only when the exact
-  /// folded VA names the same read-only data segment as the exact section
-  /// owner.
+  /// Verify the symbol owner retained for an i386 ELF R_386_GOTOFF field, or
+  /// for an absolute instruction operand anchored the same way.  Most addends
+  /// resolve inside (or one-past) their symbol's ordinary section owner and
+  /// use relocatedTargetBelongsToOwner directly.  Clang may instead fold a
+  /// negative selector bias into the relocation, placing S+A before the
+  /// symbol's rodata load segment.  The ELF loader records that exceptional
+  /// relation in RodataAnchorSeg; accept it only when the exact folded VA
+  /// names the same read-only data segment as the exact section owner.
   bool relocatedI386GOTOFFTargetBelongsToOwner(va_t TargetVA,
                                                va_t OwnerVA) const {
     if (Arch != Arch::X86 || !isELF() || getPointerSize() != 4 ||
@@ -987,7 +1116,7 @@ struct BinaryImage {
     // space.  A negative selector bias may therefore wrap below a rodata
     // segment at VA zero to (for example) 0xfffffff0.  Authenticate only the
     // exact loader-recorded anchor and a small, non-zero modular backward
-    // distance; ordinary absolute relocations never populate this relation.
+    // distance; an absolute data slot never populates this relation.
     const uint32_t BackDistance =
         static_cast<uint32_t>(OwnerSeg->VA) - static_cast<uint32_t>(TargetVA);
     if (BackDistance == 0 ||
@@ -1025,8 +1154,10 @@ struct BinaryImage {
 
   /// Classify one mapped address using the finest format-native provenance.
   /// An exact format-native section takes precedence over coarse segment
-  /// permissions. Mach-O uses instruction attributes; ELF/COFF use the
-  /// section's executable flag. This matters when linkers place non-code data
+  /// permissions. Mach-O uses instruction attributes; ELF uses the section's
+  /// executable flag. COFF also declares instruction storage with CNT_CODE,
+  /// independently of runtime page permissions (for example INITDATA).
+  /// This matters when linkers place non-code data
   /// in the same RX mapping as `.text`. A header or alignment gap is not code
   /// when section metadata exists; section-less images retain the historical
   /// segment fallback.
@@ -1041,6 +1172,9 @@ struct BinaryImage {
       if (isMachO())
         return (Sec->Type & (llvm::MachO::S_ATTR_PURE_INSTRUCTIONS |
                              llvm::MachO::S_ATTR_SOME_INSTRUCTIONS)) != 0;
+      if (Format == BinaryFormat::COFF &&
+          (Sec->Type & llvm::COFF::IMAGE_SCN_CNT_CODE))
+        return true;
       return Sec->isExecutable();
     }
     if (segmentHasReadableSectionMetadata(*Seg))
@@ -1273,8 +1407,11 @@ struct BinaryImage {
   /// normalized absolute/relative pointer-slot sets all answer through the
   /// same query.  Target-address evidence such as RelocDataAddrs and
   /// CodeRefTargets is excluded because those sets do not identify the bytes
-  /// being loaded.
+  /// being loaded.  hasRelocationProvenanceIn (RelocationProvenance.h) asks
+  /// the same of a range of bytes; the two read the same sources.
   bool hasRelocationProvenanceAt(va_t Address) const {
+    if (MachOAuthenticatedPointers.count(Address))
+      return true;
     if (CodePtrRelocSlots.count(Address) || DataPtrRelocSlots.count(Address) ||
         RelDataPtrRelocSlots.count(Address) || RelCodeRelocSlots.count(Address))
       return true;
@@ -1347,10 +1484,11 @@ struct BinaryImage {
     return nullptr;
   }
 
-  /// Find a symbol by address.
+  /// Find the symbol that names \p Addr: the first there, a section's own
+  /// symbol (Symbol::IsSection) aside.
   const Symbol *findSymbolAt(va_t Addr) const {
     for (const auto &Sym : Symbols)
-      if (Sym.Addr == Addr)
+      if (Sym.Addr == Addr && !Sym.IsSection)
         return &Sym;
     return nullptr;
   }
@@ -1361,9 +1499,11 @@ struct BinaryImage {
   /// An operation-scoped index makes repeated CFG queries logarithmic without
   /// mutating this publicly editable image from parallel workers. An absent or
   /// foreign index reads the current Symbols directly.
-  bool
-  hasFunctionSymbolAt(va_t Addr,
-                      const ExecutableCodeOwnerIndex *Index = nullptr) const;
+  /// Resumable fallthrough can exclude entries supported only by padding
+  /// guesses; explicit transfers still consider those potential callees.
+  bool hasFunctionSymbolAt(va_t Addr,
+                           const ExecutableCodeOwnerIndex *Index = nullptr,
+                           bool IncludeBoundaryGuesses = true) const;
 
   /// Largest non-function symbol size defined exactly at \p Addr (0 if none).
   /// Distinguishes a sized data object (a const array/table) from a bare label,
@@ -1429,11 +1569,13 @@ struct BinaryImage {
                : StackEntryKind::Call;
   }
 
-  /// Get all function symbols, sorted by address.
+  /// The function symbols, sorted by address.  A symbol naming a fragment
+  /// that continues another function (ContinuationCodeStarts, GCC's
+  /// `foo.cold`) names no function.
   std::vector<const Symbol *> getFunctionSymbols() const {
     std::vector<const Symbol *> Result;
     for (const auto &Sym : Symbols)
-      if (Sym.IsFunc)
+      if (Sym.IsFunc && !isFunctionContinuationAt(Sym.Addr))
         Result.push_back(&Sym);
     // Aliases of one address keep their symbol table order, so the name a
     // function is listed under never depends on how many others exist.
@@ -1524,6 +1666,13 @@ struct BinaryImage {
     return getSectionByName(section_names::elf::Rodata);
   }
 
+  /// The address of an i386 ELF PIC image's `_GLOBAL_OFFSET_TABLE_`, which a
+  /// get-PC sequence plus a GOTPC add leaves in a register.  A linked image
+  /// keeps no GOTPC relocation; this is the address its DT_PLTGOT (GNU ld and
+  /// lld: the start of .got.plt) or its `_GLOBAL_OFFSET_TABLE_` symbol
+  /// records, where both agree.  Empty for every other image.
+  std::optional<va_t> linkedI386GlobalOffsetTable() const;
+
   /// Get the GOT section (".got" / ".got.plt" / "__got").
   const Section *getGotSection() const {
     if (isMachO())
@@ -1555,16 +1704,26 @@ struct BinaryImage {
   /// `call` to `_CxxThrowException`'s `jmp [rip+IAT]` still has to name
   /// the import.
   const Import *decodeImportThunkAt(va_t Addr) const;
+  /// Whether decodeImportThunkAt reads veneers of this architecture.
+  bool decodesImportThunks() const {
+    return Arch == neverd::Arch::X64 || Arch == neverd::Arch::X86;
+  }
 
   /// Find the import owned by an exact executable veneer registration.  This
   /// deliberately excludes coarse stub ranges and legacy IAT spellings: code
   /// that needs a symbolic callable identity must not splice those independent
   /// forms of evidence together.
   const Import *findImportStubAt(va_t Addr) const {
-    auto It = ImportStubIndices.find(Addr);
-    if (It != ImportStubIndices.end() && It->second < Imports.size())
-      return &Imports[It->second];
-    return decodeImportThunkAt(Addr);
+    const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
+    const auto It = ImportStubIndices.find(Normalized);
+    const bool Registered =
+        It != ImportStubIndices.end() && It->second < Imports.size();
+    // Where the architecture decodes no veneer, only a registered one can
+    // answer; the costlier entry question waits until one may.
+    if ((!Registered && !decodesImportThunks()) ||
+        !isFunctionEntryCandidateAt(Addr))
+      return nullptr;
+    return Registered ? &Imports[It->second] : decodeImportThunkAt(Normalized);
   }
 
   /// Find an import by its format-native IAT address or an exact executable
@@ -1586,7 +1745,8 @@ struct BinaryImage {
       if (Imp.IATAddr != 0 && !Imp.Name.empty())
         Result.try_emplace(Imp.IATAddr, Imp.Name);
     for (const auto &[Addr, Index] : ImportStubIndices)
-      if (Index < Imports.size() && !Imports[Index].Name.empty())
+      if (Index < Imports.size() && !Imports[Index].Name.empty() &&
+          isFunctionEntryCandidateAt(Addr))
         Result[Addr] = Imports[Index].Name;
     return Result;
   }
@@ -1608,7 +1768,7 @@ struct BinaryImage {
   const Symbol *functionNameSymbolAt(va_t Addr) const {
     const Symbol *Best = nullptr;
     for (const auto &Sym : Symbols)
-      if (Sym.Addr == Addr && !Sym.Name.empty() &&
+      if (Sym.Addr == Addr && !Sym.Name.empty() && !Sym.IsSection &&
           (!Best || functionNameRank(Sym) > functionNameRank(*Best)))
         Best = &Sym;
     return Best;
@@ -1623,6 +1783,42 @@ struct BinaryImage {
     if (const Symbol *Best = functionNameSymbolAt(Addr))
       return functionListName(Addr, Best->Name);
     return (kAutoFuncPrefix + llvm::utohexstr(Addr)).str();
+  }
+
+  /// The name the program itself states for the function at \p Addr, as
+  /// getFunctionNameAt chooses it: the export there, else the symbol of the
+  /// highest functionNameRank where a producer stated it.  Empty where only
+  /// analysis or the user names the function, which says nothing of what
+  /// the function is.
+  llvm::StringRef statedFunctionNameAt(va_t Addr) const {
+    if (const Export *Exp = findExportAt(Addr); Exp && !Exp->Name.empty())
+      return Exp->Name;
+    if (const Symbol *Best = functionNameSymbolAt(Addr);
+        Best && Best->Origin == NameOrigin::Stated)
+      return Best->Name;
+    return {};
+  }
+
+  /// Every name the program states for the function at \p Addr, the one it
+  /// is shown under (statedFunctionNameAt) first: a linker that folds
+  /// identical functions exports one entry under each of their names.
+  std::vector<llvm::StringRef> statedFunctionNamesAt(va_t Addr) const {
+    std::vector<llvm::StringRef> Names;
+    const llvm::StringRef Shown = statedFunctionNameAt(Addr);
+    if (Shown.empty())
+      return Names;
+    Names.push_back(Shown);
+    const auto add = [&](llvm::StringRef Name) {
+      if (!Name.empty() && !llvm::is_contained(Names, Name))
+        Names.push_back(Name);
+    };
+    for (const Export &Exp : Exports)
+      if (Exp.Addr == Addr)
+        add(Exp.Name);
+    for (const Symbol &Sym : Symbols)
+      if (Sym.Addr == Addr && Sym.IsFunc && Sym.Origin == NameOrigin::Stated)
+        add(Sym.Name);
+    return Names;
   }
 
   /// The name the function at \p Addr is listed and called under when its
@@ -1684,6 +1880,7 @@ struct BinaryImage {
   bool recordImportStub(va_t StubAddr, size_t ImportIndex) {
     if (ImportIndex >= Imports.size())
       return false;
+    StubAddr = normalizeCodeAddress(StubAddr, Arch, Mode);
     const Segment *Seg = getSegmentFor(StubAddr);
     if (!Seg || !Seg->isExecutable())
       return false;
@@ -1747,27 +1944,53 @@ struct BinaryImage {
   getFunctionMetadataEnd(va_t Entry,
                          const ExecutableCodeOwnerIndex *Index = nullptr) const;
 
+  /// Shared structural admission for an independent entry. This supplies no
+  /// function identity, ABI or instruction semantics by itself.
+  bool isFunctionEntryCandidateAt(va_t Addr) const {
+    const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
+    if (DataInCode.count(Normalized) || isFunctionContinuationAt(Addr) ||
+        !hasExecutableCodeOwnerAt(Normalized))
+      return false;
+    if (Arch == neverd::Arch::AArch64)
+      return Normalized % 4 == 0;
+    if (Arch == neverd::Arch::ARM) {
+      const auto LocalMode = instructionModeAt(Normalized);
+      const bool IsARM = LocalMode ? *LocalMode == InstructionMode::ARM
+                                   : Mode == InstructionMode::ARM;
+      return Normalized % (IsARM ? 4 : 2) == 0;
+    }
+    return true;
+  }
+
+  /// A mode-tagged Thumb address and its instruction VA have the same owner.
+  bool isFunctionContinuationAt(va_t Addr) const {
+    const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
+    return ContinuationCodeStarts.count(Addr) ||
+           ContinuationCodeStarts.count(Normalized) ||
+           (normalizeCodeAddress(Normalized | 1, Arch, Mode) == Normalized &&
+            ContinuationCodeStarts.count(Normalized | 1)) ||
+           ExceptionMetadata.isFunctionContinuationAt(Normalized);
+  }
+
   /// True when p Addr is an authenticated callable entry, rather than merely
   /// an address inside executable code. Untyped COFF exports are deliberately
   /// excluded; they require decode/unwind evidence before a patcher may place
   /// a trampoline over the original bytes.
   bool hasAuthenticatedFunctionEntryAt(va_t Addr) const {
     const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
-    if (!hasExecutableCodeOwnerAt(Normalized))
+    if (!isFunctionEntryCandidateAt(Addr))
       return false;
     if ((Entry != 0 && normalizeCodeAddress(Entry, Arch, Mode) == Normalized) ||
-        RuntimeFunctionAddrs.count(Addr) != 0 ||
-        RuntimeFunctionAddrs.count(Normalized) != 0 ||
-        VerifiedFunctionEntries.count(Normalized) != 0 ||
-        ImportStubIndices.count(Addr) != 0 ||
-        ImportStubIndices.count(Normalized) != 0)
+        isRuntimeFunctionAt(Addr) ||
+        VerifiedFunctionEntries.count(Normalized) != 0)
+      return true;
+    if (findImportStubAt(Addr))
       return true;
     for (const auto &[Start, End] : ImportStubRanges)
       if (Start < End && Start == Normalized)
         return true;
-    for (const auto &[Start, End] : KnownCodeRanges)
-      if (Start < End && Start == Normalized)
-        return true;
+    if (hasKnownFunctionEntryAt(Addr))
+      return true;
     if (hasFunctionSymbolAt(Normalized))
       return true;
     // Export tables are not type metadata: Mach-O export tries and PE/ELF
@@ -1795,10 +2018,13 @@ struct BinaryImage {
       return false;
     const va_t Last = Start + Size - 1;
     const Segment *Seg = getSegmentFor(Start);
-    if (!Seg || !Seg->isExecutable() || getSegmentFor(Last) != Seg)
+    if (!Seg || getSegmentFor(Last) != Seg)
       return false;
-    if (isCodeRange(Start, Size))
+    if ((Seg->isExecutable() || Format == BinaryFormat::COFF) &&
+        isCodeRange(Start, Size))
       return true;
+    if (!Seg->isExecutable())
+      return false;
     for (const auto &[RangeStart, RangeEnd] : ImportStubRanges)
       if (Start >= RangeStart && Last < RangeEnd)
         return true;
@@ -1842,7 +2068,11 @@ struct BinaryImage {
   }
 
   bool isRuntimeFunctionAt(va_t Addr) const {
-    return RuntimeFunctionAddrs.count(Addr) != 0;
+    const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
+    return RuntimeFunctionAddrs.count(Addr) ||
+           RuntimeFunctionAddrs.count(Normalized) ||
+           (normalizeCodeAddress(Normalized | 1, Arch, Mode) == Normalized &&
+            RuntimeFunctionAddrs.count(Normalized | 1));
   }
 
   /// Compact `--func` `.pdata` start.  Does not materialize the body.
@@ -1889,11 +2119,11 @@ struct BinaryImage {
   /// chunk, so its start alone is not independent function-entry evidence.
   bool hasKnownFunctionEntryAt(va_t Addr) const {
     const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
-    if (RuntimeFunctionAddrs.count(Addr) != 0 ||
-        RuntimeFunctionAddrs.count(Normalized) != 0)
+    if (!isFunctionEntryCandidateAt(Addr))
+      return false;
+    if (isRuntimeFunctionAt(Addr))
       return true;
-    if (ExceptionMetadata.hasFunctionEntry(Addr) ||
-        ExceptionMetadata.hasFunctionEntry(Normalized))
+    if (ExceptionMetadata.hasPrimaryFunctionEntry(Normalized))
       return true;
     if (hasPdataFunctionEntryAt(Addr) || hasPdataFunctionEntryAt(Normalized))
       return true;
@@ -1918,17 +2148,25 @@ struct BinaryImage {
   /// Smallest function start strictly after Addr from the same metadata used
   /// by hasKnownFunctionEntryAt.  InvalidVA means this is the last start.
   va_t nextKnownFunctionEntryAfter(va_t Addr) const {
+    Addr = normalizeCodeAddress(Addr, Arch, Mode);
     va_t Best = InvalidVA;
     auto Consider = [&](va_t Start) {
-      if (Start > Addr && (Best == InvalidVA || Start < Best))
-        Best = Start;
+      Start = normalizeCodeAddress(Start, Arch, Mode);
+      if (Start <= Addr || !isFunctionEntryCandidateAt(Start))
+        return false;
+      Best = std::min(Best, Start);
+      return true;
     };
     if (auto It = RuntimeFunctionAddrs.upper_bound(Addr);
         It != RuntimeFunctionAddrs.end())
-      Consider(*It);
-    if (const ExceptionFunction *Next =
-            ExceptionMetadata.nextFunctionAfter(Addr))
-      Consider(Next->CodeRange.Begin);
+      for (; It != RuntimeFunctionAddrs.end(); ++It)
+        if (Consider(*It))
+          break;
+    const auto &Primaries = ExceptionMetadata.PrimaryFunctionEntries;
+    for (auto It = std::upper_bound(Primaries.begin(), Primaries.end(), Addr);
+         It != Primaries.end(); ++It)
+      if (Consider(*It))
+        break;
     if (!KnownCodeRanges.empty()) {
       const auto It =
           std::upper_bound(KnownCodeRanges.begin(), KnownCodeRanges.end(), Addr,
@@ -1941,8 +2179,10 @@ struct BinaryImage {
           break;
         }
     }
-    if (const va_t Next = nextPdataFunctionEntryAfter(Addr); Next != InvalidVA)
-      Consider(Next);
+    for (va_t Next = nextPdataFunctionEntryAfter(Addr); Next != InvalidVA;
+         Next = nextPdataFunctionEntryAfter(Next))
+      if (Consider(Next))
+        break;
     return Best;
   }
 
@@ -1951,7 +2191,8 @@ struct BinaryImage {
   /// import veneers or a coarse stub range.
   bool isValidImportStorageSlot(va_t SlotVA, llvm::StringRef Name) const {
     const uint32_t PointerSize = getPointerSize();
-    if (PointerSize == 0 || SlotVA % PointerSize != 0 || Name.empty())
+    if (PointerSize == 0 || SlotVA % PointerSize != 0 || Name.empty() ||
+        hasMachOAuthenticatedPointerIn(SlotVA, PointerSize))
       return false;
     const Segment *Seg = getSegmentFor(SlotVA);
     return Seg && !Seg->isExecutable() && readVA(SlotVA, PointerSize);
@@ -2018,14 +2259,17 @@ struct BinaryImage {
     return Accepted;
   }
 
-  /// Publish an exact dyld binding without collapsing provider or weakness
-  /// disagreements into the format-neutral name/addend view. A conflicting
-  /// native or canonical identity poisons both records permanently.
-  bool recordDyldBindSlot(va_t SlotVA, llvm::StringRef Name, int64_t Addend,
-                          llvm::StringRef Module, bool WeakImport) {
+  /// Publish an exact dyld binding without collapsing provider, lookup scope or
+  /// weakness disagreements into the format-neutral name/addend view. A
+  /// conflicting native or canonical identity poisons both records permanently.
+  bool
+  recordDyldBindSlot(va_t SlotVA, llvm::StringRef Name, int64_t Addend,
+                     llvm::StringRef Module, bool WeakImport,
+                     std::optional<int64_t> LibraryOrdinal = std::nullopt) {
     if (!isValidImportStorageSlot(SlotVA, Name))
       return false;
-    ImportBindSlot Incoming{Name.str(), Addend, Module.str(), WeakImport};
+    ImportBindSlot Incoming{Name.str(), Addend, Module.str(), WeakImport,
+                            LibraryOrdinal};
     auto Reject = [&]() {
       ConflictingImportStorageSlots.insert(SlotVA);
       DyldBindSlots.erase(SlotVA);
@@ -2040,7 +2284,9 @@ struct BinaryImage {
       if (Existing.Name != Incoming.Name ||
           Existing.Addend != Incoming.Addend ||
           Existing.Module != Incoming.Module ||
-          Existing.WeakImport != Incoming.WeakImport)
+          Existing.WeakImport != Incoming.WeakImport ||
+          (Existing.LibraryOrdinal && Incoming.LibraryOrdinal &&
+           Existing.LibraryOrdinal != Incoming.LibraryOrdinal))
         return Reject();
     }
     if (!recordImportStorageSlot(SlotVA, Incoming.Name, Incoming.Addend,
@@ -2048,6 +2294,8 @@ struct BinaryImage {
       return Reject();
     if (It == DyldBindSlots.end())
       DyldBindSlots.emplace(SlotVA, std::move(Incoming));
+    else if (!It->second.LibraryOrdinal)
+      It->second.LibraryOrdinal = LibraryOrdinal;
     return true;
   }
 

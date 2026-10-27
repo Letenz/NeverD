@@ -385,7 +385,8 @@ SymSimplifyResult rewriteRoot(llvm::Instruction *Root,
   std::optional<solver::SymSynthProofReport> BuiltInReport;
   switch (Opts.Provider) {
   case ProofProvider::BuiltInSolver: {
-    solver::SymSynthVerifier Verifier(Opts.Solver);
+    solver::SymSynthVerifier Verifier(
+        Opts.SynthesisSolver.value_or(Opts.Solver));
     auto Verify = [&](sym::SymContext &VerifyCtx, sym::SymRef Original,
                       sym::SymRef Candidate) {
       return Verifier(VerifyCtx, Original, Candidate);

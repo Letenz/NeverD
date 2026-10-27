@@ -13,6 +13,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../LibraryPrototype.h"
 #include "CSyntaxTree.h"
 
 #include "neverd/libc/LibCNames.h"
@@ -101,12 +102,34 @@ public:
 
   void run() {
     Scopes.emplace_back();
+    for (const TopLevel &Item : T.HeaderDeclarations)
+      for (Decl *D : Item.Decls)
+        if (D->Kind == DeclKind::Enumeration) {
+          for (Decl *Enumerator : D->Fields)
+            declare(Enumerator);
+          if (!enumerators(D)) {
+            TopLevel Unread;
+            Unread.TheKind = TopLevel::Kind::Unread;
+            Unread.End = T.Source.size();
+            Unread.Text = T.Source;
+            Unread.Reason = "target header declaration: " + Error;
+            T.Items = {std::move(Unread)};
+            return;
+          }
+        }
+    // The emitted unit's declarations shadow the external header names.
+    Scopes.emplace_back();
+    const size_t FileScopes = Scopes.size();
     // File-scope names first, so that a use before its declaration still
     // finds it.
     for (TopLevel &Item : T.Items)
       if (Item.TheKind == TopLevel::Kind::Declaration)
-        for (Decl *D : Item.Decls)
+        for (Decl *D : Item.Decls) {
           declare(D);
+          if (D->Kind == DeclKind::Enumeration)
+            for (Decl *Enumerator : D->Fields)
+              declare(Enumerator);
+        }
     for (TopLevel &Item : T.Items) {
       Error.clear();
       if (Item.TheKind == TopLevel::Kind::Declaration) {
@@ -122,7 +145,7 @@ public:
         Item.Text = T.Source.slice(Item.Begin, Item.End);
         Item.Reason = Error;
       }
-      Scopes.resize(1);
+      Scopes.resize(FileScopes);
     }
   }
 
@@ -140,7 +163,7 @@ private:
 
   void declare(const Decl *D) {
     if (D->Name.empty() || D->Kind == DeclKind::Typedef ||
-        D->Kind == DeclKind::Record)
+        D->Kind == DeclKind::Record || D->Kind == DeclKind::Enumeration)
       return;
     const Decl *&Slot = Scopes.back()[D->Name];
     // A definition, or a declaration with named parameters, says most.
@@ -174,20 +197,20 @@ private:
 
   /// The C declaration of a C runtime routine NeverD knows.
   static std::string libcDeclaration(const libc::LibCPrototype &P) {
-    std::string Text = std::string(P.Return) + " " + std::string(P.Name) + "(";
+    std::string Function = std::string(P.Name) + "(";
     for (unsigned I = 0; I < P.ParamCount; ++I) {
       std::string Param(P.Params[I]);
       // The Windows API convention is spelled as MSVC spells it.
       for (size_t At = Param.find(libc::kWinapiMarker); At != std::string::npos;
            At = Param.find(libc::kWinapiMarker))
         Param.replace(At, libc::kWinapiMarker.size(), "__stdcall ");
-      Text += (I ? ", " : "") + Param;
+      Function += (I ? ", " : "") + Param;
     }
     if (P.Variadic)
-      Text += P.ParamCount ? ", ..." : "...";
+      Function += P.ParamCount ? ", ..." : "...";
     else if (!P.ParamCount)
-      Text += "void";
-    return Text + ");";
+      Function += "void";
+    return c_library::declarator(P.Return, Function + ")") + ";";
   }
 
   //===--- Types ---===//
@@ -307,6 +330,17 @@ private:
       return setType(E, Last);
     }
     case ExprKind::Cast: {
+      if (E->TypeQuery) {
+        const CType *Queried = expr(E->TypeQuery);
+        if (!Queried)
+          return false;
+        const Expr *Query = E->TypeQuery;
+        while (Query->Kind == ExprKind::Paren)
+          Query = Query->Ops.front();
+        if (Queried->isUnknown() || (Query->Field && Query->Field->BitWidth))
+          return fail("typeof needs a known non-bit-field type", E);
+        E->Written = Queried;
+      }
       const CType *From = value(E->Ops.front());
       if (!From)
         return false;
@@ -347,8 +381,17 @@ private:
         if (auto Size = Types.sizeOf(E->Written))
           E->Value = static_cast<int64_t>(*Size);
       return setType(E, Types.sizeType());
-    case ExprKind::Offsetof:
+    case ExprKind::Offsetof: {
+      const CType *Of = Types.unqualified(E->Written);
+      if (!Of->isRecord() || !Of->Record->Complete)
+        return fail("offsetof of an incomplete record", E);
+      bool Through = false;
+      E->Field = field(*Of->Record, E->Text, Through);
+      E->ThroughAnonymous = Through;
+      if (!E->Field || E->Field->BitWidth)
+        return fail("offsetof of no field '" + E->Text + "'", E);
       return setType(E, Types.sizeType());
+    }
     case ExprKind::CompoundLiteral:
       if (!initializer(E->Ops.front(), E->Written))
         return false;
@@ -378,6 +421,10 @@ private:
         return false;
       return setType(E, Types.unqualified(E->Written));
     }
+    case ExprKind::VaArg:
+      if (!value(E->Ops.front()))
+        return false;
+      return setType(E, Types.unqualified(E->Written));
     case ExprKind::Asm:
       return setType(E, Types.unknownType());
     }
@@ -387,6 +434,13 @@ private:
   bool name(Expr *E) {
     if (const Decl *D = lookup(E->Text)) {
       E->Ref = D;
+      // An enumerator is an int constant (C17 6.4.4.3).
+      if (D->Kind == DeclKind::Enumerator) {
+        if (!D->Value)
+          return fail("an enumerator used before its value", E);
+        E->Value = *D->Value;
+        return setType(E, Types.intType());
+      }
       return setType(E, D->Ty, D->Kind != DeclKind::Function);
     }
     if (auto Value = headerConstant(E->Text)) {
@@ -709,10 +763,31 @@ private:
       return setType(E, Base, true);
     if (!Base->isRecord() || !Base->Record->Complete)
       return fail("member of an incomplete record", E);
-    for (const RecordField &Field : Base->Record->Fields)
-      if (Field.Name == E->Text)
-        return setType(E, Field.Type, true);
-    return fail("no field '" + E->Text + "'", E);
+    bool Through = false;
+    E->Field = field(*Base->Record, E->Text, Through);
+    E->ThroughAnonymous = Through;
+    if (!E->Field)
+      return fail("no field '" + E->Text + "'", E);
+    return setType(E, E->Field->Type, true);
+  }
+
+  /// The field of \p Record named \p Name: its own, or a member of an
+  /// anonymous structure or union it holds, which C counts as its own (C17
+  /// 6.7.2.1p13), when \p Through says so.
+  static const RecordField *field(const RecordDef &Record, llvm::StringRef Name,
+                                  bool &Through) {
+    for (const RecordField &Field : Record.Fields) {
+      if (!Field.Name.empty() && Field.Name == Name)
+        return &Field;
+      if (!Field.isAnonymousRecord() || !Field.Type->Record->Complete)
+        continue;
+      bool Inner = false;
+      if (const RecordField *Found = field(*Field.Type->Record, Name, Inner)) {
+        Through = true;
+        return Found;
+      }
+    }
+    return nullptr;
   }
 
   bool initializer(Expr *Init, const CType *Ty) {
@@ -765,6 +840,22 @@ private:
 
   //===--- Declarations and statements ---===//
 
+  bool declarationInitializer(Decl *D) {
+    if (D->Inferred) {
+      if (D->Kind != DeclKind::Variable || !D->Init || !D->Ty->isUnknown())
+        return fail("__auto_type needs an initialized variable");
+      const CType *Type = value(D->Init);
+      if (!Type)
+        return false;
+      if (Type->isUnknown())
+        return fail("__auto_type needs a known initializer type", D->Init);
+      D->Ty = Types.qualified(Type, D->Ty->Const, D->Ty->Volatile,
+                              D->Ty->AddressSpace);
+      return true;
+    }
+    return !D->Init || initializer(D->Init, D->Ty);
+  }
+
   bool topLevelDecl(Decl *D) {
     if (D->Kind == DeclKind::Function && D->Body) {
       Scopes.emplace_back();
@@ -775,8 +866,29 @@ private:
       Scopes.pop_back();
       return Ok;
     }
-    if (D->Init)
-      return initializer(D->Init, D->Ty);
+    if (D->Kind == DeclKind::Enumeration)
+      return enumerators(D);
+    return declarationInitializer(D);
+  }
+
+  /// Each enumerator's value: its constant, or the one before it plus one;
+  /// an enumerator int does not hold fails, as the enumeration would not
+  /// be int's (C17 6.7.2.2).
+  bool enumerators(Decl *D) {
+    int64_t Next = 0;
+    for (Decl *Enumerator : D->Fields) {
+      if (Enumerator->Init) {
+        if (!value(Enumerator->Init))
+          return false;
+        if (!Enumerator->Init->Value)
+          return fail("an enumerator whose value is not a constant",
+                      Enumerator->Init);
+        Next = *Enumerator->Init->Value;
+      }
+      if (Next < INT32_MIN || Next > INT32_MAX)
+        return fail("an enumerator int does not hold");
+      Enumerator->Value = Next++;
+    }
     return true;
   }
 
@@ -805,7 +917,7 @@ private:
       for (Decl *D : S->Decls) {
         if (D->Kind == DeclKind::Typedef || D->Kind == DeclKind::Record)
           return fail("a type declared inside a function");
-        if (D->Init && !initializer(D->Init, D->Ty))
+        if (!declarationInitializer(D))
           return false;
         declare(D);
       }

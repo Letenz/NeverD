@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceBindings.h"
 #include "neverd/web/SourceValues.h"
 
@@ -18,7 +19,6 @@ namespace neverd::web {
 
 inline constexpr std::string_view JavaScriptEffectProfile =
     "javascript-conservative-effects-v1";
-inline constexpr uint64_t MaxJavaScriptEffectSteps = 2000000;
 
 enum SourceEffect : uint32_t {
   ReadBinding = 1 << 0,

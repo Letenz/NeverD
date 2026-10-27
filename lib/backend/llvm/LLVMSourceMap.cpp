@@ -6,6 +6,8 @@
 
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 
+#include "neverd/backend/Limits.h"
+
 #include "llvm/IR/Instructions.h"
 
 #include <set>
@@ -36,7 +38,8 @@ void LLVMSourceMap::refreshExpressionOrigins() {
     if (auto *I = llvm::dyn_cast_or_null<llvm::Instruction>(O.Value))
       Index[I].push_back(&O);
   std::vector<LLVMSourceObservation> Added;
-  size_t Budget = 250000;
+  size_t Budget = ::neverd::limits::backend::
+      kLLVMSourceMapLLVMSourceMapRefreshExpressionOriginsBudget;
   for (const auto &O : Observations) {
     auto *Parent = llvm::dyn_cast_or_null<llvm::Instruction>(O.Value);
     if (!Parent ||
@@ -77,7 +80,7 @@ void LLVMSourceMap::refreshExpressionOrigins() {
       }
       for (const auto &Origin : Origins)
         if (Origin != O.Occurrence)
-          Added.push_back({O.Function, Origin, Parent});
+          Added.push_back({O.Function, Origin, Parent, true});
     }
   }
   std::set<std::tuple<va_t, sigs::LibraryOccurrence, llvm::Value *>> Seen;

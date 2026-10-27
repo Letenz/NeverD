@@ -3,6 +3,7 @@
 
 #include "neverd/ir/SourceCallTypeHint.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/sdk/Limits.h"
 
 #include <algorithm>
 #include <optional>
@@ -23,10 +24,12 @@ ordinarySourceReceiptOccurrences(
   bool Invalid = false;
   bool HasExceptions = Function.StructuredExceptionRegions ||
                        Function.UnstructuredExceptionRegions;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   std::vector<std::pair<const HighStmt *, unsigned>> Statements;
   const auto Append = [&](const std::vector<HighStmt> &Body, unsigned Depth) {
-    if (Depth >= 64 ||
+    if (Depth >=
+            ::neverd::sdk::
+                kSourceReceiptOccurrencesOrdinarySourceReceiptOccurrencesAppendDepthLimit ||
         Body.size() > Budget - std::min(Budget, Statements.size())) {
       Budget = 0;
       return;

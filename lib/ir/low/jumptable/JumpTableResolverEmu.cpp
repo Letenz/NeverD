@@ -18,6 +18,7 @@
 #include "JumpTableResolverDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/NdOpEmulator.h"
 #include "neverd/symbolic/SymDispatch.h"
@@ -248,7 +249,10 @@ std::vector<va_t> CFGBuilder::tryEmulatedResolution(const BinaryImage &Img,
     Limit = limits::kMaxJumpTableEntries;
 
   std::vector<va_t> Targets;
-  Targets.reserve(std::min(Limit, 64u));
+  Targets.reserve(std::min(
+      Limit,
+      ::neverd::limits::ir::
+          kJumpTableResolverEmuCFGBuilderTryEmulatedResolutionMinArgument2));
 
   NdOpEmulator Emu(Img);
   Emu.setCallPreservedRegisters(callPreservedRegs(Img));
@@ -296,7 +300,10 @@ std::vector<va_t> CFGBuilder::tryEmulatedResolution(const BinaryImage &Img,
       auto PathOps = collectPathOps(*BIt, Rec.Addr);
       if (PathOps.size() > Rec.Ops.size()) {
         std::vector<va_t> CrossBlockTargets;
-        CrossBlockTargets.reserve(std::min(Limit, 64u));
+        CrossBlockTargets.reserve(std::min(
+            Limit,
+            ::neverd::limits::ir::
+                kJumpTableResolverEmuCFGBuilderTryEmulatedResolutionMinArgument2));
 
         emulateSeries(PathOps, CrossBlockTargets);
 
@@ -382,6 +389,16 @@ std::vector<va_t> CFGBuilder::emulateGroundedTargets(const BinaryImage &Img,
     return D;
   };
   for (int I = static_cast<int>(Ops.size()) - 1; I >= 0 && LoadPos < 0; --I) {
+    if (const auto Instruction = originalAArch64TableLoad(Ops[I]);
+        Instruction && Instruction->indexShift() == kAddressMemoryScaleShift &&
+        Ops[I].Output.Size == Info.EntrySize) {
+      const auto &Index = Ops[I].Inputs[kAddressMemoryIndexOperand + 1];
+      if (Index.isReg() || Index.isTemp()) {
+        InjVar = Index;
+        LoadPos = I;
+        continue;
+      }
+    }
     if (Ops[I].Opcode != NdOp::LOAD || Ops[I].NumInputs < 1 ||
         Ops[I].Output.Size != Info.EntrySize)
       continue;

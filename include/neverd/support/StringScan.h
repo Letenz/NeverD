@@ -16,6 +16,8 @@
 #ifndef NEVERD_SUPPORT_STRINGSCAN_H
 #define NEVERD_SUPPORT_STRINGSCAN_H
 
+#include "neverd/support/Limits.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -59,9 +61,6 @@ constexpr EncodingSet defaultEncodings() {
   return Set;
 }
 
-/// The largest minimum length a scan accepts.
-constexpr unsigned MaxMinLength = 1024;
-
 struct ScanOptions {
   /// The encodings searched.  C strings that are not UTF-8 are read in each
   /// legacy code page among them.
@@ -73,7 +72,7 @@ struct ScanOptions {
   /// Display columns a string needs, its terminator not counted: a wide East
   /// Asian character counts two (displayColumns), so that three ideographs
   /// pass where three ASCII letters do not.
-  unsigned MinLength = 4;
+  unsigned MinLength = ::neverd::limits::support::kDefaultStringMinLength;
 };
 
 struct FoundString {

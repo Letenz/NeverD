@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 124a88c959c13d8407e343d17f7964de3af1071a89f0c6430eaab22959ce3ebc -->
+<!-- i18n-source: 26e0c6dba6d3b863bb8dc0c4690bbc6ea61bbe5dd2accd19643847c8968fc13e -->
 
 [← 文件索引](README.md)
 
@@ -29,11 +29,11 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 區段保留目前／最大權限與零填入。`__PAGEZERO` 只保留位址，不配置整段實體記憶體。執行前檢查檔案／VM 範圍、OS 頁對齊、取整後重疊、標頭歸屬、可執行進入點及預算。標頭區段必須可讀且可執行；保護頁和私有返回入口持續保留。檔案最後一頁保留至頁界或 EOF 的原始位元組，其後完整 VM 頁清零，依據 [XNU 載入器](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/mach_loader.c)。
 
-`LC_MAIN` 接收 `argc`、`argv`、`envp` 和 apple 向量四個整數參數；返回值低八位元成為退出狀態。只在無匯入的這種進入交接中接受 `/usr/lib/dyld`，不執行宿主 dyld。非零 `stacksize` 會拒絕，因為呼叫端明確的 `stack_size` 掌握預算。
+`LC_MAIN` 接收 `argc`、`argv`、`envp` 和 apple 向量四個整數參數；返回值低八位元成為退出狀態。在符合下述有限匯入契約的這種進入交接中接受 `/usr/lib/dyld`，不執行宿主 dyld。非零 `stacksize` 會拒絕，因為呼叫端明確的 `stack_size` 掌握預算。
 
 `LC_UNIXTHREAD` 要求恰好一份完整的原生 64 位元一般暫存器紀錄，只有 PC 已設定。起始堆疊含 argc、以零結尾的 argv/envp，以及含 `executable_path=<input filename>` 的零結尾 apple 向量。自訂 SP、旗標、其他暫存器、額外 flavor 或衝突進入點均拒絕。不繼承宿主環境或 Linux 輔助向量。參考 [dyld 架構](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md)。
 
-外部 dylib、匯入、rebases/chained fixups、建構／解構函式、TLS 區段、arm64e/PAC、其他不支援的 CPU 子型別、加密內容與未建模載入命令，都在執行前失敗。無 fixup 的 PIE 使用偏好位址，並非 ASLR。簽章資料只是中繼資料，不實作 AMFI 或 entitlement 政策。
+支援下述有限 libSystem、明確指定的啟動 dylib、啟動建構函式、主執行緒 C/C++ TLS 與行程終止時的 C/C++ 解構。選擇性 DSO 終結、舊式 TLS 初始化段、arm64e/PAC、未支援子型別、加密內容及未建模命令仍在執行前失敗。主程式使用偏好位址，dylib 採確定性獨立配置；簽章資料不實作 AMFI 或 entitlement。
 
 ## Darwin 服務
 
@@ -1796,3 +1796,98 @@ lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / ma
 native preparation489 observations including258 lchown / ARM64 O0 O1 O2
 common native82 / mandatory95 per matching platform / ARM64 required285
 ```
+
+## 有界 libSystem 匯入
+
+基線薄執行檔及下述明確指定的啟動 dylib 可繫結強依賴 `/usr/lib/libSystem.B.dylib`。主入口須為 `LC_MAIN`，並使用 `MH_TWOLEVEL` 與一般庫 ordinal；libSystem 相容需求不得超過 1.0。原始 classic/generic64 fixup、未定義符號閉包及槽均須完整驗證。未知符號、weak/threaded 繫結、其他 relocation、初始化回呼與認證指標仍被拒絕。
+
+僅在存在匯入時配置函式入口及每次全新的主執行緒 errno。包裝函式共用原始 Darwin 核心行為，失敗轉成 `-1` 與 errno，成功保留 errno。C `_exit` 的 Mach-O 名為 `__exit`；C `exit` 的 `_exit` 仍不支援。普通函式驗證返回框架；不返回的 `_exit` 無需可用返回位址。報告保留庫、連結名、參數數量及完整位元；未完成或不返回的結果為 null，原始系統呼叫報告保持相容。
+
+`SG_READ_ONLY` 只收緊 fixup 後的目前權限，保留宣告的最大權限；原生 O0/O1/O2 證明讀寫最大權限允許 `mprotect` 恢復寫入。入口與 errno 保留頁不能由來賓解除映射或變更保護。準備及執行共用期限、事件帳戶與既有記憶體預算。
+
+同一自製物件以系統、classic、chained 連結在真實 libSystem 上執行；五種平台/架構經進程/C/CLI/Python 驗證，三個 ARM64 HVF profile 實際執行。任意 dylib、dlopen/dlsym、dyld shared cache、建構函式、執行緒及 Apple 框架仍未完成，Intel HVF 與實體 iOS 未驗收。
+
+classic lazy 指標在進入客體前預先解析。每個程式必須自行指定目的槽、普通函式庫 ordinal 與符號，僅允許指標型別、零 addend，以及一條緊接 DONE 的 DO_BIND，不繼承前一程式狀態。只有同槽的一次本地可執行 rebase 與一次 lazy bind 可合併，兩筆原始記錄都計入預算。dyld_stub_binder 僅可作為伴隨實際 lazy 呼叫的強、零 addend 普通 classic bind；執行其閘道會在讀取 C 框架或參數、修改 errno 或記錄呼叫之前失敗。這支援穩定的預解析指標，不實作執行期 resolver 或 dyld 私有狀態。六函式原生與客體樣本比較槽位穩定性、輸出與結束狀態。
+
+`open`、`lseek`、`pread`、`pwrite`、`dup` 和 `dup2` 共用既有檔案目錄、變更及描述符游標。`open` 通常記錄兩個參數，低 32 位 flags 含 O_CREAT 時記錄三個。ARM64 的可選提升 int 只讀取入口 SP 的四個有效位元組，不讀取填補；x64 使用第三個通用暫存器參數。報告保留原始載體，獨立的核心參數把 mode 截斷至 16 位。沒有 O_CREAT 時 mode 為零且不讀取可選儲存；x64 必需的返回位址仍正常驗證。參數讀取失敗先於呼叫記錄、errno 和檔案副作用。此契約依據 [Apple ARM64 ABI](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms) 和 [XNU open 包裝函式](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c)。O0/O1/O2 原生對照涵蓋共用偏移、定位 I/O、dup2 失敗、超過 4 GiB 的偏移、mode 截斷與二進位內容。執行緒取消與相容路徑轉換仍不支援。
+
+`mmap`、`mprotect` 和 `munmap` 沿用既有記憶體映射、權限、常駐保留區與檔案引用。C 包裝層將保護位、旗標及描述符縮為 32 位元，報告仍保留原始參數。`mmap` 在長度為零或缺少 MAP_PRIVATE/MAP_SHARED 時先回傳 MAP_FAILED 並設定 EINVAL，再為可進入核心的呼叫加入 MAP_UNIX03；原始 BSD 語義不變。依據為 [XNU UNIX03 包裝層](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/libsyscall/wrappers/unix03/mmap.c)。原創 C 對照涵蓋匿名頁清零、權限切換、錯誤順序、關閉描述符後的映射壽命、私有寫入及 EOF 尾頁。本次不擴充共享、固定、可執行映射或配置器行為。
+
+```text
+provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
+C -> Mach-O: read -> _read; write -> _write; close -> _close
+C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
+C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
+entry: LC_MAIN main + MH_TWOLEVEL images; ordinary positive ordinals; main preferred base
+fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
+unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
+errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
+SG_READ_ONLY: current R after fixup; original declared maximum is retained
+gates: RX/max RX; errno: RW/max RW; both resident model reservations
+budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
+preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
+report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
+call carriers: hex; full GP bits or defined ARM64 int vararg bytes; exact arity; null result if incomplete/nonreturning
+open: 2 args or 3 with O_CREAT; ARM64 mode int at SP, x64 third GP; kernel mode_t 16 bits
+basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
+_exit: status 35; stdout_hex 58; named calls 2; events 2
+file calls: main status 73; stdout_hex 460044; named calls 40; events 41
+memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
+native common catalogue: 82; required methods/platform: 104; matching ARM64 identities: 312
+```
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
+```
+
+## 明確指定的啟動 dylib 與主執行緒 TLS
+
+`darwin.modules` 以精確且區分大小寫的安裝名稱指定原始 Mach-O 路徑，最多 32 項；只讀取可達依賴。`@loader_path` 按字面比對，不搜尋宿主函式庫。MH_DYLIB 必須具有相同 ISA/平台及相符身分、版本；一般依賴序號選擇實際提供者。同名匯出與共享依賴保持身分，完整檔案、映射、TLS 和中繼資料使用共同預算。
+
+支援普通 C 初始化/零初始化 TLS，對齊上限 16 位元組。準備時映射並計費每個模組的獨立儲存，首次存取複製重定位後的即時連續範本，保留先前對 BSS/間隙的修改。描述符與返回框架須通過驗證；TLS 頁不能被重新配置、解除映射或變更保護。原創樣例比較原生 O0/O1/O2 classic/chained 與五個平台的 C/CLI/Python。循環、弱/重匯出、選擇性 DSO 解構與舊式 TLS 初始化段、dlopen/dlsym、執行緒與完整框架尚未實作；Intel 原生及實體 iOS 未驗證。
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"darwin":{"modules":[{"name":"@loader_path/libneverd-base.dylib","path":"/inputs/libneverd-base.dylib"},{"name":"@loader_path/libneverd-leaf.dylib","path":"/inputs/libneverd-leaf.dylib"}]}}
+```
+
+```text
+graph: strong acyclic startup; exact install name; same ISA/platform; MH_DYLIB + LC_ID_DYLIB
+catalogue: max 32; only reachable inputs; no host lookup or @ path expansion
+budget: aggregate full files; aggregate resident mappings/TLS/metadata; 65536 records
+exports: regular / thread-local; ordinary dependency ordinal; rebased actual provider
+TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live contiguous first copy
+resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
+lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
+addends: checked signed ordinary provider offsets; data/TLS initializers; original provider spans only
+unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; selective DSO finalization/legacy TLS init; dlopen/dlsym; threads
+workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
+native common catalogue: 82; required methods/platform: 104; matching ARM64 identities: 312
+```
+
+## Darwin dylib 匯入偏移
+
+一般強 dylib 匯入支援帶符號的位元組偏移，可初始化全域指標與 TLS 範本指標。`DarwinImage` 統一計算匯出位址、程式庫載入偏移及匯入加數，檢查溢位並限定在所選提供程式庫的原始區段內；指標值檢查不推測存取寬度。libSystem 入口、匯入的 TLV 描述元和延遲繫結仍要求零加數。
+
+原創 O0/O1/O2 classic/chained 原生對照均傳回 78，輸出為空。C、CLI 和 Python 涵蓋全部五種設定；Intel 原生執行與 iOS 實機仍未驗證。
+
+## 啟動建構函式與 TLS 結束回呼
+
+原始 `S_MOD_INIT_FUNC_POINTERS`、唯讀 `S_INIT_FUNC_OFFSETS` 與單一 `LC_ROUTINES_64` 在 `LC_MAIN` 前執行；依賴依宣告順序後序初始化，共用映像只執行一次。入口限原始可執行段，ARM64 須有完整且對齊的四個位元組；待執行表異動會明確失敗。建構函式接收 argc/argv/envp/apple/`ProgramVars`，程式名取執行檔名稱而非自訂 argv0。C++ `thread_local` 包裝程式碼自行執行惰性建構。
+
+`__tlv_atexit` 使用兩參數 void ABI，忽略編譯器額外 DSO 參數，保留 errno 與結果暫存器；事件結果為 null。預先計費的佇列最多 1024 項，含空回呼與重複項，物件值保留 64 位元。main 返回與 C `exit` 逆序執行，新註冊項先於舊項。結束堆疊位於目前 SP 與 x64 red zone 下方，保留深層退出時的堆疊物件。所有工作共用原預算，完成回呼才發布退出結果；C `_exit` 與原始 BSD exit 立即終止。重入 exit、選擇性 DSO 解構、舊式 TLS 初始化段與執行緒仍未支援。五種軟體設定、三種 ARM64 HVF 設定及獨立 O0/O1/O2 classic/chained 原生控制覆蓋這些路徑；控制樣本關閉堆疊保護，guard 資料匯入仍拒絕。Intel 原生與實體 iOS 未驗證。
+
+## C/C++ 程序退出解構
+
+C `atexit` 與 C++ `__cxa_atexit` 回傳整數零並保留 errno。C 回呼無參數，C++ 回呼接收完整物件值，DSO 僅保留為不透明事件資料。正常退出先完成一次主執行緒 TLS 解構，再依統一註冊順序逆序執行全域回呼；新註冊項先於舊項，全域階段不會重新清空 TLS。只有強註冊匯入才預留獨立的 1024 項全域佇列，既有 raw、建構函式與 TLS 預算不變。
+
+原創雙 dylib 程式涵蓋編譯器產生的全域解構、重複存取區域 static、巢狀註冊、深層堆疊物件與解構中的直接 `_exit`。區域 static 控制使用 `-fno-threadsafe-statics`；`__cxa_finalize`、dlopen/dlclose、執行緒及完整框架仍明確拒絕。五種軟體設定、三種 ARM64 HVF 設定與 C/CLI/Python 沿用報告格式及預算；Intel 原生與實體 iOS 尚未驗證。
+
+## 主執行緒 C++ 靜態初始化保護
+
+只接納 `/usr/lib/libc++.1.dylib`（相容版本不高於 1.0.0）的精確強匯入 `___cxa_guard_acquire`、`___cxa_guard_release`、`___cxa_guard_abort`，加數須為零。其他 C++ 符號、libc++abi、別名、弱匯入、重匯出及覆寫內建庫仍拒絕；與 libSystem 共用兩頁，單獨 guard 不預留回呼佇列。
+
+八位元組 guard 須非空且自然對齊。初始化位元組非零時 acquire 只讀此位元組並傳回整數零，不要求寫入權限或執行緒埠。零狀態需要明確非零 `darwin_system.thread_self_port`（`DarwinSystemOptions::ThreadSelfPort`）；埠 P 的 pending 為 `(uint64_t(P)<<32)|0x200`，acquire 傳回一，abort 恢復零，release 寫入 `(uint64_t(P)<<32)|0x101`。void 呼叫保留 errno/結果暫存器，報告結果為 null。遞迴、外部擁有者、等待位元、未知狀態及無效儲存在修改前失敗，不推斷宿主執行緒。
+
+預設 static 雙 dylib 樣例涵蓋啟動、TLS/全域解構中新建物件、重複存取、完整 guard/哨兵、abort/retry 與正常/raw 結束；沿用 LIFO、預算與新程序隔離。五種軟體、三種 ARM64 HVF、C/CLI/Python 及 O0/O1/O2 classic/chained 原生控制共同驗證。ARM64 使用 `-march=armv8-a -mcpu=generic` 並檢查成品 LDARB、無 LDAPR；僅 march 仍可能產生 LDAPRB。RCpc、並行初始化、例外及選擇性 DSO 終結仍未支援；x64 控制經 Rosetta，實體 Intel/iOS 尚未驗證。

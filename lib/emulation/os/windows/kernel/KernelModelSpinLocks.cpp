@@ -57,7 +57,7 @@ llvm::Expected<uint64_t> KernelModel::initializeSpinLock(uint64_t Address) {
     return E;
   if (Address < profile::UserProbeLimit)
     return spinLockError("executive spin lock requires kernel storage");
-  if (ExecutiveSpinLocks.count(Address))
+  if (spinLockHeldAt(Address))
     return spinLockError("cannot initialize a held executive spin lock");
   if (auto E = validateSpinLockStorage(Address))
     return E;
@@ -78,7 +78,7 @@ llvm::Expected<uint64_t> KernelModel::acquireSpinLock(uint64_t Address,
                          "DISPATCH_LEVEL");
   if (!CurrentExecution)
     return spinLockError("executive spin lock requires an active guest thread");
-  if (ExecutiveSpinLocks.count(Address)) {
+  if (spinLockHeldAt(Address)) {
     if (Mode == SpinLockMode::TryAtDpc)
       return 0;
     return spinLockError("executive spin lock would deadlock on this "
@@ -124,10 +124,133 @@ KernelModel::releaseSpinLock(uint64_t Address,
     return Value.takeError();
   if (*Value != 1)
     return spinLockError("executive spin lock storage was modified");
+  if (auto E = validateExecutiveResourceRestoreIRQL(
+          RestoreIRQL ? Lock->second.OldIRQL : scheduler::DispatchLevel))
+    return E;
   if (auto E = Memory.writeInteger(Address, 0, 8))
     return E;
   CurrentIRQL = RestoreIRQL ? Lock->second.OldIRQL : scheduler::DispatchLevel;
   ExecutiveSpinLocks.erase(Lock);
+  return 0;
+}
+
+llvm::Error KernelModel::validateQueueHandle(uint64_t Handle) const {
+  if (!Handle || (Handle & 7))
+    return spinLockError(
+        "queued spin lock handle requires aligned kernel storage");
+  if (Handle < profile::UserProbeLimit)
+    return spinLockError("queued spin lock handle requires kernel storage");
+  if (auto E = validateGuestAccess(Handle, windows::LockQueueHandleSize, true))
+    return E;
+  auto Writable =
+      Memory.canAccess(Handle, windows::LockQueueHandleSize, Read | Write);
+  if (!Writable)
+    return Writable.takeError();
+  if (!*Writable)
+    return spinLockError("queued spin lock handle requires writable storage");
+  for (const auto &[Pool, Allocation] : Allocations)
+    if (Handle < Pool + Allocation.Size &&
+        Pool < Handle + windows::LockQueueHandleSize && !Allocation.NonPaged)
+      return spinLockError("queued spin lock handle requires nonpaged storage");
+  return llvm::Error::success();
+}
+
+llvm::Expected<uint64_t> KernelModel::acquireQueuedSpinLock(uint64_t SpinLock,
+                                                            uint64_t Handle,
+                                                            bool Raise) {
+  // KeAcquireInStackQueuedSpinLock (RVA 0x22e780) and its AtDpcLevel form
+  // (RVA 0x22c490): record the lock and a null successor in the handle, raise
+  // to DISPATCH_LEVEL for the first form while saving the old IRQL in the
+  // handle, then exchange the handle into the lock. A nonzero previous value
+  // means another processor owns it, which this cooperative processor cannot
+  // wait out, so it stops clearly.
+  if (auto E = validateSpinLockAddress(SpinLock))
+    return E;
+  if (SpinLock < profile::UserProbeLimit)
+    return spinLockError("executive spin lock requires kernel storage");
+  if (!Raise && CurrentIRQL != scheduler::DispatchLevel)
+    return spinLockError("DPC-level queued spin-lock acquisition requires "
+                         "DISPATCH_LEVEL");
+  if (!CurrentExecution)
+    return spinLockError("executive spin lock requires an active guest thread");
+  if (spinLockHeldAt(SpinLock))
+    return spinLockError("executive spin lock would deadlock on this "
+                         "cooperative processor");
+  if (auto E = validateSpinLockStorage(SpinLock))
+    return E;
+  if (auto E = validateQueueHandle(Handle))
+    return E;
+  if (SpinLock < Handle + windows::LockQueueHandleSize && Handle < SpinLock + 8)
+    return spinLockError("queued spin lock handle overlaps its lock");
+  auto Value = Memory.readInteger(SpinLock, 8);
+  if (!Value)
+    return Value.takeError();
+  if (*Value)
+    return spinLockError("executive spin lock must be initialized and free");
+  if (auto E = Memory.writeInteger(Handle + windows::LockQueueNextOffset, 0, 8))
+    return E;
+  if (auto E = Memory.writeInteger(Handle + windows::LockQueueLockOffset,
+                                   SpinLock, 8))
+    return E;
+  const uint8_t OldIRQL = CurrentIRQL;
+  if (Raise) {
+    if (auto E = Memory.writeInteger(Handle + windows::LockQueueOldIrqlOffset,
+                                     OldIRQL, 1))
+      return E;
+    CurrentIRQL = scheduler::DispatchLevel;
+  }
+  if (auto E = Memory.writeInteger(SpinLock, Handle, 8))
+    return E;
+  QueuedSpinLocks.emplace(
+      SpinLock, QueuedSpinLock{CurrentExecution, Handle, OldIRQL, Raise});
+  return 0;
+}
+
+llvm::Expected<uint64_t> KernelModel::releaseQueuedSpinLock(uint64_t Handle,
+                                                            bool Restore) {
+  // KeReleaseInStackQueuedSpinLock (RVA 0x22cf70) and its FromDpcLevel form
+  // (RVA 0x2cde30): read the lock from the handle, clear it, and for the first
+  // form restore the IRQL the handle saved. The successor chain stays empty on
+  // this single processor.
+  if (auto E = validateQueueHandle(Handle))
+    return E;
+  auto Stored = Memory.readInteger(Handle + windows::LockQueueLockOffset, 8);
+  if (!Stored)
+    return Stored.takeError();
+  const uint64_t SpinLock = *Stored;
+  auto Lock = QueuedSpinLocks.find(SpinLock);
+  if (Lock == QueuedSpinLocks.end() ||
+      Lock->second.Execution != CurrentExecution ||
+      Lock->second.Handle != Handle)
+    return spinLockError("queued spin lock is not owned by this thread");
+  if (Lock->second.RaisedIRQL != Restore)
+    return spinLockError("queued spin lock release variant does not match "
+                         "acquisition");
+  if (CurrentIRQL != scheduler::DispatchLevel)
+    return spinLockError("queued spin lock release requires DISPATCH_LEVEL");
+  // The raising form restores the IRQL the handle records, so a corrupted
+  // field is a driver bug the kernel would act on; refuse rather than hide it.
+  if (Restore) {
+    auto Saved =
+        Memory.readInteger(Handle + windows::LockQueueOldIrqlOffset, 1);
+    if (!Saved)
+      return Saved.takeError();
+    if (static_cast<uint8_t>(*Saved) != Lock->second.OldIRQL)
+      return spinLockError("queued spin lock handle's saved IRQL was modified");
+  }
+  auto Value = Memory.readInteger(SpinLock, 8);
+  if (!Value)
+    return Value.takeError();
+  if (*Value != Handle)
+    return spinLockError("queued spin lock storage was modified");
+  if (auto E = validateExecutiveResourceRestoreIRQL(
+          Restore ? Lock->second.OldIRQL : scheduler::DispatchLevel))
+    return E;
+  if (auto E = Memory.writeInteger(SpinLock, 0, 8))
+    return E;
+  if (Restore)
+    CurrentIRQL = Lock->second.OldIRQL;
+  QueuedSpinLocks.erase(Lock);
   return 0;
 }
 
@@ -141,7 +264,7 @@ llvm::Error KernelModel::validateInterlockedLock(uint64_t Lock) const {
     return E;
   if (Lock < profile::UserProbeLimit)
     return spinLockError("executive spin lock requires kernel storage");
-  if (ExecutiveSpinLocks.count(Lock))
+  if (spinLockHeldAt(Lock))
     return spinLockError("executive spin lock would deadlock on this "
                          "cooperative processor");
   if (auto E = validateSpinLockStorage(Lock))

@@ -7,6 +7,8 @@
 
 #include "../../core/ExecutionDiagnostics.h"
 
+#include "neverd/ir/intrinsics/AArch64/AArch64StructureMemory.h"
+
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MathExtras.h"
 
@@ -16,6 +18,10 @@ namespace neverd::emulation {
 namespace {
 static_assert((aarch64::SCTLR & aarch64::PAuthEnableMask) == 0,
               "checked PAuth hints require authentication disabled");
+static_assert((aarch64::TCR & 0x3f) == 16 &&
+                  ((aarch64::TCR >> 16) & 0x3f) == 16 &&
+                  aarch64::UserMax == 0x0000ffffffffffffULL,
+              "checked XPACLRI requires 48-bit translation ranges");
 bool disabledPAuthHint(uint32_t Word) {
   switch (Word) {
 #define NEVERD_AARCH64_PAUTH_HINT(Name, Encoding) case Encoding:
@@ -68,7 +74,11 @@ bool baselineFeatures(const cs_insn &I) {
     const auto Group = I.detail->groups[Index];
     if (Group >= AARCH64_FEATURE_HASV8_0A &&
         Group != AARCH64_FEATURE_HASV8_0A &&
-        Group != AARCH64_FEATURE_HASFPARMV8 && Group != AARCH64_FEATURE_HASNEON)
+        Group != AARCH64_FEATURE_HASFPARMV8 &&
+        Group != AARCH64_FEATURE_HASNEON &&
+        // This is a disjunction, not an SME requirement. Baseline NEON
+        // supplies fixed-width lane moves carrying this Capstone group.
+        Group != AARCH64_FEATURE_HASNEONORSME)
       return false;
   }
   return true;
@@ -76,83 +86,23 @@ bool baselineFeatures(const cs_insn &I) {
 llvm::Expected<std::vector<AArch64MemoryAccess>>
 structureMemoryEffects(uint32_t Word, const AArch64MachineState &State,
                        uint64_t Base, unsigned First) {
-  using namespace encoding;
-  const bool Load = Word & LoadBit;
-  const bool Wide = Word & StructureQBit;
-  const unsigned Size = (Word >> StructureSizeShift) & OpcodeMask;
-  if (!(Word & StructurePostIndexBit) && ((Word >> IndexShift) & RegisterMask))
-    return llvm::make_error<UnsupportedExecutionError>();
-
-  unsigned Bytes = 1u << Size, Registers = 0, Repetitions = 1;
-  unsigned Elements = 1, Lane = 0;
-  if (isMultipleStructureMemory(Word)) {
-    switch ((Word >> StructureOpcodeShift) & StructureOpcodeMask) {
-#define NEVERD_AARCH64_STRUCTURE(Opcode, Count, Repeat)                        \
-  case Opcode:                                                                 \
-    Registers = Count;                                                         \
-    Repetitions = Repeat;                                                      \
-    break;
-#include "CheckedAArch64Instructions.def"
-#undef NEVERD_AARCH64_STRUCTURE
-    default:
-      return llvm::make_error<UnsupportedExecutionError>();
-    }
-    if (!Wide && Bytes == aarch64::WordBytes && Registers != 1)
-      return llvm::make_error<UnsupportedExecutionError>();
-    Elements = (Wide ? VectorBytes : aarch64::WordBytes) / Bytes;
-  } else if (isSingleStructureMemory(Word)) {
-    const unsigned Opcode =
-        (Word >> SingleStructureOpcodeShift) & SingleStructureOpcodeMask;
-    Registers = 1 + 2 * (Opcode & 1) + bool(Word & StructureCountBit);
-    const bool S = Word & StructureLaneBit;
-    switch (Opcode >> 1) {
-    case 0:
-      Bytes = 1;
-      Lane = 8 * Wide + 4 * S + Size;
-      break;
-    case 1:
-      if (Size & 1)
-        return llvm::make_error<UnsupportedExecutionError>();
-      Bytes = 2;
-      Lane = 4 * Wide + 2 * S + Size / 2;
-      break;
-    case 2:
-      if (Size > 1 || (Size == 1 && S))
-        return llvm::make_error<UnsupportedExecutionError>();
-      Bytes = Size == 1 ? aarch64::WordBytes : aarch64::InstructionBytes;
-      Lane = Size == 1 ? unsigned(Wide) : 2 * Wide + S;
-      break;
-    case 3:
-      // Replication reads one element per register, regardless of Q. The
-      // original instruction supplies destination replication/upper clearing.
-      if (!Load || S)
-        return llvm::make_error<UnsupportedExecutionError>();
-      break;
-    }
-  } else
-    return llvm::make_error<UnsupportedExecutionError>();
-
-  const unsigned Total = Repetitions * Elements * Registers * Bytes;
-  if (Total - 1 > UINT64_MAX - Base)
+  const auto I = aarch64StructureMemoryInstruction(Word);
+  if (!I || I->totalAccessBytes() - 1 > UINT64_MAX - Base)
     return llvm::make_error<UnsupportedExecutionError>();
   std::vector<AArch64MemoryAccess> Accesses;
-  Accesses.reserve(Total / Bytes);
-  // Memory order, not register order: each structure contributes one element
-  // from every member. LD1/ST1 register lists instead repeat a whole vector.
-  for (unsigned Repeat = 0; Repeat < Repetitions; ++Repeat)
-    for (unsigned Element = 0; Element < Elements; ++Element)
-      for (unsigned Member = 0; Member < Registers; ++Member) {
-        RegisterValue Value{};
-        if (!Load) {
-          const unsigned Register =
-              (First + Repeat * Registers + Member) & RegisterMask;
-          const unsigned Offset = (Lane + Element) * Bytes;
-          Value[0] = State.Vectors[Register][Offset / aarch64::WordBytes] >>
-                     ((Offset % aarch64::WordBytes) * CHAR_BIT);
-        }
-        Accesses.push_back({Base + Accesses.size() * Bytes, Value, Bytes,
-                            Load ? Read : Write});
-      }
+  Accesses.reserve(I->totalAccessBytes() / I->ElementBytes);
+  for (unsigned N = 0; N != I->totalAccessBytes() / I->ElementBytes; ++N) {
+    RegisterValue Value{};
+    if (!I->isLoad()) {
+      const unsigned Register =
+          (First + I->memoryVector(N)) & kAddressMemoryRegisterMask;
+      const unsigned Offset = I->memoryVectorByte(N);
+      Value[0] = State.Vectors[Register][Offset / aarch64::WordBytes] >>
+                 ((Offset % aarch64::WordBytes) * CHAR_BIT);
+    }
+    Accesses.push_back({Base + N * I->ElementBytes, Value, I->ElementBytes,
+                        I->isLoad() ? Read : Write});
+  }
   return Accesses;
 }
 } // namespace
@@ -168,6 +118,15 @@ getAArch64InstructionEffects(const cs_insn &I,
   // They still execute through Machine::step and consume an ordinary attempt.
   if (disabledPAuthHint(Word))
     return std::vector<AArch64MemoryAccess>();
+  // XPACLRI (HINT #7) strips PAC bits even with authentication disabled.
+  // Low 48-bit addresses are fixed points in this translation regime, so
+  // PAuth stripping and a baseline transport's legacy HINT agree. Execute
+  // the original word; signed/tagged pointers require a separate contract.
+  if (Word == 0xd50320ff) {
+    if (State.reg(AArch64Register::X30) > aarch64::UserMax)
+      return llvm::make_error<UnsupportedExecutionError>();
+    return std::vector<AArch64MemoryAccess>();
+  }
   // AArch64PageTables never sets GP. Execute the original landing-pad word,
   // including on a transport that implements FEAT_BTI; do not replace bytes
   // or infer guarded-page enforcement from the decoder's optional feature.
@@ -242,25 +201,29 @@ getAArch64InstructionEffects(const cs_insn &I,
   const auto &A = I.detail->aarch64;
   if (Kind == ScalarConversion) {
     const bool Resize = I.id == AARCH64_INS_FCVT;
-    const unsigned FloatIndex =
-        I.id == AARCH64_INS_SCVTF || I.id == AARCH64_INS_UCVTF ? 0 : 1;
-    // Only scalar GPR <-> binary32/binary64 forms are admitted. Fixed-point
-    // immediates, packed vectors and optional half precision remain outside
-    // this contract even though Capstone uses the same instruction IDs.
+    const bool FromInteger =
+        I.id == AARCH64_INS_SCVTF || I.id == AARCH64_INS_UCVTF;
+    const unsigned FloatIndex = FromInteger ? 0 : 1;
+    // GPR conversions and equal-width scalar SIMD integer-to-float forms use
+    // binary32/binary64. Fixed-point immediates, packed vectors and optional
+    // half precision remain outside this contract despite their shared IDs.
     if (A.op_count != 2 || A.operands[0].type != AARCH64_OP_REG ||
         A.operands[1].type != AARCH64_OP_REG ||
-        (!Resize && !scalarRegister(A.operands[1 - FloatIndex].reg)) ||
         A.operands[FloatIndex].vas != AARCH64LAYOUT_INVALID)
       return llvm::make_error<UnsupportedExecutionError>();
     const unsigned Width = vectorRegisterWidth(A.operands[FloatIndex].reg);
     if (Width != 32 && Width != 64)
       return llvm::make_error<UnsupportedExecutionError>();
+    const auto &Other = A.operands[1 - FloatIndex];
     if (Resize) {
-      const auto &Other = A.operands[1 - FloatIndex];
       const unsigned OtherWidth = vectorRegisterWidth(Other.reg);
       if ((OtherWidth != 32 && OtherWidth != 64) || OtherWidth == Width ||
           Other.vas != AARCH64LAYOUT_INVALID)
         return llvm::make_error<UnsupportedExecutionError>();
+    } else if (!scalarRegister(Other.reg) &&
+               !(FromInteger && vectorRegisterWidth(Other.reg) == Width &&
+                 Other.vas == AARCH64LAYOUT_INVALID)) {
+      return llvm::make_error<UnsupportedExecutionError>();
     }
   }
   bool HasVector = UsesFloatingState || Kind == Vector;
@@ -277,9 +240,16 @@ getAArch64InstructionEffects(const cs_insn &I,
             (unsigned(O.vas) & LayoutElementMask) < FP32Bits)))
         return llvm::make_error<UnsupportedExecutionError>();
     }
+    // FCMLE's encoded zero is a typed system immediate in Capstone, not
+    // an ordinary FP operand. Admit only this instruction's exact third zero.
+    const bool ExactFloatingZero =
+        I.id == AARCH64_INS_FCMLE && A.op_count == 3 && N == 2 &&
+        O.type == AARCH64_OP_SYSIMM &&
+        O.sysop.sub_type == AARCH64_OP_EXACTFPIMM &&
+        O.sysop.imm.exactfpimm == AARCH64_EXACTFPIMM_ZERO;
     if ((Kind == Integer || Kind == Vector || UsesFloatingState) &&
         O.type != AARCH64_OP_REG && O.type != AARCH64_OP_IMM &&
-        !(Kind == Floating && O.type == AARCH64_OP_FP))
+        !(Kind == Floating && O.type == AARCH64_OP_FP) && !ExactFloatingZero)
       return llvm::make_error<UnsupportedExecutionError>();
   }
   if (HasVector && !baselineFeatures(I))

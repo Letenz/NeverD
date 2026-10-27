@@ -21,6 +21,7 @@
 #include "HighFrameAddress.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
@@ -278,7 +279,8 @@ void narrowSourceConcatLocals(HighFunc &Func) {
   if (!Func.SourceTypeHint || !validateSourceABI(*Func.SourceTypeHint, Error) ||
       Func.StructuredExceptionRegions || Func.UnstructuredExceptionRegions)
     return;
-  size_t Budget = 100000;
+  size_t Budget =
+      ::neverd::limits::ir::kHighDeadStoreElimNarrowSourceConcatLocalsBudget;
   auto Plain = [](const HighExpr &E) {
     return E.IntrinsicId == Intrinsic::None && E.IntrinsicOutputs.empty() &&
            E.MemoryOrdering == NdMemoryOrdering::None &&
@@ -291,7 +293,13 @@ void narrowSourceConcatLocals(HighFunc &Func) {
   const auto ConcatLowPrefix = [&](ExprPtr Value,
                                    uint16_t CarrierBytes) -> ExprPtr {
     uint16_t Capacity = CarrierBytes;
-    for (unsigned Depth = 0; Value && Depth < 16; ++Depth) {
+    for (
+        unsigned Depth = 0;
+        Value &&
+        Depth <
+            ::neverd::limits::ir::
+                kHighDeadStoreElimNarrowSourceConcatLocalsConcatLowPrefixDepthLimit;
+        ++Depth) {
       if (!Budget-- || !Plain(*Value) || !Value->Type ||
           Value->Type->Kind != NdTypeKind::Int || !Value->Type->Size)
         return {};
@@ -370,7 +378,9 @@ void narrowSourceConcatLocals(HighFunc &Func) {
   std::vector<HighStmt *> Statements;
   for (size_t I = 0; I < Pending.size(); ++I) {
     auto [S, Depth] = Pending[I];
-    if (!Budget-- || Depth > 128)
+    if (!Budget-- ||
+        Depth > ::neverd::limits::ir::
+                    kHighDeadStoreElimNarrowSourceConcatLocalsDepthLimit)
       return;
     Statements.push_back(S);
     auto Add = [&](std::vector<HighStmt> &Body) {
@@ -425,7 +435,11 @@ void narrowSourceConcatLocals(HighFunc &Func) {
         return false;
       // Each accepted view preserves its low Capacity bytes. Check every
       // intermediate width: re-extension cannot restore a discarded byte.
-      for (unsigned Depth = 0; Depth <= 8; ++Depth) {
+      for (unsigned Depth = 0;
+           Depth <=
+           ::neverd::limits::ir::
+               kHighDeadStoreElimNarrowSourceConcatLocalsCopyShapeDepthLimit;
+           ++Depth) {
         const auto &E = *Copy.Leaf;
         if (!E || !Plain(*E) || !E->Type || E->Type->Kind != NdTypeKind::Int ||
             !E->Type->Size || E->Type->Size > 16)
@@ -568,7 +582,10 @@ void narrowSourceConcatLocals(HighFunc &Func) {
   for (size_t I = 0; I < Uses.size(); ++I) {
     auto [Slot, Root, Parent, Operand, Depth] = Uses[I];
     const auto &E = *Slot;
-    if (!Budget-- || Depth > 128 || !E)
+    if (!Budget-- ||
+        Depth > ::neverd::limits::ir::
+                    kHighDeadStoreElimNarrowSourceConcatLocalsDepthLimit ||
+        !E)
       return;
     for (const auto &Output : E->IntrinsicOutputs)
       if (auto It = Candidates.find(varKey(Output)); It != Candidates.end())
@@ -703,8 +720,7 @@ void narrowSourceConcatLocals(HighFunc &Func) {
 // whose upper bytes are well defined only adds casts; that wider count
 // narrows only definitions that can leave bytes undefined.
 void narrowUnreadRegisterBytes(HighFunc &Func, Arch Architecture) {
-  constexpr size_t kBudget = 200000;
-  size_t Budget = kBudget;
+  size_t Budget = ::neverd::limits::ir::kHighDeadStoreElimBudget;
   bool Abort = false;
   bool ThroughArithmetic = false;
   struct Value {
@@ -832,7 +848,7 @@ void narrowUnreadRegisterBytes(HighFunc &Func, Arch Architecture) {
       };
   auto Collect = [&](bool Arithmetic) {
     Values.clear();
-    Budget = kBudget;
+    Budget = ::neverd::limits::ir::kHighDeadStoreElimBudget;
     Abort = false;
     ThroughArithmetic = Arithmetic;
     walkStmts(Func.Body, [&](HighStmt &S) {
@@ -886,7 +902,7 @@ void narrowUnreadRegisterBytes(HighFunc &Func, Arch Architecture) {
   Collect(/*Arithmetic=*/true);
   const VarKeyMap<Value> Through =
       Abort ? VarKeyMap<Value>() : std::move(Values);
-  Budget = kBudget;
+  Budget = ::neverd::limits::ir::kHighDeadStoreElimBudget;
   // Whether bytes [Low, size) of \p E may be undefined: an undefined value a
   // byte merge kept there, directly or, at depth 0, through the definitions
   // of a local. A call or load result is defined whatever its operands are.
@@ -996,7 +1012,11 @@ void narrowUnreadRegisterBytes(HighFunc &Func, Arch Architecture) {
   }
   // The low \p Bytes of \p Val, dropping only pure high operands.
   auto LowPrefix = [&](ExprPtr Val, uint16_t Bytes) -> ExprPtr {
-    for (unsigned Depth = 0; Depth < 16; ++Depth) {
+    for (unsigned Depth = 0;
+         Depth <
+         ::neverd::limits::ir::
+             kHighDeadStoreElimNarrowUnreadRegisterBytesLowPrefixDepthLimit;
+         ++Depth) {
       if (!Val || !Val->Type || Val->Type->Kind != NdTypeKind::Int ||
           Val->Type->Size < Bytes || Val->IntrinsicId != Intrinsic::None ||
           !Val->IntrinsicOutputs.empty())
@@ -1057,7 +1077,8 @@ void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture) {
   const auto &TRI = getTargetRegInfo(Architecture);
   if (TRI.PointerSize != 4 && TRI.PointerSize != 8)
     return;
-  size_t Budget = 100000;
+  size_t Budget = ::neverd::limits::ir::
+      kHighDeadStoreElimElimUnreadPrivateFrameStoresBudget;
   VarKeyMap<unsigned> Definitions;
   walkStmts(Func.Body, [&](const HighStmt &S) {
     if (!Budget)

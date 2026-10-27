@@ -1235,6 +1235,73 @@ ExceptionFunction makeRegistrationCxxDigestSource() {
   return EH;
 }
 
+TEST(WindowsEHNativeSource, PE32CleanupOnlyNeedsAnExactDirectActionGraph) {
+  auto EH = makeRegistrationCxxDigestSource();
+  EH.Registration->HandlerVA = EH.PersonalityVA;
+  EH.Cxx->IsSynchronous = true;
+  EH.Cxx->TryBlocks.clear();
+  EH.Cxx->UnwindMap = {{-1, 0x401300, CxxUnwindAction::ActionKind::Direct},
+                       {0, 0x401320, CxxUnwindAction::ActionKind::Direct}};
+  const auto IR = classifyWindowsEHNativeSource(
+      EH, Arch::X86, BinaryFormat::COFF, WindowsEHNativeCapability::IRLowering);
+#ifdef LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS
+  EXPECT_TRUE(IR.canLowerNativeIR());
+#else
+  EXPECT_FALSE(IR.canLowerNativeIR());
+#endif
+  const auto Output =
+      classifyWindowsEHNativeSource(EH, Arch::X86, BinaryFormat::COFF);
+#if defined(LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS) &&                            \
+    defined(LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS) &&                          \
+    defined(LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS)
+  EXPECT_TRUE(Output.canPatchOutput());
+  EXPECT_EQ(Output.Reason, WindowsEHNativeSourceReason::Eligible);
+#else
+  EXPECT_FALSE(Output.canPatchOutput());
+  EXPECT_EQ(Output.Reason,
+            WindowsEHNativeSourceReason::OutputReconstructionUnavailable);
+#endif
+  for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = EH;
+    auto &Cxx = *Changed.Cxx;
+    switch (Mutation) {
+    case 0:
+      Cxx.UnwindMap[1].ToState = 1;
+      break;
+    case 1:
+      Cxx.UnwindMap[0].ToState = 1;
+      break;
+    case 2:
+      Cxx.UnwindMap[0].ObjectOffset = -32;
+      break;
+    case 3:
+      Cxx.UnwindMap[0].ActionVA = EH.CodeRange.Begin + 4;
+      break;
+    case 4:
+      Cxx.UnwindMap[0].Kind = CxxUnwindAction::ActionKind::None;
+      break;
+    case 5:
+      Cxx.UnwindMap = {{-1, 0, CxxUnwindAction::ActionKind::None},
+                       {0, 0, CxxUnwindAction::ActionKind::None}};
+      break;
+    case 6:
+      Cxx.Flags = 0;
+      break;
+    }
+    EXPECT_FALSE(
+        classifyWindowsEHNativeSource(Changed, Arch::X86, BinaryFormat::COFF,
+                                      WindowsEHNativeCapability::IRLowering)
+            .canLowerNativeIR());
+  }
+  auto X64 = makeNativeFH3Source();
+  X64.Cxx->TryBlocks.clear();
+  EXPECT_EQ(classifyWindowsEHNativeSource(X64, Arch::X64, BinaryFormat::COFF,
+                                          WindowsEHNativeCapability::IRLowering)
+                .Reason,
+            WindowsEHNativeSourceReason::EmptyCxxTryMap);
+}
+
 TEST(WindowsEHNativeSource, PE32CxxOutputNeedsCompleteCompilerReceipts) {
   auto EH = makeRegistrationCxxDigestSource();
   EH.Registration->HandlerVA = EH.PersonalityVA;

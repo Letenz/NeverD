@@ -135,7 +135,7 @@ bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA);
 /// Separate the per-function EAX/FuncInfo thunk from its argument- and
 /// EAX-preserving CRT dispatch entry. A generated handler must use RuntimeVA;
 /// jumping to the original HandlerVA would reinstall the original FuncInfo.
-/// Only immutable unwrapped code and the exact VCRUNTIME140 FH3 import qualify.
+/// Only immutable unwrapped code and an exact known PE32 FH3 import qualify.
 struct X86CxxPersonalityABI {
   va_t RuntimeVA = InvalidVA;
   va_t IATVA = InvalidVA;
@@ -144,6 +144,77 @@ struct X86CxxPersonalityABI {
 std::optional<X86CxxPersonalityABI>
 getCheckedX86CxxPersonalityABI(const BinaryImage &Img,
                                const ExceptionFunction &Function);
+
+/// One checked handler-prefix comparison. Both displacements are relative to
+/// the registration node passed at [ESP+8], not necessarily to source EBP.
+/// The handler loads CookieOffset, XORs its value with node+XOROffset and
+/// invokes CheckVA. Mismatch branches to FailureVA in the original checker.
+struct X86CxxHandlerCookieGuard {
+  int32_t CookieOffset = 0;
+  int32_t XOROffset = 0;
+  va_t CallVA = 0;
+  va_t CheckVA = 0;
+  va_t FailureVA = 0;
+};
+
+/// The dispatch identity and its exact cookie preconditions. CodeRanges
+/// includes the immutable thunk, dispatcher veneers and checker success
+/// paths. This does not prove that any parent initializes or preserves the
+/// cookie cells, that a check succeeds, or that the prefix can be omitted.
+struct X86CxxHandlerABI {
+  X86CxxPersonalityABI Dispatch;
+  va_t SecurityCookieVA = 0;
+  std::vector<X86CxxHandlerCookieGuard> CookieGuards;
+};
+std::optional<X86CxxHandlerABI>
+getCheckedX86CxxHandlerABI(const BinaryImage &Img,
+                           const ExceptionFunction &Function);
+
+/// A live stack word written by the shared EAX-handler C++ prologue. Offsets
+/// use its established EBP, which is four bytes below caller entry ESP.
+struct X86CxxPrologueWrite {
+  enum class Value {
+    PreviousEBP,
+    Handler,
+    PreviousChain,
+    EBX,
+    ESI,
+    EDI,
+    EncodedCookie,
+    StackPointer,
+    InitialState
+  };
+  int32_t FrameOffset = 0;
+  Value Source = Value::PreviousEBP;
+  bool operator==(const X86CxxPrologueWrite &) const = default;
+};
+
+/// Exact immutable caller/helper instructions, including the moved return PC.
+/// Writes retain machine order, including any overlap. On return EBP is the
+/// frame origin, EAX is frame-12, ESP is PostCallStackOffset, and the other
+/// five GPRs are unchanged. Arithmetic flags come from cookie XOR EBP, not from
+/// the incoming flags. The transient return-PC word below final ESP is not
+/// live.
+///
+/// This describes a physical call, not an ordinary returning callee ABI.
+/// Applying it still requires the current caller's stack word, EAX, instruction
+/// boundary and entry-frame identities. It does not authorize native EH,
+/// cookie-check elision, callback entry, or a frame coordinate by itself.
+struct X86CxxPrologueCall {
+  static constexpr int32_t RegistrationOffset = -12;
+  static constexpr int32_t TryLevelOffset = -4;
+  ExceptionAddressRange Caller;
+  ExceptionAddressRange Helper;
+  va_t CallVA = 0;
+  va_t HandlerVA = 0;
+  va_t SecurityCookieVA = 0;
+  uint32_t AllocationBytes = 0;
+  int32_t PostCallStackOffset = 0;
+  std::vector<X86CxxPrologueWrite> Writes;
+};
+std::optional<X86CxxPrologueCall>
+getCheckedX86CxxPrologueCall(const BinaryImage &Img,
+                             const ExceptionFunction &Function);
 
 /// Authenticate a retained FH3 handler entry directly from its thunk, FuncInfo
 /// and CRT import. This supplies a code-address identity after the original
@@ -162,6 +233,13 @@ std::optional<va_t> getCheckedX86EH4CookieCheck(const BinaryImage &Img,
 /// branch to the original failure code on mismatch, otherwise return without
 /// touching stack storage or other registers. This authorizes no elision for
 /// an argument whose equality with that cookie has not separately been proved.
+struct X86CookieCheckSuccessPath {
+  va_t SecurityCookieVA = 0;
+  va_t FailureVA = 0;
+  ExceptionAddressRange CodeRange;
+};
+std::optional<X86CookieCheckSuccessPath>
+getCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA);
 bool hasCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA);
 
 } // namespace neverd::coff_loader

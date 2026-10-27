@@ -19,6 +19,7 @@
 #define NEVERD_BACKEND_C_RENDER_LLVMC_LLVMCINTRINSICRENDER_H
 #include "neverd/Common.h"
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/AtomicOrdering.h"
 
 #include <functional>
@@ -28,6 +29,7 @@
 
 namespace llvm {
 class LoadInst;
+class CallBase;
 class CallInst;
 class Value;
 } // namespace llvm
@@ -55,7 +57,42 @@ struct X86RepStos {
 std::optional<X86RepStos> classifyX86RepStos(Arch TheArch,
                                              const llvm::CallInst &Call);
 
+// The same contract for MOVS, whose source, destination and count register
+// updates the lifted IR represents separately too.
+struct X86RepMovs {
+  enum Direction { Forward, Backward, Dynamic } Dir;
+  unsigned ElementBytes;
+  unsigned AddressBits;
+};
+std::optional<X86RepMovs> classifyX86RepMovs(Arch TheArch,
+                                             const llvm::CallInst &Call);
+
 //--- Arch-specific (LLVMCIntrinsicRenderX86.cpp) ---
+/// Recognize the complete scalar MSR/port call with ordered native effects.
+bool isX86DescriptorStateNativeName(llvm::StringRef Name);
+std::optional<InlineAsmRender>
+renderX86DescriptorStateCall(Arch TheArch, BinaryFormat Format,
+                             const llvm::CallBase &Call,
+                             const std::string &ResultName, bool ResultLive,
+                             const std::vector<std::string> &Args);
+
+bool isX86ScalarSystemNativeName(llvm::StringRef Name);
+std::optional<InlineAsmRender>
+renderX86ScalarSystemCall(Arch TheArch, BinaryFormat Format,
+                          const llvm::CallBase &Call,
+                          const std::string &ResultName, bool ResultLive,
+                          const std::vector<std::string> &Args);
+/// Recognize the complete owned CR/DR call, rejecting malformed candidates.
+bool isX86SystemRegisterNativeName(llvm::StringRef Name);
+std::optional<InlineAsmRender>
+renderX86SystemRegisterCall(Arch TheArch, BinaryFormat Format,
+                            const llvm::CallBase &Call,
+                            const std::string &ResultName, bool ResultLive,
+                            const std::vector<std::string> &Args);
+/// Preserve the exact prefetch hint, address and segment of owned assembly.
+std::optional<InlineAsmRender>
+renderX86PrefetchCall(Arch TheArch, const llvm::CallBase &Call,
+                      const std::vector<std::string> &Args);
 const char *lookupX86AsmToC(const char *Mnem);
 InlineAsmRender renderX86InlineAsm(Arch TheArch, const std::string &AsmStr,
                                    const std::string &Mnemonic,
@@ -64,15 +101,32 @@ InlineAsmRender renderX86InlineAsm(Arch TheArch, const std::string &AsmStr,
                                    bool ResultLive,
                                    const std::vector<std::string> &Args);
 std::string renderX86Fence(llvm::AtomicOrdering Ordering);
-const char *renderX86DebugBreak();
+const char *renderX86DebugBreak(BinaryFormat Format);
 bool isX86FastFailName(llvm::StringRef Name);
 std::string renderX86SegmentedLoad(
     Arch TheArch, const llvm::LoadInst &LI,
     const std::function<std::string(const llvm::Value *)> &ValueStr);
 
 //--- Arch-specific (LLVMCIntrinsicRenderARM.cpp) ---
+/// False for another assembly identity; malformed owned calls throw.
+bool validateAArch64AddressMemoryCall(Arch TheArch, const llvm::CallInst &Call);
+/// Validate the original GPR/SIMD writeback call before source filtering.
+bool validateAArch64WritebackMemoryCall(Arch TheArch,
+                                        const llvm::CallInst &Call);
+std::optional<InlineAsmRender>
+renderAArch64AddressMemoryCall(Arch TheArch, const llvm::CallInst &Call,
+                               const std::string &ResultName, bool ResultLive,
+                               const std::vector<std::string> &Args);
+std::optional<InlineAsmRender>
+renderAArch64WritebackMemoryCall(Arch TheArch, const llvm::CallInst &Call,
+                                 const std::string &ResultName, bool ResultLive,
+                                 const std::vector<std::string> &Args);
+std::optional<InlineAsmRender>
+renderAArch64PAuthLoadCall(Arch TheArch, const llvm::CallInst &Call,
+                           const std::string &ResultName, bool ResultLive,
+                           const std::vector<std::string> &Args);
 const char *lookupArmAsmToC(const char *Mnem);
-InlineAsmRender renderARMInlineAsm(const std::string &AsmStr,
+InlineAsmRender renderARMInlineAsm(Arch TheArch, const std::string &AsmStr,
                                    const std::string &Mnemonic,
                                    const std::string &ResultName,
                                    bool ResultLive,
@@ -88,8 +142,10 @@ InlineAsmRender renderInlineAsm(Arch TheArch, const std::string &AsmStr,
 
 std::string renderFence(Arch TheArch, llvm::AtomicOrdering Ordering);
 
-/// Returns the arch-appropriate debug-break statement (with trailing newline).
-const char *renderDebugBreak(Arch TheArch);
+/// Returns the arch-appropriate debug-break statement (with trailing newline):
+/// x86's is Microsoft's `__debugbreak` in a COFF unit and the GNU builtin in
+/// any other, whose headers do not declare it.
+const char *renderDebugBreak(Arch TheArch, BinaryFormat Format);
 
 } // namespace neverd
 

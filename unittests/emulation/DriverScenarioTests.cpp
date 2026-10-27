@@ -18,6 +18,47 @@
 namespace neverd::emulation {
 namespace {
 
+TEST(DriverScenario, DebuggerStateRequiresBothBooleansAndRoundTrips) {
+  DriverResult Result;
+  auto JSON = llvm::cantFail(llvm::json::parse(driverResultJSON(Result)));
+  EXPECT_FALSE(
+      JSON.getAsObject()->getObject("configuration")->get("debugger_state"));
+  for (bool Enabled : {false, true})
+    for (bool NotPresent : {false, true}) {
+      const auto Input = std::string("{\"debugger_state\":{\"enabled\":") +
+                         (Enabled ? "true" : "false") +
+                         ",\"not_present\":" + (NotPresent ? "true" : "false") +
+                         "}}";
+      auto Parsed = driverOptionsFromScenarioJSON(Input);
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      ASSERT_TRUE(Parsed->DebuggerState);
+      EXPECT_EQ(Parsed->DebuggerState->Enabled, Enabled);
+      EXPECT_EQ(Parsed->DebuggerState->NotPresent, NotPresent);
+      auto Inherited = driverOptionsFromScenarioJSON("{}", *Parsed);
+      ASSERT_TRUE(bool(Inherited));
+      Result.Configuration = *Inherited;
+      JSON = llvm::cantFail(llvm::json::parse(driverResultJSON(Result)));
+      const auto *State = JSON.getAsObject()
+                              ->getObject("configuration")
+                              ->getObject("debugger_state");
+      ASSERT_NE(State, nullptr);
+      EXPECT_EQ(State->getBoolean("enabled"), Enabled);
+      EXPECT_EQ(State->getBoolean("not_present"), NotPresent);
+    }
+  for (const char *Value :
+       {"null", "true", "0", "[]", "{}", R"({"enabled":false})",
+        R"({"not_present":true})", R"({"enabled":0,"not_present":true})",
+        R"({"enabled":false,"not_present":1})",
+        R"({"enabled":false,"not_present":null})",
+        R"({"enabled":false,"not_present":true,"extra":0})",
+        R"({"enabled":false,"enabled":true,"not_present":true})"}) {
+    auto Parsed = driverOptionsFromScenarioJSON(
+        std::string("{\"debugger_state\":") + Value + "}");
+    ASSERT_FALSE(bool(Parsed)) << Value;
+    llvm::consumeError(Parsed.takeError());
+  }
+}
+
 TEST(DriverScenario, LoaderViewIsExplicitAndRoundTripsWithoutDefaultFields) {
   DriverResult Default;
   auto Report = llvm::cantFail(llvm::json::parse(driverResultJSON(Default)));
@@ -230,27 +271,57 @@ TEST(DriverScenario, RejectsUnknownFieldsTypesAndRequestKinds) {
 TEST(DriverScenario, KernelGeneratedRequestsFailBeforeImageLoading) {
   for (const char *JSON :
        {R"({"requests":[{"kind":"internal_ioctl"}]})",
-        R"({"requests":[{"kind":"internal_ioctl","code":3,"file":7}]})"}) {
+        R"({"requests":[{"kind":"internal_ioctl","code":3,"file":7}]})",
+        R"({"requests":[{"kind":"unlock_all","file":7}]})",
+        R"({"requests":[{"kind":"query_information","file":7}]})",
+        R"({"requests":[{"kind":"flush_buffers","file":7}]})",
+        R"({"requests":[{"kind":"fsctl","file":7}]})"}) {
     SCOPED_TRACE(JSON);
     auto Parsed = driverOptionsFromScenarioJSON(JSON);
     ASSERT_FALSE(bool(Parsed));
     EXPECT_NE(llvm::toString(Parsed.takeError()).find("kernel-generated"),
               std::string::npos);
   }
-  DriverOptions Input;
-  DriverRequest Request;
-  Request.Kind = DriverRequestKind::InternalDeviceControl;
-  Request.ControlCode = 3;
-  Input.Requests.push_back(Request);
-  auto Inherited = driverOptionsFromScenarioJSON("{}", Input);
-  ASSERT_FALSE(bool(Inherited));
-  EXPECT_NE(llvm::toString(Inherited.takeError()).find("kernel-generated"),
-            std::string::npos);
-  auto Executed =
-      emulateDriver("missing-kernel-request-preflight-image.sys", Input);
-  ASSERT_FALSE(bool(Executed));
-  EXPECT_NE(llvm::toString(Executed.takeError()).find("kernel-generated"),
-            std::string::npos);
+  for (auto Kind :
+       {DriverRequestKind::InternalDeviceControl, DriverRequestKind::UnlockAll,
+        DriverRequestKind::QueryInformation, DriverRequestKind::FlushBuffers,
+        DriverRequestKind::FileSystemControl}) {
+    DriverOptions Input;
+    DriverRequest Request;
+    Request.Kind = Kind;
+    Input.Requests.push_back(Request);
+    auto Inherited = driverOptionsFromScenarioJSON("{}", Input);
+    ASSERT_FALSE(bool(Inherited));
+    EXPECT_NE(llvm::toString(Inherited.takeError()).find("kernel-generated"),
+              std::string::npos);
+    auto Executed =
+        emulateDriver("missing-kernel-request-preflight-image.sys", Input);
+    ASSERT_FALSE(bool(Executed));
+    EXPECT_NE(llvm::toString(Executed.takeError()).find("kernel-generated"),
+              std::string::npos);
+  }
+}
+
+TEST(DriverScenario, FileHandleReportsPreserveGeneratedUnlockAndProcess) {
+  DriverResult Result;
+  DriverRequestResult Unlock;
+  Unlock.Kind = DriverRequestKind::UnlockAll;
+  Unlock.Origin = DriverRequestOrigin::FileHandleClose;
+  Unlock.File = 7;
+  Unlock.RequestorProcessID = 0x2000;
+  Unlock.Completed = true;
+  Unlock.IOStatus = 0;
+  Result.Requests.push_back(Unlock);
+  auto JSON = llvm::json::parse(driverResultJSON(Result));
+  ASSERT_TRUE(bool(JSON)) << llvm::toString(JSON.takeError());
+  const auto *Requests = JSON->getAsObject()->getArray("requests");
+  ASSERT_NE(Requests, nullptr);
+  ASSERT_EQ(Requests->size(), 1u);
+  const auto *Observed = (*Requests)[0].getAsObject();
+  EXPECT_EQ(Observed->getString("kind"), "unlock_all");
+  EXPECT_EQ(Observed->getString("origin"), "file_handle_close");
+  EXPECT_EQ(Observed->getInteger("file"), 7);
+  EXPECT_EQ(Observed->getInteger("requestor_process_id"), 0x2000);
 }
 
 TEST(DriverScenario, DriverAllocatedReportsPreserveKernelOriginWithoutAFile) {

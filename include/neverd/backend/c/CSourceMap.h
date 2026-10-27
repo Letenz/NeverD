@@ -7,6 +7,8 @@
 #ifndef NEVERD_BACKEND_C_CSOURCEMAP_H
 #define NEVERD_BACKEND_C_CSOURCEMAP_H
 
+#include "neverd/backend/c/SourceVariableTypes.h"
+#include "neverd/ir/SourceVariableEdits.h"
 #include "neverd/ir/high/HighSourceMap.h"
 
 #include <optional>
@@ -52,6 +54,17 @@ struct CSourceName {
   bool operator==(const CSourceName &) const = default;
 };
 
+/// The program's local types an emitted unit defines (CRecordDefinitions):
+/// the C, which the text holds once, and the types it defines and declares,
+/// so that another language's spelling of the unit defines them as its own.
+struct CSourceLocalTypes {
+  std::string Text;
+  std::vector<std::string> Types;
+  std::vector<std::string> DeclaredTypes;
+  std::vector<std::string> HeaderTypes;
+  bool operator==(const CSourceLocalTypes &) const = default;
+};
+
 struct CSourceRegion {
   /// Index into CSourceMap::Recognitions, shared by both C routes.
   size_t Recognition = 0;
@@ -87,6 +100,13 @@ struct CSourceMap {
   /// The functions and objects the text names, in identifier order, replaced
   /// on every emit.
   std::vector<CSourceName> Names;
+  /// The local types the text defines, replaced on every emit.
+  std::optional<CSourceLocalTypes> LocalTypes;
+  /// Emitter-owned variable identities, independently of presentation edits.
+  SourceVariableInventory Variables;
+  std::string VariableSnapshot;
+  std::vector<std::string> StaleVariableTypes;
+  std::vector<SourceVariableEditResult> VariableEditResults;
 };
 
 } // namespace neverd

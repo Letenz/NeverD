@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceBindings.h"
 #include "neverd/web/SourceLocation.h"
 
@@ -19,10 +20,7 @@
 namespace neverd::web {
 inline constexpr std::string_view SourceViewProfile =
     "javascript-source-view-v1";
-inline constexpr uint64_t MaxSourceViewBytes = 4 * 1024 * 1024;
 inline constexpr uint64_t MaxSourceViewSegments = 2 * MaxJavaScriptLexemes + 1;
-inline constexpr uint64_t MaxSourceViewChunk = 65536;
-inline constexpr uint64_t MaxPublishedSourceViews = 2;
 
 struct SourceReviewRange {
   uint64_t Start = 0, End = 0;

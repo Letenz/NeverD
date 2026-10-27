@@ -4,6 +4,7 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFPatchObject.cpp
   COFF/COFFFH4Encoding.cpp
   COFF/COFFInplace.cpp
+  COFF/COFFLayoutGrowth.cpp
   COFF/COFFPatch.cpp
   COFF/COFFSourceCallSymbols.cpp
   COFF/COFFTrampolineRegions.cpp
@@ -13,13 +14,25 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFRegistrationCallbackProof.cpp
   COFF/COFFRegistrationFrameProof.cpp
   COFF/COFFRegistrationSEHScopeState.cpp
+  COFF/COFFRegistrationSEHStateWrites.cpp
   COFF/COFFRegistrationSEHDynamicScope.cpp
+  COFF/COFFRegistrationSEHCall.cpp
   COFF/COFFRegistrationSEHException.cpp
+  COFF/COFFRegistrationSEHFinally.cpp
+  COFF/COFFRegistrationSEHRegisters.cpp
+  COFF/COFFRegistrationSEHState.cpp
+  COFF/COFFRegistrationSEHStateDispatch.cpp
   COFF/COFFRegistrationSEHNullAccess.cpp
   COFF/COFFRegistrationSEHJump.cpp
+  COFF/COFFRegistrationSEHJumpState.cpp
   COFF/COFFRegistrationSEHBoundCall.cpp
   COFF/COFFRegistrationSEHJumpArguments.cpp
   COFF/COFFRegistrationSEHJumpRuntime.cpp
+  COFF/COFFRegistrationSEHLocalUnwindBridge.cpp
+  COFF/COFFRegistrationSEHLocalUnwind.cpp
+  COFF/COFFRegistrationSEHLocalUnwindContext.cpp
+  COFF/COFFRegistrationSEHParentExit.cpp
+  COFF/COFFRegistrationSEHParentExitSource.cpp
   COFF/COFFRegistrationFrameStores.cpp
   COFF/COFFRegistrationFrameTaint.cpp
   COFF/COFFRegistrationFrameBits.cpp
@@ -32,6 +45,7 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFRegistrationCxxIR.cpp
   COFF/COFFRegistrationCxxEdges.cpp
   COFF/COFFRegistrationCopyEdges.cpp
+  COFF/COFFRegistrationCopySlots.cpp
   COFF/COFFRegistrationCxxCall.cpp
   COFF/COFFRegistrationCxxCatch.cpp
   COFF/COFFRegistrationCxxContinuation.cpp
@@ -43,11 +57,12 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFRegistrationCxxThrow.cpp
   COFF/COFFRegistrationIRProof.cpp
   CodeGen.cpp
-  CodeGenAArch64.cpp
-  CodeGenARM.cpp
+  AArch64/CodeGenAArch64.cpp
+  ARM/CodeGenARM.cpp
   CodeGenSymbolize.cpp
-  CodeGenX86.cpp
+  X86/CodeGenX86.cpp
   CompiledImage.cpp
+  X86/CompiledSEHStateWrites.cpp
   DwarfEHFrame.cpp
   ExceptionRewriteContract.cpp
   ELF/ELFARMEHABIEncode.cpp
@@ -59,9 +74,15 @@ add_neverd_component_library(NeverDCodeGen
   ELF/ELFSectionPatch.cpp
   ELF/ELFSourceRelocations.cpp
   ELF/ELFSourceSymbols.cpp
+  ELF/ELFSourceDependencies.cpp
   MachO/MachOCompactUnwindPatch.cpp
   MachO/MachOExceptionPatch.cpp
   MachO/MachOInplace.cpp
+  MachO/MachOSourceDependencies.cpp
+  MachO/MachODependencyState.cpp
+  MachO/MachOExportLayout.cpp
+  MachO/MachOHeaderGrowth.cpp
+  MachO/MachOLayoutGrowth.cpp
   MachO/MachOPatch.cpp
   MachO/MachOPatchObject.cpp
   MachO/MachOReloc.cpp
@@ -72,6 +93,13 @@ add_neverd_component_library(NeverDCodeGen
   PatchStorage.cpp
   SourcePatch.cpp
   SourcePatchBindings.cpp
+  SourcePatchDependencies.cpp
+  SourcePatchCallback.cpp
+  SourcePatchCallbackCOFF.cpp
+  SourcePatchCallbackSymbols.cpp
+  SourcePatchCallbackMachine.cpp
+  SourcePatchCallbackDwarf.cpp
+  SourcePatchPreparation.cpp
   rewrite/BinaryRewriter.cpp
   rewrite/InplaceRewriter.cpp
 

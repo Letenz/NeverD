@@ -1,0 +1,58 @@
+//===- RecordABIs.def - How targets lay records out -------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// How a target's compilers lay records out, beyond what its data model
+/// says: where its bit-fields go, how far its scalars align, and how large
+/// its wchar_t and long double are.
+///
+/// NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes,
+///                   LongDoubleBytes, LongDoubleAlign, Library)
+///   Spelling          Its name in the C API.
+///   Rules             Where its bit-fields go: MSVC or Itanium.
+///   ScalarAlignLimit  The largest alignment a builtin scalar takes in a
+///                     record, which otherwise aligns to its size.
+///   WCharBytes        The size of its wchar_t,
+///   LongDoubleBytes   and of its long double, as Clang's
+///                     __SIZEOF_WCHAR_T__ and __SIZEOF_LONG_DOUBLE__ give
+///                     them for its target.
+///   LongDoubleAlign   The alignment of its long double where its size and
+///                     the limit do not give it; 0 where they do.
+///   Library           The ABI whose header libraries a program of it joins:
+///                     its own, or one whose records lay out as its do.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_RECORD_ABI
+#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes, \
+                          LongDoubleBytes, LongDoubleAlign, Library)
+#endif
+
+/// Microsoft's compilers.
+NEVERD_RECORD_ABI(Microsoft, "microsoft", MSVC, 16, 2, 8, 0, Microsoft)
+/// MinGW's GCC and Clang on x64: Microsoft's records, which the Windows
+/// headers declare for both, with the x87's long double in 16 bytes.
+NEVERD_RECORD_ABI(MinGW64, "mingw-x64", MSVC, 16, 2, 16, 0, Microsoft)
+/// MinGW's on x86: the x87's long double in 12 bytes, which aligns to four
+/// where a double aligns to eight.
+NEVERD_RECORD_ABI(MinGW32, "mingw-x86", MSVC, 16, 2, 12, 4, Microsoft)
+/// GCC and Clang on the 64-bit System V targets, Android's among them, and
+/// on Apple's x86-64.
+NEVERD_RECORD_ABI(Itanium, "itanium", Itanium, 16, 4, 16, 0, Itanium)
+/// Apple's 64-bit ARM: the Itanium ABI's records, and a long double that is
+/// a double.
+NEVERD_RECORD_ABI(AppleARM64, "apple-arm64", Itanium, 16, 4, 8, 0, AppleARM64)
+/// The i386 System V ABI: long long, double and long double align to four
+/// in a record, and long double is the x87's, in 12 bytes.
+NEVERD_RECORD_ABI(I386SystemV, "i386-sysv", Itanium, 4, 4, 12, 0, I386SystemV)
+/// Android's i386: the i386 System V ABI's records, and a long double that
+/// is a double.
+NEVERD_RECORD_ABI(AndroidI386, "android-i386", Itanium, 4, 4, 8, 0, AndroidI386)
+/// The 32-bit ARM procedure call standard: eight-byte scalars align to
+/// eight, and long double is a double.
+NEVERD_RECORD_ABI(AAPCS32, "aapcs32", Itanium, 8, 4, 8, 0, AAPCS32)
+
+#undef NEVERD_RECORD_ABI

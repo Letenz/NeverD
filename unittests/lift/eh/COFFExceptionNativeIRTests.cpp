@@ -15,8 +15,8 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
-#include "neverd/lift/AArch64Regs.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/pipeline/Pipeline.h"
 

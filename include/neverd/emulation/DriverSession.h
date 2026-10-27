@@ -13,6 +13,7 @@
 #ifndef NEVERD_EMULATION_DRIVERSESSION_H
 #define NEVERD_EMULATION_DRIVERSESSION_H
 
+#include "neverd/emulation/DriverFileSystem.h"
 #include "neverd/emulation/DriverPnp.h"
 #include "neverd/emulation/DriverProfile.h"
 #include "neverd/emulation/DriverRegistry.h"
@@ -43,7 +44,8 @@ enum class DriverRequestKind {
 struct DriverRequest {
   static constexpr uint32_t DefaultRequestorProcessID = 0x1000;
   DriverRequestKind Kind = DriverRequestKind::DeviceControl;
-  /// CREATE with an empty name selects the sole live device; ambiguity fails.
+  /// CREATE with an empty name selects the sole live guest device; ambiguity
+  /// fails. Declared provider volumes do not participate in this selection.
   /// Later requests use their file's device unless a matching name is given.
   std::string Device;
   uint32_t ControlCode = 0;
@@ -142,6 +144,22 @@ struct DriverPhysicalMemoryInventory {
   std::string Evidence;
 };
 
+/// An explicitly declared, stable nonfaulting MSR read in checked-x64 mode.
+/// Currently only IA32_LSTAR is supported. This is an opaque numeric input,
+/// not host CPU state, executable memory, a kernel identity or pointer proof.
+struct DriverMSRRead {
+  uint32_t Index = 0;
+  uint64_t Value = 0;
+};
+
+/// A stable PsGetProcessPeb reply for an already modeled process identity.
+/// The numeric value creates neither a process nor readable guest storage.
+/// In particular, an omitted declaration does not mean a null PEB.
+struct DriverProcessPeb {
+  uint32_t ProcessID = 0;
+  uint64_t Value = 0;
+};
+
 /// Explicit class-196 system-information result for checked-x64 execution.
 /// Reports the declared low fourteen flags without implementing a hardware
 /// mitigation or inferring native host state. Reserved bits must be zero.
@@ -151,6 +169,13 @@ struct DriverKernelVaShadowQuery {
   std::optional<uint32_t> Flags;
   /// Caller-supplied printable label, never authenticated provenance.
   std::string Evidence;
+};
+
+/// Explicit debugger data, never inferred from the host. Omitting the whole
+/// declaration leaves KdDebuggerEnabled/KdDebuggerNotPresent inaccessible.
+struct DriverDebuggerState {
+  bool Enabled = false;
+  bool NotPresent = true;
 };
 
 /// This profile models a single-processor x64 WDM lifecycle with cooperative
@@ -174,6 +199,12 @@ struct DriverOptions {
   /// Explicit CPU environment inputs, never inferred from the host processor.
   /// A missing leaf/subleaf stops before publishing any CPUID register result.
   std::vector<DriverCPUID> CPUID;
+  /// Explicit MSR replies. Omission refuses reads; declarations retain an
+  /// unreconstructed environment dependency even if unused. WRMSR is denied.
+  std::vector<DriverMSRRead> MSRReads;
+  /// Explicit process environment inputs for checked-x64 execution. Even
+  /// unused entries retain an unreconstructed environment dependency.
+  std::vector<DriverProcessPeb> ProcessPebs;
   uint64_t TimeoutMilliseconds = profile::DefaultTimeoutMilliseconds;
   std::string ServiceName = profile::DefaultServiceName;
   /// Zero selects the preferred PE image base.
@@ -186,6 +217,13 @@ struct DriverOptions {
   /// An explicitly populated registry namespace. Omission leaves registry
   /// availability unspecified; an empty inventory models an empty namespace.
   std::optional<std::vector<DriverRegistryKey>> Registry;
+  /// Explicit session-local volumes. Omission means unknown availability; an
+  /// empty vector declares no filesystem providers. File I/O remains
+  /// unsupported.
+  std::optional<std::vector<DriverFileSystemVolume>> FileSystem;
+  /// Registry system time at virtual time zero, in Windows 100 ns units.
+  /// Mutations use this epoch plus the shared scheduler's elapsed time.
+  std::optional<uint64_t> RegistrySystemTime100ns;
   std::vector<DriverPnpDevice> PnpDevices;
   /// Omission retains cooperative scheduling and idle-only clock advancement.
   /// An explicit policy permits instruction-boundary thread preemption below
@@ -204,6 +242,7 @@ struct DriverOptions {
   /// Optional diagnostic query; even unused declarations retain an
   /// unreconstructed environment dependency. Requires checked-x64 execution.
   std::optional<DriverKernelVaShadowQuery> KernelVaShadowQuery;
+  std::optional<DriverDebuggerState> DebuggerState;
 };
 
 enum class DriverStopReason {
@@ -265,6 +304,14 @@ struct DriverRequestResult {
   std::optional<uint32_t> ResponseIndex;
   std::vector<DriverUserBufferResult> UserBuffers;
   std::optional<DriverUsbIdleRequestResult> UsbIdle;
+  /// Original FILE_INFORMATION_CLASS supplied to an internal query producer.
+  std::optional<uint32_t> FileInformationClass;
+  /// Actual file body, independent of an optional scenario identifier.
+  std::optional<uint64_t> FileObject;
+  /// Driver-originated open and terminal provider identity, when established.
+  std::optional<uint64_t> FileOpenOperation;
+  std::optional<uint64_t> FileSystemDevice;
+  std::optional<uint64_t> FileSystemFileID;
 };
 
 struct DriverFault {
@@ -308,6 +355,8 @@ struct DriverResult {
   std::optional<DriverFault> Fault;
   /// Final registry state, including changes observed before execution stops.
   std::optional<std::vector<DriverRegistryKey>> Registry;
+  /// Observed filesystem owner state, including bound volume devices.
+  std::optional<std::vector<DriverFileSystemVolumeState>> FileSystem;
   std::vector<DriverPnpDeviceResult> PnpDevices;
   std::vector<DriverInterruptResult> Interrupts;
   std::vector<DriverDmaResult> DmaTransfers;

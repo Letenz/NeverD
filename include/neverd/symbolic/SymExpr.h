@@ -34,20 +34,24 @@
 #define NEVERD_SYMBOLIC_SYMEXPR_H
 
 #include "neverd/Common.h"
+#include "neverd/symbolic/Limits.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Endian.h"
 
+#include <array>
 #include <compare>
 #include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace neverd::symbolic {
@@ -399,6 +403,11 @@ public:
   /// appended; neither query expands the tree or constructs its text.
   SymReadability readability(SymRef R) const;
 
+  /// Number of leading nodes whose readability is already cached. Inspecting
+  /// this count does not populate the cache or construct symbolic nodes.
+  /// Metered callers can charge only the prefix extension they still need.
+  size_t numCachedReadabilityNodes() const { return ReadabilityCosts.size(); }
+
   /// Every variable reachable from \p R, in ascending variable-id order.
   void collectVars(SymRef R, llvm::SmallVectorImpl<uint32_t> &Out) const;
 
@@ -430,6 +439,14 @@ public:
   /// runs through the `mk*` builders, so the result is canonical.
   SymRef substitute(SymRef R, const std::unordered_map<uint32_t, SymRef> &Map);
 
+  /// Substitute several roots with one shared DAG walk. Results retain the
+  /// input order and duplicates. Replacements are simultaneous: nodes in Map's
+  /// values are not substituted again. Roots may borrow this context's operand
+  /// storage; every root and replacement must belong to this context.
+  std::vector<SymRef>
+  substituteAll(llvm::ArrayRef<SymRef> Roots,
+                const std::unordered_map<uint32_t, SymRef> &Map);
+
   /// Replace variable \p VarIdx with \p Val throughout \p R.
   SymRef substituteVar(SymRef R, uint32_t VarIdx, SymRef Val);
 
@@ -451,6 +468,17 @@ private:
   /// Intern a node, returning an existing ref when an identical node exists.
   SymRef intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
                 uint64_t Aux);
+  /// Isolate the long-sequence hash call from the short lookup's hot frame.
+  SymRef internLongOperands(SymOp Op, uint32_t Width,
+                            llvm::ArrayRef<SymRef> Ops, uint64_t Aux,
+                            uint64_t Hash);
+  /// Both hashing paths share the same complete identity lookup.
+  SymRef internHashed(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
+                      uint64_t Aux, uint64_t Hash);
+  /// Append only after the complete identity lookup failed. A null head means
+  /// the hash has no table entry yet; existing heads retain collision chains.
+  SymRef appendInterned(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
+                        uint64_t Aux, uint64_t Hash, SymRef *Head);
   void recordVariableName(llvm::StringRef Name, uint32_t Id);
 
   /// Split \p R into a coefficient and a base so that `R == Coeff * Base`.
@@ -493,9 +521,25 @@ private:
   std::vector<LowWordProjectionEntry> LowWordProjections;
   uint32_t LowWordProjectionInsertions = 0;
 
-  /// Hash of a node's identity to the nodes carrying that hash.  Collisions
-  /// are resolved by comparing the candidate against each bucket entry.
-  std::unordered_map<uint64_t, llvm::SmallVector<uint32_t, 2>> InternTable;
+  /// Hash of a node's identity to the first node carrying that hash. Full
+  /// identity checks follow the context-owned collision links below. Both
+  /// halves fit in 32 bits, keeping the key and head in three words.
+  using InternKey = std::pair<uint32_t, uint32_t>;
+  struct InternKeyInfo : llvm::DenseMapInfo<InternKey> {
+    static unsigned getHashValue(const InternKey &Key) {
+      // The pair stores one complete hash, not two independent identities.
+      // Mix it once for bucket selection while retaining the compact key.
+      return llvm::DenseMapInfo<uint64_t>::getHashValue(
+          (uint64_t(Key.first) << 32) | Key.second);
+    }
+  };
+  llvm::DenseMap<InternKey, SymRef, InternKeyInfo> InternTable;
+  /// The two reserved key pairs have ordinary context-owned collision heads,
+  /// so every complete 64-bit hash remains representable.
+  std::array<SymRef, 2> ReservedInternHeads;
+  /// One next link per node avoids a separately managed vector in each bucket.
+  /// Invalid refs terminate a chain; copying a context retains all links.
+  std::vector<SymRef> InternNext;
   /// Plain variables keep their legacy name-and-width declaration identity.
   std::map<std::pair<std::string, uint32_t>, uint32_t> VarByNameAndWidth;
 
@@ -618,11 +662,13 @@ private:
 
   const SymContext &Ctx;
   SymRef Root;
-  std::vector<Step> Steps;
+  llvm::SmallVector<Step, limits::symbolic::kSymEvalPlanInlineSteps> Steps;
   /// Concatenated operand slot lists, indexed by Step::FirstArg.
-  std::vector<uint32_t> ArgSlots;
-  std::vector<uint32_t> Vars;
-  std::vector<uint64_t> ScratchU64;
+  llvm::SmallVector<uint32_t, limits::symbolic::kSymEvalPlanInlineOperands>
+      ArgSlots;
+  llvm::SmallVector<uint32_t, limits::symbolic::kSymEvalPlanInlineSteps> Vars;
+  llvm::SmallVector<uint64_t, limits::symbolic::kSymEvalPlanInlineSteps>
+      ScratchU64;
   std::vector<llvm::APInt> ScratchAP;
   uint32_t RootSlot = 0;
   bool FitsU64 = true;

@@ -1,0 +1,13 @@
+/* Functions that libneverd still reaches through the PLT although it binds
+   its other calls to its own definitions (-Bsymbolic-functions).  A program
+   that links LLVM's support library statically next to libneverd, as the
+   neverd CLI does, exports its own copies and keeps the one instance of
+   LLVM's process-wide state: the command-line option registry, the fatal
+   error handler, the standard streams and the timers.  libneverd keeps
+   calling those copies. */
+{
+  _ZN4llvm*;
+  _ZNK4llvm*;
+  LLVM*;
+  llvm_*;
+};

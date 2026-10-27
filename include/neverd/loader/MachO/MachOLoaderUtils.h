@@ -29,6 +29,12 @@
 namespace neverd {
 namespace macho_loader {
 
+/// Only the last fifteen encodings denote negative special library ordinals.
+inline int32_t chainedLibraryOrdinal(uint32_t Raw, uint32_t Modulus) {
+  const int32_t Value = static_cast<int32_t>(Raw);
+  return Raw > Modulus - 16 ? Value - static_cast<int32_t>(Modulus) : Value;
+}
+
 /// Whether strip removes the defined symbol \p NType describes from a linked
 /// image: a local symbol, or a private external one, which no other image
 /// links to.  An image read without its static symbol table skips these.
@@ -58,6 +64,9 @@ struct DyldInfoOffsets {
   uint32_t LazyBindSize = 0;
   uint32_t ExportOff = 0;
   uint32_t ExportSize = 0;
+  uint32_t WeakBindOff = 0;
+  uint32_t WeakBindSize = 0;
+  bool Ambiguous = false;
 };
 
 /// File offsets for LC_FUNCTION_STARTS (llvm::MachO::linkedit_data_command).
@@ -121,8 +130,11 @@ void parseRuntimeFunctionSections(const std::vector<SectionInfo> &Sections,
 
 /// Walk LC_DYLD_INFO bind / lazy_bind bytecode, enrich \p Img imports, and
 /// retain each pointer slot's symbol/addend in BinaryImage::DyldBindSlots.
+/// Original arm64e threaded binds preserve signing recipes and require the
+/// exact Mach-header mapping address; an unspecified base cannot be guessed.
 void parseBindStreams(const uint8_t *BasePtr, size_t FileSize,
-                      const DyldInfoOffsets &DyldInfo, BinaryImage &Img);
+                      const DyldInfoOffsets &DyldInfo, BinaryImage &Img,
+                      va_t TextVMAddr = InvalidVA);
 
 /// Walk LC_DYLD_INFO classic rebase bytecode and retain absolute pointer-slot
 /// provenance for code and mapped data targets.
@@ -191,7 +203,8 @@ void parseChainedFixupsRebases(const uint8_t *BasePtr, size_t FileSize,
 void parseUUID(const llvm::object::MachOObjectFile &Obj, BinaryImage &Img);
 
 /// Parse LC_BUILD_VERSION and store the min OS version string in
-/// Img.DynInfo.MinOSVersion.
+/// Img.DynInfo.MinOSVersion, and the platforms it and the older
+/// LC_VERSION_MIN_ commands name in Img.DynInfo.MachOPlatforms.
 void parseBuildVersion(const llvm::object::MachOObjectFile &Obj,
                        BinaryImage &Img);
 

@@ -12,7 +12,7 @@ on:
         required: true
         type: choice
         default: all
-        options: [all, seh3-eh4]
+        options: [all, r5, r4, seh3-eh4]
 
 permissions:
   actions: read

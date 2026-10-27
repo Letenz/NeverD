@@ -24,6 +24,12 @@ on:
 permissions:
   contents: read
 
+# Reusable calls retain the caller's workflow name and event. Isolate callers
+# and manual publication runs; only repeated push/PR checks supersede each other.
+concurrency:
+  group: web-resource-qualification-${{ github.workflow }}-${{ (github.event_name == 'push' || github.event_name == 'pull_request') && (github.event.pull_request.number || github.ref) || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   cef:
     name: Fixed CEF 120.2.7 resources (macOS arm64 reader)
@@ -61,7 +67,7 @@ jobs:
             -DNEVERD_ENABLE_WEB_JAVASCRIPT=ON \
             -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
             -DICU_ROOT="$(brew --prefix icu4c@77)"
-          cmake --build build-web-qualification \
+          python scripts/build.py build-web-qualification \
             --target NeverDWebArtifactTests NeverDWebSDKTests \
             NeverDWebGzipWithoutDecoderTests --parallel 3
       - name: Qualify the real distribution with no optional CEF omission
@@ -78,4 +84,7 @@ jobs:
           path: |
             build-web-qualification/unittests/web/cef-resource-results.xml
             build-web-qualification/Testing/Temporary/LastTest.log
+            build-web-qualification/unittests/web/Testing/Temporary/LastTest.log
+            build-web-qualification/neverd-*.json
+            build-web-qualification/CMakeCache.txt
           if-no-files-found: warn

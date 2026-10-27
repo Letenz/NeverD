@@ -8,14 +8,16 @@
 
 #include "RegistrationJumpRuntime.h"
 
-#include "RegistrationABIPrivate.h"
+#include "RegistrationSourceCall.h"
 
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/RuntimeProviders.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSwitch.h"
 
 namespace neverd::registration_state {
 
@@ -28,6 +30,11 @@ checkedJumpRuntime(const BinaryImage &Image, va_t Target, bool Indirect) {
   if (!Indirect) {
     if (Target > UINT32_MAX - 6)
       return std::nullopt;
+    // Ordinary callees are not import veneers. A raw prefix can reject them
+    // before scanning fixups; a match still needs the complete storage proof.
+    const auto *Prefix = Image.readVA(Target, 2);
+    if (!Prefix || Prefix[0] != 0xff || Prefix[1] != 0x25)
+      return std::nullopt;
     const auto Bytes =
         readImmutablePE32CodeBytes(Image, Target, 6, {Target + 2});
     if (!Bytes || (*Bytes)[0] != 0xff || (*Bytes)[1] != 0x25)
@@ -35,23 +42,21 @@ checkedJumpRuntime(const BinaryImage &Image, va_t Target, bool Indirect) {
     Slot = readLE<uint32_t>(Bytes->data() + 2);
   }
   const auto *Imported = Image.findImportAt(Slot);
-  if (!Imported || Imported->IATAddr != Slot || Imported->IsDelayImport ||
-      !isFileBackedPEImportSlot(Image, Slot))
+  if (!Imported || Imported->IATAddr != Slot || Imported->IsDelayImport)
     return std::nullopt;
-  const llvm::StringRef Module = Imported->Module;
-  if (!Module.equals_insensitive("msvcrt.dll") &&
-      !Module.equals_insensitive("vcruntime140.dll") &&
-      !Module.equals_insensitive("vcruntime140d.dll"))
+  if (!coff_loader::isX86RegistrationRuntimeProvider(Imported->Module))
+    return std::nullopt;
+  using Kind = JumpRuntimeBinding::Kind;
+  const auto Routine = llvm::StringSwitch<std::optional<Kind>>(Imported->Name)
+#define NEVERD_REGISTRATION_JUMP(Name, Routine) .Case(Name, Kind::Routine)
+#include "RegistrationRuntimeImports.def"
+                           .Default(std::nullopt);
+  if (!Routine)
+    return std::nullopt;
+  if (!isFileBackedPEImportSlot(Image, Slot))
     return std::nullopt;
   JumpRuntimeBinding Binding;
-  if (Imported->Name == "_setjmp3")
-    Binding.Routine = JumpRuntimeBinding::Kind::Capture;
-  else if (Imported->Name == "_longjmpex")
-    Binding.Routine = JumpRuntimeBinding::Kind::Resume;
-  else if (Imported->Name == "_seh_longjmp_unwind")
-    Binding.Routine = JumpRuntimeBinding::Kind::EH3Unwind;
-  else
-    return std::nullopt;
+  Binding.Routine = *Routine;
   Binding.Target = Target;
   Binding.ImportSlot = Slot;
   Binding.Indirect = Indirect;
@@ -61,56 +66,16 @@ checkedJumpRuntime(const BinaryImage &Image, va_t Target, bool Indirect) {
 std::optional<JumpRuntimeBinding>
 checkedJumpRuntimeCall(const BinaryImage &Image, const LowFunc &Function,
                        const LowOp &Op, size_t &Work) {
-  if (Op.Opcode != NdOp::CALL || Op.NumInputs != 1 || Op.Seq < 0 ||
-      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4 ||
-      Op.MemoryOrdering != NdMemoryOrdering::None ||
-      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
-      !registration_abi::chargeCalleeWork(Work, 16))
+  if (Op.Opcode != NdOp::CALL || Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
+      Op.Inputs[0].Size != 4)
     return std::nullopt;
   const auto Binding = checkedJumpRuntime(Image, Op.Inputs[0].Offset, false);
-  if (!Binding || Op.Addr > UINT32_MAX - 5)
+  if (!Binding || !checkedRegistrationDirectCall(Image, Function, Op, Work))
     return std::nullopt;
-  for (const auto &Block : Function.Blocks) {
-    if (!registration_abi::chargeCalleeWork(Work, Block.Ops.size() + 1))
-      return std::nullopt;
-    for (size_t I = 0; I != Block.Ops.size(); ++I) {
-      if (&Block.Ops[I] != &Op)
-        continue;
-      if (auto Error = validateLowInstructionBoundaries(
-              Block, LowInstructionBoundaryRequirement::Required)) {
-        llvm::consumeError(std::move(Error));
-        return std::nullopt;
-      }
-      for (const auto &Insn : Block.InstructionBoundaries) {
-        if (!registration_abi::chargeCalleeWork(Work, 1))
-          return std::nullopt;
-        if (Insn.Address != Op.Addr || I < Insn.FirstOp ||
-            I - Insn.FirstOp >= Insn.OpCount)
-          continue;
-        if (Insn.Size != 5 || Insn.Control != LowInstructionControl::Call ||
-            Insn.Immediate != Binding->Target ||
-            Insn.Mode != InstructionMode::Default ||
-            Insn.TargetMode != LowInstructionTargetMode::Preserve ||
-            hasLowInstructionControlFlag(
-                Insn.ControlFlags, LowInstructionControlFlag::Conditional) ||
-            hasLowInstructionControlFlag(
-                Insn.ControlFlags, LowInstructionControlFlag::InstructionGuard))
-          return std::nullopt;
-        const auto Bytes = readImmutableCodeBytes(Image, Op.Addr, 5);
-        if (!Bytes || (*Bytes)[0] != 0xe8 ||
-            uint32_t(Op.Addr + 5 +
-                     int64_t(readLE<int32_t>(Bytes->data() + 1))) !=
-                Binding->Target)
-          return std::nullopt;
-        return Binding;
-      }
-      return std::nullopt;
-    }
-  }
-  return std::nullopt;
+  return Binding;
 }
 
-bool isEH3JumpRuntimeInstruction(const BinaryImage &Image, va_t Address,
+bool isSEHJumpRuntimeInstruction(const BinaryImage &Image, va_t Address,
                                  uint16_t Size, llvm::ArrayRef<LowOp> Ops) {
   if (Size != 5 || Address > UINT32_MAX - Size)
     return false;
@@ -125,11 +90,11 @@ bool isEH3JumpRuntimeInstruction(const BinaryImage &Image, va_t Address,
   if (!Call)
     return false;
   const auto Binding = checkedJumpRuntime(Image, Call->Inputs[0].Offset, false);
+  if (!Binding || (Binding->Routine != JumpRuntimeBinding::Kind::Capture &&
+                   Binding->Routine != JumpRuntimeBinding::Kind::Resume))
+    return false;
   const auto Bytes = readImmutableCodeBytes(Image, Address, Size);
-  return Binding &&
-         (Binding->Routine == JumpRuntimeBinding::Kind::Capture ||
-          Binding->Routine == JumpRuntimeBinding::Kind::Resume) &&
-         Bytes && (*Bytes)[0] == 0xe8 &&
+  return Bytes && (*Bytes)[0] == 0xe8 &&
          uint32_t(Address + Size +
                   int64_t(readLE<int32_t>(Bytes->data() + 1))) ==
              Binding->Target;

@@ -1,0 +1,19 @@
+//===- KernelLookasideAPIs.def - Lookaside lifetime contracts -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Windows 10.0.19041.6456 exports. Allocation and free are WDK inlines on
+// this target; they use the guest SLIST, counters and pool callback pointers.
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinitializenpagedlookasidelist
+NEVERD_KERNEL_LOOKASIDE_API(ExInitializeNPagedLookasideList, 7, Dispatch,
+                            initializeLookaside(A, false))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exinitializepagedlookasidelist
+NEVERD_KERNEL_LOOKASIDE_API(ExInitializePagedLookasideList, 7, APC,
+                            initializeLookaside(A, true))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exdeletenpagedlookasidelist
+NEVERD_KERNEL_LOOKASIDE_API(ExDeleteNPagedLookasideList, 1, Dispatch,
+                            deleteLookaside(A[0], false))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-exdeletepagedlookasidelist
+NEVERD_KERNEL_LOOKASIDE_API(ExDeletePagedLookasideList, 1, APC,
+                            deleteLookaside(A[0], true))

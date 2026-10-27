@@ -14,6 +14,8 @@
 #include "../../archives/PathIndex.h"
 #include "Reader.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 #include <map>
 
@@ -64,7 +66,8 @@ void table(Reader &R, Range Header, uint64_t Count) {
     R.step();
     const auto At = I * 48;
     const auto NameSize = number(Rows, At + 8, 8);
-    if (!NameSize || NameSize > 4096)
+    if (!NameSize ||
+        NameSize > ::neverd::limits::web::kTablesTableNameSizeLimit)
       throw Error("wails_invalid_embed_name");
     const auto Name = R.mapped(number(Rows, At, 8), NameSize, true);
     auto Path = R.read(Name);
@@ -146,7 +149,8 @@ void readTables(Reader &R) {
         // are neither decoded as assets nor claimed as complete coverage.
         const auto FirstNameSize = number(Bytes, I + 32, 8);
         if (!N || number(Bytes, I + 16, 8) != N || !FirstNameSize ||
-            FirstNameSize > 4096)
+            FirstNameSize >
+                ::neverd::limits::web::kTablesReadTablesFirstNameSizeLimit)
           continue;
         if (N > R.Limits.Members)
           throw Error("wails_record_budget_exceeded");

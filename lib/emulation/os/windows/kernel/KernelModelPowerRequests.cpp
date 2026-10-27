@@ -101,7 +101,7 @@ KernelModel::planPowerRequest(const DriverRequest &Input, size_t Index,
   const auto Found = PnpDevices.find(Input.DeviceID);
   if (Found == PnpDevices.end() || !Found->second.AddDeviceStatus ||
       (*Found->second.AddDeviceStatus & profile::NTStatusFailureMask) ||
-      !isProviderDevice(Found->second.PDO))
+      !isPnpProviderDevice(Found->second.PDO))
     return powerError("request requires a successfully added live device_id");
   const uint64_t PDO = Found->second.PDO;
   auto State = Lifecycle.snapshot(PDO);

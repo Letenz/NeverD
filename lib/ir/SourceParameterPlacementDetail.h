@@ -49,10 +49,15 @@ placeWin64(const TargetRegInfo &TRI, const TypeRef &ReturnType,
            llvm::ArrayRef<TypeRef> ParamTypes);
 std::optional<SourceParameterPlacement>
 placeAAPCS64(const TargetRegInfo &TRI, BinaryFormat F,
-             const TypeRef &ReturnType, llvm::ArrayRef<TypeRef> ParamTypes);
+             const TypeRef &ReturnType, llvm::ArrayRef<TypeRef> ParamTypes,
+             bool Variadic = false);
 std::optional<SourceParameterPlacement>
 placeI386(const TargetRegInfo &TRI, BinaryFormat F, const TypeRef &ReturnType,
           llvm::ArrayRef<TypeRef> ParamTypes);
+std::optional<SourceParameterPlacement>
+placeI386Entered(const TargetRegInfo &TRI, BinaryFormat F,
+                 const TypeRef &ReturnType, llvm::ArrayRef<TypeRef> ParamTypes,
+                 llvm::ArrayRef<SourceABIValueLocation> Entries);
 
 } // namespace neverd::source_placement
 

@@ -122,6 +122,68 @@ int use2(int a) {
                           "use2", {"use2", "k2", "h4"});
 }
 
+// GCC -O0 reloads a char from its frame slot with `movzbl` and pushes it for
+// a prototyped import.  The C prints the pushed value in the call, and it
+// must keep the zero extension: the int8_t slot converts by its sign, which
+// passed 0xFFFFFF80 for 0x80.
+TEST_F(X86_32_CallAbi, AForwardedZeroExtensionReachesAnImportsArgument) {
+  HostFlags = {"-m32"};
+  KernelOptimization = "-O0";
+  expectHighCRunsLikeSource("gcc", {"-m32"}, R"C(
+unsigned int htonl(unsigned int);
+int lowbyte(int a) {
+  char c = (char)a;
+  return (int)htonl((unsigned char)c);
+}
+)C",
+                            "lowbyte", {"lowbyte"},
+                            {0, 0x41, 0x7F, 0x80, 0xC1, -1, 0x1FF});
+}
+
+// Clang -O0 with -mstackrealign, as the Android NDK builds i386 code,
+// realigns every frame (`and esp, -16`) and stores each stack argument with
+// `mov [esp+N]`.  No entry offset reaches below the alignment, so the stores
+// of a call through a pointer were taken for pushes, the last one first:
+// `pick(d, x * 3, x + 1, x, ...)`.
+TEST_F(X86_32_CallAbi, ARealignedFramesStackArgumentsKeepTheirSlots) {
+  HostFlags = {"-m32"};
+  KernelOptimization = "-O0";
+  expectHighCRunsLikeSource(
+      {"-target", "i386-linux-gnu", "-march=pentium4", "-mstackrealign"},
+      R"C(
+typedef int (*fn4)(int, int, int, int);
+static int mix(int a, int b, int c, int d) {
+  return (int)((((unsigned)a * 31u + (unsigned)b) * 31u + (unsigned)c) * 31u +
+               (unsigned)d);
+}
+static fn4 volatile pick = mix;
+int realigned_call(int x) {
+  char d = (char)x;
+  return pick(x, x + 1, x * 3, (unsigned char)d);
+}
+)C",
+      "realigned_call", {"realigned_call", "mix", "pick"},
+      {0, 1, -3, 77, 0x80, 0x1C1});
+}
+
+// The System V i386 psABI aligns the stack to sixteen at a call, so a
+// function enters at 12 mod 16, and Clang keeps a vector in a frame slot with
+// `movdqa %xmm0, (%esp)` without realigning.  The C frame enters at the same
+// residue: at 0 mod 16 the slot is misaligned, and the move's check traps.
+TEST_F(X86_32_CallAbi, AVectorSlotIsAlignedAsTheCallerAlignsTheStack) {
+  HostFlags = {"-m32", "-msse2"};
+  expectHighCRunsLikeSource({"-target", "i386-linux-gnu", "-march=pentium4"},
+                            R"C(
+typedef unsigned v4u __attribute__((vector_size(16)));
+int spill(int a) {
+  v4u v = {(unsigned)a, (unsigned)a * 3u, (unsigned)a ^ 5u, (unsigned)a + 7u};
+  v = v * v + (v4u){1u, 2u, 3u, 4u};
+  return (int)v[(unsigned)a & 3u];
+}
+)C",
+                            "spill", {"spill"}, {0, 1, -3, 77, 0x80, 0x1C1});
+}
+
 // A call through a function pointer takes its arguments on the stack, as
 // many as its caller pushes, whatever ECX and EDX hold at the call: here a
 // quotient in EDX and the first argument in ECX, as Clang leaves them in a

@@ -6,7 +6,9 @@
 
 #include "neverd/ir/med/MedMutableSource.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedScalarShapes.h"
 
 #include "llvm/ADT/BitVector.h"
 
@@ -16,11 +18,6 @@
 
 namespace neverd {
 namespace {
-constexpr size_t MaxBlocks = 4096;
-constexpr size_t MaxValues = 4096;
-constexpr size_t MaxOperations = 8 * 1024 * 1024;
-constexpr size_t MaxBlockValues = 4 * 1024 * 1024;
-constexpr size_t MaxPropagationWords = 16 * 1024 * 1024;
 
 bool scalarWidth(unsigned Bytes) {
   return Bytes == 1 || Bytes == 2 || Bytes == 4 || Bytes == 8 || Bytes == 16;
@@ -30,95 +27,6 @@ uint64_t byteMask(unsigned Bytes) {
   return Bytes == 64 ? ~uint64_t(0) : (uint64_t(1) << Bytes) - 1;
 }
 
-// Only explicit, unconditional scalar definitions belong to this subset.
-// Intrinsics/calls can carry implicit or conditional outputs and need their
-// own contracts. NOP/dead outputs are never definitions.
-int inputCount(NdOp Opcode) {
-  switch (Opcode) {
-  case NdOp::COPY:
-  case NdOp::LOAD:
-  case NdOp::INT_ZEXT:
-  case NdOp::INT_SEXT:
-  case NdOp::INT_NEGATE:
-  case NdOp::INT_NOT:
-  case NdOp::INT_NEG2:
-  case NdOp::BOOL_NOT:
-  case NdOp::POPCOUNT:
-  case NdOp::LZCOUNT:
-    return 1;
-  case NdOp::STORE:
-  case NdOp::INT_ADD:
-  case NdOp::INT_SUB:
-  case NdOp::INT_AND:
-  case NdOp::INT_OR:
-  case NdOp::INT_XOR:
-  case NdOp::INT_LEFT:
-  case NdOp::INT_RIGHT:
-  case NdOp::INT_ASHR:
-  case NdOp::INT_MULT:
-  case NdOp::INT_DIV:
-  case NdOp::INT_SDIV:
-  case NdOp::INT_REM:
-  case NdOp::INT_SREM:
-  case NdOp::INT_EQUAL:
-  case NdOp::INT_NOTEQUAL:
-  case NdOp::INT_LESS:
-  case NdOp::INT_SLESS:
-  case NdOp::INT_LESSEQUAL:
-  case NdOp::INT_SLESSEQUAL:
-  case NdOp::INT_CARRY:
-  case NdOp::INT_SOVF:
-  case NdOp::INT_SBOR:
-  case NdOp::BOOL_AND:
-  case NdOp::BOOL_OR:
-  case NdOp::BOOL_XOR:
-  case NdOp::CONCAT:
-  case NdOp::SUBBYTES:
-    return 2;
-  case NdOp::SELECT:
-    return 3;
-  default:
-    return -1;
-  }
-}
-
-bool compatibleWidths(const MedOp &O, unsigned PointerSize) {
-  switch (O.Opcode) {
-  case NdOp::POPCOUNT:
-  case NdOp::LZCOUNT:
-    return O.Inputs[0].Size <= 8;
-  case NdOp::LOAD:
-  case NdOp::STORE:
-    return O.Inputs[0].Size == PointerSize;
-  case NdOp::INT_LEFT:
-  case NdOp::INT_RIGHT:
-  case NdOp::INT_ASHR:
-    return O.Inputs[1].Size <= O.Inputs[0].Size;
-  case NdOp::INT_ADD:
-  case NdOp::INT_SUB:
-  case NdOp::INT_OR:
-  case NdOp::INT_XOR:
-  case NdOp::INT_MULT:
-  case NdOp::INT_DIV:
-  case NdOp::INT_SDIV:
-  case NdOp::INT_REM:
-  case NdOp::INT_SREM:
-  case NdOp::INT_EQUAL:
-  case NdOp::INT_NOTEQUAL:
-  case NdOp::INT_LESS:
-  case NdOp::INT_SLESS:
-  case NdOp::INT_LESSEQUAL:
-  case NdOp::INT_SLESSEQUAL:
-  case NdOp::INT_CARRY:
-  case NdOp::INT_SOVF:
-  case NdOp::INT_SBOR:
-    return O.Inputs[0].Size == O.Inputs[1].Size;
-  case NdOp::SELECT:
-    return O.Inputs[1].Size == O.Inputs[2].Size;
-  default:
-    return true;
-  }
-}
 } // namespace
 
 std::optional<MedMutableSourcePlan>
@@ -132,11 +40,13 @@ analyzeMedMutableSource(const MedFunc &F, Arch Architecture,
   };
   if (Error)
     Error->clear();
-  if (!F.SkippedSSA || F.Blocks.empty() || F.Blocks.size() > MaxBlocks ||
+  if (!F.SkippedSSA || F.Blocks.empty() ||
+      F.Blocks.size() > ::neverd::limits::ir::kMedMutableSourceMaxBlocks ||
       !F.ReturnType || F.Blocks.front().StartAddr != F.Entry)
     return Fail("mutable source has no bounded explicit entry");
-  if (F.DoesNotReturn || F.Params.size() > MaxValues || F.ExceptionMetadata ||
-      !F.CallInfos.empty() || !F.CallClobbers.empty() ||
+  if (F.DoesNotReturn ||
+      F.Params.size() > ::neverd::limits::ir::kMedMutableSourceMaxValues ||
+      F.ExceptionMetadata || !F.CallInfos.empty() || !F.CallClobbers.empty() ||
       !F.StructReturnCandidates.empty() || !F.MultiReturn.empty() ||
       !F.JumpTables.empty() || !F.SwitchSelectorPlans.empty() ||
       !F.ScalarAddressModels.empty() || !F.I386GetPcModels.empty() ||
@@ -174,8 +84,11 @@ analyzeMedMutableSource(const MedFunc &F, Arch Architecture,
     }
     auto It = Indices.find(V.Id);
     if (It == Indices.end()) {
-      if (Plan.Variables.size() >= MaxValues ||
-          Plan.Variables.size() + 1 > MaxBlockValues / F.Blocks.size()) {
+      if (Plan.Variables.size() >=
+              ::neverd::limits::ir::kMedMutableSourceMaxValues ||
+          Plan.Variables.size() + 1 >
+              ::neverd::limits::ir::kMedMutableSourceMaxBlockValues /
+                  F.Blocks.size()) {
         Valid = false;
         return;
       }
@@ -209,7 +122,7 @@ analyzeMedMutableSource(const MedFunc &F, Arch Architecture,
     }
   }
   std::set<va_t> Addresses;
-  size_t RemainingOps = MaxOperations;
+  size_t RemainingOps = ::neverd::limits::ir::kMedMutableSourceMaxOperations;
   bool HasReturn = false;
   // Bound every adjacency list before any reverse-edge scan can visit it.
   for (const auto &B : F.Blocks) {
@@ -218,7 +131,8 @@ analyzeMedMutableSource(const MedFunc &F, Arch Architecture,
                   std::to_string(B.Id) + " needs " +
                   std::to_string(B.Ops.size()) + " operations with " +
                   std::to_string(RemainingOps) + " remaining");
-    if (B.Succs.size() > 2 || B.Preds.size() > MaxBlocks)
+    if (B.Succs.size() > 2 ||
+        B.Preds.size() > ::neverd::limits::ir::kMedMutableSourceMaxBlocks)
       return Fail("mutable source CFG metadata exceeds its budget: block " +
                   std::to_string(B.Id) + " has " +
                   std::to_string(B.Succs.size()) + " successors and " +
@@ -279,19 +193,15 @@ analyzeMedMutableSource(const MedFunc &F, Arch Architecture,
       if (O.Dead || O.Opcode == NdOp::NOP)
         continue;
       if (!Control) {
-        const int Count = inputCount(O.Opcode);
+        const int Count = medScalarInputCount(O.Opcode);
         if (Count < 0 || O.NumInputs != Count ||
             (O.Opcode == NdOp::STORE ? O.Output.Size != 0 : O.Output.Size == 0))
           return Fail("mutable source has no explicit operation contract");
-        if (!compatibleWidths(O, TRI.PointerSize))
+        if (!medScalarInputWidthsCompatible(O, TRI.PointerSize))
           return Fail("mutable source has unsupported mixed operand widths");
-        if (O.Opcode == NdOp::SUBBYTES &&
-            (!O.Inputs[1].isConst() ||
-             O.Inputs[1].ConstVal > O.Inputs[0].Size ||
-             O.Output.Size > O.Inputs[0].Size - O.Inputs[1].ConstVal))
+        if (O.Opcode == NdOp::SUBBYTES && !medScalarByteProjectionIsValid(O))
           return Fail("mutable source requires an exact in-range byte slice");
-        if (O.Opcode == NdOp::CONCAT &&
-            O.Output.Size != O.Inputs[0].Size + O.Inputs[1].Size)
+        if (O.Opcode == NdOp::CONCAT && !medScalarByteProjectionIsValid(O))
           return Fail("mutable source has inconsistent concatenation widths");
         if (O.Output.Size) {
           if (O.Output.Kind == MedVar::Param || O.Output.isConst())
@@ -365,7 +275,7 @@ analyzeMedMutableSource(const MedFunc &F, Arch Architecture,
   llvm::BitVector Queued(F.Blocks.size(), true);
   for (const auto &B : F.Blocks)
     Pending.push_back(B.Id);
-  size_t Remaining = MaxPropagationWords;
+  size_t Remaining = ::neverd::limits::ir::kMedMutableSourceMaxPropagationWords;
   while (!Pending.empty()) {
     const int ID = Pending.front();
     Pending.pop_front();

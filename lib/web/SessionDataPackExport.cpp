@@ -13,6 +13,8 @@
 #include "ExportDirectory.h"
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web {
 std::string Session::exportDataPack(std::string_view Revision,
                                     std::string_view ExtractionID,
@@ -23,7 +25,9 @@ std::string Session::exportDataPack(std::string_view Revision,
   if (Found == State->DataPacks.end())
     throw Error("unknown_datapack_extraction");
   const auto &E = Found->second;
-  if (E.ResourceCount > 32768)
+  if (E.ResourceCount >
+      ::neverd::limits::web::
+          kSessionDataPackExportSessionExportDataPackEResourceCountLimit)
     throw Error("datapack_export_resource_budget_exceeded");
   ExportDirectory Out(OutputDirectory);
   llvm::json::Array Resources, Decoded;

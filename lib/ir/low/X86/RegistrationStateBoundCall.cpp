@@ -8,7 +8,7 @@
 
 #include "RegistrationStateSolver.h"
 
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 namespace neverd::registration_state {
 
@@ -21,6 +21,7 @@ bool RegistrationStateSolver::transferBoundSEHCallee(
       !Facts.Invalid && After.Parent && !After.Callback &&
       After.JumpBindingsIntact && !After.Frame.CallbackEntry &&
       After.Installed && !After.Uninstalled &&
+      (!EH4 || (CompleteCookies && cookiesReady(After.Frame))) &&
       After.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride].Offset ==
           0 &&
       Chain.RegistrationOffset == -16 && Chain.TryLevelOffset == -4 &&
@@ -42,6 +43,27 @@ bool RegistrationStateSolver::transferBoundSEHCallee(
               (*BoundCallees)(Op, After.Frame, WorkUsed, After.JumpCaptures)) {
         const auto SP = parentStackOffset(After);
         if (SP && int64_t(*SP) + Effect->StackPopBytes <= INT32_MAX) {
+          // A conditional helper proves its borrowed accesses in caller
+          // coordinates. The caller owns the registration and cookie layout;
+          // no borrowed object may expose those cells, including partial
+          // overlaps or an address argument that the helper never dereferences.
+          auto PrivateObject = [&](int64_t Begin, int64_t End) {
+            return charge(1) && Begin >= *SP && End <= 0 &&
+                   End - Begin <= UINT16_MAX &&
+                   frameObjectIsDisjointFromAdministration(Begin, End);
+          };
+          auto PrivateExtent = [&](const RegistrationObjectExtent &Extent) {
+            return PrivateObject(Extent.Begin, Extent.End);
+          };
+          if (!llvm::all_of(Effect->Reads, PrivateExtent) ||
+              !llvm::all_of(Effect->Writes, PrivateExtent))
+            return true;
+          if (Effect->NativeCall)
+            for (const auto &Argument : Effect->NativeCall->Arguments)
+              if (Argument.ArgumentKind ==
+                      RegistrationSEHBoundArgument::Kind::Object &&
+                  !PrivateObject(Argument.Offset, int64_t(Argument.Offset) + 4))
+                return true;
           Result.HasBoundSEHCallees = true;
           if (Effect->NativeCall) {
             const auto [It, New] = BoundCalls.emplace(
@@ -76,7 +98,7 @@ bool RegistrationStateSolver::transferBoundSEHCallee(
                 });
             if (!After.JumpBindingsIntact ||
                 Capture == After.JumpCaptures.end() ||
-                !hasEH3JumpCapture(After.Frame, Capture->second)) {
+                !hasSEHJumpCapture(After.Frame, Capture->second)) {
               Facts.Invalid = After.Unknown = true;
               After.Levels.clear();
               Result.SEHJumpResumptionsComplete = false;

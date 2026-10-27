@@ -31,8 +31,11 @@
 #ifndef NEVERD_IR_LOW_JUMPTABLE_JUMPTABLERESOLVERDETAIL_H
 #define NEVERD_IR_LOW_JUMPTABLE_JUMPTABLERESOLVERDETAIL_H
 
+#include "../LowScalarSymbolic.h"
+
 #include "neverd/Common.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/symbolic/SymExpr.h"
 
@@ -46,6 +49,21 @@
 #include <vector>
 
 namespace neverd {
+
+/// This identifies an encoded read, not an unchecked effective address.
+/// Address-role adoption separately proves its base, complete native-width
+/// selector bound and CPA2 control independence.
+inline std::optional<AArch64AddressMemoryInstruction>
+originalAArch64TableLoad(const LowOp &Operation) {
+  if (!lowAArch64AddressLoadShapeIsValid(Operation))
+    return std::nullopt;
+  const auto Instruction = aarch64AddressMemoryInstruction(
+      Operation.Inputs[kAddressMemoryWordOperand + 1].Offset);
+  return Instruction->stackBase() || Instruction->isVector() ||
+                 !Instruction->hasRegisterIndex()
+             ? std::nullopt
+             : Instruction;
+}
 
 struct BinaryImage;
 struct RelocatedAddressField;
@@ -136,6 +154,12 @@ inline bool targetRoleProofContextMatches(const TargetRoleProofContextKey &Key,
 
 /// Reaching-definition index of \p V searching backward from \p FromIdx, or -1.
 int reachingDefIdx(const std::vector<LowOp> &Ops, int FromIdx, const NdVar &V);
+
+/// Find the definition of a LOAD address through copies and widening of a
+/// complete guest pointer into the internal VA container. Narrow offsets and
+/// signed extensions do not preserve that coordinate.
+int jumpTableAddressDef(const std::vector<LowOp> &Ops, int FromIdx,
+                        const NdVar &Address, uint16_t PointerSize);
 
 /// Trace a nd-var backward through COPY chains to a plain register (InvalidVA
 /// if it does not resolve to one).
@@ -290,16 +314,6 @@ std::optional<uint64_t> evaluateJumpTableGuardPartialPrimitive(
     NdOp Opcode, uint16_t OutputSize,
     llvm::ArrayRef<std::optional<uint64_t>> Inputs,
     llvm::ArrayRef<uint16_t> InputSizes);
-
-/// Translate one integer LowIR operation to the shared symbolic bit-vector
-/// semantics used by complete-domain jump-table proofs.  Inputs are coerced
-/// exactly as the production emitter coerces them; unsupported or
-/// architecture-dependent width combinations return nullopt rather than
-/// authorizing a range from an approximate expression.
-std::optional<symbolic::SymRef>
-symbolizeJumpTableIntegerOperation(symbolic::SymContext &Ctx, NdOp Opcode,
-                                   uint16_t OutputSize,
-                                   llvm::ArrayRef<symbolic::SymRef> RawInputs);
 
 /// True when one relative-target transform operates in the complete guest
 /// pointer domain.  A mere widening event is not enough: scale and anchor

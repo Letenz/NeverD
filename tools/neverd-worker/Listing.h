@@ -38,6 +38,7 @@ public:
 
   /// Names, comments or function boundaries changed.
   void invalidate();
+  void setStackFrames(const Json &rows, const std::string &imageHash);
   /// The neverd_strings_ex_json options strings are found with, as JSON
   /// text; empty for the engine's defaults.
   void setStringOptions(std::string options);
@@ -61,10 +62,11 @@ public:
   Json strings(const Json &payload);
   /// The name the listing shows for \p address, automatic or not.
   std::string nameAt(std::uint64_t address);
-  /// Resolve an automatic or listing-local name to its address.
+  /// Resolve a name the listing shows, a function's, a data item's or an
+  /// automatic one, to its address.
   std::optional<std::uint64_t> resolveName(const std::string &name);
-  /// The entry of the function whose chunk, a part apart from its body,
-  /// holds \p address.
+  /// The entry owning an address, including recovered noncontiguous code.
+  /// An unowned address searches a bounded set of nearby function CFGs.
   std::optional<std::uint64_t> chunkOwner(std::uint64_t address);
   /// Whether \p address is an import's slot or the entry of its thunk.
   bool isImport(std::uint64_t address);
@@ -81,6 +83,19 @@ public:
   /// Which operands of the instruction that starts at \p address a number
   /// format changes, by index; none when no instruction starts there.
   std::optional<std::vector<bool>> numberOperands(std::uint64_t address);
+  /// Which of them a structure offset changes: numbers and displacements
+  /// from a base register.
+  std::optional<std::vector<bool>> structOperands(std::uint64_t address);
+  /// Whether the engine names structure offsets by local types.
+  bool namesStructOffsets();
+  /// The operand of the instruction at \p address a structure offset
+  /// changes: \p asked when it can, else its first displacement from a
+  /// register, else its last number; none when it has neither or no
+  /// instruction starts there.  \p number says whether it is a number,
+  /// with its value.
+  std::optional<std::size_t>
+  structOperand(std::uint64_t address, std::optional<std::size_t> asked,
+                std::optional<std::int64_t> *number = nullptr);
   /// The item at \p address as the listing shows it: {"start","size","kind"}
   /// and "user", the kind of the user's data item there; null outside the
   /// image.
@@ -90,6 +105,9 @@ public:
   /// Formatted instruction lines (no prefixes) of [start, end), for graph
   /// nodes.  Each element is {address, text, spans}.
   Json blockLines(std::uint64_t start, std::uint64_t end);
+  /// Explicit frame-name displacements used by the listing at this PC.
+  /// Ambiguous names are omitted, so assembly cannot guess their offset.
+  Json assemblySymbols(std::uint64_t address);
   /// Functions in address order under their display names:
   /// [{"name","engine_name","address","size","library","thunk","exported"}].
   const Json &functionRows();
@@ -104,9 +122,13 @@ public:
   /// names, slots, comments and references join the listing.
   void loadSwitches();
 
+  /// Opt in only when the client coordinates the snapshot's memory lifetime.
+  void setSteppedDiscovery(bool enabled);
   bool hasIdleWork() const;
-  /// Advance the reference index by one bounded step.
-  void idleStep();
+  /// Advance discovery/reference indexing. False while an owned discovery
+  /// snapshot is computing, so the executor can wait for interactive reads.
+  /// Completion is a separate step from rebuilding the derived listing.
+  bool idleStep();
   /// {state, done, total, generation} of the reference index.
   Json indexState() const;
   /// Changes whenever published listing text can change.

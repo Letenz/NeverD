@@ -15,6 +15,8 @@
 #include "features/configuration/FilesPublication.h"
 #include "features/configuration/Publication.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web {
 namespace {
 llvm::json::Object summary(const SourceNavigation &A, const SourceFeatures &F,
@@ -149,7 +151,8 @@ std::string Session::sourceNavigationRecords(std::string_view Revision,
     Count = Files.Sites.size() + Files.Calls.size() + Files.Sequences.size();
   else
     throw Error("unsupported_navigation_record_kind");
-  if (!Limit || Limit > 512 || Offset > Count)
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > Count)
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(Count, Offset + Limit);
   llvm::json::Array Items;

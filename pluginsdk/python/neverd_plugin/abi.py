@@ -13,7 +13,18 @@ from enum import Enum, IntEnum, IntFlag
 
 
 SessionHandle = ctypes.c_void_p
+ComparisonHandle = ctypes.c_void_p
+LineageHandle = ctypes.c_void_p
+ModuleSetHandle = ctypes.c_uint64
+ExecutionHandle = ctypes.c_uint64
 VirtualAddress = ctypes.c_ulonglong
+CancelProbeCallback = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)
+ComparisonProgressCallback = ctypes.CFUNCTYPE(
+    None, ctypes.c_void_p, ctypes.c_char_p, VirtualAddress, VirtualAddress,
+)
+LineageProgressCallback = ctypes.CFUNCTYPE(
+    None, ctypes.c_void_p, ctypes.c_char_p, VirtualAddress, VirtualAddress,
+)
 LoadProgressCallback = ctypes.CFUNCTYPE(
     None, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_ulonglong,
     ctypes.c_ulonglong, ctypes.c_char_p,
@@ -780,6 +791,51 @@ class NeverDSourcePatchBindingV1(ctypes.Structure):
     ]
 
 
+class NeverDSourcePatchDependencyV1(ctypes.Structure):
+    _fields_ = [
+        ("library", ctypes.c_char_p),
+        ("symbol", ctypes.c_char_p),
+        ("kind", ctypes.c_uint32),
+    ]
+
+
+class NeverDBytePatchOptionsV1(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t), ("address", ctypes.c_uint64),
+        ("kind", ctypes.c_char_p), ("bytes", ctypes.c_char_p),
+        ("text", ctypes.c_char_p), ("value", ctypes.c_uint64),
+        ("size", ctypes.c_uint64), ("fill_nops", ctypes.c_int),
+        ("allow_overlap", ctypes.c_int), ("dialect", ctypes.c_int),
+        ("expected", ctypes.c_char_p), ("symbols", ctypes.c_char_p),
+    ]
+
+
+class NeverDBytePatchRowV1(ctypes.Structure):
+    _fields_ = [
+        ("file_offset", ctypes.c_uint64),
+        ("address", VirtualAddress),
+        ("size", ctypes.c_size_t),
+        ("original", ctypes.POINTER(ctypes.c_uint8)),
+        ("current", ctypes.POINTER(ctypes.c_uint8)),
+        ("kind", ctypes.c_char_p),
+    ]
+
+
+class NeverDBytePatchSnapshotV1(ctypes.Structure):
+    _fields_ = [
+        ("row_count", ctypes.c_size_t),
+        ("rows", ctypes.POINTER(NeverDBytePatchRowV1)),
+    ]
+
+
+class NeverDAssembleOptionsV1(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t), ("pc", ctypes.c_uint64),
+        ("dialect", ctypes.c_int), ("mode", ctypes.c_int),
+        ("text", ctypes.c_char_p), ("symbols", ctypes.c_char_p),
+    ]
+
+
 class NeverDSourcePatchOptionsV1(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_size_t),
@@ -798,6 +854,8 @@ class NeverDSourcePatchOptionsV1(ctypes.Structure):
         ("timeout_seconds", ctypes.c_uint32),
         ("bindings", ctypes.POINTER(NeverDSourcePatchBindingV1)),
         ("binding_count", ctypes.c_size_t),
+        ("dependencies", ctypes.POINTER(NeverDSourcePatchDependencyV1)),
+        ("dependency_count", ctypes.c_size_t),
     ]
 
 
@@ -814,24 +872,60 @@ class NeverDDriverOptionsV1(ctypes.Structure):
     ]
 
 
+class NeverDModuleSetOptionsV1(ctypes.Structure):
+    """Exact v1 source-catalogue options; no analysis session is required."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("configuration_json", ctypes.c_char_p),
+        ("base_directory", ctypes.c_char_p),
+    ]
+
+
+class NeverDExecutionOptionsV1(ctypes.Structure):
+    """Exact v1 persistent workload options, independent of analysis sessions."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("module_set", ModuleSetHandle),
+        ("configuration_json", ctypes.c_char_p),
+    ]
+
+
 class Ownership(Enum):
     """Memory/lifetime contract for a native result."""
 
     VALUE = "value"
     BORROWED_STRING = "borrowed_string"
     OWNED_STRING = "owned_string"
+    OWNED_OBJECT = "owned_object"
     BORROWED_BUFFER = "borrowed_buffer"
 
 
 _C_TYPES: dict[str, object] = {
+    "int64_t": ctypes.c_int64,
     "void": None,
     "int": ctypes.c_int,
     "uint32_t": ctypes.c_uint32,
+    "uint64_t": ctypes.c_uint64,
+    "uint8_t *": ctypes.POINTER(ctypes.c_uint8),
+    "const uint8_t *": ctypes.POINTER(ctypes.c_uint8),
     "size_t": ctypes.c_size_t,
     "unsigned": ctypes.c_uint,
     "unsigned short": ctypes.c_ushort,
+    "long long": ctypes.c_longlong,
     "unsigned long long": ctypes.c_ulonglong,
     "neverd_session_t": SessionHandle,
+    "neverd_session_t *": ctypes.POINTER(SessionHandle),
+    "neverd_comparison_t": ComparisonHandle,
+    "neverd_lineage_t": LineageHandle,
+    "neverd_lineage_progress_t": LineageProgressCallback,
+    "neverd_cancel_probe_fn": CancelProbeCallback,
+    "neverd_comparison_progress_t": ComparisonProgressCallback,
+    "neverd_module_set_t": ModuleSetHandle,
+    "neverd_execution_t": ExecutionHandle,
+    "const neverd_execution_options_v1 *": ctypes.POINTER(NeverDExecutionOptionsV1),
+    "const neverd_module_set_options_v1 *": ctypes.POINTER(NeverDModuleSetOptionsV1),
     "neverd_va_t": VirtualAddress,
     "neverd_slot_t": ctypes.c_ulonglong,
     "neverd_output_language_t": ctypes.c_int,
@@ -875,6 +969,7 @@ _C_TYPES: dict[str, object] = {
     "const unsigned char *": ctypes.POINTER(ctypes.c_ubyte),
     "unsigned long long *": ctypes.POINTER(ctypes.c_ulonglong),
     "neverd_va_t *": ctypes.POINTER(ctypes.c_uint64),
+    "const neverd_va_t *": ctypes.POINTER(ctypes.c_uint64),
     "const void *": ctypes.c_void_p,
     "void *": ctypes.c_void_p,
     "neverd_load_progress_fn": LoadProgressCallback,
@@ -903,6 +998,9 @@ _C_TYPES: dict[str, object] = {
     "const neverd_driver_options_v1 *": ctypes.POINTER(NeverDDriverOptionsV1),
     "const neverd_sanitize_options_v1 *": ctypes.POINTER(NeverDSanitizeOptionsV1),
     "neverd_sanitize_result_v1 *": ctypes.POINTER(NeverDSanitizeResultV1),
+    "const neverd_byte_patch_options_v1 *": ctypes.POINTER(NeverDBytePatchOptionsV1),
+    "const neverd_byte_patch_snapshot_v1 *": ctypes.POINTER(NeverDBytePatchSnapshotV1),
+    "const neverd_assemble_options_v1 *": ctypes.POINTER(NeverDAssembleOptionsV1),
     "const neverd_source_patch_options_v1 *": ctypes.POINTER(
         NeverDSourcePatchOptionsV1
     ),
@@ -959,9 +1057,58 @@ def _declare(
 
 _declare("neverd_session_create", "neverd_session_t", [])
 _declare("neverd_session_destroy", "void", ["neverd_session_t"])
+_declare("neverd_module_set_create_v1", "neverd_module_set_t",
+         ["const neverd_module_set_options_v1 *", "const char * *"])
+_declare("neverd_execution_create_v1", "neverd_execution_t",
+         ["const neverd_execution_options_v1 *", "const char * *"])
+_declare("neverd_execution_command_json", "const char *",
+         ["neverd_execution_t", "const char *", "const char * *"],
+         ownership=Ownership.OWNED_STRING)
+_declare("neverd_execution_destroy", "int", ["neverd_execution_t", "const char * *"])
+for _execution_report in ("state", "run", "inspect", "instances"):
+    _declare(f"neverd_execution_{_execution_report}_json", "const char *",
+             ["neverd_execution_t", "const char * *"], ownership=Ownership.OWNED_STRING)
+for _execution_action in ("request_pause", "resume"):
+    _declare(f"neverd_execution_{_execution_action}", "int",
+             ["neverd_execution_t", "const char * *"])
+for _execution_input in ("declare_binding", "supply", "invoke"):
+    _declare(f"neverd_execution_{_execution_input}_json", "int",
+             ["neverd_execution_t", "const char *", "const char * *"])
+_declare("neverd_execution_read_memory", "int",
+         ["neverd_execution_t", "uint64_t", "uint8_t *", "size_t", "const char * *"])
+_declare("neverd_execution_write_memory", "int",
+         ["neverd_execution_t", "uint64_t", "const uint8_t *", "size_t", "const char * *"])
+_declare("neverd_execution_lookup_symbol_json", "const char *",
+         ["neverd_execution_t", "const char *", "const char *", "const char * *"],
+         ownership=Ownership.OWNED_STRING)
+_declare("neverd_module_set_from_file", "neverd_module_set_t",
+         ["const char *", "const char * *"])
+_declare("neverd_module_set_destroy", "int", ["neverd_module_set_t", "const char * *"])
+_declare("neverd_module_set_inspect_json", "const char *",
+         ["neverd_module_set_t", "const char * *"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_module_set_add_json", "int",
+         ["neverd_module_set_t", "const char *", "const char * *"])
+_declare("neverd_module_set_revise_unprepared_json", "int",
+         ["neverd_module_set_t", "const char *", "const char * *"])
+_declare("neverd_module_set_prepare", "int",
+         ["neverd_module_set_t", "const char *", "const char * *"])
+_declare("neverd_module_set_prepare_eager", "int", ["neverd_module_set_t", "const char * *"])
+_declare("neverd_module_set_attach_debug_json", "int",
+         ["neverd_module_set_t", "const char *", "const char *", "const char * *"])
+_declare("neverd_module_set_lookup_symbol_json", "const char *",
+         ["neverd_module_set_t", "const char *", "const char *", "const char * *"],
+         ownership=Ownership.OWNED_STRING)
 _declare("neverd_session_load", "int", ["neverd_session_t", "const char *"])
+_declare("neverd_session_load_cancellable", "int",
+         ["neverd_session_t", "const char *", "neverd_cancel_probe_fn", "void *"])
 _declare(
     "neverd_identify_json",
+    "const char *",
+    ["const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_dyld_cache_images_json",
     "const char *",
     ["const char *"],
     ownership=Ownership.OWNED_STRING,
@@ -980,6 +1127,12 @@ _declare(
 )
 _declare(
     "neverd_symbol_table_reference_json",
+    "const char *",
+    ["const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_map_reference_json",
     "const char *",
     ["const char *"],
     ownership=Ownership.OWNED_STRING,
@@ -1012,6 +1165,27 @@ _declare(
     ["neverd_session_t", "const char *", "const char *"],
 )
 _declare("neverd_session_is_loaded", "int", ["neverd_session_t"])
+_declare(
+    "neverd_analysis_section_add",
+    "int",
+    ["neverd_session_t", "const char *", "const unsigned char *", "size_t"],
+)
+_declare(
+    "neverd_analysis_section_remove",
+    "int",
+    ["neverd_session_t", "const char *"],
+)
+_declare(
+    "neverd_analysis_sections_json",
+    "const char *",
+    ["neverd_session_t", "int"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_analysis_sections_import_json",
+    "int",
+    ["neverd_session_t", "const char *"],
+)
 _declare("neverd_session_analyze", "int", ["neverd_session_t"])
 _declare(
     "neverd_session_file_path",
@@ -1056,6 +1230,97 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_local_types_json",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_local_type_json",
+    "const char *",
+    ["neverd_session_t", "const char *", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_local_types_source",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_local_types_declare",
+    "const char *",
+    ["neverd_session_t", "const char *", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_local_types_forget",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_type_libraries_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_type_libraries_set",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare("neverd_type_libraries_save", "int", ["neverd_session_t"])
+_declare("neverd_type_libraries_load", "int", ["neverd_session_t"])
+_declare(
+    "neverd_local_types_fit_json",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_local_type_member_json",
+    "const char *",
+    [
+        "neverd_session_t", "const char *", "long long",
+        "unsigned long long", "const char *",
+    ],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_func_type_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_source_type_json",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_types_convert",
+    "const char *",
+    ["const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_types_languages_json",
+    "const char *",
+    [],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_type_declarations_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare("neverd_type_declarations_save", "int", ["neverd_session_t"])
+_declare("neverd_type_declarations_load", "int", ["neverd_session_t"])
+_declare(
     "neverd_session_load_pdb",
     "int",
     ["neverd_session_t", "const char *"],
@@ -1071,6 +1336,37 @@ _declare(
     ["neverd_session_t", "const char *"],
 )
 _declare(
+    "neverd_session_set_source_symbolic",
+    "void",
+    ["neverd_session_t", "int"],
+)
+_declare(
+    "neverd_session_set_map_path_ex",
+    "int",
+    ["neverd_session_t", "const char *", "int"],
+)
+_declare(
+    "neverd_session_inspect_map_json",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_session_load_map",
+    "int",
+    ["neverd_session_t", "const char *", "int"],
+)
+_declare(
+    "neverd_session_set_dwarf_path",
+    "void",
+    ["neverd_session_t", "const char *"],
+)
+_declare(
+    "neverd_session_load_dwarf",
+    "int",
+    ["neverd_session_t", "const char *"],
+)
+_declare(
     "neverd_session_set_debug_info_enabled",
     "void",
     ["neverd_session_t", "int"],
@@ -1082,6 +1378,11 @@ _declare(
 )
 _declare(
     "neverd_session_set_dwarf_search",
+    "void",
+    ["neverd_session_t", "int"],
+)
+_declare(
+    "neverd_session_set_map_search",
     "void",
     ["neverd_session_t", "int"],
 )
@@ -1112,10 +1413,19 @@ _declare(
     ["neverd_session_t"],
     ownership=Ownership.OWNED_STRING,
 )
+_declare(
+    "neverd_session_debug_info_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
 _declare("neverd_func_count", "int", ["neverd_session_t"])
 _declare("neverd_func_entry", "neverd_va_t", ["neverd_session_t", "int"])
 _declare("neverd_func_size", "int", ["neverd_session_t", "int"])
 _declare("neverd_session_discover_functions", "int", ["neverd_session_t"])
+_declare("neverd_session_discover_functions_cancellable", "int",
+         ["neverd_session_t", "neverd_cancel_probe_fn", "void *"])
+_declare("neverd_session_discover_functions_step", "int", ["neverd_session_t"])
 _declare(
     "neverd_func_name",
     "const char *",
@@ -1132,6 +1442,12 @@ _declare(
     "neverd_disasm_json_ex",
     "const char *",
     ["neverd_session_t", "neverd_va_t", "int", "unsigned"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_function_disasm_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "neverd_va_t", "int", "unsigned"],
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
@@ -1166,6 +1482,12 @@ _declare(
     "neverd_prepare_function_view",
     "int",
     ["neverd_session_t", "neverd_va_t", "const char *"],
+)
+_declare(
+    "neverd_warm_functions_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "int"],
+    ownership=Ownership.OWNED_STRING,
 )
 _declare(
     "neverd_decompile",
@@ -1258,8 +1580,9 @@ _declare(
     ["neverd_session_t"],
     ownership=Ownership.OWNED_STRING,
 )
+UNWIND_FRAME_QUERY = "neverd_unwind_frame_json"
 _declare(
-    "neverd_unwind_frame_json",
+    UNWIND_FRAME_QUERY,
     "const char *",
     ["neverd_session_t", "neverd_va_t"],
     ownership=Ownership.OWNED_STRING,
@@ -1469,6 +1792,24 @@ _declare(
     ["neverd_session_t"],
     ownership=Ownership.OWNED_STRING,
 )
+for _patch_function in ("neverd_byte_patch_preview", "neverd_byte_patch_apply"):
+    _declare(_patch_function, "const char *", ["neverd_session_t", "const neverd_byte_patch_options_v1 *"], ownership=Ownership.OWNED_STRING)
+for _patch_function in ("neverd_byte_patches_save", "neverd_byte_patches_load"):
+    _declare(_patch_function, "int", ["neverd_session_t"])
+_declare("neverd_byte_patch_revert", "int", ["neverd_session_t", "neverd_va_t", "uint64_t"])
+_declare("neverd_byte_patches_export", "int", ["neverd_session_t", "const char *", "int"])
+_declare("neverd_byte_patches_json", "const char *", ["neverd_session_t"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_byte_patches_snapshot_v1", "const neverd_byte_patch_snapshot_v1 *",
+         ["neverd_session_t"], ownership=Ownership.OWNED_OBJECT)
+_declare("neverd_byte_patch_snapshot_free_v1", "void",
+         ["const neverd_byte_patch_snapshot_v1 *"])
+_declare("neverd_byte_patch_ranges_json", "const char *", ["neverd_session_t"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_byte_patch_context_json", "const char *", ["neverd_session_t", "neverd_va_t"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_byte_patch_source_target_json", "const char *", ["neverd_session_t", "neverd_va_t", "const char *", "size_t", "int64_t"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_byte_patch_source_preview_json", "const char *", ["neverd_session_t", "neverd_va_t", "const char *", "const neverd_byte_patch_options_v1 *"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_source_patch_context_json", "const char *", ["neverd_session_t", "neverd_va_t"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_assemble_json", "const char *", ["neverd_session_t", "const neverd_assemble_options_v1 *"], ownership=Ownership.OWNED_STRING)
+
 _declare("neverd_set_inst_substitution", "void", ["neverd_session_t", "int", "int"])
 _declare("neverd_patch_substitution_count", "int", ["neverd_session_t"])
 _declare("neverd_set_constant_encryption", "void", ["neverd_session_t", "int"])
@@ -1552,6 +1893,13 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare("neverd_annotations_save", "int", ["neverd_session_t"])
+_declare(
+    "neverd_project_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare("neverd_project_record", "int", ["neverd_session_t"])
 _declare("neverd_annotations_load", "int", ["neverd_session_t"])
 _declare(
     "neverd_diff_functions",
@@ -1567,6 +1915,9 @@ _declare(
 )
 _declare(
     "neverd_rename_func", "int", ["neverd_session_t", "const char *", "const char *"]
+)
+_declare(
+    "neverd_name_check", "int", ["neverd_session_t", "neverd_va_t", "const char *"]
 )
 _declare(
     "neverd_rename_addr", "int", ["neverd_session_t", "neverd_va_t", "const char *"]
@@ -1630,6 +1981,18 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_call_paths_json",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_call_tree_json",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_resolve_addr",
     "const char *",
     ["neverd_session_t", "neverd_va_t"],
@@ -1645,6 +2008,30 @@ _declare(
     "neverd_search_string",
     "const char *",
     ["neverd_session_t", "const char *", "int", "int"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_search_page",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_register_flow_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "neverd_va_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_stack_frame_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_enum_value_json",
+    "const char *",
+    ["neverd_session_t", "const char *", "const char *", "unsigned", "int"],
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
@@ -1764,6 +2151,18 @@ _declare(
     "neverd_decompile_all_ex",
     "const char *",
     ["neverd_session_t", "const char *", "neverd_output_language_t", "int", "int"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_decompile_functions",
+    "const char *",
+    [
+        "neverd_session_t",
+        "const char *",
+        "neverd_output_language_t",
+        "const neverd_va_t *",
+        "int",
+    ],
     ownership=Ownership.OWNED_STRING,
 )
 _declare("neverd_evm_set_strict", "void", ["neverd_session_t", "int"])
@@ -1905,6 +2304,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_x87_capabilities_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_cpu_capabilities_json",
     "const char *",
     ["neverd_session_t", "const char *", "int"],
@@ -2042,6 +2447,64 @@ _declare(
      "const neverd_devirtualize_options_v8 *", "const char * *"],
     ownership=Ownership.OWNED_STRING,
 )
+_declare("neverd_comparison_create", "neverd_comparison_t", [])
+_declare("neverd_comparison_destroy", "void", ["neverd_comparison_t"])
+_declare("neverd_comparison_cancel", "void", ["neverd_comparison_t"])
+_declare("neverd_comparison_run", "int",
+         ["neverd_comparison_t", "neverd_session_t", "neverd_session_t",
+          "const char *", "neverd_comparison_progress_t", "void *"])
+_declare("neverd_comparison_run_owned", "int",
+         ["neverd_comparison_t", "neverd_session_t *", "neverd_session_t *",
+          "const char *", "neverd_comparison_progress_t", "void *"])
+_declare("neverd_comparison_restore_json_with_progress", "int",
+         ["neverd_comparison_t", "const char *", "neverd_comparison_progress_t", "void *"])
+_declare("neverd_comparison_override_json_with_progress", "int",
+         ["neverd_comparison_t", "const char *", "neverd_comparison_progress_t", "void *"])
+for _comparison_report in ("status_json", "last_error", "summary_json", "export_json"):
+    _declare(f"neverd_comparison_{_comparison_report}", "const char *",
+             ["neverd_comparison_t"], ownership=Ownership.OWNED_STRING)
+for _comparison_page in (
+    "functions", "function_page", "source_page", "source_difference", "graph", "observations",
+    "owned_scalar_validation", "reviews", "regions", "region_page",
+    "flow_regions", "dataflow", "slice", "impact",
+):
+    _declare(f"neverd_comparison_{_comparison_page}_json", "const char *",
+             ["neverd_comparison_t", "const char *"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_comparison_function_json", "const char *",
+         ["neverd_comparison_t", "int", "neverd_va_t"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_comparison_scalar_validation_json", "const char *",
+         ["neverd_comparison_t", "neverd_session_t", "neverd_session_t", "const char *"],
+         ownership=Ownership.OWNED_STRING)
+for _comparison_action in ("restore", "review_record", "override"):
+    _declare(f"neverd_comparison_{_comparison_action}_json", "int",
+             ["neverd_comparison_t", "const char *"])
+for _comparison_history in ("undo", "redo"):
+    _declare(f"neverd_comparison_{_comparison_history}", "int", ["neverd_comparison_t"])
+    _declare(f"neverd_comparison_{_comparison_history}_with_progress", "int",
+             ["neverd_comparison_t", "neverd_comparison_progress_t", "void *"])
+_declare("neverd_comparison_validate_inputs", "int",
+         ["neverd_comparison_t", "neverd_session_t", "neverd_session_t"])
+
+_declare("neverd_lineage_create", "neverd_lineage_t", [])
+for _lineage_action in ("destroy", "cancel"):
+    _declare(f"neverd_lineage_{_lineage_action}", "void", ["neverd_lineage_t"])
+for _lineage_read in ("status_json", "last_error", "summary_json"):
+    _declare(f"neverd_lineage_{_lineage_read}", "const char *",
+             ["neverd_lineage_t"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_lineage_load_json", "int",
+         ["neverd_lineage_t", "const char *", "const char *",
+          "neverd_lineage_progress_t", "void *"])
+_declare("neverd_lineage_edit_releases_json", "int",
+         ["neverd_lineage_t", "const char *", "const char *",
+          "neverd_lineage_progress_t", "void *"])
+for _lineage_query in ("query_json", "report_json"):
+    _declare(f"neverd_lineage_{_lineage_query}", "const char *",
+             ["neverd_lineage_t", "const char *", "neverd_lineage_progress_t", "void *"],
+             ownership=Ownership.OWNED_STRING)
+_declare("neverd_lineage_export_json", "const char *",
+         ["neverd_lineage_t", "neverd_lineage_progress_t", "void *"],
+         ownership=Ownership.OWNED_STRING)
+
 _declare("neverd_version", "const char *", [], ownership=Ownership.OWNED_STRING)
 _declare("neverd_project_name", "const char *", [], ownership=Ownership.OWNED_STRING)
 _declare("neverd_version_number", "const char *", [], ownership=Ownership.OWNED_STRING)
@@ -2050,6 +2513,9 @@ _declare("neverd_version_number", "const char *", [], ownership=Ownership.OWNED_
 __all__ = [
     "AddressChangedData",
     "BinaryLoadedData",
+    "CancelProbeCallback",
+    "ComparisonHandle",
+    "ComparisonProgressCallback",
     "EventData",
     "EventType",
     "FUNCTION_SPECS",
@@ -2057,6 +2523,10 @@ __all__ = [
     "FunctionSpec",
     "NeverDEvent",
     "NeverDDriverOptionsV1",
+    "NeverDModuleSetOptionsV1",
+    "ModuleSetHandle",
+    "ExecutionHandle",
+    "NeverDExecutionOptionsV1",
     "NeverDDevirtualizeFrameSlotV1",
     "NeverDDevirtualizeOptionsV1",
     "NeverDDevirtualizeOptionsV2",

@@ -17,6 +17,7 @@
 
 #include "neverd/web/Artifact.h"
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/Source.h"
 
 namespace neverd::web {
@@ -158,7 +159,7 @@ public:
   Collector(SourceAnalysis &Result, const char *Base, size_t Size,
             uint64_t NodeLimit = MaxJavaScriptNodes,
             uint64_t StringLimit = MaxJavaScriptStringUnits,
-            uint64_t ModelLimit = 128 * 1024 * 1024)
+            uint64_t ModelLimit = ::neverd::limits::web::kHermesModelModelLimit)
       : Result(Result), Base(Base), Size(Size), RemainingUnits(StringLimit),
         NodeLimit(NodeLimit), ModelLimit(ModelLimit) {}
 
@@ -166,7 +167,7 @@ public:
                    bool Strict = false, unsigned Depth = 0) {
     if (Result.Nodes.size() >= NodeLimit)
       throw Error("syntax_inventory_budget_exceeded");
-    if (Depth >= 256)
+    if (Depth >= ::neverd::limits::web::kHermesModelCollectDepthLimit)
       throw Error("syntax_inventory_depth_exceeded");
     if (Result.SourceType != "module" &&
         (llvh::isa<AST::ImportDeclarationNode>(Node) ||

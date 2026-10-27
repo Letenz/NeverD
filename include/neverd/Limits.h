@@ -32,6 +32,17 @@ namespace limits {
 /// gracefully by the Segment bounds checks.  The cap is far larger than any
 /// real .bss, so legitimate binaries are unaffected.
 constexpr uint64_t kMaxSegmentZeroFill = 1ull << 30; // 1 GiB
+/// Bound optional target metadata inspection; larger records remain unknown.
+inline constexpr size_t kMaxImageProfileMetadataBytes = 64 * 1024;
+
+/// Work for proving that PE initialization leaves mapped header bytes intact.
+/// Counts section-owner queries and visited import/configuration/fixup bytes.
+constexpr size_t kMaxPEHeaderInitializationWork = 4 * 1024 * 1024;
+
+/// Most bytes the compressed sections of one debug file expand to: a crafted
+/// header cannot ask for more, and the largest real debug files stay well
+/// under it.
+constexpr uint64_t kMaxExpandedDebugSections = 4ull << 30; // 4 GiB
 
 /// Address room the ELF loader leaves after an undefined data symbol of a
 /// relocatable object, past the furthest offset a relocation states: code
@@ -45,6 +56,25 @@ constexpr uint64_t kMaxObjectExternStatedReach = 0x10000;
 //===----------------------------------------------------------------------===//
 // Jump-table resolution
 //===----------------------------------------------------------------------===//
+
+/// Total scalar-operation and operand-byte work for exact constant branches
+/// in one CFG build, including revalidation after new paths are discovered.
+/// Exhaustion preserves the original indirect transfers.
+constexpr size_t kMaxScalarBranchEvidenceWork = 262144;
+
+/// Optional symbolic fallback for unresolved straight-block scalar targets.
+/// Ordinary constant propagation runs first; these local caps also bound DAG
+/// construction before the shared per-function work account is charged.
+constexpr size_t kMaxScalarBranchSymbolicOperations = 256;
+constexpr size_t kMaxScalarBranchSymbolicNodes = 4096;
+constexpr unsigned kMaxScalarBranchSymbolicAtoms = 4;
+constexpr unsigned kMaxScalarBranchOptimalSynthesisAtoms = 2;
+constexpr size_t kMaxScalarBranchSymbolicRewriteWork = 8192;
+constexpr size_t kMaxScalarBranchSymbolicTableBytes = 65536;
+
+/// Total register-byte, operand and graph work for bounded SGX/SMX leaf
+/// proofs, including revalidation after CFG discovery adds incoming edges.
+constexpr size_t kMaxX86BoundedLeafEvidenceWork = 262144;
 
 /// Hard upper bound on jump-table entries.  Tables exceeding this are
 /// almost certainly false positives.
@@ -78,6 +108,18 @@ constexpr uint32_t kMaxJumpTableGuardAliasEvidenceWork = 16384;
 /// candidate-wide aggregate account.
 constexpr uint32_t kMaxJumpTableGuardExpressionEvidenceWork = 16384;
 
+/// Controlling guards that one precise guard batch handles under the ordinary
+/// allowance.  clang -O0 lowers a sparse switch to one compare per case, and a
+/// dense switch after it gets a table that every one of those compares
+/// controls.  Each costs about 120 units of exact syntax, query, and replay
+/// accounting, so more than 4096 / 128 of them can fill the ordinary
+/// allowance.  A batch with more uses the guard-expression allowance above,
+/// and its value queries cross the compare blocks at the large-expression role
+/// depth.  The 70 compares before a table in android_x64_server's
+/// `dynamic_info_t::d_tag_str` use about 8.5 KiB and reach depth 144.
+constexpr uint32_t kMaxJumpTableOrdinaryControllingGuards =
+    kMaxJumpTableEvidenceWork / 128;
+
 /// Local symbolization allowance for an ordinary unsigned-bound query.  The
 /// largest supported later O0 state-machine dispatch exceeds the generic
 /// occurrence allowance while remaining well below one complete value-match
@@ -87,10 +129,13 @@ constexpr uint32_t kMaxJumpTableBoundSymbolEvidenceWork = 65536;
 /// Local symbolization allowance for an exact finite-coordinate query.  Such
 /// a query may symbolize the expanded candidate graph before enumerating at
 /// most 64 coordinates.  The largest supported 64-way expanded selector uses
-/// about 68 Ki work; retain the next power of two.  Every visit also debits the
-/// candidate-wide aggregate account, so this allowance cannot multiply
-/// whole-CFG work across queries.
-constexpr uint32_t kMaxJumpTableFiniteSetSymbolEvidenceWork = 131072;
+/// about 68 Ki work.  A selector read from a loop-carried value expands every
+/// definition the loop gives it: a 16-way table on the high word of a 64-bit
+/// accumulator that every case updates (OptStress336 dense16) uses about
+/// 355 Ki work on ARM32 and 138 Ki on i386.  Retain the next power of two.
+/// Every visit also debits the candidate-wide aggregate account, so this
+/// allowance cannot multiply whole-CFG work across queries.
+constexpr uint32_t kMaxJumpTableFiniteSetSymbolEvidenceWork = 524288;
 
 /// Per-core proposal allowance inside one mask-domain fixed point.  Retained
 /// LowIR, coordinates and proposal batches also debit the aggregate account
@@ -397,17 +442,34 @@ constexpr uint64_t kMaxOverlapDistance = 0x10000;
 /// the ABI clobber set.
 constexpr int kMaxCallEffectCalleeDepth = 4;
 constexpr size_t kMaxCallEffectExtraLifts = 256;
+/// On-demand CFG register proofs admit only small, metadata-bounded callees.
+/// The query may not recursively start another CFG register proof.
+constexpr size_t kMaxCFGCallRegisterProofFunctions = 32;
+constexpr uint64_t kMaxCFGCallRegisterProofBytes = 4096;
+/// Scalar exit facts inspect only bounded, complete, call-free callee bodies.
+constexpr size_t kMaxCallExitConstantOps = 4096;
 /// All-path predecessor stack-store evidence for one call argument setup.
 /// Exhaustion supplies no partial proof.
 constexpr size_t kMaxCallSetupStackProofWork = 4096;
 /// A no-return proof for an internal callee lifts it, and its own proofs
 /// lift their callees in turn; one this many proofs deep counts as returning.
 constexpr unsigned kMaxNoReturnProofDepth = 4;
+/// No-return answers (proofs, screens and stated calls) a session keeps for
+/// later selections that share its analysis facts; past this many it starts
+/// over.
+constexpr size_t kMaxRetainedNoReturnAnswers = 1 << 18;
 /// One x87 call-effect proof must close every returning path and callee under
 /// these independent limits. Incomplete proofs grant no stack or return fact.
 constexpr unsigned kMaxX87CallProofDepth = 16;
 constexpr size_t kMaxX87CallProofFunctions = 128;
 constexpr size_t kMaxX87CallProofWork = 262144;
+/// A pipeline's CFG builds share one cache of call-proof graphs, and its
+/// selected-function runs also keep there the machine bodies that later runs
+/// of the same session reuse instead of lifting them again.  The least
+/// recently used graphs and bodies leave it beyond these bounds.
+constexpr size_t kMaxPipelineCallGraphEntries = 8192;
+constexpr size_t kMaxPipelineCallGraphBytes = 64 * 1024 * 1024;
+constexpr size_t kMaxPipelineCallBodyBytes = 256 * 1024 * 1024;
 /// Alignment no-ops between a call and the next function are fewer bytes
 /// than the widest function alignment compilers use (64); a longer run is
 /// not taken as padding.
@@ -456,6 +518,16 @@ constexpr int64_t kMaxFrameSize = 16 * 1024 * 1024; // 16 MiB
 /// Operations, graph edges and retained-word visits in the necessary AArch64
 /// indirect-tail frame guard. Exhaustion retains the original indirect branch.
 constexpr size_t kMaxIndirectTailFrameWork = 262144;
+
+/// Taint-walk steps across one candidate's whole private-frame audit, the
+/// proof that a reloaded i386 GOT base is spilled to a cell no current-frame
+/// address can reach.  Measured cases: a clang -O0 PIC switch that resolves
+/// (an aligned frame, foreign stores and a call in the loop) settles in about
+/// 4,700 steps; a large libstdc++ function whose dispatch is not this shape
+/// drives the walk past 31,000,000 before the general evidence budget would
+/// stop it.  This cuts the latter off early (the dispatch stays unresolved)
+/// while leaving the former a wide margin.
+constexpr size_t kMaxJumpTablePrivateFrameTaintWork = 262144;
 
 /// Cumulative decoded-prologue and protected-prefix work for one SEH query.
 constexpr size_t kMaxSEHEstablisherFrameWork = 1048576;
@@ -675,8 +747,9 @@ constexpr size_t kMinParallelIRWorkItems = 32;
 // C output formatting
 //===----------------------------------------------------------------------===//
 
-/// Threshold below which integer constants are printed in decimal
-/// rather than hexadecimal in decompiled C output.
+/// The magnitude up to which a negative integer constant prints in decimal
+/// in decompiled C, and any constant in HighIR dumps; C writes non-negative
+/// constants in their natural base (neverd/support/IntegerLiterals.h).
 constexpr uint64_t kDecimalConstThreshold = 4096;
 
 /// Display-only TPI member / enumerator names.  Structs stay small;
@@ -697,6 +770,11 @@ constexpr unsigned kMaxFrameDisplacementDepth = 32;
 
 /// Fixed-point iterations when growing HighC frame aliases.
 constexpr unsigned kMaxFrameAliasFixedPoint = 64;
+
+/// Renderings of a HighC unit that ask the local types for the records an
+/// earlier one read members of through others.  The last rendering asks for
+/// none, and reads members of the records it lacks by their offsets.
+constexpr unsigned kMaxHighCRecordDefinitionRenders = 4;
 
 /// Expression nodes visited while finding the frame address of a C++ object
 /// an unwind action destroys.  Exhaustion keeps the action as a note.
@@ -725,6 +803,10 @@ constexpr unsigned kMaxCPointerNesting = 16;
 
 /// Largest fixed integer vector represented by a C compiler vector type.
 constexpr unsigned kMaxCIntegerVectorBytes = 64;
+
+/// Largest scalar C integer carrier used for packed architectural operands:
+/// the complete group of four 512-bit source registers.
+constexpr unsigned kMaxCSourceIntegerBytes = 4 * kMaxCIntegerVectorBytes;
 
 /// HighC dead-store / store-forward expression walks.
 constexpr unsigned kMaxHighCMemoryWalkDepth = 128;

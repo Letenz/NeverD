@@ -138,9 +138,10 @@ void scanCStrings(llvm::ArrayRef<uint8_t> Data, const ScanOptions &Options,
     bool Multibyte = false;
     while (Cursor < End && *Cursor) {
       if (isTextASCII(*Cursor)) {
-        ++Chars;
-        ++Columns;
-        ++Cursor;
+        const size_t Run = textASCIIPrefix(Cursor, End - Cursor);
+        Chars += Run;
+        Columns += Run;
+        Cursor += Run;
         continue;
       }
       uint32_t Code = 0;
@@ -217,15 +218,30 @@ void scanCStrings(llvm::ArrayRef<uint8_t> Data, const ScanOptions &Options,
 /// not be ASCII read one byte off (every unit's low byte zero).
 template <unsigned Unit, bool BigEndian>
 void scanWideStrings(llvm::ArrayRef<uint8_t> Data, Encoding Kind,
-                     unsigned MinLength, std::vector<FoundString> &Out) {
+                     unsigned MinLength, llvm::ArrayRef<uint64_t> NarrowEnds,
+                     std::vector<FoundString> &Out) {
   const WideTextSet &Text = wideText();
   const uint8_t *Begin = Data.data();
   const uint8_t *End = Begin + Data.size() / Unit * Unit;
   // Where a rejected run's text may begin after a character the bytes
   // before a string start with.
   const uint8_t *Resumed = nullptr;
+  auto NextNarrow = NarrowEnds.begin();
   for (const uint8_t *Cursor = Begin; Cursor < End; Cursor += Unit) {
     const uint8_t *Start = Cursor;
+    while (NextNarrow != NarrowEnds.end() &&
+           (*NextNarrow < static_cast<uint64_t>(Start - Begin) ||
+            *NextNarrow % Unit))
+      ++NextNarrow;
+    const bool AfterNarrow =
+        NextNarrow != NarrowEnds.end() &&
+        *NextNarrow == static_cast<uint64_t>(Start - Begin);
+    if (AfterNarrow)
+      ++NextNarrow;
+    while (NextNarrow != NarrowEnds.end() && *NextNarrow % Unit)
+      ++NextNarrow;
+    const uint8_t *NarrowStart =
+        NextNarrow == NarrowEnds.end() ? nullptr : Begin + *NextNarrow;
     unsigned Chars = 0, Columns = 0, ASCII = 0;
     bool LowBytesZero = true;
     // Where an ASCII character first follows a run's first character.
@@ -244,25 +260,34 @@ void scanWideStrings(llvm::ArrayRef<uint8_t> Data, Encoding Kind,
       LowBytesZero &= Code < 0x80 || (Code & 0xff) == 0;
       Cursor += Used;
     }
-    // Text that begins after such a character is ASCII: what is not, here,
-    // is the rest of other data.
-    if (Cursor >= End || readUnit<Unit, BigEndian>(Cursor) ||
-        Columns < MinLength || (Start == Resumed && ASCII != Chars))
-      continue;
     // A run that the bytes before a string start with a character, such as
     // `00 40` (U+4000) before L"HashDigestLength", is no text; the string
     // may begin at its first ASCII character all the same.
     const auto Retry = [&] {
+      // Retry only after rejecting the earlier wide reading: valid wide text
+      // can itself contain bytes that look like a terminated ASCII run.
+      if (NarrowStart && NarrowStart <= Cursor && NarrowStart < End) {
+        Resumed = nullptr;
+        Cursor = NarrowStart - Unit;
+        return;
+      }
       if (LaterASCII && readUnit<Unit, BigEndian>(Start) >= 0x80) {
         Resumed = LaterASCII;
         Cursor = LaterASCII - Unit;
       }
     };
+    // Text resumed after an arbitrary wide character must still be ASCII;
+    // a verified narrow-string boundary is independent evidence instead.
+    if (Cursor >= End || readUnit<Unit, BigEndian>(Cursor) ||
+        Columns < MinLength || (Start == Resumed && ASCII != Chars)) {
+      Retry();
+      continue;
+    }
     // Text mostly beyond ASCII also sits where a pool of strings puts it,
     // after a zero unit, and is not ASCII read one byte off.
     if (ASCII * 2 < Chars &&
-        (LowBytesZero ||
-         (Start != Begin && readUnit<Unit, BigEndian>(Start - Unit)))) {
+        (LowBytesZero || (!AfterNarrow && Start != Begin &&
+                          readUnit<Unit, BigEndian>(Start - Unit)))) {
       Retry();
       continue;
     }
@@ -315,14 +340,35 @@ void scan(llvm::ArrayRef<uint8_t> Data, const ScanOptions &Options,
   const auto searched = [&](Encoding E) {
     return (Options.Encodings & encodingBit(E)) != 0;
   };
+  // A terminated ASCII run is also evidence of the boundary after it. Keep
+  // this separate from result filtering: a UTF-16-only scan still needs that
+  // boundary, and the ASCII run need not end in a whole zero wide unit.
+  std::vector<uint64_t> NarrowEnds;
+  if (searched(Encoding::UTF16LE) || searched(Encoding::UTF16BE) ||
+      searched(Encoding::UTF32LE) || searched(Encoding::UTF32BE)) {
+    const uint8_t *Begin = Data.data();
+    const uint8_t *End = Begin + Data.size();
+    for (const uint8_t *At = Begin; At < End; ++At) {
+      const size_t Length = textASCIIPrefix(At, End - At);
+      At += Length;
+      if (At == End)
+        break;
+      if (Length >= MinLength && !*At)
+        NarrowEnds.push_back(static_cast<uint64_t>(At + 1 - Begin));
+    }
+  }
   if (searched(Encoding::UTF16LE))
-    scanWideStrings<2, false>(Data, Encoding::UTF16LE, MinLength, All);
+    scanWideStrings<2, false>(Data, Encoding::UTF16LE, MinLength, NarrowEnds,
+                              All);
   if (searched(Encoding::UTF16BE))
-    scanWideStrings<2, true>(Data, Encoding::UTF16BE, MinLength, All);
+    scanWideStrings<2, true>(Data, Encoding::UTF16BE, MinLength, NarrowEnds,
+                             All);
   if (searched(Encoding::UTF32LE))
-    scanWideStrings<4, false>(Data, Encoding::UTF32LE, MinLength, All);
+    scanWideStrings<4, false>(Data, Encoding::UTF32LE, MinLength, NarrowEnds,
+                              All);
   if (searched(Encoding::UTF32BE))
-    scanWideStrings<4, true>(Data, Encoding::UTF32BE, MinLength, All);
+    scanWideStrings<4, true>(Data, Encoding::UTF32BE, MinLength, NarrowEnds,
+                             All);
   // The first string to start keeps the bytes; at one offset, the longer,
   // then the Unicode encoding.
   std::sort(All.begin(), All.end(),

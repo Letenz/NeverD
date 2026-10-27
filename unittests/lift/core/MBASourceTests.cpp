@@ -302,7 +302,7 @@ TEST_P(MBASourceTest, RemovesModularMBAAndPreservesExecutableBehavior) {
   ASSERT_TRUE(Compiled.ok()) << Compiled.err;
 
   const auto Output = tmpFile("modular-widths.c");
-  std::vector<std::string> Arguments{"decompile"};
+  std::vector<std::string> Arguments{"decompile", "--symbolic-simplify"};
   if (LLVM)
     Arguments.push_back("--llvm");
   Arguments.insert(Arguments.end(), {"-o", Output.string(), Object.string()});
@@ -390,7 +390,8 @@ TEST_P(MBASourceTest, RemovesModularMBAAndPreservesExecutableBehavior) {
     const std::string Function =
         std::string_view(Format) == "MachO" ? "_mba_sub32" : "mba_sub32";
     const auto One = exec(ndBin(), {"decompile", "--llvm", "--func=" + Function,
-                                    "-o", Single.string(), Object.string()});
+                                    "--symbolic-simplify", "-o",
+                                    Single.string(), Object.string()});
     ASSERT_TRUE(One.ok()) << One.err;
     expectNoResidualMBA(Single, "mba_sub32");
     const auto Unoptimized = tmpFile("single-llvm-no-opt.c");
@@ -518,7 +519,7 @@ TEST_P(MBAFrameSourceTest, RemovesSpilledMBAAndPreservesExecutableBehavior) {
   ASSERT_TRUE(Compiled.ok()) << Compiled.err;
 
   const auto Output = tmpFile("frame-spills.c");
-  std::vector<std::string> Arguments{"decompile"};
+  std::vector<std::string> Arguments{"decompile", "--symbolic-simplify"};
   if (Case.LLVM)
     Arguments.push_back("--llvm");
   Arguments.insert(Arguments.end(), {"-o", Output.string(), Object.string()});
@@ -737,7 +738,8 @@ TEST_P(MBANestedSourceTest, RecoversSpilledNestedExpressionsInBothCRoutes) {
   ASSERT_TRUE(Compiled.ok()) << Compiled.err;
 
   const auto Output = tmpFile("nested-mba.c");
-  std::vector<std::string> Arguments{"decompile", "--no-debug"};
+  std::vector<std::string> Arguments{"decompile", "--symbolic-simplify",
+                                     "--no-debug"};
   if (Case.LLVM)
     Arguments.push_back("--llvm");
   Arguments.insert(Arguments.end(), {"-o", Output.string(), Object.string()});
@@ -784,9 +786,10 @@ TEST_P(MBANestedSourceTest, RecoversSpilledNestedExpressionsInBothCRoutes) {
     // The single-function SDK route emits LLVM from cached MedIR. It must
     // receive the same semantic optimizer as full-image LLVM-to-C.
     const auto Single = tmpFile("nested-single-llvm.c");
-    const auto One = exec(ndBin(), {"decompile", "--no-debug", "--llvm",
-                                    "--func=mba_nested_add", "-o",
-                                    Single.string(), Object.string()});
+    const auto One =
+        exec(ndBin(),
+             {"decompile", "--no-debug", "--llvm", "--func=mba_nested_add",
+              "--symbolic-simplify", "-o", Single.string(), Object.string()});
     ASSERT_TRUE(One.ok()) << One.err;
     expectNoResidualMBA(Single, "mba_nested_add");
     const auto SingleSource = readSource(Single);
@@ -868,7 +871,8 @@ TEST_P(MBARegisterPairSourceTest, PreservesObservedWideReturnAndFold) {
   ASSERT_TRUE(Compiled.ok()) << Compiled.err;
 
   const auto Output = tmpFile("register-pair.c");
-  std::vector<std::string> Arguments{"decompile", "--no-debug"};
+  std::vector<std::string> Arguments{"decompile", "--symbolic-simplify",
+                                     "--no-debug"};
   if (Case.LLVM)
     Arguments.push_back("--llvm");
   Arguments.insert(Arguments.end(), {"-o", Output.string(), Object.string()});
@@ -1110,7 +1114,8 @@ TEST_P(MBAMachOARMFiveSourceTest, RecoversFiveInputArithmeticAndRuns) {
   ASSERT_TRUE(Compiled.ok()) << Compiled.err;
 
   const auto Output = tmpFile("macho-five.c");
-  std::vector<std::string> DecompileArgs{"decompile", "--no-debug"};
+  std::vector<std::string> DecompileArgs{"decompile", "--symbolic-simplify",
+                                         "--no-debug"};
   if (Case.LLVM)
     DecompileArgs.push_back("--llvm");
   DecompileArgs.insert(DecompileArgs.end(),
@@ -1123,7 +1128,9 @@ TEST_P(MBAMachOARMFiveSourceTest, RecoversFiveInputArithmeticAndRuns) {
   EXPECT_EQ(Body.find(" ^ "), std::string::npos) << Body;
   EXPECT_EQ(Body.find(" & "), std::string::npos) << Body;
   EXPECT_EQ(Body.find("~"), std::string::npos) << Body;
-  EXPECT_FALSE(functionBody(Source, "mba_five_fold").empty());
+  const auto FoldBody = functionBody(Source, "mba_five_fold");
+  EXPECT_FALSE(FoldBody.empty());
+  EXPECT_EQ(FoldBody.find("unknown register"), std::string::npos) << FoldBody;
 
   const char *Harness = R"(
 #include <stdint.h>
@@ -1220,7 +1227,8 @@ TEST_P(MBAMachOARMThumbSourceTest, RecoversMixedModeCallsAndArithmetic) {
   ASSERT_TRUE(Compiled.ok()) << Compiled.err;
 
   const auto Output = tmpFile("macho-mixed-mba.c");
-  std::vector<std::string> Args{"decompile", "--no-debug"};
+  std::vector<std::string> Args{"decompile", "--symbolic-simplify",
+                                "--no-debug"};
   if (LLVM)
     Args.push_back("--llvm");
   Args.insert(Args.end(), {"-o", Output.string(), Object.string()});
@@ -1309,7 +1317,8 @@ TEST_P(MBAMachOARMRelocationModeSourceTest,
   ASSERT_TRUE(Compiled.ok()) << Compiled.err;
 
   const auto Output = tmpFile("macho-relocation-mode.c");
-  std::vector<std::string> Args{"decompile", "--no-debug"};
+  std::vector<std::string> Args{"decompile", "--symbolic-simplify",
+                                "--no-debug"};
   if (LLVM)
     Args.push_back("--llvm");
   Args.insert(Args.end(), {"-o", Output.string(), Object.string()});
@@ -1402,7 +1411,8 @@ TEST_P(MBAMachOThumbOnlySubtypeSourceTest,
   ASSERT_TRUE(neverd::test::setThumbFixtureSubtype(Object, Case.Triple));
 
   const auto Output = tmpFile("macho-thumb-only.c");
-  std::vector<std::string> Args{"decompile", "--no-debug"};
+  std::vector<std::string> Args{"decompile", "--symbolic-simplify",
+                                "--no-debug"};
   if (Case.LLVM)
     Args.push_back("--llvm");
   Args.insert(Args.end(), {"-o", Output.string(), Object.string()});
@@ -1522,9 +1532,9 @@ TEST_P(MBAMachOExplicitMixedSourceTest,
   }
 
   const auto Output = tmpFile("macho-explicit-mixed.c");
-  std::vector<std::string> Args{"decompile", "--no-debug",
-                                "--arm-function-mode=0x0:thumb",
-                                "--arm-function-mode=0x10:arm"};
+  std::vector<std::string> Args{
+      "decompile", "--no-debug", "--symbolic-simplify",
+      "--arm-function-mode=0x0:thumb", "--arm-function-mode=0x10:arm"};
   if (GetParam())
     Args.push_back("--llvm");
   Args.insert(Args.end(), {"-o", Output.string(), Object.string()});
@@ -1612,7 +1622,8 @@ TEST_P(MBANativeFiveSourceTest, RecoversFiveInputArithmeticAndRuns) {
   ASSERT_TRUE(Compiled.ok()) << Compiled.err;
 
   const auto Output = tmpFile("native-five.c");
-  std::vector<std::string> Arguments{"decompile", "--no-debug"};
+  std::vector<std::string> Arguments{"decompile", "--symbolic-simplify",
+                                     "--no-debug"};
   if (Case.LLVM)
     Arguments.push_back("--llvm");
   Arguments.insert(Arguments.end(), {"-o", Output.string(), Object.string()});

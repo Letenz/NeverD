@@ -1,4 +1,11 @@
-// Native EH3 capture, nonlocal finally unwind, then another exception.
+// Native SEH capture, nonlocal finally unwind, then another exception.
+#if REGISTRATION_EH4_JUMP
+#define JUMP_SENTINEL -2
+#define JUMP_PERSONALITY __except_handler4
+#else
+#define JUMP_SENTINEL -1
+#define JUMP_PERSONALITY __except_handler3
+#endif
 #if REGISTRATION_CASE == 16 || REGISTRATION_CASE == 17
 #define FILTER_JUMP 1
 #endif
@@ -11,15 +18,28 @@
 _registration_entry:
   push ebp
   mov ebp,esp
-  push -1
+  push JUMP_SENTINEL
   .byte 0x68
   .long .Lscope_table
   .byte 0x68
-  .long __except_handler3
+  .long JUMP_PERSONALITY
   mov eax,fs:[0]
   push eax
+#if REGISTRATION_EH4_JUMP
+  sub esp,96
+  mov eax,[___security_cookie]
+  xor dword ptr [ebp-8],eax
+  xor eax,ebp
+  mov [ebp-28],eax
+#if REGISTRATION_EXPECT_GS
+  mov [ebp-32],eax
+#endif
+  lea eax,[ebp-16]
+  mov fs:[0],eax
+#else
   mov fs:[0],esp
   sub esp,96
+#endif
   mov [ebp-24],esp
   mov [ebp-104],ebx
   mov ebx,6
@@ -43,31 +63,49 @@ _registration_entry:
 #if RETIRED_JUMP
   mov dword ptr [ebp-108],0
 #endif
+#if REGISTRATION_EH4_JUMP
+  .byte 0x68
+  .long ___security_cookie
+#endif
 #if REGISTRATION_CASE == 19
   mov dword ptr [ebp-4],1
   push 1
 #elif FILTER_JUMP
-  mov dword ptr [ebp-4],-1
-  push -1
+  mov dword ptr [ebp-4],JUMP_SENTINEL
+  push JUMP_SENTINEL
 #else
   mov dword ptr [ebp-4],0
   push 0
 #endif
   .byte 0x68
+#if REGISTRATION_EH4_JUMP
+  .long __seh_longjmp_unwind4
+  push 3
+#else
   .long __seh_longjmp_unwind
   push 2
+#endif
   lea eax,[ebp-96]
   push eax
   call __setjmp3
+#if REGISTRATION_EH4_JUMP
+  add esp,20
+#else
   add esp,16
+#endif
   test eax,eax
   jnz .Lresumed
+#if REGISTRATION_CASE == 50
+  call _registration_no_raise
+#elif REGISTRATION_CASE == 51
+  call _registration_private_graph
+#endif
 #if RETIRED_JUMP
   mov dword ptr [ebp-108],1
 #if REGISTRATION_CASE == 19
   mov dword ptr [ebp-4],0
 #else
-  mov dword ptr [ebp-4],-1
+  mov dword ptr [ebp-4],JUMP_SENTINEL
 #endif
   mov ebx,9
 #if REGISTRATION_CASE == 19
@@ -114,9 +152,12 @@ _registration_entry:
 #endif
   jmp .Lbad
 #else
+#if REGISTRATION_CASE == 28 || REGISTRATION_CASE == 29
+  mov dword ptr [ebp-4],2
+#endif
   mov dword ptr [ebp-4],1
   mov ebx,9
-#if REGISTRATION_CASE == 13 || REGISTRATION_CASE == 15
+#if REGISTRATION_CASE == 13 || REGISTRATION_CASE == 15 || REGISTRATION_CASE == 27 || REGISTRATION_CASE == 28
   mov dword ptr [ebp-4],0
   call .Lfinally
   jmp .Lbad
@@ -133,29 +174,48 @@ _registration_entry:
 #endif
 #endif
 .Lresumed:
+#if REGISTRATION_CASE == 50 || REGISTRATION_CASE == 51
+  cmp dword ptr [_registration_helper_visits],1
+  jne .Lbad
+#endif
 #if REGISTRATION_CASE == 12
   cmp dword ptr [ebp+8],7
   jne .Lbad
 #endif
 #if FILTER_JUMP || REGISTRATION_CASE == 18
-  cmp dword ptr [ebp-4],-1
+  cmp dword ptr [ebp-4],JUMP_SENTINEL
 #else
   cmp dword ptr [ebp-4],0
 #endif
+#if REGISTRATION_CASE == 26 || REGISTRATION_CASE == 27
+  jne .Lbad_level
+#else
   jne .Lbad
+#endif
   cmp ebx,6
+#if REGISTRATION_CASE == 26 || REGISTRATION_CASE == 27
+  jne .Lbad_register
+#else
   jne .Lbad
+#endif
 #if REGISTRATION_CASE == 10 || REGISTRATION_CASE == 15 || REGISTRATION_CASE == 17
   cmp eax,1
 #else
   cmp eax,42
 #endif
+#if REGISTRATION_CASE == 26 || REGISTRATION_CASE == 27
+  jne .Lbad_value
+#else
   jne .Lbad
-#if FILTER_JUMP || REGISTRATION_CASE == 18
+#endif
+#if FILTER_JUMP || REGISTRATION_CASE == 18 || REGISTRATION_CASE == 26 || REGISTRATION_CASE == 27
 #if RETIRED_JUMP
-  mov dword ptr [ebp-4],-1
+  mov dword ptr [ebp-4],JUMP_SENTINEL
 #endif
   call _registration_no_raise
+#if REGISTRATION_CASE == 26 || REGISTRATION_CASE == 27
+  mov dword ptr [ebp-4],JUMP_SENTINEL
+#endif
   mov eax,7
   jmp .Lfinish
 #else
@@ -177,7 +237,7 @@ _registration_entry:
   mov dword ptr [esp],7
   cmp dword ptr [ebp-112],7
   jne .Lbad
-  mov dword ptr [ebp-4],-1
+  mov dword ptr [ebp-4],JUMP_SENTINEL
   mov eax,7
   jmp .Lfinish
 #endif
@@ -186,9 +246,23 @@ _registration_entry:
 #endif
 #endif
 .Lbad:
-  mov dword ptr [ebp-4],-1
+  mov dword ptr [ebp-4],JUMP_SENTINEL
   mov eax,91
   jmp .Lfinish
+#if REGISTRATION_CASE == 26 || REGISTRATION_CASE == 27
+.Lbad_level:
+  mov dword ptr [ebp-4],JUMP_SENTINEL
+  mov eax,92
+  jmp .Lfinish
+.Lbad_register:
+  mov dword ptr [ebp-4],JUMP_SENTINEL
+  mov eax,93
+  jmp .Lfinish
+.Lbad_value:
+  mov dword ptr [ebp-4],JUMP_SENTINEL
+  mov eax,94
+  jmp .Lfinish
+#endif
 .Lfilter:
 #if FILTER_JUMP
   mov dword ptr [_registration_trace],23
@@ -211,7 +285,7 @@ _registration_entry:
   add eax,3
 #endif
   mov [_registration_trace],eax
-#if REGISTRATION_CASE == 25
+#if REGISTRATION_CASE == 25 || REGISTRATION_CASE == 26 || REGISTRATION_CASE == 27
   mov eax,-1
 #else
   mov eax,1
@@ -228,6 +302,20 @@ _registration_entry:
   imul eax,eax,10
   add eax,2
   mov [ebp-100],eax
+#if REGISTRATION_CASE == 28 || REGISTRATION_CASE == 29
+  push 7
+  call .Linner_finally
+  pop edx
+  add [ebp-100],edx
+  sub dword ptr [ebp-100],7
+#endif
+#if REGISTRATION_CASE == 26 || REGISTRATION_CASE == 27
+  push 0
+  push 0
+  push 0
+  push 0xe0420042
+  call dword ptr [__imp__RaiseException@16]
+#endif
 #if REGISTRATION_CASE >= 13
 #if REGISTRATION_CASE == 15
   push 0
@@ -247,27 +335,54 @@ _registration_entry:
 #endif
 #if REGISTRATION_CASE == 19
 .Linner_handler:
-  mov dword ptr [ebp-4],-1
+  mov dword ptr [ebp-4],JUMP_SENTINEL
   mov eax,94
   jmp .Lfinish
+#endif
+#if REGISTRATION_CASE == 28 || REGISTRATION_CASE == 29
+.Linner_finally:
+  push 9
+  mov eax,[ebp-100]
+  imul eax,eax,10
+  add eax,4
+  pop edx
+  add eax,edx
+  sub eax,9
+  mov [ebp-100],eax
+  ret
 #endif
 .Lhandler:
   mov eax,7
 .Lfinish:
+#if REGISTRATION_EXPECT_GS
+  mov ecx,[ebp-32]
+  xor ecx,ebp
+  call "@__security_check_cookie@4"
+#endif
   mov ebx,[ebp-104]
   mov ecx,[ebp-16]
   mov fs:[0],ecx
   mov esp,ebp
   pop ebp
   ret
-.safeseh __except_handler3
+#if REGISTRATION_EH4_JUMP
+#include "registration_eh4_personality.inc"
+#endif
+.safeseh JUMP_PERSONALITY
 .section .rdata,"dr"
 .p2align 2
 .Lscope_table:
-#if REGISTRATION_CASE == 18
-  .long -1,0,.Lfinally
+#if REGISTRATION_EH4_JUMP
+#if REGISTRATION_EXPECT_GS
+  .long -32,0,-28,0
 #else
-  .long -1,.Lfilter,.Lhandler
+  .long -2,0,-28,0
+#endif
+#endif
+#if REGISTRATION_CASE == 18
+  .long JUMP_SENTINEL,0,.Lfinally
+#else
+  .long JUMP_SENTINEL,.Lfilter,.Lhandler
 #if !FILTER_JUMP && REGISTRATION_CASE != 20 && REGISTRATION_CASE != 21 && REGISTRATION_CASE != 22
 #if REGISTRATION_CASE == 19
   .long 0,.Lfilter,.Linner_handler
@@ -278,11 +393,19 @@ _registration_entry:
 #endif
 #endif
 #endif
+#if REGISTRATION_CASE == 28 || REGISTRATION_CASE == 29
+  .long 1,0,.Linner_finally
+#endif
   .long 0,0,0
 .globl __load_config_used
 __load_config_used:
   .long 92
+#if REGISTRATION_EH4_JUMP
+  .zero 56
+  .long ___security_cookie
+#else
   .zero 60
+#endif
   .long ___safe_se_handler_table
   .long ___safe_se_handler_count
   .long 0,0,0,0,0x400
@@ -291,3 +414,7 @@ __load_config_used:
 .type 0;
 .endef
 .set @feat.00,1
+
+#if REGISTRATION_EH4_JUMP
+#include "registration_cookie_check.inc"
+#endif

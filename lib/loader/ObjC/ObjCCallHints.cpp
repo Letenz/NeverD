@@ -6,11 +6,14 @@
 #include "../MachO/SourceLocalCall.h"
 #include "../Swift/SwiftMangledClassMethodABI.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/MachO/DarwinImportVeneer.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/MachO/SourceRegisterCopy.h"
@@ -228,7 +231,9 @@ std::optional<Value> mergeNumberCandidates(const Value &Left,
   llvm::sort(Candidates);
   Candidates.erase(std::unique(Candidates.begin(), Candidates.end()),
                    Candidates.end());
-  if (Candidates.empty() || Candidates.size() > 64)
+  if (Candidates.empty() ||
+      Candidates.size() > ::neverd::limits::loader::
+                              kObjCCallHintsMergeNumberCandidatesSizeLimit)
     return std::nullopt;
   Value Result;
   Result.TheKind =
@@ -239,8 +244,6 @@ std::optional<Value> mergeNumberCandidates(const Value &Left,
 }
 using Key = std::tuple<VnodeSpace, uint64_t, uint16_t>;
 Key key(const NdVar &V) { return {V.Space, V.Offset, V.Size}; }
-
-constexpr int64_t FrameOffsetLimit = 1048576;
 
 bool fitsUnsignedValue(uint64_t Value, unsigned Bytes) {
   return Bytes && Bytes <= 8 &&
@@ -306,7 +309,7 @@ localResultUse(const LowFunc &Function, size_t InitialBlock, size_t CallIndex,
     std::set<std::tuple<size_t, size_t, std::vector<AliasKey>>> Seen;
     std::optional<LocalResultUse> Result;
     bool Ambiguous = false;
-    size_t Budget = 4096;
+    size_t Budget = ::neverd::limits::loader::kObjCCallHintsScanBudget;
     auto Observe = [&](LocalResultUse Use) {
       const auto Same = [](const LocalResultUse &A, const LocalResultUse &B) {
         return A.Location.Kind == B.Location.Kind &&
@@ -450,11 +453,13 @@ localResultUse(const LowFunc &Function, size_t InitialBlock, size_t CallIndex,
 
 std::optional<Value> adjustedFrame(Value Base, uint64_t Amount, bool Subtract) {
   const auto Delta = static_cast<int64_t>(Amount);
-  if (Delta < -FrameOffsetLimit || Delta > FrameOffsetLimit)
+  if (Delta < -::neverd::limits::loader::kObjCCallHintsFrameOffsetLimit ||
+      Delta > ::neverd::limits::loader::kObjCCallHintsFrameOffsetLimit)
     return std::nullopt;
   const auto Offset =
       static_cast<int64_t>(Base.Number) + (Subtract ? -Delta : Delta);
-  if (Offset < -FrameOffsetLimit || Offset > FrameOffsetLimit)
+  if (Offset < -::neverd::limits::loader::kObjCCallHintsFrameOffsetLimit ||
+      Offset > ::neverd::limits::loader::kObjCCallHintsFrameOffsetLimit)
     return std::nullopt;
   Base.Number = static_cast<uint64_t>(Offset);
   return Base;
@@ -502,14 +507,17 @@ struct CallFacts {
   bool writeFrameBytes(const NdVar &V, bool Tainted) {
     if (!V.Size)
       return true;
-    if (V.Offset > InvalidVA - V.Size || V.Size > 4096)
+    if (V.Offset > InvalidVA - V.Size ||
+        V.Size >
+            ::neverd::limits::loader::kObjCCallHintsWriteFrameBytesVSizeLimit)
       return false;
     FrameBytes.erase(FrameBytes.lower_bound({V.Space, V.Offset}),
                      FrameBytes.lower_bound({V.Space, V.Offset + V.Size}));
     if (Tainted)
       for (unsigned I = 0; I < V.Size; ++I)
         FrameBytes.emplace(V.Space, V.Offset + I);
-    return FrameBytes.size() <= 4096;
+    return FrameBytes.size() <=
+           ::neverd::limits::loader::kObjCCallHintsWriteFrameBytesSizeLimit;
   }
 
   void escapeFrame() {
@@ -1052,7 +1060,10 @@ objcImmutableSelectorStubSourceCallHint(const BinaryImage &Image,
                                         va_t Address) {
   const auto H = objcSelectorStubSourceCallHint(Image, Address);
   const auto V = H ? veneer(Image, Address) : std::nullopt;
-  if (!H || !V || H->Selector.size() > 1024 ||
+  if (!H || !V ||
+      H->Selector.size() >
+          ::neverd::limits::loader::
+              kObjCCallHintsObjcImmutableSelectorStubSourceCallHintHSelectorSizeLimit ||
       !readImmutableCodeBytes(Image, Address, 20))
     return std::nullopt;
   const auto *Code = Image.getSectionFor(Address);
@@ -1162,7 +1173,8 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
   const auto ClassGetters = sourceClassGetterCalls(Image, Function);
   std::optional<SourceLocalCalls> LocalCalls;
   const size_t Count = Function.Blocks.size();
-  if (Count > 16384)
+  if (Count >
+      ::neverd::limits::loader::kObjCCallHintsSourceCallCandidatesCountLimit)
     return {};
   std::map<int, size_t> BlockIndices;
   for (size_t I = 0; I < Function.Blocks.size(); ++I)
@@ -1227,7 +1239,8 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
     // bytes and CFG edges before the shared receiver facts can use that root.
     if (const auto Receiver =
             objcNativeSwiftSelfTypeHint(Image, Function.Entry)) {
-      size_t Budget = 262144;
+      size_t Budget =
+          ::neverd::limits::loader::kObjCCallHintsSourceCallCandidatesBudget;
       const auto Signature =
           swiftMangledReceiverClassMethodSourceABI(Image, Function.Entry);
       if (Signature &&
@@ -1263,7 +1276,8 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
         else if (Image.Arch == Arch::AArch64 && V.Object &&
                  Location.Kind == SourceABICarrierKind::Stack &&
                  Location.EntryStackOffset >= 0 &&
-                 Location.EntryStackOffset <= 4096 - 8 &&
+                 Location.EntryStackOffset <=
+                     ::neverd::limits::ir::kMaxSourceStackArgumentBytes - 8 &&
                  Location.EntryStackOffset % 8 == 0)
           EntryFacts.FrameSlots.emplace(
               std::pair{Location.EntryStackOffset, 8U}, std::move(V));
@@ -1322,8 +1336,9 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
                  std::vector<ObjCReceiverTypeHint>, unsigned, va_t, uint32_t,
                  uint64_t, std::string>;
   std::map<ReceiverKey, ObjCReceiverDeclaration> ReceiverDeclarations;
+  using TransferResult = std::optional<Facts>;
   auto Transfer = [&](size_t Index, Facts State,
-                      Hints &BlockHints) -> std::optional<Facts> {
+                      Hints &BlockHints) -> TransferResult {
     auto &Values = State.Values;
     const auto &Block = Function.Blocks[Index];
     va_t PreviousAddress = InvalidVA;
@@ -1460,9 +1475,15 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
           } else if (Location.Kind == SourceABICarrierKind::Stack) {
             const int64_t Begin =
                 Location.EntryStackOffset - ReturnAddressBytes;
-            if (Begin < 0 || Begin > 4096 || Location.ValueBytes > 4096 - Begin)
+            if (Begin < 0 ||
+                Begin > ::neverd::limits::ir::kMaxSourceStackArgumentBytes ||
+                Location.ValueBytes >
+                    ::neverd::limits::ir::kMaxSourceStackArgumentBytes - Begin)
               State.escapeTypedFrame();
-            if (Begin < 0 || Begin > 4096 || Location.ValueBytes > 4096 - Begin)
+            if (Begin < 0 ||
+                Begin > ::neverd::limits::ir::kMaxSourceStackArgumentBytes ||
+                Location.ValueBytes >
+                    ::neverd::limits::ir::kMaxSourceStackArgumentBytes - Begin)
               State.escapeFrame();
             else
               ArgumentBytes =
@@ -1553,7 +1574,9 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
             ++It;
         PreviousAddress = Op.Addr;
       }
-      if (Op.Opcode == NdOp::INTRINSIC) {
+      const bool OriginalLoad =
+          Image.Arch == Arch::AArch64 && lowAArch64AddressLoadShapeIsValid(Op);
+      if (Op.Opcode == NdOp::INTRINSIC && !OriginalLoad) {
         Clobber(nullptr);
         continue;
       }
@@ -1641,8 +1664,12 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
                     Stored->TheKind == Value::Kind::SourceParameter)
                   State.TypedFrameSlots[{Offset, 8}] = *Stored;
               }
-              if (State.FrameSlots.size() > 4096 ||
-                  State.TypedFrameSlots.size() > 4096)
+              if (State.FrameSlots.size() >
+                      ::neverd::limits::loader::
+                          kObjCCallHintsSourceCallCandidatesTransferStateFrameSlotsSizeLimit ||
+                  State.TypedFrameSlots.size() >
+                      ::neverd::limits::loader::
+                          kObjCCallHintsSourceCallCandidatesTransferStateTypedFrameSlotsSizeLimit)
                 return std::nullopt;
             }
             for (auto &Copy : Snapshots) {
@@ -1665,7 +1692,9 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
                   State.FrameBytes.insert(Byte);
               }
             }
-            if (State.FrameBytes.size() > 4096)
+            if (State.FrameBytes.size() >
+                ::neverd::limits::loader::
+                    kObjCCallHintsSourceCallCandidatesTransferStateFrameBytesSizeLimit)
               return std::nullopt;
             continue;
           }
@@ -2242,7 +2271,10 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
                       !Slot->second.Number)
                     return Result; // No reads beyond the first definite nil.
                   const auto Next = Object(Slot->second);
-                  if (Result.size() == 61 || !Next)
+                  if (Result.size() ==
+                          ::neverd::limits::loader::
+                              kObjCCallHintsSourceCallCandidatesTransferObjcMsgSendObjectsResultSizeLimit ||
+                      !Next)
                     return std::nullopt;
                   Result.push_back(*Next);
                 }
@@ -2316,8 +2348,15 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
               Count->TheKind == Value::Kind::Number && Count->Number == 16) {
             const auto Base = static_cast<int64_t>(StateAddress->Number);
             const auto Buffer = static_cast<int64_t>(BufferAddress->Number);
-            if (Base >= -FrameOffsetLimit && Base <= FrameOffsetLimit - 40 &&
-                Buffer >= Base + 40 && Buffer <= FrameOffsetLimit - 16 * 8) {
+            if (Base >=
+                    -::neverd::limits::loader::kObjCCallHintsFrameOffsetLimit &&
+                Base <=
+                    ::neverd::limits::loader::kObjCCallHintsFrameOffsetLimit -
+                        40 &&
+                Buffer >= Base + 40 &&
+                Buffer <=
+                    ::neverd::limits::loader::kObjCCallHintsFrameOffsetLimit -
+                        16 * 8) {
               auto Element = *Bound->second.Receiver;
               ObjCReceiverTypeHint::TypeStep Step;
               Step.TheKind =
@@ -2412,7 +2451,9 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
               std::move(EnumeratedItems->second);
         for (auto &[Slot, Fact] : OutParameterReceivers)
           State.DeclaredObjectFrameSlots[Slot] = std::move(Fact);
-        if (State.DeclaredObjectFrameSlots.size() > 4096)
+        if (State.DeclaredObjectFrameSlots.size() >
+            ::neverd::limits::loader::
+                kObjCCallHintsSourceCallCandidatesTransferStateDeclaredObjectFrameSlotsSizeLimit)
           return std::nullopt;
         if (ReturnedReceiver) {
           const auto &Location = Bound->second.Signature.ReturnLocation;
@@ -2499,8 +2540,12 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
               Offset <= -static_cast<int64_t>(Size) &&
               State.typedFrameRangePrivate(Offset, Size))
             State.TypedFrameSlots[{Offset, Size}] = *Stored;
-          if (State.TypedFrameSlots.size() > 4096 ||
-              State.FreshNilFrameSlots.size() > 4096)
+          if (State.TypedFrameSlots.size() >
+                  ::neverd::limits::loader::
+                      kObjCCallHintsSourceCallCandidatesTransferStateTypedFrameSlotsSizeLimit ||
+              State.FreshNilFrameSlots.size() >
+                  ::neverd::limits::loader::
+                      kObjCCallHintsSourceCallCandidatesTransferStateFreshNilFrameSlotsSizeLimit)
             return std::nullopt;
           if (State.FrameEscaped)
             continue;
@@ -2510,9 +2555,15 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
               Offset <= -static_cast<int64_t>(Size))
             State.FrameSlots[{Offset, Size}] = *Stored;
         }
-        if (State.FrameSlots.size() > 4096 ||
-            State.TypedFrameSlots.size() > 4096 ||
-            State.FreshNilFrameSlots.size() > 4096)
+        if (State.FrameSlots.size() >
+                ::neverd::limits::loader::
+                    kObjCCallHintsSourceCallCandidatesTransferStateFrameSlotsSizeLimit ||
+            State.TypedFrameSlots.size() >
+                ::neverd::limits::loader::
+                    kObjCCallHintsSourceCallCandidatesTransferStateTypedFrameSlotsSizeLimit ||
+            State.FreshNilFrameSlots.size() >
+                ::neverd::limits::loader::
+                    kObjCCallHintsSourceCallCandidatesTransferStateFreshNilFrameSlotsSizeLimit)
           return std::nullopt;
         continue;
       }
@@ -2526,7 +2577,7 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
             State.escapeFrame();
       }
       bool FrameDerived = false;
-      if (Op.Opcode != NdOp::LOAD)
+      if (Op.Opcode != NdOp::LOAD && !OriginalLoad)
         for (unsigned I = 0; I < Op.NumInputs; ++I)
           FrameDerived |= State.mayBeFrame(Op.Inputs[I]);
       std::optional<Value> Out;
@@ -2540,7 +2591,32 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
         if (Input && Input->TheKind == Value::Kind::ImageBytes)
           LowImageBytes = Input;
       }
-      if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
+      if (OriginalLoad) {
+        const auto Instruction = aarch64AddressMemoryInstruction(
+            Op.Inputs[kAddressMemoryWordOperand + 1].Offset);
+        const auto Base = Read(Op.Inputs[kAddressMemoryBaseOperand + 1]);
+        const auto Index = Read(Op.Inputs[kAddressMemoryIndexOperand + 1]);
+        // A validated object layout bounds a field within that live object.
+        // Keep only its declared receiver type on the normal continuation;
+        // retain the original checked load and all of its possible faults.
+        const auto Receiver = Base ? receiver(*Base) : std::nullopt;
+        if (Receiver && Index && !Instruction->stackBase() &&
+            Instruction->usesFullWidthIndex() &&
+            Instruction->accessBytes() == kAddressMemoryPointerBytes &&
+            !Instruction->indexShift()) {
+          const auto Field =
+              Index->TheKind == Value::Kind::Number
+                  ? objcReceiverFieldTypeHint(
+                        Image, *Receiver,
+                        Instruction->addressOffset(Index->Number))
+              : Instruction->hasRegisterIndex() &&
+                      Index->TheKind == Value::Kind::IvarOffset
+                  ? objcReceiverIvarTypeHint(Image, *Receiver, Index->Number)
+                  : std::nullopt;
+          if (Field)
+            Out = Value{Value::Kind::Receiver, 0, {}, *Field};
+        }
+      } else if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
         Out = Read(Op.Inputs[0]);
       else if (Op.Opcode == NdOp::SELECT && Op.NumInputs == 3 &&
                Op.Output.Size == Op.Inputs[1].Size &&
@@ -2753,14 +2829,18 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
                     Op.Output.Size == 4 &&
                     Image.ObjCSourceReferences.at(Out->Number).Size == 4))
           Values.emplace(key(Op.Output), std::move(*Out));
-        if (Values.size() > 4096)
+        if (Values.size() >
+            ::neverd::limits::loader::
+                kObjCCallHintsSourceCallCandidatesTransferValuesSizeLimit)
           return std::nullopt;
       }
       if (LowImageBytes) {
         auto Prefix = Op.Output;
         Prefix.Size = 8;
         Values.emplace(key(Prefix), std::move(*LowImageBytes));
-        if (Values.size() > 4096)
+        if (Values.size() >
+            ::neverd::limits::loader::
+                kObjCCallHintsSourceCallCandidatesTransferValuesSizeLimit)
           return std::nullopt;
       }
       if (Op.Output.isReg() && Op.Output.Offset < TRI.StackPointer + 8 &&
@@ -2818,7 +2898,8 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
       Work.push_back(I);
       Queued[I] = true;
     }
-  size_t Remaining = 1048576;
+  size_t Remaining =
+      ::neverd::limits::loader::kObjCCallHintsSourceCallCandidatesRemaining;
   while (!Work.empty()) {
     const auto Index = Work.front();
     Work.pop_front();
@@ -2844,7 +2925,9 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
     }
     if (!Initialized)
       continue;
-    if (Incoming.FrameBytes.size() > 4096)
+    if (Incoming.FrameBytes.size() >
+        ::neverd::limits::loader::
+            kObjCCallHintsSourceCallCandidatesIncomingFrameBytesSizeLimit)
       return {};
     Bindings[Index].clear();
     auto Out = Transfer(Index, std::move(Incoming), Bindings[Index]);
@@ -2964,7 +3047,8 @@ std::optional<NativeSourceCalls> objcFrameCallContracts(
     const BinaryImage &Image, const LowFunc &Function,
     const std::map<va_t, SourceCallTypeHint> &Candidates,
     const std::map<va_t, SourceFunctionTypeHint> *NativeCallees) {
-  size_t Budget = 262144;
+  size_t Budget =
+      ::neverd::limits::loader::kObjCCallHintsObjcFrameCallContractsBudget;
   NativeSourceCalls Calls;
   size_t Count = 0;
   for (const auto &Block : Function.Blocks)
@@ -2993,7 +3077,7 @@ std::optional<NativeSourceCalls> objcFrameCallContracts(
               !Binding.Signature.ReturnType ||
               (!ImageTransform &&
                Binding.Signature.ReturnType->Kind != NdTypeKind::Void) ||
-              ++Count > 8)
+              ++Count > ::neverd::limits::loader::kMaxObjCByValueFrameCalls)
             return std::nullopt;
           Contract.ByValueFrameParameters.insert(2);
         } else if (Binding.CallKind == SourceCallTypeHint::Kind::ObjCSuper2) {
@@ -3143,7 +3227,10 @@ nonEscapingBlockFrameEffects(const BinaryImage &Image, const LowFunc &Function,
     std::string Error;
     const auto D = readObjCBlockDescriptor(Image, Descriptor->Bits,
                                            uint32_t(FlagBits), Error);
-    if (!D || D->LiteralSize < 32 || D->LiteralSize > 4096 ||
+    if (!D || D->LiteralSize < 32 ||
+        D->LiteralSize >
+            ::neverd::limits::loader::
+                kObjCCallHintsNonEscapingBlockFrameEffectsDLiteralSizeLimit ||
         !D->Limitations.empty() || !D->InvokeTypeHint ||
         !equalSourceABIs(*D->InvokeTypeHint, *Consumer))
       continue;
@@ -3195,7 +3282,10 @@ addNonEscapingBlockFrameEffects(
   std::map<SourceCallOccurrenceKey, SourceFrameEffects> Proven;
   // Dependencies may use only completed proof rounds. A cycle cannot create
   // its own lifetime permission, and candidate ordering cannot supply proof.
-  for (unsigned Round = 0; Round < 8; ++Round) {
+  for (unsigned Round = 0;
+       Round < ::neverd::limits::loader::
+                   kObjCCallHintsAddNonEscapingBlockFrameEffectsRoundLimit;
+       ++Round) {
     std::map<SourceCallOccurrenceKey, SourceFrameEffects> Next;
     for (const auto &[Site, Contract] : Working) {
       if (Proven.count(Site))
@@ -3244,7 +3334,8 @@ std::optional<SourceFrameEffects> objcNonEscapingBlockSourceFrameEffects(
       Current->second.Receiver != Binding.Receiver ||
       !equalSourceABIs(Current->second.Signature, Binding.Signature))
     return std::nullopt;
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::loader::
+      kObjCCallHintsObjcNonEscapingBlockSourceFrameEffectsBudget;
   if (!immutableNativeFrameMachineMatches(Image, Function, Budget))
     return std::nullopt;
   auto Calls =
@@ -3276,7 +3367,8 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
   auto Entry = swiftMangledReceiverClassMethodSourceABI(Image, Function.Entry);
   if (!Entry)
     Entry = objcMethodSourceTypeHint(Image, Function.Entry);
-  size_t Budget = 262144;
+  size_t Budget =
+      ::neverd::limits::loader::kObjCCallHintsBuildObjCSourceCallHintsBudget;
   if (!Entry || !immutableNativeFrameMachineMatches(Image, Function, Budget))
     return Result;
   // Stable declarations own the ABI; the shared byte query separately

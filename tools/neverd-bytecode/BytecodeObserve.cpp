@@ -9,6 +9,8 @@
 /// \file
 /// Traverse bytecode with shared symbolic semantics and emit bounded evidence.
 
+#include "ResourceLimits.h"
+
 #include "neverd/analysis/BytecodeDecoder.h"
 #include "neverd/solver/BitVectorSolver.h"
 #include "neverd/symbolic/SymExec.h"
@@ -38,7 +40,8 @@ std::string readFile(llvm::StringRef Path) {
   auto B = llvm::MemoryBuffer::getFile(Path);
   if (!B)
     throw std::runtime_error("cannot read " + Path.str());
-  if ((*B)->getBufferSize() > 64 * 1024 * 1024)
+  if ((*B)->getBufferSize() > ::neverd::limits::bytecode_tool::
+                                  kBytecodeObserveReadFileBGetBufferSizeLimit)
     throw std::runtime_error("input exceeds 64 MiB");
   return (*B)->getBuffer().str();
 }
@@ -170,8 +173,10 @@ class Observer {
   std::map<uint64_t, const J::Object *> Calls;
   std::map<uint64_t, std::string> InitialMemory;
   J::Array Results;
-  uint64_t MaxSteps = 50000, MaxPaths = 32, MaxVisits = 64;
-  uint64_t MaxMilliseconds = 10000;
+  uint64_t MaxSteps = ::neverd::limits::bytecode_tool::kBytecodeObserveMaxSteps,
+           MaxPaths = 32, MaxVisits = 64;
+  uint64_t MaxMilliseconds =
+      ::neverd::limits::bytecode_tool::kBytecodeObserveMaxMilliseconds;
   unsigned Queries = 0;
   std::string InputSHA256;
   std::string ProfileSHA256;
@@ -203,12 +208,15 @@ class Observer {
       return hex(*N);
     // Truncating after rendering is too late for a compact DAG whose printed
     // tree is exponential. Keep identity and width without expanding it.
-    if (C.readabilityCost(R) > 80)
+    if (C.readabilityCost(R) >
+        ::neverd::limits::bytecode_tool::
+            kBytecodeObserveDescribeCReadabilityCostRLimit)
       return J::Object{{"expression_ref", R.index()},
                        {"bits", C.width(R)},
                        {"rendering_omitted", "expression budget"}};
     auto S = C.toString(R);
-    if (S.size() > 300)
+    if (S.size() >
+        ::neverd::limits::bytecode_tool::kBytecodeObserveDescribeSSizeLimit)
       S = S.substr(0, 300) + "...";
     return J::Object{{"expression", S}};
   }
@@ -216,7 +224,9 @@ class Observer {
                                     uint8_t Xor = 0) {
     auto &C = P.State.context();
     std::string S;
-    for (unsigned I = 0; I < 512; ++I) {
+    for (unsigned I = 0;
+         I < ::neverd::limits::bytecode_tool::kBytecodeObserveStringILimit;
+         ++I) {
       if (Address > UINT64_MAX - I)
         return {};
       auto N = value(C, P.State.load(C.mkConst(64, Address + I), 1));
@@ -240,7 +250,10 @@ class Observer {
     if (Offset >= I->second.size())
       return {};
     std::string Text;
-    for (; Offset < I->second.size() && Text.size() < 512; ++Offset) {
+    for (; Offset < I->second.size() &&
+           Text.size() < ::neverd::limits::bytecode_tool::
+                             kBytecodeObserveInputStringTextSizeLimit;
+         ++Offset) {
       unsigned char B = I->second[Offset];
       if (!B)
         return Text.size() >= 4 ? std::optional(Text) : std::nullopt;
@@ -255,10 +268,14 @@ class Observer {
       return *N != 0;
     solver::SolverOptions O;
     O.BuildModel = false;
-    O.Sat.MaxConflicts = 500;
-    O.Sat.MaxPropagations = 50000;
-    O.Sat.MaxWatchVisits = 500000;
-    O.Blast.MaxGates = 65536;
+    O.Sat.MaxConflicts =
+        ::neverd::limits::bytecode_tool::kBytecodeObserveFeasibleMaxConflicts;
+    O.Sat.MaxPropagations = ::neverd::limits::bytecode_tool::
+        kBytecodeObserveFeasibleMaxPropagations;
+    O.Sat.MaxWatchVisits =
+        ::neverd::limits::bytecode_tool::kBytecodeObserveFeasibleMaxWatchVisits;
+    O.Blast.MaxGates =
+        ::neverd::limits::bytecode_tool::kBytecodeObserveFeasibleMaxGates;
     ++Queries;
     auto R = solver::checkSat(C, Pred, nullptr, O);
     if (R == solver::SatResult::Invalid)
@@ -480,7 +497,8 @@ class Observer {
   bool applyMemoryEffect(Path &P, const J::Object &Spec, const LowOp &Op) {
     auto &C = P.State.context();
     auto Count = value(C, readRegister(P, field(Spec, "size_register")));
-    if (!Count || *Count > 4096)
+    if (!Count || *Count > ::neverd::limits::bytecode_tool::
+                               kBytecodeObserveApplyMemoryEffectCountLimit)
       return false;
     auto Destination = readRegister(P, field(Spec, "destination_register"));
     auto Kind = Spec.getString("continuation");
@@ -564,7 +582,9 @@ public:
         const auto &O = object(V);
         auto Bytes = readFile(textField(O, "path"));
         auto Address = field(O, "address");
-        if (Bytes.size() > 1024 * 1024 || Address > UINT64_MAX - Bytes.size())
+        if (Bytes.size() > ::neverd::limits::bytecode_tool::
+                               kBytecodeObserverBytesSizeLimit ||
+            Address > UINT64_MAX - Bytes.size())
           throw std::runtime_error("invalid memory seed");
         auto Next = InitialMemory.lower_bound(Address);
         if ((Next != InitialMemory.end() &&
@@ -609,9 +629,18 @@ public:
       MaxVisits = number(*V);
     if (auto *V = config().get("max_milliseconds"))
       MaxMilliseconds = number(*V);
-    if (!MaxSteps || MaxSteps > 1000000 || !MaxPaths || MaxPaths > 256 ||
-        !MaxVisits || MaxVisits > 100000 || !MaxMilliseconds ||
-        MaxMilliseconds > 600000)
+    if (!MaxSteps ||
+        MaxSteps >
+            ::neverd::limits::bytecode_tool::kBytecodeObserverMaxStepsLimit ||
+        !MaxPaths ||
+        MaxPaths >
+            ::neverd::limits::bytecode_tool::kBytecodeObserverMaxPathsLimit ||
+        !MaxVisits ||
+        MaxVisits >
+            ::neverd::limits::bytecode_tool::kBytecodeObserverMaxVisitsLimit ||
+        !MaxMilliseconds ||
+        MaxMilliseconds > ::neverd::limits::bytecode_tool::
+                              kBytecodeObserverMaxMillisecondsLimit)
       throw std::runtime_error("analysis budget out of range");
     if (auto *A = config().getArray("calls"))
       for (auto &V : *A) {
@@ -658,7 +687,8 @@ public:
             break;
           }
           if (++P.Steps > MaxSteps || ++Steps > MaxSteps * 4 ||
-              C.numNodes() > 1000000) {
+              C.numNodes() > ::neverd::limits::bytecode_tool::
+                                 kBytecodeObserveRunCNumNodesLimit) {
             Stop = "step_or_expression_budget";
             break;
           }
@@ -682,7 +712,9 @@ public:
                 break;
               }
               if (Functions.count(*Target)) {
-                if (P.Frames.size() == 32) {
+                if (P.Frames.size() ==
+                    ::neverd::limits::bytecode_tool::
+                        kBytecodeObserveRunPFramesSizeLimit) {
                   Stop = "call_depth_budget";
                   break;
                 }
@@ -724,7 +756,9 @@ public:
                     Stop = "unknown_bytecode_dispatch";
                     break;
                   }
-                  if (P.Frames.size() == 32) {
+                  if (P.Frames.size() ==
+                      ::neverd::limits::bytecode_tool::
+                          kBytecodeObserveRunPFramesSizeLimit) {
                     Stop = "call_depth_budget";
                     break;
                   }
@@ -822,7 +856,9 @@ public:
                     llvm::formatv("{0}",
                                   describe(C, Exec.operandValue(Op.Inputs[0])))
                         .str();
-                if (SymbolFlows.size() < 4096 &&
+                if (SymbolFlows.size() <
+                        ::neverd::limits::bytecode_tool::
+                            kBytecodeObserveRunSymbolFlowsSizeLimit &&
                     SeenSymbolFlows.insert(Key).second)
                   SymbolFlows.push_back(std::move(Flow));
               }
@@ -932,7 +968,10 @@ public:
 
 std::string commentText(llvm::StringRef Text) {
   std::string Out;
-  for (size_t I = 0; I < Text.size() && I < 1000; ++I) {
+  for (size_t I = 0;
+       I < Text.size() &&
+       I < ::neverd::limits::bytecode_tool::kBytecodeObserveCommentTextILimit;
+       ++I) {
     unsigned char C = Text[I];
     if (C == '*' && I + 1 < Text.size() && Text[I + 1] == '/')
       Out += "* ";
@@ -982,7 +1021,9 @@ std::string annotate(llvm::StringRef Source, const J::Value &Report) {
             }
         if (auto N = Call.getInteger("prior_opaque_calls"); N && *N)
           Line += " [after abstracted calls]";
-        if (Seen.size() < 96 && Seen.insert(Line).second)
+        if (Seen.size() <
+                ::neverd::limits::bytecode_tool::kMaxAnnotatedCallComments &&
+            Seen.insert(Line).second)
           Text += commentText(Line) + "\n";
       }
     if (auto *Strings = F.getArray("strings"))
@@ -994,7 +1035,9 @@ std::string annotate(llvm::StringRef Source, const J::Value &Report) {
                              llvm::formatv("{0}", J::Value(*String)).str();
           if (S.getString("provenance") == "initial_image_reference")
             Line += " [initial image reference only]";
-          if (Seen.size() < 128 && Seen.insert(Line).second)
+          if (Seen.size() < ::neverd::limits::bytecode_tool::
+                                kMaxAnnotatedEvidenceComments &&
+              Seen.insert(Line).second)
             Text += commentText(Line) + "\n";
         }
       }

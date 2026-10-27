@@ -4,11 +4,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/backend/c/VariadicImportStub.h"
 #include "SourceCallExecution.h"
 #include "gtest/gtest.h"
 
+#include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/debug/DebugContext.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/loader/BinaryImage.h"
@@ -100,6 +103,29 @@ TEST(CSymbolNames, ABIUnderscoreOnlyWhereTheFormatAddsOne) {
   EXPECT_EQ(symbolOfCName("_ZdlPv", BinaryFormat::MachO, Arch::AArch64),
             "__ZdlPv");
   EXPECT_EQ(symbolOfCName("_ZdlPv", BinaryFormat::ELF, Arch::X64), "_ZdlPv");
+}
+
+TEST(CSymbolNames, StdcallNamesSpellTheBytesTheirRoutinesPop) {
+  // An import library's thunk and its slot, as MinGW links
+  // NlsValidateLocale(lcid, flags).
+  const auto Bytes = [](llvm::StringRef Symbol) {
+    return stdcallArgumentBytes(Symbol, BinaryFormat::COFF, Arch::X86);
+  };
+  EXPECT_EQ(Bytes("_NlsValidateLocale@8"), 8u);
+  EXPECT_EQ(Bytes("__imp__NlsValidateLocale@8"), 8u);
+  EXPECT_EQ(Bytes("_GetLastError@0"), 0u);
+  // cdecl and fastcall names, a C++ one, a GCC clone and stray `@`s.
+  EXPECT_EQ(Bytes("_printf"), std::nullopt);
+  EXPECT_EQ(Bytes("@InterlockedIncrement@4"), std::nullopt);
+  EXPECT_EQ(Bytes("?f@@YGXH@Z"), std::nullopt);
+  EXPECT_EQ(Bytes("_RtlNtStatusToDosErrorNoTeb@4.part.0"), std::nullopt);
+  EXPECT_EQ(Bytes("_Name@"), std::nullopt);
+  EXPECT_EQ(Bytes("_@8"), std::nullopt);
+  // Only 32-bit Windows decorates stdcall names.
+  EXPECT_EQ(stdcallArgumentBytes("_Sleep@4", BinaryFormat::COFF, Arch::X64),
+            std::nullopt);
+  EXPECT_EQ(stdcallArgumentBytes("_Sleep@4", BinaryFormat::ELF, Arch::X86),
+            std::nullopt);
 }
 
 TEST(CSymbolNames, ElfCxxCallsReadByScopeAndLinkByMangledName) {
@@ -525,14 +551,15 @@ TEST(CSymbolNames, StartupPassesMainThroughItsPrototype) {
       Img);
   // The routine no header declares has its C library prototype, and the
   // address of main reads as main, converted to the parameter's type.
-  EXPECT_NE(Source.find("extern int __libc_start_main(int (*)(int, char **, "
-                        "char **), int, char **, void (*)(void), void "
+  EXPECT_NE(Source.find("extern int32_t __libc_start_main(int32_t (*)(int32_t, "
+                        "char **, char **), int32_t, char **, void (*)(void), "
+                        "void "
                         "(*)(void), void (*)(void), void *)"),
             NotFound)
       << Source;
   EXPECT_NE(Source.find("extern int main();"), NotFound) << Source;
-  EXPECT_NE(Source.find("__libc_start_main((int (*)(int, char **, char "
-                        "**))main, 1, (char **)0x7000, 0, 0, 0, 0);"),
+  EXPECT_NE(Source.find("__libc_start_main((int32_t (*)(int32_t, char **, "
+                        "char **))main, 1, (char **)0x7000, 0, 0, 0, 0);"),
             NotFound)
       << Source;
   EXPECT_EQ(Source.find("0x1150"), NotFound) << Source;
@@ -633,7 +660,7 @@ TEST(CSymbolNames, CxxRuntimeRoutinesTakeTheirPrototypes) {
                                 HighExpr::makeConst(0, 8)}),
                  callStatement("__cxa_end_catch", 0x2010)})},
       Img);
-  EXPECT_NE(Source.find("extern int __cxa_atexit(void (*)(void *), void *, "
+  EXPECT_NE(Source.find("extern int32_t __cxa_atexit(void (*)(void *), void *, "
                         "void *);"),
             NotFound)
       << Source;
@@ -656,7 +683,7 @@ TEST(CSymbolNames, APointerResultKeepsTheMachineInteger) {
       emitFor({returnsCall("errno_slot", 0x1000,
                            HighExpr::makeCall("__errno_location", 0x2000, {}))},
               BinaryFormat::ELF, Arch::X64);
-  EXPECT_NE(Source.find("extern int *__errno_location(void);"), NotFound)
+  EXPECT_NE(Source.find("extern int32_t *__errno_location(void);"), NotFound)
       << Source;
   EXPECT_NE(Source.find("return (uintptr_t)__errno_location();"), NotFound)
       << Source;
@@ -707,7 +734,7 @@ TEST(CSymbolNames, WindowsRuntimeRoutinesTakeTheirPrototypesOnlyInPE) {
                     "(**)(void))0x3010);"),
             NotFound)
       << PE;
-  EXPECT_NE(PE.find("extern void _lock(int);"), NotFound) << PE;
+  EXPECT_NE(PE.find("extern void _lock(int32_t);"), NotFound) << PE;
   // An ELF `_lock` is a routine of its own: both arguments stay.
   const std::string ELF = emitFor(Funcs, BinaryFormat::ELF, Arch::X64);
   EXPECT_EQ(ELF.find("_initterm(void (**)"), NotFound) << ELF;
@@ -740,8 +767,9 @@ TEST(CSymbolNames, FortifiedRoutinesAreVariadicWhereGlibcDeclaresThem) {
                                         HighExpr::makeConst(0, 8),
                                         HighExpr::makeConst(5, 4)})})},
               BinaryFormat::ELF, Arch::X64);
-  EXPECT_NE(Source.find("extern int __printf_chk(int, const char *, ...);"),
-            NotFound)
+  EXPECT_NE(
+      Source.find("extern int32_t __printf_chk(int32_t, const char *, ...);"),
+      NotFound)
       << Source;
   EXPECT_NE(Source.find("__printf_chk(1, 0, 5);"), NotFound) << Source;
 }
@@ -1024,10 +1052,12 @@ TEST(CSymbolNames, AThunkNamedLikeItsImportCallsThroughTheSlot) {
               ReturnsValue)
         << Source;
     if (!ReturnsValue) {
+      // The image's own body under a header routine's name takes its
+      // address, as LLVM-C names it (copiesHeaderRoutine).
       EXPECT_NE(
           Source.find("void " +
                       cNameOfSymbol(Thunk, BinaryFormat::COFF, Target).str() +
-                      "("),
+                      "_1000("),
           NotFound)
           << Source;
       EXPECT_NE(Source.find("    " + std::string(Slot) + "("), NotFound)
@@ -1318,4 +1348,156 @@ TEST(CSymbolNames, MicrosoftImportsLinkByTheirDecoratedNames) {
   }
 }
 
+TEST(CSymbolNames, AStubPassesItsListAsTheWordATabledFormTakes) {
+  // glibc's fortified __fprintf_chk stub hands its arguments to
+  // __vfprintf_chk, which no header the unit includes declares: the unit
+  // declares it from the runtime's table, which takes the list as the
+  // machine word a call passes, as the program's own calls of it do.  The
+  // stub declares it the same, once: `va_list` beside `void *` conflicted.
+  const libc::LibCVariadicForward *Forward =
+      libc::libcVariadicForward("__fprintf_chk");
+  ASSERT_NE(Forward, nullptr);
+  for (const auto &[TheArch, Word] : {std::pair{Arch::X64, "arguments)"},
+                                      {Arch::AArch64, "(void *)&arguments)"},
+                                      {Arch::ARM, "*(void **)&arguments)"}}) {
+    SCOPED_TRACE(static_cast<int>(TheArch));
+    std::string Text;
+    llvm::raw_string_ostream OS(Text);
+    c_stub::writeVariadicImportStub(OS, "fprintf_chk_stub", "__fprintf_chk", {},
+                                    Forward, libc::LibCVariant::GNU, TheArch,
+                                    BinaryFormat::ELF);
+    OS.flush();
+    EXPECT_EQ(Text.find("va_list);"), std::string::npos) << Text;
+    EXPECT_NE(Text.find("const char *, void *);"), std::string::npos) << Text;
+    EXPECT_NE(
+        Text.find("__vfprintf_chk(arg0, arg1, format, " + std::string(Word)),
+        std::string::npos)
+        << Text;
+  }
+  // A form a header declares keeps the header's va_list.
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  c_stub::writeVariadicImportStub(
+      OS, "fprintf_stub", "fprintf", {}, libc::libcVariadicForward("fprintf"),
+      libc::LibCVariant::GNU, Arch::X64, BinaryFormat::ELF);
+  OS.flush();
+  EXPECT_NE(Text.find("extern int vfprintf(FILE *, const char *, va_list);"),
+            std::string::npos)
+      << Text;
+}
+
 } // namespace
+
+TEST(CSymbolNames, CopiesOfHeaderRoutinesStepAsideFromTheirNames) {
+  // A PLT stub named like the C library routine it jumps to, a C++ function
+  // whose identifier would be one (`sigaddset(unsigned long*, int)`), and a
+  // copy the image defines are not the routines <string.h> and <signal.h>
+  // declare: their definitions take their addresses, as LLVM-C's do, and a
+  // call to the stub reaches the routine by its own name.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = 0x1000;
+  Text.Size = 0x300;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(0x300, 0xC3);
+  Img.Segments.push_back(std::move(Text));
+  Import Imp;
+  Imp.Name = "strlen";
+  Imp.IATAddr = 0x4000;
+  Img.Imports.push_back(std::move(Imp));
+  ASSERT_TRUE(Img.recordImportStub(0x1000, 0));
+  std::vector<HighFunc> Funcs = {
+      function("strlen", 0x1000, {}), function("_Z9sigaddsetPmi", 0x1100, {}),
+      function("caller", 0x1200,
+               {callStatement("strlen", 0x1000, {HighExpr::makeConst(0, 8)}),
+                callStatement(
+                    "_Z9sigaddsetPmi", 0x1100,
+                    {HighExpr::makeConst(0, 8), HighExpr::makeConst(2, 4)})})};
+  const std::string Source = emitFor(Funcs, BinaryFormat::ELF, Arch::X64, &Img);
+  EXPECT_NE(Source.find("strlen_1000("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("sigaddset_1100("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("    strlen("), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("strlen_1000(0"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("    sigaddset_1100("), std::string::npos) << Source;
+}
+
+TEST(CSymbolNames, OmittedImageHeaderRoutinesKeepTheirRecoveredDeclarations) {
+  // A selected caller still references the image's own routine. Omitting the
+  // callee's body must not replace its recovered interface with a host header
+  // declaration, or redeclare that header's ordinary identifier incompatibly.
+  class ImageDebug : public NullDebugContext {
+  public:
+    std::string Name;
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != 0x1180)
+        return std::nullopt;
+      FunctionSym F;
+      F.Name = Name;
+      F.Addr = Address;
+      F.ReturnType = NdType::makeInt(8, false);
+      F.Params = {{"first", F.ReturnType},
+                  {"second", F.ReturnType},
+                  {"third", F.ReturnType}};
+      return F;
+    }
+    bool hasInfo() const override { return true; }
+  } Debug;
+  for (const char *Name :
+       {"strlen", "qsort", "wcschr", "_strupr", "wcscpy_s"}) {
+    SCOPED_TRACE(Name);
+    Debug.Name = Name;
+    BinaryImage Image = startupImage();
+    Image.Format = BinaryFormat::COFF;
+    Image.Symbols.back().Name = Name;
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    Options.Image = &Image;
+    const auto Caller =
+        returnsCall("caller", 0x1000,
+                    HighExpr::makeCall(Name, 0x1180,
+                                       {HighExpr::makeConst(1, 8),
+                                        HighExpr::makeConst(2, 8),
+                                        HighExpr::makeConst(3, 8)}));
+    std::string High;
+    llvm::raw_string_ostream HighOS(High);
+    ASSERT_TRUE(HighCEmitter().emit({Caller}, HighOS, Options, &Debug));
+
+    llvm::LLVMContext Context;
+    llvm::SMDiagnostic Diagnostic;
+    auto Module = llvm::parseAssemblyString(R"(
+declare i64 @sub_1180(i64, i64, i64)
+define i64 @caller() {
+  %result = call i64 @sub_1180(i64 1, i64 2, i64 3)
+  ret i64 %result
+}
+)",
+                                            Diagnostic, Context);
+    ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+    std::string LLVM;
+    llvm::raw_string_ostream LLVMOS(LLVM);
+    ASSERT_TRUE(LLVMCEmitter().emit(*Module, LLVMOS, Options, &Debug, &Image));
+    auto *Callee = Module->getFunction("sub_1180");
+    ASSERT_NE(Callee, nullptr);
+    Callee->setName(Name);
+    rewrite_source::setOriginalVA(*Callee, 0x1180);
+    std::string NamedLLVM;
+    llvm::raw_string_ostream NamedOS(NamedLLVM);
+    ASSERT_TRUE(LLVMCEmitter().emit(*Module, NamedOS, Options, &Debug, &Image));
+    for (const auto &Source : {High, LLVM, NamedLLVM}) {
+      EXPECT_NE(Source.find(std::string(Name) + "_1180("), NotFound) << Source;
+      EXPECT_NE(Source.find("__asm__(\"" + std::string(Name) + "\")"), NotFound)
+          << Source;
+      EXPECT_NE(Source.find("_1180(1, 2, 3)"), NotFound) << Source;
+      for (const char *Optimization : {"-O0", "-O2"})
+        source_call_execution_test::checkSyntax(
+            "#include <stdlib.h>\n#include <string.h>\n#include <wchar.h>\n" +
+                Source,
+            {Optimization, "-Werror=int-conversion",
+             "-Werror=incompatible-pointer-types"});
+    }
+  }
+}

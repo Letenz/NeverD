@@ -6,6 +6,8 @@
 
 #include "neverd/safety/DarwinSanitizerPublicationAdapter.h"
 
+#include "neverd/safety/Limits.h"
+
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/Errc.h"
@@ -52,7 +54,6 @@ using detail::DarwinSanitizerPublicationNativeOperationsV1;
 constexpr llvm::StringLiteral kQuarantineXattr("com.apple.quarantine");
 constexpr llvm::StringLiteral kProvenanceXattr("com.apple.provenance");
 constexpr llvm::StringLiteral kTemporaryPrefix(".neverd-sanitize-");
-constexpr size_t kIOChunkBytes = 64 * 1024;
 
 bool hasDotPathComponent(llvm::StringRef Path) {
   for (auto It = llvm::sys::path::begin(Path, llvm::sys::path::Style::posix),
@@ -170,7 +171,10 @@ hashHeldFile(int FD, const DarwinPublicationFileStatusV1 &Before,
              const DarwinSanitizerPublicationNativeOperationsV1 &Native,
              llvm::StringRef Role) {
   llvm::SHA256 Hash;
-  std::array<uint8_t, kIOChunkBytes> Buffer{};
+  std::array<
+      uint8_t,
+      ::neverd::limits::safety::kDarwinSanitizerPublicationAdapterIOChunkBytes>
+      Buffer{};
   uint64_t Offset = 0;
   while (Offset < Before.Size) {
     const uint64_t Remaining = Before.Size - Offset;
@@ -1221,7 +1225,9 @@ writeCanonicalACLNative(int FD,
 }
 
 llvm::Expected<std::vector<std::string>> listXattrsNative(int FD) {
-  for (unsigned Attempt = 0; Attempt != 4; ++Attempt) {
+  for (unsigned Attempt = 0;
+       Attempt != ::neverd::limits::safety::kMaxDarwinXattrReadAttempts;
+       ++Attempt) {
     errno = 0;
     const ssize_t Required =
         ::flistxattr(FD, nullptr, 0, XATTR_SHOWCOMPRESSION);
@@ -1268,7 +1274,9 @@ readXattrNative(int FD, llvm::StringRef Name) {
   if (Name.empty() || Name.contains('\0'))
     return adapterError("Darwin xattr name is invalid");
   const std::string NativeName = Name.str();
-  for (unsigned Attempt = 0; Attempt != 4; ++Attempt) {
+  for (unsigned Attempt = 0;
+       Attempt != ::neverd::limits::safety::kMaxDarwinXattrReadAttempts;
+       ++Attempt) {
     const ssize_t Required =
         ::fgetxattr(FD, NativeName.c_str(), nullptr, 0, 0, 0);
     if (Required < 0)
@@ -1347,7 +1355,9 @@ DarwinSanitizerPublicationNativeOperationsV1 nativeDarwinOperations() {
   Operations.CreateAnchoredExclusive =
       [](int DirectoryFD, llvm::StringRef Prefix,
          uint32_t Mode) -> llvm::Expected<DarwinPublicationCreatedFileV1> {
-    for (unsigned Attempt = 0; Attempt != 32; ++Attempt) {
+    for (unsigned Attempt = 0;
+         Attempt != ::neverd::limits::safety::kMaxDarwinTempNameAttempts;
+         ++Attempt) {
       std::string Name = randomTemporaryName(Prefix);
       const int FD =
           ::openat(DirectoryFD, Name.c_str(),

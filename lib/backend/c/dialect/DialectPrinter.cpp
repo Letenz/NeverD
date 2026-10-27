@@ -8,7 +8,10 @@
 
 #include "neverd/backend/c/CSourceMap.h"
 
+#include "llvm/ADT/StringExtras.h"
+
 #include <map>
+#include <set>
 
 using namespace neverd;
 using namespace neverd::csyntax;
@@ -17,28 +20,67 @@ DialectPrinter::DialectPrinter(const Tree &T, const SourceDialectOptions &Opts)
     : T(T), Opts(Opts) {}
 
 SourceDialectText DialectPrinter::run() {
-  // A source name two identifiers share would name neither; those keep
-  // their C identifiers.
-  std::map<std::string, std::vector<llvm::StringRef>> ByName;
+  // A source name two identifiers share would name neither, so those keep
+  // their C identifiers, unless they are functions of distinct symbols: C++
+  // overloads share their name (`std::_DeallocateCaller::
+  // __do_deallocate_handle_size` takes (void*, unsigned) and (void*,
+  // unsigned, std::align_val_t)), and each identifier still links its own
+  // symbol.  An object or a type has no such name to share, and two
+  // functions of one symbol (a `static` helper of two files) are no
+  // overloads: only their C identifiers tell them apart.
+  struct Sharers {
+    std::set<llvm::StringRef> Identifiers;
+    std::set<llvm::StringRef> Symbols;
+    bool AllFunctions = true;
+  };
+  std::map<std::string, Sharers> ByName;
   for (const CSourceName &Name : Opts.Names) {
     if (Name.Symbol.empty())
       continue;
     if (auto Spelled = Name.TheKind == CSourceName::Kind::Type
                            ? sourceTypeName(Name.Symbol)
-                           : sourceName(Name.Symbol))
-      ByName[*Spelled].push_back(Name.Identifier);
+                           : sourceName(Name.Symbol)) {
+      Sharers &Sharing = ByName[*Spelled];
+      Sharing.Identifiers.insert(Name.Identifier);
+      Sharing.Symbols.insert(Name.Symbol);
+      Sharing.AllFunctions &= Name.TheKind == CSourceName::Kind::Function;
+    }
   }
-  for (auto &[Spelled, Identifiers] : ByName)
-    if (Identifiers.size() == 1)
-      SourceNames[Identifiers.front()] = Spelled;
+  for (auto &[Spelled, Sharing] : ByName)
+    if (Sharing.Identifiers.size() == 1 ||
+        (Sharing.AllFunctions &&
+         Sharing.Symbols.size() == Sharing.Identifiers.size()))
+      for (llvm::StringRef Identifier : Sharing.Identifiers)
+        SourceNames[Identifier] = Spelled;
   for (const CSourceName &Name : Opts.Names)
     if (SourceNames.contains(Name.Identifier))
       NameEntries[Name.Identifier] = &Name;
 
   header();
   size_t PreviousEnd = 0;
+  bool LocalWritten = false;
   for (size_t I = 0; I < T.Items.size(); ++I) {
     const TopLevel &Item = T.Items[I];
+    // The program's types, as the language defines them, stand for the C
+    // that defines them.
+    if (const auto &Local = Opts.LocalTypes;
+        Local && Item.Begin >= Local->CBegin && Item.End <= Local->CEnd) {
+      if (!LocalWritten) {
+        LocalWritten = true;
+        endLine();
+        const size_t Begin = mark();
+        llvm::SmallVector<llvm::StringRef, 64> Lines;
+        llvm::StringRef(Local->Text).rtrim('\n').split(Lines, '\n');
+        for (llvm::StringRef L : Lines) {
+          Buffer += L.str();
+          AtLineStart = false;
+          endLine();
+        }
+        piece(Local->CBegin, Local->CEnd, Begin);
+      }
+      PreviousEnd = Item.End;
+      continue;
+    }
     if (I && T.Source.slice(PreviousEnd, Item.Begin).count('\n') >= 2)
       endLine();
     const TopLevel *Next = nullptr;
@@ -164,6 +206,44 @@ void DialectPrinter::directive(const TopLevel &Item) {
   line((lineComment() + " " + Item.Text).str());
 }
 
+std::optional<SourceDialectLocalTypes::Path>
+DialectPrinter::localMember(const Expr *E) const {
+  if (!Opts.LocalTypes || E->Ops.empty() || !E->Ops.front()->Ty)
+    return std::nullopt;
+  const CType *Base = E->Ops.front()->Ty;
+  if (E->Postfix) {
+    if (!Base->isPointer() || !Base->Inner)
+      return std::nullopt;
+    Base = Base->Inner;
+  }
+  if (!Base->isRecord() || !localRecord(Base))
+    return std::nullopt;
+  llvm::StringRef Tag = Base->Record->Spelling;
+  Tag.consume_front("struct ") || Tag.consume_front("union ");
+  const auto Members = Opts.LocalTypes->Members.find(Tag.str());
+  const bool BitField = E->Field && E->Field->BitWidth;
+  if (Members != Opts.LocalTypes->Members.end())
+    if (const auto Path = Members->second.find(E->Text.str());
+        Path != Members->second.end() &&
+        (BitField ? Path->second.bitField() : !Path->second.Hops.empty()))
+      return Path->second;
+  unsupported(BitField ? "a bit-field the program's types read through no "
+                         "methods"
+                       : "a member the program's types do not reach as a "
+                         "field");
+  return SourceDialectLocalTypes::Path();
+}
+
+bool DialectPrinter::localRecord(const CType *Ty) const {
+  if (!Opts.LocalTypes || !Ty->isRecord() || Ty->Record->Anonymous)
+    return false;
+  llvm::StringRef Tag = Ty->Record->Spelling;
+  if (!Tag.consume_front("struct ") && !Tag.consume_front("union "))
+    return false;
+  return Opts.LocalTypes->Members.contains(Tag.str()) ||
+         Opts.LocalTypes->Opaque.contains(Tag.str());
+}
+
 void DialectPrinter::unread(llvm::StringRef Text, llvm::StringRef Reason) {
   Unread.push_back(Reason.str());
   line((lineComment() + " NeverD: shown as C: " + Reason).str());
@@ -234,6 +314,97 @@ void DialectPrinter::trailingComments(const CommentList &Comments) {
   }
   Buffer += '\n';
   AtLineStart = true;
+}
+
+namespace {
+/// Appends the bytes \p Text spells inside a narrow C string or character
+/// literal to \p Bytes; false for an escape that spells no single byte.
+bool appendLiteralBytes(llvm::StringRef Text, std::string &Bytes) {
+  for (size_t I = 0; I < Text.size(); ++I) {
+    if (Text[I] != '\\') {
+      Bytes += Text[I];
+      continue;
+    }
+    if (++I == Text.size())
+      return false;
+    unsigned Value = 0;
+    if (Text[I] >= '0' && Text[I] <= '7') {
+      Value = Text[I] - '0';
+      for (int Digits = 1; Digits < 3 && I + 1 < Text.size() &&
+                           Text[I + 1] >= '0' && Text[I + 1] <= '7';
+           ++Digits)
+        Value = Value * 8 + (Text[++I] - '0');
+    } else if (Text[I] == 'x') {
+      if (I + 1 == Text.size() || !llvm::isHexDigit(Text[I + 1]))
+        return false;
+      while (I + 1 < Text.size() && llvm::isHexDigit(Text[I + 1]))
+        if ((Value = Value * 16 + llvm::hexDigitValue(Text[++I])) > 0xFF)
+          return false;
+    } else {
+      static constexpr llvm::StringLiteral Escapes = "n\nt\tr\ra\ab\bf\fv\v"
+                                                     "\\\\\"\"''??";
+      size_t At = 0;
+      while (At < Escapes.size() && Escapes[At] != Text[I])
+        At += 2;
+      if (At == Escapes.size())
+        return false;
+      Value = static_cast<unsigned char>(Escapes[At + 1]);
+    }
+    Bytes += static_cast<char>(Value);
+  }
+  return true;
+}
+} // namespace
+
+std::optional<std::string> DialectPrinter::stringBytes(const Expr *E) {
+  std::string Bytes;
+  const auto Append = [&](llvm::StringRef Text) {
+    return Text.consume_front("\"") && Text.consume_back("\"") &&
+           appendLiteralBytes(Text, Bytes);
+  };
+  if (E->Ops.empty() && !Append(E->Text))
+    return std::nullopt;
+  for (const Expr *Part : E->Ops)
+    if (!Append(Part->Text))
+      return std::nullopt;
+  return Bytes;
+}
+
+std::optional<std::string> DialectPrinter::listBytes(const Expr *Init,
+                                                     uint64_t Count) {
+  std::string Bytes;
+  uint64_t Next = 0;
+  for (const Expr *Item : Init->Ops) {
+    if (Item->Kind == ExprKind::Designated) {
+      if (Item->Ops.size() != 2 || !Item->Ops[0]->Value ||
+          *Item->Ops[0]->Value < 0)
+        return std::nullopt;
+      Next = static_cast<uint64_t>(*Item->Ops[0]->Value);
+      Item = Item->Ops[1];
+    }
+    std::string Byte;
+    llvm::StringRef Text = Item->Text;
+    if (Item->Kind == ExprKind::Character) {
+      if (!Text.consume_front("'") || !Text.consume_back("'") ||
+          !appendLiteralBytes(Text, Byte) || Byte.size() != 1)
+        return std::nullopt;
+    } else if (Item->Value && *Item->Value >= 0 && *Item->Value <= 0xFF) {
+      Byte = static_cast<char>(*Item->Value);
+    } else {
+      return std::nullopt;
+    }
+    if (Next >= Count)
+      return std::nullopt;
+    if (Bytes.size() <= Next)
+      Bytes.resize(Next + 1);
+    Bytes[Next++] = Byte.front();
+  }
+  return Bytes;
+}
+
+bool DialectPrinter::byteArray(const CType *Ty) {
+  return Ty->isArray() && Ty->Count && Ty->Inner->isInteger() &&
+         Ty->Inner->Bits == 8 && !Ty->Inner->Signed;
 }
 
 Printed DialectPrinter::withComments(const Expr *E, Printed P) const {

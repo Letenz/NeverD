@@ -165,7 +165,8 @@ public:
         FixedPEDiagnostic = "terminal imports require a complete fixed PE view";
         return;
       }
-      if (Options.X64TerminalImports.size() > Options.MaxImagePreparationRecords) {
+      if (Options.X64TerminalImports.size() >
+          Options.MaxImagePreparationRecords) {
         FixedPEDiagnostic = "terminal import declaration budget exhausted";
         FixedPEBudgetExceeded = true;
         return;
@@ -174,7 +175,8 @@ public:
         const auto Identity = FixedPE->importIdentity(Binding.Slot);
         if (!Identity || Identity->Module != Binding.Module ||
             Identity->Symbol != Binding.Symbol) {
-          FixedPEDiagnostic = "terminal import differs from the authenticated named slot";
+          FixedPEDiagnostic =
+              "terminal import differs from the authenticated named slot";
           return;
         }
         TerminalImports.emplace(Binding.Slot, Binding);
@@ -275,10 +277,9 @@ public:
     if (Options.X64CetDisabled &&
         (Insn.Id == X86_INS_RDSSPD || Insn.Id == X86_INS_RDSSPQ ||
          Insn.Id == X86_INS_INCSSPD || Insn.Id == X86_INS_INCSSPQ)) {
-      const auto Kind =
-          Insn.Id == X86_INS_RDSSPD || Insn.Id == X86_INS_RDSSPQ
-              ? x86cet::Operation::Read
-              : x86cet::Operation::Increment;
+      const auto Kind = Insn.Id == X86_INS_RDSSPD || Insn.Id == X86_INS_RDSSPQ
+                            ? x86cet::Operation::Read
+                            : x86cet::Operation::Increment;
       if (!x86cet::canonicalEncoding(Result.NativeBytes, Kind))
         return llvm::createStringError(
             llvm::errc::not_supported,
@@ -408,7 +409,7 @@ public:
     }
     if (Decode.isFunctionTerminator(Insn) &&
         B.Control == LowInstructionControl::None) {
-      if (Insn.Id != X86_INS_INT3 && Insn.Id != X86_INS_UD2)
+      if (!Decode.isResumableTrap(Insn) && Insn.Id != X86_INS_UD2)
         return llvm::createStringError(llvm::errc::not_supported,
                                        "unsupported machine terminator");
       // Preserve strictly lifted traps for whole-original-graph inspection.
@@ -423,11 +424,13 @@ public:
         Result.NativeBytes[0] == 0xff && Result.NativeBytes[1] == 0x15) {
       const auto Displacement = static_cast<int32_t>(
           llvm::support::endian::read32le(Result.NativeBytes.data() + 2));
-      const va_t Slot = Result.Fallthrough.Address +
-                       static_cast<uint64_t>(static_cast<int64_t>(Displacement));
-      if (const auto At = TerminalImports.find(Slot); At != TerminalImports.end()) {
-        Result.TerminalImport = SpecializationTerminalImportEvidence{
-            At->second, FixedPE->digest()};
+      const va_t Slot =
+          Result.Fallthrough.Address +
+          static_cast<uint64_t>(static_cast<int64_t>(Displacement));
+      if (const auto At = TerminalImports.find(Slot);
+          At != TerminalImports.end()) {
+        Result.TerminalImport =
+            SpecializationTerminalImportEvidence{At->second, FixedPE->digest()};
         if (auto Error = validateX64TerminalImportCall(Result))
           return std::move(Error);
       }
@@ -437,6 +440,11 @@ public:
             InterpreterProfileProjection::CetDisabledReadShadowStackV1)
       x64::bindCetDisabledPreservedState(Result);
     return Result;
+  }
+
+  std::optional<SpecializationScalarQuery>
+  scalarQuery(llvm::ArrayRef<LowOp> Operations) override {
+    return x64::describeCPUQuery(Operations);
   }
 
   std::optional<SpecializationImmutableRead>
@@ -480,6 +488,11 @@ public:
 std::optional<SpecializationResult>
 validateBinaryImage(const BinaryImage &Image,
                     const SpecializationOptions &Options) {
+  if (Options.Architecture != Image.Arch) {
+    SpecializationResult Result;
+    Result.Diagnostic = "recovery architecture differs from the binary image";
+    return Result;
+  }
   if (Image.Arch != Arch::X64 || Image.IsRelocatable ||
       Options.ByteOrder != llvm::endianness::little ||
       (Image.Format != BinaryFormat::ELF &&
@@ -496,11 +509,9 @@ validateBinaryImage(const BinaryImage &Image,
         "machine execution profile requires explicit machine-state recovery";
     return Result;
   }
-  if (Options.X64SegmentedReads &&
-      (!Options.ExplicitMachineState || !Options.NormalNonfaultingExecution)) {
+  if (auto Error = x64::validateRuntimeMemoryOptions(Options)) {
     SpecializationResult Result;
-    Result.Diagnostic =
-        "segmented reads require explicit nonfaulting machine state";
+    Result.Diagnostic = llvm::toString(std::move(Error));
     return Result;
   }
   if (!hasUsableExceptionCoverage(Image)) {
@@ -614,7 +625,19 @@ binaryExecutionDigest(const BinaryImage &Image,
   Number(Options.NormalNonfaultingExecution);
   Number(Options.X64CetDisabled);
   Number(Options.X64SegmentedReads);
+  if (Options.X64SegmentedWrites) {
+    Hash.update("x64-segmented-writes-v1");
+    Number(Options.X64SegmentedWrites);
+  }
   Number(Options.X64CR8State);
+  if (Options.X64LegacyGSState) {
+    Hash.update("x64-legacy-gs-state-v1");
+    Number(Options.X64LegacyGSState);
+  }
+  if (Options.X64MXCSRMask) {
+    Hash.update("x64-mxcsr-mask-v1");
+    Number(*Options.X64MXCSRMask);
+  }
   Number(Options.X64TerminalImports.size());
   for (const auto &Binding : Options.X64TerminalImports) {
     Number(Binding.Version);
@@ -625,6 +648,8 @@ binaryExecutionDigest(const BinaryImage &Image,
     Hash.update(Binding.Symbol);
   }
   Number(Options.ProveStoreReturnSlotSeparation);
+  if (Options.ProveStoreFrameSeparation)
+    Hash.update("proved-store-frame-separation-v1");
   Number(Options.MaxFrameOffsetNormalizationWorkPerProof);
   Number(Options.ExternalStoresDisjointEntryFrame);
   Number(Options.EntryFrameAlignment.has_value());
@@ -636,6 +661,15 @@ binaryExecutionDigest(const BinaryImage &Image,
   if (Options.EntryFrameBounds) {
     Number(static_cast<uint64_t>(Options.EntryFrameBounds->Begin));
     Number(static_cast<uint64_t>(Options.EntryFrameBounds->End));
+    if (!Options.EntryFrameBounds->ExcludedAddressRanges.empty()) {
+      Hash.update("entry-frame-exclusions-v1");
+      Number(Options.EntryFrameBounds->ExcludedAddressRanges.size());
+      for (const auto &Range :
+           Options.EntryFrameBounds->ExcludedAddressRanges) {
+        Number(Range.Begin);
+        Number(Range.End);
+      }
+    }
   }
   Number(Options.X64FlagsProfile.has_value());
   if (Options.X64FlagsProfile)
@@ -731,12 +765,18 @@ prepareBinaryRelation(const BinaryImage &Image,
   if (!Options.X64TerminalImports.empty())
     return Fail(Status::Unsupported,
                 "native proof does not support terminal import domains");
-  if (Options.X64SegmentedReads)
+  if (Options.X64SegmentedReads || Options.X64SegmentedWrites)
     return Fail(Status::Unsupported,
                 "native proof requires authenticated FS/GS base inputs");
   if (Options.X64CR8State)
     return Fail(Status::Unsupported,
                 "native proof requires authenticated task-priority state");
+  if (Options.X64LegacyGSState)
+    return Fail(Status::Unsupported,
+                "native proof requires authenticated legacy GS state");
+  if (Options.X64MXCSRMask)
+    return Fail(Status::Unsupported,
+                "native proof requires authenticated MXCSR state");
   if (Image.Segments.size() > Limits.MaxInstructions ||
       Image.Relocations.size() > Limits.MaxInstructions ||
       Image.BaseRelocations.size() > Limits.MaxInstructions ||
@@ -786,6 +826,22 @@ prepareBinaryRelation(const BinaryImage &Image,
        Options.EntryFrameBounds->End != Contract.Frame->End))
     return Fail(Status::Invalid,
                 "recovery entry frame bounds do not match the proof contract");
+  if (Options.EntryFrameBounds &&
+      !Options.EntryFrameBounds->ExcludedAddressRanges.empty()) {
+    const auto &Ranges = Options.EntryFrameBounds->ExcludedAddressRanges;
+    if (Ranges.size() > Limits.MaxInstructions)
+      return Fail(Status::BudgetExceeded,
+                  "recovery frame exclusion metadata budget exhausted");
+    if (Ranges.size() != Contract.Frame->ExcludedAddressRanges.size())
+      return Fail(Status::Invalid,
+                  "recovery and proof frame exclusion contracts differ");
+    for (size_t I = 0; I != Ranges.size(); ++I)
+      if (Ranges[I].Begin >= Ranges[I].End ||
+          Ranges[I].Begin != Contract.Frame->ExcludedAddressRanges[I].Begin ||
+          Ranges[I].End != Contract.Frame->ExcludedAddressRanges[I].End)
+        return Fail(Status::Invalid,
+                    "recovery and proof frame exclusion contracts differ");
+  }
   if (Contract.X64FlagsProfile != Options.X64FlagsProfile ||
       Contract.ByteOrder != Options.ByteOrder ||
       Contract.EntryConstants.size() != Options.EntryConstants.size())

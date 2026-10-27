@@ -391,6 +391,50 @@ TEST(SymExplore, ARejectedShadowResetDoesNotReceiveSeeds) {
   EXPECT_FALSE(Exploration.Paths.front().ConcreteComplete);
 }
 
+TEST(SymExplore, ConcreteMemoryDoesNotConstrainSymbolicEntryBytes) {
+  SymContext Ctx;
+  FunctionBuilder B;
+  B.block({op(NdOp::LOAD, NdVar::reg(kRax, 8), {NdVar::cst(0x1000, 8)}),
+           compareRax(10),
+           op(NdOp::COND_BR, NdVar{},
+              {FunctionBuilder::addressOf(1), NdVar::reg(kFlag, 1)})},
+          {1, 2});
+  B.block({op(NdOp::RETURN, NdVar{}, {})}, {});
+  B.block({op(NdOp::RETURN, NdVar{}, {})}, {});
+
+  SymExecConcreteShadow Shadow;
+  ExploreOptions Opts;
+  Opts.Concolic = &Shadow;
+  Opts.ConcolicMemory = {{0x1000, {3, 0, 0, 0, 0, 0, 0, 0}}};
+  SymExploration Exploration = explorePathsDetailed(Ctx, B.function(), Opts);
+  ASSERT_EQ(Exploration.Paths.size(), 1u);
+  const SymPath &Path = Exploration.Paths.front();
+  ASSERT_TRUE(Path.ConcreteComplete);
+  EXPECT_FALSE(Exploration.Complete);
+  EXPECT_EQ(Path.Blocks, (std::vector<int>{0, 1}));
+  ASSERT_EQ(Path.BranchDecisions.size(), 1u);
+  EXPECT_TRUE(Path.BranchDecisions[0].Taken);
+
+  llvm::SmallVector<uint32_t, 8> Variables;
+  Ctx.collectVars(Path.BranchDecisions[0].Condition, Variables);
+  ASSERT_FALSE(Variables.empty());
+  for (uint32_t Id : Variables) {
+    const auto &Origin = Ctx.varInfo(Id).InputOrigin;
+    ASSERT_TRUE(Origin.has_value());
+    EXPECT_EQ(Origin->Kind, SymInputKind::AbsoluteMemory);
+    EXPECT_EQ(Origin->Epoch, 0u);
+    EXPECT_GE(Origin->Offset, 0x1000u);
+    EXPECT_LE(Origin->Offset + Origin->Bytes, 0x1008u);
+  }
+
+  BranchShadow RegisterOnlyShadow(1);
+  Opts.Concolic = &RegisterOnlyShadow;
+  Exploration = explorePathsDetailed(Ctx, B.function(), Opts);
+  ASSERT_FALSE(Exploration.Paths.empty());
+  for (const SymPath &Refused : Exploration.Paths)
+    EXPECT_FALSE(Refused.ConcreteComplete);
+}
+
 TEST(SymExplore, ALoopGivesEachConcreteDecisionAStableInvocation) {
   SymContext Ctx;
   FunctionBuilder B;

@@ -13,6 +13,7 @@
 
 #include "neverd/web/Artifact.h"
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 
 #include <set>
 #include <string>
@@ -184,7 +185,7 @@ class Preflight {
     }
     if (Start == Cursor)
       throw Error("invalid_json");
-    if (Cursor - Start > 128)
+    if (Cursor - Start > ::neverd::limits::web::kMaxJSONNumberBytes)
       throw Error("json_primitive_budget_exceeded");
     primitive(Bytes.substr(Start, Cursor - Start));
   }

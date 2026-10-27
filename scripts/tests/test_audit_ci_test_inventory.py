@@ -59,6 +59,50 @@ def valid_inventory() -> dict:
 
 
 class AuditInventoryTests(unittest.TestCase):
+    def deduplicated_inventory(self) -> dict:
+        document = valid_inventory()
+        document["tests"] = [
+            test for test in document["tests"]
+            if test["properties"][0]["value"][0] not in (SEMANTIC, PATCH)
+        ]
+        document["tests"].extend(ctest_inventory(
+            *((f"semantic/{index}", (SEMANTIC,)) for index in range(15_481)),
+            *((f"patch/{index}", (PATCH,)) for index in range(22_000)),
+        )["tests"])
+        return document
+
+    def test_complete_deduplicated_baseline_passes_production_minima(self):
+        document = self.deduplicated_inventory()
+        for profile, expression in (
+            ("linux-semantic", r"^NeverDPatchFullTests$"),
+            ("macos-patch", r"^NeverDSemanticTests$"),
+            ("windows-focused", r"^NeverD(Semantic|PatchFull)Tests$"),
+        ):
+            with self.subTest(profile=profile):
+                result = audit_inventory(document, profile, expression)
+                self.assertEqual(result.semantic_count, 15_481)
+                self.assertEqual(result.patch_count, 22_000)
+
+    def test_one_missing_deduplicated_case_fails_production_minimum(self):
+        document = self.deduplicated_inventory()
+        document["tests"] = [
+            test for test in document["tests"] if test["name"] != "semantic/0"
+        ]
+        with self.assertRaisesRegex(
+            InventoryError, "semantic inventory 15480 is below minimum 15481"
+        ):
+            audit_inventory(document, "linux-semantic", r"^NeverDPatchFullTests$")
+
+    def test_production_patch_minimum_remains_unchanged(self):
+        document = self.deduplicated_inventory()
+        document["tests"] = [
+            test for test in document["tests"] if test["name"] != "patch/0"
+        ]
+        with self.assertRaisesRegex(
+            InventoryError, "patch inventory 21999 is below minimum 22000"
+        ):
+            audit_inventory(document, "macos-patch", r"^NeverDSemanticTests$")
+
     def test_source_dialect_suites_must_exist_and_be_selected_on_every_host(self):
         for profile, expression in (
             ("linux-semantic", r"^NeverDPatchFullTests$"),

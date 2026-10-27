@@ -7,6 +7,7 @@
 #include "neverd/loader/DWARF/LSDA.h"
 
 #include "neverd/loader/LanguageRuntime.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/DwarfEH.h"
 
@@ -23,14 +24,6 @@ namespace neverd::dwarf_eh {
 namespace {
 
 using namespace dweh;
-
-/// Largest LSDA record read from the image in one go.  A record describes one
-/// function; a megabyte is already far beyond any real translation unit and
-/// bounds the work a crafted header can request.
-constexpr size_t kMaxLSDABytes = 1u << 20;
-
-/// Largest mangled RTTI name followed out of a `std::type_info`.
-constexpr size_t kMaxTypeNameBytes = 4096;
 
 /// Largest run starting at \p Address, capped at \p Want, that a single
 /// \ref BinaryImage::readVA can hand back.  The decoder works on a bounded
@@ -55,7 +48,8 @@ size_t mappedBytesAt(const BinaryImage &Img, va_t Address, size_t Want) {
 std::string readMappedCString(const BinaryImage &Img, va_t Address) {
   if (Address == 0)
     return {};
-  const size_t Available = mappedBytesAt(Img, Address, kMaxTypeNameBytes);
+  const size_t Available = mappedBytesAt(
+      Img, Address, ::neverd::limits::loader::kLSDAMaxTypeNameBytes);
   if (Available == 0)
     return {};
   const uint8_t *Bytes = Img.readVA(Address, Available);
@@ -109,7 +103,8 @@ LSDAParseResult parseLSDA(const BinaryImage &Img, const LSDAParseRequest &Req,
     return Result;
 
   const unsigned PtrSize = Img.getPointerSize();
-  const size_t Available = mappedBytesAt(Img, Req.LSDAVA, kMaxLSDABytes);
+  const size_t Available = mappedBytesAt(
+      Img, Req.LSDAVA, ::neverd::limits::loader::kLSDAMaxLSDABytes);
   if (Available < 2)
     return malformed("Itanium LSDA is not mapped readable data");
   const uint8_t *Buf = Img.readVA(Req.LSDAVA, Available);

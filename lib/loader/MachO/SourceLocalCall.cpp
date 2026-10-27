@@ -4,8 +4,9 @@
 #include "MachOLocalFunction.h"
 
 #include "neverd/ir/low/LowIR.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BranchEncoding.h"
 
@@ -13,8 +14,10 @@
 
 namespace neverd {
 bool sourceLeafCodeRange(const BinaryImage &Image, va_t Entry, uint32_t Size) {
-  if (!Size || Size > 68 || Entry > UINT64_MAX - Size ||
-      !readImmutableCodeBytes(Image, Entry, Size))
+  if (!Size ||
+      Size > ::neverd::limits::loader::
+                 kSourceLocalCallSourceLeafCodeRangeSizeLimit ||
+      Entry > UINT64_MAX - Size || !readImmutableCodeBytes(Image, Entry, Size))
     return false;
   for (const auto &Symbol : Image.Symbols)
     if (Symbol.IsFunc && Symbol.Addr > Entry && Symbol.Addr - Entry < Size)
@@ -42,14 +45,17 @@ SourceLocalCalls sourceLocalCalls(const BinaryImage &Image,
   if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
       Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
       !Caller.DecodedInstructionCount || !Caller.hasCompleteLiftCoverage() ||
-      Caller.Blocks.empty() || Caller.Blocks.size() > 16384)
+      Caller.Blocks.empty() ||
+      Caller.Blocks.size() >
+          ::neverd::limits::loader::kSourceLocalCallsCallerBlocksSizeLimit)
     return Result;
   if (auto Error = validateLowInstructionBoundaries(
           Caller, LowInstructionBoundaryRequirement::Required)) {
     llvm::consumeError(std::move(Error));
     return Result;
   }
-  size_t Remaining = 262144;
+  size_t Remaining =
+      ::neverd::limits::loader::kSourceLocalCallSourceLocalCallsRemaining;
   std::set<SourceCallOccurrenceKey> Seen;
   uint64_t Boundaries = 0;
   for (const auto &Block : Caller.Blocks) {

@@ -11,6 +11,8 @@
 
 #include "Reader.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web::sea_detail {
 Location locateELF(const Reader &R) {
   const auto H = R.read({0, 64});
@@ -21,7 +23,7 @@ Location locateELF(const Reader &R) {
       number(H, 52, 2) != 64 || number(H, 54, 2) != 56)
     throw Error("sea_unsupported_container");
   const auto Count = number(H, 56, 2);
-  if (!Count || Count > 1024)
+  if (!Count || Count > ::neverd::limits::web::kELFLocateELFCountLimit)
     throw Error("sea_native_table_budget_exceeded");
   const Range PH{number(H, 32, 8), Count * 56};
   if (PH.Offset < 64)
@@ -55,7 +57,7 @@ Location locateELF(const Reader &R) {
       requireMapping(N.File, N.Virtual, Loads);
     uint64_t At = N.File.Offset;
     while (At < N.File.end()) {
-      if (++Seen > 8192)
+      if (++Seen > ::neverd::limits::web::kELFLocateELFSeenLimit)
         throw Error("sea_native_table_budget_exceeded");
       if (N.File.end() - At < 12)
         throw Error("sea_invalid_note");

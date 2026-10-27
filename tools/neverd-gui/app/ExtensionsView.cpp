@@ -1,5 +1,6 @@
 #include "ExtensionsView.h"
 
+#include "../Config.h"
 #include "ItemViewActivation.h"
 #include "Session.h"
 #include "ShrinkableRow.h"
@@ -20,10 +21,6 @@ namespace neverd::gui {
 namespace {
 constexpr int IdRole = Qt::UserRole;
 constexpr int NamespaceRole = Qt::UserRole + 1;
-/// The narrowest each pane may get.  A scroll area asks at least for its
-/// scroll bars' room, and macOS's take enough that the two panes side by
-/// side held the dock wider than the views around it.
-constexpr int MinimumPaneWidth = 48;
 } // namespace
 
 ExtensionsView::ExtensionsView(Session &session, QWidget *parent)
@@ -37,9 +34,10 @@ ExtensionsView::ExtensionsView(Session &session, QWidget *parent)
   auto *buttonRow = new QWidget(left);
   auto *buttons = new QHBoxLayout(buttonRow);
   buttons->setContentsMargins(0, 0, 0, 0);
-  import_ = new QPushButton(tr("Import Manifest…"), buttonRow);
+  import_ = new QPushButton(tr("Import queries…"), buttonRow);
   run_ = new QPushButton(tr("Run"), buttonRow);
-  unload_ = new QPushButton(tr("Unload"), buttonRow);
+  unload_ = new QPushButton(tr("Remove group"), buttonRow);
+  unload_->setToolTip(tr("Remove all queries in the selected group."));
   buttons->addWidget(import_);
   buttons->addWidget(run_);
   buttons->addWidget(unload_);
@@ -47,19 +45,27 @@ ExtensionsView::ExtensionsView(Session &session, QWidget *parent)
   makeRowShrinkable(*buttonRow);
   leftLayout->addWidget(buttonRow);
   list_ = new QListWidget(left);
-  list_->setMinimumWidth(MinimumPaneWidth);
+  list_->setMinimumWidth(
+      ::neverd::limits::gui_config::kExtensionsViewMinimumPaneWidth);
   activateOnReturn(*list_);
-  list_->setToolTip(
-      tr("Import a declarative manifest to add analysis commands and views."));
+  list_->setToolTip(tr("Run built-in analysis queries or import query "
+                       "definitions from a JSON file."));
   leftLayout->addWidget(list_, 1);
   result_ = new QPlainTextEdit(splitter);
-  result_->setMinimumWidth(MinimumPaneWidth);
+  result_->setMinimumWidth(
+      ::neverd::limits::gui_config::kExtensionsViewMinimumPaneWidth);
   result_->setReadOnly(true);
   result_->setFont(Theme::instance().codeFont());
   result_->setPlaceholderText(
-      tr("Select an extension command to inspect its result."));
+      tr("Select a query and choose Run to view its result."));
   splitter->setStretchFactor(1, 1);
   layout->addWidget(splitter);
+  // Start wide enough for the translated actions, while keeping the pane
+  // shrinkable when the user drags its splitter or docks it in a narrow area.
+  const auto margins = leftLayout->contentsMargins();
+  splitter->setSizes(
+      {buttonRow->sizeHint().width() + margins.left() + margins.right(),
+       result_->sizeHint().width()});
   connect(import_, &QPushButton::clicked, this,
           &ExtensionsView::importManifest);
   connect(run_, &QPushButton::clicked, this, &ExtensionsView::run);
@@ -83,8 +89,9 @@ ExtensionsView::ExtensionsView(Session &session, QWidget *parent)
 }
 
 void ExtensionsView::importManifest() {
-  const auto path = QFileDialog::getOpenFileName(
-      this, tr("Import extension manifest"), {}, tr("Manifests (*.json)"));
+  const auto path =
+      QFileDialog::getOpenFileName(this, tr("Import analysis queries"), {},
+                                   tr("Query definitions (*.json)"));
   if (!path.isEmpty())
     session_.registerContributions(path);
 }

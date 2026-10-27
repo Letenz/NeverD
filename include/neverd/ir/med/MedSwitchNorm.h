@@ -14,6 +14,7 @@
 #ifndef NEVERD_IR_MED_MEDSWITCHNORM_H
 #define NEVERD_IR_MED_MEDSWITCHNORM_H
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/med/MedIR.h"
 
 #include "llvm/ADT/APInt.h"
@@ -51,10 +52,10 @@ namespace neverd {
 /// variable.  Constants follow the emitter's Coerce semantics: their own bit
 /// pattern is zero-extended or truncated to the arithmetic output width.  No
 /// host signed negation or addition is used, including for INT64_MIN.
-inline MedVar
-peelAffineSwitchVar(const MedFunc &Fn, MedVar Index, uint64_t &LabelDelta,
-                    int MaxAffine = 2,
-                    const std::vector<int64_t> *CaseLabels = nullptr) {
+inline MedVar peelAffineSwitchVar(
+    const MedFunc &Fn, MedVar Index, uint64_t &LabelDelta,
+    int MaxAffine = ::neverd::limits::ir::kMedSwitchNormMaxAffine,
+    const std::vector<int64_t> *CaseLabels = nullptr) {
   LabelDelta = 0;
   if (Index.isConst() || Index.Size == 0 || Index.Size > 8)
     return Index;
@@ -82,7 +83,9 @@ peelAffineSwitchVar(const MedFunc &Fn, MedVar Index, uint64_t &LabelDelta,
   unsigned Width = Index.Size * 8u;
   llvm::APInt Delta(Width, 0);
   int Affine = 0;
-  for (int Hop = 0; Hop < 64; ++Hop) {
+  for (int Hop = 0;
+       Hop < ::neverd::limits::ir::kMedSwitchNormPeelAffineSwitchVarHopLimit;
+       ++Hop) {
     const MedOp *D = defOf(Cur);
     if (!D)
       break;

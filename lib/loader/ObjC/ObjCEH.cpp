@@ -6,9 +6,10 @@
 
 #include "neverd/loader/ObjC/ObjCEH.h"
 
-#include "neverd/support/BinaryEncoding.h"
 #include "neverd/loader/DirectBranch.h"
 #include "neverd/loader/LanguageRuntime.h"
+#include "neverd/loader/Limits.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -21,13 +22,6 @@
 
 namespace neverd::objc_eh {
 namespace {
-
-/// Upper bound on the bytes of one function body the runtime-call scan reads.
-constexpr size_t MaxScannedFunctionBytes = 1u << 20;
-
-/// Upper bound on a class name.  Objective-C class names are identifiers, and
-/// a longer run than this is evidence the address was not one.
-constexpr size_t MaxClassNameBytes = 512;
 
 //===----------------------------------------------------------------------===//
 // Reading the image
@@ -68,7 +62,8 @@ va_t readPointerField(const BinaryImage &Img, va_t Address) {
   const uint8_t *Slot = Img.readVA(Address, PtrSize);
   if (!Slot)
     return 0;
-  return PtrSize == 4 ? va_t(readLE<uint32_t>(Slot)) : va_t(readLE<uint64_t>(Slot));
+  return PtrSize == 4 ? va_t(readLE<uint32_t>(Slot))
+                      : va_t(readLE<uint64_t>(Slot));
 }
 
 /// Strip the leading underscores a container adds to a C symbol.  Mach-O adds
@@ -170,7 +165,8 @@ ObjCCatchClause classifySlot(const BinaryImage &Img, ObjCRuntimeKind Runtime,
     // from treating the string's bytes as an address, so it is discarded
     // rather than preferred to what is actually there.
     Clause.ClassName =
-        readCString(Img, Entry.TypeInfoVA, MaxClassNameBytes);
+        readCString(Img, Entry.TypeInfoVA,
+                    ::neverd::limits::loader::kObjCEHMaxClassNameBytes);
     break;
   }
 
@@ -335,7 +331,7 @@ void collectRuntimeCalls(
         &Targets,
     ObjCFunctionEH &EH) {
   if (Targets.empty() || !Range.isValid() ||
-      Range.size() > MaxScannedFunctionBytes)
+      Range.size() > ::neverd::limits::loader::kObjCEHMaxScannedFunctionBytes)
     return;
   const size_t Size = static_cast<size_t>(Range.size());
   const uint8_t *Code = Img.readVA(Range.Begin, Size);
@@ -443,7 +439,8 @@ bool annotateMSVC(ExceptionFunction &F, ObjCFunctionEH &EH) {
 //===----------------------------------------------------------------------===//
 
 /// The runtime the image's own frames named, if any did.
-std::optional<ObjCRuntimeKind> runtimeFromPersonalities(const ExceptionInfo &I) {
+std::optional<ObjCRuntimeKind>
+runtimeFromPersonalities(const ExceptionInfo &I) {
   for (const ExceptionFunction &F : I.Functions)
     if (std::optional<ObjCRuntimeKind> Kind =
             getObjCRuntimeForPersonality(F.Personality))
@@ -591,15 +588,16 @@ void parseObjCExceptions(BinaryImage &Img) {
   }
 
   Info.ObjCRuntime = Runtime;
-  LLVM_DEBUG(llvm::dbgs()
-             << "objc-eh: runtime " << getObjCRuntimeKindName(Runtime.Runtime)
-             << (Runtime.RuntimeProvenByPersonality ? " (from personality)"
-                                                    : " (inferred)")
-             << ", " << Runtime.CatchFrames << " catch, "
-             << Runtime.CleanupFrames << " cleanup, "
-             << Runtime.SynchronizedFrames << " synchronized, "
-             << Runtime.FragileTryFrames << " fragile-try, "
-             << Runtime.ThrowSites << " throw sites\n");
+  LLVM_DEBUG(llvm::dbgs() << "objc-eh: runtime "
+                          << getObjCRuntimeKindName(Runtime.Runtime)
+                          << (Runtime.RuntimeProvenByPersonality
+                                  ? " (from personality)"
+                                  : " (inferred)")
+                          << ", " << Runtime.CatchFrames << " catch, "
+                          << Runtime.CleanupFrames << " cleanup, "
+                          << Runtime.SynchronizedFrames << " synchronized, "
+                          << Runtime.FragileTryFrames << " fragile-try, "
+                          << Runtime.ThrowSites << " throw sites\n");
 }
 
 } // namespace neverd::objc_eh

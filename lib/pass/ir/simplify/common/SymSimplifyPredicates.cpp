@@ -7,6 +7,7 @@
 
 #include "SymSimplifyDetail.h"
 
+#include "neverd/pass/Limits.h"
 #include "neverd/pass/ir/simplify/SymSimplifyPass.h"
 
 #include "llvm/IR/ConstantRange.h"
@@ -83,7 +84,9 @@ class PredicateAnalysis {
   bool enter(llvm::Value *V, unsigned Depth) {
     // The depth limit bounds the C++ stack even for callers with an unlimited
     // work policy. Width-weighted work also bounds APInt and interval algebra.
-    return Depth <= 128 && supportedType(V) &&
+    return Depth <=
+               ::neverd::limits::pass::kSymSimplifyPredicatesEnterDepthLimit &&
+           supportedType(V) &&
            Budget.spend(1 + V->getType()->getIntegerBitWidth() / 64);
   }
 

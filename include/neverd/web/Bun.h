@@ -12,6 +12,7 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 
 #include <array>
 #include <limits>
@@ -21,10 +22,6 @@ namespace neverd::web {
 inline constexpr std::string_view BunProfile = "bun-1.4.2-linux-x64-elf-v1";
 inline constexpr std::string_view BunPrelinkedProfile =
     "bun-71d0d439-prelinked-linux-x64-elf-v1";
-inline constexpr uint32_t MaxBunModules = 4096;
-inline constexpr uint32_t MaxBunBuiltins = 4096;
-inline constexpr uint64_t MaxBunNameBytes = 1024 * 1024;
-inline constexpr uint64_t MaxBunDecodedSourceBytes = 64ULL * 1024 * 1024;
 inline constexpr uint32_t NoBunIndex = std::numeric_limits<uint32_t>::max();
 
 /// Every range is relative to the original container, never a host pathname.

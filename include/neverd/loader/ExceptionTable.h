@@ -22,6 +22,7 @@
 #include "neverd/loader/LanguageEHGo.h"
 #include "neverd/loader/LanguageEHObjC.h"
 #include "neverd/loader/LanguageEHRust.h"
+#include "neverd/loader/Limits.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -42,6 +43,9 @@ struct ExceptionInfo {
   uint32_t DirectoryRVA = 0;
   uint32_t DirectorySize = 0;
   std::vector<size_t> FunctionIndex;
+  /// Independent entries, distinct from the starts of unwind frame ranges.
+  /// A primary frame may start after its function's first instruction.
+  std::vector<va_t> PrimaryFunctionEntries;
   /// Widest indexed code range. findFunction only walks starts inside
   /// `[Address - MaxCodeSize, Address]` plus any hit, so `--func` on a
   /// large PE is logarithmic instead of a full pdata scan.
@@ -165,13 +169,46 @@ struct ExceptionInfo {
   }
 
   void rebuildIndex() {
-    FunctionIndex.resize(Functions.size());
     MaxCodeSize = 0;
-    for (size_t I = 0; I < Functions.size(); ++I) {
-      FunctionIndex[I] = I;
-      if (Functions[I].CodeRange.size() > MaxCodeSize)
-        MaxCodeSize = Functions[I].CodeRange.size();
+    PrimaryFunctionEntries.clear();
+    PrimaryFunctionEntries.reserve(Functions.size());
+    for (const ExceptionFunction &F : Functions) {
+      if (F.CodeRange.size() > MaxCodeSize)
+        MaxCodeSize = F.CodeRange.size();
+      if (F.Kind != RuntimeFunctionKind::Primary || !F.CodeRange.isValid() ||
+          F.ParseStatus == ExceptionParseStatus::Malformed)
+        continue;
+      const va_t Entry = F.FunctionEntry ? F.FunctionEntry : F.CodeRange.Begin;
+      if (Entry <= F.CodeRange.Begin)
+        PrimaryFunctionEntries.push_back(Entry);
     }
+    std::sort(PrimaryFunctionEntries.begin(), PrimaryFunctionEntries.end());
+    PrimaryFunctionEntries.erase(std::unique(PrimaryFunctionEntries.begin(),
+                                             PrimaryFunctionEntries.end()),
+                                 PrimaryFunctionEntries.end());
+    // The order a rebuild makes: by start, then size, then position, which
+    // the stable sort keeps among equals.  An index already in it with one
+    // entry per record, as when no range changed since the last rebuild, is
+    // that order already.
+    const auto Before = [&](size_t A, size_t B) {
+      const auto &RA = Functions[A].CodeRange;
+      const auto &RB = Functions[B].CodeRange;
+      if (RA.Begin != RB.Begin)
+        return RA.Begin < RB.Begin;
+      if (RA.size() != RB.size())
+        return RA.size() < RB.size();
+      return A < B;
+    };
+    if (FunctionIndex.size() == Functions.size() &&
+        std::all_of(FunctionIndex.begin(), FunctionIndex.end(),
+                    [&](size_t I) { return I < Functions.size(); }) &&
+        std::adjacent_find(FunctionIndex.begin(), FunctionIndex.end(),
+                           [&](size_t A, size_t B) { return !Before(A, B); }) ==
+            FunctionIndex.end())
+      return;
+    FunctionIndex.resize(Functions.size());
+    for (size_t I = 0; I < Functions.size(); ++I)
+      FunctionIndex[I] = I;
     std::stable_sort(FunctionIndex.begin(), FunctionIndex.end(),
                      [&](size_t A, size_t B) {
                        const auto &RA = Functions[A].CodeRange;
@@ -208,12 +245,18 @@ struct ExceptionInfo {
     const uint64_t Window =
         MaxCodeSize == 0
             ? 0
-            : std::min<uint64_t>(MaxCodeSize, uint64_t{2} * 1024 * 1024);
+            : std::min<uint64_t>(
+                  MaxCodeSize,
+                  ::neverd::limits::loader::
+                      kExceptionTableFindFunctionWindowMinArgument2);
     const va_t WalkFloor = Window != 0 && Address >= Window
                                ? Address - static_cast<va_t>(Window)
                                : 0;
     unsigned Nest = 0;
-    for (size_t N = Lo; N > 0 && Nest < 16;) {
+    for (size_t N = Lo;
+         N > 0 &&
+         Nest <
+             ::neverd::limits::loader::kExceptionTableFindFunctionNestLimit;) {
       const size_t I = FunctionIndex[--N];
       if (I >= Functions.size())
         continue;
@@ -331,6 +374,22 @@ struct ExceptionInfo {
 
   bool hasFunctionEntry(va_t Address) const {
     return findFunctionEntry(Address) != nullptr;
+  }
+
+  /// Callable identity comes from a primary entry, not any frame-range start.
+  bool hasPrimaryFunctionEntry(va_t Address) const {
+    return std::binary_search(PrimaryFunctionEntries.begin(),
+                              PrimaryFunctionEntries.end(), Address);
+  }
+
+  bool isFunctionContinuationAt(va_t Address) const {
+    if (hasPrimaryFunctionEntry(Address))
+      return false;
+    const ExceptionFunction *F = findFunctionEntry(Address);
+    return F && F->CodeRange.isValid() &&
+           F->ParseStatus != ExceptionParseStatus::Malformed &&
+           (F->Kind != RuntimeFunctionKind::Primary ||
+            (F->FunctionEntry && F->FunctionEntry != Address));
   }
 
   /// First runtime-function whose Begin is strictly greater than Address.

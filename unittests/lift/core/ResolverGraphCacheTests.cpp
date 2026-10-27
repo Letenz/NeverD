@@ -34,10 +34,83 @@ struct ResolverGraphCacheTestAccess {
     std::vector<bool> Values;
     std::vector<bool> QueryComplete;
     std::vector<uint64_t> Masks;
+    std::vector<std::optional<va_t>> Addresses;
     bool Complete = false;
     size_t Remaining = 0;
     bool operator==(const Answer &) const = default;
   };
+
+  enum class LoadCase {
+    Single,
+    Reload,
+    StoreBarrier,
+    CallBarrier,
+    Ordered,
+    Width
+  };
+
+  static Query seedDemandedLoadAddress(CFGBuilder &B, const BinaryImage &Image,
+                                       LoadCase Kind, uint16_t LoadSize = 1) {
+    B.CurrentImg = &Image;
+    B.CurrentFuncEntry = 0x100;
+    B.JumpTableProofContextComplete = true;
+    B.PersistentCFGRoots = {0x100};
+    B.BlockStarts = {0x100};
+    auto &R = B.Insns[0x100];
+    R.Addr = 0x100;
+    R.Size = 1;
+    auto Emit = [&](NdOp Code, NdVar Output,
+                    std::initializer_list<NdVar> Inputs) -> LowOp & {
+      LowOp Op;
+      Op.Addr = R.Addr;
+      Op.Seq = static_cast<int>(R.Ops.size());
+      Op.Opcode = Code;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      R.Ops.push_back(Op);
+      return R.Ops.back();
+    };
+    const auto Width = static_cast<uint16_t>(Image.getPointerSize());
+    NdVar Address = NdVar::reg(0, Width);
+    // The address is deliberately deep and non-affine. A load occurrence
+    // remains one value even when its unrelated address exceeds proof depth.
+    for (unsigned I = 0; I < 64; ++I) {
+      const auto Next = NdVar::tmp(0x8000 + I * 16, Width);
+      Emit(NdOp::INT_XOR, Next, {Address, NdVar::scalar(I + 1, Width)});
+      Address = Next;
+    }
+    const auto First =
+        NdVar::tmp(0x9000, Kind == LoadCase::Width ? LoadSize + 1 : LoadSize);
+    const int FirstSeq = Emit(NdOp::LOAD, First, {Address}).Seq;
+    NdVar Candidate = First;
+    if (Kind != LoadCase::Single) {
+      if (Kind == LoadCase::StoreBarrier)
+        Emit(NdOp::STORE, {}, {Address, NdVar::scalar(7, LoadSize)});
+      if (Kind == LoadCase::CallBarrier)
+        Emit(NdOp::CALL, {}, {NdVar::address(0x400, Width)});
+      Candidate = NdVar::tmp(0x9100, LoadSize);
+      auto &Load = Emit(NdOp::LOAD, Candidate, {Address});
+      if (Kind == LoadCase::Ordered)
+        Load.MemoryOrdering = NdMemoryOrdering::Acquire;
+    }
+    auto &End = B.Insns[0x101];
+    End.Addr = 0x101;
+    End.Size = 1;
+    End.IsRet = true;
+    LowOp Ret;
+    Ret.Opcode = NdOp::RETURN;
+    Ret.Addr = End.Addr;
+    Ret.addInput(Candidate);
+    End.Ops.push_back(Ret);
+    Query Q;
+    Q.Candidate = Candidate;
+    Q.UseAddr = End.Addr;
+    Q.UseSeq = 0;
+    Q.Alternatives = {{First, R.Addr, FirstSeq, true}};
+    Q.AllowZeroExtension = true;
+    return Q;
+  }
 
   static void seed(CFGBuilder &B, const BinaryImage &Image,
                    unsigned Length = 3) {
@@ -65,6 +138,109 @@ struct ResolverGraphCacheTestAccess {
       B.Insns.emplace(Address, std::move(R));
       B.BlockStarts.insert(Address);
     }
+  }
+
+  // Two nested loops share H and A. A late definition at D reaches the exit
+  // along entry -> H -> A -> D -> A -> H -> exit. Unknown condition loads
+  // preserve both branch arms. Querying H first must not freeze the exit's
+  // intermediate {2} prefix before D contributes 4.
+  static std::vector<Query> seedPendingCycle(CFGBuilder &B,
+                                             const BinaryImage &Image,
+                                             bool Memory,
+                                             bool Arithmetic = false) {
+    B.CurrentImg = &Image;
+    B.CurrentFuncEntry = 0x100;
+    B.JumpTableProofContextComplete = true;
+    B.PersistentCFGRoots = {0x100};
+    const auto Width = static_cast<uint16_t>(Image.getPointerSize());
+    const auto SP =
+        NdVar::reg(getTargetRegInfo(Image.Arch).StackPointer, Width);
+    const auto Lane = NdVar::reg(0, 4);
+    auto Emit = [&](va_t Address, NdOp Code, NdVar Output,
+                    std::initializer_list<NdVar> Inputs) -> LowOp & {
+      auto &R = B.Insns[Address];
+      R.Addr = Address;
+      R.Size = 0x10;
+      LowOp Op;
+      Op.Addr = Address;
+      Op.Seq = static_cast<int>(R.Ops.size());
+      Op.Opcode = Code;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      R.Ops.push_back(Op);
+      return R.Ops.back();
+    };
+    std::vector<Query> Queries;
+    for (unsigned I = 0; I < 5; ++I) {
+      const va_t Address = 0x100 + I * 0x10;
+      B.BlockStarts.insert(Address);
+      const auto Slot = NdVar::tmp(0x9000 + I * 16, Width);
+      const auto Read = NdVar::tmp(0xa000 + I * 16, 4);
+      if (Memory)
+        Emit(Address, NdOp::INT_ADD, Slot,
+             {SP, NdVar::scalar(uint64_t{0} - 4, Width)});
+      if (I == 0 || I == 3) {
+        NdVar Value = NdVar::scalar(I == 0 ? 2 : 4, 4);
+        if (Arithmetic && I == 3) {
+          if (Memory)
+            Emit(Address, NdOp::LOAD, Read, {Slot});
+          const auto Updated = Memory ? Read : Lane;
+          Emit(Address, NdOp::INT_ADD, Updated, {Updated, NdVar::scalar(1, 4)});
+          Value = Updated;
+        }
+        if (Memory)
+          Emit(Address, NdOp::STORE, {}, {Slot, Value});
+        else if (!Arithmetic || I != 3)
+          Emit(Address, NdOp::COPY, Lane, {Value});
+      }
+      if (Memory && (I == 1 || I == 4))
+        Emit(Address, NdOp::LOAD, Read, {Slot});
+      const auto Candidate = Memory ? Read : Lane;
+      int UseSeq;
+      if (I == 1 || I == 2) {
+        const auto Condition = NdVar::tmp(0x8000 + I * 16, 1);
+        Emit(Address, NdOp::LOAD, Condition, {NdVar::reg(8, Width)});
+        const va_t Target = I == 1 ? 0x140 : 0x110;
+        UseSeq = Emit(Address, NdOp::COND_BR, {},
+                      {NdVar::cst(Target, Width), Condition})
+                     .Seq;
+        auto &R = B.Insns.at(Address);
+        R.IsBranch = R.IsCond = true;
+        R.BranchTarget = Target;
+      } else if (I == 4) {
+        UseSeq = Emit(Address, NdOp::RETURN, {}, {Candidate}).Seq;
+        B.Insns.at(Address).IsRet = true;
+      } else {
+        const va_t Target = I == 0 ? 0x110 : 0x120;
+        UseSeq =
+            Emit(Address, NdOp::BRANCH, {}, {NdVar::cst(Target, Width)}).Seq;
+        auto &R = B.Insns.at(Address);
+        R.IsBranch = true;
+        R.BranchTarget = Target;
+      }
+      if (I == 1 || I == 4) {
+        Query Q;
+        Q.Candidate = Candidate;
+        Q.UseAddr = Address;
+        Q.UseSeq = UseSeq;
+        Q.Relation = Relation::UnsignedFeasibleSet;
+        Q.UnsignedUpperBound = 8;
+        Queries.push_back(Q);
+      }
+    }
+    return Queries;
+  }
+
+  static void clobberPendingCycle(CFGBuilder &B, const BinaryImage &Image) {
+    auto &R = B.Insns.at(0x130);
+    LowOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Addr = R.Addr;
+    Call.addInput(NdVar::address(0x4000, Image.getPointerSize()));
+    R.Ops.insert(R.Ops.begin(), Call);
+    for (size_t I = 0; I != R.Ops.size(); ++I)
+      R.Ops[I].Seq = int(I);
   }
 
   static Query seedPredecessorLane(CFGBuilder &B, const BinaryImage &Image,
@@ -104,6 +280,75 @@ struct ResolverGraphCacheTestAccess {
     Q.UseAddr = 0x100 + Length;
     Q.UseSeq = 0;
     Q.Alternatives = {{NdVar::cst(7, 8), InvalidVA, -1, false}};
+    return Q;
+  }
+
+  static Query seedUnusedPredicate(CFGBuilder &B, const BinaryImage &Image,
+                                   NdOp Opcode, unsigned Variant = 0) {
+    B.CurrentImg = &Image;
+    B.CurrentFuncEntry = 0x100;
+    B.JumpTableProofContextComplete = true;
+    B.PersistentCFGRoots = {0x100};
+    B.BlockStarts = {0x100, 0x191, 0x200};
+    auto Emit = [&](va_t Address, NdOp Op, NdVar Output,
+                    std::initializer_list<NdVar> Inputs) {
+      auto &R = B.Insns[Address];
+      R.Addr = Address;
+      R.Size = 1;
+      LowOp Instruction;
+      Instruction.Addr = Address;
+      Instruction.Seq = R.Ops.size();
+      Instruction.Opcode = Op;
+      Instruction.Output = Output;
+      for (const NdVar &Input : Inputs)
+        Instruction.addInput(Input);
+      R.Ops.push_back(Instruction);
+    };
+    const NdVar Lane = NdVar::reg(0, 4);
+    Emit(0x100, NdOp::COPY, Lane, {NdVar::scalar(2, 4)});
+    NdVar Input = NdVar::reg(8, 1);
+    // The known candidate is independent of this condition's deep operand.
+    // Reconstructing the operand would exceed the ordinary expression depth.
+    for (unsigned I = 0; I < 96; ++I) {
+      const NdVar Next = NdVar::tmp(0x1000 + I * 8, 1);
+      Emit(0x101 + I, NdOp::COPY, Next, {Input});
+      Input = Next;
+    }
+    NdVar Condition = NdVar::tmp(0x9000, 1);
+    NdVar Output = Condition;
+    if (Variant == 5)
+      Output.Size = 2; // A partial view does not establish an exact producer.
+    Emit(0x180, Opcode, Output, {Input, NdVar::scalar(1, 1)});
+    if (Variant == 1 || Variant == 2) {
+      const NdVar Alias = NdVar::tmp(0x9008, 1);
+      Emit(0x181, Variant == 1 ? NdOp::COPY : NdOp::BOOL_NOT, Alias,
+           {Condition});
+      Condition = Alias;
+    } else if (Variant == 3) {
+      B.Insns.at(0x180).IsInstructionGuard = true;
+    } else if (Variant == 4) {
+      B.BlockStarts.insert(
+          0x190); // Keep cross-block producers on the full path.
+      Emit(0x18f, NdOp::BRANCH, {},
+           {NdVar::cst(0x190, Image.getPointerSize())});
+      B.Insns.at(0x18f).IsBranch = true;
+      B.Insns.at(0x18f).BranchTarget = 0x190;
+    }
+    Emit(0x190, NdOp::COND_BR, {},
+         {NdVar::cst(0x200, Image.getPointerSize()), Condition});
+    auto &Branch = B.Insns.at(0x190);
+    Branch.IsBranch = Branch.IsCond = true;
+    Branch.BranchTarget = 0x200;
+    for (va_t Address : {va_t{0x191}, va_t{0x200}}) {
+      Emit(Address, NdOp::RETURN, {}, {Lane});
+      B.Insns.at(Address).IsRet = true;
+    }
+    Query Q;
+    Q.Candidate = Lane;
+    Q.UseAddr = 0x200;
+    Q.UseSeq = 0;
+    Q.Relation = Relation::UnsignedLessThan;
+    Q.UnsignedUpperBound = 4;
     return Q;
   }
 
@@ -194,6 +439,30 @@ struct ResolverGraphCacheTestAccess {
       B.Insns.erase(0x201);
       B.BlockStarts.erase(0x200);
       B.BlockStarts.erase(0x201);
+    }
+    if (Variant == 8) {
+      // Two independent arms apply identical guards. Numerical deduplication
+      // must preserve the actual predecessor join for finite-domain queries.
+      B.CurrentFuncEntry = 0x80;
+      B.PersistentCFGRoots = {0x80};
+      B.BlockStarts.insert(0x80);
+      B.BlockStarts.insert(0x81);
+      Emit(0x80, NdOp::COND_BR, {},
+           {NdVar::cst(0x200, PointerSize), NdVar::reg(24, 1)});
+      B.Insns.at(0x80).IsBranch = B.Insns.at(0x80).IsCond = true;
+      B.Insns.at(0x80).BranchTarget = 0x200;
+      Emit(0x81, NdOp::BRANCH, {}, {NdVar::cst(0x100, PointerSize)});
+      B.Insns.at(0x81).IsBranch = true;
+      B.Insns.at(0x81).BranchTarget = 0x100;
+      B.Insns.at(0x200) = B.Insns.at(0x100);
+      B.Insns.at(0x200).Addr = 0x200;
+      for (auto &Op : B.Insns.at(0x200).Ops)
+        Op.Addr = 0x200;
+      B.Insns.erase(0x201);
+      Emit(0x201, NdOp::BRANCH, {}, {NdVar::cst(0x101, PointerSize)});
+      B.Insns.at(0x201).IsBranch = true;
+      B.Insns.at(0x201).BranchTarget = 0x101;
+      Dispatch.JumpTableTargets = {0x300};
     }
     Query Q;
     Q.Candidate = WideIndex;
@@ -334,6 +603,82 @@ struct ResolverGraphCacheTestAccess {
     return Q;
   }
 
+  enum class ClobberUse { Raw, Copy, Extend, Slice, Add, Partial };
+
+  static Query seedClobberedDependency(CFGBuilder &B, const BinaryImage &Image,
+                                       ClobberUse Use, bool KnownInput = false,
+                                       bool KnownFirst = false) {
+    B.CurrentImg = &Image;
+    B.CurrentFuncEntry = 0x100;
+    B.JumpTableProofContextComplete = true;
+    B.PersistentCFGRoots = {0x100};
+    const auto &TRI = getTargetRegInfo(Image.Arch);
+    const uint16_t Width = Image.getPointerSize();
+    const auto Lane =
+        NdVar::reg(TRI.integerParamRegs(Image.abiFormat())[1], Width);
+    const auto Anchor = NdVar::tmp(0x7000, Width);
+    auto Emit = [&](va_t Address, NdOp Opcode, NdVar Output,
+                    std::initializer_list<NdVar> Inputs) {
+      auto &R = B.Insns[Address];
+      R.Addr = Address;
+      R.Size = 1;
+      B.BlockStarts.insert(Address);
+      LowOp Op;
+      Op.Addr = Address;
+      Op.Seq = static_cast<int>(R.Ops.size());
+      Op.Opcode = Opcode;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      R.Ops.push_back(Op);
+    };
+    Emit(0x100, NdOp::COPY, Anchor, {NdVar::address(0x2000, Width)});
+    Emit(0x101, NdOp::CALL, NdVar::reg(TRI.IntReturnReg, Width),
+         {NdVar::address(0x4000, Width)});
+    NdVar Candidate = NdVar::tmp(0x7100, Width);
+    switch (Use) {
+    case ClobberUse::Raw:
+      Candidate = Lane;
+      break;
+    case ClobberUse::Copy:
+      Emit(0x102, NdOp::COPY, Candidate, {Lane});
+      break;
+    case ClobberUse::Extend:
+      Candidate.Size = Width * 2;
+      Emit(0x102, NdOp::INT_ZEXT, Candidate, {Lane});
+      break;
+    case ClobberUse::Slice:
+      Candidate.Size = 1;
+      Emit(0x102, NdOp::SUBBYTES, Candidate, {Lane, NdVar::scalar(0, 4)});
+      break;
+    case ClobberUse::Add: {
+      const auto Other = KnownInput ? Anchor : NdVar::scalar(7, Width);
+      Emit(0x102, NdOp::INT_ADD, Candidate,
+           KnownFirst ? std::initializer_list<NdVar>{Other, Lane}
+                      : std::initializer_list<NdVar>{Lane, Other});
+      break;
+    }
+    case ClobberUse::Partial:
+      Emit(0x102, NdOp::COPY, NdVar::reg(Lane.Offset, 1),
+           {NdVar::scalar(7, 1)});
+      Candidate = Lane;
+      break;
+    }
+    // Keep the fallthrough contiguous even for the untransformed control.
+    if (Use == ClobberUse::Raw)
+      Emit(0x102, NdOp::COPY, NdVar::tmp(0x7200, Width),
+           {NdVar::scalar(7, Width)});
+    Emit(0x103, NdOp::RETURN, {}, {Candidate});
+    B.Insns.at(0x103).IsRet = true;
+    Query Q;
+    Q.Candidate = Candidate;
+    Q.UseAddr = 0x103;
+    Q.UseSeq = 0;
+    Q.Alternatives = {{Anchor, 0x100, 0, true}};
+    Q.Relation = Relation::MayDepend;
+    return Q;
+  }
+
   static Answer query(CFGBuilder &B, size_t Budget = 1000000,
                       unsigned Length = 3, uint32_t Depth = 0,
                       const std::vector<va_t> *Targets = nullptr) {
@@ -360,6 +705,18 @@ struct ResolverGraphCacheTestAccess {
     return B.resolverValueQueryCacheStatsForTesting();
   }
 
+  static std::shared_ptr<const void> unmeteredToken(const CFGBuilder &B) {
+    return B.CachedUnmeteredResolverGraph;
+  }
+
+  static void clearUnmetered(CFGBuilder &B) {
+    B.CachedUnmeteredResolverGraph.reset();
+  }
+
+  static std::array<size_t, 3> unmeteredStats(const CFGBuilder &B) {
+    return B.resolverValueQueryCacheStatsForTesting(/*Unmetered=*/true);
+  }
+
   static Query valueQuery(unsigned Length = 3) {
     Query Q;
     Q.Candidate = NdVar::tmp((Length - 1) * 8, 8);
@@ -380,6 +737,15 @@ struct ResolverGraphCacheTestAccess {
         WantQueryComplete ? &A.QueryComplete : nullptr, InvalidVA, nullptr,
         &A.Remaining, MatchLimit, nullptr, WantMasks ? &A.Masks : nullptr,
         Depth);
+    return A;
+  }
+
+  static Answer unmeteredBatch(CFGBuilder &B,
+                               const std::vector<Query> &Queries) {
+    Answer A;
+    A.Values = B.tableValuesMatchAtUses(Queries, &A.Complete, &A.QueryComplete,
+                                        InvalidVA, nullptr, nullptr, 0, nullptr,
+                                        &A.Masks);
     return A;
   }
 
@@ -441,6 +807,10 @@ struct ResolverGraphCacheTestAccess {
 
   static void changeValue(CFGBuilder &B) {
     B.Insns.at(0x100).Ops.front().Inputs[0] = NdVar::cst(8, 8);
+  }
+
+  static void changeUseSequence(CFGBuilder &B, va_t Address, int Sequence) {
+    B.Insns.at(Address).Ops.front().Seq = Sequence;
   }
 
   static void malformedScalar(CFGBuilder &B, unsigned Variant) {
@@ -537,6 +907,33 @@ struct ResolverGraphCacheTestAccess {
     Numeric.Relation = Relation::UnsignedLessThan;
     Numeric.UnsignedUpperBound = 4;
     return {Memory, Writer, Numeric};
+  }
+
+  static std::vector<Query> seedLongMemoryScan(CFGBuilder &B,
+                                               const BinaryImage &Image) {
+    auto Queries = seedEntryMemory(B, Image, true, false);
+    auto &Ops = B.Insns.at(0x100).Ops;
+    LowOp Copy;
+    Copy.Addr = 0x100;
+    Copy.Opcode = NdOp::COPY;
+    Copy.Output = NdVar::tmp(0xb000, 4);
+    Copy.addInput(NdVar::scalar(11, 4));
+    Ops.insert(Ops.begin() + 2, 64, Copy);
+    for (size_t I = 0; I < Ops.size(); ++I)
+      Ops[I].Seq = static_cast<int>(I);
+    for (auto &Q : Queries)
+      Q.UseSeq += 64;
+    Queries.resize(2);
+    return Queries;
+  }
+
+  static void insertMemoryScanCall(CFGBuilder &B) {
+    auto &Op = B.Insns.at(0x100).Ops[34];
+    Op = {};
+    Op.Addr = 0x100;
+    Op.Seq = 34;
+    Op.Opcode = NdOp::CALL;
+    Op.addInput(NdVar::address(0x400, B.CurrentImg->getPointerSize()));
   }
 
   static void addBackedge(CFGBuilder &B) {
@@ -1038,11 +1435,172 @@ struct ResolverGraphCacheTestAccess {
       B.BlockStarts.insert(nodeAddress(I));
     }
   }
+
+  static void seedPEBase(CFGBuilder &B, const BinaryImage &Image) {
+    seed(B, Image);
+    for (auto &[Address, Record] : B.Insns) {
+      (void)Address;
+      for (auto &Op : Record.Ops) {
+        if (Op.Output.isTemp())
+          Op.Output = NdVar::reg(0, 8);
+        for (unsigned I = 0; I < Op.NumInputs; ++I)
+          if (Op.Inputs[I].isTemp())
+            Op.Inputs[I] = NdVar::reg(0, 8);
+      }
+    }
+    B.Insns.at(0x100).Ops.front().Inputs[0] = NdVar::address(Image.Base, 8);
+  }
+  static Query seedAddressJoin(CFGBuilder &B, const BinaryImage &Image,
+                               NdVar Left, NdVar Right) {
+    B.CurrentImg = &Image;
+    B.CurrentFuncEntry = 0x100;
+    B.JumpTableProofContextComplete = true;
+    B.PersistentCFGRoots = {0x100};
+    B.BlockStarts = {0x100, 0x101, 0x102, 0x103};
+    const auto Width = static_cast<uint16_t>(Image.getPointerSize());
+    const auto Lane = NdVar::reg(0, Width);
+    for (unsigned I = 0; I < 4; ++I) {
+      auto &R = B.Insns[0x100 + I];
+      R.Addr = 0x100 + I;
+      R.Size = 1;
+      LowOp Op;
+      Op.Addr = R.Addr;
+      Op.Seq = 0;
+      if (I == 0) {
+        R.IsBranch = R.IsCond = true;
+        R.BranchTarget = 0x102;
+        Op.Opcode = NdOp::COND_BR;
+        Op.addInput(NdVar::address(0x102, Width));
+        Op.addInput(NdVar::reg(16, 1));
+      } else if (I == 3) {
+        R.IsRet = true;
+        Op.Opcode = NdOp::RETURN;
+        Op.addInput(Lane);
+      } else {
+        Op.Opcode = NdOp::COPY;
+        Op.Output = Lane;
+        Op.addInput(I == 1 ? Left : Right);
+      }
+      R.Ops.push_back(Op);
+      if (I == 1) {
+        R.IsBranch = true;
+        R.BranchTarget = 0x103;
+        Op = {};
+        Op.Addr = R.Addr;
+        Op.Seq = 1;
+        Op.Opcode = NdOp::BRANCH;
+        Op.addInput(NdVar::address(0x103, Width));
+        R.Ops.push_back(Op);
+      }
+    }
+    Query Q;
+    Q.Candidate = Lane;
+    Q.UseAddr = 0x103;
+    Q.UseSeq = 0;
+    Q.Relation = Relation::ConstantAddress;
+    return Q;
+  }
+  static void useWideAddressContainers(CFGBuilder &B, unsigned SliceOffset) {
+    for (va_t Address : {0x101, 0x102}) {
+      auto &Ops = B.Insns.at(Address).Ops;
+      const auto Destination = Ops.front().Output;
+      LowOp Seed = Ops.front();
+      Seed.Output = NdVar::tmp(1, 8);
+      LowOp Slice;
+      Slice.Addr = Address;
+      Slice.Seq = 1;
+      Slice.Opcode = NdOp::SUBBYTES;
+      Slice.Output = NdVar::tmp(2, Destination.Size);
+      Slice.addInput(Seed.Output);
+      Slice.addInput(NdVar::scalar(SliceOffset, 1));
+      LowOp Store = Ops.front();
+      Store.Seq = 2;
+      Store.Inputs[0] = Slice.Output;
+      Ops.front() = Seed;
+      Ops.insert(Ops.begin() + 1, {Slice, Store});
+      if (Ops.size() > 3)
+        Ops.back().Seq = 3;
+    }
+  }
+  static void addAddressUseRoot(CFGBuilder &B) {
+    B.PersistentCFGRoots.insert(0x103);
+  }
+  static void setAddressUseRoot(CFGBuilder &B) {
+    B.ActiveJumpTableProofRoots = std::set<va_t>{0x103};
+  }
+  static std::vector<Query>
+  seedAddressCycle(CFGBuilder &B, const BinaryImage &Image, bool Changes) {
+    auto Queries = seedPendingCycle(B, Image, false);
+    const auto Width = static_cast<uint16_t>(Image.getPointerSize());
+    for (auto &[Address, Record] : B.Insns) {
+      for (auto &Op : Record.Ops) {
+        if (Op.Output.isReg() && Op.Output.Offset == 0)
+          Op.Output.Size = Width;
+        for (unsigned I = 0; I < Op.NumInputs; ++I)
+          if (Op.Inputs[I].isReg() && Op.Inputs[I].Offset == 0)
+            Op.Inputs[I].Size = Width;
+        if (Op.Opcode == NdOp::COPY)
+          Op.Inputs[0] = NdVar::address(
+              Address == 0x130 && Changes ? 0x4010 : 0x4000, Width);
+      }
+    }
+    for (auto &Q : Queries) {
+      Q.Candidate.Size = Width;
+      Q.Relation = Relation::ConstantAddress;
+    }
+    return Queries;
+  }
+  static Answer addressBatch(CFGBuilder &B, const std::vector<Query> &Queries,
+                             size_t Budget = 1000000, uint32_t Depth = 128,
+                             size_t MatchLimit = 0, bool WantAddresses = true) {
+    Answer A;
+    A.Remaining = Budget;
+    A.Values = B.tableValuesMatchAtUses(
+        Queries, &A.Complete, &A.QueryComplete, InvalidVA, nullptr,
+        &A.Remaining, MatchLimit, nullptr, &A.Masks, Depth, nullptr, true,
+        nullptr, WantAddresses ? &A.Addresses : nullptr);
+    return A;
+  }
+  static std::optional<bool> peBase(CFGBuilder &B, const BinaryImage &Image,
+                                    size_t &Remaining,
+                                    Scope *ReadOnlyScope = nullptr) {
+    return B.queryPEImageBaseAtUse(Image, {NdVar::reg(0, 8), 0x103, 0, false},
+                                   &Remaining, ReadOnlyScope);
+  }
+  static Answer addressAtUse(CFGBuilder &B, const BinaryImage &Image,
+                             const Query &Q, Scope *ReadOnlyScope,
+                             size_t Budget = 1000000, bool Fold = false) {
+    Answer A;
+    A.Remaining = Budget;
+    const Occurrence Use{Q.Candidate, Q.UseAddr, Q.UseSeq, false};
+    A.Addresses.push_back(
+        Fold ? B.foldTableAddressAtUse(
+                   Image, B.Insns.at(Q.UseAddr), Use, Q.Candidate.Offset,
+                   Q.UseAddr, &A.Remaining, A.Complete, false, ReadOnlyScope)
+             : B.queryConstantAddressAtUse(Image, Use, &A.Remaining, A.Complete,
+                                           ReadOnlyScope));
+    return A;
+  }
+  static void changeAddressArm(CFGBuilder &B, NdVar Value) {
+    B.Insns.at(0x102).Ops.front().Inputs[0] = Value;
+  }
+  static void setPEBaseContext(CFGBuilder &B, bool Complete) {
+    B.JumpTableProofContextComplete = Complete;
+  }
+  static void changePEBase(CFGBuilder &B, NdVar Value) {
+    B.Insns.at(0x100).Ops.front().Inputs[0] = Value;
+  }
+  static void addPEBaseRoot(CFGBuilder &B) {
+    B.PersistentCFGRoots.insert(0x102);
+  }
 };
 
 } // namespace neverd::detail
 
 namespace {
+#define RESOLVER_GUARDED_BOUND_VALUE(Type, Name, Value)                        \
+  inline constexpr Type Name = Value;
+#include "ResolverGuardedBoundFixtures.def"
 using Access = detail::ResolverGraphCacheTestAccess;
 
 BinaryImage image() {
@@ -1054,6 +1612,500 @@ BinaryImage image() {
 void expectColdAnswer(CFGBuilder &B, const Access::Answer &Warm) {
   Access::clear(B);
   EXPECT_EQ(Access::query(B), Warm);
+}
+
+TEST(ResolverPEImageBase, SharedBudgetAndIncompleteContextCannotGrantABase) {
+  auto Image = image();
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::COFF;
+  Image.Base = 0x140000000;
+  auto Run = [&](size_t Budget, bool Complete) {
+    CFGBuilder B;
+    Access::seedPEBase(B, Image);
+    Access::setPEBaseContext(B, Complete);
+    const auto Result = Access::peBase(B, Image, Budget);
+    return std::pair{Result, Budget};
+  };
+  const auto Full = Run(1u << 20, true);
+  ASSERT_EQ(Full.first, std::optional<bool>(true));
+  const size_t Used = (1u << 20) - Full.second;
+  EXPECT_EQ(Run(Used, true).first, std::optional<bool>(true));
+  EXPECT_EQ(Run(Used - 1, true).first, std::nullopt);
+  EXPECT_EQ(Run(0, true).first, std::nullopt);
+  EXPECT_EQ(Run(1u << 20, false).first, std::nullopt);
+}
+
+TEST(ResolverPEImageBase, ChangedDefinitionsAndRootsInvalidateACompletedQuery) {
+  auto Image = image();
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::COFF;
+  Image.Base = 0x140000000;
+  CFGBuilder B;
+  Access::seedPEBase(B, Image);
+  auto Query = [&] {
+    size_t Budget = 1u << 20;
+    return Access::peBase(B, Image, Budget);
+  };
+  ASSERT_EQ(Query(), std::optional<bool>(true));
+  Access::changePEBase(B, NdVar::scalar(Image.Base, 8));
+  EXPECT_EQ(Query(), std::optional<bool>(false));
+  Access::changePEBase(B, NdVar::address(Image.Base + 8, 8));
+  EXPECT_EQ(Query(), std::optional<bool>(false));
+  Access::changePEBase(B, NdVar::address(Image.Base, 8));
+  ASSERT_EQ(Query(), std::optional<bool>(true));
+  Access::addPEBaseRoot(B);
+  EXPECT_NE(Query(), std::optional<bool>(true));
+}
+
+TEST(ResolverConstantAddress, EveryArchitectureAndFormatRequiresOneAddress) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      auto Image = image();
+      Image.Arch = Target;
+      Image.Format = Format;
+      Image.Bits = Target == Arch::X86 || Target == Arch::ARM ? Bitness::Bits32
+                                                              : Bitness::Bits64;
+      const auto Width = static_cast<uint16_t>(Image.getPointerSize());
+      const auto Expected = NdVar::address(0x4000, Width);
+      for (NdVar Other :
+           {Expected, NdVar::address(0x4010, Width),
+            NdVar::scalar(0x4000, Width), NdVar::addressFragment(0x4000, Width),
+            NdVar::cst(0x4000, Width), NdVar::reg(24, Width)}) {
+        for (bool Reverse : {false, true}) {
+          CFGBuilder B;
+          const auto Q = Access::seedAddressJoin(
+              B, Image, Reverse ? Other : Expected, Reverse ? Expected : Other);
+          const auto Result = Access::addressBatch(B, {Q});
+          ASSERT_TRUE(Result.Complete);
+          const bool Same = Other == Expected;
+          EXPECT_EQ(Result.Values, (std::vector<bool>{Same}));
+          EXPECT_EQ(Result.Addresses,
+                    (std::vector<std::optional<va_t>>{
+                        Same ? std::optional<va_t>(0x4000) : std::nullopt}));
+          EXPECT_EQ(Access::addressBatch(B, {Q}), Result);
+        }
+      }
+    }
+}
+
+TEST(ResolverConstantAddress, WideContainersRetainOnlyTheCompleteGuestPointer) {
+  for (Arch Target : {Arch::X86, Arch::ARM})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      auto Image = image();
+      Image.Arch = Target;
+      Image.Format = Format;
+      Image.Bits = Bitness::Bits32;
+      for (const NdVar Value :
+           {NdVar::address(0x4000, 8), NdVar::address(0x100004000, 8),
+            NdVar::scalar(0x4000, 8), NdVar::addressFragment(0x4000, 8),
+            NdVar::cst(0x4000, 8), NdVar::reg(24, 8)})
+        for (unsigned Offset : {0u, 1u}) {
+          SCOPED_TRACE(::testing::Message()
+                       << unsigned(Target) << ':' << unsigned(Format) << ':'
+                       << unsigned(Value.Provenance) << ':' << Value.Offset
+                       << ':' << Offset);
+          CFGBuilder B;
+          const auto Q = Access::seedAddressJoin(B, Image, Value, Value);
+          Access::useWideAddressContainers(B, Offset);
+          const auto Result = Access::addressBatch(B, {Q});
+          ASSERT_TRUE(Result.Complete);
+          const bool Exact = Value == NdVar::address(0x4000, 8) && Offset == 0;
+          EXPECT_EQ(Result.Values, (std::vector<bool>{Exact}));
+          EXPECT_EQ(Result.Addresses,
+                    (std::vector<std::optional<va_t>>{
+                        Exact ? std::optional<va_t>(0x4000) : std::nullopt}));
+        }
+    }
+}
+
+TEST(ResolverConstantAddress, ScopedDiscoveryPreservesEveryBudgetBoundary) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      auto Image = image();
+      Image.Arch = Target;
+      Image.Format = Format;
+      Image.Bits = Target == Arch::X86 || Target == Arch::ARM ? Bitness::Bits32
+                                                              : Bitness::Bits64;
+      const auto Width = static_cast<uint16_t>(Image.getPointerSize());
+      const auto Expected = NdVar::address(0x4000, Width);
+      for (NdVar Other :
+           {Expected, NdVar::scalar(0x4000, Width), NdVar::reg(24, Width)})
+        for (bool Fold : {false, true}) {
+          SCOPED_TRACE(static_cast<unsigned>(Target));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(static_cast<unsigned>(Other.Space));
+          SCOPED_TRACE(static_cast<unsigned>(Other.Provenance));
+          SCOPED_TRACE(Fold);
+          CFGBuilder Warm;
+          const auto Q = Access::seedAddressJoin(Warm, Image, Expected, Other);
+          Access::Scope Scope(Warm);
+          const auto Full =
+              Access::addressAtUse(Warm, Image, Q, &Scope, 1000000, Fold);
+          ASSERT_TRUE(Full.Complete);
+          ASSERT_EQ(Full.Addresses,
+                    (std::vector<std::optional<va_t>>{
+                        Other == Expected ? std::optional<va_t>(0x4000)
+                                          : std::nullopt}));
+          const auto State = Scope.State;
+          ASSERT_TRUE(State);
+          const size_t Work = 1000000 - Full.Remaining;
+          ASSERT_LT(Work, 50000u);
+          for (size_t Budget = 0; Budget <= Work + 1; ++Budget) {
+            SCOPED_TRACE(Budget);
+            CFGBuilder Cold;
+            Access::seedAddressJoin(Cold, Image, Expected, Other);
+            EXPECT_EQ(
+                Access::addressAtUse(Warm, Image, Q, &Scope, Budget, Fold),
+                Access::addressAtUse(Cold, Image, Q, nullptr, Budget, Fold));
+          }
+          EXPECT_EQ(Scope.State, State);
+        }
+    }
+}
+
+TEST(ResolverConstantAddress, ScopedDiscoveryRechecksRootsAndNewInvocations) {
+  auto Image = image();
+  Image.Bits = Bitness::Bits64;
+  CFGBuilder B;
+  const auto Q = Access::seedAddressJoin(B, Image, NdVar::address(0x4000, 8),
+                                         NdVar::address(0x4000, 8));
+  {
+    Access::Scope Scope(B);
+    ASSERT_EQ(Access::addressAtUse(B, Image, Q, &Scope).Addresses,
+              (std::vector<std::optional<va_t>>{0x4000}));
+    Access::setAddressUseRoot(B);
+    const auto Changed = Access::addressAtUse(B, Image, Q, &Scope);
+    EXPECT_EQ(Changed.Addresses,
+              (std::vector<std::optional<va_t>>{std::nullopt}));
+    Access::clear(B);
+    EXPECT_EQ(Changed, Access::addressAtUse(B, Image, Q, nullptr));
+  }
+  Access::resetRoot(B);
+  // Every invocation must authenticate equal-sized instruction changes before
+  // a local scope can reuse the graph, including restoring an earlier value.
+  for (NdVar Value : {NdVar::address(0x4010, 8), NdVar::scalar(0x4000, 8),
+                      NdVar::address(0x4000, 8)}) {
+    Access::changeAddressArm(B, Value);
+    Access::Scope Scope(B);
+    const auto Result = Access::addressAtUse(B, Image, Q, &Scope);
+    EXPECT_EQ(Result.Addresses, (std::vector<std::optional<va_t>>{
+                                    Value == NdVar::address(0x4000, 8)
+                                        ? std::optional<va_t>(0x4000)
+                                        : std::nullopt}));
+    Access::clear(B);
+    EXPECT_EQ(Result, Access::addressAtUse(B, Image, Q, nullptr));
+  }
+}
+
+TEST(ResolverPEImageBase, ScopedDiscoveryPreservesEveryBudgetBoundary) {
+  auto Image = image();
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::COFF;
+  Image.Base = 0x140000000;
+  CFGBuilder Warm;
+  Access::seedPEBase(Warm, Image);
+  Access::Scope Scope(Warm);
+  size_t Remaining = 1000000;
+  ASSERT_EQ(Access::peBase(Warm, Image, Remaining, &Scope), true);
+  const auto State = Scope.State;
+  ASSERT_TRUE(State);
+  const size_t Work = 1000000 - Remaining;
+  for (size_t Budget = 0; Budget <= Work + 1; ++Budget) {
+    SCOPED_TRACE(Budget);
+    CFGBuilder Cold;
+    Access::seedPEBase(Cold, Image);
+    size_t WarmBudget = Budget, ColdBudget = Budget;
+    EXPECT_EQ(Access::peBase(Warm, Image, WarmBudget, &Scope),
+              Access::peBase(Cold, Image, ColdBudget));
+    EXPECT_EQ(WarmBudget, ColdBudget);
+  }
+  EXPECT_EQ(Scope.State, State);
+}
+
+TEST(ResolverConstantAddress, WarmAndColdBudgetsAndGraphChangesAgree) {
+  auto Image = image();
+  Image.Bits = Bitness::Bits64;
+  CFGBuilder Warm;
+  auto Seed = [&](CFGBuilder &B) {
+    return Access::seedAddressJoin(B, Image, NdVar::address(0x4000, 8),
+                                   NdVar::address(0x4000, 8));
+  };
+  const auto Q = Seed(Warm);
+  const auto Full = Access::addressBatch(Warm, {Q});
+  ASSERT_TRUE(Full.Complete);
+  ASSERT_EQ(Full.Addresses, (std::vector<std::optional<va_t>>{0x4000}));
+  const size_t Work = 1000000 - Full.Remaining;
+  for (size_t Budget = 0; Budget <= Work + 1; ++Budget) {
+    SCOPED_TRACE(Budget);
+    CFGBuilder Cold;
+    Seed(Cold);
+    const auto Result = Access::addressBatch(Warm, {Q}, Budget);
+    EXPECT_EQ(Result, Access::addressBatch(Cold, {Q}, Budget));
+    if (Budget < Work)
+      for (const auto &Address : Result.Addresses)
+        EXPECT_FALSE(Address);
+  }
+  // Asking for a different output shape cannot reuse a batch with no address.
+  EXPECT_TRUE(Access::addressBatch(Warm, {Q}, 1000000, 128, 0, false)
+                  .Addresses.empty());
+  EXPECT_EQ(Access::addressBatch(Warm, {Q}), Full);
+  auto Missing = Q;
+  Missing.Candidate = NdVar::address(0x4000, 8);
+  Missing.UseAddr = 0x999;
+  EXPECT_EQ(Access::addressBatch(Warm, {Missing}).Addresses,
+            (std::vector<std::optional<va_t>>{std::nullopt}));
+  Access::setPEBaseContext(Warm, false);
+  const auto Incomplete = Access::addressBatch(Warm, {Q});
+  EXPECT_FALSE(Incomplete.Complete);
+  EXPECT_EQ(Incomplete.Addresses,
+            (std::vector<std::optional<va_t>>{std::nullopt}));
+  Access::setPEBaseContext(Warm, true);
+  Access::addAddressUseRoot(Warm);
+  const auto Changed = Access::addressBatch(Warm, {Q});
+  EXPECT_EQ(Changed.Addresses,
+            (std::vector<std::optional<va_t>>{std::nullopt}));
+  Access::clear(Warm);
+  EXPECT_EQ(Access::addressBatch(Warm, {Q}), Changed);
+}
+
+TEST(ResolverConstantAddress, SharedFailureClearsEarlierAddresses) {
+  auto Image = image();
+  Image.Bits = Bitness::Bits64;
+  CFGBuilder B;
+  auto Q = Access::seedAddressJoin(B, Image, NdVar::address(0x4000, 8),
+                                   NdVar::address(0x4000, 8));
+  auto Scalar = Q;
+  Scalar.Candidate = NdVar::scalar(3, 8);
+  Scalar.Relation = Access::Relation::UnsignedFeasibleSet;
+  Scalar.UnsignedUpperBound = 4;
+  const auto Full = Access::addressBatch(B, {Q, Scalar});
+  ASSERT_TRUE(Full.Complete);
+  ASSERT_EQ(Full.Values, (std::vector<bool>{true, true}));
+  for (size_t Match : {size_t{1}, size_t{2}}) {
+    auto Limited = Access::addressBatch(B, {Q, Scalar}, 1000000, 128, Match);
+    EXPECT_FALSE(Limited.Complete);
+    for (auto Value : Limited.Addresses)
+      EXPECT_FALSE(Value);
+  }
+  const size_t Work = 1000000 - Full.Remaining;
+  const auto Short = Access::addressBatch(B, {Q, Scalar}, Work - 1);
+  EXPECT_FALSE(Short.Complete);
+  for (auto Value : Short.Addresses)
+    EXPECT_FALSE(Value);
+  EXPECT_EQ(Access::addressBatch(B, {Q, Scalar}), Full);
+}
+
+TEST(ResolverConstantAddress, LateLoopDefinitionsReachEveryQuery) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (bool Changes : {false, true}) {
+      auto Image = image();
+      Image.Arch = Target;
+      Image.Bits = Target == Arch::X86 || Target == Arch::ARM ? Bitness::Bits32
+                                                              : Bitness::Bits64;
+      for (bool Reverse : {false, true}) {
+        CFGBuilder B;
+        auto Queries = Access::seedAddressCycle(B, Image, Changes);
+        if (Reverse)
+          std::reverse(Queries.begin(), Queries.end());
+        const auto Full = Access::addressBatch(B, Queries);
+        ASSERT_EQ(Full.Addresses.size(), 2u);
+        for (const auto &Address : Full.Addresses)
+          EXPECT_EQ(Address,
+                    Changes ? std::nullopt : std::optional<va_t>(0x4000));
+        EXPECT_EQ(Access::addressBatch(B, Queries), Full);
+        Access::clear(B);
+        EXPECT_EQ(Access::addressBatch(B, Queries), Full);
+        const auto Shallow = Access::addressBatch(B, Queries, 1000000, 1);
+        for (const auto &Address : Shallow.Addresses)
+          EXPECT_FALSE(Address);
+        EXPECT_EQ(Access::addressBatch(B, Queries), Full);
+      }
+    }
+}
+
+TEST(ResolverDependency, ImplicitCallClobberStaysIncompleteThroughTransports) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (auto Use : {Access::ClobberUse::Raw, Access::ClobberUse::Copy,
+                       Access::ClobberUse::Extend, Access::ClobberUse::Slice,
+                       Access::ClobberUse::Add, Access::ClobberUse::Partial})
+        for (bool Occurrence : {false, true}) {
+          SCOPED_TRACE(::testing::Message()
+                       << unsigned(Target) << " " << unsigned(Format) << " "
+                       << unsigned(Use) << " " << Occurrence);
+          auto Image = image();
+          Image.Arch = Target;
+          Image.Format = Format;
+          Image.Bits = Target == Arch::X64 || Target == Arch::AArch64
+                           ? Bitness::Bits64
+                           : Bitness::Bits32;
+          CFGBuilder B;
+          auto Q = Access::seedClobberedDependency(B, Image, Use);
+          Q.UseDefinedAlternativesAsOccurrenceRoots = Occurrence;
+          const auto Answer = Access::batch(B, {Q});
+          EXPECT_FALSE(Answer.Complete);
+          EXPECT_EQ(Answer.QueryComplete, (std::vector<bool>{false}));
+          EXPECT_EQ(Answer.Values, (std::vector<bool>{false}));
+          EXPECT_GT(Answer.Remaining, 0u);
+          EXPECT_EQ(Access::batch(B, {Q}), Answer);
+          Access::clear(B);
+          EXPECT_EQ(Access::batch(B, {Q}), Answer);
+        }
+}
+
+TEST(ResolverDependency, KnownProducerStillMatchesBesideAnUnknownInput) {
+  for (bool KnownFirst : {false, true})
+    for (bool Occurrence : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << KnownFirst << " " << Occurrence);
+      auto Image = image();
+      Image.Bits = Bitness::Bits64;
+      Image.Format = BinaryFormat::ELF;
+      CFGBuilder B;
+      auto Q = Access::seedClobberedDependency(
+          B, Image, Access::ClobberUse::Add, true, KnownFirst);
+      Q.UseDefinedAlternativesAsOccurrenceRoots = Occurrence;
+      const auto Answer = Access::batch(B, {Q});
+      EXPECT_TRUE(Answer.Complete);
+      EXPECT_EQ(Answer.QueryComplete, (std::vector<bool>{true}));
+      EXPECT_EQ(Answer.Values, (std::vector<bool>{true}));
+    }
+}
+
+TEST(ResolverDependency, UnknownInputsDoNotEraseExactTransformIdentity) {
+  for (auto Use : {Access::ClobberUse::Copy, Access::ClobberUse::Extend,
+                   Access::ClobberUse::Slice, Access::ClobberUse::Add,
+                   Access::ClobberUse::Partial}) {
+    SCOPED_TRACE(unsigned(Use));
+    auto Image = image();
+    Image.Bits = Bitness::Bits64;
+    Image.Format = BinaryFormat::ELF;
+    CFGBuilder B;
+    auto Q = Access::seedClobberedDependency(B, Image, Use);
+    Q.Relation = Access::Relation::MustEqual;
+    Q.Alternatives = {{Q.Candidate, Q.UseAddr, Q.UseSeq, false}};
+    const auto Answer = Access::batch(B, {Q});
+    EXPECT_TRUE(Answer.Complete);
+    EXPECT_EQ(Answer.Values, (std::vector<bool>{true}));
+  }
+}
+
+TEST(ResolverDependency, UnresolvedAlternativeCannotCertifyIndependence) {
+  for (auto Use : {Access::ClobberUse::Raw, Access::ClobberUse::Copy,
+                   Access::ClobberUse::Add, Access::ClobberUse::Partial}) {
+    SCOPED_TRACE(unsigned(Use));
+    auto Image = image();
+    Image.Bits = Bitness::Bits64;
+    Image.Format = BinaryFormat::ELF;
+    CFGBuilder B;
+    auto Q = Access::seedClobberedDependency(B, Image, Use);
+    Q.Alternatives = {{Q.Candidate, Q.UseAddr, Q.UseSeq, false}};
+    Q.Candidate = NdVar::address(0x3000, 8);
+    const auto Answer = Access::batch(B, {Q});
+    EXPECT_FALSE(Answer.Complete);
+    EXPECT_EQ(Answer.QueryComplete, (std::vector<bool>{false}));
+    EXPECT_EQ(Answer.Values, (std::vector<bool>{false}));
+  }
+}
+
+TEST(ResolverDependency, ClosedCyclesKeepTheirInputsWithoutInventingClobbers) {
+  for (bool Clobbered : {false, true})
+    for (bool Present : {false, true})
+      for (bool Reverse : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Clobbered << " " << Present << " " << Reverse);
+        auto Image = image();
+        Image.Bits = Bitness::Bits64;
+        Image.Format = BinaryFormat::ELF;
+        CFGBuilder B;
+        auto Queries = Access::seedPendingCycle(B, Image, false, true);
+        if (Clobbered)
+          Access::clobberPendingCycle(B, Image);
+        for (auto &Q : Queries) {
+          Q.Relation = Access::Relation::MayDepend;
+          Q.Alternatives = {
+              {NdVar::scalar(Present ? 1 : 7, 4), InvalidVA, -1, false}};
+        }
+        if (Reverse)
+          std::reverse(Queries.begin(), Queries.end());
+        const auto Answer = Access::batch(B, Queries);
+        EXPECT_EQ(Answer.Complete, Present || !Clobbered);
+        EXPECT_EQ(Answer.QueryComplete,
+                  std::vector<bool>(Queries.size(), Present || !Clobbered));
+        EXPECT_EQ(Answer.Values, std::vector<bool>(Queries.size(), Present));
+        EXPECT_GT(Answer.Remaining, 0u);
+        EXPECT_EQ(Access::batch(B, Queries), Answer);
+        Access::clear(B);
+        EXPECT_EQ(Access::batch(B, Queries), Answer);
+      }
+}
+
+TEST(ResolverLoadAddress, OpaqueLoadIdentityDoesNotRequireItsAddressValue) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (auto Kind :
+           {Access::LoadCase::Single, Access::LoadCase::StoreBarrier,
+            Access::LoadCase::CallBarrier, Access::LoadCase::Ordered,
+            Access::LoadCase::Width}) {
+        SCOPED_TRACE(static_cast<unsigned>(Target));
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(static_cast<unsigned>(Kind));
+        auto Image = image();
+        Image.Arch = Target;
+        Image.Format = Format;
+        Image.Bits = Target == Arch::X64 || Target == Arch::AArch64
+                         ? Bitness::Bits64
+                         : Bitness::Bits32;
+        CFGBuilder B;
+        const auto Q = Access::seedDemandedLoadAddress(B, Image, Kind);
+        const auto Answer = Access::batch(B, {Q}, 1000000, 8);
+        ASSERT_TRUE(Answer.Complete);
+        EXPECT_EQ(Answer.QueryComplete, (std::vector<bool>{true}));
+        EXPECT_EQ(Answer.Values,
+                  (std::vector<bool>{Kind == Access::LoadCase::Single}));
+        EXPECT_EQ(Access::batch(B, {Q}, 1000000, 8), Answer);
+      }
+}
+
+TEST(ResolverLoadAddress, ReusedLoadStillRequiresCompleteAddressEquality) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Target));
+    auto Image = image();
+    Image.Arch = Target;
+    Image.Bits = Target == Arch::X64 || Target == Arch::AArch64
+                     ? Bitness::Bits64
+                     : Bitness::Bits32;
+    CFGBuilder B;
+    const auto Q =
+        Access::seedDemandedLoadAddress(B, Image, Access::LoadCase::Reload);
+    const auto Full = Access::batch(B, {Q}, 1000000, 128);
+    ASSERT_TRUE(Full.Complete);
+    EXPECT_EQ(Full.Values, (std::vector<bool>{true}));
+    const auto Shallow = Access::batch(B, {Q}, 1000000, 8);
+    EXPECT_FALSE(Shallow.Complete);
+    EXPECT_EQ(Shallow.Values, (std::vector<bool>{false}));
+    EXPECT_EQ(Shallow.QueryComplete, (std::vector<bool>{false}));
+  }
+}
+
+TEST(ResolverLoadAddress, ARMELFLiteralStillRequiresItsAddressValue) {
+  auto Image = image();
+  Image.Arch = Arch::ARM;
+  Image.Format = BinaryFormat::ELF;
+  Image.Bits = Bitness::Bits32;
+  CFGBuilder B;
+  const auto Q =
+      Access::seedDemandedLoadAddress(B, Image, Access::LoadCase::Single, 4);
+  const auto Shallow = Access::batch(B, {Q}, 1000000, 8);
+  EXPECT_FALSE(Shallow.Complete);
+  EXPECT_EQ(Shallow.Values, (std::vector<bool>{false}));
+  const auto Full = Access::batch(B, {Q}, 1000000, 128);
+  ASSERT_TRUE(Full.Complete);
+  EXPECT_EQ(Full.Values, (std::vector<bool>{true}));
 }
 
 TEST(ResolverGuardPredicates, CompoundGuardsPreserveEveryJoinedInput) {
@@ -1535,6 +2587,85 @@ TEST(ResolverGraphCache, EqualCountsDoNotHideBackedgesRootsOrChangedOps) {
     EXPECT_NE(Access::token(B), Before);
     expectColdAnswer(B, After);
   }
+}
+
+TEST(ResolverGraphCache, RepeatedPointQueriesRetireChangedSequences) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+    auto Image = image();
+    Image.Bits = Bitness::Bits64;
+    Image.Format = Format;
+    constexpr unsigned Length = 80;
+    constexpr size_t Budget = 1000000;
+    CFGBuilder Warm;
+    const auto Q = Access::seedPredecessorLane(Warm, Image, Length);
+    std::vector<Access::Query> Queries;
+    for (unsigned I = 0; I < 144; ++I) {
+      auto Current = Q;
+      Current.UseSeq = I < 128 ? 0 : 1;
+      Current.Alternatives.front().Value = NdVar::cst(I % 5 ? 7 : 8, 8);
+      Queries.push_back(Current);
+    }
+    for (int Sequence : {0, 1}) {
+      Access::changeUseSequence(Warm, Q.UseAddr, Sequence);
+      const auto Full = Access::batch(Warm, Queries, Budget, 128);
+      ASSERT_TRUE(Full.Complete);
+      ASSERT_EQ(Full.Values.size(), Queries.size());
+      for (size_t I = 0; I < Queries.size(); ++I)
+        EXPECT_EQ(Full.Values[I], Queries[I].UseSeq == Sequence && I % 5 != 0);
+      const size_t Work = Budget - Full.Remaining;
+      ASSERT_GT(Work, 0u);
+      for (size_t Limit : {size_t{0}, Work - 1, Work, Work + 1, Budget}) {
+        CFGBuilder Cold;
+        Access::seedPredecessorLane(Cold, Image, Length);
+        Access::changeUseSequence(Cold, Q.UseAddr, Sequence);
+        EXPECT_EQ(Access::batch(Warm, Queries, Limit, 128),
+                  Access::batch(Cold, Queries, Limit, 128));
+      }
+    }
+  }
+}
+
+TEST(ResolverGraphCache, MemoryScansKeepExactWritersBarriersAndBudgets) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      auto Image = image();
+      Image.Arch = Target;
+      Image.Bits = Target == Arch::X86 || Target == Arch::ARM ? Bitness::Bits32
+                                                              : Bitness::Bits64;
+      Image.Format = Format;
+      SCOPED_TRACE(::testing::Message() << static_cast<unsigned>(Target) << ':'
+                                        << static_cast<unsigned>(Format));
+      constexpr size_t Budget = 1000000;
+      CFGBuilder Warm;
+      auto Queries = Access::seedLongMemoryScan(Warm, Image);
+      const auto First = Access::batch(Warm, Queries, Budget, 128);
+      ASSERT_TRUE(First.Complete);
+      ASSERT_EQ(First.Values, (std::vector<bool>{true, true}));
+      // A claimed memcpy at a pure COPY is malformed. It must still be
+      // visited after the ordinary memory scan has already been cached.
+      Queries[1].AuthenticatedFrameMemcpyWriters = {
+          {NdVar::scalar(11, 4), 0x100, 34, false}};
+      const auto Malformed = Access::batch(Warm, Queries, Budget, 128);
+      ASSERT_TRUE(Malformed.Complete);
+      ASSERT_EQ(Malformed.Values, (std::vector<bool>{true, false}));
+      const size_t Work = Budget - Malformed.Remaining;
+      ASSERT_GT(Work, 0u);
+      for (size_t Limit : {size_t{0}, Work - 1, Work, Work + 1, Budget}) {
+        CFGBuilder Cold;
+        Access::seedLongMemoryScan(Cold, Image);
+        EXPECT_EQ(Access::batch(Warm, Queries, Limit, 128),
+                  Access::batch(Cold, Queries, Limit, 128));
+      }
+      Queries[1].AuthenticatedFrameMemcpyWriters.clear();
+      Access::insertMemoryScanCall(Warm);
+      const auto Changed = Access::batch(Warm, Queries, Budget, 128);
+      ASSERT_TRUE(Changed.Complete);
+      EXPECT_EQ(Changed.Values, (std::vector<bool>{false, false}));
+      Access::clear(Warm);
+      EXPECT_EQ(Access::batch(Warm, Queries, Budget, 128), Changed);
+    }
 }
 
 TEST(ResolverGraphCache, StorageOwnershipAndCallbackChargesRemainCurrent) {
@@ -2096,6 +3227,79 @@ TEST(ResolverValueQueryCache, GraphIdentityDoesNotReplaceProofContextIdentity) {
   EXPECT_EQ(Access::stats(B)[0], Hits);
   Access::clear(B);
   EXPECT_EQ(Access::batch(B, {Q}), Changed);
+}
+
+TEST(ResolverValueQueryCache, UnmeteredQueriesKeepTheirOwnGraphAndBatches) {
+  const auto Image = image();
+  auto True = Access::valueQuery();
+  auto False = True;
+  False.Alternatives.front().Value = NdVar::cst(8, 8);
+  const std::vector<Access::Query> Queries{True, False};
+  CFGBuilder B;
+  Access::seed(B, Image);
+  const auto First = Access::unmeteredBatch(B, Queries);
+  ASSERT_TRUE(First.Complete);
+  ASSERT_EQ(First.Values, (std::vector<bool>{true, false}));
+  EXPECT_FALSE(Access::token(B));
+  const auto Graph = Access::unmeteredToken(B);
+  ASSERT_TRUE(Graph);
+  ASSERT_GT(Access::unmeteredStats(B)[1], 0u);
+  const size_t Hits = Access::unmeteredStats(B)[0];
+  EXPECT_EQ(Access::unmeteredBatch(B, Queries), First);
+  EXPECT_EQ(Access::unmeteredToken(B), Graph);
+  EXPECT_EQ(Access::unmeteredStats(B)[0], Hits + 1);
+  EXPECT_FALSE(Access::token(B));
+
+  // A metered query keeps its own graph beside the unmetered one, and the
+  // unmetered query keeps answering from its own.
+  ASSERT_TRUE(Access::batch(B, Queries).Complete);
+  const auto Metered = Access::token(B);
+  ASSERT_TRUE(Metered);
+  EXPECT_NE(Metered, Graph);
+  EXPECT_EQ(Access::unmeteredBatch(B, Queries), First);
+  EXPECT_EQ(Access::token(B), Metered);
+  EXPECT_EQ(Access::unmeteredToken(B), Graph);
+  EXPECT_EQ(Access::unmeteredStats(B)[0], Hits + 2);
+
+  // After unmetered queries, a metered one still pays its whole cold charge
+  // at every budget boundary.
+  CFGBuilder Probe;
+  Access::seed(Probe, Image);
+  const size_t Work = 1000000 - Access::batch(Probe, Queries).Remaining;
+  ASSERT_LT(Work, 50000u);
+  for (size_t Budget = 0; Budget <= Work + 1; ++Budget) {
+    SCOPED_TRACE(Budget);
+    CFGBuilder Warm, Cold;
+    Access::seed(Warm, Image);
+    Access::seed(Cold, Image);
+    ASSERT_EQ(Access::unmeteredBatch(Warm, Queries), First);
+    ASSERT_EQ(Access::unmeteredBatch(Warm, Queries), First);
+    EXPECT_EQ(Access::batch(Warm, Queries, Budget),
+              Access::batch(Cold, Queries, Budget));
+  }
+}
+
+TEST(ResolverValueQueryCache, UnmeteredReuseFollowsContextAndGraphChanges) {
+  const auto Image = image();
+  const auto Q = Access::valueQuery();
+  for (auto Mutate :
+       {Access::changeAddressOccurrence, Access::changeNestedAddressOccurrence,
+        Access::changeScalarOccurrence, Access::changeEntry,
+        Access::changeConsumerAudit, Access::changeSymbolBudget,
+        Access::changeValue, Access::addBackedge, Access::changeRoot,
+        Access::changeConditionalRoot}) {
+    CFGBuilder B;
+    Access::seed(B, Image);
+    Access::seedOccurrences(B);
+    const auto First = Access::unmeteredBatch(B, {Q});
+    ASSERT_TRUE(First.Complete);
+    ASSERT_EQ(Access::unmeteredBatch(B, {Q}), First);
+    ASSERT_GT(Access::unmeteredStats(B)[0], 0u);
+    Mutate(B);
+    const auto Changed = Access::unmeteredBatch(B, {Q});
+    Access::clearUnmetered(B);
+    EXPECT_EQ(Access::unmeteredBatch(B, {Q}), Changed);
+  }
 }
 
 TEST(ResolverValueQueryCache, DepthRefusalRemainsIncompleteAndRetriesNewLimit) {
@@ -2660,6 +3864,262 @@ TEST(ResolverFiniteControl, ConditionalRootsNeedTheirOwnAdmission) {
   EXPECT_FALSE(Strict.Reachable.count(0x140));
   Access::clear(B);
   EXPECT_EQ(Access::finiteControl(B, Fixture), Strict);
+}
+
+TEST(ResolverPendingCycles, BatchAndSingleQueriesIncludeTheLateLoopDefinition) {
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool Memory : {false, true})
+        for (bool Reverse : {false, true}) {
+          SCOPED_TRACE(static_cast<unsigned>(Architecture));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(Memory);
+          SCOPED_TRACE(Reverse);
+          auto Image = image();
+          Image.Arch = Architecture;
+          Image.Bits = Architecture == Arch::X86 || Architecture == Arch::ARM
+                           ? Bitness::Bits32
+                           : Bitness::Bits64;
+          Image.Format = Format;
+          CFGBuilder B;
+          auto Queries = Access::seedPendingCycle(B, Image, Memory);
+          if (Reverse)
+            std::reverse(Queries.begin(), Queries.end());
+          const auto Both =
+              Access::batch(B, Queries, 10000000, 0, 0, true, true, true);
+          ASSERT_TRUE(Both.Complete);
+          EXPECT_EQ(Both.Values, (std::vector<bool>{true, true}));
+          EXPECT_EQ(Both.Masks, (std::vector<uint64_t>{20, 20}));
+          EXPECT_EQ(Both, Access::batch(B, Queries, 10000000, 0, 0, true, true,
+                                        true));
+          for (const auto &Q : Queries) {
+            CFGBuilder Single;
+            Access::seedPendingCycle(Single, Image, Memory);
+            const auto One =
+                Access::batch(Single, {Q}, 10000000, 0, 0, true, true, true);
+            ASSERT_TRUE(One.Complete);
+            EXPECT_EQ(One.Masks, (std::vector<uint64_t>{20}));
+          }
+          for (auto &Q : Queries) {
+            Q.Relation = Access::Relation::UnsignedLessThan;
+            Q.UnsignedUpperBound = 4;
+          }
+          const auto Bound = Access::batch(B, Queries);
+          ASSERT_TRUE(Bound.Complete);
+          EXPECT_EQ(Bound.Values, (std::vector<bool>{false, false}));
+        }
+}
+
+TEST(ResolverPendingCycles, RealUpdatesCannotBecomeTransparentBackedges) {
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (bool Memory : {false, true}) {
+      auto Image = image();
+      Image.Arch = Architecture;
+      Image.Bits = Architecture == Arch::X86 || Architecture == Arch::ARM
+                       ? Bitness::Bits32
+                       : Bitness::Bits64;
+      Image.Format = BinaryFormat::ELF;
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Memory);
+      CFGBuilder B;
+      auto Queries = Access::seedPendingCycle(B, Image, Memory, true);
+      for (auto &Q : Queries) {
+        Q.Relation = Access::Relation::UnsignedLessThan;
+        Q.UnsignedUpperBound = 4;
+      }
+      const auto Bound = Access::batch(B, Queries);
+      EXPECT_EQ(Bound.Values, (std::vector<bool>{false, false}));
+    }
+}
+
+TEST(ResolverPendingCycles, WarmAndColdLimitsKeepTheSameTransaction) {
+  auto Image = image();
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::ELF;
+  for (bool Memory : {false, true}) {
+    CFGBuilder Warm;
+    const auto Queries = Access::seedPendingCycle(Warm, Image, Memory);
+    constexpr size_t Budget = 10000000;
+    const auto Complete =
+        Access::batch(Warm, Queries, Budget, 0, 0, true, true, true);
+    ASSERT_TRUE(Complete.Complete);
+    const size_t Work = Budget - Complete.Remaining;
+    ASSERT_GT(Work, 0u);
+    for (size_t Limit : {size_t{0}, Work - 1, Work, Work + 1, Budget})
+      for (uint32_t Depth : {1u, 2u, 4u, 8u, 64u}) {
+        CFGBuilder Cold;
+        Access::seedPendingCycle(Cold, Image, Memory);
+        EXPECT_EQ(
+            Access::batch(Warm, Queries, Limit, Depth, 0, true, true, true),
+            Access::batch(Cold, Queries, Limit, Depth, 0, true, true, true));
+      }
+  }
+}
+
+TEST(ResolverPredicateDemand, UnusedLocalShapesDoNotExpandTheirOperands) {
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (NdOp Opcode :
+         {NdOp::BOOL_AND, NdOp::BOOL_OR, NdOp::BOOL_XOR, NdOp::INT_SLESS,
+          NdOp::INT_SLESSEQUAL, NdOp::INT_LESS, NdOp::INT_LESSEQUAL})
+      for (unsigned Variant : {0u, 1u, 2u}) {
+        SCOPED_TRACE(static_cast<unsigned>(Architecture));
+        SCOPED_TRACE(static_cast<unsigned>(Opcode));
+        SCOPED_TRACE(Variant);
+        auto Image = image();
+        Image.Arch = Architecture;
+        Image.Bits = Architecture == Arch::X86 || Architecture == Arch::ARM
+                         ? Bitness::Bits32
+                         : Bitness::Bits64;
+        CFGBuilder B;
+        const auto Q = Access::seedUnusedPredicate(B, Image, Opcode, Variant);
+        const auto A = Access::batch(B, {Q});
+        EXPECT_TRUE(A.Complete);
+        EXPECT_EQ(A.Values, (std::vector<bool>{true}));
+      }
+}
+
+TEST(ResolverPredicateDemand, NeededAndUncertainShapesKeepTheCompleteWalk) {
+  auto Image = image();
+  for (NdOp Opcode :
+       {NdOp::BOOL_AND, NdOp::BOOL_OR, NdOp::INT_LESS, NdOp::INT_LESSEQUAL,
+        NdOp::INT_EQUAL, NdOp::INT_NOTEQUAL}) {
+    SCOPED_TRACE(static_cast<unsigned>(Opcode));
+    CFGBuilder B;
+    auto Q = Access::seedUnusedPredicate(B, Image, Opcode);
+    Q.Relation = Opcode == NdOp::BOOL_AND || Opcode == NdOp::BOOL_OR
+                     ? Access::Relation::JoinedUnsignedFeasibleSet
+                     : Access::Relation::UnsignedFeasibleSet;
+    const auto A = Access::batch(B, {Q}, 1000000, 0, 0, true, true, true);
+    EXPECT_FALSE(A.Complete);
+    EXPECT_EQ(A.QueryComplete, (std::vector<bool>{false}));
+  }
+  for (unsigned Variant : {3u, 4u, 5u}) {
+    SCOPED_TRACE(Variant);
+    CFGBuilder B;
+    const auto Q =
+        Access::seedUnusedPredicate(B, Image, NdOp::BOOL_AND, Variant);
+    EXPECT_FALSE(Access::batch(B, {Q}).Complete);
+  }
+}
+
+TEST(ResolverPredicateDemand, PolicyChangesAndBudgetsAgreeColdAndWarm) {
+  auto Image = image();
+  CFGBuilder Warm;
+  auto Q = Access::seedUnusedPredicate(Warm, Image, NdOp::INT_LESS, 2);
+  constexpr size_t Budget = 1000000;
+  const auto A = Access::batch(Warm, {Q}, Budget);
+  ASSERT_TRUE(A.Complete);
+  const size_t Work = Budget - A.Remaining;
+  ASSERT_GT(Work, 0u);
+  for (auto Relation : {Access::Relation::UnsignedLessThan,
+                        Access::Relation::UnsignedFeasibleSet,
+                        Access::Relation::JoinedUnsignedFeasibleSet,
+                        Access::Relation::UnsignedLessThan}) {
+    Q.Relation = Relation;
+    for (size_t Limit : {size_t{0}, Work - 1, Work, Work + 1, Budget})
+      for (uint32_t Depth : {1u, 2u, 4u, 64u}) {
+        CFGBuilder Cold;
+        Access::seedUnusedPredicate(Cold, Image, NdOp::INT_LESS, 2);
+        EXPECT_EQ(Access::batch(Warm, {Q}, Limit, Depth, 0, true, true, true),
+                  Access::batch(Cold, {Q}, Limit, Depth, 0, true, true, true));
+      }
+  }
+}
+
+TEST(ResolverGuardPredicates, GuardedBoundsDoNotClaimFiniteJoinOwnership) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Target));
+    auto Image = image();
+    Image.Arch = Target;
+    Image.Bits = Target == Arch::X64 || Target == Arch::AArch64
+                     ? Bitness::Bits64
+                     : Bitness::Bits32;
+    CFGBuilder B;
+    auto Guarded = Access::seedJoinedGuard(B, Image, kGuardedBoundStraightLine);
+    Guarded.Relation = Access::Relation::GuardedUnsignedLessThan;
+    Guarded.UnsignedUpperBound = kGuardedBoundEnvelope;
+    auto Cheap = Guarded;
+    Cheap.Relation = Access::Relation::UnsignedLessThan;
+    auto Join = Guarded;
+    Join.Relation = Access::Relation::JoinedUnsignedFeasibleSet;
+    const std::vector<Access::Query> Queries{Cheap, Guarded, Join, Guarded,
+                                             Cheap};
+    const auto Answer =
+        Access::batch(B, Queries, kGuardedBoundBudget, 0, 0, true, true, true);
+    ASSERT_TRUE(Answer.Complete);
+    EXPECT_EQ(Answer.Values,
+              (std::vector<bool>{false, true, false, true, false}));
+    EXPECT_EQ(Answer.Masks, std::vector<uint64_t>(Queries.size(), 0));
+    EXPECT_EQ(
+        Access::batch(B, Queries, kGuardedBoundBudget, 0, 0, true, true, true),
+        Answer);
+    Access::clear(B);
+    EXPECT_EQ(
+        Access::batch(B, Queries, kGuardedBoundBudget, 0, 0, true, true, true),
+        Answer);
+    Guarded.UnsignedUpperBound = kGuardedBoundLargeEnvelope;
+    const auto Large = Access::batch(B, {Guarded}, kGuardedBoundBudget, 0, 0,
+                                     true, true, true);
+    ASSERT_TRUE(Large.Complete);
+    EXPECT_EQ(Large.Values, (std::vector<bool>{true}));
+    EXPECT_EQ(Large.Masks, (std::vector<uint64_t>{0}));
+  }
+}
+
+TEST(ResolverGuardPredicates, IdenticalIncomingValuesKeepTheirJoinEvidence) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Target));
+    auto Image = image();
+    Image.Arch = Target;
+    Image.Bits = Target == Arch::X64 || Target == Arch::AArch64
+                     ? Bitness::Bits64
+                     : Bitness::Bits32;
+    CFGBuilder Warm;
+    const auto Q = Access::seedJoinedGuard(Warm, Image, 8);
+    const auto Answer =
+        Access::batch(Warm, {Q}, kGuardedBoundBudget, 0, 0, true, true, true);
+    ASSERT_TRUE(Answer.Complete);
+    EXPECT_EQ(Answer.Values, (std::vector<bool>{true}));
+    EXPECT_EQ(Answer.Masks, (std::vector<uint64_t>{7}));
+    const size_t Work = kGuardedBoundBudget - Answer.Remaining;
+    ASSERT_GT(Work, 0u);
+    for (size_t Budget : {size_t{0}, Work - 1, Work, Work + 1}) {
+      CFGBuilder Cold;
+      Access::seedJoinedGuard(Cold, Image, 8);
+      EXPECT_EQ(Access::batch(Warm, {Q}, Budget, 0, 0, true, true, true),
+                Access::batch(Cold, {Q}, Budget, 0, 0, true, true, true));
+    }
+  }
+}
+
+TEST(ResolverGuardPredicates,
+     GuardedBoundsRejectChangedUnboundedAndUnguardedLanes) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    auto Image = image();
+    Image.Arch = Target;
+    Image.Bits = Target == Arch::X64 || Target == Arch::AArch64
+                     ? Bitness::Bits64
+                     : Bitness::Bits32;
+    for (unsigned Variant : {1u, 2u, 3u, 4u, 5u, kGuardedBoundNarrowGuard}) {
+      if (Variant == kGuardedBoundNarrowGuard &&
+          Image.getPointerSize() == kGuardedBoundWordBytes)
+        continue;
+      SCOPED_TRACE(static_cast<unsigned>(Target));
+      SCOPED_TRACE(Variant);
+      CFGBuilder B;
+      auto Query = Access::seedJoinedGuard(B, Image, Variant);
+      Query.Relation = Access::Relation::GuardedUnsignedLessThan;
+      Query.UnsignedUpperBound = kGuardedBoundEnvelope;
+      const auto Answer = Access::batch(B, {Query}, kGuardedBoundBudget, 0, 0,
+                                        true, true, true);
+      EXPECT_EQ(Answer.Values, (std::vector<bool>{false}));
+      EXPECT_EQ(Answer.Masks, (std::vector<uint64_t>{0}));
+      EXPECT_EQ(Access::batch(B, {Query}, kGuardedBoundBudget, 0, 0, true, true,
+                              true),
+                Answer);
+    }
+  }
 }
 
 } // namespace

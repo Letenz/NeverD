@@ -38,7 +38,7 @@ llvm::Expected<uint64_t> KernelModel::beginWait(llvm::ArrayRef<uint64_t> A,
     return waitError(kernel_wait::DelayInterval);
   Wait Pending;
   Pending.Type = Delay                          ? Wait::Kind::Delay
-                 : SystemThreads.contains(A[0]) ? Wait::Kind::Thread
+                 : ThreadObjects.contains(A[0]) ? Wait::Kind::Thread
                                                 : Wait::Kind::Dispatcher;
   Pending.Object = Delay ? 0 : A[0];
   if (!Delay)
@@ -134,8 +134,8 @@ llvm::Expected<uint64_t> KernelModel::beginObjectWait(Wait Pending,
                          : windows::APCLevel))
     return waitError(kernel_wait::BlockingIRQL);
   for (uint64_t Object : Pending.Objects)
-    if (const auto Thread = SystemThreads.find(Object);
-        Thread != SystemThreads.end() && !Thread->second.PointerReferences)
+    if (const auto Thread = ThreadObjects.find(Object);
+        Thread != ThreadObjects.end() && !ReferencedObjects.at(Object).Pointers)
       return waitError(kernel_wait::ThreadReference);
   auto Acquired = acquireWaitObjects(Pending);
   if (!Acquired)
@@ -169,9 +169,9 @@ KernelModel::acquireWaitObjects(const Wait &Pending) {
   std::vector<KernelDispatcher::WaitCondition> Conditions;
   for (uint64_t Object : Objects) {
     using Condition = KernelDispatcher::WaitCondition;
-    if (const auto Thread = SystemThreads.find(Object);
-        Thread != SystemThreads.end()) {
-      if (Thread->second.CallbackID == Pending.Thread)
+    if (const auto Thread = ThreadObjects.find(Object);
+        Thread != ThreadObjects.end()) {
+      if (!Thread->second.Exited && Thread->second.CallbackID == Pending.Thread)
         return waitError(kernel_wait::SelfWait);
       Conditions.push_back({Thread->second.Exited ? Condition::Kind::Ready
                                                   : Condition::Kind::Pending});
@@ -206,13 +206,42 @@ llvm::Error KernelModel::releaseWaitReferences(const Wait &Pending) {
     if (!--WaitReferences.at(Object))
       WaitReferences.erase(Object);
   for (uint64_t Object : Objects)
-    retireThreadIfUnreferenced(Object);
+    retireObjectIfUnreferenced(Object);
   WaitRegistrations.erase(Pending.Registration);
   return llvm::Error::success();
 }
 
 llvm::Expected<std::optional<uint32_t>>
 KernelModel::pollWait(const Wait &Pending) {
+  if (Pending.Type == Wait::Kind::FileOperation) {
+    auto Ready = fileOperationReady(Pending.Object);
+    if (!Ready)
+      return Ready.takeError();
+    return *Ready ? std::optional<uint32_t>{windows::StatusSuccess}
+                  : std::optional<uint32_t>{};
+  }
+  if (Pending.Type == Wait::Kind::FileRequest) {
+    auto Ready = fileRequestReady(Pending.Object);
+    if (!Ready)
+      return Ready.takeError();
+    return *Ready ? std::optional<uint32_t>{windows::StatusSuccess}
+                  : std::optional<uint32_t>{};
+  }
+  if (Pending.Type == Wait::Kind::FileHandleClose) {
+    const auto Operation = FileHandleCloses.find(Pending.Object);
+    if (Operation == FileHandleCloses.end())
+      return waitError("file handle wait lost its continuation");
+    return FinalizedRequests.contains(Operation->second.IRP)
+               ? std::optional<uint32_t>{windows::StatusSuccess}
+               : std::optional<uint32_t>{};
+  }
+  if (Pending.Type == Wait::Kind::FileClose) {
+    if (InternalFileCloses.contains(Pending.Object))
+      return std::optional<uint32_t>{};
+    if (!FinalizedRequests.contains(Pending.Object))
+      return waitError("file CLOSE wait lost its retained request");
+    return std::optional<uint32_t>{windows::StatusSuccess};
+  }
   if (Pending.Registration) {
     const auto Registration = WaitRegistrations.find(Pending.Registration);
     if (Registration == WaitRegistrations.end() ||

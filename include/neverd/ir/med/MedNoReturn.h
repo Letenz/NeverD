@@ -17,6 +17,7 @@
 #include "neverd/ir/med/MedIR.h"
 
 #include <map>
+#include <set>
 #include <vector>
 
 namespace neverd {
@@ -41,9 +42,13 @@ bool hasProvenNoReturnExit(const MedFunc &Func, Arch TheArch);
 /// \p Stated is what the user states of functions by entry
 /// (BinaryImage::UserNoReturn): a call to one stated never to return ends
 /// its block, and a call to one stated to return does not, whatever its body
-/// proves.  A function's own DoesNotReturn stays what its body proves.
+/// proves.  A function's own DoesNotReturn stays what its body proves.  A
+/// function at one of \p ImportVeneers (an import's PLT stub, which function
+/// discovery also lists) is no internal function: a call to it keeps the
+/// effect the import's declaration gave it.
 void propagateInternalNoReturn(std::vector<MedFunc> &Funcs, Arch TheArch,
-                               const std::map<va_t, bool> &Stated = {});
+                               const std::map<va_t, bool> &Stated = {},
+                               const std::set<va_t> &ImportVeneers = {});
 
 } // namespace neverd
 

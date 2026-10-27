@@ -22,7 +22,8 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/DirectTailCall.h"
 #include "neverd/libc/LibCNames.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/libc/NoReturnLoadedTarget.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
@@ -89,12 +90,21 @@ void CFGBuilder::convertIndirectTailCalls(LowFunc &Func) {
   const bool NeedsFrameGuard = CurrentImg->Arch == Arch::AArch64;
   // Coverage is published on LowFunc later in build(), so consult the current
   // decode/lift account before granting a reaching-state condition here.
-  const auto RestoredFrames =
+  const bool FrameProofAdmitted =
       NeedsFrameGuard && DecodeFailureAddresses.empty() &&
-              UnsupportedInstructionAddresses.empty() &&
-              TruncatedPathAddresses.empty()
-          ? restoredAArch64IndirectTailFrames(Func, CurrentImg->abiFormat())
-          : std::set<va_t>{};
+      UnsupportedInstructionAddresses.empty() && TruncatedPathAddresses.empty();
+  // The proof reads Func, which the loop leaves as it is until the blocks are
+  // rebuilt after it, so it runs once a candidate first asks.  Most functions
+  // have no candidate.
+  std::optional<std::set<va_t>> RestoredFrames;
+  auto Restored = [&](va_t Addr) {
+    if (!RestoredFrames)
+      RestoredFrames =
+          FrameProofAdmitted
+              ? restoredAArch64IndirectTailFrames(Func, CurrentImg->abiFormat())
+              : std::set<va_t>{};
+    return RestoredFrames->count(Addr) != 0;
+  };
   bool Changed = false;
   for (auto &[Addr, Rec] : Insns) {
     // A lack of jump-table targets alone cannot establish a tail call. An
@@ -102,8 +112,8 @@ void CFGBuilder::convertIndirectTailCalls(LowFunc &Func) {
     // every reaching path. Existing table identity/quarantine guards still own
     // dispatch classification; this frame condition supplies no callee ABI.
     if (!Rec.IsBranch || !Rec.IsIndirect || Rec.IsCall || Rec.IsRet ||
-        Rec.IsCond || !Rec.JumpTableTargets.empty() ||
-        (NeedsFrameGuard && !RestoredFrames.count(Addr)) ||
+        Rec.IsCond || Rec.RejectedScalarBranch ||
+        !Rec.JumpTableTargets.empty() || (NeedsFrameGuard && !Restored(Addr)) ||
         EverPublishedJumpTableBranches.count(Addr) ||
         LostValidatedJumpTableBranches.count(Addr) ||
         StackTableEvidenceIncompleteBranches.count(Addr) ||
@@ -204,7 +214,7 @@ bool CFGBuilder::resolveConstantIndirectBranch(const BinaryImage &Img,
       const va_t Target = clearThumbBit(TaggedTarget);
       const InstructionMode TargetMode =
           (TaggedTarget & 1u) ? InstructionMode::Thumb : InstructionMode::ARM;
-      if (Img.hasExecutableCodeOwnerAt(Target) &&
+      if (Img.hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners) &&
           Img.instructionModeAt(Target, TargetMode) == TargetMode) {
         for (LowOp &Op : Rec.Ops) {
           if (Op.Opcode != NdOp::INDIR_BR || Op.NumInputs < 1)
@@ -238,7 +248,7 @@ bool CFGBuilder::resolveConstantIndirectBranch(const BinaryImage &Img,
     auto Target = foldRegConstant(Img, Rec, Op.Inputs[0].Offset);
     if (!Target)
       return false;
-    if (!Img.hasExecutableCodeOwnerAt(*Target) ||
+    if (!Img.hasExecutableCodeOwnerAt(*Target, ExecutableCodeOwners) ||
         (*Target % getInsnAlignment()) != 0)
       return false;
 
@@ -303,6 +313,8 @@ CFGBuilder::makeInstructionBoundary(const InsnRecord &Rec,
 //===----------------------------------------------------------------------===//
 
 bool CFGBuilder::hasFunctionSymbolAtIndexed(const BinaryImage &Img, va_t Addr) {
+  if (!Img.isFunctionEntryCandidateAt(Addr))
+    return false;
   if (FunctionSymbolIndexImage != &Img ||
       FunctionSymbolIndexData != Img.Symbols.data() ||
       FunctionSymbolIndexCount != Img.Symbols.size()) {
@@ -321,16 +333,26 @@ bool CFGBuilder::hasFunctionSymbolAtIndexed(const BinaryImage &Img, va_t Addr) {
                             normalizeCodeAddress(Addr, Img.Arch, Img.Mode));
 }
 
-bool CFGBuilder::isTailCallTarget(va_t Target) const {
+bool CFGBuilder::isTailCallTarget(va_t Target,
+                                  bool IncludeBoundaryGuesses) const {
   if (Target == InvalidVA || Target == CurrentFuncEntry)
+    return false;
+  // ObjectExterns owns undefined callable identities separately from executable
+  // veneers and IAT storage. A relocated direct branch to one is an external
+  // tail call even though no instruction bytes are allocated for that callee.
+  if (CurrentImg && CurrentImg->IsRelocatable &&
+      CurrentImg->ObjectExternFunctionEntries.count(Target))
+    return true;
+  if (CurrentImg && !CurrentImg->isFunctionEntryCandidateAt(Target))
     return false;
   // A selected-function run may omit other function symbols from its work
   // set. An explicit transfer to such a symbol still names a tail callee.
   // Symbol identity alone must not stop ordinary fallthrough exploration:
   // x86 call-next/POP retains its architectural push even at a named address.
-  const bool FunctionEntry = isKnownFunctionEntry(Target) ||
-                             (CurrentImg && CurrentImg->hasFunctionSymbolAt(
-                                                Target, ExecutableCodeOwners));
+  const bool FunctionEntry =
+      isKnownFunctionEntry(Target) ||
+      (CurrentImg && CurrentImg->hasFunctionSymbolAt(
+                         Target, ExecutableCodeOwners, IncludeBoundaryGuesses));
   if (FunctionEntry && !isCurrentExceptionalEntry(Target) &&
       !isCurrentOwnedFragment(Target))
     return true;
@@ -345,13 +367,24 @@ bool CFGBuilder::isTailCallTarget(va_t Target) const {
   return false;
 }
 
+bool calleeNeverReturns(const BinaryImage &Img, va_t Target,
+                        const libc::NoReturnTargetIndex *Names,
+                        const NoReturnCalleeProver *Prover, unsigned Depth) {
+  if (const auto Stated = Img.userNoReturnAt(Target))
+    return *Stated;
+  if (libc::isNoReturnTarget(Img, Target, Names))
+    return true;
+  return Prover && Img.hasExecutableCodeOwnerAt(Target) &&
+         Prover->mayNeverReturn(Target) && Prover->neverReturns(Target, Depth);
+}
+
 bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
   if (!CurrentImg)
     return false;
   // A compiler places nothing after a call that cannot return where it is
   // made, such as error(3) with a constant nonzero status: a call that ends
   // its function's own code range does not return, whatever the callee.
-  if (callEndsItsCodeRange(Rec))
+  if (codeRangeEndsAt(Rec.Addr, Rec.Addr + Rec.Size))
     return true;
   va_t Target = InvalidVA;
   for (const auto &Op : Rec.Ops) {
@@ -361,11 +394,11 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
       break;
     }
     // x86 lifts `call [slot]` as an INDIR_CALL of the slot address. Only the
-    // import the loader binds to the slot can prove the call never returns.
+    // import binding or a proved immutable code pointer can name its target.
     if (Op.Opcode == NdOp::INDIR_CALL && Op.NumInputs >= 1 &&
         Op.Inputs[0].isConst()) {
-      return libc::isNoReturnTarget(*CurrentImg, Op.Inputs[0].Offset,
-                                    NoReturnTargets);
+      return libc::isNoReturnLoadedTarget(*CurrentImg, Op.Inputs[0].Offset,
+                                          NoReturnTargets);
     }
   }
   if (Target == InvalidVA)
@@ -379,7 +412,8 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
   // is where a compiler that knew the callee never returns left its trace;
   // a call followed by more code still deserves the proof when the callee
   // holds nothing that returns.
-  return NoReturnCallees && CurrentImg->hasExecutableCodeOwnerAt(Target) &&
+  return NoReturnCallees &&
+         CurrentImg->hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners) &&
          (callIsFollowedByPadding(Rec) ||
           NoReturnCallees->mayNeverReturn(Target)) &&
          NoReturnCallees->neverReturns(Target, NoReturnCalleeDepth);
@@ -403,8 +437,11 @@ bool CFGBuilder::callIsFollowedByPadding(const InsnRecord &Rec) const {
   // entry or at the end of the code counts.
   size_t Skipped = 0;
   while (Skipped < Window && !isTrapPaddingByte(A, Bytes[Skipped])) {
+    const auto Mode = CurrentImg->instructionModeAt(Next + Skipped, Rec.Mode);
+    if (!Mode)
+      break;
     const size_t Length =
-        alignmentNopLength(A, Bytes + Skipped, Window - Skipped);
+        alignmentNopLength(A, Bytes + Skipped, Window - Skipped, *Mode);
     if (Length == 0)
       break;
     Skipped += Length;
@@ -417,13 +454,17 @@ bool CFGBuilder::callIsFollowedByPadding(const InsnRecord &Rec) const {
          (Skipped != 0 && isKnownFunctionEntry(Next + Skipped));
 }
 
-bool CFGBuilder::callEndsItsCodeRange(const InsnRecord &Rec) const {
-  const va_t Next = Rec.Addr + Rec.Size;
+bool CFGBuilder::codeRangeEndsAt(va_t Address, va_t Next) const {
   // Another fragment of this function may continue right where one ends.
   if (isCurrentOwnedFragment(Next))
     return false;
+  // A primary may list a cold fragment without a separate unwind record for
+  // that fragment. Its end is still an ownership boundary.
+  if (isCurrentOwnedFragment(Address) && Next > Address &&
+      isCurrentOwnedFragment(Next - 1) && !isCurrentOwnedCode(Next))
+    return true;
   if (const ExceptionFunction *Owner =
-          CurrentImg->ExceptionMetadata.findFunction(Rec.Addr);
+          CurrentImg->ExceptionMetadata.findFunction(Address);
       Owner && exceptionEncodingBoundsOneFunction(Owner->Encoding) &&
       Owner->CodeRange.End == Next)
     return true;
@@ -483,6 +524,8 @@ void CFGBuilder::rewriteAsTailCall(InsnRecord &Rec) {
   Rec.IsIndirect = false;
   Rec.IsCall = true;
   Rec.IsRet = true;
+  // Synthetic fallthrough stubs have no decoded immediate to preserve.
+  Rec.Immediate = Target;
   Rec.BranchTarget = InvalidVA;
   CallTargets.insert(Target);
 }
@@ -495,19 +538,22 @@ void CFGBuilder::rewriteOwnInteriorCall(const BinaryImage &Img, InsnRecord &Rec,
   // A call to an internal label can either return normally or abandon the
   // invocation. Its pushed return address is a value like any other.
   // Whether a return later pops it is for
-  // classifyOwnInteriorCalls to prove.  The function's body is the extent
-  // its own unwind record declares (a function-table entry or a DWARF FDE);
-  // a range recovered from code or shared by several functions bounds
-  // nothing.
+  // classifyOwnInteriorCalls to prove.  A body is the extent an unwind record
+  // declares (a function-table entry or a DWARF FDE); a range recovered from
+  // code or shared by several functions bounds nothing.  The function must own
+  // the record that starts at its entry. A call inside that record is interior
+  // to it; a call this function reaches inside another record's body, after
+  // a jump into code that record owns, is interior to that record instead.
   const va_t Target = *Rec.Immediate;
-  const ExceptionFunction *Own =
+  const ExceptionFunction *Self =
       Img.ExceptionMetadata.findFunction(CurrentFuncEntry);
-  if (!Own || Own->Kind != RuntimeFunctionKind::Primary ||
+  const ExceptionFunction *Own = Img.ExceptionMetadata.findFunction(Rec.Addr);
+  if (!Self || Self->Kind != RuntimeFunctionKind::Primary ||
+      Self->CodeRange.Begin != CurrentFuncEntry || !Own ||
+      Own->Kind != RuntimeFunctionKind::Primary ||
       !exceptionEncodingBoundsOneFunction(Own->Encoding) ||
-      Own->CodeRange.Begin != CurrentFuncEntry ||
       !Own->CodeRange.contains(Rec.Addr) || !Own->CodeRange.contains(Target) ||
-      Target == Own->CodeRange.Begin ||
-      (KnownFuncEntries && KnownFuncEntries->count(Target)) ||
+      Target == Own->CodeRange.Begin || isKnownFunctionEntry(Target) ||
       KeptOwnInteriorCallTargets.count(Target))
     return;
   const uint16_t PtrSize = TRI.PointerSize;
@@ -574,6 +620,49 @@ void CFGBuilder::rewriteOwnInteriorReturn(const BinaryImage &Img,
   Rec.IsBranch = true;
   Rec.BranchTarget = It->second.Continuation;
   Rec.Immediate = It->second.Continuation;
+}
+
+void CFGBuilder::rewriteOwnInteriorTailReturn(const BinaryImage &Img,
+                                              InsnRecord &Rec) {
+  if (!OwnInteriorTailReturns.count(Rec.Addr))
+    return;
+  const auto *Segment = Img.getSegmentFor(Rec.Addr);
+  if (Img.Arch != Arch::X64 || !Segment || Rec.Addr < Segment->VA ||
+      Rec.Addr - Segment->VA >= Segment->Data.size() ||
+      Segment->Data[Rec.Addr - Segment->VA] != 0xc3 || Rec.Size != 1 ||
+      !Rec.IsRet || Rec.IsCall || Rec.IsCond || Rec.Ops.size() != 1 ||
+      Rec.Ops.front().Opcode != NdOp::RETURN) {
+    UnsupportedInstructionAddresses.insert(Rec.Addr);
+    return;
+  }
+  const auto &TRI = getTargetRegInfo(Img.Arch);
+  const NdVar SP = NdVar::reg(TRI.StackPointer, TRI.PointerSize);
+  // A decoded RET has no other temporary. LowToMed keeps its instruction
+  // identity distinct from temporaries used by the preceding STORE.
+  const NdVar Target = NdVar::tmp(0, TRI.PointerSize);
+  LowOp Load;
+  Load.Opcode = NdOp::LOAD;
+  Load.Output = Target;
+  Load.addInput(SP);
+  LowOp Pop;
+  Pop.Opcode = NdOp::INT_ADD;
+  Pop.Output = SP;
+  Pop.addInput(SP);
+  Pop.addInput(NdVar::scalar(TRI.PointerSize, TRI.PointerSize));
+  LowOp Call;
+  Call.Opcode = NdOp::INDIR_CALL;
+  Call.Output = NdVar::reg(TRI.IntReturnReg, TRI.PointerSize);
+  Call.addInput(Target);
+  LowOp Return = Rec.Ops.front();
+  Rec.Ops = {Load, Pop, Call, Return};
+  for (size_t I = 0; I < Rec.Ops.size(); ++I) {
+    Rec.Ops[I].Addr = Rec.Addr;
+    Rec.Ops[I].Seq = I;
+  }
+  Rec.IsCall = Rec.IsRet = Rec.IsIndirect = true;
+  Rec.IsBranch = Rec.IsCond = false;
+  Rec.BranchTarget = InvalidVA;
+  Rec.Immediate.reset();
 }
 
 void CFGBuilder::rewriteAsIndirectTailCall(InsnRecord &Rec) {
@@ -655,6 +744,13 @@ void CFGBuilder::rewriteAsIndirectTailCall(InsnRecord &Rec) {
   Rec.IsCall = true;
   Rec.IsRet = true;
   Rec.BranchTarget = InvalidVA;
+  // A jump through the slot of an import that never returns, as a PLT entry
+  // of exit, never returns either, as a call through that slot does not.
+  // A loader binding or immutable code pointer proves the target. A jump
+  // that ends its function's code range is an ordinary tail call.
+  Rec.IsNoReturnCall =
+      Target.isConst() &&
+      libc::isNoReturnLoadedTarget(*CurrentImg, Target.Offset, NoReturnTargets);
 }
 
 } // namespace neverd

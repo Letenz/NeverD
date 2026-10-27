@@ -36,6 +36,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "Limits.h"
 #include "SymMBADetail.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -136,12 +137,30 @@ std::optional<SymRef> groupedForm(SymContext &Ctx,
   if (Groups.empty())
     return Ctx.mkZero(Ctx.width(Atoms[0]));
 
-  const BitwiseSynthesisLimits Synthesis = Limits.synthesis(TermBudget);
+  BitwiseSynthesisLimits Synthesis = Limits.synthesis(TermBudget);
+  const bool Independent = isIndependentWeightedSum(Weights);
+  if (Independent &&
+      llvm::all_of(Atoms, [&](SymRef R) { return Ctx.isVar(R); })) {
+    // The complete weights already give an exact sum of scaled variables.
+    // Bound selector construction by that available spelling, rather than by
+    // the much larger enclosing polynomial. A variable costs one leaf; a
+    // scaled variable costs at most a literal, a multiply and that leaf.
+    // This needs no speculative interning and keeps the established tie order.
+    size_t Cost = 0, Count = 0;
+    for (unsigned I = 0; I != NumAtoms; ++I) {
+      const auto &Coefficient = Weights[size_t(1) << I];
+      if (Coefficient.isZero())
+        continue;
+      Cost += Coefficient.isOne() ? 1 : 3;
+      ++Count;
+    }
+    Cost = Count ? Cost + Count - 1 : 1;
+    Synthesis.MaxCost = std::min(Synthesis.MaxCost, Cost);
+  }
   // Only the new cumulative search is skipped for independent weighted sums;
   // the grouped and conjunction candidates remain available, since this test
   // establishes a shape rather than a minimum expression cost.
-  if (Groups.size() > 1 && Groups.size() <= Holdable / 2 &&
-      !isIndependentWeightedSum(Weights)) {
+  if (Groups.size() > 1 && Groups.size() <= Holdable / 2 && !Independent) {
     TruthTable Nonzero = TruthTable::zero(NumAtoms);
     for (const auto &[Value, Table] : Groups)
       Nonzero |= Table;
@@ -266,7 +285,7 @@ std::optional<SymOp> fullCornerReduction(const SymContext &Ctx, SymRef R,
       return std::nullopt;
     Seen.push_back(Ctx.varId(Term));
   }
-  llvm::sort(Seen);
+  std::sort(Seen.begin(), Seen.end());
   return llvm::equal(Seen, SortedAtoms) ? std::optional<SymOp>(Op)
                                         : std::nullopt;
 }
@@ -339,7 +358,7 @@ std::vector<llvm::APInt> measure(const SymContext &Ctx, SymRef Body,
   // Keep the general evaluator for smaller tables and every other shape.
   if (NumAtoms >= 8) {
     llvm::SmallVector<uint32_t, 8> SortedAtoms(Atoms.begin(), Atoms.end());
-    llvm::sort(SortedAtoms);
+    std::sort(SortedAtoms.begin(), SortedAtoms.end());
     std::optional<SymOp> First = fullCornerReduction(Ctx, Body, SortedAtoms);
     std::optional<SymOp> Second;
     if (!First && Ctx.op(Body) == SymOp::Add && Ctx.numOperands(Body) == 2) {
@@ -393,12 +412,20 @@ bool agreeOnSamples(const SymContext &Ctx, SymRef A, SymRef B,
 
   llvm::SmallVector<uint32_t, 16> Vars(PlanA.vars());
   Vars.append(PlanB.vars().begin(), PlanB.vars().end());
-  llvm::sort(Vars);
+  std::sort(Vars.begin(), Vars.end());
   Vars.erase(std::unique(Vars.begin(), Vars.end()), Vars.end());
+  // A contiguous window of sorted unique input IDs needs only its origin to
+  // locate assignments. Sparse contexts retain the compact lookup and never
+  // allocate scratch for unrelated or unused variables.
+  const uint32_t First = Vars.empty() ? 0 : Vars.front();
+  const bool Dense = Vars.empty() || Vars.back() - First == Vars.size() - 1;
   llvm::SmallDenseMap<uint32_t, unsigned, 16> Positions;
-  for (unsigned I = 0; I < Vars.size(); ++I)
-    Positions[Vars[I]] = I;
+  if (!Dense)
+    for (unsigned I = 0; I < Vars.size(); ++I)
+      Positions[Vars[I]] = I;
   auto Position = [&](uint32_t Id) {
+    if (Dense)
+      return Id - First;
     auto It = Positions.find(Id);
     assert(It != Positions.end() && "plan requested an unlisted variable");
     return It->second;
@@ -412,20 +439,26 @@ bool agreeOnSamples(const SymContext &Ctx, SymRef A, SymRef B,
       Masks.push_back(~uint64_t(0) >> (64 - Width));
     }
     llvm::SmallVector<uint64_t, 8> Assignment(Masks.size());
-    auto Lookup = [&](uint32_t Id) { return Assignment[Position(Id)]; };
-    std::mt19937_64 Rng(0x9E3779B97F4A7C15ull);
-    for (unsigned S = 0; S < Samples; ++S) {
-      // The first three points and one generator word per narrow input match
-      // the arbitrary-width path. Only referenced inputs advance the stream.
-      for (size_t I = 0; I < Assignment.size(); ++I)
-        Assignment[I] = S == 0   ? 0
-                        : S == 1 ? Masks[I]
-                        : S == 2 ? 1
-                                 : Rng() & Masks[I];
-      if (PlanA.evalU64With(Lookup) != PlanB.evalU64With(Lookup))
-        return false;
-    }
-    return true;
+    auto CheckSamples = [&](auto &&Lookup) {
+      std::mt19937_64 Rng(0x9E3779B97F4A7C15ull);
+      for (unsigned S = 0; S < Samples; ++S) {
+        // The first three points and one generator word per narrow input match
+        // the arbitrary-width path. Only referenced inputs advance the stream.
+        for (size_t I = 0; I < Assignment.size(); ++I)
+          Assignment[I] = S == 0   ? 0
+                          : S == 1 ? Masks[I]
+                          : S == 2 ? 1
+                                   : Rng() & Masks[I];
+        if (PlanA.evalU64With(Lookup) != PlanB.evalU64With(Lookup))
+          return false;
+      }
+      return true;
+    };
+    // Select the lookup once, outside both evaluation loops. Dense samples
+    // need neither the position table nor a per-variable layout branch.
+    if (Dense)
+      return CheckSamples([&](uint32_t Id) { return Assignment[Id - First]; });
+    return CheckSamples([&](uint32_t Id) { return Assignment[Position(Id)]; });
   }
 
   llvm::SmallVector<llvm::APInt, 8> Assignment;
@@ -506,13 +539,16 @@ void affineResidualCandidates(SymContext &Ctx,
   const unsigned Count = static_cast<unsigned>(Atoms.size());
   // This search reuses only the existing small exact Boolean recipes. A
   // larger caller ceiling must not trigger the four-input optimal table here.
-  if (Count < 2 || Count > std::min({3u, Limits.MaxOptimalSynthesisAtoms,
+  if (Count < 2 || Count > std::min({limits::kMaxResidualSynthesisAtoms,
+                                     Limits.MaxOptimalSynthesisAtoms,
                                      Limits.MaxSynthesisAtoms}))
     return;
   if (TermBudget < 3)
     return;
   assert(Weights.size() == (size_t(1) << Count));
   if (!Budget.consume(Weights.size()))
+    return;
+  if (isIndependentWeightedSum(Weights))
     return;
   llvm::SmallVector<llvm::APInt, 4> Values;
   for (const llvm::APInt &Value : Weights) {
@@ -621,9 +657,11 @@ void affineResidualCandidates(SymContext &Ctx,
         auto Found = Synthesized.find(Key);
         if (Found == Synthesized.end()) {
           const unsigned Arity = std::popcount(truthTableSupport(Table));
-          const size_t Functions = size_t(1) << (size_t(1) << Arity);
-          const size_t SynthesisWork = Functions * Functions;
-          if (SynthesisWork > Limits.SynthesisWork)
+          const size_t SynthesisWork = bitwiseSynthesisWork(Arity);
+          // This optional table must fit the remaining shared allowance.
+          // Refusing it must not spend work that later regions could use.
+          if (SynthesisWork > Limits.SynthesisWork ||
+              !Budget.canConsume(SynthesisWork))
             continue;
           if (!Budget.consume(SynthesisWork))
             return;
@@ -672,7 +710,8 @@ void booleanResidualCandidates(SymContext &Ctx,
   // XOR and its complement. Two XOR tables cannot give four value pairs, so
   // one selector is an affine atom already covered by the earlier reading.
   if (Count < 3 ||
-      Count > std::min({3u, Limits.MaxOptimalSynthesisAtoms,
+      Count > std::min({limits::kMaxResidualSynthesisAtoms,
+                        Limits.MaxOptimalSynthesisAtoms,
                         Limits.MaxSynthesisAtoms}) ||
       TermBudget < 3)
     return;
@@ -719,9 +758,8 @@ void booleanResidualCandidates(SymContext &Ctx,
     auto Found = Synthesized.find(Key);
     if (Found == Synthesized.end()) {
       const unsigned Arity = std::popcount(truthTableSupport(Table));
-      const size_t Functions = size_t(1) << (size_t(1) << Arity);
-      const size_t Work = Functions * Functions;
-      if (Work > Limits.SynthesisWork)
+      const size_t Work = bitwiseSynthesisWork(Arity);
+      if (Work > Limits.SynthesisWork || !Budget.canConsume(Work))
         return std::nullopt;
       if (!Budget.consume(Work))
         return std::nullopt;

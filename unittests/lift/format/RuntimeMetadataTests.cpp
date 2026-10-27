@@ -3,14 +3,21 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
+/// \file
+/// Native import identity and lifecycle metadata invariants.
+///
+//===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
+#include "neverd/loader/FunctionNames.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/loader/PointerRelocation.h"
+#include "neverd/loader/RelocationProvenance.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/BinaryLoading.h"
 
@@ -23,7 +30,10 @@
 
 #include <cstdint>
 #include <cstring>
+#include <map>
 #include <memory>
+#include <set>
+#include <string>
 #include <vector>
 
 namespace {
@@ -538,6 +548,40 @@ TEST(RuntimeMetadata, RecordsOnlyExactMappedImportStorageSlots) {
   EXPECT_FALSE(Img.hasRelocationProvenanceAt(0x1010));
 }
 
+TEST(RuntimeMetadata, ARangeHasRelocationProvenanceWhereOneOfItsBytesHas) {
+  // The range query reads every source the per-byte one does, and accepts
+  // an import slot only where that one does: at a valid storage slot.
+  BinaryImage Img;
+  Img.Bits = Bitness::Bits64;
+  Img.Segments.push_back(makeSegment(0x1000, 0x100, true));
+  Img.Segments.push_back(makeSegment(0x3000, 0x100, false));
+  Img.CodePtrRelocSlots.insert(0x3008);
+  Img.DataPtrRelocSlots.insert(0x3018);
+  Img.RelDataPtrRelocSlots.insert(0x3028);
+  Img.RelCodeRelocSlots.insert(0x3038);
+  ASSERT_TRUE(Img.recordImportStorageSlot(
+      0x3048, "stored", 0, ImportStorageEvidence::ImportDirectory));
+  Img.ImportPtrSlots[0x3058] = "pointer";
+  Img.ImportPtrSlots[0x3061] = "unaligned";
+  Img.ImportPtrSlots[0x1020] = "executable";
+  Img.ImportPtrSlots[0x3070] = "";
+  Img.DyldBindSlots[0x3080] = ImportBindSlot{"bound"};
+  Img.DyldBindSlots[0x3089] = ImportBindSlot{"unaligned"};
+  Img.BaseRelocations.push_back(BaseRelocation{0x3093, 3});
+  RelocationEntry Reloc;
+  Reloc.Address = 0x30a5;
+  Img.Relocations.push_back(Reloc);
+  for (const va_t Base : {va_t{0x1000}, va_t{0x3000}})
+    for (va_t First = Base - 8; First < Base + 0xb0; ++First)
+      for (va_t End = First; End <= First + 20; ++End) {
+        bool Any = false;
+        for (va_t Byte = First; Byte < End; ++Byte)
+          Any |= Img.hasRelocationProvenanceAt(Byte);
+        EXPECT_EQ(hasRelocationProvenanceIn(Img, First, End), Any)
+            << std::hex << First << ".." << End;
+      }
+}
+
 TEST(RuntimeMetadata, ELFSlotBindingsOfUndefinedSymbolsAreImportStorage) {
   using namespace llvm::ELF;
   BinaryImage Img;
@@ -964,6 +1008,164 @@ TEST(RuntimeMetadata, NumbersANameLowerFunctionsTakeAsIDANumbersIt) {
   EXPECT_EQ(Img.getFunctionNameAt(0x500), "start");
   EXPECT_EQ(Img.getFunctionNameAt(0x5000), "run");
   EXPECT_EQ(Img.functionListName(0x2000, "helper"), "helper_1");
+  EXPECT_EQ(functionNameBeforeNumbering(Img, 0x2000, "helper_1"), "helper");
+  EXPECT_EQ(functionNameBeforeNumbering(Img, 0x3000, "helper_2"), "helper");
+  EXPECT_EQ(functionNameBeforeNumbering(Img, 0x4000, "helper_0"), "helper_0");
+  EXPECT_EQ(functionNameBeforeNumbering(Img, 0x2000, "recognized"),
+            "recognized");
+}
+
+TEST(RuntimeMetadata, ManyAddressesTakeTheNamesEachTakesAlone) {
+  // functionNamesAt answers in one pass what getFunctionNameAt answers per
+  // address: the first export when it has a name, else the best symbol by
+  // rank (the first of equal rank, never a section's own), numbered as the
+  // function is listed, else a synthesized name.
+  BinaryImage Img;
+  const auto AddSymbol = [&](const char *Name, va_t Addr, bool IsFunc,
+                             NameOrigin Origin = NameOrigin::Stated,
+                             bool IsSection = false) {
+    Symbol Sym;
+    Sym.Name = Name;
+    Sym.Addr = Addr;
+    Sym.IsFunc = IsFunc;
+    Sym.Origin = Origin;
+    Sym.IsSection = IsSection;
+    Img.Symbols.push_back(Sym);
+  };
+  const auto AddExport = [&](const char *Name, va_t Addr) {
+    Export Exp;
+    Exp.Name = Name;
+    Exp.Addr = Addr;
+    Img.Exports.push_back(Exp);
+  };
+  AddExport("exported", 0x1000);
+  AddSymbol("symbol", 0x1000, true);
+  AddExport("", 0x2000);
+  AddExport("second_export", 0x2000);
+  AddSymbol("label", 0x2000, false);
+  AddSymbol("function", 0x2000, true);
+  AddSymbol(".text", 0x3000, false, NameOrigin::Stated, /*IsSection=*/true);
+  AddSymbol("thunk", 0x3000, false);
+  AddSymbol("first_label", 0x4000, false);
+  AddSymbol("second_label", 0x4000, false);
+  AddSymbol("sub_5000", 0x5000, true, NameOrigin::Synthesized);
+  AddSymbol("stated", 0x5000, false);
+  AddSymbol("helper", 0x6000, true);
+  AddSymbol("helper", 0x7000, true);
+  AddSymbol("", 0x8000, true);
+  Img.numberSharedFunctionNames();
+  const std::set<va_t> Addrs = {0x1000, 0x2000, 0x3000, 0x4000, 0x5000,
+                                0x6000, 0x7000, 0x8000, 0x9000};
+  std::map<va_t, std::string> Alone;
+  for (va_t Addr : Addrs)
+    Alone.emplace(Addr, Img.getFunctionNameAt(Addr));
+  EXPECT_EQ(functionNamesAt(Img, Addrs), Alone);
+  EXPECT_EQ(Alone.at(0x2000), "function");
+  EXPECT_EQ(Alone.at(0x7000), "helper_0");
+  EXPECT_EQ(Alone.at(0x9000), "sub_9000");
+}
+
+TEST(RuntimeMetadata, RecoveredNamesKeepTheirProducersOrigin) {
+  BinaryImage Img;
+  Symbol Stated;
+  Stated.Name = "sub_1000";
+  Stated.Addr = 0x1000;
+  Stated.IsFunc = true;
+  Stated.Origin = NameOrigin::Stated;
+  Img.Symbols.push_back(Stated);
+  Symbol Generated = Stated;
+  Generated.Name = "sub_2000";
+  Generated.Addr = 0x2000;
+  Generated.Origin = NameOrigin::Synthesized;
+  Img.Symbols.push_back(Generated);
+  Symbol Recognized = Stated;
+  Recognized.Name = "recognized";
+  Recognized.Addr = 0x3000;
+  Recognized.Origin = NameOrigin::Analysis;
+  Img.Symbols.push_back(Recognized);
+  Export Exported;
+  Exported.Name = "sub_4000";
+  Exported.Addr = 0x4000;
+  Img.Exports.push_back(Exported);
+  const std::map<va_t, llvm::StringRef> Recovered{
+      {0x1000, "sub_1000"}, {0x2000, "sub_2000"}, {0x3000, "recognized"},
+      {0x4000, "sub_4000"}, {0x5000, "sub_5000"}, {0x6000, "recovered"},
+      {0x7000, ""}};
+  const auto Origins = recoveredFunctionNameOrigins(Img, Recovered);
+  EXPECT_EQ(Origins.at(0x1000), NameOrigin::Stated);
+  EXPECT_EQ(Origins.at(0x2000), NameOrigin::Synthesized);
+  EXPECT_EQ(Origins.at(0x3000), NameOrigin::Analysis);
+  EXPECT_EQ(Origins.at(0x4000), NameOrigin::Stated);
+  EXPECT_EQ(Origins.at(0x5000), NameOrigin::Synthesized);
+  EXPECT_EQ(Origins.at(0x6000), NameOrigin::Analysis);
+  EXPECT_EQ(Origins.at(0x7000), NameOrigin::Synthesized);
+}
+
+TEST(RuntimeMetadata, StatedNamesOfEveryAddressAreThoseOfEachAlone) {
+  // statedFunctionNamesByAddress answers in one pass what
+  // statedFunctionNamesAt answers per address: the shown name from the first
+  // export when it has a name, else from the best symbol by rank where a
+  // producer stated it; then each export's name and each stated function
+  // symbol's, once, in order.  An address whose shown name analysis gave
+  // has none.
+  BinaryImage Img;
+  const auto AddSymbol = [&](const char *Name, va_t Addr, bool IsFunc,
+                             NameOrigin Origin = NameOrigin::Stated,
+                             bool IsSection = false) {
+    Symbol Sym;
+    Sym.Name = Name;
+    Sym.Addr = Addr;
+    Sym.IsFunc = IsFunc;
+    Sym.Origin = Origin;
+    Sym.IsSection = IsSection;
+    Img.Symbols.push_back(Sym);
+  };
+  const auto AddExport = [&](const char *Name, va_t Addr) {
+    Export Exp;
+    Exp.Name = Name;
+    Exp.Addr = Addr;
+    Img.Exports.push_back(Exp);
+  };
+  // Identical functions a linker folded: each name exported and stated.
+  AddExport("folded_a", 0x1000);
+  AddExport("folded_b", 0x1000);
+  AddSymbol("folded_c", 0x1000, true);
+  AddSymbol("folded_a", 0x1000, true);
+  AddSymbol("folded_label", 0x1000, false);
+  // A first export without a name leaves the symbol to show it.
+  AddExport("", 0x2000);
+  AddExport("second_export", 0x2000);
+  AddSymbol("label", 0x2000, false);
+  AddSymbol("function", 0x2000, true);
+  AddSymbol(".text", 0x3000, false, NameOrigin::Stated, /*IsSection=*/true);
+  AddSymbol("thunk", 0x3000, false);
+  AddSymbol("sub_4000", 0x4000, true, NameOrigin::Synthesized);
+  AddSymbol("stated_after", 0x4000, true);
+  AddSymbol("sub_5000", 0x5000, true, NameOrigin::Synthesized);
+  AddSymbol("", 0x6000, true);
+  AddExport("", 0x7000);
+  Img.numberSharedFunctionNames();
+  const auto Every = statedFunctionNamesByAddress(Img);
+  std::set<va_t> Addrs = {0x9000};
+  for (const Export &Exp : Img.Exports)
+    Addrs.insert(Exp.Addr);
+  for (const Symbol &Sym : Img.Symbols)
+    Addrs.insert(Sym.Addr);
+  for (va_t Addr : Addrs) {
+    std::vector<std::string> Alone;
+    for (const llvm::StringRef Name : Img.statedFunctionNamesAt(Addr))
+      Alone.push_back(Name.str());
+    const auto It = Every.find(Addr);
+    EXPECT_EQ(It == Every.end() ? std::vector<std::string>() : It->second,
+              Alone)
+        << "at 0x" << llvm::utohexstr(Addr);
+    EXPECT_EQ(It != Every.end(), !Alone.empty()) << llvm::utohexstr(Addr);
+  }
+  EXPECT_EQ(Every.at(0x1000),
+            (std::vector<std::string>{"folded_a", "folded_b", "folded_c"}));
+  EXPECT_EQ(Every.at(0x2000),
+            (std::vector<std::string>{"function", "second_export"}));
+  EXPECT_FALSE(Every.count(0x5000));
 }
 
 TEST(RuntimeMetadata, ParsesRVADelayImportWithExactIATSlot) {
@@ -1143,6 +1345,7 @@ TEST(RuntimeMetadata, CollectsEveryMachORuntimeFunctionSectionKind) {
   Img.Segments.push_back(makeSegment(0x3000, 0x100, false));
 
   Segment &Arrays = Img.Segments.back();
+  Arrays.FileSz = Arrays.Size;
   writePtr(Arrays.Data.data(), 0x1010, true);
   writePtr(Arrays.Data.data() + 0x20, 0x1020, true);
   writePtr(Arrays.Data.data() + 0x40, 0x1030, true);

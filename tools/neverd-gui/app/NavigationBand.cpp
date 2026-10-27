@@ -1,5 +1,7 @@
 #include "NavigationBand.h"
 
+#include "../Config.h"
+#include "../ResourceLimits.h"
 #include "AddressSpace.h"
 #include "Session.h"
 #include "Theme.h"
@@ -16,15 +18,6 @@
 
 namespace neverd::gui {
 namespace {
-constexpr int BandHeight = 16;
-constexpr int LegendHeight = 18;
-constexpr int Margin = 4;
-constexpr int RefreshDebounceMs = 120;
-// The legend keys the band with small rounded swatches.
-constexpr int SwatchSize = 8;
-constexpr qreal SwatchRadius = 2;
-constexpr int SwatchGap = 6;
-constexpr int LegendEntryGap = 16;
 
 struct LegendEntry {
   AddressClass addressClass;
@@ -51,9 +44,13 @@ NavigationBand::NavigationBand(Session &session, AddressSpace &space,
   setMouseTracking(true);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   refresh_.setSingleShot(true);
-  refresh_.setInterval(RefreshDebounceMs);
+  refresh_.setInterval(::neverd::limits::gui::kNavigationBandRefreshDebounceMs);
   connect(&refresh_, &QTimer::timeout, this, &NavigationBand::requestOverview);
-  connect(&session_, &Session::opened, this, [this] { refresh_.start(); });
+  connect(&session_, &Session::opened, this, [this] {
+    // The initial listing needs this address map before it can navigate.
+    refresh_.stop();
+    requestOverview();
+  });
   connect(&session_, &Session::generationChanged, this,
           [this] { refresh_.start(); });
   connect(&session_, &Session::revisionChanged, this,
@@ -70,14 +67,23 @@ NavigationBand::NavigationBand(Session &session, AddressSpace &space,
 }
 
 QSize NavigationBand::sizeHint() const {
-  return {800, BandHeight + LegendHeight + Margin * 2};
+  return {800, ::neverd::limits::gui_config::kNavigationBandBandHeight +
+                   ::neverd::limits::gui_config::kNavigationBandLegendHeight +
+                   ::neverd::limits::gui_config::kNavigationBandMargin * 2};
 }
 QSize NavigationBand::minimumSizeHint() const {
-  return {120, BandHeight + LegendHeight + Margin * 2};
+  return {120, ::neverd::limits::gui_config::kNavigationBandBandHeight +
+                   ::neverd::limits::gui_config::kNavigationBandLegendHeight +
+                   ::neverd::limits::gui_config::kNavigationBandMargin * 2};
 }
 
 QRect NavigationBand::bandRect() const {
-  return QRect(Margin, Margin, std::max(1, width() - 2 * Margin), BandHeight);
+  return QRect(
+      ::neverd::limits::gui_config::kNavigationBandMargin,
+      ::neverd::limits::gui_config::kNavigationBandMargin,
+      std::max(1, width() -
+                      2 * ::neverd::limits::gui_config::kNavigationBandMargin),
+      ::neverd::limits::gui_config::kNavigationBandBandHeight);
 }
 
 void NavigationBand::requestOverview() {
@@ -158,23 +164,35 @@ void NavigationBand::paintEvent(QPaintEvent *) {
   painter.setRenderHint(QPainter::Antialiasing);
   const QFontMetrics metrics(font());
   const QColor legendText = theme.chrome(QStringLiteral("SecondaryText"));
-  int x = Margin;
-  const int y = band.bottom() + Margin + 2;
+  int x = ::neverd::limits::gui_config::kNavigationBandMargin;
+  const int y =
+      band.bottom() + ::neverd::limits::gui_config::kNavigationBandMargin + 2;
   for (const auto &entry : Legend) {
     const QString text =
         QCoreApplication::translate("NavigationBand", entry.text);
-    const QRectF swatch(x, y + (LegendHeight - SwatchSize) / 2, SwatchSize,
-                        SwatchSize);
+    const QRectF swatch(
+        x,
+        y + (::neverd::limits::gui_config::kNavigationBandLegendHeight -
+             ::neverd::limits::gui_config::kNavigationBandSwatchSize) /
+                2,
+        ::neverd::limits::gui_config::kNavigationBandSwatchSize,
+        ::neverd::limits::gui_config::kNavigationBandSwatchSize);
     painter.setPen(Qt::NoPen);
     painter.setBrush(
         theme.navigationColor(static_cast<int>(entry.addressClass)));
-    painter.drawRoundedRect(swatch, SwatchRadius, SwatchRadius);
-    const int textLeft = x + SwatchSize + SwatchGap;
+    painter.drawRoundedRect(
+        swatch, ::neverd::limits::gui_config::kNavigationBandSwatchRadius,
+        ::neverd::limits::gui_config::kNavigationBandSwatchRadius);
+    const int textLeft =
+        x + ::neverd::limits::gui_config::kNavigationBandSwatchSize +
+        ::neverd::limits::gui_config::kNavigationBandSwatchGap;
     painter.setPen(legendText);
     painter.drawText(
-        QRect(textLeft, y, metrics.horizontalAdvance(text) + 2, LegendHeight),
+        QRect(textLeft, y, metrics.horizontalAdvance(text) + 2,
+              ::neverd::limits::gui_config::kNavigationBandLegendHeight),
         Qt::AlignVCenter | Qt::AlignLeft, text);
-    x = textLeft + metrics.horizontalAdvance(text) + LegendEntryGap;
+    x = textLeft + metrics.horizontalAdvance(text) +
+        ::neverd::limits::gui_config::kNavigationBandLegendEntryGap;
     if (x > width())
       break;
   }

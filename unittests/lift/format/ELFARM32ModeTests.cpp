@@ -12,6 +12,7 @@
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/ELF/ELFLoader.h"
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/BinaryLoading.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -1179,6 +1180,270 @@ callee:
 )");
   ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
   EXPECT_EQ(Image->Mode, InstructionMode::MixedARMThumb);
+}
+
+// A mixed ARM/Thumb image pairs its ARM PLT with the imports as a
+// single-mode one does: a Thumb caller's `blx` reaches the same stub, and
+// without the pairing each of its import calls read as an unnamed routine.
+TEST_F(ELFARM32ModeTest, MixedImagePairsItsPLTWithTheImports) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedSharedAssembly("mixed_plt", R"(
+.syntax unified
+.text
+.thumb
+.globl caller
+.type caller,%function
+.thumb_func
+caller:
+  push {r4, lr}
+  bl puts
+  pop {r4, pc}
+.arm
+.p2align 2
+.globl arm_side
+.type arm_side,%function
+arm_side:
+  bx lr
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  EXPECT_EQ(Image->Mode, InstructionMode::MixedARMThumb);
+  std::vector<va_t> Stubs;
+  for (const auto &[Stub, Import] : Image->ImportStubIndices)
+    if (Image->Imports[Import].Name == "puts")
+      Stubs.push_back(Stub);
+  ASSERT_EQ(Stubs.size(), 1u);
+  const Section *Plt = Image->getSectionFor(Stubs.front());
+  ASSERT_NE(Plt, nullptr);
+  EXPECT_EQ(Plt->Name, ".plt");
+}
+
+// A Thumb tail call to an import enters the ARM PLT through the thunk lld
+// writes for it (`__ThumbV7PILongThunk_puts`, a symbol the stripped library
+// no longer has), which stands for the import as the PLT entry does.
+// A stripped library keeps no symbol for its own routines, but the code
+// pointers it stores still carry bit 0: the dynamic linker calls the init
+// array's entries as `blx` does, and a relocated slot with bit 0 set holds
+// a Thumb code address.  What they address is decoded in that mode; what an
+// untagged slot addresses may be data and stays without one.
+TEST_F(ELFARM32ModeTest, StoredCodePointersStateTheModeOfStrippedRoutines) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedSharedAssembly("code_pointers", R"(
+.syntax unified
+.text
+.thumb
+.type through_slot,%function
+.thumb_func
+through_slot:
+  adds r0, r0, #1
+  adds r0, r0, #2
+  bx lr
+.thumb
+.type thumb_constructor,%function
+.thumb_func
+thumb_constructor:
+  movs r0, #1
+  bx lr
+.arm
+.p2align 2
+.type arm_constructor,%function
+arm_constructor:
+  mov r0, #0
+  add r0, r0, #1
+  bx lr
+.arm
+.p2align 2
+.type untagged,%function
+untagged:
+  mov r0, #2
+  bx lr
+.section .init_array,"aw",%init_array
+.p2align 2
+  .word arm_constructor
+  .word thumb_constructor
+.data
+.p2align 2
+  .word through_slot
+  .word untagged
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  EXPECT_TRUE(Image->LoadDiagnostics.empty());
+  ASSERT_EQ(Image->DynInfo.InitArray.size(), 2u);
+  const va_t ARMConstructor = Image->DynInfo.InitArray[0];
+  const va_t ThumbConstructor = Image->DynInfo.InitArray[1];
+  const Section *Data = nullptr;
+  for (const Section &Sec : Image->Sections)
+    if (Sec.Name == ".data")
+      Data = &Sec;
+  ASSERT_NE(Data, nullptr);
+  const uint8_t *Slots = Image->readVA(Data->VA, 8);
+  ASSERT_NE(Slots, nullptr);
+  const uint32_t TaggedSlot = readLE<uint32_t>(Slots);
+  const uint32_t UntaggedSlot = readLE<uint32_t>(Slots + 4);
+  ASSERT_EQ(TaggedSlot & 1u, 1u);
+  ASSERT_EQ(UntaggedSlot & 1u, 0u);
+  const va_t ThroughSlot = TaggedSlot & ~1u;
+
+  EXPECT_EQ(Image->instructionModeAt(ThroughSlot), InstructionMode::Thumb);
+  EXPECT_EQ(Image->instructionModeAt(ThroughSlot + 2), InstructionMode::Thumb);
+  EXPECT_EQ(Image->instructionModeAt(ThumbConstructor), InstructionMode::Thumb);
+  EXPECT_EQ(Image->instructionModeAt(ARMConstructor), InstructionMode::ARM);
+  EXPECT_EQ(Image->instructionModeAt(ARMConstructor + 4), InstructionMode::ARM);
+  EXPECT_FALSE(Image->instructionModeAt(UntaggedSlot));
+}
+
+// Position-independent Thumb code takes a routine's address as
+// `ldr rN, [pc, #k]; add rN, pc`, the literal being the routine's address
+// with bit 0 set less the PC: what it gets is a Thumb code address, as a
+// stored one is.
+TEST_F(ELFARM32ModeTest, AddressTheCodeTakesStatesTheModeOfItsRoutine) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedSharedAssembly("taken_address", R"(
+.syntax unified
+.text
+.thumb
+.globl taker
+.type taker,%function
+.thumb_func
+taker:
+  ldr.n r0, .Lliteral
+.Lpc:
+  add r0, pc
+  bx lr
+.p2align 2
+.Lliteral:
+  .word callback + 1 - (.Lpc + 4)
+callback:
+  movs r0, #7
+  adds r0, r0, #1
+  bx lr
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  va_t Taker = 0;
+  for (const Export &Exp : Image->Exports)
+    if (Exp.Name == "taker")
+      Taker = clearThumbBit(Exp.Addr);
+  ASSERT_NE(Taker, 0u);
+  const uint8_t *Literal = Image->readVA(Taker + 8, 4);
+  ASSERT_NE(Literal, nullptr);
+  const uint32_t Address =
+      readLE<uint32_t>(Literal) + static_cast<uint32_t>(Taker + 2 + 4);
+  ASSERT_EQ(Address & 1u, 1u);
+  const va_t Callback = Address & ~1u;
+
+  EXPECT_EQ(Image->instructionModeAt(Callback), InstructionMode::Thumb);
+  EXPECT_EQ(Image->instructionModeAt(Callback + 2), InstructionMode::Thumb);
+  // The literal is data, whatever the code around it.
+  EXPECT_FALSE(Image->instructionModeAt(Taker + 8));
+}
+
+// The unwinder resumes a frame in the instruction set of its PC
+// (`_Unwind_SetIP` keeps its Thumb bit), so a landing pad no branch reaches
+// is decoded in the mode of the call site that throws into it.
+TEST_F(ELFARM32ModeTest, LandingPadsTakeTheModeOfTheirCallSites) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  const auto Source = tmpFile("landing_pads.cpp");
+  std::ofstream(Source) << R"(
+struct Failure {};
+void may_throw(int);
+extern "C" int catcher(int Value) {
+  try {
+    may_throw(Value);
+  } catch (const Failure &) {
+    return -1;
+  } catch (...) {
+    return -2;
+  }
+  return 0;
+}
+)";
+  const auto Object = tmpFile("landing_pads.o");
+  const auto Library = tmpFile("landing_pads.so");
+  ASSERT_TRUE(exec(NEVERD_TEST_CLANG,
+                   {"-target", "armv7-linux-gnueabihf", "-mthumb", "-O2",
+                    "-fPIC", "-c", Source.string(), "-o", Object.string()})
+                  .ok());
+  ASSERT_TRUE(
+      exec("ld.lld", {"-m", "armelf_linux_eabi", "-shared", "--strip-all",
+                      Object.string(), "-o", Library.string()})
+          .ok());
+  auto Image = ELFLoader().load(Library);
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+
+  std::vector<va_t> Pads;
+  for (const ExceptionFunction &Function : Image->ExceptionMetadata.Functions)
+    if (Function.Itanium)
+      for (const ItaniumCallSite &Site : Function.Itanium->CallSites)
+        if (Site.LandingPadVA)
+          Pads.push_back(Site.LandingPadVA);
+  ASSERT_FALSE(Pads.empty());
+  for (const va_t Pad : Pads) {
+    SCOPED_TRACE(Pad);
+    EXPECT_EQ(Image->instructionModeAt(Pad), InstructionMode::Thumb);
+  }
+  const auto C =
+      exec(ndBin(), {"decompile", Library.string(), "--func=catcher"});
+  EXPECT_TRUE(C.ok()) << C.err;
+}
+
+TEST_F(ELFARM32ModeTest, LinkerThunkToAnImportStandsForTheImport) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  auto Image = loadStrippedSharedAssembly("plt_thunk", R"(
+.syntax unified
+.text
+.thumb
+.globl tail_caller
+.type tail_caller,%function
+.thumb_func
+tail_caller:
+  ldr r0, .Lmessage
+.Lpc:
+  add r0, pc
+  b.w puts
+.p2align 2
+.Lmessage:
+  .word message - (.Lpc + 4)
+.section .rodata
+message:
+  .asciz "through the thunk"
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  std::vector<va_t> Stubs;
+  for (const auto &[Stub, Import] : Image->ImportStubIndices)
+    if (Image->Imports[Import].Name == "puts")
+      Stubs.push_back(Stub);
+  ASSERT_EQ(Stubs.size(), 2u) << "the PLT entry and lld's thunk";
+  std::vector<std::string> Owners;
+  for (va_t Stub : Stubs)
+    if (const Section *Owner = Image->getSectionFor(Stub))
+      Owners.push_back(Owner->Name);
+  EXPECT_EQ(Owners, (std::vector<std::string>{".text", ".plt"}));
+
+  // The caller tail-calls the import with its argument.
+  const auto C = exec(ndBin(), {"decompile", tmpFile("plt_thunk.so").string(),
+                                "--func=tail_caller"});
+  ASSERT_TRUE(C.ok()) << C.err;
+  EXPECT_NE(C.out.find("puts(\"through the thunk\")"), std::string::npos)
+      << C.out;
 }
 
 // A library's veneer for a routine the library defines goes to that

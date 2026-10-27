@@ -15,6 +15,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/CircleRange.h"
 #include "neverd/ir/low/FuncDetector.h"
 #include "neverd/ir/low/LowIR.h"
@@ -32,6 +33,7 @@
 #include <optional>
 #include <set>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace neverd {
@@ -58,6 +60,16 @@ public:
     return false;
   }
 };
+
+/// Whether the function at \p Target never returns, so that a tail call into
+/// it ends its path: what the user states, else the name list (\p Names may
+/// be null), else \p Prover's proof at \p Depth where its screen finds the
+/// function worth one.  A direct call applies the same order
+/// (CFGBuilder::isNoReturnCall), with the padding a compiler leaves after a
+/// call it knew never returns as a further reason to try the proof.
+bool calleeNeverReturns(const BinaryImage &Img, va_t Target,
+                        const libc::NoReturnTargetIndex *Names,
+                        const NoReturnCalleeProver *Prover, unsigned Depth);
 
 namespace detail {
 struct ResolverGraphCacheTestAccess;
@@ -620,7 +632,7 @@ using SuppressionOwnerReachabilityQuery =
 /// fail-closed graph rather than stale suppression.
 std::set<va_t> refineRelocationRootSuppressionOwners(
     std::set<va_t> Owners, const SuppressionOwnerReachabilityQuery &Query,
-    size_t MaxRounds = 8);
+    size_t MaxRounds = ::neverd::limits::ir::kCFGBuilderMaxRounds);
 
 /// Merge every cached source slot for the requested roots.  The cache is
 /// sorted by (root, slot); equal roots deliberately retain all slots so one
@@ -670,6 +682,25 @@ std::shared_ptr<X87CallGraphCache>
 createX87CallGraphCache(const NoReturnCalleeProver *NonReentrantProver,
                         const libc::NoReturnTargetIndex *NonReentrantTargets,
                         bool RetainCallRegisterBodies);
+/// The least recently used graphs and bodies leave the cache beyond these
+/// bounds; the defaults are the bounds of the caches above.
+struct X87CallGraphCacheLimits {
+  /// Graphs, and separately bodies, retained.
+  size_t Entries = 128;
+  size_t GraphBytes = 8 * 1024 * 1024;
+  size_t BodyBytes = 32 * 1024 * 1024;
+};
+/// ImmutableEntries names an entry inventory whose owner never changes it
+/// while the cache lives.  A request that borrows that inventory matches a
+/// context frozen from it by identity, without comparing every entry.
+/// DeclaredFloatingImports is an owned immutable snapshot of ordinary i386
+/// header return widths. It adds no callbacks or borrowed lifetime to proofs.
+std::shared_ptr<X87CallGraphCache> createX87CallGraphCache(
+    const NoReturnCalleeProver *NonReentrantProver,
+    const libc::NoReturnTargetIndex *NonReentrantTargets,
+    bool RetainCallRegisterBodies, const X87CallGraphCacheLimits &Limits,
+    const std::set<va_t> *ImmutableEntries = nullptr,
+    std::map<std::string, uint16_t> DeclaredFloatingImports = {});
 
 class CFGBuilder {
   friend class X87CallEffectIndex;
@@ -680,12 +711,38 @@ public:
   /// Build CFG for a single function starting at EntryAddr.
   LowFunc build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
                 const std::string &FuncName = "");
+  /// Build a callee CFG for a proof about the integer frame, such as a PE32
+  /// registration ABI proof. The x87 stack keeps its decoded form, so the
+  /// build starts no floating call-effect proofs. Never emit the result as
+  /// the function's body.
+  LowFunc buildIntegerFrameProof(const BinaryImage &Img, Decoder &Dec,
+                                 va_t EntryAddr, const std::string &FuncName);
 
   /// Reuse only the inputs to an ordinary x64 call-register summary, under
   /// these exact immutable-image indexes and default CFG proof limits.
   /// No-return decisions are replayed at depth zero and every skipped x87
   /// normalization must be proved to make no change. Null requests the usual
   /// independent build. This cannot supply a normalized/output LowFunc.
+  /// What warmCallGraphs left in its cache.
+  struct CallGraphWarmup {
+    /// The functions whose bodies the cache holds for later builds.
+    size_t Retained = 0;
+    /// The cache refused a graph or body it could hold only by evicting one.
+    bool Full = false;
+  };
+  /// Builds into \p Cache the raw graphs and bodies of \p Functions that the
+  /// call proofs of a build configured with these indexes would build on
+  /// demand, with at most \p MaxThreads builders at once, and without
+  /// evicting anything the cache holds.  It also keeps whether a retained
+  /// body's call to each of them refuses that body, as cachedCallRegisterBody
+  /// asks.  Later builds read them instead; their results are unchanged.
+  static CallGraphWarmup warmCallGraphs(
+      const std::shared_ptr<X87CallGraphCache> &Cache, const BinaryImage &Img,
+      llvm::ArrayRef<va_t> Functions, const std::set<va_t> *Entries,
+      const libc::NoReturnTargetIndex *NoReturnTargets,
+      const NoReturnCalleeProver *NoReturnCallees,
+      const detail::AbsoluteRelocationRootIndex *RelocationRoots,
+      const ExecutableCodeOwnerIndex *CodeOwners, unsigned MaxThreads);
   static std::shared_ptr<const CallRegisterBody> cachedCallRegisterBody(
       const std::shared_ptr<X87CallGraphCache> &Cache, const BinaryImage &Img,
       va_t Entry, const std::set<va_t> *Entries,
@@ -846,6 +903,12 @@ public:
   /// can distinguish local proof incompleteness from aggregate exhaustion.
   void setFiniteSetSymbolEvidenceBudgetForTesting(std::optional<size_t> Limit) {
     FiniteSetSymbolEvidenceBudgetForTesting = Limit;
+  }
+  /// Exhaust every proposal stage right after the candidate at \p Addr
+  /// resolves, so the candidates after it never run in a stage.
+  void
+  setExhaustProposalStageAfterCandidateForTesting(std::optional<va_t> Addr) {
+    ExhaustProposalStageAfterCandidateForTesting = Addr;
   }
   /// Force the first recursively discovered (not stage-inventoried) jump-table
   /// probe to exhaust its candidate account.  This generic transaction hook
@@ -1089,7 +1152,24 @@ private:
   // One immutable, size-bounded graph. The incomplete type keeps proof-graph
   // implementation and arena ownership inside the resolver translation unit.
   mutable std::shared_ptr<const ResolverGraphCache> CachedResolverGraph;
-  std::array<size_t, 3> resolverValueQueryCacheStatsForTesting() const;
+  // The same for unmetered queries. Their graphs and batches record no work
+  // charge, so no metered query reads them.
+  mutable std::shared_ptr<const ResolverGraphCache>
+      CachedUnmeteredResolverGraph;
+  // The image's R_ARM_REL32 relocations as (field address, position in
+  // Relocations), sorted, which the resolver's relocated-literal reads look
+  // up.  Built on the first read, and again once the image or its relocation
+  // list is another.
+  struct ARMRel32Index {
+    const BinaryImage *Image = nullptr;
+    const RelocationEntry *Data = nullptr;
+    size_t Size = 0;
+    std::vector<std::pair<va_t, size_t>> Fields;
+  };
+  mutable ARMRel32Index ARMRel32Relocations;
+  const std::vector<std::pair<va_t, size_t>> &armRel32Relocations() const;
+  std::array<size_t, 3>
+  resolverValueQueryCacheStatsForTesting(bool Unmetered = false) const;
 
   struct ResolverQueryState;
   // Local to a read-only resolver invocation. The owner, instruction map,
@@ -1126,12 +1206,19 @@ private:
     LowInstructionTargetMode TargetMode = LowInstructionTargetMode::Preserve;
     std::vector<va_t> JumpTableTargets;
 
+    /// Original operand of an exact scalar branch. Keep it for revalidation
+    /// when newly decoded paths split the producer's basic block.
+    std::optional<NdVar> ScalarBranchInput;
+    bool RejectedScalarBranch = false;
+
     /// x87 stack-top (TOP) at this instruction's entry/exit in lift (worklist)
     /// order, and whether it absolute-resets TOP (FNINIT/FNCLEX). fixupFpuStack
     /// uses these to re-base ST(i) references into control-flow order.
     int FpuTopIn = 0;
     int FpuTopOut = 0;
     bool FpuReset = false;
+
+    bool operator==(const InsnRecord &Other) const = default;
   };
 
   void explore(const BinaryImage &Img, Decoder &Dec, va_t Addr);
@@ -1154,6 +1241,13 @@ private:
   /// target has a dominating constant definition in the decoded prefix.
   bool resolveConstantIndirectBranch(const BinaryImage &Img, uint32_t InsnId,
                                      InsnRecord &Rec);
+  using ScalarImageFacts =
+      std::map<std::pair<va_t, uint16_t>, std::optional<uint64_t>>;
+  /// Close exact scalar constant branches on the completed CFG.
+  /// Every new path revalidates earlier proofs before the graph is published.
+  bool recoverScalarConstantBranches(const BinaryImage &Img, Decoder &Dec,
+                                     LowFunc &Func, size_t &RemainingWork,
+                                     ScalarImageFacts &ImageScalars);
   /// Resolve an immutable relocation-proven scalar label pointer that reaches
   /// an indirect branch through a unique frame spill/reload relay.  Unlike a
   /// jump table, the exact slot has one fixed target, so the safe model is a
@@ -1162,24 +1256,39 @@ private:
   LowInstructionBoundary makeInstructionBoundary(const InsnRecord &Rec,
                                                  uint64_t FirstOp) const;
 
+  /// Fold executed PACM prefixes into their consumers, retaining mixed edges.
+  void resolveAArch64PAuthPrefixes(LowFunc &Func);
+  void resolveX86BoundedLeaves(LowFunc &Func);
+  size_t RemainingX86BoundedLeafWork = 0;
+
   /// Re-base x87 ST(i) register references so each block's TOP matches its CFG
   /// predecessor's exit TOP rather than the worklist lift order.  The lifter
   /// names ST(i) as physical slot (TOP+i)&7 while advancing TOP in lift order;
   /// when a branch leaves a value on the stack and an arm net-changes the
   /// depth, the other arm is lifted with the wrong TOP.  A no-op (per-block
   /// offset 0) for straight-line / stack-balanced code, so only the mistracked
-  /// cases move.
-  void fixupFpuStack(LowFunc &Func);
+  /// cases move. Root seeds consume the final CFG's exact relocation ownership
+  /// so table-only labels cannot become independent x87 entries again.
+  void fixupFpuStack(LowFunc &Func,
+                     const std::set<va_t> &SuppressedRelocationRoots);
   /// Prove termination without computing unused floating return values.
   /// Local x87 state consumers retain the ordinary normalized CFG build.
   /// Only the internal no-return index may consume this reduced projection.
   bool buildNoReturnProof(const BinaryImage &Img, Decoder &Dec, va_t Entry,
                           const std::string &Name);
   bool SkipX87StackFixup = false;
+  bool SkipCalleeRegisterProofs = false;
+  /// Facts live for one build of the unchanged image. Nested proof builders
+  /// cannot assume facts about the CFG currently being constructed.
+  mutable std::map<va_t, std::optional<uint32_t>> CalleePreservedGPRs;
+  std::optional<uint32_t>
+  provedCalleePreservedGPRs(const LowOp &Call,
+                            const std::function<bool(size_t)> &Consume) const;
   // Optional evidence across *all* raw-build normalization stages, including
   // speculative CFGs and own-interior-call retries. It never escapes a build.
   struct CallRegisterBodyWitness {
-    static constexpr size_t MaxDependencies = 4096;
+    static constexpr size_t MaxDependencies =
+        ::neverd::limits::ir::kCFGBuilderMaxDependencies;
     bool Complete = true;
     std::set<va_t> Calls;
     std::vector<std::pair<va_t, bool>> NoReturnAnswers;
@@ -1196,7 +1305,7 @@ private:
 
   /// Whether \p Target is the entry of a *different* known function — i.e. an
   /// unconditional direct branch to it is a tail call, not intra-function flow.
-  bool isTailCallTarget(va_t Target) const;
+  bool isTailCallTarget(va_t Target, bool IncludeBoundaryGuesses = true) const;
 
   /// Whether the call in \p Rec never returns: it ends its function's own
   /// code range, it targets a known no-return libc function
@@ -1210,10 +1319,15 @@ private:
   /// call it knows never returns: an x86 `int3`, alignment no-ops up to
   /// another function, or another function's entry.
   bool callIsFollowedByPadding(const InsnRecord &Rec) const;
-  /// True when the call \p Rec is the last instruction of the code range
-  /// that its function's own unwind record or sized symbol gives, and no
-  /// fragment of the function follows, so the call cannot return.
-  bool callEndsItsCodeRange(const InsnRecord &Rec) const;
+  /// True when \p Next ends the declared function range containing \p Address
+  /// and no fragment of the same function follows. Coarse frame spans do not
+  /// declare that boundary. Shared by instruction-extent checks, calls, and
+  /// resumable traps.
+  bool codeRangeEndsAt(va_t Address, va_t Next) const;
+  /// Whether a trap can resume in owned code, or a bounded look through
+  /// unowned trap/NOP padding finds code before the next function. Invalid
+  /// owned continuations retain their decode/coverage failure.
+  bool codeFollowsTrap(const Decoder &Dec, va_t Next);
 
   /// Rewrite an unconditional-branch instruction record into an explicit
   /// CALL + RETURN pair (tail call to another function).
@@ -1226,11 +1340,18 @@ private:
   /// Replays a checked near RET as its physical pop and the unique internal
   /// continuation. The final graph must prove the same invocation again.
   void rewriteOwnInteriorReturn(const BinaryImage &Img, InsnRecord &Rec);
+  /// A full-width replacement of the pushed PC can be a tail transfer when
+  /// its pop restores the enclosing ABI stack and the parent PC is intact.
+  void rewriteOwnInteriorTailReturn(const BinaryImage &Img, InsnRecord &Rec);
   /// A direct i386 call to a get-PC thunk, a function whose body is `mov r32,
   /// [esp]; ret`, is lifted as what it does: copy the return address into
   /// that register (CFGBuilderX86GetPc.cpp).
   void rewriteGetPcThunkCall(const BinaryImage &Img, InsnRecord &Rec,
                              va_t Next);
+  /// The jump of an i386 PIC PLT entry the loader pairs with its import,
+  /// `jmp *disp(%ebx)` by the GOT address its callers hold in EBX, is lifted
+  /// as the jump through that import's slot (CFGBuilderX86PLT.cpp).
+  void rewriteI386PLTJump(const BinaryImage &Img, InsnRecord &Rec);
   struct OwnInteriorReturn {
     va_t Target;
     va_t CallSite;
@@ -1242,10 +1363,14 @@ private:
     std::set<va_t> Subroutines;
     /// Normal exits of a single-site invocation with a separate nonlocal exit.
     std::map<va_t, OwnInteriorReturn> Returns;
+    std::set<va_t> TailReturns;
     /// The first return no proof covers, or the target whose returns
     /// disagree.
     std::optional<va_t> Unproven;
   };
+  /// Prove a closed group of internal near calls preserves each invocation's
+  /// PC, including recursive groups whose inline stack offsets cannot join.
+  std::set<va_t> proveClosedOwnSubroutines(const BinaryImage &Img) const;
   /// Tracks the stack pointer from each target's pushed return-address slot
   /// and classifies how the returns reached from it treat that slot.
   OwnInteriorCallVerdict classifyOwnInteriorCalls(const BinaryImage &Img,
@@ -1294,6 +1419,14 @@ private:
     return CurrentExceptionalEntries.count(Address) != 0;
   }
   bool isCurrentOwnedFragment(va_t Address) const;
+  bool isCurrentOwnedCode(va_t Address) const;
+  /// An instruction starting in sized ownership must fit wholly inside it.
+  /// Reached cold code without ownership metadata remains independently
+  /// decodable; absence of a range is not a bound.
+  bool instructionFitsCurrentOwnership(va_t Address, uint64_t Size) const;
+  /// Charge both exploration and continuation peeks in disposable proofs.
+  /// Ordinary CFG construction has no candidate-proof allowance to consume.
+  bool chargeCandidateDecodeAttempt(const BinaryImage &Img);
   /// True when \p Address is Win64 code no unwind record covers and the
   /// current function is a frameless leaf: a cold part of that function.
   /// A function with a frame needs a chained record over every part of it,
@@ -1373,6 +1506,10 @@ private:
     /// an unreachable sibling consumer from a reachable but out-of-domain
     /// value when constructing a candidate-local finite-domain fixed point.
     ResolvableValue,
+    /// Discover one pointer-width address at the exact use, then prove it
+    /// against every feasible reaching value with the ordinary MustEqual
+    /// matcher. Scalars and address fragments cannot propose an address.
+    ConstantAddress,
     /// Every feasible value is below UnsignedUpperBound (at most 64), and the
     /// exact feasible coordinates are returned in the query's uint64_t result
     /// mask.  One resolver DAG and symbolic context own the whole enumeration;
@@ -1402,6 +1539,10 @@ private:
     /// does not replace ordinary mask/group domain ownership or treat a
     /// logical predicate union as a control-flow join.
     JoinedUnsignedFeasibleSet,
+    /// Prove an unsigned upper bound using unsigned and compound path
+    /// predicates. This grants neither a finite mask nor predecessor-join
+    /// ownership. The caller separately authenticates memory and addresses.
+    GuardedUnsignedLessThan,
   };
 
   struct JumpTableValueQuery {
@@ -1418,16 +1559,19 @@ private:
     /// A contained architectural register lane names the complete writer as
     /// its root, while comparisons retain the lane's exact offset and width.
     bool UseDefinedAlternativesAsOccurrenceRoots = false;
-    /// The candidate is an exact i386 GOT-base model use whose reaching value
-    /// may be reloaded from a caller-frame spill.  Calls are transparent to
+    /// The candidate is an exact i386 GOT-base use (an object's GOT-base
+    /// model, or the GOT address a linked image records) whose reaching value
+    /// may be reloaded from a caller-frame spill.  Calls, and stores through
+    /// an address no current-frame address flows into, are transparent to
     /// that reload only after the value resolver proves that no current-frame
     /// address reaches a STORE, call argument, return, or side-effecting
-    /// intrinsic anywhere in the candidate graph.  This is deliberately
-    /// query-local: ordinary frame-memory queries retain the opaque call
-    /// barrier.
+    /// intrinsic in any block of the candidate graph that can reach the
+    /// query's use (a block that cannot never runs before it).  This is
+    /// deliberately query-local: ordinary frame-memory queries retain the
+    /// opaque call and unknown-store barriers.
     bool AllowPrivateFrameMemoryAcrossCalls = false;
     JumpTableValueRelation Relation = JumpTableValueRelation::MustEqual;
-    /// UnsignedLessThan/UnsignedFeasibleSet's exclusive bound, or
+    /// Range queries' exclusive upper bound, or
     /// ExactUnsignedModuloRecipe's exact divisor.
     uint64_t UnsignedUpperBound = 0;
     /// Do not apply the role-neutral architectural-address owner wildcard.
@@ -1901,6 +2045,9 @@ private:
     const std::map<va_t, JumpTableInfo> *ConsumerRoleInfos = nullptr;
     /// Borrowed from the enclosing round; never retained by a proposal.
     FiniteJumpTableRoundCertificate *FiniteRoundCertificate = nullptr;
+
+    bool
+    operator==(const GuardedJumpTableGroupProofContext &Other) const = default;
   };
   enum class GuardedJumpTableGroupKind : uint8_t {
     DenseGuard,
@@ -1920,6 +2067,8 @@ private:
     std::map<va_t, JumpTableInfo> Infos;
     std::map<va_t, std::vector<va_t>> Targets;
     bool Published = false;
+
+    bool operator==(const GuardedJumpTableGroupState &Other) const = default;
   };
   std::optional<GuardedJumpTableGroupProofContext> GuardedGroupProofContext;
   std::optional<GuardedJumpTableGroupKey> GuardedGroupIdentity;
@@ -1990,7 +2139,8 @@ private:
   bool tryRelativeTable(const BinaryImage &Img, const InsnRecord &Rec,
                         JumpTableInfo &Info);
   bool tryCrossInstrRelativeTable(const BinaryImage &Img, const InsnRecord &Rec,
-                                  JumpTableInfo &Info);
+                                  JumpTableInfo &Info,
+                                  size_t *CandidateEvidenceBudget) const;
   // Detect a constant-base absolute code-pointer table (`jmp *tab(,idx,W)`, the
   // non-PIC computed-goto / dense-switch shape) whose table load is decoupled
   // from the indirect branch by an -O0 spill/reload relay — the loaded target
@@ -2058,7 +2208,8 @@ private:
       std::vector<JumpTableValueOccurrence> *StorageConsumersOut =
           nullptr) const;
   bool tryAArch64CompactTable(const BinaryImage &Img, const InsnRecord &Rec,
-                              JumpTableInfo &Info);
+                              JumpTableInfo &Info,
+                              size_t *CandidateEvidenceBudget) const;
   bool analyzeTableLoadAddr(
       const std::vector<LowOp> &Ops, int FromIdx, const NdVar &AddrV,
       uint64_t &BaseReg, uint64_t &IndexReg, bool &HasScaledIndex,
@@ -2086,7 +2237,10 @@ private:
       uint64_t &IndexReg, uint16_t &LoadWidth, uint64_t &Disp, va_t &TableAddr,
       NdVar *LoadOutput = nullptr, va_t *LoadAddr = nullptr,
       int *LoadSeq = nullptr, NdVar *IndexValue = nullptr,
-      va_t *IndexUseAddr = nullptr, int *IndexUseSeq = nullptr) const;
+      va_t *IndexUseAddr = nullptr, int *IndexUseSeq = nullptr,
+      size_t *CandidateEvidenceBudget = nullptr,
+      bool *AnalysisComplete = nullptr,
+      ResolverQueryScope *ReadOnlyScope = nullptr) const;
   // Detect a runtime-selected table base (`base = cond ? A : B; jmp
   // *base[idx]`), where A and B are two adjacent code-pointer tables (clang
   // lowers a computed goto whose label table is chosen at runtime, e.g. `tbl =
@@ -2097,7 +2251,7 @@ private:
   // single switch over the merged byte-offset index.
   bool tryTwoTableSelect(const BinaryImage &Img, const InsnRecord &Rec,
                          JumpTableInfo &Info, size_t *CandidateEvidenceBudget,
-                         bool *AnalysisComplete);
+                         bool *AnalysisComplete) const;
   // Detect a two-level "index-byte" table (the classic MSVC sparse-switch
   // lowering): a compact byte/halfword index table maps the switch variable to
   // a small entry index, which then indexes the real address table
@@ -2108,7 +2262,7 @@ private:
   // Info.ExplicitTargets and dispatches on the real switch variable.
   bool tryTwoLevelIndexTable(const BinaryImage &Img, const InsnRecord &Rec,
                              JumpTableInfo &Info,
-                             size_t *CandidateEvidenceBudget);
+                             size_t *CandidateEvidenceBudget) const;
   // Decompose an index-table load address (`idxtab + switchvar[*scale]`) into
   // the folded constant table base, the index register, and the index scale
   // (1 for a byte index table, the entry width for a halfword one).  Tolerates
@@ -2120,7 +2274,10 @@ private:
       va_t &TableAddr, uint64_t &IndexReg, uint32_t &Scale,
       NdVar *IndexValue = nullptr, va_t *IndexUseAddr = nullptr,
       int *IndexUseSeq = nullptr, std::function<bool(size_t)> ConsumeWork = {},
-      JumpTableDisplacedAddressRole *Displaced = nullptr) const;
+      JumpTableDisplacedAddressRole *Displaced = nullptr,
+      size_t *CandidateEvidenceBudget = nullptr,
+      bool *BaseAnalysisComplete = nullptr,
+      ResolverQueryScope *ReadOnlyScope = nullptr) const;
   /// Fold a register to a loader-mapped address.  Callers may explicitly admit
   /// an unmapped scalar candidate, while the narrower COFF exception admits
   /// only the exact PE image base.  Both exceptions still require
@@ -2131,8 +2288,19 @@ private:
                   std::function<bool(size_t)> ConsumeWork = {},
                   bool RequireMappedValue = true,
                   bool AllowUnmappedCOFFImageBase = false) const;
+  /// Prefer the exact CFG address, retaining legacy folding only after a
+  /// completed query supplies none. Legacy results remain candidates for the
+  /// ordinary final address-role proof, never a substitute for that proof.
+  std::optional<va_t>
+  foldTableAddressAtUse(const BinaryImage &Img, const InsnRecord &Rec,
+                        const JumpTableValueOccurrence &Use, uint64_t LegacyReg,
+                        va_t LegacyCutoff, size_t *CandidateEvidenceBudget,
+                        bool &AnalysisComplete,
+                        bool AllowUnmappedCOFFImageBase = false,
+                        ResolverQueryScope *ReadOnlyScope = nullptr) const;
   bool tryARMTableBranch(const BinaryImage &Img, const InsnRecord &Rec,
-                         JumpTableInfo &Info);
+                         JumpTableInfo &Info,
+                         size_t *CandidateEvidenceBudget) const;
   bool tryDualPathRecovery(const InsnRecord &Rec, JumpTableInfo &Info);
   bool inferBoundsFromUnrolledGuard(const InsnRecord &Rec, JumpTableInfo &Info);
   /// Recover the entry count by propagating a range guard's implied value
@@ -2325,7 +2493,7 @@ private:
       size_t *CandidateEvidenceBudget,
       bool UseDefinedAlternativesAsRoots = false,
       const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides = nullptr,
-      bool AllowSparseDomain = false);
+      bool AllowSparseDomain = false) const;
   bool guardUsesInclusiveCompare(const InsnRecord &Rec,
                                  const JumpTableInfo &Info,
                                  uint64_t Bound) const;
@@ -2338,6 +2506,33 @@ private:
                                    int UseSeq, const JumpTableInfo &Info,
                                    bool AllowZeroExtension = false,
                                    bool AllowSignExtension = false) const;
+  /// Prove a linked x64 PE image-base address at this exact operand use.
+  /// False is a completed mismatch (or another format); nullopt is incomplete
+  /// and must not grant a cheaper fallback or a fresh evidence allowance.
+  /// The loader proposes the expected address; the shared CFG value resolver
+  /// owns every reaching definition and its provenance. No proof survives a
+  /// changed graph merely because the expected numeric address is unchanged.
+  std::optional<bool>
+  queryPEImageBaseAtUse(const BinaryImage &Img,
+                        const JumpTableValueOccurrence &Use,
+                        size_t *CandidateEvidenceBudget,
+                        ResolverQueryScope *ReadOnlyScope = nullptr) const;
+  /// Discover and prove an address through the shared reaching-value graph.
+  /// A complete empty result grants no address; incomplete work must stop the
+  /// candidate rather than fall back to an unmetered lexical guess.
+  std::optional<va_t> queryConstantAddressAtUse(
+      const BinaryImage &Img, const JumpTableValueOccurrence &Use,
+      size_t *CandidateEvidenceBudget, bool &AnalysisComplete,
+      ResolverQueryScope *ReadOnlyScope = nullptr) const;
+  /// Certify one original indexed load without guessing access-EL controls.
+  /// Both operands are proved at its exact occurrence, and every possible
+  /// accessed byte must have the same address for every CPA2 control choice.
+  bool aarch64OriginalTableLoadMatches(
+      const LowOp &Load, const JumpTableLoadRole &Role, uint32_t Capacity,
+      size_t *AggregateEvidenceBudget, bool &AnalysisComplete,
+      ResolverQueryScope *ReadOnlyScope = nullptr,
+      const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides = nullptr,
+      bool UseGroupContext = true) const;
   /// UseGroupContext=false only for final joint-domain replay on one frozen
   /// owner graph with every member's exact certified edge set.
   std::vector<bool> tableValuesMatchAtUses(
@@ -2351,8 +2546,8 @@ private:
       std::vector<uint64_t> *QueryUnsignedFeasibleMasks = nullptr,
       uint32_t ResolverDepthLimit = 0,
       const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides = nullptr,
-      bool UseGroupContext = true,
-      ResolverQueryScope *ReadOnlyScope = nullptr) const;
+      bool UseGroupContext = true, ResolverQueryScope *ReadOnlyScope = nullptr,
+      std::vector<std::optional<va_t>> *QueryConstantAddresses = nullptr) const;
   /// Prove that the actual INDIR_BR input is derived from the strategy's exact
   /// TargetLoad occurrence on every feasible path.  Mere address co-occurrence
   /// in static scans or emulation is not sufficient.
@@ -2571,6 +2766,7 @@ private:
   bool ProposalStageForcedCommitTailRollbackPreservedStateForTesting = false;
   bool ProposalStageRollbackMutatedQuarantineForTesting = false;
   bool ExhaustUntrackedJumpTableCandidateForTesting = false;
+  std::optional<va_t> ExhaustProposalStageAfterCandidateForTesting;
   bool UntrackedJumpTableCandidateExhaustedThisStageForTesting = false;
   bool UntrackedJumpTableCandidateRollbackObservedForTesting = false;
   va_t ForcedUntrackedJumpTableCandidateAddrForTesting = InvalidVA;
@@ -2666,6 +2862,7 @@ private:
   /// Targets proven to be subroutines, whose calls stay calls.
   std::set<va_t> KeptOwnInteriorCallTargets;
   std::map<va_t, OwnInteriorReturn> OwnInteriorReturns;
+  std::set<va_t> OwnInteriorTailReturns;
   /// Executable addresses taken via a relocation-free PC-relative `lea` while
   /// exploring this function (same-section function pointers); copied into the
   /// LowFunc so the pipeline merges them into the image's CodeRefTargets (a
@@ -2753,6 +2950,11 @@ private:
   /// for either a switch or a function-pointer tail call, so retain the source
   /// INDIR_BR identity and publish it as unsafe.
   std::set<va_t> IndexDomainEvidenceIncompleteBranches;
+  /// Indirect jumps some resolution in this build claimed as table-shaped.
+  /// A proposal stage that runs out of shared evidence before reaching such a
+  /// branch leaves it as undecided as a candidate whose own proof ran out, so
+  /// it receives the same IndexDomainEvidenceIncompleteBranches marker.
+  std::set<va_t> ShapeClaimedBranches;
   /// Indirect jumps whose exact physical LOAD/address roles and local table
   /// destinations prove dispatch identity even when selector-domain recovery
   /// is definitively rejected.  This certificate preserves branch semantics;

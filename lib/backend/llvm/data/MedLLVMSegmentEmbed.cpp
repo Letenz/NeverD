@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Common.h"
+#include "neverd/backend/LLVMOriginalImageStorage.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/object/SectionNames.h"
@@ -41,15 +42,69 @@
 #include <cstddef>
 #include <cstring>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <optional>
 #include <set>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace neverd {
+
+bool MedLLVMEmitter::usesOriginalImageStorage() const {
+  return OriginalImageStorageForSource && Img && !Img->IsRelocatable;
+}
+
+std::pair<llvm::GlobalVariable *, uint64_t>
+MedLLVMEmitter::originalImageStorage(uint64_t OwnerVA) {
+  if (!OriginalImageStorageForSource || !Img || Img->IsRelocatable)
+    return {nullptr, 0};
+  const Segment *Owner = Img->getSegmentFor(OwnerVA);
+  if (!Owner || !Owner->isReadable())
+    return {nullptr, 0};
+  // A linked image preserves the distances between its mapped regions too.
+  // A single external span keeps direct, indexed and one-past addresses in
+  // the same coordinate system, without allocating or inspecting its bytes.
+  uint64_t Begin = InvalidVA, End = 0;
+  for (const Segment &Seg : Img->Segments) {
+    const uint64_t Size = Seg.Size ? Seg.Size : Seg.Data.size();
+    if (!Size)
+      continue;
+    if (Size > InvalidVA - Seg.VA)
+      return {nullptr, 0};
+    Begin = std::min(Begin, Seg.VA);
+    End = std::max(End, Seg.VA + Size);
+  }
+  if (Begin >= End)
+    return {nullptr, 0};
+  const std::string Name =
+      (kNdDataPrefix + llvm::utohexstr(Begin)).str() + ".image";
+  auto *Global = Mod->getNamedGlobal(Name);
+  if (!Global) {
+    auto *Type = llvm::ArrayType::get(llvm::Type::getInt8Ty(*Ctx), End - Begin);
+    Global = new llvm::GlobalVariable(
+        *Mod, Type, false, llvm::GlobalValue::ExternalLinkage, nullptr, Name);
+    llvm_original_image::mark(*Global);
+  }
+  return {Global, Begin};
+}
+
+// Whether an address-ordered slot set or map holds a slot inside \p S. Only
+// the first slot at or above the segment base can be inside it.
+template <typename Slots>
+static bool segmentHoldsSlot(const Segment &S, const Slots &Ordered) {
+  const auto It = Ordered.lower_bound(S.VA);
+  if (It == Ordered.end())
+    return false;
+  if constexpr (std::is_same_v<typename Slots::key_type,
+                               typename Slots::value_type>)
+    return S.contains(*It);
+  else
+    return S.contains(It->first);
+}
 
 static bool collectRodataRun(const BinaryImage *Img, uint64_t SegVA,
                              std::vector<const Segment *> &Run,
@@ -117,10 +172,18 @@ bool MedLLVMEmitter::rodataRunBounds(uint64_t SegVA, uint64_t &RunStart,
 
 std::pair<llvm::GlobalVariable *, uint64_t>
 MedLLVMEmitter::embedRodataRun(uint64_t SegVA) {
+  if (auto Storage = originalImageStorage(SegVA); Storage.first)
+    return Storage;
   uint64_t RunStart = 0, RunEnd = 0;
   std::vector<const Segment *> Run;
   if (!collectRodataRun(Img, SegVA, Run, RunStart, RunEnd))
     return {nullptr, 0};
+  if (Img->hasMachOAuthenticatedPointerIn(RunStart, RunEnd - RunStart)) {
+    uint64_t Base = 0;
+    auto *Global = llvm::dyn_cast_or_null<llvm::GlobalVariable>(
+        buildCodePtrSegmentGlobal(SegVA, Base));
+    return {Global, Base};
+  }
   if (auto It = SegmentDataGlobals.find(RunStart);
       It != SegmentDataGlobals.end()) {
     const auto Base = SegmentDataBases.find(RunStart);
@@ -158,6 +221,9 @@ MedLLVMEmitter::embedRodataRun(uint64_t SegVA) {
 
 std::pair<llvm::GlobalVariable *, uint64_t>
 MedLLVMEmitter::embedExecSegmentRun(const Segment *Seg) {
+  if (Seg)
+    if (auto Storage = originalImageStorage(Seg->VA); Storage.first)
+      return Storage;
   if (!Seg || Seg->Data.empty() ||
       Seg->Data.size() > limits::kMaxSingleGlobalEmbedLen)
     return {nullptr, 0};
@@ -165,6 +231,18 @@ MedLLVMEmitter::embedExecSegmentRun(const Segment *Seg) {
   if (auto It = SegmentDataGlobals.find(RunStart);
       It != SegmentDataGlobals.end())
     return {It->second, RunStart};
+  // Code holds a relocated pointer slot only inside a data object the image
+  // places among it, such as GNU ld's __CTOR_LIST__: the segment mirrors as
+  // the pointer table it then is, or not at all, rather than keep a stale
+  // address in raw bytes.
+  if (segHasLoaderPtrRelocSlots(Seg)) {
+    auto *Table = llvm::dyn_cast_or_null<llvm::GlobalVariable>(
+        buildCodePtrSegmentGlobal(Seg->VA, RunStart));
+    if (!Table)
+      return {nullptr, 0};
+    SegmentDataGlobals[RunStart] = Table;
+    return {Table, RunStart};
+  }
   auto *ArrTy =
       llvm::ArrayType::get(llvm::Type::getInt8Ty(*Ctx), Seg->Data.size());
   auto *Init =
@@ -190,35 +268,13 @@ bool MedLLVMEmitter::isMutableDataSeg(const Segment *S) const {
     return true;
   // A segment carrying any relocated pointer slot is likewise a pointer table,
   // not raw mutable scalar/array data.
-  auto overlaps = [&](const std::set<uint64_t> &Slots) {
-    for (uint64_t V : Slots)
-      if (S->contains(V))
-        return true;
-    return false;
-  };
-  return !segHasPtrRelocSlots(S) && !overlaps(Img->RelCodeRelocSlots);
+  return !segHasPtrRelocSlots(S) &&
+         !segmentHoldsSlot(*S, Img->RelCodeRelocSlots);
 }
 
 bool MedLLVMEmitter::segHasPtrRelocSlots(const Segment *S) const {
   if (!S || !Img)
     return false;
-  auto overlaps = [&](const std::set<uint64_t> &Slots) {
-    for (uint64_t V : Slots)
-      if (S->contains(V))
-        return true;
-    return false;
-  };
-  auto overlapsImports = [&]() {
-    for (const auto &[VA, Binding] : EffectiveImportStorageSlots) {
-      (void)Binding;
-      if (S->contains(VA))
-        return true;
-    }
-    for (va_t VA : ConflictingImportStorageSlots)
-      if (S->contains(VA))
-        return true;
-    return false;
-  };
   auto overlapsRuntimeCallableSlots = [&]() {
     for (const RuntimeCallablePointerSlot &Slot :
          Img->RuntimeCallablePointerSlots)
@@ -226,8 +282,199 @@ bool MedLLVMEmitter::segHasPtrRelocSlots(const Segment *S) const {
         return true;
     return false;
   };
-  return overlaps(Img->CodePtrRelocSlots) || overlaps(Img->DataPtrRelocSlots) ||
-         overlapsImports() || overlapsRuntimeCallableSlots();
+  return segmentHoldsSlot(*S, Img->CodePtrRelocSlots) ||
+         segmentHoldsSlot(*S, Img->DataPtrRelocSlots) ||
+         Img->hasMachOAuthenticatedPointerIn(S->VA, S->Size) ||
+         segmentHoldsSlot(*S, EffectiveImportStorageSlots) ||
+         segmentHoldsSlot(*S, ConflictingImportStorageSlots) ||
+         segmentHoldsSlot(*S, ExternalFunctionPointerSlots) ||
+         overlapsRuntimeCallableSlots();
+}
+
+bool MedLLVMEmitter::segHasLoaderPtrRelocSlots(const Segment *S) const {
+  if (!S || !Img)
+    return false;
+  auto holds = [&](const std::set<uint64_t> &Slots) {
+    auto It = Slots.lower_bound(S->VA);
+    return It != Slots.end() && S->contains(*It);
+  };
+  return holds(Img->CodePtrRelocSlots) || holds(Img->DataPtrRelocSlots) ||
+         Img->hasMachOAuthenticatedPointerIn(S->VA, S->Size);
+}
+
+llvm::Constant *MedLLVMEmitter::tryResolveDirectDataBytes(uint64_t Addr,
+                                                          uint16_t Size,
+                                                          uint64_t OwnerVA) {
+  // Shards must choose the same storage for a segment even if a different
+  // shard takes its address. Keep their existing whole-run contract; local
+  // mirrors below can instead rebind all earlier uses when demand expands.
+  if (!Img || !Size || MergeableGlobals ||
+      (OriginalImageStorageForSource && !Img->IsRelocatable) ||
+      (Addr == 0 && OwnerVA == InvalidVA))
+    return nullptr;
+  ensureImportStorageSnapshot();
+  const Segment *Seg = Img->getSegmentFor(Addr);
+  if (!Seg || !Seg->isReadable() || Seg->isExecutable() ||
+      !segHasPtrRelocSlots(Seg) || Seg->Data.size() > InvalidVA - Seg->VA ||
+      Addr - Seg->VA >= Seg->Data.size() ||
+      Size > Seg->Data.size() - (Addr - Seg->VA))
+    return nullptr;
+
+  if (OwnerVA != InvalidVA) {
+    const Segment *Owner = Img->getSegmentFor(OwnerVA);
+    const Section *Sec = Img->getSectionFor(OwnerVA);
+    const uint64_t Begin = Sec ? Sec->VA : Owner ? Owner->VA : 0;
+    const uint64_t Extent = Sec ? Sec->Size : Owner ? Owner->Size : 0;
+    if (Extent > InvalidVA - Begin || Owner != Seg ||
+        Img->getSectionFor(Addr) != Sec || Addr < Begin ||
+        Addr - Begin >= Extent || Size > Extent - (Addr - Begin))
+      return nullptr;
+  }
+  const Section *Sec = Img->getSectionFor(Addr);
+  if (Img->isMachO() && Sec &&
+      (llvm::StringRef(Sec->Name).starts_with(
+           section_names::macho::ObjCMetadataPrefix) ||
+       Sec->Name == section_names::macho::CfString))
+    return nullptr;
+
+  uint64_t MirrorBegin = 0, MirrorEnd = 0;
+  readOnlyAfterRelocRun(Seg, MirrorBegin, MirrorEnd);
+  if (CodePtrTableGlobals.count(MirrorBegin) ||
+      Img->hasMachOAuthenticatedPointerIn(MirrorBegin,
+                                          MirrorEnd - MirrorBegin) ||
+      preservesRegistrationImageStorage(MirrorBegin, MirrorEnd))
+    return nullptr;
+  // These ranges belong to live original-image storage, not a private copy of
+  // the file's initial bytes, even when the direct access misses their slots.
+  for (const RuntimeCallablePointerSlot &Slot :
+       Img->RuntimeCallablePointerSlots)
+    if (Slot.SlotVA >= MirrorBegin && Slot.SlotVA < MirrorEnd)
+      return nullptr;
+  if (TargetArch == Arch::X86 && TargetFormat == BinaryFormat::COFF)
+    for (const auto &EH : Img->ExceptionMetadata.Functions)
+      if (EH.Registration && EH.Registration->ScopeTableVA >= MirrorBegin &&
+          EH.Registration->ScopeTableVA < MirrorEnd)
+        return nullptr;
+
+  uint64_t Begin = Seg->VA, End = Seg->VA + Seg->Data.size();
+  // Use the maximal interval between relocation fields, rather than one
+  // allocation per load width, so overlapping direct loads/stores stay aliased.
+  // Include the preceding slot: a load can start inside its last few bytes.
+  auto restrictToGap = [&](const auto &Slots, unsigned Width) {
+    auto address = [](const auto &Entry) -> uint64_t {
+      if constexpr (requires { Entry.first; })
+        return Entry.first;
+      else
+        return Entry;
+    };
+    auto Next = Slots.upper_bound(Addr);
+    if (Next != Slots.end())
+      End = std::min(End, address(*Next));
+    if (Next != Slots.begin()) {
+      const uint64_t Previous = address(*std::prev(Next));
+      if (Addr - Previous < Width)
+        return false;
+      Begin = std::max(Begin, Previous + Width);
+    }
+    return Size <= End - Addr;
+  };
+  const unsigned PtrSize = Img->getPointerSize();
+  if (!PtrSize || !restrictToGap(Img->CodePtrRelocSlots, PtrSize) ||
+      !restrictToGap(Img->DataPtrRelocSlots, PtrSize) ||
+      !restrictToGap(EffectiveImportStorageSlots, PtrSize) ||
+      !restrictToGap(ConflictingImportStorageSlots, PtrSize) ||
+      !restrictToGap(ExternalFunctionPointerSlots, PtrSize) ||
+      !restrictToGap(DataSymbolBindings, PtrSize) ||
+      !restrictToGap(Img->RelCodeRelocSlots, 4))
+    return nullptr;
+
+  uint64_t Prefix = 0;
+  if (End - Begin > limits::kMaxSingleGlobalEmbedLen) {
+    // The padded symbol's virtual base must remain in its original mapping,
+    // including for source-view externalization and patch-object rebinding.
+    if (Seg->VA % limits::kMaxEmbeddedDataAlignment)
+      return nullptr;
+    // Only these finite bytes are observed. A large relocation-free gap must
+    // not force resolution of every unrelated pointer in its segment. Grow
+    // overlapping intervals on demand and redirect their previous accesses;
+    // address-valued uses still promote them to the canonical whole mirror.
+    const uint64_t GapBegin = Begin, GapEnd = End;
+    Begin = Addr;
+    End = Addr + Size;
+    auto It = DirectDataByteGlobals.lower_bound(Begin);
+    if (It != DirectDataByteGlobals.begin())
+      --It;
+    for (; It != DirectDataByteGlobals.end() && It->first <= End; ++It) {
+      const uint64_t PreviousEnd = It->first + It->second.Size;
+      // Address adjacency does not give another mapping the same backing
+      // bytes or permissions. Growth must stay inside this segment's gap.
+      if (It->first < GapBegin || PreviousEnd > GapEnd || PreviousEnd < Begin)
+        continue;
+      Begin = std::min(Begin, It->first);
+      End = std::max(End, PreviousEnd);
+    }
+    if (End - Begin > limits::kMaxSingleGlobalEmbedLen)
+      return nullptr;
+    Prefix = Begin % limits::kMaxEmbeddedDataAlignment;
+    if (Prefix > limits::kMaxSingleGlobalEmbedLen ||
+        End - Begin > limits::kMaxSingleGlobalEmbedLen - Prefix)
+      return nullptr;
+  }
+
+  auto It = DirectDataByteGlobals.find(Begin);
+  llvm::GlobalVariable *GV =
+      It == DirectDataByteGlobals.end() ? nullptr : It->second.Global;
+  if (GV && It->second.Size != End - Begin)
+    GV = nullptr;
+  if (!GV) {
+    const bool IsConstant = !Seg->isWritable() || isReadOnlyAfterReloc(Seg);
+    const auto Bytes = llvm::ArrayRef<uint8_t>(
+        Seg->Data.data() + (Begin - Seg->VA), End - Begin);
+    // Padding has no image identity and cannot be observed by finite accesses.
+    // Align the allocation, then place Begin at its original residue within
+    // that alignment. Rebinding must account for this prefix as well.
+    llvm::Constant *Init = nullptr;
+    if (Prefix) {
+      std::vector<uint8_t> Padded(Prefix, 0);
+      Padded.insert(Padded.end(), Bytes.begin(), Bytes.end());
+      Init = llvm::ConstantDataArray::get(*Ctx, Padded);
+    } else {
+      Init = llvm::ConstantDataArray::get(*Ctx, Bytes);
+    }
+    GV = new llvm::GlobalVariable(
+        *Mod, Init->getType(), IsConstant, dataLinkage(), Init,
+        // The symbolized base includes padding: source views and patch-object
+        // rebinding recover its original VA from this name before adding GEPs.
+        (kNdCodePtrPrefix + llvm::utohexstr(Begin - Prefix)).str() + ".bytes");
+    GV->setAlignment(
+        llvm::Align(Prefix ? limits::kMaxEmbeddedDataAlignment
+                           : uint64_t{1} << llvm::countr_zero(
+                                 Begin | limits::kMaxEmbeddedDataAlignment)));
+    auto *Base = llvm::ConstantExpr::getGetElementPtr(
+        llvm::Type::getInt8Ty(*Ctx), GV,
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx), Prefix));
+    rebindDirectDataBytes(Base, Begin, End);
+    DirectDataByteGlobals[Begin] = {GV, End - Begin, Prefix};
+  }
+  return llvm::ConstantExpr::getGetElementPtr(
+      llvm::Type::getInt8Ty(*Ctx), GV,
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx),
+                             Addr - Begin + Prefix));
+}
+
+void MedLLVMEmitter::rebindDirectDataBytes(llvm::Constant *Mirror,
+                                           uint64_t Begin, uint64_t End) {
+  auto It = DirectDataByteGlobals.lower_bound(Begin);
+  while (It != DirectDataByteGlobals.end() && It->first < End) {
+    auto *GV = It->second.Global;
+    auto *Address = llvm::ConstantExpr::getGetElementPtr(
+        llvm::Type::getInt8Ty(*Ctx), Mirror,
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx),
+                               It->first - Begin - It->second.Prefix));
+    GV->replaceAllUsesWith(Address);
+    GV->eraseFromParent();
+    It = DirectDataByteGlobals.erase(It);
+  }
 }
 
 bool MedLLVMEmitter::isReadOnlyAfterReloc(const Segment *S) const {
@@ -361,6 +608,32 @@ void MedLLVMEmitter::readOnlyAfterRelocRun(const Segment *Seg,
   }
 }
 
+std::optional<uint64_t>
+MedLLVMEmitter::completePointerMirrorRun(uint64_t VA) const {
+  if (!addrInCodePtrMirrorRun(VA))
+    return std::nullopt;
+  const Segment *Seg = Img->getSegmentFor(VA);
+  if (isReadOnlyAfterReloc(Seg)) {
+    if (!isMaterializableReadOnlyDataAddress(VA))
+      return std::nullopt;
+  } else {
+    // A writable segment with pointer slots already has one mutable mirror:
+    // direct addresses, selected addresses and STOREs share the same global.
+    // Its on-image bytes (including loader-authenticated zero fill) must cover
+    // the entire memory extent before an unbounded offset may retain it.
+    if (!Seg || !Seg->isReadable() || !Seg->isWritable() ||
+        Seg->isExecutable() || Seg->Size == 0 ||
+        Seg->Data.size() != Seg->Size ||
+        Seg->Size > std::numeric_limits<uint64_t>::max() - Seg->VA ||
+        !canResolveGlobalDataConstant(VA))
+      return std::nullopt;
+  }
+  uint64_t RunStart = 0, RunEnd = 0;
+  readOnlyAfterRelocRun(Seg, RunStart, RunEnd);
+  return VA >= RunStart && VA < RunEnd ? std::optional<uint64_t>(RunStart)
+                                       : std::nullopt;
+}
+
 bool MedLLVMEmitter::addrInCodePtrMirrorRun(uint64_t VA) const {
   if (!Img)
     return false;
@@ -409,6 +682,11 @@ bool MedLLVMEmitter::addrInCodePtrMirrorRun(uint64_t VA) const {
     for (va_t S : ConflictingImportStorageSlots)
       if (S >= RunStart && S < RunEnd)
         return true;
+    for (const auto &[S, Name] : ExternalFunctionPointerSlots) {
+      (void)Name;
+      if (S >= RunStart && S < RunEnd)
+        return true;
+    }
     return false;
   };
   auto runtimeCallableInRun = [&]() {
@@ -425,6 +703,8 @@ bool MedLLVMEmitter::addrInCodePtrMirrorRun(uint64_t VA) const {
 
 std::pair<llvm::GlobalVariable *, uint64_t>
 MedLLVMEmitter::embedWritableRun(uint64_t SegVA) {
+  if (auto Storage = originalImageStorage(SegVA); Storage.first)
+    return Storage;
   uint64_t RunStart = 0, RunEnd = 0;
   if (!writableRunBounds(SegVA, RunStart, RunEnd))
     return {nullptr, 0};
@@ -500,7 +780,9 @@ bool MedLLVMEmitter::writableRunBounds(uint64_t SegVA, uint64_t &RunStart,
   if (!isMutableDataSeg(Seg))
     return false;
   uint64_t RunLen = Seg->Size ? Seg->Size : Seg->Data.size();
-  if (RunLen == 0 || RunLen > limits::kMaxSingleGlobalEmbedLen ||
+  if (RunLen == 0 ||
+      (RunLen > limits::kMaxSingleGlobalEmbedLen &&
+       !(OriginalImageStorageForSource && !Img->IsRelocatable)) ||
       RunLen > std::numeric_limits<uint64_t>::max() - Seg->VA)
     return false;
   RunStart = Seg->VA;

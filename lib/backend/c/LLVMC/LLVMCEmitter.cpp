@@ -16,13 +16,25 @@
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 
 #include "../FloatConversion.h"
+#include "../HeaderPrototype.h"
+#include "../LibraryPrototype.h"
+#include "../StdcallImportPops.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
 #include "../pass/LLVMC/LLVMCBitTests.h"
 #include "../pass/LLVMC/LLVMCCommonBranches.h"
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
-#include "../render/X86FPStateHelpers.h"
+#include "../render/X86/X86AmxState.h"
+#include "../render/X86/X86AtomicExchange.h"
+#include "../render/X86/X86CompressExpand.h"
+#include "../render/X86/X86DescriptorState.h"
+#include "../render/X86/X86FPStateHelpers.h"
+#include "../render/X86/X86FourSource.h"
+#include "../render/X86/X86ScalarSystem.h"
+#include "../render/X86/X86SystemRegister.h"
+#include "../render/X86/X86SystemState.h"
+#include "../render/X86/X86Virtualization.h"
 #include "LLVMCFrameLayout.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCIntegerSaturation.h"
@@ -30,21 +42,37 @@
 #include "LLVMCSourceStrings.h"
 #include "LLVMCStackAllocation.h"
 #include "LLVMCStorage.h"
+#include "LLVMCVariableEdits.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
 #include "neverd/DataAccessWidths.h"
+#include "neverd/backend/DataSymbolMetadata.h"
+#include "neverd/backend/LLVMOriginalImageStorage.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/FloatingPointContract.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/backend/c/render/SyscallHelpers.h"
+#include "neverd/backend/llvm/LLVMFloatingCall.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LLVMSourceTypeHints.h"
-#include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
-#include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
-#include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/PEImportShadow.h"
+#include "neverd/backend/llvm/X86/LLVMX86AddressSpaces.h"
+#include "neverd/backend/llvm/X86/LLVMX86FPStateAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX86SHA.h"
+#include "neverd/backend/llvm/X86/LLVMX86ShadowStackAsm.h"
+#include "neverd/debug/UserPrototype.h"
+#include "neverd/ir/IntegerCallArguments.h"
+#include "neverd/ir/TargetRegInfo.h"
+#include "neverd/libc/LibCFixedIntegerArguments.h"
+#include "neverd/libc/LibCFloatingArguments.h"
+#include "neverd/libc/LibCResult.h"
+#include "neverd/libc/LibCVariadicArguments.h"
+#include "neverd/libc/MinGWHeaderFunctions.h"
+#include "neverd/loader/DataSymbolBinding.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -55,6 +83,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
+#include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Debug.h"
@@ -63,6 +92,8 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Scalar/DCE.h"
+#include "llvm/Transforms/Scalar/InstSimplifyPass.h"
+#include "llvm/Transforms/Scalar/ScalarizeMaskedMemIntrin.h"
 #include "llvm/Transforms/Scalar/Scalarizer.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
@@ -231,6 +262,9 @@ std::string wrapInitializer(std::string Text) {
 
 bool LLVMCWriter::isNativeVectorIntrinsic(const llvm::CallBase &Call,
                                           Arch TheArch) {
+  if ((TheArch == Arch::X86 || TheArch == Arch::X64) &&
+      llvmX86SHA256CName(Call))
+    return true;
   const auto *Callee = Call.getCalledFunction();
   if (TheArch != Arch::AArch64 || !Callee ||
       Callee->getIntrinsicID() != llvm::Intrinsic::aarch64_neon_bfmmla ||
@@ -250,6 +284,7 @@ bool LLVMCWriter::isNativeVectorIntrinsic(const llvm::CallBase &Call,
 void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
   GlobalIdentifierAllocator = CProjectionIdentifierAllocator{};
   FunctionIdentifiers.clear();
+  FunctionIdentifierNames.clear();
   FunctionSymbolNames.clear();
   FunctionSources.clear();
   ExternalDataIdentifiers.clear();
@@ -294,6 +329,7 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
       Name = IntrinsicHelper;
     }
     std::string DebugName;
+    std::optional<va_t> ImageCalleeAddress;
     if (isSynthesizedFuncName(Name)) {
       llvm::StringRef Hex = Name;
       if (!Hex.consume_front(kAutoFuncPrefix))
@@ -320,6 +356,19 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
               DebugName =
                   symbolOfImportName(Imp->Name, Opts.Format, Opts.TheArch);
         }
+        // A call to a stub reaches its import, by whose name it calls; the
+        // stub's own body is not the import, and calls it by that name.
+        if (!Fn.isDeclaration() && !DebugName.empty() && Img)
+          if (const Import *Imp = Img->findImportStubAt(Addr);
+              Imp && !Imp->Name.empty() &&
+              cNameOfSymbol(DebugName, Opts.Format, Opts.TheArch) ==
+                  cNameOfSymbol(
+                      symbolOfImportName(Imp->Name, Opts.Format, Opts.TheArch),
+                      Opts.Format, Opts.TheArch))
+            DebugName.clear();
+        if (Fn.isDeclaration() && !DebugName.empty() && Img &&
+            !Img->findImportAt(Addr) && !Img->findImportStubAt(Addr))
+          ImageCalleeAddress = Addr;
       }
     }
     // An image symbol carries the format's decoration; an LLVM name may have
@@ -329,10 +378,51 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
                           : cNameOfSymbol(DebugName, Opts.Format, Opts.TheArch);
     FunctionSymbolNames.emplace(&Fn, CName.str());
     FunctionSources.emplace(&Fn, DebugName.empty() ? Name.str() : DebugName);
-    if (!Fn.isDeclaration())
+    if (Fn.isDeclaration() && !ImageCalleeAddress && Img &&
+        copiesHeaderRoutine(CName, Opts.Format)) {
+      auto VA = rewrite_source::getOriginalVA(Fn);
+      if (!VA)
+        llvm::consumeError(VA.takeError());
+      else if (*VA && !Img->findImportAt(**VA) && !Img->findImportStubAt(**VA))
+        ImageCalleeAddress = **VA;
+    }
+    std::string Stem;
+    if (!Fn.isDeclaration()) {
       CName = cDefinitionName(CName, Opts.Format);
-    FunctionIdentifiers.emplace(
-        &Fn, GlobalIdentifierAllocator.allocate(CName, "nd_function"));
+      // The image's own copy of a C library routine, as a statically linked
+      // `atexit`, is not the routine a header declares the name for, and
+      // takes its address as a body lifted under an import's name does
+      // (`fprintf_1400014B0`), one of mingw-w64's own routines a Windows
+      // program links too (`__mingw_printf`).  So does the copy of a routine
+      // the runtime's tables type where the image imports the routine too,
+      // whose declaration takes the name; a copy alone keeps it, as the
+      // listing does (`_Unwind_Resume`).  So does a whole module's `main`,
+      // which C holds to the parameters and result it gives main, not those
+      // the code has.
+      if (copiesHeaderRoutine(CName, Opts.Format) ||
+          (libc::libcPrototype(CName, Opts.Format) &&
+           ImportCNames.count(CName.str())) ||
+          (!OnlyFunction && CName == "main")) {
+        auto VA = rewrite_source::getOriginalVA(Fn);
+        if (!VA)
+          llvm::consumeError(VA.takeError());
+        else if (*VA)
+          Stem = (CName + "_" + llvm::utohexstr(**VA)).str();
+      }
+    } else if (ImageCalleeAddress && copiesHeaderRoutine(CName, Opts.Format)) {
+      // A selected caller may omit this image-defined callee's body. Its
+      // machine signature still belongs to that image, even when a host
+      // header declares a library function under the same ordinary name.
+      Stem = (CName + "_" + llvm::utohexstr(*ImageCalleeAddress)).str();
+    }
+    if (!Stem.empty())
+      CName = Stem;
+    const auto Entry =
+        FunctionIdentifiers
+            .emplace(&Fn,
+                     GlobalIdentifierAllocator.allocate(CName, "nd_function"))
+            .first;
+    FunctionIdentifierNames.insert(Entry->second);
   }
   std::set<const llvm::GlobalVariable *> CallableGlobals;
   for (const auto &Function : Mod)
@@ -344,8 +434,7 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
             CallableGlobals.insert(Global);
   for (const auto &Global : Mod.globals())
     if (Global.isDeclaration() && !Global.getName().empty() &&
-        Global.getMetadata("neverd.data-symbol") &&
-        !CallableGlobals.count(&Global) &&
+        data_symbol::isMarked(Global) && !CallableGlobals.count(&Global) &&
         !parseNdDataSymbol(Global.getName()) &&
         !parseNdCodePtrSymbol(Global.getName()) &&
         !Global.getName().starts_with("__imp_") &&
@@ -371,19 +460,211 @@ llvm::StringRef LLVMCWriter::cNameOfGlobal(llvm::StringRef Name,
   return llvm_name::cNameOfLLVMName(Name, Opts.Format, Opts.TheArch);
 }
 
+namespace {
+struct RestoreOutput {
+  LLVMCOut &Out;
+  llvm::raw_ostream *Original;
+  ~RestoreOutput() { Out.retarget(Original); }
+};
+} // namespace
+
 void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   OnlyFunction = Only;
   SelectedGlobals =
       Only ? referencedGlobals(*Only) : std::set<const llvm::GlobalValue *>{};
   EmittedGlobalNames.clear();
+  DeclaredCalleeNames.clear();
+  RecordPointerTags.clear();
+  HeaderCallRecords.clear();
   CurMod = &Mod;
   prepareFunctionIdentifiers(Mod);
   collectImageDataUses(Mod);
   writeIncludes(Mod);
+  // Header conflicts can rename a local import. Key its checked declaration
+  // by that final C identifier while retaining the original lookup name.
+  prepareSourceImportPrototypes(Mod);
   OS << "\n";
+  // What follows names the program's records, whose definitions go before
+  // it once it is written.
+  std::string Rest;
+  llvm::raw_string_ostream RestOS(Rest);
+  {
+    RestoreOutput Restore{OS, &OS.stream()};
+    OS.retarget(&RestOS);
+    writeModuleBody(Mod);
+  }
+  writeRecordDefinitions(Rest);
+  OS << Rest;
+}
+
+std::string LLVMCWriter::recordPointerSpelling(const NdType &Record) {
+  std::string Tag = cNamedTypeSpelling(Record.SourceName);
+  if (Tag.empty())
+    return {};
+  RecordPointerTags.insert(Tag);
+  return Tag + "*";
+}
+
+void LLVMCWriter::noteRecordValue(TypeRef Type) const {
+  while (Type && Type->Kind == NdTypeKind::Array)
+    Type = Type->ElemType;
+  if (Type && Type->Kind == NdTypeKind::Struct && !Type->SourceName.empty())
+    MemberRecords.insert(Type->SourceName);
+}
+
+/// \p Text with each use of \p Tag as a type (a declaration's, a cast's)
+/// spelled with its keyword: `struct stat buf`, where a function of the
+/// same name hides the bare one.
+static void spellTagUses(std::string &Text, llvm::StringRef Tag,
+                         llvm::StringRef Keyword) {
+  const auto Identifier = [](char C) { return llvm::isAlnum(C) || C == '_'; };
+  for (size_t At = Text.find(Tag.data(), 0, Tag.size());
+       At != std::string::npos; At = Text.find(Tag.data(), At, Tag.size())) {
+    const size_t End = At + Tag.size();
+    size_t Before = At;
+    while (Before > 0 && Text[Before - 1] == ' ')
+      --Before;
+    size_t After = End;
+    while (After < Text.size() && Text[After] == ' ')
+      ++After;
+    const bool Word = (At == 0 || !Identifier(Text[At - 1])) &&
+                      (End == Text.size() || !Identifier(Text[End]));
+    const bool Member =
+        Before > 0 && (Text[Before - 1] == '.' || Text[Before - 1] == '>');
+    const bool Tagged =
+        llvm::StringRef(Text).take_front(Before).ends_with(Keyword.str());
+    const bool Type =
+        After < Text.size() && (Text[After] == '*' || Identifier(Text[After]));
+    if (Word && !Member && !Tagged && Type) {
+      Text.insert(At, Keyword.str() + " ");
+      At += Keyword.size() + 1;
+    }
+    At += Tag.size();
+  }
+}
+
+void LLVMCWriter::writeRecordDefinitions(std::string &Text) {
+  if (!Opts.EmitIncludes)
+    return;
+  CRecordDefinitions Definitions;
+  // A name the unit gives a function or an object, of its own or one it
+  // declares, is that, not a type.
+  const auto Held = [&](const std::string &Name) {
+    return GlobalIdentifierAllocator.holds(Name) ||
+           EmittedGlobalNames.count(Name) || DeclaredCalleeNames.count(Name);
+  };
+  // A record only pointers name, which no definition below completes, is
+  // declared incomplete, as HighC declares it, unless a function of the
+  // unit or of a C library has its name: it is spelled by its tag
+  // (`struct stat64` beside stat64()).
+  auto DeclareIncomplete = [&](const std::set<std::string> &Defined) {
+    bool Any = false;
+    for (const std::string &Tag : RecordPointerTags) {
+      if (Defined.count(Tag) || HeaderCallRecords.count(Tag))
+        continue;
+      const auto Known = Definitions.Tags.find(Tag);
+      const char *Keyword =
+          Known != Definitions.Tags.end() && Known->second ? "union" : "struct";
+      if (Held(Tag) || libc::isKnownFunction(Tag) ||
+          libc::headerOfDataObject(Tag)) {
+        spellTagUses(Text, Tag, Keyword);
+        continue;
+      }
+      OS << "typedef " << Keyword << " " << Tag << " " << Tag << ";\n";
+      Any = true;
+    }
+    if (Any)
+      OS << "\n";
+  };
+  if (!Opts.RecordDefinitions) {
+    DeclareIncomplete({});
+    return;
+  }
+  // Every identifier the text spells: a record's or an enumerator's name
+  // among them.
+  std::set<std::string> Words;
+  for (size_t I = 0; I < Text.size();) {
+    if (!llvm::isAlpha(Text[I]) && Text[I] != '_') {
+      ++I;
+      continue;
+    }
+    size_t End = I + 1;
+    while (End < Text.size() && (llvm::isAlnum(Text[End]) || Text[End] == '_'))
+      ++End;
+    if (I == 0 || (!llvm::isAlnum(Text[I - 1]) && Text[I - 1] != '_'))
+      Words.insert(Text.substr(I, End - I));
+    I = End;
+  }
+  std::vector<TypeRef> Named;
+  Named.reserve(Words.size());
+  for (const std::string &Word : Words)
+    if (!HeaderCallRecords.count(Word)) {
+      TypeRef Type = NdType::makeNamedRecord(Word, 0);
+      if (RecordPointerTags.count(Word) && !MemberRecords.count(Word))
+        Type = NdType::makePtr(Type);
+      Named.push_back(std::move(Type));
+    }
+  // And the records whose members it reads, which it need not spell.
+  for (const std::string &Name : MemberRecords)
+    if (!Words.count(Name) && !HeaderCallRecords.count(Name))
+      Named.push_back(NdType::makeNamedRecord(Name, 0));
+  Definitions = Opts.RecordDefinitions(Named);
+  // The records and enumerations the text spells by their tags' names,
+  // which typedefs of those names declare.
+  std::vector<std::string> Spelled;
+  for (const auto &[Name, Union] : Definitions.Tags)
+    if (Words.count(Name))
+      Spelled.push_back(Name);
+  std::vector<std::string> Enumerations;
+  for (const std::string &Name : Definitions.Enumerations)
+    if (Words.count(Name))
+      Enumerations.push_back(Name);
+  // A name the definitions declare that the unit gives a function or an
+  // object of its own leaves them out: one name would mean both.  A record
+  // the text spells by such a name is spelled by its tag, as a header the
+  // unit includes may define it (glibc's `struct stat` beside `stat`).
+  std::vector<std::string> Declared = Definitions.Identifiers;
+  llvm::append_range(Declared, Spelled);
+  llvm::append_range(Declared, Enumerations);
+  for (const std::string &Name : Declared)
+    if (Held(Name)) {
+      for (const std::string &Tag : Spelled)
+        if (Held(Tag))
+          spellTagUses(Text, Tag, Definitions.Tags[Tag] ? "union" : "struct");
+      OS << "/* The local types' definitions are left out: " << Name
+         << " names one of the unit's functions or objects too. */\n\n";
+      DeclareIncomplete({});
+      return;
+    }
+  // A header the unit includes names some records by a typedef alone, which
+  // the unit spells them by.
+  std::set<std::string> Typedefs(Spelled.begin(), Spelled.end());
+  Typedefs.insert(Definitions.HeaderTypedefs.begin(),
+                  Definitions.HeaderTypedefs.end());
+  DeclareIncomplete(Typedefs);
+  for (const std::string &Name : Spelled)
+    if (!llvm::is_contained(Definitions.HeaderTypedefs, Name))
+      OS << "typedef " << (Definitions.Tags[Name] ? "union " : "struct ")
+         << Name << " " << Name << ";\n";
+  if (!Definitions.Text.empty())
+    OS << "\n" << Definitions.Text << "\n";
+  // An enumeration's type is complete only where it is defined.  One a header
+  // names by a typedef alone has no tag, and the header's typedef is the
+  // unit's (<search.h>'s VISIT).
+  bool EnumerationTypedefs = false;
+  for (const std::string &Name : Enumerations)
+    if (!llvm::is_contained(Definitions.HeaderTypedefs, Name)) {
+      OS << "typedef enum " << Name << " " << Name << ";\n";
+      EnumerationTypedefs = true;
+    }
+  if (EnumerationTypedefs)
+    OS << "\n";
+}
+
+void LLVMCWriter::writeModuleBody(llvm::Module &Mod) {
   writeStructDefs(Mod);
   for (const auto &Global : Mod.globals()) {
-    if (Only && !SelectedGlobals.count(&Global))
+    if (OnlyFunction && !SelectedGlobals.count(&Global))
       continue;
     const auto It = ExternalDataIdentifiers.find(&Global);
     if (It == ExternalDataIdentifiers.end())
@@ -411,11 +692,6 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
         OS << SourceRecorder->end(*Event);
       OS << "\n";
     }
-  };
-  struct RestoreOutput {
-    LLVMCOut &Out;
-    llvm::raw_ostream *Original;
-    ~RestoreOutput() { Out.retarget(Original); }
   };
   if (OnlyFunction) {
     writeForwardDecls(Mod);
@@ -447,6 +723,9 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
     WriteFunctions();
   }
   writeForwardDecls(Mod);
+  // A global's initializer can hold an import's address, as an import
+  // table's mirror does.
+  writeImportCalleeDecls(Mod);
   writeGlobals(Mod);
   // Code that reaches image data through a mirror the environment holds
   // names the data itself, as one function's output does.
@@ -455,7 +734,6 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
     if (!Fn.isDeclaration())
       Defined.push_back(&Fn);
   writeReferencedImageObjects(Defined, Functions);
-  writeImportCalleeDecls(Mod);
   OS << "\n" << Functions;
   recordSourceNames(Mod);
 }
@@ -491,6 +769,26 @@ void LLVMCWriter::recordSourceNames(const llvm::Module &Mod) {
       Name.Address.reset();
   }
   std::vector<CSourceName> Names;
+  for (const auto &[Address, Use] : ImageDataUses) {
+    if (Use.CallSlot || Use.AccessBytes.size() != 1)
+      continue;
+    const std::string Name = namedImageObject(Address);
+    CSourceName Object;
+    Object.TheKind = CSourceName::Kind::Object;
+    Object.Identifier = Name;
+    Object.Address = Address;
+    ByIdentifier.emplace(Name, std::move(Object));
+    if (Opts.SourceMap && FunctionEntry) {
+      SourceVariable Variable;
+      Variable.Function = *FunctionEntry;
+      Variable.Address = Address;
+      Variable.Id = "global:" + std::to_string(Address);
+      Variable.Name = Name;
+      Variable.Bytes = *Use.AccessBytes.begin();
+      Variable.Type = NdType::makeInt(Variable.Bytes);
+      recordSourceVariable(Opts.SourceMap->Variables, std::move(Variable));
+    }
+  }
   Names.reserve(ByIdentifier.size());
   for (auto &[Identifier, Name] : ByIdentifier)
     Names.push_back(std::move(Name));
@@ -501,8 +799,19 @@ void LLVMCWriter::recordSourceNames(const llvm::Module &Mod) {
 }
 
 void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
+  bool NeedsX86SystemRegisterDispatch = false;
+  bool NeedsX86ScalarSystemDispatch = false;
+  bool NeedsX86DescriptorStateDispatch = false;
+  bool NeedsX86VirtualizationDispatch = false;
+  bool NeedsX86SystemStateDispatch = false;
   bool HasFloatingArithmetic = false;
+  bool HasWin64Call = false;
+  Win64CallABI.clear();
   std::set<std::string> Headers;
+  // The routines the user declares that the unit calls: directly, and
+  // through their imports.
+  std::set<const llvm::Function *> UserFunctions;
+  std::set<std::string> UserImports;
   Headers.insert("stdint.h");
   NeedsUnalignedTypes = false;
   std::map<std::string, std::pair<unsigned, bool>> FunnelShifts;
@@ -511,12 +820,32 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   std::map<std::string, ScalarUnary> ScalarUnaries;
   FPStateHelperNames.clear();
   SyscallHelperNames.clear();
+  // The image's copy of an object a C library header declares (optarg, by
+  // its copy relocation) is the header's, as HighC's is (ImageObject::
+  // Header): the unit includes the header, and headerDeclaresObject leaves
+  // the object's declaration to it.
+  const auto NoteHeaderObject = [&](va_t Addr) {
+    if (const auto Named = imageDataSymbolName(Addr))
+      if (const char *Header = libc::headerOfDataObject(Named->first))
+        Headers.insert(Header);
+  };
 
   for (auto &Fn : Mod) {
     if (OnlyFunction && &Fn != OnlyFunction)
       continue;
+    // Windows exception handling prints as `__try` with the filter
+    // dispositions and intrinsics <excpt.h> defines.
+    if (Opts.Format == BinaryFormat::COFF && !Fn.isDeclaration() &&
+        (functionHasWindowsEHPads(Fn) ||
+         (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Fn) &&
+          functionNeedsAnalysisOnlyEHWrap(Fn))))
+      Headers.insert("excpt.h");
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
+        for (const llvm::Use &Operand : Inst.operands())
+          if (Operand->getType()->isPointerTy())
+            if (const auto Addr = declaredImageDataVA(Operand.get()))
+              NoteHeaderObject(*Addr);
         HasFloatingArithmetic |= Inst.getOpcode() == llvm::Instruction::FAdd ||
                                  Inst.getOpcode() == llvm::Instruction::FSub ||
                                  Inst.getOpcode() == llvm::Instruction::FMul ||
@@ -532,11 +861,33 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
             ScalarUnaries.emplace(
                 functionIdentifier(*Call->getCalledFunction()), *Shape);
         }
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst))
+          HasWin64Call |= Call->getCallingConv() == llvm::CallingConv::Win64;
         if (llvm::isa<llvm::FenceInst>(&Inst))
           HasCIntrinsics = true;
+        // A library routine called through its import takes the header that
+        // declares it, as a direct call does, and one the runtime's tables
+        // type the header its prototype's types need (`FILE`).
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst);
+            Call && !Call->getCalledFunction()) {
+          if (const LibraryCallee Library = libraryCallee(*Call)) {
+            if (!Library.Prototype)
+              Headers.insert(libc::headerFor(Library.Name));
+            else if (!Library.Prototype->Header.empty())
+              Headers.insert(std::string(Library.Prototype->Header));
+          } else if (std::string Name =
+                         importCalleeCName(Call->getCalledOperand());
+                     !Name.empty() && userDeclaresRoutine(Name))
+            UserImports.insert(std::move(Name));
+        }
         if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
-          if (isLLVMX86SegmentedAddressSpace(LI->getPointerAddressSpace()))
+          if (isLLVMX86SegmentedAddressSpace(LI->getPointerAddressSpace())) {
             HasCIntrinsics = true;
+            // Windows reads the segment as MSVC's <intrin.h> spells it
+            // (__readgsqword).
+            if (Opts.Format == BinaryFormat::COFF)
+              Headers.insert("intrin.h");
+          }
           NeedsUnalignedTypes |=
               LI->isSimple() && LI->getPointerAddressSpace() == 0 &&
               !c_memory::alias(typeToCLLVM(LI->getType()), Opts.ScalarPointers)
@@ -549,6 +900,57 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                                Opts.ScalarPointers)
                    .empty();
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
+          if (auto Descriptor = renderX86DescriptorStateCall(
+                  Opts.TheArch, Opts.Format, *CI, "result", true,
+                  std::vector<std::string>(CI->arg_size(), "0"))) {
+            NeedsX86DescriptorStateDispatch |= Opts.TheArch == Arch::X64;
+            if (Descriptor->SetIntrinsics) {
+              Headers.insert("intrin.h");
+              HasCIntrinsics = true;
+            }
+            continue;
+          }
+          if (auto System = renderX86ScalarSystemCall(
+                  Opts.TheArch, Opts.Format, *CI, "result", true,
+                  std::vector<std::string>(CI->arg_size(), "0"))) {
+            NeedsX86ScalarSystemDispatch = true;
+            if (System->SetIntrinsics) {
+              Headers.insert("intrin.h");
+              HasCIntrinsics = true;
+            }
+            continue;
+          }
+          if (auto SystemRegister = renderX86SystemRegisterCall(
+                  Opts.TheArch, Opts.Format, *CI, "result", true,
+                  std::vector<std::string>(CI->arg_size(), "0"))) {
+            NeedsX86SystemRegisterDispatch |=
+                Opts.TheArch == Arch::X64 || Opts.Format == BinaryFormat::COFF;
+            if (SystemRegister->SetIntrinsics) {
+              Headers.insert("intrin.h");
+              HasCIntrinsics = true;
+            }
+            continue;
+          }
+          if (Opts.TheArch == Arch::X64) {
+            const std::vector<std::string> Arguments(CI->arg_size(), "0");
+            NeedsX86SystemStateDispatch |=
+                renderX86SystemStateNativeCall(Opts.TheArch, *CI, "result",
+                                               !CI->getType()->isVoidTy(),
+                                               Arguments)
+                    .has_value() ||
+                renderX86SystemStateCall(Opts.TheArch, *CI, "result",
+                                         !CI->getType()->isVoidTy(), Arguments)
+                    .has_value();
+            NeedsX86VirtualizationDispatch |=
+                renderX86VirtualizationNativeCall(Opts.TheArch, *CI, "result",
+                                                  !CI->getType()->isVoidTy(),
+                                                  Arguments)
+                    .has_value() ||
+                renderX86VirtualizationCall(Opts.TheArch, *CI, "result",
+                                            !CI->getType()->isVoidTy(),
+                                            Arguments)
+                    .has_value();
+          }
           if (classifyX86ShadowStackReadAsm(*CI)) {
             const unsigned Word = CI->getType()->getIntegerBitWidth() / 8;
             if ((Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64) ||
@@ -588,6 +990,29 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                 (Asm->getAsmString() == "ldmxcsr ($0)" ||
                  Asm->getAsmString() == "stmxcsr ($0)"))
               HasCIntrinsics = true;
+            // An assembly the writer prints as an intrinsic needs the header
+            // that declares it: ACLE's (`msr tpidr_el0, $0` is __arm_wsr64,
+            // `dsb sy` __dsb(0xF)), or MSVC's for a Windows image
+            // (`outb $0, $1` is __outbyte).
+            // The body refuses an assembly contract it cannot print; this
+            // only asks which header one it prints needs.
+            bool PrintsIntrinsic = false;
+            try {
+              PrintsIntrinsic =
+                  renderInlineAsm(Opts.TheArch, Asm->getAsmString().str(),
+                                  CI->getType()->isStructTy(), "result",
+                                  /*ResultLive=*/true,
+                                  std::vector<std::string>(CI->arg_size(), "0"))
+                      .SetIntrinsics;
+            } catch (const std::runtime_error &) {
+            }
+            // Follow the renderer on every architecture: x86 hardware fences
+            // printed as _mm_* also need the ISA header on ELF and Mach-O.
+            if (PrintsIntrinsic)
+              HasCIntrinsics = true;
+            if (PrintsIntrinsic && Opts.Format == BinaryFormat::COFF &&
+                (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64))
+              Headers.insert("intrin.h");
             continue;
           }
           auto *Callee = CI->getCalledFunction();
@@ -630,7 +1055,21 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
           if (isX86FastFailName(Name))
             HasCIntrinsics = true;
 
-          if (const char *Hdr = libc::headerFor(stripLeadingUnderscores(Name)))
+          // A routine the user declares is declared as the user does
+          // (writeForwardDecls), not by the header that declares the C
+          // library's routine of its name.
+          if (Callee->isDeclaration() && !Callee->isIntrinsic() &&
+              userDeclaresRoutine(cNameOfGlobal(Callee->getName(), true)))
+            UserFunctions.insert(Callee);
+          // A callee the image names as a C library routine, as the
+          // Windows kernel's own memset is, is declared by that header
+          // (writeForwardDecls leaves it to the header): _exit by
+          // <unistd.h>, not exit's <stdlib.h>.
+          else if (const char *Named =
+                       libc::headerFor(functionIdentifier(*Callee)))
+            Headers.insert(Named);
+          else if (const char *Hdr =
+                       libc::headerFor(stripLeadingUnderscores(Name)))
             Headers.insert(Hdr);
         }
       }
@@ -655,17 +1094,94 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
           c_stub::addVariadicStubHeaders(Headers, *Forward);
     }
 
+  // So is one the module names as a global of its own.
+  for (const llvm::GlobalVariable &Global : Mod.globals())
+    if (!Global.hasInitializer() && !Global.use_empty())
+      if (const std::optional<va_t> Addr = parseNdDataSymbol(Global.getName()))
+        NoteHeaderObject(*Addr);
+
   if (HasCIntrinsics)
     for (const char *Hdr : getArchIntrinsicHeaders(Opts.TheArch))
       Headers.insert(Hdr);
 
   IncludedHeaders.clear();
   if (Opts.EmitIncludes) {
+    // As NeverD read the headers: with _GNU_SOURCE, for the GNU C Library,
+    // musl and bionic.
+    if (libc::headersReadWithGnuSource(libcVariant()))
+      OS << "#define _GNU_SOURCE 1\n";
     for (auto &H : Headers)
       OS << "#include <" << H << ">\n";
     OS << "\n";
     IncludedHeaders.insert(Headers.begin(), Headers.end());
   }
+  if (NeedsX86SystemRegisterDispatch)
+    OS << X86SystemRegisterCompilerDispatch;
+  if (NeedsX86DescriptorStateDispatch)
+    OS << X86DescriptorStateCompilerDispatch;
+  if (NeedsX86ScalarSystemDispatch)
+    OS << X86ScalarSystemCompilerDispatch;
+  if (NeedsX86VirtualizationDispatch)
+    OS << X86VirtualizationCompilerDispatch;
+  if (NeedsX86SystemStateDispatch)
+    OS << X86SystemStateCompilerDispatch;
+  if (Opts.TheArch == Arch::X86) {
+    // i386 Clang supports bit-precise integers but does not define the native
+    // 128-bit aliases used by LLVM C's 65..128-bit scalar carriers. Retain the
+    // same signed/unsigned operations, including packed FP results and MXCSR.
+    OS << "#if !defined(__SIZEOF_INT128__) && defined(__BITINT_MAXWIDTH__) && "
+          "__BITINT_MAXWIDTH__ >= 128\n"
+          "typedef unsigned _BitInt(128) __uint128_t;\n"
+          "typedef _BitInt(128) __int128_t;\n"
+          "#endif\n\n";
+  }
+  if (HasWin64Call) {
+    Win64CallABI =
+        GlobalIdentifierAllocator.allocate("__neverd_ms_abi", "nd_ms_abi");
+    // Win64 is MSVC x64's native convention. Other hosts still need the
+    // explicit ABI when calling a physical Win64 function pointer.
+    OS << "#if defined(_MSC_VER) && defined(_M_X64)\n#define " << Win64CallABI
+       << "\n#else\n#define " << Win64CallABI
+       << " __attribute__((ms_abi))\n#endif\n\n";
+  }
+  // A routine the user declares under the name of one a header the unit
+  // includes declares otherwise takes another identifier, which links by
+  // the routine's name (writeForwardDecls, writeImportCalleeDecls).
+  UserImportIdentifiers.clear();
+  UserImportLinkNames.clear();
+  auto HeaderDeclares = [&](llvm::StringRef CName) {
+    const char *Header = libc::headerFor(CName);
+    return Header && IncludedHeaders.count(Header);
+  };
+  // A mirrored import initializer can reference a module declaration even
+  // when every call is indirect. Its declaration and the calls must use the
+  // same alias, including when the selected projection omits the initializer.
+  for (const llvm::Function &Fn : Mod)
+    if (Fn.isDeclaration() && !Fn.isIntrinsic() &&
+        UserImports.count(cNameOfGlobal(Fn.getName(), true).str()))
+      UserFunctions.insert(&Fn);
+  for (const llvm::Function *Fn : UserFunctions)
+    if (const std::string Name = cNameOfGlobal(Fn->getName(), true).str();
+        HeaderDeclares(Name)) {
+      std::string &Identifier = FunctionIdentifiers[Fn];
+      auto [Alias, Inserted] = UserImportIdentifiers.try_emplace(Name);
+      if (Inserted) {
+        Alias->second =
+            GlobalIdentifierAllocator.allocate(Identifier, "nd_function");
+        UserImportLinkNames.emplace(Alias->second, Name);
+      }
+      Identifier = Alias->second;
+      FunctionIdentifierNames.insert(Identifier);
+    }
+  for (const std::string &Name : UserImports)
+    if (HeaderDeclares(Name) && !UserImportIdentifiers.count(Name)) {
+      if (!GlobalIdentifierAllocator.holds(Name))
+        GlobalIdentifierAllocator.allocateVerbatim(Name);
+      const std::string Identifier =
+          GlobalIdentifierAllocator.allocate(Name, "nd_import");
+      UserImportIdentifiers.emplace(Name, Identifier);
+      UserImportLinkNames.emplace(Identifier, Name);
+    }
   if (HasFloatingArithmetic)
     c_float::writeContractionPolicy(OS.stream());
   // The accesses' types or assumptions are written only when an access can
@@ -676,7 +1192,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   for (const auto &[Name, Shape] : ScalarUnaries) {
     const unsigned CarrierBits = Shape.carrierBits();
     const std::string Type = CarrierBits == 128
-                                 ? "unsigned __int128"
+                                 ? "__uint128_t"
                                  : "uint" + std::to_string(CarrierBits) + "_t";
     if (Shape.Kind == llvm::Intrinsic::bitreverse) {
       OS << "static inline " << Type << " " << Name << "(" << Type
@@ -701,7 +1217,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   for (const auto &[Name, Shape] : IntegerSaturations) {
     const unsigned CarrierBits = Shape.Bits == 1 ? 8 : Shape.Bits;
     const std::string Type = CarrierBits == 128
-                                 ? "unsigned __int128"
+                                 ? "__uint128_t"
                                  : "uint" + std::to_string(CarrierBits) + "_t";
     OS << "static inline " << Type << " " << Name << "(" << Type << " a, "
        << Type << " b) {\n";
@@ -719,7 +1235,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   for (const auto &[Name, Shape] : IntegerMinMax) {
     const unsigned CarrierBits = Shape.Bits == 1 ? 8 : Shape.Bits;
     const std::string Type = CarrierBits == 128
-                                 ? "unsigned __int128"
+                                 ? "__uint128_t"
                                  : "uint" + std::to_string(CarrierBits) + "_t";
     OS << "static inline " << Type << " " << Name << "(" << Type << " a, "
        << Type << " b) {\n";
@@ -739,9 +1255,8 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   }
   for (const auto &[Name, Shape] : FunnelShifts) {
     const auto [Width, Left] = Shape;
-    const std::string Type = Width == 128
-                                 ? "unsigned __int128"
-                                 : "uint" + std::to_string(Width) + "_t";
+    const std::string Type =
+        Width == 128 ? "__uint128_t" : "uint" + std::to_string(Width) + "_t";
     OS << "static inline " << Type << " " << Name << "(" << Type << " a, "
        << Type << " b, " << Type << " amount) {\n"
        << "    unsigned int shift = (unsigned int)(amount % " << Width
@@ -842,6 +1357,10 @@ void LLVMCWriter::writeStructDefs(llvm::Module &Mod) {
 void LLVMCWriter::writeImageByteArray(const llvm::GlobalVariable &Global,
                                       llvm::StringRef Name) {
   const auto *Array = llvm::cast<llvm::ArrayType>(Global.getValueType());
+  if (!Global.hasInitializer()) {
+    OS << "extern uint8_t " << Name << "[" << Array->getNumElements() << "];\n";
+    return;
+  }
   OS << llvmc::storageAlignment(Global.getValueType(),
                                 Global.getParent()->getDataLayout(),
                                 Global.getAlign().valueOrOne());
@@ -868,31 +1387,65 @@ void LLVMCWriter::writeImageByteArray(const llvm::GlobalVariable &Global,
 }
 
 void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
-  if (OnlyFunction)
+  // Initializers can refer forward or form cycles. The declarations use the
+  // same storage shape and linkage as the definitions below.
+  auto declare = [&](const llvm::GlobalVariable &Global) {
+    OS << llvmc::storageAlignment(Global.getValueType(), Mod.getDataLayout(),
+                                  Global.getAlign().valueOrOne());
+    OS << (Global.hasLocalLinkage() ? "static " : "extern ");
+    if (Global.isConstant())
+      OS << "const ";
+    auto *Array = llvm::dyn_cast<llvm::ArrayType>(Global.getValueType());
+    const auto *Data =
+        llvm::dyn_cast<llvm::ConstantDataArray>(Global.getInitializer());
+    const bool String = Global.isConstant() && Data && Data->isString() &&
+                        !parseNdDataSymbol(Global.getName());
+    OS << (String ? "char"
+                  : typeToCLLVM(Array ? Array->getElementType()
+                                      : Global.getValueType()))
+       << " " << globalNameStr(&Global);
+    if (Array)
+      OS << "[" << Array->getNumElements() << "]";
+    OS << ";\n";
+  };
+  if (OnlyFunction) {
+    for (const auto &Global : Mod.globals())
+      if (SelectedGlobals.count(&Global) && Global.hasInitializer() &&
+          !mirrorsImageStorage(Global))
+        declare(Global);
+  } else {
+    // The whole module defines the image's storage too, in module order: a
+    // mirror built while an earlier mirror's initializer resolved follows
+    // the initializer that names it.
+    std::set<const llvm::GlobalVariable *> Defined, NamedEarlier;
     for (const auto &Global : Mod.globals()) {
-      if (!SelectedGlobals.count(&Global) || !Global.hasInitializer() ||
-          mirrorsImageStorage(Global))
+      Defined.insert(&Global);
+      if (!Global.hasInitializer())
         continue;
-      // Initializers can refer forward or form cycles. The declarations use
-      // the same storage shape and linkage as the definitions below.
-      OS << llvmc::storageAlignment(Global.getValueType(), Mod.getDataLayout(),
-                                    Global.getAlign().valueOrOne());
-      OS << (Global.hasLocalLinkage() ? "static " : "extern ");
-      if (Global.isConstant())
-        OS << "const ";
-      auto *Array = llvm::dyn_cast<llvm::ArrayType>(Global.getValueType());
-      const auto *Data =
-          llvm::dyn_cast<llvm::ConstantDataArray>(Global.getInitializer());
-      const bool String = Global.isConstant() && Data && Data->isString() &&
-                          !parseNdDataSymbol(Global.getName());
-      OS << (String ? "char"
-                    : typeToCLLVM(Array ? Array->getElementType()
-                                        : Global.getValueType()))
-         << " " << globalNameStr(&Global);
-      if (Array)
-        OS << "[" << Array->getNumElements() << "]";
-      OS << ";\n";
+      llvm::SmallVector<const llvm::Constant *, 16> Work{
+          Global.getInitializer()};
+      llvm::SmallPtrSet<const llvm::Constant *, 16> Seen;
+      while (!Work.empty()) {
+        const llvm::Constant *C = Work.pop_back_val();
+        if (!Seen.insert(C).second)
+          continue;
+        if (const auto *Var = llvm::dyn_cast<llvm::GlobalVariable>(C)) {
+          if (!Defined.count(Var))
+            NamedEarlier.insert(Var);
+        } else if (!llvm::isa<llvm::GlobalValue>(C)) {
+          for (const llvm::Use &Operand : C->operands())
+            if (const auto *Next = llvm::dyn_cast<llvm::Constant>(Operand))
+              Work.push_back(Next);
+        }
+      }
     }
+    for (const auto &Global : Mod.globals())
+      if (NamedEarlier.count(&Global) && Global.hasInitializer() &&
+          !Global.getName().empty() &&
+          !ExternalDataIdentifiers.count(&Global) &&
+          !sourceStringOnlyCalledByValue(Global))
+        declare(Global);
+  }
   // Permission to read a scalar from the image is not permission to remove a
   // volatile/atomic access. Its named object must survive declaration pruning.
   std::set<va_t> ObservedImageObjects;
@@ -918,6 +1471,19 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
 
     if (ExternalDataIdentifiers.count(&GV))
       continue;
+    if (llvm_original_image::isMarked(GV)) {
+      const auto Base = parseNdDataSymbol(GV.getName());
+      const auto *Array = llvm::dyn_cast<llvm::ArrayType>(GV.getValueType());
+      if (!Base || !Array || !Array->getElementType()->isIntegerTy(8) ||
+          GV.hasInitializer())
+        throw std::invalid_argument("invalid original image storage");
+      const std::string Name = namedImageObject(*Base);
+      OS << "/* neverd.image: 0x" << llvm::utohexstr(*Base)
+         << " (original loaded image storage) */\n";
+      writeImageByteArray(GV, Name);
+      EmittedGlobalNames.insert(Name);
+      continue;
+    }
     // IAT/import slots are callable names at call sites, not C objects.
     // Printing `__imp_??1?$CStringT@...` as `extern uint64_t` is not C.
     if (!GV.hasInitializer()) {
@@ -1061,7 +1627,8 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
         for (uint64_t I = 0; I < Array->getNumElements(); ++I) {
           if (I)
             Elements += ", ";
-          Elements += constStr(Init->getAggregateElement(unsigned(I)));
+          Elements += constStr(Init->getAggregateElement(unsigned(I)),
+                               /*AllowImageAddress=*/false);
         }
       OS << wrapInitializer(std::move(Elements)) << "};\n";
       continue;
@@ -1073,7 +1640,8 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
       OS << "const ";
     OS << typeToCLLVM(GV.getValueType()) << " " << Name;
     if (!llvm::isa<llvm::ConstantAggregateZero>(Init))
-      OS << " = " << wrapInitializer(constStr(Init));
+      OS << " = "
+         << wrapInitializer(constStr(Init, /*AllowImageAddress=*/false));
     OS << ";\n";
   }
 }
@@ -1218,47 +1786,428 @@ void LLVMCWriter::writeReferencedImageObjects(
     OS << "\n";
 }
 
+std::string LLVMCWriter::boundImportCallee(const llvm::CallBase &Call) const {
+  if (Call.getCalledFunction() ||
+      llvm::isa<llvm::InlineAsm>(Call.getCalledOperand()))
+    return {};
+  const llvm::Value *Slot = Call.getCalledOperand()->stripPointerCasts();
+  if (const auto *Cast = llvm::dyn_cast<llvm::IntToPtrInst>(Slot))
+    Slot = Cast->getOperand(0);
+  const auto *Symbol = llvm::dyn_cast<llvm::GlobalVariable>(Slot);
+  const bool CalledSymbol =
+      Symbol && Symbol->isDeclaration() && data_symbol::isMarked(*Symbol);
+  const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Slot);
+  const auto SlotVA =
+      Load ? imageDataVA(Load->getPointerOperand()) : std::nullopt;
+  // So does the slot of a symbol the image defines itself, which the loader
+  // starts at that routine (ownRoutineOfImport).
+  const auto OwnRoutineSlot = [&] {
+    const Import *Imp = Img->findImportAt(*SlotVA);
+    return Imp && Imp->IATAddr == *SlotVA &&
+           ownRoutineOfImport(*Img, *Imp).has_value();
+  };
+  if (!CalledSymbol &&
+      (!Img || !SlotVA ||
+       (!Img->ImportStorageSlots.count(*SlotVA) && !OwnRoutineSlot())))
+    return {};
+  return resolveImportCalleeName(Call.getCalledOperand());
+}
+
+void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
+  SourceImportPrototypes.clear();
+  if (!Dbg || Opts.PreserveLLVMFunctionTypes)
+    return;
+  std::set<std::string> Rejected;
+  const unsigned PointerBytes = getTargetRegInfo(Opts.TheArch).PointerSize;
+  const auto Scalar = [&](const TypeRef &Type) {
+    const bool Floating =
+        Type && Type->Kind == NdTypeKind::Float &&
+        (Type->Size == sizeof(float) || Type->Size == sizeof(double));
+    return Type && Type->Size && (Floating || Type->Size <= PointerBytes) &&
+           (Type->Kind != NdTypeKind::Ptr || Type->Size == PointerBytes) &&
+           (Floating || Type->Kind == NdTypeKind::Int ||
+            Type->Kind == NdTypeKind::Ptr ||
+            (Type->Kind == NdTypeKind::Struct && Type->IsEnum)) &&
+           hasCSpelling(cDisplayType(Type));
+  };
+  for (const auto &Fn : Mod) {
+    if (Fn.isDeclaration() || (OnlyFunction && &Fn != OnlyFunction))
+      continue;
+    for (const auto &Block : Fn)
+      for (const auto &Inst : Block) {
+        const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst);
+        if (!Call || libraryCallee(*Call))
+          continue;
+        const auto *Direct = Call->getCalledFunction();
+        if (Direct && (!Direct->isDeclaration() || Direct->isIntrinsic()))
+          continue;
+        const std::string Name =
+            Direct ? functionIdentifier(*Direct) : boundImportCallee(*Call);
+        if (Name.empty() || Rejected.count(Name))
+          continue;
+        const auto Source = Dbg->resolvePrototype(
+            Direct ? cNameOfGlobal(Direct->getName(), true)
+                   : importCalleeCName(Call->getCalledOperand()));
+        if (!Source || Source->PrototypeLibrary.empty() ||
+            Source->PrototypeFromCLibrary)
+          continue;
+        bool Fits =
+            Source->PlatformConvention &&
+            Source->CallConv != DebugCallConv::Fastcall &&
+            Source->CallConv != DebugCallConv::Thiscall && Source->ReturnType &&
+            (!Source->IsVariadic ||
+             libc::variadicCallArguments(*Source, Opts.TheArch, Opts.Format)
+                 .has_value());
+        std::vector<TypeRef> Parameters;
+        bool ScalarParameters = true;
+        for (const auto &Param : Source->Params) {
+          ScalarParameters &= Scalar(Param.second);
+          Parameters.push_back(Param.second);
+        }
+        const auto Floating = Fits ? libc::floatingCallArguments(
+                                         *Source, Opts.TheArch, Opts.Format)
+                                   : std::nullopt;
+        // HFA parameters are LLVM arrays, preserving whole-record stack
+        // allocation. Admit only the shared, exact source signature.
+        if (Fits && Floating &&
+            (!Floating->ParameterElements.empty() ||
+             Floating->ReturnElements)) {
+          if (Call->getFunctionType() ==
+              floatingCallType(Mod.getContext(), *Floating))
+            SourceImportPrototypes.insert_or_assign(Name, *Source);
+          else {
+            SourceImportPrototypes.erase(Name);
+            Rejected.insert(Name);
+          }
+          continue;
+        }
+        Fits &= ScalarParameters;
+        const auto Layout =
+            Fits && !Floating
+                ? integerCallArguments(Opts.TheArch, Opts.Format,
+                                       Source->ReturnType, Parameters)
+                : std::nullopt;
+        // Local scalar register declarations use the shared dense carrier
+        // layout. Stack and floating signatures require their bound adapters.
+        // Every call below must still agree on argument and result carriers.
+        const auto FixedInteger = Fits ? libc::fixedIntegerCallArguments(
+                                             *Source, Opts.TheArch, Opts.Format)
+                                       : std::nullopt;
+        const bool ScalarRegisters = Layout && !Source->IsVariadic &&
+                                     Source->ParamEntryLocations.empty() &&
+                                     !Layout->ResultPointer &&
+                                     Layout->Positions == Layout->Registers;
+        if (Source->PrototypeLibrary == UserPrototypeLibrary && !Floating &&
+            !FixedInteger && !ScalarRegisters)
+          continue;
+        Fits &=
+            (Floating || (Layout && Layout->Positions == Parameters.size())) &&
+            (Source->IsVariadic ? Parameters.size() <= Call->arg_size()
+                                : Parameters.size() == Call->arg_size());
+        for (unsigned I = 0; Fits && I < Parameters.size(); ++I) {
+          auto *Carrier = Call->getArgOperand(I)->getType();
+          if (Parameters[I]->Kind == NdTypeKind::Float) {
+            Fits &= Floating && Carrier->isFloatingPointTy() &&
+                    Mod.getDataLayout().getTypeStoreSize(Carrier) ==
+                        Parameters[I]->Size;
+            continue;
+          }
+          Fits &=
+              (Floating || (!Layout->Parameters[I].Indirect &&
+                            Layout->Parameters[I].Pieces.size() == 1 &&
+                            Layout->Parameters[I].Pieces[0].Argument == I)) &&
+              (Carrier->isIntegerTy() || Carrier->isPointerTy()) &&
+              (!Carrier->isPointerTy() ||
+               Carrier->getPointerAddressSpace() == 0) &&
+              Mod.getDataLayout().getTypeStoreSize(Carrier) >=
+                  Parameters[I]->Size;
+        }
+        if (Fits && Source->ReturnType->Kind == NdTypeKind::Void)
+          Fits = Call->getType()->isVoidTy() || !valueFeedsPrintedUse(Call);
+        else if (Fits && Source->ReturnType->Kind == NdTypeKind::Float)
+          Fits = Floating && Call->getType()->isFloatingPointTy() &&
+                 Mod.getDataLayout().getTypeStoreSize(Call->getType()) ==
+                     Source->ReturnType->Size;
+        else if (Fits)
+          Fits =
+              Scalar(Source->ReturnType) && (Call->getType()->isIntegerTy() ||
+                                             Call->getType()->isPointerTy());
+        // A local declaration does not prove the upper bits of a wider
+        // machine result. Keep that result's carrier when it remains live.
+        if (Fits && Source->PrototypeLibrary == UserPrototypeLibrary &&
+            (Source->ReturnType->Kind == NdTypeKind::Int ||
+             (Source->ReturnType->Kind == NdTypeKind::Struct &&
+              Source->ReturnType->IsEnum)) &&
+            Mod.getDataLayout().getTypeStoreSize(Call->getType()) >
+                Source->ReturnType->Size)
+          Fits = !valueFeedsPrintedUse(Call);
+        if (Fits)
+          SourceImportPrototypes.insert_or_assign(Name, *Source);
+        else {
+          SourceImportPrototypes.erase(Name);
+          Rejected.insert(Name);
+        }
+      }
+  }
+}
+
+const FunctionSym *
+LLVMCWriter::sourceImportCallee(const llvm::CallBase &Call) const {
+  if (SourceImportPrototypes.empty())
+    return nullptr;
+  const auto *Direct = Call.getCalledFunction();
+  const std::string Name =
+      Direct ? functionIdentifier(*Direct) : boundImportCallee(Call);
+  const auto It = SourceImportPrototypes.find(Name);
+  return It == SourceImportPrototypes.end() ? nullptr : &It->second;
+}
+
+std::string LLVMCWriter::sourceImportDeclaration(const FunctionSym &Function,
+                                                 llvm::StringRef Name) {
+  const auto NotePointers = [&](const TypeRef &Type) {
+    noteRecordValue(Type);
+    const NdType *Target = Type.get();
+    while (Target && Target->Kind == NdTypeKind::Ptr)
+      Target = Target->Pointee.get();
+    if (Target && Target->Kind == NdTypeKind::Struct && !Target->IsEnum)
+      recordPointerSpelling(*Target);
+  };
+  std::string Params;
+  CProjectionIdentifierAllocator Names;
+  for (const auto &[ParamName, Type] : Function.Params) {
+    if (!Params.empty())
+      Params += ", ";
+    NotePointers(Type);
+    Params +=
+        declarationToC(cDisplayType(Type), Names.allocate(ParamName, "arg"));
+  }
+  if (Function.IsVariadic)
+    Params += Params.empty() ? "..." : ", ...";
+  NotePointers(Function.ReturnType);
+  const std::string Convention =
+      Opts.TheArch == Arch::X86 && Function.CallConv == DebugCallConv::Stdcall
+          ? "__attribute__((stdcall)) "
+          : "";
+  if (const auto Declaration =
+          c_library::portableScalarDeclaration(Function, Name);
+      !Declaration.empty())
+    return Convention + Declaration.str();
+  // This convention belongs to the imported function. Keeping it inside
+  // the return declarator would attach it to a returned callback instead.
+  return Convention +
+         declarationToC(cDisplayType(Function.ReturnType),
+                        Name.str() + "(" + (Params.empty() ? "void" : Params) +
+                            ")");
+}
+
+LLVMCWriter::LibraryCallee
+LLVMCWriter::libraryCallee(const llvm::CallBase &Call) const {
+  if (Opts.PreserveLLVMFunctionTypes)
+    return {};
+  if (const llvm::Function *Callee = Call.getCalledFunction()) {
+    // The module's own definition is its code, and another routine it
+    // declares is declared as its calls type it (writeForwardDecls), unless
+    // a header declares it, as one an LLVM intrinsic prints as may be.
+    if (!Callee->isDeclaration())
+      return {};
+    // One the user declares is declared as the user does.
+    if (!Callee->isIntrinsic() &&
+        userDeclaresRoutine(cNameOfGlobal(Callee->getName(), true)))
+      return {};
+    std::string Name;
+    if (!Callee->isIntrinsic())
+      Name = functionIdentifier(*Callee);
+    else if (const char *Mapped =
+                 llvmIntrinsicToCName(Callee->getName().str().c_str()))
+      Name = Mapped;
+    if (Name.empty())
+      return {};
+    if (libc::headerFor(Name))
+      return {std::move(Name), nullptr};
+    // A routine the runtime's tables type is declared from them, as its
+    // import is (writeForwardDecls, writeImportCalleeDecls).
+    if (!Callee->isIntrinsic())
+      if (const libc::LibCPrototype *Prototype =
+              libc::libcPrototype(Name, Opts.Format))
+        return {std::move(Name), Prototype};
+    return {};
+  }
+  if (llvm::isa<llvm::InlineAsm>(Call.getCalledOperand()))
+    return {};
+  // A routine called through its import has the declaration a direct call
+  // to it would: its header's, or the runtime tables' where the unit
+  // declares it from them.
+  if (std::string Name = resolveImportCalleeName(Call.getCalledOperand());
+      !Name.empty() && libc::headerFor(Name) && !userDeclaresRoutine(Name))
+    return {std::move(Name), nullptr};
+  std::string Name = boundImportCallee(Call);
+  if (Name.empty() || FunctionIdentifierNames.count(Name) ||
+      userDeclaresRoutine(Name))
+    return {};
+  if (const libc::LibCPrototype *Prototype =
+          libc::libcPrototype(Name, Opts.Format))
+    return {std::move(Name), Prototype};
+  return {};
+}
+
+std::string LLVMCWriter::callResult(const llvm::CallBase &Call,
+                                    std::string Expr) const {
+  llvm::Type *Type = Call.getType();
+  if (!Type->isIntegerTy() && !Type->isPointerTy() &&
+      !Type->isFloatingPointTy())
+    return Expr;
+  if (const auto *Source = sourceImportCallee(Call)) {
+    if (Source->ReturnType->Kind == NdTypeKind::Void)
+      throw std::runtime_error("A void import has a live machine result");
+    if (Source->ReturnType->Kind == NdTypeKind::Float) {
+      if (!Type->isFloatingPointTy() ||
+          Type->getPrimitiveSizeInBits() != Source->ReturnType->Size * 8)
+        throw std::runtime_error(
+            "A floating import has an incompatible machine result");
+      return Expr;
+    }
+    // Source signedness must not sign-extend the low return-register bits
+    // into the machine carrier. Pointers similarly convert through uintptr_t.
+    const std::string Bits =
+        Source->ReturnType->Kind == NdTypeKind::Ptr
+            ? "uintptr_t"
+            : typeToC(NdType::makeInt(Source->ReturnType->Size, false));
+    return "((" + typeToCLLVM(Type) + ")(" + Bits + ")(" + Expr + "))";
+  }
+  // A callee that returns nothing leaves its result register undefined, of
+  // which zero is a stable choice, as an undefined value's is.
+  const std::string Undefined = "(" + Expr + ", (" + typeToCLLVM(Type) + ")0)";
+  if (calleeReturnsNothing(Call))
+    return Undefined;
+  const LibraryCallee Library = libraryCallee(Call);
+  if (!Library)
+    return Expr;
+  const std::optional<libc::LibCResult> Result =
+      libc::libcResult(Library.Name, libcVariant());
+  if (!Result)
+    return Expr;
+  // C does not convert the pointer a routine returns to the integer the
+  // machine holds it in.
+  if (*Result == libc::LibCResult::Pointer && Type->isIntegerTy())
+    return "((" + typeToCLLVM(Type) + ")(uintptr_t)" + Expr + ")";
+  if (*Result == libc::LibCResult::Void)
+    return Undefined;
+  return Expr;
+}
+
 void LLVMCWriter::writeImportCalleeDecls(llvm::Module &Mod) {
-  std::set<std::string> Declared;
-  for (const llvm::Function &Fn : Mod)
-    Declared.insert(functionIdentifier(Fn));
-  // Each import with the type its calls return; one whose calls disagree is
-  // left to them.
-  std::map<std::string, std::optional<std::string>> Imports;
+  const c_library::ImportPops StdcallPops =
+      Img ? c_library::stdcallImportPops(*Img) : c_library::ImportPops();
+  // Each import with the type its calls return, and for a stdcall one the
+  // types they pass; one whose calls disagree is left to them.
+  struct ImportCalls {
+    std::optional<std::string> Return;
+    std::optional<std::vector<std::string>> Params;
+  };
+  std::map<std::string, ImportCalls> Imports;
+  const llvm::DataLayout &Layout = Mod.getDataLayout();
+  // Each routine the runtime's tables type, with their prototype.
+  std::map<std::string, const libc::LibCPrototype *> Typed;
+  // The imports a weak reference names, whose null address the code tests
+  // (`__gmon_start__`).
+  std::set<std::string> Weak;
   for (const llvm::Function &Fn : Mod) {
     if (Fn.isDeclaration() || (OnlyFunction && &Fn != OnlyFunction))
       continue;
     for (const llvm::BasicBlock &Block : Fn)
       for (const llvm::Instruction &Inst : Block) {
         const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst);
-        if (!Call || Call->getCalledFunction() ||
-            llvm::isa<llvm::InlineAsm>(Call->getCalledOperand()))
+        if (!Call)
           continue;
-        // Only a slot the loader binds outside the import table names an
-        // import no header declares (an ELF GOT entry); a table's imports
-        // keep their headers' prototypes.
-        const llvm::Value *Slot = Call->getCalledOperand()->stripPointerCasts();
-        if (const auto *Cast = llvm::dyn_cast<llvm::IntToPtrInst>(Slot))
-          Slot = Cast->getOperand(0);
-        const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Slot);
-        const auto SlotVA =
-            Load ? imageDataVA(Load->getPointerOperand()) : std::nullopt;
-        if (!Img || !SlotVA || !Img->ImportStorageSlots.count(*SlotVA) ||
-            Img->findImportAt(*SlotVA))
+        // A call through a slot the loader binds names another module's
+        // routine, in the import table or outside it (an ELF GOT entry), as
+        // does a call to the symbol such a slot holds, which the slot's load
+        // folds to.  One a header the unit includes declares keeps that
+        // prototype, and one the runtime's tables type (RaiseException) takes
+        // theirs (libraryCallee); any other, such as most of the Windows API,
+        // is declared as the machine calls it.
+        std::string Name = boundImportCallee(*Call);
+        if (Name.empty() || FunctionIdentifierNames.count(Name) ||
+            (libc::isKnownFunction(Name) && !userDeclaresRoutine(Name)))
           continue;
-        std::string Name = resolveImportCalleeName(Call->getCalledOperand());
-        if (Name.empty() || Declared.count(Name))
+        if (const auto *Symbol = llvm::dyn_cast<llvm::GlobalValue>(
+                Call->getCalledOperand()->stripPointerCasts());
+            Symbol && Symbol->hasExternalWeakLinkage())
+          Weak.insert(Name);
+        if (const LibraryCallee Library = libraryCallee(*Call);
+            Library.Prototype) {
+          Typed.emplace(Library.Name, Library.Prototype);
           continue;
+        }
         const std::string Return = typeToCLLVM(Call->getType());
-        const auto [Import, Added] = Imports.emplace(Name, Return);
-        if (!Added && Import->second && *Import->second != Return)
-          Import->second.reset();
+        // A stdcall routine pops the arguments its calls push, which a C
+        // compiler leaves to it only by its declaration: the call's, where
+        // they fill the slots its name spells.
+        std::optional<std::vector<std::string>> Params;
+        if (const auto Pops = StdcallPops.find(Name);
+            Pops != StdcallPops.end() && Pops->second) {
+          uint64_t Pushed = 0;
+          Params.emplace();
+          for (const llvm::Use &Argument : Call->args()) {
+            Pushed += llvm::alignTo(
+                Layout.getTypeStoreSize(Argument->getType()).getFixedValue(),
+                4);
+            Params->push_back(typeToCLLVM(Argument->getType()));
+          }
+          if (Pushed != *Pops->second)
+            Params.reset();
+        }
+        const auto [Import, Added] =
+            Imports.try_emplace(Name, ImportCalls{Return, Params});
+        if (Added)
+          continue;
+        if (Import->second.Return && *Import->second.Return != Return)
+          Import->second.Return.reset();
+        if (Import->second.Params != Params)
+          Import->second.Params.reset();
       }
   }
-  // Unprototyped, the declaration takes the arguments the machine passed.
-  for (const auto &[Name, Return] : Imports)
-    if (Return)
-      OS << "extern " << *Return << " " << Name << "();\n";
+  auto Extern = [&](const std::string &Name) {
+    return Weak.count(Name) ? "extern __attribute__((weak)) " : "extern ";
+  };
+  for (const auto &[Name, Prototype] : Typed) {
+    OS << Extern(Name)
+       << c_library::declaration(*Prototype, Name, Opts.TheArch, Opts.Format)
+       << ";\n";
+    DeclaredCalleeNames.insert(Name);
+  }
+  for (const auto &[Name, Calls] : Imports) {
+    if (!Calls.Return)
+      continue;
+    DeclaredCalleeNames.insert(Name);
+    // One the user declares under another identifier links by its name.
+    std::string Label;
+    if (const auto Link = UserImportLinkNames.find(Name);
+        Link != UserImportLinkNames.end()) {
+      llvm::raw_string_ostream Spelled(Label);
+      Spelled << " __asm__(\"";
+      Spelled.write_escaped(
+          symbolOfCName(Link->second, Opts.Format, Opts.TheArch));
+      Spelled << "\")";
+    }
+    if (const auto Source = SourceImportPrototypes.find(Name);
+        Source != SourceImportPrototypes.end()) {
+      OS << Extern(Name) << sourceImportDeclaration(Source->second, Name)
+         << Label << ";\n";
+      continue;
+    }
+    // Unprototyped, the declaration takes the arguments the machine passed.
+    if (!Calls.Params) {
+      OS << Extern(Name) << *Calls.Return << " " << Name << "()" << Label
+         << ";\n";
+      continue;
+    }
+    OS << Extern(Name) << "__attribute__((stdcall)) " << *Calls.Return << " "
+       << Name << "(";
+    for (size_t I = 0; I < Calls.Params->size(); ++I)
+      OS << (I ? ", " : "") << (*Calls.Params)[I];
+    OS << (Calls.Params->empty() ? "void" : "") << ")" << Label << ";\n";
+  }
 }
 
 void LLVMCWriter::collectImageDataUses(llvm::Module &Mod) {
@@ -1307,16 +2256,19 @@ std::string LLVMCWriter::sourceScalarType(llvm::Type *T, bool Signed) const {
 
 std::string
 LLVMCWriter::sourceFunctionDeclaration(const llvm::Function &Fn,
-                                       llvm::StringRef Declarator) const {
+                                       llvm::StringRef Declarator,
+                                       std::optional<unsigned> Params) const {
   auto *FT = Fn.getFunctionType();
+  const unsigned Count =
+      Params ? std::min(*Params, FT->getNumParams()) : FT->getNumParams();
   std::string Result =
       sourceScalarType(FT->getReturnType(),
                        Fn.hasFnAttribute(LLVMSourceSignedResult)) +
       " " + Declarator.str() + "(";
-  if (FT->getNumParams() == 0 && !FT->isVarArg()) {
+  if (Count == 0 && !FT->isVarArg()) {
     Result += "void";
-  } else if (FT->getNumParams()) {
-    for (unsigned I = 0; I < FT->getNumParams(); ++I) {
+  } else if (Count) {
+    for (unsigned I = 0; I < Count; ++I) {
       if (I)
         Result += ", ";
       Result += sourceScalarType(
@@ -1331,20 +2283,47 @@ LLVMCWriter::sourceFunctionDeclaration(const llvm::Function &Fn,
   return Result + ")";
 }
 
+/// The stack bytes the first \p Params parameters of \p Fn (all without)
+/// take on i386, each a multiple of four.
+static uint64_t argumentSlotBytes(const llvm::Function &Fn,
+                                  std::optional<unsigned> Params) {
+  const llvm::DataLayout &Layout = Fn.getParent()->getDataLayout();
+  const unsigned Count = std::min(Params.value_or(Fn.arg_size()),
+                                  static_cast<unsigned>(Fn.arg_size()));
+  uint64_t Bytes = 0;
+  for (unsigned I = 0; I < Count; ++I)
+    Bytes += llvm::alignTo(
+        Layout.getTypeStoreSize(Fn.getFunctionType()->getParamType(I))
+            .getFixedValue(),
+        4);
+  return Bytes;
+}
+
 void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
+  const c_library::ImportPops StdcallPops =
+      Img ? c_library::stdcallImportPops(*Img) : c_library::ImportPops();
+  std::set<std::string> SyntheticRecords;
   for (auto &Fn : Mod) {
     if (OnlyFunction) {
       // Selected fragments need declarations for their referenced providers,
       // including scalar calls and definitions whose bodies are not emitted.
-      if (!SelectedGlobals.count(&Fn))
+      // A checked import call may name its provider only through an image
+      // pointer mirror. That mirror's initializer is deliberately not followed
+      // by referencedGlobals, but its source declaration still belongs here.
+      if (!SelectedGlobals.count(&Fn) &&
+          !(Fn.isDeclaration() &&
+            SourceImportPrototypes.count(functionIdentifier(Fn))))
         continue;
     }
-    if (Fn.isIntrinsic())
+    if (Fn.isIntrinsic() || llvm_source_unknown::isFunction(Fn))
       continue;
     if (llvmc::isCStackAllocationFunction(Fn))
       continue;
-    if (!OnlyFunction && GuardAnalysisOnlyFunctions &&
-        !isReferencedByExecutableProjection(Fn))
+    // Every definition prints as code, one with Windows exception semantics
+    // too (writeAnalysisOnlyFunction), so each is declared before the bodies
+    // that call it; another module's routine is declared where a body or a
+    // global names it.
+    if (!OnlyFunction && Fn.isDeclaration() && !isReferencedByProjection(Fn))
       continue;
 
     std::string RawName = Fn.getName().str();
@@ -1369,21 +2348,65 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
         continue;
     }
 
-    if (libc::isKnownFunction(Name))
+    // A routine the user declares is declared as the user does, under
+    // another identifier where a header declares the C library's routine of
+    // its name (writeIncludes).
+    const bool UserDeclared =
+        Fn.isDeclaration() && userDeclaresRoutine(cNameOfGlobal(RawName, true));
+    if (libc::isKnownFunction(Name) && !UserDeclared)
       continue;
+    // A routine the runtime's tables type takes their declaration, as its
+    // calls take their conversions (libraryCallee).
+    if (Fn.isDeclaration() && !UserDeclared)
+      if (const libc::LibCPrototype *Prototype =
+              libc::libcPrototype(Name, Opts.Format)) {
+        OS << (Fn.hasExternalWeakLinkage() ? "extern __attribute__((weak)) "
+                                           : "extern ")
+           << c_library::declaration(*Prototype, Name, Opts.TheArch,
+                                     Opts.Format)
+           << ";\n";
+        continue;
+      }
     if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format)) {
+      // Its `this` names its class record, which the unit declares
+      // incomplete first, as HighC does.  A name the unit gives a function
+      // or an object of its own is that, not a type.
+      if (const std::string Record =
+              cNamedTypeSpelling(msvcSyntheticRecord(Name, *Msvc));
+          !Record.empty() && !GlobalIdentifierAllocator.holds(Record) &&
+          !EmittedGlobalNames.count(Record) &&
+          SyntheticRecords.insert(Record).second)
+        OS << "typedef struct " << Record << " " << Record << ";\n";
       OS << msvcSyntheticPrototype(Name, *Msvc,
                                    Opts.TheArch == Arch::X64 && Msvc->FastCall)
          << ";\n";
       continue;
     }
 
-    OS << sourceFunctionDeclaration(Fn, Name);
+    // Calls the callee's prototype decides pass as many arguments as it
+    // takes (printedCallArgLimit), which the declaration takes too.
+    const std::optional<unsigned> Params = prototypedParamCount(Fn);
+    // An i386 stdcall routine pops the arguments its calls push, which a C
+    // compiler leaves to it only by its declaration: where its parameters
+    // fill the slots its names spell (c_library::stdcallImportPops).
+    if (Fn.isDeclaration() && !SourceImportPrototypes.count(Name))
+      if (const auto Pops = StdcallPops.find(Name);
+          Pops != StdcallPops.end() && Pops->second &&
+          *Pops->second == argumentSlotBytes(Fn, Params))
+        OS << "__attribute__((stdcall)) ";
+    if (const auto Source = SourceImportPrototypes.find(Name);
+        Fn.isDeclaration() && Source != SourceImportPrototypes.end())
+      OS << sourceImportDeclaration(Source->second, Name);
+    else
+      OS << sourceFunctionDeclaration(Fn, Name, Params);
     // An import whose identifier is not its symbol links by the symbol, which
     // a comment spells as its language does.
     std::string Comment;
     if (Fn.isDeclaration()) {
-      const llvm::StringRef CName = cNameOfGlobal(RawName, true);
+      // Identifier allocation may have recovered the image symbol from a
+      // synthesized LLVM declaration. The linker label must use that same
+      // identity, including when another declaration already uses its stem.
+      const llvm::StringRef CName = FunctionSymbolNames.at(&Fn);
       if (linksByLabel(CName, Name)) {
         std::string Label;
         llvm::raw_string_ostream(Label).write_escaped(
@@ -1403,6 +2426,42 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
 // Public API
 //===----------------------------------------------------------------------===//
 
+// PSHUFB is a byte lookup independently within each 128-bit lane. Keep the
+// selector masked before extraction: an out-of-range extract would introduce
+// poison for defined instructions whose ignored mask bits are set.
+static void lowerCByteShuffles(llvm::Module &Mod) {
+  llvm::SmallVector<llvm::IntrinsicInst *> Work;
+  for (auto &F : Mod)
+    for (auto &BB : F)
+      for (auto &I : BB)
+        if (auto *Call = llvm::dyn_cast<llvm::IntrinsicInst>(&I))
+          switch (Call->getIntrinsicID()) {
+          case llvm::Intrinsic::x86_ssse3_pshuf_b_128:
+          case llvm::Intrinsic::x86_avx2_pshuf_b:
+          case llvm::Intrinsic::x86_avx512_pshuf_b_512:
+            Work.push_back(Call);
+            break;
+          default:
+            break;
+          }
+  for (auto *Call : Work) {
+    llvm::IRBuilder<> B(Call);
+    auto *Type = llvm::cast<llvm::FixedVectorType>(Call->getType());
+    llvm::Value *Result = llvm::PoisonValue::get(Type);
+    for (unsigned I = 0; I < Type->getNumElements(); ++I) {
+      auto *Mask = B.CreateExtractElement(Call->getArgOperand(1), I);
+      auto *Index =
+          B.CreateOr(B.CreateAnd(Mask, B.getInt8(15)), B.getInt8(I & ~15u));
+      auto *Byte = B.CreateExtractElement(Call->getArgOperand(0), Index);
+      Byte = B.CreateSelect(B.CreateICmpSLT(Mask, B.getInt8(0)), B.getInt8(0),
+                            Byte);
+      Result = B.CreateInsertElement(Result, Byte, I);
+    }
+    Call->replaceAllUsesWith(Result);
+    Call->eraseFromParent();
+  }
+}
+
 static void lowerCIntegerReductions(llvm::Module &Mod) {
   llvm::SmallVector<llvm::IntrinsicInst *> Work;
   for (auto &F : Mod)
@@ -1415,6 +2474,7 @@ static void lowerCIntegerReductions(llvm::Module &Mod) {
           case llvm::Intrinsic::vector_reduce_and:
           case llvm::Intrinsic::vector_reduce_or:
           case llvm::Intrinsic::vector_reduce_xor:
+          case llvm::Intrinsic::experimental_cttz_elts:
             if (llvm::isa<llvm::FixedVectorType>(
                     Call->getArgOperand(0)->getType()))
               Work.push_back(Call);
@@ -1426,6 +2486,33 @@ static void lowerCIntegerReductions(llvm::Module &Mod) {
     llvm::IRBuilder<> B(Call);
     auto Id = Call->getIntrinsicID();
     auto *Vector = Call->getArgOperand(0);
+    if (Id == llvm::Intrinsic::experimental_cttz_elts) {
+      const unsigned Count =
+          llvm::cast<llvm::FixedVectorType>(Vector->getType())
+              ->getNumElements();
+      auto *ResultType = llvm::cast<llvm::IntegerType>(Call->getType());
+      llvm::Value *Result = llvm::ConstantInt::get(ResultType, 0);
+      llvm::Value *PrefixZero = B.getTrue();
+      // The intrinsic observes every lane, including poison after the first
+      // nonzero element. A chain of selects would incorrectly hide that lane;
+      // the prefix ANDs and additions retain those data dependencies.
+      for (unsigned I = 0; I < Count; ++I) {
+        auto *Lane = B.CreateExtractElement(Vector, I);
+        PrefixZero = B.CreateAnd(
+            PrefixZero, B.CreateICmpEQ(Lane, llvm::Constant::getNullValue(
+                                                 Lane->getType())));
+        Result =
+            B.CreateAdd(Result, B.CreateZExtOrTrunc(PrefixZero, ResultType));
+      }
+      if (llvm::cast<llvm::ConstantInt>(Call->getArgOperand(1))->isOne())
+        Result = B.CreateSelect(PrefixZero, llvm::PoisonValue::get(ResultType),
+                                Result);
+      if (llvm::APInt(64, Count).getActiveBits() > ResultType->getBitWidth())
+        Result = llvm::PoisonValue::get(ResultType);
+      Call->replaceAllUsesWith(Result);
+      Call->eraseFromParent();
+      continue;
+    }
     auto *Identity = llvm::getReductionIdentity(
         Id, Vector->getType()->getScalarType(), llvm::FastMathFlags{});
     auto *Result = llvm::getOrderedReduction(
@@ -1473,7 +2560,8 @@ static void lowerPackedVectorBitcasts(llvm::Module &Mod) {
     const unsigned ScalarBits = Scalar->getPrimitiveSizeInBits();
     const unsigned Count = Vector->getNumElements();
     const unsigned Bits = Vector->getElementType()->getPrimitiveSizeInBits();
-    if (ScalarBits > 512 || uint64_t(Count) * Bits != ScalarBits)
+    if (ScalarBits > limits::kMaxCSourceIntegerBytes * 8 ||
+        uint64_t(Count) * Bits != ScalarBits)
       continue;
     auto *Integer = llvm::IntegerType::get(Mod.getContext(), ScalarBits);
     auto *LaneInteger = llvm::IntegerType::get(Mod.getContext(), Bits);
@@ -1580,6 +2668,24 @@ static bool isCVectorBoundarySignature(const llvm::FunctionType *Type) {
 
 static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst,
                                          Arch TheArch) {
+  // The owned memory renderer exposes a private vector/base tuple. Its
+  // complete word, constraints and types are validated at the shared owner;
+  // this does not admit that tuple as an external C function ABI.
+  if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
+    if (validateAArch64WritebackMemoryCall(TheArch, *Call))
+      return true;
+  if (const auto *Extract = llvm::dyn_cast<llvm::ExtractValueInst>(&Inst))
+    if (const auto *Call =
+            llvm::dyn_cast<llvm::CallInst>(Extract->getAggregateOperand()))
+      if (validateAArch64WritebackMemoryCall(TheArch, *Call))
+        return true;
+  if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
+    if (x86CompactCallPlan(TheArch, *Call) ||
+        x86FourSourceCallPlan(TheArch, *Call))
+      return true;
+  if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
+    if (isX86AmxNativeRowCall(*Call, TheArch))
+      return true;
   if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
     if (const auto Shape = classifyX86FPStateAsm(*Call);
         Shape && isX86FPNumericalStateIntrinsic(Shape->first))
@@ -1629,8 +2735,14 @@ static void validateArrayValueBoundaries(const llvm::Module &Mod,
       (Target.isOSLinux() || Target.isOSDarwin()) &&
       (Target.isAArch64() || Target.getArch() == llvm::Triple::x86_64) &&
       Mod.getDataLayout().getPointerSizeInBits() == 64;
-  auto CheckType = [&](llvm::Type *Ty) {
+  const bool HFAABI =
+      Target.isAArch64() &&
+      (Target.isOSLinux() || Target.isOSDarwin() || Target.isOSWindows()) &&
+      Mod.getDataLayout().getPointerSizeInBits() == 64;
+  auto CheckType = [&](llvm::Type *Ty, bool Parameter) {
     if (!containsArrayValue(Ty))
+      return;
+    if (Parameter && HFAABI && isAAPCS64HFAArray(Ty))
       return;
     const auto *Array = llvm::dyn_cast<llvm::ArrayType>(Ty);
     if (!WordABI || !Array || !Array->getElementType()->isIntegerTy(64) ||
@@ -1642,17 +2754,26 @@ static void validateArrayValueBoundaries(const llvm::Module &Mod,
                             const llvm::AttributeList &Attributes) {
     bool HasArray = containsArrayValue(Ty->getReturnType());
     bool HasArrayParameter = false;
+    bool HasHFA = false;
     unsigned ArgumentWords = 0;
     bool WordParameters = true;
-    CheckType(Ty->getReturnType());
+    bool HFAParameters = true;
+    CheckType(Ty->getReturnType(), false);
     for (auto *Param : Ty->params()) {
       HasArray |= containsArrayValue(Param);
       HasArrayParameter |= containsArrayValue(Param);
-      CheckType(Param);
-      if (auto *Array = llvm::dyn_cast<llvm::ArrayType>(Param))
+      CheckType(Param, true);
+      const bool HFA = HFAABI && isAAPCS64HFAArray(Param);
+      HasHFA |= HFA;
+      HFAParameters &=
+          HFA || Param->isFloatTy() || Param->isDoubleTy() ||
+          (Param->isIntegerTy() && Param->getIntegerBitWidth() <= 64) ||
+          (Param->isPointerTy() && Param->getPointerAddressSpace() == 0);
+      if (auto *Array = llvm::dyn_cast<llvm::ArrayType>(Param)) {
         ArgumentWords += Array->getNumElements();
-      else if (Param->isIntegerTy(64) ||
-               (Param->isPointerTy() && Param->getPointerAddressSpace() == 0))
+        WordParameters &= !HFA;
+      } else if (Param->isIntegerTy(64) ||
+                 (Param->isPointerTy() && Param->getPointerAddressSpace() == 0))
         ++ArgumentWords;
       else
         WordParameters = false;
@@ -1674,8 +2795,10 @@ static void validateArrayValueBoundaries(const llvm::Module &Mod,
     // Once registers run out, C may spill a whole record while LLVM splits
     // the raw aggregate. Do not infer that stack-argument ABI from its type.
     const unsigned RegisterWords = Target.isAArch64() ? 8 : 6;
-    if (HasArrayParameter &&
-        (!WordParameters || ArgumentWords > RegisterWords || Ty->isVarArg()))
+    const bool ParametersFit =
+        HasHFA ? HFAParameters
+               : WordParameters && ArgumentWords <= RegisterWords;
+    if (HasArrayParameter && (!ParametersFit || Ty->isVarArg()))
       throw std::runtime_error(
           "C projection has an unsupported array argument ABI");
   };
@@ -1703,7 +2826,9 @@ static void validateArrayValueBoundaries(const llvm::Module &Mod,
 // LLVM owns the dominance/initialization proof for every promoted load.
 static void promoteCallResultHomes(llvm::Function &Function) {
   llvm::DominatorTree Dominators(Function);
-  for (unsigned Round = 0; Round != 8; ++Round) {
+  for (unsigned Round = 0;
+       Round != ::neverd::limits::backend::kMaxLLVMCNamePropagationRounds;
+       ++Round) {
     llvm::SmallVector<llvm::AllocaInst *, 8> Homes;
     for (auto &Instruction : Function.getEntryBlock()) {
       auto *Home = llvm::dyn_cast<llvm::AllocaInst>(&Instruction);
@@ -1724,7 +2849,8 @@ static void promoteCallResultHomes(llvm::Function &Function) {
       const llvm::Value *Value = Definition->getValueOperand();
       unsigned Depth = 0;
       while (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Value)) {
-        if (++Depth > 8)
+        if (++Depth > ::neverd::limits::backend::
+                          kLLVMCEmitterPromoteCallResultHomesDepthLimit)
           break;
         Value = Cast->getOperand(0);
       }
@@ -1740,6 +2866,20 @@ static void promoteCallResultHomes(llvm::Function &Function) {
 bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
                         const CEmitterOptions &Opts, DebugContext *Dbg,
                         const BinaryImage *Img, const llvm::Function *Only) {
+  if (Opts.SourceMap)
+    Opts.SourceMap->Variables.clear();
+  // Admission precedes function filtering and source normalization. Hiding a
+  // body cannot turn a malformed owned memory operation into valid source.
+  for (const auto &Function : Mod)
+    for (const auto &Block : Function)
+      for (const auto &Instruction : Block)
+        if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction)) {
+          (void)validateAArch64AddressMemoryCall(Opts.TheArch, *Call);
+          (void)validateAArch64WritebackMemoryCall(Opts.TheArch, *Call);
+          (void)x86CompactCallPlan(Opts.TheArch, *Call);
+          (void)x86FourSourceCallPlan(Opts.TheArch, *Call);
+          (void)x86AtomicExchangeCallPlan(Opts.TheArch, *Call);
+        }
   if (Only && referencesVectorGlobal(*Only))
     throw std::runtime_error(
         "C projection references unsupported vector global storage");
@@ -1750,6 +2890,9 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
   for (const auto &Function : Mod) {
     if (Only && &Function != Only)
       continue;
+    if (Function.hasFnAttribute("neverd.x87-import-adapter"))
+      throw std::runtime_error(
+          "C source output requires a native x87 import call adapter");
     HasVectors |= containsVectorType(Function.getFunctionType());
     for (const auto &Block : Function)
       for (const auto &Instruction : Block) {
@@ -1757,6 +2900,10 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
         // discard an unused malformed call, retaining the source error
         // contract.
         if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction)) {
+          if (const auto *Target = Call->getCalledFunction();
+              Target && Target->hasFnAttribute("neverd.x87-import-adapter"))
+            throw std::runtime_error(
+                "C source output requires a native x87 import call adapter");
           (void)scalarIntegerMinMax(*Call);
           (void)scalarIntegerSaturation(*Call);
           (void)scalarUnary(*Call);
@@ -1808,6 +2955,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
           "C projection could not map the selected function into its clone");
   }
   if (HasVectors) {
+    lowerCByteShuffles(*Projection);
     lowerCIntegerReductions(*Projection);
     lowerPackedVectorBitcasts(*Projection);
   }
@@ -1824,6 +2972,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
         promoteCallResultHomes(Function);
   for (auto &Function : *Projection)
     if (!ProjectionOnly || &Function == ProjectionOnly) {
+      llvmc::simplifyIntegerSlices(Function);
       llvmc::simplifyBitTests(Function);
       llvmc::factorCommonBranchTests(Function);
       llvmc::factorLoopPhiExpressions(Function);
@@ -1841,11 +2990,20 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
   Passes.crossRegisterProxies(Loops, Functions, CallGraph, Modules);
   llvm::FunctionPassManager Normalize;
   if (HasVectors) {
+    // C has no masked memory operation. Lower it to guarded lane accesses
+    // before scalarizing vectors, retaining fault suppression and avoiding
+    // reads of poison values in inactive lanes. This PassBuilder has generic
+    // target information, so native SIMD availability does not retain masks.
+    Normalize.addPass(llvm::ScalarizeMaskedMemIntrinPass());
     llvm::ScalarizerPassOptions ScalarOptions;
     // LLVM only splits simple accesses: volatile and atomic vectors still
     // reach the unsupported-instruction guard below.
     ScalarOptions.ScalarizeLoadStore = true;
     Normalize.addPass(llvm::ScalarizerPass(ScalarOptions));
+    // Vector packing can leave constant wide-integer expressions after lane
+    // projection. Simplify them before printing C, including when pipeline
+    // optimization is disabled: i386 C cannot spell a native i128 carrier.
+    Normalize.addPass(llvm::InstSimplifyPass());
   }
   Normalize.addPass(llvm::DCEPass());
   llvm::ModulePassManager Pipeline;
@@ -1898,20 +3056,64 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
         }
     }
   }
+  CEmitterOptions EditedOpts = Opts;
+  SourceVariableTypes EditedTypes;
+  if (Opts.VariableTypes)
+    EditedTypes = *Opts.VariableTypes;
+  if (Opts.VariableEdits && !Opts.VariableEdits->empty()) {
+    std::string Snapshot = Opts.VariableSnapshot;
+    bool Failed = false;
+    unsigned Index = 0;
+    if (ProjectionOnly)
+      llvmc::captureSourceValueIds(
+          *const_cast<llvm::Function *>(ProjectionOnly));
+    for (const auto &Edit : *Opts.VariableEdits) {
+      SourceVariableEditResult Result;
+      if (!ProjectionOnly)
+        Result.Refusal = "Select one function for a variable association";
+      else if (Failed || Snapshot.empty() || Edit.Snapshot != Snapshot)
+        Result.Refusal = "The source analysis or an earlier association "
+                         "changed; reset or reapply the association";
+      else
+        Result = llvmc::editVariableStorage(
+            *const_cast<llvm::Function *>(ProjectionOnly), Edit, Index);
+      if (Result.Applied)
+        Snapshot = Edit.AfterSnapshot;
+      else
+        Failed = true;
+      if (Opts.SourceMap)
+        Opts.SourceMap->VariableEditResults.push_back(std::move(Result));
+      ++Index;
+    }
+    if (Failed) {
+      EditedTypes.Locals.clear();
+      if (Opts.SourceMap && Opts.VariableTypes &&
+          !Opts.VariableTypes->Locals.empty())
+        Opts.SourceMap->StaleVariableTypes.push_back(
+            "Local types were not bound because a variable association could "
+            "not be replayed");
+    }
+    EditedOpts.VariableTypes = &EditedTypes;
+    if (Opts.SourceMap)
+      Opts.SourceMap->VariableSnapshot = Snapshot;
+    if (llvm::verifyModule(*Projection, &llvm::errs()))
+      throw std::runtime_error(
+          "The private variable storage projection failed verification");
+  }
   if (!Opts.SourceMap) {
-    LLVMCWriter W(Out, Opts, Dbg, Img);
+    LLVMCWriter W(Out, EditedOpts, Dbg, Img);
     W.writeModule(*Projection, ProjectionOnly);
     return true;
   }
   std::string Ordinary, Annotated;
   llvm::raw_string_ostream OrdinaryOS(Ordinary), AnnotatedOS(Annotated);
-  LLVMCWriter Plain(OrdinaryOS, Opts, Dbg, Img);
+  LLVMCWriter Plain(OrdinaryOS, EditedOpts, Dbg, Img);
   Plain.writeModule(*Projection, ProjectionOnly);
   CSourceRecorder Recorder(*Opts.SourceMap, Ordinary);
   try {
     if (Sources)
       Recorder.prepareLLVMSources(*Sources);
-    LLVMCWriter Marked(AnnotatedOS, Opts, Dbg, Img, true, &Recorder);
+    LLVMCWriter Marked(AnnotatedOS, EditedOpts, Dbg, Img, true, &Recorder);
     Marked.writeModule(*Projection, ProjectionOnly);
     Recorder.finish(Annotated, Ordinary);
   } catch (const std::exception &) {
@@ -1925,7 +3127,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
       Instructions.prepareLLVMSources(*Sources);
     std::string Annotated;
     llvm::raw_string_ostream OS(Annotated);
-    LLVMCWriter Marked(OS, Opts, Dbg, Img, true, &Instructions);
+    LLVMCWriter Marked(OS, EditedOpts, Dbg, Img, true, &Instructions);
     Marked.writeModule(*Projection, ProjectionOnly);
     Instructions.finish(Annotated, Ordinary);
   } catch (const std::exception &) {

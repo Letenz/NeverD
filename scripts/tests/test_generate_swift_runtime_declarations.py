@@ -12,6 +12,40 @@ def record(name='swift_allocate', module='Swift', cc='C_CC',
 
 
 class SwiftRuntimeDeclarationTests(unittest.TestCase):
+    def test_version_gated_once_closure_error_cannot_gain_unconditional_abi(self):
+        # swiftlang/swift 7998e286dc35008dfb9b771e40db1b60a837e0a2:
+        # FeatureAvailability.def introduces this entry in Swift 6.5; IRGen
+        # checks deployment availability. Our generated record has no version
+        # field, so importing its scalar shape must not erase that condition.
+        source = record(name='swift_onceClosureDestroyedError',
+                        returns='RETURNS(VoidTy)', args='ARGS(RefCountedPtrTy)',
+                        availability='OnceClosureDestroyedErrorAvailability',
+                        attrs='ATTRS(NoReturn, NoUnwind)')
+        self.assertEqual(declarations(source), {})
+        unconditional = source.replace('OnceClosureDestroyedErrorAvailability',
+                                       'AlwaysAvailable')
+        self.assertEqual(declarations(unconditional),
+                         {'swift_onceClosureDestroyedError': ('vp', True, False)})
+        for combined in (source + unconditional, unconditional + source):
+            self.assertEqual(declarations(combined), {})
+
+    def test_borrowing_availability_changes_veto_old_unconditional_records(self):
+        for name, cc, returns, args in (
+            ('swift_getBorrowTypeMetadata', 'SwiftCC',
+             'RETURNS(TypeMetadataResponseTy)', 'ARGS(SizeTy, TypeMetadataPtrTy)'),
+            ('swift_initBorrow', 'C_CC', 'RETURNS(VoidTy)',
+             'ARGS(TypeMetadataPtrTy, OpaquePtrTy, OpaquePtrTy)'),
+            ('swift_dereferenceBorrow', 'C_CC', 'RETURNS(OpaquePtrTy)',
+             'ARGS(TypeMetadataPtrTy, OpaquePtrTy)'),
+        ):
+            with self.subTest(name=name):
+                old = record(name=name, cc=cc, returns=returns, args=args)
+                gated = old.replace('AlwaysAvailable', 'BorrowingAvailability')
+                self.assertIn(name, declarations(old))
+                self.assertEqual(declarations(gated), {})
+                self.assertEqual(declarations(old + gated), {})
+                self.assertEqual(declarations(gated + old), {})
+
     def test_fixed_pointer_size_facts_are_deterministic(self):
         source = record() + record('swift_free', returns='RETURNS(VoidTy)',
                                     args='ARGS(RefCountedPtrTy, SizeTy, SizeTy)')

@@ -10,7 +10,7 @@
 #include "neverd/analysis/InterpreterLLVMRefinement.h"
 #include "neverd/analysis/InterpreterMachineState.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
 #include "neverd/loader/COFF/PEFixedImage.h"
@@ -232,6 +232,71 @@ TEST_F(PEFixedImageTest, CompleteFieldsAdmitCodeAndDataButExcludeLoaderWrites) {
   EXPECT_FALSE(View->read(Base + 0x21fd, 4, false));
   EXPECT_FALSE(View->read(InvalidVA, 2, false));
   EXPECT_FALSE(View->read(Base, 0, false));
+  const auto Header = View->read(Base, 2, false);
+  ASSERT_TRUE(Header);
+  EXPECT_EQ((*Header)[0], 'M');
+  EXPECT_EQ((*Header)[1], 'Z');
+  EXPECT_FALSE(View->read(Base, 2, true));
+}
+
+TEST_F(PEFixedImageTest, HeaderMappingMustMatchTheCurrentRawSnapshot) {
+  const auto Original = Image;
+  for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    Image = Original;
+    auto &Segment = Image.Segments.back();
+    auto &Section = Image.Sections.back();
+    ASSERT_EQ(Segment.VA, Base);
+    switch (Mutation) {
+    case 0:
+      Segment.Data[0x20] ^= 1;
+      break;
+    case 1:
+      Section.Data[0x20] ^= 1;
+      break;
+    case 2:
+      Segment.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+      break;
+    case 3:
+      Section.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      break;
+    case 4:
+      ++Segment.VA;
+      break;
+    case 5:
+      --Section.FileSz;
+      break;
+    case 6:
+      Segment.Data.pop_back();
+      break;
+    case 7:
+      Segment.ReadOnlyAfterRelocations = true;
+      break;
+    case 8:
+      Section.Type = IMAGE_SCN_CNT_INITIALIZED_DATA;
+      break;
+    case 9:
+      Image.Segments.pop_back();
+      Image.Sections.pop_back();
+      break;
+    case 10:
+      Image.Raw[0x20] ^= 1;
+      break;
+    case 11:
+      Image.DataPtrRelocSlots.erase(Base + Optional + 24);
+      break;
+    case 12:
+      Image.DataPtrRelocTargetOwners.erase(Base + Optional + 24);
+      break;
+    case 13:
+      Image.DataPtrRelocTargetOwners[Base + Optional + 24] = Base + 1;
+      break;
+    case 14:
+      Section.IsImageHeader = false;
+      break;
+    }
+    EXPECT_FALSE(refusal().empty());
+  }
 }
 
 TEST_F(PEFixedImageTest, LoadConfigurationExcludesExactLoaderWriteFootprint) {
@@ -251,8 +316,8 @@ TEST_F(PEFixedImageTest, LoadConfigurationExcludesExactLoaderWriteFootprint) {
     EXPECT_FALSE(View->read(Base + RVA, sizeof(uint64_t), true));
   }
   EXPECT_TRUE(proof().proved());
-  const auto Recovery = specializeBinaryInterpreter(Image, Base + 0x1000,
-                                                     Options);
+  const auto Recovery =
+      specializeBinaryInterpreter(Image, Base + 0x1000, Options);
   EXPECT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
 }
 
@@ -266,7 +331,8 @@ TEST_F(PEFixedImageTest, LoadConfigurationOwnSizeAuthenticatesLegacyDirectory) {
   EXPECT_FALSE(View->read(Base + GuardDispatchRVA, 8, false));
 }
 
-TEST_F(PEFixedImageTest, LoadConfigurationUnknownFieldsAndPartialLayoutsRefuse) {
+TEST_F(PEFixedImageTest,
+       LoadConfigurationUnknownFieldsAndPartialLayoutsRefuse) {
   auto Loaded = load(loadConfigFixture());
   ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
   const auto Original = *Loaded;
@@ -327,8 +393,8 @@ TEST_F(PEFixedImageTest, ZeroVirtualSizesRetainOriginalBytesAndMetadata) {
   auto Loaded = load(Bytes);
   ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
   EXPECT_EQ(Loaded->Raw, Bytes);
-  ASSERT_EQ(Loaded->Segments.size(), 4u);
-  ASSERT_EQ(Loaded->Sections.size(), 4u);
+  ASSERT_EQ(Loaded->Segments.size(), 5u);
+  ASSERT_EQ(Loaded->Sections.size(), 5u);
   for (unsigned I = 0; I != 4; ++I) {
     EXPECT_EQ(Loaded->Segments[I].Size, SectionBytes);
     EXPECT_EQ(Loaded->Sections[I].Size, SectionBytes);
@@ -597,7 +663,12 @@ TEST_F(PEFixedImageTest, ImportWritesCannotChangeLaterLoaderMetadata) {
     // First IAT overwrites the next descriptor's FirstThunk or a later
     // lookup terminator; a static inventory cannot authorize either write.
     put32(Image.Raw, IData + 16, Case == 0 ? 0x3024 : 0x3068);
-    sync();
+    // Header publication independently refuses this initialization footprint.
+    // Reload so the fixed-view check reaches the metadata conflict rather than
+    // correctly rejecting the previous image's now-obsolete header mapping.
+    auto Reloaded = load(Image.Raw);
+    ASSERT_TRUE(bool(Reloaded)) << llvm::toString(Reloaded.takeError());
+    Image = std::move(*Reloaded);
     EXPECT_NE(refusal().find("loader metadata"), std::string::npos);
   }
 }
@@ -624,7 +695,7 @@ TEST_F(PEFixedImageTest, MalformedRelocationTailNeverPublishesAPrefix) {
   llvm::consumeError(std::move(Error));
   EXPECT_TRUE(Image.BaseRelocations.empty());
   EXPECT_TRUE(Image.CodePtrRelocSlots.empty());
-  EXPECT_TRUE(Image.DataPtrRelocSlots.empty());
+  EXPECT_EQ(Image.DataPtrRelocSlots, (std::set<va_t>{Base + Optional + 24}));
 }
 
 TEST_F(PEFixedImageTest, LegacyWordPackedBlocksLoadWithoutFixedImageProof) {
@@ -738,7 +809,8 @@ TEST_F(PEFixedImageTest,
     ASSERT_EQ(Fields.size(), 1u);
     EXPECT_EQ(CodeTarget ? Image.CodePtrRelocSlots.size()
                          : Image.DataPtrRelocSlots.size(),
-              1u);
+              CodeTarget ? 1u : 2u);
+    EXPECT_TRUE(Image.DataPtrRelocSlots.contains(Base + Optional + 24));
     auto View = PEFixedImageView::create(Image);
     ASSERT_TRUE(static_cast<bool>(View)) << llvm::toString(View.takeError());
     ASSERT_TRUE(proof().proved());
@@ -928,7 +1000,8 @@ TEST_F(PEFixedImageTest, OrdinaryLoadingDoesNotInheritTheAnalysisRecordBudget) {
   ASSERT_FALSE(static_cast<bool>(Limited));
   EXPECT_NE(llvm::toString(Limited.takeError()).find("budget"),
             std::string::npos);
-  auto Expanded = PEFixedImageView::create(*Loaded, {.MaxRecords = 200000});
+  // Header initialization now also authenticates and orders every write.
+  auto Expanded = PEFixedImageView::create(*Loaded, {.MaxRecords = 1000000});
   ASSERT_TRUE(static_cast<bool>(Expanded))
       << llvm::toString(Expanded.takeError());
 }
@@ -978,10 +1051,13 @@ TEST_F(PEFixedImageTest, TerminalImportKeepsPhysicalExit) {
   auto Loaded = load(terminalImportFixture());
   ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
   Image = std::move(*Loaded);
-  const auto Default = specializeBinaryInterpreter(Image, Base + 0x1000, Options);
+  const auto Default =
+      specializeBinaryInterpreter(Image, Base + 0x1000, Options);
   EXPECT_FALSE(Default.complete());
-  Options.X64TerminalImports.push_back({1, Base + 0x3080, "example.dll", "StopFixture"});
-  const auto Result = specializeBinaryInterpreter(Image, Base + 0x1000, Options);
+  Options.X64TerminalImports.push_back(
+      {1, Base + 0x3080, "example.dll", "StopFixture"});
+  const auto Result =
+      specializeBinaryInterpreter(Image, Base + 0x1000, Options);
   ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
   ASSERT_EQ(Result.ExternalExits.size(), 1U);
   const auto &Exit = Result.ExternalExits.front();
@@ -1009,7 +1085,6 @@ TEST_F(PEFixedImageTest, TerminalImportKeepsPhysicalExit) {
   EXPECT_TRUE(Result.Reads.empty());
 }
 
-
 TEST_F(PEFixedImageTest, TerminalImportIdentityUsesRawNamedReadOnlySlot) {
   auto Loaded = load(terminalImportFixture());
   ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
@@ -1024,14 +1099,20 @@ TEST_F(PEFixedImageTest, TerminalImportIdentityUsesRawNamedReadOnlySlot) {
   EXPECT_EQ(Identity->Symbol, "StopFixture");
   EXPECT_FALSE(View->importIdentity(Base + 0x3081));
   EXPECT_FALSE(View->read(Base + 0x3080, 8, false));
-  Options.X64TerminalImports = {{1, Base + 0x3080, "example.dll", "StopFixture"}};
-  EXPECT_TRUE(specializeBinaryInterpreter(Image, Base + 0x1000, Options).complete());
+  Options.X64TerminalImports = {
+      {1, Base + 0x3080, "example.dll", "StopFixture"}};
+  EXPECT_TRUE(
+      specializeBinaryInterpreter(Image, Base + 0x1000, Options).complete());
   for (unsigned Which = 0; Which < 3; ++Which) {
     auto Bad = Options;
-    if (Which == 0) Bad.X64TerminalImports[0].Module = "different.dll";
-    if (Which == 1) Bad.X64TerminalImports[0].Symbol = "Different";
-    if (Which == 2) Bad.X64TerminalImports[0].Slot += 8;
-    EXPECT_FALSE(specializeBinaryInterpreter(Image, Base + 0x1000, Bad).complete());
+    if (Which == 0)
+      Bad.X64TerminalImports[0].Module = "different.dll";
+    if (Which == 1)
+      Bad.X64TerminalImports[0].Symbol = "Different";
+    if (Which == 2)
+      Bad.X64TerminalImports[0].Slot += 8;
+    EXPECT_FALSE(
+        specializeBinaryInterpreter(Image, Base + 0x1000, Bad).complete());
   }
 }
 
@@ -1041,7 +1122,8 @@ TEST_F(PEFixedImageTest, TerminalImportRefusesUnstableAndMalformedSlots) {
     auto Bytes = terminalImportFixture();
     if (Which == 0) // Writable after loading.
       put32(Bytes, SectionTable + 2 * 40 + 36,
-            IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_CNT_INITIALIZED_DATA);
+            IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE |
+                IMAGE_SCN_CNT_INITIALIZED_DATA);
     if (Which == 1) { // Ordinal identity is outside this named contract.
       put64(Bytes, IData + 0x60, (uint64_t{1} << 63) | 1);
       put64(Bytes, IData + 0x80, (uint64_t{1} << 63) | 1);
@@ -1059,20 +1141,27 @@ TEST_F(PEFixedImageTest, TerminalImportRefusesUnstableAndMalformedSlots) {
       put32(Bytes, Reloc, 0x3000);
       put16(Bytes, Reloc + 8, (IMAGE_REL_BASED_DIR64 << 12) | 0x80);
     }
-    if (Which == 5) directory(Bytes, DELAY_IMPORT_DESCRIPTOR, 0x3100, 32);
+    if (Which == 5)
+      directory(Bytes, DELAY_IMPORT_DESCRIPTOR, 0x3100, 32);
     if (Which == 6) { // Overlapping virtual mappings.
       put32(Bytes, SectionTable + 1 * 40 + 12, 0x3000);
     }
     auto Loaded = load(Bytes);
-    if (!Loaded) { llvm::consumeError(Loaded.takeError()); continue; }
-    Options.X64TerminalImports = {{1, Base + 0x3080, "example.dll", "StopFixture"}};
-    const auto Recovery = specializeBinaryInterpreter(*Loaded, Base + 0x1000, Options);
+    if (!Loaded) {
+      llvm::consumeError(Loaded.takeError());
+      continue;
+    }
+    Options.X64TerminalImports = {
+        {1, Base + 0x3080, "example.dll", "StopFixture"}};
+    const auto Recovery =
+        specializeBinaryInterpreter(*Loaded, Base + 0x1000, Options);
     EXPECT_FALSE(Recovery.complete());
     EXPECT_TRUE(Recovery.ExternalExits.empty());
   }
 }
 
-TEST_F(PEFixedImageTest, TerminalImportPreservesSiblingAndRejectsProofAndSource) {
+TEST_F(PEFixedImageTest,
+       TerminalImportPreservesSiblingAndRejectsProofAndSource) {
   auto Bytes = terminalImportFixture();
   // test ecx,ecx; je normal-return; call [rip+slot]; normal-return: ret.
   const uint8_t Prefix[] = {0x85, 0xc9, 0x74, 0x06, 0xff, 0x15};
@@ -1082,30 +1171,41 @@ TEST_F(PEFixedImageTest, TerminalImportPreservesSiblingAndRejectsProofAndSource)
   auto Loaded = load(Bytes);
   ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
   Image = std::move(*Loaded);
-  Options.X64TerminalImports = {{1, Base + 0x3080, "example.dll", "StopFixture"}};
-  const auto Recovery = specializeBinaryInterpreter(Image, Base + 0x1000, Options);
+  Options.X64TerminalImports = {
+      {1, Base + 0x3080, "example.dll", "StopFixture"}};
+  const auto Recovery =
+      specializeBinaryInterpreter(Image, Base + 0x1000, Options);
   ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
   ASSERT_EQ(Recovery.ExternalExits.size(), 1U);
   bool SawReturn = false;
   for (const auto &B : Recovery.Residual.Blocks)
-    for (const auto &Op : B.Ops) SawReturn |= Op.Opcode == NdOp::RETURN;
+    for (const auto &Op : B.Ops)
+      SawReturn |= Op.Opcode == NdOp::RETURN;
   EXPECT_TRUE(SawReturn);
-  for (auto Layout : {InterpreterMachineStateLayout::InlineReturns, InterpreterMachineStateLayout::SharedGPRExit}) {
-    auto Source = wrapInterpreterMachineStateX64(Recovery.Residual, BinaryFormat::COFF,
+  for (auto Layout : {InterpreterMachineStateLayout::InlineReturns,
+                      InterpreterMachineStateLayout::SharedGPRExit}) {
+    auto Source = wrapInterpreterMachineStateX64(
+        Recovery.Residual, BinaryFormat::COFF,
         InterpreterMachineStateProfile::UserX64NoFaultV1, std::nullopt, Layout);
     EXPECT_FALSE(bool(Source));
-    if (!Source) EXPECT_NE(llvm::toString(Source.takeError()).find("call-free"), std::string::npos);
+    if (!Source)
+      EXPECT_NE(llvm::toString(Source.takeError()).find("call-free"),
+                std::string::npos);
   }
   // Both reached and unused declarations are unsupported proof domains.
   for (va_t Entry : {Base + 0x1000, Base + 0x100a}) {
-    const auto Native = checkBinaryUndefinedIndependence(Image, Entry, Options, Contract);
+    const auto Native =
+        checkBinaryUndefinedIndependence(Image, Entry, Options, Contract);
     EXPECT_FALSE(Native.proved());
     EXPECT_FALSE(Native.Certificate);
-    EXPECT_NE(Native.Proof.Diagnostic.find("terminal import"), std::string::npos);
-    const auto Relation = checkBinaryLowIRRefinement(Image, Entry, Options, Recovery.Residual, Contract);
+    EXPECT_NE(Native.Proof.Diagnostic.find("terminal import"),
+              std::string::npos);
+    const auto Relation = checkBinaryLowIRRefinement(
+        Image, Entry, Options, Recovery.Residual, Contract);
     EXPECT_FALSE(Relation.proved());
     EXPECT_FALSE(Relation.Certificate);
-    const auto LLVM = checkBinaryLLVMRefinement(Image, Entry, Options, Recovery.Residual, "", "model", *Contract.Frame);
+    const auto LLVM = checkBinaryLLVMRefinement(
+        Image, Entry, Options, Recovery.Residual, "", "model", *Contract.Frame);
     EXPECT_EQ(LLVM.Stage, InterpreterLLVMRefinementStage::Native);
     EXPECT_FALSE(LLVM.Certificate);
     EXPECT_NE(LLVM.Diagnostic.find("terminal import"), std::string::npos);

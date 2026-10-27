@@ -11,13 +11,16 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 #include <limits>
 
 namespace neverd::web {
 namespace {
 uint64_t pageEnd(uint64_t Offset, uint64_t Limit, uint64_t Size) {
-  if (!Limit || Limit > 128 || Offset > Size)
+  if (!Limit || Limit > ::neverd::limits::web::kSessionInterfacesPageEndLimit ||
+      Offset > Size)
     throw Error("invalid_page");
   return std::min<uint64_t>(Size, Offset + Limit);
 }

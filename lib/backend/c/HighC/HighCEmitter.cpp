@@ -16,16 +16,35 @@
 
 #include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "../../../loader/Swift/SwiftErrorRuntime.h"
+#include "../../AArch64ImmediateMemoryBase.h"
+#include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
-#include "../render/X86FPStateHelpers.h"
+#include "../render/X86/X86AtomicExchange.h"
+#include "../render/X86/X86DescriptorState.h"
+#include "../render/X86/X86FPStateHelpers.h"
+#include "../render/X86/X86ScalarSystem.h"
+#include "../render/X86/X86SystemRegister.h"
+#include "../render/X86/X86SystemState.h"
+#include "../render/X86/X86Virtualization.h"
 #include "HighCWriter.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/c/FloatingPointContract.h"
+#include "neverd/backend/c/render/AArch64/AArch64AddressMemoryC.h"
+#include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
+#include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
+#include "neverd/backend/c/render/AArch64/AArch64WritebackMemoryC.h"
 #include "neverd/ir/high/CxxObjectActions.h"
+#include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
-#include "neverd/ir/high/X86FPStateShape.h"
+#include "neverd/ir/high/X86/X86FPStateShape.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
+#include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
+#include "neverd/ir/intrinsics/X86/X86FourSource.h"
+#include "neverd/ir/intrinsics/X86/X86Unsupported.h"
+#include "neverd/loader/AArch64MemoryImage.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
 #include "neverd/ArchSupport.h"
@@ -33,12 +52,13 @@
 #include "neverd/DataAccessWidths.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/backend/c/render/SyscallHelpers.h"
-#include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
+#include "neverd/backend/llvm/X86/LLVMX86AddressSpaces.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/StringLiteralSymbols.h"
+#include "neverd/loader/SymbolDecoration.h"
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/StringExtras.h"
@@ -53,6 +73,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 
@@ -60,10 +81,56 @@ namespace neverd {
 
 namespace {
 
-/// How many pointer words, and how many nonzero bytes, a long image
-/// initializer gives each line.
+/// Whether one pair of parentheses encloses all of \p Text.
+bool enclosed(llvm::StringRef Text) {
+  bool Enclosed = Text.size() >= 2 && Text.front() == '(';
+  int Depth = 0;
+  for (size_t I = 0; Enclosed && I < Text.size(); ++I) {
+    const char C = Text[I];
+    if (C == '"' || C == '\'') {
+      // A literal's parentheses are no grouping.
+      for (++I; I < Text.size() && Text[I] != C; ++I)
+        if (Text[I] == '\\')
+          ++I;
+      continue;
+    }
+    Depth += C == '(' ? 1 : C == ')' ? -1 : 0;
+    if (Depth == 0 && I + 1 < Text.size())
+      Enclosed = false;
+  }
+  return Enclosed && Depth == 0;
+}
+
+/// `(uintptr_t)` applied to \p Address, keeping one pair of parentheses when
+/// a pair already encloses all of it: `(uintptr_t)(frame_base - 80)`. An
+/// address that is such a conversion already stays as it is:
+/// `(uintptr_t)&stack_storage.var_m50`.
+std::string uintptrOf(llvm::StringRef Address) {
+  if (c_memory::integerConversion(Address))
+    return Address.str();
+  if (enclosed(Address))
+    return "(uintptr_t)" + Address.str();
+  return "(uintptr_t)(" + Address.str() + ")";
+}
+
+/// How many pointer words a long image initializer gives each line.
 constexpr uint64_t ImageWordsPerLine = 8;
-constexpr uint64_t ImageBytesPerLine = 16;
+/// The characters a line of a long list or string of image bytes holds at
+/// most, and from how many a string's line ends after a NUL or a newline.
+constexpr uint64_t ImageLineChars = 96;
+constexpr uint64_t ImageStringBreakChars = 48;
+
+/// A byte as an element of a list of image bytes: text as its character, a
+/// zero as 0, and any other byte in hexadecimal.
+std::string byteListElement(uint8_t Byte) {
+  if (!Byte)
+    return "0";
+  if (Byte == '\'' || Byte == '\\')
+    return {'\'', '\\', static_cast<char>(Byte), '\''};
+  if (Byte >= 32 && Byte < 127)
+    return {'\'', static_cast<char>(Byte), '\''};
+  return "0x" + llvm::utohexstr(Byte);
+}
 
 unsigned partialIntegerBytes(const TypeRef &Type) {
   if (!Type ||
@@ -173,7 +240,11 @@ void validateMemoryAddressSpaceForC(NdMemoryAddressSpace AddressSpace,
 }
 
 bool useMsvcSegmentedRead(const CEmitterOptions &Opts, const HighFunc *Func) {
-  return (Func && Func->ExceptionMetadata) ||
+  // A function Windows' unwind or exception tables describe is Windows code;
+  // an ELF function's DWARF FDE describes another platform's.
+  return (Func && Func->ExceptionMetadata &&
+          !exceptionEncodingIsOutsideWindows(
+              Func->ExceptionMetadata->Encoding)) ||
          (Opts.Image && Opts.Image->abiFormat() == BinaryFormat::COFF);
 }
 
@@ -225,25 +296,81 @@ std::string memoryPointerCast(llvm::StringRef Type, llvm::StringRef Address,
                  std::to_string(cMemoryAddressSpace(AddressSpace)) + ")))";
   // addrStr already emits `(uintptr_t)base + imm` for typed pointer offsets.
   // Another integer round-trip is `*(T *)(uintptr_t)((uintptr_t)p + 8)`.
-  // `&member` is already a typed object address; do not recast it.  An
-  // element of a byte backing (`&table[8]`) is a byte's address.
-  if (Address.starts_with("&") && !Address.contains('['))
-    return Address.str();
+  // A displayed member's address can point to a pointer, signed integer or
+  // floating object even when the machine operation accesses unsigned bits.
+  // Retain the operation's exact pointee type for atomic builtin operands.
+  if (Address.starts_with("&"))
+    return "(" + Qualified + " *)(" + Address.str() + ")";
   if (Address.contains("(uintptr_t)"))
     return "(" + Qualified + " *)(" + Address.str() + ")";
-  return "(" + Qualified + " *)(uintptr_t)(" + Address.str() + ")";
+  return "(" + Qualified + " *)" + uintptrOf(Address);
 }
 
 } // anonymous namespace
 
+namespace {
+/// Whether C takes the signature \p Func is emitted with, its debug
+/// information's where it has any (\p Declared), for a hosted program's
+/// main: an int result and no parameter, or argc and argv, and maybe envp,
+/// with no function specifier (C11 5.1.2.2.1, 6.7.4).
+bool hasMainSignature(const HighFunc &Func,
+                      const std::optional<FunctionSym> &Declared) {
+  auto Int = [](const TypeRef &Type) {
+    return Type && Type->Kind == NdTypeKind::Int && Type->Size == 4;
+  };
+  // `char **`: plain char, which a signed or unsigned byte is not.
+  auto Strings = [](const TypeRef &Type) {
+    return Type && Type->Kind == NdTypeKind::Ptr && Type->Pointee &&
+           Type->Pointee->Kind == NdTypeKind::Ptr && Type->Pointee->Pointee &&
+           Type->Pointee->Pointee->Kind == NdTypeKind::Int &&
+           Type->Pointee->Pointee->Size == 1 &&
+           Type->Pointee->Pointee->SourceName == "char";
+  };
+  if (Func.DoesNotReturn)
+    return false;
+  std::vector<TypeRef> Params;
+  TypeRef Result = Func.ReturnType;
+  if (Declared && Declared->ReturnType) {
+    Result = Declared->ReturnType;
+    for (const auto &[Name, Type] : Declared->Params)
+      Params.push_back(Type);
+  } else {
+    for (const HighParam &Param : Func.Params)
+      Params.push_back(Param.Type);
+  }
+  if (!Int(Result) ||
+      (Params.size() != 0 && Params.size() != 2 && Params.size() != 3))
+    return false;
+  return Params.empty() ||
+         (Int(Params[0]) && llvm::all_of(llvm::drop_begin(Params), Strings));
+}
+} // namespace
+
+bool HighCWriter::takesMainSignature(const HighFunc &Func) const {
+  return hasMainSignature(Func, Dbg && Func.Entry
+                                    ? Dbg->resolveFunction(Func.Entry)
+                                    : std::nullopt);
+}
+
 void HighCWriter::prepareFunctionIdentifiers(
     const std::vector<HighFunc> &Funcs) {
   GlobalIdentifierAllocator = CProjectionIdentifierAllocator{};
+  // The ordinary identifiers the record definitions declare are the
+  // program's names (prepareRecordDefinitions): its typedefs, enumerators,
+  // and a header's function named like its record (<sys/sysinfo.h>'s
+  // sysinfo), which the unit's own names step around and no typedef of the
+  // unit's declares again.
+  for (const std::string &Name : RecordDefinitions.Identifiers)
+    GlobalIdentifierAllocator.allocateVerbatim(Name);
+  for (const std::string &Name : RecordDefinitions.Enumerations)
+    GlobalIdentifierAllocator.allocateVerbatim(Name);
   FunctionIdentifiers.clear();
   FunctionSymbolNames.clear();
   FunctionIdentifiersBySourceName.clear();
   ExternalFunctionIdentifiers.clear();
   ExternalCallSources.clear();
+  StdcallImportPops = Opts.Image ? c_library::stdcallImportPops(*Opts.Image)
+                                 : c_library::ImportPops();
   ExternalSourceIdentifiers.clear();
   DefinedFuncs.clear();
   DefinedFunctionsByIdentifier.clear();
@@ -340,8 +467,26 @@ void HighCWriter::prepareFunctionIdentifiers(
     FunctionSymbolNames.emplace(&Func, SymbolName.str());
     const llvm::StringRef RenderedName =
         cDefinitionName(SymbolName, Opts.Format);
-    std::string Identifier =
-        GlobalIdentifierAllocator.allocate(RenderedName, "nd_function");
+    // The image's own copy of a C library routine steps aside from the
+    // header's name, as LLVM-C's does: by the identifier it would take, as a
+    // C++ `sigaddset(unsigned long*, int)` would take `sigaddset`, or by its
+    // prototype, which a C library's headers give (`__strlen_chk`).
+    std::string Stem =
+        canonicalizeCProjectionIdentifier(RenderedName, "nd_function");
+    if (Func.Entry && (copiesHeaderRoutine(Stem, Opts.Format) ||
+                       libraryDeclaresDefinition(Func))) {
+      Stem += "_" + llvm::utohexstr(Func.Entry);
+      HeaderRoutineCopies.insert(&Func);
+    }
+    // C holds a whole program's main to the result and parameters C gives
+    // main, not those the code has (make's `_Noreturn void main(int32_t,
+    // int64_t, void*)`): one whose signature C rejects steps aside as
+    // LLVM-C's whole-module main does, the C runtime reaching it by its
+    // address.
+    else if (Opts.WholeProgram && Func.Entry && Stem == "main" &&
+             !takesMainSignature(Func))
+      Stem += "_" + llvm::utohexstr(Func.Entry);
+    std::string Identifier = GlobalIdentifierAllocator.allocateVerbatim(Stem);
     FunctionIdentifiers.emplace(&Func, Identifier);
     DefinedFunctionsByIdentifier.emplace(Identifier, &Func);
     FunctionIdentifiersBySourceName.try_emplace(SourceName, Identifier);
@@ -357,6 +502,7 @@ void HighCWriter::prepareFunctionIdentifiers(
   // stems merge, as the MSVC rules want.
   std::map<std::string, std::vector<std::string>> SymbolsByStem;
   std::map<std::string, std::set<std::string>> SourcesBySymbol;
+  std::set<std::string> ImageHeaderSymbols;
   std::set<const HighExpr *> Calls;
   std::function<void(const ExprPtr &)> VisitCall = [&](const ExprPtr &Expr) {
     if (!Expr || !Calls.insert(Expr.get()).second)
@@ -373,8 +519,18 @@ void HighCWriter::prepareFunctionIdentifiers(
       return;
     const std::string Symbol =
         cNameOfSymbol(SourceName, Opts.Format, Opts.TheArch).str();
-    auto &Symbols =
-        SymbolsByStem[canonicalizeCProjectionIdentifier(Symbol, "nd_function")];
+    std::string Stem = canonicalizeCProjectionIdentifier(Symbol, "nd_function");
+    // A callee omitted from this projection is still the image's own copy.
+    // Give its recovered declaration the same namespace protection as a
+    // definition, retaining the original symbol as its assembler link name.
+    if (Expr->CallAddr && copiesHeaderRoutine(Stem, Opts.Format) &&
+        isOwnFunctionName(SourceName, Funcs) && Opts.Image &&
+        !Opts.Image->findImportAt(Expr->CallAddr) &&
+        !Opts.Image->findImportStubAt(Expr->CallAddr)) {
+      Stem += "_" + llvm::utohexstr(Expr->CallAddr);
+      ImageHeaderSymbols.insert(Symbol);
+    }
+    auto &Symbols = SymbolsByStem[Stem];
     if (!llvm::is_contained(Symbols, Symbol))
       Symbols.push_back(Symbol);
     SourcesBySymbol[Symbol].insert(SourceName);
@@ -383,10 +539,14 @@ void HighCWriter::prepareFunctionIdentifiers(
     walkStmts(Func.Body,
               [&](const HighStmt &Stmt) { forEachExpr(Stmt, VisitCall); });
   for (auto &[Stem, Symbols] : SymbolsByStem) {
-    if (Symbols.size() < 2 ||
-        llvm::none_of(Symbols, [](const std::string &Symbol) {
-          return identifierSpelledFromSymbol(Symbol) && !hasMsvcStem(Symbol);
-        }))
+    if (llvm::none_of(Symbols,
+                      [&](const std::string &Symbol) {
+                        return ImageHeaderSymbols.count(Symbol);
+                      }) &&
+        (Symbols.size() < 2 ||
+         llvm::none_of(Symbols, [](const std::string &Symbol) {
+           return identifierSpelledFromSymbol(Symbol) && !hasMsvcStem(Symbol);
+         })))
       continue;
     std::stable_partition(Symbols.begin(), Symbols.end(),
                           [](const std::string &Symbol) {
@@ -473,19 +633,19 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   // freed one's address.
   ParamCacheOf = nullptr;
   EmittedParamIndices.clear();
-  // Native AArch64 vector carriers are projected to SVE ACLE types.  x86
-  // vector intrinsics use scalar integer carriers at the HighIR boundary.
+  // Native SVE values use ACLE types despite their integer storage in HighIR.
+  // x86 values and checked aggregate-call result bridges use scalar carriers.
   const bool ProjectsScalarWideIntegers =
       Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64;
   // C compilers provide __int128 on targets with 64-bit pointers only.
   const bool TargetHasInt128 = pointerBytes(Opts.TheArch) >= sizeof(uint64_t);
-  auto CollectWideType = [&](const TypeRef &Type) {
+  auto CollectWideType = [&](const TypeRef &Type, bool ScalarResult = false) {
     if (const unsigned Bytes = partialIntegerBytes(Type))
       PartialIntegerBytes.emplace(typeToC(Type), Bytes);
-    Has256BitInteger |= ProjectsScalarWideIntegers && Type &&
-                        Type->Kind == NdTypeKind::Int && Type->Size == 32;
-    Has512BitInteger |= ProjectsScalarWideIntegers && Type &&
-                        Type->Kind == NdTypeKind::Int && Type->Size == 64;
+    const bool ScalarInteger = (ProjectsScalarWideIntegers || ScalarResult) &&
+                               Type && Type->Kind == NdTypeKind::Int;
+    Has256BitInteger |= ScalarInteger && Type->Size == 32;
+    Has512BitInteger |= ScalarInteger && Type->Size == 64;
     Int128AsBitInt |= !TargetHasInt128 && Type &&
                       Type->Kind == NdTypeKind::Int && Type->Size == 16;
     UsesX87Extended |= Type && Type->Kind == NdTypeKind::Float &&
@@ -501,7 +661,9 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
         !(E.Kind == ExprKind::Call &&
           isX86FPStateMemoryIntrinsic(E.IntrinsicId)))
       return;
-    CollectWideType(E.Type);
+    CollectWideType(E.Type, E.Kind == ExprKind::Call &&
+                                E.FloatingCallSignature &&
+                                E.FloatingCallSignature->ReturnElements);
     CollectWideType(E.CastTo);
     if (const auto Helper = x87HelperFor(E))
       X87Helpers.insert(*Helper);
@@ -550,8 +712,22 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
         E.Kind == ExprKind::Load && useMsvcSegmentedRead(Opts, CurrentFunc);
     if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
       validateMemoryAddressSpaceForC(E.MemoryAddressSpace, Opts.TheArch);
-      if (!MsvcSegmentedScalar)
+      // These renderers pass raw offsets to native instructions. They do not
+      // form C pointers in a target-specific segmented address space.
+      const bool InstructionMemory =
+          E.Kind == ExprKind::Call &&
+          (x86VirtualizationContract(E.IntrinsicId).MemoryArgument >= 0 ||
+           x86SystemStateContract(E.IntrinsicId).MemoryArgument >= 0 ||
+           isX86DescriptorStateIntrinsic(E.IntrinsicId) ||
+           isX86AtomicIntrinsic(E.IntrinsicId) ||
+           isX86CompactMemory(E.IntrinsicId) ||
+           E.IntrinsicId == Intrinsic::X86FourSourceMemory ||
+           E.IntrinsicId == Intrinsic::X86AMXState);
+      // A read MSVC's <intrin.h> spells for Windows, as __readgsqword.
+      if (!MsvcSegmentedScalar && !InstructionMemory)
         HasSegmentedMemory = true;
+      else if (MsvcSegmentedScalar && Opts.Format == BinaryFormat::COFF)
+        NeedsMsvcIntrinsics = true;
       const bool IsMemoryExpr =
           E.Kind == ExprKind::Load || E.Kind == ExprKind::Store ||
           (E.Kind == ExprKind::BinOp &&
@@ -616,8 +792,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       CollectWideType(Param.Type);
     for (const HighLocal &Local : Func.Locals)
       CollectWideType(Local.Type);
-    HideEHRuntimeMemory = Func.ExceptionMetadata.has_value() &&
-                          !preservesRegistrationMemory(Func);
+    HideEHRuntimeMemory = hidesRegistrationMemory(Func);
     walkStmts(Func.Body, [&](const HighStmt &Stmt) {
       if (Stmt.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
         if (HideEHRuntimeMemory &&
@@ -864,8 +1039,8 @@ std::string HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
     llvm::report_fatal_error("HighC memory load type was not collected");
   if (Ordering != NdMemoryOrdering::None)
     validateAtomicLoadOrdering(Ordering);
-  return memoryHelperName("load", Type, Ordering, AddressSpace) +
-         "((uintptr_t)(" + Addr.str() + "))";
+  return memoryHelperName("load", Type, Ordering, AddressSpace) + "(" +
+         uintptrOf(Addr) + ")";
 }
 
 std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
@@ -894,8 +1069,8 @@ std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
       AddressSpace == NdMemoryAddressSpace::Default && Bytes) {
     const auto Address = memoryTemporary("uintptr_t", "memory_address");
     const auto Stored = memoryTemporary(Type, "memory_value");
-    return "(" + Address + " = (uintptr_t)(" + Addr.str() + "), " + Stored +
-           " = " + Value + ", " +
+    return "(" + Address + " = " + uintptrOf(Addr) + ", " + Stored + " = " +
+           Value + ", " +
            c_memory::storeCopy(Address, Stored,
                                *Bytes ? std::to_string(*Bytes)
                                       : "sizeof(" + Stored + ")") +
@@ -906,8 +1081,8 @@ std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
     llvm::report_fatal_error("HighC memory store type was not collected");
   if (Ordering != NdMemoryOrdering::None)
     validateAtomicStoreOrdering(Ordering);
-  return memoryHelperName("store", Type, Ordering, AddressSpace) +
-         "((uintptr_t)(" + Addr.str() + "), " + Value + ")";
+  return memoryHelperName("store", Type, Ordering, AddressSpace) + "(" +
+         uintptrOf(Addr) + ", " + Value + ")";
 }
 
 std::optional<unsigned>
@@ -961,7 +1136,7 @@ void HighCWriter::writeMemoryStore(const TypeRef &Ty, llvm::StringRef Addr,
   emitIndent(Indent);
   OS << "{\n";
   emitIndent(Indent + 1);
-  OS << "uintptr_t " << Address << " = (uintptr_t)(" << Addr << ");\n";
+  OS << "uintptr_t " << Address << " = " << uintptrOf(Addr) << ";\n";
   emitIndent(Indent + 1);
   OS << Type << " " << Value << " = ";
   if (Ty && Ty->Kind == NdTypeKind::Ptr)
@@ -983,6 +1158,9 @@ HighCWriter::atomicExchangeExpr(const TypeRef &Ty, llvm::StringRef Addr,
     llvm::report_fatal_error("atomic exchange requires memory ordering");
   validateAtomicIntegerWidth(Ty);
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
+  if (const auto Plan =
+          x86AtomicExchangePlan(Opts.TheArch, Ty->Size, AddressSpace))
+    return renderX86AtomicExchange(*Plan, Addr.str(), Val.str());
   std::string Type = memoryTypeName(Ty);
   return "__atomic_exchange_n(" +
          memoryPointerCast(Type, Addr, AddressSpace, false) + ", " +
@@ -1362,6 +1540,10 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                         ? "descriptor_"
                         : "literal_") +
                 llvm::utohexstr(Hint.TargetAddress, true) + "_address");
+        } else if (Hint.CallKind == SourceCallTypeHint::Kind::Analyst) {
+          if (!Ex.IsIndirectCall)
+            Targets.insert(Ex.CallTarget.empty() ? Hint.TargetName
+                                                 : Ex.CallTarget);
         } else if (Hint.CallKind != SourceCallTypeHint::Kind::BlockInvoke) {
           NeedsObjCRuntime = true;
           NeedsObjCSuper2 |=
@@ -1393,10 +1575,28 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
           x86UsesMsvcIntrinsicHeader(Ex.IntrinsicId))
         NeedsMsvcIntrinsics = true;
+      if ((Opts.TheArch == Arch::X64 || Opts.Format == BinaryFormat::COFF) &&
+          x86SystemRegisterName(Ex.IntrinsicId, 0))
+        NeedsX86SystemRegisterDispatch = true;
+      if (Opts.TheArch == Arch::X64 &&
+          isX86DescriptorStateIntrinsic(Ex.IntrinsicId))
+        NeedsX86DescriptorStateDispatch = true;
+      if ((Opts.TheArch == Arch::X64 || Opts.TheArch == Arch::X86) &&
+          isX86ScalarSystemIntrinsic(Ex.IntrinsicId))
+        NeedsX86ScalarSystemDispatch = true;
+      if (Opts.TheArch == Arch::X64 &&
+          x86VirtualizationContract(Ex.IntrinsicId).Mnemonic)
+        NeedsX86VirtualizationDispatch = true;
+      if (Opts.TheArch == Arch::X64)
+        for (const auto Id : X86SystemStateNativeInventory)
+          NeedsX86SystemStateDispatch |= Id == Ex.IntrinsicId;
       if (Opts.Format != BinaryFormat::COFF &&
           (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
           x86UsesGnuIntrinsicHeader(Ex.IntrinsicId))
         NeedsGnuX86Intrinsics = true;
+      if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
+          Ex.IntrinsicId == Intrinsic::Cpuid)
+        NeedsCpuid = true;
       const std::string SourceName = resolvedCallTarget(Ex);
       std::string Name = SourceName;
       if (!Name.empty()) {
@@ -1453,6 +1653,11 @@ void HighCWriter::collectCallTargets(const std::vector<HighStmt> &Stmts,
       if (Ex)
         collectCallTargetsExpr(*Ex, Targets);
     });
+    if (S.Kind == StmtKind::SEHTry && S.EHIsReducible &&
+        S.EHClauses.size() == 1 && S.EHClauseBodies.size() == 1)
+      if (const std::string Filter = sehFilterName(S.EHClauses.front());
+          !Filter.empty())
+        Targets.insert(Filter);
     collectCallTargets(S.Body, Targets);
     collectCallTargets(S.ElseBody, Targets);
     for (auto &C : S.Cases)
@@ -1543,6 +1748,11 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
       forEachExpr(Statement, CheckExpr);
     });
   }
+  // Compiler helpers belong to the emitted unit even when its caller
+  // supplies the headers. Collect dependencies before the header-only exit.
+  std::set<std::string> CallTargets;
+  for (const auto &Function : Funcs)
+    collectCallTargets(Function.Body, CallTargets);
   // Every spelling of a 16-byte integer, in types and in the intrinsics'
   // casts alike, takes the C23 type a 32-bit target has.
   auto WriteInt128Spelling = [&] {
@@ -1566,6 +1776,14 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
 
   std::set<std::string> Headers;
   Headers.insert("stdint.h");
+  // SEH filters and handler captures use the platform's exception constants
+  // and compiler-intrinsic aliases, just as the LLVM C projection does.
+  if (Opts.Format == BinaryFormat::COFF)
+    for (const HighFunc &Function : Funcs)
+      walkStmts(Function.Body, [&](const HighStmt &Statement) {
+        if (Statement.Kind == StmtKind::SEHTry)
+          Headers.insert("excpt.h");
+      });
   // char16_t and char32_t strings.
   for (const auto &[Addr, Obj] : ImageObjects)
     for (const auto &String : {Obj.String, Obj.PointsTo})
@@ -1575,16 +1793,22 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     Headers.insert("stdbool.h");
   if (!MemoryTypes.empty())
     Headers.insert("string.h");
+  // The objects a C library header declares, which the unit reaches as it
+  // declares them, or as bytes at their addresses.
+  for (const auto &[Addr, Obj] : ImageObjects)
+    if (!Obj.Header.empty() && !imageBackingAddress(Addr))
+      Headers.insert(Obj.Header);
+  for (const ImageBacking &Backing : ImageBackings)
+    if (Backing.Header)
+      Headers.insert(ImageObjects.at(Backing.Base).Header);
 
-  std::set<std::string> CallTargets;
-  // An analysis-only function prints as ordinary C too, so its callees need
-  // the same headers and prototypes.
-  for (auto &F : Funcs)
-    collectCallTargets(F.Body, CallTargets);
-  writeSourceRecordDeclarations(Funcs);
+  writeSourceRecordDeclarations(Funcs, CallTargets);
   // A function whose address the code takes is declared as a callee is.
-  CallTargets.insert(AddressTakenFunctions.begin(),
-                     AddressTakenFunctions.end());
+  for (const std::string &Symbol : AddressTakenFunctions) {
+    const std::string Identifier = functionIdentifier(Symbol);
+    CallTargets.insert(Identifier);
+    ExternalCallSources[Identifier].insert(Symbol);
+  }
 
   // A stub of a variadic import passes its arguments on through stdarg.h.
   if (Opts.Image)
@@ -1594,16 +1818,20 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
           !Import.empty())
         if (const auto *Forward = libc::libcVariadicForward(Import))
           c_stub::addVariadicStubHeaders(Headers, *Forward);
+  // So does a function that builds its va_list only to pass it on.
+  for (const auto &F : Funcs)
+    if (vaStartForwarder(F))
+      Headers.insert("stdarg.h");
 
   for (auto &Name : CallTargets) {
     if (isOwnFunctionName(Name, Funcs))
       continue;
-    if (const char *Hdr = libc::headerFor(Name))
-      Headers.insert(Hdr);
-    // A C library prototype can name a type a header declares.
-    if (const libc::LibCPrototype *Prototype = externalPrototype(Name);
-        Prototype && !Prototype->Header.empty())
-      Headers.insert(std::string(Prototype->Header));
+    // A routine the user declares is declared as the user declares it
+    // (writeForwardDecls), not by the header that declares the C library's.
+    if (userDeclaresCallee(Name))
+      continue;
+    for (std::string &Header : calleeHeaders(Name))
+      Headers.insert(std::move(Header));
   }
   if (NeedsObjCRuntime) {
     Headers.insert("objc/message.h");
@@ -1616,16 +1844,30 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   if (NeedsDarwinAffineTransformBridge)
     Headers.insert("string.h");
 
-  if (HasCIntrinsics)
+  if (HasCIntrinsics && !PortableInterface)
     for (const char *Hdr : getArchIntrinsicHeaders(Opts.TheArch))
       Headers.insert(Hdr);
   if (NeedsMsvcIntrinsics)
     Headers.insert("intrin.h");
   if (NeedsGnuX86Intrinsics)
     Headers.insert("x86intrin.h");
+  if (NeedsCpuid && Opts.Format != BinaryFormat::COFF)
+    Headers.insert("cpuid.h");
 
+  // The headers declare what the unit's types and routines name as NeverD
+  // read them: with _GNU_SOURCE, for the GNU C Library, musl and bionic.
+  if (libc::headersReadWithGnuSource(Opts.libcVariant()))
+    OS << "#define _GNU_SOURCE 1\n";
   for (auto &H : Headers)
     OS << "#include <" << H << ">\n";
+  // MinGW omits this declaration when Clang supplies the builtin, while
+  // Clang's intrin.h declares it only for _MSC_VER. A builtin still needs its
+  // prototype in C. Match the intrinsic's exact interface on either compiler.
+  if (NeedsCpuid && Opts.Format == BinaryFormat::COFF)
+    OS << "#ifndef __cpuidex\n"
+          "extern void __cpuidex(int[4], int, int);\n"
+          "#endif\n";
+  IncludedHeaders = Headers;
   if (NeedsFEnvAccess)
     OS << "#pragma STDC FENV_ACCESS ON\n";
   OS << "\n";
@@ -1638,6 +1880,45 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   if (Has512BitInteger)
     OS << "typedef unsigned _BitInt(512) uint512_t;\n"
           "typedef _BitInt(512) int512_t;\n\n";
+  // The program's records the unit names, as its local types define them.
+  if (!RecordDefinitions.Text.empty())
+    OS << RecordDefinitions.Text << "\n";
+  // An enumeration's type is complete only where it is defined, and the
+  // unit spells it by its tag's name.  One a header names by a typedef alone
+  // has no tag, and the header's typedef is the unit's (<search.h>'s VISIT).
+  bool EnumerationTypedefs = false;
+  for (const std::string &Name : RecordDefinitions.Enumerations)
+    if (!llvm::is_contained(RecordDefinitions.HeaderTypedefs, Name)) {
+      OS << "typedef enum " << Name << " " << Name << ";\n";
+      EnumerationTypedefs = true;
+    }
+  if (EnumerationTypedefs)
+    OS << "\n";
+  // The unit spells the records the definitions name by their names alone
+  // too, as where a member it reads gives a local its type, unless an
+  // ordinary identifier of the unit's or of a C library header's holds the
+  // name, as <time.h>'s timezone does struct timezone's.
+  bool Typedefs = false;
+  for (const auto &[Tag, Union] : RecordDefinitions.Tags) {
+    const std::string Name = cNamedTypeSpelling(Tag);
+    if (Name.empty() || RecordTypedefs.count(Name))
+      continue;
+    if (llvm::is_contained(RecordDefinitions.HeaderTypedefs, Name)) {
+      RecordTypedefs.insert(Name);
+      continue;
+    }
+    if (GlobalIdentifierAllocator.holds(Name) || CallTargets.count(Name) ||
+        libc::headerOfDataObject(Name) || libc::isKnownFunction(Name)) {
+      TagRecords.emplace(Name, Union);
+      continue;
+    }
+    OS << "typedef " << (Union ? "union " : "struct ") << Name << " " << Name
+       << ";\n";
+    RecordTypedefs.insert(Name);
+    Typedefs = true;
+  }
+  if (Typedefs)
+    OS << "\n";
 }
 
 void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
@@ -1666,6 +1947,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // reads none.
   std::map<std::string, uint16_t> ResultBytes;
   std::map<std::string, TypeRef> FloatingResults;
+  std::map<std::string, std::vector<uint16_t>> FloatingParameters;
+  std::set<std::string> ConflictingFloatingParameters;
   const uint16_t RegisterBytes = pointerBytes(Opts.TheArch);
   for (const HighFunc &F : Funcs)
     walkStmts(F.Body, [&](const HighStmt &S) {
@@ -1680,7 +1963,27 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
             if (!Inserted && It->second->Size != E.Type->Size)
               throw std::runtime_error(
                   "HighC external calls disagree on floating return width");
-          }
+            const std::string Name = callIdentifier(E);
+            std::vector<uint16_t> Parameters;
+            for (const auto &Argument : E.Operands)
+              if (Argument && Argument->Type &&
+                  Argument->Type->Kind == NdTypeKind::Float &&
+                  (Argument->Type->Size == sizeof(float) ||
+                   Argument->Type->Size == sizeof(double)))
+                Parameters.push_back(Argument->Type->Size);
+            if (!E.FloatingCallSignature ||
+                E.FloatingCallSignature->ReturnBytes != E.Type->Size ||
+                Parameters.size() != E.Operands.size() ||
+                E.FloatingCallSignature->ParameterBytes != Parameters)
+              ConflictingFloatingParameters.insert(Name);
+            else {
+              const auto [Position, New] =
+                  FloatingParameters.emplace(Name, Parameters);
+              if (!New && Position->second != Parameters)
+                ConflictingFloatingParameters.insert(Name);
+            }
+          } else
+            ConflictingFloatingParameters.insert(callIdentifier(E));
           if (&E != Top)
             Bytes = std::max<uint16_t>(Bytes,
                                        E.Type ? E.Type->Size : RegisterBytes);
@@ -1693,8 +1996,27 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       forEachExpr(S, [&](const ExprPtr &E) { Visit(*E); });
     });
   // A function whose address the code takes is declared as a callee is.
-  CallTargets.insert(AddressTakenFunctions.begin(),
-                     AddressTakenFunctions.end());
+  for (const std::string &Symbol : AddressTakenFunctions) {
+    const std::string Identifier = functionIdentifier(Symbol);
+    if (!CallTargets.count(Identifier) &&
+        !SourceNativeSignatures.count(Identifier) &&
+        !DebugExternSigs.count(Identifier) && !prototypeForSymbol(Symbol) &&
+        !msvcCallee(Identifier, Opts.Format)) {
+      const std::string Alias = GlobalIdentifierAllocator.allocate(
+          "neverd_code_" + Identifier, "neverd_code");
+      FunctionAddressAliases.emplace(Symbol, Alias);
+      // An address identifies the symbol but says nothing about its result
+      // or parameters. An old-style int declaration can conflict with a
+      // separately emitted definition, even when no call reads its result.
+      OS << "extern unsigned char " << Alias << "[] __asm__(\"";
+      OS.write_escaped(Symbol);
+      OS << "\");\n";
+      continue;
+    }
+    CallTargets.insert(Identifier);
+    ExternalCallSources[Identifier].insert(Symbol);
+  }
+  UnitCallTargets = CallTargets;
 
   for (const auto &[Name, Identifier] : SourceRuntimeDataIdentifiers) {
     if (ConflictingSourceRuntimeDataIdentities.count(Name))
@@ -1778,11 +2100,13 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
           Function.SourceTypeHint &&
                   I < Function.SourceTypeHint->Parameters.size()
               ? sourceParameterType(Function.SourceTypeHint->Parameters[I])
-              : typeToC(emittedParamTypeAt(Function, I));
+              : declaredAs(emittedParamTypeAt(Function, I), "");
     }
+    if (vaStartForwarder(Function) && ParamCount)
+      Declarator += ", ...";
     if (ParamCount == 0)
       Declarator += "void";
-    OS << declarationToC(ReturnType, Declarator + ")") << ";\n";
+    OS << declaredAs(ReturnType, Declarator + ")") << ";\n";
   }
   CurrentFunc = nullptr;
   Analysis = {};
@@ -1802,13 +2126,15 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
           Function->SourceTypeHint &&
                   I < Function->SourceTypeHint->Parameters.size()
               ? sourceParameterType(Function->SourceTypeHint->Parameters[I])
-              : typeToC(emittedParamTypeAt(*Function, I));
+              : declaredAs(emittedParamTypeAt(*Function, I), "");
     }
+    if (vaStartForwarder(*Function) && ParamCount)
+      Declarator += ", ...";
     if (ParamCount == 0)
       Declarator += "void";
     if (Function->SourceTypeHint)
       OS << sourceConventionAttribute(Function->SourceTypeHint->Convention);
-    OS << declarationToC(ReturnType, Declarator + ")") << ";\n";
+    OS << declaredAs(ReturnType, Declarator + ")") << ";\n";
   }
   CurrentFunc = nullptr;
   Analysis = {};
@@ -1840,11 +2166,13 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
           Function->SourceTypeHint &&
                   I < Function->SourceTypeHint->Parameters.size()
               ? sourceParameterType(Function->SourceTypeHint->Parameters[I])
-              : typeToC(emittedParamTypeAt(*Function, I));
+              : declaredAs(emittedParamTypeAt(*Function, I), "");
     }
+    if (vaStartForwarder(*Function) && ParamCount)
+      Declarator += ", ...";
     if (ParamCount == 0)
       Declarator += "void";
-    OS << declarationToC(ReturnType, Declarator + ")") << ";\n";
+    OS << declaredAs(ReturnType, Declarator + ")") << ";\n";
   }
   CurrentFunc = nullptr;
   Analysis = {};
@@ -1856,7 +2184,12 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
          DefinedFunctionsByIdentifier.count(Name)) &&
         !SourceRuntimeLinkNames.count(Name))
       continue;
-    if (libc::isKnownFunction(Name) && !isOwnFunctionName(Name, Funcs))
+    // A routine the user declares is declared as the user declares it, under
+    // another identifier where a header the unit includes declares the C
+    // library's routine of the name.
+    const bool UserDeclared = userDeclaresCallee(Name);
+    if (libc::isKnownFunction(Name) && !UserDeclared &&
+        (!isOwnFunctionName(Name, Funcs) || includesHeaderOf(Name)))
       continue;
     if (CIntrinsicNames.count(Name))
       continue;
@@ -1868,7 +2201,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     std::string CleanName = Name;
     if (!CleanName.empty() && CleanName[0] == '_')
       CleanName = CleanName.substr(1);
-    if (libc::isKnownFunction(CleanName) && !isOwnFunctionName(Name, Funcs))
+    if (libc::isKnownFunction(CleanName) && !UserDeclared &&
+        (!isOwnFunctionName(Name, Funcs) || includesHeaderOf(CleanName)))
       continue;
 
     ExternFuncs.insert(Name);
@@ -1882,16 +2216,16 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     const MsvcCallee *Msvc = msvcCallee(Identifier, Opts.Format);
     if (!Msvc)
       return;
-    const TypeRef This = msvcSyntheticThis(Identifier, *Msvc);
-    if (!This || This->Kind != NdTypeKind::Ptr || !This->Pointee ||
-        This->Pointee->Kind != NdTypeKind::Struct || This->Pointee->IsEnum)
+    const std::string Record =
+        cNamedTypeSpelling(msvcSyntheticRecord(Identifier, *Msvc));
+    if (Record.empty() || !DeclaredSyntheticRecords.insert(Record).second)
       return;
-    const std::string Record = cNamedTypeSpelling(This->Pointee->SourceName);
-    if (Record.empty() || ExternFuncs.count(Record) ||
-        isOwnFunctionName(Record, Funcs) ||
-        !DeclaredSyntheticRecords.insert(Record).second)
+    if (ExternFuncs.count(Record) || isOwnFunctionName(Record, Funcs)) {
+      TagRecords.emplace(Record, false);
       return;
+    }
     OS << "typedef struct " << Record << " " << Record << ";\n";
+    RecordTypedefs.insert(Record);
   };
   for (const std::string &Name : ExternFuncs) {
     // CallTargets already contains the C identifier returned by
@@ -1903,6 +2237,17 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     // named like it, not the slot.
     const bool ImportSlot = ImportSlotIdentifiers.count(Name);
     const auto Existing = ExternalFunctionIdentifiers.find(Name);
+    // The header that declares the C library's routine of the name holds
+    // the name, where a routine the user declares takes it: the user's
+    // links by the symbol instead (LinkLabel).
+    if (Existing == ExternalFunctionIdentifiers.end() && !ImportSlot &&
+        userDeclaresCallee(Name) &&
+        (includesHeaderOf(RenderedName) ||
+         includesHeaderOf(RenderedName.ltrim('_'))))
+      if (const std::string Held =
+              canonicalizeCProjectionIdentifier(RenderedName, "nd_external");
+          !GlobalIdentifierAllocator.holds(Held))
+        GlobalIdentifierAllocator.allocateVerbatim(Held);
     std::string Identifier =
         Existing != ExternalFunctionIdentifiers.end() ? Existing->second
         : ImportSlot
@@ -2080,8 +2425,17 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
                !ConflictingDebugExternSigs.count(Name) &&
                DebugExternSigs.count(Name)) {
       DeclareSyntheticThis(Identifier);
-      OS << debugExternPrototype(DebugExternSigs[Name], Identifier, Name)
-         << LinkLabel;
+      // A C library routine is declared as its header declares it where the
+      // declaration needs nothing else: a re-spelling from its types would
+      // lose `const`, and conflict with the header a unit includes too.
+      const FunctionSym &Library = DebugExternSigs[Name];
+      if (Opts.EmitIncludes && Library.PrototypeFromCLibrary &&
+          Identifier == Name && Declared == Identifier && LinkLabel.empty() &&
+          c_library::selfContainedDeclaration(Library.PrototypeDeclaration,
+                                              Name))
+        OS << "extern " << Library.PrototypeDeclaration;
+      else
+        OS << debugExternPrototype(Library, Identifier, Name) << LinkLabel;
       if (NoReturn)
         OS << " __attribute__((noreturn))";
       OS << ";" << LinkComment << "\n";
@@ -2090,27 +2444,28 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       DeclareSyntheticThis(Identifier);
       OS << debugExternPrototype(FunctionSym{}, Identifier) << ";\n";
     } else if (!ConflictingSourceNativeSignatures.count(Name)) {
-      // The calls print as many arguments (debugCallArgLimit).
+      // The calls print as many arguments (debugCallArgLimit).  Calls
+      // through an i386 stdcall thunk and its slot (`_Validate@8`,
+      // `__imp__Validate@8`) name one routine, which pops what both spell.
       const auto Sources = ExternalCallSources.find(Name);
-      const llvm::StringRef Symbol =
-          Sources != ExternalCallSources.end() && Sources->second.size() == 1
-              ? llvm::StringRef(*Sources->second.begin())
-              : llvm::StringRef(Name);
+      llvm::StringRef Symbol = Name;
+      if (Sources != ExternalCallSources.end() && !Sources->second.empty()) {
+        const llvm::StringRef First = *Sources->second.begin();
+        const std::optional<unsigned> Pops =
+            stdcallArgumentBytes(First, Opts.Format, Opts.TheArch);
+        if (Sources->second.size() == 1 ||
+            (Pops && llvm::all_of(Sources->second, [&](const auto &Source) {
+               return stdcallArgumentBytes(Source, Opts.Format, Opts.TheArch) ==
+                      Pops;
+             })))
+          Symbol = First;
+      }
       // A routine no header declares takes the prototype the C library tables
       // give it; its calls convert their arguments to its parameter types.
       if (const libc::LibCPrototype *Prototype = prototypeForSymbol(Symbol)) {
-        OS << "extern ";
-        if (Prototype->Winapi && Opts.TheArch == Arch::X86)
-          OS << "__attribute__((stdcall)) ";
-        const std::string Return = prototypeType(Prototype->Return);
-        OS << Return << (Return.back() == '*' ? "" : " ") << Declared << "(";
-        for (unsigned I = 0; I < Prototype->ParamCount; ++I)
-          OS << (I ? ", " : "") << prototypeType(Prototype->Params[I]);
-        // ISO C before C23 spells no prototype of `...` alone.
-        if (Prototype->Variadic && Prototype->ParamCount)
-          OS << ", ...";
-        else if (!Prototype->Variadic && !Prototype->ParamCount)
-          OS << "void";
+        OS << "extern "
+           << c_library::declaration(*Prototype, Declared, Opts.TheArch,
+                                     Opts.Format);
       } else {
         const std::string Register =
             "int" + std::to_string(pointerBytes(Opts.TheArch) * 8) + "_t";
@@ -2121,13 +2476,43 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         const bool WholeRegister =
             Read != ResultBytes.end() && Read->second > sizeof(int32_t);
         const auto Floating = FloatingResults.find(Name);
-        const std::string Return = Floating != FloatingResults.end()
-                                       ? typeToC(Floating->second)
-                                   : WholeRegister ? Register
-                                                   : "int";
-        OS << "extern " << Return << " " << Declared << "(";
-        if (auto Arity = knownArity(Symbol, Name);
-            Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0) {
+        // A compiler runtime routine that returns a double word returns it
+        // in the register pair (CompilerRuntimeDoubleWord.def): `__udivti3`'s
+        // calls read RDX as its high half.
+        const bool DoubleWord = libc::returnsDoubleWord(
+            cNameOfSymbol(Symbol, Opts.Format, Opts.TheArch),
+            pointerBytes(Opts.TheArch));
+        const std::string Return =
+            Floating != FloatingResults.end() ? typeToC(Floating->second)
+            : DoubleWord
+                ? (pointerBytes(Opts.TheArch) == 8 ? "unsigned __int128"
+                                                   : "uint64_t")
+            : WholeRegister ? Register
+                            : "int";
+        // A stdcall routine pops the arguments its calls push: C compiled
+        // from the output leaves them to it, where its parameters fill the
+        // slots its decoration spells.
+        const auto Known = knownArity(Symbol, Name);
+        const std::optional<unsigned> Pops = stdcallPops(Symbol, Name);
+        const bool Stdcall = Known && Known->FpArgs == 0 &&
+                             Known->IntArgs >= 0 && Pops &&
+                             *Pops == static_cast<unsigned>(Known->IntArgs) *
+                                          pointerBytes(Opts.TheArch);
+        OS << "extern " << (Stdcall ? "__attribute__((stdcall)) " : "")
+           << Return << " " << Declared << "(";
+        if (Floating != FloatingResults.end() &&
+            FloatingParameters.count(Name) &&
+            !ConflictingFloatingParameters.count(Name)) {
+          const auto &Parameters = FloatingParameters.at(Name);
+          if (Parameters.empty())
+            OS << "void";
+          for (size_t I = 0; I < Parameters.size(); ++I) {
+            if (I)
+              OS << ", ";
+            OS << typeToC(NdType::makeFloat(Parameters[I]));
+          }
+        } else if (auto Arity = Known;
+                   Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0) {
           // Each argument fills one integer register: an int64_t on a 32-bit
           // target would take two, and the arguments after it would move.
           if (Arity->IntArgs == 0)
@@ -2140,8 +2525,9 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
             }
           }
         }
+        OS << ")";
       }
-      OS << ")" << LinkLabel;
+      OS << LinkLabel;
       if (NoReturn)
         OS << " __attribute__((noreturn))";
       OS << ";" << LinkComment << "\n";
@@ -2155,6 +2541,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // the import's address, declared by the name it links as.  A slot a call
   // goes through as well is already the function pointer the call declares.
   ImportDataSlotNames.clear();
+  ImportDataSlotTypes.clear();
   bool DeclaredDataSlot = false;
   for (va_t Slot : ImportDataSlotReads) {
     const std::string Symbol = importDataSlotIdentifier(Slot);
@@ -2168,7 +2555,20 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       }
     const std::string Identifier =
         GlobalIdentifierAllocator.allocateVerbatim(Symbol);
-    OS << "extern void *" << Identifier;
+    HighExpr Query;
+    Query.Kind = ExprKind::Call;
+    Query.CallAddr = Slot;
+    Query.CallTarget = "indirect";
+    Query.IsIndirectCall = true;
+    const auto Callee = debugCallee(Query);
+    const auto Function = Callee ? fixedCalleeFunctionType(*Callee) : nullptr;
+    if (Function) {
+      const auto Pointer = NdType::makePtr(Function);
+      OS << "extern " << declarationToC(Pointer, Identifier);
+      ImportDataSlotTypes.emplace(Slot, Pointer);
+    } else {
+      OS << "extern void *" << Identifier;
+    }
     if (Identifier != Symbol)
       OS << " __asm__(\"" << Symbol << "\")";
     OS << ";\n";
@@ -2182,18 +2582,27 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
 void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   ImageObjects.clear();
   ImageBackings.clear();
+  OriginalMemoryBases.clear();
+  OriginalMemoryObjects.clear();
   DataSymbolBindings = Opts.Image ? collectDataSymbolBindings(*Opts.Image)
                                   : std::map<va_t, DataSymbolBinding>{};
   UsedDataBindings.clear();
   ExternalDataNames.clear();
   ImportDataSlotReads.clear();
   FunctionAddressNames.clear();
+  FunctionAddressAliases.clear();
   AddressTakenFunctions.clear();
   AddressTakenDefinitions.clear();
   if (!Opts.Image)
     return;
-  VarKeyMap<va_t> ImageLoadVars;
-  auto imageLoadVA = [&](const HighExpr &E) -> std::optional<va_t> {
+  /// An image load an expression is, through integer views and the locals
+  /// assigned one: its address and the bytes it reads.
+  struct ImageLoad {
+    va_t Addr;
+    uint16_t Bytes;
+  };
+  VarKeyMap<ImageLoad> ImageLoadVars;
+  auto imageLoad = [&](const HighExpr &E) -> std::optional<ImageLoad> {
     const HighExpr *Inner = unwrapIntegerView(&E);
     if (!Inner)
       return std::nullopt;
@@ -2201,12 +2610,19 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         Inner->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         Inner->MemoryOrdering == NdMemoryOrdering::None &&
         !Inner->Operands.empty() && Inner->Operands[0])
-      return constAddress(*Inner->Operands[0]);
+      if (const auto VA = constAddress(*Inner->Operands[0]))
+        return ImageLoad{
+            *VA, static_cast<uint16_t>(Inner->Type ? Inner->Type->Size : 0)};
     if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) {
       if (auto It = ImageLoadVars.find(varKey(Inner->Var));
           It != ImageLoadVars.end())
         return It->second;
     }
+    return std::nullopt;
+  };
+  auto imageLoadVA = [&](const HighExpr &E) -> std::optional<va_t> {
+    if (const auto Load = imageLoad(E))
+      return Load->Addr;
     return std::nullopt;
   };
   for (const HighFunc &Func : Funcs)
@@ -2215,42 +2631,399 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         return;
       if (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
         return;
-      if (auto VA = imageLoadVA(*S.Val))
-        ImageLoadVars[varKey(S.Dst->Var)] = *VA;
+      if (auto Load = imageLoad(*S.Val))
+        ImageLoadVars[varKey(S.Dst->Var)] = *Load;
     });
   // Symbols size the objects; the largest one at an address is the object.
-  SizedObjects.clear();
-  SizedObjectReach.clear();
-  for (const Symbol &Sym : Opts.Image->Symbols)
-    if (!Sym.IsFunc && Sym.Size && isImageDataAddress(Sym.Addr) &&
-        Sym.Size <= std::numeric_limits<va_t>::max() - Sym.Addr)
-      SizedObjects.emplace_back(Sym.Addr, Sym.Size);
-  llvm::sort(SizedObjects, [](const auto &A, const auto &B) {
-    return A.first != B.first ? A.first < B.first : A.second > B.second;
-  });
-  SizedObjects.erase(std::unique(SizedObjects.begin(), SizedObjects.end(),
-                                 [](const auto &A, const auto &B) {
-                                   return A.first == B.first;
-                                 }),
-                     SizedObjects.end());
-  for (const auto &[Addr, Size] : SizedObjects)
-    SizedObjectReach.push_back(
-        std::max(SizedObjectReach.empty() ? va_t{0} : SizedObjectReach.back(),
-                 Addr + Size));
-  DataSymbolStarts.clear();
-  for (const Symbol &Sym : Opts.Image->Symbols)
-    if (!Sym.IsFunc && isImageDataAddress(Sym.Addr))
-      DataSymbolStarts.push_back(Sym.Addr);
-  llvm::sort(DataSymbolStarts);
-  DataSymbolStarts.erase(
-      std::unique(DataSymbolStarts.begin(), DataSymbolStarts.end()),
-      DataSymbolStarts.end());
+  if (SharedDataObjects) {
+    DataObjects = SharedDataObjects;
+  } else {
+    OwnDataObjects = collectImageDataObjects(*Opts.Image);
+    DataObjects = &OwnDataObjects;
+  }
+  // The function the walk reads, and the statement in it.
+  const HighFunc *Reading = nullptr;
+  const HighStmt *ReadingStmt = nullptr;
+  // Where each statement of the function being read sits: the list holding
+  // it, its index there, and the statement holding that list.
+  struct StmtPlace {
+    const std::vector<HighStmt> *List = nullptr;
+    size_t Index = 0;
+    const HighStmt *Parent = nullptr;
+  };
+  std::unordered_map<const HighStmt *, StmtPlace> Places;
+  // The statements a goto enters, or that hold one it enters: control
+  // reaches them without passing what comes before them in their list.
+  std::unordered_set<const HighStmt *> Entered;
+  // The assignment of each register and temporary that the function assigns
+  // once and never takes the address of.
+  std::map<VarKey, const HighStmt *> SingleDefinitions;
+  const HighFunc *DefinitionsOf = nullptr;
+  // Read once the walk asks about a variable of the function.  Exception
+  // dispatch enters handlers and landing pads at addresses no goto names, so
+  // a function with any assigns nothing this reads.
+  auto ReadDefinitions = [&] {
+    if (DefinitionsOf == Reading)
+      return;
+    DefinitionsOf = Reading;
+    Places.clear();
+    Entered.clear();
+    SingleDefinitions.clear();
+    if (!Reading || Reading->ExceptionMetadata)
+      return;
+    std::set<va_t> Targets;
+    bool Dispatched = false;
+    walkStmts(Reading->Body, [&](const HighStmt &S) {
+      if (S.Kind == StmtKind::Goto)
+        Targets.insert(S.GotoTarget);
+      Targets.insert(S.CxxContinuationReturnTargets.begin(),
+                     S.CxxContinuationReturnTargets.end());
+      Dispatched |= !S.EHClauses.empty();
+    });
+    if (Dispatched)
+      return;
+    std::map<VarKey, unsigned> Assignments;
+    std::set<VarKey> AddressTaken;
+    HighExprSet Seen;
+    std::function<void(const HighExpr &)> NoteAddresses =
+        [&](const HighExpr &E) {
+          if (!Seen.insert(&E).second)
+            return;
+          if (E.Kind == ExprKind::Addr && !E.Operands.empty() &&
+              E.Operands[0] &&
+              (E.Operands[0]->Kind == ExprKind::Var ||
+               E.Operands[0]->Kind == ExprKind::Phi))
+            AddressTaken.insert(varKey(E.Operands[0]->Var));
+          E.forEachChildExpr([&](const ExprPtr &Child) {
+            if (Child)
+              NoteAddresses(*Child);
+          });
+        };
+    std::function<bool(const std::vector<HighStmt> &, const HighStmt *)> Place =
+        [&](const std::vector<HighStmt> &List, const HighStmt *Parent) {
+          bool Holds = false;
+          for (size_t I = 0; I < List.size(); ++I) {
+            const HighStmt &S = List[I];
+            Places[&S] = {&List, I, Parent};
+            bool In = S.Addr && Targets.count(S.Addr);
+            In |= Place(S.Body, &S);
+            In |= Place(S.ElseBody, &S);
+            for (const SwitchCase &Case : S.Cases)
+              In |= Place(Case.Body, &S);
+            In |= Place(S.DefaultBody, &S);
+            for (const std::vector<HighStmt> &Body : S.EHClauseBodies)
+              In |= Place(Body, &S);
+            if (In)
+              Entered.insert(&S);
+            Holds |= In;
+            if (S.Kind == StmtKind::Assign && S.Dst && S.Val &&
+                (S.Dst->Kind == ExprKind::Var ||
+                 S.Dst->Kind == ExprKind::Phi)) {
+              const VarKey Key = varKey(S.Dst->Var);
+              if (++Assignments[Key] == 1 && (S.Dst->Var.Kind == MedVar::Reg ||
+                                              S.Dst->Var.Kind == MedVar::Temp))
+                SingleDefinitions[Key] = &S;
+              else
+                SingleDefinitions.erase(Key);
+            }
+            forEachExpr(S, [&](const ExprPtr &E) {
+              if (E)
+                NoteAddresses(*E);
+            });
+          }
+          return Holds;
+        };
+    Place(Reading->Body, nullptr);
+    for (const VarKey &Key : AddressTaken)
+      SingleDefinitions.erase(Key);
+  };
+  // Whether \p Def runs before \p Use on every path that reaches it: it
+  // comes first in a list that holds \p Use, and no goto enters between.
+  auto Dominates = [&](const HighStmt &Def, const HighStmt &Use) {
+    const auto Defined = Places.find(&Def);
+    if (Defined == Places.end())
+      return false;
+    for (const HighStmt *At = &Use; At;) {
+      const auto Place = Places.find(At);
+      if (Place == Places.end())
+        return false;
+      if (Place->second.List == Defined->second.List) {
+        if (Place->second.Index <= Defined->second.Index)
+          return false;
+        for (size_t I = Defined->second.Index + 1; I <= Place->second.Index;
+             ++I)
+          if (Entered.count(&(*Place->second.List)[I]))
+            return false;
+        return true;
+      }
+      At = Place->second.Parent;
+    }
+    return false;
+  };
+  // The largest unsigned value an integer expression takes at its width,
+  // where its form proves one: a constant, a load's width, a mask, an
+  // unsigned quotient or remainder, an extension or truncation of a value
+  // whose sign is known, the sums, scales and shifts of those that cannot
+  // wrap, and a register or temporary its one assignment before the
+  // statement \p At gives.  Any other form proves nothing.
+  const auto Ones = [](uint64_t Bytes) -> std::optional<uint64_t> {
+    if (!Bytes || Bytes > 8)
+      return std::nullopt;
+    return Bytes == 8 ? ~uint64_t{0} : (uint64_t{1} << (8 * Bytes)) - 1;
+  };
+  // Whether \p Value, as a \p Bytes-wide integer, is non-negative.
+  const auto Nonnegative = [](uint64_t Value, uint64_t Bytes) {
+    return Bytes && Bytes <= 8 && Value < (uint64_t{1} << (8 * Bytes - 1));
+  };
+  // \p Value, the largest a value of type \p From takes, once the value is
+  // converted to \p Bytes: a narrowing keeps its low bytes, and a widening
+  // keeps an unsigned or non-negative value.
+  const auto Converted = [&](std::optional<uint64_t> Value, const TypeRef &From,
+                             uint64_t Bytes) -> std::optional<uint64_t> {
+    if (!Value || !From)
+      return std::nullopt;
+    if (From->Size > Bytes) {
+      const auto Top = Ones(Bytes);
+      if (!Top)
+        return std::nullopt;
+      return std::min(*Value, *Top);
+    }
+    if (From->Size == Bytes || From->Kind == NdTypeKind::Ptr ||
+        (From->Kind == NdTypeKind::Int && !From->IsSigned) ||
+        Nonnegative(*Value, From->Size))
+      return Value;
+    return std::nullopt;
+  };
+  std::function<std::optional<uint64_t>(const HighExpr &, const HighStmt *,
+                                        unsigned)>
+      Maximum = [&](const HighExpr &E, const HighStmt *At,
+                    unsigned Depth) -> std::optional<uint64_t> {
+    if (Depth > limits::kMaxIntegerViewUnwrapDepth || !E.Type)
+      return std::nullopt;
+    const uint64_t Width = E.Type->Size;
+    // An operand's largest value as this expression's width reads it.
+    const auto Of = [&](const HighExpr *Operand) -> std::optional<uint64_t> {
+      if (!Operand || !Operand->Type)
+        return std::nullopt;
+      return Converted(Maximum(*Operand, At, Depth + 1), Operand->Type, Width);
+    };
+    const auto Within = [&](uint64_t Value) -> std::optional<uint64_t> {
+      const auto Top = Ones(Width);
+      if (!Top || Value > *Top)
+        return std::nullopt;
+      return Value;
+    };
+    const auto Operand = [&](size_t I) -> const HighExpr * {
+      return I < E.Operands.size() ? E.Operands[I].get() : nullptr;
+    };
+    switch (E.Kind) {
+    case ExprKind::Const:
+      if (!Nonnegative(E.ConstVal, Width))
+        return std::nullopt;
+      return E.ConstVal;
+    case ExprKind::Var:
+    case ExprKind::Phi: {
+      if (!At || (E.Var.Kind != MedVar::Reg && E.Var.Kind != MedVar::Temp))
+        return std::nullopt;
+      ReadDefinitions();
+      const auto Definition = SingleDefinitions.find(varKey(E.Var));
+      if (Definition == SingleDefinitions.end())
+        return std::nullopt;
+      const HighStmt &Def = *Definition->second;
+      if (!Def.Dst->Type || !Def.Val->Type || Def.Dst->Type->Size != Width ||
+          Def.Val->Type->Size != Width || !Dominates(Def, *At))
+        return std::nullopt;
+      const auto Value = Maximum(*Def.Val, &Def, Depth + 1);
+      return Value ? Within(*Value) : std::nullopt;
+    }
+    case ExprKind::Load:
+      if (E.Type->Kind != NdTypeKind::Int && E.Type->Kind != NdTypeKind::Ptr)
+        return std::nullopt;
+      return Ones(Width);
+    case ExprKind::Cast:
+    case ExprKind::BitCast: {
+      const HighExpr *From = Operand(0);
+      if (!From || !From->Type ||
+          (From->Type->Kind != NdTypeKind::Int &&
+           From->Type->Kind != NdTypeKind::Ptr) ||
+          (E.Type->Kind != NdTypeKind::Int && E.Type->Kind != NdTypeKind::Ptr))
+        return std::nullopt;
+      return Of(From);
+    }
+    case ExprKind::UnaryOp: {
+      const HighExpr *From = Operand(0);
+      if (!From || !From->Type)
+        return std::nullopt;
+      const auto Value = Maximum(*From, At, Depth + 1);
+      if (E.Op == NdOp::INT_ZEXT)
+        return Value ? Value : Ones(From->Type->Size);
+      if (E.Op == NdOp::INT_SEXT && Value &&
+          Nonnegative(*Value, From->Type->Size))
+        return Value;
+      return std::nullopt;
+    }
+    case ExprKind::BinOp: {
+      const HighExpr *Left = Operand(0);
+      const HighExpr *Right = Operand(1);
+      if (!Left || !Right)
+        return std::nullopt;
+      const auto RightConst = [&]() -> std::optional<uint64_t> {
+        if (Right->Kind != ExprKind::Const)
+          return std::nullopt;
+        return Right->ConstVal;
+      };
+      switch (E.Op) {
+      case NdOp::INT_AND: {
+        const auto L = Of(Left);
+        const auto R = Of(Right);
+        if (L && R)
+          return std::min(*L, *R);
+        return L ? L : R;
+      }
+      case NdOp::INT_ADD: {
+        const auto L = Of(Left);
+        const auto R = Of(Right);
+        if (!L || !R || *L > ~uint64_t{0} - *R)
+          return std::nullopt;
+        return Within(*L + *R);
+      }
+      case NdOp::INT_MULT: {
+        const auto L = Of(Left);
+        const auto R = Of(Right);
+        if (!L || !R || (*R && *L > ~uint64_t{0} / *R))
+          return std::nullopt;
+        return Within(*L * *R);
+      }
+      case NdOp::INT_LEFT: {
+        const auto L = Of(Left);
+        const auto Shift = RightConst();
+        if (!L || !Shift || *Shift >= 64 || (*L >> (63 - *Shift)) > 1)
+          return std::nullopt;
+        return Within(*L << *Shift);
+      }
+      case NdOp::INT_RIGHT: {
+        auto L = Of(Left);
+        if (!L)
+          L = Ones(Width);
+        const auto Shift = RightConst();
+        if (!L)
+          return std::nullopt;
+        return Shift && *Shift < 64 ? *L >> *Shift : *L;
+      }
+      case NdOp::INT_REM:
+        if (const auto Divisor = RightConst(); Divisor && *Divisor) {
+          const auto L = Of(Left);
+          return L ? std::min(*L, *Divisor - 1) : *Divisor - 1;
+        }
+        return std::nullopt;
+      case NdOp::INT_DIV:
+        if (const auto Divisor = RightConst(); Divisor && *Divisor) {
+          auto L = Of(Left);
+          if (!L)
+            L = Ones(Width);
+          if (!L)
+            return std::nullopt;
+          return *L / *Divisor;
+        }
+        return std::nullopt;
+      case NdOp::SUBBYTES:
+        if (const auto Offset = RightConst(); Offset && *Offset == 0) {
+          const auto Top = Ones(Width);
+          const auto L = Maximum(*Left, At, Depth + 1);
+          if (!Top)
+            return std::nullopt;
+          return L ? std::min(*L, *Top) : *Top;
+        }
+        return std::nullopt;
+      default:
+        return std::nullopt;
+      }
+    }
+    default:
+      return std::nullopt;
+    }
+  };
+  // The bytes from \p Base that an access of \p Bytes at \p Address
+  // reaches, in whole accesses, when every term of the sum but \p Base
+  // proves its range at the statement \p At.
+  const unsigned AddressBytes = pointerBytes(Opts.TheArch);
+  auto ProvenReach = [&](const HighExpr &Address, va_t Base, uint64_t Bytes,
+                         const HighStmt *At) -> std::optional<uint64_t> {
+    if (!Bytes || Bytes > (~uint64_t{0} >> 2))
+      return std::nullopt;
+    uint64_t Offset = 0;
+    bool SawBase = false;
+    std::function<bool(const HighExpr &, unsigned)> Terms =
+        [&](const HighExpr &E, unsigned Depth) {
+          if (Depth > limits::kMaxIntegerViewUnwrapDepth)
+            return false;
+          if (E.Kind == ExprKind::BinOp && E.Op == NdOp::INT_ADD &&
+              E.Operands.size() == 2 && E.Operands[0] && E.Operands[1])
+            return Terms(*E.Operands[0], Depth + 1) &&
+                   Terms(*E.Operands[1], Depth + 1);
+          // A view of the whole sum at its own width.
+          if ((E.Kind == ExprKind::Cast || E.Kind == ExprKind::BitCast) &&
+              E.Type && E.Operands.size() == 1 && E.Operands[0] &&
+              E.Operands[0]->Type && E.Operands[0]->Type->Size == E.Type->Size)
+            return Terms(*E.Operands[0], Depth + 1);
+          if (!SawBase && E.Kind == ExprKind::Const && E.ConstVal == Base) {
+            SawBase = true;
+            return true;
+          }
+          const auto Value = Maximum(E, At, 0);
+          const uint64_t Width = E.Type ? E.Type->Size : 0;
+          if (!Value ||
+              (Width != AddressBytes && !Nonnegative(*Value, Width)) ||
+              *Value > (~uint64_t{0} >> 2) - Offset)
+            return false;
+          Offset += *Value;
+          return true;
+        };
+    if (!Terms(Address, 0) || !SawBase)
+      return std::nullopt;
+    return (Offset + Bytes + Bytes - 1) / Bytes * Bytes;
+  };
+  // Whether a symbol sizes the object holding \p Addr, or a data symbol
+  // begins \p Object, the stretch indexedObjectAt() gives \p Addr.
+  auto SymbolBounds = [&](va_t Addr, const std::pair<va_t, uint64_t> &Object) {
+    if (sizedObjectAt(Addr))
+      return true;
+    const auto &Starts = DataObjects->DataSymbolStarts;
+    if (std::binary_search(Starts.begin(), Starts.end(), Object.first))
+      return true;
+    return Dbg && Dbg->dataSymbolsAround(Addr).first == Object.first;
+  };
+  // A table read or written at offsets whose range the code proves, in a
+  // stretch no symbol bounds.  It is declared once the walk has shown what
+  // else reaches that stretch.
+  struct BoundedAccess {
+    va_t Table;
+    std::pair<va_t, uint64_t> Stretch;
+    uint64_t Reach;
+    TypeRef Access;
+    bool Written;
+  };
+  std::vector<BoundedAccess> BoundedAccesses;
+  // The stretches the code reaches whole.
+  std::set<va_t> WholeStretches;
   // The code reaches all of an object through an address that varies or
-  // points into it: the object is declared whole, as bytes.
-  auto NoteWhole = [&](va_t Addr, const TypeRef &Access, bool Written) {
+  // points into it: the object is declared whole, as bytes.  Where no symbol
+  // bounds it, the bytes from \p Addr that the access at \p Address
+  // provably reaches may be all it declares (BoundedAccesses).
+  auto NoteWhole = [&](va_t Addr, const TypeRef &Access, bool Written,
+                       const HighExpr *Address = nullptr) {
     const auto Object = indexedObjectAt(Addr);
     if (!Object)
       return;
+    if (Address && Access && Addr - Object->first < Object->second &&
+        !SymbolBounds(Addr, *Object))
+      if (const auto Reach =
+              ProvenReach(*Address, Addr, Access->Size, ReadingStmt);
+          Reach && *Reach <= Object->second - (Addr - Object->first)) {
+        BoundedAccesses.push_back({Addr, *Object, *Reach, Access, Written});
+        return;
+      }
+    WholeStretches.insert(Object->first);
     noteImageObject(Object->first, Access, Written, Access != nullptr);
     ImageObject &Obj = ImageObjects[Object->first];
     Obj.IndexedBytes = std::max(Obj.IndexedBytes, Object->second);
@@ -2400,40 +3173,188 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           return It->second;
     return std::nullopt;
   };
-  VarKeyMap<std::pair<va_t, uint16_t>> TableEntryVars;
-  // An entry added back to its table in an assignment proves the table
-  // relative however the sum is used (`p = table + e; *p`).
+  // Retaining the original instruction does not erase its table dependence.
+  // This observation sizes the mirror; it neither folds the read nor replaces
+  // the instruction's checked address with an integer effective address.
+  auto TableRead = [&](const HighExpr &Expression, const VarKeyMap<va_t> &Bases)
+      -> std::optional<std::pair<va_t, uint16_t>> {
+    const HighExpr *Load = peelIntegerViewOps(&Expression);
+    if (!Load)
+      return std::nullopt;
+    if (Load->Kind == ExprKind::Load && Load->Type &&
+        Load->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        !Load->Operands.empty() && Load->Operands[0]) {
+      if (const auto Table = IndexedTable(*Load->Operands[0], Bases))
+        return std::make_pair(*Table, Load->Type->Size);
+      return std::nullopt;
+    }
+    if (Opts.TheArch != Arch::AArch64 ||
+        !isAArch64AddressMemoryIntrinsic(Load->IntrinsicId) ||
+        !aarch64AddressMemoryHighShapeIsValid(*Load))
+      return std::nullopt;
+    const auto Instruction = *aarch64AddressMemoryInstruction(
+        Load->Operands[kAddressMemoryWordOperand]->ConstVal);
+    if (!Instruction.isLoad() || Instruction.stackBase() ||
+        !Instruction.hasRegisterIndex())
+      return std::nullopt;
+    const auto Table =
+        AddressOf(*Load->Operands[kAddressMemoryBaseOperand], Bases);
+    if (!Table || !isImageDataAddress(*Table))
+      return std::nullopt;
+    return std::make_pair(*Table,
+                          static_cast<uint16_t>(Instruction.accessBytes()));
+  };
+  // An entry added back to its table proves the table relative, including a
+  // sum folded into a later original memory operation's base operand.
   std::set<std::pair<va_t, uint16_t>> AddedBackTables;
   for (const HighFunc &Func : Funcs) {
     const VarKeyMap<va_t> Bases = ConstAddressVars(Func);
-    walkStmts(Func.Body, [&](const HighStmt &S) {
-      if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val ||
-          (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi))
-        return;
-      const HighExpr *Load = peelIntegerViewOps(S.Val.get());
-      if (!Load || Load->Kind != ExprKind::Load || !Load->Type ||
-          Load->Operands.empty() || !Load->Operands[0])
-        return;
-      if (const auto Table = IndexedTable(*Load->Operands[0], Bases))
-        TableEntryVars[varKey(S.Dst->Var)] = {*Table, Load->Type->Size};
-    });
-    walkStmts(Func.Body, [&](const HighStmt &S) {
-      if (S.Kind != StmtKind::Assign || !S.Val)
-        return;
-      const HighExpr *Sum = peelIntegerViewOps(S.Val.get());
-      if (!Sum || Sum->Kind != ExprKind::BinOp || Sum->Op != NdOp::INT_ADD ||
-          Sum->Operands.size() != 2 || !Sum->Operands[0] || !Sum->Operands[1])
-        return;
-      for (unsigned I = 0; I < 2; ++I) {
-        const auto Table = AddressOf(*Sum->Operands[I], Bases);
-        const HighExpr *Entry = peelIntegerViewOps(Sum->Operands[1 - I].get());
-        if (!Table || !Entry ||
-            (Entry->Kind != ExprKind::Var && Entry->Kind != ExprKind::Phi))
+    Reading = &Func;
+    ReadDefinitions();
+    if (Opts.TheArch == Arch::AArch64 && !Func.ExceptionMetadata) {
+      std::set<HighSourceLocalIdentity> Used;
+      std::map<const HighExpr *, size_t> ReadUses;
+      HighExprSet Seen;
+      std::function<void(const HighExpr &)> NoteUses =
+          [&](const HighExpr &Expression) {
+            if (!Seen.insert(&Expression).second)
+              return;
+            if (Expression.Kind == ExprKind::Call &&
+                isAArch64AddressMemoryIntrinsic(Expression.IntrinsicId))
+              ++ReadUses[&Expression];
+            if (Expression.Kind == ExprKind::Var ||
+                Expression.Kind == ExprKind::Phi)
+              Used.insert(highSourceLocalIdentity(Expression.Var));
+            Expression.forEachChildExpr(
+                [&](const ExprPtr &Child) { NoteUses(*Child); });
+          };
+      walkStmts(Func.Body, [&](const HighStmt &Statement) {
+        Seen.clear();
+        forEachRhsExpr(Statement, [&](const ExprPtr &Expression) {
+          NoteUses(*Expression);
+        });
+      });
+      std::vector<const HighExpr *> Reads;
+      std::vector<HighSourceUnsignedRangeQuery> Queries;
+      walkStmts(Func.Body, [&](const HighStmt &Statement) {
+        const HighExpr *Value = nullptr;
+        if (Statement.Kind == StmtKind::Call && Statement.CallExpr)
+          Value = Statement.CallExpr.get();
+        else if (Statement.Kind == StmtKind::Assign && Statement.Dst &&
+                 Statement.Val &&
+                 (Statement.Dst->Kind == ExprKind::Var ||
+                  Statement.Dst->Kind == ExprKind::Phi) &&
+                 !Used.count(highSourceLocalIdentity(Statement.Dst->Var)))
+          Value = Statement.Val.get();
+        const HighExpr *Read = peelIntegerViewOps(Value);
+        if (!Read || !isAArch64AddressMemoryIntrinsic(Read->IntrinsicId) ||
+            !aarch64AddressMemoryHighShapeIsValid(*Read))
+          return;
+        const auto Instruction = *aarch64AddressMemoryInstruction(
+            Read->Operands[kAddressMemoryWordOperand]->ConstVal);
+        if (!Instruction.isLoad() || Instruction.stackBase())
+          return;
+        Reads.push_back(Read);
+        Queries.push_back(
+            {&Statement, Read->Operands[kAddressMemoryIndexOperand]});
+      });
+      const auto Bounds = Queries.empty()
+                              ? std::vector<std::optional<uint64_t>>{}
+                              : highSourceUnsignedUpperBounds(Func, Queries);
+      std::map<const HighExpr *,
+               std::pair<AArch64OriginalMemoryStorage, size_t>>
+          Unobserved;
+      if (Bounds.size() == Reads.size())
+        for (size_t I = 0; I < Reads.size(); ++I) {
+          if (!Bounds[I])
+            continue;
+          const auto &Read = *Reads[I];
+          const auto Instruction = *aarch64AddressMemoryInstruction(
+              Read.Operands[kAddressMemoryWordOperand]->ConstVal);
+          const auto Base =
+              AddressOf(*Read.Operands[kAddressMemoryBaseOperand], Bases);
+          const auto Span =
+              Base ? Instruction.controlIndependentSpan(*Base, *Bounds[I])
+                   : std::nullopt;
+          const auto Storage =
+              Span ? aarch64OriginalMemoryStorage(*Opts.Image, Span->Begin)
+                   : std::nullopt;
+          if (!Storage || Span->Bytes > Storage->Bytes.size())
+            continue;
+          const auto It =
+              Unobserved.emplace(&Read, std::make_pair(*Storage, 0)).first;
+          ++It->second.second;
+        }
+      for (const auto &[Read, Observation] : Unobserved) {
+        if (Observation.second != ReadUses[Read])
           continue;
-        if (const auto It = TableEntryVars.find(varKey(Entry->Var));
-            It != TableEntryVars.end() && It->second.first == *Table)
-          AddedBackTables.insert(It->second);
+        const auto &Storage = Observation.first;
+        auto It = OriginalMemoryObjects.find(Storage.Base);
+        if (It == OriginalMemoryObjects.end()) {
+          const auto Name = GlobalIdentifierAllocator.allocate(
+              kOriginalMemorySourcePrefix + llvm::utohexstr(Storage.Base));
+          It = OriginalMemoryObjects
+                   .emplace(Storage.Base, std::make_pair(Storage, Name))
+                   .first;
+        }
+        OriginalMemoryBases.emplace(
+            std::make_pair(&Func, Read),
+            llvm::formatv(
+                kOriginalMemoryCBase, It->second.second,
+                Storage.Pad +
+                    *AddressOf(*Read->Operands[kAddressMemoryBaseOperand],
+                               Bases) -
+                    Storage.Base)
+                .str());
       }
+    }
+    std::function<std::optional<std::pair<va_t, uint16_t>>(const HighExpr &,
+                                                           unsigned)>
+        ReadEntry =
+            [&](const HighExpr &Expression,
+                unsigned Depth) -> std::optional<std::pair<va_t, uint16_t>> {
+      if (Depth >= limits::kMaxIntegerViewUnwrapDepth)
+        return std::nullopt;
+      const HighExpr *Entry = peelIntegerViewOps(&Expression);
+      if (!Entry)
+        return std::nullopt;
+      auto Read = TableRead(*Entry, Bases);
+      if (!Read &&
+          (Entry->Kind == ExprKind::Var || Entry->Kind == ExprKind::Phi))
+        if (const auto It = SingleDefinitions.find(varKey(Entry->Var));
+            It != SingleDefinitions.end())
+          Read = ReadEntry(*It->second->Val, Depth + 1);
+      if (Read && Expression.Type && Expression.Type->Size < Read->second)
+        return std::nullopt;
+      return Read;
+    };
+    std::function<void(const HighExpr &)> NoteAddedBack =
+        [&](const HighExpr &Expression) {
+          if (Expression.Kind == ExprKind::BinOp &&
+              Expression.Op == NdOp::INT_ADD &&
+              Expression.Operands.size() == 2 && Expression.Operands[0] &&
+              Expression.Operands[1]) {
+            for (unsigned I = 0; I < 2; ++I) {
+              const auto Table = AddressOf(*Expression.Operands[I], Bases);
+              const HighExpr *Entry =
+                  peelIntegerViewOps(Expression.Operands[1 - I].get());
+              if (!Table || !Entry)
+                continue;
+              const auto Read = ReadEntry(*Entry, 0);
+              if (Read && Read->first == *Table)
+                AddedBackTables.insert(*Read);
+            }
+          }
+          Expression.forEachChildExpr([&](const ExprPtr &Child) {
+            if (Child)
+              NoteAddedBack(*Child);
+          });
+        };
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &Expression) {
+        if (Expression)
+          NoteAddedBack(*Expression);
+      });
     });
   }
   // The constant addresses the code reads or writes at, as opposed to those
@@ -2452,7 +3373,69 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       if (auto It = ImageObjects.find(*VA); It != ImageObjects.end())
         It->second.AtomicBytes = std::max(It->second.AtomicBytes, Access->Size);
   };
+  // An alignment precondition belongs to the access it guards: its address
+  // is that access's, which needs the alignment in C as in the image.  The
+  // guard comes before the access that declares the object, so the
+  // alignment applies once the walk is done.
+  std::map<va_t, uint16_t> GuardedAlignments;
+  auto NoteAlignmentGuard = [&](const HighExpr &Call) {
+    if (Call.Kind != ExprKind::Call ||
+        Call.IntrinsicId != Intrinsic::RequireAligned ||
+        Call.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Call.Operands.size() < 2 || !Call.Operands[0] || !Call.Operands[1] ||
+        Call.Operands[1]->Kind != ExprKind::Const)
+      return;
+    NoteAccessAddress(Call.Operands[0].get());
+    const uint64_t Bytes = Call.Operands[1]->ConstVal;
+    if (auto VA = constAddress(*Call.Operands[0]);
+        VA && Bytes > 1 && Bytes <= UINT16_MAX)
+      GuardedAlignments[*VA] = std::max<uint16_t>(GuardedAlignments[*VA],
+                                                  static_cast<uint16_t>(Bytes));
+  };
+  std::optional<AArch64ImmediateHighBases> ImageMemoryBases;
   std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
+    const auto NoteImmediateStorage = [&](const auto &Instruction,
+                                          const HighExpr &Base) {
+      const auto *Constant =
+          Instruction.hasRegisterIndex()
+              ? nullptr
+              : ImageMemoryBases->imageConstant(Base, ReadingStmt);
+      if (Constant) {
+        const auto Span = aarch64ImmediateMemoryImageSpan(
+            *Opts.Image, Instruction, Constant->ConstVal,
+            Constant->ConstProvenance, Constant->AddressOwnerVA);
+        if (Span) {
+          const auto Object = indexedObjectAt(Span->Begin);
+          if (!Object || Span->Begin < Object->first ||
+              Span->Begin - Object->first > Object->second ||
+              Span->Bytes > Object->second - (Span->Begin - Object->first))
+            throw std::invalid_argument(
+                kAddressMemoryImmediateImageUnsupported);
+          NoteAccessAddress(&Base);
+          NoteWhole(Span->Begin, nullptr, !Instruction.isLoad());
+          ImageObjects[Object->first].AddressTaken = true;
+        }
+      }
+    };
+    if (Opts.TheArch == Arch::AArch64) {
+      if (isAArch64AddressMemoryIntrinsic(E.IntrinsicId) &&
+          aarch64AddressMemoryHighShapeIsValid(E))
+        NoteImmediateStorage(
+            *aarch64AddressMemoryInstruction(
+                E.Operands[kAddressMemoryWordOperand]->ConstVal),
+            *E.Operands[kAddressMemoryBaseOperand]);
+      if (isAArch64WritebackMemoryIntrinsic(E.IntrinsicId) &&
+          aarch64WritebackMemoryHighShapeIsValid(E))
+        NoteImmediateStorage(*aarch64WritebackMemoryInstruction(
+                                 E.Operands[kWritebackWordOperand]->ConstVal),
+                             *E.Operands[kWritebackBaseOperand]);
+    }
+    if (OriginalMemoryBases.count({Reading, &E})) {
+      for (size_t I = 0; I < E.Operands.size(); ++I)
+        if (I != kAddressMemoryBaseOperand && E.Operands[I])
+          Visit(*E.Operands[I]);
+      return;
+    }
     if (E.Kind == ExprKind::Const && isAddressProvenance(E.ConstProvenance))
       noteFunctionAddress(functionAddressKey(E), Funcs);
     // An address anchored before its owner's section reaches the section's
@@ -2460,7 +3443,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     // address itself is no object the code uses.
     if (E.Kind == ExprKind::Const)
       if (const auto Owner = anchoredOwner(E)) {
-        if (!stringLiteralAt(Opts.Image, Dbg, *Owner))
+        if (!stringLiteral(*Owner))
           NoteWhole(*Owner, nullptr, false);
         return;
       }
@@ -2473,7 +3456,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           Object && Object->first != E.ConstVal)
         NoteWhole(E.ConstVal, nullptr, false);
     if (E.Kind == ExprKind::Const && isImageDataAddress(E.ConstVal) &&
-        !stringLiteralAt(Opts.Image, Dbg, E.ConstVal)) {
+        !stringLiteral(E.ConstVal)) {
       bool Named = Opts.UserNames && Opts.UserNames->count(E.ConstVal);
       if (!Named && Dbg) {
         if (auto Data = Dbg->resolveDataObject(E.ConstVal);
@@ -2564,46 +3547,13 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         !E.Operands.empty() && E.Operands[0])
       if (const HighExpr *Base = indexedImageBase(*E.Operands[0])) {
-        NoteWhole(Base->ConstVal,
-                  E.Kind == ExprKind::Load
-                      ? E.Type
-                      : (E.Operands.size() > 1 && E.Operands[1]
-                             ? E.Operands[1]->Type
-                             : nullptr),
-                  E.Kind == ExprKind::Store);
-        // `*(T *)(table + table[i])`: the offset the code adds to the table
-        // is an entry of the same table.
-        std::function<void(const HighExpr &, unsigned)> Terms =
-            [&](const HighExpr &Term, unsigned Depth) {
-              const HighExpr *Inner = peelIntegerViewOps(&Term);
-              if (!Inner || Depth > limits::kMaxIntegerViewUnwrapDepth)
-                return;
-              if (Inner->Kind == ExprKind::BinOp &&
-                  Inner->Op == NdOp::INT_ADD && Inner->Operands.size() == 2) {
-                for (const ExprPtr &Operand : Inner->Operands)
-                  if (Operand)
-                    Terms(*Operand, Depth + 1);
-                return;
-              }
-              if (Inner->Kind == ExprKind::Var ||
-                  Inner->Kind == ExprKind::Phi) {
-                if (const auto Entry = TableEntryVars.find(varKey(Inner->Var));
-                    Entry != TableEntryVars.end() &&
-                    Entry->second.first == Base->ConstVal)
-                  NoteRelativeTargets(Base->ConstVal, Entry->second.second,
-                                      /*AddedBack=*/true);
-                return;
-              }
-              if (Inner->Kind != ExprKind::Load || !Inner->Type ||
-                  Inner->Operands.empty() || !Inner->Operands[0])
-                return;
-              if (const HighExpr *Entries =
-                      indexedImageBase(*Inner->Operands[0]);
-                  Entries && Entries->ConstVal == Base->ConstVal)
-                NoteRelativeTargets(Base->ConstVal, Inner->Type->Size,
-                                    /*AddedBack=*/true);
-            };
-        Terms(*E.Operands[0], 0);
+        const TypeRef Access =
+            E.Kind == ExprKind::Load
+                ? E.Type
+                : (E.Operands.size() > 1 && E.Operands[1] ? E.Operands[1]->Type
+                                                          : nullptr);
+        NoteWhole(Base->ConstVal, Access, E.Kind == ExprKind::Store,
+                  E.Operands[0].get());
       }
     if (E.Kind == ExprKind::Store &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
@@ -2656,6 +3606,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         ImageObjects[*VA].AddressTaken = true;
       }
     }
+    NoteAlignmentGuard(E);
     // An indirect callee is no printed operand, but the slot it loads is
     // image data all the same, named as the slot the code calls through.
     E.forEachChildExpr([&](const ExprPtr &Op) { Visit(*Op); });
@@ -2675,12 +3626,30 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       if (!Expected || Expected->Kind != NdTypeKind::Ptr ||
           !Expected->Pointee || Expected->Pointee->SourceName.empty())
         continue;
-      if (auto VA = imageLoadVA(*E.Operands[I]))
-        noteImageObject(*VA, Expected, false);
+      // The object holds the pointer only where the code reads it whole: a
+      // narrower read widened for the parameter (make's 4-byte output_sync)
+      // is an integer of its own width.
+      if (const auto Load = imageLoad(*E.Operands[I]);
+          Load && Load->Bytes == Expected->Size)
+        noteImageObject(Load->Addr, Expected, false);
     }
   };
-  for (const HighFunc &Func : Funcs)
+  for (const HighFunc &Func : Funcs) {
+    // A function that returns no value prints its returns bare (a returned
+    // call as its statement): what the return register holds there names
+    // nothing in C, such as the GOT address a get-PC sequence left in it.
+    const TypeRef DeclaredReturn = declaredFunctionReturnType(Func);
+    const bool BareReturns = DeclaredReturn
+                                 ? DeclaredReturn->Kind == NdTypeKind::Void
+                                 : analyzeVoidReturn(Func);
+    Reading = &Func;
+    if (Opts.TheArch == Arch::AArch64)
+      ImageMemoryBases.emplace(Func);
     walkStmts(Func.Body, [&](const HighStmt &S) {
+      ReadingStmt = &S;
+      if (BareReturns && S.Kind == StmtKind::Return && S.RetVal &&
+          !highCExpressionHasEffect(*S.RetVal))
+        return;
       if (S.Kind == StmtKind::Store &&
           S.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
           S.StoreAddr) {
@@ -2693,13 +3662,112 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         // A table written at a variable offset is the whole table too.
         if (const HighExpr *Base = indexedImageBase(*S.StoreAddr))
           NoteWhole(Base->ConstVal, S.StoreVal ? S.StoreVal->Type : nullptr,
-                    true);
+                    true, S.StoreAddr.get());
       }
       forEachExpr(S, [&](const ExprPtr &E) {
         if (E)
           Visit(*E);
       });
     });
+  }
+  Reading = nullptr;
+  ReadingStmt = nullptr;
+  ReadDefinitions();
+  // A stretch the code reaches whole is declared whole, and so is one that
+  // holds an address the code keeps as a value: through it the code may
+  // reach any byte of the stretch.  Otherwise the bounded accesses declare
+  // the bytes they reach of each table.
+  if (!BoundedAccesses.empty()) {
+    std::vector<va_t> Values;
+    std::function<void(const HighExpr &, bool)> NoteValues =
+        [&](const HighExpr &E, bool Addressing) {
+          if (E.Kind == ExprKind::Const) {
+            if (!Addressing)
+              Values.push_back(E.ConstVal);
+            return;
+          }
+          const auto Each = [&](bool Addresses) {
+            E.forEachChildExpr([&](const ExprPtr &Child) {
+              if (Child)
+                NoteValues(*Child, Addresses);
+            });
+          };
+          // What a load or store reads or writes at, as the sum of a base
+          // and offsets in any view, is an address it uses, not a value; the
+          // address of an element it would read is a value.
+          switch (E.Kind) {
+          case ExprKind::Load:
+          case ExprKind::Store:
+            for (size_t I = 0; I < E.Operands.size(); ++I)
+              if (E.Operands[I])
+                NoteValues(*E.Operands[I], I == 0);
+            return;
+          case ExprKind::Addr:
+            if (!E.Operands.empty() && E.Operands[0] &&
+                E.Operands[0]->Kind == ExprKind::Load &&
+                !E.Operands[0]->Operands.empty() &&
+                E.Operands[0]->Operands[0]) {
+              NoteValues(*E.Operands[0]->Operands[0], false);
+              return;
+            }
+            Each(false);
+            return;
+          case ExprKind::BinOp:
+            Each(Addressing && E.Op == NdOp::INT_ADD);
+            return;
+          case ExprKind::Cast:
+          case ExprKind::BitCast:
+            Each(Addressing);
+            return;
+          case ExprKind::UnaryOp:
+            Each(Addressing &&
+                 (E.Op == NdOp::INT_ZEXT || E.Op == NdOp::INT_SEXT));
+            return;
+          // An alignment guard takes the address of the access it guards.
+          case ExprKind::Call:
+            if (E.IntrinsicId == Intrinsic::RequireAligned) {
+              for (size_t I = 0; I < E.Operands.size(); ++I)
+                if (E.Operands[I])
+                  NoteValues(*E.Operands[I], I == 0);
+              return;
+            }
+            Each(false);
+            return;
+          default:
+            Each(false);
+            return;
+          }
+        };
+    for (const HighFunc &Func : Funcs)
+      walkStmts(Func.Body, [&](const HighStmt &S) {
+        forEachExpr(S, [&](const ExprPtr &E) {
+          if (E)
+            NoteValues(*E, S.Kind == StmtKind::Store && &E == &S.StoreAddr);
+        });
+      });
+    llvm::sort(Values);
+    for (const BoundedAccess &Bounded : BoundedAccesses) {
+      const auto [Begin, Bytes] = Bounded.Stretch;
+      const auto Kept = llvm::lower_bound(Values, Begin);
+      const bool Whole = WholeStretches.count(Begin) ||
+                         (Kept != Values.end() && *Kept - Begin < Bytes);
+      const va_t At = Whole ? Begin : Bounded.Table;
+      noteImageObject(At, Bounded.Access, Bounded.Written,
+                      Bounded.Access != nullptr);
+      ImageObject &Obj = ImageObjects[At];
+      Obj.IndexedBytes =
+          std::max(Obj.IndexedBytes, Whole ? Bytes : Bounded.Reach);
+    }
+  }
+  for (const auto &[VA, Bytes] : GuardedAlignments) {
+    // A string an aligned access reads where it starts is the object C
+    // aligns as the image does (`_Alignas`), declared as its array below, not
+    // a literal C places where it likes.
+    if (!ImageObjects.count(VA) && stringLiteral(VA))
+      noteImageAddress(VA);
+    if (auto It = ImageObjects.find(VA); It != ImageObjects.end())
+      It->second.AlignedBytes = std::max(It->second.AlignedBytes, Bytes);
+  }
 
   // A table the code keeps only the address of, through a variable it
   // indexes, may be relative all the same: every entry an offset to a sized
@@ -2715,14 +3783,30 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   // is declared, data whole, so the slot can name it; a string stays its
   // literal.  A target table may hold slots of its own.
   const unsigned PointerBytes = pointerBytes(Opts.TheArch);
-  std::set<va_t> PointerSlots(Opts.Image->CodePtrRelocSlots.begin(),
-                              Opts.Image->CodePtrRelocSlots.end());
-  PointerSlots.insert(Opts.Image->DataPtrRelocSlots.begin(),
-                      Opts.Image->DataPtrRelocSlots.end());
+  // Those slots and the ones a data symbol binds, in address order.  The
+  // image's sets are read where they are: it relocates tens of thousands.
+  std::set<va_t> BoundSlots;
   for (const auto &[Slot, Binding] : DataSymbolBindings) {
     (void)Binding;
-    PointerSlots.insert(Slot);
+    BoundSlots.insert(Slot);
   }
+  const std::set<va_t> *const SlotSets[] = {&Opts.Image->CodePtrRelocSlots,
+                                            &Opts.Image->DataPtrRelocSlots,
+                                            &BoundSlots};
+  // The first of them at or after Addr.
+  auto NextSlot = [&](va_t Addr) -> std::optional<va_t> {
+    std::optional<va_t> Next;
+    for (const std::set<va_t> *Slots : SlotSets)
+      if (const auto It = Slots->lower_bound(Addr);
+          It != Slots->end() && (!Next || *It < *Next))
+        Next = *It;
+    return Next;
+  };
+  auto SlotAfter = [&](va_t Slot) -> std::optional<va_t> {
+    if (Slot == std::numeric_limits<va_t>::max())
+      return std::nullopt;
+    return NextSlot(Slot + 1);
+  };
   // An object the code keeps the address of reaches each of its slots
   // through that address, whichever the code indexes (`T = c ? FA : FB;
   // T[i]` indexes neither table directly): its symbol sizes it.
@@ -2736,14 +3820,13 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     return Bytes;
   };
   std::set<va_t> NotedSlots;
-  for (bool Changed = !PointerSlots.empty(); Changed;) {
+  for (bool Changed = NextSlot(0).has_value(); Changed;) {
     Changed = false;
     for (auto &[Addr, Obj] : ImageObjects) {
       const uint64_t Size = Extent(Addr, Obj);
-      for (auto Slot = PointerSlots.lower_bound(Addr);
-           Slot != PointerSlots.end() && *Slot - Addr < Size &&
-           *Slot - Addr + PointerBytes <= Size;
-           ++Slot) {
+      for (auto Slot = NextSlot(Addr);
+           Slot && *Slot - Addr < Size && *Slot - Addr + PointerBytes <= Size;
+           Slot = SlotAfter(*Slot)) {
         if (!NotedSlots.insert(*Slot).second)
           continue;
         Changed = true;
@@ -2774,7 +3857,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                 ? FunctionAddressNames.count(Target) ||
                       FunctionAddressNames.count(Target & ~va_t{1})
                 : sizedObjectAt(Target) || ImageObjects.count(Target) ||
-                      stringLiteralAt(Opts.Image, Dbg, Target).has_value();
+                      stringLiteral(Target).has_value();
       }
     }
   }
@@ -2859,8 +3942,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                   makeSyntheticGlobalName(GroupBase) + "_bytes", "g"),
         {},
         {}};
-    for (auto Slot = PointerSlots.lower_bound(GroupBase);
-         Slot != PointerSlots.end() && *Slot < GroupEnd; ++Slot) {
+    for (auto Slot = NextSlot(GroupBase); Slot && *Slot < GroupEnd;
+         Slot = SlotAfter(*Slot)) {
       if ((*Slot - GroupBase) % PointerBytes ||
           *Slot + PointerBytes > GroupEnd) {
         Backing.PointerSlots.clear();
@@ -2872,25 +3955,48 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       Backing.Words = Backing.Name;
       Backing.Name += ".b";
     }
-    // An atomic access in the bytes needs its address as aligned in C as in
-    // the image: bytes before the group give every address its residue
-    // modulo the widest one.  Words start word-aligned, at the group.
+    // An atomic access in the bytes, or one that requires its alignment,
+    // needs its address as aligned in C as in the image: bytes before the
+    // group give every address its residue modulo the widest one.  Words
+    // take them as whole words, which keeps each slot word-aligned: a group
+    // that starts at a word does (sort's table, 8 bytes past a 16-byte
+    // boundary, which a 16-byte access in it requires).
     for (auto It = ImageObjects.lower_bound(GroupBase);
          It != ImageObjects.end() && It->first < GroupEnd; ++It) {
-      const uint64_t Bytes = It->second.AtomicBytes;
-      if (!Bytes)
+      const ImageObject &Obj = It->second;
+      const unsigned Align = static_cast<unsigned>(std::max<uint64_t>(
+          Obj.AtomicBytes
+              ? std::min<uint64_t>(llvm::PowerOf2Ceil(Obj.AtomicBytes),
+                                   kMaxAtomicAccessBytes)
+              : 0,
+          Obj.AlignedBytes));
+      if (Align <= 1)
         continue;
-      const unsigned Align = static_cast<unsigned>(
-          std::min<uint64_t>(llvm::PowerOf2Ceil(Bytes), kMaxAtomicAccessBytes));
-      if (!Backing.Words.empty() && (It->first - GroupBase) % Align)
+      if (!Backing.Words.empty() && (GroupBase % Align) % PointerBytes)
         throw std::invalid_argument(
-            "an atomic access in relocated image words at 0x" +
+            std::string(Obj.AtomicBytes ? "an atomic" : "an aligned") +
+            " access in relocated image words at 0x" +
             llvm::utohexstr(It->first) +
             " is less aligned in C than in the image");
       Backing.Align = std::max(Backing.Align, Align);
     }
-    if (Backing.Words.empty())
-      Backing.Pad = GroupBase % Backing.Align;
+    Backing.Pad = GroupBase % Backing.Align;
+    // A C library header's object is the header's, and the reads of its
+    // members within it: its bytes are its address's, as aligned as the
+    // header declares it.
+    const auto WithinHeaderObject = [&] {
+      if (First == ImageObjects.end() || First->first != GroupBase ||
+          First->second.Header.empty())
+        return false;
+      const uint64_t Own = Opts.Image->dataObjectSizeAt(GroupBase);
+      return GroupCount == 1 || (Own && GroupEnd - GroupBase <= Own);
+    };
+    if (WithinHeaderObject() && Backing.Words.empty()) {
+      Backing.Name = "((unsigned char *)&" + First->second.Name + ")";
+      Backing.Header = true;
+      Backing.Align = 1;
+      Backing.Pad = 0;
+    }
     ImageBackings.push_back(std::move(Backing));
   };
   for (const auto &[Addr, Obj] : ImageObjects) {
@@ -2912,8 +4018,13 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       NeedsBacking = true;
     GroupEnd = std::max(GroupEnd, End);
     ++GroupCount;
-    NeedsBacking |= Obj.MemoryWidths.size() > 1 || Obj.IndexedBytes ||
-                    (Obj.HoldsPointers && !Obj.PointsTo && Size > PointerBytes);
+    // An object less aligned in the image than an access there requires
+    // keeps that residue in bytes padded to the alignment: the access
+    // faults in C as in the image.
+    NeedsBacking |=
+        Obj.MemoryWidths.size() > 1 || Obj.IndexedBytes || Obj.HeaderBytes ||
+        (Obj.HoldsPointers && !Obj.PointsTo && Size > PointerBytes) ||
+        (Obj.AlignedBytes > 1 && Addr % Obj.AlignedBytes);
     for (uint16_t Width : Obj.MemoryWidths)
       NeedsBacking |= Width && (Width & (Width - 1)) != 0;
   }
@@ -2926,21 +4037,62 @@ void HighCWriter::noteFunctionAddress(va_t Addr,
     return;
   for (const HighFunc &Func : Funcs)
     if (Func.Entry == Addr && !Func.Name.empty()) {
-      FunctionAddressNames.emplace(Addr, functionIdentifier(Func));
+      FunctionAddressNames.emplace(Addr,
+                                   FunctionAddressTarget{Func.Name, &Func});
       AddressTakenDefinitions.insert(&Func);
       return;
     }
   // A function the image names; this output declares it.
-  for (const Symbol &Sym : Opts.Image->Symbols)
-    if (Sym.Addr == Addr && Sym.IsFunc && !Sym.Name.empty()) {
-      FunctionAddressNames.emplace(
-          Addr, functionIdentifier(llvm::StringRef(Sym.Name)));
-      AddressTakenFunctions.insert(Sym.Name);
-      return;
-    }
+  if (!SharedFunctionSymbols && !OwnFunctionSymbols)
+    OwnFunctionSymbols = collectImageFunctionSymbols(*Opts.Image);
+  const HighCImageFunctionSymbols &Symbols =
+      SharedFunctionSymbols ? *SharedFunctionSymbols : *OwnFunctionSymbols;
+  if (const auto Found = Symbols.find(Addr); Found != Symbols.end()) {
+    const Symbol &Sym = *Found->second;
+    FunctionAddressNames.emplace(Addr, FunctionAddressTarget{Sym.Name});
+    AddressTakenFunctions.insert(Sym.Name);
+  }
+}
+
+std::string HighCWriter::functionAddressIdentifier(
+    const FunctionAddressTarget &Target) const {
+  if (const auto Alias = FunctionAddressAliases.find(Target.Symbol);
+      !Target.Definition && Alias != FunctionAddressAliases.end())
+    return Alias->second;
+  return Target.Definition ? functionIdentifier(*Target.Definition)
+                           : functionIdentifier(Target.Symbol);
+}
+
+bool HighCWriter::imageFunctionOwnsLinkIdentifier(llvm::StringRef Name) {
+  if (!ImageFunctionLinkNames) {
+    ImageFunctionLinkNames.emplace();
+    for (const Symbol &Symbol : Opts.Image->Symbols)
+      if (Symbol.IsFunc && !Symbol.Name.empty())
+        ImageFunctionLinkNames->insert(
+            cNameOfSymbol(Symbol.Name, Opts.Format, Opts.TheArch).str());
+  }
+  return ImageFunctionLinkNames->count(Name.str());
 }
 
 void HighCWriter::writeImageObjects() {
+  for (const auto &[Base, Object] : OriginalMemoryObjects) {
+    (void)Base;
+    const auto &[Storage, Name] = Object;
+    std::string Initializer;
+    uint64_t Count = 0;
+    const auto Append = [&](uint8_t Byte) {
+      if (Count++ % ImageWordsPerLine == 0)
+        Initializer += kOriginalMemoryCIndent;
+      Initializer += llvm::formatv(kOriginalMemoryCByte, unsigned(Byte)).str();
+    };
+    for (uint64_t I = 0; I < Storage.Pad; ++I)
+      Append(0);
+    for (uint8_t Byte : Storage.Bytes)
+      Append(Byte);
+    OS << llvm::formatv(kOriginalMemoryCStorage,
+                        limits::kMaxEmbeddedDataAlignment, Name,
+                        Storage.Pad + Storage.Bytes.size(), Initializer);
+  }
   for (va_t Slot : UsedDataBindings) {
     const auto &Binding = DataSymbolBindings.at(Slot);
     if (Binding.Definition || ExternalDataNames.count(Binding.Name))
@@ -2960,37 +4112,21 @@ void HighCWriter::writeImageObjects() {
   if (ImageObjects.empty())
     return;
   for (const ImageBacking &Backing : ImageBackings) {
-    if (!Backing.Words.empty())
+    if (!Backing.Words.empty() || Backing.Header)
       continue;
     if (Opts.EmitComments)
       OS << "/* neverd.image: 0x" << llvm::utohexstr(Backing.Base) << " .. 0x"
          << llvm::utohexstr(Backing.End) << backingReadable(Backing) << " */\n";
     if (Backing.Align > 1)
       OS << "_Alignas(" << Backing.Align << ") ";
+    const bool Authenticated = Opts.Image->hasMachOAuthenticatedPointerIn(
+        Backing.Base, Backing.End - Backing.Base);
+    if (Authenticated)
+      OS << "extern ";
     OS << "unsigned char " << Backing.Name << "["
        << Backing.Pad + (Backing.End - Backing.Base) << "]";
-    // A long initializer takes a few bytes a line, so no line runs to the
-    // object's size.
-    uint64_t NonZero = 0;
-    for (va_t Addr = Backing.Base; Addr < Backing.End; ++Addr)
-      if (const uint8_t *Byte = Opts.Image->readVA(Addr, 1); Byte && *Byte)
-        ++NonZero;
-    const bool Wrapped = NonZero > ImageBytesPerLine;
-    uint64_t Written = 0;
-    for (va_t Addr = Backing.Base; Addr < Backing.End; ++Addr) {
-      const uint8_t *Byte = Opts.Image->readVA(Addr, 1);
-      if (!Byte || !*Byte)
-        continue;
-      if (!Written)
-        OS << " = {";
-      if (Wrapped && Written % ImageBytesPerLine == 0)
-        OS << "\n ";
-      OS << " [" << Backing.Pad + (Addr - Backing.Base) << "] = 0x"
-         << llvm::utohexstr(*Byte) << ",";
-      ++Written;
-    }
-    if (Written)
-      OS << (Wrapped ? "\n}" : " }");
+    if (!Authenticated)
+      writeBackingBytes(Backing);
     OS << ";\n";
   }
   // Every object has its name before any initializer names it.
@@ -3016,8 +4152,17 @@ void HighCWriter::writeImageObjects() {
   // of everything it can name.
   std::vector<va_t> Deferred;
   for (auto &[Addr, Obj] : ImageObjects) {
-    if (imageBackingAddress(Addr))
+    // An object a C library header declares is the header's.
+    if (imageBackingAddress(Addr) || !Obj.Header.empty())
       continue;
+    const uint64_t ObjectBytes = std::max<uint64_t>(
+        Obj.IndexedBytes,
+        Obj.Type ? Obj.Type->Size : pointerBytes(Opts.TheArch));
+    if (Opts.Image->hasMachOAuthenticatedPointerIn(Addr, ObjectBytes)) {
+      OS << "extern " << declarationToC(Obj.Type, Obj.Name) << ";"
+         << kArm64eAuthenticatedStorageComment << "\n";
+      continue;
+    }
     if (!Obj.String && !Obj.PointsTo && relocatedSlotInitializer(Addr, Obj)) {
       Deferred.push_back(Addr);
       continue;
@@ -3028,6 +4173,10 @@ void HighCWriter::writeImageObjects() {
     // A definition so standalone HighC can link, with the value the image
     // holds.  LLVMC keeps `extern` because it projects LLVM `external global`.
     std::string Note;
+    // As aligned as an access at its address requires, which the image's
+    // address is: a less aligned one is bytes (above).
+    if (Obj.AlignedBytes > 1)
+      OS << "_Alignas(" << Obj.AlignedBytes << ") ";
     if (Obj.String) {
       const Segment *Seg = Opts.Image->getSegmentFor(Addr);
       OS << (Seg && !Seg->isWritable() ? "const " : "") << Obj.String->Element
@@ -3049,6 +4198,9 @@ void HighCWriter::writeImageObjects() {
           Note = relocatedTargetNote(Addr);
       }
     }
+    if (Note.empty() && !Obj.String && !Obj.PointsTo && Opts.EmitComments)
+      if (const auto Text = imageStringComment(Opts.Image, Addr))
+        Note = *Text;
     OS << ";";
     if (Opts.EmitComments && !Note.empty())
       OS << " /* " << Note << " */";
@@ -3056,6 +4208,94 @@ void HighCWriter::writeImageObjects() {
   }
   writePointerBackings(Deferred);
   OS << "\n";
+}
+
+void HighCWriter::writeBackingBytes(const ImageBacking &Backing) {
+  // The bytes after the alignment padding are the image's; a byte it does
+  // not hold is zero.
+  std::vector<uint8_t> Bytes(Backing.Pad + (Backing.End - Backing.Base));
+  for (va_t Addr = Backing.Base; Addr < Backing.End; ++Addr)
+    if (const uint8_t *Byte = Opts.Image->readVA(Addr, 1))
+      Bytes[Backing.Pad + (Addr - Backing.Base)] = *Byte;
+  // C zeroes what an initializer leaves out, so it stops at the last nonzero
+  // byte.  A list gives the bytes in order and names an index only after
+  // more zeros than it takes to write (" 0," each).
+  size_t Used = Bytes.size();
+  while (Used && !Bytes[Used - 1])
+    --Used;
+  if (!Used)
+    return;
+  std::vector<std::string> Elements;
+  size_t ListChars = 0;
+  for (size_t I = 0, Next = 0; I < Used; ++I) {
+    if (!Bytes[I])
+      continue;
+    std::string Element = "[" + std::to_string(I) + "] = ";
+    if ((I - Next) * 3 <= Element.size()) {
+      Elements.insert(Elements.end(), I - Next, "0");
+      Element.clear();
+    }
+    Elements.push_back(Element + byteListElement(Bytes[I]));
+    Next = I + 1;
+  }
+  for (const std::string &Element : Elements)
+    ListChars += Element.size() + 2;
+  // A string is shorter for text, and reads as it.  C promises compilers
+  // take strings of 4095 characters, and stores a NUL after them, so the
+  // array needs a byte to spare (C++ and GCC's
+  // -Wunterminated-string-initialization require it).
+  if (Used <= ::neverd::limits::backend::kHighCEmitterImageStringMaxBytes &&
+      Used < Bytes.size()) {
+    std::string Escaped;
+    std::vector<size_t> Ends(Used);
+    for (size_t I = 0; I < Used; ++I) {
+      Escaped += escapeCString(
+          llvm::StringRef(reinterpret_cast<const char *>(&Bytes[I]), 1));
+      Ends[I] = Escaped.size();
+    }
+    if (Escaped.size() < ListChars) {
+      // A line ends between bytes: after a NUL or a newline once it is long
+      // enough, where the image's strings end, and before it runs too long.
+      std::vector<std::pair<size_t, size_t>> Lines;
+      size_t LineBegin = 0;
+      for (size_t I = 0; I < Used; ++I) {
+        const size_t PieceBegin = I ? Ends[I - 1] : 0;
+        if (PieceBegin > LineBegin && Ends[I] - LineBegin > ImageLineChars) {
+          Lines.emplace_back(LineBegin, PieceBegin);
+          LineBegin = PieceBegin;
+        }
+        if ((!Bytes[I] || Bytes[I] == '\n') &&
+            Ends[I] - LineBegin >= ImageStringBreakChars) {
+          Lines.emplace_back(LineBegin, Ends[I]);
+          LineBegin = Ends[I];
+        }
+      }
+      if (LineBegin < Escaped.size())
+        Lines.emplace_back(LineBegin, Escaped.size());
+      if (Lines.size() == 1) {
+        OS << " = \"" << Escaped << "\"";
+        return;
+      }
+      OS << " =";
+      for (const auto &[Begin, End] : Lines)
+        OS << "\n  \"" << llvm::StringRef(Escaped).slice(Begin, End) << "\"";
+      return;
+    }
+  }
+  // A long list takes a few elements a line, so no line runs to the
+  // object's size.
+  const bool Wrapped = ListChars > ImageLineChars;
+  OS << " = {";
+  size_t Line = 0;
+  for (const std::string &Element : Elements) {
+    if (Wrapped && (!Line || Line + Element.size() + 2 > ImageLineChars)) {
+      OS << "\n ";
+      Line = 0;
+    }
+    OS << " " << Element << ",";
+    Line += Element.size() + 2;
+  }
+  OS << (Wrapped ? "\n}" : " }");
 }
 
 std::string HighCWriter::backingReadable(const ImageBacking &Backing) const {
@@ -3072,7 +4312,8 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
   // each other by the declarations that come first.
   const unsigned PointerBytes = pointerBytes(Opts.TheArch);
   auto WordCount = [&](const ImageBacking &Backing) {
-    return (Backing.End - Backing.Base + PointerBytes - 1) / PointerBytes;
+    return (Backing.Pad + (Backing.End - Backing.Base) + PointerBytes - 1) /
+           PointerBytes;
   };
   for (const ImageBacking &Backing : ImageBackings) {
     if (Backing.Words.empty())
@@ -3100,6 +4341,9 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
   for (const ImageBacking &Backing : ImageBackings) {
     if (Backing.Words.empty())
       continue;
+    if (Opts.Image->hasMachOAuthenticatedPointerIn(Backing.Base,
+                                                   Backing.End - Backing.Base))
+      continue;
     if (Opts.EmitComments)
       OS << "/* neverd.image: 0x" << llvm::utohexstr(Backing.Base) << " .. 0x"
          << llvm::utohexstr(Backing.End) << backingReadable(Backing) << " */\n";
@@ -3110,20 +4354,23 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
     const uint64_t Words = WordCount(Backing);
     const bool Wrapped = Words > ImageWordsPerLine;
     for (uint64_t I = 0; I < Words; ++I) {
-      const va_t Slot = Backing.Base + I * PointerBytes;
+      // The words before the group pad it; they hold no byte of the image.
+      const va_t Slot = Backing.Base - Backing.Pad + I * PointerBytes;
       if (Wrapped && I % ImageWordsPerLine == 0)
         OS << (I ? ",\n  " : "\n  ");
       else
         OS << (I ? ", " : " ");
-      if (llvm::is_contained(Backing.PointerSlots, Slot))
+      // The backing lists its slots in address order.
+      if (std::binary_search(Backing.PointerSlots.begin(),
+                             Backing.PointerSlots.end(), Slot))
         if (auto Target = relocatedSlotTarget(Slot)) {
           OS << *Target;
           continue;
         }
-      // Bytes past the image's data, and past the group, are zero.
+      // Bytes past the image's data, and outside the group, are zero.
       uint64_t Value = 0;
       for (unsigned Byte = 0; Byte < PointerBytes; ++Byte)
-        if (Slot + Byte < Backing.End)
+        if (Slot + Byte >= Backing.Base && Slot + Byte < Backing.End)
           if (const uint8_t *Data = Opts.Image->readVA(Slot + Byte, 1))
             Value |= uint64_t{*Data} << (8 * Byte);
       OS << (Value ? "0x" + llvm::utohexstr(Value) +
@@ -3132,6 +4379,13 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
     }
     OS << (Wrapped ? "\n} };\n" : " } };\n");
   }
+}
+
+std::optional<std::string> HighCWriter::stringLiteral(va_t Addr) const {
+  auto [Known, Added] = StringLiterals.try_emplace(Addr);
+  if (Added)
+    Known->second = stringLiteralAt(Opts.Image, Dbg, Addr);
+  return Known->second;
 }
 
 std::optional<std::string> HighCWriter::dataSymbolAddress(va_t Slot) const {
@@ -3175,7 +4429,8 @@ std::optional<std::string> HighCWriter::relocatedSlotTarget(va_t Slot) const {
     for (const va_t Entry : {Target, Target & ~va_t{1}})
       if (auto It = FunctionAddressNames.find(Entry);
           It != FunctionAddressNames.end())
-        return "(uintptr_t)&" + It->second + (Entry != Target ? " + 1" : "");
+        return "(uintptr_t)&" + functionAddressIdentifier(It->second) +
+               (Entry != Target ? " + 1" : "");
     return std::nullopt;
   }
   if (!Opts.Image->DataPtrRelocSlots.count(Slot))
@@ -3187,7 +4442,7 @@ std::optional<std::string> HighCWriter::relocatedSlotTarget(va_t Slot) const {
     const bool Array = Obj != ImageObjects.end() && Obj->second.String;
     return "(uintptr_t)" + std::string(Array ? "" : "&") + *Name;
   }
-  if (auto Literal = stringLiteralAt(Opts.Image, Dbg, Target))
+  if (auto Literal = stringLiteral(Target))
     return "(uintptr_t)" + *Literal;
   return std::nullopt;
 }
@@ -3399,6 +4654,13 @@ void HighCWriter::writeX64WindowsSyscallHelper() {
 }
 
 void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
+  // The unit spells the records it declares no typedef of, as a function or
+  // an object has the name, by their tags.
+  const auto TagKeyword = [this](llvm::StringRef Name) {
+    return recordTagKeyword(Name);
+  };
+  CRecordTagSpelling Tags(TagKeyword);
+  prepareRecordDefinitions(Funcs);
   prepareFunctionIdentifiers(Funcs);
   collectImageObjects(Funcs);
   collectMemoryTypes(Funcs);
@@ -3454,6 +4716,16 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
               [&](const HighStmt &Stmt) { forEachExpr(Stmt, Visit); });
   }
   writeX87CHelpers(OS, UsesX87Extended, X87Helpers);
+  if (NeedsX86SystemRegisterDispatch)
+    OS << X86SystemRegisterCompilerDispatch;
+  if (NeedsX86DescriptorStateDispatch)
+    OS << X86DescriptorStateCompilerDispatch;
+  if (NeedsX86ScalarSystemDispatch)
+    OS << X86ScalarSystemCompilerDispatch;
+  if (NeedsX86VirtualizationDispatch)
+    OS << X86VirtualizationCompilerDispatch;
+  if (NeedsX86SystemStateDispatch)
+    OS << X86SystemStateCompilerDispatch;
   writeX87ContextHelpers(Funcs);
   writeX86FPStateCHelpers(OS, X86FPStateHelpers);
   writeMemoryHelpers();
@@ -3488,33 +4760,146 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
 // Public API
 //===----------------------------------------------------------------------===//
 
+HighCImageDataObjects collectImageDataObjects(const BinaryImage &Image) {
+  HighCImageDataObjects Objects;
+  auto &SizedObjects = Objects.SizedObjects;
+  for (const Symbol &Sym : Image.Symbols)
+    if (!Sym.IsFunc && Sym.Size && isImageDataAt(Image, Sym.Addr) &&
+        Sym.Size <= std::numeric_limits<va_t>::max() - Sym.Addr)
+      SizedObjects.emplace_back(Sym.Addr, Sym.Size);
+  llvm::sort(SizedObjects, [](const auto &A, const auto &B) {
+    return A.first != B.first ? A.first < B.first : A.second > B.second;
+  });
+  SizedObjects.erase(std::unique(SizedObjects.begin(), SizedObjects.end(),
+                                 [](const auto &A, const auto &B) {
+                                   return A.first == B.first;
+                                 }),
+                     SizedObjects.end());
+  auto &SizedObjectReach = Objects.SizedObjectReach;
+  for (const auto &[Addr, Size] : SizedObjects)
+    SizedObjectReach.push_back(
+        std::max(SizedObjectReach.empty() ? va_t{0} : SizedObjectReach.back(),
+                 Addr + Size));
+  auto &DataSymbolStarts = Objects.DataSymbolStarts;
+  for (const Symbol &Sym : Image.Symbols)
+    if (!Sym.IsFunc && isImageDataAt(Image, Sym.Addr))
+      DataSymbolStarts.push_back(Sym.Addr);
+  llvm::sort(DataSymbolStarts);
+  DataSymbolStarts.erase(
+      std::unique(DataSymbolStarts.begin(), DataSymbolStarts.end()),
+      DataSymbolStarts.end());
+  return Objects;
+}
+
+HighCImageFunctionSymbols
+collectImageFunctionSymbols(const BinaryImage &Image) {
+  HighCImageFunctionSymbols Symbols;
+  for (const Symbol &Sym : Image.Symbols)
+    if (Sym.IsFunc && !Sym.Name.empty())
+      Symbols.try_emplace(Sym.Addr, &Sym);
+  return Symbols;
+}
+
 void HighCEmitter::prepareImageFunctionNames(const BinaryImage &Image) {
   PreparedImage = nullptr;
   PreparedImageFunctionNames = collectImageFunctionNameViews(Image);
+  PreparedDataObjects = collectImageDataObjects(Image);
+  PreparedFunctionSymbols = collectImageFunctionSymbols(Image);
   PreparedImage = &Image;
 }
 
 bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
                         llvm::raw_ostream &Out, const CEmitterOptions &Opts,
                         DebugContext *Dbg) {
+  if (Opts.SourceMap)
+    Opts.SourceMap->Variables.clear();
   // Check the complete supplied IR before source-only hiding or preparation
   // can discard an unreachable or malformed environment requirement.
+  const bool Portable =
+      PortableInterface && Funcs.size() == 1 && &Funcs.front() == PortableBody;
   std::set<const HighExpr *> Seen;
-  std::function<void(const ExprPtr &)> CheckRequirement =
-      [&](const ExprPtr &Expr) {
-        if (!Expr || !Seen.insert(Expr.get()).second)
-          return;
-        if (Expr->IntrinsicId == Intrinsic::RawEnvironmentRequirementV1)
-          throw std::invalid_argument(
-              "raw environment requirement has no C runtime contract");
-        Expr->forEachChildExpr(CheckRequirement);
-      };
-  for (const auto &Func : Funcs)
+  std::optional<AArch64ImmediateHighBases> MemoryBases;
+  const HighStmt *RequirementStatement = nullptr;
+  std::function<void(const ExprPtr &)> CheckRequirement;
+  CheckRequirement = [&](const ExprPtr &Expr) {
+    if (!Expr || !Seen.insert(Expr.get()).second)
+      return;
+    if (isAArch64AddressMemoryIntrinsic(Expr->IntrinsicId)) {
+      if (Opts.TheArch != Arch::AArch64 ||
+          !aarch64AddressMemoryHighShapeIsValid(*Expr))
+        throw std::invalid_argument(kAddressMemoryMalformed);
+      const auto Instruction = *aarch64AddressMemoryInstruction(
+          Expr->Operands[kAddressMemoryWordOperand]->ConstVal);
+      const auto &Base = Expr->Operands[kAddressMemoryBaseOperand];
+      if (Opts.Image && !Instruction.hasRegisterIndex() &&
+          !MemoryBases->supports(*Opts.Image, Instruction, *Base,
+                                 RequirementStatement))
+        throw std::invalid_argument(kAddressMemoryImmediateImageUnsupported);
+      if (const char *Reason = Instruction.sourceBaseFailure(
+              Opts.Image != nullptr,
+              Instruction.stackBase() && !Opts.Image &&
+                  MemoryBases->supportsRawSP(*Base, RequirementStatement)))
+        throw std::invalid_argument(Reason);
+    }
+    if (isAArch64WritebackMemoryIntrinsic(Expr->IntrinsicId)) {
+      if (Opts.TheArch != Arch::AArch64 ||
+          !aarch64WritebackMemoryHighShapeIsValid(*Expr))
+        throw std::invalid_argument(kWritebackMalformed);
+      const auto Instruction = *aarch64WritebackMemoryInstruction(
+          Expr->Operands[kWritebackWordOperand]->ConstVal);
+      const auto &Base = Expr->Operands[kWritebackBaseOperand];
+      if (const char *Reason = Instruction.sourceBaseFailure(
+              Opts.Image != nullptr,
+              Instruction.stackBase() && !Opts.Image &&
+                  MemoryBases->supportsRawSP(*Base, RequirementStatement)))
+        throw std::invalid_argument(Reason);
+      if (Opts.Image &&
+          !MemoryBases->supports(*Opts.Image, Instruction,
+                                 *Expr->Operands[kWritebackBaseOperand],
+                                 RequirementStatement))
+        throw std::invalid_argument(kAddressMemoryImmediateImageUnsupported);
+    }
+    if (isAArch64PAuthLoadIntrinsic(Expr->IntrinsicId)) {
+      if (Opts.TheArch != Arch::AArch64 ||
+          !aarch64PAuthLoadHighShapeIsValid(*Expr))
+        throw std::invalid_argument(kPAuthLoadMalformed);
+      const auto Instruction =
+          *aarch64PAuthLoadInstruction(Expr->Operands[1]->ConstVal);
+      if (const char *Reason = Instruction.sourceBaseFailure(
+              Opts.Image != nullptr,
+              Instruction.stackBase() && !Opts.Image &&
+                  MemoryBases->supportsRawSP(*Expr->Operands[0],
+                                             RequirementStatement)))
+        throw std::invalid_argument(Reason);
+    }
+    if (isAArch64ExceptionReturnIntrinsic(Expr->IntrinsicId))
+      throw std::invalid_argument(kAArch64ExceptionReturnUnsupported);
+    if (const char *Reason =
+            x86NonlocalControlTransferReason(Expr->IntrinsicId))
+      throw std::invalid_argument(Reason);
+    if (isPortableX87Intrinsic(Expr->IntrinsicId) && !Portable)
+      throw std::invalid_argument(
+          "portable x87 helpers require a prepared emission entry");
+    if (Expr->IntrinsicId == Intrinsic::RawEnvironmentRequirementV1)
+      throw std::invalid_argument(
+          "raw environment requirement has no C runtime contract");
+    Expr->forEachChildExpr(CheckRequirement);
+  };
+  for (const auto &Func : Funcs) {
+    if (Func.ReturnProtection && Opts.TheArch != Arch::AArch64)
+      throw std::invalid_argument(
+          "AArch64 return protection requires AArch64 source emission");
+    Seen.clear();
+    if (Opts.TheArch == Arch::AArch64)
+      MemoryBases.emplace(Func);
     walkStmts(Func.Body, [&](const HighStmt &Stmt) {
+      RequirementStatement = &Stmt;
+      Seen.clear();
       forEachExpr(Stmt, CheckRequirement);
       for (const auto &Clause : Stmt.EHClauses)
         CheckRequirement(Clause.FilterValue);
     });
+  }
   for (const auto &Func : Funcs)
     if (Func.SourceTypeHint &&
         (hasIndirectSourceParameters(*Func.SourceTypeHint) ||
@@ -3522,7 +4907,13 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
           !isSwiftErrorEntryProjected(Func, Opts.TheArch))))
       throw std::invalid_argument("Indirect record or error-register source "
                                   "entries need a projection proof");
-  auto Render = [&](llvm::raw_ostream &OS, CSourceRecorder *Recorder) {
+  // The records the code reads members of through others, as
+  // `l->head->child` reads a node, which only a rendering finds: each
+  // rendering asks the local types for those an earlier one found.
+  std::vector<TypeRef> Extra;
+  std::set<std::string> Asked;
+  auto Render = [&](llvm::raw_ostream &OS, CSourceRecorder *Recorder,
+                    std::vector<TypeRef> *Wanted = nullptr) {
     std::vector<HighFunc> Working = Funcs;
     if (Opts.StructuredExceptionSyntax) {
       attachCxxFuncletBodies(Working);
@@ -3531,34 +4922,70 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
         attachItaniumHandlerBodies(Func);
       }
     }
+    const bool Prepared = Opts.Image && Opts.Image == PreparedImage;
     HighCWriter W(OS, Opts, Dbg, true,
-                  Opts.Image && Opts.Image == PreparedImage
-                      ? &PreparedImageFunctionNames
-                      : nullptr,
-                  Recorder);
+                  Prepared ? &PreparedImageFunctionNames : nullptr, Recorder,
+                  Prepared ? &PreparedDataObjects : nullptr,
+                  Prepared ? &PreparedFunctionSymbols : nullptr,
+                  Portable ? PortableInterface : nullptr);
+    W.ExtraRecords = Extra;
+    W.WantedRecords = Wanted;
     W.prepareFunctionReturns(Working);
     W.writeAll(Working);
   };
+  // Whether rendering number \p Pass notes records for the next; and whether
+  // \p Wanted, what one noted, asks for a record none asked for before.
+  const auto Collects = [&](unsigned Pass) {
+    return Opts.RecordDefinitions && Opts.EmitIncludes &&
+           Pass + 1 < limits::kMaxHighCRecordDefinitionRenders;
+  };
+  const auto Grew = [&](std::vector<TypeRef> &Wanted) {
+    bool Any = false;
+    for (TypeRef &Record : Wanted)
+      if (Asked.insert(Record->SourceName).second) {
+        Extra.push_back(std::move(Record));
+        Any = true;
+      }
+    return Any;
+  };
   if (!Opts.SourceMap) {
-    Render(Out, nullptr);
+    std::string Text;
+    for (unsigned Pass = 0;; ++Pass) {
+      Text.clear();
+      llvm::raw_string_ostream TextOS(Text);
+      std::vector<TypeRef> Wanted;
+      Render(TextOS, nullptr, Collects(Pass) ? &Wanted : nullptr);
+      if (!Grew(Wanted))
+        break;
+    }
+    Out << Text;
     return true;
   }
   std::string Ordinary;
-  llvm::raw_string_ostream OrdinaryOS(Ordinary);
   std::optional<CSourceRecorder> Positions;
-  if (!Opts.SourceMap->Recognitions || Opts.SourceMap->Recognitions->empty()) {
-    try {
-      Positions.emplace(*Opts.SourceMap, llvm::StringRef(),
-                        CSourceRecorder::Recording::Positions);
-      Positions->prepareHighSources();
-    } catch (const std::exception &) {
-      Positions.reset();
+  for (unsigned Pass = 0;; ++Pass) {
+    Ordinary.clear();
+    llvm::raw_string_ostream OrdinaryOS(Ordinary);
+    Positions.reset();
+    if (!Opts.SourceMap->Recognitions ||
+        Opts.SourceMap->Recognitions->empty()) {
+      try {
+        Positions.emplace(*Opts.SourceMap, llvm::StringRef(),
+                          CSourceRecorder::Recording::Positions);
+        Positions->prepareHighSources();
+      } catch (const std::exception &) {
+        Positions.reset();
+      }
     }
+    // Position recording adds no bytes and cannot influence expression
+    // spelling.  Render failures are ordinary source failures, not optional
+    // mapping failures.
+    std::vector<TypeRef> Wanted;
+    Render(OrdinaryOS, Positions ? &*Positions : nullptr,
+           Collects(Pass) ? &Wanted : nullptr);
+    if (!Grew(Wanted))
+      break;
   }
-  // Position recording adds no bytes and cannot influence expression spelling.
-  // Render failures are ordinary source failures, not optional mapping
-  // failures.
-  Render(OrdinaryOS, Positions ? &*Positions : nullptr);
   if (Positions && Positions->finishPositions(Ordinary)) {
     Out << Ordinary;
     return true;

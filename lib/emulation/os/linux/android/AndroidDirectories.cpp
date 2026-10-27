@@ -34,7 +34,7 @@ BionicResult Bionic::openDirectory(const NativeCallEvent &Call) {
          linux_model::OpenDirectoryARM64 | linux_model::OpenCloseOnExec, 0, 0,
          0, 0},
         std::nullopt};
-    auto Open = Kernel.handle(linux_model::ServiceKind::Open, Event);
+    auto Open = kernelService(linux_model::ServiceKind::Open, Event);
     if (!Open)
       return Open.takeError();
     if (!*Open)
@@ -52,7 +52,7 @@ BionicResult Bionic::openDirectory(const NativeCallEvent &Call) {
   }
   ProcessServiceEvent Protect{
       0, 0, {*Token, PageSize, 0, 0, 0, 0}, std::nullopt};
-  auto P = Kernel.handle(linux_model::ServiceKind::Mprotect, Protect);
+  auto P = kernelService(linux_model::ServiceKind::Mprotect, Protect);
   if (!P)
     return P.takeError();
   if (!*P || **P)

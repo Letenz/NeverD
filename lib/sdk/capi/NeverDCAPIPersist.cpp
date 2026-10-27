@@ -14,15 +14,18 @@
 #include "SessionImpl.h"
 
 #include "neverd/decode/Decoder.h"
+#include "neverd/decode/NativeOperands.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/InternalNoReturn.h"
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/ir/low/PlatformEvidence.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/LoadCandidate.h"
+#include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/loader/Raw/ISAIdentify.h"
-#include "neverd/support/AtomicOutput.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/FilePath.h"
+#include "neverd/support/ProjectFiles.h"
 #include "neverd/support/ProjectWriteLock.h"
 #include "neverd/support/StringScan.h"
 
@@ -35,6 +38,7 @@
 #include <cmath>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <vector>
@@ -47,45 +51,8 @@ using namespace neverd::sdk;
 // ===--------------------------------------------------------------------===//
 
 static std::filesystem::path annotationPath(const Session *S) {
-  auto Path = S->FilePath;
-  Path += ".neverd-annotations.json";
-  return Path;
-}
-
-static bool saveSidecar(Session *S, const std::filesystem::path &Path,
-                        llvm::json::Value Values, llvm::StringRef Kind) {
-  const auto UTF8Path = pathToUTF8(Path);
-  auto Temporary = llvm::sys::fs::TempFile::create(
-      UTF8Path + ".tmp-%%%%%%",
-      llvm::sys::fs::owner_read | llvm::sys::fs::owner_write);
-  if (!Temporary) {
-    S->setError("cannot create " + Kind.str() +
-                " temporary file: " + llvm::toString(Temporary.takeError()));
-    return false;
-  }
-  std::error_code WriteError;
-  {
-    // TempFile owns the descriptor. Clear a handled stream error before its
-    // destructor so ENOSPC/EFBIG becomes a C ABI error rather than LLVM abort.
-    llvm::raw_fd_ostream OS(Temporary->FD, false);
-    OS << Values;
-    OS.flush();
-    WriteError = OS.error();
-    OS.clear_error();
-  }
-  if (WriteError) {
-    llvm::consumeError(
-        support::atomic_output::discardTemporaryOutput(*Temporary));
-    S->setError("cannot write " + Kind.str() + ": " + WriteError.message());
-    return false;
-  }
-  if (auto Error = support::atomic_output::closeAndCommitTemporaryOutput(
-          *Temporary, UTF8Path)) {
-    S->setError("cannot save " + Kind.str() + ": " +
-                llvm::toString(std::move(Error)));
-    return false;
-  }
-  return true;
+  return project_files::path(S->projectInputPath(),
+                             project_files::File::Annotations);
 }
 
 static std::optional<va_t>
@@ -158,7 +125,7 @@ int neverd_annotations_save(neverd_session_t Sess) {
     S->setError("no binary loaded");
     return 1;
   }
-  ProjectWriteLock Lock(S->FilePath);
+  ProjectWriteLock Lock(S->FilePath, S->projectNamespaceSuffix());
   if (!Lock) {
     S->setError("project writer unavailable: " + Lock.error());
     return 1;
@@ -210,25 +177,99 @@ int neverd_annotations_load(neverd_session_t Sess) {
   auto *Arr = Parsed->getAsArray();
   if (!Arr)
     return 1;
-  S->Annotations.clear();
+  std::map<va_t, std::string> Annotations;
   for (const auto &Item : *Arr) {
     auto *Obj = Item.getAsObject();
-    if (!Obj)
-      continue;
-    const llvm::json::Value *AddrVal = Obj->get("addr");
-    auto Text = Obj->getString("text");
-    if (!AddrVal || !Text)
-      continue;
-    std::optional<va_t> Addr = parsePersistedAddress(*AddrVal);
-    if (Addr)
-      S->Annotations[*Addr] = Text->str();
+    const auto *AddrVal = Obj ? Obj->get("addr") : nullptr;
+    const auto Text = Obj ? Obj->getString("text") : std::nullopt;
+    const auto Addr = AddrVal ? parsePersistedAddress(*AddrVal) : std::nullopt;
+    if (!Addr || !Text || !Annotations.emplace(*Addr, Text->str()).second) {
+      S->setError("annotations sidecar has an invalid or duplicate row");
+      return 1;
+    }
   }
+  S->Annotations = std::move(Annotations);
   return 0;
 }
 
 // ===--------------------------------------------------------------------===//
 // Symbol renaming
 // ===--------------------------------------------------------------------===//
+
+namespace {
+/// The address an automatic name such as `loc_F2329` or `qword_3FB8` reads
+/// as (neverd/AutomaticNames.def, neverd/DataNames.def), else nothing.
+std::optional<va_t> automaticNameAddress(llvm::StringRef Name) {
+  static constexpr llvm::StringLiteral Prefixes[] = {
+#define NEVERD_AUTOMATIC_NAME_PREFIX(Prefix) Prefix,
+#include "neverd/AutomaticNames.def"
+#define NEVERD_DATA_SIZE_NAME(SizeKeyword, Bytes, Prefix) Prefix,
+#define NEVERD_DATA_ITEM_NAME(Id, Prefix) Prefix,
+#include "neverd/DataNames.def"
+  };
+  constexpr size_t MaxHexDigits = 16;
+  for (llvm::StringRef Prefix : Prefixes) {
+    llvm::StringRef Digits = Name;
+    va_t Address = 0;
+    if (Digits.consume_front(Prefix) && !Digits.empty() &&
+        Digits.size() <= MaxHexDigits && !Digits.getAsInteger(16, Address))
+      return Address;
+  }
+  return std::nullopt;
+}
+
+/// Why \p Name cannot name \p Addr, as neverd_name_check answers; nothing
+/// when it can.  The function list must be synchronized.
+std::optional<std::string> nameProblem(const Session &S, va_t Addr,
+                                       llvm::StringRef Name) {
+  if (Name.size() > kMaxUserNameBytes ||
+      llvm::any_of(Name, [](unsigned char C) { return C <= ' ' || C == 0x7f; }))
+    return std::string("a name has at most 4096 bytes and no spaces or "
+                       "control characters");
+  if (Name.empty())
+    return std::nullopt;
+  if (automaticNameAddress(Name))
+    return Name.str() + " is an automatic name; choose another";
+  // A name leads to one address: a function's, the user's, or a symbol's no
+  // user name replaces.  An import's name, which the image gives the import's
+  // stub and slot, a local copy may take, as a PDB or a map file names one.
+  const auto usedAt = [&](va_t Other) {
+    return "the name " + Name.str() + " is used at " + vaHex(Other);
+  };
+  const auto importing = [&](va_t At) {
+    return At == 0 || S.Img.findImportAt(At) != nullptr;
+  };
+  for (const FuncInfo &F : S.Functions)
+    if (F.Entry != Addr && F.Name == Name && !importing(F.Entry))
+      return usedAt(F.Entry);
+  for (const auto &[Other, Renamed] : S.Renames)
+    if (Other != Addr && Renamed == Name)
+      return usedAt(Other);
+  for (const Symbol &Sym : S.Img.Symbols)
+    if (Sym.Addr != Addr && Sym.Name == Name && !S.Renames.count(Sym.Addr) &&
+        !importing(Sym.Addr))
+      return usedAt(Sym.Addr);
+  return std::nullopt;
+}
+} // namespace
+
+int neverd_name_check(neverd_session_t Sess, neverd_va_t Addr,
+                      const char *Name) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return -1;
+  }
+  (void)neverd_func_count(Sess);
+  if (const auto Problem = nameProblem(*S, Addr, Name ? Name : "")) {
+    S->setError(*Problem);
+    return -1;
+  }
+  return 0;
+}
 
 int neverd_rename_func(neverd_session_t Sess, const char *OldName,
                        const char *NewName) {
@@ -239,6 +280,10 @@ int neverd_rename_func(neverd_session_t Sess, const char *OldName,
 
   for (auto &F : S->Functions) {
     if (F.Name == OldName) {
+      if (const auto Problem = nameProblem(*S, F.Entry, NewName)) {
+        S->setError(*Problem);
+        return -1;
+      }
       const auto PreviousName = F.Name;
       const auto PreviousOrigin = F.Origin;
       const auto PreviousRenames = S->Renames;
@@ -246,10 +291,12 @@ int neverd_rename_func(neverd_session_t Sess, const char *OldName,
       S->forgetEmittedSources();
       F.Name = NewName;
       F.Origin = NameOrigin::User;
+      S->functionListChanged();
       if (neverd_renames_save(Sess) != 0) {
         S->Renames = PreviousRenames;
         F.Name = PreviousName;
         F.Origin = PreviousOrigin;
+        S->functionListChanged();
         return -1;
       }
       return 0;
@@ -270,19 +317,15 @@ int neverd_rename_addr(neverd_session_t Sess, neverd_va_t Addr,
     return -1;
   }
   const llvm::StringRef NewName = Name ? Name : "";
-  constexpr size_t MaxNameBytes = 4096;
-  if (NewName.size() > MaxNameBytes ||
-      llvm::any_of(NewName,
-                   [](unsigned char C) { return C <= ' ' || C == 0x7f; })) {
-    S->setError("a name has at most 4096 bytes and no spaces or control "
-                "characters");
+  (void)neverd_func_count(Sess);
+  if (const auto Problem = nameProblem(*S, Addr, NewName)) {
+    S->setError(*Problem);
     return -1;
   }
   if (!S->Img.readVA(Addr, 1)) {
     S->setError(vaHex(Addr) + " is not in the image");
     return -1;
   }
-  (void)neverd_func_count(Sess);
   const auto PreviousRenames = S->Renames;
   const auto PreviousOriginals = S->OriginalNames;
   if (NewName.empty()) {
@@ -327,13 +370,13 @@ int neverd_renames_save(neverd_session_t Sess) {
     return -1;
   if (!S->Loaded)
     return -1;
-  ProjectWriteLock Lock(S->FilePath);
+  ProjectWriteLock Lock(S->FilePath, S->projectNamespaceSuffix());
   if (!Lock) {
     S->setError("project writer unavailable: " + Lock.error());
     return -1;
   }
-  auto Path = S->FilePath;
-  Path += ".neverd-renames.json";
+  const auto Path =
+      project_files::path(S->projectInputPath(), project_files::File::Renames);
   llvm::json::Array Arr;
   for (const auto &[Addr, NewName] : S->Renames) {
     llvm::json::Object Obj;
@@ -353,8 +396,8 @@ int neverd_renames_load(neverd_session_t Sess) {
     return -1;
   if (!S->Loaded)
     return -1;
-  auto Path = S->FilePath;
-  Path += ".neverd-renames.json";
+  const auto Path =
+      project_files::path(S->projectInputPath(), project_files::File::Renames);
   auto Reset = [&] {
     for (auto &F : S->Functions) {
       if (S->Renames.find(F.Entry) == S->Renames.end())
@@ -363,6 +406,7 @@ int neverd_renames_load(neverd_session_t Sess) {
           Original != S->OriginalNames.end())
         F.Name = Original->second;
     }
+    S->functionListChanged();
     S->Renames.clear();
     S->forgetEmittedSources();
     S->refreshFunctionNames();
@@ -393,27 +437,29 @@ int neverd_renames_load(neverd_session_t Sess) {
   auto *Arr = Parsed->getAsArray();
   if (!Arr)
     return -1;
-  Reset();
+  std::map<va_t, std::string> Renames;
   for (const auto &V : *Arr) {
     auto *Obj = V.getAsObject();
-    if (!Obj)
-      continue;
-    const llvm::json::Value *AddrVal = Obj->get("addr");
-    auto Renamed = Obj->getString("renamed");
-    if (!AddrVal || !Renamed)
-      continue;
-    std::optional<va_t> Addr = parsePersistedAddress(*AddrVal);
-    if (!Addr)
-      continue;
-    S->Renames[*Addr] = Renamed->str();
+    const auto *AddrVal = Obj ? Obj->get("addr") : nullptr;
+    const auto Renamed = Obj ? Obj->getString("renamed") : std::nullopt;
+    const auto Addr = AddrVal ? parsePersistedAddress(*AddrVal) : std::nullopt;
+    if (!Addr || !Renamed || !Renames.emplace(*Addr, Renamed->str()).second) {
+      S->setError("renames sidecar has an invalid or duplicate row");
+      return -1;
+    }
+  }
+  Reset();
+  S->Renames = std::move(Renames);
+  for (const auto &[Addr, Renamed] : S->Renames) {
     for (auto &F : S->Functions) {
-      if (F.Entry == *Addr) {
-        F.Name = Renamed->str();
+      if (F.Entry == Addr) {
+        F.Name = Renamed;
         F.Origin = NameOrigin::User;
         break;
       }
     }
   }
+  S->functionListChanged();
   return 0;
 }
 
@@ -422,9 +468,8 @@ int neverd_renames_load(neverd_session_t Sess) {
 // ===--------------------------------------------------------------------===//
 
 static std::filesystem::path functionsPath(const Session *S) {
-  auto Path = S->FilePath;
-  Path += ".neverd-functions.json";
-  return Path;
+  return project_files::path(S->projectInputPath(),
+                             project_files::File::Functions);
 }
 
 /// \p Color as "#RRGGBB".
@@ -455,6 +500,9 @@ writeFunctionAttributes(const Session::FunctionAttributes &Attributes,
 #define NEVERD_FUNCTION_COLOR(Key)                                             \
   if (Attributes.Color)                                                        \
     Row[Key] = colorText(*Attributes.Color);
+#define NEVERD_FUNCTION_TYPE(Member, Key)                                      \
+  if (Attributes.Member)                                                       \
+    Row[Key] = *Attributes.Member;
 #include "neverd/sdk/FunctionAttributes.def"
 }
 
@@ -489,6 +537,22 @@ static bool readFunctionAttributes(const llvm::json::Object &Row,
       Attributes.Color = *parseColor(*Text);                                   \
     else {                                                                     \
       Error = std::string("\"") + KeyName + "\" is \"#RRGGBB\" or null";       \
+      return false;                                                            \
+    }                                                                          \
+  }
+#define NEVERD_FUNCTION_TYPE(Member, KeyName)                                  \
+  if (Name == KeyName) {                                                       \
+    Known = true;                                                              \
+    if (Value.kind() == llvm::json::Value::Null)                               \
+      Attributes.Member.reset();                                               \
+    else if (const auto Text = Value.getAsString();                            \
+             Text && !Text->trim().empty() &&                                  \
+             Text->size() <= kMaxFunctionDeclarationBytes)                     \
+      Attributes.Member = Text->trim().str();                                  \
+    else {                                                                     \
+      Error =                                                                  \
+          std::string("\"") + KeyName + "\" is a C declaration of at most " +  \
+          std::to_string(kMaxFunctionDeclarationBytes) + " bytes, or null";    \
       return false;                                                            \
     }                                                                          \
   }
@@ -530,6 +594,7 @@ static void restartWithUserNoReturn(neverd_session_t Sess, Session *S) {
   const bool Discovered = S->DiscoveredFunctions.has_value();
   S->applyUserNoReturn();
   S->DiscoveredFunctions.reset();
+  S->ProgramMainFound.reset();
   S->invalidatePipeline();
   if (Discovered)
     (void)neverd_session_discover_functions(Sess);
@@ -560,6 +625,7 @@ int neverd_func_create(neverd_session_t Sess, neverd_va_t Entry) {
       }
   }
   S->FunctionEdits[Entry] = true;
+  S->ImmediateIndex = {};
   S->invalidatePipeline();
   return 0;
 }
@@ -582,6 +648,7 @@ int neverd_func_delete(neverd_session_t Sess, neverd_va_t Entry) {
   // Recorded for a created function too: the image, the detector or analysis
   // may find a function there as well.
   S->FunctionEdits[Entry] = false;
+  S->ImmediateIndex = {};
   // What the user stated of the function goes with it, as in IDA.
   const auto Attributes = S->FunctionAttributeEdits.find(Entry);
   const bool StatedNoReturn = Attributes != S->FunctionAttributeEdits.end() &&
@@ -611,7 +678,7 @@ int neverd_functions_save(neverd_session_t Sess) {
     return -1;
   if (!S->Loaded)
     return -1;
-  ProjectWriteLock Lock(S->FilePath);
+  ProjectWriteLock Lock(S->FilePath, S->projectNamespaceSuffix());
   if (!Lock) {
     S->setError("project writer unavailable: " + Lock.error());
     return -1;
@@ -680,8 +747,19 @@ int neverd_functions_load(neverd_session_t Sess) {
         AttributeEdits[*Entry] = Attributes;
     }
   }
-  const bool Changed =
-      Edits != S->FunctionEdits || AttributeEdits != S->FunctionAttributeEdits;
+  // What analysis reads: whether functions start there and return.  A
+  // declaration, or a note, changes no more than the decompiler's text.
+  const auto WithoutDeclarations =
+      [](std::map<va_t, Session::FunctionAttributes> Rows) {
+        for (auto &[Entry, Attributes] : Rows)
+          Attributes.Type.reset();
+        return Rows;
+      };
+  const bool Changed = Edits != S->FunctionEdits ||
+                       WithoutDeclarations(AttributeEdits) !=
+                           WithoutDeclarations(S->FunctionAttributeEdits);
+  const std::map<va_t, std::string> DeclarationsBefore =
+      S->functionDeclarations();
   S->FunctionEdits = std::move(Edits);
   S->FunctionAttributeEdits = std::move(AttributeEdits);
   // A load replaces the image, which holds what analysis reads of them.
@@ -691,6 +769,8 @@ int neverd_functions_load(neverd_session_t Sess) {
     restartWithUserNoReturn(Sess, S);
   else if (Changed)
     S->invalidatePipeline();
+  else if (S->functionDeclarations() != DeclarationsBefore)
+    S->declarationsChanged();
   return 0;
 }
 
@@ -734,14 +814,26 @@ int neverd_func_edit(neverd_session_t Sess, neverd_va_t Entry,
   const std::optional<bool> OldNoReturn =
       Before == S->FunctionAttributeEdits.end() ? std::nullopt
                                                 : Before->second.NoReturn;
+  const std::optional<std::string> OldType =
+      Before == S->FunctionAttributeEdits.end() ? std::nullopt
+                                                : Before->second.Type;
+  // A declaration must read against the local types as they are now.
+  if (Attributes.Type && Attributes.Type != OldType &&
+      !S->checkFunctionDeclaration(*Attributes.Type, Error)) {
+    S->setError(Error);
+    return -1;
+  }
   if (Attributes.empty())
     S->FunctionAttributeEdits.erase(Entry);
   else
     S->FunctionAttributeEdits[Entry] = Attributes;
   // Whether a function returns decides how every call to it ends; the notes
-  // change nothing analysis reads.
+  // change nothing analysis reads, and a declaration only what the
+  // decompiler prints.
   if (Attributes.NoReturn != OldNoReturn)
     restartWithUserNoReturn(Sess, S);
+  else if (Attributes.Type != OldType)
+    S->declarationsChanged();
   return 0;
 }
 
@@ -774,12 +866,12 @@ const char *neverd_func_attributes_json(neverd_session_t Sess,
   const bool Native =
       A == Arch::X86 || A == Arch::X64 || A == Arch::ARM || A == Arch::AArch64;
   const LowFunc *Low = S->PipeRan ? S->findLowFunc(Entry) : nullptr;
+  std::set<va_t> Entries;
+  for (const FuncInfo &F : S->Functions)
+    Entries.insert(F.Entry);
+  InternalNoReturnIndex Prover(S->Img, &Entries, nullptr, nullptr, nullptr);
   LowFunc Built;
   if (!Low && Native) {
-    std::set<va_t> Entries;
-    for (const FuncInfo &F : S->Functions)
-      Entries.insert(F.Entry);
-    InternalNoReturnIndex Prover(S->Img, &Entries, nullptr, nullptr, nullptr);
     CFGBuilder Builder;
     Builder.setKnownFuncEntries(&Entries);
     Builder.setNoReturnCalleeProver(&Prover, 0);
@@ -796,8 +888,12 @@ const char *neverd_func_attributes_json(neverd_session_t Sess,
   if (Stated.NoReturn)
     Row["noreturn"] = *Stated.NoReturn;
   else if (Low)
-    Row["noreturn"] = libc::isNoReturnTarget(S->Img, Entry) ||
-                      lowFunctionNeverReturns(*Low, A);
+    // Its tail calls are judged as its calls are.
+    Row["noreturn"] =
+        libc::isNoReturnTarget(S->Img, Entry) ||
+        lowFunctionNeverReturns(*Low, A, [&](va_t Target) {
+          return calleeNeverReturns(S->Img, Target, nullptr, &Prover, 0);
+        });
   else
     Row["noreturn"] = nullptr;
   // A whole-function recognition is analysis' library function, as a FLIRT
@@ -824,6 +920,8 @@ const char *neverd_func_attributes_json(neverd_session_t Sess,
                                 : llvm::json::Value(nullptr);
   Row["color"] = Stated.Color ? llvm::json::Value(colorText(*Stated.Color))
                               : llvm::json::Value(nullptr);
+  Row["type"] = Stated.Type ? llvm::json::Value(jsonSafeText(*Stated.Type))
+                            : llvm::json::Value(nullptr);
   // x86 `ret imm` pops the caller's arguments; no other target does.
   Row["purged_bytes"] = (A == Arch::X86 || A == Arch::X64) && Low
                             ? llvm::json::Value(Low->CalleePopBytes)
@@ -853,22 +951,16 @@ uint64_t sizedItemBytes(llvm::StringRef Kind) {
 }
 
 std::filesystem::path itemsPath(const Session *S) {
-  auto Path = S->FilePath;
-  Path += ".neverd-items.json";
-  return Path;
+  return project_files::path(S->projectInputPath(), project_files::File::Items);
 }
 
 #define NEVERD_OPERAND_BASE(Id, Spelling)                                      \
   constexpr llvm::StringLiteral k##Id##Base(Spelling);
 #include "neverd/OperandFormats.def"
 
-/// The operands of one instruction a format may name.
-constexpr int MaxFormattedOperands = 8;
-
 std::filesystem::path operandsPath(const Session *S) {
-  auto Path = S->FilePath;
-  Path += ".neverd-operands.json";
-  return Path;
+  return project_files::path(S->projectInputPath(),
+                             project_files::File::Operands);
 }
 
 bool isOperandBase(llvm::StringRef Base) {
@@ -885,8 +977,8 @@ parseOperandFormat(const llvm::json::Object &Object, std::string &Error) {
   Session::OperandFormat Format;
   const auto Base = Object.getString("base");
   if (!Base || !isOperandBase(*Base)) {
-    Error = "an operand's base is number, hex, decimal, binary, char or "
-            "offset";
+    Error = "an operand's base is number, hex, decimal, binary, char, offset, "
+            "struct or enum";
     return std::nullopt;
   }
   Format.Base = Base->str();
@@ -900,6 +992,45 @@ parseOperandFormat(const llvm::json::Object &Object, std::string &Error) {
       }
       *Field = *Flag;
     }
+  const llvm::json::Value *Type = Object.get("type");
+  const llvm::json::Value *Delta = Object.get("delta");
+  if (Format.Base == "enum") {
+    const auto Name = Object.getString("type");
+    const auto Flags = Object.getBoolean("flags");
+    if (!Name || Name->empty() || Name->size() > kMaxOperandTypeNameBytes ||
+        Format.Negate || Format.Invert || Delta ||
+        (Object.get("flags") && !Flags)) {
+      Error = "An enum operand requires a type and optional flags mode";
+      return {};
+    }
+    Format.Type = Name->str();
+    Format.Delta = Flags.value_or(false) ? 1 : 0;
+    return Format;
+  }
+  if (Object.get("flags")) {
+    Error = "only an enum operand has a flags mode";
+    return std::nullopt;
+  }
+  if (Format.Base != kStructBase) {
+    if (Type || Delta) {
+      Error = "only a structure offset names a type and a delta";
+      return std::nullopt;
+    }
+    return Format;
+  }
+  // The member a structure offset names has no sign of its own to change.
+  const std::optional<llvm::StringRef> Name =
+      Type ? Type->getAsString() : std::nullopt;
+  const std::optional<int64_t> Bytes =
+      Delta ? Delta->getAsInteger() : std::optional<int64_t>(0);
+  if (!Name || Name->empty() || Name->size() > kMaxOperandTypeNameBytes ||
+      !Bytes || Format.Negate || Format.Invert) {
+    Error = "a structure offset names its local type, an integer delta, and "
+            "neither negates nor inverts";
+    return std::nullopt;
+  }
+  Format.Type = Name->str();
+  Format.Delta = *Bytes;
   return Format;
 }
 
@@ -907,12 +1038,21 @@ llvm::json::Array operandFormatRows(const Session *S) {
   llvm::json::Array Rows;
   for (const auto &[Addr, Operands] : S->OperandFormats) {
     llvm::json::Array List;
-    for (const auto &[Index, Format] : Operands)
-      List.push_back(
-          llvm::json::Object{{"operand", static_cast<int64_t>(Index)},
-                             {"base", Format.Base},
-                             {"negate", Format.Negate},
-                             {"invert", Format.Invert}});
+    for (const auto &[Index, Format] : Operands) {
+      llvm::json::Object Entry{{"operand", static_cast<int64_t>(Index)},
+                               {"base", Format.Base},
+                               {"negate", Format.Negate},
+                               {"invert", Format.Invert}};
+      if (Format.Base == "enum") {
+        Entry["type"] = jsonSafeText(Format.Type);
+        Entry["flags"] = Format.Delta != 0;
+      }
+      if (Format.Base == kStructBase) {
+        Entry["type"] = jsonSafeText(Format.Type);
+        Entry["delta"] = Format.Delta;
+      }
+      List.push_back(std::move(Entry));
+    }
     Rows.push_back(llvm::json::Object{{"addr", vaHex(Addr)},
                                       {"operands", std::move(List)}});
   }
@@ -932,6 +1072,10 @@ std::optional<Session::DataItem> parseDataItem(const Session &S, va_t Addr,
   }
   Item.Kind = Kind->str();
   const auto Size = Row.getInteger("size");
+  if (Row.get("size") && !Size) {
+    Error = "a data item's size must be an integer";
+    return std::nullopt;
+  }
   std::optional<strings::Encoding> Encoding;
   if (const uint64_t Bytes = sizedItemBytes(*Kind)) {
     if (Size && static_cast<uint64_t>(*Size) != Bytes) {
@@ -939,6 +1083,43 @@ std::optional<Session::DataItem> parseDataItem(const Session &S, va_t Addr,
       return std::nullopt;
     }
     Item.Size = Bytes;
+  } else if (*Kind == "array") {
+    const auto Width = Row.getInteger("element_size");
+    const auto Count = Row.getInteger("count");
+    if (!Width || !Count || *Width < 1 ||
+        *Width > ::neverd::sdk::kMaxDataItemArrayElementBytes || *Count < 1 ||
+        *Count > ::neverd::sdk::kMaxDataItemArrayElements ||
+        uint64_t(*Width) * uint64_t(*Count) >
+            ::neverd::sdk::kMaxDataItemArrayBytes) {
+      Error =
+          "An array needs a bounded element width and count (at most 64 MiB)";
+      return {};
+    }
+    Item.ElementSize = *Width;
+    Item.Count = *Count;
+    Item.Size = Item.ElementSize * Item.Count;
+    Item.Type = Row.getString("type").value_or("").str();
+    if ((Row.get("type") && !Row.getString("type")) ||
+        (Size && uint64_t(*Size) != Item.Size) ||
+        Item.Type.size() >
+            ::neverd::sdk::
+                kNeverDCAPIPersistParseDataItemArrayTypeItemTypeSizeLimit ||
+        (Item.Type.empty() && Item.ElementSize != 1 && Item.ElementSize != 2 &&
+         Item.ElementSize != 4 && Item.ElementSize != 8)) {
+      Error = "Array extent must match its element layout and count";
+      return {};
+    }
+  } else if (*Kind == "alignment") {
+    const auto Align = Row.getInteger("alignment");
+    if (!Align || *Align < 2 || *Align > ::neverd::sdk::kMaxDataItemAlignment ||
+        (*Align & (*Align - 1)) || !Size || *Size < 1 || *Size > *Align ||
+        Addr > UINT64_MAX - uint64_t(*Size) || (Addr + *Size) % *Align) {
+      Error = "Alignment needs a bounded power of two and a span ending on its "
+              "boundary";
+      return {};
+    }
+    Item.Size = *Size;
+    Item.Alignment = *Align;
   } else if (*Kind == StringItemKind) {
     const auto Name = Row.getString("encoding");
     Encoding = Name ? strings::encodingNamed(*Name) : std::nullopt;
@@ -1002,6 +1183,12 @@ std::optional<Session::DataItem> parseDataItem(const Session &S, va_t Addr,
             " is not in one segment";
     return std::nullopt;
   }
+  if ((Item.Kind == "array" || Item.Kind == "alignment") &&
+      (Addr - Seg->VA > Seg->Data.size() ||
+       Item.Size > Seg->Data.size() - (Addr - Seg->VA))) {
+    Error = "The complete definition needs initialized file-backed bytes";
+    return {};
+  }
   if (Encoding) {
     // The string's last code unit is its terminator.
     const unsigned Unit = strings::encodingUnitBytes(*Encoding);
@@ -1040,6 +1227,14 @@ llvm::json::Array dataItemRows(const Session *S) {
                            {"size", static_cast<int64_t>(Item.Size)}};
     if (!Item.Encoding.empty())
       Row["encoding"] = Item.Encoding;
+    if (Item.Kind == "array") {
+      Row["element_size"] = Item.ElementSize;
+      Row["count"] = Item.Count;
+      if (!Item.Type.empty())
+        Row["type"] = Item.Type;
+    }
+    if (Item.Kind == "alignment")
+      Row["alignment"] = Item.Alignment;
     Rows.push_back(std::move(Row));
   }
   return Rows;
@@ -1072,6 +1267,53 @@ int neverd_item_set(neverd_session_t Sess, neverd_va_t Addr,
   if (!Item) {
     S->setError(Error);
     return -1;
+  }
+  if (Item->Kind == "array" || Item->Kind == "alignment") {
+    if (neverd_session_discover_functions(Sess) < 0 ||
+        !S->synchronizeFunctions())
+      return -1;
+    for (unsigned Prepared = 0;; ++Prepared) {
+      for (const auto &F : S->Functions)
+        if ((F.Entry >= Addr && F.Entry - Addr < Item->Size) ||
+            (Addr > F.Entry && Addr - F.Entry < F.Size)) {
+          S->setError(
+              "The data definition overlaps a function; remove its code "
+              "ownership first");
+          return -1;
+        }
+      // Cold CLI/SDK sessions may know only an entry. A zero size is not
+      // evidence that the following bytes are data. Recover the same extent
+      // a prepared workbench uses before admitting an executable span.
+      const auto Unknown = std::find_if(
+          S->Functions.begin(), S->Functions.end(), [&](const auto &F) {
+            return F.Entry < Addr && F.Size == 0 &&
+                   S->Img.getSegmentFor(F.Entry) == S->Img.getSegmentFor(Addr);
+          });
+      if (Unknown == S->Functions.end())
+        break;
+      const va_t Entry = Unknown->Entry;
+      if (Prepared >= 32 || !neverd_prepare_function_view(Sess, Entry, "low") ||
+          !S->synchronizeFunctions() ||
+          std::any_of(
+              S->Functions.begin(), S->Functions.end(),
+              [&](const auto &F) { return F.Entry == Entry && F.Size == 0; })) {
+        S->setError("Cannot establish code ownership for this data span; "
+                    "set the function's end or remove its code ownership");
+        return -1;
+      }
+    }
+    if (!Item->Type.empty()) {
+      const auto *Library = S->readLocalTypes();
+      const auto *Type = Library ? Library->find(Item->Type) : nullptr;
+      const auto Width =
+          Type ? Library->sizeOf(*types::makeNamed(Type->Name, Type->Kind))
+               : std::nullopt;
+      if (!Width || *Width != Item->ElementSize) {
+        S->setError("The array element width differs from its current local "
+                    "type layout");
+        return -1;
+      }
+    }
   }
   // An item replaces the one at its address. Bytes the user undefined give
   // way to it and stay undefined around it; it shares no byte with any other
@@ -1127,7 +1369,7 @@ int neverd_operand_format_set(neverd_session_t Sess, neverd_va_t Addr,
     S->setError("no binary loaded");
     return -1;
   }
-  if (Operand < 0 || Operand >= MaxFormattedOperands) {
+  if (Operand < 0 || Operand >= kMaxFormattedOperands) {
     S->setError("an operand index is 0 to 7");
     return -1;
   }
@@ -1158,6 +1400,51 @@ int neverd_operand_format_set(neverd_session_t Sess, neverd_va_t Addr,
       S->setError(Error);
       return -1;
     }
+    if (Format->Base == "enum") {
+      // An enumerator stands for an immediate the decoder types, as the
+      // operand the client counted spells it.
+      const auto *Seg = S->Img.getSegmentFor(Addr);
+      Decoder Dec;
+      DecodedInsn Insn{};
+      std::optional<NativeImmediate> Selected;
+      if (Seg && Addr - Seg->VA < Seg->Data.size() && Dec.init(S->Img) &&
+          Dec.selectMode(S->Img, Addr) &&
+          Dec.decodeOne(
+              Seg->Data.data() + (Addr - Seg->VA),
+              std::min<size_t>(16, Seg->Data.size() - (Addr - Seg->VA)), Addr,
+              Insn) &&
+          Insn.Raw && Insn.Raw->detail)
+        Selected = nativeImmediateAt(
+            describeNativeOperands(Dec, Insn, S->Img.Arch, false), Insn,
+            S->Img.Arch, unsigned(Operand));
+      if (!Selected) {
+        S->setError("Select an actual decoded immediate operand");
+        return -1;
+      }
+      const auto Value = "0x" + llvm::utohexstr(Selected->Value);
+      const auto *Checked =
+          neverd_enum_value_json(Sess, Format->Type.c_str(), Value.c_str(),
+                                 Selected->Bits, Format->Delta != 0);
+      if (!Checked)
+        return -1;
+      neverd_free_string(Checked);
+    }
+    // A structure offset names a structure or union of the program's local
+    // types, which a sidecar read later may no longer have; the listing then
+    // shows the number.
+    if (Format->Base == kStructBase) {
+      const types::TypeLibrary *Library = S->readLocalTypes();
+      if (!Library)
+        return -1;
+      const types::LocalType *Record = Library->resolve(Format->Type);
+      if (!Record || !Record->Record || !Record->Record->Defined ||
+          (Record->Kind != types::TypeKind::Struct &&
+           Record->Kind != types::TypeKind::Union)) {
+        S->setError("no structure or union named " +
+                    jsonSafeText(Format->Type));
+        return -1;
+      }
+    }
   }
   // The listing's own spelling is no format of the user's.
   auto &Operands = S->OperandFormats[Addr];
@@ -1187,7 +1474,7 @@ int neverd_operand_formats_save(neverd_session_t Sess) {
     return -1;
   if (!S->Loaded)
     return -1;
-  ProjectWriteLock Lock(S->FilePath);
+  ProjectWriteLock Lock(S->FilePath, S->projectNamespaceSuffix());
   if (!Lock) {
     S->setError("project writer unavailable: " + Lock.error());
     return -1;
@@ -1251,7 +1538,8 @@ int neverd_operand_formats_load(neverd_session_t Sess) {
         std::string Error;
         auto Format =
             Object ? parseOperandFormat(*Object, Error) : std::nullopt;
-        if (!Index || *Index < 0 || *Index >= MaxFormattedOperands || !Format) {
+        if (!Index || *Index < 0 || *Index >= kMaxFormattedOperands ||
+            !Format) {
           S->setError("operand formats sidecar has an invalid operand" +
                       (Error.empty() ? std::string() : ": " + Error));
           return -1;
@@ -1280,7 +1568,7 @@ int neverd_items_save(neverd_session_t Sess) {
     return -1;
   if (!S->Loaded)
     return -1;
-  ProjectWriteLock Lock(S->FilePath);
+  ProjectWriteLock Lock(S->FilePath, S->projectNamespaceSuffix());
   if (!Lock) {
     S->setError("project writer unavailable: " + Lock.error());
     return -1;
@@ -1357,9 +1645,7 @@ constexpr llvm::StringLiteral DetectedPlatformSource("detected");
 constexpr llvm::StringLiteral ChosenPlatformSource("user");
 
 std::filesystem::path loadOptionsPath(const std::filesystem::path &Input) {
-  auto Path = Input;
-  Path += ".neverd-load.json";
-  return Path;
+  return project_files::path(Input, project_files::File::Load);
 }
 
 llvm::Error loadOptionsError(const llvm::Twine &Message) {
@@ -1399,6 +1685,17 @@ neverd::sdk::parseLoadOptions(llvm::StringRef Text) {
     return loadOptionsError("load options are not a JSON object");
   const auto Loader = Object->getString("loader");
   LoaderChoice Choice;
+  using namespace macho_loader::cache_load;
+  if (Object->get(kImageKey) || Loader == kLoader) {
+    const auto Image = Object->getString(kImageKey);
+    if ((Object->get(kLoaderKey) && !Loader) || !Image || Image->empty() ||
+        Image->contains('\0') ||
+        (Loader && *Loader != AutomaticLoaderName && *Loader != kLoader))
+      return loadOptionsError(kChoiceInvalid);
+    Choice.Format = BinaryFormat::MachO;
+    Choice.MachOSharedCacheImage = Image->str();
+    return Choice;
+  }
   if (!Loader || *Loader == AutomaticLoaderName)
     return Choice;
   if (*Loader == getLoadRowLoader(LoadRow::EVM)) {
@@ -1406,8 +1703,7 @@ neverd::sdk::parseLoadOptions(llvm::StringRef Text) {
     return Choice;
   }
   if (*Loader != getLoadRowLoader(LoadRow::Binary))
-    return loadOptionsError("unknown loader " + *Loader +
-                            "; the loaders are auto, evm and binary");
+    return loadOptionsError(llvm::formatv(kUnknownLoader, *Loader));
   Choice.Format = BinaryFormat::Raw;
   RawLoadOptions &Options = Choice.Raw;
   // No processor, or auto, has the load read it from the bytes.
@@ -1455,6 +1751,12 @@ neverd::sdk::parseLoadOptions(llvm::StringRef Text) {
 
 std::string neverd::sdk::loadOptionsJson(const LoaderChoice &Choice) {
   llvm::json::Object Object;
+  if (!Choice.MachOSharedCacheImage.empty()) {
+    Object[macho_loader::cache_load::kLoaderKey] =
+        macho_loader::cache_load::kLoader;
+    Object[macho_loader::cache_load::kImageKey] = Choice.MachOSharedCacheImage;
+    return jsonToString(llvm::json::Value(std::move(Object)));
+  }
   switch (Choice.Format) {
   case BinaryFormat::EVM:
     Object["loader"] = getLoadRowLoader(LoadRow::EVM);
@@ -1508,6 +1810,22 @@ neverd::sdk::readLoadOptionsSidecar(const std::filesystem::path &Input) {
     return loadOptionsError("load options sidecar: " +
                             llvm::toString(Options.takeError()));
   return Options;
+}
+
+llvm::Expected<LoaderChoice>
+neverd::sdk::sessionLoadOptions(const Session *S,
+                                const std::filesystem::path &Input) {
+  if (S && S->RequestedLoad)
+    return *S->RequestedLoad;
+  if (S && S->Loaded && S->Img.MachOSharedCache) {
+    // Reanalysis must retain this session's image even if another window
+    // saved a different selection in the cache's root load-options file.
+    std::error_code Error;
+    if (Input == S->FilePath ||
+        std::filesystem::equivalent(Input, S->SanitizeSourcePath, Error))
+      return S->LoadedChoice;
+  }
+  return readLoadOptionsSidecar(Input);
 }
 
 llvm::Error
@@ -1619,6 +1937,23 @@ int neverd_load_options_save(neverd_session_t Sess) {
   if (!Lock) {
     S->setError("project writer unavailable: " + Lock.error());
     return -1;
+  }
+  std::unique_ptr<ProjectWriteLock> ImageLock;
+  if (S->Img.MachOSharedCache) {
+    // Saving the root selection also records this image's input identity.
+    // Both writers must be owned before publishing either project file.
+    ImageLock = std::make_unique<ProjectWriteLock>(S->FilePath,
+                                                   S->projectNamespaceSuffix());
+    if (!*ImageLock) {
+      S->setError(
+          std::string(macho_loader::cache_load::kProjectWriterUnavailable) +
+          ImageLock->error());
+      return -1;
+    }
+    if (auto Error = project_files::prepare(S->FilePath)) {
+      S->setError(Error.message());
+      return -1;
+    }
   }
   const auto Path = loadOptionsPath(S->FilePath);
   // A file read as its header or contents say needs no sidecar.

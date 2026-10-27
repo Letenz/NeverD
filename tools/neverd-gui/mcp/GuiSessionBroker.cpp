@@ -1,5 +1,7 @@
 #include "GuiSessionBroker.h"
 
+#include "../ResourceLimits.h"
+
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -14,10 +16,12 @@
 #include <QtEndian>
 
 namespace {
-constexpr quint32 MaxFrame = 8 * 1024 * 1024;
-const QSet<QString> ReadOperations{"metadata", "functions", "disasm",
-                                   "bytes",    "decompile", "cfg",
-                                   "xrefs",    "strings"};
+/// The reads neverd-mcp's tools make, so that an attached server answers
+/// each tool as one with its own worker does; nothing that edits.
+const QSet<QString> ReadOperations{
+    "metadata",   "functions", "disasm",  "bytes",   "decompile",
+    "cfg",        "xrefs",     "strings", "imports", "string_references",
+    "call_paths", "call_tree", "search",  "resolve"};
 } // namespace
 
 GuiSessionBroker::GuiSessionBroker(QObject *parent) : QObject(parent) {
@@ -25,12 +29,15 @@ GuiSessionBroker::GuiSessionBroker(QObject *parent) : QObject(parent) {
   connect(&server_, &QLocalServer::newConnection, this,
           &GuiSessionBroker::acceptClients);
   auto *timer = new QTimer(this);
-  timer->setInterval(1000);
+  timer->setInterval(
+      ::neverd::limits::gui::
+          kGuiSessionBrokerGuiSessionBrokerSetIntervalMilliseconds);
   connect(timer, &QTimer::timeout, this, [this] {
     const auto now = QDateTime::currentMSecsSinceEpoch();
     for (const auto &id : routes_.keys()) {
       const auto route = routes_.value(id);
-      if (now - route.started < 120000)
+      if (now - route.started <
+          ::neverd::limits::gui::kGuiRouteTimeoutMilliseconds)
         continue;
       routes_.remove(id);
       if (route.socket && clients_.contains(route.socket)) {
@@ -142,8 +149,9 @@ void GuiSessionBroker::setSelection(const QJsonObject &selection) {
 void GuiSessionBroker::acceptClients() {
   while (server_.hasPendingConnections()) {
     auto *socket = server_.nextPendingConnection();
-    socket->setReadBufferSize(MaxFrame + 4);
-    if (clients_.size() >= 4) {
+    socket->setReadBufferSize(::neverd::limits::gui::kGuiSessionBrokerMaxFrame +
+                              4);
+    if (clients_.size() >= ::neverd::limits::gui::kMaxGuiSessionClients) {
       socket->abort();
       socket->deleteLater();
       continue;
@@ -159,11 +167,13 @@ void GuiSessionBroker::acceptClients() {
       socket->deleteLater();
     });
     QPointer<QLocalSocket> guard(socket);
-    QTimer::singleShot(5000, this, [this, guard] {
-      if (guard && clients_.contains(guard) &&
-          !clients_.value(guard).authenticated)
-        guard->abort();
-    });
+    QTimer::singleShot(::neverd::limits::gui::
+                           kGuiSessionBrokerAcceptClientsSingleShotMilliseconds,
+                       this, [this, guard] {
+                         if (guard && clients_.contains(guard) &&
+                             !clients_.value(guard).authenticated)
+                           guard->abort();
+                       });
   }
 }
 
@@ -172,14 +182,15 @@ void GuiSessionBroker::readClient(QLocalSocket *socket) {
     return;
   auto &client = clients_[socket];
   client.buffer += socket->readAll();
-  if (client.buffer.size() > MaxFrame + 4) {
+  if (client.buffer.size() >
+      ::neverd::limits::gui::kGuiSessionBrokerMaxFrame + 4) {
     socket->abort();
     return;
   }
   while (client.buffer.size() >= 4) {
     const auto size = qFromBigEndian<quint32>(
         reinterpret_cast<const uchar *>(client.buffer.constData()));
-    if (!size || size > MaxFrame) {
+    if (!size || size > ::neverd::limits::gui::kGuiSessionBrokerMaxFrame) {
       socket->abort();
       return;
     }
@@ -205,7 +216,8 @@ void GuiSessionBroker::handle(QLocalSocket *socket,
   const auto operation = request.value("operation").toString();
   const auto payload = request.value("payload").toObject();
   if (request.value("protocol_major").toInt() != 1 || id.isEmpty() ||
-      id.size() > 128 || !request.value("payload").isObject()) {
+      id.size() > ::neverd::limits::gui::kGuiSessionBrokerHandleIdSizeLimit ||
+      !request.value("payload").isObject()) {
     socket->abort();
     return;
   }
@@ -232,7 +244,8 @@ void GuiSessionBroker::handle(QLocalSocket *socket,
     return;
   }
   const auto revision = request.value("expected_revision").toString();
-  if (revision.size() > 128) {
+  if (revision.size() >
+      ::neverd::limits::gui::kGuiSessionBrokerHandleRevisionSizeLimit) {
     error(socket, id, "invalid_request", "Revision is too long");
     return;
   }
@@ -264,7 +277,9 @@ void GuiSessionBroker::handle(QLocalSocket *socket,
     error(socket, id, "unsupported", "Only session read queries are exposed");
     return;
   }
-  if (clients_[socket].pending >= 16 || routes_.size() >= 32) {
+  if (clients_[socket].pending >= 16 ||
+      routes_.size() >=
+          ::neverd::limits::gui::kGuiSessionBrokerHandleRoutesSizeLimit) {
     error(socket, id, "busy", "GUI session request queue is full");
     return;
   }
@@ -295,7 +310,9 @@ void GuiSessionBroker::reply(const QString &brokerRequestId,
 
 void GuiSessionBroker::write(QLocalSocket *socket, const QJsonObject &message) {
   const auto body = QJsonDocument(message).toJson(QJsonDocument::Compact);
-  if (body.size() > MaxFrame || socket->bytesToWrite() > MaxFrame) {
+  if (body.size() > ::neverd::limits::gui::kGuiSessionBrokerMaxFrame ||
+      socket->bytesToWrite() >
+          ::neverd::limits::gui::kGuiSessionBrokerMaxFrame) {
     socket->abort();
     return;
   }

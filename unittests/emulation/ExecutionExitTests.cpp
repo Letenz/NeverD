@@ -10,6 +10,7 @@
 
 #include "llvm/Support/Endian.h"
 
+#include <chrono>
 #include <stdexcept>
 
 namespace neverd::emulation {
@@ -132,6 +133,35 @@ TEST(ExecutionExit, DeadlineIsIndependentOfTheNextRun) {
     Exit = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
     EXPECT_EQ(Exit.Kind, ExecutionExitKind::Stopped);
     EXPECT_FALSE(Exit.DeadlineReached);
+  }
+}
+
+TEST(ExecutionExit, InstructionObserverCannotAdmitEffectsAfterDeadline) {
+  for (const auto Profile : Profiles) {
+    if (Profile.Contract != ExecutionContract::Software)
+      continue;
+    SCOPED_TRACE(guestArchitectureName(Profile.ISA));
+    auto CPU = cpu(Profile);
+    // The unmapped load must not execute after an observer spends the budget.
+    code(*CPU, LoadDeviceX64, LoadDeviceARM);
+    BackendHooks Hooks;
+    Hooks.Instruction = [](uint64_t, uint32_t) {
+      const auto Until = std::chrono::steady_clock::now() +
+                         std::chrono::microseconds(2 * ShortTimeout);
+      while (std::chrono::steady_clock::now() < Until) {
+      }
+    };
+    llvm::cantFail(CPU->installHooks(std::move(Hooks)));
+    const auto Exit = llvm::cantFail(CPU->runUntilExit(Code, ShortTimeout));
+    ASSERT_EQ(Exit.Kind, ExecutionExitKind::Deadline);
+    EXPECT_TRUE(Exit.DeadlineReached);
+    EXPECT_FALSE(Exit.Fault);
+    EXPECT_FALSE(CPU->fault());
+    Hooks.Instruction = [&](uint64_t, uint32_t) { CPU->stop(); };
+    llvm::cantFail(CPU->installHooks(std::move(Hooks)));
+    const auto Next = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+    EXPECT_EQ(Next.Kind, ExecutionExitKind::Stopped);
+    EXPECT_FALSE(Next.DeadlineReached);
   }
 }
 
@@ -277,6 +307,36 @@ TEST(ExecutionExit, InstructionRejectionSurvivesASecondaryObserverFailure) {
     EXPECT_FALSE(Exit.Diagnostic.empty());
     EXPECT_TRUE(Exit.StopRequested);
   }
+}
+
+TEST(ExecutionExit, UnicornAtomicRejectionSurvivesObserverFailure) {
+  auto CPU = cpu({GuestArchitecture::AArch64, ExecutionContract::Software});
+  code(*CPU, {}, AtomicLoadDeviceARM);
+  unsigned DeviceReads = 0;
+  GuestMMIOCallbacks IO;
+  IO.Validate = [](uint64_t, uint64_t, bool) { return llvm::Error::success(); };
+  IO.Read = [&](uint64_t, unsigned) -> llvm::Expected<uint64_t> {
+    ++DeviceReads;
+    return DeviceValue;
+  };
+  IO.Write = [](uint64_t, unsigned, uint64_t) {
+    return llvm::Error::success();
+  };
+  llvm::cantFail(CPU->mapMMIO(Device, PageSize, std::move(IO)));
+  BackendHooks Hooks;
+  Hooks.InvalidInstruction = [&] {
+    CPU->stop();
+    throw std::runtime_error(CallbackFailure);
+  };
+  llvm::cantFail(CPU->installHooks(std::move(Hooks)));
+  const auto Exit = llvm::cantFail(CPU->runUntilExit(Code, Timeout));
+  EXPECT_EQ(Exit.Kind, ExecutionExitKind::UnsupportedOperation);
+  ASSERT_TRUE(Exit.Fault);
+  EXPECT_EQ(Exit.Fault->Kind, BackendFaultKind::InvalidInstruction);
+  EXPECT_EQ(Exit.Fault->PC, Code);
+  EXPECT_TRUE(Exit.StopRequested);
+  EXPECT_FALSE(Exit.Diagnostic.empty());
+  EXPECT_EQ(DeviceReads, 0u);
 }
 
 TEST(ExecutionExit, SoftwareHaltIsNotWorkloadCompletion) {

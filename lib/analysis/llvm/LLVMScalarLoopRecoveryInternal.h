@@ -7,6 +7,7 @@
 #define NEVERD_ANALYSIS_LLVM_SCALAR_LOOP_RECOVERY_INTERNAL_H
 
 #include "neverd/analysis/LLVMScalarLoopRecovery.h"
+#include "neverd/analysis/Limits.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/LoopInfo.h"
@@ -38,7 +39,6 @@ struct Replacement {
   llvm::Value *Preferred;
   llvm::Value *Alternative = nullptr;
 };
-inline constexpr unsigned MaxReplacementBatch = 32;
 
 // Each accepted candidate reduces the tuple (non-header exit tests, loop
 // carriers, live instructions). Extra blocks alone do not improve this cost.
@@ -111,4 +111,10 @@ struct Counter {
 std::optional<Counter> counter(llvm::Loop &L, llvm::ICmpInst &Compare);
 
 } // namespace neverd::analysis::scalar_recovery
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::analysis::scalar_recovery {
+inline constexpr unsigned MaxReplacementBatch = ::neverd::limits::analysis::
+    kLLVMScalarLoopRecoveryInternalMaxReplacementBatch;
+}
+
 #endif

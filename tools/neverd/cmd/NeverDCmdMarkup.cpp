@@ -13,6 +13,9 @@
 
 #include "../NeverDCLI.h"
 
+#include "neverd/sdk/Limits.h"
+#include "neverd/support/ProjectFiles.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Format.h"
@@ -36,16 +39,26 @@ using namespace llvm;
 namespace neverd::cli {
 
 int runBookmarks() {
-  std::string BmPath = std::filesystem::path(InputFile.getValue()).string() +
-                       ".neverd-bookmarks.json";
+  // The project folder beside the input keeps the bookmarks, as the
+  // workbench keeps them; an older NeverD's file beside the input moves in.
+  const std::filesystem::path Input = InputFile.getValue();
+  project_files::migrate(Input);
+  const std::string BmPath =
+      project_files::path(Input, project_files::File::Bookmarks).string();
 
   using Bookmark = std::tuple<uint64_t, std::string, std::string>;
 
+  // By address, in lowercase hexadecimal, as the workbench keeps the same
+  // file: one order and one spelling under version control.
   auto toJson = [](ArrayRef<Bookmark> Bms) {
+    std::vector<Bookmark> Sorted(Bms.begin(), Bms.end());
+    llvm::stable_sort(Sorted, [](const Bookmark &A, const Bookmark &B) {
+      return std::get<0>(A) < std::get<0>(B);
+    });
     json::Array Arr;
-    for (const auto &[A, N, T] : Bms)
+    for (const auto &[A, N, T] : Sorted)
       Arr.push_back(json::Object{
-          {"addr", "0x" + utohexstr(A)}, {"name", N}, {"note", T}});
+          {"addr", "0x" + utohexstr(A, true)}, {"name", N}, {"note", T}});
     return json::Value(std::move(Arr));
   };
 
@@ -92,7 +105,12 @@ int runBookmarks() {
   };
 
   auto saveBm = [&](ArrayRef<Bookmark> Bms) -> bool {
-    std::error_code EC;
+    std::error_code EC = project_files::prepare(Input);
+    if (EC) {
+      WithColor::error() << "cannot create the project folder: " << EC.message()
+                         << "\n";
+      return false;
+    }
     raw_fd_ostream Out(BmPath, EC);
     if (EC) {
       WithColor::error() << "cannot write: " << EC.message() << "\n";
@@ -352,6 +370,7 @@ std::string functionAttributeText(const json::Object &Row) {
   };
 #define NEVERD_FUNCTION_FLAG(Member, Key) Note(Key);
 #define NEVERD_FUNCTION_COLOR(Key) Note(Key);
+#define NEVERD_FUNCTION_TYPE(Member, Key) Note(Key);
 #include "neverd/sdk/FunctionAttributes.def"
   return Text;
 }
@@ -427,7 +446,8 @@ int showFunctionAttributes(neverd_session_t Sess, uint64_t Addr) {
       Shown = Spelled->str();
     else if (const auto Count = Value ? Value->getAsInteger() : std::nullopt)
       Shown = std::to_string(*Count);
-    else if (Key == "color" || Key == "purged_bytes" || Key == "end")
+    else if (Key == "color" || Key == "purged_bytes" || Key == "end" ||
+             Key == "type")
       Shown = "-";
     if (Stated->get(Key))
       Shown += " (stated)";
@@ -442,6 +462,109 @@ int showFunctionAttributes(neverd_session_t Sess, uint64_t Addr) {
   Line("Static func", "static");
   Line("Color", "color");
   Line("Purged bytes", "purged_bytes");
+  Line("Type", "type");
+  return 0;
+}
+/// Show the declaration of the function at --declaration as IDA's Y edits
+/// it: its own, the one --check reads, or the one --retype makes, which
+/// --apply states as the function's type.
+int functionDeclaration(neverd_session_t Sess, uint64_t Addr) {
+  json::Object Options;
+  if (!FunctionCheck.empty() && !FunctionRetype.empty()) {
+    WithColor::error() << "--check and --retype work one at a time\n";
+    return 1;
+  }
+  if (!FunctionCheck.empty())
+    Options["declaration"] = FunctionCheck.getValue();
+  if (!FunctionRetype.empty()) {
+    const auto [Index, Type] = StringRef(FunctionRetype).split('=');
+    unsigned Position = 0;
+    if (Index.trim().getAsInteger(10, Position) || Type.trim().empty()) {
+      WithColor::error() << "--retype takes index=type, such as "
+                            "0='struct _KAPC *'\n";
+      return 1;
+    }
+    Options["parameter"] = static_cast<int64_t>(Position);
+    Options["type"] = Type.trim().str();
+  }
+  if (FunctionApply && Options.empty()) {
+    WithColor::error() << "--apply states the declaration --check or "
+                          "--retype gives\n";
+    return 1;
+  }
+  const std::string Request =
+      Options.empty() ? std::string()
+                      : formatv("{0}", json::Value(json::Object(Options)));
+  const char *Json = neverd_func_type_json(
+      Sess, Addr, Request.empty() ? nullptr : Request.c_str());
+  if (!Json) {
+    WithColor::error() << takeLastError(Sess) << "\n";
+    return 1;
+  }
+  auto Parsed = json::parse(Json);
+  neverd_free_string(Json);
+  json::Object *Row = Parsed ? Parsed->getAsObject() : nullptr;
+  if (!Row) {
+    consumeError(Parsed.takeError());
+    WithColor::error() << "the engine described the declaration as invalid "
+                          "JSON\n";
+    return 1;
+  }
+  const json::Array *Problems = Row->getArray("problems");
+  const std::string Declaration =
+      Row->getString("declaration").value_or("").str();
+  if (FunctionApply) {
+    if (Problems && !Problems->empty()) {
+      const json::Object *First = (*Problems)[0].getAsObject();
+      WithColor::error() << "the declaration does not read: "
+                         << First->getString("message").value_or("") << "\n";
+      return 1;
+    }
+    const std::string Edit =
+        formatv("{0}", json::Value(json::Object{{"type", Declaration}}));
+    if (neverd_func_edit(Sess, Addr, Edit.c_str()) != 0) {
+      WithColor::error() << "edit failed: " << takeLastError(Sess) << "\n";
+      return 1;
+    }
+    if (neverd_functions_save(Sess) != 0) {
+      WithColor::error() << "function edits save failed: "
+                         << takeLastError(Sess) << "\n";
+      return 1;
+    }
+    (*Row)["applied"] = true;
+  }
+  if (JsonOutput) {
+    outs() << json::Value(std::move(*Row)) << "\n";
+    return 0;
+  }
+  const char *Origin = FunctionApply             ? "stated"
+                       : !FunctionCheck.empty()  ? "checked"
+                       : !FunctionRetype.empty() ? "proposed"
+                       : Row->getBoolean("stated").value_or(false)
+                           ? "stated"
+                           : "as the decompiler prints it";
+  outs() << "\nFunction 0x" << utohexstr(Addr) << " (" << Origin << "):\n  "
+         << Declaration << "\n";
+  if (Problems && !Problems->empty()) {
+    for (const json::Value &Value : *Problems)
+      if (const json::Object *Problem = Value.getAsObject())
+        outs() << "  problem at " << Problem->getInteger("line").value_or(0)
+               << ":" << Problem->getInteger("column").value_or(0) << ": "
+               << Problem->getString("message").value_or("") << "\n";
+    return FunctionCheck.empty() ? 0 : 1;
+  }
+  if (const json::Array *Parameters = Row->getArray("parameters")) {
+    outs() << format("  %-5s %-20s %-28s %s\n", "#", "Name", "Type",
+                     "Arrives in");
+    size_t Index = 0;
+    for (const json::Value &Value : *Parameters)
+      if (const json::Object *Param = Value.getAsObject())
+        outs() << format(
+            "  %-5zu %-20s %-28s %s\n", Index++,
+            Param->getString("name").value_or("").str().c_str(),
+            Param->getString("type").value_or("").str().c_str(),
+            Param->getString("location").value_or("-").str().c_str());
+  }
   return 0;
 }
 } // namespace
@@ -451,9 +574,16 @@ int runFunctionEdits(neverd_session_t Sess) {
   const bool Delete = !FunctionDelete.empty();
   const bool Edit = !FunctionEdit.empty();
   const bool Show = !FunctionShow.empty();
-  if (Create + Delete + Edit + Show > 1) {
-    WithColor::error()
-        << "--create, --delete, --edit and --show work one at a time\n";
+  const bool Declaration = !FunctionDeclaration.empty();
+  if (Create + Delete + Edit + Show + Declaration > 1) {
+    WithColor::error() << "--create, --delete, --edit, --show and "
+                          "--declaration work one at a time\n";
+    return 1;
+  }
+  if (!Declaration &&
+      (!FunctionCheck.empty() || !FunctionRetype.empty() || FunctionApply)) {
+    WithColor::error() << "--check, --retype and --apply work with "
+                          "--declaration\n";
     return 1;
   }
   if (Edit == FunctionSet.empty()) {
@@ -461,11 +591,13 @@ int runFunctionEdits(neverd_session_t Sess) {
                                 : "--set needs the function --edit names\n");
     return 1;
   }
-  if (Create || Delete || Edit || Show) {
-    std::optional<uint64_t> Addr = parseAddrArg(Create   ? FunctionCreate
-                                                : Delete ? FunctionDelete
-                                                : Edit   ? FunctionEdit
-                                                         : FunctionShow);
+  if (Create || Delete || Edit || Show || Declaration) {
+    std::optional<uint64_t> Addr =
+        parseAddrArg(Create        ? FunctionCreate
+                     : Delete      ? FunctionDelete
+                     : Edit        ? FunctionEdit
+                     : Declaration ? FunctionDeclaration
+                                   : FunctionShow);
     if (!Addr) {
       WithColor::error() << "invalid function address\n";
       return 1;
@@ -482,6 +614,8 @@ int runFunctionEdits(neverd_session_t Sess) {
       return editFunctionAttributes(Sess, *Addr);
     if (Show)
       return showFunctionAttributes(Sess, *Addr);
+    if (Declaration)
+      return functionDeclaration(Sess, *Addr);
     if ((Create ? neverd_func_create : neverd_func_delete)(Sess, *Addr) != 0) {
       WithColor::error() << (Create ? "create" : "delete")
                          << " failed: " << takeLastError(Sess) << "\n";
@@ -557,6 +691,24 @@ StringRef valueItemKind(unsigned Bytes) {
 /// The row that makes the bytes at \p Addr the item the options ask for, or
 /// an error message.
 Expected<json::Object> itemRow(neverd_session_t Sess, uint64_t Addr) {
+  if (!ItemArray.empty())
+    return json::Object{{"kind", "array"},
+                        {"element_size", ItemElementSize.getNumOccurrences()
+                                             ? ItemElementSize.getValue()
+                                             : ItemSize.getValue()},
+                        {"count", ItemCount.getValue()},
+                        {"type", ItemType.getValue()}};
+  if (!ItemAlignment.empty()) {
+    const uint64_t Boundary = ItemBoundary;
+    if (Boundary < 2 || Boundary > ::neverd::sdk::kMaxDataItemAlignment ||
+        (Boundary & (Boundary - 1)))
+      return createStringError(inconvertibleErrorCode(),
+                               "alignment boundary must be a power of two "
+                               "from 2 to 1048576");
+    return json::Object{{"kind", "alignment"},
+                        {"alignment", Boundary},
+                        {"size", Boundary - Addr % Boundary}};
+  }
   if (!ItemData.empty()) {
     const StringRef Kind = valueItemKind(ItemSize);
     if (Kind.empty())
@@ -599,14 +751,34 @@ Expected<json::Object> itemRow(neverd_session_t Sess, uint64_t Addr) {
 } // namespace
 
 int runItems(neverd_session_t Sess) {
-  const std::string *Edits[] = {&ItemData.getValue(), &ItemString.getValue(),
-                                &ItemUndefine.getValue(),
-                                &ItemClear.getValue()};
+  if (ItemElementSize.getNumOccurrences() &&
+      (ItemArray.empty() || ItemSize.getNumOccurrences())) {
+    WithColor::error()
+        << "--element-size requires --array; choose --size or --element-size\n";
+    return 1;
+  }
+  if ((ItemArray.getNumOccurrences() && ItemArray.empty()) ||
+      (ItemAlignment.getNumOccurrences() && ItemAlignment.empty())) {
+    WithColor::error() << "--array and --alignment require an address\n";
+    return 1;
+  }
+  if ((ItemArray.empty() &&
+       (ItemCount.getNumOccurrences() || ItemType.getNumOccurrences())) ||
+      (ItemAlignment.empty() && ItemBoundary.getNumOccurrences()) ||
+      (!ItemAlignment.empty() && ItemSize.getNumOccurrences())) {
+    WithColor::error() << "--count and --type require --array; --boundary "
+                          "requires --alignment, which computes its own size\n";
+    return 1;
+  }
+  const std::string *Edits[] = {
+      &ItemData.getValue(),  &ItemString.getValue(), &ItemUndefine.getValue(),
+      &ItemClear.getValue(), &ItemArray.getValue(),  &ItemAlignment.getValue()};
   const auto Chosen =
       llvm::count_if(Edits, [](const std::string *E) { return !E->empty(); });
   if (Chosen > 1) {
     WithColor::error()
-        << "--data, --string, --undefine and --clear edit one item at a time\n";
+        << "--data, --string, --array, --alignment, --undefine and --clear "
+           "edit one item at a time\n";
     return 1;
   }
   if (Chosen == 1) {
@@ -651,7 +823,7 @@ int runItems(neverd_session_t Sess) {
   } else {
     outs() << "\nData items:\n";
     outs() << format("  %-18s %-10s %8s  %s\n", "Address", "Kind", "Size",
-                     "Encoding");
+                     "Details");
     outs() << "  " << std::string(50, '-') << "\n";
     size_t Count = 0;
     auto Parsed = json::parse(Json ? Json : "[]");
@@ -662,12 +834,24 @@ int runItems(neverd_session_t Sess) {
         const json::Object *Obj = V.getAsObject();
         if (!Obj)
           continue;
+        std::string Details = Obj->getString("encoding").value_or("").str();
+        if (Obj->getString("kind") == "array") {
+          Details =
+              std::to_string(Obj->getInteger("count").value_or(0)) +
+              " elements x " +
+              std::to_string(Obj->getInteger("element_size").value_or(0)) +
+              " bytes";
+          if (const auto Type = Obj->getString("type"))
+            Details += ", " + Type->str();
+        } else if (Obj->getString("kind") == "alignment")
+          Details = "boundary " +
+                    std::to_string(Obj->getInteger("alignment").value_or(0));
         outs() << format(
             "  %-18s %-10s %8lld  %s\n",
             Obj->getString("addr").value_or("").str().c_str(),
             Obj->getString("kind").value_or("").str().c_str(),
             static_cast<long long>(Obj->getInteger("size").value_or(0)),
-            Obj->getString("encoding").value_or("").str().c_str());
+            Details.c_str());
         ++Count;
       }
     }
@@ -679,6 +863,18 @@ int runItems(neverd_session_t Sess) {
 }
 
 int runOperands(neverd_session_t Sess) {
+  if ((OperandEnum.getNumOccurrences() && OperandEnum.empty()) ||
+      (OperandFlags.getNumOccurrences() && OperandEnum.empty()) ||
+      (!OperandEnum.empty() &&
+       (OperandAddr.empty() || OperandClear || !OperandStruct.empty() ||
+        OperandNegate || OperandInvert || OperandDelta.getNumOccurrences() ||
+        (OperandBase != "number" && OperandBase != "enum")))) {
+    WithColor::error()
+        << "--enum requires --addr and a type; --flags goes with --enum. "
+           "Do not combine enum formatting with --clear, --struct, --delta, "
+           "--negate, --invert or another --base\n";
+    return 1;
+  }
   if (!OperandAddr.empty()) {
     const std::optional<uint64_t> Addr = parseAddrArg(OperandAddr);
     if (!Addr) {
@@ -686,12 +882,32 @@ int runOperands(neverd_session_t Sess) {
       return 1;
     }
     std::string Format;
-    if (!OperandClear)
-      Format = formatv("{0}", json::Value(json::Object{
-                                  {"base", OperandBase.getValue()},
-                                  {"negate", OperandNegate.getValue()},
-                                  {"invert", OperandInvert.getValue()}}))
-                   .str();
+    if (!OperandStruct.empty() && OperandBase.getValue() != "number" &&
+        OperandBase.getValue() != "struct") {
+      WithColor::error() << "--struct shows a structure offset; leave out "
+                            "--base\n";
+      return 1;
+    }
+    if (OperandStruct.empty() && OperandDelta != 0) {
+      WithColor::error() << "--delta goes with --struct\n";
+      return 1;
+    }
+    if (!OperandClear) {
+      json::Object Object{{"base", OperandStruct.empty()
+                                       ? OperandBase.getValue()
+                                       : std::string("struct")},
+                          {"negate", OperandNegate.getValue()},
+                          {"invert", OperandInvert.getValue()}};
+      if (!OperandEnum.empty()) {
+        Object["base"] = "enum";
+        Object["type"] = OperandEnum.getValue();
+        Object["flags"] = OperandFlags.getValue();
+      } else if (!OperandStruct.empty()) {
+        Object["type"] = OperandStruct.getValue();
+        Object["delta"] = static_cast<int64_t>(OperandDelta.getValue());
+      }
+      Format = formatv("{0}", json::Value(std::move(Object))).str();
+    }
     if (neverd_operand_format_set(Sess, *Addr, static_cast<int>(OperandIndex),
                                   OperandClear ? nullptr : Format.c_str()) !=
         0) {
@@ -736,6 +952,13 @@ int runOperands(neverd_session_t Sess) {
             Changes += "sign ";
           if (Operand->getBoolean("invert").value_or(false))
             Changes += "bits ";
+          if (std::optional<StringRef> Type = Operand->getString("type")) {
+            Changes += Type->str();
+            if (Operand->getBoolean("flags").value_or(false))
+              Changes += ", flags";
+            if (const int64_t Delta = Operand->getInteger("delta").value_or(0))
+              Changes += ", delta " + std::to_string(Delta);
+          }
           outs() << format(
               "  %-18s %-8lld %-10s %s\n",
               Object->getString("addr").value_or("").str().c_str(),

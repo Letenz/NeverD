@@ -7,6 +7,7 @@
 #include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 
+#include "neverd/emulation/AddressSpace.h"
 #include "neverd/emulation/CPU.h"
 
 #include "llvm/Support/Endian.h"
@@ -191,6 +192,41 @@ TEST_P(InstructionFetch, HostAliasWriteAndContextRestoreUseFreshBytes) {
   EXPECT_EQ(value(PCRegister), Code + Next.size() - nopSize());
 }
 
+TEST_P(InstructionFetch, GuestAliasStoreRetiresAnAlreadyExecutedTarget) {
+  const auto Program = bytes(RewriteX64, RewriteARM);
+  llvm::cantFail(CPU->write(Code, Program));
+  const auto Target = Code + (X64 ? 2 : 4);
+  const auto End = Code + Program.size() - nopSize();
+  for (unsigned Round = 0; Round != 3; ++Round) {
+    auto Exit = run(Target, End);
+    ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+    EXPECT_EQ(value(Result), FirstValue);
+  }
+  llvm::cantFail(CPU->writeRegister(
+      Pointer, {Alias + (X64 ? X64PatchOffset : ARMPatchOffset), 0}));
+  llvm::cantFail(
+      CPU->writeRegister(Source, {X64 ? SecondValue : ARMReplacement, 0}));
+  const auto Exit = run(Code, End);
+  ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+  EXPECT_EQ(value(Result), SecondValue);
+  EXPECT_EQ(value(PCRegister), End);
+}
+
+TEST_P(InstructionFetch, ReusedExecuteOnlyCodeStillObservesAliasChanges) {
+  llvm::cantFail(CPU->protect(Code, PageSize, Execute | UserAccessible));
+  for (unsigned Round = 0; Round != 3; ++Round) {
+    const auto Program =
+        Round == 1 ? bytes(SecondX64, SecondARM) : bytes(FirstX64, FirstARM);
+    llvm::cantFail(CPU->write(Alias, Program));
+    for (unsigned Repeat = 0; Repeat != 3; ++Repeat) {
+      llvm::cantFail(CPU->writeRegister(Result, {0, 0}));
+      const auto Exit = run(Code, Code + Program.size() - nopSize());
+      ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+      EXPECT_EQ(value(Result), Round == 1 ? SecondValue : FirstValue);
+    }
+  }
+}
+
 TEST_P(InstructionFetch, ExecutePermissionIsRecheckedAfterResumption) {
   auto Exit = program(bytes(FirstX64, FirstARM));
   ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
@@ -204,6 +240,64 @@ TEST_P(InstructionFetch, ExecutePermissionIsRecheckedAfterResumption) {
   EXPECT_EQ(Exit.Fault->Address, Code);
   EXPECT_EQ(Exit.Fault->Access, BackendAccessKind::Execute);
   EXPECT_EQ(Seen, 0u);
+  EXPECT_EQ(value(Result), FirstValue);
+}
+
+TEST_P(InstructionFetch,
+       ExternalDeviceMappingsRetainEntryAdmissionAfterWarmRuns) {
+  const auto Program = bytes(FirstX64, FirstARM);
+  const uint64_t End = Code + Program.size() - nopSize();
+  auto Exit = program(Program);
+  ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+  EXPECT_EQ(value(Result), FirstValue);
+  auto Space = CPU->addressSpace();
+  llvm::cantFail(Space->unmapAlias(Alias, PageSize));
+  unsigned DeviceCalls = 0, Observations = 0;
+  GuestMMIOCallbacks IO;
+  IO.Validate = [&](uint64_t, uint64_t, bool) {
+    ++DeviceCalls;
+    return llvm::Error::success();
+  };
+  IO.Read = [&](uint64_t, unsigned) -> llvm::Expected<uint64_t> {
+    ++DeviceCalls;
+    return FirstValue;
+  };
+  IO.Write = [&](uint64_t, unsigned, uint64_t) {
+    ++DeviceCalls;
+    return llvm::Error::success();
+  };
+  llvm::cantFail(Space->mapMMIO(Alias, PageSize, std::move(IO)));
+  BackendHooks Hooks;
+  Hooks.Instruction = [&](uint64_t PC, uint32_t) {
+    ++Observations;
+    if (PC == End)
+      CPU->stop();
+  };
+  llvm::cantFail(CPU->installHooks(std::move(Hooks)));
+  const bool User =
+      GetParam().Contract == ExecutionContract::CheckedUserX64 ||
+      GetParam().Contract == ExecutionContract::CheckedUserAArch64;
+  for (unsigned Attempt = 0; Attempt < 2; ++Attempt) {
+    llvm::cantFail(CPU->writeRegister(Result, {SecondValue, 0}));
+    auto Outcome = CPU->runUntilExit(Code, Timeout);
+    if (User) {
+      ASSERT_FALSE(bool(Outcome));
+      EXPECT_NE(llvm::toString(Outcome.takeError()).find("device mapping"),
+                std::string::npos);
+      EXPECT_EQ(value(Result), SecondValue);
+      EXPECT_EQ(value(PCRegister), End);
+      EXPECT_EQ(Observations, 0u);
+    } else {
+      ASSERT_TRUE(bool(Outcome)) << llvm::toString(Outcome.takeError());
+      EXPECT_EQ(Outcome->Kind, ExecutionExitKind::Stopped)
+          << Outcome->Diagnostic;
+      EXPECT_EQ(value(Result), FirstValue);
+    }
+  }
+  EXPECT_EQ(DeviceCalls, 0u);
+  llvm::cantFail(Space->unmapMMIO(Alias, PageSize));
+  Exit = run(Code, End);
+  EXPECT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
   EXPECT_EQ(value(Result), FirstValue);
 }
 
@@ -263,6 +357,69 @@ TEST_P(InstructionFetch, InvalidTailNeverExecutesThePreviousInstruction) {
   EXPECT_EQ(value(PCRegister), Start);
   EXPECT_EQ(value(Result), FirstValue);
   EXPECT_EQ(Seen, 0u);
+}
+
+TEST_P(InstructionFetch, HostOperandWriteRefreshesAnInstructionAtThePageTail) {
+  // The x64 immediate crosses into a separately backed page. Changing only
+  // its tail must retire the whole cached instruction at its original start.
+  llvm::cantFail(CPU->mapAlias(Code + PageSize, Data, PageSize,
+                               Read | Write | Execute | UserAccessible));
+  const auto Program = bytes(FirstX64, FirstARM);
+  const uint64_t Start = Code + PageSize - CrossingPrefix;
+  llvm::cantFail(CPU->write(Start, Program));
+  const uint64_t End = Start + Program.size() - nopSize();
+  auto Exit = run(Start, End);
+  ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+  EXPECT_EQ(value(Result), FirstValue);
+
+  // Both changes leave the first byte of the instruction untouched. The ARM
+  // instruction is aligned and stays wholly on the first page.
+  const uint8_t Replacement = X64 ? 1 : 0x21;
+  const uint64_t Patch = X64 ? Data : Alias + PageSize - CrossingPrefix + 1;
+  llvm::cantFail(CPU->write(Patch, {Replacement}));
+  Exit = run(Start, End);
+  ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+  EXPECT_EQ(value(Result), X64 ? X64ChangedOperand : ARMChangedOperand);
+  EXPECT_EQ(value(PCRegister), End);
+}
+
+TEST_P(InstructionFetch, HostWriteAfterStopRefreshesAnUnexecutedInstruction) {
+  auto Program = bytes(FirstX64, FirstARM);
+  Program.resize(Program.size() - nopSize());
+  const uint64_t Next = Code + Program.size();
+  const auto Second = bytes(SecondX64, SecondARM);
+  Program.insert(Program.end(), Second.begin(), Second.end());
+  llvm::cantFail(CPU->write(Code, Program));
+  auto Exit = run(Code, Next);
+  ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+  EXPECT_EQ(value(Result), FirstValue);
+  // The preceding translation may have decoded this address, but it has not
+  // executed. A stopped host write can change its opcode and length as well.
+  const auto Replacement = bytes(FirstX64, FirstARM);
+  llvm::cantFail(CPU->write(Alias + Next - Code, Replacement));
+  llvm::cantFail(CPU->writeRegister(Result, {0, 0}));
+  Exit = run(Next, Next + Replacement.size() - nopSize());
+  ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+  EXPECT_EQ(value(Result), FirstValue);
+}
+
+TEST_P(InstructionFetch, RepeatedStepsRetainExactLoopAndStopState) {
+  const auto Program = bytes(LoopX64, LoopARM);
+  llvm::cantFail(CPU->write(Code, Program));
+  llvm::cantFail(CPU->writeRegister(Result, {0, 0}));
+  unsigned Seen = 0;
+  BackendHooks Hooks;
+  Hooks.Instruction = [&](uint64_t PC, uint32_t) {
+    if (++Seen == 2 * LoopIterations + 1) {
+      EXPECT_EQ(PC, Code);
+      CPU->stop();
+    }
+  };
+  const auto Exit = run(Code, Code + Program.size(), std::move(Hooks));
+  ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+  EXPECT_EQ(value(Result), LoopIterations);
+  EXPECT_EQ(value(PCRegister), Code);
+  EXPECT_EQ(Seen, 2 * LoopIterations + 1);
 }
 
 TEST_P(InstructionFetch, ReentrantRunCannotOverwriteTheOuterInstruction) {

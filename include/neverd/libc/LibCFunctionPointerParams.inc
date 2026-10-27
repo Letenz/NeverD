@@ -41,6 +41,10 @@ LIBC_FUNCTION_POINTER_PARAM("lsearch", 4, "int (*)(const void *, const void *)")
 LIBC_FUNCTION_POINTER_PARAM("scandir", 2, "int (*)(const struct dirent *)")
 LIBC_FUNCTION_POINTER_PARAM(
     "scandir", 3, "int (*)(const struct dirent **, const struct dirent **)")
+LIBC_FUNCTION_POINTER_PARAM("scandir64", 2, "int (*)(const struct dirent64 *)")
+LIBC_FUNCTION_POINTER_PARAM(
+    "scandir64", 3,
+    "int (*)(const struct dirent64 **, const struct dirent64 **)")
 
 // link.h
 LIBC_FUNCTION_POINTER_PARAM("dl_iterate_phdr", 0,

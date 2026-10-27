@@ -12,7 +12,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
-#include "neverd/ir/med/X86RegistrationCall.h"
+#include "neverd/ir/med/X86/X86RegistrationCall.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/support/BinaryEncoding.h"

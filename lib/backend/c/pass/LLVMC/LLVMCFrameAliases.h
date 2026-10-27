@@ -6,6 +6,8 @@
 #ifndef NEVERD_LIB_BACKEND_C_PASS_LLVMC_FRAMEALIASES_H
 #define NEVERD_LIB_BACKEND_C_PASS_LLVMC_FRAMEALIASES_H
 
+#include "neverd/backend/Limits.h"
+
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Instructions.h"
@@ -73,7 +75,10 @@ inline FrameAliases peelSyntheticFrames(const llvm::Value *V,
                      std::set<const llvm::Value *>)>
       Walk = [&](const llvm::Value *Cur, int64_t Off, bool FromLoad,
                  std::set<const llvm::Value *> Seen) {
-        if (!Cur || !Seen.insert(Cur).second || ++Visits > 128) {
+        if (!Cur || !Seen.insert(Cur).second ||
+            ++Visits >
+                ::neverd::limits::backend::
+                    kLLVMCFrameAliasesPeelSyntheticFramesWalkWalkVisitsLimit) {
           Result.Incomplete = true;
           return;
         }
@@ -143,8 +148,9 @@ inline FrameAliases peelSyntheticFrames(const llvm::Value *V,
             Walk(Base, Adjusted, false, Seen);
         };
         if (const auto *GEP = llvm::dyn_cast<llvm::GEPOperator>(Cur)) {
-          llvm::APInt Acc(64, 0);
-          if (GEP->accumulateConstantOffset(DL, Acc))
+          llvm::APInt Acc(DL.getIndexSizeInBits(GEP->getPointerAddressSpace()),
+                          0);
+          if (GEP->accumulateConstantOffset(DL, Acc) && Acc.isSignedIntN(64))
             return Adjust(GEP->getPointerOperand(), Acc.getSExtValue());
           if (GEP->getNumOperands() == 2)
             if (const auto *CI =

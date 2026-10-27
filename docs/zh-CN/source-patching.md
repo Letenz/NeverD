@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: e9f75b83d2e57f9899d8319d6750fa790f310da19f83d7c653dfc2c987ea3621 -->
+<!-- i18n-source: 40bc95b0497bcc23428886f1765116ce87275a1507ae139a70be4896271650a7 -->
 
 [← Documentation Index](README.md)
 
@@ -65,9 +65,9 @@ Clang 的 LLVM IR 路径也接入 Windows ARM64 C++ FH3，核对编译器拥有�
 
 | 编译器 | 制品 | 已验证的操作系统运行配置 |
 |---|---|---|
-| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++；Mach-O x64/ARM64 C/C++；PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| Clang 22.1.6 | 原生对象 | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
-| GCC/G++ 13.3.0 | 原生对象 | ELF x64/ARM64 C/C++，需要兼容的 Itanium 运行库; ELF x86 C (`qemu-user`); ELF ARM32 C (ARM/Thumb, `qemu-user`) |
+| Clang 22.1.x | LLVM IR | ELF x64/ARM64 C/C++；Mach-O x64/ARM64 C/C++；PE x86/x64/ARM64 C; PE x64/ARM64 C++ FH3; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
+| Clang 22.1.6 | 原生对象 | ELF x64/ARM64 C/C++; PE x86/x64/ARM64 C; Mach-O x64/ARM64 C; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
+| GCC/G++ 13.3.0 | 原生对象 | ELF x64/ARM64 C/C++，需要兼容的 Itanium 运行库; ELF x86 C (`compatibility`, `qemu-user`); ELF ARM32 C (ARM/Thumb, `compatibility`, `qemu-user`) |
 | NeverC 3389.1.5 普通模式 | LLVM IR | ELF x64 C；Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 普通模式 | 原生对象 | ELF x64 C |
 | NeverC 3389.1.5 C | LLVM IR / 原生对象 | ELF / PE / Mach-O x64/ARM64: 纯 C 源代码 |
@@ -92,21 +92,48 @@ CPU 矩阵要求十二种组合的源码、外部 IR 和原生对象均成功安
 GCC C 对象也在 ELF x86、ARM32、ARM64 上完成安装，并通过 Linux QEMU user mode 执行。适配器从镜像选择 ARM/Thumb 模式，GNU property 记录按 ELF 指针宽度对齐。
 
 <!-- i18n-section: references -->
-## 原程序引用与存储
+## 原实现回调、布局扩容与新增依赖
 
-绑定对应外部声明：`function` 要求已确认的原函数或导入桩；`data` 要求可写存储；`const` 要求 IR 中为 const 声明。对象数据绑定必须提供非零范围。范围不能跨越存储边界，也不能赋予 RELRO 写权限。不能回调被替换函数的原始函数体：此配置尚无保存原序言的回调跳板。
+绑定对应外部声明。`function` 验证原函数或导入桩；`data` 要求可写存储；`const` 要求常量 IR 声明。对象数据绑定必须给出非零范围，不能跨越存储边界或授予 RELRO 写权限。调用被替换函数的原实现时，必须显式使用 `original`。公开入口仍进入替换函数；保存的入口执行按完整指令重定位的前缀，再跳回原函数后续部分。源码、外部 IR 和原生对象共享此契约，包括浮点与栈参数和多个回调。
 
-新代码保持 RX，新可变状态保持 RW。只复用已有导入，并区分 GOT/IAT 槽与可调用桩。Mach-O 需要空余加载命令空间，例如 `-Wl,-headerpad,0x400`；PE 需要空余节头空间。空间不足会失败。ELF `.data.rel.ro` 和原 CET/IBT 保护需要额外契约，目前明确拒绝。
+回调必须验证函数边界、指令模式、继续执行地址和展开证据。未知指令、不安全的 PC 相对引用、跳入复制前缀的分支、不支持的加载重定位、重叠回调和未建模的带处理器序言都会在发布前失败。调用者仍须提供 ABI 匹配的声明。凭据通过 `original_callbacks` 记录保存的入口地址。
+
+PE32/PE32+ 可通过移动文件内存储范围并更新已建模的调试、符号、证书和附加数据指针，扩容已满的节头表，同时保留原 RVA。Mach-O x64/ARM64 PIE 在相邻 page-zero 保护区和末尾 linkedit 段满足条件时，可通过经过检查的头部前缀扩展取得命令和展开存储，原代码／数据地址保持不变。此配置不要求 `-Wl,-headerpad,0x400` 或相邻的空闲展开页。显式头部地址引用、未知加载命令、混合代码／数据归属、损坏范围和不支持的布局会被拒绝。安装前统一规划头部空间和展开容量。
+
+新代码保持 RX，可变状态保持 RW。显式 `--dependency` 请求通过 ELF 动态元数据、PE 导入描述符／IAT 或 Mach-O dylib／bind 元数据新增函数或数据导入。原导入身份、序号和版本记录保持稳定；槽位与可调用桩保留各自含义。库名／路径应符合目标 OS 加载器的规则。下例使用 ELF 共享库名。执行时缺库或缺符号必须产生真实加载器错误。TLS、IFUNC、新符号版本契约、加载期构造器和未建模重定位仍不支持；ELF `.data.rel.ro` 和 CET/IBT 仍需额外契约。 原生 COFF 对象必须用 `__declspec(dllimport)` 声明新增函数／数据导入，使重定位明确指向 IAT；普通的直接外部引用会被拒绝。
 
 ```sh
+# ELF example: the original target is at 0x401140.
 neverd patch app --from-source=replacement.c --entry=replacement --func=0x401140 \
+  --bind=original:saved_target=0x401140 \
   --bind=function:original_helper=0x401190 \
   --bind=data:shared_counter=0x404020:4 \
   --bind=const:lookup_table=0x402040:64 \
+  --dependency=function:extra_function=libpatch_extra.so \
+  --dependency=data:extra_state=libpatch_extra.so \
   --patch-report -o app.bound
 ```
 
-Mach-O 展开表增长还需要相邻的空余文件与虚拟空间；仅预留头部空间并不能满足这一要求。测试样本分别处理这两种空间限制。
+追加式、按结构大小检查的依赖选项适用于源码、外部 IR 和原生对象请求。凭据包含 `added_imports`；重新加载候选文件后再次核对全部回调、导入、存储权限和安装字节。失败保留输入和任何已有目标文件。
+
+<!-- i18n-section: examples -->
+## 可运行示例
+
+[完整 Windows/macOS/Linux 示例](../../examples/source-patch/README.md) 包含原程序、替换函数和依赖库源码、构建命令及真实宿主中的 Python SDK 插件。在仓库根目录运行，使用启用 Python 的 NeverD 构建和新的输出目录。
+
+```sh
+# Linux / macOS
+python3 examples/source-patch/run.py --neverd build-example-host/bin/neverd --clang clang --output build-example-native
+```
+
+```powershell
+# Windows: Visual Studio developer PowerShell
+python examples/source-patch/run.py --neverd build-example-host/bin/neverd.exe --clang clang --output build-example-native
+```
+
+默认运行两条路径；可加 `--api cli` 或 `--api sdk` 单独选择。目标地址自动发现。输入 `7` 时，原程序输出 `8`，两种补丁均输出 `36`。驱动检查真实执行、凭据和缺库加载失败，完整构建与 patch 命令保存在 `commands.json`。
+
+CLI 与宿主 Python SDK 示例已在 Linux、macOS、Windows 的 x64/ARM64 原生实跑：54 次执行、12 次真实缺库拒绝。[各平台 CI 与实际源码](../../examples/source-patch/README.md#native-validation)。
 
 <!-- i18n-section: exceptions -->
 ## C++ 异常
@@ -128,15 +155,37 @@ ELF 使用编译器的 FDE/LSDA；Mach-O 使用紧凑展开/DWARF。PE x64/ARM64
 report = session.patch_source(
     replacement_source, "app.patched",
     mappings={"replacement": original_address},
-    compiler="gcc", compiler_path="/path/to/gcc", artifact="object",
-    bindings={"shared_counter": ("data", original_counter_address, 4)},
+    compiler="clang", compiler_path="/path/to/clang", artifact="object",
+    bindings={
+        "saved_target": ("original", original_address),
+        "shared_counter": ("data", original_counter_address, 4),
+    },
+    dependencies={
+        "extra_function": ("libpatch_extra.so", "function"),
+        "extra_state": ("libpatch_extra.so", "data"),
+    },
 )
 ```
 
 <!-- i18n-section: verification -->
 ## 构建与验证
 
-通过 `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` 指定兼容的源码编译器（已验证 Clang 22.1.6）。集成构建只修正构建目录中的 LLVM 副本，不改子模块或共享预编译缓存。r3/r4 预编译版的 x64 PLT 问题可能导致 IR patch 被拒绝；原生对象避开该 MC 路径。`NEVERD_TEST_REQUIRE_FIXED_LLVM=1` 要求编译器生成精确且已修正的 PLT 引用。
+六个选定的原生 OS／ISA 任务均零失败、零跳过：3669 次 GoogleTest 执行、1008 次原生进程观测（504 次功能、504 次 C++ 异常）、12 次真实加载拒绝、96 个镜像和 84 份发布凭据。
+
+| 主机 | 源码 | Harness | CI 任务 | 测试 | 观测／拒绝 |
+|---|---|---|---|---|---|
+| Linux x64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845056048](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845056048) | 626 | 168 / 2 |
+| Linux ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [197126208b6](https://github.com/gmh5225/test_mac_intel/commit/197126208b665bec0db5c6dc74278931300229af) | [116845055863](https://github.com/gmh5225/test_mac_intel/actions/runs/38861651227/job/116845055863) | 600 | 168 / 2 |
+| macOS Intel | [b7a180c7ac3](https://github.com/NeverSight/NeverD/commit/b7a180c7ac35fc2f05be3568a86104d42fc32800) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117185095063](https://github.com/gmh5225/test_mac_intel/actions/runs/38963782346/job/117185095063) | 624 | 168 / 2 |
+| macOS ARM64 | [61fb1d3e759](https://github.com/NeverSight/NeverD/commit/61fb1d3e759f6796d23341782e7f4d624295f27c) | [f6311a611e0](https://github.com/gmh5225/test_mac_intel/commit/f6311a611e095bcffb7537c7ae3b40c826d1e2e1) | [116879179194](https://github.com/gmh5225/test_mac_intel/actions/runs/38872352550/job/116879179194) | 624 | 168 / 2 |
+| Windows x64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [a42b117681f](https://github.com/gmh5225/test_mac_intel/commit/a42b117681f81d922e09d98ccb1a1c4525055947) | [116908799030](https://github.com/gmh5225/test_mac_intel/actions/runs/38881414688/job/116908799030) | 598 | 168 / 2 |
+| Windows ARM64 | [76ce83e138d](https://github.com/NeverSight/NeverD/commit/76ce83e138de639b8d75206c78bd5ccbb9cfd8dd) | [cba0906a114](https://github.com/gmh5225/test_mac_intel/commit/cba0906a11461d6e29bbe68f9337515fe084b610) | [117014878954](https://github.com/gmh5225/test_mac_intel/actions/runs/38913475295/job/117014878954) | 597 | 168 / 2 |
+
+这些产物只验收下表的实际源码与 harness 提交；后续 dev 整合和文档提交另有本机及文档检查。早期失败或取消的任务仍保留为失败。历史 216 次补充观测、PE ARM32 及旧 32 位 Apple 的 CPU／兼容层结果，不构成新能力的原生硬件或 C++ 异常证明。
+
+Windows ARM64 验收使用原生 ARM64 Unicorn C DLL：以固定子模块和已验证的 LLVM-MinGW 工具链真实构建，生成 MSVC 导入库并显式覆盖 CMake 目标。隔离的构建副本认证三项主机修正：非 SEH 跳转函数对、带指令缓存同步的 ARM64 页面提交回调，以及适配 Windows LLP64 的 64 位立即数掩码。子模块源码及版本不变。这证明 CPU 矩阵测试主机可用，不代表默认 MSVC ARM64 JIT 已受支持。五项主机恢复检查与补丁进程的原生执行、C++ 异常证据分开记录。
+
+通过 `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` 指定兼容的源码编译器（已验证 Clang 22.1.6）。集成构建直接编译所记录的 NeverSight LLVM fork，重定位修正在 fork 中维护；NeverD 不再应用 LLVM 源码补丁。r3/r4 预编译版的 x64 PLT 问题可能导致 IR patch 被拒绝；原生对象避开该 MC 路径。`NEVERD_TEST_REQUIRE_FIXED_LLVM=1` 要求编译器生成精确且已修正的 PLT 引用。
 
 `NeverDSourcePatchTests` 包含原生 C/API/对象/异常用例；`NeverDSourcePatchMatrixTests` 使用 Unicorn 检查所有目标组合。配置 `NEVERD_TEST_WINDOWS_CRT_LIB`、`NEVERD_TEST_WINDOWS_UCRT_LIB` 和 `NEVERD_TEST_WINDOWS_SDK_LIB` 后，`SourcePatchPE` 执行七种 C++ 场景。非 Windows 宿主还需要 `NEVERD_TEST_WINDOWS_RUNNER`。`NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` 使缺少运行输入成为失败。Windows 专项工作流要求原生执行且拒绝跳过用例。
 
@@ -154,7 +203,7 @@ ctest --test-dir build-source -L \
   --output-on-failure --parallel 4
 ```
 
-LLVM 构建副本还修正了 Mach-O x64 的 GOT 数据引用：Clang 的类型捕获表以四字节重定位字段末尾为基准。r3/r4 预编译版会偏移四字节；发布前检查会拒绝未修正的结果。开发 Mac 的 x64 Mach-O 用例通过 Rosetta 2 执行，ARM64 用例直接执行。
+LLVM fork 还修正了 Mach-O x64 的 GOT 数据引用：Clang 的类型捕获表以四字节重定位字段末尾为基准。r3/r4 预编译版会偏移四字节；发布前检查会拒绝未修正的结果。开发 Mac 的 x64 Mach-O 用例通过 Rosetta 2 执行，ARM64 用例直接执行。
 
 Windows x64 原生验收 [2ed7e78fc](https://github.com/NeverSight/NeverD/actions/runs/38307461805) 的 16 个 PE/对象/trampoline 专项用例和 143 个 CPU 目标矩阵用例全部通过，无跳过。FH3 用例执行了七种 C++ 运行场景；目标矩阵使用 Unicorn。该轮使用 Clang 22.1.6、原生 MSVC、Windows SDK 和集成 LLVM。
 
@@ -187,10 +236,33 @@ AArch64 指令重定位要求显式 RELA 加数。隐式 REL 指令加数会在�
 
 同一工作流要求 Windows x64 上的 Windows x86 执行 30 次、Linux x64 上的 Linux x86 执行 48 次，并通过 QEMU 用户模式执行 96 次 Linux ARM32 观测，ARM 与 Thumb 各占一半。Linux 检查包含匹配目标的 GCC 对象。每种场景重复三次。报告区分 `native`、`compatibility`、`rosetta` 和 `qemu-user`，同时记录目标架构与实际宿主架构。Rosetta 不能满足 Intel 原生执行要求。
 
-全部 14 个 CPU 目标配置仍由 154 项源码／IR／对象矩阵覆盖。PE ARM32、Mach-O i386、ARMv7 iOS 和 ARMv7k watchOS 目前有 CPU 验证，不据此宣称原生 OS 加载器或 C++ 展开器验证通过。NeverC 继续只支持 x64／ARM64 纯 C；32 位编译由 Clang 和匹配目标的 ELF GCC 驱动承担。验证器不会构建或修改 NeverC。
+全部 14 个 CPU 目标配置仍由 283 项源码／IR／对象矩阵覆盖。PE ARM32、Mach-O i386、ARMv7 iOS 和 ARMv7k watchOS 目前有 CPU 验证，不据此宣称原生 OS 加载器或 C++ 展开器验证通过。NeverC 继续只支持 x64／ARM64 纯 C；32 位编译由 Clang 和匹配目标的 ELF GCC 驱动承担。验证器不会构建或修改 NeverC。
 
 Windows x64 和 ARM64 还会各自执行 36 次 Clang C++ FH3 观测。
 
 Mach-O 的可写指针用例在执行时建立指针；静态地址初始化仍需尚不支持的运行时重定位注册，并有明确拒绝的回归测试。ELF 零大小 COMDAT 函数仅在签名是其可执行节起点处的唯一函数、且 CFI 精确覆盖整个节时才被接受。节内偏移、共享、填充、无分组和缺少 CFI 的情况继续拒绝。
 
 ELF ARM 与 Thumb 使用独立配置。源码编译器明确接收 `-marm` 或 `-mthumb`，原生函数绑定保留原函数的指令状态位。32 位 ELF 进程使用具有真实动态重定位的 PIE 镜像。ARM32 QEMU 执行会记录显式 glibc `--loader` 和 sysroot：QEMU 的 AUXV 计算没有像 Linux 内核那样处理迁移后的程序头。该路径验证 QEMU 下的 glibc 加载与执行，不代表 ARM32 真机或原生内核加载器验证。
+
+对于这些补丁后的 ELF 镜像，Linux x86 与 ARM32 的 `qemu-user` 路径都需要显式使用匹配目标架构的 sysroot 中的 glibc `--loader`。Linux x86 的 `compatibility` 路径使用 Linux x64 宿主内核的 32 位兼容支持，并与 QEMU 执行分别记录；它不能证明在原生 32 位 x86 主机上执行。
+
+[`fcee81c9a5e2f20a71090ade23ae833175f64c59` 的进程验证](https://github.com/NeverSight/NeverD/actions/runs/38694434082)通过全部 750 次观测：匹配主机上的 576 次原生执行、78 次 x86 兼容模式执行，以及 QEMU 用户模式下的 96 次 ARM／Thumb 执行。独立产物审计核对了全部 126 个镜像的哈希、执行身份和完整场景清单。[Windows 重建验收](https://github.com/NeverSight/NeverD/actions/runs/38694628242)通过 194 项专项检查和 474 次 Windows／Linux 进程观测。[Linux 重建验收](https://github.com/NeverSight/NeverD/actions/runs/38694638358)通过 444 项检查，包含原来的全部 62 项失败和 46 项跳过，零失败、零跳过。这些结果保留上述硬件与加载器验证边界；NeverC 仍为纯 C，未修改其仓库。
+
+补充的 [ARM/Thumb 验证](https://github.com/gmh5225/test_mac_intel/actions/runs/38750504263)在 `ubuntu-24.04-arm` 上执行了 `fcee81c9a5e2f20a71090ade23ae833175f64c59` 的 32 个 C 测试镜像，全部 96 次观测通过（ARM 与 Thumb 各 48 次）。Linux 内核通过 `/lib/ld-linux-armhf.so.3` 直接加载镜像，未使用 QEMU 或显式加载器命令。这属于 ARM64 主机上的 `compatibility`，不是原生 32 位主机验证。测试入口提交 `3ad17ac9608d6bd9f5a4d44953ec375524e5730b` 与镜像提交分别记录。独立产物审计核对了镜像哈希、全部 30 份发布回执、完整场景及重复次数，并确认没有匹配这些镜像的 `binfmt_misc` 解释器规则。
+
+另行执行的[托管 runner 探测](https://github.com/gmh5225/test_mac_intel/actions/runs/38749138719)确认，所提供的 Windows 11 ARM64 runner 以 `WinError 216` 拒绝启动 ARM32 程序。在 macOS 15.7.9 和 Xcode 16.4 环境中，现有 SDK 无法链接 macOS i386 或 iOS ARMv7 程序。watchOS ARMv7k 程序链接成功，但未取得实体设备执行证据。探测任务成功不等于这些平台通过验证；其原生硬件覆盖仍未补齐。NeverC 未被构建或修改。
+
+补充的[个人 Actions Linux 验证](https://github.com/gmh5225/test_mac_intel/actions/runs/38773830274)在完整 QEMU TCG ARM32 客体中通过了 96 次 ARM/Thumb 执行，客体使用 32 位 Linux 内核和 glibc；同一客体内的 Wine 另通过 30 次 PE ARM32 执行。ELF 镜像由客体内核直接加载，这是整机模拟，与需要显式加载器的 `qemu-user` 路径分别记录。ARM64 宿主兼容层上的 Wine 注册表安装仅作为安装证据，计入零次补丁执行。客体内的 Wine 初始化和每次测量执行都必须在原定时限内成功。
+
+[Apple 兼容性验证](https://github.com/gmh5225/test_mac_intel/actions/runs/38771214358)通过了 Linux 上 Darling 的 30 次 Mach-O i386 执行，以及 Intel macOS 上 touchHLE 的 60 次 ARMv7/ARMv7k 执行。每个原始镜像以及源码 IR、编译对象、外部对象替换结果均执行三次。独立审计核验了这些补充运行中的全部 72 个镜像、66 份补丁发布记录和 216 次执行，包括 GitHub 产物大小、SHA256、精确提交及完整用例清单。Linux 输入仍固定于 `fcee81c9a5`；PE 输入生成于 `a542f97ba`，Mach-O 输入生成于 `8f5f06762`。验证脚本的提交号在对应运行中单独记录。
+
+Mach-O 修复按所选函数认证 Thumb 模式，避免被镜像整体的 ARM/Thumb 混合模式覆盖；仅规范化有证据的 Thumb 导出指针，并统一 ARM32 展开代码地址，不改变数据指针或范围长度。集成 LLVM 源码构建在本机通过全部 283 项 CPU 矩阵检查和 258 项异常契约检查，零失败、零跳过。旧 Mach-O 测试程序使用已记录的开源链接器并预留展开元数据容量；i386 使用正确对齐的启动入口和 64 KiB 页零段。
+
+这些结果证明指定模拟器和兼容层下的 C 代码执行。Wine 不等于 Microsoft Windows，Darling 不等于 macOS；iOS HLE 中的 ARMv7k 执行不能证明 watchOS、WatchKit 或 Apple 实机支持。不能据此推断旧 Apple SDK 或原生 32 位硬件覆盖，这些测试也不认证 C++ 异常展开。既有原生与兼容模式证据继续分开记录。NeverC 未构建、未修改。
+
+<!-- i18n-section: interactive-byte-patches -->
+## 交互式补丁的职责
+
+`lib/patch` 负责字节准入、LLVM MC 编码、不可变输入快照、规范化覆盖记录及独占导出。SDK 根据实际输出的 C、规范 LowIR 来源和解码操作数证明源码目标；导航锚点本身不能授权修改。worker 将可选的 `patches.json` 纳入普通撤销重做，修改后使分析失效。签名名称读取原字节；被修改函数不再采用由身份推导的库语义。GUI、CLI 和 Python 共用这些 API。整函数替换仍使用 `neverd_patch_source`，已有字节补丁时必须先导出并重新打开。
+
+[GUI](../gui.md) · `neverd patch-bytes` · `Session.byte_patches` · `Session.apply_byte_patch` · `Session.export_byte_patches`

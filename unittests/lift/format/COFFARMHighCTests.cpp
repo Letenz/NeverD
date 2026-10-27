@@ -248,23 +248,20 @@ TEST_F(COFFARMPipeline, HighCForwardingPreservesFrameLvaluesAndAddresses) {
 
   auto Body = cFunctionBody(C, "frame_lvalue_address");
   ASSERT_TRUE(Body.has_value()) << C;
-  const auto FirstStore = Body->find("= 7;");
+  // Both stores write the slot's frame record member, and the returned
+  // pointer points to it.
+  const auto FirstStore = Body->find("stack_storage.var_m4 = 7;");
   ASSERT_NE(FirstStore, std::string::npos) << *Body;
-  const auto SecondStore = Body->find("= 9;", FirstStore + 1);
+  const auto SecondStore =
+      Body->find("stack_storage.var_m4 = 9;", FirstStore + 1);
   ASSERT_NE(SecondStore, std::string::npos) << *Body;
-  EXPECT_NE(Body->substr(FirstStore, SecondStore - FirstStore)
-                .find("__builtin_memcpy((void *)"),
-            std::string::npos)
-      << *Body;
-  EXPECT_NE(Body->substr(SecondStore).find("__builtin_memcpy((void *)"),
-            std::string::npos)
-      << *Body;
   const auto ReturnAt = Body->find("return ");
   ASSERT_NE(ReturnAt, std::string::npos) << *Body;
-  EXPECT_NE(Body->substr(ReturnAt).find("frame_base"), std::string::npos)
+  EXPECT_GT(ReturnAt, SecondStore) << *Body;
+  EXPECT_NE(Body->substr(ReturnAt).find("&stack_storage.var_m4"),
+            std::string::npos)
       << *Body;
-  EXPECT_NE(Body->find("uint8_t stack_storage[16]"), std::string::npos)
-      << *Body;
+  EXPECT_NE(Body->find("} stack_storage;"), std::string::npos) << *Body;
 
   const fs::path CPath = tmpFile("frame_lvalue_address.c");
   std::ofstream Out(CPath);

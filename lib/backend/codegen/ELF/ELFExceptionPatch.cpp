@@ -7,6 +7,7 @@
 #include "neverd/backend/codegen/ELF/ELFExceptionPatch.h"
 
 #include "neverd/backend/ExceptionRewriteContract.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/DwarfEHFrame.h"
 #include "neverd/object/ELFLayout.h"
@@ -341,8 +342,31 @@ bool rebuildEhFrameHdr(llvm::ArrayRef<uint8_t> Binary,
       static_cast<uint64_t>(readEncoded(H, HN, Cursor, Hdr.FdeCountEnc));
 
   if (OldCount > (HN - Cursor) / kFdeEntrySize ||
-      OldCount != ExistingByRecord.size())
+      OldCount < ExistingByRecord.size())
     return false;
+
+  // A prior source patch can publish additional records in another PT_LOAD.
+  // Authenticate each indexed FDE at its actual address; restricting all old
+  // entries to the original section prevents a second additive installation.
+  auto Mapped = [&](uint64_t VA, uint64_t Size) -> const uint8_t * {
+    const uint8_t *Result = nullptr;
+    unsigned Owners = 0;
+    forEachELFPhdr(Binary.data(), Binary.size(),
+                   [&](const ELFPhdrFields &P, const uint8_t *, bool) {
+                     if (P.Type != llvm::ELF::PT_LOAD ||
+                         !(P.Flags & llvm::ELF::PF_R) || VA < P.VAddr ||
+                         !rangeInBounds(VA - P.VAddr, Size, P.FileSz) ||
+                         !rangeInBounds(P.Offset, P.FileSz, Binary.size()))
+                       return;
+                     Result = Binary.data() + P.Offset + VA - P.VAddr;
+                     ++Owners;
+                   });
+    return Owners == 1 ? Result : nullptr;
+  };
+  uint64_t DecodeBudget =
+      ::neverd::limits::backend::kELFExceptionPatchDecodeBudget;
+  const size_t PrimaryCount = ExistingByRecord.size();
+  std::set<uint64_t> SeenPrimary;
 
   std::map<uint64_t, uint64_t> Entries;
   std::set<uint64_t> SeenOldRecords;
@@ -359,13 +383,52 @@ bool rebuildEhFrameHdr(llvm::ArrayRef<uint8_t> Binary,
         !Entries.emplace(InitVA, FdeVA).second)
       return false;
     auto Existing = ExistingByRecord.find(FdeVA);
-    if (Existing == ExistingByRecord.end() || Existing->second != InitVA ||
-        !SeenOldRecords.insert(FdeVA).second)
+    if (Existing != ExistingByRecord.end()) {
+      if (Existing->second != InitVA)
+        return false;
+      SeenPrimary.insert(FdeVA);
+    } else {
+      const uint8_t *Prefix = Mapped(FdeVA, 8);
+      if (!Prefix)
+        return false;
+      uint64_t Length = readLE<uint32_t>(Prefix), IDOffset = 4, Distance = 0;
+      if (Length == UINT32_MAX) {
+        Prefix = Mapped(FdeVA, 20);
+        if (!Prefix)
+          return false;
+        Length = readLE<uint64_t>(Prefix + 4);
+        IDOffset = 12;
+        Distance = readLE<uint64_t>(Prefix + 12);
+      } else {
+        Distance = readLE<uint32_t>(Prefix + 4);
+      }
+      if (!Length || !Distance || Length > DecodeBudget ||
+          Distance > DecodeBudget - Length || FdeVA > UINT64_MAX - IDOffset ||
+          Distance > FdeVA + IDOffset)
+        return false;
+      const uint64_t CIEVA = FdeVA + IDOffset - Distance;
+      const uint64_t Span = Distance + Length;
+      const uint8_t *Storage = Mapped(CIEVA, Span);
+      if (!Storage)
+        return false;
+      DecodeBudget -= Span;
+      auto Records = decodeDwarfEHFrameRecords({Storage, size_t(Span)}, CIEVA,
+                                               Region.Is64);
+      if (!Records) {
+        llvm::consumeError(Records.takeError());
+        return false;
+      }
+      if (llvm::none_of(*Records, [&](const auto &R) {
+            return R.RecordVA == FdeVA && R.BeginVA == InitVA;
+          }))
+        return false;
+    }
+    if (!SeenOldRecords.insert(FdeVA).second)
       return false;
     PreviousOld = InitVA;
     HasPreviousOld = true;
   }
-  if (SeenOldRecords.size() != ExistingByRecord.size())
+  if (SeenPrimary.size() != PrimaryCount)
     return false;
 
   std::set<uint64_t> NewKeys;

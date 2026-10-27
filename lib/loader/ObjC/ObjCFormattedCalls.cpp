@@ -2,6 +2,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ObjC/ObjCConstantStrings.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 #include "neverd/loader/ReadOnlyBytes.h"
@@ -13,9 +14,9 @@ namespace neverd {
 namespace {
 std::optional<std::vector<uint16_t>>
 readImmutableCFormat(const BinaryImage &Image, va_t Address) {
-  constexpr uint32_t MaxUnits = 65536;
   uint32_t Units = 0;
-  for (; Units <= MaxUnits; ++Units) {
+  for (; Units <= ::neverd::limits::loader::kObjCFormattedCallsMaxUnits;
+       ++Units) {
     if (Address > InvalidVA - Units)
       return std::nullopt;
     const auto *Byte = Image.readVA(Address + Units, 1);
@@ -24,7 +25,7 @@ readImmutableCFormat(const BinaryImage &Image, va_t Address) {
     if (!*Byte)
       break;
   }
-  if (Units > MaxUnits)
+  if (Units > ::neverd::limits::loader::kObjCFormattedCallsMaxUnits)
     return std::nullopt;
   auto Bytes = readImmutableImageBytes(Image, Address, Units + 1);
   if (!Bytes || Bytes->size() != Units + 1 || Bytes->back())
@@ -46,7 +47,9 @@ bindFormatArguments(const BinaryImage &Image, SourceCallTypeHint Result,
       !Result.Signature.Parameters[FormatParameter].Type ||
       Result.Signature.Parameters[FormatParameter].Type->Kind !=
           NdTypeKind::Ptr ||
-      Result.Signature.Parameters.size() + Arguments->size() > 64)
+      Result.Signature.Parameters.size() + Arguments->size() >
+          ::neverd::limits::loader::
+              kObjCFormattedCallsBindFormatArgumentsResultSignatureParametersSizeArgumentsSizeLimit)
     return std::nullopt;
   const auto Fixed = unsigned(Result.Signature.Parameters.size());
   Result.Format = SourceCallTypeHint::FormatArguments{Fixed, FormatParameter,
@@ -117,7 +120,10 @@ predicateConversions(llvm::ArrayRef<uint16_t> Format) {
 std::optional<std::vector<TypeRef>>
 objcFormatArgumentTypes(llvm::ArrayRef<uint16_t> Format,
                         SourceCallTypeHint::FormatSyntax Syntax) {
-  if (Format.size() > 65536 || llvm::is_contained(Format, uint16_t(0)))
+  if (Format.size() >
+          ::neverd::limits::loader::
+              kObjCFormattedCallsObjcFormatArgumentTypesFormatSizeLimit ||
+      llvm::is_contained(Format, uint16_t(0)))
     return std::nullopt;
   if (Syntax == SourceCallTypeHint::FormatSyntax::Predicate) {
     auto Tokens = predicateConversions(Format);
@@ -136,7 +142,10 @@ objcFormatArgumentTypes(llvm::ArrayRef<uint16_t> Format,
     const auto Start = Cursor;
     unsigned N = 0;
     while (Digit()) {
-      N = std::min(65U, N * 10 + (Format[Cursor++] - '0'));
+      N = std::min(
+          ::neverd::limits::loader::
+              kObjCFormattedCallsObjcFormatArgumentTypesPositionNMinArgument1,
+          N * 10 + (Format[Cursor++] - '0'));
     }
     if (Peek() != '$') {
       Cursor = Start;
@@ -281,7 +290,10 @@ objcFormattedSourceCallHint(const BinaryImage &Image, llvm::StringRef Selector,
 std::optional<SourceCallTypeHint>
 objcFormattedSourceCallHint(const BinaryImage &Image, llvm::StringRef Selector,
                             llvm::ArrayRef<va_t> FormatAddresses) {
-  if (FormatAddresses.empty() || FormatAddresses.size() > 64)
+  if (FormatAddresses.empty() ||
+      FormatAddresses.size() >
+          ::neverd::limits::loader::
+              kObjCFormattedCallsObjcFormattedSourceCallHintFormatAddressesSizeLimit)
     return std::nullopt;
   std::vector<va_t> Addresses(FormatAddresses.begin(), FormatAddresses.end());
   llvm::sort(Addresses);
@@ -292,21 +304,19 @@ objcFormattedSourceCallHint(const BinaryImage &Image, llvm::StringRef Selector,
   if (!Result || !Result->Format)
     return std::nullopt;
   for (size_t I = 1; I < Addresses.size(); ++I) {
-    auto Candidate =
-        objcFormattedSourceCallHint(Image, Selector, Addresses[I]);
+    auto Candidate = objcFormattedSourceCallHint(Image, Selector, Addresses[I]);
     if (!Candidate || !Candidate->Format ||
         Candidate->CallKind != Result->CallKind ||
         Candidate->TargetName != Result->TargetName ||
         Candidate->Selector != Result->Selector ||
         Candidate->Format->FixedCount != Result->Format->FixedCount ||
-        Candidate->Format->FormatParameter !=
-            Result->Format->FormatParameter ||
+        Candidate->Format->FormatParameter != Result->Format->FormatParameter ||
         Candidate->Format->Syntax != Result->Format->Syntax ||
         !equalSourceABIs(Candidate->Signature, Result->Signature))
       return std::nullopt;
   }
   Result->Format->AlternativeFormatAddresses.assign(Addresses.begin() + 1,
-                                                     Addresses.end());
+                                                    Addresses.end());
   return Result;
 }
 
@@ -322,7 +332,9 @@ objcDynamicFormatPointerArgumentsSourceCallHint(const BinaryImage &Image,
                                                 unsigned PointerArguments) {
   auto Declaration = objcSelectorFormatDeclaration(Image, Selector);
   if (!Declaration || PointerArguments > 64 ||
-      Declaration->Signature.Parameters.size() + PointerArguments > 64)
+      Declaration->Signature.Parameters.size() + PointerArguments >
+          ::neverd::limits::loader::
+              kObjCFormattedCallsObjcDynamicFormatPointerArgumentsSourceCallHintDeclarationSignatureParametersSizePointerArgumentsLimit)
     return std::nullopt;
   SourceCallTypeHint Call;
   Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
@@ -333,9 +345,14 @@ objcDynamicFormatPointerArgumentsSourceCallHint(const BinaryImage &Image,
   for (unsigned I = 0; I < PointerArguments; ++I)
     Call.Signature.Parameters.push_back(
         {"format_pointer_arg", NdType::makePtr(NdType::makeVoid())});
-  Call.Format = SourceCallTypeHint::FormatArguments{
-      Fixed, Declaration->FormatParameter, 0, Declaration->Syntax, {},
-      PointerArguments == 0, PointerArguments != 0};
+  Call.Format =
+      SourceCallTypeHint::FormatArguments{Fixed,
+                                          Declaration->FormatParameter,
+                                          0,
+                                          Declaration->Syntax,
+                                          {},
+                                          PointerArguments == 0,
+                                          PointerArguments != 0};
   std::string Diagnostic;
   if (!assignDarwinVariadicSourceABI(Call.Signature, Fixed, Image.Arch,
                                      Diagnostic))
@@ -348,7 +365,9 @@ objcDynamicFormatInteger64ArgumentsSourceCallHint(
     const BinaryImage &Image, llvm::StringRef Selector,
     llvm::ArrayRef<TypeRef> IntegerArguments) {
   if (Image.Arch != Arch::AArch64 || IntegerArguments.empty() ||
-      IntegerArguments.size() > 64 ||
+      IntegerArguments.size() >
+          ::neverd::limits::loader::
+              kObjCFormattedCallsObjcDynamicFormatInteger64ArgumentsSourceCallHintIntegerArgumentsSizeLimit ||
       !std::all_of(IntegerArguments.begin(), IntegerArguments.end(),
                    [](const TypeRef &Type) {
                      return Type && Type->Kind == NdTypeKind::Int &&
@@ -357,7 +376,9 @@ objcDynamicFormatInteger64ArgumentsSourceCallHint(
     return std::nullopt;
   auto Call = objcDynamicFormatWithoutArgumentsSourceCallHint(Image, Selector);
   if (!Call || !Call->Format ||
-      Call->Signature.Parameters.size() + IntegerArguments.size() > 64)
+      Call->Signature.Parameters.size() + IntegerArguments.size() >
+          ::neverd::limits::loader::
+              kObjCFormattedCallsObjcDynamicFormatInteger64ArgumentsSourceCallHintCallSignatureParametersSizeIntegerArgumentsSizeLimit)
     return std::nullopt;
   for (const auto &Type : IntegerArguments)
     Call->Signature.Parameters.push_back({"format_integer_arg", Type});

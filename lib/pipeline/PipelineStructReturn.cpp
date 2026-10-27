@@ -13,13 +13,18 @@
 #include "PipelineReturnModelingDetail.h"
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/MedReturnArguments.h"
+#include "neverd/libc/LibCNames.h"
+#include "neverd/loader/SymbolDecoration.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -69,7 +74,42 @@ void recoverStructReturnFromCallers(const BinaryImage &Img,
         if (auto It = StructRetCallees.find(MF.Entry);
             It != StructRetCallees.end())
           MF.MultiReturn = It->second;
+    // A compiler runtime routine declared to return a double word returns
+    // the integer pair from its definition too (CompilerRuntimeDoubleWord.def):
+    // libgcc_s defines the __fixunsdfti its calls reach through its PLT entry.
+    if (TRI.IntReturnReg2)
+      for (auto &MF : Result.MedFuncs)
+        if (MF.MultiReturn.empty() && !MF.SourceParametersBound &&
+            libc::returnsDoubleWord(
+                cNameOfSymbol(MF.Name, Img.Format, Img.Arch), TRI.PointerSize))
+          MF.MultiReturn = {{TRI.IntReturnReg, TRI.PointerSize, false},
+                            {TRI.IntReturnReg2, TRI.PointerSize, false}};
   }
+}
+
+MedFunc *forwardingCallee(const BinaryImage &Img, const PipelineResult &Result,
+                          const std::map<va_t, MedFunc *> &ByEntry,
+                          const MedOp &Call, bool *ThroughImport) {
+  if (ThroughImport)
+    *ThroughImport = false;
+  if (Call.NumInputs < 1 || !Call.Inputs[0].isConst())
+    return nullptr;
+  const va_t Target = Call.Inputs[0].ConstVal;
+  if (const std::optional<va_t> Own =
+          importOwnRoutine(Img, &Result.CallArgumentSources, Target))
+    if (const auto It = ByEntry.find(*Own); It != ByEntry.end()) {
+      if (ThroughImport)
+        *ThroughImport = true;
+      return It->second;
+    }
+  // Another module's routine keeps the ABI its declaration gives it, which
+  // its stub's callers do not override: the stub is no function of this
+  // module whose return the forwarder decides.
+  if (Call.Opcode != NdOp::CALL || Img.findImportStubAt(Target) ||
+      !importCalleeName(Img, Target).empty())
+    return nullptr;
+  const auto It = ByEntry.find(Target);
+  return It == ByEntry.end() ? nullptr : It->second;
 }
 
 // Struct-return tail-call forwarder shape propagation: `struct S
@@ -86,8 +126,9 @@ void recoverStructReturnFromCallers(const BinaryImage &Img,
 // scan (which can miss a field -- e.g. recover only 2 of a 3-double HFA, or 0
 // of a `{x, 2x}` pair whose first field is the passed-through argument).
 // Iterated to a fixpoint so a forwarder chain (f -> mid -> g) propagates all
-// the way down.  64-bit register struct returns only (the caller-side remodel
-// is gated to PointerSize==8).
+// the way down, through an import's PLT entry to this image's own routine
+// too (forwardingCallee).  64-bit register struct returns only (the
+// caller-side remodel is gated to PointerSize==8).
 void propagateStructReturnForwarderShapes(const BinaryImage &Img,
                                           PipelineResult &Result) {
   const auto &TRI = getTargetRegInfo(Img.Arch);
@@ -122,19 +163,32 @@ void propagateStructReturnForwarderShapes(const BinaryImage &Img,
           bool Found = false;
           for (size_t I = 0; I + 1 < Blk.Ops.size(); ++I) {
             const auto &Op = Blk.Ops[I];
-            if (Op.Opcode != NdOp::CALL || Op.NumInputs < 1 ||
-                !Op.Inputs[0].isConst() || Op.Output.Kind != MedVar::Reg)
+            if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
+                Op.NumInputs < 1 || !Op.Inputs[0].isConst() ||
+                Op.Output.Kind != MedVar::Reg)
               continue;
             const auto &Ret = Blk.Ops[I + 1];
             if (Ret.Opcode != NdOp::RETURN || Ret.NumInputs < 1 ||
                 Ret.Inputs[0].Kind != MedVar::Reg ||
                 Ret.Inputs[0].RegOff != Op.Output.RegOff)
               continue;
-            auto It = ByEntry.find(Op.Inputs[0].ConstVal);
-            if (It != ByEntry.end() &&
-                (It->second->MultiReturn.empty() ||
-                 IsCompatibleSubset(It->second->MultiReturn, MF.MultiReturn))) {
-              It->second->MultiReturn = MF.MultiReturn;
+            bool ThroughImport = false;
+            MedFunc *Callee =
+                forwardingCallee(Img, Result, ByEntry, Op, &ThroughImport);
+            // Through an import's entry the shape comes from the entry's
+            // callers, which read what the routine left in the integer return
+            // registers: no call keeps them for its caller, so a read there
+            // is of a result.  A shape with a floating field is no such
+            // evidence: libgcc's __divtf3 returns a float128 in XMM0, yet its
+            // entry's callers gave it {RAX, XMM0}.
+            const bool Confirmed =
+                !ThroughImport ||
+                llvm::none_of(MF.MultiReturn,
+                              [](const MedReturnReg &F) { return F.IsFP; });
+            if (Callee && Confirmed &&
+                (Callee->MultiReturn.empty() ||
+                 IsCompatibleSubset(Callee->MultiReturn, MF.MultiReturn))) {
+              Callee->MultiReturn = MF.MultiReturn;
               Changed = true;
             }
             Found = true;
@@ -167,7 +221,10 @@ static bool returnsWholeVector(const MedFunc &MF, const TargetRegInfo &TRI,
   // value -- a real vector -- rather than a zero-extended <=8-byte
   // scalar (an `INT_ZEXT Qn <- Dn` HFA element / scalar FP).
   auto isWideVec = [&](MedVar V) -> bool {
-    for (int Depth = 0; Depth < 8; ++Depth) {
+    for (int Depth = 0;
+         Depth < ::neverd::limits::pipeline::
+                     kPipelineStructReturnsWholeVectorIsWideVecDepthLimit;
+         ++Depth) {
       if (V.Kind == MedVar::Const)
         return false;
       auto It = Defs.find({V.Id, V.SSAVer});

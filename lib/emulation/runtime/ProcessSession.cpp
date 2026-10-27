@@ -12,6 +12,7 @@
 #include "../os/darwin/process/DarwinProcess.h"
 #include "../os/linux/android/AndroidInternal.h"
 #include "../os/linux/kernel/LinuxKernelAvailability.h"
+#include "../os/linux/kernel/LinuxNetwork.h"
 #include "../os/linux/kernel/LinuxPriority.h"
 #include "../os/linux/kernel/LinuxSignals.h"
 #include "../os/linux/kernel/LinuxTime.h"
@@ -61,6 +62,10 @@ llvm::Expected<ProcessResult> runProfile(const std::filesystem::path &Path,
                                          ProcessObserver *Observer) {
   if (Options.Windows && Profile != ProcessProfile::WindowsPE64)
     return diagnostic::error(process_report::WindowsProfile);
+  if (Options.Darwin && Profile != ProcessProfile::MacOSMachO64 &&
+      Profile != ProcessProfile::IOSMachO64 &&
+      Profile != ProcessProfile::IOSSimulatorMachO64)
+    return diagnostic::error("process: darwin requires a Darwin profile");
   if (Options.DarwinSystem) {
     if (Profile != ProcessProfile::MacOSMachO64 &&
         Profile != ProcessProfile::IOSMachO64 &&
@@ -93,6 +98,19 @@ llvm::Expected<ProcessResult> runProfile(const std::filesystem::path &Path,
       return std::move(E);
     if (auto E = linux_model::validateKernelTaskInputs(Options))
       return std::move(E);
+  }
+  if (Options.LinuxNetwork) {
+    if ((Profile != ProcessProfile::LinuxELF64 &&
+         Profile != ProcessProfile::AndroidNativeAArch64) ||
+        !Options.LinuxFiles)
+      return diagnostic::error(
+          "linux_network requires a Linux profile and linux_files");
+    if (auto E = linux_model::validateNetworkOptions(*Options.LinuxNetwork))
+      return std::move(E);
+    if (linux_model::hasTimedReceives(*Options.LinuxNetwork) &&
+        (!Options.LinuxTime || !Options.LinuxTime->AdvanceOnIdle))
+      return diagnostic::error(
+          "timed network input requires linux_time.advance_on_idle");
   }
   if (Options.LinuxPriority) {
     if (Profile != ProcessProfile::LinuxELF64 &&

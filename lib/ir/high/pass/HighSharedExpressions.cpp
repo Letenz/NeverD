@@ -17,6 +17,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -29,16 +30,6 @@
 namespace neverd {
 namespace {
 
-/// A statement prints this many nodes at least before a repeated value is
-/// worth a local, and at least this many times its distinct nodes unless it
-/// exceeds kMaxPrintedNodes.
-constexpr uint64_t kMinPrintedNodes = 256;
-constexpr uint64_t kMinRepetition = 2;
-/// A repeated value this small stays inline.
-constexpr uint64_t kMinNamedNodes = 4;
-/// A statement that still prints more nodes after its repeated values have
-/// names prints its large movable parts as locals of about this size.
-constexpr uint64_t kMaxPrintedNodes = 512;
 constexpr uint64_t kPartNodes = 64;
 
 /// Evaluating \p E cannot fault or have an effect.
@@ -226,16 +217,17 @@ private:
       uint64_t N = 1;
       for (const ExprPtr &Operand : E->Operands)
         N = std::min<uint64_t>(N + Size(Operand.get()), UINT64_MAX / 4);
-      N = std::min<uint64_t>(N + Size(E->IndirectTarget.get()),
-                             UINT64_MAX / 4);
+      N = std::min<uint64_t>(N + Size(E->IndirectTarget.get()), UINT64_MAX / 4);
       Printed[E] = N;
       return N;
     };
     uint64_t Total = 0;
     for (ExprPtr *Root : Roots)
       Total += Size(Root->get());
-    if (Total < kMinPrintedNodes ||
-        (Total <= kMaxPrintedNodes && Total < kMinRepetition * Printed.size()))
+    if (Total < ::neverd::limits::ir::kHighSharedExpressionsMinPrintedNodes ||
+        (Total <= ::neverd::limits::ir::kHighSharedExpressionsMaxPrintedNodes &&
+         Total < ::neverd::limits::ir::kHighSharedExpressionsMinRepetition *
+                     Printed.size()))
       return {};
 
     // Work on a copy, so that a statement sharing these nodes keeps them.
@@ -260,21 +252,20 @@ private:
     // right operand of a logical operator and the arms of a selection.
     bool Quiet = true;
     std::set<const HighExpr *> Conditional, Unconditional;
-    std::function<void(const HighExpr *, bool)> Reach =
-        [&](const HighExpr *E, bool Guarded) {
-          if (!E || !(Guarded ? Conditional : Unconditional).insert(E).second)
-            return;
-          Quiet &= !hasEffect(*E);
-          for (size_t I = 0; I < E->Operands.size(); ++I) {
-            const bool Arm =
-                (E->Kind == ExprKind::BinOp &&
-                 (E->Op == NdOp::BOOL_AND || E->Op == NdOp::BOOL_OR) &&
-                 I > 0) ||
-                (E->Op == NdOp::SELECT && I > 0);
-            Reach(E->Operands[I].get(), Guarded || Arm);
-          }
-          Reach(E->IndirectTarget.get(), Guarded);
-        };
+    std::function<void(const HighExpr *, bool)> Reach = [&](const HighExpr *E,
+                                                            bool Guarded) {
+      if (!E || !(Guarded ? Conditional : Unconditional).insert(E).second)
+        return;
+      Quiet &= !hasEffect(*E);
+      for (size_t I = 0; I < E->Operands.size(); ++I) {
+        const bool Arm =
+            (E->Kind == ExprKind::BinOp &&
+             (E->Op == NdOp::BOOL_AND || E->Op == NdOp::BOOL_OR) && I > 0) ||
+            (E->Op == NdOp::SELECT && I > 0);
+        Reach(E->Operands[I].get(), Guarded || Arm);
+      }
+      Reach(E->IndirectTarget.get(), Guarded);
+    };
     for (ExprPtr *Root : Roots)
       Reach(Root->get(), false);
     // A destination in memory computes its address within the statement too.
@@ -293,8 +284,8 @@ private:
       Readers[E.get()].push_back(&E);
       if (!Seen.insert(E.get()).second)
         return Free[E.get()];
-      bool AllFree = effectFree(*E) || (Quiet && plainLoad(*E) &&
-                                        !Conditional.count(E.get()));
+      bool AllFree = effectFree(*E) ||
+                     (Quiet && plainLoad(*E) && !Conditional.count(E.get()));
       for (ExprPtr &Operand : E->Operands)
         AllFree &= Walk(Operand);
       if (E->IndirectTarget) {
@@ -348,21 +339,22 @@ private:
     // value reading it.
     for (const ExprPtr &E : PostOrder)
       if (Readers[E.get()].size() >= 2 && Nameable(E) &&
-          Size(E.get()) >= kMinNamedNodes && !NameValue(E))
+          Size(E.get()) >=
+              ::neverd::limits::ir::kHighSharedExpressionsMinNamedNodes &&
+          !NameValue(E))
         break;
     uint64_t Remaining = 0;
     for (ExprPtr *Root : Roots)
       Remaining += Size(Root->get());
-    if (Remaining > kMaxPrintedNodes)
+    if (Remaining > ::neverd::limits::ir::kHighSharedExpressionsMaxPrintedNodes)
       for (const ExprPtr &E : PostOrder)
         if (Readers[E.get()].size() == 1 && Nameable(E) &&
             Size(E.get()) >= kPartNodes && !NameValue(E))
           break;
     // A value a named one reads comes before it in the post order, so this
     // order assigns every name before any assignment reads it.
-    llvm::stable_sort(Named, [](const auto &A, const auto &B) {
-      return A.first < B.first;
-    });
+    llvm::stable_sort(
+        Named, [](const auto &A, const auto &B) { return A.first < B.first; });
     std::vector<HighStmt> Ordered;
     for (auto &Entry : Named)
       Ordered.push_back(std::move(Entry.second));

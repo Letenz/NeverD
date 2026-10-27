@@ -70,6 +70,14 @@ bool hasIndependentImportNoReturn(const MedOp &Op, Arch TheArch) {
          Op.NumInputs == sourceABIParameters(Hint.Signature).size() + 1;
 }
 
+/// Whether the control-flow graph ends \p Block at its call \p Op, marked as
+/// one that does not return: the call is the block's last operation, and no
+/// edge leaves the block.
+bool endsItsPath(const MedBlock &Block, const MedOp &Op) {
+  return Op.DoesNotReturn && Block.Succs.empty() && !Block.Ops.empty() &&
+         &Block.Ops.back() == &Op;
+}
+
 bool provesNoReturn(const MedFunc &Func, Arch TheArch,
                     const std::set<va_t> &KnownNoReturn) {
   if (Func.Blocks.empty())
@@ -137,15 +145,19 @@ bool hasProvenNoReturnExit(const MedFunc &Func, Arch TheArch) {
 }
 
 void propagateInternalNoReturn(std::vector<MedFunc> &Funcs, Arch TheArch,
-                               const std::map<va_t, bool> &Stated) {
+                               const std::map<va_t, bool> &Stated,
+                               const std::set<va_t> &ImportVeneers) {
   std::set<va_t> InternalEntries;
   for (const MedFunc &Func : Funcs)
-    if (!Func.Blocks.empty())
+    if (!Func.Blocks.empty() && !ImportVeneers.count(Func.Entry))
       InternalEntries.insert(Func.Entry);
 
   // A second run follows late ABI remodelling.  Recompute internal markers
   // from the current graph while preserving independently proven external and
-  // indirect no-return calls created during LowIR conversion.
+  // indirect no-return calls created during LowIR conversion.  A call the
+  // control-flow graph ends its path at keeps its marker too: whatever the
+  // callee proves, nothing of this function follows it (a call that ends the
+  // function's code, after which the compiler placed another path's code).
   for (MedFunc &Func : Funcs) {
     Func.DoesNotReturn = false;
     for (MedBlock &Block : Func.Blocks)
@@ -153,7 +165,8 @@ void propagateInternalNoReturn(std::vector<MedFunc> &Funcs, Arch TheArch,
         if (Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
             Op.Inputs[0].isConst() &&
             InternalEntries.count(Op.Inputs[0].ConstVal) != 0 &&
-            !hasIndependentImportNoReturn(Op, TheArch))
+            !hasIndependentImportNoReturn(Op, TheArch) &&
+            !endsItsPath(Block, Op))
           Op.DoesNotReturn = false;
   }
 

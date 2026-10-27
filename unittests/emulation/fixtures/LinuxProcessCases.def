@@ -33,6 +33,7 @@ NEVERD_LINUX_FIXTURE_VALUE(PhdrEntrySize, 56)
 NEVERD_LINUX_FIXTURE_VALUE(MaxAuxEntries, 64)
 NEVERD_LINUX_FIXTURE_VALUE(RandomSize, 16)
 NEVERD_LINUX_FIXTURE_VALUE(ExpectedArgc, 2)
+NEVERD_LINUX_FIXTURE_VALUE(EchoEnvironmentSize, 40000)
 #endif
 #ifdef NEVERD_LINUX_FIXTURE_TEXT
 NEVERD_LINUX_FIXTURE_TEXT(Message, "linux process ok\n")
@@ -47,6 +48,7 @@ NEVERD_LINUX_FIXTURE_BYTES(BinaryOutput, 0, 0xff, 0x7f)
 #endif
 #ifdef NEVERD_LINUX_FIXTURE_MODE
 NEVERD_LINUX_FIXTURE_MODE(Normal, 'n', "normal")
+NEVERD_LINUX_FIXTURE_MODE(EchoEnvironment, 'e', "echo-environment")
 NEVERD_LINUX_FIXTURE_MODE(Loop, 'l', "loop")
 NEVERD_LINUX_FIXTURE_MODE(Fault, 'f', "fault")
 NEVERD_LINUX_FIXTURE_MODE(Unknown, 'u', "unknown")

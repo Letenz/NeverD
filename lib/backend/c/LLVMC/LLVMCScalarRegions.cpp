@@ -6,6 +6,8 @@
 
 #include "LLVMCWriter.h"
 
+#include "neverd/backend/Limits.h"
+
 #include "llvm/ADT/BitVector.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/PostDominators.h"
@@ -71,7 +73,8 @@ class ScalarRegionPlan {
       llvm::SmallVector<std::pair<llvm::BasicBlock *, unsigned>, 32> Queue;
       Queue.emplace_back(Branch.getSuccessor(Side), 0);
       for (size_t Next = 0; Next != Queue.size(); ++Next) {
-        if (++Work > 65536)
+        if (++Work >
+            ::neverd::limits::backend::kLLVMCScalarRegionsNormalJoinWorkLimit)
           return nullptr;
         auto [BB, Depth] = Queue[Next];
         if (BB == Branch.getParent() || returnOnly(BB) ||
@@ -121,7 +124,9 @@ class ScalarRegionPlan {
       std::vector<ScalarRegion> Tests;
       llvm::SmallPtrSet<llvm::BasicBlock *, 16> Visited;
       Visited.insert(Root.getParent());
-      while (Tests.size() < 15 && Next != Failure &&
+      while (Tests.size() < ::neverd::limits::backend::
+                                kLLVMCScalarRegionsChainTestsSizeLimit &&
+             Next != Failure &&
              Next->getSinglePredecessor() == Current->getParent() &&
              Loops.getLoopFor(Next) == Scope && !Seen.contains(Next) &&
              Visited.insert(Next).second) {
@@ -175,7 +180,7 @@ class ScalarRegionPlan {
 
   bool edge(std::vector<ScalarRegion> &Into, llvm::BasicBlock *From,
             llvm::BasicBlock *To) {
-    if (++Work > 65536)
+    if (++Work > ::neverd::limits::backend::kLLVMCScalarRegionsEdgeWorkLimit)
       return false;
     Into.push_back({ScalarRegion::Kind::Edge, From, To, false, {}, {}});
     ++Edges;
@@ -185,12 +190,14 @@ class ScalarRegionPlan {
   bool sequence(llvm::BasicBlock *BB, llvm::BasicBlock *Stop,
                 const llvm::Loop *Scope, std::vector<ScalarRegion> &Into,
                 unsigned Depth, bool StartAtStop = false) {
-    if (Depth > 64)
+    if (Depth >
+        ::neverd::limits::backend::kLLVMCScalarRegionsSequenceDepthLimit)
       return false;
     bool First = StartAtStop;
     while (BB && (BB != Stop || First)) {
       First = false;
-      if (++Work > 65536)
+      if (++Work >
+          ::neverd::limits::backend::kLLVMCScalarRegionsSequenceWorkLimit)
         return false;
       // A PHI-only return sink may be spelled at each incoming edge. The
       // edge still owns its parallel copies; no effectful instruction is
@@ -224,7 +231,18 @@ class ScalarRegionPlan {
         LoopExits[Loop] = Exit;
         const bool HeaderExit = Branch && (Branch->getSuccessor(0) == Exit ||
                                            Branch->getSuccessor(1) == Exit);
-        if (!HeaderExit) {
+        // A direct while/for publishes the header's exit copies after the
+        // loop. A body exit reaching the same continuation would execute
+        // those copies too, overwriting its own values. Give every normal
+        // exit its own guard and edge copies when the body can leave. Pure
+        // return sinks terminate locally and never reach the continuation.
+        const bool BodyExit = llvm::any_of(Loop->blocks(), [&](auto *Block) {
+          return Block != BB &&
+                 llvm::any_of(llvm::successors(Block), [&](auto *Successor) {
+                   return !Loop->contains(Successor) && !returnOnly(Successor);
+                 });
+        });
+        if (!HeaderExit || BodyExit) {
           ScalarRegion Region{
               ScalarRegion::Kind::Repeat, BB, Exit, false, {}, {}};
           Region.Scope = Loop;
@@ -367,7 +385,9 @@ public:
     // or calls execute. Keep the existing instruction and parallel-copy
     // writers authoritative; EH, aggregate values and ordered memory retain
     // their existing projection.
-    if (Fn.size() > 1024 || Fn.hasPersonalityFn())
+    if (Fn.size() >
+            ::neverd::limits::backend::kLLVMCScalarRegionsBuildFnSizeLimit ||
+        Fn.hasPersonalityFn())
       return false;
     auto Scalar = [&](llvm::Type *T) {
       return T->isIntegerTy(1) || T->isIntegerTy(8) || T->isIntegerTy(16) ||
@@ -390,7 +410,8 @@ public:
         return false;
       ExpectedEdges += Term->getNumSuccessors();
       for (const auto &Inst : BB) {
-        if (++Instructions > 16384)
+        if (++Instructions > ::neverd::limits::backend::
+                                 kLLVMCScalarRegionsBuildInstructionsLimit)
           return false;
         if (Inst.isTerminator())
           continue;
@@ -445,7 +466,10 @@ void LLVMCWriter::coalesceScalarPhiNames(llvm::Function &Fn) {
   for (const auto &BB : Fn) {
     Blocks[&BB] = Blocks.size();
     for (const auto &Phi : BB.phis()) {
-      if (Analysis.Inlinable.count(&Phi) || Phis.size() == 128)
+      if (Analysis.Inlinable.count(&Phi) ||
+          Phis.size() ==
+              ::neverd::limits::backend::
+                  kLLVMCScalarRegionsLLVMCWriterCoalesceScalarPhiNamesPhisSizeLimit)
         return;
       IDs[&Phi] = Phis.size();
       Phis.push_back(&Phi);
@@ -464,7 +488,12 @@ void LLVMCWriter::coalesceScalarPhiNames(llvm::Function &Fn) {
   unsigned Work = 0;
   auto Reads = [&](auto &&Self, const llvm::Value *V, Bits &Into,
                    unsigned Depth) -> bool {
-    if (++Work > 1048576 || Depth > 64)
+    if (++Work >
+            ::neverd::limits::backend::
+                kLLVMCScalarRegionsLLVMCWriterCoalesceScalarPhiNamesReadsWorkLimit ||
+        Depth >
+            ::neverd::limits::backend::
+                kLLVMCScalarRegionsLLVMCWriterCoalesceScalarPhiNamesReadsDepthLimit)
       return false;
     if (auto It = IDs.find(V); It != IDs.end()) {
       Into.set(It->second);
@@ -499,7 +528,9 @@ void LLVMCWriter::coalesceScalarPhiNames(llvm::Function &Fn) {
   while (Changed) {
     Changed = false;
     for (auto &F : Facts) {
-      if (++Work > 1048576)
+      if (++Work >
+          ::neverd::limits::backend::
+              kLLVMCScalarRegionsLLVMCWriterCoalesceScalarPhiNamesWorkLimit)
         return;
       Bits Live = F.Uses;
       for (const auto &[To, Reads] : F.Edges) {
@@ -538,7 +569,9 @@ void LLVMCWriter::coalesceScalarPhiNames(llvm::Function &Fn) {
       bool Conflict = false;
       for (unsigned X = 0; X != N; ++X)
         for (unsigned Y = 0; Y != N; ++Y) {
-          if (++Work > 1048576)
+          if (++Work >
+              ::neverd::limits::backend::
+                  kLLVMCScalarRegionsLLVMCWriterCoalesceScalarPhiNamesWorkLimit)
             return;
           if (Groups[X] == A && Groups[Y] == B && Interference[X].test(Y))
             Conflict = true;
@@ -740,7 +773,9 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
                                                          Group->second.end());
       while (!Pending.empty()) {
         const auto *Value = Pending.pop_back_val();
-        if (++ScopeWork > 65536)
+        if (++ScopeWork >
+            ::neverd::limits::backend::
+                kLLVMCScalarRegionsLLVMCWriterTryWriteScalarRegionsConfinedScopeWorkLimit)
           return false;
         if (!Seen.insert(Value).second)
           continue;
@@ -748,7 +783,9 @@ bool LLVMCWriter::tryWriteScalarRegions(llvm::Function &Fn, int Indent) {
         if (!Inst || !Region.Scope->contains(Inst))
           return false;
         for (const auto *User : Value->users()) {
-          if (++ScopeWork > 65536)
+          if (++ScopeWork >
+              ::neverd::limits::backend::
+                  kLLVMCScalarRegionsLLVMCWriterTryWriteScalarRegionsConfinedScopeWorkLimit)
             return false;
           const auto *Use = llvm::dyn_cast<llvm::Instruction>(User);
           if (!Use || !Region.Scope->contains(Use))

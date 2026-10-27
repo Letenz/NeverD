@@ -4,12 +4,15 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../lib/analysis/core/FrameEntryConstraints.h"
 #include "../../lib/analysis/core/FrameOffsets.h"
 #include "gtest/gtest.h"
 
+#include "neverd/symbolic/SymMBA.h"
 #include "neverd/symbolic/SymState.h"
 
 #include <memory>
+#include <optional>
 #include <tuple>
 
 using namespace neverd::analysis;
@@ -17,6 +20,50 @@ using namespace neverd::analysis::detail;
 using namespace neverd::symbolic;
 
 namespace {
+
+TEST(FrameOffsets, DisjointRelativeRangesKeepEqualRootsAndBoundaryBytes) {
+  struct Case {
+    uint64_t Frame;
+    int64_t FrameBegin;
+    int64_t FrameEnd;
+    uint64_t Object;
+    int64_t ObjectBegin;
+    int64_t ObjectEnd;
+    bool Allowed;
+  };
+  const Case Cases[] = {
+      {0, 0, 8, 0, 16, 24, true},
+      {0, 0, 8, 0, 0, 8, false},
+      {0, -1, 8, 16, 0, 8, false},
+      {32, -32, 8, 40, 0, 32, true},
+      {32, -32, 8, 39, 0, 32, false},
+      {32, -32, 8, 0, -1, 8, false},
+      {2, 0, 8, 1, -1, 0, true},
+      {UINT64_MAX - 7, 0, 8, 0, 0, 8, true},
+      {UINT64_MAX - 6, 0, 8, 0, 0, 8, false},
+      {0, 0, 8, UINT64_MAX, 0, 1, true},
+      {UINT64_C(1) << 63, INT64_MIN, INT64_MIN + 1, 1, 0, 1, true},
+      {UINT64_MAX, INT64_MIN, INT64_MIN + 1, UINT64_MAX, 0, 1, true},
+      {0, INT64_MAX - 1, INT64_MAX, 1, INT64_MIN, INT64_MIN + 1, false},
+  };
+  for (const auto &C : Cases) {
+    SCOPED_TRACE(C.Frame);
+    SCOPED_TRACE(C.Object);
+    SCOPED_TRACE(C.FrameBegin);
+    SCOPED_TRACE(C.ObjectBegin);
+    SymContext Ctx;
+    const auto Frame = Ctx.mkConst(64, C.Frame);
+    const auto Object = Ctx.mkConst(64, C.Object);
+    const auto Domain = Ctx.mkAnd(
+        {nonwrappingFramePredicate(Ctx, Frame, C.FrameBegin, C.FrameEnd),
+         nonwrappingFramePredicate(Ctx, Object, C.ObjectBegin, C.ObjectEnd),
+         disjointFrameRangesPredicate(Ctx, Frame, C.FrameBegin, C.FrameEnd,
+                                      Object, C.ObjectBegin, C.ObjectEnd)});
+    const auto Actual = Ctx.asConst(Domain);
+    ASSERT_TRUE(Actual);
+    EXPECT_EQ(!Actual->isZero(), C.Allowed);
+  }
+}
 
 SymRef residue(SymContext &Ctx, SymRef Root, uint64_t Mask, uint64_t Value) {
   return Ctx.mkEq(Ctx.mkAnd(Root, Ctx.mkConst(64, Mask)),
@@ -752,10 +799,18 @@ TEST(FrameOffsets, NormalizationRetryPreservesPredicateAndFiniteDomains) {
       EXPECT_EQ(Queries, Case == 2 ? 1u : 2u);
       EXPECT_GT(Work.WorkUsed, 0u);
       EXPECT_LE(Work.WorkUsed, Work.MaxWork);
-      EXPECT_FALSE(Cache.lookup(Ctx, Predicate, {CacheValue}, 1));
+      const auto Cached = Cache.lookup(Ctx, Predicate, {CacheValue}, 1);
+      ASSERT_TRUE(Cached);
+      EXPECT_EQ(Cached->Status, Case == 0 || Case == 2
+                                    ? FiniteValueStatus::Complete
+                                    : FiniteValueStatus::TooManyValues);
+      if (Case == 0)
+        EXPECT_EQ(Cached->Tuples,
+                  (std::vector<std::vector<uint64_t>>{{uint64_t{0} - 86}}));
+      else
+        EXPECT_TRUE(Cached->Tuples.empty());
       const auto Before = Queries;
-      EXPECT_EQ(Prove(nullptr, Before).Status,
-                FrameOffsetStatus::BudgetExceeded);
+      EXPECT_EQ(Prove(nullptr, Before).Status, Result.Status);
       EXPECT_EQ(Queries, Before);
       if (Case == 0) {
         EXPECT_EQ(Result.Offset, uint64_t{0} - 75);
@@ -899,6 +954,196 @@ TEST(FrameOffsets, NormalizationTheoremsNeverPopulateFiniteDomains) {
   }
 }
 
+TEST(FrameOffsets, NormalizationFeasibilityCachesExactTranslatedTheorems) {
+  for (bool Bound : {false, true})
+    for (bool ReuseEncoding : {false, true})
+      for (bool Impossible : {false, true}) {
+        SCOPED_TRACE(Bound);
+        SCOPED_TRACE(ReuseEncoding);
+        SCOPED_TRACE(Impossible);
+        SymContext Ctx;
+        const auto Root = Ctx.mkVar("frame", 64);
+        const auto Input = Ctx.mkVar("data", 64);
+        const auto Byte = Ctx.mkVar("byte", 8);
+        const auto Base = mbaFrameAddress(Ctx, Root, Input, 0);
+        const auto Predicate =
+            Impossible ? Ctx.mkEq(Ctx.mkMul(Byte, Byte), Ctx.mkConst(8, 2))
+                       : residue(Ctx, Root, 15, 8);
+        const auto OtherPredicate = residue(Ctx, Root, 15, 7);
+        const auto OtherRoot = Ctx.mkVar("other frame", 64);
+        const auto Difference = Ctx.mkSub(Base, Root);
+        auto Cache = Bound ? std::make_unique<FiniteQueryCache>(65536, Ctx)
+                           : std::make_unique<FiniteQueryCache>(65536);
+        uint64_t Queries = 0;
+        const auto Feasibility = enumerateFiniteValues(Ctx, Predicate, {}, 1,
+                                                       {}, 100, 65536, Queries);
+        ASSERT_EQ(Feasibility.Status, FiniteValueStatus::Complete);
+        ASSERT_EQ(Feasibility.Tuples.size(), Impossible ? 0u : 1u);
+        Cache->store(Ctx, Predicate, {}, 1, Feasibility);
+        const auto Before = Queries;
+        neverd::solver::SolverOptions Settings;
+        Settings.Blast.MaxGates = 1;
+        FiniteDomainEncoding Encoding(Ctx, Settings);
+        FrameOffsetNormalization Work{65536};
+        const auto Prove = [&](SymRef P, SymRef V, SymRef R,
+                               uint64_t MaxNodes) {
+          return ReuseEncoding
+                     ? proveFrameOffset(Encoding, P, V, R, Queries, MaxNodes,
+                                        Queries, Cache.get(), &Work)
+                     : proveFrameOffset(Ctx, P, V, R, Settings, Queries,
+                                        MaxNodes, Queries, Cache.get(), &Work);
+        };
+        const auto Shifted = Ctx.mkAdd(Base, Ctx.mkConst(64, 37));
+        const auto First = Prove(Predicate, Shifted, Root, 65536);
+        ASSERT_EQ(First.Status, Impossible ? FrameOffsetStatus::Infeasible
+                                           : FrameOffsetStatus::Exact);
+        if (!Impossible)
+          EXPECT_EQ(First.Offset, 37u);
+        EXPECT_GT(Work.WorkUsed, 0u);
+        EXPECT_EQ(Queries, Before);
+        const auto Domain = Cache->lookup(Ctx, Predicate, {Difference}, 1);
+        ASSERT_TRUE(Domain);
+        ASSERT_EQ(Domain->Status, FiniteValueStatus::Complete);
+        EXPECT_EQ(Domain->Tuples,
+                  Impossible ? std::vector<std::vector<uint64_t>>{}
+                             : std::vector<std::vector<uint64_t>>{{0}});
+
+        // Warm queries consume neither normalization nor solver work, including
+        // modulo-2^64 translations. The root's high bits remain unconstrained.
+        Work.MaxWork = 0;
+        for (uint64_t Bias : {uint64_t{0}, uint64_t{73}, uint64_t{0} - 91,
+                              uint64_t{1} << 63, UINT64_MAX}) {
+          const auto R = Prove(
+              Predicate, Ctx.mkAdd(Base, Ctx.mkConst(64, Bias)), Root, 65536);
+          ASSERT_EQ(R.Status, First.Status);
+          if (!Impossible)
+            EXPECT_EQ(R.Offset, Bias);
+          EXPECT_EQ(Work.WorkUsed, 0u);
+          EXPECT_EQ(Queries, Before);
+        }
+        EXPECT_EQ(Prove(OtherPredicate, Base, Root, 65536).Status,
+                  FrameOffsetStatus::BudgetExceeded);
+        EXPECT_EQ(Prove(Predicate, Base, OtherRoot, 65536).Status,
+                  FrameOffsetStatus::BudgetExceeded);
+        EXPECT_EQ(Prove(Predicate, Base, Root, Ctx.numNodes() - 1).Status,
+                  FrameOffsetStatus::BudgetExceeded);
+      }
+}
+
+TEST(FrameOffsets,
+     NormalizationFeasibilityRejectsIncompleteAndUnrelatedProofs) {
+  enum class Evidence {
+    Absent,
+    ShortQuery,
+    Rejected,
+    OtherPredicate,
+    OtherLimit
+  };
+  for (bool Bound : {false, true})
+    for (auto Kind :
+         {Evidence::Absent, Evidence::ShortQuery, Evidence::Rejected,
+          Evidence::OtherPredicate, Evidence::OtherLimit}) {
+      SCOPED_TRACE(Bound);
+      SCOPED_TRACE(static_cast<unsigned>(Kind));
+      SymContext Ctx;
+      const auto Root = Ctx.mkVar("frame", 64);
+      const auto Input = Ctx.mkVar("data", 64);
+      const auto Value = mbaFrameAddress(Ctx, Root, Input, 0);
+      const auto Predicate = residue(Ctx, Root, 15, 8);
+      const auto ProofPredicate = Kind == Evidence::OtherPredicate
+                                      ? residue(Ctx, Root, 15, 7)
+                                      : Predicate;
+      const uint32_t Limit = Kind == Evidence::OtherLimit ? 2 : 1;
+      const auto Difference = Ctx.mkSub(Value, Root);
+      auto Cache = Bound ? std::make_unique<FiniteQueryCache>(65536, Ctx)
+                         : std::make_unique<FiniteQueryCache>(65536);
+      uint64_t Queries = 0;
+      if (Kind != Evidence::Absent) {
+        const auto Observe = [&](llvm::ArrayRef<uint64_t>) {
+          return Kind != Evidence::Rejected;
+        };
+        const auto Domain = enumerateFiniteValues(
+            Ctx, ProofPredicate, {}, Limit, {},
+            Kind == Evidence::ShortQuery ? 1 : 100, 65536, Queries, Observe);
+        EXPECT_EQ(Domain.Status, Kind == Evidence::ShortQuery
+                                     ? FiniteValueStatus::QueryBudgetExceeded
+                                 : Kind == Evidence::Rejected
+                                     ? FiniteValueStatus::Unknown
+                                     : FiniteValueStatus::Complete);
+        Cache->store(Ctx, ProofPredicate, {}, Limit, Domain);
+      }
+      const auto Before = Queries;
+      SpecializationOptions Options;
+      Options.MaxSolverQueries = Queries;
+      FrameOffsetNormalization Work{65536};
+      for (unsigned Retry = 0; Retry != 2; ++Retry) {
+        const auto R = proveFrameOffset(Ctx, Predicate, Value, Root, Options,
+                                        Queries, Cache.get(), &Work);
+        ASSERT_EQ(R.Status, FrameOffsetStatus::Exact);
+        EXPECT_EQ(R.Offset, 0u);
+        EXPECT_GT(Work.WorkUsed, 0u);
+        EXPECT_EQ(Queries, Before);
+        EXPECT_FALSE(Cache->lookup(Ctx, Predicate, {Difference}, 1));
+      }
+    }
+}
+
+TEST(FrameOffsets, NormalizationFeasibilityRetainsStorageAndWorkLimits) {
+  // A bound empty-projection proof needs 19 words; its singleton frame-domain
+  // proof needs 21. Rejected storage must not turn a theorem into a warm hit.
+  const auto Run = [&](uint64_t Words, uint64_t MaxWork) {
+    SymContext Ctx;
+    const auto Root = Ctx.mkVar("frame", 64);
+    const auto Input = Ctx.mkVar("data", 64);
+    const auto Value = mbaFrameAddress(Ctx, Root, Input, 0);
+    const auto Predicate = Ctx.mkTrue();
+    const auto Difference = Ctx.mkSub(Value, Root);
+    FiniteQueryCache Cache(Words, Ctx);
+    uint64_t Queries = 0;
+    const auto Domain =
+        enumerateFiniteValues(Ctx, Predicate, {}, 1, {}, 100, 65536, Queries);
+    EXPECT_EQ(Domain.Status, FiniteValueStatus::Complete);
+    Cache.store(Ctx, Predicate, {}, 1, Domain);
+    const auto Before = Queries;
+    SpecializationOptions Options;
+    Options.MaxSolverQueries = Queries;
+    FrameOffsetNormalization Work{MaxWork};
+    const auto R = proveFrameOffset(Ctx, Predicate, Value, Root, Options,
+                                    Queries, &Cache, &Work);
+    EXPECT_EQ(Queries, Before);
+    EXPECT_LE(Work.WorkUsed, MaxWork);
+    const bool Retained =
+        Cache.lookup(Ctx, Predicate, {Difference}, 1).has_value();
+    FrameOffsetNormalization Disabled{0, 99};
+    const auto Warm = proveFrameOffset(Ctx, Predicate, Value, Root, Options,
+                                       Queries, &Cache, &Disabled);
+    EXPECT_EQ(Warm.Status, Retained ? FrameOffsetStatus::Exact
+                                    : FrameOffsetStatus::BudgetExceeded);
+    EXPECT_EQ(Disabled.WorkUsed, 0u);
+    EXPECT_EQ(Queries, Before);
+    return std::tuple{R.Status, Work.WorkUsed, Retained};
+  };
+  const auto [Status, Used, Retained] = Run(21, 65536);
+  ASSERT_EQ(Status, FrameOffsetStatus::Exact);
+  ASSERT_GT(Used, 0u);
+  EXPECT_TRUE(Retained);
+  const auto [ExactStatus, ExactWork, ExactRetained] = Run(21, Used);
+  EXPECT_EQ(ExactStatus, Status);
+  EXPECT_LE(ExactWork, Used);
+  EXPECT_TRUE(ExactRetained);
+  const auto [ShortStatus, ShortWork, ShortRetained] = Run(21, 1);
+  EXPECT_EQ(ShortStatus, FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(ShortWork, 1u);
+  EXPECT_FALSE(ShortRetained);
+  for (uint64_t Words : {18, 19, 20}) {
+    const auto [LimitedStatus, LimitedWork, LimitedRetained] =
+        Run(Words, 65536);
+    EXPECT_EQ(LimitedStatus, FrameOffsetStatus::Exact);
+    EXPECT_GT(LimitedWork, 0u);
+    EXPECT_FALSE(LimitedRetained);
+  }
+}
+
 TEST(FrameOffsets, CompletedAndInvalidProofsSkipNormalization) {
   SymContext Ctx;
   const auto Root = Ctx.mkVar("root", 64);
@@ -1022,6 +1267,299 @@ TEST(FrameOffsets, AdmittedNormalizationMeasurementCanStillExhaust) {
   EXPECT_EQ(Complete.Offset, 0u);
   EXPECT_LT(Work.WorkUsed, 65536u);
   EXPECT_FALSE(Cache.lookup(Ctx, Predicate, {Difference}, 1));
+}
+
+TEST(FrameOffsets, NormalizationChargesOnlyTheUncachedReadabilityPrefix) {
+  SymContext Original;
+  // History unrelated to the demanded address must still cost admission when
+  // cold, but a previous readability query has already paid for its cache.
+  for (unsigned I = 1; I <= 4096; ++I)
+    Original.mkConst(llvm::APInt(256, I).shl(128));
+  const auto Root = Original.mkVar("frame", 64);
+  const auto Input = Original.mkVar("data", 64);
+  const auto Value = mbaFrameAddress(Original, Root, Input, uint64_t{0} - 24);
+  const auto Admission = Original.mkVar("admission", 8);
+  const auto Predicate = Original.mkEq(Original.mkMul(Admission, Admission),
+                                       Original.mkConst(8, 9));
+  Original.mkSub(Value, Root);
+  ASSERT_EQ(Original.numCachedReadabilityNodes(), 0u);
+  uint64_t Prefix = 0;
+  for (uint32_t I = 0; I != Original.numNodes(); ++I) {
+    const SymRef R(I);
+    Prefix += 1 + Original.numOperands(R);
+    if (Original.op(R) == SymOp::Const)
+      Prefix += (uint64_t{Original.width(R)} + 63) / 64;
+  }
+  const auto Run = [&](bool Warm, uint64_t MaxWork, bool ShortNodes = false) {
+    auto Ctx = Original;
+    if (Warm)
+      Ctx.readability(Value);
+    // Appended nodes still need admission even after a fully warm prefix.
+    Ctx.mkConst(llvm::APInt(256, 0xabcdef));
+    SpecializationOptions O;
+    O.MaxSolverGates =
+        1; // Refuse the predicate before allocating query values.
+    if (ShortNodes)
+      O.MaxSymbolicNodes = Ctx.numNodes() - 1;
+    FrameOffsetNormalization Work{MaxWork};
+    uint64_t Queries = 0;
+    const auto R = proveFrameOffset(Ctx, Predicate, Value, Root, O, Queries,
+                                    nullptr, &Work);
+    EXPECT_EQ(Queries, 0u);
+    EXPECT_LE(Work.WorkUsed, MaxWork);
+    return std::pair{R, Work.WorkUsed};
+  };
+  const auto [Cold, ColdWork] = Run(false, 65536);
+  const auto [Warm, WarmWork] = Run(true, 65536);
+  ASSERT_EQ(Cold.Status, FrameOffsetStatus::Exact);
+  ASSERT_EQ(Warm.Status, FrameOffsetStatus::Exact);
+  EXPECT_EQ(Cold.Offset, uint64_t{0} - 24);
+  EXPECT_EQ(Warm.Offset, Cold.Offset);
+  EXPECT_EQ(ColdWork - WarmWork, Prefix);
+  EXPECT_GT(WarmWork, 5u); // The new four-limb literal plus MBA work.
+  EXPECT_EQ(Run(true, WarmWork).first.Status, FrameOffsetStatus::Exact);
+  EXPECT_EQ(Run(false, WarmWork).first.Status,
+            FrameOffsetStatus::BudgetExceeded);
+  const auto [Short, Charged] = Run(true, 4);
+  EXPECT_EQ(Short.Status, FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(Charged, 4u);
+  const auto [NodeLimit, NodeWork] = Run(true, 65536, true);
+  EXPECT_EQ(NodeLimit.Status, FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(NodeWork, 0u);
+}
+
+TEST(FrameOffsets, NormalizationRetryReusesOriginalTranslatedQuery) {
+  for (bool Bound : {false, true})
+    for (bool ReuseEncoding : {false, true}) {
+      SCOPED_TRACE(Bound);
+      SCOPED_TRACE(ReuseEncoding);
+      SymContext Ctx;
+      const auto Root = Ctx.mkVar("frame", 64);
+      const auto Input = Ctx.mkVar("data", 64);
+      const auto Base =
+          Ctx.mkAnd(mbaFrameAddress(Ctx, Root, Input, uint64_t{0} - 73),
+                    Ctx.mkConst(64, -16));
+      const auto Predicate = residue(Ctx, Root, 15, 6);
+      auto Cache = Bound ? std::make_unique<FiniteQueryCache>(65536, Ctx)
+                         : std::make_unique<FiniteQueryCache>(65536);
+      neverd::solver::SolverOptions Settings;
+      Settings.Blast.MaxGates = 256;
+      FiniteDomainEncoding Encoding(Ctx, Settings);
+      uint64_t Queries = 0;
+      const auto Prove = [&](SymRef P, SymRef Value, uint64_t Limit,
+                             uint64_t Nodes, FrameOffsetNormalization &Work) {
+        return ReuseEncoding
+                   ? proveFrameOffset(Encoding, P, Value, Root, Limit, Nodes,
+                                      Queries, Cache.get(), &Work)
+                   : proveFrameOffset(Ctx, P, Value, Root, Settings, Limit,
+                                      Nodes, Queries, Cache.get(), &Work);
+      };
+      FrameOffsetNormalization Work{65536};
+      const auto Initial = Prove(
+          Predicate, Ctx.mkAdd(Base, Ctx.mkConst(64, 11)), 100, 65536, Work);
+      ASSERT_EQ(Initial.Status, FrameOffsetStatus::Exact);
+      ASSERT_EQ(Queries, 2u);
+      ASSERT_GT(Work.WorkUsed, 0u);
+      for (uint64_t Bias : {uint64_t{0}, uint64_t{1}, uint64_t{0} - 11,
+                            uint64_t{1} << 63, UINT64_MAX}) {
+        const auto Address = Ctx.mkAdd(Base, Ctx.mkConst(64, Bias));
+        Work.MaxWork = 0;
+        Work.WorkUsed = 99;
+        const auto Result = Prove(Predicate, Address, Queries, 65536, Work);
+        ASSERT_EQ(Result.Status, FrameOffsetStatus::Exact);
+        EXPECT_EQ(Result.Offset, uint64_t{0} - 86 + Bias);
+        EXPECT_EQ(Queries, 2u);
+        EXPECT_EQ(Work.WorkUsed, 0u);
+        // Cached proofs still answer only their exact predicate and respect
+        // the caller's current context-node ceiling.
+        EXPECT_EQ(
+            Prove(Predicate, Address, Queries, Ctx.numNodes() - 1, Work).Status,
+            FrameOffsetStatus::BudgetExceeded);
+        EXPECT_EQ(
+            Prove(residue(Ctx, Root, 15, 7), Address, Queries, 65536, Work)
+                .Status,
+            FrameOffsetStatus::BudgetExceeded);
+        EXPECT_EQ(Queries, 2u);
+      }
+    }
+}
+
+TEST(FrameOffsets, IncompleteNormalizationRetryNeverSuppliesCachedEvidence) {
+  SymContext Ctx;
+  const auto Root = Ctx.mkVar("frame", 64);
+  const auto Input = Ctx.mkVar("data", 64);
+  const auto Base =
+      Ctx.mkAnd(mbaFrameAddress(Ctx, Root, Input, uint64_t{0} - 73),
+                Ctx.mkConst(64, -16));
+  const auto Value = Ctx.mkAdd(Base, Ctx.mkConst(64, 11));
+  const auto Predicate = residue(Ctx, Root, 15, 6);
+  const auto Key = Ctx.mkSub(Base, Root);
+  neverd::solver::SolverOptions Settings;
+  Settings.Blast.MaxGates = 256;
+  FiniteQueryCache Cache(65536, Ctx);
+  uint64_t Queries = 0;
+  FrameOffsetNormalization Work{65536};
+  // A single SAT request cannot establish uniqueness. Repeating the original
+  // query with no new allowance must not acquire a cached singleton.
+  EXPECT_EQ(proveFrameOffset(Ctx, Predicate, Value, Root, Settings, 1, 65536,
+                             Queries, &Cache, &Work)
+                .Status,
+            FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(Queries, 1u);
+  EXPECT_FALSE(Cache.lookup(Ctx, Predicate, {Key}, 1));
+  Work.MaxWork = 0;
+  EXPECT_EQ(proveFrameOffset(Ctx, Predicate, Value, Root, Settings, 1, 65536,
+                             Queries, &Cache, &Work)
+                .Status,
+            FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(Queries, 1u);
+  EXPECT_FALSE(Cache.lookup(Ctx, Predicate, {Key}, 1));
+}
+
+TEST(FrameOffsets, CachedNormalizationRetainsAdmissionAndZeroWorkLimits) {
+  SymContext Ctx;
+  const auto Root = Ctx.mkVar("frame", 64);
+  const auto Input = Ctx.mkVar("data", 64);
+  const auto Value = mbaFrameAddress(Ctx, Root, Input, 24);
+  const auto Admission = Ctx.mkVar("admission", 8);
+  const auto Predicate =
+      Ctx.mkEq(Ctx.mkMul(Admission, Admission), Ctx.mkConst(8, 9));
+  SpecializationOptions Options;
+  Options.MaxSolverQueries = 0;
+  // Refuse the predicate before allocating a fresh finite-value variable.
+  Options.MaxSolverGates = 1;
+  MBARewriteCache Rewrites(Ctx);
+  FrameOffsetNormalization Work{65536, 0, &Rewrites};
+  uint64_t Queries = 0;
+  const auto Prove = [&] {
+    return proveFrameOffset(Ctx, Predicate, Value, Root, Options, Queries,
+                            nullptr, &Work);
+  };
+  const auto Cold = Prove();
+  ASSERT_EQ(Cold.Status, FrameOffsetStatus::Exact);
+  EXPECT_EQ(Cold.Offset, 24u);
+  ASSERT_GT(Rewrites.size(), 0u);
+  const auto ColdWork = Work.WorkUsed;
+  // Complete the readability prefix so the next proof measures cache use,
+  // independently of the preceding proof's newly constructed nodes.
+  Ctx.readability(Value);
+  Work.MaxWork = 1;
+  const auto Hot = Prove();
+  ASSERT_EQ(Hot.Status, FrameOffsetStatus::Exact);
+  EXPECT_EQ(Hot.Offset, Cold.Offset);
+  EXPECT_EQ(Work.WorkUsed, 1u);
+  EXPECT_LT(Work.WorkUsed, ColdWork);
+  const auto Hits = Rewrites.reusedRoots();
+  ASSERT_GT(Hits, 0u);
+  Work.MaxWork = 0;
+  EXPECT_EQ(Prove().Status, FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(Work.WorkUsed, 0u);
+  EXPECT_EQ(Rewrites.reusedRoots(), Hits);
+  EXPECT_EQ(Queries, 0u);
+
+  // A cached derivation does not skip admission of new context nodes.
+  Ctx.mkConst(llvm::APInt(256, 0xabcdef));
+  Work.MaxWork = 5; // One node and its four constant limbs, with no MBA work.
+  EXPECT_EQ(Prove().Status, FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(Work.WorkUsed, 5u);
+  EXPECT_EQ(Rewrites.reusedRoots(), Hits);
+  Work.MaxWork = 6;
+  EXPECT_EQ(Prove().Status, FrameOffsetStatus::Exact);
+  EXPECT_EQ(Work.WorkUsed, 6u);
+  EXPECT_GT(Rewrites.reusedRoots(), Hits);
+  Options.MaxSymbolicNodes = Ctx.numNodes() - 1;
+  EXPECT_EQ(Prove().Status, FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(Work.WorkUsed, 0u);
+}
+
+TEST(FrameOffsets, CachedChildUnderANewRootStillNeedsThePredicateProof) {
+  for (bool ReuseEncoding : {false, true}) {
+    SCOPED_TRACE(ReuseEncoding);
+    SymContext Ctx;
+    const auto Root = Ctx.mkVar("frame", 64);
+    const auto Input = Ctx.mkVar("data", 64);
+    const auto Child = mbaFrameAddress(Ctx, Root, Input, uint64_t{0} - 73);
+    const auto True = Ctx.mkTrue();
+    MBARewriteCache Rewrites(Ctx);
+    FrameOffsetNormalization Work{65536, 0, &Rewrites};
+    SpecializationOptions WarmOptions;
+    WarmOptions.MaxSolverQueries = 0;
+    uint64_t Queries = 0;
+    FiniteQueryCache Domains(65536, Ctx);
+    const auto Warm = proveFrameOffset(Ctx, True, Child, Root, WarmOptions,
+                                       Queries, &Domains, &Work);
+    ASSERT_EQ(Warm.Status, FrameOffsetStatus::Exact);
+    ASSERT_GT(Rewrites.size(), 0u);
+    EXPECT_FALSE(Domains.lookup(Ctx, True, {Ctx.mkSub(Child, Root)}, 1));
+    const auto Hits = Rewrites.reusedRoots();
+    const auto Value =
+        Ctx.mkAdd(Ctx.mkAnd(Child, Ctx.mkConst(64, -16)), Ctx.mkConst(64, 11));
+    const auto Predicate = residue(Ctx, Root, 15, 6);
+    neverd::solver::SolverOptions Settings;
+    Settings.Blast.MaxGates = 256;
+    FiniteDomainEncoding Encoding(Ctx, Settings);
+    const auto Prove = [&](SymRef Condition, uint64_t MaxQueries) {
+      return ReuseEncoding
+                 ? proveFrameOffset(Encoding, Condition, Value, Root,
+                                    MaxQueries, 65536, Queries, &Domains, &Work)
+                 : proveFrameOffset(Ctx, Condition, Value, Root, Settings,
+                                    MaxQueries, 65536, Queries, &Domains,
+                                    &Work);
+    };
+    EXPECT_EQ(Prove(Predicate, 0).Status, FrameOffsetStatus::BudgetExceeded);
+    EXPECT_EQ(Queries, 0u);
+    EXPECT_GT(Rewrites.reusedRoots(), Hits);
+    const auto Key = Ctx.mkSub(Ctx.mkAnd(Child, Ctx.mkConst(64, -16)), Root);
+    EXPECT_FALSE(Domains.lookup(Ctx, Predicate, {Key}, 1));
+    const auto Proved = Prove(Predicate, 2);
+    ASSERT_EQ(Proved.Status, FrameOffsetStatus::Exact);
+    EXPECT_EQ(Proved.Offset, uint64_t{0} - 75);
+    EXPECT_EQ(Queries, 2u); // A model and its independent uniqueness check.
+    ASSERT_TRUE(Domains.lookup(Ctx, Predicate, {Key}, 1));
+    // Algebraic rewrites are reusable, but the frame residue was never one.
+    Queries = 0;
+    EXPECT_EQ(Prove(True, 2).Status, FrameOffsetStatus::NonUnique);
+    EXPECT_EQ(Queries, 2u);
+    for (uint64_t Stack :
+         {uint64_t{6}, uint64_t{0x123456789abcdef6}, UINT64_MAX - 9})
+      for (uint64_t Data : {uint64_t{0}, uint64_t{37}, UINT64_MAX}) {
+        const auto Expected =
+            (((Stack ^ Data) + 2 * (Stack & Data) - Data - 73) &
+             ~uint64_t{15}) +
+            11;
+        EXPECT_EQ(Ctx.evalU64(Value, {Stack, Data}), Expected);
+        EXPECT_EQ(Expected, Stack + Proved.Offset);
+      }
+  }
+}
+
+TEST(FrameOffsets, FreshNormalizationCachesDoNotReuseRecycledContextStorage) {
+  // Recreate the context at exactly the same address and with colliding node
+  // indices. A context-address-only persistent cache would mix these values.
+  std::optional<SymContext> Storage;
+  for (uint64_t Bias : {uint64_t{24}, uint64_t{0} - 40, UINT64_MAX}) {
+    auto &Ctx = Storage.emplace();
+    const auto Root = Ctx.mkVar("frame", 64);
+    const auto Input = Ctx.mkVar("data", 64);
+    const auto Value = mbaFrameAddress(Ctx, Root, Input, Bias);
+    MBARewriteCache Rewrites(Ctx);
+    ASSERT_EQ(Rewrites.size(), 0u);
+    ASSERT_EQ(Rewrites.reusedRoots(), 0u);
+    FrameOffsetNormalization Work{65536, 0, &Rewrites};
+    SpecializationOptions Options;
+    Options.MaxSolverQueries = 0;
+    uint64_t Queries = 0;
+    const auto R = proveFrameOffset(Ctx, Ctx.mkTrue(), Value, Root, Options,
+                                    Queries, nullptr, &Work);
+    ASSERT_EQ(R.Status, FrameOffsetStatus::Exact);
+    EXPECT_EQ(R.Offset, Bias);
+    EXPECT_GT(Rewrites.size(), 0u);
+    EXPECT_EQ(Queries, 0u);
+    for (uint64_t Stack :
+         {uint64_t{0}, uint64_t{0x123456789abcdef0}, UINT64_MAX})
+      for (uint64_t Data : {uint64_t{0}, uint64_t{7}, UINT64_MAX})
+        EXPECT_EQ(Ctx.evalU64(Value, {Stack, Data}), Stack + R.Offset);
+  }
 }
 
 } // namespace

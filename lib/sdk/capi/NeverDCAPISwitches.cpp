@@ -15,6 +15,7 @@
 #include "SessionImpl.h"
 
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MathExtras.h"
@@ -28,7 +29,6 @@ using namespace neverd::sdk;
 namespace {
 
 /// The most functions one page covers.
-constexpr int MaxSwitchFunctionsPerPage = 4096;
 
 /// How every slot of a table stores its target.
 enum class EntryForm { Absolute, TableRelative, ImageRelative };
@@ -152,7 +152,7 @@ const char *neverd_switches_json(neverd_session_t Sess, neverd_va_t FirstEntry,
     return nullptr;
   }
   const size_t Limit = static_cast<size_t>(
-      std::clamp(MaxFunctions, 1, MaxSwitchFunctionsPerPage));
+      std::clamp(MaxFunctions, 1, kMaxSwitchFunctionsPerPage));
   std::vector<const LowFunc *> Functions;
   Functions.reserve(S->PipeResult.LowFuncs.size());
   for (const LowFunc &F : S->PipeResult.LowFuncs)

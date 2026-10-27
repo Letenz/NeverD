@@ -11,17 +11,43 @@
 ///
 ///   NEVERD_DWARF_LOCATION(Name, Spelling)
 ///
+/// The debug directories searched by build ID and debug link, as GDB's
+/// debug-file-directory and IDA's ELF_DEBUG_FILE_DIRECTORY name them, and the
+/// environment variable whose list of directories, separated as PATH is,
+/// replaces them:
+///
+///   NEVERD_DEBUG_FILE_DIRECTORY(Path)
+///   NEVERD_DEBUG_FILE_DIRECTORY_VARIABLE(Name)
+///
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_DWARF_LOCATION
 #define NEVERD_DWARF_LOCATION(Name, Spelling)
+#endif
+#ifndef NEVERD_DEBUG_FILE_DIRECTORY
+#define NEVERD_DEBUG_FILE_DIRECTORY(Path)
+#endif
+#ifndef NEVERD_DEBUG_FILE_DIRECTORY_VARIABLE
+#define NEVERD_DEBUG_FILE_DIRECTORY_VARIABLE(Name)
 #endif
 
 // The image's own .debug_info or __debug_info sections.
 NEVERD_DWARF_LOCATION(Input, "input")
 // The DWARF file of a .dSYM bundle beside a Mach-O image.
 NEVERD_DWARF_LOCATION(DSYM, "dsym")
+// <debug directory>/.build-id/xx/yyyy.debug, named by the ELF image's build
+// ID and carrying the same one, as distribution debug packages install it.
+NEVERD_DWARF_LOCATION(BuildID, "build-id")
+// The file the ELF image's .gnu_debuglink names, beside it, in .debug/ beside
+// it or under a debug directory, whose CRC is the one the link records.
+NEVERD_DWARF_LOCATION(DebugLink, "debuglink")
 // A split .debug file beside the image, matched by its name alone.
 NEVERD_DWARF_LOCATION(Beside, "beside")
 
+// Where distribution debug packages install companion files.
+NEVERD_DEBUG_FILE_DIRECTORY("/usr/lib/debug")
+NEVERD_DEBUG_FILE_DIRECTORY_VARIABLE("NEVERD_DEBUG_FILE_DIRECTORY")
+
 #undef NEVERD_DWARF_LOCATION
+#undef NEVERD_DEBUG_FILE_DIRECTORY
+#undef NEVERD_DEBUG_FILE_DIRECTORY_VARIABLE

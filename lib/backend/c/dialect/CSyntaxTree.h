@@ -103,15 +103,30 @@ struct CType {
 };
 
 struct RecordField {
+  /// Empty for a bit-field the record leaves unnamed, and for an anonymous
+  /// structure or union, whose members are the record's own (C17 6.7.2.1).
   std::string Name;
   const CType *Type = nullptr;
+  /// A bit-field's width in bits.
+  std::optional<unsigned> BitWidth;
+
+  bool isAnonymousRecord() const {
+    return Name.empty() && !BitWidth && Type && Type->isRecord();
+  }
 };
 
 struct RecordDef {
-  /// `struct QDomNode`.
+  /// `struct QDomNode`, `union _LARGE_INTEGER`.
   std::string Spelling;
   std::vector<RecordField> Fields;
   bool Complete = false;
+  bool Union = false;
+  /// A structure or union declared without a tag, as a member.
+  bool Anonymous = false;
+  /// The `#pragma pack` the record is defined under; 0 for none.
+  unsigned Pack = 0;
+  /// The alignment `DECLSPEC_ALIGN(N)` declares; 0 for the natural one.
+  uint64_t Alignment = 0;
 };
 
 /// Owns and interns the C types of one text.
@@ -139,6 +154,11 @@ public:
   const CType *function(const CType *Return, std::vector<const CType *> Params,
                         bool Variadic, bool Prototyped);
   const CType *record(llvm::StringRef Spelling);
+  /// A structure or union declared without a tag, as a record's member.
+  const CType *anonymousRecord(bool Union);
+  /// `enum Name`: an integer of int's width, as MSVC and GCC give an
+  /// enumeration whose values int holds.
+  const CType *enumeration(llvm::StringRef Name);
   /// \p T with \p Const and \p Volatile added, or in \p AddressSpace.
   const CType *qualified(const CType *T, bool Const, bool Volatile,
                          unsigned AddressSpace = 0);
@@ -161,6 +181,7 @@ private:
   std::map<std::string, const CType *> Interned;
   std::deque<RecordDef> Records;
   llvm::StringMap<RecordDef *> RecordsByName;
+  unsigned Anonymous = 0;
   const CType *Void, *Bool, *Int, *UnsignedInt, *Char, *Size, *Ptrdiff, *Double,
       *Unknown;
 };
@@ -206,8 +227,11 @@ enum class ExprKind : uint8_t {
   StatementExpr,
   /// `__builtin_bit_cast(T, x)`.
   BitCast,
-  /// `__builtin_offsetof(T, field)`.
+  /// `__builtin_offsetof(T, field)`, or `offsetof` as `<stddef.h>` spells
+  /// it.
   Offsetof,
+  /// `va_arg(ap, T)`, whose operand is the list and whose type is written.
+  VaArg,
   /// `__asm__(...)` where the emitter wrote it as a value; kept as written.
   Asm,
 };
@@ -223,6 +247,8 @@ struct Expr {
   llvm::SmallVector<Expr *, 2> Ops;
   /// The type a cast, sizeof, compound literal or bit cast names.
   const CType *Written = nullptr;
+  /// A cast's unevaluated GNU typeof operand, resolved by the checker.
+  Expr *TypeQuery = nullptr;
   Stmt *Body = nullptr;
   CommentList Leading;
   CommentList Trailing;
@@ -237,6 +263,10 @@ struct Expr {
   bool LValue = false;
   /// The declaration a name refers to.
   const Decl *Ref = nullptr;
+  /// The field a member access or `offsetof` names, and whether it reaches
+  /// the field through anonymous records.
+  const RecordField *Field = nullptr;
+  bool ThroughAnonymous = false;
   /// The value an integer constant expression has, when the checker knows it.
   std::optional<int64_t> Value;
 };
@@ -308,7 +338,11 @@ enum class DeclKind : uint8_t {
   Function,
   Parameter,
   Typedef,
-  Record
+  Record,
+  /// `enum Name { ... };`, its enumerators in Fields.
+  Enumeration,
+  /// A constant an enumeration declares, its value in Init.
+  Enumerator
 };
 
 struct Decl {
@@ -324,8 +358,12 @@ struct Decl {
   bool Static = false;
   bool Inline = false;
   bool Register = false;
+  /// GNU __auto_type: the initializer supplies the variable's value type.
+  bool Inferred = false;
   bool Noreturn = false;
   std::optional<uint64_t> AlignAs;
+  /// An enumerator's value, as the checker computes it.
+  std::optional<int64_t> Value;
   /// The string literal of `__asm__("symbol")` after a declarator, as
   /// written.
   llvm::StringRef AsmLabel;
@@ -334,7 +372,7 @@ struct Decl {
   Expr *Init = nullptr;
   std::vector<Decl *> Params;
   Stmt *Body = nullptr;
-  /// A record definition's fields.
+  /// A record definition's fields; an enumeration's enumerators.
   std::vector<Decl *> Fields;
   CommentList Leading;
   CommentList Trailing;
@@ -345,7 +383,8 @@ struct TopLevel {
     /// One declaration statement: a function, prototypes, variables, a
     /// typedef or a record.
     Declaration,
-    /// `_Static_assert(condition, "message");`
+    /// `_Static_assert(condition, "message");`, or `static_assert` as C23,
+    /// C++ and `<assert.h>` spell it, the keyword in Text.
     StaticAssert,
     Comment,
     /// A preprocessor line.
@@ -397,6 +436,8 @@ public:
   BinaryFormat Format = BinaryFormat::Unknown;
   TypeContext Types;
   std::vector<TopLevel> Items;
+  /// Target header declarations used for typing, not printed as source.
+  std::vector<TopLevel> HeaderDeclarations;
   /// Declarations read from elsewhere, which the nodes point into.
   std::deque<std::string> Sources;
 
@@ -408,7 +449,8 @@ private:
 
 /// Reads \p Source into \p Result.  A top-level declaration it cannot read
 /// becomes an Unread item with the reason; the rest is still read.
-void parse(llvm::StringRef Source, Tree &Result);
+void parse(llvm::StringRef Source, Tree &Result,
+           llvm::StringRef HeaderDeclarations = {});
 
 /// Reads the declarations of \p Source, which must outlive \p Nodes, with
 /// \p Nodes' types and nodes but not into its items.

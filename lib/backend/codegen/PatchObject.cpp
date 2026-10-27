@@ -6,6 +6,7 @@
 
 #include "neverd/backend/codegen/PatchObject.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/codegen/DwarfEHFrame.h"
 #include "neverd/backend/codegen/ELF/ELFARMEHABIPatch.h"
 #include "neverd/backend/codegen/ELF/ELFExceptionPatch.h"
@@ -14,6 +15,7 @@
 #include "neverd/backend/codegen/ELF/ELFSourceRelocations.h"
 #include "neverd/backend/codegen/ELF/ELFSourceSymbols.h"
 #include "neverd/backend/codegen/PatchStorage.h"
+#include "neverd/backend/codegen/SourcePatchPreparation.h"
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
 #include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/object/ELFLayout.h"
@@ -36,7 +38,6 @@
 namespace neverd {
 namespace {
 using SectionKind = llvm::mc_rewrite::RewriteSectionKind;
-constexpr uint64_t MaxImageSize = 64 * 1024 * 1024;
 
 llvm::Error fail(const llvm::Twine &Detail) {
   return llvm::createStringError(llvm::errc::not_supported,
@@ -79,7 +80,138 @@ struct ObjectImage {
   uint64_t MetadataOffset = 0;
   uint64_t GOTBase = 0;
   bool NeedsGOTBase = false;
+  struct ImportThunk {
+    size_t CodeSection = 0, FrameSection = 0;
+    uint64_t FrameOffset = 0, SlotVA = 0;
+    uint64_t CodeSize = 0, FrameSize = 0;
+    InstructionMode Mode = InstructionMode::Default;
+  };
+  std::map<std::pair<uint32_t, InstructionMode>, ImportThunk> ImportThunks;
 };
+
+llvm::Error
+prepareObjectImportThunks(ObjectImage &Object,
+                          llvm::ArrayRef<SourcePatchImport> Imports) {
+  const Arch A = Object.Storage.TargetArch;
+  std::optional<size_t> EH;
+  if (A != Arch::ARM) {
+    for (size_t I = 0; I < Object.Storage.Sections.size(); ++I)
+      if (Object.Storage.Sections[I].Name == ".eh_frame")
+        EH = I;
+    if (!EH && !Imports.empty())
+      return fail("import thunks need native DWARF storage");
+  }
+  for (const auto &Import : Imports) {
+    if (Import.Request.Kind != SourcePatchDependencyKind::Function)
+      continue;
+    auto Found = Object.NamedSymbols.find(Import.Request.Symbol);
+    if (Found == Object.NamedSymbols.end() ||
+        Object.Symbols[Found->second].Section != llvm::ELF::SHN_UNDEF)
+      return fail(
+          "new function dependency requires an undefined object symbol");
+    // Tail branches cannot interwork. Give each caller instruction state its
+    // own ABI-preserving veneer; mapping order must not select that state.
+    const std::vector<InstructionMode> Modes =
+        A == Arch::ARM ? std::vector<InstructionMode>{InstructionMode::ARM,
+                                                      InstructionMode::Thumb}
+                       : std::vector<InstructionMode>{InstructionMode::Default};
+    for (const auto Mode : Modes) {
+      auto Code = buildSourceImportThunk(A, Mode, 0x10000, 0x20000);
+      if (!Code)
+        return Code.takeError();
+      ObjectImage::ImportThunk T;
+      T.CodeSection = Object.Storage.Sections.size();
+      T.SlotVA = Import.SlotVA;
+      T.Mode = Mode;
+      T.CodeSize = Code->size();
+      CompiledSection S;
+      S.Name = ".text.neverd.import." + std::to_string(Found->second) + "." +
+               std::to_string(unsigned(Mode));
+      S.Kind = SectionKind::Code;
+      S.Alignment = 4;
+      S.Size = Code->size();
+      S.IsAllocated = S.IsInImage = true;
+      S.ExternalBytes = std::move(*Code);
+      Object.Storage.Sections.push_back(std::move(S));
+      if (A == Arch::ARM) {
+        T.FrameSection = Object.Storage.Sections.size();
+        T.FrameSize = 8;
+        CompiledSection F;
+        F.Name = ".ARM.exidx.neverd.import." + std::to_string(Found->second) +
+                 "." + std::to_string(unsigned(Mode));
+        F.Kind = SectionKind::ReadOnlyData;
+        F.Alignment = 4;
+        F.Size = 8;
+        F.IsAllocated = F.IsInImage = true;
+        F.ExternalBytes.resize(8);
+        Object.Storage.Sections.push_back(std::move(F));
+      } else {
+        auto Frame =
+            buildSourceImportThunkFrame(A, 0x10000, T.CodeSize, 0x20000);
+        if (!Frame)
+          return Frame.takeError();
+        auto &F = Object.Storage.Sections[*EH];
+        // Native object .eh_frame is a sequence of bounded DWARF32 records.
+        // Remove only its zero terminator/tail before appending a fresh CIE.
+        size_t End = 0;
+        while (rangeInBounds(End, 4, F.ExternalBytes.size())) {
+          uint32_t N = readLE<uint32_t>(F.ExternalBytes.data() + End);
+          if (!N)
+            break;
+          if (N == UINT32_MAX ||
+              !rangeInBounds(End + 4, N, F.ExternalBytes.size()))
+            return fail("unbounded original object frame record");
+          End += 4 + N;
+        }
+        if (llvm::any_of(
+                llvm::ArrayRef<uint8_t>(F.ExternalBytes).drop_front(End),
+                [](uint8_t C) { return C != 0; }))
+          return fail("nonzero bytes follow the object frame terminator");
+        F.ExternalBytes.resize(End);
+        T.FrameSection = *EH;
+        T.FrameOffset = End;
+        T.FrameSize = Frame->size();
+        F.ExternalBytes.insert(F.ExternalBytes.end(), Frame->begin(),
+                               Frame->end());
+        F.Size = F.ExternalBytes.size();
+      }
+      Object.ImportThunks.emplace(std::make_pair(Found->second, Mode), T);
+    }
+  }
+  return llvm::Error::success();
+}
+
+llvm::Error finalizeObjectImportThunks(ObjectImage &Object) {
+  auto &Image = Object.Storage;
+  for (const auto &[Symbol, T] : Object.ImportThunks) {
+    const auto &S = Image.Sections[T.CodeSection];
+    const auto &F = Image.Sections[T.FrameSection];
+    auto Code =
+        buildSourceImportThunk(Image.TargetArch, T.Mode, S.VA, T.SlotVA);
+    if (!Code)
+      return Code.takeError();
+    std::copy(Code->begin(), Code->end(), Image.Bytes.begin() + S.Offset);
+    const uint64_t FrameVA = F.VA + T.FrameOffset;
+    if (Image.TargetArch == Arch::ARM) {
+      const int64_t D = int64_t(S.VA) - int64_t(FrameVA);
+      if (!llvm::isInt<31>(D))
+        return fail("import thunk exceeds EHABI reach");
+      writeLE<uint32_t>(Image.Bytes.data() + F.Offset,
+                        uint32_t(D) & 0x7fffffff);
+      writeLE<uint32_t>(Image.Bytes.data() + F.Offset + 4, 0x80b0b0b0);
+    } else {
+      auto Frame =
+          buildSourceImportThunkFrame(Image.TargetArch, S.VA, S.Size, FrameVA);
+      if (!Frame)
+        return Frame.takeError();
+      if (Frame->size() != T.FrameSize)
+        return fail("import frame placement changed");
+      std::copy(Frame->begin(), Frame->end(),
+                Image.Bytes.begin() + F.Offset + T.FrameOffset);
+    }
+  }
+  return llvm::Error::success();
+}
 
 template <typename ELF>
 llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
@@ -113,7 +245,9 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
   auto Sections = File->sections();
   if (!Sections)
     return Sections.takeError();
-  if (Sections->empty() || Sections->size() > 65536)
+  if (Sections->empty() ||
+      Sections->size() >
+          ::neverd::limits::backend::kPatchObjectReadELFObjectSectionsSizeLimit)
     return fail("invalid section count");
   ObjectImage Result;
   Result.Storage.InputKind = RewriteInputKind::ReplacementObject;
@@ -199,10 +333,13 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
         ((Flags & llvm::ELF::SHF_WRITE) && (Flags & llvm::ELF::SHF_EXECINSTR)))
       return fail("unsupported allocated section or permissions: " + *Name);
     const uint64_t Alignment = std::max<uint64_t>(Section.sh_addralign, 1);
-    if (!llvm::isPowerOf2_64(Alignment) || Alignment > 1024 * 1024 ||
-        Section.sh_size > MaxImageSize || Name->empty())
+    if (!llvm::isPowerOf2_64(Alignment) ||
+        Alignment > ::neverd::limits::backend::kMaxPatchObjectAlignment ||
+        Section.sh_size > ::neverd::limits::backend::kPatchObjectMaxImageSize ||
+        Name->empty())
       return fail("invalid allocated section: " + *Name);
-    if (Section.sh_size > MaxImageSize - AllocatedBytes)
+    if (Section.sh_size >
+        ::neverd::limits::backend::kPatchObjectMaxImageSize - AllocatedBytes)
       return fail("total allocated storage exceeds the profile limit");
     AllocatedBytes += Section.sh_size;
     if (*Name == ".got.source")
@@ -247,7 +384,8 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
   auto Names = File->getStringTableForSymtab((*Sections)[*Symtab]);
   if (!Names)
     return Names.takeError();
-  if (Symbols->size() > 1024 * 1024)
+  if (Symbols->size() >
+      ::neverd::limits::backend::kPatchObjectReadELFObjectSymbolsSizeLimit)
     return fail("excessive symbol count");
   std::map<uint32_t, unsigned> FunctionCounts;
   for (const auto &Symbol : *Symbols) {
@@ -456,7 +594,8 @@ llvm::Error placeObject(ObjectImage &Object, const BinaryImage &Original,
                         uint64_t BaseVA, uint64_t OriginalUnwindSize) {
   auto &Image = Object.Storage;
   Image.BaseVA = BaseVA;
-  if (!BaseVA || BaseVA > UINT64_MAX - MaxImageSize)
+  if (!BaseVA ||
+      BaseVA > UINT64_MAX - ::neverd::limits::backend::kPatchObjectMaxImageSize)
     return fail("invalid placement base");
   if (Object.NeedsGOTBase) {
     CompiledSection GOT;
@@ -470,8 +609,10 @@ llvm::Error placeObject(ObjectImage &Object, const BinaryImage &Original,
   uint64_t Cursor = BaseVA;
   auto Place = [&](CompiledSection &Section) -> llvm::Error {
     Cursor = llvm::alignTo(Cursor, Section.Alignment);
-    if (Cursor < BaseVA || Cursor - BaseVA > MaxImageSize ||
-        Section.Size > MaxImageSize - (Cursor - BaseVA))
+    if (Cursor < BaseVA ||
+        Cursor - BaseVA > ::neverd::limits::backend::kPatchObjectMaxImageSize ||
+        Section.Size > ::neverd::limits::backend::kPatchObjectMaxImageSize -
+                           (Cursor - BaseVA))
       return fail("object placement exceeds the profile limit");
     Section.VA = Cursor;
     Section.Offset = Cursor - BaseVA;
@@ -497,7 +638,9 @@ llvm::Error placeObject(ObjectImage &Object, const BinaryImage &Original,
                        Section.Type == llvm::ELF::SHT_REL)
                      Reserve += Section.Size;
                  });
-  if (Reserve > MaxImageSize || Object.MetadataOffset > MaxImageSize - Reserve)
+  if (Reserve > ::neverd::limits::backend::kPatchObjectMaxImageSize ||
+      Object.MetadataOffset >
+          ::neverd::limits::backend::kPatchObjectMaxImageSize - Reserve)
     return fail("object metadata exceeds the profile limit");
   Cursor = BaseVA + Object.MetadataOffset + Reserve;
   const bool HasWritable = std::any_of(
@@ -513,7 +656,7 @@ llvm::Error placeObject(ObjectImage &Object, const BinaryImage &Original,
         Section.Kind == SectionKind::UninitializedData)
       if (auto Error = Place(Section))
         return Error;
-  if (Cursor - BaseVA > MaxImageSize)
+  if (Cursor - BaseVA > ::neverd::limits::backend::kPatchObjectMaxImageSize)
     return fail("object image is too large");
   Image.Bytes.resize(Cursor - BaseVA, 0);
   for (auto &Section : Image.Sections) {
@@ -544,7 +687,8 @@ llvm::Error placeObject(ObjectImage &Object, const BinaryImage &Original,
 
 llvm::Expected<ResolvedSymbol> resolveObjectSymbol(
     const ObjectImage &Object, uint32_t Index, const BinaryImage &Original,
-    const std::map<std::string, SourcePatchBinding> &Bindings, bool Callable) {
+    const std::map<std::string, SourcePatchBinding> &Bindings, bool Callable,
+    InstructionMode CallMode = InstructionMode::Default) {
   const auto &Symbol = Object.Symbols[Index];
   if (Symbol.Section != llvm::ELF::SHN_UNDEF) {
     auto Section = Object.SectionIndices.find(Symbol.Section);
@@ -576,6 +720,13 @@ llvm::Expected<ResolvedSymbol> resolveObjectSymbol(
   }
   if (Symbol.Binding == llvm::ELF::STB_WEAK)
     return fail("unresolved weak symbol: " + Symbol.Name);
+  if (Callable)
+    if (auto T = Object.ImportThunks.find({Index, CallMode});
+        T != Object.ImportThunks.end()) {
+      const auto &S = Object.Storage.Sections[T->second.CodeSection];
+      return ResolvedSymbol{
+          S.VA | (T->second.Mode == InstructionMode::Thumb ? 1u : 0u), 0};
+    }
   if (!Callable) {
     auto Dynamic = findELFSourceDynamicSymbol(Original, Symbol.Name);
     if (!Dynamic)
@@ -681,7 +832,12 @@ llvm::Error relocateOtherELFObject(
                   ResolvedSymbol{Object.GOT.at(R.Symbol), 0})
         : GOTPC
             ? llvm::Expected<ResolvedSymbol>(ResolvedSymbol{Object.GOTBase, 0})
-            : resolveObjectSymbol(Object, R.Symbol, Original, Bindings, Call);
+            : resolveObjectSymbol(Object, R.Symbol, Original, Bindings, Call,
+                                  A != Arch::ARM ? InstructionMode::Default
+                                  : (R.Type == llvm::ELF::R_ARM_THM_CALL ||
+                                     R.Type == llvm::ELF::R_ARM_THM_JUMP24)
+                                      ? InstructionMode::Thumb
+                                      : InstructionMode::ARM);
     if (!Target)
       return Target.takeError();
     auto *Out = Image.Bytes.data() + Section.Offset + R.Offset;
@@ -744,6 +900,12 @@ llvm::Error relocateOtherELFObject(
         if (!D)
           return D.takeError();
         const uint32_t Old = readLE<uint32_t>(Out);
+        const bool WasBLX = (Old & 0xfe000000u) == 0xfa000000u;
+        if ((R.Type == llvm::ELF::R_ARM_CALL && !WasBLX &&
+             (Old & 0xff000000u) != 0xeb000000u) ||
+            (R.Type == llvm::ELF::R_ARM_JUMP24 &&
+             ((Old & 0x0f000000u) != 0x0a000000u || Old >> 28 == 15)))
+          return fail("malformed ARM branch relocation");
         if ((*D & 1) || (P & 3) || (Thumb && R.Type != llvm::ELF::R_ARM_CALL) ||
             (!Thumb && (*D & 3)) || (Old & 0x0e000000) != 0x0a000000)
           return fail("ARM call requires an unsupported interworking veneer");
@@ -754,6 +916,12 @@ llvm::Error relocateOtherELFObject(
                                    (Thumb ? (uint32_t(*D) & 2) << 23 : 0));
       } else if (R.Type == llvm::ELF::R_ARM_THM_CALL ||
                  R.Type == llvm::ELF::R_ARM_THM_JUMP24) {
+        const uint16_t Hi = readLE<uint16_t>(Out),
+                       Lo = readLE<uint16_t>(Out + 2);
+        if ((Hi & 0xf800u) != 0xf000u ||
+            (R.Type == llvm::ELF::R_ARM_THM_CALL ? (Lo & 0xc000u) != 0xc000u
+                                                 : (Lo & 0xd000u) != 0x9000u))
+          return fail("malformed Thumb branch relocation");
         const bool Thumb = Target->VA & 1;
         if (!Thumb && R.Type != llvm::ELF::R_ARM_THM_CALL)
           return fail("Thumb tail branch requires an ARM veneer");
@@ -929,6 +1097,10 @@ validateObjectUnwind(const ObjectImage &Object) {
   const auto &Image = Object.Storage;
   const CompiledSection *EH = nullptr;
   std::map<uint64_t, uint64_t> Functions;
+  for (const auto &[Symbol, Thunk] : Object.ImportThunks) {
+    const auto &S = Image.Sections[Thunk.CodeSection];
+    Functions.emplace(S.VA, S.VA + S.Size);
+  }
   for (const auto &Symbol : Object.Symbols) {
     if (Symbol.Type != llvm::ELF::STT_FUNC ||
         Symbol.Section == llvm::ELF::SHN_UNDEF)
@@ -991,7 +1163,8 @@ validateDynCodePatchImage(const DynCodePatchEvidence &Evidence,
       Compiled.InputKind != RewriteInputKind::ReplacementObject ||
       Mappings.size() != 1 || Mappings.front().Symbol.empty() ||
       !Bindings.empty() || Evidence.Payload.empty() ||
-      Evidence.Payload.size() > MaxImageSize)
+      Evidence.Payload.size() >
+          ::neverd::limits::backend::kPatchObjectMaxImageSize)
     return fail("hosted DynCode requires one explicit x64/ARM64 entry, "
                 "a bounded payload and no original bindings");
   auto Parsed = llvm::json::parse(Evidence.Audit);
@@ -1070,18 +1243,23 @@ validateDynCodePatchImage(const DynCodePatchEvidence &Evidence,
 }
 
 llvm::Expected<PatchResult> installObjectPatch(
-    llvm::StringRef Bytes, const BinaryImage &Original,
+    llvm::StringRef Bytes, const BinaryImage &OriginalInput,
     llvm::ArrayRef<SourcePatchMapping> Mappings,
     llvm::ArrayRef<SourcePatchBinding> RequestedBindings,
     const std::filesystem::path &Output,
     llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt,
-    const DynCodePatchEvidence *DynCode) {
+    const DynCodePatchEvidence *DynCode,
+    const SourcePatchPreparation *Preparation) {
+  const BinaryImage &Original =
+      Preparation ? Preparation->Image : OriginalInput;
   if (Original.Format == BinaryFormat::COFF)
-    return installCOFFObjectPatch(Bytes, Original, Mappings, RequestedBindings,
-                                  Output, PrepareReceipt, DynCode);
+    return installCOFFObjectPatch(Bytes, OriginalInput, Mappings,
+                                  RequestedBindings, Output, PrepareReceipt,
+                                  DynCode, Preparation);
   if (Original.Format == BinaryFormat::MachO)
-    return installMachOObjectPatch(Bytes, Original, Mappings, RequestedBindings,
-                                   Output, PrepareReceipt, DynCode);
+    return installMachOObjectPatch(Bytes, OriginalInput, Mappings,
+                                   RequestedBindings, Output, PrepareReceipt,
+                                   DynCode, Preparation);
   if (Original.Format != BinaryFormat::ELF)
     return fail("native object format is unsupported");
   if (Mappings.empty())
@@ -1138,6 +1316,9 @@ llvm::Expected<PatchResult> installObjectPatch(
   const bool ARM = Original.Arch == Arch::ARM;
   if (ARM ? !EHABI.has_value() : (!EH || !EH->HasHdr))
     return fail("original requires a registered native unwind search table");
+  if (Preparation)
+    if (auto E = prepareObjectImportThunks(*Object, Preparation->Imports))
+      return std::move(E);
   ELFPatcher Patcher;
   Patcher.setInputKind(RewriteInputKind::ReplacementObject);
   const uint64_t Base =
@@ -1146,6 +1327,8 @@ llvm::Expected<PatchResult> installObjectPatch(
                                ARM ? EHABI->IndexSize : EH->HdrSize))
     return std::move(Error);
   if (auto Error = relocateObject(*Object, References, Bindings))
+    return std::move(Error);
+  if (auto Error = finalizeObjectImportThunks(*Object))
     return std::move(Error);
   if (DynCode)
     if (auto Error = validateDynCodePatchImage(*DynCode, Bytes, Original,
@@ -1179,7 +1362,7 @@ llvm::Expected<PatchResult> installObjectPatch(
   if (!Dynamic)
     return Dynamic.takeError();
   return publishSourcePatch(
-      Original, Mappings, Output,
+      OriginalInput, Mappings, Output,
       [&](const std::filesystem::path &Input,
           const std::filesystem::path &Candidate)
           -> llvm::Expected<PatchResult> {
@@ -1243,7 +1426,37 @@ llvm::Expected<PatchResult> installObjectPatch(
           return fail(Failure.empty() ? "candidate write failed" : Failure);
         return Result;
       },
-      PrepareReceipt);
+      PrepareReceipt, Preparation,
+      [&](const BinaryImage &Final) -> llvm::Error {
+        if (auto E = verifyELFSourceRelocations(Final, *Dynamic))
+          return E;
+        for (const auto &S : Image.Sections) {
+          if (!S.IsInImage || !S.IsAllocated || !S.Size)
+            continue;
+          const uint64_t Offset = Final.vaToFileOffset(S.VA);
+          const auto *Owner = Final.getSegmentFor(S.VA);
+          const bool Code = S.Kind == SectionKind::Code;
+          const bool Writable = S.Kind == SectionKind::WritableData ||
+                                S.Kind == SectionKind::UninitializedData;
+          if (!Owner || Owner->isWritable() != Writable ||
+              (Code && !Owner->isExecutable()) ||
+              !rangeInBounds(Offset, S.Size, Final.Raw.size()) ||
+              !std::equal(Image.Bytes.begin() + S.Offset,
+                          Image.Bytes.begin() + S.Offset + S.Size,
+                          Final.Raw.begin() + Offset))
+            return fail(
+                "published native object storage differs from its receipt");
+        }
+        for (const auto &[Key, T] : Object->ImportThunks) {
+          const auto &S = Image.Sections[T.CodeSection];
+          const auto *F = Final.ExceptionMetadata.findFunction(S.VA);
+          if (!F || F->ParseStatus != ExceptionParseStatus::Complete ||
+              F->CodeRange.Begin != S.VA ||
+              F->CodeRange.End < S.VA + T.CodeSize)
+            return fail("published import thunk lost its unwind identity");
+        }
+        return llvm::Error::success();
+      });
 }
 
 } // namespace neverd

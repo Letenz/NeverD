@@ -32,6 +32,15 @@ using namespace llvm;
 namespace neverd::cli {
 
 namespace {
+cl::opt<std::string> RegisterQuery(
+    "register-flow",
+    cl::desc("Physical register query: registers, definitions, uses or value"),
+    cl::init(""), cl::sub(DisasmCmd));
+cl::opt<std::string> RegisterName("register", cl::desc("Decoded register name"),
+                                  cl::init(""), cl::sub(DisasmCmd));
+cl::opt<std::string> RegisterPC("instruction",
+                                cl::desc("Instruction address (hex)"),
+                                cl::init(""), cl::sub(DisasmCmd));
 
 int findFunction(neverd_session_t Sess, const std::string &FuncId) {
   int FuncIdx = neverd_func_find_by_name(Sess, FuncId.c_str());
@@ -136,6 +145,33 @@ int runFuncs(neverd_session_t Sess) {
 }
 
 int runDisasm(neverd_session_t Sess) {
+  if (!RegisterQuery.empty()) {
+    std::optional<uint64_t> Entry;
+    const auto Index =
+        neverd_func_find_by_name(Sess, DisasmFunc.getValue().c_str());
+    if (Index >= 0)
+      Entry = neverd_func_entry(Sess, Index);
+    else
+      Entry = parseAddrArg(DisasmFunc);
+    const auto PC = parseAddrArg(RegisterPC);
+    if (!Entry || !PC) {
+      WithColor::error() << "register flow requires --func and --instruction\n";
+      return 1;
+    }
+    std::string Options;
+    raw_string_ostream(Options)
+        << json::Value(json::Object{{"kind", RegisterQuery.getValue()},
+                                    {"register", RegisterName.getValue()}});
+    const auto *Reply =
+        neverd_register_flow_json(Sess, *Entry, *PC, Options.c_str());
+    if (!Reply) {
+      WithColor::error() << takeLastError(Sess) << "\n";
+      return 1;
+    }
+    outs() << Reply << "\n";
+    neverd_free_string(Reply);
+    return 0;
+  }
   if (DisasmFunc.empty()) {
     WithColor::error() << "disasm requires --func <name or hex addr>\n";
     return 1;

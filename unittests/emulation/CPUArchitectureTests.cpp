@@ -10,6 +10,7 @@
 
 #include "llvm/Support/Endian.h"
 
+#include <array>
 #include <cstdlib>
 
 namespace neverd::emulation {
@@ -22,14 +23,23 @@ namespace {
 #undef NEVERD_CPU_TEST_CODE
 #undef NEVERD_CPU_TEST_VALUE
 #undef NEVERD_CPU_TEST_TEXT
-llvm::Error code(ExecutionBackend &CPU, llvm::ArrayRef<uint32_t> Words) {
+
+template <typename T, typename U>
+void expectValue(llvm::Expected<T> Actual, const U &Expected) {
+  ASSERT_TRUE(bool(Actual)) << llvm::toString(Actual.takeError());
+  EXPECT_EQ(*Actual, Expected);
+}
+
+llvm::Error code(ExecutionBackend &CPU, llvm::ArrayRef<uint32_t> Words,
+                 uint64_t Address = Code) {
   std::vector<uint8_t> Bytes(Words.size() * sizeof(uint32_t));
   for (size_t N = 0; N < Words.size(); ++N)
     llvm::support::endian::write32le(Bytes.data() + N * sizeof(uint32_t),
                                      Words[N]);
-  return CPU.write(Code, Bytes);
+  return CPU.write(Address, Bytes);
 }
-llvm::Error steps(ExecutionBackend &CPU, unsigned Count) {
+llvm::Error steps(ExecutionBackend &CPU, unsigned Count,
+                  uint64_t Address = Code) {
   unsigned Seen = 0;
   BackendHooks Hooks;
   Hooks.Instruction = [&](uint64_t, uint32_t) {
@@ -38,7 +48,7 @@ llvm::Error steps(ExecutionBackend &CPU, unsigned Count) {
   };
   if (auto E = CPU.installHooks(std::move(Hooks)))
     return E;
-  auto Result = CPU.run(Code, Timeout);
+  auto Result = CPU.run(Address, Timeout);
   llvm::consumeError(CPU.installHooks({}));
   return Result;
 }
@@ -78,37 +88,37 @@ protected:
 TEST_P(AArch64CPU, ExecutesIntegerBranchAndMemoryAtHighAddresses) {
   ASSERT_EQ(llvm::toString(code(*CPU, Arithmetic)), "");
   ASSERT_EQ(llvm::toString(steps(*CPU, 7)), "");
-  EXPECT_EQ(*CPU->reg(AArch64Register::X0), ArithmeticValue);
-  EXPECT_EQ(*CPU->reg(AArch64Register::X2), ArithmeticValue);
-  EXPECT_EQ(*CPU->reg(AArch64Register::X3), 0u);
-  EXPECT_EQ(*CPU->reg(AArch64Register::X4), 7u);
-  EXPECT_EQ(*CPU->reg(AArch64Register::NZCV), ArithmeticFlags);
-  EXPECT_EQ(*CPU->readInteger(Data, sizeof(uint64_t)), ArithmeticValue);
+  expectValue(CPU->reg(AArch64Register::X0), ArithmeticValue);
+  expectValue(CPU->reg(AArch64Register::X2), ArithmeticValue);
+  expectValue(CPU->reg(AArch64Register::X3), 0u);
+  expectValue(CPU->reg(AArch64Register::X4), 7u);
+  expectValue(CPU->reg(AArch64Register::NZCV), ArithmeticFlags);
+  expectValue(CPU->readInteger(Data, sizeof(uint64_t)), ArithmeticValue);
 }
 TEST_P(AArch64CPU, PreservesLinkRegisterAndReturnControlFlow) {
   ASSERT_EQ(llvm::toString(code(*CPU, Call)), "");
   ASSERT_EQ(llvm::toString(steps(*CPU, 5)), "");
-  EXPECT_EQ(*CPU->reg(AArch64Register::X0), 12u);
-  EXPECT_EQ(*CPU->reg(AArch64Register::X30), Code + 2 * sizeof(uint32_t));
-  EXPECT_EQ(*CPU->reg(AArch64Register::PC), Code + 5 * sizeof(uint32_t));
+  expectValue(CPU->reg(AArch64Register::X0), 12u);
+  expectValue(CPU->reg(AArch64Register::X30), Code + 2 * sizeof(uint32_t));
+  expectValue(CPU->reg(AArch64Register::PC), Code + 5 * sizeof(uint32_t));
 }
 TEST_P(AArch64CPU, PairWritebackAndZeroExtendedRegisters) {
   ASSERT_EQ(llvm::toString(code(*CPU, PairStack)), "");
   ASSERT_EQ(llvm::toString(CPU->setReg(AArch64Register::X0, Value)), "");
   ASSERT_EQ(llvm::toString(CPU->setReg(AArch64Register::X2, Updated)), "");
   ASSERT_EQ(llvm::toString(steps(*CPU, 2)), "");
-  EXPECT_EQ(*CPU->reg(AArch64Register::SP), Stack + PageSize);
-  EXPECT_EQ(*CPU->reg(AArch64Register::X3), Value);
-  EXPECT_EQ(*CPU->reg(AArch64Register::X4), Updated);
+  expectValue(CPU->reg(AArch64Register::SP), Stack + PageSize);
+  expectValue(CPU->reg(AArch64Register::X3), Value);
+  expectValue(CPU->reg(AArch64Register::X4), Updated);
 }
 TEST_P(AArch64CPU, IndexedMemoryUsesTheArchitecturalAddress) {
   ASSERT_EQ(llvm::toString(code(*CPU, Indexed)), "");
   ASSERT_EQ(llvm::toString(CPU->setReg(AArch64Register::X0, Value)), "");
   ASSERT_EQ(llvm::toString(CPU->setReg(AArch64Register::X2, 3)), "");
   ASSERT_EQ(llvm::toString(steps(*CPU, 2)), "");
-  EXPECT_EQ(*CPU->reg(AArch64Register::X3), uint32_t(Value));
-  EXPECT_EQ(*CPU->readInteger(Data + 3 * sizeof(uint32_t), sizeof(uint32_t)),
-            uint32_t(Value));
+  expectValue(CPU->reg(AArch64Register::X3), uint32_t(Value));
+  expectValue(CPU->readInteger(Data + 3 * sizeof(uint32_t), sizeof(uint32_t)),
+              uint32_t(Value));
 }
 TEST_P(AArch64CPU, SignedLoadsPreserveRegisterWidthSemantics) {
   ASSERT_EQ(llvm::toString(code(*CPU, SignedLoads)), "");
@@ -116,9 +126,9 @@ TEST_P(AArch64CPU, SignedLoadsPreserveRegisterWidthSemantics) {
       llvm::toString(CPU->writeInteger(Data, UINT64_MAX, sizeof(uint64_t))),
       "");
   ASSERT_EQ(llvm::toString(steps(*CPU, 3)), "");
-  EXPECT_EQ(*CPU->reg(AArch64Register::X0), UINT64_MAX);
-  EXPECT_EQ(*CPU->reg(AArch64Register::X2), UINT32_MAX);
-  EXPECT_EQ(*CPU->reg(AArch64Register::X3), UINT64_MAX);
+  expectValue(CPU->reg(AArch64Register::X0), UINT64_MAX);
+  expectValue(CPU->reg(AArch64Register::X2), UINT32_MAX);
+  expectValue(CPU->reg(AArch64Register::X3), UINT64_MAX);
 }
 TEST_P(AArch64CPU, ObserverStopsStoreBeforeEffects) {
   ASSERT_EQ(llvm::toString(code(*CPU, Store)), "");
@@ -132,8 +142,8 @@ TEST_P(AArch64CPU, ObserverStopsStoreBeforeEffects) {
   };
   ASSERT_EQ(llvm::toString(CPU->installHooks(std::move(H))), "");
   ASSERT_EQ(llvm::toString(CPU->run(Code, Timeout)), "");
-  EXPECT_EQ(*CPU->reg(AArch64Register::PC), Code);
-  EXPECT_EQ(*CPU->readInteger(Data, sizeof(uint64_t)), 0u);
+  expectValue(CPU->reg(AArch64Register::PC), Code);
+  expectValue(CPU->readInteger(Data, sizeof(uint64_t)), 0u);
 }
 TEST_P(AArch64CPU, PairFaultPrecedesBothWritesAndCannotBeRestoredAway) {
   ASSERT_EQ(llvm::toString(code(*CPU, PairStore)), "");
@@ -170,7 +180,7 @@ TEST_P(AArch64CPU, ContextRestoresRegistersAgainstCurrentAliasMappings) {
               "");
     ASSERT_EQ(llvm::toString(CPU->restoreContext(**Saved)), "");
     ASSERT_EQ(llvm::toString(steps(*CPU, 1)), "");
-    EXPECT_EQ(*CPU->reg(AArch64Register::X0), N % 2 ? Updated : Value);
+    expectValue(CPU->reg(AArch64Register::X0), N % 2 ? Updated : Value);
   }
 }
 TEST_P(AArch64CPU, ChangedCodeInvalidatesCachedInstructions) {
@@ -178,13 +188,13 @@ TEST_P(AArch64CPU, ChangedCodeInvalidatesCachedInstructions) {
   ASSERT_EQ(llvm::toString(steps(*CPU, 1)), "");
   ASSERT_EQ(llvm::toString(code(*CPU, Modified)), "");
   ASSERT_EQ(llvm::toString(steps(*CPU, 1)), "");
-  EXPECT_EQ(*CPU->reg(AArch64Register::X0), 123u);
+  expectValue(CPU->reg(AArch64Register::X0), 123u);
 }
 TEST_P(AArch64CPU, UnsupportedSystemInstructionStopsBeforeEffect) {
   ASSERT_EQ(llvm::toString(code(*CPU, System)), "");
   ASSERT_EQ(llvm::toString(CPU->setReg(AArch64Register::X0, Value)), "");
   EXPECT_NE(llvm::toString(CPU->run(Code, Timeout)), "");
-  EXPECT_EQ(*CPU->reg(AArch64Register::X0), Value);
+  expectValue(CPU->reg(AArch64Register::X0), Value);
   ASSERT_TRUE(CPU->fault());
   EXPECT_EQ(CPU->fault()->Kind, BackendFaultKind::InvalidInstruction);
 }
@@ -227,6 +237,61 @@ TEST(CPUSelection, MatchingGuestUsesTheNativeHostBackend) {
 #endif
 }
 
+TEST(UnicornAArch64, CheckedRegisterPacketsPreserveEveryLaneAndRestoration) {
+  constexpr uint64_t PacketCode = 0x100000, PacketStack = 0x200000;
+  constexpr uint64_t PacketData = 0x300000;
+  for (bool User : {false, true}) {
+    SCOPED_TRACE(User);
+    auto Backend =
+        createExecutionBackend(ExecutionBackendKind::Unicorn,
+                               User ? ExecutionContract::CheckedUserAArch64
+                                    : ExecutionContract::CheckedAArch64,
+                               Limit, GuestArchitecture::AArch64);
+    ASSERT_TRUE(bool(Backend)) << llvm::toString(Backend.takeError());
+    auto &CPU = *Backend->CPU;
+    const unsigned Rights =
+        Read | Write | Execute | (User ? unsigned(UserAccessible) : 0u);
+    llvm::cantFail(CPU.map(PacketCode, PageSize, Rights));
+    llvm::cantFail(CPU.map(PacketStack, PageSize, Rights & ~Execute));
+    // ADD X0, X0, #1; the NOP is the pre-effect stop marker.
+    llvm::cantFail(code(CPU, {0x91000400, 0xd503201f}, PacketCode));
+    for (unsigned Round = 0; Round < 3; ++Round) {
+      SCOPED_TRACE(Round);
+      std::array<uint64_t, unsigned(AArch64Register::FPSR) + 1> Scalars{};
+      std::array<RegisterValue, 32> Vectors{};
+      for (unsigned I = 0; I <= unsigned(AArch64Register::X30); ++I)
+        Scalars[I] = 0x1122334455660000ULL + 0x1000 * Round + I;
+      Scalars[unsigned(AArch64Register::SP)] = PacketStack + PageSize - 16;
+      Scalars[unsigned(AArch64Register::PC)] = PacketCode;
+      Scalars[unsigned(AArch64Register::NZCV)] = 0xb0000000;
+      Scalars[unsigned(AArch64Register::TPIDR_EL0)] = PacketData + Round;
+      Scalars[unsigned(AArch64Register::TPIDRRO_EL0)] = PacketData + 16 + Round;
+      Scalars[unsigned(AArch64Register::TPIDR_EL1)] = PacketData + 32 + Round;
+      Scalars[unsigned(AArch64Register::FPCR)] = 0x01c00000;
+      Scalars[unsigned(AArch64Register::FPSR)] = 0x08000001;
+      for (unsigned I = 0; I < Scalars.size(); ++I)
+        llvm::cantFail(CPU.setReg(AArch64Register(I), Scalars[I]));
+      for (unsigned I = 0; I < Vectors.size(); ++I) {
+        Vectors[I] = {0x0123456789abcdefULL + 0x100 * Round + I,
+                      0xfedcba9876543210ULL - 0x100 * Round - I};
+        llvm::cantFail(CPU.setVector(I, Vectors[I]));
+      }
+      auto Saved = llvm::cantFail(CPU.saveContext());
+      ++Scalars[unsigned(AArch64Register::X0)];
+      Scalars[unsigned(AArch64Register::PC)] += 4;
+      for (unsigned Retry = 0; Retry < 2; ++Retry) {
+        llvm::cantFail(CPU.restoreContext(*Saved));
+        ASSERT_EQ(llvm::toString(steps(CPU, 1, PacketCode)), "");
+        for (unsigned I = 0; I < Scalars.size(); ++I)
+          EXPECT_EQ(llvm::cantFail(CPU.reg(AArch64Register(I))), Scalars[I])
+              << I;
+        for (unsigned I = 0; I < Vectors.size(); ++I)
+          EXPECT_EQ(llvm::cantFail(CPU.vector(I)), Vectors[I]) << I;
+      }
+    }
+  }
+}
+
 TEST(UnicornAArch64, ExecutesSIMDAndTLSAndRestoresCPUOnly) {
   auto B = createExecutionBackend(ExecutionBackendKind::Unicorn,
                                   ExecutionContract::Software, Limit,
@@ -238,16 +303,16 @@ TEST(UnicornAArch64, ExecutesSIMDAndTLSAndRestoresCPUOnly) {
   ASSERT_EQ(llvm::toString(CPU.map(Data, PageSize, Read | Write)), "");
   ASSERT_EQ(llvm::toString(code(CPU, CurrentEL)), "");
   ASSERT_EQ(llvm::toString(steps(CPU, 1)), "");
-  EXPECT_EQ(*CPU.reg(AArch64Register::X0), 4u);
+  expectValue(CPU.reg(AArch64Register::X0), 4u);
   ASSERT_EQ(llvm::toString(code(CPU, SIMD)), "");
   ASSERT_EQ(llvm::toString(CPU.setReg(AArch64Register::X3, Value)), "");
   ASSERT_EQ(llvm::toString(CPU.setReg(AArch64Register::TPIDR_EL0, Data)), "");
   ASSERT_EQ(llvm::toString(steps(CPU, 4)), "");
   ASSERT_FALSE(CPU.fault()) << std::hex << (CPU.fault() ? CPU.fault()->PC : 0);
-  EXPECT_EQ(*CPU.vector(0), (RegisterValue{SIMDPattern, SIMDPattern}));
-  EXPECT_EQ(*CPU.vector(1), (RegisterValue{}));
-  EXPECT_EQ(*CPU.vector(2), (RegisterValue{Value, 0}));
-  EXPECT_EQ(*CPU.reg(AArch64Register::X4), Data);
+  expectValue(CPU.vector(0), (RegisterValue{SIMDPattern, SIMDPattern}));
+  expectValue(CPU.vector(1), (RegisterValue{}));
+  expectValue(CPU.vector(2), (RegisterValue{Value, 0}));
+  expectValue(CPU.reg(AArch64Register::X4), Data);
   auto Saved = CPU.saveContext();
   ASSERT_TRUE(bool(Saved));
   ASSERT_EQ(llvm::toString(CPU.setVector(0, {})), "");
@@ -255,9 +320,9 @@ TEST(UnicornAArch64, ExecutesSIMDAndTLSAndRestoresCPUOnly) {
   ASSERT_EQ(llvm::toString(CPU.writeInteger(Data, Updated, sizeof(uint64_t))),
             "");
   ASSERT_EQ(llvm::toString(CPU.restoreContext(**Saved)), "");
-  EXPECT_EQ(*CPU.vector(0), (RegisterValue{SIMDPattern, SIMDPattern}));
-  EXPECT_EQ(*CPU.reg(AArch64Register::TPIDR_EL0), Data);
-  EXPECT_EQ(*CPU.readInteger(Data, sizeof(uint64_t)), Updated);
+  expectValue(CPU.vector(0), (RegisterValue{SIMDPattern, SIMDPattern}));
+  expectValue(CPU.reg(AArch64Register::TPIDR_EL0), Data);
+  expectValue(CPU.readInteger(Data, sizeof(uint64_t)), Updated);
   auto Invalid = CPU.reg(X64Register::AX);
   EXPECT_FALSE(bool(Invalid));
   llvm::consumeError(Invalid.takeError());

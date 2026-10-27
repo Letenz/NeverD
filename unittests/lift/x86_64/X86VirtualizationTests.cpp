@@ -1,0 +1,184 @@
+//===- X86VirtualizationTests.cpp - VMX/SVM completion -------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Independent synthetic instruction encodings. Privileged instructions are
+/// never executed on the host: mocked completion tests the architectural merge.
+//===----------------------------------------------------------------------===//
+
+#include "X86VirtualizationFixtures.h"
+#include "gtest/gtest.h"
+
+#include "neverd/decode/Decoder.h"
+#include "neverd/ir/low/NdOpEmulator.h"
+#include "neverd/lift/X86/X86Regs.h"
+#include "neverd/loader/BinaryImage.h"
+
+#include <algorithm>
+#include <array>
+#include <exception>
+#include <iterator>
+#include <vector>
+
+using namespace neverd;
+using namespace neverd::test;
+
+namespace {
+
+std::vector<LowOp> lift(Arch A, const std::vector<uint8_t> &Bytes) {
+  Decoder D;
+  if (!D.init(A)) {
+    ADD_FAILURE();
+    return {};
+  }
+  DecodedInsn I{};
+  if (D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I) !=
+      static_cast<int>(Bytes.size())) {
+    ADD_FAILURE();
+    return {};
+  }
+  std::vector<LowOp> Ops;
+  try {
+    D.liftToLow(I, Ops);
+  } catch (const std::exception &E) {
+    ADD_FAILURE() << E.what();
+  }
+  return Ops;
+}
+
+const LowOp *operation(const std::vector<LowOp> &Ops, Intrinsic Id) {
+  for (const auto &Op : Ops)
+    if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+        Op.Inputs[0].isConst() && Op.Inputs[0].Offset == uint64_t(Id))
+      return &Op;
+  return nullptr;
+}
+} // namespace
+
+TEST(X86Virtualization, EveryOwnedEncodingRetainsItsOperandsAndShape) {
+  for (Arch A : {Arch::X86, Arch::X64})
+    for (const auto &E : Encodings) {
+      SCOPED_TRACE(x86VirtualizationContract(E.Id).Mnemonic);
+      SCOPED_TRACE(A == Arch::X64 ? "x64" : "x86");
+      const auto Ops = lift(A, E.Bytes);
+      const auto *Op = operation(Ops, E.Id);
+      ASSERT_NE(Op, nullptr);
+      EXPECT_TRUE(x86VirtualizationShapeIsValid(
+          E.Id, x86VirtualizationLowShape(*Op, A)));
+      EXPECT_EQ(Op->Addr, 0x1000u);
+      EXPECT_TRUE(isSideeffectIntrinsic(E.Id));
+      for (const auto &Part : Ops)
+        EXPECT_TRUE(Part.Opcode != NdOp::LOAD && Part.Opcode != NdOp::STORE);
+      if (E.Id == Intrinsic::SvmInvalidate) {
+        ASSERT_EQ(Op->NumInputs, 3);
+        EXPECT_EQ(Op->Inputs[1].Offset, x86reg::RAX);
+        EXPECT_EQ(Op->Inputs[2].Offset, x86reg::RCX);
+        EXPECT_EQ(Op->Inputs[2].Size, 4);
+      }
+    }
+}
+
+TEST(X86Virtualization, VmreadPreservesTheDestinationOnBothFailureKinds) {
+  for (Arch A : {Arch::X86, Arch::X64})
+    for (uint16_t Flags : {uint16_t(0), uint16_t(1), uint16_t(0x100)}) {
+      SCOPED_TRACE(Flags);
+      const uint16_t Word = A == Arch::X64 ? 8 : 4;
+      const uint64_t Old = A == Arch::X64 ? 0xABCDEF1287654321ULL : 0x87654321;
+      const uint64_t New = A == Arch::X64 ? 0x80000000FEDCBA98ULL : 0xFEDCBA98;
+      const auto Ops = lift(A, Encodings[0].Bytes);
+      ASSERT_NE(operation(Ops, Intrinsic::VmxRead), nullptr);
+      BinaryImage Image;
+      Image.Arch = A;
+      NdOpEmulator Emulator(Image);
+      Emulator.setRegister(x86reg::RAX, Old);
+      for (const auto Flag : {x86reg::CF, x86reg::ZF, x86reg::AF, x86reg::OF,
+                              x86reg::SF, x86reg::PF})
+        Emulator.setRegister(Flag, 1);
+      for (auto Op : Ops) {
+        if (Op.Opcode == NdOp::INTRINSIC) {
+          // Independent architectural completion oracle: status occupies the
+          // upper natural word. A failed read's candidate must be ignored.
+          Op.Opcode = NdOp::CONCAT;
+          Op.NumInputs = 0;
+          Op.addInput(NdVar::scalar(Flags, Word));
+          Op.addInput(NdVar::scalar(New, Word));
+        }
+        ASSERT_TRUE(Emulator.step(Op));
+      }
+      EXPECT_EQ(Emulator.getRegister(x86reg::RAX).value_or(0),
+                Flags ? Old : New);
+      EXPECT_EQ(Emulator.getRegister(x86reg::CF).value_or(7), Flags & 1);
+      EXPECT_EQ(Emulator.getRegister(x86reg::ZF).value_or(7), Flags >> 8);
+      for (const auto Flag : {x86reg::AF, x86reg::OF, x86reg::SF, x86reg::PF})
+        EXPECT_EQ(Emulator.getRegister(Flag).value_or(7), 0u);
+    }
+}
+
+TEST(X86Virtualization, ScalarEmulationNeverInventsVmxOrSvmCompletion) {
+  for (const auto &E : Encodings) {
+    const auto Ops = lift(Arch::X64, E.Bytes);
+    const auto *Op = operation(Ops, E.Id);
+    ASSERT_NE(Op, nullptr);
+    BinaryImage Image;
+    Image.Arch = Arch::X64;
+    NdOpEmulator Emulator(Image);
+    Emulator.setRegister(x86reg::RAX, 0xdeadbeef);
+    EXPECT_FALSE(Emulator.step(*Op));
+    EXPECT_EQ(Emulator.getRegister(x86reg::RAX).value_or(0), 0xdeadbeefu);
+  }
+}
+
+TEST(X86Virtualization, MalformedShapesNeverBecomeOrdinaryMemoryEffects) {
+  for (const auto &E : Encodings) {
+    const auto Ops = lift(Arch::X64, E.Bytes);
+    const auto *Op = operation(Ops, E.Id);
+    ASSERT_NE(Op, nullptr);
+    const auto Good = x86VirtualizationLowShape(*Op, Arch::X64);
+    ASSERT_TRUE(x86VirtualizationShapeIsValid(E.Id, Good));
+    for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+      auto Bad = Good;
+      switch (Mutation) {
+      case 0:
+        Bad.ValidId = false;
+        break;
+      case 1:
+        Bad.OutputSize += 1;
+        break;
+      case 2:
+        Bad.Arguments += 1;
+        break;
+      case 3:
+        Bad.TargetArch = Arch::AArch64;
+        break;
+      case 4:
+        Bad.MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      }
+      EXPECT_FALSE(x86VirtualizationShapeIsValid(E.Id, Bad));
+    }
+  }
+}
+
+TEST(X86Virtualization, AddressSizeAndSegmentsStayWithTheInstruction) {
+  for (Intrinsic Id :
+       {Intrinsic::SvmLoad, Intrinsic::SvmSave, Intrinsic::SvmInvalidate}) {
+    auto It = std::find_if(std::begin(Encodings), std::end(Encodings),
+                           [&](const auto &E) { return E.Id == Id; });
+    auto Bytes = It->Bytes;
+    Bytes.insert(Bytes.begin(), 0x67);
+    const auto Ops = lift(Arch::X64, Bytes);
+    const auto *Op = operation(Ops, Id);
+    ASSERT_NE(Op, nullptr);
+    EXPECT_EQ(Op->Inputs[1].Size, 4);
+  }
+  auto Bytes = Encodings[1].Bytes;
+  Bytes.insert(Bytes.begin(), 0x65);
+  const auto Ops = lift(Arch::X64, Bytes);
+  const auto *Op = operation(Ops, Intrinsic::VmxReadMemory);
+  ASSERT_NE(Op, nullptr);
+  EXPECT_EQ(Op->MemoryAddressSpace, NdMemoryAddressSpace::X86GS);
+  EXPECT_TRUE(x86VirtualizationShapeIsValid(
+      Intrinsic::VmxReadMemory, x86VirtualizationLowShape(*Op, Arch::X64)));
+}

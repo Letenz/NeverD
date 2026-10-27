@@ -11,9 +11,9 @@ NEVERD_RUNTIME_DIAGNOSTIC(ProcessProfile, "unknown guest process profile")
 NEVERD_RUNTIME_DIAGNOSTIC(ProcessOutcome, "unknown guest process stop reason")
 NEVERD_RUNTIME_DIAGNOSTIC(
     SessionResources, "execution session requires a CPU and workload budget")
-NEVERD_RUNTIME_DIAGNOSTIC(
-    SessionState,
-    "execution session has an unconsumed continuation or terminal exit")
+NEVERD_RUNTIME_DIAGNOSTIC(SessionState,
+                          "execution session is running or has an unconsumed "
+                          "continuation or terminal exit")
 NEVERD_RUNTIME_DIAGNOSTIC(
     SessionQuantum, "execution session requires a positive instruction quantum")
 NEVERD_RUNTIME_DIAGNOSTIC(
@@ -21,6 +21,17 @@ NEVERD_RUNTIME_DIAGNOSTIC(
 NEVERD_RUNTIME_DIAGNOSTIC(SessionFault,
                           "execution session has no owned recoverable fault")
 NEVERD_RUNTIME_DIAGNOSTIC(SessionExit, "unknown execution session exit")
+NEVERD_RUNTIME_DIAGNOSTIC(SessionContext,
+                          "session context belongs to another or expired owner")
+NEVERD_RUNTIME_DIAGNOSTIC(SessionReturn,
+                          "session already has a reserved call return")
+NEVERD_RUNTIME_DIAGNOSTIC(SessionDeferred,
+                          "session has no owned deferred instruction")
+NEVERD_RUNTIME_DIAGNOSTIC(
+    SessionDeferredPC,
+    "deferred instruction no longer identifies the stopped CPU PC")
+NEVERD_RUNTIME_DIAGNOSTIC(
+    SessionObserver, "deferred instruction observer raised a host exception")
 NEVERD_RUNTIME_DIAGNOSTIC(
     SessionWatch, "execution watches must be nonempty ranges that do not wrap")
 NEVERD_RUNTIME_DIAGNOSTIC(
@@ -29,4 +40,6 @@ NEVERD_RUNTIME_DIAGNOSTIC(InstructionLimit, "guest instruction limit reached")
 NEVERD_RUNTIME_DIAGNOSTIC(EventLimit, "behavior event limit reached")
 NEVERD_RUNTIME_DIAGNOSTIC(Timeout, "execution time limit reached")
 NEVERD_RUNTIME_DIAGNOSTIC(ObserverStop, "process observer ended the run")
+NEVERD_RUNTIME_DIAGNOSTIC(WorkScope,
+                          "invalid or consumed workload time interval")
 #endif

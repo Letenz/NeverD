@@ -1,5 +1,7 @@
 **語言**：[English](../process-emulation.md) | [简体中文](../zh-CN/process-emulation.md) | [繁體中文](process-emulation.md) | [日本語](../ja/process-emulation.md) | [한국어](../ko/process-emulation.md) | [Français](../fr/process-emulation.md) | [Deutsch](../de/process-emulation.md) | [Español](../es/process-emulation.md) | [Italiano](../it/process-emulation.md) | [Русский](../ru/process-emulation.md) | [العربية](../ar/process-emulation.md)
 
+> 更新：poll/epoll 與緩衝 stdio 的目前行為見[共享契約](../linux-network-contracts.md#poll-and-epoll-waits)。本頁將 poll 限於零逾時及 GKI 的說明屬於先前子集。
+
 [← 文件索引](README.md)
 
 # 客體程序模擬

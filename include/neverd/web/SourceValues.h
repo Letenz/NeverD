@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/Source.h"
 
 #include <memory>
@@ -19,10 +20,6 @@ namespace neverd::web {
 
 inline constexpr std::string_view JavaScriptValueProfile =
     "javascript-primitive-values-v1";
-inline constexpr uint64_t MaxJavaScriptValueSteps = 4000000;
-inline constexpr uint64_t MaxJavaScriptValueStringUnits = 65536;
-inline constexpr uint64_t MaxJavaScriptValueAllocatedUnits = 2097152;
-inline constexpr unsigned MaxJavaScriptBigIntBits = 1024;
 
 enum class PrimitiveKind { Undefined, Null, Boolean, Number, String, BigInt };
 

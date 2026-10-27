@@ -9,14 +9,16 @@
 #include "SEHFrameProofDetail.h"
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/X86/X87Context.h"
 #include "neverd/ir/low/SEHFrameProof.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Errc.h"
 
 #include <limits>
 #include <optional>
+#include <set>
 
 namespace neverd {
 namespace {
@@ -28,7 +30,81 @@ struct FrameCFG {
   std::map<va_t, std::vector<size_t>> HandlerScopes;
   std::map<size_t, std::vector<int>> GuardedBlocks;
 };
+
+bool touchesFunctionTemporary(const LowFunc &F, const NdVar &V) {
+  if (!V.isTemp() || !V.Size)
+    return false;
+  if (V.Offset > std::numeric_limits<uint64_t>::max() - (V.Size - 1))
+    return true;
+  return llvm::any_of(F.FunctionTemporaries, [&](const auto &Range) {
+    return V.Offset <= Range.Offset + (Range.Bytes - 1) &&
+           Range.Offset <= V.Offset + (V.Size - 1);
+  });
+}
+
+bool isWholeFunctionTemporary(const LowFunc &F, const NdVar &V) {
+  return V.isTemp() &&
+         llvm::any_of(F.FunctionTemporaries, [&](const auto &Range) {
+           return Range.Offset == V.Offset && Range.Bytes == V.Size;
+         });
+}
+
+bool chargeOperation(const LowOp &Op, size_t &WorkRemaining) {
+  const size_t Cost = size_t(Op.NumInputs) + 1;
+  if (Cost > WorkRemaining) {
+    WorkRemaining = 0;
+    return false;
+  }
+  WorkRemaining -= Cost;
+  return true;
+}
 } // namespace
+
+std::optional<bool>
+lowFunctionTemporariesAreX87ContextHandles(const LowFunc &F,
+                                           size_t &WorkRemaining) {
+  if (F.FunctionTemporaries.empty())
+    return true;
+  for (const LowBlock &Block : F.Blocks)
+    for (const LowOp &Op : Block.Ops) {
+      if (!chargeOperation(Op, WorkRemaining))
+        return std::nullopt;
+      const NdVar *Handle = x87ContextHandleOperand(Op);
+      auto Admitted = [&](const NdVar &V) {
+        return !touchesFunctionTemporary(F, V) ||
+               (&V == Handle && isWholeFunctionTemporary(F, V));
+      };
+      if (!Admitted(Op.Output))
+        return false;
+      for (unsigned I = 0; I < Op.NumInputs; ++I)
+        if (!Admitted(Op.Inputs[I]))
+          return false;
+    }
+  return true;
+}
+
+std::optional<bool> lowBlockBindsFunctionTemporaries(const LowFunc &F,
+                                                     const LowBlock &Block,
+                                                     size_t &WorkRemaining) {
+  std::set<uint64_t> Bound;
+  for (const LowOp &Op : Block.Ops) {
+    if (Bound.size() == F.FunctionTemporaries.size())
+      break;
+    if (!chargeOperation(Op, WorkRemaining))
+      return std::nullopt;
+    for (unsigned I = 0; I < Op.NumInputs; ++I)
+      if (touchesFunctionTemporary(F, Op.Inputs[I]) &&
+          (!isWholeFunctionTemporary(F, Op.Inputs[I]) ||
+           !Bound.count(Op.Inputs[I].Offset)))
+        return false;
+    if (touchesFunctionTemporary(F, Op.Output)) {
+      if (!isWholeFunctionTemporary(F, Op.Output))
+        return false;
+      Bound.insert(Op.Output.Offset);
+    }
+  }
+  return Bound.size() == F.FunctionTemporaries.size();
+}
 
 /// Windows resumes an in-function __except body with its establisher SP, not
 /// with the entry SP used for an independent ordinary machine-code root.
@@ -88,10 +164,18 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
       (HasFrameRegister && FrameRegister == TRI.StackPointer) ||
       EH.CodeRange.Begin != Low.Entry || !EH.ownsCode(Handler))
     return Fail("unsupported unwind or frame-register contract");
-  if (!Low.hasCompleteLiftCoverage() || !Low.FunctionTemporaries.empty() ||
-      Low.Blocks.empty() || Low.Blocks.front().StartAddr != Low.Entry ||
+  if (!Low.hasCompleteLiftCoverage() || Low.Blocks.empty() ||
+      Low.Blocks.front().StartAddr != Low.Entry ||
       EH.PrologueSize > EH.CodeRange.End - Low.Entry)
     return Fail("missing decoded prologue");
+  if (!Charge(Low.FunctionTemporaries.size()))
+    return Fail("frame propagation budget exhausted");
+  const std::optional<bool> X87Handles =
+      lowFunctionTemporariesAreX87ContextHandles(Low, WorkRemaining);
+  if (!X87Handles)
+    return Fail("frame propagation budget exhausted");
+  if (!*X87Handles)
+    return Fail("function temporary other than the x87 context handle");
   const va_t PrologueEnd = Low.Entry + EH.PrologueSize;
   if (Low.Blocks.front().EndAddr < PrologueEnd)
     return Fail("nonlinear prologue is not certified");
@@ -229,8 +313,14 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
           return Fail("frame propagation budget exhausted");
         bool HasEdge = false;
         for (const ExceptionalEdge &Edge : Low.Blocks[B].ExceptionalSuccs) {
-          if (Edge.Kind != ExceptionalEdgeKind::CxxCatch ||
-              !Regions.count(Edge.RegionIndex))
+          if (Edge.Kind != ExceptionalEdgeKind::CxxCatch)
+            continue;
+          if (!Charge(Edge.contexts().size() - 1))
+            return Fail("frame propagation budget exhausted");
+          if (std::none_of(Edge.contexts().begin(), Edge.contexts().end(),
+                           [&](const auto &Context) {
+                             return Regions.count(Context.RegionIndex);
+                           }))
             continue;
           if (SynchronousCxx) {
             const auto &Insns = Low.Blocks[B].InstructionBoundaries;
@@ -340,6 +430,20 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
         return More.takeError();
       if (!*More)
         return Fail("handler has no decoded protected scope");
+    }
+  }
+  // No ordinary path brings a function temporary to a root the dispatcher
+  // enters, so each such root must bind them before it reads one.
+  if (!Low.FunctionTemporaries.empty()) {
+    std::set<int> DispatcherRoots(std::next(Sources.begin()), Sources.end());
+    DispatcherRoots.insert(HandlerId);
+    for (int Root : DispatcherRoots) {
+      const std::optional<bool> Binds = lowBlockBindsFunctionTemporaries(
+          Low, Low.Blocks[Root], WorkRemaining);
+      if (!Binds)
+        return Fail("frame propagation budget exhausted");
+      if (!*Binds)
+        return Fail("handler reads a function temporary before binding it");
     }
   }
   std::vector<bool> Reachable(N, false);
@@ -466,6 +570,43 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
   auto OverlapsSP = [&](const NdVar &V) {
     return Overlaps(V, TRI.StackPointer);
   };
+  // Source calls do not explicitly read the physical return-slot address.
+  // They still require a separate range proof before frame loads can be
+  // projected. Keep actual handler SP reads unsupported when the fault can
+  // leave more than one SP, including a return before restoring the frame.
+  auto HandlerRestoresSPBeforeReading = [&]() -> std::optional<bool> {
+    if (!Charge(N))
+      return std::nullopt;
+    std::vector<bool> Seen(N, false);
+    std::vector<int> Pending{HandlerId};
+    while (!Pending.empty()) {
+      if (!Charge())
+        return std::nullopt;
+      const int B = Pending.back();
+      Pending.pop_back();
+      if (Seen[B])
+        continue;
+      Seen[B] = true;
+      bool Restored = false;
+      for (const LowOp &Op : Low.Blocks[B].Ops) {
+        if (!Charge(Op.NumInputs + 1))
+          return std::nullopt;
+        for (unsigned I = 0; I < Op.NumInputs; ++I)
+          if (OverlapsSP(Op.Inputs[I]))
+            return false;
+        if (Op.Opcode == NdOp::RETURN)
+          return false;
+        if (Op.Output == NdVar::reg(TRI.StackPointer, TRI.PointerSize)) {
+          Restored = true;
+          break;
+        }
+      }
+      if (!Restored)
+        Pending.insert(Pending.end(), Low.Blocks[B].Succs.begin(),
+                       Low.Blocks[B].Succs.end());
+    }
+    return true;
+  };
   // `lea fp, [rsp + FrameOffset]` (`mov fp, rsp` for a zero offset): one
   // full-width copy of a value the same instruction computes as SP plus that
   // constant.
@@ -542,7 +683,17 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
           continue;
         const bool AfterPrologue =
             B != 0 || Boundary.Address + Boundary.Size > PrologueEnd;
-        if (HasFrameRegister && AfterPrologue && !ProtectedBlock[B]) {
+        if (HasFrameRegister && AfterPrologue &&
+            (ProtectedBlock[B] || OrdinaryEntry) &&
+            Use == LowSEHFrameUse::SourceProjection &&
+            !Result.HasVaryingEntrySP) {
+          const auto Unobserved = HandlerRestoresSPBeforeReading();
+          if (!Unobserved)
+            return Fail("frame propagation budget exhausted");
+          Result.HasVaryingEntrySP = *Unobserved;
+        }
+        if (HasFrameRegister && AfterPrologue &&
+            (!ProtectedBlock[B] || Result.HasVaryingEntrySP)) {
           DynamicSP = true;
           continue;
         }
@@ -576,7 +727,7 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
     }
   // Ordinary flow into a shared handler is not proven to bring the SP the
   // dispatcher resumes with once SP moves on the way in.
-  if (DynamicSP && OrdinaryEntry && !IndependentSP)
+  if (DynamicSP && OrdinaryEntry && !IndependentSP && !Result.HasVaryingEntrySP)
     return Fail("SP moves before a handler that ordinary flow also enters");
   Result.FrameBytes = FrameBytes;
   Result.DynamicSP = DynamicSP;

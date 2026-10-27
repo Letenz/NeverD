@@ -1,6 +1,6 @@
 **Lingue**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1af6ecd5944b90deebffd661bc746dba46c505fcb5c57991ad0de2f45c50968e -->
+<!-- i18n-source: 7736ad46b93593b04d29c3e0facee7e7a9cd77a1dd1d2b11e74558f55c3ed76c -->
 
 [← Progetto NeverD](project.md)
 
@@ -26,6 +26,7 @@ Le guide inglesi sono direttamente in `docs/`. Le traduzioni sono raggruppate in
 | [Profilo sorgente HTML (inglese)](../web-html-profile.md) | Inventario limitato degli script in C++, riferimenti locali acquisiti e ancore originali dei sorgenti incorporati |
 | [Test](testing.md) | Suite, fixture generate, roundtrip Unicorn e comandi incrementali |
 | [Ambiente desktop (inglese)](../gui.md) | Disposizione da disassemblatore classico, worker separato, database di progetto, localizzazione e connessioni MCP |
+| [Sezioni dell’immagine di analisi (inglese)](../analysis-sections.md) | Aggiunta di codice e dati materializzati tramite ABI C, worker, CLI e ambiente di lavoro; viste native e persistenza del progetto |
 | [Riconoscimento delle librerie (inglese)](../library-recognition.md) | Identità STL, ATL/MFC, COM e libc con evidenze, profili e compressione reversibile del codice C |
 | [Validazione del desktop (inglese)](../gui-qualification.md) | Misure GUI, limiti del packaging e validazione delle piattaforme ancora necessaria |
 | [Recupero del sorgente da interpreti](interpreter-recovery.md) | Specializzazione sperimentale `--devirtualize`, controlli CLI, contratto di esecuzione, evidenze e limiti; proposte di prova per cicli annidati; budget di scoperta espliciti e API C versionata; API di prova esatta dal codice nativo a LLVM |
@@ -48,3 +49,5 @@ Le guide inglesi sono direttamente in `docs/`. Le traduzioni sono raggruppate in
 | [Roadmap](roadmap.md) | Stato: formati nativi, EVM e Solana SBF implementati |
 | Documentazione tradotta | I collegamenti linguistici in alto aprono l’indice e la panoramica di ogni lingua |
 | [Spacchettamento degli eseguibili compressi](unpack.md) | Recupero di immagini PE32+ compresse osservando un processo ospite limitato: regole di ingresso, immagine ricostruita, identificazione e limiti |
+
+- [Moduli espliciti ed esecuzione persistente (inglese)](../runtime-modules.md)

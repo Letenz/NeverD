@@ -27,6 +27,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Common.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 
@@ -80,7 +81,8 @@ bool MedLLVMEmitter::i386WalkedPointerDeref(const MedVar &AddrVar) const {
   };
   std::set<std::tuple<int, int, int>> Seen;
   std::vector<MedVar> Work{AddrVar};
-  int Budget = 256;
+  int Budget = ::neverd::limits::backend::
+      kMedLLVMX86GlobalDataMedLLVMEmitterI386WalkedPointerDerefBudget;
   while (!Work.empty() && Budget-- > 0) {
     MedVar Cur = Work.back();
     Work.pop_back();
@@ -121,8 +123,7 @@ bool MedLLVMEmitter::funcUsesI386WalkedPointerDeref() const {
     for (const auto &Op : Blk.Ops)
       if (Op.Opcode == NdOp::LOAD &&
           Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-          Op.NumInputs >= 1 &&
-          i386WalkedPointerDeref(Op.Inputs[0]))
+          Op.NumInputs >= 1 && i386WalkedPointerDeref(Op.Inputs[0]))
         return true;
   return false;
 }
@@ -145,7 +146,9 @@ bool MedLLVMEmitter::i386PeeledInitStoreAddr(const MedVar &AddrVar,
     std::vector<MedVar> Work{V};
     auto tracesToSegEntry = [&](const MedVar &Arg, auto &Self,
                                 int Depth) -> bool {
-      if (Depth > 8)
+      if (Depth >
+          ::neverd::limits::backend::
+              kMedLLVMX86GlobalDataMedLLVMEmitterI386PeeledInitStoreAddrPeelInitInductionPhiTracesToSegEntryDepthLimit)
         return false;
       if (writableDataSegOf(Arg, /*RequireRelocBase=*/false) ||
           addrHasSymbolizedSegConst(Arg, SegVA))
@@ -160,7 +163,9 @@ bool MedLLVMEmitter::i386PeeledInitStoreAddr(const MedVar &AddrVar,
     };
     auto tracesToUnrollStep = [&](const MedVar &Arg, auto &Self,
                                   int Depth) -> bool {
-      if (Depth > 8)
+      if (Depth >
+          ::neverd::limits::backend::
+              kMedLLVMX86GlobalDataMedLLVMEmitterI386PeeledInitStoreAddrPeelInitInductionPhiTracesToUnrollStepDepthLimit)
         return false;
       if (const MedOp *AD = findDef(Arg)) {
         if (AD->Opcode == NdOp::INT_ZEXT && AD->NumInputs >= 1)

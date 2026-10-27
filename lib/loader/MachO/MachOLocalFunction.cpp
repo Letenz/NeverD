@@ -1,6 +1,7 @@
 #include "MachOLocalFunction.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Object/Binary.h"
@@ -18,7 +19,9 @@ bool isMachOLocalFunctionRange(const BinaryImage &Image, va_t Entry,
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       !Image.ReadsStaticSymbols || Image.Arch != Arch::AArch64 ||
       Image.Bits != Bitness::Bits64 || !Size || Entry > InvalidVA - Size ||
-      Image.Segments.size() > 64)
+      Image.Segments.size() >
+          ::neverd::limits::loader::
+              kMachOLocalFunctionIsMachOLocalFunctionRangeImageSegmentsSizeLimit)
     return false;
   const auto Inside = [&](va_t Address) {
     return Address >= Entry && Address - Entry < Size;
@@ -37,7 +40,9 @@ bool isMachOLocalFunctionRange(const BinaryImage &Image, va_t Entry,
   for (const auto *Segment : Segments) {
     if (Segment->FileOff != FileSize ||
         Segment->FileSz > Segment->Data.size() ||
-        Segment->FileSz > 64 * 1024 * 1024 - FileSize)
+        Segment->FileSz >
+            ::neverd::limits::loader::kMaxMachOLocalFunctionFileBytes -
+                FileSize)
       return false;
     FileSize += Segment->FileSz;
   }
@@ -136,7 +141,8 @@ bool isMachOLocalFunctionRange(const BinaryImage &Image, va_t Entry,
   if (!Matches)
     return false;
   bool Exported = false;
-  size_t Budget = 1024 * 1024;
+  size_t Budget = ::neverd::limits::loader::
+      kMachOLocalFunctionIsMachOLocalFunctionRangeBudget;
   llvm::Error Error = llvm::Error::success();
   for (const auto &Export : Object->exports(Error)) {
     if (!Budget--) {

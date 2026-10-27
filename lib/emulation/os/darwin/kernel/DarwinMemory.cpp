@@ -7,6 +7,8 @@
 
 #include "DarwinFiles.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <algorithm>
 
 namespace neverd::emulation::darwin_model {
@@ -37,9 +39,10 @@ DarwinMemory::DarwinMemory(AddressSpace &Space, const MemoryLayout &Layout,
     : Space(Space), PageSize(Layout.PageSize), Minimum(Layout.MinimumAddress),
       Limit(Options.MemoryLimit),
       GuardBase(StackTop - Options.StackSize - PageSize),
-      Maximum(Layout.Maximum) {
+      Maximum(Layout.Maximum), Reserved(Layout.Reserved) {
   Maximum.push_back({StackTop - Options.StackSize, Options.StackSize, 3});
   Maximum.push_back({ReturnGate, PageSize, 5});
+  Reserved.push_back({ReturnGate, PageSize, 5});
 }
 
 llvm::Expected<std::optional<ServiceResult>>
@@ -280,7 +283,11 @@ DarwinMemory::handle(ServiceKind Kind, const ProcessServiceEvent &E,
       (HasProtection && (E.Arguments[2] & ProtExecute)) ||
       (!IsMap && E.Arguments[0] < UserLimit &&
        E.Arguments[1] <= UserLimit - E.Arguments[0] &&
-       overlaps(E.Arguments[0], E.Arguments[1], ReturnGate, PageSize))) {
+       llvm::any_of(
+           Reserved,
+           [&](const auto &R) {
+             return overlaps(E.Arguments[0], E.Arguments[1], R.Address, R.Size);
+           }))) {
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic = diagnostic::MemoryMode;
     return std::optional<ServiceResult>();

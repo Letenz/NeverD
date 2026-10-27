@@ -14,7 +14,8 @@
 namespace neverd::analysis {
 
 /// Single owner for the raw terminal-import environment domain and its bounds.
-llvm::Error validateX64TerminalImportDomain(const SpecializationOptions &Options);
+llvm::Error
+validateX64TerminalImportDomain(const SpecializationOptions &Options);
 
 /// Authenticate the canonical RIP-relative import-call bytes and their entire
 /// lifted target evaluation. Does not prove the caller's terminal domain or
@@ -50,6 +51,9 @@ struct NativeStackExpansion {
   size_t OriginalPrefixSize = 0;
   bool ExpandedIndirectCall = false;
   bool ExpandedReturn = false;
+  /// The authenticated final operation ends this region. Retain it without
+  /// evaluating exception-state effects or inventing a continuation.
+  bool RetainedTerminator = false;
 };
 
 /// Expand a provider-certified physical near CALL/RET, or validate an already
@@ -70,6 +74,16 @@ expandNativeStackControl(const SpecializationInstruction &Instruction,
                          NdVar Stack, NdVar Scratch,
                          NativeReturnExpansion ReturnMode,
                          llvm::ArrayRef<NdVar> ReservedTemporaries = {});
+
+/// Strictly authenticate the complete original x64 transfer, then retain its
+/// exact physical effects and actual next PC as a terminal INDIR_BR. Direct
+/// guest addresses remain values, never residual CFG labels. A declared trap
+/// instead retains its exact terminal operation without a next-PC contract.
+llvm::Expected<NativeStackExpansion>
+expandX64MachineExit(const SpecializationInstruction &Instruction,
+                     const SpecializationX64MachineExit &Declaration,
+                     NdVar Scratch,
+                     llvm::ArrayRef<NdVar> ReservedTemporaries = {});
 
 } // namespace neverd::analysis
 

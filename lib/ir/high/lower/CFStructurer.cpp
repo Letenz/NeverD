@@ -674,24 +674,26 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
     const CompareTreeSwitch *Tree =
         TreeIt == TreeAt.end() ? nullptr : TreeIt->second;
     size_t BlkBodyStart = Func.Body.size();
-    std::set<size_t> IntrinsicSkip;
     const size_t OpEnd = CurBlock.Ops.size() - (Tree ? 1 : 0);
     for (size_t OpIdx = 0; OpIdx < OpEnd; ++OpIdx) {
-      if (IntrinsicSkip.count(OpIdx))
-        continue;
       auto &CurOp = CurBlock.Ops[OpIdx];
+      if (ReturnProtectionOps.count(&CurOp))
+        continue;
       const size_t StatementBegin = Func.Body.size();
       switch (CurOp.Opcode) {
       case NdOp::STORE:
-        // A prologue save keeps the caller's register, which no source reads.
-        if (!CurOp.PrologueSave)
+        // A prologue save keeps the caller's register, which no source reads,
+        // and a get-PC call pushes the return address only for its pop, as a
+        // spill of a PC-rooted value is stored only for its reloads.
+        if (!CurOp.PrologueSave &&
+            !I386PcRootedStores.count({CurOp.Addr, CurOp.OriginSeq}))
           lowerStore(Func, CurOp);
         break;
       case NdOp::CALL:
         lowerCall(Func, CurBlock, CurOp);
         break;
       case NdOp::INTRINSIC:
-        lowerIntrinsic(Func, CurBlock, CurOp, OpIdx, IntrinsicSkip);
+        lowerIntrinsic(Func, CurBlock, CurOp, OpIdx);
         break;
       case NdOp::INDIR_CALL:
         lowerCallInd(Func, CurBlock, CurOp);

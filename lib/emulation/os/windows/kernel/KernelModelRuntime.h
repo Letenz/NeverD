@@ -54,6 +54,18 @@ llvm::Expected<uint64_t> timeToTimeFields(const KernelModel &Model,
 llvm::Expected<uint64_t> timeFieldsToTime(const KernelModel &Model,
                                           GuestMemory &Memory,
                                           llvm::ArrayRef<uint64_t> A);
+llvm::Expected<uint64_t> timeToSecondsSince1980(const KernelModel &Model,
+                                                GuestMemory &Memory,
+                                                llvm::ArrayRef<uint64_t> A);
+/// Pinned Unicode upcasing that is independent of the system NLS table.
+/// Units at or above U+00C0 require an explicit NLS owner and fail clearly.
+llvm::Expected<uint16_t> uppercaseUnicodeUnit(uint16_t Unit);
+/// Scalar case exports: ANSI bytes require ASCII; WCHAR/wint_t values use
+/// the same NLS-independent mapping as counted Unicode strings.
+llvm::Expected<uint64_t> uppercaseCharacter(uint64_t Value, bool Narrow);
+llvm::Expected<uint64_t> hashUnicodeString(const KernelModel &Model,
+                                           GuestMemory &Memory,
+                                           llvm::ArrayRef<uint64_t> A);
 /// RtlEqualString when \p EqualityOnly is true, otherwise RtlCompareString.
 llvm::Expected<uint64_t> compareAnsiStrings(const KernelModel &Model,
                                             GuestMemory &Memory,
@@ -70,7 +82,8 @@ llvm::Expected<uint64_t> prefixUnicodeString(const KernelModel &Model,
                                              llvm::ArrayRef<uint64_t> A);
 llvm::Expected<uint64_t> integerToUnicodeString(const KernelModel &Model,
                                                 GuestMemory &Memory,
-                                                llvm::ArrayRef<uint64_t> A);
+                                                llvm::ArrayRef<uint64_t> A,
+                                                bool WideValue);
 llvm::Expected<uint64_t> unicodeStringToInteger(const KernelModel &Model,
                                                 GuestMemory &Memory,
                                                 llvm::ArrayRef<uint64_t> A);
@@ -85,6 +98,32 @@ llvm::Expected<uint64_t> cStringLength(const KernelModel &Model,
                                        GuestMemory &Memory,
                                        llvm::ArrayRef<uint64_t> A,
                                        unsigned UnitWidth);
+/// Return the pinned kernel ctype digit mask, with int/byte carrier narrowing.
+uint64_t cIsDigit(uint32_t Value);
+/// Locate the raw PE signature through the pinned kernel's DOS-offset checks.
+/// This does not validate the optional header, sections or image loadability.
+llvm::Expected<uint64_t> imageNtHeader(const KernelModel &Model,
+                                       GuestMemory &Memory, uint64_t Base);
+/// In-place ASCII case conversion. Other byte/UTF-16 units are unchanged;
+/// only converted units are written, with preceding stores retained on faults.
+llvm::Expected<uint64_t> cStringChangeCase(const KernelModel &Model,
+                                           GuestMemory &Memory,
+                                           uint64_t Address, unsigned UnitWidth,
+                                           bool Lower);
+/// Checked copies / wide append with capacity in units, optional count and
+/// SIZE_MAX truncation. Preserve sequential stores and kernel errno results.
+llvm::Expected<uint64_t> cStringCheckedWrite(const KernelModel &Model,
+                                             GuestMemory &Memory,
+                                             llvm::ArrayRef<uint64_t> A,
+                                             unsigned UnitWidth, bool Append);
+
+/// strcpy/wcscpy, or strcat/wcscat when Append is true. A third argument
+/// selects the counted form. Copy pads to the count; append always terminates.
+/// Overlap and invalid storage are rejected before publishing any output.
+llvm::Expected<uint64_t> cStringWrite(const KernelModel &Model,
+                                      GuestMemory &Memory,
+                                      llvm::ArrayRef<uint64_t> A,
+                                      unsigned UnitWidth, bool Append);
 /// How a comparison reports a mismatch: Normalized is strcmp/strncmp/wcscmp
 /// (-1, 0 or 1); Raw is wcsncmp (the raw unit difference); FoldedRaw is the
 /// case-insensitive family (ASCII A-Z folded to lowercase, then raw).
@@ -120,6 +159,14 @@ llvm::Expected<std::string> formatDebugMessage(const KernelModel &Model,
                                                uint64_t Format,
                                                unsigned FirstArgument,
                                                ArgumentReader ReadArgument);
+/// The same finite formatter with a guest x64 va_list and the kernel's
+/// 128/256/384/512-byte prefix attempts. The entire bounded body is checked
+/// before publication; truncation does not admit invalid or unsupported tails.
+llvm::Expected<std::string> formatPrefixedDebugMessage(const KernelModel &Model,
+                                                       GuestMemory &Memory,
+                                                       uint64_t Prefix,
+                                                       uint64_t Format,
+                                                       uint64_t Arguments);
 } // namespace runtime
 } // namespace neverd::emulation
 

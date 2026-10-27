@@ -7,6 +7,7 @@
 #include <functional>
 
 class QLineEdit;
+class QMenu;
 class QPlainTextEdit;
 class QToolButton;
 
@@ -22,6 +23,9 @@ public:
   explicit OutputWindow(Session &session, QWidget *parent = nullptr);
 
   void append(const QString &text, int level = 0);
+  /// The log's context menu, which the caller owns: Copy, Select all and
+  /// Clear.
+  QMenu *createLogMenu();
   void focusCommandLine();
   /// Run one command line as if typed (echoed to the log).
   void run(const QString &line);
@@ -42,12 +46,16 @@ private:
   void evaluate(const QString &text,
                 std::function<void(std::optional<Address>, QString)> done);
   void printHelp();
+  /// Color every line again for its level in the current theme.
+  void recolor();
   Session &session_;
   QPlainTextEdit *log_;
   QLineEdit *command_;
   QToolButton *language_;
   QStringList history_;
   int historyIndex_ = 0;
+  /// Whether the log's lines are colored for the dark theme.
+  bool coloredDark_ = false;
   std::function<std::optional<Address>()> location_;
 };
 

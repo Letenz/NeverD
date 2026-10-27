@@ -11,6 +11,8 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web {
 namespace {
 llvm::json::Object sourceSummary(const ElectronSource &A, uint64_t Revision) {
@@ -138,7 +140,8 @@ std::string Session::electronSourceRecords(std::string_view Revision,
   if (Found == State->ElectronSources.end())
     throw Error("electron_source_not_analyzed");
   const auto &A = Found->second;
-  if (!Limit || Limit > 512 || Offset > A.Boundaries.size())
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > A.Boundaries.size())
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(A.Boundaries.size(), Offset + Limit);
   auto Node = [&](uint32_t I) -> llvm::json::Value {

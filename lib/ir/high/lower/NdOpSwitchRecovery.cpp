@@ -105,7 +105,7 @@ void MedToHighConverter::planDispatchSelectors(const MedFunc &Med) {
         Med.UnsafeIndirectBranchAddresses.count(Br.Addr))
       continue;
     const JumpTable *JT = nullptr;
-    for (const JumpTable &Table : JumpTables)
+    for (const JumpTable &Table : Med.JumpTables)
       if (Table.InsnAddr == Br.Addr && !Table.Targets.empty() &&
           !Table.MutatedUnsafe) {
         JT = &Table;
@@ -508,7 +508,7 @@ void MedToHighConverter::lowerBranchInd(HighFunc &Func,
       Med.UnsafeIndirectBranchAddresses.count(CurOp.Addr) != 0;
   // Try to find a matching jump table for switch recovery.
   if (!MustFailClosed) {
-    for (auto &JTE : JumpTables) {
+    for (auto &JTE : Med.JumpTables) {
       if (JTE.InsnAddr == CurOp.Addr && !JTE.Targets.empty() &&
           !JTE.MutatedUnsafe) {
         if (lowerSwitchFromJumpTable(Func, CurBlock, CurOp, Med, JTE))

@@ -24,8 +24,9 @@ inline constexpr std::array kUnistdFunctions = {
     "lseek",     "lseek64",     "pathconf",   "pipe",      "pipe2",
     "pread",     "pwrite",      "read",       "readlink",  "readlinkat",
     "rmdir",     "setgid",      "setpgid",    "setsid",    "setuid",
-    "sleep",     "swab",        "symlink",    "symlinkat", "sysconf",
-    "truncate",  "unlink",      "unlinkat",   "usleep",    "write",
+    "sleep",     "swab",        "symlink",    "symlinkat", "syscall",
+    "sysconf",   "truncate",    "unlink",     "unlinkat",  "usleep",
+    "write",
 };
 
 /// Fixed arity of the non-variadic unistd.h functions (open/fcntl are variadic

@@ -16,7 +16,9 @@
 
 #include "../CIdentifier.h"
 #include "../CSourceRecorder.h"
+#include "../DebugParamBinding.h"
 
+#include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/pass/LLVMC/LLVMCPasses.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -24,6 +26,7 @@
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/LibCRecordArguments.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/SymbolDecoration.h"
 
@@ -88,21 +91,53 @@ public:
           ImportEntryCNames.insert(Imp.Name);
   }
 
+  /// The C library whose declarations the program's calls follow.
+  libc::LibCVariant libcVariant() const {
+    return Img ? libc::libcVariantOf(*Img) : Opts.libcVariant();
+  }
+
   //--- Module-level (LLVMCEmitter.cpp) ---
   void writeModule(llvm::Module &Mod, const llvm::Function *Only = nullptr);
   void prepareFunctionIdentifiers(llvm::Module &Mod);
+  /// One declaration per imported symbol, admitted only when every printed
+  /// call has the header's complete scalar or HFA operand layout.
+  void prepareSourceImportPrototypes(llvm::Module &Mod);
+  const FunctionSym *sourceImportCallee(const llvm::CallBase &Call) const;
+  bool groupedFloatingCall(const llvm::CallBase &Call,
+                           const FunctionSym &Function) const;
+  std::optional<libc::RecordCallArguments>
+  recordCallArguments(const llvm::CallBase &Call,
+                      const FunctionSym &Function) const;
+  std::string sourceImportDeclaration(const FunctionSym &Function,
+                                      llvm::StringRef Name);
+  std::map<std::string, FunctionSym> SourceImportPrototypes;
   /// Records which symbol each function identifier stands for
   /// (CSourceMap::Names), as HighC does, from the ordinary render.
   void recordSourceNames(const llvm::Module &Mod);
   std::string functionIdentifier(const llvm::Function &Fn) const;
   std::string sourceScalarType(llvm::Type *Type, bool Signed) const;
-  std::string sourceFunctionDeclaration(const llvm::Function &Fn,
-                                        llvm::StringRef Declarator) const;
+  /// \p Fn's C declaration of \p Declarator; with \p Params, of its first
+  /// that many parameters only.
+  std::string sourceFunctionDeclaration(
+      const llvm::Function &Fn, llvm::StringRef Declarator,
+      std::optional<unsigned> Params = std::nullopt) const;
   /// The C name of global \p Name: the module names a global by its symbol
   /// (cNameOfLLVMName), but a declaration of an import by the name its
   /// import entry lists, which is already the C name on some formats.
   llvm::StringRef cNameOfGlobal(llvm::StringRef Name, bool Declaration) const;
   void writeIncludes(llvm::Module &Mod);
+  /// What writeModule writes after the includes.
+  void writeModuleBody(llvm::Module &Mod);
+  /// The program's records \p Text names, as its local types define them
+  /// (CEmitterOptions::RecordDefinitions), and the typedefs of their tags
+  /// it spells them by; a record only a pointer names, which they do not
+  /// define, is declared incomplete.
+  void writeRecordDefinitions(std::string &Text);
+  /// A pointer to \p Record, by its tag, which the unit then declares; empty
+  /// when the record has no C name.
+  std::string recordPointerSpelling(const NdType &Record);
+  /// Records whose size is required by an emitted object, including arrays.
+  void noteRecordValue(TypeRef Type) const;
   void writeStructDefs(llvm::Module &Mod);
   std::string aggregateMemberPath(llvm::Type *Ty,
                                   llvm::ArrayRef<unsigned> Indices);
@@ -118,7 +153,9 @@ public:
 
   //--- Function rendering (LLVMCFuncWriter.cpp) ---
   bool isAnalysisOnlyFunction(const llvm::Function &Fn) const;
-  bool isReferencedByExecutableProjection(const llvm::Function &Fn) const;
+  /// Whether printed code or data names \p Fn: a body's instruction, a
+  /// definition's personality or a global's initializer.
+  bool isReferencedByProjection(const llvm::Function &Fn) const;
   void writeFunction(llvm::Function &Fn);
   void writeAnalysisOnlyFunction(llvm::Function &Fn);
   void writeFunctionProjection(llvm::Function &Fn);
@@ -126,6 +163,7 @@ public:
   void setupFunction(llvm::Function &Fn);
   void emitFunctionDecls(llvm::Function &Fn);
   void scanReferencedBlocks(llvm::Function &Fn);
+  void writeBlockLabel(const llvm::BasicBlock &BB);
   void planExpressionMaterialization(llvm::Function &Fn);
   void markInlinable(llvm::Function &Fn);
   static bool isFloatingPointBitcast(const llvm::Instruction &Inst);
@@ -198,7 +236,8 @@ public:
     if (auto It = UnknownPlaceholderCache.find(V);
         It != UnknownPlaceholderCache.end())
       return It->second;
-    bool Unknown = isCallClobberValue(V) || llvm::isa<llvm::UndefValue>(V) ||
+    bool Unknown = llvm_source_unknown::isValue(V) || isCallClobberValue(V) ||
+                   llvm::isa<llvm::UndefValue>(V) ||
                    llvm::isa<llvm::PoisonValue>(V);
     if (!Unknown)
       if (const auto *Inst = llvm::dyn_cast<llvm::Instruction>(V);
@@ -222,12 +261,33 @@ public:
     std::string Text;
     TypeRef Type;
   };
+  /// \p Text, a member of type \p Member that \p Load reads, as the value
+  /// the load gives: an integer read of a pointer member converts it.
+  std::string memberAsAccessed(const llvm::LoadInst &Load, std::string Text,
+                               const TypeRef &Member) const;
+  /// The parameters the signature types as pointers, from the debug
+  /// information or the local types, which the code computes with as
+  /// integers.
+  std::set<const llvm::Argument *> PointerParams;
+  /// The tags recordPointerSpelling spelled.
+  std::set<std::string> RecordPointerTags;
+  /// The pointer type the signature returns, where the code returns it as
+  /// an integer; empty otherwise.
+  std::string PointerReturnType;
   TypeRef typeOfValue(const llvm::Value *V) const;
   std::string indirectCalleeStr(const llvm::Value *Callee,
                                 bool MarkChain = false);
+  /// The member at \p Ptr an access of \p AccessSize bytes reads or
+  /// writes; of a union's alternatives of that width, the one its \p Class
+  /// holds (NdType::scalarOfClassAt).
   std::optional<TypedAccess>
   typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
-                    bool EnterNestedAtZero = true) const;
+                    bool EnterNestedAtZero = true,
+                    NdAccessClass Class = NdAccessClass::Unknown) const;
+  /// The member \p LI reads, and the member \p SI writes, as wide as the
+  /// value and of its class.
+  std::optional<TypedAccess> typedLoadAccess(const llvm::LoadInst &LI) const;
+  std::optional<TypedAccess> typedStoreAccess(const llvm::StoreInst &SI) const;
   /// PDB/S_LOCAL or HighC `var_mHEX` name for a synthetic `[N x i8] frame`
   /// GEP.  Address-of a slot is `&record` / `&var_m188`; a load of an
   /// interior field is `record.p`.  `Synthesize` creates a `var_m*` only
@@ -506,8 +566,42 @@ public:
   /// \p Call: its debug information or the MSVC callee table.
   TypeRef expectedCallArgType(const llvm::CallBase &Call, unsigned Index) const;
   std::optional<FunctionSym> debugCallee(const llvm::CallBase &Call) const;
+  /// The debug information's function, or the prototype of its name, that
+  /// \p Callee is: by its original address, its slot, or the address its
+  /// name spells.
+  std::optional<FunctionSym> debugFunction(const llvm::Function &Callee) const;
+  /// Whether the user declares the routine of C name \p CName
+  /// (userPrototype): the unit declares it as the user does, not through the
+  /// header that declares the C library's routine of the name.
+  bool userDeclaresRoutine(llvm::StringRef CName) const;
+  /// How many arguments the calls to \p Callee pass where its prototype
+  /// decides them (printedCallArgLimit), which its declaration then takes;
+  /// none where its machine parameters do.
+  std::optional<unsigned>
+  prototypedParamCount(const llvm::Function &Callee) const;
   bool looksLikeHiddenSretOperand(const llvm::Value *Arg) const;
   std::string printedCalleeName(const llvm::CallBase &Call) const;
+  /// The C library routine \p Call reaches, directly or through its import,
+  /// whose declaration types its arguments and result: one a header the unit
+  /// includes declares, or one the runtime's tables type (Prototype), which
+  /// the unit declares itself (writeImportCalleeDecls).  Empty for another
+  /// call, which passes and returns what the machine did.
+  struct LibraryCallee {
+    std::string Name;
+    const libc::LibCPrototype *Prototype = nullptr;
+    explicit operator bool() const { return !Name.empty(); }
+  };
+  LibraryCallee libraryCallee(const llvm::CallBase &Call) const;
+  /// Whether the unit declares \p Call's callee to return nothing where the
+  /// call's own type returns a value: a routine declared void, or the
+  /// module's definition whose result is settled as none, which prints as
+  /// returning void (analyzeVoidReturn) unless it returns a record's address
+  /// as an MSVC indirect result.
+  bool calleeReturnsNothing(const llvm::CallBase &Call) const;
+  /// \p Call's text \p Expr as a value of the call's own type: the pointer a
+  /// library routine returns as the integer that holds it, and the result a
+  /// callee that returns nothing leaves undefined as zero.
+  std::string callResult(const llvm::CallBase &Call, std::string Expr) const;
   /// MSVC ctor/dtor that returns `this` and whose result is unread. A store
   /// into an alloca that nothing loads does not count. Print the call as a
   /// statement in a non-void function too.
@@ -525,6 +619,9 @@ public:
   bool usersOnlySeeImmediate(const llvm::Value *V) const;
   bool usersAreDeadCopies(const llvm::Value *V) const;
   void collectOmittedUnknowns(llvm::Function &Fn);
+  void collectDeferredUnknowns(llvm::Function &Fn);
+  static bool isDeferredUnknownInput(const llvm::Value *Value);
+  bool writeDeferredUnknownCopy(llvm::Instruction &Inst, int Indent);
   void collectOmittedInlinedImmediates(llvm::Function &Fn);
 
   /// Omit ABI clobber placeholders and unused copies of them. Uses print
@@ -571,9 +668,10 @@ public:
   /// whether the text is an address, as valueStr reports it.
   std::string callArgStr(const llvm::Value *Arg, const llvm::CallBase &Call,
                          unsigned ArgIdx, bool *PointerSpelling = nullptr);
-  /// Whether the declaration written for \p Call's callee is its LLVM
-  /// prototype, with an integer parameter at \p ArgIdx: C converts no
-  /// address to it implicitly.
+  /// Whether the declaration written for \p Call's callee, or the type a
+  /// call through a pointer casts it to, is its LLVM prototype, with an
+  /// integer parameter at \p ArgIdx: C converts no address to it
+  /// implicitly.
   bool declaredParameterIsInteger(const llvm::CallBase &Call,
                                   llvm::StringRef CalleeName,
                                   unsigned ArgIdx) const;
@@ -601,10 +699,18 @@ public:
   bool edgePrintsPhiCopy(const llvm::BasicBlock *From,
                          const llvm::BasicBlock *To);
   std::string resolveImportCalleeName(const llvm::Value *Callee) const;
+  /// resolveImportCalleeName before UserImportIdentifiers renames it.
+  std::string importCalleeCName(const llvm::Value *Callee) const;
   bool isImportCalleeOnlyLoad(const llvm::LoadInst *LI) const;
   bool writeIntrinsicCall(llvm::CallBase &Call, int Indent);
   bool writeInlineAsmCall(llvm::CallInst &Call, const std::string &Name,
                           int Indent);
+  /// A forward REP STOS or MOVS of \p Element-byte elements (\p Movs) as
+  /// the C library's fill or copy, where that writes exactly its bytes, as
+  /// HighC prints it (c_memory::fillCall, c_memory::copyCall).  False, with
+  /// nothing written, otherwise.
+  bool writeFlatStringRoutine(const llvm::CallInst &Call, bool Movs,
+                              unsigned Element, int Indent);
   bool callDoesNotReturn(const llvm::CallBase &Call) const;
   void writeGEP(llvm::GetElementPtrInst &GEP, const std::string &Name,
                 int Indent);
@@ -614,7 +720,7 @@ public:
   void writeCatchSwitch(llvm::CatchSwitchInst &CS, int Indent);
   void writeCleanupRet(llvm::CleanupReturnInst &CR, int Indent);
   std::string windowsEHFilterExpr(const llvm::CatchSwitchInst &CS);
-  std::string SEHFilterFrameName;
+  std::string SEHParentFrameName;
   std::string windowsCxxCatchType(const llvm::CatchPadInst &Pad);
   void emitIndent(int N);
   const llvm::AllocaInst *asAllocaPointer(const llvm::Value *V) const;
@@ -644,6 +750,9 @@ public:
   std::optional<va_t>
   uniqueAllocaImageImmediate(const llvm::AllocaInst *Slot) const;
   std::string namedImageObject(va_t Addr) const;
+  /// Recognized image text beside the load that reads it, even when the
+  /// object's declaration is folded out of the displayed function body.
+  std::string imageLoadComment(const llvm::LoadInst &Load) const;
   std::optional<va_t> imageDataVA(const llvm::Value *V) const;
   static unsigned imageIntegerAccessSize(const llvm::Type *Ty) {
     if (!Ty || !Ty->isIntegerTy())
@@ -663,21 +772,40 @@ public:
                                                    uint64_t AccessSize) const;
   std::optional<uint64_t> foldReadonlyScalar(va_t Addr, uint16_t Size) const;
   std::optional<std::string> foldImmediate(const llvm::Value *V) const;
+  /// The image address of the object the unit declares for pointer \p V,
+  /// which imageDataCName names; nullopt for none, or for bytes of an array
+  /// the module defines.
+  std::optional<va_t> declaredImageDataVA(const llvm::Value *V) const;
   std::string imageDataCName(const llvm::Value *V) const;
   std::string getName(const llvm::Value *V);
+  std::string rawSourceName(const llvm::Value *V);
+  TypeRef statedVariableType(const llvm::Value *V) const;
+  const SourceCallTypeHint *analystCallHint(const llvm::CallBase &Call) const;
+  std::string sourceVariableDeclaration(const llvm::Instruction &I,
+                                        llvm::StringRef Name);
+  std::map<const llvm::Value *, std::string> SourceValueIds;
   std::string freshVar(const std::string &Hint = "v");
   std::string valueStr(const llvm::Value *V, bool *PointerSpelling = nullptr);
   std::string globalNameStr(const llvm::GlobalValue *Global);
-  std::string constStr(const llvm::Constant *C);
+  /// Storage and aggregate integer constants retain their literal bits;
+  /// expression uses may additionally carry an image-address spelling.
+  std::string constStr(const llvm::Constant *C, bool AllowImageAddress = true,
+                       bool *PointerSpelling = nullptr);
   std::string blockLabel(const llvm::BasicBlock *BB);
   std::string binopStr(unsigned Opcode, const std::string &LHS,
                        const std::string &RHS, llvm::Type *Ty);
-  std::string integerPointerOperandStr(const llvm::Value *Operand);
+  std::string integerPointerOperandStr(const llvm::Value *Operand,
+                                       const llvm::CallBase *Call = nullptr,
+                                       unsigned ArgIdx = 0);
   std::optional<std::string>
   targetPointerMaskIdentity(const llvm::BinaryOperator &Op);
   std::optional<std::string> lowBitsMaskCast(const llvm::BinaryOperator &Op);
   std::string castStr(unsigned Opcode, const std::string &Src,
                       llvm::Type *SrcTy, llvm::Type *DstTy);
+  /// The text \p Cast reads as where its operand reads as \p Text: the
+  /// same, unless the cast moves between an integer and a pointer, whose C
+  /// types differ.
+  std::string castOfText(const llvm::CastInst &Cast, const std::string &Text);
   std::string cmpStr(llvm::CmpInst::Predicate Pred, const std::string &LHS,
                      const std::string &RHS, bool IsFP,
                      bool CastUnsigned = true);
@@ -690,10 +818,16 @@ public:
   std::string unsignedCompareOperand(const llvm::Value *V, std::string Text);
   std::string renderInline(const llvm::Instruction &Inst);
   std::string renderInlineImpl(const llvm::Instruction &Inst);
-  std::string callExpr(const llvm::CallBase &Call);
+  std::optional<std::string> unknownBitwiseText(const llvm::BinaryOperator &Op);
+  /// \p Call as C; as a \p Statement, whose value nothing reads.
+  std::string callExpr(const llvm::CallBase &Call, bool Statement = false);
   /// The C function-pointer type of \p Call's callee, from the call's own
   /// type and convention.  \p Strict refuses what shown C may approximate.
   std::string indirectCalleeType(const llvm::CallBase &Call, bool Strict);
+  /// The parameters an indirect \p Call's callee takes where it loads the
+  /// callee from a typed record's member that points to a function, as
+  /// SystemTable->ConOut->OutputString does; none otherwise.
+  std::optional<unsigned> typedSlotParamCount(const llvm::CallBase &Call) const;
   std::string preservedIndirectCalleeStr(const llvm::CallBase &Call);
   std::string atomicRMWText(const llvm::AtomicRMWInst &AI);
   std::string ctorThisAddress(const llvm::CallBase &Call);
@@ -709,14 +843,26 @@ public:
   const llvm::Function *OnlyFunction = nullptr;
   std::set<const llvm::GlobalValue *> SelectedGlobals;
   std::set<std::string> EmittedGlobalNames;
+  /// The routines writeImportCalleeDecls declares, ordinary identifiers a
+  /// record of the same name leaves to its tag (`struct stat64`).
+  std::set<std::string> DeclaredCalleeNames;
   /// When false, emit recovered statements without a C wrapper so analysis-only
   /// functions can nest the listing inside `#if 0` of the trap stub.
   bool EmitFunctionWrapper = true;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
+  std::string Win64CallABI;
   std::map<std::pair<Intrinsic, unsigned>, std::string> FPStateHelperNames;
   /// The helper each modeled supervisor call in the unit prints through.
   std::map<Intrinsic, std::string> SyscallHelperNames;
   std::map<const llvm::Function *, std::string> FunctionIdentifiers;
+  /// The identifiers FunctionIdentifiers gives the module's functions.
+  std::set<std::string> FunctionIdentifierNames;
+  /// The identifier each routine the user declares, called through its
+  /// import, takes where a header the unit includes declares the C library's
+  /// routine of its name, by that name (writeIncludes), and the name each
+  /// such identifier links by.
+  std::map<std::string, std::string> UserImportIdentifiers;
+  std::map<std::string, std::string> UserImportLinkNames;
   /// Exact projected prototypes captured while rendering definitions. They
   /// include source presentation choices such as inferred void and sret.
   std::map<const llvm::Function *, std::string> DefinitionDeclarations;
@@ -730,6 +876,9 @@ public:
   /// The calls a function's next render keeps as statements: its text
   /// printed each other than once where the analysis inlined it.
   std::set<const llvm::CallBase *> StatementCalls;
+  // Shared SEH handlers can resume a loop across several protected ranges.
+  // Preserve their individual block scopes and explicit CFG edges.
+  bool ExplicitSEHBlockScopes = false;
 
   int NextVar = 0;
   std::map<const llvm::Value *, std::string> ValNames;
@@ -762,6 +911,13 @@ public:
   /// Calls currently being printed as expressions, so a cyclic reprint
   /// falls back to the instruction name.
   std::vector<const llvm::CallBase *> RenderingCalls;
+  /// The records whose members the text reads, by their names in the
+  /// source, which writeRecordDefinitions has the local types define: the
+  /// text reaches them through members and need not spell them.
+  mutable std::set<std::string> MemberRecords;
+  /// Record call adapters use types already declared by an included header.
+  /// The textual type scan must not define those records a second time.
+  std::set<std::string> HeaderCallRecords;
   mutable std::map<const llvm::Value *, std::string> KnownImmediates;
   bool UseScalarExpressionTypes = false;
   std::set<std::string> ScopedScalarNames;
@@ -808,12 +964,16 @@ public:
   }
   mutable CProjectionIdentifierAllocator ImageIdentifierAllocator;
   mutable std::map<va_t, std::string> ImageObjectNames;
-  /// The comment naming the symbol of each image object whose identifier is
-  /// not that symbol (symbolComment()), by identifier.
+  /// The name the image's data symbol at \p Addr gives the object there, and
+  /// the symbol as C spells it, which namedImageObject spells an identifier
+  /// from; nullopt where the image names no data there.
+  std::optional<std::pair<std::string, std::string>>
+  imageDataSymbolName(va_t Addr) const;
+  /// Original symbol spellings and recognized image text, by identifier.
   mutable std::map<std::string, std::string> ImageObjectSymbols;
-  /// The line before the declaration of image object \p Name that names its
-  /// symbol, as a definition names its function's; empty for an object named
-  /// as its symbol is.
+  /// Text already scanned while naming an image object, reused at its reads.
+  mutable std::map<va_t, std::string> ImageObjectStrings;
+  /// Original symbol spelling or recognized text beside an image declaration.
   std::string imageObjectSymbolLine(llvm::StringRef Name) const;
   /// Image data no symbol or debug information names: its name is the
   /// writer's own.
@@ -836,6 +996,9 @@ public:
   /// the import table print by name (resolveImportCalleeName), with the type
   /// the calls return.
   void writeImportCalleeDecls(llvm::Module &Mod);
+  /// The import a call through a slot the loader binds, or to the symbol
+  /// such a slot holds, reaches; empty for any other call.
+  std::string boundImportCallee(const llvm::CallBase &Call) const;
   /// Last store in the current block. Cleared with `AllocaImmediates`.
   std::map<const llvm::AllocaInst *, const llvm::Value *> AllocaLastValues;
   /// Last store seen in `collectTypedHomes`. Survives per-block
@@ -857,9 +1020,29 @@ public:
   /// the same value. Survives per-block `AllocaImmediates` resets.
   std::map<const llvm::AllocaInst *, std::string> OmittedAllocaImmediates;
   std::optional<FunctionSym> DebugFn;
+  /// DebugFn's parameters are the function's arguments in order.
+  bool DebugPositional = true;
   TypeRef DebugThisRecord;
   const llvm::Argument *DebugThisArg = nullptr;
-  va_t FunctionEntry = 0;
+  /// The type the debug information gives each parameter.
+  std::map<const llvm::Argument *, TypeRef> ParamDebugTypes;
+  /// The debug parameter each argument holds, bound by where the convention
+  /// passes it (bindDebugParams), and the name each reads as.  Unbound for
+  /// an MSVC indirect result, whose arguments keep their positions.
+  std::vector<DebugParamBinding> ArgDebugBindings;
+  std::vector<std::string> ArgDebugNames;
+  bool DebugArgsBound = false;
+  /// Binds the debug signature's parameters to \p Fn's arguments.
+  void bindDebugArguments(const llvm::Function &Fn);
+  /// The name the debug signature gives \p Arg, or empty.
+  std::string debugArgumentName(const llvm::Argument &Arg) const;
+  /// The debug parameter argument \p ArgNo holds whole, past an MSVC
+  /// indirect result at \p SretParamIdx; none when it holds none.
+  std::optional<size_t> debugParamIndexOf(unsigned ArgNo,
+                                          int SretParamIdx) const;
+  /// The function's address in the image, which a relocatable object's
+  /// first function has as zero; none for a function of no address.
+  std::optional<va_t> FunctionEntry;
   const llvm::AllocaInst *SyntheticFrame = nullptr;
   uint64_t FrameBaseOffset = 0;
   /// PDB stack-pointer offset -> frame-alloca offset of an address-taken use.
@@ -920,6 +1103,9 @@ public:
   std::map<const llvm::AllocaInst *, TypeRef> AllocaTypes;
   std::map<const llvm::Value *, std::string> ValueTexts;
   std::map<const llvm::AllocaInst *, std::string> AllocaTexts;
+  /// The settled source contract does not observe the return carrier. This
+  /// remains true when the client preserves its non-void LLVM signature.
+  bool ReturnsNoValue = false;
   bool InferredVoid = false;
   int EHTryDepth = 0;
   bool EHWrapIsCxx = false;
@@ -940,6 +1126,9 @@ public:
   /// fallthrough. Other printed references are checked after rendering.
   std::set<const llvm::BasicBlock *> EHFallthroughLabelCandidates;
   std::set<const llvm::Value *> OmittedUnknowns;
+  /// Availability of mixed known/unknown integer PHIs and their copies.
+  std::map<const llvm::Value *, std::string> DeferredUnknownFlags;
+  bool ReadingDeferredPayload = false;
   std::set<const llvm::Value *> OmittedInlined;
   std::set<const llvm::StoreInst *> OmittedLeftoverNarrow;
   std::map<const llvm::StoreInst *, const llvm::CallBase *> LeftoverSiblingFill;
@@ -967,6 +1156,10 @@ public:
   /// prints the value stored on the edge.
   const llvm::AllocaInst *PhiTailSlot = nullptr;
   const llvm::Value *PhiTailIncoming = nullptr;
+  /// Even without printed values, an unconditional cycle must retain a
+  /// control-flow destination. Compute this once per function, including
+  /// cycles with multiple external entries and unreachable components.
+  std::set<const llvm::BasicBlock *> UnconditionalCycleBlocks;
 };
 
 } // namespace neverd

@@ -68,6 +68,7 @@ public:
     std::vector<uint64_t> Arguments;
     std::optional<GuestCallToken> ExecutionToken;
     uint64_t SynchronizationObject = 0;
+    std::optional<uint32_t> ProcessID;
   };
   struct DeviceCreation {
     uint32_t Status = 0;
@@ -149,6 +150,7 @@ public:
     bool Neither = false;
     uint64_t UserInput = 0, UserOutput = 0;
     uint64_t File = 0;
+    std::optional<uint32_t> CallbackProcessID;
   };
   struct LockedUserBuffer {
     uint32_t Status = 0;
@@ -670,6 +672,7 @@ private:
     uint64_t File = 0;
     uint32_t Status = 0;
     uint64_t SynchronizationObject = 0;
+    std::optional<uint32_t> ProcessID;
   };
   struct Continuation {
     std::vector<Step> Steps;

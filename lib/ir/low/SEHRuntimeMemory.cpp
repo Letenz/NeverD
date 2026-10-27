@@ -8,13 +8,19 @@
 
 #include "neverd/ir/low/SEHRuntimeMemory.h"
 
+#include "neverd/ir/Limits.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA256.h"
 
 namespace neverd {
 
 std::string lowSEHRuntimeMemoryDigest(const LowSEHRuntimeMemory &Memory) {
-  constexpr size_t MaxCalls = 256, MaxFormats = 4096, MaxBytes = 65536;
+  constexpr size_t MaxCalls = ::neverd::limits::ir::kSEHRuntimeMemoryMaxCalls,
+                   MaxFormats =
+                       ::neverd::limits::ir::kSEHRuntimeMemoryMaxFormats,
+                   MaxBytes = ::neverd::limits::ir::
+                       kSEHRuntimeMemoryLowSEHRuntimeMemoryDigestMaxBytes;
   if (Memory.calls().size() > MaxCalls ||
       Memory.scalarFormats().size() > MaxFormats ||
       Memory.writableImageRanges().size() > MaxCalls)
@@ -35,8 +41,13 @@ std::string lowSEHRuntimeMemoryDigest(const LowSEHRuntimeMemory &Memory) {
   for (const auto &[Identity, Call] : Memory.calls()) {
     if (!Identity.first || !Call.IATAddress ||
         Call.IATAddress > InvalidVA - 8 || Call.Module.empty() ||
-        Call.Module.size() > 256 || Call.Name.empty() ||
-        Call.Name.size() > 256 ||
+        Call.Module.size() >
+            ::neverd::limits::ir::
+                kSEHRuntimeMemoryLowSEHRuntimeMemoryDigestCallModuleSizeLimit ||
+        Call.Name.empty() ||
+        Call.Name.size() >
+            ::neverd::limits::ir::
+                kSEHRuntimeMemoryLowSEHRuntimeMemoryDigestCallNameSizeLimit ||
         Call.Routine > LowSEHRuntimeCall::Kind::CRTControlFP)
       return {};
     Word(Identity.first);

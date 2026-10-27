@@ -89,8 +89,10 @@ const char *neverd_string_refs_json(neverd_session_t Sess,
   std::vector<std::vector<Row>> Slots(Page.Functions.size());
   const BinaryImage &Img = S->Img;
   const bool Decoded = decodeFunctions(
-      Img, Page, [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
-        const InstructionFlow Flow = summarizeInstructionFlow(Img, Dec, DI);
+      Img, Page,
+      [&](size_t Index, Decoder &Dec, const DecodedInsn &DI,
+          InstructionFlowScratch &Scratch) {
+        const InstructionFlow Flow = Scratch.summarize(Img, Dec, DI);
         // The instruction as neverd_disasm_json() spells it.
         const auto instruction = [&] {
           std::string Text = DI.Raw ? DI.Raw->mnemonic : "";

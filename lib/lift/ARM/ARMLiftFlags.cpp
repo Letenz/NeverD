@@ -13,7 +13,7 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/ARMLifter.h"
+#include "neverd/lift/ARM/ARMLifter.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
@@ -124,50 +124,65 @@ void ARMLifter::emitNZ(LiftState &S, NdVar Result) {
          {Result, NdVar::cst(0, Result.Size)});
 }
 
-void ARMLifter::emitMrsNzcv(LiftState &S, NdVar Dst) {
-  auto zextFlag = [&](uint64_t Off) {
-    NdVar T = S.makeTemp(4);
-    S.emit(NdOp::INT_ZEXT, T, {NdVar::reg(Off, 1)});
-    return T;
-  };
+void ARMLifter::emitMrsApsr(LiftState &S, NdVar Dst, NdVar Machine) {
+  // The machine's word with each modelled flag in place of its bit.
+  uint32_t Modelled = 0;
+  for (const armreg::ApsrFlagBit &Entry : armreg::ApsrFlagBits)
+    Modelled |= uint32_t{1} << Entry.Bit;
   NdVar Packed = S.makeTemp(4);
-  S.emit(NdOp::INT_LEFT, Packed,
-         {zextFlag(armreg::NFLAG), NdVar::cst(armreg::CpsrNBit, 4)});
-  auto orShifted = [&](NdVar Acc, NdVar F, unsigned Bit) {
+  S.emit(NdOp::INT_AND, Packed, {Machine, NdVar::cst(uint32_t(~Modelled), 4)});
+  for (const armreg::ApsrFlagBit &Entry : armreg::ApsrFlagBits) {
+    NdVar Flag = S.makeTemp(4);
+    S.emit(NdOp::INT_ZEXT, Flag, {NdVar::reg(Entry.Flag, 1)});
     NdVar Sh = S.makeTemp(4);
-    S.emit(NdOp::INT_LEFT, Sh, {F, NdVar::cst(Bit, 4)});
-    NdVar Out = S.makeTemp(4);
-    S.emit(NdOp::INT_OR, Out, {Acc, Sh});
-    return Out;
-  };
-  Packed = orShifted(Packed, zextFlag(armreg::ZFLAG), armreg::CpsrZBit);
-  Packed = orShifted(Packed, zextFlag(armreg::CFLAG), armreg::CpsrCBit);
-  Packed = orShifted(Packed, zextFlag(armreg::VFLAG), armreg::CpsrVBit);
+    S.emit(NdOp::INT_LEFT, Sh, {Flag, NdVar::cst(Entry.Bit, 4)});
+    NdVar Next = S.makeTemp(4);
+    S.emit(NdOp::INT_OR, Next, {Packed, Sh});
+    Packed = Next;
+  }
   if (Dst.Size >= 4)
     S.emit(NdOp::COPY, Dst, {Packed});
   else
     S.emit(NdOp::SUBBYTES, Dst, {Packed, NdVar::cst(0, 4)});
 }
 
+namespace {
+
+/// The 32-bit word of MSR source \p Src.
+NdVar msrWord(ARMLifter::LiftState &S, NdVar Src) {
+  if (Src.Size >= 4)
+    return Src;
+  NdVar Word = S.makeTemp(4);
+  S.emit(NdOp::INT_ZEXT, Word, {Src});
+  return Word;
+}
+
+/// Sets the flag register at \p Off to bit \p Bit of \p Word.
+void setFlagFromBit(ARMLifter::LiftState &S, NdVar Word, unsigned Bit,
+                    uint64_t Off) {
+  NdVar Sh = S.makeTemp(4);
+  S.emit(NdOp::INT_RIGHT, Sh, {Word, NdVar::cst(Bit, 4)});
+  NdVar Bit0 = S.makeTemp(4);
+  S.emit(NdOp::INT_AND, Bit0, {Sh, NdVar::cst(1, 4)});
+  NdVar Lo = S.makeTemp(1);
+  S.emit(NdOp::SUBBYTES, Lo, {Bit0, NdVar::cst(0, 4)});
+  S.emit(NdOp::COPY, NdVar::reg(Off, 1), {Lo});
+}
+
+} // namespace
+
 void ARMLifter::emitMsrNzcv(LiftState &S, NdVar Src) {
-  NdVar Word = Src;
-  if (Src.Size < 4) {
-    Word = S.makeTemp(4);
-    S.emit(NdOp::INT_ZEXT, Word, {Src});
-  }
-  auto setFlag = [&](unsigned Bit, uint64_t Off) {
-    NdVar Sh = S.makeTemp(4);
-    S.emit(NdOp::INT_RIGHT, Sh, {Word, NdVar::cst(Bit, 4)});
-    NdVar Bit0 = S.makeTemp(4);
-    S.emit(NdOp::INT_AND, Bit0, {Sh, NdVar::cst(1, 4)});
-    NdVar Lo = S.makeTemp(1);
-    S.emit(NdOp::SUBBYTES, Lo, {Bit0, NdVar::cst(0, 4)});
-    S.emit(NdOp::COPY, NdVar::reg(Off, 1), {Lo});
-  };
-  setFlag(armreg::CpsrNBit, armreg::NFLAG);
-  setFlag(armreg::CpsrZBit, armreg::ZFLAG);
-  setFlag(armreg::CpsrCBit, armreg::CFLAG);
-  setFlag(armreg::CpsrVBit, armreg::VFLAG);
+  const NdVar Word = msrWord(S, Src);
+  setFlagFromBit(S, Word, armreg::CpsrNBit, armreg::NFLAG);
+  setFlagFromBit(S, Word, armreg::CpsrZBit, armreg::ZFLAG);
+  setFlagFromBit(S, Word, armreg::CpsrCBit, armreg::CFLAG);
+  setFlagFromBit(S, Word, armreg::CpsrVBit, armreg::VFLAG);
+}
+
+void ARMLifter::emitMsrGe(LiftState &S, NdVar Src) {
+  const NdVar Word = msrWord(S, Src);
+  for (unsigned I = 0; I < 4; ++I)
+    setFlagFromBit(S, Word, armreg::CpsrGEBit + I, armreg::GEFLAG(I));
 }
 
 NdVar ARMLifter::snapForFlags(LiftState &S, const NdVar &Dst, const NdVar &Op) {

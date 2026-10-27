@@ -13,11 +13,15 @@
 #include "../../../lib/pipeline/PipelineReturnModelingDetail.h"
 #include "gtest/gtest.h"
 
+#include "neverd/debug/DebugContext.h"
 #include "neverd/ir/med/MedIR.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/ir/med/MedTypePass.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include <map>
+#include <string>
 #include <vector>
 
 using namespace neverd;
@@ -96,20 +100,90 @@ MedFunc branching(va_t Entry, MedOp Last) {
                    block({std::move(Last), returning(Value)}, {0})});
 }
 
+TEST(ReturnContract, ExplicitX87PrecisionRequiresAnExactIEEEValue) {
+  MedVar IEEE = temporary(1);
+  IEEE.Size = 8;
+  MedVar Extended = temporary(2);
+  Extended.Size = 10;
+  MedVar Result = temporary(3);
+  Result.Size = 10;
+  const MedOp Widen = operation(NdOp::FLOAT_FLOAT2FLOAT, Extended, {IEEE});
+  auto Width = [&](std::vector<MedOp> Ops) {
+    Ops.push_back(returning(Result));
+    auto Func = function(CalleeEntry, {block(std::move(Ops))});
+    Func.ExplicitX87ReturnValue = true;
+    inferMedTypes(Func, Arch::X86);
+    return Func.ReturnType->Size;
+  };
+  EXPECT_EQ(Width({Widen, operation(NdOp::COPY, Result, {Extended})}), 8u);
+  EXPECT_EQ(Width({Widen, operation(NdOp::SUBBYTES, Result,
+                                    {Extended, MedVar::makeConst(0, 4)})}),
+            8u);
+  EXPECT_EQ(Width({Widen, operation(NdOp::SUBBYTES, Result,
+                                    {Extended, MedVar::makeConst(1, 4)})}),
+            10u);
+  EXPECT_EQ(
+      Width({Widen, operation(NdOp::FLOAT_ADD, Result, {Extended, Extended})}),
+      10u);
+  EXPECT_EQ(Width({Widen, operation(NdOp::INT_XOR, Result,
+                                    {Extended, MedVar::makeConst(1, 10)})}),
+            10u);
+  EXPECT_EQ(Width({operation(NdOp::LOAD, Result, {IEEE})}), 10u);
+}
+
 MedOp callTo(va_t Target, int Version) {
   return operation(
       NdOp::CALL, rax(Version),
       {MedVar::makeConst(Target, 8, ConstantAddressProvenance::CodeAddress)});
 }
 
+/// Debug information that declares what some functions return, by their
+/// entries, and the prototypes of some routines, by their names.
+class DeclaringDebugContext final : public DebugContext {
+public:
+  std::map<va_t, TypeRef> Returns;
+  std::map<std::string, TypeRef> Prototypes;
+  std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+    const auto Return = Returns.find(Addr);
+    if (Return == Returns.end())
+      return std::nullopt;
+    FunctionSym Function;
+    Function.Addr = Addr;
+    Function.ReturnType = Return->second;
+    return Function;
+  }
+  std::optional<FunctionSym>
+  resolvePrototype(llvm::StringRef Name) const override {
+    const auto Return = Prototypes.find(Name.str());
+    if (Return == Prototypes.end())
+      return std::nullopt;
+    FunctionSym Function;
+    Function.Name = Name.str();
+    Function.ReturnType = Return->second;
+    return Function;
+  }
+  std::optional<VariableSym> resolveVariable(va_t, int64_t) const override {
+    return std::nullopt;
+  }
+  std::optional<TypeSym> resolveType(uint64_t) const override {
+    return std::nullopt;
+  }
+  std::optional<SourceLoc> sourceLocation(va_t) const override {
+    return std::nullopt;
+  }
+  std::vector<FunctionSym> allFunctions() const override { return {}; }
+  bool hasInfo() const override { return true; }
+};
+
 std::vector<bool> settle(std::vector<MedFunc> Funcs,
-                         BinaryFormat Format = BinaryFormat::ELF) {
+                         BinaryFormat Format = BinaryFormat::ELF,
+                         const DebugContext *Dbg = nullptr) {
   BinaryImage Image;
   Image.Arch = Arch::X64;
   Image.Format = Format;
   PipelineResult Result;
   Result.MedFuncs = std::move(Funcs);
-  settleReturnContracts(Image, Result);
+  settleReturnContracts(Image, Result, Dbg);
   std::vector<bool> NoValue;
   for (const MedFunc &Func : Result.MedFuncs)
     NoValue.push_back(Func.ReturnsNoValue);
@@ -161,6 +235,227 @@ TEST(ReturnContracts, ACallerThatReadsTheResultKeepsAValue) {
             (std::vector<bool>{false, false}));
 }
 
+/// A caller that calls the callee on one path only and merges RAX at the
+/// join, then returns what \p Join returns.
+MedFunc conditionalCaller(MedVar Untaken, MedOp Return) {
+  PhiNode Merge;
+  Merge.Output = rax(2);
+  Merge.Args = {{0, std::move(Untaken)}, {1, rax(1)}};
+  MedBlock Join = block({std::move(Return)}, {0, 1});
+  Join.Phis.push_back(std::move(Merge));
+  return function(CallerEntry,
+                  {block({seed(), operation(NdOp::COND_BR, {}, {temporary(9)})},
+                         {}, {1, 2}),
+                   block({callTo(CalleeEntry, 1)}, {0}, {2}), std::move(Join)});
+}
+
+TEST(ReturnContracts, AResultOnlyADeadMergeReadsIsNoValue) {
+  // init_multithreading: RAX merges where nothing reads it, and the caller
+  // returns a constant.
+  MedFunc Callee = branching(
+      CalleeEntry, operation(NdOp::INDIR_CALL, rax(1), {temporary(5)}));
+  MedFunc Caller =
+      conditionalCaller(rax(0), returning(MedVar::makeConst(0, 8)));
+  EXPECT_EQ(settle({std::move(Callee), std::move(Caller)}),
+            (std::vector<bool>{true, false}));
+}
+
+TEST(ReturnContracts, AResultAMergeHandsBackIsReadByACallerThatReturnsAValue) {
+  // The caller returns 5 on the other path, so what it hands back from the
+  // callee is a value too.
+  MedFunc Callee = branching(
+      CalleeEntry, operation(NdOp::INDIR_CALL, rax(1), {temporary(5)}));
+  MedFunc Caller =
+      conditionalCaller(MedVar::makeConst(5, 8), returning(rax(2)));
+  EXPECT_EQ(settle({std::move(Callee), std::move(Caller)}),
+            (std::vector<bool>{false, false}));
+}
+
+TEST(ReturnContracts, AReturnOfACopiedArgumentIsAValue) {
+  // `mov %rdi, %rax; ret`: copy propagation left the RETURN reading RDI,
+  // the argument, where the register holds it.
+  MedVar Rdi = rax(0);
+  Rdi.Id = 7;
+  Rdi.RegOff = x86reg::RDI;
+  MedFunc Func =
+      function(CalleeEntry,
+               {block({operation(NdOp::COPY, Rdi, {Rdi}), returning(Rdi)})});
+  MedVar Argument = Rdi;
+  Argument.Kind = MedVar::Param;
+  Func.Params.push_back(Argument);
+  EXPECT_EQ(settle({std::move(Func)}), std::vector<bool>{false});
+}
+
+/// RAX written by intrinsic \p Id with \p Inputs after it.
+MedOp intrinsic(Intrinsic Id, std::vector<MedVar> Inputs = {}) {
+  Inputs.insert(Inputs.begin(),
+                MedVar::makeConst(static_cast<uint64_t>(Id), 2));
+  return operation(NdOp::INTRINSIC, rax(1), std::move(Inputs));
+}
+
+TEST(ReturnContracts, ASystemRegisterReadIsAValue) {
+  // `mov rax, cr3; ret` hands back the register it reads, though reading it
+  // has side effects.
+  EXPECT_EQ(settle({function(CalleeEntry, {block({intrinsic(Intrinsic::ReadCr3),
+                                                  returning(rax(1))})})}),
+            std::vector<bool>{false});
+}
+
+TEST(ReturnContracts, CheckedAArch64PointersRemainReturnValues) {
+  const auto Pointer = MedVar::makeConst(0x1234, 8);
+  const auto Modifier = MedVar::makeConst(0x5678, 8);
+  const struct {
+    Intrinsic Id;
+    std::vector<MedVar> Inputs;
+  } Cases[] = {
+      {Intrinsic::Pacia, {Pointer, Modifier}},
+      {Intrinsic::Pacib, {Pointer, Modifier}},
+      {Intrinsic::Pacda, {Pointer, Modifier}},
+      {Intrinsic::Pacdb, {Pointer, Modifier}},
+      {Intrinsic::Autia, {Pointer, Modifier}},
+      {Intrinsic::Autib, {Pointer, Modifier}},
+      {Intrinsic::Autda, {Pointer, Modifier}},
+      {Intrinsic::Autdb, {Pointer, Modifier}},
+      {Intrinsic::Xpaci, {Pointer}},
+      {Intrinsic::Xpacd, {Pointer}},
+      {Intrinsic::A64_Pacga, {Pointer, Modifier}},
+      {Intrinsic::A64_AuthBranch, {Pointer, MedVar::makeConst(0, 4), Modifier}},
+      {Intrinsic::A64_Addpt, {Pointer, Modifier}},
+      {Intrinsic::A64_Subpt, {Pointer, Modifier}},
+      {Intrinsic::A64_Maddpt, {Pointer, Modifier, Pointer}},
+      {Intrinsic::A64_Msubpt, {Pointer, Modifier, Pointer}},
+      {Intrinsic::A64_Pacia2, {Pointer, Modifier, Pointer}},
+      {Intrinsic::A64_Pacib2, {Pointer, Modifier, Pointer}},
+      {Intrinsic::A64_Autia2, {Pointer, Modifier, Pointer}},
+      {Intrinsic::A64_Autib2, {Pointer, Modifier, Pointer}},
+      {Intrinsic::A64_AuthReturnIA2, {Pointer, Modifier, Pointer}},
+      {Intrinsic::A64_AuthReturnIB2, {Pointer, Modifier, Pointer}},
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(static_cast<unsigned>(Case.Id));
+    for (bool Malformed : {false, true}) {
+      MedOp Op = intrinsic(Case.Id, Case.Inputs);
+      Op.Output.TheArch = Arch::AArch64;
+      Op.Output.RegOff = 0; // AArch64 x0, the integer result register.
+      if (Malformed)
+        Op.Inputs[1].Size = 4;
+      BinaryImage Image;
+      Image.Arch = Arch::AArch64;
+      Image.Format = BinaryFormat::MachO;
+      PipelineResult Result;
+      Result.MedFuncs = {
+          function(CalleeEntry, {block({Op, returning(Op.Output)})})};
+      settleReturnContracts(Image, Result);
+      EXPECT_EQ(Result.MedFuncs.front().ReturnsNoValue, Malformed);
+    }
+  }
+}
+
+TEST(ReturnContracts, ValidatedX86SystemCompletionsRemainReturnValues) {
+  const auto Constant = [](uint64_t Value, uint16_t Size) {
+    return MedVar::makeConst(Value, Size);
+  };
+  struct Case {
+    Intrinsic Id;
+    uint16_t Width;
+    std::vector<MedVar> Inputs;
+  };
+  const Case Cases[] = {
+      {Intrinsic::Verr, 1, {Constant(0x23, 2)}},
+      {Intrinsic::Verw, 1, {Constant(0x23, 2)}},
+      {Intrinsic::Verr, 1, {Constant(0x3000, 8)}},
+      {Intrinsic::Verw, 1, {Constant(0x3000, 8)}},
+      {Intrinsic::Sldt, 2, {}},
+      {Intrinsic::Sldt, 4, {}},
+      {Intrinsic::Sldt, 8, {}},
+      {Intrinsic::Str, 2, {}},
+      {Intrinsic::Str, 4, {}},
+      {Intrinsic::Str, 8, {}},
+      {Intrinsic::Smsw, 2, {}},
+      {Intrinsic::Smsw, 4, {}},
+      {Intrinsic::Smsw, 8, {}},
+      {Intrinsic::X86ReadPid, 8, {}},
+      {Intrinsic::X86ReadFsBase, 8, {}},
+      {Intrinsic::X86UserWait,
+       1,
+       {Constant(0, 4), Constant(1, 4), Constant(2, 4)}},
+      {Intrinsic::X86LoadAccessRights, 16, {Constant(0x23, 2)}},
+      {Intrinsic::X86ReadMsrList,
+       8,
+       {Constant(0x3000, 8), Constant(0x4000, 8), Constant(3, 8)}},
+      {Intrinsic::X86WriteMsrList,
+       8,
+       {Constant(0x3000, 8), Constant(0x4000, 8), Constant(3, 8)}},
+      {Intrinsic::VmxRead, 16, {Constant(0x4402, 8)}},
+      {Intrinsic::VmxWrite, 2, {Constant(0x4402, 8), Constant(0, 8)}},
+      {Intrinsic::X86MsrAccess,
+       8,
+       {Constant(static_cast<uint64_t>(X86MsrAccessKind::RdmsrVexImmediate), 1),
+        Constant(0x10, 4)}},
+  };
+  for (const auto &C : Cases) {
+    SCOPED_TRACE(static_cast<unsigned>(C.Id));
+    MedOp Read = intrinsic(C.Id, C.Inputs);
+    Read.Output = temporary(20);
+    Read.Output.Size = C.Width;
+    MedOp Project =
+        C.Width < 8 ? operation(NdOp::INT_ZEXT, rax(1), {Read.Output})
+        : C.Width > 8
+            ? operation(NdOp::SUBBYTES, rax(1), {Read.Output, Constant(0, 4)})
+            : operation(NdOp::COPY, rax(1), {Read.Output});
+    EXPECT_EQ(settle({function(CalleeEntry,
+                               {block({Read, Project, returning(rax(1))})})}),
+              std::vector<bool>{false});
+    // A fabricated extra argument invalidates the owned completion contract.
+    Read.addInput(Constant(0, 8));
+    EXPECT_EQ(settle({function(CalleeEntry,
+                               {block({Read, Project, returning(rax(1))})})}),
+              std::vector<bool>{true});
+  }
+  EXPECT_EQ(
+      settle({function(CalleeEntry,
+                       {block({intrinsic(Intrinsic::X86WriteMsrNonSerializing,
+                                         {Constant(0x10, 4), Constant(1, 4),
+                                          Constant(2, 4)}),
+                               returning(rax(1))})})}),
+      std::vector<bool>{true});
+}
+
+TEST(ReturnContracts, ASystemCallResultACallerReadsIsAValue) {
+  // An ntdll stub returns its system call's NTSTATUS, which its caller
+  // tests.
+  MedFunc Stub =
+      function(CalleeEntry, {block({intrinsic(Intrinsic::X64WindowsSyscall,
+                                              {MedVar::makeConst(0x55, 8)}),
+                                    returning(rax(1))})});
+  MedFunc Caller = function(
+      CallerEntry, {block({callTo(CalleeEntry, 1),
+                           operation(NdOp::INT_ADD, rax(2),
+                                     {rax(1), MedVar::makeConst(1, 8)}),
+                           returning(rax(2))})});
+  EXPECT_EQ(settle({std::move(Stub), std::move(Caller)}, BinaryFormat::COFF),
+            (std::vector<bool>{false, false}));
+}
+
+TEST(ReturnContracts, ASystemCallResultNoCallerReadsIsNoValue) {
+  // A system call writes its result whatever the function means: a wrapper
+  // nothing reads the result of, as `void f(void) { exit_group(5); }`,
+  // returns none.
+  EXPECT_EQ(settle({function(CalleeEntry,
+                             {block({intrinsic(Intrinsic::X64WindowsSyscall,
+                                               {MedVar::makeConst(0x55, 8)}),
+                                     returning(rax(1))})})},
+                   BinaryFormat::COFF),
+            std::vector<bool>{true});
+}
+
+TEST(ReturnContracts, AnInstructionRunForItsEffectIsNoValue) {
+  // What the lift writes for a breakpoint is no result.
+  EXPECT_EQ(settle({function(CalleeEntry, {block({intrinsic(Intrinsic::Int3),
+                                                  returning(rax(1))})})}),
+            std::vector<bool>{true});
+}
+
 TEST(ReturnContracts, AConstantIsADeliberateValue) {
   // register_tm_clones' `return 0` beside the bare path: a value.
   EXPECT_EQ(
@@ -174,6 +469,24 @@ TEST(ReturnContracts, AFunctionThatNeverReturnsReturnsNoValue) {
   Abort.DoesNotReturn = true;
   EXPECT_EQ(settle({function(CalleeEntry, {block({seed(), Abort})})}),
             std::vector<bool>{true});
+}
+
+TEST(ReturnContracts, MissingOrdinaryReturnsDoNotEraseExceptionalResults) {
+  MedOp Throw = callTo(0x3000, 1);
+  Throw.DoesNotReturn = true;
+  MedFunc Parent = function(CalleeEntry, {block({seed(), Throw})});
+  // The catch body and its parent continuation are not ordinary blocks in
+  // this snapshot. Its physical no-return call can still dispatch to them.
+  Parent.Blocks.front().ExceptionalSuccs.push_back(
+      {-1, 0x4000, ExceptionalEdgeKind::CxxCatch});
+  EXPECT_EQ(settle({Parent}, BinaryFormat::COFF), std::vector<bool>{false});
+
+  MedFunc Unresolved = function(CalleeEntry, {block({seed()})});
+  EXPECT_EQ(settle({Unresolved}), std::vector<bool>{false});
+
+  // An independently proved termination still returns no value.
+  Parent.Blocks.front().ExceptionalSuccs.clear();
+  EXPECT_EQ(settle({Parent}, BinaryFormat::COFF), std::vector<bool>{true});
 }
 
 TEST(ReturnContracts, AWrapperOfADestructorReturnsNoValue) {
@@ -226,6 +539,47 @@ TEST(ReturnContracts, AStubOfAVoidImportReturnsNoValue) {
               operation(NdOp::INDIR_CALL, rax(1), {temporary(4)}),
               returning(rax(1))})})};
   settleReturnContracts(Image, Result);
+  EXPECT_TRUE(Result.MedFuncs.front().ReturnsNoValue);
+}
+
+TEST(ReturnContracts, ACallToAFunctionDeclaredVoidElsewhereHandsBackNoValue) {
+  // A function decompiled alone tail-calls one the debug information, or
+  // the prototype of its name, declares void: the C writers print a call
+  // that returns nothing, and so the caller returns nothing either.
+  const MedFunc Caller = function(
+      CallerEntry, {block({callTo(CalleeEntry, 1), returning(rax(1))})});
+  DeclaringDebugContext Debug;
+  EXPECT_EQ(settle({Caller}, BinaryFormat::COFF, &Debug),
+            std::vector<bool>{false});
+  Debug.Returns[CalleeEntry] = NdType::makeVoid();
+  EXPECT_EQ(settle({Caller}, BinaryFormat::COFF, &Debug),
+            std::vector<bool>{true});
+  // One declared to return a value hands it back.
+  Debug.Returns[CalleeEntry] = NdType::makeInt(4);
+  EXPECT_EQ(settle({Caller}, BinaryFormat::COFF, &Debug),
+            std::vector<bool>{false});
+}
+
+TEST(ReturnContracts, AStubOfAnImportDeclaredVoidReturnsNoValue) {
+  // The kernel's headers declare ExFreePool void; the libc tables know it
+  // not.
+  constexpr va_t Slot = 0x4018;
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Format = BinaryFormat::COFF;
+  Import Free;
+  Free.Name = "ExFreePool";
+  Free.IATAddr = Slot;
+  Image.Imports.push_back(Free);
+  DeclaringDebugContext Debug;
+  Debug.Prototypes["ExFreePool"] = NdType::makeVoid();
+  PipelineResult Result;
+  Result.MedFuncs = {function(
+      CallerEntry,
+      {block({operation(NdOp::LOAD, temporary(4), {MedVar::makeConst(Slot, 8)}),
+              operation(NdOp::INDIR_CALL, rax(1), {temporary(4)}),
+              returning(rax(1))})})};
+  settleReturnContracts(Image, Result, &Debug);
   EXPECT_TRUE(Result.MedFuncs.front().ReturnsNoValue);
 }
 

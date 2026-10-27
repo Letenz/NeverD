@@ -1,5 +1,6 @@
 #include "neverd/ir/med/MedSourceParameterUses.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/ir/med/MedNoReturn.h"
@@ -62,7 +63,10 @@ observedMedSourceEntryBytes(const MedFunc &Function,
   auto Observe = [&](const MedVar &Value) -> Node * {
     if (Value.isConst() || !Value.Size)
       return nullptr;
-    if (Value.Size > 64 || Nodes.size() > 65536 ||
+    if (Value.Size > 64 ||
+        Nodes.size() >
+            ::neverd::limits::ir::
+                kMedSourceParameterUsesObservedMedSourceEntryBytesObserveNodesSizeLimit ||
         (Value.Kind == MedVar::Reg &&
          Value.RegOff > ~uint64_t(0) - Value.Size)) {
       Valid = false;
@@ -150,6 +154,10 @@ observedMedSourceEntryBytes(const MedFunc &Function,
   }
   for (const auto &Block : Function.Blocks)
     for (const auto &Op : Block.Ops) {
+      // Source stack preparation already proved these stores unobservable.
+      // Rooting their addresses would revive an otherwise unused entry SP.
+      if (Op.Opcode == NdOp::STORE && Op.PrologueSave)
+        continue;
       if (Op.Opcode == NdOp::RETURN) {
         if (Demand == SourceEntryDemand::EffectsOnly)
           continue;
@@ -177,7 +185,8 @@ observedMedSourceEntryBytes(const MedFunc &Function,
   for (const auto &Clobber : Function.CallClobbers)
     if (Clobber.PreservedPrefixSize)
       Need(Clobber.PreservedInput, Mask(Clobber.PreservedPrefixSize));
-  size_t Remaining = 262144;
+  size_t Remaining = ::neverd::limits::ir::
+      kMedSourceParameterUsesObservedMedSourceEntryBytesRemaining;
   std::map<uint64_t, uint64_t> Result;
   // A generic parameter with no graph occurrence has no dead-byte proof.
   // Keep that original evidence, rather than treating an absent graph as a

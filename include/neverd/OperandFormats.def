@@ -23,4 +23,9 @@ NEVERD_OPERAND_BASE(Binary, "binary")
 NEVERD_OPERAND_BASE(Char, "char")
 // The address the number holds, by name.
 NEVERD_OPERAND_BASE(Offset, "offset")
+// A structure offset, as IDA's T shows one: the member of a local type the
+// number lands on, `delta` bytes further in when the register points that
+// far into the type.
+NEVERD_OPERAND_BASE(Struct, "struct")
+NEVERD_OPERAND_BASE(Enum, "enum")
 #undef NEVERD_OPERAND_BASE

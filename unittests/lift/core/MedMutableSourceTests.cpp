@@ -12,7 +12,7 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedMutableSource.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 

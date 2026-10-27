@@ -29,11 +29,38 @@ TEST(InterpreterLLVMRefinement, SegmentedContractRequiresAuthenticatedBases) {
   Program P({0xb8, 7, 0, 0, 0, 0xc3});
   const auto R = P.recover();
   ASSERT_TRUE(R.complete());
-  P.Options.X64SegmentedReads = true;
+  for (bool Write : {false, true}) {
+    P.Options.X64SegmentedReads = !Write;
+    P.Options.X64SegmentedWrites = Write;
+    const auto Proof = P.check(R.Residual, constantResult());
+    rejected(Proof, Stage::Native);
+    EXPECT_EQ(Proof.Native.Proof.Status, Status::Unsupported);
+    EXPECT_NE(Proof.Diagnostic.find("FS/GS base inputs"), std::string::npos);
+    EXPECT_FALSE(Proof.Native.Certificate);
+  }
+}
+
+TEST(InterpreterLLVMRefinement, MXCSRContractRequiresAuthenticatedState) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete());
+  P.Options.X64MXCSRMask = 0xffbf;
   const auto Proof = P.check(R.Residual, constantResult());
   rejected(Proof, Stage::Native);
   EXPECT_EQ(Proof.Native.Proof.Status, Status::Unsupported);
-  EXPECT_NE(Proof.Diagnostic.find("FS/GS base inputs"), std::string::npos);
+  EXPECT_NE(Proof.Diagnostic.find("MXCSR state"), std::string::npos);
+  EXPECT_FALSE(Proof.Native.Certificate);
+}
+
+TEST(InterpreterLLVMRefinement, LegacyGSContractRequiresAuthenticatedState) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete());
+  P.Options.X64LegacyGSState = true;
+  const auto Proof = P.check(R.Residual, constantResult());
+  rejected(Proof, Stage::Native);
+  EXPECT_EQ(Proof.Native.Proof.Status, Status::Unsupported);
+  EXPECT_NE(Proof.Diagnostic.find("legacy GS state"), std::string::npos);
   EXPECT_FALSE(Proof.Native.Certificate);
 }
 
@@ -455,4 +482,28 @@ TEST(InterpreterLLVMRefinement, PreparationCannotRepairDanglingEntryEdges) {
   EXPECT_FALSE(bool(Prepared));
   llvm::consumeError(Prepared.takeError());
 }
+
+TEST(InterpreterLLVMRefinement, RawCmpxchgStopsBeforeLLVMProof) {
+  // A valid raw native instruction reaches the machine-state model boundary.
+  // Preparation precedes native checking in the composed API.
+  Program P({0xf0, 0x48, 0x0f, 0xb1, 0x54, 0x24, 0xf8, 0xc3});
+  P.Options.RequireRestoredFrameAtReturn = true;
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  unsigned Atomics = 0;
+  for (const auto &B : R.Residual.Blocks)
+    for (const auto &Op : B.Ops)
+      Atomics += Op.Opcode == NdOp::ATOMIC_CMPXCHG;
+  ASSERT_EQ(Atomics, 1u);
+  const auto Proof = P.check(R.Residual, module("ret i64 0"));
+  rejected(Proof, Stage::Preparation);
+  EXPECT_NE(Proof.Diagnostic.find("ordered or special memory"),
+            std::string::npos)
+      << Proof.Diagnostic;
+  EXPECT_FALSE(Proof.Native.Certificate);
+  EXPECT_FALSE(Proof.Native.Proof.Certificate);
+  EXPECT_FALSE(Proof.LLVM.Certificate);
+  EXPECT_EQ(Proof.Native.Proof.Operations, 0u);
+}
+
 } // namespace neverd::analysis::llvm_refinement_test

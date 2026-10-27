@@ -17,6 +17,7 @@
 #include "neverd/loader/BinaryImageDynamic.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/DebugInfo/CodeView/CVRecord.h"
 #include "llvm/Support/Error.h"
@@ -29,6 +30,10 @@
 #include <set>
 #include <string>
 #include <vector>
+
+namespace llvm::pdb {
+class PDBFile;
+} // namespace llvm::pdb
 
 namespace neverd {
 
@@ -135,7 +140,8 @@ struct RecordedSection {
 /// Every section must keep its name and characteristics.  Trailing .rsrc and
 /// .reloc sections may be re-laid out, because post-link resource stamping
 /// rewrites them without relinking and neither holds a code or data symbol;
-/// every other section must match exactly.
+/// every other section must match exactly. Loader-owned image header storage
+/// is not part of the file's section table and has no debug section number.
 bool recordedSectionsMatch(const BinaryImage &Image,
                            llvm::ArrayRef<RecordedSection> Recorded);
 
@@ -213,6 +219,12 @@ public:
 
   std::optional<AuthenticatedRecordParameter>
   resolveAuthenticatedRecordReturn(va_t Addr) const override;
+
+  /// Runs \p Use on the open PDB with its type streams to itself, for a
+  /// reader that walks them whole, such as the local type import.  An error
+  /// when the context keeps no file open, as for a PDB 2.00 file.
+  llvm::Error
+  withPDBFile(llvm::function_ref<llvm::Error(llvm::pdb::PDBFile &)> Use) const;
 
   bool hasAuthenticatedImageIdentity() const;
   bool hasAnalysisAuthority() const;

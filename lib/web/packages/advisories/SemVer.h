@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
+
 #include <array>
 #include <cstddef>
 #include <optional>
@@ -19,8 +21,6 @@
 #include <vector>
 
 namespace neverd::web::package_advisories {
-
-inline constexpr size_t MaxSemVerBytes = 1024;
 
 struct SemVer {
   std::array<std::string, 3> Core;
@@ -34,3 +34,9 @@ std::optional<SemVer> parseSemVer(std::string_view Text);
 int compareSemVer(const SemVer &Before, const SemVer &After);
 
 } // namespace neverd::web::package_advisories
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::web::package_advisories {
+inline constexpr size_t MaxSemVerBytes =
+    ::neverd::limits::web::kSemVerMaxSemVerBytes;
+}

@@ -7,6 +7,7 @@
 #include "COFFExceptionDetail.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include <algorithm>
@@ -99,7 +100,8 @@ public:
   }
 
 private:
-  static constexpr uint64_t MaxBytes = 1u << 20;
+  static constexpr uint64_t MaxBytes =
+      ::neverd::limits::loader::kCOFFExceptionFH4MaxBytes;
   const BinaryImage &Img;
   va_t Cursor = 0;
   uint64_t BytesRead = 0;
@@ -119,8 +121,7 @@ bool readFH4ImageAddress(FH4Reader &Reader, va_t ImageBase, va_t &Address,
 
 bool parseFH4HandlerMap(ExceptionFunction &F, const BinaryImage &Img,
                         va_t HandlerMapVA, va_t FuncInfoVA, bool IsSeparated,
-                        CxxTryBlock &Try,
-                        LanguageRecordBudget &Budget) {
+                        CxxTryBlock &Try, LanguageRecordBudget &Budget) {
   FH4Reader Reader(Img, HandlerMapVA);
   uint32_t Count = 0;
   if (!Reader.readCompressedUInt(Count) || Count > MaxLanguageRecords) {

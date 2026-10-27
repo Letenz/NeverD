@@ -1,10 +1,10 @@
-//===- RegistrationJumpCapture.h - Bound EH3 jump capture ------*- C++ -*-===//
+//===- RegistrationJumpCapture.h - Bound SEH jump capture ------*- C++ -*-===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Bind the current EH3 invocation to its source jump-buffer capture.
+/// Bind the current SEH invocation to its source jump-buffer capture.
 
 #ifndef NEVERD_IR_LOW_X86_REGISTRATIONJUMPCAPTURE_H
 #define NEVERD_IR_LOW_X86_REGISTRATIONJUMPCAPTURE_H
@@ -21,10 +21,11 @@
 namespace neverd {
 struct BinaryImage;
 struct LowFunc;
+struct RegistrationChainInfo;
 
 namespace registration_state {
 
-struct EH3JumpCapture {
+struct SEHJumpCapture {
   static constexpr uint16_t BufferBytes =
       RegistrationSEHJumpCapture::BufferBytes;
   va_t Call = InvalidVA;
@@ -33,39 +34,55 @@ struct EH3JumpCapture {
   int32_t BufferOffset = 0;
   int32_t StackOffset = 0;
   int32_t Level = -1;
+  RegistrationSEHJumpCapture::Kind Protocol =
+      RegistrationSEHJumpCapture::Kind::EH3;
+  va_t SecurityCookieVA = 0;
   /// Actual EBP, EBX, EDI and ESI values. A later resume must retain their
   /// provenance; an unknown saved register is never a fabricated scalar.
   std::array<FrameValue, 4> Nonvolatile;
-  bool operator==(const EH3JumpCapture &) const = default;
+  bool operator==(const SEHJumpCapture &) const = default;
 };
 
 /// The image owner authenticates calls; the state owner proves buffer
 /// lifetime, effects and resumption. These callbacks grant no target-wide
 /// stack or memory summary.
-struct EH3JumpRuntime {
+struct SEHJumpRuntime {
   std::set<va_t> ImportSlots;
-  std::function<std::optional<EH3JumpCapture>(const LowOp &, const FrameState &,
+  std::function<std::optional<SEHJumpCapture>(const LowOp &, const FrameState &,
                                               bool, size_t &)>
       Capture;
   std::function<bool(const LowOp &, size_t &)> Resume;
   std::function<bool(const LowOp &, const FrameState &, size_t &)> Raise;
   std::function<bool(const LowOp &, size_t &)> ControlFP;
+  /// An authenticated ordinary call with zero stack cleanup and no parent
+  /// frame borrow. This grants capture preservation only; its volatile
+  /// registers, result and native caller ABI remain separate obligations.
+  std::function<bool(const LowOp &, size_t &)> PrivateCall;
+  /// Proves image storage disjoint from suspended callback/parent frames.
+  /// Contents remain runtime values; writes cannot replace import bindings.
+  std::function<bool(va_t, uint16_t, bool, size_t &)> ImageMemory;
 };
 
-/// Only the ten DWORDs written by the two-argument EH3 capture protocol are
-/// initialized. The six unwind-data DWORDs remain untouched.
-void storeEH3JumpCapture(FrameState &Frame, const EH3JumpCapture &Capture);
-bool hasEH3JumpCapture(const FrameState &Frame, const EH3JumpCapture &Capture);
+/// EH3 initializes ten DWORDs; EH4 also saves its cookie address at offset 40.
+/// The remaining unwind-data DWORDs remain untouched.
+void storeSEHJumpCapture(FrameState &Frame, const SEHJumpCapture &Capture);
+bool hasSEHJumpCapture(const FrameState &Frame, const SEHJumpCapture &Capture);
 
-/// Prepare a capture for a checked installed direct EH3 frame. Only the
-/// two-argument EH3 unwind protocol is admitted. Buffer storage must be fully
+/// Prepare a capture for a checked installed direct EH3/EH4 frame. The exact
+/// runtime protocol owns the unwind arguments. Buffer storage must be fully
 /// separated from outgoing arguments and registration administration. This
 /// supplies no surviving-buffer or resumption proof and is not a call-pop
 /// summary. Unknown roles, source slices and protocol values refuse.
-std::optional<EH3JumpCapture>
-prepareEH3JumpCapture(const BinaryImage &Image, const LowFunc &Function,
+std::optional<SEHJumpCapture>
+prepareSEHJumpCapture(const BinaryImage &Image, const LowFunc &Function,
                       const LowOp &Op, const FrameState &Frame, bool Installed,
                       size_t &Work);
+
+/// Authenticate EH4's encoded scope table and third unwind argument. Cookie
+/// initialization, slot disjointness and lifetime remain state obligations.
+std::optional<va_t> checkedEH4JumpCookie(const BinaryImage &Image,
+                                         const RegistrationChainInfo &Chain,
+                                         const FrameState &Frame, int32_t SP);
 
 } // namespace registration_state
 } // namespace neverd

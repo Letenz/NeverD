@@ -19,6 +19,7 @@
 #include "HighCFSimplifyDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/support/Diagnostic.h"
@@ -185,7 +186,7 @@ class ContinuationFolder {
   }
 
   void fold(std::vector<HighStmt> &Body, unsigned Depth) {
-    if (Depth > 64)
+    if (Depth > ::neverd::limits::ir::kHighCFSimplifyIfElseFoldDepthLimit)
       return;
     for (size_t I = 0; I < Body.size(); ++I) {
       auto &S = Body[I];
@@ -1082,7 +1083,7 @@ static bool exprUsesVar(const HighExpr *E, const MedVar &V) {
     return false;
   llvm::SmallVector<const HighExpr *, 32> Work{E};
   for (unsigned Visited = 0; !Work.empty();) {
-    if (++Visited > 128)
+    if (++Visited > ::neverd::limits::ir::kMaxIfElseCandidateVisits)
       return exprUsesVarShared(E, V);
     const HighExpr *Cur = Work.pop_back_val();
     if (Cur->Kind == ExprKind::Var && sameMedVar(Cur->Var, V))
@@ -1266,7 +1267,9 @@ static bool prefixOkForChain(const HighStmt &S) {
 
 static const HighExpr *peelCond(const HighExpr *E) {
   unsigned Depth = 0;
-  while (E && Depth++ < 8) {
+  while (E &&
+         Depth++ <
+             ::neverd::limits::ir::kHighCFSimplifyIfElsePeelCondDepthLimit) {
     if ((E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast) &&
         !E->Operands.empty() && E->Operands[0]) {
       E = E->Operands[0].get();
@@ -1438,7 +1441,10 @@ static const HighExpr *precedingPredCall(const std::vector<HighStmt> &Body,
 static const HighExpr *peelFieldPath(const HighExpr *E,
                                      std::vector<uint64_t> &Offs) {
   unsigned Depth = 0;
-  while (E && Depth++ < 8) {
+  while (
+      E &&
+      Depth++ <
+          ::neverd::limits::ir::kHighCFSimplifyIfElsePeelFieldPathDepthLimit) {
     E = peelCond(E);
     if (!E)
       return nullptr;
@@ -2125,8 +2131,12 @@ static bool dropImpliedFallthroughConds(std::vector<HighStmt> &Body,
     unsigned Skipped = 0;
     // A jump into the work or to the next test reaches it without failing
     // the first one.
-    while (J < Body.size() && Skipped < 32 && fallthroughWorkOk(Body[J]) &&
-           !isEnteredFromOutside(Body[J], Uses)) {
+    while (
+        J < Body.size() &&
+        Skipped <
+            ::neverd::limits::ir::
+                kHighCFSimplifyIfElseDropImpliedFallthroughCondsSkippedLimit &&
+        fallthroughWorkOk(Body[J]) && !isEnteredFromOutside(Body[J], Uses)) {
       ++J;
       ++Skipped;
     }
@@ -2240,7 +2250,10 @@ static bool isNegatedCallCondFromPrefix(const HighExpr *E,
   if (!Val || Val->Kind != ExprKind::Var)
     return false;
   MedVar Wanted = Val->Var;
-  for (int J = static_cast<int>(IfIdx) - 1, Steps = 0; J >= 0 && Steps < 8;
+  for (int J = static_cast<int>(IfIdx) - 1, Steps = 0;
+       J >= 0 &&
+       Steps < ::neverd::limits::ir::
+                   kHighCFSimplifyIfElseIsNegatedCallCondFromPrefixStepsLimit;
        --J) {
     const HighStmt &P = Body[static_cast<size_t>(J)];
     if (stmtIsSkipResidue(P))
@@ -2440,6 +2453,7 @@ static bool hoistIdenticalIfElseSuffixes(std::vector<HighStmt> &Body,
               [](const HighStmt &) { return false; }))
         break;
       Joins.push_back(std::move(S.ElseBody.back()));
+      Joins.back().Val = withMergedCallSites(Joins.back().Val, ValA);
       S.Body.pop_back();
       S.ElseBody.pop_back();
     }
@@ -3611,7 +3625,10 @@ static bool foldJoinValueGotoChain(std::vector<HighStmt> &Body) {
     Arms.push_back({I, Body[I].Cond, {}, {}});
 
     size_t J = I + 1;
-    while (J < Body.size() && Arms.size() < 8) {
+    while (J < Body.size() &&
+           Arms.size() <
+               ::neverd::limits::ir::
+                   kHighCFSimplifyIfElseFoldJoinValueGotoChainArmsSizeLimit) {
       if (prefixOkForChain(Body[J])) {
         ++J;
         continue;
@@ -3783,7 +3800,10 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
         stmtHasStructuredRegion(Prev))
       continue;
     const va_t Join = uniqueNestedGoto(Prev);
-    if (countStmtTree(Prev) > 96 || jumpsWithin(Prev))
+    if (countStmtTree(Prev) >
+            ::neverd::limits::ir::
+                kHighCFSimplifyIfElseSinkJoinDefaultAssignCountStmtTreePrevLimit ||
+        jumpsWithin(Prev))
       continue;
     size_t I = P + 1;
     size_t DefI = SIZE_MAX;
@@ -3950,7 +3970,11 @@ bool sinkJoinDefaultsLate(HighFunc &Func) {
   bool Changed = false;
   std::function<void(std::vector<HighStmt> &)> Visit =
       [&](std::vector<HighStmt> &L) {
-        for (int Sinks = 0; Sinks < 32 && sinkJoinDefaultAssign(L); ++Sinks)
+        for (int Sinks = 0;
+             Sinks <
+                 ::neverd::limits::ir::kHighCFSimplifyIfElseVisitSinksLimit &&
+             sinkJoinDefaultAssign(L);
+             ++Sinks)
           Changed = true;
         for (HighStmt &S : L) {
           Visit(S.Body);
@@ -4144,7 +4168,11 @@ static bool invertExternalSkipGoto(std::vector<HighStmt> &Body) {
     if (NextI >= Body.size())
       continue;
     size_t CleanupI = SIZE_MAX;
-    for (size_t K = NextI; K < Body.size() && K - NextI < 32; ++K) {
+    for (size_t K = NextI;
+         K < Body.size() &&
+         K - NextI < ::neverd::limits::ir::
+                         kHighCFSimplifyIfElseInvertExternalSkipGotoKNextILimit;
+         ++K) {
       if (Body[K].Kind == StmtKind::Goto && Body[K].GotoTarget &&
           Body[K].GotoTarget != InvalidVA) {
         CleanupI = K;
@@ -4205,7 +4233,11 @@ static bool foldSameTargetSkipGoto(std::vector<HighStmt> &Body) {
     if (NextI >= Body.size())
       continue;
     size_t CleanupI = SIZE_MAX;
-    for (size_t K = NextI; K < Body.size() && K - NextI < 32; ++K) {
+    for (size_t K = NextI;
+         K < Body.size() &&
+         K - NextI < ::neverd::limits::ir::
+                         kHighCFSimplifyIfElseFoldSameTargetSkipGotoKNextILimit;
+         ++K) {
       if (Body[K].Kind == StmtKind::Goto && Body[K].GotoTarget &&
           Body[K].GotoTarget != InvalidVA) {
         CleanupI = K;
@@ -4793,6 +4825,8 @@ static void inlineSmallExclusiveJoinNested(std::vector<HighStmt> &Body,
 /// Structures \p Stmts bottom-up; true when anything in it changed.
 static bool structureIfElseNested(std::vector<HighStmt> &Stmts, int MaxPasses,
                                   const MedFunc *Med) {
+  if (Stmts.empty())
+    return false;
   bool ChildrenChanged = false;
   for (HighStmt &S : Stmts) {
     ChildrenChanged |= structureIfElseNested(S.Body, MaxPasses, Med);
@@ -4845,8 +4879,10 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
     Changed = false;
     AM.rebuild(Body);
     for (int Sinks = 0;
-         Sinks < 32 && ((CanSinkWin64Join && sinkJoinDefaultAssign(Body)) ||
-                        foldJoinValueGotoChain(Body));
+         Sinks < ::neverd::limits::ir::
+                     kHighCFSimplifyIfElseStructureIfElseListSinksLimit &&
+         ((CanSinkWin64Join && sinkJoinDefaultAssign(Body)) ||
+          foldJoinValueGotoChain(Body));
          ++Sinks) {
       Changed = true;
       AM.rebuild(Body);
@@ -4942,10 +4978,12 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
         size_t ThenCut = ThenEnd;
         size_t ElseCut = ElseEnd;
         std::vector<size_t> Moved;
+        std::vector<size_t> Partners;
         while (ThenEnd > 0 && ElseEnd > 0) {
           if (pairs(ThenEnd - 1, ElseEnd - 1)) {
             Moved.push_back(--ElseEnd);
             ThenCut = --ThenEnd;
+            Partners.push_back(ThenEnd);
             ElseCut = ElseEnd;
             continue;
           }
@@ -4963,8 +5001,11 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
           Moved.clear();
         std::vector<HighStmt> Joins;
         if (!Moved.empty()) {
-          for (auto It = Moved.rbegin(); It != Moved.rend(); ++It)
-            Joins.push_back(std::move(Stmt.ElseBody[*It]));
+          for (size_t K = Moved.size(); K-- > 0;) {
+            Joins.push_back(std::move(Stmt.ElseBody[Moved[K]]));
+            Joins.back().Val = withMergedCallSites(Joins.back().Val,
+                                                   Stmt.Body[Partners[K]].Val);
+          }
           Stmt.Body.erase(Stmt.Body.begin() + static_cast<long>(ThenCut),
                           Stmt.Body.end());
           Stmt.ElseBody.erase(Stmt.ElseBody.begin() +
@@ -5921,7 +5962,10 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
     auto Ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                   std::chrono::steady_clock::now() - T0)
                   .count();
-    if (Body.size() >= 64 || Ms >= 2)
+    if (Body.size() >=
+            ::neverd::limits::ir::
+                kHighCFSimplifyIfElseStructureIfElseListBodySizeLimit ||
+        Ms >= 2)
       syncWarning() << "m2h-ifelse-list: size=" << Body.size()
                     << " passes=" << Pass << " cap=" << MaxPasses
                     << " ms=" << Ms << "\n";

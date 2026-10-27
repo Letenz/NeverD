@@ -17,8 +17,11 @@
 #include "../kernel/KernelVersionQuery.h"
 #include "../kernel/WindowsKernelLayout.h"
 #include "DriverCPUID.h"
+#include "DriverFileSystemJSON.h"
 #include "DriverLoaderViewJSON.h"
+#include "DriverMSR.h"
 #include "DriverPhysicalInventoryJSON.h"
+#include "DriverProcessPeb.h"
 #include "DriverSchedulingJSON.h"
 #include "DriverVaShadowQueryJSON.h"
 #include "DriverVersionQueryJSON.h"
@@ -1429,13 +1432,19 @@ registry(const llvm::json::Value &Value) {
     const auto *Key = KeyValue.getAsObject();
     if (!Key)
       return invalid("each registry key must be an object");
-    if (auto E = fields(*Key, {field::Path, field::Values}))
+    if (auto E = fields(
+            *Key, {field::Path, field::Values, field::LastWriteTime100ns}))
       return std::move(E);
     auto Path = Key->getString(field::Path);
     if (!Path)
       return invalid("registry key path must be a string");
     DriverRegistryKey Entry;
     Entry.Path = Path->str();
+    if (const auto *Time = Key->get(field::LastWriteTime100ns)) {
+      Entry.LastWriteTime100ns = Time->getAsUINT64();
+      if (!Entry.LastWriteTime100ns)
+        return invalid("last_write_time_100ns must be an unsigned integer");
+    }
     if (const auto *ValuesValue = Key->get(field::Values)) {
       const auto *Values = ValuesValue->getAsArray();
       if (!Values || Values->size() > MaxRegistryValues)
@@ -2076,6 +2085,8 @@ llvm::Error validateDriverUserMemory(const DriverRequest &Request) {
 }
 
 llvm::Error validateDriverScenario(const DriverOptions &Options) {
+  if (auto E = validateDriverFileSystem(Options.FileSystem))
+    return E;
   if (Options.LoaderView)
     if (auto E = kernel_loader_view::validate(*Options.LoaderView))
       return E;
@@ -2089,6 +2100,10 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
     if (auto E = kernel_physical_inventory::validate(
             *Options.PhysicalMemoryInventory))
       return E;
+  if (auto E = driver_msr::validate(Options.MSRReads))
+    return E;
+  if (auto E = driver_process_peb::validate(Options.ProcessPebs))
+    return E;
   if (auto E = driver_cpuid::validate(Options.CPUID))
     return E;
   if (Options.Scheduling)
@@ -2105,7 +2120,8 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
                                  "letters, digits, underscores or hyphens",
                                  profile::MaxServiceNameSize)
                        .str());
-  if (auto E = validateDriverRegistry(Options.Registry))
+  if (auto E = validateDriverRegistry(Options.Registry,
+                                      Options.RegistrySystemTime100ns))
     return invalid(llvm::toString(std::move(E)));
   if (Options.PnpDevices.size() > DriverScenarioPnpDeviceLimit)
     return invalid("pnp_devices exceeds the device count limit");
@@ -2456,6 +2472,17 @@ driverOptionsFromScenarioJSON(llvm::StringRef JSON, DriverOptions Base) {
       return ParsedRegistry.takeError();
     Base.Registry = std::move(*ParsedRegistry);
   }
+  if (const auto *FileSystem = Object->get(FileSystemField)) {
+    auto Volumes = driver_filesystem::parse(*FileSystem);
+    if (!Volumes)
+      return Volumes.takeError();
+    Base.FileSystem = std::move(*Volumes);
+  }
+  if (const auto *Time = Object->get(RegistrySystemTime100nsField)) {
+    Base.RegistrySystemTime100ns = Time->getAsUINT64();
+    if (!Base.RegistrySystemTime100ns)
+      return invalid("registry_system_time_100ns must be an unsigned integer");
+  }
   if (const auto *Exports = Object->get(KernelExportsField)) {
     const auto *Inventory = Exports->getAsObject();
     if (!Inventory || Inventory->size() > profile::MaxImports)
@@ -2494,6 +2521,18 @@ driverOptionsFromScenarioJSON(llvm::StringRef JSON, DriverOptions Base) {
       return invalid("trace_memory_writes must be boolean");
     Base.TraceMemoryWrites = *Boolean;
   }
+  if (const auto *MSRs = Object->get(MSRReadsField)) {
+    auto Parsed = driver_msr::parse(*MSRs);
+    if (!Parsed)
+      return Parsed.takeError();
+    Base.MSRReads = std::move(*Parsed);
+  }
+  if (const auto *Pebs = Object->get(ProcessPebsField)) {
+    auto Parsed = driver_process_peb::parse(*Pebs);
+    if (!Parsed)
+      return Parsed.takeError();
+    Base.ProcessPebs = std::move(*Parsed);
+  }
   if (const auto *CPUID = Object->get(CPUIDField)) {
     auto Parsed = driver_cpuid::parse(*CPUID);
     if (!Parsed)
@@ -2511,6 +2550,18 @@ driverOptionsFromScenarioJSON(llvm::StringRef JSON, DriverOptions Base) {
     if (!Parsed)
       return Parsed.takeError();
     Base.KernelVaShadowQuery = std::move(*Parsed);
+  }
+  if (const auto *State = Object->get(DebuggerStateField)) {
+    const auto *Fields = State->getAsObject();
+    if (!Fields || Fields->size() != 2)
+      return invalid(
+          "debugger_state requires exactly enabled and not_present booleans");
+    const auto Enabled = Fields->getBoolean("enabled");
+    const auto NotPresent = Fields->getBoolean("not_present");
+    if (!Enabled || !NotPresent)
+      return invalid(
+          "debugger_state requires enabled and not_present booleans");
+    Base.DebuggerState = DriverDebuggerState{*Enabled, *NotPresent};
   }
   if (const auto *Query = Object->get(VersionQueryField)) {
     auto Parsed = driver_version_query::parse(*Query);

@@ -12,10 +12,16 @@
 #define NEVERD_EMULATION_KERNELPHYSICALINVENTORY_H
 
 #include "neverd/emulation/DriverSession.h"
+#include "neverd/emulation/Limits.h"
 
 namespace neverd::emulation::kernel_physical_inventory {
 constexpr uint32_t Version = 1;
-constexpr size_t MaxEvidenceSize = 256;
 llvm::Error validate(const DriverPhysicalMemoryInventory &Inventory);
 } // namespace neverd::emulation::kernel_physical_inventory
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::emulation::kernel_physical_inventory {
+inline constexpr size_t MaxEvidenceSize =
+    ::neverd::limits::emulation::kKernelPhysicalInventoryMaxEvidenceSize;
+}
+
 #endif

@@ -1,11 +1,79 @@
+add_neverd_unittest(NeverDX87CapabilityTests
+  x86/X87CapabilitiesTests.cpp
+  LINK_COMPONENTS IRLowValidation)
+
+add_neverd_unittest(NeverDX87ArithmeticTests
+  x86/X87ArithmeticTests.cpp
+  LINK_COMPONENTS IRLowValidation)
+add_neverd_unittest(NeverDX87PortableContextTests
+  x86/X87PortableContextTests.cpp
+  LINK_COMPONENTS IRLowValidation)
+add_neverd_unittest(NeverDX87PortableEmulatorTests
+  x86/X87PortableEmulatorTests.cpp
+  LINK_COMPONENTS IRLow Lift)
+add_executable(NeverDX87ArithmeticReplay x86/X87ArithmeticReplay.cpp)
+target_link_libraries(NeverDX87ArithmeticReplay PRIVATE NeverDIRLowValidation)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|i[3-6]86)$" AND
+   CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  add_executable(NeverDX87OriginalReplay x86/X87OriginalReplay.c)
+  set_target_properties(NeverDX87OriginalReplay PROPERTIES C_STANDARD 11
+                        C_STANDARD_REQUIRED ON)
+endif()
+if(TARGET unicorn)
+  target_link_libraries(NeverDX87ArithmeticTests PRIVATE unicorn)
+  target_compile_definitions(NeverDX87ArithmeticTests PRIVATE
+    NEVERD_X87_UNICORN_REFERENCE=1)
+  target_link_libraries(NeverDX87PortableContextTests PRIVATE unicorn)
+  target_compile_definitions(NeverDX87PortableContextTests PRIVATE
+    NEVERD_X87_UNICORN_REFERENCE=1)
+endif()
+
+if(TARGET neverd_shared AND TARGET neverd)
+  add_neverd_unittest(NeverDX87CapabilitiesPublicTests
+    x86/X87CapabilitiesPublicTests.cpp
+    LINK_LIBS neverd_shared)
+  target_include_directories(NeverDX87CapabilitiesPublicTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+  target_compile_definitions(NeverDX87CapabilitiesPublicTests PRIVATE
+    NEVERD_X87_CLI="$<TARGET_FILE:neverd>")
+  if(NOT APPLE)
+    target_link_libraries(NeverDX87CapabilitiesPublicTests PRIVATE LLVMSupport)
+  endif()
+  add_dependencies(NeverDX87CapabilitiesPublicTests neverd)
+endif()
+
+add_neverd_unittest(NeverDCOFFExceptionV2Tests
+  eh/COFFExceptionV2Tests.cpp
+  LINK_COMPONENTS Loader)
+
+add_neverd_unittest(NeverDDirectTailCallMetadataTests
+  core/DirectTailCallMetadataTests.cpp
+  LINK_COMPONENTS IRLow Lift
+)
+
+add_neverd_unittest(NeverDConstantBranchTests
+  core/ConstantBranchTests.cpp
+  LINK_COMPONENTS IRLow Lift
+)
+
+add_neverd_unittest(NeverDResumableTrapBoundaryTests
+  core/ResumableTrapBoundaryTests.cpp
+  core/ResumableTrapIdentityTests.cpp
+  aarch64/AArch64_FastClassifyParityTests.cpp
+  LINK_COMPONENTS Pipeline BackendC
+)
+
 add_neverd_unittest(NeverDSEHRuntimeMemoryTests
+  core/LowScalarConstantTests.cpp
   eh/SEHRuntimeMemoryTests.cpp
   eh/SEHImageFormatTests.cpp
   eh/X64CRTFrameTests.cpp
   eh/RegistrationSEHControlTests.cpp
+  eh/RegistrationSEHEpilogueTests.cpp
   eh/RegistrationConditionalFrameTests.cpp
   eh/RegistrationJumpRuntimeTests.cpp
   eh/RegistrationJumpCaptureTests.cpp
+  eh/RegistrationCallbackImageTests.cpp
   LINK_COMPONENTS Pipeline)
 target_include_directories(NeverDSEHRuntimeMemoryTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/pipeline)
@@ -23,9 +91,24 @@ add_neverd_unittest(NeverDHighCParamUsageTests
   core/HighCParamUsageTests.cpp
   LINK_COMPONENTS BackendC)
 
+add_neverd_unittest(NeverDHighCSupervisorCallTests
+  core/HighCSupervisorCallTests.cpp
+  LINK_COMPONENTS BackendC)
+
+add_neverd_unittest(NeverDMedStackDeltaTests
+  core/MedStackDeltaTests.cpp
+  LINK_COMPONENTS IRMed
+)
+
+add_neverd_unittest(NeverDMedDceTests
+  core/MedDceImplicitSpTests.cpp
+  LINK_COMPONENTS IRMed)
+
 add_neverd_unittest(NeverDFPParameterMaskTests
   core/FPParameterMaskTests.cpp
   core/MedCallingConvTests.cpp
+  core/MedCallingConvX86StackTests.cpp
+  core/MedFPStackHomeTests.cpp
   LINK_COMPONENTS Pipeline BackendLLVM BackendC)
 
 add_neverd_unittest(NeverDHighSwiftEmitterTests
@@ -54,6 +137,50 @@ target_compile_definitions(NeverDX87CallGraphTests PRIVATE
   TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
   TEST_OBJ_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 
+add_neverd_unittest(NeverDX87StackManagementTests
+  x86_32/X87StackManagementTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX87StackManagementTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(NeverDX87StackManagementTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
+add_neverd_unittest(NeverDX87PackedBCDTests
+  x86_32/X87PackedBCDTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX87PackedBCDTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(NeverDX87PackedBCDTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
+add_neverd_unittest(NeverDX87TranscendentalTests
+  x86_32/X87TranscendentalTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX87TranscendentalTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(NeverDX87TranscendentalTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
+add_neverd_unittest(NeverDX87WorkloadTests
+  x86_32/X87WorkloadTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX87WorkloadTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(NeverDX87WorkloadTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
+add_neverd_unittest(NeverDX86FunctionDiscoveryTests
+  x86_32/X86_32_FunctionDiscoveryTests.cpp
+  LINK_COMPONENTS Pipeline)
+
 add_neverd_unittest(NeverDPEProgramExportsTests
   format/PEProgramExportsTests.cpp
   LINK_COMPONENTS Loader
@@ -64,8 +191,15 @@ add_neverd_unittest(NeverDNativeConstantStoresTests
   LINK_COMPONENTS Pipeline)
 
 add_neverd_unittest(NeverDMedEntryFrameTests
+  core/MedSSACallClobberTests.cpp
   core/MedSSAMultiRootTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
+add_neverd_unittest(NeverDMedVariadicTests
+  core/MedVariadicTests.cpp
+  LINK_COMPONENTS IRMed)
+add_neverd_unittest(NeverDExecutableCodeOwnerTests
+  core/ExecutableCodeOwnerIndexTests.cpp
+  LINK_COMPONENTS Pipeline)
 target_include_directories(NeverDMedEntryFrameTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
 if(NEVERD_ENABLE_BINARY_CORPUS_TESTS)
@@ -79,7 +213,7 @@ add_neverd_unittest(NeverDLiftTemporaryTests
 )
 
 add_neverd_unittest(NeverDLiftTests
-  core/X64MemoryCallTargetTests.cpp
+  x86_64/X64MemoryCallTargetTests.cpp
   aarch64/AArch64_ArithTests.cpp
   aarch64/AArch64_AtomicTests.cpp
   aarch64/AArch64_BitShiftTests.cpp
@@ -118,6 +252,9 @@ add_neverd_unittest(NeverDLiftTests
   arm32/ARM32_CallAbiTests.cpp
   arm32/ARM32_CarryTests.cpp
   arm32/ARM32_ControlTests.cpp
+  arm32/ARM32_CoprocessorTests.cpp
+  arm32/ARM32_StatusRegisterTests.cpp
+  arm32/ARM32_ThreadPointerTests.cpp
   arm32/ARM32_ExtendTests.cpp
   arm32/ARM32_IntrinsicsTests.cpp
   arm32/ARM32_LiteralPoolTests.cpp
@@ -157,6 +294,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_32/X86_32_StringTests.cpp
   x86_32/X86_32_X87FPUTests.cpp
   x86_32/X86_32_DebugHighCTests.cpp
+  x86_32/X86_32_DebugParamTests.cpp
   x86_32/X86_32_FunctionDiscoveryTests.cpp
   x86_64/X86_64_AdxMiscTests.cpp
   x86_64/X86_64_ArithTests.cpp
@@ -166,6 +304,9 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_CarryOpsTests.cpp
   x86_64/X86_64_CmpxchgTests.cpp
   x86_64/X86_64_CFGEntryTests.cpp
+  x86_64/X86_64_ColdFragmentTests.cpp
+  x86_64/X86_64_NoReturnCallTests.cpp
+  x86_64/X86_64_PltStubTests.cpp
   x86_64/X86_64_ComputedGotoTests.cpp
   x86_64/X86_64_ControlFlowTests.cpp
   x86_64/X86_64_ControlSemanticsTests.cpp
@@ -216,17 +357,20 @@ add_neverd_unittest(NeverDLiftTests
   arm32/ARM32_SwitchTests.cpp
   arm32/ARM32_RoundTripTests.cpp
   core/InstructionModeTests.cpp
-  core/ExecutableCodeOwnerIndexTests.cpp
   core/LowInstructionBoundaryTests.cpp
   core/LiftCommonTests.cpp
   core/LinuxSyscallTests.cpp
+  core/SmcccCallTests.cpp
+  core/RegisterPairCallTests.cpp
   core/TargetRegInfoSubRegTests.cpp
+  core/MedSSACallClobberTests.cpp
   core/MedSSAMultiRootTests.cpp
   core/ObjCSourceTypeHintTests.cpp
   core/ObjCProtocolTests.cpp
   core/ObjCPropertyTests.cpp
   core/ReturnContractTests.cpp
   core/RegisterPairReturnTests.cpp
+  core/IncomingHomeSourceTests.cpp
   core/SourceABITests.cpp
   core/AdjacentCallTests.cpp
   core/MedConstantPropagationTests.cpp
@@ -266,7 +410,7 @@ add_neverd_unittest(NeverDLiftTests
   core/ObjCBlocksTests.cpp
   core/ObjCBlockCallHintTests.cpp
   core/HighFrameTemporaryTests.cpp
-  core/HighX86CallSetupTests.cpp
+  x86_32/HighX86CallSetupTests.cpp
   core/HalfFMAHostTests.cpp
   core/HighControlFlowSemanticsTests.cpp
   core/LowZeroIdiomTests.cpp
@@ -278,10 +422,12 @@ add_neverd_unittest(NeverDLiftTests
   ../loader/SwiftRuntimeSourceTests.cpp
   core/HighCPointerAddressTests.cpp
   core/SourceParameterPlacementTests.cpp
+  core/IntegerCallArgumentsTests.cpp
   core/HighCIntegerWidthTests.cpp
   core/HighCDemandedBytesTests.cpp
   core/CSourceDefinitionTests.cpp
   core/CStringCommentTests.cpp
+  core/CSourcePresentationTests.cpp
   core/CImageObjectTests.cpp
   core/CSymbolNameTests.cpp
   sdk/ObjCSourceProjectionTests.cpp
@@ -309,11 +455,12 @@ add_neverd_unittest(NeverDLiftTests
   format/MachOI386RelocationScatteredTests.cpp
   format/MachOFunctionListingTests.cpp
   format/FunctionDiscoveryAlignmentTests.cpp
+  format/PEFunctionAddressTests.cpp
+  format/FunctionDiscoveryCancellationTests.cpp
   format/ELFFunctionListingTests.cpp
   format/ELFWithoutSectionsTests.cpp
   format/ELFARM32ModeTests.cpp
   format/COFFFunctionListingTests.cpp
-  format/InputDigestTests.cpp
   format/MachOLLVMNameBoundaryTests.cpp
   format/COFFImportStorageBoundaryTests.cpp
   format/LLVMImportVeneerBoundaryTests.cpp
@@ -323,8 +470,12 @@ add_neverd_unittest(NeverDLiftTests
   format/NativePointerRelocationBoundaryTests.cpp
   format/PointerRelocationBatchTests.cpp
   core/MedCallingConvTests.cpp
+  core/MedCallingConvX86StackTests.cpp
+  core/MedFPStackHomeTests.cpp
   core/FPParameterMaskTests.cpp
   core/MedDceImplicitSpTests.cpp
+  core/MedCallLeftoversTests.cpp
+  core/MedStackDeltaTests.cpp
   core/MedVariadicTests.cpp
   eh/COFFExceptionTests.cpp
   eh/COFFExceptionARM32UnwindTests.cpp
@@ -372,6 +523,8 @@ add_neverd_unittest(NeverDLiftTests
   core/JumpTableFiniteSelectorTests.cpp
   core/JumpTableJoinedGuardTests.cpp
   core/JumpTableFixedAddressTests.cpp
+  core/JumpTableTwoLevelI386Tests.cpp
+  core/JumpTableLinkedI386GOTTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
   core/ModuleJumpTableBudgetTests.cpp
   core/ModuleAdjacentTableTests.cpp
@@ -516,6 +669,137 @@ target_include_directories(NeverDX86MOVDIR64BStateTests PRIVATE
 
 # Keeps opaque system-memory side effects independently runnable through
 # decode, lift and strict fail-closed emulation without executing host state.
+add_neverd_unittest(NeverDX86InstructionCoverageTests
+  x86_64/X86InstructionCoverageTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+target_compile_definitions(NeverDX86InstructionCoverageTests PRIVATE
+  NEVERD_X86_MC_DIRECTORY="${CMAKE_SOURCE_DIR}/third_party/capstone/suite/MC/X86")
+
+add_neverd_unittest(NeverDX86SHA512Tests
+  x86_64/X86SHA512Tests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86VectorEncodingModeTests
+  x86_64/X86VectorEncodingModeTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86FPEncodingTests
+  x86_64/X86FPEncodingTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86SystemStateTests
+  x86_64/X86SystemStateTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86NonlocalControlTests
+  x86/X86NonlocalControlTests.cpp
+  LINK_COMPONENTS Pipeline BackendC)
+
+add_neverd_unittest(NeverDX86TransactionBeginTests
+  x86/X86TransactionBeginTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86TransactionBeginTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX86TBMTests
+  x86/X86TBMTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86BEXTRTests
+  x86/X86BEXTRTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86ADXTests
+  x86/X86ADXTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86BMI2Tests
+  x86/X86BMI2Tests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86BMILogicTests
+  x86/X86BMILogicTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86BitCountTests
+  x86/X86BitCountTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86MpxContextTests
+  x86/X86MpxContextTests.cpp
+  x86/X86MpxMemoryTests.cpp
+  LINK_COMPONENTS IRLowValidation)
+
+add_neverd_unittest(NeverDX86MpxEncodingTests
+  x86/X86MpxEncodingTests.cpp
+  x86/X86MpxExecutionTests.cpp
+  x86/X86MpxAddressFaultTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86LegacyAdmissionTests
+  x86/X86LegacyAdmissionTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86VirtualizationTests
+  x86_64/X86VirtualizationTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86VirtualizationSourceTests
+  NO_PRETTY_VALUES
+  x86_64/X86VirtualizationSourceTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_compile_definitions(NeverDX86VirtualizationSourceTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+
+add_neverd_unittest(NeverDX86BoundedLeafTests
+  x86/X86BoundedLeafTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+
+add_neverd_unittest(NeverDX86AsmFlagsTests
+  x86/X86AsmFlagsTests.cpp
+  LINK_COMPONENTS BackendC CodeGen)
+
+add_neverd_unittest(NeverDX86PortSourceTests
+  x86/X86PortSourceTests.cpp
+  LINK_COMPONENTS BackendC)
+
+add_neverd_unittest(NeverDX86CompressExpandSourceTests
+  x86/X86CompressExpandSourceTests.cpp
+  x86/X86NativeMemoryCarrierTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+
+add_neverd_unittest(NeverDX86CompactSegmentTests
+  x86/X86CompactSegmentTests.cpp
+  x86/X86PackedSourceConstantsTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86CompactSegmentTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX86FourSourceSourceTests
+  x86/X86FourSourceSourceTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+
+add_neverd_unittest(NeverDX86FourSourceSegmentTests
+  x86/X86FourSourceSegmentTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86FourSourceSegmentTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX86APXAtomicSourceTests
+  x86/X86APXAtomicSourceTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+
+add_neverd_unittest(NeverDX86LegacyEncodingSourceTests
+  x86/X86APXAtomicSourceTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_compile_definitions(NeverDX86LegacyEncodingSourceTests PRIVATE
+  NEVERD_TEST_LEGACY_ATOMIC=1
+)
+
+add_neverd_unittest(NeverDX86RepStateTests
+  x86_64/X86RepStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+
 add_neverd_unittest(NeverDX86SystemSideeffectTests
   x86_64/X86_64_SystemSideeffectTests.cpp
 
@@ -546,9 +830,8 @@ target_include_directories(NeverDX86AMXStateTests PRIVATE
   ${LLVM_INCLUDE_DIRS}
 )
 
-# Pins the LLVM boundary independently from concrete AMX emulation.  Until the
-# versioned runtime owns tile state, restartable strided memory and fault
-# continuation, every exact AMX MedIR shape must fail before emitting effects.
+# Pins the LLVM boundary independently from concrete AMX emulation: legacy
+# value transfers remain guarded; native bank operations retain exact shapes.
 add_neverd_unittest(NeverDX86AMXLLVMGuardTests
   x86_64/X86_64_AMXLLVMGuardTests.cpp
 
@@ -563,8 +846,24 @@ target_include_directories(NeverDX86AMXLLVMGuardTests PRIVATE
   ${LLVM_INCLUDE_DIRS}
 )
 
+add_neverd_unittest(NeverDX86AMXAddressTests
+  x86_64/X86AMXAddressTests.cpp
+
+  LINK_COMPONENTS BackendLLVM BackendC Decode Lift Loader
+)
+target_include_directories(NeverDX86AMXAddressTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+
 # Pins exact 128/256/512-bit memory transfer behavior independently of the
 # aggregate lift suite, including fault atomicity and address wrap rejection.
+add_neverd_unittest(NeverDNdOpEmulatorTests
+  core/NdOpEmulatorTests.cpp
+  core/NdOpEmulatorBitOpsTests.cpp
+  core/NdOpEmulatorMemoryTests.cpp
+  LINK_COMPONENTS IRLow Lift Loader Symbolic)
+
 add_neverd_unittest(NeverDNdOpEmulatorWideMemoryTests
   core/NdOpEmulatorWideMemoryTests.cpp
 
@@ -592,6 +891,18 @@ add_neverd_unittest(NeverDX86LegacyAtomicSemanticTests
 )
 
 target_include_directories(NeverDX86LegacyAtomicSemanticTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+
+# Keeps legacy aligned SIMD loads and stores fault-atomic, with architectural
+# address-width wrapping and explicit FS/GS bases in strict emulation.
+add_neverd_unittest(NeverDX86LegacyAlignedMoveTests
+  x86_64/X86_64_LegacyAlignedMoveTests.cpp
+  LINK_COMPONENTS Decode IRLow Lift Loader
+)
+
+target_include_directories(NeverDX86LegacyAlignedMoveTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}
 )
@@ -999,6 +1310,7 @@ add_neverd_unittest(NeverDX86UndefinedEffectsTests
   x86_64/X86_64_DoubleShiftUndefinedEffectsTests.cpp
   x86_64/X86_64_BitTestUndefinedEffectsTests.cpp
   x86_64/X86_64_XaddAuditTests.cpp
+  x86_64/X86_64_LegacyVectorMoveAuditTests.cpp
   LINK_COMPONENTS Decode Lift Loader Symbolic
 )
 
@@ -1134,16 +1446,29 @@ target_include_directories(NeverDLiftTests PRIVATE
   ${LLVM_INCLUDE_DIRS}
 )
 
+add_neverd_unittest(NeverDHighSymSimplifyTests
+  core/HighSymSimplifyTests.cpp
+  LINK_COMPONENTS BackendC Solver)
+
 add_neverd_unittest(NeverDJumpTableTests
+  core/JumpTableAddressTests.cpp
+  core/JumpTableCOFFBaseTests.cpp
+  core/GuardExpressionTests.cpp
   core/AffineFrameStateTests.cpp
   core/ResolverGraphCacheTests.cpp
+  core/ResolverDefinitionCacheTests.cpp
+  core/ResolverMemoryDefinitionCacheTests.cpp
+  core/ResolverPendingWalksTests.cpp
   core/ResolverLaneViewTests.cpp
+  core/ResolverPointLookupTests.cpp
   core/JumpTableCountLaneTests.cpp
   core/IndirectTailFrameTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
   core/JumpTableJoinedGuardTests.cpp
   core/JumpTableFixedAddressTests.cpp
+  core/JumpTableTwoLevelI386Tests.cpp
+  core/JumpTableLinkedI386GOTTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
   core/ModuleJumpTableBudgetTests.cpp
   core/ModuleAdjacentTableTests.cpp
@@ -1267,12 +1592,53 @@ target_include_directories(NeverDSysVCallContractTests PRIVATE
 target_compile_definitions(NeverDSysVCallContractTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 
+add_neverd_unittest(NeverDIntegerCallArgumentsTests
+  core/IntegerCallArgumentsTests.cpp
+  LINK_COMPONENTS IR
+)
+target_include_directories(NeverDIntegerCallArgumentsTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+
+add_neverd_unittest(NeverDRecordCallContractTests
+  core/RecordCallContractTests.cpp
+  "${CMAKE_SOURCE_DIR}/lib/sdk/capi/LocalTypesDebugContext.cpp"
+  LINK_COMPONENTS BackendC BackendLLVM Pipeline Types
+)
+target_include_directories(NeverDRecordCallContractTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS}
+  "${CMAKE_SOURCE_DIR}/lib/sdk/capi")
+target_compile_definitions(NeverDRecordCallContractTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+
+add_neverd_unittest(NeverDAAPCS64CallContractTests
+  core/AAPCS64CallContractTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM Loader Pipeline
+)
+target_include_directories(NeverDAAPCS64CallContractTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+
 add_neverd_unittest(NeverDWin64CallContractTests
-  core/Win64CallContractTests.cpp
+  core/FloatingCallLeftoversTests.cpp
+  x86_64/Win64CallContractTests.cpp
   LINK_COMPONENTS BackendC BackendLLVM Pipeline
 )
 target_include_directories(NeverDWin64CallContractTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+
+add_neverd_unittest(NeverDSourceEntryBindingTests
+  core/IncomingHomeSourceTests.cpp
+  core/LowScalarConstantTests.cpp
+  core/SourceFrameAnalysisTests.cpp
+  core/SourceABITests.cpp
+  core/ObjCSourceTypeHintTests.cpp
+  core/HighCSourceCallTests.cpp
+  core/NativeSourceHintsTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM Pipeline
+)
+target_include_directories(NeverDSourceEntryBindingTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(NeverDSourceEntryBindingTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 
 add_neverd_unittest(NeverDI386CallContractTests
   core/I386CallContractTests.cpp
@@ -1296,7 +1662,7 @@ add_neverd_unittest(NeverDHighControlFlowTests
   core/HighEntryStackOffsetsTests.cpp
   core/HighSourceRangeTests.cpp
   core/HighFrameTemporaryTests.cpp
-  core/HighX86CallSetupTests.cpp
+  x86_32/HighX86CallSetupTests.cpp
   eh/WindowsSEHFallbackTests.cpp
   LINK_COMPONENTS
   BackendC
@@ -1387,6 +1753,11 @@ add_neverd_unittest(NeverDWindowsEHMetadataEncoderTests
   WindowsEHMetadata
 )
 
+add_neverd_unittest(NeverDReturnContractTests
+  core/ReturnContractTests.cpp
+  LINK_COMPONENTS Pipeline
+)
+
 add_neverd_unittest(NeverDNoReturnTests
   core/MedNoReturnTests.cpp
   core/InternalNoReturnTests.cpp
@@ -1398,10 +1769,23 @@ add_neverd_unittest(NeverDNoReturnTests
 
 add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationStateTests.cpp
+  eh/RegistrationCxxCookieStateTests.cpp
+  eh/RegistrationDispatchTests.cpp
   eh/RegistrationOrdinaryFinallyTests.cpp
   eh/RegistrationSEHInvocationTests.cpp
   eh/RegistrationSEHExceptionTests.cpp
   eh/RegistrationJumpStateTests.cpp
+  eh/RegistrationMultiStateJumpTests.cpp
+  eh/RegistrationReplacementJumpTests.cpp
+  eh/RegistrationPrivateCallStateTests.cpp
+  eh/RegistrationBoundCallStateTests.cpp
+  eh/RegistrationJumpTestUtils.cpp
+  eh/RegistrationFilterStateTests.cpp
+  eh/RegistrationFilterTestUtils.cpp
+  eh/RegistrationCallbackLoopTests.cpp
+  eh/RegistrationFilterJumpTests.cpp
+  eh/RegistrationSEHTryLevelTests.cpp
+  eh/RegistrationLocalUnwindTests.cpp
   eh/RegistrationScalarCallStateTests.cpp
   eh/RegistrationRuntimeMemberStateTests.cpp
   eh/RegistrationMemberArgumentStateTests.cpp
@@ -1417,14 +1801,24 @@ add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationRealignedTestUtils.cpp
   eh/RegistrationCallbackStateTests.cpp
   eh/RegistrationFrameMemoryTests.cpp
+  eh/RegistrationFrameScalarTests.cpp
   eh/RegistrationIncomingAliasTests.cpp
 
   LINK_COMPONENTS
   IRRegistrationState
 )
 
+add_neverd_unittest(NeverDExceptionEdgeTests
+  eh/ExceptionCFGSeedTests.cpp
+  eh/RegistrationEdgeTests.cpp
+  LINK_COMPONENTS IRLow
+)
+
 add_neverd_unittest(NeverDRegistrationEHTests
+  eh/RegistrationEH4WrapperTests.cpp
+  eh/RegistrationPrologueSavesTests.cpp
   eh/RegistrationTryLevelTests.cpp
+  eh/RegistrationSEHPrivateCallTests.cpp
 
   LINK_COMPONENTS
   IRLow
@@ -1483,16 +1877,38 @@ add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
 
 add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/WindowsRegistrationNativeTests.cpp
+  eh/WindowsRegistrationCleanupOnlyTests.cpp
+  eh/RegistrationLocalUnwindBridgeTests.cpp
+  eh/RegistrationLocalUnwindNativeTests.cpp
   eh/RegistrationSEHReturnTests.cpp
+  eh/RegistrationSEHParentExitTests.cpp
+  eh/RegistrationSEHRegisterInputTests.cpp
+  eh/RegistrationSEHParentExitIRMutations.cpp
+  eh/RegistrationSEHRegisterIRMutations.cpp
+  eh/RegistrationSEHCallbackTests.cpp
+  eh/RegistrationSEHStateStoreTests.cpp
   eh/RegistrationSEHExceptionNativeTests.cpp
   eh/RegistrationSEHJumpNativeTests.cpp
+  eh/RegistrationSEHJumpStateNativeTests.cpp
+  eh/RegistrationSEHJumpCaptureNativeTests.cpp
+  eh/RegistrationSEHJumpABITests.cpp
+  eh/RegistrationCookieABITests.cpp
+  eh/RegistrationCopyEdgeTests.cpp
+  eh/RegistrationRecoveredCopyTests.cpp
   eh/RegistrationSEHBoundNativeTests.cpp
   eh/RegistrationSEHRuntimeNativeTests.cpp
   eh/RegistrationSEHBoundSourceTests.cpp
+  eh/RegistrationSEHBoundCookieTests.cpp
   eh/RegistrationSEHDynamicScopeTests.cpp
+  eh/RegistrationSEHScopeStateTests.cpp
   eh/RegistrationSEHFinallyResultTests.cpp
+  eh/RegistrationSEHStateNativeTests.cpp
+  eh/RegistrationSEHStateDispatchTests.cpp
+  eh/RegistrationSEHCopyIRMutations.cpp
+  eh/RegistrationSEHFinallyIRMutations.cpp
   eh/RegistrationSEHPersonalityTests.cpp
   eh/RegistrationSEHFrameProofTests.cpp
+  eh/RegistrationSEHScalarSpillTests.cpp
   eh/RegistrationSEHNullAccessTests.cpp
   eh/RegistrationCxxContinuationTestUtils.cpp
   eh/RegistrationCallTests.cpp
@@ -1511,6 +1927,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationFrameStoresTests.cpp
   eh/RegistrationFrameBitsTests.cpp
   eh/RegistrationPHICopyTests.cpp
+  eh/RegistrationSEHPHICopyTests.cpp
   eh/RegistrationStackCopyTests.cpp
   eh/COFFTrampolineRegionTests.cpp
   eh/RegistrationReliftTests.cpp
@@ -1532,6 +1949,34 @@ if(TARGET neverd)
   add_dependencies(NeverDLiftTests neverd)
 endif()
 
+# Keep C pointer and integer projection regressions independently runnable.
+add_neverd_unittest(NeverDCPointerProjectionTests
+  core/HighCPointerAddressTests.cpp
+  LINK_COMPONENTS Pipeline BackendC
+)
+target_include_directories(NeverDCPointerProjectionTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_definitions(NeverDCPointerProjectionTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_BINARY_CORPUS_ROOT="${NEVERD_BINARY_CORPUS_ROOT}"
+  NEVERD_RUNTIME_FIXTURE_COMPILER="${NEVERD_HOST_RUNTIME_FIXTURE_COMPILER_EXECUTABLE}"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
+add_dependencies(NeverDCPointerProjectionTests neverd)
+
+# Keep SEH continuation and handler projection regressions independently runnable.
+add_neverd_unittest(NeverDCOFFExceptionIRTests
+  eh/COFFExceptionIRTests.cpp
+  LINK_COMPONENTS Pipeline BackendC
+)
+target_include_directories(NeverDCOFFExceptionIRTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_definitions(NeverDCOFFExceptionIRTests PRIVATE
+  NEVERD_RUNTIME_FIXTURE_COMPILER="${NEVERD_HOST_RUNTIME_FIXTURE_COMPILER_EXECUTABLE}"
+)
+
 # Pins the format-neutral distinction between an explicitly returned semantic
 # value producer and an incidental call result left in the native return
 # register.  Keeping this focused avoids relinking the full lift suite.
@@ -1546,6 +1991,8 @@ add_neverd_unittest(NeverDImageAnalysisBoundaryTests
   core/MedConstantPropagationTests.cpp
   core/MedImmutableTableScanTests.cpp
   format/FunctionDiscoveryAlignmentTests.cpp
+  format/PEFunctionAddressTests.cpp
+  format/FunctionDiscoveryCancellationTests.cpp
   LINK_COMPONENTS IR Loader
 )
 
@@ -1563,6 +2010,11 @@ add_neverd_unittest(NeverDLLVMMemoryAlignmentTests
   LINK_COMPONENTS BackendLLVM
 )
 
+add_neverd_unittest(NeverDMedLLVMDirectDataTests
+  core/MedLLVMDirectDataTests.cpp
+  LINK_COMPONENTS BackendLLVM BackendC
+)
+
 add_neverd_unittest(NeverDMedLLVMDeadSlotsTests
   core/MedLLVMDeadSlotsTests.cpp
   LINK_COMPONENTS BackendLLVM
@@ -1573,6 +2025,8 @@ target_include_directories(NeverDMedLLVMDeadSlotsTests PRIVATE
 
 add_neverd_unittest(NeverDRegistrationCallResultTests
   eh/RegistrationCallResultTests.cpp
+  eh/RegistrationSEHLocalUnwindTests.cpp
+  eh/RegistrationSEHRuntimeReturnTests.cpp
   eh/RegistrationLLVMCallResultTests.cpp
   LINK_COMPONENTS IRMed BackendLLVM
 )
@@ -1633,6 +2087,43 @@ if(NEVERD_TEST_CLANG_EXECUTABLE)
     NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 endif()
 
+add_neverd_unittest(NeverDDyldSharedCacheTests
+  format/DyldSharedCacheTests.cpp
+  LINK_COMPONENTS Loader Support
+)
+
+add_neverd_unittest(NeverDArm64eAnalysisTests
+  aarch64/AArch64AddressMemoryTests.cpp
+  aarch64/AArch64RawSPProvenanceTests.cpp
+  aarch64/AArch64PAuthSemanticTests.cpp
+  aarch64/AArch64_FastClassifyParityTests.cpp
+  format/MachOArm64eTests.cpp
+  format/MachOBindingIdentityTests.cpp
+  format/MachOThreadedBindTests.cpp
+  NO_PRETTY_VALUES
+  LINK_COMPONENTS BackendC BackendLLVM CodeGen Decode Lift Loader
+)
+target_include_directories(NeverDArm64eAnalysisTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/backend)
+target_compile_definitions(NeverDArm64eAnalysisTests PRIVATE
+  NEVERD_ARM64E_TEST_HEADERS="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/arm64e")
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDArm64eAnalysisTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
+
+add_neverd_unittest(NeverDAArch64SVEPredicateTests
+  aarch64/AArch64SVEPredicateTests.cpp
+  aarch64/AArch64SVEVectorTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM CodeGen Decode IRHigh IRLow IRMed Lift Support
+)
+target_compile_definitions(NeverDAArch64SVEPredicateTests PRIVATE
+  NEVERD_SVE_TEST_HEADERS="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/arm64e")
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDAArch64SVEPredicateTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
+
 add_neverd_unittest(NeverDAArch64DivisionSemanticTests
   aarch64/AArch64DivisionSemanticTests.cpp
   LINK_COMPONENTS Decode IRLow Support
@@ -1640,6 +2131,17 @@ add_neverd_unittest(NeverDAArch64DivisionSemanticTests
 target_include_directories(NeverDAArch64DivisionSemanticTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}
+)
+
+add_neverd_unittest(NeverDAArch64DecodeValidityTests
+  aarch64/AArch64DecodeOccurrenceTests.cpp
+  aarch64/AArch64DecodeValidityTests.cpp
+  aarch64/AArch64_NativeDecodeParityTests.cpp
+  aarch64/AArch64_NativeDecodeParityControlTests.cpp
+  aarch64/AArch64_NativeDecodeParityFPTests.cpp
+  aarch64/AArch64_NativeDecodeParityLoadStoreTests.cpp
+  aarch64/AArch64_NativeDecodeParitySweepTests.cpp
+  LINK_COMPONENTS Decode IRLow Support
 )
 
 add_neverd_unittest(NeverDCMemoryCopyTests
@@ -1652,6 +2154,17 @@ if(NEVERD_TEST_CLANG_EXECUTABLE)
   target_compile_definitions(NeverDCMemoryCopyTests PRIVATE
     NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 endif()
+
+# The operand a trap, a breakpoint or a barrier keeps through the lift and
+# both C routes (IntrinsicInstructionText.h).
+add_neverd_unittest(NeverDMachineInstructionTextTests
+  core/MachineInstructionTextTests.cpp
+  LINK_COMPONENTS Decode Lift BackendC
+)
+target_include_directories(NeverDMachineInstructionTextTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
 
 add_neverd_unittest(NeverDLLVMCValueTests
   core/LLVMCValueTests.cpp
@@ -1723,17 +2236,21 @@ endif()
 # are the public fail-closed boundary under test.
 add_neverd_unittest(NeverDNativeExceptionRewriteContractTests
   eh/DwarfEHFrameTests.cpp
+  eh/AArch64DwarfRewriteTests.cpp
   eh/ELFExceptionTests.cpp
   eh/ELFSectionPatchTests.cpp
   eh/ELFSourceRelocationsTests.cpp
   eh/ELFSourceSymbolsTests.cpp
+  eh/MachOARM32TransactionTests.cpp
   eh/MachOCompactUnwindPatchTests.cpp
   eh/MachOExceptionPatchTests.cpp
+  eh/MachONativeInplaceTests.cpp
   eh/NativeExceptionRewriteContractTests.cpp
   eh/PatchStorageTests.cpp
   eh/ReplacementIRTests.cpp
   eh/SourcePatchBindingsTests.cpp
   eh/RewriteFunctionProvenanceTests.cpp
+  eh/CompiledSEHStateWriteTests.cpp
 
   LINK_COMPONENTS
   BackendC
@@ -1828,6 +2345,16 @@ target_include_directories(NeverDLLVMImportVeneerBoundaryTests PRIVATE
   ${LLVM_INCLUDE_DIRS}
 )
 
+add_neverd_unittest(NeverDRelocatedLiteralTests
+  format/RelocatedLiteralTests.cpp
+  LINK_COMPONENTS Loader BackendLLVM LibC Lift
+)
+
+add_neverd_unittest(NeverDRelocatedFunctionEntryTests
+  format/RelocatedFunctionEntryTests.cpp
+  LINK_COMPONENTS IRLow BackendLLVM LibC Lift
+)
+
 # Pins Mach-O bind/rebase pointer provenance and its LLVM relocation boundary
 # without relinking the full lift suite during local RED/GREEN iterations.
 add_neverd_unittest(NeverDMachOPointerRelocationBoundaryTests
@@ -1892,6 +2419,18 @@ add_neverd_unittest(NeverDMedStackAlignmentTests
 )
 add_neverd_unittest(NeverDMedPrologueSavesTests
   core/MedPrologueSavesTests.cpp
+  LINK_COMPONENTS IRMed
+)
+add_neverd_unittest(NeverDAArch64ReturnProtectionTests
+  aarch64/AArch64ReturnProtectionTests.cpp
+  LINK_COMPONENTS BackendC IRHigh IRMed IRLow Decode Lift Loader
+)
+add_neverd_unittest(NeverDCallRegisterUnreadTests
+  core/CallRegisterUnreadTests.cpp
+  LINK_COMPONENTS IRLow
+)
+add_neverd_unittest(NeverDMedPointerAccessesTests
+  core/MedPointerAccessesTests.cpp
   LINK_COMPONENTS IRMed
 )
 target_compile_definitions(NeverDMBASourceTests PRIVATE
@@ -2006,6 +2545,14 @@ target_include_directories(NeverDPipelineLLVMShardingTests PRIVATE
 )
 
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+if(TARGET NeverDX87CapabilitiesPublicTests)
+  add_test(NAME X87Capabilities.GeneratedDocumentationMatchesPublicReport
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/scripts/generate_x87_capabilities.py"
+      --neverd "$<TARGET_FILE:neverd>" --check)
+  set_tests_properties(X87Capabilities.GeneratedDocumentationMatchesPublicReport
+    PROPERTIES LABELS NeverDX87CapabilitiesPublicTests TIMEOUT 120)
+endif()
 set(NEVERD_SYNTHETIC_WINDOWS_EH_ROOT
   "${CMAKE_CURRENT_BINARY_DIR}/windows-eh-synthetic")
 set(NEVERD_SYNTHETIC_WINDOWS_EH_MANIFEST
@@ -2024,6 +2571,9 @@ add_custom_target(NeverDWindowsEHSyntheticCorpus
 
 add_neverd_unittest(NeverDLanguageEHTests
   language/LanguageEHTests.cpp
+  language/AArch64DwarfReturnAddressTests.cpp
+  language/ReturnAddressSigningTests.cpp
+  language/AArch64LinkedUnwindTests.cpp
   language/LanguageEHDirectBranchTests.cpp
   language/DirectBranchDecodeTests.cpp
   language/LanguageEHItaniumSJLJTests.cpp
@@ -2438,10 +2988,19 @@ set(X86_64_TEST_SOURCES
   x86_64/test_sse_misc.c
   x86_64/test_intrinsics_system.c
   x86_64/test_switch.c
+  x86_64/test_o0_switch_break.c
   x86_64/test_roundtrip.c
   x86_64/test_debug_records.c
   x86_64/test_debug_params.c
   x86_64/test_jumptable_enhanced.c
+  x86_64/test_jumptable_recursive.c
+  x86_64/test_jumptable_rbp_base.s
+  x86_64/test_jumptable_tail_stub.s
+  x86_64/test_jumptable_frame_tail_jump.s
+  x86_64/test_jumptable_slot_reload_guard.s
+  x86_64/test_jumptable_guard_chain.c
+  x86_64/test_jumptable_masked_byte.s
+  x86_64/test_jumptable_byte_switch.s
   x86_64/test_jumptable_inclusive_postload_clobber.s
   x86_64/test_jumptable_inclusive_postload_unrelated.s
   x86_64/test_jumptable_inclusive_preload_alias.s
@@ -2479,10 +3038,17 @@ set(X86_32_TEST_SOURCES
   x86_32/test_return_join_i386.c
   x86_32/test_i386_direct_gotoff_group.s
   x86_32/test_i386_gotpc_model.s
+  x86_32/test_i386_gotoff_stage_abort.s
+  x86_32/test_i386_gotpc_thunk.s
   x86_32/test_i386_gotoff_forcepeel.s
   x86_32/test_i386_gotoff_stack_group.s
   x86_32/test_i386_relocation_writer_footprint.s
   x86_32/test_jumptable_frame_lane32.s
+  x86_32/test_jumptable_foreign_store_i386.c
+  x86_32/test_jumptable_dynamic_stack_i386.s
+  x86_32/test_register_pair_returns_i386.s
+  x86_32/test_jumptable_realigned_frame_i386.c
+  x86_32/test_jumptable_realigned_alias_i386.s
   x86_32/test_arith32.c
   x86_32/test_control32.c
   x86_32/test_bitops32.c
@@ -2492,6 +3058,8 @@ set(X86_32_TEST_SOURCES
   x86_32/test_flags32.c
   x86_32/test_misc32.c
   x86_32/test_fp32.c
+  x86_32/test_debug_params32.c
+  x86_32/test_debug_regparm32.c
   x86_32/test_cmov32.c
   x86_32/test_rotate32.c
   x86_32/test_carry32.c
@@ -2511,7 +3079,13 @@ set(AARCH64_TEST_SOURCES
   aarch64/test_return_join_a64.c
   aarch64/test_param_phi_a64.s
   aarch64/test_linux_svc_a64.s
+  aarch64/test_smccc_a64.s
+  aarch64/test_trap_ends_flow_a64.s
   aarch64/test_jumptable_index_identity_a64.s
+  aarch64/test_jumptable_gcc_compact_a64.s
+  aarch64/test_jumptable_inflate_gcc_a64.s
+  aarch64/test_jumptable_byte_loop_a64.s
+  aarch64/test_jumptable_masked_lane_a64.s
   aarch64/test_pageoff_wrong_base_a64.s
   aarch64/test_pageoff_reaching_a64.s
   aarch64/test_pageoff_alternatives_a64.s
@@ -2553,10 +3127,17 @@ set(ARM32_TEST_SOURCES
   arm32/test_predicated_pop_arm.s
   arm32/test_inline_state_domain_arm.s
   arm32/test_frame_pointer_void_arm.s
+  arm32/test_refused_functions_arm.s
   arm32/test_arm_rel32_reaching.s
   arm32/test_arm_rel32_multiple_sources.s
   arm32/test_arm_relocation_free_literal.s
   arm32/test_linux_svc_arm.s
+  arm32/test_smccc_arm.s
+  arm32/test_coprocessor_arm.s
+  arm32/test_status_registers_arm.s
+  arm32/test_register_pair_returns_arm.s
+  arm32/test_thread_pointer_import_arm.s
+  arm32/test_thread_pointer_defined_arm.s
   arm32/test_thumb_pc_reads.s
   arm32/test_module_predicated_escape_arm.s
   format/test_elf_pointer_reloc_arm32.s
@@ -2780,6 +3361,13 @@ foreach(src ${X86_64_TEST_SOURCES})
     # by a spill/reload relay (the shared multi-site dispatch the const-base
     # absolute resolver recovers); -O1 would inline the load into the branch.
     set(extra_flags -O0)
+  elseif(src MATCHES "test_jumptable_recursive")
+    # A position-independent table, whose offsets carry no relocation.
+    set(extra_flags -O1 -fPIC)
+  elseif(src MATCHES "test_jumptable_guard_chain")
+    # -O0 compares a sparse switch's cases one by one, and the dense switch
+    # after it gets a position-independent table.
+    set(extra_flags -O0 -fPIC)
   elseif(src MATCHES "test_switch|test_jumptable")
     set(extra_flags -O1)
   elseif(src MATCHES "test_bmi")
@@ -2793,6 +3381,10 @@ foreach(src ${X86_64_TEST_SOURCES})
   elseif(src MATCHES "test_debug_records|test_debug_params")
     # The records and signatures under test come from the DWARF description.
     set(extra_flags -g)
+  elseif(src MATCHES "test_o0_switch_break")
+    # A position-independent table: its entries carry no relocation, so the
+    # break-only case blocks they name are not retained as address-taken.
+    set(extra_flags -fPIC)
   elseif(src MATCHES "test_return_join")
     set(extra_flags -O2)
   elseif(src MATCHES "test_extern_calls_nopic")
@@ -2819,12 +3411,24 @@ foreach(src ${X86_32_TEST_SOURCES})
   set(x86_32_extra_flags)
   if(src MATCHES "test_fp32")
     set(x86_32_extra_flags -msse2)
+  elseif(src MATCHES "test_debug_params32")
+    # The signatures under test come from the DWARF description.
+    set(x86_32_extra_flags -g)
+  elseif(src MATCHES "test_debug_regparm32")
+    # Optimized, the description locates each parameter where it enters.
+    set(x86_32_extra_flags -g -O2)
   elseif(src MATCHES "test_return_join")
     set(x86_32_extra_flags -O2)
   elseif(src MATCHES "test_extern_calls_nopic")
     set(x86_32_extra_flags -O2 -fno-pic -fcommon)
   elseif(src MATCHES "test_extern_calls")
     set(x86_32_extra_flags -O2 -fPIC -fcommon)
+  elseif(src MATCHES "test_jumptable_foreign_store")
+    # -O0 PIC: the GOT base is spilled once and reloaded in the loop.
+    set(x86_32_extra_flags -fPIC)
+  elseif(src MATCHES "test_jumptable_realigned_frame")
+    # Every prologue aligns ESP, and locals are addressed from the result.
+    set(x86_32_extra_flags -fPIC -mstackrealign)
   endif()
   add_custom_command(
     OUTPUT ${obj}
@@ -2895,6 +3499,21 @@ add_custom_command(
   DEPENDS ${i386_adjacent_twotable_src}
   COMMENT "Assembling three-run i386 GOTOFF tables")
 list(APPEND TEST_OBJECTS ${i386_three_switch_loops_o2_obj})
+
+# A GOT spill beside a masked byte ring: mask 15 misses the slot, 31 may not.
+set(i386_ring_spill_src "${CMAKE_CURRENT_SOURCE_DIR}/x86_32/test_i386_ring_spill.S")
+foreach(ring_mask 15 31)
+  set(i386_ring_spill_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_i386_ring_spill_${ring_mask}.o")
+  add_custom_command(
+    OUTPUT ${i386_ring_spill_obj}
+    COMMAND ${CLANG_EXEC} -target i386-linux-gnu -nostdlib -nostdlibinc -c
+            -DRING_MASK=${ring_mask} ${i386_ring_spill_src}
+            -o ${i386_ring_spill_obj}
+    DEPENDS ${i386_ring_spill_src}
+    COMMENT "Assembling the i386 GOT spill beside a ring of mask ${ring_mask}")
+  list(APPEND TEST_OBJECTS ${i386_ring_spill_obj})
+endforeach()
 
 set(i386_adjacent_function_pointer_src
     "${CMAKE_CURRENT_SOURCE_DIR}/x86_32/test_i386_adjacent_function_pointer_runs.S")
@@ -3264,6 +3883,28 @@ if(LLD_LINK_EXEC)
     COMMENT "Linking guarded x64 SEH fixture")
   list(APPEND TEST_OBJECTS ${coff_seh_guard_obj} ${coff_seh_guard_exe})
 
+  set(mingw_startup_seh_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_mingw_startup_seh.s")
+  set(mingw_startup_seh_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_mingw_startup_seh.obj")
+  set(mingw_startup_seh_exe
+      "${CMAKE_CURRENT_BINARY_DIR}/test_mingw_startup_seh.exe")
+  add_custom_command(
+    OUTPUT ${mingw_startup_seh_obj}
+    COMMAND ${CLANG_EXEC} -target x86_64-pc-windows-msvc -c
+            ${mingw_startup_seh_src} -o ${mingw_startup_seh_obj}
+    DEPENDS ${mingw_startup_seh_src}
+    COMMENT "Compiling MinGW-style x64 SEH startup fixture")
+  add_custom_command(
+    OUTPUT ${mingw_startup_seh_exe}
+    COMMAND ${LLD_LINK_EXEC} /entry:mingw_entry /subsystem:console
+            /nodefaultlib /export:mingw_entry /export:startup_filter
+            /export:__C_specific_handler ${mingw_startup_seh_obj}
+            /out:${mingw_startup_seh_exe}
+    DEPENDS ${mingw_startup_seh_obj}
+    COMMENT "Linking MinGW-style x64 SEH startup fixture")
+  list(APPEND TEST_OBJECTS ${mingw_startup_seh_obj} ${mingw_startup_seh_exe})
+
   set(coff_cxx_fh3_src
       "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_patch_coff_cxx_fh3.s")
   set(coff_cxx_fh3_obj
@@ -3504,6 +4145,29 @@ if(LLD_EXEC)
   list(APPEND ELF_EXECUTABLES ${call_arg_phi_a64_elf_obj}
                               ${call_arg_phi_a64_elf_so})
 
+  # Landing pads that a jump and the unwinder both enter, the shape rustc
+  # gives panic_with_hook.  Linking resolves the LSDA pointer in .eh_frame.
+  set(landing_pad_chain_a64_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/aarch64/test_landing_pad_chain_a64.s")
+  set(landing_pad_chain_a64_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_landing_pad_chain_a64.o")
+  set(landing_pad_chain_a64_so
+      "${CMAKE_CURRENT_BINARY_DIR}/test_landing_pad_chain_a64.so")
+  add_custom_command(
+    OUTPUT ${landing_pad_chain_a64_obj}
+    COMMAND ${CLANG_EXEC} -target aarch64-linux-gnu -fPIC -c
+            ${landing_pad_chain_a64_src} -o ${landing_pad_chain_a64_obj}
+    DEPENDS ${landing_pad_chain_a64_src}
+    COMMENT "Compiling AArch64 landing-pad chain fixture")
+  add_custom_command(
+    OUTPUT ${landing_pad_chain_a64_so}
+    COMMAND ${LLD_EXEC} -shared -m aarch64linux --eh-frame-hdr
+            -o ${landing_pad_chain_a64_so} ${landing_pad_chain_a64_obj}
+    DEPENDS ${landing_pad_chain_a64_obj}
+    COMMENT "Linking AArch64 landing-pad chain fixture")
+  list(APPEND ELF_EXECUTABLES ${landing_pad_chain_a64_obj}
+                              ${landing_pad_chain_a64_so})
+
   # An i386 shared library as GCC builds one: its PLT entry jumps through the
   # GOT by the address in EBX.
   set(pic_library_i386_src
@@ -3525,6 +4189,119 @@ if(LLD_EXEC)
     DEPENDS ${pic_library_i386_obj}
     COMMENT "Linking i386 PIC library fixture")
   list(APPEND ELF_EXECUTABLES ${pic_library_i386_obj} ${pic_library_i386_so})
+
+  # GCC's hot/cold partitioning: an x86-64 cleanup moved to `.cold`, linked
+  # with its symbols and stripped.
+  set(gcc_cold_x64_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_gcc_cold_fragment_x64.s")
+  set(gcc_cold_x64_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_gcc_cold_fragment_x64.o")
+  set(gcc_cold_x64_so
+      "${CMAKE_CURRENT_BINARY_DIR}/test_gcc_cold_fragment_x64.so")
+  set(gcc_cold_x64_stripped
+      "${CMAKE_CURRENT_BINARY_DIR}/test_gcc_cold_fragment_x64_stripped.so")
+  add_custom_command(
+    OUTPUT ${gcc_cold_x64_obj}
+    COMMAND ${CLANG_EXEC} -target x86_64-linux-gnu -c ${gcc_cold_x64_src}
+            -o ${gcc_cold_x64_obj}
+    DEPENDS ${gcc_cold_x64_src}
+    COMMENT "Compiling x86-64 GCC cold fragment fixture")
+  add_custom_command(
+    OUTPUT ${gcc_cold_x64_so} ${gcc_cold_x64_stripped}
+    COMMAND ${LLD_EXEC} -shared --eh-frame-hdr -o ${gcc_cold_x64_so}
+            ${gcc_cold_x64_obj}
+    COMMAND ${LLD_EXEC} -shared --eh-frame-hdr -s -o ${gcc_cold_x64_stripped}
+            ${gcc_cold_x64_obj}
+    DEPENDS ${gcc_cold_x64_obj}
+    COMMENT "Linking x86-64 GCC cold fragment fixtures")
+  list(APPEND ELF_EXECUTABLES ${gcc_cold_x64_obj} ${gcc_cold_x64_so}
+                              ${gcc_cold_x64_stripped})
+
+  # Functions that never return, and callers whose compiler knew it, linked
+  # and stripped.
+  set(noreturn_calls_x64_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_noreturn_calls_x64.s")
+  set(noreturn_calls_x64_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_noreturn_calls_x64.o")
+  set(noreturn_calls_x64_stripped
+      "${CMAKE_CURRENT_BINARY_DIR}/test_noreturn_calls_x64_stripped.so")
+  add_custom_command(
+    OUTPUT ${noreturn_calls_x64_obj}
+    COMMAND ${CLANG_EXEC} -target x86_64-linux-gnu -c ${noreturn_calls_x64_src}
+            -o ${noreturn_calls_x64_obj}
+    DEPENDS ${noreturn_calls_x64_src}
+    COMMENT "Compiling x86-64 no-return call fixture")
+  add_custom_command(
+    OUTPUT ${noreturn_calls_x64_stripped}
+    COMMAND ${LLD_EXEC} -shared --eh-frame-hdr -s -o
+            ${noreturn_calls_x64_stripped} ${noreturn_calls_x64_obj}
+    DEPENDS ${noreturn_calls_x64_obj}
+    COMMENT "Linking x86-64 no-return call fixture")
+  list(APPEND ELF_EXECUTABLES ${noreturn_calls_x64_obj}
+                              ${noreturn_calls_x64_stripped})
+
+  # A byte write of RDX after an int call through a PLT entry.
+  set(plt_byte_write_x64_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_plt_byte_write_x64.s")
+  set(plt_byte_write_x64_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_plt_byte_write_x64.o")
+  set(plt_byte_write_x64_so
+      "${CMAKE_CURRENT_BINARY_DIR}/test_plt_byte_write_x64.so")
+  add_custom_command(
+    OUTPUT ${plt_byte_write_x64_obj}
+    COMMAND ${CLANG_EXEC} -target x86_64-linux-gnu -c ${plt_byte_write_x64_src}
+            -o ${plt_byte_write_x64_obj}
+    DEPENDS ${plt_byte_write_x64_src}
+    COMMENT "Compiling x86-64 PLT byte-write fixture")
+  add_custom_command(
+    OUTPUT ${plt_byte_write_x64_so}
+    COMMAND ${LLD_EXEC} -shared --eh-frame-hdr -o ${plt_byte_write_x64_so}
+            ${plt_byte_write_x64_obj}
+    DEPENDS ${plt_byte_write_x64_obj}
+    COMMENT "Linking x86-64 PLT byte-write fixture")
+  list(APPEND ELF_EXECUTABLES ${plt_byte_write_x64_obj}
+                              ${plt_byte_write_x64_so})
+
+  # Calls through PLT entries whose callees return a register pair.
+  set(plt_pair_returns_x64_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_plt_pair_returns_x64.s")
+  set(plt_pair_returns_x64_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_plt_pair_returns_x64.o")
+  set(plt_pair_returns_x64_so
+      "${CMAKE_CURRENT_BINARY_DIR}/test_plt_pair_returns_x64.so")
+  add_custom_command(
+    OUTPUT ${plt_pair_returns_x64_obj}
+    COMMAND ${CLANG_EXEC} -target x86_64-linux-gnu -c ${plt_pair_returns_x64_src}
+            -o ${plt_pair_returns_x64_obj}
+    DEPENDS ${plt_pair_returns_x64_src}
+    COMMENT "Compiling x86-64 PLT pair-return fixture")
+  add_custom_command(
+    OUTPUT ${plt_pair_returns_x64_so}
+    COMMAND ${LLD_EXEC} -shared --eh-frame-hdr -o ${plt_pair_returns_x64_so}
+            ${plt_pair_returns_x64_obj}
+    DEPENDS ${plt_pair_returns_x64_obj}
+    COMMENT "Linking x86-64 PLT pair-return fixture")
+  list(APPEND ELF_EXECUTABLES ${plt_pair_returns_x64_obj}
+                              ${plt_pair_returns_x64_so})
+
+  # Switch tables of an i386 shared library, relative to its GOT address.
+  set(pic_switch_i386_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/x86_32/test_pic_switch_i386.s")
+  set(pic_switch_i386_obj "${CMAKE_CURRENT_BINARY_DIR}/test_pic_switch_i386.o")
+  set(pic_switch_i386_so "${CMAKE_CURRENT_BINARY_DIR}/test_pic_switch_i386.so")
+  add_custom_command(
+    OUTPUT ${pic_switch_i386_obj}
+    COMMAND ${CLANG_EXEC} -target i386-linux-gnu -c ${pic_switch_i386_src}
+            -o ${pic_switch_i386_obj}
+    DEPENDS ${pic_switch_i386_src}
+    COMMENT "Compiling i386 PIC switch fixture")
+  add_custom_command(
+    OUTPUT ${pic_switch_i386_so}
+    COMMAND ${LLD_EXEC} -shared -m elf_i386 -o ${pic_switch_i386_so}
+            ${pic_switch_i386_obj}
+    DEPENDS ${pic_switch_i386_obj}
+    COMMENT "Linking i386 PIC switch fixture")
+  list(APPEND ELF_EXECUTABLES ${pic_switch_i386_obj} ${pic_switch_i386_so})
 
   set(native_pointer_elf_src
       "${CMAKE_CURRENT_SOURCE_DIR}/format/test_elf_pointer_reloc_x64.s")
@@ -3781,6 +4558,9 @@ if(LLD_EXEC)
 endif()
 
 add_custom_target(lift-test-objects DEPENDS ${TEST_OBJECTS} ${ELF_EXECUTABLES})
+add_custom_target(lift-x87-test-objects
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/test_x87_fpu32.o")
+add_dependencies(NeverDX87CallGraphTests neverd lift-x87-test-objects)
 add_dependencies(NeverDLiftTests lift-test-objects)
 add_dependencies(NeverDJumpTableTests lift-test-objects)
 add_dependencies(NeverDNativePointerRelocationBoundaryTests lift-test-objects)
@@ -3793,6 +4573,16 @@ endif()
 add_neverd_unittest(NeverDLLVMCAllocaTests
   core/LLVMCAllocaTests.cpp
   LINK_COMPONENTS BackendC
+)
+
+add_neverd_unittest(NeverDCSourcePresentationTests
+  core/CSourcePresentationTests.cpp
+  core/CStringCommentTests.cpp
+  LINK_COMPONENTS BackendC
+)
+target_include_directories(NeverDCSourcePresentationTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
 )
 target_include_directories(NeverDLLVMCAllocaTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
@@ -3842,6 +4632,46 @@ if(TARGET neverd-worker AND Python3_Interpreter_FOUND)
 endif()
 
 if(TARGET neverd AND Python3_Interpreter_FOUND AND CLANG_EXEC)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+     CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" AND
+     NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME NeverDX86TBMPipeline
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/x86/tbm_pipeline_test.py"
+        "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
+    set_tests_properties(NeverDX86TBMPipeline PROPERTIES
+      TIMEOUT 600 LABELS "unit;x86;source;cli")
+    add_test(NAME NeverDX86ADXPipeline
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/x86/adx_pipeline_test.py"
+        "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
+    set_tests_properties(NeverDX86ADXPipeline PROPERTIES
+      TIMEOUT 600 LABELS "unit;x86;source;cli")
+    add_test(NAME NeverDX86BMI2Pipeline
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/x86/bmi2_pipeline_test.py"
+        "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
+    set_tests_properties(NeverDX86BMI2Pipeline PROPERTIES
+      TIMEOUT 600 LABELS "unit;x86;source;cli")
+    add_test(NAME NeverDX86BMILogicPipeline
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/x86/bmi_logic_pipeline_test.py"
+        "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
+    set_tests_properties(NeverDX86BMILogicPipeline PROPERTIES
+      TIMEOUT 600 LABELS "unit;x86;source;cli")
+    add_test(NAME NeverDX86BitCountPipeline
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/x86/bitcount_pipeline_test.py"
+        "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
+    set_tests_properties(NeverDX86BitCountPipeline PROPERTIES
+      TIMEOUT 600 LABELS "unit;x86;source;cli")
+    add_test(NAME NeverDX86BEXTRPipeline
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/x86/bextr_pipeline_test.py"
+        "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
+    set_tests_properties(NeverDX86BEXTRPipeline PROPERTIES
+      TIMEOUT 600 LABELS "unit;x86;source;cli")
+  endif()
   add_test(NAME NeverDLibraryFeatureCLI
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/library_cli_test.py"
@@ -3977,8 +4807,21 @@ target_include_directories(NeverDX86X87IntegerLoadTests PRIVATE
 
 add_neverd_unittest(NeverDX86X87ConvertStateTests
   x86_64/X86_64_X87ConvertStateTests.cpp
+  x86_64/X86_64_X87FaultTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86X87ConvertStateTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX86ThreeDNowContextTests
+  x86_64/X86ThreeDNowContextTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86ThreeDNowContextTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX87MMXStateTests
+  x86_64/X87MMXStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX87MMXStateTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
 
 add_neverd_unittest(NeverDX86ComiStateTests
@@ -4044,3 +4887,21 @@ add_neverd_unittest(NeverDX86StateAccuracyTests
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86StateAccuracyTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDMedCachedCallTargetTests
+  core/MedCachedCallTargetTests.cpp
+  LINK_COMPONENTS BackendC)
+
+add_neverd_unittest(NeverDWindowsEHSourceTests
+  eh/COFFExceptionIRTests.cpp LINK_COMPONENTS Pipeline BackendC)
+target_include_directories(NeverDWindowsEHSourceTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(NeverDWindowsEHSourceTests PRIVATE
+  NEVERD_RUNTIME_FIXTURE_COMPILER="${NEVERD_HOST_RUNTIME_FIXTURE_COMPILER_EXECUTABLE}")
+
+add_neverd_unittest(NeverDHighPointerTypeInferenceTests
+  core/HighPointerTypeInferenceTests.cpp LINK_COMPONENTS BackendC)
+target_compile_definitions(NeverDHighPointerTypeInferenceTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+add_neverd_unittest(NeverDCDisplayFrameRecordTests
+  core/CDisplayFrameRecordTests.cpp LINK_COMPONENTS BackendC)

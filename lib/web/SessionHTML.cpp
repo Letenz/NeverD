@@ -11,6 +11,8 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web {
 namespace {
 llvm::json::Value idOrNull(const std::string &ID) {
@@ -103,7 +105,8 @@ std::string Session::htmlRecords(std::string_view Revision,
                      : Kind == "import_maps"
                          ? M.Declarations.size()
                          : throw Error("invalid_record_kind");
-  if (!Limit || Limit > 512 || Offset > Count)
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > Count)
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(Count, Offset + Limit);
   llvm::json::Array Items;

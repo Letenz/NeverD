@@ -30,6 +30,7 @@
 #include "BitBlastDetail.h"
 
 #include "neverd/solver/CnfEncoder.h"
+#include "neverd/solver/Limits.h"
 #include "neverd/solver/SatTypes.h"
 #include "neverd/symbolic/SymExpr.h"
 
@@ -160,7 +161,8 @@ bool BitBlaster::encodeReachable(SymRef Root) {
   // topological order and one sort replaces a post-order walk. Large graphs
   // use integer radix passes with the same ascending order. Traversal has
   // emptied Work, so its storage can serve as the permutation scratch.
-  if (Order.size() < 1024) {
+  if (Order.size() <
+      ::neverd::limits::solver::kBitBlasterEncodeReachableOrderSizeLimit) {
     llvm::sort(Order);
   } else {
     sortLargeNodeOrder(Order, Work);

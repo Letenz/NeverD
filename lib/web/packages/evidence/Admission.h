@@ -14,6 +14,7 @@
 #include "../../JsonReader.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/PackageEvidence.h"
 
 #include <optional>
@@ -57,7 +58,8 @@ inline llvm::json::Value document(const Artifact &Input, Budget &Work) {
 }
 
 inline std::optional<std::string>
-text(const llvm::json::Object &O, llvm::StringRef Key, size_t Limit = 4096) {
+text(const llvm::json::Object &O, llvm::StringRef Key,
+     size_t Limit = ::neverd::limits::web::kAdmissionTextLimit) {
   const auto *V = O.get(Key);
   if (!V)
     return {};

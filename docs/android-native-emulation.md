@@ -4,8 +4,10 @@
 AArch64 shared library using NeverD's CPU, address space, AAPCS64 call frames,
 execution sessions, and Linux syscall models. This is a bounded native analysis
 environment, with explicit inputs and observable failures. It does not boot an
-Android system or supply ART, JNI, Binder, signal delivery, a general filesystem, or a
-network. It never calls host functions to satisfy a guest import.
+Android system or supply arbitrary system-service peers, a general filesystem,
+or a host network. Managed execution, JNI, Binder and standard signal delivery
+have explicit bounded models described below. It never calls host functions
+to satisfy a guest import.
 
 Build with `NEVERD_ENABLE_CPU_EMULATION=ON`. The host transport is selected
 independently of the guest profile; `unicorn` works without an Android device.
@@ -96,6 +98,71 @@ thread and `exit_group` ends the workload. Destructors are not run when the
 observation ends at the selected function's return. The libc
 `exit` import and automatic FINI-array execution remain unsupported.
 
+### Execution observations
+
+`android.observe_cpu_state: true` adds `android.cpu_state` to the final report.
+It contains the current guest `thread_id` and all modeled ARM64 registers:
+`X0`–`X30`, `SP`, `PC`, `NZCV`, the three modeled `TPIDR` registers, `FPCR`,
+`FPSR`, and `V0`–`V31`. Each named value is a pair of hexadecimal strings
+`[low_64_bits, high_64_bits]`, including scalars whose upper word is zero.
+Capture also runs at terminal CPU/model failures. A read failure produces
+`registers: null` with its own `diagnostic`; the workload's stop reason and
+diagnostic remain intact. The option is false by default and reserves 1,144 raw
+report bytes from `output_limit` before execution. It does not observe suspended
+threads, guest memory, or backend-private state and is not a resumable
+checkpoint. The captured `PC` is the actual CPU register; a service report may
+separately identify a call site or continuation.
+
+`android.observe_memory_on_failure: true` also captures the requested
+`read_memory` ranges after CPU or runtime failures. It reads stopped RAM backing
+without executing guest instructions, switching threads, changing permissions
+or invoking devices. This forensic read ignores guest read permissions; it does
+not make an unmapped or device-backed range readable. A failed region has empty
+`bytes_hex` and its own `diagnostic`; later regions are still attempted and the
+original stop and diagnostic remain intact. The default is false. Every requested
+range reserves an additional diagnostic allowance from `output_limit`, owned by
+`kAndroidFailureMemoryDiagnosticBytes` in `emulation/Limits.h`; long diagnostics
+end with an explicit truncation marker. Entry-time mapping requirements still
+apply. This is selected RAM evidence, not a resumable process checkpoint.
+
+`android.observe_execution` records state immediately before explicit absolute
+guest PCs, without patching code or supplying call results:
+
+```json
+{"pcs":["0x40001000","0x40001004"],"limit":32,
+ "read_memory":[{"address":"0x20000000","size":64}]}
+```
+
+The object requires 1–64 unique, four-byte-aligned `pcs` and a positive `limit`.
+Each retained record contains `pc`, `thread_id`, the admitted instruction count
+before that point, `registers` in x0–x30 order, `sp`, `nzcv`, and the requested
+memory bytes. These are scalar observations, not complete CPU/OS checkpoints.
+Addresses and register bits use hexadecimal strings in reports. The same
+memory ranges are copied at every point. `require_mapped_at_entry: false`
+allows a range created during execution; it must be readable at every captured
+point. An unreadable range fails before executing that watched instruction.
+
+`read_register_memory` adds bounded reads from pointers that change during
+execution, for example `[{"register":"x1","offset":-8,"size":32}]`.
+The register is exactly `x0`–`x30` or `sp`; `offset` is an optional signed
+64-bit JSON integer, defaulting to zero. `size` is a positive byte count.
+Each address is resolved from that record's stopped register state, with
+checked addition/subtraction and range bounds. The complete range must be
+readable then; no entry mapping, null-pointer fallback or partial read is
+inferred. These snapshots follow fixed `read_memory` snapshots in input order
+and report the resolved address. They share the same reservation and truncation
+rules. They do not decode strings, dereference further pointers or supply JNI
+objects. `require_mapped_at_entry` applies only to fixed reads.
+
+The complete retained capacity shares `output_limit` with ordinary snapshots,
+thread records and PC tracing. `execution_observations_truncated` becomes true
+only when another point matches after the retained limit; execution continues
+with observation disabled. Unreached addresses produce no records. Observations
+consume no guest instruction or service event and preserve cooperative quantum
+boundaries. Their host work still counts against the existing wall-time limit.
+They neither prove coverage beyond supplied inputs nor implement an unknown
+provider's memory, IPC or external effects.
+
 ## Linking and Android contracts
 
 The loader reads original PT_LOAD/PT_DYNAMIC file bytes, independently of
@@ -118,15 +185,103 @@ model. Symbol versions are not used to select alternate implementations.
 The supported Bionic subset is:
 
 - `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strnlen`, `strcmp`, `strncmp`.
+- `__strlen_chk` uses the same NUL scan as `strlen`, then requires the returned
+  length to be strictly smaller than the full LP64 object extent. The NUL must
+  fit inside that extent; an empty string therefore needs at least one byte.
+  Even a zero extent does not skip the scan. Inaccessible memory, the scan
+  limit or an expired deadline can stop the call before the fortify check.
+  Large extents, including `SIZE_MAX`, do not require a whole-object read and
+  do not relax the process scan limit. Success preserves guest bytes and errno.
+  A failed extent check uses the existing string-fortify `runtime_failure`
+  boundary without a returned value; abort-triggered signal delivery and
+  logging are not modeled. This independently implemented ordering follows the
+  pinned [API 28 implementation](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/fortify.cpp).
+- `strncpy` copies at most the requested count through the first NUL, then pads
+  the destination to exactly that count with zeros. Truncated copies need not
+  terminate. It returns the original destination and retains errno; zero count
+  accesses neither pointer. The full LP64 count is bounded by the process memory
+  limit. Source reads stop at NUL or count, including page-end strings. The
+  model stages all bytes and refuses overlapping accessed ranges, inaccessible
+  memory or an expired budget before committing guest writes. This atomic
+  refusal is a model diagnostic, not native fault/undefined-behavior emulation.
+  The valid-call contract follows the pinned API 28
+  [Bionic implementation](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/string/strncpy.c).
+- `strlcpy` returns the full source length, including when the destination size
+  is zero. A nonzero size writes at most size minus one bytes and a terminating
+  NUL, without padding. It scans the entire source before changing memory and
+  validates only the bytes actually written. Overlap, inaccessible memory and
+  scan limits stop explicitly; success preserves errno. Static and dynamic
+  imports use the same string owner and provider-lifetime checks.
+- `__strncpy_chk` and `__strncpy_chk2` share that copy owner. Both require the
+  requested count to fit the full LP64 destination extent before any memory
+  access or copy limit check. `__strncpy_chk2` additionally checks the actual
+  source bytes read after the scan, including a consumed NUL but excluding
+  destination padding. An inaccessible source byte can therefore fail before
+  the source-extent check, even when that extent is zero. A truncated copy needs
+  only its count of source bytes, without a terminator. Zero count touches
+  neither pointer; large object extents do not relax the process memory limit.
+  Fortify violations use a non-returning `runtime_failure`. The shared model
+  stages all writes and rejects atomically, so native pre-abort writes, logging
+  and abort-triggered signal delivery are not simulated. The checks follow the
+  pinned [API 28 implementation](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/fortify.cpp).
+- `__FD_SET_chk`, `__FD_CLR_chk`, `__FD_ISSET_chk`, using the Bionic LP64
+  1024-bit descriptor bitmap. The signed low 32-bit descriptor must be 0..1023,
+  then the full-width object extent must be at least 128 bytes. Invalid values
+  stop with a non-returning FORTIFY `runtime_failure` before touching the bitmap;
+  FORTIFY-triggered signal delivery is not modeled. Valid calls access only the selected eight-byte
+  word, preserve other bits and errno, and do not require an open descriptor.
+  Queries return 0 or 1 and accept read-only memory; mutations require read/write
+  access. Guest-pointer and wrapping-address failures remain explicit. These
+  rules follow the pinned API 28 [checks](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/private/bionic_fortify.h)
+  and [bitmap ABI](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/include/sys/select.h).
+  Raw `pselect6` and its variadic `syscall` route use the shared Linux readiness
+  subset below; Bionic `select`/`pselect` wrappers are not yet modeled.
+- LP64 raw `pselect6`, within the initial 64-descriptor
+  word. It captures all input sets before ordered output, counts ready bits
+  across sets, checks unopened descriptors, and preserves the raw errno/libc
+  errno boundary. Regular files and declared live pidfds share the existing
+  descriptor owner. Connected offline sockets can be readable from supplied
+  data, queued empty UDP datagrams or explicit TCP EOF; remaining declared sends
+  can establish immediate write readiness. Queries never consume a packet,
+  completion error or stream byte. Missing input, gated input, exceptional data
+  and exhausted send contracts retain an unsupported observation boundary.
+  Zero timeouts do not change time. A nonzero timeout requires the explicit
+  virtual idle-time policy. Explicit [arrival and quiet intervals](linux-network-contracts.md#timed-readiness)
+  allow blocking waits without host polling. The scheduler runs other runnable
+  threads first and advances idle time only to the earliest wait event. Inputs
+  are retained across suspension, output access is checked on wake, and the
+  original raw or libc event is completed once. Readiness wins over a timeout
+  at the same instant. The remaining-time copy follows bitmap output, including
+  aliases and ordinary errors; wholly read-only timeout output is ignored.
+  Closing or replacing a watched description during a wait stops explicitly.
+  Partial output faults, larger descriptor-table history and temporary signal
+  masks remain unsupported. Admission and copy ordering follow [Linux v4.14](https://github.com/torvalds/linux/blob/v4.14/fs/select.c).
 - `strchr`, `strrchr`, `__strchr_chk`, `__strrchr_chk`, with byte-width character
   conversion, NUL matches, full-width object extents and unchanged errno. The
   first search can return before reaching a terminator; reverse search must
   reach NUL. Fortified calls check the remaining extent before each read.
   Exhaustion produces a non-returning `runtime_failure` with a Fortify diagnostic,
-  consistent with the model's abort boundary; signal delivery is not modeled.
+  consistent with the model's abort boundary; abort-triggered signal delivery is not modeled.
   Invalid pointers and memory/deadline limits remain distinct failures. Only
   visited guest bytes are read, including a match at a readable page's last byte.
   These rules follow the pinned [API 28 implementation](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/fortify.cpp).
+- `strspn`, returning the length of the initial byte prefix belonging to the
+  caller's NUL-terminated accept set. Duplicate and high-bit bytes, empty strings,
+  overlapping strings and read-only input are supported; NUL is never accepted.
+  The model reads the complete accept set, then only the source prefix through
+  the first rejected byte or NUL. Even an empty set requires a readable first
+  source byte. Both scans are bounded by the memory limit and shared deadline;
+  inaccessible, wrapping or unterminated required input stops explicitly instead
+  of returning a guessed count. No guest bytes or errno are changed. This
+  independently implemented model follows the byte-set contract of the pinned
+  [API 28 Bionic source](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/upstream-openbsd/lib/libc/string/strspn.c).
+- `strcspn`, sharing that bounded byte-set owner and returning the prefix length
+  before the first member of a NUL-terminated reject set. A source NUL always
+  stops the scan, including when the reject set is empty. The model reads the
+  full reject set and only the required source prefix, supports read-only and
+  overlapping strings, preserves errno and keeps the same explicit pointer,
+  scan-limit and deadline failures. Its independent implementation follows the
+  pinned [API 28 byte contract](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/upstream-openbsd/lib/libc/string/strcspn.c).
 - `strtok_r`, scanning guest byte strings and updating the caller's eight-byte,
   aligned save pointer. Delimiters may change between calls; separate contexts
   remain independent. API 28 clears the saved pointer at the final token or an
@@ -136,9 +291,16 @@ The supported Bionic subset is:
   checked before either effect, and errno is preserved. Invalid pointers and
   exhausted scan/deadline bounds stop explicitly. No host tokenizer or hidden
   process cursor supplies state; `strtok` remains unsupported.
-- `snprintf`, `vsnprintf`, `sprintf`, `vsprintf`, for the bounded integer and
-  byte-string formatting subset described below.
-- `sscanf`, `vsscanf`, for bounded integer scanning as described below.
+- `snprintf`, `vsnprintf`, `sprintf`, `vsprintf` and their four `__*_chk`
+  fortify forms, for the bounded integer and byte-string formatting subset
+  described below.
+- `sscanf`, `vsscanf`, for bounded integer and narrow byte scanning as described below.
+
+- `kill`, sharing the [Linux signal contract](process-emulation.md) with raw
+  SVC and variadic `syscall`: self signal-zero probes, process-wide SIGKILL and
+  bounded ordinary self-process signals,
+  signed argument narrowing, invalid-signal errno and dynamic provider lifetime.
+  Other targets remain unsupported. No host signal is sent.
 - `sigaction`, `sigaction64`, sharing process-wide dispositions with raw
   `rt_sigaction` and the variadic `syscall` wrapper. Initial actions come from
   the explicit [`linux_signals` input](process-emulation.md). API 28 LP64 has
@@ -152,7 +314,15 @@ The supported Bionic subset is:
   on this path, so the model cannot invent its bytes. See the pinned
   [wrapper](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/sigaction.cpp)
   and [reserved mask](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/private/sigrtmin.h).
-  Registering an action does not enable signal delivery or execute its handler.
+  Delivery additionally requires a known thread mask and, for guest handlers,
+  an explicitly cleared disabled alternate stack. AArch64 handlers execute
+  guest code and return through mutable Linux signal frames.
+- `sigprocmask`, `sigpending` and their 64 variants, plus `signal` and the
+  `sigemptyset`, `sigfillset`, `sigaddset`, `sigdelset`, `sigismember` families
+  (including 64 variants). The shared Linux owner retains masks, coalesced
+  standard process-pending signals and handler frames; child threads inherit
+  masks independently. See the [supported signal boundaries](process-emulation.md)
+  for copy ordering, context restoration and explicit unsupported cases.
 - `mincore`, for the shared Linux validation, empty-range and unmapped-first-page
   subset. Direct imports, variadic `syscall` and raw SVC share the same error
   priority and leave the output vector untouched. Only Bionic converts negative
@@ -162,6 +332,12 @@ The supported Bionic subset is:
 - `malloc`, `calloc`, `realloc`, `free`, with live allocation tracking and
   bounded anonymous guest memory. Zero-size allocations may return a unique
   pointer; allocation failure returns NULL and sets ENOMEM.
+  `android.malloc_fill_byte` (0..255, default 0) selects concrete contents for
+  the requested bytes of `malloc` and the growth tail of `realloc`. Use
+  different values to check whether an analysis depends on initial heap bytes.
+  `calloc`, internal model allocations and anonymous `mmap` remain zeroed;
+  page padding is excluded. This input neither models a real allocator history
+  nor establishes the validity of uninitialized reads.
 - `__errno`, `getpid`, `gettid`, `getuid`, `geteuid`, `getgid`, `getegid`.
   Identity queries share the Linux
   process model: PID/TID and real/effective UID/GID are 1000, including raw
@@ -188,6 +364,72 @@ The supported Bionic subset is:
   Imported, dynamic and raw calls use the shared descriptor owner. Inputs must
   declare the ordered request, scalar/byte expectations, result and outputs;
   missing transactions stop. This does not provide a driver or device mapping.
+- `localtime`, `localtime_r`, `gmtime` and `gmtime_r`, converting signed 64-bit
+  timestamps to API 28's 56-byte LP64 `struct tm` for civil years 1..9999.
+  Local conversion requires `android.fixed_time_zone`, for example
+  `{"name":"FIX+08","offset_seconds":28800}`. This is a complete fixed zone
+  with no transitions or leap-second corrections: the offset is seconds east
+  of UTC, within ±86400, and the abbreviation is 1..32 printable non-space
+  ASCII bytes. It is not a tzdb name or a host-zone lookup. GMT conversion uses
+  zero offset and the `GMT` abbreviation without requiring that input.
+  The non-reentrant APIs share one process-owned guest object across threads;
+  `_r` writes caller storage, preserves ABI padding, and leaves that static
+  object alone. Zone strings have stable, read-only guest storage. Supported
+  conversions preserve errno and read the timestamp before writing output,
+  including overlapping input/output. Missing local-zone input and dates
+  outside the admitted range stop explicitly; wider-year overflow effects,
+  tzdata transitions, leap seconds, `tzset` and calendar formatting remain
+  unsupported. No host clock, locale or environment is consulted. The ABI and
+  storage contract follow [API 28 Bionic's calendar implementation](https://raw.githubusercontent.com/aosp-mirror/platform_bionic/android-9.0.0_r1/libc/tzcode/localtime.c).
+- `mktime`, the inverse conversion with the same explicit complete fixed zone.
+  Signed seconds, minutes, hours, days and months normalize across date and
+  century boundaries before the local civil year is checked against 1..9999.
+  Input weekday, year-day, offset and zone pointer are ignored. The complete
+  output fields are recomputed in caller storage, including `tm_isdst = 0`,
+  `tm_gmtoff` and the shared immutable zone pointer; ABI padding is preserved.
+  It leaves the static forward-conversion object alone unless the caller
+  passes that object. UTC seconds may lie outside the forward UTC range when
+  an endpoint local date has a nonzero offset. As in API 28, any result of
+  `-1` sets `EOVERFLOW` (75), including the valid epoch second `-1` and null
+  input; other successful results preserve errno. A positive `tm_isdst`
+  cannot be satisfied by a complete zone without DST: it returns `-1`, clamps
+  values greater than one to one, and retains all other caller bytes. Missing
+  zone input, excluded civil years and intermediate signed-int normalization
+  overflow stop explicitly. Full output admission precedes field writes; no
+  guest clock advances and no host calendar function is called. The inverse
+  and errno contract uses the same pinned API 28 source linked above.
+- `getenv`, reading the live LP64 pointer vector at
+  `android.environment_vector`. This unsigned 64-bit guest address accepts
+  numeric strings. Omission leaves the environment unknown and stops the
+  query; zero explicitly supplies a null environment. A nonzero address must
+  point to caller-supplied guest memory containing string pointers followed
+  by a null pointer. Each call rereads the vector and the necessary entry
+  prefixes, returns the first matching entry's original value pointer, and
+  preserves errno. Duplicate names and guest changes to pointers or string
+  bytes remain visible across calls, constructors and threads. As in
+  [API 28 Bionic](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/stdlib/getenv.c),
+  the query name ends at either NUL or `=`, and an empty name can match an
+  entry beginning with `=`. The name is read even for a null environment;
+  the returned value and later entries are not read. Invalid necessary reads
+  fail visibly. Aggregate pointer and byte reads are bounded by the workload
+  memory limit and execution deadline; exhaustion never becomes a missing
+  key. The input fixes the vector address, not its contents. Environment
+  mutators and an imported `environ` data symbol remain unsupported. Neither
+  the host environment nor Linux ELF process startup inputs are consulted.
+- `getauxval`, reading the complete immutable `android.auxiliary_vector`
+  input. Each entry has unsigned 64-bit `type` and `value` fields; numeric
+  strings, including hexadecimal values, are accepted. At most 128 unique,
+  nonzero types are admitted; the `AT_NULL` terminator is implicit. For example,
+  `[{"type":16,"value":0},{"type":26,"value":0}]` explicitly advertises zero
+  HWCAP/HWCAP2 for this workload, not the host's capabilities. Omitting the
+  vector stops the query as unknown; `[]` is an explicitly empty vector.
+  A missing key returns zero and sets the calling thread's errno to `ENOENT`;
+  a present zero leaves errno unchanged, matching
+  [API 28 Bionic](https://raw.githubusercontent.com/aosp-mirror/platform_bionic/android-9.0.0_r1/libc/bionic/getauxval.cpp).
+  Constructors, finalizers and named dynamic calls use the same input.
+  Pointer-valued entries are guest values; callers must provide their backing
+  memory separately. No host auxv is consulted, no Linux process startup stack
+  is changed, and advertised features never relax checked CPU admission.
 - `sysconf`, for Android's `_SC_PAGESIZE` (`0x27`) and `_SC_PAGE_SIZE` (`0x28`)
   selectors. Both return the same guest page size as `getpagesize`, mappings
   and allocation rounding, without changing errno. The selector uses its
@@ -224,7 +466,10 @@ The supported Bionic subset is:
   IPC remain unsupported.
 - `time`, `gettimeofday`, and `clock_gettime`, using the shared explicit
   [`linux_time` inputs](process-emulation.md#explicit-guest-clocks). Imports,
-  named dynamic calls and raw ARM64 services read the same fixed observations.
+  named dynamic calls and raw ARM64 services share the same observations.
+  A closed task catalogue can admit encoded process CPU clocks independently
+  of GKI; CPU samples remain fixed. Explicit monotonic-raw observations share
+  virtual idle/instruction advancement while retaining their own epoch.
   Successful calls preserve errno; kernel errors become `-1` and errno in
   Bionic alone. API 28's `time` fallback stores through the caller's `time_t*`
   in user space, so a bad destination is a runtime failure rather than a
@@ -269,8 +514,8 @@ The supported Bionic subset is:
   bits and does not update TLS errno.
   `madvise` supports the shared [KSM eligibility contract](process-emulation.md#linux-elf64-profile)
   for `MADV_MERGEABLE` and `MADV_UNMERGEABLE`; other advice stops explicitly.
-- `open`/`open64`, `openat`/`openat64`, `read`, `close`, `lseek`/`lseek64`
-  and `fstat`/`fstat64`, `fstatat`/`fstatat64`
+- `open`/`open64`, `openat`/`openat64`, `read`, `close`, `lseek`/`lseek64`,
+  `fstat`/`fstat64`, `fstatat`/`fstatat64`, `stat`/`stat64` and `lstat`/`lstat64`
   use the explicit [`linux_files` catalogue](process-emulation.md#explicit-memory-files).
   Raw traps, imported calls and guest threads share descriptors and cursors;
   only Bionic converts negative errors into `-1` and TLS errno. No host files or
@@ -280,6 +525,13 @@ The supported Bionic subset is:
   File status requires complete explicit `metadata`; it writes the 128-byte
   AArch64 layout and preserves the open cursor. Missing observations and mixed
   writable/inaccessible outputs stop without invented values or partial bytes.
+  The pathname-only status aliases adapt to `fstatat` with `AT_FDCWD`; `lstat`
+  aliases additionally select `AT_SYMLINK_NOFOLLOW`. They share its pathname
+  resolution, metadata requirements, output layout and unsupported boundaries.
+- `__read_chk` checks the signed byte-count limit and destination extent before
+  invoking the shared Linux read owner. Valid requests preserve descriptor
+  cursors, scheduled waits and Bionic errno conversion. Fortify failures stop
+  without changing memory or errno; they do not simulate a guest abort handler.
 - `syscall(number, ...)` uses the same Linux service table and effects. The
   AArch64 wrapper takes the number from x0 and six arguments from x1–x6;
   x7 is unused. It preserves full-width results and applies Bionic's -1/errno
@@ -292,14 +544,34 @@ The supported Bionic subset is:
   [idle clock advancement policy](process-emulation.md#explicit-guest-clocks)
   with raw and variadic calls. It retains the thread's original continuation
   while other guest threads run, and preserves remaining-time storage and errno
-  on success. The policy is disabled by default; signal interruption and
-  absolute sleeps remain unmodeled.
+  on success. Caught ordinary signals interrupt sleeping cooperative threads,
+  copy remaining time and return EINTR regardless of SA_RESTART. Bionic errno
+  conversion occurs after the guest handler returns; raw SVC keeps kernel
+  results. See the [signal continuation contract](process-emulation.md).
+  The policy is disabled by default; absolute sleeps remain unmodeled.
+- `poll/ppoll`, `epoll_wait/epoll_pwait`, raw `pselect6` and direct socket
+  `read/recv/recvfrom` share the [signal interruption/restart contract](process-emulation.md).
+  Ready operations finish first. Caught handlers interrupt readiness waits;
+  zero-progress receives restart only with SA_RESTART and no entry-time timeout.
+  Restart re-enters the original trap, rechecks the FD and preserves guest
+  context edits. Infinite cooperative waits need no invented future event when
+  another guest thread can wake them; an idle unresolved wait still stops.
 - `usleep` uses the same policy and thread wait ownership. The argument is
   unsigned 32-bit microseconds, including values of one second or more;
   successful calls preserve errno. Direct imports and dynamic lookups share
   provider lifetime checks. The scalar conversion follows Android 9's
   [Bionic contract](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/upstream-freebsd/lib/libc/gen/usleep.c)
   and [32-bit type](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/include/sys/types.h).
+- `sleep` shares the same duration admission, clock and cooperative wait. Its
+  unsigned 32-bit seconds argument follows the
+  [API 28 wrapper](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/upstream-freebsd/lib/libc/gen/sleep.c):
+  a request above `INT_MAX` waits for `INT_MAX` seconds and returns the excess.
+  An interrupted wait returns the remaining seconds rounded up, plus that
+  excess. Other nanosleep errors return the original requested seconds.
+  Success preserves errno; interrupted errno conversion occurs after the guest
+  handler returns. Nested handlers retain separate remainder values and mutable
+  signal contexts still control return or bypass of the wrapper. Missing clock
+  policy, clock overflow and inactive dynamic providers stop explicitly.
 
 TLS uses the API 28 Bionic layout: TPIDR_EL0 points to a guest TLS block,
 `__errno` addresses slot 2, and the stack guard occupies slot 5. The guard is a
@@ -320,7 +592,7 @@ The model is independently implemented; these sources specify the ABI.
 
 ### String formatting
 
-The four string formatting imports share one Android implementation. It reads
+The eight string formatting imports share one Android implementation. It reads
 ordinary GP arguments from x0–x7 and then the guest stack. The `v` forms consume
 the caller's actual 32-byte AAPCS64 `va_list`, including its GP save area and
 overflow stack; they never use the host's variadic ABI. The caller's list is
@@ -341,6 +613,22 @@ only the actual destination prefix to be writable. Padding is counted without
 materializing discarded bytes; input scans and retained output share the
 process's existing memory and deadline limits.
 
+`__snprintf_chk` and `__vsnprintf_chk` check the requested capacity against the
+compiler-supplied object size before reading the format or variadic arguments.
+An admitted request retains ordinary `snprintf` truncation and counting rules,
+including a zero-capacity call with a null destination. The object size remains
+64-bit and may be SIZE_MAX when the requested capacity is within the supported
+range. `__sprintf_chk` and `__vsprintf_chk` use the object size as their capacity
+and require the complete result plus its final NUL to fit. Even an empty result
+requires one byte. API 28 ignores the flags argument in all four forms.
+
+Fortify violations stop as `unsupported_service` without publishing a result or
+partial output; Bionic's abort, logging and pre-abort writes are not simulated.
+The checked `sprintf` forms retain the existing INT_MAX capacity admission
+boundary, including explicit refusal of an unknown SIZE_MAX object size. API 28
+maps that unknown size to SSIZE_MAX, whose version-specific formatting behavior
+is outside this model. No smaller capacity or successful result is guessed.
+
 Floating-point, wide text, positional arguments, `%n`, unknown conversions,
 `snprintf` capacities above INT_MAX, and lengths exceeding INT_MAX stop as
 `unsupported_service` before publishing output. This boundary does not simulate
@@ -351,8 +639,9 @@ same implementation and provider lifetime checks as direct imports.
 
 The independently authored implementation and compiled O0/O2 callers follow
 [AAPCS64's variadic layout](https://github.com/ARM-software/abi-aa/blob/2025Q1/aapcs64/aapcs64.rst#the-va_list-type),
-Android 9's [formatting entrypoints](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/stdio.cpp)
-and [conversion behavior](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/vfprintf.cpp).
+Android 9's [formatting entrypoints](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/stdio.cpp),
+[conversion behavior](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/vfprintf.cpp)
+and [fortify wrappers](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/bionic/fortify.cpp).
 
 ### Byte streams
 
@@ -372,7 +661,10 @@ API 28's 1024-byte BUFSIZ. Missing metadata remains unknown, not a fabricated
 failed fstat or default block size. `setvbuf(..., _IONBF, ...)` needs no metadata
 and uses a one-byte buffer. Model-owned allocations count against the guest
 memory limit; buffer allocation failure falls back to one-byte reads and
-retains ENOMEM. Caller-supplied buffers are actual guest memory. Rebuffering
+retains ENOMEM. A non-null caller buffer with a nonzero size also avoids a
+default-size dependency, while known descriptor errors still set errno. Its
+bytes are actual guest memory; filesystem-size seek optimizations are not
+performed by this model. Rebuffering
 discards unread bytes at the underlying FD position without rewinding it.
 
 Refills advance the kernel's shared open-description cursor; `ftell` subtracts
@@ -388,9 +680,23 @@ and retains a failure while continuing with the remaining streams.
 `fdopen` adopts the existing FD without duplicating or resetting it. `dup`
 aliases and raw syscalls see the same kernel cursor. Closing the FD does not
 erase already buffered bytes; a later refill reports EBADF. `fclose` retires the
-stream even when closing its FD fails. Thread calls share FILE state, complete
-as indivisible model events, and retain separate TLS errno. Explicit
-`flockfile` locking and concurrent unlocked operations are not modeled.
+stream even when closing its FD fails. Buffered and direct `fread`, `fgets`,
+`fgetc`/`getc` and unlocked aliases can suspend on a scheduled kernel read.
+The libc continuation retains the original arguments, partial element/line
+progress and refill phase, and completes the original import exactly once.
+`__fread_chk` and `__fgets_chk` apply their compiler-supplied bounds before
+entering the same continuation. Violations stop explicitly without simulating
+the libc abort sequence; fread multiplication overflow keeps its normal error
+path, following [Bionic fortify](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/fortify.cpp).
+Every nested read keeps its own entry-time socket timeout; errno is set in the
+resumed thread. Other guest threads run before idle time advances. A missing
+input leaves the original import incomplete, including any bytes already copied.
+
+An active read reserves that FILE until completion. Concurrent access by another
+thread stops explicitly; FILE lock contention, explicit `flockfile` and racing
+unlocked access are not modeled. Other FILE objects remain usable. Buffered
+writes/flushes retain their existing immediate-transfer contract; this does not
+add blocking output or sockets' missing default fstat metadata.
 
 Transfers above the API 28 callback's signed-int extent, fdopen's close-on-exec
 or append-flag mutation, `ungetc`, wide streams, `freopen`, custom callbacks
@@ -427,6 +733,15 @@ The output transition contracts are pinned to AOSP's
 and [byte writer](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/upstream-openbsd/lib/libc/stdio/fvwrite.c),
 with independent model code and synthetic tests.
 
+### Live process observations
+
+The optional [live proc and file metadata contract](linux-live-proc.md) supplies
+maps, task/status, fdinfo and FD links from the shared Linux owners. Bionic
+FILE/DIR buffering observes the same records as raw calls. Explicit tracked
+memory files maintain complete stat metadata using the virtual realtime clock.
+Unknown status fields, proc inode metadata and broader filesystem policies
+remain explicit boundaries; a live view does not imply complete Android procfs.
+
 ### Directory streams
 
 `opendir`, `fdopendir`, `readdir`/`readdir64`, `closedir`, `dirfd`, `telldir`,
@@ -443,14 +758,22 @@ Scandir, reentrant directory APIs, general symlink traversal and a public DIR
 layout remain unmodeled. Enumeration order and unspecified inode identities
 belong to the virtual workload, not to the host filesystem.
 
-### Integer scanning
+### Integer and byte scanning
 
 `sscanf` and `vsscanf` share the formatting model's GP argument reader and
-Android LP64 `va_list` rules. The scanner accepts `d i o u x X p n`, literal
+Android LP64 `va_list` rules. The scanner accepts `d i o u x X p n c s`, literal
 characters, `%%`, ASCII whitespace, assignment suppression, decimal field
 widths, and `hh h l ll j z t q` integer lengths. Android's `D` and `O` aliases
 use `long`. `%n` records consumed input bytes without increasing the assignment
-count. Suppression and widths on `%n`, and lengths on `%p`, are unsupported.
+count. Suppression and widths on `%n`, and lengths on `%p`, `%c` or `%s`, are
+unsupported.
+
+Narrow `%c` consumes bytes without skipping whitespace or adding a NUL, with
+default width one. A nonempty field shorter than its width still assigns the
+available bytes. Narrow `%s` skips ASCII whitespace, consumes non-whitespace
+bytes up to its optional width and adds a terminating NUL. Suppressed character
+and string fields consume input without reading a destination argument. Their
+pending output storage is charged to the same memory budget as integer fields.
 
 The input is a bounded NUL-terminated guest byte string. A numeric field consumes
 at most 512 bytes, including its sign and radix prefix. An incomplete `0x`
@@ -459,7 +782,7 @@ assignment count; input exhaustion returns EOF when no assignment has occurred.
 Earlier assignments survive either normal failure. Destination widths and
 truncation follow Android LP64, and successful conversions preserve thread errno.
 
-Floating-point, character/string/scanset conversions, allocation, positional
+Floating-point, wide-character/string and scanset conversions, allocation, positional
 arguments, malformed formats, and 64-bit conversion overflow stop explicitly.
 Output that aliases input, format, or consumed argument storage also stops;
 destinations may alias each other and are written in conversion order. All
@@ -511,6 +834,29 @@ return a lookup error. `dlerror()` consumes the pending guest error pointer in
 API 28 TLS slot 6 once; successful lookups do not clear an earlier error, and
 `errno` is independent. Error message wording belongs to the model.
 
+An optional `dladdr_observations` array supplies successful LP64 `dladdr`
+queries. Each record requires `address`, `image_base`, `image_name`,
+`symbol_name` and `symbol_address`. Addresses accept unsigned integers or hex
+strings; a missing symbol is expressed by `symbol_name: null` and
+`symbol_address: 0`. Query addresses must be unique and match exactly.
+
+```json
+{"android":{"entry_symbol":"inspect_buffer","dladdr_observations":[
+  {"address":"0x40001004","image_base":"0x40000000",
+   "image_name":"/guest/fixture.so","symbol_name":"symbol",
+   "symbol_address":"0x40001000"}
+]}}
+```
+
+A matching query writes the four LP64 fields and returns 1 while preserving
+`errno` and pending `dlerror` state. Names are borrowed, stable, read-only guest
+strings. Invalid output spans publish no partial `Dl_info`; changing or
+unmapping retained strings makes subsequent queries fail explicitly. Missing,
+empty and unmatched observations remain unsupported. These records neither
+populate the library catalogue nor infer negative results, symbol membership
+or host files. Record, string and aggregate byte limits have one authority in
+`include/neverd/emulation/Limits.h`.
+
 An optional `default_scope` supplies the complete ordered provider list for
 `dlsym(RTLD_DEFAULT, name)` (handle 0 on LP64):
 
@@ -548,6 +894,23 @@ stop with a diagnostic rather than selecting a guessed process-wide scope.
 ABI references: Android 9 [`dlfcn.h`](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/include/dlfcn.h),
 [`dlsym`/`dlclose`](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/linker/linker.cpp),
 and [`dlerror`](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/linker/dlfcn.cpp).
+
+## API 28 pseudo-random sequences
+
+`rand`/`random` share one guest process sequence; `srand`/`srandom` reset it
+using the low 32 bits of the seed. The default 31-word additive generator,
+signed seed expansion and 310 warm-up steps follow the pinned
+[Android 9 random implementation](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/upstream-netbsd/common/lib/libc/stdlib/random.c)
+and [Bionic aliases](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/rand.cpp).
+An unseeded process starts with seed 1; seed 0 has its own sequence. Calls are
+atomic within the guest scheduler and never use host entropy or host libc state.
+
+`rand_r` updates exactly four guest bytes using the separate
+[Android 9 recurrence](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/upstream-netbsd/lib/libc/stdlib/rand_r.c),
+retains the high bit in the stored seed and returns the low 31 bits. Invalid or
+read-only seed memory stops explicitly; successful calls preserve errno.
+`initstate` and `setstate` remain unsupported.
+These deterministic sequences reproduce the pinned ABI; they are not entropy.
 
 ## API 28 mutexes
 
@@ -590,6 +953,31 @@ futex supplies guest behavior.
 ABI references: Android 9 [`pthread_mutex.cpp`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/pthread_mutex.cpp)
 and [`pthread_types.h`](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/include/bits/pthread_types.h).
 These declarations and state rules inform an independent implementation.
+
+## API 28 unnamed semaphores
+
+`sem_init`, `sem_destroy`, `sem_getvalue`, `sem_post`, `sem_trywait` and
+`sem_wait` share the guest count word. The LP64 object occupies 16 bytes;
+these operations access only its first aligned 32-bit word and preserve the
+reserved bytes. The low bit records process sharing. The signed upper 31 bits
+hold the count or the contended state. Initialization rejects values above
+`0x3fffffff` before accessing the object; posting at that limit returns
+`-1/EOVERFLOW`. An empty try-wait returns `-1/EAGAIN`. Success preserves TLS
+errno. API 28 destroy returns zero without accessing the supplied object.
+
+A blocking wait requires enabled guest-thread scheduling. Posting to a
+contended word wakes all modeled waiters; each reloads shared RAM before
+competing for a token. A runnable caller may consume a token first, leaving
+a woken waiter asleep again with its original import still pending. Invalid
+state, changed sharing or inaccessible storage on resumption fail explicitly.
+A wait with no possible producer reports the existing guest-thread deadlock.
+Shared semaphores support participants in this modeled process; this does not
+create external process participants. Timed waits, named semaphores, signal
+interruption and raw futex interoperability remain unsupported.
+
+This independently authored model follows Android 9
+[`semaphore.cpp`](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/bionic/semaphore.cpp)
+and [`semaphore.h`](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/include/semaphore.h).
 
 ## API 28 thread attributes
 
@@ -661,15 +1049,23 @@ threads release storage on completion. Invalid non-null or retired handles
 fail at the API 28 target boundary; NULL lookup returns ESRCH, self-join
 returns EDEADLK, and detached or already claimed targets return EINVAL.
 If no thread is runnable, an admitted sleep can advance virtual time to its
-deadline. With no such deadline, outstanding join, once or mutex waits produce
-an explicit unsupported stop.
+deadline. With no such deadline, outstanding join, once, mutex or semaphore
+waits produce an explicit unsupported stop.
+Returning from a child start routine uses the same completion path as
+`pthread_exit`, including its pointer result, JNI cleanup and join/detach
+retirement. It does not require the initial SP: no guest caller resumes on
+that terminal stack. With scheduling enabled, the selected entry still
+requires its prepared return SP; native callbacks always require their saved
+caller SP. This terminal behavior does not relax ordinary guest-call ABI
+requirements or reconstruct Bionic's private startup frame.
 `pthread_exit` returns its pointer to a joiner; raw `SYS_exit` terminates only
 the current thread and leaves its pthread result zero. When the last thread
 exits without an entry return, its low eight status bits become the workload
 exit status. `exit_group` terminates
 the workload. Guest cleanup handlers, TLS keys/destructors, exit during a
 once/finalize callback, timers, cancellation,
-signals and clone remain unsupported. No cleanup or completion is invented.
+interruption of synchronization/stdio waits, and clone remain
+unsupported. No cleanup or completion is invented.
 
 By default the selected entry's return stops observation, even with live
 children. `android.drain_threads: true` continues those children under the
@@ -677,7 +1073,10 @@ same limits. The entry's `return_value` remains visible if a later child stops
 with an error. `android.threads` records identity, placement, waiting,
 completion and retirement; completion of its initial row means the selected
 invocation ended, not that the process exited. Named calls and raw services
-include `thread_id`. `android.trace_threads` partitions the existing PC trace
+include `thread_id`. Process-wide SIGKILL adds `termination_signal` to each
+still-live thread, clears its waiting status and does not invent a return,
+join completion, destructor or retirement. Previously completed thread history
+and any completed entry return are retained. `android.trace_threads` partitions the existing PC trace
 using zero-based `trace_index` and `thread_id`. Each new run consumes 16 bytes
 of the remaining report allowance; insufficient allowance truncates trace
 retention, not execution. Thread metadata reserves 128 bytes per allowed
@@ -704,3 +1103,395 @@ A trace demonstrates behavior for its explicit inputs. It is not proof of
 unvisited branches or arbitrary input equivalence. Unknown services and CPU
 instructions, invalid pointers, stack-check failures, and exhausted budgets
 remain visible stops. No unsupported instruction is replaced by NOP.
+
+## JNI native values and thread attachment
+
+Set `"android":{"jni":true,...}` to enable the JNI 1.6 LP64 interface. The
+strict Boolean defaults to false. `JNI_GetCreatedJavaVMs` exposes one guest VM;
+`GetEnv`, attachment and detachment use the cooperative native thread ID.
+Threads initially have no JNIEnv. A successful attachment creates a distinct
+identity; an environment from another thread or a previous attachment fails.
+The function tables are immutable guest storage, checked before each call.
+Internal JNI entry names are not accepted as arbitrary ELF imports; calls must
+enter a thunk owned by the prepared interface table.
+
+This native value model supports intrinsic class identity, local/global
+references, local frames, pending exceptions, UTF-16 and modified UTF-8 strings,
+primitive arrays of all eight widths, and Object/String object arrays. Array
+region copies preserve complete element bits; borrowed element copies obey
+release, commit and abort modes. Borrowed strings require matching releases.
+Pending-exception cleanup preserves both exception identity and borrowed values.
+Slots not implemented stop with their standard JNI table index in the diagnostic.
+
+The supported class set comprises Object, Class, String, Throwable, Exception,
+Error, RuntimeException, NullPointerException, IllegalArgumentException, IndexOutOfBoundsException,
+ArrayIndexOutOfBoundsException, StringIndexOutOfBoundsException,
+NegativeArraySizeException, ArrayStoreException and OutOfMemoryError, plus the
+primitive and Object/String array classes and the scalar Build.VERSION
+projection described below. Unknown classes stop rather than
+inventing an application class or assuming ClassNotFoundException. `ThrowNew`
+admits only a null message for these intrinsic throwable classes.
+
+Java execution includes the intrinsic methods and explicit integral DEX bodies
+below. There is no general class loader, native-method registration, monitor, weak-reference,
+critical/direct-buffer, GC or JIT model.
+Attachment names/groups and VM destruction also remain unsupported. The model
+retains at most 4096 objects and 4096 live references/borrows, with object storage
+bounded by half the memory limit and 512 unique attachment identities per
+workload. Exhaustion fails explicitly; it is not a claim about ART heap pressure.
+Native child-thread exit requires detachment and all borrowed copies released.
+Stopping observation at the selected main function's return is not a thread exit.
+
+Invocation ordering and return statuses follow the pinned
+[API 28 ART implementation](https://android.googlesource.com/platform/art/+/android-9.0.0_r1/runtime/java_vm_ext.cc).
+In particular, zero-capacity VM enumeration copies no VM and reports zero, and
+unsupported GetEnv versions leave its output untouched. Native values follow
+[JNI functions](https://docs.oracle.com/en/java/javase/17/docs/specs/jni/functions.html)
+and the [invocation interface](https://docs.oracle.com/en/java/javase/17/docs/specs/jni/invocation.html).
+These are bounded protocol models implemented independently of ART, not a booted
+Android runtime. See [device contracts](linux-device-contracts.md) for Binder and
+GPU ownership shared with raw Linux syscalls.
+
+ART-specific JNI value boundaries follow the pinned [API 28 JNI owner](https://android.googlesource.com/platform/art/+/refs/tags/android-9.0.0_r1/runtime/jni_internal.cc)
+and [UTF conversion contract](https://android.googlesource.com/platform/art/+/refs/tags/android-9.0.0_r1/libdexfile/dex/utf.cc).
+`NewStringUTF` accepts null and valid four-byte Unicode sequences; a complete
+surrogate pair encodes as four bytes, while an isolated UTF-16 surrogate unit
+encodes as three. `GetStringUTFChars` on null leaves `isCopy` untouched. Malformed
+encodings still fail explicitly. Negative array construction and an incompatible
+object-array initializer are JNI abort boundaries, represented by `runtime_failure`,
+not recoverable Java exceptions. Array-region bounds and `SetObjectArrayElement`
+type mismatches produce pending Java exceptions. Negative local-frame capacity
+returns `JNI_ERR` without pushing a frame. These distinctions are tested separately.
+
+
+### Intrinsic Java method execution
+
+GetMethodID/GetStaticMethodID resolve opaque, VM-owned method IDs. Ordinary,
+`V` and `A` calls share the same descriptor, receiver, invocation-kind and
+return-type checks. GP varargs reuse the Bionic AAPCS64 reader, including stack
+arguments; `A` calls read eight-byte jvalue carriers and consume only declared
+primitive bits. Method IDs survive deletion of the lookup reference. A zero-arg
+method does not read its argument pointer. Unknown method bodies stop with the
+class, method and signature; they are not evidence for NoSuchMethodError.
+
+The independently implemented, value-based subset is:
+
+- Object.getClass/equals, including String's virtual equals override and explicit
+  nonvirtual Object identity; Class.getName/isArray, with cached name identity.
+- String.length/isEmpty/charAt/hashCode/equals/toString, concat, substring with
+  one or two integer indices, compareTo(String), startsWith with optional offset,
+  endsWith, indexOf(String) with optional starting index, getChars and toCharArray.
+- String constructors for empty, String and char[] (whole array or offset/count),
+  plus static valueOf for int, long, boolean, char and char[].
+
+The operations compute UTF-16 values from the actual arguments and preserve
+copy/alias behavior, 32-bit hash overflow, bounds and null exception ordering.
+Boolean and minimum-integer literal identities, and Android's cached int strings
+for -99 through 99, are retained separately from newly allocated value strings.
+getChars validates its destination before writing and preserves it on exception.
+Allocation shares the JNI object budget. String search also has a finite work
+budget. This intrinsic catalogue does not infer application methods or arbitrary
+class initializers. Explicit supplied DEX bodies use the separate executor below.
+
+Semantic references are the pinned Android 9
+[String](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/String.java),
+[Class](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/Class.java),
+[Integer](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/Integer.java),
+[Long](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/Long.java)
+and JNI invocation contracts linked above. No host Java runtime is invoked.
+
+
+### Android version fields
+
+With `android.jni`, the bounded `android/os/Build$VERSION` scalar projection
+reads the same explicit `android.properties` snapshot as Bionic. It admits
+`INCREMENTAL`, `RELEASE`, `BASE_OS`, `SECURITY_PATCH`, `SDK`, `SDK_INT`,
+`FIRST_SDK_INT`, `PREVIEW_SDK_INT`, `CODENAME` and
+`MIN_SUPPORTED_TARGET_SDK_INT`. String defaults and signed 32-bit parsing follow
+[API 28 Build](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/Build.java),
+[SystemProperties JNI](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/jni/android_os_SystemProperties.cpp)
+and [ParseInt](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/base/include/android-base/parseint.h).
+Missing/empty values use the field's platform default; an invalid/overflowing
+integer becomes zero. Decimal leading zeroes are not octal, and hexadecimal
+requires `0x`/`0X` at the original start of the property.
+
+JNI and supplied DEX instructions use the same Runtime field and heap identity.
+Nonempty property Strings are separate from interned literals; a default keeps
+its literal identity. Repeated reads and detach/reattach retain the field value.
+Final writes, wrong accessors, forged identities, unknown fields, malformed
+property encodings and exhausted budgets fail explicitly.
+
+This is a read-only scalar view of platform state, not execution of the full
+framework class initializer, enclosing `Build` class, array/resource-version
+fields or a host boot classpath. Changing property values does not change the
+API 28 execution profile. Supplied DEX still cannot replace platform classes.
+No application context, registration, service reply or SDK-private cache is
+created by this projection.
+
+### Android system clocks
+
+JNI and DEX share the API 28 `SystemClock.uptimeMillis()`,
+`elapsedRealtime()` and `elapsedRealtimeNanos()` methods. Uptime reads explicit
+Linux `CLOCK_MONOTONIC` input (ID 1); elapsed realtime reads `CLOCK_BOOTTIME`
+(ID 7), including its independent epoch. The shared Linux clock owner accounts
+native and Java instruction work and optional idle advancement once. These
+methods require no application snapshot or host clock.
+
+Both elapsed methods read the same nanosecond service; the millisecond method
+truncates after reading it. As in API 28's
+[native SystemClock implementation](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/libutils/SystemClock.cpp),
+all three conversions pass through signed nanoseconds. Missing clock input,
+negative time and values beyond the nonnegative signed-nanosecond range stop
+explicitly. No clock substitutes for another. Handler posting and MessageQueue
+reads reuse the same uptime service and validation. Other `SystemClock` methods
+remain unmodeled.
+
+### ServiceManager lookup results and duration statistics
+
+The API 28 [ServiceManager](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/ServiceManager.java)
+model shares cache, Binder identities and initialization across JNI and DEX.
+`android.application_snapshot.service_manager` admits `cache` entries with
+nullable `name` and `binder`, and `binder_proxies` with positive unique `key`
+and optional `warn_on_blocking`. Missing cache state is unknown; an explicit
+empty array is a known empty cache. Non-null cache hits return their retained
+identity without timing or changing the blocking flag. `initServiceCache`
+copies entries through the shared HashMap model.
+
+`manager_proxy` and `context_object` independently describe an existing
+ServiceManagerProxy and the BinderInternal context result. Each is an optional
+nullable Binder key. A known-null manager uses the explicit context Binder to
+construct and retain a proxy. Unknown state stops at the boundary that needs it.
+
+Cache misses may consume `lookup_results`, an array of at most 256 exact,
+stable, successful semantic replies. Each entry requires all four fields:
+
+```json
+{"operation":"get","manager":7,"name":"alpha","binder":8}
+```
+
+`operation` is `get` or `check`; `manager` names the declared Binder behind the
+proxy, and `name` is a Java String value or null. `binder` is a declared Binder
+key or explicit null. Names are limited to 4096 encoded bytes. Duplicate
+manager/method/name tuples, undeclared keys and malformed encodings are rejected
+by shared admission. Unlisted queries remain unsupported; they never establish
+service absence. These replies do not execute native Parcel/Binder transport,
+simulate latency, or insert values into the Java cache. Successful non-null
+results reuse the same Binder identities and apply `Binder.allowBlocking`.
+
+`getService` measures duration with the shared boot clock and updates the
+retained StatLogger arrays. It obtains UID through the shared Linux identity
+owner, applies API 28 core/app thresholds and Java integer wrapping, and reads
+uptime from the independent monotonic clock. `checkService` does not perform
+these statistics updates. Paths requiring EventLog output or RemoteException
+handling remain unsupported rather than fabricating logging or transport effects.
+
+[StatLogger](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/com/android/internal/util/StatLogger.java)
+`logDurationStat(int,long)` updates counts, total/max duration, and per-second
+statistics in the retained Java arrays. It preserves signed comparisons,
+wrapping arithmetic, the strict next-tick comparison, and partial effects before
+array/clock failures. Invalid event IDs stop at the unmodeled diagnostic-logging
+boundary. Dump/reporting methods and arbitrary platform logging remain unmodeled.
+
+### Class lookup and native registration
+
+API 28 `FindClass` resolves a class without executing `<clinit>`. Native
+registration also does not initialize it. These boundaries follow
+[ART JNI](https://android.googlesource.com/platform/art/+/android-9.0.0_r1/runtime/jni_internal.cc)
+and [ClassLinker](https://android.googlesource.com/platform/art/+/android-9.0.0_r1/runtime/class_linker.cc).
+
+The shared Android hierarchy includes the public final `android.os.ServiceManager`
+class with `java.lang.Object` as its superclass. Class identity, assignability
+and reference-array queries do not initialize it. Active uses, including JNI
+method/field ID lookup and `AllocObject`, run its modeled API 28 initialization
+once through the shared Dalvik owner. Initialization reads property thresholds,
+constructs the shared HashMap and StatLogger, and retains class and field state.
+It requires explicit boot-clock input and does not infer a service registry.
+This type metadata does not admit other unknown Android classes.
+
+Unknown classes remain explicit stops. A workload may supply
+`android.jni_class_lookup_failures`, mapping exact slash-separated, non-array
+class names to `java/lang/ClassNotFoundException` or
+`java/lang/NoClassDefFoundError`. Each matched lookup returns null and leaves
+that fresh pending exception, with no message/cause payload. This is an explicit
+negative result supplied by the external loader contract; missing DEX alone
+never declares absence. At most 4096 entries with names of at most 1024 bytes
+are admitted. Known intrinsic or supplied DEX classes cannot be shadowed, and
+JNI must be enabled. Unlisted names, arbitrary loader objects, custom delegation,
+multiple defining loaders and dynamic classpath mutation remain unmodeled.
+
+`RegisterNatives` binds names and full signatures to native declarations in the
+supplied class/superclass chain. It retains the original declaring owner,
+replaces previous bindings, and preserves earlier entries if a later missing or
+non-native method raises `NoSuchMethodError` with its API 28 detail message.
+API 28's deprecated `!` signature
+prefix is accepted. Zero-count registration is a no-op; null members, malformed
+tables, negative counts and exhausted bounds fail explicitly. Each table and
+retained inventory is limited to 4096 bindings. `UnregisterNatives` removes only
+the specified class's declarations. Local-reference deletion and detach do not
+retire bindings.
+
+The process report's optional `android.jni_registrations` lists retained
+`class`, `name`, `signature` and `address`, sorted by method identity, including
+partial state at terminal failures. These are registered targets, not evidence
+of method execution or of a deployed application's identity. This increment
+admits registration only: native Java method invocation, special native ABIs,
+implicit symbol lookup and registration against unmodeled platform declarations
+remain explicit unsupported boundaries. Neither registration nor reporting
+executes or rewrites the target.
+
+## Explicit DEX methods and object state
+
+With JNI enabled, `android.dex_images` accepts an array of complete hex-encoded
+DEX images. This is an explicit classpath for this workload; the model never
+searches the host, phone, APK store or network. The Android API 28 profile admits
+versions 035, 037, 038 and 039, at most 16 images, 4096 supplied classes across
+all images and 1 MiB of input, further
+limited by the process memory allowance. The process JSON contract reserves
+2 MiB for this hexadecimal payload in addition to its 64 KiB metadata budget;
+other fields and escape overhead receive no extra allowance. The shared DEX reader checks container
+checksums, metadata, instruction boundaries and code flow before native guest
+constructors run. Duplicate definitions and platform class replacements fail.
+The reader's existing annotation and format restrictions also apply.
+
+`FindClass`, method lookup and field lookup bind supplied declarations and exact descriptors,
+including inherited members.
+Ordinary, V and A calls share the same JNI descriptor/argument owner as the
+intrinsics. Method identities belong to this VM and survive local frame or
+thread teardown. The execution contract supports static/instance methods,
+constructors and nonvolatile integral/reference fields on finite supplied
+class hierarchies, including public abstract interface declarations. Supported bodies include integer/wide constants and moves,
+32/64-bit arithmetic and shifts, narrowing/sign extension, signed comparisons,
+branches, packed/sparse switches, loops, recursion and static calls to supplied
+methods. Integral arguments/results include boolean, byte, char, short, int and
+long. All arithmetic uses Java wrapping and masked shift distances; minimum
+integer divided by -1 wraps, and division by zero raises a pending
+ArithmeticException for JNI to observe and clear.
+
+Each workload retains its own class state across JNI calls, local-reference
+deletion, detach/reattach and sequential calls from different guest threads.
+DEX encoded field values (or zero defaults) are installed before `<clinit>`.
+Method/field lookup, allocation, static invocation and static field instructions
+initialize the declaring class once. `FindClass` only resolves the class, including
+a previously resolved class whose initializer failed. Recursive initialization on the executing
+thread can observe prepared or partially written values; it does not rerun the
+initializer. `sget`/`sput` integral variants check the declared field width;
+stores narrow byte/char/short values, and final stores are restricted to the
+declaring initializer. Cross-class nonpublic members remain unsupported.
+
+A modeled Java exception escaping `<clinit>` produces a pending
+ExceptionInInitializerError; subsequent use of that erroneous class produces
+NoClassDefFoundError. Nested initialization Errors propagate. Effects already
+performed by Java code remain observable. An unsupported instruction, invalid
+execution or exhausted resource budget terminates the workload rather than
+being converted into a Java exception or silently restarting initialization.
+Modeled throwables retain heap identity and explicit constructor messages,
+without a complete ART cause/stack-trace object graph. Initialization follows the synchronous subset of
+[Java class initialization](https://docs.oracle.com/javase/specs/jls/se25/html/jls-12.html#jls-12.4.2)
+and [JNI initialization triggers](https://docs.oracle.com/en/java/javase/25/docs/specs/jni/functions.html#findclass).
+
+Every DEX instruction consumes the existing native workload instruction budget
+and deadline. Calls do not reset either budget. Recursion is bounded to 64
+frames and a conservative frame-storage share of the stack/memory allowance;
+resource exhaustion stops explicitly. Uninitialized registers, torn wide
+values and incompatible results fail. Wide moves read both halves before an
+overlapping write. Diagnostics name the method and DEX code-unit address.
+DEX bodies execute synchronously inside their JNI call; this contract does not
+preempt Java threads or equate bytecode steps with physical CPU/GPU timing.
+Native scheduling and explicitly configured virtual clocks retain their owners.
+
+DEX and JNI share a bounded heap, object identities, field values and array
+storage. `new-instance`, direct/private calls, virtual/interface dispatch,
+`invoke-super`, `iget`/`iput` and reference static fields execute supplied bodies.
+Objects include inherited fields and methods resolve from declared and actual
+types. Superclasses initialize before subclasses; static members retain the
+state of their declaring class. JNI ordinary calls select the actual override,
+while nonvirtual calls validate and execute the named class's resolved method.
+Direct `this`/super constructor chains keep one object identity, with initialization
+completed only after the outer constructor returns. Uninitialized objects can
+be moved but cannot escape through calls, fields or returns; arbitrary
+constructor self-escape remains outside the profile. JNI `AllocObject` explicitly creates
+zeroed storage without running the constructor; `NewObject` ordinary/V/A runs it.
+
+Reference registers remain distinct from integers (only literal zero can also
+serve as null). `new-array`, `filled-new-array`, `fill-array-data`, array length,
+all integral/reference `aget`/`aput` variants, casts, instance tests and reference
+equality share the same type rules. Arrays may contain supplied instances or
+other arrays; primitive arrays are not coerced across component types. Null,
+bounds, negative DEX lengths, array-store and cast failures produce their Java
+exceptions. JNI negative-length allocation retains its existing fatal contract.
+JNI array borrows still copy back only under their requested release mode.
+
+JNI GetFieldID/GetStaticFieldID and integral/reference accessor families resolve
+opaque, workload-owned IDs against supplied declarations. They validate the
+receiver, storage kind and accessor type; field lookup initializes the class.
+JNI changes are visible to DEX and vice versa, including after detaching a native
+thread. Final-field mutation through JNI is deliberately rejected. Object storage
+is retained until workload teardown with finite byte/object limits; reaching a
+model limit stops explicitly, without claiming that a real Java VM would throw
+OutOfMemoryError. There is no garbage-collection or ART layout claim.
+
+DEX string constants (including encoded static String values), reference class literals,
+and the same bounded String/Object/Class value methods available through JNI
+now execute in the shared runtime. UTF-16 preserves embedded NUL, supplementary
+characters and isolated surrogates. Literal strings and `String.intern` share a
+workload pool; class objects share identity with FindClass/GetObjectClass.
+Supported throwable constructors accept no argument or a String message;
+`Throwable.getMessage` returns that actual message identity.
+
+Ordered typed catches, catch-all handlers, `move-exception`, explicit throws,
+rethrows and compiled finally paths execute decoded control flow. Exceptions
+from modeled arithmetic, arrays and library operations follow the same handler
+selection. The original throwable survives JNI ExceptionOccurred/Throw and
+catch/rethrow. Non-Java failures and budget stops cannot be swallowed by a catch.
+
+This is a bounded interpreter, not complete ART. Float/double execution,
+other encoded reference constants, default/static interface bodies, interface
+fields, synchronization, volatile fields, cross-class nonpublic member access,
+and external/native Java methods remain unsupported. The finite library catalogue
+is explicit; an unknown method never supplies a guessed Java result.
+Binder system-service implementations and GPU shaders are independent inputs
+and are not supplied by admitting DEX.
+
+The instruction contract follows the Android
+[Dalvik bytecode specification](https://source.android.com/docs/core/runtime/dalvik-bytecode)
+and [DEX format](https://source.android.com/docs/core/runtime/dex-format).
+`test_android_dex_runtime.py` compiles original Java fixtures with javac and D8,
+then compares the JVM's class-file results with JNI calls into those DEX bodies.
+`test_android_dex_state.py` compares every value and exception type in repeated
+calls, reversed cyclic initialization, retained state after failure, reattachment
+and sequential guest-thread execution against independently run Java class files.
+`test_android_dex_objects.py` compares JVM values with constructors, instance
+calls, typed field access, reference identity, primitive/object/nested arrays,
+copy-back, global references across reattachment and recoverable Java exceptions.
+It also tests invalid field IDs/accessor types, final writes and heap limits.
+`test_android_dex_language.py` adds independent JVM checks for UTF-16 operations,
+interning, thrown-object identity, ordered handlers, finally effects, repeated
+unwinding, inherited fields and class/interface/super/JNI nonvirtual dispatch.
+The JVM and D8 prepare/check fixtures only; NeverD execution uses neither.
+
+## Offline address resolution and TCP
+
+Explicit `android.resolver_queries` and `linux_network` inputs allow bounded
+`getaddrinfo`/`freeaddrinfo`, `inet_ntop`/`inet_pton`, socket creation, timeout
+options, connect and scalar
+stream I/O. See [offline network contracts](linux-network-contracts.md) for the
+API 28 layout, ownership checks, errno, descriptor aliases and unsupported
+boundaries. No host DNS or sockets are used.
+
+### Error text storage
+
+`strerror` interprets the low 32 argument bits as a signed error number and
+preserves errno. Known errors borrow process-owned, initially read-only strings;
+unknown values use `Unknown error N` in reusable per-thread storage. Another
+unknown call on that thread replaces its buffer; known calls and other threads
+leave it unchanged. The buffer is separate from `dlerror` and ABI TLS slots.
+Known calls return a pointer without reading the pointed-to bytes, so a guest
+unmapping the text faults only if it later dereferences that pointer.
+
+The text catalog is pinned to Android NDK 26.2.11394342's ARM64 `strerror.o`,
+including codes 0 through 133 except 41 and 58. This is an explicit catalog
+choice within the bounded native profile; its exact equivalence to every API 28
+device has not been established. The original sysroot notices are retained in
+[third-party notices](../THIRD_PARTY_NOTICES.md). Model addresses are placement
+policy. Reentrant and locale variants remain unsupported. No host libc, locale,
+errno or network supplies the result.

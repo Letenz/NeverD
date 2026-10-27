@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceLocation.h"
 
 #include <memory>
@@ -21,8 +22,6 @@
 
 namespace neverd::web {
 inline constexpr std::string_view SourceMapProfile = "source-map-v3-offline-v1";
-inline constexpr uint64_t MaxSourceMapBytes = 8 * 1024 * 1024;
-inline constexpr uint64_t MaxSourceMapSegments = 100000;
 
 /// Storage locators are offsets in the immutable container, not host paths.
 /// Decoded text has its own identity and never reuses compressed byte offsets.

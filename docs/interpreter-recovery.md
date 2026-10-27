@@ -258,7 +258,9 @@ If a target remains unresolved after producer, guard, register and frame refinem
 
 `MaxChainedTransfers` is an opt-in C++ limit (default `0`) for consecutive control transfers whose target or Boolean outcome is proved unique. It preserves full symbolic state, native origins and cumulative budgets; multiple outcomes use ordinary CFG edges. Backward discovery replays committed instruction occurrences. Chaining may duplicate loop origins and limit automatic cutpoint inference.
 
-`EntryFrameBounds` explicitly declares a nonwrapping `[Begin, End)` range around the entry value of `FrameBaseRegister`. It grants no memory-access or nonalias facts. Without it, roots remain modular. Native proof requires matching caller frame bounds and binds them into its receipt; LLVM proof retains that frame's existing domain. Recovery alone is not an equivalence certificate.
+`EntryFrameBounds` explicitly declares a nonwrapping `[Begin, End)` range around the entry value of `FrameBaseRegister`. The bounds alone grant no memory-access or nonalias facts. Without it, roots remain modular. Native proof requires matching caller frame bounds and binds them into its receipt; LLVM proof retains that frame's existing domain. Recovery alone is not an equivalence certificate.
+
+`EntryFrameBounds::ExcludedAddressRanges` can additionally declare absolute, nonwrapping intervals that the whole entry frame must miss. These are explicit caller preconditions, never inferred from an observed address or pointer provenance. `ProveStoreFrameSeparation` preserves current frame bytes and affine pointer spills only after proving that a complete write misses the declared frame; unproved writes retain ordinary alias invalidation, and unknown proofs or exhausted budgets refuse. This includes the complete CMPXCHG write phase. Native proof requires the identical exclusion list in its frame contract. Raw receipts bind both the exclusions and the proof strategy; residual consumers must retain the declared input domain.
 
 <!-- i18n-section: execution-contract -->
 
@@ -268,7 +270,7 @@ The binary adapter currently accepts linked x64 ELF and PE images at their
 mapped addresses. Mappings, bytes, and permissions must remain fixed, with no
 concurrent mutation. Strict on-demand lifting follows reachable machine code;
 unsupported instructions, calls, opaque operations outside the flag forms
-described below, ordered memory, unresolved control, and language exception
+described below, ordered memory outside the narrow raw CAS domain below, unresolved control, and language exception
 handling stop recovery.
 
 PE recovery requires full image metadata, including image-wide relocations and
@@ -321,6 +323,22 @@ The exact x64 `PUSHFQ`/`POPFQ` forms remain in the residual program. Analysis tr
 Before a full flag snapshot, every modelled arithmetic or direction flag must have a definition within the recovered function. Any direct flag read also needs a definition on every reachable predecessor, even when symbolic simplification cancels its value. Otherwise recovery refuses instead of emitting an unknown-register trap in C.
 
 LowIR temporaries are local to one lifted native instruction. Every byte read must have been defined earlier in that instruction; a reused offset from a prior instruction or an algebraically cancelled undefined value is not source evidence. Entry constants may bind physical registers only.
+
+<!-- i18n-section: supervisor-interrupt-control -->
+
+## Supervisor interrupt control
+
+Raw LowIR recovery and native relation proofs admit canonical x64 `CLI`/`STI` only with the explicit `KernelX64NoFaultV1` profile. The shared x64 flags owner clears/sets IF while preserving every other flag, general-purpose register and memory byte. Recovery retains the original intrinsic; proofs record its flag transition and always compare final system flags, even without ordinary register observations.
+
+This profile fixes CPL0/IOPL0 and excludes asynchronous events, debug delivery and privilege transitions. It therefore does not observe STI's temporary interrupt inhibition. A missing or user profile refuses these instructions; the existing source ABI remains restricted to its user profile. This support supplies no interrupt-delivery or privilege-transition model.
+
+<!-- i18n-section: raw-cmpxchg -->
+
+## Sequential raw compare-and-exchange
+
+Raw specialization admits `ATOMIC_CMPXCHG` only with `ExplicitMachineState=true` and `NormalNonfaultingExecution=true`, `Default` memory, a 64-bit address, 1/2/4/8-byte values of equal width and `SequentiallyConsistent` ordering. It retains the original atomic operation, ordering, address space and occurrence. This uses the existing sequential execution domain with no concurrent or asynchronous modification; it supplies no concurrency or MMIO model. Other atomic operations, 16-byte CAS, other orderings, segmented CAS and ordered LOAD/STORE remain unsupported by this recovery path.
+
+The existing `ExternalStoresPreserveEntryReturnSlot` and `ExternalStoresDisjointEntryFrame` contracts apply to the entire write phase, including a failed comparison or an unchanged value. `ExternalStoresPreserveEntryReturnSlot` protects only the entry return slot. `ExternalStoresDisjointEntryFrame` protects only the declared frame bounds; live native return cells outside those bounds still need independent separation evidence. No additional nonalias premise is inferred. Machine-source wrapping and the independent LowIR/native/LLVM proof routes still refuse reachable ordered CAS; a complete raw result is not a source or equivalence certificate.
 
 <!-- i18n-section: machine-state -->
 
@@ -583,3 +601,17 @@ Entry-prefix replays visit queued branches before extending an earlier loop agai
 
 
 Alignment forwards `MaxCuts` to the shared inference owner. After input validation and complete feedback-cut selection, an oversized set fails before symbolic entry exploration or widening. This per-plan cap does not reduce `MaxCutpointAttempts` or legal single-cut retries. Filtered families retain their charged selection work. Standalone and native inference keep their existing limits; every accepted relation still requires the unchanged complete checker.
+
+<!-- i18n-section: immutable-wide-reads -->
+
+## Complete immutable wide reads
+
+Under `ExplicitMachineState` and `NormalNonfaultingExecution`, an admitted 16-byte `LOAD` can use immutable image evidence only when every feasible address has a complete 16-byte witness. Symbolic execution retains all 128 bits. Residual materialization uses scalar parts in storage order and captures an overlapping address before writing any destination byte. Both byte orders share this rule. Every emitted operation consumes the existing operation budget.
+
+An incomplete address domain or unavailable immutable span retains the whole runtime read without partial witnesses. A provider returning a malformed byte extent refuses the result. Writable memory and runtime observations do not acquire immutable authority. Raw receipts bind all witness bytes, including the upper half. Source wrapping and independent native proofs keep their existing width and environment requirements.
+
+<!-- i18n-section: unrooted-native-stack -->
+
+## Internal transfers after changing the stack
+
+Explicit raw machine regions can follow internal near CALL and RET instructions when the current stack pointer is no longer an entry-relative value. The architecture adapter retains the physical target capture, push, return-word read and pop. Every internal return still requires an exhaustive finite target proof from the actual stack word. Only proved entry-relative return cells enter the frame projection and preservation inventory; losing an unrelated stack relation at a graph boundary can still cause recovery to refuse. Ordinary function recovery retains its restored-frame requirements. This capability supplies a raw region result; whole-function composition and source or native equivalence remain separate obligations.

@@ -7,6 +7,7 @@
 #ifndef NEVERD_SYMBOLIC_SYMKNOWNBITS_H
 #define NEVERD_SYMBOLIC_SYMKNOWNBITS_H
 
+#include "neverd/symbolic/Limits.h"
 #include "neverd/symbolic/SymExpr.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -20,10 +21,14 @@ namespace neverd::symbolic {
 /// Callers retain responsibility for those obligations.
 class SymKnownBits {
 public:
-  static constexpr unsigned MaxQueryWork = 256;
-  static constexpr unsigned MaxDepth = 32;
-  static constexpr unsigned MaxWidth = 128;
-  static constexpr unsigned MaxCachedFacts = 65536;
+  static constexpr unsigned MaxQueryWork =
+      ::neverd::limits::symbolic::kSymKnownBitsMaxQueryWork;
+  static constexpr unsigned MaxDepth =
+      ::neverd::limits::symbolic::kSymKnownBitsMaxDepth;
+  static constexpr unsigned MaxWidth =
+      ::neverd::limits::symbolic::kSymKnownBitsMaxWidth;
+  static constexpr unsigned MaxCachedFacts =
+      ::neverd::limits::symbolic::kSymKnownBitsMaxCachedFacts;
 
   explicit SymKnownBits(const SymContext &Context) : C(Context) {}
   SymKnownBits(const SymKnownBits &) = delete;

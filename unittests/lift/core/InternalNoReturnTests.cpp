@@ -1,18 +1,20 @@
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
-#include "neverd/ir/X87Context.h"
+#include "neverd/ir/X86/X87Context.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/InternalNoReturn.h"
 #include "neverd/libc/LibCNames.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/ProloguePatterns.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
+#include <map>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -399,6 +401,32 @@ TEST(InternalNoReturn, CalleeEndingInAKnownNoReturnCallEndsItsBlock) {
   EXPECT_TRUE(callAtBaseEndsItsBlock(Image));
 }
 
+TEST(InternalNoReturn, RustNeverReturningRoutinesEndTheirCallersBlock) {
+  // Rust's standard library declares its panic entry points `-> !`.  A body
+  // that reaches the runtime through more calls than a proof follows (here
+  // through a pointer, then `ret`) is known by its name, as `abort` is; the
+  // bytes after the call can be a jump table rustc keeps in __text.
+  const std::vector<uint8_t> CallsThroughAPointer = {0xff, 0xd0, 0xc3};
+  for (const char *Name :
+       {"_RNvNtCs1a2b3c4d5e6_4core6option13unwrap_failed",
+        "__RNvNtCsbAqs9W1eE8G_4core9panicking16panic_in_cleanup",
+        "__RINvNtCsbAqs9W1eE8G_4core9panicking13assert_failedyyEB4_",
+        "_ZN4core9panicking5panic17h0123456789abcdefE"}) {
+    SCOPED_TRACE(Name);
+    EXPECT_TRUE(callAtBaseEndsItsBlock(imageWith(
+        callerThen(CallsThroughAPointer), {{Base, "caller"}, {0x1010, Name}})));
+  }
+  // What only inspects a panic returns, and so does the runtime's attempt to
+  // start one when no unwinder takes it.
+  for (const char *Name :
+       {"_RNvNtCsgejaSCmAoRz_3std6thread9panicking",
+        "__RNvCs9wFQrvczXsK_7___rustc18___rust_start_panic"}) {
+    SCOPED_TRACE(Name);
+    EXPECT_FALSE(callAtBaseEndsItsBlock(imageWith(
+        callerThen(CallsThroughAPointer), {{Base, "caller"}, {0x1010, Name}})));
+  }
+}
+
 TEST(InternalNoReturn, WhatTheUserStatesOfACalleeDecides) {
   // As IDA's Edit function does, a statement decides over the callee's name
   // and its body, in either direction.
@@ -429,6 +457,187 @@ TEST(InternalNoReturn, WhatTheUserStatesOfACalleeDecides) {
     EXPECT_TRUE(callAtBaseEndsItsBlock(Image));
     Image.UserNoReturn[0x1010] = false;
     EXPECT_FALSE(callAtBaseEndsItsBlock(Image));
+  }
+}
+
+/// caller: call b1; ret.  Each of b1 .. bN is `call next; ret`, sized so the
+/// screen decodes it, and the last calls c: ret.  Code follows every call
+/// and every b holds a `ret`, so only what the user states of c can end the
+/// caller's call.
+BinaryImage statedChain(unsigned Length) {
+  std::vector<uint8_t> Code(0x10 * (Length + 2), 0xcc);
+  std::vector<std::pair<va_t, const char *>> Functions{{Base, "caller"}};
+  static const char *Names[] = {"b1", "b2", "b3", "b4", "b5", "b6"};
+  for (unsigned I = 0; I <= Length; ++I) {
+    const va_t At = Base + 0x10 * I;
+    putCall(Code, At, At + 0x10);
+    Code[At - Base + 5] = 0xc3;
+    if (I != 0)
+      Functions.push_back({At, Names[I - 1]});
+  }
+  const va_t C = Base + 0x10 * (Length + 1);
+  Code[C - Base] = 0xc3;
+  Functions.push_back({C, "c"});
+  auto Image = imageWith(Code, Functions);
+  for (Symbol &Sym : Image.Symbols)
+    Sym.Size = Sym.Addr == C ? 1 : 6;
+  return Image;
+}
+
+TEST(InternalNoReturn, CalleeCallingWhatTheUserStatesNeverReturnsIsProved) {
+  // As IDA passes an edited no-return flag on to callers: once c is stated
+  // never to return, b's `ret` is unreachable, so b is proved and the call
+  // to it ends its block.  A statement that b returns decides over that.
+  auto Image = statedChain(1);
+  const va_t B = Base + 0x10, C = Base + 0x20;
+  EXPECT_FALSE(callAtBaseEndsItsBlock(Image));
+  Image.UserNoReturn[C] = true;
+  EXPECT_TRUE(callAtBaseEndsItsBlock(Image));
+  Image.UserNoReturn[B] = false;
+  EXPECT_FALSE(callAtBaseEndsItsBlock(Image));
+}
+
+TEST(InternalNoReturn, ScreenWantsEveryReturnAfterACallThatCannotComeBack) {
+  // Stating c never returns sends to the proof only callees whose every
+  // return follows, with no branch in between, a call that cannot come back:
+  // a call to c, or to a function with no return that calls c.  A callee
+  // that calls c on one path and returns on another needs no proof.
+  std::vector<uint8_t> Code(0x120, 0xcc);
+  const va_t C = Base + 0x100, D = Base + 0x110, W = Base + 0x40;
+  const auto put = [&](va_t At, std::initializer_list<uint8_t> Bytes) {
+    std::copy(Bytes.begin(), Bytes.end(), Code.begin() + (At - Base));
+  };
+  putCall(Code, Base, C); // b1: call c; ret
+  put(Base + 5, {0xc3});
+  put(Base + 0x10, {0x85, 0xc9, 0x74, 0x05}); // b2: test; jz over; call c
+  putCall(Code, Base + 0x14, C);
+  put(Base + 0x19, {0xc3});      //     over: ret
+  putCall(Code, Base + 0x20, C); // b3: call c; add rsp, 8; ret
+  put(Base + 0x25, {0x48, 0x83, 0xc4, 0x08, 0xc3});
+  putCall(Code, Base + 0x30, C); // b4: call c; call d; ret
+  putCall(Code, Base + 0x35, D);
+  put(Base + 0x3a, {0xc3});
+  putCall(Code, W, C);           // w: call c; int3
+  putCall(Code, Base + 0x50, W); // b5: call w; ret
+  put(Base + 0x55, {0xc3});
+  putCall(Code, Base + 0x60, D); // b6: call d; ret
+  put(Base + 0x65, {0xc3});
+  put(C, {0xc3});
+  put(D, {0xc3});
+  auto Image = imageWith(Code, {{Base, "b1"},
+                                {Base + 0x10, "b2"},
+                                {Base + 0x20, "b3"},
+                                {Base + 0x30, "b4"},
+                                {W, "w"},
+                                {Base + 0x50, "b5"},
+                                {Base + 0x60, "b6"},
+                                {C, "c"},
+                                {D, "d"}});
+  const std::map<std::string, uint64_t> Sizes = {
+      {"b1", 6}, {"b2", 10}, {"b3", 10}, {"b4", 11}, {"w", 6},
+      {"b5", 6}, {"b6", 6},  {"c", 1},   {"d", 1}};
+  for (Symbol &Sym : Image.Symbols)
+    Sym.Size = Sizes.at(Sym.Name);
+  const auto screened = [&](const BinaryImage &In) {
+    std::set<va_t> Entries;
+    for (const Symbol &Sym : In.Symbols)
+      Entries.insert(Sym.Addr);
+    const libc::NoReturnTargetIndex Names(In);
+    const InternalNoReturnIndex Index(In, &Entries, &Names, nullptr, nullptr);
+    std::string Passed;
+    for (const Symbol &Sym : In.Symbols)
+      if (Index.mayNeverReturn(Sym.Addr))
+        Passed += Sym.Name + " ";
+    return Passed;
+  };
+  // Without a statement only w, which holds no return, is worth a proof.
+  EXPECT_EQ(screened(Image), "w ");
+  Image.UserNoReturn[C] = true;
+  EXPECT_EQ(screened(Image), "b1 b3 w b5 ");
+}
+
+TEST(InternalNoReturn, ScreenTreatsAnUnliftableByteAsUnknown) {
+  // b: call c; getsec; ret, with c stated never to return. GETSEC remains
+  // pending without a register proof, so the screen cannot know b's
+  // branches. It declines the proof instead of assuming local completion.
+  std::vector<uint8_t> Code(0x30, 0xcc);
+  putCall(Code, Base, Base + 0x20);
+  Code[5] = 0x0f;
+  Code[6] = 0x37;
+  Code[7] = 0xc3;
+  Code[0x20] = 0xc3;
+  auto Image = imageWith(Code, {{Base, "b"}, {Base + 0x20, "c"}});
+  for (Symbol &Sym : Image.Symbols)
+    Sym.Size = Sym.Name == "b" ? 8 : 1;
+  Image.UserNoReturn[Base + 0x20] = true;
+  const std::set<va_t> Entries{Base, Base + 0x20};
+  const libc::NoReturnTargetIndex Names(Image);
+  const InternalNoReturnIndex Index(Image, &Entries, &Names, nullptr, nullptr);
+  bool Screened = true;
+  EXPECT_NO_THROW(Screened = Index.mayNeverReturn(Base));
+  EXPECT_FALSE(Screened);
+}
+
+TEST(InternalNoReturn, StatedNoReturnReachesCallersUpToTheDepthLimit) {
+  // A chain of such callees is proved to the same depth as one ending in a
+  // trap (ProofsStopAtTheDepthLimit), and no further.
+  for (unsigned Length :
+       {limits::kMaxNoReturnProofDepth, limits::kMaxNoReturnProofDepth + 1}) {
+    SCOPED_TRACE(Length);
+    auto Image = statedChain(Length);
+    Image.UserNoReturn[Base + 0x10 * (Length + 1)] = true;
+    EXPECT_EQ(callAtBaseEndsItsBlock(Image),
+              Length <= limits::kMaxNoReturnProofDepth);
+  }
+}
+
+TEST(InternalNoReturn, PathAroundAStatedCallStillReturns) {
+  // b: test ecx, ecx; jz over; call c; over: ret -- c is stated never to
+  // return, but the path around the call still returns.
+  std::vector<uint8_t> Code(0x30, 0xcc);
+  putCall(Code, Base, Base + 0x10);
+  Code[5] = 0xc3;
+  const uint8_t Body[] = {0x85, 0xc9, 0x74, 0x05};
+  std::copy(std::begin(Body), std::end(Body), Code.begin() + 0x10);
+  putCall(Code, Base + 0x14, Base + 0x20);
+  Code[0x19] = 0xc3;
+  Code[0x20] = 0xc3;
+  auto Image =
+      imageWith(Code, {{Base, "caller"}, {0x1010, "b"}, {0x1020, "c"}});
+  for (Symbol &Sym : Image.Symbols)
+    Sym.Size = Sym.Name == "caller" ? 6 : Sym.Name == "b" ? 10 : 1;
+  Image.UserNoReturn[0x1020] = true;
+  EXPECT_FALSE(callAtBaseEndsItsBlock(Image));
+}
+
+TEST(InternalNoReturn, TailJumpIntoAFunctionThatNeverReturnsIsProved) {
+  // b: jmp c, the shape a compiler gives a wrapper ending in its call when
+  // it does not know c never returns.  The jump ends b's path as a call to
+  // c would: once c is stated never to return, when the name list knows c,
+  // or when c is proved, and a statement that c returns decides over both.
+  struct Case {
+    const char *Name;
+    std::vector<uint8_t> Body;
+  };
+  for (const Case &C :
+       {Case{"c", {0xc3}}, Case{"abort", {0xc3}}, Case{"c", {0xcd, 0x29}}}) {
+    SCOPED_TRACE(std::string(C.Name) + " " + std::to_string(C.Body.size()));
+    std::vector<uint8_t> Code(0x30, 0xcc);
+    putCall(Code, Base, Base + 0x10);
+    Code[5] = 0xc3;
+    Code[0x10] = 0xe9;
+    const auto Rel = static_cast<int32_t>((Base + 0x20) - (Base + 0x15));
+    for (unsigned I = 0; I < 4; ++I)
+      Code[0x11 + I] = static_cast<uint8_t>(Rel >> (8 * I));
+    std::copy(C.Body.begin(), C.Body.end(), Code.begin() + 0x20);
+    auto Image =
+        imageWith(Code, {{Base, "caller"}, {0x1010, "b"}, {0x1020, C.Name}});
+    for (Symbol &Sym : Image.Symbols)
+      Sym.Size = Sym.Name == "caller" ? 6 : Sym.Name == "b" ? 5 : C.Body.size();
+    const bool Known = std::string_view(C.Name) == "abort" || C.Body.size() > 1;
+    EXPECT_EQ(callAtBaseEndsItsBlock(Image), Known);
+    Image.UserNoReturn[0x1020] = !Known;
+    EXPECT_EQ(callAtBaseEndsItsBlock(Image), !Known);
   }
 }
 
@@ -465,6 +674,27 @@ TEST(InternalNoReturn, ProofsStopAtTheDepthLimit) {
     EXPECT_EQ(callAtBaseEndsItsBlock(Image),
               Length <= limits::kMaxNoReturnProofDepth);
   }
+}
+
+TEST(InternalNoReturn, TrimmingKeepsAnswersUntilThereAreTooMany) {
+  // A later run keeps the answers earlier runs found, which depend only on
+  // the index's inputs.  Changing the callee after its proof, which no
+  // session does, shows which answer a run reads.
+  auto Image =
+      imageWith(callerThen({0xcd, 0x29}), {{Base, "caller"}, {0x1010, "b"}});
+  const std::set<va_t> Entries{Base, 0x1010};
+  const libc::NoReturnTargetIndex Names(Image);
+  InternalNoReturnIndex Callees(Image, &Entries, &Names, nullptr, nullptr);
+  ASSERT_TRUE(Callees.neverReturns(0x1010, 0));
+  Image.Segments.front().Data[0x10] = 0xc3;
+  Callees.trimMemoizedProofs(limits::kMaxRetainedNoReturnAnswers);
+  EXPECT_TRUE(Callees.neverReturns(0x1010, 0));
+  // Past the bound the answers start over, as a cleared index does.
+  Callees.trimMemoizedProofs(0);
+  EXPECT_FALSE(Callees.neverReturns(0x1010, 0));
+  Image.Segments.front().Data[0x10] = 0xcd;
+  Callees.clearMemoizedProofs();
+  EXPECT_TRUE(Callees.neverReturns(0x1010, 0));
 }
 
 TEST(InternalNoReturn, CallFollowedByCodeIsNotProved) {
@@ -587,18 +817,25 @@ TEST(InternalNoReturn, CallerWithAnUnresolvedBranchStillListsItsCallees) {
 
 TEST(InternalNoReturn, CallToACalleeWithNothingThatReturnsIsProved) {
   // caller: call b; ret -- code follows the call, but b's sized symbol
-  // covers only `int 0x29`, which does not return, so b is proved.  A b that
-  // also holds a `ret`, even one no path reaches, is not worth the proof.
-  for (bool HoldsReturn : {false, true}) {
-    SCOPED_TRACE(HoldsReturn);
+  // covers only `int 0x29`, which does not return, so b is proved.  A `ret`
+  // that only the `int 0x29` precedes is reached by no path, and b is still
+  // proved. A `ret` a branch reaches is worth no proof.
+  struct Case {
+    std::vector<uint8_t> Body;
+    bool Proved;
+  };
+  for (const Case &C :
+       {Case{{0xcd, 0x29}, true}, Case{{0xcd, 0x29, 0xc3}, true},
+        Case{{0x74, 0x02, 0xcd, 0x29, 0xc3}, false}}) {
+    SCOPED_TRACE(testing::PrintToString(C.Body));
     std::vector<uint8_t> Code(0x10, 0xcc);
     putCall(Code, Base, Base + 0x10);
     Code[5] = 0xc3;
-    Code.insert(Code.end(), {0xcd, 0x29, 0xc3});
+    Code.insert(Code.end(), C.Body.begin(), C.Body.end());
     Code.resize(0x20, 0xcc);
     auto Image = imageWith(Code, {{Base, "caller"}, {0x1010, "b"}});
-    Image.Symbols.back().Size = HoldsReturn ? 3 : 2;
-    EXPECT_EQ(callAtBaseEndsItsBlock(Image), !HoldsReturn);
+    Image.Symbols.back().Size = C.Body.size();
+    EXPECT_EQ(callAtBaseEndsItsBlock(Image), C.Proved);
   }
 }
 

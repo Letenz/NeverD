@@ -8,6 +8,7 @@
 
 #include "MedLibraryRecognitionInternal.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/SymbolSpelling.h"
@@ -195,7 +196,10 @@ public:
   }
 
   std::optional<MedVar> canonical(MedVar V) {
-    for (unsigned Depth = 0; Depth < 64; ++Depth) {
+    for (unsigned Depth = 0;
+         Depth <
+         ::neverd::limits::ir::kMedLibraryRecognitionCanonicalDepthLimit;
+         ++Depth) {
       if (!spend())
         return std::nullopt;
       if (V.isConst())
@@ -243,7 +247,10 @@ public:
   }
 
   bool unsignedFits(MedVar Value, unsigned Bits, unsigned Depth = 0) {
-    if (!spend() || Depth >= 32 || !Bits || Bits > 64)
+    if (!spend() ||
+        Depth >= ::neverd::limits::ir::
+                     kMedLibraryRecognitionUnsignedFitsDepthLimit ||
+        !Bits || Bits > 64)
       return false;
     auto C = canonical(Value);
     if (!C)
@@ -268,7 +275,10 @@ public:
 
   std::optional<uint64_t> literal(MedVar Value, MatchState &State,
                                   unsigned Depth = 0) {
-    if (!spend() || Depth >= 32 || !Value.Size || Value.Size > 8)
+    if (!spend() ||
+        Depth >=
+            ::neverd::limits::ir::kMedLibraryRecognitionLiteralDepthLimit ||
+        !Value.Size || Value.Size > 8)
       return std::nullopt;
     auto C = canonical(Value);
     if (!C)
@@ -318,7 +328,8 @@ public:
 
   bool match(const LibraryFeatureRule &Rule, unsigned NodeIndex, MedVar Value,
              MatchState &State, unsigned Depth = 0) {
-    if (!spend() || Depth >= 128)
+    if (!spend() ||
+        Depth >= ::neverd::limits::ir::kMedLibraryRecognitionMatchDepthLimit)
       return false;
     const LibraryFeatureNode &Node = Rule.Nodes[NodeIndex];
     auto Canonical = canonical(Value);
@@ -542,7 +553,9 @@ public:
 
   std::optional<MedVar> predicateCarrier(MedVar Value, MatchState &State,
                                          unsigned Depth = 0) {
-    if (!spend() || Depth >= 32)
+    if (!spend() || Depth >=
+                        ::neverd::limits::ir::
+                            kMedLibraryRecognitionPredicateCarrierDepthLimit)
       return std::nullopt;
     auto C = canonical(Value);
     if (!C)
@@ -712,7 +725,10 @@ public:
   }
 
   bool unobserved(const MedVar &Value, unsigned Depth = 0) {
-    if (!spend() || Depth >= 32 || !Value.Size)
+    if (!spend() ||
+        Depth >=
+            ::neverd::limits::ir::kMedLibraryRecognitionUnobservedDepthLimit ||
+        !Value.Size)
       return false;
     for (const auto &B : Function.Blocks) {
       for (const auto &P : B.Phis)
@@ -878,7 +894,10 @@ public:
 
 private:
   bool sameLowResult(MedVar Value, const MedVar &Root, unsigned Depth = 0) {
-    if (!spend() || Depth > 16 || !Root.Size || Root.Size >= 8)
+    if (!spend() ||
+        Depth > ::neverd::limits::ir::
+                    kMedLibraryRecognitionSameLowResultDepthLimit ||
+        !Root.Size || Root.Size >= 8)
       return false;
     auto C = canonical(Value);
     if (!C)
@@ -916,7 +935,8 @@ private:
   };
 
   std::optional<Comparison> comparison(MedVar Value, unsigned Depth = 0) {
-    if (Depth > 32)
+    if (Depth >
+        ::neverd::limits::ir::kMedLibraryRecognitionComparisonDepthLimit)
       return std::nullopt;
     auto C = canonical(Value);
     const MedOp *D = C ? definition(*C) : nullptr;
@@ -998,7 +1018,7 @@ MedLibraryIdentityIndex::MedLibraryIdentityIndex(const BinaryImage &Image)
 
 llvm::ArrayRef<std::string>
 MedLibraryIdentityIndex::names(const BinaryImage &Image, va_t Entry) const {
-  if (this->Image != &Image)
+  if (this->Image != &Image || Image.functionHasBytePatch(Entry))
     return {};
   auto I = Names.find(Entry);
   return I == Names.end() ? llvm::ArrayRef<std::string>{}
@@ -1255,7 +1275,9 @@ MedLibraryRecognitionResult neverd::recognizeMedLibraryOperations(
               std::unique(Match.Occurrences.begin(), Match.Occurrences.end()),
               Match.Occurrences.end());
           Result.Matches.push_back(std::move(Match));
-          if (Result.Matches.size() > 128) {
+          if (Result.Matches.size() >
+              ::neverd::limits::ir::
+                  kMedLibraryRecognitionNeverdRecognizeMedLibraryOperationsResultMatchesSizeLimit) {
             Result.BudgetExhausted = true;
             MaxWork = 0;
             break;

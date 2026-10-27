@@ -16,6 +16,7 @@
 #define NEVERD_LIB_LOADER_COFF_EH_COFFEXCEPTIONDETAIL_H
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/StringRef.h"
@@ -32,11 +33,9 @@
 namespace neverd::coff_loader {
 namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE detail {
 
-inline constexpr uint32_t MaxLanguageRecords = 1u << 16;
-inline constexpr unsigned MaxPersonalityVeneers = 8;
-
 struct LanguageRecordBudget {
-  uint64_t Remaining = MaxLanguageRecords;
+  uint64_t Remaining =
+      ::neverd::limits::loader::kCOFFExceptionDetailMaxLanguageRecords;
 
   bool consume(uint64_t Count) {
     if (Count > Remaining)
@@ -116,6 +115,16 @@ std::optional<ExceptionPersonality>
 inferGSPersonality(const ExceptionFunction &F, const BinaryImage &Img,
                    const PrimaryFunctionByBegin *PrimaryByBegin = nullptr);
 
+} // namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE detail
+} // namespace neverd::coff_loader
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::coff_loader {
+namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE detail {
+inline constexpr uint32_t MaxLanguageRecords =
+    ::neverd::limits::loader::kCOFFExceptionDetailMaxLanguageRecords;
+inline constexpr unsigned MaxPersonalityVeneers =
+    ::neverd::limits::loader::kCOFFExceptionDetailMaxPersonalityVeneers;
 } // namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE detail
 } // namespace neverd::coff_loader
 

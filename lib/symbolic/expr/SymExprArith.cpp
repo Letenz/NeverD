@@ -17,9 +17,11 @@
 
 #include "neverd/symbolic/SymExpr.h"
 
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/STLExtras.h"
+
 #include <algorithm>
 #include <cassert>
-#include <map>
 
 namespace neverd::symbolic {
 
@@ -50,8 +52,13 @@ SymRef SymContext::mkAdd(llvm::ArrayRef<SymRef> Ops) {
   uint32_t W = width(Ops[0]);
 
   llvm::APInt ConstTerm(W, 0);
-  // Ordered by base node index so the rebuilt operand list is canonical.
-  std::map<uint32_t, llvm::APInt> Terms;
+  // Small sums need no separately allocated tree nodes. Sort the completed
+  // entries by base index before rebuilding, preserving canonical order.
+  struct Addend {
+    llvm::APInt Coefficient;
+    SymRef Original;
+  };
+  llvm::SmallMapVector<uint32_t, Addend, 8> Terms;
 
   llvm::SmallVector<SymRef, 8> Work(Ops.begin(), Ops.end());
   llvm::SmallVector<SymRef, 8> Masked;
@@ -87,10 +94,12 @@ SymRef SymContext::mkAdd(llvm::ArrayRef<SymRef> Ops) {
       }
 
       auto It = Terms.find(Base.index());
-      if (It == Terms.end())
-        Terms.emplace(Base.index(), Coeff);
-      else
-        It->second += Coeff;
+      if (It == Terms.end()) {
+        Terms.try_emplace(Base.index(), Addend{Coeff, R});
+      } else {
+        It->second.Coefficient += Coeff;
+        It->second.Original = {};
+      }
     }
     if (Masked.empty())
       break;
@@ -104,11 +113,18 @@ SymRef SymContext::mkAdd(llvm::ArrayRef<SymRef> Ops) {
   bool Recollect = false;
   if (!ConstTerm.isZero())
     Final.push_back(mkConst(ConstTerm));
-  for (const auto &[BaseIdx, Coeff] : Terms) {
+  auto OrderedTerms = Terms.takeVector();
+  llvm::sort(OrderedTerms, llvm::less_first());
+  for (const auto &[BaseIdx, Entry] : OrderedTerms) {
+    const auto &Coeff = Entry.Coefficient;
     if (Coeff.isZero())
       continue;
     SymRef Base(BaseIdx);
-    SymRef Term = Coeff.isOne() ? Base : mkMul(mkConst(Coeff), Base);
+    // A unique addend already has exactly the collected coefficient. Reuse
+    // it instead of rebuilding its unchanged, potentially very long product.
+    SymRef Term = Entry.Original.isValid() ? Entry.Original
+                  : Coeff.isOne()          ? Base
+                                           : mkMul(mkConst(Coeff), Base);
     Recollect |= !Coeff.isOne() && op(Term) != SymOp::Mul;
     Final.push_back(Term);
   }
@@ -118,7 +134,7 @@ SymRef SymContext::mkAdd(llvm::ArrayRef<SymRef> Ops) {
     // a constant or a base already present in the sum. Collect those once.
     // A recovered nonconstant slice retains its mask, so the new base cannot
     // be a bare LShr and this collection cannot expose another such slice.
-    Terms.clear();
+    OrderedTerms.clear();
     ConstTerm = llvm::APInt(W, 0);
     for (SymRef R : Final) {
       if (isConst(R)) {
@@ -133,17 +149,24 @@ SymRef SymContext::mkAdd(llvm::ArrayRef<SymRef> Ops) {
                                           operands(R).end());
         Base = mkMul(Tail);
       }
-      auto [It, Inserted] = Terms.try_emplace(Base.index(), Coeff);
-      if (!Inserted)
-        It->second += Coeff;
+      auto [It, Inserted] = Terms.try_emplace(Base.index(), Addend{Coeff, R});
+      if (!Inserted) {
+        It->second.Coefficient += Coeff;
+        It->second.Original = {};
+      }
     }
     Final.clear();
     if (!ConstTerm.isZero())
       Final.push_back(mkConst(ConstTerm));
-    for (const auto &[BaseIdx, Coeff] : Terms) {
+    OrderedTerms = Terms.takeVector();
+    llvm::sort(OrderedTerms, llvm::less_first());
+    for (const auto &[BaseIdx, Entry] : OrderedTerms) {
+      const auto &Coeff = Entry.Coefficient;
       if (!Coeff.isZero()) {
         SymRef Base(BaseIdx);
-        Final.push_back(Coeff.isOne() ? Base : mkMul(mkConst(Coeff), Base));
+        Final.push_back(Entry.Original.isValid() ? Entry.Original
+                        : Coeff.isOne()          ? Base
+                                                 : mkMul(mkConst(Coeff), Base));
       }
     }
   }
@@ -155,7 +178,45 @@ SymRef SymContext::mkAdd(llvm::ArrayRef<SymRef> Ops) {
   return intern(SymOp::Add, W, Final, 0);
 }
 
-SymRef SymContext::mkSub(SymRef A, SymRef B) { return mkAdd(A, mkNeg(B)); }
+SymRef SymContext::mkSub(SymRef A, SymRef B) {
+  assert(width(A) == width(B) && "subtraction operands must share a width");
+  if (op(A) == SymOp::Add || op(B) == SymOp::Add) {
+    // Cancel complete additive terms before constructing a negated sum.
+    // Operands are owned copies because any builder may relocate the pool.
+    llvm::SmallVector<SymRef, 8> Left, Right;
+    if (op(A) == SymOp::Add)
+      Left.append(operands(A).begin(), operands(A).end());
+    else
+      Left.push_back(A);
+    if (op(B) == SymOp::Add)
+      Right.append(operands(B).begin(), operands(B).end());
+    else
+      Right.push_back(B);
+    std::sort(Left.begin(), Left.end());
+    std::sort(Right.begin(), Right.end());
+    llvm::SmallVector<SymRef, 8> KeptLeft, KeptRight;
+    size_t L = 0, R = 0;
+    bool Cancelled = false;
+    while (L != Left.size() && R != Right.size()) {
+      if (Left[L] == Right[R]) {
+        ++L;
+        ++R;
+        Cancelled = true;
+      } else if (Left[L] < Right[R])
+        KeptLeft.push_back(Left[L++]);
+      else
+        KeptRight.push_back(Right[R++]);
+    }
+    if (Cancelled) {
+      KeptLeft.append(Left.begin() + L, Left.end());
+      KeptRight.append(Right.begin() + R, Right.end());
+      for (SymRef Term : KeptRight)
+        KeptLeft.push_back(mkNeg(Term));
+      return KeptLeft.empty() ? mkZero(width(A)) : mkAdd(KeptLeft);
+    }
+  }
+  return mkAdd(A, mkNeg(B));
+}
 
 SymRef SymContext::mkNeg(SymRef A) {
   uint32_t W = width(A);
@@ -165,6 +226,70 @@ SymRef SymContext::mkNeg(SymRef A) {
 SymRef SymContext::mkMul(llvm::ArrayRef<SymRef> Ops) {
   assert(!Ops.empty() && "mkMul needs at least one operand");
   uint32_t W = width(Ops[0]);
+
+  // Incrementally built products already have sorted nonconstant operands
+  // and at most one leading coefficient. Insert the new atom directly instead
+  // of flattening, multiplying the same coefficient and sorting that prefix
+  // again. Keep an owned snapshot before interning can relocate the arena.
+  if (Ops.size() == 2) {
+    SymRef Product = Ops[0], Atom = Ops[1];
+    if (op(Product) != SymOp::Mul)
+      std::swap(Product, Atom);
+    if (op(Product) == SymOp::Mul && op(Atom) != SymOp::Mul && !isConst(Atom)) {
+      assert(width(Atom) == W && width(Product) == W &&
+             "mkMul operands must share a width");
+      auto Existing = operands(Product);
+      llvm::SmallVector<SymRef, 16> Factors;
+      Factors.reserve(Existing.size() + 1);
+      Factors.append(Existing.begin(), Existing.end());
+      auto Begin = Factors.begin() + unsigned(isConst(Factors.front()));
+      Factors.insert(std::lower_bound(Begin, Factors.end(), Atom), Atom);
+      return intern(SymOp::Mul, W, Factors, 0);
+    }
+    if (op(Product) == SymOp::Mul && isConst(Atom)) {
+      auto Existing = operands(Product);
+      const bool Scaled = isConst(Existing.front());
+      auto Tail = Existing.drop_front(unsigned(Scaled));
+      // A single logical shift still needs the matching-power fold below.
+      if (Tail.size() >= 2) {
+        assert(width(Atom) == W && width(Product) == W &&
+               "mkMul operands must share a width");
+        llvm::APInt Coefficient = constValue(Atom);
+        if (Scaled)
+          Coefficient *= constValue(Existing.front());
+        if (Coefficient.isZero())
+          return mkZero(W);
+        llvm::SmallVector<SymRef, 16> Factors;
+        Factors.reserve(Tail.size() + 1);
+        Factors.append(Tail.begin(), Tail.end());
+        if (!Coefficient.isOne())
+          Factors.insert(Factors.begin(), mkConst(Coefficient));
+        return intern(SymOp::Mul, W, Factors, 0);
+      }
+    }
+  }
+  // Arithmetic normalization and sum coefficient collection often hand back
+  // an already canonical flat product. Verify that order before reusing it;
+  // zero/unit coefficients and unary shift products retain ordinary folding.
+  if (Ops.size() >= 3 && !isConst(Ops.back())) {
+    const bool Scaled = isConst(Ops.front());
+    bool Canonical = !Scaled || (!isConstZero(Ops.front()) &&
+                                 !constValue(Ops.front()).isOne());
+    SymRef Previous;
+    for (SymRef Factor : Ops.drop_front(unsigned(Scaled))) {
+      assert(width(Factor) == W && "mkMul operands must share a width");
+      if (isConst(Factor) || op(Factor) == SymOp::Mul ||
+          (Previous.isValid() && Factor < Previous)) {
+        Canonical = false;
+        break;
+      }
+      Previous = Factor;
+    }
+    if (Canonical) {
+      llvm::SmallVector<SymRef, 16> Factors(Ops);
+      return intern(SymOp::Mul, W, Factors, 0);
+    }
+  }
 
   llvm::APInt ConstFactor(W, 1);
   llvm::SmallVector<SymRef, 8> Rest;

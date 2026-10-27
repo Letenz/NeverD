@@ -20,6 +20,17 @@ unsigned registration_parameter_after;
 #endif
 static unsigned observed_caller;
 unsigned registration_trace;
+#if (REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 49) ||                    \
+    (REGISTRATION_CASE == 52 || REGISTRATION_CASE == 57 ||                     \
+     REGISTRATION_CASE == 64 || REGISTRATION_CASE == 65 ||                     \
+     (REGISTRATION_CASE >= 72 && REGISTRATION_CASE <= 81) ||                   \
+     REGISTRATION_CASE == 84 || REGISTRATION_CASE == 85 ||                     \
+     REGISTRATION_CASE == 88)
+unsigned registration_iteration;
+#endif
+#if REGISTRATION_CASE >= 48 && REGISTRATION_CASE <= 51
+unsigned registration_helper_visits;
+#endif
 #if REGISTRATION_CASE == 1 || REGISTRATION_CASE == 2
 #define EXPECTED_TRACE 123
 #elif REGISTRATION_CASE == 3
@@ -32,6 +43,44 @@ unsigned registration_trace;
 #define EXPECTED_TRACE 177
 #elif REGISTRATION_CASE == 7 || REGISTRATION_CASE == 8
 #define EXPECTED_TRACE 7u
+#elif REGISTRATION_CASE == 28 || REGISTRATION_CASE == 29 ||                    \
+    REGISTRATION_CASE == 30 || REGISTRATION_CASE == 31 ||                      \
+    REGISTRATION_CASE == 34 || REGISTRATION_CASE == 35
+#define EXPECTED_TRACE 243
+#elif REGISTRATION_CASE >= 43 && REGISTRATION_CASE <= 49
+#define EXPECTED_TRACE ((iterations & 1) + 1)
+#elif REGISTRATION_CASE >= 76 && REGISTRATION_CASE <= 78
+#define EXPECTED_TRACE 6662345u
+#elif REGISTRATION_CASE >= 79 && REGISTRATION_CASE <= 81
+#define EXPECTED_TRACE 2666345u
+#elif REGISTRATION_CASE == 84
+#define EXPECTED_TRACE ((iterations & 1) ? 24u : 23u)
+#elif REGISTRATION_CASE == 86 || REGISTRATION_CASE == 87
+#define EXPECTED_TRACE 234u
+#elif REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 42
+#define EXPECTED_TRACE 2345
+#elif REGISTRATION_CASE == 68 || REGISTRATION_CASE == 70 ||                    \
+    REGISTRATION_CASE == 74
+#define EXPECTED_TRACE 23u
+#elif REGISTRATION_CASE == 69 || REGISTRATION_CASE == 71 ||                    \
+    REGISTRATION_CASE == 75
+#define EXPECTED_TRACE 263u
+#elif REGISTRATION_CASE == 72
+#define EXPECTED_TRACE ((iterations & 1) ? 23u : 235u)
+#elif REGISTRATION_CASE == 73
+#define EXPECTED_TRACE ((iterations & 1) ? 263u : 26375u)
+#elif REGISTRATION_CASE == 57
+#define EXPECTED_TRACE ((iterations & 1) ? 23u : 235u)
+#elif REGISTRATION_CASE == 54 || REGISTRATION_CASE == 58 ||                    \
+    REGISTRATION_CASE == 60 || REGISTRATION_CASE == 62 ||                      \
+    REGISTRATION_CASE == 64 || REGISTRATION_CASE == 66
+#define EXPECTED_TRACE 236u
+#elif REGISTRATION_CASE == 59 || REGISTRATION_CASE == 61 ||                    \
+    REGISTRATION_CASE == 63 || REGISTRATION_CASE == 65 ||                      \
+    REGISTRATION_CASE == 67
+#define EXPECTED_TRACE 2367u
+#elif REGISTRATION_CASE == 55
+#define EXPECTED_TRACE 234u
 #elif REGISTRATION_CASE == 9 || REGISTRATION_CASE == 10 ||                     \
     REGISTRATION_CASE == 12 || REGISTRATION_CASE >= 13
 #define EXPECTED_TRACE 23u
@@ -52,6 +101,9 @@ void registration_raise(void) {
 
 void registration_no_raise(void) {
   observed_caller = (unsigned)_ReturnAddress();
+#if REGISTRATION_CASE == 48 || REGISTRATION_CASE == 50
+  ++registration_helper_visits;
+#endif
 }
 
 void mainCRTStartup(void) {
@@ -60,6 +112,17 @@ void mainCRTStartup(void) {
   int value = 0, chain_ok = 1;
   for (; iterations != 4; ++iterations) {
     registration_trace = 0;
+#if (REGISTRATION_CASE >= 36 && REGISTRATION_CASE <= 49) ||                    \
+    (REGISTRATION_CASE == 52 || REGISTRATION_CASE == 57 ||                     \
+     REGISTRATION_CASE == 64 || REGISTRATION_CASE == 65 ||                     \
+     (REGISTRATION_CASE >= 72 && REGISTRATION_CASE <= 81) ||                   \
+     REGISTRATION_CASE == 84 || REGISTRATION_CASE == 85 ||                     \
+     REGISTRATION_CASE == 88)
+    registration_iteration = iterations;
+#endif
+#if REGISTRATION_CASE >= 48 && REGISTRATION_CASE <= 51
+    registration_helper_visits = 0;
+#endif
 #if REGISTRATION_CASE == 6
     registration_parameter_after = 0;
     value = registration_call_entry();

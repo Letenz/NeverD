@@ -70,6 +70,18 @@ NEVERD_ELF_SYMBOL_VALUE(AArch64, R_AARCH64_JUMP_SLOT, true)
 NEVERD_ELF_SYMBOL_VALUE(AArch64, R_AARCH64_ABS64, true)
 #undef NEVERD_ELF_SYMBOL_VALUE
 
+// NEVERD_ELF_ABSOLUTE_SYMBOL(Arch, Type): relocations that store a symbol's
+// address plus the addend in an ordinary data word, such as the initializer of
+// a pointer variable, which the program may later overwrite.
+#ifndef NEVERD_ELF_ABSOLUTE_SYMBOL
+#define NEVERD_ELF_ABSOLUTE_SYMBOL(Arch, Type)
+#endif
+NEVERD_ELF_ABSOLUTE_SYMBOL(X86, R_386_32)
+NEVERD_ELF_ABSOLUTE_SYMBOL(X64, R_X86_64_64)
+NEVERD_ELF_ABSOLUTE_SYMBOL(ARM, R_ARM_ABS32)
+NEVERD_ELF_ABSOLUTE_SYMBOL(AArch64, R_AARCH64_ABS64)
+#undef NEVERD_ELF_ABSOLUTE_SYMBOL
+
 // Ordinary symbol-address cells, distinct from PLT calls and TLS descriptors.
 #ifndef NEVERD_ELF_DATA_SLOT
 #define NEVERD_ELF_DATA_SLOT(Arch, Type)

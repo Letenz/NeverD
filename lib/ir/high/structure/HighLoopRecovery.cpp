@@ -19,6 +19,7 @@
 
 #include "HighCFSimplifyDetail.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
 
 #include <functional>
@@ -40,7 +41,7 @@ class NaturalLoopEvidence {
   std::vector<std::vector<int>> Predecessors;
   std::vector<bool> Reachable;
   int Entry = -1;
-  size_t Budget = 1000000;
+  size_t Budget = ::neverd::limits::ir::kHighLoopRecoveryBudget;
   bool Valid = true;
 
   bool consume() {
@@ -198,7 +199,11 @@ void detectAndConvertLoops(HighFunc &Func,
     return std::nullopt;
   };
 
-  const int MaxLoopPasses = IsMega ? 2 : 4;
+  const int MaxLoopPasses =
+      IsMega ? ::neverd::limits::ir::
+                   kHighLoopRecoveryDetectAndConvertLoopsMaxLoopPassesSelected
+             : ::neverd::limits::ir::
+                   kHighLoopRecoveryDetectAndConvertLoopsMaxLoopPassesDefault;
   for (int LoopPass = 0; LoopPass < MaxLoopPasses; ++LoopPass) {
     bool FoundLoop = false;
     AM.rebuild(Func.Body);

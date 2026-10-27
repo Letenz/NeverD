@@ -14,7 +14,9 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -148,7 +150,7 @@ TEST(ObjCSourceProjection,
   // C projection does not require an LLVM definition or invent one as proof.
   EXPECT_FALSE(P.Audit.HasLLVMDefinition);
   const std::string Source = emit(P.Func);
-  EXPECT_NE(Source.find("return 42;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 0x2A;"), std::string::npos) << Source;
   EXPECT_TRUE(objcSourceTextLimitation(Source).empty());
 }
 
@@ -185,6 +187,86 @@ TEST(ObjCSourceProjection, SignatureChangesCannotInheritRecoveryStatus) {
     Projection P;
     Mutate(P);
     EXPECT_FALSE(P.limitation().empty());
+  }
+}
+
+TEST(ObjCSourceProjection, OriginalAArch64MemoryInstructionsKeepSourceBodies) {
+  struct Case {
+    uint32_t Word;
+    Intrinsic Id;
+    unsigned Bytes;
+    unsigned IndexBytes;
+  };
+  for (const auto C : {
+           Case{0x38626820, Intrinsic::A64_LoadRegisterOffset, 1, 8},
+           Case{0x78626820, Intrinsic::A64_LoadRegisterOffset, 2, 8},
+           Case{0xb8626820, Intrinsic::A64_LoadRegisterOffset, 4, 8},
+           Case{0xb8a2c820, Intrinsic::A64_LoadRegisterOffset, 4, 4},
+           Case{0xf8626820, Intrinsic::A64_Load64RegisterOffset, 8, 8},
+           Case{0x38226820, Intrinsic::A64_StoreRegisterOffset, 1, 8},
+           Case{0x78226820, Intrinsic::A64_StoreRegisterOffset, 2, 8},
+           Case{0xb8226820, Intrinsic::A64_StoreRegisterOffset, 4, 8},
+           Case{0xf8226820, Intrinsic::A64_StoreRegisterOffset, 8, 8},
+       }) {
+    SCOPED_TRACE(C.Word);
+    Projection P;
+    P.Hint.Architecture = Arch::AArch64;
+    P.Func.SourceTypeHint = P.Hint;
+    auto Memory = HighExpr::makeCall({}, 0,
+                                     {HighExpr::makeConst(0x2000, 8),
+                                      HighExpr::makeConst(8, C.IndexBytes),
+                                      HighExpr::makeConst(C.Word, 4)});
+    Memory->IntrinsicId = C.Id;
+    const bool Store = C.Id == Intrinsic::A64_StoreRegisterOffset;
+    Memory->Type = Store ? NdType::makeVoid() : NdType::makeInt(C.Bytes, false);
+    if (Store)
+      Memory->Operands.push_back(HighExpr::makeConst(42, C.Bytes));
+    HighStmt Statement;
+    Statement.Kind = StmtKind::ExprStmt;
+    Statement.Val = Memory;
+    P.Func.Body.insert(P.Func.Body.begin(), Statement);
+    ASSERT_TRUE(P.limitation().empty()) << P.limitation();
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    ASSERT_TRUE(HighCEmitter().emit({P.Func}, OS, Options));
+    EXPECT_NE(Source.find("__asm__ volatile(\".inst"), std::string::npos);
+    EXPECT_TRUE(objcSourceTextLimitation(Source).empty()) << Source;
+
+    using Mutation = std::function<void(Projection &, HighExpr &)>;
+    const std::vector<Mutation> Mutations = {
+        [](Projection &Q, HighExpr &) {
+          Q.Hint.Architecture = Arch::X64;
+          Q.Func.SourceTypeHint = Q.Hint;
+        },
+        [](Projection &, HighExpr &E) { E.IsIndirectCall = true; },
+        [](Projection &, HighExpr &E) { E.Operands.pop_back(); },
+        [](Projection &, HighExpr &E) {
+          E.Operands[0] = HighExpr::makeConst(0x2000, 4);
+        },
+        [](Projection &, HighExpr &E) {
+          E.Operands[2] = HighExpr::makeConst(0xd65f03c0, 4);
+        },
+        [](Projection &, HighExpr &E) {
+          E.Operands[2] = HighExpr::makeConst(
+              (E.Operands[2]->ConstVal & ~uint64_t(0x3e0)) | 0x3e0, 4);
+        },
+        [](Projection &, HighExpr &E) {
+          E.MemoryOrdering = NdMemoryOrdering::Acquire;
+        },
+        [](Projection &, HighExpr &E) {
+          E.Operands[0] = HighExpr::makeCall("unbound", 0x3000, {});
+          E.Operands[0]->Type = NdType::makeInt(8, false);
+        },
+    };
+    for (size_t I = 0; I < Mutations.size(); ++I) {
+      SCOPED_TRACE(I);
+      Projection Q = P;
+      Q.Func.Body[0].Val = std::make_shared<HighExpr>(*Memory);
+      Mutations[I](Q, *Q.Func.Body[0].Val);
+      EXPECT_FALSE(Q.limitation().empty());
+    }
   }
 }
 
@@ -1015,8 +1097,7 @@ TEST(ObjCSourceProjection, OnlyAnActualUnconditionalTrapTerminatesThePath) {
   HighStmt Call;
   Call.Kind = StmtKind::Call;
   Call.CallExpr = HighExpr::makeCall("trap", 0, {});
-  for (auto Id : {Intrinsic::Ud2, Intrinsic::ArmHlt, Intrinsic::Brk,
-                  Intrinsic::Hlt_A64}) {
+  for (auto Id : {Intrinsic::Ud2, Intrinsic::Brk, Intrinsic::Hlt_A64}) {
     Call.CallExpr->IntrinsicId = Id;
     P.Func.Body = {Call};
     EXPECT_TRUE(P.limitation().empty()) << P.limitation();
@@ -1024,11 +1105,16 @@ TEST(ObjCSourceProjection, OnlyAnActualUnconditionalTrapTerminatesThePath) {
   }
   EXPECT_STREQ(intrinsicCName(Intrinsic::Brk), "__builtin_trap");
 
-  // A debugger can resume after a breakpoint. Its spelling is not proof of
-  // a terminating path, even when the containing native function is flagged.
-  Call.CallExpr->IntrinsicId = Intrinsic::Int3;
-  P.Func.Body = {Call};
-  EXPECT_FALSE(P.limitation().empty());
+  // Breakpoints and raw ARM trap spellings retain their continuations. They
+  // cannot prove source termination, even when the native function is flagged.
+  for (auto Id : {Intrinsic::Int3, Intrinsic::ArmBkpt, Intrinsic::ArmHlt,
+                  Intrinsic::ArmUdf}) {
+    SCOPED_TRACE(static_cast<unsigned>(Id));
+    Call.CallExpr->IntrinsicId = Id;
+    P.Func.Body = {Call};
+    EXPECT_FALSE(P.limitation().empty());
+    EXPECT_FALSE(isUnconditionalTrapIntrinsic(Id));
+  }
 
   Call.CallExpr->IntrinsicId = Intrinsic::Ud2;
   Call.CallExpr->SourceCallHint = std::make_shared<SourceCallTypeHint>();

@@ -12,10 +12,12 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/AArch64AddressMemory.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/StringRef.h"
 
@@ -33,6 +35,20 @@ namespace objc_projection_detail {
 inline bool sameHint(const SourceFunctionTypeHint &Left,
                      const SourceFunctionTypeHint &Right) {
   return equalSourceABIs(Left, Right);
+}
+
+// These calls are original memory instructions with an existing HighC
+// projection. Reuse its shape contract and retain every operand for the
+// recursive source-binding inspection below.
+inline bool isProjectedMemory(const HighExpr &Expression, Arch Architecture) {
+  if (Architecture != Arch::AArch64 ||
+      !isAArch64AddressMemoryIntrinsic(Expression.IntrinsicId) ||
+      !aarch64AddressMemoryHighShapeIsValid(Expression))
+    return false;
+  const auto Instruction = aarch64AddressMemoryInstruction(
+      Expression.Operands[kAddressMemoryWordOperand]->ConstVal);
+  // The C projection cannot recreate the original SP alignment/tagging state.
+  return Instruction && !Instruction->stackBase();
 }
 
 inline bool isPlainUnwind(const ExceptionFunction &Metadata) {
@@ -54,11 +70,11 @@ inline void collectSourceBodyDiagnostics(
   if (!Func.SourceTypeHint || !sameHint(*Func.SourceTypeHint, Hint) ||
       !equalSourceTypes(Func.ReturnType, Hint.ReturnType) ||
       Func.Params.size() != Hint.Parameters.size() ||
-      Hint.Parameters.size() > 64)
+      Hint.Parameters.size() > ::neverd::sdk::kMaxSourceProjectionParameters)
     Diagnostics.add(
         SourceProjectionIssue::Signature,
         "method source signature disagrees with its runtime type hint");
-  if (Hint.Parameters.size() > 64)
+  if (Hint.Parameters.size() > ::neverd::sdk::kMaxSourceProjectionParameters)
     Diagnostics.Complete = false;
   if (hasIndirectSourceParameters(Hint))
     Diagnostics.add(SourceProjectionIssue::ABI,
@@ -71,8 +87,9 @@ inline void collectSourceBodyDiagnostics(
        Hint.Parameters.size() < 2 || Hint.Parameters.size() > 8))
     Diagnostics.add(SourceProjectionIssue::ABI,
                     "method has no explicit source ABI binding");
-  for (size_t Index = 0; Index < std::min({Func.Params.size(),
-                                           Hint.Parameters.size(), size_t{64}});
+  for (size_t Index = 0;
+       Index < std::min({Func.Params.size(), Hint.Parameters.size(),
+                         ::neverd::sdk::kMaxSourceProjectionParametersSize});
        ++Index) {
     const auto &Parameter = Func.Params[Index];
     if (Parameter.Name != Hint.Parameters[Index].Name ||
@@ -111,7 +128,7 @@ inline void collectSourceBodyDiagnostics(
   // own stack. HighC's expression renderer truncates beyond depth 200.
   std::vector<std::pair<const HighStmt *, unsigned>> Statements;
   std::vector<std::tuple<const HighExpr *, unsigned, va_t>> Expressions;
-  size_t Budget = 1000000;
+  size_t Budget = kSourceEvaluationWork;
   auto Spend = [&](size_t Count) {
     if (Count > Budget) {
       Diagnostics.Complete = false;
@@ -140,7 +157,7 @@ inline void collectSourceBodyDiagnostics(
   while (!Statements.empty()) {
     const auto [Statement, Depth] = Statements.back();
     Statements.pop_back();
-    if (Depth > 200) {
+    if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth) {
       Diagnostics.Complete = false;
       Diagnostics.add(
           SourceProjectionIssue::Budget,
@@ -189,7 +206,7 @@ inline void collectSourceBodyDiagnostics(
   while (!Expressions.empty()) {
     const auto [Expression, Depth, Address] = Expressions.back();
     Expressions.pop_back();
-    if (Depth > 200) {
+    if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth) {
       Diagnostics.Complete = false;
       Diagnostics.add(
           SourceProjectionIssue::Budget,
@@ -222,6 +239,7 @@ inline void collectSourceBodyDiagnostics(
     }
     if (Expression->Kind == ExprKind::Call &&
         !(CallAllowed && CallAllowed(*Expression)) &&
+        !isProjectedMemory(*Expression, Hint.Architecture) &&
         (Expression->IntrinsicId == Intrinsic::None ||
          !intrinsicCName(Expression->IntrinsicId) ||
          Expression->IsIndirectCall ||

@@ -13,6 +13,8 @@
 
 #include "Reader.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web::wails_detail {
 void Reader::admitMapping(Mapping M) {
   within(M.File, Input.Content.size());
@@ -20,7 +22,8 @@ void Reader::admitMapping(Mapping M) {
   if (!(M.Flags & 4) || (M.Flags & ~7U) || (M.Flags & 3) == 3 ||
       M.File.Size > M.Virtual.Size)
     throw Error("wails_invalid_load_mapping");
-  if (Mappings.size() == 128)
+  if (Mappings.size() ==
+      ::neverd::limits::web::kMappingsReaderAdmitMappingsSizeLimit)
     throw Error("wails_native_table_budget_exceeded");
   for (const auto &Other : Mappings) {
     step();

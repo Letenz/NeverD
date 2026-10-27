@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceNavigation.h"
 
 #include <array>
@@ -19,8 +20,6 @@
 namespace neverd::web {
 inline constexpr std::string_view DesktopBridgeProfile =
     "tauri-1-wails-2-direct-bridge-syntax-v1";
-inline constexpr uint64_t MaxDesktopBridgeSteps = 2000000;
-inline constexpr uint64_t MaxDesktopBridgeRecords = 1024;
 
 struct DesktopBridgeCall {
   std::string ID, Family, Form, Status, Reason, RootResolution;

@@ -27,10 +27,14 @@
 
 #include "neverd/symbolic/SymExec.h"
 
+#include "neverd/ir/X86/X87GuardedValue.h"
+#include "neverd/ir/X86/X87Stack.h"
+#include "neverd/ir/X86/X87Value.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
-#include "neverd/ir/low/X87PartialRemainder.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/ir/low/X86/X87PartialRemainder.h"
+#include "neverd/lift/X86/X86Regs.h"
+#include "neverd/symbolic/SymIntegerIntrinsics.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallVector.h"
@@ -61,6 +65,23 @@ SymSpace spaceOf(const NdVar &V) {
 }
 
 } // namespace
+
+bool supportsCmpxchgPreservation(const LowOp &Op) {
+  if (Op.Opcode != NdOp::ATOMIC_CMPXCHG || Op.NumInputs != 3 ||
+      Op.MemoryOrdering != NdMemoryOrdering::SequentiallyConsistent ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const auto Scalar = [](const NdVar &V) {
+    return V.Size && (V.isConst() || V.isReg() || V.isTemp()) &&
+           (V.isConst() || V.Offset <= UINT64_MAX - (V.Size - 1));
+  };
+  const auto Bytes = Op.Output.Size;
+  return (Bytes == 1 || Bytes == 2 || Bytes == 4 || Bytes == 8) &&
+         (Op.Output.isReg() || Op.Output.isTemp()) && Scalar(Op.Output) &&
+         Op.Inputs[0].Size == 8 && Scalar(Op.Inputs[0]) &&
+         Op.Inputs[1].Size == Bytes && Scalar(Op.Inputs[1]) &&
+         Op.Inputs[2].Size == Bytes && Scalar(Op.Inputs[2]);
+}
 
 //===----------------------------------------------------------------------===//
 // Reading and writing operands
@@ -156,6 +177,9 @@ StepResult SymExec::stepX87Intrinsic(const LowOp &Op) {
     return unknownX87State();
 
   const Intrinsic Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (x87ValueInfo(Id) &&
+      !x87ValueShapeIsValid(x87ValueLowShape(Op, Arch::Unknown)))
+    return unknownX87State();
   if (Id == Intrinsic::X87Fninit) {
     if (Op.NumInputs != 1 || Op.Output.Size != 0)
       return unknownX87State();
@@ -169,6 +193,15 @@ StepResult SymExec::stepX87Intrinsic(const LowOp &Op) {
     ++Unmodelled;
     ++OpaqueOperations;
     return StepResult::Unmodelled;
+  }
+  if (isX87GuardedValueIntrinsic(Id)) {
+    if (!x87GuardedValueShapeIsValid(
+            x87GuardedValueLowShape(Op, Arch::Unknown)))
+      return unknownX87State();
+    const auto Result = unmodelled(Op);
+    State.write(SymSpace::Register, x86reg::FPU_SW,
+                State.freshInput("x87_guarded_status", 16));
+    return Result;
   }
   if (Id == Intrinsic::X87Wait) {
     if (Op.NumInputs != 1 || Op.Output.Size != 0)
@@ -190,7 +223,7 @@ StepResult SymExec::stepX87Intrinsic(const LowOp &Op) {
                 Ctx.mkAnd(Status, Ctx.mkConst(16, ~uint16_t(0x80ff))));
     return StepResult::Continue;
   }
-  if (Id == Intrinsic::X87Ffree) {
+  if (const auto Stack = x87StackEffect(Id); Stack && Stack->FreesOperand) {
     if (Op.NumInputs != 3 || Op.Output.Size != 0 || !Op.Inputs[1].isReg() ||
         Op.Inputs[1].Size != x86reg::FPURegSize ||
         Op.Inputs[1].Offset < x86reg::ST0 ||
@@ -203,19 +236,26 @@ StepResult SymExec::stepX87Intrinsic(const LowOp &Op) {
     // Intel also leaves every x87 condition code undefined.
     State.write(SymSpace::Register, Op.Inputs[1].Offset,
                 State.freshInput("x87_empty", 80));
+    if (Stack->Pops) {
+      const unsigned OldTop = (x86reg::stRegIndex(Op.Inputs[1].Offset) +
+                               x86reg::FPUStackDepth - Op.Inputs[2].Offset) &
+                              7;
+      State.write(SymSpace::Register, x86reg::stReg(OldTop),
+                  State.freshInput("x87_popped", 80));
+    }
     SymRef Status = State.read(SymSpace::Register, x86reg::FPU_SW, 2);
-    SymRef Preserved = Ctx.mkAnd(
-        Status, Ctx.mkConst(16, ~uint16_t(X87PartialRemainderConditionMask)));
-    SymRef UnknownCodes =
-        Ctx.mkAnd(State.freshInput("x87_ffree_codes", 16),
-                  Ctx.mkConst(16, X87PartialRemainderConditionMask));
+    const uint16_t ChangedMask =
+        X87PartialRemainderConditionMask | (Stack->Pops ? kX87TopMask : 0);
+    SymRef Preserved = Ctx.mkAnd(Status, Ctx.mkConst(16, ~ChangedMask));
+    SymRef UnknownCodes = Ctx.mkAnd(State.freshInput("x87_ffree_codes", 16),
+                                    Ctx.mkConst(16, ChangedMask));
     State.write(SymSpace::Register, x86reg::FPU_SW,
                 Ctx.mkOr(Preserved, UnknownCodes));
     ++Unmodelled;
     ++OpaqueOperations;
     return StepResult::Unmodelled;
   }
-  if (Id == Intrinsic::X87Fincstp) {
+  if (x87StackEffect(Id)) {
     if (Op.NumInputs != 1 || Op.Output.Size != 0)
       return unknownX87State();
     SymRef Status = State.read(SymSpace::Register, x86reg::FPU_SW, 2);
@@ -234,9 +274,6 @@ StepResult SymExec::stepX87Intrinsic(const LowOp &Op) {
     return StepResult::Unmodelled;
   }
   if (Id == Intrinsic::X87ReadStatus) {
-    if (Op.NumInputs != 1 || Op.Output.Size != 2 ||
-        (!Op.Output.isReg() && !Op.Output.isTemp()))
-      return unmodelled(Op);
     writeResult(Op.Output, State.read(SymSpace::Register, x86reg::FPU_SW, 2));
     return StepResult::Continue;
   }
@@ -262,11 +299,7 @@ StepResult SymExec::stepX87Intrinsic(const LowOp &Op) {
                 State.freshInput("x87_status", 16));
     return Result;
   };
-  if (State.byteOrder() != llvm::endianness::little || Op.NumInputs != 3 ||
-      Op.Output.Size != x86reg::FPURegSize ||
-      Op.Inputs[1].Size != x86reg::FPURegSize ||
-      Op.Inputs[2].Size != x86reg::FPURegSize ||
-      (!Op.Output.isReg() && !Op.Output.isTemp()))
+  if (State.byteOrder() != llvm::endianness::little)
     return unknownRemainder();
 
   auto concreteBytes =
@@ -643,7 +676,8 @@ StepResult SymExec::stepBits(const LowOp &Op) {
 }
 
 StepResult SymExec::stepMemory(const LowOp &Op,
-                               SymStorePreservation *Preservation) {
+                               SymStorePreservation *Preservation,
+                               SymConditionalStore *Conditional) {
   const auto Refuse = [&]() {
     if (Op.Opcode == NdOp::STORE || Op.Opcode == NdOp::ATOMIC_XCHG ||
         Op.Opcode == NdOp::ATOMIC_ADD || Op.Opcode == NdOp::ATOMIC_CMPXCHG) {
@@ -652,6 +686,9 @@ StepResult SymExec::stepMemory(const LowOp &Op,
     }
     return unmodelled(Op);
   };
+  if ((Preservation || Conditional) && Op.Opcode == NdOp::ATOMIC_CMPXCHG &&
+      !supportsCmpxchgPreservation(Op))
+    return Refuse();
   const LowMemoryOperandView Memory = lowMemoryOperands(Op);
   const SymRef Addr = memoryAddressValue(Op);
   if (!Addr)
@@ -660,6 +697,25 @@ StepResult SymExec::stepMemory(const LowOp &Op,
       Absolute && Absolute->getBitWidth() <= 64 &&
       Absolute->getZExtValue() > UINT64_MAX - (Memory.AccessSize - 1))
     return Refuse();
+  const auto Commit = [&](SymRef Value) {
+    bool Absolute;
+    if (Conditional) {
+      Absolute = State.storeConditional(Addr, Value, *Conditional);
+      if (Conditional->Status != SymConditionalStoreStatus::Applied)
+        return Refuse();
+    } else {
+      Absolute = Preservation ? State.store(Addr, Value, *Preservation)
+                              : State.store(Addr, Value);
+      if (Preservation &&
+          Preservation->Status != SymStorePreservationStatus::Applied)
+        return Refuse();
+    }
+    if (!Absolute) {
+      ++Unmodelled;
+      ++MemoryHavocs;
+    }
+    return StepResult::Continue;
+  };
   if (Op.Opcode == NdOp::LOAD) {
     const auto Value = State.load(Addr, Memory.AccessSize);
     if (!Value)
@@ -689,28 +745,21 @@ StepResult SymExec::stepMemory(const LowOp &Op,
       return Refuse();
     SymRef Expected = fit(read(*Memory.ExpectedValue), widthOf(Op.Output));
     SymRef Desired = fit(read(*Memory.StoredValue), widthOf(Op.Output));
-    writeResult(Op.Output, Old);
-    if (!State.store(Addr, Ctx.mkIte(Ctx.mkEq(Old, Expected), Desired, Old))) {
-      ++Unmodelled;
-      ++MemoryHavocs;
-    }
+    // Preserve the legacy no-descriptor ordering, including RAM outputs.
+    // Explicit write policies accept only scalar outputs and publish Old
+    // after the write phase has actually succeeded.
+    if (!Preservation && !Conditional)
+      writeResult(Op.Output, Old);
+    const auto Committed =
+        Commit(Ctx.mkIte(Ctx.mkEq(Old, Expected), Desired, Old));
+    if (Committed != StepResult::Continue)
+      return Committed;
+    if (Preservation || Conditional)
+      writeResult(Op.Output, Old);
     return StepResult::Continue;
   }
 
-  SymRef Value = read(*Memory.StoredValue);
-  const bool Absolute = Preservation ? State.store(Addr, Value, *Preservation)
-                                     : State.store(Addr, Value);
-  if (Preservation &&
-      Preservation->Status != SymStorePreservationStatus::Applied) {
-    State.clobberMemory();
-    ++MemoryHavocs;
-    return unmodelled(Op);
-  }
-  if (!Absolute) {
-    ++Unmodelled;
-    ++MemoryHavocs;
-  }
-  return StepResult::Continue;
+  return Commit(read(*Memory.StoredValue));
 }
 
 StepResult SymExec::stepControl(const LowOp &Op,
@@ -809,6 +858,20 @@ StepResult SymExec::step(const LowOp &Op, const SymCallEffect *CallEffect) {
 
 StepResult SymExec::step(const LowOp &Op, const SymCallEffect *CallEffect,
                          SymStorePreservation *Preservation) {
+  return stepImpl(Op, CallEffect, Preservation, nullptr);
+}
+
+StepResult SymExec::stepWithConditionalStore(const LowOp &Op,
+                                             SymConditionalStore &Control,
+                                             const SymCallEffect *CallEffect) {
+  Control.Status = SymConditionalStoreStatus::Invalid;
+  Control.WorkUsed = 0;
+  return stepImpl(Op, CallEffect, nullptr, &Control);
+}
+
+StepResult SymExec::stepImpl(const LowOp &Op, const SymCallEffect *CallEffect,
+                             SymStorePreservation *Preservation,
+                             SymConditionalStore *Conditional) {
   // Unmodelled is a continuing value abstraction. A required environment
   // cannot be replaced by an unknown result, especially without an output.
   if (isLowRawEnvironmentRequirement(Op))
@@ -817,9 +880,12 @@ StepResult SymExec::step(const LowOp &Op, const SymCallEffect *CallEffect,
   if (Preservation) {
     Preservation->Status = SymStorePreservationStatus::Invalid;
     Preservation->WorkUsed = 0;
-    if (Op.Opcode != NdOp::STORE)
+    if (Op.Opcode != NdOp::STORE && Op.Opcode != NdOp::ATOMIC_CMPXCHG)
       return step(Op, CallEffect);
   }
+  if (Conditional && Op.Opcode != NdOp::STORE &&
+      Op.Opcode != NdOp::ATOMIC_CMPXCHG)
+    return step(Op, CallEffect);
   switch (Op.Opcode) {
   case NdOp::INT_ADD:
   case NdOp::INT_SUB:
@@ -887,7 +953,7 @@ StepResult SymExec::step(const LowOp &Op, const SymCallEffect *CallEffect,
   case NdOp::ATOMIC_XCHG:
   case NdOp::ATOMIC_ADD:
   case NdOp::ATOMIC_CMPXCHG:
-    return stepMemory(Op, Preservation);
+    return stepMemory(Op, Preservation, Conditional);
 
   case NdOp::BRANCH:
   case NdOp::COND_BR:
@@ -901,6 +967,11 @@ StepResult SymExec::step(const LowOp &Op, const SymCallEffect *CallEffect,
     return StepResult::Continue;
 
   case NdOp::INTRINSIC:
+    if (auto Value = evaluateIntegerIntrinsic(
+            Ctx, Op, [&](const NdVar &Input) { return read(Input); })) {
+      writeResult(Op.Output, *Value);
+      return StepResult::Continue;
+    }
     return stepX87Intrinsic(Op);
 
   default:

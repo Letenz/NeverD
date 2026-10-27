@@ -7,8 +7,8 @@
 #ifndef NEVERD_BACKEND_LLVM_X86_MEDLLVMREGISTRATIONSEHJUMP_H
 #define NEVERD_BACKEND_LLVM_X86_MEDLLVMREGISTRATIONSEHJUMP_H
 
-#include "neverd/backend/llvm/X86RegistrationSEHBoundCall.h"
-#include "neverd/backend/llvm/X86RegistrationSEHJump.h"
+#include "neverd/backend/llvm/X86/X86RegistrationSEHBoundCall.h"
+#include "neverd/backend/llvm/X86/X86RegistrationSEHJump.h"
 
 #include "llvm/IR/IRBuilder.h"
 
@@ -52,6 +52,10 @@ struct SEHJumpCallbackCall {
   X86RegistrationSEHJumpStack Stack;
 };
 
+/// Retain each invocation-local load while rebinding its outlined stack slot.
+void bindSEHRuntimeCallbackArguments(
+    const SEHJumpPlan &Plan, const std::map<va_t, llvm::Function *> &Callbacks);
+
 /// Bind cloned calls and recover their capture buffers after callback commit.
 std::map<llvm::CallInst *, SEHJumpCallbackCall>
 emitSEHJumpCallbackBindings(const SEHJumpPlan &Plan, llvm::Function &Parent,
@@ -62,6 +66,13 @@ std::optional<SEHJumpPlan>
 prepareSEHJumps(const MedFunc &Source, llvm::Function &Parent,
                 llvm::AllocaInst &Frame, uint64_t EntrySP,
                 const std::map<const llvm::CallInst *, va_t> &Calls);
+
+/// Restore the capture state on initial return, or project the last logical
+/// callback state through the source's proved remaining unwind steps.
+llvm::Value *emitSEHJumpState(const X86RegistrationSEHJumpCall &Source,
+                              llvm::CallInst &Call, llvm::Value &State,
+                              llvm::Value *Captured,
+                              llvm::IRBuilder<> &Builder);
 
 /// Commit a preflighted buffer projection. The returned map replaces the old
 /// source calls before protected invokes are constructed.

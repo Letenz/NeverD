@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "OptimizationGuards.h"
 #include "SemanticConvergence.h"
 
 #include "neverd/Common.h"
@@ -32,6 +33,7 @@
 #include "neverd/pass/ir/simplify/ByteMemoryForwardingPass.h"
 #include "neverd/pass/ir/simplify/ControlFlowRecoveryPass.h"
 #include "neverd/pass/ir/simplify/SymSimplifyPass.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
@@ -69,6 +71,7 @@
 
 #define DEBUG_TYPE "neverd-pipeline"
 
+#include "PipelineLLVMFrame.h"
 namespace neverd {
 
 namespace {
@@ -159,7 +162,10 @@ privateFrameDisplacement(llvm::Value *Value, llvm::Value *EntrySP,
   int64_t Offset = 0;
   // One path is followed at each step. Bound the walk in malformed or very
   // large lifted graphs without making a guess about an unproved address.
-  for (unsigned Work = 0; Work < 1024; ++Work) {
+  for (unsigned Work = 0;
+       Work < ::neverd::limits::pipeline::
+                  kPipelineOptimizePrivateFrameDisplacementWorkLimit;
+       ++Work) {
     if (Value == EntrySP)
       return Offset;
     if (auto *Trunc = llvm::dyn_cast<llvm::TruncInst>(Value)) {
@@ -207,7 +213,10 @@ static bool returnDependsOnProvenLoad(
     const llvm::SmallPtrSetImpl<const llvm::LoadInst *> &ProvenLoads) {
   llvm::SmallVector<const llvm::Value *, 32> Work{Return.getReturnValue()};
   llvm::SmallPtrSet<const llvm::Value *, 32> Seen;
-  while (!Work.empty() && Seen.size() < 512) {
+  while (!Work.empty() &&
+         Seen.size() <
+             ::neverd::limits::pipeline::
+                 kPipelineOptimizeReturnDependsOnProvenLoadSeenSizeLimit) {
     const llvm::Value *Value = Work.pop_back_val();
     if (!Value || !Seen.insert(Value).second)
       continue;
@@ -221,7 +230,9 @@ static bool returnDependsOnProvenLoad(
       continue;
     for (const llvm::Use &Operand : Inst->operands())
       Work.push_back(Operand.get());
-    if (Work.size() > 512)
+    if (Work.size() >
+        ::neverd::limits::pipeline::
+            kPipelineOptimizeReturnDependsOnProvenLoadWorkSizeLimit)
       return false;
   }
   return false;
@@ -233,7 +244,7 @@ static bool returnDependsOnProvenLoad(
 /// Restoring that pointer provenance lets LLVM's ordinary SROA and mem2reg
 /// recover the scalar values before semantic MBA simplification. Escaping,
 /// dynamic, ordered, and out-of-frame accesses keep their original pointers.
-static bool canonicalizePrivateFrameAccesses(llvm::Module &Mod) {
+bool canonicalizePrivateFrameAccesses(llvm::Module &Mod) {
   bool Changed = false;
   const llvm::DataLayout &DL = Mod.getDataLayout();
   // Native 32-bit stack arithmetic commonly carries the synthetic pointer
@@ -345,77 +356,6 @@ static bool canonicalizePrivateFrameAccesses(llvm::Module &Mod) {
   return Changed;
 }
 
-/// After SROA, bare negative inttoptr addresses (e.g.
-/// `inttoptr (i32 -4 to ptr)`) can appear for stack slots that were
-/// previously frame-relative.  Rewrite them to `frame_base + disp`.
-static bool fixLiftedStackPointers(llvm::Module &Mod) {
-  bool Changed = false;
-  for (llvm::Function &F : Mod) {
-    if (F.isDeclaration() || F.hasOptNone())
-      continue;
-
-    llvm::Value *FrameBase = nullptr;
-    for (llvm::BasicBlock &BB : F) {
-      if (!BB.getName().starts_with(kFrameSetupBlock))
-        continue;
-      for (llvm::Instruction &I : BB) {
-        if (auto *Trunc = llvm::dyn_cast<llvm::TruncInst>(&I)) {
-          if (auto *PTI =
-                  llvm::dyn_cast<llvm::PtrToIntInst>(Trunc->getOperand(0)))
-            if (PTI->getName() == kRspInitValue)
-              FrameBase = Trunc;
-        }
-        if (!FrameBase) {
-          if (auto *PTI = llvm::dyn_cast<llvm::PtrToIntInst>(&I))
-            if (PTI->getName() == kRspInitValue)
-              FrameBase = PTI;
-        }
-      }
-    }
-    if (!FrameBase)
-      continue;
-
-    llvm::LLVMContext &Ctx = F.getContext();
-    for (llvm::BasicBlock &BB : F) {
-      for (llvm::Instruction &I : BB) {
-        auto FixIntToPtr = [&](llvm::Instruction *User, unsigned OpNo) -> bool {
-          llvm::Value *PtrOp = User->getOperand(OpNo);
-          llvm::Value *Addr = PtrOp;
-          if (auto *CE = llvm::dyn_cast<llvm::ConstantExpr>(PtrOp)) {
-            if (CE->getOpcode() != llvm::Instruction::IntToPtr)
-              return false;
-            Addr = CE->getOperand(0);
-          }
-          auto *CI = llvm::dyn_cast<llvm::ConstantInt>(Addr);
-          if (!CI)
-            return false;
-          int64_t Disp = CI->getSExtValue();
-          if (Disp >= 0)
-            return false;
-
-          llvm::IRBuilder<> FixB(User);
-          llvm::Value *Base = FrameBase;
-          if (Base->getType() != CI->getType())
-            Base = FixB.CreateIntCast(Base, CI->getType(), true, "sp_cast");
-          llvm::Value *Off = llvm::ConstantInt::get(
-              CI->getType(), static_cast<uint64_t>(Disp), true);
-          llvm::Value *PtrInt = FixB.CreateAdd(Base, Off);
-          llvm::Value *Fixed = FixB.CreateIntToPtr(
-              PtrInt, llvm::PointerType::get(Ctx, 0), "stackptr");
-          User->setOperand(OpNo, Fixed);
-          return true;
-        };
-
-        if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&I))
-          Changed |= FixIntToPtr(LI, llvm::LoadInst::getPointerOperandIndex());
-        else if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(&I))
-          Changed |= FixIntToPtr(SI, llvm::StoreInst::getPointerOperandIndex());
-      }
-    }
-  }
-  return Changed;
-}
-
 void Pipeline::promoteScaffoldingAllocas(llvm::Module &Mod) {
   llvm::LoopAnalysisManager LAM;
   llvm::FunctionAnalysisManager FAM;
@@ -435,8 +375,7 @@ void Pipeline::promoteScaffoldingAllocas(llvm::Module &Mod) {
   // mem2reg only: promotes the per-temp allocas the emitter spills SSA values
   // through (their addresses are never taken) and leaves the address-taken
   // frame alloca in memory.  No SROA / InstCombine / SimplifyCFG, so no
-  // value-changing transform runs and fixLiftedStackPointers (an SROA cleanup)
-  // is unneeded.
+  // value-changing transform runs.
   llvm::FunctionPassManager FPM;
   FPM.addPass(llvm::PromotePass());
   llvm::ModulePassManager MPM;
@@ -460,6 +399,7 @@ runOptimizationPipeline(llvm::Module &Mod,
   llvm::PassInstrumentationCallbacks PIC;
   llvm::OptNoneInstrumentation OptNone(/*DebugLogging=*/false);
   OptNone.registerCallbacks(PIC);
+  registerOptNoneInterproceduralGuard(PIC);
   llvm::PassBuilder PB(nullptr, llvm::PipelineTuningOptions(), std::nullopt,
                        &PIC);
 
@@ -565,16 +505,51 @@ runOptimizationPipeline(llvm::Module &Mod,
       llvm::PreservedAnalyses ThinPA = ThinPipeline.run(Mod, MAM);
       Result->Changed |= !ThinPA.areAllPreserved();
     } else {
+      // A source view shows each function as the machine runs it.  The
+      // inliner would copy a callee's body into its callers, and only into
+      // those that share the callee's LLVM shard, so the C would change
+      // with how the module was split and lose the calls it observed.
+      llvm::SmallVector<llvm::WeakVH, 0> Pinned;
+      if (Options.KeepFunctionBoundaries)
+        for (llvm::Function &F : Mod)
+          if (!F.isDeclaration() &&
+              !F.hasFnAttribute(llvm::Attribute::NoInline) &&
+              !F.hasFnAttribute(llvm::Attribute::AlwaysInline)) {
+            F.addFnAttr(llvm::Attribute::NoInline);
+            Pinned.push_back(&F);
+          }
+      // A view's module holds some of the image's functions, so it does not
+      // see every store to a writable table of code pointers: what a load
+      // finds is not its initializer.  GlobalOpt would otherwise take a
+      // function pointer no function here writes for a constant, and turn a
+      // call through it into a call to the first function it held, as of a
+      // lazily bound `__imp_X` its binder rewrites.
+      llvm::SmallVector<llvm::WeakVH, 0> Unsettled;
+      if (Options.KeepFunctionBoundaries)
+        for (llvm::GlobalVariable &G : Mod.globals())
+          if (G.hasLocalLinkage() && G.hasInitializer() && !G.isConstant() &&
+              !G.isExternallyInitialized() &&
+              parseNdCodePtrSymbol(G.getName())) {
+            G.setExternallyInitialized(true);
+            Unsettled.push_back(&G);
+          }
       llvm::ModulePassManager DefaultPipeline =
           Options.LLVMLevel == llvm::OptimizationLevel::O0
               ? PB.buildO0DefaultPipeline(Options.LLVMLevel)
               : PB.buildPerModuleDefaultPipeline(Options.LLVMLevel);
       llvm::PreservedAnalyses DefaultPA = DefaultPipeline.run(Mod, MAM);
       Result->Changed |= !DefaultPA.areAllPreserved();
+      for (llvm::WeakVH &Handle : Pinned)
+        if (auto *F = llvm::dyn_cast_or_null<llvm::Function>(Handle))
+          F->removeFnAttr(llvm::Attribute::NoInline);
+      for (llvm::WeakVH &Handle : Unsettled)
+        if (auto *G = llvm::dyn_cast_or_null<llvm::GlobalVariable>(Handle))
+          G->setExternallyInitialized(false);
     }
   }
 
-  Result->Changed |= fixLiftedStackPointers(Mod);
+  // Absolute integer addresses retain their bits. Only the pre-optimization
+  // private-frame proof above may recover an allocation-relative pointer.
   // Both Deep extension points intentionally contribute semantic work to the
   // same sink.  A function definition is nevertheless one visited function,
   // independent of how many extension points observe it.
@@ -679,7 +654,11 @@ Pipeline::optimizeOrPromoteModule(llvm::Module &Mod, LLVMSourceMap *Sources,
   OptimizationOptions Options;
   Options.SourceMap = Sources;
   Options.EnableSemantic = View.Symbolic;
+  Options.Semantic.EnableSynthesis = View.Symbolic;
+  Options.Semantic.Synthesis = symbolic::SynthOptions::sourceView();
+  Options.Semantic.SynthesisSolver = solver::SolverOptions::sourceView();
   Options.EnableControlFlowRecovery = View.RecoverControlFlow;
+  Options.KeepFunctionBoundaries = true;
   switch (View.LLVM) {
   case SourceViewOptions::LLVMOptimization::Basic:
   case SourceViewOptions::LLVMOptimization::Custom:

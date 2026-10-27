@@ -4,6 +4,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedIR.h"
+#include "neverd/pipeline/Limits.h"
 
 #include <algorithm>
 #include <map>
@@ -51,7 +52,8 @@ class Proof {
   std::map<Key, size_t> Indices;
   std::vector<Node> Nodes;
   std::vector<size_t> Roots;
-  size_t Remaining = 262144;
+  size_t Remaining =
+      ::neverd::limits::pipeline::kNativeSourceFloatingReturnRemaining;
   int Entry = -1;
 
   bool spend() {
@@ -83,7 +85,10 @@ class Proof {
   }
 
   bool graph() {
-    if (Function.Blocks.empty() || Function.Blocks.size() > 4096)
+    if (Function.Blocks.empty() ||
+        Function.Blocks.size() >
+            ::neverd::limits::pipeline::
+                kNativeSourceFloatingReturnGraphFunctionBlocksSizeLimit)
       return false;
     for (const auto &B : Function.Blocks) {
       if (B.Id < 0 || !Blocks.emplace(B.Id, &B).second ||
@@ -136,7 +141,8 @@ class Proof {
         if (Seen.empty() || Seen != Preds[Id])
           return false;
       }
-      if (B->Ops.size() > 65536)
+      if (B->Ops.size() > ::neverd::limits::pipeline::
+                              kNativeSourceFloatingReturnGraphBOpsSizeLimit)
         return false;
       for (size_t Position = 0; Position != B->Ops.size(); ++Position) {
         const auto &Op = B->Ops[Position];
@@ -239,7 +245,9 @@ class Proof {
     if (!spend() || V.Size < 8 || V.Size > 16)
       return std::nullopt;
     if (V.isConst()) {
-      if (V.Size != 8 || Nodes.size() >= 4096)
+      if (V.Size != 8 || Nodes.size() >=
+                             ::neverd::limits::pipeline::
+                                 kNativeSourceFloatingReturnNeedNodesSizeLimit)
         return std::nullopt;
       Nodes.push_back({V, {}, true, false});
       return Nodes.size() - 1;
@@ -255,7 +263,8 @@ class Proof {
       return std::nullopt;
     auto [I, Added] = Indices.emplace(key(V), Nodes.size());
     if (Added) {
-      if (Nodes.size() >= 4096)
+      if (Nodes.size() >= ::neverd::limits::pipeline::
+                              kNativeSourceFloatingReturnNeedNodesSizeLimit)
         return std::nullopt;
       Nodes.push_back({V, {}, false, false});
     }

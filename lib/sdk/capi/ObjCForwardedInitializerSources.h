@@ -3,6 +3,10 @@
 
 #include "ObjCSuperGetterSources.h"
 
+#include "neverd/sdk/Limits.h"
+
+#include <iterator>
+
 namespace neverd::sdk {
 namespace objc_forwarded_initializer_detail {
 using namespace objc_super_getter_detail;
@@ -41,7 +45,9 @@ inline const LowFunc *completeCallerLow(const PipelineResult &Result,
       !Audit->DecodeFailures.empty() ||
       !Audit->UnsupportedInstructions.empty() ||
       !Audit->TruncatedPaths.empty() || Low->Blocks.empty() ||
-      Low->Blocks.size() > 8)
+      Low->Blocks.size() >
+          ::neverd::sdk::
+              kObjCForwardedInitializerSourcesCompleteCallerLowLowBlocksSizeLimit)
     return nullptr;
   size_t Decoded = 0;
   const LowBlock *Entry = nullptr;
@@ -49,7 +55,9 @@ inline const LowFunc *completeCallerLow(const PipelineResult &Result,
     Decoded += Block.InstructionBoundaries.size();
     if (!Block.Preds.empty() || !Block.Succs.empty() ||
         !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty() ||
-        Block.Ops.size() > 256)
+        Block.Ops.size() >
+            ::neverd::sdk::
+                kObjCForwardedInitializerSourcesCompleteCallerLowBlockOpsSizeLimit)
       return nullptr;
     if (Block.StartAddr == Root) {
       if (Entry)
@@ -71,7 +79,7 @@ inline const LowFunc *completeCallerLow(const PipelineResult &Result,
       return nullptr;
   for (const auto &Op : Entry->Ops)
     if (Op.Addr < Root || Op.Addr - Root >= 12 || (Op.Addr - Root) % 4 ||
-        Op.NumInputs > 6)
+        Op.NumInputs > std::size(Op.Inputs))
       return nullptr;
   return Low;
 }

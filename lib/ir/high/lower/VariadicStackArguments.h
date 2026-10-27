@@ -41,7 +41,11 @@ struct StackSlotValue {
 /// with.  A view narrower than another phi of the register (`w0` beside
 /// `x0`) keeps step with writes to the whole register only for the reads of
 /// it that follow; with none left it may be stale, and where a write to the
-/// view zero-extends into the register, the wider phi holds the value.
+/// view zero-extends into the register, the wider phi holds the value.  The
+/// view's phi stands for the register where it is read and the wider phi
+/// joins an unmaterialized incoming value, an unspecified exceptional value,
+/// or an incomplete predecessor. This choice is independent of the two
+/// PHIs' order.
 const PhiNode *registerPhi(const MedFunc &Func, const MedBlock &Block,
                            uint64_t RegOff, const TargetRegInfo &TRI);
 
@@ -51,6 +55,22 @@ const PhiNode *registerPhi(const MedFunc &Func, const MedBlock &Block,
 bool reachingRegisterAtBlockEntry(const MedFunc &Func, const MedBlock &Block,
                                   uint64_t RegOff, const TargetRegInfo &TRI,
                                   MedVar &Out);
+
+/// The integer argument register at \p RegOff as the call at \p CallIdx of
+/// \p Block reads it: the block's last write to it before the call, else as
+/// it enters the block (reachingRegisterAtBlockEntry).  A call that may
+/// change the register (callClobbersRegister under \p Format) ends a path as
+/// a write does, and so does an exception handler's entry, where the
+/// unwinder leaves caller-saved registers unspecified.  Where every path
+/// that finds nothing else ends so, none reaching the function's entry, the
+/// value is what the calls left there (valueLeftByCall).  With
+/// \p ParameterAtEntry, a register the function takes as a parameter and its
+/// entry holds no copy of (the body only passes it on) enters as that
+/// parameter.
+bool reachingRegisterAtCall(const MedFunc &Func, const MedBlock &Block,
+                            size_t CallIdx, uint64_t RegOff,
+                            const TargetRegInfo &TRI, BinaryFormat Format,
+                            MedVar &Out, bool ParameterAtEntry = false);
 
 /// The values the call at \p CallIdx in \p Block stores to the pointer-wide
 /// slots from the stack pointer it is made with up, in slot order as far as

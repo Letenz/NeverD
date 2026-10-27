@@ -27,6 +27,7 @@ private:
   AddressSpace &Space;
   uint64_t PageSize, Minimum, Limit, GuardBase;
   std::vector<MaximumProtection> Maximum;
+  std::vector<MaximumProtection> Reserved;
   struct FileMapping {
     uint64_t Address, Size;
     std::shared_ptr<const unsigned> Lease;

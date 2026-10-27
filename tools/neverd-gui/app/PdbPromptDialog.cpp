@@ -10,6 +10,7 @@
 
 #include "PdbPromptDialog.h"
 
+#include "../Config.h"
 #include "Session.h"
 #include "SymbolDownload.h"
 #include "Theme.h"
@@ -33,16 +34,6 @@
 
 namespace neverd::gui {
 namespace {
-
-// Room for the question and a path of usual length.
-constexpr int DialogWidth = 480;
-/// The dialog's margins, the space between the lines of a group and the
-/// space between groups, on the 4-pixel grid.
-constexpr int Margin = 16;
-constexpr int LineSpacing = 4;
-constexpr int GroupSpacing = 8;
-/// A slim bar, as Visual Studio Code draws progress.
-constexpr int ProgressHeight = 4;
 
 /// The host of Microsoft's public symbol server, which the question names
 /// as IDA does.
@@ -86,10 +77,14 @@ PdbPromptDialog::PdbPromptDialog(Session &session, const QString &input,
   setObjectName(QStringLiteral("pdbPrompt"));
   setWindowTitle(tr("Load PDB file"));
   // The question fits its text: each step sets the height it needs.
-  setFixedWidth(DialogWidth);
+  setFixedWidth(::neverd::limits::gui_config::kPdbPromptDialogDialogWidth);
   auto *layout = new QVBoxLayout(this);
-  layout->setContentsMargins(Margin, Margin, Margin, Margin);
-  layout->setSpacing(LineSpacing);
+  layout->setContentsMargins(
+      ::neverd::limits::gui_config::kPdbPromptDialogMargin,
+      ::neverd::limits::gui_config::kPdbPromptDialogMargin,
+      ::neverd::limits::gui_config::kPdbPromptDialogMargin,
+      ::neverd::limits::gui_config::kPdbPromptDialogMargin);
+  layout->setSpacing(::neverd::limits::gui_config::kPdbPromptDialogLineSpacing);
 
   // What the input names, where a copy is, and what to do: each a group of
   // lines, apart from the next.
@@ -103,7 +98,8 @@ PdbPromptDialog::PdbPromptDialog(Session &session, const QString &input,
   recorded_->setFont(Theme::instance().codeFont());
   setElided(recorded_, reference_.value("recorded").toString());
   layout->addWidget(recorded_);
-  layout->addSpacing(GroupSpacing);
+  layout->addSpacing(
+      ::neverd::limits::gui_config::kPdbPromptDialogGroupSpacing);
 
   where_ = line(this, "where");
   layout->addWidget(where_);
@@ -115,15 +111,18 @@ PdbPromptDialog::PdbPromptDialog(Session &session, const QString &input,
   progress_ = new QProgressBar(this);
   progress_->setObjectName(QStringLiteral("progress"));
   progress_->setTextVisible(false);
-  progress_->setFixedHeight(ProgressHeight);
+  progress_->setFixedHeight(
+      ::neverd::limits::gui_config::kPdbPromptDialogProgressHeight);
   layout->addWidget(progress_);
   detail_ = line(this, "detail");
   detail_->setProperty("statusLine", true);
   layout->addWidget(detail_);
-  layout->addSpacing(GroupSpacing);
+  layout->addSpacing(
+      ::neverd::limits::gui_config::kPdbPromptDialogGroupSpacing);
   question_ = line(this, "question");
   layout->addWidget(question_);
-  layout->addSpacing(GroupSpacing);
+  layout->addSpacing(
+      ::neverd::limits::gui_config::kPdbPromptDialogGroupSpacing);
 
   buttons_ = new QDialogButtonBox(this);
   buttons_->setCenterButtons(true);

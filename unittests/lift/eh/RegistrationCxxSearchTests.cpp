@@ -8,7 +8,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/ir/RegistrationState.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include <algorithm>
 
@@ -131,7 +131,7 @@ TEST(RegistrationState, SecondarySearchSurvivesBlockAndSuccessorReordering) {
         return Other.BlockId == Block.BlockId;
       });
       ASSERT_NE(Found, Expected.Blocks.end());
-      EXPECT_EQ(Block.Levels, Found->Levels);
+      EXPECT_EQ(Block.levels(), Found->levels());
       EXPECT_EQ(Block.CxxSearches, Found->CxxSearches);
       EXPECT_EQ(Block.CallbackOnly, Found->CallbackOnly);
       EXPECT_EQ(Block.Unknown, Found->Unknown);

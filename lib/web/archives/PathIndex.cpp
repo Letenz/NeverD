@@ -14,6 +14,7 @@
 #include "../PathPolicy.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/PackageArchive.h"
 
 #include <algorithm>
@@ -27,7 +28,9 @@ void ArchivePathIndex::charge(uint64_t Bytes) {
 
 void ArchivePathIndex::admit(const std::string &Path, bool Directory) {
   const auto Key = archivePathKey(Path);
-  if (std::count(Path.begin(), Path.end(), '/') >= 64)
+  if (std::count(Path.begin(), Path.end(), '/') >=
+      ::neverd::limits::web::
+          kPathIndexArchivePathIndexAdmitStdCountPathBeginPathEndLimit)
     throw Error("package_archive_depth_budget_exceeded");
   charge(Path.size());
   const auto Existing = Paths.find(Key);

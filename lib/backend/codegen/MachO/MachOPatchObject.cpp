@@ -4,11 +4,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/codegen/MachO/MachOCompactUnwindPatch.h"
 #include "neverd/backend/codegen/MachO/MachOExceptionPatch.h"
+#include "neverd/backend/codegen/MachO/MachOLayoutGrowth.h"
 #include "neverd/backend/codegen/MachO/MachOPatch.h"
 #include "neverd/backend/codegen/PatchObject.h"
 #include "neverd/backend/codegen/PatchStorage.h"
+#include "neverd/backend/codegen/SourcePatchPreparation.h"
 #include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/loader/MachO/CompactUnwind.h"
 #include "neverd/object/MachOLayout.h"
@@ -25,7 +28,6 @@ namespace neverd {
 namespace {
 using Kind = llvm::mc_rewrite::RewriteSectionKind;
 using namespace llvm::MachO;
-constexpr uint64_t MaxStorage = 64 * 1024 * 1024;
 llvm::Error fail(const llvm::Twine &Message) {
   return llvm::createStringError(llvm::errc::not_supported,
                                  "Mach-O patch object: " + Message);
@@ -61,6 +63,14 @@ struct NativeMachO {
   std::optional<size_t> EH, CompactSection;
   bool SjLj = false;
   bool CompactOnly = false;
+  std::map<unsigned, SourcePatchImport> Imports;
+  std::map<uint64_t, unsigned> IndirectSymbols;
+  std::map<uint64_t, uint64_t> IndirectSlots;
+  struct Thunk {
+    size_t Section;
+    uint64_t Slot, FrameOffset, FrameSize;
+  };
+  std::map<unsigned, Thunk> Thunks;
 };
 
 llvm::Expected<NativeMachO> readObject(llvm::StringRef Bytes,
@@ -131,11 +141,13 @@ llvm::Expected<NativeMachO> readObject(llvm::StringRef Bytes,
     const bool Code =
         Flags & (S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS);
     const bool Zero = Type == S_ZEROFILL;
+    const bool Indirect = Type == S_NON_LAZY_SYMBOL_POINTERS;
     if (Type != S_REGULAR && Type != S_COALESCED && Type != S_ZEROFILL &&
         Type != S_CSTRING_LITERALS && Type != S_4BYTE_LITERALS &&
-        Type != S_8BYTE_LITERALS && Type != S_16BYTE_LITERALS)
+        Type != S_8BYTE_LITERALS && Type != S_16BYTE_LITERALS && !Indirect)
       return fail("unsupported native section kind: " + *Name);
-    if (S.getSize() > MaxStorage - Total)
+    if (S.getSize() >
+        ::neverd::limits::backend::kMachOPatchObjectMaxStorage - Total)
       return fail("native storage exceeds profile limit");
     Total += S.getSize();
     CompiledSection Item;
@@ -149,8 +161,8 @@ llvm::Expected<NativeMachO> readObject(llvm::StringRef Bytes,
                 : Zero     ? Kind::UninitializedData
                 : Writable ? Kind::WritableData
                            : Kind::ReadOnlyData;
-    Item.IsAllocated = !Compact;
-    Item.IsInImage = !Compact && *Name != "__eh_frame";
+    Item.IsAllocated = !Compact && !Indirect;
+    Item.IsInImage = !Compact && !Indirect && *Name != "__eh_frame";
     if (!llvm::isPowerOf2_64(Item.Alignment) || Item.Alignment > 65536)
       return fail("invalid section alignment");
     if (Zero)
@@ -162,6 +174,27 @@ llvm::Expected<NativeMachO> readObject(llvm::StringRef Bytes,
       if (Data->size() != Item.Size)
         return fail("truncated section");
       Item.ExternalBytes.assign(Data->begin(), Data->end());
+    }
+    if (Indirect) {
+      const auto D = M->getDysymtabLoadCommand();
+      const unsigned First =
+          M->is64Bit() ? M->getSection64(S.getRawDataRefImpl()).reserved1
+                       : M->getSection(S.getRawDataRefImpl()).reserved1;
+      if (S.getSize() % Image.PointerWidth || First > D.nindirectsyms ||
+          S.getSize() / Image.PointerWidth > D.nindirectsyms - First ||
+          !rangeInBounds(D.indirectsymoff, uint64_t(D.nindirectsyms) * 4,
+                         Bytes.size()) ||
+          !S.relocations().empty())
+        return fail("invalid native indirect-symbol storage");
+      for (uint64_t N = 0; N < S.getSize() / Image.PointerWidth; ++N) {
+        const unsigned Symbol = M->getIndirectSymbolTableEntry(D, First + N);
+        if (Symbol & (INDIRECT_SYMBOL_LOCAL | INDIRECT_SYMBOL_ABS))
+          return fail("local indirect pointer needs a native rebase contract");
+        if (!Result.IndirectSymbols
+                 .emplace(S.getAddress() + N * Image.PointerWidth, Symbol)
+                 .second)
+          return fail("overlapping native indirect pointers");
+      }
     }
     const size_t Index = Image.Sections.size();
     if (*Name == "__eh_frame") {
@@ -300,6 +333,135 @@ llvm::Expected<NativeMachO> readObject(llvm::StringRef Bytes,
   return Result;
 }
 
+llvm::Error prepareImports(NativeMachO &Object,
+                           llvm::ArrayRef<SourcePatchImport> Imports) {
+  auto &Image = Object.Image;
+  for (const auto &I : Imports) {
+    const auto N = Object.Names.find(I.Request.Symbol);
+    if (N == Object.Names.end() || Object.Symbols.at(N->second).Section)
+      return fail("new dependency requires a unique undefined symbol: " +
+                  I.Request.Symbol);
+    Object.Imports.emplace(N->second, I);
+    if (I.Request.Kind != SourcePatchDependencyKind::Function)
+      continue;
+    auto Code = buildSourceImportThunk(Image.TargetArch,
+                                       Image.TargetArch == Arch::ARM
+                                           ? InstructionMode::Thumb
+                                           : InstructionMode::Default,
+                                       0x10000, 0x20000);
+    if (!Code)
+      return Code.takeError();
+    CompiledSection S;
+    S.Name = "__nd_import_" + std::to_string(N->second);
+    S.Kind = Kind::Code;
+    S.Alignment = 4;
+    S.Size = Code->size();
+    S.ExternalBytes = std::move(*Code);
+    S.IsAllocated = S.IsInImage = true;
+    Object.Thunks.emplace(
+        N->second, NativeMachO::Thunk{Image.Sections.size(), I.SlotVA, 0, 0});
+    Image.Sections.push_back(std::move(S));
+  }
+  for (const auto &[VA, Index] : Object.IndirectSymbols) {
+    const auto Import = Object.Imports.find(Index);
+    if (Import == Object.Imports.end())
+      return fail("native indirect pointer has no explicit dependency");
+    Object.IndirectSlots.emplace(VA, Import->second.SlotVA);
+  }
+  if (!Object.Thunks.empty()) {
+    if (!Object.EH) {
+      Object.EH = Image.Sections.size();
+      CompiledSection F;
+      F.Name = "__eh_frame";
+      F.Kind = Kind::ReadOnlyData;
+      F.Alignment = 8;
+      F.IsAllocated = true;
+      F.IsInImage = false;
+      Image.Sections.push_back(std::move(F));
+    }
+    // Reserve the size now, append records only after producer relocations and
+    // exact producer function ranges have been checked independently.
+    auto &F = Image.Sections[*Object.EH];
+    F.Size = llvm::alignTo(F.Size, 8);
+    for (auto &[Index, T] : Object.Thunks) {
+      auto Frame = buildSourceImportThunkFrame(
+          Image.TargetArch, 0x10000, Image.Sections[T.Section].Size, 0x20000);
+      if (!Frame)
+        return Frame.takeError();
+      T.FrameSize = Frame->size();
+      F.Size += T.FrameSize;
+    }
+  }
+  return llvm::Error::success();
+}
+
+llvm::Error finalizeImports(NativeMachO &Object,
+                            const MachOEHFrameRegion &Region) {
+  if (Object.Thunks.empty())
+    return llvm::Error::success();
+  auto &Image = Object.Image;
+  auto &F = Image.Sections[*Object.EH];
+  if (F.ExternalBytes.size() % 8) {
+    // Pad the last authenticated record with DW_CFA_nop, not a zero-length
+    // record (which would terminate the entire table before our new CIE).
+    size_t At = 0, Last = 0;
+    while (At < F.ExternalBytes.size()) {
+      if (!rangeInBounds(At, 4, F.ExternalBytes.size()))
+        return fail("truncated producer frame");
+      const uint32_t Size = readLE<uint32_t>(F.ExternalBytes.data() + At);
+      if (Size < 4 || !rangeInBounds(At + 4, Size, F.ExternalBytes.size()))
+        return fail("unmodeled producer frame terminator");
+      Last = At;
+      At += 4 + Size;
+    }
+    const auto Padding = llvm::alignTo(At, 8) - At;
+    writeLE<uint32_t>(F.ExternalBytes.data() + Last,
+                      readLE<uint32_t>(F.ExternalBytes.data() + Last) +
+                          Padding);
+    F.ExternalBytes.resize(At + Padding, 0);
+  }
+  for (auto &[Index, T] : Object.Thunks) {
+    auto &S = Image.Sections[T.Section];
+    auto Code = buildSourceImportThunk(Image.TargetArch,
+                                       Image.TargetArch == Arch::ARM
+                                           ? InstructionMode::Thumb
+                                           : InstructionMode::Default,
+                                       S.VA, T.Slot);
+    if (!Code)
+      return Code.takeError();
+    std::copy(Code->begin(), Code->end(), Image.Bytes.begin() + S.Offset);
+    // Mach-O FDEs must start on 8-byte boundaries; the producer's records
+    // already have this padding. Reject rather than insert a zero terminator.
+    if (F.ExternalBytes.size() % 8)
+      return fail("producer frame alignment cannot host an import thunk");
+    T.FrameOffset = F.ExternalBytes.size();
+    auto Frame = buildSourceImportThunkFrame(Image.TargetArch, S.VA, S.Size,
+                                             F.VA + T.FrameOffset);
+    if (!Frame)
+      return Frame.takeError();
+    if (Frame->size() != T.FrameSize)
+      return fail("import frame sizing changed");
+    auto Records = decodeDwarfEHFrameRecords(*Frame, F.VA + T.FrameOffset,
+                                             Image.PointerWidth == 8);
+    if (!Records)
+      return Records.takeError();
+    if (Records->size() != 1 || Records->front().BeginVA != S.VA ||
+        Records->front().EndVA != S.VA + S.Size)
+      return fail("import frame has no exact thunk owner");
+    const uint64_t FDE = Records->front().RecordVA - Region.SectionVA;
+    if (FDE > 0xffffff)
+      return fail("import FDE exceeds compact offset encoding");
+    Object.Compact.push_back(
+        {S.VA, S.VA + S.Size,
+         (Image.TargetArch == Arch::AArch64 ? 0x03000000u : 0x04000000u) |
+             uint32_t(FDE)});
+    F.ExternalBytes.insert(F.ExternalBytes.end(), Frame->begin(), Frame->end());
+  }
+  if (F.ExternalBytes.size() != F.Size)
+    return fail("native import frame reservation changed");
+  return llvm::Error::success();
+}
+
 llvm::Error place(NativeMachO &Object, uint64_t Base,
                   const std::optional<MachOEHFrameRegion> &EH) {
   auto &Image = Object.Image;
@@ -313,15 +475,18 @@ llvm::Error place(NativeMachO &Object, uint64_t Base,
     for (auto &S : Image.Sections)
       if (S.IsAllocated && S.IsInImage && S.Kind == Group) {
         Cursor = llvm::alignTo(Cursor, S.Alignment);
-        if (Cursor < Base || Cursor - Base > MaxStorage ||
-            S.Size > MaxStorage - (Cursor - Base))
+        if (Cursor < Base ||
+            Cursor - Base >
+                ::neverd::limits::backend::kMachOPatchObjectMaxStorage ||
+            S.Size > ::neverd::limits::backend::kMachOPatchObjectMaxStorage -
+                         (Cursor - Base))
           return fail("native placement overflows");
         S.VA = Cursor;
         S.Offset = Cursor - Base;
         Cursor += S.Size;
       }
   }
-  if (Cursor - Base > MaxStorage)
+  if (Cursor - Base > ::neverd::limits::backend::kMachOPatchObjectMaxStorage)
     return fail("native placement exceeds limit");
   Image.Bytes.resize(Cursor - Base, 0);
   for (auto &S : Image.Sections)
@@ -346,6 +511,12 @@ llvm::Error place(NativeMachO &Object, uint64_t Base,
   return llvm::Error::success();
 }
 llvm::Expected<uint64_t> mapOldVA(const NativeMachO &Object, uint64_t VA) {
+  if (auto It = Object.IndirectSlots.upper_bound(VA);
+      It != Object.IndirectSlots.begin()) {
+    --It;
+    if (VA - It->first < Object.Image.PointerWidth)
+      return It->second + VA - It->first;
+  }
   std::optional<uint64_t> Value;
   for (const auto &[Number, Index] : Object.Sections) {
     const auto &S = Object.Image.Sections[Index];
@@ -378,6 +549,11 @@ resolve(const NativeMachO &Object, unsigned Index, const BinaryImage &Original,
     return Object.Image.Sections[Object.Sections.at(S.Section)].VA + S.Offset +
            (S.Function && S.Thumb ? 1 : 0);
   }
+  if (auto T = Object.Thunks.find(Index); T != Object.Thunks.end())
+    return Object.Image.Sections[T->second.Section].VA +
+           (Object.Image.TargetArch == Arch::ARM ? 1 : 0);
+  if (Object.Imports.contains(Index))
+    return fail("data dependency needs a loader pointer-slot relocation");
   if (auto B = Bindings.find(S.Name); B != Bindings.end())
     return B->second.OriginalVA;
   std::set<uint64_t> VAs;
@@ -430,9 +606,16 @@ relocate(NativeMachO &Object, const BinaryImage &Original,
                           return X.second == R.Section;
                         })->first;
     const uint64_t OldP = Object.OldSectionVAs.at(Number) + R.Offset;
+    const bool GOT =
+        R.External && Object.Imports.contains(R.SymbolIndex) &&
+        ((A == Arch::X64 &&
+          (R.Type == X86_64_RELOC_GOT || R.Type == X86_64_RELOC_GOT_LOAD)) ||
+         (A == Arch::AArch64 && (R.Type == ARM64_RELOC_GOT_LOAD_PAGE21 ||
+                                 R.Type == ARM64_RELOC_GOT_LOAD_PAGEOFF12)));
     llvm::Expected<uint64_t> Target =
-        R.Scattered  ? mapOldVA(Object, R.ScatteredVA)
-        : R.External ? resolve(Object, R.SymbolIndex, Original, Bindings)
+        GOT ? llvm::Expected<uint64_t>(Object.Imports.at(R.SymbolIndex).SlotVA)
+        : R.Scattered ? mapOldVA(Object, R.ScatteredVA)
+        : R.External  ? resolve(Object, R.SymbolIndex, Original, Bindings)
         : Object.Sections.contains(R.SymbolIndex)
             ? llvm::Expected<uint64_t>(
                   Object.Image.Sections[Object.Sections.at(R.SymbolIndex)].VA)
@@ -445,9 +628,9 @@ relocate(NativeMachO &Object, const BinaryImage &Original,
         (A == Arch::X86 && R.Type == GENERIC_RELOC_VANILLA) ||
         (A == Arch::ARM && R.Type == ARM_RELOC_VANILLA) ||
         (A == Arch::X64 &&
-         (R.Type == X86_64_RELOC_UNSIGNED || R.Type == X86_64_RELOC_BRANCH ||
-          R.Type == X86_64_RELOC_SIGNED || R.Type == X86_64_RELOC_SIGNED_1 ||
-          R.Type == X86_64_RELOC_SIGNED_2 ||
+         (GOT || R.Type == X86_64_RELOC_UNSIGNED ||
+          R.Type == X86_64_RELOC_BRANCH || R.Type == X86_64_RELOC_SIGNED ||
+          R.Type == X86_64_RELOC_SIGNED_1 || R.Type == X86_64_RELOC_SIGNED_2 ||
           R.Type == X86_64_RELOC_SIGNED_4)) ||
         (A == Arch::AArch64 && R.Type == ARM64_RELOC_UNSIGNED);
     const bool Half = A == Arch::ARM && (R.Type == ARM_RELOC_HALF ||
@@ -546,10 +729,11 @@ relocate(NativeMachO &Object, const BinaryImage &Original,
       }
     } else if (A == Arch::AArch64 &&
                (R.Type == ARM64_RELOC_PAGE21 ||
-                R.Type == ARM64_RELOC_PAGEOFF12) &&
+                R.Type == ARM64_RELOC_PAGEOFF12 || GOT) &&
                R.Width == 4) {
       const uint32_t Old = Raw;
-      if (R.Type == ARM64_RELOC_PAGE21) {
+      if (R.Type == ARM64_RELOC_PAGE21 ||
+          R.Type == ARM64_RELOC_GOT_LOAD_PAGE21) {
         if (!R.PCRel || (Old & 0x9f000000) != 0x90000000 || !R.External)
           return fail("PAGE21 requires a symbolic ADRP");
         V += llvm::APInt(
@@ -604,7 +788,10 @@ relocate(NativeMachO &Object, const BinaryImage &Original,
                          return S.Function && S.Thumb &&
                                 Object.Image.SymbolAddrs.at(S.Name) == TargetVA;
                        }) ||
-          (Original.instructionModeAt(TargetVA) == InstructionMode::Thumb);
+          (Original.instructionModeAt(TargetVA) == InstructionMode::Thumb) ||
+          llvm::any_of(Object.Thunks, [&](const auto &T) {
+            return Object.Image.Sections[T.second.Section].VA == TargetVA;
+          });
       if (!Thumb)
         return fail("BR22 requires a verified Thumb target");
       V -= llvm::APInt(128, P + 4);
@@ -702,6 +889,30 @@ relocate(NativeMachO &Object, const BinaryImage &Original,
         return fail("native DWARF and compact extents disagree");
     }
   }
+  if (Object.EH && !Object.CompactOnly) {
+    const auto Region = findMachOEHFrameRegion(Original.Raw);
+    // Actual section identity is supplied by placement when storage has grown.
+    const auto &EH = Object.Image.Sections[*Object.EH];
+    auto Records = decodeDwarfEHFrameRecords(EH.ExternalBytes, EH.VA,
+                                             Object.Image.PointerWidth == 8);
+    if (!Records)
+      return Records.takeError();
+    if (!Region)
+      return fail("producer FDEs need a registered frame section");
+    for (const auto &R : *Records) {
+      if (llvm::any_of(Object.Compact,
+                       [&](const auto &C) { return C.BeginVA == R.BeginVA; }))
+        continue;
+      if (R.RecordVA < Region->SectionVA ||
+          R.RecordVA - Region->SectionVA > 0xffffff)
+        return fail("producer FDE exceeds compact encoding");
+      Object.Compact.push_back(
+          {R.BeginVA, R.EndVA,
+           (A == Arch::AArch64 ? macho_unwind::kARM64ModeDwarf
+                               : macho_unwind::kX86ModeDwarf) |
+               uint32_t(R.RecordVA - Region->SectionVA)});
+    }
+  }
   std::map<uint64_t, Symbol *> Functions;
   for (auto &[I, S] : Object.Symbols)
     if (S.Function) {
@@ -730,34 +941,20 @@ relocate(NativeMachO &Object, const BinaryImage &Original,
   for (const auto &[Begin, End] : Extents)
     if (!Functions.contains(Begin) || Functions.at(Begin)->Size != End - Begin)
       return fail("native unwind has no exact function symbol");
-  auto OriginalCompact = findMachOCompactUnwindRegion(Original.Raw);
-  if (!OriginalCompact)
-    return OriginalCompact.takeError();
-  if (!*OriginalCompact && !Object.Compact.empty() && Object.EH &&
-      !Object.CompactOnly) {
-    const auto &EH = Object.Image.Sections[*Object.EH];
-    auto Records = decodeDwarfEHFrameRecords(EH.ExternalBytes, EH.VA,
-                                             Object.Image.PointerWidth == 8);
-    if (!Records)
-      return Records.takeError();
-    if (llvm::all_of(Object.Compact, [&](const auto &Range) {
-          return llvm::count_if(*Records, [&](const auto &R) {
-                   return R.BeginVA == Range.BeginVA && R.EndVA == Range.EndVA;
-                 }) == 1;
-        }))
-      Object.Compact.clear();
-  }
   return llvm::Error::success();
 }
 } // namespace
 
 llvm::Expected<PatchResult> installMachOObjectPatch(
-    llvm::StringRef Bytes, const BinaryImage &Original,
+    llvm::StringRef Bytes, const BinaryImage &OriginalInput,
     llvm::ArrayRef<SourcePatchMapping> Mappings,
     llvm::ArrayRef<SourcePatchBinding> RequestedBindings,
     const std::filesystem::path &Output,
     llvm::function_ref<llvm::Error(const PatchResult &)> PrepareReceipt,
-    const DynCodePatchEvidence *DynCode) {
+    const DynCodePatchEvidence *DynCode,
+    const SourcePatchPreparation *Preparation) {
+  const BinaryImage &Original =
+      Preparation ? Preparation->Image : OriginalInput;
   auto Object = readObject(Bytes, Original);
   if (!Object)
     return Object.takeError();
@@ -786,22 +983,48 @@ llvm::Expected<PatchResult> installMachOObjectPatch(
   }
   MachOPatcher Patcher;
   Patcher.setInputKind(RewriteInputKind::ReplacementObject);
+  auto LayoutBytes = Original.Raw;
+  if (Preparation)
+    if (auto E = prepareImports(*Object, Preparation->Imports))
+      return E;
+  const uint64_t ExtraEH = Object->EH && (findMachOEHFrameRegion(LayoutBytes) ||
+                                          !Object->Thunks.empty())
+                               ? Object->Image.Sections[*Object->EH].Size
+                               : 0;
+  auto Grown = reserveMachOSourceUnwind(LayoutBytes, Original.Arch, ExtraEH,
+                                        Object->Symbols.size());
+  if (!Grown)
+    return Grown.takeError();
   const uint64_t Base =
-      Patcher.plannedExecSegmentVA(Original.Raw, Original.Arch);
-  const auto EH = findMachOEHFrameRegion(Original.Raw);
+      Patcher.plannedExecSegmentVA(LayoutBytes, Original.Arch);
+  const auto EH = findMachOEHFrameRegion(LayoutBytes);
   if (!Base)
     return fail("original Mach-O has no safe placement");
   if (auto E = place(*Object, Base, EH))
     return std::move(E);
-  if (auto E = relocate(*Object, References, Bindings))
+  auto LayoutReader = Loader::create(BinaryFormat::MachO);
+  auto LayoutImage = LayoutReader->loadBuffer(llvm::MemoryBufferRef(
+      llvm::StringRef(reinterpret_cast<const char *>(LayoutBytes.data()),
+                      LayoutBytes.size()),
+      "object-layout"));
+  if (!LayoutImage)
+    return LayoutImage.takeError();
+  scanImportThunks(*LayoutImage);
+  if (auto E = relocate(*Object, *LayoutImage, Bindings))
     return std::move(E);
+  if (!Object->Thunks.empty()) {
+    if (!EH)
+      return fail("import thunks need registered native DWARF storage");
+    if (auto E = finalizeImports(*Object, *EH))
+      return E;
+  }
   if (DynCode)
     if (auto E =
             validateDynCodePatchImage(*DynCode, Bytes, Original, Object->Image,
                                       Mappings, RequestedBindings))
       return std::move(E);
   return publishSourcePatch(
-      Original, Mappings, Output,
+      OriginalInput, Mappings, Output,
       [&](const std::filesystem::path &Input,
           const std::filesystem::path &Candidate)
           -> llvm::Expected<PatchResult> {
@@ -813,6 +1036,7 @@ llvm::Expected<PatchResult> installMachOObjectPatch(
                 Failure = llvm::toString(std::move(E));
                 return false;
               };
+              Binary = LayoutBytes;
               if (Object->EH && !Object->CompactOnly)
                 if (auto E = installNativeMachOEHFrame(
                         Binary, *EH, Object->Image.Sections[*Object->EH]))
@@ -833,7 +1057,7 @@ llvm::Expected<PatchResult> installMachOObjectPatch(
                               : InstructionMode::ARM) != *Mode) ||
                     !getTargetCodegenInfo(Original.Arch, *Mode)
                          .writeSourceTrampoline(
-                             Binary, Original.vaToFileOffset(M.OriginalVA),
+                             Binary, LayoutImage->vaToFileOffset(M.OriginalVA),
                              Owner, M.OriginalVA,
                              getTargetCodegenInfo(Original.Arch, *Mode)
                                  .sourceTrampolineSize()))
@@ -852,6 +1076,32 @@ llvm::Expected<PatchResult> installMachOObjectPatch(
           return fail(Failure.empty() ? "candidate write failed" : Failure);
         return R;
       },
-      PrepareReceipt);
+      PrepareReceipt, Preparation,
+      [&](const BinaryImage &Final) -> llvm::Error {
+        for (const auto &S : Object->Image.Sections) {
+          if (!S.IsAllocated || !S.Size ||
+              (Object->CompactOnly && Object->EH &&
+               &S == &Object->Image.Sections[*Object->EH]))
+            continue;
+          if (auto E =
+                  validateInstalledSourcePatchSection(Final, Object->Image, S))
+            return E;
+        }
+        const auto Native = macho_unwind::parseCompactUnwind(Final);
+        if (Native.ParseStatus != ExceptionParseStatus::Complete)
+          return fail(
+              "final native compact table cannot be decoded completely");
+        for (const auto &C : Object->Compact) {
+          const auto It = llvm::find_if(Native.Entries, [&](const auto &E) {
+            return E.CodeRange.Begin == C.BeginVA &&
+                   E.CodeRange.End == C.EndVA && E.NativeEncoding == C.Encoding;
+          });
+          if (It == Native.Entries.end() ||
+              It->SemanticStatus != CompactUnwindSemanticStatus::Complete)
+            return fail(
+                "final native compact encoding or range is not registered");
+        }
+        return llvm::Error::success();
+      });
 }
 } // namespace neverd

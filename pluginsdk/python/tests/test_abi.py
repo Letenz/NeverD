@@ -8,12 +8,67 @@ from scripts.check_python_plugin_sdk import (
     check_bytecode_decoder_abi,
     check_concolic_abi,
     check_devirtualization_abi,
+    check_module_resources_abi,
+    check_execution_resources_abi,
     check_sanitizer_abi,
     parse_c_api_header,
 )
 
 
 class ABIInventoryTests(unittest.TestCase):
+    def test_byte_patch_snapshot_preserves_native_pointer_and_frozen_layout(self) -> None:
+        from neverd_plugin import abi
+
+        acquire = abi.FUNCTION_SPECS["neverd_byte_patches_snapshot_v1"]
+        free = abi.FUNCTION_SPECS["neverd_byte_patch_snapshot_free_v1"]
+        pointer = ctypes.POINTER(abi.NeverDBytePatchSnapshotV1)
+        self.assertIs(acquire.ownership, abi.Ownership.OWNED_OBJECT)
+        self.assertIs(acquire.restype, pointer)
+        self.assertEqual(free.argtypes, (pointer,))
+        self.assertIsNone(free.restype)
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            self.assertEqual(ctypes.sizeof(abi.NeverDBytePatchRowV1), 48)
+            self.assertEqual(ctypes.sizeof(abi.NeverDBytePatchSnapshotV1), 16)
+            for field, offset in (("file_offset", 0), ("address", 8),
+                                  ("size", 16), ("original", 24),
+                                  ("current", 32), ("kind", 40)):
+                self.assertEqual(getattr(abi.NeverDBytePatchRowV1, field).offset,
+                                 offset)
+
+    def test_execution_keeps_fixed_handles_layout_buffers_and_owned_reports(self) -> None:
+        from neverd_plugin import abi
+
+        errors: list[str] = []
+        check_execution_resources_abi(errors)
+        self.assertEqual(errors, [])
+        self.assertEqual(ctypes.sizeof(abi.ExecutionHandle), 8)
+        self.assertEqual(abi.NeverDExecutionOptionsV1.struct_size.offset, 0)
+        self.assertEqual(abi.NeverDExecutionOptionsV1.module_set.offset,
+                         ctypes.sizeof(ctypes.c_uint64))
+        for name in ("state", "run", "inspect", "instances", "lookup_symbol", "command"):
+            spec = abi.FUNCTION_SPECS[f"neverd_execution_{name}_json"]
+            self.assertIs(spec.ownership, abi.Ownership.OWNED_STRING)
+            self.assertIs(spec.restype, ctypes.c_void_p)
+        read = abi.FUNCTION_SPECS["neverd_execution_read_memory"]
+        self.assertIs(read.argtypes[1], ctypes.c_uint64)
+        self.assertIs(read.argtypes[2], ctypes.POINTER(ctypes.c_uint8))
+
+    def test_module_resources_keep_fixed_handles_struct_layout_and_owned_outputs(self) -> None:
+        from neverd_plugin import abi
+
+        errors: list[str] = []
+        check_module_resources_abi(errors)
+        self.assertEqual(errors, [])
+        self.assertEqual(ctypes.sizeof(abi.ModuleSetHandle), 8)
+        self.assertEqual(abi.NeverDModuleSetOptionsV1.struct_size.offset, 0)
+        self.assertEqual(ctypes.sizeof(abi.NeverDModuleSetOptionsV1),
+                         ctypes.sizeof(ctypes.c_size_t) + 2 * ctypes.sizeof(ctypes.c_void_p))
+        for name in ("neverd_module_set_inspect_json", "neverd_module_set_lookup_symbol_json"):
+            spec = abi.FUNCTION_SPECS[name]
+            self.assertIs(spec.ownership, abi.Ownership.OWNED_STRING)
+            self.assertIs(spec.restype, ctypes.c_void_p)
+            self.assertIs(spec.argtypes[-1], ctypes.POINTER(ctypes.c_void_p))
+
     def test_bytecode_decoder_callbacks_have_exact_c_signatures(self) -> None:
         errors: list[str] = []
         check_bytecode_decoder_abi(errors)

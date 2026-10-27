@@ -4,31 +4,129 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/ir/low/PrologueStackAllocation.h"
 #include "gtest/gtest.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/X86/X87Context.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
+#include "neverd/ir/med/MedCallReturnReads.h"
+#include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/ir/med/MedStackAlignment.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
 
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
 
+#include <algorithm>
 #include <regex>
 #include <set>
 
 namespace {
 
 using namespace neverd;
+
+TEST(MedSSAMultiRoot, SharedHandlersRetainEveryDistinctExceptionalPredecessor) {
+  for (Arch Architecture : {Arch::X86, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    constexpr int Sources = 256;
+    constexpr int Targets = 4;
+    constexpr int Contexts = 8;
+    constexpr int Duplicates = 3;
+    const auto Width = getTargetRegInfo(Architecture).PointerSize;
+    LowFunc Low;
+    Low.Entry = 0x1000;
+    Low.Name = "shared_exception_handlers";
+    // Removing the empty interval between sources and handlers must remap
+    // every destination while keeping the source state and instruction.
+    Low.Blocks.resize(Sources + 1 + Targets);
+    std::vector<std::vector<ExceptionalEdge>> Expected(Targets);
+    for (int I = 0; I < static_cast<int>(Low.Blocks.size()); ++I) {
+      auto &Block = Low.Blocks[I];
+      Block.Id = I;
+      Block.StartAddr = Low.Entry + 16 * I;
+      Block.EndAddr = Block.StartAddr + 8;
+      if (I == Sources)
+        continue;
+      LowOp Return;
+      Return.Addr = Block.StartAddr;
+      Return.Opcode = NdOp::RETURN;
+      Return.addInput(NdVar::scalar(0, Width));
+      Block.Ops.push_back(Return);
+      if (I >= Sources)
+        continue;
+      for (int J = 0; J < Targets; ++J) {
+        const va_t Target = Low.Entry + 16 * (Sources + 1 + J);
+        std::vector<ExceptionalEdge> Edges = {
+            {Sources + 1 + J, Target, ExceptionalEdgeKind::CxxCleanup, 0, 3},
+            {Sources + 1 + J, Target, ExceptionalEdgeKind::CxxCleanup, 1, 3},
+            {Sources + 1 + J, Target, ExceptionalEdgeKind::CxxCleanup, 0, 4},
+            {Sources + 1 + J, Target, ExceptionalEdgeKind::CxxCleanup, 0, 3,
+             Block.StartAddr + 1},
+            {Sources + 1 + J, Target, ExceptionalEdgeKind::CxxCatch, 0, 3},
+            {Sources + 1 + J, Target + 1, ExceptionalEdgeKind::CxxCleanup, 0,
+             3}};
+        // Identical sets of regions and states do not imply identical pairs.
+        // Both domains must survive, and a separately owned equal domain must
+        // deduplicate by value rather than by shared_ptr identity.
+        for (bool Crossed : {false, true}) {
+          auto Edge = Edges.front();
+          Edge.SharedContexts =
+              std::make_shared<const ExceptionalEdgeContextDomain>(
+                  std::vector<ExceptionalEdgeContext>{{0, Crossed ? 4 : 3},
+                                                      {1, Crossed ? 3 : 4}});
+          Edges.push_back(std::move(Edge));
+        }
+        for (auto Edge : Edges) {
+          Block.ExceptionalSuccs.push_back(Edge);
+          Edge.BlockId = I;
+          Low.Blocks[Sources + 1 + J].ExceptionalPreds.push_back(Edge);
+          Expected[J].push_back(Edge);
+        }
+        // Duplicate metadata does not create another incoming occurrence.
+        Block.ExceptionalSuccs.push_back(Edges[0]);
+        Block.ExceptionalSuccs.push_back(Edges[2]);
+        auto Duplicate = Edges[6];
+        Duplicate.SharedContexts =
+            std::make_shared<const ExceptionalEdgeContextDomain>(
+                std::vector<ExceptionalEdgeContext>{{1, 4}, {0, 3}});
+        Block.ExceptionalSuccs.push_back(std::move(Duplicate));
+      }
+      Block.ExceptionalSuccs.push_back(
+          {-1, 0x80000, ExceptionalEdgeKind::CxxCleanup, 0, 3});
+    }
+    auto Med = LowToMedConverter().convert(Low, Architecture);
+    ASSERT_EQ(Med.Blocks.size(), Sources + Targets);
+    for (int J = 0; J < Targets; ++J) {
+      const auto &Handler = Med.Blocks[Sources + J];
+      EXPECT_EQ(Handler.ExceptionalPreds.size(), Sources * Contexts);
+      EXPECT_EQ(Handler.ExceptionalPreds, Expected[J]);
+    }
+    for (int I = 0; I < Sources; ++I) {
+      const auto &Edges = Med.Blocks[I].ExceptionalSuccs;
+      ASSERT_EQ(Edges.size(), Targets * (Contexts + Duplicates) + 1);
+      for (int J = 0; J < Targets; ++J)
+        for (int K = 0; K < Contexts + Duplicates; ++K)
+          EXPECT_EQ(Edges[J * (Contexts + Duplicates) + K].BlockId,
+                    Sources + J);
+      EXPECT_EQ(Edges.back().BlockId, -1);
+    }
+    EXPECT_TRUE(verifyMedFunc(Med, "shared-exception-handlers"));
+  }
+}
 
 TEST(MedSSAMultiRoot, MergesDefinitionsFromIndependentSourcesAtAJoin) {
   constexpr va_t EntryVA = 0x1000;
@@ -227,6 +325,99 @@ TEST(MedSSAMultiRoot, DoesNotInventADownstreamRootFromBlockOrder) {
   ASSERT_TRUE(MedReturn.Inputs[0].isConst());
   EXPECT_EQ(MedReturn.Inputs[0].ConstVal, SourceValue);
   EXPECT_TRUE(verifyMedFunc(Med, "source-scc-order"));
+}
+
+TEST(MedSSAMultiRoot, LoopLiveInsRespectDefinitionsAndUseOrder) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool DefineAtEntry : {false, true})
+        for (bool DefineBeforeUse : {false, true}) {
+          SCOPED_TRACE(static_cast<int>(Architecture));
+          SCOPED_TRACE(static_cast<int>(Format));
+          SCOPED_TRACE(DefineAtEntry);
+          SCOPED_TRACE(DefineBeforeUse);
+          const auto &TRI = getTargetRegInfo(Architecture);
+          const auto Arguments = TRI.integerArgumentLayout(Format).Registers;
+          ASSERT_GE(Arguments.size(), 2u);
+          const uint64_t ValueReg = Arguments[1];
+          const uint16_t Width = TRI.PointerSize;
+          LowFunc Low;
+          Low.Entry = 0x1000;
+          Low.Name = "loop_live_in";
+          Low.Blocks.resize(4);
+          for (int B = 0; B < 4; ++B) {
+            Low.Blocks[B].Id = B;
+            Low.Blocks[B].StartAddr = Low.Entry + 16 * B;
+            Low.Blocks[B].EndAddr = Low.Entry + 16 * B + 12;
+          }
+          Low.Blocks[0].Succs = {1};
+          Low.Blocks[1].Preds = {0, 2};
+          Low.Blocks[1].Succs = {2, 3};
+          Low.Blocks[2].Preds = {1};
+          Low.Blocks[2].Succs = {1};
+          Low.Blocks[3].Preds = {1};
+
+          auto Define = [&](int B) {
+            LowOp Op;
+            Op.Opcode = NdOp::COPY;
+            Op.Addr = Low.Blocks[B].StartAddr + 4 * Low.Blocks[B].Ops.size();
+            Op.Output = NdVar::reg(ValueReg, Width);
+            Op.addInput(NdVar::scalar(0x33, Width));
+            Low.Blocks[B].Ops.push_back(Op);
+          };
+          if (DefineAtEntry)
+            Define(0);
+          LowOp Branch;
+          Branch.Opcode = NdOp::BRANCH;
+          Branch.Addr = Low.Entry + 8;
+          Branch.addInput(NdVar::cst(0x1010, Width));
+          Low.Blocks[0].Ops.push_back(Branch);
+          Branch.Addr = 0x1028;
+
+          LowOp Condition;
+          Condition.Opcode = NdOp::COND_BR;
+          Condition.Addr = 0x1010;
+          Condition.addInput(NdVar::cst(0x1030, Width));
+          Condition.addInput(NdVar::reg(Arguments[0], Width));
+          Low.Blocks[1].Ops.push_back(Condition);
+
+          // Keep the store observable. A definition after its read does not
+          // kill the first iteration's incoming value; one before it does.
+          if (DefineBeforeUse)
+            Define(2);
+          LowOp Store;
+          Store.Opcode = NdOp::STORE;
+          Store.Addr = 0x1020 + 4 * Low.Blocks[2].Ops.size();
+          Store.addInput(NdVar::cst(0x4000, Width));
+          Store.addInput(NdVar::reg(ValueReg, Width));
+          Low.Blocks[2].Ops.push_back(Store);
+          if (!DefineBeforeUse)
+            Define(2);
+          Low.Blocks[2].Ops.push_back(Branch);
+          LowOp Return;
+          Return.Opcode = NdOp::RETURN;
+          Return.Addr = 0x1030;
+          Return.addInput(NdVar::scalar(0, Width));
+          Low.Blocks[3].Ops.push_back(Return);
+
+          const auto Med =
+              LowToMedConverter().convert(Low, Architecture, Format);
+          ASSERT_FALSE(Med.SkippedSSA);
+          ASSERT_TRUE(verifyMedFunc(Med, "loop-live-in"));
+          EXPECT_EQ(std::any_of(Med.Params.begin(), Med.Params.end(),
+                                [&](const MedVar &Param) {
+                                  return Param.Kind == MedVar::Param &&
+                                         Param.RegOff == ValueReg &&
+                                         Param.Id >= 0;
+                                }),
+                    !DefineAtEntry && !DefineBeforeUse);
+          unsigned Stores = 0;
+          for (const auto &Block : Med.Blocks)
+            for (const auto &Op : Block.Ops)
+              Stores += Op.Opcode == NdOp::STORE;
+          EXPECT_EQ(Stores, 1u);
+        }
 }
 
 TEST(MedTempIdentity, SeparatesReusedLowTempSlotsByWidth) {
@@ -431,6 +622,218 @@ TEST(MedSEHEstablisherFrame, NormalHandlerAndJoinUseTheSameLocalSlot) {
   EXPECT_EQ(Seen, Expected);
 }
 
+TEST(MedSEHEstablisherFrame, CallBeforeStackRestoreKeepsHandlerFrameLive) {
+  for (bool Indirect : {false, true}) {
+    SCOPED_TRACE(Indirect);
+    auto Img = makeFixedSEHFrameImage();
+    auto &Code = Img.Segments.front().Data;
+    Code.resize(0x45, 0xcc);
+    Img.Segments.front().Size = Code.size();
+    Img.Sections.front().Size = Code.size();
+    Img.Symbols.front().Size = Code.size();
+    Img.ExceptionMetadata.Functions.front().CodeRange.End =
+        Img.Entry + Code.size();
+    // Remember the allocated SP in a preserved register. Neither the handler
+    // nor the join explicitly reads SP before the join restores it from RDI.
+    const uint8_t Save[] = {0x48, 0x89, 0xe7, 0x90, 0x90, 0x90, 0x90, 0x90};
+    std::copy(std::begin(Save), std::end(Save), Code.begin() + 8);
+    const uint8_t Handler[] = {0x31, 0xc0, 0xeb, 0x0c};
+    std::copy(std::begin(Handler), std::end(Handler), Code.begin() + 0x20);
+    const uint8_t Join[] = {0xe8, 0xcb, 0,    0,    0,    0x48, 0x89,
+                            0xfc, 0x8b, 0x44, 0x24, 0x24, 0x48, 0x81,
+                            0xc4, 0x80, 0,    0,    0,    0x5f, 0xc3};
+    std::copy(std::begin(Join), std::end(Join), Code.begin() + 0x30);
+    if (Indirect) {
+      Code[0x30] = 0xff;
+      Code[0x31] = 0xd2; // call rdx
+      std::fill(Code.begin() + 0x32, Code.begin() + 0x35, 0x90);
+    }
+    Img.ExceptionMetadata.rebuildIndex();
+    auto Low = decodeFixedSEHFrame(Img);
+    LowToMedConverter Converter;
+    Converter.setBinaryImage(&Img);
+    auto Med = Converter.convert(Low, Arch::X64, BinaryFormat::COFF);
+    ASSERT_TRUE(verifyMedFunc(Med, "seh-call-before-stack-restore"));
+    std::string Error;
+    EXPECT_TRUE(validateSourceCallReturnReads(
+        Med, Img, Error, limits::ir::kSourceCallReturnReadWork, &Low))
+        << Error;
+    unsigned Seen = 0;
+    for (const auto &Block : Med.Blocks)
+      if (Block.StartAddr == Img.Entry + 0x20)
+        for (const auto &Op : Block.Ops)
+          if (Op.Output.Kind == MedVar::Reg &&
+              Op.Output.RegOff == getTargetRegInfo(Arch::X64).StackPointer) {
+            EXPECT_EQ(entrySPOffset(Med, Op.Output), -136);
+            ++Seen;
+          }
+    EXPECT_EQ(Seen, 1u);
+  }
+}
+
+TEST(MedSEHEstablisherFrame, AllocationFactsCannotEraseAddressProvenance) {
+  for (auto Provenance :
+       {ConstantAddressProvenance::Unknown, ConstantAddressProvenance::Scalar,
+        ConstantAddressProvenance::DataAddress,
+        ConstantAddressProvenance::CodeAddress}) {
+    SCOPED_TRACE(static_cast<unsigned>(Provenance));
+    for (bool Mapped : {false, true}) {
+      SCOPED_TRACE(Mapped);
+      BinaryImage Image;
+      Image.Arch = Arch::X64;
+      Image.Bits = Bitness::Bits64;
+      Image.Format = BinaryFormat::COFF;
+      if (Mapped) {
+        Segment Data;
+        Data.VA = 0x80;
+        Data.Size = Data.FileSz = 8;
+        Data.Flags = SegmentFlags::Readable;
+        Data.Data.resize(8);
+        Image.Segments.push_back(std::move(Data));
+      }
+      LowFunc Function;
+      Function.Entry = 0x1000;
+      Function.ExceptionMetadata.emplace();
+      Function.ExceptionMetadata->PrologueSize = 2;
+      Function.Blocks.resize(1);
+      auto &Block = Function.Blocks.front();
+      Block.Id = 0;
+      Block.StartAddr = Function.Entry;
+      Block.EndAddr = Function.Entry + 2;
+      const NdVar SP = NdVar::reg(x86reg::RSP, 8);
+      const NdVar Amount = NdVar::reg(x86reg::RAX, 8);
+      LowOp Copy;
+      Copy.Addr = Function.Entry;
+      Copy.Opcode = NdOp::COPY;
+      Copy.Output = Amount;
+      auto Constant = NdVar::cst(0x80, 8);
+      Constant.Provenance = Provenance;
+      Copy.addInput(Constant);
+      LowOp Allocate;
+      Allocate.Addr = Function.Entry + 1;
+      Allocate.Opcode = NdOp::INT_SUB;
+      Allocate.Output = SP;
+      Allocate.addInput(SP);
+      Allocate.addInput(Amount);
+      Block.Ops = {Copy, Allocate};
+      for (unsigned I = 0; I < 2; ++I) {
+        LowInstructionBoundary Boundary;
+        Boundary.Address = Function.Entry + I;
+        Boundary.Size = Boundary.OpCount = 1;
+        Boundary.FirstOp = I;
+        Block.InstructionBoundaries.push_back(Boundary);
+      }
+      canonicalizePrologueStackAllocation(Image, Function);
+      const bool Scalar =
+          Provenance == ConstantAddressProvenance::Scalar ||
+          (Provenance == ConstantAddressProvenance::Unknown && !Mapped);
+      EXPECT_EQ(Block.Ops[1].Inputs[1].isConst(), Scalar);
+      if (Scalar)
+        EXPECT_EQ(Block.Ops[1].Inputs[1].Offset, 0x80u);
+      else
+        EXPECT_EQ(Block.Ops[1].Inputs[1], Amount);
+    }
+  }
+}
+
+TEST(MedSEHEstablisherFrame, StackProbeKeepsTheDecodedAllocationConstant) {
+  for (unsigned Variant = 0; Variant != 4; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto Img = makeFixedSEHFrameImage();
+    auto &Text = Img.Segments.front();
+    Text.Size = Text.FileSz = 0x80;
+    Text.Data.resize(Text.Size, 0xcc);
+    Img.Sections.front().Size = Text.Size;
+    std::fill_n(Text.Data.begin(), 0x20, 0xcc);
+    const uint8_t Prefix[] = {
+        0x57,                      // push rdi
+        0xb8, 0x80, 0,    0,    0, // mov eax,128
+        0xe8, 0x65, 0,    0,    0, // call helper at +70h
+        0x48, 0x2b, 0xe0,          // sub rsp,rax
+        0xc7, 0x44, 0x24, 0x24, 1,   0,
+        0,    0,    0x90, 0xeb, 0x17}; // protected nop; jmp join
+    std::copy(std::begin(Prefix), std::end(Prefix), Text.Data.begin());
+    Text.Data[0x70] = 0xc3;
+    Symbol Probe = Symbol::makeFunc(Img.Entry + 0x70, 1);
+    Probe.Name = Variant == 1 ? "ordinary_callee" : "__chkstk";
+    Probe.Origin = Variant == 2 ? NameOrigin::Analysis : NameOrigin::Stated;
+    Img.Symbols.push_back(Probe);
+    auto &EH = Img.ExceptionMetadata.Functions.front();
+    EH.PrologueSize = 14;
+    EH.UnwindOperations.front().CodeOffset = 14;
+    EH.SEH->Scopes.front().GuardedRange = {Img.Entry + 22, Img.Entry + 23};
+    // A decoded constant still has to agree with the independently supplied
+    // unwind allocation. The helper's name cannot repair this mismatch.
+    if (Variant == 3)
+      Text.Data[2] = 0x40;
+    Img.ExceptionMetadata.rebuildIndex();
+    auto Low = decodeFixedSEHFrame(Img);
+    unsigned Calls = 0;
+    for (const auto &Block : Low.Blocks)
+      for (const auto &Op : Block.Ops)
+        Calls += Op.Opcode == NdOp::CALL;
+    EXPECT_EQ(Calls,
+              1u); // stack probes and their fault behavior remain visible
+    size_t Work = limits::kMaxSEHEstablisherFrameWork;
+    auto Frame = proveLowSEHEstablisherFrame(
+        Low, Img.Entry + 0x20, getTargetRegInfo(Arch::X64), false, Work);
+    const bool Proven = bool(Frame);
+    const std::string Error = Proven ? "" : llvm::toString(Frame.takeError());
+    EXPECT_EQ(Proven, Variant == 0) << Error;
+    if (Proven) {
+      EXPECT_EQ(Frame->FrameBytes, 136u);
+      const auto Med =
+          LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+      EXPECT_TRUE(verifyMedFunc(Med, "stack-probe-frame"));
+    }
+  }
+}
+
+TEST(MedSEHEstablisherFrame, ResumableBreakpointKeepsTheFollowingFramePath) {
+  auto Img = makeFixedSEHFrameImage();
+  Img.Segments.front().Data[0x10] = 0xcc;
+  Img.ExceptionMetadata.Functions.front().SEH->Scopes.front().GuardedRange.End =
+      Img.Entry + 0x13;
+  Img.ExceptionMetadata.rebuildIndex();
+  auto Low = decodeFixedSEHFrame(Img);
+  ASSERT_TRUE(Low.hasCompleteLiftCoverage());
+  bool MiddleBreakpoint = false;
+  for (size_t I = 0; I < Low.Blocks.size(); ++I) {
+    auto &Block = Low.Blocks[I];
+    for (const auto &Insn : Block.InstructionBoundaries)
+      if (Insn.Address == Img.Entry + 0x10) {
+        EXPECT_EQ(Insn.Control, LowInstructionControl::Terminator);
+        EXPECT_TRUE(hasLowInstructionControlFlag(
+            Insn.ControlFlags, LowInstructionControlFlag::Resumable));
+        MiddleBreakpoint = &Insn != &Block.InstructionBoundaries.back();
+      }
+  }
+  ASSERT_TRUE(MiddleBreakpoint);
+  for (bool Source : {false, true}) {
+    size_t Work = limits::kMaxSEHEstablisherFrameWork;
+    auto Proof = proveLowSEHEstablisherFrame(
+        Low, Img.Entry + 0x20, getTargetRegInfo(Arch::X64), false, Work, {},
+        false,
+        Source ? LowSEHFrameUse::SourceProjection
+               : LowSEHFrameUse::InvocationIdentity);
+    ASSERT_TRUE(bool(Proof)) << llvm::toString(Proof.takeError());
+    auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+    EXPECT_TRUE(verifyMedFunc(Med, "resumable-seh-frame"));
+  }
+  // A terminal transfer in the middle of a block still invalidates the
+  // frame proof; only the decoder's explicit resumption contract admits it.
+  for (auto &Block : Low.Blocks)
+    for (auto &Insn : Block.InstructionBoundaries)
+      if (Insn.Address == Img.Entry + 0x10)
+        Insn.ControlFlags = LowInstructionControlFlag::None;
+  size_t Work = limits::kMaxSEHEstablisherFrameWork;
+  auto Proof = proveLowSEHEstablisherFrame(
+      Low, Img.Entry + 0x20, getTargetRegInfo(Arch::X64), false, Work, {},
+      false, LowSEHFrameUse::SourceProjection);
+  EXPECT_FALSE(bool(Proof));
+  llvm::consumeError(Proof.takeError());
+}
+
 TEST(MedSEHEstablisherFrame, SourceIndependentEntriesKeepUnknownStackValues) {
   for (bool SharedHandler : {false, true}) {
     SCOPED_TRACE(SharedHandler);
@@ -500,6 +903,35 @@ TEST(MedSEHEstablisherFrame, SourceIndependentEntriesKeepUnknownStackValues) {
     llvm::LLVMContext Context;
     EXPECT_THROW((void)MedLLVMEmitter().emit({Med}, Context),
                  std::runtime_error);
+    MedLLVMEmitter SourceEmitter;
+    SourceEmitter.setPreserveUnknownSourceValues(true);
+    auto Module = SourceEmitter.emit({Med}, Context, "source-seh-frame",
+                                     Arch::X64, {}, &Img, BinaryFormat::COFF);
+    ASSERT_TRUE(Module);
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    bool ExplicitFrame = false, UnknownValue = false;
+    for (const auto &Function : *Module) {
+      ExplicitFrame |=
+          Function.hasFnAttribute(windows_eh_md::UnresolvedSourceFrame);
+      for (const auto &Block : Function)
+        for (const auto &Instruction : Block)
+          UnknownValue |= llvm_source_unknown::isValue(&Instruction);
+    }
+    EXPECT_TRUE(ExplicitFrame);
+    EXPECT_TRUE(UnknownValue);
+    std::string LLVMSource;
+    llvm::raw_string_ostream LLVMStream(LLVMSource);
+    EXPECT_TRUE(LLVMCEmitter().emit(*Module, LLVMStream, Options));
+    EXPECT_NE(LLVMSource.find("unresolved runtime stack"), std::string::npos)
+        << LLVMSource;
+    EXPECT_NE(LLVMSource.find("unknown machine state"), std::string::npos)
+        << LLVMSource;
+    // Reusing an emitter for native output never inherits source admission.
+    SourceEmitter.setPreserveUnknownSourceValues(false);
+    EXPECT_THROW((void)SourceEmitter.emit({Med}, Context, "native-seh-frame",
+                                          Arch::X64, {}, &Img,
+                                          BinaryFormat::COFF),
+                 std::runtime_error);
   }
 }
 
@@ -547,9 +979,10 @@ TEST(MedSEHEstablisherFrame, SourceSwitchRequiresEveryResolvedTarget) {
     auto Proof = proveLowSEHEstablisherFrame(
         Changed, Img.Entry + 0x20, getTargetRegInfo(Arch::X64), false, Work, {},
         false, LowSEHFrameUse::SourceProjection);
-    std::string Failure = Proof ? "" : llvm::toString(Proof.takeError());
-    EXPECT_EQ(bool(Proof), Mutation == 0) << Failure;
-    if (Proof) {
+    const bool Proved = bool(Proof);
+    std::string Failure = Proved ? "" : llvm::toString(Proof.takeError());
+    EXPECT_EQ(Proved, Mutation == 0) << Failure;
+    if (Proved) {
       EXPECT_FALSE(Proof->DynamicSP);
       EXPECT_FALSE(Proof->HasIndependentEntries);
       EXPECT_EQ(Proof->FrameBytes, 136u);
@@ -590,9 +1023,10 @@ TEST(MedSEHEstablisherFrame, SourceRequiresExplicitIndependentEntry) {
     auto Proof = proveLowSEHEstablisherFrame(
         Low, Img.Entry + 0x20, getTargetRegInfo(Arch::X64), false, Work, {},
         false, LowSEHFrameUse::SourceProjection);
-    std::string Failure = Proof ? "" : llvm::toString(Proof.takeError());
-    EXPECT_EQ(bool(Proof), Published) << Failure;
-    if (Proof)
+    const bool Proved = bool(Proof);
+    std::string Failure = Proved ? "" : llvm::toString(Proof.takeError());
+    EXPECT_EQ(Proved, Published) << Failure;
+    if (Proved)
       EXPECT_TRUE(Proof->HasIndependentEntries);
   }
 }
@@ -620,8 +1054,7 @@ LowFunc makeFixedCxxContinuationFrame(
       E.Kind = ExceptionalEdgeKind::CxxCatch;
       E.BlockId = -1;
       E.TargetVA = Catch.HandlerVA;
-      E.RegionIndex = 0;
-      E.State = 0;
+      E.ExplicitContext = {0, 0};
     }
   }
   Low.CxxContinuationEntries.push_back(
@@ -982,9 +1415,10 @@ TEST(MedCxxContinuationFrame, ClangInteriorStateMarkersKeepThePrologueFrame) {
     bool FoundCall = false;
     for (const auto &B : Main->Blocks)
       for (const auto &Edge : B.ExceptionalSuccs)
-        FoundCall |= Edge.Kind == ExceptionalEdgeKind::CxxCatch &&
-                     Edge.RegionIndex == 0 && Edge.State == 3 &&
-                     Edge.SourceVA == C.Throw;
+        FoundCall |=
+            Edge.Kind == ExceptionalEdgeKind::CxxCatch &&
+            Edge.singleContext() && Edge.singleContext()->RegionIndex == 0 &&
+            Edge.singleContext()->State == 3 && Edge.SourceVA == C.Throw;
     EXPECT_TRUE(FoundCall);
   }
 #endif
@@ -1176,9 +1610,9 @@ TEST(MedSEHEstablisherFrame, HighCPreservesTheCertifiedHandlerSlot) {
   EXPECT_NE(Source.find("var_m64 = 1;"), std::string::npos) << Source;
   // The handler adds 20 to the certified slot, as an update or folded into
   // the return that reads it.
-  EXPECT_TRUE(Source.substr(Handler).find("var_m64 += 20;") !=
-                  std::string::npos ||
-              Source.substr(Handler).find("var_m64 + 20") != std::string::npos)
+  EXPECT_TRUE(
+      Source.substr(Handler).find("var_m64 += 20;") != std::string::npos ||
+      Source.substr(Handler).find("var_m64 + 0x14") != std::string::npos)
       << Source;
   // The handler returns the slot, directly, through a copy of it, or with
   // the update folded in.
@@ -1315,6 +1749,174 @@ TEST(MedSEHEstablisherFrame, RejectsADynamicSPWriteInAProtectedBlock) {
                                                              Img.Entry + 0x1a};
   EXPECT_THROW(LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
                LowToMedConversionError);
+  LowToMedConverter Source;
+  Source.setSEHSourceProjectionEnabled(true);
+  EXPECT_THROW(Source.convert(Low, Arch::X64, BinaryFormat::COFF),
+               LowToMedConversionError);
+}
+
+TEST(MedSEHEstablisherFrame,
+     SourceHandlerCallRetainsEveryProtectedStackPosition) {
+  for (bool SharedHandler : {false, true})
+    for (bool ObservesReturnSlot : {false, true}) {
+      SCOPED_TRACE(SharedHandler);
+      SCOPED_TRACE(ObservesReturnSlot);
+      auto Image = makeDynamicFramePointerSEHImage();
+      auto &Bytes = Image.Segments.front().Data;
+      // Allocate a second area inside the guard, so faults before and after
+      // the allocation enter the same handler with different physical SPs.
+      const uint8_t Allocate[] = {0x48, 0x83, 0xec, 0x20, 0x90};
+      std::copy(std::begin(Allocate), std::end(Allocate), Bytes.begin() + 0x0a);
+      // The handler uses RBP, calls a helper, then restores SP in the join.
+      const uint8_t Handler[] = {0x8b, 0x45, 0xfc, 0xe8, 0xd8,
+                                 0x0f, 0,    0,    0xeb, 6};
+      std::copy(std::begin(Handler), std::end(Handler), Bytes.begin() + 0x20);
+      Image.ExceptionMetadata.Functions.front()
+          .SEH->Scopes.front()
+          .GuardedRange = {Image.Entry + 0x0a, Image.Entry + 0x1a};
+      if (SharedHandler) {
+        // This scope starts after the allocation. Ordinary execution also
+        // branches into its handler; it must not become an exact SP seed.
+        Image.ExceptionMetadata.Functions.front()
+            .SEH->Scopes.front()
+            .GuardedRange = {Image.Entry + 0x16, Image.Entry + 0x1a};
+        Bytes[0x1c] = 3; // jmp handler instead of jmp join.
+      }
+      if (ObservesReturnSlot)
+        // Read a possible CALL return slot on an exceptional entry.
+        Bytes[0x32] = SharedHandler ? 0x98 : 0xb8;
+      Image.ExceptionMetadata.rebuildIndex();
+      const auto Low = decodeFixedSEHFrame(Image);
+      LowToMedConverter Machine;
+      Machine.setBinaryImage(&Image);
+      EXPECT_THROW(Machine.convert(Low, Arch::X64, BinaryFormat::COFF),
+                   LowToMedConversionError);
+      LowToMedConverter Source;
+      Source.setBinaryImage(&Image);
+      Source.setSEHSourceProjectionEnabled(true);
+      MedFunc Med;
+      ASSERT_NO_THROW(Med = Source.convert(Low, Arch::X64, BinaryFormat::COFF));
+      ASSERT_TRUE(verifyMedFunc(Med, "varying-protected-sp"));
+      EXPECT_TRUE(Med.HasUnresolvedSEHFrame);
+      markSourceStackAccesses(Med, Arch::X64, BinaryFormat::COFF);
+      const auto Save =
+          llvm::find_if(Med.Blocks.front().Ops, [&](const auto &Op) {
+            return Op.Opcode == NdOp::STORE && Op.Addr == Image.Entry;
+          });
+      ASSERT_NE(Save, Med.Blocks.front().Ops.end());
+      EXPECT_TRUE(Save->PrologueSave);
+      std::string Error;
+      EXPECT_EQ(
+          validateSourceCallReturnReads(
+              Med, Image, Error, limits::ir::kSourceCallReturnReadWork, &Low),
+          !ObservesReturnSlot)
+          << Error;
+      if (ObservesReturnSlot)
+        EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos);
+      else {
+        // Losing the fresh unwind/frame proof must not authorize the same
+        // source reads from an unknown physical stack.
+        EXPECT_FALSE(validateSourceCallReturnReads(Med, Image, Error));
+        auto Stale = Med;
+        for (auto &Block : Stale.Blocks)
+          if (!Block.ExceptionalPreds.empty()) {
+            auto Edge = Block.ExceptionalPreds.front();
+            Edge.BlockId = static_cast<int>(Stale.Blocks.size());
+            Block.ExceptionalPreds.push_back(Edge);
+          }
+        EXPECT_FALSE(validateSourceCallReturnReads(
+            Stale, Image, Error, limits::ir::kSourceCallReturnReadWork, &Low));
+      }
+    }
+}
+
+// The fixed frame whose handler starts with fninit. The CFG builder carries
+// the x87 state in one function temporary, the context handle, which every
+// root begins: the entry and the handler the dispatcher resumes.
+BinaryImage makeX87HandlerSEHFrameImage() {
+  BinaryImage Img = makeFixedSEHFrameImage();
+  // Handler: fninit; eax=[rsp+36]; eax+=20; [rsp+36]=eax; jmp join.
+  const uint8_t Handler[] = {0xdb, 0xe3, 0x8b, 0x44, 0x24, 0x24, 0x83, 0xc0,
+                             20,   0x89, 0x44, 0x24, 0x24, 0xeb, 1};
+  std::copy(std::begin(Handler), std::end(Handler),
+            Img.Segments.front().Data.begin() + 0x20);
+  return Img;
+}
+
+// Decoded with the image's own conventions, as the pipeline decodes it: x64
+// PE code owns the x87 context.
+LowFunc decodeX87HandlerSEHFrame(const BinaryImage &Img) {
+  Decoder Dec;
+  EXPECT_TRUE(Dec.init(Img));
+  return CFGBuilder().build(Img, Dec, Img.Entry, "x87_seh_frame");
+}
+
+LowBlock &blockAt(LowFunc &Low, va_t Start) {
+  const auto Block =
+      std::find_if(Low.Blocks.begin(), Low.Blocks.end(),
+                   [&](const LowBlock &B) { return B.StartAddr == Start; });
+  EXPECT_NE(Block, Low.Blocks.end());
+  return *Block;
+}
+
+std::string frameProofError(const LowFunc &Low, va_t Handler) {
+  size_t Work = limits::kMaxSEHEstablisherFrameWork;
+  auto Proof = proveLowSEHEstablisherFrame(
+      Low, Handler, getTargetRegInfo(Arch::X64), /*OrdinaryEntry=*/false, Work);
+  return Proof ? std::string() : llvm::toString(Proof.takeError());
+}
+
+TEST(MedSEHEstablisherFrame, TheX87ContextHandleIsNotAFrameValue) {
+  // MinGW's startup code: x87 state travels through its __try.
+  auto Img = makeX87HandlerSEHFrameImage();
+  auto Low = decodeX87HandlerSEHFrame(Img);
+  ASSERT_EQ(Low.FunctionTemporaries.size(), 1u);
+  EXPECT_EQ(frameProofError(Low, Img.Entry + 0x20), "");
+  MedFunc Med;
+  ASSERT_NO_THROW(
+      Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF));
+  EXPECT_TRUE(verifyMedFunc(Med, "seh-x87-context"));
+}
+
+TEST(MedSEHEstablisherFrame, TheHandlerBeginsTheX87ContextBeforeUsingIt) {
+  // No ordinary path brings the handle to the handler the dispatcher resumes.
+  auto Img = makeX87HandlerSEHFrameImage();
+  auto Low = decodeX87HandlerSEHFrame(Img);
+  ASSERT_EQ(Low.FunctionTemporaries.size(), 1u);
+  LowBlock &Handler = blockAt(Low, Img.Entry + 0x20);
+  ASSERT_FALSE(Handler.Ops.empty());
+  const LowOp &Begin = Handler.Ops.front();
+  ASSERT_EQ(x87ContextHandleOperand(Begin), &Begin.Output);
+  Handler.Ops.erase(Handler.Ops.begin());
+  ASSERT_FALSE(Handler.InstructionBoundaries.empty());
+  --Handler.InstructionBoundaries.front().OpCount;
+  for (size_t I = 1; I < Handler.InstructionBoundaries.size(); ++I)
+    --Handler.InstructionBoundaries[I].FirstOp;
+  EXPECT_NE(frameProofError(Low, Img.Entry + 0x20)
+                .find("handler reads a function temporary before binding it"),
+            std::string::npos);
+}
+
+TEST(MedSEHEstablisherFrame, OnlyTheX87ContextHandleIsAdmitted) {
+  // A copy makes the handle an ordinary value the proof does not follow.
+  auto Img = makeX87HandlerSEHFrameImage();
+  auto Low = decodeX87HandlerSEHFrame(Img);
+  ASSERT_EQ(Low.FunctionTemporaries.size(), 1u);
+  LowBlock &Entry = Low.Blocks.front();
+  ASSERT_FALSE(Entry.Ops.empty());
+  ASSERT_FALSE(Entry.InstructionBoundaries.empty());
+  LowOp Copy;
+  Copy.Opcode = NdOp::COPY;
+  Copy.Addr = Entry.Ops.front().Addr;
+  Copy.Output = NdVar::reg(x86reg::RAX, 8);
+  Copy.addInput(NdVar::tmp(Low.FunctionTemporaries.front().Offset, 8));
+  Entry.Ops.insert(Entry.Ops.begin() + 1, Copy);
+  ++Entry.InstructionBoundaries.front().OpCount;
+  for (size_t I = 1; I < Entry.InstructionBoundaries.size(); ++I)
+    ++Entry.InstructionBoundaries[I].FirstOp;
+  EXPECT_NE(frameProofError(Low, Img.Entry + 0x20)
+                .find("function temporary other than the x87 context handle"),
+            std::string::npos);
 }
 
 TEST(MedSEHHandlerEntry, EAXHoldsTheExceptionCode) {
@@ -1705,6 +2307,78 @@ TEST(MedSEHHandlerEntry, HandlerSharedWithTheNormalPathMergesBothValues) {
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
 }
 
+// MinGW's startup scope ends at a nop the guarded code falls through, and
+// resumes at the next nop, which prints nothing: no statement carries the
+// handler's address, and the guarded block reaches the handler block both as
+// its successor and as its scope's target. The normal path returns 7.
+static BinaryImage makeNopResumeSharedHandlerImage() {
+  auto Img = makeSharedHandlerImage();
+  const uint8_t Code[] = {0xb8, 7,    0, 0, 0, // mov eax, 7
+                          0x88, 0x11,          // mov [rcx], dl
+                          0x90,                // nop
+                          0x90,                // nop
+                          0xc3};               // ret
+  std::copy(std::begin(Code), std::end(Code),
+            Img.Segments.front().Data.begin());
+  Img.Symbols.front() = Symbol::makeFunc(Img.Entry, sizeof(Code));
+  ExceptionFunction &EH = Img.ExceptionMetadata.Functions.front();
+  EH.CodeRange = {Img.Entry, Img.Entry + sizeof(Code)};
+  EH.SEH->Scopes.front().GuardedRange = {Img.Entry + 5, Img.Entry + 8};
+  EH.SEH->Scopes.front().HandlerVA = Img.Entry + 8;
+  Img.ExceptionMetadata.rebuildIndex();
+  return Img;
+}
+
+TEST(MedSEHHandlerEntry, AHandlerResumingAtANopEndsTheArmThere) {
+  // The arm runs on to the return after the __try instead of jumping to a
+  // label that does not exist.
+  auto Img = makeNopResumeSharedHandlerImage();
+  auto Low = decodeFixedSEHFrame(Img);
+  auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+  ASSERT_TRUE(verifyMedFunc(Med, "seh-shared-handler-nop"));
+  auto High = MedToHighConverter().convert(Med, Arch::X64);
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({High}, Stream, Options));
+  Stream.flush();
+  const size_t Handler = Source.find("__except");
+  ASSERT_NE(Handler, std::string::npos) << Source;
+  EXPECT_NE(Source.substr(Handler).find("exception_code;"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
+}
+
+TEST(MedSEHHandlerEntry, LLVMKeepsTheNormalPathValueOfAHandlerItFallsInto) {
+  // The edge into the handler block is both ordinary and exceptional; its
+  // ordinary copy into the merged RAX must survive, or the function returns
+  // what that PHI's storage started with.
+  auto Img = makeNopResumeSharedHandlerImage();
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.LiftMode = true;
+  // The emitter's own IR: this image has no native SEH lowering, which the
+  // optimizer's exception-rewrite contract requires.
+  Opts.NoOpt = true;
+  Opts.OnlyFunctionEntries.insert(Img.Entry);
+  llvm::LLVMContext Context;
+  auto Result = Pipeline().run(Img, Context, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_NE(Result.LlvmModule, nullptr);
+  std::vector<uint64_t> Returned;
+  for (llvm::Function &Fn : *Result.LlvmModule)
+    for (llvm::BasicBlock &Block : Fn)
+      if (auto *Ret = llvm::dyn_cast<llvm::ReturnInst>(Block.getTerminator()))
+        if (auto *Value = llvm::dyn_cast_or_null<llvm::ConstantInt>(
+                Ret->getReturnValue()))
+          Returned.push_back(Value->getZExtValue());
+  std::string IR;
+  llvm::raw_string_ostream Stream(IR);
+  Result.LlvmModule->print(Stream, nullptr);
+  EXPECT_EQ(Returned, std::vector<uint64_t>{7}) << IR;
+}
+
 TEST(MedSEHHandlerEntry, HighCCapturesTheExceptionCodeInTheExceptArm) {
   auto Img = makeSEHHandlerRegisterImage();
   auto Low = decodeFixedSEHFrame(Img);
@@ -1719,10 +2393,12 @@ TEST(MedSEHHandlerEntry, HighCCapturesTheExceptionCodeInTheExceptArm) {
   const size_t Handler = Source.find("__except");
   ASSERT_NE(Handler, std::string::npos) << Source;
   const std::string Arm = Source.substr(Handler);
-  EXPECT_NE(Arm.find("exception_code = GetExceptionCode();"), std::string::npos)
+  EXPECT_NE(Arm.find("seh_exception_code = GetExceptionCode();"),
+            std::string::npos)
       << Source;
-  EXPECT_NE(Arm.find("var_m64 = exception_code;"), std::string::npos) << Source;
-  EXPECT_NE(Source.substr(0, Handler).find(" exception_code;"),
+  EXPECT_NE(Arm.find("var_m64 = seh_exception_code;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.substr(0, Handler).find(" seh_exception_code;"),
             std::string::npos)
       << Source;
 }
@@ -1868,12 +2544,16 @@ TEST(MedSEHEstablisherFrame, PublicNestedSEHUsesOneSlotInMedAndHighC) {
   ASSERT_NE(MainHigh, Result.HighFuncs.end());
   ASSERT_TRUE(HighCEmitter().emit({*MainHigh}, Stream, COptions));
   Stream.flush();
+  // The handler reaches the -100 slot as the frame record's member, never
+  // through another frame displacement.
   const size_t Handler = Source.find("__except");
   ASSERT_NE(Handler, std::string::npos) << Source;
-  EXPECT_NE(Source.substr(Handler).find("frame_base - 100"), std::string::npos)
+  EXPECT_NE(Source.substr(Handler).find("stack_storage.var_m64"),
+            std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("frame_base - 236"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("frame_base - 272"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("frame_base"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("var_mEC"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("var_m110"), std::string::npos) << Source;
 #endif
 }
 
@@ -1895,7 +2575,7 @@ BinaryImage makeWin64ForwarderImage() {
   Segment Text;
   Text.Name = ".text";
   Text.VA = Entry;
-  Text.Size = 0x30;
+  Text.Size = 0x40;
   Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
   Text.Data.assign(Text.Size, 0xcc);
   const int32_t Rel = static_cast<int32_t>(Callee - (Entry + 0x13 + 5));
@@ -1929,16 +2609,23 @@ BinaryImage makeWin64ForwarderImage() {
                           0x38,  // add
                           0xc3}; // ret
   std::copy(std::begin(Code), std::end(Code), Text.Data.begin());
-  // The callee reads its fifth argument, so the forwarder's outgoing slot is
-  // a real stack argument: mov rax, [rsp+28h]; ret.
-  const uint8_t CalleeCode[] = {0x48, 0x8b, 0x44, 0x24, 0x28, 0xc3};
+  // All five positions are live: the actual callee consumes the register
+  // arguments as well as its fifth stack argument. An unused register slot
+  // alone is not evidence that the forwarder has a parameter in that slot.
+  const uint8_t CalleeCode[] = {0x48, 0x8b, 0x44,
+                                0x24, 0x28,       // mov rax,[rsp+28h]
+                                0x48, 0x01, 0xc8, // add rax,rcx
+                                0x48, 0x01, 0xd0, // add rax,rdx
+                                0x4c, 0x01, 0xc0, // add rax,r8
+                                0x4c, 0x01, 0xc8, // add rax,r9
+                                0xc3};
   std::copy(std::begin(CalleeCode), std::end(CalleeCode),
             Text.Data.begin() + (Callee - Entry));
   Img.Segments.push_back(std::move(Text));
   Section Section;
   Section.Name = ".text";
   Section.VA = Entry;
-  Section.Size = 0x30;
+  Section.Size = 0x40;
   Section.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
   Img.Sections.push_back(std::move(Section));
   Img.Symbols.push_back(Symbol::makeFunc(Entry, 0x20));
@@ -1969,8 +2656,8 @@ TEST(Win64Forwarder, UntouchedRegisterArgumentsPassTheParameters) {
   Options.Image = &Img;
   ASSERT_TRUE(HighCEmitter().emit({*Forwarder}, Stream, Options));
   Stream.flush();
-  // The outgoing stack argument means all four register slots are arguments;
-  // the function never writes them, so they carry its own parameters.
+  // The callee consumes all five slots; the untouched register arguments
+  // carry the forwarder's own parameters.
   EXPECT_NE(Source.find("(arg0, arg1, arg2, arg3, arg4)"), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("(0, 0, 0, 0,"), std::string::npos) << Source;

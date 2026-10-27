@@ -14,6 +14,7 @@
 #include "../BlobStore.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 
 #include <algorithm>
 #include <array>
@@ -37,8 +38,8 @@ Blob decodeGzip(const Blob &Input, uint64_t MaxOutput) {
 #ifndef NEVERD_WEB_ZLIB
   throw Error("gzip_decoder_unavailable");
 #else
-  constexpr uint64_t MaxInput = 16 * 1024 * 1024;
-  if (Input.size() > MaxInput || MaxOutput > 8 * 1024 * 1024)
+  if (Input.size() > ::neverd::limits::web::kGzipMaxInput ||
+      MaxOutput > ::neverd::limits::web::kGzipDecodeGzipMaxOutputLimit)
     throw Error("gzip_byte_budget_exceeded");
   struct Inflater {
     struct alignas(std::max_align_t) Allocation {
@@ -50,7 +51,7 @@ Blob decodeGzip(const Blob &Input, uint64_t MaxOutput) {
     static void *allocate(void *Opaque, uInt Count, uInt Size) {
       auto &Self = *static_cast<Inflater *>(Opaque);
       const uint64_t Bytes = uint64_t(Count) * Size + sizeof(Allocation);
-      if (Bytes > 2 * 1024 * 1024 - Self.Memory)
+      if (Bytes > ::neverd::limits::web::kMaxGzipAllocatorBytes - Self.Memory)
         return nullptr;
       auto *Block = static_cast<Allocation *>(std::calloc(1, size_t(Bytes)));
       if (!Block)
@@ -86,9 +87,12 @@ Blob decodeGzip(const Blob &Input, uint64_t MaxOutput) {
   std::array<char, BlobTransferBytes> Output;
   uint64_t Read = 0, Produced = 0, Calls = 0;
   const auto Deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(2);
+      std::chrono::steady_clock::now() +
+      std::chrono::seconds(
+          ::neverd::limits::web::kGzipDecodeGzipDeadlineSeconds);
   for (;;) {
-    if (++Calls > 8192 || std::chrono::steady_clock::now() > Deadline)
+    if (++Calls > ::neverd::limits::web::kMaxGzipInflateCalls ||
+        std::chrono::steady_clock::now() > Deadline)
       throw Error("gzip_work_budget_exceeded");
     if (!S.avail_in && Read < Input.size()) {
       Chunk =

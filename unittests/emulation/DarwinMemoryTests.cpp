@@ -71,6 +71,58 @@ protected:
     return FD.Value;
   }
 };
+TEST_P(DarwinMemoryTest, MappedTLSReservationCannotBeBorrowedOrReprotected) {
+  const uint64_t TLS = 0x200000000ULL;
+  MemoryLayout Layout{Page, 0x100000000ULL, {{TLS, Page, 3}}, {{TLS, Page, 3}}};
+  Memory = std::make_unique<DarwinMemory>(*Space, Layout, Options);
+  llvm::cantFail(Space->map(TLS, Page, Read | Write | UserAccessible));
+  EXPECT_EQ(Space->mappedBytes(), Page);
+  EXPECT_EQ(Space->physicalMemory()->allocatedBytes(), Page);
+  for (unsigned Instantiated : {0u, 1u}) {
+    llvm::cantFail(Space->writeInteger(TLS, Instantiated ? 71 : 0, 8));
+    auto Hint = call(ServiceKind::Mmap, {TLS, Page, 3, 0x1002, UINT64_MAX, 0});
+    ASSERT_FALSE(Hint.Error);
+    EXPECT_NE(Hint.Value, TLS);
+    EXPECT_FALSE(call(ServiceKind::Munmap, {Hint.Value, Page}).Error);
+    auto TooMuch =
+        call(ServiceKind::Mmap, {0, Page * 4, 3, 0x1002, UINT64_MAX, 0});
+    EXPECT_TRUE(TooMuch.Error);
+    EXPECT_EQ(TooMuch.Value, 12u);
+    for (auto Kind : {ServiceKind::Mprotect, ServiceKind::Munmap}) {
+      auto R = Memory->handle(Kind, {0, 0, {TLS, Page, 3}, std::nullopt},
+                              *Files, Result);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      EXPECT_FALSE(*R);
+      EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+    }
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(TLS, 8)),
+              Instantiated ? 71u : 0u);
+    EXPECT_EQ(Space->mappedBytes(), Page);
+  }
+}
+TEST_P(DarwinMemoryTest, ImportedGateAndErrnoReservationsKeepTheirLiveStorage) {
+  const auto Gate = value::LibSystemGate;
+  MemoryLayout Layout{Page,
+                      0x100000000ULL,
+                      {{Gate, Page, 5}, {Gate + Page, Page, 3}},
+                      {{Gate, Page, 5}, {Gate + Page, Page, 3}}};
+  Memory = std::make_unique<DarwinMemory>(*Space, Layout, Options);
+  llvm::cantFail(Space->map(Gate, Page, Read | Execute | UserAccessible));
+  llvm::cantFail(Space->map(Gate + Page, Page, Read | Write | UserAccessible));
+  llvm::cantFail(Space->writeInteger(Gate + Page, 91, 4));
+  for (auto Kind : {ServiceKind::Mprotect, ServiceKind::Munmap})
+    for (uint64_t Address : {Gate, Gate + 8, Gate + Page, Gate + Page + 8}) {
+      ProcessServiceEvent E{0, 0, {Address, 16, 3}, std::nullopt};
+      auto R = Memory->handle(Kind, E, *Files, Result);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      EXPECT_FALSE(*R);
+      EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(Result.Diagnostic, diagnostic::MemoryMode);
+      EXPECT_EQ(Space->mappedBytes(), Page * 2);
+      EXPECT_EQ(Space->physicalMemory()->allocatedBytes(), Page * 2);
+      EXPECT_EQ(llvm::cantFail(Space->readInteger(Gate + Page, 4)), 91u);
+    }
+}
 TEST_P(DarwinMemoryTest, OwnerQueriesKeepAnonymousMemoryAndCloseFileMappings) {
   for (auto Authorization : {DarwinFileAuthorization::StaticOwnerQueries,
                              DarwinFileAuthorization::StaticOrdinaryQueries}) {

@@ -3,10 +3,11 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/Swift/SwiftMetadata.h"
 #include "neverd/loader/Swift/SwiftMethods.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/Support/JSON.h"
 
@@ -19,7 +20,10 @@ inline bool identifier(llvm::StringRef Text) {
   auto Letter = [](char C) {
     return (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') || C == '_';
   };
-  return !Text.empty() && Text.size() <= 1024 && Letter(Text.front()) &&
+  return !Text.empty() &&
+         Text.size() <=
+             ::neverd::sdk::kSwiftSourceSignaturesIdentifierTextSizeLimit &&
+         Letter(Text.front()) &&
          std::all_of(Text.begin(), Text.end(), [&](char C) {
            return Letter(C) || (C >= '0' && C <= '9');
          });
@@ -28,14 +32,15 @@ inline bool identifier(llvm::StringRef Text) {
 inline std::string text(const llvm::json::Object &Object, llvm::StringRef Key,
                         bool AllowEmpty = false) {
   auto Value = Object.getString(Key);
-  if (!Value || (!AllowEmpty && !identifier(*Value)) || Value->size() > 65536)
+  if (!Value || (!AllowEmpty && !identifier(*Value)) ||
+      Value->size() > ::neverd::sdk::kSwiftSourceSignaturesTextValueSizeLimit)
     throw std::invalid_argument("invalid Swift signature field: " + Key.str());
   return Value->str();
 }
 
 inline SwiftSourceType type(const llvm::json::Object *Object,
                             unsigned Depth = 0) {
-  if (!Object || Depth > 8)
+  if (!Object || Depth > ::neverd::sdk::kSwiftSourceSignaturesTypeDepthLimit)
     throw std::invalid_argument("missing or excessive Swift type description");
   SwiftSourceType Result;
   Result.Name = text(*Object, "name");
@@ -109,7 +114,9 @@ signature(const llvm::json::Object &Object, const BinaryImage &Image,
   SwiftSourceSignature Result;
   auto Entry = Object.getString("entry");
   auto Symbol = Object.getString("mangled_symbol");
-  if (!Entry || !Symbol || Symbol->size() > 65536 ||
+  if (!Entry || !Symbol ||
+      Symbol->size() >
+          ::neverd::sdk::kSwiftSourceSignaturesSignatureSymbolSizeLimit ||
       !Entry->consume_front("0x") || Entry->empty() ||
       Entry->getAsInteger(16, Result.Entry) ||
       !Image.isCodeAddress(Result.Entry))
@@ -156,7 +163,9 @@ signature(const llvm::json::Object &Object, const BinaryImage &Image,
   Result.IsMutatingKnown = *MutatingKnown;
   auto Parameters = Object.getArray("parameters");
   auto Labels = Object.getArray("labels");
-  if (!Parameters || !Labels || Parameters->size() > 64 ||
+  if (!Parameters || !Labels ||
+      Parameters->size() >
+          ::neverd::sdk::kSwiftSourceSignaturesSignatureParametersSizeLimit ||
       Labels->size() != Parameters->size())
     throw std::invalid_argument("invalid Swift parameter and label counts");
   for (size_t Index = 0; Index < Parameters->size(); ++Index) {

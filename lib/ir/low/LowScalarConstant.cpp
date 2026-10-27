@@ -8,6 +8,15 @@
 
 #include "neverd/ir/low/LowScalarConstant.h"
 
+#include "neverd/ir/Limits.h"
+
+#include "llvm/ADT/APInt.h"
+
+#include <algorithm>
+#include <map>
+#include <set>
+#include <utility>
+
 namespace neverd {
 
 std::optional<uint64_t> lowScalarConstantResult(
@@ -23,15 +32,29 @@ std::optional<uint64_t> lowScalarConstantResult(
   std::optional<uint64_t> Result;
   if (Op.NumInputs == 1 &&
       (Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT ||
+       Op.Opcode == NdOp::INT_SEXT || Op.Opcode == NdOp::INT_NOT ||
+       Op.Opcode == NdOp::INT_NEGATE || Op.Opcode == NdOp::INT_NEG2 ||
        Op.Opcode == NdOp::BOOL_NOT)) {
     const auto Width = Op.Inputs[0].Size;
+    const bool Extension =
+        Op.Opcode == NdOp::INT_ZEXT || Op.Opcode == NdOp::INT_SEXT;
     if (!Width || Width > Op.Output.Size ||
         (Op.Opcode == NdOp::BOOL_NOT && (Width != 1 || Op.Output.Size != 1)) ||
-        (Op.Opcode == NdOp::COPY && Width != Op.Output.Size))
+        (!Extension && Width != Op.Output.Size))
       return std::nullopt;
-    if (auto Value = ValueOf(Op.Inputs[0]))
-      Result = Op.Opcode == NdOp::BOOL_NOT ? !(*Value & Mask(Width))
-                                           : *Value & Mask(Width);
+    if (auto Value = ValueOf(Op.Inputs[0])) {
+      const uint64_t Bits = *Value & Mask(Width);
+      if (Op.Opcode == NdOp::INT_SEXT)
+        Result = llvm::APInt(Width * 8, Bits)
+                     .sextOrTrunc(Op.Output.Size * 8)
+                     .getZExtValue();
+      else if (Op.Opcode == NdOp::INT_NOT || Op.Opcode == NdOp::INT_NEGATE)
+        Result = ~Bits;
+      else if (Op.Opcode == NdOp::INT_NEG2)
+        Result = uint64_t{0} - Bits;
+      else
+        Result = Op.Opcode == NdOp::BOOL_NOT ? !Bits : Bits;
+    }
   } else if (Op.NumInputs == 2 && Op.Output.Size == 1 && Op.Inputs[0].Size &&
              Op.Inputs[0].Size <= 8 && Op.Inputs[0].Size == Op.Inputs[1].Size &&
              (Op.Opcode == NdOp::INT_EQUAL || Op.Opcode == NdOp::INT_NOTEQUAL ||
@@ -57,19 +80,49 @@ std::optional<uint64_t> lowScalarConstantResult(
                    : L <= R;
     }
   } else if (Op.NumInputs == 2 &&
-             (Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB ||
-              Op.Opcode == NdOp::INT_XOR || Op.Opcode == NdOp::INT_AND ||
-              Op.Opcode == NdOp::INT_OR || Op.Opcode == NdOp::BOOL_AND ||
-              Op.Opcode == NdOp::BOOL_OR || Op.Opcode == NdOp::BOOL_XOR) &&
+             (Op.Opcode == NdOp::INT_LEFT || Op.Opcode == NdOp::INT_RIGHT ||
+              Op.Opcode == NdOp::INT_ASHR) &&
              Op.Inputs[0].Size == Op.Output.Size &&
              Op.Inputs[1].Size == Op.Output.Size) {
-    if (Op.Opcode == NdOp::INT_XOR && Op.Inputs[0] == Op.Inputs[1] &&
+    const auto Left = ValueOf(Op.Inputs[0]);
+    const auto Right = ValueOf(Op.Inputs[1]);
+    if (Left && Right) {
+      const unsigned Bits = Op.Output.Size * 8;
+      const llvm::APInt Value(Bits, *Left);
+      const unsigned Count =
+          unsigned(std::min<uint64_t>(*Right & Mask(Op.Output.Size), Bits));
+      // ISA count masking belongs to the lifter. LowIR shifts saturate at
+      // their declared width; never perform an out-of-range host shift.
+      Result = (Op.Opcode == NdOp::INT_LEFT ? Value.shl(Count)
+                : Op.Opcode == NdOp::INT_RIGHT
+                    ? Value.lshr(Count)
+                    : Value.ashr(std::min(Count, Bits - 1)))
+                   .getZExtValue();
+    }
+  } else if (Op.NumInputs == 2 &&
+             (Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB ||
+              Op.Opcode == NdOp::INT_MULT || Op.Opcode == NdOp::INT_XOR ||
+              Op.Opcode == NdOp::INT_AND || Op.Opcode == NdOp::INT_OR ||
+              Op.Opcode == NdOp::BOOL_AND || Op.Opcode == NdOp::BOOL_OR ||
+              Op.Opcode == NdOp::BOOL_XOR) &&
+             Op.Inputs[0].Size == Op.Output.Size &&
+             Op.Inputs[1].Size == Op.Output.Size) {
+    if ((Op.Opcode == NdOp::INT_XOR || Op.Opcode == NdOp::INT_SUB) &&
+        Op.Inputs[0] == Op.Inputs[1] &&
         (Op.Inputs[0].isReg() || Op.Inputs[0].isTemp()))
       Result = 0;
     else {
       const auto Left = ValueOf(Op.Inputs[0]);
       const auto Right = ValueOf(Op.Inputs[1]);
-      if (Left && Right) {
+      const uint64_t WidthMask = Mask(Op.Output.Size);
+      if (Op.Opcode == NdOp::INT_AND && ((Left && (*Left & WidthMask) == 0) ||
+                                         (Right && (*Right & WidthMask) == 0)))
+        Result = 0;
+      else if (Op.Opcode == NdOp::INT_OR &&
+               ((Left && (*Left & WidthMask) == WidthMask) ||
+                (Right && (*Right & WidthMask) == WidthMask)))
+        Result = WidthMask;
+      else if (Left && Right) {
         if (Op.Opcode == NdOp::BOOL_AND || Op.Opcode == NdOp::BOOL_OR ||
             Op.Opcode == NdOp::BOOL_XOR) {
           if (Op.Output.Size != 1)
@@ -80,16 +133,211 @@ std::optional<uint64_t> lowScalarConstantResult(
                    : Op.Opcode == NdOp::BOOL_OR ? L || R
                                                 : L != R;
         } else
-          Result = Op.Opcode == NdOp::INT_ADD   ? *Left + *Right
-                   : Op.Opcode == NdOp::INT_SUB ? *Left - *Right
-                   : Op.Opcode == NdOp::INT_AND ? *Left & *Right
-                   : Op.Opcode == NdOp::INT_OR  ? *Left | *Right
-                                                : *Left ^ *Right;
+          Result = Op.Opcode == NdOp::INT_ADD    ? *Left + *Right
+                   : Op.Opcode == NdOp::INT_SUB  ? *Left - *Right
+                   : Op.Opcode == NdOp::INT_MULT ? *Left * *Right
+                   : Op.Opcode == NdOp::INT_AND  ? *Left & *Right
+                   : Op.Opcode == NdOp::INT_OR   ? *Left | *Right
+                                                 : *Left ^ *Right;
       }
     }
   }
   return Result ? std::optional<uint64_t>{*Result & Mask(Op.Output.Size)}
                 : std::nullopt;
+}
+
+namespace {
+using ValueLookup = llvm::function_ref<std::optional<uint64_t>(const NdVar &)>;
+
+// Pack storage into words without promoting the proof to word granularity.
+// A byte mask retains partial-register writes, including unaligned ranges.
+// Replacing an aligned constant updates one existing node instead of freeing
+// and allocating eight byte nodes on every machine operation.
+class RegisterConstants {
+  static constexpr unsigned WordBytes = sizeof(uint64_t);
+  struct Word {
+    uint64_t Bits = 0;
+    uint8_t Known = 0;
+  };
+  std::map<uint64_t, Word> Words;
+
+  static uint64_t base(uint64_t Offset) {
+    return Offset & ~(uint64_t{WordBytes} - 1);
+  }
+  static uint64_t bitsMask(unsigned Size) {
+    return UINT64_MAX >> ((WordBytes - Size) * 8);
+  }
+  static uint8_t byteMask(unsigned Begin, unsigned Size) {
+    return static_cast<uint8_t>(((1U << Size) - 1) << Begin);
+  }
+
+public:
+  void clear() { Words.clear(); }
+
+  std::optional<uint64_t> read(uint64_t Offset, unsigned Size) const {
+    uint64_t Bits = 0;
+    for (unsigned I = 0; I < Size;) {
+      const auto Address = Offset + I;
+      const auto Begin = static_cast<unsigned>(Address - base(Address));
+      const unsigned Count = std::min(Size - I, WordBytes - Begin);
+      const auto Found = Words.find(base(Address));
+      const auto Mask = byteMask(Begin, Count);
+      if (Found == Words.end() || (Found->second.Known & Mask) != Mask)
+        return {};
+      Bits |= ((Found->second.Bits >> (Begin * 8)) & bitsMask(Count))
+              << (I * 8);
+      I += Count;
+    }
+    return Bits;
+  }
+
+  void write(uint64_t Offset, unsigned Size, uint64_t Bits) {
+    for (unsigned I = 0; I < Size;) {
+      const auto Address = Offset + I;
+      const auto Begin = static_cast<unsigned>(Address - base(Address));
+      const unsigned Count = std::min(Size - I, WordBytes - Begin);
+      auto &Value = Words[base(Address)];
+      const uint64_t Mask = bitsMask(Count) << (Begin * 8);
+      Value.Bits =
+          (Value.Bits & ~Mask) | ((Bits >> (I * 8)) << (Begin * 8) & Mask);
+      Value.Known |= byteMask(Begin, Count);
+      I += Count;
+    }
+  }
+
+  void forget(uint64_t Offset, unsigned Size) {
+    const uint64_t End = Offset + Size;
+    // Visit only materialized words, even for a very wide unknown output.
+    for (auto It = Words.lower_bound(base(Offset));
+         It != Words.end() && It->first < End;) {
+      const auto Begin =
+          static_cast<unsigned>(Offset > It->first ? Offset - It->first : 0);
+      const auto Count = static_cast<unsigned>(
+          std::min<uint64_t>(WordBytes, End - It->first) - Begin);
+      It->second.Known &= ~byteMask(Begin, Count);
+      if (!It->second.Known)
+        It = Words.erase(It);
+      else
+        ++It;
+    }
+  }
+};
+
+bool visitScalarCallValues(
+    const LowFunc &Function, llvm::function_ref<bool(const LowOp &)> Select,
+    llvm::function_ref<void(const LowOp &, ValueLookup)> Observe) {
+  size_t Work = 0;
+  for (const auto &Block : Function.Blocks) {
+    if (Block.Ops.size() > limits::ir::kConstantRegisterCallOperations - Work)
+      return false;
+    Work += Block.Ops.size();
+    if (std::none_of(Block.Ops.begin(), Block.Ops.end(), Select))
+      continue;
+    RegisterConstants Registers;
+    std::map<uint64_t, std::pair<uint16_t, uint64_t>> Temps;
+    va_t Instruction = InvalidVA;
+    auto ValueOf = [&](const NdVar &Value) -> std::optional<uint64_t> {
+      if (!Value.Size || Value.Size > sizeof(uint64_t))
+        return {};
+      if (Value.isConst())
+        return Value.Offset & (UINT64_MAX >> ((8 - Value.Size) * 8));
+      if (Value.isTemp()) {
+        const auto It = Temps.find(Value.Offset);
+        if (It != Temps.end() && It->second.first == Value.Size)
+          return It->second.second;
+        return {};
+      }
+      if (!Value.isReg() || Value.Offset > UINT64_MAX - Value.Size)
+        return {};
+      return Registers.read(Value.Offset, Value.Size);
+    };
+    for (const auto &Op : Block.Ops) {
+      if (Op.Addr != Instruction) {
+        Temps.clear();
+        Instruction = Op.Addr;
+      }
+      if (Select(Op))
+        Observe(Op, ValueOf);
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+          Op.Opcode == NdOp::INTRINSIC) {
+        Registers.clear();
+        Temps.clear();
+        continue;
+      }
+      const auto &Output = Op.Output;
+      if (!Output.Size || (!Output.isReg() && !Output.isTemp()))
+        continue;
+      const auto Result =
+          Op.MemoryOrdering == NdMemoryOrdering::None &&
+                  Op.MemoryAddressSpace == NdMemoryAddressSpace::Default
+              ? lowScalarConstantResult(Op, ValueOf)
+              : std::nullopt;
+      if (Output.isTemp()) {
+        if (Result)
+          Temps[Output.Offset] = {Output.Size, *Result};
+        else
+          Temps.erase(Output.Offset);
+      } else if (Output.Offset <= UINT64_MAX - Output.Size) {
+        // Erase overlapping byte facts even for a wide unknown result. Never
+        // interpret an architectural subregister write as a whole GPR write.
+        if (Result)
+          Registers.write(Output.Offset, Output.Size, *Result);
+        else
+          Registers.forget(Output.Offset, Output.Size);
+      } else
+        Registers.clear();
+    }
+  }
+  return true;
+}
+} // namespace
+
+std::map<SourceCallOccurrenceKey, va_t>
+constantRegisterCallTargets(const LowFunc &Function) {
+  std::map<SourceCallOccurrenceKey, va_t> Targets;
+  std::set<SourceCallOccurrenceKey> Seen;
+  const bool Complete = visitScalarCallValues(
+      Function,
+      [](const LowOp &Op) {
+        return Op.Opcode == NdOp::INDIR_CALL && Op.NumInputs == 1 &&
+               !Op.Inputs[0].isConst();
+      },
+      [&](const LowOp &Op, ValueLookup ValueOf) {
+        if (const auto Site = sourceCallOccurrenceKey(Op)) {
+          if (!Seen.insert(*Site).second)
+            Targets.erase(*Site);
+          else if (const auto Target = ValueOf(Op.Inputs[0]))
+            Targets.emplace(*Site, *Target);
+        }
+      });
+  if (!Complete)
+    return {};
+  return Targets;
+}
+
+LowCallRegisterConstant
+constantRegisterValueAtCall(const LowFunc &Function,
+                            const SourceCallOccurrenceKey &Site,
+                            const NdVar &Register) {
+  LowCallRegisterConstant Result;
+  if (!Register.isReg() || !Register.Size || Register.Size > 8)
+    return Result;
+  const bool Complete = visitScalarCallValues(
+      Function,
+      [&](const LowOp &Op) { return sourceCallOccurrenceKey(Op) == Site; },
+      [&](const LowOp &, ValueLookup ValueOf) {
+        if (Result.OccurrenceFound)
+          Result.Value.reset();
+        else {
+          Result.OccurrenceFound = true;
+          Result.Value = ValueOf(Register);
+        }
+      });
+  if (!Complete) {
+    Result = {};
+    Result.BudgetExceeded = true;
+  }
+  return Result;
 }
 
 } // namespace neverd

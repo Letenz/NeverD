@@ -46,6 +46,7 @@ NEVERD_LINUX_VALUE(AccessDenied, 13)
 NEVERD_LINUX_VALUE(ServiceNotImplemented, 38)
 NEVERD_LINUX_VALUE(BadDescriptor, 9)
 NEVERD_LINUX_VALUE(BadAddress, 14)
+NEVERD_LINUX_VALUE(InterruptedCall, 4)
 NEVERD_LINUX_VALUE(PermissionDenied, 1)
 NEVERD_LINUX_VALUE(InvalidArgument, 22)
 NEVERD_LINUX_VALUE(OperationNotSupported, 95)
@@ -66,15 +67,20 @@ NEVERD_LINUX_VALUE(RangeError, 34)
 NEVERD_LINUX_VALUE(XAttrNameLimit, 256)
 NEVERD_LINUX_VALUE(FileDescriptorLimit, 4096)
 NEVERD_LINUX_VALUE(FileCountLimit, 256)
+NEVERD_LINUX_VALUE(TmpfsDirectoryEntryBytes, 20)
 NEVERD_LINUX_VALUE(DeviceIoctlLimit, 1024)
 NEVERD_LINUX_VALUE(DeviceMappingLimit, 16)
 NEVERD_LINUX_VALUE(DeviceMappingPageSize, 4096)
+// Explicit residency observations currently select the 4 KiB LP64 contract.
+NEVERD_LINUX_VALUE(ResidencyPageSize, 4096)
 NEVERD_LINUX_VALUE(DeviceMemoryLimit, 16)
 NEVERD_LINUX_VALUE(FileByteLimit, 16 * 1024 * 1024)
+NEVERD_LINUX_VALUE(ProcBlockSize, 1024)
 NEVERD_LINUX_VALUE(FilePathLimit, 4096)
 NEVERD_LINUX_VALUE(FileNameLimit, 255)
 NEVERD_LINUX_VALUE(FileRegularMode, 0100000)
 NEVERD_LINUX_VALUE(FilePermissionMask, 07777)
+NEVERD_LINUX_VALUE(FileRWXModeBits, 0777)
 NEVERD_LINUX_VALUE(FileAccessMask, 7)
 NEVERD_LINUX_VALUE(FileStatusSizeARM64, 128)
 NEVERD_LINUX_VALUE(FileStatusSizeX64, 144)
@@ -88,6 +94,7 @@ NEVERD_LINUX_VALUE(OpenCreate, 0100)
 NEVERD_LINUX_VALUE(OpenExclusive, 0200)
 NEVERD_LINUX_VALUE(OpenTruncate, 01000)
 NEVERD_LINUX_VALUE(OpenAppend, 02000)
+NEVERD_LINUX_VALUE(OpenNonBlock, 04000)
 NEVERD_LINUX_VALUE(OpenLargeFileX64, 00100000)
 NEVERD_LINUX_VALUE(OpenLargeFileARM64, 0400000)
 NEVERD_LINUX_VALUE(OpenDirectoryX64, 00200000)
@@ -105,8 +112,11 @@ NEVERD_LINUX_VALUE(MapAnonymous, 0x20)
 NEVERD_LINUX_VALUE(ProtRead, 0x01)
 NEVERD_LINUX_VALUE(ProtWrite, 0x02)
 NEVERD_LINUX_VALUE(ProtExecute, 0x04)
+NEVERD_LINUX_VALUE(AdviceDontNeed, 4)
 NEVERD_LINUX_VALUE(AdviceMergeable, 12)
 NEVERD_LINUX_VALUE(AdviceUnmergeable, 13)
+NEVERD_LINUX_VALUE(PRSetVMA, 0x53564d41)
+NEVERD_LINUX_VALUE(PRSetVMAAnonName, 0)
 NEVERD_LINUX_VALUE(ExitMask, 0xff)
 NEVERD_LINUX_VALUE(SignalCount, 64)
 NEVERD_LINUX_VALUE(SignalKill, 9)
@@ -115,6 +125,9 @@ NEVERD_LINUX_VALUE(SignalActionSize, 32)
 NEVERD_LINUX_VALUE(SignalMaskSize, 8)
 #endif
 #ifdef NEVERD_LINUX_X64_SERVICE
+NEVERD_LINUX_X64_SERVICE(Poll, 7, 3)
+NEVERD_LINUX_X64_SERVICE(EpollCreate, 213, 1)
+NEVERD_LINUX_X64_SERVICE(EpollWait, 232, 4)
 NEVERD_LINUX_X64_SERVICE(Dup2, 33, 2)
 NEVERD_LINUX_X64_SERVICE(Open, 2, 3)
 NEVERD_LINUX_X64_SERVICE(Access, 21, 2)
@@ -168,10 +181,21 @@ NEVERD_LINUX_AUX(NULL, 0, 0)
   NEVERD_LINUX_SERVICE(Name, X64, ARM, Count)
 #include "neverd/emulation/LinuxUnavailableSyscalls.def"
 #undef NEVERD_LINUX_UNAVAILABLE_SYSCALL
+NEVERD_LINUX_SERVICE(SetSocketOption, 54, 208, 5)
+NEVERD_LINUX_SERVICE(GetSocketOption, 55, 209, 5)
+NEVERD_LINUX_SERVICE(Socket, 41, 198, 3)
+NEVERD_LINUX_SERVICE(Connect, 42, 203, 3)
+NEVERD_LINUX_SERVICE(SendTo, 44, 206, 6)
+NEVERD_LINUX_SERVICE(ReceiveFrom, 45, 207, 6)
 NEVERD_LINUX_SERVICE(SignalAction, 13, 134, 4)
+NEVERD_LINUX_SERVICE(SignalMask, 14, 135, 4)
+NEVERD_LINUX_SERVICE(SignalPending, 127, 136, 2)
+NEVERD_LINUX_SERVICE(SignalReturn, 15, 139, 0)
+NEVERD_LINUX_SERVICE(Kill, 62, 129, 2)
 NEVERD_LINUX_SERVICE(Mincore, 27, 232, 3)
 // Linux UAPI: x86-64 and asm-generic numbers, followed by fixed arity.
 NEVERD_LINUX_SERVICE(OpenAt, 257, 56, 4)
+NEVERD_LINUX_SERVICE(Getcwd, 79, 17, 2)
 NEVERD_LINUX_SERVICE(FaccessAt, 269, 48, 3)
 NEVERD_LINUX_SERVICE(MkdirAt, 258, 34, 3)
 NEVERD_LINUX_SERVICE(ReadlinkAt, 267, 78, 4)
@@ -195,6 +219,10 @@ NEVERD_LINUX_SERVICE(GetTimeOfDay, 96, 169, 2)
 NEVERD_LINUX_SERVICE(ClockGetTime, 228, 113, 2)
 NEVERD_LINUX_SERVICE(Nanosleep, 35, 101, 2)
 NEVERD_LINUX_SERVICE(PPoll, 271, 73, 5)
+NEVERD_LINUX_SERVICE(EpollCreate1, 291, 20, 1)
+NEVERD_LINUX_SERVICE(EpollCtl, 233, 21, 4)
+NEVERD_LINUX_SERVICE(EpollPwait, 281, 22, 6)
+NEVERD_LINUX_SERVICE(PSelect, 270, 72, 6)
 NEVERD_LINUX_SERVICE(Exit, 60, 93, 1)
 NEVERD_LINUX_SERVICE(ExitGroup, 231, 94, 1)
 NEVERD_LINUX_SERVICE(GetPriority, 140, 141, 2)
@@ -210,6 +238,7 @@ NEVERD_LINUX_SERVICE(Mprotect, 10, 226, 3)
 NEVERD_LINUX_SERVICE(Munmap, 11, 215, 2)
 NEVERD_LINUX_SERVICE(Madvise, 28, 233, 3)
 NEVERD_LINUX_SERVICE(Brk, 12, 214, 1)
+NEVERD_LINUX_SERVICE(Prctl, 157, 167, 5)
 #endif
 #ifdef NEVERD_LINUX_ABI
 NEVERD_LINUX_ABI(X64, X64Syscall, X64AX, X64AX, X64SP, X64PC, X64DI, X64SI,
@@ -229,10 +258,24 @@ NEVERD_LINUX_DYNAMIC_DEPENDENCY(DependencyAudit, 0x6ffffefb)
 #ifdef NEVERD_LINUX_DIAGNOSTIC
 NEVERD_LINUX_DIAGNOSTIC(MemoryResidency,
                         "unmodeled Linux page residency observation")
+NEVERD_LINUX_DIAGNOSTIC(ResidencyExhausted,
+                        "Linux residency observation catalogue exhausted")
+NEVERD_LINUX_DIAGNOSTIC(ResidencyMismatch,
+                        "Linux residency observation does not match the query")
+NEVERD_LINUX_DIAGNOSTIC(
+    ResidencyBacking,
+    "Linux residency requires owned anonymous mmap or brk backing")
+NEVERD_LINUX_DIAGNOSTIC(ResidencyDeviceOutput,
+                        "Linux residency output in device memory is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(ResidencyPartialCopy,
+                        "partial Linux residency vector copy is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(KernelOptions,
                         "invalid Linux kernel availability input")
 NEVERD_LINUX_DIAGNOSTIC(PidFDTargetMissing,
                         "pidfd_open target process is not modeled")
+NEVERD_LINUX_DIAGNOSTIC(
+    PidFDThreadLifetime,
+    "pidfd_open guest-thread descriptor lifetime is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(PriorityOptions, "invalid Linux priority input")
 NEVERD_LINUX_DIAGNOSTIC(
     PriorityInputsMissing,
@@ -241,7 +284,15 @@ NEVERD_LINUX_DIAGNOSTIC(PrioritySelection,
                         "Linux group and user priority selection is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(PriorityTaskMissing,
                         "unmodeled Linux task priority: {0}")
+NEVERD_LINUX_DIAGNOSTIC(PriorityThreadConflict,
+                        "Linux priority task conflicts with new thread: {0}")
+NEVERD_LINUX_DIAGNOSTIC(PriorityThreadLimit,
+                        "Linux priority task lifetime limit reached")
 NEVERD_LINUX_DIAGNOSTIC(SignalOptions, "invalid Linux signal disposition input")
+NEVERD_LINUX_DIAGNOSTIC(SignalTargetUnsupported,
+                        "Linux kill target {0} requires process/group state")
+NEVERD_LINUX_DIAGNOSTIC(SignalDeliveryUnsupported,
+                        "unsupported Linux signal {0} delivery")
 NEVERD_LINUX_DIAGNOSTIC(SignalInputMissing,
                         "signal actions require explicit linux_signals input")
 NEVERD_LINUX_DIAGNOSTIC(SignalActionMissing,
@@ -250,6 +301,17 @@ NEVERD_LINUX_DIAGNOSTIC(SignalPartialOutput,
                         "unmodeled partial Linux signal action output")
 NEVERD_LINUX_DIAGNOSTIC(SignalFlagsUnsupported,
                         "unmodeled Linux signal action flags")
+NEVERD_LINUX_DIAGNOSTIC(SignalMaskMissing,
+                        "Linux signal delivery requires a known thread mask")
+NEVERD_LINUX_DIAGNOSTIC(
+    SignalWaitUnsupported,
+    "Linux signal interruption of a waiting thread is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(SignalFrameUnsupported,
+                        "unsupported Linux signal frame or handler context")
+NEVERD_LINUX_DIAGNOSTIC(SignalFrameFault,
+                        "Linux signal frame memory is inaccessible")
+NEVERD_LINUX_DIAGNOSTIC(SignalReturnUnsupported,
+                        "unsupported Linux signal return frame")
 NEVERD_LINUX_DIAGNOSTIC(
     FileOptionsLimit, "linux_files exceeds its catalogue or descriptor limits")
 NEVERD_LINUX_DIAGNOSTIC(
@@ -263,27 +325,32 @@ NEVERD_LINUX_DIAGNOSTIC(DeviceOptions,
                         "invalid linux_files device transaction contract")
 NEVERD_LINUX_DIAGNOSTIC(DeviceOperation,
                         "Linux device operation has no explicit contract")
-NEVERD_LINUX_DIAGNOSTIC(DeviceOpenMode,
-                        "Linux device open access mode differs from its contract")
+NEVERD_LINUX_DIAGNOSTIC(
+    DeviceOpenMode, "Linux device open access mode differs from its contract")
 NEVERD_LINUX_DIAGNOSTIC(DeviceIoctlMissing,
                         "Linux ioctl has no matching next device transaction")
-NEVERD_LINUX_DIAGNOSTIC(DeviceIoctlMemory,
-                        "Linux ioctl memory does not satisfy its explicit contract")
+NEVERD_LINUX_DIAGNOSTIC(
+    DeviceIoctlMemory,
+    "Linux ioctl memory does not satisfy its explicit contract")
 NEVERD_LINUX_DIAGNOSTIC(DeviceMappingMissing,
                         "Linux mmap has no matching read-only device pages")
 NEVERD_LINUX_DIAGNOSTIC(DeviceMappingAdvice,
                         "Linux device mapping advice is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(
-    XAttrKernel, "extended attribute queries require explicit released GKI input")
+    XAttrKernel,
+    "extended attribute queries require explicit released GKI input or "
+    "xattr_query_import")
 NEVERD_LINUX_DIAGNOSTIC(
-    XAttrObservation, "extended attributes for this catalogue object are unmodeled")
+    XAttrObservation,
+    "extended attributes for this catalogue object are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(FileDirectIO,
                         "direct I/O for this catalogue file is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(FilePathForm, "unsupported Linux memory-file path form")
-NEVERD_LINUX_DIAGNOSTIC(FileLinkTarget,
-                        "linux_files symbolic links require nonempty NUL-free targets")
-NEVERD_LINUX_DIAGNOSTIC(FileLinkTraversal,
-                        "Linux symbolic-link traversal or metadata is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(
+    FileLinkTarget,
+    "linux_files symbolic links require nonempty NUL-free targets")
+NEVERD_LINUX_DIAGNOSTIC(
+    FileLinkTraversal, "Linux symbolic-link traversal or metadata is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(FileLinkDescriptor,
                         "Linux descriptor-backed symbolic links are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(FileLinkPartialOutput,
@@ -365,20 +432,17 @@ NEVERD_LINUX_DIAGNOSTIC(UnexpectedExit,
                         "CPU stopped without a modeled process continuation")
 NEVERD_LINUX_DIAGNOSTIC(TimePartialOutput,
                         "partial Linux time output fault is unmodeled")
-NEVERD_LINUX_DIAGNOSTIC(TimeClockOption,
-                        "linux_time requires distinct supported Linux clock IDs")
+NEVERD_LINUX_DIAGNOSTIC(
+    TimeClockOption, "linux_time requires distinct supported Linux clock IDs")
 NEVERD_LINUX_DIAGNOSTIC(TimeCPUObservation,
-                        "Linux process CPU clocks require consistent GKI task observations and nonnegative seconds")
+                        "Linux process CPU clocks require consistent task "
+                        "observations and nonnegative seconds")
 NEVERD_LINUX_DIAGNOSTIC(TimeCPUTargetMissing,
                         "CPU clock target process is not modeled")
 NEVERD_LINUX_DIAGNOSTIC(TimeThreadCPUClock,
                         "encoded per-thread CPU clocks are unmodeled")
-NEVERD_LINUX_DIAGNOSTIC(PollKernelMissing,
-                        "ppoll requires an explicit released GKI kernel")
 NEVERD_LINUX_DIAGNOSTIC(PollLimitMissing,
                         "ppoll requires an explicit guest descriptor limit")
-NEVERD_LINUX_DIAGNOSTIC(PollWaitUnsupported,
-                        "blocking ppoll waits are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(PollSignalMaskUnsupported,
                         "temporary ppoll signal masks are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(PollDescriptorUnsupported,
@@ -395,7 +459,8 @@ NEVERD_LINUX_DIAGNOSTIC(TimezoneMissing,
                         "Linux timezone has no explicit linux_time input")
 NEVERD_LINUX_DIAGNOSTIC(
     TimeAdvanceClock,
-    "advance_on_idle supports realtime, monotonic, boottime and fixed process CPU clocks only")
+    "virtual time advancement supports realtime, monotonic, "
+    "monotonic raw, boottime and fixed process CPU clocks only")
 NEVERD_LINUX_DIAGNOSTIC(
     TimeAdvanceOverflow,
     "Linux virtual clock advancement exceeds its modeled range")
@@ -403,4 +468,21 @@ NEVERD_LINUX_DIAGNOSTIC(SleepPolicy,
                         "Linux nanosleep requires linux_time.advance_on_idle")
 NEVERD_LINUX_DIAGNOSTIC(
     SleepRange, "Linux sleep deadline exceeds the modeled virtual time range")
+NEVERD_LINUX_DIAGNOSTIC(SleepPartialOutput,
+                        "unmodeled partial Linux nanosleep remainder output")
+#endif
+
+// Append service identities; existing internal catalogue values stay stable.
+#ifdef NEVERD_LINUX_X64_SERVICE
+NEVERD_LINUX_X64_SERVICE(Unlink, 87, 1)
+#endif
+#ifdef NEVERD_LINUX_SERVICE
+NEVERD_LINUX_SERVICE(UnlinkAt, 263, 35, 3)
+#endif
+
+#ifdef NEVERD_LINUX_X64_SERVICE
+NEVERD_LINUX_X64_SERVICE(Rename, 82, 2)
+#endif
+#ifdef NEVERD_LINUX_SERVICE
+NEVERD_LINUX_SERVICE(RenameAt, 264, 38, 4)
 #endif

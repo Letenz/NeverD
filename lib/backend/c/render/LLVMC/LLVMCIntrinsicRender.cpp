@@ -26,7 +26,8 @@ InlineAsmRender renderInlineAsm(Arch TheArch, const std::string &AsmStr,
     Mnemonic = Mnemonic.substr(0, SpacePos);
 
   if (TheArch == Arch::ARM || TheArch == Arch::AArch64)
-    return renderARMInlineAsm(AsmStr, Mnemonic, ResultName, ResultLive, Args);
+    return renderARMInlineAsm(TheArch, AsmStr, Mnemonic, ResultName, ResultLive,
+                              Args);
 
   if (TheArch == Arch::X86 || TheArch == Arch::X64)
     return renderX86InlineAsm(TheArch, AsmStr, Mnemonic, IsStructReturn,
@@ -41,10 +42,10 @@ std::string renderFence(Arch TheArch, llvm::AtomicOrdering Ordering) {
   return renderX86Fence(Ordering);
 }
 
-const char *renderDebugBreak(Arch TheArch) {
+const char *renderDebugBreak(Arch TheArch, BinaryFormat Format) {
   if (TheArch == Arch::ARM || TheArch == Arch::AArch64)
     return renderARMDebugBreak();
-  return renderX86DebugBreak();
+  return renderX86DebugBreak(Format);
 }
 
 } // namespace neverd

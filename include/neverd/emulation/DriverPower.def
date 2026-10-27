@@ -33,6 +33,17 @@ NEVERD_DRIVER_REQUEST_ORIGIN(FrameworkPowerPolicy, "framework_power_policy")
 NEVERD_DRIVER_REQUEST_ORIGIN(FrameworkWaitWake, "framework_wait_wake")
 NEVERD_DRIVER_REQUEST_ORIGIN(FrameworkUsbIdle, "framework_usb_idle")
 NEVERD_DRIVER_REQUEST_ORIGIN(DriverAllocatedIRP, "driver_allocated_irp")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileHandleClose, "file_handle_close")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileInformationQuery, "IoQueryFileInformation")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileCreate, "file_create")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileCancelOpen, "IoCancelFileOpen")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileFinalClose, "file_final_close")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileHandleQuery, "ZwQueryInformationFile")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileHandleRead, "ZwReadFile")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileHandleWrite, "ZwWriteFile")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileHandleFlush, "ZwFlushBuffersFile")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileHandleDeviceControl, "ZwDeviceIoControlFile")
+NEVERD_DRIVER_REQUEST_ORIGIN(FileHandleSystemControl, "ZwFsControlFile")
 #endif
 
 #ifdef NEVERD_DRIVER_POWER_DEVICE_STATE

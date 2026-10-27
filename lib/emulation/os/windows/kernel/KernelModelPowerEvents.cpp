@@ -55,7 +55,7 @@ KernelModel::capturePowerEventOwner(const DriverPowerPolicyEvent &Event) const {
       (*Provider->second.AddDeviceStatus & profile::NTStatusFailureMask))
     return policyError("event requires a successfully added device");
   const uint64_t PDO = Provider->second.PDO;
-  if (!isProviderDevice(PDO))
+  if (!isPnpProviderDevice(PDO))
     return policyError("event requires a live provider");
   if (Event.After100ns > uint64_t(INT64_MAX) - Scheduler.now100ns())
     return policyError("event deadline exceeds the virtual clock range");
@@ -231,7 +231,7 @@ llvm::Error KernelModel::processPowerPolicyEvents() {
     if (Observation.OccurredAt100ns ||
         Observation.DueAt100ns > Scheduler.now100ns())
       continue;
-    if (!isProviderDevice(Event.PDO))
+    if (!isPnpProviderDevice(Event.PDO))
       return policyError("event reached a retired provider");
     if (const auto *Usb = std::get_if<UsbIdlePermissionEvent>(&Event.Owner)) {
       if (auto E = queueUsbIdlePermission(Usb->Members))

@@ -16,21 +16,27 @@ add_neverd_component_library(NeverDSymbolic
   mba/SymBitwise.cpp
   mba/SymMBA.cpp
   mba/SymMBAMaskPartition.cpp
+  mba/SymMBAMaskedSum.cpp
   mba/SymMBAAbstract.cpp
+  mba/SymMBAAffineResidue.cpp
   mba/SymMBAArithmetic.cpp
   mba/SymMBAFactor.cpp
   mba/SymMBAMeasure.cpp
   mba/SymMBAPoly.cpp
   mba/SymMBAProduct.cpp
   mba/SymMBARegion.cpp
+  mba/SymMBAResidueDecision.cpp
+  mba/SymMBAResidue.cpp
   mba/SymWideArithmetic.cpp
   parse/SymParse.cpp
   parse/SymParseCall.cpp
   parse/SymParseLex.cpp
   parse/SymPrint.cpp
   synth/SymSynth.cpp
+  synth/SymSynthAffine.cpp
   synth/SymSynthEnumerate.cpp
   synth/SymSynthOracle.cpp
+  synth/SymSynthQuadratic.cpp
   synth/SymSynthStochastic.cpp
 
   LINK_COMPONENTS

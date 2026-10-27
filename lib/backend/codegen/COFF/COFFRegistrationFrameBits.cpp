@@ -12,6 +12,7 @@
 #include "COFFRegistrationFrameStores.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/IR/Constants.h"
@@ -37,7 +38,10 @@ std::optional<bool> truncationMayDependOnFrame(
   std::function<std::optional<bool>(const llvm::Value *, llvm::APInt)> Query;
   Query = [&](const llvm::Value *Value,
               llvm::APInt Demand) -> std::optional<bool> {
-    if (Work >= limits::kMaxRegistrationEHStateWork || Active.size() >= 128)
+    if (Work >= limits::kMaxRegistrationEHStateWork ||
+        Active.size() >=
+            ::neverd::limits::backend::
+                kCOFFRegistrationFrameBitsTruncationMayDependOnFrameQueryActiveSizeLimit)
       return std::nullopt;
     ++Work;
     if (Demand.isZero() || !IsAddress(Value))

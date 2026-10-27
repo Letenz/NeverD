@@ -6,6 +6,8 @@
 
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
 
+#include "neverd/decode/Decoder.h"
+#include "neverd/decode/InstructionRelocations.h"
 #include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -23,6 +25,7 @@
 #include <cstring>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <optional>
 #include <set>
 #include <vector>
@@ -471,6 +474,8 @@ void parseSymbolTable(const COFFObjectFile &Obj, BinaryImage &Img,
 
     if (CoffSym.getSectionNumber() == llvm::COFF::IMAGE_SYM_UNDEFINED)
       continue;
+    if (!Img.IsRelocatable && isDebugRecord(CoffSym))
+      continue;
 
     uint64_t Addr = CoffSym.getValue();
     if (CoffSym.getSectionNumber() > 0) {
@@ -505,10 +510,295 @@ void parseSymbolTable(const COFFObjectFile &Obj, BinaryImage &Img,
     S.Name = NameOrErr->str();
     S.Addr = Addr;
     S.IsFunc = IsFunc;
+    S.IsSection = !Img.IsRelocatable && isSectionDefinition(CoffSym);
     Img.Symbols.push_back(std::move(S));
   }
   LLVM_DEBUG(llvm::dbgs() << "coff: parsed " << Img.Symbols.size()
                           << " symbols from symbol table\n");
+}
+
+void recordSymbolTableDataInCode(BinaryImage &Img) {
+  if (Img.IsRelocatable || !Img.ReadsStaticSymbols)
+    return;
+  Decoder Dec;
+  if (!Dec.init(Img))
+    return;
+  std::vector<va_t> Objects;
+  for (const Symbol &Sym : Img.Symbols) {
+    // A local label (`.l_startw`, an import thunk's `.text`) names code.
+    if (Sym.IsFunc || Sym.IsSection || Sym.Name.empty() ||
+        Sym.Name.front() == '.' || !Img.isCodeAddress(Sym.Addr) ||
+        Img.findImportStubAt(Sym.Addr))
+      continue;
+    // An assembler's code label has no function type either; code begins
+    // with an instruction, and a table such as GNU ld's -1-headed
+    // __CTOR_LIST__ does not.
+    size_t Available = 16;
+    const uint8_t *Bytes = nullptr;
+    while (Available && !(Bytes = Img.readVA(Sym.Addr, Available)))
+      --Available;
+    DecodedInsn Insn{};
+    if (!Available ||
+        (Dec.selectMode(Img, Sym.Addr) &&
+         Dec.decodeOneLight(Bytes, Available, Sym.Addr, Insn) > 0))
+      continue;
+    Objects.push_back(Sym.Addr);
+  }
+  if (!recordDataInCode(Img, Objects))
+    return;
+  // Such an object runs from its symbol up to the next one.
+  std::vector<va_t> Starts;
+  for (const Symbol &Sym : Img.Symbols)
+    if (!Sym.IsSection && !Sym.Name.empty())
+      Starts.push_back(Sym.Addr);
+  llvm::sort(Starts);
+  auto InData = [&](va_t Addr) {
+    const auto Object = Img.DataInCode.upper_bound(Addr);
+    if (Object == Img.DataInCode.begin())
+      return false;
+    const va_t Start = *std::prev(Object);
+    const auto Next = std::upper_bound(Starts.begin(), Starts.end(), Start);
+    return Next == Starts.end() || *Next > Addr;
+  };
+  // A pointer to such an object, or into it, points to data.
+  recordDataPointerTargets(Img, InData);
+  // A pointer such an object holds, which the base relocations recorded as
+  // an instruction's operand for its section's sake, is a pointer slot of
+  // data: GNU ld's __CTOR_LIST__ lists the constructors to run.
+  const uint32_t Width = Img.getPointerSize();
+  std::vector<AbsolutePointerRelocationEffect> Slots;
+  for (const auto &[SlotVA, Field] : Img.CodeAddressRelocOperands)
+    if (Field.Width == Width && !Field.PCRelativeFromInstructionEnd &&
+        Field.Kind == RelocatedAddressFieldKind::Generic && InData(SlotVA))
+      Slots.push_back(decideAbsolutePointerRelocation(
+          Img, SlotVA, Field.TargetVA, Field.TargetOwnerVA, [&](va_t Addr) {
+            PointerRelocationAddressClass Class =
+                classifyPointerRelocationAddress(Img, Addr);
+            if (Addr == SlotVA)
+              Class.Executable = false;
+            return Class;
+          }));
+  for (const AbsolutePointerRelocationEffect &Slot : Slots)
+    if (Slot.What != AbsolutePointerRelocationEffect::Kind::None) {
+      Img.CodeAddressRelocOperands.erase(Slot.SlotVA);
+      applyAbsolutePointerRelocation(Img, Slot);
+    }
+}
+
+void recordConstantCodeSlots(BinaryImage &Img) {
+  if (Img.IsRelocatable || (Img.Arch != Arch::X86 && Img.Arch != Arch::X64))
+    return;
+  const uint32_t Width = Img.getPointerSize();
+  // MinGW's runtime defines `__imp_X` for each function it supplies in place
+  // of an import (__MINGW_IMP_SYMBOL), initialized to that function.
+  std::map<va_t, va_t> Candidates;
+  for (const Symbol &Sym : Img.Symbols) {
+    const llvm::StringRef Name = Sym.Name;
+    if (Sym.IsFunc || Sym.IsSection ||
+        (!Name.starts_with("__imp_") && !Name.starts_with("_imp_")))
+      continue;
+    const va_t Slot = Sym.Addr;
+    const Section *Sec = Img.getSectionFor(Slot);
+    if (!Sec || Sec->isExecutable() || !Img.CodePtrRelocSlots.count(Slot) ||
+        Img.ImportStorageSlots.count(Slot) || Img.findImportAt(Slot))
+      continue;
+    const uint8_t *Bytes = Img.readVA(Slot, Width);
+    if (!Bytes)
+      continue;
+    const va_t Target = normalizeCodeAddress(
+        static_cast<va_t>(readPtr(Bytes, Width == 8)), Img.Arch, Img.Mode);
+    if (Img.hasAuthenticatedFunctionEntryAt(Target))
+      Candidates.emplace(Slot, Target);
+  }
+  if (Candidates.empty())
+    return;
+  // The candidate slot \p Size bytes at \p Addr overlap, if any.
+  auto SlotAt = [&](va_t Addr, uint64_t Size) -> std::optional<va_t> {
+    const va_t Last = Addr + (Size ? Size - 1 : 0);
+    if (Last < Addr)
+      return std::nullopt;
+    auto It = Candidates.upper_bound(Last);
+    if (It == Candidates.begin())
+      return std::nullopt;
+    --It;
+    if (It->first > InvalidVA - Width || It->first + Width <= Addr)
+      return std::nullopt;
+    return It->first;
+  };
+  std::set<va_t> Escaped;
+  // A pointer to the slot in data, or an export of it, lets it escape.
+  for (const std::set<uint64_t> *Pointers :
+       {&Img.CodePtrRelocSlots, &Img.DataPtrRelocSlots})
+    for (const uint64_t Pointer : *Pointers)
+      if (const uint8_t *Bytes = Img.readVA(Pointer, Width))
+        if (auto Slot =
+                SlotAt(static_cast<va_t>(readPtr(Bytes, Width == 8)), 1))
+          Escaped.insert(*Slot);
+  for (const Export &Exp : Img.Exports)
+    if (auto Slot = SlotAt(Exp.Addr, 1))
+      Escaped.insert(*Slot);
+  Decoder Dec;
+  if (!Dec.init(Img))
+    return;
+  // Instruction starts the image's metadata gives resynchronize the sweep.
+  std::set<va_t> Starts;
+  auto AddStart = [&](va_t Addr) {
+    Starts.insert(normalizeCodeAddress(Addr, Img.Arch, Img.Mode));
+  };
+  if (Img.Entry)
+    AddStart(Img.Entry);
+  for (const Symbol &Sym : Img.Symbols)
+    if (Sym.IsFunc && !Sym.IsSection)
+      AddStart(Sym.Addr);
+  for (const va_t Addr : Img.RuntimeFunctionAddrs)
+    AddStart(Addr);
+  for (const auto &[Begin, End] : Img.KnownCodeRanges)
+    AddStart(Begin);
+  for (const Export &Exp : Img.Exports)
+    AddStart(Exp.Addr);
+  const uint64_t AddressMask =
+      Img.Arch == Arch::X86 ? uint64_t{0xFFFFFFFF} : ~uint64_t{0};
+  for (const Section &Sec : Img.Sections) {
+    if (!Sec.isExecutable() || Sec.Size > InvalidVA - Sec.VA)
+      continue;
+    const va_t End = Sec.VA + Sec.Size;
+    va_t Cur = Sec.VA;
+    while (Cur < End && Escaped.size() < Candidates.size()) {
+      size_t Available = static_cast<size_t>(std::min<va_t>(16, End - Cur));
+      const uint8_t *Bytes = nullptr;
+      while (Available && !(Bytes = Img.readVA(Cur, Available)))
+        --Available;
+      DecodedInsn Insn{};
+      const int Len = Bytes && Dec.selectMode(Img, Cur)
+                          ? Dec.decodeOne(Bytes, Available, Cur, Insn)
+                          : 0;
+      if (Len <= 0 || !Insn.Raw || !Insn.Raw->detail) {
+        ++Cur;
+        continue;
+      }
+      // Each memory operand at a fixed address names what it reads or
+      // writes there; a load of the address itself, or the address as an
+      // immediate, lets the slot escape.
+      const cs_x86 &X86 = Insn.Raw->detail->x86;
+      for (uint8_t I = 0; I < X86.op_count; ++I) {
+        const cs_x86_op &Operand = X86.operands[I];
+        if (Operand.type == X86_OP_IMM) {
+          if (auto Slot =
+                  SlotAt(static_cast<va_t>(static_cast<uint64_t>(Operand.imm) &
+                                           AddressMask),
+                         1))
+            Escaped.insert(*Slot);
+          continue;
+        }
+        if (Operand.type != X86_OP_MEM || Operand.mem.index != X86_REG_INVALID)
+          continue;
+        std::optional<va_t> Address;
+        if (Operand.mem.base == X86_REG_RIP)
+          Address =
+              Insn.Addr + Insn.Size + static_cast<uint64_t>(Operand.mem.disp);
+        else if (Operand.mem.base == X86_REG_INVALID)
+          Address = static_cast<uint64_t>(Operand.mem.disp) & AddressMask;
+        if (!Address)
+          continue;
+        if (auto Slot = SlotAt(*Address, Operand.size ? Operand.size : 1))
+          if (Insn.Id == X86_INS_LEA || !(Operand.access & CS_AC_READ) ||
+              (Operand.access & CS_AC_WRITE))
+            Escaped.insert(*Slot);
+      }
+      // An instruction that runs over a known instruction start has lost the
+      // boundaries: take them up again at that start.
+      va_t After = Cur + static_cast<va_t>(Len);
+      if (auto Inside = Starts.upper_bound(Cur);
+          Inside != Starts.end() && *Inside < After)
+        After = *Inside;
+      Cur = After;
+    }
+  }
+  for (const auto &[Slot, Target] : Candidates)
+    if (!Escaped.count(Slot))
+      Img.ConstantCodeSlots.emplace(Slot, Target);
+}
+
+void recordRelocatedPointerRunsInCode(BinaryImage &Img) {
+  if (Img.IsRelocatable)
+    return;
+  const uint32_t Width = Img.getPointerSize();
+  const std::optional<unsigned> PerInstruction =
+      maxAdjacentRelocatedFields(Img.Arch, Width);
+  if (!PerInstruction)
+    return;
+  // The absolute pointer-wide fields among the code, whatever they name.
+  std::vector<std::pair<va_t, RelocatedAddressField>> Fields;
+  auto Collect = [&](const std::map<va_t, RelocatedAddressField> &Operands) {
+    for (const auto &[SlotVA, Field] : Operands)
+      if (Field.Width == Width && !Field.PCRelativeFromInstructionEnd &&
+          Field.Kind == RelocatedAddressFieldKind::Generic)
+        Fields.emplace_back(SlotVA, Field);
+  };
+  Collect(Img.CodeAddressRelocOperands);
+  Collect(Img.DataAddressRelocOperands);
+  llvm::sort(Fields, llvm::less_first());
+  std::vector<AbsolutePointerRelocationEffect> Slots;
+  std::vector<std::pair<va_t, va_t>> Runs;
+  for (size_t Begin = 0; Begin < Fields.size();) {
+    size_t End = Begin + 1;
+    while (End < Fields.size() &&
+           Fields[End].first - Fields[End - 1].first == Width)
+      ++End;
+    if (End - Begin > *PerInstruction) {
+      Runs.emplace_back(Fields[Begin].first, Fields[End - 1].first + Width);
+      for (size_t I = Begin; I < End; ++I) {
+        const auto &[SlotVA, Field] = Fields[I];
+        // The relocation as it would have been recorded had the slot's
+        // section kept data only.
+        Slots.push_back(decideAbsolutePointerRelocation(
+            Img, SlotVA, Field.TargetVA, Field.TargetOwnerVA, [&](va_t Addr) {
+              PointerRelocationAddressClass Class =
+                  classifyPointerRelocationAddress(Img, Addr);
+              if (Addr == SlotVA)
+                Class.Executable = false;
+              return Class;
+            }));
+      }
+    }
+    Begin = End;
+  }
+  if (Runs.empty())
+    return;
+  auto InRun = [&](va_t Addr) {
+    const auto Run = std::upper_bound(
+        Runs.begin(), Runs.end(), Addr,
+        [](va_t A, const std::pair<va_t, va_t> &R) { return A < R.first; });
+    return Run != Runs.begin() && Addr < std::prev(Run)->second;
+  };
+  // An operand naming such a run names data, as one naming a table in .rdata
+  // does.
+  for (const auto &[SlotVA, Field] : Img.CodeAddressRelocOperands)
+    if (!InRun(SlotVA) && InRun(Field.TargetVA) &&
+        !Field.PCRelativeFromInstructionEnd &&
+        Field.Kind == RelocatedAddressFieldKind::Generic) {
+      // Decided as it would have been had the run's section kept data only;
+      // the target owns itself, as recordDataPointerTargets has it.
+      const va_t Target = Field.TargetVA;
+      Slots.push_back(decideAbsolutePointerRelocation(
+          Img, SlotVA, Target, InvalidVA, [&](va_t Addr) {
+            PointerRelocationAddressClass Class =
+                classifyPointerRelocationAddress(Img, Addr);
+            if (Addr == Target)
+              Class.Executable = false;
+            return Class;
+          }));
+    }
+  for (const AbsolutePointerRelocationEffect &Slot : Slots)
+    if (Slot.What != AbsolutePointerRelocationEffect::Kind::None) {
+      Img.CodeAddressRelocOperands.erase(Slot.SlotVA);
+      Img.DataAddressRelocOperands.erase(Slot.SlotVA);
+      applyAbsolutePointerRelocation(Img, Slot);
+    }
+  std::vector<va_t> Starts;
+  for (const auto &[Begin, End] : Runs)
+    Starts.push_back(Begin);
+  recordDataInCode(Img, Starts);
 }
 
 void parseTLSDirectory(const COFFObjectFile &Obj, BinaryImage &Img,
@@ -655,6 +945,43 @@ void parseDebugDirectory(const COFFObjectFile &Obj, BinaryImage &Img,
 
 namespace {
 template <typename LoadCfgT>
+llvm::ArrayRef<LoadConfigCallableField> callableFields() {
+  static constexpr LoadConfigCallableField Fields[] = {
+      {offsetof(LoadCfgT, GuardCFCheckFunction),
+       RuntimeCallablePointerSlotKind::GuardCFCheck},
+      {offsetof(LoadCfgT, GuardCFCheckDispatch),
+       RuntimeCallablePointerSlotKind::GuardCFDispatch},
+      {offsetof(LoadCfgT, GuardRFFailureRoutineFunctionPointer),
+       RuntimeCallablePointerSlotKind::GuardRFFailureRoutine},
+      {offsetof(LoadCfgT, GuardRFVerifyStackPointerFunctionPointer),
+       RuntimeCallablePointerSlotKind::GuardRFVerifyStackPointer},
+      {offsetof(LoadCfgT, GuardXFGCheckFunctionPointer),
+       RuntimeCallablePointerSlotKind::GuardXFGCheck},
+      {offsetof(LoadCfgT, GuardXFGDispatchFunctionPointer),
+       RuntimeCallablePointerSlotKind::GuardXFGDispatch},
+      {offsetof(LoadCfgT, GuardXFGTableDispatchFunctionPointer),
+       RuntimeCallablePointerSlotKind::GuardXFGTableDispatch},
+      {offsetof(LoadCfgT, CastGuardOsDeterminedFailureMode),
+       RuntimeCallablePointerSlotKind::CastGuardOsDeterminedFailureMode},
+      // The append-only ABI places GuardMemcpy after CastGuard. LLVM's
+      // older typed structures stop at CastGuard; don't change their sizeof.
+      {offsetof(LoadCfgT, CastGuardOsDeterminedFailureMode) +
+           sizeof(LoadCfgT::CastGuardOsDeterminedFailureMode),
+       RuntimeCallablePointerSlotKind::GuardMemcpy}};
+  return Fields;
+}
+} // namespace
+
+llvm::ArrayRef<LoadConfigCallableField> loadConfigCallableFields(Bitness Bits) {
+  if (Bits == Bitness::Bits64)
+    return callableFields<coff_load_configuration64>();
+  if (Bits == Bitness::Bits32)
+    return callableFields<coff_load_configuration32>();
+  return {};
+}
+
+namespace {
+template <typename LoadCfgT>
 void extractLoadCfgFields(uintptr_t CfgPtr, size_t AvailableSize,
                           uint64_t ImageBase, BinaryImage &Img) {
   if (AvailableSize < sizeof(uint32_t))
@@ -707,61 +1034,15 @@ void extractLoadCfgFields(uintptr_t CfgPtr, size_t AvailableSize,
           sizeof(Cfg.GuardEHContinuationCount)))
     Img.DynInfo.GuardEHContinuationCount = Cfg.GuardEHContinuationCount;
 
-  RecordRuntimeCallableSlot(offsetof(LoadCfgT, GuardCFCheckFunction),
-                            sizeof(Cfg.GuardCFCheckFunction),
-                            Cfg.GuardCFCheckFunction,
-                            RuntimeCallablePointerSlotKind::GuardCFCheck);
-  RecordRuntimeCallableSlot(offsetof(LoadCfgT, GuardCFCheckDispatch),
-                            sizeof(Cfg.GuardCFCheckDispatch),
-                            Cfg.GuardCFCheckDispatch,
-                            RuntimeCallablePointerSlotKind::GuardCFDispatch);
-  RecordRuntimeCallableSlot(
-      offsetof(LoadCfgT, GuardRFFailureRoutineFunctionPointer),
-      sizeof(Cfg.GuardRFFailureRoutineFunctionPointer),
-      Cfg.GuardRFFailureRoutineFunctionPointer,
-      RuntimeCallablePointerSlotKind::GuardRFFailureRoutine);
-  RecordRuntimeCallableSlot(
-      offsetof(LoadCfgT, GuardRFVerifyStackPointerFunctionPointer),
-      sizeof(Cfg.GuardRFVerifyStackPointerFunctionPointer),
-      Cfg.GuardRFVerifyStackPointerFunctionPointer,
-      RuntimeCallablePointerSlotKind::GuardRFVerifyStackPointer);
-  RecordRuntimeCallableSlot(offsetof(LoadCfgT, GuardXFGCheckFunctionPointer),
-                            sizeof(Cfg.GuardXFGCheckFunctionPointer),
-                            Cfg.GuardXFGCheckFunctionPointer,
-                            RuntimeCallablePointerSlotKind::GuardXFGCheck);
-  RecordRuntimeCallableSlot(offsetof(LoadCfgT, GuardXFGDispatchFunctionPointer),
-                            sizeof(Cfg.GuardXFGDispatchFunctionPointer),
-                            Cfg.GuardXFGDispatchFunctionPointer,
-                            RuntimeCallablePointerSlotKind::GuardXFGDispatch);
-  RecordRuntimeCallableSlot(
-      offsetof(LoadCfgT, GuardXFGTableDispatchFunctionPointer),
-      sizeof(Cfg.GuardXFGTableDispatchFunctionPointer),
-      Cfg.GuardXFGTableDispatchFunctionPointer,
-      RuntimeCallablePointerSlotKind::GuardXFGTableDispatch);
-  RecordRuntimeCallableSlot(
-      offsetof(LoadCfgT, CastGuardOsDeterminedFailureMode),
-      sizeof(Cfg.CastGuardOsDeterminedFailureMode),
-      Cfg.CastGuardOsDeterminedFailureMode,
-      RuntimeCallablePointerSlotKind::CastGuardOsDeterminedFailureMode);
-
-  // GuardMemcpyFunctionPointer immediately follows CastGuard in the
-  // append-only IMAGE_LOAD_CONFIG_DIRECTORY ABI.  LLVM releases predating the
-  // SDK field intentionally end their typed structure at CastGuard, so decode
-  // this tail by its versioned byte offset instead of changing LLVM's sizeof
-  // contract locally.  The structure's declared Size has already bounded
-  // AvailableSize above.
-  constexpr size_t GuardMemcpyOffset =
-      offsetof(LoadCfgT, CastGuardOsDeterminedFailureMode) +
-      sizeof(Cfg.CastGuardOsDeterminedFailureMode);
-  constexpr size_t PointerWidth = sizeof(Cfg.CastGuardOsDeterminedFailureMode);
-  if (Has(GuardMemcpyOffset, PointerWidth)) {
-    const auto *Field =
-        reinterpret_cast<const uint8_t *>(CfgPtr) + GuardMemcpyOffset;
-    const uint64_t SlotVA = PointerWidth == sizeof(uint64_t)
-                                ? readLE<uint64_t>(Field)
-                                : readLE<uint32_t>(Field);
-    RecordRuntimeCallableSlot(GuardMemcpyOffset, PointerWidth, SlotVA,
-                              RuntimeCallablePointerSlotKind::GuardMemcpy);
+  const size_t PointerWidth = sizeof(Cfg.CastGuardOsDeterminedFailureMode);
+  for (const auto &Field : loadConfigCallableFields(Img.Bits)) {
+    if (!Has(Field.Offset, PointerWidth))
+      continue;
+    const auto *Bytes =
+        reinterpret_cast<const uint8_t *>(CfgPtr) + Field.Offset;
+    RecordRuntimeCallableSlot(Field.Offset, PointerWidth,
+                              readPtr(Bytes, PointerWidth == sizeof(uint64_t)),
+                              Field.Kind);
   }
 }
 } // anonymous namespace

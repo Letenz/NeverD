@@ -23,7 +23,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
@@ -59,7 +59,8 @@ static uint64_t truncateToByteWidth(uint64_t Value, uint16_t Bytes) {
 bool CFGBuilder::tryTwoTableSelect(const BinaryImage &Img,
                                    const InsnRecord &Rec, JumpTableInfo &Info,
                                    size_t *CandidateEvidenceBudget,
-                                   bool *AnalysisComplete) {
+                                   bool *AnalysisComplete) const {
+  ResolverQueryScope AddressScope(*this);
   if (AnalysisComplete)
     *AnalysisComplete = false;
   bool Complete = true;
@@ -432,6 +433,19 @@ bool CFGBuilder::tryTwoTableSelect(const BinaryImage &Img,
     }
     if (V.isConst())
       return V.Offset;
+    if (From + 1 >= 0 && From + 1 < static_cast<int>(Ops.size())) {
+      const auto &Use = Ops[From + 1];
+      bool AddressComplete = false;
+      auto Address = queryConstantAddressAtUse(
+          Img, {V, Use.Addr, Use.Seq, false}, CandidateEvidenceBudget,
+          AddressComplete, &AddressScope);
+      if (!AddressComplete) {
+        Complete = false;
+        return std::nullopt;
+      }
+      if (Address)
+        return Address;
+    }
     NdVar Cur = V;
     int CurFrom = From;
     // A non-table constant a register folded to is kept only as a last resort:
@@ -1215,11 +1229,130 @@ bool CFGBuilder::tryTwoTableSelect(const BinaryImage &Img,
 // tryConstBaseAbsoluteTable — constant-base absolute table, decoupled load
 //===----------------------------------------------------------------------===//
 
+bool CFGBuilder::aarch64OriginalTableLoadMatches(
+    const LowOp &Load, const JumpTableLoadRole &Role, uint32_t Capacity,
+    size_t *AggregateEvidenceBudget, bool &AnalysisComplete,
+    ResolverQueryScope *ReadOnlyScope,
+    const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides,
+    bool UseGroupContext) const {
+  AnalysisComplete = true;
+  const auto Instruction = originalAArch64TableLoad(Load);
+  if (!CurrentImg || CurrentImg->Arch != Arch::AArch64 || !Instruction ||
+      Role.AllowedBases.size() != 1 || Role.Indices.empty() ||
+      (uint64_t(1) << Instruction->indexShift()) !=
+          Instruction->accessBytes() ||
+      !Capacity || Capacity > limits::kMaxJumpTableEntries)
+    return false;
+  const va_t Base = Role.AllowedBases.front();
+  // A storage ceiling alone grants no selector domain. Inline tables have no
+  // independent storage owner: the resolver limit is only an address-equality
+  // envelope, and the separate native-width query must prove the raw index
+  // lies inside it. Target and runtime-domain certification remain mandatory.
+  const uint64_t LastIndex =
+      Instruction->index() == kAddressMemoryRegisterMask ? 0 : Capacity - 1;
+  for (uint64_t Index = 0; Index <= LastIndex; ++Index) {
+    if (AggregateEvidenceBudget) {
+      if (!*AggregateEvidenceBudget) {
+        AnalysisComplete = false;
+        return false;
+      }
+      --*AggregateEvidenceBudget;
+    }
+    const auto Address = Instruction->controlIndependentAddress(Base, Index);
+    if (!Address || *Address != Base + Index * Instruction->accessBytes())
+      return false;
+  }
+  JumpTableValueQuery BaseQuery;
+  BaseQuery.Candidate = Load.Inputs[kAddressMemoryBaseOperand + 1];
+  BaseQuery.UseAddr = Load.Addr;
+  BaseQuery.UseSeq = Load.Seq;
+  BaseQuery.Alternatives = {
+      {NdVar::address(Base, kAddressMemoryPointerBytes), InvalidVA, -1, false},
+      {NdVar::scalar(Base, kAddressMemoryPointerBytes), InvalidVA, -1, false}};
+  JumpTableValueQuery IndexQuery;
+  IndexQuery.Candidate = Load.Inputs[kAddressMemoryIndexOperand + 1];
+  IndexQuery.UseAddr = Load.Addr;
+  IndexQuery.UseSeq = Load.Seq;
+  IndexQuery.Relation = JumpTableValueRelation::UnsignedLessThan;
+  // The address-equality envelope may exceed the storage owner. Do not turn
+  // that owner's size into a selector bound before the common domain proof.
+  IndexQuery.UnsignedUpperBound = Instruction->controlIndependentAddressRange(
+                                      Base, limits::kMaxJumpTableEntries - 1)
+                                      ? limits::kMaxJumpTableEntries
+                                      : Capacity;
+  const auto Match = [&](llvm::ArrayRef<JumpTableValueQuery> Queries) {
+    return tableValuesMatchAtUses(
+        Queries, &AnalysisComplete, nullptr, InvalidVA, nullptr,
+        AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
+        nullptr, nullptr, limits::kMaxJumpTableExpandedResolverDepth,
+        CertifiedEdgeOverrides, UseGroupContext, ReadOnlyScope);
+  };
+  JumpTableValueQuery IdentityQuery;
+  IdentityQuery.Candidate = IndexQuery.Candidate;
+  IdentityQuery.UseAddr = Load.Addr;
+  IdentityQuery.UseSeq = Load.Seq;
+  IdentityQuery.AllowZeroExtension = Role.AllowZeroExtension;
+  if (AggregateEvidenceBudget) {
+    // Prepay the additional retained occurrence copy before allocating it.
+    if (Role.Indices.size() > *AggregateEvidenceBudget / 3) {
+      *AggregateEvidenceBudget = 0;
+      AnalysisComplete = false;
+      return false;
+    }
+    *AggregateEvidenceBudget -= Role.Indices.size() * 3;
+  }
+  IdentityQuery.Alternatives = Role.Indices;
+  const auto Identities = Match({BaseQuery, IdentityQuery});
+  if (!AnalysisComplete || Identities.size() != 2 || !Identities[0] ||
+      !Identities[1])
+    return false;
+  // A zero-extended W index has a complete, branch-independent input domain.
+  // Proving AddressAdd agrees throughout it breaks no runtime-domain tie:
+  // the common selector/storage fixed point still owns every table slot.
+  if (Instruction->controlIndependentAddressRange(Base,
+                                                  kAddressMemoryNarrowMask)) {
+    if (!Instruction->usesFullWidthIndex())
+      return true;
+    JumpTableValueQuery NarrowIdentity;
+    NarrowIdentity.Candidate = IndexQuery.Candidate;
+    NarrowIdentity.UseAddr = Load.Addr;
+    NarrowIdentity.UseSeq = Load.Seq;
+    NdVar Narrow = IndexQuery.Candidate;
+    Narrow.Size = kAddressMemoryNarrowIndexBytes;
+    NarrowIdentity.Alternatives = {{Narrow, Load.Addr, Load.Seq, false}};
+    NarrowIdentity.AllowZeroExtension = true;
+    const auto NarrowResult = Match({NarrowIdentity});
+    if (!AnalysisComplete)
+      return false;
+    if (NarrowResult.size() == 1 && NarrowResult[0])
+      return true;
+  }
+  const auto Results = Match({IndexQuery});
+  if (!AnalysisComplete || Results.size() != 1)
+    return false;
+  if (Results[0])
+    return true;
+  // Masks and exact remainders need no branch reconstruction. Otherwise
+  // retain CMP/B.HI and other compound unsigned guards for the complete raw
+  // index, without granting finite-mask or predecessor-join authority.
+  IndexQuery.Relation = JumpTableValueRelation::GuardedUnsignedLessThan;
+  const auto Guarded = Match({IndexQuery});
+  return AnalysisComplete && Guarded.size() == 1 && Guarded[0];
+}
+
 bool CFGBuilder::tryConstBaseAbsoluteTable(
     const BinaryImage &Img, const InsnRecord &Rec, JumpTableInfo &Info,
     JumpTableExactConsumerGroup *ExactConsumerGroup, bool *ShapeClaimed,
     size_t *EvidenceBudget, bool *AnalysisComplete, bool ScanExactGroup,
     bool RequireCurrentBranchLoad, bool RequireExactGroupAnchor) const {
+  if (GuardedGroupProofContext && finiteAbsoluteGroupClaimed()) {
+    // The frozen group owns its other members. Replay this member's exact
+    // load and selector; a lexical sibling is not an alternative lifetime of
+    // this branch's index.
+    ScanExactGroup = false;
+    RequireCurrentBranchLoad = true;
+  }
+  ResolverQueryScope AddressScope(*this);
   if (AnalysisComplete)
     *AnalysisComplete = false;
   if (ShapeClaimed)
@@ -1297,7 +1430,8 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
   for (auto &Op : Rec.Ops) {
     if (Op.Opcode == NdOp::INDIR_BR && Op.NumInputs >= 1)
       HasIndBranch = true;
-    if (Op.Opcode == NdOp::LOAD && (Op.Output.Size == 4 || Op.Output.Size == 8))
+    if ((Op.Opcode == NdOp::LOAD || originalAArch64TableLoad(Op)) &&
+        (Op.Output.Size == 4 || Op.Output.Size == 8))
       HasInstructionLocalPointerLoad = true;
   }
   if (!HasIndBranch)
@@ -1350,6 +1484,10 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
       if (Def < 0 || BlockOps[Def].Addr < *Block)
         return true;
       const LowOp &Producer = BlockOps[Def];
+      if (originalAArch64TableLoad(Producer)) {
+        BranchLocalPointerLoadAddr = Producer.Addr;
+        return true;
+      }
       if (Producer.Opcode == NdOp::LOAD &&
           Producer.Output.Size == Img.getPointerSize()) {
         const NdVar &Address = Producer.Inputs[Producer.NumInputs >= 2 ? 1 : 0];
@@ -1489,7 +1627,8 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
           const bool InstructionHasPointerLoad =
               std::any_of(It->second.Ops.begin(), It->second.Ops.end(),
                           [](const LowOp &Op) {
-                            return Op.Opcode == NdOp::LOAD &&
+                            return (Op.Opcode == NdOp::LOAD ||
+                                    originalAArch64TableLoad(Op)) &&
                                    (Op.Output.Size == 4 || Op.Output.Size == 8);
                           });
           if (!InstructionHasPointerLoad)
@@ -1684,7 +1823,8 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
           break;
         }
         const LowOp &Producer = Ops[*Def];
-        if (Producer.Opcode == NdOp::LOAD &&
+        if ((Producer.Opcode == NdOp::LOAD ||
+             originalAArch64TableLoad(Producer)) &&
             Producer.Output.Size == Img.getPointerSize()) {
           if (!ensureAppendCapacity(InstructionLocalConsumers) || !consume(2))
             return false;
@@ -1832,7 +1972,8 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
           if (*Def < 0)
             break;
           const LowOp &Producer = Ops[*Def];
-          if (Producer.Opcode == NdOp::LOAD) {
+          if (Producer.Opcode == NdOp::LOAD ||
+              originalAArch64TableLoad(Producer)) {
             AllowI386GOTOFFRelay = Producer.Output.Size == Img.getPointerSize();
             break;
           }
@@ -2032,6 +2173,48 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
                             {AnchorUpper, CodePtrLookup + 1}});
   };
   const size_t I386GOTOFFPriorityCount = AllowI386GOTOFFRelay ? Ops.size() : 0;
+  auto boundedRelocationRun =
+      [&](va_t ResolvedBase, uint16_t W,
+          bool ExactBaseOwnerAuthenticated) -> std::optional<uint32_t> {
+    if (!chargeRelocationRun())
+      return std::nullopt;
+    uint32_t Run = countCodePtrRelocRun(Img, ResolvedBase, W);
+    bool HasExactSizedObject = false;
+    if (ExactBaseOwnerAuthenticated) {
+      // An exact data symbol owns the whole table even when another
+      // relocation names an interior constant arm.  For i386 GOTOFF, first
+      // require that the relocation owner names this exact base.  Validate
+      // the complete object against its mapped owner and the already
+      // authenticated relocation run before ignoring an interior consumer
+      // anchor.
+      if (!consumeProducts({{Img.Symbols.size(), 2},
+                            {Img.Segments.size(), 2},
+                            {Img.Sections.size(), 2}}))
+        return std::nullopt;
+      const std::optional<va_t> OwnerEnd =
+          Img.mappedObjectOwnerEnd(ResolvedBase);
+      const uint64_t ObjectSize = Img.dataObjectSizeAt(ResolvedBase);
+      if (ObjectSize >= W && OwnerEnd &&
+          ObjectSize <= InvalidVA - ResolvedBase &&
+          ResolvedBase + ObjectSize <= *OwnerEnd && ObjectSize % W == 0) {
+        const uint64_t ExactSlots = ObjectSize / W;
+        if (ExactSlots >= limits::kMinJumpTableEntries &&
+            ExactSlots <= limits::kMaxJumpTableEntries && ExactSlots <= Run) {
+          Run = static_cast<uint32_t>(ExactSlots);
+          HasExactSizedObject = true;
+        }
+      }
+    }
+    if (!HasExactSizedObject) {
+      if (!ensureDecodedAnchors())
+        return std::nullopt;
+      if (Run != 0 && !chargeNextAnchorBound())
+        return std::nullopt;
+      Run = boundCodePtrRunByNextAnchor(Img, ResolvedBase, W, Run,
+                                        *DecodedAnchors);
+    }
+    return Run;
+  };
   for (size_t OrderIndex = 0; OrderIndex < LoadScanOrder.size(); ++OrderIndex) {
     if (ScanWholeFunction && OrderIndex < I386GOTOFFPriorityCount &&
         FoundModel) {
@@ -2046,7 +2229,8 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
     if (!consume())
       return false;
     const LowOp &L = Ops[I];
-    if (L.Opcode != NdOp::LOAD || L.NumInputs < 1)
+    if ((L.Opcode != NdOp::LOAD && !originalAArch64TableLoad(L)) ||
+        L.NumInputs < 1)
       continue;
     uint16_t W = L.Output.Size;
     if (W != 4 && W != 8)
@@ -2116,6 +2300,63 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
       }
       return true;
     };
+    if (const auto Instruction = originalAArch64TableLoad(L)) {
+      if (Img.Arch != Arch::AArch64 ||
+          Instruction->indexShift() != kAddressMemoryScaleShift)
+        continue;
+      const NdVar BaseValue = L.Inputs[kAddressMemoryBaseOperand + 1];
+      bool BaseComplete = false;
+      const auto Base = foldTableAddressAtUse(
+          Img, Rec, {BaseValue, L.Addr, L.Seq, false},
+          BaseValue.isReg() ? BaseValue.Offset : InvalidVA, L.Addr,
+          EvidenceBudget, BaseComplete, false, &AddressScope);
+      if (!BaseComplete)
+        return false;
+      if (!Base)
+        continue;
+      const auto Run = boundedRelocationRun(*Base, W, true);
+      if (!Run)
+        return false;
+      const bool Relocated = *Run >= limits::kMinJumpTableEntries;
+      if (!Relocated && (*Run != 0 || W != Img.getPointerSize() ||
+                         !BranchLocalPointerLoadAddr ||
+                         *BranchLocalPointerLoadAddr != L.Addr ||
+                         !Img.readVA(*Base, W * limits::kMinJumpTableEntries)))
+        continue;
+      // Discovery proposes a recipe only. The address-role owner replays
+      // both exact operands and the CPA2 proof before any stable adoption.
+      if (FoundModel &&
+          (*Base != ModelBase || W != ModelWidth || *Run != ModelRun))
+        continue;
+      const NdVar Index = L.Inputs[kAddressMemoryIndexOperand + 1];
+      if (!FoundModel) {
+        FoundModel = true;
+        ModelBase = *Base;
+        ModelWidth = W;
+        ModelRun = *Run;
+        Info.setBaseAddr(*Base);
+        Info.EntrySize = W;
+        Info.IsRelative = false;
+        Info.IsSigned = false;
+        // The load may overwrite its own index register. Consumers must use
+        // the exact input occurrence, not a later lifetime of that register.
+        Info.IndexReg = InvalidVA;
+        Info.IndexValueAtUse = Index;
+        Info.IndexUseAddr = L.Addr;
+        Info.IndexUseSeq = L.Seq;
+        Info.TableLoadAddr = L.Addr;
+        Info.TableLoadSeq = L.Seq;
+        Info.PhysicalCapacity = *Run;
+        // An inline absolute table need not have code-pointer relocation
+        // slots. Zero capacity grants no storage or selector authority: the
+        // common guard, exact role and target proofs must certify it.
+        Info.RelocAbsolute = Relocated;
+      }
+      if (!appendOccurrence(*Base, Index, L.Addr, L.Seq, *Base, Index, L.Addr,
+                            L.Seq, W, std::nullopt))
+        return false;
+      continue;
+    }
     const NdVar &AddrV = (L.NumInputs >= 2) ? L.Inputs[1] : L.Inputs[0];
     if (!AddrV.isReg() && !AddrV.isTemp())
       continue;
@@ -2361,10 +2602,13 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
           if (!consumeProducts(
                   {{Img.Segments.size(), 4}, {Img.Sections.size(), 2}}))
             return false;
-          auto F =
-              foldRegConstant(Img, Rec, BReg, Ops[AddressAddIdx].Addr,
-                              [&](size_t Amount) { return consume(Amount); });
-          if (BudgetExhausted)
+          bool AddressComplete = false;
+          auto F = foldTableAddressAtUse(
+              Img, Rec,
+              {BaseV, Ops[AddressAddIdx].Addr, Ops[AddressAddIdx].Seq, false},
+              BReg, Ops[AddressAddIdx].Addr, EvidenceBudget, AddressComplete,
+              /*AllowUnmappedCOFFImageBase=*/false, &AddressScope);
+          if (!AddressComplete || BudgetExhausted)
             return false;
           if (F && Img.getSegmentFor(*F))
             Base = static_cast<va_t>(*F);
@@ -2432,46 +2676,13 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
       const auto *Seg = Img.getSegmentFor(ResolvedBase);
       if (!Seg || Seg->Data.empty())
         continue;
-      if (!chargeRelocationRun())
-        return false;
-      uint32_t Run = countCodePtrRelocRun(Img, ResolvedBase, W);
-      bool HasExactSizedObject = false;
-      const bool ExactBaseOwnerAuthenticated =
+      const auto BoundedRun = boundedRelocationRun(
+          ResolvedBase, W,
           !ExactI386GOTOFFBase ||
-          (ExactI386GOTOFFOwner && *ExactI386GOTOFFOwner == ResolvedBase);
-      if (ExactBaseOwnerAuthenticated) {
-        // An exact data symbol owns the whole table even when another
-        // relocation names an interior constant arm.  For i386 GOTOFF, first
-        // require that the relocation owner names this exact base.  Validate
-        // the complete object against its mapped owner and the already
-        // authenticated relocation run before ignoring an interior consumer
-        // anchor.
-        if (!consumeProducts({{Img.Symbols.size(), 2},
-                              {Img.Segments.size(), 2},
-                              {Img.Sections.size(), 2}}))
-          return false;
-        const std::optional<va_t> OwnerEnd =
-            Img.mappedObjectOwnerEnd(ResolvedBase);
-        const uint64_t ObjectSize = Img.dataObjectSizeAt(ResolvedBase);
-        if (ObjectSize >= W && OwnerEnd &&
-            ObjectSize <= InvalidVA - ResolvedBase &&
-            ResolvedBase + ObjectSize <= *OwnerEnd && ObjectSize % W == 0) {
-          const uint64_t ExactSlots = ObjectSize / W;
-          if (ExactSlots >= limits::kMinJumpTableEntries &&
-              ExactSlots <= limits::kMaxJumpTableEntries && ExactSlots <= Run) {
-            Run = static_cast<uint32_t>(ExactSlots);
-            HasExactSizedObject = true;
-          }
-        }
-      }
-      if (!HasExactSizedObject) {
-        if (!ensureDecodedAnchors())
-          return false;
-        if (Run != 0 && !chargeNextAnchorBound())
-          return false;
-        Run = boundCodePtrRunByNextAnchor(Img, ResolvedBase, W, Run,
-                                          *DecodedAnchors);
-      }
+              (ExactI386GOTOFFOwner && *ExactI386GOTOFFOwner == ResolvedBase));
+      if (!BoundedRun)
+        return false;
+      const uint32_t Run = *BoundedRun;
       if (Run < limits::kMinJumpTableEntries)
         continue;
 

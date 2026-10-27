@@ -11,10 +11,17 @@
 
 #include "neverd/backend/c/render/CTypeFormat.h"
 
+#include "../CIdentifier.h"
+
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/SourceABI.h"
+#include "neverd/ir/SourceFrameBytes.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64SVEVector.h"
+#include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/RelocationProvenance.h"
 #include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/StringScan.h"
@@ -163,25 +170,29 @@ bool appendStatedLiteralCharacter(uint32_t Ch, std::string &Out) {
 } // namespace
 
 std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
-                                              bool AllowEmpty) {
+                                              bool AllowEmpty, bool Narrow) {
   if (!Img || Addr == 0 || Addr == InvalidVA)
     return std::nullopt;
   if (Img->findImportAt(Addr) || !terminatesStrings(*Img))
     return std::nullopt;
+  // Data a linker placed in the code segment (`.rodata` in the R+X mapping
+  // of an Android image) is still data: the finest provenance decides.
   const Segment *Seg = Img->getSegmentFor(Addr);
-  if (!Seg || !Seg->isReadable() || Seg->isWritable() || Seg->isExecutable())
+  if (!Seg || !Seg->isReadable() || Seg->isWritable() ||
+      Img->isCodeAddress(Addr))
     return std::nullopt;
   // A file header or an alignment gap is mapped but holds no program data: a
   // small integer in an image loaded at zero lands there.
   if (!Img->hasObjectDataProvenance(Addr))
     return std::nullopt;
-  constexpr unsigned kMaxLit = 64;
   const auto Escape = appendLiteralCharacter;
   const uint64_t Off = Addr - Seg->VA;
   if (Off >= Seg->Data.size())
     return std::nullopt;
   const uint8_t *Base = Seg->Data.data() + Off;
-  const size_t Remain = Seg->Data.size() - static_cast<size_t>(Off);
+  const size_t Remain =
+      std::min(Seg->Data.size() - static_cast<size_t>(Off),
+               ::neverd::limits::backend::kCTypeFormatStringWindow);
   // A sized data object that holds the bytes must be the string itself.  A
   // literal shorter than its object would leave the bytes past it unread: a
   // struct of a short number and a null pointer reads as a one-character
@@ -210,16 +221,12 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
     const uint32_t PointerBytes = Img->getPointerSize();
     const va_t Reach = PointerBytes ? PointerBytes - 1 : 7;
     const va_t First = Addr >= Reach ? Addr - Reach : 0;
-    const va_t End = Addr + Extent;
-    for (va_t Byte = First; Byte < End; ++Byte)
-      if (Img->hasRelocationProvenanceAt(Byte))
-        return false;
-    return true;
+    return !hasRelocationProvenanceIn(*Img, First, Addr + Extent);
   };
-  if (Remain >= 2 && Base[1] == 0) {
+  if (!Narrow && Remain >= 2 && Base[1] == 0) {
     std::string Body;
     unsigned N = 0;
-    for (size_t I = 0; I + 1 < Remain && N < kMaxLit; I += 2, ++N) {
+    for (size_t I = 0; I + 1 < Remain; I += 2, ++N) {
       const uint16_t Unit = readLE<uint16_t>(Base + I);
       if (Unit == 0) {
         if (!HasStableBytes(I + 2))
@@ -235,7 +242,7 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
   }
   std::string Body;
   unsigned N = 0;
-  for (size_t I = 0; I < Remain && N < kMaxLit; ++I, ++N) {
+  for (size_t I = 0; I < Remain; ++I, ++N) {
     const uint8_t Ch = Base[I];
     if (Ch == 0) {
       if (!HasStableBytes(I + 1))
@@ -323,13 +330,11 @@ std::string quotedStringText(strings::Encoding Kind, llvm::StringRef Text) {
         !Name.empty())
       Comment += Name.str() + " ";
   Comment += '"';
-  // Characters shown before the text is cut; UTF-8 continuation bytes
-  // belong to the character before them.
-  constexpr unsigned MaxCharacters = 64;
   unsigned Characters = 0;
   for (size_t I = 0; I < Text.size(); ++I) {
     const unsigned char Ch = Text[I];
-    if ((Ch & 0xC0) != 0x80 && Characters++ == MaxCharacters) {
+    if ((Ch & 0xC0) != 0x80 &&
+        Characters++ == ::neverd::limits::backend::kCTypeFormatMaxCharacters) {
       Comment += "\xE2\x80\xA6"; // U+2026, the ellipsis, in UTF-8
       break;
     }
@@ -405,9 +410,6 @@ readableDataBytes(const BinaryImage *Img, va_t Addr, size_t Window) {
       std::min<size_t>(Window, Seg->Data.size() - static_cast<size_t>(Off)));
 }
 
-/// A string that does not end within this many bytes is not read.
-constexpr size_t StringWindow = 4096;
-
 /// Writes the characters of a C string literal in UTF-8 source text.
 class CLiteralWriter {
 public:
@@ -472,21 +474,41 @@ private:
 };
 } // namespace
 
-std::optional<std::string> imageStringComment(const BinaryImage *Img,
-                                              va_t Addr) {
-  const auto Bytes = readableDataBytes(Img, Addr, StringWindow);
-  if (!Bytes)
-    return std::nullopt;
-  const auto First = stringAtStart(*Bytes, strings::ScanOptions());
+static std::optional<std::string>
+bytesStringComment(llvm::ArrayRef<uint8_t> Bytes) {
+  strings::ScanOptions Options;
+  // Comments describe the stored bytes without replacing them by a host C
+  // literal. They can therefore show big-endian Unicode on a little-endian
+  // target too; imageCString retains its stricter replacement contract.
+  Options.Encodings |= strings::encodingBit(strings::Encoding::UTF16BE) |
+                       strings::encodingBit(strings::Encoding::UTF32BE);
+  const auto First = stringAtStart(Bytes, Options);
   if (!First)
     return std::nullopt;
   return quotedStringText(First->Kind, First->Text);
 }
 
+std::optional<std::string> imageStringComment(const BinaryImage *Img,
+                                              va_t Addr) {
+  const auto Bytes = readableDataBytes(
+      Img, Addr, ::neverd::limits::backend::kCTypeFormatStringWindow);
+  return Bytes ? bytesStringComment(*Bytes) : std::nullopt;
+}
+
+std::optional<std::string>
+sourceFrameStringComment(const SourceFrameBytes &Value) {
+  const auto Text = bytesStringComment(Value.Bytes);
+  return Text ? std::optional<std::string>("stack text at 0x" +
+                                           llvm::utohexstr(Value.Instruction) +
+                                           ": " + *Text)
+              : std::nullopt;
+}
+
 std::optional<ImageCString> imageCString(const BinaryImage *Img, va_t Addr) {
   if (Img && (Img->findImportAt(Addr) || !terminatesStrings(*Img)))
     return std::nullopt;
-  const auto Bytes = readableDataBytes(Img, Addr, StringWindow);
+  const auto Bytes = readableDataBytes(
+      Img, Addr, ::neverd::limits::backend::kCTypeFormatStringWindow);
   if (!Bytes)
     return std::nullopt;
   // The literal stands for the bytes, so a short string reads too.
@@ -503,9 +525,9 @@ std::optional<ImageCString> imageCString(const BinaryImage *Img, va_t Addr) {
       Result.Bytes > InvalidVA - Addr)
     return std::nullopt;
   // Bytes a relocation writes are an address, not text.
-  for (va_t Byte = Addr >= 7 ? Addr - 7 : 0; Byte < Addr + Result.Bytes; ++Byte)
-    if (Img->hasRelocationProvenanceAt(Byte))
-      return std::nullopt;
+  if (hasRelocationProvenanceIn(*Img, Addr >= 7 ? Addr - 7 : 0,
+                                Addr + Result.Bytes))
+    return std::nullopt;
   const llvm::ArrayRef<uint8_t> Text = Bytes->take_front(First->Bytes);
   std::string Body;
   CLiteralWriter Writer(Body);
@@ -566,13 +588,72 @@ std::string extendedIntegerType(unsigned Bytes, bool Signed) {
   if (Bytes == 32 || Bytes == 64)
     return std::string(Signed ? "int" : "uint") + std::to_string(Bytes * 8) +
            "_t";
-  // C23 _BitInt covers every non-power-of-two slice up to the widest
-  // register (a 512-bit ZMM value); e.g. a 224-bit YMM byte-shift window.
-  if (Bytes == 0 || Bytes > 64)
+  // C23 _BitInt also carries packed source groups and intermediate slices;
+  // these scalar values are distinct from individual compiler vector types.
+  if (Bytes == 0 || Bytes > limits::kMaxCSourceIntegerBytes)
     throw std::invalid_argument("C integer of " + std::to_string(Bytes) +
                                 " bytes exceeds the supported bit width");
   return std::string(Signed ? "" : "unsigned ") + "_BitInt(" +
          std::to_string(Bytes * 8) + ")";
+}
+
+/// Whether \p Type, which holds a function, spells as a C declarator: each
+/// function returns what C can and takes what C passes.  A pointer of any
+/// width spells alike, an i386 callback's four-byte ones too; every other
+/// part is a type a source signature holds (equalSourceTypes).
+bool spellsAsDeclarator(const TypeRef &Type, unsigned Depth,
+                        unsigned &Remaining) {
+  if (!Remaining || !Type || Depth > limits::kMaxCPointerNesting)
+    return false;
+  --Remaining;
+  switch (Type->Kind) {
+  case NdTypeKind::Ptr:
+    // A callback may borrow a named, incomplete record. Its declaration
+    // needs the tag, not a by-value ABI layout of that record; in particular
+    // recursive SDK structures must not recurse through their members here.
+    if ((Type->Size == 4 || Type->Size == 8) && Type->Pointee &&
+        Type->Pointee->Kind == NdTypeKind::Struct && !Type->Pointee->IsEnum &&
+        !Type->Pointee->SourceName.empty())
+      return true;
+    return (Type->Size == 4 || Type->Size == 8) &&
+           spellsAsDeclarator(Type->Pointee, Depth + 1, Remaining);
+  case NdTypeKind::Func:
+    if (!Type->FunctionConvention || Type->Size != 0 || !Type->RetType ||
+        Type->RetType->Kind == NdTypeKind::Func ||
+        !spellsAsDeclarator(Type->RetType, Depth + 1, Remaining))
+      return false;
+    for (const TypeRef &Param : Type->ParamTypes)
+      if (!Param || Param->Kind == NdTypeKind::Void ||
+          Param->Kind == NdTypeKind::Func ||
+          !spellsAsDeclarator(Param, Depth + 1, Remaining))
+        return false;
+    return true;
+  default:
+    return equalSourceTypes(Type, Type);
+  }
+}
+
+std::string functionConventionSpelling(types::CallingConvention Convention) {
+  llvm::StringRef Spelling;
+  switch (Convention) {
+#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA, Wide, Pops)              \
+  case types::CallingConvention::Name:                                         \
+    Spelling = C;                                                              \
+    break;
+#include "neverd/types/CallingConventions.def"
+  default:
+    throw std::invalid_argument("C callback has an unknown calling convention");
+  }
+  if (Spelling.empty())
+    return {};
+  // The declaration table owns the convention. Use GNU attributes so the
+  // emitted C also compiles without Microsoft keyword extensions.
+  if (Spelling.starts_with("__attribute__"))
+    return Spelling.str() + " ";
+  if (Spelling.consume_front("__"))
+    return "__attribute__((" + Spelling.str() + ")) ";
+  throw std::invalid_argument(
+      "C callback has an unsupported calling convention");
 }
 
 bool containsFunction(const TypeRef &Type) {
@@ -589,25 +670,32 @@ bool containsFunction(const TypeRef &Type) {
     throw std::invalid_argument("C type exceeds the pointer nesting limit");
   return false;
 }
-} // namespace
-
-std::string declarationToC(const TypeRef &Ty, llvm::StringRef Declarator) {
+std::string declarationToCImpl(const TypeRef &Ty, llvm::StringRef Declarator,
+                               bool ConventionPlaced) {
   if (Ty && Ty->Kind == NdTypeKind::Array && Ty->ElemType) {
     std::string Inner = Declarator.str();
     Inner += Ty->ArrayCount ? "[" + std::to_string(Ty->ArrayCount) + "]" : "[]";
-    return declarationToC(Ty->ElemType, Inner);
+    return declarationToCImpl(Ty->ElemType, Inner, false);
   }
   if (!containsFunction(Ty))
     return typeToC(Ty) + (Declarator.empty() ? "" : " " + Declarator.str());
-  if (!equalSourceTypes(Ty, Ty))
+  unsigned Remaining =
+      ::neverd::limits::backend::kCTypeFormatDeclarationToCRemaining;
+  if (!spellsAsDeclarator(Ty, 0, Remaining))
     throw std::invalid_argument("C callback type has no supported signature");
   if (Ty->Kind == NdTypeKind::Ptr) {
     std::string Pointer = "*" + Declarator.str();
-    if (Ty->Pointee->Kind == NdTypeKind::Func)
-      Pointer = "(" + Pointer + ")";
-    return declarationToC(Ty->Pointee, Pointer);
+    const bool Function = Ty->Pointee->Kind == NdTypeKind::Func;
+    if (Function)
+      Pointer = "(" +
+                functionConventionSpelling(*Ty->Pointee->FunctionConvention) +
+                Pointer + ")";
+    return declarationToCImpl(Ty->Pointee, Pointer, Function);
   }
-  std::string Function = Declarator.str() + "(";
+  std::string Function =
+      (ConventionPlaced ? ""
+                        : functionConventionSpelling(*Ty->FunctionConvention)) +
+      Declarator.str() + "(";
   for (size_t I = 0; I < Ty->ParamTypes.size(); ++I) {
     if (I)
       Function += ", ";
@@ -615,8 +703,40 @@ std::string declarationToC(const TypeRef &Ty, llvm::StringRef Declarator) {
   }
   if (Ty->ParamTypes.empty())
     Function += "void";
-  return declarationToC(Ty->RetType, Function + ")");
+  return declarationToCImpl(Ty->RetType, Function + ")", false);
 }
+} // namespace
+
+std::string declarationToC(const TypeRef &Ty, llvm::StringRef Declarator) {
+  return declarationToCImpl(Ty, Declarator, false);
+}
+
+namespace {
+
+/// The keywords of the records the unit being written spells by their tags
+/// (CRecordTagSpelling).
+thread_local llvm::function_ref<const char *(llvm::StringRef)> RecordTags;
+
+/// The C spelling of source name \p Name: a scoped or template C++ name is
+/// the identifier the unit declares its record or typedef under, as
+/// cNamedTypeSpelling projects it (`std::__ndk1::__sp_mut` is `__sp_mut`,
+/// `(anonymous namespace)::Node` is `Node`), which the C++ view names back.
+/// Any other name is C's own spelling (`size_t`, `unsigned int`,
+/// `uint8_t __attribute__((vector_size(16)))`).
+std::string sourceNameToC(llvm::StringRef Name) {
+  return Name.contains("::") || Name.contains('<') ? cNamedTypeSpelling(Name)
+                                                   : Name.str();
+}
+
+} // namespace
+
+CRecordTagSpelling::CRecordTagSpelling(
+    llvm::function_ref<const char *(llvm::StringRef)> Keyword)
+    : Outer(RecordTags) {
+  RecordTags = Keyword;
+}
+
+CRecordTagSpelling::~CRecordTagSpelling() { RecordTags = Outer; }
 
 std::string typeToC(const TypeRef &Ty) {
   if (!Ty)
@@ -628,7 +748,7 @@ std::string typeToC(const TypeRef &Ty) {
     return "void";
   case NdTypeKind::Int:
     if (!Ty->SourceName.empty())
-      return Ty->SourceName;
+      return sourceNameToC(Ty->SourceName);
     if (Ty->IsSigned) {
       switch (Ty->Size) {
       case 1:
@@ -662,7 +782,7 @@ std::string typeToC(const TypeRef &Ty) {
     }
   case NdTypeKind::Float:
     if (!Ty->SourceName.empty())
-      return Ty->SourceName;
+      return sourceNameToC(Ty->SourceName);
 #define NEVERD_C_FLOAT_TYPE(Bytes, Spelling, FusedMultiplyAdd, ComputesWider)  \
   if (Ty->Size == Bytes)                                                       \
     return Spelling;
@@ -673,8 +793,20 @@ std::string typeToC(const TypeRef &Ty) {
       return "void*";
     return typeToC(Ty->Pointee) + "*";
   case NdTypeKind::Struct: {
-    if (!Ty->SourceName.empty())
-      return Ty->SourceName;
+    if (!Ty->SourceName.empty()) {
+      const std::string Name = sourceNameToC(Ty->SourceName);
+      if (Name.find(' ') != std::string::npos)
+        return Name;
+      // A record a function shares the name of has no typedef beside the
+      // function, a C library one (`struct stat` and `stat()`) or one of the
+      // unit's (CRecordTagSpelling): C spells its tag.
+      const char *Keyword = RecordTags ? RecordTags(Name) : nullptr;
+      if (!Keyword && libc::isKnownFunction(Name))
+        Keyword = "struct";
+      if (Keyword)
+        return std::string(Ty->IsEnum ? "enum" : Keyword) + " " + Name;
+      return Name;
+    }
     if (sourceAggregateMembers(Ty).empty())
       throw std::invalid_argument("C record has no supported source layout");
     std::function<std::string(const TypeRef &)> Code = [&](const TypeRef &T) {
@@ -827,10 +959,10 @@ std::string typeToCLLVM(llvm::Type *Ty) {
       return "uint64_t";
     if (Bits <= 128)
       return "__uint128_t";
-    if (Bits <= 512)
+    if (Bits <= limits::kMaxCSourceIntegerBytes * 8)
       return "unsigned _BitInt(" + std::to_string(Bits) + ")";
     throw std::invalid_argument(
-        "LLVM C integer exceeds supported 512-bit carrier");
+        "LLVM C integer exceeds supported source carrier width");
   }
   if (Ty->isBFloatTy())
     return "__bf16";
@@ -847,6 +979,9 @@ std::string typeToCLLVM(llvm::Type *Ty) {
 
   if (auto *ST = llvm::dyn_cast<llvm::StructType>(Ty))
     return llvmStructName(ST);
+
+  if (llvm::isa<llvm::ScalableVectorType>(Ty))
+    throw std::invalid_argument(aarch64_sve::kUnsupportedLLVMVectorC);
 
   if (auto *VT = llvm::dyn_cast<llvm::FixedVectorType>(Ty)) {
     if (!isCVectorType(VT))

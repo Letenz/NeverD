@@ -12,6 +12,7 @@
 
 #include "MedLLVMFailureSnapshot.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/object/SectionNames.h"
@@ -205,7 +206,9 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectBaseLitTable(
   std::vector<MedVar> IdxTerms;
   std::function<bool(const MedVar &, int)> peel = [&](const MedVar &V,
                                                       int Depth) -> bool {
-    if (Depth > 8)
+    if (Depth >
+        ::neverd::limits::backend::
+            kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectBaseLitTablePeelPeelDepthLimit)
       return false;
     if (SelArms S = matchSel(V); S.Ok) {
       Sel = S;
@@ -275,7 +278,9 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectBaseLitTable(
   // resolved recursively into a select of the two indexed pointers.
   std::function<llvm::Value *(const MedVar &, int)> armPtr =
       [&](const MedVar &Arm, int Depth) -> llvm::Value * {
-    if (Depth > 8)
+    if (Depth >
+        ::neverd::limits::backend::
+            kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectBaseLitTableArmPtrDepthLimit)
       return nullptr;
     if (SelArms S = matchSel(Arm); S.Ok) {
       llvm::Value *AT = armPtr(S.ArmT, Depth + 1);
@@ -359,10 +364,16 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
     // negative addend (`table - 1`) so a subsequent one-based index lands on
     // the first element.  The owner, not the adjusted numeric value, selects
     // the rebuilt run.  Admit at most one native word of look-behind; larger
-    // cross-object arithmetic still needs an explicit complete-domain proof.
+    // cross-object arithmetic still needs an explicit complete-domain proof,
+    // unless the loader authenticated an i386 GOTOFF base that the compiler
+    // biased further before its read-only owner (clang selects between
+    // `T + 0x14` and `T - 0x20` for `T[(j + 5) % 13]`).
     const uint64_t PointerSize = getTargetRegInfo(TargetArch).PointerSize;
     const uint64_t LowerBound = Begin > PointerSize ? Begin - PointerSize : 0;
-    if (Size > InvalidVA - Begin || VA < LowerBound || VA > Begin + Size)
+    if (Size > InvalidVA - Begin)
+      return false;
+    if ((VA < LowerBound || VA > Begin + Size) &&
+        !Img->relocatedI386GOTOFFTargetBelongsToOwner(VA, OwnerVA))
       return false;
 
     bool HasReadOnlySectionEvidence = false;
@@ -394,7 +405,10 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   const uint64_t StackPointer = getTargetRegInfo(TargetArch).StackPointer;
   std::function<bool(const MedVar &, int, FrameSeen)> isPureFrameAddress =
       [&](const MedVar &V, int Depth, FrameSeen Seen) -> bool {
-    if (V.isConst() || Depth > 16)
+    if (V.isConst() ||
+        Depth >
+            ::neverd::limits::backend::
+                kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectMergeTableIsPureFrameAddressDepthLimit)
       return false;
     if (V.Kind == MedVar::Reg && StackPointer != 0 && V.RegOff == StackPointer)
       return true;
@@ -463,11 +477,13 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   bool SawUnprovedFrameReload = false;
   bool SawRawOriginalBase = false;
   bool SawSymbolizedBase = false;
+  bool SawOpaqueRuntimeOffset = false;
   bool AuditIncomplete = false;
   // Large flag-expanded scalar DAGs in real computed-goto loops use just under
   // 5K nodes. Keep the audit bounded while leaving headroom above that proven
   // valid shape; a partial walk still fails closed below.
-  size_t RemainingAuditNodes = 8192;
+  size_t RemainingAuditNodes =
+      ::neverd::limits::backend::kMedLLVMLiteralTableRemainingAuditNodes;
   // A speculative integer call argument may merely resemble an address.
   // Its caller passes FailClosed=false so an ambiguous proof returns nullptr
   // and preserves the ordinary integer ABI path. Concrete memory accesses and
@@ -647,7 +663,10 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   std::function<std::optional<AffineRoot>(const MedVar &, int, CondSeen)>
       affineRoot = [&](const MedVar &Value, int Depth,
                        CondSeen Seen) -> std::optional<AffineRoot> {
-    if (Value.isConst() || Depth > 16)
+    if (Value.isConst() ||
+        Depth >
+            ::neverd::limits::backend::
+                kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectMergeTableAffineRootDepthLimit)
       return std::nullopt;
     auto Key = std::make_tuple(static_cast<int>(Value.Kind), Value.Id,
                                Value.SSAVer, Value.Size);
@@ -687,7 +706,9 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   std::function<std::optional<ConditionSet>(const MedVar &, int, CondSeen)>
       conditionSet = [&](const MedVar &Value, int Depth,
                          CondSeen Seen) -> std::optional<ConditionSet> {
-    if (Depth > 24)
+    if (Depth >
+        ::neverd::limits::backend::
+            kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectMergeTableConditionSetDepthLimit)
       return std::nullopt;
     if (Value.isConst())
       return constantCondition(Value.ConstVal != 0);
@@ -868,7 +889,10 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   std::function<std::optional<uint64_t>(const MedVar &, int, PredSeen)>
       predicatedValue = [&](const MedVar &Value, int Depth,
                             PredSeen Seen) -> std::optional<uint64_t> {
-    if (!PredicatedAccessGuard || Depth > 24)
+    if (!PredicatedAccessGuard ||
+        Depth >
+            ::neverd::limits::backend::
+                kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectMergeTablePredicatedValueDepthLimit)
       return std::nullopt;
     if (Value.isConst())
       return Value.ConstVal;
@@ -922,7 +946,10 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   std::function<std::optional<uint64_t>(const MedVar &, int, PredSeen)>
       predicatedTableBase = [&](const MedVar &Value, int Depth,
                                 PredSeen Seen) -> std::optional<uint64_t> {
-    if (!PredicatedAccessGuard || Depth > 16)
+    if (!PredicatedAccessGuard ||
+        Depth >
+            ::neverd::limits::backend::
+                kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectMergeTablePredicatedTableBaseDepthLimit)
       return std::nullopt;
     if (auto Folded = predicatedValue(Value, 0, {});
         Folded && isReadOnlyTableBase(*Folded))
@@ -976,6 +1003,16 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   // be reused under a different ancestor set.
   std::set<AddressProvenanceVarKey> ProvenWithoutBase;
   size_t CycleEpoch = 0;
+  auto offsetPreservesAddress = [&](const MedVar &Offset) {
+    if (valueIsStableAddressOffset(Offset))
+      return true;
+    if (!valueIsOpaqueRuntimeOffset(Offset))
+      return false;
+    // The complete address audit below must still establish one complete
+    // run and a uniform symbolized model for every selectable base.
+    SawOpaqueRuntimeOffset = true;
+    return true;
+  };
   std::function<BaseProof(const MedVar &, int, SeenSet)> walk;
   auto walkUncached = [&](const MedVar &V, int Depth,
                           SeenSet Seen) -> BaseProof {
@@ -1270,7 +1307,7 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
             LeftPointer ? Def->Inputs[0] : Def->Inputs[1];
         const MedVar &OffsetInput =
             LeftPointer ? Def->Inputs[1] : Def->Inputs[0];
-        if (!valueIsStableAddressOffset(OffsetInput)) {
+        if (!offsetPreservesAddress(OffsetInput)) {
           SawInvalidPointerExpression = true;
           return BaseProof::Invalid;
         }
@@ -1303,7 +1340,7 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
       }
       if ((L == BaseProof::HasBase || L == BaseProof::Cycle) &&
           R == BaseProof::NoBase) {
-        if (!valueIsStableAddressOffset(Def->Inputs[1])) {
+        if (!offsetPreservesAddress(Def->Inputs[1])) {
           SawInvalidPointerExpression = true;
           return BaseProof::Invalid;
         }
@@ -1424,7 +1461,8 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
         auto scanNarrowSources = [&]() {
           std::vector<MedVar> Work = Sources;
           SeenSet ScanSeen;
-          size_t Budget = 8192;
+          size_t Budget = ::neverd::limits::backend::
+              kMedLLVMLiteralTableScanNarrowSourcesBudget;
           while (!Work.empty()) {
             if (Budget-- == 0)
               return NarrowLeafScan::Incomplete;
@@ -1556,6 +1594,27 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   };
   BaseProof Proof = walk(BaseVar, 0, {});
 
+  if (SawOpaqueRuntimeOffset) {
+    std::optional<uint64_t> Run;
+    bool CompleteMirror =
+        !SawRawOriginalBase && SawSymbolizedBase && CycleEpoch == 0;
+    for (const auto &Base : Bases) {
+      const auto Owner = completePointerMirrorRun(Base.VA);
+      const auto ExactOwner = Base.OwnerVA == InvalidVA
+                                  ? Owner
+                                  : completePointerMirrorRun(Base.OwnerVA);
+      if (!Owner || ExactOwner != Owner || (Run && *Run != *Owner)) {
+        CompleteMirror = false;
+        break;
+      }
+      Run = Owner;
+    }
+    if (!CompleteMirror || !Run) {
+      Proof = BaseProof::Invalid;
+      SawInvalidPointerExpression = true;
+    }
+  }
+
   // An invalid relocatable leaf can be hidden by constant arithmetic whose
   // old-image value happens to fold back into a read-only table.  The child
   // walk intentionally rejects that leaf before recording a raw table base;
@@ -1587,6 +1646,7 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
       SawNonBaseValueMerge = false;
       SawRawOriginalBase = true;
       SawSymbolizedBase = false;
+      SawOpaqueRuntimeOffset = false;
       Proof = BaseProof::HasBase;
     }
   }
@@ -1606,11 +1666,15 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
       size_t True = 0, False = 0;
     };
     std::vector<SelectionNode> Plan;
-    size_t Budget = 128;
+    size_t Budget = ::neverd::limits::backend::
+        kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectMergeTableBudget;
     std::function<std::optional<size_t>(const MedVar &, unsigned)> plan =
         [&](const MedVar &V, unsigned Depth) -> std::optional<size_t> {
       const unsigned PointerSize = getTargetRegInfo(TargetArch).PointerSize;
-      if (Depth > 32 || Budget == 0 || V.Size < PointerSize)
+      if (Depth >
+              ::neverd::limits::backend::
+                  kMedLLVMLiteralTableMedLLVMEmitterTryResolveSelectMergeTablePlanPlanDepthLimit ||
+          Budget == 0 || V.Size < PointerSize)
         return std::nullopt;
       --Budget;
       const MedOp *Def = V.isConst() ? nullptr : findDef(V);
@@ -1717,6 +1781,16 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   }
   if (Proof == BaseProof::Invalid && SawInvalidPointerExpression &&
       (!Bases.empty() || SawTableShapedInvalidExpression)) {
+    // A single read-only table base with an unprovable runtime index
+    // (`table[obj->field]`) is invalid only because the offset is not a proven
+    // address offset, not because the base is ambiguous.  Redirect it through
+    // the region's read-only run mirror before refusing; a true ambiguity (a
+    // pointer merge, a PHI, a frame reload or a mutable base) still falls
+    // through.
+    if (!SawPhi && !SawPointerValueMerge)
+      if (llvm::Value *Table = tryResolveRuntimeIndexedReadOnlyTable(
+              AddrVar, SizeHint, Bases.size(), Builder))
+        return Table;
     failAmbiguousAddress("literal-ambiguity-L1603");
     return nullptr;
   }
@@ -1765,6 +1839,13 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   // SawPhi because the scalar-domain proof consumes them before this pointer
   // audit, so ordinary `base +/- scalar_phi` remains eligible.
   if (!SawPointerValueMerge && !SawPhi) {
+    if (SawOpaqueRuntimeOffset) {
+      if (llvm::Value *Indexed = tryResolveRuntimeIndexedReadOnlyTable(
+              AddrVar, SizeHint, Bases.size(), Builder))
+        return Indexed;
+      failAmbiguousAddress("literal-runtime-index");
+      return nullptr;
+    }
     if (llvm::Value *Indexed =
             tryResolveIndexedGlobalPtr(AddrVar, SizeHint, FailClosed, Builder))
       return Indexed;

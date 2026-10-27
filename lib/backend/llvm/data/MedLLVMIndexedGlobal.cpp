@@ -14,10 +14,12 @@
 #include "MedLLVMFailureSnapshot.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/support/Diagnostic.h"
 
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Instructions.h"
@@ -90,7 +92,8 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
   {
     std::vector<MedVar> Work{AddrVar};
     std::set<std::tuple<int, int, int>> Seen;
-    int Budget = 256;
+    int Budget = ::neverd::limits::backend::
+        kMedLLVMIndexedGlobalMedLLVMEmitterTryResolveInductionGlobalPtrBudget;
     while (!Work.empty() && Budget-- > 0) {
       MedVar Cur = Work.back();
       Work.pop_back();
@@ -211,7 +214,12 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
   const PhiNode *DirectAddressPhi = nullptr;
   {
     MedVar Cur = AddrVar;
-    for (int Depth = 0; Depth < 8; ++Depth) {
+    for (
+        int Depth = 0;
+        Depth <
+        ::neverd::limits::backend::
+            kMedLLVMIndexedGlobalMedLLVMEmitterTryResolveInductionGlobalPtrDepthLimit;
+        ++Depth) {
       if (const PhiNode *Phi = findPhi(Cur)) {
         DirectAddressPhi = Phi;
         break;
@@ -264,10 +272,13 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
   if (Img && (!Img->DataPtrRelocSlots.empty() ||
               !EffectiveImportStorageSlots.empty() ||
               !ConflictingImportStorageSlots.empty() ||
+              !ExternalFunctionPointerSlots.empty() ||
               !Img->RuntimeCallablePointerSlots.empty())) {
     auto loadsFromDataPtrTable = [&](const MedVar &Start) {
       MedVar Cur = Start;
-      for (int D = 0; D < 8; ++D) {
+      for (int D = 0; D < ::neverd::limits::backend::
+                              kMedLLVMIndexedGlobalLoadsFromDataPtrTableDLimit;
+           ++D) {
         const MedOp *Def = findDef(Cur);
         if (!Def)
           return false;
@@ -303,6 +314,11 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
         for (va_t S : ConflictingImportStorageSlots)
           if (S >= LSeg->VA && S < LSeg->VA + LSeg->Data.size())
             return true;
+        for (const auto &[S, Name] : ExternalFunctionPointerSlots) {
+          (void)Name;
+          if (S >= LSeg->VA && S < LSeg->VA + LSeg->Data.size())
+            return true;
+        }
         for (const RuntimeCallablePointerSlot &Slot :
              Img->RuntimeCallablePointerSlots)
           if (Slot.SlotVA >= LSeg->VA &&
@@ -363,7 +379,8 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
     std::set<std::tuple<int, int, int, bool>> Seen;
     bool SawRaw = false;
     bool SawSymbolized = false;
-    int Budget = 256;
+    int Budget = ::neverd::limits::backend::
+        kMedLLVMIndexedGlobalClassifyIndexedBaseModelBudget;
     while (!Work.empty() && Budget-- > 0) {
       auto [Cur, BypassesGetVar] = Work.back();
       Work.pop_back();
@@ -529,7 +546,12 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
       return false;
     MedVar Current = Arg;
     std::set<std::tuple<int, int, int, uint16_t>> Seen;
-    for (int Depth = 0; Depth <= 16; ++Depth) {
+    for (
+        int Depth = 0;
+        Depth <=
+        ::neverd::limits::backend::
+            kMedLLVMIndexedGlobalMedLLVMEmitterTryResolveInductionGlobalPtrLosesMappedAddressBitsDepthLimit;
+        ++Depth) {
       if (Current.isConst()) {
         if (Current.Size == 0 || Current.Size >= PointerSize ||
             Current.Size >= 8)
@@ -559,7 +581,13 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
   auto forwardedPhi = [&](const MedVar &Value) {
     MedVar Current = Value;
     std::set<std::tuple<int, int, int>> Seen;
-    for (int Depth = 0; Depth <= 64 && !Current.isConst(); ++Depth) {
+    for (
+        int Depth = 0;
+        Depth <=
+            ::neverd::limits::backend::
+                kMedLLVMIndexedGlobalMedLLVMEmitterTryResolveInductionGlobalPtrForwardedPhiDepthLimit &&
+        !Current.isConst();
+        ++Depth) {
       if (const PhiNode *Phi = findPhi(Current))
         return Phi;
       auto Key = std::make_tuple(static_cast<int>(Current.Kind), Current.Id,
@@ -859,7 +887,10 @@ MedLLVMEmitter::tryResolveInductionGlobalPtr(const MedVar &AddrVar,
         recoverSelectionArm =
             [&](const MedVar &Arg, int Depth,
                 SelectionSeen Seen) -> std::optional<SelectionEvidence> {
-      if (Depth > 16 || varIsFrameDerived(Arg))
+      if (Depth >
+              ::neverd::limits::backend::
+                  kMedLLVMIndexedGlobalMedLLVMEmitterTryResolveInductionGlobalPtrRecoverSelectionArmDepthLimit ||
+          varIsFrameDerived(Arg))
         return std::nullopt;
       if (!Arg.isConst()) {
         auto Key =
@@ -1077,7 +1108,9 @@ MedLLVMEmitter::tryResolveIndexedGlobalPtr(const MedVar &AddrVar,
   std::set<std::tuple<int, int, int>> BoundedPhiSeen;
   std::function<bool(const MedVar &, int)> isBoundedScalarLookup =
       [&](const MedVar &Value, int Depth) -> bool {
-    if (Depth > 16)
+    if (Depth >
+        ::neverd::limits::backend::
+            kMedLLVMIndexedGlobalMedLLVMEmitterTryResolveIndexedGlobalPtrIsBoundedScalarLookupDepthLimit)
       return false;
     if (Value.isConst())
       return Value.ConstVal < limits::kMaxJumpTableEntries;
@@ -1382,6 +1415,118 @@ MedLLVMEmitter::tryResolveIndexedGlobalPtr(const MedVar &AddrVar,
   if (!IdxVal)
     return nullptr;
   return Builder.CreateGEP(llvm::Type::getInt8Ty(*Ctx), G, IdxVal, "tblptr");
+}
+
+llvm::Value *MedLLVMEmitter::tryResolveRuntimeIndexedReadOnlyTable(
+    const MedVar &AddrVar, uint16_t SizeHint, size_t AuditedBaseCount,
+    llvm::IRBuilder<> &Builder) {
+  (void)SizeHint;
+  // The caller's audit must have reached exactly one read-only base; a second
+  // mapped base (a double anchor or a base merge) is a genuine ambiguity.
+  if (!CurMedFunc || !Img || AddrVar.isConst() || AuditedBaseCount != 1)
+    return nullptr;
+
+  // Find the INT_ADD/INT_SUB through any pointer-preserving wrapper (an i386
+  // LOAD address is zero-extended to pointer width).
+  const MedOp *Def = lookupDef(AddrVar);
+  for (
+      int Peel = 0;
+      Peel <
+          ::neverd::limits::backend::
+              kMedLLVMIndexedGlobalMedLLVMEmitterTryResolveRuntimeIndexedReadOnlyTablePeelLimit &&
+      Def;
+      ++Peel) {
+    if (Def->Opcode == NdOp::INT_ADD || Def->Opcode == NdOp::INT_SUB)
+      break;
+    auto Forwarded = pointerPreservingInput(*Def);
+    if (!Forwarded)
+      break;
+    Def = lookupDef(*Forwarded);
+  }
+  if (!Def || (Def->Opcode != NdOp::INT_ADD && Def->Opcode != NdOp::INT_SUB))
+    return nullptr;
+
+  // Recover the single table base and additive index terms.  A SUB with a
+  // non-constant subtrahend is the main resolver's branchless shape, not a
+  // plain index, so collectIndexedGlobalBase declines it and this returns.
+  uint64_t Base = 0;
+  bool HaveBase = false;
+  std::vector<MedVar> IdxTerms;
+  if (!collectIndexedGlobalBase(AddrVar, Base, HaveBase, IdxTerms, /*Depth=*/0,
+                                /*FailClosed=*/false) ||
+      !HaveBase || Base == 0 || IdxTerms.empty())
+    return nullptr;
+
+  // The base must be a genuine read-only table -- a non-writable segment, or
+  // one immutable after relocation -- so it cannot be a mutable array a store
+  // aliases.  A runtime index into it needs no bound: the run mirror preserves
+  // the region's exact layout, so an in-region index is faithful and an
+  // out-of-region one is the program's own undefined behaviour, as the
+  // pointer-table resolver's run redirect is for a pointer table.  Every index
+  // term must be a runtime value, never frame-derived (a stack pointer is not
+  // a table index).
+  const Segment *BaseSeg = Img->getSegmentFor(Base);
+  if (!BaseSeg || !BaseSeg->isReadable() || BaseSeg->isExecutable() ||
+      (BaseSeg->isWritable() && !isReadOnlyAfterReloc(BaseSeg)) ||
+      Base < BaseSeg->VA || Base - BaseSeg->VA >= BaseSeg->Data.size())
+    return nullptr;
+  for (const auto &T : IdxTerms) {
+    if (varIsFrameDerived(T))
+      return nullptr;
+    // A folded second mapped base among the index terms is a genuine double
+    // anchor, not an index.
+    if (T.isConst() && isMaterializableReadOnlyDataAddress(T.ConstVal))
+      return nullptr;
+  }
+
+  auto [RunGV, RunStart] = materializeReadOnlyDataRun(BaseSeg);
+  if (!RunGV || Base < RunStart)
+    return nullptr;
+
+  const unsigned AddrBits = AddrVar.Size > 0 ? AddrVar.Size * 8 : 64;
+  auto *IdxTy = llvm::IntegerType::get(*Ctx, AddrBits);
+  llvm::Value *Off = llvm::ConstantInt::get(IdxTy, Base - RunStart);
+  for (const auto &T : IdxTerms) {
+    llvm::Value *TV = getVar(T, Builder);
+    if (!TV)
+      return nullptr;
+    if (TV->getType()->isPointerTy())
+      TV = Builder.CreatePtrToInt(TV, IdxTy);
+    else if (TV->getType() != IdxTy)
+      TV = Builder.CreateZExtOrTrunc(TV, IdxTy);
+    Off = Builder.CreateAdd(Off, TV, "tblidx");
+  }
+  return Builder.CreateGEP(llvm::Type::getInt8Ty(*Ctx), RunGV, Off, "indptr");
+}
+
+llvm::Value *MedLLVMEmitter::tryResolveI386GotRelativeReadOnlyPtr(
+    const MedVar &AddrVar, uint16_t SizeHint, llvm::IRBuilder<> &Builder) {
+  const auto Got = matchI386GotRelative(AddrVar);
+  if (!Got)
+    return nullptr;
+  // Writable data keeps the writable-run resolver, which aliases its other
+  // accesses (writableDataSegOf places it by the same sum), and a table of
+  // relocated pointers the pointer-table resolvers, which rebuild its slots.
+  if (segHasPtrRelocSlots(Img->getSegmentFor(Got->Base)))
+    return nullptr;
+  llvm::Constant *G = tryResolveGlobalData(Got->Base, SizeHint);
+  // The global may be a whole run the base lies inside, as a GEP into it.
+  auto *GV =
+      G ? llvm::dyn_cast<llvm::GlobalVariable>(llvm::getUnderlyingObject(G))
+        : nullptr;
+  if (!GV || !GV->isConstant())
+    return nullptr;
+  if (!Got->Index)
+    return G;
+  llvm::Value *Index = getVar(*Got->Index, Builder);
+  if (!Index)
+    return nullptr;
+  auto *IdxTy = llvm::IntegerType::get(*Ctx, 32);
+  if (Index->getType()->isPointerTy())
+    Index = Builder.CreatePtrToInt(Index, IdxTy);
+  else if (Index->getType() != IdxTy)
+    Index = Builder.CreateZExtOrTrunc(Index, IdxTy);
+  return Builder.CreateGEP(llvm::Type::getInt8Ty(*Ctx), G, Index, "gotrelptr");
 }
 
 } // namespace neverd

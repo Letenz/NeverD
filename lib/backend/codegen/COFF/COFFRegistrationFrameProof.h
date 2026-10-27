@@ -37,6 +37,8 @@ namespace neverd::coff_registration {
 
 struct RegistrationSEHExceptionContract;
 struct RegistrationSEHJumpContract;
+struct RegistrationSEHLocalUnwindContract;
+struct RegistrationSEHParentExitContract;
 struct RegistrationSEHScopeState;
 
 struct RegistrationFrameBorrow {
@@ -107,7 +109,9 @@ llvm::Error validateFramePrivacy(
     const RegistrationCxxFrameContract *Cxx = nullptr,
     const RegistrationSEHExceptionContract *SEH = nullptr,
     const RegistrationSEHJumpContract *Jumps = nullptr,
-    const RegistrationSEHScopeState *Scopes = nullptr);
+    const RegistrationSEHScopeState *Scopes = nullptr,
+    const RegistrationSEHParentExitContract *ParentExits = nullptr,
+    const RegistrationSEHLocalUnwindContract *LocalUnwinds = nullptr);
 
 } // namespace neverd::coff_registration
 

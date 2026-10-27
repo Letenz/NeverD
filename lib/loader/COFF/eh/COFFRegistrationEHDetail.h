@@ -18,6 +18,8 @@
 
 #include "neverd/Limits.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/Support/Compiler.h"
@@ -48,11 +50,17 @@ bool isExecutableAddress(const BinaryImage &Img, va_t Address);
 /// space, so a corrupt operand cannot fabricate an in-image target.
 std::optional<va_t> addSignedOffset(va_t Base, int64_t Displacement);
 
-/// Disprove a padding-derived boundary using decoded callback instructions.
-/// After a control transfer, only an instruction-interior guess can be removed.
-/// Independent entries, ambiguous decoding and exhausted budgets retain it.
-bool disprovesCallbackBoundary(const BinaryImage &Img, va_t Entry,
-                               va_t Boundary, size_t &Work);
+/// Disprove a heuristic boundary using decoded callback instructions.
+/// A separately checked physical entry call returns to its own fallthrough.
+/// After other control transfers, only instruction-interior guesses can go,
+/// plus a guess created from an operand whose last byte is trap padding.
+/// A bounded absolute jump table is followed like a direct jump: a slot that
+/// names the boundary keeps it, and an in-range case can show that a later
+/// guess sits inside an instruction. Independent entries, ambiguous decoding
+/// and exhausted budgets retain the boundary.
+bool disprovesCallbackBoundary(
+    const BinaryImage &Img, va_t Entry, va_t Boundary, size_t &Work,
+    std::optional<va_t> ReturningEntryCall = std::nullopt);
 
 /// Extend an exact padding guess only through a closed, unambiguous callback
 /// graph with a prior ordinary branch and no independent callee in the range.
@@ -67,6 +75,14 @@ checkedRegistrationRangeEnd(const BinaryImage &Img,
                             const ExceptionAddressRange &Range,
                             const std::vector<va_t> &Roots, size_t &Work);
 
+/// Recover only candidates reached by a decoded direct call, whose preceding
+/// padding guess is independently inside a decoded instruction. Paths start
+/// at the image entry or already authenticated physical registration entries.
+/// This proves structural boundaries, not a callee ABI or native frame.
+std::set<va_t> checkedRegistrationCallBoundaries(
+    const BinaryImage &Img, const std::set<va_t> &PhysicalEntries,
+    const std::map<va_t, va_t> &Candidates, size_t &Work);
+
 template <typename T>
 std::optional<T> readScalar(const BinaryImage &Img, va_t Address) {
   const uint8_t *P = Img.readVA(Address, sizeof(T));
@@ -75,14 +91,31 @@ std::optional<T> readScalar(const BinaryImage &Img, va_t Address) {
   return readLE<T>(P);
 }
 
+struct PhysicalRegistrationEntry {
+  va_t Address = 0;
+  std::optional<va_t> ReturningCall;
+};
+
 /// Half-open code ranges of every discovered function, sorted by start.  A
 /// recovered registration record belongs to whichever function contains its
 /// install site; without that attribution the record would have no code range
 /// and could not take part in CFG or structuring.
 class FunctionRangeMap {
 public:
-  explicit FunctionRangeMap(const BinaryImage &Img)
+  explicit FunctionRangeMap(
+      const BinaryImage &Img,
+      const std::vector<PhysicalRegistrationEntry> &PhysicalEntries = {})
       : Guesses(Img.boundaryGuessFunctionStarts()) {
+    // These entries come from complete physical registration prefixes, not
+    // from a range that merely contains a chain-head read. They constrain
+    // body/callback ownership without promoting an ordinary callable symbol.
+    for (const auto &Entry : PhysicalEntries)
+      if (isExecutableAddress(Img, Entry.Address)) {
+        Starts.push_back(Entry.Address);
+        Guesses.erase(Entry.Address);
+        if (Entry.ReturningCall)
+          ReturningEntryCalls.emplace(Entry.Address, *Entry.ReturningCall);
+      }
     // PE export entries and the image entry are format-owned boundaries even
     // when no COFF symbol table or preceding padding made them discoverable.
     for (const Export &Entry : Img.Exports)
@@ -98,6 +131,19 @@ public:
         continue;
       Starts.push_back(Sym.Addr);
     }
+    // A PE32 image entry can call initialization before tail-jumping to its
+    // actual body. Retain that direct target as an ownership boundary even
+    // when a preceding padding guess cannot prove a closed function. This
+    // proves neither that the call returns nor a callable/frame contract.
+    if (const auto Prefix = readImmutablePE32CodeBytes(Img, Img.Entry, 10, {});
+        Prefix && (*Prefix)[0] == 0xe8 && (*Prefix)[5] == 0xe9) {
+      const auto Target =
+          addSignedOffset(Img.Entry + 10, readLE<int32_t>(Prefix->data() + 6));
+      if (Target && readImmutablePE32CodeBytes(Img, *Target, 1, {})) {
+        Starts.push_back(*Target);
+        Guesses.erase(*Target);
+      }
+    }
     // An exact PE32 direct entry jump can name a regenerated frame whose
     // prologue lives in another section. Retain its target as a boundary;
     // only the later registration/layout proofs can make it callable.
@@ -105,7 +151,9 @@ public:
     size_t Work = 0;
     for (va_t Start : OriginalStarts) {
       std::vector<va_t> Seen{Start};
-      for (unsigned Depth = 0; Depth != 8; ++Depth) {
+      for (unsigned Depth = 0;
+           Depth != ::neverd::limits::loader::kMaxRegistrationNullArgumentDepth;
+           ++Depth) {
         if (++Work > limits::kMaxRegistrationEHStateWork ||
             Start > uint64_t(UINT32_MAX) - 4)
           break;
@@ -137,9 +185,14 @@ public:
     // A padding guess cannot truncate an authenticated entry's instructions.
     // Exact entries after control transfers, ambiguous decoding and every
     // stated symbol, export and other confirmed boundary remain independent.
+    const auto Call = ReturningEntryCalls.find(Address);
+    const std::optional<va_t> ReturningCall =
+        Call != ReturningEntryCalls.end() ? std::optional<va_t>(Call->second)
+                                          : std::nullopt;
     if (AuthenticatedEntry)
       while (It != Starts.end() && Guesses.count(*It) &&
-             disprovesCallbackBoundary(Img, Address, *It, CallbackWork))
+             disprovesCallbackBoundary(Img, Address, *It, CallbackWork,
+                                       ReturningCall))
         ++It;
     const Segment *Seg = Img.getSegmentFor(Begin);
     if (!Seg || !Seg->isExecutable())
@@ -182,9 +235,12 @@ public:
     return Range;
   }
 
+  bool isBoundaryGuess(va_t Address) const { return Guesses.count(Address); }
+
 private:
   std::vector<va_t> Starts;
   std::set<va_t> Guesses;
+  std::map<va_t, va_t> ReturningEntryCalls;
   mutable size_t CallbackWork = 0;
 };
 
@@ -282,7 +338,21 @@ struct InstallSite {
   std::optional<int32_t> TryLevel;
   HandlerIdentity Identity;
   ExceptionAddressRange Range;
+  bool HasPhysicalEntry = false;
+  std::optional<va_t> ReturningEntryCall;
 };
+
+/// Observe the complete MSVC entry-aligned C++ installation prefix. Its
+/// runtime node has no fixed source-EBP displacement; this supplies an entry
+/// boundary only, not registration slots or a native frame protocol.
+std::optional<va_t> alignedCxxInstallEntry(const BinaryImage &Img,
+                                           const InstallSite &Site);
+
+/// Reuse the full fixed C++ layout proof to recover a cookie-publishing entry
+/// inside a guessed owner. A checked allocating probe retains its returning
+/// instruction boundary, without an ordinary callee or native frame ABI.
+std::optional<PhysicalRegistrationEntry>
+directCxxCookieInstallEntry(const BinaryImage &Img, const InstallSite &Site);
 
 bool proveFixedCxxRegistrationLayout(const BinaryImage &Img,
                                      const InstallSite &Site,
@@ -298,6 +368,11 @@ std::vector<InstallSite> findInstallSites(const BinaryImage &Img,
 void expandPrologueHelpers(const BinaryImage &Img,
                            const FunctionRangeMap &Functions,
                            std::vector<InstallSite> &Sites);
+/// Shared C++ prologues receive the per-function handler in EAX. These source
+/// observations do not establish frame coordinates or physical call effects.
+std::vector<InstallSite> findCxxEAXPrologueCallers(
+    const BinaryImage &Img, const FunctionRangeMap &Functions,
+    const SafeSEHTable &SafeSEH, const std::set<va_t> &PhysicalEntries);
 
 uint32_t decodeScopeRecords(const BinaryImage &Img, va_t ArrayVA, va_t Limit,
                             bool IsEH4,

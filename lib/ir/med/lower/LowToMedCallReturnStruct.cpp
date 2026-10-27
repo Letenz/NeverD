@@ -9,9 +9,12 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -22,6 +25,51 @@
 #include <vector>
 
 namespace neverd {
+
+namespace {
+
+bool sameValue(const MedVar &A, const MedVar &B) {
+  return A.Kind == B.Kind && A.Id == B.Id && A.SSAVer == B.SSAVer &&
+         A.RegOff == B.RegOff && A.Size == B.Size;
+}
+
+/// Whether \p Ops[\p At] reads a register only to keep the bytes a write of
+/// its low bytes leaves, as a partial register write lowers: `t = R & mask`,
+/// whose mask clears at least the low byte, then `u = t | v` and `R = u`
+/// within the next few operations.
+bool keepsUpperBytesOfWrite(const std::vector<MedOp> &Ops, size_t At) {
+  const MedOp &Keep = Ops[At];
+  if (Keep.Opcode != NdOp::INT_AND || Keep.NumInputs != 2 ||
+      Keep.Inputs[0].Kind != MedVar::Reg || !Keep.Inputs[1].isConst() ||
+      (Keep.Inputs[1].ConstVal & 0xFF) != 0 || Keep.Inputs[1].ConstVal == 0)
+    return false;
+  const uint64_t Register = Keep.Inputs[0].RegOff;
+  for (size_t K = At + 1;
+       K < Ops.size() &&
+       K <= At + ::neverd::limits::ir::kLowToMedCallReturnStructWindow;
+       ++K) {
+    const MedOp &Merge = Ops[K];
+    if (Merge.Opcode != NdOp::INT_OR || Merge.NumInputs != 2 ||
+        (!sameValue(Merge.Inputs[0], Keep.Output) &&
+         !sameValue(Merge.Inputs[1], Keep.Output)))
+      continue;
+    if (Merge.Output.Kind == MedVar::Reg && Merge.Output.RegOff == Register)
+      return true;
+    for (size_t M = K + 1;
+         M < Ops.size() &&
+         M <= K + ::neverd::limits::ir::kLowToMedCallReturnStructWindow;
+         ++M)
+      if (Ops[M].Opcode == NdOp::COPY && Ops[M].NumInputs >= 1 &&
+          Ops[M].Output.Kind == MedVar::Reg &&
+          Ops[M].Output.RegOff == Register &&
+          sameValue(Ops[M].Inputs[0], Merge.Output))
+        return true;
+    return false;
+  }
+  return false;
+}
+
+} // namespace
 
 void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
   const auto &TRI = getTargetRegInfo(TargetArch);
@@ -36,6 +84,14 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
   // in registers.  32-bit targets return such aggregates through the sret
   // pointer or the wide-int register pair (handled by modelCallWideIntReturn).
   if (TRI.PointerSize != 8)
+    return;
+  // Where a call returns one register value at most, reading another
+  // volatile result register after it does not establish a second source
+  // result. Explicit source contracts are already bound separately, before
+  // this heuristic inference.
+  if (const CallArgumentConvention *Convention =
+          callArgumentConvention(TargetArch, TargetFormat);
+      Convention && Convention->SingleRegisterReturns)
     return;
   if (TRI.IntReturnRegs.empty() && TRI.FPReturnRegs.empty())
     return;
@@ -114,9 +170,16 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
       // field proof; only an exact executable import stub supplies this ABI.
       if (Image && Op.Opcode == NdOp::CALL && Op.Inputs[0].isConst())
         if (const Import *Imp = Image->findImportStubAt(Op.Inputs[0].ConstVal))
-          if (const auto Signature = libc::libcArityForSymbol(Imp->Name);
+          if (const auto Signature = libc::libcArityForSymbol(
+                  Imp->Name, libc::libcVariantOf(*Image));
               Signature && libc::floatReturnBytes(*Signature))
             continue;
+      // Nor does an import whose C declaration returns nothing or a pointer.
+      // After `call setlocale`, GCC pads the next call's stack arguments with
+      // `push %rdx`: a read of what setlocale left in RDX, no second field.
+      if (Image && Op.Opcode == NdOp::CALL && Op.Inputs[0].isConst() &&
+          importDeclaresNoRecord(*Image, Op.Inputs[0].ConstVal))
+        continue;
 
       // Which candidate return registers does the caller read straight-line
       // after the call (a genuine input) before that register is redefined?
@@ -155,6 +218,12 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
             Nx.Inputs[0].RegOff == Nx.Inputs[1].RegOff &&
             Nx.Inputs[0].Id == Nx.Inputs[1].Id &&
             Nx.Inputs[0].SSAVer == Nx.Inputs[1].SSAVer;
+        // So does a write of the register's low bytes (`sete dl` after an int
+        // call): `t = rdx & ~0xff; rdx = t | dl` reads the register only to
+        // keep the bytes it does not write, and a caller that overwrites its
+        // low bytes reads no field there.
+        if (!SelfZero && keepsUpperBytesOfWrite(Blk.Ops, J))
+          continue;
         if (!SelfZero)
           for (uint8_t I = 0; I < Nx.NumInputs; ++I) {
             const auto &In = Nx.Inputs[I];
@@ -233,6 +302,21 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
                                     }),
                      Fields.end());
       }
+      // A compiler runtime routine declared to return a double word returns
+      // both halves of the integer pair, whichever of them its caller reads:
+      // `(n / d) >> 64` reads only RDX after `call __udivti3`.
+      if (Image && Op.Inputs[0].isConst() && TRI.IntReturnReg2 &&
+          importReturnsDoubleWord(*Image, Op.Inputs[0].ConstVal,
+                                  TRI.PointerSize))
+        for (const uint64_t Register : {TRI.IntReturnReg, TRI.IntReturnReg2}) {
+          auto Known = std::find_if(
+              Fields.begin(), Fields.end(),
+              [&](const FieldRead &F) { return F.RegOff == Register; });
+          if (Known == Fields.end())
+            Fields.push_back({Register, false, TRI.PointerSize, MedVar{}});
+          else
+            Known->Size = std::max<uint16_t>(Known->Size, TRI.PointerSize);
+        }
       if (Fields.size() < 2)
         continue;
       bool AnyFP = false, AnyInt = false;

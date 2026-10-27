@@ -12,6 +12,8 @@
 #include "ElectronSelection.h"
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web {
 namespace {
 llvm::json::Object entrySummary(const ElectronEntries &A, uint64_t Revision) {
@@ -109,7 +111,8 @@ std::string Session::electronEntryRecords(std::string_view Revision,
   const auto Size = Kind == "sources"   ? A.Sources.size()
                     : Kind == "entries" ? A.Entries.size()
                                         : throw Error("invalid_record_kind");
-  if (!Limit || Limit > 512 || Offset > Size)
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > Size)
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(Size, Offset + Limit);
   llvm::json::Array Items;

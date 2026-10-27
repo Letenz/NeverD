@@ -13,6 +13,8 @@
 #include "SessionInternal.h"
 #include "interfaces/report/Publication.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 
 namespace neverd::web {
@@ -33,7 +35,10 @@ std::string Session::createPassiveReport(std::string_view Revision,
     if (!Value)
       return std::string{};
     const auto Text = Value->getAsString();
-    if (!Text || Text->empty() || Text->size() > 64)
+    if (!Text || Text->empty() ||
+        Text->size() >
+            ::neverd::limits::web::
+                kSessionPassiveReportSessionCreatePassiveReportSelectedTextSizeLimit)
       throw Error("invalid_passive_report_selection");
     return Text->str();
   };
@@ -104,7 +109,7 @@ std::string Session::createPassiveReport(std::string_view Revision,
   uint64_t Bytes = 0;
   for (const auto &R : Report.Records) {
     const auto Size = json(passive_report::record(R)).size();
-    if (Size > 16 * 1024 * 1024 - Bytes)
+    if (Size > ::neverd::limits::web::kMaxPassiveReportExportBytes - Bytes)
       throw Error("passive_report_metadata_budget_exceeded");
     Bytes += Size;
   }
@@ -125,7 +130,9 @@ std::string Session::passiveReportRecords(std::string_view Revision,
       Report = &R;
   if (!Report)
     throw Error("unknown_passive_report");
-  if (!Limit || Limit > 128 || Offset > Report->Records.size())
+  if (!Limit ||
+      Limit > ::neverd::limits::web::kSessionPassiveReportRecordsLimit ||
+      Offset > Report->Records.size())
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(Report->Records.size(), Offset + Limit);
   llvm::json::Array Items;

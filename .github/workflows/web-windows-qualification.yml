@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   workflow_call:
   push:
-    branches: [dev]
+    branches: [dev, codex/performance-libraries]
     paths:
       - 'lib/web/**'
       - 'include/neverd/web/**'
@@ -12,6 +12,22 @@ on:
       - 'tools/neverd-web-mcp/**'
       - 'tools/neverd-worker/**'
       - 'cmake/NeverDWeb*.cmake'
+      - 'cmake/NeverDPerformance.cmake'
+      - 'cmake/NeverDForks*'
+      - '.gitmodules'
+      - 'third_party/forks.json'
+      - 'third_party/capstone'
+      - 'third_party/highway'
+      - 'third_party/simdutf'
+      - 'third_party/simdjson'
+      - 'third_party/oneTBB'
+      - 'third_party/mimalloc'
+      - 'cmake/NeverDMimalloc.cmake'
+      - 'scripts/build.py'
+      - 'scripts/fork_dependencies.py'
+      - 'scripts/tests/test_fork_dependencies.py'
+      - 'lib/support/**'
+      - 'tools/common/transport/**'
       - 'cmake/web-product-dependencies.json'
       - 'CMakeLists.txt'
       - 'include/neverd/sdk/NeverDCAPIWeb.h'
@@ -27,6 +43,22 @@ on:
       - 'tools/neverd-web-mcp/**'
       - 'tools/neverd-worker/**'
       - 'cmake/NeverDWeb*.cmake'
+      - 'cmake/NeverDPerformance.cmake'
+      - 'cmake/NeverDForks*'
+      - '.gitmodules'
+      - 'third_party/forks.json'
+      - 'third_party/capstone'
+      - 'third_party/highway'
+      - 'third_party/simdutf'
+      - 'third_party/simdjson'
+      - 'third_party/oneTBB'
+      - 'third_party/mimalloc'
+      - 'cmake/NeverDMimalloc.cmake'
+      - 'scripts/build.py'
+      - 'scripts/fork_dependencies.py'
+      - 'scripts/tests/test_fork_dependencies.py'
+      - 'lib/support/**'
+      - 'tools/common/transport/**'
       - 'cmake/web-product-dependencies.json'
       - 'CMakeLists.txt'
       - 'include/neverd/sdk/NeverDCAPIWeb.h'
@@ -37,6 +69,12 @@ on:
 
 permissions:
   contents: read
+
+# Reusable calls retain the caller's workflow name and event. Isolate callers
+# and manual publication runs; only repeated push/PR checks supersede each other.
+concurrency:
+  group: web-windows-qualification-${{ github.workflow }}-${{ (github.event_name == 'push' || github.event_name == 'pull_request') && (github.event.pull_request.number || github.ref) || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   windows:
@@ -122,10 +160,10 @@ jobs:
           cmake -S scripts/fixtures/windows_llvm_runtime -B build-llvm-runtime -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl "-DLLVM_DIR=$LLVM"
           cmake --build build-llvm-runtime --parallel 2
           & "$PWD/build-llvm-runtime/neverd-llvm-runtime-probe.exe"
-          cmake --build build-web-windows --target NeverDWebArtifactTests --parallel 4
+          python scripts/build.py build-web-windows --target NeverDWebArtifactTests --parallel 4
           Copy-Item "$ICU/bin64/icuuc77.dll", "$ICU/bin64/icudt77.dll" build-web-windows/bin
           ctest --test-dir build-web-windows/unittests/web --output-on-failure --no-tests=error --parallel 4 -R '^Web(WindowsHost|PathPolicy|Artifacts|Asar)\.'
-          cmake --build build-web-windows --target neverd neverd-worker neverd-web-mcp NeverDWebArtifactTests NeverDWebSDKTests NeverDWebNativeTests neverd-worker-web-tests neverd-web-mcp-web-tests neverd-web-package-tests --parallel 4
+          python scripts/build.py build-web-windows --target neverd neverd-worker neverd-web-mcp NeverDWebArtifactTests NeverDWebSDKTests NeverDWebNativeTests neverd-worker-web-tests neverd-web-mcp-web-tests neverd-web-package-tests --parallel 4
           Copy-Item "$ICU/bin64/icuuc77.dll", "$ICU/bin64/icudt77.dll" build-web-windows/bin
       - name: Qualify Windows owners and public API without skips
         run: |
@@ -157,5 +195,6 @@ jobs:
             dist/
             build-web-windows/unittests/web/Testing/Temporary/LastTest.log
             build-web-windows/CMakeCache.txt
+            build-web-windows/neverd-*.json
             build-web-windows/CMakeFiles/CMakeConfigureLog.yaml
           if-no-files-found: error

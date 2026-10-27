@@ -12,7 +12,7 @@
 
 #include "neverd/ir/RegistrationState.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include <algorithm>
 
@@ -164,6 +164,56 @@ LowFunc invocationFrame(unsigned Mutation, bool Returning) {
 
 } // namespace
 
+TEST(RegistrationState, LocalUnwindKeepsOrdinaryAndRuntimeFinallyEvidence) {
+  for (bool Reverse : {false, true}) {
+    SCOPED_TRACE(Reverse);
+    auto F = invocationFrame(0, false);
+    // The inner finally can run during exception dispatch before its parent
+    // retires the scope for the ordinary CALL. Both paths share one receipt.
+    F.Blocks.resize(12);
+    F.Blocks[4].Succs = {11};
+    auto &Active = F.Blocks[11];
+    Active.Id = 11;
+    Active.StartAddr = 0x1090;
+    Active.EndAddr = 0x1097;
+    Active.Succs = {1};
+    addSlotStore(Active, 1);
+    Active.InstructionBoundaries = {{0x1090, 7, 0, Active.Ops.size()}};
+    F.ExceptionMetadata->Registration->TryLevelStores.push_back(
+        {0x1090, 0x1097, 1});
+    auto &Exit = F.Blocks[3];
+    emitOp(Exit, Exit.StartAddr, NdOp::INT_ADD, NdVar::tmp(30, 4),
+           {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-16), 4)});
+    emitOp(Exit, Exit.StartAddr, NdOp::LOAD, NdVar::tmp(31, 4),
+           {NdVar::tmp(30, 4)});
+    emitOp(Exit, Exit.StartAddr, NdOp::STORE, {},
+           {NdVar::cst(0, 4), NdVar::tmp(31, 4)}, NdMemoryAddressSpace::X86FS);
+    Exit.InstructionBoundaries.front().OpCount = Exit.Ops.size();
+    if (Reverse)
+      std::reverse(F.Blocks.begin(), F.Blocks.end());
+    const std::vector<RegistrationSEHControlContract> Controls{
+        {RegistrationSEHControlContract::Kind::NearCall, 0x1100, 0x1105,
+         0x1800},
+        {RegistrationSEHControlContract::Kind::NearReturn, 0x1850, 0x1851,
+         InvalidVA}};
+    const std::vector<RegistrationLocalUnwindContract> Unwinds{{0x2200, false}};
+    const auto States = analyzeRegistrationStates(F, 0, 0, nullptr, nullptr,
+                                                  nullptr, &Unwinds, &Controls);
+    ASSERT_TRUE(States.Complete);
+    ASSERT_TRUE(States.CallbackStatesComplete);
+    ASSERT_TRUE(States.RegistrationLifetimeComplete);
+    ASSERT_TRUE(States.HasSEHLocalUnwinds);
+    ASSERT_TRUE(States.SEHLocalUnwindsComplete);
+    ASSERT_EQ(States.SEHLocalUnwinds.size(), 1u);
+    const auto &Call = States.SEHLocalUnwinds.front();
+    EXPECT_EQ(Call.Address, 0x1809u);
+    EXPECT_EQ(Call.EntryVA, 0x1800u);
+    EXPECT_EQ(Call.StackOffset, -64);
+    EXPECT_EQ(Call.Bound, UINT32_MAX);
+    EXPECT_FALSE(Call.Transitions.empty());
+  }
+}
+
 TEST(RegistrationState, FinallyInvocationsResumeOnlyTheirCheckedParent) {
   for (bool Returning : {false, true})
     for (unsigned Mutation = 0; Mutation != 13; ++Mutation) {
@@ -216,8 +266,113 @@ TEST(RegistrationState, FinallyInvocationsResumeOnlyTheirCheckedParent) {
     }
 }
 
+TEST(RegistrationState, FinallyOnlyParentTailsRequireEveryPathToAnAnchor) {
+  for (unsigned Shape = 0; Shape != 3; ++Shape)
+    for (unsigned Mutation = 0; Mutation != 10; ++Mutation)
+      for (bool Reverse : {false, true}) {
+        SCOPED_TRACE(Shape);
+        SCOPED_TRACE(Mutation);
+        SCOPED_TRACE(Reverse);
+        auto F = invocationFrame(12, false);
+        F.Blocks.resize(Shape == 2 ? 13 : Shape == 1 ? 12 : 11);
+        const auto SetBranch = [&](unsigned Id, va_t Address, unsigned Target,
+                                   va_t TargetAddress) {
+          auto &Block = F.Blocks[Id];
+          Block = {};
+          Block.Id = Id;
+          Block.StartAddr = Address;
+          Block.EndAddr = Address + 2;
+          Block.Succs = {int(Target)};
+          emitOp(Block, Address, NdOp::BRANCH, {},
+                 {NdVar::cst(TargetAddress, 4)});
+          Block.InstructionBoundaries = {{Address, 2, 0, 1}};
+          auto &Instruction = Block.InstructionBoundaries.back();
+          Instruction.Control = LowInstructionControl::Branch;
+          Instruction.ControlFlags = LowInstructionControlFlag::Branch;
+          Instruction.Immediate = TargetAddress;
+        };
+        SetBranch(10, 0x1900, Shape ? 11 : 8, Shape ? 0x1910 : 0x1105);
+        if (Shape)
+          SetBranch(11, 0x1910, 8, 0x1105);
+        if (Shape == 2) {
+          SetBranch(12, 0x1902, 8, 0x1105);
+          auto &Split = F.Blocks[10];
+          Split.Succs.push_back(12);
+          Split.Ops.back().Opcode = NdOp::COND_BR;
+          Split.Ops.back().addInput(NdVar::cst(1, 1));
+          Split.InstructionBoundaries.back().ControlFlags |=
+              LowInstructionControlFlag::Conditional;
+        }
+        auto &Tail = F.Blocks[10];
+        switch (Mutation) {
+        case 1:
+          SetBranch(10, 0x1900, 10, 0x1900);
+          break;
+        case 2:
+          SetBranch(10, 0x1900, 9, 0x1850);
+          break;
+        case 3:
+          Tail.Succs.front() = 99;
+          break;
+        case 4:
+          Tail.Succs.push_back(Tail.Succs.front());
+          break;
+        case 5:
+          ++*Tail.InstructionBoundaries.back().Immediate;
+          break;
+        case 6:
+          F.ExceptionMetadata->CodeRange.End = 0x1900;
+          break;
+        case 7:
+          Tail.InstructionBoundaries.back().TargetMode =
+              LowInstructionTargetMode::Thumb;
+          break;
+        case 8:
+          Tail.Succs.clear();
+          Tail.Ops.back().Opcode = NdOp::RETURN;
+          Tail.Ops.back().NumInputs = 0;
+          Tail.InstructionBoundaries.back().Control =
+              LowInstructionControl::Return;
+          Tail.InstructionBoundaries.back().ControlFlags =
+              LowInstructionControlFlag::Return;
+          Tail.InstructionBoundaries.back().Immediate = 0;
+          break;
+        case 9:
+          if (Shape == 2)
+            SetBranch(12, 0x1902, 9, 0x1850);
+          else
+            Tail.InstructionBoundaries.back().ControlFlags |=
+                LowInstructionControlFlag::InstructionGuard;
+          break;
+        }
+        if (Reverse)
+          std::reverse(F.Blocks.begin(), F.Blocks.end());
+        const std::vector<RegistrationSEHControlContract> Controls{
+            {RegistrationSEHControlContract::Kind::NearCall, 0x1100, 0x1105,
+             0x1800},
+            {RegistrationSEHControlContract::Kind::NearReturn, 0x1850, 0x1851,
+             InvalidVA}};
+        const std::vector<RegistrationLocalUnwindContract> Unwinds{
+            {0x2200, false}};
+        const auto State = analyzeRegistrationStates(
+            F, 0, 0, nullptr, nullptr, nullptr, &Unwinds, &Controls);
+        EXPECT_EQ(State.Complete, Mutation == 0);
+        EXPECT_EQ(State.SEHInvocationExitsComplete, Mutation == 0);
+        if (Mutation)
+          continue;
+        ASSERT_EQ(State.SEHInvocationExits.size(), 1u);
+        EXPECT_EQ(State.SEHInvocationExits.front().TargetVA, 0x1900u);
+        const auto Reached = llvm::find_if(State.Blocks, [](const auto &Block) {
+          return Block.BlockId == 10;
+        });
+        ASSERT_NE(Reached, State.Blocks.end());
+        EXPECT_TRUE(Reached->Reached);
+        EXPECT_FALSE(Reached->CallbackOnly);
+      }
+}
+
 TEST(RegistrationState, NestedFinallyKeepsEachInvocationReturnSlot) {
-  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 19; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto F = invocationFrame(0, true);
     auto &Outer = F.Blocks[6];
@@ -258,27 +413,88 @@ TEST(RegistrationState, NestedFinallyKeepsEachInvocationReturnSlot) {
       Inner.InstructionBoundaries.back().ControlFlags =
           LowInstructionControlFlag::Return;
     }
+    const bool PrivateStacks = Mutation >= 6;
+    if (PrivateStacks) {
+      Outer.Ops.clear();
+      emitOp(Outer, 0x1800, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
+             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
+      emitOp(Outer, 0x1800, NdOp::STORE, {},
+             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(7, 4)});
+      emitOp(Outer, 0x1802, NdOp::CALL, {}, {NdVar::cst(0x1850, 4)});
+      Outer.EndAddr = 0x1807;
+      Outer.InstructionBoundaries = {{0x1800, 2, 0, 2}, {0x1802, 5, 2, 1}};
+      Outer.InstructionBoundaries.back().Control = LowInstructionControl::Call;
+      Outer.InstructionBoundaries.back().ControlFlags =
+          LowInstructionControlFlag::Call;
+      Outer.InstructionBoundaries.back().Immediate = 0x1850;
+      Return.StartAddr = 0x1807;
+      Return.EndAddr = 0x1809;
+      Return.Ops.clear();
+      emitOp(Return, 0x1807, NdOp::LOAD, NdVar::reg(x86reg::RDX, 4),
+             {NdVar::reg(x86reg::RSP, 4)});
+      emitOp(Return, 0x1807, NdOp::INT_ADD, NdVar::reg(x86reg::RSP, 4),
+             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
+      emitOp(Return, 0x1808, NdOp::RETURN, {}, {});
+      Return.InstructionBoundaries = {{0x1807, 1, 0, 2}, {0x1808, 1, 2, 1}};
+      Return.InstructionBoundaries.back().Control =
+          LowInstructionControl::Return;
+      Return.InstructionBoundaries.back().ControlFlags =
+          LowInstructionControlFlag::Return;
+      Inner.Ops.clear();
+      emitOp(Inner, 0x1850, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
+             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
+      emitOp(Inner, 0x1850, NdOp::STORE, {},
+             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(9, 4)});
+      emitOp(Inner, 0x1852, NdOp::LOAD, NdVar::reg(x86reg::RDX, 4),
+             {NdVar::reg(x86reg::RSP, 4)});
+      emitOp(Inner, 0x1852, NdOp::INT_ADD, NdVar::reg(x86reg::RSP, 4),
+             {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
+      emitOp(Inner, 0x1853, NdOp::RETURN, {}, {});
+      Inner.EndAddr = 0x1854;
+      Inner.InstructionBoundaries = {
+          {0x1850, 2, 0, 2}, {0x1852, 1, 2, 2}, {0x1853, 1, 4, 1}};
+      Inner.InstructionBoundaries.back().Control =
+          LowInstructionControl::Return;
+      Inner.InstructionBoundaries.back().ControlFlags =
+          LowInstructionControlFlag::Return;
+    }
+    const va_t NestedCall = PrivateStacks ? 0x1802 : 0x1800;
     std::vector<RegistrationSEHControlContract> Controls{
         {RegistrationSEHControlContract::Kind::NearCall, 0x1100, 0x1105,
          0x1800},
-        {RegistrationSEHControlContract::Kind::NearCall, 0x1800, 0x1805,
-         0x1850},
-        {RegistrationSEHControlContract::Kind::NearReturn, 0x1805, 0x1806,
-         InvalidVA},
-        {RegistrationSEHControlContract::Kind::NearReturn,
-         Mutation == 2 || Mutation == 4 ? 0x1851u : 0x1850u, Inner.EndAddr,
-         InvalidVA}};
+        {RegistrationSEHControlContract::Kind::NearCall, NestedCall,
+         Outer.EndAddr, 0x1850},
+        {RegistrationSEHControlContract::Kind::NearReturn, Return.EndAddr - 1,
+         Return.EndAddr, InvalidVA},
+        {RegistrationSEHControlContract::Kind::NearReturn, Inner.EndAddr - 1,
+         Inner.EndAddr, InvalidVA}};
     if (Mutation == 3)
       Controls.erase(Controls.begin() + 1);
+    if (Mutation >= 7 && Mutation < 16)
+      addFinallyTailJump(Outer, Return, Controls, Mutation - 7);
+    if (Mutation == 16)
+      addFinallyCallTrailingEffect(Outer);
+    if (Mutation == 17)
+      F.ExceptionMetadata->CodeRange.End = 0x1700;
+    if (Mutation == 18)
+      F.ExceptionMetadata->CodeRange.End = 0x1105;
     const auto A = analyzeRegistrationStates(F, 0, 0, nullptr, nullptr, nullptr,
                                              nullptr, &Controls);
-    EXPECT_EQ(A.Complete, Mutation == 0);
-    if (!Mutation) {
-      EXPECT_TRUE(A.HasBoundSEHCallees);
-      ASSERT_EQ(A.SEHInvocationExits.size(), 1u);
-      EXPECT_EQ(A.SEHInvocationExits.front().Address, 0x1805u);
+    const bool Valid =
+        Mutation == 0 || Mutation == 6 || Mutation == 7 || Mutation == 17;
+    EXPECT_EQ(A.Complete, Valid);
+    if (Valid) {
+      EXPECT_FALSE(A.HasBoundSEHCallees);
+      ASSERT_EQ(A.SEHInvocationExits.size(), 2u);
+      EXPECT_EQ(A.SEHInvocationExits.front().Address, Return.EndAddr - 1);
       EXPECT_EQ(A.SEHInvocationExits.front().CallVA, 0x1100u);
       EXPECT_EQ(A.SEHInvocationExits.front().StackOffset, -56);
+      EXPECT_EQ(A.SEHInvocationExits.back().Address, Inner.EndAddr - 1);
+      EXPECT_EQ(A.SEHInvocationExits.back().CallVA, NestedCall);
+      EXPECT_EQ(A.SEHInvocationExits.back().EntryVA, 0x1850u);
+      EXPECT_EQ(A.SEHInvocationExits.back().TargetVA, Return.StartAddr);
+      EXPECT_EQ(A.SEHInvocationExits.back().StackOffset,
+                PrivateStacks ? -4 : 0);
     } else
       EXPECT_FALSE(A.SEHInvocationExitsComplete);
   }
@@ -524,7 +740,7 @@ TEST(RegistrationState, ReturningRuntimeCallCanPrecedeAFinallyReturn) {
         {RegistrationSEHControlContract::Kind::NearReturn, 0x1850, 0x1851,
          InvalidVA}};
     unsigned Invocations = 0;
-    EH3JumpRuntime Runtime;
+    SEHJumpRuntime Runtime;
     Runtime.Raise = [=, &Invocations](const LowOp &Op, const FrameState &,
                                       size_t &) {
       ++Invocations;

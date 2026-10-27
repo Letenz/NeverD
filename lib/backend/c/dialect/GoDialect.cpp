@@ -117,6 +117,8 @@ private:
     case CType::Kind::Integer:
       return (Ty->Signed ? "int" : "uint") + std::to_string(Ty->Bits);
     case CType::Kind::Floating:
+      if (Ty->Bits != 32 && Ty->Bits != 64)
+        unsupported("floating type '" + Ty->Spelling + "'");
       return "float" + std::to_string(Ty->Bits);
     case CType::Kind::Pointer:
       if (Ty->Inner->AddressSpace)
@@ -246,6 +248,10 @@ private:
   }
 
   Printed value(const Expr *E, const CType *Want) {
+    // A character a byte holds is a constant Go assigns to it.
+    if (E->Kind == ExprKind::Character && E->Text.starts_with("'") && Want &&
+        Want->isInteger() && Want->Bits == 8 && !Want->Signed)
+      return withComments(E, Printed{E->Text.str(), PrecAtom});
     if (const Expr *Narrow = narrowable(E, Want))
       return withComments(E, narrowed(Narrow, Want));
     return convert(raw(E), valueType(E), Want);
@@ -411,8 +417,11 @@ private:
       return cast(E);
     case ExprKind::Call:
       return call(E);
-    case ExprKind::Subscript:
     case ExprKind::Member:
+      if (auto Bits = bitField(E))
+        return Printed{Bits->Holder + "." + Bits->Getter + "()", PrecAtom};
+      return place(E);
+    case ExprKind::Subscript:
       return place(E);
     case ExprKind::SizeofExpr:
     case ExprKind::SizeofType:
@@ -434,6 +443,10 @@ private:
                          ")))",
                      PrecAtom};
     case ExprKind::Offsetof:
+      if (E->ThroughAnonymous) {
+        unsupported("a member of an anonymous structure or union");
+        return Printed{"_", PrecAtom};
+      }
       return Printed{type(E->Ty) + "(unsafe.Offsetof(" + type(E->Written) +
                          "{}." + E->Text.str() + "))",
                      PrecAtom};
@@ -448,6 +461,9 @@ private:
       return statementExpr(E);
     case ExprKind::BitCast:
       return bitCast(E);
+    case ExprKind::VaArg:
+      unsupported("va_arg");
+      return Printed{"_", PrecAtom};
     case ExprKind::Asm:
       return Printed{E->Text.str(), PrecAtom};
     }
@@ -498,11 +514,22 @@ private:
     if (O == "&") {
       if (Op->Ty->isFunction())
         return raw(Op);
-      // `&(T){0}`: a new zero T.
+      // `&(T){0}`: a new zero T; `&(T){v}`: a new T holding v, the one
+      // element of a slice made of it, which Go can take the address of.
       const Expr *Literal = skipParens(Op);
       if (Literal->Kind == ExprKind::CompoundLiteral &&
-          Literal->Written->isScalar() && isZeroInitializer(Literal->Ops[0]))
-        return Printed{"new(" + type(Literal->Written) + ")", PrecAtom};
+          Literal->Written->isScalar()) {
+        if (isZeroInitializer(Literal->Ops[0]))
+          return Printed{"new(" + type(Literal->Written) + ")", PrecAtom};
+        const Expr *Init = Literal->Ops[0];
+        if (Init->Kind == ExprKind::InitList && Init->Ops.size() == 1)
+          Init = Init->Ops[0];
+        if (Init->Kind != ExprKind::InitList &&
+            Init->Kind != ExprKind::Designated)
+          return Printed{"&[]" + type(Literal->Written) + "{" +
+                             value(Init, Literal->Written).Text + "}[0]",
+                         PrecUnary};
+      }
       return Printed{"&" + paren(place(Op), PrecAtom), PrecUnary};
     }
     if (O == "*") {
@@ -791,6 +818,34 @@ private:
     return Printed{Text, PrecAtom};
   }
 
+  /// What \p E, a member of one of the program's types, reaches through
+  /// \p Hops: fields, and methods that return pointers.
+  std::string localPath(const Expr *E,
+                        llvm::ArrayRef<SourceDialectLocalTypes::Hop> Hops) {
+    std::string Text = paren(E->Postfix ? value(E->Ops.front(), nullptr)
+                                        : place(E->Ops.front()),
+                             PrecAtom);
+    for (const SourceDialectLocalTypes::Hop &Hop : Hops)
+      Text += "." + Hop.Name + (Hop.Accessor ? "()" : "");
+    return Text;
+  }
+
+  /// A bit-field of one of the program's types, as Go reads and writes it:
+  /// the record whose methods do, and their names.
+  struct BitField {
+    std::string Holder, Getter, Setter;
+  };
+  std::optional<BitField> bitField(const Expr *E) {
+    if (E->Kind != ExprKind::Member || !E->Field || !E->Field->BitWidth ||
+        !valueType(E)->isInteger() ||
+        valueType(E)->TheKind == CType::Kind::Bool)
+      return std::nullopt;
+    std::optional<SourceDialectLocalTypes::Path> Path = localMember(E);
+    if (!Path || !Path->bitField())
+      return std::nullopt;
+    return BitField{localPath(E, Path->Hops), Path->Getter, Path->Setter};
+  }
+
   Printed place(const Expr *E) {
     switch (E->Kind) {
     case ExprKind::Paren:
@@ -819,12 +874,34 @@ private:
       Printed Moved = pointerOffset(value(Base, nullptr), Index, false, PtrTy);
       return Printed{"*" + paren(Moved, PrecUnary), PrecUnary};
     }
-    case ExprKind::Member:
+    case ExprKind::Member: {
+      // A member of one of the program's types, by the fields and methods
+      // that reach it; a method returns a pointer to the member.
+      if (auto Path = localMember(E)) {
+        // Only the methods of a bit-field's record read and write it.
+        if (Path->bitField())
+          unsupported("a bit-field where Go needs a place");
+        if (Path->Hops.empty() || refused())
+          return Printed{"_", PrecAtom};
+        const std::string Text = localPath(E, Path->Hops);
+        if (Path->Hops.back().Accessor)
+          return Printed{"*" + Text, PrecUnary};
+        return Printed{Text, PrecAtom};
+      }
+      if (E->Field && E->Field->BitWidth) {
+        unsupported("a bit-field");
+        return Printed{"_", PrecAtom};
+      }
+      if (E->ThroughAnonymous) {
+        unsupported("a member of an anonymous structure or union");
+        return Printed{"_", PrecAtom};
+      }
       return Printed{paren(E->Postfix ? value(E->Ops.front(), nullptr)
                                       : place(E->Ops.front()),
                            PrecAtom) +
                          "." + E->Text.str(),
                      PrecAtom};
+    }
     case ExprKind::String:
       return Printed{stringLiteral(E), PrecAtom};
     default:
@@ -1125,6 +1202,11 @@ private:
       return;
     case ExprKind::Unary:
       if (E->Text == "++" || E->Text == "--") {
+        if (auto Bits = bitField(E->Ops.front())) {
+          line(Bits->Holder + "." + Bits->Setter + "(" + Bits->Holder + "." +
+               Bits->Getter + "()" + (E->Text == "++" ? " + 1" : " - 1") + ")");
+          return;
+        }
         line(place(E->Ops.front()).Text + E->Text.str());
         return;
       }
@@ -1166,30 +1248,45 @@ private:
   void assignment(const Expr *E) {
     const Expr *L = E->Ops[0], *R = E->Ops[1];
     const CType *Target = valueType(L);
-    const std::string Place = place(L).Text;
+    // A bit-field takes what its setter stores, computed from its getter.
+    const std::optional<BitField> Bits = bitField(L);
+    const std::string Place = Bits ? std::string() : place(L).Text;
+    const auto store = [&](const std::string &Value) {
+      line(Bits ? Bits->Holder + "." + Bits->Setter + "(" + Value + ")"
+                : Place + " = " + Value);
+    };
     if (E->Text == "=") {
       const Expr *Inner = skipParens(R);
       if (Inner->Kind == ExprKind::Conditional &&
           !(Inner->Ops[1]->Value && Inner->Ops[2]->Value &&
             *Inner->Ops[1]->Value == 1 && *Inner->Ops[2]->Value == 0)) {
         openBlock("if " + condition(Inner->Ops[0]).Text);
-        line(Place + " = " + value(Inner->Ops[1], Target).Text);
+        store(value(Inner->Ops[1], Target).Text);
         dedent();
         openBlock("} else");
-        line(Place + " = " + value(Inner->Ops[2], Target).Text);
+        store(value(Inner->Ops[2], Target).Text);
         closeBlock();
         return;
       }
       if (hoists(Inner)) {
-        hoisted(Inner, [&](const Expr *Last) {
-          line(Place + " = " + value(Last, Target).Text);
-        });
+        hoisted(Inner,
+                [&](const Expr *Last) { store(value(Last, Target).Text); });
         return;
       }
-      line(Place + " = " + value(R, Target).Text);
+      store(value(R, Target).Text);
       return;
     }
     const llvm::StringRef Op = E->Text.drop_back();
+    if (Bits) {
+      Printed Current =
+          convert(Printed{Bits->Holder + "." + Bits->Getter + "()", PrecAtom},
+                  Target, E->OpTy);
+      store(convert(binaryText(Current, Op, value(R, E->OpTy),
+                               binaryPrecedence(Op)),
+                    E->OpTy, Target)
+                .Text);
+      return;
+    }
     if (Target->isPointer()) {
       line(Place + " = " +
            pointerOffset(Printed{Place, PrecAtom}, R, Op == "-", Target).Text);
@@ -1251,8 +1348,29 @@ private:
 
   std::string initializer(const Expr *Init, const CType *Ty) {
     if (Init->Kind != ExprKind::InitList) {
-      if (Ty->isArray() && Init->Kind == ExprKind::String)
+      if (Ty->isArray() && Init->Kind == ExprKind::String) {
+        // An array of bytes takes them as its elements, which Go zero-fills
+        // past the last.
+        if (byteArray(Ty))
+          if (auto Bytes = stringBytes(Init);
+              Bytes && Bytes->size() <= *Ty->Count) {
+            while (!Bytes->empty() && !Bytes->back())
+              Bytes->pop_back();
+            std::vector<std::string> Elements;
+            for (const unsigned char Byte : *Bytes) {
+              if (!Byte)
+                Elements.push_back("0");
+              else if (Byte == '\'' || Byte == '\\')
+                Elements.push_back({'\'', '\\', static_cast<char>(Byte), '\''});
+              else if (Byte >= 32 && Byte < 127)
+                Elements.push_back({'\'', static_cast<char>(Byte), '\''});
+              else
+                Elements.push_back("0x" + llvm::utohexstr(Byte));
+            }
+            return type(Ty) + "{" + llvm::join(Elements, ", ") + "}";
+          }
         return stringLiteral(Init);
+      }
       return value(Init, Ty).Text;
     }
     std::vector<std::string> Elements;
@@ -1369,12 +1487,25 @@ private:
         break;
       }
       case DeclKind::Typedef:
-        if (!D->Ty->isInteger())
+        // Go names a record and its type alike: a typedef that names a
+        // record by its own tag is the record, which its definition
+        // defines, or which the typedef declares opaque.
+        if (D->Ty->isRecord() && type(D->Ty) == escapeIdentifier(D->Name)) {
+          if (!D->Ty->Record->Complete)
+            record(D->Ty);
+        } else if (!D->Ty->isInteger())
           line("type " + escapeIdentifier(D->Name) + " = " + type(D->Ty));
         break;
       case DeclKind::Record:
         record(D->Ty);
         break;
+      case DeclKind::Enumeration:
+        // C's enumeration is an int and its enumerators int constants.
+        for (const Decl *Enumerator : D->Fields)
+          line("const " + escapeIdentifier(Enumerator->Name) +
+               " int32 = " + std::to_string(*Enumerator->Value));
+        break;
+      case DeclKind::Enumerator:
       case DeclKind::Parameter:
         break;
       }
@@ -1411,9 +1542,31 @@ private:
   }
 
   void record(const CType *Ty) {
-    if (!Ty->isRecord() || !Ty->Record->Complete ||
-        !PrintedRecords.insert(Ty).second)
+    // The program's types define their records themselves.
+    if (!Ty->isRecord() || PrintedRecords.contains(Ty) || localRecord(Ty))
       return;
+    const RecordDef &Record = *Ty->Record;
+    // What a Go structure of these fields would not lay out as C does.
+    if (Record.Union)
+      return unsupported("a union");
+    if (Record.Pack)
+      return unsupported("a packed record");
+    if (Record.Alignment)
+      return unsupported("an aligned record");
+    for (const RecordField &Field : Record.Fields) {
+      if (Field.BitWidth)
+        return unsupported("a bit-field");
+      if (Field.isAnonymousRecord())
+        return unsupported("an anonymous structure or union");
+      if (Field.Type->Volatile)
+        return unsupported("a volatile member");
+    }
+    PrintedRecords.insert(Ty);
+    // A record the text only declares stays opaque: its address passes.
+    if (!Record.Complete) {
+      line("type " + type(Ty) + " struct{}");
+      return;
+    }
     openBlock("type " + type(Ty) + " struct");
     for (const RecordField &Field : Ty->Record->Fields)
       line(escapeIdentifier(Field.Name) + " " + type(Field.Type));

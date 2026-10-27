@@ -4,6 +4,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ObjC/ObjCConstantStrings.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
@@ -79,7 +80,9 @@ objcSentinelSourceCallHint(const BinaryImage &Image, llvm::StringRef Selector,
                            const ObjCReceiverTypeHint &Receiver,
                            llvm::ArrayRef<va_t> Objects) {
   if (!objcSentinelReceiverValid(Image, Selector, Receiver) ||
-      Objects.size() > 61)
+      Objects.size() >
+          ::neverd::limits::loader::
+              kObjCSentinelCallsObjcSentinelSourceCallHintObjectsSizeLimit)
     return std::nullopt;
   for (const auto Address : Objects)
     if (!Address || (!readObjCConstantString(Image, Address) &&

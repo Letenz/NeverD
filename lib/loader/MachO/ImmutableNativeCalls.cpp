@@ -7,8 +7,9 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/Support/Endian.h"
@@ -135,7 +136,8 @@ class Trace {
 
   std::optional<Address> address(const NdVar &Value, size_t Before,
                                  unsigned Depth) {
-    if (Depth > 48)
+    if (Depth >
+        ::neverd::limits::loader::kImmutableNativeCallsAddressDepthLimit)
       return std::nullopt;
     const auto Index = definition(Value, Before);
     if (!Index)
@@ -249,7 +251,7 @@ public:
 
   std::optional<va_t> slot(const NdVar &Value, size_t Before,
                            unsigned Depth = 0) {
-    if (Depth > 48)
+    if (Depth > ::neverd::limits::loader::kImmutableNativeCallsSlotDepthLimit)
       return std::nullopt;
     const auto Index = definition(Value, Before);
     if (!Index)
@@ -305,7 +307,10 @@ std::map<va_t, ImmutableNativeCallTarget> immutableNativeCallTargets(
       !Function.Entry || Function.Entry % 4 ||
       !Function.DecodedInstructionCount ||
       !Function.hasCompleteLiftCoverage() || Function.Blocks.empty() ||
-      Function.Blocks.size() > 4096 || !Function.JumpTables.empty() ||
+      Function.Blocks.size() >
+          ::neverd::limits::loader::
+              kImmutableNativeCallsImmutableNativeCallTargetsFunctionBlocksSizeLimit ||
+      !Function.JumpTables.empty() ||
       (!Function.ModuleAnalysisRoots.empty() &&
        Function.ModuleAnalysisRoots != std::set<va_t>{Function.Entry}) ||
       (!Function.OrdinaryModuleAnalysisRoots.empty() &&
@@ -319,7 +324,9 @@ std::map<va_t, ImmutableNativeCallTarget> immutableNativeCallTargets(
     llvm::consumeError(std::move(Error));
     return {};
   }
-  size_t Remaining = 262144, InstructionCount = 0;
+  size_t Remaining = ::neverd::limits::loader::
+             kImmutableNativeCallsImmutableNativeCallTargetsRemaining,
+         InstructionCount = 0;
   std::set<va_t> Instructions;
   bool HasIndirect = false;
   for (const auto &Block : Function.Blocks) {
@@ -341,7 +348,11 @@ std::map<va_t, ImmutableNativeCallTarget> immutableNativeCallTargets(
   std::map<va_t, ImmutableNativeCallTarget> Result;
   AuthenticatedSourceFrameLoads Frame{Image, Function, DirectCalls,
                                       NativeCallees, Remaining};
-  for (unsigned Round = 0; Round < 64 && Remaining; ++Round) {
+  for (unsigned Round = 0;
+       Round < ::neverd::limits::loader::
+                   kImmutableNativeCallsImmutableNativeCallTargetsRoundLimit &&
+       Remaining;
+       ++Round) {
     Frame.beginRound(Result);
     std::map<va_t, ImmutableNativeCallTarget> Added;
     for (const auto &Block : Function.Blocks) {
@@ -415,7 +426,10 @@ bool isImmutableNativeCallHint(const SourceCallTypeHint &Hint,
          ABI.Origin == SourceFunctionTypeHint::OriginKind::NativeAnalysis &&
          ABI.HasExplicitABI && ABI.Architecture == Architecture &&
          validateSourceABI(ABI, Error) && scalarCarrier(ABI.ReturnType, true) &&
-         ABI.ReturnComponents.empty() && ABI.Parameters.size() <= 64 &&
+         ABI.ReturnComponents.empty() &&
+         ABI.Parameters.size() <=
+             ::neverd::limits::loader::
+                 kImmutableNativeCallsIsImmutableNativeCallHintABIParametersSizeLimit &&
          std::all_of(ABI.Parameters.begin(), ABI.Parameters.end(),
                      [](const SourceParameterTypeHint &P) {
                        return scalarCarrier(P.Type) && P.Components.empty();
@@ -426,11 +440,15 @@ std::map<va_t, SourceCallTypeHint> buildImmutableNativeCallHints(
     const BinaryImage &Image, const LowFunc &Function,
     const std::map<va_t, SourceFunctionTypeHint> &NativeCallees) {
   std::map<va_t, SourceCallTypeHint> Result;
-  if (NativeCallees.empty() || Function.Blocks.size() > 4096)
+  if (NativeCallees.empty() ||
+      Function.Blocks.size() >
+          ::neverd::limits::loader::
+              kImmutableNativeCallsBuildImmutableNativeCallHintsFunctionBlocksSizeLimit)
     return Result;
   // Most source-bound functions have no indirect call. Avoid rebuilding
   // instruction-boundary indexes for those functions on every inference round.
-  size_t Remaining = 262144;
+  size_t Remaining = ::neverd::limits::loader::
+      kImmutableNativeCallsBuildImmutableNativeCallHintsRemaining;
   bool HasIndirect = false;
   for (const auto &Block : Function.Blocks) {
     if (Block.Ops.size() > Remaining)

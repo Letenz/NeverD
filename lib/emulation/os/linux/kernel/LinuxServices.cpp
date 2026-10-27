@@ -57,30 +57,71 @@ LinuxServices::handle(const ProcessServiceEvent &Event, ThreadContext *Thread) {
 llvm::Expected<std::optional<uint64_t>>
 LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
                       ThreadContext *Thread) {
+  Files.setCurrentTask(Thread ? Thread->ID : ThreadID);
   if (auto E = synchronizeDevices())
     return std::move(E);
   if (unavailableKernelService(Kind, Options.LinuxKernel))
     return std::optional<uint64_t>(uint64_t(0) - ServiceNotImplemented);
   switch (Kind) {
+  case ServiceKind::SetSocketOption:
+  case ServiceKind::GetSocketOption:
+  case ServiceKind::Socket:
+  case ServiceKind::Connect:
+  case ServiceKind::SendTo:
+  case ServiceKind::ReceiveFrom:
+    return Files.network(Kind, Event, Options.LinuxNetwork, Result, Thread);
   case ServiceKind::PidFDOpen:
     if (Options.LinuxKernel && Options.LinuxKernel->GKI) {
       return Files.openProcessDescriptor(Event.Arguments[0], Event.Arguments[1],
-                                         *Options.LinuxKernel, Result);
+                                         *Options.LinuxKernel, Result,
+                                         Thread != nullptr);
     }
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic = llvm::formatv(Service, Event.Number).str();
     return std::optional<uint64_t>();
   case ServiceKind::SignalAction:
     return Signals.handle(CPU, Layout, Event, Result);
+  case ServiceKind::SignalMask:
+  case ServiceKind::SignalPending:
+    return Signals.maskService(CPU, Layout, Kind, Event,
+                               Thread ? Thread->ID : ThreadID, Result);
+  case ServiceKind::SignalReturn: {
+    auto Restored =
+        Signals.restore(CPU, Layout, Thread ? Thread->ID : ThreadID, Result);
+    if (!Restored)
+      return Restored.takeError();
+    if (!*Restored)
+      return std::optional<uint64_t>();
+    SignalRestored = true;
+    return std::optional<uint64_t>(0);
+  }
+  case ServiceKind::Kill:
+    return Signals.send(int32_t(uint32_t(Event.Arguments[0])),
+                        int32_t(uint32_t(Event.Arguments[1])),
+                        Thread ? Thread->ID : ThreadID, Result);
   case ServiceKind::GetXAttr:
   case ServiceKind::LGetXAttr:
   case ServiceKind::FGetXAttr:
     return Files.extendedAttribute(Kind, Event, Options.LinuxKernel, Result);
   case ServiceKind::PPoll:
-    return Files.poll(Event, Options.LinuxKernel, Result);
+  case ServiceKind::Poll:
+    return Files.poll(Kind, Event, Result, Thread);
+  case ServiceKind::EpollCreate:
+  case ServiceKind::EpollCreate1:
+  case ServiceKind::EpollCtl:
+  case ServiceKind::EpollWait:
+  case ServiceKind::EpollPwait:
+    return Files.epoll(Kind, Event, Result, Thread);
+  case ServiceKind::PSelect:
+    return Files.select(Event, Result, Thread);
   case ServiceKind::Getdents64:
+  case ServiceKind::Getcwd:
   case ServiceKind::Open:
   case ServiceKind::OpenAt:
+  case ServiceKind::Unlink:
+  case ServiceKind::UnlinkAt:
+  case ServiceKind::Rename:
+  case ServiceKind::RenameAt:
   case ServiceKind::Access:
   case ServiceKind::FaccessAt:
   case ServiceKind::Mkdir:
@@ -98,7 +139,7 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::FstatAt:
   case ServiceKind::StatFS:
   case ServiceKind::FstatFS:
-    return Files.handle(Kind, Event, Result);
+    return Files.handle(Kind, Event, Result, Thread);
   case ServiceKind::Time:
   case ServiceKind::GetTimeOfDay:
   case ServiceKind::ClockGetTime:
@@ -130,7 +171,9 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::GetEGID:
     return std::optional<uint64_t>(GroupID);
   case ServiceKind::Mmap:
-    if (Event.Arguments[3] == MapShared) {
+    if (Event.Arguments[3] == MapShared ||
+        (!(Event.Arguments[3] & MapAnonymous) &&
+         Files.isDevice(uint32_t(Event.Arguments[4])))) {
       auto Device = Files.mappingDevice(uint32_t(Event.Arguments[4]));
       if (const auto *Error = std::get_if<uint64_t>(&Device))
         return std::optional<uint64_t>(*Error);
@@ -144,13 +187,15 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Madvise:
   case ServiceKind::Mincore:
   case ServiceKind::Brk:
+  case ServiceKind::Prctl:
     return Memory.handle(Kind, Event, Result);
   case ServiceKind::ArchPrctl:
     return archPrctl(CPU, Event, Layout, Result);
   case ServiceKind::Write:
   case ServiceKind::WriteV:
     if (Files.isDevice(Event.Arguments[0]) ||
-        Files.isRegularFile(Event.Arguments[0]))
+        Files.isRegularFile(Event.Arguments[0]) ||
+        Files.isSocket(Event.Arguments[0]))
       return Files.handle(Kind, Event, Result);
     if (Options.LinuxFiles) {
       if (auto E = Files.outputError(Event.Arguments[0])) {

@@ -5,24 +5,28 @@
 //===----------------------------------------------------------------------===//
 #include "LLVMScalarLoopRecoveryInternal.h"
 
+#include "neverd/analysis/Limits.h"
+
 #include "llvm/IR/IRBuilder.h"
 
 namespace neverd::analysis::scalar_recovery {
 using namespace llvm;
 namespace {
-constexpr unsigned MaxValues = 32;
-constexpr unsigned MaxOperands = 64;
-constexpr unsigned MaxBounds = 4;
 
 // This slice only discovers candidates. An invariant leaf supplies no range
 // assumption, and syntactic dependence does not prove any counter relation.
-SmallVector<Value *, MaxBounds> findBounds(Search &S, Loop &L,
-                                           DominatorTree &DT,
-                                           Instruction &Condition,
-                                           PHINode &Counter) {
-  SmallVector<Value *, MaxValues> Work{&Condition};
-  SmallPtrSet<Value *, MaxValues> Seen;
-  SmallVector<Value *, MaxBounds> Bounds;
+SmallVector<Value *, ::neverd::limits::analysis::kLLVMScalarLoopBoundsMaxBounds>
+findBounds(Search &S, Loop &L, DominatorTree &DT, Instruction &Condition,
+           PHINode &Counter) {
+  SmallVector<Value *,
+              ::neverd::limits::analysis::kLLVMScalarLoopBoundsMaxValues>
+      Work{&Condition};
+  SmallPtrSet<Value *,
+              ::neverd::limits::analysis::kLLVMScalarLoopBoundsMaxValues>
+      Seen;
+  SmallVector<Value *,
+              ::neverd::limits::analysis::kLLVMScalarLoopBoundsMaxBounds>
+      Bounds;
   bool UsesCounter = false;
   for (size_t N = 0; N < Work.size(); ++N) {
     if (!S.charge())
@@ -30,7 +34,8 @@ SmallVector<Value *, MaxBounds> findBounds(Search &S, Loop &L,
     auto *V = Work[N];
     if (!Seen.insert(V).second)
       continue;
-    if (Seen.size() > MaxValues)
+    if (Seen.size() >
+        ::neverd::limits::analysis::kLLVMScalarLoopBoundsMaxValues)
       return {};
     if (V == &Counter) {
       UsesCounter = true;
@@ -40,14 +45,16 @@ SmallVector<Value *, MaxBounds> findBounds(Search &S, Loop &L,
       continue;
     if (L.isLoopInvariant(V)) {
       if (V->getType() == Counter.getType() && DT.dominates(V, &Condition) &&
-          Bounds.size() < MaxBounds)
+          Bounds.size() <
+              ::neverd::limits::analysis::kLLVMScalarLoopBoundsMaxBounds)
         Bounds.push_back(V);
       continue;
     }
     auto *I = dyn_cast<Instruction>(V);
     if (!I || isa<PHINode>(I))
       continue;
-    if (Work.size() + I->getNumOperands() > MaxOperands)
+    if (Work.size() + I->getNumOperands() >
+        ::neverd::limits::analysis::kLLVMScalarLoopBoundsMaxOperands)
       return {};
     for (auto *O : I->operand_values())
       Work.push_back(O);

@@ -6,6 +6,7 @@
 
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/pipeline/NativeSourceHints.h"
+#include "neverd/sdk/Limits.h"
 
 namespace neverd::sdk {
 namespace swift_witness_frame_detail {
@@ -15,7 +16,7 @@ using Calls = std::map<SourceCallOccurrenceKey, const HighExpr *>;
 // statements sharing the same node cannot reuse a single machine occurrence.
 inline std::optional<Calls> calls(const HighFunc &Function) {
   Calls Result;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   bool Invalid = false;
   std::vector<const HighStmt *> Statements;
   const auto Append = [&](const auto &Body) {
@@ -83,7 +84,7 @@ inline std::optional<Calls> calls(const HighFunc &Function) {
 inline bool sameCalls(const Calls &Expected, const Calls &Actual) {
   if (Expected.size() != Actual.size())
     return false;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   for (const auto &[Site, E] : Expected) {
     const auto Found = Actual.find(Site);
     if (Found == Actual.end())
@@ -170,7 +171,6 @@ public:
     for (const auto &F : Result.MedFuncs)
       Names.emplace(F.Entry, F.Name);
     Converter.setFuncNames(&Names);
-    Converter.setJumpTables(Current->Low->JumpTables);
     const auto Replay = Converter.convert(*Current->Med, Image.Arch);
     const auto Expected = calls(Replay), Saved = calls(*Current->High);
     if (!Expected || !Saved || Expected->size() != MedSites.size())

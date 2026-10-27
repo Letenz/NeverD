@@ -1,5 +1,6 @@
 #include "DisassemblyView.h"
 
+#include "../ResourceLimits.h"
 #include "AddressSpace.h"
 #include "GraphView.h"
 #include "ListingView.h"
@@ -13,7 +14,6 @@
 
 namespace neverd::gui {
 namespace {
-constexpr std::size_t MaxHistory = 512;
 constexpr int FileOffsetDigits = 8;
 } // namespace
 
@@ -133,7 +133,7 @@ void DisassemblyView::remember(Address address) {
     history_.resize(historyIndex_ + 1);
   if (history_.empty() || history_.back() != address)
     history_.push_back(address);
-  if (history_.size() > MaxHistory)
+  if (history_.size() > ::neverd::limits::gui::kDisassemblyViewMaxHistory)
     history_.erase(history_.begin());
   historyIndex_ = history_.size() - 1;
   emit historyChanged();
@@ -171,7 +171,8 @@ void DisassemblyView::navigate(Address address, bool record,
       emit locationChanged(address);
     }
   } else {
-    listing_->jumpTo(address);
+    if (!listing_->revealItem(address))
+      listing_->jumpTo(address);
   }
   updateStatus();
 }
@@ -224,6 +225,18 @@ std::optional<Address> DisassemblyView::operandTarget() const {
 
 std::optional<int> DisassemblyView::currentOperand() const {
   return graphMode() ? std::nullopt : listing_->currentOperand();
+}
+
+bool DisassemblyView::onInstruction() const {
+  if (graphMode())
+    return graph_->currentAddress().has_value();
+  const auto *line = listing_->cursorLine();
+  return line && line->kind == QLatin1String("insn");
+}
+
+bool DisassemblyView::onData() const {
+  const auto *line = graphMode() ? nullptr : listing_->cursorLine();
+  return line && line->kind == QLatin1String("data");
 }
 
 QString DisassemblyView::currentToken() const {

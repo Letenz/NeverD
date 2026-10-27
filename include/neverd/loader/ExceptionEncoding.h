@@ -148,6 +148,40 @@ inline ExceptionModel getExceptionEncodingModel(ExceptionEncoding Encoding) {
   return ExceptionModel::None;
 }
 
+/// Whether the encoding describes code of a platform other than Windows:
+/// DWARF call frame information, Darwin's compact unwind, Go's table or ARM
+/// EHABI.  That code reaches FS and GS as its platform has them, an ELF
+/// thread's TLS (the stack protector's canary at FS:0x28), not as Windows'
+/// TEB and its x86 SEH registration chain at FS:[0].
+inline bool exceptionEncodingIsOutsideWindows(ExceptionEncoding Encoding) {
+  switch (Encoding) {
+  case ExceptionEncoding::DwarfFDE:
+  case ExceptionEncoding::CompactUnwind:
+  case ExceptionEncoding::GoFuncTable:
+  case ExceptionEncoding::ARMEHABICantUnwind:
+  case ExceptionEncoding::ARMEHABIInline:
+  case ExceptionEncoding::ARMEHABICompact:
+  case ExceptionEncoding::ARMEHABIGeneric:
+    return true;
+  case ExceptionEncoding::X64UnwindV1:
+  case ExceptionEncoding::X64UnwindV2:
+  case ExceptionEncoding::X64UnwindV3:
+  case ExceptionEncoding::ARM32Packed:
+  case ExceptionEncoding::ARM32PackedFragment:
+  case ExceptionEncoding::ARM32Unpacked:
+  case ExceptionEncoding::ARM64Packed:
+  case ExceptionEncoding::ARM64PackedFragment:
+  case ExceptionEncoding::ARM64Unpacked:
+  case ExceptionEncoding::X86ScopeTableEH3:
+  case ExceptionEncoding::X86ScopeTableEH4:
+  case ExceptionEncoding::X86CxxFuncInfo:
+  case ExceptionEncoding::DelphiX86Chain:
+  case ExceptionEncoding::Unknown:
+    return false;
+  }
+  return false;
+}
+
 /// Whether a record of this encoding covers the code of exactly one function,
 /// as the image's own table declares it.  Function tables, DWARF FDEs and the
 /// Go function table do.  A registration-chain range is recovered from code,

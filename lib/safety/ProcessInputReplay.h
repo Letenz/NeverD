@@ -7,6 +7,7 @@
 #ifndef NEVERD_LIB_SAFETY_PROCESSINPUTREPLAY_H
 #define NEVERD_LIB_SAFETY_PROCESSINPUTREPLAY_H
 
+#include "neverd/safety/Limits.h"
 #include "neverd/safety/SafetyTypes.h"
 
 #include <cstdint>
@@ -14,9 +15,6 @@
 #include <string>
 
 namespace neverd::safety {
-
-/// Hard ceiling for literal process data retained by one report finding.
-inline constexpr uint64_t kProcessInputReplayByteBudget = uint64_t(1) << 20;
 
 /// Result of validating and taking ownership of a candidate replay plan.
 /// Plan is populated exactly when Reason is empty.
@@ -32,14 +30,22 @@ struct ProcessInputReplayResult {
 std::optional<std::string>
 validateProcessInputReplay(const ReplayPlan &Plan,
                            const std::vector<SolverAssignment> &Model,
-                           uint64_t ByteBudget = kProcessInputReplayByteBudget);
+                           uint64_t ByteBudget = ::neverd::limits::safety::
+                               kProcessInputReplayProcessInputReplayByteBudget);
 
 /// Validate Candidate and return it only when it is a bounded, exact replay.
 ProcessInputReplayResult
 buildProcessInputReplay(ReplayPlan Candidate,
                         const std::vector<SolverAssignment> &Model,
-                        uint64_t ByteBudget = kProcessInputReplayByteBudget);
+                        uint64_t ByteBudget = ::neverd::limits::safety::
+                            kProcessInputReplayProcessInputReplayByteBudget);
 
 } // namespace neverd::safety
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::safety {
+inline constexpr uint64_t kProcessInputReplayByteBudget =
+    ::neverd::limits::safety::kProcessInputReplayProcessInputReplayByteBudget;
+}
 
 #endif // NEVERD_LIB_SAFETY_PROCESSINPUTREPLAY_H

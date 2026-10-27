@@ -6,6 +6,7 @@
 
 #include "LLVMCLoopPhases.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
@@ -55,15 +56,17 @@ bool supportedOperation(Instruction *I) {
 
 bool factorLoopPhiExpressions(llvm::Function &Function) {
   using namespace llvm;
-  constexpr size_t MaxWork = 65536;
-  constexpr unsigned MaxChanges = 64;
-  if (Function.isDeclaration() || Function.size() > 4096 ||
+  if (Function.isDeclaration() ||
+      Function.size() >
+          ::neverd::limits::backend::
+              kLLVMCLoopPhasesFactorLoopPhiExpressionsFunctionSizeLimit ||
       Function.hasPersonalityFn() ||
       Function.getMetadata(windows_eh_md::FunctionAttachment) ||
       Function.getMetadata(windows_eh_md::NativeAttachment) ||
       Function.getParent()->getNamedMetadata(windows_eh_md::FunctionTable))
     return false;
-  size_t Work = MaxWork;
+  size_t Work = ::neverd::limits::backend::
+      kLLVMCLoopPhasesFactorLoopPhiExpressionsMaxWork;
   auto Spend = [&](size_t Amount = 1) {
     if (Amount > Work) {
       Work = 0;
@@ -85,7 +88,10 @@ bool factorLoopPhiExpressions(llvm::Function &Function) {
         Pending.push_back(&Phi);
 
   unsigned Changed = 0;
-  for (size_t Next = 0; Next < Pending.size() && Changed < MaxChanges; ++Next) {
+  for (size_t Next = 0;
+       Next < Pending.size() &&
+       Changed < ::neverd::limits::backend::kLLVMCLoopPhasesMaxChanges;
+       ++Next) {
     if (!Spend())
       break;
     auto *Phi = Pending[Next];

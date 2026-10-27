@@ -1,0 +1,26 @@
+//===- LiteralRadixes.def - How a source literal shows a number -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// The bases a user can show an integer literal of pseudocode in, which the
+// worker keeps with the function's code edits and the GUI offers on a number
+// (neverd/support/IntegerLiterals.h spells them).
+//
+// NEVERD_LITERAL_RADIX(Id, Spelling): Number is the decompiler's own choice;
+// the others name the base the user picked.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_LITERAL_RADIX
+#define NEVERD_LITERAL_RADIX(Id, Spelling)
+#endif
+NEVERD_LITERAL_RADIX(Number, "number")
+NEVERD_LITERAL_RADIX(Hex, "hex")
+NEVERD_LITERAL_RADIX(Decimal, "decimal")
+NEVERD_LITERAL_RADIX(Octal, "octal")
+NEVERD_LITERAL_RADIX(Binary, "binary")
+// The value's bytes as a C character constant, most significant first.
+NEVERD_LITERAL_RADIX(Char, "char")
+#undef NEVERD_LITERAL_RADIX

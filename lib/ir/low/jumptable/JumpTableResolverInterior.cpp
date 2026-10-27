@@ -17,7 +17,6 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
-#include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include <algorithm>
@@ -138,7 +137,7 @@ bool CFGBuilder::isOwnedInteriorTarget(const BinaryImage &Img,
       !isCurrentOwnedFragment(Target))
     return false;
   if ((Target % getInsnAlignment()) != 0 ||
-      !Img.hasExecutableCodeOwnerAt(Target) ||
+      !Img.hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners) ||
       !Img.hasExecutableCodeOwnerRange(Target, getInsnAlignment()) ||
       !Img.readVA(Target, 1))
     return false;
@@ -181,6 +180,13 @@ void CFGBuilder::exploreAddressTakenRoots(const BinaryImage &Img,
   const auto SafeSEHPointer =
       coff_loader::getCheckedX86SafeSEHTablePointer(Img);
   for (auto &[Target, Sources] : RelocationSources) {
+    // A pointer table among the code is read by the function dispatching
+    // through it, whose jump-table resolver recovers what it names; it roots
+    // no function's code.  The range of a function before the dispatcher
+    // reaches the dispatcher's cases when its entry is only a guess.
+    std::erase_if(Sources, [&](va_t Slot) {
+      return Img.hasExecutableCodeOwnerAt(Slot, ExecutableCodeOwners);
+    });
     if (Exception && Exception->Registration &&
         (Exception->Encoding == ExceptionEncoding::X86ScopeTableEH3 ||
          Exception->Encoding == ExceptionEncoding::X86ScopeTableEH4))
@@ -417,10 +423,7 @@ bool CFGBuilder::resolveRelocatedInteriorBranch(const BinaryImage &Img,
   auto SlotVA = foldValue(*SourceAddr, ValueLoad - 1, 0);
   if (!SlotVA || !Img.CodePtrRelocSlots.count(*SlotVA))
     return false;
-  const Segment *SlotSeg = Img.getSegmentFor(*SlotVA);
-  if (!SlotSeg ||
-      (SlotSeg->isWritable() &&
-       !section_names::isReadOnlyAfterRelocSectionName(SlotSeg->Name)))
+  if (!Img.readOnlyAfterRelocations(*SlotVA, Img.getPointerSize()))
     return false;
 
   const uint8_t *P = Img.readVA(*SlotVA, Img.getPointerSize());

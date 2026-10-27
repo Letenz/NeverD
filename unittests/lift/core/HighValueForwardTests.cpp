@@ -7,6 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/debug/DebugContext.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 
@@ -562,6 +563,78 @@ HighStmt store(ExprPtr Address, ExprPtr Value) {
   S.StoreAddr = std::move(Address);
   S.StoreVal = std::move(Value);
   return S;
+}
+
+TEST(HighValueForward, OutParameterPointersKeepTheirFieldsAcrossSlotUpdates) {
+  auto Record = NdType::makeNamedRecord("OUT_RECORD", 12);
+  Record->FieldDisplayNames = {"first", "middle", "last"};
+  Record->FieldDisplayOffsets = {0, 4, 8};
+  Record->FieldDisplayTypes.assign(3, NdType::makeInt(4));
+  class RecordDebug : public NullDebugContext {
+  public:
+    explicit RecordDebug(TypeRef Record) : Record(std::move(Record)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != 0x2000)
+        return std::nullopt;
+      FunctionSym Function;
+      Function.Addr = Address;
+      Function.Name = "next_record";
+      Function.ReturnType = NdType::makeVoid();
+      Function.Params = {{"out", NdType::makePtr(NdType::makePtr(Record))}};
+      return Function;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Record;
+  } Debug(Record);
+  const auto Next = [] {
+    HighStmt Call;
+    Call.Kind = StmtKind::Call;
+    Call.CallExpr = HighExpr::makeCall("next_record", 0x2000, {frameSlot(16)});
+    Call.CallExpr->Type = NdType::makeVoid();
+    return Call;
+  };
+  const auto Field = [](uint64_t Offset) {
+    return HighExpr::makeLoad(op(NdOp::INT_ADD, local(1), constant(Offset)),
+                              NdType::makeInt(4));
+  };
+  HighFunc Function = function(
+      "saved_record",
+      {Next(),
+       assign(local(1), HighExpr::makeLoad(frameSlot(16), NdType::makeInt(8))),
+       Next(), result(op(NdOp::INT_ADD, Field(4), Field(8)))});
+  Function.Params.clear();
+  Function.FrameSize = 64;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text = "typedef struct OUT_RECORD { int32_t first, middle, "
+                       "last; } OUT_RECORD;\n";
+    Definitions.Records = {{"OUT_RECORD", false}};
+    Definitions.Tags = {{"OUT_RECORD", false}};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Function}, Out, Options, &Debug));
+  Out.flush();
+  EXPECT_NE(Source.find("->middle"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("->last"), std::string::npos) << Source;
+  compileAndRun(Source + R"(
+void next_record(OUT_RECORD **out) {
+  static OUT_RECORD records[] = {
+      {1, 2, 3}, {7, 11, 13}, {5, -2, -3}, {17, 19, 23}};
+  static unsigned index;
+  *out = &records[index++ % 4];
+}
+int main(void) {
+  const uint64_t negative_words = (uint64_t)(uint32_t)-2 + (uint32_t)-3;
+  return saved_record() != 5 || saved_record() != negative_words ||
+         saved_record() != 5;
+}
+)");
 }
 
 /// Saves x in a slot, reads it back, then stores 5 to the slot at

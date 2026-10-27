@@ -380,7 +380,8 @@ preparePointerRelocations(const BinaryImage &Original, CompiledImage &Compiled,
                                   Address.second,
                                   Size.second,
                                   *SectionHeader,
-                                  Is64};
+                                  Is64,
+                                  std::move(Table)};
 }
 
 template <typename ELF>
@@ -437,4 +438,54 @@ llvm::Error installELFSourceRelocations(std::vector<uint8_t> &Binary,
              ? installPointerRelocations<llvm::object::ELF64LE>(Binary, Table)
              : installPointerRelocations<llvm::object::ELF32LE>(Binary, Table);
 }
+template <typename ELF>
+llvm::Error verifyPointerTable(const BinaryImage &Image,
+                               const ELFSourceRelocationTable &Table) {
+  if (!Table.Size)
+    return llvm::Error::success();
+  constexpr bool Is64 = sizeof(typename ELF::Addr) == 8;
+  auto L = dynamicLayout<ELF>(Image.Raw);
+  if (!L)
+    return L.takeError();
+  const auto Address =
+      L->Tags.find(Is64 ? llvm::ELF::DT_RELA : llvm::ELF::DT_REL);
+  const auto Size =
+      L->Tags.find(Is64 ? llvm::ELF::DT_RELASZ : llvm::ELF::DT_RELSZ);
+  const auto Entry =
+      L->Tags.find(Is64 ? llvm::ELF::DT_RELAENT : llvm::ELF::DT_RELENT);
+  const unsigned ExpectedEntry =
+      Is64 ? sizeof(typename ELF::Rela) : sizeof(typename ELF::Rel);
+  if (Address == L->Tags.end() || Size == L->Tags.end() ||
+      Entry == L->Tags.end() || Address->second.first != Table.VA ||
+      Size->second.first != Table.Size ||
+      Entry->second.first != ExpectedEntry ||
+      Table.ExpectedBytes.size() != Table.Size)
+    return fail("published runtime writer table differs from its receipt");
+  auto Offset = fileOffset(Image.Raw, Table.VA, Table.Size);
+  if (!Offset)
+    return Offset.takeError();
+  if (!std::equal(Table.ExpectedBytes.begin(), Table.ExpectedBytes.end(),
+                  Image.Raw.begin() + *Offset))
+    return fail("published runtime writer bytes differ from their receipt");
+  unsigned Count = 0;
+  for (const auto &S : L->Sections)
+    if (S.Addr == Table.VA &&
+        S.Type == (Is64 ? llvm::ELF::SHT_RELA : llvm::ELF::SHT_REL)) {
+      if (S.Offset != *Offset || S.Size != Table.Size ||
+          S.EntSize != ExpectedEntry)
+        return fail(
+            "published runtime writer section differs from dynamic table");
+      ++Count;
+    }
+  if (Count != 1)
+    return fail("runtime writer table lost its section identity");
+  return llvm::Error::success();
+}
+
+llvm::Error verifyELFSourceRelocations(const BinaryImage &Image,
+                                       const ELFSourceRelocationTable &Table) {
+  return Table.Is64 ? verifyPointerTable<llvm::object::ELF64LE>(Image, Table)
+                    : verifyPointerTable<llvm::object::ELF32LE>(Image, Table);
+}
+
 } // namespace neverd

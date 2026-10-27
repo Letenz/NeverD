@@ -7,6 +7,7 @@
 
 #include "ProcessAndroidJSON.h"
 #include "ProcessDarwinFilesJSON.h"
+#include "ProcessDarwinJSON.h"
 #include "ProcessDarwinSystemJSON.h"
 #include "ProcessDarwinTimeJSON.h"
 #include "ProcessLinuxFilesJSON.h"
@@ -14,6 +15,7 @@
 #include "ProcessLinuxPriorityJSON.h"
 #include "ProcessLinuxSignalsJSON.h"
 #include "ProcessLinuxTimeJSON.h"
+#include "ProcessNetworkJSON.h"
 #include "ProcessWindowsJSON.h"
 
 #include "neverd/emulation/ProcessReportFields.h"
@@ -64,6 +66,13 @@ llvm::Expected<ProcessOptions> processOptionsFromJSON(llvm::StringRef Text) {
   ProcessOptions Options;
   for (const auto &[Key, V] : *Object) {
     const llvm::StringRef Name = Key;
+    if (Name == field::Darwin) {
+      auto Darwin = darwinOptionsFromJSON(V);
+      if (!Darwin)
+        return Darwin.takeError();
+      Options.Darwin = std::move(*Darwin);
+      continue;
+    }
     if (Name == field::DarwinSystem) {
       auto System = darwinSystemOptionsFromJSON(V);
       if (!System)
@@ -90,6 +99,13 @@ llvm::Expected<ProcessOptions> processOptionsFromJSON(llvm::StringRef Text) {
       if (!Kernel)
         return Kernel.takeError();
       Options.LinuxKernel = std::move(*Kernel);
+      continue;
+    }
+    if (Name == field::LinuxNetwork) {
+      auto Network = linuxNetworkOptionsFromJSON(V);
+      if (!Network)
+        return Network.takeError();
+      Options.LinuxNetwork = std::move(*Network);
       continue;
     }
     if (Name == field::LinuxPriority) {
@@ -180,6 +196,19 @@ llvm::Expected<ProcessOptions> processOptionsFromJSON(llvm::StringRef Text) {
 #undef NEVERD_PROCESS_OPTION_NUMBER
     return invalid(field::UnknownField, Name);
   }
+  // Only payloads already admitted by their decoded-byte owners earn wire
+  // capacity. Paths, other binary fields, whitespace and JSON escape
+  // overhead remain metadata; no field name alone grants an exemption.
+  uint64_t EncodedPayloadBytes = 0;
+  if (Options.Android)
+    for (const auto &Image : Options.Android->DexImages)
+      EncodedPayloadBytes += Image.size() * 2;
+  if (Options.LinuxFiles)
+    for (const auto &[Path, Bytes] : Options.LinuxFiles->Files)
+      EncodedPayloadBytes += Bytes.size() * 2;
+  if (EncodedPayloadBytes > Text.size() ||
+      Text.size() - EncodedPayloadBytes > field::JSONMetadataLimit)
+    return invalid(field::TooLarge);
   return Options;
 }
 
@@ -219,6 +248,37 @@ std::string processResultJSON(const ProcessResult &Result) {
       {field::Stderr, llvm::toHex(Result.StandardError, true)},
       {field::Services, std::move(Services)},
       {field::CPUExit, nullptr}};
+  if (Result.IoctlTraceEnabled) {
+    llvm::json::Array Calls;
+    for (const auto &Event : Result.IoctlTrace) {
+      llvm::json::Array Memory;
+      for (const auto &M : Event.Memory)
+        Memory.push_back(llvm::json::Object{
+            {field::Address,
+             M.Address ? llvm::json::Value(bits(*M.Address)) : nullptr},
+            {field::Size, M.Size},
+            {field::IoctlTraceBefore, llvm::toHex(M.Before, true)},
+            {field::IoctlTraceAfter, llvm::toHex(M.After, true)},
+            {field::IoctlTraceBeforeStatus, M.BeforeStatus},
+            {field::IoctlTraceAfterStatus, M.AfterStatus}});
+      llvm::json::Object Call{
+          {field::PC, bits(Event.PC)},
+          {field::DeviceRequest, bits(Event.Request)},
+          {field::DeviceArgument, bits(Event.Argument)},
+          {field::ThreadID, Event.ThreadID},
+          {field::IoctlTraceFD, Event.FD},
+          {field::Result,
+           Event.Result ? llvm::json::Value(bits(*Event.Result)) : nullptr},
+          {field::Memory, std::move(Memory)}};
+      if (Event.ReturnAddress)
+        Call[field::ReturnAddress] = bits(*Event.ReturnAddress);
+      Calls.push_back(std::move(Call));
+    }
+    Object[field::IoctlTrace] = std::move(Calls);
+    Object[field::IoctlTraceTruncated] = Result.IoctlTraceTruncated;
+  }
+  if (Result.TerminationSignal)
+    Object[field::TerminationSignal] = *Result.TerminationSignal;
   if (Result.Profile == ProcessProfile::AndroidNativeAArch64) {
     Object[field::Android] = androidResultJSON(Result);
     Object[field::ReturnValue] =
@@ -248,6 +308,26 @@ std::string processResultJSON(const ProcessResult &Result) {
     Object[field::ReturnValue] =
         Result.ReturnValue ? llvm::json::Value(bits(*Result.ReturnValue))
                            : nullptr;
+  }
+  if (!Result.NativeCalls.empty() &&
+      (Result.Profile == ProcessProfile::MacOSMachO64 ||
+       Result.Profile == ProcessProfile::IOSMachO64 ||
+       Result.Profile == ProcessProfile::IOSSimulatorMachO64)) {
+    llvm::json::Array Calls;
+    for (const auto &Event : Result.NativeCalls) {
+      llvm::json::Array Arguments;
+      for (unsigned I = 0; I < Event.ArgumentCount; ++I)
+        Arguments.push_back(bits(Event.Arguments[I]));
+      Calls.push_back(llvm::json::Object{
+          {field::PC, bits(Event.PC)},
+          {field::Module, Event.Module},
+          {field::Name, Event.Name},
+          {field::Arguments, std::move(Arguments)},
+          {field::Result,
+           Event.Result ? llvm::json::Value(bits(*Event.Result)) : nullptr}});
+    }
+    Object[field::Darwin] =
+        llvm::json::Object{{field::NativeCalls, std::move(Calls)}};
   }
   if (Result.LastCPUExit) {
     const auto &Exit = *Result.LastCPUExit;

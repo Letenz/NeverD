@@ -6,46 +6,24 @@
 /// \file
 /// Read API 28 byte streams through one kernel-owned descriptor cursor.
 #include "AndroidInternal.h"
+#include "AndroidThreads.h"
 
 #include "neverd/emulation/CPU.h"
 
 #include <algorithm>
 
 namespace neverd::emulation::android_model {
-llvm::Expected<std::optional<uint64_t>>
-Bionic::streamRead(InputStream &Stream, uint64_t Output, uint64_t Size) {
-  // API 28's large fread path calls the FD reader directly. Only __srefill
-  // switches stream direction or flushes other line-buffered writers.
-  auto Read =
-      streamService(linux_model::ServiceKind::Read, Stream.FD, Output, Size);
-  if (!Read)
-    return Read.takeError();
-  if (!*Read)
-    return std::optional<uint64_t>();
-  if (**Read >= uint64_t(0) - 4095) {
-    Stream.Error = true;
-    return std::optional<uint64_t>(0);
-  }
-  if (!**Read)
-    Stream.EndOfFile = true;
-  return *Read;
-}
-
-llvm::Expected<bool> Bionic::refillStream(InputStream &Stream) {
+llvm::Expected<std::optional<bool>>
+Bionic::prepareStreamRefill(InputStream &Stream) {
+  using Reply = std::optional<bool>;
   auto Readable = prepareStreamRead(Stream);
-  if (!Readable)
-    return Readable.takeError();
-  if (!*Readable)
-    return false;
-  if (!**Readable) {
-    Stream.Begin = Stream.End = 0;
-    return true;
-  }
+  if (!Readable || !*Readable || !**Readable)
+    return Readable;
   auto Ready = prepareStreamBuffer(Stream);
   if (!Ready)
     return Ready.takeError();
   if (!*Ready)
-    return false;
+    return Reply();
   if (Stream.BufferMode) {
     for (auto &[Token, Other] : InputStreams) {
       if (&Other == &Stream || Other.BufferMode != 1)
@@ -54,18 +32,11 @@ llvm::Expected<bool> Bionic::refillStream(InputStream &Stream) {
       if (!Flushed)
         return Flushed.takeError();
       if (!*Flushed)
-        return false;
-      // The Bionic refill path deliberately ignores other streams' IO errors.
+        return Reply();
+      // API 28 deliberately ignores other streams' IO errors.
     }
   }
-  auto Count = streamRead(Stream, Stream.Buffer, Stream.Capacity);
-  if (!Count)
-    return Count.takeError();
-  if (!*Count)
-    return false;
-  Stream.Begin = 0;
-  Stream.End = **Count;
-  return true;
+  return Reply(true);
 }
 
 llvm::Error Bionic::copyStream(InputStream &Stream, uint64_t Output,
@@ -87,119 +58,193 @@ llvm::Error Bionic::copyStream(InputStream &Stream, uint64_t Output,
   return llvm::Error::success();
 }
 
-BionicResult Bionic::readStream(const NativeCallEvent &Call) {
-  const auto &A = Call.Arguments;
-  const bool Block =
-      Call.Name == symbol::Fread || Call.Name == symbol::FreadUnlocked;
-  const bool Line =
-      Call.Name == symbol::Fgets || Call.Name == symbol::FgetsUnlocked;
-  auto Found = inputStream(Block ? A[3] : Line ? A[2] : A[0]);
-  if (!Found)
-    return Found.takeError();
-  auto &Stream = **Found;
-  if (!Block && !Line) {
-    if (Stream.Begin == Stream.End) {
-      auto Ready = refillStream(Stream);
-      if (!Ready)
-        return Ready.takeError();
-      if (!*Ready)
-        return std::optional<BionicValue>();
-    }
-    if (Stream.Begin == Stream.End)
-      return value(UINT32_MAX);
-    auto Character = byte(Stream.Buffer + Stream.Begin);
-    if (!Character)
-      return Character.takeError();
-    ++Stream.Begin;
-    return value(*Character);
+class Bionic::StreamReadWait final : public NativeWait {
+public:
+  explicit StreamReadWait(const NativeCallEvent &Call)
+      : Block(Call.Name == symbol::Fread ||
+              Call.Name == symbol::FreadUnlocked ||
+              Call.Name == symbol::FreadChk),
+        Line(Call.Name == symbol::Fgets || Call.Name == symbol::FgetsUnlocked ||
+             Call.Name == symbol::FgetsChk),
+        Handle(Call.Arguments[Block  ? 3
+                              : Line ? 2
+                                     : 0]),
+        Output(Call.Arguments[0]), Size(Call.Arguments[1]),
+        Count(Call.Arguments[2]) {}
+  bool ready() const override { return Pending->ready(); }
+  std::optional<uint64_t> nextWake() const override {
+    return Pending->nextWake();
   }
-  uint64_t Requested;
-  if (Block) {
-    if (A[1] && A[2] > UINT64_MAX / A[1]) {
+  BionicResult resume(Bionic &LibC) override {
+    auto Found = LibC.inputStream(Handle);
+    if (!Found)
+      return Found.takeError();
+    auto &Stream = **Found;
+    Stream.Reader = LibC.threadID();
+    auto R = run(LibC, Stream);
+    if (!R || !*R || !std::holds_alternative<GuestThreadWait>(**R))
+      Stream.Reader.reset();
+    return R;
+  }
+
+private:
+  bool Block, Line, Started = false, Direct = false;
+  uint64_t Handle, Output, Size, Count, Requested = 1, Done = 0;
+  std::unique_ptr<linux_model::KernelWait> Pending;
+
+  llvm::Expected<std::optional<uint64_t>> read(Bionic &LibC,
+                                               InputStream &Stream) {
+    // The kernel retains the open description and timeout of this particular
+    // read. The outer libc operation retains its buffer, arguments and
+    // progress.
+    const bool Resuming = bool(Pending);
+    auto R =
+        Resuming
+            ? Pending->resume(LibC.Result)
+            : LibC.streamService(linux_model::ServiceKind::Read, Stream.FD,
+                                 Direct ? Output + Done : Stream.Buffer,
+                                 Direct ? Requested - Done : Stream.Capacity);
+    if (!R)
+      return R.takeError();
+    if (!*R) {
+      if (!Pending && LibC.Threads && LibC.Threads->kernel())
+        Pending = std::move(LibC.Threads->kernel()->Pending);
+      return std::optional<uint64_t>();
+    }
+    Pending.reset();
+    if (**R >= uint64_t(0) - 4095) {
+      if (Resuming)
+        if (auto E = LibC.setErrno(uint64_t(0) - **R))
+          return std::move(E);
       Stream.Error = true;
-      return streamError(linux_model::ValueOverflow, 0);
+      return std::optional<uint64_t>(0);
     }
-    Requested = A[1] * A[2];
-    if (!Requested)
-      return value(0);
-    // The API 28 file read callback takes an int count. Reject excessive
-    // transfers instead of accidentally modeling host-sized read semantics.
-    if (Requested > INT32_MAX)
-      return failure("stdio read exceeds the supported signed-int extent");
-    auto Ready = prepareStreamBuffer(Stream);
-    if (!Ready)
-      return Ready.takeError();
-    if (!*Ready)
-      return std::optional<BionicValue>();
-  } else {
-    if (int32_t(A[1]) <= 0)
-      return streamError(linux_model::InvalidArgument, 0);
-    Requested = uint32_t(A[1]) - 1;
+    if (!**R)
+      Stream.EndOfFile = true;
+    return *R;
   }
-  uint64_t Done = 0;
-  bool Direct = false;
-  while (Done < Requested) {
-    if (auto E = access(0, 0, 0))
-      return std::move(E);
-    if (A[0] > UINT64_MAX - Done)
-      return failure("stdio destination address overflow");
-    const uint64_t Output = A[0] + Done;
-    uint64_t Available = Stream.End - Stream.Begin;
-    if (!Available) {
-      Direct |= Block && Requested - Done > Stream.Capacity;
-      if (Direct) {
-        auto Count = streamRead(Stream, Output, Requested - Done);
-        if (!Count)
-          return Count.takeError();
-        if (!*Count)
+
+  BionicResult run(Bionic &LibC, InputStream &Stream) {
+    if (!Started) {
+      Started = true;
+      if (Block) {
+        if (Size && Count > UINT64_MAX / Size) {
+          Stream.Error = true;
+          return LibC.streamError(linux_model::ValueOverflow, 0);
+        }
+        Requested = Size * Count;
+        if (!Requested)
+          return value(0);
+        if (Requested > INT32_MAX)
+          return failure("stdio read exceeds the supported signed-int extent");
+        auto Ready = LibC.prepareStreamBuffer(Stream);
+        if (!Ready)
+          return Ready.takeError();
+        if (!*Ready)
           return std::optional<BionicValue>();
-        if (!**Count)
-          break;
-        Done += **Count;
-        continue;
+      } else if (Line) {
+        if (int32_t(Size) <= 0)
+          return LibC.streamError(linux_model::InvalidArgument, 0);
+        Requested = uint32_t(Size) - 1;
       }
-      auto Ready = refillStream(Stream);
-      if (!Ready)
-        return Ready.takeError();
-      if (!*Ready)
-        return std::optional<BionicValue>();
-      Available = Stream.End - Stream.Begin;
-      if (!Available)
-        break;
     }
-    uint64_t Count = std::min(Available, Requested - Done);
-    bool Newline = false;
-    if (Line) {
-      // Bounded guest reads preserve the first newline without probing beyond
-      // it, including buffers that end at a guest mapping boundary.
-      for (uint64_t I = 0; I < Count; ++I) {
-        auto Character = byte(Stream.Buffer + Stream.Begin + I);
+    while (Done < Requested) {
+      if (auto E = LibC.access(0, 0, 0))
+        return std::move(E);
+      if (Output > UINT64_MAX - Done)
+        return failure("stdio destination address overflow");
+      uint64_t Available = Stream.End - Stream.Begin;
+      if (!Available) {
+        if (!Pending) {
+          Direct |= Block && Requested - Done > Stream.Capacity;
+          if (!Direct) {
+            auto Prepared = LibC.prepareStreamRefill(Stream);
+            if (!Prepared)
+              return Prepared.takeError();
+            if (!*Prepared)
+              return std::optional<BionicValue>();
+            if (!**Prepared) {
+              Stream.Begin = Stream.End = 0;
+              break;
+            }
+          }
+        }
+        auto Bytes = read(LibC, Stream);
+        if (!Bytes)
+          return Bytes.takeError();
+        if (!*Bytes) {
+          if (Pending && !Pending->ready())
+            return BionicValue(GuestThreadWait{});
+          return std::optional<BionicValue>();
+        }
+        if (Direct) {
+          if (!**Bytes)
+            break;
+          Done += **Bytes;
+          continue;
+        }
+        Stream.Begin = 0;
+        Stream.End = Available = **Bytes;
+        if (!Available)
+          break;
+      }
+      if (!Block && !Line) {
+        auto Character = LibC.byte(Stream.Buffer + Stream.Begin);
         if (!Character)
           return Character.takeError();
-        if (*Character == '\n') {
-          Count = I + 1;
-          Newline = true;
-          break;
+        ++Stream.Begin;
+        return value(*Character);
+      }
+      uint64_t Bytes = std::min(Available, Requested - Done);
+      bool Newline = false;
+      if (Line) {
+        for (uint64_t I = 0; I < Bytes; ++I) {
+          auto Character = LibC.byte(Stream.Buffer + Stream.Begin + I);
+          if (!Character)
+            return Character.takeError();
+          if (*Character == '\n') {
+            Bytes = I + 1;
+            Newline = true;
+            break;
+          }
         }
       }
+      if (auto E = LibC.copyStream(Stream, Output + Done, Bytes))
+        return std::move(E);
+      Done += Bytes;
+      if (Newline)
+        break;
     }
-    if (auto E = copyStream(Stream, Output, Count))
+    if (Block)
+      return value(Done / Size);
+    if (!Line)
+      return value(UINT32_MAX);
+    if (!Done && Requested)
+      return value(0);
+    if (Output > UINT64_MAX - Done)
+      return failure("stdio destination address overflow");
+    if (auto E = LibC.access(Output + Done, 1, Write))
       return std::move(E);
-    Done += Count;
-    if (Newline)
-      break;
+    const uint8_t Nul = 0;
+    if (auto E = LibC.CPU.write(Output + Done, llvm::ArrayRef(&Nul, 1)))
+      return std::move(E);
+    return value(Output);
   }
-  if (Block)
-    return value(Done / A[1]);
-  if (!Done && Requested)
-    return value(0);
-  if (A[0] > UINT64_MAX - Done)
-    return failure("stdio destination address overflow");
-  if (auto E = access(A[0] + Done, 1, Write))
-    return std::move(E);
-  const uint8_t Nul = 0;
-  if (auto E = CPU.write(A[0] + Done, llvm::ArrayRef<uint8_t>(&Nul, 1)))
-    return std::move(E);
-  return value(A[0]);
+};
+
+BionicResult Bionic::readStream(const NativeCallEvent &Call) {
+  const auto &A = Call.Arguments;
+  if (Call.Name == symbol::FgetsChk &&
+      (int32_t(A[1]) < 0 || uint32_t(A[1]) > A[3]))
+    return failure("fortified fgets extent exceeds destination bounds");
+  // Overflow deliberately takes fread's ordinary EOVERFLOW path in API 28.
+  if (Call.Name == symbol::FreadChk && (!A[1] || A[2] <= UINT64_MAX / A[1]) &&
+      A[1] * A[2] > A[4])
+    return failure("fortified fread extent exceeds destination bounds");
+  auto Pending = std::make_unique<StreamReadWait>(Call);
+  auto R = Pending->resume(*this);
+  if (R && *R && std::holds_alternative<GuestThreadWait>(**R))
+    Threads->waitNative(std::move(Pending));
+  return R;
 }
 } // namespace neverd::emulation::android_model

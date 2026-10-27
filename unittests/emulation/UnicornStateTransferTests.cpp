@@ -1,7 +1,9 @@
-//===- UnicornStateTransferTests.cpp - Atomic real ARM64 engine capture
-//----===//
+//===- UnicornStateTransferTests.cpp - Atomic ARM64 engine capture --------===//
 //
 // NeverD Decompiler
+//
+/// \file
+/// Checks complete Unicorn register transfers under injected failures.
 //
 //===----------------------------------------------------------------------===//
 #include "arch/aarch64/AArch64Machine.h"
@@ -24,9 +26,11 @@ namespace {
 #undef NEVERD_UNICORN_STATE_VALUE
 
 std::atomic<int> FailureRegister{UC_ARM64_REG_INVALID};
+std::atomic<int> WriteFailureRegister{UC_ARM64_REG_INVALID};
 std::atomic<int> CancellationRegister{UC_ARM64_REG_INVALID};
 std::atomic<bool> CancellationStop;
 std::atomic<bool> ExpireCapture;
+unsigned PacketWrites = 0;
 } // namespace
 extern "C" uc_err __real_uc_reg_read(uc_engine *, int, void *);
 // Only this executable injects a single failed transport read, after the
@@ -49,6 +53,38 @@ extern "C" uc_err __wrap_uc_reg_read(uc_engine *Engine, int Register,
       CancellationStop = true;
   }
   return Result;
+}
+
+extern "C" uc_err __real_uc_reg_read_batch(uc_engine *, const int *, void **,
+                                           int);
+extern "C" uc_err __wrap_uc_reg_read_batch(uc_engine *Engine, const int *IDs,
+                                           void **Values, int Count) {
+  if (FailureRegister == UC_ARM64_REG_INVALID &&
+      CancellationRegister == UC_ARM64_REG_INVALID)
+    return __real_uc_reg_read_batch(Engine, IDs, Values, Count);
+  // Split only injected packets so each existing register failure/stop can
+  // occur after a populated prefix. Ordinary captures use the real full batch.
+  for (int I = 0; I < Count; ++I)
+    if (auto Status = __wrap_uc_reg_read(Engine, IDs[I], Values[I]))
+      return Status;
+  return UC_ERR_OK;
+}
+extern "C" uc_err __real_uc_reg_write_batch(uc_engine *, const int *,
+                                            void *const *, int);
+extern "C" uc_err __wrap_uc_reg_write_batch(uc_engine *Engine, const int *IDs,
+                                            void *const *Values, int Count) {
+  ++PacketWrites;
+  for (int I = 0; I < Count; ++I) {
+    auto Failure = WriteFailureRegister.load();
+    if (IDs[I] == Failure && WriteFailureRegister.compare_exchange_strong(
+                                 Failure, UC_ARM64_REG_INVALID)) {
+      if (I)
+        if (auto Status = __real_uc_reg_write_batch(Engine, IDs, Values, I))
+          return Status;
+      return UC_ERR_RESOURCE;
+    }
+  }
+  return __real_uc_reg_write_batch(Engine, IDs, Values, Count);
 }
 
 namespace neverd::emulation {
@@ -81,9 +117,11 @@ protected:
   AArch64MachineState State;
   void SetUp() override {
     FailureRegister = UC_ARM64_REG_INVALID;
+    WriteFailureRegister = UC_ARM64_REG_INVALID;
     CancellationRegister = UC_ARM64_REG_INVALID;
     CancellationStop = false;
     ExpireCapture = false;
+    PacketWrites = 0;
     Memory = llvm::cantFail(MemoryProjection::create(MemoryLimit));
     const unsigned User = GetParam() ? UserAccessible : SupervisorPermission;
     llvm::cantFail(
@@ -104,10 +142,12 @@ protected:
     State.reg(AArch64Register::NZCV) = PoisonedNZCV;
     State.reg(AArch64Register::FPCR) = PoisonedFPControl;
     State.reg(AArch64Register::FPSR) = PoisonedFPControl;
-    State.Vectors.fill({InitialVectorLow, InitialVectorHigh});
+    for (unsigned I = 0; I < State.Vectors.size(); ++I)
+      State.Vectors[I] = {InitialVectorLow + I, InitialVectorHigh - I};
   }
   void TearDown() override {
     FailureRegister = UC_ARM64_REG_INVALID;
+    WriteFailureRegister = UC_ARM64_REG_INVALID;
     CancellationRegister = UC_ARM64_REG_INVALID;
     CancellationStop = false;
     ExpireCapture = false;
@@ -159,6 +199,70 @@ TEST_P(UnicornStateTransfer, CapturesDeclaredWidthsWithoutStaleUpperBits) {
   const auto Before = State;
   ASSERT_EQ(llvm::toString(step()), "");
   expectCaptured(Before);
+}
+TEST_P(UnicornStateTransfer, ContinuedStepsReuseOnlyCapturedUserInput) {
+  ASSERT_EQ(llvm::toString(step()), "");
+  uint8_t Bytes[aarch64::InstructionBytes];
+  llvm::support::endian::write32le(Bytes, IncrementInteger);
+  for (unsigned I = 0; I < SequentialSteps; ++I) {
+    ASSERT_EQ(
+        llvm::toString(Memory->write(State.reg(AArch64Register::PC), Bytes)),
+        "");
+    const auto Before = PacketWrites;
+    ASSERT_EQ(llvm::toString(step()), "");
+    if (GetParam())
+      EXPECT_EQ(PacketWrites, Before);
+    else
+      EXPECT_GT(PacketWrites, Before);
+  }
+  State.reg(AArch64Register::PC) = Code;
+  const auto Before = PacketWrites;
+  ASSERT_EQ(llvm::toString(step()), "");
+  EXPECT_GT(PacketWrites, Before);
+}
+TEST_P(UnicornStateTransfer, FailedWarmCaptureRestoresInputBeforeRetry) {
+  ASSERT_EQ(llvm::toString(step()), "");
+  std::vector<int> Registers(std::begin(RegisterIDs), std::end(RegisterIDs));
+  Registers.insert(Registers.end(), std::begin(VectorIDs), std::end(VectorIDs));
+  uint8_t Bytes[aarch64::InstructionBytes];
+  llvm::support::endian::write32le(Bytes, IncrementInteger);
+  for (int Register : Registers) {
+    SCOPED_TRACE(Register);
+    ASSERT_EQ(
+        llvm::toString(Memory->write(State.reg(AArch64Register::PC), Bytes)),
+        "");
+    const auto Before = State;
+    FailureRegister = Register;
+    EXPECT_EQ(llvm::toString(step()), uc_strerror(UC_ERR_RESOURCE));
+    EXPECT_EQ(FailureRegister.load(), UC_ARM64_REG_INVALID);
+    EXPECT_EQ(State.Registers, Before.Registers);
+    EXPECT_EQ(State.Vectors, Before.Vectors);
+    const auto WritesBeforeRetry = PacketWrites;
+    ASSERT_EQ(llvm::toString(step()), "");
+    EXPECT_GT(PacketWrites, WritesBeforeRetry);
+    auto Expected = Before;
+    Expected.reg(AArch64Register::X0) += IntegerIncrement;
+    Expected.reg(AArch64Register::PC) += aarch64::InstructionBytes;
+    EXPECT_EQ(State.Registers, Expected.Registers);
+    EXPECT_EQ(State.Vectors, Expected.Vectors);
+  }
+}
+TEST_P(UnicornStateTransfer, PartialInstallRetainsInputAndRetriesAllRegisters) {
+  const auto Before = State;
+  std::vector<int> Registers(std::begin(RegisterIDs), std::end(RegisterIDs));
+  Registers.insert(Registers.end(), std::begin(VectorIDs), std::end(VectorIDs));
+  for (int Register : Registers) {
+    SCOPED_TRACE(Register);
+    State = Before;
+    WriteFailureRegister = Register;
+    EXPECT_EQ(llvm::toString(step()), uc_strerror(UC_ERR_RESOURCE));
+    EXPECT_EQ(WriteFailureRegister.load(), UC_ARM64_REG_INVALID);
+    EXPECT_EQ(State.UserMode, Before.UserMode);
+    EXPECT_EQ(State.Registers, Before.Registers);
+    EXPECT_EQ(State.Vectors, Before.Vectors);
+    ASSERT_EQ(llvm::toString(step()), "");
+    expectCaptured(Before);
+  }
 }
 TEST_P(UnicornStateTransfer, FailedVectorReadCannotPublishScalarOrVectorState) {
   const auto Before = State;

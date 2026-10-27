@@ -14,6 +14,8 @@
 #include "Internal.h"
 #include "platform/WindowsFile.h"
 
+#include "neverd/web/Limits.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA256.h"
 
@@ -56,7 +58,9 @@ public:
 #ifdef _WIN32
     Destination = win::newDirectory(Path, win::DirectoryAccess::Traverse);
 #else
-    if (Path.empty() || Path.size() > 32768 || Path.find('\0') != Path.npos)
+    if (Path.empty() ||
+        Path.size() > ::neverd::limits::web::kExportDirectoryPathSizeLimit ||
+        Path.find('\0') != Path.npos)
       throw Error("invalid_path");
     const std::filesystem::path P{Path};
     const auto Name = P.filename().string();
@@ -83,8 +87,8 @@ public:
   void write(std::string_view Name, uint64_t Size, std::string_view Hash,
              const std::function<std::string(uint64_t, uint64_t)> &Read) {
     validateMemberName(Name);
-    constexpr uint64_t MaxOutput = 1024ULL * 1024 * 1024;
-    if (Size > MaxOutput - Written || Files >= 40000)
+    if (Size > ::neverd::limits::web::kExportDirectoryMaxOutput - Written ||
+        Files >= ::neverd::limits::web::kExportDirectoryWriteFilesLimit)
       throw Error("export_budget_exceeded");
 #ifdef _WIN32
     auto F = win::createFile(Destination.Directory.get(), Name);

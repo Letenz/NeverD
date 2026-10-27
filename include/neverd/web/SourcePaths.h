@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceOrigins.h"
 #include "neverd/web/SourceValues.h"
 
@@ -19,9 +20,6 @@
 namespace neverd::web {
 inline constexpr std::string_view CapturedPathProfile =
     "javascript-captured-portable-path-candidates-v1";
-inline constexpr uint64_t MaxCapturedPathSteps = 2000000;
-inline constexpr uint64_t MaxCapturedPathUnits = 4096;
-inline constexpr uint64_t MaxCapturedPathAllocatedUnits = 1048576;
 
 enum class CapturedPathKind {
   Unknown,

@@ -155,6 +155,8 @@ Bleibt ein Ziel ungelöst, nachdem Produzenten-, Bedingungs-, Register- und Fram
 
 `EntryFrameBounds` deklariert ausdrücklich einen nicht überlaufenden Bereich `[Begin, End)` relativ zum Eintrittswert von `FrameBaseRegister`. Daraus folgen weder Speicherzugriffsrechte noch Aliasfreiheit. Ohne Angabe bleibt der Wurzelbereich modular. Der native Beweis verlangt dieselben Frame-Grenzen im Aufrufervertrag und bindet sie in seinen Nachweis ein; der LLVM-Beweis behält den bestehenden Frame-Bereich. Wiederherstellung allein ist kein Äquivalenzzertifikat.
 
+`EntryFrameBounds::ExcludedAddressRanges` kann zusätzlich absolute, nicht leere und nicht überlaufende Intervalle deklarieren, die den gesamten Eintrittsframe ausschließen. Dies sind ausdrückliche Aufrufervoraussetzungen; sie werden niemals aus beobachteten Adressen oder der Herkunft eines Zeigers abgeleitet. `ProveStoreFrameSeparation` bewahrt aktuelle Frame-Bytes und gespeicherte affine Zeiger erst nach dem Beweis, dass der vollständige Schreibbereich den Frame nicht berührt. Unbewiesene Schreibzugriffe behalten die normale Alias-Invalidierung; unbekannte Beweise oder erschöpfte Budgets werden abgelehnt. Auch die vollständige CMPXCHG-Schreibphase wird geprüft. Der native Beweis verlangt dieselbe Ausschlussliste im Frame-Vertrag. Rohe Nachweise binden Liste und Beweisstrategie; Verbraucher des Restcodes müssen die Eingabevoraussetzungen beibehalten.
+
 <!-- i18n-section: execution-contract -->
 
 ## Ausführungsvertrag
@@ -163,7 +165,7 @@ Der Binäradapter akzeptiert derzeit fertig gelinkte x64-ELF- und PE-Abbilder an
 ihren gemappten Adressen. Mappings, Bytes und Berechtigungen müssen unverändert
 bleiben; gleichzeitige Änderungen sind ausgeschlossen. Striktes Lifting bei
 Bedarf folgt dem erreichbaren Maschinencode. Nicht unterstützte Instruktionen,
-Aufrufe, undurchsichtige Operationen, geordnete Speicherzugriffe, nicht
+Aufrufe, undurchsichtige Operationen, geordnete Speicherzugriffe außerhalb des unten beschriebenen engen Raw-CAS-Bereichs, nicht
 aufgelöster Kontrollfluss und sprachabhängige Ausnahmebehandlung stoppen die
 Rekonstruktion.
 
@@ -205,6 +207,22 @@ Die exakten x64-Formen von `PUSHFQ`/`POPFQ` bleiben im Restprogramm erhalten. Di
 Vor einem vollständigen Flags-Schnappschuss muss jedes modellierte arithmetische Flag und das Richtungsflag innerhalb der rekonstruierten Funktion definiert sein. Auch ein direkter Flag-Lesezugriff braucht auf jedem erreichbaren Vorgängerpfad eine Definition, selbst wenn die symbolische Vereinfachung seinen Wert aufhebt. Andernfalls wird die Rekonstruktion abgelehnt, statt C mit einer Falle für ein unbekanntes Register auszugeben.
 
 LowIR-Temporärwerte gelten nur innerhalb einer gehobenen nativen Anweisung. Jedes gelesene Byte muss zuvor in derselben Anweisung definiert worden sein; ein wiederverwendeter Offset aus einer früheren Anweisung oder ein algebraisch aufgehobener undefinierter Wert ist kein Beleg für gültigen Quellcode. Eintrittskonstanten dürfen nur physische Register binden.
+
+<!-- i18n-section: supervisor-interrupt-control -->
+
+## Interrupt-Flag im Supervisor-Modus
+
+Die rohe LowIR-Wiederherstellung und native Relationsbeweise erlauben kanonische x64-Formen von `CLI`/`STI` nur mit dem expliziten Profil `KernelX64NoFaultV1`. Die gemeinsame x64-Flag-Semantik löscht beziehungsweise setzt IF und erhält alle anderen Flags, allgemeinen Register und Speicherbytes. Die Wiederherstellung behält das ursprüngliche Intrinsic bei; Beweise erfassen seinen Flag-Übergang und vergleichen stets die abschließenden Systemflags, auch ohne Beobachtungen gewöhnlicher Register.
+
+Das Profil legt CPL0/IOPL0 fest und schließt asynchrone Ereignisse, die Zustellung von Debug-Ereignissen und Privilegwechsel aus. Die vorübergehende Interrupt-Sperre von STI wird daher nicht beobachtet. Ein fehlendes Profil oder ein Benutzerprofil weist diese Befehle zurück; die bestehende Quellcode-ABI bleibt auf ihr Benutzerprofil beschränkt. Diese Unterstützung liefert kein Modell für Interrupt-Zustellung oder Privilegwechsel.
+
+<!-- i18n-section: raw-cmpxchg -->
+
+## Vergleich und Austausch im sequenziellen Raw-Modell
+
+Die Raw-Spezialisierung akzeptiert `ATOMIC_CMPXCHG` nur mit `ExplicitMachineState=true` und `NormalNonfaultingExecution=true`, `Default`-Speicher, einer 64-Bit-Adresse, gleich breiten Werten von 1/2/4/8 Byte und `SequentiallyConsistent`. Atomare Operation, Speicherordnung, Adressraum und Vorkommen bleiben erhalten. Es gilt der bestehende sequenzielle Ausführungsbereich ohne gleichzeitige oder asynchrone Änderungen; ein Nebenläufigkeits- oder MMIO-Modell entsteht dadurch nicht. Andere atomare Operationen, 16-Byte-CAS, andere Speicherordnungen, segmentierte CAS und geordnete LOAD/STORE bleiben in diesem Rekonstruktionspfad unzulässig.
+
+Die bestehenden Verträge `ExternalStoresPreserveEntryReturnSlot` und `ExternalStoresDisjointEntryFrame` gelten für die gesamte Schreibphase, auch bei fehlgeschlagenem Vergleich oder unverändertem Wert. `ExternalStoresPreserveEntryReturnSlot` schützt nur den Eintritts-Rückkehrslot. `ExternalStoresDisjointEntryFrame` schützt nur die deklarierten Frame-Grenzen; aktive native Rückkehrzellen außerhalb benötigen weiterhin unabhängige Trennungsevidenz. Es wird keine zusätzliche Nichtalias-Voraussetzung abgeleitet. Die Maschinenzustands-Quelltextkapselung sowie die unabhängigen LowIR-/nativen/LLVM-Beweispfade lehnen erreichbare geordnete CAS weiterhin ab. Ein vollständiges Raw-Ergebnis ist kein Quelltext- oder Äquivalenzzertifikat.
 
 <!-- i18n-section: machine-state -->
 
@@ -354,3 +372,17 @@ Wiederholungen des Eintrittspräfixes besuchen wartende Zweige, bevor eine früh
 
 
 Die Ausrichtungssuche übergibt `MaxCuts` an die gemeinsame Inferenz. Nach Eingabeprüfung und Auswahl einer vollständigen Rückkopplungsschnittmenge wird eine zu große Menge vor symbolischer Eintrittsexploration oder Erweiterung abgelehnt. Diese Grenze je Plan reduziert weder `MaxCutpointAttempts` noch zulässige Versuche mit einem einzelnen Schnitt. Auswahlaufwand gefilterter Familien bleibt angerechnet. Eigenständige und native Inferenz behalten ihre Grenzen; jede akzeptierte Relation benötigt weiterhin den unveränderten vollständigen Prüfer.
+
+<!-- i18n-section: immutable-wide-reads -->
+
+## Vollständige unveränderliche breite Lesezugriffe
+
+Unter `ExplicitMachineState` und `NormalNonfaultingExecution` darf ein zugelassener 16-Byte-`LOAD` unveränderliche Abbilddaten nur verwenden, wenn jede mögliche Adresse einen vollständigen 16-Byte-Nachweis besitzt. Die symbolische Ausführung erhält alle 128 Bits. Der Restcode materialisiert skalare Teile in Speicherreihenfolge und erfasst eine möglicherweise überlappende Adresse vor dem ersten Schreiben des Ziels. Beide Byteordnungen teilen diese Regel; jede erzeugte Operation verbraucht das bestehende Operationsbudget.
+
+Ein unvollständiger Adressbereich oder fehlender unveränderlicher Abschnitt erhält den ganzen Laufzeitzugriff ohne Teilnachweise. Eine ungültige Byteanzahl des Providers führt zur Ablehnung. Schreibbarer Speicher und Laufzeitbeobachtungen erhalten keine Unveränderlichkeitsbefugnis. Rohe Belege binden sämtliche Nachweisbytes einschließlich der oberen Hälfte. Quellcodekapselung und unabhängige native Beweise behalten ihre bisherigen Breiten- und Umgebungsanforderungen.
+
+<!-- i18n-section: unrooted-native-stack -->
+
+## Interne Übergänge nach einem Stackwechsel
+
+Explizite rohe Maschinenregionen können interne near CALL- und RET-Anweisungen verfolgen, wenn sich der aktuelle Stackzeiger nicht mehr relativ zum Eintrittswert ausdrücken lässt. Der Architekturadapter erhält die tatsächliche Zielerfassung, das Push, das Lesen des Rücksprungworts und das Pop. Jeder interne Rücksprung benötigt weiterhin einen vollständigen Beweis der endlichen Zielmenge aus dem tatsächlichen Stackwort. Nur nachweislich eintrittsrelative Rücksprungzellen gelangen in die Frame-Projektion und das Erhaltungsinventar; der Verlust anderer Stackbeziehungen an einer Graphgrenze kann weiterhin zur Ablehnung führen. Für gewöhnliche Funktionen gelten die Anforderungen zur Frame-Wiederherstellung weiter. Das Ergebnis beschreibt eine rohe Region; die Zusammensetzung der gesamten Funktion sowie die Quellcode- oder native Äquivalenz müssen separat bewiesen werden.

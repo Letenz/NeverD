@@ -80,7 +80,8 @@ void KernelModel::configureFrameworkDeviceHost() {
                                      bool Exclusive,
                                      bool Filter) -> DeviceResult {
     auto *Configured = pnpDeviceForPDO(PDO);
-    if (!Configured || !Configured->AddDeviceActive || !isProviderDevice(PDO))
+    if (!Configured || !Configured->AddDeviceActive ||
+        !isPnpProviderDevice(PDO))
       return frameworkDeviceError(
           "PnP framework creation requires the active physical device");
     uint32_t PowerFlags = windows::DevicePowerPageable;
@@ -165,10 +166,12 @@ void KernelModel::configureFrameworkDeviceHost() {
       return frameworkDeviceError(
           "framework deletion requires its own live WDM device");
     const uint64_t PDO = Object->second.PnpDevice;
-    if (std::any_of(Files.begin(), Files.end(), [&](const auto &File) {
-          return File.second.Address && (File.second.Device == Device ||
-                                         (PDO && File.second.PnpDevice == PDO));
-        }))
+    if (std::any_of(FileObjects.begin(), FileObjects.end(),
+                    [&](const auto &File) {
+                      return File.second.Address &&
+                             (File.second.Device == Device ||
+                              (PDO && File.second.PnpDevice == PDO));
+                    }))
       return frameworkDeviceError(
           "framework device deletion with live files is outside this profile");
     if (std::any_of(WorkItems.begin(), WorkItems.end(),
@@ -196,8 +199,8 @@ void KernelModel::configureFrameworkDeviceHost() {
           "framework device deletion with an active IRP is outside this "
           "profile");
     for (const auto &Key : Owner->second) {
-      auto Link = SymbolicLinks.find(Key);
-      if (Link == SymbolicLinks.end() || Link->second != Object->second.Name)
+      const auto Link = findSymbolicLink(Key);
+      if (!Link || SymbolicLinks.at(Link).Target != Object->second.Name)
         return frameworkDeviceError(
             "framework device symbolic-link ownership changed before deletion");
     }
@@ -271,6 +274,8 @@ void KernelModel::configureFrameworkDeviceHost() {
 
 std::optional<unsigned>
 KernelModel::argumentCount(const KernelExportRegistry::Export &Export) {
+  if (Export.Kind == KernelExportRegistry::ExportKind::ModuleData)
+    return std::nullopt;
   if (Export.Kind == KernelExportRegistry::ExportKind::ModuleExport &&
       Export.Module == KernelProvider)
     return argumentCount(Export.Name);
@@ -289,6 +294,8 @@ llvm::Expected<uint64_t> KernelModel::call(
     llvm::ArrayRef<uint64_t> Arguments,
     llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument,
     const KernelContextCapture *Context) {
+  if (Export.Kind == KernelExportRegistry::ExportKind::ModuleData)
+    return llvm::createStringError("kernel data exports are not callable");
   if (Export.Kind == KernelExportRegistry::ExportKind::ModuleExport &&
       Export.Module == KernelProvider)
     return call(Export.Name, Arguments, ReadArgument, Context);
@@ -422,7 +429,7 @@ std::optional<KernelGuestCall> KernelModel::takeIndependentGuestCall() {
       return KernelGuestCall{Call->ExecutionToken.value_or(GuestCallToken{
                                  GuestCallOwner::Framework, Call->Token}),
                              Call->PC, std::move(Call->Arguments),
-                             Call->SynchronizationObject};
+                             Call->SynchronizationObject, Call->ProcessID};
   return std::nullopt;
 }
 

@@ -8,9 +8,11 @@
 
 #include "ControlDiscovery.h"
 
+#include "neverd/analysis/Limits.h"
 #include "neverd/symbolic/SymMBA.h"
 
 #include <algorithm>
+#include <cassert>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -37,11 +39,13 @@ std::optional<SymRef>
 normalizeFrameExpression(SymContext &Ctx, SymRef Value,
                          uint64_t MaxSymbolicNodes,
                          FrameOffsetNormalization &Budget) {
-  // Charge the context prefix that readability inspection can visit. Counts
-  // are fixed-width metadata: obtain the price without walking operand lists
-  // or inspecting constant payloads. These are admission/measurement units,
-  // not an upper bound on rebuilding, sorting or default sample defect guards.
-  for (uint64_t I = 0, N = Ctx.numNodes(); I != N; ++I) {
+  // Readability extends a context-owned prefix cache. Charge only its pending
+  // extension: earlier queries or builders have already computed older costs.
+  // Counts are fixed-width metadata, so pricing needs no operand-list walk or
+  // constant-payload inspection. These are admission/measurement units, not an
+  // upper bound on rebuilding, sorting or default sample defect guards.
+  for (uint64_t I = Ctx.numCachedReadabilityNodes(), N = Ctx.numNodes(); I != N;
+       ++I) {
     const SymRef R(static_cast<uint32_t>(I));
     // Operand counts and bit widths are 32-bit, so this sum cannot overflow.
     const uint64_t Cost =
@@ -60,7 +64,9 @@ normalizeFrameExpression(SymContext &Ctx, SymRef Value,
   // Never interpret a large caller budget as MBA's unlimited sentinel.
   Options.MaxWork = static_cast<size_t>(
       std::min<uint64_t>(Remaining, std::numeric_limits<size_t>::max() - 1));
-  const auto Result = simplifyMBADeep(Ctx, Value, Options);
+  const auto Result =
+      Budget.Rewrites ? simplifyMBADeep(Ctx, Value, Options, *Budget.Rewrites)
+                      : simplifyMBADeep(Ctx, Value, Options);
   Budget.WorkUsed += Result.Work;
   // The context bound gates publication, not peak allocation inside MBA.
   if (Ctx.numNodes() > MaxSymbolicNodes || !Result.Expr ||
@@ -146,7 +152,13 @@ static FrameOffset proveFrameOffsetImpl(
     SymContext &Ctx, SymRef Predicate, SymRef Value, SymRef Root,
     solver::SolverOptions Settings, uint64_t MaxQueries,
     uint64_t MaxSymbolicNodes, uint64_t &Queries, FiniteQueryCache *Cache,
-    FiniteDomainEncoding *Encoding, FrameOffsetNormalization *Normalization) {
+    FiniteDomainEncoding *Encoding, FrameOffsetNormalization *Normalization,
+    FiniteValues *CompletedDomain = nullptr) {
+  // Only the uncached normalization retry requests this evidence. Algebraic
+  // offsets carry no feasible-domain witness and leave it unknown.
+  assert(!CompletedDomain || !Cache);
+  if (CompletedDomain)
+    *CompletedDomain = {};
   if (Normalization)
     Normalization->WorkUsed = 0;
   const auto Valid = [&](SymRef R, unsigned Width) {
@@ -160,7 +172,8 @@ static FrameOffset proveFrameOffsetImpl(
     return {FrameOffsetStatus::Infeasible};
   if (const auto Offset = frameRelativeOffset(Ctx, Value, Root))
     return {FrameOffsetStatus::Exact, *Offset};
-  unsigned Remaining = 16;
+  unsigned Remaining =
+      ::neverd::limits::analysis::kFrameOffsetsProveFrameOffsetImplRemaining;
   const auto Remainder = relativeRemainder(Ctx, Value, Root, Remaining);
   const SymRef Difference = Remainder ? *Remainder : Ctx.mkSub(Value, Root);
   if (Ctx.numNodes() > MaxSymbolicNodes)
@@ -202,26 +215,38 @@ static FrameOffset proveFrameOffsetImpl(
                                   MaxQueries, MaxSymbolicNodes, Queries);
   if (Ctx.numNodes() > MaxSymbolicNodes)
     return {FrameOffsetStatus::BudgetExceeded};
-  if (Cache && !Cached) {
-    if (CacheBias && Domain.Status == FiniteValueStatus::Complete) {
-      auto Unbiased = Domain;
+  const auto RememberDomain = [&](const FiniteValues &Proved) {
+    if (!Cache || Cached ||
+        (Proved.Status != FiniteValueStatus::Complete &&
+         Proved.Status != FiniteValueStatus::TooManyValues))
+      return;
+    if (CacheBias && Proved.Status == FiniteValueStatus::Complete) {
+      auto Unbiased = Proved;
       for (auto &Tuple : Unbiased.Tuples)
         if (Tuple.size() == 1)
           Tuple.front() -= CacheBias;
       Cache->store(std::move(Prepared), Unbiased);
     } else {
-      Cache->store(std::move(Prepared), Domain);
+      Cache->store(std::move(Prepared), Proved);
     }
-  }
+  };
+  RememberDomain(Domain);
   switch (Domain.Status) {
   case FiniteValueStatus::Complete:
-    if (Domain.Tuples.empty())
+    if (Domain.Tuples.empty()) {
+      if (CompletedDomain)
+        *CompletedDomain = Domain;
       return {FrameOffsetStatus::Infeasible};
+    }
     if (Domain.Tuples.size() != 1 || Domain.Tuples.front().size() != 1)
       return {FrameOffsetStatus::Invalid};
+    if (CompletedDomain)
+      *CompletedDomain = Domain;
     return {FrameOffsetStatus::Exact,
             Domain.Tuples.front().front() + (Cached ? CacheBias : 0)};
   case FiniteValueStatus::TooManyValues:
+    if (CompletedDomain)
+      *CompletedDomain = Domain;
     return {FrameOffsetStatus::NonUnique};
   case FiniteValueStatus::Invalid:
     return {FrameOffsetStatus::Invalid};
@@ -230,17 +255,37 @@ static FrameOffset proveFrameOffsetImpl(
     if (!Cached && Normalization && Normalization->MaxWork)
       if (const auto Normalized = normalizeFrameExpression(
               Ctx, Value, MaxSymbolicNodes, *Normalization)) {
-        // Algebra proves the offset independently of Predicate. It provides
-        // no satisfiability witness and must not cache a nonempty domain.
-        if (const auto Offset = frameRelativeOffset(Ctx, *Normalized, Root))
+        // Algebra alone supplies no feasibility witness. An already completed
+        // empty projection under the same predicate supplies the missing
+        // evidence, without another solver query or a new memory premise.
+        if (const auto Offset = frameRelativeOffset(Ctx, *Normalized, Root)) {
+          if (Cache)
+            if (auto Feasible = Cache->lookup(Ctx, Predicate, {}, 1);
+                Feasible && Feasible->Status == FiniteValueStatus::Complete) {
+              for (auto &Tuple : Feasible->Tuples)
+                Tuple = {*Offset};
+              RememberDomain(*Feasible);
+              if (Feasible->Tuples.empty())
+                return {FrameOffsetStatus::Infeasible};
+            }
           return {FrameOffsetStatus::Exact, *Offset};
+        }
         // An exact derivation may still need the ordinary predicate-dependent
         // proof. Retry once with a fresh encoding and the original limits and
         // cumulative query count. Do not normalize again or reset WorkUsed.
-        // Neither outcome of this fallback enters the finite-domain cache.
-        if (*Normalized != Value)
-          return proveFrameOffset(Ctx, Predicate, *Normalized, Root, Settings,
-                                  MaxQueries, MaxSymbolicNodes, Queries);
+        // Exact normalization preserves every projected value under the same
+        // predicate. A completed retry can therefore populate the original
+        // query's cache, with its original constant bias. A structural offset
+        // or incomplete retry supplies no finite-domain evidence to store.
+        if (*Normalized != Value) {
+          FiniteValues RetriedDomain;
+          const auto Retried =
+              proveFrameOffsetImpl(Ctx, Predicate, *Normalized, Root, Settings,
+                                   MaxQueries, MaxSymbolicNodes, Queries,
+                                   nullptr, nullptr, nullptr, &RetriedDomain);
+          RememberDomain(RetriedDomain);
+          return Retried;
+        }
       }
     return {FrameOffsetStatus::BudgetExceeded};
   }

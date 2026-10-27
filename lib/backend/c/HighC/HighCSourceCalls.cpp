@@ -4,6 +4,7 @@
 #include "HighCWriter.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/libc/LibCObjC.h"
@@ -140,6 +141,67 @@ HighCWriter::sourceCallDefinition(const SourceCallTypeHint &Hint,
 
 std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
   const auto &Hint = *E.SourceCallHint;
+  if (Hint.CallKind == SourceCallTypeHint::Kind::Analyst) {
+    std::string Diagnostic;
+    if (!Hint.AnalystSite || Hint.AnalystSite->Instruction != E.CallSiteAddr ||
+        Hint.Signature.Architecture != Opts.TheArch ||
+        !validateSourceABI(Hint.Signature, Diagnostic) ||
+        E.Operands.size() != Hint.Signature.Parameters.size())
+      throw std::invalid_argument("The call-site contract lost its original "
+                                  "occurrence or complete operands");
+    const auto &Signature = Hint.Signature;
+    const unsigned Fixed = Hint.AnalystFixedCount < 0
+                               ? Signature.Parameters.size()
+                               : Hint.AnalystFixedCount;
+    if (Fixed > Signature.Parameters.size())
+      throw std::invalid_argument("Invalid call-site variadic prefix");
+    std::string Prototype = "(*)(";
+    if (!Fixed)
+      Prototype += "void";
+    for (unsigned I = 0; I < Fixed; ++I) {
+      if (I)
+        Prototype += ", ";
+      Prototype += declarationToC(Signature.Parameters[I].Type, "");
+    }
+    if (Hint.AnalystFixedCount >= 0)
+      Prototype += ", ...";
+    Prototype += ")";
+    if (E.IsIndirectCall && !E.IndirectTarget)
+      throw std::invalid_argument(
+          "The original indirect call target is unavailable");
+    std::string Target =
+        E.IsIndirectCall
+            ? exprStr(*E.IndirectTarget)
+            : functionIdentifier(!E.CallTarget.empty() ? E.CallTarget
+                                                       : Hint.TargetName);
+    if (Target.empty())
+      throw std::invalid_argument(
+          "The original call-site target is unresolved");
+    std::string Call = "((" + declarationToC(Signature.ReturnType, Prototype) +
+                       ")(uintptr_t)(" + Target + "))(";
+    for (unsigned I = 0; I < E.Operands.size(); ++I) {
+      const auto &Argument = E.Operands[I];
+      const auto Value = Argument
+                             ? sourceValue(exprStr(*Argument), Argument->Type,
+                                           Signature.Parameters[I].Type)
+                             : std::nullopt;
+      if (!Value)
+        throw std::invalid_argument(
+            "A complete call-site argument carrier is unavailable");
+      if (I)
+        Call += ", ";
+      Call += *Value;
+    }
+    Call += ")";
+    if (Signature.ReturnType->Kind == NdTypeKind::Void ||
+        Signature.ReturnType->Kind == NdTypeKind::Ptr)
+      return Call;
+    const auto Value = sourceValue(Call, Signature.ReturnType, E.Type);
+    if (!Value)
+      throw std::invalid_argument(
+          "The call-site result carrier is incompatible");
+    return *Value;
+  }
   if ((hasIndirectSourceParameters(Hint.Signature) || Hint.ByValueCopy) &&
       (!CurrentFunc ||
        !isObjCByValueCopyHint(Hint, CurrentFunc->Entry, Opts.TheArch) ||
@@ -288,7 +350,9 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
        Signature.Architecture != Arch::AArch64 ||
        Opts.TheArch != Arch::AArch64 || !Signature.HasExplicitABI ||
        Signature.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK ||
-       Hint.NilTerminated->Objects.size() > 61 ||
+       Hint.NilTerminated->Objects.size() >
+           ::neverd::limits::backend::
+               kHighCSourceCallsHighCWriterRenderSourceCallExprObjcMsgSendHintNilTerminatedObjectsSizeLimit ||
        Signature.Parameters.size() != 3 + Hint.NilTerminated->Objects.size() ||
        std::any_of(Hint.NilTerminated->Objects.begin(),
                    Hint.NilTerminated->Objects.end(),
@@ -671,7 +735,10 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                           true) +
           "_address()";
     } else if (Hint.CallKind == Kind::RuntimeConstantObjectTable) {
-      if (!Hint.TargetAddress || !Hint.ByteCount || Hint.ByteCount > 65536 ||
+      if (!Hint.TargetAddress || !Hint.ByteCount ||
+          Hint.ByteCount >
+              ::neverd::limits::backend::
+                  kHighCSourceCallsHighCWriterRenderSourceCallExprHintByteCountLimit ||
           Hint.ByteCount % 8)
         return bad("constant-object table has no complete bounded extent");
       Value = "neverd_objc_constant_object_table_" +
@@ -846,7 +913,9 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Hint.CallKind != Kind::RuntimeObjCMetadataFactory &&
       Hint.CallKind != Kind::RuntimeObjCForwardedInitializer)
     return bad("unknown binding kind");
-  if (Signature.Parameters.size() > 64 ||
+  if (Signature.Parameters.size() >
+          ::neverd::limits::backend::
+              kHighCSourceCallsHighCWriterRenderSourceCallExprSignatureParametersSizeLimit ||
       E.Operands.size() != Signature.Parameters.size())
     return bad("argument count disagrees with the source declaration");
   std::string ABIDiagnostic;
@@ -933,7 +1002,9 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         (Format.DynamicWithoutArguments && !DynamicWithoutArguments) ||
         (Format.DynamicPointerArguments && !DynamicPointerArguments) ||
         (Format.DynamicInteger64Arguments && !DynamicInteger64Arguments) ||
-        Format.AlternativeFormatAddresses.size() >= 64 ||
+        Format.AlternativeFormatAddresses.size() >=
+            ::neverd::limits::backend::
+                kHighCSourceCallsHighCWriterRenderSourceCallExprFormatAlternativeFormatAddressesSizeLimit ||
         !std::is_sorted(Format.AlternativeFormatAddresses.begin(),
                         Format.AlternativeFormatAddresses.end()) ||
         std::adjacent_find(Format.AlternativeFormatAddresses.begin(),

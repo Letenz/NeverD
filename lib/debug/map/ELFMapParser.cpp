@@ -24,7 +24,8 @@
 namespace neverd {
 
 void parseELFMap(llvm::StringRef Content,
-                 std::map<va_t, FunctionSym> &Functions) {
+                 std::map<va_t, FunctionSym> &Functions,
+                 std::vector<MapSection> *Sections) {
   bool InTable = false;
   bool HasStructuredColumns = false;
   std::string CurrentSection;
@@ -72,11 +73,16 @@ void parseELFMap(llvm::StringRef Content,
     if (Gap >= 9 && Gap < 17)
       continue;
 
+    const auto placeSection = [&] {
+      CurrentSection = Payload.str();
+      if (Sections)
+        Sections->push_back(MapSection{{}, CurrentSection, VMA, Size});
+    };
     if (HasStructuredColumns && Gap < 9) {
       // In the producer's layout these are output sections or top-level
       // assignments. Section names need not begin with a dot.
       if (!Payload.contains('='))
-        CurrentSection = Payload.str();
+        placeSection();
       continue;
     }
 
@@ -88,7 +94,7 @@ void parseELFMap(llvm::StringRef Content,
         continue;
       if (Payload.starts_with(".")) {
         if (!Payload.contains(' '))
-          CurrentSection = Payload.str();
+          placeSection();
         continue;
       }
       if (Payload.starts_with("("))

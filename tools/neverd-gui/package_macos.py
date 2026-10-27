@@ -226,11 +226,15 @@ def audit_bundle(bundle: Path) -> dict:
 
 
 def copy_notices(bundle: Path, source: Path, origins: set[Path], qt_version: str,
-                 qt_licenses: Path, kddw_source: Path, json_license: Path) -> None:
+                 qt_licenses: Path, kddw_source: Path, json_license: Path,
+                 engine_notices: Path) -> None:
     licenses = bundle / "Contents/Resources/Licenses"
     licenses.mkdir()
-    for name in ("LICENSE", "NOTICE", "ATTRIBUTION.md"):
+    for name in ("LICENSE", "NOTICE", "ATTRIBUTION.md", "THIRD_PARTY_NOTICES.md"):
         shutil.copy2(source.parents[1] / name, licenses / ("NeverD-" + name))
+    shutil.copytree(source.parents[1] / "LICENSES/zlib", licenses / "zlib")
+    if engine_notices.is_dir():
+        shutil.copytree(engine_notices, licenses / "Engine")
     if not qt_licenses.is_dir():
         raise RuntimeError(f"Qt {qt_version} license directory required: {qt_licenses}")
     shutil.copytree(qt_licenses, licenses / ("Qt-" + qt_version))
@@ -265,19 +269,24 @@ def copy_notices(bundle: Path, source: Path, origins: set[Path], qt_version: str
         "Before distribution, provide matching complete corresponding source and dependency source as required.\n")
 
 
+# The executables that run the engine, which may emulate code with HVF.
+ENGINE_HOSTS = ("neverd-worker", "neverd-mcp")
+
+
 def sign_bundle(bundle: Path, entitlements: Path) -> None:
-    """Sign leaves, retain the worker's HVF entitlement, then audit it."""
-    worker = bundle / "Contents/MacOS/neverd-worker"
+    """Sign leaves, retain the engine hosts' HVF entitlement, then audit it."""
+    hosts = [bundle / "Contents/MacOS" / name for name in ENGINE_HOSTS]
     for image in sorted((path for path in bundle.rglob("*") if macho(path)),
                         key=lambda path: len(path.parts), reverse=True):
-        flags = ["--entitlements", entitlements] if image == worker else []
+        flags = ["--entitlements", entitlements] if image in hosts else []
         run("codesign", "--force", "--sign", "-", *flags, image)
     run("codesign", "--force", "--deep", "--sign", "-",
         "--preserve-metadata=entitlements", bundle)
     run("codesign", "--verify", "--deep", "--strict", bundle)
-    actual = plistlib.loads(output("codesign", "--display", "--entitlements", ":-", worker).encode())
-    if actual.get("com.apple.security.hypervisor") is not True:
-        raise RuntimeError("Packaged neverd-worker lost its Hypervisor entitlement")
+    for host in hosts:
+        actual = plistlib.loads(output("codesign", "--display", "--entitlements", ":-", host).encode())
+        if actual.get("com.apple.security.hypervisor") is not True:
+            raise RuntimeError(f"Packaged {host.name} lost its Hypervisor entitlement")
 
 
 def main() -> None:
@@ -299,44 +308,46 @@ def main() -> None:
     macos, frameworks, resources = (bundle / "Contents" / name for name in ("MacOS", "Frameworks", "Resources"))
     for directory in (macos, frameworks, resources):
         directory.mkdir(parents=True)
-    for name in ("neverd-gui", "neverd-worker"):
-        shutil.copy2(args.build_dir / "bin" / name, macos / name)
-    shutil.copy2(args.engine, frameworks / "libneverd.dylib")
+    executables = {name: args.build_dir / "bin" / name
+                   for name in ("neverd-gui", *ENGINE_HOSTS)}
+    gui_bundle_binary = args.build_dir / "bin/neverd-gui.app/Contents/MacOS/neverd-gui"
+    if gui_bundle_binary.is_file():
+        executables["neverd-gui"] = gui_bundle_binary
+    inputs = [(name, origin, macos / name) for name, origin in executables.items()]
+    inputs.append(("libneverd.dylib", args.engine, frameworks / "libneverd.dylib"))
+    for name, origin, copied in inputs:
+        shutil.copy2(origin, copied)
     build_inputs = [{"name": name, "source": str(origin.resolve()),
                      "sha256": hashlib.sha256(copied.read_bytes()).hexdigest()}
-                    for name, origin, copied in (
-                        ("neverd-gui", args.build_dir / "bin/neverd-gui", macos / "neverd-gui"),
-                        ("neverd-worker", args.build_dir / "bin/neverd-worker", macos / "neverd-worker"),
-                        ("libneverd.dylib", args.engine, frameworks / "libneverd.dylib"))]
+                    for name, origin, copied in inputs]
     origins = {args.engine.resolve()}
     for dependency in dependencies(args.engine):
         if dependency.startswith("/") and "/Python.framework/" in dependency:
             relative = Path(framework_relative(dependency))
             copy_dependency(Path(dependency), relative, frameworks, origins)
             run("install_name_tool", "-change", dependency, "@rpath/" + str(relative), frameworks / "libneverd.dylib")
-    shutil.copytree(source.parent / "neverd-mcp", resources / "mcp", ignore=shutil.ignore_patterns("__pycache__", "tests"))
-    python_versions = sorted((frameworks / "Python.framework/Versions").glob("3.*"))
-    launcher = macos / "neverd-mcp"
-    compiler = ["xcrun", "clang", "-Os", "-Wall", "-Wextra", "-Werror", "-mmacosx-version-min=11.0"]
-    for architecture in output("lipo", "-archs", macos / "neverd-gui").split():
-        compiler += ["-arch", architecture]
-    if python_versions:
-        compiler += ['-DNEVERD_BUNDLED_PYTHON="' + python_versions[-1].name + '"']
-    run(*compiler, source / "resources/mcp_launcher.c", "-o", launcher)
     plist = {"CFBundleName": "NeverD", "CFBundleDisplayName": "NeverD", "CFBundleExecutable": "neverd-gui",
              "CFBundleIdentifier": "dev.neversight.neverd", "CFBundlePackageType": "APPL",
-             "CFBundleShortVersionString": "3389.0.1", "CFBundleVersion": "3389.0.1", "NSHighResolutionCapable": True}
+             "CFBundleShortVersionString": "3389.0.1", "CFBundleVersion": "3389.0.1", "NSHighResolutionCapable": True,
+             # neverd:// links clicked anywhere open in the workbench, which LaunchServices hands them.
+             "CFBundleURLTypes": [{"CFBundleURLName": "dev.neversight.neverd.link",
+                                   "CFBundleURLSchemes": ["neverd"]}]}
     icon = source / "resources/NeverD.icns"
     if icon.is_file():
         shutil.copy2(icon, resources / icon.name)
         plist["CFBundleIconFile"] = icon.name
     with (bundle / "Contents/Info.plist").open("wb") as stream:
         plistlib.dump(plist, stream)
-    run("install_name_tool", "-add_rpath", "@executable_path/../Frameworks", macos / "neverd-worker")
+    for host in ENGINE_HOSTS:
+        run("install_name_tool", "-add_rpath", "@executable_path/../Frameworks", macos / host)
+    # Preserve dependency discovery before macdeployqt rewrites framework
+    # extensions' absolute library paths. It can rewrite Python's _sqlite3
+    # reference without copying the keg-only SQLite library it names.
+    repair_dependencies(bundle, args.qt_dir, origins)
     # Qt 6.8 does not support -no-codesign. Any deployment-time signatures
     # are regenerated after dependency repairs by the signing steps below.
     run(args.qt_dir / "bin/macdeployqt", bundle,
-        "-executable=" + str(macos / "neverd-worker"), "-libpath=" + str(args.qt_dir / "lib"),
+        *("-executable=" + str(macos / host) for host in ENGINE_HOSTS), "-libpath=" + str(args.qt_dir / "lib"),
         "-libpath=" + str(frameworks))
     validate_and_prune_sql_drivers(bundle)
     repair_dependencies(bundle, args.qt_dir, origins)
@@ -346,13 +357,13 @@ def main() -> None:
     with (bundle / "Contents/Info.plist").open("wb") as stream:
         plistlib.dump(plist, stream)
     version = output(args.qt_dir / "bin/qmake", "-query", "QT_VERSION").strip()
-    kddw_source = args.kddw_source or args.build_dir / "_deps/kddockwidgets-src"
+    kddw_source = args.kddw_source or args.build_dir / "_deps/neverd_docking-src"
     json_license = args.json_license or args.build_dir / "_deps/neverd_worker_json-src/LICENSE.MIT"
     copy_notices(bundle, source, origins, version, args.qt_licenses or source / "licenses" / ("Qt-" + version),
-                 kddw_source, json_license)
+                 kddw_source, json_license, args.engine.parent / "licenses")
     (resources / "dependency-audit.json").write_text(json.dumps(report, indent=2) + "\n")
     # Dependency repair invalidates Mach-O signatures. Preserve entitlements
-    # when the final recursive bundle signing revisits the worker executable.
+    # when the final recursive bundle signing revisits the engine hosts.
     sign_bundle(bundle, source.parents[1] / "resources/macos/neverd-hypervisor.entitlements")
     print(json.dumps({"bundle": str(bundle), "minimum_macos": report["minimum_macos"], "macho_images": len(report["images"])}))
 

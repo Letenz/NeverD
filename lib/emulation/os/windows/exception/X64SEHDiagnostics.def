@@ -24,8 +24,14 @@ NEVERD_X64_SEH_TEXT(StackAdjustmentExceedsTheCurrentExecutionStack,
 NEVERD_X64_SEH_TEXT(NullReturnAddress, "null return address")
 NEVERD_X64_SEH_TEXT(EncounteredIncompleteExceptionMetadata,
                     "encountered incomplete exception metadata")
-NEVERD_X64_SEH_TEXT(OnlyX64V1UnwindRecordsAreSupported,
-                    "only x64 V1 unwind records are supported")
+NEVERD_X64_SEH_TEXT(OnlyMatchingX64V1V2RecordsAreSupported,
+                    "only matching x64 V1/V2 unwind records are supported")
+NEVERD_X64_SEH_TEXT(InvalidV2EpilogueMetadata,
+                    "invalid x64 V2 epilogue metadata")
+NEVERD_X64_SEH_TEXT(UnsupportedV2EpilogueRestores,
+                    "unsupported x64 V2 epilogue restore sequence")
+NEVERD_X64_SEH_TEXT(InvalidV2EpiloguePosition,
+                    "x64 V2 epilogue size or control position is inconsistent")
 NEVERD_X64_SEH_TEXT(InconsistentChainedUnwindRecord,
                     "inconsistent chained unwind record")
 NEVERD_X64_SEH_TEXT(UnsupportedUnwindFlags, "unsupported unwind flags")

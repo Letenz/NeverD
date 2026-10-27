@@ -18,15 +18,18 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedCallingConvDetail.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/support/Diagnostic.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
@@ -124,27 +127,82 @@ ValueSet computeForwardValueClosure(
   return Reached;
 }
 
-/// Scan all blocks to determine the widest data width at which the entry
-/// live-in value of a parameter register is actually consumed. Returns 0 if
-/// no use found. Later SSA values in the same physical register are clobbers,
-/// not uses of the incoming parameter.
-uint16_t findFirstUseSize(const MedFunc &Func, uint64_t ParamRegOff,
-                          const TargetRegInfo &TRI) {
-  if (Func.Blocks.empty())
-    return 0;
+/// The widest data widths at which the entry live-in values of a function's
+/// parameter registers are actually consumed (findFirstUseSize).  The value
+/// flow they follow is the function's, the same for every register: it is
+/// read once, where a register first needs it.
+class FirstUseSizes {
+public:
+  FirstUseSizes(const MedFunc &Func, const TargetRegInfo &TRI)
+      : Func(Func), TRI(TRI) {}
+  uint16_t of(uint64_t ParamRegOff);
 
+private:
   struct ValueEdge {
     ValueKey To;
     uint16_t WidthLimit = 0;
   };
-  auto IsValue = [](const MedVar &V) { return V.Kind != MedVar::Const; };
-  auto LimitWidth = [](uint16_t Width, uint16_t Limit) {
+  static bool isValue(const MedVar &V) { return V.Kind != MedVar::Const; }
+  static uint16_t limitWidth(uint16_t Width, uint16_t Limit) {
     if (Width == 0)
       return Limit;
     if (Limit == 0)
       return Width;
     return std::min(Width, Limit);
+  }
+  void index();
+
+  const MedFunc &Func;
+  const TargetRegInfo &TRI;
+  bool Indexed = false;
+  /// The copies, extensions, low-part extractions and PHIs that carry each
+  /// value on, with the width each passes.
+  llvm::DenseMap<ValueKey, std::vector<ValueEdge>> Edges;
+};
+
+void FirstUseSizes::index() {
+  if (Indexed)
+    return;
+  Indexed = true;
+  auto AddEdge = [&](const MedVar &From, const MedVar &To,
+                     uint16_t WidthLimit = 0) {
+    if (isValue(From) && isValue(To))
+      Edges[valueKey(From)].push_back({valueKey(To), WidthLimit});
   };
+  for (const MedBlock &Blk : Func.Blocks) {
+    for (const PhiNode &Phi : Blk.Phis)
+      for (const auto &Arg : Phi.Args)
+        AddEdge(Arg.second, Phi.Output);
+
+    for (const MedOp &Op : Blk.Ops) {
+      if (Op.NumInputs < 1)
+        continue;
+      switch (Op.Opcode) {
+      case NdOp::COPY:
+        if (Op.NumInputs == 1)
+          AddEdge(Op.Inputs[0], Op.Output,
+                  limitWidth(Op.Inputs[0].Size, Op.Output.Size));
+        break;
+      case NdOp::INT_ZEXT:
+      case NdOp::INT_SEXT:
+        if (Op.NumInputs == 1)
+          AddEdge(Op.Inputs[0], Op.Output, Op.Inputs[0].Size);
+        break;
+      case NdOp::SUBBYTES:
+        if (Op.NumInputs >= 2 && Op.Inputs[1].Kind == MedVar::Const &&
+            Op.Inputs[1].ConstVal == 0)
+          AddEdge(Op.Inputs[0], Op.Output, Op.Output.Size);
+        break;
+      default:
+        break;
+      }
+    }
+  }
+}
+
+uint16_t FirstUseSizes::of(uint64_t ParamRegOff) {
+  if (Func.Blocks.empty())
+    return 0;
 
   std::map<ValueKey, uint16_t> LiveInWidths;
   std::deque<ValueKey> Worklist;
@@ -168,42 +226,7 @@ uint16_t findFirstUseSize(const MedFunc &Func, uint64_t ParamRegOff,
   if (LiveInWidths.empty())
     return 0;
 
-  std::map<ValueKey, std::vector<ValueEdge>> Edges;
-  auto AddEdge = [&](const MedVar &From, const MedVar &To,
-                     uint16_t WidthLimit = 0) {
-    if (IsValue(From) && IsValue(To))
-      Edges[valueKey(From)].push_back({valueKey(To), WidthLimit});
-  };
-  for (const MedBlock &Blk : Func.Blocks) {
-    for (const PhiNode &Phi : Blk.Phis)
-      for (const auto &Arg : Phi.Args)
-        AddEdge(Arg.second, Phi.Output);
-
-    for (const MedOp &Op : Blk.Ops) {
-      if (Op.NumInputs < 1)
-        continue;
-      switch (Op.Opcode) {
-      case NdOp::COPY:
-        if (Op.NumInputs == 1)
-          AddEdge(Op.Inputs[0], Op.Output,
-                  LimitWidth(Op.Inputs[0].Size, Op.Output.Size));
-        break;
-      case NdOp::INT_ZEXT:
-      case NdOp::INT_SEXT:
-        if (Op.NumInputs == 1)
-          AddEdge(Op.Inputs[0], Op.Output, Op.Inputs[0].Size);
-        break;
-      case NdOp::SUBBYTES:
-        if (Op.NumInputs >= 2 && Op.Inputs[1].Kind == MedVar::Const &&
-            Op.Inputs[1].ConstVal == 0)
-          AddEdge(Op.Inputs[0], Op.Output, Op.Output.Size);
-        break;
-      default:
-        break;
-      }
-    }
-  }
-
+  index();
   while (!Worklist.empty()) {
     ValueKey From = Worklist.front();
     Worklist.pop_front();
@@ -212,7 +235,7 @@ uint16_t findFirstUseSize(const MedFunc &Func, uint64_t ParamRegOff,
     if (EdgeIt == Edges.end())
       continue;
     for (const ValueEdge &Edge : EdgeIt->second) {
-      uint16_t Width = LimitWidth(FromWidth, Edge.WidthLimit);
+      uint16_t Width = limitWidth(FromWidth, Edge.WidthLimit);
       auto [It, Inserted] = LiveInWidths.emplace(Edge.To, Width);
       if (Inserted || It->second < Width) {
         It->second = Width;
@@ -222,12 +245,12 @@ uint16_t findFirstUseSize(const MedFunc &Func, uint64_t ParamRegOff,
   }
 
   auto ConsumedWidth = [&](const MedVar &V) -> uint16_t {
-    if (!IsValue(V) || V.Size == 0)
+    if (!isValue(V) || V.Size == 0)
       return 0;
     auto It = LiveInWidths.find(valueKey(V));
     if (It == LiveInWidths.end())
       return 0;
-    return LimitWidth(V.Size, It->second);
+    return limitWidth(V.Size, It->second);
   };
   auto IsTransparent = [](const MedOp &Op) {
     if ((Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT ||
@@ -259,6 +282,15 @@ uint16_t findFirstUseSize(const MedFunc &Func, uint64_t ParamRegOff,
     }
   }
   return MaxSz;
+}
+
+/// Scan all blocks to determine the widest data width at which the entry
+/// live-in value of a parameter register is actually consumed. Returns 0 if
+/// no use found. Later SSA values in the same physical register are clobbers,
+/// not uses of the incoming parameter.
+uint16_t findFirstUseSize(const MedFunc &Func, uint64_t ParamRegOff,
+                          const TargetRegInfo &TRI) {
+  return FirstUseSizes(Func, TRI).of(ParamRegOff);
 }
 
 int nextValueId(const MedFunc &Func) {
@@ -454,7 +486,7 @@ bool incomingBytesReachUse(const MedFunc &Func, uint64_t RegOff) {
           return true;
       }
     }
-    if (Round > 64)
+    if (Round > ::neverd::limits::ir::kMaxCallingConventionUseRounds)
       return true; // did not settle: keep the parameter
   }
   return Used;
@@ -587,6 +619,9 @@ void detectRegisterParams(MedFunc &Func, const TargetRegInfo &TRI,
     LastUsedIdx = Consec - 1;
   }
 
+  // Every register reads the function's value flow, which recording the
+  // parameters leaves as it is.
+  med_calling_conv_detail::FirstUseSizes FirstUses(Func, TRI);
   for (size_t Idx = 0; Idx < ParamRegs.size() && Idx <= LastUsedIdx; ++Idx) {
     uint64_t PR = ParamRegs[Idx];
     if (!UsedParamRegs.count(PR)) {
@@ -601,8 +636,7 @@ void detectRegisterParams(MedFunc &Func, const TargetRegInfo &TRI,
       continue;
     }
 
-    uint16_t FirstUse =
-        med_calling_conv_detail::findFirstUseSize(Func, PR, TRI);
+    uint16_t FirstUse = FirstUses.of(PR);
     uint16_t BestSize = FirstUse > 0 ? FirstUse : TRI.FullRegWidth;
 
     const MedVar *Marker = nullptr;
@@ -762,14 +796,14 @@ void detectStackParams(MedFunc &Func, Arch TargetArch, BinaryFormat Fmt,
   }
 
   using ValueKey = med_calling_conv_detail::ValueKey;
-  std::map<ValueKey, const MedOp *> UniqueDefs;
-  std::set<ValueKey> AmbiguousDefs;
+  llvm::DenseMap<ValueKey, const MedOp *> UniqueDefs;
+  llvm::DenseSet<ValueKey> AmbiguousDefs;
   for (const auto &Block : Func.Blocks)
     for (const auto &Op : Block.Ops) {
       if (Op.Output.isConst())
         continue;
       const ValueKey Key = med_calling_conv_detail::valueKey(Op.Output);
-      auto [It, Inserted] = UniqueDefs.emplace(Key, &Op);
+      auto [It, Inserted] = UniqueDefs.try_emplace(Key, &Op);
       if (!Inserted && It->second != &Op)
         AmbiguousDefs.insert(Key);
     }
@@ -781,12 +815,12 @@ void detectStackParams(MedFunc &Func, Arch TargetArch, BinaryFormat Fmt,
     auto It = UniqueDefs.find(Key);
     return It == UniqueDefs.end() ? nullptr : It->second;
   };
-  std::map<ValueKey, const PhiNode *> UniquePhis;
-  std::set<ValueKey> AmbiguousPhis;
+  llvm::DenseMap<ValueKey, const PhiNode *> UniquePhis;
+  llvm::DenseSet<ValueKey> AmbiguousPhis;
   for (const auto &Block : Func.Blocks)
     for (const auto &Phi : Block.Phis) {
       const ValueKey Key = med_calling_conv_detail::valueKey(Phi.Output);
-      auto [It, Inserted] = UniquePhis.emplace(Key, &Phi);
+      auto [It, Inserted] = UniquePhis.try_emplace(Key, &Phi);
       if (!Inserted && It->second != &Phi)
         AmbiguousPhis.insert(Key);
     }
@@ -794,16 +828,17 @@ void detectStackParams(MedFunc &Func, Arch TargetArch, BinaryFormat Fmt,
   // Offset of \p V relative to the entry stack pointer (folding the COPY /
   // zext / subpiece / push-sub chain detectCc sees before copy propagation),
   // or nullopt when V is not entry-SP-derived.
-  std::set<ValueKey> ActiveTrace;
+  llvm::DenseSet<ValueKey> ActiveTrace;
   std::function<std::optional<int64_t>(const MedVar &, int)> traceOff =
       [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
-    if (Depth > 64)
+    if (Depth > ::neverd::limits::ir::
+                    kMedCallingConvDetectStackParamsTraceOffDepthLimit)
       return std::nullopt;
     const ValueKey Key = med_calling_conv_detail::valueKey(V);
     if (!ActiveTrace.insert(Key).second)
       return std::nullopt;
     struct PopActive {
-      std::set<ValueKey> &Set;
+      llvm::DenseSet<ValueKey> &Set;
       ValueKey Key;
       ~PopActive() { Set.erase(Key); }
     } Guard{ActiveTrace, Key};
@@ -1217,7 +1252,9 @@ void detectIndirectResultParam(MedFunc &Func, const MedBlock &Entry,
   };
   std::function<bool(const MedVar &, int)> derivesFromIRR =
       [&](const MedVar &V, int Depth) -> bool {
-    if (Depth > 32)
+    if (Depth >
+        ::neverd::limits::ir::
+            kMedCallingConvDetectIndirectResultParamDerivesFromIRRDepthLimit)
       return false;
     if (V.Kind == MedVar::Reg && V.RegOff == IRR)
       return true;
@@ -1411,6 +1448,20 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
   // Stack parameters that follow the registers used (i386 cdecl and regparm).
   if (Convention && Convention->StackArgumentsFollowUsedRegisters)
     detectCdeclStackParams(Func, TargetArch);
+
+  if (Func.ConsumesX87Argument && TheArch == Arch::X86) {
+    const auto It = RegVarMap.find({x86reg::ST0, x86reg::FPURegSize});
+    if (It != RegVarMap.end()) {
+      MedVar Param;
+      Param.Kind = MedVar::Param;
+      Param.Id = It->second;
+      Param.Size = x86reg::FPURegSize;
+      Param.RegOff = x86reg::ST0;
+      Param.TheArch = TheArch;
+      Func.Params.push_back(Param);
+      Func.FPParamScalarBytes[Param.RegOff] = Param.Size;
+    }
+  }
 
   // AArch64: recover the hidden indirect-result (sret) pointer in x8 for a
   // by-value aggregate return (no-op on targets without a dedicated x8).

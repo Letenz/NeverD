@@ -630,6 +630,29 @@ class CapabilitySchemaTests(unittest.TestCase):
                 frozenset({"PublicSession.sanitize"}),
             )
 
+    def test_cli_help_cannot_end_declarations_or_bind_other_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cli = root / "tools" / "neverd"
+            cli.mkdir(parents=True)
+            (cli / "NeverDCLIOptions.cpp").write_text(
+                'cl::SubCommand TypesCmd("types", "types");\n'
+                'cl::SubCommand OtherCmd("other", "other");\n'
+                'cl::opt<std::string> Spelling("spelling",\n'
+                '    cl::desc("names (widths); cl::sub(OtherCmd) is only help"),\n'
+                '    cl::sub(TypesCmd));\n'
+                'cl::opt<bool> Next("next", cl::sub(OtherCmd));\n',
+                encoding="utf-8",
+            )
+            surfaces = capabilities.collect_public_surfaces(root)
+            self.assertEqual(
+                surfaces["cli"],
+                frozenset({
+                    "neverd types", "neverd types --spelling",
+                    "neverd other", "neverd other --next",
+                }),
+            )
+
     def test_cli_literal_inventory_uses_the_declarative_value_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -663,11 +686,11 @@ class CapabilitySchemaTests(unittest.TestCase):
     def test_cli_inventory_resolves_option_names_from_def_tables(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            include = root / "include" / "neverd" / "loader"
+            include = root / "include" / "neverd" / "loader" / "ARM"
             include.mkdir(parents=True)
             (include / "ARMModeCLIStrings.h").write_text(
                 "namespace neverd::arm_mode_cli {\n"
-                '#include "neverd/loader/ARMModeCLIStrings.def"\n'
+                '#include "neverd/loader/ARM/ARMModeCLIStrings.def"\n'
                 "}\n",
                 encoding="utf-8",
             )
@@ -3193,6 +3216,7 @@ class RepositoryCapabilityTests(unittest.TestCase):
             {row["id"]: row["status"] for row in document["capabilities"]},
             {
                 "analysis.ir-view.instruction-anchors": "experimental",
+                "analysis.materialized-image-sections": "experimental",
                 "analysis.external-bytecode-recovery": "experimental",
                 "analysis.interpreter-source-recovery": "experimental",
                 "debug.hardware": "unsupported",
@@ -3204,6 +3228,7 @@ class RepositoryCapabilityTests(unittest.TestCase):
                 "emulation.windows-driver-initialization": "experimental",
                 "exception.itanium.ada-d": "experimental",
                 "exception.rewrite.end-to-end": "unsupported",
+                "rewrite.interactive-byte-overlay": "experimental",
                 "safety.binary-sanitizer-publication": "experimental",
                 "safety.process-replay-native-execution": "unsupported",
                 "semantic.mba.derivation": "supported",
@@ -3215,10 +3240,68 @@ class RepositoryCapabilityTests(unittest.TestCase):
                 "translation.executable-engine": "experimental",
                 "translation.runtime-contract": "experimental",
                 "unpack.observed-entry": "experimental",
+                "x87.scoped-semantic-inventory": "experimental",
             },
         )
         no_surfaces = {"c": [], "python": [], "cli": [], "json": []}
         expected_surfaces = {
+            "rewrite.interactive-byte-overlay": {
+                "c": [
+                    "neverd_assemble_json",
+                    "neverd_byte_patch_apply",
+                    "neverd_byte_patch_context_json",
+                    "neverd_byte_patch_preview",
+                    "neverd_byte_patch_ranges_json",
+                    "neverd_byte_patch_revert",
+                    "neverd_byte_patch_snapshot_free_v1",
+                    "neverd_byte_patch_source_preview_json",
+                    "neverd_byte_patch_source_target_json",
+                    "neverd_byte_patches_export",
+                    "neverd_byte_patches_json",
+                    "neverd_byte_patches_load",
+                    "neverd_byte_patches_save",
+                    "neverd_byte_patches_snapshot_v1",
+                    "neverd_source_patch_context_json",
+                ],
+                "python": [
+                    "Session.apply_byte_patch",
+                    "Session.assemble",
+                    "Session.byte_patch_ranges",
+                    "Session.byte_patches",
+                    "Session.export_byte_patches",
+                    "Session.load_byte_patches",
+                    "Session.preview_byte_patch",
+                    "Session.revert_byte_patch",
+                    "Session.save_byte_patches",
+                ],
+                "cli": [
+                    "neverd patch-bytes",
+                    "neverd patch-bytes --address",
+                    "neverd patch-bytes --allow-overlap",
+                    "neverd patch-bytes --allow-unsigned",
+                    "neverd patch-bytes --apply",
+                    "neverd patch-bytes --assemble",
+                    "neverd patch-bytes --att",
+                    "neverd patch-bytes --bytes",
+                    "neverd patch-bytes --export",
+                    "neverd patch-bytes --fill-nops",
+                    "neverd patch-bytes --kind",
+                    "neverd patch-bytes --o",
+                    "neverd patch-bytes --revert",
+                    "neverd patch-bytes --size",
+                    "neverd patch-bytes --symbols",
+                    "neverd patch-bytes --value",
+                ],
+                "json": [
+                    "neverd_assemble_json",
+                    "neverd_byte_patch_context_json",
+                    "neverd_byte_patch_ranges_json",
+                    "neverd_byte_patch_source_preview_json",
+                    "neverd_byte_patch_source_target_json",
+                    "neverd_byte_patches_json",
+                    "neverd_source_patch_context_json",
+                ],
+            },
             "unpack.observed-entry": {
                 "c": ["neverd_unpack_json"],
                 "python": ["Session.unpack"],
@@ -3318,6 +3401,26 @@ class RepositoryCapabilityTests(unittest.TestCase):
                 "cli": [],
                 "json": ["neverd_ir_view_json"],
             },
+            "analysis.materialized-image-sections": {
+                "c": [
+                    "neverd_analysis_section_add",
+                    "neverd_analysis_section_remove",
+                    "neverd_analysis_sections_import_json",
+                    "neverd_analysis_sections_json",
+                ],
+                "python": [],
+                "cli": [
+                    "neverd analysis-sections",
+                    "neverd analysis-sections --add",
+                    "neverd analysis-sections --data",
+                    "neverd analysis-sections --json",
+                    "neverd analysis-sections --remove",
+                ],
+                "json": [
+                    "neverd_analysis_sections_import_json",
+                    "neverd_analysis_sections_json",
+                ],
+            },
             "mobile.source-recovery": {
                 "c": [
                     "neverd_objc_methods_json",
@@ -3351,6 +3454,12 @@ class RepositoryCapabilityTests(unittest.TestCase):
                     "neverd_objc_methods_summary_json",
                     "neverd_swift_methods_json",
                 ],
+            },
+            "x87.scoped-semantic-inventory": {
+                "c": ["neverd_x87_capabilities_json"],
+                "python": ["Session.x87_capabilities"],
+                "cli": ["neverd x87-capabilities"],
+                "json": ["neverd_x87_capabilities_json"],
             },
             "debug.hardware": no_surfaces,
             "debug.local": no_surfaces,
@@ -3528,11 +3637,11 @@ class RepositoryCapabilityTests(unittest.TestCase):
         self.assertIn(completion_stamp, workflow)
         self.assertIn(inventory_capture, workflow)
         main_build = next(
-            line for line in workflow.splitlines() if "cmake --build build-ci" in line
+            line for line in workflow.splitlines() if "python scripts/build.py build-ci" in line
         )
         self.assertNotIn("--target", main_build)
         self.assertGreater(
-            workflow.index(completion_stamp), workflow.index("cmake --build build-ci")
+            workflow.index(completion_stamp), workflow.index("python scripts/build.py build-ci")
         )
         self.assertIn(configured_check, workflow)
         self.assertIn(configured_inventory, workflow)

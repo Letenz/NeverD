@@ -110,12 +110,21 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   ProcessResult Result{ProcessProfile::LinuxELF64, Layout->Architecture,
                        Backend->Kind, Backend->Reason};
   LinuxServices Kernel(CPU, Layout->Memory, InitialBreak, Options, Result);
+  if (auto E = Kernel.initializeProc())
+    return std::move(E);
   Result.Entry = Result.PC = Plan->Entry;
   auto RuntimeFailure = [&](llvm::Error E) {
     Result.Stop = ProcessStopReason::RuntimeFailure;
     Result.Diagnostic = llvm::toString(std::move(E));
   };
   while (true) {
+    auto Delivery = Kernel.deliverSignals();
+    if (!Delivery) {
+      RuntimeFailure(Delivery.takeError());
+      break;
+    }
+    if (!*Delivery)
+      break;
     if (auto E = Kernel.synchronizeDevices()) {
       RuntimeFailure(std::move(E));
       break;
@@ -180,6 +189,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       RuntimeFailure(Returned.takeError());
       break;
     }
+    if (Kernel.takeSignalRestore())
+      continue;
     auto Value = *Returned;
     if (!Value)
       break;

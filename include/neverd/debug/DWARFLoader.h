@@ -15,6 +15,10 @@
 
 #include "neverd/debug/DebugContext.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/Support/Error.h"
+#include "llvm/TargetParser/Triple.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -23,6 +27,10 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+namespace llvm {
+class DWARFContext;
+} // namespace llvm
 
 namespace neverd {
 
@@ -102,6 +110,10 @@ private:
 /// Empty when there is none or the directory cannot be read.
 std::filesystem::path findDSYMFile(const std::filesystem::path &BinaryPath);
 
+/// The DWARF file inside the .dSYM bundle \p Bundle,
+/// Contents/Resources/DWARF/<file>.  Empty when it holds none.
+std::filesystem::path dSYMBundleFile(const std::filesystem::path &Bundle);
+
 /// Whether the object file at \p Path holds DWARF compile units, the test
 /// DWARFDebugContext::load applies to an image and to its .dSYM file.
 bool hasDWARFUnits(const std::filesystem::path &Path);
@@ -110,9 +122,12 @@ class DWARFDebugContext : public DebugContext {
 public:
   ~DWARFDebugContext() override;
 
+  /// \p RequiredArch picks the slice of a universal file, a .dSYM's among
+  /// them, and refuses an object of another architecture.
   static std::unique_ptr<DWARFDebugContext>
   load(const std::filesystem::path &BinaryPath, BinaryFormat Fmt,
-       DWARFLoadTrust Trust, std::span<const uint8_t> ExpectedImageBytes = {});
+       DWARFLoadTrust Trust, std::span<const uint8_t> ExpectedImageBytes = {},
+       std::optional<llvm::Triple::ArchType> RequiredArch = std::nullopt);
 
   std::optional<FunctionSym> resolveFunction(va_t Addr) const override;
   std::optional<VariableSym> resolveVariable(va_t FuncAddr,
@@ -138,6 +153,12 @@ public:
   std::vector<AuthenticatedRecordParameter>
   resolveAuthenticatedRecordParameters(va_t Entry) const override;
   bool hasInfo() const override;
+
+  /// Runs \p Use on the DWARF this context read, for a reader that walks
+  /// its units whole, such as the local type import; no other query reads
+  /// it meanwhile.  An error when the context read none.
+  llvm::Error withDWARFContext(
+      llvm::function_ref<llvm::Error(llvm::DWARFContext &)> Use) const;
 
 private:
   DWARFDebugContext() = default;

@@ -7,7 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
-#include "neverd/ir/intrinsics/X86Interrupts.h"
+#include "neverd/ir/intrinsics/X86/X86Interrupts.h"
 
 #include <cstdint>
 #include <vector>
@@ -38,7 +38,9 @@ TEST(X86Terminator, AnInterruptEndsAFunctionWithOrWithoutOperandDetail) {
     for (unsigned Vector = 0; Vector < 256; ++Vector) {
       SCOPED_TRACE(::testing::Message() << "int " << Vector);
       const std::vector<uint8_t> Bytes = {0xCD, static_cast<uint8_t>(Vector)};
-      const bool Expected = isX86NoReturnInterrupt(Vector);
+      // A resumable breakpoint also delimits a function probe; this is not a
+      // claim that the interrupt can never return to its continuation.
+      const bool Expected = isX86NoReturnInterrupt(Vector) || Vector == 3;
       EXPECT_EQ(terminates(Dec, true, Bytes), Expected);
       EXPECT_EQ(terminates(Dec, false, Bytes), Expected);
     }

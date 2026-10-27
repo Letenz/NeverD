@@ -12,6 +12,7 @@
 #include "KernelExportRegistry.h"
 
 #include "../driver/DriverImage.h"
+#include "KernelDataExports.h"
 
 #include "neverd/emulation/CPU.h"
 #include "neverd/emulation/DriverSession.h"
@@ -86,6 +87,13 @@ bool KernelExportRegistry::overlapsThunk(uint64_t Address, uint64_t Size) {
   return false;
 }
 
+bool KernelExportRegistry::overlapsData(uint64_t Address, uint64_t Size) {
+  const uint64_t First =
+      profile::KernelModuleBase + profile::KernelModuleDataRVA;
+  return Size && Address < First + profile::KernelModuleDataSize &&
+         (Address >= First || Size > First - Address);
+}
+
 llvm::ArrayRef<ExecutionWatch> KernelExportRegistry::executionWatches() {
   static const auto Ranges = [] {
     std::array<ExecutionWatch, profile::KernelModuleCount + 1> Result{};
@@ -133,6 +141,13 @@ llvm::Error KernelExportRegistry::initialize(const DriverOptions &Options) {
   }
 #include "KernelHALAPIs.def"
 #undef NEVERD_KERNEL_HAL_API
+  for (const auto &Data : kernel_data::Exports)
+    if (!Candidate.Names.count(
+            Identity{KernelProvider.str(), Data.Name.str(), 0})) {
+      auto Address = Candidate.insert(KernelProvider, Data.Name);
+      if (!Address)
+        return Address.takeError();
+    }
   for (const auto &[Name, Present] : Options.KernelExports)
     if (Present) {
       auto Address = Candidate.insert(defaultProvider(Name), Name);
@@ -151,7 +166,11 @@ llvm::Expected<uint64_t> KernelExportRegistry::insert(llvm::StringRef Module,
   Identity Key{Module.str(), Name.str(), Binding};
   if (auto I = Names.find(Key); I != Names.end())
     return I->second;
-  if (Exports.size() >= profile::ThunkSize / profile::ThunkStride - 1)
+  const auto *Data =
+      Kind == ExportKind::ModuleExport && Module == KernelProvider
+          ? kernel_data::lookup(Name)
+          : nullptr;
+  if (!Data && ThunkCount >= profile::ThunkSize / profile::ThunkStride - 1)
     return invalid("kernel export table exhausted its thunk capacity");
   uint64_t Base = profile::ThunkBase;
   if (Kind == ExportKind::ModuleExport) {
@@ -160,7 +179,13 @@ llvm::Expected<uint64_t> KernelExportRegistry::insert(llvm::StringRef Module,
       return invalid("kernel export has no module image identity");
     Base = *Image + profile::KernelModuleCodeRVA;
   }
-  const uint64_t Address = Base + Exports.size() * profile::ThunkStride;
+  uint64_t Address = Base + ThunkCount * profile::ThunkStride;
+  if (Data) {
+    Address = *moduleBase(Module) + profile::KernelModuleDataRVA + Data->Offset;
+    Kind = ExportKind::ModuleData;
+  } else {
+    ++ThunkCount;
+  }
   Names.emplace(std::move(Key), Address);
   Exports.emplace(Address,
                   Export{Name.str(), Module.str(), Address, Kind, Binding});
@@ -242,15 +267,14 @@ KernelExportRegistry::insertProviderFunction(uint64_t PDO,
 
 const KernelExportRegistry::Export *
 KernelExportRegistry::lookup(uint64_t Address) const {
-  // Ordinary instructions cannot name a service gate. Share the registry's
-  // complete gate ranges with access validation before searching identities.
-  if (!overlapsThunk(Address))
+  // Ordinary instructions cannot name a service gate or data export.
+  if (!overlapsThunk(Address) && !overlapsData(Address, 1))
     return nullptr;
   auto I = Exports.find(Address);
   return I == Exports.end() ? nullptr : &I->second;
 }
 
 size_t KernelExportRegistry::availableThunkCount() const {
-  return profile::ThunkSize / profile::ThunkStride - 1 - Exports.size();
+  return profile::ThunkSize / profile::ThunkStride - 1 - ThunkCount;
 }
 } // namespace neverd::emulation

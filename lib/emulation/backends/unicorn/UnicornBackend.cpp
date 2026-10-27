@@ -21,7 +21,9 @@
 #include "UnicornAArch64Atomic.h"
 #include "UnicornArchitecture.h"
 #include "UnicornMemory.h"
+#include "UnicornResourcePause.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -33,6 +35,7 @@
 #include <iterator>
 #include <map>
 #include <new>
+#include <system_error>
 #include <unicorn/arm64.h>
 #include <unicorn/unicorn.h>
 #include <unicorn/x86.h>
@@ -99,11 +102,15 @@ struct UnicornBackend::Impl {
   std::vector<uc_hook> HookHandles;
   std::optional<BackendFault> FirstFault;
   std::optional<BackendFault> RecoverableFault;
+  std::optional<ResourcePause> ResourcePending;
+  std::optional<uint64_t> ResourceResumePC;
+  bool InstructionWrote = false, InstructionTouchedMMIO = false;
   std::shared_ptr<RAMReservation> Exclusive;
   std::string InstructionFailure;
   bool InstructionRejected = false;
   uint64_t InstructionPC = 0;
   bool Timeout = false;
+  std::chrono::steady_clock::time_point Deadline;
   bool CallbackFailed = false;
   std::atomic<bool> Running{false}, StopRequested{false};
   bool DeviceCallbackActive = false;
@@ -151,7 +158,7 @@ struct UnicornBackend::Impl {
   llvm::Error mutableState() const {
     if (Running || DeviceCallbackActive)
       return diagnostic::error(diagnostic::Running);
-    if (effectsStopped() || RecoverableFault)
+    if (effectsStopped() || RecoverableFault || ResourceResumePC)
       return diagnostic::error(diagnostic::Faulted);
     return Memory->mutableMemory();
   }
@@ -206,8 +213,20 @@ struct UnicornBackend::Impl {
   }
 
   bool effectsStopped() const {
-    return MMIOFailed || CallbackFailed || FirstFault ||
-           (Running && StopRequested);
+    return MMIOFailed || CallbackFailed || FirstFault || ResourcePending ||
+           (Running && (StopRequested || Timeout));
+  }
+
+  bool interruptEntry() {
+    if (StopRequested) {
+      uc_emu_stop(Engine);
+      return true;
+    }
+    if (std::chrono::steady_clock::now() < Deadline)
+      return false;
+    Timeout = true;
+    uc_emu_stop(Engine);
+    return true;
   }
 
   llvm::Error deviceError() const {
@@ -233,6 +252,8 @@ struct UnicornBackend::Impl {
     auto *Region = overlappingMMIO(Address, Size);
     if (!Region)
       return llvm::Error::success();
+    if (Hooks.ResourcePause)
+      InstructionTouchedMMIO = true;
     if (Address < Region->Address ||
         Address - Region->Address >= Region->Size ||
         Size > Region->Size - (Address - Region->Address))
@@ -341,6 +362,10 @@ struct UnicornBackend::Impl {
   static void code(uc_engine *, uint64_t Address, uint32_t Size, void *Opaque) {
     auto &S = *static_cast<Impl *>(Opaque);
     S.InstructionPC = Address;
+    if (S.interruptEntry())
+      return;
+    S.InstructionWrote = false;
+    S.InstructionTouchedMMIO = false;
     S.invoke([&] {
       // Only a completed RAM store arms this notification: a pre-store hook
       // can be followed by a self-modifying-code retry at the same PC.
@@ -348,13 +373,14 @@ struct UnicornBackend::Impl {
       // fault or service request before this boundary keeps exit priority.
       if (std::exchange(S.PendingWriteWatch, false) && S.Hooks.MemoryWritten) {
         S.Hooks.MemoryWritten();
-        if (S.effectsStopped() || S.RecoverableFault)
+        if (S.effectsStopped() || S.RecoverableFault || S.interruptEntry())
           return;
       }
       if (S.Hooks.Instruction)
         S.Hooks.Instruction(Address, Size);
-      if (S.Architecture != GuestArchitecture::AArch64 || S.effectsStopped() ||
-          S.RecoverableFault)
+      if (S.effectsStopped() || S.RecoverableFault || S.interruptEntry())
+        return;
+      if (S.Architecture != GuestArchitecture::AArch64)
         return;
       auto E = executeUnicornAArch64Atomic(
           S.Engine, Address, *S.Memory, S.Exclusive,
@@ -373,6 +399,8 @@ struct UnicornBackend::Impl {
           registerID);
       if (E) {
         S.InstructionRejected = E.isA<UnsupportedExecutionError>();
+        // Consume the error before invoking an observer that may throw.
+        S.InstructionFailure = llvm::toString(std::move(E));
         if (!S.FirstFault) {
           S.CallbackFailed = !S.InstructionRejected;
           S.retain({S.InstructionRejected
@@ -382,7 +410,6 @@ struct UnicornBackend::Impl {
           if (S.InstructionRejected && S.Hooks.InvalidInstruction)
             S.Hooks.InvalidInstruction();
         }
-        S.InstructionFailure = llvm::toString(std::move(E));
         uc_emu_stop(S.Engine);
       }
     });
@@ -393,6 +420,8 @@ struct UnicornBackend::Impl {
     S.invoke([&] {
       if (S.effectsStopped())
         return;
+      if (S.Hooks.ResourcePause)
+        S.InstructionWrote = true;
       S.preflightMMIO(Address, Size, true);
       if (S.effectsStopped())
         return;
@@ -466,6 +495,17 @@ struct UnicornBackend::Impl {
         Address, Size > 0 ? std::optional<uint64_t>(Size) : std::nullopt,
         Access,  std::nullopt};
     S.invoke([&] {
+      if (!S.effectsStopped() && !S.RecoverableFault && S.Hooks.ResourcePause) {
+        const auto Pause = classifyUnicornResourcePause(
+            *S.Memory, S.Architecture, S.InstructionPC, Fault,
+            S.InstructionWrote, S.InstructionTouchedMMIO);
+        if (Pause && S.Hooks.ResourcePause(*Pause) && !S.effectsStopped() &&
+            !S.RecoverableFault) {
+          S.ResourcePending = *Pause;
+          uc_emu_stop(S.Engine);
+          return;
+        }
+      }
       if (!S.effectsStopped() && S.Hooks.RecoverableFault &&
           S.Hooks.RecoverableFault(Fault)) {
         S.Exclusive.reset();
@@ -473,7 +513,7 @@ struct UnicornBackend::Impl {
         uc_emu_stop(S.Engine);
       }
     });
-    if (S.RecoverableFault)
+    if (S.RecoverableFault || S.ResourcePending)
       return false;
     S.retain(Fault);
     S.invoke([&] {
@@ -659,6 +699,8 @@ llvm::Error UnicornBackend::unmapMMIO(uint64_t Address, uint64_t Size) {
 
 llvm::Error UnicornBackend::read(uint64_t Address,
                                  llvm::MutableArrayRef<uint8_t> Bytes) {
+  if (State->ResourcePending || State->ResourceResumePC)
+    return diagnostic::error(diagnostic::ResourcePausePending);
   auto Lock = State->Memory->lock();
   if (!Lock)
     return Lock.takeError();
@@ -694,6 +736,8 @@ llvm::Error UnicornBackend::read(uint64_t Address,
 }
 llvm::Error UnicornBackend::write(uint64_t Address,
                                   llvm::ArrayRef<uint8_t> Bytes) {
+  if (State->ResourcePending || State->ResourceResumePC)
+    return diagnostic::error(diagnostic::ResourcePausePending);
   auto Lock = State->Memory->lock();
   if (!Lock)
     return Lock.takeError();
@@ -735,6 +779,8 @@ llvm::Error UnicornBackend::write(uint64_t Address,
 }
 llvm::Error UnicornBackend::fetch(uint64_t Address,
                                   llvm::MutableArrayRef<uint8_t> Bytes) {
+  if (State->ResourcePending || State->ResourceResumePC)
+    return diagnostic::error(diagnostic::ResourcePausePending);
   auto Lock = State->Memory->lock();
   if (!Lock)
     return Lock.takeError();
@@ -798,12 +844,15 @@ UnicornBackend::supportedControlBits(CPURegister R) const {
     return RegisterValue{x64::fp::ArchitecturalMXCSRMask, 0};
   return ExecutionBackend::supportedControlBits(R);
 }
-llvm::Expected<RegisterValue> UnicornBackend::readRegister(CPURegister R) {
-  if (!registerMatches(R, architecture()))
+namespace {
+llvm::Expected<RegisterValue>
+readUnicornRegister(GuestArchitecture Architecture, CPURegister R,
+                    llvm::function_ref<uc_err(int, void *)> Read) {
+  if (!registerMatches(R, Architecture))
     return diagnostic::error(diagnostic::Register);
   RegisterValue V{};
-  if (auto E = check(uc_reg_read(State->Engine, registerID(R), V.data()),
-                     diagnostic::UnicornReadRegister))
+  if (auto E =
+          check(Read(registerID(R), V.data()), diagnostic::UnicornReadRegister))
     return std::move(E);
   if (R == CPURegister::X64FPTag) {
     X64FPState FP;
@@ -811,6 +860,27 @@ llvm::Expected<RegisterValue> UnicornBackend::readRegister(CPURegister R) {
     V = {FP.Tag, 0};
   }
   return V;
+}
+} // namespace
+llvm::Expected<RegisterValue> UnicornBackend::readRegister(CPURegister R) {
+  return readUnicornRegister(architecture(), R, [&](int ID, void *Value) {
+    return uc_reg_read(State->Engine, ID, Value);
+  });
+}
+llvm::Expected<RegisterValue>
+UnicornBackend::readContextRegister(const BackendContext &Context,
+                                    CPURegister R) const {
+  const auto *Saved = contextStorage(Context);
+  if (!Saved || Saved->Owner.expired())
+    return diagnostic::error(diagnostic::ContextExpired);
+  if (Saved->Owner.lock() != State->Identity)
+    return diagnostic::error(diagnostic::ContextOwner);
+  if (Saved->Space.lock() != addressSpace())
+    return diagnostic::error(diagnostic::ContextSpace);
+  return readUnicornRegister(architecture(), R, [&](int ID, void *Value) {
+    return uc_context_reg_read(
+        static_cast<const UnicornContext &>(*Saved).Context, ID, Value);
+  });
 }
 llvm::Error UnicornBackend::writeRegister(CPURegister R,
                                           const RegisterValue &V) {
@@ -837,7 +907,8 @@ llvm::Error UnicornBackend::writeRegister(CPURegister R,
 
 llvm::Expected<std::unique_ptr<BackendContext>> UnicornBackend::saveContext() {
   if (State->FirstFault || State->CallbackFailed || State->MMIOFailed ||
-      State->RecoverableFault)
+      State->RecoverableFault || State->ResourcePending ||
+      State->ResourceResumePC)
     return failure(unicornDiagnostic::CannotSaveAFaultedCPUInstance);
   auto Saved = std::make_unique<UnicornContext>();
   Saved->Owner = State->Identity;
@@ -858,7 +929,8 @@ llvm::Error UnicornBackend::saveContext(BackendContext &Context) {
     return failure(
         unicornDiagnostic::CPUContextBelongsToAnotherBackendInstance);
   if (State->FirstFault || State->CallbackFailed || State->MMIOFailed ||
-      State->RecoverableFault)
+      State->RecoverableFault || State->ResourcePending ||
+      State->ResourceResumePC)
     return failure(unicornDiagnostic::CannotSaveAFaultedCPUInstance);
   contextStorage(Context)->Space = addressSpace();
   auto &Saved = static_cast<UnicornContext &>(*contextStorage(Context));
@@ -876,7 +948,8 @@ llvm::Error UnicornBackend::restoreContext(const BackendContext &Context) {
     return failure(
         unicornDiagnostic::CPUContextBelongsToAnotherBackendInstance);
   if (State->FirstFault || State->CallbackFailed || State->MMIOFailed ||
-      State->RecoverableFault)
+      State->RecoverableFault || State->ResourcePending ||
+      State->ResourceResumePC)
     return failure(unicornDiagnostic::CannotRestoreAFaultedCPUInstance);
   if (State->Running)
     return failure(
@@ -966,6 +1039,8 @@ llvm::Expected<uint32_t> UnicornBackend::instructionSize(uint64_t Address) {
 llvm::Error UnicornBackend::installHooks(BackendHooks Hooks) {
   if (auto E = State->mutableState())
     return E;
+  if (Hooks.ResourcePause && !supportsResourcePause())
+    return diagnostic::error(diagnostic::ResourcePauseUnsupported);
   State->Hooks = std::move(Hooks);
   // Replacing observers must not duplicate the underlying hooks.
   if (!State->HookHandles.empty())
@@ -1001,6 +1076,10 @@ llvm::Expected<ExecutionExit> UnicornBackend::runUntilExit(uint64_t PC,
       State->CallbackFailed &&
       (!State->FirstFault ||
        State->FirstFault->Kind == BackendFaultKind::UnhandledException);
+  if (State->FirstFault || State->CallbackFailed || State->MMIOFailed) {
+    State->ResourcePending.reset();
+    State->ResourceResumePC.reset();
+  }
   return makeExecutionExit(std::move(E),
                            {.Fault = State->FirstFault,
                             .Recoverable = State->RecoverableFault,
@@ -1008,18 +1087,21 @@ llvm::Expected<ExecutionExit> UnicornBackend::runUntilExit(uint64_t PC,
                             .BackendFailed = CallbackFailed,
                             .InstructionRejected = State->InstructionRejected,
                             .StopRequested = State->StopRequested,
-                            .DeadlineReached = State->Timeout});
+                            .DeadlineReached = State->Timeout,
+                            .Resource = State->ResourcePending});
 }
 
 llvm::Error UnicornBackend::runImpl(uint64_t PC, uint64_t TimeoutMicroseconds,
                                     bool &Started) {
   if (auto E = State->deviceError())
     return E;
-  if (State->FirstFault || State->CallbackFailed || State->RecoverableFault)
+  if (State->FirstFault || State->CallbackFailed || State->RecoverableFault ||
+      State->ResourcePending)
     return failure(unicornDiagnostic::CannotResumeAFaultedCPUInstance);
+  if (State->ResourceResumePC && PC != *State->ResourceResumePC)
+    return diagnostic::error(diagnostic::ResourceResumePC);
   if (State->Running)
     return failure(unicornDiagnostic::CannotRecursivelyExecuteACPUInstance);
-  // Unicorn treats zero as unbounded and converts microseconds to nanoseconds.
   // Apply the same finite budget admission as checked/native execution before
   // changing projections, registers or observations.
   auto Limit = makeExecutionDeadline(TimeoutMicroseconds);
@@ -1043,17 +1125,44 @@ llvm::Error UnicornBackend::runImpl(uint64_t PC, uint64_t TimeoutMicroseconds,
     return E;
   State->InstructionPC = PC;
   State->PendingWriteWatch = false;
+  State->ResourceResumePC.reset();
+  State->InstructionWrote = false;
+  State->InstructionTouchedMMIO = false;
   State->Timeout = false;
   State->StopRequested = false;
   State->Running = true;
   Started = true;
-  uc_err Status =
-      uc_emu_start(State->Engine, PC, UINT64_MAX, TimeoutMicroseconds, 0);
+  State->Deadline = *Limit;
+  // The mandatory instruction hook checks this absolute deadline, including
+  // time spent preparing entry or in observers. Unicorn's optional timer
+  // creates and joins a sleeping host thread for every short scheduling slice.
+  // Its zero timeout disables that second timer, not this adapter's budget.
+  const uc_err Status = uc_emu_start(State->Engine, PC, UINT64_MAX, 0, 0);
   State->Running = false;
   if (!State->InstructionFailure.empty())
     return failure(State->InstructionFailure);
   if (auto E = State->deviceError())
     return E;
+  if (State->ResourcePending) {
+    const auto Pause = *State->ResourcePending;
+    const auto Access = Pause.Fault.Access;
+    const uc_err Expected =
+        Access == BackendAccessKind::Read    ? UC_ERR_READ_UNMAPPED
+        : Access == BackendAccessKind::Write ? UC_ERR_WRITE_UNMAPPED
+                                             : UC_ERR_FETCH_UNMAPPED;
+    uint64_t ActualPC = 0;
+    const bool Valid =
+        !State->FirstFault && !State->RecoverableFault &&
+        (Status == UC_ERR_OK || Status == Expected) &&
+        uc_reg_read(State->Engine, State->PCRegister, &ActualPC) == UC_ERR_OK &&
+        ActualPC == Pause.ResumePC;
+    if (!Valid) {
+      State->retain(Pause.Fault);
+      State->ResourcePending.reset();
+      return diagnostic::error(diagnostic::ResourceResumePC);
+    }
+    return llvm::Error::success();
+  }
   if (State->RecoverableFault) {
     // Unicorn can report the original exception even after the hook stops the
     // instruction. Only that exact hook-admitted event may be resumed by a
@@ -1088,11 +1197,6 @@ llvm::Error UnicornBackend::runImpl(uint64_t PC, uint64_t TimeoutMicroseconds,
                        : BackendFaultKind::UnhandledException,
                    State->currentPC(), std::nullopt, std::nullopt, std::nullopt,
                    std::nullopt});
-  size_t TimedOut = 0;
-  if (auto E = check(uc_query(State->Engine, UC_QUERY_TIMEOUT, &TimedOut),
-                     unicornDiagnostic::QueryCPUTimeout))
-    return E;
-  State->Timeout = TimedOut != 0;
   if (State->CallbackFailed)
     return failure(unicornDiagnostic::ExceptionInEmulatorHook);
   return check(Status, unicornDiagnostic::ExecuteGuest);
@@ -1114,6 +1218,26 @@ std::optional<BackendFault> UnicornBackend::takeRecoverableFault() {
   auto Fault = State->RecoverableFault;
   State->RecoverableFault.reset();
   return Fault;
+}
+std::optional<ResourcePause> UnicornBackend::pendingResourcePause() const {
+  return State->ResourcePending;
+}
+llvm::Error UnicornBackend::acknowledgeResourcePause() {
+  if (!State->ResourcePending)
+    return diagnostic::error(diagnostic::ResourcePauseMissing);
+  if (State->Running || State->FirstFault || State->CallbackFailed ||
+      State->MMIOFailed || State->RecoverableFault)
+    return diagnostic::error(diagnostic::Faulted);
+  const auto &F = State->ResourcePending->Fault;
+  auto Access = addressSpace()->canAccess(
+      *F.Address, *F.Size, State->ResourcePending->RequiredPermissions);
+  if (!Access)
+    return Access.takeError();
+  if (!*Access)
+    return diagnostic::error(diagnostic::ResourcePauseUnresolved);
+  State->ResourceResumePC = State->ResourcePending->ResumePC;
+  State->ResourcePending.reset();
+  return llvm::Error::success();
 }
 bool UnicornBackend::executable(uint64_t Address) const {
   return State->accessible(Address, 1, Execute);

@@ -9,7 +9,8 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/LowNoReturn.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -35,7 +36,8 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
   Domain After = Before;
   std::optional<Domain> CallException;
   FrameTransfer Transfer(
-      After.Frame, *Chain.RegistrationOffset, EH4 ? SecurityCookieVA : 0,
+      After.Frame, *Chain.RegistrationOffset,
+      EH4 || CxxCookies || CxxPrologue ? SecurityCookieVA : 0,
       Chain.RealignedFrame ? &*Chain.RealignedFrame : nullptr);
   FrameTransfer RuntimeTransfer(After.RuntimeObject, *Chain.RegistrationOffset);
   std::set<va_t> ProvenStores;
@@ -74,6 +76,48 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       RegisterBytes += Op.Inputs[Input].Size;
     if (!charge(1 + RegisterBytes + MemoryWork))
       break;
+    if (CxxPrologue && Op.Addr == CxxPrologue->CallVA) {
+      if (!transferCxxPrologue(I, After, Op, Facts)) {
+        Invalidate();
+        CompleteCalls = CompleteChainOperations = CompleteCookies = false;
+      } else {
+        const auto Value = FrameValue::frame(CxxPrologue->RegistrationOffset);
+        LowOp Returned;
+        Returned.Opcode = NdOp::COPY;
+        Returned.Output = Op.Output;
+        Transfer.write(Returned, Value);
+        if (CheckRuntimeObjects)
+          RuntimeTransfer.write(Returned, {});
+        auto [It, New] =
+            FrameValues.emplace(std::make_pair(Op.Addr, Op.Seq), Value);
+        if (!New)
+          It->second = registration_state::join(It->second, Value);
+      }
+      continue;
+    }
+    if (const auto Exit = CxxEpilogueIndex.find(Op.Addr);
+        Exit != CxxEpilogueIndex.end()) {
+      if (!transferCxxEpilogue(I, After, Op, Facts, *Exit->second)) {
+        Invalidate();
+        CompleteCalls = CompleteChainOperations = CompleteCookies = false;
+      } else {
+        const auto Value =
+            After.Frame.Registers[x86reg::RAX / x86reg::GeneralRegStride];
+        LowOp Returned;
+        Returned.Opcode = NdOp::COPY;
+        Returned.Output = Op.Output;
+        Transfer.write(Returned, Value);
+        if (CheckRuntimeObjects)
+          RuntimeTransfer.write(
+              Returned, After.RuntimeObject
+                            .Registers[x86reg::RAX / x86reg::GeneralRegStride]);
+        auto [It, New] =
+            FrameValues.emplace(std::make_pair(Op.Addr, Op.Seq), Value);
+        if (!New)
+          It->second = registration_state::join(It->second, Value);
+      }
+      continue;
+    }
     FrameValue Value = Transfer.evaluate(Op, After.Installed);
     if (Conditional) {
       // The caller's physical registration address changes during native
@@ -150,14 +194,15 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     if (Exhausted)
       break;
 
-    if (EH4 && Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op))
+    if ((EH4 || CxxCookies) && Op.Opcode == NdOp::INTRINSIC &&
+        !isFramePreservingIntrinsic(Op))
       CompleteCookies = false;
-    if (EH4 && Memory.Address &&
+    if ((EH4 || CxxCookies) && Memory.Address &&
         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
       const auto Address = Transfer.read(*Memory.Address);
       if (!Memory.Complete)
         CompleteCookies = false;
-      if (After.Installed && !RuntimeMemory &&
+      if (After.Installed && !RuntimeMemory && !Address.CallbackAddress &&
           (!Address.Offset && Address.MayBeFrame))
         CompleteCookies = false;
       if (After.Installed && Address.Offset) {
@@ -167,42 +212,68 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
         // Source cookie storage is owned only by its checked initialization
         // and the native runtime. Reads or writes after installation would
         // observe or change a synthetic cookie instead of the physical one.
-        const bool CheckedGSRead = CookieCheckVA && Op.Opcode == NdOp::LOAD &&
-                                   Address.Offset == GSCookieSlot &&
-                                   Memory.AccessSize == 4;
+        const bool CxxSlot =
+            llvm::any_of(CxxCookieConditions, [&](const auto &Condition) {
+              return Address.Offset == Condition.FrameOffset;
+            });
+        const bool CheckedGSRead =
+            CookieCheckVA && Op.Opcode == NdOp::LOAD &&
+            (Address.Offset == GSCookieSlot || CxxSlot) &&
+            Memory.AccessSize == 4;
         ReadsGSCookie |= CheckedGSRead;
-        if (Touches(EHCookieSlot) ||
-            (Touches(GSCookieSlot) && !CheckedGSRead) ||
-            overlaps(*Address.Offset, Memory.AccessSize,
-                     *Chain.RegistrationOffset + 8, 4))
+        if (EH4 && (Touches(EHCookieSlot) ||
+                    (Touches(GSCookieSlot) && !CheckedGSRead) ||
+                    overlaps(*Address.Offset, Memory.AccessSize,
+                             *Chain.RegistrationOffset + 8, 4)))
           CompleteCookies = false;
+        for (const auto &Condition : CxxCookieConditions)
+          if (Touches(Condition.FrameOffset) && !CheckedGSRead)
+            CompleteCookies = false;
       }
       if (Memory.StoredValue) {
         const uint64_t TableEnd =
             Chain.ScopeTableVA + 16 + uint64_t(Chain.Scopes.size()) * 12;
-        if (!Address.Offset &&
+        // The callback-memory owner above proves its private stack disjoint
+        // from the establisher and image. It cannot overwrite either cookie.
+        if (!Address.Offset && !Address.CallbackAddress &&
             (!Address.Constant ||
              (uint64_t(*Address.Constant) < SecurityCookieVA + 4 &&
               SecurityCookieVA <
                   uint64_t(*Address.Constant) + Memory.AccessSize) ||
-             (uint64_t(*Address.Constant) < TableEnd &&
+             (EH4 && uint64_t(*Address.Constant) < TableEnd &&
               Chain.ScopeTableVA <
                   uint64_t(*Address.Constant) + Memory.AccessSize)))
           CompleteCookies = false;
       }
     }
+    // A call also writes its return PC below the current ESP. A later ESP
+    // restoration cannot make a cookie that was deallocated at this exact
+    // call remain intact for exceptional dispatch.
+    if (CxxCookies && After.Installed &&
+        (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+        !cxxCookiesReady(After))
+      CompleteCookies = false;
+    bool CheckedCxxCookieCall = false;
     if (CookieCheckVA && Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
         Op.Inputs[0].isConst() && Op.Inputs[0].Offset == CookieCheckVA) {
       const auto Boundary = Boundaries.find(Op.Addr);
       if (!Transfer.isCookieCheck(Op, CookieCheckVA) || Op.Seq < 0 ||
-          Boundary == Boundaries.end() || Boundary->second.first != Block.Id)
+          Boundary == Boundaries.end() || Boundary->second.first != Block.Id ||
+          (CxxCookies &&
+           Boundary->second.second.Control != LowInstructionControl::Call))
         CompleteCookies = false;
-      else
+      else {
         CookieChecks.emplace(
             std::make_pair(Op.Addr, Op.Seq),
             RegistrationCookieCheck{
                 Op.Addr, Op.Addr + Boundary->second.second.Size, Op.Seq});
+        CheckedCxxCookieCall = CxxCookies;
+        if (CxxCookies)
+          ImageReads.emplace(SecurityCookieVA, SecurityCookieVA + 4);
+      }
     }
+    if (!validateSEHParentChainUse(After, Op, Transfer))
+      Result.SEHParentChainComplete = false;
     if (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)) {
       CompleteImageReads = false;
       if (CheckCalls) {
@@ -299,10 +370,20 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
           After.Unknown = false;
           After.Uninstalled = false;
           After.Installed = true;
+          After.AbandonedSEHGuard = false;
           After.JumpCaptures.clear();
           ProvenInstallation = true;
           if (EH4 && !cookiesReady(After.Frame))
             CompleteCookies = false;
+          if (CxxCookies && !cxxCookiesReady(After))
+            CompleteCookies = false;
+          recordChainAccess(Op, Block, RegistrationChainAccess::Kind::Install);
+        } else if (Address.Constant == uint32_t{0} && Width == 4 && AtEnd &&
+                   Stored.Offset == Chain.RegistrationOffset &&
+                   canReconnectSEHParentChain(After)) {
+          // Republish the same live node after abandoning a CRT callback.
+          // Keep its current TryLevel and buffer bindings, unlike first entry.
+          After.AbandonedSEHGuard = false;
           recordChainAccess(Op, Block, RegistrationChainAccess::Kind::Install);
         } else if (Address.Constant == uint32_t{0} && Width == 4 && AtEnd &&
                    Stored.PreviousChain && After.Installed &&
@@ -311,8 +392,12 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
           After.Unknown = false;
           After.Uninstalled = true;
           After.Installed = false;
+          After.AbandonedSEHGuard = false;
           After.JumpCaptures.clear();
           recordChainAccess(Op, Block, RegistrationChainAccess::Kind::Remove);
+          if (!KnownCxx && After.Callback &&
+              !transferSEHParentFallthrough(I, After, Op, Facts))
+            Invalidate();
         } else {
           CompleteChainOperations = false;
           Invalidate();
@@ -332,36 +417,11 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
             !Address.CallbackAddress &&
             (!Address.Offset ||
              overlaps(*Address.Offset, Width, *Chain.TryLevelOffset, 4))) {
-          auto Observation = Stores.find(Op.Addr);
           std::set<int32_t> WrittenLevels;
-          bool Valid =
-              Address.Offset == Chain.TryLevelOffset &&
-              (Width == 1 || Width == 2 || Width == 4) && Stored.Constant &&
-              Observation != Stores.end() &&
-              Observation->second.Width == Width &&
-              uint32_t(Observation->second.Level) == *Stored.Constant &&
-              !After.Uninstalled;
-          if (Valid && Width == 4) {
-            Valid = validLevel(int32_t(*Stored.Constant));
-            WrittenLevels.insert(int32_t(*Stored.Constant));
-          } else if (Valid) {
-            // A byte/word state write preserves the other bytes. Never
-            // sign-extend its immediate or infer zero high bytes. Replay
-            // every reaching whole level and retain distinct results.
-            const uint32_t Mask = Width == 1 ? UINT8_MAX : UINT16_MAX;
-            Valid = !After.Unknown && !After.Levels.empty() &&
-                    *Stored.Constant <= Mask;
-            for (int32_t Level : After.Levels) {
-              if (!charge(1)) {
-                Valid = false;
-                break;
-              }
-              const int32_t Written = int32_t((uint32_t(Level) & ~Mask) |
-                                              (*Stored.Constant & Mask));
-              Valid &= validLevel(Written);
-              WrittenLevels.insert(Written);
-            }
-          }
+          const bool Valid =
+              !After.Uninstalled &&
+              transferTryLevelStore(I, Op, Address, Stored, After.Levels,
+                                    After.Unknown, WrittenLevels);
           if (Valid && ProvenStores.insert(Op.Addr).second) {
             After.Levels = std::move(WrittenLevels);
             After.Unknown = false;
@@ -439,7 +499,14 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     bool CheckedCall = false;
     const bool JumpCapture = transferJumpCapture(I, After, Op, Facts, CallSP);
     const bool JumpResume = transferJumpResume(I, After, Op, Facts);
-    if (!JumpCapture && !JumpResume &&
+    const auto LocalSP = !JumpCapture && !JumpResume
+                             ? transferLocalUnwind(I, After, Op, Facts)
+                             : std::nullopt;
+    if (LocalSP)
+      CallSP = *LocalSP;
+    if (CheckedCxxCookieCall)
+      CallSP = After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
+    if (!CheckedCxxCookieCall && !JumpCapture && !JumpResume && !LocalSP &&
         !transferOrdinaryFinally(I, After, Op, Facts, CallSP))
       if (auto Call = transferCall(I, After, Op, Facts)) {
         CheckedCall = true;
@@ -449,8 +516,6 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
         if (NoReturnAtExit)
           NoReturnEnd = Call->EndAddress;
       }
-    if (auto SP = transferLocalUnwind(I, After, Op, Facts))
-      CallSP = *SP;
     if (!CallSP)
       CallSP = transferControlFP(Before, After, Op, Facts, CallException);
     if (!CallSP && JumpRuntime && JumpRuntime->Raise &&
@@ -465,13 +530,24 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
                              RegistrationSEHBoundCall::Kind::RaiseException);
         CallSP = FrameValue::frame(*SP.Offset + 16);
       } else if (SP.CallbackAddress && After.Frame.callbackMemoryIsPrivate(
-                                           *SP.CallbackAddress, 16, true))
+                                           *SP.CallbackAddress, 16, true)) {
+        recordSEHRuntimeCall(After, Op,
+                             RegistrationSEHBoundCall::Kind::RaiseException);
         CallSP = FrameValue::callbackFrame(SP.CallbackAddress->Entry,
                                            SP.CallbackAddress->Offset + 16);
+        if (After.Callback && After.Activation.Entry &&
+            FinallyTargets.count(*After.Activation.Entry) &&
+            !applySEHContinueFilters(I, After, Facts)) {
+          Invalidate();
+          Result.SEHInvocationExitsComplete = false;
+        }
+      }
     }
     if (!transferBoundSEHCallee(I, Before, After, Op, Facts, CallSP,
                                 CallException))
       break;
+    if (!CallSP && !JumpCapture && !JumpResume)
+      CallSP = transferPrivateSEHCall(After, Op, Facts);
     if (!JumpCapture && !JumpResume && !CallSP && !Facts.InvocationAtExit &&
         (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
          (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)))) {
@@ -540,7 +616,8 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       After.Frame.Registers[x86reg::RAX / x86reg::GeneralRegStride] =
           FrameValue::constant(0);
     if (CheckRuntimeObjects) {
-      RuntimeTransfer.write(Op, RuntimeValue);
+      if (!CheckedCxxCookieCall)
+        RuntimeTransfer.write(Op, RuntimeValue);
       if (CheckedCall) {
         After.RuntimeObject
             .Registers[x86reg::RAX / x86reg::GeneralRegStride] = {};
@@ -616,26 +693,9 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
   Facts.CxxContinuationAtExit = CatchReturn.has_value();
   Facts.NoReturnAtExit = NoReturnAtExit;
   if (!NoReturnAtExit && !Facts.InvocationAtExit) {
-    std::optional<va_t> SelectedBranch;
-    if (!Facts.Invalid && !After.Unknown && Block.Succs.size() == 2 &&
-        !Block.Ops.empty()) {
-      const auto &Branch = Block.Ops.back();
-      if (Branch.Opcode == NdOp::COND_BR && Branch.NumInputs == 2 &&
-          Branch.Inputs[0].isConst()) {
-        const auto Condition = Transfer.read(Branch.Inputs[1]);
-        const auto Taken = Entries.find(Branch.Inputs[0].Offset);
-        const auto Fallthrough = Entries.find(Block.EndAddr);
-        if (Condition.Constant && !Condition.MayBeFrame &&
-            Taken != Entries.end() && Fallthrough != Entries.end() &&
-            Taken != Fallthrough &&
-            llvm::is_contained(Block.Succs,
-                               Function.Blocks[Taken->second].Id) &&
-            llvm::is_contained(Block.Succs,
-                               Function.Blocks[Fallthrough->second].Id))
-          SelectedBranch =
-              *Condition.Constant ? Branch.Inputs[0].Offset : Block.EndAddr;
-      }
-    }
+    const auto SelectedBranch = !Facts.Invalid && !After.Unknown
+                                    ? knownSuccessor(Block, Transfer)
+                                    : std::nullopt;
     for (int Successor : Block.Succs) {
       auto It = Index.find(Successor);
       if (It == Index.end()) {

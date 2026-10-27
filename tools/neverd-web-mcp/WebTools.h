@@ -13,10 +13,10 @@
 #pragma once
 
 #include "Catalog.h"
+#include "ResourceLimits.h"
 #include "common/web/Backend.h"
 
 namespace neverd::mcp {
-inline constexpr std::size_t MaxInputs = 8;
 
 class WebTools final : public ToolService {
   std::vector<std::string> Inputs;
@@ -33,3 +33,9 @@ public:
   Json call(const std::string &Name, const Json &Arguments) override;
 };
 } // namespace neverd::mcp
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::mcp {
+inline constexpr std::size_t MaxInputs =
+    ::neverd::limits::web_mcp::kWebToolsMaxInputs;
+}

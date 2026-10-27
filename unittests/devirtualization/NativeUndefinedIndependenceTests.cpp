@@ -9,11 +9,14 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/Support/Errc.h"
 
+#include <iterator>
 #include <map>
+#include <optional>
+#include <vector>
 
 using namespace neverd;
 using namespace neverd::analysis;
@@ -28,6 +31,12 @@ public:
   std::map<va_t, SpecializationInstruction> Instructions;
   std::map<va_t, unsigned> Fetches;
   std::map<va_t, uint8_t> ReadBytes;
+  std::optional<SpecializationScalarQuery> Query;
+
+  std::optional<SpecializationScalarQuery>
+  scalarQuery(llvm::ArrayRef<LowOp> Operations) override {
+    return Query;
+  }
 
   void prependLoad(va_t Address, va_t ReadAddress) {
     auto &Insn = Instructions.at(Address);
@@ -114,7 +123,7 @@ public:
     LowOp Op;
     Op.Opcode = NdOp::INTRINSIC;
     Op.Addr = 0x200;
-    Op.addInput(NdVar::scalar(static_cast<uint64_t>(Intrinsic::Int3), 2));
+    Op.addInput(NdVar::cst(static_cast<uint64_t>(Intrinsic::Int3), 2));
     Trap.Ops = {Op};
     Trap.Origin.Address = 0x200;
     Trap.Origin.Size = 1;
@@ -615,61 +624,102 @@ TEST(NativeUndefinedIndependence, IndirectCycleCannotPublishABoundedPrefix) {
 }
 
 TEST(NativeUndefinedIndependence, UntakenTrapStillRequiresExactEvidence) {
-  NativeProvider Provider;
-  Provider.untakenTrap();
-  const auto Check = [&] {
-    return neverd::analysis::detail::checkNativeUndefinedIndependence(
-        Provider, {0x100}, contract(), {});
+  const struct {
+    std::vector<uint8_t> Bytes;
+    Intrinsic Id;
+    bool Resumable;
+  } Traps[] = {
+      {{0xcc}, Intrinsic::Int3, true},
+      {{0xf1}, Intrinsic::Int1, true},
+      {{0xcd, 0x03}, Intrinsic::Int3, true},
+      {{0x0f, 0x0b}, Intrinsic::Ud2, false},
   };
-  const auto Valid = Check();
-  ASSERT_TRUE(Valid.Proof.proved()) << Valid.Proof.Diagnostic;
-  ASSERT_EQ(Valid.Instructions.size(), 3U);
-  EXPECT_EQ(Provider.Fetches.count(0x201), 0U);
-  EXPECT_EQ(Valid.Instructions.back().UndefinedEffects.Coverage,
-            LowUndefinedCoverage::Missing);
-  const auto Original = Provider.Instructions.at(0x200);
-  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
-    SCOPED_TRACE(Mutation);
+  for (const auto &Encoding : Traps) {
+    SCOPED_TRACE(unsigned(Encoding.Bytes.front()));
+    NativeProvider Provider;
+    Provider.untakenTrap();
     auto &Trap = Provider.Instructions.at(0x200);
-    Trap = Original;
-    switch (Mutation) {
-    case 0:
-      Trap.UndefinedEffects.OperationDigest.clear();
-      break;
-    case 1:
-      Trap.Ops[0].Output = NdVar::reg(0, 8);
-      break;
-    case 2:
-      Trap.Ops[0].Inputs[0] =
-          NdVar::scalar(static_cast<uint64_t>(Intrinsic::Rdtsc), 2);
-      break;
-    case 3:
-      Trap.Ops[0].addInput(NdVar::scalar(0, 1));
-      break;
-    case 4:
+    Trap.NativeBytes = Encoding.Bytes;
+    Trap.Origin.Size = Encoding.Bytes.size();
+    Trap.Fallthrough.Address = Trap.Origin.Address + Trap.Origin.Size;
+    if (!Encoding.Resumable)
       Trap.Origin.ControlFlags = LowInstructionControlFlag::Terminator;
-      break;
-    case 5:
-      Trap.NativeStackControl = SpecializationNativeStackControl::Return;
-      break;
-    case 6:
-      Trap.Ops[0].Opcode = NdOp::NOP;
-      Trap.Ops[0].NumInputs = 0;
-      break;
-    case 7:
-      Trap.UndefinedEffects.OpCount = 0;
-      break;
+    Trap.Ops[0].Inputs[0] = NdVar::cst(static_cast<uint64_t>(Encoding.Id), 2);
+    Trap.UndefinedEffects.OperationDigest =
+        lowUndefinedOperationDigest(Trap.Ops);
+    const auto Check = [&] {
+      return neverd::analysis::detail::checkNativeUndefinedIndependence(
+          Provider, {0x100}, contract(), {});
+    };
+    const auto Valid = Check();
+    ASSERT_TRUE(Valid.Proof.proved()) << Valid.Proof.Diagnostic;
+    ASSERT_EQ(Valid.Instructions.size(), 3U);
+    EXPECT_EQ(Provider.Fetches.count(Trap.Fallthrough.Address), 0U);
+    EXPECT_EQ(Valid.Instructions.back().UndefinedEffects.Coverage,
+              LowUndefinedCoverage::Missing);
+    const auto Original = Trap;
+    for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      Trap = Original;
+      switch (Mutation) {
+      case 0:
+        Trap.UndefinedEffects.OperationDigest.clear();
+        break;
+      case 1:
+        Trap.Ops[0].Output = NdVar::reg(0, 8);
+        break;
+      case 2:
+        Trap.Ops[0].Inputs[0] =
+            NdVar::scalar(static_cast<uint64_t>(Intrinsic::Rdtsc), 2);
+        break;
+      case 3:
+        Trap.Ops[0].addInput(NdVar::scalar(0, 1));
+        break;
+      case 4:
+        Trap.Origin.ControlFlags = LowInstructionControlFlag::Terminator;
+        if (!Encoding.Resumable)
+          Trap.Origin.ControlFlags |= LowInstructionControlFlag::Resumable;
+        break;
+      case 5:
+        Trap.NativeStackControl = SpecializationNativeStackControl::Return;
+        break;
+      case 6:
+        Trap.Ops[0].Opcode = NdOp::NOP;
+        Trap.Ops[0].NumInputs = 0;
+        break;
+      case 7:
+        Trap.UndefinedEffects.OpCount = 0;
+        break;
+      case 8:
+        // Keep valid trap bytes, flags and a self-consistent operation digest,
+        // but give the retained intrinsic a different exception identity.
+        Trap.Ops[0].Inputs[0] =
+            NdVar::cst(static_cast<uint64_t>(Encoding.Id == Intrinsic::Int1
+                                                 ? Intrinsic::Int3
+                                                 : Intrinsic::Int1),
+                       2);
+        break;
+      case 9:
+        Trap.NativeBytes.assign(Trap.Origin.Size, 0x90);
+        break;
+      case 10:
+        Trap.UndefinedEffects.Coverage = LowUndefinedCoverage::Complete;
+        break;
+      case 11:
+        Trap.PreservedState.SemanticsVersion = 1;
+        break;
+      }
+      if (Mutation != 0)
+        Trap.UndefinedEffects.OperationDigest =
+            lowUndefinedOperationDigest(Trap.Ops);
+      const auto Rejected = Check();
+      EXPECT_TRUE(Rejected.Proof.Status == LowIRIndependenceStatus::Invalid ||
+                  Rejected.Proof.Status == LowIRIndependenceStatus::Unsupported)
+          << Rejected.Proof.Diagnostic;
+      EXPECT_FALSE(Rejected.Proof.Certificate.has_value());
+      EXPECT_TRUE(Rejected.Instructions.empty());
+      EXPECT_TRUE(Rejected.Reads.empty());
     }
-    if (Mutation != 0)
-      Trap.UndefinedEffects.OperationDigest =
-          lowUndefinedOperationDigest(Trap.Ops);
-    const auto Rejected = Check();
-    EXPECT_TRUE(Rejected.Proof.Status == LowIRIndependenceStatus::Invalid ||
-                Rejected.Proof.Status == LowIRIndependenceStatus::Unsupported)
-        << Rejected.Proof.Diagnostic;
-    EXPECT_FALSE(Rejected.Proof.Certificate.has_value());
-    EXPECT_TRUE(Rejected.Instructions.empty());
-    EXPECT_TRUE(Rejected.Reads.empty());
   }
 }
 
@@ -1258,5 +1308,124 @@ TEST(NativeTraceBlocks, InteriorLoopCutsStopBeforeGroupedInstructions) {
     EXPECT_EQ(Wrong.Proof.Status, LowIRRefinementStatus::Different)
         << Wrong.Proof.Diagnostic;
     EXPECT_FALSE(Wrong.Proof.Certificate);
+  }
+}
+
+namespace {
+// A synthetic provider contract tests the common descriptor protocol. These
+// bytes/operations are deliberately not an architectural decoding claim.
+NativeProvider scalarQueryProvider() {
+  NativeProvider P;
+  P.flags(false);
+  auto &I = P.Instructions.at(0x100);
+  I.Ops[0].Output = NdVar::reg(0, 8);
+  I.UndefinedEffects.OperationDigest = lowUndefinedOperationDigest(I.Ops);
+  SpecializationScalarQuery Q;
+  Q.Identity = "test.scalar";
+  Q.SemanticsVersion = 1;
+  Q.Selectors = {NdVar::scalar(7, 4)};
+  Q.ResultBits = {32};
+  Q.Bindings = {{NdVar::reg(0, 8), 0}};
+  P.Query = std::move(Q);
+  return P;
+}
+} // namespace
+
+TEST(NativeScalarQueryDescriptor, ActualDescriptorBindsTheProofDigest) {
+  auto C = contract();
+  C.ExternalQueries = LowIRExternalQueryModel::OrderedScalarV1;
+  C.ReturnRegisters = {{0, 8}};
+  auto P = scalarQueryProvider();
+  const auto Good = detail::checkNativeUndefinedIndependence(P, {0x100}, C, {});
+  ASSERT_TRUE(Good.Proof.proved()) << Good.Proof.Diagnostic;
+  ASSERT_EQ(Good.Proof.Certificate->ExternalQueryTransitions.size(), 1U);
+  using Mutation = void (*)(SpecializationScalarQuery &);
+  const Mutation Changes[]{
+      [](auto &Q) { Q.Identity = "test.other"; },
+      [](auto &Q) { ++Q.SemanticsVersion; },
+      [](auto &Q) { ++Q.Selectors[0].Offset; },
+      [](auto &Q) { Q.ResultBits[0] = 64; },
+      [](auto &Q) { Q.Bindings.push_back({NdVar::tmp(0x70, 8), 0}); }};
+  for (auto Change : Changes) {
+    auto Other = scalarQueryProvider();
+    Change(*Other.Query);
+    const auto R =
+        detail::checkNativeUndefinedIndependence(Other, {0x100}, C, {});
+    ASSERT_TRUE(R.Proof.proved()) << R.Proof.Diagnostic;
+    EXPECT_NE(R.Proof.Certificate->InputDigest,
+              Good.Proof.Certificate->InputDigest);
+    ASSERT_EQ(R.Proof.Certificate->ExternalQueryTransitions.size(), 1U);
+    EXPECT_NE(
+        R.Proof.Certificate->ExternalQueryTransitions[0].DescriptorDigest,
+        Good.Proof.Certificate->ExternalQueryTransitions[0].DescriptorDigest);
+    EXPECT_EQ(
+        R.Proof.Certificate->ExternalQueryTransitions[0].OperationDigest,
+        Good.Proof.Certificate->ExternalQueryTransitions[0].OperationDigest);
+  }
+}
+
+TEST(NativeScalarQueryDescriptor,
+     MalformedOrUnboundedDeclarationsNeverCertify) {
+  auto C = contract();
+  C.ExternalQueries = LowIRExternalQueryModel::OrderedScalarV1;
+  using Mutation = void (*)(SpecializationScalarQuery &);
+  const Mutation Changes[]{
+      [](auto &Q) { Q.Identity.clear(); },
+      [](auto &Q) { Q.Identity.assign(65, 'x'); },
+      [](auto &Q) { Q.SemanticsVersion = 0; },
+      [](auto &Q) { Q.Selectors.resize(9); },
+      [](auto &Q) { Q.Selectors[0] = NdVar::reg(0, 16); },
+      [](auto &Q) { Q.Selectors[0] = NdVar::tmp(0, 8); },
+      [](auto &Q) { Q.ResultBits.clear(); },
+      [](auto &Q) { Q.ResultBits.resize(9, 8); },
+      [](auto &Q) { Q.ResultBits[0] = 0; },
+      [](auto &Q) { Q.ResultBits[0] = 65; },
+      [](auto &Q) { Q.Bindings.clear(); },
+      [](auto &Q) { Q.Bindings.resize(17); },
+      [](auto &Q) { Q.Bindings[0].Result = 1; },
+      [](auto &Q) { Q.Bindings[0].Destination = NdVar::reg(0, 1); },
+      [](auto &Q) { Q.Bindings[0].Destination = NdVar::scalar(0, 8); },
+      [](auto &Q) { Q.Bindings[0].Destination = NdVar::reg(8, 8); },
+      [](auto &Q) { Q.Bindings.push_back({NdVar::reg(4, 4), 0}); },
+      [](auto &Q) {
+        Q.Bindings.push_back({NdVar::tmp(UINT64_MAX - 7, 8), 0});
+      }};
+  for (size_t I = 0; I != std::size(Changes); ++I) {
+    auto P = scalarQueryProvider();
+    Changes[I](*P.Query);
+    const auto R = detail::checkNativeUndefinedIndependence(P, {0x100}, C, {});
+    EXPECT_EQ(R.Proof.Status, LowIRIndependenceStatus::Invalid)
+        << I << ": " << R.Proof.Diagnostic;
+    EXPECT_FALSE(R.Proof.Certificate);
+  }
+}
+
+TEST(NativeScalarQueryDescriptor,
+     MetadataCeilingsHaveValidExactBoundaryControls) {
+  auto C = contract();
+  C.ExternalQueries = LowIRExternalQueryModel::OrderedScalarV1;
+  auto P = scalarQueryProvider();
+  auto &Q = *P.Query;
+  Q.Identity.assign(64, 'q');
+  Q.Selectors.assign(8, NdVar::scalar(7, 4));
+  Q.ResultBits.assign(8, 32);
+  for (unsigned I = 1; I != 16; ++I)
+    Q.Bindings.push_back({NdVar::tmp(0x100 + I * 8, 8), uint16_t(I % 8)});
+  const auto Good = detail::checkNativeUndefinedIndependence(P, {0x100}, C, {});
+  ASSERT_TRUE(Good.Proof.proved()) << Good.Proof.Diagnostic;
+  using Mutation = void (*)(SpecializationScalarQuery &);
+  const Mutation Changes[]{
+      [](auto &Q) { Q.Identity += 'q'; },
+      [](auto &Q) { Q.Selectors.push_back(NdVar::scalar(7, 4)); },
+      [](auto &Q) { Q.ResultBits.push_back(32); },
+      [](auto &Q) { Q.Bindings.push_back({NdVar::tmp(0x200, 8), 0}); }};
+  for (auto Change : Changes) {
+    auto Other = P;
+    Change(*Other.Query);
+    const auto R =
+        detail::checkNativeUndefinedIndependence(Other, {0x100}, C, {});
+    EXPECT_EQ(R.Proof.Status, LowIRIndependenceStatus::Invalid);
+    EXPECT_EQ(R.Proof.Diagnostic, "invalid scalar query descriptor");
+    EXPECT_FALSE(R.Proof.Certificate);
   }
 }

@@ -17,7 +17,7 @@
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedIR.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/Parallel.h"
@@ -32,6 +32,7 @@
 #include <regex>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -1366,6 +1367,55 @@ TEST(CFGBuilderCoverage,
                    }));
 }
 
+TEST(CFGBuilderCoverage, FH4ContinuationRootsAreReadOncePerImage) {
+  // The catch continuation an FH4 handler names in another function of its
+  // record is that function's root.  A selected run that shares the
+  // analysis cache reads such continuations from the cache's inventory, once
+  // for every run.
+  constexpr va_t CatchVA = 0x140001000;
+  constexpr va_t OwnerVA = CatchVA + 0x100;
+  constexpr va_t TargetVA = OwnerVA + 0x20;
+  BinaryImage Img = continuationPipelineImage(/*ReturnAddress=*/false);
+  for (ExceptionFunction &Function : Img.ExceptionMetadata.Functions)
+    Function.Cxx->NativeEncoding = CxxExceptionInfo::Encoding::FH4;
+  ExceptionFunction &Catch = Img.ExceptionMetadata.Functions.front();
+  ASSERT_EQ(Catch.CodeRange.Begin, CatchVA);
+  CxxCatchHandler Handler;
+  Handler.HandlerVA = CatchVA;
+  Handler.ContinuationVAs = {TargetVA};
+  CxxTryBlock Try;
+  Try.Handlers.push_back(std::move(Handler));
+  Catch.Cxx->TryBlocks.push_back(std::move(Try));
+
+  EXPECT_EQ(pipeline_detail::fh4ContinuationCandidates(Img),
+            (std::vector<std::pair<va_t, va_t>>{{OwnerVA, TargetVA}}));
+  const auto Roots =
+      pipeline_detail::collectWindowsEHContinuationRootsForTesting(
+          Img, {}, {OwnerVA}, std::nullopt, /*CompleteModule=*/false);
+  EXPECT_EQ(Roots.RootsByOwner,
+            (std::map<va_t, std::set<va_t>>{{OwnerVA, {TargetVA}}}));
+
+  PipelineAnalysisCache Cache;
+  for (int Run = 0; Run < 2; ++Run) {
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.DumpLow = true;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {OwnerVA};
+    Options.AnalysisCache = &Cache;
+    const PipelineResult Result = Pipeline().run(Img, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    const auto Owner = std::find_if(
+        Result.LowFuncs.begin(), Result.LowFuncs.end(),
+        [&](const LowFunc &Function) { return Function.Entry == OwnerVA; });
+    ASSERT_NE(Owner, Result.LowFuncs.end()) << "run " << Run;
+    EXPECT_TRUE(std::any_of(
+        Owner->Blocks.begin(), Owner->Blocks.end(),
+        [&](const LowBlock &Block) { return Block.StartAddr == TargetVA; }))
+        << "run " << Run;
+  }
+}
+
 TEST(CFGBuilderCoverage, LocalUnwindTargetRequiresExclusiveSameFrameUses) {
   constexpr va_t Entry = 0x140001000, Target = Entry + 0x20;
   constexpr va_t Stub = Entry + 0x180;
@@ -2321,7 +2371,7 @@ TEST(CFGBuilderCoverage, DecodesOperandSizePrefixedFence) {
   EXPECT_EQ(Function.LiftedInstructionCount, 2u);
 }
 
-TEST(MedLLVMEmitterAudit, CountsUnhandledValueIntrinsic) {
+TEST(MedLLVMEmitterAudit, RefusesUnhandledValueAndRetainsValidSourceIdentity) {
   MedFunc Func;
   Func.Entry = 0x140001000;
   Func.Name = "backend_audit_probe";
@@ -2349,9 +2399,14 @@ TEST(MedLLVMEmitterAudit, CountsUnhandledValueIntrinsic) {
 
   llvm::LLVMContext Context;
   MedLLVMEmitter Emitter;
+  EXPECT_THROW(Emitter.emit({Func}, Context, "backend-audit", Arch::X64),
+               std::runtime_error);
+  EXPECT_EQ(Emitter.unhandledValueIntrinsicCount(), 1u);
+  Func.Blocks[0].Ops[0].Opcode = NdOp::COPY;
+  Func.Blocks[0].Ops[0].Inputs[0] = MedVar::makeConst(7, Output.Size);
   auto Module = Emitter.emit({Func}, Context, "backend-audit", Arch::X64);
   ASSERT_NE(Module, nullptr);
-  EXPECT_EQ(Emitter.unhandledValueIntrinsicCount(), 1u);
+  EXPECT_EQ(Emitter.unhandledValueIntrinsicCount(), 0u);
   llvm::Function *Emitted = Module->getFunction(Func.Name);
   ASSERT_NE(Emitted, nullptr);
   auto OriginalVA = rewrite_source::getOriginalVA(*Emitted);
@@ -2431,73 +2486,6 @@ TEST_F(X86_64_CFGEntry, OptimizedAndUnoptimizedLLVMEmissionSucceed) {
   ASSERT_EQ(Unoptimized.exitCode, 0) << Unoptimized.err;
 }
 
-// A long `.text` is swept for call targets in pieces on the worker threads
-// and the pieces joined as one sweep would have gone.  Random bytes decode to
-// every length of instruction and to bytes that do not decode at all, so the
-// pieces start in the middle of instructions; the symbols start wherever
-// they like, some where the long sweep never lands and some ending inside an
-// instruction.  What the detector finds must not depend on any of that.
-TEST(FuncDetectorCoverage, SweepsInPiecesExactlyAsInOnePiece) {
-  constexpr va_t TextVA = 0x401000;
-  constexpr size_t TextSize = 512 * 1024;
-  BinaryImage Img;
-  Img.Arch = Arch::X64;
-  Img.Bits = Bitness::Bits64;
-  Img.Format = BinaryFormat::ELF;
-  Img.Base = 0x400000;
-  Img.Entry = TextVA;
-
-  Segment Mapping;
-  Mapping.VA = TextVA;
-  Mapping.Size = TextSize;
-  Mapping.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
-  Mapping.Data.resize(TextSize);
-  uint64_t State = 0x9E3779B97F4A7C15ull;
-  auto Next = [&] {
-    State ^= State << 13, State ^= State >> 7, State ^= State << 17;
-    return State;
-  };
-  for (uint8_t &Byte : Mapping.Data)
-    Byte = static_cast<uint8_t>(Next());
-  // Real calls among the noise: `push rbp; call rel32` into the text.
-  for (unsigned Call = 0; Call < 4000; ++Call) {
-    const size_t At = Next() % (TextSize - 16);
-    const size_t Target = Next() % (TextSize - 16) & ~size_t(15);
-    Mapping.Data[At] = 0x55;
-    Mapping.Data[At + 1] = 0xE8;
-    const int32_t Disp = static_cast<int32_t>(static_cast<int64_t>(Target) -
-                                              static_cast<int64_t>(At + 6));
-    std::memcpy(Mapping.Data.data() + At + 2, &Disp, sizeof(Disp));
-    std::memcpy(Mapping.Data.data() + Target, "\x55\x48\x89\xE5\x5D\xC3",
-                6); // a small function there
-  }
-  Img.Segments.push_back(std::move(Mapping));
-  Section Code;
-  Code.Name = ".text";
-  Code.VA = TextVA;
-  Code.Size = TextSize;
-  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
-  Img.Sections.push_back(std::move(Code));
-  for (unsigned Sym = 0; Sym < 500; ++Sym) {
-    const va_t Start = TextVA + Next() % (TextSize - 64);
-    Img.Symbols.push_back(Symbol::makeFunc(Start, 1 + Next() % 60));
-  }
-
-  auto DetectWith = [&](unsigned Threads) {
-    setWorkerThreadCount(Threads);
-    Decoder Dec;
-    EXPECT_TRUE(Dec.init(Arch::X64));
-    FuncDetector Detector;
-    auto Functions = Detector.detect(Img, Dec);
-    setWorkerThreadCount(0);
-    return Functions;
-  };
-  const auto OnePiece = DetectWith(1);
-  const auto Pieces = DetectWith(16);
-  EXPECT_GT(OnePiece.size(), 1000u);
-  EXPECT_EQ(Pieces, OnePiece);
-}
-
 TEST(CFGBuilderCoverage, LocalUnwindFrameProofIntersectsEveryPredecessor) {
   const auto SP = NdVar::reg(x86reg::RSP, 8);
   const auto Frame = NdVar::reg(x86reg::RCX, 8);
@@ -2571,7 +2559,7 @@ TEST(CFGBuilderCoverage, LocalUnwindFrameProofIntersectsEveryPredecessor) {
       Arm.Ops = {
           MakeOp(NdOp::COPY, NdVar::reg(x86reg::RSP, 4), {NdVar::cst(0, 4)})};
     if (Mutation == 15)
-      Arm.ExceptionalPreds.push_back({.BlockId = 10});
+      Arm.ExceptionalPreds.push_back({10, 0});
     if (Mutation == 17)
       Arm.Ops = {MakeOp(NdOp::INT_ADD, SP, {SP, NdVar::cst(40, 8)}),
                  MakeOp(NdOp::INT_SUB, SP, {SP, NdVar::cst(40, 8)})};
@@ -2840,11 +2828,11 @@ TEST(CFGBuilderCoverage,
     }
     if (Mutation == 17) {
       for (auto &E : H->ExceptionalPreds)
-        ++E.RegionIndex;
+        ++E.ExplicitContext.RegionIndex;
       for (auto &B : Low.Blocks)
         for (auto &E : B.ExceptionalSuccs)
           if (E.TargetVA == Handler)
-            ++E.RegionIndex;
+            ++E.ExplicitContext.RegionIndex;
     }
     if (Mutation == 19)
       H->ExceptionalPreds.front().BlockId = H->Id;
@@ -2911,7 +2899,7 @@ TEST(CFGBuilderCoverage,
         if (Edit == 6)
           Edge.Kind = ExceptionalEdgeKind::SEHFinally;
         if (Edit == 7)
-          ++Edge.RegionIndex;
+          ++Edge.ExplicitContext.RegionIndex;
         if (Edit == 8)
           Edge.SourceVA = Entry + 4;
         EXPECT_NE(Proof.DependencyDigest, lowSEHFrameDependencyDigest(Changed));

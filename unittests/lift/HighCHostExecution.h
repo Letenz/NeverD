@@ -15,6 +15,7 @@
 
 #include "NeverDLiftFixture.h"
 
+#include <algorithm>
 #include <fstream>
 #include <initializer_list>
 #include <iterator>
@@ -56,6 +57,13 @@ protected:
                                  std::initializer_list<int> Values) {
     if (!hasCrossTargetClang())
       GTEST_SKIP() << "cross-target compilation requires Clang";
+#if defined(__APPLE__)
+    // These kernels retain addresses in 32-bit integers. A 64-bit host build
+    // would change their meaning, and macOS cannot run a 32-bit executable.
+    if (std::find(HostFlags.begin(), HostFlags.end(), "-m32") !=
+        HostFlags.end())
+      GTEST_SKIP() << "32-bit native HighC execution is unavailable on macOS";
+#endif
     const auto Source = tmpFile("kernel.c");
     const auto Object = tmpFile("kernel.o");
     std::ofstream(Source) << Kernel;

@@ -51,13 +51,15 @@ protected:
     Image.Entry = Image.Base + 0x1000;
     Image.Size = 0x3000;
     success(Model->initialize(Image, DriverOptions{}));
-    Registry = std::make_unique<KernelRegistry>(*Memory);
+    Model->enterExecution(profile::StackBase);
+    Registry = std::make_unique<KernelRegistry>(*Model, *Memory);
     initialize({{Path, {{"Mode", 4, {1, 2, 3, 4}}}}});
     unicode(ValueName, "Mode");
   }
 
-  void initialize(std::vector<DriverRegistryKey> Keys) {
-    success(Registry->initialize(std::move(Keys)));
+  void initialize(std::vector<DriverRegistryKey> Keys,
+                  std::optional<uint64_t> Time = std::nullopt) {
+    success(Registry->initialize(std::move(Keys), Time));
   }
 
   void put(uint64_t Address, uint64_t Value, unsigned Size = 8) {
@@ -95,7 +97,7 @@ protected:
 
   uint64_t call(llvm::StringRef Name,
                 std::initializer_list<uint64_t> Arguments) {
-    auto Value = Registry->call(*Model, Name, Arguments);
+    auto Value = Registry->call(Name, Arguments);
     if (!Value) {
       ADD_FAILURE() << Name.str() << ": " << llvm::toString(Value.takeError());
       return UINT64_MAX;
@@ -105,7 +107,7 @@ protected:
 
   std::string failure(llvm::StringRef Name,
                       std::initializer_list<uint64_t> Arguments) {
-    auto Value = Registry->call(*Model, Name, Arguments);
+    auto Value = Registry->call(Name, Arguments);
     if (Value) {
       ADD_FAILURE() << Name.str() << " unexpectedly returned " << *Value;
       return {};
@@ -124,6 +126,30 @@ protected:
                  uint64_t Buffer = Output) {
     return call("ZwQueryValueKey",
                 {Handle, ValueName, Class, Buffer, Size, LengthOutput});
+  }
+
+  uint64_t objectCall(llvm::StringRef Name, std::initializer_list<uint64_t> A) {
+    auto V = Model->call(Name.str(), A);
+    if (!V) {
+      ADD_FAILURE() << Name.str() << ": " << llvm::toString(V.takeError());
+      return UINT64_MAX;
+    }
+    return *V;
+  }
+  std::string objectFailure(llvm::StringRef Name,
+                            std::initializer_list<uint64_t> A) {
+    auto V = Model->call(Name.str(), A);
+    if (V) {
+      ADD_FAILURE() << Name.str() << " unexpectedly returned " << *V;
+      return {};
+    }
+    return llvm::toString(V.takeError());
+  }
+  uint64_t reference(uint64_t Handle, uint64_t Type = 0) {
+    EXPECT_EQ(
+        objectCall("ObReferenceObjectByHandle", {Handle, 0, Type, 0, Data, 0}),
+        0u);
+    return get(Data);
   }
 
   std::vector<uint8_t> bytes(uint64_t Address, size_t Size) {
@@ -189,12 +215,367 @@ TEST_F(DriverKernelRegistry, BasicAndFullQuerySerializeNamesAndDataOffsets) {
   EXPECT_EQ(bytes(Output + 12, 8),
             (std::vector<uint8_t>{'M', 0, 'o', 0, 'd', 0, 'e', 0}));
   EXPECT_EQ(query(Handle, 1, 20), 0x80000005u);
-  EXPECT_EQ(get(LengthOutput, 4), 32u);
-  EXPECT_EQ(get(Output + 8, 4), 28u);
+  EXPECT_EQ(get(LengthOutput, 4), 36u);
+  EXPECT_EQ(get(Output + 8, 4), 32u);
   EXPECT_EQ(get(Output + 12, 4), 4u);
   EXPECT_EQ(get(Output + 16, 4), 8u);
-  EXPECT_EQ(query(Handle, 1, 32), 0u);
-  EXPECT_EQ(get(Output + 28, 4), 0x04030201u);
+  EXPECT_EQ(query(Handle, 1, 36), 0u);
+  EXPECT_EQ(get(Output + 32, 4), 0x04030201u);
+}
+
+TEST_F(DriverKernelRegistry, EnumerationUsesCreationOrderAndLiveValueIndices) {
+  initialize(
+      {{Path, {{"Zulu", 3, {0x11}}, {"Alpha", 4, {0x22}}, {"", 0, {}}}}});
+  const auto Handle = open();
+  auto Enumerate = [&](uint64_t Index, uint64_t Class = 0) {
+    return call("ZwEnumerateValueKey",
+                {Handle, Index, Class, Output, 64, LengthOutput});
+  };
+  EXPECT_EQ(Enumerate(0), 0u);
+  EXPECT_EQ(get(Output + 12, 2), 'Z');
+  EXPECT_EQ(Enumerate(1), 0u);
+  EXPECT_EQ(get(Output + 12, 2), 'A');
+  EXPECT_EQ(Enumerate(2), 0u);
+  EXPECT_EQ(get(Output + 8, 4), 0u);
+  EXPECT_EQ(Enumerate(3), 0x8000001au);
+  // Replacing a value preserves its original name and position.
+  unicode(ValueName, "zULU");
+  put(Data, 0x33, 1);
+  EXPECT_EQ(call("ZwSetValueKey", {Handle, ValueName, 0, 3, Data, 1}), 0u);
+  EXPECT_EQ(Enumerate(0, 1), 0u);
+  EXPECT_EQ(get(Output + 20, 2), 'Z');
+  EXPECT_EQ(get(Output + 32, 1), 0x33u);
+  // Removing compacts the list; recreating appends, even for the same spelling.
+  EXPECT_EQ(call("ZwDeleteValueKey", {Handle, ValueName}), 0u);
+  EXPECT_EQ(Enumerate(0), 0u);
+  EXPECT_EQ(get(Output + 12, 2), 'A');
+  EXPECT_EQ(call("ZwSetValueKey", {Handle, ValueName, 0, 3, Data, 1}), 0u);
+  EXPECT_EQ(Enumerate(2), 0u);
+  EXPECT_EQ(get(Output + 12, 2), 'z');
+  const auto Snapshot = Registry->snapshot();
+  ASSERT_TRUE(Snapshot);
+  const auto &Values = Snapshot->back().Values;
+  ASSERT_EQ(Values.size(), 3u);
+  EXPECT_EQ(Values[0].Name, "Alpha");
+  EXPECT_EQ(Values[1].Name, "");
+  EXPECT_EQ(Values[2].Name, "zULU");
+  EXPECT_EQ(call("ZwClose", {Handle}), 0u);
+  initialize(*Snapshot);
+  const auto Reopened = open();
+  EXPECT_EQ(
+      call("ZwEnumerateValueKey", {Reopened, 2, 0, Output, 64, LengthOutput}),
+      0u);
+  EXPECT_EQ(get(Output + 12, 2), 'z');
+}
+
+TEST_F(DriverKernelRegistry, EnumerationSharesQueryLayoutsAndShortBuffers) {
+  const auto Handle = open();
+  for (uint32_t Class : {0, 1, 2}) {
+    for (uint32_t Length = 0; Length <= 40; ++Length) {
+      SCOPED_TRACE(::testing::Message() << Class << ':' << Length);
+      success(Memory->write(Output, std::vector<uint8_t>(64, 0xcc)));
+      const auto Status = query(Handle, Class, Length);
+      const auto Required = get(LengthOutput, 4);
+      const auto Expected = bytes(Output, 64);
+      success(Memory->write(Output, std::vector<uint8_t>(64, 0xcc)));
+      EXPECT_EQ(call("ZwEnumerateValueKey",
+                     {Handle, 0, Class, Output, Length, LengthOutput}),
+                Status);
+      EXPECT_EQ(get(LengthOutput, 4), Required);
+      EXPECT_EQ(bytes(Output, 64), Expected);
+    }
+  }
+  // Independently checked against CmpQueryKeyValueData in 19041.6456:
+  // Full data is eight-aligned; padding and an incomplete ASCII unit survive.
+  success(Memory->write(Output, std::vector<uint8_t>(64, 0xcc)));
+  EXPECT_EQ(query(Handle, 1, 64), 0u);
+  EXPECT_EQ(get(Output + 8, 4), 32u);
+  EXPECT_EQ(get(Output + 28, 4), 0xccccccccu);
+  success(Memory->write(Output, std::vector<uint8_t>(64, 0xcc)));
+  EXPECT_EQ(query(Handle, 0, 13), 0x80000005u);
+  EXPECT_EQ(get(Output + 12, 2), 0xccccu);
+  EXPECT_EQ(call("ZwSetValueKey", {Handle, ValueName, 0, 0, 0, 0}), 0u);
+  EXPECT_EQ(query(Handle, 1, 28), 0u);
+  EXPECT_EQ(get(LengthOutput, 4), 28u);
+  EXPECT_EQ(get(Output + 8, 4), UINT32_MAX);
+  EXPECT_EQ(get(Output + 12, 4), 0u);
+  EXPECT_EQ(call("ZwEnumerateValueKey", {Handle, 0, 0, Output, 64, Output}),
+            0u);
+  EXPECT_EQ(get(Output, 4), 20u);
+  EXPECT_EQ(get(Output + 8, 4), 8u);
+}
+
+TEST_F(DriverKernelRegistry, EnumerationErrorsPreserveOutputsAndRespectRights) {
+  const auto Handle = open();
+  put(Output, 0x1122334455667788);
+  put(LengthOutput, 0x98765432, 4);
+  // Invalid enum classes precede handle, index and output access in the kernel.
+  for (uint64_t Class : {3, 4, 5, 6, -1})
+    EXPECT_EQ(call("ZwEnumerateValueKey", {0, 0, Class, 0, 0, 0}), 0xc000000du);
+  EXPECT_EQ(call("ZwEnumerateValueKey", {0, 0, 0, 0, 0, 0}), 0xc0000008u);
+  EXPECT_EQ(call("ZwEnumerateValueKey", {Handle, UINT32_MAX, 0, 0, 0, 0}),
+            0x8000001au);
+  EXPECT_EQ(call("ZwEnumerateValueKey", {open(Path, 2), 0, 0, 0, 0, 0}),
+            0xc0000022u);
+  EXPECT_FALSE(failure("ZwEnumerateValueKey",
+                       {Handle, 0, 0, 0x90000000, 64, LengthOutput})
+                   .empty());
+  EXPECT_FALSE(
+      failure("ZwEnumerateValueKey", {Handle, 0, 0, Output, 64, 0x90000000})
+          .empty());
+  EXPECT_EQ(get(Output), 0x1122334455667788u);
+  EXPECT_EQ(get(LengthOutput, 4), 0x98765432u);
+  constexpr uint64_t High = 0xfedcba9800000000;
+  EXPECT_EQ(call("ZwEnumerateValueKey",
+                 {Handle, High, High | 2, Output, High | 16, LengthOutput}),
+            0u);
+  EXPECT_EQ(get(Output + 12, 4), 0x04030201u);
+  EXPECT_EQ(call("ZwDeleteKey", {Handle}), 0u);
+  EXPECT_EQ(call("ZwEnumerateValueKey", {Handle, 0, 0, 0, 0, 0}), 0xc000017cu);
+  EXPECT_EQ(call("ZwClose", {Handle}), 0u);
+  EXPECT_EQ(call("ZwEnumerateValueKey", {Handle, 0, 0, 0, 0, 0}), 0xc0000008u);
+}
+
+TEST_F(DriverKernelRegistry, KeyInformationSerializesNamesCountsAndTimestamps) {
+  initialize({{Path, {{"Mode", 4, {1, 2, 3, 4}}, {"Longer", 3, {1}}}, 1234},
+              {std::string(Path) + "\\z", {}},
+              {std::string(Path) + "\\Alpha\\Grandchild", {}}},
+             2000);
+  const auto Handle = open();
+  auto Query = [&](uint32_t Class, uint32_t Size) {
+    return call("ZwQueryKey", {Handle, Class, Output, Size, LengthOutput});
+  };
+  success(Memory->write(Output, std::vector<uint8_t>(64, 0xcc)));
+  EXPECT_EQ(Query(0, 15), 0xc0000023u);
+  EXPECT_EQ(get(LengthOutput, 4), 28u);
+  EXPECT_EQ(get(Output), 0xccccccccccccccccu);
+  EXPECT_EQ(Query(0, 17), 0x80000005u);
+  EXPECT_EQ(get(Output), 1234u);
+  EXPECT_EQ(get(Output + 8, 4), 0u);
+  EXPECT_EQ(get(Output + 12, 4), 12u);
+  EXPECT_EQ(get(Output + 16, 2), 0xccccu);
+  EXPECT_EQ(Query(0, 28), 0u);
+  EXPECT_EQ(get(Output + 16, 2), 'N');
+  EXPECT_EQ(Query(1, 64), 0u);
+  EXPECT_EQ(get(LengthOutput, 4), 36u);
+  EXPECT_EQ(get(Output + 12, 4), UINT32_MAX);
+  EXPECT_EQ(get(Output + 16, 4), 0u);
+  EXPECT_EQ(get(Output + 20, 4), 12u);
+  EXPECT_EQ(get(Output + 24, 2), 'N');
+  EXPECT_EQ(Query(2, 44), 0u);
+  EXPECT_EQ(get(LengthOutput, 4), 44u);
+  EXPECT_EQ(get(Output), 1234u);
+  EXPECT_EQ(get(Output + 12, 4), UINT32_MAX);
+  EXPECT_EQ(get(Output + 16, 4), 0u);
+  EXPECT_EQ(get(Output + 20, 4), 2u);
+  EXPECT_EQ(get(Output + 24, 4), 10u);
+  EXPECT_EQ(get(Output + 28, 4), 0u);
+  EXPECT_EQ(get(Output + 32, 4), 2u);
+  EXPECT_EQ(get(Output + 36, 4), 12u);
+  EXPECT_EQ(get(Output + 40, 4), 4u);
+  success(Memory->write(Output, std::vector<uint8_t>(48, 0xcc)));
+  EXPECT_EQ(Query(4, 39), 0xc0000023u);
+  EXPECT_EQ(get(Output), 0xccccccccccccccccu);
+  EXPECT_EQ(Query(4, 40), 0u);
+  EXPECT_EQ(get(LengthOutput, 4), 40u);
+  EXPECT_EQ(get(Output + 12, 4), 2u);
+  EXPECT_EQ(get(Output + 16, 4), 10u);
+  EXPECT_EQ(get(Output + 20, 4), 2u);
+  EXPECT_EQ(get(Output + 24, 4), 12u);
+  EXPECT_EQ(get(Output + 28, 4), 4u);
+  EXPECT_EQ(get(Output + 32, 4), 12u);
+  EXPECT_EQ(get(Output + 36, 4), 0xccccccccu);
+}
+
+TEST_F(DriverKernelRegistry, KeyNamesNeedNoClockAndUseAnyNonzeroGrantedAccess) {
+  const auto Handle = open(Path, 2);
+  const uint32_t Required = 4 + std::string(Path).size() * 2;
+  EXPECT_EQ(call("ZwQueryKey", {Handle, 3, 0, 0, LengthOutput}), 0xc0000023u);
+  EXPECT_EQ(get(LengthOutput, 4), Required);
+  success(Memory->write(Output, std::vector<uint8_t>(128, 0xcc)));
+  EXPECT_EQ(call("ZwQueryKey", {Handle, 3, Output, 5, LengthOutput}),
+            0x80000005u);
+  EXPECT_EQ(get(Output, 4), Required - 4);
+  EXPECT_EQ(get(Output + 4, 2), 0xcc5cu); // NameInformation copies odd bytes.
+  EXPECT_EQ(call("ZwQueryKey", {Handle, 3, Output, 128, LengthOutput}), 0u);
+  EXPECT_EQ(get(Output + 4, 2), '\\');
+  EXPECT_EQ(call("ZwQueryKey", {Handle, 0, Output, 64, LengthOutput}),
+            0xc0000022u);
+  EXPECT_EQ(call("ZwQueryKey", {open(Path, 0), 3, 0, 0, 0}), 0xc0000022u);
+  EXPECT_EQ(call("ZwQueryKey", {0, 9, 0, 0, 0}), 0xc000000du);
+  const auto Read = open();
+  EXPECT_EQ(call("ZwQueryKey", {Read, 0, 0, 0, LengthOutput}), 0xc0000023u);
+  EXPECT_NE(failure("ZwQueryKey", {Read, 0, Output, 64, LengthOutput})
+                .find("last-write time is unspecified"),
+            std::string::npos);
+  EXPECT_NE(failure("ZwQueryKey", {Read, 5, Output, 64, LengthOutput})
+                .find("unsupported"),
+            std::string::npos);
+  constexpr uint64_t High = 0xaabbccdd00000000;
+  EXPECT_EQ(
+      call("ZwQueryKey", {Read, High | 3, Output, High | 128, LengthOutput}),
+      0u);
+}
+
+TEST_F(DriverKernelRegistry, SubkeyEnumerationUsesImmediateLiveChildren) {
+  initialize({{Path, {}},
+              {std::string(Path) + "\\_item", {}},
+              {std::string(Path) + "\\z", {}},
+              {std::string(Path) + "\\Alpha\\Grandchild", {}}},
+             99);
+  const auto Handle = open(Path, 8);
+  const char Initials[] = {'A', 'z', '_'};
+  for (unsigned I = 0; I < 3; ++I) {
+    EXPECT_EQ(call("ZwEnumerateKey", {Handle, I, 0, Output, 64, LengthOutput}),
+              0u);
+    EXPECT_EQ(get(Output), 99u);
+    EXPECT_EQ(get(Output + 16, 2), Initials[I]);
+  }
+  EXPECT_EQ(call("ZwEnumerateKey", {Handle, 3, 0, 0, 0, 0}), 0x8000001au);
+  EXPECT_EQ(call("ZwEnumerateKey", {Handle, UINT32_MAX, 0, 0, 0, 0}),
+            0x8000001au);
+  EXPECT_EQ(call("ZwEnumerateKey", {0, 0, 3, 0, 0, 0}), 0xc000000du);
+  EXPECT_EQ(call("ZwEnumerateKey", {open(Path, 1), 0, 0, 0, 0, 0}),
+            0xc0000022u);
+  // Enumerating Full describes the child, including its own immediate children.
+  EXPECT_EQ(call("ZwEnumerateKey", {Handle, 0, 2, Output, 44, LengthOutput}),
+            0u);
+  EXPECT_EQ(get(Output + 20, 4), 1u);
+  EXPECT_EQ(get(Output + 24, 4), 20u);
+  const auto Z = open(std::string(Path) + "\\z");
+  EXPECT_EQ(call("ZwDeleteKey", {Z}), 0u);
+  EXPECT_EQ(call("ZwEnumerateKey", {Handle, 1, 1, Output, 64, LengthOutput}),
+            0u);
+  EXPECT_EQ(get(Output + 24, 2), '_');
+  EXPECT_EQ(call("ZwEnumerateKey", {Z, 0, 0, 0, 0, 0}), 0xc000017cu);
+  constexpr uint64_t High = 0xabcdef0100000000;
+  EXPECT_EQ(call("ZwEnumerateKey",
+                 {Handle, High | 1, High, Output, High | 64, LengthOutput}),
+            0u);
+  EXPECT_EQ(get(Output + 16, 2), '_');
+}
+
+TEST_F(DriverKernelRegistry, KeyQueryOutputsAndDeletedNamesMatchTheKernel) {
+  initialize({{Path, {}, 1234}});
+  const auto Handle = open();
+  put(Output, 0x1122334455667788);
+  put(LengthOutput, 0x98765432, 4);
+  EXPECT_FALSE(
+      failure("ZwQueryKey", {Handle, 0, 0x90000000, 64, LengthOutput}).empty());
+  EXPECT_FALSE(
+      failure("ZwQueryKey", {Handle, 0, Output, 64, 0x90000000}).empty());
+  EXPECT_EQ(get(Output), 0x1122334455667788u);
+  EXPECT_EQ(get(LengthOutput, 4), 0x98765432u);
+  EXPECT_EQ(call("ZwQueryKey", {Handle, 0, Output, 64, Output}), 0u);
+  EXPECT_EQ(get(Output, 4), 28u); // ResultLength follows the aliased payload.
+  EXPECT_EQ(get(Output + 12, 4), 12u);
+  EXPECT_EQ(call("ZwDeleteKey", {Handle}), 0u);
+  EXPECT_EQ(call("ZwQueryKey", {Handle, 0, 0, 0, 0}), 0xc000017cu);
+  EXPECT_EQ(call("ZwQueryKey", {Handle, 3, 0, 0, LengthOutput}), 0xc0000023u);
+  EXPECT_EQ(call("ZwQueryKey", {Handle, 3, Output, 5, LengthOutput}),
+            0x80000005u);
+  EXPECT_EQ(call("ZwQueryKey", {Handle, 3, Output, 128, LengthOutput}),
+            0xc000017cu);
+  EXPECT_EQ(get(Output, 4), std::string(Path).size() * 2);
+  EXPECT_EQ(get(Output + 4, 2), '\\');
+}
+
+TEST_F(DriverKernelRegistry, KeyFullNameUsesEachRetainedAncestorSpelling) {
+  initialize({{"\\Registry\\Machine\\Software", {}},
+              {"\\registry\\machine\\SOFTWARE\\Child", {}}});
+  const auto Handle = open("\\REGISTRY\\MACHINE\\software\\CHILD");
+  EXPECT_EQ(call("ZwQueryKey", {Handle, 3, Output, 128, LengthOutput}), 0u);
+  const std::string Expected = "\\Registry\\Machine\\Software\\Child";
+  EXPECT_EQ(get(Output, 4), Expected.size() * 2);
+  for (size_t I = 0; I < Expected.size(); ++I)
+    EXPECT_EQ(get(Output + 4 + I * 2, 2), uint8_t(Expected[I]));
+  EXPECT_EQ(call("ZwDeleteKey", {Handle}), 0u);
+  const auto Parent = open("\\Registry\\Machine\\Software");
+  EXPECT_EQ(call("ZwDeleteKey", {Parent}), 0u);
+  EXPECT_EQ(call("ZwClose", {Parent}), 0u);
+  EXPECT_EQ(call("ZwQueryKey", {Handle, 3, Output, 128, LengthOutput}),
+            0xc000017cu);
+  for (size_t I = 0; I < Expected.size(); ++I)
+    EXPECT_EQ(get(Output + 4 + I * 2, 2), uint8_t(Expected[I]));
+}
+
+TEST_F(DriverKernelRegistry, RegistryMutationsUseDeclaredClockAndRetainMaxima) {
+  initialize({{Path, {{"LongName", 3, {1, 2, 3, 4}}, {"B", 3, {0}}}, 17}},
+             1000);
+  const auto Handle = open();
+  auto Query = [&]() {
+    EXPECT_EQ(call("ZwQueryKey", {Handle, 2, Output, 44, LengthOutput}), 0u);
+  };
+  success(Model->advanceExecutionTo100ns(20));
+  unicode(ValueName, "LongName");
+  put(Data, 0x04030201, 4);
+  EXPECT_EQ(call("ZwSetValueKey", {Handle, ValueName, 0, 3, Data, 4}), 0u);
+  Query();
+  EXPECT_EQ(get(Output), 17u); // Identical writes preserve the observation.
+  EXPECT_EQ(call("ZwSetValueKey", {Handle, ValueName, 0, 3, Data, 1}), 0u);
+  Query();
+  EXPECT_EQ(get(Output), 1020u);
+  EXPECT_EQ(get(Output + 40, 4),
+            4u); // Shrinking a value preserves the maximum.
+  EXPECT_EQ(call("ZwDeleteValueKey", {Handle, ValueName}), 0u);
+  Query();
+  EXPECT_EQ(get(Output + 36, 4), 16u);
+  EXPECT_EQ(get(Output + 40, 4), 4u);
+  unicode(ValueName, "B");
+  EXPECT_EQ(call("ZwDeleteValueKey", {Handle, ValueName}), 0u);
+  Query();
+  EXPECT_EQ(get(Output + 36, 4), 0u);
+  EXPECT_EQ(get(Output + 40, 4), 0u);
+  success(Model->advanceExecutionTo100ns(30));
+  object("LongChild", Handle);
+  EXPECT_EQ(call("ZwCreateKey",
+                 {HandleOutput, 0xf003f, Object, 0, 0, 0, Disposition}),
+            0u);
+  const auto Child = get(HandleOutput);
+  Query();
+  EXPECT_EQ(get(Output), 1030u);
+  EXPECT_EQ(get(Output + 24, 4), 18u);
+  EXPECT_EQ(call("ZwQueryKey", {Child, 0, Output, 64, LengthOutput}), 0u);
+  EXPECT_EQ(get(Output), 1030u);
+  success(Model->advanceExecutionTo100ns(40));
+  EXPECT_EQ(call("ZwDeleteKey", {Child}), 0u);
+  Query();
+  EXPECT_EQ(get(Output), 1040u);
+  EXPECT_EQ(get(Output + 24, 4), 0u);
+  EXPECT_EQ(Registry->snapshot()->back().LastWriteTime100ns, 1040u);
+}
+
+TEST_F(DriverKernelRegistry, UnknownAndOverflowingRegistryTimesDoNotGuess) {
+  initialize({{Path, {{"Mode", 4, {1, 2, 3, 4}}}, 42}});
+  auto Handle = open();
+  put(Data, 0x04030201, 4);
+  EXPECT_EQ(call("ZwSetValueKey", {Handle, ValueName, 0, 4, Data, 4}), 0u);
+  EXPECT_EQ(call("ZwQueryKey", {Handle, 0, Output, 64, LengthOutput}), 0u);
+  EXPECT_EQ(get(Output), 42u);
+  put(Data, 9, 4);
+  EXPECT_EQ(call("ZwSetValueKey", {Handle, ValueName, 0, 4, Data, 4}), 0u);
+  EXPECT_FALSE(Registry->snapshot()->back().LastWriteTime100ns);
+  EXPECT_NE(failure("ZwQueryKey", {Handle, 0, Output, 64, LengthOutput})
+                .find("unspecified"),
+            std::string::npos);
+  EXPECT_EQ(call("ZwClose", {Handle}), 0u);
+  initialize({{Path, {{"Mode", 4, {1, 2, 3, 4}}}}}, uint64_t(INT64_MAX));
+  Handle = open();
+  success(Model->advanceExecutionTo100ns(1));
+  EXPECT_NE(failure("ZwSetValueKey", {Handle, ValueName, 0, 4, Data, 4})
+                .find("time exceeds"),
+            std::string::npos);
+  EXPECT_EQ(query(Handle, 2, 16), 0u);
+  EXPECT_EQ(get(Output + 12, 4), 0x04030201u);
+  EXPECT_NE(
+      failure("ZwDeleteValueKey", {Handle, ValueName}).find("time exceeds"),
+      std::string::npos);
+  object("Child", Handle);
+  EXPECT_NE(
+      failure("ZwCreateKey", {HandleOutput, 3, Object, 0, 0, 0, Disposition})
+          .find("time exceeds"),
+      std::string::npos);
+  EXPECT_EQ(Registry->snapshot()->size(), 3u);
 }
 
 TEST_F(DriverKernelRegistry,
@@ -283,25 +664,28 @@ TEST_F(DriverKernelRegistry,
   EXPECT_EQ(call("ZwDeleteValueKey", {Handle, ValueName}), 0xc0000034u);
 }
 
-TEST_F(DriverKernelRegistry, DeletedKeyRemainsInvalidUntilAllHandlesClose) {
+TEST_F(DriverKernelRegistry, DeletedKeyBodiesRemainSeparateFromARecreatedName) {
   const uint64_t First = open();
   const uint64_t Second = open();
   EXPECT_EQ(call("ZwDeleteKey", {First}), 0u);
+  EXPECT_EQ(call("ZwDeleteKey", {First}), 0u);
   EXPECT_EQ(query(Second, 2, 16), 0xc000017cu);
   EXPECT_EQ(call("ZwDeleteValueKey", {First, ValueName}), 0xc000017cu);
-  object(Path);
-  EXPECT_EQ(
-      call("ZwCreateKey", {HandleOutput, 3, Object, 0, 0, 0, Disposition}),
-      0xc000017cu);
   EXPECT_EQ(Registry->snapshot()->size(), 2u);
-  EXPECT_EQ(call("ZwClose", {First}), 0u);
-  EXPECT_TRUE(Registry->hasOpenHandles());
-  EXPECT_EQ(call("ZwClose", {Second}), 0u);
-  EXPECT_FALSE(Registry->hasOpenHandles());
+  object(Path);
+  EXPECT_EQ(call("ZwOpenKey", {HandleOutput, 1, Object}), 0xc0000034u);
   EXPECT_EQ(
       call("ZwCreateKey", {HandleOutput, 3, Object, 0, 0, 0, Disposition}), 0u);
+  const uint64_t Recreated = get(HandleOutput);
   EXPECT_EQ(get(Disposition, 4), 1u);
-  EXPECT_EQ(query(get(HandleOutput), 2, 16), 0xc0000034u);
+  EXPECT_EQ(query(Recreated, 2, 16), 0xc0000034u);
+  EXPECT_EQ(query(Second, 2, 16), 0xc000017cu);
+  EXPECT_EQ(call("ZwClose", {First}), 0u);
+  EXPECT_EQ(call("ZwClose", {Second}), 0u);
+  EXPECT_TRUE(Registry->hasOpenHandles());
+  EXPECT_EQ(query(Recreated, 2, 16), 0xc0000034u);
+  EXPECT_EQ(call("ZwClose", {Recreated}), 0u);
+  EXPECT_FALSE(Registry->hasOpenHandles());
 }
 
 TEST_F(DriverKernelRegistry, ParentDeletionAndVolatileChildrenHaveConstraints) {
@@ -358,10 +742,9 @@ TEST_F(DriverKernelRegistry, NarrowArgumentsIgnoreUpperRegisterBits) {
 TEST_F(DriverKernelRegistry, FaultingCreateOutputDoesNotPublishKeyOrHandle) {
   object("\\Registry\\Machine\\Software\\NewKey");
   const auto Before = Registry->snapshot()->size();
-  EXPECT_NE(
+  EXPECT_FALSE(
       failure("ZwCreateKey", {0x90000000, 3, Object, 0, 0, 0, Disposition})
-          .find("fault"),
-      std::string::npos);
+          .empty());
   EXPECT_FALSE(Registry->hasOpenHandles());
   EXPECT_EQ(Registry->snapshot()->size(), Before);
 }
@@ -412,6 +795,243 @@ TEST_F(DriverKernelRegistry,
   EXPECT_EQ(call("ZwDeleteValueKey", {Handle, ValueName}), 0u);
   unicode(ValueName, "New");
   EXPECT_EQ(call("ZwSetValueKey", {Handle, ValueName, 0, 3, Data, 1}), 0u);
+}
+
+TEST_F(DriverKernelRegistry,
+       PerOpenObjectsShareKeyDataAndCommonHandleRetirement) {
+  const auto First = open(), Second = open();
+  const auto A = reference(First), B = reference(Second);
+  EXPECT_NE(A, B);
+  const auto Type = objectCall("ObGetObjectType", {A});
+  EXPECT_EQ(objectCall("ObGetObjectType", {B}), Type);
+  unicode(KeyName, Path);
+  EXPECT_NE(objectFailure("ObReferenceObjectByName",
+                          {KeyName, 0x40, 0, 0, Type, 0, 0, Data})
+                .find("registry name parsing"),
+            std::string::npos);
+  auto Opaque = Model->validateGuestAccess(A, 1, false);
+  ASSERT_TRUE(bool(Opaque));
+  EXPECT_NE(llvm::toString(std::move(Opaque)).find("opaque"),
+            std::string::npos);
+  EXPECT_EQ(
+      objectCall("ObReferenceObjectByHandle", {First, 0, Type, 0, Data, 0}),
+      0u);
+  EXPECT_EQ(get(Data), A);
+  objectCall("ObfDereferenceObject", {A});
+  const auto DriverType =
+      objectCall("ObGetObjectType", {Model->driverObject()});
+  EXPECT_EQ(objectCall("ObReferenceObjectByHandle",
+                       {First, 0, DriverType, 0, Data, 0}),
+            0xc0000024u);
+  EXPECT_EQ(objectCall("ObReferenceObjectByPointer", {A, 0, DriverType, 0}),
+            0xc0000024u);
+  EXPECT_EQ(objectCall("ObReferenceObjectByPointer", {A, 0, Type, 0}), 0u);
+  objectCall("ObfDereferenceObject", {A});
+  EXPECT_EQ(objectCall("ObOpenObjectByPointer",
+                       {A, 0x200, 0, 0x80000000, Type, 0, HandleOutput}),
+            0u);
+  const auto Clone = get(HandleOutput);
+  EXPECT_EQ(reference(Clone, Type), A);
+  objectCall("ObfDereferenceObject", {A});
+  EXPECT_EQ(objectCall("ZwClose", {First}), 0u);
+  EXPECT_EQ(query(Clone, 2, 16), 0u);
+  EXPECT_EQ(query(Second, 2, 16), 0u);
+  EXPECT_EQ(objectCall("ZwClose", {Clone}), 0u);
+  EXPECT_EQ(objectCall("ZwClose", {Clone}), 0xc0000008u);
+  EXPECT_EQ(objectCall("ObGetObjectType", {A}), Type);
+  objectCall("ObfDereferenceObject", {A});
+  EXPECT_FALSE(objectFailure("ObGetObjectType", {A}).empty());
+  EXPECT_EQ(objectCall("ZwClose", {Second}), 0u);
+  objectCall("ObfDereferenceObject", {B});
+  EXPECT_FALSE(Registry->hasOpenHandles());
+  EXPECT_FALSE(objectFailure("ObfDereferenceObject", {B}).empty());
+  auto Invalid = Model->validateGuestAccess(B, 1, false);
+  ASSERT_TRUE(bool(Invalid));
+  EXPECT_NE(llvm::toString(std::move(Invalid)).find("freed"),
+            std::string::npos);
+}
+
+TEST_F(DriverKernelRegistry, KeyNameBytesMatchShortOddExactAndDeletedQueries) {
+  const auto Handle = open();
+  const auto Body = reference(Handle);
+  const uint32_t Required = 18 + std::string(Path).size() * 2;
+  for (bool ByHandle : {false, true}) {
+    for (uint32_t Size = 0; Size <= Required + 2; ++Size) {
+      SCOPED_TRACE(::testing::Message() << ByHandle << ':' << Size);
+      success(Memory->write(Output, std::vector<uint8_t>(128, 0xa5)));
+      const auto Status =
+          ByHandle ? objectCall("ZwQueryObject",
+                                {Handle, 1, Output, Size, LengthOutput})
+                   : objectCall("ObQueryNameString",
+                                {Body, Output, Size, LengthOutput});
+      EXPECT_EQ(Status, Size < Required ? 0xc0000004u : 0u);
+      EXPECT_EQ(get(LengthOutput, 4), Required);
+      if (Size < 18) {
+        EXPECT_EQ(bytes(Output, 128), std::vector<uint8_t>(128, 0xa5));
+        continue;
+      }
+      const auto Written = std::min(Size, Required) - 18;
+      EXPECT_EQ(get(Output, 2), Written);
+      EXPECT_EQ(get(Output + 2, 2), Written);
+      EXPECT_EQ(get(Output + 4, 4), Size >= Required ? 0u : 0xa5a5a5a5u);
+      EXPECT_EQ(get(Output + 8), Output + 16);
+      for (unsigned I = 0; I < (Written & ~1u); I += 2)
+        EXPECT_EQ(get(Output + 16 + I, 2), uint8_t(Path[I / 2]));
+      EXPECT_EQ(get(Output + 16 + (Written & ~1u), 2), 0u);
+    }
+  }
+  EXPECT_EQ(objectCall("ZwQueryObject", {Handle, 1, Output, 128, 0}), 0u);
+  EXPECT_EQ(objectCall("ObQueryNameString", {Body, Output, 128, Output}), 0u);
+  EXPECT_EQ(get(Output, 2), Required - 18);
+  EXPECT_EQ(objectCall("ZwQueryObject", {Handle, 1, Output, 128, Output}), 0u);
+  EXPECT_EQ(get(Output, 4),
+            Required); // Syscall result length follows the payload.
+  EXPECT_EQ(call("ZwDeleteKey", {Handle}), 0u);
+  success(Memory->write(Output, std::vector<uint8_t>(128, 0xa5)));
+  put(LengthOutput, 0xfeed, 4);
+  EXPECT_EQ(objectCall("ObQueryNameString", {Body, Output, 128, LengthOutput}),
+            0xc000017cu);
+  EXPECT_EQ(get(LengthOutput, 4), 0xfeedu);
+  EXPECT_EQ(objectCall("ZwQueryObject", {Handle, 1, Output, 128, LengthOutput}),
+            0xc000017cu);
+  EXPECT_EQ(get(LengthOutput, 4), 0u);
+  EXPECT_EQ(bytes(Output, 128), std::vector<uint8_t>(128, 0xa5));
+  EXPECT_EQ(objectCall("ZwClose", {Handle}), 0u);
+  EXPECT_NE(objectCall("ObGetObjectType", {Body}), 0u);
+  objectCall("ObfDereferenceObject", {Body});
+}
+
+TEST_F(DriverKernelRegistry, DeletedPointerAndHandlesNeverBindToRecreatedKey) {
+  const auto OldHandle = open(), Old = reference(OldHandle);
+  EXPECT_EQ(call("ZwDeleteKey", {OldHandle}), 0u);
+  object(Path);
+  EXPECT_EQ(call("ZwCreateKey",
+                 {HandleOutput, 0xf003f, Object, 0, 0, 0, Disposition}),
+            0u);
+  const auto NewHandle = get(HandleOutput), New = reference(NewHandle);
+  EXPECT_NE(Old, New);
+  EXPECT_EQ(get(Disposition, 4), 1u);
+  EXPECT_EQ(objectCall("ZwClose", {OldHandle}), 0u);
+  EXPECT_EQ(objectCall("ObOpenObjectByPointer",
+                       {Old, 0x200, 0, 1, 0, 0, HandleOutput}),
+            0u);
+  const auto ReopenedOld = get(HandleOutput);
+  EXPECT_EQ(query(ReopenedOld, 2, 16), 0xc000017cu);
+  EXPECT_EQ(query(NewHandle, 2, 16), 0xc0000034u);
+  objectCall("ObfDereferenceObject", {Old});
+  EXPECT_EQ(objectCall("ZwClose", {ReopenedOld}), 0u);
+  EXPECT_FALSE(objectFailure("ObGetObjectType", {Old}).empty());
+  EXPECT_EQ(objectCall("ZwQueryObject", {NewHandle, 1, Output, 128, 0}), 0u);
+  objectCall("ObfDereferenceObject", {New});
+  EXPECT_EQ(objectCall("ZwClose", {NewHandle}), 0u);
+}
+
+TEST_F(DriverKernelRegistry,
+       SharedHandleTypesAccessAndProcessScopeAreEnforced) {
+  const auto Kernel = open(Path, 0x80000000);
+  object(Path);
+  put(Object + 24, 0x40, 4);
+  EXPECT_EQ(call("ZwOpenKey", {HandleOutput, 0x80000000, Object}), 0u);
+  const auto Local = get(HandleOutput);
+  EXPECT_EQ(objectCall("ObReferenceObjectByHandle", {Local, 2, 0, 1, Data, 0}),
+            0xc0000022u);
+  EXPECT_EQ(
+      objectCall("ObReferenceObjectByHandle", {Local, 1, 0, 1, Data, Output}),
+      0u);
+  EXPECT_EQ(get(Output, 4), 0u);
+  EXPECT_EQ(get(Output + 4, 4), 0x20019u);
+  objectCall("ObfDereferenceObject", {get(Data)});
+  EXPECT_EQ(objectCall("ObReferenceObjectByHandle", {Kernel, 0, 0, 1, Data, 0}),
+            0xc0000008u);
+  success(Model->setUserRequestContext(true, 0x2000));
+  EXPECT_EQ(query(Local, 2, 16), 0xc0000008u);
+  EXPECT_EQ(objectCall("ZwClose", {Local}), 0xc0000008u);
+  EXPECT_EQ(query(Kernel, 2, 16), 0u);
+  EXPECT_FALSE(failure("ZwOpenKey", {HandleOutput, 1, Object}).empty());
+  success(Model->setUserRequestContext(false));
+  object("\\Driver");
+  EXPECT_EQ(objectCall("ZwOpenDirectoryObject", {HandleOutput, 1, Object}), 0u);
+  const auto Directory = get(HandleOutput);
+  EXPECT_EQ(query(Directory, 2, 16), 0xc0000024u);
+  object("Child", Directory);
+  EXPECT_EQ(call("ZwOpenKey", {HandleOutput, 1, Object}), 0xc0000024u);
+  EXPECT_EQ(objectCall("ZwQuerySymbolicLinkObject", {Kernel, ValueName, 0}),
+            0xc0000024u);
+  EXPECT_EQ(objectCall("ZwClose", {Directory}), 0u);
+  EXPECT_EQ(objectCall("ZwClose", {Kernel}), 0u);
+  EXPECT_EQ(objectCall("ZwClose", {Local}), 0u);
+}
+
+TEST_F(DriverKernelRegistry, FailedObjectOutputsDoNotPublishReferencesOrKeys) {
+  constexpr auto ReadOnly = Scratch + 0x8000;
+  success(Memory->protect(ReadOnly, 4096, Read));
+  put(Disposition, 0xfeed, 4);
+  object("\\Registry\\Machine\\Software\\NotPublished");
+  EXPECT_FALSE(
+      failure("ZwCreateKey", {ReadOnly, 1, Object, 0, 0, 0, Disposition})
+          .empty());
+  EXPECT_EQ(get(Disposition, 4), 0xfeedu);
+  EXPECT_FALSE(failure("ZwCreateKey",
+                       {Scratch + 0xfffc, 1, Object, 0, 0, 0, Disposition})
+                   .empty());
+  EXPECT_EQ(get(Disposition, 4), 0xfeedu);
+  EXPECT_FALSE(Registry->hasOpenHandles());
+  const auto Handle = open();
+  EXPECT_EQ(Handle, 0x60000000u);
+  EXPECT_FALSE(objectFailure("ObReferenceObjectByHandle",
+                             {Handle, 0, 0, 0, Data, ReadOnly})
+                   .empty());
+  const auto Body = reference(Handle);
+  put(LengthOutput, 0xfeed, 4);
+  EXPECT_FALSE(
+      objectFailure("ObQueryNameString", {Body, ReadOnly, 128, LengthOutput})
+          .empty());
+  EXPECT_EQ(get(LengthOutput, 4), 0xfeedu);
+  EXPECT_FALSE(objectFailure("ObQueryNameString",
+                             {Body, Scratch + 0xfff0, 128, LengthOutput})
+                   .empty());
+  EXPECT_EQ(get(LengthOutput, 4), 0xfeedu);
+  EXPECT_FALSE(objectFailure("ObOpenObjectByPointer",
+                             {Body, 0x200, 0, 1, 0, 0, ReadOnly})
+                   .empty());
+  EXPECT_EQ(objectCall("ZwClose", {Handle}), 0u);
+  objectCall("ObfDereferenceObject", {Body});
+  EXPECT_FALSE(objectFailure("ObGetObjectType", {Body}).empty());
+  EXPECT_FALSE(Registry->hasOpenHandles());
+  success(Registry->initialize(std::vector<DriverRegistryKey>{}));
+}
+
+TEST_F(DriverKernelRegistry,
+       PointerHeldBodiesAndClonedHandlesHaveBoundedCapacity) {
+  const auto Handle = open();
+  const auto Body = reference(Handle);
+  for (size_t I = 1; I < MaxRegistryHandles; ++I)
+    EXPECT_EQ(objectCall("ObOpenObjectByPointer",
+                         {Body, 0x200, 0, 1, 0, 0, HandleOutput}),
+              0u);
+  EXPECT_NE(objectFailure("ObOpenObjectByPointer",
+                          {Body, 0x200, 0, 1, 0, 0, HandleOutput})
+                .find("limit"),
+            std::string::npos);
+  for (size_t I = 0; I < MaxRegistryHandles; ++I)
+    EXPECT_EQ(objectCall("ZwClose", {Handle + I * 4}), 0u);
+  EXPECT_FALSE(Registry->hasOpenHandles());
+  auto Reset = Registry->initialize(std::vector<DriverRegistryKey>{});
+  ASSERT_TRUE(bool(Reset));
+  EXPECT_NE(llvm::toString(std::move(Reset)).find("key objects"),
+            std::string::npos);
+  for (size_t I = 1; I < MaxRegistryHandles; ++I) {
+    const auto H = open();
+    reference(H);
+    EXPECT_EQ(objectCall("ZwClose", {H}), 0u);
+  }
+  object(Path);
+  EXPECT_NE(
+      failure("ZwOpenKey", {HandleOutput, 1, Object}).find("key object count"),
+      std::string::npos);
+  objectCall("ObfDereferenceObject", {Body});
+  const auto New = open();
+  EXPECT_EQ(objectCall("ZwClose", {New}), 0u);
 }
 
 TEST(DriverRegistryValidation, RejectsAmbiguousNamesAndUnboundedInventories) {

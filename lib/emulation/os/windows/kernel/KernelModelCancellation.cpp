@@ -97,6 +97,8 @@ llvm::Error KernelModel::releaseCancelSpinLock(uint64_t OldIRQL) {
   if (uint8_t(OldIRQL) != CancelLock.OldIRQL)
     return cancellationError(
         "IoReleaseCancelSpinLock must restore the saved IRQL");
+  if (auto E = validateExecutiveResourceRestoreIRQL(CancelLock.OldIRQL))
+    return E;
   CancelLock.Held = false;
   CancelLock.Owner = 0;
   CurrentIRQL = CancelLock.OldIRQL;

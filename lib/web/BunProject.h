@@ -9,7 +9,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#pragma once
+#ifndef NEVERD_WEB_PRIVATE_BUNPROJECT_H
+#define NEVERD_WEB_PRIVATE_BUNPROJECT_H
 
 #include "neverd/web/Bun.h"
 
@@ -30,3 +31,5 @@ std::string exportBunProject(const BunExtraction &Extraction,
                              std::string_view OutputDirectory,
                              BunProjectLimits Limits = {});
 } // namespace neverd::web
+
+#endif // NEVERD_WEB_PRIVATE_BUNPROJECT_H

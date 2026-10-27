@@ -80,11 +80,14 @@ CheckedBackend::~CheckedBackend() {
     cs_close(&Decoder);
 }
 
-llvm::Error CheckedBackend::checkExecutionState() const {
+llvm::Error
+CheckedBackend::checkExecutionState(bool AllowResourceContinuation) const {
   if (FirstFault || RecoverableFault)
     return error(diagnostic::Faulted);
   if (PendingService)
     return error(diagnostic::PendingService);
+  if (ResourcePending || (ResourceResumePC && !AllowResourceContinuation))
+    return error(diagnostic::ResourcePausePending);
   return llvm::Error::success();
 }
 
@@ -151,6 +154,22 @@ llvm::Error CheckedBackend::access(uint64_t A, uint64_t N, unsigned P,
                                : BackendAccessKind::Read;
     BackendFault F{Failure->Kind, programCounter(), Failure->Address,
                    Failure->Size, Access,           std::nullopt};
+    if (Guest && Running && !Direct &&
+        F.Kind == BackendFaultKind::UnmappedMemory && !ResourcePending &&
+        Hooks.ResourcePause) {
+      ResourcePause Pause{F, programCounter(), programCounter(),
+                          P == Execute
+                              ? ResourceRestartKind::FetchBoundary
+                              : ResourceRestartKind::ArchitecturalRetry,
+                          P != Execute};
+      Pause.RequiredPermissions = executionPermissions(P);
+      if (Hooks.ResourcePause(Pause) && !FirstFault && !RecoverableFault &&
+          !DeviceFailed) {
+        ResourcePending = Pause;
+        StopRequested = true;
+        return llvm::Error::success();
+      }
+    }
     return raiseFault(F, Recoverable && P != Execute);
   }
   return llvm::Error::success();
@@ -176,6 +195,8 @@ llvm::Error CheckedBackend::raiseFault(BackendFault Fault, bool Recoverable) {
 }
 
 llvm::Error CheckedBackend::read(uint64_t A, llvm::MutableArrayRef<uint8_t> B) {
+  if (ResourcePending || ResourceResumePC)
+    return error(diagnostic::ResourcePausePending);
   auto Lock = Memory->lock();
   if (!Lock)
     return Lock.takeError();
@@ -194,6 +215,8 @@ llvm::Error CheckedBackend::write(uint64_t A, llvm::ArrayRef<uint8_t> B) {
 
 llvm::Error CheckedBackend::fetch(uint64_t A,
                                   llvm::MutableArrayRef<uint8_t> B) {
+  if (ResourcePending || ResourceResumePC)
+    return error(diagnostic::ResourcePausePending);
   auto Lock = Memory->lock();
   if (!Lock)
     return Lock.takeError();
@@ -239,6 +262,8 @@ llvm::Error CheckedBackend::snapshotBacking(uint64_t A,
 llvm::Error CheckedBackend::installHooks(BackendHooks H) {
   if (auto E = mutableMemory())
     return E;
+  if (H.ResourcePause && !supportsResourcePause())
+    return error(diagnostic::ResourcePauseUnsupported);
   Hooks = std::move(H);
   return llvm::Error::success();
 }
@@ -314,6 +339,23 @@ llvm::Expected<uint32_t> CheckedBackend::instructionSize(uint64_t Address) {
 std::optional<BackendFault> CheckedBackend::takeRecoverableFault() {
   return std::exchange(RecoverableFault, std::nullopt);
 }
+llvm::Error CheckedBackend::acknowledgeResourcePause() {
+  if (!ResourcePending)
+    return error(diagnostic::ResourcePauseMissing);
+  if (Running || FirstFault || RecoverableFault || PendingService ||
+      DeviceFailed)
+    return error(diagnostic::Faulted);
+  const auto &F = ResourcePending->Fault;
+  auto Access = addressSpace()->canAccess(*F.Address, *F.Size,
+                                          ResourcePending->RequiredPermissions);
+  if (!Access)
+    return Access.takeError();
+  if (!*Access)
+    return error(diagnostic::ResourcePauseUnresolved);
+  ResourceResumePC = ResourcePending->ResumePC;
+  ResourcePending.reset();
+  return llvm::Error::success();
+}
 
 std::optional<ServiceRequest> CheckedBackend::takeServiceRequest() {
   if (Running)
@@ -326,10 +368,12 @@ llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
   if (Entered.test_and_set())
     return error(diagnostic::Running);
   auto Leave = llvm::scope_exit([&] { Entered.clear(); });
-  if (auto E = checkExecutionState())
+  if (auto E = checkExecutionState(true))
     return std::move(E);
+  if (ResourceResumePC && *ResourceResumePC != PC)
+    return error(diagnostic::ResourceResumePC);
   if (!Memory->parallelEnabled())
-    if (auto E = mutableMemory())
+    if (auto E = Memory->mutableMemory())
       return std::move(E);
   auto Limit = makeExecutionDeadline(Timeout);
   if (!Limit)
@@ -349,6 +393,10 @@ llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
   if ((BackendFailed || PendingService) &&
       std::chrono::steady_clock::now() >= Deadline)
     TimedOut = true;
+  if (FirstFault || BackendFailed || DeviceFailed) {
+    ResourcePending.reset();
+    ResourceResumePC.reset();
+  }
   return makeExecutionExit(
       std::move(E), {.Fault = FirstFault,
                      .Recoverable = RecoverableFault,
@@ -359,7 +407,8 @@ llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
                          FirstFault && FirstFault->Kind ==
                                            BackendFaultKind::InvalidInstruction,
                      .StopRequested = StopRequested,
-                     .DeadlineReached = TimedOut});
+                     .DeadlineReached = TimedOut,
+                     .Resource = ResourcePending});
 }
 
 llvm::Error CheckedBackend::executeDirect() {
@@ -381,12 +430,23 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, bool &Started,
     auto Startup = Memory->beginInstruction();
     if (!Startup)
       return Startup.takeError();
-    if (auto E = Memory->validateMappings(
-            [this](uint64_t A, uint64_t N) { return canonicalRange(A, N); },
-            supportsDeviceMappings()))
-      return E;
+    const auto Space = Memory->addressSpace();
+    const uint64_t Generation = Space->mappingGeneration();
+    // The startup lease keeps mappings stable through validation and reuse.
+    // External mutations advance the epoch; equal epochs on another address
+    // space do not establish admission for this backend's fixed ISA policy.
+    if (ValidatedMappingSpace.lock() != Space ||
+        ValidatedMappingGeneration != Generation) {
+      if (auto E = Memory->validateMappings(
+              [this](uint64_t A, uint64_t N) { return canonicalRange(A, N); },
+              supportsDeviceMappings()))
+        return E;
+      ValidatedMappingSpace = Space;
+      ValidatedMappingGeneration = Generation;
+    }
     setProgramCounter(PC);
   }
+  ResourceResumePC.reset();
   Running = true;
   Started = true;
   TimedOut = false;
@@ -445,6 +505,15 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, bool &Started,
         if (!(PC % InstructionAlignment) &&
             Memory->check(PC, 1, executionPermissions(Execute)))
           return access(PC, 1, Execute, false, true);
+        if (!(PC % InstructionAlignment) && Hooks.ResourcePause) {
+          uint64_t Count = InstructionBytes.size();
+          if (Count - 1 > UINT64_MAX - PC)
+            Count = UINT64_MAX - PC + 1;
+          if (auto Missing = Memory->firstAccessFailure(
+                  PC, Count, executionPermissions(Execute));
+              Missing && Missing->Kind == BackendFaultKind::UnmappedMemory)
+            return access(Missing->Address, 1, Execute, false, true);
+        }
         FirstFault = BackendFault{BackendFaultKind::InvalidInstruction, PC};
         if (Hooks.InvalidInstruction)
           Hooks.InvalidInstruction();
@@ -475,8 +544,17 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, bool &Started,
               BackendFault{Unsupported ? BackendFaultKind::InvalidInstruction
                                        : BackendFaultKind::UnhandledException,
                            PC};
-          if (Unsupported && Hooks.InvalidInstruction)
-            Hooks.InvalidInstruction();
+          if (Unsupported && Hooks.InvalidInstruction) {
+            try {
+              Hooks.InvalidInstruction();
+            } catch (...) {
+              // Error owns an unchecked payload until returned or consumed.
+              // An observer exception must reach the outer fault-preserving
+              // handler without aborting while this Error is unwound.
+              llvm::consumeError(std::move(E));
+              throw;
+            }
+          }
         }
         return E;
       }

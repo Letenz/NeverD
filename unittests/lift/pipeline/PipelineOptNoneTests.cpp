@@ -16,6 +16,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 
 using namespace neverd;
 
@@ -122,6 +123,88 @@ TEST(PipelineOptNone, ManualFrameCanonicalizationAlsoPreservesOptNone) {
 
   EXPECT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
   EXPECT_EQ(body(*M.getFunction("callback")), Before);
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(PipelineOptNone,
+     InterproceduralPassesRetainCallbackArgumentsAndSelectors) {
+  llvm::LLVMContext C;
+  llvm::Module M("callback-abi", C);
+  auto *Callback = buildRoot(M, "callback", true);
+  Callback->setLinkage(llvm::GlobalValue::InternalLinkage);
+  auto &Entry = Callback->getEntryBlock();
+  auto *Save = llvm::cast<llvm::StoreInst>(&*std::next(Entry.begin()));
+  Save->setOperand(0, llvm::ConstantInt::get(llvm::Type::getInt32Ty(C), 7));
+  ASSERT_TRUE(Callback->getArg(0)->use_empty());
+  llvm::appendToCompilerUsed(M, {Callback});
+  auto *Ordinary = buildRoot(M, "ordinary", false);
+  llvm::IRBuilder<> B(Ordinary->getEntryBlock().getTerminator());
+  auto *Call = B.CreateCall(Callback, {B.getInt32(1)});
+  Ordinary->getEntryBlock().getTerminator()->setOperand(0, Call);
+  auto *Choice = llvm::BasicBlock::Create(C, "choice", Callback);
+  auto *Reject = llvm::BasicBlock::Create(C, "reject", Callback);
+  B.SetInsertPoint(Entry.getTerminator());
+  auto *Read = B.CreateLoad(B.getInt32Ty(), &Entry.front());
+  Read->setVolatile(true);
+  auto *Switch = B.CreateSwitch(Read, Reject, 1);
+  Switch->addCase(B.getInt32(7), Choice);
+  Entry.getTerminator()->eraseFromParent();
+  B.SetInsertPoint(Choice);
+  B.CreateRet(B.getInt32(7));
+  B.SetInsertPoint(Reject);
+  B.CreateRet(B.getInt32(0));
+  const auto Before = body(*Callback);
+  ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+
+  Pipeline::OptimizationOptions Options;
+  Options.Strength = Pipeline::OptStrength::Deep;
+  const auto Result = Pipeline::optimizeModule(M, Options);
+
+  EXPECT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
+  auto *After = M.getFunction("callback");
+  ASSERT_TRUE(After);
+  EXPECT_EQ(body(*After), Before);
+  unsigned Calls = 0;
+  for (const auto &I : llvm::instructions(*M.getFunction("ordinary")))
+    if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&I);
+        Call && Call->getCalledFunction() == After) {
+      ++Calls;
+      ASSERT_EQ(Call->arg_size(), 1u);
+      const auto *Argument =
+          llvm::dyn_cast<llvm::ConstantInt>(Call->getArgOperand(0));
+      ASSERT_TRUE(Argument);
+      EXPECT_TRUE(Argument->isOne());
+    }
+  EXPECT_EQ(Calls, 1u);
+  EXPECT_FALSE(hasAlloca(*M.getFunction("ordinary")));
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(PipelineOptNone, OrdinaryModulesKeepInterproceduralOptimization) {
+  llvm::LLVMContext C;
+  llvm::Module M("ordinary-abi", C);
+  auto *Callee = buildRoot(M, "callee", false);
+  Callee->setLinkage(llvm::GlobalValue::InternalLinkage);
+  auto *Caller = buildRoot(M, "caller", false);
+  llvm::IRBuilder<> B(Caller->getEntryBlock().getTerminator());
+  Caller->getEntryBlock().getTerminator()->setOperand(
+      0, B.CreateCall(Callee, {B.getInt32(1)}));
+  Pipeline::OptimizationOptions Options;
+  Options.Strength = Pipeline::OptStrength::Deep;
+
+  const auto Result = Pipeline::optimizeModule(M, Options);
+
+  EXPECT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
+  Caller = M.getFunction("caller");
+  ASSERT_TRUE(Caller);
+  ASSERT_EQ(Caller->size(), 1u);
+  const auto *Return =
+      llvm::dyn_cast<llvm::ReturnInst>(Caller->getEntryBlock().getTerminator());
+  ASSERT_TRUE(Return);
+  const auto *Value =
+      llvm::dyn_cast<llvm::ConstantInt>(Return->getReturnValue());
+  ASSERT_TRUE(Value);
+  EXPECT_TRUE(Value->isOne());
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 

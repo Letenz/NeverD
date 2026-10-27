@@ -20,8 +20,8 @@
 
 #include "CxxCleanupScope.h"
 #include "HighCFSimplifyDetail.h"
-#include "X86RegistrationFilter.h"
-#include "X86RegistrationTry.h"
+#include "X86/X86RegistrationFilter.h"
+#include "X86/X86RegistrationTry.h"
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
@@ -29,8 +29,8 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/high/MsvcTypeName.h"
 #include "neverd/ir/med/MedStackAlignment.h"
-#include "neverd/ir/med/X86RegistrationCallback.h"
-#include "neverd/ir/med/X86RegistrationFrame.h"
+#include "neverd/ir/med/X86/X86RegistrationCallback.h"
+#include "neverd/ir/med/X86/X86RegistrationFrame.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/STLExtras.h"

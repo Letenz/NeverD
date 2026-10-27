@@ -159,20 +159,6 @@ NEVERD_OPERAND_KEYWORD("uxtx")
 NEVERD_OPERAND_KEYWORD("sxtx")
 #undef NEVERD_OPERAND_KEYWORD
 
-// NEVERD_DUMMY_NAME_PREFIX(Prefix): automatic name prefixes that resolve back
-// to the hexadecimal address that follows them, besides the data prefixes of
-// neverd/DataNames.def that the decompiled C shares.
-#ifndef NEVERD_DUMMY_NAME_PREFIX
-#define NEVERD_DUMMY_NAME_PREFIX(Prefix)
-#endif
-NEVERD_DUMMY_NAME_PREFIX("sub_")
-NEVERD_DUMMY_NAME_PREFIX("loc_")
-NEVERD_DUMMY_NAME_PREFIX("locret_")
-NEVERD_DUMMY_NAME_PREFIX("asc_")
-NEVERD_DUMMY_NAME_PREFIX("stru_")
-NEVERD_DUMMY_NAME_PREFIX("j_")
-#undef NEVERD_DUMMY_NAME_PREFIX
-
 // NEVERD_PADDING_MNEMONIC(Spelling): instructions that only fill space
 // between functions.  A gap made solely of them renders as one align line.
 #ifndef NEVERD_PADDING_MNEMONIC
@@ -436,22 +422,12 @@ NEVERD_FRAME_NAME_PREFIX(ArgumentPrefix, "arg_")
 NEVERD_X86_MULTIBYTE_NOP(0x0f, 0x1f)
 #undef NEVERD_X86_MULTIBYTE_NOP
 
-// NEVERD_START_ROUTINE(Name): C runtime entry routines whose first argument
-// is the program's main function.
-#ifndef NEVERD_START_ROUTINE
-#define NEVERD_START_ROUTINE(Name)
-#endif
-NEVERD_START_ROUTINE("__libc_start_main")
-NEVERD_START_ROUTINE("__uClibc_main")
-#undef NEVERD_START_ROUTINE
-
 // NEVERD_CLASSIC_NAME(Id, Spelling): names for functions the engine leaves
 // generic, as classic disassemblers show them.
 #ifndef NEVERD_CLASSIC_NAME
 #define NEVERD_CLASSIC_NAME(Id, Spelling)
 #endif
 NEVERD_CLASSIC_NAME(EntryFunctionName, "start")
-NEVERD_CLASSIC_NAME(MainFunctionName, "main")
 #undef NEVERD_CLASSIC_NAME
 
 // NEVERD_STUB_SECTION_PREFIX(Prefix): sections of linker-generated import

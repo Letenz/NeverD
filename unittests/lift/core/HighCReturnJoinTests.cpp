@@ -6,7 +6,9 @@
 //
 // A RETURN whose block joins paths that all leave the same version of the
 // return register returns that value: it was established before the paths
-// parted, here by a call whose result outlives a branch around a store.
+// parted, here by a call whose result outlives a branch around a store.  A
+// RETURN that no path reaches with a write of the register returns the
+// parameter that arrived in it.
 //
 //===----------------------------------------------------------------------===//
 
@@ -43,30 +45,48 @@ std::string definitionBody(const std::string &Source, const std::string &Name) {
   return {};
 }
 
+/// HighC for the function \p Name of fixture \p Object, or empty.
+std::string decompileFixtureFunction(const char *Object, const char *Name) {
+  auto ImageOrErr = loadBinary(std::filesystem::path(TEST_OBJ_DIR) / Object);
+  if (!ImageOrErr) {
+    ADD_FAILURE() << llvm::toString(ImageOrErr.takeError());
+    return {};
+  }
+  const BinaryImage &Img = *ImageOrErr;
+  const Symbol *Entry = Img.findSymbol(Name);
+  if (!Entry) {
+    ADD_FAILURE() << "no symbol " << Name;
+    return {};
+  }
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Entry->Addr};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  if (!Result.Success) {
+    ADD_FAILURE() << Result.Error;
+    return {};
+  }
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Img.Arch;
+  Options.Format = Img.Format;
+  Options.Image = &Img;
+  if (!HighCEmitter().emit(Result.HighFuncs, OS, Options)) {
+    ADD_FAILURE() << "HighC emission failed";
+    return {};
+  }
+  return Source;
+}
+
 TEST(HighCReturnJoin, ResultEstablishedBeforeABranchIsReturned) {
   for (const char *Object :
        {"test_return_join.o", "test_return_join_i386.o",
         "test_return_join_arm.o", "test_return_join_a64.o"}) {
     SCOPED_TRACE(Object);
-    auto ImageOrErr = loadBinary(std::filesystem::path(TEST_OBJ_DIR) / Object);
-    ASSERT_TRUE(static_cast<bool>(ImageOrErr))
-        << llvm::toString(ImageOrErr.takeError());
-    const BinaryImage &Img = *ImageOrErr;
-    const Symbol *Entry = Img.findSymbol("call_then_store");
-    ASSERT_NE(Entry, nullptr);
-    llvm::LLVMContext Ctx;
-    PipelineOptions Opts;
-    Opts.EmitDumpOutput = false;
-    Opts.OnlyFunctionEntries = {Entry->Addr};
-    const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
-    ASSERT_TRUE(Result.Success) << Result.Error;
-    std::string Source;
-    llvm::raw_string_ostream OS(Source);
-    CEmitterOptions Options;
-    Options.TheArch = Img.Arch;
-    Options.Format = Img.Format;
-    Options.Image = &Img;
-    ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
+    const std::string Source =
+        decompileFixtureFunction(Object, "call_then_store");
     EXPECT_EQ(Source.find("void call_then_store("), std::string::npos)
         << Source;
     const std::string Body = definitionBody(Source, "call_then_store");
@@ -74,6 +94,22 @@ TEST(HighCReturnJoin, ResultEstablishedBeforeABranchIsReturned) {
     EXPECT_NE(Body.find("triple("), std::string::npos) << Body;
     EXPECT_EQ(Body.find("return;"), std::string::npos) << Body;
   }
+}
+
+// `if (b) return g(b); return a;`: on AArch64 and ARM the path that returns
+// `a` is a bare return, since `a` arrives in the result register.
+TEST(HighCReturnJoin, BareReturnBesideATailCallReturnsTheParameter) {
+  for (const char *Object :
+       {"test_return_join.o", "test_return_join_i386.o",
+        "test_return_join_arm.o", "test_return_join_a64.o"})
+    for (const char *Name : {"passthrough_direct", "passthrough_indirect"}) {
+      SCOPED_TRACE(std::string(Object) + " " + Name);
+      const std::string Source = decompileFixtureFunction(Object, Name);
+      const std::string Body = definitionBody(Source, Name);
+      ASSERT_FALSE(Body.empty()) << Source;
+      EXPECT_EQ(Body.find("__builtin_trap"), std::string::npos) << Body;
+      EXPECT_NE(Body.find("return arg0;"), std::string::npos) << Body;
+    }
 }
 
 } // namespace

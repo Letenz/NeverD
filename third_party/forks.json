@@ -1,0 +1,7 @@
+{
+  "neverd_highway": "https://github.com/NeverSight/highway.git",
+  "neverd_simdutf": "https://github.com/NeverSight/simdutf.git",
+  "neverd_simdjson": "https://github.com/NeverSight/simdjson.git",
+  "neverd_tbb": "https://github.com/NeverSight/oneTBB.git",
+  "neverd_mimalloc": "https://github.com/NeverSight/mimalloc.git"
+}

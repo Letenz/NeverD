@@ -16,6 +16,8 @@
 #ifndef NEVERD_LIB_SUPPORT_TEXTEVIDENCE_H
 #define NEVERD_LIB_SUPPORT_TEXTEVIDENCE_H
 
+#include "neverd/support/ByteScan.h"
+#include "neverd/support/Limits.h"
 #include "neverd/support/StringScan.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -23,10 +25,6 @@
 #include <cstdint>
 
 namespace neverd::strings::detail {
-
-inline bool isTextASCII(uint32_t C) {
-  return (C >= 0x20 && C < 0x7f) || C == '\t' || C == '\n' || C == '\r';
-}
 
 /// A printable character beyond ASCII: no control, surrogate, private-use
 /// or noncharacter code point.
@@ -81,10 +79,6 @@ enum class Source : uint8_t { UTF8, Wide, DoubleByte, SingleByte };
 ///    in five letters accented.
 bool readsAsText(llvm::ArrayRef<uint32_t> Codes, Source From);
 
-/// Text mostly beyond ASCII needs this many characters: two random code
-/// points read as text too often.
-constexpr size_t MinTextBeyondASCII = 3;
-
 /// Whether \p Codes hold enough characters for their kind of text: at least
 /// MinTextBeyondASCII when most are beyond ASCII.
 bool longEnoughText(llvm::ArrayRef<uint32_t> Codes);
@@ -104,5 +98,11 @@ bool inCodePageScripts(llvm::ArrayRef<uint32_t> Codes, Encoding Page);
 bool shareScripts(Encoding A, Encoding B);
 
 } // namespace neverd::strings::detail
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::strings::detail {
+inline constexpr size_t MinTextBeyondASCII =
+    ::neverd::limits::support::kTextEvidenceMinTextBeyondASCII;
+}
 
 #endif // NEVERD_LIB_SUPPORT_TEXTEVIDENCE_H

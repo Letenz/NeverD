@@ -127,8 +127,8 @@ void process_main(U64 *stack) {
     entries[4].events = 0xffff;
     entries[4].revents = 77;
     if (mode == 'h') {
-      call6(PPoll, 1, 0, (U64)&timeout, 0, 0, 0);
-      finish(91);
+      require(call6(PPoll, 1, 0, (U64)&timeout, 0, 0, 0) == 0, 160);
+      finish(0);
     }
     require(pidfd(self, 0) == 3, 103);
     if (mode == 'j') {
@@ -138,14 +138,16 @@ void process_main(U64 *stack) {
     }
     if (mode == 'k') {
       timeout.nanoseconds = 1;
-      call6(PPoll, (U64)entries, 1, (U64)&timeout, 0, 0, 0);
-      finish(91);
+      require(call6(PPoll, (U64)entries, 1, (U64)&timeout, 0, 0, 0) == 0, 161);
+      finish(0);
     }
     if (mode == 'r') {
       require(linux_service(OpenAt, (U64)-100, (U64) "/catalog/input", 0) == 4,
               104);
-      call6(PPoll, (U64)(entries + 1), 1, (U64)&timeout, 0, 0, 0);
-      finish(91);
+      require(call6(PPoll, (U64)(entries + 1), 1, (U64)&timeout, 0, 0, 0) == 1,
+              162);
+      require(entries[1].revents == 0x145, 163);
+      finish(0);
     }
     require(pidfd(2000, 0) == 4, 105);
     require(call6(PPoll, (U64)entries, 0x100000005UL, (U64)&timeout, 0, ~0UL,

@@ -11,16 +11,13 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/NodeBehavior.h"
 
 namespace neverd::web {
 
 inline constexpr std::string_view PackageBehaviorDiffProfile =
     "node-selected-behavior-diff-v1";
-inline constexpr uint64_t MaxPackageBehaviorDiffPairs = 32;
-inline constexpr uint64_t MaxPackageBehaviorDiffOccurrences = 16384;
-inline constexpr uint64_t MaxPackageBehaviorDiffSteps = 8000000;
-inline constexpr uint64_t MaxCachedPackageBehaviorDiffs = 2;
 
 struct PackageBehaviorDiffEndpoint {
   std::string SourceID, ArtifactID, FileID, PackageID, BehaviorID, SourceType;

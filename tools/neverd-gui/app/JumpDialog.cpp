@@ -1,5 +1,6 @@
 #include "JumpDialog.h"
 
+#include "../ResourceLimits.h"
 #include "Address.h"
 #include "Icons.h"
 #include "ItemViewActivation.h"
@@ -8,6 +9,7 @@
 #include "Theme.h"
 
 #include <QDialogButtonBox>
+#include <QFontInfo>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QKeyEvent>
@@ -20,9 +22,6 @@
 namespace neverd::gui {
 namespace {
 constexpr char HistoryKey[] = "jump/history";
-constexpr int MaxHistory = 25;
-constexpr int MaxMatches = 200;
-constexpr int SearchDebounceMs = 90;
 constexpr int AddressRole = Qt::UserRole;
 } // namespace
 
@@ -33,7 +32,7 @@ void JumpDialog::remember(const QString &text) {
   auto history = settings.value(HistoryKey).toStringList();
   history.removeAll(text);
   history.prepend(text);
-  while (history.size() > MaxHistory)
+  while (history.size() > ::neverd::limits::gui::kJumpDialogMaxHistory)
     history.removeLast();
   settings.setValue(HistoryKey, history);
 }
@@ -54,7 +53,7 @@ JumpDialog::JumpDialog(Session &session, QWidget *parent)
   matches_->setUniformItemSizes(true);
   // Names read in the list's font; their addresses line up at the right.
   QFont addresses = Theme::instance().codeFont();
-  addresses.setPointSize(matches_->font().pointSize());
+  addresses.setPointSizeF(QFontInfo(matches_->font()).pointSizeF());
   matches_->setItemDelegate(new SecondaryTextDelegate(addresses, matches_));
   layout->addWidget(matches_, 1);
   layout->addWidget(hint_);
@@ -65,12 +64,24 @@ JumpDialog::JumpDialog(Session &session, QWidget *parent)
   connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
   connect(matches_, &QListWidget::itemActivated, this, [this] { accept(); });
   debounce_.setSingleShot(true);
-  debounce_.setInterval(SearchDebounceMs);
+  debounce_.setInterval(::neverd::limits::gui::kJumpDialogSearchDebounceMs);
   connect(&debounce_, &QTimer::timeout, this, &JumpDialog::search);
   connect(input_, &QLineEdit::textChanged, this, [this] {
-    matches_->clearSelection();
-    debounce_.start();
+    // Retire the previous text's replies before the debounce fires.
+    ++serial_;
+    debounce_.stop();
+    matches_->clear();
+    hint_->clear();
+    if (input_->text().trimmed().isEmpty())
+      showRecent();
+    else
+      debounce_.start();
   });
+  showRecent();
+}
+
+void JumpDialog::showRecent() {
+  matches_->clear();
   // Recent jumps while nothing is typed.
   for (const auto &text : QSettings().value(HistoryKey).toStringList()) {
     auto *item =
@@ -87,8 +98,11 @@ void JumpDialog::search() {
     return;
   session_.read(
       QStringLiteral("names"),
-      {{"filter", text}, {"limit", MaxMatches}, {"sort", "name"}}, this,
-      [this, serial, text](const QJsonObject &payload) {
+      {{"filter", text},
+       {"limit", ::neverd::limits::gui::kJumpDialogMaxMatches},
+       {"sort", "name"}},
+      this,
+      [this, serial](const QJsonObject &payload) {
         if (serial != serial_)
           return;
         matches_->clear();
@@ -113,8 +127,9 @@ void JumpDialog::search() {
         hint_->setText(
             tr("%n matches", "", int(payload.value("total").toInt())));
       },
-      [this](const QString &, const QString &message) {
-        hint_->setText(message);
+      [this, serial](const QString &, const QString &message) {
+        if (serial == serial_)
+          hint_->setText(message);
       });
 }
 

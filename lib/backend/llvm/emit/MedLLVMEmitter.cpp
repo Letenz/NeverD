@@ -22,22 +22,34 @@
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 
+#include "../../AArch64ImmediateMemoryBase.h"
+
 #include "neverd/Common.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/PEImportShadow.h"
+#include "neverd/backend/llvm/SourceFrameBytes.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/X86/X86Unsupported.h"
+#include "neverd/ir/med/AArch64/AArch64SVEState.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedRawEnvironment.h"
+#include "neverd/ir/med/X86/X86CompactShape.h"
+#include "neverd/ir/med/X86/X86FourSourceShape.h"
+#include "neverd/loader/AArch64MemoryImage.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-emitter"
 #include "neverd/ArchSupport.h"
 #include "neverd/Limits.h"
+#include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Diagnostic.h"
 
@@ -94,12 +106,17 @@ void MedLLVMEmitter::ensureImportStorageSnapshot() const {
   EffectiveImportStorageSlots.clear();
   ConflictingImportStorageSlots.clear();
   DataSymbolBindings.clear();
+  ExternalFunctionPointerSlots.clear();
   if (!Img)
     return;
   DataSymbolBindings = collectDataSymbolBindings(*Img);
   ImportStorageSlotCollection ImportStorage = Img->collectImportStorageSlots();
   EffectiveImportStorageSlots = std::move(ImportStorage.Slots);
   ConflictingImportStorageSlots = std::move(ImportStorage.Conflicts);
+  for (auto &[Slot, Name] : collectExternalFunctionPointers(*Img))
+    if (!EffectiveImportStorageSlots.count(Slot) &&
+        !ConflictingImportStorageSlots.count(Slot))
+      ExternalFunctionPointerSlots.emplace(Slot, std::move(Name));
 }
 
 bool MedLLVMEmitter::sameCxxContinuationReturnValue(const MedVar &Left,
@@ -339,7 +356,10 @@ void MedLLVMEmitter::finalizeCxxContinuationPlans() {
   }
   auto ReturnedBlockAddress =
       [](const llvm::Value *Value) -> const llvm::BasicBlock * {
-    for (unsigned Depth = 0; Value && Depth != 4; ++Depth) {
+    for (unsigned Depth = 0;
+         Value &&
+         Depth != ::neverd::limits::backend::kMaxReturnedBlockAddressDepth;
+         ++Depth) {
       if (const auto *Address = llvm::dyn_cast<llvm::BlockAddress>(Value))
         return Address->getBasicBlock();
 
@@ -486,7 +506,7 @@ bool MedLLVMEmitter::isFrameRelativeDisplacement(uint64_t Addr,
   // -4 must not become absolute inttoptr addresses.
   uint64_t Abs = static_cast<uint64_t>(-(Disp + 1)) + 1;
   if (!CurMedFunc || CurMedFunc->FrameSize == 0)
-    return Abs <= 65536;
+    return Abs <= ::neverd::limits::backend::kMaxUnknownFrameDisplacement;
   return Abs <= static_cast<uint64_t>(CurMedFunc->FrameSize) + 128;
 }
 
@@ -567,6 +587,8 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
     EmittedName = It->second;
   if (auto *Existing = Mod->getFunction(EmittedName))
     return Existing;
+  if (&Func == PortableBody)
+    return declarePortableX87Function(Func);
 
   const auto &TRI = getTargetRegInfo(TargetArch);
   auto *Vec2I64 = llvm::FixedVectorType::get(llvm::Type::getInt64Ty(*Ctx), 2);
@@ -575,8 +597,15 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
   // 16-byte register (x86 XMM, AArch64 V) takes the <2 x i64> vector so the
   // body's 16-byte register model flows through and LLVM's SSE/AAPCS lowering
   // assigns it to the FP register file; an 8/4-byte register (ARM D/S) takes a
-  // scalar double/float so the AAPCS-VFP lowering assigns it to D/S.
-  auto fpAbiType = [&](uint16_t ElemSize) -> llvm::Type * {
+  // scalar double/float so the AAPCS-VFP lowering assigns it to D/S. A proven
+  // AAPCS64 scalar also keeps its scalar type at the ABI boundary: the wide
+  // physical V-register model is not a source-language vector parameter.
+  auto fpAbiType = [&](uint16_t ElemSize,
+                       bool WholeVector = false) -> llvm::Type * {
+    if (TargetArch == Arch::AArch64 && !WholeVector &&
+        (ElemSize == sizeof(float) || ElemSize == sizeof(double)))
+      return ElemSize == sizeof(float) ? llvm::Type::getFloatTy(*Ctx)
+                                       : llvm::Type::getDoubleTy(*Ctx);
     const uint16_t ABIWidth = TRI.FPABIRegWidth != 0
                                   ? TRI.FPABIRegWidth
                                   : static_cast<uint16_t>(TRI.VecRegStride);
@@ -604,7 +633,8 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
     // The i386 cdecl x87 (st0) return is a scalar FP type so LLVM lowers it to
     // the x87 stack; the XMM0-vector convention keeps the 16-byte vector type.
     RetType = Func.FPReturnViaX87 ? mapNdtype(Func.ReturnType)
-                                  : fpAbiType(Func.ReturnType->Size);
+                                  : fpAbiType(Func.ReturnType->Size,
+                                              Func.ReturnsVectorRegister);
   }
 
   // AArch64: a narrow integer return is materialized by a sub-register write
@@ -635,7 +665,11 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
     // it to the FP register file; declaring it an integer would route it
     // through the integer registers instead.
     if (P.RegOff != kNoParamReg && TRI.isFPArgReg(P.RegOff, TargetFormat)) {
-      ParamTypes.push_back(fpAbiType(P.Size));
+      const auto Scalar = Func.FPParamScalarBytes.find(P.RegOff);
+      ParamTypes.push_back(fpAbiType(
+          TargetArch == Arch::AArch64 && Scalar != Func.FPParamScalarBytes.end()
+              ? Scalar->second
+              : P.Size));
       continue;
     }
     if (HaveTypes)
@@ -717,6 +751,7 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
   if (Func.DoesNotReturn)
     LLVMFunc->addFnAttr(llvm::Attribute::NoReturn);
   rewrite_source::setOriginalVA(*LLVMFunc, Func.Entry);
+  writeSourceFrameBytes(*LLVMFunc, Func.FrameBytes);
   return LLVMFunc;
 }
 
@@ -732,6 +767,11 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
                      bool MergeableGlobals_,
                      const std::vector<char> *BodyMask) {
 
+  if (!AnalystSourceProjection)
+    for (const auto &F : Funcs)
+      if (F.AnalystStackFrame)
+        throw std::runtime_error(
+            "Analyst stack corrections require a private source projection");
   MutableSourcePlans.clear();
   MutableReturnValue.reset();
   EmittingMutableBody = false;
@@ -751,7 +791,12 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   // bodies. Validate mutable storage and metadata before any such traversal,
   // then reuse the same plan during emission.
   for (const auto &Func : Funcs) {
-    if (Func.HasUnresolvedSEHFrame)
+    std::optional<AArch64ImmediateMedBases> MemoryBases;
+    if (TheArch == Arch::AArch64)
+      MemoryBases.emplace(Func);
+    if (const char *Error = validateAArch64SVEState(Func, TheArch))
+      throw std::runtime_error(Error);
+    if (Func.HasUnresolvedSEHFrame && !PreserveUnknownSourceValues)
       throw std::runtime_error(
           "Windows SEH source projection has an unresolved runtime stack in " +
           Func.Name);
@@ -760,9 +805,92 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
         if (isMedRawEnvironmentRequirement(Op))
           llvm::report_fatal_error(
               "raw environment requirement has no LLVM runtime contract");
+        if (Op.Opcode == NdOp::INTRINSIC && !Op.Inputs.empty() &&
+            Op.Inputs[0].isConst() &&
+            isAArch64WritebackMemoryIntrinsic(
+                static_cast<Intrinsic>(Op.Inputs[0].ConstVal)) &&
+            (TheArch != Arch::AArch64 ||
+             !aarch64WritebackMemoryMedShapeIsValid(Op)))
+          throw std::runtime_error(kWritebackMalformed);
         if (Op.Opcode == NdOp::INTRINSIC && !hasValidMedIntrinsicId(Op))
           llvm::report_fatal_error(
               "intrinsic has an invalid intrinsic ID shape");
+        if (Op.Opcode == NdOp::INTRINSIC) {
+          const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+          if (Id == Intrinsic::X86FourSourceMemory &&
+              ((TheArch != Arch::X86 && TheArch != Arch::X64) ||
+               !x86FourSourceShapeIsValid(x86FourSourceMedShape(Op, TheArch))))
+            throw std::invalid_argument(X86FourSourceMalformed);
+          if (isX86CompactMemory(Id) &&
+              ((TheArch != Arch::X86 && TheArch != Arch::X64) ||
+               !x86CompactShapeIsValid(Id, x86CompactMedShape(Op, TheArch))))
+            throw std::invalid_argument(X86CompactMalformed);
+          if (isAArch64ExceptionReturnIntrinsic(Id))
+            throw std::runtime_error(kAArch64ExceptionReturnUnsupported);
+          if (const char *Reason = x86NonlocalControlTransferReason(Id))
+            throw std::runtime_error(Reason);
+          if (isAArch64AddressMemoryIntrinsic(Id)) {
+            if (TheArch != Arch::AArch64 ||
+                !aarch64AddressMemoryMedShapeIsValid(Op))
+              throw std::runtime_error(kAddressMemoryMalformed);
+            const auto Instruction = *aarch64AddressMemoryInstruction(
+                Op.Inputs[kAddressMemoryWordOperand + 1].ConstVal);
+            const auto &Base = Op.Inputs[kAddressMemoryBaseOperand + 1];
+            if (Img_ && !Instruction.hasRegisterIndex() &&
+                !MemoryBases->supports(*Img_, Instruction, Base))
+              throw std::runtime_error(kAddressMemoryImmediateImageUnsupported);
+            if (const char *Reason = Instruction.sourceBaseFailure(
+                    Img_ != nullptr, Instruction.stackBase() && !Img_ &&
+                                         MemoryBases->supportsRawSP(Base)))
+              throw std::runtime_error(Reason);
+          }
+          if (isAArch64WritebackMemoryIntrinsic(Id)) {
+            const auto Instruction = *aarch64WritebackMemoryInstruction(
+                Op.Inputs[kWritebackWordOperand + 1].ConstVal);
+            if (const char *Reason = Instruction.sourceBaseFailure(
+                    Img_ != nullptr,
+                    Instruction.stackBase() && !Img_ &&
+                        MemoryBases->supportsRawSP(
+                            Op.Inputs[kWritebackBaseOperand + 1])))
+              throw std::runtime_error(Reason);
+            if (Img_ &&
+                !MemoryBases->supports(*Img_, Instruction,
+                                       Op.Inputs[kWritebackBaseOperand + 1]))
+              throw std::runtime_error(kAddressMemoryImmediateImageUnsupported);
+          }
+          if (isAArch64PAuthLoadIntrinsic(Id)) {
+            if (TheArch != Arch::AArch64 ||
+                !aarch64PAuthLoadMedShapeIsValid(Op))
+              throw std::runtime_error(kPAuthLoadMalformed);
+            const auto Instruction =
+                *aarch64PAuthLoadInstruction(Op.Inputs[2].ConstVal);
+            if (const char *Reason = Instruction.sourceBaseFailure(
+                    Img_ != nullptr,
+                    Instruction.stackBase() && !Img_ &&
+                        MemoryBases->supportsRawSP(Op.Inputs[1])))
+              throw std::runtime_error(Reason);
+          }
+          if (isPortableX87Intrinsic(Id) && &Func != PortableBody)
+            throw std::invalid_argument(
+                "portable x87 helpers require a prepared emission entry");
+          if (Id == Intrinsic::A64_PACMPending)
+            throw std::runtime_error(kAArch64PAuthMalformedOperation);
+          if (aarch64_sve::vectorOperation(Id) &&
+              (TheArch != Arch::AArch64 || !aarch64VectorMedShapeIsValid(Op)))
+            throw std::runtime_error(aarch64_sve::kMalformedVector);
+          if (Id == Intrinsic::A64_SvePtrue &&
+              (TheArch != Arch::AArch64 || !aarch64PtrueMedShapeIsValid(Op)))
+            throw std::runtime_error(aarch64_sve::kMalformedPtrue);
+          if (x87ValueInfo(Id) &&
+              !x87ValueShapeIsValid(x87ValueMedShape(Op, TheArch)))
+            llvm::report_fatal_error(
+                "invalid x87 scalar value/status contract");
+          if (isX87GuardedValueIntrinsic(Id) &&
+              !x87GuardedValueShapeIsValid(
+                  x87GuardedValueMedShape(Op, TheArch)))
+            llvm::report_fatal_error(
+                "invalid guarded x87 value/control contract");
+        }
         if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
             Op.Inputs[0].isConst() &&
             Op.Inputs[0].ConstVal == static_cast<uint64_t>(Intrinsic::X87Fxam))
@@ -785,7 +913,15 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   Ctx = &LCtx;
   auto Mod_ = std::make_unique<llvm::Module>(ModName, LCtx);
   Mod = Mod_.get();
-  if (const char *Triple = llvmEmitTriple(TheArch, Fmt)) {
+  if (Img_ && Img_->MachOSharedCache)
+    Mod_->addModuleFlag(llvm::Module::Error,
+                        macho_loader::cache_load::kAnalysisFlag, 1);
+  if (Img_ && (Img_->isArm64e() || !Img_->MachOAuthenticatedPointers.empty()))
+    Mod_->addModuleFlag(llvm::Module::Error, kArm64eAnalysisModuleFlag, 1);
+  if (PortableBody) {
+    Mod_->setTargetTriple(llvm::Triple(PortableOutputTriple));
+    Mod_->setDataLayout(Mod_->getTargetTriple().computeDataLayout());
+  } else if (const char *Triple = llvmEmitTriple(TheArch, Fmt)) {
     Mod_->setTargetTriple(llvm::Triple(Triple));
     // Address folding, aggregate layout and C projection run before native
     // codegen. They need the same target layout on every architecture/format,
@@ -793,12 +929,15 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     Mod_->setDataLayout(Mod_->getTargetTriple().computeDataLayout());
   }
   Img = Img_;
+  RelocatedEntryProofs.reset();
   ImportStorageSnapshotImage = nullptr;
   EffectiveImportStorageSlots.clear();
   ConflictingImportStorageSlots.clear();
+  ExternalFunctionPointerSlots.clear();
   ensureImportStorageSnapshot();
   TargetArch = TheArch;
   TargetFormat = Fmt;
+  TargetLibC = Img ? libc::libcVariantOf(*Img) : libc::libcVariantOf(Fmt);
   MergeableGlobals = MergeableGlobals_;
   UnhandledValueIntrinsicCount = 0;
   AddressProvenanceWork = {};
@@ -916,6 +1055,10 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   SegmentDataBases.clear();
   WritableSegmentGlobals.clear();
   CodePtrTableGlobals.clear();
+  ImageFunctionSymbolsIndexed = false;
+  ImageFunctionEntrySymbols.clear();
+  ImageFunctionEndSymbols.clear();
+  DirectDataByteGlobals.clear();
   PreparedFuncBlocks.clear();
   LiftedCodeBlocks.clear();
   EmittedFuncCodeRanges.clear();
@@ -946,6 +1089,12 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   StableOffsetCache.clear();
   ClosedFrameSlotCacheFor = nullptr;
   ClosedFrameSlotCache.clear();
+  SharedBudgetFrameSlotCacheFor = nullptr;
+  SharedBudgetFrameSlotCache.clear();
+  BoundFrameSlotCacheFor = nullptr;
+  BoundFrameSlotCache.clear();
+  AffineFrameKeysFor = nullptr;
+  AffineFrameKeys.clear();
   AddressFragmentTaintFor = nullptr;
   AddressFragmentTaint.clear();
   SymbolizedWritableSegsFor = nullptr;
@@ -1104,7 +1253,10 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   EmittedFuncNames.clear();
   FuncNames.clear();
   PEImportCNames = Img ? peImportCNames(*Img) : std::set<std::string>{};
-  for (const MedFunc &F : Funcs) {
+  const auto Declarations = PreserveUnknownSourceValues
+                                ? SourceCalleeDeclarations
+                                : llvm::ArrayRef<MedFunc>{};
+  const auto NameFunction = [&](const MedFunc &F) {
     std::string EmittedName = F.Name;
     auto Personality = NativePersonalityNames.find(F.Entry);
     llvm::StringRef SourceName(F.Name);
@@ -1141,6 +1293,17 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
       EmittedName = std::move(*Shadow);
     EmittedFuncNames[F.Entry] = EmittedName;
     FuncNames[F.Entry] = std::move(EmittedName);
+  };
+  for (const MedFunc &Function : Funcs)
+    NameFunction(Function);
+  std::map<va_t, const MedFunc *> OmittedDeclarations;
+  for (const MedFunc &Declaration : Declarations) {
+    if (!Declaration.Blocks.empty())
+      throw std::invalid_argument("source callee declaration has a body");
+    if (EmittedFuncNames.count(Declaration.Entry))
+      continue;
+    NameFunction(Declaration);
+    OmittedDeclarations.emplace(Declaration.Entry, &Declaration);
   }
   for (auto &[Addr, Name] : Imports)
     FuncNames[Addr] = llvm_name::fromObjectSymbol(Name, Fmt).str();
@@ -1216,7 +1379,25 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     if (!Merged.empty())
       EmittedFuncCodeRanges[Func.Entry] = std::move(Merged);
   }
+  // Definitions selected for this module own their types. Omitted declarations
+  // supply no implementation, interior-code range or exception contract.
+  for (const auto &[Entry, Declaration] : OmittedDeclarations)
+    declareFunc(*Declaration);
   initializeCxxContinuationPlans(Funcs, BodyMask);
+
+  DirectCallArgumentCounts.clear();
+  for (const auto &Func : Funcs)
+    for (const MedCallInfo &CI : Func.CallInfos) {
+      if (CI.IsIndirect)
+        continue;
+      const size_t Count = CI.Args.size();
+      auto [It, Inserted] =
+          DirectCallArgumentCounts.try_emplace(CI.TargetAddr, Count, Count);
+      if (!Inserted) {
+        It->second.first = std::min(It->second.first, Count);
+        It->second.second = std::max(It->second.second, Count);
+      }
+    }
 
   // PE32 registration prologues push the executable runtime handler address.
   // An import veneer may intentionally have no lifted body. Its checked EH
@@ -1253,6 +1434,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
       resolveX86RegistrationHandlerReference(
           Func.ExceptionMetadata->PersonalityVA);
       declareX86RegistrationJumpRuntimes(Func);
+      declareX86RegistrationLocalUnwinds(Func);
     }
 
   // Build every ordinary block skeleton before emitting the first operation.
@@ -1289,7 +1471,8 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     if (Func.Name.empty())
       continue;
     ActiveCxxContinuationPlan = I;
-    emitFunc(Func);
+    if (!tryEmitX86NativeMemoryFunction(Func))
+      emitFunc(Func);
     ActiveCxxContinuationPlan.reset();
   }
   ActiveCxxContinuationPlan.reset();
@@ -1373,8 +1556,8 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
       }
 
   if (FatalCodePointerResolution || FatalDataPointerResolution ||
-      !normalizeResolvedLLVMCalls(*Mod_, SourceMap) ||
-      !validateResolvedLLVMCallSignatures(*Mod_))
+      !normalizeResolvedLLVMCalls(*Mod_, SourceMap, AnalystSourceProjection) ||
+      !validateResolvedLLVMCallSignatures(*Mod_, AnalystSourceProjection))
     return nullptr;
 
   // Mark the producer schema independently of per-function attachments.  A

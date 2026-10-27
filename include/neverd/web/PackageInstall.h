@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/NodeBehavior.h"
 
 #include <optional>
@@ -19,12 +20,6 @@ namespace neverd::web {
 
 inline constexpr std::string_view PackageInstallProfile =
     "node-install-entry-traces-v1";
-inline constexpr uint64_t MaxPackageInstallScripts = 1024;
-inline constexpr uint64_t MaxPackageInstallRequests = 4096;
-inline constexpr uint64_t MaxPackageInstallAssociations = 8192;
-inline constexpr uint64_t MaxPackageInstallDepth = 16;
-inline constexpr uint64_t MaxPackageInstallSteps = 8000000;
-inline constexpr uint64_t MaxCachedPackageInstalls = 2;
 
 struct PackageInstallInput {
   const SourceAnalysis *Source = nullptr;

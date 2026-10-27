@@ -6,6 +6,7 @@
 
 #include "LLVMCCommonBranches.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -19,9 +20,9 @@ namespace neverd::llvmc {
 
 bool distributeReturnEdges(llvm::Function &Function) {
   using namespace llvm;
-  constexpr size_t MaxBlocks = 4096;
-  constexpr size_t MaxEdges = 4096;
-  if (Function.isDeclaration() || Function.size() > MaxBlocks ||
+  if (Function.isDeclaration() ||
+      Function.size() >
+          ::neverd::limits::backend::kReturnEdgeDistributionMaxBlocks ||
       Function.hasPersonalityFn() ||
       Function.getMetadata(windows_eh_md::FunctionAttachment) ||
       Function.getMetadata(windows_eh_md::NativeAttachment) ||
@@ -34,7 +35,7 @@ bool distributeReturnEdges(llvm::Function &Function) {
     if (isa<ReturnInst>(Block.getTerminator()))
       Returns.push_back(&Block);
   }
-  size_t Work = MaxEdges;
+  size_t Work = ::neverd::limits::backend::kLLVMCCommonBranchesMaxEdges;
   bool Changed = false;
   for (auto *Block : Returns) {
     auto *Return = cast<ReturnInst>(Block->getTerminator());
@@ -69,6 +70,12 @@ bool distributeReturnEdges(llvm::Function &Function) {
     for (auto *Pred : Predecessors) {
       auto *Incoming = Phi ? Phi->getIncomingValueForBlock(Pred) : Value;
       auto *Branch = Pred->getTerminator();
+      // A return without a PHI gives the statement writer one common
+      // exit for short-circuit conditions. Splitting those conditional edges
+      // destroys that identity and can insert a return block before the
+      // ordinary fallthrough. Only PHI substitution needs a private edge.
+      if (!Phi && isa<CondBrInst>(Branch))
+        continue;
       ReturnInst *NewReturn;
       if (isa<UncondBrInst>(Branch)) {
         NewReturn = ReturnInst::Create(Function.getContext(), Incoming,
@@ -84,28 +91,28 @@ bool distributeReturnEdges(llvm::Function &Function) {
       }
       NewReturn->copyMetadata(*Return);
       NewReturn->setDebugLoc(Return->getDebugLoc());
+      Changed = true;
     }
-    Block->dropAllReferences();
-    Block->eraseFromParent();
-    Changed = true;
+    if (pred_empty(Block)) {
+      Block->dropAllReferences();
+      Block->eraseFromParent();
+    }
   }
   return Changed;
 }
 
 bool factorCommonBranchTests(llvm::Function &Function) {
   using namespace llvm;
-  // Bound graph construction, repeated dominance queries, PHI scans and output
-  // size independently of source size. Exhaustion retains the remaining CFG.
-  constexpr size_t MaxBlocks = 4096;
-  constexpr size_t MaxWork = 65536;
-  constexpr unsigned MaxJoins = 64;
-  if (Function.isDeclaration() || Function.size() > MaxBlocks ||
+  if (Function.isDeclaration() ||
+      Function.size() >
+          ::neverd::limits::backend::kCommonBranchFactoringMaxBlocks ||
       Function.hasPersonalityFn() ||
       Function.getMetadata(windows_eh_md::FunctionAttachment) ||
       Function.getMetadata(windows_eh_md::NativeAttachment) ||
       Function.getParent()->getNamedMetadata(windows_eh_md::FunctionTable))
     return false;
-  size_t Work = MaxWork;
+  size_t Work = ::neverd::limits::backend::
+      kLLVMCCommonBranchesFactorCommonBranchTestsMaxWork;
   auto Spend = [&](size_t Amount = 1) {
     if (Amount > Work) {
       Work = 0;
@@ -122,7 +129,8 @@ bool factorCommonBranchTests(llvm::Function &Function) {
   }
   unsigned Changed = 0;
   for (auto *HeadBlock : Heads) {
-    if (!Spend() || Changed == MaxJoins)
+    if (!Spend() ||
+        Changed == ::neverd::limits::backend::kLLVMCCommonBranchesMaxJoins)
       break;
     auto *Head = dyn_cast<CondBrInst>(HeadBlock->getTerminator());
     if (!Head)

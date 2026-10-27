@@ -86,5 +86,98 @@ TEST(ExecutionBudget, ZeroUnboundedAndUnrepresentableRequestsAreRejected) {
   EXPECT_FALSE(bool(Overflow));
   llvm::consumeError(Overflow.takeError());
 }
+TEST(ExecutionBudget, ActiveWorkExcludesWaitingAndPreservesAllCredits) {
+  auto Result = ExecutionBudget::createWithTimePolicy(
+      Limits, ExecutionTimePolicy::ActiveWork, Epoch);
+  ASSERT_TRUE(bool(Result));
+  auto &B = **Result;
+  EXPECT_EQ(B.timePolicy(), ExecutionTimePolicy::ActiveWork);
+  EXPECT_EQ(B.remainingMicroseconds(Epoch + Microseconds(10000)), Timeout);
+  auto Work = B.enterWork(Epoch + Microseconds(10000));
+  ASSERT_TRUE(bool(Work));
+  EXPECT_TRUE(B.consumeInstructions());
+  EXPECT_TRUE(B.consumeEvents());
+  EXPECT_EQ(B.remainingMicroseconds(Epoch + Microseconds(10400)), 600u);
+  ASSERT_EQ(llvm::toString((*Work)->close(Epoch + Microseconds(10400))), "");
+  EXPECT_EQ(B.remainingMicroseconds(Clock::time_point::max()), 600u);
+  auto Next = B.enterWork(Epoch + Microseconds(100000));
+  ASSERT_TRUE(bool(Next));
+  EXPECT_EQ(B.remainingMicroseconds(Epoch + Microseconds(100500)), 100u);
+  ASSERT_EQ(llvm::toString((*Next)->close(Epoch + Microseconds(100500))), "");
+  EXPECT_EQ(B.instructions(), 1u);
+  EXPECT_EQ(B.events(), 1u);
+  EXPECT_EQ(B.remainingMicroseconds(Clock::time_point::max()), 100u);
+}
+TEST(ExecutionBudget, NestedActiveScopesChargeTheirUnionExactlyOnce) {
+  auto B = llvm::cantFail(ExecutionBudget::createWithTimePolicy(
+      Limits, ExecutionTimePolicy::ActiveWork, Epoch));
+  auto Outer = B->enterWork(Epoch);
+  ASSERT_TRUE(bool(Outer));
+  auto Inner = B->enterWork(Epoch + Microseconds(100));
+  ASSERT_TRUE(bool(Inner));
+  ASSERT_EQ(llvm::toString((*Inner)->close(Epoch + Microseconds(200))), "");
+  EXPECT_EQ(B->remainingMicroseconds(Epoch + Microseconds(300)), 700u);
+  ASSERT_EQ(llvm::toString((*Outer)->close(Epoch + Microseconds(400))), "");
+  EXPECT_EQ(B->remainingMicroseconds(Epoch + Microseconds(10000)), 600u);
+  EXPECT_NE(llvm::toString((*Outer)->close(Epoch + Microseconds(10000))), "");
+  EXPECT_EQ(B->remainingMicroseconds(Epoch + Microseconds(20000)), 600u);
+}
+TEST(ExecutionBudget, ActiveClockSamplesCannotReplenishAnObservedInterval) {
+  auto B = llvm::cantFail(ExecutionBudget::createWithTimePolicy(
+      Limits, ExecutionTimePolicy::ActiveWork, Epoch));
+  auto Work = B->enterWork(Epoch);
+  ASSERT_TRUE(bool(Work));
+  EXPECT_EQ(B->remainingMicroseconds(Epoch + Microseconds(700)), 300u);
+  EXPECT_EQ(B->remainingMicroseconds(Epoch + Microseconds(10)), 300u);
+  ASSERT_EQ(llvm::toString((*Work)->close(Epoch + Microseconds(20))), "");
+  EXPECT_EQ(B->remainingMicroseconds(Epoch + Microseconds(10000)), 300u);
+  auto Next = B->enterWork(Epoch + Microseconds(900));
+  ASSERT_TRUE(bool(Next));
+  EXPECT_EQ(B->remainingMicroseconds(Clock::time_point::max()), 0u);
+  EXPECT_EQ(B->remainingMicroseconds(Epoch + Microseconds(950)), 0u);
+  ASSERT_EQ(llvm::toString((*Next)->close(Epoch + Microseconds(950))), "");
+  EXPECT_EQ(B->remainingMicroseconds(Epoch + Microseconds(20000)), 0u);
+}
+TEST(ExecutionBudget, FractionalActiveTimeSurvivesPauseAndResume) {
+  auto B = llvm::cantFail(ExecutionBudget::createWithTimePolicy(
+      {100, 100, 2}, ExecutionTimePolicy::ActiveWork, Epoch));
+  const auto OneMicrosecond =
+      std::chrono::duration_cast<Clock::duration>(Microseconds(1));
+  const auto Slice = Clock::duration(OneMicrosecond.count() / 2 + 1);
+  auto First = B->enterWork(Epoch);
+  ASSERT_TRUE(bool(First));
+  ASSERT_EQ(llvm::toString((*First)->close(Epoch + Slice)), "");
+  EXPECT_EQ(B->remainingMicroseconds(Epoch + Microseconds(100)), 1u);
+  auto Second = B->enterWork(Epoch + Microseconds(100));
+  ASSERT_TRUE(bool(Second));
+  ASSERT_EQ(llvm::toString((*Second)->close(Epoch + Microseconds(100) + Slice)),
+            "");
+  EXPECT_EQ(B->remainingMicroseconds(Epoch + Microseconds(1000)), 0u);
+}
+TEST(ExecutionBudget, AbsoluteDeadlineKeepsItsOriginalPolicyInsideWorkScopes) {
+  auto B = llvm::cantFail(ExecutionBudget::create(Limits, Epoch));
+  EXPECT_EQ(B->timePolicy(), ExecutionTimePolicy::AbsoluteDeadline);
+  auto Work = B->enterWork(Epoch + Microseconds(100));
+  ASSERT_TRUE(bool(Work));
+  ASSERT_EQ(llvm::toString((*Work)->close(Epoch + Microseconds(200))), "");
+  EXPECT_EQ(B->remainingMicroseconds(Epoch + Microseconds(999)), 1u);
+  EXPECT_EQ(B->remainingMicroseconds(Epoch + Microseconds(1000)), 0u);
+}
+TEST(ExecutionBudget, ActiveScopeClockOverflowFailsWithoutChangingBudget) {
+  auto B = llvm::cantFail(ExecutionBudget::createWithTimePolicy(
+      Limits, ExecutionTimePolicy::ActiveWork, Epoch));
+  auto Invalid = B->enterWork(Clock::time_point::max());
+  ASSERT_FALSE(bool(Invalid));
+  llvm::consumeError(Invalid.takeError());
+  EXPECT_EQ(B->remainingMicroseconds(Epoch), Timeout);
+  auto Work = B->enterWork(Epoch);
+  ASSERT_TRUE(bool(Work));
+  ASSERT_EQ(llvm::toString((*Work)->close(Epoch + Microseconds(1))), "");
+  EXPECT_EQ(B->remainingMicroseconds(Epoch), Timeout - 1);
+  auto BadPolicy = ExecutionBudget::createWithTimePolicy(
+      Limits, static_cast<ExecutionTimePolicy>(99), Epoch);
+  ASSERT_FALSE(bool(BadPolicy));
+  llvm::consumeError(BadPolicy.takeError());
+}
 } // namespace
 } // namespace neverd::emulation

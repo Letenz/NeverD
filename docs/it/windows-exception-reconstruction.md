@@ -221,3 +221,41 @@ Ogni nuova forma nativa deve includere nello stesso change:
 
 La sola decodifica non amplia l’allow-list. Il criterio è preservare il
 comportamento delle eccezioni nell’immagine finale collegata.
+
+Il cleanup del handler selezionato può saltare alla stessa cattura o a un’altra cattura valida del frame padre, cambiando il valore scalare (zero diventa uno). Ogni destinazione e valore mantiene i propri effetti sul frame; la ripresa ripristina registri, ESP e limite di unwind della destinazione effettiva. Le chiamate finally sospese e annidate vengono annullate. MedIR lega ogni sostituzione al punto esatto della chiamata callback e alla cattura, richiedendo percorsi completi in un grafo aciclico. Entrambi i buffer devono restare validi durante tutti i cleanup rimanenti; scritture sovrapposte, buffer scaduti, cicli non provati e indirizzi del frame che sfuggono sono rifiutati.
+
+Un filtro chiamato da RaiseException dentro un finally sospeso può saltare alla stessa cattura o a un’altra valida, oppure ritornare da un altro ramo. Gli effetti di ritorno e salto rimangono distinti; il salto termina il filtro e tutti i finally sospesi e annidati, mantenendo la propria destinazione e il proprio valore.
+
+I cicli finiti nei callback finally e nei filtri conservano un frame completo per ogni passo, inclusi contatori nei registri, celle del padre e stack privato. Stati completi ricorrenti, terminazione non dimostrata e budget esauriti sono rifiutati. Ogni blocco di copia PHI conserva l’esatto arco sorgente e il callback; l’installazione verifica l’indice escape dello slot scalare recuperato e gli accessi privati non atomici di tutti gli alias.
+
+Un finally SEH3/EH4 con frame fisso verificato può ripristinare SavedESP e saltare
+a una continuazione già attribuita al padre. Un contesto SjLj privato ripristina
+lo stack generato e FS:[0], conserva i registri logici correnti e le scritture del
+callback ed entra nell’esatto confine dello scope sorgente. L’installatore verifica
+separatamente alias, acquisizione, trasferimento e selezione; un buffer sorgente
+non può sostituire questo contesto. Un’uscita dal runtime può abbandonare il nodo
+temporaneo di unwind del CRT: prima di un’altra chiamata o operazione che possa
+causare un’eccezione, il sorgente deve ricollegare la registration attiva oppure
+rimuoverla al ritorno. Riparazioni non dimostrate e destinazioni esterne al CFG
+padre verificato vengono rifiutate.
+
+Una continuazione può essere raggiunta solo dal salto del finally se ogni
+percorso decodificato della sua coda aciclica confluisce in codice padre già
+attribuito, senza attraversare un ingresso filter o finally. Questa prova fisica
+non concede privilegi di memoria del gestore runtime; il trasferimento SavedESP
+e gli stati in ingresso restano verificati separatamente. Un ritorno privo di
+collegamento al padre o un ciclo non può stabilire tale appartenenza.
+
+
+Le chiamate ordinarie a finally scambiano esplicitamente EAX/ECX/EDX/EBX/ESI/EDI
+tramite slot privati del frame padre, inclusi i valori del ritorno vicino fisico.
+L’ingresso del runtime mantiene il proprio contratto dei registri e non riutilizza
+gli ingressi di una precedente chiamata ordinaria. Uno scope referenziato solo da
+una chiamata ordinaria a finally autenticata viene conservato anche se nessun
+try level del codice sorgente lo attiva.
+
+La ricostruzione di `nonlocal_finally_return` prodotto da MSVC x86 viene verificata con `/Od` e `/O2`, `/GS-` e `/GS`, LLVM sorgente ottimizzato e non, entrambe le modalità di patch e due basi forzate. Un osservatore SEH esterno controlla ritorni normali ed eccezionali, sentinelle dello stack e ripristino della catena. Il percorso GS conserva il wrapper originale di normalizzazione del codice di eccezione dopo aver provato che il suo ausiliario scalare non può osservare il frame del chiamante.
+
+Il ritorno diretto al padre con `/O2` richiede la verifica della chiamata fisica adiacente, del ripristino dell’ESP salvato, della rimozione originale della catena e dell’intero epilogo del padre. LowIR prova questi effetti sorgente, MedIR associa le operazioni conservate e l’installatore COFF verifica nuovamente il contratto in modo indipendente. Il trasporto sintetico dei registri inutilizzati non aggiunge parametri fisici al padre; i valori osservati mantengono le dipendenze. La forma `goto` non locale verificata di MSVC usa il contratto di unwind completo descritto di seguito.
+
+Le chiamate verificate a `_local_unwind2` e `_local_unwind4` conservano l’esatta operazione sorgente, lo slot di importazione autenticato, l’argomento effettivo del frame padre, il limite senza segno e le coppie di stati al ritorno. EH4 richiede anche la prova dell’indirizzo del cookie e dell’inizializzazione dei cookie del frame. Importazioni sovrascritte, chiamate condizionali o identità sorgenti discordanti invalidano la prova. MedIR recupera esattamente due o tre argomenti sullo stack senza trasformare registri incidentalmente attivi in argomenti. La sostituzione nativa supporta l’unwind completo fino a EH3 `-1` o EH4 `-2` dopo il collegamento indipendente del bridge del frame padre fisico, del ripristino di SavedESP e delle operazioni sorgente. Il vero `nonlocal_finally_goto` di MSVC viene eseguito con `/Od`, `/O2`, `/GS-`, `/GS`, LLVM grezzo e ottimizzato, entrambe le modalità di patch e due basi forzate. I limiti parziali e la ripresa entro scope esterni attivi richiedono ancora ulteriori contratti nativi.

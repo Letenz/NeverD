@@ -41,9 +41,20 @@ NEVERD_THEME_COLOR(ListingOpcodeBytes, "#808080", "#858585")
 NEVERD_THEME_COLOR(ListingLabel, "#795E26", "#DCDCAA")
 NEVERD_THEME_COLOR(ListingError, "#CD3131", "#F44747")
 NEVERD_THEME_COLOR(ListingFlowMnemonic, "#AF00DB", "#C586C0")
+NEVERD_THEME_COLOR(ListingStructOffset, "#267F99", "#4EC9B0")
+
+// How well a type fits the code's accesses, and the characters a search
+// matched, as Visual Studio Code's testing and list highlight colors.
+NEVERD_THEME_COLOR(FitExact, "#388A34", "#89D185")
+NEVERD_THEME_COLOR(FitPartial, "#BF8803", "#CCA700")
+NEVERD_THEME_COLOR(FitOutside, "#CD3131", "#F48771")
+NEVERD_THEME_COLOR(MatchHighlight, "#0066BF", "#2AAAFF")
 
 // Listing surfaces.
 NEVERD_THEME_COLOR(ListingBackground, "#FFFFFF", "#1E1E1E")
+NEVERD_THEME_COLOR(ListingPatched, "#FFF1C2", "#4B3B17")
+NEVERD_THEME_COLOR(ListingPatchedSelection, "#E8CD82", "#725620")
+NEVERD_THEME_COLOR(HexPatched, "#FFF1C2", "#4B3B17")
 NEVERD_THEME_COLOR(ListingCurrentLine, "#F0F0F0", "#2A2D2E")
 NEVERD_THEME_COLOR(ListingSelection, "#ADD6FF", "#264F78")
 NEVERD_THEME_COLOR(ListingHighlight, "#F8C9AA", "#623314")
@@ -120,5 +131,10 @@ NEVERD_THEME_COLOR(CodePunctuation, "#3B3B3B", "#D4D4D4")
 NEVERD_THEME_COLOR(CodePreprocessor, "#AF00DB", "#C586C0")
 NEVERD_THEME_COLOR(CodeLineNumber, "#237893", "#858585")
 NEVERD_THEME_COLOR(CodeFold, "#E8F0FE", "#2A3A4A")
+
+// Structural comparison states also carry a text label.
+NEVERD_THEME_COLOR(DiffAdded, "#26712A", "#89D185")
+NEVERD_THEME_COLOR(DiffRemoved, "#B92338", "#F48791")
+NEVERD_THEME_COLOR(DiffChanged, "#875C00", "#E2C08D")
 
 #undef NEVERD_THEME_COLOR

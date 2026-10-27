@@ -246,6 +246,9 @@ inline constexpr llvm::StringLiteral kSBFArchName("sbf");
 /// dispatch).  Each entry is `ptrtoint @func`, so the recompiled object's
 /// indirect call reaches the recompiled function rather than the stale
 /// original VA (which points nowhere after relinking).
+/// A `.bytes` suffix names a relocation-free subrange of that storage used by
+/// finite direct accesses. Single-function C declares either form as original
+/// image storage rather than defining a private snapshot.
 inline constexpr llvm::StringLiteral kNdCodePtrPrefix("__nd_codeptr_");
 
 /// Build the canonical `__nd_data_<hex VA>` symbol name that encodes an
@@ -479,11 +482,16 @@ struct Symbol {
   va_t Addr = 0;
   uint64_t Size = 0;
   bool IsFunc = false;
-  /// The only evidence for this function start is a prologue-looking
-  /// instruction after inter-function padding.  Hot/cold split chunks look
-  /// the same, so a direct jump to such an address stays inside the jumping
-  /// function instead of becoming a tail call.
+  /// The only evidence for this start is a prologue-looking instruction
+  /// after padding or at an address-valued, unrelocated data word. A hot/cold
+  /// chunk or an instruction operand can look the same. Decoded ownership
+  /// may absorb this candidate instead of asserting an independent function.
   bool IsBoundaryGuess = false;
+  /// A linked COFF image's symbol for a section an object contributed, which
+  /// GNU ld keeps at that object's first function or variable.  It bounds
+  /// the contribution as any symbol does, but names nothing: findSymbolAt
+  /// and the function names pass over it, as IDA does.
+  bool IsSection = false;
   /// Set at the producer, independently of the bytes in Name. A linker may
   /// legitimately publish a symbol spelled sub_1234.
   NameOrigin Origin = NameOrigin::Stated;

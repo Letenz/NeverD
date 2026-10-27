@@ -14,6 +14,7 @@
 #include "../evidence/Admission.h"
 #include "Encoding.h"
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/PackageAttestations.h"
 
 namespace neverd::web::package_attestations {
@@ -23,8 +24,9 @@ const Object *object(const Object &O, llvm::StringRef Key);
 const llvm::json::Array *array(const Object &O, llvm::StringRef Key);
 /// These metadata profiles retain empty and missing strings without coercion;
 /// nullable protobuf-style fields are distinct from OSV required fields.
-std::optional<std::string> text(const Object &O, llvm::StringRef Key,
-                                size_t MaxBytes = 4096);
+std::optional<std::string>
+text(const Object &O, llvm::StringRef Key,
+     size_t MaxBytes = ::neverd::limits::web::kInternalTextMaxBytes);
 std::string_view digestStatus(std::string_view Algorithm,
                               std::string_view Value);
 

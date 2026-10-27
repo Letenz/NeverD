@@ -16,19 +16,23 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/LLVMValueProvenance.h"
-#include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
-#include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
-#include "neverd/backend/llvm/LLVMX86StackEffects.h"
-#include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
-#include "neverd/backend/llvm/LLVMX87ContextAsm.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/backend/llvm/X86/LLVMX86DivRemAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX86FPStateAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX86ShadowStackAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX86StackEffects.h"
+#include "neverd/backend/llvm/X86/LLVMX87ConstantAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX87ContextAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX87GuardedValueAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX87ValueAsm.h"
+#include "neverd/backend/llvm/X86/X86SystemRegisterAsm.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-x86-value"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/ir/intrinsics/X64Syscall.h"
-#include "neverd/ir/intrinsics/X86SegmentRegisters.h"
+#include "neverd/ir/intrinsics/X86/X64Syscall.h"
+#include "neverd/ir/intrinsics/X86/X86SegmentRegisters.h"
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -329,13 +333,14 @@ llvm::Value *MedLLVMEmitter::emitRepString(const MedOp &Op, Intrinsic IC,
       auto *FnTy = llvm::FunctionType::get(
           RetTy, {AddrRegTy, AddrRegTy, ValTy, AddrRegTy}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mn, "={di},={cx},0,1,{ax},r,~{memory},~{dirflag},~{cc}", true);
+          FnTy, Mn, "={di},={cx},0,1,{ax},r,~{memory},~{dirflag},~{flags}",
+          true);
       Builder.CreateCall(IA, {RDI, RCX, Val, Df});
     } else {
       auto *FnTy =
           llvm::FunctionType::get(RetTy, {AddrRegTy, AddrRegTy, ValTy}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mn, "={di},={cx},0,1,{ax},~{memory},~{dirflag},~{cc}", true);
+          FnTy, Mn, "={di},={cx},0,1,{ax},~{memory},~{dirflag},~{flags}", true);
       Builder.CreateCall(IA, {RDI, RCX, Val});
     }
     return Handled();
@@ -372,14 +377,14 @@ llvm::Value *MedLLVMEmitter::emitRepString(const MedOp &Op, Intrinsic IC,
         auto *FnTy = llvm::FunctionType::get(
             RetTy, {AddrRegTy, AddrRegTy, AddrRegTy, AddrRegTy}, false);
         auto *IA = llvm::InlineAsm::get(
-            FnTy, Mn, "={di},={cx},={ax},0,1,2,r,~{memory},~{dirflag},~{cc}",
+            FnTy, Mn, "={di},={cx},={ax},0,1,2,r,~{memory},~{dirflag},~{flags}",
             true);
         Call = Builder.CreateCall(IA, {RDI, RCX, Val, Df}, "rep_scas");
       } else {
         auto *FnTy = llvm::FunctionType::get(
             RetTy, {AddrRegTy, AddrRegTy, AddrRegTy}, false);
         auto *IA = llvm::InlineAsm::get(
-            FnTy, Mn, "={di},={cx},={ax},0,1,2,~{memory},~{dirflag},~{cc}",
+            FnTy, Mn, "={di},={cx},={ax},0,1,2,~{memory},~{dirflag},~{flags}",
             true);
         Call = Builder.CreateCall(IA, {RDI, RCX, Val}, "rep_scas");
       }
@@ -404,7 +409,7 @@ llvm::Value *MedLLVMEmitter::emitRepString(const MedOp &Op, Intrinsic IC,
             RetTy, {AddrRegTy, AddrRegTy, AddrRegTy, AddrRegTy}, false);
         auto *IA = llvm::InlineAsm::get(FnTy, Mn,
                                         "={si},={di},={cx},={ax},0,1,2,r,"
-                                        "~{memory},~{dirflag},~{cc}",
+                                        "~{memory},~{dirflag},~{flags}",
                                         true);
         Call = Builder.CreateCall(IA, {RSI, RDI, RCX, Df}, "rep_cmps");
       } else {
@@ -412,7 +417,7 @@ llvm::Value *MedLLVMEmitter::emitRepString(const MedOp &Op, Intrinsic IC,
             RetTy, {AddrRegTy, AddrRegTy, AddrRegTy}, false);
         auto *IA = llvm::InlineAsm::get(FnTy, Mn,
                                         "={si},={di},={cx},={ax},0,1,2,"
-                                        "~{memory},~{dirflag},~{cc}",
+                                        "~{memory},~{dirflag},~{flags}",
                                         true);
         Call = Builder.CreateCall(IA, {RSI, RDI, RCX}, "rep_cmps");
       }
@@ -445,14 +450,15 @@ llvm::Value *MedLLVMEmitter::emitRepString(const MedOp &Op, Intrinsic IC,
       auto *FnTy = llvm::FunctionType::get(
           RetTy, {AddrRegTy, AddrRegTy, AddrRegTy, AddrRegTy}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mn, "={si},={cx},={ax},0,1,2,r,~{memory},~{dirflag},~{cc}",
+          FnTy, Mn, "={si},={cx},={ax},0,1,2,r,~{memory},~{dirflag},~{flags}",
           true);
       Call = Builder.CreateCall(IA, {RSI, RCX, RAX, Df}, "rep_lods");
     } else {
       auto *FnTy = llvm::FunctionType::get(
           RetTy, {AddrRegTy, AddrRegTy, AddrRegTy}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mn, "={si},={cx},={ax},0,1,2,~{memory},~{dirflag},~{cc}", true);
+          FnTy, Mn, "={si},={cx},={ax},0,1,2,~{memory},~{dirflag},~{flags}",
+          true);
       Call = Builder.CreateCall(IA, {RSI, RCX, RAX}, "rep_lods");
     }
     auto *Accumulator = Builder.CreateExtractValue(Call, {2}, "lods_ax");
@@ -475,14 +481,15 @@ llvm::Value *MedLLVMEmitter::emitRepString(const MedOp &Op, Intrinsic IC,
       auto *FnTy = llvm::FunctionType::get(
           RetTy, {AddrRegTy, AddrRegTy, AddrRegTy, AddrRegTy}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mn, "={si},={di},={cx},0,1,2,r,~{memory},~{dirflag},~{cc}",
+          FnTy, Mn, "={si},={di},={cx},0,1,2,r,~{memory},~{dirflag},~{flags}",
           true);
       Builder.CreateCall(IA, {RSI, RDI, RCX, Df});
     } else {
       auto *FnTy = llvm::FunctionType::get(
           RetTy, {AddrRegTy, AddrRegTy, AddrRegTy}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mn, "={si},={di},={cx},0,1,2,~{memory},~{dirflag},~{cc}", true);
+          FnTy, Mn, "={si},={di},={cx},0,1,2,~{memory},~{dirflag},~{flags}",
+          true);
       Builder.CreateCall(IA, {RSI, RDI, RCX});
     }
     return Handled();
@@ -501,9 +508,8 @@ llvm::Value *MedLLVMEmitter::emitRepString(const MedOp &Op, Intrinsic IC,
 //===----------------------------------------------------------------------===//
 
 // Maps an x87 value-producing intrinsic to the inline-asm text that computes it
-// and leaves the single result on the x87 stack top.  FPTAN/FXTRACT pop the
-// extra value they would otherwise push so each call yields one scalar (the
-// lifter re-creates the stack push).  Returns nullptr for non-x87 intrinsics.
+// and leaves the single result on the x87 stack top. Push instructions use
+// the guarded two-result contract instead. Returns nullptr for other IDs.
 static const char *x87AsmForIntrinsic(Intrinsic IC) {
   switch (IC) {
   case Intrinsic::X87Fsin:
@@ -524,12 +530,6 @@ static const char *x87AsmForIntrinsic(Intrinsic IC) {
     return "fyl2x";
   case Intrinsic::X87Fyl2xp1:
     return "fyl2xp1";
-  case Intrinsic::X87Fptan:
-    return "fptan\n\tfstp %st(0)";
-  case Intrinsic::X87Fxtractsig:
-    return "fxtract\n\tfstp %st(1)";
-  case Intrinsic::X87Fxtractexp:
-    return "fxtract\n\tfstp %st(0)";
   default:
     return nullptr;
   }
@@ -740,6 +740,32 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     return Result;
   }
 
+  if (isX87GuardedValueIntrinsic(IC)) {
+    if (!x87GuardedValueShapeIsValid(x87GuardedValueMedShape(Op, TargetArch)))
+      llvm::report_fatal_error("invalid guarded x87 value/control contract");
+    llvm::IRBuilder<> Entry(&CurFunc->getEntryBlock(),
+                            CurFunc->getEntryBlock().begin());
+    auto *Bits = Builder.getIntNTy(80);
+    auto *ResultBits = Builder.getIntNTy(x87GuardedValueBytes(IC) * 8);
+    auto *Source = Entry.CreateAlloca(Bits, nullptr, "x87_value_source");
+    auto *Result = Entry.CreateAlloca(ResultBits, nullptr, "x87_value_result");
+    auto *Control =
+        Entry.CreateAlloca(Builder.getInt16Ty(), nullptr, "x87_value_control");
+    auto *Status =
+        Entry.CreateAlloca(Builder.getInt16Ty(), nullptr, "x87_value_status");
+    Builder.CreateStore(getVar(Op.Inputs[1], Builder), Source);
+    Builder.CreateStore(getVar(Op.Inputs[2], Builder), Control);
+    auto *Ptr = llvm::PointerType::get(*Ctx, 0);
+    auto *Type = llvm::FunctionType::get(Builder.getVoidTy(),
+                                         {Ptr, Ptr, Ptr, Ptr}, false);
+    auto *Asm = llvm::InlineAsm::get(Type, x87GuardedValueAsm(IC),
+                                     x87GuardedValueConstraints(), true);
+    auto *Call = Builder.CreateCall(Asm, {Result, Source, Control, Status});
+    Call->setMetadata(X87GuardedValueAsmMetadata, llvm::MDNode::get(*Ctx, {}));
+    PendingX87Status = Builder.CreateLoad(Builder.getInt16Ty(), Status);
+    PendingX87StatusBlock = Builder.GetInsertBlock();
+    return Builder.CreateLoad(ResultBits, Result);
+  }
   if (isX87ConstantControlIntrinsic(IC)) {
     if (!x87ConstantControlShapeIsValid(
             IC, x87ConstantControlMedShape(Op, TargetArch)))
@@ -1189,23 +1215,25 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     const auto KnownNumber = controlConstantMayRelocate(Op.Inputs[1])
                                  ? std::nullopt
                                  : traceControlConst(Op.Inputs[1]);
-    const bool OnlyFirstArgument =
-        KnownNumber && linuxX64SyscallArgumentCount(*KnownNumber) == 1;
-    // Linux exit/exit_group consume only RDI. Do not invent dependencies on
-    // undefined entry registers for operands outside that syscall's ABI.
-    llvm::Value *DxSi = OnlyFirstArgument ? llvm::ConstantInt::get(I128Ty, 0)
-                                          : getVar(Op.Inputs[3], Builder);
-    llvm::Value *R8R10 = OnlyFirstArgument ? llvm::ConstantInt::get(I128Ty, 0)
-                                           : getVar(Op.Inputs[4], Builder);
+    const std::optional<unsigned> Count =
+        KnownNumber ? linuxX64SyscallArgumentCount(*KnownNumber) : std::nullopt;
+    // A syscall whose arity is known reads only its own arguments. Do not
+    // invent dependencies on undefined entry registers outside its ABI.
+    const auto Operand = [&](size_t Index, llvm::Type *Type) -> llvm::Value * {
+      return !Count || x64SyscallOperandRead(Index, *Count)
+                 ? getVar(Op.Inputs[1 + Index], Builder)
+                 : llvm::ConstantInt::get(Type, 0);
+    };
+    llvm::Value *DxSi = Operand(2, I128Ty);
+    llvm::Value *R8R10 = Operand(3, I128Ty);
     llvm::Value *Arguments[] = {
         Number,
-        getVar(Op.Inputs[2], Builder),
+        Operand(1, I64Ty),
         Builder.CreateTrunc(DxSi, I64Ty),
         Builder.CreateTrunc(Builder.CreateLShr(DxSi, 64), I64Ty),
         Builder.CreateTrunc(R8R10, I64Ty),
         Builder.CreateTrunc(Builder.CreateLShr(R8R10, 64), I64Ty),
-        OnlyFirstArgument ? llvm::ConstantInt::get(I64Ty, 0)
-                          : getVar(Op.Inputs[5], Builder)};
+        Operand(4, I64Ty)};
     auto *FnTy = llvm::FunctionType::get(
         PairTy, {I64Ty, I64Ty, I64Ty, I64Ty, I64Ty, I64Ty, I64Ty}, false);
     auto *Asm = llvm::InlineAsm::get(
@@ -1268,32 +1296,29 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     return Packed;
   }
 
-  // FPREM/FPREM1 expose partial-reduction progress and quotient bits through
-  // the x87 status word. The fused asm below captures status before a compiler
-  // spill can change TOP or condition codes; the next synthetic read takes it.
+  if (x87ValueInfo(IC) &&
+      !x87ValueShapeIsValid(x87ValueMedShape(Op, TargetArch)))
+    llvm::report_fatal_error("invalid x87 scalar value/status contract");
+
+  // Status-producing x87 intrinsics capture the word in their own asm before
+  // a compiler spill can change it. The synthetic read consumes that value.
   if (IC == I::X87ReadStatus) {
-    if (Op.NumInputs != 1 || Op.Output.Size != 2 || !PendingX87FpremStatus ||
-        PendingX87FpremBlock != Builder.GetInsertBlock())
+    if (Op.NumInputs != 1 || Op.Output.Size != 2 || !PendingX87Status ||
+        PendingX87StatusBlock != Builder.GetInsertBlock())
       llvm::report_fatal_error(
-          "X87ReadStatus requires an immediately preceding FPREM in the "
-          "same block");
-    llvm::Value *Status = PendingX87FpremStatus;
-    PendingX87FpremStatus = nullptr;
-    PendingX87FpremBlock = nullptr;
+          "X87ReadStatus requires an immediately preceding status-producing "
+          "x87 intrinsic in the same block");
+    llvm::Value *Status = PendingX87Status;
+    PendingX87Status = nullptr;
+    PendingX87StatusBlock = nullptr;
     return Status;
   }
 
-  // x87 transcendental / special ops: emit the genuine x87 instruction via
-  // inline asm so the recompiled object runs the same hardware op as the
-  // original (Unicorn executes it natively).  ST operands flow as doubles; the
-  // backend reloads/stores them around the asm.  Lowering to libm would not
-  // roundtrip and would call functions absent under Unicorn.
+  // Run the original x87 instruction on binary80 operands. A libm call has
+  // different precision, status and processor-specific approximation rules.
   if (const char *Mn = x87AsmForIntrinsic(IC)) {
-    if (Op.Output.Size == 0 || Op.NumInputs < 2)
-      return nullptr;
-    // The x87 stack registers are modeled at 80-bit extended precision, so the
-    // transcendental runs on x86_fp80 to match hardware (and the original under
-    // Unicorn) bit-for-bit instead of truncating to a 64-bit double.
+    // Keep native x87 working precision. Transcendental approximations depend
+    // on the processor; this projection does not promise cross-CPU identity.
     auto *F80Ty = llvm::Type::getX86_FP80Ty(*Ctx);
     auto *I80Ty = llvm::Type::getIntNTy(*Ctx, 80);
     auto ToX87 = [&](const MedVar &V) -> llvm::Value * {
@@ -1301,72 +1326,60 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
       llvm::Type *T = X->getType();
       if (T->isX86_FP80Ty())
         return X;
-      if (T->isFloatingPointTy())
-        return Builder.CreateFPExt(X, F80Ty, "x87in");
-      unsigned Bits = T->getIntegerBitWidth();
-      if (Bits == 80)
-        return Builder.CreateBitCast(X, F80Ty);
-      // Narrower register bits hold a float/double pattern: reinterpret at that
-      // width, then widen to the 80-bit working precision.
-      llvm::Type *SrcF = (Bits <= 32) ? llvm::Type::getFloatTy(*Ctx)
-                                      : llvm::Type::getDoubleTy(*Ctx);
-      unsigned FBits = SrcF->getPrimitiveSizeInBits();
-      if (Bits > FBits)
-        X = Builder.CreateTrunc(X, llvm::Type::getIntNTy(*Ctx, FBits));
-      else if (Bits < FBits)
-        X = Builder.CreateZExt(X, llvm::Type::getIntNTy(*Ctx, FBits));
-      return Builder.CreateFPExt(Builder.CreateBitCast(X, SrcF), F80Ty,
-                                 "x87in");
+      if (!T->isIntegerTy(80))
+        llvm::report_fatal_error(
+            "x87 scalar operand lost its binary80 carrier");
+      return Builder.CreateBitCast(X, F80Ty);
     };
-    bool TwoIn =
-        (IC != I::X87Fsin && IC != I::X87Fcos && IC != I::X87F2xm1 &&
-         IC != I::X87Fptan && IC != I::X87Fxtractsig && IC != I::X87Fxtractexp);
+    const auto Info = *x87ValueInfo(IC);
+    const bool TwoIn = Info.Operands == 2;
+    const bool PopsSecondInput = Info.PopsSecond;
+    const bool IsRemainder = IC == I::X87Fprem || IC == I::X87Fprem1;
+    const bool SamplesStatus = Info.SamplesStatus;
     llvm::Value *In0 = ToX87(Op.Inputs[1]);
     llvm::Value *Res = nullptr;
-    if (!TwoIn) {
+    if (SamplesStatus) {
+      auto *I16Ty = llvm::Type::getInt16Ty(*Ctx);
+      const char *PairName = IsRemainder ? "neverd.x87.fprem_result"
+                                         : "neverd.x87.value_status_result";
+      auto *PairTy = llvm::StructType::getTypeByName(*Ctx, PairName);
+      if (!PairTy)
+        PairTy = llvm::StructType::create(*Ctx, {F80Ty, I16Ty}, PairName);
+      if (PairTy->isOpaque() || PairTy->getNumElements() != 2 ||
+          PairTy->getElementType(0) != F80Ty ||
+          PairTy->getElementType(1) != I16Ty)
+        llvm::report_fatal_error("invalid x87 value/status result structure");
+      llvm::SmallVector<llvm::Value *, 2> Inputs{In0};
+      llvm::SmallVector<llvm::Type *, 2> Types{F80Ty};
+      if (TwoIn) {
+        Inputs.push_back(ToX87(Op.Inputs[2]));
+        Types.push_back(F80Ty);
+      }
+      auto *FnTy = llvm::FunctionType::get(PairTy, Types, false);
+      auto *IA = llvm::InlineAsm::get(
+          FnTy, std::string(Mn) + "\n\tfnstsw $1",
+          x87ValueStatusConstraints(TwoIn, PopsSecondInput),
+          /*hasSideEffects=*/true);
+      auto *Pair = Builder.CreateCall(IA, Inputs, "x87_value_status");
+      Res = Builder.CreateExtractValue(Pair, {0}, "x87_value");
+      PendingX87Status = Builder.CreateExtractValue(Pair, {1}, "x87_status");
+      PendingX87StatusBlock = Builder.GetInsertBlock();
+    } else if (!TwoIn) {
       auto *FnTy = llvm::FunctionType::get(F80Ty, {F80Ty}, false);
       auto *IA =
           llvm::InlineAsm::get(FnTy, Mn, "=&{st},0,~{dirflag},~{fpsr},~{flags}",
                                /*hasSideEffects=*/true);
       Res = Builder.CreateCall(IA, {In0}, "x87");
     } else {
-      llvm::Value *In1 = (Op.NumInputs >= 3) ? ToX87(Op.Inputs[2]) : In0;
-      if (IC == I::X87Fprem || IC == I::X87Fprem1) {
-        auto *I16Ty = llvm::Type::getInt16Ty(*Ctx);
-        auto *PairTy =
-            llvm::StructType::getTypeByName(*Ctx, "neverd.x87.fprem_result");
-        if (!PairTy)
-          PairTy = llvm::StructType::create(*Ctx, {F80Ty, I16Ty},
-                                            "neverd.x87.fprem_result");
-        if (PairTy->isOpaque() || PairTy->getNumElements() != 2 ||
-            PairTy->getElementType(0) != F80Ty ||
-            PairTy->getElementType(1) != I16Ty)
-          llvm::report_fatal_error("invalid x87 FPREM result structure");
-        auto *FnTy = llvm::FunctionType::get(PairTy, {F80Ty, F80Ty}, false);
-        auto *IA = llvm::InlineAsm::get(
-            FnTy, std::string(Mn) + "\n\tfnstsw $1",
-            "=&{st},={ax},0,{st(1)},~{dirflag},~{fpsr},~{flags}",
-            /*hasSideEffects=*/true);
-        auto *Pair = Builder.CreateCall(IA, {In0, In1}, "x87_fprem_pair");
-        Res = Builder.CreateExtractValue(Pair, {0}, "x87_fprem_value");
-        PendingX87FpremStatus =
-            Builder.CreateExtractValue(Pair, {1}, "x87_fprem_status");
-        PendingX87FpremBlock = Builder.GetInsertBlock();
-      } else {
-        bool PopsSecondInput = false;
-#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
-  if (IC == Intrinsic::ID)                                                     \
-    PopsSecondInput = PopsST1;
-#include "neverd/ir/intrinsics/X87ValueInstructions.def"
-        auto *FnTy = llvm::FunctionType::get(F80Ty, {F80Ty, F80Ty}, false);
-        auto *IA = llvm::InlineAsm::get(
-            FnTy, Mn,
-            PopsSecondInput
-                ? "=&{st},0,{st(1)},~{st(1)},~{dirflag},~{fpsr},~{flags}"
-                : "=&{st},0,{st(1)},~{dirflag},~{fpsr},~{flags}",
-            /*hasSideEffects=*/true);
-        Res = Builder.CreateCall(IA, {In0, In1}, "x87");
-      }
+      llvm::Value *In1 = ToX87(Op.Inputs[2]);
+      auto *FnTy = llvm::FunctionType::get(F80Ty, {F80Ty, F80Ty}, false);
+      auto *IA = llvm::InlineAsm::get(
+          FnTy, Mn,
+          PopsSecondInput
+              ? "=&{st},0,{st(1)},~{st(1)},~{dirflag},~{fpsr},~{flags}"
+              : "=&{st},0,{st(1)},~{dirflag},~{fpsr},~{flags}",
+          /*hasSideEffects=*/true);
+      Res = Builder.CreateCall(IA, {In0, In1}, "x87");
     }
     llvm::Value *Bits = Builder.CreateBitCast(Res, I80Ty);
     auto *OutTy = sizeToType(Op.Output.Size);
@@ -1381,37 +1394,25 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
   if (IC == I::Rdtsc || IC == I::Rdtscp)
     return emitRdtscValue(Op, IC, Builder);
 
-  // TSX: XTEST reports whether execution is transactional; XBEGIN returns
-  // its abort status (or ~0 when the transaction starts).
-  if ((IC == I::Xtest || IC == I::Xbegin) && Op.Output.Size > 0) {
+  // XTEST reports whether execution is transactional.
+  if (IC == I::Xtest && Op.Output.Size > 0) {
     auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
-        Mod, IC == I::Xtest ? llvm::Intrinsic::x86_xtest
-                            : llvm::Intrinsic::x86_xbegin);
+        Mod, llvm::Intrinsic::x86_xtest);
     llvm::Value *Value = Builder.CreateCall(Fn, {}, "tsx");
     return Builder.CreateZExtOrTrunc(Value, sizeToType(Op.Output.Size));
   }
 
-  // RDMSR reads the MSR selected by ECX into EDX:EAX; the lifter hands the
-  // selector in and splits the 64-bit result itself.  The asm returns the
-  // combined value so it reads as one `__readmsr(ecx)`.
-  if (IC == I::Rdmsr && Op.Output.Size > 0) {
-    if (Op.NumInputs != 2)
-      llvm::report_fatal_error("x86 RDMSR has no MSR selector");
-    auto *I32Ty = llvm::Type::getInt32Ty(*Ctx);
-    auto *I64Ty = llvm::Type::getInt64Ty(*Ctx);
-    llvm::Value *Selector =
-        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[1], Builder), I32Ty);
-    auto *FnTy = llvm::FunctionType::get(I64Ty, {I32Ty}, false);
-    auto *IA = TargetArch == Arch::X64
-                   ? llvm::InlineAsm::get(
-                         FnTy, "rdmsr\n\tshlq $$32, %rdx\n\torq %rdx, %rax",
-                         "={rax},{ecx},~{rdx},~{memory}",
-                         /*hasSideEffects=*/true)
-                   : llvm::InlineAsm::get(FnTy, "rdmsr", "=A,{ecx},~{memory}",
-                                          /*hasSideEffects=*/true);
-    llvm::Value *Value = Builder.CreateCall(IA, {Selector}, "msr");
-    return Builder.CreateZExtOrTrunc(Value, sizeToType(Op.Output.Size));
+  // XBEGIN's status: ~0 when the transaction started, else the abort status.
+  // The lifted instruction branches on it to the original fallback, which
+  // keeps that continuation and its checkpoint.
+  if (IC == I::Xbegin && Op.Output.Size == 4) {
+    auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
+        Mod, llvm::Intrinsic::x86_xbegin);
+    return Builder.CreateCall(Fn, {}, "xbegin");
   }
+
+  if (IC == I::Rdmsr)
+    return emitX86ScalarSystem(Op, IC, Builder);
 
   // A segment selector read.
   if (IC == I::ReadSegment && Op.Output.Size > 0) {
@@ -1465,39 +1466,6 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     return Builder.CreateZExtOrTrunc(Status, sizeToType(Op.Output.Size));
   }
 
-  // VERR/VERW with a live ZF; a memory selector keeps its FS/GS override.
-  if ((IC == I::Verr || IC == I::Verw) && Op.Output.Size > 0) {
-    if (Op.NumInputs != 2)
-      llvm::report_fatal_error("x86 VERR/VERW has an invalid operand shape");
-    auto *I8Ty = llvm::Type::getInt8Ty(*Ctx);
-    std::string Text = IC == I::Verr ? "verr " : "verw ";
-    llvm::Value *Operand = nullptr;
-    if (Op.Inputs[1].Size == 8) {
-      Operand = Op.MemoryAddressSpace == NdMemoryAddressSpace::Default
-                    ? getVar(Op.Inputs[1], Builder)
-                    : getRawSegmentOffset(Op.Inputs[1], Builder);
-      if (Operand->getType()->isPointerTy())
-        Operand = Builder.CreatePtrToInt(Operand, llvm::Type::getInt64Ty(*Ctx));
-      Operand =
-          Builder.CreateZExtOrTrunc(Operand, llvm::Type::getInt64Ty(*Ctx));
-      if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS)
-        Text += "%fs:";
-      else if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86GS)
-        Text += "%gs:";
-      Text += "($1)";
-    } else {
-      Operand = Builder.CreateZExtOrTrunc(getVar(Op.Inputs[1], Builder),
-                                          llvm::Type::getInt16Ty(*Ctx));
-      Text += "$1";
-    }
-    auto *FnTy = llvm::FunctionType::get(I8Ty, {Operand->getType()}, false);
-    auto *IA =
-        llvm::InlineAsm::get(FnTy, Text + "\n\tsetz $0", "=q,r,~{cc},~{memory}",
-                             /*hasSideEffects=*/true);
-    llvm::Value *Zf = Builder.CreateCall(IA, {Operand}, "segment_ok");
-    return Builder.CreateZExtOrTrunc(Zf, sizeToType(Op.Output.Size));
-  }
-
   // LSL: the segment limit, or its selector check (ZF).
   if ((IC == I::SegmentLimit || IC == I::SegmentLimitValid) &&
       Op.Output.Size > 0) {
@@ -1510,14 +1478,14 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     llvm::Value *Result = nullptr;
     if (IC == I::SegmentLimit) {
       auto *FnTy = llvm::FunctionType::get(I32Ty, {I32Ty}, false);
-      auto *IA = llvm::InlineAsm::get(FnTy, "lsl ${1:w}, $0", "=r,r,~{cc}",
+      auto *IA = llvm::InlineAsm::get(FnTy, "lsl ${1:w}, $0", "=r,r,~{flags}",
                                       /*hasSideEffects=*/false);
       Result = Builder.CreateCall(IA, {Selector}, "segment_limit");
     } else {
       auto *RetTy = llvm::StructType::get(*Ctx, {I32Ty, I8Ty});
       auto *FnTy = llvm::FunctionType::get(RetTy, {I32Ty}, false);
       auto *IA = llvm::InlineAsm::get(FnTy, "lsl ${2:w}, $0\n\tsetz $1",
-                                      "=&r,=q,r,~{cc}",
+                                      "=&r,=q,r,~{flags}",
                                       /*hasSideEffects=*/false);
       Result = Builder.CreateExtractValue(Builder.CreateCall(IA, {Selector}), 1,
                                           "segment_valid");
@@ -1538,7 +1506,7 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     auto *IA = llvm::InlineAsm::get(
         FnTy,
         std::string(IC == I::Rdrand ? "rdrand" : "rdseed") + " $0\n\tsetc $1",
-        "=r,=q,~{cc}", /*hasSideEffects=*/true);
+        "=r,=q,~{flags}", /*hasSideEffects=*/true);
     llvm::Value *Pair = Builder.CreateCall(IA, {}, "random");
     llvm::Value *Value =
         Builder.CreateZExt(Builder.CreateExtractValue(Pair, 0), PairTy);
@@ -1613,21 +1581,28 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
                : nullptr;
 
   if (IC == I::In)
-    return emitX86PortIn(Op, Builder);
+    return emitX86ScalarSystem(Op, IC, Builder);
 
-  if (auto Reg = x86SystemRegisterName(
-          IC, Op.NumInputs > 1 && Op.Inputs[1].isConst() ? Op.Inputs[1].ConstVal
-                                                         : UINT64_MAX);
-      Reg && Op.Output.Size > 0) {
+  if (x86SystemRegisterName(IC, 0)) {
+    const auto P = x86SystemRegisterAsm(
+        IC, TargetArch,
+        Op.NumInputs > 1 && Op.Inputs[1].isConst() ? Op.Inputs[1].ConstVal
+                                                   : UINT64_MAX);
+    if (!P || P->Write || Op.Output.Size != P->Bytes ||
+        Op.NumInputs != (P->Debug ? 2 : 1) ||
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      llvm::report_fatal_error("invalid x86 system register read contract");
+    if (const auto IID = llvm::Intrinsic::lookupIntrinsicID(P->LLVMName))
+      return Builder.CreateCall(
+          llvm::Intrinsic::getOrInsertDeclaration(Mod, IID),
+          {Builder.getInt32(P->Index)}, "sysreg");
     auto *FnTy = llvm::FunctionType::get(sizeToType(Op.Output.Size), false);
-    auto *IA = llvm::InlineAsm::get(FnTy, "mov " + *Reg + ", $0",
-                                    "=r,~{memory}", /*hasSideEffects=*/true);
+    auto *IA = llvm::InlineAsm::get(FnTy, P->Text, P->Constraints,
+                                    /*hasSideEffects=*/true);
     return Builder.CreateCall(IA, {}, "sysreg");
   }
 
   // SLDT/STR/SMSW with a register destination (no memory operand captured).
-  if ((IC == I::Sldt || IC == I::Str || IC == I::Smsw) && Op.NumInputs <= 1)
-    return emitX86SysRegStore(Op, IC, Builder);
 
   if (IC == I::Cpuid)
     return emitCpuidValue(Op, Builder);
@@ -1731,13 +1706,11 @@ llvm::Value *MedLLVMEmitter::emitX86WideDivRem(llvm::IRBuilder<> &Builder,
   llvm::Value *Hi = Builder.CreateTrunc(HiShifted, HalfTy, "div.hi");
   llvm::Value *DivHalf = Builder.CreateTrunc(Divisor, HalfTy, "div.src");
 
-  const char *AsmStr = (WideBits == 128) ? (IsSigned ? "idivq $4" : "divq $4")
-                                         : (IsSigned ? "idivl $4" : "divl $4");
   auto *RetTy = llvm::StructType::get(*Ctx, {HalfTy, HalfTy});
   auto *FnTy = llvm::FunctionType::get(RetTy, {HalfTy, HalfTy, HalfTy}, false);
-  auto *IA =
-      llvm::InlineAsm::get(FnTy, AsmStr, "={ax},={dx},{ax},{dx},r,~{flags}",
-                           /*hasSideEffects=*/true);
+  auto *IA = llvm::InlineAsm::get(FnTy, x86DivRemAssembly({HalfBits, IsSigned}),
+                                  X86DivRemAsmConstraints,
+                                  /*hasSideEffects=*/true);
 
   llvm::Value *AsmResult = Builder.CreateCall(IA, {Lo, Hi, DivHalf}, "divrem");
   unsigned Idx = WantRem ? 1 : 0;

@@ -9,16 +9,18 @@
 // a virtual call takes the object a dominating block loaded into RDI, and a
 // void method returns without writing RAX on one path while it tail-calls on
 // the others.  Also xxd's: wrappers pass their arguments straight to a libc
-// import, and end at a helper that never returns.
+// import, and end at a helper that never returns.  Mach-O images follow
+// the same convention.
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/pipeline/PipelineLowIRDetail.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/ir/med/LowToMed.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -62,7 +64,7 @@ std::vector<uint8_t> rel32(va_t Next, va_t To) {
           static_cast<uint8_t>(Delta >> 16), static_cast<uint8_t>(Delta >> 24)};
 }
 
-BinaryImage makeImage() {
+BinaryImage makeImage(BinaryFormat Format = BinaryFormat::ELF) {
   std::vector<uint8_t> Code(0xC0, 0xCC);
   // is_doc(node): rdi = node->impl; return impl && impl->vtbl[11](impl) == 9.
   put(Code, IsDoc, {0x48, 0x8B,
@@ -120,7 +122,7 @@ BinaryImage makeImage() {
   BinaryImage Img;
   Img.Arch = Arch::X64;
   Img.Bits = Bitness::Bits64;
-  Img.Format = BinaryFormat::ELF;
+  Img.Format = Format;
   Img.Base = 0x400000;
   Img.Entry = Save;
   Segment Seg;
@@ -135,7 +137,9 @@ BinaryImage makeImage() {
   const char *Names[] = {"is_doc", "save", "helper", "helper2"};
   for (unsigned I = 0; I < 4; ++I) {
     Symbol Function = Symbol::makeFunc(Funcs[I].first, Funcs[I].second);
-    Function.Name = Names[I];
+    // A Mach-O symbol spells a C name with a leading underscore.
+    Function.Name =
+        (Format == BinaryFormat::MachO ? "_" : "") + std::string(Names[I]);
     Img.Symbols.push_back(std::move(Function));
     Img.KnownCodeRanges.push_back(
         {Funcs[I].first, Funcs[I].first + Funcs[I].second});
@@ -143,8 +147,8 @@ BinaryImage makeImage() {
   return Img;
 }
 
-std::string lift() {
-  BinaryImage Img = makeImage();
+std::string lift(BinaryFormat Format = BinaryFormat::ELF) {
+  BinaryImage Img = makeImage(Format);
   llvm::LLVMContext Ctx;
   PipelineOptions Opts;
   Opts.EmitDumpOutput = false;
@@ -235,6 +239,12 @@ void compileAndRun(const std::string &Source) {
         SourcePath,
         "-o",
         BinaryPath};
+#if defined(__APPLE__) && defined(__aarch64__)
+    // These x86-64 fixtures retain MXCSR and x86 floating-point helpers.
+    // Compile for their ISA and execute with Rosetta on Apple Silicon.
+    Arguments.push_back("-arch");
+    Arguments.push_back("x86_64");
+#endif
 #ifdef _WIN32
     Arguments.push_back("-shared-libasan");
 #endif
@@ -271,7 +281,7 @@ TEST(SysVCallContract, PassThroughThisAndUndefinedReturnPathsStayFaithful) {
   EXPECT_EQ(SaveBody.find("is_doc()"), std::string::npos) << SaveBody;
   EXPECT_NE(SaveBody.find("is_doc("), std::string::npos) << SaveBody;
   // The virtual call takes the object the dominating block loaded into RDI.
-  EXPECT_EQ(IsDocBody.find("+ 88)))()"), std::string::npos) << IsDocBody;
+  EXPECT_EQ(IsDocBody.find("+ 0x58)))()"), std::string::npos) << IsDocBody;
   compileAndRun(Source + R"(
 static uint64_t document_type(void *self) { return self ? 9 : 0; }
 static uint64_t element_type(void *self) { return self ? 1 : 0; }
@@ -291,6 +301,16 @@ int main(void) {
   return document.field8 == 1 && element.field8 == 2 ? 0 : 1;
 }
 )");
+}
+
+TEST(SysVCallContract, MachOCallsPassTheRegistersTheirCalleesRead) {
+  // Apple's x86-64 convention is the System V one: is_doc reads the RDI save
+  // never wrote, so the call passes save's own node there as on ELF.
+  const std::string Source = lift(BinaryFormat::MachO);
+  const std::string SaveBody = body(Source, "save");
+  ASSERT_FALSE(SaveBody.empty()) << Source;
+  EXPECT_EQ(SaveBody.find("is_doc()"), std::string::npos) << SaveBody;
+  EXPECT_NE(SaveBody.find("is_doc("), std::string::npos) << SaveBody;
 }
 
 TEST(SysVCallContract, ALowByteWriteIsTheReturnValueOnEveryPath) {
@@ -555,7 +575,7 @@ TEST(SysVCallContract, PushedStackArgumentsReachTheCalleeThatReadsThem) {
   const std::string Source = liftEntries(Img, {Ten, Caller});
   const std::string Body = body(Source, "caller");
   ASSERT_FALSE(Body.empty()) << Source;
-  EXPECT_NE(Body.find("ten(arg0, 10, 20, 30, 40, 50, arg0, 2, 3, 4)"),
+  EXPECT_NE(Body.find("ten(arg0, 10, 0x14, 0x1E, 0x28, 0x32, arg0, 2, 3, 4)"),
             std::string::npos)
       << Body;
   EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
@@ -564,6 +584,65 @@ int main(void) {
   return caller(5) == 1001 * 5 + 384 && caller(-7) == 1001 * -7 + 384 ? 0 : 1;
 }
 )");
+}
+
+TEST(SysVCallContract, PushedArgumentsAfterAStackJoinKeepEverySlot) {
+  // The branch leaves RSP at different entry offsets. All five pushes after
+  // that join still have exact distances from the eventual call SP.
+  constexpr va_t Eleven = Text, Caller = Text + 0x60;
+  std::vector<uint8_t> Code(0xC0, 0xCC);
+  put(Code, Eleven,
+      {0x48, 0x8B, 0x44, 0x24, 0x08, // mov rax, [rsp+8]
+       0x48, 0x6B, 0xC0, 0x0A,       // imul rax, rax, 10
+       0x48, 0x03, 0x44, 0x24, 0x10, // add rax, [rsp+16]
+       0x48, 0x6B, 0xC0, 0x0A, 0x48, 0x03, 0x44, 0x24, 0x18, 0x48, 0x6B,
+       0xC0, 0x0A, 0x48, 0x03, 0x44, 0x24, 0x20, 0x48, 0x6B, 0xC0, 0x0A,
+       0x48, 0x03, 0x44, 0x24, 0x28, 0x48, 0x01, 0xF8, // add rax, rdi
+       0x48, 0x01, 0xF0,                               // add rax, rsi
+       0x48, 0x01, 0xD0,                               // add rax, rdx
+       0x48, 0x01, 0xC8,                               // add rax, rcx
+       0x4C, 0x01, 0xC0,                               // add rax, r8
+       0x4C, 0x01, 0xC8,                               // add rax, r9
+       0xC3});
+  std::vector<uint8_t> CallerCode = {
+      0x55, 0x48, 0x89, 0xE5,             // push rbp; mov rbp, rsp
+      0x85, 0xFF, 0x74, 0x06,             // test edi, edi; je other
+      0x48, 0x83, 0xEC, 0x08,             // sub rsp, 8
+      0xEB, 0x04,                         // jmp joined
+      0x48, 0x83, 0xEC, 0x18,             // other: sub rsp, 24
+      0x6A, 0x05, 0x6A, 0x04,             // joined: push 5; push 4
+      0x6A, 0x03, 0x6A, 0x02,             // push 3; push 2
+      0x6A, 0x01,                         // push 1
+      0xBE, 0x02, 0x00, 0x00, 0x00,       // mov esi, 2
+      0xBA, 0x03, 0x00, 0x00, 0x00,       // mov edx, 3
+      0xB9, 0x04, 0x00, 0x00, 0x00,       // mov ecx, 4
+      0x41, 0xB8, 0x05, 0x00, 0x00, 0x00, // mov r8d, 5
+      0x41, 0xB9, 0x06, 0x00, 0x00, 0x00, // mov r9d, 6
+      0xBF, 0x01, 0x00, 0x00, 0x00,       // mov edi, 1
+      0xE8};
+  for (uint8_t B : rel32(Caller + CallerCode.size() + 4, Eleven))
+    CallerCode.push_back(B);
+  for (uint8_t B : {0x48, 0x89, 0xEC, 0x5D, 0xC3}) // mov rsp, rbp; pop; ret
+    CallerCode.push_back(B);
+  put(Code, Caller, CallerCode);
+  for (BinaryFormat Format : {BinaryFormat::ELF, BinaryFormat::MachO}) {
+    SCOPED_TRACE(static_cast<unsigned>(Format));
+    BinaryImage Img =
+        makeImportImage(Code, {{Eleven, "eleven"}, {Caller, "caller"}}, {});
+    Img.Format = Format;
+    if (Format == BinaryFormat::MachO)
+      for (auto &Symbol : Img.Symbols)
+        Symbol.Name = "_" + Symbol.Name;
+    const std::string Source = liftEntries(Img, {Eleven, Caller});
+    const std::string Body = body(Source, "caller");
+    EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+    compileAndRun(Source + R"(
+int main(void) {
+  return caller(0) == 12366 && caller(1) == 12366 && caller(-7) == 12366
+             ? 0 : 1;
+}
+)");
+  }
 }
 
 TEST(SysVCallContract, AFloatArgumentReachesAPrototypedImport) {
@@ -897,6 +976,61 @@ int main(void) {
 )");
 }
 
+TEST(SysVCallContract, ASharedCallTakesTheFormatAnotherBodyGivesIt) {
+  // b(x) = printf("%d", x) loads the format and calls; a jumps straight to
+  // that call with its own registers, a(f, x) = printf(f, x).  A run that
+  // lifts b before a makes the call they share a formatted one, which reads
+  // the value after the format, for a too.  a's facts, kept from a run that
+  // reached a alone, read an ordinary call and must not stand in for it.
+  constexpr va_t B = Text, Call = B + 7, A = Text + 0x10, Q = Text + 0x20,
+                 R = Text + 0x30, Stub = Text + 0x40, Format = 0x402000;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> BCode = {0x48, 0x8D, 0x3D}; // lea rdi, [fmt]
+  for (uint8_t Byte : rel32(Call, Format))
+    BCode.push_back(Byte);
+  BCode.push_back(0xE8); // call printf
+  for (uint8_t Byte : rel32(Call + 5, Stub))
+    BCode.push_back(Byte);
+  BCode.push_back(0xC3); // ret
+  put(Code, B, BCode);
+  std::vector<uint8_t> ACode = {0xE9}; // jmp to b's call
+  for (uint8_t Byte : rel32(A + 5, Call))
+    ACode.push_back(Byte);
+  put(Code, A, ACode);
+  std::vector<uint8_t> QCode = {0xE8}; // call b
+  for (uint8_t Byte : rel32(Q + 5, B))
+    QCode.push_back(Byte);
+  QCode.push_back(0xE8); // call a
+  for (uint8_t Byte : rel32(Q + 10, A))
+    QCode.push_back(Byte);
+  QCode.push_back(0xC3); // ret
+  put(Code, Q, QCode);
+  std::vector<uint8_t> RCode = {0xE8}; // call a
+  for (uint8_t Byte : rel32(R + 5, A))
+    RCode.push_back(Byte);
+  RCode.push_back(0xC3); // ret
+  put(Code, R, RCode);
+  BinaryImage Img = makeImportImage(
+      Code, {{B, "b"}, {A, "a"}, {Q, "q"}, {R, "r"}}, {{Stub, "printf"}});
+  addReadOnlyData(Img, Format, "%d");
+  const auto Run = [&](va_t Entry, PipelineAnalysisCache *Cache) {
+    llvm::LLVMContext Ctx;
+    PipelineOptions Opts;
+    Opts.EmitDumpOutput = false;
+    Opts.OnlyFunctionEntries = {Entry};
+    Opts.AnalysisCache = Cache;
+    return Pipeline().run(Img, Ctx, Opts);
+  };
+  PipelineAnalysisCache Cache;
+  for (va_t Root : {R, Q}) {
+    SCOPED_TRACE(Root);
+    const PipelineResult Kept = Run(Root, &Cache), Cold = Run(Root, nullptr);
+    EXPECT_EQ(Kept.CallEntryReadGPRs, Cold.CallEntryReadGPRs);
+    EXPECT_EQ(Kept.CallMayWriteGPRs, Cold.CallMayWriteGPRs);
+    EXPECT_EQ(Kept.CallEntryStackArgs, Cold.CallEntryStackArgs);
+  }
+}
+
 TEST(SysVCallContract, AVariadicImportsFixedArgumentsReachItFromAJoin) {
   // wrap(flag) picks the format in either arm of an `if` and calls
   // __fprintf_chk(0, 2, fmt) after the join: the format reaches the call as
@@ -927,6 +1061,385 @@ TEST(SysVCallContract, AVariadicImportsFixedArgumentsReachItFromAJoin) {
   ASSERT_FALSE(Body.empty()) << Source;
   EXPECT_NE(Body.find("__fprintf_chk("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
+}
+
+TEST(SysVCallContract, ACallTwoPathsShareTakesTheArgumentsBothFormatsName) {
+  // report(flag, n, s, c) prints n with "%lu%c" in one arm and s with
+  // "%s%c" in the other, and both arms jump to one __fprintf_chk call, as
+  // sed's cross-jumped calls do.  Each arm sets the format and its two
+  // arguments; the call passes them all whichever arm ran.  Formats that name
+  // their arguments in different registers say nothing about the call.
+  constexpr va_t Report = Text, Stub = Text + 0x40, First = 0x402000,
+                 Second = 0x402010;
+  const auto Lift = [&](const char *FirstFormat, const char *SecondFormat) {
+    std::vector<uint8_t> Code(0x50, 0xCC);
+    std::vector<uint8_t> ReportCode = {0x48, 0x83, 0xEC, 0x08, // sub rsp, 8
+                                       0x85, 0xFF,             // test edi, edi
+                                       0x74, 0x10,             // je L1
+                                       0x44, 0x0F, 0xBE, 0xC1, // movsx r8d, cl
+                                       0x48, 0x89, 0xF1,       // mov rcx, rsi
+                                       0x48, 0x8D, 0x15}; // lea rdx, [first]
+    for (uint8_t B : rel32(Report + 22, First))
+      ReportCode.push_back(B);
+    for (uint8_t B : {0xEB, 0x0E,             // jmp L2
+                      0x44, 0x0F, 0xBE, 0xC1, // L1: movsx r8d, cl
+                      0x48, 0x89, 0xD1,       // mov rcx, rdx
+                      0x48, 0x8D, 0x15})      // lea rdx, [second]
+      ReportCode.push_back(B);
+    for (uint8_t B : rel32(Report + 38, Second))
+      ReportCode.push_back(B);
+    for (uint8_t B : {0xBE, 0x02, 0x00, 0x00, 0x00, // L2: mov esi, 2
+                      0x31, 0xFF,                   // xor edi, edi
+                      0x31, 0xC0,                   // xor eax, eax
+                      0xE8})                        // call __fprintf_chk
+      ReportCode.push_back(B);
+    for (uint8_t B : rel32(Report + 52, Stub))
+      ReportCode.push_back(B);
+    for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                      0xC3})                  // ret
+      ReportCode.push_back(B);
+    put(Code, Report, ReportCode);
+    BinaryImage Img =
+        makeImportImage(Code, {{Report, "report"}}, {{Stub, "__fprintf_chk"}});
+    addReadOnlyData(Img, First, FirstFormat);
+    addReadOnlyData(Img, Second, SecondFormat);
+    const std::string Source = liftEntries(Img, {Report});
+    return body(Source, "report");
+  };
+  const llvm::Regex FiveArguments(
+      "__fprintf_chk\\([^,]+, 2, [^,]+, [^,]+, [^,]+\\);");
+  const std::string Shared = Lift("%lu%c", "%s%c");
+  ASSERT_FALSE(Shared.empty());
+  EXPECT_TRUE(FiveArguments.match(Shared)) << Shared;
+  const std::string Different = Lift("%lu%c", "%s");
+  ASSERT_FALSE(Different.empty());
+  EXPECT_NE(Different.find("__fprintf_chk("), std::string::npos) << Different;
+  EXPECT_FALSE(FiveArguments.match(Different)) << Different;
+}
+
+TEST(SysVCallContract, JoinedFormatsRequireCompleteCompatibleReachingValues) {
+  constexpr va_t Stub = Text + 0x80, First = 0x402000, Second = First + 0x20;
+  for (const auto Format : {BinaryFormat::ELF, BinaryFormat::MachO})
+    for (bool Reverse : {false, true})
+      for (unsigned Case = 0; Case < 15; ++Case) {
+        SCOPED_TRACE(static_cast<int>(Format));
+        SCOPED_TRACE(Reverse);
+        SCOPED_TRACE(Case);
+        BinaryImage Img =
+            makeImportImage(std::vector<uint8_t>(0x90, 0xCC),
+                            {{Text, "report"}}, {{Stub, "printf"}});
+        Img.Format = Format;
+        if (Format == BinaryFormat::MachO)
+          Img.Imports.front().Name = "_printf";
+        addReadOnlyData(Img, First,
+                        Case == 1    ? "%p%c"
+                        : Case >= 11 ? "%f%c"
+                                     : "%llu%c");
+        const char *Other = Case == 2   ? "%s"
+                            : Case == 3 ? "%f%c"
+                            : Case == 4 ? "%n%c"
+                                        : "%s%c";
+        addReadOnlyData(Img, Second, Case >= 11 ? "%f%c" : Other);
+        auto Op = [](NdOp Code, NdVar Output,
+                     std::initializer_list<NdVar> Inputs) {
+          LowOp O;
+          O.Opcode = Code;
+          O.Output = Output;
+          for (const auto &Input : Inputs)
+            O.addInput(Input);
+          return O;
+        };
+        LowFunc F;
+        F.Entry = Text;
+        F.Blocks.resize(4);
+        for (int I = 0; I < 4; ++I) {
+          F.Blocks[I].Id = I;
+          F.Blocks[I].StartAddr = Text + 0x10 * I;
+        }
+        F.Blocks[0].Succs = {1, 2};
+        for (int I : {1, 2}) {
+          auto &B = F.Blocks[I];
+          B.Preds = {0};
+          B.Succs = {3};
+          B.Ops = {Op(NdOp::COPY, NdVar::reg(x86reg::RDI, 8),
+                      {NdVar::cst(I == 1 ? First : Second, 8)})};
+        }
+        auto &Join = F.Blocks[3];
+        Join.Preds = Reverse ? std::vector<int>{2, 1} : std::vector<int>{1, 2};
+        Join.Ops = {
+            Op(NdOp::COPY, NdVar::reg(x86reg::RAX, 4), {NdVar::cst(0, 4)}),
+            Op(NdOp::CALL, {}, {NdVar::cst(Stub, 8)})};
+        Join.Ops.back().Addr = Join.StartAddr;
+        if (Case == 5)
+          F.Blocks[2].Ops.clear();
+        if (Case == 6)
+          F.Blocks[2].Ops.push_back(
+              Op(NdOp::COPY, NdVar::reg(x86reg::RDI, 1), {NdVar::cst(0, 1)}));
+        if (Case == 7)
+          F.Blocks[2].Ops.push_back(
+              Op(NdOp::CALL, {}, {NdVar::cst(Stub + 0x10, 8)}));
+        if (Case == 8)
+          Join.Preds.push_back(99);
+        if (Case == 9) {
+          ExceptionalEdge Edge;
+          Edge.BlockId = 0;
+          Join.ExceptionalPreds.push_back(Edge);
+        }
+        if (Case == 10)
+          F.OrdinaryModuleAnalysisRoots.insert(Join.StartAddr);
+        if (Case >= 11) {
+          // The vector count reaches the call from its predecessors too.
+          // A zero AL cannot supply the double the format names.
+          for (int I : {1, 2}) {
+            const unsigned Count = Case == 11 || (Case == 13 && I == 2) ? 0
+                                   : Case == 14 && I == 2               ? 257
+                                                                        : 1;
+            F.Blocks[I].Ops.push_back(Op(NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
+                                         {NdVar::cst(Count, 4)}));
+          }
+          Join.Ops.erase(Join.Ops.begin());
+        }
+        if (Reverse)
+          std::swap(F.Blocks[1], F.Blocks[2]);
+        std::map<va_t, FormattedCall> Calls;
+        pipeline_detail::collectFormattedCalls(Img, F, Calls);
+        const bool Floating = Case == 12 || Case == 14;
+        if (Case >= 2 && !Floating) {
+          EXPECT_TRUE(Calls.empty());
+          continue;
+        }
+        ASSERT_EQ(Calls.size(), 1u);
+        const auto &Arguments = Calls.begin()->second.Arguments;
+        ASSERT_EQ(Arguments.size(), 3u);
+        EXPECT_EQ(Arguments[1].Register, Floating ? x86reg::XMM0 : x86reg::RSI);
+        EXPECT_EQ(Arguments[1].Bytes, 8);
+        EXPECT_EQ(Arguments[1].Floating, Floating);
+        EXPECT_EQ(Arguments[1].Pointer, Case == 1);
+        EXPECT_EQ(Arguments[2].Register, Floating ? x86reg::RSI : x86reg::RDX);
+        EXPECT_EQ(Arguments[2].Bytes, 4);
+      }
+}
+
+TEST(SysVCallContract, JoinedFormatsKeepEntryValuesAndProofLimitsUnknown) {
+  constexpr va_t Stub = Text + 0x400, Format = 0x402000;
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Img = makeImportImage(std::vector<uint8_t>(0x410, 0xCC),
+                               {{Text, "report"}}, {{Stub, "printf"}});
+    addReadOnlyData(Img, Format, "%d%c");
+    auto Copy = [](va_t Address) {
+      LowOp O;
+      O.Opcode = NdOp::COPY;
+      O.Output = NdVar::reg(x86reg::RDI, 8);
+      O.addInput(NdVar::cst(Address, 8));
+      return O;
+    };
+    auto Call = [&](va_t Address) {
+      LowOp O;
+      O.Opcode = NdOp::CALL;
+      O.Addr = Address;
+      O.addInput(NdVar::cst(Stub, 8));
+      return O;
+    };
+    LowFunc F;
+    F.Entry = Text;
+    auto Initialize = [&](unsigned Count) {
+      F.Blocks.resize(Count);
+      for (unsigned I = 0; I < Count; ++I) {
+        F.Blocks[I].Id = I;
+        F.Blocks[I].StartAddr = Text + 0x10 * I;
+      }
+    };
+    if (Case == 0) {
+      // A real initialization reaches the loop on its first iteration.
+      Initialize(4);
+      F.Blocks[0].Ops = {Copy(Format)};
+      F.Blocks[0].Succs = {1};
+      F.Blocks[1].Preds = {0, 2};
+      F.Blocks[1].Succs = {2, 3};
+      F.Blocks[2].Preds = {1};
+      F.Blocks[2].Succs = {1};
+      F.Blocks[3].Preds = {1};
+      F.Blocks[3].Ops = {Call(F.Blocks[3].StartAddr)};
+    } else if (Case == 1) {
+      // A backedge cannot initialize a format on entry to the function.
+      Initialize(2);
+      F.Blocks[0].Preds = {1};
+      F.Blocks[0].Succs = {1};
+      F.Blocks[0].Ops = {Call(Text)};
+      F.Blocks[1].Preds = {0};
+      F.Blocks[1].Succs = {0};
+      F.Blocks[1].Ops = {Copy(Format)};
+    } else if (Case == 2) {
+      // More alternatives than the bounded set retains prove no format.
+      Initialize(7);
+      for (int I = 1; I <= 5; ++I) {
+        const va_t Address = Format + 0x20 * I;
+        addReadOnlyData(Img, Address, "%d%c");
+        F.Blocks[0].Succs.push_back(I);
+        F.Blocks[I].Preds = {0};
+        F.Blocks[I].Succs = {6};
+        F.Blocks[I].Ops = {Copy(Address)};
+        F.Blocks[6].Preds.push_back(I);
+      }
+      F.Blocks[6].Ops = {Call(F.Blocks[6].StartAddr)};
+    } else {
+      // An early call becomes known, but the reverse-ordered long sibling
+      // path exhausts the fixed-point budget. Publish no partial result.
+      Initialize(18);
+      F.Blocks[0].Ops = {Copy(Format)};
+      F.Blocks[0].Succs = {1, 3};
+      F.Blocks[1].Preds = {0};
+      F.Blocks[1].Succs = {2};
+      F.Blocks[2].Preds = {1};
+      F.Blocks[2].Ops = {Call(F.Blocks[2].StartAddr)};
+      for (int I = 3; I < 18; ++I) {
+        F.Blocks[I].Preds = {I == 3 ? 0 : I - 1};
+        if (I + 1 < 18)
+          F.Blocks[I].Succs = {I + 1};
+      }
+      std::reverse(F.Blocks.begin() + 1, F.Blocks.end());
+    }
+    std::map<va_t, FormattedCall> Calls;
+    pipeline_detail::collectFormattedCalls(Img, F, Calls);
+    EXPECT_EQ(Calls.size(), Case == 0 ? 1u : 0u);
+  }
+}
+
+TEST(SysVCallContract, AJoinedFormatPrintsEveryArgumentOnBothPaths) {
+  // report(buf, size, flag, n, s, c) shares one snprintf after choosing
+  // "%llu%c" or "%s%c". Compile and execute both arms with a number whose
+  // upper word is nonzero and a real string pointer.
+  constexpr va_t Stub = Text + 0x40, First = 0x402000, Second = First + 0x20;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> Report = {0x48, 0x83, 0xEC, 0x08, // sub rsp, 8
+                                 0x85, 0xD2,             // test edx, edx
+                                 0x74, 0x0D,             // je string
+                                 0x45, 0x0F, 0xBE, 0xC1, // movsx r8d, r9b
+                                 0x48, 0x8D, 0x15};      // lea rdx, [first]
+  for (uint8_t B : rel32(Text + 19, First))
+    Report.push_back(B);
+  for (uint8_t B : {0xEB, 0x0E,             // jmp call
+                    0x4C, 0x89, 0xC1,       // string: mov rcx, r8
+                    0x45, 0x0F, 0xBE, 0xC1, // movsx r8d, r9b
+                    0x48, 0x8D, 0x15})      // lea rdx, [second]
+    Report.push_back(B);
+  for (uint8_t B : rel32(Text + 35, Second))
+    Report.push_back(B);
+  for (uint8_t B : {0x31, 0xC0, 0xE8}) // xor eax, eax; call snprintf
+    Report.push_back(B);
+  for (uint8_t B : rel32(Text + 42, Stub))
+    Report.push_back(B);
+  for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, 0xC3})
+    Report.push_back(B);
+  put(Code, Text, Report);
+  auto Img =
+      makeImportImage(Code, {{Text, "joined_report"}}, {{Stub, "snprintf"}});
+  addReadOnlyData(Img, First, "%llu%c");
+  addReadOnlyData(Img, Second, "%s%c");
+  const auto Source = liftEntries(Img, {Text});
+  compileAndRun(Source + R"(
+#include <string.h>
+int main(void) {
+  char Buffer[64];
+  int (*Call)(char *, uint64_t, int, uint64_t, const char *, int) =
+      (int (*)(char *, uint64_t, int, uint64_t, const char *, int))(void *)joined_report;
+  if (Call(Buffer, sizeof Buffer, 1, UINT64_C(4294967303), "joined", '!') != 11 ||
+      strcmp(Buffer, "4294967303!")) return 1;
+  if (Call(Buffer, sizeof Buffer, 0, UINT64_C(4294967303), "joined", '?') != 7 ||
+      strcmp(Buffer, "joined?")) return 2;
+  return 0;
+}
+)");
+}
+
+TEST(SysVCallContract, AVariadicImportTakesTheParameterPassedThroughToIt) {
+  // reader(path, flags) opens path with flags & 3 and writer(path, flags)
+  // creates it with a mode, as less and gzip do.  Each reads ESI itself, so
+  // RDI is the parameter before it, which the body never reads: the entry
+  // holds no copy of it, yet it reaches open as it entered.  open is
+  // variadic, so no prototype says what its stub reads.  less's unit called
+  // open() with no argument.
+  constexpr va_t Reader = Text, Writer = Text + 0x20, Stub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  auto Define = [&](va_t At, std::vector<uint8_t> Setup) {
+    std::vector<uint8_t> Bytes = {0x48, 0x83, 0xEC, 0x08}; // sub rsp, 8
+    Bytes.insert(Bytes.end(), Setup.begin(), Setup.end());
+    Bytes.push_back(0xE8); // call open
+    for (uint8_t B : rel32(At + Bytes.size() + 4, Stub))
+      Bytes.push_back(B);
+    for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                      0xC3})                  // ret
+      Bytes.push_back(B);
+    put(Code, At, Bytes);
+  };
+  Define(Reader, {0x83, 0xE6, 0x03,             // and esi, 3
+                  0x31, 0xC0});                 // xor eax, eax
+  Define(Writer, {0x83, 0xCE, 0x41,             // or esi, O_CREAT | O_WRONLY
+                  0xBA, 0xA4, 0x01, 0x00, 0x00, // mov edx, 0644
+                  0x31, 0xC0});                 // xor eax, eax
+  const BinaryImage Img = makeImportImage(
+      Code, {{Reader, "reader"}, {Writer, "writer"}}, {{Stub, "open"}});
+  const std::string Source = liftEntries(Img, {Reader, Writer});
+  const std::string Read = body(Source, "reader");
+  const std::string Write = body(Source, "writer");
+  ASSERT_FALSE(Read.empty()) << Source;
+  ASSERT_FALSE(Write.empty()) << Source;
+  EXPECT_EQ(Read.find("open()"), std::string::npos) << Read;
+  EXPECT_TRUE(llvm::Regex("open\\([^,]*arg0[^,]*, [^,]*arg1").match(Read))
+      << Read;
+  EXPECT_TRUE(llvm::Regex("open\\([^,]*arg0[^,]*, [^,]*arg1[^,]*, 0x1A4\\)")
+                  .match(Write))
+      << Write;
+  EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+}
+
+TEST(SysVCallContract, AVariadicImportReadsTheParametersPassedOnToIt) {
+  // grep opens a file `xor ecx, ecx; xor eax, eax; call openat`, passing
+  // its dirfd, path and flags on untouched and reading none of them, and
+  // logs `mov esi, 7; xor eax, eax; call printf` with its format.  A
+  // variadic import reads its fixed parameters, which are then the
+  // functions' own, and the arguments a call sets after them follow them:
+  // its unit called openat() in a function of no parameter.
+  constexpr va_t Opener = Text, Logger = Text + 0x20, OpenAt = Text + 0x40,
+                 Printf = Text + 0x50;
+  std::vector<uint8_t> Code(0x60, 0xCC);
+  auto Define = [&](va_t At, std::vector<uint8_t> Setup, va_t Callee) {
+    std::vector<uint8_t> Bytes = {0x48, 0x83, 0xEC, 0x08}; // sub rsp, 8
+    Bytes.insert(Bytes.end(), Setup.begin(), Setup.end());
+    Bytes.push_back(0xE8); // call
+    for (uint8_t B : rel32(At + Bytes.size() + 4, Callee))
+      Bytes.push_back(B);
+    for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                      0xC3})                  // ret
+      Bytes.push_back(B);
+    put(Code, At, Bytes);
+  };
+  Define(Opener,
+         {0x31, 0xC9,  // xor ecx, ecx
+          0x31, 0xC0}, // xor eax, eax
+         OpenAt);
+  Define(Logger,
+         {0xBE, 0x07, 0x00, 0x00, 0x00, // mov esi, 7
+          0x31, 0xC0},                  // xor eax, eax
+         Printf);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Opener, "opener"}, {Logger, "logger"}},
+                      {{OpenAt, "openat"}, {Printf, "printf"}});
+  const std::string Source = liftEntries(Img, {Opener, Logger});
+  const std::string Open = body(Source, "opener");
+  const std::string Log = body(Source, "logger");
+  ASSERT_FALSE(Open.empty()) << Source;
+  ASSERT_FALSE(Log.empty()) << Source;
+  EXPECT_TRUE(
+      llvm::Regex("opener\\([^)]*arg0, [^)]*arg1, [^)]*arg2\\)").match(Open))
+      << Open;
+  EXPECT_TRUE(llvm::Regex("openat\\([^,]*arg0[^,]*, [^,]*arg1[^,]*, "
+                          "[^,]*arg2[^,]*, 0\\)")
+                  .match(Open))
+      << Open;
+  EXPECT_TRUE(llvm::Regex("printf\\([^,]*arg0[^,]*, 7\\)").match(Log)) << Log;
+  EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
 }
 
 TEST(SysVCallContract, AJumpThroughALoadedSlotPassesTheArgumentsSetBefore) {
@@ -1004,6 +1517,41 @@ TEST(SysVCallContract, ACallThroughALoaderBoundSlotPassesThePrototype) {
   EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
 }
 
+TEST(SysVCallContract, APLTEntryOfItsOwnRoutinePassesTheRoutinesArguments) {
+  // A shared object defines g(x) { return 2 * x + 1; } and reaches it through
+  // its PLT entry, `f: jmp g@plt`, as it does a preemptible g.  The loader
+  // relocates g's slot to g itself, so f and the entry pass x on, to g.
+  constexpr va_t G = Text, F = Text + 0x10, Stub = Text + 0x20;
+  std::vector<uint8_t> Code(0x30, 0xCC);
+  put(Code, G, {0x8D, 0x44, 0x3F, 0x01, 0xC3}); // lea eax, [rdi+rdi+1]; ret
+  std::vector<uint8_t> Jump = {0xE9};           // jmp stub
+  for (uint8_t B : rel32(F + 5, Stub))
+    Jump.push_back(B);
+  put(Code, F, Jump);
+  BinaryImage Img = makeImportImage(Code, {{G, "g"}, {F, "f"}}, {{Stub, "g"}});
+  constexpr va_t Slot = 0x403000;
+  for (unsigned B = 0; B < 8; ++B)
+    Img.Segments.back().Data[B] = static_cast<uint8_t>(G >> (8 * B));
+  Img.CodePtrRelocSlots.insert(Slot);
+  for (const std::set<va_t> &Entries :
+       {std::set<va_t>{G, F, Stub}, std::set<va_t>{F}}) {
+    SCOPED_TRACE(Entries.size());
+    const std::string Source = liftEntries(Img, Entries);
+    const std::string Caller = body(Source, "f");
+    ASSERT_FALSE(Caller.empty()) << Source;
+    EXPECT_NE(Caller.find("f(int64_t arg0)"), std::string::npos) << Caller;
+    EXPECT_TRUE(llvm::Regex("[^[:alnum:]_]g\\(arg0\\)").match(Caller))
+        << Caller;
+    EXPECT_FALSE(llvm::Regex("[^[:alnum:]_]g_[[:xdigit:]]+\\(").match(Source))
+        << Source;
+  }
+  const std::string Source = liftEntries(Img, {G, Stub});
+  const std::string Entry = body(Source, "sub_401020");
+  ASSERT_FALSE(Entry.empty()) << Source;
+  EXPECT_NE(Entry.find("sub_401020(int64_t arg0)"), std::string::npos) << Entry;
+  EXPECT_TRUE(llvm::Regex("[^[:alnum:]_]g\\(arg0\\)").match(Entry)) << Entry;
+}
+
 TEST(SysVCallContract, AnArgumentOnlyTheCallSiteScanReadsKeepsItsValue) {
   // parse(o): s = o->text + 1 in RDI, tested by a load through it; the call
   // to an import with no prototype in the next block passes it on.  Only
@@ -1056,7 +1604,7 @@ TEST(SysVCallContract, ARegisterTheCalleeLeavesAloneIsNoReturnedField) {
   const std::string Source = liftEntries(Img, {Add, Inc});
   const std::string Body = body(Source, "add");
   ASSERT_FALSE(Body.empty()) << Source;
-  EXPECT_EQ(Body.find(">> 32"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find(">> 0x20"), std::string::npos) << Body;
   compileAndRun(Source + R"(
 int main(void) {
   return (uint32_t)add(5, 7) == 13 && (uint32_t)add(-3, 40) == 38 ? 0 : 1;
@@ -1322,6 +1870,304 @@ TEST(SysVCallContract, GccSplitVaStartMarksTheFunctionVariadic) {
         << "vector save-area slot as a vector parameter";
     EXPECT_EQ(Scalar->second, sizeof(double));
   }
+}
+
+TEST(SysVCallContract, AColdFragmentCallingAbortThroughItsStubNeverReturns) {
+  // check(x) jumps to its cold fragment, which calls abort through the PLT
+  // stub that function discovery also lists as a function.  The stub's
+  // import never returns, so neither does the fragment, and check's jump to
+  // it hands back no value.
+  constexpr va_t Check = Text, Cold = Text + 0x40, AbortStub = Text + 0x100;
+  std::vector<uint8_t> Code(0x110, 0xCC);
+  std::vector<uint8_t> CheckCode = {0x85, 0xFF,  // test edi, edi
+                                    0x0F, 0x88}; // js cold
+  for (uint8_t B : rel32(Check + CheckCode.size() + 4, Cold))
+    CheckCode.push_back(B);
+  for (uint8_t B : {0x8D, 0x04, 0x7F, // lea eax, [rdi + rdi*2]
+                    0xC3})            // ret
+    CheckCode.push_back(B);
+  put(Code, Check, CheckCode);
+  std::vector<uint8_t> ColdCode = {0xE8}; // call abort
+  for (uint8_t B : rel32(Cold + 5, AbortStub))
+    ColdCode.push_back(B);
+  put(Code, Cold, ColdCode);
+  const BinaryImage Img = makeImportImage(
+      Code, {{Check, "check"}, {Cold, "check_cold"}}, {{AbortStub, "abort"}});
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Check, Cold, AbortStub};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  auto Find = [&](va_t Entry) {
+    return std::find_if(
+        Result.MedFuncs.begin(), Result.MedFuncs.end(),
+        [&](const MedFunc &Function) { return Function.Entry == Entry; });
+  };
+  const auto Fragment = Find(Cold);
+  ASSERT_NE(Fragment, Result.MedFuncs.end());
+  EXPECT_TRUE(Fragment->DoesNotReturn);
+  const auto Caller = Find(Check);
+  ASSERT_NE(Caller, Result.MedFuncs.end());
+  bool SawJump = false;
+  for (const MedBlock &Block : Caller->Blocks)
+    for (const MedOp &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst() &&
+          Op.Inputs[0].ConstVal == Cold) {
+        SawJump = true;
+        EXPECT_TRUE(Op.DoesNotReturn);
+      }
+  EXPECT_TRUE(SawJump);
+}
+
+TEST(SysVCallContract, AByteSetAfterACallReadsNoSecondResult) {
+  // g calls f, which clobbers EDX, then compares two flags it sets in DL and
+  // AL.  `setne dl` keeps what f left in the rest of RDX, but nothing reads
+  // those bytes, so f returns one register and no record of two.
+  constexpr va_t G = Text, F = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> GCode = {0x53,             // push rbx
+                                0x48, 0x89, 0xFB, // mov rbx, rdi
+                                0xE8};            // call f
+  for (uint8_t B : rel32(G + GCode.size() + 4, F))
+    GCode.push_back(B);
+  for (uint8_t B : {0x80, 0x3B, 0x00, // cmp byte [rbx], 0
+                    0x0F, 0x95, 0xC2, // setne dl
+                    0x83, 0xF8, 0x07, // cmp eax, 7
+                    0x0F, 0x94, 0xC0, // sete al
+                    0x38, 0xD0,       // cmp al, dl
+                    0x0F, 0x94, 0xC0, // sete al
+                    0x0F, 0xB6, 0xC0, // movzx eax, al
+                    0x5B,             // pop rbx
+                    0xC3})            // ret
+    GCode.push_back(B);
+  put(Code, G, GCode);
+  put(Code, F,
+      {0x89, 0xFA,       // mov edx, edi
+       0x8D, 0x04, 0x52, // lea eax, [rdx + rdx*2]
+       0xC3});           // ret
+  const BinaryImage Img = makeImportImage(Code, {{G, "g"}, {F, "f"}}, {});
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {G, F};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  const auto Callee = std::find_if(
+      Result.MedFuncs.begin(), Result.MedFuncs.end(),
+      [&](const MedFunc &Function) { return Function.Entry == F; });
+  ASSERT_NE(Callee, Result.MedFuncs.end());
+  EXPECT_TRUE(Callee->MultiReturn.empty());
+}
+
+TEST(SysVCallContract, AStringCompareLeavesNoSecondResultInRDX) {
+  // same(a, b) returns `a && strcmp(a, b) != 0` the way GCC returns a bool:
+  // EDX is zero, or `setne dl` over what strcmp left in RDX, and EDX moves
+  // whole into EAX.  strcmp declares an int, so RDX holds no second field of
+  // its result and its stub returns one register; same returns the one byte
+  // both paths define, which no byte strcmp left in RDX reaches.
+  constexpr va_t Same = Text, StrcmpStub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> SameCode = {0x31, 0xD2,       // xor edx, edx
+                                   0x48, 0x85, 0xFF, // test rdi, rdi
+                                   0x74, 0x0A,       // je done
+                                   0xE8};            // call strcmp
+  for (uint8_t B : rel32(Same + 12, StrcmpStub))
+    SameCode.push_back(B);
+  for (uint8_t B : {0x85, 0xC0,       // test eax, eax
+                    0x0F, 0x95, 0xC2, // setne dl
+                    0x89, 0xD0,       // done: mov eax, edx
+                    0xC3})            // ret
+    SameCode.push_back(B);
+  put(Code, Same, SameCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Same, "same"}}, {{StrcmpStub, "strcmp"}});
+  const std::string Source = liftEntries(Img, {Same, StrcmpStub});
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("int8_t same("), std::string::npos) << Source;
+}
+
+TEST(SysVCallContract, AWholeRegisterArgumentKeepsItsHighBytes) {
+  // ntfscp's parse_options passes a string to an import no declaration
+  // describes with `lea rdi, [rip + s]` while EDI is live: the lifter syncs
+  // EDI with the address's low bytes, and the call took that sync for its
+  // argument, printing `(int32_t)("parse_options")`.  The call reads all of
+  // RDI.
+  constexpr va_t Name = Text, Str = Text + 0x20, LogStub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> NameCode = {0x53,              // push rbx
+                                   0x48, 0x8D, 0x3D}; // lea rdi, [rip + str]
+  for (uint8_t B : rel32(Name + 8, Str))
+    NameCode.push_back(B);
+  for (uint8_t B : {0x89, 0xFB, // mov ebx, edi
+                    0xE8})      // call log_name
+    NameCode.push_back(B);
+  for (uint8_t B : rel32(Name + 15, LogStub))
+    NameCode.push_back(B);
+  for (uint8_t B : {0x89, 0xD8, // mov eax, ebx
+                    0x5B,       // pop rbx
+                    0xC3})      // ret
+    NameCode.push_back(B);
+  put(Code, Name, NameCode);
+  put(Code, Str, {'h', 'i', 0});
+  const BinaryImage Img =
+      makeImportImage(Code, {{Name, "name"}}, {{LogStub, "log_name"}});
+  const std::string Source = liftEntries(Img, {Name});
+  const std::string Body = body(Source, "name");
+  const size_t Call = Body.find("log_name(");
+  ASSERT_NE(Call, std::string::npos) << Source;
+  const std::string Line = Body.substr(Call, Body.find('\n', Call) - Call);
+  EXPECT_EQ(Line.find("int32_t"), std::string::npos) << Body;
+}
+
+TEST(SysVCallContract, APaddingPushAfterAPointerCallReadsNoSecondResult) {
+  // ntfscp's utils_set_locale passes setlocale's result as the one stack
+  // argument of a variadic call, which GCC aligns with a `push rdx` between
+  // the call's register setup: a read of what setlocale left in RDX.
+  // setlocale declares a pointer, so RDX holds no second field of its
+  // result, and the call returns that one register.
+  constexpr va_t Setup = Text, SetlocaleStub = Text + 0x40,
+                 LogStub = Text + 0x48;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> SetupCode = {0x48, 0x83, 0xEC, 0x08, // sub rsp, 8
+                                    0x31, 0xF6,             // xor esi, esi
+                                    0xBF, 0x06, 0x00, 0x00, 0x00, // mov edi, 6
+                                    0xE8}; // call setlocale
+  for (uint8_t B : rel32(Setup + 16, SetlocaleStub))
+    SetupCode.push_back(B);
+  for (uint8_t B : {0xB9, 0x80, 0x00, 0x00, 0x00,       // mov ecx, 0x80
+                    0xBE, 0x34, 0x12, 0x00, 0x00,       // mov esi, 0x1234
+                    0x41, 0xB9, 0x78, 0x56, 0x00, 0x00, // mov r9d, 0x5678
+                    0x52,                               // push rdx
+                    0x45, 0x31, 0xC0,                   // xor r8d, r8d
+                    0xBA, 0x8C, 0x00, 0x00, 0x00,       // mov edx, 0x8c
+                    0xBF, 0xBC, 0x9A, 0x00, 0x00,       // mov edi, 0x9abc
+                    0x50,                               // push rax
+                    0x31, 0xC0,                         // xor eax, eax
+                    0xE8})                              // call log_it
+    SetupCode.push_back(B);
+  for (uint8_t B : rel32(Setup + 54, LogStub))
+    SetupCode.push_back(B);
+  for (uint8_t B : {0x59,                   // pop rcx
+                    0x5E,                   // pop rsi
+                    0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                    0xC3})                  // ret
+    SetupCode.push_back(B);
+  put(Code, Setup, SetupCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Setup, "setup"}},
+                      {{SetlocaleStub, "setlocale"}, {LogStub, "log_it"}});
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Setup};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  const auto Caller = std::find_if(
+      Result.MedFuncs.begin(), Result.MedFuncs.end(),
+      [&](const MedFunc &Function) { return Function.Entry == Setup; });
+  ASSERT_NE(Caller, Result.MedFuncs.end());
+  const MedOp *Call = nullptr;
+  for (const MedBlock &Block : Caller->Blocks)
+    for (const MedOp &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
+          Op.Inputs[0].isConst() && Op.Inputs[0].ConstVal == SetlocaleStub)
+        Call = &Op;
+  ASSERT_NE(Call, nullptr);
+  EXPECT_EQ(Call->Output.Kind, MedVar::Reg);
+  EXPECT_EQ(Call->Output.Size, 8);
+}
+
+TEST(SysVCallContract, ATailCallLeavesNoRegisterOfTheCallersOwn) {
+  // g adds RDX to what f returns in RAX, so f returns the pair.  f sets
+  // EDX to 11 and tail-jumps to an import no declaration describes: RDX
+  // then holds what the import leaves there, not 11.  Nothing forwards the
+  // pair such an import returns yet, so f refuses to return one.
+  constexpr va_t F = Text, G = Text + 0x20, Stub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> FCode = {0xBA, 0x0B, 0x00, 0x00, 0x00, // mov edx, 11
+                                0xE9};                        // jmp stub
+  for (uint8_t B : rel32(F + 10, Stub))
+    FCode.push_back(B);
+  put(Code, F, FCode);
+  std::vector<uint8_t> GCode = {0xE8}; // call f
+  for (uint8_t B : rel32(G + 5, F))
+    GCode.push_back(B);
+  for (uint8_t B : {0x48, 0x01, 0xD0, // add rax, rdx
+                    0xC3})            // ret
+    GCode.push_back(B);
+  put(Code, G, GCode);
+  const BinaryImage Img = makeImportImage(Code, {{F, "f"}, {G, "g"}},
+                                          {{Stub, "neverd_pair_source"}});
+  const std::string Source = liftEntries(Img, {F, G, Stub});
+  EXPECT_EQ(Source.find("(11)) << 64"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("int64_t f(void) {\n    __builtin_trap(); /* unknown "
+                        "return value */"),
+            std::string::npos)
+      << Source;
+}
+
+TEST(SysVCallContract, AByteSetAfterAFloatCallLeavesNoUnknownBytes) {
+  // later(a, b) returns `a && difftime(a, b) >= 0` the way GCC returns a
+  // bool: EAX is zero, or `setbe al` over what difftime, which returns a
+  // double, left in RAX.  later returns the one byte both paths define.
+  constexpr va_t Later = Text, DifftimeStub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> LaterCode = {0x31, 0xC0,       // xor eax, eax
+                                    0x48, 0x85, 0xFF, // test rdi, rdi
+                                    0x74, 0x10,       // je done
+                                    0xE8};            // call difftime
+  for (uint8_t B : rel32(Later + 12, DifftimeStub))
+    LaterCode.push_back(B);
+  for (uint8_t B : {0x66, 0x0F, 0xEF, 0xC9, // pxor xmm1, xmm1
+                    0x66, 0x0F, 0x2F, 0xC8, // comisd xmm1, xmm0
+                    0x0F, 0x96, 0xC0,       // setbe al
+                    0xC3})                  // done: ret
+    LaterCode.push_back(B);
+  put(Code, Later, LaterCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Later, "later"}}, {{DifftimeStub, "difftime"}});
+  const std::string Source = liftEntries(Img, {Later, DifftimeStub});
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("int8_t later("), std::string::npos) << Source;
+}
+
+TEST(SysVCallContract, ABoolCallersTestIsNoFloatALeftoverReturns) {
+  // f(s) parses s with strtod and returns whether the value is positive,
+  // like find's get_relative_timestamp: EAX is 1 or 0 at the shared
+  // epilogue, where XMM0 still holds the value or its square.  g tests AL
+  // after the call, so f returns that integer and no double.
+  constexpr va_t F = Text, G = Text + 0x30, StrtodStub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> FCode = {0x53,  // push rbx
+                                0xE8}; // call strtod
+  for (uint8_t B : rel32(F + 6, StrtodStub))
+    FCode.push_back(B);
+  for (uint8_t B : {0x66, 0x0F, 0xEF, 0xC9,       // pxor xmm1, xmm1
+                    0x66, 0x0F, 0x2F, 0xC1,       // comisd xmm0, xmm1
+                    0x76, 0x0B,                   // jbe false
+                    0xF2, 0x0F, 0x59, 0xC0,       // mulsd xmm0, xmm0
+                    0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
+                    0xEB, 0x02,                   // jmp done
+                    0x31, 0xC0,                   // false: xor eax, eax
+                    0x5B,                         // done: pop rbx
+                    0xC3})                        // ret
+    FCode.push_back(B);
+  put(Code, F, FCode);
+  std::vector<uint8_t> GCode = {0xE8}; // call f
+  for (uint8_t B : rel32(G + 5, F))
+    GCode.push_back(B);
+  for (uint8_t B : {0x84, 0xC0,       // test al, al
+                    0x0F, 0x94, 0xC0, // sete al
+                    0x0F, 0xB6, 0xC0, // movzx eax, al
+                    0xC3})            // ret
+    GCode.push_back(B);
+  put(Code, G, GCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{F, "f"}, {G, "g"}}, {{StrtodStub, "strtod"}});
+  const std::string Source = liftEntries(Img, {F, G, StrtodStub});
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("double f("), std::string::npos) << Source;
 }
 
 TEST(SysVCallContract, AnAlignmentPushIsNoStackArgument) {

@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "HvfExecutor.h"
 
+#include "neverd/emulation/Limits.h"
+
 #if defined(__APPLE__) && defined(NEVERD_EMULATION_HVF)
 #include "../../core/ExecutionDiagnostics.h"
 #include "../RunDeadline.h"
@@ -173,7 +175,8 @@ llvm::Error Executor::submit(Action Run, const MachineRunControl *Control) {
   std::unique_lock Gate(Admission, std::defer_lock);
   if (Control) {
     // Recheck stop while waiting, including a deadline at time_point::max().
-    while (!Gate.try_lock_for(std::chrono::milliseconds(1)))
+    while (!Gate.try_lock_for(std::chrono::milliseconds(
+        ::neverd::limits::emulation::kHvfExecutorSubmitMilliseconds)))
       if (Control->interrupted())
         return diagnostic::interrupted(Interrupted, *Control);
     if (Control->interrupted())
@@ -367,9 +370,8 @@ llvm::Error Executor::run(MachineRunControl Control, Completion Complete) {
       return E;
 #if defined(__arm64__)
   Deadline->Cancel.Status.store(HV_SUCCESS);
-  auto Entry = Deadline->Timer.invoke(Control, [&]() noexcept {
-    return hv_vcpu_run(CPU);
-  });
+  auto Entry = Deadline->Timer.invoke(
+      Control, [&]() noexcept { return hv_vcpu_run(CPU); });
   llvm::Error Result = llvm::Error::success();
   if (Entry.Value) {
     if (*Entry.Value != HV_SUCCESS)

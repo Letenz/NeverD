@@ -9,6 +9,8 @@ required: CTest encodes some infrastructure errors as JUnit skipped elements.
 from __future__ import annotations
 
 import argparse
+import copy
+import hashlib
 import json
 import os
 import re
@@ -76,6 +78,31 @@ NON_LINUX_SESSION_SKIPS = {
         ("SourcePagesNameTheSymbolsOfRenamedFunctions", "builds a glibc program"),
         ("FunctionsThatShareANameAreNumberedAsIDANumbersThem", "builds a glibc program"),
         ("AnalyzedLLVMPagesEmitTheirFunctionAlone", "builds a glibc program"),
+        ("LLVMViewShowsTheFunctionInAModuleOfItsOwn", "builds an x86-64 glibc program"),
+        ("LLVMViewMapsEachSpellingOfAMirrorToItsOwnOffset",
+         "reads the engine's internal view of an LLVM function"),
+        ("APLTEntryOfALibrarysOwnVariadicRoutineIsTheRoutine", "builds a glibc shared object"),
+    )
+}
+# These four opt-in checks read developer-supplied Windows kernel/PDB files.
+# Keep exact identities and reasons; a configured input cannot use this exception.
+OPTIONAL_KERNEL_INPUT_SKIPS = {
+    inventory.TestRecord(
+        "SessionCAPIKernelInputs." + name,
+        frozenset({"NeverDSessionCAPITests"}),
+    ): (frozenset(inputs), reason)
+    for name, inputs, reason in (
+        ("TheKernelsTypesJoinTheHeadersOfItsDrivers",
+         ("NEVERD_TYPES_NTOSKRNL", "NEVERD_TYPES_NTKRNLMP"),
+         "set NEVERD_TYPES_NTOSKRNL and NEVERD_TYPES_NTKRNLMP to ntoskrnl.exe and ntkrnlmp.pdb"),
+        ("KernelFunctionsDecompileWithTheirPrototypes",
+         ("NEVERD_TYPES_NTOSKRNL", "NEVERD_TYPES_NTKRNLMP"),
+         "set NEVERD_TYPES_NTOSKRNL and NEVERD_TYPES_NTKRNLMP to ntoskrnl.exe and ntkrnlmp.pdb"),
+        ("KernelExportsTakeTheirPrototypesWithoutThePDB",
+         ("NEVERD_TYPES_NTOSKRNL",), "set NEVERD_TYPES_NTOSKRNL to ntoskrnl.exe"),
+        ("KernelFunctionsHoldTheRecordsTheyName",
+         ("NEVERD_TYPES_NTOSKRNL", "NEVERD_TYPES_NTKRNLMP"),
+         "set NEVERD_TYPES_NTOSKRNL and NEVERD_TYPES_NTKRNLMP to ntoskrnl.exe and ntkrnlmp.pdb"),
     )
 }
 OUTCOME_NAMES = ("passed", "failed", "skipped", "disabled", "not_run")
@@ -197,6 +224,53 @@ def _identity(test: inventory.TestRecord) -> str:
     return f"{test.name} [{', '.join(sorted(test.labels))}]"
 
 
+def prior_passes(
+    records: Sequence[inventory.TestRecord],
+    selected: Sequence[inventory.TestRecord],
+    documents: Sequence[ET.Element],
+) -> ET.Element:
+    """Reuse only matching, consistently passed registrations from this job."""
+    known = set(records)
+    observations: dict[inventory.TestRecord, list[TestOutcome]] = {}
+    cases: dict[inventory.TestRecord, ET.Element] = {}
+    for document in documents:
+        for result, case in zip(parse_junit(document), document, strict=True):
+            if result.test not in known:
+                raise ResultError(
+                    "completed result has an unknown inventory identity: "
+                    + _identity(result.test)
+                )
+            observations.setdefault(result.test, []).append(result)
+            cases.setdefault(result.test, case)
+    eligible = {test for test in selected if test in observations and all(
+        result.outcome == "passed" for result in observations[test]
+    )}
+    # A focused binary and its aggregate can register the same name with
+    # different owners. CTest excludes by name, so retain every selected owner
+    # of that name together or leave all of them for the remaining execution.
+    remaining_names = {test.name for test in selected if test not in eligible}
+    reused = [test for test in selected
+              if test in eligible and test.name not in remaining_names]
+    root = ET.Element("testsuite", tests=str(len(reused)), failures="0",
+                      disabled="0", skipped="0")
+    for test in reused:
+        if any(character in test.name for character in "\r\n"):
+            raise ResultError("test name cannot be represented in a CTest name file")
+        root.append(copy.deepcopy(cases[test]))
+    return root
+
+
+def combine_prior_passes(
+    current: Sequence[TestOutcome], previous: Sequence[TestOutcome]
+) -> tuple[TestOutcome, ...]:
+    if any(result.outcome != "passed" for result in previous):
+        raise ResultError("reused evidence contains an outcome other than passed")
+    identities = [result.test for result in (*current, *previous)]
+    if len(set(identities)) != len(identities):
+        raise ResultError("fresh and reused results contain duplicate identities")
+    return (*current, *previous)
+
+
 def _preview(tests: Sequence[inventory.TestRecord]) -> str:
     return "; ".join(_identity(test) for test in tests[:10]) + (
         "; ..." if len(tests) > 10 else ""
@@ -208,6 +282,7 @@ def audit_results(
     outcomes: Sequence[TestOutcome],
     profile: str,
     exit_status: int,
+    configured_kernel_inputs: frozenset[str] = frozenset(),
 ) -> dict:
     mandatory = required_labels(profile)
     errors: list[str] = []
@@ -244,12 +319,14 @@ def audit_results(
     required_skips: list[inventory.TestRecord] = []
     invalid: list[inventory.TestRecord] = []
     platform_skips = 0
+    external_input_skips = 0
     for test in selected:
         result = actual.get(test)
         required = bool(test.labels & mandatory)
         state = result.outcome if result else "missing"
         counts[state] += 1
         permitted_platform_skip = False
+        permitted_external_input_skip = False
         if result and state == "skipped" and required:
             reason = NON_APPLE_CORPUS_SKIPS.get(test)
             permitted_platform_skip = (
@@ -267,7 +344,17 @@ def audit_results(
             )
             if permitted_platform_skip:
                 platform_skips += 1
-            else:
+            external = OPTIONAL_KERNEL_INPUT_SKIPS.get(test)
+            if external is not None:
+                inputs, reason = external
+                permitted_external_input_skip = (
+                    not inputs <= configured_kernel_inputs
+                    and result.message == "SKIP_REGULAR_EXPRESSION_MATCHED"
+                    and reason in result.output.splitlines()
+                )
+                if permitted_external_input_skip:
+                    external_input_skips += 1
+            if not permitted_platform_skip and not permitted_external_input_skip:
                 required_skips.append(test)
         if state in {"failed", "disabled", "not_run"}:
             invalid.append(test)
@@ -277,6 +364,7 @@ def audit_results(
             "outcome": state,
             "required": required,
             "permitted_platform_skip": permitted_platform_skip,
+            "permitted_external_input_skip": permitted_external_input_skip,
         }
         if result and state != "passed":
             row.update(message=result.message, output=result.output[:4000])
@@ -305,6 +393,7 @@ def audit_results(
             "unexpected": len(unexpected),
             "required_skips": len(required_skips),
             "permitted_platform_skips": platform_skips,
+            "permitted_external_input_skips": external_input_skips,
         },
         "errors": errors,
         "tests": rows,
@@ -372,6 +461,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     audit.add_argument("--exclude-label-regex", required=True)
     audit.add_argument("--matrix-name", required=True)
+    audit.add_argument("--prior-passes", type=Path)
+    reuse = commands.add_parser(
+        "reuse", help="preserve passed focused tests before executing the remaining profile"
+    )
+    for argument in ("inventory", "exclude-tests", "prior-passes", "output"):
+        reuse.add_argument(f"--{argument}", type=Path, required=True)
+    reuse.add_argument("--completed-junit", type=Path, action="append", required=True)
+    reuse.add_argument(
+        "--profile", choices=sorted(inventory.PROFILE_EXCLUSIONS), required=True
+    )
+    reuse.add_argument("--exclude-label-regex", required=True)
     arguments = parser.parse_args(argv)
     if arguments.command == "check-tool":
         try:
@@ -384,6 +484,45 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         print(completed.stdout.splitlines()[0] + ": JUnit outcome auditing available")
         return 0
+
+    if arguments.command == "reuse":
+        try:
+            document = json.loads(arguments.inventory.read_text(encoding="utf-8"))
+            discovery = inventory.audit_inventory(
+                document, arguments.profile, arguments.exclude_label_regex
+            )
+            completed = [ET.parse(path).getroot() for path in arguments.completed_junit]
+            retained = prior_passes(
+                inventory.parse_inventory(document), discovery.selected_records, completed
+            )
+            reused = parse_junit(retained)
+            ET.ElementTree(retained).write(
+                arguments.prior_passes, encoding="utf-8", xml_declaration=True
+            )
+            arguments.exclude_tests.write_text(
+                "".join(name + "\n" for name in sorted({result.test.name for result in reused})),
+                encoding="utf-8", newline="\n",
+            )
+            report = {
+                "ok": True,
+                "head": os.environ.get("GITHUB_SHA"),
+                "run_id": os.environ.get("GITHUB_RUN_ID"),
+                "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+                "selected_count": discovery.selected_count,
+                "reused_passed": len(reused),
+                "remaining_count": discovery.selected_count - len(reused),
+                "inventory_sha256": hashlib.sha256(arguments.inventory.read_bytes()).hexdigest(),
+                "completed_junit": [
+                    {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+                    for path in arguments.completed_junit
+                ],
+                "prior_passes_sha256": hashlib.sha256(arguments.prior_passes.read_bytes()).hexdigest(),
+            }
+        except (OSError, ValueError, ET.ParseError) as error:
+            report = {"ok": False, "errors": [str(error)]}
+        arguments.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps(report, indent=2))
+        return 0 if report["ok"] else 1
 
     report = {
         "schema": 1,
@@ -400,9 +539,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         exit_status = read_exit_status(arguments.ctest_status)
         outcomes = parse_junit(ET.parse(arguments.junit).getroot())
+        reused = ()
+        fresh_count = len(outcomes)
+        if arguments.prior_passes is not None:
+            reused = parse_junit(ET.parse(arguments.prior_passes).getroot())
+            outcomes = combine_prior_passes(outcomes, reused)
         report = audit_results(
-            discovery.selected_records, outcomes, discovery.profile, exit_status
+            discovery.selected_records, outcomes, discovery.profile, exit_status,
+            frozenset(name for name in ("NEVERD_TYPES_NTOSKRNL", "NEVERD_TYPES_NTKRNLMP")
+                      if name in os.environ),
         )
+        if arguments.prior_passes is not None:
+            report["reuse"] = {
+                "fresh_reported": fresh_count,
+                "prior_passed": len(reused),
+                "prior_passes_sha256": hashlib.sha256(arguments.prior_passes.read_bytes()).hexdigest(),
+            }
     except (OSError, ValueError, ET.ParseError) as error:
         report["errors"] = [str(error)]
     arguments.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

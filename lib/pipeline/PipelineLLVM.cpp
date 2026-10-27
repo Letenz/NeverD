@@ -61,6 +61,7 @@ struct SerializedSources {
     sigs::LibraryOccurrence Occurrence;
     std::string Function;
     size_t Instruction;
+    bool ExpressionDerived;
   };
   std::vector<Observation> Observations;
 };
@@ -86,7 +87,7 @@ SerializedSources serializeSources(const LLVMSourceMap &Sources,
       continue;
     Result.Observations.push_back({Source.Function, Source.Occurrence,
                                    Instruction->getFunction()->getName().str(),
-                                   Found->second});
+                                   Found->second, Source.ExpressionDerived});
   }
   return Result;
 }
@@ -108,7 +109,8 @@ void restoreSources(const SerializedSources &Sources, llvm::Module &Module,
     if (Function != Instructions.end() &&
         Source.Instruction < Function->second.size())
       Result.Observations.push_back({Source.Entry, Source.Occurrence,
-                                     Function->second[Source.Instruction]});
+                                     Function->second[Source.Instruction],
+                                     Source.ExpressionDerived});
   }
 }
 
@@ -228,7 +230,10 @@ Pipeline::LLVMEmissionResult Pipeline::emitLLVMSharded(
     const std::vector<std::pair<va_t, std::string>> &Imports,
     const BinaryImage &Img, BinaryFormat Fmt, bool NoOpt, unsigned NumThreads,
     bool RecordSources, llvm::ArrayRef<sigs::LibraryRecognition> Recognitions,
-    const DebugContext *Dbg) {
+    const DebugContext *Dbg, const SourceViewOptions &View,
+    const std::set<va_t> *PrototypeArgumentCallees,
+    bool PreserveUnknownSourceValues,
+    llvm::ArrayRef<MedFunc> SourceCalleeDeclarations) {
   const size_t N = Funcs.size();
   NumThreads = std::max(
       1u, std::min<unsigned>(NumThreads, static_cast<unsigned>(N ? N : 1)));
@@ -239,7 +244,10 @@ Pipeline::LLVMEmissionResult Pipeline::emitLLVMSharded(
     for (size_t I = 0; I < N; ++I)
       Mask[I] = (ShardPlan.ShardOf[I] == S);
     MedLLVMEmitter Emitter;
+    Emitter.setPreserveUnknownSourceValues(PreserveUnknownSourceValues);
+    Emitter.setSourceCalleeDeclarations(SourceCalleeDeclarations);
     Emitter.setDebugContext(Dbg);
+    Emitter.setPrototypeArgumentCallees(PrototypeArgumentCallees);
     LLVMEmissionResult Result;
     if (RecordSources) {
       Result.Sources = std::make_shared<LLVMSourceMap>();
@@ -254,14 +262,14 @@ Pipeline::LLVMEmissionResult Pipeline::emitLLVMSharded(
     return Result;
   };
   return runLLVMShardPipeline(Funcs, Ctx, ShardPlan.NumShards, NumThreads,
-                              NoOpt, EmitShard);
+                              NoOpt, EmitShard, View);
 }
 
 Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
     const std::vector<MedFunc> &Funcs, llvm::LLVMContext &Ctx,
     unsigned NumShards, unsigned NumThreads, bool NoOpt,
-    llvm::function_ref<LLVMEmissionResult(unsigned, llvm::LLVMContext &)>
-        Emit) {
+    llvm::function_ref<LLVMEmissionResult(unsigned, llvm::LLVMContext &)> Emit,
+    const SourceViewOptions &View) {
   LLVMEmissionResult Result;
   if (NumShards == 0) {
     Result.Error = "LLVM shard planning failed: no shards";
@@ -334,7 +342,7 @@ Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
         if (!NoOpt) {
           ShardPhase = "optimization";
           OptimizationResult Optimization =
-              optimizeOrPromoteModule(*M, Emission.Sources.get());
+              optimizeOrPromoteModule(*M, Emission.Sources.get(), View);
           if (Optimization.Stop == OptimizationStopReason::InputInvalid) {
             // The shard was verified above. A blocking native EH contract
             // keeps value-changing passes off this module; the shared helper

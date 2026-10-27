@@ -1,0 +1,9 @@
+//===- ExecutionBudget.def - Workload time policies ---------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_EXECUTION_TIME_POLICY
+NEVERD_EXECUTION_TIME_POLICY(AbsoluteDeadline, "absolute_deadline")
+NEVERD_EXECUTION_TIME_POLICY(ActiveWork, "active_work")
+#endif

@@ -11,6 +11,8 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web {
 namespace {
 llvm::json::Array diagnostics(const std::vector<SourceDiagnostic> &Entries) {
@@ -109,7 +111,8 @@ std::string Session::sourceSemanticRecords(std::string_view ExpectedRevision,
   const auto &V = Cached->second.Values;
   const auto &E = Cached->second.Effects;
   const auto Count = std::max(V.Nodes.size(), E.Nodes.size());
-  if (!Limit || Limit > 512 || Offset > Count)
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > Count)
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(Count, Offset + Limit);
   llvm::json::Array Items;

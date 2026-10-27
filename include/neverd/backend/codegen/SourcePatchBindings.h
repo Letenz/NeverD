@@ -11,7 +11,12 @@
 
 namespace neverd {
 
-enum class SourcePatchBindingKind { Function, ReadOnlyData, WritableData };
+enum class SourcePatchBindingKind {
+  Function,
+  ReadOnlyData,
+  WritableData,
+  OriginalFunction
+};
 
 struct SourcePatchBinding {
   std::string Symbol;
@@ -36,7 +41,8 @@ validateSourcePatchBinding(const SourcePatchBinding &Binding,
 llvm::Expected<std::vector<SourcePatchBinding>>
 bindSourcePatchReferences(llvm::Module &Module, const BinaryImage &Image,
                           llvm::ArrayRef<SourcePatchMapping> Replacements,
-                          llvm::ArrayRef<SourcePatchBinding> Bindings);
+                          llvm::ArrayRef<SourcePatchBinding> Bindings,
+                          bool RenameDeclarations = true);
 
 } // namespace neverd
 

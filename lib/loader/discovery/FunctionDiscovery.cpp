@@ -8,8 +8,11 @@
 
 #include "FunctionDiscoveryDetail.h"
 
+#include "neverd/loader/LinkerThunk.h"
+#include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
+#include "neverd/support/Limits.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -18,6 +21,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <map>
+#include <optional>
 #include <set>
 
 #define DEBUG_TYPE "neverd-func-discovery"
@@ -40,7 +45,9 @@ const Import *BinaryImage::decodeImportThunkAt(va_t Addr) const {
     return nullptr;
   };
 
-  if (Arch == Arch::X64 || Arch == Arch::X86) {
+  if (decodesImportThunks()) {
+    if (!hasExecutableCodeOwnerRange(Addr, x86::kJmpIndirectLen))
+      return nullptr;
     const uint8_t *Bytes = readVA(Addr, x86::kJmpIndirectLen);
     if (!Bytes || Bytes[0] != x86::kJmpIndirectOp)
       return nullptr;
@@ -162,6 +169,61 @@ bool ImportThunkCandidates::allows(va_t Start, uint64_t Size) const {
   return Next == Bodies.begin() || std::prev(Next)->second <= Start;
 }
 
+/// Pair each long-branch or interworking thunk a linker wrote that jumps to
+/// an import's stub with that import: a Thumb tail call reaches an ARM PLT
+/// entry through `__ThumbV7PILongThunk_puts`, a distant A64 call through
+/// `__AArch64ADRPThunk_*`.  Only the forms a linker alone writes count
+/// (linkerLongBranchThunkAt); a direct jump to a stub ends many a routine.
+static size_t
+pairLinkerThunksWithImports(BinaryImage &Img, std::set<va_t> &Existing,
+                            const ImportThunkCandidates &Candidates) {
+  if ((Img.Arch != Arch::ARM && Img.Arch != Arch::AArch64) ||
+      Img.ImportStubIndices.empty())
+    return 0;
+  // A Thumb thunk may start at any halfword, an ARM or A64 one at a word.
+  const size_t Step =
+      Img.Arch == Arch::ARM ? arm::kThumbInsnSize : aarch64::kInsnSize;
+  size_t Added = 0;
+  for (const Segment &Seg : Img.Segments) {
+    if (!Seg.isExecutable())
+      continue;
+    for (size_t Offset = 0; Offset + Step <= Seg.Data.size(); Offset += Step) {
+      const va_t VA = Seg.VA + Offset;
+      for (const InstructionMode Mode :
+           {InstructionMode::Thumb, InstructionMode::ARM}) {
+        if (Img.Arch == Arch::AArch64 && Mode == InstructionMode::Thumb)
+          continue;
+        if (Img.Arch == Arch::ARM && Mode == InstructionMode::ARM &&
+            VA % arm::kInsnSize != 0)
+          continue;
+        const std::optional<LinkerThunk> Thunk = linkerLongBranchThunkAt(
+            Img, VA, Img.Arch == Arch::ARM ? Mode : InstructionMode::Default);
+        if (!Thunk)
+          continue;
+        const auto Stub = Img.ImportStubIndices.find(Thunk->Target);
+        if (Stub == Img.ImportStubIndices.end())
+          continue;
+        // Bytes known to run in the other instruction set are no such thunk.
+        if (Img.Arch == Arch::ARM)
+          if (const std::optional<InstructionMode> Known =
+                  Img.instructionModeAt(VA);
+              Known && *Known != Mode)
+            continue;
+        if (!Img.isCodeRange(VA, Thunk->Size) ||
+            !Candidates.allows(VA, Thunk->Size))
+          continue;
+        Img.recordImportStub(VA, Stub->second);
+        if (Existing.insert(VA).second) {
+          Img.Symbols.push_back(Symbol::makeFunc(VA, Thunk->Size));
+          ++Added;
+        }
+        break;
+      }
+    }
+  }
+  return Added;
+}
+
 void scanImportThunks(BinaryImage &Img) {
   std::map<va_t, size_t> TargetImports;
   for (size_t I = 0; I < Img.Imports.size(); ++I)
@@ -195,6 +257,7 @@ void scanImportThunks(BinaryImage &Img) {
       break;
     }
   }
+  Added += pairLinkerThunksWithImports(Img, Existing, Candidates);
   LLVM_DEBUG(llvm::dbgs() << "func-discovery: import thunk scan added " << Added
                           << " functions\n");
 }
@@ -290,15 +353,80 @@ collectClaimedCodeRanges(const BinaryImage &Img) {
   return Merged;
 }
 
-void scanPaddingBoundaries(BinaryImage &Img) {
+void recordRelocatedLiteralTargets(BinaryImage &Img) {
+  if ((Img.Arch != Arch::X86 && Img.Arch != Arch::X64) ||
+      Img.CodePtrRelocSlots.empty())
+    return;
+  X86StringLiteralRuns Literals(Img);
+  std::map<va_t, bool> Classified;
+  std::vector<va_t> Objects;
+  // Text alone is not enough: the shared literal decoder also requires every
+  // path through its bytes and padding to end in a trap. Decide every target
+  // before publishing any data objects or changing relocation classifications.
+  for (va_t Slot : Img.CodePtrRelocSlots) {
+    const uint8_t *Bytes = Img.readVA(Slot, Img.getPointerSize());
+    if (!Bytes)
+      continue;
+    const va_t Addr = readPtr(Bytes, Img.is64Bit());
+    const auto [It, Inserted] = Classified.try_emplace(Addr, false);
+    if (!Inserted)
+      continue;
+    const Segment *Seg = Img.getSegmentFor(Addr);
+    if (Seg && Seg->isExecutable() &&
+        Literals.at(*Seg, static_cast<size_t>(Addr - Seg->VA))) {
+      It->second = true;
+      Objects.push_back(Addr);
+    }
+  }
+  // Existing code metadata, including a function's exclusive end, has priority
+  // over this proof. Reuse the shared rules used for debug data objects.
+  recordDataInCode(Img, Objects);
+  recordDataPointerTargets(Img, [&](va_t Addr) {
+    const auto It = Classified.find(Addr);
+    return It != Classified.end() && It->second && Img.DataInCode.count(Addr);
+  });
+}
+
+static const void *findLoadByte(const uint8_t *Data, int Byte, size_t Size,
+                                const LoadProgress &Progress) {
+  if (!Progress)
+    return std::memchr(Data, Byte, Size);
+  for (size_t Done = 0; Done < Size;) {
+    Progress.check();
+    const size_t Count =
+        std::min(limits::support::kLoadByteCheckpointBytes, Size - Done);
+    if (const void *Found = std::memchr(Data + Done, Byte, Count))
+      return Found;
+    Done += Count;
+  }
+  return nullptr;
+}
+
+void scanPaddingBoundaries(BinaryImage &Img, const LoadProgress &Progress) {
+  Progress.check();
+  // LC_FUNCTION_STARTS lists every function a linked Mach-O image lays out,
+  // so a byte between two of its starts belongs to the function before it.
+  // Padding there begins no function: an `int3` byte inside an instruction
+  // (`call` with a displacement of 0xffffcc9a) or among the jump tables a
+  // function keeps in __text reads as padding, and the byte after it as a
+  // prologue.
+  if (Img.Format == BinaryFormat::MachO && !Img.IsRelocatable &&
+      Img.MachOHasFunctionStarts)
+    return;
+
   const auto Known = collectClaimedCodeRanges(Img);
   auto Existing = Img.getSymbolAddresses();
 
   const uint8_t PadByte = codePaddingByte(Img.Arch);
   const size_t Alignment = prologueAlignment(Img.Arch);
+  // An x86 prologue is a single byte, and text is full of them.
+  std::optional<X86StringLiteralRuns> Literals;
+  if (Img.Arch == Arch::X86 || Img.Arch == Arch::X64)
+    Literals.emplace(Img);
 
   [[maybe_unused]] size_t Added = 0;
   for (const auto &Seg : Img.Segments) {
+    Progress.check();
     if (!Seg.isExecutable() || Seg.Data.size() < 4)
       continue;
     const uint8_t *D = Seg.Data.data();
@@ -306,7 +434,8 @@ void scanPaddingBoundaries(BinaryImage &Img) {
     auto Consider = [&](size_t I) {
       const va_t Addr = Seg.VA + I;
       if (checkCodePrologueAtOffset(Img, Seg, I, Img.Arch) &&
-          !insideInterval(Known, Addr) && Existing.insert(Addr).second) {
+          !insideInterval(Known, Addr) && !(Literals && Literals->at(Seg, I)) &&
+          Existing.insert(Addr).second) {
         Symbol Guess = Symbol::makeFunc(Addr);
         Guess.IsBoundaryGuess = true;
         Img.Symbols.push_back(std::move(Guess));
@@ -316,16 +445,23 @@ void scanPaddingBoundaries(BinaryImage &Img) {
     // A boundary is a byte that is no padding right after one that is, past
     // the padding the segment may open with.
     size_t First = 0;
-    while (First < N && D[First] == PadByte)
+    while (First < N && D[First] == PadByte) {
+      if (First % limits::support::kLoadByteCheckpointBytes == 0)
+        Progress.check();
       ++First;
+    }
     if (Alignment == 1) {
       for (size_t From = First; From < N;) {
-        const void *Pad = std::memchr(D + From, PadByte, N - From);
+        Progress.check();
+        const void *Pad = findLoadByte(D + From, PadByte, N - From, Progress);
         if (!Pad)
           break;
         size_t I = static_cast<size_t>(static_cast<const uint8_t *>(Pad) - D);
-        while (I < N && D[I] == PadByte)
+        while (I < N && D[I] == PadByte) {
+          if (I % limits::support::kLoadByteCheckpointBytes == 0)
+            Progress.check();
           ++I;
+        }
         if (I >= N)
           break;
         Consider(I);
@@ -336,15 +472,18 @@ void scanPaddingBoundaries(BinaryImage &Img) {
     // Only a boundary a prologue can begin at is looked at.
     const size_t Skew = static_cast<size_t>((Seg.VA + First + 1) % Alignment);
     for (size_t I = First + 1 + (Skew ? Alignment - Skew : 0); I < N;
-         I += Alignment)
+         I += Alignment) {
+      Progress.check();
       if (D[I - 1] == PadByte && D[I] != PadByte)
         Consider(I);
+    }
   }
   LLVM_DEBUG(llvm::dbgs() << "func-discovery: padding scan added " << Added
                           << " functions\n");
 }
 
-void scanX86HotpatchEntries(BinaryImage &Img) {
+void scanX86HotpatchEntries(BinaryImage &Img, const LoadProgress &Progress) {
+  Progress.check();
   if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF ||
       Img.IsRelocatable)
     return;
@@ -353,13 +492,15 @@ void scanX86HotpatchEntries(BinaryImage &Img) {
 
   [[maybe_unused]] size_t Added = 0;
   for (const auto &Seg : Img.Segments) {
+    Progress.check();
     if (!Seg.isExecutable())
       continue;
     const uint8_t *D = Seg.Data.data();
     const size_t N = Seg.Data.size();
     // Every entry begins with 8B, so only those bytes are examined.
     for (size_t Off = 0; Off < N; ++Off) {
-      const void *Hit = std::memchr(D + Off, 0x8B, N - Off);
+      Progress.check();
+      const void *Hit = findLoadByte(D + Off, 0x8B, N - Off, Progress);
       if (!Hit)
         break;
       Off = static_cast<size_t>(static_cast<const uint8_t *>(Hit) - D);
@@ -381,7 +522,8 @@ void scanX86HotpatchEntries(BinaryImage &Img) {
                           << " functions\n");
 }
 
-void scanDataFuncPointers(BinaryImage &Img) {
+void scanDataFuncPointers(BinaryImage &Img, const LoadProgress &Progress) {
+  Progress.check();
   const size_t PtrSize = Img.getPointerSize();
   if (PtrSize == 0)
     return;
@@ -431,6 +573,21 @@ void scanDataFuncPointers(BinaryImage &Img) {
   // same owner end, unless an ARM mapping symbol makes a slot data or
   // segments or sections overlap; otherwise it is looked up once per range.
   const bool OwnerPerRange = Img.Arch != Arch::ARM && hasDisjointOwners(Img);
+  // A table of strings an executable section keeps points at data.
+  std::optional<X86StringLiteralRuns> Literals;
+  if (Img.Arch == Arch::X86 || Img.Arch == Arch::X64)
+    Literals.emplace(Img);
+
+  // Only a relocated slot confirms the pointer interpretation of its bytes.
+  // An untyped integer or string can coincide with a prologue-looking address
+  // inside another instruction. Keep that candidate as a boundary guess so
+  // the same decoded ownership proof used for padding can disprove it.
+  // Indices: the scan below appends symbols.
+  std::map<va_t, size_t> Guesses;
+  if (!Img.CodePtrRelocSlots.empty())
+    for (size_t I = 0; I < Img.Symbols.size(); ++I)
+      if (Img.Symbols[I].IsFunc && Img.Symbols[I].IsBoundaryGuess)
+        Guesses.emplace(Img.Symbols[I].Addr, I);
 
   [[maybe_unused]] size_t Added = 0;
   auto ScanRange = [&](const Segment *Seg, va_t Start, uint64_t RequestedLen) {
@@ -457,7 +614,12 @@ void scanDataFuncPointers(BinaryImage &Img) {
     if (Misalignment != 0)
       Cur += PtrSize - Misalignment;
     std::optional<va_t> OwnerEnd;
+    Progress.check();
     for (; Cur <= End && End - Cur >= PtrSize; Cur += PtrSize) {
+      // Pointer scans can visit millions of slots. Poll by covered bytes,
+      // preserving every semantic visit without calling the host per pointer.
+      if (Cur % limits::support::kLoadByteCheckpointBytes == 0)
+        Progress.check();
       if (!OwnerEnd || !OwnerPerRange)
         OwnerEnd = Img.mappedObjectOwnerEnd(Cur);
       if (!OwnerEnd || *OwnerEnd < Cur || PtrSize > *OwnerEnd - Cur)
@@ -465,6 +627,11 @@ void scanDataFuncPointers(BinaryImage &Img) {
       const size_t I = static_cast<size_t>(Cur - Seg->VA);
       uint64_t Val = normalizeCodeAddress(
           readPtr(Seg->Data.data() + I, Img.is64Bit()), Img.Arch, Img.Mode);
+      if (const auto Guess = Guesses.find(Val);
+          Guess != Guesses.end() && Img.CodePtrRelocSlots.count(Cur)) {
+        Img.Symbols[Guess->second].IsBoundaryGuess = false;
+        Guesses.erase(Guess);
+      }
       if (!InExecutableSegment(Val) || insideInterval(Known, Val) ||
           Existing.count(Val))
         continue;
@@ -472,11 +639,16 @@ void scanDataFuncPointers(BinaryImage &Img) {
       if (!ESeg)
         continue;
       size_t Off = static_cast<size_t>(Val - ESeg->VA);
-      if (!checkCodePrologueAtOffset(Img, *ESeg, Off, Img.Arch))
+      if (!checkCodePrologueAtOffset(Img, *ESeg, Off, Img.Arch) ||
+          (Literals && Literals->at(*ESeg, Off)))
         continue;
       if (!Existing.insert(Val).second)
         continue;
-      Img.Symbols.push_back(Symbol::makeFunc(Val));
+      auto Candidate = Symbol::makeFunc(Val);
+      Candidate.IsBoundaryGuess = !Img.CodePtrRelocSlots.count(Cur);
+      if (Candidate.IsBoundaryGuess && !Img.CodePtrRelocSlots.empty())
+        Guesses.emplace(Val, Img.Symbols.size());
+      Img.Symbols.push_back(std::move(Candidate));
       ++Added;
     }
   };
@@ -486,6 +658,7 @@ void scanDataFuncPointers(BinaryImage &Img) {
         !Sec.isWritable() && !Img.isCodeAddress(Sec.VA))
       ScanRange(Img.getSegmentFor(Sec.VA), Sec.VA, Sec.Size);
   for (const Segment &Seg : Img.Segments) {
+    Progress.check();
     if (section_names::isDebugSectionName(Seg.Name) || Seg.Name == "__DWARF" ||
         Img.segmentHasReadableSectionMetadata(Seg) || !Seg.isReadable() ||
         Seg.isExecutable() || Seg.isWritable())

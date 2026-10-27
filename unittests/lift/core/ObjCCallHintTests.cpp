@@ -10,8 +10,8 @@
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedNoReturn.h"
 #include "neverd/ir/med/MedTypePass.h"
-#include "neverd/lift/AArch64Regs.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCBlocks.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
@@ -7702,6 +7702,60 @@ TEST(ObjCCallHints,
     EXPECT_EQ(Copy.Inputs[I + 1].ConstVal, I + 100);
 }
 } // namespace
+
+TEST(ObjCCallHints, UserPrototypesOverrideOnlyMatchingAutomaticSDKCalls) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (bool Indirect : {false, true})
+      for (va_t UserKey : {va_t(0x9999), va_t(0x2180), va_t(0x1100)}) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(Indirect);
+        SCOPED_TRACE(UserKey);
+        auto Image = runtimeImage("_read", Architecture);
+        Image.DyldBindSlots[0x2180] = {"_read", 0, "/usr/lib/libSystem.B.dylib",
+                                       false};
+        auto Low = caller(Architecture);
+        if (Indirect) {
+          const auto Target = NdVar::reg(
+              getTargetRegInfo(Architecture).CalleeSaveRegs.front(), 8);
+          Low.Blocks.front().Ops = {
+              operation(NdOp::LOAD, Target, {NdVar::cst(0x2180, 8)}),
+              operation(NdOp::INDIR_CALL, {}, {Target}, 0x1204),
+              operation(NdOp::RETURN, {}, {}, 0x1208)};
+          Low.Blocks.front().EndAddr = 0x120c;
+        }
+        SourceFunctionTypeHint Inferred;
+        Inferred.ReturnType = NdType::makeInt(8, true);
+        Inferred.Parameters = {{"first", NdType::makeInt(8, true)}};
+        std::string Error;
+        ASSERT_TRUE(assignDarwinScalarSourceABI(Inferred, Architecture, Error))
+            << Error;
+        const std::map<va_t, SourceFunctionTypeHint> Callees{
+            {0x1100, Inferred}};
+        const std::set<va_t> UserPrototypes{UserKey};
+        LowToMedConverter Converter;
+        Converter.setBinaryImage(&Image);
+        Converter.setSourceCallHintsEnabled(true);
+        Converter.setSourceCalleeTypeHints(&Callees);
+        Converter.setUserPrototypeCallees(&UserPrototypes);
+        const auto Med =
+            Converter.convert(Low, Architecture, BinaryFormat::MachO);
+        const bool Overridden =
+            UserKey == 0x2180 || (!Indirect && UserKey == 0x1100);
+        size_t Calls = 0;
+        for (const auto &B : Med.Blocks)
+          for (const auto &Op : B.Ops)
+            if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+              ++Calls;
+              EXPECT_EQ(bool(Op.SourceCallHint), !Overridden);
+              if (Op.SourceCallHint) {
+                EXPECT_EQ(Op.SourceCallHint->CallKind,
+                          SourceCallTypeHint::Kind::DarwinRuntimeCall);
+                EXPECT_EQ(Op.SourceCallHint->Signature.Parameters.size(), 3u);
+              }
+            }
+        EXPECT_EQ(Calls, 1u);
+      }
+}
 
 TEST(ObjCCallHints, SDKCDeclarationsPreservePointerIntegerAndFloatCarriers) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {

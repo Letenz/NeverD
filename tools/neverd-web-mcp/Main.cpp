@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "ResourceLimits.h"
 #include "Stdio.h"
 #include "WebTools.h"
 
@@ -65,7 +66,7 @@ int wmain(int Count, wchar_t **Arguments) {
       const auto Size =
           WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, Arguments[I], -1,
                               nullptr, 0, nullptr, nullptr);
-      if (Size <= 0 || Size > 32769)
+      if (Size <= 0 || Size > ::neverd::limits::web_mcp::kMainSizeLimit)
         throw std::invalid_argument("Invalid launch argument");
       std::string Text(Size, '\0');
       if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, Arguments[I], -1,

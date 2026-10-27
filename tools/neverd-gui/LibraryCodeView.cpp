@@ -1,8 +1,11 @@
 #include "LibraryCodeView.h"
 
+#include "ResourceLimits.h"
+
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -36,8 +39,8 @@ void LibraryCodeView::reset(const QString &original,
     // a byte in the middle of a multibyte character onto a Qt position.
     const auto number = value.toDouble(-1);
     if (!value.isDouble() || !std::isfinite(number) || byteOffset < 0 ||
-        byteOffset > 32 * 1024 * 1024 || number < byteOffset ||
-        number - byteOffset > bytes.size() ||
+        byteOffset > ::neverd::limits::gui::kMaxLibraryViewByteOffset ||
+        number < byteOffset || number - byteOffset > bytes.size() ||
         number != static_cast<double>(static_cast<qint64>(number)))
       return -1;
     const auto local = static_cast<qsizetype>(number - byteOffset);
@@ -48,7 +51,8 @@ void LibraryCodeView::reset(const QString &original,
   };
   QSet<QString> ids;
   qsizetype spanCount = 0;
-  if (regions.size() <= 256)
+  if (regions.size() <=
+      ::neverd::limits::gui::kLibraryCodeViewResetRegionsSizeLimit)
     for (const auto &value : regions) {
       const auto object = value.toObject();
       Region region;
@@ -62,7 +66,12 @@ void LibraryCodeView::reset(const QString &original,
       const auto spans = object["spans"].toArray();
       spanCount += spans.size();
       region.available &=
-          !spans.isEmpty() && spans.size() <= 1024 && spanCount <= 4096;
+          !spans.isEmpty() &&
+          spans.size() <=
+              ::neverd::limits::gui::
+                  kLibraryCodeViewResetRegionAvailableSpansSizeLimit &&
+          spanCount <= ::neverd::limits::gui::
+                           kLibraryCodeViewResetRegionAvailableSpanCountLimit;
       if (region.available)
         for (const auto &entry : spans) {
           const auto span = entry.toObject();
@@ -133,6 +142,7 @@ void LibraryCodeView::addSourceBlocks() {
   QVector<Region> blocks;
   QString structure;
   int ordinal = 0;
+  int metadataOrdinal = 0;
   const int size = int(original_.size());
   for (int i = 0; i < size;) {
     const QChar c = original_[i];
@@ -142,6 +152,7 @@ void LibraryCodeView::addSourceBlocks() {
       continue;
     }
     if (QStringView(original_).mid(i, 2) == QLatin1String("/*")) {
+      const int begin = i;
       int depth = 1;
       i += 2;
       while (i < size && depth) {
@@ -158,6 +169,34 @@ void LibraryCodeView::addSourceBlocks() {
       }
       if (depth)
         return;
+      if (QStringView(original_).mid(begin).startsWith(
+              QLatin1String("/* neverd.exception:"))) {
+        if (++metadataOrdinal + ordinal >
+            ::neverd::limits::gui::kMaxLibraryViewOrdinal)
+          return;
+        const int newline = int(original_.indexOf('\n', begin));
+        const auto closingLine = std::upper_bound(sourceLines_.cbegin(),
+                                                  sourceLines_.cend(), i - 1) -
+                                 1;
+        if (newline >= 0 && newline < *closingLine - 1) {
+          Region detail;
+          detail.id =
+              QStringLiteral("source-exception:%1").arg(metadataOrdinal);
+          detail.header = begin;
+          detail.summary = QStringLiteral(" …\n");
+          detail.spans = {{newline, *closingLine}};
+          detail.library = false;
+          detail.available = true;
+          const QString header = original_.mid(begin, newline - begin);
+          const QString body = original_.mid(newline, *closingLine - newline);
+          detail.details = {
+              {"id", detail.id},
+              {"kind", "source-metadata"},
+              {"default_detail", header.contains("status=complete,") &&
+                                     body.contains("fallback_regions=0\n")}};
+          blocks.append(std::move(detail));
+        }
+      }
       continue;
     }
     // C++ raw strings, including their optional encoding prefix.
@@ -209,7 +248,8 @@ void LibraryCodeView::addSourceBlocks() {
         return;
     }
     if (c == '{') {
-      if (++ordinal > 8192)
+      if (++ordinal + metadataOrdinal >
+          ::neverd::limits::gui::kMaxLibraryViewOrdinal)
         return;
       stack.append({i, ordinal});
       structure += '{';
@@ -227,11 +267,25 @@ void LibraryCodeView::addSourceBlocks() {
         Region block;
         block.id = QStringLiteral("source-block:%1").arg(open.ordinal);
         block.header = open.position;
-        block.summary = QStringLiteral("block");
+        block.summary = QStringLiteral(" /* … */\n");
         block.spans = {{firstNewline, *closingLine}};
         block.library = false;
         block.available = true;
         block.details = {{"id", block.id}, {"kind", "source-block"}};
+        const auto headerLine =
+            std::upper_bound(sourceLines_.cbegin(), sourceLines_.cend(),
+                             open.position) -
+            1;
+        const QString header =
+            original_.mid(*headerLine, open.position - *headerLine + 1);
+        const int end = int(original_.indexOf('\n', i));
+        const QString closing =
+            original_.mid(i, end < 0 ? size - i : end - i).trimmed();
+        static const QRegularExpression frameHeader(QStringLiteral(
+            R"(^\s*(?:_Alignas|alignas)\([0-9]+\) struct frame_[0-9A-Fa-f]+ \{$)"));
+        block.details["default_detail"] =
+            !stack.isEmpty() && frameHeader.match(header).hasMatch() &&
+            closing == QLatin1String("} stack_storage;");
         blocks.append(std::move(block));
       }
     }
@@ -284,6 +338,14 @@ QSet<QString> LibraryCodeView::foldedBlocks() const {
   QSet<QString> result;
   for (const auto &region : regions_)
     if (region.header >= 0 && isFolded(region.id))
+      result.insert(region.id);
+  return result;
+}
+
+QSet<QString> LibraryCodeView::defaultDetailBlocks() const {
+  QSet<QString> result;
+  for (const auto &region : regions_)
+    if (region.available && region.details.value("default_detail").toBool())
       result.insert(region.id);
   return result;
 }
@@ -442,9 +504,8 @@ void LibraryCodeView::rebuild() {
     append(cursor, fold.span.begin,
            original_.mid(cursor, fold.span.begin - cursor), {});
     append(fold.span.begin, fold.span.end,
-           fold.block ? QStringLiteral(" /* … */\n")
-                      : "/* " + fold.summary + " … */",
-           fold.id, fold.block);
+           fold.block ? fold.summary : "/* " + fold.summary + " … */", fold.id,
+           fold.block);
     cursor = fold.span.end;
   }
   append(cursor, original_.size(), original_.mid(cursor), {});

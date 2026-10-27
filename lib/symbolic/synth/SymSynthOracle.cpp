@@ -360,7 +360,8 @@ Signature evaluateOnGrid(const SymContext &Ctx, SymRef R,
   Out.reserve(Grid.size());
   for (const SamplePoint &Point : Grid) {
     for (size_t L = 0; L < LeafVars.size(); ++L)
-      Assignment[LeafVars[L]] = Point[L];
+      Assignment[LeafVars[L]] =
+          Point[L].zextOrTrunc(Ctx.varInfo(LeafVars[L]).Width);
     Out.push_back(Plan.eval(Assignment));
   }
   return Out;
@@ -487,14 +488,146 @@ void harvestConstants(SymContext &Ctx, const SynthProblem &P,
     Out.push_back(Ctx.mkConst(Wanted[I]));
 }
 
+/// Keep the complete typed expression when all its actual inputs fit in the
+/// result word and at least one is narrower. Hiding each extension separately
+/// loses relations such as zext(x >> 4) == zext(x) >> 4. The oracle and proof
+/// provider already model those operations at their original widths.
+///
+/// Candidate terminals are word-sized views of the actual inputs. A direct
+/// sign extension nominates a signed view only when there is no competing
+/// zero extension; this is a search choice, never an assumption about values.
+bool useTypedInputs(SymContext &Ctx, SymRef Root,
+                    llvm::ArrayRef<uint32_t> Order, SynthProblem &Out) {
+  llvm::SmallVector<SymRef, 8> Variables;
+  llvm::DenseSet<uint32_t> Signed, Unsigned;
+  bool HasNarrowInput = false;
+  for (uint32_t Index : Order) {
+    SymRef R(Index);
+    if (Ctx.isVar(R)) {
+      if (Ctx.width(R) > Out.Width)
+        return false;
+      HasNarrowInput |= Ctx.width(R) < Out.Width;
+      Variables.push_back(R);
+    } else if (Ctx.op(R) == SymOp::SExt || Ctx.op(R) == SymOp::ZExt) {
+      SymRef Source = Ctx.operands(R).front();
+      if (Ctx.isVar(Source))
+        (Ctx.op(R) == SymOp::SExt ? Signed : Unsigned).insert(Source.index());
+    }
+  }
+  if (!HasNarrowInput)
+    return false;
+  llvm::sort(Variables,
+             [&](SymRef A, SymRef B) { return Ctx.varId(A) < Ctx.varId(B); });
+  Out.Body = Root;
+  for (SymRef V : Variables) {
+    Out.LeafVars.push_back(Ctx.varId(V));
+    Out.Leaves.push_back(Signed.contains(V.index()) &&
+                                 !Unsigned.contains(V.index())
+                             ? Ctx.mkSExt(V, Out.Width)
+                             : Ctx.mkZExt(V, Out.Width));
+  }
+  return true;
+}
+
+void buildProblemGrid(SymContext &Ctx, const SynthOptions &Opts,
+                      SynthProblem &Out) {
+  Out.Grid = buildGrid(static_cast<unsigned>(Out.Leaves.size()), Out.Width,
+                       Opts.MaxSamples, Opts.Seed);
+  // Columns denote terminal values, while evaluation assigns the original
+  // input width. Normalization retains negative signed views and makes the
+  // terminal signatures agree with the actual typed expression.
+  for (SamplePoint &Point : Out.Grid)
+    for (size_t I = 0; I < Out.Leaves.size(); ++I) {
+      const unsigned InputWidth = Ctx.varInfo(Out.LeafVars[I]).Width;
+      if (InputWidth >= Out.Width)
+        continue;
+      const llvm::APInt Narrow = Point[I].trunc(InputWidth);
+      Point[I] = Ctx.op(Out.Leaves[I]) == SymOp::SExt ? Narrow.sext(Out.Width)
+                                                      : Narrow.zext(Out.Width);
+    }
+  Out.Target = evaluateOnGrid(Ctx, Out.Body, Out.LeafVars, Out.Grid);
+}
+
 } // namespace
+
+ProblemStatus buildTypedProblem(SymContext &Ctx, SymRef Root,
+                                const SynthOptions &Opts, SynthProblem &Out,
+                                size_t MaxWork, size_t &Work) {
+  Out.Original = Root;
+  Out.Width = Ctx.width(Root);
+  Work = 0;
+  auto spend = [&](size_t Units) {
+    if (Units > MaxWork - Work)
+      return false;
+    Work += Units;
+    return true;
+  };
+  // Bound this optional walk before constructing any evaluation grid. Count
+  // shared edges too; an enormous opaque DAG must not consume an unbounded
+  // amount of work merely to discover that a typed fit is unavailable.
+  std::vector<uint32_t> Order;
+  llvm::DenseSet<uint32_t> Seen;
+  llvm::SmallVector<SymRef, 32> Pending{Root};
+  size_t EvaluationCost = 0;
+  while (!Pending.empty()) {
+    if (!spend(1))
+      return ProblemStatus::BudgetExhausted;
+    SymRef R = Pending.pop_back_val();
+    if (!Seen.insert(R.index()).second)
+      continue;
+    const auto Ops = Ctx.operands(R);
+    const size_t Words = (size_t(Ctx.width(R)) + 63) / 64;
+    if (!spend(Words) || !spend(Ops.size()))
+      return ProblemStatus::BudgetExhausted;
+    EvaluationCost += Words;
+    Order.push_back(R.index());
+    Pending.append(Ops.begin(), Ops.end());
+  }
+  llvm::sort(Order);
+  if (!spend(Order.size()))
+    return ProblemStatus::BudgetExhausted;
+  if (!useTypedInputs(Ctx, Root, Order, Out))
+    return ProblemStatus::Trivial;
+  if (Out.Leaves.size() > Opts.MaxLeaves)
+    return ProblemStatus::TooManyLeaves;
+
+  // The evaluator's assignment is context-indexed, including unrelated vars.
+  // Charge its allocation/initialization as well as every word evaluation.
+  if (!spend(Ctx.numVars()))
+    return ProblemStatus::BudgetExhausted;
+  for (size_t I = 0; I < Ctx.numVars(); ++I)
+    if (!spend((size_t(Ctx.varInfo(I).Width) + 63) / 64))
+      return ProblemStatus::BudgetExhausted;
+  if (Out.Leaves.size() > (MaxWork - Work) / 4)
+    return ProblemStatus::BudgetExhausted;
+  const size_t Points =
+      std::max(Opts.MaxSamples, 4 * Out.Leaves.size() + size_t(16));
+  if (Points > (MaxWork - Work) / EvaluationCost ||
+      !spend(Points * EvaluationCost))
+    return ProblemStatus::BudgetExhausted;
+  // Reserve the independent checker's grid and original-body evaluation too.
+  // In particular, a root conversion used to exit before creating a checker;
+  // its optional typed route must not allocate an unbounded VerifySamples.
+  const size_t CheckPoints =
+      std::max<size_t>(Opts.VerifySamples, 4 * Out.Leaves.size() + size_t(16));
+  if (CheckPoints > (MaxWork - Work) / EvaluationCost ||
+      !spend(CheckPoints * EvaluationCost))
+    return ProblemStatus::BudgetExhausted;
+  buildProblemGrid(Ctx, Opts, Out);
+  return ProblemStatus::Ready;
+}
 
 ProblemStatus buildProblem(SymContext &Ctx, SymRef Root,
                            const SynthOptions &Opts, SynthProblem &Out) {
   const uint32_t Width = Ctx.width(Root);
+  Out.Original = Root;
   Out.Width = Width;
 
   const std::vector<uint32_t> Order = reachableAscending(Ctx, Root);
+  Out.HasNarrowInputs = llvm::any_of(Order, [&](uint32_t Index) {
+    SymRef R(Index);
+    return Ctx.isVar(R) && Ctx.width(R) < Width;
+  });
 
   // Children precede parents, so an operand's replacement is always settled
   // before the node that uses it is reached.  A node of some other width is
@@ -552,9 +685,7 @@ ProblemStatus buildProblem(SymContext &Ctx, SymRef Root,
     return ProblemStatus::TooManyLeaves;
 
   harvestConstants(Ctx, Out, Opts, Out.Constants);
-  Out.Grid = buildGrid(static_cast<unsigned>(Out.Leaves.size()), Width,
-                       Opts.MaxSamples, Opts.Seed);
-  Out.Target = evaluateOnGrid(Ctx, Out.Body, Out.LeafVars, Out.Grid);
+  buildProblemGrid(Ctx, Opts, Out);
   return ProblemStatus::Ready;
 }
 
@@ -612,6 +743,46 @@ Verdict Checker::check(SymRef Candidate,
     return Verdict::ProofIncomplete;
   }
   llvm_unreachable("unhandled synthesis verification");
+}
+
+SearchOutcome checkFittedCandidate(SymContext &Ctx, SymRef Candidate,
+                                   const SynthProblem &P,
+                                   const SynthOptions &Opts,
+                                   SearchEffort &Effort, Checker &Check,
+                                   const std::optional<SynthVerifyFn> &Verify,
+                                   uint64_t &ProofQueries) {
+  SearchOutcome Result;
+  const size_t Cost = Ctx.readabilityCost(Candidate);
+  if (Cost > Opts.MaxCost || Candidate == P.Body)
+    return Result;
+
+  // Compare restored spellings before a potentially expensive proof. Hidden
+  // subterms retain their original identities and widths under substitution.
+  if (!Opts.AllowGrowth &&
+      Ctx.readability(Ctx.substitute(Candidate, P.Hidden)) >=
+          Ctx.readability(Ctx.substitute(P.Body, P.Hidden)))
+    return Result;
+  if (!Effort.spend(std::max<size_t>(Check.Grid.size(), 1)))
+    return Result;
+  switch (Check.check(Candidate, Verify, ProofQueries)) {
+  case Verdict::Refuted:
+    Result.SawRefuted = true;
+    return Result;
+  case Verdict::ProofIncomplete:
+    Result.SawProofIncomplete = true;
+    Result.StopForProof = true;
+    return Result;
+  case Verdict::AcceptedBySamples:
+    Result.Evidence = SynthEvidence::Samples;
+    break;
+  case Verdict::AcceptedByVerifier:
+    Result.Evidence = SynthEvidence::Verifier;
+    break;
+  }
+  Result.Candidate = Candidate;
+  Result.Cost = Cost;
+  Result.NumLeaves = static_cast<unsigned>(P.Leaves.size());
+  return Result;
 }
 
 Checker makeChecker(SymContext &Ctx, const SynthProblem &P,

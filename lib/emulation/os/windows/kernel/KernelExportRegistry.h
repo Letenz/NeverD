@@ -33,6 +33,7 @@ class KernelExportRegistry {
 public:
   enum class ExportKind {
     ModuleExport,
+    ModuleData,
     FrameworkFunction,
     DMAFunction,
     ProviderFunction
@@ -46,6 +47,9 @@ public:
     /// Guest framework globals, DMA adapter or PDO, never a host pointer.
     /// Zero for ordinary PE imports. The owning model checks its lifetime.
     uint64_t Binding = 0;
+    bool isModuleSymbol() const {
+      return Kind == ExportKind::ModuleExport || Kind == ExportKind::ModuleData;
+    }
   };
 
   /// Recognized PE import providers, folded case-insensitively. The kernel's
@@ -58,6 +62,8 @@ public:
   static std::optional<uint64_t> moduleBase(llvm::StringRef Module);
   /// Service bodies are opaque, including unused addresses in their gates.
   static bool overlapsThunk(uint64_t Address, uint64_t Size = 1);
+  /// Read-only kernel data is environment state, never a callable service gate.
+  static bool overlapsData(uint64_t Address, uint64_t Size);
   /// Complete service regions, including identities registered after startup.
   /// Direct execution must stop before entering any byte of these bodies.
   static llvm::ArrayRef<ExecutionWatch> executionWatches();
@@ -92,6 +98,7 @@ private:
                                   ExportKind Kind = ExportKind::ModuleExport,
                                   uint64_t Binding = 0);
   bool Initialized = false;
+  size_t ThunkCount = 0;
   std::map<Identity, uint64_t> Names;
   std::map<uint64_t, Export> Exports;
 };

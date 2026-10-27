@@ -1,0 +1,42 @@
+//===- MapMatches.def - How a linker MAP holds against an image -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// What holding a MAP against an image can show, and why a MAP belongs to
+/// another build, with the spellings the C API reports.  Define the macros
+/// before including this file.
+///
+///   NEVERD_MAP_MATCH(Name, Spelling)
+///   NEVERD_MAP_MISMATCH(Name, Spelling)
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_MAP_MATCH
+#define NEVERD_MAP_MATCH(Name, Spelling)
+#endif
+#ifndef NEVERD_MAP_MISMATCH
+#define NEVERD_MAP_MISMATCH(Name, Spelling)
+#endif
+
+// It records the image's build stamp.
+NEVERD_MAP_MATCH(Verified, "verified")
+// It places every section the image also has where the image has it.
+NEVERD_MAP_MATCH(Consistent, "consistent")
+// It states nothing to hold against the image.
+NEVERD_MAP_MATCH(Unverified, "unverified")
+// It describes another build or another layout.
+NEVERD_MAP_MATCH(Mismatch, "mismatch")
+
+NEVERD_MAP_MISMATCH(None, "")
+// The build stamp it records is not the image's.
+NEVERD_MAP_MISMATCH(Stamp, "stamp")
+// It places a section at another address, or with another size.
+NEVERD_MAP_MISMATCH(Section, "section")
+// Most of its functions lie outside the image's code.
+NEVERD_MAP_MISMATCH(Outside, "outside")
+
+#undef NEVERD_MAP_MATCH
+#undef NEVERD_MAP_MISMATCH

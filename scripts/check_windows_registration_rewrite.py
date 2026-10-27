@@ -58,7 +58,123 @@ CASES.update({"longjmp-finally": (9, 23), "longjmp-zero": (10, 23),
               "longjmp-scalar-callee": (22, 23),
               "longjmp-runtime-raise": (23, 23),
               "longjmp-control-fp": (24, 23),
-              "longjmp-runtime-continue": (25, 23)})
+              "longjmp-runtime-continue": (25, 23),
+              "longjmp-runtime-finally": (26, 23),
+              "longjmp-runtime-ordinary-finally": (27, 23),
+              "longjmp-nested-finally-call": (28, 243),
+              "longjmp-nested-finally-unwind": (29, 243),
+              "longjmp-state-activate-call": (30, 243),
+              "longjmp-state-activate-unwind": (31, 243),
+              "longjmp-state-retire": (32, 23),
+              "longjmp-state-sentinel": (33, 23),
+              "longjmp-state-byte": (34, 243),
+              "longjmp-state-word": (35, 243),
+              "longjmp-filter-correlated-state": (36, 2345),
+              "longjmp-filter-shared-state": (37, 2345),
+              "longjmp-filter-captured-cursor": (38, 2345),
+              "longjmp-filter-negative-disposition": (39, 2345),
+              "longjmp-filter-skipped-scope": (40, 2345),
+              "longjmp-filter-two-resume-mappings": (41, 2345),
+              "longjmp-filter-callback-activation": (42, 2345),
+              "longjmp-state-byte-high-bits": (43, 2),
+              "longjmp-finally-incidental-result": (44, 2),
+              "longjmp-deep-scope-chain": (45, 2),
+              "longjmp-shared-parent-call": (46, 2),
+              "shared-parent-throwing-call": (47, 2),
+              "longjmp-private-parent-call": (48, 2),
+              "longjmp-private-parent-graph": (49, 2),
+              "longjmp-handler-selected": (53, 23),
+              "longjmp-handler-cleanup": (54, 236),
+              "longjmp-handler-captured-cursor": (55, 234),
+              "longjmp-handler-nested-finally": (56, 23),
+              "longjmp-handler-mixed-resumption": (57, 23),
+              "longjmp-handler-cleanup-jump": (58, 236),
+              "longjmp-handler-nested-cleanup-jump": (59, 2367),
+              "longjmp-handler-cleanup-value": (60, 236),
+              "longjmp-handler-nested-cleanup-value": (61, 2367),
+              "longjmp-handler-cleanup-zero": (62, 236),
+              "longjmp-handler-nested-cleanup-zero": (63, 2367),
+              "longjmp-handler-cleanup-dynamic-value": (64, 236),
+              "longjmp-handler-nested-cleanup-dynamic-value": (65, 2367),
+              "longjmp-handler-cleanup-other-capture": (66, 236),
+              "longjmp-handler-nested-cleanup-other-capture": (67, 2367),
+              "longjmp-search-filter-jump": (68, 23),
+              "longjmp-nested-search-filter-jump": (69, 263),
+              "longjmp-search-filter-other-capture": (70, 23),
+              "longjmp-nested-search-filter-other-capture": (71, 263),
+              "longjmp-search-filter-mixed-jump": (72, 23),
+              "longjmp-nested-search-filter-mixed-jump": (73, 263),
+              "longjmp-search-filter-selected-jump": (74, 23),
+              "longjmp-nested-search-filter-selected-jump": (75, 263),
+              "longjmp-finally-register-loop": (76, 6662345),
+              "longjmp-finally-frame-loop": (77, 6662345),
+              "longjmp-finally-private-loop": (78, 6662345),
+              "longjmp-filter-register-loop": (79, 2666345),
+              "longjmp-filter-frame-loop": (80, 2666345),
+              "longjmp-filter-private-loop": (81, 2666345)})
+PARENT_EXIT_CASES = {
+    "finally-parent-jump": (82, 23),
+    "finally-parent-unwind": (83, 23),
+    "finally-parent-select": (84, 24),
+    "finally-parent-mixed-return": (85, 23),
+    "finally-parent-reenter-unwind": (86, 234),
+    "finally-parent-reenter-normal": (87, 234),
+    "finally-parent-register-input": (88, 23),
+    "finally-parent-only": (89, 23),
+    "finally-parent-only-unwind": (90, 23),
+}
+CASES.update({prefix + name: value for prefix in ("", "eh4-", "eh4-gs-")
+              for name, value in PARENT_EXIT_CASES.items()})
+EH4_JUMP_CASES = ("longjmp-finally", "longjmp-zero", "longjmp-filter",
+                  "longjmp-parameter", "longjmp-callback",
+                  "longjmp-unwind-callback", "longjmp-callback-zero",
+                  "longjmp-search-filter", "longjmp-search-filter-zero",
+                  "longjmp-retired-scope", "longjmp-retired-inner-scope",
+                  "longjmp-callee", "longjmp-returning-callee",
+                  "longjmp-scalar-callee", "longjmp-filter-correlated-state",
+                  "longjmp-filter-shared-state", "longjmp-filter-captured-cursor",
+                  "longjmp-filter-negative-disposition", "longjmp-filter-skipped-scope",
+                  "longjmp-filter-two-resume-mappings", "longjmp-filter-callback-activation",
+                  "longjmp-handler-selected", "longjmp-handler-cleanup",
+                  "longjmp-handler-captured-cursor", "longjmp-handler-nested-finally",
+                  "longjmp-handler-mixed-resumption", "longjmp-handler-cleanup-jump",
+                  "longjmp-handler-nested-cleanup-jump", "longjmp-handler-cleanup-value",
+                  "longjmp-handler-nested-cleanup-value", "longjmp-handler-cleanup-zero",
+                  "longjmp-handler-nested-cleanup-zero",
+                  "longjmp-handler-cleanup-dynamic-value",
+                  "longjmp-handler-nested-cleanup-dynamic-value",
+                  "longjmp-handler-cleanup-other-capture",
+                  "longjmp-handler-nested-cleanup-other-capture",
+                  "longjmp-search-filter-jump",
+                  "longjmp-nested-search-filter-jump",
+                  "longjmp-search-filter-other-capture",
+                  "longjmp-nested-search-filter-other-capture",
+                  "longjmp-search-filter-mixed-jump",
+                  "longjmp-nested-search-filter-mixed-jump",
+                  "longjmp-search-filter-selected-jump",
+                  "longjmp-nested-search-filter-selected-jump",
+                  "longjmp-finally-register-loop",
+                  "longjmp-finally-frame-loop",
+                  "longjmp-finally-private-loop",
+                  "longjmp-filter-register-loop",
+                  "longjmp-filter-frame-loop",
+                  "longjmp-filter-private-loop")
+CASES.update({prefix + name: CASES[name]
+              for prefix in ("eh4-", "eh4-gs-") for name in EH4_JUMP_CASES})
+CASES.update({prefix + name: (number, 23)
+              for prefix in ("eh4-", "eh4-gs-")
+              for number, name in ((50, "longjmp-private-parent-call"),
+                                   (51, "longjmp-private-parent-graph"))})
+CASES.update({prefix + "longjmp-multistate-capture": (52, 23)
+              for prefix in ("", "eh4-", "eh4-gs-")})
+CASES.update({prefix + name: (number, 23)
+              for prefix in ("eh4-", "eh4-gs-")
+              for number, name in ((20, "longjmp-eh4-callee"),
+                                   (21, "longjmp-eh4-returning-callee"),
+                                   (22, "longjmp-eh4-scalar-callee"))})
+CASES.update({name + "-mixed-gs": value for name, value in tuple(CASES.items())
+              if "-eh4-" in name})
+
 
 
 class PE32:
@@ -214,7 +330,8 @@ def main(argv: list[str] | None = None) -> int:
     case, expected_trace = CASES[args.case]
     eh4 = args.case.startswith("eh4-")
     gs = args.case.startswith("eh4-gs-")
-    jump = args.case.startswith("longjmp-")
+    helper_gs = gs != args.case.endswith("-mixed-gs")
+    jump = "longjmp-" in args.case
     report = {"schema": 2, "evidence": f"reconstructed-source-registration-{'seh4' if eh4 else 'seh3'}",
               "case": args.case, "expected_trace": expected_trace,
               "passed": False, "steps": [], "observations": []}
@@ -233,9 +350,12 @@ def main(argv: list[str] | None = None) -> int:
             prefix.mkdir(parents=True, exist_ok=True)
             environment.update(WINEPREFIX=str(prefix), WINEDEBUG="-all")
         commands = []
-        runtime_exports = ("_except_handler3\n" +
-                           ("_except_handler4_common\n" if eh4 else "") +
-                           ("_setjmp3\n_longjmpex\n_seh_longjmp_unwind\n" if jump else ""))
+        runtime_exports = "_except_handler3\n"
+        if eh4:
+            runtime_exports += "_except_handler4_common\n"
+        if jump:
+            runtime_exports += "_setjmp3\n_longjmpex\n"
+            runtime_exports += "_seh_longjmp_unwind4\n" if eh4 else "_seh_longjmp_unwind\n"
         definitions = [("kernel32", KERNEL32)]
         if args.runtime_root:
             runtime, report["seh_runtime"] = load_runtime(args.runtime_root.resolve())
@@ -246,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
                                 ("vcruntime", "LIBRARY vcruntime140.dll\nEXPORTS\n" +
                                  runtime_exports)))
         else:
-            if args.case == "longjmp-retired-inner-scope" and launcher:
+            if case == 19 and launcher:
                 raise ValueError("retired inner scopes require --runtime-root: Wine's builtin CRT uses a different unwind bound")
             definitions.append(("msvcrt", MSVCRT.replace("_except_handler3\n", "") +
                                 runtime_exports))
@@ -256,31 +376,79 @@ def main(argv: list[str] | None = None) -> int:
             (output / f"{name}.def").write_text(definition, encoding="utf-8")
             commands.append([linker, "/lib", f"/def:{output / (name + '.def')}",
                              "/machine:x86", f"/out:{output / (name + '.lib')}"])
-        sources = (["registration_seh4.s", "registration_eh4_runtime.c"] if eh4
-                   else ["registration_jump.s" if jump else "registration_seh3.s"])
+        if case in {value[0] for value in PARENT_EXIT_CASES.values()}:
+            sources = ["registration_parent_exit.s"]
+            if eh4:
+                sources.append("registration_eh4_runtime.c")
+        elif 76 <= case <= 81:
+            sources = ["registration_callback_loop.s"]
+            if eh4:
+                sources.append("registration_eh4_runtime.c")
+        else:
+            sources = (["registration_multistate_jump.s"] +
+                       (["registration_eh4_runtime.c"] if eh4 else []) if case == 52
+                       else ["registration_filter_state_eh4.s" if 36 <= case <= 42 or 53 <= case <= 75 else
+                             "registration_jump_eh4.s" if jump else "registration_seh4.s",
+                        "registration_eh4_runtime.c"] if eh4
+                       else ["registration_shared_calls.s" if case == 47 else
+                             "registration_deep_scopes.s" if case in (45, 46, 48, 49) else
+                             "registration_state_dispatch.s" if case in (43, 44) else
+                             "registration_filter_state.s" if case >= 36 else
+                             "registration_state.s" if case >= 30 else
+                             "registration_jump.s" if jump else "registration_seh3.s"])
         sources.append("registration_observer.c")
-        if args.case in ("longjmp-callee", "longjmp-returning-callee",
-                         "longjmp-scalar-callee"):
-            sources.append("registration_jump_callee.s")
+        if case in (49, 51):
+            sources.append("registration_private_graph.s")
+        if case in (20, 21, 22):
+            sources.append("registration_jump_callee_eh4.s" if "-eh4-" in args.case
+                           else "registration_jump_callee.s")
         for source in sources:
-            commands.append([compiler, "--target=i686-pc-windows-msvc", "-O0",
+            compile_command = [compiler, "--target=i686-pc-windows-msvc", "-O0",
                              f"-DREGISTRATION_CASE={case}",
+                             f"-DREGISTRATION_LOOP_EH4={int(eh4)}",
+                             f"-DREGISTRATION_PARENT_EH4={int(eh4)}",
                              "-DREGISTRATION_FORWARD_ONLY=1", f"-DREGISTRATION_EXPECT_GS={int(gs)}",
+                             f"-DREGISTRATION_HELPER_GS={int(helper_gs)}",
+                             *([f"-DREGISTRATION_MULTISTATE_EH4={int(eh4)}"] if case == 52 else []),
                              *( ["-x", "assembler-with-cpp"] if source.endswith(".s") else []),
                              "-fno-stack-protector", "-c", str(FIXTURES / source),
-                             "-o", str(output / (source + ".obj"))])
+                             "-o", str(output / (source + ".obj"))]
+            commands.append(compile_command)
+            if case == 86 and source == "registration_parent_exit.s":
+                commands.append([
+                    *[str(output / "unrepaired-parent.obj")
+                      if argument == str(output / (source + ".obj")) else argument
+                      for argument in compile_command],
+                    "-DREGISTRATION_PARENT_RESTORE_CHAIN=0"])
         original, patched = output / "original.exe", output / "patched.exe"
         for stale in (original, patched, output / "product-patched.exe",
                       output / "collision-patched.exe",
                       output / "rewrite.xml"):
             stale.unlink(missing_ok=True)
-        commands.append([linker, "/entry:mainCRTStartup", "/nodefaultlib",
+        link_command = [linker, "/entry:mainCRTStartup", "/nodefaultlib",
                          "/machine:x86", "/subsystem:console", "/dynamicbase:no",
                          "/export:registration_entry",
                          *( ["/export:registration_eh4_personality=_except_handler4"] if eh4 else []),
                          f"/out:{original}",
                          *(str(output / (name + ".obj")) for name in sources),
-                         *(str(output / (name + ".lib")) for name, _ in definitions)])
+                         *(str(output / (name + ".lib")) for name, _ in definitions)]
+        commands.append(link_command)
+        if case == 86:
+            # Never execute this control: its second exception follows the
+            # abandoned CRT unwind guard. Admission must reject the source.
+            unrepaired = output / "unrepaired-parent.exe"
+            replacements = {
+                f"/out:{original}": f"/out:{unrepaired}",
+                str(output / "registration_parent_exit.s.obj"):
+                    str(output / "unrepaired-parent.obj"),
+            }
+            commands.append([replacements.get(argument, argument)
+                             for argument in link_command])
+            environment["NEVERD_SEH_UNREPAIRED_PARENT_INPUT_PE32"] = str(unrepaired)
+            commands.append([
+                str(args.test_binary.resolve()),
+                "--gtest_filter=RegistrationSEHParentExit.InputPE32RejectsAnAbandonedUnwindGuard",
+                f"--gtest_output=xml:{output / 'unrepaired-parent.xml'}"])
         environment.update(NEVERD_REGISTRATION_INPUT_PE32=str(original),
                            NEVERD_REGISTRATION_OUTPUT_PE32=str(patched),
                            NEVERD_REGISTRATION_OUTPUT_IR=str(output / "registration.ll"))
@@ -299,6 +467,10 @@ def main(argv: list[str] | None = None) -> int:
         tests = ET.parse(output / "rewrite.xml").getroot()
         if int(tests.get("tests", "0")) != 1 or tests.findall(".//skipped"):
             raise ValueError("source reconstruction was not executed")
+        if case == 86:
+            control = ET.parse(output / "unrepaired-parent.xml").getroot()
+            if int(control.get("tests", "0")) != 1 or control.findall(".//skipped"):
+                raise ValueError("unrepaired parent-chain control was not executed")
         images = [(original, False), (patched, True),
                   (output / "product-patched.exe", True),
                   (output / "collision-patched.exe", True)]

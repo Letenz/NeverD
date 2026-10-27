@@ -25,3 +25,21 @@ NEVERD_KERNEL_SPINLOCK_API(KeReleaseSpinLockFromDpcLevel, 1, Dispatch,
                            releaseSpinLock(A[0], std::nullopt))
 NEVERD_KERNEL_SPINLOCK_API(KeTryToAcquireSpinLockAtDpcLevel, 1, Dispatch,
                            acquireSpinLock(A[0], SpinLockMode::TryAtDpc))
+
+// In-stack queued spin locks keep the wait token in a caller KLOCK_QUEUE_HANDLE
+// and save the old IRQL there. RVA 0x22e780 raises to DISPATCH_LEVEL; the
+// AtDpcLevel form (RVA 0x22c490) runs already there. Releases (RVA 0x22cf70 and
+// the FromDpcLevel form RVA 0x2cde30) clear the lock and, for the raising form,
+// restore the saved IRQL.
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-keacquireinstackqueuedspinlock
+NEVERD_KERNEL_SPINLOCK_API(KeAcquireInStackQueuedSpinLock, 2, Dispatch,
+                           acquireQueuedSpinLock(A[0], A[1], true))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-kereleaseinstackqueuedspinlock
+NEVERD_KERNEL_SPINLOCK_API(KeReleaseInStackQueuedSpinLock, 1, Dispatch,
+                           releaseQueuedSpinLock(A[0], true))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-keacquireinstackqueuedspinlockatdpclevel
+NEVERD_KERNEL_SPINLOCK_API(KeAcquireInStackQueuedSpinLockAtDpcLevel, 2,
+                           Dispatch, acquireQueuedSpinLock(A[0], A[1], false))
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-kereleaseinstackqueuedspinlockfromdpclevel
+NEVERD_KERNEL_SPINLOCK_API(KeReleaseInStackQueuedSpinLockFromDpcLevel, 1,
+                           Dispatch, releaseQueuedSpinLock(A[0], false))

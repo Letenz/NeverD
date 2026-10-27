@@ -102,6 +102,148 @@ protected:
   }
 };
 
+TEST_F(DriverScenarioPublic, DeclaredFileSystemStateReachesCABIAndCLIOnStop) {
+  for (char Mode : {'S', 'W', 'C', 'P', 'X', 'U', 'R', 'Q'}) {
+    SCOPED_TRACE(Mode);
+    const std::string Scenario =
+        std::string(R"({"service_name":"DeclaredFileSystem)") + Mode +
+        R"(","unload":true,"filesystem":[{"device_name":"\\Device\\DeclaredVolume",)"
+        R"("access_policy":"full_access","sector_size":4096,"alignment_mask":511, "nodes":[)"
+        R"({"path":"\\","kind":"directory","file_id":0,"attributes":16,"allocation_size":0,)"
+        R"("creation_time_100ns":0,"last_access_time_100ns":0,"last_write_time_100ns":0,"change_time_100ns":0},)"
+        R"({"path":"\\Data","kind":"file","file_id":18446744073709551615,"attributes":32,)"
+        R"("allocation_size":4096,"creation_time_100ns":1,"last_access_time_100ns":2,)"
+        R"("last_write_time_100ns":3,"change_time_100ns":4,"data":"007f80ff"}]}]})";
+    const auto FromC = takeString(neverd_emulate_driver_scenario_json(
+        Session, fixture("driver_filesystem_provider").c_str(),
+        Scenario.c_str(), nullptr));
+    ASSERT_FALSE(FromC.empty()) << error();
+    // X handles a cancelled CREATE; Q handles a short metadata buffer. The
+    // report and CLI exit preserve those failed requests after driver success.
+    const auto FromCLI = runCLI(Scenario,
+                                Mode == 'W'                  ? 3
+                                : Mode == 'X' || Mode == 'Q' ? 2
+                                                             : 0,
+                                "driver_filesystem_provider");
+    for (const auto &Text : {FromC, FromCLI}) {
+      auto Parsed = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      const auto *Report = Parsed->getAsObject();
+      ASSERT_NE(Report, nullptr);
+      EXPECT_EQ(Report->getString("stop_reason"),
+                Mode == 'W' ? "model_error" : "returned");
+      EXPECT_EQ(Report->getBoolean("unload_completed"), Mode != 'W');
+      if (Mode != 'S' && Mode != 'W') {
+        const auto *Requests = Report->getArray("requests");
+        ASSERT_NE(Requests, nullptr);
+        ASSERT_FALSE(Requests->empty());
+        for (const auto &Value : *Requests) {
+          const auto &Request = *Value.getAsObject();
+          EXPECT_EQ(Request.get("file")->kind(), llvm::json::Value::Null);
+          EXPECT_TRUE(Request.getString("file_object"));
+          EXPECT_TRUE(Request.getInteger("file_open_operation"));
+          EXPECT_TRUE(Request.getString("filesystem_device"));
+          EXPECT_TRUE(Request.get("filesystem_file_id"));
+          EXPECT_EQ(Request.getBoolean("completed"), true);
+        }
+        if (Mode == 'Q') {
+          struct ExpectedQuery {
+            unsigned Class;
+            llvm::StringRef Bytes;
+          };
+          const ExpectedQuery Metadata[] = {
+              {4, "010000000000000002000000000000000300000000000000"
+                  "04000000000000002000000000000000"},
+              {5, "001000000000000004000000000000000100000000000000"},
+              {6, "ffffffffffffffff"},
+              {9, "0a0000005c004400610074006100"},
+              {34, "010000000000000002000000000000000300000000000000"
+                   "040000000000000000100000000000000400000000000000"
+                   "2000000000000000"},
+              {35, "2000000000000000"}};
+          unsigned Index = 0;
+          for (const auto &Value : *Requests) {
+            const auto &Request = *Value.getAsObject();
+            if (Request.getString("kind") != "query_information")
+              continue;
+            ASSERT_LT(Index, 16u);
+            ExpectedQuery Expected = Metadata[Index % 6];
+            uint32_t Status = 0;
+            if (Index == 12) {
+              Expected = {5, ""};
+              Status = 0xc0000004;
+            } else if (Index == 13) {
+              Expected = {9, "0a0000005c004400"};
+              Status = 0x80000005;
+            } else if (Index >= 14) {
+              Expected = Index == 14 ? ExpectedQuery{16, "20000000"}
+                                     : ExpectedQuery{17, "ff010000"};
+            }
+            EXPECT_EQ(Request.getString("origin"),
+                      Index < 6 ? "IoQueryFileInformation"
+                                : "ZwQueryInformationFile");
+            EXPECT_EQ(Request.getInteger("file_information_class"),
+                      Expected.Class);
+            EXPECT_EQ(Request.getInteger("io_status"), Status);
+            EXPECT_EQ(Request.getInteger("information"),
+                      Expected.Bytes.size() / 2);
+            EXPECT_EQ(Request.getString("output_hex"), Expected.Bytes);
+            ++Index;
+          }
+          EXPECT_EQ(Index, 16u);
+        }
+      }
+      const auto *State = Report->getArray("filesystem");
+      ASSERT_NE(State, nullptr);
+      ASSERT_EQ(State->size(), 1u);
+      const auto &Volume = *State->front().getAsObject();
+      EXPECT_NE(Volume.getString("device_object"), "0x0");
+      const auto *Nodes = Volume.getArray("nodes");
+      ASSERT_NE(Nodes, nullptr);
+      ASSERT_EQ(Nodes->size(), 2u);
+      const auto &File = *(*Nodes)[1].getAsObject();
+      EXPECT_EQ(File.getString("data"), "007f80ff");
+      EXPECT_EQ(File.getInteger("end_of_file"), 4);
+      EXPECT_EQ(File.getInteger("change_time_100ns"), 4);
+      EXPECT_EQ(File.get("file_id")->getAsUINT64(), UINT64_MAX);
+      const auto *Configuration = Report->getObject("configuration");
+      ASSERT_NE(Configuration, nullptr);
+      const auto *Input = Configuration->getArray("filesystem");
+      ASSERT_NE(Input, nullptr);
+      const auto *InputVolume = Input->front().getAsObject();
+      EXPECT_EQ(InputVolume->get("device_object"), nullptr);
+      EXPECT_EQ((*InputVolume->getArray("nodes"))[1].getAsObject()->get(
+                    "end_of_file"),
+                nullptr);
+    }
+  }
+}
+
+TEST_F(DriverScenarioPublic, FileSystemOmissionEmptyAndInvalidRemainDistinct) {
+  for (bool Empty : {false, true}) {
+    const auto Scenario = Empty ? R"({"filesystem":[]})" : "{}";
+    const auto Text = takeString(neverd_emulate_driver_scenario_json(
+        Session, fixture("success").c_str(), Scenario, nullptr));
+    ASSERT_FALSE(Text.empty()) << error();
+    auto Parsed = llvm::json::parse(Text);
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    const auto *State = Parsed->getAsObject()->get("filesystem");
+    ASSERT_NE(State, nullptr);
+    EXPECT_EQ(State->getAsArray() != nullptr, Empty);
+    if (Empty)
+      EXPECT_TRUE(State->getAsArray()->empty());
+    else
+      EXPECT_EQ(State->kind(), llvm::json::Value::Null);
+  }
+  for (const auto *Scenario :
+       {R"({"filesystem":null})", R"({"filesystem":[{}]})"}) {
+    EXPECT_EQ(neverd_emulate_driver_scenario_json(Session, "missing.sys",
+                                                  Scenario, nullptr),
+              nullptr);
+    EXPECT_NE(error().find("filesystem"), std::string::npos);
+  }
+}
+
 TEST_F(DriverScenarioPublic, EmptyScenarioPreservesInitializationOnlyBehavior) {
   auto Parsed =
       llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
@@ -114,6 +256,43 @@ TEST_F(DriverScenarioPublic, EmptyScenarioPreservesInitializationOnlyBehavior) {
   EXPECT_EQ(Report->getBoolean("nt_success"), true);
   EXPECT_EQ(Report->getBoolean("scenario_success"), true);
   EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+}
+
+TEST_F(DriverScenarioPublic, DebuggerDataDeclarationReachesCABIAndCLI) {
+  for (bool Enabled : {false, true}) {
+    const auto Scenario =
+        std::string(
+            R"({"service_name":"NeverDData1","unload":true,"debugger_state":{"enabled":)") +
+        (Enabled ? "true" : "false") + R"(,"not_present":true}})";
+    const auto FromC = takeString(neverd_emulate_driver_scenario_json(
+        Session, fixture("driver_data").c_str(), Scenario.c_str(), nullptr));
+    ASSERT_FALSE(FromC.empty()) << error();
+    const auto FromCLI = runCLI(Scenario, 0, "driver_data");
+    for (const auto &Text : {FromC, FromCLI}) {
+      auto Parsed = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      const auto *Report = Parsed->getAsObject();
+      ASSERT_NE(Report, nullptr);
+      EXPECT_EQ(Report->getString("stop_reason"), "returned");
+      EXPECT_EQ(Report->getInteger("nt_status"), 0);
+      const auto *Messages = Report->getArray("messages");
+      ASSERT_NE(Messages, nullptr);
+      ASSERT_EQ(Messages->size(), 1u);
+      EXPECT_EQ((*Messages)[0].getAsString(),
+                Enabled ? "debugger bytes: 1,1" : "debugger bytes: 0,1");
+      EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+      const auto *State =
+          Report->getObject("configuration")->getObject("debugger_state");
+      ASSERT_NE(State, nullptr);
+      EXPECT_EQ(State->getBoolean("enabled"), Enabled);
+      EXPECT_EQ(State->getBoolean("not_present"), true);
+    }
+  }
+  EXPECT_EQ(neverd_emulate_driver_scenario_json(
+                Session, "missing.sys",
+                R"({"debugger_state":{"enabled":true}})", nullptr),
+            nullptr);
+  EXPECT_NE(error().find("debugger_state"), std::string::npos);
 }
 
 TEST_F(DriverScenarioPublic,
@@ -158,18 +337,21 @@ TEST_F(DriverScenarioPublic, CLIRejectsUnknownFieldsNULAndOversizedFiles) {
 
 TEST_F(DriverScenarioPublic,
        CAPIAndCLIRejectKernelGeneratedRequestsBeforeImageLoading) {
-  constexpr char Scenario[] =
-      R"({"requests":[{"kind":"internal_ioctl","code":3}]})";
   constexpr char Image[] = "missing-kernel-request-public.sys";
-  EXPECT_EQ(
-      neverd_emulate_driver_scenario_json(Session, Image, Scenario, nullptr),
-      nullptr);
-  EXPECT_NE(error().find("kernel-generated"), std::string::npos);
-  EXPECT_FALSE(neverd_session_is_loaded(Session));
-  EXPECT_TRUE(runCLI(Scenario, 1, "success", Image).empty());
-  std::ifstream Errors(Directory / "error.txt");
-  const std::string Diagnostic(std::istreambuf_iterator<char>(Errors), {});
-  EXPECT_NE(Diagnostic.find("kernel-generated"), std::string::npos);
+  for (const char *Scenario :
+       {R"({"requests":[{"kind":"internal_ioctl","code":3}]})",
+        R"({"requests":[{"kind":"unlock_all","file":1}]})"}) {
+    SCOPED_TRACE(Scenario);
+    EXPECT_EQ(
+        neverd_emulate_driver_scenario_json(Session, Image, Scenario, nullptr),
+        nullptr);
+    EXPECT_NE(error().find("kernel-generated"), std::string::npos);
+    EXPECT_FALSE(neverd_session_is_loaded(Session));
+    EXPECT_TRUE(runCLI(Scenario, 1, "success", Image).empty());
+    std::ifstream Errors(Directory / "error.txt");
+    const std::string Diagnostic(std::istreambuf_iterator<char>(Errors), {});
+    EXPECT_NE(Diagnostic.find("kernel-generated"), std::string::npos);
+  }
 }
 
 TEST_F(DriverScenarioPublic, CAPIAndCLIReportIndependentDriverAllocatedIRP) {

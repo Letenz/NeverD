@@ -6,6 +6,7 @@
 
 #include "MedLibraryRecognitionInternal.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/SymbolSpelling.h"
@@ -124,7 +125,8 @@ public:
     return At == Definitions.end() ? nullptr : At->second;
   }
   std::optional<MedVar> value(MedVar V, const Path &P, unsigned Depth = 0) {
-    if (!spend() || Depth >= 64)
+    if (!spend() ||
+        Depth >= ::neverd::limits::ir::kMedComLibraryRecognitionValueDepthLimit)
       return std::nullopt;
     if (V.isConst())
       return V;
@@ -145,7 +147,8 @@ public:
   }
   bool stackAddress(MedVar V, const Path &P, unsigned Depth = 0) {
     auto C = value(V, P);
-    if (!C || Depth >= 32)
+    if (!C || Depth >= ::neverd::limits::ir::
+                           kMedComLibraryRecognitionStackAddressDepthLimit)
       return false;
     if (input(*C, Stack))
       return true;
@@ -233,7 +236,9 @@ public:
                   P.Operations.size() - 1};
   }
   bool walk(int ID, int Pred, Path P) {
-    if (!spend() || Paths.size() >= 16 || P.Blocks.size() >= 32 ||
+    if (!spend() || Paths.size() >= 16 ||
+        P.Blocks.size() >= ::neverd::limits::ir::
+                               kMedComLibraryRecognitionWalkPBlocksSizeLimit ||
         !P.Blocks.insert(ID).second)
       return false;
     const auto At =
@@ -337,7 +342,9 @@ public:
   }
 
   bool verify(const LibraryFeatureRule &Rule, bool Whole) {
-    if (!Valid || F.Blocks.empty() || F.Blocks.size() > 32 ||
+    if (!Valid || F.Blocks.empty() ||
+        F.Blocks.size() > ::neverd::limits::ir::
+                              kMedComLibraryRecognitionVerifyFBlocksSizeLimit ||
         !F.Blocks.front().Preds.empty())
       return false;
     if (F.ExceptionMetadata &&
@@ -508,7 +515,9 @@ public:
       std::set<Key> Seen;
       std::function<bool(MedVar, unsigned)> Collect = [&](MedVar V,
                                                           unsigned Depth) {
-        if (!spend() || Depth >= 64)
+        if (!spend() ||
+            Depth >= ::neverd::limits::ir::
+                         kMedComLibraryRecognitionInlineRegionCollectDepthLimit)
           return false;
         auto C = value(V, P);
         if (!C)
@@ -545,31 +554,37 @@ public:
     }
     // A value escaping into an independent observable computation prevents
     // folding, even when the lifetime policy itself was recognized.
-    std::function<bool(const MedVar &, unsigned)> Unobserved =
-        [&](const MedVar &V, unsigned Depth) {
-          if (!spend() || Depth >= 32 || !V.Size)
-            return false;
-          for (const auto &B : F.Blocks) {
-            for (const auto &P : B.Phis)
-              for (const auto &[Pred, Input] : P.Args) {
-                (void)Pred;
-                if (same(Input, V))
-                  return false;
-              }
-            for (const auto &O : B.Ops) {
-              if (!spend())
-                return false;
-              if (O.Dead)
-                continue;
-              for (unsigned I = 0; I < O.NumInputs; ++I)
-                if (same(O.Inputs[I], V) &&
-                    (!scalar(O.Opcode) || !O.Output.Size || same(O.Output, V) ||
-                     !Unobserved(O.Output, Depth + 1)))
-                  return false;
-            }
+    std::function<bool(const MedVar &, unsigned)> Unobserved = [&](const MedVar
+                                                                       &V,
+                                                                   unsigned
+                                                                       Depth) {
+      if (!spend() ||
+          Depth >=
+              ::neverd::limits::ir::
+                  kMedComLibraryRecognitionInlineRegionUnobservedDepthLimit ||
+          !V.Size)
+        return false;
+      for (const auto &B : F.Blocks) {
+        for (const auto &P : B.Phis)
+          for (const auto &[Pred, Input] : P.Args) {
+            (void)Pred;
+            if (same(Input, V))
+              return false;
           }
-          return true;
-        };
+        for (const auto &O : B.Ops) {
+          if (!spend())
+            return false;
+          if (O.Dead)
+            continue;
+          for (unsigned I = 0; I < O.NumInputs; ++I)
+            if (same(O.Inputs[I], V) &&
+                (!scalar(O.Opcode) || !O.Output.Size || same(O.Output, V) ||
+                 !Unobserved(O.Output, Depth + 1)))
+              return false;
+        }
+      }
+      return true;
+    };
     for (const auto &P : Paths)
       for (const auto *O : P.Operations) {
         if (Core.contains(O) || O->Opcode == NdOp::COPY ||
@@ -609,12 +624,13 @@ public:
 private:
   bool terminalExceptionExit(const ExceptionalEdge &Edge) const {
     const auto *EH = F.ExceptionMetadata ? &*F.ExceptionMetadata : nullptr;
+    const auto *Context = Edge.singleContext();
     if (!EH || EH->ParseStatus != ExceptionParseStatus::Complete || !EH->Cxx ||
         !EH->Cxx->hasValidStateGraph() || !EH->Cxx->TryBlocks.empty() ||
         EH->Cxx->IsCatchFunclet || EH->Cxx->IsSeparated ||
         EH->Cxx->UnwindMap.size() != 1 ||
         Edge.Kind != ExceptionalEdgeKind::CxxCleanup || Edge.BlockId != -1 ||
-        Edge.State != 0 || !Edge.TargetVA)
+        !Context || Context->State != 0 || !Edge.TargetVA)
       return false;
     const auto &Action = EH->Cxx->UnwindMap.front();
     if (Action.ActionVA != Edge.TargetVA || Action.ToState != -1 ||

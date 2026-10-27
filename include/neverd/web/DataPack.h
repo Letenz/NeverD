@@ -14,19 +14,12 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 
 namespace neverd::web {
 inline constexpr std::string_view DataPackProfile = "chromium-datapack-v5-v1";
 inline constexpr std::string_view WebViewDataPackProfile =
     "msedge-webview2-datapack-v5-u32-v1";
-inline constexpr uint64_t MaxDataPackBytes = 128ULL * 1024 * 1024;
-inline constexpr uint32_t MaxDataPackResources = 65536;
-inline constexpr uint32_t MaxCachedDataPacks = 4;
-inline constexpr uint32_t MaxCachedDataPackResources = 65536;
-inline constexpr uint32_t MaxDataPackPageRecords = 512;
-inline constexpr uint32_t MaxDecodedDataPackResources = 16;
-inline constexpr uint64_t MaxDataPackDecodedBytes = 8 * 1024 * 1024;
-inline constexpr uint64_t MaxCachedDataPackDecodedBytes = 64 * 1024 * 1024;
 
 struct DataPackResource {
   std::string ID, BlobHash;

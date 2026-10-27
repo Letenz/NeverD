@@ -11,6 +11,8 @@
 
 #include "Reader.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web::sea_detail {
 Location locateMachO(const Reader &R) {
   const auto H = R.read({0, 32});
@@ -19,7 +21,8 @@ Location locateMachO(const Reader &R) {
       (CPU != 0x1000007 && CPU != 0x100000c))
     throw Error("sea_unsupported_container");
   const auto Size = number(H, 20, 4);
-  if (!Count || Count > 4096 || Size > 1024 * 1024)
+  if (!Count || Count > ::neverd::limits::web::kMachOLocateMachOCountLimit ||
+      Size > ::neverd::limits::web::kMachOLocateMachOSizeLimit)
     throw Error("sea_native_table_budget_exceeded");
   const auto Commands = R.read({32, Size});
   std::vector<Mapping> Loads, Sections;
@@ -45,7 +48,7 @@ Location locateMachO(const Reader &R) {
         if (++SEASegments > 1)
           throw Error("sea_duplicate_resource");
       }
-      if (NS > 4096 - SectionCount)
+      if (NS > ::neverd::limits::web::kMaxMachOSEASections - SectionCount)
         throw Error("sea_native_table_budget_exceeded");
       SectionCount += NS;
       if (Length != 72 + NS * 80)

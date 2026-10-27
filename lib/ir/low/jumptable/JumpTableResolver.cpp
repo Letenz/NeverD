@@ -66,6 +66,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/symbolic/SymDispatch.h"
 
 #include "llvm/Support/Debug.h"
@@ -96,7 +97,7 @@ bool jumpTableTargetLoadUsesDefaultAddressSpace(llvm::ArrayRef<LowOp> Ops,
     bool Matches = true;
     Matches &= Op.Addr == Address;
     Matches &= Op.Seq == Sequence;
-    Matches &= Op.Opcode == NdOp::LOAD;
+    Matches &= Op.Opcode == NdOp::LOAD || originalAArch64TableLoad(Op);
     Matches &= Op.Output.Space == Output.Space;
     Matches &= Op.Output.Offset == Output.Offset;
     Matches &= Op.Output.Size == Output.Size;
@@ -632,14 +633,15 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
     ProofScratch.I386GOTOFFProposalEvidenceRemaining = ModelAllowance;
     JumpTableInfo Probe;
     const bool Shape = ProofScratch.tryCrossInstrRelativeTable(
-        Img, ProofScratch.Insns.at(Branch), Probe);
+        Img, ProofScratch.Insns.at(Branch), Probe, EvidenceBudget);
     const size_t ModelUsed =
         ModelAllowance - ProofScratch.I386GOTOFFProposalEvidenceRemaining;
     if (!Charge(ModelUsed))
       return false;
     if (ProofScratch.I386GOTOFFProposalEvidenceIncomplete ||
         ProofScratch.I386GOTModelEvidenceIncomplete ||
-        ProofScratch.StackTableEvidenceIncompleteBranches.count(Branch))
+        ProofScratch.StackTableEvidenceIncompleteBranches.count(Branch) ||
+        Probe.IncompleteGuardDomain)
       return Incomplete();
     if (!Shape || !ProofScratch.I386GOTOFFProposalShapeClaimed ||
         !Probe.HasBaseAddr || Probe.BaseAddr != Base || Probe.EntrySize != 4 ||
@@ -1138,6 +1140,7 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   bool CandidateAwaitingSiblingRuntimeCertificate = false;
   struct CandidateEvidenceOutcome {
     std::set<va_t> &IncompleteBranches;
+    std::set<va_t> &ShapeClaimedBranches;
     va_t BranchAddr;
     const size_t Initial;
     const size_t &Remaining;
@@ -1166,6 +1169,8 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
                                       ExhaustedBeforeDedicatedRefund ||
                                       (!Published && Remaining == 0);
       const bool EvidenceIncomplete = AnalysisIncomplete || ResourceIncomplete;
+      if ((ShapeClaimed || I386GOTOFFShapeClaimed) && IncompleteInsertPrepaid)
+        ShapeClaimedBranches.insert(BranchAddr);
       // Resource exhaustion cannot distinguish a callback-shaped tail jump
       // from a table whose proof ran out of work, so preserve the original
       // branch fail-closed.  A completed semantic rejection is different: it
@@ -1234,6 +1239,7 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
       }
     }
   } CandidateOutcome{IndexDomainEvidenceIncompleteBranches,
+                     ShapeClaimedBranches,
                      Rec.Addr,
                      InitialCandidateEvidenceBudget,
                      CandidateEvidenceBudget,
@@ -1441,7 +1447,15 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
       LookupWork > std::numeric_limits<size_t>::max() - NodeAndCleanupWork
           ? std::numeric_limits<size_t>::max()
           : LookupWork + NodeAndCleanupWork;
-  if (!consumeIncompleteBranchMarkerEvidence(MarkerWork))
+  // The same account remembers a claimed table shape for the rest of the
+  // build (ShapeClaimedBranches).
+  const size_t ShapeLookupWork = orderedLookupWork(ShapeClaimedBranches.size());
+  const size_t ShapeMarkerWork =
+      ShapeLookupWork > std::numeric_limits<size_t>::max() - NodeAndCleanupWork
+          ? std::numeric_limits<size_t>::max()
+          : ShapeLookupWork + NodeAndCleanupWork;
+  if (!consumeIncompleteBranchMarkerEvidence(MarkerWork) ||
+      !consumeIncompleteBranchMarkerEvidence(ShapeMarkerWork))
     return {};
   IncompleteBranchInsertPrepaid = true;
   auto insertIncompleteBranchOnce = [&]() {
@@ -1939,7 +1953,12 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   // detector to dispatch to here.
 
   // Strategy 1: ARM32 TBB/TBH table-branch (most specific, check first).
-  bool Recovered = tryARMTableBranch(Img, Rec, Info);
+  bool Recovered = tryARMTableBranch(Img, Rec, Info, &CandidateEvidenceBudget);
+  if (Info.IncompleteGuardDomain) {
+    CandidateEvidenceShapeClaimed = true;
+    CandidateEvidenceAnalysisIncomplete = true;
+    return {};
+  }
   if (Recovered && !HasOccurrenceMetadata(Info))
     Recovered = RejectIncompleteCandidate();
 
@@ -1947,8 +1966,10 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   // code anchor, scaled entries) — must precede the generic relative resolver,
   // which would otherwise latch onto the entry base as the (wrong) target base.
   bool RecoveredAArch64Compact = false;
+  bool CompactOwnerCapacity = false;
   if (!Recovered) {
-    Recovered = tryAArch64CompactTable(Img, Rec, Info);
+    Recovered =
+        tryAArch64CompactTable(Img, Rec, Info, &CandidateEvidenceBudget);
     RecoveredAArch64Compact = Recovered;
   }
   // Compact byte/halfword tables have no per-entry relocations, so the generic
@@ -1976,10 +1997,17 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
           PhysicalStride >= Info.EntrySize) {
         const uint64_t Span = *OwnerEnd - Info.BaseAddr;
         const uint64_t Slots = 1 + (Span - Info.EntrySize) / PhysicalStride;
-        if (Slots <= limits::kMaxJumpTableEntries)
+        if (Slots <= limits::kMaxJumpTableEntries) {
           Info.PhysicalCapacity = static_cast<uint32_t>(Slots);
+          CompactOwnerCapacity = true;
+        }
       }
     }
+  }
+  if (Info.IncompleteGuardDomain) {
+    CandidateEvidenceShapeClaimed = true;
+    CandidateEvidenceAnalysisIncomplete = true;
+    return {};
   }
   if (Recovered && !HasOccurrenceMetadata(Info))
     Recovered = RejectIncompleteCandidate();
@@ -2019,8 +2047,11 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   if (!Recovered) {
     Info = JumpTableInfo{};
     Recovered = tryTwoLevelIndexTable(Img, Rec, Info, &CandidateEvidenceBudget);
-    CandidateEvidenceShapeClaimed |= Info.CompositeShapeClaimed;
+    CandidateEvidenceShapeClaimed |=
+        Info.CompositeShapeClaimed || Info.IncompleteGuardDomain;
     CandidateEvidenceAnalysisIncomplete |= Info.IncompleteGuardDomain;
+    if (Info.IncompleteGuardDomain)
+      return {};
     if (Info.CompositeShapeClaimed &&
         (!Recovered || !HasOccurrenceMetadata(Info))) {
       return {};
@@ -2046,7 +2077,16 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   // per-record slice above cannot see the base, so fold it across
   // instructions by emulating the dominating prefix.
   if (!Recovered)
-    Recovered = tryCrossInstrRelativeTable(Img, Rec, Info);
+    Recovered =
+        tryCrossInstrRelativeTable(Img, Rec, Info, &CandidateEvidenceBudget);
+  if (Info.IncompleteGuardDomain) {
+    // Address discovery can now defer before the detector finishes the
+    // candidate. Retain the recognized load/branch shape on incomplete work;
+    // it is not evidence that the original indirect branch is a tail call.
+    CandidateEvidenceShapeClaimed = true;
+    CandidateEvidenceAnalysisIncomplete = true;
+    return {};
+  }
   if (StackTableEvidenceIncompleteBranches.count(Rec.Addr)) {
     CandidateEvidenceAnalysisIncomplete = true;
     return {};
@@ -2664,7 +2704,8 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
     const uint32_t Align = getInsnAlignment();
     for (va_t Target : Targets) {
       const auto *Segment = Img.getSegmentFor(Target);
-      if (!Segment || !Img.hasExecutableCodeOwnerAt(Target) ||
+      if (!Segment ||
+          !Img.hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners) ||
           (Align > 1 && Target % Align != 0))
         return std::nullopt;
       const size_t Offset = static_cast<size_t>(Target - Segment->VA);
@@ -3662,7 +3703,7 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
     for (const LowOp &Op : LoadInsn->second.Ops) {
       if (Op.Addr != State.TableLoadAddr || Op.Seq != State.TableLoadSeq)
         continue;
-      if (Load || Op.Opcode != NdOp::LOAD)
+      if (Load || (Op.Opcode != NdOp::LOAD && !originalAArch64TableLoad(Op)))
         return false;
       Load = &Op;
     }
@@ -3713,6 +3754,16 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
       Info.AuthenticatedGuardBound = Info.MaxEntries;
     }
   }
+  // The owner capacity a compact table borrowed above only bounds storage for
+  // a selector no guard bounds.  An authenticated guard bounds every runtime
+  // coordinate, so the owner's bytes past it are adjacent data: decoding them
+  // would charge the fixed point for slots the dispatch cannot select, and the
+  // guarded domain would look like a partial subset of its storage.
+  if (CompactOwnerCapacity && GuardFound && !Info.PreScaledIndex &&
+      Info.AuthenticatedGuardBound != 0 &&
+      Info.AuthenticatedGuardBound == Info.MaxEntries &&
+      Info.PhysicalCapacity > Info.AuthenticatedGuardBound)
+    Info.PhysicalCapacity = Info.AuthenticatedGuardBound;
   if (GuardedGroupProofContext && !FiniteJointGOTOFF && !FiniteJointAbsolute) {
     observeGroupProof("single-load-selector");
     if (!GroupHasSingleGuardedLoadAndSelector(Info))
@@ -6009,7 +6060,7 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
         };
     auto isAuthenticatedTargetLoad = [&](const LowOp &Op,
                                          bool &AnalysisComplete) {
-      if (Op.Opcode != NdOp::LOAD)
+      if (Op.Opcode != NdOp::LOAD && !originalAArch64TableLoad(Op))
         return false;
       auto Authenticates = [&](const auto &Candidate) {
         const std::optional<size_t> ComparisonWork =
@@ -6183,7 +6234,7 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
         return false;
       }
       for (const LowOp &Op : It->second.Ops)
-        if (Op.Opcode == NdOp::LOAD &&
+        if ((Op.Opcode == NdOp::LOAD || originalAArch64TableLoad(Op)) &&
             isAuthenticatedTargetLoad(Op, AnalysisComplete))
           return true;
       return false;
@@ -6340,10 +6391,31 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
           return false;
         }
         for (const LowOp &Op : It->second.Ops) {
-          if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2)
-            AddQuery(Op.Inputs[1], Op);
+          // The exact authenticated read consumes its address; it cannot
+          // publish that address. Other encoded reads retain the conservative
+          // escape path, including independent consumers of this storage.
+          if (originalAArch64TableLoad(Op)) {
+            const bool Authenticated =
+                isAuthenticatedTargetLoad(Op, AnalysisComplete);
+            if (!AnalysisComplete) {
+              QueryConstructionComplete = false;
+              return false;
+            }
+            if (Authenticated)
+              continue;
+          }
+          if (Op.Opcode == NdOp::STORE) {
+            const auto Memory = lowMemoryOperands(Op);
+            if (!Memory.Complete) {
+              AnalysisComplete = false;
+              return false;
+            }
+            AddQuery(*Memory.StoredValue, Op);
+          }
           if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
-              Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::RETURN) {
+              (Op.Opcode == NdOp::INTRINSIC &&
+               !lowIntrinsicHasOnlyValueEffects(Op)) ||
+              Op.Opcode == NdOp::RETURN) {
             if (!consumeCandidateEvidence(Op.NumInputs)) {
               QueryConstructionComplete = false;
               AnalysisComplete = false;

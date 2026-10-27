@@ -12,6 +12,7 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 
 #include <optional>
 
@@ -19,11 +20,6 @@ namespace neverd::web {
 
 inline constexpr std::string_view StreamRedactionPolicy =
     "passive-stream-metadata-v1";
-inline constexpr uint64_t MaxStreamBytes = 8 * 1024 * 1024;
-inline constexpr uint64_t MaxStreamFragmentBytes = 256 * 1024;
-inline constexpr uint64_t MaxStreamRecords = 4096;
-inline constexpr uint64_t MaxStreamJSONWork = 200000;
-inline constexpr uint64_t MaxStreamPrivateBytes = 1024 * 1024;
 
 /// All strings here are fixed vocabulary or occurrence identities. Input
 /// payloads, arbitrary method/event names and recorded identifiers are absent.

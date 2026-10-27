@@ -4,6 +4,8 @@
 #include "ObjCSynchronizedSource.h"
 #include "ObjCUnwindSource.h"
 
+#include "neverd/sdk/Limits.h"
+
 namespace neverd::sdk {
 
 struct ObjCResumeSourceProof {
@@ -27,9 +29,14 @@ proveObjCResumeOnlySource(const BinaryImage &Image, const HighFunc &Function) {
       EH.ObjC->Runtime != ObjCRuntimeKind::AppleNonFragile ||
       EH.ObjC->UsesFragileSetjmp || EH.ObjC->UsesMSVCTables ||
       EH.CodeRange.End < 4 || EH.CodeRange.End - 4 <= Function.Entry ||
-      EH.CodeRange.End - 4 - Function.Entry > 16384 ||
+      EH.CodeRange.End - 4 - Function.Entry >
+          ::neverd::sdk::
+              kObjCResumeSourceProveObjCResumeOnlySourceEHCodeRangeEnd4FunctionEntryLimit ||
       (Function.Entry | EH.CodeRange.End) % 4 ||
-      EH.Itanium->CallSites.empty() || EH.Itanium->CallSites.size() > 129)
+      EH.Itanium->CallSites.empty() ||
+      EH.Itanium->CallSites.size() >
+          ::neverd::sdk::
+              kObjCResumeSourceProveObjCResumeOnlySourceEHItaniumCallSitesSizeLimit)
     return std::nullopt;
   const va_t Pad = EH.CodeRange.End - 4;
   const va_t Resume = objcSynchronizedBranchTarget(Image, Pad);
@@ -126,7 +133,7 @@ inline bool omitProvenObjCResumeOnlyPad(HighFunc &Function,
   std::vector<std::pair<const HighStmt *, bool>> Pending;
   for (const auto &Statement : Function.Body)
     Pending.emplace_back(&Statement, false);
-  size_t Budget = 4096;
+  size_t Budget = kSourceValueWork;
   while (!Pending.empty()) {
     if (!Budget--)
       return false;

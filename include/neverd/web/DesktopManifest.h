@@ -13,6 +13,7 @@
 #define NEVERD_WEB_DESKTOPMANIFEST_H
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 
 #include <map>
 
@@ -23,7 +24,6 @@ inline constexpr std::string_view VSIXManifestProfile =
     "vscode-extension-manifest-file-candidates-v1";
 inline constexpr std::string_view DesktopResourceProfile =
     "cef-webview-local-resource-descriptor-v1";
-inline constexpr uint64_t MaxDesktopManifestBytes = 1024 * 1024;
 
 struct DesktopEntry {
   std::string ID, Field, ValueStatus, LinkStatus, ArtifactID;

@@ -15,10 +15,8 @@
 #error "Define NEVERD_SIGS_LIMIT before including this file"
 #endif
 
-// The fewest bytes a module may state exactly and still identify a routine:
-// several instructions of one specific routine, which no unrelated function
-// reaches by coincidence.  Below that a pattern is mostly wildcards and
-// agrees with a great deal of code.
+// Minimum fixed-byte evidence for the context-gated recognizers. This rejects
+// mostly-wildcard patterns; byte count alone never proves function identity.
 NEVERD_SIGS_LIMIT(MinStatedBytes, 16)
 
 // A generated line states this many leading bytes one by one, as FLIRT's
@@ -43,5 +41,24 @@ NEVERD_SIGS_LIMIT(ParallelIndexModules, 16384)
 // Matching checks the entries of an image on the worker threads in blocks of
 // this many.
 NEVERD_SIGS_LIMIT(MatchBlockEntries, 16)
+
+// Reader admission and recognition work ceilings.
+NEVERD_SIGS_LIMIT(LibraryByteRecognitionMaxEligibilityChecks,
+                  std::size_t{2000000})
+NEVERD_SIGS_LIMIT(LibraryFeatureMaxFileBytes, std::size_t{8 * 1024 * 1024})
+NEVERD_SIGS_LIMIT(LibraryFeatureMaxRules, std::size_t{256})
+NEVERD_SIGS_LIMIT(LibraryFeatureMaxNodes, std::size_t{128})
+NEVERD_SIGS_LIMIT(LibraryFeatureIdentifierTextSizeLimit, 128)
+NEVERD_SIGS_LIMIT(LibraryFeatureStringSSizeLimit, 16384)
+NEVERD_SIGS_LIMIT(LibraryFeatureJsonKeysSizeLimit, 64)
+NEVERD_SIGS_LIMIT(LibraryFeatureReadRulesWitnessesSizeLimit, 256)
+NEVERD_SIGS_LIMIT(
+    LibraryFeatureNeverdSigsReadLibraryFeaturePackLayoutsSizeLimit, 64)
+NEVERD_SIGS_LIMIT(
+    LibraryFeatureNeverdSigsReadLibraryFeaturePackDerivedSizeLimit, 64)
+NEVERD_SIGS_LIMIT(
+    LibraryRecognitionNeverdSigsFinalizeLibraryRecognitionsMatchesSizeLimit,
+    128)
+NEVERD_SIGS_LIMIT(SignatureDBLoadFeatureDirectoryFilesSizeLimit, 64)
 
 #undef NEVERD_SIGS_LIMIT

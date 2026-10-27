@@ -9,10 +9,13 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../CDeferredValue.h"
 #include "../UnalignedMemory.h"
 #include "HighCWriter.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
+#include "neverd/ir/high/HighIntegerProjection.h"
 
 #include "llvm/Support/ErrorHandling.h"
 
@@ -121,7 +124,8 @@ std::optional<std::pair<uint16_t, bool>> literalType(llvm::StringRef Text) {
 bool countBelow(const HighExpr &Count, uint64_t Limit, unsigned Depth = 0) {
   if (Count.Kind == ExprKind::Const)
     return Count.ConstVal < Limit;
-  if (Depth > 8 || !Count.Type || Count.Type->Kind != NdTypeKind::Int ||
+  if (Depth > ::neverd::limits::backend::kHighCExprBinOpCountBelowDepthLimit ||
+      !Count.Type || Count.Type->Kind != NdTypeKind::Int ||
       Count.Type->Size == 0)
     return false;
   // A value below Limit keeps it in any width that holds Limit - 1.
@@ -210,6 +214,29 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
 
 std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                                              int ParentPrec) {
+  if ((E.Op == NdOp::INT_AND || E.Op == NdOp::INT_OR) && E.Type &&
+      E.Type->Kind == NdTypeKind::Int && !E.Type->IsEnum &&
+      (E.Type->Size == 1 || E.Type->Size == 2 || E.Type->Size == 4 ||
+       E.Type->Size == 8) &&
+      E.Operands.size() == 2)
+    for (unsigned I = 0; I < 2; ++I) {
+      const auto &Unknown = E.Operands[I];
+      const auto &Known = E.Operands[1 - I];
+      if (!Unknown || !Known || !isUnknownCallOperand(Unknown.get()) ||
+          isUnknownCallOperand(Known.get()) ||
+          (Known->Kind != ExprKind::Var && Known->Kind != ExprKind::Phi &&
+           Known->Kind != ExprKind::Const) ||
+          !Known->Type || Known->Type->Size != E.Type->Size)
+        continue;
+      const std::string Value = exprStr(*Known);
+      // A forwarded load/call must keep its native evaluation and effects.
+      if (Known->Kind == ExprKind::Const || Value == varName(Known->Var))
+        return shortCircuitUnknownBits(
+            E.Op == NdOp::INT_AND, E.Type->Size * 8, typeToC(E.Type),
+            exprStr(*Unknown), Value,
+            Known->Kind == ExprKind::Const ? std::optional(Known->ConstVal)
+                                           : std::nullopt);
+    }
   auto IsZeroLike = [this](const ExprPtr &Op) {
     if (!Op)
       return false;
@@ -290,7 +317,11 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
   };
   auto PeelZeroView = [&](const HighExpr *E) -> const HighExpr * {
     unsigned Depth = 0;
-    while (E && Depth++ < 6) {
+    while (
+        E &&
+        Depth++ <
+            ::neverd::limits::backend::
+                kHighCExprBinOpHighCWriterRenderBinOpOperandsPeelZeroViewDepthLimit) {
       E = forwardedExpr(E);
       E = unwrapIntegerView(E);
       if (!E || E->Kind != ExprKind::BinOp || IsCompareOp(E->Op) ||
@@ -465,7 +496,8 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       return {};
     if (E.MemoryAddressSpace == NdMemoryAddressSpace::Default)
       if (auto Member =
-              typedMemberAccess(*E.Operands[0], E.Type ? E.Type->Size : 0))
+              typedMemberAccess(*E.Operands[0], E.Type ? E.Type->Size : 0,
+                                /*EnterNestedAtZero=*/true, accessClassOf(&E)))
         return "&" + *Member;
     return addrStr(*E.Operands[0], 0,
                    E.MemoryAddressSpace == NdMemoryAddressSpace::Default);
@@ -808,10 +840,24 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
   case NdOp::SUBBYTES: {
     if (const HighExpr *Call = typedCallResult(&E))
       return exprStr(*Call, ParentPrec);
-    std::string Src = exprStr(*E.Operands[0], 99);
     uint64_t ByteOff = 0;
     if (E.Operands[1]->Kind == ExprKind::Const)
       ByteOff = E.Operands[1]->ConstVal;
+    if (E.Operands[1]->Kind == ExprKind::Const && E.Type &&
+        E.Type->Kind == NdTypeKind::Int && E.Type->Size && E.Type->Size <= 8 &&
+        ByteOff < 8) {
+      const uint64_t Mask = E.Type->Size == 8
+                                ? UINT64_MAX
+                                : (uint64_t{1} << (E.Type->Size * 8)) - 1;
+      auto Source =
+          projectHighIntegerBits(E.Operands[0], Mask << (ByteOff * 8));
+      if (Source != E.Operands[0]) {
+        HighExpr Projected = E;
+        Projected.Operands[0] = std::move(Source);
+        return renderBinOp(Projected, ParentPrec);
+      }
+    }
+    std::string Src = exprStr(*E.Operands[0], 99);
     std::string Ty = typeToC(E.Type);
     if (ByteOff == 0 && E.Type && E.Type->Kind == NdTypeKind::Int &&
         !E.Type->IsEnum && E.Operands[0]->Type &&
@@ -1103,7 +1149,11 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     auto PeelView = [&](const ExprPtr &Op) -> const HighExpr * {
       const HighExpr *Cur = Op.get();
       unsigned Depth = 0;
-      while (Cur && Depth++ < 8) {
+      while (
+          Cur &&
+          Depth++ <
+              ::neverd::limits::backend::
+                  kHighCExprBinOpHighCWriterRenderBinOpOperandsPeelViewDepthLimit) {
         const HighExpr *Inner = nullptr;
         if ((Cur->Kind == ExprKind::Cast || Cur->Kind == ExprKind::BitCast) &&
             !Cur->Operands.empty())
@@ -1135,7 +1185,10 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     const HighExpr *R = PeelView(E.Operands[1]);
     auto DisplayInt = [&](auto &&Self, const HighExpr *Op,
                           unsigned Depth) -> TypeRef {
-      if (!Op || Depth > 6)
+      if (!Op ||
+          Depth >
+              ::neverd::limits::backend::
+                  kHighCExprBinOpHighCWriterRenderBinOpOperandsDisplayIntDepthLimit)
         return {};
       if ((Op->Kind == ExprKind::Cast || Op->Kind == ExprKind::BitCast ||
            (Op->Kind == ExprKind::UnaryOp &&
@@ -1170,7 +1223,7 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
             DbgTy && (DbgTy->Kind == NdTypeKind::Int || DbgTy->IsEnum))
           return DbgTy;
         if (Dbg && CurrentFunc) {
-          if (auto FS = Dbg->resolveFunction(CurrentFunc->Entry); FS) {
+          if (const auto &FS = resolvedFunction(CurrentFunc->Entry); FS) {
             const std::string Printed = copyForwardName(Raw);
             for (const auto &[PName, PTy] : FS->Params) {
               if (PName == Printed && PTy &&

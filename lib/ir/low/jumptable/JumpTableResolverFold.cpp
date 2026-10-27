@@ -21,6 +21,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/NdOpEmulator.h"
 
 #include <algorithm>
@@ -55,12 +56,10 @@ std::vector<uint64_t> callPreservedRegs(const BinaryImage &Img) {
 /// table base is materialised.  Address callers retain the default mapped-value
 /// requirement; scalar-proof callers may request an unmapped result only as a
 /// candidate for a separate point-sensitive proof.
-std::optional<uint64_t>
-CFGBuilder::foldRegConstant(const BinaryImage &Img, const InsnRecord &Rec,
-                            uint64_t Reg, va_t CutoffAddr,
-                            std::function<bool(size_t)> ConsumeWork,
-                            bool RequireMappedValue,
-                            bool AllowUnmappedCOFFImageBase) const {
+std::optional<uint64_t> CFGBuilder::foldRegConstant(
+    const BinaryImage &Img, const InsnRecord &Rec, uint64_t Reg,
+    va_t CutoffAddr, std::function<bool(size_t)> ConsumeWork,
+    bool RequireMappedValue, bool AllowUnmappedCOFFImageBase) const {
   bool WorkComplete = true;
   auto consume = [&](size_t Amount = 1) {
     if (!WorkComplete)
@@ -71,8 +70,7 @@ CFGBuilder::foldRegConstant(const BinaryImage &Img, const InsnRecord &Rec,
     return false;
   };
   auto consumeProduct = [&](size_t Count, size_t Factor) {
-    if (Factor != 0 &&
-        Count > std::numeric_limits<size_t>::max() / Factor) {
+    if (Factor != 0 && Count > std::numeric_limits<size_t>::max() / Factor) {
       consume(std::numeric_limits<size_t>::max());
       WorkComplete = false;
       return false;
@@ -203,6 +201,11 @@ CFGBuilder::foldRegConstant(const BinaryImage &Img, const InsnRecord &Rec,
           if (!addCount(MemoryReads))
             return false;
           break;
+        case NdOp::INTRINSIC:
+          if (Img.Arch == Arch::AArch64 &&
+              lowAArch64AddressLoadShapeIsValid(Op) && !addCount(MemoryReads))
+            return false;
+          break;
         case NdOp::STORE:
           if (!addCount(MemoryWrites))
             return false;
@@ -220,8 +223,8 @@ CFGBuilder::foldRegConstant(const BinaryImage &Img, const InsnRecord &Rec,
     }
 
     const size_t RegisterUpper = RegisterMutations;
-    const size_t StoreUpper = std::min(
-        MemoryWrites, size_t(limits::kMaxEmulatorStoreEntries));
+    const size_t StoreUpper =
+        std::min(MemoryWrites, size_t(limits::kMaxEmulatorStoreEntries));
     const size_t RegisterLookup = orderedLookupWork(RegisterUpper);
     const size_t StoreLookup = orderedLookupWork(StoreUpper);
     const size_t PreservedLookup = orderedLookupWork(PreservedCount);
@@ -232,8 +235,7 @@ CFGBuilder::foldRegConstant(const BinaryImage &Img, const InsnRecord &Rec,
     // query; memory ops pay overlay lookup, node lifetime, and image-owner
     // scanning; each call that can be stepped over pays a full register-state
     // walk plus ABI-preserved lookup.  All work debits the same caller account.
-    return consume(8) &&
-           consumeFactors({RegisterAccesses, RegisterLookup}) &&
+    return consume(8) && consumeFactors({RegisterAccesses, RegisterLookup}) &&
            consumeFactors({RegisterMutations, RegisterLookup}) &&
            consumeProduct(RegisterMutations, 3) &&
            consumeFactors({MemoryReads, StoreLookup}) &&
@@ -278,8 +280,8 @@ CFGBuilder::foldRegConstant(const BinaryImage &Img, const InsnRecord &Rec,
         ++RecordCount;
         OpCount += It->second.Ops.size();
       }
-      if (!consume(orderedLookupWork(Insns.size())) ||
-          !consume(RecordCount) || !consumeProduct(OpCount, 4))
+      if (!consume(orderedLookupWork(Insns.size())) || !consume(RecordCount) ||
+          !consumeProduct(OpCount, 4))
         return std::nullopt;
       Prefix.reserve(OpCount);
       for (auto It = Insns.lower_bound(Start);
@@ -322,12 +324,102 @@ CFGBuilder::foldRegConstant(const BinaryImage &Img, const InsnRecord &Rec,
     if (!consume(orderedLookupWork(Prefix.size())))
       return std::nullopt;
     auto V = Emu.getRegister(Reg);
+    // The emulator reads a register nothing in the run wrote as zero, and a
+    // call drops each register its ABI does not preserve.  A value derived
+    // from either is no constant, even when it names mapped memory: a reload
+    // `mov 0x54(%esp),%eax` would read the image's headers at 0x54.  Accept
+    // a definition whose every input is a constant or an earlier, surviving
+    // definition of the run.  One that reads registers the run never wrote
+    // may still be determined: clang's `call next; pop` forwards the pushed
+    // address through the unknown stack pointer.  Run the prefix again with
+    // those registers holding other values, and accept only an unchanged
+    // result.  Anything a call dropped stays rejected.
+    enum class Determined { Closed, StartValues, No };
+    const std::vector<uint64_t> Preserved = callPreservedRegs(Img);
+    std::set<int> Visited;
+    std::function<Determined(int, unsigned)> determinedDefinition =
+        [&](int Def, unsigned Depth) -> Determined {
+      if (Depth >= limits::kMaxQuasiCopyDepth || !consume())
+        return Determined::No;
+      if (!Visited.insert(Def).second)
+        return Determined::Closed;
+      const LowOp &Op = Prefix[Def];
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+        return Determined::No;
+      Determined Result = Determined::Closed;
+      for (uint8_t I = 0; I < Op.NumInputs; ++I) {
+        const NdVar &Input = Op.Inputs[I];
+        if (Input.isConst())
+          continue;
+        if (!Input.isReg() && !Input.isTemp())
+          return Determined::No;
+        const bool Survives =
+            Input.isReg() && std::find(Preserved.begin(), Preserved.end(),
+                                       Input.Offset) != Preserved.end();
+        int InputDef = -1;
+        for (int J = Def - 1; J >= 0; --J) {
+          if (!consume())
+            return Determined::No;
+          const LowOp &Prior = Prefix[J];
+          if (Prior.Output.Space == Input.Space &&
+              Prior.Output.Offset == Input.Offset) {
+            InputDef = J;
+            break;
+          }
+          if ((Prior.Opcode == NdOp::CALL ||
+               Prior.Opcode == NdOp::INDIR_CALL) &&
+              !Survives)
+            return Determined::No;
+        }
+        const Determined Source =
+            InputDef < 0 ? (Op.Inputs[I].isReg() ? Determined::StartValues
+                                                 : Determined::No)
+                         : determinedDefinition(InputDef, Depth + 1);
+        if (Source == Determined::No)
+          return Determined::No;
+        if (Source == Determined::StartValues)
+          Result = Determined::StartValues;
+      }
+      return Result;
+    };
+    auto unchangedByStartValues = [&](uint64_t Value) {
+      std::set<uint64_t> Written, Read;
+      for (size_t I = 0; I < Executed && I < Prefix.size(); ++I) {
+        const LowOp &Op = Prefix[I];
+        if (!consume(Op.NumInputs + 1))
+          return false;
+        for (uint8_t J = 0; J < Op.NumInputs; ++J)
+          if (Op.Inputs[J].isReg() && !Written.count(Op.Inputs[J].Offset))
+            Read.insert(Op.Inputs[J].Offset);
+        if (Op.Output.isReg())
+          Written.insert(Op.Output.Offset);
+      }
+      if (Read.empty() || !prepayEmulatorRun(Prefix, PreservedCount, true) ||
+          !consumeProduct(PreservedCount, 4) || !consume(Read.size() + 2))
+        return false;
+      NdOpEmulator Probe(Img);
+      Probe.setCallPreservedRegisters(callPreservedRegs(Img));
+      // Far from any image the loaders map, and different for every register.
+      uint64_t Seed = Img.getPointerSize() == 4 ? UINT64_C(0x9e370000)
+                                                : UINT64_C(0x9e3779b900000000);
+      for (uint64_t Register : Read) {
+        Probe.setRegister(Register, Seed);
+        Seed += UINT64_C(0x00110000);
+      }
+      const size_t ProbeExecuted = Probe.run(Prefix);
+      const auto Again = Probe.getRegister(Reg);
+      return ProbeExecuted > static_cast<size_t>(LastRegDef) && Again &&
+             *Again == Value;
+    };
     // A failed load or unsupported operation can stop emulation before the
     // table-base LEA while leaving an older value in the same register.  That
     // stale value may coincidentally fall inside .text (for example RCX == 1),
     // so accept it only when the defining op itself was actually executed.
-    if (LastRegDef >= 0 && Executed > static_cast<size_t>(LastRegDef) && V &&
-        (!RequireMappedValue || *V)) {
+    Determined DefinedBy = Determined::No;
+    if (LastRegDef >= 0 && Executed > static_cast<size_t>(LastRegDef) && V)
+      DefinedBy = determinedDefinition(LastRegDef, 0);
+    if (DefinedBy != Determined::No && (!RequireMappedValue || *V) &&
+        (DefinedBy == Determined::Closed || unchangedByStartValues(*V))) {
       if (!RequireMappedValue)
         return V;
       if (!consume(Img.Segments.size()))
@@ -440,8 +532,7 @@ CFGBuilder::foldRegConstant(const BinaryImage &Img, const InsnRecord &Rec,
       if (!consume(Img.Segments.size()))
         return std::nullopt;
       if (Img.getSegmentFor(*LocalV) ||
-          (AllowUnmappedCOFFImageBase && Img.isCOFF() &&
-           *LocalV == Img.Base))
+          (AllowUnmappedCOFFImageBase && Img.isCOFF() && *LocalV == Img.Base))
         return LocalV;
     }
     return std::nullopt;
@@ -485,11 +576,14 @@ CFGBuilder::foldRegConstant(const BinaryImage &Img, const InsnRecord &Rec,
       switch (Op.Opcode) {
       case NdOp::CALL:
       case NdOp::INDIR_CALL:
-      case NdOp::INTRINSIC:
       case NdOp::BRANCH:
       case NdOp::COND_BR:
       case NdOp::INDIR_BR:
         IsTerm = true;
+        break;
+      case NdOp::INTRINSIC:
+        IsTerm |=
+            Img.Arch != Arch::AArch64 || !lowAArch64AddressLoadShapeIsValid(Op);
         break;
       default:
         break;

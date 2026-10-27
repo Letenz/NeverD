@@ -1,11 +1,14 @@
 #include "neverd/loader/Swift/SwiftABI.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/Swift/SwiftMetadata.h"
 
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -203,7 +206,8 @@ class Proof {
   }
 
   void inspect(const LowFunc &Function, unsigned Depth = 0) {
-    if (Depth > 8 || !Entered.insert(Function.Entry).second)
+    if (Depth > ::neverd::limits::loader::kSwiftABIInspectDepthLimit ||
+        !Entered.insert(Function.Entry).second)
       throw Unproven(
           "Swift self tail flow is recursive or exceeds its depth limit");
     if (!Image.isCodeAddress(Function.Entry) || Function.Blocks.size() != 1 ||
@@ -211,12 +215,14 @@ class Proof {
         !Function.Blocks.front().ExceptionalSuccs.empty() ||
         !Function.Blocks.front().ExceptionalPreds.empty() ||
         !Function.Blocks.front().Succs.empty() ||
-        Function.Blocks.front().Ops.size() > 4096)
+        Function.Blocks.front().Ops.size() >
+            ::neverd::limits::loader::
+                kSwiftABIInspectFunctionBlocksFrontOpsSizeLimit)
       throw Unproven("Swift self entry-flow proof currently requires one "
                      "bounded nonexceptional block");
     const auto &Block = Function.Blocks.front();
     InspectedOps += Block.Ops.size();
-    if (InspectedOps > 16384)
+    if (InspectedOps > ::neverd::limits::loader::kMaxSwiftSelfFlowOperations)
       throw Unproven("Swift self native flow exceeds its operation limit");
     for (size_t Index = 0; Index < Block.Ops.size(); ++Index) {
       const auto &Op = Block.Ops[Index];
@@ -258,9 +264,12 @@ class Proof {
         if (Op.Opcode == NdOp::INT_ADD && A.TheKind == Value::Constant)
           std::swap(A, B);
         if ((A.TheKind == Value::Self || A.TheKind == Value::Stack) &&
-            B.TheKind == Value::Constant && B.Offset >= -1048576 &&
-            B.Offset <= 1048576 && A.Offset >= -1048576 &&
-            A.Offset <= 1048576 && Op.Output.Size == 8) {
+            B.TheKind == Value::Constant &&
+            B.Offset >= -::neverd::limits::ir::kMaxSourceFrameDisplacement &&
+            B.Offset <= ::neverd::limits::ir::kMaxSourceFrameDisplacement &&
+            A.Offset >= -::neverd::limits::ir::kMaxSourceFrameDisplacement &&
+            A.Offset <= ::neverd::limits::ir::kMaxSourceFrameDisplacement &&
+            Op.Output.Size == 8) {
           A.Offset += Op.Opcode == NdOp::INT_SUB ? -B.Offset : B.Offset;
           put(Op.Output, A);
         } else
@@ -361,7 +370,8 @@ class Proof {
         throw Unproven(
             "Swift self proof has a call, branch, or unmodeled native effect");
       default:
-        if (!Op.Output.Size || !Op.NumInputs || Op.NumInputs > 6)
+        if (!Op.Output.Size || !Op.NumInputs ||
+            Op.NumInputs > std::size(Op.Inputs))
           throw Unproven("Swift self proof has an unmodeled value operation");
         put(Op.Output, scalar(Op));
         break;

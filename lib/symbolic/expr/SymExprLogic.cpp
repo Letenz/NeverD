@@ -17,6 +17,7 @@
 #include "SymExprCompare.h"
 #include "SymExprMask.h"
 
+#include "neverd/symbolic/Limits.h"
 #include "neverd/symbolic/SymExpr.h"
 
 #include <algorithm>
@@ -60,9 +61,13 @@ SymRef removeDiscardedShiftTerms(SymContext &C, SymRef A, unsigned Amount) {
   const auto Op = C.op(A);
   const unsigned Width = C.width(A);
   if ((Op != SymOp::And && Op != SymOp::Or && Op != SymOp::Xor) ||
-      Width > 128 || C.numOperands(A) > 8)
+      Width > ::neverd::limits::symbolic::kMaxDiscardedShiftWidth ||
+      C.numOperands(A) >
+          ::neverd::limits::symbolic::
+              kSymExprLogicRemoveDiscardedShiftTermsCNumOperandsALimit)
     return A;
-  unsigned Work = 256;
+  unsigned Work =
+      ::neverd::limits::symbolic::kSymExprLogicRemoveDiscardedShiftTermsWork;
   llvm::SmallVector<SymRef, 8> Kept;
   for (auto Child : C.operands(A)) {
     bool Neutral = true;
@@ -275,6 +280,49 @@ SymRef SymContext::mkOr(llvm::ArrayRef<SymRef> Ops) {
   std::sort(Rest.begin(), Rest.end());
   Rest.erase(std::unique(Rest.begin(), Rest.end()), Rest.end());
 
+  // The XOR of values contained in X cannot set any bit outside X. This
+  // includes X ^ (X & Y), without reasoning about the arithmetic inside X.
+  unsigned SubsetWork = ::neverd::limits::symbolic::kSymExprLogicSubsetWork;
+  const auto CoveredXor = [&](SymRef Value) {
+    if (op(Value) != SymOp::Xor)
+      return false;
+    for (SymRef Cover : Rest) {
+      if (!SubsetWork)
+        return false;
+      --SubsetWork;
+      if (Cover == Value)
+        continue;
+      bool Covered = true;
+      for (SymRef Term : operands(Value)) {
+        if (!SubsetWork)
+          return false;
+        --SubsetWork;
+        if (Term == Cover)
+          continue;
+        if (op(Term) != SymOp::And) {
+          Covered = false;
+          break;
+        }
+        bool Found = false;
+        for (SymRef Factor : operands(Term)) {
+          if (!SubsetWork)
+            return false;
+          --SubsetWork;
+          if (Factor == Cover) {
+            Found = true;
+            break;
+          }
+        }
+        if (!Found) {
+          Covered = false;
+          break;
+        }
+      }
+      if (Covered)
+        return true;
+    }
+    return false;
+  };
   // Dual absorption: x | (x & y) == x, including compound x.
   llvm::SmallVector<SymRef, 8> Unabsorbed;
   for (SymRef R : Rest) {
@@ -282,6 +330,7 @@ SymRef SymContext::mkOr(llvm::ArrayRef<SymRef> Ops) {
         op(R) == SymOp::And && llvm::any_of(operands(R), [&](SymRef C) {
           return std::binary_search(Rest.begin(), Rest.end(), C);
         });
+    Absorbed |= CoveredXor(R);
     if (!Absorbed)
       Unabsorbed.push_back(R);
   }

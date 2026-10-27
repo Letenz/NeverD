@@ -1,14 +1,15 @@
 """Protocol fixture: stdin/stdout only, no NeverD dependency."""
 import json
+import signal
 import sys
 
-if len(sys.argv) > 1 and sys.argv[1] == "malformed":
-    print("not JSON", flush=True)
+if len(sys.argv) > 1 and sys.argv[1] in ("malformed", "oversized"):
+    # Console processes can still deliver buffered stdout after termination
+    # was requested on Windows. Exercise that ordering on every host.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    print("not JSON" if sys.argv[1] == "malformed" else "x" * (8 * 1024 * 1024 + 1), flush=True)
     sys.stdin.read()
-    raise SystemExit(0)
-if len(sys.argv) > 1 and sys.argv[1] == "oversized":
-    print("x" * (8 * 1024 * 1024 + 1), flush=True)
-    sys.stdin.read()
+    print("late invalid JSON", flush=True)
     raise SystemExit(0)
 
 for line in sys.stdin:

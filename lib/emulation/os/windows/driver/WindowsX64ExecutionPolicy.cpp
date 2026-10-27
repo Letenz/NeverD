@@ -14,6 +14,7 @@
 
 #include "../../../../lift/X86/X86CetEncoding.h"
 #include "../../../arch/x86_64/X64Decoder.h"
+#include "../../../arch/x86_64/X64MSRRead.h"
 #include "../../../arch/x86_64/X64Machine.h"
 #include "../kernel/WindowsKernelLayout.h"
 
@@ -103,6 +104,11 @@ WindowsX64ExecutionPolicy::inspectUncached(llvm::ArrayRef<uint8_t> Bytes,
     return std::optional<Action>{
         {Action::Kind::ReadDisabledShadowStack, std::nullopt}};
   }
+  if (Insn->id == X86_INS_RDMSR) {
+    if (!x64::msr::canonicalRead(Bytes) || X86.op_count)
+      return Rejected();
+    return std::optional<Action>{{Action::Kind::ReadMSR, std::nullopt}};
+  }
   if (Insn->id == X86_INS_CPUID) {
     if (X86.prefix[0] == X86_PREFIX_LOCK || X86.op_count)
       return Rejected();
@@ -135,7 +141,7 @@ WindowsX64ExecutionPolicy::inspectUncached(llvm::ArrayRef<uint8_t> Bytes,
 #define NEVERD_X64_REGISTER(Name, DecoderID, BackendID)                        \
   case DecoderID:                                                              \
     return std::optional<Action>{{*Kind, X64Register::Name}};
-#include "neverd/emulation/X64Registers.def"
+#include "neverd/emulation/arch/x86_64/X64Registers.def"
 #undef NEVERD_X64_REGISTER
       default:
         return failure(policy::Destination);

@@ -18,6 +18,7 @@
 
 #include "HighDCEDetail.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/support/Diagnostic.h"
 
@@ -46,7 +47,9 @@ static bool isLocalExpr(const HighExpr &E) {
 // Expression cycle detection and breaking
 //===----------------------------------------------------------------------===//
 
-static void breakExprCycles(ExprPtr &Root, HighExprSet &KnownAcyclic) {
+// Returns whether a cycle was broken.
+static bool breakExprCycles(ExprPtr &Root, HighExprSet &KnownAcyclic) {
+  bool Broken = false;
   struct Frame {
     ExprPtr *Slot = nullptr;
     size_t NextOperand = 0;
@@ -70,6 +73,7 @@ static void breakExprCycles(ExprPtr &Root, HighExprSet &KnownAcyclic) {
       }
       if (!Path.insert(Expr).second) {
         *Current.Slot = HighExpr::makeConst(0, 8);
+        Broken = true;
         Work.pop_back();
         continue;
       }
@@ -90,6 +94,7 @@ static void breakExprCycles(ExprPtr &Root, HighExprSet &KnownAcyclic) {
         continue;
       if (Path.count(Operand.get())) {
         Operand = HighExpr::makeConst(0, 8);
+        Broken = true;
         continue;
       }
       Work.push_back({&Operand, 0, false});
@@ -100,13 +105,17 @@ static void breakExprCycles(ExprPtr &Root, HighExprSet &KnownAcyclic) {
     KnownAcyclic.insert(Expr);
     Work.pop_back();
   }
+  return Broken;
 }
 
-static void breakStmtCycles(std::vector<HighStmt> &Stmts) {
+// Returns whether a cycle was broken.
+static bool breakStmtCycles(std::vector<HighStmt> &Stmts) {
   HighExprSet Safe;
-  walkStmts(Stmts, [&Safe](HighStmt &S) {
-    forEachExpr(S, [&Safe](ExprPtr &EP) { breakExprCycles(EP, Safe); });
+  bool Broken = false;
+  walkStmts(Stmts, [&](HighStmt &S) {
+    forEachExpr(S, [&](ExprPtr &EP) { Broken |= breakExprCycles(EP, Safe); });
   });
+  return Broken;
 }
 
 //===----------------------------------------------------------------------===//
@@ -247,6 +256,57 @@ static bool isSelfAssign(const HighStmt &S) {
   return VK(S.Dst->Var) == VK(S.Val->Var);
 }
 
+/// Whether \p E reads the local \p Key.
+static bool readsLocal(const HighExpr &E, const VarKey &Key, unsigned Depth) {
+  if (Depth > ::neverd::limits::ir::kMaxHighDCEReadDepth)
+    return true;
+  if (isLocalExpr(E) && VK(E.Var) == Key)
+    return true;
+  bool Reads = false;
+  E.forEachChildExpr([&](const ExprPtr &Child) {
+    Reads = Reads || (Child && readsLocal(*Child, Key, Depth + 1));
+  });
+  return Reads;
+}
+
+/// Whether \p Store writes back, unchanged, the bytes \p Load, the statement
+/// before it, read from the same address: `t = *(A); *(A) = t;`, as a stack
+/// probe (`or [rsp], 0`) lifts.  The address names the same bytes at both
+/// unless it reads t.  Atomic and non-default memory keeps the access.
+static bool restoresLoadedBytes(const HighStmt &Load, const HighStmt &Store) {
+  if (Load.Kind != StmtKind::Assign || !Load.Dst || !Load.Val ||
+      !isLocalExpr(*Load.Dst) || !Load.Dst->Type ||
+      Store.MemoryOrdering != NdMemoryOrdering::None ||
+      Store.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const HighExpr &Read = *Load.Val;
+  if (Read.Kind != ExprKind::Load || Read.Operands.size() != 1 ||
+      !Read.Operands[0] || !Read.Type ||
+      Read.Type->Size != Load.Dst->Type->Size ||
+      Read.MemoryOrdering != NdMemoryOrdering::None ||
+      Read.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const HighExpr *Address = nullptr, *Value = nullptr, *Written = nullptr;
+  if (Store.Kind == StmtKind::Store) {
+    Address = Store.StoreAddr.get();
+    Value = Written = Store.StoreVal.get();
+  } else if (Store.Kind == StmtKind::Assign && Store.Dst && Store.Val &&
+             Store.Dst->Kind == ExprKind::Load &&
+             Store.Dst->Operands.size() == 1 &&
+             Store.Dst->MemoryOrdering == NdMemoryOrdering::None &&
+             Store.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+    // An assignment to memory names its destination as a load of it.
+    Address = Store.Dst->Operands[0].get();
+    Value = Store.Val.get();
+    Written = Store.Dst.get();
+  }
+  const VarKey Loaded = VK(Load.Dst->Var);
+  return Address && Value && Written && Written->Type &&
+         Written->Type->Size == Read.Type->Size && isLocalExpr(*Value) &&
+         VK(Value->Var) == Loaded && !readsLocal(*Address, Loaded, 0) &&
+         Read.Operands[0]->structuralEq(*Address);
+}
+
 static std::unordered_set<va_t>
 referencedStatementEntries(const std::vector<HighStmt> &Stmts) {
   std::unordered_set<va_t> Entries;
@@ -272,6 +332,23 @@ static bool eliminateDeadAssigns(std::vector<HighStmt> &Stmts,
                                  const std::unordered_set<va_t> &Entries,
                                  const AssignmentEffects &Effects) {
   bool Changed = false;
+  // A store of what the statement before it read leaves memory as it was.
+  // The load holds the instruction's place; a store at its own branch entry
+  // leaves an empty block there.  The load is dead once nothing else reads
+  // its value.
+  for (size_t I = 1; I < Stmts.size(); ++I) {
+    if (!restoresLoadedBytes(Stmts[I - 1], Stmts[I]))
+      continue;
+    const va_t Entry = Stmts[I].Addr;
+    if (Entry != Stmts[I - 1].Addr && Entries.count(Entry)) {
+      Stmts[I] = HighStmt{};
+      Stmts[I].Kind = StmtKind::Block;
+      Stmts[I].Addr = Entry;
+    } else {
+      Stmts.erase(Stmts.begin() + I--);
+    }
+    Changed = true;
+  }
   if (!Entries.empty()) {
     for (size_t I = 0; I < Stmts.size();) {
       const size_t First = I++;
@@ -389,7 +466,8 @@ static void preDCE(std::vector<HighStmt> &Stmts,
                    const MedVar *SourceCapture = nullptr) {
   size_t Before = Stmts.size();
   const AssignmentEffects Effects(Stmts);
-  for (int PreIter = 0; PreIter < 8; ++PreIter) {
+  for (int PreIter = 0;
+       PreIter < ::neverd::limits::ir::kHighDCEPreDCEPreIterLimit; ++PreIter) {
     VarKeySet Refs;
     collectLiveRefs(Stmts, Refs, Effects, SourceCapture);
     if (!eliminateDeadAssigns(Stmts, Refs, Entries, Effects))
@@ -482,7 +560,11 @@ static bool exprHasCall(const HighExpr *E) {
 static bool followingHasObservableWork(const std::vector<HighStmt> &Stmts,
                                        size_t After) {
   const size_t Begin = After + 1;
-  for (size_t K = Begin; K < Stmts.size() && K - Begin <= 32; ++K) {
+  for (size_t K = Begin;
+       K < Stmts.size() &&
+       K - Begin <=
+           ::neverd::limits::ir::kHighDCEFollowingHasObservableWorkKBeginLimit;
+       ++K) {
     const HighStmt &S = Stmts[K];
     if (S.Kind == StmtKind::Store || S.Kind == StmtKind::If ||
         S.Kind == StmtKind::IfElse || S.Kind == StmtKind::CxxTry ||
@@ -607,13 +689,15 @@ static void eliminateDeadConditions(std::vector<HighStmt> &Stmts,
 
 static void iterativeDCE(HighFunc &Func,
                          const std::unordered_set<va_t> &Entries) {
-  for (int Outer = 0; Outer < 6; ++Outer) {
+  for (int Outer = 0;
+       Outer < ::neverd::limits::ir::kHighDCEIterativeDCEOuterLimit; ++Outer) {
     LLVM_DEBUG(llvm::dbgs() << "      dce iter " << Outer << "/6 (" << Func.Name
                             << ", " << Func.Body.size() << " stmts)\n");
     bool DCEChanged = false;
     {
       const AssignmentEffects Effects(Func.Body);
-      for (int Iter = 0; Iter < 10; ++Iter) {
+      for (int Iter = 0;
+           Iter < ::neverd::limits::ir::kHighDCEIterativeDCEIterLimit; ++Iter) {
         VarKeySet Refs;
         collectLiveRefs(Func.Body, Refs, Effects,
                         Func.SwiftErrorEntry ? &Func.SwiftErrorEntry->Input
@@ -680,7 +764,8 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
   // anchor at its start address before the first surviving statement, so the
   // entry keeps its code, its label, and its address range for the EH
   // structurer.
-  if (CurMed)
+  if (CurMed) {
+    std::optional<std::unordered_set<va_t>> AnchoredEntries;
     for (size_t B = 1; B < CurMed->Blocks.size(); ++B) {
       const MedBlock &Block = CurMed->Blocks[B];
       if (!Block.Preds.empty() || Block.StartAddr == 0 ||
@@ -689,11 +774,15 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
       Entries.insert(Block.StartAddr);
       // DCE runs repeatedly; an anchor from an earlier round, possibly
       // wrapped since, already carries the address.
-      bool Anchored = false;
-      walkStmts(Func.Body, [&](const HighStmt &S) {
-        Anchored |= S.Addr == Block.StartAddr;
-      });
-      if (Anchored)
+      // This loop only inserts anchors. Index the existing nested addresses
+      // once, on demand, and add each new anchor before checking another
+      // block. The index never survives a statement rewrite or DCE round.
+      if (!AnchoredEntries) {
+        AnchoredEntries.emplace();
+        walkStmts(Func.Body,
+                  [&](const HighStmt &S) { AnchoredEntries->insert(S.Addr); });
+      }
+      if (AnchoredEntries->count(Block.StartAddr))
         continue;
       auto First = std::find_if(
           Func.Body.begin(), Func.Body.end(), [&](const HighStmt &S) {
@@ -705,7 +794,9 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
       Anchor.Kind = StmtKind::Block;
       Anchor.Addr = Block.StartAddr;
       Func.Body.insert(First, std::move(Anchor));
+      AnchoredEntries->insert(Block.StartAddr);
     }
+  }
 
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 0: unreachable (" << Func.Name
                           << ", " << Func.Body.size() << " stmts)\n");
@@ -768,9 +859,15 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 13: iterative DCE (" << Func.Name
                           << ", " << Func.Body.size() << " stmts)\n");
   const auto TIter = Clock::now();
+  const bool ForwardedAcrossJoins =
+      forwardPrivateFrameLoads(Func, TargetArch, /*AcrossJoins=*/true);
   iterativeDCE(Func, Entries);
   const auto TPost = Clock::now();
 
+  // A shared epilogue can retain load temporaries and PHI chains for saved
+  // registers until DCE. Revisit home-slot preservation after those reads
+  // disappear, while addresses still have their original SSA identities.
+  stripPrologueEpilogue(Func);
   elimUnreadPrivateFrameStores(Func, TargetArch);
   narrowSourceConcatLocals(Func);
   // Removing a vector carrier can expose a second, narrower scalar copy
@@ -793,16 +890,30 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 15: semantic simplify ("
                           << Func.Name << ", " << Func.Body.size()
                           << " stmts)\n");
-  forwardPrivateFrameLoads(Func, TargetArch);
+  // The proof across joins builds a flow graph per function. Repeat it only
+  // to follow up on rewrites its phase-13 run made: DCE and renaming alone
+  // rarely give it anything new.
+  forwardPrivateFrameLoads(Func, TargetArch,
+                           /*AcrossJoins=*/ForwardedAcrossJoins);
+  const bool Simplified = simplifyAllExprs(Func.Body);
   if (SymbolicSimplification)
     simplifyExprSemantics(Func.Body, SemanticThreadLimit);
-  breakStmtCycles(Func.Body);
+  const bool CyclesBroken = breakStmtCycles(Func.Body);
+  // Symbolic word arithmetic may publish a negated sum for a difference.
+  // Restore source comparisons without substituting any local definitions
+  // back into the shared expression graph. Expressions the pass above left
+  // unchanged, and nothing changed since, would come out unchanged again.
+  if (Simplified || SymbolicSimplification || CyclesBroken)
+    simplifyAllExprs(Func.Body);
   // Semantic rewriting can make the scalar definitions that held an MBA
   // expansion dead. Remove them without feeding the shared result back through
   // copy propagation, which could create a cycle in the expression DAG.
   {
     const AssignmentEffects Effects(Func.Body);
-    for (int Iter = 0; Iter < 10; ++Iter) {
+    for (int Iter = 0;
+         Iter < ::neverd::limits::ir::
+                    kHighDCEMedToHighConverterEliminateDeadStmtsIterLimit;
+         ++Iter) {
       VarKeySet Refs;
       collectLiveRefs(Func.Body, Refs, Effects,
                       Func.SwiftErrorEntry ? &Func.SwiftErrorEntry->Input

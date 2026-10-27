@@ -17,14 +17,19 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedCallLeftovers.h"
+#include "neverd/ir/med/MedCallTarget.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -36,30 +41,17 @@
 
 namespace neverd {
 
-bool isAbiRecoveryBarrier(const MedOp &Op) {
-  if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
-    return true;
-  if (Op.Opcode != NdOp::INTRINSIC)
-    return false;
-  if (Op.NumInputs == 0 || Op.NumInputs > Op.Inputs.size() ||
-      !Op.Inputs[0].isConst())
-    return true;
-  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
-  if (static_cast<uint64_t>(Id) != Op.Inputs[0].ConstVal)
-    return true;
-  if (preservesCallSetup(Id))
-    return false;
-  return !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op));
-}
+bool isAbiRecoveryBarrier(const MedOp &Op) { return endsCallArgumentSetup(Op); }
 
 bool incomingArgumentReachesCall(const AbiCallContext &C, int ArgIndex) {
   if (C.Func.Blocks.empty() || C.CallIdx < 0)
     return false;
   size_t Remaining = limits::kMaxCallSetupStackProofWork;
-  std::map<int, const MedBlock *> Blocks;
-  for (const auto &B : C.Func.Blocks)
-    if (!Blocks.emplace(B.Id, &B).second)
-      return false;
+  std::optional<MedBlockIdIndex> OwnBlocks;
+  const MedBlockIdIndex &Blocks =
+      C.Blocks ? *C.Blocks : OwnBlocks.emplace(C.Func);
+  if (!Blocks.unique())
+    return false;
   std::vector<std::pair<const MedBlock *, size_t>> Work{
       {&C.Blk, static_cast<size_t>(C.CallIdx)}};
   std::set<int> Seen;
@@ -96,11 +88,10 @@ bool incomingArgumentReachesCall(const AbiCallContext &C, int ArgIndex) {
     } else if (B->Preds.empty())
       return false;
     for (int Id : B->Preds) {
-      auto P = Blocks.find(Id);
-      if (P == Blocks.end() || std::count(P->second->Succs.begin(),
-                                          P->second->Succs.end(), B->Id) != 1)
+      const MedBlock *P = Blocks.first(Id);
+      if (!P || std::count(P->Succs.begin(), P->Succs.end(), B->Id) != 1)
         return false;
-      Work.emplace_back(P->second, P->second->Ops.size());
+      Work.emplace_back(P, P->Ops.size());
     }
   }
   return ReachedEntry;
@@ -116,10 +107,11 @@ std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C) {
   // A per-call bound also limits path duplication in diamonds. Exhaustion
   // publishes no partial predecessor proof.
   size_t Remaining = limits::kMaxCallSetupStackProofWork;
-  std::map<int, const MedBlock *> Blocks;
-  for (const MedBlock &B : C.Func.Blocks)
-    if (!Blocks.emplace(B.Id, &B).second)
-      return {};
+  std::optional<MedBlockIdIndex> OwnBlocks;
+  const MedBlockIdIndex &Blocks =
+      C.Blocks ? *C.Blocks : OwnBlocks.emplace(C.Func);
+  if (!Blocks.unique())
+    return {};
   std::set<int> Active;
   auto same = [](const MedVar &A, const MedVar &B) {
     return A.Kind == B.Kind && A.Id == B.Id && A.SSAVer == B.SSAVer &&
@@ -186,15 +178,14 @@ std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C) {
       bool First = true;
       std::set<int> Preds;
       for (int Id : B.Preds) {
-        const auto P = Blocks.find(Id);
-        if (!Remaining || !Preds.insert(Id).second || P == Blocks.end() ||
-            std::count(P->second->Succs.begin(), P->second->Succs.end(),
-                       B.Id) != 1) {
+        const MedBlock *P = Blocks.first(Id);
+        if (!Remaining || !Preds.insert(Id).second || !P ||
+            std::count(P->Succs.begin(), P->Succs.end(), B.Id) != 1) {
           Common.clear();
           break;
         }
         --Remaining;
-        Stores Incoming = Visit(*P->second, P->second->Ops.size(), Depth + 1);
+        Stores Incoming = Visit(*P, P->Ops.size(), Depth + 1);
         if (First) {
           Common = std::move(Incoming);
           First = false;
@@ -225,6 +216,15 @@ struct ReducedAddress {
   llvm::APInt Offset;
 };
 
+static bool consumeCallTargetWork(size_t *Remaining) {
+  if (!Remaining)
+    return true;
+  if (!*Remaining)
+    return false;
+  --*Remaining;
+  return true;
+}
+
 static bool sameAddressValue(const MedVar &A, const MedVar &B) {
   return A.Kind == B.Kind && A.Id == B.Id && A.SSAVer == B.SSAVer &&
          A.RegOff == B.RegOff && A.Size == B.Size && A.TheArch == B.TheArch &&
@@ -234,17 +234,21 @@ static bool sameAddressValue(const MedVar &A, const MedVar &B) {
 // Stop at an opaque value when the next operation cannot be peeled exactly.
 // The already-proven suffix remains usable, including when two accesses share
 // the same conversion result. Invalid widths and conflicting definitions fail.
-static std::optional<ReducedAddress> reduceAddr(const MedBlock &Blk,
-                                                const MedVar &V) {
+static std::optional<ReducedAddress>
+reduceAddr(const MedBlock &Blk, const MedVar &V, size_t *Remaining = nullptr) {
   if (V.Size == 0 || V.Size > 8)
     return std::nullopt;
   ReducedAddress Result{V, llvm::APInt(V.Size * 8u, 0)};
-  for (unsigned Depth = 0; Depth <= 128; ++Depth) {
+  for (unsigned Depth = 0;
+       Depth <= ::neverd::limits::ir::kMedABIPassSupportReduceAddrDepthLimit;
+       ++Depth) {
     const MedVar &Cur = Result.Base;
     if (Cur.isConst())
       break;
     const MedOp *Def = nullptr;
     for (const auto &Op : Blk.Ops) {
+      if (!consumeCallTargetWork(Remaining))
+        return std::nullopt;
       // STOREs and control-flow operations have no defining output. Their
       // default Temp/id=0 must not conflict with a real temporary definition.
       if (Op.Output.Size == 0 || Op.Output.Kind != Cur.Kind ||
@@ -276,9 +280,8 @@ static std::optional<ReducedAddress> reduceAddr(const MedBlock &Blk,
       const unsigned C = Def->Inputs[1].isConst() ? 1 : 0;
       const MedVar &Constant = Def->Inputs[C];
       const MedVar &Base = Def->Inputs[1 - C];
-      if (!Constant.isConst() || Base.isConst() || Base.Size != Cur.Size ||
-          Constant.Size == 0 || Constant.Size > 8 ||
-          (Def->Opcode == NdOp::INT_SUB && C != 1))
+      if (!Constant.isConst() || Base.Size != Cur.Size || Constant.Size == 0 ||
+          Constant.Size > 8 || (Def->Opcode == NdOp::INT_SUB && C != 1))
         break;
       // Match arithmetic Coerce: truncate the constant at its own width,
       // then zero-extend or truncate to the operation's fixed output width.
@@ -340,29 +343,33 @@ static bool reducedRangesDisjoint(const llvm::APInt &Distance,
 static bool preservesSpillAcrossCall(const MedBlock &Blk, int CallIndex,
                                      const MedVar &Address, uint16_t Size,
                                      const AbiSpillContext &Context, int Depth);
-static std::optional<int64_t> authenticatedStackOffset(const MedFunc &Func,
-                                                       const TargetRegInfo &TRI,
-                                                       const MedVar &V,
-                                                       unsigned Depth = 0);
+static std::optional<int64_t>
+authenticatedStackOffset(const MedFunc &Func, const TargetRegInfo &TRI,
+                         const MedVar &V, unsigned Depth = 0,
+                         MedDefSiteIndex *Defs = nullptr);
 
 // Prove a complete same-block store reaches this load. Unknown calls, aliases,
 // partial overwrites and atomic accesses invalidate the earlier stored value.
 static std::optional<int>
 reachingStore(const MedBlock &Blk, int LoadIndex,
-              const AbiSpillContext *Context = nullptr, int Depth = 0) {
+              const AbiSpillContext *Context = nullptr, int Depth = 0,
+              size_t *Remaining = nullptr) {
   const MedOp &Load = Blk.Ops[LoadIndex];
   const MedVar *Address = safety::detail::memoryAddress(Load);
   if (!Address || Load.Output.Size == 0 ||
-      Load.MemoryOrdering != NdMemoryOrdering::None)
+      Load.MemoryOrdering != NdMemoryOrdering::None ||
+      Load.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return std::nullopt;
   const auto StackOffset =
       Context ? authenticatedStackOffset(Context->Func, Context->TRI, *Address)
               : std::nullopt;
-  const auto Target =
-      StackOffset ? std::optional<ReducedAddress>{} : reduceAddr(Blk, *Address);
+  const auto Target = StackOffset ? std::optional<ReducedAddress>{}
+                                  : reduceAddr(Blk, *Address, Remaining);
   if (!StackOffset && !Target)
     return std::nullopt;
   for (int I = LoadIndex - 1; I >= 0; --I) {
+    if (!consumeCallTargetWork(Remaining))
+      return std::nullopt;
     const MedOp &Op = Blk.Ops[I];
     if (Op.Opcode == NdOp::INTRINSIC && isAbiRecoveryBarrier(Op))
       return std::nullopt;
@@ -377,7 +384,8 @@ reachingStore(const MedBlock &Blk, int LoadIndex,
     const MedVar *StoreAddress = safety::detail::memoryAddress(Op);
     const MedVar *Value = safety::detail::storedValue(Op);
     if (!StoreAddress || !Value || Value->Size == 0 ||
-        Op.MemoryOrdering != NdMemoryOrdering::None)
+        Op.MemoryOrdering != NdMemoryOrdering::None ||
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
       return std::nullopt;
     if (StackOffset) {
       const auto SourceOffset =
@@ -391,7 +399,7 @@ reachingStore(const MedBlock &Blk, int LoadIndex,
                  ? std::optional<int>(I)
                  : std::nullopt;
     }
-    const auto Source = reduceAddr(Blk, *StoreAddress);
+    const auto Source = reduceAddr(Blk, *StoreAddress, Remaining);
     if (!Source)
       return std::nullopt;
     const auto Distance = reducedAddressDistance(*Source, *Target);
@@ -418,7 +426,9 @@ reachingStore(const MedBlock &Blk, int LoadIndex,
 va_t resolveIndirectTargetAddr(const MedBlock &Blk, int FromIdx,
                                const MedVar &V, int Depth,
                                const AbiSpillContext *Context) {
-  if (Depth > 16 || (Context && V.Size != Context->TRI.PointerSize))
+  if (Depth > ::neverd::limits::ir::
+                  kMedABIPassSupportResolveIndirectTargetAddrDepthLimit ||
+      (Context && V.Size != Context->TRI.PointerSize))
     return 0;
   if (V.isConst())
     return V.ConstVal;
@@ -463,6 +473,208 @@ va_t resolveIndirectTargetAddr(const MedBlock &Blk, int FromIdx,
   }
 }
 
+std::optional<MedCallTarget> resolveMedCallTarget(const MedBlock &Block,
+                                                  size_t Before,
+                                                  const MedVar &Value,
+                                                  size_t *WorkRemaining) {
+  if (Before > Block.Ops.size() || !Value.Size || Value.Size > 8)
+    return std::nullopt;
+  MedVar Current = Value;
+  size_t OwnWork = limits::ir::kSourceFrameAnalysisRemaining;
+  if (!WorkRemaining)
+    WorkRemaining = &OwnWork;
+  for (unsigned Depth = 0; Depth < limits::kCallTargetSlotDepth; ++Depth) {
+    if (!consumeCallTargetWork(WorkRemaining))
+      return std::nullopt;
+    if (Current.isConst())
+      return MedCallTarget{Current.ConstVal, false};
+    const MedOp *Definition = nullptr;
+    for (size_t I = Before; I-- > 0;) {
+      if (!consumeCallTargetWork(WorkRemaining))
+        return std::nullopt;
+      if (sameAddressValue(Block.Ops[I].Output, Current)) {
+        Definition = &Block.Ops[I];
+        Before = I;
+        break;
+      }
+    }
+    if (!Definition || !Definition->NumInputs ||
+        Definition->Output.Size != Value.Size)
+      return std::nullopt;
+    const auto &Def = *Definition;
+    if ((Def.Opcode == NdOp::COPY && Def.NumInputs == 1) ||
+        (Def.Opcode == NdOp::SUBBYTES && Def.NumInputs == 2 &&
+         Def.Inputs[1].isConst() && Def.Inputs[1].ConstVal == 0)) {
+      if (Def.Inputs[0].Size != Value.Size)
+        return std::nullopt;
+      Current = Def.Inputs[0];
+      continue;
+    }
+    if (Def.Opcode != NdOp::LOAD || Def.NumInputs != 1 ||
+        Def.MemoryOrdering != NdMemoryOrdering::None ||
+        Def.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return std::nullopt;
+    if (const auto Store = reachingStore(Block, static_cast<int>(Before),
+                                         nullptr, 0, WorkRemaining)) {
+      Current = *safety::detail::storedValue(Block.Ops[*Store]);
+      Before = *Store;
+      continue;
+    }
+    const auto Address = reduceAddr(Block, Def.Inputs[0], WorkRemaining);
+    if (Address && Address->Base.isConst()) {
+      llvm::APInt Slot(Address->Offset.getBitWidth(), Address->Base.ConstVal,
+                       false, true);
+      Slot += Address->Offset;
+      return MedCallTarget{Slot.getZExtValue(), true, Before};
+    }
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+MedVar PreSSAMedCallTargets::read(MedVar Value) {
+  if (!Value.isConst())
+    Value.SSAVer =
+        Versions[Key{Value.Kind, Value.Id, Value.RegOff, Value.Size}];
+  return Value;
+}
+
+bool PreSSAMedCallTargets::version(const MedOp &Original,
+                                   size_t *WorkRemaining) {
+  if (!consumeCallTargetWork(WorkRemaining))
+    return false;
+  MedOp Op = Original;
+  for (unsigned I = 0; I < Op.NumInputs; ++I)
+    Op.Inputs[I] = read(Op.Inputs[I]);
+  if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+      Op.Opcode == NdOp::INTRINSIC)
+    for (auto &[K, Version] : Versions) {
+      if (!consumeCallTargetWork(WorkRemaining))
+        return false;
+      if (std::get<0>(K) == MedVar::Reg &&
+          (Op.Opcode == NdOp::INTRINSIC ||
+           std::get<2>(K) != getTargetRegInfo(Architecture).StackPointer))
+        Version = Next++;
+    }
+  if (Op.Output.Size && !Op.Output.isConst()) {
+    // A narrow write also invalidates the old wider register value. Its
+    // missing definition becomes an opaque root, never the preceding bits.
+    if (Op.Output.Kind == MedVar::Reg) {
+      if (Op.Output.RegOff > UINT64_MAX - Op.Output.Size)
+        return false;
+      for (auto &[K, Version] : Versions) {
+        if (!consumeCallTargetWork(WorkRemaining))
+          return false;
+        if (std::get<0>(K) == MedVar::Reg &&
+            std::get<2>(K) < Op.Output.RegOff + Op.Output.Size &&
+            Op.Output.RegOff < std::get<2>(K) + std::get<3>(K))
+          Version = Next++;
+      }
+    }
+    Op.Output.SSAVer = Versions[Key{Op.Output.Kind, Op.Output.Id,
+                                    Op.Output.RegOff, Op.Output.Size}] = Next++;
+  }
+  for (auto &Auxiliary : Op.IntrinsicOutputs) {
+    if (!consumeCallTargetWork(WorkRemaining))
+      return false;
+    if (Auxiliary.Size && !Auxiliary.isConst())
+      Auxiliary.SSAVer = Versions[Key{Auxiliary.Kind, Auxiliary.Id,
+                                      Auxiliary.RegOff, Auxiliary.Size}] =
+          Next++;
+  }
+  Proof.Ops.push_back(std::move(Op));
+  return true;
+}
+
+std::optional<MedCallTarget>
+PreSSAMedCallTargets::resolve(const MedBlock &Block, const MedVar &Value,
+                              size_t *WorkRemaining) {
+  if (Failed || Architecture == Arch::Unknown ||
+      Block.Ops.size() > limits::kMaxCallSetupStackProofWork ||
+      Value.Size != getTargetRegInfo(Architecture).PointerSize)
+    return std::nullopt;
+  size_t OwnWork = limits::ir::kSourceFrameAnalysisRemaining;
+  if (!WorkRemaining)
+    WorkRemaining = &OwnWork;
+  // The versions of earlier operations do not depend on later ones, so the
+  // block's prefix is versioned once across queries.
+  while (Proof.Ops.size() < Block.Ops.size())
+    if (!version(Block.Ops[Proof.Ops.size()], WorkRemaining)) {
+      Failed = true;
+      return std::nullopt;
+    }
+  return resolveMedCallTarget(Proof, Proof.Ops.size(), read(Value),
+                              WorkRemaining);
+}
+
+std::optional<MedCallTarget> resolvePreSSAMedCallTarget(const MedBlock &Block,
+                                                        const MedVar &Value,
+                                                        Arch Architecture,
+                                                        size_t *WorkRemaining) {
+  return PreSSAMedCallTargets(Architecture)
+      .resolve(Block, Value, WorkRemaining);
+}
+
+std::map<size_t, MedCallTarget>
+resolveLowBlockCallTargets(const LowBlock &Block, Arch Architecture,
+                           size_t *WorkRemaining) {
+  std::map<size_t, MedCallTarget> Result;
+  if (Architecture == Arch::Unknown ||
+      Block.Ops.size() > limits::kMaxCallSetupStackProofWork ||
+      std::none_of(Block.Ops.begin(), Block.Ops.end(), [](const LowOp &O) {
+        return O.Opcode == NdOp::INDIR_CALL && O.NumInputs == 1 &&
+               !O.Inputs[0].isConst();
+      }))
+    return Result;
+  size_t OwnWork = limits::ir::kSourceFrameAnalysisRemaining;
+  if (!WorkRemaining)
+    WorkRemaining = &OwnWork;
+  using Key = std::tuple<VnodeSpace, uint64_t, uint16_t>;
+  std::map<Key, int> Identities;
+  const auto Convert = [&](const NdVar &V) {
+    if (V.isConst())
+      return MedVar::makeConst(V.Offset, V.Size, V.Provenance,
+                               V.AddressOwnerVA);
+    MedVar M;
+    M.Size = V.Size;
+    M.TheArch = Architecture;
+    M.Kind = V.isReg() ? MedVar::Reg : MedVar::Temp;
+    if (V.isReg())
+      M.RegOff = V.Offset;
+    if (!V.isReg() && !V.isTemp())
+      return MedVar::makeUnspecified(V.Size, Architecture);
+    const auto [It, Inserted] = Identities.try_emplace(
+        Key{V.Space, V.Offset, V.Size}, static_cast<int>(Identities.size()));
+    M.Id = It->second;
+    return M;
+  };
+  MedBlock Prefix;
+  PreSSAMedCallTargets Targets(Architecture);
+  for (size_t I = 0; I < Block.Ops.size(); ++I) {
+    if (!consumeCallTargetWork(WorkRemaining))
+      return {};
+    const auto &O = Block.Ops[I];
+    if (O.NumInputs > std::size(O.Inputs))
+      return {};
+    if (O.Opcode == NdOp::INDIR_CALL && O.NumInputs == 1 &&
+        !O.Inputs[0].isConst())
+      if (const auto Target =
+              Targets.resolve(Prefix, Convert(O.Inputs[0]), WorkRemaining))
+        Result.emplace(I, *Target);
+    MedOp M;
+    M.Opcode = O.Opcode;
+    M.Addr = O.Addr;
+    M.OriginSeq = O.Seq;
+    M.MemoryOrdering = O.MemoryOrdering;
+    M.MemoryAddressSpace = O.MemoryAddressSpace;
+    M.Output = Convert(O.Output);
+    for (unsigned J = 0; J < O.NumInputs; ++J)
+      M.addInput(Convert(O.Inputs[J]));
+    Prefix.Ops.push_back(std::move(M));
+  }
+  return *WorkRemaining ? Result : std::map<size_t, MedCallTarget>();
+}
+
 static int defIndexInBlock(const MedBlock &Blk, int FromIdx, const MedVar &V) {
   for (int J = FromIdx - 1; J >= 0; --J) {
     const auto &O = Blk.Ops[J];
@@ -475,7 +687,11 @@ static int defIndexInBlock(const MedBlock &Blk, int FromIdx, const MedVar &V) {
 
 static int peelCopyDefIndex(const MedBlock &Blk, int FromIdx, MedVar &V) {
   int Idx = defIndexInBlock(Blk, FromIdx, V);
-  for (int Depth = 0; Idx >= 0 && Depth < 16; ++Depth) {
+  for (int Depth = 0;
+       Idx >= 0 &&
+       Depth <
+           ::neverd::limits::ir::kMedABIPassSupportPeelCopyDefIndexDepthLimit;
+       ++Depth) {
     const MedOp &Def = Blk.Ops[Idx];
     if ((Def.Opcode != NdOp::COPY && Def.Opcode != NdOp::INT_ZEXT &&
          Def.Opcode != NdOp::INT_SEXT && Def.Opcode != NdOp::SUBBYTES) ||
@@ -535,7 +751,9 @@ std::optional<int>
 resolveIndirectTargetArgIdx(const MedBlock &Blk, int FromIdx,
                             const TargetRegInfo &TRI, const MedVar &V,
                             const IntegerArgumentLayout &Layout, int Depth) {
-  if (Depth > 16 || V.isConst())
+  if (Depth > ::neverd::limits::ir::
+                  kMedABIPassSupportResolveIndirectTargetArgIdxDepthLimit ||
+      V.isConst())
     return std::nullopt;
 
   int DefIdx = -1;
@@ -600,13 +818,6 @@ resolveIndirectTargetArgIdx(const MedBlock &Blk, int FromIdx,
 // outgoing call-frame base in a predecessor and emits the STOREs and CALL in a
 // successor.  Looking only in the use block loses that exact definition and
 // silently drops every cdecl argument.
-struct MedDefSite {
-  const MedBlock *Block = nullptr;
-  const MedOp *Op = nullptr;
-  const PhiNode *Phi = nullptr;
-  bool Ambiguous = false;
-};
-
 static bool sameDefIdentity(const MedVar &A, const MedVar &B) {
   return A.Kind == B.Kind && A.Id == B.Id && A.SSAVer == B.SSAVer &&
          A.RegOff == B.RegOff;
@@ -643,15 +854,42 @@ static MedDefSite findFuncDef(const MedFunc &Func, const MedVar &V) {
   return Site;
 }
 
+// The same sites as findFuncDef, keyed by its identity, built in one scan.
+MedDefSite MedDefSiteIndex::find(const MedVar &V) {
+  if (!Built) {
+    for (const MedBlock &Block : Func.Blocks) {
+      auto Record = [&](const MedVar &Output, const MedOp *Op,
+                        const PhiNode *Phi) {
+        auto [It, Inserted] = Sites.try_emplace(key(Output));
+        if (Inserted)
+          It->second = {&Block, Op, Phi, false};
+        else
+          It->second = {nullptr, nullptr, nullptr, true};
+      };
+      for (const PhiNode &Phi : Block.Phis)
+        Record(Phi.Output, nullptr, &Phi);
+      for (const MedOp &Op : Block.Ops)
+        if (Op.Output.Size > 0)
+          Record(Op.Output, &Op, nullptr);
+    }
+    Built = true;
+  }
+  const auto It = Sites.find(key(V));
+  return It == Sites.end() ? MedDefSite{} : It->second;
+}
+
 // Unlike the heuristic argument scanner, call-boundary alias proofs may not
 // accept truncation, guessed live-ins, loads, PHIs or overflowing arithmetic.
 static std::optional<int64_t> authenticatedStackOffset(const MedFunc &Func,
                                                        const TargetRegInfo &TRI,
                                                        const MedVar &V,
-                                                       unsigned Depth) {
-  if (Depth > 128 || V.Size != TRI.PointerSize || V.isConst())
+                                                       unsigned Depth,
+                                                       MedDefSiteIndex *Defs) {
+  if (Depth > ::neverd::limits::ir::
+                  kMedABIPassSupportAuthenticatedStackOffsetDepthLimit ||
+      V.Size != TRI.PointerSize || V.isConst())
     return std::nullopt;
-  const auto Site = findFuncDef(Func, V);
+  const auto Site = Defs ? Defs->find(V) : findFuncDef(Func, V);
   if (Site.Ambiguous || !Site.Op || Site.Op->Output.Size != V.Size ||
       Site.Op->Output.TheArch != V.TheArch ||
       Site.Op->Output.RenameTag != V.RenameTag)
@@ -661,7 +899,7 @@ static std::optional<int64_t> authenticatedStackOffset(const MedFunc &Func,
       safety::detail::isAuthenticatedEntryRegisterLiveIn(Func, V))
     return 0;
   if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
-    return authenticatedStackOffset(Func, TRI, Op.Inputs[0], Depth + 1);
+    return authenticatedStackOffset(Func, TRI, Op.Inputs[0], Depth + 1, Defs);
   if ((Op.Opcode != NdOp::INT_ADD && Op.Opcode != NdOp::INT_SUB) ||
       Op.NumInputs != 2)
     return std::nullopt;
@@ -678,8 +916,8 @@ static std::optional<int64_t> authenticatedStackOffset(const MedFunc &Func,
       (Constant.Size < TRI.PointerSize &&
        (*Delta < 0 || static_cast<uint64_t>(*Delta) != Constant.ConstVal)))
     return std::nullopt;
-  auto Base =
-      authenticatedStackOffset(Func, TRI, Op.Inputs[BaseIndex], Depth + 1);
+  auto Base = authenticatedStackOffset(Func, TRI, Op.Inputs[BaseIndex],
+                                       Depth + 1, Defs);
   if (!Base || !Delta)
     return std::nullopt;
   return safety::detail::checkedStackOffset(*Base, *Delta,
@@ -694,35 +932,47 @@ std::set<va_t> findFrameLocalLeafCallees(const std::vector<MedFunc> &Funcs,
     if (!Seen.insert(F.Entry).second)
       Duplicates.insert(F.Entry);
     bool Safe = !F.Blocks.empty();
+    // This summary never changes F. Share its definition index across all
+    // store-address chains, including definitions after the stores themselves.
+    MedDefSiteIndex DefSites(F);
     std::set<va_t> BlockEntries;
     for (const auto &B : F.Blocks)
       BlockEntries.insert(B.StartAddr);
     for (const auto &B : F.Blocks) {
       if (B.Ops.empty() ||
-          (B.Succs.empty() && B.Ops.back().Opcode != NdOp::RETURN))
+          (B.Succs.empty() && B.Ops.back().Opcode != NdOp::RETURN)) {
         Safe = false;
+        break;
+      }
       for (const auto &Op : B.Ops) {
         if (isAbiRecoveryBarrier(Op) || Op.Opcode == NdOp::INDIR_BR ||
             Op.Opcode >= NdOp::_COUNT ||
             safety::detail::isAtomicMemoryAccess(Op.Opcode)) {
           Safe = false;
-          continue;
+          break;
         }
         if ((Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR) &&
             (Op.NumInputs == 0 || !Op.Inputs[0].isConst() ||
-             !BlockEntries.count(Op.Inputs[0].ConstVal)))
+             !BlockEntries.count(Op.Inputs[0].ConstVal))) {
           Safe = false;
+          break;
+        }
         if (Op.Opcode != NdOp::STORE)
           continue;
         const auto *Address = safety::detail::memoryAddress(Op);
         const auto *Value = safety::detail::storedValue(Op);
         auto Offset =
-            Address ? authenticatedStackOffset(F, TRI, *Address) : std::nullopt;
+            Address ? authenticatedStackOffset(F, TRI, *Address, 0, &DefSites)
+                    : std::nullopt;
         if (!Offset || !Value || Value->Size == 0 ||
             Op.MemoryOrdering != NdMemoryOrdering::None ||
-            *Offset > -static_cast<int64_t>(Value->Size))
+            *Offset > -static_cast<int64_t>(Value->Size)) {
           Safe = false;
+          break;
+        }
       }
+      if (!Safe)
+        break;
     }
     if (Safe)
       Result.insert(F.Entry);
@@ -736,8 +986,9 @@ static bool preservesSpillAcrossCall(const MedBlock &Blk, int CallIndex,
                                      const MedVar &Address, uint16_t Size,
                                      const AbiSpillContext &Context,
                                      int Depth) {
-  if (Depth >= 16 || !Context.FrameLocalLeafCallees ||
-      Context.TRI.TheArch != Arch::AArch64)
+  if (Depth >= ::neverd::limits::ir::
+                   kMedABIPassSupportPreservesSpillAcrossCallDepthLimit ||
+      !Context.FrameLocalLeafCallees || Context.TRI.TheArch != Arch::AArch64)
     return false;
   auto Offset = authenticatedStackOffset(Context.Func, Context.TRI, Address);
   if (!Offset || Size == 0 || *Offset > -static_cast<int64_t>(Size))
@@ -801,34 +1052,77 @@ static std::optional<StackAddressStep> parseStackAddressStep(const MedOp &Op) {
   }
 }
 
+// stackPtrDelta's answer for a value: the offset, how many levels below the
+// value its walk went, and whether the depth cap cut that walk short.
+struct StackDeltaWalk {
+  std::optional<int64_t> Delta;
+  int Height = 0;
+  bool Capped = false;
+};
+
+// stackPtrDelta's answers within one query, by value identity and depth. The
+// depth cap makes an answer depend on the depth it was asked at; within that,
+// a PHI DAG shares each answer instead of re-walking it once per path.
+// Most queries hold a few answers, so the first ones stay inline.
+using StackDeltaMemo =
+    llvm::SmallDenseMap<std::tuple<int, int, int, uint64_t, int>,
+                        StackDeltaWalk, 8>;
+
+static StackDeltaWalk stackPtrDeltaAt(const MedFunc &Func,
+                                      const TargetRegInfo &TRI, const MedVar &V,
+                                      int Depth, MedDefSiteIndex *Defs,
+                                      StackDeltaMemo &Memo);
+
 std::optional<int64_t> stackPtrDelta(const MedFunc &Func,
                                      const TargetRegInfo &TRI, const MedVar &V,
-                                     int Depth) {
-  if (Depth > 128 || V.isConst())
-    return std::nullopt;
+                                     int Depth, MedDefSiteIndex *Defs,
+                                     BinaryFormat Format) {
+  StackDeltaMemo Memo;
+  const auto Delta = stackPtrDeltaAt(Func, TRI, V, Depth, Defs, Memo).Delta;
+  if (Delta || Depth)
+    return Delta;
+  // Reuse the entry-offset owner's complete loop proof when the local ABI
+  // walk cannot resolve mutually dependent stack PHIs. Calls and outgoing
+  // stores must share that origin instead of losing later stack arguments.
+  return entryStackOffset(Func, V, TRI.TheArch, Format, Func.EntryKind);
+}
 
-  const MedDefSite Site = findFuncDef(Func, V);
+static StackDeltaWalk stackPtrDeltaUncached(const MedFunc &Func,
+                                            const TargetRegInfo &TRI,
+                                            const MedVar &V, int Depth,
+                                            MedDefSiteIndex *Defs,
+                                            StackDeltaMemo &Memo) {
+  StackDeltaWalk Walk;
+  auto Below = [&](const MedVar &Next) {
+    const StackDeltaWalk Step =
+        stackPtrDeltaAt(Func, TRI, Next, Depth + 1, Defs, Memo);
+    Walk.Height = std::max(Walk.Height, Step.Height + 1);
+    Walk.Capped |= Step.Capped;
+    return Step.Delta;
+  };
+  const MedDefSite Site = Defs ? Defs->find(V) : findFuncDef(Func, V);
   if (Site.Ambiguous)
-    return std::nullopt;
+    return Walk;
   if (Site.Phi) {
     std::optional<int64_t> Common;
     for (const auto &[Pred, Incoming] : Site.Phi->Args) {
       (void)Pred;
       if (sameDefIdentity(Incoming, V))
         continue;
-      auto Delta = stackPtrDelta(Func, TRI, Incoming, Depth + 1);
+      auto Delta = Below(Incoming);
       if (!Delta || (Common && *Common != *Delta))
-        return std::nullopt;
+        return Walk;
       Common = *Delta;
     }
-    return Common;
+    Walk.Delta = Common;
+    return Walk;
   }
   if (!Site.Op) {
     // No function-wide definition: the live-in stack pointer is the zero
     // reference; anything else is not SP-derived.
     if (V.Kind == MedVar::Reg && V.RegOff == TRI.StackPointer)
-      return 0;
-    return std::nullopt;
+      Walk.Delta = 0;
+    return Walk;
   }
   const MedOp *Def = Site.Op;
   const MedBlock &DefBlock = *Site.Block;
@@ -840,26 +1134,52 @@ std::optional<int64_t> stackPtrDelta(const MedFunc &Func,
     // cap and report the whole push chain as un-traceable, collapsing every
     // pushed argument onto slot 0.
     if (In.Kind == MedVar::Reg && In.RegOff == TRI.StackPointer &&
-        In.Id == V.Id && In.SSAVer == V.SSAVer)
-      return 0;
+        In.Id == V.Id && In.SSAVer == V.SSAVer) {
+      Walk.Delta = 0;
+      return Walk;
+    }
   }
   if (auto Step = parseStackAddressStep(*Def)) {
-    auto Base = stackPtrDelta(Func, TRI, *Step->Base, Depth + 1);
-    if (!Base)
-      return std::nullopt;
-    return safety::detail::checkedStackOffset(*Base, Step->Delta,
-                                              Step->Subtract);
+    if (auto Base = Below(*Step->Base))
+      Walk.Delta = safety::detail::checkedStackOffset(*Base, Step->Delta,
+                                                      Step->Subtract);
+    return Walk;
   }
   if (Def->Opcode == NdOp::LOAD) {
     const int LoadIndex = static_cast<int>(Def - DefBlock.Ops.data());
-    const auto Store = reachingStore(DefBlock, LoadIndex);
-    if (!Store)
-      return std::nullopt;
-    return stackPtrDelta(Func, TRI,
-                         *safety::detail::storedValue(DefBlock.Ops[*Store]),
-                         Depth + 1);
+    if (const auto Store = reachingStore(DefBlock, LoadIndex))
+      Walk.Delta = Below(*safety::detail::storedValue(DefBlock.Ops[*Store]));
+    return Walk;
   }
-  return std::nullopt;
+  return Walk;
+}
+
+static StackDeltaWalk stackPtrDeltaAt(const MedFunc &Func,
+                                      const TargetRegInfo &TRI, const MedVar &V,
+                                      int Depth, MedDefSiteIndex *Defs,
+                                      StackDeltaMemo &Memo) {
+  if (V.isConst())
+    return {};
+  if (Depth > ::neverd::limits::ir::kMedABIPassSupportStackPtrDeltaAtDepthLimit)
+    return {std::nullopt, 0, /*Capped=*/true};
+  // An answer no cap shaped serves any query whose walk stays under the cap,
+  // so the calls of one function share their stack-pointer chains.
+  if (Defs)
+    if (const auto *Known = Defs->stackDelta(V, TRI.StackPointer);
+        Known &&
+        Depth + Known->Height <=
+            ::neverd::limits::ir::kMedABIPassSupportStackPtrDeltaAtDepthLimit)
+      return {Known->Delta, Known->Height, false};
+  // The answer reads V only through its definition identity.
+  const auto Key = std::make_tuple(static_cast<int>(V.Kind), V.Id, V.SSAVer,
+                                   V.RegOff, Depth);
+  if (const auto It = Memo.find(Key); It != Memo.end())
+    return It->second;
+  const auto Walk = stackPtrDeltaUncached(Func, TRI, V, Depth, Defs, Memo);
+  Memo.try_emplace(Key, Walk);
+  if (Defs && !Walk.Capped)
+    Defs->rememberStackDelta(V, TRI.StackPointer, {Walk.Delta, Walk.Height});
+  return Walk;
 }
 
 // Whether \p V is, or derives from (through copies, width casts and a constant
@@ -872,7 +1192,9 @@ std::optional<int64_t> stackPtrDelta(const MedFunc &Func,
 // indirect-sret call sites.
 bool derivesFromFrameReg(const MedBlock &Blk, const TargetRegInfo &TRI,
                          const MedVar &V, int Depth) {
-  if (Depth > 64 || V.isConst())
+  if (Depth > ::neverd::limits::ir::
+                  kMedABIPassSupportDerivesFromFrameRegDepthLimit ||
+      V.isConst())
     return false;
   if (V.Kind == MedVar::Reg && TRI.isFrameReg(V.RegOff))
     return true;
@@ -904,12 +1226,15 @@ static SpOffsetKey spOffsetKey(const MedVar &V) {
 // constant).
 void buildCallSpOffsets(const MedFunc &Func, const TargetRegInfo &TRI,
                         const MedVar &V, int64_t Off,
-                        std::map<SpOffsetKey, int64_t> &Map, int Depth) {
-  if (Depth > 128 || V.isConst())
+                        std::map<SpOffsetKey, int64_t> &Map, int Depth,
+                        MedDefSiteIndex *Defs) {
+  if (Depth > ::neverd::limits::ir::
+                  kMedABIPassSupportBuildCallSpOffsetsDepthLimit ||
+      V.isConst())
     return;
   if (!Map.emplace(spOffsetKey(V), Off).second)
     return; // already visited (e.g. the entry SP self-copy)
-  const MedDefSite Site = findFuncDef(Func, V);
+  const MedDefSite Site = Defs ? Defs->find(V) : findFuncDef(Func, V);
   if (Site.Ambiguous)
     return;
   // A PHI can merge different concrete stack deltas.  The relative fallback
@@ -929,7 +1254,8 @@ void buildCallSpOffsets(const MedFunc &Func, const TargetRegInfo &TRI,
   auto BaseOffset =
       safety::detail::checkedStackOffset(Off, Step->Delta, !Step->Subtract);
   if (BaseOffset)
-    buildCallSpOffsets(Func, TRI, *Step->Base, *BaseOffset, Map, Depth + 1);
+    buildCallSpOffsets(Func, TRI, *Step->Base, *BaseOffset, Map, Depth + 1,
+                       Defs);
 }
 
 // Offset of store-address \p V above the call SP, resolved against the call
@@ -939,19 +1265,20 @@ void buildCallSpOffsets(const MedFunc &Func, const TargetRegInfo &TRI,
 std::optional<int64_t> relStackOff(const MedFunc &Func,
                                    const TargetRegInfo &TRI, const MedVar &V,
                                    const std::map<SpOffsetKey, int64_t> &Map,
-                                   int Depth) {
-  if (Depth > 128 || V.isConst())
+                                   int Depth, MedDefSiteIndex *Defs) {
+  if (Depth > ::neverd::limits::ir::kMedABIPassSupportRelStackOffDepthLimit ||
+      V.isConst())
     return std::nullopt;
   if (auto It = Map.find(spOffsetKey(V)); It != Map.end())
     return It->second;
-  const MedDefSite Site = findFuncDef(Func, V);
+  const MedDefSite Site = Defs ? Defs->find(V) : findFuncDef(Func, V);
   if (Site.Ambiguous)
     return std::nullopt;
   if (Site.Phi) {
     std::optional<int64_t> Common;
     for (const auto &[Pred, Incoming] : Site.Phi->Args) {
       (void)Pred;
-      auto Rel = relStackOff(Func, TRI, Incoming, Map, Depth + 1);
+      auto Rel = relStackOff(Func, TRI, Incoming, Map, Depth + 1, Defs);
       if (!Rel || (Common && *Common != *Rel))
         return std::nullopt;
       Common = *Rel;
@@ -964,30 +1291,57 @@ std::optional<int64_t> relStackOff(const MedFunc &Func,
   auto Step = parseStackAddressStep(*Def);
   if (!Step)
     return std::nullopt;
-  auto Base = relStackOff(Func, TRI, *Step->Base, Map, Depth + 1);
+  auto Base = relStackOff(Func, TRI, *Step->Base, Map, Depth + 1, Defs);
   if (!Base)
     return std::nullopt;
   return safety::detail::checkedStackOffset(*Base, Step->Delta, Step->Subtract);
 }
 
-std::string relocCalleeName(const BinaryImage &Img, va_t InsnAddr) {
-  for (const auto &Rel : Img.Relocations) {
-    // The branch relocation sits at the instruction's displacement field: at
-    // the instruction address itself for AArch64/ARM `bl` (the imm is in the
-    // opcode word), but one byte in for x86 `call rel32` (the 0xE8 opcode
-    // precedes the 4-byte displacement).  Accept both so a relocatable-object
-    // external call is named on x86 too (otherwise its placeholder-0 target
-    // resolves to whatever symbol sits at VA 0 — e.g. the function itself,
-    // lifting a libc call into a bogus self-recursion).
-    if ((Rel.Address != InsnAddr && Rel.Address != InsnAddr + 1) ||
-        Rel.SymbolName.empty())
-      continue;
-    llvm::StringRef Name = stripLeadingUnderscores(Rel.SymbolName);
-    if (libc::isKnownFunction(Name))
-      return Name.str();
-    return Rel.SymbolName;
+const RelocationEntry *RelocationSymbolIndex::at(va_t Address) const {
+  if (!Named) {
+    Named.emplace();
+    for (size_t I = 0; I < Img.Relocations.size(); ++I)
+      if (!Img.Relocations[I].SymbolName.empty())
+        Named->emplace_back(Img.Relocations[I].Address, I);
+    std::sort(Named->begin(), Named->end());
   }
-  return {};
+  const auto It = std::lower_bound(Named->begin(), Named->end(),
+                                   std::make_pair(Address, size_t{0}));
+  return It != Named->end() && It->first == Address
+             ? &Img.Relocations[It->second]
+             : nullptr;
+}
+
+std::string relocCalleeName(const BinaryImage &Img, va_t InsnAddr,
+                            const RelocationSymbolIndex *Index) {
+  // The branch relocation sits at the instruction's displacement field: at
+  // the instruction address itself for AArch64/ARM `bl` (the imm is in the
+  // opcode word), but one byte in for x86 `call rel32` (the 0xE8 opcode
+  // precedes the 4-byte displacement).  Accept both so a relocatable-object
+  // external call is named on x86 too (otherwise its placeholder-0 target
+  // resolves to whatever symbol sits at VA 0 — e.g. the function itself,
+  // lifting a libc call into a bogus self-recursion).  The first such
+  // relocation in the image's order names it.
+  const RelocationEntry *Rel = nullptr;
+  if (Index) {
+    const RelocationEntry *At = Index->at(InsnAddr);
+    const RelocationEntry *After = Index->at(InsnAddr + 1);
+    Rel = !At || (After && After < At) ? After : At;
+  } else {
+    for (const auto &Candidate : Img.Relocations)
+      if ((Candidate.Address == InsnAddr ||
+           Candidate.Address == InsnAddr + 1) &&
+          !Candidate.SymbolName.empty()) {
+        Rel = &Candidate;
+        break;
+      }
+  }
+  if (!Rel)
+    return {};
+  llvm::StringRef Name = stripLeadingUnderscores(Rel->SymbolName);
+  if (libc::isKnownFunction(Name))
+    return Name.str();
+  return Rel->SymbolName;
 }
 
 // The value an argument-register-defining op contributes to its slot: the
@@ -1007,16 +1361,19 @@ static MedVar argRegSourceValue(const MedOp &Op) {
   return Op.Output;
 }
 
-// Resolve synthetic low-register observations back to the whole argument
-// written by the same machine instruction. Multiple sibling aliases may
-// intervene, but a real partial write, another instruction, or a call ends
-// the proof. Source identity includes constant provenance and owner as well
-// as the exact register/temporary SSA occurrence.
-MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
-                                const TargetRegInfo &TRI,
-                                const IntegerArgumentLayout &Layout) {
+// Resolve synthetic low-register observations back to the whole argument the
+// register holds: its nearest write, where that writes the same source.  SSA
+// syncs a low register where an instruction reads it, so the write may be an
+// earlier instruction's (`lea rdi, [rip + s]` before `mov ebx, edi`).
+// Multiple sibling aliases may intervene, but a real partial write or a call
+// ends the proof. Source identity includes constant provenance and owner as
+// well as the exact register/temporary SSA occurrence; a temporary the block
+// copies a value into stands for that value (`lea` computes the address into
+// one, copies it to the register and syncs the low bytes from it).
+int wholeArgRegWriteInBlock(const MedBlock &Blk, int J,
+                            const TargetRegInfo &TRI,
+                            const IntegerArgumentLayout &Layout) {
   const MedOp &Op = Blk.Ops[J];
-  MedVar Base = argRegSourceValue(Op);
   // Only a sub-register sync whose source is not the register itself needs the
   // sibling lookup; everything else (a plain copy, or `subpiece(Xn, 0)`) is
   // already resolved by argRegSourceValue.
@@ -1025,21 +1382,36 @@ MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
       Op.Output.Kind != MedVar::Reg ||
       (Op.Inputs[0].Kind == MedVar::Reg &&
        Op.Inputs[0].RegOff == Op.Output.RegOff))
-    return Base;
+    return -1;
   const MedVar &Src = Op.Inputs[0];
-  auto sameSource = [&](const MedVar &Candidate) {
-    return sameAddressValue(Candidate, Src) &&
-           (!Src.isConst() || (Candidate.ConstVal == Src.ConstVal &&
-                               Candidate.Provenance == Src.Provenance &&
-                               Candidate.AddressOwnerVA == Src.AddressOwnerVA));
-  };
   const int ArgIdx = Layout.registerIndex(Op.Output.RegOff);
   if (Op.OriginSeq >= 0 || Src.Size <= Op.Output.Size || ArgIdx < 0)
-    return Base;
+    return -1;
+  auto matches = [](const MedVar &Candidate, const MedVar &Value) {
+    return sameAddressValue(Candidate, Value) &&
+           (!Value.isConst() ||
+            (Candidate.ConstVal == Value.ConstVal &&
+             Candidate.Provenance == Value.Provenance &&
+             Candidate.AddressOwnerVA == Value.AddressOwnerVA));
+  };
+  // The value \p V holds where the block copied one into it before the sync.
+  auto valueOf = [&](const MedVar &V) -> const MedVar & {
+    if (!V.isConst())
+      for (int K = J - 1; K >= 0; --K) {
+        const MedOp &D = Blk.Ops[K];
+        if (D.Opcode == NdOp::COPY && D.NumInputs == 1 &&
+            sameAddressValue(D.Output, V))
+          return D.Inputs[0];
+      }
+    return V;
+  };
+  auto sameSource = [&](const MedVar &Candidate) {
+    return matches(Candidate, Src) || matches(valueOf(Candidate), valueOf(Src));
+  };
   const uint64_t Register = Layout.Registers[ArgIdx];
   for (int K = J - 1; K >= 0; --K) {
     const MedOp &W = Blk.Ops[K];
-    if (W.Addr != Op.Addr || isAbiRecoveryBarrier(W))
+    if (isAbiRecoveryBarrier(W))
       break;
     if (W.Output.Kind != MedVar::Reg || W.Output.Size == 0)
       continue;
@@ -1057,10 +1429,18 @@ MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
     if (W.Opcode == NdOp::COPY && W.Output.RegOff == Register &&
         W.Output.Size == Src.Size && W.NumInputs == 1 &&
         sameSource(W.Inputs[0]))
-      return Src;
+      return K;
     break;
   }
-  return Base;
+  return -1;
+}
+
+MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
+                                const TargetRegInfo &TRI,
+                                const IntegerArgumentLayout &Layout) {
+  if (wholeArgRegWriteInBlock(Blk, J, TRI, Layout) >= 0)
+    return Blk.Ops[J].Inputs[0];
+  return argRegSourceValue(Blk.Ops[J]);
 }
 
 const PhiNode *selectAuthoritativeArgPhi(const MedFunc &Func,
@@ -1130,6 +1510,30 @@ const PhiNode *selectAuthoritativeArgPhi(const MedFunc &Func,
   return Best;
 }
 
+const PhiNode *argPhiReachingCall(const MedFunc &Func, const MedBlock &Block,
+                                  int CallIdx, const TargetRegInfo &TRI,
+                                  int ArgIdx,
+                                  const IntegerArgumentLayout &Layout,
+                                  BinaryFormat Format) {
+  if (ArgIdx < 0 || ArgIdx >= static_cast<int>(Layout.Registers.size()))
+    return nullptr;
+  const uint64_t ArgReg = Layout.Registers[ArgIdx];
+  const auto ArgBytes = static_cast<uint16_t>(TRI.PointerSize);
+  auto writesArgument = [&](const MedVar &V) {
+    return V.Kind == MedVar::Reg && V.Size > 0 &&
+           Layout.registerIndex(V.RegOff) == ArgIdx;
+  };
+  const int End = std::min(CallIdx, static_cast<int>(Block.Ops.size()));
+  for (int J = 0; J < End; ++J) {
+    const MedOp &Op = Block.Ops[J];
+    if (writesArgument(Op.Output) ||
+        llvm::any_of(Op.IntrinsicOutputs, writesArgument) ||
+        callClobbersRegister(Op, ArgReg, ArgBytes, TRI, Format))
+      return nullptr;
+  }
+  return selectAuthoritativeArgPhi(Func, Block, TRI, ArgIdx, Layout);
+}
+
 // Value reaching argument register \p ArgIdx at the call in (\p BlockId,
 // \p OpIdx), found by walking the CFG backwards into predecessor blocks: the
 // nearest write to that argument register, then a block PHI for it.  Returns
@@ -1147,21 +1551,42 @@ const PhiNode *selectAuthoritativeArgPhi(const MedFunc &Func,
 std::optional<MedVar>
 findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
                    int BlockId, int ArgIdx, const IntegerArgumentLayout &Layout,
-                   bool AllowUnknownLiveIn, bool *FromLiveIn, bool *FoundDef) {
-  std::map<int, const MedBlock *> ById;
-  for (const auto &B : Func.Blocks)
-    ById[B.Id] = &B;
+                   bool AllowUnknownLiveIn, bool *FromLiveIn, bool *FoundDef,
+                   int CallIdx, BinaryFormat Format,
+                   const MedBlockIdIndex *Blocks) {
+  std::optional<MedBlockIdIndex> OwnBlocks;
+  const MedBlockIdIndex &ById = Blocks ? *Blocks : OwnBlocks.emplace(Func);
 
-  auto scanBlock = [&](const MedBlock &B, int UpTo) -> std::optional<MedVar> {
+  const uint64_t ArgReg =
+      ArgIdx >= 0 && ArgIdx < static_cast<int>(Layout.Registers.size())
+          ? Layout.Registers[ArgIdx]
+          : 0;
+  const auto ArgBytes = static_cast<uint16_t>(TRI.PointerSize);
+  // The nearest write to the register before \p UpTo, or what the nearest
+  // call that may change the register left there (\p Left).  In the call's
+  // own block another barrier to call-setup recovery (an intrinsic not
+  // proven to keep the setup) ends the search there, as the caller's
+  // in-block scan stops at it.
+  auto scanOps = [&](const MedBlock &B, int UpTo, bool &Left,
+                     bool CallBlock = false) -> std::optional<MedVar> {
     for (int J = UpTo - 1; J >= 0; --J) {
       const auto &Op = B.Ops[J];
       if (Op.Output.Kind == MedVar::Reg && Op.Output.Size > 0 &&
           Layout.registerIndex(Op.Output.RegOff) == ArgIdx)
         return argRegSourceValueInBlock(B, J, TRI, Layout);
+      for (const MedVar &Aux : Op.IntrinsicOutputs)
+        if (Aux.Kind == MedVar::Reg && Aux.Size > 0 &&
+            Layout.registerIndex(Aux.RegOff) == ArgIdx)
+          return Aux;
+      if (ArgReg)
+        if (auto Value =
+                valueLeftByCall(Func, Op, ArgReg, ArgBytes, TRI, Format)) {
+          Left = true;
+          return Value;
+        }
+      if (CallBlock && Op.Opcode == NdOp::INTRINSIC && isAbiRecoveryBarrier(Op))
+        return std::nullopt;
     }
-    if (const PhiNode *Phi =
-            selectAuthoritativeArgPhi(Func, B, TRI, ArgIdx, Layout))
-      return Phi->Output;
     return std::nullopt;
   };
 
@@ -1170,37 +1595,77 @@ findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
   if (FoundDef)
     *FoundDef = false;
 
-  auto It = ById.find(BlockId);
-  if (It == ById.end())
+  const MedBlock *LastCallBlock = ById.last(BlockId);
+  if (!LastCallBlock)
     return std::nullopt;
-  // The call block's straight-line ops were already handled by the caller (with
-  // its call-boundary stop); only its PHIs and the predecessor chain remain.
+  const MedBlock &CallBlock = *LastCallBlock;
+  // The caller took a write in the call's block before its call-boundary
+  // stop; whatever reaches the call also passes the call at that stop.
+  if (CallIdx >= 0) {
+    bool Left = false;
+    if (auto V = scanOps(
+            CallBlock,
+            std::min(CallIdx, static_cast<int>(CallBlock.Ops.size())), Left,
+            /*CallBlock=*/true)) {
+      if (FoundDef)
+        *FoundDef = !Left;
+      return V;
+    }
+  }
   if (const PhiNode *Phi =
-          selectAuthoritativeArgPhi(Func, *It->second, TRI, ArgIdx, Layout)) {
+          selectAuthoritativeArgPhi(Func, CallBlock, TRI, ArgIdx, Layout)) {
     if (FoundDef)
       *FoundDef = true;
     return Phi->Output;
   }
 
+  // A write or PHI ends a path back from the call, and so does a call that
+  // may change the register, or an exception handler's entry, where the
+  // unwinder leaves caller-saved registers unspecified.  The nearest write
+  // on any path wins, and the incoming value does where a path reaches the
+  // function's entry: only where calls end every path is the value theirs.
+  std::optional<MedVar> FirstLeft;
+  bool ReachedEntry = false;
   std::set<int> Visited{BlockId};
-  std::vector<int> Work(It->second->Preds.begin(), It->second->Preds.end());
+  std::vector<int> Work;
+  auto continuePaths = [&](const MedBlock &B) {
+    if (!B.ExceptionalPreds.empty() && !FirstLeft)
+      FirstLeft = MedVar::makeUnspecified(ArgBytes, TheArch);
+    if (B.Preds.empty() && B.ExceptionalPreds.empty())
+      ReachedEntry = true;
+    Work.insert(Work.end(), B.Preds.begin(), B.Preds.end());
+  };
+  continuePaths(CallBlock);
   while (!Work.empty()) {
     int BId = Work.back();
     Work.pop_back();
     if (!Visited.insert(BId).second)
       continue;
-    auto BIt = ById.find(BId);
-    if (BIt == ById.end())
+    const MedBlock *Pred = ById.last(BId);
+    if (!Pred)
       continue;
-    if (auto V = scanBlock(*BIt->second,
-                           static_cast<int>(BIt->second->Ops.size()))) {
+    const MedBlock &B = *Pred;
+    bool Left = false;
+    if (auto V = scanOps(B, static_cast<int>(B.Ops.size()), Left)) {
+      if (!Left) {
+        if (FoundDef)
+          *FoundDef = true;
+        return V;
+      }
+      if (!FirstLeft)
+        FirstLeft = V;
+      continue;
+    }
+    if (const PhiNode *Phi =
+            selectAuthoritativeArgPhi(Func, B, TRI, ArgIdx, Layout)) {
       if (FoundDef)
         *FoundDef = true;
-      return V;
+      return Phi->Output;
     }
-    Work.insert(Work.end(), BIt->second->Preds.begin(),
-                BIt->second->Preds.end());
+    continuePaths(B);
   }
+  if (FirstLeft && !ReachedEntry)
+    return FirstLeft;
 
   // No in-function definition reaches the call: the value is the live-in
   // (incoming parameter), as when a caller forwards its own argument straight
@@ -1323,7 +1788,10 @@ std::optional<MedVar> uniquePredNonNullGuard(const MedFunc &Func,
       return Def;
     };
     std::set<std::tuple<int, int, int, uint64_t>> Seen;
-    for (unsigned Depth = 0; Depth < 8; ++Depth) {
+    for (unsigned Depth = 0;
+         Depth < ::neverd::limits::ir::
+                     kMedABIPassSupportUniquePredNonNullGuardDepthLimit;
+         ++Depth) {
       if (!Seen.insert({static_cast<int>(Cond.Kind), Cond.Id, Cond.SSAVer,
                         Cond.RegOff})
                .second)

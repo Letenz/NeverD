@@ -266,3 +266,98 @@ TEST(AffineFrameState, CyclicEquationsAgreeWithIndependentPathConstraints) {
     }
   }
 }
+
+TEST(AffineFrameState, AlignmentStartsAnAnchorThatOffsetsKeep) {
+  // push ebp; push ebx (SP = -8); and esp, -16; sub esp, 0x90.
+  Proof P;
+  const auto Aligned = P.Graph.align(Frame::constant(-8), 16);
+  ASSERT_EQ(Aligned.K, Frame::Kind::Value);
+  ASSERT_NE(Aligned.Anchor, 0u);
+  EXPECT_EQ(Aligned.Offset, 0);
+  const auto Frame0 = P.Graph.adjust(Aligned, 0x90, true);
+  ASSERT_EQ(Frame0.K, Frame::Kind::Value);
+  EXPECT_EQ(Frame0.Anchor, Aligned.Anchor);
+  EXPECT_EQ(Frame0.Offset, -0x90);
+  // The same coordinate aligned again names the same anchor.
+  EXPECT_EQ(P.Graph.align(Frame::constant(-8), 16).Anchor, Aligned.Anchor);
+  // An anchored coordinate never equals an incoming-SP offset, and two
+  // alignments of different coordinates are different anchors.
+  EXPECT_EQ(P.Graph.merge({Frame0, Frame::constant(-0x90)}).K,
+            Frame::Kind::Invalid);
+  EXPECT_NE(P.Graph.align(Frame::constant(-12), 16).Anchor, Aligned.Anchor);
+  const auto Same =
+      P.Graph.merge({Frame0, P.Graph.adjust(Aligned, 0x90, true)});
+  ASSERT_EQ(Same.K, Frame::Kind::Value);
+  EXPECT_EQ(Same.Anchor, Aligned.Anchor);
+  EXPECT_EQ(Same.Offset, -0x90);
+}
+
+TEST(AffineFrameState, AnchorBoundsCoverTheAlignmentSlack) {
+  Proof P;
+  const auto Outer = P.Graph.align(Frame::constant(-8), 16);
+  const auto Bounds = P.Graph.anchorBounds(Outer.Anchor);
+  ASSERT_TRUE(Bounds);
+  EXPECT_EQ(Bounds->first, -23);
+  EXPECT_EQ(Bounds->second, -8);
+  // A weaker alignment of an anchored coordinate is exact: the anchor is a
+  // multiple of it.  A stronger one starts a nested anchor.
+  const auto Lower = P.Graph.align(P.Graph.adjust(Outer, 0x94, true), 8);
+  ASSERT_EQ(Lower.K, Frame::Kind::Value);
+  EXPECT_EQ(Lower.Anchor, Outer.Anchor);
+  EXPECT_EQ(Lower.Offset, -0x98);
+  const auto Inner = P.Graph.align(P.Graph.adjust(Outer, 0x20, true), 64);
+  ASSERT_EQ(Inner.K, Frame::Kind::Value);
+  ASSERT_NE(Inner.Anchor, Outer.Anchor);
+  const auto Nested = P.Graph.anchorBounds(Inner.Anchor);
+  ASSERT_TRUE(Nested);
+  EXPECT_EQ(Nested->first, -23 - 0x20 - 63);
+  EXPECT_EQ(Nested->second, -8 - 0x20);
+  EXPECT_EQ(P.Graph.anchorBounds(0), std::make_pair(int64_t{0}, int64_t{0}));
+  EXPECT_FALSE(P.Graph.anchorBounds(Inner.Anchor + 1));
+}
+
+TEST(AffineFrameState, AlignmentRejectsAMaskThatIsNoPowerOfTwo) {
+  Proof P;
+  EXPECT_EQ(P.Graph.align(Frame::constant(-8), 0).K, Frame::Kind::Invalid);
+  EXPECT_EQ(P.Graph.align(Frame::constant(-8), 1).K, Frame::Kind::Invalid);
+  EXPECT_EQ(P.Graph.align(Frame::constant(-8), 24).K, Frame::Kind::Invalid);
+  EXPECT_EQ(P.Graph.align(Frame::constant(-8), Frame::MaxAlignment * 2).K,
+            Frame::Kind::Invalid);
+  EXPECT_EQ(P.Graph.align(Frame::invalid(), 16).K, Frame::Kind::Invalid);
+}
+
+TEST(AffineFrameState, LoopKeepsTheAlignedFrame) {
+  // The prologue aligns once; every iteration pushes and pops around a call.
+  Proof P;
+  const auto Body =
+      P.Graph.adjust(P.Graph.align(Frame::constant(-16), 16), 0x90, true);
+  const auto Header = P.Graph.reference();
+  const auto Pushed = P.Graph.adjust(Header, 4, true);
+  const auto Popped = P.Graph.adjust(Pushed, 4, false);
+  ASSERT_TRUE(P.Graph.define(Header, P.Graph.merge({Body, Popped})));
+  const auto H = P.Graph.value(Header);
+  ASSERT_EQ(H.K, Frame::Kind::Value);
+  EXPECT_EQ(H.Anchor, Body.Anchor);
+  EXPECT_EQ(H.Offset, -0x90);
+  // A backedge that realigns each iteration has no common coordinate.
+  const auto Again = P.Graph.reference();
+  const auto Realigned = P.Graph.adjust(P.Graph.align(Again, 16), 16, true);
+  ASSERT_TRUE(
+      P.Graph.define(Again, P.Graph.merge({Frame::constant(-16), Realigned})));
+  EXPECT_EQ(P.Graph.value(Again).K, Frame::Kind::Invalid);
+}
+
+TEST(AffineFrameState, AlignmentOfAReferenceSolvesWithItsInput) {
+  Proof P;
+  const auto Input = P.Graph.reference();
+  const auto Aligned = P.Graph.align(Input, 16);
+  ASSERT_EQ(Aligned.K, Frame::Kind::Reference);
+  ASSERT_TRUE(P.Graph.define(Input, Frame::constant(-12)));
+  const auto Value = P.Graph.value(Aligned);
+  ASSERT_EQ(Value.K, Frame::Kind::Value);
+  EXPECT_NE(Value.Anchor, 0u);
+  EXPECT_EQ(Value.Offset, 0);
+  EXPECT_EQ(P.Graph.anchorBounds(Value.Anchor),
+            std::make_pair(int64_t{-27}, int64_t{-12}));
+  EXPECT_EQ(P.Graph.align(Frame::constant(-12), 16).Anchor, Value.Anchor);
+}

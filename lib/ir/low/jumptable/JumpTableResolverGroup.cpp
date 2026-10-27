@@ -8,6 +8,7 @@
 #include "JumpTableResolverDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -1265,7 +1266,10 @@ bool CFGBuilder::recoverGuardedJumpTableGroup(const BinaryImage &Img,
     if (!Budget.take(16))
       return Incomplete();
     if (!Section.isReadable() || Section.isWritable() ||
-        Section.isExecutable() || Section.Size < 8 || Section.Size > 256 ||
+        Section.isExecutable() || Section.Size < 8 ||
+        Section.Size >
+            ::neverd::limits::ir::
+                kJumpTableResolverGroupCFGBuilderRecoverGuardedJumpTableGroupSectionSizeLimit ||
         Section.Size % 4 != 0 || Section.Size > InvalidVA - Section.VA)
       continue;
     const va_t End = Section.VA + Section.Size;

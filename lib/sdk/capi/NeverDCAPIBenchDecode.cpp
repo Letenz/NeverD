@@ -13,8 +13,9 @@
 
 #include "SessionImpl.h"
 
+#include "neverd/lift/AArch64/AArch64Lifter.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/Parallel.h"
-#include "neverd/lift/AArch64Lifter.h"
 
 #include "llvm/Support/JSON.h"
 
@@ -63,25 +64,18 @@ const char *neverd_bench_decode(neverd_session_t Sess) {
     va_t VA;
   };
 
-  // Cap the bytes fed to the timed passes so the benchmark stays fast on very
-  // large images (e.g. a statically-linked shared library with tens of MB of
-  // __text) while still decoding a representative slice.  A full linear decode
-  // is bounded work, but at single-threaded capstone throughput 80 MB of code
-  // is tens of seconds per pass — far more than a throughput probe needs.
-  constexpr uint64_t kByteBudget = 16ull << 20; // 16 MiB
-
   std::vector<Span> Execs;
-  uint64_t ExecBytes = 0;   // total executable bytes in the image
-  uint64_t BenchBytes = 0;  // bytes actually fed to the timed passes
+  uint64_t ExecBytes = 0;  // total executable bytes in the image
+  uint64_t BenchBytes = 0; // bytes actually fed to the timed passes
   for (const auto &Seg : S->Img.Segments) {
     if (!Seg.isExecutable() || Seg.Data.empty())
       continue;
     ExecBytes += Seg.Data.size();
-    if (BenchBytes >= kByteBudget)
+    if (BenchBytes >= kDecodeBenchmarkBytes)
       continue;
     size_t Take = Seg.Data.size();
-    if (BenchBytes + Take > kByteBudget)
-      Take = static_cast<size_t>(kByteBudget - BenchBytes);
+    if (BenchBytes + Take > kDecodeBenchmarkBytes)
+      Take = static_cast<size_t>(kDecodeBenchmarkBytes - BenchBytes);
     Execs.push_back({Seg.Data.data(), Take, Seg.VA});
     BenchBytes += Take;
   }
@@ -108,9 +102,10 @@ const char *neverd_bench_decode(neverd_session_t Sess) {
       if (BestNs == 0.0 || Ns < BestNs)
         BestNs = Ns;
       ++Reps;
-    } while (Reps < 100 && std::chrono::duration<double, std::milli>(
-                               Clock::now() - Overall)
-                                   .count() < 200.0);
+    } while (Reps < ::neverd::sdk::kDecodeBenchmarkMaxRepetitions &&
+             std::chrono::duration<double, std::milli>(Clock::now() - Overall)
+                     .count() <
+                 ::neverd::sdk::kDecodeBenchmarkDurationMilliseconds);
     return {Insns, BestNs};
   };
 
@@ -214,7 +209,6 @@ const char *neverd_bench_decode(neverd_session_t Sess) {
   // x86 chunk boundaries fall mid-instruction, so a chunk resyncs from its
   // start exactly like the pipeline's per-function decode; the instruction
   // count is a throughput proxy and need not equal the linear-sweep count.
-  constexpr size_t kMtChunk = 64ull << 10;
   struct DecChunk {
     const uint8_t *Data;
     size_t Len;
@@ -222,8 +216,8 @@ const char *neverd_bench_decode(neverd_session_t Sess) {
   };
   std::vector<DecChunk> Chunks;
   for (const auto &Sp : Execs) {
-    for (size_t Off = 0; Off < Sp.Len; Off += kMtChunk) {
-      size_t CLen = std::min(kMtChunk, Sp.Len - Off);
+    for (size_t Off = 0; Off < Sp.Len; Off += kDecodeBenchmarkChunkBytes) {
+      size_t CLen = std::min(kDecodeBenchmarkChunkBytes, Sp.Len - Off);
       Chunks.push_back({Sp.Data + Off, CLen, Sp.VA + Off});
     }
   }

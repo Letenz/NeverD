@@ -26,11 +26,14 @@ std::optional<uint64_t> LinuxFiles::duplicate(ServiceKind Kind, uint32_t Old,
   if (Target != Descriptors.end() && Target->second != I->second &&
       !canRelease(Target->second))
     return unsupported(
-        Result, "GPU descriptor replacement cannot retire a busy context");
+        Result, "Device descriptor replacement cannot retire pending work");
   // Save before replacement, including Old == New. No observer can see an
   // intermediate close/reallocation or a different open-description identity.
+  if (Old == New)
+    return New;
   auto Description = I->second;
   Descriptors.insert_or_assign(New, std::move(Description));
+  opened(New, Kind == ServiceKind::Dup3 ? Flags : 0);
   return New;
 }
 
@@ -46,23 +49,37 @@ LinuxFiles::close(uint32_t FD, ProcessResult &Result) {
   if (I == Descriptors.end())
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
   if (!canRelease(I->second))
-    return unsupported(Result, "GPU last close cannot retire a busy context");
+    return unsupported(Result, "Device last close cannot retire pending work");
   Descriptors.erase(I);
+  CloseOnExec.erase(FD);
   return std::optional<uint64_t>(0);
 }
 
 llvm::Expected<std::optional<uint64_t>>
 LinuxFiles::readDescriptor(uint32_t FD, uint64_t Address, uint64_t Size,
-                           ProcessResult &Result) {
+                           ProcessResult &Result, ThreadContext *Thread) {
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
-  if (std::holds_alternative<ProcessDescriptor>(*I->second))
+  if (std::holds_alternative<OpenSocket>(*I->second)) {
+    auto Admitted = receiveBuffer(Address, Size, Result);
+    if (!Admitted || *Admitted)
+      return Admitted;
+    // Linux sock_read_iter returns before dequeuing for a zero-size read.
+    // recvfrom with a zero-size buffer still consumes a UDP datagram.
+    if (!Size)
+      return std::optional<uint64_t>(0);
+    return receiveSocket(I->second, Address, Size, Result, Thread);
+  }
+  if (std::holds_alternative<ProcessDescriptor>(*I->second) ||
+      std::holds_alternative<std::shared_ptr<EpollState>>(*I->second))
     return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
   if (std::holds_alternative<OpenDevice>(*I->second))
     return unsupported(Result, DeviceOperation);
   if (std::holds_alternative<OpenDirectory>(*I->second))
     return std::optional<uint64_t>(uint64_t(0) - IsDirectory);
+  if (auto *P = std::get_if<OpenProcFile>(I->second.get()))
+    return readProc(*P, Address, Size, Result);
   auto *File = std::get_if<OpenFile>(I->second.get());
   if (!File) {
     if (std::get<Stream>(*I->second) == Stream::Input)
@@ -85,7 +102,9 @@ LinuxFiles::seekDescriptor(uint32_t FD, uint64_t Offset, uint32_t Whence,
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
   if (Whence > SeekHole)
     return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
-  if (std::holds_alternative<ProcessDescriptor>(*I->second))
+  if (std::holds_alternative<ProcessDescriptor>(*I->second) ||
+      std::holds_alternative<std::shared_ptr<EpollState>>(*I->second) ||
+      std::holds_alternative<OpenSocket>(*I->second))
     return std::optional<uint64_t>(uint64_t(0) - IllegalSeek);
   if (std::holds_alternative<OpenDevice>(*I->second))
     return unsupported(Result, DeviceOperation);
@@ -95,13 +114,19 @@ LinuxFiles::seekDescriptor(uint32_t FD, uint64_t Offset, uint32_t Whence,
     const uint64_t Position = (Whence == SeekCurrent ? D->Offset : 0) + Offset;
     if (Position > MaxSignedIOSize)
       return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
-    if (Options->DynamicProcFDs && D->Path == "/proc/self/fd" &&
+    if (liveProcFDs() && llvm::StringRef(D->Path).starts_with("/proc/") &&
+        (llvm::StringRef(D->Path).ends_with("/fd") ||
+         llvm::StringRef(D->Path).ends_with("/fdinfo")) &&
         Position > UINT32_MAX)
       return unsupported(Result,
                          "proc FD cookie exceeds the supported index extent");
+    if (D->Offset != Position)
+      D->NextTask.clear();
     D->Offset = Position;
     return std::optional<uint64_t>(Position);
   }
+  if (auto *P = std::get_if<OpenProcFile>(I->second.get()))
+    return seekProc(*P, Offset, Whence, Result);
   auto *File = std::get_if<OpenFile>(I->second.get());
   if (!File) {
     if (std::get<Stream>(*I->second) == Stream::Input)

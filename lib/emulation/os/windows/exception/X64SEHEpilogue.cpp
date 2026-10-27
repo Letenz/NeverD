@@ -1,11 +1,12 @@
-//===- X64SEHEpilogue.cpp - x64 V1 epilogue unwind ---------------------===//
+//===- X64SEHEpilogue.cpp - x64 V1/V2 epilogue unwind ---------------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Recognize a complete canonical epilogue before reading stack storage.
+/// Validate the V1 instruction grammar or normalized V2 restore positions
+/// before reading stack storage.
 /// Simulate only the remaining instructions; prologue unwind codes describe
 /// the full frame and cannot recover an already partially restored frame.
 ///
@@ -35,7 +36,7 @@ std::optional<unsigned> registerIndex(x86_reg Register) {
 #define NEVERD_X64_REGISTER(Name, DecoderID, BackendID)                        \
   case DecoderID:                                                              \
     return unsigned(X64Register::Name);
-#include "neverd/emulation/X64Registers.def"
+#include "neverd/emulation/arch/x86_64/X64Registers.def"
 #undef NEVERD_X64_REGISTER
   default:
     return {};
@@ -47,17 +48,61 @@ struct Restore {
   unsigned Register = 0;
   int64_t Offset = 0;
 };
-} // namespace
+using RestorePlan = std::optional<std::vector<Restore>>;
 
-llvm::Expected<std::optional<X64SEH::Context>>
-X64SEH::unwindEpilogue(const ExceptionFunction &Frame, const Context &Current,
-                       Stack Bounds, const Image &Owner) const {
-  const std::optional<Context> NotEpilogue;
+llvm::Expected<RestorePlan> planV2Restores(const ExceptionFunction &Frame,
+                                           const ExceptionFunction &Primary,
+                                           uint64_t ControlOffset) {
+  const auto Region = std::find_if(
+      Frame.Epilogs.begin(), Frame.Epilogs.end(), [&](const UnwindEpilog &E) {
+        return ControlOffset >= uint64_t(E.StartOffset) &&
+               ControlOffset - uint64_t(E.StartOffset) <=
+                   E.LastInstructionOffset;
+      });
+  if (Region == Frame.Epilogs.end())
+    return RestorePlan{};
+
+  const uint64_t Position = ControlOffset - uint64_t(Region->StartOffset);
+  const auto &Operations = Primary.UnwindOperations;
+  auto FirstPush = std::find_if(
+      Operations.begin(), Operations.end(), [](const UnwindOperation &Op) {
+        return Op.Kind == UnwindOperationKind::PushNonVolatile;
+      });
+  uint32_t Offset = 0;
+  bool AtInstruction = false;
+  std::vector<Restore> Restores;
+  const auto Append = [&](Restore Step, unsigned Width) {
+    AtInstruction |= Position == Offset;
+    if (Position <= Offset)
+      Restores.push_back(Step);
+    Offset += Width;
+  };
+  auto I = FirstPush;
+  for (;
+       I != Operations.end() && I->Kind == UnwindOperationKind::PushNonVolatile;
+       ++I)
+    Append({Restore::Kind::Pop, I->Register}, I->Register >= 8 ? 2 : 1);
+  // A trailing eight-byte allocation can describe PUSHFQ, discarded by a
+  // one-byte volatile POP. Windows leaves volatile register values alone.
+  if (I != Operations.end() && I->Kind == UnwindOperationKind::AllocateSmall &&
+      I->StackOffset == seh::PointerSize) {
+    Append({Restore::Kind::AddStack, 0, seh::PointerSize}, 1);
+    ++I;
+  }
+  if (I != Operations.end())
+    return invalid(seh::text::UnsupportedV2EpilogueRestores);
+  AtInstruction |= Position == Offset;
+  if (Offset != Region->LastInstructionOffset || !AtInstruction)
+    return invalid(seh::text::InvalidV2EpiloguePosition);
+  return RestorePlan{std::move(Restores)};
+}
+
+llvm::Expected<RestorePlan> planV1Restores(const ExceptionFunction &Frame,
+                                           const X64SEH::ReadCode &Code,
+                                           uint64_t PC, uint64_t End) {
+  const RestorePlan NotEpilogue;
   if (!Code)
     return NotEpilogue;
-  const uint64_t PC = Current.PC + unsigned(Current.FromReturnAddress);
-  const uint64_t End =
-      Owner.ActualBase + (Frame.CodeRange.End - Owner.PreferredBase);
   if (PC >= End)
     return NotEpilogue;
   std::array<uint8_t, seh::MaxEpilogueBytes> Bytes;
@@ -129,7 +174,29 @@ X64SEH::unwindEpilogue(const ExceptionFunction &Frame, const Context &Current,
   }
   if (!Complete)
     return NotEpilogue;
+  return RestorePlan{std::move(Restores)};
+}
+} // namespace
 
+llvm::Expected<std::optional<X64SEH::Context>>
+X64SEH::unwindEpilogue(const ExceptionFunction &Frame,
+                       const ExceptionFunction &Primary, const Context &Current,
+                       Stack Bounds, const Image &Owner) const {
+  const uint64_t PC = Current.PC + unsigned(Current.FromReturnAddress);
+  const uint64_t Begin =
+      Owner.ActualBase + (Frame.CodeRange.Begin - Owner.PreferredBase);
+  const uint64_t End =
+      Owner.ActualBase + (Frame.CodeRange.End - Owner.PreferredBase);
+  if (PC < Begin || PC >= End)
+    return std::optional<Context>{};
+  auto Plan = Frame.UnwindVersion == 2
+                  ? planV2Restores(Frame, Primary, PC - Begin)
+                  : planV1Restores(Frame, Code, PC, End);
+  if (!Plan)
+    return Plan.takeError();
+  if (!*Plan)
+    return std::optional<Context>{};
+  const auto &Restores = **Plan;
   Context Caller = Current;
   auto &SP = Caller.GPR[seh::StackRegister];
   const uint64_t StackEnd = Bounds.Base + Bounds.Size;

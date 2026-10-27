@@ -7,6 +7,7 @@
 #ifndef NEVERD_EMULATION_DRIVERPOWERPOLICY_H
 #define NEVERD_EMULATION_DRIVERPOWERPOLICY_H
 #include "neverd/emulation/DriverUsbIdle.h"
+#include "neverd/emulation/Limits.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -46,6 +47,10 @@ struct DriverPowerPolicyResult {
   std::optional<uint32_t> State;
   std::vector<DriverUsbIdleMemberResult> UsbIdleMembers;
 };
-inline constexpr size_t DriverPowerPolicyEventLimit = 1024;
 } // namespace neverd::emulation
+// Preserve interface spellings; resource values are defined by Limits.h.
+
+inline constexpr size_t DriverPowerPolicyEventLimit =
+    ::neverd::limits::emulation::kDriverPowerPolicyDriverPowerPolicyEventLimit;
+
 #endif

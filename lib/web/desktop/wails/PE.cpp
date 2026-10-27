@@ -12,6 +12,8 @@
 
 #include "Reader.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 
 namespace neverd::web::wails_detail {
@@ -30,7 +32,7 @@ void admitPE(Reader &R) {
       !(Flags & 2) || (Flags & 0x2100) || number(H, 20, 2) != 240)
     throw Error("wails_unsupported_container");
   const auto Count = number(H, 6, 2);
-  if (!Count || Count > 96)
+  if (!Count || Count > ::neverd::limits::web::kPEAdmitPECountLimit)
     throw Error("wails_native_table_budget_exceeded");
   const auto O = R.read({PE + 24, 240});
   if (number(O, 0, 2) != 0x20b || number(O, 108, 4) != 16)

@@ -239,12 +239,20 @@ inline void expectNoLocalReadBeforeDefinition(llvm::StringRef Body) {
   size_t OpenBrace = Body.find('{');
   ASSERT_NE(OpenBrace, llvm::StringRef::npos) << Body.str();
   size_t LineStart = OpenBrace + 1;
+  // The frame record's members are no locals: the body reaches them through
+  // the record, `stack_storage.var_m28`.
+  bool InRecord = false;
   while (LineStart < Body.size()) {
     size_t LineEnd = Body.find('\n', LineStart);
     if (LineEnd == llvm::StringRef::npos)
       LineEnd = Body.size();
     llvm::StringRef Line = Body.slice(LineStart, LineEnd).trim();
-    if (Line.ends_with(";") && !Line.contains('=') && !Line.contains('(')) {
+    if (Line.contains("struct frame_") && Line.ends_with("{"))
+      InRecord = true;
+    else if (InRecord && Line.starts_with("}"))
+      InRecord = false;
+    else if (!InRecord && Line.ends_with(";") && !Line.contains('=') &&
+             !Line.contains('(')) {
       llvm::StringRef Declaration = Line.drop_back().trim();
       size_t TypeEnd = Declaration.find_first_of(" \t");
       llvm::StringRef Type = Declaration.take_front(TypeEnd);

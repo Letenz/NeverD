@@ -1,10 +1,17 @@
 //===- X86_64_LegacyAtomicSemanticTests.cpp - exact RMW semantics --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Memory atomicity, completion flags, fault ordering and HLE admission.
+//===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/NdOpEmulator.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include <algorithm>
@@ -135,6 +142,101 @@ TEST(X86LegacyAtomic, MemoryFormsDistinguishLockedAtomicity) {
     if (Test.Width == 16)
       EXPECT_NE(findIntrinsic(Ops, Intrinsic::RequireAligned), nullptr);
   }
+}
+
+TEST(X86LegacyAtomic, ElisionPrefixesCannotBecomeOrdinaryMemoryOperations) {
+  const std::vector<std::vector<uint8_t>> Locked = {
+      {0x01, 0x08},       // ADD
+      {0x11, 0x08},       // ADC
+      {0x21, 0x08},       // AND
+      {0x0f, 0xbb, 0x08}, // BTC
+      {0x0f, 0xb3, 0x08}, // BTR
+      {0x0f, 0xab, 0x08}, // BTS
+      {0x0f, 0xb1, 0x08}, // CMPXCHG
+      {0x0f, 0xc7, 0x08}, // CMPXCHG8B
+      {0xff, 0x08},       // DEC
+      {0xff, 0x00},       // INC
+      {0xf7, 0x18},       // NEG
+      {0xf7, 0x10},       // NOT
+      {0x09, 0x08},       // OR
+      {0x19, 0x08},       // SBB
+      {0x29, 0x08},       // SUB
+      {0x31, 0x08},       // XOR
+      {0x0f, 0xc1, 0x08}, // XADD
+      {0x87, 0x08}};      // XCHG
+  std::vector<std::vector<uint8_t>> Cases;
+  for (const auto &Body : Locked)
+    for (uint8_t Hint : {0xf2, 0xf3})
+      for (bool HintFirst : {false, true}) {
+        std::vector<uint8_t> Bytes = HintFirst
+                                         ? std::vector<uint8_t>{Hint, 0xf0}
+                                         : std::vector<uint8_t>{0xf0, Hint};
+        Bytes.insert(Bytes.end(), Body.begin(), Body.end());
+        Cases.push_back(std::move(Bytes));
+      }
+  for (uint8_t Hint : {0xf2, 0xf3})
+    for (uint8_t Opcode : {0x86, 0x87})
+      Cases.push_back({Hint, Opcode, 0x08}); // Implicit LOCK XCHG.
+  Cases.insert(Cases.end(), {{0xf3, 0x88, 0x08},
+                             {0xf3, 0x89, 0x08},
+                             {0xf3, 0xc6, 0x00, 1},
+                             {0xf3, 0xc7, 0x00, 1, 0, 0, 0}});
+  for (Arch Target : {Arch::X86, Arch::X64})
+    for (bool Strict : {false, true})
+      for (unsigned Route : {0u, 1u, 2u}) {
+        Decoder Decode;
+        ASSERT_TRUE(Decode.init(Target));
+        Decode.setStrict(Strict);
+        Decode.setText(false);
+        auto ModeCases = Cases;
+        if (Target == Arch::X64)
+          ModeCases.insert(ModeCases.end(),
+                           {{0xf3, 0x48, 0x89, 0x08},
+                            {0xf3, 0xd5, 0x00, 0x89, 0x08},
+                            {0xf2, 0xf0, 0x48, 0x0f, 0xc1, 0x08}});
+        for (const auto &Bytes : ModeCases) {
+          SCOPED_TRACE(testing::PrintToString(Bytes));
+          SCOPED_TRACE(static_cast<unsigned>(Target));
+          SCOPED_TRACE(Strict);
+          SCOPED_TRACE(Route);
+          DecodedInsn Instruction;
+          const int Size =
+              Route == 0 ? Decode.decodeOne(Bytes.data(), Bytes.size(),
+                                            kInstructionAddress, Instruction)
+              : Route == 1
+                  ? Decode.decodeOneLight(Bytes.data(), Bytes.size(),
+                                          kInstructionAddress, Instruction)
+                  : Decode.decodeOneForLift(Bytes.data(), Bytes.size(),
+                                            kInstructionAddress, Instruction);
+          ASSERT_EQ(Size, static_cast<int>(Bytes.size()));
+          std::vector<LowOp> Ops(1);
+          Ops[0].Opcode = NdOp::COPY;
+          EXPECT_THROW(Decode.liftToLow(Instruction, Ops), UnliftedInstruction);
+          ASSERT_EQ(Ops.size(), 1u);
+          EXPECT_EQ(Ops[0].Opcode, NdOp::COPY);
+        }
+      }
+}
+
+TEST(X86LegacyAtomic, NonElisionRepeatPrefixesRetainTheirMeaning) {
+  for (const std::vector<uint8_t> &Bytes :
+       {std::vector<uint8_t>{0xf2, 0x89,
+                             0x08}, // XACQUIRE does not apply to MOV.
+        std::vector<uint8_t>{0xf3, 0x8b,
+                             0x08}, // MOV load, not a release store.
+        std::vector<uint8_t>{0xf3, 0x0f, 0x10, 0x08}, // MOVSS mandatory prefix.
+        std::vector<uint8_t>{0xf3, 0x90}})            // PAUSE.
+    for (Arch Target : {Arch::X86, Arch::X64}) {
+      Decoder Decode;
+      ASSERT_TRUE(Decode.init(Target));
+      Decode.setStrict(true);
+      DecodedInsn Instruction;
+      ASSERT_EQ(Decode.decodeOneForLift(Bytes.data(), Bytes.size(),
+                                        kInstructionAddress, Instruction),
+                static_cast<int>(Bytes.size()));
+      std::vector<LowOp> Ops;
+      EXPECT_NO_THROW(Decode.liftToLow(Instruction, Ops));
+    }
 }
 
 TEST(X86LegacyAtomic, CmpxchgAndXaddFaultBeforeArchitecturalCommit) {

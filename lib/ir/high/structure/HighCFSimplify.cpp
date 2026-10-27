@@ -17,15 +17,19 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../HighExprUseCounts.h"
 #include "HighCFSimplifyDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/support/Diagnostic.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -39,6 +43,7 @@
 #include <set>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace neverd {
 
@@ -522,7 +527,7 @@ static void mergeConsecutiveCondBlocks(std::vector<HighStmt> &Stmts) {
 //===----------------------------------------------------------------------===//
 
 static bool isPureValue(const HighExpr &E, unsigned Depth = 0) {
-  if (Depth > 16)
+  if (Depth > ::neverd::limits::ir::kHighCFSimplifyIsPureValueDepthLimit)
     return false;
   switch (E.Kind) {
   case ExprKind::Var:
@@ -549,7 +554,7 @@ static bool isPureValue(const HighExpr &E, unsigned Depth = 0) {
 /// store or atomic.  Each path executes exactly one copy, so duplicating a
 /// load is as exact as duplicating arithmetic.
 static bool isTailValue(const HighExpr &E, unsigned Depth = 0) {
-  if (Depth > 32)
+  if (Depth > ::neverd::limits::ir::kHighCFSimplifyIsTailValueDepthLimit)
     return false;
   switch (E.Kind) {
   case ExprKind::Var:
@@ -796,9 +801,10 @@ static bool tailMayFault(const std::vector<HighStmt> &Tail) {
 /// never returns such as the fail-fast trap, becomes a copy of those
 /// statements.  The labelled original stays for any other path, so no code
 /// is removed; only the jump is.
-bool duplicateSmallJumpTails(std::vector<HighStmt> &Body) {
+bool duplicateSmallJumpTails(std::vector<HighStmt> &Body,
+                             const std::set<va_t> &DispatcherEntries) {
   std::map<va_t, unsigned> Uses;
-  std::set<va_t> Pinned;
+  std::set<va_t> Pinned = DispatcherEntries;
   walkStmts(Body, [&](const HighStmt &S) {
     if (S.Kind == StmtKind::Goto && S.GotoTarget != 0 &&
         S.GotoTarget != InvalidVA)
@@ -903,9 +909,17 @@ bool duplicateSmallJumpTails(std::vector<HighStmt> &Body) {
           if (L[I].Kind == StmtKind::Goto) {
             auto It = Tails.find(L[I].GotoTarget);
             if (It != Tails.end() && TailContexts.at(It->first) == Ctx) {
+              // The dispatcher enters a jump at its own address: an empty
+              // block keeps that address ahead of the copy.
+              const bool Entered = DispatcherEntries.count(L[I].Addr) != 0;
+              HighStmt Anchor;
+              Anchor.Kind = StmtKind::Block;
+              Anchor.Addr = L[I].Addr;
               L.erase(L.begin() + I);
               L.insert(L.begin() + I, It->second.begin(), It->second.end());
-              I += It->second.size() - 1;
+              if (Entered)
+                L.insert(L.begin() + I, std::move(Anchor));
+              I += It->second.size() - (Entered ? 0 : 1);
               Changed = true;
               continue;
             }
@@ -998,7 +1012,8 @@ static unsigned readsOf(const HighExpr *E, const VarKey &K) {
   return N;
 }
 
-bool duplicateSmallReturnTails(std::vector<HighStmt> &Body, bool PrintedSize) {
+bool duplicateSmallReturnTails(std::vector<HighStmt> &Body, bool PrintedSize,
+                               const std::set<va_t> &DispatcherEntries) {
   constexpr size_t kMaxTailAssigns = limits::kMaxReturnTailStatements;
   constexpr size_t kMaxComposedTail = 2 * kMaxTailAssigns + 1;
   std::set<va_t> Targets;
@@ -1091,6 +1106,7 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body, bool PrintedSize) {
         for (size_t I = 0; I < Stmts.size(); ++I) {
           const va_t Label = Stmts[I].Addr;
           if (Starts.unique(Label) && !Tails.count(Label) &&
+              !DispatcherEntries.count(Label) &&
               LabelStarts::beginsGroup(Stmts, I, Parent))
             if (auto Tail = TailAt(Stmts, I, Cont, Ctx)) {
               Tails.emplace(Label, std::move(*Tail));
@@ -1129,7 +1145,10 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body, bool PrintedSize) {
       };
   // A composed tail needs its epilogue's tail first; the epilogue usually
   // follows the jumps to it, so repeat until no new tail appears.
-  for (size_t Round = 0; Round < 4; ++Round) {
+  for (size_t Round = 0;
+       Round <
+       ::neverd::limits::ir::kHighCFSimplifyDuplicateSmallReturnTailsRoundLimit;
+       ++Round) {
     const size_t Before = Tails.size();
     Collect(Body, nullptr, 0, TryContext());
     if (Tails.size() == Before)
@@ -2671,9 +2690,9 @@ bool moveSwitchTailsToTheirExit(std::vector<HighStmt> &Body) {
 static std::optional<llvm::APInt> evaluateWith(const HighExpr &E, VarKey Key,
                                                const llvm::APInt &Value,
                                                unsigned Depth = 0) {
-  if (Depth > 32 || !E.Type || E.Type->Kind != NdTypeKind::Int ||
-      E.Type->Size == 0 || E.Type->Size > 8 ||
-      E.MemoryOrdering != NdMemoryOrdering::None ||
+  if (Depth > ::neverd::limits::ir::kHighCFSimplifyEvaluateWithDepthLimit ||
+      !E.Type || E.Type->Kind != NdTypeKind::Int || E.Type->Size == 0 ||
+      E.Type->Size > 8 || E.MemoryOrdering != NdMemoryOrdering::None ||
       E.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
       E.IntrinsicId != Intrinsic::None || !E.IntrinsicOutputs.empty())
     return std::nullopt;
@@ -2909,7 +2928,6 @@ bool absorbSwitchRangeGuards(std::vector<HighStmt> &Body) {
 }
 
 bool busiestExitFollowsTheSwitch(std::vector<HighStmt> &Body) {
-  constexpr unsigned kMaxRounds = 64;
   auto IsTry = [](const HighStmt &S) {
     return S.Kind == StmtKind::SEHTry || S.Kind == StmtKind::CxxTry ||
            S.Kind == StmtKind::ItaniumTry;
@@ -2949,7 +2967,8 @@ bool busiestExitFollowsTheSwitch(std::vector<HighStmt> &Body) {
   };
   std::set<va_t> Refused;
   bool Changed = false;
-  for (unsigned Round = 0; Round < kMaxRounds; ++Round) {
+  for (unsigned Round = 0;
+       Round < ::neverd::limits::ir::kHighCFSimplifyMaxRounds; ++Round) {
     const LabelStarts Labels(Body);
     std::map<va_t, unsigned> AllJumps, AllHandlers;
     CountEntries(Body, AllJumps, AllHandlers);
@@ -3890,10 +3909,15 @@ bool groupSwitchCases(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
-bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
-  // Every way a statement address is entered: gotos and __except handlers.
-  std::map<va_t, unsigned> Uses;
-  std::set<va_t> Pinned;
+bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions,
+                          const std::set<va_t> &DispatcherEntries) {
+  // These indexes are queried by address only. Rewrite order comes from the
+  // statement traversal, including the first label at a duplicate address.
+  // Every way a statement address is entered: gotos, __except handlers, and
+  // the entries the caller names, such as landing pads.
+  std::unordered_map<va_t, unsigned> Uses;
+  std::unordered_set<va_t> Pinned(DispatcherEntries.begin(),
+                                  DispatcherEntries.end());
   walkStmts(Body, [&](const HighStmt &S) {
     if (S.Kind == StmtKind::Goto && S.GotoTarget != 0 &&
         S.GotoTarget != InvalidVA)
@@ -3902,6 +3926,11 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
       if (Clause.HandlerVA != 0 && Clause.HandlerVA != InvalidVA)
         Pinned.insert(Clause.HandlerVA);
   });
+  // The jumps that enter \p Addr, whatever else enters it.
+  auto jumpsTo = [&](va_t Addr) -> unsigned {
+    auto It = Uses.find(Addr);
+    return It == Uses.end() ? 0 : It->second;
+  };
   auto usesOf = [&](va_t Addr) -> unsigned {
     if (Addr == 0 || Addr == InvalidVA)
       return 0;
@@ -3925,7 +3954,7 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
   // Statements starting each address anywhere in the tree.  A copied tail
   // keeps its addresses, so a jump names one statement only when exactly one
   // starts its target.
-  std::map<va_t, unsigned> AddressStarts;
+  std::unordered_map<va_t, unsigned> AddressStarts;
   std::function<void(const std::vector<HighStmt> &)> CountStarts =
       [&](const std::vector<HighStmt> &L) {
         for (size_t I = 0; I < L.size(); ++I) {
@@ -3944,49 +3973,119 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
       };
   CountStarts(Body);
 
-  // Reads of each variable anywhere in the function (assignment targets are
-  // writes, not reads). An indirect call reads its target like an operand.
-  std::unordered_map<VarKey, unsigned, VarKeyHash> Reads;
-  std::function<void(const ExprPtr &)> CountReads = [&](const ExprPtr &E) {
+  VarKeyMap<int> Reads;
+  auto CountFast = [&](auto &&Self, const ExprPtr &E, size_t &Remaining,
+                       unsigned Depth) -> bool {
     if (!E)
-      return;
-    if (E->Kind == ExprKind::Var)
-      ++Reads[varKey(E->Var)];
-    E->forEachChildExpr(CountReads);
-  };
-  walkStmts(Body, [&](const HighStmt &S) {
-    forEachExpr(S, [&](const ExprPtr &E) {
-      if (&E == &S.Dst && S.Kind == StmtKind::Assign && E &&
-          E->Kind == ExprKind::Var)
-        return;
-      CountReads(E);
-    });
-  });
-  // Replace the single read of \p Key in \p E with \p Value.
-  std::function<bool(ExprPtr &, const VarKey &, const ExprPtr &)> Substitute =
-      [&](ExprPtr &E, const VarKey &Key, const ExprPtr &Value) {
-        if (!E)
-          return false;
-        if (E->Kind == ExprKind::Var && varKey(E->Var) == Key) {
-          E = Value;
-          return true;
-        }
-        for (ExprPtr &Op : E->Operands)
-          if (Substitute(Op, Key, Value))
-            return true;
-        return Substitute(E->IndirectTarget, Key, Value);
-      };
-  // A load or pure value with no call inside it.
-  std::function<bool(const HighExpr &, unsigned)> Foldable =
-      [&](const HighExpr &E, unsigned Depth) -> bool {
-    // An atomic is still evaluated exactly once, at the same point.
-    if (Depth > 32 || E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
-        E.Kind == ExprKind::Phi || E.Kind == ExprKind::Undef)
+      return true;
+    if (!Remaining || Depth > ::neverd::limits::ir::kHighCFSimplifyMaxTreeDepth)
       return false;
-    for (const ExprPtr &Op : E.Operands)
-      if (!Op || !Foldable(*Op, Depth + 1))
+    --Remaining;
+    if (E->Kind == ExprKind::Var) {
+      auto &Count = Reads[varKey(E->Var)];
+      Count = std::min(2, Count + 1);
+    }
+    bool Complete = true;
+    E->forEachChildExpr([&](const ExprPtr &Child) {
+      if (Complete)
+        Complete = Self(Self, Child, Remaining, Depth + 1);
+    });
+    return Complete;
+  };
+  auto VisitReadRoots = [&](auto &&Visit) {
+    walkStmts(Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        if (&E == &S.Dst && S.Kind == StmtKind::Assign && E &&
+            E->Kind == ExprKind::Var)
+          return;
+        Visit(E);
+      });
+    });
+  };
+  bool Complex = false;
+  VisitReadRoots([&](const ExprPtr &E) {
+    if (!Complex) {
+      size_t Remaining = ::neverd::limits::ir::kHighCFSimplifyMaxTreeVisits;
+      Complex = !CountFast(CountFast, E, Remaining, 0);
+    }
+  });
+  if (Complex) {
+    Reads.clear();
+    std::unordered_map<const HighExpr *, uint8_t> Visits;
+    VisitReadRoots(
+        [&](const ExprPtr &E) { countExprVarUsesUpToTwo(E, Reads, Visits); });
+  }
+  // The global count has already proved that the read is unique. Search each
+  // shared node once, retaining the original operand-before-target order.
+  auto Substitute = [&](ExprPtr &E, const VarKey &Key, const ExprPtr &Value) {
+    llvm::SmallVector<ExprPtr *, 16> Work{&E};
+    llvm::SmallPtrSet<const HighExpr *, 16> Seen;
+    while (!Work.empty()) {
+      ExprPtr &Current = *Work.pop_back_val();
+      if (!Current)
+        continue;
+      if (Current->Kind == ExprKind::Var && varKey(Current->Var) == Key) {
+        Current = Value;
+        return true;
+      }
+      if ((Current->Operands.empty() && !Current->IndirectTarget) ||
+          !Seen.insert(Current.get()).second)
+        continue;
+      if (Current->IndirectTarget)
+        Work.push_back(&Current->IndirectTarget);
+      for (auto It = Current->Operands.rbegin(); It != Current->Operands.rend();
+           ++It)
+        if (*It)
+          Work.push_back(&*It);
+    }
+    return false;
+  };
+  // Preserve the original depth and effect checks. Large shared expressions
+  // use exact node/depth memoization instead of expanding every path.
+  auto Foldable = [&](const HighExpr &Root, unsigned RootDepth) {
+    size_t Remaining = ::neverd::limits::ir::kHighCFSimplifyMaxTreeVisits;
+    bool Exhausted = false;
+    auto Fast = [&](auto &&Self, const HighExpr &E, unsigned Depth) -> bool {
+      if (Depth >
+              ::neverd::limits::ir::
+                  kHighCFSimplifyReduceSingleUseGotosFoldableFastDepthLimit ||
+          E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
+          E.Kind == ExprKind::Phi || E.Kind == ExprKind::Undef)
         return false;
-    return true;
+      if (!Remaining) {
+        Exhausted = true;
+        return false;
+      }
+      --Remaining;
+      for (const ExprPtr &Op : E.Operands)
+        if (!Op || !Self(Self, *Op, Depth + 1))
+          return false;
+      return true;
+    };
+    const bool Result = Fast(Fast, Root, RootDepth);
+    if (!Exhausted)
+      return Result;
+    std::map<std::pair<const HighExpr *, unsigned>, bool> Memo;
+    auto Shared = [&](auto &&Self, const HighExpr &E, unsigned Depth) -> bool {
+      if (Depth >
+              ::neverd::limits::ir::
+                  kHighCFSimplifyReduceSingleUseGotosFoldableSharedDepthLimit ||
+          E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
+          E.Kind == ExprKind::Phi || E.Kind == ExprKind::Undef)
+        return false;
+      const auto Key = std::pair{&E, Depth};
+      if (auto It = Memo.find(Key); It != Memo.end())
+        return It->second;
+      bool Result = true;
+      for (const ExprPtr &Op : E.Operands)
+        if (!Op || !Self(Self, *Op, Depth + 1)) {
+          Result = false;
+          break;
+        }
+      Memo.emplace(Key, Result);
+      return Result;
+    };
+    return Shared(Shared, Root, RootDepth);
   };
 
   // Remove the trailing goto of \p L.  A goto that itself carries an entered
@@ -4229,30 +4328,59 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
         Changed = true;
       }
       // T0: a temporary read only by the next condition is evaluated at
-      // exactly the same point when folded into it.
+      // exactly the same point when folded into it.  At a label only the
+      // dispatcher enters, an anchor keeps the label where the read was.
+      const bool DispatcherLabel = I + 1 < L.size() && labelStart(L, I) &&
+                                   DispatcherEntries.count(L[I].Addr) &&
+                                   jumpsTo(L[I].Addr) == 0;
       if (I + 1 < L.size() && L[I].Kind == StmtKind::Assign &&
           !L[I].IsPhiCopy && L[I].Dst && L[I].Dst->Kind == ExprKind::Var &&
-          L[I].Val && Foldable(*L[I].Val, 0) && !labelStart(L, I) &&
+          L[I].Val && (!labelStart(L, I) || DispatcherLabel) &&
           !labelStart(L, I + 1) &&
           (L[I + 1].Kind == StmtKind::If ||
            L[I + 1].Kind == StmtKind::IfElse) &&
           L[I + 1].Cond) {
         const VarKey Key = varKey(L[I].Dst->Var);
         auto ReadIt = Reads.find(Key);
-        unsigned CondReads = 0;
-        std::function<void(const ExprPtr &)> CountKey = [&](const ExprPtr &E) {
-          if (!E)
-            return;
-          if (E->Kind == ExprKind::Var && varKey(E->Var) == Key)
-            ++CondReads;
-          E->forEachChildExpr(CountKey);
-        };
-        CountKey(L[I + 1].Cond);
-        if (ReadIt != Reads.end() && ReadIt->second == 1 && CondReads == 1 &&
-            Substitute(L[I + 1].Cond, Key, L[I].Val)) {
-          ReadIt->second = 0;
-          L.erase(L.begin() + I);
-          Changed = true;
+        if (ReadIt != Reads.end() && ReadIt->second == 1 &&
+            Foldable(*L[I].Val, 0)) {
+          unsigned CondReads = 0;
+          size_t Remaining = ::neverd::limits::ir::kHighCFSimplifyMaxTreeVisits;
+          auto CountKey = [&](auto &&Self, const ExprPtr &E,
+                              unsigned Depth) -> bool {
+            if (!E)
+              return true;
+            if (!Remaining ||
+                Depth > ::neverd::limits::ir::kHighCFSimplifyMaxTreeDepth)
+              return false;
+            --Remaining;
+            if (E->Kind == ExprKind::Var && varKey(E->Var) == Key)
+              CondReads = std::min(2u, CondReads + 1);
+            bool Complete = true;
+            E->forEachChildExpr([&](const ExprPtr &Child) {
+              if (Complete)
+                Complete = Self(Self, Child, Depth + 1);
+            });
+            return Complete;
+          };
+          if (!CountKey(CountKey, L[I + 1].Cond, 0)) {
+            VarKeyMap<int> Counts;
+            std::unordered_map<const HighExpr *, uint8_t> Visits;
+            countExprVarUsesUpToTwo(L[I + 1].Cond, Counts, Visits);
+            CondReads = Counts[Key];
+          }
+          if (CondReads == 1 && Substitute(L[I + 1].Cond, Key, L[I].Val)) {
+            ReadIt->second = 0;
+            if (DispatcherLabel) {
+              HighStmt Anchor;
+              Anchor.Kind = StmtKind::Block;
+              Anchor.Addr = L[I].Addr;
+              L[I] = std::move(Anchor);
+            } else {
+              L.erase(L.begin() + I);
+            }
+            Changed = true;
+          }
         }
       }
       // T3: merge a run of conditional jumps to one target.
@@ -4660,10 +4788,19 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
     size_t Index = 0;
     /// The innermost try body or handler holding the site.
     const void *Try = nullptr;
-    // Position in a pre-order walk of the tree: program order.
-    size_t Order = 0;
-    // Every (list, index) enclosing the site, outermost first.
-    std::vector<std::pair<const std::vector<HighStmt> *, size_t>> Chain;
+    // Index of the innermost enclosing statement in this round's parents.
+    std::optional<size_t> Parent;
+  };
+  struct ParentSite {
+    const std::vector<HighStmt> *List;
+    size_t Index;
+    std::optional<size_t> Parent;
+  };
+  struct ParentScope {
+    const std::vector<HighStmt> *List;
+    size_t Index;
+    ParentScope *Parent;
+    std::optional<size_t> Retained;
   };
   // A no-op that a jump still enters falls through like any statement.
   auto prevNonNop = [&](const std::vector<HighStmt> &L,
@@ -4680,10 +4817,12 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
   // after K up to it is entered only by gotos inside the region.
   auto regionEnd = [&](const std::vector<HighStmt> &LL,
                        size_t K) -> std::optional<size_t> {
-    constexpr size_t kMaxRegionStmts = 256;
     std::map<va_t, unsigned> Internal;
     std::set<va_t> Inner;
-    for (size_t M = K; M < LL.size() && M - K < kMaxRegionStmts; ++M) {
+    for (size_t M = K;
+         M < LL.size() &&
+         M - K < ::neverd::limits::ir::kHighCFSimplifyMaxRegionStmts;
+         ++M) {
       if (M > K && labelStart(LL, M)) {
         if (usesOf(LL[M].Addr) == ~0u)
           return std::nullopt;
@@ -4716,47 +4855,72 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
     }
     return std::nullopt;
   };
-  for (unsigned Applied = 0; Applied < 512; ++Applied) {
-    std::map<va_t, Site> Labels;
+  for (unsigned Applied = 0;
+       Applied <
+       ::neverd::limits::ir::kHighCFSimplifyReduceSingleUseGotosAppliedLimit;
+       ++Applied) {
+    std::unordered_map<va_t, Site> Labels;
     std::vector<std::pair<Site, va_t>> Gotos;
-    std::vector<std::pair<const std::vector<HighStmt> *, size_t>> Chain;
+    // Retain ancestors only when a label or goto needs them. Sites share
+    // these paths through indices, which survive table growth. Rebuild the
+    // table after every splice, before reusing any site.
+    std::vector<ParentSite> Parents;
+    auto RetainParent = [&](auto &&Self,
+                            ParentScope *Scope) -> std::optional<size_t> {
+      if (!Scope)
+        return std::nullopt;
+      if (!Scope->Retained) {
+        const auto Parent = Self(Self, Scope->Parent);
+        Scope->Retained = Parents.size();
+        Parents.push_back({Scope->List, Scope->Index, Parent});
+      }
+      return Scope->Retained;
+    };
     // Statements starting each address group: a jump can name an address
     // only when exactly one statement starts it.
-    std::map<va_t, unsigned> Starts;
-    size_t Order = 0;
-    std::function<void(std::vector<HighStmt> &, const void *)> Collect =
-        [&](std::vector<HighStmt> &L, const void *Try) {
+    std::unordered_map<va_t, unsigned> Starts;
+    std::function<void(std::vector<HighStmt> &, const void *, ParentScope *)>
+        Collect = [&](std::vector<HighStmt> &L, const void *Try,
+                      ParentScope *Parent) {
           for (size_t I = 0; I < L.size(); ++I) {
             HighStmt &S = L[I];
-            ++Order;
             if (S.Addr != 0 && S.Addr != InvalidVA &&
                 (I == 0 || L[I - 1].Addr != S.Addr))
               ++Starts[S.Addr];
             if (labelStart(L, I) && S.Kind != StmtKind::Nop)
-              Labels.emplace(S.Addr, Site{&L, I, Try, Order, Chain});
+              Labels.emplace(
+                  S.Addr, Site{&L, I, Try, RetainParent(RetainParent, Parent)});
             if (S.Kind == StmtKind::Goto && usesOf(S.GotoTarget) == 1)
-              Gotos.push_back({Site{&L, I, Try, Order, Chain}, S.GotoTarget});
-            Chain.push_back({&L, I});
+              Gotos.push_back(
+                  {Site{&L, I, Try, RetainParent(RetainParent, Parent)},
+                   S.GotoTarget});
+            ParentScope Scope{&L, I, Parent, std::nullopt};
+            auto CollectChild = [&](std::vector<HighStmt> &Child,
+                                    const void *ChildTry) {
+              if (!Child.empty())
+                Collect(Child, ChildTry, &Scope);
+            };
             const bool IsTry = S.Kind == StmtKind::SEHTry ||
                                S.Kind == StmtKind::CxxTry ||
                                S.Kind == StmtKind::ItaniumTry;
-            Collect(S.Body, IsTry ? static_cast<const void *>(&S) : Try);
-            Collect(S.ElseBody, Try);
+            CollectChild(S.Body, IsTry ? static_cast<const void *>(&S) : Try);
+            CollectChild(S.ElseBody, Try);
             for (auto &C : S.Cases)
-              Collect(C.Body, Try);
-            Collect(S.DefaultBody, Try);
+              CollectChild(C.Body, Try);
+            CollectChild(S.DefaultBody, Try);
             for (auto &ClauseBody : S.EHClauseBodies)
-              Collect(ClauseBody, &ClauseBody);
-            Chain.pop_back();
+              CollectChild(ClauseBody, &ClauseBody);
           }
         };
-    Collect(Body, nullptr);
+    Collect(Body, nullptr, nullptr);
     // What runs after the list holding \p At falls off its end: the next
     // statement after the if/else, block or switch around it, when exactly
     // one statement starts that address.
     auto FollowOf = [&](const Site &At) -> va_t {
-      for (size_t D = At.Chain.size(); D-- > 0;) {
-        const auto &[ParentList, ParentIndex] = At.Chain[D];
+      for (auto P = At.Parent; P; P = Parents[*P].Parent) {
+        const auto &Ancestor = Parents[*P];
+        const auto *ParentList = Ancestor.List;
+        const size_t ParentIndex = Ancestor.Index;
         const HighStmt &Parent = (*ParentList)[ParentIndex];
         if (Parent.Kind != StmtKind::If && Parent.Kind != StmtKind::IfElse &&
             Parent.Kind != StmtKind::Block && Parent.Kind != StmtKind::Switch)
@@ -4824,9 +4988,11 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
         Bad = false;
       }
       // The goto must not sit inside the block it would receive.
-      for (const auto &[List, Index] : GotoSite.Chain)
-        if (List == &LL && Index >= K && Index <= M)
+      for (auto P = GotoSite.Parent; P; P = Parents[*P].Parent) {
+        const auto &Ancestor = Parents[*P];
+        if (Ancestor.List == &LL && Ancestor.Index >= K && Ancestor.Index <= M)
           Bad = true;
+      }
       if (GotoSite.List == &LL && GotoSite.Index >= K && GotoSite.Index <= M)
         Bad = true;
       std::vector<HighStmt> Moved(LL.begin() + K, LL.begin() + M + 1);
@@ -5024,11 +5190,14 @@ void MedToHighConverter::simplifyControlFlow(HighFunc &Func,
   const char *Detail = std::getenv("NEVERD_HIGHIR_DETAIL");
   const bool WantDetail = Detail && Detail[0] == '1' && Detail[1] == '\0';
   size_t NestedStatements = 0;
-  if (Func.Body.size() > 512)
+  if (Func.Body.size() >
+      ::neverd::limits::ir::
+          kHighCFSimplifyMedToHighConverterSimplifyControlFlowFuncBodySizeLimit)
     walkStmts(Func.Body, [&](const HighStmt &) { ++NestedStatements; });
   // Every if/else pass revisits nested arms; cap optional folding before a
   // shallow outer list multiplies work across thousands of descendants.
-  const bool TooNestedForIfElse = NestedStatements > 1536;
+  const bool TooNestedForIfElse =
+      NestedStatements > ::neverd::limits::ir::kMaxIfElseNestedStatements;
   auto Now = [] { return std::chrono::steady_clock::now(); };
   auto ElapsedMs = [](auto Start, auto End) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(End - Start)

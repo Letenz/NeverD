@@ -602,4 +602,26 @@ KernelPhysicalMemory::physicalAddress(uint64_t Backing) const {
   const uint64_t Page = pageBase(Backing);
   return Pages.at(pageKey(Regions.at(*Owner), Page)).Physical + Backing - Page;
 }
+llvm::Expected<KernelPhysicalMemory::AddressTranslation>
+KernelPhysicalMemory::resolveAddress(uint64_t Address) const {
+  // Resolve the live mapping, never the original VA of a retained owner. A
+  // reused VA may name a different allocation while an old alias survives.
+  auto View = Memory.pinBacking(Address, 1);
+  if (!View)
+    return View.takeError();
+  const auto &Slice = View->slices().front();
+  const auto Page = Pages.find({Slice.Region, pageBase(Slice.Offset)});
+  if (Page == Pages.end())
+    return physicalError(physical_diagnostic::MissingOwner);
+  AddressTranslation Result;
+  Result.Physical = Page->second.Physical + Slice.Offset % physical::PageSize;
+  for (const auto &[Owner, Region] : Regions)
+    if (Region.Storage.overlaps(*View))
+      Result.Owners.push_back(Owner);
+  // A live page shared with another allocation does not own its retired bytes.
+  if (Result.Owners.empty())
+    return physicalError(physical_diagnostic::MissingOwner);
+  return Result;
+}
+
 } // namespace neverd::emulation

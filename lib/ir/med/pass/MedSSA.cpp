@@ -16,15 +16,21 @@
 #include "../X86/SEHSourceRoots.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/SourceCallABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/ir/med/MedCallLeftovers.h"
+#include "neverd/ir/med/MedStackAlignment.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/ExceptionInfo.h"
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -378,24 +384,28 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     return false;
   };
 
-  auto CallClobberedIds = [&](const MedOp &Op) {
-    std::set<int> Result;
+  // Lowering assigns each call a distinct occurrence ID. Entry seeding may
+  // move operations and SSA renames their values, but neither changes a
+  // call's preservation contract or the register views collected above.
+  // Reuse its complete clobber set across liveness, PHI placement and rename.
+  llvm::DenseMap<uint32_t, llvm::SmallVector<int, 8>> CallClobbers;
+  auto CallClobberedIds = [&](const MedOp &Op) -> llvm::ArrayRef<int> {
     if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
         Op.PreservesCallerSaved)
-      return Result;
-    for (const auto &[RegOff, Ids] : RegOffToIds) {
-      if (TRI.isFrameOrLinkReg(RegOff) || TRI.isStackPointer(RegOff) ||
-          (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == RegOff))
-        continue;
-      for (int Id : Ids) {
-        auto It = RegVarOfId.find(Id);
-        if (It == RegVarOfId.end() ||
-            (!fullyPreserved(RegOff, It->second.Size) &&
-             !callPreservesRegisterBytes(TRI.TheArch, Op.CallPreservedGPRs,
-                                         RegOff, It->second.Size)))
-          Result.insert(Id);
-      }
-    }
+      return {};
+    auto [Cached, Inserted] = CallClobbers.try_emplace(Op.CallSiteId);
+    if (!Inserted)
+      return Cached->second;
+    auto &Result = Cached->second;
+    for (const auto &[RegOff, Ids] : RegOffToIds)
+      for (int Id : Ids)
+        if (const auto It = RegVarOfId.find(Id);
+            It != RegVarOfId.end() &&
+            callClobbersRegister(Op, RegOff, It->second.Size, TRI,
+                                 TargetFormat))
+          Result.push_back(Id);
+    llvm::sort(Result);
+    Result.erase(std::unique(Result.begin(), Result.end()), Result.end());
     return Result;
   };
 
@@ -458,6 +468,25 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
             VarOfId.emplace(Inp.Id, Inp);
           }
         }
+        // A physical x86 CALL reads SP to write its return slot, even when
+        // none of its source arguments mention SP. Keep that use live across
+        // handler roots before a later explicit restore overwrites SP. The
+        // existing SEH frame proof then supplies the handler's frame value.
+        if (TRI.CallPushesReturnAddress &&
+            (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)) {
+          const auto Bias =
+              sourceCallReturnAddressBias(Image, TargetArch, Op.Addr);
+          if (!Bias || *Bias != 0)
+            if (auto It = RegOffToIds.find(TRI.StackPointer);
+                It != RegOffToIds.end())
+              for (int Id : It->second) {
+                const auto &View = RegVarOfId.at(Id);
+                if (IsFullStackPointer(View) && !Kill.count(Id)) {
+                  UEVar[B].insert(Id);
+                  VarOfId.emplace(Id, View);
+                }
+              }
+        }
         // A partial call clobber reads the pre-call value to retain its ABI-
         // preserved low prefix.  Account for that hidden use before applying
         // the call's kill, otherwise a first-use v8-v15 Q view would lack its
@@ -494,31 +523,34 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         for (const MedVar &Aux : Op.IntrinsicOutputs)
           if (Aux.Id >= 0 && Aux.Size > 0)
             Kill.insert(Aux.Id);
-        std::set<int> Clobbered = CallClobberedIds(Op);
+        llvm::ArrayRef<int> Clobbered = CallClobberedIds(Op);
         Kill.insert(Clobbered.begin(), Clobbered.end());
       }
     }
 
-    std::vector<std::set<int>> LiveIn(N), LiveOut(N);
-    bool Changed = true;
-    while (Changed) {
-      Changed = false;
+    // Each live-in fact crosses a predecessor edge only once. The transfer
+    // UEVar[B] union (LiveOut[B] - VarKill[B]) distributes over individual
+    // variables, so propagating only new facts reaches the same least fixpoint
+    // without rebuilding successor unions or revisiting unchanged facts.
+    auto LiveIn = std::move(UEVar);
+    // Self-edges cannot add another block's uses to a single-block function.
+    if (N > 1) {
+      std::queue<std::pair<int, int>> Pending;
       for (auto It = RPO.rbegin(); It != RPO.rend(); ++It) {
-        int B = *It;
+        const int B = *It;
         if (B == VirtualRoot)
           continue;
-        std::set<int> NewOut;
-        for (int S : FlowSuccs[B])
-          if (S >= 0 && S < N)
-            NewOut.insert(LiveIn[S].begin(), LiveIn[S].end());
-        std::set<int> NewIn = UEVar[B];
-        for (int V : NewOut)
-          if (!VarKill[B].count(V))
-            NewIn.insert(V);
-        if (NewIn != LiveIn[B] || NewOut != LiveOut[B]) {
-          LiveIn[B] = std::move(NewIn);
-          LiveOut[B] = std::move(NewOut);
-          Changed = true;
+        for (int Id : LiveIn[B])
+          Pending.emplace(B, Id);
+      }
+      while (!Pending.empty()) {
+        const auto [B, Id] = Pending.front();
+        Pending.pop();
+        for (int P : FlowPreds[B]) {
+          // The synthetic root joins dominance, not machine-entry values.
+          if (P != VirtualRoot && !VarKill[P].count(Id) &&
+              LiveIn[P].insert(Id).second)
+            Pending.emplace(P, Id);
         }
       }
     }
@@ -614,15 +646,15 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         // Ordinary flow and runtime resumption must agree on the same frame.
         // A runtime-only continuation is a real root: its SP is the proved
         // target frame, not a second ordinary function-entry SP.
-        bool IndependentEntries = false;
+        bool UnresolvedEntries = false;
         const auto FrameBytes = proveSEHEstablisherFrame(
             Low, Func, Func.Blocks[B].StartAddr, TRI,
             /*OrdinaryEntry=*/!IsRoot[B], LocalUnwindDigest,
             /*CxxContinuation=*/false, nullptr, nullptr,
-            SEHSourceProjectionEnabled, &IndependentEntries);
-        Func.HasUnresolvedSEHFrame |= IndependentEntries;
+            SEHSourceProjectionEnabled, &UnresolvedEntries);
+        Func.HasUnresolvedSEHFrame |= UnresolvedEntries;
         if (!IsRoot[B]) {
-          if (IndependentEntries)
+          if (UnresolvedEntries)
             SharedSourceSPRoots.insert(B);
           continue;
         }
@@ -785,6 +817,8 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     }
   }
 
+  RegistrationRoots.seedSEHParentFrames(Func);
+
   // Step 2: Compute dominance frontiers
   std::vector<std::set<int>> DF(GraphN);
   for (int B = 0; B < N; ++B) {
@@ -901,8 +935,8 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   }
 
   // Step 5: SSA renaming (assign version numbers)
-  std::map<int, int> VarCounter;
-  std::map<int, std::vector<int>> VarStack;
+  llvm::DenseMap<int, int> VarCounter;
+  llvm::DenseMap<int, std::vector<int>> VarStack;
   // Version 0 is the value a variable holds when a root is entered.  A root
   // other than the entry reads it after the entry's subtree has been
   // renamed, so its definitions start at 1 instead of taking version 0 and
@@ -941,10 +975,33 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   struct Frame {
     int B;
     size_t ChildIdx;
-    std::map<int, int> SavedSizes;
+    /// The variables this block pushed a version of, once per push.
+    std::vector<int> Pushed;
   };
   std::vector<Frame> Stk;
   Stk.reserve(N);
+
+  // The arguments each block's PHIs take on an edge from each predecessor:
+  // (predecessor, PHI, argument) in PHI and argument order.  Renaming does
+  // not change a PHI's arguments' predecessors.
+  struct PhiEdgeArg {
+    int Pred;
+    uint32_t Phi;
+    uint32_t Arg;
+  };
+  std::vector<std::vector<PhiEdgeArg>> PhiEdgeArgs(N);
+  for (int B = 0; B < N; ++B) {
+    const auto &Phis = Func.Blocks[B].Phis;
+    for (size_t P = 0; P < Phis.size(); ++P)
+      for (size_t A = 0; A < Phis[P].Args.size(); ++A)
+        PhiEdgeArgs[B].push_back({Phis[P].Args[A].first,
+                                  static_cast<uint32_t>(P),
+                                  static_cast<uint32_t>(A)});
+    std::stable_sort(PhiEdgeArgs[B].begin(), PhiEdgeArgs[B].end(),
+                     [](const PhiEdgeArg &L, const PhiEdgeArg &R) {
+                       return L.Pred < R.Pred;
+                     });
+  }
 
   auto ProcessBlock = [&](Frame &F) {
     if (F.B == VirtualRoot)
@@ -954,7 +1011,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     auto &Blk = Func.Blocks[F.B];
     for (auto &Phi : Blk.Phis) {
       Phi.Output.SSAVer = NewVersion(Phi.Output.Id);
-      F.SavedSizes[Phi.Output.Id]++;
+      F.Pushed.push_back(Phi.Output.Id);
     }
     if (SEHProtectedBlocks.count(F.B))
       for (int Id : SEHTrackedIds)
@@ -964,13 +1021,16 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           CxxThrowingCalls.count({F.B, Op.Addr}))
         for (int Id : SEHTrackedIds)
           CxxCallVersions[{F.B, Op.Addr}][Id] = GetVersion(Id);
+      const bool RuntimeCoordinate = hasValidRegistrationRootShape(Op);
       for (uint8_t I = 0; I < Op.NumInputs; ++I) {
-        if (Op.Inputs[I].Id >= 0)
+        // A runtime coordinate defines a new frame value independently of an
+        // incoming machine register, including at a resumed parent block.
+        if (Op.Inputs[I].Id >= 0 && !RuntimeCoordinate)
           Op.Inputs[I].SSAVer = GetVersion(Op.Inputs[I].Id);
       }
       if (Op.Output.Id >= 0 && Op.Output.Size > 0) {
         Op.Output.SSAVer = NewVersion(Op.Output.Id);
-        F.SavedSizes[Op.Output.Id]++;
+        F.Pushed.push_back(Op.Output.Id);
         if (Func.HasUnresolvedSEHFrame && Op.Addr == InvalidVA &&
             SEHProtectedBlocks.count(F.B) && SEHTrackedIds.count(Op.Output.Id))
           SEHEntryVersions[F.B][Op.Output.Id] = Op.Output.SSAVer;
@@ -979,7 +1039,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         if (Aux.Id < 0 || Aux.Size == 0)
           continue;
         Aux.SSAVer = NewVersion(Aux.Id);
-        F.SavedSizes[Aux.Id]++;
+        F.Pushed.push_back(Aux.Id);
       }
       for (int Id : CallClobberedIds(Op)) {
         auto It = RegVarOfId.find(Id);
@@ -997,7 +1057,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           }
         }
         int Version = NewVersion(Id);
-        F.SavedSizes[Id]++;
+        F.Pushed.push_back(Id);
         if (It != RegVarOfId.end()) {
           MedVar Clobber = It->second;
           Clobber.SSAVer = Version;
@@ -1009,19 +1069,20 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     for (int S : FlowSuccs[F.B]) {
       if (S < 0 || S >= N)
         continue;
-      for (auto &Phi : Func.Blocks[S].Phis) {
-        for (auto &[Pred, Arg] : Phi.Args) {
-          if (Pred != F.B)
-            continue;
-          // A PHI can be placed for a register that no instruction reads on
-          // this edge. With no reaching definition, version zero may name a
-          // sibling's first write; publishing it would let propagation borrow
-          // that sibling's constant for this path.
-          if (VarStack[Arg.Id].empty())
-            Arg = MedVar::makeUnspecified(Arg.Size, TargetArch);
-          else
-            Arg.SSAVer = GetVersion(Arg.Id);
-        }
+      const auto &EdgeArgs = PhiEdgeArgs[S];
+      auto First = std::lower_bound(
+          EdgeArgs.begin(), EdgeArgs.end(), F.B,
+          [](const PhiEdgeArg &E, int Pred) { return E.Pred < Pred; });
+      for (auto It = First; It != EdgeArgs.end() && It->Pred == F.B; ++It) {
+        MedVar &Arg = Func.Blocks[S].Phis[It->Phi].Args[It->Arg].second;
+        // A PHI can be placed for a register that no instruction reads on
+        // this edge. With no reaching definition, version zero may name a
+        // sibling's first write; publishing it would let propagation borrow
+        // that sibling's constant for this path.
+        if (VarStack[Arg.Id].empty())
+          Arg = MedVar::makeUnspecified(Arg.Size, TargetArch);
+        else
+          Arg.SSAVer = GetVersion(Arg.Id);
       }
     }
   };
@@ -1036,10 +1097,8 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       Stk.push_back({C, 0, {}});
       ProcessBlock(Stk.back());
     } else {
-      for (auto &[VId, Cnt] : F.SavedSizes) {
-        for (int I = 0; I < Cnt; ++I)
-          VarStack[VId].pop_back();
-      }
+      for (int VId : F.Pushed)
+        VarStack[VId].pop_back();
       Stk.pop_back();
     }
   }

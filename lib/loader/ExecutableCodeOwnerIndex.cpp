@@ -7,6 +7,7 @@
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 
 #include "neverd/loader/BinaryImageModel.h"
+#include "neverd/support/SortedSearch.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -111,16 +112,20 @@ ExecutableCodeOwnerIndex::ExecutableCodeOwnerIndex(const BinaryImage &Image)
     for (const Import &Imp : Image.Imports)
       if (Image.isCodeAddress(Imp.IATAddr))
         ImportStubs.push_back(Imp.IATAddr);
+  const auto BoundaryGuesses = Image.boundaryGuessFunctionStarts();
   for (const Symbol &Sym : Image.Symbols) {
     if (!Sym.IsFunc)
       continue;
     const va_t Start = normalizeCodeAddress(Sym.Addr, Image.Arch, Image.Mode);
     FunctionStarts.push_back(Start);
+    if (!BoundaryGuesses.count(Sym.Addr))
+      NonGuessedFunctionStarts.push_back(Start);
     if (Sym.Size != 0 && Sym.Size <= InvalidVA - Start)
       CodeRanges.emplace_back(Start, Start + Sym.Size);
   }
   sortUnique(ImportStubs);
   sortUnique(FunctionStarts);
+  sortUnique(NonGuessedFunctionStarts);
   mergeRanges(ImportRanges);
   mergeRanges(CodeRanges);
   visitFunctionMetadataRanges(Image, [&](va_t Start, va_t End) {
@@ -225,16 +230,19 @@ va_t BinaryImage::getFunctionMetadataEnd(
 }
 
 bool ExecutableCodeOwnerIndex::isImportStubAt(va_t Addr) const {
-  return std::binary_search(ImportStubs.begin(), ImportStubs.end(), Addr) ||
+  return sorted::contains64(ImportStubs.data(), ImportStubs.size(), Addr) ||
          contains(ImportRanges, Addr);
 }
 
-bool ExecutableCodeOwnerIndex::hasFunctionSymbolAt(va_t Addr) const {
-  return std::binary_search(FunctionStarts.begin(), FunctionStarts.end(), Addr);
+bool ExecutableCodeOwnerIndex::hasFunctionSymbolAt(
+    va_t Addr, bool IncludeBoundaryGuesses) const {
+  const auto &Starts =
+      IncludeBoundaryGuesses ? FunctionStarts : NonGuessedFunctionStarts;
+  return sorted::contains64(Starts.data(), Starts.size(), Addr);
 }
 
 bool ExecutableCodeOwnerIndex::hasKnownOrTypedOwnerAt(va_t Addr) const {
-  return std::binary_search(FunctionStarts.begin(), FunctionStarts.end(),
+  return sorted::contains64(FunctionStarts.data(), FunctionStarts.size(),
                             Addr) ||
          contains(CodeRanges, Addr);
 }
@@ -243,7 +251,13 @@ bool BinaryImage::hasExecutableCodeOwnerAt(
     va_t Addr, const ExecutableCodeOwnerIndex *Index) const {
   const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
   const Segment *Seg = getSegmentFor(Normalized);
-  if (!Seg || !Seg->isExecutable())
+  if (!Seg)
+    return false;
+  // COFF's code-content declaration is structural analysis provenance, not
+  // permission to execute the original mapping. Keep the page flags intact.
+  if (Format == BinaryFormat::COFF && isCodeAddress(Normalized))
+    return true;
+  if (!Seg->isExecutable())
     return false;
   if (const ARMCodeRegion *Region = armMappingRegionAt(Normalized);
       Region && Region->Kind == ARMCodeRegionKind::Data)
@@ -276,13 +290,17 @@ bool BinaryImage::hasExecutableCodeOwnerAt(
   return false;
 }
 
-bool BinaryImage::hasFunctionSymbolAt(
-    va_t Addr, const ExecutableCodeOwnerIndex *Index) const {
+bool BinaryImage::hasFunctionSymbolAt(va_t Addr,
+                                      const ExecutableCodeOwnerIndex *Index,
+                                      bool IncludeBoundaryGuesses) const {
   const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
   if (Index && Index->Image == this)
-    return Index->hasFunctionSymbolAt(Normalized);
+    return Index->hasFunctionSymbolAt(Normalized, IncludeBoundaryGuesses);
+  const auto BoundaryGuesses =
+      IncludeBoundaryGuesses ? std::set<va_t>{} : boundaryGuessFunctionStarts();
   for (const Symbol &Sym : Symbols)
-    if (Sym.IsFunc && normalizeCodeAddress(Sym.Addr, Arch, Mode) == Normalized)
+    if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr) &&
+        normalizeCodeAddress(Sym.Addr, Arch, Mode) == Normalized)
       return true;
   return false;
 }

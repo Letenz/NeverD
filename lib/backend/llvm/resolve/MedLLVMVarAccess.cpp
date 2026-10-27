@@ -18,7 +18,9 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/LLVMValueProvenance.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/support/Diagnostic.h"
@@ -78,17 +80,23 @@ void MedLLVMEmitter::ensureDefPhiIndex() const {
   DefPhiIndexFor = CurMedFunc;
   DefIndex.clear();
   PhiIndex.clear();
+  PhiBlocks.clear();
+  UniqueBlockIndex.clear();
+  UniqueBlockIds = true;
   if (!CurMedFunc)
     return;
   // try_emplace keeps the FIRST op/phi defining each identity, matching the old
   // linear scans' "return the first match" behavior.
   for (const MedBlock &Blk : CurMedFunc->Blocks) {
+    UniqueBlockIds &= UniqueBlockIndex.emplace(Blk.Id, &Blk).second;
     for (const MedOp &Op : Blk.Ops)
       if (!Op.Output.isConst())
         DefIndex.try_emplace(medVarDefKey(Op.Output), &Op);
-    for (const PhiNode &P : Blk.Phis)
+    for (const PhiNode &P : Blk.Phis) {
+      PhiBlocks.try_emplace(&P, &Blk);
       if (!P.Output.isConst())
         PhiIndex.try_emplace(medVarDefKey(P.Output), &P);
+    }
   }
 }
 
@@ -106,6 +114,18 @@ const PhiNode *MedLLVMEmitter::lookupPhi(const MedVar &V) const {
   ensureDefPhiIndex();
   auto It = PhiIndex.find(medVarDefKey(V));
   return It == PhiIndex.end() ? nullptr : It->second;
+}
+
+const MedBlock *MedLLVMEmitter::lookupPhiBlock(const PhiNode *Phi) const {
+  ensureDefPhiIndex();
+  auto It = PhiBlocks.find(Phi);
+  return It == PhiBlocks.end() ? nullptr : It->second;
+}
+
+const std::map<int, const MedBlock *> *
+MedLLVMEmitter::uniqueBlocksById() const {
+  ensureDefPhiIndex();
+  return UniqueBlockIds ? &UniqueBlockIndex : nullptr;
 }
 
 //===----------------------------------------------------------------------===//
@@ -279,7 +299,8 @@ MedLLVMEmitter::summarizeConstantProvenance(const MedVar &V) const {
   using Key = std::tuple<int, int, int, uint16_t>;
   std::map<Key, Result> Memo;
   std::set<Key> Active;
-  int Budget = 512;
+  int Budget = ::neverd::limits::backend::
+      kMedLLVMVarAccessMedLLVMEmitterSummarizeConstantProvenanceBudget;
 
   auto mergeValues = [&](Result A, const MedVar &AV, Result B,
                          const MedVar &BV) {
@@ -538,7 +559,11 @@ bool MedLLVMEmitter::addressFragmentCanStayInLocalFrameSlot(
         continue;
       }
       uint16_t AccessSize = Op.Output.Size;
-      if (*AddressInput == 3)
+      if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 2 &&
+          Op.Inputs[0].isConst() &&
+          isX86AtomicIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].ConstVal)))
+        AccessSize = Op.Inputs[2].Size;
+      else if (*AddressInput == 3)
         AccessSize = 16;
       else if (*AddressInput == 2 && Op.NumInputs > 3 && Op.Inputs[3].isConst())
         AccessSize = static_cast<uint16_t>(Op.Inputs[3].ConstVal);
@@ -622,6 +647,11 @@ MedLLVMEmitter::getPhiIncomingConstant(const MedVar &V, uint16_t OutputSize,
 llvm::Value *MedLLVMEmitter::getPhiIncomingValue(const MedVar &V,
                                                  uint16_t OutputSize,
                                                  llvm::IRBuilder<> &Builder) {
+  // Every incoming image address uses the same runtime coordinate model as
+  // ordinary operands. The mirror mode's raw-VA PHI convention is not valid
+  // for a single external original-image span.
+  if (usesOriginalImageStorage())
+    return getVar(V, Builder);
   // A PHI feeding another PHI is already a relocation-aware runtime value:
   // its predecessor copies materialized every exact code/data arm before
   // storing the selected value in the source PHI's alloca.  Re-proving the
@@ -644,7 +674,8 @@ llvm::Value *MedLLVMEmitter::getRawSegmentOffset(const MedVar &V,
                                                  llvm::IRBuilder<> &Builder) {
   using Key = std::tuple<int, int, int, uint16_t>;
   std::set<Key> Active;
-  int Budget = 256;
+  int Budget = ::neverd::limits::backend::
+      kMedLLVMVarAccessMedLLVMEmitterGetRawSegmentOffsetBudget;
 
   auto rawConstant = [&](const MedVar &C) -> llvm::Value * {
     return rawIntegerConstant(*Ctx, sizeToType(C.Size), C.ConstVal);
@@ -844,10 +875,12 @@ llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
   // occurrence values; whole-function variable roles are not SSA evidence.
   if (CurMedFunc && CurMedFunc->SkippedSSA && V.isConst())
     return rawIntegerConstant(*Ctx, sizeToType(V.Size), V.ConstVal);
-  // Any fixed value is as good as another, but every read of one agrees.
-  if (V.Kind == MedVar::Unspecified)
-    return Builder.CreateFreeze(llvm::PoisonValue::get(
-        llvm::Type::getIntNTy(*Ctx, std::max<unsigned>(V.Size, 1) * 8)));
+  if (V.Kind == MedVar::Unspecified) {
+    auto *Type = llvm::Type::getIntNTy(*Ctx, std::max<unsigned>(V.Size, 1) * 8);
+    if (PreserveUnknownSourceValues)
+      return llvm_source_unknown::create(Builder, Type);
+    return Builder.CreateFreeze(llvm::PoisonValue::get(Type));
+  }
   if (V.Kind == MedVar::SEHExceptionCode) {
     // The native SEH lowering stores the handler's catch pad code here.
     // Without it no edge reaches the handler, so this read is unreachable.
@@ -964,6 +997,17 @@ llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
         if (llvm::Constant *Code = resolveLiftedCodeAddress(V.ConstVal))
           return Builder.CreatePtrToInt(Code, sizeToType(V.Size),
                                         "codeptr.prov");
+        // An exact import veneer stands for its import, as in the pointer
+        // mirror: a destructor `push offset` names one for an iterator.
+        if (const Import *Imported =
+                Img ? Img->findImportStubAt(V.ConstVal) : nullptr;
+            Imported && !Imported->Name.empty()) {
+          if (llvm::GlobalValue *Symbol =
+                  importedSymbolIdentity(Imported->Name))
+            return Builder.CreatePtrToInt(Symbol, sizeToType(V.Size),
+                                          "import.prov");
+          return llvm::UndefValue::get(sizeToType(V.Size));
+        }
         // A string literal among the code is data a symbol names.
         if (llvm::Constant *Literal = resolveSymbolStringLiteral(V.ConstVal))
           return Builder.CreatePtrToInt(Literal, sizeToType(V.Size), "literal");
@@ -978,7 +1022,7 @@ llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
       }
 
       if (V.Provenance == ConstantAddressProvenance::Address && Img &&
-          Img->isCodeAddress(V.ConstVal)) {
+          !usesOriginalImageStorage() && Img->isCodeAddress(V.ConstVal)) {
         // A role-neutral architectural PC is also used as the numeric base of
         // ARM switch/literal expressions.  Eagerly turning every such COPY
         // into blockaddress changes arithmetic semantics and can leave an
@@ -994,7 +1038,7 @@ llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
       // tail object in an adjacent .rodata segment; eagerly materializing only
       // that tail would mix it with the raw RELRO head nodes in a PHI/SELECT.
       if (V.Provenance == ConstantAddressProvenance::Address &&
-          addrInCodePtrMirrorRun(V.ConstVal))
+          !usesOriginalImageStorage() && addrInCodePtrMirrorRun(V.ConstVal))
         return rawConstant();
 
       uint64_t Address = 0;
@@ -1147,7 +1191,9 @@ llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
   if (V.Kind == MedVar::Param && V.RegOff == kNoParamReg && CurMedFunc) {
     unsigned Slot = getTargetRegInfo(TargetArch).PointerSize;
     if (Slot > 0 && V.Size > Slot && (V.Size % Slot) == 0 &&
-        V.Size / Slot <= 64) {
+        V.Size / Slot <=
+            ::neverd::limits::backend::
+                kMedLLVMVarAccessMedLLVMEmitterGetVarVSizeSlotLimit) {
       unsigned N = V.Size / Slot;
       bool AllPresent = true;
       for (unsigned K = 0; K < N && AllPresent; ++K) {
@@ -1376,7 +1422,12 @@ llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
   llvm::IRBuilder<> AllocBuilder(&Entry, Entry.begin());
   auto *Ty = sizeToType(V.Size);
   auto *Alloca = AllocBuilder.CreateAlloca(Ty, nullptr, V.display());
-  AllocBuilder.CreateStore(llvm::ConstantInt::get(Ty, 0), Alloca);
+  llvm::Value *Initial =
+      PreserveUnknownSourceValues
+          ? llvm_source_unknown::createEntrySeed(
+                AllocBuilder, llvm::cast<llvm::IntegerType>(Ty))
+          : llvm::ConstantInt::get(Ty, 0);
+  AllocBuilder.CreateStore(Initial, Alloca);
   VarAllocs[Key] = Alloca;
   return Builder.CreateLoad(Ty, Alloca, V.display() + "_v");
 }

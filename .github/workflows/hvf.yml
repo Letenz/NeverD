@@ -129,7 +129,7 @@ jobs:
         timeout-minutes: 10
         shell: bash
         run: |
-          cmake --build build-hvf --target NeverDHvfTests --parallel 4 2>&1 | tee build-hvf/transport-build.log
+          python scripts/build.py build-hvf --target NeverDHvfTests --parallel 4 2>&1 | tee build-hvf/transport-build.log
       - name: Repeat native interruption and recovery
         if: inputs.validation != 'probe'
         timeout-minutes: ${{ inputs.recovery-repetitions == '1000' && 10 || 3 }}

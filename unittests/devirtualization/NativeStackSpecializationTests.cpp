@@ -8,7 +8,7 @@
 
 #include "neverd/analysis/InterpreterSpecialization.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/symbolic/SymExec.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -51,7 +51,7 @@ class StackProvider : public SpecializationProvider {
 public:
   std::map<va_t, SpecializationInstruction> Code;
 
-  void add(va_t Address, std::initializer_list<LowOp> Ops,
+  void add(va_t Address, const std::vector<LowOp> &Ops,
            SpecializationNativeStackControl Native =
                SpecializationNativeStackControl::None) {
     SpecializationInstruction Insn;
@@ -540,6 +540,27 @@ TEST(NativeStackSpecialization,
           EXPECT_EQ(Run->Value, 7 + 2 * Input + 64 + Low);
           EXPECT_EQ(Run->Stack, Base + Low);
         }
+  }
+}
+
+TEST(NativeStackSpecialization,
+     AlignmentRetryDoesNotNominateAfterTerminalBudgetFailure) {
+  auto P = alignedSpillLoop(2);
+  P.add(0xff, {operation(NdOp::COPY, r(16), {c(7)}), branch(0x100)});
+  const auto Good = specializeInterpreter(P, {0xff}, registerCaseOptions());
+  ASSERT_TRUE(Good.complete()) << Good.Diagnostic;
+  ASSERT_GT(Good.ControlRefinements, 0u);
+  for (uint64_t Limit = 1; Limit < Good.EvaluatedOperations; ++Limit) {
+    auto Options = registerCaseOptions();
+    Options.MaxOperations = Limit;
+    const auto Result = specializeInterpreter(P, {0xff}, Options);
+    ASSERT_EQ(Result.Status, SpecializationStatus::BudgetExceeded)
+        << Limit << ": " << Result.Diagnostic;
+    EXPECT_TRUE(Result.Residual.Blocks.empty());
+    EXPECT_TRUE(Result.Origins.empty());
+    EXPECT_TRUE(Result.Reads.empty());
+    ASSERT_LE(Result.EvaluatedOperations, Limit + 1)
+        << Limit << ": " << Result.Diagnostic;
   }
 }
 
@@ -1385,6 +1406,37 @@ TEST(NativeStackSpecialization, RefinesFiniteDispatchBeforeUnsupportedArm) {
     }
 }
 
+TEST(NativeStackSpecialization,
+     AbsoluteFactsKeepFrameInputsAvailableForControlDiscovery) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (uint32_t Chain : {0, 8}) {
+      auto P = finiteDispatchDecoder(true);
+      P.add(0xff,
+            {operation(NdOp::STORE, {}, {c(0xa800), c(0x501)}), branch(0x100)});
+      P.add(0x500, {operation(NdOp::INT_ADD, r(0), {r(8), c(17)}),
+                    operation(NdOp::LOAD, r(120), {c(0xa800)}),
+                    operation(NdOp::INDIR_BR, {}, {r(120)})});
+      auto O = stackOptions();
+      O.ByteOrder = Order;
+      O.MaxChainedTransfers = Chain;
+      O.DiscoverControlState = true;
+      O.ProveStoreFrameSeparation = true;
+      O.EntryFrameBounds = SpecializationEntryFrameBounds{-64, 8};
+      O.EntryFrameBounds->ExcludedAddressRanges = {{0xa800, 0xa808}};
+      const auto R = specializeInterpreter(P, {0xff}, O);
+      ASSERT_TRUE(R.complete()) << R.Diagnostic;
+      for (uint64_t Input : {uint64_t{0}, uint64_t{37}, UINT64_MAX}) {
+        const auto Run = execute(R.Residual, Input, 0, Order);
+        ASSERT_TRUE(Run);
+        EXPECT_EQ(Run->Value, Input + 17);
+        EXPECT_EQ(Run->Stack, 0x10000u);
+      }
+      auto MayAlias = O;
+      MayAlias.EntryFrameBounds->ExcludedAddressRanges.clear();
+      EXPECT_FALSE(specializeInterpreter(P, {0xff}, MayAlias).complete());
+    }
+}
+
 TEST(NativeStackSpecialization, FiniteGuardsDoNotPreemptExistingRefinement) {
   auto P = guardedDecoder(false);
   // A runtime dispatch before the decoder has a large, irrelevant selector
@@ -2203,25 +2255,45 @@ LowOp repeatedBytes(NdVar Source, NdVar Destination, NdVar Count, NdVar DF) {
 }
 
 TEST(NativeStackSpecialization, RepeatedCopyRetainsOverlapAndInstructionOrder) {
-  StackProvider P;
-  P.add(0x100, {operation(NdOp::INT_SUB, r(40), {r(32), c(40)}),
-                operation(NdOp::STORE, {}, {r(40), c(0x8877665544332211)}),
-                operation(NdOp::INT_ADD, r(48), {r(40), c(1)}),
-                operation(NdOp::COPY, r(56), {c(7)}),
-                repeatedBytes(r(40), r(48), r(56), c(0, 1)),
-                operation(NdOp::LOAD, r(0), {r(40)}), ret()});
-  auto Result = specializeInterpreter(P, {0x100}, stackOptions());
-  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
-  auto Run = execute(Result.Residual);
-  ASSERT_TRUE(Run);
-  EXPECT_EQ(Run->Value, 0x1111111111111111u);
-  auto Exact = stackOptions();
-  Exact.MaxOperations = Result.EvaluatedOperations;
-  EXPECT_TRUE(specializeInterpreter(P, {0x100}, Exact).complete());
-  --Exact.MaxOperations;
-  const auto Short = specializeInterpreter(P, {0x100}, Exact);
-  EXPECT_EQ(Short.Status, SpecializationStatus::BudgetExceeded);
-  EXPECT_TRUE(Short.Residual.Blocks.empty());
+  for (bool Complete : {false, true}) {
+    SCOPED_TRACE(Complete);
+    StackProvider P;
+    std::vector<LowOp> Ops = {
+        operation(NdOp::INT_SUB, r(40), {r(32), c(40)}),
+        operation(NdOp::STORE, {}, {r(40), c(0x8877665544332211)}),
+        operation(NdOp::INT_ADD, r(48), {r(40), c(1)}),
+        operation(NdOp::COPY, r(56), {c(7)}),
+        repeatedBytes(r(40), r(48), r(56), c(0, 1))};
+    if (Complete) {
+      auto &Transfer = Ops.back();
+      Transfer.Inputs[0] =
+          c(static_cast<uint16_t>(Intrinsic::X86RepMovsState), 2);
+      // Arithmetic flags are nonzero while DF is clear. Only the owned DF
+      // bit may select backward transfer.
+      Transfer.Inputs[4] = c(X86RepFlagsMask, X86RepStatusBytes);
+      Transfer.addInput(c(*x86RepDescriptor(Intrinsic::X86RepMovsState,
+                                            Arch::X64, 1, 8, 0, false),
+                          4));
+      for (unsigned I = 1; I <= 2; ++I)
+        Ops.push_back(operation(NdOp::COPY, NdVar::tmp(0x10100 + I * 16, 8),
+                                {NdVar::tmp(0x10108 + I * 16, 8)}));
+    }
+    Ops.push_back(operation(NdOp::LOAD, r(0), {r(40)}));
+    Ops.push_back(ret());
+    P.add(0x100, Ops);
+    auto Result = specializeInterpreter(P, {0x100}, stackOptions());
+    ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+    auto Run = execute(Result.Residual);
+    ASSERT_TRUE(Run);
+    EXPECT_EQ(Run->Value, 0x1111111111111111u);
+    auto Exact = stackOptions();
+    Exact.MaxOperations = Result.EvaluatedOperations;
+    EXPECT_TRUE(specializeInterpreter(P, {0x100}, Exact).complete());
+    --Exact.MaxOperations;
+    const auto Short = specializeInterpreter(P, {0x100}, Exact);
+    EXPECT_EQ(Short.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_TRUE(Short.Residual.Blocks.empty());
+  }
 }
 
 TEST(NativeStackSpecialization, ZeroCountKeepsUnknownPointersAndDirection) {
@@ -2616,6 +2688,176 @@ TEST(NativeStackSpecialization, TargetContextsShareRecoveryBudgets) {
     EXPECT_TRUE(Limited.Residual.Blocks.empty());
     EXPECT_TRUE(Limited.Origins.empty());
     EXPECT_TRUE(Limited.Reads.empty());
+  }
+}
+
+TEST(NativeStackSpecialization, ProvedFrameSeparationRetainsSpilledRoot) {
+  StackProvider P;
+  P.add(0x100, {operation(NdOp::INT_SUB, r(40), {r(32), c(16)}),
+                operation(NdOp::STORE, {}, {r(40), r(32)})});
+  P.nativeCall(0x101, 0x200);
+  P.add(0x102, {operation(NdOp::LOAD, r(32), {r(40)}),
+                operation(NdOp::LOAD, r(0), {c(0x8080)})});
+  P.nativeReturn(0x103);
+  P.add(0x200, {operation(NdOp::STORE, {}, {c(0x8080), c(17)})});
+  P.nativeReturn(0x201);
+  auto O = stackOptions();
+  O.EntryFrameBounds = SpecializationEntryFrameBounds{-32, 8};
+  O.EntryFrameBounds->ExcludedAddressRanges = {{0x8000, 0x8100}};
+  O.ExternalStoresPreserveEntryReturnSlot = false;
+  O.ProveStoreReturnSlotSeparation = true;
+  // Proving the live return word alone cannot retain the separately saved root.
+  EXPECT_FALSE(specializeInterpreter(P, {0x100}, O).complete());
+  O.ProveStoreFrameSeparation = true;
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    O.ByteOrder = Order;
+    const auto Good = specializeInterpreter(P, {0x100}, O);
+    ASSERT_TRUE(Good.complete()) << Good.Diagnostic;
+    for (uint64_t Root : {uint64_t{0x8000 - 8}, uint64_t{0x8100 + 32},
+                          uint64_t{0xffff900000001008}}) {
+      const auto Run = execute(Good.Residual, 0, 0, Order, Root);
+      ASSERT_TRUE(Run);
+      EXPECT_EQ(Run->Value, 17U);
+      EXPECT_EQ(Run->Stack, Root);
+    }
+    auto Exact = O;
+    Exact.MaxOperations = Good.EvaluatedOperations;
+    EXPECT_TRUE(specializeInterpreter(P, {0x100}, Exact).complete());
+    --Exact.MaxOperations;
+    EXPECT_EQ(specializeInterpreter(P, {0x100}, Exact).Status,
+              SpecializationStatus::BudgetExceeded);
+    auto Missing = O;
+    Missing.EntryFrameBounds->ExcludedAddressRanges.clear();
+    EXPECT_FALSE(specializeInterpreter(P, {0x100}, Missing).complete());
+  }
+}
+
+TEST(NativeStackSpecialization, FrameExclusionsDoNotExemptUnprovedStores) {
+  auto O = stackOptions();
+  O.EntryFrameBounds = SpecializationEntryFrameBounds{-32, 24};
+  O.EntryFrameBounds->ExcludedAddressRanges = {{0x8000, 0x8100}};
+  O.ProveStoreFrameSeparation = true;
+  O.ProveStoreReturnSlotSeparation = true;
+  // Both straddling writes miss the live native return word. Place the saved
+  // root near the corresponding frame edge: preserving only that return word
+  // cannot preserve a root whose bytes the write may change.
+  for (auto Address : {r(8), c(0x7ffc), c(0x80fc)}) {
+    SCOPED_TRACE(Address.Offset);
+    StackProvider P;
+    const uint64_t Slot = Address == c(0x7ffc) ? 16 : uint64_t(-32);
+    P.add(0x100, {operation(NdOp::INT_ADD, r(40), {r(32), c(Slot)}),
+                  operation(NdOp::STORE, {}, {r(40), r(32)})});
+    P.nativeCall(0x101, 0x200);
+    P.add(0x102, {operation(NdOp::LOAD, r(32), {r(40)})});
+    P.nativeReturn(0x103);
+    P.add(0x200, {operation(NdOp::STORE, {}, {Address, c(7)})});
+    P.nativeReturn(0x201);
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    EXPECT_FALSE(R.complete());
+    EXPECT_TRUE(R.Residual.Blocks.empty());
+  }
+  // A real write to the saved return address still changes the destination.
+  StackProvider P;
+  P.nativeCall(0x100, 0x200);
+  P.nativeReturn(0x101);
+  P.nativeReturn(0x201);
+  P.add(0x200, {operation(NdOp::STORE, {}, {r(32), c(0x300)})});
+  P.add(0x300, {operation(NdOp::COPY, r(0), {c(71)})});
+  P.nativeReturn(0x301);
+  const auto Changed = specializeInterpreter(P, {0x100}, O);
+  ASSERT_TRUE(Changed.complete()) << Changed.Diagnostic;
+  const auto Run = execute(Changed.Residual);
+  ASSERT_TRUE(Run);
+  EXPECT_EQ(Run->Value, 71U);
+  // Missing the frame does not imply missing a return word outside it.
+  StackProvider Outside;
+  Outside.add(0x100, {operation(NdOp::STORE, {}, {c(0x8080), c(7)})});
+  Outside.nativeReturn(0x101);
+  O.EntryFrameBounds = SpecializationEntryFrameBounds{-32, 0};
+  O.EntryFrameBounds->ExcludedAddressRanges = {{0x8080, 0x8088}};
+  O.ExternalStoresPreserveEntryReturnSlot = false;
+  EXPECT_FALSE(specializeInterpreter(Outside, {0x100}, O).complete());
+}
+
+TEST(NativeStackSpecialization,
+     FrameSeparationRejectsInvalidDomainsAndBudgets) {
+  StackProvider P;
+  P.nativeReturn(0x100);
+  auto O = stackOptions();
+  O.ProveStoreFrameSeparation = true;
+  EXPECT_EQ(specializeInterpreter(P, {0x100}, O).Status,
+            SpecializationStatus::InvalidInput);
+  O.EntryFrameBounds = SpecializationEntryFrameBounds{-16, 8};
+  for (auto Range : {SpecializationFrameExclusion{7, 7}, {8, 7}}) {
+    O.EntryFrameBounds->ExcludedAddressRanges = {Range};
+    EXPECT_EQ(specializeInterpreter(P, {0x100}, O).Status,
+              SpecializationStatus::InvalidInput);
+  }
+  O.EntryFrameBounds->ExcludedAddressRanges = {{0x8000, 0x8100}};
+  O.MaxOperations = 0;
+  EXPECT_EQ(specializeInterpreter(P, {0x100}, O).Status,
+            SpecializationStatus::InvalidInput);
+  O.MaxOperations = 1;
+  EXPECT_EQ(specializeInterpreter(P, {0x100}, O).Status,
+            SpecializationStatus::BudgetExceeded);
+}
+
+StackProvider repeatedProducerDecoder() {
+  auto P = finiteDispatchDecoder(false);
+  P.add(0x201, {operation(NdOp::INT_MULT, r(24), {r(16), c(0x100)}),
+                operation(NdOp::INT_ADD, r(24), {r(24), c(0x400)}),
+                operation(NdOp::INDIR_BR, {}, {r(24)})});
+  const auto Selector = [&](va_t Start, uint64_t Register) {
+    P.add(Start, {operation(NdOp::COPY, r(Register), {r(8)})});
+    for (unsigned I = 0; I != 24; ++I)
+      P.add(
+          Start + I + 1,
+          {operation(NdOp::INT_RIGHT, r(64), {r(8), c(I % 2 + 1)}),
+           operation(NdOp::INT_MULT, r(Register), {r(Register), c(3 + 2 * I)}),
+           operation(NdOp::INT_XOR, r(Register), {r(Register), r(64)})});
+  };
+  Selector(0x400, 16);
+  P.add(0x419,
+        {operation(NdOp::INT_AND, r(16), {r(16), c(1)}),
+         operation(NdOp::INT_AND, r(24, 1), {r(8, 1), c(1, 1)}),
+         operation(NdOp::COND_BR, {}, {NdVar::cst(0x440, 8), r(24, 1)})});
+  P.add(0x41a, {branch(0x441)});
+  P.add(0x440, {branch(0x450)});
+  P.add(0x441, {branch(0x450)});
+  Selector(0x450, 56);
+  P.add(0x469, {operation(NdOp::INT_AND, r(56), {r(56), c(1)}),
+                operation(NdOp::INT_XOR, r(16), {r(16), r(56)}),
+                operation(NdOp::INT_ADD, r(16), {r(16), c(1)}), branch(0x200)});
+  return P;
+}
+
+TEST(NativeStackSpecialization, RepeatedProducerKeepsSiblingProofObligations) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    auto P = repeatedProducerDecoder();
+    auto O = stackOptions();
+    O.ByteOrder = Order;
+    O.DiscoverControlState = true;
+    O.MaxDiscoveryVisits = Order == llvm::endianness::little ? 2100 : 2800;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    RecordProperty(Order == llvm::endianness::little ? "little_visits"
+                                                     : "big_visits",
+                   R.DiscoveryVisits);
+    for (uint64_t Input :
+         {uint64_t{0}, uint64_t{1}, uint64_t{42}, uint64_t{137}, UINT64_MAX}) {
+      const auto Run = execute(R.Residual, Input, 0, Order);
+      ASSERT_TRUE(Run);
+      EXPECT_EQ(Run->Value, Input + 17);
+      EXPECT_EQ(Run->Stack, 0x10000U);
+    }
+    P.add(0x441, {operation(NdOp::INDIR_BR, {}, {r(96)})});
+    O.MaxDiscoveryVisits = 65536;
+    const auto MissingSibling = specializeInterpreter(P, {0x100}, O);
+    EXPECT_EQ(MissingSibling.Status, SpecializationStatus::UnresolvedControl)
+        << MissingSibling.Diagnostic;
+    EXPECT_TRUE(MissingSibling.Residual.Blocks.empty());
+    EXPECT_TRUE(MissingSibling.Origins.empty());
+    EXPECT_TRUE(MissingSibling.Reads.empty());
   }
 }
 

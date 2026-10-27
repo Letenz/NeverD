@@ -19,6 +19,8 @@
 
 #include "SymSimplifyDetail.h"
 
+#include "neverd/pass/Limits.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -32,6 +34,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/KnownBits.h"
 
 #include <cstdint>
 #include <optional>
@@ -87,6 +90,154 @@ bool safeWidenedShift(const llvm::Instruction &I) {
   return Amount->getValue().ule(ResultWidth - SourceWidth);
 }
 
+struct MaskedAddBounds {
+  llvm::APInt UnsignedMax, SignedMin, SignedMax;
+
+  explicit MaskedAddBounds(unsigned Width)
+      : UnsignedMax(llvm::APInt::getAllOnes(Width)),
+        SignedMin(llvm::APInt::getSignedMinValue(Width)),
+        SignedMax(llvm::APInt::getSignedMaxValue(Width)) {}
+};
+
+// Compute bounds from values alone, never from nowrap flags, range metadata,
+// assumptions or the instruction being justified. Unknown operations keep the
+// full domain. The small depth/node/width limits bound admission work.
+MaskedAddBounds maskedAddBounds(const llvm::Value *V, unsigned Depth,
+                                unsigned &Remaining) {
+  const unsigned Width = V->getType()->getIntegerBitWidth();
+  MaskedAddBounds Result(Width);
+  if (!Remaining || !Depth)
+    return Result;
+  --Remaining;
+  if (const auto *C = llvm::dyn_cast<llvm::ConstantInt>(V)) {
+    Result.UnsignedMax = Result.SignedMin = Result.SignedMax = C->getValue();
+    return Result;
+  }
+  const auto *I = llvm::dyn_cast<llvm::BinaryOperator>(V);
+  if (!I)
+    return Result;
+  if (I->getOpcode() == llvm::Instruction::And) {
+    for (const llvm::Value *Operand : I->operands()) {
+      if (const auto *Mask = llvm::dyn_cast<llvm::ConstantInt>(Operand)) {
+        Result.UnsignedMax = Mask->getValue();
+        Result.SignedMax = Mask->getValue();
+        Result.SignedMax.clearSignBit();
+        if (!Mask->getValue().isNegative())
+          Result.SignedMin.clearAllBits();
+        return Result;
+      }
+    }
+  }
+  if (I->getOpcode() != llvm::Instruction::Add)
+    return Result;
+  auto Left = maskedAddBounds(I->getOperand(0), Depth - 1, Remaining);
+  auto Right = maskedAddBounds(I->getOperand(1), Depth - 1, Remaining);
+  bool Overflow;
+  auto UMax = Left.UnsignedMax.uadd_ov(Right.UnsignedMax, Overflow);
+  if (!Overflow)
+    Result.UnsignedMax = std::move(UMax);
+  auto SMin = Left.SignedMin.sadd_ov(Right.SignedMin, Overflow);
+  if (Overflow)
+    return Result;
+  auto SMax = Left.SignedMax.sadd_ov(Right.SignedMax, Overflow);
+  if (!Overflow) {
+    Result.SignedMin = std::move(SMin);
+    Result.SignedMax = std::move(SMax);
+  }
+  return Result;
+}
+
+bool safeMaskedArithmetic(const llvm::Instruction &I) {
+  const bool Product = I.getOpcode() == llvm::Instruction::Mul;
+  if ((!Product && I.getOpcode() != llvm::Instruction::Add) ||
+      !I.getType()->isIntegerTy() ||
+      I.getType()->getIntegerBitWidth() >
+          ::neverd::limits::pass::
+              kSymSimplifyTranslatorSafeMaskedArithmeticMaxWidth ||
+      (!I.hasNoUnsignedWrap() && !I.hasNoSignedWrap()))
+    return false;
+  unsigned Remaining = ::neverd::limits::pass::
+      kSymSimplifyTranslatorSafeMaskedArithmeticRemaining;
+  const unsigned Depth =
+      ::neverd::limits::pass::kSymSimplifyTranslatorSafeMaskedArithmeticDepth;
+  auto Left = maskedAddBounds(I.getOperand(0), Depth, Remaining);
+  auto Right = maskedAddBounds(I.getOperand(1), Depth, Remaining);
+  bool Overflow;
+  if (I.hasNoUnsignedWrap()) {
+    if (Product)
+      (void)Left.UnsignedMax.umul_ov(Right.UnsignedMax, Overflow);
+    else
+      (void)Left.UnsignedMax.uadd_ov(Right.UnsignedMax, Overflow);
+    if (Overflow)
+      return false;
+  }
+  if (I.hasNoSignedWrap()) {
+    if (Product) {
+      // Signed multiplication reaches its extrema at interval corners.
+      // Check all four: two negative endpoints can overflow positively.
+      for (const auto *L : {&Left.SignedMin, &Left.SignedMax})
+        for (const auto *R : {&Right.SignedMin, &Right.SignedMax}) {
+          (void)L->smul_ov(*R, Overflow);
+          if (Overflow)
+            return false;
+        }
+      return true;
+    }
+    (void)Left.SignedMin.sadd_ov(Right.SignedMin, Overflow);
+    if (Overflow)
+      return false;
+    (void)Left.SignedMax.sadd_ov(Right.SignedMax, Overflow);
+    if (Overflow)
+      return false;
+  }
+  return true;
+}
+
+// Infer only literal-mask, OR and wrapping-add facts. In particular, neither
+// the disjoint flag being justified nor overflow flags, metadata or assumptions
+// contribute evidence. The translator separately checks every hidden child
+// for poison. Bounded failure supplies unknown bits, never a premise.
+llvm::KnownBits maskedOrBits(const llvm::Value *V, unsigned Depth,
+                             unsigned &Remaining) {
+  const unsigned Width = V->getType()->getIntegerBitWidth();
+  llvm::KnownBits Unknown(Width);
+  if (!Remaining || !Depth)
+    return Unknown;
+  --Remaining;
+  if (const auto *C = llvm::dyn_cast<llvm::ConstantInt>(V))
+    return llvm::KnownBits::makeConstant(C->getValue());
+  const auto *I = llvm::dyn_cast<llvm::BinaryOperator>(V);
+  if (!I)
+    return Unknown;
+  if (I->getOpcode() == llvm::Instruction::And) {
+    for (const llvm::Value *Operand : I->operands())
+      if (const auto *Mask = llvm::dyn_cast<llvm::ConstantInt>(Operand)) {
+        Unknown.Zero = ~Mask->getValue();
+        return Unknown;
+      }
+  }
+  if (I->getOpcode() != llvm::Instruction::Add &&
+      I->getOpcode() != llvm::Instruction::Or)
+    return Unknown;
+  auto Left = maskedOrBits(I->getOperand(0), Depth - 1, Remaining);
+  auto Right = maskedOrBits(I->getOperand(1), Depth - 1, Remaining);
+  return I->getOpcode() == llvm::Instruction::Or
+             ? Left | Right
+             : llvm::KnownBits::computeForAddSub(
+                   /*Add=*/true, /*NSW=*/false, /*NUW=*/false, Left, Right);
+}
+
+bool safeMaskedOr(const llvm::Instruction &I) {
+  if (I.getOpcode() != llvm::Instruction::Or || !I.getType()->isIntegerTy() ||
+      I.getType()->getIntegerBitWidth() > 512)
+    return false;
+  unsigned Remaining =
+      ::neverd::limits::pass::kSymSimplifyTranslatorSafeMaskedOrRemaining;
+  auto Left = maskedOrBits(I.getOperand(0), 8, Remaining);
+  auto Right = maskedOrBits(I.getOperand(1), 8, Remaining);
+  return (Left.Zero | Right.Zero).isAllOnes();
+}
+
 /// Whether \p I has the same domain in LLVM IR and in the engine's total
 /// bitvector algebra.
 ///
@@ -100,8 +251,10 @@ bool hasCompatibleSemantics(const llvm::Instruction &I) {
   // This catches poison-generating flags added to LLVM after this switch was
   // written.  The per-opcode checks below remain deliberate documentation of
   // the exact language subset accepted today.
-  if ((I.hasPoisonGeneratingFlags() && !splitWordAssembly(I) &&
-       !safeWidenedShift(I)) ||
+  const bool SafeArithmetic = safeMaskedArithmetic(I);
+  const bool SafeOr = safeMaskedOr(I);
+  if ((I.hasPoisonGeneratingFlags() && !SafeArithmetic && !SafeOr &&
+       !splitWordAssembly(I) && !safeWidenedShift(I)) ||
       I.hasPoisonGeneratingAttributes() || I.hasPoisonGeneratingMetadata())
     return false;
 
@@ -116,14 +269,15 @@ bool hasCompatibleSemantics(const llvm::Instruction &I) {
 
   switch (tagOf(I)) {
   case OpTag::Add:
-  case OpTag::Sub:
   case OpTag::Mul:
+    return !HasNoWrap() || SafeArithmetic;
+  case OpTag::Sub:
     return !HasNoWrap();
   case OpTag::And:
   case OpTag::Xor:
     return true;
   case OpTag::Or:
-    return !llvm::cast<llvm::PossiblyDisjointInst>(I).isDisjoint() ||
+    return !llvm::cast<llvm::PossiblyDisjointInst>(I).isDisjoint() || SafeOr ||
            splitWordAssembly(I).has_value();
   case OpTag::Shl:
     return (!HasNoWrap() || safeWidenedShift(I)) && HasInRangeConstantShift();
@@ -162,11 +316,11 @@ bool hasCompatibleSemantics(const llvm::Instruction &I) {
 /// scalar bitvector algebra.
 bool hasIncompatibleSemantics(const llvm::Instruction &I,
                               bool WithComparisons) {
-  if (llvm::isa<llvm::FreezeInst>(I) ||
-      (I.hasPoisonGeneratingAnnotations() && !splitWordAssembly(I) &&
-       !safeWidenedShift(I)))
+  if (llvm::isa<llvm::FreezeInst>(I))
     return true;
-  return isTranslatable(&I, WithComparisons) && !hasCompatibleSemantics(I);
+  if (isTranslatable(&I, WithComparisons))
+    return !hasCompatibleSemantics(I);
+  return I.hasPoisonGeneratingAnnotations();
 }
 
 /// Whether a translatable value hidden behind an opaque shared leaf contains
@@ -292,6 +446,11 @@ sym::SymRef Translator::build(const llvm::Instruction &I) {
       if (High.isValid() && Low.isValid())
         return Ctx.mkConcat(High, Low);
     }
+    // Compiler-created masked ORs can join different arithmetic words.
+    // A proved disjoint OR is also their sum, exposing enclosing coefficients
+    // to the shared MBA engine without assuming a flag's precondition.
+    if (safeMaskedOr(I))
+      return Ctx.mkAdd(M(A), M(B));
     return Ctx.mkOr(M(A), M(B));
   case OpTag::Xor:
     // `x ^ -1` is complement, a generator of the bitwise algebra the solver

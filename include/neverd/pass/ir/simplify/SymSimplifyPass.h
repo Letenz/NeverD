@@ -170,6 +170,11 @@ struct SymSimplifyOptions {
   /// Resource policy for the built-in proof provider.
   solver::SolverOptions Solver;
 
+  /// Optional proof budget for heuristic synthesis alone. Without an override,
+  /// synthesis uses Solver too. Source views bound their new search without
+  /// reducing the existing split-word arithmetic recovery proof allowance.
+  std::optional<solver::SolverOptions> SynthesisSolver;
+
   /// Permit heuristic candidate discovery.  Off by default so existing pass
   /// pipelines remain derivational until they opt into solver-backed search.
   bool EnableSynthesis = false;

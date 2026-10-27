@@ -14,6 +14,7 @@
 #include "SourceModel.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 
 #include <optional>
 
@@ -75,7 +76,8 @@ struct Resolver {
   Origin append(Origin Base, const std::u16string &Name) {
     if (!Base)
       return {};
-    if (Base->Members.size() >= 32)
+    if (Base->Members.size() >=
+        ::neverd::limits::web::kSourceOriginsAppendBaseMembersSizeLimit)
       throw Error("source_origin_budget_exceeded");
     uint64_t Count = Name.size();
     for (const auto &P : Base->Members) {
@@ -104,7 +106,7 @@ struct Resolver {
   void pattern(uint32_t I, uint32_t Value,
                const std::vector<std::u16string> &Path, unsigned Depth = 0) {
     step();
-    if (Depth > 32)
+    if (Depth > ::neverd::limits::web::kSourceOriginsPatternDepthLimit)
       throw Error("source_origin_budget_exceeded");
     if (I == None)
       return;
@@ -141,7 +143,7 @@ struct Resolver {
   }
   Origin node(uint32_t I, unsigned Depth = 0) {
     step();
-    if (Depth > 64)
+    if (Depth > ::neverd::limits::web::kSourceOriginsNodeDepthLimit)
       throw Error("source_origin_budget_exceeded");
     if (I == None)
       return {};

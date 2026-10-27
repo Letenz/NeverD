@@ -140,6 +140,34 @@ TEST_P(LinuxProcess, RelativeSleepUsesSharedClockAndErrorPolicyOnBothISAs) {
   }
 }
 
+TEST_P(LinuxProcess, RawMonotonicAdvancesFromItsOwnEpochOnBothISAs) {
+  Options.LinuxTime.emplace();
+  Options.LinuxTime->AdvanceOnIdle = true;
+  Options.LinuxTime->Clocks = {
+      {0, {4294967297, 999999998}}, {1, {12, 3}}, {4, {4294967301, 999999996}}};
+  for (const char *Opt : {"O0", "O2"}) {
+    SCOPED_TRACE(Opt);
+    auto R = runTime('r', Opt);
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
+    std::string Expected;
+    for (uint64_t Word :
+         {4294967297ULL, 999999998ULL, 12ULL, 3ULL, 4294967301ULL, 999999996ULL,
+          4294967299ULL, 5ULL, 13ULL, 10ULL, 4294967303ULL, 3ULL, 0ULL, 0ULL})
+      for (unsigned I = 0; I < 8; ++I)
+        Expected.push_back(static_cast<char>(Word >> (I * 8)));
+    EXPECT_EQ(R.StandardOutput, Expected);
+    ASSERT_GE(R.Services.size(), 7u);
+    EXPECT_EQ(R.Services[2].Number,
+              GetParam().ISA == GuestArchitecture::X64 ? 228u : 113u);
+    EXPECT_EQ(R.Services[2].Arguments[0], 0x1234567800000004ULL);
+    EXPECT_EQ(R.Services[3].Number,
+              GetParam().ISA == GuestArchitecture::X64 ? 35u : 101u);
+    for (unsigned I = 0; I < 7; ++I)
+      EXPECT_EQ(R.Services[I].Result, 0u);
+  }
+}
+
 TEST_P(LinuxProcess, ExplicitClocksPreserve64BitWireLayoutsOnBothISAs) {
   Options.LinuxTime.emplace();
   Options.LinuxTime->Timezone = LinuxTimezone{-60, 2};
@@ -197,6 +225,103 @@ TEST_P(LinuxProcess, ResidencyErrorsPreserveTheVectorAndMappedQueriesStop) {
   }
 }
 
+TEST_P(LinuxProcess, ResidencyObservationsExecuteOnBothLP64ABIs) {
+  Options.LinuxKernel.emplace().ResidencyObservations =
+      std::vector<LinuxResidencyObservation>{{0x60000000, {0, 1, 0}},
+                                             {0x60000000, {1, 0, 1}}};
+  for (const char *Opt : {"O0", "O2"}) {
+    const auto Fixture = Path.parent_path() /
+                         (Path.stem().string() + "-residency-" + Opt + ".elf");
+    Options.Arguments = {"residency", "o"};
+    auto R = llvm::cantFail(
+        emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options));
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
+    std::string Expected(32, char(0xa5));
+    Expected[3] = 0;
+    Expected[4] = 1;
+    Expected[5] = 0;
+    Expected[8] = 1;
+    Expected[9] = 0;
+    Expected[10] = 1;
+    EXPECT_EQ(R.StandardOutput, Expected);
+    unsigned Calls = 0;
+    for (const auto &Call : R.Services)
+      if (Call.Number ==
+          (GetParam().ISA == GuestArchitecture::X64 ? 27u : 232u)) {
+        ASSERT_TRUE(Call.Result);
+        EXPECT_EQ(*Call.Result, Calls++ == 0 ? uint64_t(-22) : 0u);
+      }
+    EXPECT_EQ(Calls, 4u);
+  }
+}
+
+TEST_P(LinuxProcess, NegativePrctlOptionsUseIntWidthOnBothLP64ABIs) {
+  for (const char *Opt : {"O0", "O2"}) {
+    SCOPED_TRACE(Opt);
+    const auto Fixture = Path.parent_path() /
+                         (Path.stem().string() + "-residency-" + Opt + ".elf");
+    Options.Arguments = {"prctl", "p"};
+    auto Run = emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    ASSERT_EQ(Run->Stop, ProcessStopReason::Exited) << Run->Diagnostic;
+    EXPECT_EQ(Run->ExitStatus, 0u);
+    std::string Expected;
+    for (unsigned I = 0; I != 4; ++I) {
+      Expected.push_back(char(0xea));
+      Expected.append(7, char(0xff));
+    }
+    Expected.append(32, char(0xa5));
+    EXPECT_EQ(Run->StandardOutput, Expected);
+    unsigned Calls = 0;
+    for (const auto &Call : Run->Services)
+      if (Call.Number ==
+          (GetParam().ISA == GuestArchitecture::X64 ? 157u : 167u)) {
+        ASSERT_TRUE(Call.Result);
+        EXPECT_EQ(*Call.Result, uint64_t(-22));
+        ++Calls;
+      }
+    EXPECT_EQ(Calls, 4u);
+    Options.Arguments[1] = "P";
+    Run = emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    EXPECT_EQ(Run->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Run->Diagnostic, "prctl operation is unmodeled");
+    EXPECT_TRUE(Run->StandardOutput.empty());
+    ASSERT_FALSE(Run->Services.empty());
+    EXPECT_EQ(Run->Services.back().Arguments[0], 0x800000000000000fULL);
+    EXPECT_FALSE(Run->Services.back().Result);
+  }
+}
+
+TEST_P(LinuxProcess, DiscardPreservesOuterPagesThenClearsBothSidesOfAHole) {
+  Options.Limits.Instructions = 500000;
+  Options.Limits.TimeoutMicroseconds = 30000000;
+  for (const char *Opt : {"O0", "O2"}) {
+    const auto Fixture = Path.parent_path() /
+                         (Path.stem().string() + "-residency-" + Opt + ".elf");
+    Options.Arguments = {"discard", "d"};
+    auto Run = emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    const auto &R = *Run;
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
+    std::string Expected(4096, '1');
+    Expected.append(4096, '\0');
+    Expected.append(4096, '3');
+    Expected.append(8192, '\0');
+    EXPECT_EQ(R.StandardOutput, Expected);
+    unsigned Calls = 0;
+    for (const auto &Call : R.Services)
+      if (Call.Number ==
+          (GetParam().ISA == GuestArchitecture::X64 ? 28u : 233u)) {
+        ASSERT_TRUE(Call.Result);
+        EXPECT_EQ(*Call.Result, Calls++ == 0 ? 0u : uint64_t(-12));
+      }
+    EXPECT_EQ(Calls, 2u);
+  }
+}
+
 TEST_P(LinuxProcess, SignalActionsShareExactLP64StateAndCopyFailureOrdering) {
   for (const char *Opt : {"O0", "O2"}) {
     SCOPED_TRACE(Opt);
@@ -238,6 +363,76 @@ TEST_P(LinuxProcess, SignalActionsShareExactLP64StateAndCopyFailureOrdering) {
   }
 }
 
+TEST_P(LinuxProcess, KillSharesProcessTerminationAndUnknownDeliveryBoundaries) {
+  for (const char *Opt : {"O0", "O2"}) {
+    const auto SignalPath = Path.parent_path() /
+                            (Path.stem().string() + "-signals-" + Opt + ".elf");
+    for (const char *Mode : {"q", "k", "u", "h"}) {
+      SCOPED_TRACE(Opt);
+      SCOPED_TRACE(Mode);
+      Options.Arguments = {"signals", Mode};
+      const auto R = llvm::cantFail(
+          emulateProcess(SignalPath, ProcessProfile::LinuxELF64, Options));
+      if (*Mode == 'q') {
+        EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+        EXPECT_EQ(R.ExitStatus, 0u);
+        EXPECT_FALSE(R.TerminationSignal);
+        EXPECT_TRUE(R.StandardOutput.empty());
+      } else {
+        EXPECT_EQ(R.Stop, *Mode == 'k' ? ProcessStopReason::Signaled
+                                       : ProcessStopReason::UnsupportedService)
+            << R.Diagnostic;
+        EXPECT_EQ(R.TerminationSignal,
+                  *Mode == 'k' ? std::optional<uint32_t>(9) : std::nullopt);
+        EXPECT_FALSE(R.ExitStatus);
+        EXPECT_EQ(R.StandardOutput, "before");
+        ASSERT_FALSE(R.Services.empty());
+        EXPECT_EQ(R.Services.back().Number,
+                  GetParam().ISA == GuestArchitecture::X64 ? 62u : 129u);
+        EXPECT_FALSE(R.Services.back().Result);
+      }
+    }
+  }
+}
+
+TEST_P(LinuxProcess, SignalDeliverySharesMasksPendingAndAArch64Frames) {
+  for (const char *Opt : {"O0", "O2"}) {
+    const auto SignalPath = Path.parent_path() /
+                            (Path.stem().string() + "-signals-" + Opt + ".elf");
+    Options.LinuxSignals.emplace();
+    Options.LinuxSignals->InitialMask = 0;
+    Options.LinuxSignals->AlternateStackDisabled = true;
+    for (const char *Mode : {"v", "d", "s"}) {
+      SCOPED_TRACE(Opt);
+      SCOPED_TRACE(Mode);
+      Options.Arguments = {"signals", Mode};
+      const auto R = llvm::cantFail(
+          emulateProcess(SignalPath, ProcessProfile::LinuxELF64, Options));
+      if (*Mode == 'd') {
+        EXPECT_EQ(R.Stop, ProcessStopReason::Signaled) << R.Diagnostic;
+        EXPECT_EQ(R.TerminationSignal, 15u);
+        EXPECT_FALSE(R.ExitStatus);
+      } else if (*Mode == 's' && GetParam().ISA == GuestArchitecture::X64) {
+        EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+        EXPECT_NE(R.Diagnostic.find("signal frame"), std::string::npos);
+      } else {
+        ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+        EXPECT_EQ(R.ExitStatus, 0u);
+        uint64_t Expected[8] = {};
+        Expected[0] = *Mode == 's' ? 10 : 0;
+        Expected[1] = 512;
+        Expected[2] = *Mode == 's' ? 0 : 512;
+        Expected[4] = *Mode == 's' ? 0 : 4096;
+        std::string Bytes;
+        for (uint64_t Word : Expected)
+          for (unsigned Byte = 0; Byte < 8; ++Byte)
+            Bytes.push_back(char(Word >> (8 * Byte)));
+        EXPECT_EQ(R.StandardOutput, Bytes);
+      }
+    }
+  }
+}
+
 TEST_P(LinuxProcess, MemoryFilesPreserveBinaryBytesCursorsAndFaultPrefixes) {
   // O0 link checks fill a complete page one guest instruction at a time.
   // Allow contended runners while retaining instruction/event limits.
@@ -262,6 +457,124 @@ TEST_P(LinuxProcess, MemoryFilesPreserveBinaryBytesCursorsAndFaultPrefixes) {
     }
   }
 }
+
+TEST_P(LinuxProcess, RenameMovesNamesWithoutReplacingOpenFileIdentity) {
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  for (const char *opt : {"O0", "O2"}) {
+    auto file =
+        Path.parent_path() / (Path.stem().string() + "-files-" + opt + ".elf");
+    for (char mode : {'Q', 'T', '1'}) {
+      Options.Arguments = {"files", std::string(1, mode)};
+      Options.LinuxFiles = fileRenameTestInput();
+      if (mode == '1')
+        Options.LinuxFiles->DynamicProc = LinuxProcOptions{"fixture", 12};
+      auto r = emulateProcess(file, ProcessProfile::LinuxELF64, Options);
+      ASSERT_TRUE(bool(r)) << llvm::toString(r.takeError());
+      EXPECT_EQ(r->Stop, ProcessStopReason::Exited) << r->Diagnostic;
+      EXPECT_EQ(r->ExitStatus, 0u);
+      Options.LinuxFiles->FileRenames.reset();
+      auto refused = emulateProcess(file, ProcessProfile::LinuxELF64, Options);
+      ASSERT_TRUE(bool(refused)) << llvm::toString(refused.takeError());
+      EXPECT_EQ(refused->Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_NE(refused->Diagnostic.find("explicit provider"),
+                std::string::npos);
+    }
+  }
+}
+
+TEST_P(LinuxProcess,
+       UnlinkKnownErrorsKeepOriginalFilesAndUnsupportedBoundaries) {
+  Options.Limits.TimeoutMicroseconds = 30000000;
+  Options.LinuxFiles.emplace();
+  Options.LinuxFiles->Files["/fixture/data"] = {0,    0xff, 0x41,
+                                                0x0a, 0x80, 0x5a};
+  Options.LinuxFiles->SymbolicLinks["/links/raw"] = {'/', 'x'};
+  for (const char *opt : {"O0", "O2"}) {
+    auto file =
+        Path.parent_path() / (Path.stem().string() + "-files-" + opt + ".elf");
+    for (char mode : {'e', 'E', 'F', 'G', 'H', 'I', 'K'}) {
+      SCOPED_TRACE(testing::Message() << opt << ":" << mode);
+      Options.Arguments = {"files", std::string(1, mode)};
+      auto r = llvm::cantFail(
+          emulateProcess(file, ProcessProfile::LinuxELF64, Options));
+      if (mode == 'e') {
+        EXPECT_EQ(r.Stop, ProcessStopReason::Exited) << r.Diagnostic;
+        EXPECT_EQ(r.ExitStatus, 0u);
+      } else {
+        EXPECT_EQ(r.Stop, ProcessStopReason::UnsupportedService)
+            << r.Diagnostic;
+        ASSERT_FALSE(r.Services.empty());
+        EXPECT_FALSE(r.Services.back().Result);
+      }
+    }
+  }
+}
+
+TEST_P(LinuxProcess, UnlinkClosedFileRequiresItsSeparateProvider) {
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  for (const char *Opt : {"O0", "O2"}) {
+    auto File =
+        Path.parent_path() / (Path.stem().string() + "-files-" + Opt + ".elf");
+    Options.Arguments = {"files", "E"};
+    Options.LinuxFiles = fileUnlinkTestInput();
+    auto R = llvm::cantFail(
+        emulateProcess(File, ProcessProfile::LinuxELF64, Options));
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
+    Options.LinuxFiles->FileUnlinks.reset();
+    auto Refused = llvm::cantFail(
+        emulateProcess(File, ProcessProfile::LinuxELF64, Options));
+    EXPECT_EQ(Refused.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(Refused.Diagnostic.find("explicit provider"), std::string::npos);
+    ASSERT_FALSE(Refused.Services.empty());
+    EXPECT_FALSE(Refused.Services.back().Result);
+  }
+}
+
+TEST_P(LinuxProcess,
+       FileCreationExecutesOriginalCallersWithoutAliasingMovedFiles) {
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  for (const char *Opt : {"O0", "O2"}) {
+    auto File =
+        Path.parent_path() / (Path.stem().string() + "-files-" + Opt + ".elf");
+    Options.Arguments = {"files", "N"};
+    Options.LinuxFiles = fileCreationTestInput();
+    auto R = llvm::cantFail(
+        emulateProcess(File, ProcessProfile::LinuxELF64, Options));
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
+    Options.LinuxFiles->FileCreations.reset();
+    auto Refused = llvm::cantFail(
+        emulateProcess(File, ProcessProfile::LinuxELF64, Options));
+    EXPECT_EQ(Refused.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(Refused.Diagnostic.find("explicit object reservation"),
+              std::string::npos);
+    ASSERT_FALSE(Refused.Services.empty());
+    EXPECT_FALSE(Refused.Services.back().Result);
+  }
+}
+
+TEST_P(LinuxProcess, FileCreationCountsExecuteIndependentRawLifecycles) {
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  for (const char *Opt : {"O0", "O2"}) {
+    auto File =
+        Path.parent_path() / (Path.stem().string() + "-files-" + Opt + ".elf");
+    Options.Arguments = {"files", "M"};
+    Options.LinuxFiles = fileCreationCountTestInput();
+    auto R = llvm::cantFail(
+        emulateProcess(File, ProcessProfile::LinuxELF64, Options));
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
+    Options.LinuxFiles->FileCreations->Files.at("/fixture/data").Count = 1;
+    auto Refused = llvm::cantFail(
+        emulateProcess(File, ProcessProfile::LinuxELF64, Options));
+    EXPECT_EQ(Refused.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(Refused.Diagnostic.find("already consumed"), std::string::npos);
+    ASSERT_FALSE(Refused.Services.empty());
+    EXPECT_FALSE(Refused.Services.back().Result);
+  }
+}
+
 TEST_P(LinuxProcess, ExplicitDeviceTransactionsShareDescriptorOwnership) {
   Options.LinuxFiles.emplace().Devices["/fixture/control"] = deviceTestInput();
   for (const char *Optimization : {"O0", "O2"}) {
@@ -279,11 +592,17 @@ TEST_P(LinuxProcess, StatefulDescriptorsPagesAndContextsShareOneKernelOwner) {
   for (const char *Optimization : {"O0", "O2"}) {
     auto DevicePath = Path.parent_path() / (Path.stem().string() + "-devices-" +
                                             Optimization + ".elf");
-    for (char Mode : {'d', 'u', 'k', 'b'}) {
+    for (char Mode : {'d', 'u', 'k', 'b', 'g'}) {
       SCOPED_TRACE(testing::Message() << Optimization << ':' << Mode);
       Options.Arguments = {"devices", std::string(1, Mode)};
       Options.LinuxFiles->Devices["/fixture/control"] =
-          Mode == 'k' ? contextDeviceTestInput() : updatingDeviceTestInput();
+          Mode == 'k' || Mode == 'g' ? contextDeviceTestInput()
+                                     : updatingDeviceTestInput();
+      if (Mode == 'g') {
+        auto &D = Options.LinuxFiles->Devices.at("/fixture/control");
+        D.ReadOnlyMappings[0].Updates.clear();
+        D.KGSL->SynchronousA3xx = true;
+      }
       Options.LinuxTime->NanosecondsPerInstruction = Mode == 'b' ? 100 : 0;
       Options.InstructionQuantum = 1024;
       if (Mode == 'b')
@@ -299,6 +618,75 @@ TEST_P(LinuxProcess, StatefulDescriptorsPagesAndContextsShareOneKernelOwner) {
     }
   }
 }
+TEST_P(LinuxProcess, SustainedGPUCommandsPreserveTimeAndContextOwnership) {
+  Options.Limits.TimeoutMicroseconds = 30000000;
+  auto D = contextDeviceTestInput();
+  D.ReadOnlyMappings[0].Updates.clear();
+  D.KGSL->SynchronousA3xx = true;
+  Options.LinuxFiles.emplace().Devices["/fixture/control"] = D;
+  Options.LinuxTime.emplace().AdvanceOnIdle = true;
+  Options.LinuxTime->Clocks[1] = {20, 999500000};
+  Options.Limits.Instructions = 2000000;
+  Options.Arguments = {"devices", "s"};
+  auto &Trace = Options.LinuxFiles->IoctlTrace.emplace();
+  Trace.IncludeUnlisted = false;
+  Trace.EventLimit = 4;
+  Trace.ByteLimit = 96;
+  Trace.Requests[0xc00c0916] = {{0, 12, {}}};
+  for (const char *Optimization : {"O0", "O2"}) {
+    SCOPED_TRACE(Optimization);
+    auto File = Path.parent_path() /
+                (Path.stem().string() + "-devices-" + Optimization + ".elf");
+    auto R = emulateProcess(File, ProcessProfile::LinuxELF64, Options);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 0u);
+    EXPECT_FALSE(R->IoctlTraceTruncated);
+    ASSERT_EQ(R->IoctlTrace.size(), 4u);
+  }
+}
+
+TEST_P(LinuxProcess, GPUObjectStorageChecksCompletePagesAndLifetime) {
+  // Original O0 code checks every word of three pages. Keep the guest
+  // instruction/event limits, while allowing a contended software CPU.
+  Options.Limits.TimeoutMicroseconds = 30000000;
+  auto D = contextDeviceTestInput();
+  D.ReadOnlyMappings[0].Updates.clear();
+  D.KGSL->SynchronousA3xx = true;
+  D.KGSL->MemoryObjects = true;
+  Options.LinuxFiles.emplace().Devices["/fixture/control"] = D;
+  Options.Arguments = {"devices", "o"};
+  Options.InstructionQuantum = 1024;
+  for (const char *Optimization : {"O0", "O2"}) {
+    SCOPED_TRACE(Optimization);
+    auto DevicePath = Path.parent_path() / (Path.stem().string() + "-devices-" +
+                                            Optimization + ".elf");
+    auto R = emulateProcess(DevicePath, ProcessProfile::LinuxELF64, Options);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 0u);
+  }
+}
+
+TEST_P(LinuxProcess, LegacyGPUObjectsShareModernState) {
+  auto D = contextDeviceTestInput();
+  D.ReadOnlyMappings[0].Updates.clear();
+  D.KGSL->SynchronousA3xx = true;
+  D.KGSL->MemoryObjects = true;
+  Options.LinuxFiles.emplace().Devices["/fixture/control"] = D;
+  Options.Arguments = {"devices", "l"};
+  Options.InstructionQuantum = 1024;
+  for (const char *Optimization : {"O0", "O2"}) {
+    SCOPED_TRACE(Optimization);
+    auto DevicePath = Path.parent_path() / (Path.stem().string() + "-devices-" +
+                                            Optimization + ".elf");
+    auto R = emulateProcess(DevicePath, ProcessProfile::LinuxELF64, Options);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 0u);
+  }
+}
+
 TEST_P(LinuxProcess, MemoryFileOpenFlagsRetainObservedPathErrors) {
   Options.LinuxFiles.emplace();
   Options.LinuxFiles->Files["/fixture/data"] = {0, 0xff, 0x41};
@@ -399,6 +787,100 @@ TEST_P(LinuxProcess, XAttrsKeepUnknownKernelAndExistingObjectBoundaries) {
     Options.LinuxKernel.reset();
   }
 }
+struct XAttrImportCase {
+  LinuxXAttrQueryImport Import;
+  const char *Mode;
+};
+// Independent fixture modes retain their literal errno and buffer assertions.
+constexpr XAttrImportCase XAttrImports[] = {
+    {LinuxXAttrQueryImport::TargetBeforeName, "X"},
+    {LinuxXAttrQueryImport::NameBeforeTarget, "Y"}};
+
+TEST_P(LinuxProcess, XAttrQueryImportExecutesIndependentRawErrorOrders) {
+  Options.LinuxFiles.emplace().Files["/fixture/data"] = {0, 0xff};
+  for (const auto &C : XAttrImports) {
+    SCOPED_TRACE(C.Mode);
+    Options.LinuxKernel.emplace().XAttrQueryImport = C.Import;
+    for (const char *Opt : {"O0", "O2"}) {
+      SCOPED_TRACE(Opt);
+      const auto Fixture = Path.parent_path() /
+                           (Path.stem().string() + "-files-" + Opt + ".elf");
+      Options.Arguments = {"files", C.Mode};
+      auto R = llvm::cantFail(
+          emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options));
+      ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+      EXPECT_EQ(R.ExitStatus, 0u);
+    }
+  }
+}
+
+TEST_P(LinuxProcess, XAttrQueryImportKeepsObjectAndSymbolicLinkBoundaries) {
+  for (const auto &C : XAttrImports) {
+    SCOPED_TRACE(C.Mode);
+    Options.LinuxKernel.emplace().XAttrQueryImport = C.Import;
+    for (const char *Opt : {"O0", "O2"}) {
+      SCOPED_TRACE(Opt);
+      const auto Fixture = Path.parent_path() /
+                           (Path.stem().string() + "-files-" + Opt + ".elf");
+      Options.LinuxFiles.emplace().Files["/fixture/data"] = {0};
+      for (char Mode : {'U', 'V', 'W', 'J'}) {
+        SCOPED_TRACE(Mode);
+        Options.Arguments = {"files", std::string(1, Mode)};
+        auto R = llvm::cantFail(
+            emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options));
+        EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService)
+            << R.Diagnostic;
+        EXPECT_NE(R.Diagnostic.find("extended attributes"), std::string::npos);
+        ASSERT_FALSE(R.Services.empty());
+        EXPECT_FALSE(R.Services.back().Result);
+      }
+      Options.LinuxFiles->Files.clear();
+      for (bool Directory : {false, true}) {
+        SCOPED_TRACE(Directory);
+        Options.LinuxFiles->SymbolicLinks.clear();
+        const char *Link = Directory ? "/fixture" : "/fixture/data";
+        Options.LinuxFiles->SymbolicLinks[Link] = {'/', 't'};
+        Options.Arguments = {"files", Directory ? "V" : "U"};
+        auto R = llvm::cantFail(
+            emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options));
+        EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService)
+            << R.Diagnostic;
+        EXPECT_NE(R.Diagnostic.find("symbolic-link"), std::string::npos);
+        ASSERT_FALSE(R.Services.empty());
+        EXPECT_FALSE(R.Services.back().Result);
+      }
+    }
+  }
+}
+
+TEST_P(LinuxProcess, XAttrQueryImportKeepsPidFDAbsenceIndependent) {
+  auto &Kernel = Options.LinuxKernel.emplace();
+  for (const auto &C : XAttrImports) {
+    Kernel.XAttrQueryImport = C.Import;
+    for (const char *Opt : {"O0", "O2"}) {
+      const auto Fixture = Path.parent_path() /
+                           (Path.stem().string() + "-pidfd-" + Opt + ".elf");
+      Options.Arguments = {"pidfd", "m", "0"};
+      Kernel.UnavailableSyscalls.clear();
+      auto Unknown = llvm::cantFail(
+          emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options));
+      EXPECT_EQ(Unknown.Stop, ProcessStopReason::UnsupportedService)
+          << Unknown.Diagnostic;
+      ASSERT_FALSE(Unknown.Services.empty());
+      EXPECT_EQ(Unknown.Services.back().Number, 434u);
+      EXPECT_FALSE(Unknown.Services.back().Result);
+      Kernel.UnavailableSyscalls.insert(LinuxUnavailableSyscall::PidFDOpen);
+      auto Absent = llvm::cantFail(
+          emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options));
+      ASSERT_EQ(Absent.Stop, ProcessStopReason::Exited) << Absent.Diagnostic;
+      EXPECT_EQ(Absent.ExitStatus, 91u);
+      ASSERT_EQ(Absent.Services.size(), 3u);
+      EXPECT_EQ(Absent.Services[1].Number, 434u);
+      EXPECT_EQ(Absent.Services[1].Result, uint64_t(-38));
+    }
+  }
+}
+
 TEST_P(LinuxProcess, TimeFaultsPreserveKernelErrnosAndOrderedWrites) {
   Options.LinuxTime.emplace();
   Options.LinuxTime->Clocks[0] = {4294967297, 987654321};

@@ -33,6 +33,7 @@
 #ifndef NEVERD_SYMBOLIC_SYMBITWISE_H
 #define NEVERD_SYMBOLIC_SYMBITWISE_H
 
+#include "neverd/symbolic/Limits.h"
 #include "neverd/symbolic/SymExpr.h"
 
 #include "llvm/ADT/APInt.h"
@@ -47,15 +48,6 @@
 #include <utility>
 
 namespace neverd::symbolic {
-
-/// The largest arity a truth table is ever built at.
-///
-/// A table of t inputs is 2^t bits, so this is a statement about addressable
-/// memory rather than about the algebra: past it the table itself stops
-/// fitting, never mind anything computed from it.  It is deliberately far
-/// above where any caller's own budget stops, so that it is a backstop against
-/// an overflowed shift count rather than the limit anybody actually meets.
-constexpr unsigned kMaxTruthTableAtoms = 30;
 
 /// The 2^\p NumVars input patterns a function of that arity has, or nothing
 /// when a table of that arity is not built.
@@ -154,6 +146,8 @@ public:
   }
 
 private:
+  friend TruthTable atomTruthTable(unsigned Index, unsigned NumVars);
+
   explicit TruthTable(llvm::APInt B) : Bits(std::move(B)) {}
 
   static unsigned entryCount(unsigned NumVars) {
@@ -182,8 +176,9 @@ uint32_t truthTableSupport(const TruthTable &Table);
 /// memory finding and building one may cost, so that a caller asking for more
 /// reach gets more reach rather than an allocation it cannot survive.
 struct BitwiseSynthesisLimits {
-  /// Inputs at or below which the shortest expression that exists is returned,
+  /// Inputs at or below which an affordable optimal table is preferred,
   /// found by tabulating every function of that arity and relaxing every pair.
+  /// If that table exceeds MaxWork, the general exact constructions are tried.
   ///
   /// There are 2^(2^t) functions of t inputs and the relaxation is quadratic
   /// in that count, so the cost is not exponential but doubly so: three inputs
@@ -212,9 +207,9 @@ struct BitwiseSynthesisLimits {
 /// Build a purely bitwise expression over \p Atoms realising \p Table.
 ///
 /// With \c BitwiseSynthesisLimits::MaxOptimalAtoms inputs or fewer — after the
-/// ones the function ignores have been dropped — the result is the shortest
-/// expression there is, found by searching every function of that arity by
-/// increasing size.  Above that, both a cover by prime implicants and an
+/// ones the function ignores have been dropped — an affordable optimal table
+/// supplies the shortest expression, found by searching every function of
+/// that arity by increasing size. Otherwise, a cover by prime implicants and an
 /// exclusive-or normal form are costed and the cheaper is built: each is
 /// correct, and each is the short one for a different family of functions.
 /// The normal form may also expose an exact small kernel after independent

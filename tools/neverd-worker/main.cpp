@@ -1,10 +1,20 @@
+#include "ComparisonService.h"
 #include "Engine.h"
+#include "LineageService.h"
 #include "Protocol.h"
+#include "ResourceLimits.h"
+#include "UnwindQuery.h"
 #include "WebEngine.h"
 
+#ifdef NEVERD_WORKER_HAS_MIMALLOC
+#include <mimalloc.h>
+#endif
+
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdio>
 #include <deque>
 #include <iostream>
@@ -50,10 +60,10 @@ public:
     ::close(descriptor_);
 #endif
   }
-  bool send(const Json &message) {
+  bool send(const Json &message, const EncodedJson *payload = nullptr) {
     std::string encoded;
     try {
-      encoded = frame(message);
+      encoded = payload ? frame(message, *payload) : frame(message);
     } catch (const Error &) {
       Json failure = message;
       failure["status"] = "budget_exceeded";
@@ -115,7 +125,9 @@ private:
 struct Request {
   Json value;
   std::size_t bytes;
-  bool cancelled = false;
+  std::atomic<bool> cancelled{false};
+  Request(Json Value, std::size_t Bytes)
+      : value(std::move(Value)), bytes(Bytes) {}
 };
 bool isWeb(const Json &request) {
   if (!request.is_object())
@@ -134,9 +146,15 @@ struct State {
   bool stopping = false;
   bool finished = false;
   std::string revision = "0", projectId;
-  // Engine background work state, published with heartbeats.
+  // Engine background work state, shared by replies and heartbeats.
   Json background = nullptr;
+  uint64_t BackgroundSequence = 0;
   std::string webRevision = "0", webProjectId;
+  /// Caller holds mutex; every executor publication has a monotonic sequence.
+  void publishBackground(Json Background) {
+    background = std::move(Background);
+    ++BackgroundSequence;
+  }
   const std::string &revisionFor(const Json &request) const {
     return isWeb(request) ? webRevision : revision;
   }
@@ -144,6 +162,28 @@ struct State {
     return isWeb(request) ? webProjectId : projectId;
   }
 };
+
+/// Caller holds state.mutex, so both periodic and readiness notifications
+/// describe one published executor state with the same protocol envelope.
+Json heartbeatMessage(const State &state) {
+  return {
+      {"protocol_major", 1},
+      {"type", "heartbeat"},
+      {"revision", state.revision},
+      {"project_id", state.projectId},
+      {"web",
+       {{"revision", state.webRevision}, {"project_id", state.webProjectId}}},
+      {"active_request_id",
+       state.active ? state.active->value["request_id"] : Json(nullptr)},
+      {"cancellation_requested", state.active && state.active->cancelled},
+      {"background_sequence", std::to_string(state.BackgroundSequence)},
+      {"background", state.background}};
+}
+
+bool discoveryComplete(const Json &background) {
+  return background.is_object() &&
+         background.value("discovery_complete", false);
+}
 
 Json response(const Json &request, const std::string &revision,
               const std::string &project, const std::string &status,
@@ -182,8 +222,12 @@ Json hello() {
               {"max_frame_bytes", MaxFrameBytes},
               {"capabilities",
                {"metadata",
+                "analysis_sections",
+                "analysis_section_add",
+                "analysis_section_remove",
                 "analysis_snapshot",
                 "analysis_restore",
+                "analysis_update_names",
                 "functions",
                 "disasm",
                 "bytes",
@@ -200,6 +244,10 @@ Json hello() {
                 "annotation_set",
                 "rename",
                 "code_edit",
+                "code_edit_prepare",
+                "source_type",
+                "source_variables",
+                "call_sites",
                 "save",
                 "reload",
                 "segments",
@@ -210,6 +258,7 @@ Json hello() {
                 "undo",
                 "redo",
                 "history_reset",
+                "project_sync",
                 "contributions",
                 "contribution_register",
                 "contribution_unregister",
@@ -221,6 +270,7 @@ Json hello() {
                 "imports",
                 "exports",
                 "search",
+                "register_flow",
                 "string_encodings",
                 "string_options",
                 "string_references",
@@ -230,6 +280,49 @@ Json hello() {
                "queued_requests_stop; "
                "synchronous_engine_requires_completion_or_process_restart"},
               {"storage", "existing_json_sidecars"}};
+  if (Engine::comparesBinaries()) {
+    for (const char *operation :
+         {"comparison_start",         "comparison_summary",
+          "comparison_functions",     "comparison_function",
+          "comparison_function_page", "comparison_regions",
+          "comparison_region_page",   "comparison_dataflow",
+          "comparison_flow_regions",  "comparison_slice",
+          "comparison_impact",        "comparison_cfg_summary",
+          "comparison_cfg_viewport",  "comparison_cfg_focus",
+          "comparison_save",          "comparison_export",
+          "comparison_restore",       "comparison_override",
+          "comparison_undo",          "comparison_redo",
+          "comparison_validate",      "comparison_close",
+          "comparison_observations",  "comparison_scalar_validation",
+          "comparison_reviews",       "comparison_review_record"})
+      result["capabilities"].push_back(operation);
+    if (ComparisonService::sourceSupported())
+      result["capabilities"].push_back("comparison_source_page");
+    if (ComparisonService::sourceDifferenceSupported())
+      result["capabilities"].push_back("comparison_source_difference");
+    result["comparison_cancellation"] =
+        "cooperative; partial snapshots retained";
+    result["comparison_cancellable_operations"] = Json::array();
+    for (const auto Operation : ComparisonService::CancellableOperations)
+      if (ComparisonService::cancellable(Operation))
+        result["comparison_cancellable_operations"].push_back(
+            std::string(Operation));
+  }
+  if (LineageService::supported()) {
+    for (const char *Operation :
+         {"lineage_load", "lineage_summary", "lineage_status", "lineage_query",
+          "lineage_save", "lineage_save_report", "lineage_close"})
+      result["capabilities"].push_back(Operation);
+    if (LineageService::releaseEditingSupported())
+      result["capabilities"].push_back("lineage_edit_releases");
+    result["lineage_cancellation"] =
+        "cooperative; previous collection retained on stop";
+    result["lineage_cancellable_operations"] = Json::array();
+    for (const auto Operation : LineageService::CancellableOperations)
+      if (LineageService::cancellable(Operation))
+        result["lineage_cancellable_operations"].push_back(
+            std::string(Operation));
+  }
   // Function edits, data items and operand formats need an engine that keeps
   // them.
   if (Engine::keepsFunctionEdits())
@@ -238,8 +331,22 @@ Json hello() {
   if (Engine::statesFunctionAttributes())
     for (const char *operation : {"function_attributes", "function_edit"})
       result["capabilities"].push_back(operation);
+  if (Engine::typesFunctions())
+    result["capabilities"].push_back("function_type");
   if (Engine::keepsDataItems())
     result["capabilities"].push_back("item_define");
+  if (Engine::keepsBytePatches())
+    for (const char *operation :
+         {"patch_context", "patch_preview", "patch_apply", "patch_revert",
+          "patches", "patch_export"})
+      result["capabilities"].push_back(operation);
+  if (Engine::keepsSourcePatches())
+    for (const char *operation : {"source_patch", "source_patch_context"})
+      result["capabilities"].push_back(operation);
+  if (Engine::provesSourcePatches())
+    for (const char *operation :
+         {"patch_source_target", "patch_source_preview"})
+      result["capabilities"].push_back(operation);
   if (Engine::keepsOperandFormats())
     result["capabilities"].push_back("operand_format");
   if (Engine::identifiesFiles())
@@ -250,16 +357,75 @@ Json hello() {
   }
   if (Engine::findsPdbFiles())
     result["capabilities"].push_back("pdb_reference");
+  if (Engine::listsLocalTypes())
+    for (const char *operation :
+         {"local_types", "local_type", "local_types_source"})
+      result["capabilities"].push_back(operation);
+  if (Engine::declaresLocalTypes())
+    for (const char *operation : {"local_types_declare", "local_types_forget"})
+      result["capabilities"].push_back(operation);
+  if (Engine::choosesTypeLibraries())
+    for (const char *operation : {"type_libraries", "type_libraries_set"})
+      result["capabilities"].push_back(operation);
+  // Structure offsets are operand formats that name local types.
+  if (Engine::fitsLocalTypes()) {
+    result["capabilities"].push_back("local_types_fit");
+    if (Engine::keepsOperandFormats())
+      result["capabilities"].push_back("operand_struct");
+  }
   if (Engine::findsDwarf())
     result["capabilities"].push_back("dwarf_reference");
   if (Engine::findsSymbolTables())
     result["capabilities"].push_back("symbol_table_reference");
+  if (Engine::findsMapFiles())
+    result["capabilities"].push_back("map_reference");
+  if (Engine::loadsMapFiles()) {
+    result["capabilities"].push_back("map_inspect");
+    result["capabilities"].push_back("map_load");
+  }
+  if (Engine::loadsDwarfFiles())
+    result["capabilities"].push_back("dwarf_load");
+  if (Engine::findsCallPaths())
+    for (const char *operation : {"call_paths", "call_tree"})
+      result["capabilities"].push_back(operation);
+  if (Engine::reportsUnwindFrames())
+    result["capabilities"].push_back(unwind_query::kOperation);
+  if (Engine::reportsX87Capabilities())
+    result["capabilities"].push_back("x87_capabilities");
   result["web"] = WebEngine::capabilities();
   return result;
 }
 
 /// How long requests must pause before background work starts.
-constexpr auto IdleGracePeriod = std::chrono::milliseconds(150);
+constexpr auto IdleGracePeriod = std::chrono::milliseconds(
+    ::neverd::limits::worker::kMainIdleGracePeriodMilliseconds);
+
+#ifdef NEVERD_WORKER_HAS_MIMALLOC
+void collectPagesAfterIdle(State &state, std::unique_lock<std::mutex> &lock) {
+  const long delay = mi_option_get(mi_option_purge_delay);
+  if (delay < 0)
+    return;
+  using Clock = std::chrono::steady_clock;
+  const auto now = Clock::now();
+  const auto maximumDelay =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          Clock::duration::max());
+  const auto duration = std::chrono::duration_cast<Clock::duration>(
+      std::min(std::chrono::milliseconds(delay), maximumDelay));
+  const auto deadline =
+      now.time_since_epoch() > Clock::duration::max() - duration
+          ? Clock::time_point::max()
+          : now + duration;
+  if (!state.changed.wait_until(lock, deadline, [&] {
+        return state.stopping || !state.queue.empty();
+      })) {
+    // Free pages belong to this process; every live SDK allocation stays.
+    lock.unlock();
+    mi_collect(true);
+    lock.lock();
+  }
+}
+#endif
 
 void executeLoop(State &state, Transport &transport) {
   try {
@@ -278,15 +444,41 @@ void executeLoop(State &state, Transport &transport) {
             return state.stopping || !state.queue.empty();
           });
         while (!state.stopping && state.queue.empty() && engine.hasIdleWork()) {
+          const bool wasDiscovered = discoveryComplete(state.background);
           lock.unlock();
+          bool advanced = true;
           try {
-            engine.idleStep();
+            advanced = engine.idleStep();
           } catch (const std::exception &) {
             // A failed step leaves its error in the published state.
           }
           lock.lock();
-          state.background = engine.backgroundState();
+          state.publishBackground(engine.backgroundState());
+          if (!wasDiscovered && discoveryComplete(state.background)) {
+            // Large-image clients wait for discovery publication before
+            // starting a replica. Notify them now, then admit their request
+            // before starting a potentially expensive derived-list rebuild.
+            // The same idle grace wakes immediately when a request arrives.
+            const auto message = heartbeatMessage(state);
+            lock.unlock();
+            const bool sent = transport.send(message);
+            lock.lock();
+            if (!sent)
+              throw Error("transport_closed", "Cannot publish discovery state");
+            state.changed.wait_for(lock, IdleGracePeriod, [&] {
+              return state.stopping || !state.queue.empty();
+            });
+          } else if (!advanced)
+            state.changed.wait_for(
+                lock,
+                std::chrono::milliseconds(
+                    ::neverd::limits::worker::kMainExecuteLoopMilliseconds),
+                [&] { return state.stopping || !state.queue.empty(); });
         }
+#ifdef NEVERD_WORKER_HAS_MIMALLOC
+        if (!state.stopping && state.queue.empty())
+          collectPagesAfterIdle(state, lock);
+#endif
         state.changed.wait(
             lock, [&] { return state.stopping || !state.queue.empty(); });
         if (state.stopping && state.queue.empty())
@@ -306,6 +498,7 @@ void executeLoop(State &state, Transport &transport) {
         return webRequest ? web.projectId() : engine.projectId();
       };
       Json result;
+      Engine::EncodedPayload encodedPayload;
       try {
         if (value.contains("expected_revision") &&
             value["expected_revision"] != revision())
@@ -315,6 +508,8 @@ void executeLoop(State &state, Transport &transport) {
             !value["project_id"].get<std::string>().empty() &&
             value["project_id"] != project())
           throw Error("stale_project", "Request refers to a different project");
+        engine.setCancellationProbe(
+            [request] { return request->cancelled.load(); });
         engine.setLoadProgressSink([&](const char *Phase, std::uint64_t Done,
                                        std::uint64_t Total,
                                        const char *Detail) {
@@ -326,39 +521,63 @@ void executeLoop(State &state, Transport &transport) {
                                    {"detail", Detail ? Detail : ""}}));
         });
         const auto input = value.value("payload", Json::object());
-        auto payload =
-            webRequest ? web.execute(op, input) : engine.execute(op, input);
-        result =
-            response(value, revision(), project(), "ok", std::move(payload));
+        auto reply = webRequest ? Engine::Reply{web.execute(op, input), {}}
+                                : engine.executeResponse(op, input);
+        encodedPayload = std::move(reply.encoded);
+        result = response(value, revision(), project(), "ok",
+                          std::move(reply.value));
       } catch (const Error &error) {
+        encodedPayload.reset();
         result = failure(value, revision(), project(), error);
       } catch (const std::exception &error) {
+        encodedPayload.reset();
         result = failure(value, revision(), project(),
                          Error("engine_error", webRequest ? "Web adapter failed"
                                                           : error.what()));
       }
       engine.setLoadProgressSink({});
+      engine.setCancellationProbe({});
       result["analysis_state"] = webRequest          ? web.analysisState()
                                  : engine.analyzed() ? "complete"
                                                      : "not_analyzed";
       {
         std::lock_guard lock(state.mutex);
         if (request->cancelled) {
-          // An acknowledged cancellation cannot stop the synchronous C ABI.
-          // Preserve committed mutations and the actual completion status.
+          // The comparison cooperates; legacy synchronous operations finish.
+          // Only the terminal reply reports that computation has stopped.
           result["cancellation_requested"] = true;
           result["calculation_stopped"] = true;
-          result["completed_before_cancellation"] = true;
+          const bool ComparisonOperation = ComparisonService::cancellable(op);
+          const bool LineageOperation = LineageService::cancellable(op);
+          const bool ComparisonPartial =
+              ComparisonOperation && result.contains("payload") &&
+              !result["payload"].value("restore_completed", false) &&
+              !result["payload"].value("edit_completed", false) &&
+              result["payload"].value("state", std::string()) == "cancelled";
+          const bool ComparisonStopped =
+              ComparisonPartial ||
+              (result.contains("error") &&
+               result["error"].value("code", std::string()) == "cancelled");
+          result["completed_before_cancellation"] = !ComparisonStopped;
+          if (ComparisonOperation)
+            result["partial_result_retained"] = ComparisonPartial;
+          if (LineageOperation)
+            result["partial_result_retained"] = false;
         }
         state.revision = engine.revision();
         state.projectId = engine.projectId();
-        state.background = engine.backgroundState();
+        state.publishBackground(engine.backgroundState());
+        if (!webRequest) {
+          result["background"] = state.background;
+          result["background_sequence"] =
+              std::to_string(state.BackgroundSequence);
+        }
         state.webRevision = web.revision();
         state.webProjectId = web.projectId();
         state.pending.erase(value["request_id"].get<std::string>());
         state.active.reset();
       }
-      if (!transport.send(result))
+      if (!transport.send(result, encodedPayload.get()))
         break;
     }
   } catch (const std::exception &error) {
@@ -406,21 +625,13 @@ int main(int argc, char **argv) {
     std::thread heartbeat([&] {
       std::unique_lock lock(state.mutex);
       while (!state.finished) {
-        if (state.changed.wait_for(lock, std::chrono::seconds(1),
-                                   [&] { return state.finished; }))
+        if (state.changed.wait_for(
+                lock,
+                std::chrono::seconds(
+                    ::neverd::limits::worker::kMainMainHeartbeatSeconds),
+                [&] { return state.finished; }))
           break;
-        Json message = {
-            {"protocol_major", 1},
-            {"type", "heartbeat"},
-            {"revision", state.revision},
-            {"project_id", state.projectId},
-            {"web",
-             {{"revision", state.webRevision},
-              {"project_id", state.webProjectId}}},
-            {"active_request_id",
-             state.active ? state.active->value["request_id"] : Json(nullptr)},
-            {"cancellation_requested", state.active && state.active->cancelled},
-            {"background", state.background}};
+        const auto message = heartbeatMessage(state);
         lock.unlock();
         transport.send(message);
         lock.lock();
@@ -453,7 +664,10 @@ int main(int argc, char **argv) {
             lock.unlock();
             transport.send(result);
           } else if (op == "cancel") {
-            const auto target = stringField(payload, "request_id", {}, 128);
+            const auto target = stringField(
+                payload, "request_id", {},
+                ::neverd::limits::worker::
+                    kMainMainHelloCancelTargetRequestIdStringFieldMax);
             if (target.empty())
               throw Error("invalid_request",
                           "cancel requires payload.request_id");
@@ -477,14 +691,21 @@ int main(int argc, char **argv) {
                 break;
               }
             }
-            transport.send(
-                response(value, state.revision, state.projectId, "ok",
-                         {{"accepted", accepted},
-                          {"stopped", stopped},
-                          {"state", !accepted ? "not_found"
-                                    : stopped ? "stopped"
-                                              : "pending"},
-                          {"requires_restart", accepted && !stopped}}));
+            transport.send(response(
+                value, state.revision, state.projectId, "ok",
+                {{"accepted", accepted},
+                 {"stopped", stopped},
+                 {"state", !accepted ? "not_found"
+                           : stopped ? "stopped"
+                                     : "pending"},
+                 {"requires_restart",
+                  accepted && !stopped &&
+                      (!state.active || (!ComparisonService::cancellable(
+                                             state.active->value["operation"]
+                                                 .get<std::string>()) &&
+                                         !LineageService::cancellable(
+                                             state.active->value["operation"]
+                                                 .get<std::string>())))}}));
           } else if (op == "shutdown") {
             state.stopping = true;
             cancelQueued(state, transport);
@@ -500,7 +721,7 @@ int main(int argc, char **argv) {
               throw Error("queue_full",
                           "Worker queue reached its request or byte limit");
             state.queue.push_back(
-                std::make_shared<Request>(Request{std::move(value), bytes}));
+                std::make_shared<Request>(std::move(value), bytes));
             state.pending.insert(id);
             state.queuedBytes += bytes;
             state.changed.notify_all();
@@ -517,7 +738,9 @@ int main(int argc, char **argv) {
           if (value.is_object())
             for (const auto *key : {"request_id", "operation"})
               if (value.contains(key) && value[key].is_string() &&
-                  value[key].get_ref<const std::string &>().size() <= 128)
+                  value[key].get_ref<const std::string &>().size() <=
+                      ::neverd::limits::worker::
+                          kMainMainValueKeyGetRefConstStdStringSizeLimit)
                 safe[key] = value[key];
           transport.send(failure(safe, revision, project, error));
         }

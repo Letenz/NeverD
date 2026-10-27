@@ -10,7 +10,8 @@
 #include "neverd/emulation/ExecutionExit.h"
 #include "neverd/emulation/GuestMemory.h"
 #include "neverd/emulation/Registers.h"
-#include "neverd/emulation/X64BranchModel.h"
+#include "neverd/emulation/ResourceEvent.h"
+#include "neverd/emulation/arch/x86_64/X64BranchModel.h"
 
 #include <array>
 #include <functional>
@@ -53,6 +54,12 @@ struct BackendHooks {
   /// describe the next boundary. Faults and service requests retain priority.
   /// This is distinct from Write, which observes an access before its effects.
   std::function<void()> MemoryWritten;
+  /// Pure opt-in policy for an unmapped candidate within the backend's restart
+  /// shapes. Final validation after CPU exit can still make the stop terminal.
+  /// Do not perform IO, mutate/execute a CPU, or resolve files in this
+  /// callback. Acceptance requests a typed resource pause; it grants no fault
+  /// recovery.
+  std::function<bool(const emulation::ResourcePause &)> ResourcePause;
 };
 /// An owning CPU snapshot associated with exactly one backend instance.
 /// Guest memory and hooks are shared by all contexts and are never rolled back.
@@ -110,6 +117,16 @@ public:
   /// set. OS context restoration must not infer this from writable MXCSR bits.
   virtual bool supportsSIMDExceptions() const { return false; }
   virtual llvm::Expected<RegisterValue> readRegister(CPURegister Register) = 0;
+  /// Read the stopped CPU's complete modeled architectural register set.
+  /// All-or-error: no partial state, context switch, execution, or memory read.
+  /// This is observation only, not a resumable context or saved-thread state.
+  llvm::Expected<std::vector<RegisterSnapshot>> readRegisters();
+  /// Observe a saved context from this backend and its current address space.
+  /// Uses the same inventory and all-or-error contract as the current CPU.
+  /// Never restores the context or changes faults, pending events, or memory.
+  /// May inspect a saved context even when the current CPU is faulted.
+  llvm::Expected<std::vector<RegisterSnapshot>>
+  readRegisters(const BackendContext &Context) const;
   virtual llvm::Error writeRegister(CPURegister Register,
                                     const RegisterValue &Value) = 0;
   virtual llvm::Error fetch(uint64_t Address,
@@ -162,6 +179,14 @@ public:
   virtual bool hasDeviceError() const = 0;
   virtual std::optional<BackendFault> fault() const = 0;
   virtual std::optional<BackendFault> takeRecoverableFault() = 0;
+  virtual bool supportsResourcePause() const { return false; }
+  virtual std::optional<ResourcePause> pendingResourcePause() const {
+    return std::nullopt;
+  }
+  /// Acknowledge only after mapping repair while stopped. The CPU verifies
+  /// access and retains a mandatory continuation PC; it rejects CPU mutation,
+  /// snapshots and any different run PC until that continuation starts.
+  virtual llvm::Error acknowledgeResourcePause();
   /// Inspect an intercepted service request without releasing the CPU. A
   /// pending request prevents run, state mutation, rebind and CPU snapshots.
   virtual std::optional<ServiceRequest> pendingServiceRequest() const {
@@ -176,6 +201,9 @@ public:
   virtual bool executable(uint64_t Address) const = 0;
 
 protected:
+  virtual llvm::Expected<RegisterValue>
+  readContextRegister(const BackendContext &Context,
+                      CPURegister Register) const;
   static std::unique_ptr<BackendContext>
   makeContext(std::unique_ptr<BackendContext::Storage> State) {
     return std::unique_ptr<BackendContext>(

@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "PipelineRegisterCalls.h"
 #include "PipelineReturnModelingDetail.h"
 #include "PipelineWideIntReturnDetail.h"
 
@@ -19,14 +20,18 @@
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/SymbolDecoration.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryEncoding.h"
+
+#include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
 #include <cstring>
 #include <map>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <vector>
 
 namespace neverd {
@@ -44,7 +49,8 @@ std::optional<va_t> resolveCallTargetVA(const MedFunc &MF,
                                         int Depth = 0) {
   if (V.isConst())
     return V.ConstVal;
-  if (Depth > 8)
+  if (Depth > ::neverd::limits::pipeline::
+                  kPipelineWideIntReturnResolveCallTargetVADepthLimit)
     return std::nullopt;
 
   const MedOp *Def = nullptr;
@@ -111,7 +117,8 @@ std::optional<va_t> resolveCallTargetVA(const MedFunc &MF,
 // whose caller consumes the high half into one producing a 64-bit temp; the
 // target of such a call returns i64, so override its (low-half-only) inferred
 // return type to match the call site and splice both halves at its RETURN.
-void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
+void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result,
+                         MedStackProjection StackProjection) {
   const auto &TRI = getTargetRegInfo(Img.Arch);
   if (TRI.PointerSize == 4 && TRI.IntReturnReg2 != 0) {
     std::set<va_t> WideRetCallees;
@@ -128,6 +135,69 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
           else if (Op.Opcode == NdOp::INDIR_CALL)
             HasIndirectWideRet = true;
         }
+
+    // A caller that reads the high register after a direct call, before
+    // anything redefines it, uses the callee's high result: the register is
+    // caller-saved, so nothing else of the caller's can be there.  It need
+    // not read the low half (`(uint32_t)(f() >> 32)`, or a `mov r0, r1`
+    // that returns it), which the per-function scan requires.  Nor need the
+    // read be visible: arguments are not recovered yet, so a high result
+    // passed unchanged into the next call is a parameter that callee reads
+    // (ARM's `add64(add64(a, b), c)` keeps it in r1).  Only an in-module
+    // callee qualifies, and its body must still return the pair on every
+    // path (below): a callee that leaves the register alone, as
+    // __aeabi_read_tp leaves r1, fails that.
+    {
+      std::map<va_t, const MedFunc *> InModule;
+      for (const auto &MF : Result.MedFuncs)
+        InModule.emplace(MF.Entry, &MF);
+      auto takesHighRegister = [&](va_t Entry) {
+        const auto It = InModule.find(Entry);
+        return It != InModule.end() &&
+               llvm::any_of(It->second->Params, [&](const MedVar &Param) {
+                 return Param.Kind == MedVar::Param &&
+                        Param.RegOff == TRI.IntReturnReg2;
+               });
+      };
+      auto directTarget = [](const MedOp &Op) -> std::optional<va_t> {
+        if (Op.Opcode != NdOp::CALL || Op.NumInputs < 1 ||
+            !Op.Inputs[0].isConst())
+          return std::nullopt;
+        return Op.Inputs[0].ConstVal;
+      };
+      for (const auto &MF : Result.MedFuncs)
+        for (const auto &Blk : MF.Blocks)
+          for (size_t OI = 0; OI < Blk.Ops.size(); ++OI) {
+            const std::optional<va_t> Target = directTarget(Blk.Ops[OI]);
+            if (!Target || !InModule.count(*Target) ||
+                WideRetCallees.count(*Target))
+              continue;
+            for (size_t J = OI + 1; J < Blk.Ops.size(); ++J) {
+              const MedOp &Next = Blk.Ops[J];
+              const bool ReadsHigh = llvm::any_of(
+                  llvm::ArrayRef(Next.Inputs.data(), Next.NumInputs),
+                  [&](const MedVar &In) {
+                    return In.Kind == MedVar::Reg &&
+                           In.RegOff == TRI.IntReturnReg2;
+                  });
+              if (Next.Opcode == NdOp::CALL ||
+                  Next.Opcode == NdOp::INDIR_CALL) {
+                const std::optional<va_t> Following = directTarget(Next);
+                if (Following && takesHighRegister(*Following))
+                  WideRetCallees.insert(*Target);
+                break;
+              }
+              if (ReadsHigh) {
+                WideRetCallees.insert(*Target);
+                break;
+              }
+              if (Next.Opcode == NdOp::RETURN ||
+                  (Next.Output.Kind == MedVar::Reg &&
+                   Next.Output.RegOff == TRI.IntReturnReg2))
+                break;
+            }
+          }
+    }
 
     // When the indirect target itself folds to a known function (notably an
     // ARM32 PC-relative literal-pool pointer), the widened call site is direct
@@ -199,15 +269,50 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
     // remainder) at its epilogue.
     std::map<va_t, std::set<va_t>> IndirectI64SitesByFunc;
     {
+      // Every call asks the same per-function question, and no function
+      // changes until the last query below. Index each function once: its
+      // blocks by id, and the blocks whose return-register PHIs take each
+      // non-constant value (equal exactly when Kind, Id and SSAVer are).
+      // Rebuilding the block map and scanning every PHI for each call was
+      // quadratic in a 12k-block function.
+      struct CarriedResultIndex {
+        std::map<int, const MedBlock *> ById;
+        std::map<std::tuple<int, int, int>, std::set<int>> PhiBlocksByArg;
+      };
+      std::map<const MedFunc *, CarriedResultIndex> CarriedResultIndexes;
+      auto carriedResultIndex =
+          [&](const MedFunc &MF) -> const CarriedResultIndex & {
+        auto [It, Inserted] = CarriedResultIndexes.try_emplace(&MF);
+        if (!Inserted)
+          return It->second;
+        for (const auto &Block : MF.Blocks) {
+          It->second.ById[Block.Id] = &Block;
+          for (const auto &Phi : Block.Phis) {
+            if (Phi.Output.Kind != MedVar::Reg ||
+                Phi.Output.RegOff != TRI.IntReturnReg)
+              continue;
+            for (const auto &A : Phi.Args)
+              if (!A.second.isConst())
+                It->second
+                    .PhiBlocksByArg[{static_cast<int>(A.second.Kind),
+                                     A.second.Id, A.second.SSAVer}]
+                    .insert(Block.Id);
+          }
+        }
+        return It->second;
+      };
       auto lowResultLoopCarried = [&](const MedFunc &MF, const MedBlock &B,
                                       const MedOp &Call) -> bool {
         if (Call.Output.Kind != MedVar::Reg ||
             Call.Output.RegOff != TRI.IntReturnReg)
           return false;
 
-        std::map<int, const MedBlock *> ById;
-        for (const auto &Block : MF.Blocks)
-          ById[Block.Id] = &Block;
+        const CarriedResultIndex &Index = carriedResultIndex(MF);
+        const auto PhiBlocks =
+            Index.PhiBlocksByArg.find({static_cast<int>(Call.Output.Kind),
+                                       Call.Output.Id, Call.Output.SSAVer});
+        if (PhiBlocks == Index.PhiBlocksByArg.end())
+          return false;
 
         // A loop header need not be an immediate successor of the call block:
         // size-oriented ARM code commonly branches through a separate latch.
@@ -223,25 +328,16 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
           Work.pop_back();
           if (!CanReachCall.insert(Id).second)
             continue;
-          auto It = ById.find(Id);
-          if (It == ById.end())
+          auto It = Index.ById.find(Id);
+          if (It == Index.ById.end())
             continue;
           Work.insert(Work.end(), It->second->Preds.begin(),
                       It->second->Preds.end());
         }
 
-        for (const auto &PhiBlock : MF.Blocks) {
-          if (!CanReachCall.count(PhiBlock.Id))
-            continue;
-          for (const auto &Phi : PhiBlock.Phis) {
-            if (Phi.Output.Kind != MedVar::Reg ||
-                Phi.Output.RegOff != TRI.IntReturnReg)
-              continue;
-            for (const auto &A : Phi.Args)
-              if (A.second == Call.Output)
-                return true;
-          }
-        }
+        for (int PhiBlock : PhiBlocks->second)
+          if (CanReachCall.count(PhiBlock))
+            return true;
         return false;
       };
 
@@ -332,7 +428,7 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
       for (const auto &MF : Result.MedFuncs) {
         ByEntry[MF.Entry] = &MF;
         if (libc::returnsDoubleWord(
-                cNameOfSymbol(MF.Name, Img.Format, Img.Arch)))
+                cNameOfSymbol(MF.Name, Img.Format, Img.Arch), TRI.PointerSize))
           WideRetCallees.insert(MF.Entry);
       }
       std::set<va_t> Proven;
@@ -355,8 +451,10 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
             const Import *Import = Img.findImportAt(Call.Inputs[0].ConstVal);
             // An opaque import's caller reading EDX/R1 cannot override the
             // import's ABI. Only a declared double-word runtime is evidence.
-            return Import && libc::returnsDoubleWord(cNameOfSymbol(
-                                 Import->Name, Img.Format, Img.Arch));
+            return Import &&
+                   libc::returnsDoubleWord(
+                       cNameOfSymbol(Import->Name, Img.Format, Img.Arch),
+                       TRI.PointerSize);
           };
           if (!returnsRegisterPairI64(Callee, TRI, TailReturnsPair))
             continue;
@@ -428,6 +526,8 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
       for (const auto &LF : Result.LowFuncs)
         if (LF.CalleePopBytes > 0)
           CalleePop[LF.Entry] = LF.CalleePopBytes;
+      for (const auto &[Address, Bytes] : Result.CallEntryStackPops)
+        CalleePop.try_emplace(Address, Bytes);
 
       // Stack-probe slot set for the i64-caller re-conversion (mirrors
       // buildMedIR): keep the prologue chkstk call from killing the live-in
@@ -465,21 +565,43 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
         Reconv.setBinaryImage(&Img);
         Reconv.setCalleePopMap(&CalleePop);
         Reconv.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
+        Reconv.setCallExitConstants(&Result.CallExitConstants);
         Reconv.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);
+        Reconv.setCallUnreadGPRs(&Result.CallUnreadGPRs);
+        Reconv.setCallArgumentSources(&Result.CallArgumentSources);
         Reconv.setCallEntryStackArgs(&Result.CallEntryStackArgs);
+        Reconv.setCallEntryStackSlots(&Result.CallEntryStackSlots);
+        Reconv.setCallEntryArgumentCounts(&Result.CallEntryArgumentCounts);
+        Reconv.setCallEntryIntegerArguments(&Result.CallEntryIntegerArguments);
+        Reconv.setCallEntryFloatingArguments(
+            &Result.CallEntryFloatingArguments);
         Reconv.setCallDispatchThunks(&Result.CallDispatchThunks);
         Reconv.setCallVariadicFrom(&Result.CallVariadicFrom);
+        Reconv.setCallEntryVariadicArguments(
+            &Result.CallEntryVariadicArguments);
         Reconv.setFormattedCalls(&Result.FormattedCalls);
         Reconv.setStackProbeSlots(&StackProbeSlots);
         Reconv.setI64Callees(&I64RetCallees);
         if (HasIndI64)
           Reconv.setI64IndirectSites(&IndIt->second);
+        // MedFuncs[I] is the first conversion of the same LowFunc.
+        Reconv.setRegistrationFrameFacts(
+            {Result.MedFuncs[I].Entry,
+             Result.MedFuncs[I].RegistrationCallerCleanupABIComplete,
+             Result.MedFuncs[I].RegistrationCxxEntryPopBytes});
         MedFunc NewMF =
             Reconv.convert(Result.LowFuncs[I], Img.Arch, Img.abiFormat());
         NewMF.OriginalSize = Result.LowFuncs[I].OriginalSize;
         NewMF.DebugName = Result.LowFuncs[I].DebugName;
         NewMF.SourceFile = Result.LowFuncs[I].SourceFile;
         NewMF.SourceLine = Result.LowFuncs[I].SourceLine;
+        // Reconversion replaces the operation sequence. Repeat the same stack
+        // proofs as the initial conversion before either source emitter reads
+        // it.
+        prepareMedStackAccesses(NewMF, Result.LowFuncs[I], Img,
+                                StackProjection);
+        if (StackProjection == MedStackProjection::Source)
+          expandSourceRegisterCalls(NewMF, Img, Result.CallRegisterLeaves);
         Result.MedFuncs[I] = std::move(NewMF);
         inferMedTypes(Result.MedFuncs[I], Img.Arch);
         if (SelfWide)

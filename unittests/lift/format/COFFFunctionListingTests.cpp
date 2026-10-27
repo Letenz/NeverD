@@ -541,10 +541,14 @@ TEST_F(COFFFunctionListingTest,
     COFFLoader Loader;
     auto Image = Loader.load(writeFixture(Bytes));
     ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+    // A section's own symbol bounds the section but names nothing, and the
+    // unwind record still finds the function it starts.
     ASSERT_EQ(Image->Symbols.size(), 2u);
     EXPECT_EQ(Image->Symbols[0].Name, ".text");
+    EXPECT_TRUE(Image->Symbols[0].IsSection);
     EXPECT_FALSE(Image->Symbols[0].IsFunc);
     EXPECT_EQ(Image->Symbols[0].Size, 0u);
+    EXPECT_NE(Image->getFunctionNameAt(Image->Symbols[0].Addr), ".text");
     const auto Functions = Image->getFunctionSymbols();
     ASSERT_EQ(Functions.size(), 1u);
     EXPECT_EQ(Functions[0]->Name,

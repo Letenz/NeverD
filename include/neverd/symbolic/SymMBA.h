@@ -59,10 +59,12 @@
 #ifndef NEVERD_SYMBOLIC_SYMMBA_H
 #define NEVERD_SYMBOLIC_SYMMBA_H
 
+#include "neverd/symbolic/Limits.h"
 #include "neverd/symbolic/SymExpr.h"
 
 #include <cstddef>
 #include <limits>
+#include <unordered_map>
 
 namespace neverd::symbolic {
 
@@ -235,6 +237,34 @@ struct MBAResult {
   size_t Work = 0;
 };
 
+namespace detail {
+class MBADeepSimplifier;
+}
+
+/// Caller-owned, bounded cache of context-local exact shortening derivations.
+/// The context must outlive this object and remain at the same address. No
+/// sampled equalities or path assumptions are retained. Capacity bounds the
+/// persistent entry count independently of per-query measurement storage.
+class MBARewriteCache {
+public:
+  explicit MBARewriteCache(
+      const SymContext &Context,
+      size_t Capacity =
+          ::neverd::limits::symbolic::kSymMBAMBARewriteCacheCapacity)
+      : Owner(&Context), Capacity(Capacity) {}
+  MBARewriteCache(const MBARewriteCache &) = delete;
+  MBARewriteCache &operator=(const MBARewriteCache &) = delete;
+  size_t size() const { return Rewrites.size(); }
+  uint64_t reusedRoots() const { return ReusedRoots; }
+
+private:
+  friend class detail::MBADeepSimplifier;
+  const SymContext *Owner;
+  size_t Capacity;
+  uint64_t ReusedRoots = 0;
+  std::unordered_map<uint32_t, SymRef> Rewrites;
+};
+
 /// Measure \p E as one region and rewrite it into the best form that admits.
 ///
 /// Returns \p E unchanged when it has too many inputs to measure, or when
@@ -252,6 +282,13 @@ MBAResult simplifyMBA(SymContext &Ctx, SymRef E, const MBAOptions &Opts = {});
 /// the one below.  This is the entry point to use on real obfuscated code.
 MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E,
                           const MBAOptions &Opts = {});
+
+/// Reuse exact derivations across queries. Each reused root consumes work;
+/// zero-work queries do not reuse facts. Child hits retain the ordinary DAG
+/// walk and final whole-expression growth/verification checks. A cache from
+/// another context throws std::invalid_argument before analysis starts.
+MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                          MBARewriteCache &Cache);
 
 } // namespace neverd::symbolic
 

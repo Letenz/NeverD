@@ -19,6 +19,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedIR.h"
 
@@ -73,12 +74,18 @@ struct CallArgScan {
   /// entry stack pointer, above the return address on x86, and no argument
   /// was pushed.
   bool TailJump = false;
+  /// The call is indirect: as call-ABI recovery does, the scan takes no
+  /// prologue save of a register's incoming value for one of its stack
+  /// arguments (isIncomingRegisterSave).
+  bool Indirect = false;
   /// Register arguments a summarized callee reads (MedOp::CalleeRegisterArgs),
   /// or -1 when the callee has no summary.
   int CalleeRegisterArgs = -1;
   /// Positional arguments its incoming stack reads imply
   /// (MedOp::CalleeStackArgs), or -1 when they are unbounded.
   int CalleeStackArgs = -1;
+  /// A checked header variadic prefix is a minimum, not a stack upper bound.
+  bool HeaderVariadic = false;
   /// The call is a direct one to code of this image, whose recovered stack
   /// parameters are one per slot.  An import's prototype may instead take an
   /// argument wider than a slot whole.
@@ -107,14 +114,22 @@ struct CallArgScan {
   /// below the stack pointer it is made from, through another pointer, or
   /// at a fixed address.
   llvm::function_ref<bool(const MedVar &)> IsNoArgumentStore;
+  /// Whether \p Store is one only reads of a PC-rooted value observe: the
+  /// get-PC push, or a spill of the GOT address its reloads read.  The GOT
+  /// address is never a C argument.
+  llvm::function_ref<bool(const MedOp &)> IsPcRootedStore;
   /// Offset of an address from the stack pointer at function entry, when it
   /// resolves through copies and constant adjustments (an `r11 = rsp`
   /// frame); nullopt otherwise.
   llvm::function_ref<std::optional<int64_t>(const MedVar &)> EntryOffsetOf;
   /// The entry offset of the stack pointer the call is made with, where it
-  /// is known (i386): a store EntryOffsetOf places at or above it is in the
-  /// slot at that distance.
+  /// is known.
   std::optional<int64_t> CallStackEntryOffset;
+  /// The distance of an address above the stack pointer the call is made
+  /// with, where both are exact offsets from the entry stack pointer, one
+  /// realignment, or the same current stack PHI. A store there occupies the
+  /// slot at that distance; an unknown entry coordinate is not zero.
+  llvm::function_ref<std::optional<int64_t>(const MedVar &)> CallStackOffsetOf;
   /// Bytes the prologue moved the stack pointer below its entry value.
   int64_t FrameSize = 0;
   /// Entry-relative stack slots the function loads; see MedToHigh.h.
@@ -191,8 +206,8 @@ struct CallArgPolicy {
   /// calls.
   bool RecursiveCallsPassOwnSignature = false;
   /// Merge scanned arguments into those a source binding names.
-  void (*MergeScannedArgs)(CallArgContext &C,
-                           std::vector<ExprPtr> &Hinted) = nullptr;
+  void (*MergeScannedArgs)(CallArgContext &C, std::vector<ExprPtr> &Hinted,
+                           const SourceFunctionTypeHint &Signature) = nullptr;
 };
 
 /// The call-argument policy for code of \p A in a \p F image, or null.
@@ -211,21 +226,9 @@ inline bool isNoopRegisterCopy(const MedOp &Op) {
          Op.Output.SSAVer == Op.Inputs[0].SSAVer;
 }
 
-/// True when \p Op ends the setup of a later call's arguments: another call,
-/// or an intrinsic that may write registers or memory.  The x87 wait that
-/// FILD, FABS and FCHS check writes neither (preservesCallSetup), as
-/// MedABIPass's barrier has it.
-inline bool endsCallSetup(const MedOp &Op) {
-  if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
-    return true;
-  if (Op.Opcode != NdOp::INTRINSIC)
-    return false;
-  if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
-    return true;
-  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
-  return static_cast<uint64_t>(Id) != Op.Inputs[0].ConstVal ||
-         !preservesCallSetup(Id);
-}
+/// True when \p Op ends the setup of a later call's arguments
+/// (endsCallArgumentSetup), as MedABIPass's barrier has it.
+inline bool endsCallSetup(const MedOp &Op) { return endsCallArgumentSetup(Op); }
 
 void collectSpilledStackArgs(const CallArgScan &Scan,
                              std::vector<ExprPtr> &Found);

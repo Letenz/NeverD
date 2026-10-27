@@ -7,7 +7,7 @@
 #include "RegistrationStateSolver.h"
 
 #include "neverd/Limits.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include <algorithm>
 #include <utility>
@@ -15,9 +15,11 @@
 namespace neverd::registration_state {
 
 RegistrationStateAnalysis RegistrationStateSolver::finish() {
-  if (FailedLocalUnwind)
+  if (FailedLocalUnwind) {
+    Result.SEHLocalUnwindsComplete = false;
     Result.Diagnostics.push_back(
         "local-unwind frame arguments or finally effects are not proven");
+  }
   if (Exhausted) {
     Result.Diagnostics.push_back(
         "registration-state propagation budget exhausted");
@@ -38,6 +40,7 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
   if (Result.SEHInvocationExitsComplete)
     for (const auto &[Identity, Exit] : SEHExits)
       Result.SEHInvocationExits.push_back(Exit);
+  std::shared_ptr<const std::vector<int32_t>> UnknownLevels;
   for (size_t I = 0; I < Function.Blocks.size(); ++I) {
     const LowBlock &Block = Function.Blocks[I];
     std::set<int32_t> Levels;
@@ -66,12 +69,16 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
           State.Reached &&
           (State.Unknown || Facts.Invalid || (State.Callback && State.Parent) ||
            (State.Uninstalled && State.Installed));
-      const auto &ReachingLevels = Unproven ? AllLevels : State.Levels;
       auto ContextSearches = cxxSearches(State, Facts.Invalid);
-      if (!charge(ReachingLevels.size() + State.CxxCatchStacks.size() +
-                  ContextSearches.size() + 1))
+      if (!charge(State.CxxCatchStacks.size() + ContextSearches.size() + 1))
         break;
-      Levels.insert(ReachingLevels.begin(), ReachingLevels.end());
+      // Unknown already denotes the full domain. Keep the invocation's other
+      // facts separate without materializing that same set for this join.
+      if (!Unknown && !Unproven) {
+        if (!charge(State.Levels.size()))
+          break;
+        Levels.insert(State.Levels.begin(), State.Levels.end());
+      }
       Searches.insert(ContextSearches.begin(), ContextSearches.end());
       Reached |= State.Reached;
       Parent |= State.Parent;
@@ -106,25 +113,33 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
     const bool CallbackOnly = Callback && !Parent;
     if (!CallbackOnly && Unknown)
       Result.Complete = false;
-    if (Unknown)
-      Levels = AllLevels;
-    if (Exhausted || !charge(Levels.size() + Searches.size() + 1)) {
+    const size_t LevelWork =
+        Unknown ? (UnknownLevels ? 0 : AllLevels.size()) : Levels.size();
+    if (Exhausted || !charge(LevelWork + Searches.size() + 1)) {
       Result.Complete = false;
       Result.Blocks.clear();
       Result.Diagnostics.push_back(
           "registration-state output budget exhausted");
       return std::move(Result);
     }
+    std::vector<int32_t> ExplicitLevels;
+    if (Unknown) {
+      if (!UnknownLevels)
+        UnknownLevels = std::make_shared<const std::vector<int32_t>>(
+            AllLevels.begin(), AllLevels.end());
+    } else
+      ExplicitLevels.assign(Levels.begin(), Levels.end());
     Result.Blocks.push_back({Block.Id,
                              {Block.StartAddr, Block.EndAddr},
-                             {Levels.begin(), Levels.end()},
+                             std::move(ExplicitLevels),
                              Unknown,
                              CallbackOnly,
                              CanDispatch,
                              Minimum == INT32_MAX ? 0 : Minimum,
                              Reached,
                              {Searches.begin(), Searches.end()},
-                             {CatchStacks.begin(), CatchStacks.end()}});
+                             {CatchStacks.begin(), CatchStacks.end()},
+                             Unknown ? UnknownLevels : nullptr});
   }
   Result.RegistrationLifetimeComplete &= Result.CxxContinuationsComplete;
   if (!Result.SEHInvocationExitsComplete) {
@@ -151,6 +166,12 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
   if (Result.SEHBoundCallsComplete && charge(BoundCalls.size()))
     for (const auto &[Identity, Call] : BoundCalls)
       Result.SEHBoundCalls.push_back(Call);
+  Result.SEHLocalUnwindsComplete &=
+      Result.Complete && Result.CallbackStatesComplete &&
+      Result.RegistrationLifetimeComplete && !Exhausted;
+  if (Result.SEHLocalUnwindsComplete && charge(LocalUnwindCalls.size()))
+    for (const auto &[Identity, Call] : LocalUnwindCalls)
+      Result.SEHLocalUnwinds.push_back(Call);
   Result.SEHJumpResumptionsComplete &=
       Result.Complete && Result.CallbackStatesComplete;
   if (Result.SEHJumpResumptionsComplete)
@@ -194,6 +215,8 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
   if (Result.ChainOperationsComplete)
     for (const auto &[Identity, Access] : ChainAccesses)
       Result.ChainAccesses.push_back(Access);
+  if (Result.ChainOperationsComplete)
+    Result.CxxPrologue = CxxPrologueEffect;
   Result.IncomingFrameAccessesComplete = ConsistentIncomingAccesses;
   Result.CallFrameEffectsComplete = CompleteCalls && Result.Complete &&
                                     Result.CallbackStatesComplete &&
@@ -236,13 +259,25 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
   Result.SecurityCookiesComplete =
       CompleteCookies && Result.Complete && Result.CallbackStatesComplete &&
       Result.RegistrationLifetimeComplete && Result.ChainOperationsComplete &&
-      CookieChecks.size() == CookieCheckOccurrences.size() &&
-      (!ReadsGSCookie || !CookieChecks.empty());
+      (!CxxCookies ||
+       (Result.CallFrameEffectsComplete && Result.CleanupFrameEffectsComplete &&
+        Result.CxxCatchObjectsComplete &&
+        Result.RuntimeObjectAccessesComplete)) &&
+      hasCompleteCookieChecks() && (!ReadsGSCookie || !CookieChecks.empty());
   if (Result.SecurityCookiesComplete) {
     Result.SecurityCookieVA = SecurityCookieVA;
     Result.CookieCheckVA = CookieCheckVA;
+    Result.CxxCookieConditions = CxxCookieConditions;
     for (const auto &[Identity, Check] : CookieChecks)
       Result.CookieChecks.push_back(Check);
+  } else if (CxxCookies && !CookieChecks.empty()) {
+    // Transfer used these success paths instead of ordinary callee effects.
+    // Without published cookie receipts they cannot close the call or runtime
+    // memory proof: the original mismatch path has not been summarized.
+    Result.CallFrameEffectsComplete = Result.RuntimeObjectAccessesComplete =
+        Result.ImageReadsComplete = false;
+    Result.RuntimeObjectAccesses.clear();
+    Result.Diagnostics.push_back("C++ cookie call success is not proven");
   }
   if (Result.ImageReadsComplete)
     for (const auto &[Begin, End] : ImageReads)
@@ -270,7 +305,9 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
       Result.SecurityCookieVA = 0;
       Result.CookieCheckVA = 0;
       Result.CookieChecks.clear();
+      Result.CxxCookieConditions.clear();
       Result.ChainAccesses.clear();
+      Result.CxxPrologue.reset();
       Result.Diagnostics.push_back(
           "registration-frame output budget exhausted");
       return std::move(Result);
@@ -280,6 +317,12 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
         Result.FrameValues.push_back(
             {Identity.first, Identity.second, Value.Offset});
   }
+  Result.SEHStateStoresComplete &=
+      Result.Complete && Result.CallbackStatesComplete &&
+      Result.RegistrationLifetimeComplete && !Exhausted;
+  if (Result.SEHStateStoresComplete && charge(SEHStateStores.size()))
+    for (const auto &[Identity, Store] : SEHStateStores)
+      Result.SEHStateStores.push_back(Store);
   return std::move(Result);
 }
 

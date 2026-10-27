@@ -37,6 +37,9 @@ struct DriverRegistryValue {
 struct DriverRegistryKey {
   std::string Path;
   std::vector<DriverRegistryValue> Values;
+  /// Absolute Windows time in 100 ns units. Omission leaves historical time
+  /// unknown unless the scenario supplies the registry's initial system time.
+  std::optional<uint64_t> LastWriteTime100ns;
 };
 
 /// An omitted inventory means unknown availability. An explicit inventory is
@@ -45,7 +48,8 @@ struct DriverRegistryKey {
 /// Names use ASCII case folding; arbitrary value bytes are preserved exactly.
 /// TotalBytes bounds value payloads; the separate name limits bound names.
 llvm::Error validateDriverRegistry(
-    const std::optional<std::vector<DriverRegistryKey>> &Registry);
+    const std::optional<std::vector<DriverRegistryKey>> &Registry,
+    std::optional<uint64_t> SystemTime100ns = std::nullopt);
 
 } // namespace neverd::emulation
 

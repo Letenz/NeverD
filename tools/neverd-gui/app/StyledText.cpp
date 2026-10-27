@@ -1,5 +1,7 @@
 #include "StyledText.h"
 
+#include "../Config.h"
+
 #include <QFontMetricsF>
 #include <QTextCharFormat>
 #include <algorithm>
@@ -7,8 +9,6 @@
 
 namespace neverd::gui {
 namespace {
-/// Pixels a character's advance may differ from its columns' width.
-constexpr qreal GridTolerance = 0.01;
 
 /// Whether a fixed-width listing draws \p code two columns wide; the worker
 /// aligns columns by the same table.
@@ -149,7 +149,8 @@ QTextLayout &StyledLine::layout(const QFont &font, quint64 stamp,
       const qreal advance =
           line.cursorToX(int(i + units)) - line.cursorToX(int(i));
       const qreal expected = (isWideCharacter(code) ? 2 : 1) * column;
-      if (std::abs(advance - expected) > GridTolerance) {
+      if (std::abs(advance - expected) >
+          ::neverd::limits::gui_config::kStyledTextGridTolerance) {
         QTextLayout::FormatRange range;
         range.start = int(i);
         range.length = units;

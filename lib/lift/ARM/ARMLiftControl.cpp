@@ -11,8 +11,10 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "ARMLiftDetail.h"
+
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/ARMLifter.h"
+#include "neverd/lift/ARM/ARMLifter.h"
 
 #include "llvm/Support/Debug.h"
 
@@ -22,6 +24,15 @@ namespace neverd {
 
 bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
                             const cs_arm &ARM) {
+  if (isARMUndefinedInstruction(Insn->id)) {
+    // Undefined-instruction aliases share UDF's code and void effect. A
+    // resumed exception must see the original r0, not a synthetic result.
+    if (const std::optional<uint64_t> Code = armExceptionCode(*Insn, ARM))
+      S.emitVoidIntrinsic(Intrinsic::ArmUdf, {NdVar::cst(*Code, 2)});
+    else
+      S.emitVoidIntrinsic(Intrinsic::ArmUdf);
+    return true;
+  }
   switch (Insn->id) {
 
   // --- B / BL / BX / BLX ---
@@ -97,33 +108,53 @@ bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
       S.emitIntrinsic(Intrinsic::ArmSvc);
     break;
   }
+  // The call number or the code is the intrinsic's first input: the C
+  // writers print it, and a recompiled HVC, SMC, BKPT or HLT carries it.
   case ARM_INS_HVC:
-    S.emitIntrinsic(Intrinsic::ArmHvc);
-    break;
   case ARM_INS_SMC:
-    S.emitIntrinsic(Intrinsic::ArmSmc);
-    break;
   case ARM_INS_BKPT:
-    S.emitIntrinsic(Intrinsic::ArmBkpt);
+  case ARM_INS_HLT: {
+    const Intrinsic Id = Insn->id == ARM_INS_HVC    ? Intrinsic::ArmHvc
+                         : Insn->id == ARM_INS_SMC  ? Intrinsic::ArmSmc
+                         : Insn->id == ARM_INS_BKPT ? Intrinsic::ArmBkpt
+                                                    : Intrinsic::ArmHlt;
+    const std::optional<uint64_t> Code = armExceptionCode(*Insn, ARM);
+    if (Id == Intrinsic::ArmBkpt || Id == Intrinsic::ArmHlt) {
+      if (Code)
+        S.emitVoidIntrinsic(Id, {NdVar::cst(*Code, 2)});
+      else
+        S.emitVoidIntrinsic(Id);
+      break;
+    }
+    if (!Code) {
+      S.emitIntrinsic(Id);
+      break;
+    }
+    S.emitIntrinsic(Id, NdVar::reg(armreg::R0, 4), {NdVar::cst(*Code, 2)});
+    // An SMC or HVC #0 follows the SMC Calling Convention, which returns its
+    // results in r0-r3; LowToMed gives it the argument registers it reads.
+    if ((Id == Intrinsic::ArmHvc || Id == Intrinsic::ArmSmc) && *Code == 0)
+      for (unsigned Result = 0; Result < 4; ++Result)
+        S.emit(NdOp::COPY, NdVar::reg(armreg::R0 + Result * 4, 4),
+               {S.makeTemp(4)});
     break;
-  case ARM_INS_HLT:
-    S.emitIntrinsic(Intrinsic::ArmHlt);
-    break;
-  case ARM_INS_UDF:
-  case ARM_INS_TRAP:
-    // An undefined instruction raises an exception and writes no register:
-    // a debugger break resumes with r0 as it was.
-    S.emitVoidIntrinsic(Intrinsic::ArmUdf);
-    break;
+  }
+  // Memory barriers, with their option (`dmb ish`, `dsb sy`).
   case ARM_INS_DMB:
-    S.emitVoidIntrinsic(Intrinsic::ArmDmb);
-    break;
   case ARM_INS_DSB:
-    S.emitVoidIntrinsic(Intrinsic::ArmDsb);
+  case ARM_INS_ISB: {
+    const Intrinsic Id = Insn->id == ARM_INS_DMB   ? Intrinsic::ArmDmb
+                         : Insn->id == ARM_INS_DSB ? Intrinsic::ArmDsb
+                                                   : Intrinsic::ArmIsb;
+    // Capstone reports no option for an ISB, which only has SY.
+    if (ARM.mem_barrier != ARM_MB_RESERVED_0)
+      S.emitVoidIntrinsic(Id, {NdVar::cst(ARM.mem_barrier & 0xF, 1)});
+    else if (Id == Intrinsic::ArmIsb)
+      S.emitVoidIntrinsic(Id, {NdVar::cst(0xF, 1)});
+    else
+      S.emitVoidIntrinsic(Id);
     break;
-  case ARM_INS_ISB:
-    S.emitVoidIntrinsic(Intrinsic::ArmIsb);
-    break;
+  }
   case ARM_INS_CLREX:
     S.emitVoidIntrinsic(Intrinsic::ArmClrex);
     break;
@@ -134,19 +165,59 @@ bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
   case ARM_INS_PLI:
     S.emit(NdOp::NOP, {}, {});
     break;
+  // An MRS of APSR reads the lifted N, Z, C, V and GE flags and the
+  // machine's other bits: Q, and in a privileged mode the mode and the
+  // interrupt masks (`mrs r0, cpsr` before `cpsid i`).  An SPSR is the
+  // machine's.  A banked register has no typed contract.
   case ARM_INS_MRS: {
-    if (ARM.op_count >= 1) {
-      NdVar Dst = operandWrite(ARM.operands[0]);
-      emitMrsNzcv(S, Dst);
+    if (ARM.op_count != 2 || !isTransferRegister(ARM.operands[0]) ||
+        ARM.operands[1].type != ARM_OP_REG)
+      return false;
+    const auto Source = static_cast<arm_reg>(ARM.operands[1].reg);
+    if (Source == ARM_REG_SPSR) {
+      S.emitIntrinsic(Intrinsic::ArmMrs, operandWrite(ARM.operands[0]),
+                      {NdVar::cst(ArmMrsSpsr, 4)});
+      break;
     }
+    if (Source != ARM_REG_APSR && Source != ARM_REG_CPSR)
+      return false;
+    NdVar Machine = S.makeTemp(4);
+    S.emitIntrinsic(Intrinsic::ArmMrs, Machine, {NdVar::cst(ArmMrsApsr, 4)});
+    emitMrsApsr(S, operandWrite(ARM.operands[0]), Machine);
     break;
   }
+  // An MSR writes the fields of its mask: N, Z, C and V (f) and GE (s) to
+  // the lifted flags, and Q (f), the control field (c) and the extension
+  // field (x) to the machine, which also keeps every field of an SPSR.
+  // `msr cpsr_c, #0xd3` enters Supervisor mode with IRQs and FIQs masked and
+  // leaves the flags alone.
   case ARM_INS_MSR: {
-    if (ARM.op_count >= 2)
-      emitMsrNzcv(S, operandRead(S, ARM.operands[1]));
+    if (ARM.op_count != 2)
+      return false;
+    const std::optional<uint64_t> Field = msrField(ARM.operands[0]);
+    if (!Field || (ARM.operands[1].type != ARM_OP_IMM &&
+                   !isTransferRegister(ARM.operands[1])))
+      return false;
+    const NdVar Value = operandRead(S, ARM.operands[1]);
+    if (*Field & ArmMsrSpsr) {
+      S.emitVoidIntrinsic(Intrinsic::ArmMsr, {NdVar::cst(*Field, 4), Value});
+      break;
+    }
+    if (*Field & 8)
+      emitMsrNzcv(S, Value);
+    if (*Field & 4)
+      emitMsrGe(S, Value);
+    if (const uint64_t Machine = *Field & 0xB)
+      S.emitVoidIntrinsic(Intrinsic::ArmMsr, {NdVar::cst(Machine, 4), Value});
     break;
   }
+  // A CPS changes the interrupt masks or the mode, which the machine keeps.
   case ARM_INS_CPS:
+    if (const std::optional<uint64_t> Field = cpsField(ARM)) {
+      S.emitVoidIntrinsic(Intrinsic::ArmCps, {NdVar::cst(*Field, 4)});
+      break;
+    }
+    return false;
   case ARM_INS_SETEND:
   case ARM_INS_SETPAN:
   case ARM_INS_DBG:
@@ -187,14 +258,58 @@ bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
     // typed state-transition contract.
     return false;
 
-  // Coprocessor (traditional CP14/CP15 access — system side effects)
-  case ARM_INS_MCR:
-  case ARM_INS_MCR2:
-  case ARM_INS_MCRR:
-  case ARM_INS_MCRR2:
+  // A coprocessor register transfer keeps its coprocessor, opc1, CRn, CRm
+  // and opc2 as its field (armCoprocessorField): `mrc p15, #0, r0, c13, c0,
+  // #3` reads TPIDRURO into r0, and `mcr p15, #0, r1, c7, c10, #5` runs the
+  // CP15 barrier with r1.
   case ARM_INS_MRC:
-  case ARM_INS_MRC2:
+  case ARM_INS_MCR: {
+    const std::optional<uint64_t> Field =
+        coprocessorTransferField(ARM, /*TwoRegisters=*/false);
+    if (!Field || !isTransferRegister(ARM.operands[2]))
+      return false;
+    if (Insn->id == ARM_INS_MRC)
+      S.emitIntrinsic(Intrinsic::ArmMrc, operandWrite(ARM.operands[2]),
+                      {NdVar::cst(*Field, 4)});
+    else
+      S.emitVoidIntrinsic(Intrinsic::ArmMcr, {NdVar::cst(*Field, 4),
+                                              operandRead(S, ARM.operands[2])});
+    break;
+  }
+  // An MRRC or MCRR moves a 64-bit value, Rt its low half and Rt2 its high
+  // (`mrrc p15, #1, r0, r1, c14` reads CNTVCT).
   case ARM_INS_MRRC:
+  case ARM_INS_MCRR: {
+    const std::optional<uint64_t> Field =
+        coprocessorTransferField(ARM, /*TwoRegisters=*/true);
+    if (!Field || !isTransferRegister(ARM.operands[2]) ||
+        !isTransferRegister(ARM.operands[3]))
+      return false;
+    NdVar Value = S.makeTemp(8);
+    if (Insn->id == ARM_INS_MCRR) {
+      S.emit(
+          NdOp::CONCAT, Value,
+          {operandRead(S, ARM.operands[3]), operandRead(S, ARM.operands[2])});
+      S.emitVoidIntrinsic(Intrinsic::ArmMcrr, {NdVar::cst(*Field, 4), Value});
+      break;
+    }
+    // An MRRC that writes one register twice is UNPREDICTABLE.
+    if (ARM.operands[2].reg == ARM.operands[3].reg)
+      return false;
+    S.emitIntrinsic(Intrinsic::ArmMrrc, Value, {NdVar::cst(*Field, 4)});
+    S.emit(NdOp::SUBBYTES, operandWrite(ARM.operands[2]),
+           {Value, NdVar::cst(0, 4)});
+    S.emit(NdOp::SUBBYTES, operandWrite(ARM.operands[3]),
+           {Value, NdVar::cst(4, 4)});
+    break;
+  }
+  // The unconditional transfers (MRC2 and its kin), which Armv8 removed and
+  // ACLE only spells before it, CDP and the coprocessor loads and stores
+  // have no typed contract; a placeholder would lose their data flow and
+  // the state they change.
+  case ARM_INS_MCR2:
+  case ARM_INS_MCRR2:
+  case ARM_INS_MRC2:
   case ARM_INS_MRRC2:
   case ARM_INS_CDP:
   case ARM_INS_CDP2:
@@ -206,9 +321,6 @@ bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
   case ARM_INS_STC2:
   case ARM_INS_STC2L:
   case ARM_INS_STCL:
-    // Coprocessor forms differ in register direction, width, addressing, and
-    // device side effects.  Treating all of them as MSR loses both data flow
-    // and architectural state.
     return false;
   // CDE (Custom Datapath Extension).  These encodings carry
   // implementation-defined coprocessor operands.  Operand-free placeholders

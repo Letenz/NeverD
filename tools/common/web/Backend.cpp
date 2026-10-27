@@ -11,6 +11,8 @@
 
 #include "Backend.h"
 
+#include "ResourceLimits.h"
+
 #include <algorithm>
 #include <charconv>
 #include <cstring>
@@ -186,7 +188,9 @@ Json result(const char *text) {
   if (value.value("status", "") != "ok") {
     auto code = std::string("invalid_backend_response");
     if (value.contains("error") && value["error"].is_object())
-      code = stringField(value["error"], "code", code, 128);
+      code = stringField(value["error"], "code", code,
+                         ::neverd::limits::web_tool::
+                             kBackendResultCodeErrorCodeStringFieldMax);
     throw Error(code, "Web operation failed");
   }
   return value;
@@ -372,7 +376,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     return result(
         call(session_, revision.data(), revision.size(), id.data(), id.size(),
              sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-             sizeField(p, "limit", 128, 128)));
+             sizeField(p, "limit",
+                       ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                       ::neverd::limits::web_tool::kMaxSmallSessionPageRows)));
   }
   if (operation == "web_passive_report_create") {
     fields(p, {"revision", "interface_analysis_id", "har_capture_id",
@@ -443,7 +449,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     return result(
         call(session_, revision.data(), revision.size(), id.data(), id.size(),
              sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-             sizeField(p, "limit", 128, 128)));
+             sizeField(p, "limit",
+                       ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                       ::neverd::limits::web_tool::kMaxSmallSessionPageRows)));
   }
   if (operation == "web_interfaces_compare") {
     fields(p, {"revision", "analysis_id", "capture_id"});
@@ -489,10 +497,13 @@ Json Backend::execute(const std::string &operation, const Json &p) {
       const auto selected = p.find(key);
       if (selected == p.end())
         continue;
-      const auto maximum = std::string_view(key) == "integrity_ids" ||
-                                   std::string_view(key) == "advisory_ids"
-                               ? 16U
-                               : 4U;
+      const auto maximum =
+          std::string_view(key) == "integrity_ids" ||
+                  std::string_view(key) == "advisory_ids"
+              ? ::neverd::limits::web_tool::
+                    kBackendExecuteWebPackageAssessmentCreateMaximumSelected
+              : ::neverd::limits::web_tool::
+                    kBackendExecuteWebPackageAssessmentCreateMaximumDefault;
       if (!selected->is_array() || selected->size() > maximum)
         throw Error("invalid_request", "Invalid assessment selection");
       for (const auto &item : *selected)
@@ -563,7 +574,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         call(session_, revision.data(), revision.size(), id.data(), id.size(),
              head.data(), head.size(),
              sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-             sizeField(p, "limit", 128, 512)));
+             sizeField(p, "limit",
+                       ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                       ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_package_attestation_import") {
     fields(p,
@@ -595,7 +608,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         session_, revision.data(), revision.size(), id.data(), id.size(),
         kind.data(), kind.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_package_attestation_digest_match") {
     fields(p,
@@ -650,7 +665,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         session_, revision.data(), revision.size(), id.data(), id.size(),
         kind.data(), kind.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_package_advisories_match") {
     fields(p, {"revision", "package_analysis_id", "advisory_ids"});
@@ -661,7 +678,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     const auto id = required(p, "package_analysis_id", 64);
     Json options{{"schema_version", 1}};
     if (const auto selected = p.find("advisory_ids"); selected != p.end()) {
-      if (!selected->is_array() || selected->size() > 16)
+      if (!selected->is_array() ||
+          selected->size() >
+              ::neverd::limits::web_tool::kMaxWebAssessmentSelections)
         throw Error("invalid_request", "Invalid advisory selection");
       for (const auto &advisory : *selected)
         if (!advisory.is_string() ||
@@ -686,7 +705,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     return result(api().neverd_web_package_advisories_match_records_json(
         session_, revision.data(), revision.size(), id.data(), id.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_package_integrity_verify") {
     fields(p, {"revision", "artifact_id", "declaration_id", "package_id"});
@@ -715,7 +736,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         session_, revision.data(), revision.size(), archive.data(),
         archive.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_packages_analyze") {
     fields(p, {"revision", "artifact_id", "input_kind"});
@@ -741,7 +764,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         session_, revision.data(), revision.size(), id.data(), id.size(),
         kind.data(), kind.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_packages_compare") {
     fields(p, {"revision", "before_id", "after_id"});
@@ -765,7 +790,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     return result(api().neverd_web_package_diff_records_json(
         session_, revision.data(), revision.size(), id.data(), id.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_desktop_manifest_analyze") {
     fields(p, {"revision", "artifact_id", "input_kind"});
@@ -807,7 +834,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     return result(api().neverd_web_electron_source_records_json(
         session_, revision.data(), revision.size(), id.data(), id.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_electron_ipc_analyze" ||
       operation == "web_electron_entries_analyze" ||
@@ -828,12 +857,15 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     const auto id = required(p, idField, 64);
     const auto selected = p.find("source_ids");
     if (selected == p.end() || !selected->is_array() || selected->empty() ||
-        selected->size() > 16)
+        selected->size() >
+            ::neverd::limits::web_tool::kMaxWebAssessmentSelections)
       throw Error("invalid_request", "Invalid source selection");
     for (const auto &source : *selected)
       if (!source.is_string() ||
           source.get_ref<const std::string &>().empty() ||
-          source.get_ref<const std::string &>().size() > 64)
+          source.get_ref<const std::string &>().size() >
+              ::neverd::limits::web_tool::
+                  kBackendExecuteWebPackageBehaviorAnalyzeWebElectronEntriesAnalyzeWebElectronIpcAnalyzeSourceGetRefConstStdStringSizeLimit)
         throw Error("invalid_request", "Invalid source selection");
     const auto options =
         Json{{"schema_version", 1}, {"source_ids", *selected}}.dump();
@@ -911,7 +943,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         records(session_, revision.data(), revision.size(), id.data(),
                 id.size(), kind.data(), kind.size(),
                 sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-                sizeField(p, "limit", 128, 512)));
+                sizeField(p, "limit",
+                          ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                          ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_html_analyze") {
     fields(p, {"revision", "artifact_id"});
@@ -935,7 +969,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         session_, revision.data(), revision.size(), id.data(), id.size(),
         kind.data(), kind.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_asar_extract") {
     fields(p, {"revision", "artifact_id", "unpacked_directory_id"});
@@ -943,7 +979,10 @@ Json Backend::execute(const std::string &operation, const Json &p) {
       throw Error("capability_unavailable", "ASAR extraction is unavailable");
     const auto revision = required(p, "revision", 20);
     const auto id = required(p, "artifact_id", 64);
-    const auto unpacked = stringField(p, "unpacked_directory_id", {}, 64);
+    const auto unpacked = stringField(
+        p, "unpacked_directory_id", {},
+        ::neverd::limits::web_tool::
+            kBackendExecuteWebAsarExtractUnpackedDirectoryIdStringFieldMax);
     auto value = result(api().neverd_web_asar_extract_json(
         session_, revision.data(), revision.size(), id.data(), id.size(),
         unpacked.data(), unpacked.size()));
@@ -959,7 +998,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     return result(api().neverd_web_asar_records_json(
         session_, revision.data(), revision.size(), id.data(), id.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_sea_extract") {
     fields(p, {"revision", "artifact_id", "profile"});
@@ -983,7 +1024,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     return result(api().neverd_web_sea_records_json(
         session_, revision.data(), revision.size(), id.data(), id.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 128)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSmallSessionPageRows)));
   }
   if (operation == "web_nexe_extract") {
     fields(p, {"revision", "artifact_id", "profile"});
@@ -1009,7 +1052,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         session_, revision.data(), revision.size(), id.data(), id.size(),
         kind.data(), kind.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_pkg_extract") {
     fields(p, {"revision", "artifact_id", "profile"});
@@ -1035,7 +1080,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         session_, revision.data(), revision.size(), id.data(), id.size(),
         kind.data(), kind.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_datapack_extract") {
     fields(p, {"revision", "artifact_id", "profile"});
@@ -1061,7 +1108,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     return result(api().neverd_web_datapack_records_json(
         session_, revision.data(), revision.size(), id.data(), id.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_datapack_decode") {
     fields(p, {"revision", "resource_id", "codec"});
@@ -1096,7 +1145,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     return result(api().neverd_web_tauri_records_json(
         session_, revision.data(), revision.size(), id.data(), id.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 128)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSmallSessionPageRows)));
   }
   if (operation == "web_wails_extract") {
     fields(p, {"revision", "artifact_id", "profile"});
@@ -1122,7 +1173,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         session_, revision.data(), revision.size(), id.data(), id.size(),
         kind.data(), kind.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 128)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSmallSessionPageRows)));
   }
   if (operation == "web_bun_extract") {
     fields(p, {"revision", "artifact_id"});
@@ -1146,7 +1199,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         session_, revision.data(), revision.size(), id.data(), id.size(),
         kind.data(), kind.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_source_analyze" ||
       operation == "web_source_analyze_large" ||
@@ -1197,7 +1252,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     return result(api().neverd_web_node_behavior_records_json(
         session_, revision.data(), revision.size(), id.data(), id.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_source_rewrite_analyze") {
     fields(p, {"revision", "source_id", "pass"});
@@ -1222,7 +1279,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         session_, revision.data(), revision.size(), rewrite.data(),
         rewrite.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_source_semantics_analyze") {
     fields(p, {"revision", "source_id"});
@@ -1246,7 +1305,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         session_, revision.data(), revision.size(), source.data(),
         source.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-        sizeField(p, "limit", 128, 512)));
+        sizeField(p, "limit",
+                  ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                  ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_source_bindings_analyze" ||
       operation == "web_source_modules_analyze" ||
@@ -1290,7 +1351,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         records(session_, revision.data(), revision.size(), source.data(),
                 source.size(), kind.data(), kind.size(),
                 sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
-                sizeField(p, "limit", 128, 512)));
+                sizeField(p, "limit",
+                          ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                          ::neverd::limits::web_tool::kMaxSessionPageRows)));
   }
   if (operation == "web_source_anchor") {
     fields(p,
@@ -1299,7 +1362,10 @@ Json Backend::execute(const std::string &operation, const Json &p) {
       throw Error("capability_unavailable", "Source anchors are unavailable");
     const auto revision = required(p, "revision", 20);
     const auto source = required(p, "source_id", 64);
-    const auto view = stringField(p, "view_id", {}, 64);
+    const auto view =
+        stringField(p, "view_id", {},
+                    ::neverd::limits::web_tool::
+                        kBackendExecuteWebSourceAnchorViewViewIdStringFieldMax);
     return result(api().neverd_web_source_anchor_json(
         session_, revision.data(), revision.size(), source.data(),
         source.size(), decimal(p, "byte_offset"), decimal(p, "byte_length"),
@@ -1349,8 +1415,17 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     const auto offset =
         chunk ? decimal(p, "byte_offset")
               : sizeField(p, "offset", 0, std::numeric_limits<size_t>::max());
-    const auto limit = chunk ? sizeField(p, "byte_limit", 65536, 65536)
-                             : sizeField(p, "limit", 128, 512);
+    const auto limit =
+        chunk
+            ? sizeField(
+                  p, "byte_limit",
+                  ::neverd::limits::web_tool::
+                      kBackendExecuteWebSourceViewChunkWebSourceViewRecordsLimitByteLimitSizeFieldDefault,
+                  ::neverd::limits::web_tool::
+                      kBackendExecuteWebSourceViewChunkWebSourceViewRecordsLimitByteLimitSizeFieldMax)
+            : sizeField(p, "limit",
+                        ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                        ::neverd::limits::web_tool::kMaxSessionPageRows);
     return result(query(session_, revision.data(), revision.size(), view.data(),
                         view.size(), offset, limit));
   }
@@ -1378,7 +1453,9 @@ Json Backend::execute(const std::string &operation, const Json &p) {
   const auto revision = required(p, "revision", 20);
   const auto offset =
       sizeField(p, "offset", 0, std::numeric_limits<size_t>::max());
-  const auto limit = sizeField(p, "limit", 128, 512);
+  const auto limit =
+      sizeField(p, "limit", ::neverd::limits::web_tool::kDefaultSessionPageRows,
+                ::neverd::limits::web_tool::kMaxSessionPageRows);
   if (artifacts)
     return result(api().neverd_web_artifacts_json(
         session_, revision.data(), revision.size(), offset, limit));

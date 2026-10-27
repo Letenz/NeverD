@@ -1,5 +1,6 @@
 #ifndef NEVERD_IR_HIGH_FRAMEADDRESS_H
 #define NEVERD_IR_HIGH_FRAMEADDRESS_H
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 
@@ -17,7 +18,8 @@ frameAddressOffset(const ExprPtr &E, const HighFunc &Func, Arch Architecture,
   const auto &TRI = getTargetRegInfo(Architecture);
   if (!E || !E->Type || E->Type->Size != TRI.PointerSize ||
       E->MemoryOrdering != NdMemoryOrdering::None ||
-      E->MemoryAddressSpace != NdMemoryAddressSpace::Default || Depth > 32 ||
+      E->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      Depth > ::neverd::limits::ir::kHighFrameAddressOffsetDepthLimit ||
       !Budget)
     return std::nullopt;
   --Budget;

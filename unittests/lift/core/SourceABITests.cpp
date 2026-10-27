@@ -8,12 +8,13 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
 #include "neverd/ir/med/MedTypePass.h"
-#include "neverd/lift/AArch64Regs.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -37,6 +38,199 @@ namespace {
 using namespace neverd;
 
 void executeC(const std::string &Source, bool Math);
+
+TEST(SourceABI, SourceCallsReplaceGenericRegisterArgumentSummaries) {
+  for (const auto Architecture : {Arch::X64, Arch::AArch64}) {
+    for (const bool SwiftContext : {false, true}) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(SwiftContext);
+      SourceFunctionTypeHint Hint;
+      Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      Hint.ReturnType = NdType::makeInt(8);
+      Hint.Parameters = {
+          {"first", SwiftContext ? NdType::makeInt(8) : NdType::makeFloat(8)},
+          {"second", SwiftContext ? NdType::makePtr(NdType::makeVoid())
+                                  : NdType::makeInt(4)}};
+      std::string Error;
+      if (SwiftContext) {
+        Hint.Parameters[1].TheRole =
+            SourceParameterTypeHint::Role::SwiftContext;
+        ASSERT_TRUE(assignDarwinSwiftSourceABI(Hint, Architecture, Error))
+            << Error;
+      } else {
+        ASSERT_TRUE(assignDarwinFixedSourceABI(Hint, Architecture, Error))
+            << Error;
+      }
+      const auto &TRI = getTargetRegInfo(Architecture);
+      LowFunc Low;
+      Low.Entry = 0x1000;
+      LowBlock Block;
+      Block.Id = 0;
+      Block.StartAddr = Low.Entry;
+      Block.EndAddr = Low.Entry + 8;
+      LowOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Addr = Low.Entry;
+      Call.Output = NdVar::reg(TRI.IntReturnReg, 8);
+      Call.addInput(NdVar::cst(0x2000, 8));
+      LowOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = Low.Entry + 4;
+      Return.addInput(Call.Output);
+      Block.Ops = {Call, Return};
+      Low.Blocks = {Block};
+      GPRReadWidths Reads{};
+      // A generic SysV summary orders integer arguments before vector ones
+      // and does not describe Swift's dedicated context register. The source
+      // ABI must publish its own order and lanes exactly once before SSA.
+      Reads[x86reg::RDI / 8] = SwiftContext ? 8 : 4;
+      if (!SwiftContext)
+        Reads[kX64VectorFamilyBase] = 8;
+      const std::map<va_t, GPRReadWidths> Summaries{{0x2000, Reads}};
+      const std::map<va_t, SourceFunctionTypeHint> Hints{{0x2000, Hint}};
+      LowToMedConverter Converter;
+      Converter.setSourceCallHintsEnabled(true);
+      Converter.setSourceCalleeTypeHints(&Hints);
+      Converter.setCallEntryReadGPRs(&Summaries);
+      // Standalone source clients use the same explicit contract outside
+      // Mach-O. Native-image runtime discovery retains its separate gate.
+      for (const auto Format : {BinaryFormat::MachO, BinaryFormat::ELF}) {
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        auto Med = Converter.convert(Low, Architecture, Format);
+        const std::map<va_t, std::string> Names{{0x2000, "typed_helper"}};
+        recoverCallAbi(Med, Architecture, Names);
+        ASSERT_EQ(Med.CallInfos.size(), 1U);
+        const auto &Info = Med.CallInfos.front();
+        ASSERT_TRUE(Info.SourceCallHint);
+        EXPECT_TRUE(equalSourceABIs(Info.SourceCallHint->Signature, Hint));
+        ASSERT_EQ(Info.Args.size(), 2U);
+        for (size_t I = 0; I < Info.Args.size(); ++I) {
+          EXPECT_EQ(Info.Args[I].RegOff,
+                    Hint.Parameters[I].Location.RegisterOffset);
+          EXPECT_EQ(Info.Args[I].Size, Hint.Parameters[I].Location.ValueBytes);
+        }
+        for (const auto &B : Med.Blocks)
+          for (const auto &Op : B.Ops)
+            if (Op.SourceCallHint) {
+              EXPECT_EQ(Op.CalleeRegisterArgs, -1);
+              EXPECT_EQ(Op.CalleeVectorArgs, -1);
+              EXPECT_EQ(Op.CalleeVectorArgWidths, 0U);
+            }
+      }
+    }
+  }
+}
+
+TEST(SourceABI, UnboundSourceCallsRetainGenericArguments) {
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    SourceFunctionTypeHint Hint;
+    Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Hint.ReturnType = NdType::makeInt(8);
+    Hint.Parameters = {{"value", NdType::makeInt(8)}};
+    std::string Error;
+    ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Arch::X64, Error)) << Error;
+    if (Mutation == 1)
+      Hint.Architecture = Arch::AArch64;
+    if (Mutation == 2)
+      Hint.Parameters[0].Location.ValueBytes = 3;
+    LowFunc Low;
+    Low.Entry = 0x1000;
+    LowBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Low.Entry;
+    Block.EndAddr = Low.Entry + 8;
+    LowOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Addr = Low.Entry;
+    Call.Output = NdVar::reg(x86reg::RAX, 8);
+    Call.addInput(NdVar::cst(0x2000, 8));
+    if (Mutation == 4) {
+      Call.addInput(NdVar::reg(x86reg::RDI, 4));
+      Call.addInput(NdVar::reg(x86reg::RSI, 8));
+    }
+    LowOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = Low.Entry + 4;
+    Return.addInput(Call.Output);
+    Block.Ops = {Call, Return};
+    Low.Blocks = {Block};
+    GPRReadWidths Reads{};
+    Reads[x86reg::RDI / 8] = 4;
+    Reads[x86reg::RSI / 8] = 8;
+    const std::map<va_t, GPRReadWidths> Summaries{{0x2000, Reads}};
+    const std::map<va_t, SourceFunctionTypeHint> Hints{
+        {Mutation == 3 ? 0x3000 : 0x2000, Hint}};
+    LowToMedConverter Converter;
+    Converter.setSourceCallHintsEnabled(Mutation != 0);
+    Converter.setSourceCalleeTypeHints(&Hints);
+    Converter.setCallEntryReadGPRs(&Summaries);
+    const std::map<va_t, FormattedCall> Formatted{
+        {Call.Addr, {{{x86reg::RDI, 4}, {x86reg::RSI, 8}}}}};
+    if (Mutation == 5)
+      Converter.setFormattedCalls(&Formatted);
+    auto Med = Converter.convert(Low, Arch::X64, BinaryFormat::MachO);
+    const auto &Ops = Med.Blocks.front().Ops;
+    const auto It = std::find_if(Ops.begin(), Ops.end(), [](const MedOp &Op) {
+      return Op.Opcode == NdOp::CALL;
+    });
+    ASSERT_NE(It, Ops.end());
+    EXPECT_FALSE(It->SourceCallHint);
+    EXPECT_EQ(It->ExactArguments, Mutation == 5);
+    ASSERT_EQ(It->NumInputs, 3U);
+    EXPECT_EQ(It->Inputs[1].RegOff, x86reg::RDI);
+    EXPECT_EQ(It->Inputs[1].Size, 4U);
+    EXPECT_EQ(It->Inputs[2].RegOff, x86reg::RSI);
+    EXPECT_EQ(It->Inputs[2].Size, 8U);
+  }
+}
+
+TEST(SourceABI, PrototypeArgumentCountsDoNotReplaceExplicitOperands) {
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Hint.ReturnType = NdType::makeInt(8);
+  Hint.Parameters = {{"first", NdType::makeInt(4)},
+                     {"second", NdType::makeInt(8)}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Arch::AArch64, Error)) << Error;
+  LowFunc Low;
+  Low.Entry = 0x1000;
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Low.Entry;
+  Block.EndAddr = Low.Entry + 8;
+  LowOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = Low.Entry;
+  Call.Output = NdVar::reg(a64reg::X0, 8);
+  Call.addInput(NdVar::cst(0x2000, 8));
+  Call.addInput(NdVar::cst(11, 4));
+  Call.addInput(NdVar::cst(22, 8));
+  LowOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = Low.Entry + 4;
+  Return.addInput(Call.Output);
+  Block.Ops = {Call, Return};
+  Low.Blocks = {Block};
+  const std::map<va_t, int> Counts{{0x2000, 2}};
+  const std::map<va_t, SourceFunctionTypeHint> Hints{{0x2000, Hint}};
+  LowToMedConverter Converter;
+  Converter.setSourceCallHintsEnabled(true);
+  Converter.setSourceCalleeTypeHints(&Hints);
+  Converter.setCallEntryArgumentCounts(&Counts);
+  auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::COFF);
+  const auto &Ops = Med.Blocks.front().Ops;
+  const auto It = std::find_if(Ops.begin(), Ops.end(), [](const MedOp &Op) {
+    return Op.Opcode == NdOp::CALL;
+  });
+  ASSERT_NE(It, Ops.end());
+  EXPECT_FALSE(It->SourceCallHint);
+  ASSERT_EQ(It->NumInputs, 3U);
+  ASSERT_TRUE(It->Inputs[1].isConst());
+  EXPECT_EQ(It->Inputs[1].ConstVal, 11U);
+  ASSERT_TRUE(It->Inputs[2].isConst());
+  EXPECT_EQ(It->Inputs[2].ConstVal, 22U);
+}
 
 TEST(SourceABI, NativeAArch64FullQRegisterRequiresVectorCarrier) {
   SourceFunctionTypeHint Hint;
@@ -2013,6 +2207,16 @@ TEST(SourceABI, CallbackTypesKeepTheirSignaturesAndRejectMalformedGraphs) {
                                               NdType::makeInt(4), {Pointer}))));
   EXPECT_FALSE(equalSourceTypes(
       Callback, NdType::makePtr(NdType::makeFunc(NdType::makeVoid()))));
+  // A different callback convention cannot enter an ordinary-C projection,
+  // even if its integer and pointer carriers happen to be identical.
+  for (auto Convention :
+       {types::CallingConvention::Stdcall, types::CallingConvention::Vectorcall,
+        types::CallingConvention::Win64}) {
+    auto Specialized = NdType::makePtr(
+        NdType::makeFunc(NdType::makeVoid(), {Pointer}, Convention));
+    EXPECT_FALSE(equalSourceTypes(Specialized, Callback));
+    EXPECT_FALSE(equalSourceTypes(Specialized, Specialized));
+  }
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     SourceFunctionTypeHint Hint;
     Hint.ReturnType = Callback;
@@ -2353,6 +2557,101 @@ TEST(SourceABI, SourceStackExpressionsPreserveExactEntryOffsets) {
       EXPECT_EQ(Func.Params[Index].RegOff, kNoParamReg);
     }
   }
+}
+
+TEST(SourceABI, StoredParametersCannotAliasCallResultIdentities) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (auto Opcode : {NdOp::CALL, NdOp::INDIR_CALL, NdOp::INTRINSIC}) {
+      if (Opcode == NdOp::INTRINSIC && Architecture != Arch::X64)
+        continue;
+      SCOPED_TRACE(testing::Message() << static_cast<int>(Architecture) << ":"
+                                      << static_cast<int>(Opcode));
+      auto Hint = declaration(NdType::makeVoid());
+      for (unsigned I = 0; I != 9; ++I)
+        Hint.Parameters.push_back(
+            {"value" + std::to_string(I), NdType::makeFloat(8)});
+      std::string Error;
+      ASSERT_TRUE(assignDarwinObjCSourceABI(Hint, Architecture, Error))
+          << Error;
+      MedFunc Func;
+      Func.Entry = 0x1000;
+      Func.Name = "stored_parameter";
+      Func.SourceTypeHint = Hint;
+      Func.SourceParametersBound = true;
+      Func.ReturnType = Hint.ReturnType;
+      for (size_t I = 0; I < Hint.Parameters.size(); ++I) {
+        const auto &Binding = Hint.Parameters[I];
+        MedVar Parameter;
+        Parameter.Kind = MedVar::Param;
+        Parameter.TheArch = Architecture;
+        Parameter.Id = static_cast<int>(I);
+        Parameter.Size = Binding.Type->Size;
+        Parameter.RegOff = Binding.Location.Kind == SourceABICarrierKind::Stack
+                               ? kNoParamReg
+                               : Binding.Location.RegisterOffset;
+        Func.Params.push_back(Parameter);
+        Func.TypedParams.push_back({Binding.Name, Binding.Type});
+      }
+      MedOp Store;
+      Store.Opcode = NdOp::STORE;
+      Store.Addr = Func.Entry;
+      Store.addInput(Func.Params[0]);
+      Store.addInput(Func.Params.back());
+      MedOp Call;
+      Call.Opcode = Opcode;
+      Call.Addr = Func.Entry + 4;
+      Call.Output = Func.Params.back();
+      Call.Output.Kind = MedVar::Temp;
+      Call.Output.RegOff = 0;
+      Call.Output.Size = 4;
+      Call.addInput(Opcode == NdOp::INTRINSIC
+                        ? MedVar::makeConst(
+                              static_cast<uint64_t>(Intrinsic::X86ReadMXCSR), 4)
+                    : Opcode == NdOp::INDIR_CALL
+                        ? Func.Params[1]
+                        : MedVar::makeConst(0x2000, 8));
+      MedOp StoreResult = Store;
+      StoreResult.Addr = Func.Entry + 8;
+      StoreResult.Inputs[0] = Func.Params[1];
+      StoreResult.Inputs[1] = Call.Output;
+      MedOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = Func.Entry + 12;
+      MedBlock Block;
+      Block.Id = 0;
+      Block.StartAddr = Func.Entry;
+      Block.Ops = {Store, Call, StoreResult, Return};
+      Func.Blocks.push_back(std::move(Block));
+      const auto High = MedToHighConverter().convert(Func, Architecture);
+      unsigned ParameterStores = 0, ResultStores = 0;
+      walkStmts(High.Body, [&](const HighStmt &Statement) {
+        if (Statement.Kind != StmtKind::Store)
+          return;
+        if (Statement.Addr == Store.Addr) {
+          ++ParameterStores;
+          const auto &Bits = Statement.StoreVal;
+          ASSERT_TRUE(Bits);
+          ASSERT_EQ(Bits->Kind, ExprKind::BitCast);
+          ASSERT_EQ(Bits->Operands.size(), 1U);
+          const auto &Parameter = Bits->Operands[0];
+          ASSERT_EQ(Parameter->Kind, ExprKind::Var);
+          EXPECT_EQ(Parameter->Var.Kind, MedVar::Param);
+          EXPECT_EQ(Parameter->Var.Id, int(Hint.Parameters.size() - 1));
+          EXPECT_EQ(Parameter->Var.StackOff,
+                    Hint.Parameters.back().Location.EntryStackOffset);
+          EXPECT_TRUE(equalSourceTypes(Parameter->Type, NdType::makeFloat(8)));
+        } else if (Statement.Addr == StoreResult.Addr) {
+          ++ResultStores;
+          ASSERT_TRUE(Statement.StoreVal);
+          EXPECT_EQ(Statement.StoreVal->Kind, ExprKind::Var);
+          EXPECT_EQ(Statement.StoreVal->Var.Kind, MedVar::Temp);
+          EXPECT_EQ(Statement.StoreVal->Var.Id, Call.Output.Id);
+          EXPECT_EQ(Statement.StoreVal->Var.Size, Call.Output.Size);
+        }
+      });
+      EXPECT_EQ(ParameterStores, 1U);
+      EXPECT_EQ(ResultStores, 1U);
+    }
 }
 
 TEST(SourceABI, BitCastRejectsMismatchedWidthsAndDistinguishesTargetTypes) {

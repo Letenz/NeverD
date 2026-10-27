@@ -29,7 +29,7 @@ llvm::Error pnpError(const llvm::Twine &Message) {
 llvm::Expected<uint64_t>
 KernelModel::deviceStartEpoch(uint64_t PDO, bool AllowStarting) const {
   const auto *Provider = pnpDeviceForPDO(PDO);
-  if (!Provider || !isProviderDevice(PDO))
+  if (!Provider || !isPnpProviderDevice(PDO))
     return pnpError("wait/wake requires a live provider");
   auto State = Lifecycle.snapshot(PDO);
   if (!State)
@@ -66,7 +66,7 @@ KernelModel::validatePnpTopologyTransition(uint64_t PDO,
   if (!Provider)
     return pnpError("topology transition lost its provider");
   if (Minor == DevicePnpRequest::Start && Provider->ParentPDO) {
-    if (!isProviderDevice(Provider->ParentPDO))
+    if (!isPnpProviderDevice(Provider->ParentPDO))
       return pnpError("child START requires a live parent provider");
     auto Parent = Lifecycle.snapshot(Provider->ParentPDO);
     if (!Parent)
@@ -81,7 +81,7 @@ KernelModel::validatePnpTopologyTransition(uint64_t PDO,
       Minor != DevicePnpRequest::SurpriseRemoval)
     return llvm::Error::success();
   for (const auto &[ID, Child] : PnpDevices) {
-    if (Child.ParentPDO != PDO || !isProviderDevice(Child.PDO))
+    if (Child.ParentPDO != PDO || !isPnpProviderDevice(Child.PDO))
       continue;
     if (Minor == DevicePnpRequest::Remove)
       return pnpError("parent REMOVE requires all child providers to retire");
@@ -136,7 +136,7 @@ KernelModel::beginPnpRequest(const DriverRequest &Input, size_t Index) {
     if (State->Pnp == DevicePnpState::Started)
       return pnpError(
           "normal removal of a started device requires query-remove");
-    for (const auto &[ID, File] : Files) {
+    for (const auto &[ID, File] : FileObjects) {
       (void)ID;
       if (File.PnpDevice == PDO)
         return pnpError("remove requires all device files to close");

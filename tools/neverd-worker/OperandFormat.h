@@ -86,14 +86,33 @@ enum class NumberBase : std::uint8_t {
 std::optional<NumberBase> parseNumberBase(std::string_view spelling);
 std::string_view numberBaseName(NumberBase base);
 /// How the user shows an operand's number: its base, with its sign changed
-/// (`-1` for 0FFFFFFFFh) or its bits inverted (`~0Fh` for 0FFFFFFF0h).
+/// (`-1` for 0FFFFFFFFh) or its bits inverted (`~0Fh` for 0FFFFFFF0h), or
+/// as a structure offset into a local type.
 struct NumberFormat {
   NumberBase base = NumberBase::Number;
   bool negate = false, invert = false;
+  /// A structure offset's type, and how many bytes into it the register
+  /// points: the number lands that much further in.
+  std::string type;
+  std::int64_t delta = 0;
   bool isDefault() const {
     return base == NumberBase::Number && !negate && !invert;
   }
 };
+
+/// Where a structure offset lands in its type: the member's path
+/// (`Tail.Overlay.CurrentStackLocation`, empty for the type itself) and
+/// where the member begins in the type.
+struct StructLanding {
+  std::string path;
+  std::int64_t offset = 0;
+};
+
+/// Lands \p offset, where an access of \p bytes bytes (none for an address)
+/// begins, among the members of the local type \p type; none when no member
+/// of it holds that byte.
+using StructNamer = std::function<std::optional<StructLanding>(
+    std::string_view type, std::int64_t offset, unsigned bytes)>;
 
 struct OperandFacts {
   OperandDialect dialect = OperandDialect::Generic;
@@ -118,6 +137,14 @@ struct OperandFacts {
   std::optional<std::int64_t> stackDepth;
   /// The user's formats of the operands' numbers, by operand index.
   const std::vector<NumberFormat> *numberFormats = nullptr;
+  /// Decoder-provided logical widths in the displayed operand order. Enum
+  /// rendering requires these rather than borrowing another operand's width.
+  const std::vector<unsigned> *operandBits = nullptr;
+  /// Names structure offsets, when the engine has local types.
+  const StructNamer *structs = nullptr;
+  using EnumNamer = std::function<std::optional<std::string>(
+      std::string_view, std::uint64_t, unsigned, bool)>;
+  const EnumNamer *enums = nullptr;
 };
 
 /// A memory operand relative to a frame register.
@@ -137,6 +164,7 @@ std::string_view x86SizeKeyword(unsigned bytes);
 /// An instruction's mnemonic and operand text as classic listings spell it.
 struct ClassicInstruction {
   std::string mnemonic, operands;
+  std::vector<std::size_t> operandIndices;
 };
 
 /// Respell engine disassembler text for \p dialect: classic mnemonics, hidden
@@ -161,6 +189,15 @@ bool showsNumberFormats(OperandDialect dialect);
 /// format changes: the plain numbers, by operand index.
 std::vector<bool> formattableOperands(std::string_view operands,
                                       OperandDialect dialect);
+/// Which operands a structure offset changes: the plain numbers and the
+/// memory operands that add a displacement to a base register, by index.
+std::vector<bool> structOperands(std::string_view operands,
+                                 OperandDialect dialect);
+/// The number operand \p index of \p operands is, as written, a negative
+/// one with its sign; none when it is no plain number of \p dialect.
+std::optional<std::int64_t> operandNumber(std::string_view operands,
+                                          std::size_t index,
+                                          OperandDialect dialect);
 
 /// Classify one identifier of operand text for \p dialect.
 bool isRegisterName(OperandDialect dialect, std::string_view name);

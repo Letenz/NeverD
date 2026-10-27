@@ -9,9 +9,11 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "ImportSlots.h"
 #include "JSONText.h"
 #include "LibraryPresentation.h"
 #include "SessionImpl.h"
+#include "UnwindSigningJSON.h"
 
 #include "neverd/backend/c/dialect/SourceDialect.h"
 #include "neverd/evm/bytecode/EVMBytecode.h"
@@ -19,14 +21,20 @@
 #include "neverd/loader/ExceptionCommon.h"
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionFunction.h"
+#include "neverd/loader/FunctionNames.h"
+#include "neverd/loader/ImageProfile.h"
 #include "neverd/loader/InputDigest.h"
+#include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/FilePath.h"
+#include "neverd/support/ProjectFiles.h"
 #include "neverd/support/StringScan.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Support/CRC.h"
@@ -39,14 +47,10 @@
 #include <fstream>
 #include <map>
 #include <set>
+#include <utility>
 
 using namespace neverd;
 using namespace neverd::sdk;
-
-namespace {
-/// The most bytes neverd_decode_text_json decodes at once.
-constexpr int kMaxDecodedTextBytes = 65536;
-} // namespace
 
 namespace {
 
@@ -228,35 +232,41 @@ const char *neverd_imports_json(neverd_session_t Sess) {
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }
 
-const char *neverd_import_slots_json(neverd_session_t Sess) {
-  auto *S = toSession(Sess);
-  if (!S || !S->Loaded)
-    return dupStr(std::string("[]"));
-  const auto Collection = S->Img.collectImportStorageSlots();
-  std::map<va_t, std::pair<std::string, int64_t>> Slots;
+std::map<va_t, ImportAddressSlot>
+neverd::sdk::importAddressSlots(const BinaryImage &Img) {
+  const auto Collection = Img.collectImportStorageSlots();
+  std::map<va_t, ImportAddressSlot> Slots;
   std::set<va_t> Conflicts(Collection.Conflicts.begin(),
                            Collection.Conflicts.end());
   const auto Note = [&](va_t Addr, const std::string &Name, int64_t Addend) {
     if (Name.empty())
       return;
-    auto [It, Inserted] = Slots.try_emplace(Addr, Name, Addend);
-    if (!Inserted && (It->second.first != Name || It->second.second != Addend))
+    auto [It, Inserted] =
+        Slots.try_emplace(Addr, ImportAddressSlot{Name, Addend});
+    if (!Inserted && (It->second.Name != Name || It->second.Addend != Addend))
       Conflicts.insert(Addr);
   };
   for (const auto &[Addr, Slot] : Collection.Slots)
     Note(Addr, Slot.Name, Slot.Addend);
-  if (S->Img.Format == BinaryFormat::ELF && !S->Img.IsRelocatable)
-    for (const auto &Rel : S->Img.Relocations)
-      if (elf_loader::isELFSlotBinding(S->Img.Arch, Rel.Type))
+  if (Img.Format == BinaryFormat::ELF && !Img.IsRelocatable)
+    for (const auto &Rel : Img.Relocations)
+      if (elf_loader::isELFSlotBinding(Img.Arch, Rel.Type))
         Note(Rel.Address, Rel.SymbolName, Rel.Addend);
+  for (va_t Addr : Conflicts)
+    Slots.erase(Addr);
+  return Slots;
+}
+
+const char *neverd_import_slots_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S || !S->Loaded)
+    return dupStr(std::string("[]"));
   llvm::json::Array Arr;
-  for (const auto &[Addr, Slot] : Slots) {
-    if (Conflicts.count(Addr))
-      continue;
+  for (const auto &[Addr, Slot] : importAddressSlots(S->Img)) {
     llvm::json::Object Obj{{"addr", vaHex(Addr)},
-                           {"name", jsonSafeText(Slot.first)},
-                           {"addend", Slot.second}};
-    addCName(Obj, Slot.first, S->Img);
+                           {"name", jsonSafeText(Slot.Name)},
+                           {"addend", Slot.Addend}};
+    addCName(Obj, Slot.Name, S->Img);
     Arr.push_back(std::move(Obj));
   }
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
@@ -280,6 +290,9 @@ const char *neverd_unwind_frame_json(neverd_session_t Sess,
                          {"language_data", F->hasLanguageTable()}};
   if (!F->PersonalityName.empty())
     Obj["personality"] = jsonSafeText(F->PersonalityName);
+  if (S->Img.Arch == Arch::AArch64)
+    Obj[unwind_json::kReturnAddress] =
+        unwindSigningJSON(queryAArch64UnwindSigning(S->Img, *F, Address));
   return dupStr(jsonToString(llvm::json::Value(std::move(Obj))));
 }
 
@@ -300,15 +313,20 @@ const char *neverd_exports_json(neverd_session_t Sess) {
   if (!S->Loaded)
     return dupStr(std::string("[]"));
 
-  llvm::json::Array Arr;
-  for (const auto &Exp : S->Img.Exports) {
-    llvm::json::Object Obj;
-    Obj["name"] = jsonSafeText(Exp.Name);
-    Obj["ordinal"] = static_cast<int64_t>(Exp.Ordinal);
-    Obj["addr"] = vaHex(Exp.Addr);
-    Arr.push_back(std::move(Obj));
-  }
-  return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
+  // Stream in the sorted key order a json::Object prints.
+  std::string Buf;
+  llvm::raw_string_ostream OS(Buf);
+  llvm::json::OStream J(OS);
+  J.array([&] {
+    for (const auto &Exp : S->Img.Exports)
+      J.object([&] {
+        J.attribute("addr", vaHex(Exp.Addr));
+        J.attribute("name", jsonSafeText(Exp.Name));
+        J.attribute("ordinal", static_cast<int64_t>(Exp.Ordinal));
+      });
+  });
+  OS.flush();
+  return dupStr(Buf);
 }
 
 const char *neverd_segments_json(neverd_session_t Sess) {
@@ -337,7 +355,8 @@ const char *neverd_strings_json(neverd_session_t Sess, int MinLength) {
   if (!S->Loaded)
     return dupStr(std::string("[]"));
 
-  unsigned MinLen = MinLength > 0 ? static_cast<unsigned>(MinLength) : 4;
+  unsigned MinLen = MinLength > 0 ? static_cast<unsigned>(MinLength)
+                                  : kDefaultStringMinLength;
   // Streamed in the sorted key order a json::Object prints.
   std::string Buf;
   llvm::raw_string_ostream OS(Buf);
@@ -427,9 +446,8 @@ const char *neverd_strings_page_json(neverd_session_t Sess,
     S->setError(Error);
     return nullptr;
   }
-  constexpr int MaxRowsPerPage = 65536;
   const size_t Limit =
-      static_cast<size_t>(std::clamp(MaxRows, 1, MaxRowsPerPage));
+      static_cast<size_t>(std::clamp(MaxRows, 1, kMaxStringRowsPerPage));
   // The scan runs once per options; a page reads it from its cursor.
   static const std::vector<ImageString> None;
   const auto &Strings = S->Loaded ? imageStrings(*S, Options) : None;
@@ -477,7 +495,6 @@ const char *neverd_string_at(neverd_session_t Sess, neverd_va_t Addr,
     return nullptr;
   }
   // A string that does not end within this many bytes is not read.
-  constexpr size_t Window = 65536;
   const Segment *Seg = S->Img.getSegmentFor(Addr);
   const uint64_t Offset = Seg && Addr >= Seg->VA ? Addr - Seg->VA : 0;
   if (!Seg || Addr < Seg->VA || Offset >= Seg->Data.size()) {
@@ -486,7 +503,8 @@ const char *neverd_string_at(neverd_session_t Sess, neverd_va_t Addr,
   }
   const llvm::ArrayRef<uint8_t> Bytes(
       Seg->Data.data() + Offset,
-      std::min<size_t>(Window, Seg->Data.size() - static_cast<size_t>(Offset)));
+      std::min<size_t>(kStringSearchWindowBytes,
+                       Seg->Data.size() - static_cast<size_t>(Offset)));
   std::optional<strings::FoundString> First;
   strings::scan(Bytes, Options, [&](strings::FoundString &&Found) {
     if (!First)
@@ -595,6 +613,14 @@ const char *neverd_sections_json(neverd_session_t Sess) {
     Obj["size"] = static_cast<int64_t>(Sec.Size);
     Obj["file_off"] = static_cast<int64_t>(Sec.FileOff);
     Obj["file_sz"] = static_cast<int64_t>(Sec.FileSz);
+    // Analysis sections own initialized bytes without original-file backing.
+    // Keep file_sz zero and state their materialization independently.
+    if (std::any_of(S->AnalysisSections.begin(), S->AnalysisSections.end(),
+                    [&](const auto &Record) {
+                      return Record.getAsObject()->getString("name") ==
+                             Sec.Name;
+                    }))
+      Obj["materialized_sz"] = static_cast<int64_t>(Sec.Data.size());
     std::string Flags;
     Flags += Sec.isReadable() ? 'R' : '-';
     Flags += Sec.isWritable() ? 'W' : '-';
@@ -628,7 +654,8 @@ static const char *symbolRows(Session &S, bool Data) {
   std::set<va_t> Renamed;
   J.array([&] {
     for (const auto &Sym : S.Img.Symbols) {
-      if (Data && Sym.IsFunc)
+      // A section's own symbol names nothing (Symbol::IsSection).
+      if (Sym.IsSection || (Data && Sym.IsFunc))
         continue;
       const auto Rename = S.Renames.find(Sym.Addr);
       if (Rename == S.Renames.end()) {
@@ -688,7 +715,10 @@ const char *neverd_headers_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S->Loaded)
     return dupStr("{}");
-  (void)S->synchronizeFunctions();
+  // SBF function recovery includes optional Solana analysis. Header admission
+  // must remain observable even when that later stage fails or is not run.
+  if (S->Img.Arch != Arch::SBF)
+    (void)S->synchronizeFunctions();
 
   llvm::json::Object Root;
   Root["entry"] = vaHex(S->Img.Entry);
@@ -696,14 +726,49 @@ const char *neverd_headers_json(neverd_session_t Sess) {
   Root["arch"] = getArchName(S->Img.Arch);
   Root["instruction_mode"] = getInstructionModeName(S->Img.Mode);
   Root["format"] = S->Img.getFormatName();
+  const ImageProfile Profile = identifyImageProfile(S->Img);
+  llvm::json::Object Target;
+  Target["system"] = imageSystemName(Profile.System);
+  Target["domain"] = imageDomainName(Profile.Domain);
+  Target["runtime"] = imageRuntimeName(Profile.Runtime);
+  Target["conflicting_evidence"] = Profile.ConflictingEvidence;
+  llvm::json::Array TargetEvidence, Years;
+  for (llvm::StringRef Reason : Profile.Evidence)
+    TargetEvidence.push_back(Reason);
+  for (unsigned Year : Profile.VisualStudioYears)
+    Years.push_back(Year);
+  Target["evidence"] = std::move(TargetEvidence);
+  Target["visual_studio_years"] = std::move(Years);
+  Root["target_profile"] = std::move(Target);
+  if (const auto &Selection = S->SigDB.automaticSelection()) {
+    llvm::json::Object Statistics;
+    Statistics["available_files"] = int64_t(Selection->AvailableFiles);
+    Statistics["selected_files"] = int64_t(Selection->SelectedFiles);
+    Statistics["skipped_files"] =
+        int64_t(Selection->AvailableFiles - Selection->SelectedFiles);
+    Root["signature_selection"] = std::move(Statistics);
+  }
   Root["bits"] = S->Img.is64Bit() ? 64 : 32;
   Root["file_path"] = jsonSafeText(pathToUTF8(S->FilePath));
+  if (S->Img.MachOSharedCache) {
+    using namespace macho_loader::cache_load;
+    auto Cache = sharedCacheIdentity(S->Img);
+    Cache[kAuthCountKey] = int64_t(S->Img.MachOAuthenticatedPointers.size());
+    Cache[kResolvedCountKey] =
+        int64_t(S->Img.MachOResolvedChainedPointerSlots.size());
+    Cache[kSymbolCountKey] =
+        int64_t(S->Img.MachOSharedCacheSymbolPointers.size());
+    Root[kCacheKey] = std::move(Cache);
+  }
 
   Root["file_size"] = static_cast<int64_t>(S->inputFileSize());
 
   Root["segment_count"] = static_cast<int64_t>(S->Img.Segments.size());
   Root["section_count"] = static_cast<int64_t>(S->Img.Sections.size());
   Root["func_count"] = static_cast<int64_t>(S->Functions.size());
+  if (S->Img.Arch == Arch::SBF)
+    Root["func_count_status"] =
+        S->SBFFunctionsSynchronized ? "recovered" : "image_inventory";
   Root["symbol_count"] = static_cast<int64_t>(S->Img.Symbols.size());
   Root["import_count"] = static_cast<int64_t>(S->Img.Imports.size());
   Root["export_count"] = static_cast<int64_t>(S->Img.Exports.size());
@@ -815,7 +880,8 @@ const char *neverd_headers_json(neverd_session_t Sess) {
   Root["debug_info"] =
       llvm::json::Object{{"enabled", S->DbgRequest.Enabled},
                          {"kind", debugInfoKindName(S->DbgKind)},
-                         {"path", pathToUTF8(S->DbgPath)}};
+                         {"path", pathToUTF8(S->DbgPath)},
+                         {"files", debugInfoFilesJson(*S)}};
   if (!DI.UUID.empty())
     Dyn["uuid"] = DI.UUID;
   if (!DI.MinOSVersion.empty())
@@ -839,49 +905,66 @@ const char *neverd_entrypoints_json(neverd_session_t Sess) {
   const auto &Img = S->Img;
   const auto &DI = Img.DynInfo;
 
-  llvm::json::Array Arr;
-
-  auto addEntry = [&](const char *Type, neverd::va_t Addr,
-                      const std::string &Name, bool AllowZero = false) {
+  llvm::SmallVector<std::pair<const char *, va_t>> Entries;
+  std::set<va_t> Addrs;
+  const auto AddEntry = [&](const char *Type, va_t Addr,
+                            bool AllowZero = false) {
     if (!Addr && !AllowZero)
       return;
+    Entries.emplace_back(Type, Addr);
+    Addrs.insert(Addr);
+  };
+
+  AddEntry("entry", Img.Entry, hasMainEntryPoint(Img));
+  AddEntry("init", DI.InitAddr);
+  AddEntry("fini", DI.FiniAddr);
+  for (va_t Addr : DI.PreinitArray)
+    AddEntry("preinit_array", Addr);
+  for (va_t Addr : DI.InitArray)
+    AddEntry("init_array", Addr);
+  for (va_t Addr : DI.FiniArray)
+    AddEntry("fini_array", Addr);
+  if (Entries.empty())
+    return dupStr("[]");
+
+  // Resolve names together, while retaining entry kinds, order and repeats.
+  const auto Names = functionNamesAt(Img, Addrs);
+  llvm::json::Array Arr;
+  for (const auto &[Type, Addr] : Entries) {
     llvm::json::Object O;
     O["type"] = Type;
     O["addr"] = vaHex(Addr);
-    O["name"] = jsonSafeText(Name);
+    O["name"] = jsonSafeText(Names.at(Addr));
     Arr.push_back(std::move(O));
-  };
-
-  addEntry("entry", Img.Entry, Img.getFunctionNameAt(Img.Entry),
-           hasMainEntryPoint(Img));
-  addEntry("init", DI.InitAddr, Img.getFunctionNameAt(DI.InitAddr));
-  addEntry("fini", DI.FiniAddr, Img.getFunctionNameAt(DI.FiniAddr));
-
-  for (va_t Addr : DI.PreinitArray)
-    addEntry("preinit_array", Addr, Img.getFunctionNameAt(Addr));
-  for (va_t Addr : DI.InitArray)
-    addEntry("init_array", Addr, Img.getFunctionNameAt(Addr));
-  for (va_t Addr : DI.FiniArray)
-    addEntry("fini_array", Addr, Img.getFunctionNameAt(Addr));
-
+  }
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }
 
-/// The SHA-256 of the input as loaded, in lowercase hexadecimal: the one the
-/// loader took while it read the input, else one hash of the file, kept.
-/// Empty when the file cannot be read.
-static std::string inputSha256(Session &S) {
-  if (!S.Img.InputFileSHA256) {
-    if (S.MemoryInputBytes)
-      return {};
-    auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(S.FilePath));
-    if (!Buffer)
-      return {};
-    S.Img.InputFileSHA256 = sha256(llvm::ArrayRef<uint8_t>(
-        reinterpret_cast<const uint8_t *>((*Buffer)->getBufferStart()),
-        (*Buffer)->getBufferSize()));
+const char *neverd_project_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  S->clearError();
+  if (!S->Loaded || S->MemoryInputBytes) {
+    S->setError("no file is loaded");
+    return nullptr;
   }
-  return llvm::toHex(*S.Img.InputFileSHA256, /*LowerCase=*/true);
+  llvm::json::Object Input = projectInput(*S);
+  std::optional<llvm::json::Object> Recorded = recordedInput(*S);
+  const bool Matches = !Recorded || matchesProjectInput(*Recorded, Input);
+  return dupStr(jsonToString(llvm::json::Object{
+      {"folder",
+       jsonSafeText(pathToUTF8(project_files::folder(S->projectInputPath())))},
+      {"input", std::move(Input)},
+      {"recorded", Recorded ? llvm::json::Value(std::move(*Recorded))
+                            : llvm::json::Value(nullptr)},
+      {"matches", Matches}}));
+}
+
+int neverd_project_record(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  S->clearError();
+  if (!S->Loaded || !S->requireFileBacked())
+    return -1;
+  return recordProjectInput(S) ? 0 : -1;
 }
 
 const char *neverd_session_input_sha256(neverd_session_t Sess) {
@@ -1025,7 +1108,9 @@ const char *neverd_resolve_addr(neverd_session_t Sess, neverd_va_t Addr) {
       const uint8_t *P = Seg.Data.data() + Off;
       size_t Remain = Seg.Data.size() - Off;
       size_t Len = 0;
-      while (Len < Remain && Len < 256 && P[Len] >= 0x20 && P[Len] < 0x7f)
+      while (Len < Remain &&
+             Len < ::neverd::sdk::kNeverDCAPIInfoNeverdResolveAddrLenLimit &&
+             P[Len] >= 0x20 && P[Len] < 0x7f)
         ++Len;
       if (Len >= 4 && (Len >= Remain || P[Len] == 0)) {
         Obj["type"] = "string";

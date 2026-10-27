@@ -5,6 +5,7 @@
 #include "ObjCSwiftOnceSources.h"
 
 #include "neverd/loader/MachO/DarwinImportVeneer.h"
+#include "neverd/sdk/Limits.h"
 
 namespace neverd::sdk {
 namespace objc_immutable_string_callback_detail {
@@ -198,10 +199,9 @@ proveAddressor(const BinaryImage &Image, const PipelineResult &Result,
   const auto SharedWord = [&](unsigned I) {
     return llvm::support::endian::read32le(SharedBytes->data() + I * 4);
   };
-  constexpr uint32_t Fixed[] = {0xa9be4ff4, 0xa9017bfd, 0x910043fd,
-                                0xaa0303f3, 0xaa0203f4, 0xd63f0020,
-                                0xa9400008, 0xf9000288, 0xf9000260,
-                                0xa9417bfd, 0xa8c24ff4};
+  constexpr uint32_t Fixed[] = {0xa9be4ff4, 0xa9017bfd, 0x910043fd, 0xaa0303f3,
+                                0xaa0203f4, 0xd63f0020, 0xa9400008, 0xf9000288,
+                                0xf9000260, 0xa9417bfd, 0xa8c24ff4};
   for (unsigned I = 0; I < std::size(Fixed); ++I)
     if (SharedWord(I) != Fixed[I])
       return std::nullopt;
@@ -212,8 +212,7 @@ proveAddressor(const BinaryImage &Image, const PipelineResult &Result,
   const auto Planned = Once.Addressors.find(*Provider);
   const auto ProviderCall =
       validatedSwiftOnceAddressorCallee(*Provider, Image, Once, Functions);
-  const auto Disjoint = [](va_t A, uint64_t ASize, va_t B,
-                           uint64_t BSize) {
+  const auto Disjoint = [](va_t A, uint64_t ASize, va_t B, uint64_t BSize) {
     return A <= InvalidVA - ASize && B <= InvalidVA - BSize &&
            (A + ASize <= B || B + BSize <= A);
   };
@@ -264,8 +263,7 @@ proveAddressor(const BinaryImage &Image, const PipelineResult &Result,
     if (!Calls.emplace(*Key, Call).second)
       return std::nullopt;
   }
-  if (Calls.size() != 2 ||
-      !restoresNativeSourceState(*Low, Image.Arch, Calls))
+  if (Calls.size() != 2 || !restoresNativeSourceState(*Low, Image.Arch, Calls))
     return std::nullopt;
   for (const auto &F : Result.LowFuncs)
     for (const auto &B : F.Blocks)
@@ -273,9 +271,9 @@ proveAddressor(const BinaryImage &Image, const PipelineResult &Result,
         if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst() &&
             Op.Inputs[0].Offset == Root)
           return std::nullopt;
-  return AddressorContract{Root, *Shared, *Provider, *Destination,
-                           *RetainTarget, Planned->second, *Storage,
-                           *ProviderCall, *Retain};
+  return AddressorContract{Root,         *Shared,       *Provider,
+                           *Destination, *RetainTarget, Planned->second,
+                           *Storage,     *ProviderCall, *Retain};
 }
 
 inline ExprPtr scalar(uint64_t Value) {
@@ -406,7 +404,9 @@ inline bool sameExpression(const ExprPtr &A, const ExprPtr &B,
                            unsigned Depth = 0) {
   if (!A || !B)
     return !A && !B;
-  if (Depth > 12 || A->Kind != B->Kind || A->Op != B->Op ||
+  if (Depth > ::neverd::sdk::
+                  kObjCImmutableStringCallbackSourcesSameExpressionDepthLimit ||
+      A->Kind != B->Kind || A->Op != B->Op ||
       !equalSourceTypes(A->Type, B->Type) ||
       bool(A->CastTo) != bool(B->CastTo) ||
       (A->CastTo && !equalSourceTypes(A->CastTo, B->CastTo)) ||
@@ -498,11 +498,10 @@ inline bool objCImmutableStringCallbackValid(const HighFunc &Function,
     const auto &A = Function.Body[I];
     const auto &B = Expected->Function.Body[I];
     if (A.Kind != B.Kind || A.Addr != B.Addr || A.Cond || A.RetVal ||
-        A.SwitchExpr || A.GotoTarget || A.LoopHeaderAddr ||
-        !A.Body.empty() || !A.ElseBody.empty() || !A.Cases.empty() ||
-        !A.DefaultBody.empty() || !A.EHClauses.empty() ||
-        !A.EHClauseBodies.empty() || A.EHIsReducible || A.IsPhiCopy ||
-        A.MemoryOrdering != NdMemoryOrdering::None ||
+        A.SwitchExpr || A.GotoTarget || A.LoopHeaderAddr || !A.Body.empty() ||
+        !A.ElseBody.empty() || !A.Cases.empty() || !A.DefaultBody.empty() ||
+        !A.EHClauses.empty() || !A.EHClauseBodies.empty() || A.EHIsReducible ||
+        A.IsPhiCopy || A.MemoryOrdering != NdMemoryOrdering::None ||
         A.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
         !objc_immutable_string_callback_detail::sameExpression(
             A.Dst, B.Dst, Image, Once, Functions) ||

@@ -1,0 +1,184 @@
+name: Allocator compatibility
+
+on:
+  push:
+    branches: [dev, codex/performance-libraries]
+    paths:
+      - 'cmake/*Mimalloc*'
+      - 'cmake/NeverDForks*'
+      - '.gitmodules'
+      - 'third_party/forks.json'
+      - 'third_party/highway'
+      - 'third_party/simdutf'
+      - 'third_party/simdjson'
+      - 'third_party/oneTBB'
+      - 'third_party/mimalloc'
+      - 'scripts/build.py'
+      - 'scripts/fork_dependencies.py'
+      - 'cmake/AddNeverD.cmake'
+      - 'cmake/NeverDWorkerAllocator.cmake'
+      - 'tools/neverd-worker/CMakeLists.txt'
+      - 'unittests/CMakeLists.txt'
+      - 'unittests/allocator/**'
+      - 'scripts/tests/test_mimalloc*.py'
+      - '.github/workflows/allocator.yml'
+  pull_request:
+    paths:
+      - 'cmake/*Mimalloc*'
+      - 'cmake/NeverDForks*'
+      - '.gitmodules'
+      - 'third_party/forks.json'
+      - 'third_party/highway'
+      - 'third_party/simdutf'
+      - 'third_party/simdjson'
+      - 'third_party/oneTBB'
+      - 'third_party/mimalloc'
+      - 'scripts/build.py'
+      - 'scripts/fork_dependencies.py'
+      - 'cmake/AddNeverD.cmake'
+      - 'cmake/NeverDWorkerAllocator.cmake'
+      - 'tools/neverd-worker/CMakeLists.txt'
+      - 'unittests/CMakeLists.txt'
+      - 'unittests/allocator/**'
+      - 'scripts/tests/test_mimalloc*.py'
+      - '.github/workflows/allocator.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: allocator-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unix:
+    name: ${{ matrix.runner }} allocator
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Test mimalloc, system allocator and sanitizer compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          for allocator in default OFF; do
+            if [ "$allocator" = default ]; then
+              allocator_flags=(-DNEVERD_TEST_EXPECT_MIMALLOC=ON)
+            else
+              allocator_flags=(-DNEVERD_ENABLE_MIMALLOC=OFF -DNEVERD_TEST_EXPECT_MIMALLOC=OFF)
+            fi
+            cmake -S unittests/allocator -B "build-allocator-$allocator" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release "${allocator_flags[@]}"
+            python scripts/build.py "build-allocator-$allocator" --parallel 2
+            ctest --test-dir "build-allocator-$allocator" --output-on-failure --no-tests=error
+          done
+          cmake -S unittests/allocator -B build-allocator-asan -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_MIMALLOC=ON -DNEVERD_TEST_EXPECT_MIMALLOC=OFF \
+            -DCMAKE_C_FLAGS=-fsanitize=address,undefined \
+            -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined
+          python scripts/build.py build-allocator-asan --parallel 2
+          ctest --test-dir build-allocator-asan --output-on-failure --no-tests=error
+      - name: Verify macOS lazy initialization and system allocation contracts
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=$(python -c 'import json; from pathlib import Path; s=json.load(open("build-allocator-default/.neverd-deps/snapshot.json"))["sources"]["neverd_mimalloc"]; print(Path(s["archive"]).parent / "src")')
+          for profile in Release Debug; do
+            build="build-mimalloc-fork-$profile"
+            cmake -S "$source" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE="$profile" \
+              -DMI_BUILD_TESTS=ON -DMI_BUILD_OBJECT=ON -DMI_BUILD_STATIC=ON \
+              -DMI_BUILD_SHARED=OFF -DMI_OVERRIDE=ON -DMI_OSX_ZONE=ON \
+              -DMI_OSX_INTERPOSE=ON -DMI_NO_OPT_ARCH=ON
+            cmake --build "$build" --parallel 2 --target mimalloc-test-api \
+              mimalloc-test-osx-override mimalloc-test-osx-early-zone
+            ctest --test-dir "$build" --no-tests=error --output-on-failure \
+              -R '^test-(api|osx-override|osx-early-zone)$' --output-junit results.xml
+          done
+          python - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          for profile in ('Release', 'Debug'):
+              cases = list(ET.parse(Path('build-mimalloc-fork-' + profile) / 'results.xml').getroot().iter('testcase'))
+              assert {case.get('name') for case in cases} == {'test-api', 'test-osx-override', 'test-osx-early-zone'}
+              assert len(cases) == 3
+              assert all(case.get('status') == 'run' and not any(child.tag in {'failure', 'error', 'skipped'} for child in case) for case in cases)
+          PY
+      - name: Retain allocator source and build receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocator-${{ matrix.runner }}-${{ github.sha }}
+          path: |
+            build-allocator-*/neverd-*.json
+            build-allocator-*/Testing/Temporary/LastTest.log
+            build-mimalloc-fork-*/results.xml
+            build-mimalloc-fork-*/Testing/Temporary/LastTest.log
+
+  windows:
+    name: Windows ${{ matrix.arch }} (${{ matrix.compiler }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+            compiler: cl
+          - runner: windows-latest
+            arch: x64
+            compiler: clang-cl
+          - runner: windows-11-arm
+            arch: arm64
+            compiler: cl
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: ${{ matrix.arch }}
+      - name: Configure dynamic CRT allocator tests
+        run: >-
+          cmake -S unittests/allocator -B build-allocator -G "Ninja Multi-Config"
+          -DNEVERD_TEST_EXPECT_MIMALLOC=ON
+          -DCMAKE_C_COMPILER=${{ matrix.compiler }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+      - name: Test Release and Debug, including installed DLLs
+        shell: pwsh
+        run: |
+          foreach ($configuration in @('Release', 'Debug')) {
+            python scripts/build.py build-allocator --config $configuration
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            ctest --test-dir build-allocator -C $configuration --output-on-failure --no-tests=error
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            New-Item -ItemType Directory -Force "allocator-evidence/$configuration" | Out-Null
+            Copy-Item build-allocator/neverd-*.json "allocator-evidence/$configuration/"
+            Copy-Item build-allocator/Testing/Temporary/LastTest.log "allocator-evidence/$configuration/"
+          }
+      - name: Test the system allocator build
+        shell: pwsh
+        run: |
+          cmake -S unittests/allocator -B build-allocator-off -G Ninja -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_MIMALLOC=OFF -DNEVERD_TEST_EXPECT_MIMALLOC=OFF -DCMAKE_C_COMPILER=${{ matrix.compiler }} -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/build.py build-allocator-off
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ctest --test-dir build-allocator-off --output-on-failure --no-tests=error
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Retain allocator source and build receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocator-${{ matrix.arch }}-${{ matrix.compiler }}-${{ github.sha }}
+          path: |
+            allocator-evidence/
+            build-allocator*/neverd-*.json
+            build-allocator*/Testing/Temporary/LastTest.log

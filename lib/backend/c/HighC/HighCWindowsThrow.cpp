@@ -8,13 +8,16 @@
 //===----------------------------------------------------------------------===//
 #include "HighCWriter.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/ir/high/MsvcTypeName.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 namespace neverd {
 namespace {
 bool isNullThrowArgument(const HighExpr *Value) {
-  for (unsigned Depth = 0; Value && Depth != 8; ++Depth) {
+  for (unsigned Depth = 0;
+       Value && Depth != ::neverd::limits::backend::kMaxNullThrowArgumentDepth;
+       ++Depth) {
     if (Value->Kind == ExprKind::Const)
       return Value->ConstVal == 0;
     if ((Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast ||

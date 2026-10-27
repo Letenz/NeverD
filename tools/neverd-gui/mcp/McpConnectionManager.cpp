@@ -1,5 +1,7 @@
 #include "McpConnectionManager.h"
 
+#include "../ResourceLimits.h"
+
 #include <QDateTime>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -10,7 +12,6 @@
 #include <QTimer>
 
 namespace {
-constexpr qsizetype MaxMessage = 8 * 1024 * 1024;
 constexpr auto Protocol = "2025-11-25";
 } // namespace
 
@@ -19,8 +20,14 @@ McpConnectionManager::McpConnectionManager(QObject *parent) : QObject(parent) {
   connect(&process_, &QProcess::started, this,
           &McpConnectionManager::initialize);
   connect(&process_, &QProcess::readyReadStandardOutput, this, [this] {
-    input_ += process_.readAllStandardOutput();
-    if (input_.size() > MaxMessage) {
+    const auto chunk = process_.readAllStandardOutput();
+    // A stopped console process may still have buffered stdout. The first
+    // protocol failure stays authoritative while those bytes are drained.
+    if (stopping_)
+      return;
+    input_ += chunk;
+    if (input_.size() >
+        ::neverd::limits::gui::kMcpConnectionManagerMaxMessage) {
       failSource(QT_TR_NOOP("MCP message exceeds 8 MiB"));
       return;
     }
@@ -41,7 +48,9 @@ McpConnectionManager::McpConnectionManager(QObject *parent) : QObject(parent) {
   });
   connect(&process_, &QProcess::readyReadStandardError, this, [this] {
     diagnostics_ += process_.readAllStandardError();
-    if (diagnostics_.size() > 65536)
+    if (diagnostics_.size() >
+        ::neverd::limits::gui::
+            kMcpConnectionManagerMcpConnectionManagerDiagnosticsSizeLimit)
       diagnostics_ = diagnostics_.right(65536);
   });
   connect(&process_, &QProcess::errorOccurred, this,
@@ -58,12 +67,16 @@ McpConnectionManager::McpConnectionManager(QObject *parent) : QObject(parent) {
                   {QString::number(code), QString::fromUtf8(diagnostics_)});
           });
   auto timer = new QTimer(this);
-  timer->setInterval(1000);
+  timer->setInterval(
+      ::neverd::limits::gui::
+          kMcpConnectionManagerMcpConnectionManagerSetIntervalMilliseconds);
   connect(timer, &QTimer::timeout, this, [this] {
     const auto now = QDateTime::currentMSecsSinceEpoch();
     const auto ids = pending_.keys();
     for (const auto &id : ids) {
-      if (now - pending_.value(id).started < 120000)
+      if (now - pending_.value(id).started <
+          ::neverd::limits::gui::
+              kMcpConnectionManagerMcpConnectionManagerNowPendingValueIdStartedLimit)
         continue;
       const auto method = pending_.take(id).method;
       finishCall(id, "timed_out");
@@ -86,7 +99,9 @@ McpConnectionManager::~McpConnectionManager() {
   disconnectServer();
   if (process_.state() != QProcess::NotRunning) {
     process_.kill();
-    process_.waitForFinished(1000);
+    process_.waitForFinished(
+        ::neverd::limits::gui::
+            kMcpConnectionManagerMcpConnectionManagerWaitForFinishedMilliseconds);
   }
 }
 
@@ -175,10 +190,14 @@ void McpConnectionManager::disconnectServer() {
     process_.closeWriteChannel();
     process_.terminate();
     const auto generation = generation_;
-    QTimer::singleShot(1000, this, [this, generation] {
-      if (generation == generation_ && process_.state() != QProcess::NotRunning)
-        process_.kill();
-    });
+    QTimer::singleShot(
+        ::neverd::limits::gui::
+            kMcpConnectionManagerDisconnectServerSingleShotMilliseconds,
+        this, [this, generation] {
+          if (generation == generation_ &&
+              process_.state() != QProcess::NotRunning)
+            process_.kill();
+        });
   }
   endpoint_.clear();
   token_.clear();
@@ -236,7 +255,9 @@ void McpConnectionManager::initialize() {
 QString McpConnectionManager::send(const QString &method,
                                    const QJsonObject &params,
                                    bool notification) {
-  if (pending_.size() >= 32 && !notification) {
+  if (pending_.size() >=
+          ::neverd::limits::gui::kMcpConnectionManagerSendPendingSizeLimit &&
+      !notification) {
     setStatus(QT_TR_NOOP("MCP request queue is full"));
     emit changed();
     return {};
@@ -252,8 +273,11 @@ QString McpConnectionManager::send(const QString &method,
     post(message);
   else if (process_.state() == QProcess::Running) {
     auto body = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
-    if (body.size() > 1024 * 1024 ||
-        process_.bytesToWrite() > 2 * 1024 * 1024) {
+    if (body.size() >
+            ::neverd::limits::gui::kMcpConnectionManagerSendBodySizeLimit ||
+        process_.bytesToWrite() >
+            ::neverd::limits::gui::
+                kMcpConnectionManagerSendProcessBytesToWriteLimit) {
       failSource(QT_TR_NOOP("MCP outgoing message budget exceeded"));
       return {};
     }
@@ -278,7 +302,9 @@ QNetworkRequest McpConnectionManager::request() const {
     request.setRawHeader("Authorization", "Bearer " + token_);
   if (tls_)
     request.setSslConfiguration(*tls_);
-  request.setTransferTimeout(120000);
+  request.setTransferTimeout(
+      ::neverd::limits::gui::
+          kMcpConnectionManagerRequestSetTransferTimeoutMilliseconds);
   // Never forward credentials to an endpoint selected by an HTTP redirect.
   request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                        QNetworkRequest::ManualRedirectPolicy);
@@ -287,7 +313,8 @@ QNetworkRequest McpConnectionManager::request() const {
 
 void McpConnectionManager::post(const QJsonObject &message) {
   const auto body = QJsonDocument(message).toJson(QJsonDocument::Compact);
-  if (body.size() > 1024 * 1024) {
+  if (body.size() >
+      ::neverd::limits::gui::kMcpConnectionManagerPostBodySizeLimit) {
     failSource(QT_TR_NOOP("MCP outgoing message budget exceeded"));
     return;
   }
@@ -298,7 +325,8 @@ void McpConnectionManager::post(const QJsonObject &message) {
 }
 
 void McpConnectionManager::watchReply(QNetworkReply *reply, HttpStream stream) {
-  reply->setReadBufferSize(MaxMessage + 1);
+  reply->setReadBufferSize(
+      ::neverd::limits::gui::kMcpConnectionManagerMaxMessage + 1);
   replies_.insert(reply, QSharedPointer<HttpStream>::create(stream));
   connect(reply, &QNetworkReply::readyRead, this,
           [this, reply] { readHttp(reply); });
@@ -400,7 +428,9 @@ void McpConnectionManager::readHttp(QNetworkReply *reply) {
           return;
         }
       }
-      if (session.size() > 4096) {
+      if (session.size() >
+          ::neverd::limits::gui::
+              kMcpConnectionManagerReadHttpInitializeSessionSizeLimit) {
         failSource(QT_TR_NOOP("MCP session identifier is too large"));
         return;
       }
@@ -408,7 +438,8 @@ void McpConnectionManager::readHttp(QNetworkReply *reply) {
     }
   }
   stream.buffer += reply->readAll();
-  if (stream.buffer.size() + stream.eventData.size() > MaxMessage) {
+  if (stream.buffer.size() + stream.eventData.size() >
+      ::neverd::limits::gui::kMcpConnectionManagerMaxMessage) {
     failSource(QT_TR_NOOP("MCP message exceeds 8 MiB"));
     return;
   }
@@ -456,7 +487,9 @@ void McpConnectionManager::readHttp(QNetworkReply *reply) {
       auto id = line.mid(3);
       if (id.startsWith(' '))
         id.remove(0, 1);
-      if (id.size() > 4096 || id.contains('\r')) {
+      if (id.size() >
+              ::neverd::limits::gui::kMcpConnectionManagerReadHttpIdSizeLimit ||
+          id.contains('\r')) {
         failSource(QT_TR_NOOP("Invalid MCP event data"));
         return;
       }
@@ -565,7 +598,9 @@ void McpConnectionManager::callTool(const QString &name,
     emit changed();
     return;
   }
-  if (jsonArguments.size() > 1024 * 1024) {
+  if (jsonArguments.size() >
+      ::neverd::limits::gui::
+          kMcpConnectionManagerCallToolJsonArgumentsSizeLimit) {
     setStatus(QT_TR_NOOP("Tool arguments exceed the size limit"));
     emit changed();
     return;
@@ -594,16 +629,22 @@ void McpConnectionManager::readResource(const QString &uri) {
 void McpConnectionManager::recordCall(const QString &id, const QString &method,
                                       const QString &name,
                                       const QString &arguments) {
-  history_.prepend(QVariantMap{{"id", id},
-                               {"connection", QString::number(generation_)},
-                               {"method", method},
-                               {"name", name.left(256)},
-                               {"arguments", arguments.left(4096)},
-                               {"status", "pending"},
-                               {"started", QDateTime::currentMSecsSinceEpoch()},
-                               {"result", QString()},
-                               {"truncated", arguments.size() > 4096}});
-  while (history_.size() > 50) {
+  history_.prepend(QVariantMap{
+      {"id", id},
+      {"connection", QString::number(generation_)},
+      {"method", method},
+      {"name", name.left(256)},
+      {"arguments", arguments.left(4096)},
+      {"status", "pending"},
+      {"started", QDateTime::currentMSecsSinceEpoch()},
+      {"result", QString()},
+      {"truncated",
+       arguments.size() >
+           ::neverd::limits::gui::
+               kMcpConnectionManagerRecordCallTruncatedArgumentsSizeLimit}});
+  while (
+      history_.size() >
+      ::neverd::limits::gui::kMcpConnectionManagerRecordCallHistorySizeLimit) {
     // Keep every active call reachable for cancellation; there are at most 32.
     for (qsizetype index = history_.size() - 1; index >= 0; --index) {
       if (history_[index].toMap().value("status").toString() != "pending") {
@@ -624,7 +665,10 @@ void McpConnectionManager::finishCall(const QString &id, const QString &state,
     entry.insert("status", state);
     entry.insert("result", result.left(4096));
     entry.insert("truncated",
-                 entry.value("truncated").toBool() || result.size() > 4096);
+                 entry.value("truncated").toBool() ||
+                     result.size() >
+                         ::neverd::limits::gui::
+                             kMcpConnectionManagerFinishCallResultSizeLimit);
     entry.insert("durationMs", QDateTime::currentMSecsSinceEpoch() -
                                    entry.value("started").toLongLong());
     item = entry;

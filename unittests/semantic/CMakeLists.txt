@@ -537,6 +537,7 @@ add_neverd_unittest(NeverDSemanticTests
   allplatform/scalar/AllPlatform_RevBitfieldRTTests.cpp
   allplatform/scalar/AllPlatform_ScalarMixRTTests.cpp
   allplatform/scalar/AllPlatform_ShiftedRegOperandRTTests.cpp
+  allplatform/scalar/AllPlatform_SelfCompareFlagsRTTests.cpp
   allplatform/scalar/AllPlatform_SignedFlagFoldRTTests.cpp
   allplatform/scalar/AllPlatform_SubRegMixRTTests.cpp
   allplatform/vector/AllPlatform_ComplexArithRTTests.cpp
@@ -678,29 +679,29 @@ add_neverd_unittest(NeverDSemanticTests
   common/KnownBugTests.cpp
   common/PipelineSemanticTests.cpp
   common/PreviouslyUnsupportedTests.cpp
-  common/RewriteCodegenAArch64RTTests.cpp
-  common/RewriteCodegenAArch64RelocRTTests.cpp
-  common/RewriteCodegenARM32RTTests.cpp
-  common/RewriteCodegenARM32RelocRTTests.cpp
-  common/RewriteCodegenCOFFAArch64RTTests.cpp
-  common/RewriteCodegenCOFFAArch64RelocRTTests.cpp
-  common/RewriteCodegenCOFFARM32RTTests.cpp
-  common/RewriteCodegenCOFFARM32RelocRTTests.cpp
-  common/RewriteCodegenCOFFI386RTTests.cpp
-  common/RewriteCodegenCOFFI386RelocRTTests.cpp
-  common/RewriteCodegenCOFFX64RTTests.cpp
-  common/RewriteCodegenCOFFX64RelocRTTests.cpp
+  aarch64/RewriteCodegenAArch64RTTests.cpp
+  aarch64/RewriteCodegenAArch64RelocRTTests.cpp
+  arm32/RewriteCodegenARM32RTTests.cpp
+  arm32/RewriteCodegenARM32RelocRTTests.cpp
+  aarch64/RewriteCodegenCOFFAArch64RTTests.cpp
+  aarch64/RewriteCodegenCOFFAArch64RelocRTTests.cpp
+  arm32/RewriteCodegenCOFFARM32RTTests.cpp
+  arm32/RewriteCodegenCOFFARM32RelocRTTests.cpp
+  x86_32/RewriteCodegenCOFFI386RTTests.cpp
+  x86_32/RewriteCodegenCOFFI386RelocRTTests.cpp
+  x86_64/RewriteCodegenCOFFX64RTTests.cpp
+  x86_64/RewriteCodegenCOFFX64RelocRTTests.cpp
   common/RewriteCodegenHarness.cpp
-  common/RewriteCodegenI386RTTests.cpp
-  common/RewriteCodegenI386RelocRTTests.cpp
+  x86_32/RewriteCodegenI386RTTests.cpp
+  x86_32/RewriteCodegenI386RelocRTTests.cpp
   common/RewriteCodegenInplaceRTTests.cpp
   common/RewriteCodegenMIRRTTests.cpp
-  common/RewriteCodegenMachOAArch64RTTests.cpp
-  common/RewriteCodegenMachOAArch64RelocRTTests.cpp
-  common/RewriteCodegenMachOX64RTTests.cpp
-  common/RewriteCodegenMachOX64RelocRTTests.cpp
-  common/RewriteCodegenX64RTTests.cpp
-  common/RewriteCodegenX64RelocRTTests.cpp
+  aarch64/RewriteCodegenMachOAArch64RTTests.cpp
+  aarch64/RewriteCodegenMachOAArch64RelocRTTests.cpp
+  x86_64/RewriteCodegenMachOX64RTTests.cpp
+  x86_64/RewriteCodegenMachOX64RelocRTTests.cpp
+  x86_64/RewriteCodegenX64RTTests.cpp
+  x86_64/RewriteCodegenX64RelocRTTests.cpp
   x86/X86_DoubleShiftZeroRTTests.cpp
   x86/X86_FlagPreserveRTTests.cpp
   x86/X86_FpI64CvtRTTests.cpp
@@ -984,6 +985,42 @@ endif()
 
 if(TARGET neverd)
   add_dependencies(NeverDPatchFullTests neverd)
+endif()
+
+# --- Shared comparison and flag folding across integer architectures ---
+add_neverd_unittest(NeverDSelfCompareFlagTests
+  allplatform/scalar/AllPlatform_SelfCompareFlagsRTTests.cpp
+  allplatform/scalar/AllPlatform_SignedFlagFoldRTTests.cpp
+  TIMEOUT 600
+)
+
+target_compile_definitions(NeverDSelfCompareFlagTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_include_directories(NeverDSelfCompareFlagTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+  ${CMAKE_SOURCE_DIR}/third_party/unicorn/include
+)
+
+target_link_libraries(NeverDSelfCompareFlagTests PRIVATE
+  unicorn
+  neverd_shared
+  NeverDPassMIR
+  LLVMMC
+  LLVMMCParser
+  LLVMObject
+  LLVMX86AsmParser LLVMX86Desc LLVMX86Info
+  LLVMAArch64AsmParser LLVMAArch64Desc LLVMAArch64Info
+  LLVMARMAsmParser LLVMARMDesc LLVMARMInfo
+  LLVMSupport
+)
+
+if(TARGET neverd)
+  add_dependencies(NeverDSelfCompareFlagTests neverd)
 endif()
 
 # --- Computed-goto / local label-table probing suite ---

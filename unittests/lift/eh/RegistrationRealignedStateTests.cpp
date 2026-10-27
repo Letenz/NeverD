@@ -9,7 +9,7 @@
 
 #include "neverd/ir/RegistrationState.h"
 #include "neverd/ir/low/LowIR.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 using namespace neverd;
 using namespace neverd::registration_test;
@@ -25,7 +25,7 @@ TEST(RegistrationRealignment, ReplaysTheEntryAndRuntimeFramesSeparately) {
   EXPECT_TRUE(State.RegistrationLifetimeComplete);
   EXPECT_TRUE(State.ChainOperationsComplete);
   ASSERT_EQ(State.Blocks.size(), 4u);
-  EXPECT_EQ(State.Blocks.back().Levels, (std::vector<int32_t>{0}));
+  EXPECT_EQ(State.Blocks.back().levels(), (std::vector<int32_t>{0}));
   EXPECT_TRUE(State.IncomingFrameAccessesComplete);
   EXPECT_TRUE(State.IncomingFrameAccesses.empty());
   const auto EntryFP = llvm::find_if(State.FrameValues, [](const auto &Value) {

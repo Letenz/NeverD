@@ -7,10 +7,11 @@
 #include "RegistrationStateSolver.h"
 
 #include "neverd/Limits.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include <algorithm>
 #include <bit>
+#include <cassert>
 #include <utility>
 
 namespace neverd::registration_state {
@@ -28,9 +29,16 @@ int32_t cxxMinimumTryLevel(const Domain &State, const CxxExceptionInfo &Cxx) {
 void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
   if (Exhausted || !charge(1 + Source.Activation.JumpCaptureCalls.size() +
                            Source.Activation.Callers.size() +
+                           Source.Levels.size() + Source.JumpCaptures.size() +
                            2 * std::bit_width(States[Target].size() + 1)))
     return;
-  auto [It, New] = States[Target].try_emplace(Source.Activation);
+  SEHFlowKey Key{Source.Activation};
+  if (JumpRuntime && !KnownCxx) {
+    Key.Levels.assign(Source.Levels.begin(), Source.Levels.end());
+    for (const auto &[Offset, Capture] : Source.JumpCaptures)
+      Key.Captures.emplace_back(Offset, Capture.Call, Capture.Level);
+  }
+  auto [It, New] = States[Target].try_emplace(Key);
   auto &Node = It->second;
   if (New)
     Node.Facts.Invalid = InvalidBlocks[Target];
@@ -119,14 +127,32 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
     }
     MergeFlag(Dest.Uninstalled, Source.Uninstalled);
     MergeFlag(Dest.Installed, Source.Installed);
+    // This bit only proves native CRT-guard lifetime. Once that proof fails,
+    // another guard-only change cannot recover it or refine language state.
+    // Do not revisit an otherwise stable logical frame for that change.
+    if (Result.SEHParentChainComplete)
+      MergeFlag(Dest.AbandonedSEHGuard, Source.AbandonedSEHGuard);
     MergeFlag(Dest.CanDispatch, Source.CanDispatch);
   }
   if (Changed && charge(1 + 2 * std::bit_width(Work.size() + 1)))
-    Work.emplace(Order[Target], Target, Source.Activation);
+    Work.emplace(Order[Target], Target, std::move(Key));
+}
+
+Domain dispatchSource(const Domain &Source) {
+  Domain Root;
+  Root.Frame.Cells = Source.Frame.Cells;
+  Root.Frame.EntryCells = Source.Frame.EntryCells;
+  Root.JumpCaptures = Source.JumpCaptures;
+  Root.JumpBindingsIntact = Source.JumpBindingsIntact;
+  Root.InitializedFrameBytes = Source.InitializedFrameBytes;
+  Root.RuntimeObject.Cells = Source.RuntimeObject.Cells;
+  Root.RuntimeObject.forgetCellValues();
+  Root.Unknown = Source.Unknown;
+  return Root;
 }
 
 void RegistrationStateSolver::dispatch(
-    va_t Address, int32_t Level, const Domain &Source, bool Unknown,
+    va_t Address, std::set<int32_t> Levels, const Domain &Source, bool Unknown,
     bool Callback, bool SearchFilter,
     std::optional<std::pair<uint32_t, uint32_t>> CxxCatch) {
   auto It = Entries.find(Address);
@@ -135,7 +161,11 @@ void RegistrationStateSolver::dispatch(
       CompleteCxxContinuations = false;
     return;
   }
-  Domain Root;
+  assert(!Levels.empty());
+  if (!charge(Levels.size() + 1))
+    return;
+  Domain Root = dispatchSource(Source);
+  Root.Levels = std::move(Levels);
   if (!KnownCxx && Callback)
     Root.Activation = {Address, SearchFilter};
   if (!KnownCxx && Callback) {
@@ -144,19 +174,17 @@ void RegistrationStateSolver::dispatch(
     for (const auto &[Offset, Capture] : Source.JumpCaptures)
       Root.Activation.JumpCaptureCalls.emplace_back(Offset, Capture.Call);
   }
-  Root.Levels = {Level};
   for (auto &Register : Root.Frame.Registers)
     Register.MayBeFrame = true;
   Root.Frame.OtherRegistersMayBeFrame = true;
-  Root.Frame.Cells = Source.Frame.Cells;
-  Root.Frame.EntryCells = Source.Frame.EntryCells;
-  Root.JumpCaptures = Source.JumpCaptures;
-  Root.JumpBindingsIntact = Source.JumpBindingsIntact;
-  Root.InitializedFrameBytes = Source.InitializedFrameBytes;
-  Root.RuntimeObject.Cells = Source.RuntimeObject.Cells;
-  Root.RuntimeObject.forgetCellValues();
-  Root.Frame.Cells[*Chain.TryLevelOffset] =
-      FrameValue::constant(uint32_t(Level));
+  // This is the join of roots from one source snapshot, differing only in
+  // their logical level. Distinct constants have no exact cell value; the
+  // complete finite domain remains in Levels for subsequent state transfers.
+  if (Root.Levels.size() == 1)
+    Root.Frame.Cells[*Chain.TryLevelOffset] =
+        FrameValue::constant(uint32_t(*Root.Levels.begin()));
+  else
+    Root.Frame.Cells.erase(*Chain.TryLevelOffset);
   Root.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride] =
       FrameValue::frame(KnownCxx ? *Chain.cxxRuntimeFrameOffset() : 0);
   Root.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride].MayBeFrame =
@@ -173,7 +201,7 @@ void RegistrationStateSolver::dispatch(
     else
       Root.Frame.enterCallback(Address);
   }
-  Root.Unknown = Unknown || Source.Unknown;
+  Root.Unknown |= Unknown;
   Root.Parent = !Callback;
   Root.Callback = Callback;
   Root.OtherCallback = Callback && !CxxCatch;
@@ -246,12 +274,20 @@ void RegistrationStateSolver::seedEntries() {
   // them with zero and then expose the invented value.
   for (auto &Register : Initial.Frame.Registers)
     Register.MayBeFrame = true;
-  if (Conditional) {
+  const bool ParentEpilogue =
+      SEHControls && !KnownCxx && !Chain.RealignedFrame &&
+      std::any_of(SEHControls->begin(), SEHControls->end(), [](const auto &C) {
+        return C.Control ==
+               RegistrationSEHControlContract::Kind::ParentEpilogue;
+      });
+  if (Conditional || ParentEpilogue || CxxPrologue) {
     for (unsigned Index = 0; Index != Initial.Frame.Registers.size(); ++Index)
       Initial.Frame.Registers[Index].SavedRegister = uint8_t(Index + 1);
     FrameValue PC;
     PC.MayBeFrame = PC.ReturnPC = true;
     Initial.Frame.Cells[4] = PC;
+  }
+  if (Conditional) {
     for (const auto &[Offset, Value] : Conditional->Arguments)
       Initial.Frame.store(Offset, 4, Value);
     for (const auto &[Offset, Value] : Conditional->ObjectCells)

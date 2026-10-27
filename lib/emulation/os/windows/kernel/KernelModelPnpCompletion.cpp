@@ -33,7 +33,7 @@ KernelModel::callProviderDriver(uint64_t Device, uint64_t IRP,
                                 std::optional<int64_t> SendTimeout) {
   auto *Request = requestForIRP(IRP);
   const auto *Provider = pnpDeviceForPDO(Device);
-  if (!Request || Request->Completed || !isProviderDevice(Device) ||
+  if (!Request || Request->Completed || !isPnpProviderDevice(Device) ||
       !Provider || Request->PnpDevice != Device)
     return providerError("dispatch requires its configured provider IRP");
   if (PendingWdmCall || (Framework && Framework->hasPendingGuestCall()))

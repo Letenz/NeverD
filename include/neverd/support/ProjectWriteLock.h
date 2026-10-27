@@ -1,9 +1,19 @@
-//===- ProjectWriteLock.h - Cross-process sidecar ownership ------*- C++
-//-*-===//
-#pragma once
+//===- ProjectWriteLock.h - Cross-process sidecar ownership -----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file Cross-process ownership of an input's optional project namespace.
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_SUPPORT_PROJECTWRITELOCK_H
+#define NEVERD_SUPPORT_PROJECTWRITELOCK_H
+
+#include "neverd/support/ProjectFiles.h"
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <system_error>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -18,18 +28,28 @@
 
 namespace neverd {
 // Writers use the same canonical input path, including short-lived CLI writes.
-// The lock file stays in place: removing it could split ownership across
-// inodes.
+// The lock file stays in place, in the project folder's local/: removing it
+// could split ownership across inodes.
 class ProjectWriteLock {
 public:
-  explicit ProjectWriteLock(const std::filesystem::path &Binary) {
+  explicit ProjectWriteLock(const std::filesystem::path &Binary,
+                            std::string_view NamespaceSuffix = {}) {
     std::error_code EC;
-    auto Path = std::filesystem::canonical(Binary, EC);
+    auto Input = std::filesystem::canonical(Binary, EC);
     if (EC) {
       Error = EC.message();
       return;
     }
-    Path += ".neverd-gui.lock";
+    // A selected cache image has a project namespace, but no standalone input
+    // file. Canonicalize the real input before adding that namespace.
+    Input += NamespaceSuffix;
+    project_files::migrate(Input);
+    if (EC = project_files::prepare(Input); EC) {
+      Error = EC.message();
+      return;
+    }
+    const auto Path =
+        project_files::path(Input, project_files::File::WriterLock);
 #ifdef _WIN32
     Handle = CreateFileW(Path.c_str(), GENERIC_READ | GENERIC_WRITE,
                          FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
@@ -76,3 +96,5 @@ private:
 #endif
 };
 } // namespace neverd
+
+#endif // NEVERD_SUPPORT_PROJECTWRITELOCK_H

@@ -1,6 +1,7 @@
 #ifndef NEVERD_IR_HIGH_HIGHSWIFTERRORPROJECTION_H
 #define NEVERD_IR_HIGH_HIGHSWIFTERRORPROJECTION_H
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighIR.h"
 
@@ -58,13 +59,17 @@ inline bool isSwiftErrorEntryProjected(const HighFunc &Function,
       Capture.Val->MemoryOrdering != NdMemoryOrdering::None ||
       Capture.Val->MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
-  size_t Budget = 100000;
+  size_t Budget = ::neverd::limits::ir::
+      kHighSwiftErrorProjectionIsSwiftErrorEntryProjectedBudget;
   std::vector<std::pair<const std::vector<HighStmt> *, unsigned>> Lists{
       {&Function.Body, 0}};
   while (!Lists.empty()) {
     const auto [Body, Depth] = Lists.back();
     Lists.pop_back();
-    if (Depth > 200 || Body->size() > Budget)
+    if (Depth >
+            ::neverd::limits::ir::
+                kHighSwiftErrorProjectionIsSwiftErrorEntryProjectedDepthLimit ||
+        Body->size() > Budget)
       return false;
     Budget -= Body->size();
     for (size_t I = 0; I < Body->size(); ++I) {

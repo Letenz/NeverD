@@ -19,14 +19,15 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
-#include "neverd/backend/llvm/X86RegistrationCatch.h"
-#include "neverd/backend/llvm/X86RegistrationCxxUnwind.h"
-#include "neverd/backend/llvm/X86RegistrationEntry.h"
-#include "neverd/backend/llvm/X86RegistrationLayout.h"
+#include "neverd/backend/llvm/X86/X86RegistrationCatch.h"
+#include "neverd/backend/llvm/X86/X86RegistrationCxxUnwind.h"
+#include "neverd/backend/llvm/X86/X86RegistrationEntry.h"
+#include "neverd/backend/llvm/X86/X86RegistrationLayout.h"
 #include "neverd/ir/low/RegistrationABI.h"
-#include "neverd/ir/med/X86RegistrationCallResult.h"
-#include "neverd/ir/med/X86RegistrationCallback.h"
-#include "neverd/ir/med/X86RegistrationFrame.h"
+#include "neverd/ir/med/X86/X86RegistrationCallResult.h"
+#include "neverd/ir/med/X86/X86RegistrationCallback.h"
+#include "neverd/ir/med/X86/X86RegistrationFrame.h"
+#include "neverd/ir/med/X86/X86RegistrationPhysicalFrame.h"
 #include "neverd/loader/ExceptionInfo.h"
 
 #include "llvm/IR/CFG.h"
@@ -73,12 +74,15 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       !States.CxxContinuationsComplete || !States.CxxCatchObjectsComplete ||
       !States.RuntimeObjectAccessesComplete || !States.ImageReadsComplete)
     return false;
+  const auto *ChainAccesses = getX86RegistrationCxxChainAccesses(Func);
+  if (!ChainAccesses || !hasCheckedX86RegistrationCxxPhysicalFrame(*Img, Func))
+    return false;
   const auto &Cxx = *EH.Cxx;
   const auto UnwindGraph = projectX86RegistrationCxxUnwind(Cxx);
   if (!UnwindGraph)
     return false;
   const auto FrameBytes = FrameAlloca->getAllocationSize(Mod->getDataLayout());
-  const auto Coordinate = cxxRegistrationFrameCoordinate(EH, &States);
+  const auto Coordinate = cxxRegistrationFrameCoordinate(Func);
   const auto Layout =
       Coordinate && FrameBytes && !FrameBytes->isScalable()
           ? projectX86RegistrationFrame(
@@ -249,7 +253,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
         continue;
       // Synchronous calls need one source dispatch state. A common resume
       // block may join catch states before its next state store or return.
-      if (State->Levels.size() > 1)
+      if (State->levels().size() > 1)
         return false;
       const auto *Effect = States.callFrameEffect(Op.Addr, Op.OriginSeq);
       llvm::CallInst *Call = nullptr;
@@ -324,7 +328,8 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
         break;
     }
   }
-  if (Resumes.empty() || Resumes.size() != States.CxxContinuations.size() ||
+  if ((!Catches.empty() && Resumes.empty()) ||
+      Resumes.size() != States.CxxContinuations.size() ||
       Calls.size() != States.CallFrameEffects.size())
     return false;
   const auto CopyOwners = registrationCxxPHICopyOwners(
@@ -390,9 +395,9 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   if (!CleanupParents)
     return false;
   for (const auto &Plan : Calls) {
-    if (Plan.State->Levels.empty())
+    if (!Plan.State->CanDispatch || Plan.State->levels().empty())
       continue;
-    const auto Level = Plan.State->Levels[0];
+    const auto Level = Plan.State->levels()[0];
     int32_t Walk = Level;
     while (Walk >= 0) {
       if (++Work > limits::kMaxRegistrationEHStateWork ||
@@ -411,10 +416,10 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     }
   }
 
-  if (States.ChainAccesses.empty() ||
-      States.ChainAccesses.size() != RegistrationChainIR.size())
+  if (ChainAccesses->empty() ||
+      ChainAccesses->size() != RegistrationChainIR.size())
     return false;
-  for (const auto &Access : States.ChainAccesses) {
+  for (const auto &Access : *ChainAccesses) {
     auto It = RegistrationChainIR.find({Access.Address, Access.OpSeq});
     if (It == RegistrationChainIR.end() || !It->second ||
         !ChainInstructions.insert(It->second).second)
@@ -607,14 +612,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     OuterUnwinds.push_back(UnwindAt(Cxx.UnwindMap[Try.TryLow].ToState));
   emitRegistrationCxxCatches(EH, Catches, Dispatches, OuterUnwinds,
                              *CatchParents, *FrameAlloca, Parent);
-  auto ProtectedCall = [&](const RegistrationBlockState &State) {
-    if (State.Levels.empty())
-      return false;
-    const int32_t Level = State.Levels.front();
-    return llvm::any_of(State.CxxSearches, [&](const auto &Search) {
-      return Search.Level == Level;
-    });
-  };
+  size_t Protected = 0;
   for (const auto &Plan : Calls) {
     auto *Old = Plan.Call;
     for (auto *Unused : Plan.DiscardedResult) {
@@ -658,13 +656,14 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       for (unsigned I = 1; I < Old->arg_size(); ++I)
         Args.push_back(Old->getArgOperand(I));
     const int32_t Level =
-        Plan.State->Levels.empty() ? -1 : Plan.State->Levels.front();
-    auto *Unwind = ProtectedCall(*Plan.State) ? UnwindAt(Level) : nullptr;
+        Plan.State->levels().empty() ? -1 : Plan.State->levels().front();
+    auto *Unwind = Plan.State->CanDispatch ? UnwindAt(Level) : nullptr;
     llvm::SmallVector<llvm::OperandBundleDef, 1> Bundles;
     if (Plan.State->CallbackOnly)
       Bundles.emplace_back("funclet", Catches.at(Plan.CatchIdentity).Pad);
     llvm::CallBase *Call = nullptr;
     if (Unwind) {
+      ++Protected;
       auto *Block = Old->getParent();
       auto *Continue = Block->splitBasicBlock(Old->getNextNode(),
                                               "registration.cxx.call.cont");
@@ -731,7 +730,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
         Stack ? *Stack->Allocation : *FrameAlloca,
         Stack ? Stack->Bytes : Layout->Establisher);
   }
-  for (const auto &Access : States.ChainAccesses) {
+  for (const auto &Access : *ChainAccesses) {
     auto *I = RegistrationChainIR.at({Access.Address, Access.OpSeq});
     llvm::IRBuilder<> B(I);
     med_llvm_eh::emitWindowsEHProvenanceAnchor(
@@ -781,8 +780,6 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       llvm::MDNode::get(
           *Ctx, {med_llvm_eh::mdUInt(*Ctx, 1, 1),
                  llvm::MDString::get(*Ctx, "cxx-x86-registration-native")}));
-  const auto Protected = llvm::count_if(
-      Calls, [&](const CallPlan &Plan) { return ProtectedCall(*Plan.State); });
   exception_rewrite::setContract(
       Parent, exception_rewrite::SourceState::Complete,
       exception_rewrite::LoweringState::Complete, Protected, Protected, 0);

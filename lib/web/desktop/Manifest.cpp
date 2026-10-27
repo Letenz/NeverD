@@ -13,6 +13,8 @@
 #include "../JsonReader.h"
 #include "ManifestInternal.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 #include <set>
 
@@ -44,8 +46,13 @@ ManifestContext::ManifestContext(const Snapshot &Input,
   uint64_t Bytes = 0;
   std::set<std::string_view> IDs;
   for (const auto &A : Input.Artifacts) {
-    if (A.ID.size() > 64 || A.MemberPath.size() > 4096 ||
-        A.MemberPath.size() > 8 * 1024 * 1024 - Bytes)
+    if (A.ID.size() > ::neverd::limits::web::
+                          kManifestContextManifestContextAIDSizeLimit ||
+        A.MemberPath.size() >
+            ::neverd::limits::web::
+                kManifestContextManifestContextAMemberPathSizeLimit ||
+        A.MemberPath.size() >
+            ::neverd::limits::web::kMaxDesktopManifestPathBytes - Bytes)
       throw Error("desktop_manifest_namespace_budget_exceeded");
     Bytes += A.MemberPath.size();
     if (!IDs.insert(A.ID).second ||
@@ -80,7 +87,7 @@ DesktopEntry ManifestContext::entry(std::string_view Field,
     return E;
   }
   auto Path = Value->getAsString()->str();
-  if (Path.size() > 4096) {
+  if (Path.size() > ::neverd::limits::web::kManifestContextEntryPathSizeLimit) {
     E.LinkStatus = "path_budget_exceeded";
     return E;
   }

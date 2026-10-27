@@ -38,7 +38,7 @@ private:
                                     const ExecutableCodeOwnerIndex *);
 
   bool isImportStubAt(va_t Addr) const;
-  bool hasFunctionSymbolAt(va_t Addr) const;
+  bool hasFunctionSymbolAt(va_t Addr, bool IncludeBoundaryGuesses) const;
   bool hasKnownOrTypedOwnerAt(va_t Addr) const;
   va_t getFunctionMetadataEnd(va_t Entry) const;
   bool ownsFunctionFragment(va_t Entry, va_t Target) const;
@@ -47,6 +47,7 @@ private:
   std::vector<va_t> ImportStubs;
   std::vector<std::pair<va_t, va_t>> ImportRanges;
   std::vector<va_t> FunctionStarts;
+  std::vector<va_t> NonGuessedFunctionStarts;
   std::vector<std::pair<va_t, va_t>> CodeRanges;
   // Exact raw entries and their smallest finite end, without normalization
   // or merging overlapping functions into one owner.

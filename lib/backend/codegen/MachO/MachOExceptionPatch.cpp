@@ -430,7 +430,7 @@ findMachOEHFrameRegion(llvm::ArrayRef<uint8_t> Binary) {
         uint64_t AppendFileOff = EHFileOff + *LogicalSize;
         uint64_t Limit = Seg.FileOff + Seg.FileSize;
         for (uint64_t Offset : SectionOffsets)
-          if (Offset > AppendFileOff)
+          if (Offset != EHFileOff && Offset >= AppendFileOff)
             Limit = std::min(Limit, Offset);
         if (Limit < AppendFileOff || Limit > Binary.size())
           return;

@@ -8,6 +8,7 @@
 #define NEVERD_BACKEND_LLVM_SCALAR_PROOF_H
 
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/ir/med/MedIR.h"
 
 #include "llvm/ADT/APInt.h"
@@ -56,7 +57,10 @@ bool provesUnsignedMagicRemainder(const MedVar &Value, LookupDefFn &&LookupDef,
   std::function<std::optional<ScaledQuotient>(const MedVar &, unsigned)>
       scaleFactor = [&](const MedVar &V,
                         unsigned Depth) -> std::optional<ScaledQuotient> {
-    if (V.Size != 4 || Depth > 8)
+    if (V.Size != 4 ||
+        Depth >
+            ::neverd::limits::backend::
+                kMedLLVMScalarProofProvesUnsignedMagicRemainderScaleFactorDepthLimit)
       return std::nullopt;
     const MedOp *Def = LookupDef(V);
     if (!Def || Def->Output.Size != 4)

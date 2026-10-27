@@ -1,6 +1,7 @@
 #include "ConnectionsDialog.h"
 
 #include "Icons.h"
+#include "ModelessDialog.h"
 #include "Session.h"
 #include "Theme.h"
 #include "mcp/GuiSessionBroker.h"
@@ -49,16 +50,17 @@ ConnectionsDialog::ConnectionsDialog(Session &session,
                                      McpConnectionManager &client,
                                      GuiSessionBroker &broker, QWidget *parent)
     : QDialog(parent), session_(session), client_(client), broker_(broker) {
-  setWindowTitle(tr("MCP Connections"));
+  setObjectName(QStringLiteral("connectionsDialog"));
+  setWindowTitle(tr("MCP connections"));
   setWindowIcon(icon(QStringLiteral("mcp")));
   resize(1000, 700);
   auto *layout = new QVBoxLayout(this);
 
   // Session sharing.
   auto *shareRow = new QHBoxLayout;
-  shareRow->addWidget(new QLabel(tr("Current GUI session"), this), 1);
+  shareRow->addWidget(new QLabel(tr("This NeverD session"), this), 1);
   sharing_ = new QPushButton(this);
-  copyCredential_ = new QPushButton(tr("Copy Credential Path"), this);
+  copyCredential_ = new QPushButton(tr("Copy credential path"), this);
   shareRow->addWidget(sharing_);
   shareRow->addWidget(copyCredential_);
   layout->addLayout(shareRow);
@@ -129,8 +131,8 @@ ConnectionsDialog::ConnectionsDialog(Session &session,
   auto *titleRow = new QHBoxLayout;
   selectedTitle_ = new QLabel(tr("Result"), right);
   schema_ = new QPushButton(tr("Schema"), right);
-  call_ = new QPushButton(tr("Call Tool"), right);
-  cancelCall_ = new QPushButton(tr("Cancel Call"), right);
+  call_ = new QPushButton(tr("Call tool"), right);
+  cancelCall_ = new QPushButton(tr("Cancel call"), right);
   titleRow->addWidget(selectedTitle_, 1);
   titleRow->addWidget(schema_);
   titleRow->addWidget(call_);
@@ -189,7 +191,7 @@ ConnectionsDialog::ConnectionsDialog(Session &session,
 
 void ConnectionsDialog::refresh() {
   const bool shared = broker_.enabled();
-  sharing_->setText(shared ? tr("Disable Sharing") : tr("Enable Sharing"));
+  sharing_->setText(shared ? tr("Disable sharing") : tr("Enable sharing"));
   sharing_->setEnabled(session_.loaded() || shared);
   copyCredential_->setEnabled(shared);
   const QString brokerStatus = broker_.status();
@@ -331,11 +333,12 @@ void ConnectionsDialog::selectEntry() {
 }
 
 void ConnectionsDialog::showSchema() {
-  QDialog dialog(this);
-  dialog.setWindowTitle(tr("Tool Input Schema"));
-  dialog.resize(640, 520);
-  auto *layout = new QVBoxLayout(&dialog);
-  auto *text = new QPlainTextEdit(&dialog);
+  auto *dialog = new QDialog(this);
+  dialog->setObjectName(QStringLiteral("toolSchemaDialog"));
+  dialog->setWindowTitle(tr("Tool input schema"));
+  dialog->resize(640, 520);
+  auto *layout = new QVBoxLayout(dialog);
+  auto *text = new QPlainTextEdit(dialog);
   text->setReadOnly(true);
   text->setFont(Theme::instance().codeFont());
   text->setPlainText(QString::fromUtf8(
@@ -343,10 +346,10 @@ void ConnectionsDialog::showSchema() {
                         selectedTool_.value("inputSchema").toMap()))
           .toJson(QJsonDocument::Indented)));
   layout->addWidget(text);
-  auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
-  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
+  connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
   layout->addWidget(buttons);
-  dialog.exec();
+  showModelessDialog(dialog, this);
 }
 
 } // namespace neverd::gui

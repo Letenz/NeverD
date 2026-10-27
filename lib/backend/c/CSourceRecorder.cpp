@@ -6,6 +6,7 @@
 
 #include "CSourceRecorder.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/ir/high/HighIR.h"
 
@@ -53,24 +54,24 @@ CSourceRecorder::CSourceRecorder(CSourceMap &Map, llvm::StringRef Ordinary,
 void CSourceRecorder::prepareHighSources() {
   if (!Map.HighSources)
     return;
+  if (recordsInstructions())
+    HighStatements.emplace(*Map.HighSources);
   using Key = std::pair<va_t, const HighExpr *>;
   std::map<Key, std::set<sigs::LibraryOccurrence>> Origins;
   std::map<Key, std::shared_ptr<const HighExpr>> Alive;
   std::map<std::pair<va_t, va_t>, std::set<sigs::LibraryOccurrence>> Stores;
   std::set<std::pair<va_t, va_t>> AmbiguousStores;
   std::set<Key> Ambiguous;
-  size_t Work = 250000;
+  size_t Work = ::neverd::limits::backend::
+      kCSourceRecorderCSourceRecorderPrepareHighSourcesWork;
   for (const auto &Source : *Map.HighSources) {
-    if (recordsInstructions() && Source.Kind != HighSourceKind::Expression &&
-        Source.StatementKind)
-      HighAnchors[{Source.Function, Source.Occurrence.Address,
-                   *Source.StatementKind}]
-          .insert(Source.Occurrence);
     if (Source.Kind == HighSourceKind::Store) {
       Stores[{Source.Function, Source.Occurrence.Address}].insert(
           Source.Occurrence);
       continue;
     }
+    if (Source.Kind == HighSourceKind::StatementExpression)
+      continue;
     if (auto Expr = Source.Expression.lock()) {
       Key K{Source.Function, Expr.get()};
       if (recordsInstructions() &&
@@ -110,7 +111,8 @@ void CSourceRecorder::prepareHighSources() {
       std::set<sigs::LibraryOccurrence> Covered;
       std::set<const HighExpr *> Seen;
       std::vector<const HighExpr *> Pending{Expr.get()};
-      size_t Budget = 4096;
+      size_t Budget = ::neverd::limits::backend::
+          kCSourceRecorderCSourceRecorderPrepareHighSourcesBudget;
       while (!Pending.empty() && Budget) {
         if (!Work) {
           HighRegions.clear();
@@ -157,7 +159,8 @@ void CSourceRecorder::prepareLLVMSources(const LLVMSourceMap &Sources) {
     if (auto *Function = llvm::dyn_cast_or_null<llvm::Function>(Handle))
       LLVMFunctions.emplace(Function, Entry);
   std::set<const llvm::Value *> Ambiguous;
-  size_t Work = 250000;
+  size_t Work = ::neverd::limits::backend::
+      kCSourceRecorderCSourceRecorderPrepareLLVMSourcesWork;
   for (const auto &Observation : Sources.Observations) {
     auto *Instruction =
         llvm::dyn_cast_or_null<llvm::Instruction>(Observation.Value);
@@ -340,10 +343,9 @@ CSourceRecorder::instruction(const llvm::Instruction &Value) {
 std::optional<size_t> CSourceRecorder::statement(va_t Function,
                                                  const HighStmt &Stmt) {
   const auto At = HighStores.find({Function, Stmt.Addr});
-  const auto Anchor = HighAnchors.find({Function, Stmt.Addr, Stmt.Kind});
-  if (recordsInstructions() && !Stmt.IsPhiCopy && Anchor != HighAnchors.end() &&
-      Anchor->second.size() == 1)
-    return event(std::nullopt, {*Anchor->second.begin()}, Function);
+  if (recordsInstructions() && HighStatements)
+    if (const auto Origin = HighStatements->lookup(Function, Stmt))
+      return event(std::nullopt, {*Origin}, Function);
   if (Stmt.Kind != StmtKind::Store)
     return std::nullopt;
   return At == HighStores.end()

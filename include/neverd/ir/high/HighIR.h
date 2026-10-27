@@ -15,9 +15,12 @@
 #define NEVERD_IR_HIGH_HIGHIR_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/FloatingCallArguments.h"
 #include "neverd/ir/NdTypes.h"
+#include "neverd/ir/SourceFrameBytes.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/med/AArch64/AArch64ReturnProtection.h"
 #include "neverd/ir/med/MedIR.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
@@ -117,11 +120,18 @@ struct HighExpr {
   /// For Call
   std::string CallTarget;
   va_t CallAddr = 0;
+  /// The address of the call instruction this call is, which copies of it
+  /// keep: a tail duplicated over a jump takes the jump's address, and work
+  /// sunk into both arms has none.  0 for a call no instruction makes.
+  va_t CallSiteAddr = 0;
   bool IsIndirectCall = false;
   int IndirectParamIdx = -1;
   /// Unresolved `INDIR_CALL` callee.  Not a printed argument.
   std::shared_ptr<HighExpr> IndirectTarget;
   std::shared_ptr<const SourceCallTypeHint> SourceCallHint;
+  /// Complete fixed scalar FP signature proven by call-ABI recovery. Operand
+  /// expression types alone cannot establish a nonvariadic declaration.
+  std::shared_ptr<const FloatingCallArguments> FloatingCallSignature;
   Intrinsic IntrinsicId = Intrinsic::None;
   std::vector<MedVar> IntrinsicOutputs;
   /// The MedIR call never returns: its callee is a routine the name list
@@ -189,6 +199,12 @@ bool isNonReturningSourceCall(const ExprPtr &Expression);
 /// A bound noreturn call or an exact unconditional source trap. Resumable
 /// debugger traps and unbound call spellings do not terminate source flow.
 bool isTerminatingHighCall(const ExprPtr &Expression);
+
+/// \p Kept as the one value that a merge of two equal statements leaves for
+/// it and \p Dropped.  Copies of one statement make the same calls, which
+/// keep their call instructions; calls two instructions made keep none, as
+/// one call now stands for both (HighExpr::CallSiteAddr).
+ExprPtr withMergedCallSites(const ExprPtr &Kept, const ExprPtr &Dropped);
 
 //===----------------------------------------------------------------------===//
 // Statements (structured control flow)
@@ -568,6 +584,11 @@ struct HighLocal {
 };
 
 struct HighFunc {
+  /// Proven entry-SP PAC/AUT return policy, projected by MedToHigh without
+  /// changing machine IR. C emits a branch-protection target attribute.
+  std::optional<AArch64ReturnProtection> ReturnProtection;
+  /// Same original-machine byte observations carried by MedFunc.
+  std::vector<SourceFrameBytes> FrameBytes;
   va_t Entry = 0;
   uint64_t OriginalSize = 0;
   /// Bytes reserved below and above the synthetic entry stack pointer.
@@ -583,6 +604,37 @@ struct HighFunc {
   /// MedFunc::IsVariadic: its prologue saves its argument registers for
   /// va_arg, which reads no more of them than a caller passes.
   bool IsVariadic = false;
+  /// A System V x86-64 function whose va_start only builds a va_list it
+  /// passes on (`error(fmt, ...)` calling `verror(fmt, va)`): C prints it as
+  /// `T f(named, ...)` with va_start, and its calls with the arguments each
+  /// caller passes.  The rest of its body never reads the saved registers,
+  /// the va_list or the overflow parameters (recognizeVaStartForwarder).
+  struct VaStartForwarder {
+    /// The System V x86-64 va_list's bytes, and the register save area's:
+    /// the six integer argument registers' then the eight vector ones'.
+    static constexpr int64_t VaListBytes = 24;
+    static constexpr int64_t SaveAreaBytes = 6 * 8 + 8 * 16;
+    /// The va_list's and the register save area's entry displacements.
+    int64_t VaList = 0;
+    int64_t SaveArea = 0;
+    /// The integer parameters ahead of the saved registers.
+    unsigned NamedParams = 0;
+    /// The call operands that pass the va_list to a parameter that takes
+    /// one (MedFunc::VaListCalls), as (call address, operand).
+    std::set<std::pair<va_t, unsigned>> Passes;
+    /// Call operands that only hold the address of one of va_start's areas:
+    /// its fields, stored where a stack argument would be, read back as one,
+    /// or the list's own in an argument no parameter of the call takes.  The
+    /// C writer prints the function this way only if no call passes one.
+    std::set<std::pair<va_t, unsigned>> Junk;
+  };
+  std::optional<VaStartForwarder> VaStart;
+  /// MedFunc's va_start geometry, and the calls that pass its va_list on,
+  /// which recognizeVaStartForwarder reads.
+  std::optional<int64_t> VaListDisplacement;
+  std::optional<int64_t> VaRegisterSaveArea;
+  int VaNamedIntegerRegisters = -1;
+  std::map<va_t, bool> VaListCalls;
   /// How execution reaches Entry (MedFunc::EntryKind).
   StackEntryKind EntryKind = StackEntryKind::Call;
   TypeRef ReturnType;

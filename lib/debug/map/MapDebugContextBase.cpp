@@ -11,6 +11,11 @@
 
 #include "neverd/debug/MapDebugContextBase.h"
 
+#include "MapParsers.h"
+
+#include "neverd/debug/Limits.h"
+#include "neverd/debug/MapFile.h"
+
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
@@ -52,7 +57,9 @@ std::optional<SourceLoc> MapDebugContextBase::sourceLocation(va_t Addr) const {
   if (It == SourceLocations.begin())
     return std::nullopt;
   --It;
-  if (It->first == Addr || (Addr - It->first) < 256)
+  if (It->first == Addr ||
+      (Addr - It->first) <
+          ::neverd::limits::debug::kMaxNearestMapSymbolDistance)
     return It->second;
   return std::nullopt;
 }
@@ -89,15 +96,15 @@ bool MapDebugContextBase::isCOFFMapHeader(llvm::StringRef Line) {
 }
 
 bool MapDebugContextBase::parseSegOffset(llvm::StringRef Token, uint16_t &Seg,
-                                         uint32_t &Offset) {
+                                         uint64_t &Offset) {
   auto ColonPos = Token.find(':');
   if (ColonPos == llvm::StringRef::npos)
     return false;
   unsigned SegVal;
-  if (Token.substr(0, ColonPos).getAsInteger(16, SegVal) ||
-      SegVal > 0xFFFFu)
+  if (Token.substr(0, ColonPos).getAsInteger(16, SegVal) || SegVal > 0xFFFFu)
     return false;
-  unsigned OffVal;
+  // IDA writes the offsets of a 64-bit database in sixteen digits.
+  uint64_t OffVal;
   if (Token.substr(ColonPos + 1).getAsInteger(16, OffVal))
     return false;
   Seg = static_cast<uint16_t>(SegVal);
@@ -115,7 +122,7 @@ void MapDebugContextBase::inferFunctionSizes() {
     if (Next == Functions.end())
       break;
     uint64_t Gap = Next->first - It->first;
-    if (Gap > 0 && Gap <= 16 * 1024 * 1024)
+    if (Gap > 0 && Gap <= ::neverd::limits::debug::kMaxMapFunctionGapBytes)
       It->second.Size = Gap;
   }
 }
@@ -124,7 +131,7 @@ namespace {
 
 struct SectionEntry {
   uint16_t Seg;
-  uint32_t Offset;
+  uint64_t Offset;
   uint32_t Length;
   std::string Name;
   std::string Class;
@@ -139,7 +146,7 @@ bool isCodeSegment(const std::vector<SectionEntry> &Sections, uint16_t Seg) {
 }
 
 va_t resolveAddress(const std::vector<SectionEntry> &Sections, uint16_t Seg,
-                    uint32_t Offset, uint64_t ImageBase) {
+                    uint64_t Offset, uint64_t ImageBase) {
   if (Seg == 0)
     return 0;
   for (auto &S : Sections) {
@@ -149,16 +156,124 @@ va_t resolveAddress(const std::vector<SectionEntry> &Sections, uint16_t Seg,
   return ImageBase + Offset;
 }
 
+/// A public as a segmented MAP states it, before the image places it.
+struct PublicRow {
+  uint16_t Seg = 0;
+  uint64_t Offset = 0;
+  std::string Name;
+  /// link.exe's Rva+Base column: the address at the MAP's image base.
+  std::optional<uint64_t> RvaBase;
+  bool FuncFlag = false;
+};
+
+/// The ways the segment:offset of a public without an Rva+Base column reads
+/// as an address.  link.exe numbers a PE's sections from one, and IDA does so
+/// for the segments of a PE it loaded; Borland's section table starts each
+/// segment at its address; IDA states the address itself for an image whose
+/// segments are flat, such as an ELF or Mach-O one.
+enum class SegmentReading { ImageSection, TableStart, Flat, Legacy };
+
+std::optional<va_t> readAddress(SegmentReading Reading, const PublicRow &Row,
+                                const std::vector<SectionEntry> &Sections,
+                                const MapImageLayout &Layout,
+                                uint64_t MapBase) {
+  switch (Reading) {
+  case SegmentReading::ImageSection:
+    if (Row.Seg == 0 || Row.Seg > Layout.Sections.size())
+      return std::nullopt;
+    return Layout.Sections[Row.Seg - 1].Address + Row.Offset;
+  case SegmentReading::TableStart:
+    for (const SectionEntry &S : Sections)
+      if (S.Seg == Row.Seg)
+        return S.Offset + Row.Offset;
+    return std::nullopt;
+  case SegmentReading::Flat:
+    return Row.Offset;
+  case SegmentReading::Legacy:
+    return resolveAddress(Sections, Row.Seg, Row.Offset, MapBase);
+  }
+  return std::nullopt;
+}
+
+/// The reading that places the most of \p Rows in the image, preferring the
+/// image's own section numbering for a PE.
+SegmentReading chooseReading(const std::vector<PublicRow> &Rows,
+                             const std::vector<SectionEntry> &Sections,
+                             const MapImageLayout &Layout, uint64_t MapBase) {
+  const bool PE = Layout.Format == BinaryFormat::COFF;
+  const SegmentReading Order[] = {
+      PE ? SegmentReading::ImageSection : SegmentReading::Flat,
+      SegmentReading::TableStart,
+      PE ? SegmentReading::Flat : SegmentReading::ImageSection,
+      SegmentReading::Legacy};
+  SegmentReading Best = SegmentReading::Legacy;
+  size_t BestPlaced = 0;
+  for (SegmentReading Reading : Order) {
+    size_t Placed = 0;
+    for (const PublicRow &Row : Rows)
+      if (!Row.RvaBase)
+        if (auto VA = readAddress(Reading, Row, Sections, Layout, MapBase);
+            VA && Layout.isMapped(*VA))
+          ++Placed;
+    if (Placed > BestPlaced) {
+      Best = Reading;
+      BestPlaced = Placed;
+    }
+  }
+  return Best;
+}
+
 } // anonymous namespace
+
+bool isAutomaticNameOf(llvm::StringRef Name, va_t Addr) {
+  static constexpr llvm::StringLiteral Prefixes[] = {
+#define NEVERD_MAP_AUTOMATIC_NAME_PREFIX(Prefix) Prefix,
+#include "neverd/debug/MapAutomaticNames.def"
+  };
+  constexpr size_t MaxHexDigits = 16;
+  for (llvm::StringRef Prefix : Prefixes) {
+    llvm::StringRef Digits = Name;
+    uint64_t Value = 0;
+    if (Digits.consume_front(Prefix) && !Digits.empty() &&
+        Digits.size() <= MaxHexDigits && !Digits.getAsInteger(16, Value))
+      return Value == Addr;
+  }
+  return false;
+}
 
 void MapDebugContextBase::parseCOFFMapContent(
     llvm::StringRef Content, std::map<va_t, FunctionSym> &Functions,
-    uint64_t ImageBase, std::map<va_t, DataObjectSym> *DataObjects) {
+    uint64_t ImageBase, std::map<va_t, DataObjectSym> *DataObjects,
+    const MapImageLayout *Layout) {
 
   enum class ParseState { Header, Sections, Symbols, Done };
   ParseState State = ParseState::Header;
   uint64_t PreferredBase = ImageBase;
+  bool StatesPreferredBase = false;
+  // link.exe follows each public with its address; IDA and Borland do not,
+  // and IDA's demangled names hold spaces.
+  bool HasRvaColumn = false;
   std::vector<SectionEntry> Sections;
+  std::vector<PublicRow> Rows;
+
+  const auto addFunction = [&](va_t VA, std::string Name) {
+    if (Functions.find(VA) != Functions.end())
+      return;
+    FunctionSym FS;
+    FS.Name = std::move(Name);
+    FS.Addr = VA;
+    Functions[VA] = std::move(FS);
+  };
+  const auto addData = [&](va_t VA, std::string Name) {
+    if (!DataObjects || DataObjects->find(VA) != DataObjects->end())
+      return;
+    DataObjectSym Obj;
+    Obj.Name = std::move(Name);
+    Obj.Addr = VA;
+    Obj.Size = 0;
+    Obj.IsBuffer = false;
+    (*DataObjects)[VA] = std::move(Obj);
+  };
 
   llvm::StringRef Remaining = Content;
   while (!Remaining.empty()) {
@@ -172,8 +287,10 @@ void MapDebugContextBase::parseCOFFMapContent(
     if (Trimmed.starts_with("Preferred load address is")) {
       llvm::StringRef AddrStr = Trimmed.substr(25).trim();
       unsigned long long Val;
-      if (!AddrStr.getAsInteger(16, Val))
+      if (!AddrStr.getAsInteger(16, Val)) {
         PreferredBase = Val;
+        StatesPreferredBase = true;
+      }
       continue;
     }
 
@@ -185,6 +302,7 @@ void MapDebugContextBase::parseCOFFMapContent(
 
     if (MapDebugContextBase::isCOFFMapHeader(Trimmed)) {
       State = ParseState::Symbols;
+      HasRvaColumn = Trimmed.contains("Rva+Base");
       continue;
     }
 
@@ -193,7 +311,8 @@ void MapDebugContextBase::parseCOFFMapContent(
       continue;
     }
 
-    if (Trimmed.starts_with("entry point at")) {
+    if (Trimmed.starts_with("entry point at") ||
+        Trimmed.starts_with("Program entry point at")) {
       State = ParseState::Done;
       continue;
     }
@@ -203,7 +322,7 @@ void MapDebugContextBase::parseCOFFMapContent(
       Trimmed.split(Tokens, ' ', -1, false);
       if (Tokens.size() >= 3) {
         uint16_t Seg;
-        uint32_t Offset;
+        uint64_t Offset;
         if (parseSegOffset(Tokens[0], Seg, Offset)) {
           SectionEntry Entry;
           Entry.Seg = Seg;
@@ -227,53 +346,81 @@ void MapDebugContextBase::parseCOFFMapContent(
         continue;
 
       uint16_t Seg;
-      uint32_t Offset;
+      uint64_t Offset;
       if (!parseSegOffset(Tokens[0], Seg, Offset))
         continue;
 
       bool HasFuncFlag = std::find(Tokens.begin() + 2, Tokens.end(),
                                    llvm::StringRef("f")) != Tokens.end();
 
-      std::string Name = Tokens[1].str();
-
-      va_t VA = 0;
-      if (Tokens.size() >= 3) {
+      std::optional<uint64_t> RvaBase;
+      if (Tokens.size() >= 3 && (!Layout || HasRvaColumn)) {
         llvm::StringRef RvaStr = Tokens[2];
         if (RvaStr.starts_with("0x") || RvaStr.starts_with("0X"))
           RvaStr = RvaStr.drop_front(2);
-        unsigned long long RvaBase;
-        if (!RvaStr.getAsInteger(16, RvaBase))
-          VA = static_cast<va_t>(RvaBase);
+        unsigned long long Value;
+        if (!RvaStr.getAsInteger(16, Value) && Value != 0)
+          RvaBase = Value;
       }
-      if (VA == 0)
-        VA = resolveAddress(Sections, Seg, Offset, PreferredBase);
-      if (VA == 0 || Name.empty())
-        continue;
 
-      if (HasFuncFlag || isCodeSegment(Sections, Seg)) {
-        if (Functions.find(VA) == Functions.end()) {
-          FunctionSym FS;
-          FS.Name = std::move(Name);
-          FS.Addr = VA;
-          Functions[VA] = std::move(FS);
-        }
+      if (!Layout) {
+        std::string Name = Tokens[1].str();
+        va_t VA = RvaBase
+                      ? static_cast<va_t>(*RvaBase)
+                      : resolveAddress(Sections, Seg, Offset, PreferredBase);
+        if (VA == 0 || Name.empty())
+          continue;
+        if (HasFuncFlag || isCodeSegment(Sections, Seg))
+          addFunction(VA, std::move(Name));
+        else
+          addData(VA, std::move(Name));
         continue;
       }
-      if (!DataObjects || DataObjects->find(VA) != DataObjects->end())
-        continue;
-      DataObjectSym Obj;
-      Obj.Name = std::move(Name);
-      Obj.Addr = VA;
-      Obj.Size = 0;
-      Obj.IsBuffer = false;
-      (*DataObjects)[VA] = std::move(Obj);
+
+      PublicRow Row;
+      Row.Seg = Seg;
+      Row.Offset = Offset;
+      Row.RvaBase = RvaBase;
+      Row.FuncFlag = HasFuncFlag;
+      Row.Name = HasRvaColumn
+                     ? Tokens[1].str()
+                     : Trimmed.drop_front(Tokens[0].size()).trim().str();
+      if (!Row.Name.empty() && Seg != 0)
+        Rows.push_back(std::move(Row));
     }
+  }
+
+  if (!Layout)
+    return;
+
+  // The image the MAP is read against places what the MAP does not: the
+  // address of a public without one, and which addresses hold code.
+  const uint64_t MapBase = StatesPreferredBase ? PreferredBase : Layout->Base;
+  const SegmentReading Reading =
+      chooseReading(Rows, Sections, *Layout, MapBase);
+  const bool SectionsKnown = !Layout->Sections.empty();
+  for (PublicRow &Row : Rows) {
+    std::optional<va_t> VA;
+    if (Row.RvaBase) {
+      // An image rebased since the link moves its names with it.
+      VA = static_cast<va_t>(*Row.RvaBase - MapBase + Layout->Base);
+    } else {
+      VA = readAddress(Reading, Row, Sections, *Layout, MapBase);
+    }
+    if (!VA || *VA == 0 || isAutomaticNameOf(Row.Name, *VA))
+      continue;
+    const bool Code =
+        SectionsKnown ? Layout->isCode(*VA) : isCodeSegment(Sections, Row.Seg);
+    if (Row.FuncFlag || Code)
+      addFunction(*VA, std::move(Row.Name));
+    else if (!SectionsKnown || Layout->isMapped(*VA))
+      addData(*VA, std::move(Row.Name));
   }
 }
 
 void MapDebugContextBase::parseCOFFMapLineNumbers(
     llvm::StringRef Content, std::map<va_t, SourceLoc> &Locations,
-    uint64_t ImageBase) {
+    uint64_t ImageBase, const MapImageLayout *Layout) {
 
   std::string CurrentFile;
   bool InLineNumbers = false;
@@ -304,7 +451,7 @@ void MapDebugContextBase::parseCOFFMapLineNumbers(
         STrimmed.split(Tokens, ' ', -1, false);
         if (Tokens.size() >= 3) {
           uint16_t Seg;
-          uint32_t Offset;
+          uint64_t Offset;
           if (parseSegOffset(Tokens[0], Seg, Offset)) {
             SectionEntry Entry;
             Entry.Seg = Seg;
@@ -339,11 +486,16 @@ void MapDebugContextBase::parseCOFFMapLineNumbers(
         continue;
 
       uint16_t Seg;
-      uint32_t Offset;
+      uint64_t Offset;
       if (!parseSegOffset(Tokens[I + 1], Seg, Offset))
         continue;
 
-      va_t VA = resolveAddress(Sections, Seg, Offset, ImageBase);
+      // link.exe numbers the segments as the image numbers its sections.
+      va_t VA = 0;
+      if (Layout && Seg != 0 && Seg <= Layout->Sections.size())
+        VA = Layout->Sections[Seg - 1].Address + Offset;
+      else if (!Layout)
+        VA = resolveAddress(Sections, Seg, Offset, ImageBase);
       if (VA == 0)
         continue;
 

@@ -37,8 +37,8 @@ Nonreturning or unsupported requests have no result value: JSON uses
 
 `MachOExecutionImage` uses LLVM's Mach-O parser and the shared loader entry
 reader. It preserves original file bytes without analysis relocation patches.
-Only thin little-endian `MH_EXECUTE` images with one unambiguous platform and
-entry are admitted. Universal images require an explicitly extracted slice;
+Main inputs must be thin little-endian `MH_EXECUTE` images with one unambiguous
+platform and entry; explicit MH_DYLIB dependencies follow the contract below. Universal images require an explicitly extracted slice;
 the execution loader does not choose one from the host.
 
 The complete input file, including unmapped metadata and trailing bytes, must
@@ -61,7 +61,7 @@ Guard pages and the private main-return gate remain reserved.
 `LC_MAIN` receives `argc`, `argv`, `envp` and the apple vector as four integer
 arguments under the platform's scalar entry convention. A return produces the
 low eight-bit process exit status. The bounded startup model accepts the
-standard `/usr/lib/dyld` command only for import-free `LC_MAIN`; it implements
+standard `/usr/lib/dyld` command for `LC_MAIN` within the finite import contract below; it implements
 that entry handoff without loading or running host dyld. Nonzero `stacksize`
 requests are rejected, since the caller's explicit `stack_size` owns the budget.
 
@@ -73,12 +73,7 @@ extra flavors and conflicting entries are rejected. No host environment or
 auxiliary Linux vector is inherited. Startup follows the distinction described
 in Apple's [dyld architecture](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-External dylibs, imports, rebases/chained fixups, constructors/destructors,
-thread-local sections, arm64e/PAC and other nonbaseline CPU subtypes,
-encrypted payloads and unmodeled load commands fail before execution. PIE
-images without fixups use their preferred addresses; this is deterministic
-placement, not ASLR. Code-signing blobs are metadata, not an implementation
-of AMFI or entitlement policy.
+The finite contracts below admit libSystem, explicit startup dylibs, startup constructors, main-thread C/C++ TLS and process-lifetime C/C++ destruction. Selective DSO finalization, legacy TLS initializer sections, arm64e/PAC, unsupported CPU subtypes, encrypted payloads and unmodeled load commands fail explicitly. Main executables retain their preferred addresses and dylibs receive disjoint deterministic placements. Code-signing blobs are metadata, without AMFI or entitlement policy.
 
 ## Darwin services
 
@@ -2689,3 +2684,251 @@ lchown-ownership-mutations59 services / virtual-lchown-ownership67 services / ma
 native preparation489 observations including258 lchown / ARM64 O0 O1 O2
 common native82 / mandatory95 per matching platform / ARM64 required285
 ```
+
+## Bounded libSystem imports
+
+Thin baseline executables and the explicit startup dylibs below may bind strong `/usr/lib/libSystem.B.dylib` dependencies under the finite contract. The main executable requires `LC_MAIN`; images use `MH_TWOLEVEL` and ordinary provider ordinals, with a libSystem compatibility requirement no greater than 1.0. Original classic/generic64 fixups, complete undefined-symbol closure, exact slots and local rebase targets are validated. Unknown symbols, weak/threaded binding, other relocation sources, initialization callbacks and authenticated pointers still fail explicitly.
+
+The process maps authenticated scalar call gates and one fresh main-thread errno word only when imports are present. Named wrappers share the raw Darwin kernel effects; they convert errors to `-1` and errno, while successful calls preserve errno. C `_exit` is Mach-O `__exit`; C `exit` (Mach-O `_exit`) remains unsupported. Ordinary functions require a valid return frame; a terminal `_exit` needs no usable return address. Calls retain provider, exact linkage name, declared argument count and complete carrier bits. Incomplete or nonreturning calls have a null result. Raw-only reports remain unchanged.
+
+`SG_READ_ONLY` makes current segment protection read-only after fixups while preserving its declared maximum protection. Native O0/O1/O2 observations confirm that a declared read/write maximum permits restoring write access with `mprotect`. Gate and errno pages are separate resident model reservations and cannot be unmapped or reprotected by the guest. Preparation and execution retain one deadline and event account; decoded metadata and model pages consume the existing memory budget.
+
+Independent native controls cover O0/O1/O2. The same authored object runs through the system linker, classic linking and chained linking against real libSystem. Portable process/C/CLI/Python checks cover all five platform/ISA combinations; matching ARM64 HVF checks cover macOS, iOS-device and Simulator profiles. This finite single-thread contract does not complete dlopen/dlsym, arbitrary dylib loading, dyld shared cache, threads, Objective-C/Swift frameworks, Intel HVF or physical iOS qualification.
+
+Classic lazy pointer programs are resolved eagerly before entry. Each program must explicitly name its destination, ordinary provider ordinal and symbol; only pointer type and zero addend are admitted, with one DO_BIND immediately followed by DONE and no inherited state. One exact original rebase to local executable bytes plus one lazy bind may share a slot; both raw records consume the budget, and all other collisions fail. `dyld_stub_binder` is admitted only as a strong, zero-addend ordinary classic bind alongside actual lazy calls. Entering its refusal gate fails before C frame/argument decoding, errno changes or a native-call record. This supports ordinary call stubs with stable prepared pointers, without implementing the runtime lazy resolver or dyld private state. The six-function C fixture observes all slots before calls and after repeated calls; a native control requests eager binding and compares output/status with guest execution.
+
+`open`, `lseek`, `pread`, `pwrite`, `dup` and `dup2` share the existing file catalogue, mutations and descriptor cursors. `open` records two arguments, or three when low-32-bit flags include O_CREAT. Its optional promoted int occupies four defined bytes at entry SP on ARM64 (padding is not read); x64 uses the third GP argument. The report preserves that carrier while a separate kernel argument narrows mode to 16 bits. With no O_CREAT, mode is zero and optional storage is not read; the required x64 return address is still validated. Argument-read failures precede call records, errno and file effects. This follows [Apple's ARM64 ABI](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms) and the [XNU open wrapper](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/open-base.c). Native O0/O1/O2 controls cover shared offsets, positioned IO, dup2 failures, offsets above 4 GiB, mode narrowing and binary bytes. Thread cancellation and compatibility path shims remain outside this model.
+
+`mmap`, `mprotect` and `munmap` reuse the existing memory mappings, protections, resident reservations and file leases. The C wrapper narrows protection, flag and descriptor arguments to 32 bits while reports retain their original carriers. `mmap` returns MAP_FAILED with EINVAL for zero length or absent MAP_PRIVATE/MAP_SHARED before kernel effects, then supplies MAP_UNIX03 for admitted calls; raw BSD semantics stay unchanged. This follows the [XNU UNIX03 wrapper](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/libsyscall/wrappers/unix03/mmap.c). Original C controls cover zero-filled anonymous pages, protection changes, error order, closed-descriptor mapping lifetime, private writes and partial EOF pages. Shared/fixed/executable mappings and allocator behavior remain outside this increment.
+
+```text
+provider: /usr/lib/libSystem.B.dylib (strong LC_LOAD_DYLIB; compatibility <= 1.0)
+C -> Mach-O: read -> _read; write -> _write; close -> _close
+C -> Mach-O: getpid -> _getpid; _exit -> __exit; __error -> ___error
+C -> Mach-O: open -> _open; lseek -> _lseek; pread -> _pread; pwrite -> _pwrite; dup -> _dup; dup2 -> _dup2
+C -> Mach-O: mmap -> _mmap; mprotect -> _mprotect; munmap -> _munmap
+entry: LC_MAIN main + MH_TWOLEVEL images; ordinary positive ordinals; main preferred base
+fixups: classic pointer rebase/non-lazy bind; independent lazy programs prepared eagerly; PTR_64 / PTR_64_OFFSET
+unsupported: runtime lazy resolver; weak/threaded streams; authenticated/multi-start chains; other relocations
+errno: fresh main-thread 4 bytes; error => -1 + errno; success preserves errno
+SG_READ_ONLY: current R after fixup; original declared maximum is retained
+gates: RX/max RX; errno: RW/max RW; both resident model reservations
+budget: one preparation/execution deadline; one event per trap; bounded metadata/model memory
+preparation timeout: typed Timeout, zero guest work; original format/backend errors propagate
+report v1: optional darwin.native_calls[] = {pc,module,name,arguments,result}
+call carriers: hex; full GP bits or defined ARM64 int vararg bytes; exact arity; null result if incomplete/nonreturning
+open: 2 args or 3 with O_CREAT; ARM64 mode int at SP, x64 third GP; kernel mode_t 16 bits
+basic: main status 58; stdout_hex 4100ff4221; named calls 14; events 15
+classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/events 13
+_exit: status 35; stdout_hex 58; named calls 2; events 2
+file calls: main status 73; stdout_hex 460044; named calls 40; events 41
+memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
+native common catalogue: 82; required methods/platform: 104; matching ARM64 identities: 312
+```
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["libsystem"],"darwin_files":{"files":[],"stdin_hex":"6162006364"}}
+```
+
+## Explicit startup dylibs and main-thread TLS
+
+Optional `darwin.modules` maps exact, case-sensitive install names to original
+Mach-O input paths (at most 32 entries). Only reachable dependencies are read.
+Prefixes such as `@loader_path` are literal names, with no host search or path
+expansion. Each strong `LC_LOAD_DYLIB` edge requires an MH_DYLIB with the same
+baseline ISA/platform, an exact LC_ID_DYLIB identity and a sufficient current
+version. Ordinary positive ordinals select the actual provider; shared
+dependencies load once and identically spelled exports in different libraries
+remain distinct. The executable retains its preferred base; dylibs receive
+disjoint deterministic placements. Code/data exports and local rebases slide
+once. Export tries admit regular and thread-local symbols with bounded,
+unambiguous nodes. A thread-local export must name an admitted descriptor.
+
+Strong ordinary dylib imports may carry signed byte addends. `DarwinImage`
+computes the selected export address plus its provider slide and addend with
+checked address arithmetic. Nonzero offsets must remain in the selected
+provider's original mapped segment spans, including either code or data.
+Pointer values need one-byte membership; later accesses retain their normal
+width and permissions. Other images, runtime reservations and mapping-page
+padding outside those spans are refused. The same relocation initializes
+ordinary global pointers and TLS-template pointers before the live first copy.
+
+The original alias fixture reaches the third `int` array element through
+byte addends `+8` from its base and `-4` from a separately exported tail symbol.
+It changes provider data through a TLS pointer and leaves TLS pointer state
+changed before a fresh process. Native
+O0/O1/O2 classic/chained controls return 78 with empty output.
+
+The sum of complete reachable files, including unmapped tails, must fit
+`memory_limit`. Mapped images, stack, model pages, TLS storage and decoded
+metadata share the separate resident limit with that same value. All graph
+expansion shares a 65,536-record limit and the original preparation deadline.
+Cycles, missing identities/versions, duplicate catalogue names and attempts to
+override libSystem fail explicitly. Unused catalogue files are not opened.
+Complete undefined-symbol closure remains required, including infrastructure
+symbols; an unused undefined binder is not silently accepted.
+
+Ordinary C initialized and zero-initialized TLS supports alignment up to
+16 bytes. Preparation maps and charges a separate block for each image and
+process, checks nonoverlapping template sections and exact 24-byte descriptors,
+then publishes validated keys and thunk fixups. On first access,
+`DarwinTLS` copies the relocated live contiguous template, preserving prior
+guest changes to BSS and gaps. Subsequent accesses retain writes and pointer
+identity. There is no repacking or extra zeroing at first access.
+Descriptor thunk/key/offset and the return frame are checked on every call.
+Runtime TLS pages cannot be borrowed by mmap or changed by munmap/mprotect.
+
+The authenticated resolver follows the
+[Apple TLV helper ABI](https://github.com/apple-oss-distributions/dyld/blob/dyld-1125.5/libdyld/threadLocalHelpers.s):
+x64 receives the descriptor in RDI and returns its address in RAX; ARM64 uses
+X0 for both. GP/vector state other than result and return PC/SP is preserved
+by this model; native ARM64 does not promise X16/X17 preservation.
+The named event is `__tlv_get_addr`, with one descriptor argument and the
+resolved address; it consumes the existing event budget and leaves errno alone.
+No raw BSD syscall is invented. The original C fixture covers shared
+dependencies, equal export spellings, cross-library TLS identity, zero-only
+TLS, live template changes, nested libSystem calls and fresh repeated runs.
+Independent native O0/O1/O2 classic/chained controls retain status 83 and
+binary stdout `440054`; portable C/CLI/Python checks cover all five profiles.
+
+Nonzero libSystem gate, imported TLV descriptor and classic lazy addends,
+weak/reexport/resolver exports, selective DSO finalization,
+legacy TLS initialization sections, runtime dlopen/dlsym, threads and
+complete Apple frameworks remain unsupported. Native Intel and physical iOS
+execution remain unqualified.
+
+### Startup constructors and TLS termination
+
+Original `S_MOD_INIT_FUNC_POINTERS`, read-only `S_INIT_FUNC_OFFSETS` and one
+`LC_ROUTINES_64` initializer run before `LC_MAIN`. Dependencies initialize in
+declared postorder, with shared images initialized once. Within an image,
+the routines initializer precedes pointer sections, then compact offsets.
+Targets must belong to that image's original executable segment spans; ARM64
+requires four aligned entry bytes. Page padding and foreign/runtime targets
+give no callback authority. Relocations resolve through the existing ledger;
+compact offsets add the original image base and slide once. A pending slot
+modified by guest code fails explicitly before entry. Nonempty terminator
+sections and routines module/reserved state remain unsupported. These finite
+forms follow Apple's [initializer traversal](https://github.com/apple-oss-distributions/dyld/blob/dyld-1125.5/common/MachOAnalyzer.cpp).
+
+Constructors receive `argc`, `argv`, `envp`, `apple` and a bounded `ProgramVars`
+record containing the main Mach header and pointers to process-owned argc,
+argv, envp and program-name variables. The program name is the executable
+basename, independent of a custom argv0. `LC_MAIN` receives a fresh ordinary
+entry frame after startup. Guest C++ `thread_local` wrappers execute their
+own lazy construction code through the existing TLV resolver.
+
+Mach-O `__tlv_atexit` models the runtime `void _tlv_atexit(function, object)`
+ABI. Clang's unused third DSO carrier is ignored; the completed native-call
+event has two arguments and a null result, preserving errno and the result
+register. At most 1,024 pending registrations, including null callbacks and
+duplicates, fit in precharged storage. Objects are opaque full-width values.
+Null callbacks do nothing. Main return and C `exit` (Mach-O `_exit`) drain
+registrations in reverse order; registrations made by a destructor run before
+older entries. This follows Apple's [TLS termination owner](https://github.com/apple-oss-distributions/dyld/blob/dyld-1125.5/dyld/DyldRuntimeState.cpp)
+and [runtime entry ABI](https://github.com/apple-oss-distributions/dyld/blob/dyld-1125.5/dyld/DyldAPIs.cpp).
+
+Termination frames sit below the current SP and its x64 red zone, preserving
+live caller-stack objects during deep `exit`. Each balanced callback return
+uses a separate authenticated trap in the existing private return page.
+All guest instructions, calls and returns share the original session and
+instruction/event/deadline budget. Exit status and a main return value become
+final only after callbacks finish. C `_exit` (Mach-O `__exit`) and raw BSD exit
+terminate immediately, including from a constructor or destructor.
+Reentrant normal `exit` during termination fails explicitly. Explicit
+`__cxa_finalize`, legacy `S_THREAD_LOCAL_INIT_FUNCTION_POINTERS`,
+threads, exception runtimes and complete Apple frameworks remain unsupported.
+
+### C and C++ process exit registrations
+
+C `atexit(function)` and C++ `__cxa_atexit(function, object, dso)` register
+original guest callbacks and return int zero while preserving errno. C callbacks
+receive no arguments; C++ destructors receive their original full-width object,
+including null. The DSO value is opaque and retained in the native-call event;
+it does not enable selective finalization or library unloading.
+
+Normal main return and C `exit` finalize main-thread TLS exactly once, then
+interleave C and C++ registrations in reverse registration order. A callback
+is removed before invocation, so new global registrations precede older work.
+TLS callbacks may register globals; globals may register TLS, but the completed
+TLS phase is not restarted. Nonnull targets require original executable storage
+and current execution permission at registration and invocation. A separate
+1,024-entry global quota is reserved only for images with strong registration
+imports; unrelated images retain their previous base and TLS metadata charges.
+All phases share the same stack authentication, instruction/event/deadline
+budget and delayed exit-result publication. Raw exit from a global destructor
+ends the process immediately, preserving its actual status and partial output.
+
+The original two-dylib C++ graph includes compiler-generated global destruction,
+repeated local-static access, mixed C/C++ registration, opaque carriers, deep
+stack objects and fresh processes. Its single-thread local-static controls use
+`-fno-threadsafe-statics`; a separate default-guard graph covers the protocol below. Independent
+O0/O1/O2 classic/chained macOS controls cover eight normal/raw outcomes. Five
+software profiles and three matching ARM64 HVF profiles exercise the same guest
+programs; C/CLI and genuine Python checks retain the existing version 1 schema.
+The ordering follows [Apple's exit registration owner](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/stdlib/FreeBSD/atexit.c)
+and the [Itanium termination ABI](https://itanium-cxx-abi.github.io/cxx-abi/abi.html#dso-dtor-runtime-api).
+
+The original C/C++ graph checks dependency order, startup arguments,
+constructor TLS access, lazy TLS construction once, nested LIFO destruction,
+early constructor exits, live stack objects and fresh processes. Five portable
+profiles and three matching ARM64 HVF profiles cover classic/chained inputs;
+independent original macOS O0/O1/O2 controls disable stack-protector imports.
+Guard-data imports outside the finite provider remain refused. Native Intel
+and physical iOS execution remain unqualified.
+
+```json
+{"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"darwin":{"modules":[{"name":"@loader_path/libneverd-base.dylib","path":"/inputs/libneverd-base.dylib"},{"name":"@loader_path/libneverd-leaf.dylib","path":"/inputs/libneverd-leaf.dylib"}]}}
+```
+
+```text
+graph: strong acyclic startup; exact install name; same ISA/platform; MH_DYLIB + LC_ID_DYLIB
+catalogue: max 32; only reachable inputs; no host lookup or @ path expansion
+budget: aggregate full files; aggregate resident mappings/TLS/metadata; 65536 records
+exports: regular / thread-local; ordinary dependency ordinal; rebased actual provider
+TLS: initialized / zero-only / alignment <=16; exact 24-byte descriptor; live contiguous first copy
+resolver: __tlv_get_addr; x64 RDI -> RAX; ARM64 X0 -> X0; one named event; errno preserved
+lifetime: one main-thread block/image/process; stable addresses; fresh subsequent processes
+addends: checked signed ordinary provider offsets; data/TLS initializers; original provider spans only
+unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; selective DSO finalization/legacy TLS init; dlopen/dlsym; threads
+workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
+native common catalogue: 82; required methods/platform: 104; matching ARM64 identities: 312
+```
+
+### Main-thread C++ static initialization guards
+
+Default compiler-generated local statics use the exact strong, zero-addend
+`___cxa_guard_acquire`, `___cxa_guard_release` and `___cxa_guard_abort` imports
+from `/usr/lib/libc++.1.dylib`, compatibility at most 1.0.0. Current version does
+not select behavior. Other libc++ symbols, libc++abi identities, aliases,
+weak/reexport providers and caller overrides remain refused, including imports
+in unexecuted branches. libSystem and libc++ share the same two runtime pages;
+each prepared fixup and unique gate retains its charge. Guard-only imports
+reserve no callback queue or executable callback spans.
+
+Guards have a nonnull, naturally aligned eight-byte guest address. Acquire
+reads only the initialized byte when nonzero and returns int zero, without a
+thread observation, writable storage or bookkeeping reads. Starting from zero
+requires the existing explicit, known nonzero `darwin_system.thread_self_port`
+(C++ `DarwinSystemOptions::ThreadSelfPort`). For that 32-bit port P, acquire
+writes `(uint64_t(P) << 32) | 0x200` and returns int one. Abort restores zero;
+release writes `(uint64_t(P) << 32) | 0x101`. Both are void, preserve errno and
+integer result registers, and report a null result. Same-owner recursive
+initialization, foreign/waiting or unknown states, invalid pointers and failed
+permissions refuse before mutation. No host thread identity is inferred.
+
+This is a single-main-thread protocol. A static created during startup, TLS
+finalization or a global destructor uses the existing global LIFO and shared
+execution budgets. Fresh processes restore original guards. The independent
+two-dylib default-guard graph covers repeated access/mutation, full guard bytes
+and sentinels, abort/retry, errno and normal/raw exits through five software
+profiles, three matching ARM64 HVF profiles, C/CLI and genuine Python. Native
+O0/O1/O2 classic/chained controls use real libc++; x64 controls run through
+Rosetta on the ARM64 host. Physical Intel and iOS remain unqualified.
+
+ARM64 controls explicitly use `-march=armv8-a -mcpu=generic`; final images must
+contain LDARB and no LDAPR family instruction while retaining real guard calls.
+Apple clang's `-march=armv8-a` alone still selects its modern host CPU and can
+emit LDAPRB. The checked CPU contract continues to refuse RCpc; modern default
+Mac instruction output, concurrent initialization, exceptions and selective DSO
+finalization require separate support.

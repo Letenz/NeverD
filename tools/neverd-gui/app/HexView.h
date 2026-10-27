@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Address.h"
+#include "WheelInput.h"
 
 #include <QAbstractScrollArea>
 #include <QHash>
@@ -10,10 +11,14 @@
 #include <list>
 #include <optional>
 
+class QAction;
+class QMenu;
+
 namespace neverd::gui {
 
 class AddressSpace;
 class Session;
+class PatchEditor;
 
 /// The hex dump: rows of sixteen bytes at addresses that are multiples of
 /// sixteen, over every mapped region, fetched from the worker in cached
@@ -33,10 +38,14 @@ public:
   /// The selected bytes, first and last, when more than the current one are
   /// selected: by dragging, shift-clicking or Shift and the arrow keys.
   std::optional<std::pair<Address, Address>> selection() const;
+  std::optional<std::pair<Address, Address>> byteSelection() const;
   /// Copy the selected bytes, or the current item's, as hex text
   /// (`48 89 5C 24 08`) once every one of them has loaded.
   void copySelection();
+  void setExportAction(QAction *action);
+  void editByte();
   std::optional<Address> currentAddress() const { return current_; }
+  QRect cursorViewportRect() const;
   /// Map rows again after the regions of the address space changed.
   void addressSpaceChanged();
   /// The byte at \p address once it is loaded and mapped.
@@ -51,6 +60,7 @@ public:
   void setTextEncoding(const QString &name);
 
 signals:
+  void populateContextMenu(QMenu *menu);
   void locationChanged(neverd::gui::Address address);
 
 protected:
@@ -103,7 +113,9 @@ private:
   void updateMetrics();
   int visibleRows() const;
 
+  WheelInput wheel_;
   Session &session_;
+  QAction *ExportAction = nullptr;
   const AddressSpace &space_;
   mutable QHash<Address, Chunk> chunks_;
   mutable std::list<Address> order_;

@@ -4,7 +4,7 @@
 
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/med/LowToMed.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
@@ -590,13 +590,20 @@ TEST(SwiftBooleanProjection, TerminalBrkRequiresCurrentImmutableOpcode) {
   Brk.Addr = Trap.StartAddr;
   Brk.Seq = 0;
   Brk.Opcode = NdOp::INTRINSIC;
-  Brk.Output = NdVar::reg(getTargetRegInfo(Arch::AArch64).IntReturnReg, 8);
   Brk.addInput(NdVar::cst(static_cast<uint64_t>(Intrinsic::Brk), 2));
+  Brk.addInput(NdVar::cst(1, 2));
   Trap.Ops.push_back(Brk);
   F.word(Trap.StartAddr, 0xd4200020); // BRK #1.
   EXPECT_TRUE(swift_boolean_projection_detail::terminalBrk(F.Image, Trap));
   F.word(Trap.StartAddr, 0xd503201f); // NOP.
   EXPECT_FALSE(swift_boolean_projection_detail::terminalBrk(F.Image, Trap));
+  F.word(Trap.StartAddr, 0xd4200040); // Stale IR code: BRK #2.
+  EXPECT_FALSE(swift_boolean_projection_detail::terminalBrk(F.Image, Trap));
+  F.word(Trap.StartAddr, 0xd43e0000); // Debugger BRK #0xf000.
+  EXPECT_FALSE(swift_boolean_projection_detail::terminalBrk(F.Image, Trap));
+  Trap.Ops.front().Inputs[1].Offset = 0xf000;
+  EXPECT_FALSE(swift_boolean_projection_detail::terminalBrk(F.Image, Trap));
+  Trap.Ops.front().Inputs[1].Offset = 1;
   F.word(Trap.StartAddr, 0xd4200020);
   F.Image.Segments.back().Flags = SegmentFlags::Readable |
                                   SegmentFlags::Writable |

@@ -19,6 +19,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/DWARF/EHFrame.h"
 #include "neverd/loader/ExceptionInfo.h"
+#include "neverd/loader/Limits.h"
 
 #include <optional>
 #include <string>
@@ -55,7 +56,7 @@ struct LSDAParseRequest {
   /// application was a producer saying something, and is left to say it.
   std::optional<uint8_t> TypeTableEncodingOverride;
   /// Upper bound on call sites, actions, and type-table entries.
-  size_t MaxRecords = 1u << 16;
+  size_t MaxRecords = ::neverd::limits::loader::kLSDAMaxRecords;
 };
 
 struct LSDAParseResult {

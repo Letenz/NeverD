@@ -40,17 +40,27 @@ NTSTATUS DriverEntry(U8 *, void *);
 static void *volatile EntryAddress = (void *)DriverEntry;
 
 static void put(U8 *P, U64 V, unsigned Size) {
-  for (unsigned I = 0; I < Size; ++I)
-    P[I] = (U8)(V >> (8 * I));
+  // This x64 fixture is little-endian. Each call has a constant 2/4/8-byte
+  // size, including unaligned fields; keep the complete oracle without guest
+  // loops that reconstruct each byte on a single-stepped native transport.
+  __builtin_memcpy(P, &V, Size);
 }
 
 static int verify(Capture Function, U8 Fill, U32 MXCSR) {
-  __declspec(align(16)) U8 Area[1296];
-  U8 Expected[1296];
+  // The aligned unsigned words retain all 1296 bytes, including both guards.
+  // Byte stores below update their object representations before comparison.
+  enum { WordCount = 1296 / sizeof(U64) };
+  __declspec(align(16)) U64 AreaWords[WordCount];
+  U64 ExpectedWords[WordCount];
+  U8 *Area = (U8 *)AreaWords;
+  U8 *Expected = (U8 *)ExpectedWords;
   U64 Observed[11] = {0};
   U8 *P = Expected + 32;
-  for (unsigned I = 0; I < 1296; ++I)
-    Area[I] = Expected[I] = Fill;
+  const U64 Pattern = (U64)Fill * 0x0101010101010101ULL;
+  // Retain every guard/record word while reducing single-step loop overhead.
+#pragma clang loop unroll_count(8)
+  for (unsigned I = 0; I < WordCount; ++I)
+    AreaWords[I] = ExpectedWords[I] = Pattern;
   Observed[9] = (U64)CaptureDriverResume;
   CaptureDriverContext(Function, Area + 32, Observed, MXCSR);
   if (Observed[1] != Observed[9] || Observed[8] != Observed[0] + 128 ||
@@ -61,6 +71,7 @@ static int verify(Capture Function, U8 Fill, U32 MXCSR) {
   // SP - 8, which is nonzero and cannot carry, overflow or set auxiliary carry.
   U64 SP = Observed[0] - 8;
   unsigned Ones = 0;
+#pragma clang loop unroll(full)
   for (unsigned I = 0; I < 8; ++I)
     Ones += (unsigned)((SP >> I) & 1);
   U64 PostFlags =
@@ -69,9 +80,11 @@ static int verify(Capture Function, U8 Fill, U32 MXCSR) {
     return 0;
   put(P + 48, 0x10000f, 4);
   put(P + 52, MXCSR, 4);
+#pragma clang loop unroll(full)
   for (unsigned I = 0; I < 6; ++I)
     put(P + 56 + I * 2, I ? 16 : 8, 2);
   put(P + 68, Observed[2], 4);
+#pragma clang loop unroll(full)
   for (unsigned I = 0; I < 16; ++I) {
     U64 Value = 0x12340000 + I;
     if (I == 1)
@@ -87,12 +100,14 @@ static int verify(Capture Function, U8 Fill, U32 MXCSR) {
   put(P + 256, Controls[52] | ((U32)Controls[53] << 8), 2);
   put(P + 258, 0, 4);
   put(P + 280, MXCSR, 4);
+#pragma clang loop unroll(full)
   for (unsigned I = 0; I < 16; ++I) {
     put(P + 416 + I * 16, 0x1122334455667700ULL + I, 8);
     put(P + 424 + I * 16, 0x8877665544332200ULL + I, 8);
   }
-  for (unsigned I = 0; I < 1296; ++I)
-    if (Area[I] != Expected[I])
+#pragma clang loop unroll_count(8)
+  for (unsigned I = 0; I < WordCount; ++I)
+    if (AreaWords[I] != ExpectedWords[I])
       return 0;
   return 1;
 }

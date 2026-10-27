@@ -1,13 +1,22 @@
 add_neverd_unittest(NeverDSignatureTests
+  ImageProfileTests.cpp
   LibraryFeatureTests.cpp
   MachOPatternGeneratorTests.cpp
   PatternGeneratorTests.cpp
+  VTableEvidenceTests.cpp
+  RuntimePointerEvidenceTests.cpp
   PatternParserTests.cpp
   RichHeaderTests.cpp
   SignatureCacheTests.cpp
   SignatureDBTests.cpp
+  SignatureDataContextTests.cpp
+  LocalDataEvidenceTests.cpp
+  SignatureVTableContextTests.cpp
+  SignatureRuntimePointerContextTests.cpp
   SignatureMatcherTests.cpp
   SignatureTreeTests.cpp
+  X86ReferenceBoundaryTests.cpp
+  ThrowInfoReferenceTests.cpp
   SynthesizedRoutineTests.cpp
 
   LINK_COMPONENTS Sigs

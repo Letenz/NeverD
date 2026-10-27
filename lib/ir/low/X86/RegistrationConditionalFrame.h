@@ -41,7 +41,7 @@ struct ConditionalFrame {
   std::map<int32_t, FrameValue> Arguments;
   std::vector<RegistrationObjectExtent> Objects;
   std::map<int32_t, FrameValue> ObjectCells;
-  std::map<va_t, EH3JumpCapture> JumpBuffers;
+  std::map<va_t, SEHJumpCapture> JumpBuffers;
   std::map<std::pair<va_t, int>, BorrowedJumpResume> JumpResumes;
   std::set<std::pair<int32_t, int32_t>> Reads;
   std::set<std::pair<int32_t, int32_t>> Writes;
@@ -69,11 +69,11 @@ void checkConditionalNativeFrame(const FrameState &State, const LowOp &Op,
 /// separately binds this target to its authenticated physical CALL occurrence.
 std::optional<BoundCalleeEffect> proveBoundSEHCallee(
     const BinaryImage &Image, const LowOp &Op, const FrameState &Parent,
-    size_t &Work, const std::map<int32_t, EH3JumpCapture> *Captures = nullptr);
+    size_t &Work, const std::map<int32_t, SEHJumpCapture> *Captures = nullptr);
 
 using BoundCalleeProver = std::function<std::optional<BoundCalleeEffect>(
     const LowOp &, const FrameState &, size_t &,
-    const std::map<int32_t, EH3JumpCapture> &)>;
+    const std::map<int32_t, SEHJumpCapture> &)>;
 
 } // namespace neverd::registration_state
 

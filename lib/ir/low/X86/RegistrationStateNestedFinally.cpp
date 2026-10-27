@@ -8,14 +8,18 @@
 
 #include "RegistrationStateSolver.h"
 
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 namespace neverd::registration_state {
 
-bool RegistrationStateSolver::returnNestedFinally(Domain &After,
-                                                  const LowOp &Op,
-                                                  BlockFacts &Facts) {
+bool RegistrationStateSolver::returnNestedFinally(
+    Domain &After, const LowOp &Op, BlockFacts &Facts,
+    RegistrationSEHInvocationExit Exit) {
+  const SEHExitKey Identity{Exit.EntryVA, Exit.CallVA, Exit.Address,
+                            Exit.OpSeq};
   const auto Refuse = [&] {
+    SEHExits.erase(Identity);
+    InvalidSEHExits.insert(Identity);
     Result.SEHInvocationExitsComplete = false;
     Facts.Invalid = After.Unknown = true;
     After.Levels.clear();
@@ -23,7 +27,11 @@ bool RegistrationStateSolver::returnNestedFinally(Domain &After,
   };
   const auto Return = SEHControlIndex.find(Op.Addr);
   const auto Call = SEHControlIndex.find(After.Activation.OrdinaryCall);
-  const auto Target = sehCallContinuation(After.Activation.OrdinaryCall);
+  const auto Target = sehCallContinuation(
+      After.Activation.OrdinaryCall,
+      After.SEHCallers.empty()
+          ? 0
+          : After.SEHCallers.back().Activation.Entry.value_or(0));
   if (!callbackCanReturn(After) || Return == SEHControlIndex.end() ||
       Return->second.Control !=
           RegistrationSEHControlContract::Kind::NearReturn ||
@@ -39,6 +47,13 @@ bool RegistrationStateSolver::returnNestedFinally(Domain &After,
   if (!Caller.Activation.Entry || Caller.Activation.SearchFilter || !SP ||
       SP->Entry != Caller.Activation.Entry || SP->Offset > 0 ||
       Caller.Stack.CallbackEntry != Caller.Activation.Entry)
+    return Refuse();
+  Exit.TargetVA = *Target;
+  Exit.StackOffset = SP->Offset;
+  if (InvalidSEHExits.count(Identity))
+    return Refuse();
+  const auto [Found, Added] = SEHExits.emplace(Identity, Exit);
+  if (!Added && Found->second != Exit)
     return Refuse();
   Domain Resume = After;
   Resume.Frame.leaveCallback();

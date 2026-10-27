@@ -2,6 +2,8 @@
 
 #include "neverd/backend/codegen/MachO/MachOSigner.h"
 
+#include "neverd/backend/Limits.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -21,8 +23,6 @@ namespace neverd::macho_signing {
 namespace {
 
 constexpr llvm::StringLiteral CodesignPath = "/usr/bin/codesign";
-constexpr unsigned CodesignTimeoutSeconds = 30;
-constexpr size_t MaximumDetailLength = 256;
 
 llvm::Error signerError(llvm::StringRef Detail) {
   return llvm::make_error<llvm::StringError>("macho signing: " + Detail,
@@ -30,7 +30,8 @@ llvm::Error signerError(llvm::StringRef Detail) {
 }
 
 std::string boundedDetail(llvm::StringRef Detail) {
-  Detail = Detail.take_front(MaximumDetailLength);
+  Detail = Detail.take_front(
+      ::neverd::limits::backend::kMachOSignerMaximumDetailLength);
   std::string Result = Detail.str();
   for (char &Character : Result)
     if (static_cast<unsigned char>(Character) < 0x20)
@@ -101,7 +102,8 @@ llvm::Error execute(llvm::StringRef Operation,
   ProcessRequest Request;
   Request.Program = CodesignPath.str();
   Request.Arguments = std::move(Arguments);
-  Request.TimeoutSeconds = CodesignTimeoutSeconds;
+  Request.TimeoutSeconds =
+      ::neverd::limits::backend::kMachOSignerCodesignTimeoutSeconds;
   Request.DiscardStandardStreams = true;
   // /usr/bin/codesign does not need PATH, locale, a keychain, or allocator
   // discovery for identityless signing.  An explicit empty environment keeps

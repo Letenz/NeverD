@@ -12,6 +12,10 @@
 // routine reads at most Count variadic arguments, each passed as Type, so
 // they can be passed on one by one.
 //
+// LIBC_ELF_BOUNDED_VARARGS(...): the same, for a routine only the C
+// libraries of ELF systems (Linux, Android) declare variadic: Darwin's
+// ptrace takes its pid, address and datum as fixed parameters.
+//
 // LIBC_SENTINEL_VARARGS(Name, Return, Header, VectorName, Environment,
 // Fixed...): the variadic arguments are pointers up to a null one, which
 // VectorName takes as an array after the first fixed parameter; when
@@ -96,6 +100,12 @@ LIBC_BOUNDED_VARARGS("prctl", "int", "", 4, "unsigned long", "int")
 LIBC_BOUNDED_VARARGS("syscall", "long", "", 6, "long", "long")
 LIBC_BOUNDED_VARARGS("ulimit", "long", "", 1, "long", "int")
 #undef LIBC_BOUNDED_VARARGS
+#endif
+
+#ifdef LIBC_ELF_BOUNDED_VARARGS
+LIBC_ELF_BOUNDED_VARARGS("ptrace", "long", "sys/ptrace.h", 3, "long",
+                         "enum __ptrace_request")
+#undef LIBC_ELF_BOUNDED_VARARGS
 #endif
 
 #ifdef LIBC_SENTINEL_VARARGS

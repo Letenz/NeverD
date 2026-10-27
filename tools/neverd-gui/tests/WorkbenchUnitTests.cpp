@@ -1,18 +1,34 @@
-// Unit tests of workbench building blocks that need no worker.
+//===- WorkbenchUnitTests.cpp - Workbench component contracts ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Workbench building blocks that need no worker.
+//===----------------------------------------------------------------------===//
+
 #include "ActionRegistry.h"
 #include "Address.h"
 #include "AddressSpace.h"
+#include "DeepLink.h"
+#include "DialogReturnKey.h"
 #include "Docking.h"
 #include "Expression.h"
+#include "FlowLayout.h"
 #include "Icons.h"
 #include "ItemViewActivation.h"
+#include "LinkDispatch.h"
 #include "LoadFileDialog.h"
+#include "ModelessDialog.h"
+#include "NativeWindowStates.h"
+#include "PatchMenu.h"
 #include "ProjectDatabase.h"
 #include "StyledText.h"
+#include "SymbolTablePromptDialog.h"
 #include "Theme.h"
 #include "TitleBar.h"
+#include "TypeSourceHighlighter.h"
 #include "WindowFrame.h"
-#include "WindowFramePlatform.h"
 
 #include <QAbstractButton>
 #include <QAction>
@@ -34,15 +50,18 @@
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QMetaEnum>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QScreen>
 #include <QSet>
+#include <QSignalSpy>
 #include <QSplitter>
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -51,18 +70,51 @@
 #include <QTabBar>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTextBlock>
+#include <QTextDocument>
+#include <QTextLayout>
 #include <QToolBar>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <QWindow>
 #include <kddockwidgets/KDDockWidgets.h>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
 #include <kddockwidgets/qtwidgets/views/Separator.h>
+#include <limits>
 #include <memory>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 
 using namespace neverd::gui;
 
 namespace {
+class ReparentedDialogSource final : public QWidget {
+public:
+  using QWidget::QWidget;
+  QPointer<QDialog> Dialog;
+  bool SawParentChange = false;
+  bool DetachedBeforeChange = false;
+  bool NativeDetachedBeforeChange = false;
+
+protected:
+  bool event(QEvent *event) override {
+    if (event->type() == QEvent::ParentAboutToChange && Dialog &&
+        Dialog->windowHandle()) {
+      SawParentChange = true;
+      DetachedBeforeChange = !Dialog->windowHandle()->transientParent();
+#ifdef Q_OS_WIN
+      if (QGuiApplication::platformName() == QStringLiteral("windows"))
+        NativeDetachedBeforeChange =
+            !GetWindow(reinterpret_cast<HWND>(Dialog->winId()), GW_OWNER);
+#endif
+    }
+    return QWidget::event(event);
+  }
+};
+
 /// Two docks side by side in a main window, each filled with a plain color.
 struct DockPair {
   static constexpr QColor LeftColor{0x10, 0x20, 0x30};
@@ -100,8 +152,10 @@ struct DockPair {
   }
   /// Column \p x of the window's middle row.
   QColor pixel(int x) {
-    return window.grab().toImage().pixelColor(x,
-                                              contentRect(left).center().y());
+    const auto image = window.grab().toImage();
+    const qreal scale = image.devicePixelRatio();
+    return image.pixelColor(qRound(x * scale),
+                            qRound(contentRect(left).center().y() * scale));
   }
 };
 
@@ -141,42 +195,235 @@ QList<QKeySequence> idaKeys(QLatin1StringView spelling) {
     return {};
   return {key};
 }
-/// The window states the window system confirmed on a native window, which
-/// it reports with a WindowStateChange event there.
-class AppliedStates final : public QObject {
-public:
-  Qt::WindowStates states;
-  int count = 0;
-
-protected:
-  bool eventFilter(QObject *object, QEvent *event) override {
-    if (event->type() == QEvent::WindowStateChange) {
-      states = static_cast<QWindow *>(object)->windowStates();
-      ++count;
-    }
-    return false;
-  }
-};
-
-/// The state a window shows, of several it holds at once.
-Qt::WindowState effectiveState(Qt::WindowStates states) {
-  if (states & Qt::WindowMinimized)
-    return Qt::WindowMinimized;
-  if (states & Qt::WindowFullScreen)
-    return Qt::WindowFullScreen;
-  if (states & Qt::WindowMaximized)
-    return Qt::WindowMaximized;
-  return Qt::WindowNoState;
-}
-
 } // namespace
 
 class WorkbenchUnitTests : public QObject {
   Q_OBJECT
+public:
+  static void initMain() { WindowFrame::prepareNativeWindows(); }
 private slots:
+  void modelessBrowsersDetachBeforeTheirNativeOwnerChanges_data() {
+    QTest::addColumn<bool>("ancestor");
+    QTest::newRow("source") << false;
+    QTest::newRow("ancestor") << true;
+  }
+
+  void modelessBrowsersDetachBeforeTheirNativeOwnerChanges() {
+    QFETCH(bool, ancestor);
+    auto origin = std::make_unique<QWidget>();
+    QWidget destination;
+    origin->show();
+    destination.show();
+    auto *moving = new ReparentedDialogSource(origin.get());
+    auto *source = ancestor ? new QWidget(moving) : moving;
+    moving->show();
+    source->show();
+    const QPointer<QDialog> dialog = new QDialog(source);
+    showModelessDialog(dialog, source);
+    QVERIFY(dialog->windowHandle());
+    QCOMPARE(dialog->windowHandle()->transientParent(), origin->windowHandle());
+    moving->Dialog = dialog;
+
+    // A native owner can disappear before the queued ParentChange callback.
+    // Inspect this boundary synchronously, while the old owner still exists.
+    moving->setParent(&destination);
+    QVERIFY(moving->SawParentChange);
+    QVERIFY(moving->DetachedBeforeChange);
+#ifdef Q_OS_WIN
+    if (QGuiApplication::platformName() == QStringLiteral("windows"))
+      QVERIFY(moving->NativeDetachedBeforeChange);
+#endif
+    origin.reset();
+    moving->show();
+    source->show();
+    QTRY_VERIFY(dialog && dialog->isVisible());
+    QTRY_COMPARE(dialog->windowHandle()->transientParent(),
+                 destination.windowHandle());
+#ifdef Q_OS_WIN
+    if (QGuiApplication::platformName() == QStringLiteral("windows")) {
+      QVERIFY(IsWindow(reinterpret_cast<HWND>(dialog->winId())));
+      // Qt can publish its logical parent before the queued native update.
+      QTRY_COMPARE(GetWindow(reinterpret_cast<HWND>(dialog->winId()), GW_OWNER),
+                   reinterpret_cast<HWND>(destination.winId()));
+    }
+#endif
+    dialog->close();
+    QTRY_VERIFY(!dialog);
+  }
+
   void initTestCase() {
+    // As the workbench starts.
+    WindowFrame::prepareNativeWindows();
+    Theme::instance().apply();
     // Docking chrome is fixed before the first dock exists.
     configureDocking();
+  }
+
+  void typeSourceColorsJavaScriptsComments() {
+    // JSDoc spans lines and sits before code; a private field is no
+    // directive; the offsets a comment gives stand out from its words.
+    QTextDocument document;
+    document.setPlainText(QStringLiteral(
+        "/**\n"
+        " * 0x18 int32_t Tail\n"
+        " */\n"
+        "export class _X {\n"
+        "  #view;\n"
+        "  /** @returns {number} */ get Tail() { return 0x18; } // 0x18\n"));
+    TypeSourceHighlighter highlighter(&document);
+    highlighter.setLanguage(QStringLiteral("javascript"));
+    const Theme &theme = Theme::instance();
+    // The color the highlighter gives the character at \p column of line
+    // \p line, or none.
+    const auto colorAt = [&](int line, int column) {
+      const QTextBlock block = document.findBlockByNumber(line);
+      for (const QTextLayout::FormatRange &range : block.layout()->formats())
+        if (column >= range.start && column < range.start + range.length)
+          return range.format.foreground().color();
+      return QColor();
+    };
+    const QColor comment = theme.color(ColorRole::ListingComment);
+    const QColor number = theme.color(ColorRole::ListingNumber);
+    const QColor keyword = theme.color(ColorRole::ListingKeyword);
+    QCOMPARE(colorAt(0, 0), comment);
+    QCOMPARE(colorAt(1, 1), comment);
+    QCOMPARE(colorAt(1, 3), number);
+    QCOMPARE(colorAt(2, 1), comment);
+    QCOMPARE(colorAt(3, 0), keyword);
+    QVERIFY(colorAt(4, 2) != theme.color(ColorRole::ListingDirective));
+    const QString last = document.findBlockByNumber(5).text();
+    QCOMPARE(colorAt(5, int(last.indexOf(QLatin1String("@returns")))), comment);
+    QCOMPARE(colorAt(5, int(last.indexOf(QLatin1String("get")))), keyword);
+    QCOMPARE(colorAt(5, int(last.indexOf(QLatin1String("return 0x18")) + 7)),
+             number);
+    QCOMPARE(colorAt(5, int(last.lastIndexOf(QLatin1String("//")))), comment);
+  }
+
+  void typeSourceColorsLuasComments() {
+    // Lua comments with --, after code too.
+    QTextDocument document;
+    document.setPlainText(
+        QStringLiteral("-- 0x08 uint32_t Flags: integer\n"
+                       "local T = record(\"_X\", 0x10) -- 0x10\n"));
+    TypeSourceHighlighter highlighter(&document);
+    highlighter.setLanguage(QStringLiteral("lua"));
+    const Theme &theme = Theme::instance();
+    const auto colorAt = [&](int line, int column) {
+      const QTextBlock block = document.findBlockByNumber(line);
+      for (const QTextLayout::FormatRange &range : block.layout()->formats())
+        if (column >= range.start && column < range.start + range.length)
+          return range.format.foreground().color();
+      return QColor();
+    };
+    QCOMPARE(colorAt(0, 0), theme.color(ColorRole::ListingComment));
+    QCOMPARE(colorAt(0, 4), theme.color(ColorRole::ListingNumber));
+    QCOMPARE(colorAt(1, 0), theme.color(ColorRole::ListingKeyword));
+    const QString code = document.findBlockByNumber(1).text();
+    QCOMPARE(colorAt(1, int(code.indexOf(QLatin1String("--")))),
+             theme.color(ColorRole::ListingComment));
+  }
+
+  void flowLayoutWrapsRatherThanOverlaps_data() {
+    QTest::addColumn<bool>("RightToLeft");
+    QTest::newRow("left-to-right") << false;
+    QTest::newRow("right-to-left") << true;
+  }
+
+  void flowLayoutWrapsRatherThanOverlaps() {
+    QFETCH(bool, RightToLeft);
+    // A combo box that keeps its width and the checkboxes after it, as the
+    // Local Types options are: narrow, they wrap to rows of their own, each
+    // at its own size and none over another; wide, they share one row.
+    QWidget row;
+    row.setLayoutDirection(RightToLeft ? Qt::RightToLeft : Qt::LeftToRight);
+    auto *flow = new FlowLayout(&row);
+    auto *combo = new QComboBox(&row);
+    combo->addItem(QStringLiteral("C keywords (unsigned long)"));
+    combo->setMinimumWidth(combo->sizeHint().width());
+    flow->addWidget(combo);
+    QList<QWidget *> widgets{combo};
+    for (const char *text :
+         {"Hex offsets", "With dependencies", "Layout checks"})
+      widgets.append(new QCheckBox(QString::fromLatin1(text), &row));
+    for (QWidget *widget : widgets.mid(1))
+      flow->addWidget(widget);
+    const auto layOut = [&](int width) {
+      row.resize(width, flow->heightForWidth(width));
+      flow->setGeometry(QRect(0, 0, width, flow->heightForWidth(width)));
+    };
+    const int narrow = combo->sizeHint().width() + 20;
+    layOut(narrow);
+    for (int first = 0; first < widgets.size(); ++first) {
+      const QRect at = widgets[first]->geometry();
+      QCOMPARE(at.size(), widgets[first]->sizeHint());
+      QVERIFY(row.rect().contains(at));
+      for (int second = first + 1; second < widgets.size(); ++second)
+        QVERIFY2(!at.intersects(widgets[second]->geometry()),
+                 qPrintable(widgets[first]->objectName()));
+    }
+    QVERIFY(widgets[1]->geometry().top() > combo->geometry().top());
+    const int wrapped = flow->heightForWidth(narrow);
+    int wide = 0;
+    for (QWidget *widget : widgets)
+      wide += widget->sizeHint().width() + 20;
+    layOut(wide);
+    for (QWidget *widget : widgets)
+      QCOMPARE(widget->geometry().center().y(), combo->geometry().center().y());
+    for (int i = 1; i < widgets.size(); ++i)
+      QVERIFY(RightToLeft ? widgets[i]->geometry().right() <
+                                widgets[i - 1]->geometry().left()
+                          : widgets[i]->geometry().left() >
+                                widgets[i - 1]->geometry().right());
+    QVERIFY(flow->heightForWidth(wide) < wrapped);
+    // A hidden widget takes no place: the one after it moves over by its
+    // width.
+    const int leading = RightToLeft ? widgets[2]->geometry().right()
+                                    : widgets[2]->geometry().left();
+    widgets[2]->hide();
+    layOut(wide);
+    QCOMPARE(RightToLeft ? widgets[3]->geometry().right()
+                         : widgets[3]->geometry().left(),
+             leading);
+  }
+
+  void flowLayoutCentersOddAndEvenHeights_data() {
+    QTest::addColumn<int>("firstHeight");
+    QTest::addColumn<int>("secondHeight");
+    QTest::newRow("odd row, even item") << 21 << 20;
+    QTest::newRow("even item, odd row") << 20 << 21;
+    QTest::newRow("even row, odd item") << 22 << 19;
+    QTest::newRow("odd item, even row") << 19 << 22;
+  }
+
+  void flowLayoutCentersOddAndEvenHeights() {
+    QFETCH(int, firstHeight);
+    QFETCH(int, secondHeight);
+    class SizedWidget : public QWidget {
+    public:
+      SizedWidget(int height, QWidget *parent) : QWidget(parent) {
+        setFixedSize(20, height);
+      }
+      QSize sizeHint() const override { return size(); }
+    };
+    QWidget row;
+    auto *flow = new FlowLayout(&row);
+    flow->setContentsMargins(3, 5, 7, 9);
+    flow->setSpacing(4);
+    auto *first = new SizedWidget(firstHeight, &row);
+    auto *second = new SizedWidget(secondHeight, &row);
+    flow->addWidget(first);
+    flow->addWidget(second);
+    const QRect bounds(11, 13, 90, flow->heightForWidth(90));
+    flow->setGeometry(bounds);
+    const int rowHeight = qMax(firstHeight, secondHeight);
+    const int rowTop = bounds.top() + 5;
+    for (QWidget *widget : {first, second}) {
+      QCOMPARE(widget->geometry().size(), widget->sizeHint());
+      QCOMPARE(widget->geometry().center().y(), rowTop + (rowHeight - 1) / 2);
+      QVERIFY(widget->geometry().top() >= rowTop);
+      QVERIFY(widget->geometry().bottom() < rowTop + rowHeight);
+    }
+    QVERIFY(!first->geometry().intersects(second->geometry()));
   }
 
   void addressSpellings() {
@@ -283,8 +530,7 @@ private slots:
   }
 
   void unicodeCommentsKeepTheCodePrefixOnItsGrid() {
-    // The code views' font: Consolas where it exists, else the system's
-    // fixed font.
+    // Use the same bundled fixed-width font as code views.
     QFont font = Theme::defaultCodeFont();
     font.setPointSize(10);
     const auto color = [](int role) {
@@ -334,25 +580,23 @@ private slots:
     registry.buildMenus(window.menuBar(), [](QMenu *, const QString &) {});
     registry.buildToolbars(&window);
     QSet<QString> ids;
-    QHash<QString, QString> globalKeys, viewKeys;
-    const auto &views = registry.viewActions();
+    QHash<QString, QString> keys;
     for (auto *action : registry.allActions()) {
       QVERIFY2(!ids.contains(action->objectName()),
                qPrintable(action->objectName()));
       ids.insert(action->objectName());
       QVERIFY2(!action->text().isEmpty(), qPrintable(action->objectName()));
       QVERIFY2(!action->icon().isNull(), qPrintable(action->objectName()));
-      const auto key = action->shortcut().toString(QKeySequence::PortableText);
-      if (key.isEmpty())
-        continue;
-      auto &keys = views.contains(action) ? viewKeys : globalKeys;
-      QVERIFY2(!keys.contains(key),
-               qPrintable(key + QStringLiteral(": ") + keys.value(key) +
-                          QStringLiteral(" and ") + action->objectName()));
-      keys.insert(key, action->objectName());
-      // A view shortcut must not also be a window-wide one.
-      if (views.contains(action))
-        QVERIFY2(!globalKeys.contains(key), qPrintable(key));
+      // Check aliases too: a view shortcut and a window shortcut can both
+      // be active while an analysis view has focus.
+      for (const auto &shortcut : action->shortcuts()) {
+        const auto key = shortcut.toString(QKeySequence::PortableText);
+        QVERIFY2(!key.isEmpty(), qPrintable(action->objectName()));
+        QVERIFY2(!keys.contains(key),
+                 qPrintable(key + QStringLiteral(": ") + keys.value(key) +
+                            QStringLiteral(" and ") + action->objectName()));
+        keys.insert(key, action->objectName());
+      }
     }
     QCOMPARE(ids.size(), int(ActionId::Count));
     // Every command is reachable from a menu.
@@ -367,8 +611,274 @@ private slots:
     for (auto *action : window.menuBar()->actions())
       if (action->menu())
         walk(action->menu());
+    // Patch is populated from the engine when opened. Its popup action and
+    // dynamic inventory share the production table; fixed keys/filtering are
+    // exercised by patchMenuUsesEngineChoicesAndFixedKeys below.
+    reachable.insert(registry.action(ActionId::EditPatchMenu));
+#define NEVERD_PATCH_ITEM(Id, Key, Kind)                                       \
+  reachable.insert(registry.action(ActionId::Id));
+#include "PatchMenu.def"
     for (auto *action : registry.allActions())
       QVERIFY2(reachable.contains(action), qPrintable(action->objectName()));
+  }
+
+  void toolbarButtonsKeepKeysInTooltips() {
+    QMainWindow window;
+    ActionRegistry registry;
+    const auto toolbars = registry.buildToolbars(&window);
+    int hinted = 0;
+    for (auto *toolbar : toolbars)
+      for (auto *action : toolbar->actions()) {
+        auto *button =
+            qobject_cast<QToolButton *>(toolbar->widgetForAction(action));
+        if (!button)
+          continue;
+        QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonIconOnly);
+        if (action->shortcut().isEmpty())
+          continue;
+        ++hinted;
+        QVERIFY(button->toolTip().contains(
+            action->shortcut().toString(QKeySequence::NativeText)));
+        QVERIFY(action->isShortcutVisibleInContextMenu());
+      }
+    QVERIFY(hinted > 10);
+    auto *action = registry.action(ActionId::JumpEntry);
+    QToolButton *entry = nullptr;
+    for (auto *toolbar : toolbars)
+      if (auto *button =
+              qobject_cast<QToolButton *>(toolbar->widgetForAction(action)))
+        entry = button;
+    QVERIFY(entry);
+    QVERIFY(entry->toolTip().contains(
+        action->shortcut().toString(QKeySequence::NativeText)));
+    // Translation and action updates preserve the compact toolbar.
+    action->setShortcut(QKeySequence(Qt::Key_F12));
+    registry.retranslate();
+    action->setEnabled(false);
+    QVERIFY(entry->toolTip().contains(QStringLiteral("F12")));
+    QCOMPARE(entry->toolButtonStyle(), Qt::ToolButtonIconOnly);
+    action->setShortcut({});
+    QCOMPARE(entry->toolButtonStyle(), Qt::ToolButtonIconOnly);
+  }
+
+  void commentKeysShareOneViewScopedAction() {
+    QMainWindow window;
+    auto *view = new QWidget(&window);
+    view->setFocusPolicy(Qt::StrongFocus);
+    auto *layout = new QVBoxLayout(view);
+    auto *input = new QLineEdit(view);
+    auto *editor = new QPlainTextEdit(view);
+    layout->addWidget(input);
+    layout->addWidget(editor);
+    window.setCentralWidget(view);
+    ActionRegistry registry;
+    registry.buildMenus(window.menuBar(), [](QMenu *, const QString &) {});
+    registry.attachViewShortcuts(view);
+    auto *comment = registry.action(ActionId::EditRepeatableComment);
+    QCOMPARE(comment->shortcuts(), QList({QKeySequence(Qt::Key_Semicolon),
+                                          QKeySequence(Qt::Key_Slash)}));
+    QCOMPARE(comment->shortcutContext(), Qt::WidgetWithChildrenShortcut);
+    QVERIFY(comment->toolTip().contains(QStringLiteral(";, /")));
+    QVERIFY(!registry.findChild<QAction *>(QStringLiteral("EditComment")));
+    for (auto *action : registry.allActions())
+      QVERIFY(!action->shortcuts().contains(QKeySequence(Qt::Key_Colon)));
+    auto *menu = window.findChild<QMenu *>(QStringLiteral("menuComments"));
+    QVERIFY(menu);
+    QCOMPARE(menu->actions(), QList({comment}));
+    QSignalSpy triggered(comment, &QAction::triggered);
+    window.show();
+    window.raise();
+    window.activateWindow();
+    const bool active = QTest::qWaitForWindowActive(&window);
+    if (!active && QGuiApplication::platformName() == QLatin1String("cocoa"))
+      QSKIP("Comment key dispatch requires a foreground Cocoa window.");
+    QVERIFY(active);
+    view->setFocus();
+    QTRY_VERIFY(view->hasFocus());
+    auto *handle = window.windowHandle();
+    QTest::keyClick(handle, Qt::Key_Semicolon);
+    QCOMPARE(triggered.size(), 1);
+    QTest::keyClick(handle, Qt::Key_Slash);
+    QCOMPARE(triggered.size(), 2);
+    QTest::keyClick(handle, Qt::Key_Colon, Qt::ShiftModifier);
+    QCOMPARE(triggered.size(), 2);
+    input->setFocus();
+    QTRY_VERIFY(input->hasFocus());
+    QTest::keyClicks(input, ";/:");
+    QCOMPARE(input->text(), QStringLiteral(";/:"));
+    editor->setFocus();
+    QTRY_VERIFY(editor->hasFocus());
+    QTest::keyClicks(editor, ";/:");
+    QCOMPARE(editor->toPlainText(), QStringLiteral(";/:"));
+    QCOMPARE(triggered.size(), 2);
+    view->setFocus();
+    QTRY_VERIFY(view->hasFocus());
+    comment->setEnabled(false);
+    QTest::keyClick(handle, Qt::Key_Semicolon);
+    QTest::keyClick(handle, Qt::Key_Slash);
+    QCOMPARE(triggered.size(), 2);
+  }
+
+  void deepLinksTakeIdasFormAndRefuseWhatTheyCannotName() {
+    // NeverD's links take IDA's form, and NeverD reads IDA's links.
+    const auto link = [](const QString &text) {
+      const ParsedLink parsed = parseDeepLink(text);
+      return parsed.link ? *parsed.link : DeepLink{};
+    };
+    const DeepLink function = link(QStringLiteral(
+        "neverd:///trojan%201.exe/functions?rva=0x1240&view=pseudocode"
+        "&sha256=0123456789ABCDEF&from=chat"));
+    QCOMPARE(function.scheme, QStringLiteral("neverd"));
+    QCOMPARE(function.input, QStringLiteral("trojan 1.exe"));
+    QCOMPARE(function.resource, LinkResource::Functions);
+    QCOMPARE(function.rva, std::optional<Address>(0x1240));
+    QCOMPARE(function.shownView(), LinkView::Pseudocode);
+    QCOMPARE(function.sha256, QStringLiteral("0123456789abcdef"));
+    QCOMPARE(function.address(0x400000), std::optional<Address>(0x401240));
+    QVERIFY(function.namesHash(QStringLiteral("0123456789abcdef") +
+                               QString(48, QLatin1Char('0'))));
+    QVERIFY(!function.namesHash(QString(64, QLatin1Char('f'))));
+    // A parameter another tool adds stays out of the link NeverD writes.
+    QCOMPARE(formatDeepLink(function),
+             QStringLiteral("neverd:///trojan%201.exe/functions?rva=0x1240"
+                            "&view=pseudocode&sha256=0123456789abcdef"));
+    const DeepLink ida = link(QStringLiteral(
+        "ida://malware-samples/trojan1.i64/types?name=std%3A%3Astring"));
+    QCOMPARE(ida.scheme, QStringLiteral("ida"));
+    QCOMPARE(ida.source, QStringLiteral("malware-samples"));
+    QCOMPARE(ida.resource, LinkResource::Types);
+    QCOMPARE(ida.name, QStringLiteral("std::string"));
+    QCOMPARE(ida.shownView(), LinkView::Types);
+    QCOMPARE(
+        link(QStringLiteral("ida://localhost/addresses?ea=4198400")).address(0),
+        std::optional<Address>(0x401000));
+    QVERIFY(link(QStringLiteral("ida://localhost/addresses?ea=1"))
+                .source.isEmpty());
+    QCOMPARE(link(QStringLiteral("neverd:///bookmarks?rva=0x10")).shownView(),
+             LinkView::Disasm);
+    // An address shows at its line of the pseudocode, which IDA's do not.
+    QCOMPARE(link(QStringLiteral("neverd:///addresses?rva=0x10&view="
+                                 "pseudocode"))
+                 .shownView(),
+             LinkView::Pseudocode);
+
+    const auto refusal = [](const QString &text) {
+      return parseDeepLink(text).error;
+    };
+    QVERIFY(!refusal(QStringLiteral("https://example.com/functions?rva=1"))
+                 .isEmpty());
+    QCOMPARE(refusal(QStringLiteral("neverd:///functions?rva=1&ea=2")),
+             QStringLiteral("A link gives rva or ea, not both."));
+    QCOMPARE(refusal(QStringLiteral("neverd:///functions")),
+             QStringLiteral("functions links give their address with rva= "
+                            "or ea=."));
+    QCOMPARE(refusal(QStringLiteral("neverd:///types?rva=1")),
+             QStringLiteral("A types link names its type with name=, not an "
+                            "address."));
+    QCOMPARE(refusal(QStringLiteral("neverd:///imports?rva=1&view=graph")),
+             QStringLiteral("imports links show in imports, disasm, "
+                            "hexdump, not in graph."));
+    QCOMPARE(refusal(QStringLiteral("neverd:///functions?rva=-1")),
+             QStringLiteral("rva is a number, decimal or after 0x, not "
+                            "\"-1\"."));
+    QVERIFY(!refusal(QStringLiteral("neverd:///functions?rva=1&sha256=12"))
+                 .isEmpty());
+    for (const int digits : {8, 16, 64})
+      QVERIFY(
+          parseDeepLink(QStringLiteral("neverd:///functions?rva=1&sha256=") +
+                        QString(digits, QLatin1Char('a')))
+              .link.has_value());
+    for (const QString &hash :
+         {QString(7, QLatin1Char('a')), QString(65, QLatin1Char('a')),
+          QString(16, QLatin1Char('z'))})
+      QVERIFY(
+          !refusal(QStringLiteral("neverd:///functions?rva=1&sha256=") + hash)
+               .isEmpty());
+    QVERIFY(!refusal(QStringLiteral("neverd:///code?rva=1")).isEmpty());
+    QVERIFY(!refusal(QStringLiteral("ida://ke.example.com/api/v1/buckets/b/"
+                                    "assets/k"))
+                 .isEmpty());
+    QVERIFY(looksLikeDeepLink(QStringLiteral(" IDA:///functions?rva=1")));
+    QVERIFY(!looksLikeDeepLink(QStringLiteral("/tmp/neverd.bin")));
+
+    // IDA names a program's database after it.
+    QVERIFY(
+        linkNamesInput(QStringLiteral("foo.exe"), QStringLiteral("foo.exe")));
+    QVERIFY(linkNamesInput(QStringLiteral("foo.exe.i64"),
+                           QStringLiteral("foo.exe")));
+    QVERIFY(
+        linkNamesInput(QStringLiteral("foo.idb"), QStringLiteral("foo.exe")));
+    QVERIFY(
+        !linkNamesInput(QStringLiteral("bar.i64"), QStringLiteral("foo.exe")));
+  }
+
+  void aLinkGoesToTheWorkbenchThatHasItsProgram() {
+    // As IDA's hcli routes a link: by the input's hash, else its name, else
+    // to the only workbench with a program open.
+    const QList<QJsonObject> instances{
+        {{"loaded", false}},
+        {{"loaded", true},
+         {"input_name", "a.out"},
+         {"sha256", QString(64, QLatin1Char('a'))}},
+        {{"loaded", true},
+         {"input_name", "b.out"},
+         {"sha256", QString(64, QLatin1Char('b'))}}};
+    const auto choose = [&](const QString &text,
+                            const QList<QJsonObject> &among) {
+      const ParsedLink parsed = parseDeepLink(text);
+      return parsed.link ? chooseInstance(among, *parsed.link)
+                         : InstanceChoice{};
+    };
+    QCOMPARE(
+        choose(QStringLiteral("neverd:///b.out/functions?rva=1"), instances)
+            .index,
+        2);
+    // The hash outranks a name the file no longer has.
+    QCOMPARE(choose(QStringLiteral("neverd:///old.out/functions?rva=1"
+                                   "&sha256=aaaaaaaa"),
+                    instances)
+                 .index,
+             1);
+    QCOMPARE(
+        choose(QStringLiteral("neverd:///c.out/functions?rva=1"), instances)
+            .index,
+        -1);
+    // A name match must not bypass an explicitly different build hash.
+    QCOMPARE(choose(QStringLiteral("neverd:///a.out/functions?rva=1"
+                                   "&sha256=cccccccc"),
+                    instances)
+                 .index,
+             -1);
+    const InstanceChoice unnamed =
+        choose(QStringLiteral("neverd:///functions?rva=1"), instances);
+    QCOMPARE(unnamed.index, -1);
+    QVERIFY(unnamed.ambiguous);
+    QCOMPARE(
+        choose(QStringLiteral("neverd:///functions?rva=1"), instances.mid(0, 2))
+            .index,
+        1);
+  }
+
+  void relativeLinksDoNotWrap() {
+    DeepLink relative;
+    relative.rva = std::numeric_limits<Address>::max();
+    QVERIFY(!relative.address(1));
+    QCOMPARE(relative.address(0), relative.rva);
+    relative.rva = 0;
+    QCOMPARE(relative.address(std::numeric_limits<Address>::max()),
+             std::optional<Address>(std::numeric_limits<Address>::max()));
+  }
+
+  void linkNumbersContainOnlyDigits() {
+    for (const QString &number :
+         {QStringLiteral("%091"), QStringLiteral("1%09"),
+          QStringLiteral("%0a1"), QStringLiteral("1%0d"),
+          QStringLiteral("0x%091")}) {
+      const auto parsed =
+          parseDeepLink(QStringLiteral("neverd:///addresses?ea=") + number);
+      QVERIFY2(!parsed.link, qPrintable(number));
+      QVERIFY(!parsed.error.isEmpty());
+    }
   }
 
   void commandsKeepIdasShortcuts() {
@@ -397,7 +907,12 @@ private slots:
   for (const auto &key : idaKeys(QLatin1StringView(Shortcut)))                 \
     idaCommands.insert(key, QStringLiteral(IdaAction));
 #include "IdaActions.def"
-    QVERIFY(shared.size() > int(ActionId::Count) * 3 / 4);
+    int patchOnly = 1; // NeverD's menu opener, whose free key is tested below.
+#define NEVERD_PATCH_ITEM(Id, Key, Kind)                                       \
+  if (!shared.contains(registry.action(ActionId::Id)))                         \
+    ++patchOnly;
+#include "PatchMenu.def"
+    QVERIFY(shared.size() > (int(ActionId::Count) - patchOnly) * 3 / 4);
     for (auto *action : registry.allActions())
       if (!shared.contains(action) && !action->shortcut().isEmpty())
         QVERIFY2(!idaCommands.contains(action->shortcut()),
@@ -411,6 +926,61 @@ private slots:
              QList{QKeySequence(Qt::Key_Return)});
     QCOMPARE(idaKeys(QLatin1StringView("sys(ZoomOut)")),
              QKeySequence::keyBindings(QKeySequence::ZoomOut));
+  }
+
+  void patchShortcutsDoNotTakeHexRaysKeys() {
+    ActionRegistry registry;
+    QSet<QKeySequence> keys;
+#define NEVERD_HEXRAYS_KEY(Name, Key)                                          \
+  keys.insert(QKeySequence(QStringLiteral(Key)));
+#include "HexRaysShortcuts.def"
+    QVERIFY(keys.contains(QKeySequence("Z")));
+    const auto patch = registry.action(ActionId::EditPatchMenu)->shortcut();
+    QCOMPARE(patch, QKeySequence("J"));
+    QVERIFY(!keys.contains(patch));
+    QCOMPARE(registry.action(ActionId::EditPatchedBytes)->shortcut(),
+             QKeySequence("Ctrl+Alt+P"));
+    QVERIFY(registry.action(ActionId::EditPatchAssemble)->shortcut().isEmpty());
+  }
+
+  void patchMenuUsesEngineChoicesAndFixedKeys() {
+    ActionRegistry registry;
+    QMenu menu;
+    PatchMenu binding(&menu);
+    registry.action(ActionId::EditPatchNop)
+        ->setText(QString::fromUtf8("填充空指令"));
+    QSignalSpy nop(registry.action(ActionId::EditPatchNop),
+                   &QAction::triggered);
+    QSignalSpy rename(registry.action(ActionId::EditRename),
+                      &QAction::triggered);
+    binding.fill(registry, {"nop", "bytes"});
+    QCOMPARE(menu.actions().size(), 2);
+    menu.show();
+    QTest::keyClick(&menu, Qt::Key_N);
+    QCOMPARE(rename.size(), 0);
+    QTest::keyClick(&menu, Qt::Key_J);
+    QCOMPARE(nop.size(), 1);
+    QMenu pending;
+    PatchMenu waiting(&pending);
+    pending.show();
+    QTest::keyClick(&pending, Qt::Key_J);
+    waiting.fill(registry, {"nop"});
+    QCOMPARE(nop.size(), 2);
+  }
+
+  void cancelledPatchMenuDiscardsItsPendingKey() {
+    ActionRegistry registry;
+    QMenu menu;
+    PatchMenu binding(&menu);
+    menu.addAction(QStringLiteral("Checking available patches"));
+    QSignalSpy nop(registry.action(ActionId::EditPatchNop),
+                   &QAction::triggered);
+    menu.show();
+    QTest::keyClick(&menu, Qt::Key_J);
+    QTest::keyClick(&menu, Qt::Key_Escape);
+    QVERIFY(!menu.isVisible());
+    binding.fill(registry, {"nop"});
+    QCOMPARE(nop.size(), 0);
   }
 
   void everyIconRenders() {
@@ -492,18 +1062,19 @@ private slots:
       byte = char(generator.bounded(256));
     const auto binary = directory.filePath(QStringLiteral("sample.bin"));
     const auto write = [](const QString &path, const QByteArray &bytes) {
+      QDir().mkpath(QFileInfo(path).absolutePath());
       QFile file(path);
       return file.open(QIODevice::WriteOnly) &&
              file.write(bytes) == bytes.size();
     };
     QVERIFY(write(binary, input));
-    QVERIFY(write(binary + ".neverd-annotations.json",
+    QVERIFY(write(binary + ".neverd/annotations.json",
                   R"([{"addr":"0x10","text":"one"}])"));
-    QVERIFY(write(binary + ".neverd-renames.json", "[]"));
+    QVERIFY(write(binary + ".neverd/renames.json", "[]"));
     // Every table the worker keeps, and how a binary file is read.
-    QVERIFY(write(binary + ".neverd-items.json",
+    QVERIFY(write(binary + ".neverd/items.json",
                   R"([{"addr":"0x20","kind":"data","size":4}])"));
-    QVERIFY(write(binary + ".neverd-load.json",
+    QVERIFY(write(binary + ".neverd/load.json",
                   R"({"loader":"binary","processor":"x86_64"})"));
     const auto database = ProjectDatabase::pathFor(binary);
     QCOMPARE(database, binary + QStringLiteral(".nddb"));
@@ -528,7 +1099,7 @@ private slots:
              QByteArray(R"({"address":"0x10"})"));
 
     // A second save updates sidecars and state in place.
-    QVERIFY(write(binary + ".neverd-annotations.json",
+    QVERIFY(write(binary + ".neverd/annotations.json",
                   R"([{"addr":"0x10","text":"two"}])"));
     QCOMPARE(ProjectDatabase::saveState(database,
                                         {{QStringLiteral("bookmarks"), "[]"}}),
@@ -548,16 +1119,16 @@ private slots:
     QFile copy(unpacked);
     QVERIFY(copy.open(QIODevice::ReadOnly));
     QCOMPARE(copy.readAll(), input);
-    QFile annotations(unpacked + ".neverd-annotations.json");
+    QFile annotations(unpacked + ".neverd/annotations.json");
     QVERIFY(annotations.open(QIODevice::ReadOnly));
     QVERIFY(annotations.readAll().contains("two"));
-    QFile items(unpacked + ".neverd-items.json");
+    QFile items(unpacked + ".neverd/items.json");
     QVERIFY(items.open(QIODevice::ReadOnly));
     QVERIFY(items.readAll().contains("0x20"));
-    QFile load(unpacked + ".neverd-load.json");
+    QFile load(unpacked + ".neverd/load.json");
     QVERIFY(load.open(QIODevice::ReadOnly));
     QVERIFY(load.readAll().contains("x86_64"));
-    QVERIFY(!QFileInfo::exists(unpacked + ".neverd-history.json"));
+    QVERIFY(!QFileInfo::exists(unpacked + ".neverd/local/history.json"));
 
     // Damage is reported, never unpacked as a different input.
     {
@@ -594,10 +1165,189 @@ private slots:
         directory.filePath(QStringLiteral("missing.nddb")), &error));
   }
 
+  void databaseRecoverySurvivesConsumedJournalAndRejectsConflictingPack() {
+    QTemporaryDir directory, working;
+    const auto binary = directory.filePath(QStringLiteral("recover.bin"));
+    const auto write = [](const QString &path, const QByteArray &bytes) {
+      QDir().mkpath(QFileInfo(path).absolutePath());
+      QFile file(path);
+      return file.open(QIODevice::WriteOnly) &&
+             file.write(bytes) == bytes.size();
+    };
+    const auto read = [](const QString &path) {
+      QFile file(path);
+      return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    QVERIFY(write(binary, "fixture"));
+    QVERIFY(write(binary + ".neverd/annotations.json", "packed"));
+    const auto database = ProjectDatabase::pathFor(binary);
+    QCOMPARE(ProjectDatabase::save(database, binary, {}), QString());
+    QString error;
+    bool recovered = true;
+    const auto input =
+        ProjectDatabase::unpack(database, working.path(), &error, &recovered);
+    QVERIFY2(!input.isEmpty(), qPrintable(error));
+    QVERIFY(!recovered);
+    const auto journal = input + ".neverd/local/journal.json";
+    QVERIFY(write(journal, "pending worker transaction"));
+    QVERIFY(write(input + ".neverd/annotations.json", "newest"));
+    QCOMPARE(
+        ProjectDatabase::unpack(database, working.path(), &error, &recovered),
+        input);
+    QVERIFY(recovered);
+    QVERIFY(QFile::remove(journal));
+    QCOMPARE(
+        ProjectDatabase::unpack(database, working.path(), &error, &recovered),
+        input);
+    QVERIFY(recovered);
+    QCOMPARE(read(input + ".neverd/annotations.json"), QByteArray("newest"));
+    // A different writer changes the packed database while the recovery is
+    // pending. Refuse to replace either copy of the edits.
+    QVERIFY(write(binary + ".neverd/annotations.json", "other writer"));
+    QCOMPARE(ProjectDatabase::save(database, binary, {}), QString());
+    QVERIFY(
+        ProjectDatabase::unpack(database, working.path(), &error, &recovered)
+            .isEmpty());
+    QCOMPARE(read(input + ".neverd/annotations.json"), QByteArray("newest"));
+    // Explicit Discard retires the marker and allows the packed state back.
+    QCOMPARE(ProjectDatabase::finishRecovery(input), QString());
+    QCOMPARE(
+        ProjectDatabase::unpack(database, working.path(), &error, &recovered),
+        input);
+    QVERIFY(!recovered);
+    QCOMPARE(read(input + ".neverd/annotations.json"),
+             QByteArray("other writer"));
+  }
+
+  void projectFilesPackWithTheProject() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto binary = directory.filePath(QStringLiteral("sample.bin"));
+    const auto write = [](const QString &path, const QByteArray &bytes) {
+      QDir().mkpath(QFileInfo(path).absolutePath());
+      QFile file(path);
+      return file.open(QIODevice::WriteOnly) &&
+             file.write(bytes) == bytes.size();
+    };
+    const auto read = [](const QString &path) {
+      QFile file(path);
+      return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    QVERIFY(write(binary, "\x90\xc3"));
+    // The project's own files read like the worker's: two-space indents,
+    // keys sorted, one final line break.
+    // Bookmarks as the command line's bookmarks command keeps them: by
+    // address, one at each, addresses in lowercase.
+    const QJsonArray marks = ProjectDatabase::bookmarkFile(QJsonArray{
+        QJsonObject{{"address", "0x1A"}, {"text", "later"}},
+        QJsonObject{{"address", "0x9"}, {"text", QString::fromUtf8("标记")}},
+        QJsonObject{{"address", "0x1a"}, {"text", "last"}, {"note", "kept"}}});
+    QCOMPARE(ProjectDatabase::writeProjectFile(binary,
+                                               ProjectDatabase::BookmarksSuffix,
+                                               QJsonDocument(marks)),
+             QString());
+    QCOMPARE(read(binary + ".neverd/bookmarks.json"),
+             QByteArray("[\n  {\n    \"addr\": \"0x9\",\n    \"name\": \"") +
+                 QString::fromUtf8("标记").toUtf8() +
+                 "\",\n    \"note\": \"\"\n  },\n  {\n    \"addr\": \"0x1a\",\n"
+                 "    \"name\": \"last\",\n    \"note\": \"kept\"\n  }\n]\n");
+    const auto rows = ProjectDatabase::bookmarkRows(
+        ProjectDatabase::readProjectFile(binary,
+                                         ProjectDatabase::BookmarksSuffix)
+            ->array());
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(
+        rows.at(1).toObject(),
+        (QJsonObject{{"address", "0x1a"}, {"text", "last"}, {"note", "kept"}}));
+    // No bookmarks read as the command line writes none, and an empty
+    // member closes where it opens.
+    const auto empty = directory.filePath(QStringLiteral("empty.bin"));
+    QCOMPARE(ProjectDatabase::writeProjectFile(empty,
+                                               ProjectDatabase::BookmarksSuffix,
+                                               QJsonDocument(QJsonArray())),
+             QString());
+    QCOMPARE(read(empty + ".neverd/bookmarks.json"), QByteArray("[]\n"));
+    QCOMPARE(ProjectDatabase::writeProjectFile(
+                 empty, ProjectDatabase::DebugFilesSuffix,
+                 QJsonDocument(QJsonObject{{"pdb", QJsonObject()},
+                                           {"paths", QJsonArray()}})),
+             QString());
+    QCOMPARE(read(empty + ".neverd/debug.json"),
+             QByteArray("{\n  \"paths\": [],\n  \"pdb\": {}\n}\n"));
+    QVERIFY(!ProjectDatabase::readProjectFile(
+        binary, ProjectDatabase::WorkbenchSuffix));
+    QVERIFY(write(binary + ".neverd/debug.json", R"({"pdb":{"mode":"none"}})"));
+    QVERIFY(write(binary + ".neverd/types.json", R"({"types":["struct T"]})"));
+    QVERIFY(write(binary + ".neverd/items.json", "[]"));
+    QVERIFY(write(
+        binary + ".neverd/patches.json",
+        R"([{"addr":"0x0","file_off":"0x0","va":"0x0","size":1,"original":"90","current":"cc","kind":"bytes"}])"));
+    // A workbench file is the user's own; a database keeps its own state.
+    QVERIFY(write(binary + ".neverd/local/workbench.json", "{}"));
+
+    // Local types, bookmarks and debug files go into the database and come
+    // back out of it.
+    const auto database = ProjectDatabase::pathFor(binary);
+    QCOMPARE(ProjectDatabase::save(database, binary, {}), QString());
+    QString error;
+    auto contents = ProjectDatabase::read(database, &error);
+    QVERIFY2(contents, qPrintable(error));
+    for (const char *suffix : {".neverd-types.json", ".neverd-bookmarks.json",
+                               ".neverd-debug.json", ".neverd-items.json"})
+      QVERIFY2(contents->sidecars.contains(QLatin1String(suffix)), suffix);
+    QVERIFY(
+        !contents->sidecars.contains(QStringLiteral(".neverd-workbench.json")));
+    QVERIFY(contents->packedSuffixes.contains(
+        QStringLiteral(".neverd-types.json")));
+    QTemporaryDir elsewhere;
+    const auto unpacked =
+        ProjectDatabase::unpack(database, elsewhere.path(), &error);
+    QVERIFY2(!unpacked.isEmpty(), qPrintable(error));
+    QCOMPARE(read(unpacked + ".neverd/types.json"),
+             read(binary + ".neverd/types.json"));
+    QCOMPARE(read(unpacked + ".neverd/bookmarks.json"),
+             read(binary + ".neverd/bookmarks.json"));
+    QCOMPARE(read(unpacked + ".neverd/debug.json"),
+             read(binary + ".neverd/debug.json"));
+    QCOMPARE(read(unpacked + ".neverd/patches.json"),
+             read(binary + ".neverd/patches.json"));
+
+    // A database written before it named the files it packs packed no local
+    // types: unpacking it keeps the types beside the input, while a table it
+    // did pack and now lacks is removed.
+    {
+      auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                          QStringLiteral("legacy"));
+      db.setDatabaseName(database);
+      QVERIFY(db.open());
+      QSqlQuery query(db);
+      QVERIFY(query.exec(
+          QStringLiteral("DELETE FROM meta WHERE key = 'sidecar_suffixes'")));
+      QVERIFY(query.exec(QStringLiteral(
+          "DELETE FROM sidecars WHERE suffix IN ('.neverd-types.json', "
+          "'.neverd-items.json', '.neverd-bookmarks.json', "
+          "'.neverd-debug.json')")));
+      db.close();
+    }
+    QSqlDatabase::removeDatabase(QStringLiteral("legacy"));
+    contents = ProjectDatabase::read(database, &error);
+    QVERIFY2(contents, qPrintable(error));
+    QVERIFY(!contents->packedSuffixes.contains(
+        QStringLiteral(".neverd-types.json")));
+    QVERIFY(write(unpacked + ".neverd/types.json", "only copy"));
+    QVERIFY(write(unpacked + ".neverd/items.json", "stale"));
+    QCOMPARE(ProjectDatabase::unpack(database, elsewhere.path(), &error),
+             unpacked);
+    QCOMPARE(read(unpacked + ".neverd/types.json"), QByteArray("only copy"));
+    QVERIFY(!QFileInfo::exists(unpacked + ".neverd/items.json"));
+    QVERIFY(QFileInfo::exists(unpacked + ".neverd/bookmarks.json"));
+  }
+
   void projectDatabaseIdentity() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     const auto write = [](const QString &path, const QByteArray &bytes) {
+      QDir().mkpath(QFileInfo(path).absolutePath());
       QFile file(path);
       return file.open(QIODevice::WriteOnly) &&
              file.write(bytes) == bytes.size();
@@ -662,8 +1412,7 @@ private slots:
                                          "'1')")}));
     const auto foreignBytes = contents(foreign);
     QVERIFY(!ProjectDatabase::read(foreign, &error));
-    QCOMPARE(error,
-             QStringLiteral("%1 is not a NeverD database.").arg(foreign));
+    QCOMPARE(error, QStringLiteral("NDDB: not a NeverD database"));
     QVERIFY(!ProjectDatabase::saveState(foreign, {}).isEmpty());
     QVERIFY(!ProjectDatabase::save(foreign, binary, {}).isEmpty());
     QCOMPARE(contents(foreign), foreignBytes);
@@ -1027,8 +1776,13 @@ private slots:
     QWidget *window = dock->QWidget::window();
     QVERIFY(window != dock.get());
     QVERIFY(QTest::qWaitForWindowExposed(window));
-    QCOMPARE(window->grab().toImage().pixelColor(0, window->height() / 2),
-             theme.chrome(QStringLiteral("FloatingWindowBorder")));
+    const auto capture = window->grab().toImage();
+    const int edge = window->contentsMargins().left();
+    QVERIFY(edge > 0);
+    const int row = capture.height() / 2;
+    QVERIFY(capture.pixelColor(0, row).alpha() <
+            capture.pixelColor(qRound(edge * capture.devicePixelRatio()), row)
+                .alpha());
   }
 
   void tabsShowCloseButtonsWhenCurrentOrHovered() {
@@ -1122,7 +1876,8 @@ private slots:
     QCOMPARE(at(200, 150), Qt::Edges());
     QCOMPARE(at(2, 150), Qt::Edges(Qt::LeftEdge));
     QCOMPARE(at(12, 150), Qt::Edges(Qt::LeftEdge));
-    QCOMPARE(at(14, 150), Qt::Edges());
+    QCOMPARE(at(16, 150), Qt::Edges(Qt::LeftEdge));
+    QCOMPARE(at(18, 150), Qt::Edges());
     QCOMPARE(at(395, 150), Qt::Edges(Qt::RightEdge));
     QCOMPARE(at(200, 5), Qt::Edges(Qt::TopEdge));
     QCOMPARE(at(200, 292), Qt::Edges(Qt::BottomEdge));
@@ -1133,7 +1888,9 @@ private slots:
     // Without a shadow the edges lie just inside the window.
     QCOMPARE(WindowFrame::edgesAt(QPoint(1, 150), size, QMargins()),
              Qt::Edges(Qt::LeftEdge));
-    QCOMPARE(WindowFrame::edgesAt(QPoint(5, 150), size, QMargins()),
+    QCOMPARE(WindowFrame::edgesAt(QPoint(6, 150), size, QMargins()),
+             Qt::Edges(Qt::LeftEdge));
+    QCOMPARE(WindowFrame::edgesAt(QPoint(8, 150), size, QMargins()),
              Qt::Edges());
   }
 
@@ -1148,7 +1905,11 @@ private slots:
     QCOMPARE(menus->parentWidget(), bar);
     QAction palette;
     int runs = 0;
-    connect(&palette, &QAction::triggered, &window, [&runs] { ++runs; });
+    QWidget *clicked = nullptr;
+    connect(&palette, &QAction::triggered, &window, [&] {
+      ++runs;
+      clicked = bar->clickedCommandCenter();
+    });
     bar->setCommandCenterAction(&palette);
     bar->setCommandCenterText(QStringLiteral("xxd"),
                               QStringLiteral("NeverD - xxd /tmp"));
@@ -1167,12 +1928,18 @@ private slots:
     QCOMPARE(button("maximizeButton")->accessibleName(),
              QStringLiteral("Maximize"));
 
-    // The command center names the file and runs its command.
+    // The command center names the file and runs its command, which can tell
+    // a click on the field, which it drops from, from its key.
     auto *center = button("commandCenter");
     QVERIFY(center && center->isVisible());
     QCOMPARE(center->text(), QStringLiteral("xxd"));
     QTest::mouseClick(center, Qt::LeftButton);
     QCOMPARE(runs, 1);
+    QCOMPARE(clicked, static_cast<QWidget *>(center));
+    QVERIFY(!bar->clickedCommandCenter());
+    palette.trigger();
+    QCOMPARE(runs, 2);
+    QVERIFY(!clicked);
 
     // The maximize button and a double click on the bar's empty part toggle
     // the maximized state, and the button then offers to restore.
@@ -1192,17 +1959,170 @@ private slots:
     QTRY_VERIFY(button("closeButton")->isVisible());
   }
 
+  void titleBarControlsRepaintOnPointerLeave() {
+    // A native-window handoff can deliver Leave without HoverLeave. Clearing
+    // underMouse must also repaint the close button's previous red highlight.
+    QWidget window;
+    auto *bar = new TitleBar(window);
+    window.resize(500, 300);
+    bar->setGeometry(0, 0, 500, bar->sizeHint().height());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto *close = bar->findChild<QAbstractButton *>("closeButton");
+    QVERIFY(close && close->isVisible());
+    const QPoint center = close->rect().center();
+    QEnterEvent enter(center, close->mapTo(&window, center),
+                      close->mapToGlobal(center));
+    QCoreApplication::sendEvent(close, &enter);
+    QHoverEvent hover(QEvent::HoverEnter, center, close->mapToGlobal(center),
+                      QPointF(-1, -1));
+    QCoreApplication::sendEvent(close, &hover);
+    QVERIFY(close->underMouse());
+    QCoreApplication::processEvents();
+    class PaintCounter final : public QObject {
+    public:
+      int paints = 0;
+      bool eventFilter(QObject *, QEvent *event) override {
+        if (event->type() == QEvent::Paint)
+          ++paints;
+        return false;
+      }
+    } counter;
+    close->installEventFilter(&counter);
+    QEvent leave(QEvent::Leave);
+    QCoreApplication::sendEvent(close, &leave);
+    QVERIFY(!close->underMouse());
+    QTRY_VERIFY(counter.paints > 0);
+  }
+
+  void loadQuestionFitsTheFontsItShowsWith() {
+    // The style sheet gives the detail line its font only as the dialog
+    // polishes; the question measured before then was a pixel short in
+    // Chinese and Japanese.  A larger detail font shows the same gap.
+    SymbolTablePromptDialog dialog(QJsonObject{
+        {"table", QStringLiteral(".symtab")},
+        {"names", QJsonArray{QStringLiteral("main"), QStringLiteral("die")}}});
+    dialog.setStyleSheet(
+        QStringLiteral("QLabel[statusLine=\"true\"] { font-size: 40px; }"));
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    QVERIFY2(
+        dialog.height() >= dialog.layout()->totalHeightForWidth(dialog.width()),
+        qPrintable(
+            QStringLiteral("%1 < %2")
+                .arg(dialog.height())
+                .arg(dialog.layout()->totalHeightForWidth(dialog.width()))));
+  }
+
+  void titleFitLeavesAMessageBoxItsWrapping() {
+    // A rich text wraps from the start, as About NeverD's does.  Fitting the
+    // title measured it wrapped, so the box then showed it unwrapped and cut
+    // off at the title's width, with no way to resize it.
+    const QString text = QStringLiteral(
+        "<h3>NeverD 1.0</h3><p>Interactive disassembler and decompiler "
+        "workbench.</p><p>Licensed under the GNU Affero General Public "
+        "License v3. Icons are original NeverD artwork.</p>");
+    QMessageBox plain(QMessageBox::Information, QStringLiteral("About"), text);
+    QMessageBox fitted(QMessageBox::Information, QStringLiteral("About"), text);
+    WindowFrame::fitTitle(fitted, 240);
+    plain.show();
+    fitted.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&fitted));
+    QCOMPARE(fitted.size(), plain.size());
+    const auto *label =
+        fitted.findChild<QLabel *>(QStringLiteral("qt_msgbox_label"));
+    QVERIFY(label && label->wordWrap());
+    QVERIFY(label->heightForWidth(label->width()) <= label->height());
+  }
+
+  void titleFitWidensAShortMessage() {
+    // A text narrower than the title still widens to show the title whole.
+    for (const QString &text :
+         {QStringLiteral("Done."), QStringLiteral("<b>Done.</b>")}) {
+      QMessageBox box(QMessageBox::Information, QStringLiteral("Saved"), text);
+      WindowFrame::fitTitle(box, 420);
+      box.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&box));
+      QVERIFY2(box.width() >= 420, qPrintable(text));
+    }
+  }
+
+  void earlyDialogWindowsLeaveTheWorkbenchWhole() {
+    // A file dialog is polished while it is built, and its frame then takes
+    // its native window before it first shows (WindowFrame::attach).  Qt
+    // gave every child of the dialog's parent a native window as well: the
+    // workbench's title bar, toolbars, docks and status bar became Wayland
+    // subsurfaces that GNOME stopped updating once Load file > FLIRT
+    // signature file was cancelled.  Over a view inside the workbench, as
+    // Extensions' Import manifest opens one, this climbed through every
+    // widget around the view.
+    QMainWindow workbench;
+    workbench.setMenuBar(new QMenuBar);
+    workbench.menuBar()->addMenu(QStringLiteral("&File"));
+    workbench.addToolBar(QStringLiteral("File"))
+        ->addAction(QStringLiteral("Open"));
+    auto *central = new QWidget;
+    auto *layout = new QVBoxLayout(central);
+    layout->addWidget(new QLabel(QStringLiteral("Status")));
+    auto *view = new QPlainTextEdit;
+    layout->addWidget(view);
+    workbench.setCentralWidget(central);
+    workbench.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&workbench));
+    for (QWidget *parent :
+         {static_cast<QWidget *>(&workbench), static_cast<QWidget *>(view)}) {
+      QDialog dialog(parent);
+      QVERIFY(!dialog.windowHandle());
+      dialog.winId();
+      QVERIFY(dialog.windowHandle());
+      const auto widgets = workbench.findChildren<QWidget *>();
+      QVERIFY(widgets.size() >= 5);
+      for (const QWidget *widget : widgets)
+        if (!widget->isWindow())
+          QVERIFY2(!widget->internalWinId(), widget->metaObject()->className());
+    }
+  }
+
+  void fullScreenRetainsTheRestoreState_data() {
+    QTest::addColumn<bool>("maximized");
+    QTest::newRow("normal") << false;
+    QTest::newRow("maximized") << true;
+  }
+
+  void fullScreenRetainsTheRestoreState() {
+    if (QGuiApplication::platformName() != QLatin1String("offscreen"))
+      QSKIP("Native transitions are covered by the native frame regression");
+    QFETCH(bool, maximized);
+    QWidget window;
+    auto *frame = WindowFrame::attach(window);
+    QVERIFY(frame);
+    window.resize(900, 600);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    if (maximized)
+      window.showMaximized();
+    for (int round = 0; round < 2; ++round) {
+      frame->toggleFullScreen();
+      QVERIFY(window.isFullScreen());
+      // Some platforms report full screen alone. Losing the maximized bit
+      // must not change where the user's second F11 returns the window.
+      window.setWindowState(Qt::WindowFullScreen);
+      frame->toggleFullScreen();
+      QVERIFY(!window.isFullScreen());
+      QCOMPARE(window.isMaximized(), maximized);
+    }
+  }
+
   void nativeFrameKeepsTheTitleBarOnScreen() {
-    // Windows and macOS keep the system frame without its caption, so the
-    // window system decides where a maximized or full-screen window's client
-    // area lies; CI runs this with their native platforms.
-    if (platform::frameKind() != platform::FrameKind::Captionless)
-      QSKIP("The platform has no captionless system frame");
+    // The drawn frame must survive native state transitions on every desktop.
+    if (QGuiApplication::platformName() == QLatin1String("offscreen"))
+      QSKIP("Needs a native window manager");
     QWidget window;
     auto *menus = new QMenuBar;
     menus->addMenu(QStringLiteral("&File"));
     auto *bar = new TitleBar(window, menus);
-    QVERIFY(WindowFrame::attach(window, bar));
+    auto *frame = WindowFrame::attach(window, bar);
+    QVERIFY(frame);
     // Small CI screens (1024x768) leave the default placement partly off
     // screen; start inside the available area.
     window.resize(900, 600);
@@ -1210,17 +2130,26 @@ private slots:
                 QPoint(40, 40));
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
-    AppliedStates applied;
-    window.windowHandle()->installEventFilter(&applied);
+    if (QGuiApplication::platformName() == QLatin1String("cocoa")) {
+      // AppKit cannot complete a native full-screen transition for this
+      // background test process when the desktop refuses activation.
+      window.raise();
+      window.activateWindow();
+      if (!QTest::qWaitForWindowActive(&window))
+        QSKIP("Cocoa full-screen validation requires a foreground window.");
+    }
+    test::NativeWindowStates applied(*window.windowHandle());
     QScreen *screen = window.screen();
     const auto barRect = [&] {
       return QRect(bar->mapToGlobal(QPoint(0, 0)), bar->size());
     };
     const auto report = [&](const char *step) {
-      qInfo() << step << "applied" << applied.states << "frame"
-              << window.frameGeometry() << "client" << window.geometry()
-              << "contents" << window.contentsMargins() << "bar" << barRect()
-              << "screen" << screen->geometry() << "available"
+      qInfo() << step << "applied" << applied.states << "handle"
+              << window.windowHandle()->windowStates() << "widget"
+              << window.windowState() << "frame" << window.frameGeometry()
+              << "client" << window.geometry() << "contents"
+              << window.contentsMargins() << "bar" << barRect() << "screen"
+              << screen->geometry() << "available"
               << screen->availableGeometry();
     };
     // Each step waits until the window system confirms the state on the
@@ -1228,24 +2157,36 @@ private slots:
     // before an animation ends, and reports full screen alone over maximized.
     const auto request = [&](Qt::WindowStates states, const char *step) {
       const int before = applied.count;
-      window.setWindowState(states);
+      bool nativeFinished = true;
+      const auto apply = [&] {
+        if (states.testFlag(Qt::WindowFullScreen) != window.isFullScreen())
+          frame->toggleFullScreen();
+        else
+          frame->setWindowState(states);
+      };
+#ifdef Q_OS_MACOS
+      if (QGuiApplication::platformName() == QLatin1String("cocoa"))
+        nativeFinished = test::setNativeWindowState(window, states, apply);
+      else
+#endif
+        apply();
       const bool confirmed = QTest::qWaitFor(
-          [&] {
-            return applied.count > before &&
-                   effectiveState(applied.states) == effectiveState(states);
-          },
-          10000);
+          [&] { return applied.count > before && applied.is(states); }, 10000);
       QTest::qWait(300);
       report(step);
-      return confirmed;
+      return nativeFinished && confirmed && applied.is(states) &&
+             test::NativeWindowStates::same(window.windowState(), states);
     };
     report("normal");
     const QSize normal = window.size();
     QVERIFY(screen->geometry().contains(barRect()));
 
     QVERIFY(request(Qt::WindowMaximized, "maximized"));
+    QCOMPARE(window.contentsMargins().left(), 0);
+    QCOMPARE(window.contentsMargins().right(), 0);
     QVERIFY(screen->availableGeometry().contains(barRect()));
     QVERIFY(request(Qt::WindowNoState, "restored"));
+    QVERIFY(window.contentsMargins().left() > 0);
     QCOMPARE(window.size(), normal);
 
     // Full screen twice: its client area must not lose the title bar, and a
@@ -1262,18 +2203,27 @@ private slots:
     // inset there, and leaving full screen returns to the maximized size.
     QVERIFY(request(Qt::WindowMaximized, "maximized"));
     const QSize maximized = window.size();
-    QVERIFY(request(Qt::WindowMaximized | Qt::WindowFullScreen,
-                    "full screen from maximized"));
-    QVERIFY(screen->geometry().contains(barRect()));
-    QCOMPARE(barRect().top(), screen->geometry().top());
-    QVERIFY(request(Qt::WindowMaximized, "maximized again"));
-    QCOMPARE(window.size(), maximized);
-    QVERIFY(screen->availableGeometry().contains(barRect()));
+    for (int round = 0; round < 2; ++round) {
+      QVERIFY(request(Qt::WindowMaximized | Qt::WindowFullScreen,
+                      "full screen from maximized"));
+      QVERIFY(screen->geometry().contains(barRect()));
+      QCOMPARE(barRect().top(), screen->geometry().top());
+      QVERIFY(request(Qt::WindowMaximized, "maximized again"));
+      QCOMPARE(window.size(), maximized);
+      QVERIFY(screen->availableGeometry().contains(barRect()));
+    }
     QVERIFY(request(Qt::WindowNoState, "restored"));
     QCOMPARE(window.size(), normal);
   }
 
+  void dialogTitleBarOffersTheButtonsItsFlagsAskFor_data() {
+    QTest::addColumn<bool>("customized");
+    QTest::newRow("default-dialog-flags") << false;
+    QTest::newRow("customized-flags") << true;
+  }
+
   void dialogTitleBarOffersTheButtonsItsFlagsAskFor() {
+    QFETCH(bool, customized);
     QDialog dialog;
     dialog.setWindowTitle(QStringLiteral("Jump anywhere"));
     auto *bar = new TitleBar(dialog);
@@ -1296,9 +2246,12 @@ private slots:
     QTRY_VERIFY(!dialog.isVisible());
 
     // A dialog whose flags ask for Maximize offers it.
-    QDialog resizable(
-        nullptr, Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint |
-                     Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+    Qt::WindowFlags flags = Qt::Dialog | Qt::WindowTitleHint |
+                            Qt::WindowCloseButtonHint |
+                            Qt::WindowMinMaxButtonsHint;
+    if (customized)
+      flags |= Qt::CustomizeWindowHint;
+    QDialog resizable(nullptr, flags);
     auto *second = new TitleBar(resizable);
     resizable.resize(500, 300);
     second->setGeometry(0, 0, 500, second->sizeHint().height());
@@ -1308,6 +2261,12 @@ private slots:
     QVERIFY(maximize->isVisible());
     QTest::mouseClick(maximize, Qt::LeftButton);
     QTRY_VERIFY(resizable.isMaximized());
+    QTest::mouseClick(maximize, Qt::LeftButton);
+    QTRY_VERIFY(!resizable.isMaximized());
+    QAbstractButton *minimize = button(second, "minimizeButton");
+    QVERIFY(minimize->isVisible());
+    QTest::mouseClick(minimize, Qt::LeftButton);
+    QTRY_VERIFY(resizable.isMinimized());
   }
 
   void returnOpensTheCurrentItemOnce() {
@@ -1326,6 +2285,97 @@ private slots:
     QCOMPARE(opened, QStringList{QStringLiteral("second")});
     QTest::keyClick(&list, Qt::Key_Enter, Qt::KeypadModifier);
     QCOMPARE(opened.size(), 2);
+  }
+
+  void returnInADialogPressesItsDefaultButton() {
+    // Qt's GNOME platform theme makes Return press the focused check box,
+    // as this one does: after Alt+O checked "Does not return", Return
+    // cleared it and the dialog stayed open.
+    class ReturnPressedCheckBox final : public QCheckBox {
+    public:
+      using QCheckBox::QCheckBox;
+
+    protected:
+      void keyPressEvent(QKeyEvent *event) override {
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
+          toggle();
+        else
+          QCheckBox::keyPressEvent(event);
+      }
+    };
+    const std::unique_ptr<QObject> filter(acceptDialogsOnReturn(*qApp));
+    QDialog dialog;
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *box =
+        new ReturnPressedCheckBox(QStringLiteral("D&oes not return"), &dialog);
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(box);
+    layout->addWidget(buttons);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    box->setFocus();
+    QTest::keyClick(box, Qt::Key_Space);
+    QVERIFY(box->isChecked());
+    QTest::keyClick(box, Qt::Key_Return);
+    QVERIFY(box->isChecked());
+    QCOMPARE(dialog.result(), int(QDialog::Accepted));
+    QVERIFY(!dialog.isVisible());
+    // Outside a dialog the button keeps the key.
+    ReturnPressedCheckBox alone(QStringLiteral("Alone"));
+    alone.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&alone));
+    QTest::keyClick(&alone, Qt::Key_Return);
+    QVERIFY(alone.isChecked());
+  }
+
+  void returnOnAListOfChoicesPressesTheDefaultButton() {
+    // The GNOME theme makes Return open a combo box's list as well, so
+    // Return after choosing a theme opened the list again.
+    class ReturnOpenedComboBox final : public QComboBox {
+    public:
+      using QComboBox::QComboBox;
+      int opened = 0;
+
+    protected:
+      void keyPressEvent(QKeyEvent *event) override {
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
+          ++opened;
+        else
+          QComboBox::keyPressEvent(event);
+      }
+    };
+    const std::unique_ptr<QObject> filter(acceptDialogsOnReturn(*qApp));
+    QDialog dialog;
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *choices = new ReturnOpenedComboBox(&dialog);
+    choices->addItems({QStringLiteral("Dark"), QStringLiteral("Light")});
+    auto *typed = new ReturnOpenedComboBox(&dialog);
+    typed->setEditable(true);
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    for (QWidget *widget :
+         {static_cast<QWidget *>(choices), static_cast<QWidget *>(typed),
+          static_cast<QWidget *>(buttons)})
+      layout->addWidget(widget);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    // A combo box that takes typing keeps Return for its text.
+    typed->setFocus();
+    QTest::keyClick(typed, Qt::Key_Return);
+    QCOMPARE(typed->opened, 1);
+    QVERIFY(dialog.isVisible());
+    choices->setFocus();
+    QTest::keyClick(choices, Qt::Key_Down);
+    QCOMPARE(choices->currentText(), QStringLiteral("Light"));
+    QTest::keyClick(choices, Qt::Key_Return);
+    QCOMPARE(choices->opened, 0);
+    QCOMPARE(dialog.result(), int(QDialog::Accepted));
+    QVERIFY(!dialog.isVisible());
   }
 
   void themeDrawsFlatControls() {
@@ -1352,7 +2402,9 @@ private slots:
       QVERIFY(QTest::qWaitForWindowExposed(&dialog));
       const QImage image = dialog.grab().toImage();
       const auto pixel = [&](QWidget *widget, QPoint point) {
-        return image.pixelColor(widget->mapTo(&dialog, point));
+        const QPoint at = widget->mapTo(&dialog, point);
+        const qreal scale = image.devicePixelRatio();
+        return image.pixelColor(qRound(at.x() * scale), qRound(at.y() * scale));
       };
 
       // An unchecked box stands out from the dialog behind it.

@@ -7,8 +7,8 @@
 /// \file
 /// Argument counts, caller-IRQL ceilings and typed operations for the counted
 /// string helpers that drivers use to build and parse UNICODE_STRING and
-/// STRING records. Every operation only touches caller-provided guest memory;
-/// its full effect is captured by the written bytes. Behavior is modeled 1:1
+/// STRING records. Conversion allocations reuse the shared paged-string owner;
+/// other effects are captured by caller-visible bytes. Behavior is modeled
 /// against the Windows 10.0.19041.6456 kernel exports cited per entry, so
 /// malformed records and unsupported case folding fail clearly rather than
 /// guessing.
@@ -65,13 +65,19 @@ NEVERD_KERNEL_RUNTIME_STRING_API(RtlPrefixUnicodeString, 3, Passive,
                                  runtime::prefixUnicodeString(*this, Memory, A))
 
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlintegertounicodestring
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlint64tounicodestring
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlunicodestringtointeger
 // RVA 0x6f6280 (integer->string, via RtlIntegerToChar 0x6f7000) and 0x6638e0
 // (string->integer). Both reject invalid radices; the formatter needs room for
 // the null terminator, and the parser skips leading whitespace and a sign.
 NEVERD_KERNEL_RUNTIME_STRING_API(RtlIntegerToUnicodeString, 3, Passive,
                                  runtime::integerToUnicodeString(*this, Memory,
-                                                                 A))
+                                                                 A, false))
+// RVA 0x6f6790 preserves all 64 value bits through RtlLargeIntegerToChar and
+// shares the same counted-string output conversion.
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlInt64ToUnicodeString, 3, Passive,
+                                 runtime::integerToUnicodeString(*this, Memory,
+                                                                 A, true))
 NEVERD_KERNEL_RUNTIME_STRING_API(RtlUnicodeStringToInteger, 3, Passive,
                                  runtime::unicodeStringToInteger(*this, Memory,
                                                                  A))
@@ -101,3 +107,19 @@ NEVERD_KERNEL_RUNTIME_STRING_API(RtlStringFromGUID, 2, Passive,
                                  stringFromGUID(A))
 NEVERD_KERNEL_RUNTIME_STRING_API(RtlGUIDFromString, 2, Passive,
                                  guidFromString(A))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlhashunicodestring
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-rtlupcaseunicodestring
+// RVA 0x6afa80 and 0x62f0c0. Folded units below U+00C0 are independent of
+// the NLS table. Hashing without folding accepts every UTF-16 code unit.
+// Upcase allocations reuse the paged 'Strg' owner; zero-sized allocation is
+// outside that owner's contract. Both preserve original field-access order.
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlHashUnicodeString, 4, APC,
+                                 runtime::hashUnicodeString(*this, Memory, A))
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlUpcaseUnicodeString, 3, APC,
+                                 upcaseUnicodeString(A))
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlupcaseunicodechar
+// RVA 0x601d90 uses the same unit mapping as the counted routines above.
+NEVERD_KERNEL_RUNTIME_STRING_API(RtlUpcaseUnicodeChar, 1, APC,
+                                 runtime::uppercaseCharacter(A[0], false))

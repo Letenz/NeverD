@@ -8,7 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/ir/med/X86RegistrationFrame.h"
+#include "neverd/ir/med/X86/X86RegistrationFrame.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -86,6 +86,10 @@ RegistrationRoots::RegistrationRoots(const LowFunc &Low, Arch Architecture,
 }
 
 void RegistrationRoots::disconnectNoReturnFallthroughs(MedFunc &Func) const {
+  if (Direct && HasSEHFrame) {
+    disconnectAdjacentSEHCalls(Func);
+    return;
+  }
   if (!(Direct || Realigned) || !HasCxxFrame || !Low.RegistrationStates ||
       !Low.RegistrationStates->Complete ||
       !Low.RegistrationStates->CallFrameEffectsComplete ||

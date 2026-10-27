@@ -48,6 +48,10 @@ NEVERD_API const char *neverd_func_name(neverd_session_t Sess, int Idx);
 // Function lookup helpers
 // ===--------------------------------------------------------------------===//
 
+/// Find a listed name or an export alias, preferring the listed name. On
+/// Mach-O, also accept the C spelling without its one ABI underscore when
+/// neither exact spelling matches. The function list keeps its original names.
+/// Return -1 when no listed function matches.
 NEVERD_API int neverd_func_find_by_name(neverd_session_t Sess,
                                         const char *Name);
 NEVERD_API int neverd_func_find_by_addr(neverd_session_t Sess,
@@ -89,7 +93,11 @@ enum {
   /// pointer where it was, as the lift models it: the callee pops the return
   /// address, and arguments a callee also pops are not included.  A return
   /// states only what happens before control leaves the function.
-  NEVERD_DISASM_STACK = 2u
+  NEVERD_DISASM_STACK = 2u,
+  /// Add "operand_bits" for decoded x86/x64 operands, indexed before display
+  /// folding. Widths come from the decoder, including the logical width of
+  /// an immediate; they are not inferred from a different operand's register.
+  NEVERD_DISASM_OPERANDS = 4u
 };
 
 /// neverd_disasm_json() with additive row fields selected by \p Options.
@@ -98,12 +106,30 @@ NEVERD_API const char *neverd_disasm_json_ex(neverd_session_t Sess,
                                              neverd_va_t Addr, int MaxInsns,
                                              unsigned Options);
 
+/// Native instructions recovered for one function, in address order, starting
+/// at FirstAddress. Uses the same CFG and recovery checks as the decompiler;
+/// skipped bytes are absent, even inside a sized function. Prepares the low
+/// function view on demand. Options select the same additive fields as raw
+/// disassembly; recovered direct branch targets replace instruction-local
+/// indirect targets. Raw neverd_disasm_json[_ex] remains a linear decode.
+/// Returns {"instructions":[...],"next_address":"0x..."|null,
+/// "lift_complete":bool}. Completeness describes reachable instruction lifting,
+/// not proof that every indirect target is known. MaxInsns is clamped to
+/// 1..4096. NULL with an error for non-native images or unavailable analysis.
+NEVERD_API const char *neverd_function_disasm_json(neverd_session_t Sess,
+                                                   neverd_va_t Entry,
+                                                   neverd_va_t FirstAddress,
+                                                   int MaxInsns,
+                                                   unsigned Options);
+
 /// Direct references of up to \p MaxFunctions native functions whose entries
 /// are at or above \p FirstEntry, in ascending entry order, from the same
 /// LowIR lift as NEVERD_DISASM_FLOW.  The address cursor stays valid when lazy
 /// analysis adds a function to the list between calls.  A function with a
-/// known size is decoded across its whole extent; one without a size stops at
-/// its first function terminator.  Returns
+/// known size is decoded across its whole extent; one without a size is the
+/// code its own direct jumps reach from its entry, short of another listed
+/// function's entry (on 32-bit ARM, up to its first function terminator).
+/// Returns
 /// {"refs":[["from","to","kind"],...],"next_entry":"0x..."|null,
 /// "function_count":int}, where kind is "call", "jump", "cjump", "read",
 /// "write" or "offset", or "icall"/"ijump" for a call or jump through a pointer
@@ -169,13 +195,44 @@ NEVERD_API int neverd_prepare_function(neverd_session_t Sess,
                                        neverd_va_t FuncEntry);
 
 /// Prepare the requested view with the same entry and recovery checks.
-/// Native "llvm" and "llvmc" postpone HighIR construction, preserving shared
-/// CFG/ABI/exception analysis. A later source view completes HighIR on demand.
+/// Native "low", "med", "llvm" and "llvmc" postpone HighIR construction,
+/// preserving shared CFG/ABI/exception analysis. A later source or "high" view
+/// completes HighIR on demand. Native "cfg" prepares the control-flow graphs
+/// alone (neverd_cfg_json); any other view of the function continues that
+/// analysis on demand.
 /// Other valid representations keep ordinary preparation; unknown names fail.
 /// Returns 1 on success or 0 with neverd_last_error on failure.
 NEVERD_API int neverd_prepare_function_view(neverd_session_t Sess,
                                             neverd_va_t FuncEntry,
                                             const char *Representation);
+
+/// Prepare later neverd_prepare_function calls for the functions from
+/// FirstEntry on, in entry order, at most MaxFunctions (clamped to
+/// 1..4096): build the control-flow graphs those calls would otherwise build
+/// on demand, for them to reuse, and scan the image's data access widths the
+/// first C view reads.  The results of later calls are unchanged,
+/// and nothing already prepared is discarded.  Returns
+/// {"available":bool,"prepared":int,"full":bool,"next_entry":"0x..."|null}:
+/// "prepared" counts the functions the session now holds prepared, "full"
+/// says it refused one for lack of room, so further calls prepare no more
+/// functions.  They still keep what a decompile reads of calls to the
+/// page's functions, so a pass goes on to "next_entry" null either way.
+/// "available" is false where calls keep no such state: images other than
+/// x86-64 except those whose calls take their arguments from the caller's
+/// setup outside i386's regparm convention (AArch64, ARM), for which it
+/// reads the functions' signature bodies as their callers' selections read
+/// them.  Whatever it says, an image with a C view has its widths
+/// scanned, and the function list and the C emitter its first views read
+/// prepared.  A function that is not a symbol start keeps its own state
+/// beside it.  A PE function's preparation keeps it unless discovering the
+/// function's exception handlers adds metadata, which after a full load it
+/// does not.  NULL
+/// with an error when no binary is loaded or a build fails.  Like every
+/// session call, this must not run concurrently with another call on the
+/// session.
+NEVERD_API const char *neverd_warm_functions_json(neverd_session_t Sess,
+                                                  neverd_va_t FirstEntry,
+                                                  int MaxFunctions);
 
 NEVERD_API const char *neverd_decompile(neverd_session_t Sess,
                                         neverd_va_t FuncEntry);
@@ -237,16 +294,16 @@ NEVERD_API const char *neverd_ir_high(neverd_session_t Sess,
 NEVERD_API const char *neverd_ir_llvm(neverd_session_t Sess,
                                       neverd_va_t FuncEntry);
 
-/// Return a schema_version=1 page of native Low/Med IR with instruction
-/// anchors, or C/LLVMC with optional library regions. Representation is
-/// "low", "med", "c", "llvmc", "cpp", "rust", "go" or "source"; dialects
-/// spell the HighC page in that language and "source" in the function's own
-/// (C++, Rust, Go or C), adding dialect, unread and source_names (where each
-/// source name such as core::fmt::write is). Every C, LLVMC and dialect page
-/// lists identifier_symbols: the functions the emitted C names by another
-/// identifier than their symbol (fini for _fini, dotted_fn for dotted.fn),
-/// each as identifier, symbol and address. Dialects are offered for
-/// an image with that language's code (neverd_headers_json's
+/// Return a schema_version=1 page of native Low/Med/High/LLVM IR with
+/// instruction anchors, or C/LLVMC with optional library regions.
+/// Representation is "low", "med", "high", "llvm", "c", "llvmc", "cpp", "rust",
+/// "go" or "source"; dialects spell the HighC page in that language and
+/// "source" in the function's own (C++, Rust, Go or C), adding dialect, unread
+/// and source_names (where each source name such as core::fmt::write is). Every
+/// C, LLVMC and dialect page lists identifier_symbols: the functions the
+/// emitted C names by another identifier than their symbol (fini for _fini,
+/// dotted_fn for dotted.fn), each as identifier, symbol and address. Dialects
+/// are offered for an image with that language's code (neverd_headers_json's
 /// language.pseudocode); for another the page is mapping_status
 /// "unsupported_representation" with the reason. Offset is an absolute
 /// zero-based rendered line and Limit is 1..2048. Text is byte-for-byte the

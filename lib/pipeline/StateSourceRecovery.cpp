@@ -11,6 +11,7 @@
 #include "StateSourceBank.h"
 
 #include "neverd/backend/llvm/LLVMSourceTypeHints.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/BitVector.h"
@@ -69,7 +70,9 @@ bool signedType(StateSourceType T) {
          T == StateSourceType::I32 || T == StateSourceType::I64;
 }
 bool identifier(llvm::StringRef Name) {
-  return !Name.empty() && Name.size() <= 128 &&
+  return !Name.empty() &&
+         Name.size() <= ::neverd::limits::pipeline::
+                            kStateSourceRecoveryIdentifierNameSizeLimit &&
          (llvm::isAlpha(Name.front()) || Name.front() == '_') &&
          llvm::all_of(Name,
                       [](char C) { return llvm::isAlnum(C) || C == '_'; }) &&
@@ -148,7 +151,9 @@ llvm::StringRef sourceScalarSpelling(StateSourceType T) {
 llvm::Constant *normalReturnConstant(llvm::Value *V, llvm::CallInst &Call,
                                      const llvm::DataLayout &DL,
                                      unsigned &Budget, unsigned Depth = 0) {
-  if (!Budget || Depth >= 64)
+  if (!Budget || Depth >=
+                     ::neverd::limits::pipeline::
+                         kStateSourceRecoveryNormalReturnConstantDepthLimit)
     return nullptr;
   --Budget;
   if (V == &Call)
@@ -179,11 +184,14 @@ bool resultWriteIsDead(llvm::CallInst &Call, StateSourceSlot Result,
                        unsigned StateBytes, const llvm::DataLayout &DL) {
   using Key = std::pair<llvm::Instruction *, unsigned>;
   std::set<Key> Active, Proven;
-  unsigned Budget = 4096;
+  unsigned Budget =
+      ::neverd::limits::pipeline::kStateSourceRecoveryResultWriteIsDeadBudget;
   auto *Bank = Call.getArgOperand(0);
   auto Check = [&](auto &&Self, llvm::Instruction *Start, unsigned Live,
                    unsigned Depth) -> bool {
-    if (!Start || !Budget || Depth >= 128)
+    if (!Start || !Budget ||
+        Depth >= ::neverd::limits::pipeline::
+                     kStateSourceRecoveryResultWriteIsDeadCheckDepthLimit)
       return false;
     Key K{Start, Live};
     if (Proven.count(K))
@@ -306,7 +314,8 @@ struct AdvisoryAddress {
 std::optional<AdvisoryAddress>
 advisoryAddress(llvm::Value *V, llvm::Value *Bank, const llvm::DataLayout &DL,
                 unsigned &Budget, unsigned Depth = 0) {
-  if (!Budget || Depth >= 64)
+  if (!Budget || Depth >= ::neverd::limits::pipeline::
+                              kStateSourceRecoveryAdvisoryAddressDepthLimit)
     return {};
   --Budget;
   auto FullWidth = [](llvm::Type *T) {
@@ -410,7 +419,8 @@ advisoryStore(llvm::LoadInst &Load, llvm::Value *Bank, llvm::DominatorTree &DT,
 llvm::LoadInst *pointerCandidateLoad(llvm::Value *V, llvm::Value *Bank,
                                      llvm::DominatorTree &DT,
                                      const llvm::DataLayout &DL) {
-  unsigned Budget = 4096;
+  unsigned Budget = ::neverd::limits::pipeline::
+      kStateSourceRecoveryPointerCandidateLoadBudget;
   while (Budget) {
     --Budget;
     auto *Load = pointerLoad(V);
@@ -435,8 +445,10 @@ llvm::ConstantInt *selectorCandidate(llvm::Value *V, llvm::Value *Bank,
                                      llvm::DominatorTree &DT,
                                      const llvm::DataLayout &DL,
                                      unsigned &Budget, unsigned Depth = 0) {
-  if (!Budget || Depth >= 64 || !V->getType()->isIntegerTy() ||
-      V->getType()->getIntegerBitWidth() > 64)
+  if (!Budget ||
+      Depth >= ::neverd::limits::pipeline::
+                   kStateSourceRecoverySelectorCandidateDepthLimit ||
+      !V->getType()->isIntegerTy() || V->getType()->getIntegerBitWidth() > 64)
     return nullptr;
   --Budget;
   if (auto *K = llvm::dyn_cast<llvm::ConstantInt>(V))
@@ -497,7 +509,8 @@ llvm::ConstantInt *selectorCandidate(llvm::Value *V, llvm::Value *Bank,
 bool pointerCandidateMatches(llvm::LoadInst &Origin, llvm::Value *Bank,
                              const StateSourceImage &Image, unsigned Offset,
                              const llvm::DataLayout &DL) {
-  unsigned Budget = 4096;
+  unsigned Budget = ::neverd::limits::pipeline::
+      kStateSourceRecoveryPointerCandidateMatchesBudget;
   for (auto &I : llvm::instructions(Origin.getFunction())) {
     if (!Budget--)
       return false;
@@ -574,7 +587,8 @@ bool exposeBankLoadSlices(llvm::Module &M) {
           Bits >= L->getType()->getIntegerBitWidth() ||
           !displacement(L->getPointerOperand(), F.getArg(0), M.getDataLayout()))
         continue;
-      if (Slices.size() < 4096)
+      if (Slices.size() < ::neverd::limits::pipeline::
+                              kStateSourceRecoveryExposeBankLoadSlicesSizeLimit)
         Slices.push_back({&I, L, Bits});
     }
   }
@@ -604,8 +618,12 @@ bool exposeBankLoadSlices(llvm::Module &M) {
 // the bank operand of an opaque call with the cache's address.
 bool localizeBank(llvm::Function &F, unsigned Bytes) {
   if (F.isDeclaration() || F.hasPersonalityFn() || F.hasLocalLinkage() ||
-      F.hasComdat() || F.hasAvailableExternallyLinkage() || Bytes > 4096 ||
-      F.getInstructionCount() > 16384)
+      F.hasComdat() || F.hasAvailableExternallyLinkage() ||
+      Bytes > ::neverd::limits::pipeline::
+                  kStateSourceRecoveryLocalizeBankBytesLimit ||
+      F.getInstructionCount() >
+          ::neverd::limits::pipeline::
+              kStateSourceRecoveryLocalizeBankFGetInstructionCountLimit)
     return false;
   if (auto Error = validateBank(F, Bytes)) {
     llvm::consumeError(std::move(Error));
@@ -668,8 +686,12 @@ bool localizeBank(llvm::Function &F, unsigned Bytes) {
       Scope = MD;
     Accesses.push_back({&I, Offset, Width});
   }
-  if (Accesses.empty() || Calls.size() > 256 ||
-      uint64_t(Bytes) * (2 * Calls.size() + Returns.size() + 1) > 262144)
+  if (Accesses.empty() ||
+      Calls.size() > ::neverd::limits::pipeline::
+                         kStateSourceRecoveryLocalizeBankCallsSizeLimit ||
+      uint64_t(Bytes) * (2 * Calls.size() + Returns.size() + 1) >
+          ::neverd::limits::pipeline::
+              kStateSourceRecoveryLocalizeBankUint64TBytes2CallsSizeReturnsSize1Limit)
     return false;
   // Publish only bytes possibly written since the last synchronization.
   // A whole-function write set would re-publish stale/unmodified carriers at
@@ -684,7 +706,8 @@ bool localizeBank(llvm::Function &F, unsigned Bytes) {
   do {
     Changed = false;
     for (auto &BB : F) {
-      if (++Work > 65536)
+      if (++Work >
+          ::neverd::limits::pipeline::kStateSourceRecoveryLocalizeBankWorkLimit)
         return false;
       llvm::BitVector Dirty(Bytes);
       for (const auto *Pred : llvm::predecessors(&BB))
@@ -822,7 +845,13 @@ llvm::Error localizeProfitableBanks(llvm::Module &M, StateSourceRecovery &R) {
 llvm::Expected<StateSourceRecovery>
 prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
   if (!C.IsolatedBank || (!C.Gateways.empty() && !C.ZeroStatusGateways) ||
-      !C.StateBytes || C.StateBytes > 65536 || C.Gateways.size() > 256)
+      !C.StateBytes ||
+      C.StateBytes >
+          ::neverd::limits::pipeline::
+              kStateSourceRecoveryPrepareStateSourceRecoveryCStateBytesLimit ||
+      C.Gateways.size() >
+          ::neverd::limits::pipeline::
+              kStateSourceRecoveryPrepareStateSourceRecoveryCGatewaysSizeLimit)
     return invalid(
         "requires a bounded isolated bank and explicit zero-status gateways");
   if (llvm::verifyModule(M, &llvm::errs()))
@@ -839,7 +868,10 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
     return invalid("too many image candidates");
   for (const auto &Image : C.Images)
     if (!Image.Readable || !ValidSlot(Image.Base) || Image.Base.Bytes != 8 ||
-        Image.Bytes.empty() || Image.Bytes.size() > 65536)
+        Image.Bytes.empty() ||
+        Image.Bytes.size() >
+            ::neverd::limits::pipeline::
+                kStateSourceRecoveryPrepareStateSourceRecoveryImageBytesSizeLimit)
       return invalid("invalid readable image candidate");
   std::map<std::string, const StateSourceImport *> Names;
   std::map<std::string, size_t> Gateways;
@@ -852,7 +884,10 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
         *G.FallbackWrites->ResultBytes != 8)
       return invalid("invalid fixed fallback result width");
     if (!Gateways.emplace(G.Name, Index).second || !identifier(G.Name) ||
-        G.Arguments.size() > 16 || G.Imports.size() > 4096 ||
+        G.Arguments.size() > 16 ||
+        G.Imports.size() >
+            ::neverd::limits::pipeline::
+                kStateSourceRecoveryPrepareStateSourceRecoveryGImportsSizeLimit ||
         !ValidSlot(G.ResultOffset) || !ValidSlot(G.ResultBytes) ||
         (G.Selector && !ValidSlot(*G.Selector)) ||
         (G.FunctionPointer && (G.Selector || !ValidSlot(*G.FunctionPointer) ||
@@ -866,7 +901,10 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
     for (unsigned A : G.IndirectArguments)
       if (A >= G.Arguments.size() || !Indirect.insert(A).second)
         return invalid("invalid indirect argument");
-    if (G.Strings.size() > 16 || G.ExcludedArguments.size() > 64)
+    if (G.Strings.size() > 16 ||
+        G.ExcludedArguments.size() >
+            ::neverd::limits::pipeline::
+                kStateSourceRecoveryPrepareStateSourceRecoveryGExcludedArgumentsSizeLimit)
       return invalid("too many string arguments or exclusions");
     for (const auto &S : G.Strings)
       if (!S.ByValue || S.Argument >= G.Arguments.size() ||
@@ -877,7 +915,9 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
     for (auto E : G.ExcludedArguments)
       if (E.Argument >= G.Arguments.size())
         return invalid("invalid argument exclusion");
-    if (G.Writes.size() > 128)
+    if (G.Writes.size() >
+        ::neverd::limits::pipeline::
+            kStateSourceRecoveryPrepareStateSourceRecoveryGWritesSizeLimit)
       return invalid("too many fixed writes");
     for (auto W : G.Writes)
       if (!ValidSlot(W.Slot))
@@ -1160,7 +1200,11 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
         Result.Stop == OptimizationStopReason::VerificationFailed)
       return invalid("argument source optimization failed");
   }
-  for (unsigned Round = 0; Round < 3 && exposeBankLoadSlices(M); ++Round) {
+  for (unsigned Round = 0;
+       Round < ::neverd::limits::pipeline::
+                   kStateSourceRecoveryFinishStateSourceRecoveryRoundLimit &&
+       exposeBankLoadSlices(M);
+       ++Round) {
     Pipeline::OptimizationOptions Policy;
     Policy.Strength = Pipeline::OptStrength::Deep;
     Policy.LLVMLevel = llvm::OptimizationLevel::O2;
@@ -1211,7 +1255,8 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
                                  DT, M.getDataLayout());
       } else if (!Selector) {
         llvm::DominatorTree DT(*Call->getFunction());
-        unsigned Budget = 4096;
+        unsigned Budget = ::neverd::limits::pipeline::
+            kStateSourceRecoveryFinishStateSourceRecoveryBudget;
         if (auto *K = selectorCandidate(Call->getArgOperand(N),
                                         Call->getArgOperand(0), DT,
                                         M.getDataLayout(), Budget))
@@ -1319,8 +1364,13 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
           }
           StringCandidate Candidate{S.Argument, {}, {}};
           bool Terminated = false;
-          for (size_t P = *Start;
-               P < Image.Bytes.size() && Candidate.Encoded.size() < 512; ++P) {
+          for (
+              size_t P = *Start;
+              P < Image.Bytes.size() &&
+              Candidate.Encoded.size() <
+                  ::neverd::limits::pipeline::
+                      kStateSourceRecoveryFinishStateSourceRecoveryCandidateEncodedSizeLimit;
+              ++P) {
             uint8_t Byte = Image.Bytes[P];
             Candidate.Encoded.push_back(char(Byte));
             if (uint8_t(Byte ^ Xor) == 0) {

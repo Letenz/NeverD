@@ -20,13 +20,15 @@
 namespace neverd {
 namespace {
 
-void createSEHJumpUnwindBridge(llvm::Module &Module, llvm::Function &Runtime) {
+void createSEHJumpUnwindBridge(llvm::Module &Module, llvm::Function &Runtime,
+                               RegistrationSEHJumpCapture::Kind Protocol) {
   using namespace x86_registration;
-  if (Module.getNamedValue(SEHJumpUnwindName))
+  const auto Name = getSEHJumpUnwindName(Protocol);
+  if (Module.getNamedValue(Name))
     return;
-  auto *Bridge = llvm::Function::Create(Runtime.getFunctionType(),
-                                        llvm::GlobalValue::InternalLinkage,
-                                        SEHJumpUnwindName, Module);
+  auto *Bridge =
+      llvm::Function::Create(Runtime.getFunctionType(),
+                             llvm::GlobalValue::InternalLinkage, Name, Module);
   Bridge->setCallingConv(llvm::CallingConv::X86_StdCall);
   Bridge->addFnAttr(llvm::Attribute::NoInline);
   Bridge->addFnAttr(llvm::Attribute::OptimizeNone);
@@ -108,10 +110,11 @@ void MedLLVMEmitter::declareX86RegistrationJumpRuntimes(const MedFunc &Func) {
       Declare(Call.Capture->TargetVA, "_setjmp3",
               llvm::FunctionType::get(I32, {Ptr, I32}, true));
       if (auto *Unwind = Declare(Call.Capture->UnwindVA,
-                                 x86_registration::SEHSourceJumpUnwindName,
+                                 x86_registration::getSEHSourceJumpUnwindName(
+                                     Call.Capture->Protocol),
                                  llvm::FunctionType::get(Void, {Ptr}, false),
                                  llvm::CallingConv::X86_StdCall))
-        createSEHJumpUnwindBridge(*Mod, *Unwind);
+        createSEHJumpUnwindBridge(*Mod, *Unwind, Call.Capture->Protocol);
     }
   }
 }
@@ -177,6 +180,11 @@ prepareSEHJumps(const MedFunc &Source, llvm::Function &Parent,
         return std::nullopt;
       auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(&I);
       if (!Slot || Slot == &Frame)
+        continue;
+      // Ordinary finally inputs/results belong to an invocation, not the
+      // logical register state captured by setjmp. Each call initializes its
+      // own inputs; runtime entries have a separate unknown-register path.
+      if (Slot->getMetadata(windows_eh_md::RegistrationRegisterAttachment))
         continue;
       if (!Slot->isStaticAlloca() || Slot->getAddressSpace() ||
           !Slot->getAllocatedType()->isSingleValueType() ||
@@ -275,13 +283,29 @@ emitSEHJumps(const SEHJumpPlan &Plan, llvm::Function &Parent,
         Restore->setVolatile(true);
         Restore->setAlignment(Slot->getAlign());
       }
+      llvm::Value *Captured = nullptr;
+      if (Capture.Levels.size() > 1) {
+        auto *Saved = Entry.CreateAlloca(Before.getInt32Ty(), nullptr,
+                                         "registration.jump.level");
+        Saved->setAlignment(llvm::Align(4));
+        Saved->setMetadata(windows_eh_md::RegistrationJumpAttachment,
+                           Marker(Capture.Address, SEHJumpRole::CapturedState));
+        auto *State = Before.CreateInBoundsGEP(Before.getInt8Ty(), &Frame,
+                                               Before.getInt32(EntrySP - 8));
+        auto *Read = Before.CreateLoad(Before.getInt32Ty(), State);
+        Read->setVolatile(true);
+        Read->setAlignment(llvm::Align(1));
+        auto *Save = Before.CreateStore(Read, Saved);
+        Save->setVolatile(true);
+        Save->setAlignment(llvm::Align(4));
+        auto *Reload = After.CreateLoad(After.getInt32Ty(), Saved);
+        Reload->setVolatile(true);
+        Reload->setAlignment(llvm::Align(4));
+        Captured = Reload;
+      }
       auto *State = After.CreateInBoundsGEP(After.getInt8Ty(), &Frame,
                                             After.getInt32(EntrySP - 8));
-      llvm::Value *Level = After.getInt32(Capture.Level);
-      if (Source.ResumeLevel != Capture.Level)
-        Level = After.CreateSelect(After.CreateICmpEQ(Call, After.getInt32(0)),
-                                   Level, After.getInt32(Source.ResumeLevel),
-                                   "registration.jump.state");
+      auto *Level = emitSEHJumpState(Source, *Call, *State, Captured, After);
       auto *Restore = After.CreateStore(Level, State);
       Restore->setAlignment(llvm::Align(1));
       Restore->setVolatile(true);

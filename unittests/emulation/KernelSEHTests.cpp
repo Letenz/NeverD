@@ -28,12 +28,12 @@ using namespace neverd::emulation;
 namespace {
 namespace secondary {
 #define NEVERD_SEH_SECONDARY_VALUE(Name, Value) constexpr uint64_t Name = Value;
-#include "X64SEHSecondaryCases.def"
+#include "x86_64/X64SEHSecondaryCases.def"
 #undef NEVERD_SEH_SECONDARY_VALUE
 } // namespace secondary
 namespace image_case {
 #define NEVERD_SEH_IMAGE_VALUE(Name, Value) constexpr uint64_t Name = Value;
-#include "X64SEHImageCases.def"
+#include "x86_64/X64SEHImageCases.def"
 #undef NEVERD_SEH_IMAGE_VALUE
 } // namespace image_case
 namespace continuation {
@@ -543,6 +543,155 @@ TEST_F(DriverKernelSEH, EpilogueRestoresOnlyInstructionsAfterControlPC) {
     EXPECT_EQ(Result.Registers.GPR[4], SP + 56);
     EXPECT_EQ(Result.HandlerPC, Base + 0x1080);
   }
+}
+
+TEST_F(DriverKernelSEH, V2BodyUnwindsSavedRegisters) {
+  handler();
+  auto &Helper = function(0x2000);
+  Helper.Encoding = ExceptionEncoding::X64UnwindV2;
+  Helper.UnwindVersion = 2;
+  Helper.UnwindOperations = {op(UnwindOperationKind::AllocateSmall, 6, 40),
+                             op(UnwindOperationKind::PushNonVolatile, 2, 0, 12),
+                             op(UnwindOperationKind::PushNonVolatile, 1, 0, 3)};
+  Caller.PC = Base + 0x2040;
+  // A V2 body with no declared epilogue must use the complete frame, even
+  // where its bytes happen to look like a V1 epilogue.
+  Instructions[Caller.PC] = {0x5b, 0xc3};
+  const uint64_t SP = Caller.GPR[4];
+  Words = {{SP + 40, 0x1234}, {SP + 48, 0x5678}, {SP + 56, Base + 0x1041}};
+  const auto Result = selected();
+  EXPECT_EQ(Result.Registers.GPR[12], 0x1234u);
+  EXPECT_EQ(Result.Registers.GPR[3], 0x5678u);
+  EXPECT_EQ(Result.Registers.GPR[4], SP + 64);
+  EXPECT_EQ(Reads, (std::vector<uint64_t>{SP + 40, SP + 48, SP + 56}));
+}
+
+TEST_F(DriverKernelSEH, V2EpilogueRestoresOnlyRemainingPrimaryPushes) {
+  handler();
+  auto &Helper = function(0x2000);
+  Helper.Encoding = ExceptionEncoding::X64UnwindV2;
+  Helper.UnwindVersion = 2;
+  Helper.UnwindOperations = {op(UnwindOperationKind::AllocateSmall, 6, 40),
+                             op(UnwindOperationKind::PushNonVolatile, 2, 0, 12),
+                             op(UnwindOperationKind::PushNonVolatile, 1, 0, 3)};
+  Helper.Epilogs = {{0x40, 0, 0, 3, {}}};
+  const auto Initial = Caller;
+  const uint64_t SP = Initial.GPR[4];
+  for (uint64_t Load : {Base, Base + 0x100000}) {
+    ActualBase = Load;
+    Words = {{SP, 0x1234}, {SP + 8, 0x5678}, {SP + 16, Load + 0x1041}};
+    for (unsigned Offset : {0u, 2u, 3u}) {
+      for (bool FromReturn : {false, true}) {
+        SCOPED_TRACE(Offset);
+        SCOPED_TRACE(FromReturn);
+        Caller = Initial;
+        Caller.PC = Load + 0x2040 + Offset - unsigned(FromReturn);
+        Caller.FromReturnAddress = FromReturn;
+        Caller.GPR[4] += (Offset >= 2 ? 8 : 0) + (Offset >= 3 ? 8 : 0);
+        if (Offset >= 2)
+          Caller.GPR[12] = 0x1234;
+        if (Offset >= 3)
+          Caller.GPR[3] = 0x5678;
+        Reads.clear();
+        const auto Result = selected();
+        EXPECT_EQ(Result.Registers.GPR[12], 0x1234u);
+        EXPECT_EQ(Result.Registers.GPR[3], 0x5678u);
+        EXPECT_EQ(Result.Registers.GPR[4], SP + 24);
+        EXPECT_EQ(Result.HandlerPC, Load + 0x1080);
+        EXPECT_EQ(Reads.size(), Offset == 0 ? 3u : Offset == 2 ? 2u : 1u);
+      }
+    }
+  }
+}
+
+TEST_F(DriverKernelSEH, V2PartialPrologueUsesOnlyCompletedOperations) {
+  handler();
+  auto &Helper = function(0x2000);
+  Helper.Encoding = ExceptionEncoding::X64UnwindV2;
+  Helper.UnwindVersion = 2;
+  Helper.UnwindOperations = {op(UnwindOperationKind::AllocateSmall, 6, 40),
+                             op(UnwindOperationKind::PushNonVolatile, 2, 0, 12),
+                             op(UnwindOperationKind::PushNonVolatile, 1, 0, 3)};
+  Helper.Epilogs = {{0x40, 0, 0, 3, {}}};
+  Caller.PC = Base + 0x2001;
+  const uint64_t SP = Caller.GPR[4];
+  Words = {{SP, 0x5678}, {SP + 8, Base + 0x1041}};
+  const auto Result = selected();
+  EXPECT_EQ(Result.Registers.GPR[3], 0x5678u);
+  EXPECT_EQ(Result.Registers.GPR[12], Caller.GPR[12]);
+  EXPECT_EQ(Result.Registers.GPR[4], SP + 16);
+}
+
+TEST_F(DriverKernelSEH, V2DiscardedFlagsDoNotRestoreVolatileState) {
+  handler();
+  auto &Helper = function(0x2000);
+  Helper.Encoding = ExceptionEncoding::X64UnwindV2;
+  Helper.UnwindVersion = 2;
+  Helper.UnwindOperations = {op(UnwindOperationKind::AllocateSmall, 6, 32),
+                             op(UnwindOperationKind::PushNonVolatile, 2, 0, 3),
+                             op(UnwindOperationKind::AllocateSmall, 1, 8)};
+  Helper.Epilogs = {{0x40, 0, 0, 2, {}}};
+  Caller.PC = Base + 0x2040;
+  const uint64_t SP = Caller.GPR[4];
+  // No backing is provided for the discarded flags word.
+  Words = {{SP, 0x5678}, {SP + 16, Base + 0x1041}};
+  const auto Result = selected();
+  EXPECT_EQ(Result.Registers.GPR[3], 0x5678u);
+  EXPECT_EQ(Result.Registers.GPR[1], Caller.GPR[1]);
+  EXPECT_EQ(Result.Registers.GPR[4], SP + 24);
+  EXPECT_EQ(Reads, (std::vector<uint64_t>{SP, SP + 16}));
+}
+
+TEST_F(DriverKernelSEH, V2InvalidEpilogueCannotFallBackToFullFrame) {
+  auto &Helper = function();
+  Helper.Encoding = ExceptionEncoding::X64UnwindV2;
+  Helper.UnwindVersion = 2;
+  Helper.UnwindOperations = {
+      op(UnwindOperationKind::PushNonVolatile, 2, 0, 12)};
+  Helper.Epilogs = {{0x40, 0, 0, 2, {}}};
+  Caller.PC = Base + 0x1041; // Inside the two-byte POP r12.
+  rejected("control position");
+  Caller.PC = Base + 0x1040;
+  Helper.Epilogs.front().LastInstructionOffset = 3;
+  rejected("epilogue size");
+  Helper.Epilogs.front().LastInstructionOffset = 2;
+  Helper.Epilogs.push_back({0x41, 0, 0, 2, {}});
+  rejected("epilogue metadata");
+  Helper.Epilogs.resize(1);
+  Helper.UnwindOperations.push_back(
+      op(UnwindOperationKind::AllocateSmall, 1, 16));
+  rejected("restore sequence");
+  Helper.UnwindOperations.pop_back();
+  Caller.GPR[4] = StackBase + StackSize;
+  rejected("stack");
+  EXPECT_TRUE(Reads.empty());
+}
+
+TEST_F(DriverKernelSEH, V2ChainedEpilogueUsesPrimaryPushes) {
+  handler();
+  auto &Primary = function(0x2000);
+  Primary.UnwindInfoRVA = 0x3000;
+  Primary.UnwindOperations = {
+      op(UnwindOperationKind::AllocateSmall, 6, 32),
+      op(UnwindOperationKind::PushNonVolatile, 1, 0, 3)};
+  auto &Secondary = function(0x2200);
+  Secondary.Encoding = ExceptionEncoding::X64UnwindV2;
+  Secondary.UnwindVersion = 2;
+  Secondary.Kind = RuntimeFunctionKind::Chained;
+  Secondary.UnwindFlags = seh::ChainFlag;
+  Secondary.PrimaryFunctionIndex = 1;
+  Secondary.ChainedPrimaryRange = Metadata.Functions[1].CodeRange;
+  Secondary.ChainedUnwindInfoRVA = 0x3000;
+  Secondary.UnwindOperations = {
+      op(UnwindOperationKind::SaveNonVolatile, 8, 16, 12)};
+  Secondary.Epilogs = {{0x40, 0, 0, 1, {}}};
+  Caller.PC = Base + 0x2240;
+  const uint64_t SP = Caller.GPR[4];
+  Words = {{SP, 0x5678}, {SP + 8, Base + 0x1041}};
+  const auto Result = selected();
+  EXPECT_EQ(Result.Registers.GPR[3], 0x5678u);
+  EXPECT_EQ(Result.Registers.GPR[12], Caller.GPR[12]);
+  EXPECT_EQ(Result.Registers.GPR[4], SP + 16);
 }
 
 TEST_F(DriverKernelSEH, EpilogueUsesFrameRegisterAndDoesNotReadTailTarget) {
@@ -1293,7 +1442,11 @@ TEST_F(DriverKernelSEH, IncompleteAndUnsupportedFramesCannotActAsLeaves) {
   rejected("chained");
   F.Kind = RuntimeFunctionKind::Primary;
   F.UnwindVersion = 2;
-  rejected("V1");
+  rejected("matching");
+  F.Encoding = ExceptionEncoding::X64UnwindV3;
+  F.UnwindVersion = 3;
+  rejected("V1/V2");
+  F.Encoding = ExceptionEncoding::X64UnwindV1;
   F.UnwindVersion = 1;
   F.Personality = ExceptionPersonality::GSHandlerCheckSEH;
   rejected("metadata");

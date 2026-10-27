@@ -578,4 +578,28 @@ TEST(InterpreterTransferChain,
   EXPECT_FALSE(Accepts((uint64_t{1} << 63) - 1, INT64_MIN, 1));
   EXPECT_TRUE(Accepts(uint64_t{1} << 63, INT64_MIN, 1));
 }
+
+TEST(InterpreterTransferChain, FrameExclusionEdgesUseCompleteByteExtents) {
+  SymContext Ctx;
+  const auto Accepts = [&](uint64_t Root, int64_t Begin, int64_t End,
+                           uint64_t First, uint64_t Last) {
+    const auto Value = Ctx.mkConst(64, Root);
+    return Ctx.isConstOnes(
+        Ctx.mkAnd(detail::nonwrappingFramePredicate(Ctx, Value, Begin, End),
+                  detail::excludedFrameRangePredicate(Ctx, Value, Begin, End,
+                                                      First, Last)));
+  };
+  EXPECT_TRUE(Accepts(0x100, -16, 8, 0xe0, 0xf0));
+  EXPECT_FALSE(Accepts(0x100, -16, 8, 0xe0, 0xf1));
+  EXPECT_TRUE(Accepts(0x100, -16, 8, 0x108, 0x118));
+  EXPECT_FALSE(Accepts(0x100, -16, 8, 0x107, 0x118));
+  EXPECT_FALSE(Accepts(0x100, -16, 8, 0xf0, 0x108));
+  EXPECT_TRUE(Accepts(UINT64_MAX - 7, -16, 8, 0, 0x1000));
+  EXPECT_FALSE(Accepts(UINT64_MAX - 6, -16, 8, 0, 0x1000));
+  EXPECT_FALSE(Accepts(UINT64_MAX - 7, -16, 8, UINT64_MAX - 1, UINT64_MAX));
+  EXPECT_TRUE(Accepts(uint64_t{1} << 63, INT64_MIN, 1, (uint64_t{1} << 63) + 1,
+                      UINT64_MAX));
+  EXPECT_FALSE(Accepts(uint64_t{1} << 63, INT64_MIN, 1, 0, 1));
+}
+
 } // namespace

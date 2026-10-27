@@ -20,6 +20,141 @@ bool valid(uint64_t Address, uint64_t Size, unsigned Permissions) {
          !(Permissions & ~GuestPermissionMask);
 }
 } // namespace
+struct AddressSpace::MappingTransaction::Impl {
+  struct Patch {
+    uint64_t Physical;
+    std::vector<uint8_t> Bytes;
+  };
+  std::shared_ptr<AddressSpace> Space;
+  std::unique_lock<std::recursive_mutex> Lock;
+  std::map<uint64_t, AddressSpace::Impl::Page> Pages;
+  std::vector<Patch> Patches;
+  uint64_t Used;
+  bool Committed = false;
+  bool MetadataOnly = false;
+  Impl(std::shared_ptr<AddressSpace> Space,
+       std::unique_lock<std::recursive_mutex> Lock,
+       std::map<uint64_t, AddressSpace::Impl::Page> Pages, uint64_t Used)
+      : Space(std::move(Space)), Lock(std::move(Lock)), Pages(std::move(Pages)),
+        Used(Used) {}
+};
+AddressSpace::MappingTransaction::MappingTransaction(
+    std::unique_ptr<Impl> State)
+    : State(std::move(State)) {}
+AddressSpace::MappingTransaction::~MappingTransaction() {
+  // Drop uncommitted reservations while the stopped lease is still held.
+  State->Pages.clear();
+  State->Space->State->Memory->State->Running = false;
+}
+llvm::Error AddressSpace::MappingTransaction::commit() {
+  if (State->Committed)
+    return diagnostic::error(diagnostic::InvalidMapping);
+  if (State->MetadataOnly) {
+    State->Committed = true;
+    return llvm::Error::success();
+  }
+  auto &Target = *State->Space->State;
+  auto &RAM = *Target.Memory->State;
+  for (const auto &P : State->Patches) {
+    std::memcpy(static_cast<uint8_t *>(RAM.Backing.base()) + P.Physical -
+                    memory::ProjectionReserve,
+                P.Bytes.data(), P.Bytes.size());
+    RAM.invalidateReservations(P.Physical, P.Bytes.size());
+  }
+  Target.Pages.swap(State->Pages);
+  Target.Used = State->Used;
+  ++Target.Generation;
+  State->Committed = true;
+  return llvm::Error::success();
+}
+llvm::Expected<std::unique_ptr<AddressSpace::MappingTransaction>>
+AddressSpace::prepareMappings(llvm::ArrayRef<InitializedMapping> Mappings,
+                              llvm::ArrayRef<BackingPatch> Patches) {
+  auto &RAM = *State->Memory->State;
+  std::unique_lock Lock(RAM.Mutex, std::try_to_lock);
+  if (!Lock.owns_lock() || RAM.Running)
+    return diagnostic::error(diagnostic::Running);
+  if (Mappings.empty() && Patches.empty())
+    return diagnostic::error(diagnostic::InvalidMapping);
+  auto Next = State->Pages;
+  uint64_t Used = State->Used;
+  // Validate every extent and collision before reserving physical capacity.
+  for (const auto &M : Mappings) {
+    if (!valid(M.Address, M.Bytes.size(), M.Permissions))
+      return diagnostic::error(diagnostic::InvalidMapping);
+    if (M.Bytes.size() > State->Limit - Used)
+      return llvm::make_error<GuestMemoryLimitError>();
+    for (uint64_t N = 0; N < M.Bytes.size(); N += memory::PageSize)
+      if (!Next.emplace(M.Address + N, Impl::Page{}).second)
+        return diagnostic::error(diagnostic::InvalidMapping);
+    Used += M.Bytes.size();
+  }
+  for (const auto &M : Mappings) {
+    auto Region = State->Memory->allocate(M.Bytes.size());
+    if (!Region)
+      return Region.takeError();
+    std::memcpy(static_cast<uint8_t *>(RAM.Backing.base()) + (*Region)->Offset,
+                M.Bytes.data(), M.Bytes.size());
+    for (uint64_t N = 0; N < M.Bytes.size(); N += memory::PageSize)
+      Next.at(M.Address + N) =
+          Impl::Page{memory::ProjectionReserve + (*Region)->Offset + N,
+                     M.Permissions,
+                     *Region,
+                     {}};
+  }
+  std::vector<MappingTransaction::Impl::Patch> PatchCopies;
+  uint64_t PatchBytes = 0;
+  for (const auto &P : Patches) {
+    if (P.Bytes.empty() || P.Bytes.size() - 1 > UINT64_MAX - P.Address ||
+        P.Bytes.size() > RAM.Limit - PatchBytes)
+      return diagnostic::error(diagnostic::InvalidMapping);
+    PatchBytes += P.Bytes.size();
+    auto Bytes = P.Bytes;
+    uint64_t A = P.Address;
+    while (!Bytes.empty()) {
+      const uint64_t Offset = A % memory::PageSize;
+      const auto Page = Next.find(A - Offset);
+      if (Page == Next.end() || Page->second.IO)
+        return diagnostic::error(diagnostic::MemoryAccess);
+      const uint64_t N =
+          std::min(uint64_t(Bytes.size()), memory::PageSize - Offset);
+      PatchCopies.push_back(
+          {Page->second.Physical + Offset, {Bytes.begin(), Bytes.begin() + N}});
+      Bytes = Bytes.drop_front(N);
+      if (!Bytes.empty())
+        A += N;
+    }
+  }
+  std::sort(
+      PatchCopies.begin(), PatchCopies.end(),
+      [](const auto &A, const auto &B) { return A.Physical < B.Physical; });
+  for (size_t I = 1; I < PatchCopies.size(); ++I)
+    if (PatchCopies[I].Physical - PatchCopies[I - 1].Physical <
+        PatchCopies[I - 1].Bytes.size())
+      return diagnostic::error(diagnostic::InvalidMapping);
+  auto Prepared = std::unique_ptr<MappingTransaction>(
+      new MappingTransaction(std::make_unique<MappingTransaction::Impl>(
+          shared_from_this(), std::move(Lock), std::move(Next), Used)));
+  Prepared->State->Patches = std::move(PatchCopies);
+  // Prevent recursive execution/mutation until RAM and its consumer metadata
+  // have both been published. Other host threads also fail the held lock.
+  RAM.Running = true;
+  return Prepared;
+}
+llvm::Expected<std::unique_ptr<AddressSpace::MappingTransaction>>
+AddressSpace::prepareMetadataPublication() {
+  auto &RAM = *State->Memory->State;
+  std::unique_lock Lock(RAM.Mutex, std::try_to_lock);
+  if (!Lock.owns_lock() || RAM.Running)
+    return diagnostic::error(diagnostic::Running);
+  auto Prepared = std::unique_ptr<MappingTransaction>(
+      new MappingTransaction(std::make_unique<MappingTransaction::Impl>(
+          shared_from_this(), std::move(Lock), std::map<uint64_t, Impl::Page>{},
+          0)));
+  Prepared->State->MetadataOnly = true;
+  RAM.Running = true;
+  return Prepared;
+}
 AddressSpace::AddressSpace(std::unique_ptr<Impl> State)
     : State(std::move(State)) {}
 AddressSpace::~AddressSpace() = default;
@@ -38,6 +173,13 @@ std::shared_ptr<AddressSpace> AddressSpace::addressSpace() const {
 }
 std::shared_ptr<const void> AddressSpace::identity() const {
   return State->Identity;
+}
+llvm::Expected<MemoryView> AddressSpace::allocateBacking(uint64_t Size) {
+  auto Region = State->Memory->allocate(Size);
+  if (!Region)
+    return Region.takeError();
+  return MemoryView(State->Memory, State->Identity, Size,
+                    {{std::move(*Region), 0, Size}});
 }
 llvm::Expected<MemoryView> AddressSpace::pinBacking(uint64_t Address,
                                                     uint64_t Size) const {

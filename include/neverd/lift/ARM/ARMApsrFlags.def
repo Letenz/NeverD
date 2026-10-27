@@ -1,0 +1,23 @@
+//===- ARMApsrFlags.def - Modelled flags in the APSR word -------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// NEVERD_ARM_APSR_BIT(Flag, Bit): a flag the lifter models as a register
+// (armreg::Flag) and its bit position in the APSR word an MRS reads and an
+// MSR writes.  The machine keeps the word's other bits: Q, and the control
+// bits a privileged mode reads.
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_ARM_APSR_BIT
+NEVERD_ARM_APSR_BIT(NFLAG, 31)
+NEVERD_ARM_APSR_BIT(ZFLAG, 30)
+NEVERD_ARM_APSR_BIT(CFLAG, 29)
+NEVERD_ARM_APSR_BIT(VFLAG, 28)
+NEVERD_ARM_APSR_BIT(GE0FLAG, 16)
+NEVERD_ARM_APSR_BIT(GE1FLAG, 17)
+NEVERD_ARM_APSR_BIT(GE2FLAG, 18)
+NEVERD_ARM_APSR_BIT(GE3FLAG, 19)
+#undef NEVERD_ARM_APSR_BIT
+#endif

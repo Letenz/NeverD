@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -373,9 +374,8 @@ TEST_F(MachOFunctionListingTest,
                Binary.data() + kStringTableOff, Symtab->strsize);
   Symtab->stroff += sizeof(llvm::MachO::nlist_64);
   Symbols[4] = Symbols[3];
-  Symbols[4].n_type =
-      static_cast<uint8_t>(llvm::MachO::N_UNDF) |
-      static_cast<uint8_t>(llvm::MachO::N_EXT);
+  Symbols[4].n_type = static_cast<uint8_t>(llvm::MachO::N_UNDF) |
+                      static_cast<uint8_t>(llvm::MachO::N_EXT);
   Symbols[4].n_sect = 0;
   Symtab->nsyms = 5;
 
@@ -428,6 +428,35 @@ TEST_F(MachOFunctionListingTest,
   const llvm::json::Array *Functions = Parsed->getAsArray();
   ASSERT_NE(Functions, nullptr) << Result.out;
   ASSERT_EQ(Functions->size(), 2u) << Result.out;
+
+  const std::vector<std::string> ExpectedNames = {"_main",
+                                                  "_neverd_fixture_fn"};
+  for (size_t I = 0; I < Functions->size(); ++I) {
+    const llvm::json::Object *Function = (*Functions)[I].getAsObject();
+    ASSERT_NE(Function, nullptr);
+    EXPECT_EQ(Function->getString("name").value_or(""), ExpectedNames[I]);
+    EXPECT_EQ(Function->getInteger("size").value_or(0), kFunctionSize);
+  }
+}
+
+// `export --format=funcs` lists the functions `funcs --json` lists, by the
+// same names.  It wrote each name from a string it had already freed.
+TEST_F(MachOFunctionListingTest, ExportedFunctionListNamesEachFunction) {
+  const fs::path Listing = tmpFile("function-listing.json");
+  const RunResult Result =
+      exec(ndBin(), {"export", "--format=funcs", "-o", Listing.string(),
+                     writeFixture().string()});
+  ASSERT_EQ(Result.exitCode, 0) << Result.err;
+  std::ifstream In(Listing, std::ios::binary);
+  const std::string Text((std::istreambuf_iterator<char>(In)),
+                         std::istreambuf_iterator<char>());
+  auto Parsed = llvm::json::parse(Text);
+  ASSERT_TRUE(static_cast<bool>(Parsed))
+      << llvm::toString(Parsed.takeError()) << "\n"
+      << Text;
+  const llvm::json::Array *Functions = Parsed->getAsArray();
+  ASSERT_NE(Functions, nullptr) << Text;
+  ASSERT_EQ(Functions->size(), 2u) << Text;
 
   const std::vector<std::string> ExpectedNames = {"_main",
                                                   "_neverd_fixture_fn"};

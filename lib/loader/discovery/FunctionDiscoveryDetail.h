@@ -21,6 +21,7 @@
 #include "neverd/loader/BinaryImage.h"
 
 #include <map>
+#include <memory>
 #include <set>
 
 namespace neverd {
@@ -63,6 +64,30 @@ size_t scanImportThunksARM(BinaryImage &Img, const Segment &Seg,
                            const std::map<va_t, size_t> &Targets,
                            std::set<va_t> &Existing,
                            const ImportThunkCandidates &Candidates);
+
+/// The string literals an x86 image keeps in executable sections, as MSVC
+/// does in drivers and the kernel.  Function discovery must not take them for
+/// functions: `W` reads as `push rdi` and `H` as a REX prefix, but text holds
+/// no return, call or unconditional jump, so execution entered there can only
+/// trap.
+class X86StringLiteralRuns {
+public:
+  explicit X86StringLiteralRuns(const BinaryImage &Image);
+  ~X86StringLiteralRuns();
+  X86StringLiteralRuns(const X86StringLiteralRuns &) = delete;
+  X86StringLiteralRuns &operator=(const X86StringLiteralRuns &) = delete;
+
+  /// Whether a string literal begins at \p Offset of \p Seg, text and the
+  /// zero that ends it, from which every path execution can take through the
+  /// literals, their zeros and the int3 padding between them ends in a trap:
+  /// an int3, or an opcode the processor rejects.
+  bool at(const Segment &Seg, size_t Offset);
+
+private:
+  struct Decoder;
+  const BinaryImage &Img;
+  std::unique_ptr<Decoder> Dec;
+};
 
 } // namespace neverd
 

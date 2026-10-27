@@ -1,8 +1,13 @@
 #include "CodeEdits.h"
 
+#include "neverd/support/IntegerLiterals.h"
+
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 using namespace neverd::worker;
 
@@ -52,9 +57,305 @@ void refused(const Json &view, const Json &request, const std::string &code) {
     check(error.code == code, "Wrong edit rejection");
   }
 }
+Json sourceName(std::size_t begin, std::size_t end) {
+  return {{"begin_byte", begin}, {"end_byte", end}, {"address", "0x1100"}};
+}
+void sourceSpanBoundaries() {
+  auto spelling = page("fini fini fini fini fini");
+  spelling["identifier_symbols"] = Json::array(
+      {{{"identifier", "fini"}, {"symbol", "_fini"}, {"address", "0x1100"}}});
+  spelling["source_names"] =
+      Json::array({sourceName(6, 7), sourceName(1, 3), sourceName(16, 16),
+                   sourceName(9, 10)});
+  CodeEdits::spellIdentifierSymbols(spelling);
+  std::vector<std::size_t> added;
+  for (const auto &name : spelling.at("source_names"))
+    if (name.contains("identifier"))
+      added.push_back(name.at("begin_byte").get<std::size_t>());
+  check(added == std::vector<std::size_t>({10, 20}),
+        "Spelling changed partial overlap or touching span boundaries");
+
+  const std::string text = "int target(void) { return callee(); }\n";
+  const auto begin = text.find("callee");
+  auto adjacent = page(text);
+  adjacent["source_names"] = Json::array(
+      {sourceName(begin + 3, begin + 6), sourceName(begin, begin + 3)});
+  decorate(adjacent);
+  const auto &names = adjacent.at("code_names");
+  check(names.size() == 4 && names[0].at("original") == "lee" &&
+            names[1].at("original") == "cal" &&
+            names[3].at("original") == "callee",
+        "Adjacent spans were merged or partial coverage hid the full token");
+
+  // Accepted spans may arrive in either order. Containment and duplicate
+  // starts must be rejected just like a partial overlap.
+  const std::vector<std::pair<std::size_t, std::size_t>> overlaps = {
+      {0, 6}, {1, 3}, {3, 8}, {0, 3}};
+  for (const auto &[left, right] : overlaps) {
+    for (bool reverse : {false, true}) {
+      auto invalid = page(text);
+      auto a = sourceName(begin, begin + 6);
+      auto b = sourceName(begin + left, begin + right);
+      invalid["source_names"] =
+          reverse ? Json::array({b, a}) : Json::array({a, b});
+      try {
+        decorate(invalid);
+        check(false, "Overlapping explicit source names were accepted");
+      } catch (const Error &error) {
+        check(error.code == "invalid_engine_result",
+              "Overlapping source names produced the wrong error");
+      }
+    }
+  }
+
+  auto ignored = page(text);
+  ignored["source_names"] = Json::array({sourceName(begin, begin + 6),
+                                         sourceName(begin + 2, begin + 2),
+                                         sourceName(begin + 3, begin + 1),
+                                         sourceName(begin, text.size() + 1),
+                                         {{"begin_byte", begin + 1},
+                                          {"end_byte", begin + 4},
+                                          {"symbol", "unknown"}}});
+  decorate(ignored);
+  check(ignored.at("code_names").size() == 2,
+        "Invalid or unresolved spans interfered with accepted source names");
+}
+
+void manySourceNames() {
+  std::string text = "int target(void) {\n";
+  Json spans = Json::array();
+  for (unsigned i = 0; i < 256; ++i) {
+    spans.push_back(sourceName(text.size() + 2, text.size() + 8));
+    text += "  callee();\n";
+  }
+  text += "  return 0;\n}\n";
+  std::reverse(spans.begin(), spans.end());
+  auto view = page(text);
+  view["source_names"] = spans;
+  decorate(view, nullptr,
+           Json::array({{{"addr", "0x1100"}, {"renamed", "renamed_callee"}}}));
+  check(view.at("code_names").size() == 257 &&
+            view.at("source_names").size() == 256 &&
+            view.at("rows").size() == 259,
+        "Unordered source names lost edit targets or source rows");
+  const auto &rendered = view.at("text").get_ref<const std::string &>();
+  for (const auto &span : view.at("source_names")) {
+    const auto begin = span.at("begin_byte").get<std::size_t>();
+    const auto end = span.at("end_byte").get<std::size_t>();
+    check(end <= rendered.size() && begin < end &&
+              rendered.substr(begin, end - begin) == "renamed_callee",
+          "A renamed explicit source span lost its displayed edit target");
+  }
+}
+
+std::vector<std::string> spellings(std::string_view line,
+                                   neverd::LiteralSyntax syntax) {
+  bool inComment = false;
+  std::vector<std::string> texts;
+  for (const auto &literal : neverd::integerLiterals(line, syntax, inComment))
+    texts.push_back(literal.Text);
+  return texts;
+}
+
+std::string spelled(std::string_view line, neverd::LiteralRadix radix,
+                    neverd::LiteralSyntax syntax = neverd::LiteralSyntax::C) {
+  bool inComment = false;
+  const auto literals = neverd::integerLiterals(line, syntax, inComment);
+  check(literals.size() == 1, "A test line does not hold one literal");
+  return neverd::spellIntegerLiteral(literals.front(), radix, syntax)
+      .value_or("-");
+}
+
+void integerLiterals() {
+  using neverd::LiteralRadix;
+  using neverd::LiteralSyntax;
+  // A number reads in hexadecimal unless it is small or round in decimal.
+  for (const std::uint64_t value :
+       {0ull, 7ull, 10ull, 99ull, 100ull, 999ull, 5000ull, 1000000ull})
+    check(neverd::naturalLiteralRadix(value) == LiteralRadix::Decimal,
+          "A small or round number did not read in decimal");
+  for (const std::uint64_t value :
+       {11ull, 16ull, 19ull, 20ull, 42ull, 240ull, 255ull, 1024ull, 4096ull,
+        0x7FFFFFFFull, 0xFFFFFFFFull})
+    check(neverd::naturalLiteralRadix(value) == LiteralRadix::Hex,
+          "A number with no round decimal reading did not read in hex");
+  // Comments, strings and floating literals hold no integer literal, and a
+  // block comment carries over to the next line.
+  check(spellings("  v = *(uint32_t *)(a1 + 24) & 0xFFFFFFFF; // 99",
+                  LiteralSyntax::C) ==
+            std::vector<std::string>({"24", "0xFFFFFFFF"}),
+        "Literals were missed, or found in a comment");
+  check(spellings("s = \"12\"; f = 1e5 + 0x1p3 + 1.5 + 2.0f; t = 'eliF';",
+                  LiteralSyntax::C) == std::vector<std::string>({"'eliF'"}),
+        "A string or floating literal read as an integer literal");
+  bool inComment = false;
+  check(neverd::integerLiterals("x = 1; /* 2", LiteralSyntax::C, inComment)
+                    .size() == 1 &&
+            inComment &&
+            neverd::integerLiterals("3 */ y = 4;", LiteralSyntax::C, inComment)
+                    .size() == 1 &&
+            !inComment,
+        "A block comment did not carry over lines");
+  // Rust's chars and labels and Go's runes are no integer literals; their
+  // suffixes and separators are.
+  check(spellings("let x = 24usize + 0x18_u64 + 030 + 'a' as u32 + 1e-5;",
+                  LiteralSyntax::Rust) ==
+            std::vector<std::string>({"24usize", "0x18_u64", "030"}),
+        "Rust literals were misread");
+  check(spellings("x := 0x18 + 030 + 0o17 + 'A' + 1_000", LiteralSyntax::Go) ==
+            std::vector<std::string>({"0x18", "030", "0o17", "1_000"}),
+        "Go literals were misread");
+
+  // Each base keeps the C type the written literal has under LP64 and LLP64.
+  check(spelled("24", LiteralRadix::Hex) == "0x18" &&
+            spelled("24", LiteralRadix::Octal) == "030" &&
+            spelled("24", LiteralRadix::Binary) == "0b11000" &&
+            spelled("65", LiteralRadix::Char) == "'A'" &&
+            spelled("24", LiteralRadix::Char) == "'\\030'" &&
+            spelled("0", LiteralRadix::Char) == "'\\0'",
+        "A small literal was spelled wrongly");
+  check(spelled("0xFFFFFFFF", LiteralRadix::Decimal) == "4294967295U" &&
+            spelled("4294967295u", LiteralRadix::Hex) == "0xFFFFFFFFu" &&
+            spelled("3000000000", LiteralRadix::Hex) == "0xB2D05E00LL" &&
+            spelled("0x80000000", LiteralRadix::Char) == "-",
+        "A literal's type changed with its base");
+  check(spelled("'eliF'", LiteralRadix::Hex) == "0x656C6946" &&
+            spelled("0x656C6946", LiteralRadix::Char) == "'eliF'" &&
+            spelled("'\\xff'", LiteralRadix::Hex) == "-" &&
+            spelled("0xFF", LiteralRadix::Char) == "-",
+        "Character constants were not read or refused as compilers read them");
+  check(spelled("24usize", LiteralRadix::Hex, LiteralSyntax::Rust) ==
+                "0x18usize" &&
+            spelled("24", LiteralRadix::Octal, LiteralSyntax::Rust) == "0o30" &&
+            spelled("24", LiteralRadix::Char, LiteralSyntax::Rust) == "-" &&
+            spelled("0x18", LiteralRadix::Octal, LiteralSyntax::Go) == "0o30" &&
+            spelled("24", LiteralRadix::Char, LiteralSyntax::Go) == "-",
+        "Rust or Go literals were spelled wrongly");
+}
+
+void numberFormats() {
+  const std::string source = "int32_t target(int32_t value) {\n"
+                             "  /* 1\n"
+                             "     2 */ value = value + 24; /* 7 */\n"
+                             "  return value * 3 + 0x10; // 5\n"
+                             "}\n";
+  auto original = page(source);
+  decorate(original);
+  const Json number = {{"address", "0x1000"},
+                       {"representation", "c"},
+                       {"kind", "number"},
+                       {"line", 3},
+                       {"anchor", "  return value * 3 + 0x10; // 5"},
+                       {"index", 1},
+                       {"radix", "decimal"}};
+  CodeEdits::validateChange(original, number);
+  auto row = CodeEdits::change(nullptr, number);
+  // The literal after a comment that ends on the line is its first.
+  auto spanned = number;
+  spanned["line"] = 2;
+  spanned["anchor"] = "     2 */ value = value + 24; /* 7 */";
+  spanned["index"] = 0;
+  spanned["radix"] = "hex";
+  CodeEdits::validateChange(original, spanned);
+  row = CodeEdits::change(row, spanned);
+  // A local's alias on the same line keeps its span.
+  const Json rename = {{"address", "0x1000"},
+                       {"representation", "c"},
+                       {"kind", "name"},
+                       {"original", "value"},
+                       {"name", "total_value"},
+                       {"identity", target(original, "value").at("identity")}};
+  row = CodeEdits::change(row, rename);
+  auto edited = page(source);
+  decorate(edited, row);
+  const auto &text = edited.at("text").get_ref<const std::string &>();
+  check(text.find("total_value = total_value + 0x18; /* 7 */") !=
+                std::string::npos &&
+            text.find("return total_value * 3 + 16; // 5") !=
+                std::string::npos &&
+            text.find("/* 1\n     2 */") != std::string::npos,
+        "The picked bases were not shown, or a comment changed");
+  check(edited.at("rows")[3].at("code_number_radixes") ==
+                Json({{"1", "decimal"}}) &&
+            !edited.at("rows")[1].contains("code_number_radixes"),
+        "A row does not say which base its numbers were given");
+  for (const auto &name : edited.at("code_names")) {
+    const auto begin = name.at("begin_byte").get<std::size_t>();
+    const auto end = name.at("end_byte").get<std::size_t>();
+    const auto spelling = text.substr(begin, end - begin);
+    check(spelling == "total_value" || spelling == "target",
+          "A respelled number moved an edit span");
+  }
+
+  // The decompiler's own base again, and the bases of a changed line.
+  auto reset = number;
+  reset["radix"] = "number";
+  auto cleared = CodeEdits::change(row, reset);
+  cleared = CodeEdits::change(cleared, [&] {
+    auto other = spanned;
+    other["radix"] = "number";
+    return other;
+  }());
+  check(!cleared.at("views").at("c").contains("numbers"),
+        "Giving the numbers back left a base behind");
+  auto changed = page("int32_t target(int32_t value) {\n"
+                      "  /* 1\n"
+                      "     2 */ value = value + 24; /* 7 */\n"
+                      "  return value * 3 + 0x20; // 5\n"
+                      "}\n");
+  decorate(changed, row);
+  check(changed.at("text").get<std::string>().find("+ 0x20; // 5") !=
+                std::string::npos &&
+            !changed.at("rows")[3].contains("code_number_radixes"),
+        "A base was applied to a line that reads differently");
+
+  auto missing = number;
+  missing["index"] = 2;
+  refused(original, missing, "stale_target");
+  auto moved = number;
+  moved["anchor"] = "  return value;";
+  refused(original, moved, "stale_target");
+  auto inComment = number;
+  inComment["line"] = 1;
+  inComment["anchor"] = "  /* 1";
+  inComment["index"] = 0;
+  refused(original, inComment, "stale_target");
+  auto unknown = number;
+  unknown["radix"] = "roman";
+  refused(original, unknown, "invalid_request");
+  auto wide = page("int32_t target(void) {\n  return 0xFFFFFFFF;\n}\n");
+  decorate(wide);
+  refused(wide,
+          {{"address", "0x1000"},
+           {"representation", "c"},
+           {"kind", "number"},
+           {"line", 1},
+           {"anchor", "  return 0xFFFFFFFF;"},
+           {"index", 0},
+           {"radix", "char"}},
+          "invalid_request");
+  for (const Json &invalid :
+       {Json{{"anchor", "x"}, {"radixes", {{"0", "number"}}}},
+        Json{{"anchor", "x"}, {"radixes", {{"a", "hex"}}}},
+        Json{{"anchor", "x"}, {"radixes", Json::object()}}}) {
+    auto bad = row;
+    bad["views"]["c"]["numbers"]["3"] = invalid;
+    try {
+      CodeEdits::validateRow(bad);
+      check(false, "An invalid number format was accepted");
+    } catch (const Error &error) {
+      check(error.code == "invalid_request",
+            "An invalid number format produced the wrong error");
+    }
+  }
+}
 } // namespace
 
 int main() {
+  sourceSpanBoundaries();
+  manySourceNames();
+  integerLiterals();
+  numberFormats();
   const std::string source =
       "extern int32_t global_data; /* 0x2000 */\n"
       "int32_t callee(int32_t);\n"
@@ -109,6 +410,20 @@ int main() {
             std::count(text.begin(), text.end(), '\n') ==
                 std::count(source.begin(), source.end(), '\n'),
         "An inline annotation changed the line mapping");
+  for (const std::string prefix : {"R", "u8R", "uR", "UR", "LR"}) {
+    const auto literal = prefix + "\"tag(\" value callee \" )tag\"";
+    auto rawView = page("int target(int value) { const char *str = " + literal +
+                        "; return value; }\n");
+    decorate(rawView);
+    auto rawRename = rename;
+    rawRename["identity"] = target(rawView, "value").at("identity");
+    const auto rawRow = CodeEdits::change(nullptr, rawRename);
+    decorate(rawView, rawRow, imageNames);
+    const auto rawText = rawView.at("text").get<std::string>();
+    check(rawText.find(literal) != std::string::npos &&
+              rawText.find("return input_value") != std::string::npos,
+          "A prefixed raw string was mistaken for editable identifiers");
+  }
   for (const auto &name : edited.at("code_names")) {
     const auto begin = name.at("begin_byte").get<std::size_t>();
     const auto end = name.at("end_byte").get<std::size_t>();
@@ -153,6 +468,20 @@ int main() {
   check(renamedOverDisplay.at("text").get<std::string>().find(
             "temp = value + renamed_callee(value)") != std::string::npos,
         "A display name replaced the analyst's rename");
+  // A function the code takes the address of, in an image initializer or as
+  // an argument, shows the name its declaration shows, or the C names a
+  // function nothing declares.
+  auto addressed = page("extern int callee();\n"
+                        "union g_bytes_words g_bytes = { .w = {\n"
+                        "  0x10ull, (uintptr_t)&callee, 0 } };\n"
+                        "int target(void) { return install(callee); }\n");
+  decorate(addressed, nullptr, Json::array(), displayNames);
+  const auto addressedText = addressed.at("text").get<std::string>();
+  check(addressedText.find("extern int start();") != std::string::npos &&
+            addressedText.find("(uintptr_t)&start, 0") != std::string::npos &&
+            addressedText.find("install(start)") != std::string::npos &&
+            addressedText.find("callee") == std::string::npos,
+        "A function's address kept a name its declaration no longer has");
   auto shadowed =
       page("int target(int value) { { int value = 1; } return value; }\n");
   decorate(shadowed);

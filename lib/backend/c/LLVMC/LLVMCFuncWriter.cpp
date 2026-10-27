@@ -12,18 +12,29 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../CDeferredValue.h"
 #include "../VariadicImportStub.h"
-#include "../X86GetPcThunk.h"
+#include "../X86/X86GetPcThunk.h"
+#include "../render/X86/X86NativeFeatures.h"
 #include "LLVMCStackAllocation.h"
 #include "LLVMCStorage.h"
+#include "LLVMCVariableEdits.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/LLVMValueProvenance.h"
+#include "neverd/backend/Limits.h"
+#include "neverd/backend/ParameterSites.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/backend/llvm/LLVMCallContract.h"
+#include "neverd/backend/llvm/LLVMFloatingCall.h"
+#include "neverd/backend/llvm/SourceFrameBytes.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/LibCRecordArguments.h"
 #include "neverd/loader/ExceptionCommon.h"
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionPersonality.h"
@@ -64,6 +75,26 @@ namespace {
 
 /// Holds the frame record's place until the body has named its members.
 constexpr llvm::StringLiteral kFrameRecordMarker = "/*@neverd-frame-record@*/";
+
+/// Whether \p Signature declares main as a hosted C program's runtime calls
+/// it: `int main(int argc, char **argv)`, and envp after argv where it
+/// passes that too (libc::kProgramMainDeclaration).
+bool declaresProgramMain(const FunctionSym &Signature) {
+  const auto Int = [](const TypeRef &Type) {
+    return Type && Type->Kind == NdTypeKind::Int && Type->Size == 4;
+  };
+  const auto Strings = [](const TypeRef &Type) {
+    return Type && Type->Kind == NdTypeKind::Ptr && Type->Pointee &&
+           Type->Pointee->Kind == NdTypeKind::Ptr && Type->Pointee->Pointee &&
+           Type->Pointee->Pointee->Kind == NdTypeKind::Int &&
+           Type->Pointee->Pointee->Size == 1;
+  };
+  const auto &Params = Signature.Params;
+  return Signature.Name == "main" && Int(Signature.ReturnType) &&
+         (Params.size() == 2 || Params.size() == 3) && Int(Params[0].second) &&
+         Strings(Params[1].second) &&
+         (Params.size() == 2 || Strings(Params[2].second));
+}
 
 std::string allocaAlignment(const llvm::AllocaInst &Alloca) {
   return llvmc::storageAlignment(Alloca.getAllocatedType(),
@@ -197,8 +228,7 @@ bool LLVMCWriter::isAnalysisOnlyFunction(const llvm::Function &Fn) const {
          llvm::Triple(Module->getTargetTriple()).isOSWindows();
 }
 
-bool LLVMCWriter::isReferencedByExecutableProjection(
-    const llvm::Function &Fn) const {
+bool LLVMCWriter::isReferencedByProjection(const llvm::Function &Fn) const {
   llvm::SmallVector<const llvm::User *, 16> Worklist;
   llvm::SmallPtrSet<const llvm::User *, 32> Visited;
   for (const llvm::User *User : Fn.users())
@@ -208,14 +238,10 @@ bool LLVMCWriter::isReferencedByExecutableProjection(
     const llvm::User *User = Worklist.pop_back_val();
     if (!Visited.insert(User).second)
       continue;
-    if (const auto *Inst = llvm::dyn_cast<llvm::Instruction>(User)) {
-      const llvm::Function *Owner = Inst->getFunction();
-      if (Owner && !isAnalysisOnlyFunction(*Owner))
-        return true;
-      continue;
-    }
+    if (llvm::isa<llvm::Instruction>(User))
+      return true;
     if (const auto *Owner = llvm::dyn_cast<llvm::Function>(User)) {
-      if (!Owner->isDeclaration() && !isAnalysisOnlyFunction(*Owner))
+      if (!Owner->isDeclaration())
         return true;
       continue;
     }
@@ -463,12 +489,23 @@ void LLVMCWriter::planExpressionMaterialization(llvm::Function &Fn) {
   // The bounded walk also keeps this planning linear in the instruction count.
   for (const auto &BB : Fn) {
     for (const auto &I : BB) {
+      // An RMW's result is the snapshot produced at this position. Expanding
+      // a single-use result at its consumer can move the write past a load
+      // or call, or give C permission to evaluate other operands first.
+      if (llvm::isa<llvm::AtomicRMWInst>(&I)) {
+        MaterializedExpressions.insert(&I);
+        continue;
+      }
       if (!Expandable(&I))
         continue;
-      unsigned Work = 64;
+      unsigned Work = ::neverd::limits::backend::
+          kLLVMCFuncWriterLLVMCWriterPlanExpressionMaterializationWork;
       auto Fits = [&](auto &&Self, const llvm::Value *V,
                       unsigned Depth) -> bool {
-        if (Depth > 16 || Work == 0)
+        if (Depth >
+                ::neverd::limits::backend::
+                    kLLVMCFuncWriterLLVMCWriterPlanExpressionMaterializationFitsFitsDepthLimit ||
+            Work == 0)
           return false;
         --Work;
         if (!Expandable(V) || MaterializedExpressions.count(V))
@@ -490,7 +527,8 @@ void LLVMCWriter::markInlinable(llvm::Function &Fn) {
   planExpressionMaterialization(Fn);
   for (auto &BB : Fn) {
     for (auto &Inst : BB) {
-      if (Inst.getType()->isVoidTy() || MaterializedExpressions.count(&Inst))
+      if (Inst.getType()->isVoidTy() || MaterializedExpressions.count(&Inst) ||
+          statedVariableType(&Inst))
         continue;
       // Freeze materializes one stable, defined choice before any folding.
       if (llvm::isa<llvm::FreezeInst>(&Inst))
@@ -574,7 +612,10 @@ void collectSlotMentions(const LLVMCWriter &Writer, const llvm::Value *V,
                          llvm::SmallVectorImpl<SlotMention> &Out,
                          llvm::SmallPtrSetImpl<const llvm::Value *> &Seen,
                          int Depth) {
-  if (!V || Depth > 6 || !Seen.insert(V).second)
+  if (!V ||
+      Depth > ::neverd::limits::backend::
+                  kLLVMCFuncWriterCollectSlotMentionsDepthLimit ||
+      !Seen.insert(V).second)
     return;
   if (const auto *AI =
           llvm::dyn_cast<llvm::AllocaInst>(V->stripPointerCasts())) {
@@ -646,6 +687,8 @@ bool LLVMCWriter::sameSlotDestructorBetween(
 }
 
 void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
+  if (ExplicitSEHBlockScopes)
+    return;
   auto CanSinkCall = [&](const llvm::CallInst &Call,
                          const llvm::Instruction &Sink) {
     // C does not sequence sibling operands. Moving a call to its printed use
@@ -653,7 +696,8 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
     llvm::SmallPtrSet<const llvm::BasicBlock *, 16> Blocks;
     Blocks.insert(Call.getParent());
     const llvm::Instruction *Cur = Call.getNextNode();
-    unsigned Budget = 4096;
+    unsigned Budget =
+        ::neverd::limits::backend::kLLVMCFuncWriterCanSinkCallBudget;
     while (Cur && Budget--) {
       if (Cur == &Sink)
         return true;
@@ -822,7 +866,7 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
           // A projected void return does not print its machine return value.
           // Keep the call as a statement instead of sinking it into a use
           // that the return writer deliberately omits.
-          if (InferredVoid && llvm::isa<llvm::ReturnInst>(I))
+          if (ReturnsNoValue && llvm::isa<llvm::ReturnInst>(I))
             continue;
           Sinks.insert(I);
         }
@@ -1227,6 +1271,13 @@ void LLVMCWriter::writeEHWrapOpen(const EHWrapClause &Clause, int Indent) {
   }
 }
 
+void LLVMCWriter::writeBlockLabel(const llvm::BasicBlock &BB) {
+  if (ReferencedBlocks.count(&BB))
+    OS << blockLabel(&BB) << ":\n";
+  else
+    DeferredBlockLabels.try_emplace(&BB, OS.stream().tell());
+}
+
 void LLVMCWriter::writeBasicBlock(const llvm::BasicBlock &BB, int Indent) {
   if (FoldedJoinArms.count(&BB) || InlinedFallthroughBlocks.count(&BB) ||
       ConditionChainBodies.count(&BB) || DuplicatedAssignBlocks.count(&BB))
@@ -1263,10 +1314,7 @@ void LLVMCWriter::writeBasicBlock(const llvm::BasicBlock &BB, int Indent) {
     AllocaImmediates.clear();
     AllocaLastValues.clear();
   }
-  if (ReferencedBlocks.count(&BB))
-    OS << blockLabel(&BB) << ":\n";
-  else
-    DeferredBlockLabels.try_emplace(&BB, OS.stream().tell());
+  writeBlockLabel(BB);
   for (const llvm::Instruction &Inst : BB) {
     if (llvm::isa<llvm::AllocaInst>(&Inst))
       continue;
@@ -1276,6 +1324,17 @@ void LLVMCWriter::writeBasicBlock(const llvm::BasicBlock &BB, int Indent) {
 
 void LLVMCWriter::writeEHWrapClose(const EHWrapClause &Clause, int Indent) {
   auto WriteBody = [&]() {
+    // Catch-pad tokens describe the structured handler, but values produced
+    // in that pad (notably the exception code) still execute on handler entry.
+    // Body starts at catchret's destination, so emit the pad's value producers
+    // here before any handler use instead of dropping them with the token.
+    if (Clause.Switch)
+      if (const auto *Pad = firstCatchPad(*Clause.Switch))
+        for (const llvm::Instruction &Inst : *Pad->getParent()) {
+          if (llvm::isa<llvm::CatchPadInst, llvm::CatchReturnInst>(Inst))
+            continue;
+          writeInstruction(const_cast<llvm::Instruction &>(Inst), Indent + 1);
+        }
     if (Clause.Body.empty()) {
       emitIndent(Indent + 1);
       OS << "/* recovered handler labels remain in the protected body */\n";
@@ -1372,10 +1431,6 @@ bool LLVMCWriter::functionNeedsAnalysisOnlyEHWrap(
 
 namespace {
 
-constexpr size_t MaxEHAnnotationRows = 4096;
-constexpr size_t MaxEHAnnotationChars = 256 * 1024;
-constexpr size_t MaxEHAnnotationStringChars = 4096;
-
 std::optional<uint64_t> ehAnnotationUInt(const llvm::MDNode &Node,
                                          unsigned Index, unsigned Width) {
   if (Index >= Node.getNumOperands())
@@ -1426,7 +1481,8 @@ bool ehAnnotationUIntFields(
 }
 
 bool ehAnnotationCountRows(const llvm::MDNode &Node, size_t &Rows) {
-  if (Node.getNumOperands() > MaxEHAnnotationRows - Rows)
+  if (Node.getNumOperands() >
+      ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows - Rows)
     return false;
   Rows += Node.getNumOperands();
   return true;
@@ -1670,7 +1726,8 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
   if (!Status || !ehAnnotationStatus(*Status) || !Encoding ||
       !ehAnnotationEncoding(*Encoding) || !PersonalityKind ||
       !ehAnnotationPersonality(*PersonalityKind) || !Personality ||
-      Personality->size() > MaxEHAnnotationStringChars ||
+      Personality->size() > ::neverd::limits::backend::
+                                kLLVMCFuncWriterMaxEHAnnotationStringChars ||
       !ehAnnotationString(*Payload, windows_eh_md::NativeUnwindBytes)) {
     Invalid("function string field");
     return;
@@ -1719,11 +1776,16 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
     Invalid(Reason);
     return;
   }
-  if (SEH->getNumOperands() > MaxEHAnnotationRows ||
-      CxxUnwind->getNumOperands() > MaxEHAnnotationRows ||
-      CxxTry->getNumOperands() > MaxEHAnnotationRows ||
-      CxxIP->getNumOperands() > MaxEHAnnotationRows ||
-      Diagnostics->getNumOperands() > MaxEHAnnotationRows) {
+  if (SEH->getNumOperands() >
+          ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows ||
+      CxxUnwind->getNumOperands() >
+          ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows ||
+      CxxTry->getNumOperands() >
+          ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows ||
+      CxxIP->getNumOperands() >
+          ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows ||
+      Diagnostics->getNumOperands() >
+          ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows) {
     Invalid("annotation row limit");
     return;
   }
@@ -1733,8 +1795,10 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
   size_t Rows = 0;
   auto WithinBudget = [&]() {
     DetailOS.flush();
-    return ++Rows <= MaxEHAnnotationRows &&
-           Details.size() <= MaxEHAnnotationChars;
+    return ++Rows <=
+               ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows &&
+           Details.size() <=
+               ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationChars;
   };
   if (Registration->getNumOperands()) {
     const auto *Frame = ehAnnotationNode(
@@ -1935,7 +1999,9 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
       }
       const llvm::MDNode *Handlers =
           ehAnnotationNode(*Row, windows_eh_md::CxxTryHandlers);
-      if (!Handlers || Handlers->getNumOperands() > MaxEHAnnotationRows) {
+      if (!Handlers ||
+          Handlers->getNumOperands() >
+              ::neverd::limits::backend::kLLVMCFuncWriterMaxEHAnnotationRows) {
         Invalid("cxx.try handlers");
         return;
       }
@@ -1975,8 +2041,9 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
         }
         const llvm::MDNode *Continuations =
             ehAnnotationNode(*Catch, windows_eh_md::CxxCatchContinuations);
-        if (!Continuations ||
-            Continuations->getNumOperands() > MaxEHAnnotationRows) {
+        if (!Continuations || Continuations->getNumOperands() >
+                                  ::neverd::limits::backend::
+                                      kLLVMCFuncWriterMaxEHAnnotationRows) {
           Invalid("cxx.catch continuations");
           return;
         }
@@ -2077,7 +2144,9 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
   }
   for (unsigned I = 0; I < Diagnostics->getNumOperands(); ++I) {
     const auto Diagnostic = ehAnnotationString(*Diagnostics, I);
-    if (!Diagnostic || Diagnostic->size() > MaxEHAnnotationStringChars) {
+    if (!Diagnostic || Diagnostic->size() >
+                           ::neverd::limits::backend::
+                               kLLVMCFuncWriterMaxEHAnnotationStringChars) {
       Invalid("diagnostic string field");
       return;
     }
@@ -2104,6 +2173,8 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
 }
 
 bool LLVMCWriter::isUnknownCopyInst(const llvm::Instruction &Inst) const {
+  if (llvm_source_unknown::isValue(&Inst))
+    return true;
   if (isCallClobberName(Inst.getName()))
     return true;
   if (const auto *Phi = llvm::dyn_cast<llvm::PHINode>(&Inst)) {
@@ -2126,6 +2197,10 @@ bool LLVMCWriter::isUnknownCopyInst(const llvm::Instruction &Inst) const {
 }
 
 bool LLVMCWriter::allocaAddressTaken(const llvm::AllocaInst *AI) const {
+  // Keep an explicitly associated storage lifetime materialized. Reusing the
+  // conservative address-observed path avoids folding the user's local away.
+  if (AI && AI->getMetadata("neverd.source.association"))
+    return true;
   if (!AI)
     return false;
   if (auto It = AllocaAddressTakenCache.find(AI);
@@ -2167,7 +2242,8 @@ bool LLVMCWriter::usersAreDeadCopies(const llvm::Value *V) const {
     return true;
   std::set<const llvm::Value *> Seen;
   llvm::SmallVector<const llvm::Value *, 16> Pending{V};
-  unsigned Work = 64;
+  unsigned Work = ::neverd::limits::backend::
+      kLLVMCFuncWriterLLVMCWriterUsersAreDeadCopiesWork;
   // Materialized casts can still have long chains of cast users. Bound both
   // stack use and repeated liveness queries; exhaustion keeps extra source
   // temporaries rather than justifying the omission of an unvisited use.
@@ -2287,7 +2363,11 @@ void LLVMCWriter::collectOmittedInlinedImmediates(llvm::Function &Fn) {
   }
   bool Grew = true;
   unsigned Guard = 0;
-  while (Grew && Guard++ < 32) {
+  while (
+      Grew &&
+      Guard++ <
+          ::neverd::limits::backend::
+              kLLVMCFuncWriterLLVMCWriterCollectOmittedInlinedImmediatesGuardLimit) {
     Grew = false;
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
@@ -2312,7 +2392,10 @@ void LLVMCWriter::collectOmittedUnknowns(llvm::Function &Fn) {
         OmittedUnknowns.insert(&Inst);
   bool Grew = true;
   unsigned Guard = 0;
-  while (Grew && Guard++ < 32) {
+  while (Grew &&
+         Guard++ <
+             ::neverd::limits::backend::
+                 kLLVMCFuncWriterLLVMCWriterCollectOmittedUnknownsGuardLimit) {
     Grew = false;
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
@@ -2340,18 +2423,91 @@ void LLVMCWriter::collectOmittedUnknowns(llvm::Function &Fn) {
   }
 }
 
+bool LLVMCWriter::isDeferredUnknownInput(const llvm::Value *Value) {
+  // LLVM undef/freeze retains its own refinement contract. Only the source
+  // marker denotes missing machine state that must fail when observed.
+  while (const auto *Inst = llvm::dyn_cast<llvm::Instruction>(Value)) {
+    if (!llvm::isa<llvm::TruncInst, llvm::ZExtInst, llvm::SExtInst,
+                   llvm::FreezeInst>(Inst))
+      break;
+    Value = Inst->getOperand(0);
+  }
+  return llvm_source_unknown::isValue(Value);
+}
+
+void LLVMCWriter::collectDeferredUnknowns(llvm::Function &Fn) {
+  std::vector<CValueTransfer<const llvm::Value *>> Transfers;
+  for (auto &Block : Fn)
+    for (auto &Inst : Block) {
+      if (!Inst.getType()->isIntegerTy())
+        continue;
+      if (const auto *Phi = llvm::dyn_cast<llvm::PHINode>(&Inst)) {
+        for (const llvm::Value *Incoming : Phi->incoming_values())
+          Transfers.push_back(
+              {Phi, Incoming, isDeferredUnknownInput(Incoming)});
+      } else if (llvm::isa<llvm::TruncInst, llvm::ZExtInst, llvm::SExtInst>(
+                     &Inst))
+        Transfers.push_back({&Inst, Inst.getOperand(0), false});
+    }
+  const auto Deferred = deferredCValues(Transfers);
+  for (auto &Block : Fn)
+    for (auto &Inst : Block) {
+      if (!Deferred.count(&Inst) || Inst.use_empty())
+        continue;
+      DeferredUnknownFlags.emplace(&Inst, freshVar(getName(&Inst) + "_known"));
+      Analysis.Inlinable.erase(&Inst);
+      OmittedInlined.erase(&Inst);
+      OmittedUnknowns.erase(&Inst);
+    }
+  // Copy-only cycles have no observation and need no payload declaration.
+  // Decide after materializing the closure so an inlined live copy cannot
+  // hide its users during the liveness query.
+  std::erase_if(DeferredUnknownFlags, [&](const auto &Entry) {
+    const auto *Inst = llvm::cast<llvm::Instruction>(Entry.first);
+    const auto *Phi = llvm::dyn_cast<llvm::PHINode>(Inst);
+    return Analysis.DeadFrameStores.count(Inst) ||
+           (usersAreDeadCopies(Inst) &&
+            (!Phi || !phiPrintedAsJoinCallArg(Phi)));
+  });
+  // Earlier display analysis can have cached expressions before availability
+  // was known. Their observations must be rendered with the new guards.
+  if (!DeferredUnknownFlags.empty())
+    InlineCache.clear();
+}
+
 void LLVMCWriter::setupFunction(llvm::Function &Fn) {
+  DeferredUnknownFlags.clear();
+  ReadingDeferredPayload = false;
+  PointerParams.clear();
+  PointerReturnType.clear();
   UseScalarExpressionTypes = false;
   RawMemoryUpdates.clear();
   RawMemoryUpdateInputs.clear();
   RawMemoryExpressionLoads.clear();
   ScopedScalarNames.clear();
   Dominators.recalculate(Fn);
+  UnconditionalCycleBlocks.clear();
+  llvm::SmallPtrSet<const llvm::BasicBlock *, 32> Completed;
+  for (const auto &Block : Fn) {
+    llvm::SmallVector<const llvm::BasicBlock *, 8> Path;
+    llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Active;
+    const llvm::BasicBlock *Current = &Block;
+    while (Current && !Completed.count(Current) &&
+           Active.insert(Current).second) {
+      Path.push_back(Current);
+      const auto *Branch =
+          llvm::dyn_cast<llvm::UncondBrInst>(Current->getTerminator());
+      Current = Branch ? Branch->getSuccessor(0) : nullptr;
+    }
+    if (Current && Active.count(Current))
+      UnconditionalCycleBlocks.insert(llvm::find(Path, Current), Path.end());
+    Completed.insert(Path.begin(), Path.end());
+  }
   NextVar = 0;
   ValNames.clear();
   UsedNames.clear();
   CapturedX87StatusCalls.clear();
-  SEHFilterFrameName.clear();
+  SEHParentFrameName.clear();
   BlockLabels.clear();
   DeferredBlockLabels.clear();
   ReferencedBlocks.clear();
@@ -2383,9 +2539,26 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   OmittedLeftoverNarrow.clear();
   LeftoverSiblingFill.clear();
   DebugFn.reset();
+  DebugPositional = true;
   DebugThisRecord = nullptr;
   DebugThisArg = nullptr;
-  FunctionEntry = 0;
+  ParamDebugTypes.clear();
+  ArgDebugBindings.clear();
+  ArgDebugNames.clear();
+  DebugArgsBound = false;
+  FunctionEntry.reset();
+  SourceValueIds.clear();
+  unsigned SourceValueIndex = 0;
+  if (Opts.SourceMap ||
+      (Opts.VariableTypes && !Opts.VariableTypes->Locals.empty())) {
+    for (const auto &Argument : Fn.args())
+      SourceValueIds[&Argument] =
+          "argument:" + std::to_string(Argument.getArgNo());
+    for (const auto &Block : Fn)
+      for (const auto &Instruction : Block)
+        SourceValueIds[&Instruction] =
+            llvmc::sourceValueId(Instruction, SourceValueIndex++);
+  }
   SyntheticFrame = nullptr;
   FrameBaseOffset = 0;
   SpLocalOwner.clear();
@@ -2416,13 +2589,42 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   PhiTailIncoming = nullptr;
 
   if (auto VAOr = rewrite_source::getOriginalVA(Fn)) {
-    if (*VAOr && **VAOr)
+    if (*VAOr)
       FunctionEntry = static_cast<va_t>(**VAOr);
   }
   if (Dbg && FunctionEntry) {
-    if (auto FS = Dbg->resolveFunction(FunctionEntry)) {
+    if (auto FS = Dbg->resolveFunction(*FunctionEntry)) {
       DebugFn = std::move(*FS);
-      if (!Fn.arg_empty() && !DebugFn->Params.empty() &&
+      // The declaration names the arguments by position.  An i386 function
+      // declared to take every argument on the stack takes no register: one
+      // recovered anyway, such as an ECX a call passes on, comes before the
+      // stack arguments and moves every name after it.  Where more arguments
+      // were recovered than declared, none is named.
+      DebugPositional = DebugFn->ParamEntryLocations.empty() &&
+                        (Opts.TheArch != Arch::X86 ||
+                         (DebugFn->CallConv != DebugCallConv::Cdecl &&
+                          DebugFn->CallConv != DebugCallConv::Stdcall &&
+                          DebugFn->CallConv != DebugCallConv::Unknown) ||
+                         Fn.arg_size() <= DebugFn->Params.size());
+      bindDebugArguments(Fn);
+      // The record the first parameter points to is reached through the
+      // argument that holds that pointer, where the convention put it.  A
+      // record whose bytes arrive in registers has no address there.
+      llvm::Argument *FirstAddress = nullptr;
+      if (DebugArgsBound) {
+        TypeRef First;
+        if (!DebugFn->Params.empty())
+          First = DebugFn->Params[0].second;
+        for (llvm::Argument &Arg : Fn.args()) {
+          const DebugParamBinding &B = ArgDebugBindings[Arg.getArgNo()];
+          if (B.Index == 0 && B.Whole && First &&
+              First->Kind == NdTypeKind::Ptr)
+            FirstAddress = &Arg;
+        }
+      } else if (DebugPositional && !Fn.arg_empty()) {
+        FirstAddress = Fn.getArg(0);
+      }
+      if (FirstAddress && !DebugFn->Params.empty() &&
           DebugFn->Params[0].second) {
         TypeRef Ty = DebugFn->Params[0].second;
         TypeRef Rec = Ty;
@@ -2431,14 +2633,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
         if (Rec && Rec->Kind == NdTypeKind::Struct &&
             !Rec->SourceName.empty()) {
           DebugThisRecord = Rec;
-          DebugThisArg = Fn.getArg(0);
-          std::string ThisName = "this";
-          if (!DebugFn->Params[0].first.empty())
-            ThisName = DebugFn->Params[0].first;
-          ValNames[DebugThisArg] = ThisName;
-          if (Fn.arg_size() > 1 && DebugFn->Params.size() > 1 &&
-              !DebugFn->Params[1].first.empty())
-            ValNames[Fn.getArg(1)] = DebugFn->Params[1].first;
+          DebugThisArg = FirstAddress;
         }
       }
     }
@@ -2459,13 +2654,22 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
       std::string Raw;
       if (Sret >= 0 && static_cast<int>(ParamIdx) == Sret)
         Raw = "result";
-      else if (DebugFn) {
+      else if (DebugArgsBound) {
+        Raw = ArgDebugNames[ParamIdx];
+        if (const std::optional<size_t> DebugIdx =
+                debugParamIndexOf(ParamIdx, -1);
+            DebugIdx && DebugFn->Params[*DebugIdx].second)
+          ParamDebugTypes[&Arg] = DebugFn->Params[*DebugIdx].second;
+      } else if (DebugFn && DebugPositional) {
         size_t DebugIdx = ParamIdx;
         if (Sret >= 0 && static_cast<int>(ParamIdx) > Sret)
           DebugIdx = static_cast<size_t>(ParamIdx - 1);
         if (DebugIdx < DebugFn->Params.size() &&
             !DebugFn->Params[DebugIdx].first.empty())
           Raw = DebugFn->Params[DebugIdx].first;
+        if (DebugIdx < DebugFn->Params.size() &&
+            DebugFn->Params[DebugIdx].second)
+          ParamDebugTypes[&Arg] = DebugFn->Params[DebugIdx].second;
       }
       if (Raw.empty() && Arg.hasName())
         Raw = Arg.getName().str();
@@ -2495,8 +2699,10 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
         Entry->second = std::move(Name);
       }
   markInlinable(Fn);
-  analyzeDeadFrameStores(Analysis, Fn);
-  analyzeStoreForwarding(Analysis, Fn);
+  if (!Opts.FrameVariables || Opts.FrameVariables->empty()) {
+    analyzeDeadFrameStores(Analysis, Fn);
+    analyzeStoreForwarding(Analysis, Fn);
+  }
 
   // A frame address passed on can reach any byte of the frame, unless a type
   // bounds the object it starts: the callee's prototype, or the debug type of
@@ -2511,7 +2717,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
         return Var->Type->Size;
       if (!Dbg || !FunctionEntry)
         return 0;
-      auto Var = Dbg->resolveVariable(FunctionEntry, Disp);
+      auto Var = Dbg->resolveVariable(*FunctionEntry, Disp);
       if (!Var || !Var->Type)
         return 0;
       Dbg->completeType(Var->Type);
@@ -2611,14 +2817,15 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
     FrameRecord = true;
     FrameRecordName = getName(SyntheticFrame);
   }
-  InferredVoid =
-      !Opts.PreserveLLVMFunctionTypes && analyzeVoidReturn(Analysis, Fn);
+  ReturnsNoValue = analyzeVoidReturn(Analysis, Fn);
+  InferredVoid = !Opts.PreserveLLVMFunctionTypes && ReturnsNoValue;
 
-  if (InferredVoid)
+  if (ReturnsNoValue)
     analyzeVoidDeadChain(Analysis, Fn);
   collectOmittedUnknowns(Fn);
   collectOmittedInlinedImmediates(Fn);
-  collectTypedHomes(Fn);
+  if (!ExplicitSEHBlockScopes)
+    collectTypedHomes(Fn);
   markSinglePrintedUseCalls(Fn);
   planRawMemoryUpdates(Fn);
   scanReferencedBlocks(Fn);
@@ -2628,34 +2835,156 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   InlinedFallthroughBlocks.clear();
   DuplicatedAssignBlocks.clear();
   ConditionChainBodies.clear();
+  collectDeferredUnknowns(Fn);
+}
+
+void LLVMCWriter::bindDebugArguments(const llvm::Function &Fn) {
+  ArgDebugBindings.clear();
+  ArgDebugNames.clear();
+  DebugArgsBound = false;
+  // An MSVC indirect result keeps its arguments' positions.
+  if (!DebugFn ||
+      (!Opts.PreserveLLVMFunctionTypes &&
+       isMsvcIndirectReturn(DebugFn->ReturnType, Opts.TheArch, Opts.Format)))
+    return;
+  // Where each argument arrives, as the lifted function records it; an
+  // argument of no recorded place binds by position, as an integer prefix.
+  const auto Recorded = parameter_sites::getParameterSites(Fn);
+  std::vector<RecoveredParamSite> Sites;
+  for (const llvm::Argument &Arg : Fn.args()) {
+    RecoveredParamSite Site;
+    if (Recorded) {
+      Site.RegOff = (*Recorded)[Arg.getArgNo()].RegOff;
+      Site.MedIndex = static_cast<int>((*Recorded)[Arg.getArgNo()].MedIndex);
+    }
+    if (Arg.getType()->isSized())
+      Site.Bytes = static_cast<uint16_t>(
+          Fn.getDataLayout().getTypeStoreSize(Arg.getType()));
+    Sites.push_back(Site);
+  }
+  DebugParamBindings Bound =
+      bindDebugParams(Opts.TheArch, Opts.Format, *DebugFn, Sites, Dbg);
+  ArgDebugBindings = std::move(Bound.Params);
+  DebugArgsBound = true;
+  // A piece's name, `result` or a source name can meet another argument's;
+  // every argument keeps its machine name then.
+  std::set<std::string> Spelled;
+  for (const DebugParamBinding &Binding : ArgDebugBindings) {
+    ArgDebugNames.push_back(debugParamName(*DebugFn, Binding));
+    if (!ArgDebugNames.back().empty() &&
+        !Spelled.insert(ArgDebugNames.back()).second) {
+      ArgDebugNames.assign(ArgDebugBindings.size(), {});
+      break;
+    }
+  }
+}
+
+std::string LLVMCWriter::debugArgumentName(const llvm::Argument &Arg) const {
+  if (!DebugFn)
+    return {};
+  if (DebugArgsBound)
+    return Arg.getArgNo() < ArgDebugNames.size() ? ArgDebugNames[Arg.getArgNo()]
+                                                 : std::string();
+  return Arg.getArgNo() < DebugFn->Params.size()
+             ? DebugFn->Params[Arg.getArgNo()].first
+             : std::string();
+}
+
+std::optional<size_t> LLVMCWriter::debugParamIndexOf(unsigned ArgNo,
+                                                     int SretParamIdx) const {
+  if (!DebugFn)
+    return std::nullopt;
+  if (DebugArgsBound) {
+    if (ArgNo >= ArgDebugBindings.size())
+      return std::nullopt;
+    const DebugParamBinding &Binding = ArgDebugBindings[ArgNo];
+    if (!Binding.Whole || Binding.Index < 0 ||
+        static_cast<size_t>(Binding.Index) >= DebugFn->Params.size())
+      return std::nullopt;
+    return static_cast<size_t>(Binding.Index);
+  }
+  size_t DebugIdx = ArgNo;
+  if (SretParamIdx >= 0 && static_cast<int>(ArgNo) > SretParamIdx)
+    DebugIdx = static_cast<size_t>(static_cast<int>(ArgNo) - 1);
+  if (DebugIdx >= DebugFn->Params.size())
+    return std::nullopt;
+  return DebugIdx;
+}
+
+std::optional<FunctionSym>
+LLVMCWriter::debugFunction(const llvm::Function &Callee) const {
+  if (!Dbg)
+    return std::nullopt;
+  if (auto VAOr = rewrite_source::getOriginalVA(Callee)) {
+    if (*VAOr)
+      if (auto FS = Dbg->resolveFunction(static_cast<va_t>(**VAOr)))
+        return FS;
+  }
+  if (auto Slot = parseNdCodePtrSymbol(Callee.getName()))
+    if (auto FS = Dbg->resolveFunction(*Slot))
+      return FS;
+  llvm::StringRef Hex = Callee.getName();
+  if (Hex.consume_front(kAutoFuncPrefix) ||
+      Hex.consume_front(kAutoFuncPrefixEVM)) {
+    uint64_t Addr = 0;
+    if (!Hex.empty() && !Hex.getAsInteger(16, Addr) && Addr)
+      if (auto FS = Dbg->resolveFunction(static_cast<va_t>(Addr)))
+        return FS;
+  }
+  return std::nullopt;
+}
+
+bool LLVMCWriter::userDeclaresRoutine(llvm::StringRef CName) const {
+  return !CName.empty() && userPrototype(Dbg, CName).has_value();
+}
+
+bool LLVMCWriter::calleeReturnsNothing(const llvm::CallBase &Call) const {
+  const llvm::Function *Callee = Call.getCalledFunction();
+  if (!Callee || Callee->isIntrinsic() || Call.getType()->isVoidTy() ||
+      Opts.PreserveLLVMFunctionTypes)
+    return false;
+  if (Callee->getReturnType()->isVoidTy())
+    return true;
+  // A definition prints its settled result (setupFunction's InferredVoid);
+  // another the unit only declares keeps the type its LLVM declaration has.
+  if (Callee->isDeclaration() || (OnlyFunction && Callee != OnlyFunction) ||
+      !llvm_value_provenance::returnsNoValue(*Callee))
+    return false;
+  const std::optional<FunctionSym> Debug = debugFunction(*Callee);
+  return !Debug ||
+         !isMsvcIndirectReturn(Debug->ReturnType, Opts.TheArch, Opts.Format);
 }
 
 std::optional<FunctionSym>
 LLVMCWriter::debugCallee(const llvm::CallBase &Call) const {
   if (!Dbg)
     return std::nullopt;
-  if (const auto *Callee = Call.getCalledFunction()) {
-    if (auto VAOr = rewrite_source::getOriginalVA(*Callee)) {
-      if (*VAOr && **VAOr)
-        if (auto FS = Dbg->resolveFunction(static_cast<va_t>(**VAOr)))
-          return FS;
-    }
-    if (auto Slot = parseNdCodePtrSymbol(Callee->getName()))
-      if (auto FS = Dbg->resolveFunction(*Slot))
-        return FS;
-    llvm::StringRef Hex = Callee->getName();
-    if (Hex.consume_front(kAutoFuncPrefix) ||
-        Hex.consume_front(kAutoFuncPrefixEVM)) {
-      uint64_t Addr = 0;
-      if (!Hex.empty() && !Hex.getAsInteger(16, Addr) && Addr)
-        if (auto FS = Dbg->resolveFunction(static_cast<va_t>(Addr)))
-          return FS;
-    }
-  }
+  if (const auto *Callee = Call.getCalledFunction())
+    if (auto FS = debugFunction(*Callee))
+      return FS;
   if (auto Slot = imageDataVA(Call.getCalledOperand()))
     if (auto FS = Dbg->resolveFunction(*Slot))
       return FS;
   return std::nullopt;
+}
+
+std::optional<unsigned>
+LLVMCWriter::prototypedParamCount(const llvm::Function &Callee) const {
+  // printedCallArgLimit's prototype case: parameters, and a result returned
+  // through a hidden pointer counted unless a member's `this` precedes it.
+  // A callee the lift declared variadic, as calls that pass more registers
+  // than a prototype declares make it, still takes what its calls pass: no
+  // fewer than its fixed parameters.
+  const std::optional<FunctionSym> FS = debugFunction(Callee);
+  if (!FS || FS->Params.empty())
+    return std::nullopt;
+  const bool Indirect =
+      isMsvcIndirectReturn(FS->ReturnType, Opts.TheArch, Opts.Format);
+  if (Indirect && FS->Params.front().first == "this")
+    return std::nullopt;
+  const size_t Limit = FS->Params.size() + (Indirect ? 1 : 0);
+  return static_cast<unsigned>(
+      std::min<size_t>(Limit, Callee.getFunctionType()->getNumParams()));
 }
 
 bool LLVMCWriter::looksLikeHiddenSretOperand(const llvm::Value *Arg) const {
@@ -2711,6 +3040,13 @@ bool LLVMCWriter::valueFeedsPrintedUse(const llvm::Value *V) {
       const auto *UI = llvm::dyn_cast<llvm::Instruction>(U);
       if (!UI)
         return true;
+      // Return contracts are settled before either C projection. The machine
+      // IR keeps the return register, but a void source return does not read
+      // it. Use that shared fact even before setupFunction, when admitting a
+      // header's void prototype; other uses, including stores, stay live.
+      if (llvm::isa<llvm::ReturnInst>(UI) &&
+          llvm_value_provenance::returnsNoValue(*UI->getFunction()))
+        continue;
       if (OmittedUnknowns.count(UI) || OmittedInlined.count(UI))
         continue;
       if (llvm::isa<llvm::CastInst, llvm::FreezeInst, llvm::PHINode,
@@ -2869,6 +3205,11 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
       }
     }
   }
+  // A call through a typed member that points to a function passes the
+  // parameters its type declares: on x86 a word the caller pushed to make
+  // room on the stack is none.
+  if (const std::optional<unsigned> Params = typedSlotParamCount(Call))
+    return Clamp(*Params);
   auto UnknownAt = [&](size_t I) {
     llvm::Value *Arg = Call.getArgOperand(static_cast<unsigned>(I));
     return isUnknownPlaceholder(Arg) || OmittedUnknowns.count(Arg);
@@ -2892,7 +3233,11 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
       std::set<const llvm::Value *> Seen;
       auto addressShaped = [&](auto &&self, const llvm::Value *V,
                                int Depth) -> bool {
-        if (!V || Depth > 4 || !Seen.insert(V).second)
+        if (!V ||
+            Depth >
+                ::neverd::limits::backend::
+                    kLLVMCFuncWriterLLVMCWriterPrintedCallArgLimitKeepExtraAddressShapedDepthLimit ||
+            !Seen.insert(V).second)
           return false;
         if (llvm::isa<llvm::CallBase>(V))
           return true;
@@ -2920,7 +3265,18 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
     }
     return false;
   };
+  // A routine the runtime's tables type takes the parameters the unit
+  // declares for it.
+  if (const LibraryCallee Library = libraryCallee(Call);
+      Library.Prototype && !Library.Prototype->Variadic)
+    return Clamp(Library.Prototype->ParamCount);
   if (auto FS = debugCallee(Call)) {
+    if (FS->IsVariadic)
+      return Have;
+    if (const auto Library = libraryCallee(Call);
+        Library && Library.Name == FS->Name)
+      if (const auto Layout = recordCallArguments(Call, *FS))
+        return Clamp(Layout->Positions);
     // A pointer-encoded class return may be a real RAX pointer rather than
     // an indirect result. With no debug parameters, live integer machine
     // arguments do not establish a hidden result address.
@@ -2968,10 +3324,10 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
         msvcPrintedArgLimit(*Msvc, Have, UnknownAt, KeepExtra));
   // The arity tables know symbols; a C++ callee's C name is its stem.
   const auto *Callee = Call.getCalledFunction();
-  auto Arity =
-      libc::libcArityForSymbol(Callee ? Callee->getName() : CalleeName);
+  auto Arity = libc::libcArityForSymbol(Callee ? Callee->getName() : CalleeName,
+                                        libcVariant());
   if (!Arity)
-    Arity = libc::libcArity(CalleeName.str());
+    Arity = libc::libcArity(CalleeName.str(), libcVariant());
   if (Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0)
     return Clamp(static_cast<size_t>(Arity->IntArgs));
   if (!Call.getCalledFunction()) {
@@ -3014,11 +3370,55 @@ bool LLVMCWriter::isTrailingLiveInCopy(const llvm::Value *V) const {
   return false;
 }
 
+bool LLVMCWriter::groupedFloatingCall(const llvm::CallBase &Call,
+                                      const FunctionSym &Function) const {
+  const auto Floating =
+      libc::floatingCallArguments(Function, Opts.TheArch, Opts.Format);
+  return Floating && !Floating->ParameterElements.empty() &&
+         Call.getFunctionType() ==
+             floatingCallType(Call.getContext(), *Floating);
+}
+
+std::optional<libc::RecordCallArguments>
+LLVMCWriter::recordCallArguments(const llvm::CallBase &Call,
+                                 const FunctionSym &Function) const {
+  auto Layout = libc::recordCallArguments(Function, Opts.TheArch, Opts.Format,
+                                          libcVariant());
+  if (!Layout || Layout->FloatingResult || groupedFloatingCall(Call, Function))
+    return Layout;
+  for (const auto &Parameter : Layout->Parameters)
+    for (const auto &Piece : Parameter.Pieces)
+      if (Piece.Floating)
+        return Layout;
+  auto Bound =
+      bindLLVMIntegerCallArguments(Call, *Layout, Opts.TheArch, Opts.Format);
+  if (!Bound)
+    throw std::runtime_error("The record call operands do not cover the "
+                             "declared locations for " +
+                             Function.Name);
+  static_cast<IntegerCallArguments &>(*Layout) = std::move(*Bound);
+  return Layout;
+}
+
 TypeRef LLVMCWriter::expectedCallArgType(const llvm::CallBase &Call,
                                          unsigned Index) const {
-  if (auto FS = debugCallee(Call))
+  // The source-import table already proved this exact call's complete scalar
+  // signature. Use the same binding for frame objects and call conversions.
+  if (const auto *Source = sourceImportCallee(Call))
+    if (TypeRef Ty = cDisplayType(debugCallArgPointer(*Source, Index, Opts)))
+      return Ty;
+  if (auto FS = debugCallee(Call)) {
+    if (const auto Layout = recordCallArguments(Call, *FS);
+        Layout && !groupedFloatingCall(Call, *FS)) {
+      const auto Scalar =
+          libc::recordCallScalarParameter(*FS, *Layout, Index, libcVariant());
+      if (!Scalar)
+        return {};
+      Index = *Scalar;
+    }
     if (TypeRef Ty = cDisplayType(debugCallArgPointer(*FS, Index, Opts)))
       return Ty;
+  }
   std::string Name;
   if (const auto *Callee = Call.getCalledFunction()) {
     const std::string Raw = Callee->getName().str();
@@ -3046,6 +3446,23 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
   AllocaLastValues.clear();
   AllocaImmediates.clear();
 
+  std::vector<std::pair<uint64_t, uint64_t>> FrameMemory;
+  for (const auto &BB : Fn)
+    for (const auto &I : BB) {
+      const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&I);
+      const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
+      const auto *Pointer = Load    ? Load->getPointerOperand()
+                            : Store ? Store->getPointerOperand()
+                                    : nullptr;
+      if (!Pointer)
+        continue;
+      const auto At = peelPointerOffset(Pointer);
+      const auto Bytes = llvmAccessSize(
+          Load ? Load->getType() : Store->getValueOperand()->getType());
+      if (At && At->first == SyntheticFrame && Bytes)
+        FrameMemory.emplace_back(At->second, Bytes);
+    }
+
   auto applyCallSlotType = [&](llvm::Value *Arg, const TypeRef &Expected) {
     if (!isNamedPointerDisplay(Expected))
       return;
@@ -3070,6 +3487,20 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
         (It->second.Type && It->second.Type->FieldDisplayNames.size() >
                                 Next->FieldDisplayNames.size()))
       return;
+    if (FrameRecord && Next->Kind == NdTypeKind::Struct && !Next->IsEnum &&
+        Next->Size &&
+        (!It->second.MemberType ||
+         (It->second.MemberType->Kind == NdTypeKind::Array &&
+          It->second.MemberType->Size >= Next->Size)) &&
+        !llvm::any_of(FrameMemory,
+                      [&](const auto &Access) {
+                        return Access.first <= Peeled->second
+                                   ? Peeled->second - Access.first <
+                                         Access.second
+                                   : Access.first - Peeled->second < Next->Size;
+                      }) &&
+        frameRecordAdmits(Peeled->second, Next))
+      It->second.MemberType = Next;
     It->second.Type = std::move(Next);
   };
   auto frameSlotOff = [&](const llvm::Value *V) -> std::optional<uint64_t> {
@@ -3162,7 +3593,7 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
           continue;
         }
         const uint16_t Size = llvmAccessSize(LI->getType());
-        if (auto Acc = typedRecordAccess(LI->getPointerOperand(), Size)) {
+        if (auto Acc = typedLoadAccess(*LI)) {
           ValueTypes[LI] = Acc->Type;
           ValueTexts[LI] = Acc->Text;
         } else if (auto Acc =
@@ -3189,18 +3620,21 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
                    VA && Size == PtrWidth && !StoredImageAddrs.count(*VA) &&
                    !foldReadonlyScalar(*VA, Size) &&
                    !imageByteArrayBacking(LI->getPointerOperand(), Size)) {
+          // A header's object has the header's type, not the load's: it is
+          // read through its address.
           if (std::string Image = imageDataCName(LI->getPointerOperand());
-              !Image.empty() && !synthesizedImageObject(*VA))
+              !Image.empty() && !synthesizedImageObject(*VA) &&
+              !headerDeclaresObject(Image))
             ValueTexts[LI] = std::move(Image);
         }
         continue;
       }
-      if (llvm::isa<llvm::CastInst>(&Inst)) {
+      if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(&Inst)) {
         if (llvm::isa<llvm::TruncInst, llvm::ZExtInst, llvm::SExtInst>(&Inst))
           continue;
         if (auto Text = ValueTexts.find(Inst.getOperand(0));
             Text != ValueTexts.end() && !Text->second.empty())
-          ValueTexts[&Inst] = Text->second;
+          ValueTexts[&Inst] = castOfText(*Cast, Text->second);
         continue;
       }
       if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst)) {
@@ -3266,7 +3700,11 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
            !Ty->Pointee->SourceName.empty() && !Ty->Pointee->IsEnum;
   };
   bool Changed = true;
-  for (int Guard = 0; Changed && Guard < 6; ++Guard) {
+  for (int Guard = 0;
+       Changed &&
+       Guard < ::neverd::limits::backend::
+                   kLLVMCFuncWriterLLVMCWriterCollectTypedHomesGuardLimit;
+       ++Guard) {
     Changed = false;
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
@@ -3301,7 +3739,7 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
         if (!LI || !LI->isSimple())
           continue;
         const uint16_t Size = llvmAccessSize(LI->getType());
-        if (auto Acc = typedRecordAccess(LI->getPointerOperand(), Size)) {
+        if (auto Acc = typedLoadAccess(*LI)) {
           if (ValueTexts[LI] != Acc->Text) {
             ValueTypes[LI] = Acc->Type;
             ValueTexts[LI] = Acc->Text;
@@ -3341,12 +3779,13 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
   }
   for (auto &BB : Fn) {
     for (auto &Inst : BB) {
-      if (!llvm::isa<llvm::CastInst>(&Inst) ||
+      const auto *Cast = llvm::dyn_cast<llvm::CastInst>(&Inst);
+      if (!Cast ||
           llvm::isa<llvm::TruncInst, llvm::ZExtInst, llvm::SExtInst>(&Inst))
         continue;
       if (auto Text = ValueTexts.find(Inst.getOperand(0));
           Text != ValueTexts.end() && !Text->second.empty())
-        ValueTexts[&Inst] = Text->second;
+        ValueTexts[&Inst] = castOfText(*Cast, Text->second);
     }
   }
 
@@ -3598,12 +4037,12 @@ void LLVMCWriter::markComposedPrints(llvm::Function &Fn) {
       if (auto Text = ValueTexts.find(&Inst);
           Text != ValueTexts.end() && !Text->second.empty())
         Mark(Inst);
-      if (llvm::isa<llvm::CastInst>(&Inst)) {
+      if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(&Inst)) {
         if (llvm::isa<llvm::TruncInst, llvm::ZExtInst, llvm::SExtInst>(&Inst))
           continue;
         if (auto Text = ValueTexts.find(Inst.getOperand(0));
             Text != ValueTexts.end() && !Text->second.empty()) {
-          ValueTexts[&Inst] = Text->second;
+          ValueTexts[&Inst] = castOfText(*Cast, Text->second);
           Mark(Inst);
         }
       }
@@ -3654,14 +4093,18 @@ std::string LLVMCWriter::composedReprintText(const llvm::Value *V) {
     if (const auto *Arg = llvm::dyn_cast<llvm::Argument>(Cur)) {
       if (auto It = ValNames.find(Arg); It != ValNames.end())
         return It->second;
-      if (DebugFn && Arg->getArgNo() < DebugFn->Params.size() &&
-          !DebugFn->Params[Arg->getArgNo()].first.empty())
-        return DebugFn->Params[Arg->getArgNo()].first;
+      if (std::string Name = debugArgumentName(*Arg); !Name.empty())
+        return Name;
       if (DebugThisArg == Arg)
         return "this";
       return {};
     }
     if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Cur)) {
+      // Statement emission materializes casts outside the inlinable set.
+      // Reprinting their operands would leave that assignment unread and
+      // bypass the same named boundary for every later use.
+      if (!Analysis.Inlinable.count(Cast))
+        return getName(Cast);
       const std::string Text = Rec(Cast->getOperand(0));
       if (Text.empty())
         return {};
@@ -3947,7 +4390,10 @@ void LLVMCWriter::omitSingleCopyCursorTemp(llvm::Function &Fn) {
 void LLVMCWriter::markRedundantPhiCopies(llvm::Function &Fn) {
   bool Changed = true;
   unsigned Guard = 0;
-  while (Changed && Guard++ < 32) {
+  while (Changed &&
+         Guard++ <
+             ::neverd::limits::backend::
+                 kLLVMCFuncWriterLLVMCWriterMarkRedundantPhiCopiesGuardLimit) {
     Changed = false;
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
@@ -4270,7 +4716,7 @@ bool LLVMCWriter::storedTypedMemberLoad(const llvm::Value *Stored) const {
   if (!LI)
     return false;
   const uint16_t Size = llvmAccessSize(LI->getType());
-  if (typedRecordAccess(LI->getPointerOperand(), Size))
+  if (typedLoadAccess(*LI))
     return true;
   // A slot read where the load is prints as its temporary.
   return slotReadAtUses(*LI) &&
@@ -4583,9 +5029,7 @@ bool LLVMCWriter::instructionIsPrinted(const llvm::Instruction &Inst) {
   }
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
     if (isImportCalleeOnlyLoad(LI) || computedAllocaLoadIsForwarded(LI) ||
-        typedRecordAccess(LI->getPointerOperand(),
-                          llvmAccessSize(LI->getType())) ||
-        typedIndexAccess(LI->getPointerOperand()) ||
+        typedLoadAccess(*LI) || typedIndexAccess(LI->getPointerOperand()) ||
         isTypedRecordCursorSlot(asAllocaPointer(LI->getPointerOperand())) ||
         isJoinCallArgAlloca(asAllocaPointer(LI->getPointerOperand())) ||
         joinFieldDefaultText(asAllocaPointer(LI->getPointerOperand())))
@@ -4617,7 +5061,7 @@ bool LLVMCWriter::instructionIsPrinted(const llvm::Instruction &Inst) {
 }
 
 bool LLVMCWriter::isPrintPassthrough(const llvm::BasicBlock *BB) {
-  if (!BB)
+  if (!BB || UnconditionalCycleBlocks.count(BB))
     return false;
   const auto *Br = llvm::dyn_cast<llvm::UncondBrInst>(BB->getTerminator());
   if (!Br || Br->getNumSuccessors() != 1)
@@ -4675,6 +5119,12 @@ bool LLVMCWriter::joinPrintsNext(const llvm::BasicBlock *From,
   // that bridge is still the next statement.
   const llvm::BasicBlock *Printed = printBranchTarget(Join);
   if (!Printed)
+    return false;
+  // A continuation moved out of a protected scope no longer follows the
+  // same LLVM block in the C listing. Its incoming edge must leave the scope
+  // explicitly, including a handler that resumes at a later continuation.
+  if (EHMovedContinuationBlocks.count(Printed) &&
+      !EHMovedContinuationBlocks.count(From))
     return false;
   const llvm::Function *Fn = From->getParent();
   bool SeenFrom = false;
@@ -4838,7 +5288,11 @@ bool LLVMCWriter::singleEntryUncondTail(
   const llvm::BasicBlock *Pred = Arm;
   const llvm::BasicBlock *Cur = Edge;
   llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Seen;
-  for (int Step = 0; Step < 4 && Cur; ++Step) {
+  for (int Step = 0;
+       Step < ::neverd::limits::backend::
+                  kLLVMCFuncWriterLLVMCWriterSingleEntryUncondTailStepLimit &&
+       Cur;
+       ++Step) {
     llvm::SmallPtrSet<const llvm::BasicBlock *, 4> Hops;
     while (Cur && isPrintPassthrough(Cur)) {
       if (Cur->isLandingPad() || FoldedJoinArms.count(Cur) ||
@@ -5085,8 +5539,7 @@ std::string LLVMCWriter::cursorFieldIncText(const llvm::BasicBlock *BB,
     const auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst);
     if (!LI)
       continue;
-    if (auto Acc = typedRecordAccess(LI->getPointerOperand(),
-                                     llvmAccessSize(LI->getType()));
+    if (auto Acc = typedLoadAccess(*LI);
         Acc && Acc->Text.find("->") != std::string::npos) {
       Field = Acc->Text;
       continue;
@@ -5495,7 +5948,11 @@ bool LLVMCWriter::assignSelectElseIf(
   Conds.push_back(From);
   Arms.push_back(FirstArm);
   const llvm::BasicBlock *Prev = From;
-  for (int Step = 0; Step < 3 && Cont; ++Step) {
+  for (int Step = 0;
+       Step < ::neverd::limits::backend::
+                  kLLVMCFuncWriterLLVMCWriterAssignSelectElseIfStepLimit &&
+       Cont;
+       ++Step) {
     if (Cont->getSinglePredecessor() != Prev || Cont->isLandingPad() ||
         isCatchPadBlock(*Cont) || hasCleanupPad(*Cont))
       return false;
@@ -5571,7 +6028,10 @@ bool LLVMCWriter::conditionChainElse(
     const llvm::BasicBlock *Prev = nullptr;
     const llvm::BasicBlock *Default = nullptr;
     llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Seen;
-    while (Cur && Seen.insert(Cur).second && Conds.size() < 4) {
+    while (
+        Cur && Seen.insert(Cur).second &&
+        Conds.size() <
+            ::neverd::limits::backend::kLLVMCFuncWriterAttemptCondsSizeLimit) {
       if (Prev && Cur->getSinglePredecessor() != Prev)
         return false;
       if (Cur->isLandingPad() || isCatchPadBlock(*Cur) || hasCleanupPad(*Cur))
@@ -6246,7 +6706,10 @@ bool LLVMCWriter::exclusiveSkipElseIf(
       return false;
     Arm.Start = Start;
     llvm::SmallPtrSet<const llvm::BasicBlock *, 32> In;
-    if (In.size() >= 160 || BadBlock(Start))
+    if (In.size() >=
+            ::neverd::limits::backend::
+                kLLVMCFuncWriterLLVMCWriterExclusiveSkipElseIfCollectArmInSizeLimit ||
+        BadBlock(Start))
       return false;
     In.insert(Start);
     bool Grew = true;
@@ -6311,7 +6774,10 @@ bool LLVMCWriter::exclusiveSkipElseIf(
           break;
         }
         if (Any && Ok) {
-          if (In.size() >= 160 || BadBlock(Cand))
+          if (In.size() >=
+                  ::neverd::limits::backend::
+                      kLLVMCFuncWriterLLVMCWriterExclusiveSkipElseIfCollectArmInSizeLimit ||
+              BadBlock(Cand))
             return false;
           if (InlinedFallthroughBlocks.count(Cand))
             continue;
@@ -6353,7 +6819,10 @@ bool LLVMCWriter::exclusiveSkipElseIf(
         }
       }
       for (const llvm::BasicBlock *BB : Extra) {
-        if (In.count(BB) || In.size() >= 160)
+        if (In.count(BB) ||
+            In.size() >=
+                ::neverd::limits::backend::
+                    kLLVMCFuncWriterLLVMCWriterExclusiveSkipElseIfCollectArmInSizeLimit)
           continue;
         In.insert(BB);
         Pulled = true;
@@ -6532,7 +7001,11 @@ bool LLVMCWriter::exclusiveSkipElseIf(
   std::function<bool(const llvm::BasicBlock *, int, Chain, Chain &)> Walk;
   Walk = [&](const llvm::BasicBlock *Cur, int Depth, Chain St,
              Chain &Out) -> bool {
-    if (!Cur || Depth >= 5 || BadBlock(Cur))
+    if (!Cur ||
+        Depth >=
+            ::neverd::limits::backend::
+                kLLVMCFuncWriterLLVMCWriterExclusiveSkipElseIfWalkDepthLimit ||
+        BadBlock(Cur))
       return false;
     const auto *Br = llvm::dyn_cast<llvm::CondBrInst>(Cur->getTerminator());
     if (!Br || Br->getSuccessor(0) == Br->getSuccessor(1))
@@ -6671,7 +7144,11 @@ bool LLVMCWriter::exclusiveSkipElseIf(
         ChainOut.clear();
         const llvm::BasicBlock *Cur = Start;
         llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Seen;
-        while (Cur && ChainOut.size() < 4 && Seen.insert(Cur).second) {
+        while (Cur &&
+               ChainOut.size() <
+                   ::neverd::limits::backend::
+                       kLLVMCFuncWriterStraightReturnChainOutSizeLimit &&
+               Seen.insert(Cur).second) {
           if (BadBlock(Cur) && Cur != Start)
             return false;
           ChainOut.push_back(Cur);
@@ -6715,8 +7192,11 @@ bool LLVMCWriter::exclusiveSkipElseIf(
   {
     const llvm::BasicBlock *Cursor = From;
     llvm::SmallPtrSet<const llvm::BasicBlock *, 8> SeenClause;
-    while (Done.Headers.size() < 4 && Cursor &&
-           SeenClause.insert(Cursor).second) {
+    while (
+        Done.Headers.size() <
+            ::neverd::limits::backend::
+                kLLVMCFuncWriterLLVMCWriterExclusiveSkipElseIfDoneHeadersSizeLimit &&
+        Cursor && SeenClause.insert(Cursor).second) {
       llvm::SmallVector<const llvm::BasicBlock *, 4> Conds;
       llvm::SmallVector<char, 4> Taken;
       llvm::SmallVector<const llvm::BasicBlock *, 4> Hops;
@@ -6724,7 +7204,11 @@ bool LLVMCWriter::exclusiveSkipElseIf(
       const llvm::BasicBlock *ArmEdge = nullptr;
       const llvm::BasicBlock *Cur = Cursor;
       bool ClauseOk = true;
-      while (Conds.size() < 4 && Cur) {
+      while (
+          Conds.size() <
+              ::neverd::limits::backend::
+                  kLLVMCFuncWriterLLVMCWriterExclusiveSkipElseIfCondsSizeLimit &&
+          Cur) {
         const auto *Br = llvm::dyn_cast<llvm::CondBrInst>(Cur->getTerminator());
         if (!Br || Br->getSuccessor(0) == Br->getSuccessor(1) ||
             BadBlock(Cur) || edgePrintsPhiCopy(Cur, Br->getSuccessor(0)) ||
@@ -7112,7 +7596,11 @@ bool LLVMCWriter::privateJoinElseIf(
     return true;
   };
 
-  for (int Step = 0; Step < 4 && Cur; ++Step) {
+  for (int Step = 0;
+       Step < ::neverd::limits::backend::
+                  kLLVMCFuncWriterLLVMCWriterPrivateJoinElseIfStepLimit &&
+       Cur;
+       ++Step) {
     if (!SeenHead.insert(Cur).second)
       return false;
     const auto *Br = llvm::dyn_cast<llvm::CondBrInst>(Cur->getTerminator());
@@ -7238,8 +7726,12 @@ bool LLVMCWriter::regionBeforeSkipTarget(
   }
   const bool ThroughHop =
       isPrintPassthrough(FromBr->getSuccessor(0)) && !SkipAssigns;
-  while (ThroughHop && RegionStart &&
-         InlinedFallthroughBlocks.count(RegionStart) && SkipChain.size() < 4) {
+  while (
+      ThroughHop && RegionStart &&
+      InlinedFallthroughBlocks.count(RegionStart) &&
+      SkipChain.size() <
+          ::neverd::limits::backend::
+              kLLVMCFuncWriterLLVMCWriterRegionBeforeSkipTargetSkipChainSizeLimit) {
     const auto *ChainBr =
         llvm::dyn_cast<llvm::CondBrInst>(RegionStart->getTerminator());
     if (!ChainBr || printBranchTarget(ChainBr->getSuccessor(0)) != SkipTarget ||
@@ -7286,6 +7778,11 @@ bool LLVMCWriter::regionBeforeSkipTarget(
     if (!Cur || Cur == SkipTarget || Cur == From || In.count(Cur) ||
         SkipChain.count(Cur))
       continue;
+    // This region is printed in function layout, starting at RegionStart.
+    // An earlier target has already been printed or would precede the region's
+    // entry. Moving it here duplicates labels and can execute the wrong block.
+    if (Cur != RegionStart && !Before(RegionStart, Cur))
+      return false;
     // An empty hop, or a single-entry block with real instructions, may be
     // laid out after the shared exit and still fall into a block before it.
     const bool LateFromRegion = !Before(Cur, SkipTarget) &&
@@ -7299,7 +7796,9 @@ bool LLVMCWriter::regionBeforeSkipTarget(
     const bool LateUnreachable =
         LateFromRegion && Cur->getTerminator() &&
         llvm::isa<llvm::UnreachableInst>(Cur->getTerminator());
-    if (In.size() >= 48)
+    if (In.size() >=
+        ::neverd::limits::backend::
+            kLLVMCFuncWriterLLVMCWriterRegionBeforeSkipTargetInSizeLimit)
       return false;
     if (!Before(Cur, SkipTarget) && !LateFallthrough && !LateBody &&
         !LateCond && !LateUnreachable)
@@ -8304,9 +8803,7 @@ bool LLVMCWriter::allocaHasPrintedLoad(const llvm::AllocaInst *Slot) {
       continue;
     if (Analysis.DeadFrameStores.count(LI) || Analysis.Inlinable.count(LI) ||
         isImportCalleeOnlyLoad(LI) || computedAllocaLoadIsForwarded(LI) ||
-        typedRecordAccess(LI->getPointerOperand(),
-                          llvmAccessSize(LI->getType())) ||
-        typedIndexAccess(LI->getPointerOperand()) ||
+        typedLoadAccess(*LI) || typedIndexAccess(LI->getPointerOperand()) ||
         isTypedRecordCursorSlot(Slot))
       continue;
     // A value folded from the current print path cannot prove that every
@@ -8322,6 +8819,13 @@ bool LLVMCWriter::allocaHasPrintedLoad(const llvm::AllocaInst *Slot) {
 }
 
 void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
+  for (auto &Block : Fn)
+    for (auto &Inst : Block)
+      if (auto Flag = DeferredUnknownFlags.find(&Inst);
+          Flag != DeferredUnknownFlags.end()) {
+        emitIndent(1);
+        OS << "uint8_t " << Flag->second << " = 0;\n";
+      }
   // A query in a nested region can feed an extract in a later block. Declare
   // its array at function scope rather than at the effect's execution point.
   for (auto &BB : Fn)
@@ -8388,7 +8892,8 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
                       llvm::CleanupPadInst>(&Inst))
           continue;
         if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
-          if (classifyX86RepStos(Opts.TheArch, *Call))
+          if (classifyX86RepStos(Opts.TheArch, *Call) ||
+              classifyX86RepMovs(Opts.TheArch, *Call))
             continue;
         if (Analysis.IntrinsicStructVals.count(&Inst))
           continue;
@@ -8416,12 +8921,12 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
         }
         if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
           if (!LI->isSimple()) {
-            NeedsDecl.insert(LI);
+            if (!isImportCalleeOnlyLoad(LI))
+              NeedsDecl.insert(LI);
             continue;
           }
           if (isImportCalleeOnlyLoad(LI) || computedAllocaLoadIsForwarded(LI) ||
-              typedRecordAccess(LI->getPointerOperand(),
-                                llvmAccessSize(LI->getType())) ||
+              typedLoadAccess(*LI) ||
               (slotReadAtUses(*LI) &&
                frameSlotAccess(LI->getPointerOperand(),
                                llvmAccessSize(LI->getType()),
@@ -8445,7 +8950,7 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
               unreadMsvcThisReturn(*CB))
             continue;
         }
-        if (InferredVoid) {
+        if (ReturnsNoValue) {
           if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst))
             if (!isCallResultLive(Analysis, CI))
               continue;
@@ -8469,7 +8974,7 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
       // name never appears in the body, and keep a printed unused assign.
       CallDeclNames.push_back(DeclName);
       emitIndent(1);
-      OS << typeToCLLVM(Inst.getType()) << " " << DeclName << ";\n";
+      OS << sourceVariableDeclaration(Inst, DeclName) << "\n";
     }
   }
 
@@ -8482,9 +8987,10 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
     if (Slot.Name.empty() || !DeclaredSlots.insert(Slot.Name).second)
       continue;
     emitIndent(1);
-    if (Slot.Type)
+    if (Slot.Type) {
+      noteRecordValue(Slot.Type);
       OS << declarationToC(Slot.Type, Slot.Name) << ";\n";
-    else
+    } else
       OS << "uint64_t " << Slot.Name << ";\n";
     CallDeclNames.push_back(Slot.Name);
     EmittedLocal = true;
@@ -8525,10 +9031,10 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
               It->second->Kind == NdTypeKind::Ptr && It->second->Pointee &&
               It->second->Pointee->Kind == NdTypeKind::Struct &&
               !It->second->Pointee->SourceName.empty()) {
-            const std::string Tag =
-                cNamedTypeSpelling(It->second->Pointee->SourceName);
-            if (!Tag.empty()) {
-              OS << Tag << "* " << AllocName << ";\n";
+            if (std::string Pointer =
+                    recordPointerSpelling(*It->second->Pointee);
+                !Pointer.empty()) {
+              OS << Pointer << " " << AllocName << ";\n";
               continue;
             }
           }
@@ -8755,11 +9261,16 @@ void LLVMCWriter::writeFunction(llvm::Function &Fn) {
             cNameOfGlobal(Fn.getName(), /*Declaration=*/false), "nd_function");
       c_stub::writeVariadicImportStub(
           Stub, c_stub::variadicStubName(Name, Import, *Entry), Import, {},
-          libc::libcVariadicForward(Import));
+          libc::libcVariadicForward(Import), libcVariant(), Opts.TheArch,
+          Opts.Format);
       OS << Text;
       return;
     }
   }
+  // Analysis-only EH still emits the same native instruction expressions.
+  // Their fallback macros and target attributes belong to every definition.
+  if (EmitFunctionWrapper)
+    OS << x86NativeFunctionPreamble(Fn, Opts.TheArch);
   if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Fn) &&
       (functionHasWindowsEHPads(Fn) || functionNeedsAnalysisOnlyEHWrap(Fn))) {
     writeAnalysisOnlyFunction(Fn);
@@ -8788,9 +9299,257 @@ size_t printedOccurrences(llvm::StringRef Text, llvm::StringRef Call) {
       ++Count;
   return Count;
 }
+
+// Optimization can append a split precondition block containing try.begin
+// after its protected body. Restore that entry's lexical position only when
+// the CFG proves a closed, single-entry range already contiguous in the
+// normal block walk. No edge, instruction or exception scope is changed.
+void restoreSEHRangeEntryOrder(llvm::Function &Fn) {
+  llvm::InvokeInst *Begin = nullptr;
+  llvm::InvokeInst *End = nullptr;
+  for (auto &BB : Fn) {
+    auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(BB.getTerminator());
+    auto *Callee = Invoke ? Invoke->getCalledFunction() : nullptr;
+    if (!Callee)
+      continue;
+    if (Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_begin) {
+      if (Begin)
+        return;
+      Begin = Invoke;
+    } else if (Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_end) {
+      if (End)
+        return;
+      End = Invoke;
+    }
+  }
+  if (!Begin || !End || Begin->getUnwindDest() != End->getUnwindDest())
+    return;
+  llvm::SmallPtrSet<const llvm::BasicBlock *, 16> Body, Normal;
+  collectNormalReachable(Fn, Normal);
+  llvm::SmallVector<const llvm::BasicBlock *, 16> Work{Begin->getNormalDest()};
+  while (!Work.empty()) {
+    const auto *BB = Work.pop_back_val();
+    if (BB == Begin->getParent() || !Normal.count(BB))
+      return;
+    if (!Body.insert(BB).second || BB == End->getParent())
+      continue;
+    const auto *Term = BB->getTerminator();
+    if (const auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(Term)) {
+      if (Invoke->getUnwindDest() != Begin->getUnwindDest())
+        return;
+      Work.push_back(Invoke->getNormalDest());
+    } else {
+      if (Term->getNumSuccessors() == 0)
+        return;
+      for (const auto *Successor : llvm::successors(BB))
+        Work.push_back(Successor);
+    }
+  }
+  if (!Body.count(End->getParent()))
+    return;
+  for (const auto *BB : Body)
+    for (const auto *Pred : llvm::predecessors(BB))
+      if (!Body.count(Pred) &&
+          !(BB == Begin->getNormalDest() && Pred == Begin->getParent()))
+        return;
+  bool Inside = false, Ended = false, BeginAfter = false;
+  for (auto &BB : Fn) {
+    if (&BB == Begin->getParent()) {
+      BeginAfter = Ended;
+      continue;
+    }
+    if (!Normal.count(&BB))
+      continue;
+    if (Body.count(&BB)) {
+      if (Ended || (!Inside && &BB != Begin->getNormalDest()))
+        return;
+      Inside = true;
+      if (&BB == End->getParent())
+        Ended = true;
+    } else if (Inside && !Ended) {
+      return;
+    }
+  }
+  if (BeginAfter)
+    Begin->getParent()->moveBefore(Begin->getNormalDest()->getIterator());
+}
+
+struct SEHBlockClause {
+  const llvm::CatchSwitchInst *Dispatch = nullptr;
+  const llvm::CatchPadInst *Pad = nullptr;
+  const llvm::BasicBlock *Handler = nullptr;
+  const llvm::CleanupPadInst *Cleanup = nullptr;
+  llvm::SmallVector<const llvm::BasicBlock *, 4> CleanupBody;
+  const llvm::BasicBlock *Unwind = nullptr;
+};
+
+struct SEHBlockScopes {
+  using Scope = std::vector<const llvm::BasicBlock *>;
+  std::map<const llvm::BasicBlock *, Scope> Protected;
+  std::map<const llvm::BasicBlock *, SEHBlockClause> Clauses;
+};
+
+// Range markers own the scope state, independently of LLVM's block order.
+// Each protected block keeps its complete ordered unwind chain. All normal
+// and handler edges leave the C compounds before entering their destination;
+// a fragmented range never needs a goto into another protected statement.
+std::optional<SEHBlockScopes> planSEHBlockScopes(const llvm::Function &Fn) {
+  SEHBlockScopes Plan;
+  unsigned Begins = 0, Ends = 0;
+  std::map<const llvm::BasicBlock *, std::pair<unsigned, unsigned>> Markers;
+  for (const auto &BB : Fn) {
+    if (const auto *Switch =
+            llvm::dyn_cast<llvm::CatchSwitchInst>(BB.getTerminator())) {
+      if (!isEHTokenNone(Switch->getParentPad()) ||
+          Switch->getNumHandlers() != 1)
+        return std::nullopt;
+      auto &Clause = Plan.Clauses[&BB];
+      Clause.Dispatch = Switch;
+      Clause.Pad = firstCatchPad(*Switch);
+      if (!Clause.Pad || Clause.Pad->arg_size() != 1)
+        return std::nullopt;
+      const auto *Ret = llvm::dyn_cast<llvm::CatchReturnInst>(
+          Clause.Pad->getParent()->getTerminator());
+      if (!Ret)
+        return std::nullopt;
+      Clause.Handler = Ret->getSuccessor();
+      Clause.Unwind = Switch->getUnwindDest();
+    }
+    for (const auto &Inst : BB)
+      if (const auto *Pad = llvm::dyn_cast<llvm::CleanupPadInst>(&Inst)) {
+        if (!isEHTokenNone(Pad->getParentPad()))
+          return std::nullopt;
+        Plan.Clauses[&BB].Cleanup = Pad;
+      }
+    if (const auto *Invoke =
+            llvm::dyn_cast<llvm::InvokeInst>(BB.getTerminator()))
+      if (const auto *Callee = Invoke->getCalledFunction()) {
+        Begins += Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_begin;
+        Ends += Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_end;
+        auto &Counts = Markers[Invoke->getUnwindDest()];
+        Counts.first +=
+            Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_begin;
+        Counts.second +=
+            Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_end;
+      }
+  }
+  // Keep the lexical renderer for a single closed range. This plan owns
+  // fragmented or independently nested ranges whose block order is immaterial.
+  if (Plan.Clauses.empty() || !Begins || !Ends || (Begins == 1 && Ends == 1))
+    return std::nullopt;
+  // The existing lexical renderer also owns one closed finally nested in
+  // one closed except. Preserve that compact source form when each clause
+  // has exactly one marker pair.
+  if (Plan.Clauses.size() == 2 &&
+      llvm::count_if(Plan.Clauses,
+                     [](const auto &Entry) {
+                       return Entry.second.Dispatch != nullptr;
+                     }) == 1 &&
+      llvm::all_of(Plan.Clauses, [&](const auto &Entry) {
+        return Markers[Entry.first] == std::pair(1u, 1u);
+      }))
+    return std::nullopt;
+  for (auto &[Entry, Clause] : Plan.Clauses) {
+    if (!Clause.Cleanup)
+      continue;
+    // The normal cleanup counterpart already lives in the normal CFG. A
+    // per-block finally executes this linear body only while unwinding.
+    llvm::SmallPtrSet<const llvm::BasicBlock *, 4> Seen;
+    const auto *BB = Entry;
+    while (Seen.insert(BB).second) {
+      Clause.CleanupBody.push_back(BB);
+      const auto *Term = BB->getTerminator();
+      if (const auto *Ret = llvm::dyn_cast<llvm::CleanupReturnInst>(Term)) {
+        if (Ret->getCleanupPad() != Clause.Cleanup)
+          return std::nullopt;
+        Clause.Unwind = Ret->getUnwindDest();
+        break;
+      }
+      const llvm::BasicBlock *Next = nullptr;
+      if (const auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(Term))
+        Next = Invoke->getNormalDest();
+      else if (const auto *Branch = llvm::dyn_cast<llvm::UncondBrInst>(Term))
+        Next = Branch->getSuccessor(0);
+      if (!Next || Next->getSinglePredecessor() != BB || Seen.count(Next))
+        return std::nullopt;
+      BB = Next;
+    }
+    for (const auto *Body : Clause.CleanupBody)
+      if (const auto *Invoke =
+              llvm::dyn_cast<llvm::InvokeInst>(Body->getTerminator()))
+        if (Invoke->getUnwindDest() != Clause.Unwind)
+          return std::nullopt;
+  }
+  std::map<const llvm::BasicBlock *, SEHBlockScopes::Scope> Chains;
+  for (const auto &[Entry, Clause] : Plan.Clauses) {
+    auto &Chain = Chains[Entry];
+    for (const auto *Current = Entry; Current;) {
+      const auto Found = Plan.Clauses.find(Current);
+      if (Found == Plan.Clauses.end() || llvm::is_contained(Chain, Current))
+        return std::nullopt;
+      Chain.push_back(Current);
+      Current = Found->second.Unwind;
+    }
+    std::reverse(Chain.begin(), Chain.end());
+  }
+  llvm::SmallVector<std::pair<const llvm::BasicBlock *, SEHBlockScopes::Scope>,
+                    16>
+      Work{{&Fn.getEntryBlock(), {}}};
+  for (const auto &[Entry, Clause] : Plan.Clauses)
+    if (Clause.Handler)
+      Work.emplace_back(Clause.Handler, SEHBlockScopes::Scope{});
+  while (!Work.empty()) {
+    auto [BB, Incoming] = Work.pop_back_val();
+    auto [It, Inserted] = Plan.Protected.emplace(BB, Incoming);
+    if (!Inserted) {
+      if (It->second != Incoming)
+        return std::nullopt;
+      continue;
+    }
+    const auto *Term = BB->getTerminator();
+    if (const auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(Term)) {
+      const auto Found = Chains.find(Invoke->getUnwindDest());
+      if (Found == Chains.end())
+        return std::nullopt;
+      const auto *Callee = Invoke->getCalledFunction();
+      const auto ID =
+          Callee ? Callee->getIntrinsicID() : llvm::Intrinsic::not_intrinsic;
+      auto Outgoing = Found->second;
+      if (ID == llvm::Intrinsic::seh_try_begin) {
+        auto Outside = Outgoing;
+        Outside.pop_back();
+        if (Incoming != Outside)
+          return std::nullopt;
+      } else {
+        if (Incoming != Outgoing)
+          return std::nullopt;
+        if (ID == llvm::Intrinsic::seh_try_end)
+          Outgoing.pop_back();
+      }
+      Work.emplace_back(Invoke->getNormalDest(), std::move(Outgoing));
+      continue;
+    }
+    if (llvm::isa<llvm::CatchSwitchInst, llvm::CatchReturnInst,
+                  llvm::CleanupReturnInst, llvm::IndirectBrInst>(Term))
+      return std::nullopt;
+    if (llvm::isa<llvm::ReturnInst>(Term) &&
+        llvm::any_of(Incoming, [&](const auto *Scope) {
+          return Plan.Clauses.at(Scope).Cleanup != nullptr;
+        }))
+      return std::nullopt;
+    for (const auto *Next : llvm::successors(BB))
+      Work.emplace_back(Next, Incoming);
+  }
+  return Plan;
+}
+
 } // namespace
 
 void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
+  if (Fn.hasFnAttribute(windows_eh_md::UnresolvedSourceFrame))
+    OS << "/* neverd.seh: unresolved runtime stack; unknown entry values "
+          "remain explicit. Native reconstruction is unavailable. */\n";
+  restoreSEHRangeEntryOrder(Fn);
   // A call the analysis sinks into the one use that needs it must print
   // there exactly once: text that prints the use twice (`(c) & (c)` for
   // `test eax, eax`) runs it twice, and text that drops the use loses it.
@@ -8841,6 +9600,8 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
 }
 
 void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
+  const auto BlockScopes = planSEHBlockScopes(Fn);
+  ExplicitSEHBlockScopes = BlockScopes.has_value();
   setupFunction(Fn);
   CallDeclNames.clear();
   std::string Buffered;
@@ -8876,8 +9637,10 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
                                     DebugFn->Params[0].first == "this";
   const int SretParamIdx =
       !IndirectReturn ? -1 : (MemberIndirectReturn ? 1 : 0);
-  if (IndirectReturn)
+  if (IndirectReturn) {
+    ReturnsNoValue = false;
     InferredVoid = false;
+  }
   auto IndirectReturnTypeStr = [&]() -> std::string {
     if (!IndirectReturn)
       return {};
@@ -8885,12 +9648,15 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
                                                     Opts.TheArch, Opts.Format);
     if (!Record)
       return {};
-    const std::string Tag = cNamedTypeSpelling(Record->SourceName);
-    if (Tag.empty())
-      return {};
-    return Tag + "*";
+    return recordPointerSpelling(*Record);
   };
 
+  // The program's main declares what the C runtime passes it and takes back
+  // (libc::kProgramMainDeclaration), as HighC declares it, whatever widths
+  // the code holds them in: the code's integer return converts to int, and
+  // an argument held as an integer converts where the code uses it.
+  const bool ProgramMain = !Opts.PreserveLLVMFunctionTypes && DebugFn &&
+                           SretParamIdx < 0 && declaresProgramMain(*DebugFn);
   auto BindParam = [&](llvm::Argument &Arg, unsigned) { return getName(&Arg); };
   auto ParamTypeStr = [&](llvm::Argument &Arg, unsigned ParamIdx) {
     if (Opts.PreserveLLVMFunctionTypes)
@@ -8899,17 +9665,23 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       if (std::string Ty = IndirectReturnTypeStr(); !Ty.empty())
         return Ty;
     }
-    size_t DebugIdx = ParamIdx;
-    if (SretParamIdx >= 0 && static_cast<int>(ParamIdx) > SretParamIdx)
-      DebugIdx = static_cast<size_t>(static_cast<int>(ParamIdx) - 1);
-    if (DebugFn && DebugIdx < DebugFn->Params.size()) {
-      TypeRef Ty = DebugFn->Params[DebugIdx].second;
+    const std::optional<size_t> DebugIdx =
+        debugParamIndexOf(ParamIdx, SretParamIdx);
+    if (DebugIdx) {
+      TypeRef Ty = DebugFn->Params[*DebugIdx].second;
       if (Ty && Ty->Kind == NdTypeKind::Ptr && Ty->Pointee &&
           Ty->Pointee->Kind == NdTypeKind::Struct &&
           !Ty->Pointee->SourceName.empty()) {
-        const std::string Tag = cNamedTypeSpelling(Ty->Pointee->SourceName);
-        if (!Tag.empty())
-          return Tag + "*";
+        if (std::string Pointer = recordPointerSpelling(*Ty->Pointee);
+            !Pointer.empty()) {
+          if (Opts.RecordDefinitions && Arg.getType()->isIntegerTy())
+            PointerParams.insert(&Arg);
+          // The typedef the prototype names the pointer by, as PRKDPC, in a
+          // unit that defines the program's types.
+          if (Opts.RecordDefinitions && !Ty->TypedefName.empty())
+            return cNamedTypeSpelling(Ty->TypedefName);
+          return Pointer;
+        }
       }
       if (Ty && Ty->Kind == NdTypeKind::Struct && Ty->IsEnum &&
           !Ty->SourceName.empty()) {
@@ -8921,24 +9693,108 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     return typeToCLLVM(Arg.getType());
   };
 
+  // A pointer the debug information or the local types give a parameter or
+  // the result, which the code holds as an integer of its width, in a unit
+  // that defines the program's records: its uses convert it.
+  auto PointerDebugType = [&](const TypeRef &Ty, const llvm::Type *Held) {
+    return Opts.RecordDefinitions && !Opts.PreserveLLVMFunctionTypes && Ty &&
+           Ty->Kind == NdTypeKind::Ptr && Ty->Pointee && Held &&
+           Held->isIntegerTy() && Ty->Size &&
+           Held->getIntegerBitWidth() == Ty->Size * 8u;
+  };
+  // The typedef a prototype names a parameter's or the result's type by
+  // (NdType::TypedefName), where the unit defines the program's types and
+  // the typedef holds what the code does: a pointer it holds as an integer
+  // of its width, or an integer or enumeration of the width it holds.
+  auto Alias = [&](const TypeRef &Ty, const llvm::Type *Held) -> std::string {
+    if (!Opts.RecordDefinitions || Opts.PreserveLLVMFunctionTypes || !Ty ||
+        Ty->TypedefName.empty() || !Held)
+      return {};
+    const bool Integer = (Ty->Kind == NdTypeKind::Int ||
+                          (Ty->Kind == NdTypeKind::Struct && Ty->IsEnum)) &&
+                         Held->isIntegerTy() && Ty->Size &&
+                         Held->getIntegerBitWidth() == Ty->Size * 8u;
+    if (!Integer && !PointerDebugType(Ty, Held))
+      return {};
+    return cNamedTypeSpelling(Ty->TypedefName);
+  };
+  auto ParamDecl = [&](llvm::Argument &Arg, unsigned ParamIdx) {
+    const std::optional<size_t> DebugIdx =
+        debugParamIndexOf(ParamIdx, SretParamIdx);
+    const bool Sret =
+        SretParamIdx >= 0 && static_cast<int>(ParamIdx) == SretParamIdx;
+    if (ProgramMain && DebugIdx) {
+      const TypeRef &Ty = DebugFn->Params[*DebugIdx].second;
+      if (Ty->Kind == NdTypeKind::Ptr && Arg.getType()->isIntegerTy())
+        PointerParams.insert(&Arg);
+      return declarationToC(Ty, BindParam(Arg, ParamIdx));
+    }
+    if (!Sret && DebugIdx) {
+      const TypeRef &Ty = DebugFn->Params[*DebugIdx].second;
+      if (const std::string Name = Alias(Ty, Arg.getType()); !Name.empty()) {
+        if (PointerDebugType(Ty, Arg.getType()))
+          PointerParams.insert(&Arg);
+        return Name + " " + BindParam(Arg, ParamIdx);
+      }
+      if (PointerDebugType(Ty, Arg.getType()) &&
+          Ty->Pointee->Kind != NdTypeKind::Struct) {
+        PointerParams.insert(&Arg);
+        return declarationToC(Ty, BindParam(Arg, ParamIdx));
+      }
+    }
+    return ParamTypeStr(Arg, ParamIdx) + " " + BindParam(Arg, ParamIdx);
+  };
+
   if (EmitFunctionWrapper) {
     auto *FuncTy = Fn.getFunctionType();
     std::string RetStr =
         InferredVoid ? "void" : typeToCLLVM(FuncTy->getReturnType());
     if (std::string Ty = IndirectReturnTypeStr(); !Ty.empty())
       RetStr = std::move(Ty);
+    else if (!InferredVoid && DebugFn &&
+             PointerDebugType(DebugFn->ReturnType, FuncTy->getReturnType()) &&
+             DebugFn->ReturnType->Pointee->Kind != NdTypeKind::Func) {
+      RetStr = typeToC(DebugFn->ReturnType);
+      PointerReturnType = RetStr;
+      if (std::string Name =
+              Alias(DebugFn->ReturnType, FuncTy->getReturnType());
+          !Name.empty())
+        RetStr = PointerReturnType = std::move(Name);
+    } else if (!InferredVoid && DebugFn) {
+      if (std::string Name =
+              Alias(DebugFn->ReturnType, FuncTy->getReturnType());
+          !Name.empty() &&
+          !PointerDebugType(DebugFn->ReturnType, FuncTy->getReturnType()))
+        RetStr = std::move(Name);
+    }
+    if (ProgramMain && !InferredVoid)
+      RetStr = typeToC(DebugFn->ReturnType);
     std::string Signature;
     llvm::raw_string_ostream SignatureOS(Signature);
     SignatureOS << RetStr << " " << FName << "(";
 
     unsigned ParamIdx = 0;
+    std::set<size_t> Declared;
     for (auto &Arg : Fn.args()) {
       if (ParamIdx > 0)
         SignatureOS << ", ";
-      SignatureOS << ParamTypeStr(Arg, ParamIdx) << " "
-                  << BindParam(Arg, ParamIdx);
+      SignatureOS << ParamDecl(Arg, ParamIdx);
+      if (const auto DebugIdx = debugParamIndexOf(ParamIdx, SretParamIdx))
+        Declared.insert(*DebugIdx);
       ++ParamIdx;
     }
+    // The parameters main takes that its code never reads, as envp, where
+    // the unit calls it nowhere: a whole module's start-up code passes what
+    // the code reads.
+    if (ProgramMain && OnlyFunction == &Fn && !Fn.isVarArg())
+      for (size_t Index = 0; Index < DebugFn->Params.size(); ++Index)
+        if (!Declared.count(Index) && Index >= ParamIdx) {
+          if (ParamIdx++ > 0)
+            SignatureOS << ", ";
+          const auto &[Name, Ty] = DebugFn->Params[Index];
+          SignatureOS << declarationToC(
+              Ty, Name.empty() ? "arg" + std::to_string(Index) : Name);
+        }
     if (Fn.isVarArg() && ParamIdx != 0) {
       if (ParamIdx > 0)
         SignatureOS << ", ";
@@ -8955,6 +9811,12 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     }
   }
 
+  if (Opts.EmitComments)
+    for (const auto &Bytes : readSourceFrameBytes(Fn))
+      if (const auto Text = sourceFrameStringComment(Bytes)) {
+        emitIndent(1);
+        OS << "/* " << *Text << " */\n";
+      }
   BufOS.flush();
   const size_t DeclInsertPos = Buffered.size();
   emitFunctionDecls(Fn);
@@ -9010,17 +9872,26 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
   EHWrapIsCxx = functionIsCxxEH(Fn);
   EHTryDepth = 0;
 
-  if (!SEHFilterFrameName.empty()) {
-    // Capture in the parent, before Clang outlines the __except expression.
-    // Evaluating localaddress inside that expression would name the filter's
-    // frame instead. Keep the same target intrinsic used by native finally
-    // callbacks; frameaddress(0) can name a different base after realignment.
+  if (SEHParentFrameName.empty() && !EHWraps.empty())
+    for (const llvm::BasicBlock &BB : Fn)
+      for (const llvm::Instruction &Inst : BB)
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst);
+            SEHParentFrameName.empty() && Call &&
+            Call->getIntrinsicID() == llvm::Intrinsic::localaddress) {
+          SEHParentFrameName = freshVar("seh_parent_frame");
+          break;
+        }
+  if (!SEHParentFrameName.empty()) {
+    // The source compiler outlines both __except filters and __finally bodies.
+    // Every localaddress in this LLVM function names its parent's local area,
+    // not a newly outlined C helper's frame. Capture it once before outlining;
+    // frameaddress(0) can name a different base after stack realignment.
     const std::string LocalAddress = freshVar("llvm_localaddress");
     emitIndent(1);
     OS << "extern void *" << LocalAddress
        << "(void) __asm__(\"llvm.localaddress\");\n";
     emitIndent(1);
-    OS << "void *" << SEHFilterFrameName << " = " << LocalAddress << "();\n";
+    OS << "void *" << SEHParentFrameName << " = " << LocalAddress << "();\n";
   }
 
   llvm::SmallPtrSet<const llvm::BasicBlock *, 16> SkipInTry;
@@ -9037,7 +9908,7 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     const llvm::BasicBlock *End = nullptr;
   };
   std::vector<SehRangeMarker> RangeMarkers(EHWraps.size());
-  bool UseRanges = !EHWraps.empty();
+  bool UseRanges = !BlockScopes && !EHWraps.empty();
   auto PadBlock = [](const EHWrapClause &Clause) -> const llvm::BasicBlock * {
     if (Clause.Switch)
       return Clause.Switch->getParent();
@@ -9163,7 +10034,7 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
   // destination prints that destination after the wrap. Leaving it inside
   // the try drops it from the handler path once the resume goto is omitted.
   llvm::SmallPtrSet<const llvm::BasicBlock *, 16> AfterWrap;
-  if (!UseRanges && EHWraps.size() == 1 &&
+  if (!BlockScopes && !UseRanges && EHWraps.size() == 1 &&
       EHWraps.front().Kind == EHWrapClause::Kind::SEHExcept &&
       EHWraps.front().Switch && EHWraps.front().Body.size() == 1) {
     const llvm::BasicBlock *Dispatch = EHWraps.front().Switch->getParent();
@@ -9213,16 +10084,10 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
               !InvokeBlocks.empty() && HandlerTerm &&
               ((HandlerBr && HandlerBr->getSuccessor(0) == FirstCont) ||
                llvm::isa<llvm::ReturnInst>(HandlerTerm));
-    if (Ok)
-      for (const llvm::BasicBlock &BB : Fn) {
-        if (&BB == FirstCont)
-          break;
-        if (AfterWrap.count(&BB) &&
-            (!isPrintPassthrough(&BB) || printBranchTarget(&BB) != FirstCont)) {
-          Ok = false;
-          break;
-        }
-      }
+    // Post-try blocks can have several entries, and their LLVM list order
+    // need not start with the handler's join. Explicit edges below preserve
+    // that CFG; requiring one fallthrough join needlessly sent valid layouts
+    // to the unsafe all-blocks-inside-try fallback.
     auto MainBlocks = [&]() {
       llvm::SmallVector<const llvm::BasicBlock *, 16> Blocks;
       for (const llvm::BasicBlock &BB : Fn)
@@ -9295,8 +10160,8 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
         const auto *Invoke =
             llvm::cast<llvm::InvokeInst>(InvokeBB->getTerminator());
         const llvm::BasicBlock *NormalDest = NormalPrintTarget(*Invoke);
-        const bool ExitsTry =
-            AfterWrap.count(Invoke->getNormalDest()) && NormalDest == FirstCont;
+        const bool ExitsTry = AfterWrap.count(Invoke->getNormalDest()) &&
+                              AfterWrap.count(NormalDest);
         HasNormalExit |= ExitsTry;
         if (!ExitsTry && !TryRegion.count(Invoke->getNormalDest())) {
           Ok = false;
@@ -9318,27 +10183,9 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
             NeedGoto.emplace(InvokeBB, NormalDest);
           continue;
         }
-        // A normal exit can fall through the end of __try only if every
-        // remaining main-walk block is an empty EH boundary marker. Otherwise
-        // jump to the continuation after the entire __except statement.
-        if (Invoke->getNormalDest() != NormalDest)
-          NeedGoto.emplace(InvokeBB, NormalDest);
-        for (auto Later = std::next(It); Later != MainWalk.end(); ++Later) {
-          const auto *End =
-              SehRangeInvoke(**Later, llvm::Intrinsic::seh_try_end);
-          bool EmptyEnd = End && End->getNormalDest() == FirstCont &&
-                          !edgePrintsPhiCopy(*Later, FirstCont);
-          if (EmptyEnd)
-            for (const llvm::Instruction &Inst : **Later)
-              if (&Inst != End && instructionIsPrinted(Inst)) {
-                EmptyEnd = false;
-                break;
-              }
-          if (!EmptyEnd) {
-            NeedGoto.emplace(InvokeBB, NormalDest);
-            break;
-          }
-        }
+        // Both normal and exception exits name their actual continuation;
+        // neither can borrow the first block printed after the wrapper.
+        NeedGoto.emplace(InvokeBB, NormalDest);
       }
     }
     Ok = Ok && HasNormalExit;
@@ -9356,11 +10203,11 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
           const auto *PredInvoke =
               llvm::dyn_cast<llvm::InvokeInst>(Pred->getTerminator());
           const bool FromInvoke = InvokeBlocks.count(Pred) && PredInvoke &&
-                                  PredInvoke->getNormalDest() == BB &&
-                                  NormalPrintTarget(*PredInvoke) == FirstCont;
+                                  PredInvoke->getNormalDest() == BB;
           const bool FromHandler = Pred == Handler && BB == FirstCont;
           const bool FromCont = AfterWrap.count(Pred);
-          if (!FromInvoke && !FromHandler && !FromCont) {
+          const bool FromTry = TryRegion.count(Pred) && Normal.count(Pred);
+          if (!FromInvoke && !FromHandler && !FromCont && !FromTry) {
             Ok = false;
             break;
           }
@@ -9378,15 +10225,15 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       // enter that protected C scope.  writeGoto can instead inline its
       // proven shared return epilogue and finish inside __except.
       if (!HandlerTerm)
-        llvm::report_fatal_error("LLVMC EH fallback handler has no terminator");
+        throw std::runtime_error("LLVMC EH fallback handler has no terminator");
       if (ConsumedByOtherPrinter(Handler))
-        llvm::report_fatal_error(
+        throw std::runtime_error(
             "LLVMC EH fallback handler has no printed C body");
       for (unsigned I = 0; I < HandlerTerm->getNumSuccessors(); ++I) {
         const llvm::BasicBlock *Successor = HandlerTerm->getSuccessor(I);
         if (Successor == Handler) {
           if (isPrintPassthrough(Handler))
-            llvm::report_fatal_error(
+            throw std::runtime_error(
                 "LLVMC EH fallback handler has no printed C loop");
           ReferencedBlocks.insert(Handler);
           continue;
@@ -9397,7 +10244,7 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
         const bool ReturnsInline =
             EmitsGoto && sharedReturnEpilogue(Successor) == Successor;
         if (!ReturnsInline)
-          llvm::report_fatal_error(
+          throw std::runtime_error(
               "LLVMC EH fallback handler enters protected try body");
         EHPrintedPassthroughHandlers.insert(Handler);
       }
@@ -9415,12 +10262,12 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
         const auto To =
             std::find(FallbackWalk.begin(), FallbackWalk.end(), Target);
         if (From == FallbackWalk.end() || To == FallbackWalk.end())
-          llvm::report_fatal_error(
+          throw std::runtime_error(
               "LLVMC EH fallback invoke normal edge has no printed try target");
         if (std::next(From) == To && Invoke->getNormalDest() == Target)
           continue;
         if (!HasGotoLabel(Target))
-          llvm::report_fatal_error(
+          throw std::runtime_error(
               "LLVMC EH fallback invoke normal target has no C label");
         NeedGoto.emplace(InvokeBB, Target);
       }
@@ -9428,12 +10275,12 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     EHInvokeNormalGotos.insert(NeedGoto.begin(), NeedGoto.end());
     for (const auto &[_, Target] : NeedGoto)
       ReferencedBlocks.insert(Target);
-    if (Ok && HandlerCopy) {
+    if (Ok && HandlerBr) {
       EHPrintedPassthroughHandlers.insert(Handler);
     }
   }
 
-  if (!UseRanges && AfterWrap.empty() && EHWraps.size() == 1 &&
+  if (!BlockScopes && !UseRanges && AfterWrap.empty() && EHWraps.size() == 1 &&
       (EHWraps.front().Kind == EHWrapClause::Kind::SEHFinally ||
        EHWraps.front().Kind == EHWrapClause::Kind::CxxCleanup) &&
       EHWraps.front().Cleanup && EHWraps.front().Body.size() == 1) {
@@ -9524,9 +10371,152 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       InlinedFallthroughBlocks.insert(&BB);
   }
 
-  const bool WroteScalarRegions =
-      EHWraps.empty() && !UseRanges && tryWriteScalarRegions(Fn, 1);
-  if (WroteScalarRegions) {
+  const bool WroteScalarRegions = DeferredUnknownFlags.empty() &&
+                                  EHWraps.empty() && !UseRanges &&
+                                  tryWriteScalarRegions(Fn, 1);
+  if (BlockScopes) {
+    std::string NormalExit;
+    if (llvm::any_of(BlockScopes->Clauses, [](const auto &Entry) {
+          return Entry.second.Cleanup != nullptr;
+        })) {
+      NormalExit = "neverd_seh_normal";
+      while (!UsedNames.insert(NormalExit).second)
+        NormalExit += "_";
+      emitIndent(1);
+      OS << "volatile unsigned char " << NormalExit << ";\n";
+    }
+    // Every edge assigns its own PHIs. None is a lexical fallthrough or a
+    // globally known immediate, including bridges with no other statements.
+    for (const auto &[BB, Protected] : BlockScopes->Protected) {
+      EHMovedContinuationBlocks.insert(BB);
+      for (const auto &Inst : *BB)
+        if (llvm::isa<llvm::PHINode>(Inst))
+          Analysis.Inlinable.erase(&Inst);
+    }
+    bool InCleanup = false;
+    auto Edge = [&](const llvm::BasicBlock *From, const llvm::BasicBlock *To,
+                    int Indent) {
+      writePhiCopies(From, To, Indent);
+      KnownImmediates.clear();
+      if (InCleanup) {
+        emitIndent(Indent);
+        OS << NormalExit << " = 1;\n";
+      }
+      emitIndent(Indent);
+      OS << "goto " << blockLabel(To) << ";\n";
+    };
+    for (auto &BB : Fn) {
+      const auto Scope = BlockScopes->Protected.find(&BB);
+      if (Scope == BlockScopes->Protected.end())
+        continue;
+      KnownImmediates.clear();
+      AllocaImmediates.clear();
+      AllocaLastValues.clear();
+      AfterCxxThrow = false;
+      OS << blockLabel(&BB) << ":\n";
+      InCleanup = llvm::any_of(Scope->second, [&](const auto *Entry) {
+        return BlockScopes->Clauses.at(Entry).Cleanup != nullptr;
+      });
+      int Indent = 1;
+      if (InCleanup) {
+        emitIndent(Indent);
+        OS << NormalExit << " = 0;\n";
+      }
+      for (const auto *Entry : Scope->second) {
+        (void)Entry;
+        emitIndent(Indent++);
+        OS << "__try {\n";
+      }
+      for (auto &Inst : BB) {
+        if (Inst.isTerminator() || llvm::isa<llvm::AllocaInst>(Inst))
+          continue;
+        writeInstruction(Inst, Indent);
+      }
+      auto *Term = BB.getTerminator();
+      if (auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(Term)) {
+        writeCallLike(*Invoke,
+                      Invoke->getType()->isVoidTy() ? "" : getName(Invoke),
+                      Indent);
+        if (!AfterCxxThrow)
+          Edge(&BB, Invoke->getNormalDest(), Indent);
+      } else if (const auto *Branch =
+                     llvm::dyn_cast<llvm::UncondBrInst>(Term)) {
+        Edge(&BB, Branch->getSuccessor(0), Indent);
+      } else if (const auto *Branch = llvm::dyn_cast<llvm::CondBrInst>(Term)) {
+        emitIndent(Indent);
+        OS << "if (" << valueStr(Branch->getCondition()) << ") {\n";
+        Edge(&BB, Branch->getSuccessor(0), Indent + 1);
+        emitIndent(Indent);
+        OS << "} else {\n";
+        Edge(&BB, Branch->getSuccessor(1), Indent + 1);
+        emitIndent(Indent);
+        OS << "}\n";
+      } else if (const auto *Switch = llvm::dyn_cast<llvm::SwitchInst>(Term)) {
+        emitIndent(Indent);
+        OS << "switch (" << valueStr(Switch->getCondition()) << ") {\n";
+        for (const auto &Case : Switch->cases()) {
+          emitIndent(Indent);
+          OS << "case " << valueStr(Case.getCaseValue()) << ":\n";
+          Edge(&BB, Case.getCaseSuccessor(), Indent + 1);
+        }
+        emitIndent(Indent);
+        OS << "default:\n";
+        Edge(&BB, Switch->getDefaultDest(), Indent + 1);
+        emitIndent(Indent);
+        OS << "}\n";
+      } else {
+        writeInstruction(*Term, Indent);
+      }
+      for (const auto *Entry : llvm::reverse(Scope->second)) {
+        --Indent;
+        const auto &Clause = BlockScopes->Clauses.at(Entry);
+        KnownImmediates.clear();
+        AllocaImmediates.clear();
+        AllocaLastValues.clear();
+        AfterCxxThrow = false;
+        emitIndent(Indent);
+        if (Clause.Cleanup) {
+          OS << "} __finally {\n";
+          emitIndent(Indent + 1);
+          OS << "if (!" << NormalExit << ") {\n";
+          for (const auto *CleanupBB : Clause.CleanupBody) {
+            for (const auto &Inst : *CleanupBB)
+              if (!Inst.isTerminator() &&
+                  !llvm::isa<llvm::CleanupPadInst, llvm::AllocaInst>(Inst))
+                writeInstruction(const_cast<llvm::Instruction &>(Inst),
+                                 Indent + 2);
+            const auto *CleanupTerm = CleanupBB->getTerminator();
+            const llvm::BasicBlock *Next = nullptr;
+            if (const auto *Invoke =
+                    llvm::dyn_cast<llvm::InvokeInst>(CleanupTerm)) {
+              writeCallLike(*const_cast<llvm::InvokeInst *>(Invoke),
+                            Invoke->getType()->isVoidTy() ? ""
+                                                          : getName(Invoke),
+                            Indent + 2);
+              Next = Invoke->getNormalDest();
+            } else if (const auto *Branch =
+                           llvm::dyn_cast<llvm::UncondBrInst>(CleanupTerm))
+              Next = Branch->getSuccessor(0);
+            if (Next && !AfterCxxThrow)
+              writePhiCopies(CleanupBB, Next, Indent + 2);
+          }
+          emitIndent(Indent + 1);
+          OS << "}\n";
+        } else {
+          OS << "} __except (" << windowsEHFilterExpr(*Clause.Dispatch)
+             << ") {\n";
+          for (const auto &Inst : *Clause.Pad->getParent())
+            if (!llvm::isa<llvm::CatchPadInst, llvm::CatchReturnInst>(Inst))
+              writeInstruction(const_cast<llvm::Instruction &>(Inst),
+                               Indent + 1);
+          Edge(Clause.Pad->getParent(), Clause.Handler, Indent + 1);
+        }
+        emitIndent(Indent);
+        OS << "}\n";
+      }
+      InCleanup = false;
+    }
+  } else if (WroteScalarRegions) {
     // The complete region plan owns all blocks and PHI edges.
   } else if (!UseRanges) {
     EHSkippedMainBlocks.insert(SkipInTry.begin(), SkipInTry.end());
@@ -9708,17 +10698,17 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
               Found->second->Kind == NdTypeKind::Ptr &&
               Found->second->Pointee &&
               Found->second->Pointee->Kind == NdTypeKind::Struct) {
-            const std::string Tag =
-                cNamedTypeSpelling(Found->second->Pointee->SourceName);
-            if (!Tag.empty())
-              Type = Tag + "*";
+            if (std::string Pointer =
+                    recordPointerSpelling(*Found->second->Pointee);
+                !Pointer.empty())
+              Type = std::move(Pointer);
           }
           Declaration =
               "    " + allocaAlignment(*AI) + Type + " " + It->second + ";\n";
         }
       } else {
         Declaration =
-            "    " + typeToCLLVM(Inst.getType()) + " " + It->second + ";\n";
+            "    " + sourceVariableDeclaration(Inst, It->second) + "\n";
       }
       MissingDecls.emplace_back(*FirstUse, std::move(Declaration));
       DeclaredNames.insert(It->second);
@@ -9760,13 +10750,13 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     const std::string Name = blockLabel(Target);
     for (const auto &[Block, OtherName] : BlockLabels)
       if (Block != Target && OtherName == Name)
-        llvm::report_fatal_error(
+        throw std::runtime_error(
             "LLVMC EH invoke normal target label is ambiguous");
     const std::string Label = "\n" + Name + ":\n";
     const size_t First = Final.find(Label);
     if (First == std::string::npos ||
         Final.find(Label, First + Label.size()) != std::string::npos)
-      llvm::report_fatal_error(
+      throw std::runtime_error(
           "LLVMC EH invoke normal target has no unique emitted label");
   }
   OS << Final;

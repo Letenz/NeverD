@@ -229,6 +229,17 @@ private:
     case ExprKind::Offsetof:
       return Printed{text(E->Begin, E->End), PrecAtom};
     case ExprKind::CompoundLiteral:
+      if (Opts.Dialect == SourceDialect::Cpp && E->Written->isRecord() &&
+          E->Written->Record->Anonymous) {
+        // C++ cannot define a record in a type specifier. Name the type
+        // through an unevaluated lambda; the initializer stays outside it.
+        const size_t TypeBegin = E->Text.data() - T.Source.data();
+        return Printed{"(decltype([] { " +
+                           text(TypeBegin, TypeBegin + E->Text.size()) +
+                           " __neverd_value{}; return __neverd_value; }()))" +
+                           expr(E->Ops.front()).Text,
+                       PrecAtom};
+      }
       return Printed{text(E->Begin, E->Ops.front()->Begin) + " " +
                          expr(E->Ops.front()).Text,
                      PrecAtom};
@@ -252,6 +263,10 @@ private:
     case ExprKind::BitCast:
       return Printed{text(E->Begin, E->Ops.front()->Begin) +
                          expr(E->Ops.front()).Text + ")",
+                     PrecAtom};
+    case ExprKind::VaArg:
+      return Printed{"va_arg(" + expr(E->Ops.front()).Text +
+                         text(E->Ops.front()->End, E->End),
                      PrecAtom};
     }
     return Printed{"", PrecAtom};
@@ -439,15 +454,15 @@ private:
   void declaration(const TopLevel &Item) override {
     // Recovered field layouts describe the binary's storage. Keep those C
     // declarations intact rather than inventing definitions of STL aliases.
-    if (Opts.Dialect == SourceDialect::Cpp &&
-        (Item.Decls.front()->Kind == DeclKind::Record ||
-         Item.Decls.front()->Kind == DeclKind::Typedef)) {
+    const DeclKind Kind = Item.Decls.front()->Kind;
+    const bool Type = Kind == DeclKind::Record || Kind == DeclKind::Typedef ||
+                      Kind == DeclKind::Enumeration;
+    if (Opts.Dialect == SourceDialect::Cpp && Type) {
       line(text(Item.Begin, Item.End, false));
       trailingComments(Item.Trailing);
       return;
     }
-    if (Item.Decls.size() > 1 || Item.Decls.front()->Kind == DeclKind::Record ||
-        Item.Decls.front()->Kind == DeclKind::Typedef) {
+    if (Item.Decls.size() > 1 || Type) {
       line(text(Item.Begin, Item.End));
     } else {
       declarationLine(Item.Decls.front());
@@ -456,9 +471,13 @@ private:
   }
 
   void staticAssert(const TopLevel &Item) override {
-    line(std::string(Opts.Dialect == SourceDialect::Cpp ? "static_assert("
-                                                        : "_Static_assert(") +
-         expr(Item.Assertion).Text + ", " + expr(Item.Message).Text + ");");
+    // C keeps the keyword the text spells; C++ has its own.
+    const std::string Keyword = Opts.Dialect == SourceDialect::Cpp
+                                    ? "static_assert"
+                                : Item.Text.empty() ? "_Static_assert"
+                                                    : Item.Text.str();
+    line(Keyword + "(" + expr(Item.Assertion).Text + ", " +
+         expr(Item.Message).Text + ");");
     trailingComments(Item.Trailing);
   }
 };

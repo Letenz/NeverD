@@ -23,6 +23,10 @@ BionicResult Bionic::finishCallback(const GuestCallback &Callback) {
           return finalize(Continuation.DSO);
         } else if constexpr (std::is_same_v<T, PropertyCallback>) {
           return nextProperty(Continuation);
+        } else if constexpr (std::is_same_v<T, JNINativeCallback>) {
+          return finishNativeJNI(Continuation);
+        } else if constexpr (std::is_same_v<T, JNIOnLoadCallback>) {
+          return finishJavaLibrary(Continuation);
         } else {
           static_assert(std::is_same_v<T, PropertyReadCallback>);
           // The read-callback ABI is void; x0 is unspecified on return.

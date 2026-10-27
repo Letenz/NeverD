@@ -7,6 +7,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
+#include "neverd/loader/Limits.h"
 
 #include "llvm/Support/Endian.h"
 
@@ -37,7 +38,10 @@ class Reader {
 public:
   explicit Reader(const llvm::object::COFFObjectFile &Object)
       : Bytes(llvm::arrayRefFromStringRef(Object.getData())),
-        Budget(std::min<uint64_t>(Bytes.size(), 8 * 1024 * 1024) * 8) {
+        Budget(std::min<uint64_t>(
+                   Bytes.size(),
+                   ::neverd::limits::loader::kPEImportsReaderMinArgument2) *
+               8) {
     if (const auto *D = Object.getDataDirectory(BOUND_IMPORT))
       BoundImports = D->RelativeVirtualAddress || D->Size;
     for (const auto &Ref : Object.sections()) {
@@ -111,7 +115,7 @@ public:
       return Module.takeError();
     const uint32_t IATRVA = read32le(Data + 16);
     if (!detail::validImportLookupSource(read32le(Data), read32le(Data + 4),
-                                        BoundImports))
+                                         BoundImports))
       return invalid("bound IAT has no independent import lookup table");
     const uint32_t LookupRVA = read32le(Data) ? read32le(Data) : IATRVA;
     auto Lookup = tail(LookupRVA);

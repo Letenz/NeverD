@@ -13,6 +13,7 @@
 
 #include "../NeverDCLI.h"
 #include "../NeverDCLIFunctions.h"
+#include "../ResourceLimits.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Format.h"
@@ -26,9 +27,6 @@ using namespace llvm;
 
 namespace neverd::cli {
 namespace {
-
-/// Functions one neverd_string_refs_json call decodes.
-constexpr int ReferencePageFunctions = 1024;
 
 /// Takes an owned engine string.
 std::string take(const char *Text) {
@@ -128,8 +126,9 @@ int runStringReferences(neverd_session_t Sess, const std::string &Options) {
   json::Array Out;
   size_t Count = 0;
   for (std::optional<neverd_va_t> Cursor = 0; Cursor;) {
-    const char *Page = neverd_string_refs_json(Sess, Options.c_str(), *Cursor,
-                                               ReferencePageFunctions);
+    const char *Page = neverd_string_refs_json(
+        Sess, Options.c_str(), *Cursor,
+        ::neverd::limits::cli::kNeverDCmdStringsReferencePageFunctions);
     if (!Page) {
       WithColor::error() << takeLastError(Sess) << "\n";
       return 1;

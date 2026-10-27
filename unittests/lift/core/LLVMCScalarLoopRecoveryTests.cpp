@@ -21,6 +21,21 @@
 #include "llvm/Support/SourceMgr.h"
 
 namespace {
+
+/// Where \p Source defines the function whose header starts with \p Header:
+/// the header's line that opens its body.  A whole module declares each
+/// definition before the bodies (DefinitionDeclarations), which a unit of
+/// one function leaves out.
+size_t definitionAt(llvm::StringRef Source, llvm::StringRef Header) {
+  for (size_t At = Source.find(Header); At != llvm::StringRef::npos;
+       At = Source.find(Header, At + 1)) {
+    const size_t End = Source.find('\n', At);
+    if (Source.slice(At, End).rtrim().ends_with("{"))
+      return At;
+  }
+  return llvm::StringRef::npos;
+}
+
 void compileAndRun(const std::string &Source,
                    llvm::StringRef Optimization = "-O2",
                    const std::string &ReferenceIR = {},
@@ -223,6 +238,7 @@ TEST(LLVMCScalarLoopRecovery, NewlyExposedModularStopsComposeWithLoopRecovery) {
     EXPECT_EQ(Source.find("while (1)"), std::string::npos) << Source;
     EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
     EXPECT_EQ(Source.find("127"), std::string::npos) << Source;
+    EXPECT_EQ(Source.find("0x7F"), std::string::npos) << Source;
     checkArithmetic(*Module, Source, "uint" + std::to_string(Width) + "_t");
   }
 }
@@ -348,7 +364,7 @@ exit:
   ASSERT_TRUE(Module);
   const auto Source = emit(*Module);
   EXPECT_EQ(Source.find("uint64_t"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("& 15"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("& 0xF"), std::string::npos) << Source;
   EXPECT_NE(Source.find("for ("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
   checkArithmetic(*Module, Source);
@@ -759,8 +775,8 @@ return:
   EXPECT_NE(Source.find("guard"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("uint8_t guard11 ="), std::string::npos) << Source;
   const auto Selected = emit(*Module, Module->getFunction("ladder"));
-  EXPECT_EQ(Selected.substr(Selected.find("uint64_t ladder(")),
-            Source.substr(Source.find("uint64_t ladder(")));
+  EXPECT_EQ(Selected.substr(definitionAt(Selected, "uint64_t ladder(")),
+            Source.substr(definitionAt(Source, "uint64_t ladder(")));
   Module->getFunction("ladder")->setName("reference_ladder");
   const auto Reference = text(*Module);
   const std::string Main = R"(
@@ -940,8 +956,8 @@ join:
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
   EXPECT_NE(Source.find("break;"), std::string::npos) << Source;
   const auto Selected = emit(*Module, Module->getFunction("exit_tails"));
-  EXPECT_EQ(Selected.substr(Selected.find("uint64_t exit_tails(")),
-            Source.substr(Source.find("uint64_t exit_tails(")));
+  EXPECT_EQ(Selected.substr(definitionAt(Selected, "uint64_t exit_tails(")),
+            Source.substr(definitionAt(Source, "uint64_t exit_tails(")));
   Module->getFunction("exit_tails")->setName("reference_exits");
   const auto Reference = text(*Module);
   const std::string Main = R"(

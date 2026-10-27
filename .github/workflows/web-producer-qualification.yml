@@ -109,7 +109,7 @@ jobs:
             -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
             -DICU_ROOT="$(brew --prefix icu4c@77)" \
             -Dzstd_DIR="$RUNNER_TEMP/web-codecs/lib/cmake/zstd"
-          cmake --build build-web-qualification --parallel 3 \
+          python scripts/build.py build-web-qualification --parallel 3 \
             --target NeverDWebArtifactTests NeverDWebSourceMapTests \
             NeverDWebNativeTests NeverDWebSDKTests
       - name: Require all eleven fixed producer qualification tests
@@ -126,4 +126,6 @@ jobs:
           path: |
             build-web-qualification/unittests/web/producer-results.xml
             build-web-qualification/unittests/web/Testing/Temporary/LastTest.log
+            build-web-qualification/neverd-*.json
+            build-web-qualification/CMakeCache.txt
           if-no-files-found: warn

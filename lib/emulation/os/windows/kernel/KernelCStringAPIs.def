@@ -6,16 +6,12 @@
 ///
 /// \file
 /// Argument counts, caller-IRQL ceilings and typed operations for the C runtime
-/// string helpers the kernel exports and drivers call directly. Every operation
-/// only reads caller-provided guest memory one unit at a time; residency is
-/// enforced per unit and a run without a terminator stops at the 1 MiB model
-/// limit. Behavior is modeled 1:1 against the Windows 10.0.19041.6456 kernel
-/// exports cited per entry: counts and search results follow the standard C
-/// semantics, comparisons fold only ASCII A-Z, and the result width matches the
-/// routine (int results are zero-extended to 32 bits, size_t and pointer
-/// results are full width). The IRQL ceiling is Any, matching the exported
-/// leaf routines and the bounded memory helpers; validateGuestAccess still
-/// rejects paged reads above APC_LEVEL.
+/// scalar/string helpers the kernel exports and drivers call directly. Memory
+/// operations enforce residency per access and a run without a terminator
+/// stops at the 1 MiB model limit. Bounded behavior follows the Windows
+/// 10.0.19041.6456 kernel exports cited per entry; result widths, overlap and
+/// error writes follow each operation's contract. IRQL admission is supplied
+/// per entry, and validateGuestAccess also rejects paged storage above APC_LEVEL.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -33,6 +29,34 @@ NEVERD_KERNEL_CSTRING_API(strnlen, 2, Any,
                           runtime::cStringLength(*this, Memory, A, 1))
 NEVERD_KERNEL_CSTRING_API(wcsnlen, 2, Any,
                           runtime::cStringLength(*this, Memory, A, 2))
+
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strcpy-wcscpy-mbscpy
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strncpy-strncpy-l-wcsncpy-wcsncpy-l-mbsncpy-mbsncpy-l
+// strcpy RVA 0x3d2f30, wcscpy 0x3d37e0; strncpy 0x3d3360, wcsncpy 0x3d3980.
+// Copy includes the terminator; counted copy writes exactly Count units,
+// padding with zeros when the source ends and adding no extra terminator.
+NEVERD_KERNEL_CSTRING_API(strcpy, 2, Any,
+                          runtime::cStringWrite(*this, Memory, A, 1, false))
+NEVERD_KERNEL_CSTRING_API(wcscpy, 2, Any,
+                          runtime::cStringWrite(*this, Memory, A, 2, false))
+NEVERD_KERNEL_CSTRING_API(strncpy, 3, Any,
+                          runtime::cStringWrite(*this, Memory, A, 1, false))
+NEVERD_KERNEL_CSTRING_API(wcsncpy, 3, Any,
+                          runtime::cStringWrite(*this, Memory, A, 2, false))
+
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strcat-wcscat-mbscat
+// https://learn.microsoft.com/cpp/c-runtime-library/reference/strncat-strncat-l-wcsncat-wcsncat-l-mbsncat-mbsncat-l
+// strcat RVA 0x3d2e90, wcscat 0x3d37a0; strncat 0x3d31b0, wcsncat 0x3d38f0.
+// Append replaces the old terminator and always writes a new one. A zero
+// count makes strncat return untouched, but wcsncat still scans/writes Dest.
+NEVERD_KERNEL_CSTRING_API(strcat, 2, Any,
+                          runtime::cStringWrite(*this, Memory, A, 1, true))
+NEVERD_KERNEL_CSTRING_API(wcscat, 2, Any,
+                          runtime::cStringWrite(*this, Memory, A, 2, true))
+NEVERD_KERNEL_CSTRING_API(strncat, 3, Any,
+                          runtime::cStringWrite(*this, Memory, A, 1, true))
+NEVERD_KERNEL_CSTRING_API(wcsncat, 3, Any,
+                          runtime::cStringWrite(*this, Memory, A, 2, true))
 
 // https://learn.microsoft.com/cpp/c-runtime-library/reference/strcmp-wcscmp-mbscmp
 // strcmp RVA 0x3d3030, wcscmp RVA 0x3d3840: unsigned unit order, normalized to
@@ -112,3 +136,47 @@ NEVERD_KERNEL_CSTRING_API(wcsspn, 2, Any,
                           runtime::cStringSpan(*this, Memory, A, 2, false))
 NEVERD_KERNEL_CSTRING_API(wcscspn, 2, Any,
                           runtime::cStringSpan(*this, Memory, A, 2, true))
+
+// Pinned x64 kernel CRT: isdigit returns the ctype digit mask (4), narrowing
+// to an unsigned byte except for the signed-int EOF value (RVA 0x3d1fd0).
+NEVERD_KERNEL_CSTRING_API(isdigit, 1, Any, runtime::cIsDigit(uint32_t(A[0])))
+
+// toupper (RVA 0x3d3630) converts a low byte through paged ANSI/UTF-8 and
+// Unicode helpers; only ASCII is independent of the code page. towupper
+// (RVA 0x3d36d0) delegates to RtlUpcaseUnicodeChar with a 16-bit argument.
+// Unlike the in-place CRT routines below, extended mapping requires NLS.
+NEVERD_KERNEL_CSTRING_API(toupper, 1, APC,
+                          runtime::uppercaseCharacter(A[0], true))
+NEVERD_KERNEL_CSTRING_API(towupper, 1, APC,
+                          runtime::uppercaseCharacter(A[0], false))
+
+// These in-place transforms only change ASCII, independently of NLS tables.
+// The narrow upper / wide lower routines tolerate NULL; wide upper does not.
+// RVA 0x3d0920, 0x3d1a30 and 0x3d1cf0 respectively.
+NEVERD_KERNEL_CSTRING_API(_strupr, 1, Any,
+                          runtime::cStringChangeCase(*this, Memory, A[0], 1,
+                                                     false))
+NEVERD_KERNEL_CSTRING_API(_wcslwr, 1, Any,
+                          runtime::cStringChangeCase(*this, Memory, A[0], 2,
+                                                     true))
+NEVERD_KERNEL_CSTRING_API(_wcsupr, 1, Any,
+                          runtime::cStringChangeCase(*this, Memory, A[0], 2,
+                                                     false))
+
+// Kernel checked writes preserve copied bytes even when the final status is
+// EINVAL / ERANGE, clearing only the first destination unit. SIZE_MAX requests
+// truncation for the counted copies. Their pinned invalid-parameter helper
+// returns without side effects; this is not a user CRT handler contract.
+// RVA 0x3d7670, 0x3d7810, 0x3d7ad0 and 0x3d7d20 respectively.
+NEVERD_KERNEL_CSTRING_API(strcpy_s, 3, Any,
+                          runtime::cStringCheckedWrite(*this, Memory, A, 1,
+                                                       false))
+NEVERD_KERNEL_CSTRING_API(strncpy_s, 4, Any,
+                          runtime::cStringCheckedWrite(*this, Memory, A, 1,
+                                                       false))
+NEVERD_KERNEL_CSTRING_API(wcscat_s, 3, Any,
+                          runtime::cStringCheckedWrite(*this, Memory, A, 2,
+                                                       true))
+NEVERD_KERNEL_CSTRING_API(wcsncpy_s, 4, Any,
+                          runtime::cStringCheckedWrite(*this, Memory, A, 2,
+                                                       false))

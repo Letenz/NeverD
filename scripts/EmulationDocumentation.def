@@ -673,12 +673,13 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "WDKDriverFixtures.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI,
-                           "5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 "
-                           "wait sets + 28 driver UNPACK + 6 clock reads "
+                           "5085 CPU + 270 WHP + 32 SEH + 77 scheduling + 30 "
+                           "wait sets + 29 driver UNPACK + 6 clock reads "
                            "+ 4 image memory checks + 6 CPUID "
                            "+ 7 kernel snapshots + 10 pool captures "
                            "+ 4 DriverEntry caller checks "
-                           "+ 103 driver environment checks = 5615")
+                           "+ 126 driver environment checks "
+                           "+ 116 driver API checks = 5802")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -1404,7 +1405,7 @@ NEVERD_EMULATION_DOC_PATH(UnpackOwner, "docs/{locale}/architecture.md")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "lib/unpack")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "format/pe")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "PETLS.cpp")
-NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "arch/X64Imports.cpp")
+NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "arch/x86_64/X64Imports.cpp")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "dynamic/ProcessImports.cpp")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "Observation.def")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "observeProcess")
@@ -2558,3 +2559,54 @@ NEVERD_EMULATION_DOC_TOKEN(
     Darwin,
     "native5s compiler120s build1200s parallel2 guest5000000us quantum1024 "
     "public30s / native Intel and physical iOS unqualified")
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(DriverFileSystem, "docs/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(DriverFileSystem, "docs/{locale}/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(DriverFileSystemArchitecture, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(DriverFileSystemArchitecture,
+                          "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(DriverFileSystemTests, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(DriverFileSystemTests, "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "filesystem")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "configuration.filesystem")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "full_access")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "device_object")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "end_of_file")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "DriverFileSystemLimits.def")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemArchitecture, "KernelFileSystem")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemArchitecture, "KernelModel")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemArchitecture, "DriverFileSystemJSON")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemArchitecture, "DeviceOwnerKind")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemArchitecture, "isPnpProviderDevice")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemTests, "DriverFileSystemTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemTests, "KernelFileSystemTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemTests,
+                           "DriverFileSystemExecutionTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemTests,
+                           "NEVERD_WDM_FILESYSTEM_FIXTURE")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemTests,
+                           "NEVERD_WDM_FILESYSTEM_CFG_FIXTURE")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemTests,
+                           "test_driver_filesystem_integration.py")
+NEVERD_EMULATION_DOC_TOKEN(
+    DriverFileSystemTests,
+    "UnusedFileSystemDeclarationCannotAuthorizeRuntimeRecovery")
+#endif
+
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "ZwOpenFile")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "ZwCreateFile")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "IoCreateFile")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "IoCancelFileOpen")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "file_object")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "file_open_operation")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "filesystem_device")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystem, "filesystem_file_id")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemArchitecture,
+                           "KernelModelFileCreate")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemArchitecture, "DriverSession")
+NEVERD_EMULATION_DOC_TOKEN(DriverFileSystemTests, "KernelFileCreateTests.cpp")
+#endif

@@ -20,6 +20,7 @@
 #include "JumpTableResolverDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 
@@ -52,7 +53,7 @@ uint32_t CFGBuilder::getInsnAlignment() const {
 bool CFGBuilder::isValidTarget(const BinaryImage &Img, va_t Target,
                                va_t FuncEntry) const {
   const auto *Seg = Img.getSegmentFor(Target);
-  if (!Seg || !Img.hasExecutableCodeOwnerAt(Target))
+  if (!Seg || !Img.hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners))
     return false;
 
   // Distance is only a heuristic for ownership; a chained/cold fragment that
@@ -136,7 +137,8 @@ bool CFGBuilder::sanityCheckTargets(const BinaryImage &Img,
     }
 
     const auto *TSeg = Img.getSegmentFor(Targets[I]);
-    if (!TSeg || !Img.hasExecutableCodeOwnerAt(Targets[I])) {
+    if (!TSeg ||
+        !Img.hasExecutableCodeOwnerAt(Targets[I], ExecutableCodeOwners)) {
       TruncAt = I;
       break;
     }
@@ -325,7 +327,10 @@ CFGBuilder::readTableEntries(const BinaryImage &Img, const JumpTableInfo &Info,
     Limit = limits::kMaxJumpTableEntries;
 
   std::vector<va_t> Targets;
-  Targets.reserve(std::min(Limit, 64u));
+  Targets.reserve(std::min(
+      Limit,
+      ::neverd::limits::ir::
+          kJumpTableResolverTargetsCFGBuilderReadTableEntriesMinArgument2));
   size_t Off = static_cast<size_t>(Info.BaseAddr - Seg->VA);
   va_t PrevTarget = InvalidVA;
   int DuplicateRun = 0;

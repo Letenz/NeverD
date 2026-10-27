@@ -11,6 +11,8 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web {
 namespace {
 llvm::json::Value nullable(const std::string &Text) {
@@ -67,7 +69,8 @@ llvm::json::Object summary(const PackageDiff &D, uint64_t Revision) {
                             {"redaction_policy", "metadata-only-v1"}};
 }
 uint64_t end(uint64_t Offset, uint64_t Limit, uint64_t Total) {
-  if (!Limit || Limit > 512 || Offset > Total)
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > Total)
     throw Error("invalid_page");
   return std::min<uint64_t>(Total, Offset + Limit);
 }

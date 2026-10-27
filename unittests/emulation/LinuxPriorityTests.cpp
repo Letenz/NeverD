@@ -70,6 +70,75 @@ TEST(LinuxPriority, MissingModelAndUnmodeledSelectorsRemainBoundaries) {
       State.handle(ServiceKind::GetPriority, priorityEvent(0, 0), 1000, Result),
       20u);
 }
+TEST(LinuxPriority, InheritanceCopiesCurrentStateAndExitEndsKernelIdentity) {
+  std::optional<LinuxPriorityOptions> Options;
+  Options.emplace().Tasks = {{1000, -5}};
+  LinuxPriority State(Options);
+  ProcessResult Result{};
+  llvm::cantFail(State.inherit(1000, 1001));
+  EXPECT_EQ(State.handle(ServiceKind::SetPriority, priorityEvent(0, 0, 8), 1000,
+                         Result),
+            0u);
+  llvm::cantFail(State.inherit(1001, 1002));
+  EXPECT_EQ(State.handle(ServiceKind::SetPriority, priorityEvent(0, 0, 4), 1001,
+                         Result),
+            0u);
+  EXPECT_EQ(
+      State.handle(ServiceKind::GetPriority, priorityEvent(0, 0), 1002, Result),
+      25u);
+  EXPECT_EQ(
+      State.handle(ServiceKind::GetPriority, priorityEvent(0, 0), 1001, Result),
+      16u);
+  EXPECT_EQ(
+      State.handle(ServiceKind::GetPriority, priorityEvent(0, 0), 1000, Result),
+      12u);
+  State.exit(1001);
+  for (auto Kind : {ServiceKind::GetPriority, ServiceKind::SetPriority})
+    EXPECT_EQ(State.handle(Kind, priorityEvent(0, 1001, 19), 1000, Result),
+              uint64_t(0) - 3);
+  EXPECT_FALSE(State.handle(ServiceKind::GetPriority, priorityEvent(0, 999),
+                            1000, Result));
+}
+TEST(LinuxPriority, UnknownParentsCancellationAndCollisionsDoNotInventState) {
+  std::optional<LinuxPriorityOptions> Options;
+  Options.emplace().Tasks = {{1000, 7}};
+  LinuxPriority State(Options);
+  ProcessResult Result{};
+  llvm::cantFail(State.inherit(999, 1001));
+  EXPECT_FALSE(State.handle(ServiceKind::GetPriority, priorityEvent(0, 1001),
+                            1000, Result));
+  State.cancel(1001);
+  EXPECT_FALSE(State.handle(ServiceKind::GetPriority, priorityEvent(0, 1001),
+                            1000, Result));
+  llvm::cantFail(State.inherit(1000, 1001));
+  auto Conflict = State.inherit(999, 1001);
+  ASSERT_TRUE(bool(Conflict));
+  llvm::consumeError(std::move(Conflict));
+  EXPECT_EQ(State.handle(ServiceKind::GetPriority, priorityEvent(0, 1001), 1000,
+                         Result),
+            13u);
+  State.exit(1001);
+  auto Reused = State.inherit(1000, 1001);
+  ASSERT_TRUE(bool(Reused));
+  llvm::consumeError(std::move(Reused));
+}
+TEST(LinuxPriority, ChildCapacityFailureLeavesExistingTasksUnchanged) {
+  std::optional<LinuxPriorityOptions> Options;
+  Options.emplace();
+  for (uint32_t ID = 1; ID <= PriorityTaskLimit; ++ID)
+    Options->Tasks.emplace(ID, 6);
+  LinuxPriority State(Options);
+  auto Limit = State.inherit(1, PriorityTaskLimit + 1);
+  ASSERT_TRUE(bool(Limit));
+  EXPECT_EQ(llvm::toString(std::move(Limit)), PriorityThreadLimit);
+  ProcessResult Result{};
+  EXPECT_EQ(
+      State.handle(ServiceKind::GetPriority, priorityEvent(0, 0), 1, Result),
+      14u);
+  EXPECT_FALSE(State.handle(ServiceKind::GetPriority,
+                            priorityEvent(0, PriorityTaskLimit + 1), 1,
+                            Result));
+}
 TEST(LinuxPriority, JSONValidatesSignedStateLimitsAndProfileBeforeExecution) {
   auto O = processOptionsFromJSON(R"({"linux_priority":{
     "tasks":[{"id":1000,"nice":-20},{"id":1001,"nice":19}],

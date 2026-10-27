@@ -6,6 +6,7 @@
 #include "SwiftBooleanSourceBinding.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/Support/Endian.h"
@@ -150,7 +151,8 @@ swiftOpaqueValueCallEffects(const BinaryImage &Image, const LowFunc &Caller,
       !Site.StaticTarget || Binding.WeakImport || Binding.DoesNotReturn ||
       !sourceLocalCalls(Image, Caller).count(Site))
     return std::nullopt;
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::loader::
+      kSwiftOpaqueValueEffectsSwiftOpaqueValueCallEffectsBudget;
   if (!immutableNativeFrameMachineMatches(Image, Caller, Budget))
     return std::nullopt;
   if (Binding.CallKind == SourceCallTypeHint::Kind::Native && Callee &&
@@ -190,7 +192,8 @@ std::map<va_t, SourceCallTypeHint> buildSwiftOpaqueValueCallHints(
       Image.Bits != Bitness::Bits64 || Image.IsRelocatable)
     return Result;
   const auto Sites = sourceLocalCalls(Image, Caller);
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::loader::
+      kSwiftOpaqueValueEffectsBuildSwiftOpaqueValueCallHintsBudget;
   for (const auto &[Site, Word] : Sites) {
     if (!Site.StaticTarget)
       continue;

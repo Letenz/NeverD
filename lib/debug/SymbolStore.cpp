@@ -13,6 +13,7 @@
 #include "neverd/debug/SymbolStore.h"
 
 #include "neverd/Common.h"
+#include "neverd/debug/Limits.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/SmallString.h"
@@ -85,8 +86,10 @@ std::optional<PDBSymbolRequest> pdbSymbolRequest(const BinaryImage &Img) {
   const auto Name = recordedFileName(DI.PDBPath);
   // The recorded directory is never a network or cache destination. Restrict
   // the basename to portable file characters before publishing it to clients.
-  if (Name.empty() || Name.size() > 240 || Name.front() == '.' ||
-      !Name.ends_with_insensitive(".pdb"))
+  if (Name.empty() ||
+      Name.size() >
+          ::neverd::limits::debug::kSymbolStorePdbSymbolRequestNameSizeLimit ||
+      Name.front() == '.' || !Name.ends_with_insensitive(".pdb"))
     return std::nullopt;
   for (unsigned char C : Name)
     if (C < 0x20 || C >= 0x7f || llvm::StringRef("<>:\"/\\|?*").contains(C))

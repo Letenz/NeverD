@@ -13,15 +13,13 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 
 namespace neverd::web {
 inline constexpr std::string_view WailsProfile =
     "wails-2.11.0-go-1.25.7-linux-x64-elf-embedfs-v1";
 inline constexpr std::string_view WailsPEProfile =
     "wails-2.11.0-go-1.25.7-windows-x64-pe-embedfs-v1";
-inline constexpr uint64_t MaxWailsInputBytes = 256ULL * 1024 * 1024;
-inline constexpr uint32_t MaxCachedWailsExtractions = 4;
-inline constexpr uint64_t MaxCachedWailsPrivateBytes = 8ULL * 1024 * 1024;
 
 struct WailsLimits {
   uint32_t Tables = 32, Members = 4096;
