@@ -18,7 +18,7 @@
 #include <sys/ucontext.h>
 #include <unistd.h>
 
-_Static_assert(sizeof(immediate_cases) / sizeof(immediate_cases[0]) ==
+_Static_assert(sizeof(SP_TEST_CASES) / sizeof(SP_TEST_CASES[0]) ==
                    SP_TEST_CASE_COUNT,
                SP_TEST_CASE_COUNT_ERROR);
 
@@ -40,6 +40,9 @@ static void captureSPFault(int Signal, siginfo_t *Info, void *Opaque) {
 }
 
 int main(void) {
+#if defined(SP_TEST_EXTENDED_MEMORY)
+  (void)SP_TEST_EXISTING_CASES;
+#endif
   stack_t Alternate = {0};
   Alternate.ss_size = SIGSTKSZ;
   Alternate.ss_sp = malloc(Alternate.ss_size);
@@ -66,7 +69,7 @@ int main(void) {
     if (sigsetjmp(Escape, 1) == 0) {
       uint64_t Upper = 0;
       Armed = 1;
-      immediate_cases[C].call(RawSP, SP_TEST_LOW, SP_TEST_HIGH, &Upper);
+      SP_TEST_CASES[C].call(RawSP, SP_TEST_LOW, SP_TEST_HIGH, &Upper);
       Armed = 0;
       return SP_TEST_MISSING_TRAP;
     }

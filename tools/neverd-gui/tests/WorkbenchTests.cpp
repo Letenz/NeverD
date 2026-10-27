@@ -67,6 +67,7 @@
 #include <QDebug>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QCursor>
 #include <QDragEnterEvent>
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
@@ -741,14 +742,26 @@ private slots:
           return painted.pixelColor(close->mapTo(bar, QPoint(1, 1)) *
                                     painted.devicePixelRatio());
         };
-        QTest::mouseMove(
-            bench.window->windowHandle(),
-            close->mapTo(bench.window.get(), close->rect().center()));
+        QVERIFY(activateTestWindow(bench.window.get()));
+        const auto movePointer = [&](QPoint position) {
+#ifdef Q_OS_MACOS
+          // After closing the focus window, Cocoa needs a native enter/move
+          // for the restored window. A QWindow test event does not move the
+          // system pointer or establish that native tracking transition.
+          if (QGuiApplication::platformName() == QLatin1String("cocoa")) {
+            QCursor::setPos(bench.window->mapToGlobal(position));
+            return;
+          }
+#endif
+          QTest::mouseMove(bench.window->windowHandle(), position);
+        };
+        movePointer(bench.window->rect().center());
+        QTRY_VERIFY(!close->underMouse());
+        movePointer(close->mapTo(bench.window.get(), close->rect().center()));
         QTRY_VERIFY(close->underMouse());
         QCOMPARE(background(),
                  theme.chrome(QStringLiteral("WindowCloseHover")));
-        QTest::mouseMove(bench.window->windowHandle(),
-                         bench.window->rect().center());
+        movePointer(bench.window->rect().center());
         QTRY_VERIFY(!close->underMouse() && !close->isDown());
         QCOMPARE(background(), theme.chrome(QStringLiteral("TitleBar")));
       }
