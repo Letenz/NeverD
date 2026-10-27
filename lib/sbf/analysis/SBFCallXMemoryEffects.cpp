@@ -24,6 +24,18 @@
 #include <utility>
 
 namespace neverd::sbf::callx_detail {
+namespace {
+
+bool isOwnOrChildFrame(const RegisterValue &Address,
+                       const SBFProgram &Program) {
+  return Address.ValueKind == RegisterValue::Kind::StackAddress &&
+         Address.Value == kRegisterCount &&
+         !versionHasFeature(Program.Low.TheVersion,
+                            VersionFeature::ManualStackFrames) &&
+         Address.Offset >= -static_cast<int64_t>(Program.Config.StackFrameSize);
+}
+
+} // namespace
 
 RegisterState symbolicInputs() {
   RegisterState Origins{};
@@ -100,10 +112,7 @@ void MemoryEffects::addWrite(RegisterValue Address, uint64_t Size,
     Writes.clear();
     return;
   }
-  if (!Absolute && Address.Value == kRegisterCount &&
-      !versionHasFeature(Program.Low.TheVersion,
-                         VersionFeature::ManualStackFrames) &&
-      Address.Offset >= -static_cast<int64_t>(Program.Config.StackFrameSize)) {
+  if (isOwnOrChildFrame(Address, Program)) {
     // The current automatic frame and every higher coordinate belong to this
     // callee or descendants. All such cells are invalidated together at use.
     WritesFrames = true;
@@ -153,6 +162,11 @@ void MemoryEffects::include(const MemoryEffects &Callee,
   for (const auto &Write : Callee.Writes)
     addWrite(substituteOrigin(Write.Address, Entry, Program), Write.Size,
              Program);
+}
+
+bool MemoryEffects::invalidatesEntryFrame(const RegisterValue &Address,
+                                          const SBFProgram &Program) const {
+  return WritesFrames && isOwnOrChildFrame(Address, Program);
 }
 
 bool MemoryEffects::invalidate(
