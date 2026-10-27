@@ -1488,6 +1488,24 @@ across detach and compares constructor/getTime observations with Linux boot
 clock reads. Run full Dalvik, JNI/thread/callback and Linux clock suites for
 these shared owners. Tests are offline; they do not execute ART or claim
 ServiceManager cache/Binder initialization or StatLogger reporting support.
+`NeverDDalvikTests` includes `AndroidServiceManagerTest.*` for initializer
+property/clock ordering, Java int-to-long threshold overflow, dependency class
+state, DEX/static-library entry consistency, unknown versus empty caches,
+retained Binder aliases, null/cast exceptions, repeatable empty cache installs,
+context proxy acquisition and terminal/error propagation. HashMap `putAll`
+regressions cover overlaps, null keys, self-copy and independent entry storage.
+The framework volatile-field exception is checked against an ordinary supplied
+DEX volatile field to keep ownership explicit.
+
+`NeverDAndroidNativeTests` includes `*AndroidJNI.ServiceManager*` for JNI method
+and field lookup, normal/varargs/array calls, exception identity, detach/reattach,
+cache aliases and explicit missing-state/RPC stops across fixture optimization,
+relocation packing and available CPU backends. `NeverDLinuxProcessTests` covers
+strict shared JSON admission and Java-state report identities under
+`ProcessReport.AndroidServiceManager*` and `ProcessReport.JavaServiceManager*`.
+Public request rejection cases share `ProcessReportCases.def`; these checks do
+not require a live Binder service, device, private workload or network access.
+
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
 typed/JSON admission, DEX catch and shared message access, terminal instruction

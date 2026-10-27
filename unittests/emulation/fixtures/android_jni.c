@@ -1791,6 +1791,62 @@ int jni_dex_class_pair(const char *first, const char *last) {
   CHECK(!C(vm, int, 5));
   return 0;
 }
+static Ref service_get_v(Handle e, Ref type, Ref method, ...) {
+  __builtin_va_list args;
+  __builtin_va_start(args, method);
+  Ref result = C(e, Ref, 115, type, method, args);
+  __builtin_va_end(args);
+  return result;
+}
+int jni_service_manager_cache(unsigned mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/os/ServiceManager");
+  Ref get = C(e, Ref, 113, type, "getService",
+              "(Ljava/lang/String;)Landroid/os/IBinder;");
+  Ref check = C(e, Ref, 113, type, "checkService",
+                "(Ljava/lang/String;)Landroid/os/IBinder;");
+  CHECK(get && check);
+  Ref alpha = C(e, Ref, 167, "alpha");
+  Ref first = C(e, Ref, 114, type, get, alpha);
+  if (mode)
+    return (int)first; // Missing-state/RPC cases stop at the original call.
+  CHECK(first);
+  Ref beta = C(e, Ref, 167, "beta");
+  CHECK(same_ref(e, first, service_get_v(e, type, get, beta)));
+  U64 arguments[] = {beta};
+  CHECK(same_ref(e, first, C(e, Ref, 116, type, check, arguments)));
+  Ref proxy = C(e, Ref, 6, "android/os/BinderProxy");
+  Ref warning = C(e, Ref, 94, proxy, "mWarnOnBlocking", "Z");
+  CHECK(warning && C(e, U8, 96, first, warning));
+  Ref binder = C(e, Ref, 6, "android/os/Binder");
+  Ref allow = C(e, Ref, 113, binder, "allowBlocking",
+                "(Landroid/os/IBinder;)Landroid/os/IBinder;");
+  CHECK(same_ref(e, first, C(e, Ref, 114, binder, allow, first)));
+  CHECK(!C(e, U8, 96, first, warning));
+  Ref ibinder = C(e, Ref, 6, "android/os/IBinder");
+  Ref local = C(e, Ref, 33, ibinder, "queryLocalInterface",
+                "(Ljava/lang/String;)Landroid/os/IInterface;");
+  CHECK(!C(e, Ref, 34, first, local, (Ref)0));
+  Ref install = C(e, Ref, 113, type, "initServiceCache", "(Ljava/util/Map;)V");
+  C(e, void, 141, type, install, (Ref)0);
+  Ref thrown = C(e, Ref, 15);
+  CHECK(thrown);
+  C(e, void, 17);
+  Ref illegal = C(e, Ref, 6, "java/lang/IllegalStateException");
+  CHECK(C(e, U8, 32, thrown, illegal));
+  Ref global = C(e, Ref, 21, first);
+  CHECK(!C(vm, int, 5));
+  e = attach();
+  CHECK(e);
+  type = C(e, Ref, 6, "android/os/ServiceManager");
+  alpha = C(e, Ref, 167, "alpha");
+  CHECK(same_ref(e, global, C(e, Ref, 114, type, get, alpha)));
+  C(e, void, 22, global);
+  CHECK(!C(e, U8, 228));
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
 int jni_service_manager_metadata(unsigned mode) {
   Handle e = attach();
   CHECK(e);

@@ -2864,6 +2864,75 @@ TEST(ProcessReport, AndroidURLHandlerRequiresExplicitBoundedCustomFailures) {
   }
 }
 
+TEST(ProcessReport, AndroidServiceManagerPreservesUnknownNullAndProxyKeys) {
+  auto wrap = [](const std::string &value) {
+    return "{\"android\":{\"jni\":true,\"application_snapshot\":{\"phase\":"
+           "\"unattached\",\"service_manager\":" +
+           value + "}}}";
+  };
+  for (
+      const auto *value :
+      {"{}", R"({"cache":[],"manager_proxy":null,"context_object":null})",
+       R"({"binder_proxies":[{"key":7,"warn_on_blocking":true},{"key":8}],"cache":[{"name":"a\u0000b","binder":7},{"name":null,"binder":null}],"manager_proxy":7,"context_object":8})"}) {
+    auto parsed = processOptionsFromJSON(wrap(value));
+    ASSERT_TRUE(bool(parsed)) << llvm::toString(parsed.takeError());
+    ASSERT_TRUE(parsed->Android->Application->service_manager);
+    const auto &state = *parsed->Android->Application->service_manager;
+    if (!state.binder_proxies.empty()) {
+      EXPECT_EQ(state.binder_proxies[0].warn_on_blocking, true);
+      EXPECT_FALSE(state.binder_proxies[1].warn_on_blocking);
+      EXPECT_EQ(state.cache->at(0).name, std::string("a\0b", 3));
+      EXPECT_EQ(state.manager_proxy, std::optional<std::optional<uint32_t>>(7));
+    }
+  }
+  for (
+      const auto *value :
+      {"null", "[]", R"({"cache":null})", R"({"unknown":0})",
+       R"({"binder_proxies":[{"key":0}]})",
+       R"({"binder_proxies":[{"key":null}]})",
+       R"({"binder_proxies":[{"key":7,"warn_on_blocking":null}]})",
+       R"({"binder_proxies":[{"key":7,"extra":false}]})",
+       R"({"binder_proxies":[{"key":7},{"key":7}]})", R"({"manager_proxy":7})",
+       R"({"context_object":false})", R"({"context_object":4294967296})",
+       R"({"cache":[{"name":"x","binder":7}]})", R"({"cache":[{"name":"x"}]})",
+       R"({"cache":[{"name":false,"binder":null}]})",
+       R"({"cache":[{"name":"x","binder":null},{"name":"x","binder":null}]})"}) {
+    auto parsed = processOptionsFromJSON(wrap(value));
+    EXPECT_FALSE(bool(parsed)) << value;
+    llvm::consumeError(parsed.takeError());
+  }
+}
+TEST(ProcessReport, JavaServiceManagerObservationUsesRetainedIdentities) {
+  ProcessResult result{ProcessProfile::AndroidNativeAArch64,
+                       GuestArchitecture::AArch64,
+                       ExecutionBackendKind::Unicorn,
+                       {}};
+  result.JavaState.emplace();
+  auto &state = result.JavaState->framework.service_manager.emplace();
+  state.initialized = true;
+  state.cache = 0xa;
+  state.stat_logger = 0xb;
+  state.cache_known = true;
+  state.entries = {{0xc, 0xd}, {0, 0xd}};
+  state.binder_proxies = {{7, 0xd, std::nullopt}};
+  auto value = llvm::cantFail(llvm::json::parse(processResultJSON(result)));
+  auto *object = value.getAsObject()
+                     ->getObject("android")
+                     ->getObject("java_state")
+                     ->getObject("framework")
+                     ->getObject("service_manager");
+  ASSERT_NE(object, nullptr);
+  EXPECT_EQ(object->getString("cache"), "a");
+  EXPECT_EQ(object->getString("stat_logger"), "b");
+  EXPECT_EQ(object->getBoolean("cache_known"), true);
+  EXPECT_EQ(object->get("manager")->kind(), llvm::json::Value::Null);
+  ASSERT_EQ(object->getArray("entries")->size(), 2u);
+  const auto *proxy = object->getArray("binder_proxies")->front().getAsObject();
+  EXPECT_EQ(proxy->getInteger("key"), 7);
+  EXPECT_EQ(proxy->getString("identity"), "d");
+  EXPECT_EQ(proxy->get("warn_on_blocking")->kind(), llvm::json::Value::Null);
+}
+
 TEST(ProcessReport, AndroidDefaultLocaleRequiresCanonicalExplicitState) {
   auto wrap = [](const std::string &value, const char *phase = "unattached") {
     return std::string("{\"android\":{\"jni\":true,\"application_snapshot\":{"

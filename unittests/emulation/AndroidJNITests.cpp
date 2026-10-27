@@ -105,7 +105,7 @@ TEST_P(AndroidJNI, HashMapRefusesCustomKeysRawObjectsAndUnmodeledEquality) {
     EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService)
         << result.Diagnostic;
     EXPECT_NE(result.Diagnostic.find(mode == 1   ? "String and null keys"
-                                     : mode == 2 ? "no constructed state"
+                                     : mode == 2 ? "contents are not supplied"
                                                  : "equality, hashing"),
               std::string::npos);
   }
@@ -1168,6 +1168,78 @@ TEST_P(AndroidJNI, DexClassCapacityIsSeparateAndAggregate) {
   invoke({Small}, "", "Invalid DEX");
 #endif
 }
+TEST_P(AndroidJNI, ServiceManagerCacheAliasesSurviveCallsAndDetach) {
+  Options.LinuxTime.emplace().Clocks = {{7, {50, 987654321}}};
+  auto &state =
+      Options.Android->Application.emplace().service_manager.emplace();
+  state.binder_proxies = {{7, true}};
+  state.cache = std::vector<
+      mobile::dalvik::AndroidApplicationSnapshot::ServiceManager::CacheEntry>{
+      {"alpha", 7}, {"beta", 7}};
+  Options.Android->ObserveJavaState = true;
+  auto result = run("jni_service_manager_cache");
+  ASSERT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+  EXPECT_EQ(result.ReturnValue, 0u);
+  ASSERT_TRUE(result.JavaState);
+  ASSERT_TRUE(result.JavaState->framework.service_manager);
+  const auto &snapshot = *result.JavaState->framework.service_manager;
+  EXPECT_TRUE(snapshot.initialized);
+  EXPECT_TRUE(snapshot.cache_known);
+  ASSERT_EQ(snapshot.entries.size(), 2u);
+  EXPECT_EQ(snapshot.entries[0].binder, snapshot.entries[1].binder);
+  ASSERT_EQ(snapshot.binder_proxies.size(), 1u);
+  EXPECT_EQ(snapshot.binder_proxies[0].warn_on_blocking, false);
+  EXPECT_FALSE(snapshot.manager);
+}
+TEST_P(AndroidJNI, ServiceManagerMissingStateAndTransactionsStayExplicit) {
+  Options.LinuxTime.emplace().Clocks = {{7, {50, 0}}};
+  Options.Android->Arguments = {1};
+  Options.Android->ObserveJavaState = true;
+  for (unsigned mode = 0; mode < 4; ++mode) {
+    auto &state =
+        Options.Android->Application.emplace().service_manager.emplace();
+    if (mode > 0)
+      state.cache.emplace();
+    if (mode > 1)
+      state.manager_proxy.emplace(std::nullopt);
+    if (mode > 2) {
+      state.binder_proxies = {{7, true}};
+      state.context_object.emplace(7);
+    }
+    auto result = run("jni_service_manager_cache");
+    EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService);
+    const char *messages[] = {"cache contents", "proxy state", "context object",
+                              "Binder transaction"};
+    EXPECT_NE(result.Diagnostic.find(messages[mode]), std::string::npos)
+        << result.Diagnostic;
+    ASSERT_TRUE(result.JavaState);
+    ASSERT_TRUE(result.JavaState->framework.service_manager);
+    EXPECT_TRUE(result.JavaState->framework.service_manager->initialized);
+    EXPECT_TRUE(result.JavaState->terminal);
+  }
+}
+TEST_P(AndroidJNI, ServiceManagerActiveUsesInitializeOnceWithSharedTime) {
+  Options.LinuxTime.emplace().Clocks = {{7, {50, 0}}};
+  Options.Android->ObserveJavaState = true;
+  for (unsigned mode = 1; mode != 5; ++mode) {
+    Options.Android->Arguments = {mode};
+    auto result = run("jni_service_manager_metadata");
+    if (mode == 3) {
+      // Initialization completes before lookup reaches the separate,
+      // deliberately unsupported Object.toString value implementation.
+      EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_NE(result.Diagnostic.find("unmodeled Java method"),
+                std::string::npos);
+    } else {
+      EXPECT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+      EXPECT_EQ(result.ReturnValue, 0u);
+    }
+    ASSERT_TRUE(result.JavaState);
+    ASSERT_TRUE(result.JavaState->framework.service_manager);
+    EXPECT_TRUE(result.JavaState->framework.service_manager->initialized);
+    EXPECT_FALSE(result.JavaState->framework.service_manager->cache_known);
+  }
+}
 TEST_P(AndroidJNI, ServiceManagerMetadataDoesNotInitializeTheClass) {
   Options.Android->ObserveJavaState = true;
   auto R = run("jni_service_manager_metadata");
@@ -1186,7 +1258,7 @@ TEST_P(AndroidJNI, ServiceManagerMetadataDoesNotInitializeTheClass) {
     }
   EXPECT_TRUE(Found);
 }
-TEST_P(AndroidJNI, ServiceManagerActiveUsesKeepUnmodeledInitialization) {
+TEST_P(AndroidJNI, ServiceManagerActiveUsesRequireElapsedRealtime) {
   Options.Android->ObserveJavaState = true;
   const char *Calls[] = {"JNIEnv.113", "JNIEnv.144", "JNIEnv.33", "JNIEnv.27"};
   for (unsigned Mode = 1; Mode != 5; ++Mode) {
@@ -1194,8 +1266,7 @@ TEST_P(AndroidJNI, ServiceManagerActiveUsesKeepUnmodeledInitialization) {
     Options.Android->Arguments = {Mode};
     auto R = run("jni_service_manager_metadata");
     EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
-    EXPECT_NE(R.Diagnostic.find("Landroid/os/ServiceManager;: class "
-                                "initialization is not modeled"),
+    EXPECT_NE(R.Diagnostic.find("no explicit linux_time input"),
               std::string::npos);
     ASSERT_FALSE(R.NativeCalls.empty());
     EXPECT_EQ(R.NativeCalls.back().Name, Calls[Mode - 1]);
@@ -1205,7 +1276,7 @@ TEST_P(AndroidJNI, ServiceManagerActiveUsesKeepUnmodeledInitialization) {
     for (const auto &C : R.JavaState->classes)
       if (C.descriptor == "Landroid/os/ServiceManager;")
         EXPECT_EQ(C.initialization,
-                  mobile::dalvik::JavaClassState::Initialization::NotStarted);
+                  mobile::dalvik::JavaClassState::Initialization::Initializing);
   }
 }
 TEST_P(AndroidJNI, ExplicitClassLookupFailuresPreserveExceptionsAndUnknowns) {
