@@ -20,7 +20,9 @@ namespace llvm {
 class Function;
 }
 namespace neverd {
-std::string x86NativeFunctionPreamble(const HighFunc &Function);
-std::string x86NativeFunctionPreamble(const llvm::Function &Function);
+std::string x86NativeFunctionPreamble(const HighFunc &Function,
+                                      Arch TargetArch);
+std::string x86NativeFunctionPreamble(const llvm::Function &Function,
+                                      Arch TargetArch);
 } // namespace neverd
 #endif // NEVERD_LIB_BACKEND_C_RENDER_X86_X86NATIVEFEATURES_H

@@ -274,6 +274,22 @@ four-source arithmetic. Pair these with `NeverDX86FourFMAExactTests`,
 unknown-value regressions. Hardware AVX512_4FMAPS/AVX512_4VNNIW behavior remains
 unqualified on hosts without those capabilities.
 
+`NeverDX86CompactSegmentTests` checks i386 CS/ES/SS and implicit-stack
+compact memory, all twelve opcode families, all vector widths, addr16/addr32,
+three decoder routes and both lift policies. It rejects mixed control/mode/
+segment contracts and verifies concrete refusal before an active access when
+no descriptor context exists. Its full pipelines compile 270 objects across
+ELF/COFF/Mach-O, default/NoOpt and LLVM/HighC/LLVMC routes. Absolute segment
+offsets deliberately alias an ordinary DS object; stack parameters remain
+scalar offsets. `X86PackedSourceConstants` additionally executes 126 compact
+and four-source constant-input cases at O0/O2 under ASan/UBSan.
+Set `NEVERD_ISA_REGRESSION_ARTIFACT_DIR`, then run
+`scripts/verify_x86_compact_segments.py --exports DIR --keep CHECKS --neverc NEVERC`
+for both C routes with Clang and NeverC at O0/O2. These host x64 recorders verify
+operand transport, not i386 hardware or descriptor faults. The ordinary compact
+wrapper matrix also includes all three new i386 segment prefixes. See the
+[qualification record](evidence/x86-compact-segments-2026-10-27.json).
+
 `X86NativeMemoryCarrier.*` in `NeverDX86CompressExpandSourceTests` compiles owned
 compact/four-source, descriptor, query and atomic assembly in dynamically
 allocated, realigned frames for i386/x64 and ELF/COFF/Mach-O. Its 54 objects

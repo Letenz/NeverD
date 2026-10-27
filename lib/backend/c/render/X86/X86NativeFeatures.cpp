@@ -130,7 +130,8 @@ std::string preamble(const std::set<std::string> &Amx, bool Sgx, bool Rep,
 }
 } // namespace
 
-std::string x86NativeFunctionPreamble(const HighFunc &Function) {
+std::string x86NativeFunctionPreamble(const HighFunc &Function,
+                                      Arch TargetArch) {
   bool Atomic = false, Compact = false, FourSource = false;
   bool Sgx = false, Rep = false, Compare = false, Bounded = false,
        BoundedEnclu = false;
@@ -141,14 +142,12 @@ std::string x86NativeFunctionPreamble(const HighFunc &Function) {
     Atomic |= isX86AtomicIntrinsic(E->IntrinsicId);
     if (isX86CompactMemory(E->IntrinsicId)) {
       Compact = true;
-      // Target-independent source scanning validates its shape; the writer
-      // separately validates the actual target architecture.
-      const auto P = x86CompactHighPlan(Arch::X64, *E);
+      const auto P = x86CompactHighPlan(TargetArch, *E);
       for (const auto &Name : x86CompactSourceFeatures(P))
         Required.insert(Name);
     }
     if (E->IntrinsicId == Intrinsic::X86FourSourceMemory) {
-      (void)x86FourSourceHighPlan(Arch::X64, *E);
+      (void)x86FourSourceHighPlan(TargetArch, *E);
       FourSource = true;
       Required.insert("avx512f");
     }
@@ -172,7 +171,8 @@ std::string x86NativeFunctionPreamble(const HighFunc &Function) {
          preamble(x86AmxFunctionFeatures(Function), Sgx, Rep, Compare, Bounded,
                   BoundedEnclu, Required);
 }
-std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
+std::string x86NativeFunctionPreamble(const llvm::Function &Function,
+                                      Arch TargetArch) {
   bool Atomic = false, Compact = false, FourSource = false;
   bool Sgx = false, Rep = false, Compare = false, Bounded = false,
        BoundedEnclu = false;
@@ -188,12 +188,12 @@ std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
               llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand()))
         Atomic |= llvm::StringRef(Asm->getAsmString())
                       .starts_with(X86APXAtomicAsmMarker);
-      if (const auto P = x86CompactCallPlan(Arch::X64, *Call)) {
+      if (const auto P = x86CompactCallPlan(TargetArch, *Call)) {
         Compact = true;
         for (const auto &Name : x86CompactSourceFeatures(*P))
           Required.insert(Name);
       }
-      if (x86FourSourceCallPlan(Arch::X64, *Call)) {
+      if (x86FourSourceCallPlan(TargetArch, *Call)) {
         FourSource = true;
         Required.insert("avx512f");
       }

@@ -33,8 +33,10 @@ std::vector<X86CompactPlan> plans(Arch A = Arch::X64) {
   std::vector<X86CompactPlan> R;
   for (unsigned Bytes : {16u, 32u, 64u})
     for (unsigned Kind = 0; Kind < 6; ++Kind)
-      for (unsigned Prefix : {0u, 0x64u, 0x65u, X86NativeStackReference})
-        if (A != Arch::X86 || !x86NativeMemoryIsStack(Prefix))
+      for (unsigned Prefix :
+           {0u, 0x64u, 0x65u, X86NativeStackReference, 0x26u, 0x2eu, 0x36u})
+        if (A == Arch::X86 ? !x86NativeMemoryIsStack(Prefix)
+                           : Prefix != 0x26 && Prefix != 0x2e && Prefix != 0x36)
           for (unsigned Mode = 0; Mode < 3; ++Mode)
             R.push_back(
                 *x86CompactPlan(Mode != 0, Bytes, Kind, Mode == 2, Prefix));
@@ -43,7 +45,10 @@ std::vector<X86CompactPlan> plans(Arch A = Arch::X64) {
 unsigned control(const X86CompactPlan &P) {
   return P.elementBytes() | (P.Kind >= 4 ? X86CompactFloat : 0) |
          (P.Zero ? X86CompactZero : 0) |
-         (P.stackReference() ? X86CompactStackReference : 0);
+         (P.stackReference() ? X86CompactStackReference : 0) |
+         ((P.Prefix == 0x26 || P.Prefix == 0x2e || P.Prefix == 0x36)
+              ? P.Prefix << X86CompactSegmentShift
+              : 0);
 }
 Intrinsic id(const X86CompactPlan &P) {
   return P.Expand ? Intrinsic::EVEXExpandLoad : Intrinsic::EVEXCompressStore;
@@ -71,7 +76,7 @@ MedFunc med(const X86CompactPlan &P) {
   Op.addInput(MedVar::makeConst(0x12345678, 8));
   Op.addInput(MedVar::makeConst(0x55, 8));
   Op.addInput(MedVar::makeConst(0x87654321, P.Bytes));
-  Op.addInput(MedVar::makeConst(control(P), 1));
+  Op.addInput(MedVar::makeConst(control(P), control(P) > UINT8_MAX ? 2 : 1));
   MedOp Ret;
   Ret.Opcode = NdOp::RETURN;
   MedBlock B;
@@ -91,10 +96,10 @@ ExprPtr high(const X86CompactPlan &P) {
   E->IntrinsicId = id(P);
   E->MemoryAddressSpace = space(P);
   E->Type = P.Expand ? NdType::makeInt(P.Bytes, false) : NdType::makeVoid();
-  E->Operands = {HighExpr::makeVar(temporary(0, 8)),
-                 HighExpr::makeVar(temporary(1, 8)),
-                 HighExpr::makeVar(temporary(2, P.Bytes)),
-                 HighExpr::makeConst(control(P), 1)};
+  E->Operands = {
+      HighExpr::makeVar(temporary(0, 8)), HighExpr::makeVar(temporary(1, 8)),
+      HighExpr::makeVar(temporary(2, P.Bytes)),
+      HighExpr::makeConst(control(P), control(P) > UINT8_MAX ? 2 : 1)};
   return E;
 }
 void write(const std::string &Name, llvm::StringRef Text) {

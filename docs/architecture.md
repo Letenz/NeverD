@@ -7336,8 +7336,25 @@ The control separately retains long-mode stack-default address provenance.
 SDK capability check shared with AMX. Native LLVM and NeverC use that control;
 older SDKs and ordinary C retain RBP as the SIB base and compute the offset in
 RDX without changing RBP. An explicit DS override does not erase RSP/RBP stack
-provenance; FS/GS and address-size-32 operands do not acquire it. i386 SS-default
-and explicit non-DS/FS/GS segments remain refused.
+provenance; FS/GS and address-size-32 operands do not acquire it. i386 segments
+use the separate compact control described below.
+
+`X86CompressExpand.h` retains i386 CS/ES/SS offsets in a two-byte control,
+with the architectural prefix in the high byte. The one-byte DS/FS/GS and
+long-mode stack-reference forms keep their existing layout. Known target modes,
+control size, address space and stack provenance must agree. The lifter retains
+implicit SS for SP/BP bases and performs effective-address wrapping before
+native transport. LLVM reuses the raw segment-offset materializer; MedIR and
+HighIR type inference do not promote these offsets into process pointers.
+Native instructions own descriptor checks and faults. Concrete execution
+refuses active accesses without a descriptor environment; zero-mask suppression
+still avoids observing the address or segment. Both C feature scans consume the
+emitter's actual architecture instead of assuming x64.
+
+Packed HighIR inputs in compact and four-source C projection have explicit
+integer storage at their complete declared widths. A narrow printed literal
+such as zero cannot create a four-byte temporary followed by a wider memcpy.
+LLVM-to-C's already typed vector inputs retain their vector storage.
 
 `X86FourSource.h` owns the explicit four-source memory shape and observation
 rules. The lifter snapshots independent register inputs into one packed SSA
