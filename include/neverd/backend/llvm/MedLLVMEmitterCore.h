@@ -39,6 +39,7 @@
 #ifndef NEVERD_BACKEND_LLVM_MEDLLVMEMITTERCORE_H
 #define NEVERD_BACKEND_LLVM_MEDLLVMEMITTERCORE_H
 #include "neverd/backend/llvm/MedLLVMEmitterState.h"
+#include "neverd/ir/OperationLimits.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedIR.h"
@@ -47,6 +48,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/DataSymbolBinding.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Hashing.h"
@@ -99,6 +101,11 @@ public:
       std::map<std::string, std::pair<llvm::FunctionType *, unsigned>>;
   void setSourceTargetSignatures(const SourceTargetSignatures *Signatures) {
     AnalystTargets = Signatures;
+  }
+  /// Source-only declarations recovered by the shared call-ABI owner. They
+  /// keep omitted direct callees' parameter types without emitting bodies.
+  void setSourceCalleeDeclarations(llvm::ArrayRef<MedFunc> Declarations) {
+    SourceCalleeDeclarations = Declarations;
   }
   /// Debug information to name the image's data by where the image's own
   /// symbols do not: publics a single function's load leaves unread.  Its
@@ -155,6 +162,7 @@ public:
   }
 
 private:
+  llvm::ArrayRef<MedFunc> SourceCalleeDeclarations;
   const MedFunc *PortableBody = nullptr;
   const PreparedPortableX87Function *PortableInterface = nullptr;
   std::string PortableOutputTriple;
@@ -2471,7 +2479,7 @@ private:
   void propagateToSubRegs(uint64_t RegOff, uint16_t WriteSize, llvm::Value *Val,
                           llvm::IRBuilder<> &Builder);
 
-  llvm::Value *PendingIntrinsicOutputs[4] = {};
+  llvm::Value *PendingIntrinsicOutputs[kIntrinsicOperationOutputs] = {};
   unsigned PendingIntrinsicCount = 0;
   /// Status sampled inside an FPREM/FPREM1 or BCD asm call. Only the
   /// immediately following synthetic X87ReadStatus in the same LLVM block may

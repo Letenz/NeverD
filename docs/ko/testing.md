@@ -1,5 +1,7 @@
 **언어**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](../ja/testing.md) | [한국어](testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites`는 소스 파이프라인에서 x64/ARM64 Mach-O의 정수, 부동소수점 및 혼합 스택 인자를 검사합니다. `IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers`는 메모리 읽기, 호출, 스택 주소 유출, 불투명하거나 메모리를 사용하는 intrinsic에 필요한 진입 저장소를 유지합니다. 값만 사용하는 경로는 선언된 인자를 사용하여 물리 SP 쓰기를 추가하지 않으며 레지스터 부동소수점 상태 효과를 유지합니다. macOS 모바일 행렬은 복원된 Swift를 독립적으로 컴파일하고 실행합니다. 생성 성공만으로 실행 검증을 의미하지는 않습니다.
+
 `NeverDLLVMCValueTests`는 별도의 Windows x64 ABI 함수에 대한 가변 호출을 O0/O2와 두 형식 보존 설정으로 컴파일하고 실행합니다. 네이티브 x64에서 va_arg 값을 확인하며 다른 아키텍처는 명시적으로 건너뜁니다.
 
 [← 문서 인덱스](README.md)
@@ -11,6 +13,8 @@
 `NeverDSourceEntryBindingTests`는 x64/ARM64, PE/ELF, HighC/LLVMC의 진입 스택 인수를 컴파일하고 실행합니다. 전체 모듈, 호출자만 선택, 명시적 부동소수점 비트 전달, 캐시 재사용과 초기화를 검증합니다. 부분 쓰기, 정렬되지 않은 인수, 프레임 주소 유출 및 정의되지 않은 입력을 거부하는 대조군과 독립 피호출 함수 정의를 통한 고정 선언 검증을 포함합니다. 호스트 실행은 네이티브 Windows ARM64 드라이버 검증이 아닙니다. RBP와 x29/x30 프레임 복원도 검증합니다. 저장 바이트 덮어쓰기, SP만 복원하고 RBP를 변경한 경우, 반환 주소를 매개변수로 사용하는 경우를 거부하며 ELF와 Windows의 보존 레지스터 차이도 확인합니다.
 
 추가 행렬은 부호 있는 값과 없는 값의 1/2/4바이트 읽기를 두 C 경로, 전체 출력과 호출자만 선택한 출력에서 O0/O2 및 UBSan으로 실행합니다. 호출자는 읽는 바이트만 쓰며 선언 폭을 넘는 읽기는 거부합니다.
+
+혼합 폭 행렬은 같은 슬롯의 접두부 읽기와 전체 읽기를 O0/O2 및 UBSan으로 실행합니다. 네이티브 프레임 대조군은 두 순서를 검사하고 좁은 읽기만 있거나 전체 읽기가 다른 슬롯에 속한 증거를 거부합니다.
 
 알려진 레지스터 호출은 x64/ARM64 PE/ELF의 두 C 경로에서 전체 모듈과 호출자 선택으로 실행합니다. 원래 LowIR 간접 호출은 유지합니다. 부분 쓰기, 불투명 효과, 임시 값 재사용, 메모리 슬롯, 작업 한도 초과를 거부하는 검사도 포함합니다.
 
@@ -2201,3 +2205,7 @@ NeverSight LLVM fork의 `BinaryRewriteRelocationTest`는 x64 PLT, i386 GOT, Mach
 자기 비교 행렬은 인수가 없는 동등 비교 및 뺄셈 오버플로 사례도 실행합니다. 입력 레지스터 값이 필요하지 않으므로 두 C 경로 모두 알 수 없는 상태의 트랩을 추가하면 안 됩니다.
 
 HFA 임포트 슬롯 테스트는 엄격한 C 프로토타입을 컴파일하고 헤더 및 로컬 선언의 완전한 인수와 반환값을 실행 검증합니다. 두 C 경로 모두 float 및 double 구조체, 연속 호출, AArch64 실행을 다룹니다.
+
+## 선택한 함수 선언 검사
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes`는 주소 출력을 정수, 포인터, 부동소수점, void 구현과 결합한다. `AddressOnlyCallbackConvertsToItsKnownParameterType`는 형식이 지정된 콜백을 실행한다. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules`는 개별 선택과 전체 단위 및 콜드·웜 캐시를 비교한다. x64/ARM64 PE, ELF, Mach-O 모델이 생성한 C를 호스트에서 O0/O2와 UBSan으로 실행한다. 모든 대상의 네이티브 실행을 검증한 것은 아니다. 경계 변경 후 호출 계약, 포인터 투영, 소스 ABI 및 피호출 함수 캐시 검사를 실행한다.

@@ -57,6 +57,8 @@ struct CRecordDefinitions {
   /// unit defines as its own.
   std::vector<std::string> Types;
   std::vector<std::string> DeclaredTypes;
+  /// Types whose matching target header declarations Text includes instead.
+  std::vector<std::string> HeaderTypes;
   /// The records the unit's headers name by a typedef alone, as bionic's
   /// <pthread.h> does pthread_mutex_t: the unit spells each by that name
   /// and declares no typedef of its own, which would contradict the
@@ -86,6 +88,8 @@ struct CEmitterOptions {
   /// LLVMC clients with a complete source contract can retain the module's
   /// function types and request prototypes for definitions as well as imports.
   /// Disables inferred-void and debug-signature projections in that route.
+  /// A settled no-value contract still discards the machine return register;
+  /// a retained non-void signature uses a zero-initialized carrier instead.
   bool PreserveLLVMFunctionTypes = false;
   /// Spell ordinary scalar byte accesses through pointers, as
   /// ScalarPointers says. Ordered and unusual-width accesses retain their

@@ -298,6 +298,58 @@ static const LibraryMethod Methods[] = {
      ThrowableConstruct},
     // Append new entries to preserve the existing JNI intrinsic method tokens.
     {"java/lang/String", "getBytes", "(Ljava/lang/String;)[B", StringGetBytes},
+    {"android/os/SystemClock", "uptimeMillis", "()J", UptimeMillis, true},
+    {"android/os/SystemClock", "elapsedRealtime", "()J", ElapsedRealtime, true},
+    {"android/os/SystemClock", "elapsedRealtimeNanos", "()J",
+     ElapsedRealtimeNanos, true},
+    {"java/util/HashMap", "<init>", "()V", Construct},
+    {"java/util/HashMap", "size", "()I", MapSize},
+    {"java/util/HashMap", "isEmpty", "()Z", MapIsEmpty},
+    {"java/util/HashMap", "get", "(Ljava/lang/Object;)Ljava/lang/Object;",
+     MapGet},
+    {"java/util/HashMap", "put",
+     "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", MapPut},
+    {"java/util/HashMap", "containsKey", "(Ljava/lang/Object;)Z",
+     MapContainsKey},
+    {"java/util/HashMap", "remove", "(Ljava/lang/Object;)Ljava/lang/Object;",
+     MapRemove},
+    {"java/util/HashMap", "clear", "()V", MapClear},
+    {"java/util/AbstractMap", "equals", "(Ljava/lang/Object;)Z", Equals},
+    {"java/util/AbstractMap", "hashCode", "()I", Hash},
+    {"java/util/AbstractMap", "toString", "()Ljava/lang/String;", ToString},
+    {"android/os/SystemProperties", "getInt", "(Ljava/lang/String;I)I",
+     PropertyInt, true},
+    {"java/util/Map", "size", "()I", MapSize},
+    {"java/util/Map", "isEmpty", "()Z", MapIsEmpty},
+    {"java/util/Map", "get", "(Ljava/lang/Object;)Ljava/lang/Object;", MapGet},
+    {"java/util/Map", "put",
+     "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", MapPut},
+    {"java/util/Map", "containsKey", "(Ljava/lang/Object;)Z", MapContainsKey},
+    {"java/util/Map", "remove", "(Ljava/lang/Object;)Ljava/lang/Object;",
+     MapRemove},
+    {"java/util/Map", "clear", "()V", MapClear},
+    {"com/android/internal/util/StatLogger", "<init>", "([Ljava/lang/String;)V",
+     Construct},
+    {"com/android/internal/util/StatLogger", "getTime", "()J", StatLoggerTime},
+    {"java/util/HashMap", "putAll", "(Ljava/util/Map;)V", MapPutAll},
+    {"java/util/Map", "putAll", "(Ljava/util/Map;)V", MapPutAll},
+    {"android/os/ServiceManager", "getService",
+     "(Ljava/lang/String;)Landroid/os/IBinder;", ServiceGet, true},
+    {"android/os/ServiceManager", "checkService",
+     "(Ljava/lang/String;)Landroid/os/IBinder;", ServiceCheck, true},
+    {"android/os/ServiceManager", "initServiceCache", "(Ljava/util/Map;)V",
+     ServiceInitCache, true},
+    {"android/os/Binder", "allowBlocking",
+     "(Landroid/os/IBinder;)Landroid/os/IBinder;", BinderAllowBlocking, true},
+    {"android/os/IBinder", "queryLocalInterface",
+     "(Ljava/lang/String;)Landroid/os/IInterface;", BinderQueryLocalInterface},
+    {"android/os/BinderProxy", "queryLocalInterface",
+     "(Ljava/lang/String;)Landroid/os/IInterface;", BinderQueryLocalInterface,
+     false, false, false},
+    {"android/os/IInterface", "asBinder", "()Landroid/os/IBinder;",
+     ServiceAsBinder},
+    {"android/os/IServiceManager", "asBinder", "()Landroid/os/IBinder;",
+     ServiceAsBinder},
 };
 
 struct LibraryStop {
@@ -417,9 +469,16 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
         M.Op == ClassLoaderString || M.Op == MainLooper ||
         M.Op == HandlerPost || M.Op == LooperQueue ||
         M.Op == MessageQueueNext || M.Op == MessageCallback ||
-        M.Op == MessageTarget ||
+        M.Op == MessageTarget || M.Op == UptimeMillis ||
+        M.Op == ElapsedRealtime || M.Op == ElapsedRealtimeNanos ||
+        M.Op == PropertyInt || M.Op == StatLoggerTime || M.Op == ServiceGet ||
+        M.Op == ServiceCheck || M.Op == ServiceInitCache ||
+        M.Op == BinderAllowBlocking || M.Op == BinderQueryLocalInterface ||
+        M.Op == ServiceAsBinder ||
         (M.Op == Construct &&
-         std::string_view(M.Class) == "android/os/Handler")) {
+         (std::string_view(M.Class) == "android/os/Handler" ||
+          std::string_view(M.Class) ==
+              "com/android/internal/util/StatLogger"))) {
       if (!program || !framework)
         return {ExecutionStop::Unsupported,
                 0,
@@ -497,6 +556,116 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
               0,
               {},
               "Java URL handler-dependent equality or hashing is unmodeled"};
+    if (std::string_view(M.Class) == "java/util/AbstractMap" ||
+        (M.Op == IdentityEquals && !Nonvirtual && ObjectValue &&
+         assignable(objectDescriptor(*ObjectValue), "Ljava/util/AbstractMap;")))
+      return {ExecutionStop::Unsupported,
+              0,
+              {},
+              "Java Map equality, hashing and string conversion are unmodeled"};
+    if (std::string_view(M.Class) == "java/util/HashMap" ||
+        std::string_view(M.Class) == "java/util/Map") {
+      if (ObjectValue && ObjectValue->ClassName != "java/util/HashMap")
+        return {ExecutionStop::Unsupported,
+                0,
+                {},
+                "Java HashMap subclass behavior is unmodeled"};
+      if (M.Op == Construct) {
+        if (ObjectValue &&
+            (ObjectValue->Initialized || ObjectValue->MapEntries))
+          return failure("Java HashMap receiver is already constructed");
+        auto o = ObjectValue ? ObjectValue
+                             : heap.allocate(Object::Instance, M.Class, 0);
+        if (!o || !heap.replaceMapEntries(*o, {}))
+          return Ref(std::shared_ptr<Object>());
+        return Ref(o);
+      }
+      if (!ObjectValue->MapEntries)
+        return {ExecutionStop::Unsupported,
+                0,
+                {},
+                "Java HashMap contents are not supplied"};
+      if (M.Op == MapPutAll) {
+        const auto source = object(Values[0]);
+        if (!source)
+          return Throw("java/lang/NullPointerException");
+        if (source->ClassName != "java/util/HashMap" || !source->MapEntries)
+          return {ExecutionStop::Unsupported,
+                  0,
+                  {},
+                  "Java putAll requires known HashMap contents"};
+        // Snapshot before mutation so putAll(this) keeps stable traversal.
+        for (size_t i = 0; i < source->MapEntries->size(); ++i)
+          tick();
+        const auto copy = *source->MapEntries;
+        const auto *put =
+            libraryMethod({"Ljava/util/HashMap;",
+                           "put",
+                           {"Ljava/lang/Object;", "Ljava/lang/Object;"},
+                           "Ljava/lang/Object;"},
+                          false);
+        for (const auto &entry : copy) {
+          const uint64_t args[] = {entry.Key, entry.Value};
+          auto result = executeLibrary(heap, *put, receiver, args, admit, false,
+                                       program, framework);
+          if (result.stop != ExecutionStop::Returned)
+            return result;
+        }
+        return value(0);
+      }
+      const auto &entries = *ObjectValue->MapEntries;
+      if (M.Op == MapSize)
+        return value(entries.size());
+      if (M.Op == MapIsEmpty)
+        return value(entries.empty());
+      if (M.Op == MapClear) {
+        for (size_t i = 0; i < entries.size(); ++i)
+          tick();
+        heap.replaceMapEntries(*ObjectValue, {});
+        return value(0);
+      }
+      const auto key = object(Values[0]);
+      if (key && key->Type != Object::String)
+        return {ExecutionStop::Unsupported,
+                0,
+                {},
+                "Java HashMap supports only String and null keys"};
+      size_t found = entries.size();
+      for (size_t i = 0; i < entries.size(); ++i) {
+        tick();
+        const auto stored = heap.get(entries[i].Key);
+        if (key && stored)
+          work(key->Bytes.size());
+        if (key == stored || (key && stored && key->Bytes == stored->Bytes)) {
+          found = i;
+          break;
+        }
+      }
+      const bool present = found != entries.size();
+      const uint32_t previous = present ? entries[found].Value : 0;
+      if (M.Op == MapGet)
+        return value(previous);
+      if (M.Op == MapContainsKey)
+        return value(present);
+      // Admit traversal and the complete retained copy before mutation.
+      for (size_t i = 0; i < entries.size(); ++i)
+        tick();
+      auto changed = entries;
+      if (M.Op == MapPut) {
+        if (present)
+          changed[found].Value = uint32_t(Values[1]);
+        else
+          changed.push_back({uint32_t(Values[0]), uint32_t(Values[1])});
+      } else if (M.Op == MapRemove) {
+        if (present)
+          changed.erase(changed.begin() + found);
+      } else {
+        return failure("unknown Java HashMap operation");
+      }
+      if (!heap.replaceMapEntries(*ObjectValue, std::move(changed)))
+        return Ref(std::shared_ptr<Object>());
+      return value(previous);
+    }
     if (std::string_view(M.Class) == "java/lang/StringBuilder") {
       // Constructors share the existing DEX/JNI constructor operation. The
       // mutable UTF-16 value stays in the same retained workload object.

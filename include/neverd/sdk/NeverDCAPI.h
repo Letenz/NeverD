@@ -48,6 +48,7 @@
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIEmulation.h"
 #include "neverd/sdk/NeverDCAPIExecution.h"
+#include "neverd/sdk/NeverDCAPILineage.h"
 #include "neverd/sdk/NeverDCAPILocalTypes.h"
 #include "neverd/sdk/NeverDCAPIModules.h"
 #include "neverd/sdk/NeverDCAPIOptimize.h"

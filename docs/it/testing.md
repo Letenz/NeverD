@@ -1,5 +1,7 @@
 **Lingue**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](../ja/testing.md) | [한국어](../ko/testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` verifica gli argomenti sullo stack interi, floating point e misti dei Mach-O x64/ARM64 nella pipeline sorgente. `IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` conserva la memoria iniziale in presenza di letture, chiamate, indirizzi dello stack che sfuggono e intrinseci opachi o di memoria. I percorsi di soli valori usano i parametri dichiarati senza inventare scritture tramite lo SP fisico e mantengono gli effetti dello stato floating point dei registri. La matrice mobile macOS compila ed esegue indipendentemente lo Swift ricostruito; la sola emissione riuscita non dimostra l’esecuzione.
+
 `NeverDLLVMCValueTests` compila ed esegue una chiamata variadica convertita con una funzione Windows x64 ABI separata, a O0/O2 e con entrambe le opzioni di conservazione dei tipi. x64 nativo verifica il valore con va_arg; le altre architetture saltano esplicitamente questa esecuzione.
 
 [← Indice della documentazione](README.md)
@@ -11,6 +13,8 @@
 `NeverDSourceEntryBindingTests` compila ed esegue la matrice x64/ARM64, PE/ELF, HighC/LLVMC: moduli completi, chiamanti selezionati, trasporto esplicito dei bit floating-point, riuso e azzeramento della cache. I controlli negativi rifiutano scritture parziali, parametri non allineati, fuga di indirizzi del frame e ingressi indefiniti. Definizioni indipendenti delle funzioni chiamate verificano le dichiarazioni fisse. Le esecuzioni sull’host non qualificano driver Windows ARM64 nativi. La matrice include frame RBP e x29/x30 bilanciati. Rifiuta salvataggi sovrascritti, RBP modificato anche con SP ripristinato e indirizzi di ritorno usati come parametri; distingue i registri preservati di ELF e Windows.
 
 La nuova matrice esegue letture con e senza segno di 1/2/4 byte lungo entrambe le vie C a O0/O2 con UBSan, per output completo o del solo chiamante. I chiamanti scrivono soltanto i byte letti; le letture oltre la larghezza dichiarata vengono rifiutate.
+
+La matrice di larghezze miste esegue letture del prefisso e dello slot completo a O0/O2 con UBSan. I controlli del frame nativo coprono entrambi gli ordini e rifiutano sole letture strette o una lettura completa appartenente a un altro slot.
 
 Le chiamate tramite registro note vengono eseguite nei due percorsi C per x64/ARM64 PE/ELF, con modulo completo e solo chiamante selezionato. Il LowIR originale resta indiretto. I controlli rifiutano scritture parziali obsolete, effetti opachi, temporanei riutilizzati, celle di memoria e budget esauriti.
 
@@ -2307,3 +2311,7 @@ La regressione worker copre anche diciotto parametri misti registro/stack, un ri
 La matrice esegue anche casi senza argomenti per uguaglianza e overflow della sottrazione. Non richiedono valori di registro in ingresso e nessuno dei due percorsi C deve introdurre una trappola per stato sconosciuto.
 
 I test degli slot di importazione HFA compilano prototipi C rigorosi ed eseguono argomenti e risultati completi per dichiarazioni locali e negli header. Entrambi i percorsi C coprono strutture float e double, chiamate concatenate ed esecuzione AArch64.
+
+## Verifica delle dichiarazioni selezionate
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` combina indirizzi con implementazioni che restituiscono interi, puntatori, valori floating o void. `AddressOnlyCallbackConvertsToItsKnownParameterType` esegue un callback tipizzato. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` confronta selezioni separate, unità completa e cache fredda/calda. Il C generato dai modelli x64/ARM64 PE, ELF e Mach-O viene eseguito sul host con O0/O2 e UBSan; ciò non qualifica ogni piattaforma nativa. Eseguire i test dei contratti di chiamata, proiezione dei puntatori, ABI sorgente e cache dei chiamati.

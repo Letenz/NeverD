@@ -653,7 +653,8 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
       CRecordDefinitions Definitions = Local->definitions(Records);
       if (SourceMap && !Definitions.Text.empty())
         SourceMap->LocalTypes = CSourceLocalTypes{
-            Definitions.Text, Definitions.Types, Definitions.DeclaredTypes};
+            Definitions.Text, Definitions.Types, Definitions.DeclaredTypes,
+            Definitions.HeaderTypes};
       return Definitions;
     };
   try {
@@ -773,7 +774,8 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
       CRecordDefinitions Definitions = Local->definitions(Records);
       if (SourceMap && !Definitions.Text.empty())
         SourceMap->LocalTypes = CSourceLocalTypes{
-            Definitions.Text, Definitions.Types, Definitions.DeclaredTypes};
+            Definitions.Text, Definitions.Types, Definitions.DeclaredTypes,
+            Definitions.HeaderTypes};
       return Definitions;
     };
   try {
@@ -921,6 +923,10 @@ const Session::FunctionSource &dialectSource(neverd_session_t Sess, va_t Entry,
   Options.TheArch = S.Img.Arch;
   Options.Format = S.Img.abiFormat();
   Options.Names = Map.Names;
+  if (S.LocalTypesDbg)
+    Options.Types = &S.LocalTypesDbg->library();
+  if (Map.LocalTypes)
+    Options.HeaderTypes = Map.LocalTypes->HeaderTypes;
   const llvm::StringRef Original(Raw);
   if (Dialect == SourceDialect::Rust || Dialect == SourceDialect::Go)
     Options.LocalTypes = dialectLocalTypes(S.LocalTypesDbg.get(), Original,
@@ -2087,7 +2093,8 @@ static const char *decompileAllImpl(neverd_session_t Sess,
         CRecordDefinitions Definitions = LocalTypes->definitions(Records);
         if (!Definitions.Text.empty())
           Held = CSourceLocalTypes{Definitions.Text, Definitions.Types,
-                                   Definitions.DeclaredTypes};
+                                   Definitions.DeclaredTypes,
+                                   Definitions.HeaderTypes};
         return Definitions;
       };
   };
@@ -2290,6 +2297,10 @@ static const char *decompileAllImpl(neverd_session_t Sess,
       Options.TheArch = R.Img.Arch;
       Options.Format = R.Img.abiFormat();
       Options.Names = Names;
+      if (LocalTypes)
+        Options.Types = &LocalTypes->library();
+      if (Held)
+        Options.HeaderTypes = Held->HeaderTypes;
       if (*Dialect == SourceDialect::Rust || *Dialect == SourceDialect::Go)
         Options.LocalTypes =
             dialectLocalTypes(LocalTypes.get(), Buf, Held, *Dialect);

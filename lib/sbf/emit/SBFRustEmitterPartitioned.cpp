@@ -23,45 +23,71 @@ void emitPartitionedProgram(
     const SourcePartition &Partition) {
   emitCallHelpers(OS, Program);
   emitMemoryHelpers(OS, Program);
-  OS << "struct NdMachine {\n"
-        "    r: NdRegisters,\n"
+  OS << "#[allow(dead_code)]\nstruct NdCallStack {\n"
         "    saved: [[u64; SAVED_REGISTERS]; MAX_CALL_DEPTH],\n"
         "    saved_fp: [u64; MAX_CALL_DEPTH],\n"
         "    return_pc: [usize; MAX_CALL_DEPTH],\n"
         "    depth: usize,\n"
+        "}\n\n"
+        "struct NdMachine {\n"
+        "    r: NdRegisters,\n"
+        "    stack: NdCallStack,\n"
         "    pc: usize,\n"
         "}\n\n";
   for (const auto &Region : Partition.Regions) {
     bool NeedsFaultCheck = false;
+    bool NeedsFallthroughPC = false;
+    for (size_t Slot : Region.Slots) {
+      const auto Found = BySlot.find(Slot);
+      if (Program.Low.Instructions[Slot].IsContinuation ||
+          Found == BySlot.end())
+        continue;
+      const auto &Instruction = *Found->second;
+      const bool HasNext = Instruction.Slot + Instruction.SlotWidth <
+                           Program.Low.Instructions.size();
+      NeedsFaultCheck |=
+          (HasNext && (Instruction.Op == Operation::Load ||
+                       Instruction.Op == Operation::Store)) ||
+          Instruction.Op == Operation::CallX ||
+          (Instruction.Op == Operation::Call &&
+           Instruction.Call == CallKind::Internal && Instruction.CallTarget);
+      NeedsFallthroughPC |=
+          HasNext &&
+          ((Instruction.Semantics.Terminator == TerminatorKind::None &&
+            Instruction.Op != Operation::Invalid) ||
+           (Instruction.Op == Operation::Call &&
+            (Instruction.Call == CallKind::Syscall ||
+             Instruction.Call == CallKind::Unresolved)));
+    }
     OS << "#[inline(never)]\nfn " << Region.Name
        << "(env: &mut dyn SbfEnvironmentV2, machine: &mut NdMachine) -> "
           "Result<Option<u64>, SbfErrorV2> {\n"
-          "    let mut pc = machine.pc; let mut depth = machine.depth;\n"
+          "    let mut pc = machine.pc;\n"
           "    let mut fault: Option<SbfErrorV2> = None;\n"
-          "    let r = &mut machine.r; let saved = &mut machine.saved;\n"
-          "    let saved_fp = &mut machine.saved_fp; let return_pc = &mut "
-          "machine.return_pc;\n"
-          "    let _ = (&mut *env, &mut pc, &mut depth, &mut fault, &mut *r, "
-          "&mut *saved, "
-          "&mut *saved_fp, &mut *return_pc);\n"
-          "    loop {\n        match pc {\n";
+          "    let r = &mut machine.r; let stack = &mut machine.stack;\n"
+          "    let _ = (&mut *env, &mut pc, &mut fault, &mut *r, &mut "
+          "*stack);\n"
+          "    loop {\n"
+          "        let current_pc = pc;\n";
+    // One default advance replaces per-arm assignments. A region containing
+    // only transfers/faults has no fallthrough and needs no unused assignment.
+    if (NeedsFallthroughPC)
+      OS << "        pc = pc.wrapping_add(1);\n";
+    OS << "        match current_pc {\n";
     for (size_t Slot : Region.Slots) {
       const auto Found = BySlot.find(Slot);
       if (Program.Low.Instructions[Slot].IsContinuation ||
           Found == BySlot.end()) {
         OS << "            " << Slot
-           << " => { machine.pc = pc; machine.depth = depth; return Err("
+           << " => { machine.pc = current_pc; return "
+              "Err("
            << rustSourceErrorName(FaultCode::InvalidInstruction) << "); },\n";
         continue;
       }
-      const auto &Instruction = *Found->second;
-      NeedsFaultCheck |= (Instruction.Op == Operation::Load ||
-                          Instruction.Op == Operation::Store) &&
-                         Instruction.Slot + Instruction.SlotWidth <
-                             Program.Low.Instructions.size();
       emitInstruction(OS, *Found->second, Program, true);
     }
-    OS << "            _ => { machine.pc = pc; machine.depth = depth; return "
+    OS << "            _ => { machine.pc = current_pc; "
+          "return "
           "Ok(None); },\n"
           "        }\n";
     if (NeedsFaultCheck)
@@ -82,11 +108,12 @@ void emitPartitionedProgram(
         "fn nd_program_impl<E: SbfEnvironmentV2>(env: &mut E, input: u64, "
         "instruction_data: u64) -> Result<u64, SbfErrorV2> {\n"
         "    let mut machine = NdMachine {\n"
-        "        r: NdRegisters::default(), saved: [[0u64; SAVED_REGISTERS]; "
+        "        r: NdRegisters::default(), stack: NdCallStack {\n"
+        "        saved: [[0u64; SAVED_REGISTERS]; "
         "MAX_CALL_DEPTH],\n"
         "        saved_fp: [0u64; MAX_CALL_DEPTH], return_pc: [0usize; "
         "MAX_CALL_DEPTH],\n"
-        "        depth: 0, pc: "
+        "        depth: 0 }, pc: "
      << Program.Low.EntrySlot
      << ",\n"
         "    };\n"

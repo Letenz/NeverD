@@ -12,6 +12,8 @@ Weicht der LLVM-Aufruftyp von der Funktionsdeklaration ab, wertet LLVM C die Umw
 
 Ganzzahlige Stackparameter von 1/2/4/8 Byte behalten ihre genaue Breite im Cache, bei der Eingangsbindung und im Nachweis der Aufruferschreibzugriffe. Vorzeichen- und Nullerweiterung erhalten die gelesenen Bits; schmale Parameter initialisieren keine benachbarten Bytes.
 
+Schmale Zugriffe am selben Offset teilen einen Parameter nur, wenn erreichbarer Originalcode auch die volle deklarierte Breite dieses Slots liest. Der gemeinsame Frame-Nachweis prüft das Maximum je Slot. Wiederholte schmale Zugriffe oder ein vollständiger Zugriff auf einen anderen Slot ersetzen keine fehlenden Bytes.
+
 Konstante Registeraufrufziele verwenden die gemeinsame begrenzte LowIR-Skalaranalyse. Der Stapelnachweis behält die ursprüngliche indirekte Aufrufstelle; nur das Quell-MedIR wird bei übereinstimmendem Ziel, Deklaration und ausgehenden Bytes zu einem benannten Aufruf. Ladevorgänge, blockübergreifende Werte, Aufrufeffekte und unvollständige Register liefern kein Ziel.
 
 Bei gelinkten x64-PE-Dateien erfasst die Funktionserkennung kanonische RIP-relative LEA-Codeadressen im vorhandenen Aufrufscan. Ziele benötigen weiterhin einen unabhängigen Einstieg und einen begrenzten Nachweis eines aufrufbaren Ausgangs; interne Labels, Fortsetzungen und nicht unterstützte Funktionskörper bleiben ausgeschlossen. Erkennung und Signaturen teilen sich die Prüfung der Adresskodierung. Bedingte COFF-rel32-Referenzen erfordern außerdem explizite Funktionssymbole und Relokationen ohne Addend. Offline prüft `--single-reference-context` jede Bedingung mit einer Referenzstelle gegen alle überlappenden ursprünglichen Quelldeklarationen und bewahrt sämtliche Alternativen der Stelle.
@@ -2025,3 +2027,9 @@ Die gemeinsame MedIR-Flag-Vereinfachung erhält beide Subtraktionsoperanden, auc
 Ganzzahlbedingungen, die denselben SSA-Wert mit sich selbst vergleichen, werden vor der Quellausgabe zu booleschen Konstanten. Dies umfasst Subtraktionsüberlauf; unspezifizierte Operanden bleiben explizit.
 
 Gespeicherte HFA-Aufrufziele verwenden dieselbe geprüfte Quellsignatur wie die Rekonstruktion der Strukturargumente und Ergebnisse. Der Prototyp erhält den ursprünglichen Funktionszeiger und die vollständigen Strukturtypen, einschließlich aufgeteilter Registergruppen und Stackargumente.
+
+## Deklarationen ausgewählter Funktionen
+
+HighC stellt reine Funktionsadressen ohne bekannte Signatur als Byte-Array-Alias mit Linkersymbol dar und erfindet keinen Rückgabetyp. Typisierte Callback-Konvertierungen und die Navigation zu Symbol und Adresse bleiben erhalten. Quell-LLVM nutzt den begrenzten Leser ausgelassener Funktionen auch bei bekannter Argumentzahl. Feste x64/ARM64-Wort-Deklarationen für Ganzzahlen oder Zeiger bleiben nur erhalten, wenn Träger und Typen nach der Rekonstruktion unverändert sind. Explizite Quellverträge haben Vorrang; Funktionskörper, Ausnahmeverträge oder native Lifting-Rechte entstehen nicht. Der Cache unterscheidet diese Lesevorgänge und erhält dieselbe Deklarationsentscheidung bei Wiederverwendung.
+
+Bekannte Ausnahmemetadaten schließen diese Deklaration bereits vor dem Lesen des Körpers aus; normale Signaturlesevorgänge bleiben unverändert.

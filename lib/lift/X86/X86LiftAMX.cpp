@@ -9,6 +9,7 @@
 
 #include "X86LiftDetail.h"
 
+#include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/X86/X86AmxState.h"
 #include "neverd/lift/X86/X86Lifter.h"
 #include "neverd/support/X86/X86Addressing.h"
@@ -201,6 +202,18 @@ bool liftAMX(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     const auto &Memory = X86.operands[MemoryIndex];
     if (Memory.type != X86_OP_MEM)
       return false;
+    Space = S.memoryAddressSpace(Memory);
+    if (Memory.mem.segment == X86_REG_SS)
+      Descriptor |= X86AmxStackSegment;
+    if (S.AddressSize == 4)
+      Descriptor |= X86AmxAddress32;
+    else if (Space == NdMemoryAddressSpace::Default &&
+             isStackDefaultBase(Memory.mem.base))
+      Descriptor |= X86AmxStackReference;
+    // Reject before emitting stride/EA temporaries: row-memory still needs a
+    // native stack-base contract separate from its architectural stride.
+    if (!x86AmxAddressIsValid(Descriptor, Space))
+      throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
     cs_x86_op RowBase = Memory;
     if (TileMemory) {
       auto T = Tile(1 - MemoryIndex);
@@ -232,15 +245,8 @@ bool liftAMX(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       RowBase.mem.index = X86_REG_INVALID;
       RowBase.mem.scale = 1;
     }
-    if (S.AddressSize == 4)
-      Descriptor |= X86AmxAddress32;
     if (Insn->bytes[Prefix] == 0x62)
       Descriptor |= X86AmxEvexMemory;
-    Space = S.memoryAddressSpace(Memory);
-    if (Memory.mem.segment == X86_REG_SS ||
-        (Memory.mem.segment == X86_REG_INVALID &&
-         isStackDefaultBase(Memory.mem.base)))
-      Descriptor |= X86AmxStackSegment;
     Base = S.computeEA(RowBase);
   }
   if (!x86AmxDescriptorIsValid(Descriptor))

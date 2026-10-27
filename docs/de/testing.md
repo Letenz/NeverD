@@ -1,5 +1,7 @@
 **Sprachen**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](../ja/testing.md) | [한국어](../ko/testing.md) | [Français](../fr/testing.md) | [Deutsch](testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` prüft ganzzahlige, Gleitkomma- und gemischte Stackargumente von x64/ARM64-Mach-O im Quelltextpfad. `IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` erhält den Eingangsspeicher bei Speicherzugriffen, Aufrufen, entweichenden Stackadressen und undurchsichtigen oder speicherlesenden Intrinsics. Reine Wertpfade verwenden deklarierte Parameter ohne zusätzliche Schreibzugriffe über den physischen SP; Gleitkomma-Zustandseffekte der Register bleiben erhalten. Die mobile macOS-Matrix kompiliert und führt rekonstruierten Swift unabhängig aus; erfolgreiche Ausgabe allein ist kein Ausführungsnachweis.
+
 `NeverDLLVMCValueTests` kompiliert und führt den umgewandelten Varargs-Aufruf mit einer separaten Windows-x64-ABI-Funktion bei O0/O2 und beiden Typbeibehaltungsoptionen aus. Native x64-Hosts prüfen den Wert mit va_arg; andere Architekturen überspringen diese Ausführung ausdrücklich.
 
 [← Dokumentationsindex](README.md)
@@ -11,6 +13,8 @@
 `NeverDSourceEntryBindingTests` kompiliert und führt die Matrix x64/ARM64, PE/ELF, HighC/LLVMC aus: vollständige Module, einzelne Aufrufer, explizite Übertragung von Gleitkommabits sowie Cache-Wiederverwendung und -Zurücksetzung. Negativkontrollen lehnen unvollständige Schreibzugriffe und nicht ausgerichtete Parameter, entweichende Rahmenadressen und undefinierte Eingaben ab. Unabhängige Definitionen der Aufgerufenen prüfen feste Deklarationen. Host-Ausführungen qualifizieren keine nativen Windows-ARM64-Treiber. Die Matrix umfasst ausgeglichene RBP- und x29/x30-Rahmen. Überschriebene Sicherungen, ein verändertes RBP trotz wiederhergestelltem SP und die Rücksprungadresse als Parameter werden abgelehnt; ELF- und Windows-Erhaltungsregeln werden getrennt geprüft.
 
 Die zusätzliche Matrix führt vorzeichenbehaftete und vorzeichenlose Zugriffe von 1/2/4 Byte über beide C-Pfade bei O0/O2 mit UBSan aus, für vollständige Ausgaben und einzelne Aufrufer. Aufrufer schreiben nur die gelesenen Bytes; Zugriffe über die deklarierte Breite hinaus werden abgelehnt.
+
+Die Matrix gemischter Breiten führt Präfix- und vollständige Slot-Lesezugriffe mit O0/O2 und UBSan aus. Native Frame-Kontrollen prüfen beide Reihenfolgen und lehnen ausschließlich schmale Zugriffe sowie vollständige Zugriffe auf einen anderen Slot ab.
 
 Bekannte Registeraufrufe werden über beide C-Ausgaben für x64/ARM64 PE/ELF als vollständiges Modul und ausgewählter Aufrufer ausgeführt. Das ursprüngliche LowIR bleibt indirekt. Gegenproben prüfen Teilüberschreibungen, unbekannte Effekte, wiederverwendete temporäre Werte, Speicherzellen und erschöpfte Budgets.
 
@@ -2327,3 +2331,7 @@ Die Worker-Regression deckt außerdem achtzehn gemischte Register-/Stapelparamet
 Die Selbstvergleichsmatrix führt auch parameterlose Gleichheits- und Subtraktionsüberlauffälle aus. Sie benötigen keinen eingehenden Registerwert und dürfen in keinem C-Pfad einen Trap für unbekannten Zustand erhalten.
 
 Die HFA-Importslot-Tests kompilieren strenge C-Prototypen und führen vollständige Argumente und Ergebnisse für Header- und lokale Deklarationen aus. Beide C-Pfade decken float- und double-Strukturen, verkettete Aufrufe und die Ausführung auf AArch64 ab.
+
+## Prüfung ausgewählter Deklarationen
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` kombiniert Adressen mit Ganzzahl-, Zeiger-, Gleitkomma- und void-Implementierungen. `AddressOnlyCallbackConvertsToItsKnownParameterType` führt einen typisierten Callback aus. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` vergleicht getrennte Auswahl, Gesamteinheit sowie kalten/warmen Cache. Generiertes C der x64/ARM64-Modelle für PE, ELF und Mach-O läuft auf dem Host mit O0/O2 und UBSan. Dies belegt keine native Ausführung auf allen Zielen. Bei Änderungen die Tests für Aufrufverträge, Zeigerprojektion, Quell-ABI und Aufrufziel-Cache ausführen.

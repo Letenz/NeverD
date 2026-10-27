@@ -12,6 +12,8 @@ Cuando el tipo de llamada LLVM difiere de la declaración, LLVM C evalúa la con
 
 Los parámetros enteros de pila de 1/2/4/8 bytes conservan su anchura exacta en la caché, el enlace de entrada y la prueba de escritura del llamador. Las extensiones con y sin signo preservan los bits leídos; un parámetro estrecho no inicializa bytes adyacentes.
 
+Las lecturas estrechas en el mismo desplazamiento comparten un parámetro solo si el código original alcanzable también lee todo el ancho declarado de esa ranura. La prueba de marco comprueba el máximo por ranura; repetir lecturas estrechas o leer otra ranura completa no aporta los bytes faltantes.
+
 Los destinos constantes de llamadas por registro usan la consulta escalar LowIR acotada y compartida. La prueba de pila conserva la llamada indirecta original; solo el MedIR fuente pasa a una llamada con nombre cuando coinciden destino, declaración y bytes de salida. Cargas, valores entre bloques, efectos de llamadas y registros incompletos no determinan un destino.
 
 En un PE x64 enlazado, el descubrimiento recoge las direcciones de código de LEA relativas a RIP canónicas durante el barrido de llamadas existente. Cada destino sigue necesitando una entrada independiente y una prueba acotada de salida invocable; se excluyen etiquetas internas, continuaciones y cuerpos no admitidos. El descubrimiento y las firmas comparten el reconocimiento de esta codificación. Las referencias rel32 condicionales COFF también exigen símbolos de función explícitos y reubicaciones sin sumando. Sin conexión, `--single-reference-context` verifica cada condición de un solo sitio frente a todas las declaraciones originales superpuestas y conserva todas las alternativas del sitio.
@@ -2024,3 +2026,9 @@ La simplificación compartida de indicadores MedIR conserva ambos operandos de l
 Las condiciones enteras que comparan un mismo valor SSA consigo mismo se convierten en constantes booleanas antes de emitir el código fuente, incluido el desbordamiento de resta. Los operandos no especificados siguen siendo explícitos.
 
 Los destinos capturados de llamadas HFA usan la misma firma de origen verificada que la reconstrucción de argumentos y resultados de estructuras. El prototipo conserva el puntero original y los tipos completos, incluidos los grupos de registros descompuestos y los argumentos de pila.
+
+## Declaraciones de funciones seleccionadas
+
+HighC representa un símbolo de función usado solo como dirección y sin firma conocida mediante un alias de bytes con nombre de enlace, sin inventar el retorno. Conserva la conversión del callback tipado y la navegación al símbolo y su dirección. LLVM de fuente reutiliza el lector acotado de funciones omitidas aunque se conozca el número de argumentos. Solo conserva declaraciones fijas de enteros o punteros de tamaño palabra x64/ARM64 si la recuperación no cambia sus portadores ni tipos. Los contratos explícitos prevalecen; no se aportan cuerpos, contratos de excepciones ni permisos de lifting nativo. La caché distingue estas lecturas y mantiene la misma decisión en caliente.
+
+Los metadatos de excepciones conocidos excluyen esta declaración antes de leer el cuerpo; las lecturas ordinarias de firmas no cambian.

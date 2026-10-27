@@ -2523,17 +2523,19 @@ bool liftSIMDAVXFloat(X86Lifter &L, X86Lifter::LiftState &S,
         return false;
       Mask = NdVar::reg(Info.Offset, MaskSize);
     }
-    if (!x86NativeDsAddressIsValid(L.targetArch(), X86, Memory))
+    if (!x86NativeSibAddressIsValid(L.targetArch(), X86, Memory))
       return false;
     const auto Kind = Scalar ? (Negative ? X86FourSourceKind::FNMAddSS
                                          : X86FourSourceKind::FMAddSS)
                              : (Negative ? X86FourSourceKind::FNMAddPS
                                          : X86FourSourceKind::FMAddPS);
     const bool Zero = HasMask && X86.operands[1].avx_zero_opmask;
-    const X86FourSourceControl C{Kind, Zero};
+    const bool Stack = x86NativeAddressIsStack(L.targetArch(), X86, Memory);
+    const X86FourSourceControl C{Kind, Zero, Stack};
     const auto Sources = x86FourSourceSnapshot(S, GroupBase, C);
     const uint8_t Control = static_cast<uint8_t>(
-        static_cast<unsigned>(Kind) | (Zero ? X86FourSourceZero : 0));
+        static_cast<unsigned>(Kind) | (Zero ? X86FourSourceZero : 0) |
+        (Stack ? X86FourSourceStackReference : 0));
     const NdVar OldDestination = L.operandRead(S, Destination);
     const NdVar ArchitecturalOut = L.operandWrite(Destination);
     const NdVar Out = Scalar ? S.makeTemp(16) : ArchitecturalOut;

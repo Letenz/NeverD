@@ -1240,6 +1240,7 @@ namespace {
 struct SourceStackSeeds {
   size_t Position = 0;
   int64_t Headroom = 0;
+  int MaximumId = 0;
   std::vector<MedOp> Operations;
 };
 
@@ -1250,7 +1251,8 @@ struct SourceStackSeeds {
 std::optional<SourceStackSeeds>
 sourceStackSeeds(const MedFunc &Func, Arch Architecture,
                  const TargetRegInfo &TRI,
-                 const std::vector<SourceABIParameter> &Parameters) {
+                 const std::vector<SourceABIParameter> &Parameters,
+                 const std::optional<std::set<uint64_t>> &Observed) {
   SourceStackSeeds Seeds;
   if (Func.SourceParametersBound ||
       std::none_of(Parameters.begin(), Parameters.end(), [](const auto &P) {
@@ -1262,6 +1264,7 @@ sourceStackSeeds(const MedFunc &Func, Arch Architecture,
     return std::nullopt;
   std::optional<MedVar> Stack;
   bool Ambiguous = false;
+  bool MemoryObserved = !Func.CallInfos.empty();
   int MaximumId = 0;
   auto Visit = [&](const MedVar &Value) {
     if (!Value.isConst())
@@ -1273,6 +1276,7 @@ sourceStackSeeds(const MedFunc &Func, Arch Architecture,
     }
   };
   for (const auto &Block : Func.Blocks) {
+    MemoryObserved |= !Block.ExceptionalSuccs.empty();
     for (const auto &Phi : Block.Phis) {
       Visit(Phi.Output);
       for (const auto &[Pred, Value] : Phi.Args)
@@ -1281,6 +1285,26 @@ sourceStackSeeds(const MedFunc &Func, Arch Architecture,
         Visit(*Phi.ExceptionalEntry);
     }
     for (const auto &Op : Block.Ops) {
+      // A raw read can alias an incoming home even through another input.
+      // Calls, indirect transfers and unqualified intrinsics retain their
+      // memory initialization regardless of the explicit SP use proof.
+      MemoryObserved |=
+          Op.Opcode == NdOp::LOAD ||
+          (Op.Opcode == NdOp::STORE && !Op.PrologueSave) ||
+          Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
+          Op.Opcode == NdOp::ATOMIC_CMPXCHG || Op.Opcode == NdOp::CALL ||
+          Op.Opcode == NdOp::INDIR_CALL || Op.Opcode == NdOp::INDIR_BR ||
+          Op.MemoryOrdering != NdMemoryOrdering::None ||
+          Op.MemoryAddressSpace != NdMemoryAddressSpace::Default;
+      if (Op.Opcode == NdOp::INTRINSIC) {
+        const auto Id = Op.NumInputs && Op.Inputs[0].isConst()
+                            ? static_cast<Intrinsic>(Op.Inputs[0].ConstVal)
+                            : Intrinsic::None;
+        MemoryObserved |=
+            !Op.NumInputs || Op.Inputs[0].ConstVal != unsigned(Id) ||
+            isX86FPStateMemoryIntrinsic(Id) ||
+            !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op, Architecture));
+      }
       Visit(Op.Output);
       for (const auto &Output : Op.IntrinsicOutputs)
         Visit(Output);
@@ -1299,9 +1323,21 @@ sourceStackSeeds(const MedFunc &Func, Arch Architecture,
       Parameters.size() >
           static_cast<size_t>(std::numeric_limits<int>::max() - MaximumId))
     return std::nullopt;
+  Seeds.MaximumId = MaximumId;
+  for (const auto &Op : Func.Blocks.front().Ops) {
+    if (Op.Opcode != NdOp::COPY || Op.NumInputs != 1 ||
+        Op.Output != Op.Inputs[0])
+      break;
+    ++Seeds.Position;
+  }
   // A body already expressed entirely through Param values has no remaining
   // entry-SP memory to initialize.
   if (!Stack)
+    return Seeds;
+  // Generic recovery may already have replaced every incoming stack read
+  // with a Param. With no remaining memory observer or escaping SP, emitting
+  // stores here would invent a source dependency on the physical stack.
+  if (!MemoryObserved && Observed && !Observed->count(TRI.StackPointer))
     return Seeds;
 
   // A declaration initializes only its own bytes. In particular, a raw
@@ -1357,12 +1393,6 @@ sourceStackSeeds(const MedFunc &Func, Arch Architecture,
     if (Range->first > Begin || Range->second < End)
       return std::nullopt;
   }
-  for (const auto &Op : Func.Blocks.front().Ops) {
-    if (Op.Opcode != NdOp::COPY || Op.NumInputs != 1 ||
-        Op.Output != Op.Inputs[0])
-      break;
-    ++Seeds.Position;
-  }
   for (size_t I = 0; I < Parameters.size(); ++I) {
     const auto &Location = Parameters[I].Location;
     if (Location.Kind != SourceABICarrierKind::Stack)
@@ -1378,7 +1408,7 @@ sourceStackSeeds(const MedFunc &Func, Arch Architecture,
     Address.Addr = Func.Entry;
     Address.Output.Kind = MedVar::Temp;
     Address.Output.TheArch = Architecture;
-    Address.Output.Id = ++MaximumId;
+    Address.Output.Id = ++Seeds.MaximumId;
     Address.Output.SSAVer = 1;
     Address.Output.Size = TRI.PointerSize;
     Address.addInput(*Stack);
@@ -1395,12 +1425,6 @@ sourceStackSeeds(const MedFunc &Func, Arch Architecture,
     Seeds.Operations.push_back(std::move(Address));
     Seeds.Operations.push_back(std::move(Store));
   }
-  for (const auto &Call : Func.CallInfos)
-    if (Call.BlockId == Func.Blocks.front().Id && Call.OpIdx >= 0 &&
-        static_cast<size_t>(Call.OpIdx) >= Seeds.Position &&
-        Seeds.Operations.size() >
-            static_cast<size_t>(std::numeric_limits<int>::max() - Call.OpIdx))
-      return std::nullopt;
   return Seeds;
 }
 } // namespace
@@ -1463,6 +1487,7 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
     uint8_t Input;
     MedVar Parameter;
     std::optional<uint64_t> SliceOffset;
+    uint16_t PrefixBytes = 0;
   };
   std::vector<Rewrite> Rewrites;
   bool Valid = true;
@@ -1528,6 +1553,7 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
                                : L.RegisterOffset;
         Parameter.Size = L.ValueBytes;
         std::optional<uint64_t> SliceOffset;
+        uint16_t PrefixBytes = 0;
         if (Slice)
           SliceOffset = static_cast<uint64_t>(Offset - L.EntryStackOffset);
         else if (Bytes != L.ValueBytes) {
@@ -1536,15 +1562,20 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
           // this pass has no operation in which to insert its byte slice.
           if (EntryRegister && Bytes < L.ValueBytes)
             continue;
-          // A simple COPY can preserve a narrower low slice; a wider read or
-          // a whole-slot arithmetic use cannot manufacture padding bytes.
-          if (EntryRegister || K != 0 || Op.Opcode != NdOp::COPY ||
-              Op.NumInputs != 1)
-            Valid = false;
-          else
+          if (!EntryRegister && K == 0 && Op.Opcode == NdOp::COPY &&
+              Op.NumInputs == 1)
             SliceOffset = 0;
+          else if (!EntryRegister && L.Kind == SourceABICarrierKind::Stack &&
+                   Offset == L.EntryStackOffset && Bytes < L.ValueBytes &&
+                   Parameters[Index].Type->Kind == NdTypeKind::Int)
+            // Generic stack recovery can retain differently sized Param
+            // operands for the same slot. Keep the consumer's original width
+            // through an explicit slice, including sign/zero extensions.
+            PrefixBytes = Bytes;
+          else
+            Valid = false;
         }
-        Rewrites.push_back({&Op, K, Parameter, SliceOffset});
+        Rewrites.push_back({&Op, K, Parameter, SliceOffset, PrefixBytes});
       }
     }
     for (const auto &Phi : Block.Phis)
@@ -1600,11 +1631,49 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
     Func.SourceTypeHint.reset();
     return;
   }
-  auto Seeds = sourceStackSeeds(Func, TheArch, TRI, Parameters);
+  auto Seeds = sourceStackSeeds(Func, TheArch, TRI, Parameters, Observed);
   if (!Seeds) {
     Func.SourceTypeHint.reset();
     return;
   }
+  // Parameters are immutable source values. One pure entry slice per width
+  // serves every matching use without inserting instructions into each block
+  // or changing a sign extension into a whole-carrier operation.
+  std::map<std::pair<int, uint16_t>, MedVar> Prefixes;
+  for (auto &R : Rewrites) {
+    if (!R.PrefixBytes)
+      continue;
+    const auto Key = std::pair{R.Parameter.Id, R.PrefixBytes};
+    auto Found = Prefixes.find(Key);
+    if (Found == Prefixes.end()) {
+      if (Seeds->MaximumId == std::numeric_limits<int>::max()) {
+        Func.SourceTypeHint.reset();
+        return;
+      }
+      MedOp Slice;
+      Slice.Opcode = NdOp::SUBBYTES;
+      Slice.Addr = Func.Entry;
+      Slice.Output.Kind = MedVar::Temp;
+      Slice.Output.TheArch = TheArch;
+      Slice.Output.Id = ++Seeds->MaximumId;
+      Slice.Output.SSAVer = 1;
+      Slice.Output.Size = R.PrefixBytes;
+      Slice.addInput(R.Parameter);
+      Slice.addInput(MedVar::makeConst(0, TRI.PointerSize,
+                                       ConstantAddressProvenance::Scalar));
+      Found = Prefixes.emplace(Key, Slice.Output).first;
+      Seeds->Operations.push_back(std::move(Slice));
+    }
+    R.Parameter = Found->second;
+  }
+  for (const auto &Call : Func.CallInfos)
+    if (Call.BlockId == Func.Blocks.front().Id && Call.OpIdx >= 0 &&
+        static_cast<size_t>(Call.OpIdx) >= Seeds->Position &&
+        Seeds->Operations.size() >
+            static_cast<size_t>(std::numeric_limits<int>::max() - Call.OpIdx)) {
+      Func.SourceTypeHint.reset();
+      return;
+    }
   std::vector<MedVar> BoundParams;
   std::vector<MedTypedParam> BoundTypes;
   for (size_t I = 0; I < Parameters.size(); ++I) {

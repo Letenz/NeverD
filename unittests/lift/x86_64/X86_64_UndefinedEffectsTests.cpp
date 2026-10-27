@@ -340,6 +340,14 @@ TEST_F(X86UndefinedEffects, XaddChangedEncodingAndOperandsRemainUnaudited) {
     }
     std::vector<LowOp> Ops;
     auto Effects = staleEffects();
+    if (X.op_count < 2) {
+      EXPECT_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects),
+                   UnliftedInstruction);
+      EXPECT_TRUE(Ops.empty());
+      EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Unsupported);
+      expectCleared(Effects);
+      continue;
+    }
     ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects));
     EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
     expectCleared(Effects);
@@ -525,6 +533,14 @@ TEST_F(X86UndefinedEffects, DoubleShiftChangedFormsDoNotPublishDraftEffects) {
       }
       std::vector<LowOp> Ops;
       auto Effects = staleEffects();
+      if (X.op_count < 3) {
+        EXPECT_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects),
+                     UnliftedInstruction);
+        EXPECT_TRUE(Ops.empty());
+        EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Unsupported);
+        expectCleared(Effects);
+        continue;
+      }
       ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects));
       EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
       expectCleared(Effects);
@@ -610,6 +626,14 @@ TEST_F(X86UndefinedEffects, BitTestMutatedEncodingAndOperandsRemainUnaudited) {
       }
       std::vector<LowOp> Ops;
       auto Effects = staleEffects();
+      if (X.op_count < 2) {
+        EXPECT_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects),
+                     UnliftedInstruction);
+        EXPECT_TRUE(Ops.empty());
+        EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Unsupported);
+        expectCleared(Effects);
+        continue;
+      }
       ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects));
       EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
       expectCleared(Effects);
@@ -654,6 +678,14 @@ TEST_F(X86UndefinedEffects, ScalarCountMutatedWidthAndOpcodeRemainUnaudited) {
       }
       std::vector<LowOp> Ops;
       auto Effects = staleEffects();
+      if (X.op_count < 2) {
+        EXPECT_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects),
+                     UnliftedInstruction);
+        EXPECT_TRUE(Ops.empty());
+        EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Unsupported);
+        expectCleared(Effects);
+        continue;
+      }
       ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects));
       EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
       expectCleared(Effects);
@@ -667,19 +699,18 @@ TEST_F(X86UndefinedEffects, ScalarCountMutatedWidthAndOpcodeRemainUnaudited) {
   expectCleared(Effects);
 }
 
-TEST_F(X86UndefinedEffects, PermissiveUnsupportedFallbackClearsOldCertificate) {
+TEST_F(X86UndefinedEffects, PermissiveUnsupportedFailureClearsOldCertificate) {
   DecodedInsn Insn{};
   ASSERT_TRUE(decode({0x90}, Insn));
   Insn.Raw->id = X86_INS_INVALID;
   Dec.setStrict(false);
   std::vector<LowOp> Ops;
   auto Effects = staleEffects();
-  Dec.liftToLow(Insn, Ops, {}, {}, &Effects);
+  EXPECT_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects), UnliftedInstruction);
   EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Unsupported);
   expectCleared(Effects);
-  ASSERT_EQ(Ops.size(), 1U);
-  EXPECT_EQ(Ops.front().Opcode, NdOp::NOP);
-  EXPECT_EQ(Effects.OpCount, Ops.size());
+  EXPECT_TRUE(Ops.empty());
+  EXPECT_EQ(Effects.OpCount, 0u);
 }
 
 TEST_F(X86UndefinedEffects, StrictFailureClearsOldCertificateBeforeThrowing) {
@@ -700,7 +731,7 @@ TEST_F(X86UndefinedEffects, MissingOperandDetailClearsOldCertificate) {
   Insn.Raw = &WithoutDetail;
   std::vector<LowOp> Ops;
   auto Effects = staleEffects();
-  Dec.liftToLow(Insn, Ops, {}, {}, &Effects);
+  EXPECT_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects), UnliftedInstruction);
   expectCleared(Effects);
   EXPECT_EQ(Effects.OpCount, 0U);
   EXPECT_TRUE(Ops.empty());
@@ -741,7 +772,8 @@ TEST_F(X86UndefinedEffects, MalformedOperandCountCannotCertifyEmptyLift) {
   Dec.setStrict(false);
   std::vector<LowOp> Ops;
   auto Effects = staleEffects();
-  Dec.liftToLow(Insn, Ops, {}, {}, &Effects);
+  EXPECT_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects), UnliftedInstruction);
+  EXPECT_TRUE(Ops.empty());
   expectCleared(Effects);
 }
 

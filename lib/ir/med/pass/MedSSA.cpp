@@ -27,8 +27,10 @@
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/ExceptionInfo.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -382,18 +384,28 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     return false;
   };
 
-  auto CallClobberedIds = [&](const MedOp &Op) {
-    std::set<int> Result;
+  // Lowering assigns each call a distinct occurrence ID. Entry seeding may
+  // move operations and SSA renames their values, but neither changes a
+  // call's preservation contract or the register views collected above.
+  // Reuse its complete clobber set across liveness, PHI placement and rename.
+  llvm::DenseMap<uint32_t, llvm::SmallVector<int, 8>> CallClobbers;
+  auto CallClobberedIds = [&](const MedOp &Op) -> llvm::ArrayRef<int> {
     if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
         Op.PreservesCallerSaved)
-      return Result;
+      return {};
+    auto [Cached, Inserted] = CallClobbers.try_emplace(Op.CallSiteId);
+    if (!Inserted)
+      return Cached->second;
+    auto &Result = Cached->second;
     for (const auto &[RegOff, Ids] : RegOffToIds)
       for (int Id : Ids)
         if (const auto It = RegVarOfId.find(Id);
             It != RegVarOfId.end() &&
             callClobbersRegister(Op, RegOff, It->second.Size, TRI,
                                  TargetFormat))
-          Result.insert(Id);
+          Result.push_back(Id);
+    llvm::sort(Result);
+    Result.erase(std::unique(Result.begin(), Result.end()), Result.end());
     return Result;
   };
 
@@ -511,7 +523,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         for (const MedVar &Aux : Op.IntrinsicOutputs)
           if (Aux.Id >= 0 && Aux.Size > 0)
             Kill.insert(Aux.Id);
-        std::set<int> Clobbered = CallClobberedIds(Op);
+        llvm::ArrayRef<int> Clobbered = CallClobberedIds(Op);
         Kill.insert(Clobbered.begin(), Clobbered.end());
       }
     }

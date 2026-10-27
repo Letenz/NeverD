@@ -58,6 +58,7 @@ struct Comparison {
   uint64_t Done = 0, Total = 0;
   bool Published = false;
   Program Primary, Secondary;
+  std::map<uint64_t, std::string> PrimaryDisplayNames, SecondaryDisplayNames;
   using OwnedSession = std::unique_ptr<void, decltype(&neverd_session_destroy)>;
   OwnedSession PrimarySource{nullptr, neverd_session_destroy};
   OwnedSession SecondarySource{nullptr, neverd_session_destroy};
@@ -245,11 +246,22 @@ llvm::json::Object match(const FunctionMatch &M) {
                             {"normalized_unchanged", M.identical()},
                             {"changes", changes(M.Changes)}};
 }
-llvm::json::Object function(const Program &P, uint32_t Index) {
+llvm::StringRef displayName(const Comparison &C, const Program &P,
+                            uint32_t Index) {
+  const auto &F = P.Functions[Index];
+  const auto &Names =
+      &P == &C.Primary ? C.PrimaryDisplayNames : C.SecondaryDisplayNames;
+  const auto It = Names.find(F.Address);
+  return It == Names.end() ? llvm::StringRef(F.Name)
+                           : llvm::StringRef(It->second);
+}
+llvm::json::Object function(const Comparison &C, const Program &P,
+                            uint32_t Index) {
   const auto &F = P.Functions[Index];
   return llvm::json::Object{
       {"address", vaHex(F.Address)},
-      {"name", jsonSafeText(F.Name)},
+      {"name", jsonSafeText(displayName(C, P, Index))},
+      {"evidence_name", jsonSafeText(F.Name)},
       {"size", F.Size},
       {"blocks", F.BlockCount},
       {"instructions", P.instructionCount(F)},
@@ -269,7 +281,8 @@ llvm::json::Object instruction(const Program &P, uint32_t Index) {
                     : nullptr;
   return O;
 }
-llvm::json::Object graph(const Program &P, uint32_t Index) {
+llvm::json::Object graph(const Comparison &C, const Program &P,
+                         uint32_t Index) {
   const auto &F = P.Functions[Index];
   llvm::json::Array Blocks, Edges;
   for (const auto &B : P.blocks(F)) {
@@ -286,7 +299,7 @@ llvm::json::Object graph(const Program &P, uint32_t Index) {
     Edges.push_back(
         llvm::json::Array{E.From, E.To, static_cast<unsigned>(E.Kind)});
   return llvm::json::Object{
-      {"function", function(P, Index)},
+      {"function", function(C, P, Index)},
       {"blocks", std::move(Blocks)},
       {"edges", std::move(Edges)},
       {"entry_block", F.EntryBlock},
@@ -584,6 +597,8 @@ static int runComparison(neverd_comparison_t Handle, neverd_session_t A,
             "comparison has no decoded code on one or both sides");
     C.Primary = std::move(Primary->Program);
     C.Secondary = std::move(Secondary->Program);
+    C.PrimaryDisplayNames = std::move(Primary->DisplayNames);
+    C.SecondaryDisplayNames = std::move(Secondary->DisplayNames);
     C.OwnedInputsBound = Own && !Primary->Stopped && !Secondary->Stopped;
     for (const auto &O : Overrides)
       require(C.Primary.functionAt(O.Primary) &&
@@ -816,6 +831,7 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
             (Kind == "unmatched" && (M || Ambiguous)))
           return;
         if (!Search.empty() &&
+            displayName(C, P, I).lower().find(Search) == std::string::npos &&
             llvm::StringRef(P.Functions[I].Name).lower().find(Search) ==
                 std::string::npos &&
             llvm::StringRef(vaHex(P.Functions[I].Address))
@@ -848,8 +864,8 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
         std::sort(Order.begin(), Order.end(), [&](uint32_t A, uint32_t B) {
           if (Descending)
             std::swap(A, B);
-          if (Sort == "name" && P.Functions[A].Name != P.Functions[B].Name)
-            return P.Functions[A].Name < P.Functions[B].Name;
+          if (Sort == "name" && displayName(C, P, A) != displayName(C, P, B))
+            return displayName(C, P, A) < displayName(C, P, B);
           if (Sort != "name" && Sort != "address" && Number(A) != Number(B))
             return Number(A) < Number(B);
           return P.Functions[A].Address < P.Functions[B].Address;
@@ -869,11 +885,11 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
       const auto I = C.Inventory[Position];
       const auto *M = Pair(I);
       const bool Ambiguous = I < Amb.size() && Amb[I] != NoIndex;
-      auto Row = function(P, I);
+      auto Row = function(C, P, I);
       Row["state"] = M ? "matched" : Ambiguous ? "ambiguous" : "unmatched";
       if (M) {
         Row["counterpart"] =
-            function(Other, Secondary ? M->Primary : M->Secondary);
+            function(C, Other, Secondary ? M->Primary : M->Secondary);
         Row["evidence"] = match(*M);
       }
       if (Ambiguous) {
@@ -884,7 +900,7 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
              N <
              std::min<size_t>(Others.size(), diffLimits::kDefaultMaxCandidates);
              ++N)
-          Candidates.push_back(function(Other, Others[N]));
+          Candidates.push_back(function(C, Other, Others[N]));
         Row["candidate_total"] = Others.size();
         Row["candidate_preview_complete"] = Others.size() == Candidates.size();
         Row["candidates"] = std::move(Candidates);
@@ -906,7 +922,7 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
     if (Source)
       Out["ambiguity"] = llvm::json::Object{
           {"source_side", Secondary ? "primary" : "secondary"},
-          {"source", function(Other, *Source)},
+          {"source", function(C, Other, *Source)},
           {"candidate_total",
            Group ? (Secondary ? Group->Secondary.size() : Group->Primary.size())
                  : 0},
@@ -935,15 +951,15 @@ const char *neverd_comparison_function_json(neverd_comparison_t Handle,
       require(P.instructionCount(P.Functions[*Index]) <=
                   diffLimits::kMaxDetailInstructions,
               "function exceeds detail instruction allowance");
-      Out[Secondary ? "secondary" : "primary"] = graph(P, *Index);
+      Out[Secondary ? "secondary" : "primary"] = graph(C, P, *Index);
       Out[Secondary ? "primary" : "secondary"] = nullptr;
       detailStatus(Out, nullptr);
       return dupStr(jsonToString(std::move(Out)));
     }
     const auto &Delta = cachedDelta(C, *M);
     detailStatus(Out, &Delta);
-    Out["primary"] = graph(C.Primary, M->Primary);
-    Out["secondary"] = graph(C.Secondary, M->Secondary);
+    Out["primary"] = graph(C, C.Primary, M->Primary);
+    Out["secondary"] = graph(C, C.Secondary, M->Secondary);
     Out["evidence"] = match(*M);
     llvm::json::Array Rows, Blocks;
     for (const auto &R : Delta.Rows) {
@@ -1052,7 +1068,7 @@ const char *neverd_comparison_source_page_json(neverd_comparison_t Handle,
         {"availability", Result.Availability},
         {"reason", jsonSafeText(Result.Reason)},
         {"side", Secondary ? "secondary" : "primary"},
-        {"function", function(P, Index)},
+        {"function", function(C, P, Index)},
         {"input_revision", P.Identity.Revision},
         {"input_sha256", P.Identity.SHA256},
         {"representation", Options.Representation},
@@ -1069,7 +1085,7 @@ const char *neverd_comparison_source_page_json(neverd_comparison_t Handle,
         {"cancellation_granularity", "between_function_analysis_and_rendering"},
         {"document", std::move(Result.Document)}};
     Out["counterpart"] =
-        M ? llvm::json::Value(function(Secondary ? C.Primary : C.Secondary,
+        M ? llvm::json::Value(function(C, Secondary ? C.Primary : C.Secondary,
                                        Secondary ? M->Primary : M->Secondary))
           : llvm::json::Value(nullptr);
     return dupStr(jsonToString(std::move(Out)));
@@ -1189,7 +1205,7 @@ const char *neverd_comparison_source_difference_json(neverd_comparison_t Handle,
     const auto Metadata = [&](const Program &P, uint32_t FunctionIndex,
                               const ComparisonSourceDocument &Document) {
       return llvm::json::Object{
-          {"function", function(P, FunctionIndex)},
+          {"function", function(C, P, FunctionIndex)},
           {"input_revision", P.Identity.Revision},
           {"input_sha256", P.Identity.SHA256},
           {"dialect", Document.Dialect},
@@ -1277,12 +1293,12 @@ const char *neverd_comparison_function_page_json(neverd_comparison_t Handle,
         {"offset", Offset},
         {"next_offset", End < Total ? llvm::json::Value(End) : nullptr}};
     detailStatus(Out, D);
-    Out["primary"] = M ? llvm::json::Value(function(C.Primary, M->Primary))
-                     : !Secondary ? llvm::json::Value(function(P, Index))
+    Out["primary"] = M ? llvm::json::Value(function(C, C.Primary, M->Primary))
+                     : !Secondary ? llvm::json::Value(function(C, P, Index))
                                   : nullptr;
     Out["secondary"] =
-        M           ? llvm::json::Value(function(C.Secondary, M->Secondary))
-        : Secondary ? llvm::json::Value(function(P, Index))
+        M           ? llvm::json::Value(function(C, C.Secondary, M->Secondary))
+        : Secondary ? llvm::json::Value(function(C, P, Index))
                     : nullptr;
     if (M)
       Out["evidence"] = match(*M);
@@ -1487,9 +1503,9 @@ const char *neverd_comparison_reviews_json(neverd_comparison_t Handle,
       const auto SF = Secondary ? Index : (M ? M->Secondary : NoIndex);
       Selection = llvm::json::Object{
           {"primary", PF == NoIndex ? llvm::json::Value(nullptr)
-                                    : function(C.Primary, PF)},
+                                    : function(C, C.Primary, PF)},
           {"secondary", SF == NoIndex ? llvm::json::Value(nullptr)
-                                      : function(C.Secondary, SF)},
+                                      : function(C, C.Secondary, SF)},
           {"pair_active", M != nullptr}};
     }
     const auto &J = C.Result.Reviews;
@@ -1674,8 +1690,8 @@ static const char *scalarValidation(neverd_comparison_t Handle,
         {"state", stateName(R.State)},
         {"status", scalarValidationStatusName(R.Proof.Status)},
         {"diagnostic", R.Proof.Diagnostic},
-        {"primary", function(C.Primary, M->Primary)},
-        {"secondary", function(C.Secondary, M->Secondary)},
+        {"primary", function(C, C.Primary, M->Primary)},
+        {"secondary", function(C, C.Secondary, M->Secondary)},
         {"primary_revision", C.Primary.Identity.Revision},
         {"secondary_revision", C.Secondary.Identity.Revision},
         {"primary_sha256", C.Primary.Identity.SHA256},
@@ -1918,8 +1934,8 @@ const char *neverd_comparison_observations_json(neverd_comparison_t Handle,
         {"anchor_scope", "aligned_native_rows"},
         {"dependency_scope", "local_and_unique_direct_synthetic_operands"},
         {"state", stateName(R.State)},
-        {"primary", function(C.Primary, M->Primary)},
-        {"secondary", function(C.Secondary, M->Secondary)},
+        {"primary", function(C, C.Primary, M->Primary)},
+        {"secondary", function(C, C.Secondary, M->Secondary)},
         {"primary_sha256", C.Primary.Identity.SHA256},
         {"secondary_sha256", C.Secondary.Identity.SHA256},
         {"pairing", match(*M)},
@@ -1989,7 +2005,7 @@ const char *neverd_comparison_dataflow_json(neverd_comparison_t Handle,
       }
       Out["availability"] = availabilityName(Row->Availability);
       Out["reason"] = Row->Reason;
-      Out["function_info"] = function(P, *P.functionAt(Address));
+      Out["function_info"] = function(C, P, *P.functionAt(Address));
     }
     Out["schema"] = "neverd.bindiff.dataflow.page";
     Out["schema_version"] =
@@ -2251,10 +2267,10 @@ const char *neverd_comparison_impact_json(neverd_comparison_t Handle,
       const auto &S = R.Sites[I];
       return llvm::json::Object{
           {"site", I},
-          {"caller", function(P, S.Caller)},
+          {"caller", function(C, P, S.Caller)},
           {"callee", S.Callee == NoIndex
                          ? llvm::json::Value(nullptr)
-                         : llvm::json::Value(function(P, S.Callee))},
+                         : llvm::json::Value(function(C, P, S.Callee))},
           {"instruction",
            S.Instruction == NoIndex
                ? llvm::json::Value(nullptr)
@@ -2332,7 +2348,7 @@ const char *neverd_comparison_impact_json(neverd_comparison_t Handle,
       const auto RI = Kind == "functions" ? uint32_t(I) : Indices[I];
       const auto &F = R.Functions[RI];
       const auto &Native = P.Functions[F.Function];
-      auto Row = function(P, F.Function);
+      auto Row = function(C, P, F.Function);
       Row["row"] = RI;
       Row["depth"] = F.Depth;
       Row["entry_point"] = Native.has(TraitEntryPoint);
@@ -2667,8 +2683,8 @@ const char *neverd_comparison_region_page_json(neverd_comparison_t Handle,
         {"total", Total},
         {"offset", Offset},
         {"next_offset", End < Total ? llvm::json::Value(End) : nullptr},
-        {"primary", function(C.Primary, A.Primary.Function)},
-        {"secondary", function(C.Secondary, A.Secondary.Function)},
+        {"primary", function(C, C.Primary, A.Primary.Function)},
+        {"secondary", function(C, C.Secondary, A.Secondary.Function)},
         {"hypothesis",
          H ? llvm::json::Value(regionHypothesisJSON(*H, C.Primary, C.Secondary))
            : nullptr},

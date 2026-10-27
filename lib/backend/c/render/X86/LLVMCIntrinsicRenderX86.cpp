@@ -169,12 +169,23 @@ renderX86DescriptorStateCall(Arch TheArch, BinaryFormat Format,
                 }
               };
               Match(Candidate->Constraints);
+              if (Candidate->Address) {
+                // Retain the exact older fixed-BX spelling, while new output
+                // avoids reserved realignment and PIC bases.
+                auto Constraints = Candidate->Constraints;
+                Constraints.replace(
+                    Constraints.find(Candidate->InputConstraint),
+                    Candidate->InputConstraint.size(), "{bx}");
+                Match(Constraints);
+              }
               // Earlier lifted FS/GS accesses already normalized the offset
               // but allowed any base register. Keep that exact legacy form.
               if (Candidate->Address && Candidate->Address->Bits == WordBits &&
                   (Prefix == 0x64 || Prefix == 0x65)) {
                 auto Constraints = Candidate->Constraints;
-                Constraints.replace(Constraints.find("{bx}"), 4, "r");
+                Constraints.replace(
+                    Constraints.find(Candidate->InputConstraint),
+                    Candidate->InputConstraint.size(), "r");
                 Match(Constraints);
               }
             }

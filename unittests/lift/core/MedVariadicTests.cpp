@@ -228,6 +228,43 @@ TEST(MedVariadic, DefinitionLookupIsFreshForEachFunctionAndEdit) {
   }
 }
 
+TEST(MedVariadic, I386RequiresAHomedPointerAndAReloadOrAdvancedRead) {
+  for (int Mode = 0; Mode < 10; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc F = homeFunction(Arch::X86);
+    auto &Ops = F.Blocks[0].Ops;
+    const MedVar Value = Ops[0].Output;
+    const MedVar Advanced = temp(4, 4);
+    if (Mode == 1) {
+      Ops.erase(Ops.begin() + 2); // A reload alone supplies no va_list home.
+    } else if (Mode == 2) {
+      Ops.pop_back(); // A home alone supplies no va_arg use.
+    } else if (Mode == 3) {
+      Ops[3].Inputs[0] = Value; // A direct read must follow an advance.
+    } else if (Mode >= 4) {
+      Ops[3].Inputs[0] = Mode == 5 ? temp(99, 4) : Advanced;
+      Ops.push_back(
+          op(NdOp::INT_ADD, Advanced,
+             {Value, Mode == 7 ? temp(98, 4) : MedVar::makeConst(4, 4)}));
+      if (Mode == 6)
+        Ops[2].MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      if (Mode == 8)
+        Ops[3].MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+      if (Mode == 9) {
+        const MedVar Joined = temp(5, 4);
+        const MedVar Backedge = temp(6, 4);
+        F.Blocks[0].Phis.push_back({Joined, {{0, Advanced}, {1, Backedge}}});
+        Ops.push_back(op(NdOp::COPY, Backedge, {Joined}));
+        Ops[3].Inputs[0] = Joined;
+      }
+    }
+    classify(F, Arch::X86);
+    EXPECT_EQ(F.IsVariadic, Mode == 0 || Mode == 4 || Mode == 9);
+    if (F.IsVariadic)
+      EXPECT_EQ(F.VariadicOverflowBase, 8);
+  }
+}
+
 TEST(MedVariadic, DarwinWalkRetainsFirstCopyAndOrderedOrCandidates) {
   const auto &TRI = getTargetRegInfo(Arch::AArch64);
   for (int Mode = 0; Mode < 10; ++Mode) {

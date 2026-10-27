@@ -1,5 +1,7 @@
 **语言**: [English](../testing.md) | [简体中文](testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](../ja/testing.md) | [한국어](../ko/testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` 通过源码流水线检查 x64/ARM64 Mach-O 的整数、浮点及混合栈参数。`IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` 确保内存读取、调用、栈地址逃逸以及不透明或内存 intrinsic 仍保留入口存储初始化。纯值路径直接使用声明的参数，不额外生成物理 SP 写入，并保留寄存器浮点状态效应。macOS 移动端矩阵独立编译并执行恢复的 Swift；生成成功本身不代表执行验证。
+
 `NeverDLLVMCValueTests` 在 O0/O2、保留 LLVM 类型开关两种状态下，把转换后的可变参数调用与独立的 Windows x64 ABI 被调函数一起编译执行。原生 x64 通过 va_arg 验证浮点值；其他架构明确跳过此执行。
 
 [← 文档索引](README.md)
@@ -11,6 +13,8 @@
 `NeverDSourceEntryBindingTests` 编译并执行 x64/ARM64、PE/ELF、HighC/LLVMC 的入口栈参数矩阵，覆盖完整模块、单独调用者、显式浮点位传递、缓存复用和重置。负向测试拒绝不完整写入、未对齐参数、栈地址逃逸和未定义输入；独立被调函数定义检查固定参数声明。主机执行不等于原生 Windows ARM64 驱动验证。 矩阵还覆盖 RBP、x29/x30 栈帧的恢复；覆盖保存字节、SP 恢复但 RBP 改变、把返回地址当参数等反例，并检查 ELF 与 Windows 保留寄存器的差异。
 
 新增矩阵以 O0/O2 和 UBSan 执行有符号与无符号的 1/2/4 字节读取，覆盖两条 C 路径、完整输出及仅选调用者；调用者只写入实际读取的字节，并拒绝超出声明宽度的读取。
+
+混合宽度矩阵以 O0/O2 和 UBSan 执行同槽前缀及完整读取。原生栈帧反例覆盖两种读取顺序，并拒绝仅有窄读取、或完整读取属于另一槽的证据。
 
 已知寄存器调用覆盖 x64/ARM64 PE/ELF、完整模块和仅选调用者的两条 C 路径，并检查原始 LowIR 仍是间接调用。负例覆盖部分写入旧值、不透明副作用、指令临时变量复用、内存调用槽及工作预算耗尽。
 
@@ -2176,3 +2180,7 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 自身比较矩阵还执行无参数的相等及减法溢出案例。这些案例不需要任何传入寄存器值，两条 C 路线都不能额外生成未知状态陷阱。
 
 HFA 导入槽测试编译严格的 C 原型，并对头文件声明和本地声明执行完整参数及返回值验证。两条 C 路线覆盖 float、double 结构体、连续调用和 AArch64 执行。
+
+## 选定函数声明检查
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` 将地址输出分别与整数、指针、浮点和 void 返回的实现拼接；`AddressOnlyCallbackConvertsToItsKnownParameterType` 执行带类型的回调。`SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` 拼接分别选择的调用者和读取指针的被调函数，对比整单元及冷、热缓存输出。x64/ARM64 的 PE、ELF、Mach-O 输入模型生成的 C 在主机上以 O0/O2 和 UBSan 编译执行。这不代表所有目标平台的原生执行已验证。修改此边界后运行调用契约、指针投影、源码 ABI 和被调函数缓存相关测试。

@@ -317,20 +317,9 @@ struct Runtime::State::Engine {
     if (!refs && !integral(component))
       fail(ExecutionStop::Unsupported,
            "floating array execution is unsupported");
-    unsigned size = refs               ? sizeof(std::weak_ptr<Object>)
-                    : component == "J" ? 8
-                    : component == "I" ? 4
-                    : component == "C" || component == "S" ? 2
-                                                           : 1;
-    auto value = state.heap->allocate(
-        refs ? Object::ObjectArray : Object::PrimitiveArray, type,
-        refs ? 0 : uint64_t(length) * size, refs ? uint64_t(length) * size : 0);
+    auto value = state.heap->allocateArray(type, length);
     if (!value)
       fail(ExecutionStop::HeapLimit, "Java array storage budget exhausted");
-    value->Length = length;
-    value->ElementSize = size;
-    if (refs)
-      value->Elements.resize(length);
     return value;
   }
   uint64_t arrayValue(Object &array, uint32_t index,
@@ -396,6 +385,13 @@ struct Runtime::State::Engine {
       if (receiver)
         fail(ExecutionStop::Invalid, "static field has an instance receiver");
       co_await initialize(ref.owner, depth);
+      if (program.androidFrameworkField(field)) {
+        auto result =
+            state.framework.field(*state.heap, field, 0, write, admit);
+        if (result.stop != ExecutionStop::Returned)
+          throw Halt{std::move(result)};
+        co_return narrow(result.value, ref.type);
+      }
       value = &state.classes.at(program.findClass(ref.owner)).fields.at(&field);
     } else {
       auto instance = object(receiver, frame);
@@ -452,7 +448,8 @@ struct Runtime::State::Engine {
       // recursive initialization reads this class's partially initialized
       // state.
       for (const auto &field : klass->fields) {
-        if (!has(field.access, "static"))
+        if (!has(field.access, "static") ||
+            program.androidFrameworkField(field))
           continue;
         uint64_t value = 0;
         const auto &type = field.reference.type;
@@ -526,6 +523,20 @@ struct Runtime::State::Engine {
       if (!has(klass->access, "interface") && klass->superclass &&
           program.containsClass(*klass->superclass))
         co_await initialize(*klass->superclass, depth + 1);
+      if (program.android_framework_initializers.contains(klass)) {
+        auto result = state.framework.initializeServiceManager(
+            *state.heap, program, admit, [&](std::string_view dependency) {
+              // Reserved framework dependencies have no suspended DEX bodies.
+              // Reuse class preparation, owner and failure propagation.
+              return state.start(
+                  [dependency = std::string(dependency), depth](auto &engine) {
+                    return engine.initialize(dependency, depth + 1);
+                  },
+                  admit, remaining_stack, owner);
+            });
+        if (result.stop != ExecutionStop::Returned)
+          throw Halt{std::move(result)};
+      }
       for (const auto &method : klass->methods)
         if (method.reference.name == "<clinit>") {
           if (!method.reference.parameters.empty() ||
@@ -1072,6 +1083,9 @@ struct Runtime::State::Engine {
                    "call");
             if (direct != ctor && !static_call)
               frame.invalid("invalid library invoke kind");
+            if (static_call && program.android_framework_initializers.contains(
+                                   program.findClass(selected.owner)))
+              co_await initialize(selected.owner, depth + 1);
             auto args = std::span<const uint64_t>(values).subspan(!static_call);
             auto executed =
                 executeLibrary(*state.heap, *library, receiver, args, admit,
@@ -1286,7 +1300,9 @@ Program::Program(
     std::optional<std::map<std::string, std::string>> android_properties) {
   for (auto &item : declarations) {
     if (item.name.starts_with("Ljava/") || item.name.starts_with("Ljavax/") ||
-        item.name.starts_with("Landroid/") || item.name.starts_with("Ldalvik/"))
+        item.name.starts_with("Landroid/") ||
+        item.name.starts_with("Ldalvik/") ||
+        item.name == "Lcom/android/internal/util/StatLogger;")
       throw Error("DEX cannot replace platform classes");
     auto name = item.name;
     auto [entry, inserted] = classes.emplace(std::move(name), std::move(item));
@@ -1482,7 +1498,7 @@ Program::unsupportedClass(std::string_view name) const {
     for (const auto &field : klass->fields)
       if ((!integral(field.reference.type) &&
            !referenceType(field.reference.type)) ||
-          has(field.access, "volatile"))
+          (has(field.access, "volatile") && !androidFrameworkField(field)))
         return "DEX floating or volatile field is unsupported";
     for (const auto &method : klass->methods) {
       for (const auto &inherited : libraryMethods()) {
@@ -1661,6 +1677,15 @@ ExecutionResult Runtime::library(const LibraryMethod &method, uint64_t receiver,
                                  std::span<const uint64_t> args,
                                  const AdmitInstruction &admit,
                                  bool nonvirtual) {
+  const auto owner = "L" + std::string(method.Class) + ";";
+  if (method.Static && state->program.android_framework_initializers.contains(
+                           state->program.findClass(owner))) {
+    // These bounded initializers need no DEX stack frames. JNI and DEX use
+    // this same class state; a terminal initializer cannot be bypassed here.
+    auto result = initialize(owner, admit, 0);
+    if (result.stop != ExecutionStop::Returned)
+      return result;
+  }
   return state->invoke([&] {
     if (!admit)
       throw Halt{{ExecutionStop::Invalid, 0, {}, "missing Java work budget"}};

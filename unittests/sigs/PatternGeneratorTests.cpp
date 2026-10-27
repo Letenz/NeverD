@@ -795,6 +795,44 @@ TEST(PatternGeneratorCOFF, PrimaryVTableAddressesRetainExactTypeReferences) {
   }
 }
 
+TEST(PatternGeneratorCOFF, ThrowInfoReferencesRequireCanonicalExternalData) {
+  for (bool EmitData : {false, true}) {
+    for (unsigned Variant = 0; Variant < 5; ++Variant) {
+      std::vector<uint8_t> Code(32, 0x90);
+      Code[4] = 0x48;
+      Code[5] = 0x8d;
+      Code[6] = 0x15;
+      std::fill(Code.begin() + 7, Code.begin() + 11, 0);
+      if (Variant == 4)
+        Code[7] = 1; // A relocation addend does not name the complete record.
+      COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_AMD64, Code);
+      if (Variant != 1)
+        Builder.setDataTarget();
+      if (Variant == 2)
+        Builder.setTargetStorage(COFF::IMAGE_SYM_CLASS_STATIC);
+      if (Variant == 3)
+        Builder.setTargetStorage(COFF::IMAGE_SYM_CLASS_EXTERNAL, 1);
+      Builder.addFunction("thrower", 0);
+      Builder.addRelocation(7, COFF::IMAGE_REL_AMD64_REL32);
+      Builder.setRelocationTarget("_TI2?AVWidget@@");
+      PatternGeneratorOptions Opts;
+      Opts.EmitReferences = true;
+      Opts.EmitDataReferences = EmitData;
+      Opts.RequireReferences = true;
+      Generated Out = generate(Builder.build(), Opts);
+      ASSERT_EQ(Out.Lines.size(), 1u);
+      auto Mod = PatternParser::parseLine(Out.Lines.front());
+      ASSERT_TRUE(static_cast<bool>(Mod)) << toString(Mod.takeError());
+      ASSERT_EQ(Mod->References.size(), Variant == 0 ? 1u : 0u);
+      if (Variant == 0) {
+        EXPECT_EQ(Mod->References.front().Name, "_TI2?AVWidget@@");
+        EXPECT_EQ(Mod->References.front().Offset, 7u);
+        EXPECT_FALSE(Mod->References.front().IsData);
+      }
+    }
+  }
+}
+
 TEST(PatternGeneratorCOFF, VTableReferencesRequireCanonicalZeroAddendFields) {
   for (unsigned Variant = 0; Variant != 8; ++Variant) {
     std::vector<uint8_t> Code(32, 0x90);
@@ -1577,6 +1615,25 @@ TEST(PatternGeneratorCOFF, FunctionAddressReferencesRequireFunctionSymbols) {
   EXPECT_EQ(Mod->References.front().Offset, 3u);
   Builder.setDataTarget();
   EXPECT_TRUE(generate(Builder.build(), Opts).Lines.empty());
+}
+
+TEST(PatternGeneratorCOFF, FunctionAddressesAfterPrefixLookingOperands) {
+  // F0 is the previous LEA's SIB byte, not a LOCK prefix on the next LEA.
+  COFFObjectBuilder Builder(
+      COFF::IMAGE_FILE_MACHINE_AMD64,
+      {0x48, 0x8d, 0x0c, 0xf0, 0x4c, 0x8d, 0x0d, 0, 0, 0, 0, 0xc3});
+  Builder.addFunction("registration", 0);
+  Builder.setRelocationTarget("callback");
+  Builder.addRelocation(7, COFF::IMAGE_REL_AMD64_REL32);
+  PatternGeneratorOptions Opts;
+  Opts.EmitReferences = Opts.RequireReferences = true;
+  const auto Out = generate(Builder.build(), Opts);
+  ASSERT_EQ(Out.Lines.size(), 1u);
+  auto Mod = PatternParser::parseLine(Out.Lines.front());
+  ASSERT_TRUE(bool(Mod)) << toString(Mod.takeError());
+  ASSERT_EQ(Mod->References.size(), 1u);
+  EXPECT_EQ(Mod->References.front().Name, "callback");
+  EXPECT_EQ(Mod->References.front().Offset, 7u);
 }
 
 TEST(PatternGeneratorCOFF, CollisionEvidenceIncludesWeakUnreferencedFunctions) {

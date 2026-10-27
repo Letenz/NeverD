@@ -12,6 +12,8 @@ Quando il tipo di chiamata LLVM differisce dalla dichiarazione, LLVM C valuta la
 
 I parametri interi sullo stack di 1/2/4/8 byte mantengono la larghezza esatta nella cache, nel binding di ingresso e nella prova delle scritture del chiamante. Le estensioni con e senza segno preservano i bit letti; un parametro stretto non inizializza byte adiacenti.
 
+Le letture strette allo stesso offset condividono un parametro solo se il codice originale raggiungibile legge anche tutta la larghezza dichiarata dello slot. La prova del frame verifica il massimo per slot: letture strette ripetute o una lettura completa da un altro slot non forniscono i byte mancanti.
+
 Le destinazioni costanti delle chiamate tramite registro usano la query scalare LowIR limitata e condivisa. La prova dello stack mantiene la chiamata indiretta originale; solo il MedIR sorgente diventa una chiamata nominata dopo l’accordo tra destinazione, dichiarazione e byte in uscita. Caricamenti, valori tra blocchi, effetti delle chiamate e registri incompleti non determinano una destinazione.
 
 Per i PE x64 collegati, il rilevamento raccoglie gli indirizzi di codice delle LEA canoniche relative a RIP durante la scansione delle chiamate esistente. Ogni destinazione richiede ancora un ingresso indipendente e una prova limitata di uscita richiamabile; etichette interne, continuazioni e corpi non supportati restano esclusi. Rilevamento e firme condividono il riconoscimento della codifica. I riferimenti rel32 condizionali COFF richiedono inoltre simboli di funzione espliciti e rilocazioni senza addendo. Offline, `--single-reference-context` verifica ogni condizione con un solo sito rispetto a tutte le dichiarazioni originali sovrapposte, mantenendo tutte le alternative del sito.
@@ -2021,3 +2023,9 @@ La semplificazione condivisa dei flag MedIR conserva entrambi gli operandi della
 Le condizioni intere che confrontano lo stesso valore SSA con sé stesso diventano costanti booleane prima dell’emissione del sorgente, incluso l’overflow della sottrazione. Gli operandi non specificati restano espliciti.
 
 Le destinazioni HFA salvate usano la stessa firma sorgente verificata della ricostruzione degli argomenti e dei risultati di struttura. Il prototipo conserva il puntatore originale e i tipi completi, compresi i gruppi di registri scomposti e gli argomenti sullo stack.
+
+## Dichiarazioni delle funzioni selezionate
+
+HighC rappresenta un simbolo usato solo come indirizzo e privo di firma nota con un alias di byte associato al nome del linker, senza inventare il tipo restituito. Conserva la conversione del callback tipizzato e la navigazione verso simbolo e indirizzo. LLVM per il sorgente riusa il lettore limitato delle funzioni omesse anche quando il numero di argomenti è noto. Mantiene dichiarazioni fisse x64/ARM64 di interi o puntatori della dimensione di una parola solo se portatori e tipi restano invariati dopo il recupero. I contratti espliciti hanno precedenza; non vengono forniti corpi, contratti di eccezione o autorizzazioni al lifting nativo. La cache distingue queste letture e mantiene la stessa decisione a caldo.
+
+I metadati di eccezione noti escludono questa dichiarazione prima di leggere il corpo; le letture ordinarie delle firme restano invariate.

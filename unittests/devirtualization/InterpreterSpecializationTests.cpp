@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <optional>
@@ -645,6 +646,23 @@ TEST(InterpreterSpecialization, UnknownIndirectAndOpaqueEffectsPublishNothing) {
     EXPECT_TRUE(Result.Residual.Blocks.empty());
     EXPECT_FALSE(Result.Diagnostic.empty());
   }
+}
+
+TEST(InterpreterSpecialization,
+     ExtendedOperandStorageRetainsUnsupportedEffectRefusal) {
+  LowOp Opaque = op(NdOp::INTRINSIC, reg(0), {});
+  for (size_t I = 0; I != std::size(Opaque.Inputs); ++I)
+    Opaque.addInput(constant(0));
+  Provider P;
+  P.add(0x100, {Opaque});
+  auto Result = specializeInterpreter(P, {0x100});
+  EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+  auto &Malformed = P.Code[0x100].Ops[0];
+  Malformed.NumInputs = std::size(Malformed.Inputs) + 1;
+  Result = specializeInterpreter(P, {0x100});
+  EXPECT_EQ(Result.Status, SpecializationStatus::InvalidInput);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
 }
 
 TEST(InterpreterSpecialization,

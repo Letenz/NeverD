@@ -516,7 +516,8 @@ bool supported(const LowOp &Op, const SpecializationOptions &Options) {
   if (Op.Opcode == NdOp::ATOMIC_CMPXCHG)
     return Options.ExplicitMachineState && Options.NormalNonfaultingExecution &&
            supportsCmpxchgPreservation(Op);
-  if (Op.NumInputs > 6 || Op.MemoryOrdering != NdMemoryOrdering::None)
+  if (Op.NumInputs > std::size(Op.Inputs) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None)
     return false;
   if (Op.Output.Size > 8 ||
       std::any_of(Op.Inputs, Op.Inputs + Op.NumInputs,
@@ -2477,7 +2478,9 @@ bool Specializer::evaluate(int Id) {
                   llvm::toString(Fetched.takeError()));
     const auto &Instruction = *Fetched;
     if (std::any_of(Instruction.Ops.begin(), Instruction.Ops.end(),
-                    [](const LowOp &Op) { return Op.NumInputs > 6; }))
+                    [](const LowOp &Op) {
+                      return Op.NumInputs > std::size(Op.Inputs);
+                    }))
       return fail(SpecializationStatus::InvalidInput,
                   "provider operation exceeds its operand capacity");
     if (Instruction.Origin.Address != Cursor.Address ||

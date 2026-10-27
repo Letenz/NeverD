@@ -23,6 +23,10 @@
 #ifndef NEVERD_A64_WRITEBACK_MULTI_OUTPUT
 #define NEVERD_A64_WRITEBACK_MULTI_OUTPUT(Id, Count)
 #endif
+#ifndef NEVERD_A64_WRITEBACK_MACHINE
+#define NEVERD_A64_WRITEBACK_MACHINE(Stack, Vector, Pair, Load, Asm,           \
+                                     Constraints)
+#endif
 #ifndef NEVERD_A64_WRITEBACK_VALUE
 #define NEVERD_A64_WRITEBACK_VALUE(Type, Name, Value)
 #endif
@@ -40,6 +44,28 @@ NEVERD_A64_WRITEBACK_OPERATION(A64_PairLoad, "pair_load")
 NEVERD_A64_WRITEBACK_OPERATION(A64_PairStore, "pair_store")
 NEVERD_A64_WRITEBACK_OPERATION(A64_VectorPairLoad, "vector_pair_load")
 NEVERD_A64_WRITEBACK_OPERATION(A64_VectorPairStore, "vector_pair_store")
+// Append-only: complete structure values, followed by the completed base.
+NEVERD_A64_WRITEBACK_OPERATION(A64_StructureLoad1, "structure_load1")
+NEVERD_A64_WRITEBACK_MULTI_OUTPUT(A64_StructureLoad1, 2)
+NEVERD_A64_WRITEBACK_OPERATION(A64_StructureLoad2, "structure_load2")
+NEVERD_A64_WRITEBACK_MULTI_OUTPUT(A64_StructureLoad2, 3)
+NEVERD_A64_WRITEBACK_OPERATION(A64_StructureLoad3, "structure_load3")
+NEVERD_A64_WRITEBACK_MULTI_OUTPUT(A64_StructureLoad3, 4)
+NEVERD_A64_WRITEBACK_OPERATION(A64_StructureLoad4, "structure_load4")
+NEVERD_A64_WRITEBACK_MULTI_OUTPUT(A64_StructureLoad4, 5)
+NEVERD_A64_WRITEBACK_OPERATION(A64_StructureLaneLoad1, "structure_laneload1")
+NEVERD_A64_WRITEBACK_MULTI_OUTPUT(A64_StructureLaneLoad1, 2)
+NEVERD_A64_WRITEBACK_OPERATION(A64_StructureLaneLoad2, "structure_laneload2")
+NEVERD_A64_WRITEBACK_MULTI_OUTPUT(A64_StructureLaneLoad2, 3)
+NEVERD_A64_WRITEBACK_OPERATION(A64_StructureLaneLoad3, "structure_laneload3")
+NEVERD_A64_WRITEBACK_MULTI_OUTPUT(A64_StructureLaneLoad3, 4)
+NEVERD_A64_WRITEBACK_OPERATION(A64_StructureLaneLoad4, "structure_laneload4")
+NEVERD_A64_WRITEBACK_MULTI_OUTPUT(A64_StructureLaneLoad4, 5)
+NEVERD_A64_WRITEBACK_OPERATION(A64_StructureStore1, "structure_store1")
+NEVERD_A64_WRITEBACK_OPERATION(A64_StructureStore2, "structure_store2")
+NEVERD_A64_WRITEBACK_OPERATION(A64_StructureStore3, "structure_store3")
+NEVERD_A64_WRITEBACK_OPERATION(A64_StructureStore4, "structure_store4")
+
 NEVERD_A64_WRITEBACK_MULTI_OUTPUT(A64_PairLoad, 3)
 NEVERD_A64_WRITEBACK_MULTI_OUTPUT(A64_VectorPairLoad, 3)
 NEVERD_A64_WRITEBACK_MULTI_OUTPUT(A64_VectorLoadWriteback, 2)
@@ -139,6 +165,89 @@ NEVERD_A64_WRITEBACK_TEXT(kWritebackVectorLoadConstraints,
                           "=&{v17},={x16},1,i,~{memory}")
 NEVERD_A64_WRITEBACK_TEXT(kWritebackVectorStoreConstraints,
                           "={x16},0,{v17},i,~{memory}")
+// SP is borrowed for one instruction. Capture its completed value before
+// restoring the host stack; no compiler access or call occurs in this window.
+NEVERD_A64_WRITEBACK_TEXT(
+    kWritebackStoreSPAsm,
+    "// neverd.writeback.store.sp\n\tmov x14, sp\n\tmov sp, x16\n\t"
+    ".inst ${3:c}\n\tmov x16, sp\n\tmov sp, x14")
+NEVERD_A64_WRITEBACK_TEXT(kWritebackStoreSPConstraints,
+                          "={x16},0,{x17},i,~{x14},~{memory}")
+NEVERD_A64_WRITEBACK_MACHINE(false, false, false, false, kWritebackStoreAsm,
+                             kWritebackStoreConstraints)
+NEVERD_A64_WRITEBACK_MACHINE(true, false, false, false, kWritebackStoreSPAsm,
+                             kWritebackStoreSPConstraints)
+NEVERD_A64_WRITEBACK_TEXT(
+    kWritebackLoadSPAsm,
+    "// neverd.writeback.load.sp\n\tmov x14, sp\n\tmov sp, x16\n\t"
+    ".inst ${3:c}\n\tmov x16, sp\n\tmov sp, x14")
+NEVERD_A64_WRITEBACK_TEXT(kWritebackLoadSPConstraints,
+                          "=&{x17},={x16},1,i,~{x14},~{memory}")
+NEVERD_A64_WRITEBACK_MACHINE(false, false, false, true, kWritebackLoadAsm,
+                             kWritebackLoadConstraints)
+NEVERD_A64_WRITEBACK_MACHINE(true, false, false, true, kWritebackLoadSPAsm,
+                             kWritebackLoadSPConstraints)
+NEVERD_A64_WRITEBACK_TEXT(
+    kWritebackVectorStoreSPAsm,
+    "// neverd.writeback.vector.store.sp\n\tmov x14, sp\n\tmov sp, x16\n\t"
+    ".inst ${3:c}\n\tmov x16, sp\n\tmov sp, x14")
+NEVERD_A64_WRITEBACK_TEXT(kWritebackVectorStoreSPConstraints,
+                          "={x16},0,{v17},i,~{x14},~{memory}")
+NEVERD_A64_WRITEBACK_MACHINE(false, true, false, false,
+                             kWritebackVectorStoreAsm,
+                             kWritebackVectorStoreConstraints)
+NEVERD_A64_WRITEBACK_MACHINE(true, true, false, false,
+                             kWritebackVectorStoreSPAsm,
+                             kWritebackVectorStoreSPConstraints)
+NEVERD_A64_WRITEBACK_TEXT(
+    kWritebackVectorLoadSPAsm,
+    "// neverd.writeback.vector.load.sp\n\tmov x14, sp\n\tmov sp, x16\n\t"
+    ".inst ${3:c}\n\tmov x16, sp\n\tmov sp, x14")
+NEVERD_A64_WRITEBACK_TEXT(kWritebackVectorLoadSPConstraints,
+                          "=&{v17},={x16},1,i,~{x14},~{memory}")
+NEVERD_A64_WRITEBACK_MACHINE(false, true, false, true, kWritebackVectorLoadAsm,
+                             kWritebackVectorLoadConstraints)
+NEVERD_A64_WRITEBACK_MACHINE(true, true, false, true, kWritebackVectorLoadSPAsm,
+                             kWritebackVectorLoadSPConstraints)
+NEVERD_A64_WRITEBACK_TEXT(
+    kPairStoreSPAsm, "// neverd.pair.store.sp\n\tmov x14, sp\n\tmov sp, x16\n\t"
+                     ".inst ${4:c}\n\tmov x16, sp\n\tmov sp, x14")
+NEVERD_A64_WRITEBACK_TEXT(kPairStoreSPConstraints,
+                          "={x16},0,{x17},{x15},i,~{x14},~{memory}")
+NEVERD_A64_WRITEBACK_MACHINE(false, false, true, false, kPairStoreAsm,
+                             kPairStoreConstraints)
+NEVERD_A64_WRITEBACK_MACHINE(true, false, true, false, kPairStoreSPAsm,
+                             kPairStoreSPConstraints)
+NEVERD_A64_WRITEBACK_TEXT(
+    kPairLoadSPAsm, "// neverd.pair.load.sp\n\tmov x14, sp\n\tmov sp, x16\n\t"
+                    ".inst ${4:c}\n\tmov x16, sp\n\tmov sp, x14")
+NEVERD_A64_WRITEBACK_TEXT(kPairLoadSPConstraints,
+                          "=&{x17},=&{x15},={x16},2,i,~{x14},~{memory}")
+NEVERD_A64_WRITEBACK_MACHINE(false, false, true, true, kPairLoadAsm,
+                             kPairLoadConstraints)
+NEVERD_A64_WRITEBACK_MACHINE(true, false, true, true, kPairLoadSPAsm,
+                             kPairLoadSPConstraints)
+NEVERD_A64_WRITEBACK_TEXT(
+    kPairVectorStoreSPAsm,
+    "// neverd.pair.vector.store.sp\n\tmov x14, sp\n\tmov sp, x16\n\t"
+    ".inst ${4:c}\n\tmov x16, sp\n\tmov sp, x14")
+NEVERD_A64_WRITEBACK_TEXT(kPairVectorStoreSPConstraints,
+                          "={x16},0,{v17},{v15},i,~{x14},~{memory}")
+NEVERD_A64_WRITEBACK_MACHINE(false, true, true, false, kPairVectorStoreAsm,
+                             kPairVectorStoreConstraints)
+NEVERD_A64_WRITEBACK_MACHINE(true, true, true, false, kPairVectorStoreSPAsm,
+                             kPairVectorStoreSPConstraints)
+NEVERD_A64_WRITEBACK_TEXT(
+    kPairVectorLoadSPAsm,
+    "// neverd.pair.vector.load.sp\n\tmov x14, sp\n\tmov sp, x16\n\t"
+    ".inst ${4:c}\n\tmov x16, sp\n\tmov sp, x14")
+NEVERD_A64_WRITEBACK_TEXT(kPairVectorLoadSPConstraints,
+                          "=&{v17},=&{v15},={x16},2,i,~{x14},~{memory}")
+NEVERD_A64_WRITEBACK_MACHINE(false, true, true, true, kPairVectorLoadAsm,
+                             kPairVectorLoadConstraints)
+NEVERD_A64_WRITEBACK_MACHINE(true, true, true, true, kPairVectorLoadSPAsm,
+                             kPairVectorLoadSPConstraints)
+
 NEVERD_A64_WRITEBACK_TEXT(kWritebackResult, "memory.writeback")
 NEVERD_A64_WRITEBACK_TEXT(kWritebackMalformed,
                           "malformed AArch64 writeback memory operation")
@@ -146,6 +255,7 @@ NEVERD_A64_WRITEBACK_TEXT(kWritebackSPUnsupported,
                           "writeback SP memory requires the original SP "
                           "alignment and memory-tagging environment")
 
+#undef NEVERD_A64_WRITEBACK_MACHINE
 #undef NEVERD_A64_PAIR_ENCODING
 #undef NEVERD_A64_WRITEBACK_VECTOR_ENCODING
 #undef NEVERD_A64_WRITEBACK_MULTI_OUTPUT

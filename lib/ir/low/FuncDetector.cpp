@@ -786,6 +786,8 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
       std::set<va_t> Starts;
       for (const auto &R : Results)
         Starts.insert(R.first);
+      const auto UnwindTails = func_detect_detail::checkedUnwindTailTargetsX64(
+          Img, Starts, Cancellation);
       const bool PreviousDetail = Dec.detailEnabled();
       // Every target is a new start, so a chain of forwarders ends.
       std::vector<va_t> Forwarders(Starts.begin(), Starts.end());
@@ -796,14 +798,23 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
           func_detect_detail::checkCancellation(Cancellation);
           Dec.setDetail(true);
           Dec.resetX86FpuState();
-          const va_t Target = forwardingJumpTarget(Img, Dec, Forwarder);
+          const auto Tail = UnwindTails.find(Forwarder);
+          const bool RestoredFrame = Tail != UnwindTails.end();
+          const va_t Target = RestoredFrame
+                                  ? Tail->second
+                                  : forwardingJumpTarget(Img, Dec, Forwarder);
           if (Target == InvalidVA || Starts.count(Target) ||
               Img.findImportAt(Target) || !Img.hasExecutableCodeOwnerAt(Target))
             continue;
           const auto Next = Starts.upper_bound(Forwarder);
-          if (Target > Forwarder && (Next == Starts.end() || Target < *Next))
+          // A checked adapter has an exact source extent, so a forward target
+          // beyond that extent is callable even before the next known entry.
+          // An interior of another metadata-owned range is still not an entry.
+          if (RestoredFrame ? InsideKnownButNotStart(Target)
+                            : Target > Forwarder &&
+                                  (Next == Starts.end() || Target < *Next))
             continue;
-          if (!verifyFunctionDecode(Img, Dec, Target))
+          if (!verifyFunctionDecode(Img, Dec, Target, false, RestoredFrame))
             continue;
           Starts.insert(Target);
           Entries.insert(Target);

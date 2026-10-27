@@ -1423,6 +1423,7 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
   // spelling of the unit defines.
   for (const LocalType *Type : Theirs) {
     Result.Types.push_back(Type->Name);
+    Result.HeaderTypes.push_back(Type->Name);
     if (Type->Kind == TypeKind::Struct || Type->Kind == TypeKind::Union)
       Result.HeaderRecords.emplace_back(Names.type(Type->Name),
                                         Type->Kind == TypeKind::Union);

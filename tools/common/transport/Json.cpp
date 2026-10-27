@@ -63,9 +63,11 @@ public:
 };
 
 #if NEVERD_USE_SIMDJSON
+enum class DuplicateKeys { Reject, KeepLast };
 // Copy the validated tape directly into the owned DOM. Object insertion also
 // checks decoded duplicate keys, without a separate set or a second text parse.
-Json copySIMDValue(simdjson::dom::element Value, bool &NeedsNumberParser) {
+Json copySIMDValue(simdjson::dom::element Value, bool &NeedsNumberParser,
+                   DuplicateKeys Keys) {
   using Type = simdjson::dom::element_type;
   switch (Value.type()) {
   case Type::OBJECT: {
@@ -74,9 +76,11 @@ Json copySIMDValue(simdjson::dom::element Value, bool &NeedsNumberParser) {
     const auto Object = Value.get_object().value_unsafe();
     for (const auto Field : Object) {
       auto [It, Inserted] = Result.emplace(std::string(Field.key), nullptr);
-      if (!Inserted)
+      if (!Inserted && Keys == DuplicateKeys::Reject)
         throw Error("invalid_json", "Duplicate object key in JSON frame");
-      It->second = copySIMDValue(Field.value, NeedsNumberParser);
+      It->second = copySIMDValue(Field.value, NeedsNumberParser, Keys);
+      if (NeedsNumberParser && Keys == DuplicateKeys::KeepLast)
+        return nullptr;
     }
     return Json(std::move(Result));
   }
@@ -84,8 +88,11 @@ Json copySIMDValue(simdjson::dom::element Value, bool &NeedsNumberParser) {
     const auto Array = Value.get_array().value_unsafe();
     Json::array_t Result;
     Result.reserve(Array.size());
-    for (const auto Child : Array)
-      Result.push_back(copySIMDValue(Child, NeedsNumberParser));
+    for (const auto Child : Array) {
+      Result.push_back(copySIMDValue(Child, NeedsNumberParser, Keys));
+      if (NeedsNumberParser && Keys == DuplicateKeys::KeepLast)
+        return nullptr;
+    }
     return Json(std::move(Result));
   }
   case Type::STRING:
@@ -110,26 +117,37 @@ Json copySIMDValue(simdjson::dom::element Value, bool &NeedsNumberParser) {
   throw Error("invalid_json", "Malformed UTF-8 JSON frame");
 }
 
-std::optional<Json> parseWithSIMD(std::string_view Text) {
+std::optional<Json> parseWithSIMD(std::string_view Text, DuplicateKeys Keys) {
+  // The tape loses the signed integer spelling of -0. Backend documents have
+  // no separate duplicate-key admission, so they can go straight to native
+  // number parsing. Frames must still finish checking all decoded keys.
+  bool NeedsNumberParser = Text.find("-0") != std::string_view::npos;
+  if (NeedsNumberParser && Keys == DuplicateKeys::KeepLast)
+    return Json::parse(Text);
   // Keep retained storage bounded per transport thread. Larger frames get a
-  // temporary parser whose tape is released before parsing the final DOM.
-  constexpr size_t RetainedBytes = 64 * 1024;
+  // temporary parser whose tape is released after constructing the owned DOM.
+  constexpr auto RetainedBytes =
+      ::neverd::limits::transport::kJsonRetainedParserBytes;
   auto Parse = [&](simdjson::dom::parser &Parser) -> std::optional<Json> {
     simdjson::dom::element Root;
     if (Parser.parse(Text.data(), Text.size()).get(Root))
       return std::nullopt;
-    // The DOM tape does not preserve the signed integer spelling of -0.
-    // This conservative check also covers occurrences inside strings.
-    bool NeedsNumberParser = Text.find("-0") != std::string_view::npos;
-    auto Result = copySIMDValue(Root, NeedsNumberParser);
-    return NeedsNumberParser ? Json::parse(Text) : std::move(Result);
+    return copySIMDValue(Root, NeedsNumberParser, Keys);
   };
+  std::optional<Json> Result;
   if (Text.size() > RetainedBytes) {
     simdjson::dom::parser Parser;
-    return Parse(Parser);
+    Result = Parse(Parser);
+  } else {
+    thread_local simdjson::dom::parser Parser(RetainedBytes);
+    Result = Parse(Parser);
   }
-  thread_local simdjson::dom::parser Parser(RetainedBytes);
-  return Parse(Parser);
+  if (Result && NeedsNumberParser) {
+    // Release a large tape and any partial owned tree before native parsing.
+    Result.reset();
+    return Json::parse(Text);
+  }
+  return Result;
 }
 #endif
 
@@ -209,7 +227,7 @@ Json parseJson(std::string_view Text, std::size_t MaxBytes) {
   }
   try {
 #if NEVERD_USE_SIMDJSON
-    if (auto Parsed = parseWithSIMD(Text))
+    if (auto Parsed = parseWithSIMD(Text, DuplicateKeys::Reject))
       return std::move(*Parsed);
 #endif
     // Preserve acceptance and diagnostic precedence for BOMs, large JSON
@@ -221,6 +239,14 @@ Json parseJson(std::string_view Text, std::size_t MaxBytes) {
   } catch (const Json::exception &) {
     throw Error("invalid_json", "Malformed UTF-8 JSON frame");
   }
+}
+
+Json parseBackendJson(std::string_view Text) {
+#if NEVERD_USE_SIMDJSON
+  if (auto Parsed = parseWithSIMD(Text, DuplicateKeys::KeepLast))
+    return std::move(*Parsed);
+#endif
+  return Json::parse(Text);
 }
 
 std::string serializeJson(const Json &Value, std::size_t MaxBytes) {

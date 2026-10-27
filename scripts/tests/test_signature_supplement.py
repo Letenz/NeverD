@@ -9,6 +9,26 @@ from scripts.signatures import supplement_patterns as supplement
 
 
 class SupplementTests(unittest.TestCase):
+    def test_required_context_checks_rivals_hidden_inside_a_wildcard_crc_span(self):
+        lead = '90' * 32
+        candidate = f'{lead} 00 0000 0030 !refs :0000 wrapper ^0028 expected ' + '..' * 12 + 'CCDDEEFF'
+        raw = candidate.replace('!refs', '!evidence')
+        rival = f'{lead} 08 1234 0030 !evidence :0000 different ^0028 other ' + '..' * 4 + 'CCDDEEFF'
+        self.assertEqual(len(self.select(candidate, [('runtime', raw + '\n' + rival)])), 1)
+        self.assertFalse(self.select(candidate, [('runtime', raw + '\n' + rival.replace(' other ', ' expected '))]))
+
+    def test_required_parent_needs_a_distinct_full_caller_refinement(self):
+        body = "90909090909090909090909090909090488D05........C3 00 0000 0018"
+        source = body + " !caller :0000 parent ^0013 child"
+        required = source.replace("!caller", "!refs")
+        raw = source.replace("!caller", "!evidence")
+        self.assertEqual([line.text for line in self.select(source, [("runtime", raw)], required)],
+                         [source])
+        self.assertFalse(self.select(source, [("runtime", raw)], required + "\n" + source))
+        self.assertFalse(self.select(source, [("runtime", raw)], source.replace(" !caller", "")))
+        missing = raw.split(" ^0013")[0]
+        self.assertFalse(self.select(source, [("runtime", raw + "\n" + missing)], required))
+
     def test_local_relations_keep_scope_kind_and_raw_counterclaims(self):
         a = "488D05........C3 00 0000 0008 !refs :0000 a %0003 00000013:anchor_a"
         b = a.replace(":0000 a", ":0000 b").replace("anchor_a", "anchor_b")

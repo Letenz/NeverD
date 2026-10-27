@@ -16,10 +16,12 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
 #include "neverd/ir/low/SourceFrameAnalysis.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -469,6 +471,141 @@ TEST(IncomingHomeSource, NarrowStackInputsKeepTheirExactWidth) {
           }
 }
 
+struct IncomingHomeSourceProfile {
+  const char *Name;
+  Arch Architecture;
+  BinaryFormat Format;
+  uint16_t CarrierBytes;
+};
+
+constexpr IncomingHomeSourceProfile IncomingHomeSourceProfiles[] = {
+#define INCOMING_HOME_SOURCE_PROFILE(Name, Architecture, Format, CarrierBytes) \
+  {#Name, Architecture, Format, CarrierBytes},
+#include "IncomingHomeSourceProfiles.def"
+};
+
+class IncomingHomeSourceMixedWidth
+    : public ::testing::TestWithParam<IncomingHomeSourceProfile> {};
+
+TEST_P(IncomingHomeSourceMixedWidth, ReadsShareOneCompleteInput) {
+  const auto [Name, Architecture, Format, CarrierBytes] = GetParam();
+  SCOPED_TRACE(Name);
+  for (uint16_t PrefixBytes : {1, 2, 4})
+    for (bool Signed : {false, true}) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(static_cast<unsigned>(Format));
+      SCOPED_TRACE(CarrierBytes);
+      SCOPED_TRACE(PrefixBytes);
+      SCOPED_TRACE(Signed);
+      auto Image = homeImage(Architecture, Format);
+      auto &Text = Image.Segments.front();
+      Text.Data.resize(Callee - Caller);
+      if (Architecture == Arch::X64) {
+        std::vector<uint8_t> Store;
+        if (CarrierBytes == 8)
+          Store.push_back(0x48);
+        Store.insert(Store.end(), {0xc7, 0x04, 0x24, 0xd5, 0xff, 0xff, 0xff});
+        Store.resize(8, 0x90);
+        std::copy(Store.begin(), Store.end(), Text.Data.begin() + 4);
+        if (PrefixBytes < 4) {
+          if (CarrierBytes == 8)
+            Text.Data.push_back(0x48);
+          Text.Data.insert(
+              Text.Data.end(),
+              {0x0f,
+               static_cast<uint8_t>((PrefixBytes == 1 ? 0xb6 : 0xb7) +
+                                    (Signed ? 8 : 0)),
+               0x44, 0x24, 8}); // movzx [r/e]ax,[rsp+8]
+        } else if (Signed && CarrierBytes == 8)
+          Text.Data.insert(Text.Data.end(), {0x48, 0x63, 0x44, 0x24, 8});
+        else
+          Text.Data.insert(Text.Data.end(), {0x8b, 0x44, 0x24, 8});
+        if (CarrierBytes == 8)
+          Text.Data.push_back(0x48);
+        Text.Data.insert(Text.Data.end(),
+                         {0x03, 0x44, 0x24, 8, 0xc3}); // add [r/e]ax,[rsp+8]
+      } else {
+        Text.Data[11] = 0x92; // movn x0,#42
+        Text.Data.insert(Text.Data.end(), {0xfd, 0x7b, 0xbf, 0xa9});
+        Text.Data.insert(Text.Data.end(),
+                         {0xe0,
+                          static_cast<uint8_t>(PrefixBytes == 1   ? 0x43
+                                               : PrefixBytes == 2 ? 0x23
+                                                                  : 0x13),
+                          static_cast<uint8_t>(Signed ? 0x80 : 0x40),
+                          static_cast<uint8_t>(PrefixBytes == 1   ? 0x39
+                                               : PrefixBytes == 2 ? 0x79
+                                                                  : 0xb9)});
+        Text.Data.insert(Text.Data.end(),
+                         {0xfd, 0x0b, 0x40, 0xf9,   // ldr x29,[sp,#16]
+                          0x00, 0x00, 0x1d, 0x8b,   // add x0,x0,x29
+                          0xfd, 0x7b, 0xc1, 0xa8,   // ldp x29,x30,[sp],#16
+                          0xc0, 0x03, 0x5f, 0xd6}); // ret
+      }
+      Text.Size = Text.FileSz = Text.Data.size();
+      const uint64_t Expected =
+          Signed
+              ? (CarrierBytes == 8 ? uint64_t(-86) : (uint64_t(1) << 32) - 86)
+              : (uint64_t(1) << (PrefixBytes * 8)) - 86;
+      for (bool Selected : {false, true})
+        for (bool LLVM : {false, true}) {
+          SCOPED_TRACE(Selected);
+          SCOPED_TRACE(LLVM);
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.SourceProjection = LLVM;
+          Options.LiftMode = LLVM;
+          Options.OnlyFunctionEntries = Selected
+                                            ? std::set<va_t>{Caller}
+                                            : std::set<va_t>{Caller, Callee};
+          auto Result = Pipeline().run(Image, Context, Options);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          const auto Hints = readIncomingStackCallees(Image, Result, {Callee});
+          ASSERT_TRUE(Hints.contains(Callee));
+          ASSERT_EQ(Hints.at(Callee).Parameters.size(), 1u);
+          EXPECT_EQ(Hints.at(Callee).Parameters.front().Type->Size,
+                    CarrierBytes);
+          std::string Source;
+          llvm::raw_string_ostream Out(Source);
+          CEmitterOptions COptions;
+          COptions.TheArch = Architecture;
+          COptions.Format = Format;
+          COptions.Image = &Image;
+          if (LLVM) {
+            ASSERT_TRUE(Result.LlvmModule);
+            ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule));
+            ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions));
+          } else
+            ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Out, COptions));
+          ASSERT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+          const auto CarrierType =
+              "uint" + std::to_string(CarrierBytes * 8) + "_t";
+          const auto PrefixType = std::string(Signed ? "int" : "uint") +
+                                  std::to_string(PrefixBytes * 8) + "_t";
+          const std::string Oracle =
+              (Selected ? "\nuint64_t read_home(" + CarrierType +
+                              " value) { return (" + CarrierType +
+                              ")(value + (" + PrefixType + ")value); }\n"
+                        : "") +
+              "\nint main(void) { return caller_home() != UINT64_C(" +
+              std::to_string(Expected) + "); }\n";
+          for (llvm::StringRef Level : {"-O0", "-O2"})
+            source_call_execution_test::compileAndRun(
+                Source + Oracle,
+                {Level, "-ftrivial-auto-var-init=pattern",
+                 "-fsanitize=undefined", "-fsanitize-trap=all"});
+        }
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ByProfile, IncomingHomeSourceMixedWidth,
+    ::testing::ValuesIn(IncomingHomeSourceProfiles),
+    [](const ::testing::TestParamInfo<IncomingHomeSourceProfile> &Info) {
+      return Info.param.Name;
+    });
+
 TEST(IncomingHomeSource, OmittedStackLeafUsesTheOrdinaryCalleeReader) {
   for (Arch Architecture : {Arch::X64, Arch::AArch64})
     for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
@@ -815,6 +952,117 @@ TEST(IncomingHomeSource, EntryInitializationRetainsCallOccurrenceIndices) {
     ASSERT_TRUE(Function.SourceTypeHint);
     EXPECT_EQ(Function.CallInfos.front().OpIdx, static_cast<int>(Index));
     EXPECT_EQ(Block.Ops.size(), Size);
+  }
+}
+
+TEST(IncomingHomeSource, StackInitializationRequiresAbsenceOfAllObservers) {
+  enum class Observation {
+    None,
+    Read,
+    Call,
+    EscapingReturn,
+    Intrinsic,
+    RegisterFPState,
+    MemoryFPState,
+    Store
+  };
+  for (Arch Architecture : {Arch::X64, Arch::AArch64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    for (auto Case : {Observation::None, Observation::Read, Observation::Call,
+                      Observation::EscapingReturn, Observation::Intrinsic,
+                      Observation::RegisterFPState, Observation::MemoryFPState,
+                      Observation::Store}) {
+      if (Architecture != Arch::X64 && (Case == Observation::RegisterFPState ||
+                                        Case == Observation::MemoryFPState))
+        continue;
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(static_cast<unsigned>(Case));
+      MedFunc Function;
+      Function.Entry = Callee;
+      Function.SourceTypeHint = homeSignature(Architecture, false);
+      Function.Blocks.resize(1);
+      auto &Block = Function.Blocks.front();
+      Block.Id = 0;
+      Block.StartAddr = Callee;
+      MedVar Stack;
+      Stack.Kind = MedVar::Reg;
+      Stack.Id = 20;
+      Stack.TheArch = Architecture;
+      Stack.RegOff = TRI.StackPointer;
+      Stack.Size = TRI.PointerSize;
+      auto Op = [](NdOp Code, MedVar Output,
+                   std::initializer_list<MedVar> Inputs) {
+        MedOp Result;
+        Result.Opcode = Code;
+        Result.Output = Output;
+        for (const auto &Input : Inputs)
+          Result.addInput(Input);
+        return Result;
+      };
+      auto Temp = Stack;
+      Temp.Kind = MedVar::Temp;
+      Temp.Id = 21;
+      Temp.SSAVer = 1;
+      auto Returned = Stack;
+      Returned.Id = 22;
+      Returned.RegOff = TRI.IntReturnReg;
+      Returned.SSAVer = 1;
+      Block.Ops = {Op(NdOp::COPY, Stack, {Stack})};
+      auto Saved = Op(NdOp::STORE, {}, {Stack, MedVar::makeConst(0, 8)});
+      Saved.PrologueSave = true;
+      Block.Ops.push_back(Saved);
+      if (Case == Observation::Read)
+        Block.Ops.push_back(
+            Op(NdOp::LOAD, Temp, {MedVar::makeConst(0x2000, 8)}));
+      else if (Case == Observation::Call)
+        Block.Ops.push_back(Op(NdOp::CALL, {}, {MedVar::makeConst(Caller, 8)}));
+      else if (Case == Observation::Intrinsic)
+        Block.Ops.push_back(Op(
+            NdOp::INTRINSIC, Temp,
+            {MedVar::makeConst(static_cast<unsigned>(Intrinsic::Rdtsc), 2)}));
+      else if (Case == Observation::RegisterFPState ||
+               Case == Observation::MemoryFPState) {
+        Temp.Size = 4;
+        Block.Ops.push_back(
+            Op(NdOp::INTRINSIC, Temp,
+               {MedVar::makeConst(
+                   static_cast<unsigned>(Intrinsic::X86ReadMXCSR), 2)}));
+        auto Result = Temp;
+        Result.Id = 23;
+        Result.Size = 12;
+        if (Case == Observation::RegisterFPState)
+          Block.Ops.push_back(
+              Op(NdOp::INTRINSIC, Result,
+                 {MedVar::makeConst(
+                      static_cast<unsigned>(Intrinsic::X86FPAddState), 2),
+                  MedVar::makeConst(0, 8), MedVar::makeConst(0, 8), Temp}));
+        else
+          Block.Ops.push_back(Op(
+              NdOp::INTRINSIC, Result,
+              {MedVar::makeConst(
+                   static_cast<unsigned>(Intrinsic::X86FPArithMemoryState), 2),
+               MedVar::makeConst(0x2000, 8), MedVar::makeConst(24, 1),
+               MedVar::makeConst(0, 8), Temp}));
+        const auto &State = Block.Ops.back();
+        ASSERT_TRUE(x86FPStateShapeIsValid(
+            static_cast<Intrinsic>(State.Inputs[0].ConstVal),
+            x86FPStateMedShape(State, Architecture)));
+      } else if (Case == Observation::Store)
+        Block.Ops.push_back(
+            Op(NdOp::STORE, {}, {MedVar::makeConst(0x2000, 8), Stack}));
+      Block.Ops.push_back(
+          Op(NdOp::COPY, Returned,
+             {Case == Observation::EscapingReturn ? Stack
+                                                  : MedVar::makeConst(1, 8)}));
+      Block.Ops.push_back(Op(NdOp::RETURN, {}, {Returned}));
+      const auto OriginalSize = Block.Ops.size();
+      inferMedTypes(Function, Architecture);
+      ASSERT_TRUE(Function.SourceParametersBound);
+      ASSERT_TRUE(Function.SourceTypeHint);
+      const bool NeedsStorage =
+          Case != Observation::None && Case != Observation::RegisterFPState;
+      EXPECT_EQ(Block.Ops.size() > OriginalSize, NeedsStorage);
+    }
   }
 }
 

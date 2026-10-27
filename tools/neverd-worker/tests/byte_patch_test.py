@@ -103,6 +103,51 @@ def run(executable, real=False):
     print("patch preview, stale protection, history, replica, batch revert, reopen and export passed")
 
 
+def split_row_history(executable):
+    data, entry = two_routine_elf()
+    with tempfile.TemporaryDirectory(prefix="neverd-patch-merge-history-") as directory:
+        binary = Path(directory) / "input.elf"
+        binary.write_bytes(data)
+        states = [(data[-12:].hex(), [])]
+        expected = bytearray(data[-12:])
+        with Client(executable) as worker:
+            ok(worker, "open", {"path": str(binary), "analysis": False})
+            # Insert before/after existing rows, then split an interior range.
+            for offset, replacement in ((2, b"\x90" * 4), (0, b"\x91"),
+                                        (8, b"\x92"), (3, b"\x93" * 2)):
+                old = expected[offset:offset + len(replacement)].hex()
+                ok(worker, "patch_apply", {"address": hex(entry + offset),
+                                           "kind": "bytes", "bytes": replacement.hex(),
+                                           "expected": old, "allow_overlap": True})
+                expected[offset:offset + len(replacement)] = replacement
+                assert ok(worker, "bytes", {"address": hex(entry), "size": 12})["data"] == expected.hex()
+                rows = ok(worker, "patches")["items"]
+                assert [int(row["addr"], 16) for row in rows] == sorted(int(row["addr"], 16) for row in rows)
+                states.append((expected.hex(), rows))
+            for operation, sequence in (("undo", reversed(states[:-1])),
+                                         ("redo", states[1:])):
+                for bytes_, rows in sequence:
+                    ok(worker, operation)
+                    assert ok(worker, "bytes", {"address": hex(entry), "size": 12})["data"] == bytes_
+                    assert ok(worker, "patches")["items"] == rows
+            rows = states[-1][1]
+            assert len(rows) >= 3, rows
+            ok(worker, "patch_revert", {"address": rows[0]["va"], "ranges": [
+                {"address": row["va"], "size": row["size"]} for row in (rows[0], rows[-1])]})
+            reverted = ok(worker, "patches")["items"]
+            ok(worker, "undo")
+            assert ok(worker, "patches")["items"] == rows
+        with Client(executable) as worker:
+            ok(worker, "open", {"path": str(binary), "analysis": False})
+            assert ok(worker, "bytes", {"address": hex(entry), "size": 12})["data"] == states[-1][0]
+            ok(worker, "redo")
+            assert ok(worker, "patches")["items"] == reverted
+            ok(worker, "undo")
+            assert ok(worker, "patches")["items"] == states[-1][1]
+        assert binary.read_bytes() == data
+    print("ordered patch inserts, split rows, batch removal and reopened undo/redo passed")
+
+
 def pe_export(executable):
     data = image()[0]
     with tempfile.TemporaryDirectory(prefix="neverd-pe-export-") as directory:
@@ -125,7 +170,69 @@ def pe_export(executable):
     print("PE export, UTF-8 paths, exclusive output, unchanged input and temporary cleanup passed")
 
 
+def patch_budget_boundary(executable):
+    # Patch state reserves half the advertised frame allowance. Construct an
+    # exact compact-JSON boundary independently of the native size counter.
+    def compact(rows):
+        return json.dumps(rows, separators=(",", ":"), sort_keys=True).encode()
+
+    def fixture(limit):
+        for base in (0xffff800012340000, 0xfff800012340000):
+            for kind in ("bytes", "nop", "assemble"):
+                for size in range(limit // 4 - 256, limit // 4):
+                    offset = size + 16
+                    rows = [{"addr": "0x0", "file_off": "0x0", "va": hex(base),
+                             "size": size, "original": "", "current": "", "kind": kind},
+                            {"addr": hex(offset), "file_off": hex(offset), "va": hex(base + offset),
+                             "size": 1, "original": "cc", "current": "91", "kind": "bytes"}]
+                    if len(compact(rows)) + size * 4 == limit:
+                        rows[0].update(original="cc" * size, current="90" * size)
+                        assert len(compact(rows)) == limit
+                        return base, size, offset, rows
+        raise AssertionError("Could not construct exact patch budget boundary")
+
+    for excess in (0, 1):
+        with tempfile.TemporaryDirectory(prefix="neverd-patch-budget-") as directory:
+            root = Path(directory)
+            binary = root / "input.bin"
+            with Client(executable) as seed:
+                limit = seed.hello["max_frame_bytes"] // 2
+                base, size, offset, expected = fixture(limit + excess)
+                original = b"\xcc" * (size + 64)
+                binary.write_bytes(original)
+                options = {"path": str(binary), "loader": "binary", "processor": "x86_64",
+                           "base": hex(base), "analysis": False}
+                ok(seed, "open", options)
+                ok(seed, "patch_apply", {"address": hex(base), "kind": "bytes", "bytes": "90"})
+            sidecar, = root.rglob("patches.json")
+            history, = root.rglob("history.json")
+            history.unlink()
+            before = json.loads(compact(expected))
+            before[1]["current"] = "90"
+            before_text = compact(before)
+            sidecar.write_bytes(before_text)
+            with Client(executable) as worker:
+                ok(worker, "open", options)
+                reply = worker.call("patch_apply", {"address": hex(base + offset), "kind": "bytes",
+                                                     "bytes": "91", "expected": "90"})
+                if excess:
+                    assert reply["error"]["code"] == "patch_limit", reply
+                    assert sidecar.read_bytes() == before_text
+                    assert not history.exists() and not list(root.rglob("journal.json"))
+                else:
+                    assert reply["status"] == "ok" and reply["payload"]["saved"], reply
+                    assert json.loads(sidecar.read_bytes()) == expected
+                    assert len(compact(json.loads(sidecar.read_bytes()))) == limit
+                    ok(worker, "undo")
+                    assert json.loads(sidecar.read_bytes()) == before
+                assert ok(worker, "bytes", {"address": hex(base + offset), "size": 1})["data"] == "90"
+            assert binary.read_bytes() == original
+    print("exact patch budget accepted, one-byte excess refused, live and persisted rollback passed")
+
+
 if __name__ == "__main__":
     run(sys.argv[1], "--real" in sys.argv[2:])
     if "--real" in sys.argv[2:]:
+        split_row_history(sys.argv[1])
         pe_export(sys.argv[1])
+        patch_budget_boundary(sys.argv[1])

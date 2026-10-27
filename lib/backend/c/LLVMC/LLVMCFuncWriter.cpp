@@ -866,7 +866,7 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
           // A projected void return does not print its machine return value.
           // Keep the call as a statement instead of sinking it into a use
           // that the return writer deliberately omits.
-          if (InferredVoid && llvm::isa<llvm::ReturnInst>(I))
+          if (ReturnsNoValue && llvm::isa<llvm::ReturnInst>(I))
             continue;
           Sinks.insert(I);
         }
@@ -2817,10 +2817,10 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
     FrameRecord = true;
     FrameRecordName = getName(SyntheticFrame);
   }
-  InferredVoid =
-      !Opts.PreserveLLVMFunctionTypes && analyzeVoidReturn(Analysis, Fn);
+  ReturnsNoValue = analyzeVoidReturn(Analysis, Fn);
+  InferredVoid = !Opts.PreserveLLVMFunctionTypes && ReturnsNoValue;
 
-  if (InferredVoid)
+  if (ReturnsNoValue)
     analyzeVoidDeadChain(Analysis, Fn);
   collectOmittedUnknowns(Fn);
   collectOmittedInlinedImmediates(Fn);
@@ -3044,7 +3044,7 @@ bool LLVMCWriter::valueFeedsPrintedUse(const llvm::Value *V) {
       // IR keeps the return register, but a void source return does not read
       // it. Use that shared fact even before setupFunction, when admitting a
       // header's void prototype; other uses, including stores, stay live.
-      if (!Opts.PreserveLLVMFunctionTypes && llvm::isa<llvm::ReturnInst>(UI) &&
+      if (llvm::isa<llvm::ReturnInst>(UI) &&
           llvm_value_provenance::returnsNoValue(*UI->getFunction()))
         continue;
       if (OmittedUnknowns.count(UI) || OmittedInlined.count(UI))
@@ -4100,6 +4100,11 @@ std::string LLVMCWriter::composedReprintText(const llvm::Value *V) {
       return {};
     }
     if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Cur)) {
+      // Statement emission materializes casts outside the inlinable set.
+      // Reprinting their operands would leave that assignment unread and
+      // bypass the same named boundary for every later use.
+      if (!Analysis.Inlinable.count(Cast))
+        return getName(Cast);
       const std::string Text = Rec(Cast->getOperand(0));
       if (Text.empty())
         return {};
@@ -8945,7 +8950,7 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
               unreadMsvcThisReturn(*CB))
             continue;
         }
-        if (InferredVoid) {
+        if (ReturnsNoValue) {
           if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst))
             if (!isCallResultLive(Analysis, CI))
               continue;
@@ -9632,8 +9637,10 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
                                     DebugFn->Params[0].first == "this";
   const int SretParamIdx =
       !IndirectReturn ? -1 : (MemberIndirectReturn ? 1 : 0);
-  if (IndirectReturn)
+  if (IndirectReturn) {
+    ReturnsNoValue = false;
     InferredVoid = false;
+  }
   auto IndirectReturnTypeStr = [&]() -> std::string {
     if (!IndirectReturn)
       return {};

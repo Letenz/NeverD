@@ -7,15 +7,54 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
+#include <iterator>
+#include <map>
+#include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
 namespace neverd::worker {
 namespace fs = std::filesystem;
+using FileContents = std::map<fs::path, std::shared_ptr<const std::string>>;
+struct ProjectHistory::Command {
+  Json Value;
+  // Commands never change after admission. The owning worker thread can
+  // memoize their strict encoding without making history queries encode it.
+  mutable std::string Text;
+  const std::string &encoded() const;
+};
+struct ProjectHistory::Snapshot {
+  Json state;
+  // Loaded snapshots need this encoding only if a later save uses them as
+  // the journal's before state. Committed snapshots already own the encoding.
+  std::string stateText;
+  std::shared_ptr<const std::string> document;
+  FileContents contents;
+  // A loaded document retains validated file bytes (possibly with a BOM).
+  // Only serializer-produced text can be embedded directly in a journal.
+  bool documentIsEncoded = true;
+};
 namespace {
+// A committed snapshot and its serialized bytes must describe the same value.
+// JSON dumping otherwise maps non-finite numbers to null and binary values to
+// objects. Strings and keys are checked by the strict serializer below.
+void validateJsonValues(const Json &value) {
+  if (value.is_binary() || value.is_discarded() ||
+      (value.is_number_float() && !std::isfinite(value.get<double>())))
+    throw Error("history_invalid", "User history contains a non-JSON value");
+  if (value.is_structured())
+    for (const auto &child : value)
+      validateJsonValues(child);
+}
 std::string compactText(const Json &value) {
-  return value.dump(-1, ' ', false, Json::error_handler_t::replace);
+  try {
+    return value.dump();
+  } catch (const Json::exception &) {
+    throw Error("history_invalid", "User history contains invalid JSON text");
+  }
 }
 fs::path sidecar(const fs::path &binary, project_files::File file) {
   return project_files::path(binary, file);
@@ -50,7 +89,8 @@ std::string sidecarContents(std::string_view table, const Json &rows) {
     row.erase("addr");
   return sidecarText(fileRows);
 }
-using SidecarWrites = std::vector<std::pair<fs::path, std::string>>;
+using SidecarWrites =
+    std::vector<std::pair<fs::path, std::shared_ptr<const std::string>>>;
 // Encode once before publishing the journal. Validate every table's write
 // budget, including unchanged ones, so recovery can still materialize it.
 SidecarWrites prepareSidecars(const fs::path &binary, const Json &state,
@@ -64,18 +104,17 @@ SidecarWrites prepareSidecars(const fs::path &binary, const Json &state,
       throw Error("history_budget_exceeded",                                   \
                   "A user state file exceeds 16 MiB");                         \
     if (!before || state.at(Table) != before->at(Table))                       \
-      writes.emplace_back(sidecar(binary, project_files::File::Id),            \
-                          std::move(text));                                    \
+      writes.emplace_back(                                                     \
+          sidecar(binary, project_files::File::Id),                            \
+          std::make_shared<const std::string>(std::move(text)));               \
   }
 #include "UserStateTables.def"
   return writes;
 }
-Json read(const fs::path &path,
-          std::size_t limit =
-              ::neverd::limits::worker::kProjectHistoryMaxHistoryBytes) {
+std::optional<std::string> readText(const fs::path &path, std::size_t limit) {
   std::error_code ec;
   if (!fs::exists(path, ec))
-    return nullptr;
+    return std::nullopt;
   const auto size = fs::file_size(path, ec);
   if (ec || size > limit)
     throw Error("history_budget_exceeded",
@@ -88,12 +127,18 @@ Json read(const fs::path &path,
   text.resize(static_cast<std::size_t>(input.gcount()));
   if (text.size() > size)
     throw Error("foreign_edits", "User state changed while it was being read");
+  return text;
+}
+Json parseFile(const fs::path &path, const std::optional<std::string> &text,
+               std::size_t limit) {
+  if (!text)
+    return nullptr;
   try {
-    return parseJson(text, limit);
+    return parseJson(*text, limit);
   } catch (const Error &) {
     // A merge git could not finish leaves its markers in the file.
-    if (text.starts_with("<<<<<<< ") ||
-        text.find("\n<<<<<<< ") != std::string::npos)
+    if (text->starts_with("<<<<<<< ") ||
+        text->find("\n<<<<<<< ") != std::string::npos)
       throw Error("merge_conflict",
                   path.filename().string() +
                       " has unresolved merge conflicts; resolve them before "
@@ -101,8 +146,30 @@ Json read(const fs::path &path,
     throw Error("history_invalid", "User state file is not valid bounded JSON");
   }
 }
+void remember(FileContents &contents, const fs::path &path,
+              std::optional<std::string> text) {
+  contents[path] =
+      text ? std::make_shared<const std::string>(std::move(*text)) : nullptr;
+}
+bool sameText(const FileContents &contents, const fs::path &path,
+              const std::optional<std::string> &text) {
+  const auto found = contents.find(path);
+  return found != contents.end() && bool(found->second) == bool(text) &&
+         (!text || *found->second == *text);
+}
+Json read(const fs::path &path,
+          std::size_t limit =
+              ::neverd::limits::worker::kProjectHistoryMaxHistoryBytes,
+          FileContents *contents = nullptr) {
+  auto text = readText(path, limit);
+  auto value = parseFile(path, text, limit);
+  if (contents)
+    remember(*contents, path, std::move(text));
+  return value;
+}
 /// The fields of a row of \p table besides its address.
 void validateRow(std::string_view table, const Json &row) {
+  validateJsonValues(row);
   if (table == "code_edits") {
     CodeEdits::validateRow(row);
   } else if (table == "annotations") {
@@ -244,6 +311,51 @@ void validateRow(std::string_view table, const Json &row) {
   }
 }
 
+// JSON value equality permits 1 == 1.0; admission also depends on field types.
+bool sameTypedValue(const Json &left, const Json &right) {
+  if (left.type() != right.type())
+    return false;
+  if (!left.is_structured())
+    return left == right;
+  if (left.size() != right.size())
+    return false;
+  auto a = left.begin(), b = right.begin();
+  for (; a != left.end(); ++a, ++b)
+    if ((left.is_object() && a.key() != b.key()) || !sameTypedValue(*a, *b))
+      return false;
+  return true;
+}
+void normalizeTable(std::string_view name, Json &items,
+                    const Json *validated = nullptr) {
+  for (std::size_t index = 0; index < items.size(); ++index) {
+    auto &item = items[index];
+    // Only an identical row from this history's normalized snapshot carries
+    // admission forward. Changed or shifted rows take the original validator.
+    if (validated && index < validated->size() &&
+        sameTypedValue(item, (*validated)[index]))
+      continue;
+    if (!item.is_object())
+      throw Error("history_invalid", "User state item must be an object");
+    item["addr"] = hexAddress(parseAddress(stringField(item, "addr")));
+    validateRow(name, item);
+  }
+  // By address, as the CLI orders the tables it writes: one order for
+  // both writers keeps a project's files from changing with the tool.
+  const auto byAddress = [](const Json &a, const Json &b) {
+    return parseAddress(a.at("addr").get_ref<const std::string &>()) <
+           parseAddress(b.at("addr").get_ref<const std::string &>());
+  };
+  if (!std::is_sorted(items.begin(), items.end(), byAddress))
+    std::sort(items.begin(), items.end(), byAddress);
+  for (std::size_t i = 1; i < items.size(); ++i)
+    if (items[i - 1].at("addr") == items[i].at("addr"))
+      throw Error("history_invalid", "User state contains duplicate addresses");
+  // An ordered table's rows lie at their places in the list, every one.
+  if (ordered(name))
+    for (std::size_t i = 0; i < items.size(); ++i)
+      if (parseAddress(items[i].at("addr").get<std::string>()) != i)
+        throw Error("history_invalid", "User state rows in order leave a gap");
+}
 void validateChange(std::string_view kind, const char *table,
                     const Json &change) {
   parseAddress(stringField(change, "address"));
@@ -274,6 +386,7 @@ void validateChange(std::string_view kind, const char *table,
 }
 
 void validateCommand(const Json &command) {
+  validateJsonValues(command);
   const auto kind =
       stringField(command, "kind", {},
                   ::neverd::limits::worker::
@@ -294,17 +407,7 @@ void validateCommand(const Json &command) {
     validateChange(kind, table, row);
   }
 }
-} // namespace
-
-const char *ProjectHistory::tableOfKind(std::string_view kind) {
-#define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
-  if (kind == Kind)                                                            \
-    return Table;
-#include "UserStateTables.def"
-  return nullptr;
-}
-
-Json ProjectHistory::normalizedState(Json state) {
+Json normalizeState(Json state, const Json *validated = nullptr) {
   if (!state.is_object())
     throw Error("history_invalid", "User state must be an object");
 #define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional) {Table, Optional},
@@ -317,36 +420,92 @@ Json ProjectHistory::normalizedState(Json state) {
     if (!state.contains(name) || !state[name].is_array())
       throw Error("history_invalid", "User state table is missing");
     auto &items = state[name];
-    for (auto &item : items) {
-      if (!item.is_object())
-        throw Error("history_invalid", "User state item must be an object");
-      item["addr"] = hexAddress(parseAddress(stringField(item, "addr")));
-      validateRow(name, item);
-    }
-    // By address, as the CLI orders the tables it writes: one order for
-    // both writers keeps a project's files from changing with the tool.
-    const auto byAddress = [](const Json &a, const Json &b) {
-      return parseAddress(a.at("addr").get_ref<const std::string &>()) <
-             parseAddress(b.at("addr").get_ref<const std::string &>());
-    };
-    if (!std::is_sorted(items.begin(), items.end(), byAddress))
-      std::sort(items.begin(), items.end(), byAddress);
-    for (std::size_t i = 1; i < items.size(); ++i)
-      if (items[i - 1].at("addr") == items[i].at("addr"))
-        throw Error("history_invalid",
-                    "User state contains duplicate addresses");
-    // An ordered table's rows lie at their places in the list, every one.
-    if (ordered(name))
-      for (std::size_t i = 0; i < items.size(); ++i)
-        if (parseAddress(items[i].at("addr").get<std::string>()) != i)
-          throw Error("history_invalid",
-                      "User state rows in order leave a gap");
+    normalizeTable(name, items, validated ? &validated->at(name) : nullptr);
   }
+  for (const auto &[name, value] : state.items())
+    if (std::none_of(std::begin(Tables), std::end(Tables),
+                     [&](const auto &table) { return name == table.first; }))
+      validateJsonValues(value);
   return state;
+}
+
+Json readStateFiles(const fs::path &binary, FileContents *contents) {
+  Json state = Json::object();
+#define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
+  if (auto rows =                                                              \
+          read(sidecar(binary, project_files::File::Id),                       \
+               ::neverd::limits::worker::kProjectHistoryMaxStateFileBytes,     \
+               contents);                                                      \
+      rows.is_null())                                                          \
+    state[Table] = Json::array();                                              \
+  else                                                                         \
+    state[Table] = rowsFromFile(Table, std::move(rows));
+#include "UserStateTables.def"
+  return ProjectHistory::normalizedState(std::move(state));
+}
+
+bool stateMatches(const fs::path &binary, const Json &expected,
+                  const FileContents &contents,
+                  FileContents *observed = nullptr) {
+  Json changed = Json::object();
+  std::size_t tables = 0;
+#define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
+  {                                                                            \
+    ++tables;                                                                  \
+    const auto path = sidecar(binary, project_files::File::Id);                \
+    constexpr auto limit =                                                     \
+        ::neverd::limits::worker::kProjectHistoryMaxStateFileBytes;            \
+    auto text = readText(path, limit);                                         \
+    if (!sameText(contents, path, text)) {                                     \
+      auto rows = parseFile(path, text, limit);                                \
+      changed[Table] = rows.is_null() ? Json::array()                          \
+                                      : rowsFromFile(Table, std::move(rows));  \
+      if (observed)                                                            \
+        remember(*observed, path, std::move(text));                            \
+    }                                                                          \
+  }
+#include "UserStateTables.def"
+  bool matches = true;
+#define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
+  if (const auto found = changed.find(Table); found != changed.end()) {        \
+    if (!found->is_array())                                                    \
+      throw Error("history_invalid", "User state table is missing");           \
+    normalizeTable(Table, *found);                                             \
+    matches &= *found == expected.at(Table);                                   \
+  }
+#include "UserStateTables.def"
+  return matches && expected.size() == tables;
+}
+bool historyMatches(const fs::path &path, std::string_view expected,
+                    const FileContents &contents) {
+  constexpr auto limit =
+      ::neverd::limits::worker::kProjectHistoryMaxHistoryBytes;
+  const auto text = readText(path, limit);
+  return sameText(contents, path, text) ||
+         parseFile(path, text, limit) == transport::parseBackendJson(expected);
+}
+} // namespace
+
+const char *ProjectHistory::tableOfKind(std::string_view kind) {
+#define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
+  if (kind == Kind)                                                            \
+    return Table;
+#include "UserStateTables.def"
+  return nullptr;
+}
+
+Json ProjectHistory::normalizedState(Json state) {
+  return normalizeState(std::move(state));
 }
 
 bool ProjectHistory::recoveryPending(const fs::path &binary) {
   return fs::exists(sidecar(binary, project_files::File::Journal));
+}
+
+const std::string &ProjectHistory::Command::encoded() const {
+  if (Text.empty())
+    Text = compactText(Value);
+  return Text;
 }
 
 ProjectHistory::ProjectHistory(fs::path binary, std::string sourceHash,
@@ -365,36 +524,40 @@ ProjectHistory::ProjectHistory(fs::path binary, std::string sourceHash,
                 "Engine did not provide a valid source SHA-256");
   if (recoveryPending(binary_))
     recover();
-  committedState_ = diskState();
-  previousDocument_ = read(historyPath_);
-  if (previousDocument_.is_null())
+  Json previousDocument;
+  snapshot_ = readSnapshot(&previousDocument);
+  if (previousDocument.is_null())
     return;
   try {
-    if (previousDocument_.value("schema_version", 0) != 1)
+    if (previousDocument.value("schema_version", 0) != 1)
       throw Error("history_invalid", "Unsupported history schema");
-    if (previousDocument_.value("source_sha256", "") != hash_) {
+    if (previousDocument.value("source_sha256", "") != hash_) {
       blocked_ = "input_changed";
       return;
     }
     // A table the history predates took no edit it recorded: it holds
     // what the file holds.
-    Json previous = previousDocument_.at("state");
+    Json previous = previousDocument.at("state");
 #define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
   if (Optional && previous.is_object() && !previous.contains(Table))           \
-    previous[Table] = committedState_.at(Table);
+    previous[Table] = snapshot_->state.at(Table);
 #include "UserStateTables.def"
-    if (normalizedState(std::move(previous)) != committedState_) {
+    if (normalizedState(std::move(previous)) != snapshot_->state) {
       blocked_ = "foreign_edits";
       return;
     }
-    commands_ = previousDocument_.at("commands");
-    if (!commands_.is_array() ||
-        commands_.size() > ::neverd::limits::worker::
-                               kProjectHistoryProjectHistoryCommandsSizeLimit)
+    auto &commands = previousDocument.at("commands");
+    if (!commands.is_array() ||
+        commands.size() > ::neverd::limits::worker::
+                              kProjectHistoryProjectHistoryCommandsSizeLimit)
       throw Error("history_invalid", "History command count is invalid");
-    cursor_ = sizeField(previousDocument_, "cursor", 0, commands_.size());
-    for (const auto &command : commands_)
+    cursor_ = sizeField(previousDocument, "cursor", 0, commands.size());
+    commands_.reserve(commands.size());
+    for (auto &command : commands) {
       validateCommand(command);
+      commands_.push_back(
+          std::make_shared<const Command>(Command{std::move(command), {}}));
+    }
   } catch (const Json::exception &) {
     throw Error("history_invalid", "History document is incomplete");
   }
@@ -403,22 +566,27 @@ ProjectHistory::ProjectHistory(fs::path binary, std::string sourceHash,
 Json ProjectHistory::diskState() const { return readState(binary_); }
 
 Json ProjectHistory::readState(const fs::path &binary) {
-  Json state = Json::object();
-#define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
-  if (auto rows =                                                              \
-          read(sidecar(binary, project_files::File::Id),                       \
-               ::neverd::limits::worker::kProjectHistoryMaxStateFileBytes);    \
-      rows.is_null())                                                          \
-    state[Table] = Json::array();                                              \
-  else                                                                         \
-    state[Table] = rowsFromFile(Table, std::move(rows));
-#include "UserStateTables.def"
-  return normalizedState(std::move(state));
+  return readStateFiles(binary, nullptr);
 }
+std::shared_ptr<const ProjectHistory::Snapshot>
+ProjectHistory::readSnapshot(Json *document) const {
+  auto snapshot = std::make_shared<Snapshot>();
+  snapshot->state = readStateFiles(binary_, &snapshot->contents);
+  auto previous = read(historyPath_,
+                       ::neverd::limits::worker::kProjectHistoryMaxHistoryBytes,
+                       &snapshot->contents);
+  const auto &raw = snapshot->contents.at(historyPath_);
+  snapshot->document = raw ? raw : std::make_shared<const std::string>("null");
+  snapshot->documentIsEncoded = !raw;
+  if (document)
+    *document = std::move(previous);
+  return snapshot;
+}
+const Json &ProjectHistory::committedState() const { return snapshot_->state; }
 
 void ProjectHistory::verifyLoadedState(const Json &state) {
   auto loaded = normalizedState(state);
-  auto committed = committedState_;
+  auto committed = snapshot_->state;
   // The C ABI reconstructs original symbol names independently; only current
   // user rename values are part of the loaded edit-state identity here.
   for (auto &row : loaded["renames"])
@@ -447,7 +615,7 @@ Json ProjectHistory::listing(std::size_t offset, std::size_t limit) const {
   Json items = Json::array();
   for (std::size_t i = std::min(offset, commands_.size());
        i < commands_.size() && items.size() < limit; ++i) {
-    auto command = commands_[i];
+    auto command = commands_[i]->Value;
     command["address"] = hexAddress(displayAddress(command));
     // The durable command retains every byte. A chooser page must not echo
     // megabytes of old/new data per row; the patches query owns byte pages.
@@ -485,15 +653,22 @@ Json ProjectHistory::listing(std::size_t offset, std::size_t limit) const {
 void ProjectHistory::stage(Json command) {
   requireUsable();
   validateCommand(command);
-  commands_.erase(commands_.begin() +
-                      static_cast<Json::difference_type>(cursor_),
-                  commands_.end());
-  commands_.push_back(std::move(command));
+  // Refuse invalid string/key encoding before mutating the undo cursor.
+  auto text = compactText(command);
+  auto next = std::make_shared<const Command>(
+      Command{std::move(command), std::move(text)});
+  commands_.erase(
+      commands_.begin() +
+          static_cast<decltype(commands_)::difference_type>(cursor_),
+      commands_.end());
+  commands_.push_back(std::move(next));
   ++cursor_;
+  auto bytes = commandTextSize();
   while (commands_.size() >
              ::neverd::limits::worker::kProjectHistoryStageCommandsSizeLimit ||
-         compactText(commands_).size() >
-             ::neverd::limits::worker::kProjectHistoryMaxHistoryBytes / 2) {
+         bytes > ::neverd::limits::worker::kProjectHistoryMaxHistoryBytes / 2) {
+    bytes -=
+        commands_.front()->encoded().size() + (commands_.size() > 1 ? 1 : 0);
     commands_.erase(commands_.begin());
     --cursor_;
   }
@@ -503,7 +678,7 @@ Json ProjectHistory::next(bool redo) const {
   requireUsable();
   if (redo ? cursor_ == commands_.size() : cursor_ == 0)
     throw Error("history_empty", redo ? "Nothing to redo" : "Nothing to undo");
-  return commands_[redo ? cursor_ : cursor_ - 1];
+  return commands_[redo ? cursor_ : cursor_ - 1]->Value;
 }
 void ProjectHistory::advance(bool redo) {
   (void)next(redo);
@@ -513,16 +688,44 @@ void ProjectHistory::advance(bool redo) {
     --cursor_;
 }
 
-Json ProjectHistory::document(const Json &state) const {
-  return {{"schema_version", 1},
-          {"source_sha256", hash_},
-          {"engine_version", engineVersion_},
-          {"cursor", cursor_},
-          {"commands", commands_},
-          {"state", state}};
+std::size_t ProjectHistory::commandTextSize() const {
+  std::size_t bytes = 2;
+  for (const auto &command : commands_)
+    bytes += command->encoded().size();
+  if (!commands_.empty())
+    bytes += commands_.size() - 1;
+  return bytes;
 }
 
-void ProjectHistory::persist(const Json &state) {
+std::string ProjectHistory::document(std::string_view encodedState) const {
+  const Json header{{"schema_version", 1},
+                    {"source_sha256", hash_},
+                    {"engine_version", engineVersion_},
+                    {"cursor", cursor_}};
+  auto headerText = compactText(header);
+  headerText.pop_back();
+  // Commands sort first in the original object serializer. Keep the same
+  // bytes while sharing their immutable values across rollback checkpoints.
+  headerText.front() = ',';
+  std::string text = "{\"commands\":";
+  constexpr std::string_view StateMember = ",\"state\":";
+  text.reserve(text.size() + commandTextSize() + headerText.size() +
+               StateMember.size() + encodedState.size() + 1);
+  text += '[';
+  for (std::size_t i = 0; i < commands_.size(); ++i) {
+    if (i)
+      text += ',';
+    text += commands_[i]->encoded();
+  }
+  text += ']';
+  text += headerText;
+  text += StateMember;
+  text += encodedState;
+  text += '}';
+  return text;
+}
+
+void ProjectHistory::persist(Json state) {
   requireUsable();
   if (readOnly_)
     throw Error("read_only", "History persistence requires the writer lock");
@@ -543,11 +746,16 @@ void ProjectHistory::persist(const Json &state) {
     // and history against the journal before replacing anything. Newer staged
     // annotations and commands stay in memory and are saved below afterwards.
     recover();
-    committedState_ = normalizedState(interruptedWrite_.at("after"));
-    previousDocument_ = interruptedWrite_.at("after_history");
+    auto recovered = std::make_shared<Snapshot>();
+    recovered->state = normalizedState(interruptedWrite_.at("after"));
+    recovered->stateText = compactText(recovered->state);
+    recovered->document = std::make_shared<const std::string>(
+        compactText(interruptedWrite_.at("after_history")));
+    snapshot_ = std::move(recovered);
     interruptedWrite_ = nullptr;
-    if (normalizedState(state) == committedState_ &&
-        document(committedState_) == previousDocument_) {
+    if (normalizedState(state) == snapshot_->state &&
+        transport::parseBackendJson(document(snapshot_->stateText)) ==
+            transport::parseBackendJson(*snapshot_->document)) {
       if (committed_)
         committed_();
       return;
@@ -556,13 +764,20 @@ void ProjectHistory::persist(const Json &state) {
   if (recoveryPending(binary_))
     throw Error("recovery_required",
                 "An interrupted edit must be recovered before another save");
-  if (diskState() != committedState_ || read(historyPath_) != previousDocument_)
+  auto contents = snapshot_->contents;
+  // Compare actual bounded file contents, never timestamps or file sizes.
+  // Equal bytes reuse the validated snapshot; changed bytes retain the full
+  // parser/normalizer, including acceptance of equivalent formatting.
+  if (!stateMatches(binary_, snapshot_->state, snapshot_->contents,
+                    &contents) ||
+      !historyMatches(historyPath_, *snapshot_->document, snapshot_->contents))
     throw Error("foreign_edits", "Sidecars or history changed outside this "
                                  "worker; reload and inspect before editing");
-  auto after = normalizedState(state);
-  auto nextDocument = document(after);
-  const auto historyText = compactText(nextDocument);
-  if (historyText.size() >
+  auto after = normalizeState(std::move(state), &snapshot_->state);
+  auto afterText = compactText(after);
+  const auto historyText =
+      std::make_shared<const std::string>(document(afterText));
+  if (historyText->size() >
       ::neverd::limits::worker::kProjectHistoryMaxHistoryBytes)
     throw Error("history_budget_exceeded",
                 "Persisted user history exceeds 8 MiB");
@@ -572,42 +787,64 @@ void ProjectHistory::persist(const Json &state) {
   // states until publication succeeds, or retain the full journal on failure.
   auto journalText = compactText(journal);
   journalText.pop_back();
-  journalText += ",\"before\":";
-  journalText += compactText(committedState_);
-  journalText += ",\"before_history\":";
-  journalText += compactText(previousDocument_);
-  journalText += ",\"after\":";
-  journalText += compactText(after);
-  journalText += ",\"after_history\":";
-  journalText += historyText;
-  journalText += '}';
-  if (journalText.size() >
-      ::neverd::limits::worker::kProjectHistoryMaxJournalBytes)
-    throw Error("history_budget_exceeded", "Recovery journal exceeds 24 MiB");
-  const auto writes = prepareSidecars(binary_, after, &committedState_);
+  {
+    std::string beforeStateText, beforeHistoryText;
+    std::string_view beforeState = snapshot_->stateText;
+    if (beforeState.empty()) {
+      beforeStateText = compactText(snapshot_->state);
+      beforeState = beforeStateText;
+    }
+    std::string_view beforeHistory = *snapshot_->document;
+    if (!snapshot_->documentIsEncoded) {
+      beforeHistoryText =
+          compactText(transport::parseBackendJson(*snapshot_->document));
+      beforeHistory = beforeHistoryText;
+    }
+    const std::string_view parts[] = {
+        ",\"before\":",        beforeState,   ",\"before_history\":",
+        beforeHistory,         ",\"after\":", afterText,
+        ",\"after_history\":", *historyText,  "}"};
+    auto journalSize = journalText.size();
+    for (const auto part : parts)
+      journalSize += part.size();
+    if (journalSize > ::neverd::limits::worker::kProjectHistoryMaxJournalBytes)
+      throw Error("history_budget_exceeded", "Recovery journal exceeds 24 MiB");
+    journalText.reserve(journalSize);
+    for (const auto part : parts)
+      journalText += part;
+  }
+  const auto writes = prepareSidecars(binary_, after, &snapshot_->state);
   if (const auto error = project_files::prepare(binary_))
     throw Error("save_failed",
                 "Cannot create the project folder: " + error.message());
+  for (const auto &[path, text] : writes)
+    contents[path] = text;
+  contents[historyPath_] = historyText;
+  // Allocate the next snapshot before publishing any transaction file. The
+  // final in-memory commit is just a noexcept shared-pointer move.
+  auto next = std::make_shared<Snapshot>(
+      Snapshot{std::move(after), std::move(afterText), historyText,
+               std::move(contents)});
   writer_(journalPath_, journalText);
   // From this point any failure leaves a recoverable write-ahead journal.
   try {
     for (const auto &[path, text] : writes)
-      writer_(path, text);
-    writer_(historyPath_, historyText);
+      writer_(path, *text);
+    writer_(historyPath_, *historyText);
     std::error_code ec;
     if (!fs::remove(journalPath_, ec) || ec)
       throw Error("recovery_required", "User edits were saved but journal "
                                        "cleanup failed; retry Save to recover");
   } catch (...) {
-    journal["before"] = committedState_;
-    journal["before_history"] = previousDocument_;
-    journal["after"] = std::move(after);
-    journal["after_history"] = std::move(nextDocument);
+    journal["before"] = snapshot_->state;
+    journal["before_history"] =
+        transport::parseBackendJson(*snapshot_->document);
+    journal["after"] = std::move(next->state);
+    journal["after_history"] = transport::parseBackendJson(*next->document);
     interruptedWrite_ = std::move(journal);
     throw;
   }
-  committedState_ = std::move(after);
-  previousDocument_ = std::move(nextDocument);
+  snapshot_ = std::move(next);
   if (committed_)
     committed_();
 }
@@ -655,7 +892,7 @@ void ProjectHistory::recover() {
       validateCommand(command);
     const auto writes = prepareSidecars(binary_, after);
     for (const auto &[path, text] : writes)
-      writer_(path, text);
+      writer_(path, *text);
     writer_(historyPath_, compactText(history));
     std::error_code ec;
     if (!fs::remove(journalPath_, ec) || ec)
@@ -667,7 +904,8 @@ void ProjectHistory::recover() {
 }
 
 bool ProjectHistory::current() const {
-  return blocked_.empty() && diskState() == committedState_;
+  return blocked_.empty() &&
+         stateMatches(binary_, snapshot_->state, snapshot_->contents);
 }
 
 void ProjectHistory::reset() {
@@ -678,12 +916,11 @@ void ProjectHistory::reset() {
                 "Recover the pending transaction before resetting history");
   const auto checkpoint = *this;
   try {
-    committedState_ = diskState();
-    previousDocument_ = read(historyPath_);
-    commands_ = Json::array();
+    snapshot_ = readSnapshot();
+    commands_.clear();
     cursor_ = 0;
     blocked_.clear();
-    persist(committedState_);
+    persist(snapshot_->state);
   } catch (...) {
     *this = checkpoint;
     throw;

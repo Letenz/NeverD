@@ -6,6 +6,8 @@
 
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
 
+#include "ELFLoaderDetail.h"
+
 #include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/object/ELFLayout.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -286,15 +288,8 @@ void parseDynamic(const llvm::object::ELFFile<ELFT> &ELF,
       !rangeInBounds(DynamicSH.sh_offset, DynamicSH.sh_size, Size))
     return;
 
-  llvm::StringRef DynStrTab;
-  if (DynamicSH.sh_link != 0 && DynamicSH.sh_link < Sections.size()) {
-    const typename ELFT::Shdr *StrSH = &Sections[DynamicSH.sh_link];
-    auto TabOr = ELF.getStringTable(*StrSH);
-    if (TabOr)
-      DynStrTab = *TabOr;
-    else
-      llvm::consumeError(TabOr.takeError());
-  }
+  const auto DynStrTab =
+      detail::getLinkedStringTable<ELFT>(ELF, Sections, DynamicSH);
 
   struct DynEntry {
     int64_t Tag;
@@ -420,13 +415,8 @@ void parsePLTImports(const llvm::object::ELFFile<ELFT> &ELF,
     }
   }
 
-  if (DynSymSH) {
-    auto TabOr = ELF.getStringTableForSymtab(*DynSymSH, Sections);
-    if (TabOr)
-      DynStr = *TabOr;
-    else
-      llvm::consumeError(TabOr.takeError());
-  }
+  if (DynSymSH)
+    DynStr = detail::getLinkedStringTable<ELFT>(ELF, Sections, *DynSymSH);
 
   if (!DynSymSH || DynStr.empty() || !RelPltSH || RelPltSH->sh_entsize == 0)
     return;

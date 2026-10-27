@@ -30,6 +30,7 @@ set(NEVERD_SDK_SOURCES
     capi/ComparisonScalarValidation.cpp
     capi/ComparisonSource.cpp
     capi/NeverDCAPIDiff.cpp
+    capi/NeverDCAPILineage.cpp
     capi/ProgramMain.cpp
     capi/ImageStrings.cpp
     capi/LLVMFunctionView.cpp
@@ -255,6 +256,7 @@ set(NEVERD_SDK_HEADERS
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIEmulation.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIExecution.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIQuery.h
+    ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPILineage.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPILocalTypes.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIModules.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPISymbolic.h

@@ -468,6 +468,10 @@ private:
   /// Intern a node, returning an existing ref when an identical node exists.
   SymRef intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
                 uint64_t Aux);
+  /// Append only after the complete identity lookup failed. A null head means
+  /// the hash has no table entry yet; existing heads retain collision chains.
+  SymRef appendInterned(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
+                        uint64_t Aux, uint64_t Hash, SymRef *Head);
   void recordVariableName(llvm::StringRef Name, uint32_t Id);
 
   /// Split \p R into a coefficient and a base so that `R == Coeff * Base`.

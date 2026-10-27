@@ -1283,3 +1283,55 @@ description and either a byte-file path or `data_hex`; `analysis_section_remove`
 accepts a name. Successful edits invalidate analysis, publish a revision and
 remain unsaved until `save`. Analysis snapshots carry unsaved additions into
 read-only replicas. The shared SDK validates every mutation transactionally.
+
+## Offline version comparison graphs
+
+Optional `lineage_load`, `lineage_summary`, `lineage_status`, `lineage_query`,
+`lineage_save`, `lineage_save_report` and `lineage_close` capabilities use the
+additive native lineage API. `lineage_cancellable_operations` advertises the
+load/query/save operations with cooperative cancellation and retained old data.
+`lineage_edit_releases` is advertised independently when the optional native
+release editor is available, and then also appears in that cancellation list.
+An older engine continues to advertise its existing graph operations.
+
+- `lineage_load`: `reports` is an array of local report paths; `path` reopens a
+  collection. `append: true` retains a loaded collection and excludes `path`.
+  Optional `versions` replaces metadata; `version_updates` merges per-snapshot
+  edits while preserving other labels (duplicates still fail shared validation).
+  `options` contains shared admission settings. Invalid JSON in a reopened file
+  retains error code `invalid_json`; the error response's `payload` identifies
+  `source: "lineage_file"` and `path`. File-read failures remain `load_failed`.
+- `lineage_query`: `query` is the [shared page request](../../docs/binary-diff-lineage.md#queries-and-limits).
+  An absent revision is filled; explicit stale revisions remain errors.
+- `lineage_edit_releases`: `edit` contains the shared `revision`, `upsert`,
+  `remove` and `parent_updates` transaction; `options` supplies native admission
+  settings. An omitted edit revision is filled from the current graph. The
+  optional `expected_lineage_revision` remains a separate outer guard. Success
+  returns the bounded summary of the newly committed collection. Scalar edits
+  to existing records may omit `parents` to preserve the complete parent set;
+  bounded `parent_updates` add/remove links without fetching that set over IPC.
+  Cycles, unknown references and contradictory ancestor dates fail atomically.
+- `lineage_save`: `path` publishes a whole collection locally.
+  `lineage_save_report` also requires `report`, preserving its exact bytes.
+- `lineage_summary` and `lineage_status` separate `operation_state`,
+  `loaded_revision` and historical report completeness. `lineage_close` releases
+  the collection without touching comparison/project sessions.
+
+Release edits upgrade a saved collection to document schema version 2, including
+when its last release is later removed. Existing load/append/metadata/save paths
+retain that envelope and its release records. Summary/page protocol versions
+remain 1; `document_schema_version` identifies the saved document version.
+`releases`, `release_parents` and `release_children` query rows are bounded and
+contain relation counts instead of embedded parent arrays. The `focus` selector
+on `releases` locates the page containing an ID after a timeline reorder. See
+[release contracts](../../docs/binary-diff-lineage.md#declared-releases-and-timelines)
+for the canonical UTC timestamp, edit and ordering rules. Dates and ancestry
+are analyst declarations, not inferred patch-presence or backport evidence.
+
+Every operation optionally accepts `expected_lineage_revision`; stale requests
+fail before mutation. Unknown payload fields are refused. Sources and bundles
+are read/written locally with explicit aggregate admission, including files over
+32 MiB. Full documents never cross the 8 MiB IPC frame. Failed or stopped
+replacement retains the prior collection; no partial new graph is published.
+Save closes its temporary file, checks cancellation, then renames once. A late
+cancel cannot relabel publication as stopped.

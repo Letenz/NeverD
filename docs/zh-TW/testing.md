@@ -1,5 +1,7 @@
 **語言**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](testing.md) | [日本語](../ja/testing.md) | [한국어](../ko/testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` 透過原始碼管線檢查 x64/ARM64 Mach-O 的整數、浮點及混合堆疊參數。`IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` 確保記憶體讀取、呼叫、堆疊位址逸出，以及不透明或記憶體 intrinsic 仍保留入口儲存初始化。純值路徑直接使用宣告參數，不額外產生實體 SP 寫入，並保留暫存器浮點狀態效應。macOS 行動端矩陣獨立編譯並執行還原的 Swift；產生成功本身不代表執行驗證。
+
 `NeverDLLVMCValueTests` 在 O0/O2 及兩種 LLVM 型別保留設定下，與獨立的 Windows x64 ABI 函式編譯執行可變參數呼叫。原生 x64 以 va_arg 驗證浮點值；其他架構明確略過。
 
 [← 文件索引](README.md)
@@ -11,6 +13,8 @@
 `NeverDSourceEntryBindingTests` 編譯並執行 x64/ARM64、PE/ELF、HighC/LLVMC 的入口堆疊參數矩陣，涵蓋完整模組、單獨呼叫者、顯式浮點位元傳遞、快取重用與重設。負向測試拒絕不完整寫入、未對齊參數、堆疊位址逃逸及未定義輸入；獨立被呼叫函式定義檢查固定參數宣告。主機執行不等於原生 Windows ARM64 驅動程式驗證。 矩陣也涵蓋 RBP、x29/x30 框架的還原；檢查儲存位元組被覆寫、SP 還原但 RBP 改變、把返回位址當參數等反例，以及 ELF 與 Windows 保留暫存器的差異。
 
 新增矩陣以 O0/O2 和 UBSan 執行有號與無號的 1/2/4 位元組讀取，涵蓋兩條 C 路徑、完整輸出與僅選呼叫者；呼叫者只寫入實際讀取的位元組，並拒絕超出宣告寬度的讀取。
+
+混合寬度矩陣以 O0/O2 和 UBSan 執行同槽前綴及完整讀取。原生框架反例涵蓋兩種讀取順序，並拒絕僅有窄讀取、或完整讀取屬於另一槽的證據。
 
 已知暫存器呼叫涵蓋 x64/ARM64 PE/ELF、完整模組及僅選呼叫者的兩條 C 路徑，並保留原始間接 LowIR。負例涵蓋部分寫入、不透明副作用、暫存值重用、記憶體呼叫槽和預算耗盡。
 
@@ -2157,3 +2161,7 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 自身比較矩陣也執行無參數的相等及減法溢位案例。這些案例不需要任何傳入暫存器值，兩條 C 路線都不能額外產生未知狀態陷阱。
 
 HFA 匯入槽測試編譯嚴格的 C 原型，並對標頭宣告及本機宣告執行完整參數與傳回值驗證。兩條 C 路徑涵蓋 float、double 結構體、連續呼叫與 AArch64 執行。
+
+## 選定函式宣告檢查
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` 將位址輸出與整數、指標、浮點及 void 提供者拼接。`AddressOnlyCallbackConvertsToItsKnownParameterType` 執行具型別的回呼。`SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` 比較分別選定及整單元輸出，以及冷、熱快取；x64/ARM64 PE、ELF、Mach-O 模型產生的 C 在主機上以 O0/O2 和 UBSan 編譯執行，不代表各平台的原生執行驗證。修改此邊界後執行呼叫契約、指標投影、原始碼 ABI 和被呼叫函式快取測試。

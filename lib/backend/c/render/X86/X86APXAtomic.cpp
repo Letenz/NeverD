@@ -53,18 +53,28 @@ std::string expression(const X86APXAtomicPlan &P,
                         : P.TargetArch == Arch::X64 ? "%{rex%} "
                                                     : "";
   const std::string Register = P.legacy() ? "R" : "r";
-  Fallback += "__asm__ __volatile__(\"" + std::string(Encoding) + P.mnemonic() +
-              " " + (P.compare() ? "%2, %0, " : "%1, ") + Segment + "(" +
-              Offset + ")\" : ";
+  const auto Memory =
+      P.stackReference() ? std::string("(%%rbp,%%rdx)") : "(" + Offset + ")";
+  const auto Setup = P.stackReference()
+                         ? std::string("movq %q") + (P.compare() ? "1" : "0") +
+                               ", %%rdx\\n\\tsubq %%rbp, %%rdx\\n\\t"
+                         : "";
+  Fallback += "__asm__ __volatile__(\"" + Setup + Encoding + P.mnemonic() +
+              " " + (P.compare() ? "%2, %0, " : "%1, ") + Segment + Memory +
+              "\" : ";
   if (P.compare())
     Fallback += "\"+" + Register + "\"(" + Temporary + ")";
-  Fallback += " : \"b\"(" + Address + "), \"" + Register + "\"((" + Word +
-              ")(" + Args.back() + ")) : " + (P.compare() ? "\"cc\", " : "") +
-              "\"memory\"); ";
+  Fallback += std::string(" : \"") +
+              x86MemoryAddressAsm(P.AddressBits).GNUConstraint + "\"(" +
+              Address + "), \"" + Register + "\"((" + Word + ")(" +
+              Args.back() +
+              ")) : " + (P.compare() || P.stackReference() ? "\"cc\", " : "") +
+              (P.stackReference() ? "\"rdx\", " : "") + "\"memory\"); ";
   Fallback += P.compare() ? Temporary + "; })" : "(void)0; })";
-  return std::string(P.legacy() ? "NEVERD_X86_LEGACY_ATOMIC("
-                                : "NEVERD_X86_APX_ATOMIC(") +
-         Native + ", " + Fallback + ")";
+  return std::string(P.legacy() ? "NEVERD_X86_LEGACY_ATOMIC"
+                                : "NEVERD_X86_APX_ATOMIC") +
+         (P.stackReference() ? "_STACK(" : "(") + Native + ", " + Fallback +
+         ")";
 }
 
 bool scalar(const ExprPtr &E) {
@@ -121,7 +131,9 @@ x86APXAtomicCallPlan(Arch A, const llvm::CallInst &Call) {
     if (Named)
       P = x86APXAtomicPlan(Named->Id, Named->Bytes, Bits, Prefix, Condition, A);
     if (!P || Asm->getAsmString() != P->assembly() ||
-        Asm->getConstraintString() != P->constraints() ||
+        (Asm->getConstraintString() != P->constraints() &&
+         (P->stackReference() ||
+          Asm->getConstraintString() != P->constraints(true))) ||
         !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
         Asm->getDialect() != llvm::InlineAsm::AD_ATT ||
         Call.arg_size() != P->arguments() ||
@@ -152,13 +164,14 @@ std::string renderX86APXAtomicExpression(
     Arch A, const HighExpr &E,
     const std::function<std::string(const HighExpr &)> &Expr) {
   const auto Prefix = x86APXSegmentPrefix(E.MemoryAddressSpace);
-  if (E.Operands.size() > 4 || E.Kind != ExprKind::Call || E.IsIndirectCall ||
+  if (E.Operands.size() > 5 || E.Kind != ExprKind::Call || E.IsIndirectCall ||
       E.IndirectTarget || E.SourceCallHint || E.DoesNotReturn ||
       !E.IntrinsicOutputs.empty() || !Prefix)
     throw std::invalid_argument("invalid HighC APX atomic call");
   ApxAtomicIntrinsicShape S;
   S.TargetArch = A;
   S.MemoryOrdering = E.MemoryOrdering;
+  S.MemoryAddressSpace = E.MemoryAddressSpace;
   S.NumInputs = E.Operands.size() + 1;
   S.IntrinsicIdIsConst = true;
   S.IntrinsicIdSize = 2;
@@ -184,10 +197,19 @@ std::string renderX86APXAtomicExpression(
     S.ConditionSize = CC->Type->Size;
     S.Condition = CC->ConstVal;
   }
+  const auto ControlIndex = x86AtomicAddressControlIndex(E.IntrinsicId) - 1;
+  if (E.Operands.size() > ControlIndex && scalar(E.Operands[ControlIndex])) {
+    const auto &Control = E.Operands[ControlIndex];
+    S.AddressControlIsConst = Control->Kind == ExprKind::Const &&
+                              !isAddressProvenance(Control->ConstProvenance);
+    S.AddressControlSize = Control->Type->Size;
+    S.AddressControl = Control->ConstVal;
+  }
   if (!intrinsicApxAtomicShapeIsValid(E.IntrinsicId, S))
     throw std::invalid_argument("invalid HighC APX atomic operands");
   const auto P = *x86APXAtomicPlan(
-      E.IntrinsicId, S.SourceSize, A == Arch::X86 ? 32 : 64, *Prefix,
+      E.IntrinsicId, S.SourceSize, A == Arch::X86 ? 32 : 64,
+      *Prefix | (S.stackReference() ? X86NativeStackReference : 0),
       isX86CmpccXaddIntrinsic(E.IntrinsicId) ? S.Condition : 0, A);
   std::vector<std::string> Args = {Expr(*E.Operands[0])};
   if (P.compare())

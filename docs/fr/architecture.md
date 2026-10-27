@@ -12,6 +12,8 @@ Si le type de l’appel LLVM diffère de la déclaration nommée, LLVM C évalue
 
 Les paramètres entiers de pile de 1/2/4/8 octets conservent leur largeur exacte dans le cache, la liaison à l’entrée et la preuve des écritures de l’appelant. Les extensions signées et non signées préservent les bits lus ; un paramètre étroit n’initialise aucun octet adjacent.
 
+Les lectures étroites au même décalage partagent un paramètre si le code original accessible lit aussi toute la largeur déclarée de cette case. La preuve de cadre vérifie le maximum par case : des lectures étroites répétées ou une lecture complète d’une autre case ne fournissent pas les octets manquants.
+
 Les cibles constantes des appels par registre utilisent la requête scalaire LowIR bornée partagée. La preuve de pile conserve l’occurrence indirecte originale ; seul le MedIR source devient un appel nommé après accord de la cible, de la déclaration et des octets sortants. Les chargements, valeurs interblocs, effets des appels et registres incomplets ne déterminent aucune cible.
 
 Pour un PE x64 lié, la découverte recueille les adresses de code des LEA RIP-relatifs canoniques pendant le balayage des appels existant. Chaque cible exige une entrée indépendante et une preuve bornée de sortie appelable ; labels internes, continuations et corps non pris en charge restent exclus. La découverte et les signatures partagent le décodeur de cette forme. Les références rel32 conditionnelles COFF exigent aussi un symbole de fonction explicite et une relocation sans addend. Hors ligne, `--single-reference-context` vérifie chaque clause à un seul site contre toutes les déclarations sources brutes qui se recouvrent, en conservant toutes les alternatives du site.
@@ -2031,3 +2033,9 @@ La simplification commune des indicateurs MedIR conserve les deux opérandes de 
 Les conditions entières comparant une même valeur SSA à elle-même deviennent des constantes booléennes avant l’émission du source, y compris le débordement de soustraction. Les opérandes non spécifiés restent explicites.
 
 Les cibles HFA mémorisées utilisent la même signature source vérifiée que la reconstruction des arguments et résultats de structure. Le prototype conserve le pointeur de fonction initial et les types complets, y compris les groupes de registres décomposés et les arguments sur la pile.
+
+## Déclarations des fonctions sélectionnées
+
+HighC représente un symbole de fonction utilisé uniquement comme adresse, sans signature connue, par un alias de tableau d’octets portant son nom de liaison. Aucun type de retour n’est inventé ; les conversions des callbacks typés et la navigation vers le symbole et son adresse restent intactes. LLVM source réutilise le lecteur borné des fonctions omises même si le nombre d’arguments est connu. Il conserve les déclarations fixes d’entiers ou pointeurs de taille mot x64/ARM64 seulement si les supports et types restent inchangés après récupération. Les contrats source explicites priment ; aucun corps, contrat d’exception ou droit de lifting natif n’est ajouté. Le cache distingue ces lectures et conserve la même décision à chaud.
+
+Les métadonnées d’exception connues excluent cette déclaration avant la lecture du corps ; les lectures ordinaires de signature restent inchangées.

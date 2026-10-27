@@ -12,6 +12,7 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Errc.h"
 
+#include <iterator>
 #include <limits>
 #include <set>
 
@@ -82,7 +83,8 @@ llvm::Error validateBoundary(const SpecializationInstruction &Instruction) {
     return invalid("native stack control requires an exact instruction extent");
   for (size_t I = 0; I < Instruction.Ops.size(); ++I) {
     const auto &Op = Instruction.Ops[I];
-    if (Op.NumInputs > 6 || Op.Seq != static_cast<int>(I) || !ordinary(Op))
+    if (Op.NumInputs > std::size(Op.Inputs) || Op.Seq != static_cast<int>(I) ||
+        !ordinary(Op))
       return invalid("native stack control has malformed operation metadata");
     if (Op.Output.Size && !validValue(Op.Output))
       return invalid("native stack control has an invalid output operand");

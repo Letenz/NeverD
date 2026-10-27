@@ -4,6 +4,8 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/lift/AArch64/AArch64Regs.h"
 
+#include <iterator>
+
 using namespace neverd;
 
 namespace {
@@ -912,7 +914,8 @@ TEST(NativeBooleanResultProof, RejectsMalformedGraphsOperationsAndContracts) {
     if (Mutation == 8)
       B.Ops.front().Opcode = NdOp::INDIR_CALL;
     if (Mutation == 9)
-      B.Ops.front().NumInputs = 7;
+      B.Ops.front().NumInputs =
+          static_cast<uint8_t>(std::size(B.Ops.front().Inputs) + 1);
     if (Mutation == 10) {
       F.linear({call(), operation(NdOp::INTRINSIC, {}, {}),
                 mask(a64reg::X0, a64reg::X0), ret()});

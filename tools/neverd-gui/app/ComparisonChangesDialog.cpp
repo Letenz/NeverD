@@ -212,7 +212,7 @@ ComparisonChangesDialog::ComparisonChangesDialog(ComparisonSession &S,
                          ? tr("none recorded")
                          : words(Page["secondary_gaps"].toArray())));
         if (Changes->rowCount() && !ChangeTable->currentIndex().isValid())
-          ChangeTable->selectRow(0);
+          ChangeTable->setCurrentIndex(ChangeTable->model()->index(0, 0));
         controls();
       });
   connect(Slice, &ComparisonModel::pageReady, this,

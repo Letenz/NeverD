@@ -19,6 +19,7 @@
 
 namespace neverd {
 inline constexpr unsigned X86CompactFloat = 0x10;
+inline constexpr unsigned X86CompactStackReference = 0x20;
 inline constexpr unsigned X86CompactZero = 0x80;
 inline constexpr const char *X86CompactMalformed =
     "invalid x86 compress/expand memory contract";
@@ -29,6 +30,7 @@ struct X86CompactControl {
   unsigned ElementBytes;
   unsigned Kind;
   bool Zero;
+  bool StackReference = false;
 };
 struct X86CompactOperandUse {
   uint64_t LaneMask;
@@ -49,7 +51,8 @@ x86CompactOperandUse(unsigned Lanes, bool Expand, bool Zero,
 constexpr std::optional<X86CompactControl> x86CompactControl(Intrinsic Id,
                                                              uint64_t C) {
   if (!isX86CompactMemory(Id) || C > UINT8_MAX ||
-      (C & ~(X86CompactFloat | X86CompactZero | 15u)) ||
+      (C &
+       ~(X86CompactFloat | X86CompactStackReference | X86CompactZero | 15u)) ||
       (Id == Intrinsic::EVEXCompressStore && (C & X86CompactZero)))
     return {};
   const unsigned Bytes = C & 15;
@@ -64,7 +67,8 @@ constexpr std::optional<X86CompactControl> x86CompactControl(Intrinsic Id,
                            : Bytes == 2 ? 1u
                            : Bytes == 4 ? 2u
                                         : 3u,
-                           bool(C & X86CompactZero)};
+                           bool(C & X86CompactZero),
+                           bool(C & X86CompactStackReference)};
 }
 struct X86CompactShape {
   Arch TargetArch = Arch::Unknown;
@@ -90,6 +94,10 @@ constexpr bool x86CompactShapeIsValid(Intrinsic Id, const X86CompactShape &S) {
   for (bool Scalar : S.Scalars)
     if (!Scalar)
       return false;
+  if (x86CompactControl(Id, *S.Control)->StackReference &&
+      (S.TargetArch == Arch::X86 ||
+       S.MemoryAddressSpace != NdMemoryAddressSpace::Default))
+    return false;
   if (S.Sizes[1] * 8 <
       S.Sizes[2] / x86CompactControl(Id, *S.Control)->ElementBytes)
     return false;

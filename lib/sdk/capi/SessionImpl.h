@@ -41,6 +41,7 @@
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/FunctionNames.h"
 #include "neverd/loader/SymbolSpelling.h"
 #include "neverd/pass/Limits.h"
 #include "neverd/patch/PatchOverlay.h"
@@ -95,6 +96,8 @@ struct FuncInfo {
   /// Original identity is never overwritten by a display annotation or rename.
   std::string LinkageName;
   NameOrigin LinkageOrigin = NameOrigin::Stated;
+  /// Origin of OriginalNames after recognition, before an analyst's rename.
+  NameOrigin ResolvedOrigin = NameOrigin::Synthesized;
 
   bool operator==(const FuncInfo &) const = default;
 };
@@ -344,6 +347,7 @@ struct Session {
   /// mutate the HighIR route's MedIR: later source variants rebuild from that
   /// same prepared input.
   std::optional<std::vector<MedFunc>> NativeMedFuncs;
+  std::vector<MedFunc> NativeCalleeDeclarations;
   bool SBFFunctionsSynchronized = false;
   bool NativeFunctionsSynchronized = false;
   /// The image's strings under the options last searched with
@@ -870,8 +874,8 @@ struct Session {
       const auto Rename = Renames.find(Entry);
       const bool Renamed = Rename != Renames.end();
       Functions.push_back({Entry, 0, Renamed ? Rename->second : Name,
-                           Renamed ? NameOrigin::User : NameOrigin::Analysis,
-                           Name, NameOrigin::Analysis});
+                           Renamed ? NameOrigin::User : NameOrigin::Synthesized,
+                           Name, NameOrigin::Synthesized});
       Added = true;
     }
     if (Added) {
@@ -892,6 +896,11 @@ struct Session {
     Known.reserve(Functions.size());
     for (const FuncInfo &F : Functions)
       Known.insert(F.Entry);
+    std::map<va_t, llvm::StringRef> NewNames;
+    for (const auto &[Entry, Name] : *DiscoveredFunctions)
+      if (!isDeletedFunction(Entry) && !Known.contains(Entry))
+        NewNames.try_emplace(Entry, Name);
+    const auto Origins = recoveredFunctionNameOrigins(Img, NewNames);
     bool Added = false;
     for (const auto &[Entry, Name] : *DiscoveredFunctions) {
       if (isDeletedFunction(Entry) || !Known.insert(Entry).second)
@@ -899,9 +908,9 @@ struct Session {
       OriginalNames.try_emplace(Entry, Name);
       const auto Rename = Renames.find(Entry);
       const bool Renamed = Rename != Renames.end();
+      const auto Origin = Origins.at(Entry);
       Functions.push_back({Entry, 0, Renamed ? Rename->second : Name,
-                           Renamed ? NameOrigin::User : NameOrigin::Analysis,
-                           Name, NameOrigin::Analysis});
+                           Renamed ? NameOrigin::User : Origin, Name, Origin});
       Added = true;
     }
     if (Added) {
@@ -982,6 +991,7 @@ struct Session {
     CurrentCallResults.clear();
     UsingAnalystCallContracts = false;
     NativeMedFuncs.reset();
+    NativeCalleeDeclarations.clear();
     PipeResult = {};
     LLVMCtx.reset();
     PipeRan = false;
@@ -1196,29 +1206,22 @@ struct Session {
       // not keep, and what each function-pointer variable starts at.
       PipelineResult Recovery;
       Recovery.MedFuncs = PipeResult.MedFuncs;
-      Recovery.CallMayWriteGPRs = PipeResult.CallMayWriteGPRs;
-      Recovery.CallExitConstants = PipeResult.CallExitConstants;
-      Recovery.CallEntryReadGPRs = PipeResult.CallEntryReadGPRs;
-      Recovery.CallEntryStackArgs = PipeResult.CallEntryStackArgs;
-      Recovery.CallEntryStackSlots = PipeResult.CallEntryStackSlots;
-      Recovery.CallEntryArgumentCounts = PipeResult.CallEntryArgumentCounts;
-      Recovery.OmittedCalleeArgumentCounts =
-          PipeResult.OmittedCalleeArgumentCounts;
-      Recovery.CallPrototypeArguments = PipeResult.CallPrototypeArguments;
-      Recovery.CallUserPrototypes = PipeResult.CallUserPrototypes;
-      Recovery.CallArgumentSources = PipeResult.CallArgumentSources;
+      copyCallSignatureFacts(PipeResult, Recovery);
       Recovery.OmittedCallees = PipeResult.OmittedCallees;
       // The pipeline's callee memo keeps the forwarder probes of those
       // callees, which serve where this recovery reads the same.
       Recovery.CalleeSignatureMemo = PipeResult.CalleeSignatureMemo;
-      recoverModuleCallAbi(Img, Recovery, FuncNames);
+      recoverModuleCallAbi(Img, Recovery, FuncNames,
+                           /*SourceDeclarations=*/true);
       NativeMedFuncs = std::move(Recovery.MedFuncs);
+      NativeCalleeDeclarations = std::move(Recovery.OmittedCalleeDeclarations);
     }
     std::vector<std::pair<va_t, std::string>> ImportMap;
     for (const auto &[Addr, Name] : Img.getImportAddressNames())
       ImportMap.emplace_back(Addr, Name);
     MedLLVMEmitter Emitter;
     Emitter.setPreserveUnknownSourceValues(true);
+    Emitter.setSourceCalleeDeclarations(NativeCalleeDeclarations);
     Emitter.setOriginalImageStorageForSource(OriginalImageStorage);
     Emitter.setAnalystSourceProjection(UsingAnalystCallContracts);
     if (UsingAnalystCallContracts && CallVariant)

@@ -40,7 +40,9 @@ class LinkPaintProbe(QObject):
             raise RuntimeError("IDA View-A is unavailable")
         ida_kernwin.activate_widget(widget, True)
         ida_kernwin.set_view_renderer_type(widget, ida_kernwin.TCCRT_FLAT)
-        self.view = ida_kernwin.PluginForm.TWidgetToPySideWidget(widget)
+        # The legacy PySide helper expects QtGui.QWidget.FromCapsule. IDA's
+        # Qt 6 bridge wraps the actual widget type through shiboken instead.
+        self.view = ida_kernwin.PluginForm.TWidgetToQtPythonWidget(widget)
         if not isinstance(self.view, QAbstractScrollArea):
             raise RuntimeError("IDA's disassembly has no measurable Qt viewport")
         self.viewport = self.view.viewport()

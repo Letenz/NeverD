@@ -63,6 +63,146 @@ TEST_P(AndroidJNI, VMThreadAttachmentAndVersions) {
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
   EXPECT_EQ(R.ReturnValue, 0u);
 }
+TEST_P(AndroidJNI, StatLoggerUsesSharedClockArraysAndRetainedLabels) {
+  Options.LinuxTime.emplace().Clocks = {{7, {50, 987654321}}};
+  for (unsigned advance : {0u, 31u}) {
+    Options.LinuxTime->NanosecondsPerInstruction = advance;
+    for (unsigned mode : {0u, 1u}) {
+      Options.Android->Arguments = {mode};
+      auto result = run("jni_stat_logger");
+      ASSERT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+      EXPECT_EQ(result.ReturnValue, 0u);
+    }
+  }
+}
+TEST_P(AndroidJNI, StatLoggerReadsBootClockBeforeNullLabelsException) {
+  Options.Android->Arguments = {1};
+  auto missing = run("jni_stat_logger");
+  EXPECT_EQ(missing.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(missing.Diagnostic.find("no explicit linux_time input"),
+            std::string::npos);
+  Options.LinuxTime.emplace().Clocks = {{1, {10, 0}}};
+  auto wrong_clock = run("jni_stat_logger");
+  EXPECT_EQ(wrong_clock.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(wrong_clock.Diagnostic.find("no explicit linux_time input"),
+            std::string::npos);
+}
+TEST_P(AndroidJNI, StatLoggerDoesNotInventLoggingOrStatisticsUpdates) {
+  Options.Android->Arguments = {2};
+  auto result = run("jni_stat_logger");
+  EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(result.Diagnostic.find("unmodeled Java method"), std::string::npos);
+}
+TEST_P(AndroidJNI, HashMapRetainsStringNullAndReferenceValuesAcrossDetach) {
+  auto result = run("jni_hash_map");
+  EXPECT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+  EXPECT_EQ(result.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, HashMapRefusesCustomKeysRawObjectsAndUnmodeledEquality) {
+  for (uint64_t mode : {1u, 2u, 3u}) {
+    Options.Android->Arguments = {mode};
+    auto result = run("jni_hash_map");
+    EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService)
+        << result.Diagnostic;
+    EXPECT_NE(result.Diagnostic.find(mode == 1   ? "String and null keys"
+                                     : mode == 2 ? "contents are not supplied"
+                                                 : "equality, hashing"),
+              std::string::npos);
+  }
+}
+TEST_P(AndroidJNI, SystemPropertyIntegersShareNativeRecordsAndArtKeyEncoding) {
+  Options.Android->Properties = {{"test.valid", "28"},
+                                 {"test.hex", "0x1c"},
+                                 {"test.min", "-2147483648"},
+                                 {"test.max", "2147483647"},
+                                 {"test.octal", "028"},
+                                 {"test.sign", "\t -28"},
+                                 {"test.empty", ""},
+                                 {"test.overflow", "2147483648"},
+                                 {"test.underflow", "-2147483649"},
+                                 {"test.trailing", "28 "},
+                                 {"test.signedhex", "-0x1c"},
+                                 {"test.spacehex", " 0x1c"},
+                                 {"test.hexoverflow", "0x80000000"},
+                                 {"\xc0\x80\xed\xa0\x80"
+                                  "a\xf0\x9f\x98\x80",
+                                  "-7"}};
+  auto result = run("jni_property_int");
+  EXPECT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+  EXPECT_EQ(result.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, SystemPropertyIntegersRejectChangedOrUnmappedNativeRecords) {
+  Options.Android->Properties = {{"test.valid", "28"}};
+  for (uint64_t mode : {1u, 2u}) {
+    Options.Android->Arguments = {mode};
+    auto result = run("jni_property_int");
+    EXPECT_EQ(result.Stop, ProcessStopReason::RuntimeFailure)
+        << result.Diagnostic;
+    if (mode == 1)
+      EXPECT_NE(
+          result.Diagnostic.find("changed the immutable Android property"),
+          std::string::npos);
+  }
+}
+TEST_P(AndroidJNI, SystemPropertyReadProjectionDoesNotInventWrites) {
+  Options.Android->Arguments = {3};
+  auto result = run("jni_property_int");
+  EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService)
+      << result.Diagnostic;
+  EXPECT_NE(result.Diagnostic.find("unmodeled Java method"), std::string::npos);
+}
+TEST_P(AndroidJNI, SystemClockSharesLinuxEpochsIdleAndInstructionTime) {
+  Options.LinuxTime.emplace();
+  Options.LinuxTime->Clocks = {{1, {10, 123456789}}, {7, {50, 987654321}}};
+  Options.LinuxTime->AdvanceOnIdle = true;
+  for (unsigned mode : {0u, 5u}) {
+    Options.Android->Arguments = {mode};
+    Options.LinuxTime->NanosecondsPerInstruction = mode ? 31 : 0;
+    auto result = run("jni_system_clock");
+    ASSERT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+    EXPECT_EQ(result.ReturnValue, 0u);
+  }
+}
+TEST_P(AndroidJNI, SystemClockRequiresEachClockAndSignedNanosecondRange) {
+  for (unsigned mode : {1u, 2u, 3u}) {
+    Options.Android->Arguments = {mode};
+    Options.LinuxTime.reset();
+    auto absent = run("jni_system_clock");
+    EXPECT_EQ(absent.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(absent.Diagnostic.find("no explicit linux_time input"),
+              std::string::npos);
+    Options.LinuxTime.emplace().Clocks = {{mode == 1 ? 7 : 1, {10, 123456789}}};
+    auto other_clock = run("jni_system_clock");
+    EXPECT_EQ(other_clock.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(other_clock.Diagnostic.find("no explicit linux_time input"),
+              std::string::npos);
+    const int clock = mode == 1 ? 1 : 7;
+    for (auto time :
+         {LinuxTimespec{-1, 999999999}, LinuxTimespec{9223372036, 854775808}}) {
+      Options.LinuxTime->Clocks = {{clock, time}};
+      auto invalid = run("jni_system_clock");
+      EXPECT_EQ(invalid.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(invalid.Diagnostic,
+                mode == 1 ? "Android monotonic time exceeds its range"
+                          : "Android boot time exceeds its range");
+    }
+    Options.LinuxTime->Clocks = {{clock, {9223372036, 854775807}}};
+    auto maximum = run("jni_system_clock");
+    ASSERT_EQ(maximum.Stop, ProcessStopReason::Returned) << maximum.Diagnostic;
+    EXPECT_EQ(maximum.ReturnValue,
+              mode == 3 ? uint64_t(INT64_MAX) : uint64_t(INT64_MAX) / 1000000);
+    Options.LinuxTime->Clocks = {{clock, {0, 0}}};
+    auto zero = run("jni_system_clock");
+    ASSERT_EQ(zero.Stop, ProcessStopReason::Returned) << zero.Diagnostic;
+    EXPECT_EQ(zero.ReturnValue, 0u);
+  }
+}
+TEST_P(AndroidJNI, SystemClockDoesNotSupplyOtherNativeMethods) {
+  Options.Android->Arguments = {4};
+  auto result = run("jni_system_clock");
+  EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(result.Diagnostic.find("unmodeled Java method"), std::string::npos);
+}
 TEST_P(AndroidJNI,
        LoaderFailuresRetainExceptionsAcrossDetachWithoutClosingNamespaces) {
   using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
@@ -1028,6 +1168,144 @@ TEST_P(AndroidJNI, DexClassCapacityIsSeparateAndAggregate) {
   invoke({Small}, "", "Invalid DEX");
 #endif
 }
+TEST_P(AndroidJNI, ServiceManagerCacheAliasesSurviveCallsAndDetach) {
+  Options.LinuxTime.emplace().Clocks = {{7, {50, 987654321}}};
+  auto &state =
+      Options.Android->Application.emplace().service_manager.emplace();
+  state.binder_proxies = {{7, true}};
+  state.cache = std::vector<
+      mobile::dalvik::AndroidApplicationSnapshot::ServiceManager::CacheEntry>{
+      {"alpha", 7}, {"beta", 7}};
+  Options.Android->ObserveJavaState = true;
+  auto result = run("jni_service_manager_cache");
+  ASSERT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+  EXPECT_EQ(result.ReturnValue, 0u);
+  ASSERT_TRUE(result.JavaState);
+  ASSERT_TRUE(result.JavaState->framework.service_manager);
+  const auto &snapshot = *result.JavaState->framework.service_manager;
+  EXPECT_TRUE(snapshot.initialized);
+  EXPECT_TRUE(snapshot.cache_known);
+  ASSERT_EQ(snapshot.entries.size(), 2u);
+  EXPECT_EQ(snapshot.entries[0].binder, snapshot.entries[1].binder);
+  ASSERT_EQ(snapshot.binder_proxies.size(), 1u);
+  EXPECT_EQ(snapshot.binder_proxies[0].warn_on_blocking, false);
+  EXPECT_FALSE(snapshot.manager);
+}
+TEST_P(AndroidJNI, ServiceManagerMissingStateAndTransactionsStayExplicit) {
+  Options.LinuxTime.emplace().Clocks = {{7, {50, 0}}};
+  Options.Android->Arguments = {1};
+  Options.Android->ObserveJavaState = true;
+  for (unsigned mode = 0; mode < 4; ++mode) {
+    auto &state =
+        Options.Android->Application.emplace().service_manager.emplace();
+    if (mode > 0)
+      state.cache.emplace();
+    if (mode > 1)
+      state.manager_proxy.emplace(std::nullopt);
+    if (mode > 2) {
+      state.binder_proxies = {{7, true}};
+      state.context_object.emplace(7);
+    }
+    auto result = run("jni_service_manager_cache");
+    EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService);
+    const char *messages[] = {"cache contents", "proxy state", "context object",
+                              "Binder transaction"};
+    EXPECT_NE(result.Diagnostic.find(messages[mode]), std::string::npos)
+        << result.Diagnostic;
+    ASSERT_TRUE(result.JavaState);
+    ASSERT_TRUE(result.JavaState->framework.service_manager);
+    EXPECT_TRUE(result.JavaState->framework.service_manager->initialized);
+    EXPECT_TRUE(result.JavaState->terminal);
+  }
+}
+TEST_P(AndroidJNI, ServiceManagerActiveUsesInitializeOnceWithSharedTime) {
+  Options.LinuxTime.emplace().Clocks = {{7, {50, 0}}};
+  Options.Android->ObserveJavaState = true;
+  for (unsigned mode = 1; mode != 5; ++mode) {
+    Options.Android->Arguments = {mode};
+    auto result = run("jni_service_manager_metadata");
+    if (mode == 3) {
+      // Initialization completes before lookup reaches the separate,
+      // deliberately unsupported Object.toString value implementation.
+      EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_NE(result.Diagnostic.find("unmodeled Java method"),
+                std::string::npos);
+    } else {
+      EXPECT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+      EXPECT_EQ(result.ReturnValue, 0u);
+    }
+    ASSERT_TRUE(result.JavaState);
+    ASSERT_TRUE(result.JavaState->framework.service_manager);
+    EXPECT_TRUE(result.JavaState->framework.service_manager->initialized);
+    EXPECT_FALSE(result.JavaState->framework.service_manager->cache_known);
+  }
+}
+TEST_P(AndroidJNI, ServiceManagerLoggerRetainsIndependentBootEpochAcrossIdle) {
+  Options.LinuxTime.emplace().Clocks = {
+      {1, {10, 123456789}}, {4, {30, 500000000}}, {7, {50, 987654321}}};
+  Options.LinuxTime->AdvanceOnIdle = true;
+  Options.Android->ObserveJavaState = true;
+  for (unsigned advance : {0u, 31u}) {
+    Options.LinuxTime->NanosecondsPerInstruction = advance;
+    Options.Android->Arguments = {advance};
+    auto result = run("jni_service_manager_clock");
+    ASSERT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+    EXPECT_EQ(result.ReturnValue, 0u);
+    ASSERT_TRUE(result.JavaState);
+    EXPECT_FALSE(result.JavaState->terminal);
+    ASSERT_TRUE(result.JavaState->framework.service_manager);
+    const auto &state = *result.JavaState->framework.service_manager;
+    EXPECT_TRUE(state.initialized);
+    EXPECT_NE(state.stat_logger, 0u);
+    EXPECT_FALSE(state.cache_known);
+    EXPECT_FALSE(state.manager);
+  }
+}
+TEST_P(AndroidJNI, ServiceManagerMetadataDoesNotInitializeTheClass) {
+  Options.Android->ObserveJavaState = true;
+  auto R = run("jni_service_manager_metadata");
+  ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+  ASSERT_TRUE(R.JavaState);
+  EXPECT_FALSE(R.JavaState->terminal);
+  bool Found = false;
+  for (const auto &C : R.JavaState->classes)
+    if (C.descriptor == "Landroid/os/ServiceManager;") {
+      Found = true;
+      EXPECT_NE(C.class_object, 0u);
+      EXPECT_FALSE(C.supplied);
+      EXPECT_EQ(C.initialization,
+                mobile::dalvik::JavaClassState::Initialization::NotStarted);
+    }
+  EXPECT_TRUE(Found);
+}
+TEST_P(AndroidJNI, ServiceManagerActiveUsesRequireElapsedRealtime) {
+  Options.Android->ObserveJavaState = true;
+  const char *Calls[] = {"JNIEnv.113", "JNIEnv.144", "JNIEnv.33", "JNIEnv.27"};
+  for (bool supplied : {false, true}) {
+    SCOPED_TRACE(supplied);
+    if (supplied)
+      Options.LinuxTime.emplace().Clocks = {
+          {0, {100, 0}}, {1, {10, 123456789}}, {4, {30, 500000000}}};
+    for (unsigned Mode = 1; Mode != 5; ++Mode) {
+      SCOPED_TRACE(Mode);
+      Options.Android->Arguments = {Mode};
+      auto R = run("jni_service_manager_metadata");
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+      EXPECT_EQ(R.Diagnostic, "Linux clock 7 has no explicit linux_time input");
+      ASSERT_FALSE(R.NativeCalls.empty());
+      EXPECT_EQ(R.NativeCalls.back().Name, Calls[Mode - 1]);
+      EXPECT_FALSE(R.NativeCalls.back().Result);
+      ASSERT_TRUE(R.JavaState);
+      EXPECT_TRUE(R.JavaState->terminal);
+      for (const auto &C : R.JavaState->classes)
+        if (C.descriptor == "Landroid/os/ServiceManager;")
+          EXPECT_EQ(
+              C.initialization,
+              mobile::dalvik::JavaClassState::Initialization::Initializing);
+    }
+  }
+}
 TEST_P(AndroidJNI, ExplicitClassLookupFailuresPreserveExceptionsAndUnknowns) {
   for (const std::string Type :
        {"java/lang/ClassNotFoundException", "java/lang/NoClassDefFoundError"}) {
@@ -1051,9 +1329,9 @@ TEST_P(AndroidJNI, ExplicitClassLookupFailuresPreserveExceptionsAndUnknowns) {
 }
 TEST_P(AndroidJNI, RejectsContradictoryClassLoaderDeclarations) {
   for (const std::string Name : std::vector<std::string>{
-           "", "java/lang/String", "android/os/Build$VERSION", "bad.name",
-           "[Lfixture/Absent;", "/bad", "bad/", "bad//Name",
-           std::string("bad\0Name", 8)}) {
+           "", "java/lang/String", "android/os/Build$VERSION",
+           "android/os/ServiceManager", "bad.name", "[Lfixture/Absent;", "/bad",
+           "bad/", "bad//Name", std::string("bad\0Name", 8)}) {
     Options.Android->JNIClassLookupFailures = {
         {Name, "java/lang/ClassNotFoundException"}};
     Options.Android->EntrySymbol = "jni_vm_lifecycle";

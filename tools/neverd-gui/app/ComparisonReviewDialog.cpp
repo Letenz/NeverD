@@ -211,7 +211,7 @@ ComparisonReviewDialog::ComparisonReviewDialog(ComparisonSession &S,
                                  .arg(Page["total"].toInt())
                                  .arg(Page["record_count"].toInt()));
             if (History->rowCount() && !Table->currentIndex().isValid())
-              Table->selectRow(0);
+              Table->setCurrentIndex(Table->model()->index(0, 0));
             controls();
           });
   connect(History, &ComparisonModel::failed, this,

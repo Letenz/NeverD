@@ -50,6 +50,7 @@ public:
   void clear();
   void reload();
   QJsonObject row(int Index) const;
+  static QString functionNamesText(const QJsonObject &Function);
   static QString callEffectText(const QJsonObject &Effect);
   qsizetype cachedPages() const { return Pages.size(); }
 

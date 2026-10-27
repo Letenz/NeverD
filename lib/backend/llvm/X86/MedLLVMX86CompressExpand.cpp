@@ -27,9 +27,10 @@ llvm::Value *MedLLVMEmitter::emitX86CompressExpand(const MedOp &Op,
     throw std::invalid_argument(X86CompactMalformed);
   const auto C = *x86CompactControl(Id, *S.Control);
   const unsigned Prefix =
-      S.MemoryAddressSpace == NdMemoryAddressSpace::X86FS   ? 0x64
-      : S.MemoryAddressSpace == NdMemoryAddressSpace::X86GS ? 0x65
-                                                            : 0;
+      (S.MemoryAddressSpace == NdMemoryAddressSpace::X86FS   ? 0x64
+       : S.MemoryAddressSpace == NdMemoryAddressSpace::X86GS ? 0x65
+                                                             : 0) |
+      (C.StackReference ? X86NativeStackReference : 0);
   const auto P = *x86CompactPlan(Id == Intrinsic::EVEXExpandLoad, S.Sizes[2],
                                  C.Kind, C.Zero, Prefix);
   auto *F = B.GetInsertBlock()->getParent();
@@ -58,7 +59,8 @@ llvm::Value *MedLLVMEmitter::emitX86CompressExpand(const MedOp &Op,
                         : llvm::Constant::getNullValue(Vector);
   auto *Mask = B.CreateZExtOrTrunc(getVar(Op.Inputs[2], B), B.getInt64Ty());
   llvm::Value *Result;
-  if (const auto IID = llvm::Intrinsic::lookupIntrinsicID(P.llvmName())) {
+  if (const auto IID = llvm::Intrinsic::lookupIntrinsicID(P.llvmName());
+      IID && (!P.stackReference() || x86NativeStackMemoryIsAvailable())) {
     std::vector<llvm::Value *> Args = {Address, Mask, Data, B.getInt32(P.Kind)};
     if (P.Expand)
       Args.push_back(B.getInt32(P.Zero));

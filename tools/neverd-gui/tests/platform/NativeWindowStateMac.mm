@@ -18,6 +18,29 @@
 
 namespace neverd::gui::test {
 
+bool nativeWindowIsMinimized(QWidget &Window) {
+  return reinterpret_cast<NSView *>(Window.winId()).window.miniaturized;
+}
+
+bool hasNativeApplicationModalWindow() { return NSApp.modalWindow != nil; }
+
+void quitNativeApplication() { [NSApp terminate:nil]; }
+
+bool reopenNativeApplication() {
+  auto *Event = [NSAppleEventDescriptor
+      appleEventWithEventClass:kCoreEventClass
+                       eventID:kAEReopenApplication
+              targetDescriptor:
+                  [NSAppleEventDescriptor
+                      descriptorWithProcessIdentifier:NSProcessInfo.processInfo
+                                                          .processIdentifier]
+                      returnID:kAutoGenerateReturnID
+                 transactionID:kAnyTransactionID];
+  NSError *Error = nil;
+  [Event sendEventWithOptions:NSAppleEventSendNoReply timeout:1 error:&Error];
+  return Error == nil;
+}
+
 bool setNativeFullScreen(QWidget &Window, bool FullScreen) {
   return setNativeWindowState(Window, FullScreen ? Qt::WindowFullScreen
                                                  : Qt::WindowNoState);

@@ -354,7 +354,7 @@ TEST(X86EVEXCompressExpandMemory, BothDecodersRetainKindsSegmentsAndMode) {
 }
 
 TEST(X86EVEXCompressExpandMemory,
-     RefusesUnownedStackFaultClassAndStrayZeroFlags) {
+     RetainsStackFaultClassAndRefusesStrayZeroFlags) {
   for (bool Fast : {false, true}) {
     for (const auto &Bytes : std::vector<std::vector<uint8_t>>{
              {0x62, 0xf2, 0x7d, 0x0a, 0x89, 0x0c, 0x24},    // RSP default SS
@@ -366,7 +366,16 @@ TEST(X86EVEXCompressExpandMemory,
                      : D.decodeOne(Bytes.data(), Bytes.size(), 0x1000, I),
                 int(Bytes.size()));
       std::vector<LowOp> Ops;
-      EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
+      ASSERT_NO_THROW(D.liftToLow(I, Ops));
+      const auto It = std::find_if(Ops.begin(), Ops.end(), [](const LowOp &Op) {
+        return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+               isX86CompactMemory(Intrinsic(Op.Inputs[0].Offset));
+      });
+      ASSERT_NE(It, Ops.end());
+      const auto C = x86CompactControl(Intrinsic(It->Inputs[0].Offset),
+                                       It->Inputs[4].Offset);
+      ASSERT_TRUE(C);
+      EXPECT_TRUE(C->StackReference);
     }
     const auto Bytes = encoding(Families[2], false, false, 16);
     Decoder D;

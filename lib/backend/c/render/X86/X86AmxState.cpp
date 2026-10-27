@@ -71,20 +71,23 @@ std::optional<NativeCall> nativeCall(const llvm::CallInst &Call) {
     P.RowOrStride = 2;
     const unsigned WidthIndex = x86AmxIsTileMemory(K) ? 3 : 1;
     const unsigned Bits = Constant(WidthIndex, 64);
-    P.Prefix = Constant(WidthIndex + 1, UINT8_MAX);
+    P.Prefix = Constant(WidthIndex + 1, X86AmxNativeStackReference | UINT8_MAX);
+    const unsigned Prefix = P.Prefix & UINT8_MAX;
     if ((Bits != 32 && Bits != 64) ||
-        (P.Prefix && P.Prefix != 0x26 && P.Prefix != 0x2e && P.Prefix != 0x36 &&
-         P.Prefix != 0x3e && P.Prefix != 0x64 && P.Prefix != 0x65))
+        (Prefix && Prefix != 0x26 && Prefix != 0x2e && Prefix != 0x36 &&
+         Prefix != 0x3e && Prefix != 0x64 && Prefix != 0x65))
       throw std::invalid_argument("invalid AMX native address");
     if (Bits == 32)
       P.Descriptor |= X86AmxAddress32;
     if (Constant(WidthIndex + 2, 1))
       P.Descriptor |= X86AmxEvexMemory;
-    if (P.Prefix == 0x36)
+    if (P.Prefix & X86AmxNativeStackReference)
+      P.Descriptor |= X86AmxStackReference;
+    if (Prefix == 0x36)
       P.Descriptor |= X86AmxStackSegment;
-    if (P.Prefix == 0x64)
+    if (Prefix == 0x64)
       P.Space = NdMemoryAddressSpace::X86FS;
-    if (P.Prefix == 0x65)
+    if (Prefix == 0x65)
       P.Space = NdMemoryAddressSpace::X86GS;
   } else if (x86AmxIsRow(K)) {
     P.RowOrStride = 1;
@@ -96,7 +99,8 @@ std::optional<NativeCall> nativeCall(const llvm::CallInst &Call) {
     P.Descriptor = (P.Descriptor & ~((7u << 8) | (7u << 11))) |
                    (Constant(1, 7) << 8) | (Constant(2, 7) << 11);
   }
-  if (!x86AmxDescriptorIsValid(P.Descriptor))
+  if (!x86AmxDescriptorIsValid(P.Descriptor) ||
+      !x86AmxAddressIsValid(P.Descriptor, P.Space))
     throw std::invalid_argument("invalid AMX native bank descriptor");
   return P;
 }
@@ -142,8 +146,11 @@ std::string builtin(uint32_t D, unsigned Prefix,
   }
   return Text;
 }
-std::string dispatch(const std::string &Native, const std::string &Fallback) {
-  return "NEVERD_X86_AMX(" + Native + ", ({ " + Fallback + " }))";
+std::string dispatch(uint32_t D, const std::string &Native,
+                     const std::string &Fallback) {
+  return std::string(D & X86AmxStackReference ? "NEVERD_X86_AMX_STACK("
+                                              : "NEVERD_X86_AMX(") +
+         Native + ", ({ " + Fallback + " }))";
 }
 void addFeatures(std::set<std::string> &Features, uint32_t D) {
   const auto Names = x86AmxNativeFeatures(D);
@@ -209,8 +216,10 @@ std::string render(const X86AmxAsm &P, std::vector<std::string> Inputs) {
   for (unsigned I = 0; I < Inputs.size(); ++I) {
     if (I)
       Text += ", ";
-    const auto C =
-        P.InputConstraints[I] == "{r16}" ? "r" : P.InputConstraints[I];
+    const auto C = P.InputConstraints[I] == "{r16}"  ? "r"
+                   : P.InputConstraints[I] == "{ax}" ? "a"
+                   : P.InputConstraints[I] == "{cx}" ? "c"
+                                                     : P.InputConstraints[I];
     Text += "\"" + C + "\"((uint" + std::to_string(P.InputBytes[I] * 8) +
             "_t)(" + Inputs[I] + "))";
   }
@@ -273,7 +282,8 @@ std::string renderX86AmxExpression(Arch A, const HighExpr &E,
     Inputs = {"&" + RowName, Args[2]};
   }
   Text +=
-      dispatch(builtin(*S.Descriptor,
+      dispatch(*S.Descriptor,
+               builtin(*S.Descriptor,
                        x86AmxNativePrefix(*S.Descriptor, S.MemoryAddressSpace),
                        Inputs),
                render(*P, Inputs)) +
@@ -289,13 +299,13 @@ std::optional<std::string> renderX86AmxCall(
     if (A != Arch::X64 || Args.size() != Call.arg_size())
       throw std::invalid_argument("invalid AMX native C route");
     auto P = *x86AmxAsm(N->Descriptor, N->Space);
-    if (P.Memory &&
-        (N->Prefix == 0 || N->Prefix == 0x26 || N->Prefix == 0x2e)) {
+    const unsigned Prefix = N->Prefix & UINT8_MAX;
+    if (P.Memory && (Prefix == 0 || Prefix == 0x26 || Prefix == 0x2e)) {
       const auto At = P.Text.find("%ds:");
       P.Text.replace(At, 4,
-                     N->Prefix == 0      ? ""
-                     : N->Prefix == 0x26 ? "%es:"
-                                         : "%cs:");
+                     Prefix == 0      ? ""
+                     : Prefix == 0x26 ? "%es:"
+                                      : "%cs:");
     }
     std::vector<std::string> Inputs;
     std::string Local = Result;
@@ -317,16 +327,21 @@ std::optional<std::string> renderX86AmxCall(
       Inputs = {"&" + Local, Args[N->RowOrStride]};
     }
     return Text +
-           dispatch(builtin(N->Descriptor, N->Prefix, Inputs),
+           dispatch(N->Descriptor, builtin(N->Descriptor, N->Prefix, Inputs),
                     render(P, Inputs)) +
            "; }\n";
   }
   const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
-  if (!Asm ||
-      !llvm::StringRef(Asm->getAsmString()).starts_with(X86AmxAsmMarker))
+  if (!Asm)
+    return {};
+  const bool Legacy =
+      llvm::StringRef(Asm->getAsmString()).starts_with(X86AmxLegacyAsmMarker);
+  const llvm::StringRef Marker =
+      Legacy ? X86AmxLegacyAsmMarker : X86AmxAsmMarker;
+  if (!llvm::StringRef(Asm->getAsmString()).starts_with(Marker))
     return {};
   auto Header = llvm::StringRef(Asm->getAsmString())
-                    .drop_front(llvm::StringRef(X86AmxAsmMarker).size())
+                    .drop_front(Marker.size())
                     .split('\n')
                     .first;
   auto Fields = Header.split(' ');
@@ -336,7 +351,7 @@ std::optional<std::string> renderX86AmxCall(
       Fields.second.getAsInteger(10, Space) || Space > UINT8_MAX)
     throw std::invalid_argument("invalid AMX native descriptor");
   const auto P =
-      x86AmxAsm(Descriptor, static_cast<NdMemoryAddressSpace>(Space));
+      x86AmxAsm(Descriptor, static_cast<NdMemoryAddressSpace>(Space), Legacy);
   if (!P || P->Text != Asm->getAsmString() ||
       P->Constraints != Asm->getConstraintString() || !Asm->hasSideEffects() ||
       Asm->isAlignStack() || Asm->canThrow() ||
@@ -362,11 +377,14 @@ std::optional<std::string> renderX86AmxCall(
   // Scope the fixed r16 binding if more than one row instruction is emitted.
   return "{ " +
          dispatch(
+             Descriptor,
              builtin(Descriptor,
                      x86AmxNativePrefix(
                          Descriptor, static_cast<NdMemoryAddressSpace>(Space)),
                      Args),
-             render(*P, Args)) +
+             render(*x86AmxAsm(Descriptor,
+                               static_cast<NdMemoryAddressSpace>(Space)),
+                    Args)) +
          "; }\n";
 }
 bool isX86AmxNativeRowCall(const llvm::CallInst &Call, Arch A) {
@@ -403,12 +421,16 @@ std::set<std::string> x86AmxFunctionFeatures(const llvm::Function &Function) {
       }
       const auto *Asm =
           llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand());
-      if (!Asm ||
-          !llvm::StringRef(Asm->getAsmString()).starts_with(X86AmxAsmMarker))
+      if (!Asm)
+        continue;
+      const llvm::StringRef Text = Asm->getAsmString();
+      const llvm::StringRef Marker = Text.starts_with(X86AmxLegacyAsmMarker)
+                                         ? X86AmxLegacyAsmMarker
+                                         : X86AmxAsmMarker;
+      if (!Text.starts_with(Marker))
         continue;
       uint32_t D;
-      if (!llvm::StringRef(Asm->getAsmString())
-               .drop_front(llvm::StringRef(X86AmxAsmMarker).size())
+      if (!Text.drop_front(Marker.size())
                .split(' ')
                .first.getAsInteger(10, D) &&
           x86AmxDescriptorIsValid(D))

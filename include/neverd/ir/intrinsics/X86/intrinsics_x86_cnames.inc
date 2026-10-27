@@ -20,6 +20,10 @@ C(Intrinsic::X64Syscall, "neverd_x64_syscall");
 // returns and reconstructs no privilege/segment transition.
 C(Intrinsic::Retf, "neverd_far_return");
 C(Intrinsic::Iret, "neverd_interrupt_return");
+// Syscall returns: terminal transfers to a named register (SYSRET: RCX->RIP,
+// R11->RFLAGS; SYSEXIT: RDX->RIP, RCX->RSP).
+C(Intrinsic::Sysretq, "neverd_syscall_return");
+C(Intrinsic::Sysexitq, "neverd_sysenter_return");
 C(Intrinsic::X64WindowsSyscall, "neverd_x64_windows_syscall");
 
 // SSE4.2 CRC32 (the function takes the crc32 target feature,

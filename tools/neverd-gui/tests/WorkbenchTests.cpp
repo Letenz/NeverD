@@ -23,6 +23,7 @@
 #include "GraphView.h"
 #include "HexView.h"
 #include "InstanceServer.h"
+#include "InteractionMetrics.h"
 #include "JumpDialog.h"
 #include "LinkDispatch.h"
 #include "LinkOpener.h"
@@ -32,6 +33,7 @@
 #include "LocalTypesView.h"
 #include "MainWindow.h"
 #include "MapPromptDialog.h"
+#include "NativeWindowStates.h"
 #include "NavigationBand.h"
 #include "OutputWindow.h"
 #include "PatchEditor.h"
@@ -65,6 +67,7 @@
 #include <QDebug>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QCursor>
 #include <QDragEnterEvent>
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
@@ -94,6 +97,7 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSaveFile>
@@ -129,6 +133,37 @@
 
 using namespace neverd::gui;
 
+namespace neverd::gui {
+/// Observe sampling and run one production measurement without exiting the
+/// test process or spending ten seconds in the independent scroll phases.
+struct InteractionMetricsTestAccess {
+  static bool started(const InteractionMetrics &metrics) {
+    return metrics.started_;
+  }
+  static int functionCount(const InteractionMetrics &metrics) {
+    return metrics.functionCount_;
+  }
+  static qsizetype samples(const InteractionMetrics &metrics) {
+    return metrics.samples_.size();
+  }
+  static void pseudocode(InteractionMetrics &metrics, Address address,
+                         std::function<void()> done) {
+    metrics.started_ = true;
+    metrics.samples_ = {address};
+    metrics.measurePseudocode("pseudocode", std::move(done));
+  }
+  static void openPseudocode(InteractionMetrics &metrics, Address address,
+                             std::function<void()> done) {
+    metrics.started_ = true;
+    metrics.samples_ = {address};
+    metrics.pseudocodeStep("pseudocode")(std::move(done));
+  }
+  static QJsonObject pseudocodeResult(const InteractionMetrics &metrics) {
+    return metrics.phases_.value("pseudocode").toObject();
+  }
+};
+} // namespace neverd::gui
+
 namespace {
 constexpr Address Base = 0xffff800012340000ULL;
 constexpr int OpenTimeoutMs = 7000;
@@ -139,6 +174,14 @@ constexpr int NarrowViewWidth = 160;
 
 /// Long enough for the offer of a missing PDB to follow an open.
 constexpr int OfferWaitMs = 500;
+
+QuickStartDialog *visibleQuickStart() {
+  for (auto *window : QApplication::topLevelWidgets())
+    if (auto *dialog = qobject_cast<QuickStartDialog *>(window);
+        dialog && dialog->isVisible())
+      return dialog;
+  return nullptr;
+}
 
 QString writeFixture(const QTemporaryDir &directory, const QString &name) {
   const auto path = directory.filePath(name);
@@ -219,17 +262,52 @@ QDialog *visibleDialog(const QString &name = {}) {
   return nullptr;
 }
 
+bool privateWayland() {
+  return QGuiApplication::platformName().startsWith(QLatin1String("wayland")) &&
+         qEnvironmentVariableIsSet("NEVERD_TEST_GNOME_POINTER");
+}
+
+// Only the disposable compositor runner grants this capability. Never ask the
+// user's ordinary desktop to activate windows or create input devices.
+bool privateShell(const QString &script) {
+  QProcess process;
+  process.start(QStringLiteral("gdbus"),
+                {QStringLiteral("call"), QStringLiteral("--session"),
+                 QStringLiteral("--dest"), QStringLiteral("org.gnome.Shell"),
+                 QStringLiteral("--object-path"),
+                 QStringLiteral("/org/gnome/Shell"), QStringLiteral("--method"),
+                 QStringLiteral("org.gnome.Shell.Eval"), script});
+  return process.waitForFinished(OpenTimeoutMs) && process.exitCode() == 0 &&
+         process.readAllStandardOutput().startsWith("(true,");
+}
+
 bool activateTestWindow(QWidget *window) {
   // Qt can report a transient family as active before native keyboard focus
   // reaches this particular window. A dialog's pending activation can also
   // supersede a single request. Keep requesting within the ordinary test
   // deadline, and require both observations before sending keyboard input.
-  const bool active = QTest::qWaitFor([window] {
+  QString nativeActivation;
+  if (privateWayland()) {
+    const auto title = QJsonDocument(QJsonArray{window->windowTitle()})
+                           .toJson(QJsonDocument::Compact);
+    nativeActivation =
+        QStringLiteral(
+            "Main.overview.hide(); const w = global.get_window_actors()"
+            ".map(a => a.meta_window).find(w => w.get_pid() === %1 && "
+            "w.get_title() === %2); if (w) Main.activateWindow(w);")
+            .arg(QCoreApplication::applicationPid())
+            .arg(QString::fromUtf8(title.mid(1, title.size() - 2)));
+  }
+  const bool active = QTest::qWaitFor([window, &nativeActivation] {
     if (window->isActiveWindow() &&
         QGuiApplication::focusWindow() == window->windowHandle())
       return true;
-    window->raise();
-    window->activateWindow();
+    if (!nativeActivation.isEmpty())
+      privateShell(nativeActivation);
+    else {
+      window->raise();
+      window->activateWindow();
+    }
     return false;
   });
   if (!active)
@@ -653,6 +731,40 @@ private slots:
       QVERIFY(!code->isVisible());
       QVERIFY(output->findChild<QPlainTextEdit *>()->toPlainText().contains(
           "help"));
+      if (button && !floating) {
+        auto *bar =
+            bench.window->findChild<TitleBar *>(Qt::FindDirectChildrenOnly);
+        QVERIFY(bar);
+        auto *close = bar->findChild<QAbstractButton *>("closeButton");
+        QVERIFY(close && close->isVisible());
+        const auto background = [&] {
+          const QImage painted = bar->grab().toImage();
+          return painted.pixelColor(close->mapTo(bar, QPoint(1, 1)) *
+                                    painted.devicePixelRatio());
+        };
+        QVERIFY(activateTestWindow(bench.window.get()));
+        const auto movePointer = [&](QPoint position) {
+#ifdef Q_OS_MACOS
+          // After closing the focus window, Cocoa needs a native enter/move
+          // for the restored window. A QWindow test event does not move the
+          // system pointer or establish that native tracking transition.
+          if (QGuiApplication::platformName() == QLatin1String("cocoa")) {
+            QCursor::setPos(bench.window->mapToGlobal(position));
+            return;
+          }
+#endif
+          QTest::mouseMove(bench.window->windowHandle(), position);
+        };
+        movePointer(bench.window->rect().center());
+        QTRY_VERIFY(!close->underMouse());
+        movePointer(close->mapTo(bench.window.get(), close->rect().center()));
+        QTRY_VERIFY(close->underMouse());
+        QCOMPARE(background(),
+                 theme.chrome(QStringLiteral("WindowCloseHover")));
+        movePointer(bench.window->rect().center());
+        QTRY_VERIFY(!close->underMouse() && !close->isDown());
+        QCOMPARE(background(), theme.chrome(QStringLiteral("TitleBar")));
+      }
     }
   }
 
@@ -3687,8 +3799,8 @@ private slots:
     assembly->navigate(Base + 0x1a0);
     QTRY_COMPARE(assembly->currentFunction(),
                  std::optional<Address>(Base + 0x1a0));
-    bench.window->activateWindow();
-    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    originDock->setAsCurrentTab();
+    QVERIFY(activateTestWindow(origin->window()));
     auto *code = origin->text();
     const int row = scenario == "call-token" ? 1 : 0;
     code->setCursorLine(row);
@@ -3734,15 +3846,13 @@ private slots:
         if (list->model().addressAt(i) == Base + 0x163) {
           chooser.stop();
           // Browsing elsewhere must not redirect acceptance to that pane.
-          bench.window->activateWindow();
-          QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
           otherDock->setAsCurrentTab();
           QTRY_VERIFY(other->isVisible());
+          QVERIFY(activateTestWindow(other->window()));
           other->text()->setFocus();
           QTRY_VERIFY(other->text()->hasFocus());
           QVERIFY(dialog->isVisible());
-          dialog->activateWindow();
-          QVERIFY(QTest::qWaitForWindowActive(dialog));
+          QVERIFY(activateTestWindow(dialog));
           list->table()->setFocus();
           QTRY_VERIFY(list->table()->hasFocus());
           chosen = true;
@@ -5136,8 +5246,7 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     auto *assembly = bench.window->disassembly();
     const Address function = Base + 0x140, other = Base + 0x180;
-    bench.window->activateWindow();
-    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    QVERIFY(activateTestWindow(bench.window.get()));
     assembly->navigate(function + 9);
     assembly->focusContent();
     // Tab during a listing jump also waits for the correct function to land.
@@ -5151,7 +5260,7 @@ private slots:
     QCOMPARE(code->commentTarget()->value("line").toInt(), 550);
     QVERIFY(code->preludeFolded());
     QVERIFY(code->verticalScrollBar()->value() > 256);
-    QVERIFY(code->hasFocus());
+    QTRY_VERIFY(code->hasFocus());
 
     // Reuse the complete function without a decompile and expand just the
     // target operation; the declaration prelude stays folded.
@@ -5184,7 +5293,7 @@ private slots:
     QTRY_VERIFY(!code->loading() && code->function() == other);
     QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
     QCOMPARE(code->commentTarget()->value("line").toInt(), 550);
-    QVERIFY(code->hasFocus());
+    QTRY_VERIFY(code->hasFocus());
 
     // Missing mappings are reported without guessing a nearby source row.
     assembly->navigate(other + 5);
@@ -5199,9 +5308,13 @@ private slots:
 
     // Two code panes can display the same representation. Reverse Tab must
     // return to the actual pane used, rather than the default source dock.
+    const auto originalVersion = code->documentVersion();
     bench.action(ActionId::ViewLowIR)->trigger();
     auto *second = bench.codeView(QStringLiteral("low"));
     QVERIFY(second && second != view);
+    QTRY_VERIFY(!view->isVisible());
+    QCOMPARE(code->documentVersion(), originalVersion);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
     second->setRepresentation(QStringLiteral("source"));
     QTRY_VERIFY(!second->text()->loading());
     second->text()->setFocus();
@@ -5218,6 +5331,17 @@ private slots:
              std::optional<Address>(function + 9));
     QCOMPARE(code->function(), std::optional<Address>(other));
     QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
+    // Returning to the retained tab keeps the secondary instruction mapping,
+    // including a reverse Tab to assembly, without reloading the document.
+    auto *originalDock = bench.dockFor(view);
+    QVERIFY(originalDock);
+    originalDock->setAsCurrentTab();
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    QCOMPARE(code->documentVersion(), originalVersion);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
+    QTest::keyClick(code, Qt::Key_Tab);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(other + 9));
   }
 
   void pseudocodeNamesAndCommentsEditTheirSource_data() {
@@ -7945,6 +8069,157 @@ private slots:
     QCOMPARE(visibleMoves, 0);
   }
 
+  void quickStartMinimizesAndReopens_data() {
+    QTest::addColumn<bool>("greeting");
+    QTest::newRow("startup") << true;
+    QTest::newRow("workbench") << false;
+  }
+
+  void quickStartMinimizesAndReopens() {
+    QFETCH(bool, greeting);
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), !greeting);
+    bench.window->showQuickStart();
+    auto *dialog = visibleQuickStart();
+    QVERIFY(dialog);
+    QVERIFY(!QApplication::activeModalWidget());
+    QVERIFY(QTest::qWaitForWindowExposed(dialog));
+    const auto size = dialog->size();
+    auto *minimize = dialog->findChild<QAbstractButton *>("minimizeButton");
+    QVERIFY(minimize && minimize->isVisible());
+    QTest::mouseClick(minimize, Qt::LeftButton);
+    QTRY_VERIFY(dialog->isMinimized());
+    // File > Quick start must restore the existing window on every desktop.
+    bench.window->showQuickStart();
+    QTRY_VERIFY(!dialog->isMinimized());
+    QCOMPARE(visibleQuickStart(), dialog);
+    QCOMPARE(dialog->size(), size);
+    QCOMPARE(bench.window->isVisible(), !greeting);
+  }
+
+  void quickStartReusesItsWindowAndClosesWithTheWorkbench() {
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    bench.window->showQuickStart();
+    QPointer<QuickStartDialog> dialog = visibleQuickStart();
+    QVERIFY(dialog);
+    QVERIFY(!QApplication::activeModalWidget());
+    QVERIFY(!bench.window->isVisible());
+    QVERIFY(!dialog->parentWidget());
+    bench.window->showQuickStart();
+    QCOMPARE(visibleQuickStart(), dialog.data());
+    auto *go = buttonNamed(dialog, QStringLiteral("&Go"));
+    QVERIFY(go);
+    go->click();
+    QTRY_VERIFY(bench.window->isVisible());
+    QTRY_VERIFY(!dialog);
+    bench.window->showQuickStart();
+    dialog = visibleQuickStart();
+    QVERIFY(dialog);
+    QVERIFY(!QApplication::activeModalWidget());
+    QCOMPARE(dialog->parentWidget(), bench.window.get());
+    bench.window.reset();
+    QVERIFY(!dialog);
+
+    Workbench startup(QString::fromLocal8Bit(TEST_WORKER), false);
+    startup.window->showQuickStart();
+    dialog = visibleQuickStart();
+    QVERIFY(dialog);
+    startup.window.reset();
+    QVERIFY(!dialog);
+  }
+
+  void quickStartQuitsWhileMinimized() {
+#ifdef Q_OS_MACOS
+    if (QGuiApplication::platformName() != QLatin1String("cocoa"))
+      QSKIP("Requires Cocoa application termination");
+    // Run a real application event loop in a child so AppKit termination cannot
+    // stop the surrounding test runner or leave its workers behind.
+    if (!qEnvironmentVariableIsSet("NEVERD_TEST_MINIMIZED_QUIT")) {
+      QProcess child;
+      auto environment = QProcessEnvironment::systemEnvironment();
+      environment.insert(QStringLiteral("NEVERD_TEST_MINIMIZED_QUIT"),
+                         QStringLiteral("1"));
+      child.setProcessEnvironment(environment);
+      child.setProcessChannelMode(QProcess::MergedChannels);
+      child.start(QCoreApplication::applicationFilePath(),
+                  {QStringLiteral("quickStartQuitsWhileMinimized")});
+      QVERIFY(child.waitForFinished(NativeOpenTimeoutMs));
+      const auto output = child.readAll();
+      QVERIFY2(child.exitStatus() == QProcess::NormalExit &&
+                   child.exitCode() == 0,
+               output.constData());
+      return;
+    }
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    bool minimized = false, timedOut = false;
+    QTimer deadline;
+    deadline.setSingleShot(true);
+    connect(&deadline, &QTimer::timeout, this, [&] {
+      timedOut = true;
+      QCoreApplication::exit(1);
+    });
+    deadline.start(OpenTimeoutMs);
+    QTimer::singleShot(0, this, [&] {
+      auto *dialog = visibleQuickStart();
+      QVERIFY(dialog);
+      auto close = qScopeGuard([&] { dialog->close(); });
+      auto *button = dialog->findChild<QAbstractButton *>("minimizeButton");
+      QVERIFY(button && button->isVisible());
+      QTest::mouseClick(button, Qt::LeftButton);
+      QTRY_VERIFY(test::nativeWindowIsMinimized(*dialog));
+      minimized = true;
+      close.dismiss();
+      test::quitNativeApplication();
+    });
+    bench.window->showQuickStart();
+    const auto result = qApp->exec();
+    QVERIFY(!timedOut);
+    QVERIFY(minimized);
+    QCOMPARE(result, 0);
+#else
+    QSKIP("Requires Cocoa application termination");
+#endif
+  }
+
+  void quickStartRestoresFromTheDock_data() {
+    QTest::addColumn<bool>("greeting");
+    QTest::newRow("startup") << true;
+    QTest::newRow("workbench") << false;
+  }
+
+  void quickStartRestoresFromTheDock() {
+#ifdef Q_OS_MACOS
+    if (QGuiApplication::platformName() != QLatin1String("cocoa"))
+      QSKIP("Requires native Cocoa window minimization and application reopen");
+    QFETCH(bool, greeting);
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), !greeting);
+    bool exercised = false;
+    QTimer::singleShot(0, this, [&] {
+      auto *dialog = visibleQuickStart();
+      QVERIFY(dialog);
+      const auto close = qScopeGuard([&] { dialog->close(); });
+      QVERIFY(activateTestWindow(dialog));
+      // A direct widget click bypasses Cocoa's activation before native input.
+      // Settle the first activation before testing a later Dock reopen.
+      QTRY_COMPARE(QGuiApplication::applicationState(), Qt::ApplicationActive);
+      auto *minimize = dialog->findChild<QAbstractButton *>("minimizeButton");
+      QVERIFY(minimize && minimize->isVisible());
+      const auto size = dialog->size();
+      QTest::mouseClick(minimize, Qt::LeftButton);
+      QTRY_VERIFY(test::nativeWindowIsMinimized(*dialog));
+      QVERIFY(test::reopenNativeApplication());
+      QTRY_VERIFY_WITH_TIMEOUT(!test::nativeWindowIsMinimized(*dialog), 3000);
+      QTRY_VERIFY(dialog->isVisible() && !dialog->isMinimized());
+      QCOMPARE(dialog->size(), size);
+      QVERIFY(!test::hasNativeApplicationModalWindow());
+      exercised = true;
+    });
+    bench.window->showQuickStart();
+    QTRY_VERIFY(exercised);
+#else
+    QSKIP("Requires native Cocoa window minimization and application reopen");
+#endif
+  }
+
   void startupQuickStartDoesNotWaitForExposureOrWorker_data() {
     QTest::addColumn<bool>("go");
     QTest::newRow("close") << false;
@@ -7962,8 +8237,7 @@ private slots:
     bool clickedGo = false;
     QTimer close;
     connect(&close, &QTimer::timeout, this, [&] {
-      auto *dialog =
-          qobject_cast<QuickStartDialog *>(QApplication::activeModalWidget());
+      auto *dialog = visibleQuickStart();
       if (!dialog)
         return;
       ++shown;
@@ -8011,8 +8285,7 @@ private slots:
     int shown = 0;
     QTimer dismiss;
     connect(&dismiss, &QTimer::timeout, this, [&] {
-      if (auto *dialog = qobject_cast<QuickStartDialog *>(
-              QApplication::activeModalWidget())) {
+      if (auto *dialog = visibleQuickStart()) {
         ++shown;
         dialog->reject();
       }
@@ -8031,14 +8304,13 @@ private slots:
     QCOMPARE(bench.session.filePath(), path);
     // Explicitly opening Quick Start from the menu still works in a project.
     QTimer::singleShot(0, bench.window.get(), [&] {
-      if (auto *dialog = qobject_cast<QuickStartDialog *>(
-              QApplication::activeModalWidget())) {
+      if (auto *dialog = visibleQuickStart()) {
         ++shown;
         dialog->reject();
       }
     });
     bench.window->showQuickStart();
-    QCOMPARE(shown, 1);
+    QTRY_COMPARE(shown, 1);
     QVERIFY(bench.session.loaded());
   }
 
@@ -8096,8 +8368,7 @@ private slots:
     bool answered = false, alone = false, dropped = false;
     QTimer answer;
     connect(&answer, &QTimer::timeout, this, [&] {
-      auto *dialog =
-          qobject_cast<QuickStartDialog *>(QApplication::activeModalWidget());
+      auto *dialog = visibleQuickStart();
       if (!dialog || answered)
         return;
       answered = true;
@@ -8989,8 +9260,8 @@ private slots:
     QTimer drag;
     bool accepted = false;
     connect(&drag, &QTimer::timeout, this, [&] {
-      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
-      if (!dialog || dialog->objectName() != QLatin1String("quickStartDialog"))
+      auto *dialog = visibleQuickStart();
+      if (!dialog)
         return;
       drag.stop();
       accepted = dropFile(dialog, path);
@@ -8999,7 +9270,7 @@ private slots:
     });
     drag.start(10);
     bench.window->showQuickStart();
-    QVERIFY(accepted);
+    QTRY_VERIFY(accepted);
     QTRY_COMPARE_WITH_TIMEOUT(bench.session.filePath(), path, OpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     QVERIFY(!QApplication::activeModalWidget());
@@ -9014,8 +9285,8 @@ private slots:
     QTimer drag;
     bool shown = false, hidden = false, folderShown = true;
     connect(&drag, &QTimer::timeout, this, [&] {
-      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
-      if (!dialog || dialog->objectName() != QLatin1String("quickStartDialog"))
+      auto *dialog = visibleQuickStart();
+      if (!dialog)
         return;
       drag.stop();
       auto *target =
@@ -9038,7 +9309,7 @@ private slots:
     });
     drag.start(10);
     bench.window->showQuickStart();
-    QVERIFY(shown);
+    QTRY_VERIFY(shown);
     QVERIFY(hidden);
     QVERIFY(!folderShown);
   }
@@ -9187,6 +9458,19 @@ private slots:
                        settingsDirectory_.path());
     configureDocking();
     WindowFrame::frameDialogs(*qApp);
+    if (privateWayland()) {
+      QTRY_VERIFY_WITH_TIMEOUT(
+          privateShell(QStringLiteral("if (Main.layoutManager._startingUp) "
+                                      "throw Error('desktop starting');")),
+          NativeOpenTimeoutMs);
+      QVERIFY(privateShell(QStringLiteral(
+          "global.neverdWorkbenchPointer = "
+          "imports.gi.Clutter.get_default_backend().get_default_seat()"
+          ".create_virtual_device(imports.gi.Clutter.InputDeviceType.POINTER_"
+          "DEVICE); global.neverdWorkbenchPointer.notify_absolute_motion("
+          "imports.gi.GLib.get_monotonic_time(), global.stage.width / 2, "
+          "global.stage.height / 2); Main.overview.hide();")));
+    }
   }
 
   void windowChromeLeavesRoomToType() {
@@ -10438,6 +10722,114 @@ private slots:
     QSettings().setValue(settings::InstancesDisabled, false);
     QVERIFY2(server.start(), qPrintable(server.errorString()));
     QVERIFY(server.listening());
+  }
+
+  void interactionSamplingWaitsForTheCompletedFunctionCatalog() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("chooser-refresh.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.analysisComplete(), OpenTimeoutMs);
+    const auto background = bench.session.background();
+    const auto publish = [&](QString state, int count) {
+      auto next = background;
+      next["state"] = state;
+      next["functions"] = count;
+      SessionTestAccess::receive(
+          bench.session,
+          {{"type", "heartbeat"},
+           {"project_id", bench.session.queries().projectId()},
+           {"background_sequence",
+            SessionTestAccess::nextBackgroundSequence(bench.session)},
+           {"background", next}});
+    };
+    publish("building", 600);
+    QVERIFY(!bench.session.analysisComplete());
+    InteractionMetrics metrics(*bench.window, bench.session,
+                               directory.filePath("interactions.json"),
+                               NativeOpenTimeoutMs, nullptr);
+    emit bench.window->firstContentPainted();
+    bool delivered = false;
+    QTimer::singleShot(0, &metrics, [&] { delivered = true; });
+    QTRY_VERIFY(delivered);
+    QVERIFY(!InteractionMetricsTestAccess::started(metrics));
+    QCOMPARE(InteractionMetricsTestAccess::samples(metrics), 0);
+
+    // The completed catalog differs from open-time metadata. The worker's
+    // existing discovery fixture adds one identity when this marker appears.
+    QVERIFY(!writeFixture(directory, "chooser-refresh.bin.discover").isEmpty());
+    publish("ready", 601);
+    QTRY_VERIFY_WITH_TIMEOUT(InteractionMetricsTestAccess::samples(metrics) > 0,
+                             OpenTimeoutMs);
+    QCOMPARE(bench.session.metadata().value("function_count").toInt(), 600);
+    QCOMPARE(InteractionMetricsTestAccess::functionCount(metrics), 601);
+  }
+
+  void pseudocodeMeasurementWaitsForThePendingListingJump() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("source-cache.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.analysisComplete(), OpenTimeoutMs);
+    QVERIFY(!bench.codeView("source"));
+    auto *listing = bench.window->disassembly()->listing();
+    listing->jumpTo(Base + 16);
+    QVERIFY(listing->jumpPending());
+    InteractionMetrics metrics(*bench.window, bench.session,
+                               directory.filePath("interactions.json"),
+                               NativeOpenTimeoutMs, nullptr);
+    bool done = false;
+    InteractionMetricsTestAccess::openPseudocode(metrics, Base + 16,
+                                                 [&] { done = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(done, OpenTimeoutMs);
+    const auto result = InteractionMetricsTestAccess::pseudocodeResult(metrics);
+    QCOMPARE(result.value("samples").toInt(), 1);
+    QCOMPARE(result.value("missed").toInt(), 0);
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    QVERIFY(view->text()->complete());
+    QCOMPARE(view->text()->function(), std::optional<Address>(Base + 16));
+  }
+
+  void pseudocodeMeasurementRequiresTheRequestedCompleteDocument_data() {
+    QTest::addColumn<QString>("fixture");
+    QTest::addColumn<bool>("success");
+    QTest::newRow("complete-after-cancellation")
+        << QStringLiteral("source-export.bin") << true;
+    QTest::newRow("error-page-is-not-source")
+        << QStringLiteral("source-export-fail.bin") << false;
+  }
+
+  void pseudocodeMeasurementRequiresTheRequestedCompleteDocument() {
+    QFETCH(QString, fixture);
+    QFETCH(bool, success);
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(directory, fixture));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.analysisComplete(), OpenTimeoutMs);
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    view->showFunction(Base + 16);
+    QVERIFY(view->text()->loading());
+    InteractionMetrics metrics(*bench.window, bench.session,
+                               directory.filePath("interactions.json"),
+                               NativeOpenTimeoutMs, nullptr);
+    bool done = false;
+    InteractionMetricsTestAccess::pseudocode(metrics, Base + 16,
+                                             [&] { done = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(done, OpenTimeoutMs);
+    const auto result = InteractionMetricsTestAccess::pseudocodeResult(metrics);
+    QCOMPARE(result.value("samples").toInt(), success ? 1 : 0);
+    QCOMPARE(result.value("missed").toInt(), success ? 0 : 1);
+    QCOMPARE(view->text()->complete(), success);
+    QCOMPARE(view->text()->function(), std::optional<Address>(Base + 16));
+    const auto detail = result.value("detail").toArray();
+    QCOMPARE(detail.size(), 1);
+    QCOMPARE(detail[0].toObject().contains("ms"), success);
+    if (!success)
+      QVERIFY(detail[0].toObject().value("missed").toString().contains(
+          "fixture export preparation failed"));
   }
 
   void analysisCompletionDoesNotRequireAnUnsupportedReferenceIndex() {

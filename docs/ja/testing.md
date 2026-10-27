@@ -1,5 +1,7 @@
 **Languages**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](testing.md) | [한국어](../ko/testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`HighSwiftEmitter.StackScalarBindingsDoNotInventPhysicalStackWrites` は x64/ARM64 Mach-O の整数、浮動小数点、混合スタック引数をソースパイプラインで検証します。`IncomingHomeSource.StackInitializationRequiresAbsenceOfAllObservers` はメモリ読み取り、呼び出し、スタックアドレスの流出、不透明な intrinsic やメモリ intrinsic に必要な入口ストレージを維持します。値だけを使う経路では宣言済み引数を使い、物理 SP への書き込みを生成せず、レジスタの浮動小数点状態効果を保持します。macOS モバイル行列は復元した Swift を独立にコンパイル・実行します。生成成功だけでは実行の証拠になりません。
+
 `NeverDLLVMCValueTests` は独立した Windows x64 ABI 関数への可変引数呼び出しを O0/O2 と両型保持設定でコンパイルして実行します。ネイティブ x64 で va_arg による値を検証し、他のアーキテクチャでは明示的にスキップします。
 
 [← ドキュメント索引](README.md)
@@ -11,6 +13,8 @@
 `NeverDSourceEntryBindingTests` は x64/ARM64、PE/ELF、HighC/LLVMC の入口スタック引数をコンパイルして実行します。完全なモジュール、呼び出し元だけの選択、明示的な浮動小数点ビット転送、キャッシュ再利用とリセットを検証します。不完全な書き込み、未整列の引数、フレームアドレスの逸出、未定義入力を拒否する対照を含みます。独立した呼び出し先定義で固定宣言を確認します。ホスト実行はネイティブ Windows ARM64 ドライバーの検証ではありません。 RBP と x29/x30 の復元済みフレームも検証します。保存バイトの上書き、SP だけを戻して RBP を変更した場合、戻り先アドレスの引数化は拒否し、ELF と Windows の保存レジスターの違いも確認します。
 
 追加の行列は、符号付き・符号なしの 1/2/4 バイト読み取りを両 C 経路、全体出力と呼び出し元のみの選択で O0/O2 と UBSan により実行します。呼び出し元は読み取るバイトだけを書き込み、宣言幅を超える読み取りは拒否されます。
+
+混合幅の行列は同一スロットの部分読み取りと完全な読み取りを O0/O2 と UBSan で実行します。ネイティブフレームの対照は両順序を確認し、狭い読み取りのみ、または完全な読み取りが別スロットに属する証拠を拒否します。
 
 既知のレジスタ呼び出しを x64/ARM64 PE/ELF の両 C 経路で、全体と呼び出し元のみの選択について実行します。元の LowIR は間接呼び出しのままです。部分書き込み、不透明な効果、一時値の再利用、メモリスロット、予算超過を拒否するテストも含みます。
 
@@ -2211,3 +2215,7 @@ NeverSight LLVM fork の `BinaryRewriteRelocationTest` は x64 PLT、i386 GOT、
 自己比較の行列には、引数なしの等値条件と減算オーバーフロー条件の実行も含まれます。入力レジスタ値を必要としないため、どちらの C 経路でも未知状態のトラップを追加してはいけません。
 
 HFA インポートスロットのテストは厳密な C プロトタイプをコンパイルし、ヘッダー宣言とローカル宣言の完全な引数と戻り値を実行検証します。両 C 経路で float・double 構造体、連続呼び出し、AArch64 実行を検証します。
+
+## 選択した関数の宣言テスト
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` は整数、ポインター、浮動小数点、void の実装とアドレス出力を結合する。`AddressOnlyCallbackConvertsToItsKnownParameterType` は型付きコールバックを実行する。`SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` は個別選択と単位全体、冷・温キャッシュを比較する。x64/ARM64 の PE、ELF、Mach-O 入力モデルから生成した C をホスト上で O0/O2 と UBSan で実行する。全対象でのネイティブ実行を意味しない。この境界の変更後は呼び出し契約、ポインター投影、ソース ABI、呼び出し先キャッシュのテストを実行する。

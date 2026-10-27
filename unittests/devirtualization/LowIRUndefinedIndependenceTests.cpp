@@ -9,6 +9,8 @@
 
 #include "neverd/analysis/LowIRUndefinedIndependence.h"
 
+#include <iterator>
+
 using namespace neverd;
 using namespace neverd::analysis;
 
@@ -501,11 +503,26 @@ TEST(LowIRUndefinedIndependence,
   Program P;
   P.instruction({op(NdOp::COPY, reg(0), {number(0)})});
   P.finish();
-  P.Function.Blocks[0].Ops[0].NumInputs = 7;
+  auto &Malformed = P.Function.Blocks[0].Ops[0];
+  Malformed.NumInputs = std::size(Malformed.Inputs) + 1;
   expectStatus(P, Status::Invalid);
   P.Function.Blocks[0].Ops[0].NumInputs = 1;
   P.Function.Blocks[0].Ops[0].Inputs[0] = NdVar::tmp(UINT64_MAX, 1);
   P.rebind();
+  expectStatus(P, Status::Invalid);
+}
+
+TEST(LowIRUndefinedIndependence,
+     ExtendedOperandStorageRetainsUnsupportedEffectRefusal) {
+  LowOp Opaque = op(NdOp::INTRINSIC, reg(0));
+  for (size_t I = 0; I != std::size(Opaque.Inputs); ++I)
+    Opaque.addInput(number(0));
+  Program P;
+  P.instruction({Opaque});
+  P.finish();
+  expectStatus(P, Status::Unsupported);
+  auto &Malformed = P.Function.Blocks[0].Ops[0];
+  Malformed.NumInputs = std::size(Malformed.Inputs) + 1;
   expectStatus(P, Status::Invalid);
 }
 

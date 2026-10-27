@@ -39,6 +39,7 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <iterator>
 
 using namespace neverd;
 
@@ -5158,7 +5159,7 @@ TEST(NativeSourceHints,
         Ops[0].Inputs[0] = NdVar::reg(TRI.IntParamRegs[0], 8);
         break;
       case 13:
-        Ops[0].NumInputs = 7;
+        Ops[0].NumInputs = static_cast<uint8_t>(std::size(Ops[0].Inputs) + 1);
         break;
       case 14: {
         LowOp Escape;
@@ -5922,6 +5923,50 @@ TEST(NativeSourceHints, IncomingStackReadsRequireCompleteObservedSlots) {
       EXPECT_EQ(Hint->Parameters[0].Location.ValueBytes, 8U);
       EXPECT_EQ(F.Med.Params[0].RegOff, kNoParamReg);
     }
+}
+
+TEST(NativeSourceHints, IncomingStackPrefixReadsRequireTheirOwnCompleteLoad) {
+  for (uint16_t Width : {1, 2, 4})
+    for (bool PrefixFirst : {false, true})
+      for (bool OtherSlot : {false, true}) {
+        SCOPED_TRACE(Width);
+        SCOPED_TRACE(PrefixFirst);
+        SCOPED_TRACE(OtherSlot);
+        NativeIncomingStackFixture F(16);
+        auto &Ops = F.Low.Blocks[0].Ops;
+        const auto Address = NdVar::tmp(TmpBase + 256, 8);
+        const auto Offset = F.IncomingOffset + (OtherSlot ? 8 : 0);
+        Ops.insert(
+            Ops.begin() + F.LoadIndex + (PrefixFirst ? 0 : 1),
+            {NativeVoidFrameFixture::op(NdOp::INT_ADD, Address,
+                                        {NdVar::reg(a64reg::SP, 8),
+                                         NdVar::cst(F.FrameBytes + Offset, 8)},
+                                        0x100c),
+             NativeVoidFrameFixture::op(NdOp::LOAD,
+                                        NdVar::tmp(TmpBase + 272, Width),
+                                        {Address}, 0x100c)});
+        F.LoadIndex += PrefixFirst ? 2 : 0;
+        F.CallIndex += 2;
+        F.RestoreIndex += 2;
+        auto Signature = F.entrySignature();
+        if (OtherSlot) {
+          auto Parameter = Signature.Parameters.front();
+          Parameter.Location.EntryStackOffset = Offset;
+          Signature.Parameters.push_back(std::move(Parameter));
+        }
+        EXPECT_EQ(restoresNativeSourceState(F.Low, Arch::AArch64, F.calls(),
+                                            nullptr, &Signature),
+                  !OtherSlot);
+        if (!OtherSlot) {
+          std::string Error;
+          EXPECT_TRUE(F.inferVoid(Error)) << Error;
+          // Repeated prefix observations cannot collectively pretend that
+          // this slot's otherwise unobserved upper bytes were read.
+          Ops[F.LoadIndex].Output.Size = Width;
+          EXPECT_FALSE(restoresNativeSourceState(
+              F.Low, Arch::AArch64, F.calls(), nullptr, &Signature));
+        }
+      }
 }
 
 TEST(NativeSourceHints, IncomingStackReadsRejectMissingOrPartialEvidence) {
@@ -9373,7 +9418,8 @@ TEST(NativeSourceHints, AuxiliaryParametersRequireCompleteNativeReadEvidence) {
       else if (Mutation == 2)
         ++Fixture.Low.Entry;
       else if (Mutation == 3)
-        Fixture.Low.Blocks[0].Ops[0].NumInputs = 7;
+        Fixture.Low.Blocks[0].Ops[0].NumInputs = static_cast<uint8_t>(
+            std::size(Fixture.Low.Blocks[0].Ops[0].Inputs) + 1);
       else {
         Fixture.Med.Params[1].Size = 4;
         Fixture.Med.TypedParams[1].Type = NdType::makeInt(4);
@@ -9521,7 +9567,7 @@ TEST(NativeSourceHints, ContextProofRejectsClobbersAndIncompleteNativeReads) {
       } else if (Mutation == 6) {
         Fixture.Low.Blocks.resize(16385);
       } else if (Mutation == 7) {
-        Ops[0].NumInputs = 7;
+        Ops[0].NumInputs = static_cast<uint8_t>(std::size(Ops[0].Inputs) + 1);
       } else {
         LowOp Write;
         Write.Opcode = NdOp::COPY;

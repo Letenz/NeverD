@@ -307,7 +307,7 @@ def carry_product_elf(degree, product=True, needed=7, high_bits=None, additive=F
     return elf(code), f"x+y+z+{scale}U*" + "*".join(factors)
 
 
-def residue_power_elf(degree, observed):
+def residue_power_elf(degree, observed, perturb=0, residual=False):
     # Original x64 instructions keep z independent of the repeated x group.
     # The scalar C oracle multiplies every original factor at complete width.
     split = (observed + 2) // 3
@@ -316,11 +316,15 @@ def residue_power_elf(degree, observed):
     code += bytes.fromhex("89f1 c1e1") + bytes([split])
     factors = []
     for i in range(degree):
-        offset = i << split
+        offset = (i << split) + (perturb if i == 0 else 0)
         code += bytes.fromhex("4189f8 4181c0") + struct.pack("<I", offset)
         code += bytes.fromhex("4131c8 410fafc0")
         factors.append(f"((x+{offset}U)^(y<<{split}))")
-    code += bytes.fromhex("0fafc2 01f8 01f0 01d0 c3")
+    code += bytes.fromhex("0fafc2")
+    if residual:
+        code += bytes.fromhex("4189d0 4183c003 410fafc0")
+        factors.append("(z+3U)")
+    code += bytes.fromhex("01f8 01f0 01d0 c3")
     return elf(code), f"x+y+z+{scale}U*z*" + "*".join(factors)
 
 
@@ -573,6 +577,8 @@ if __name__ == "__main__":
             ("power-group-16", *residue_power_elf(16, 4)),
             ("power-group-64", *residue_power_elf(64, 6)),
             ("power-group-512", *residue_power_elf(512, 8)),
+            ("power-group-513", *residue_power_elf(513, 8)),
+            ("power-group-residual-512", *residue_power_elf(512, 8, 1, True)),
             ("residue-affine-quartic", *affine_residue_elf(4)),
             ("residue-affine-octic", *affine_residue_elf(8)),
             ("affine-residue-neighbor", *affine_residue_elf(8, True)),
