@@ -5037,6 +5037,31 @@ validation. `Bun` owns the shared graph records, flags and module decoding;
 transport capability lists and extraction results use the same profile builder.
 Adding a target container does not change source semantics or imply native
 machine-code/bytecode decompilation.
+`BunProjectSource` owns development reconstruction literal relocation from
+recovery-parser syntax and complete reparse comparison. Recovery trees remain
+inadmissible to semantic consumers. `BunProjectRequire` separately uses a Large
+parse and the existing lexical/module owners to identify an unwritten named
+export initialized by `import.meta.require` and its exact imported call sites.
+Its immutable private results bind source hashes, bindings and syntax spans;
+the relocation owner rechecks every call against its current syntax tree.
+Neither owner changes the callee, module loading order or loader behavior.
+`BunProject` uses those plans, the shared Bun text decoder and exclusive
+fixed-name export writer to emit a candidate project with unresolved runtime
+references. One project-wide account bounds retained metadata records and
+UTF-16 strings before JSON insertion, independently of source/parser and
+output-file limits; callers can lower but cannot raise its hard ceilings.
+Its development driver never invokes a compiler or executes input;
+external build and behavior qualification remain separate from offline
+analysis and evidence export. In particular, relocation alone does not make
+a compiler include modules reached through runtime `import.meta.require`.
+`BunSemanticIndex` builds a separate private navigation export from an admitted
+extraction and the shared Large source, binding, module, navigation and feature
+owners. Exact original spellings and UTF-8 byte spans stay separate from
+inferred roles and bounded AST vocabulary cues. Original files, readable
+views and navigation pages have read-back hashes; fixed filenames and aggregate
+record, string and output limits apply before publication. A refused analysis
+never becomes an assertion that a feature is absent, and the index does not
+rename executable bindings or reconstruct erased TypeScript types.
 `BunSourceMap` owns serialized-map framing, coordinates, Zstd envelope preflight
 and decoded-content budgets. `compression/Zstd` only selects an in-process
 decoder and writes into bounded caller-owned output: LLVM Support first, then

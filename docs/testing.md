@@ -6472,6 +6472,28 @@ The same target compares static scalar, pointer, array and packed-record alignme
 
 ## Offline web analysis
 
+`WebBunProjectSource.*` checks parser-confirmed module literal relocation and
+unchanged syntax, unsupported requests and unresolved runtime paths.
+`WebBunProjectRequire.*` checks exact imported require aliases against the
+shared lexical/module owners, including writes, shadows, optional/spread
+calls, dynamic scope, source changes and private proof construction.
+`WebBunProject.*` checks fixed filenames, preserved source/asset bytes, shared
+text decoding, exclusive output, aggregate record/string budgets and complete
+diagnostic/readable-source accounting. `WebLargeSource` checks that module
+inventory uses the same explicit Large work profile as bindings/navigation;
+Recovery models remain rejected. The optional development target
+`neverd-web-bun-project` exports a reconstruction candidate from one admitted
+Bun executable; it does not build or run it. Build and isolated runtime
+receipts are separate acceptance evidence, never implied by an export passing.
+
+`WebBunSemanticIndex.*` checks private names and source coordinates, shared
+module/feature evidence, rejection of comment/substring false matches, exact
+UTF-16 names, bounded partial refusals and read-back-bound navigation output.
+The optional `neverd-web-bun-semantic-index` development driver takes an admitted
+Bun executable and a new output directory. Its inferred role labels and
+captured-name links do not establish runtime API identity or original project
+structure; no target code is executed.
+
 `WebWindowsHost.*` qualifies native Windows x64 local NTFS capture, junction
 and alternate-stream refusal, replacement, Unicode identity, private unlinked
 spools, concurrent range reads and export/rollback ownership. The required
@@ -6491,6 +6513,11 @@ one-row pages, source anchors, stored/deflate ZIP composition, explicit gzip,
 failed-publication atomicity, cache limits, revocation and exclusive export.
 CLI cases use an unusable external-tool PATH; worker/MCP compare the shared API
 and reject raw-export/execution options. See [resource profiles](web-datapack-profile.md).
+The DataPack CLI check uses the advertised archive capability when ICU is
+omitted: direct packs remain available, while ZIP-wrapped selections must
+return `package_archive_path_policy_unavailable` before source analysis.
+Each command has separate redirect files so a shorter refusal cannot retain
+trailing bytes from a previous successful command.
 
 Select the fixed real inputs without running the applications:
 
@@ -6851,6 +6878,10 @@ all admitted units must complete the inventory. See the
 [file navigation profile](web-configuration-file-profile.md).
 `WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
 recovery without raising interactive budgets and invalid-source refusal.
+The private `neverd-web-source-model` evidence fixture accepts a final
+`export-budget-mib` argument from 1 through 1024 (default 256). This bounds
+serialized-model accounting only; parser and binding limits stay unchanged.
+Invalid budgets and exhausted exports refuse before creating an output directory.
 `WebReadableExportSDK.*` checks immutable input deletion, exact original and
 readable hashes, explicit source goals, invalid syntax/encoding without fake
 source, stale/unknown/oversize refusal before writes, 9 MiB chunked selection,
