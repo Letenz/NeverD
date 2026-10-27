@@ -910,17 +910,19 @@ NeverC for x64; compilation does not qualify hardware rollback.
 The source checks also require the `rtm` attribute when a legacy LLVM inline
 assembly call becomes `_xabort`. A dword memory result fixes the return width
 in the immediate-byte fixtures; constant-return inference is not their oracle.
-The nonlocal-control suite also refuses decoded and legacy-IR XBEGIN forms
-whose original abort target and checkpoint are absent.
+The nonlocal-control suite now checks the integrated rel32 XBEGIN
+two-exit lift and its original abort target. rel16 remains refused; these
+checks do not qualify full transactional checkpoint or native rollback.
 `NeverDX86LegacyAdmissionTests` separately covers incomplete far-pointer
-segment loads and 24 3DNow! operations. Its 76 and 384 valid instruction forms
+segment loads and unowned forms of 24 3DNow! operations. Its 76 and 384 valid instruction forms
 run through full, lightweight and lift decoding in strict/permissive modes.
 Each rejection must preserve the existing LowIR prefix without adding loads,
 register writes or placeholder effects. Ordinary loads and MMX arithmetic
 remain positive controls. This is admission qualification, not completed
-segment or 3DNow! semantics.
+segment or owned 3DNow! semantics. The owned context suite below independently
+qualifies the admitted x64 path.
 The pinned decoder corpus census shares these independent legacy encoding
-fixtures. Its 3DNow! samples are explicit refusals, not successful lift counts;
+fixtures. Its unowned 3DNow! samples are explicit refusals, not successful lift counts;
 unexpected refusals of other instruction IDs still fail the corpus test.
 Both source inventories reject incomplete address fragments in addresses
 and stored/comparator values. i386 decoded absolute-address fixtures also
@@ -2054,7 +2056,9 @@ and modular shifts. Check it with
 
 `SymMBAWitness.*` checks complemented degree-96/128 products at the unchanged
 work allowance, exhaustive low-six-bit carry inputs, wide words through 257
-bits, nearby parity changes and budget refusal. Concrete nonzero witnesses
+bits, nearby parity changes and budget refusal. Degree-48/65/96 near misses
+require recovery when a concrete nonzero product includes even factors.
+Concrete nonzero witnesses
 only stop futile zero searches; they never authorize a rewrite. Use
 `--family complemented-carry-product --count 108` for 432 degree-48–256 cases
 with complemented inputs, reversed factors and parity near misses. Keep all
@@ -2064,13 +2068,17 @@ routes at O0/O2.
 
 `SymMBAResiduePowers.*` checks modular power periods, even inputs, small
 exponents, independent multiplier parity and exact/short resource accounts.
+Small parity groups retain multiple residual words, and boundary cases with
+too few even factors must not discard the other branch.
 It uses complete-word multiplication through 257 bits and independent native
 width solver proofs. `--family residue-power --count 81` adds 324 degree-16–512
 cases, including immediate period neighbors and one-factor disturbances.
 These controls retain bounded refusals as results. The real CLI and worker
 source matrix also executes degree-16/64 groups with an independent multiplier
 through all six source routes at O0/O2. A degree-512 fixture also executes the
-large-product path through these same CLI and GUI-worker routes.
+large-product path through these same CLI and GUI-worker routes. A disturbed
+degree-128 fixture exercises the small parity-group path with an independent
+multiplier through the same six routes.
 
 Eligible products beyond affine expansion's 512-factor admission use bounded
 low-word representatives and multiplicity-weighted sums. Only ring and bitwise
@@ -2102,10 +2110,25 @@ Expression interning regressions retain deliberately colliding variable and
 literal identities, all-bit hash values, and references across table growth,
 context copies, assignment and moves. Full symbolic and source-route coverage
 checks the shared table underneath both CLI and GUI simplification.
+`LongOperandIdentityPreservesOrderAcrossGrowthAndCopies` covers 7/8/9/16/65
+operands, ordered concatenations, commutative sums and independent full-word
+evaluation after table growth and context copies.
 `SymExpr.NativeNormalizedResultsRetainWidthBoundaries` compares both native
-evaluation entry points against independent APInt arithmetic at 1/7/8/16/32/64
-bits. Unmasked inputs, wrapping sums and products, both conditional branches,
+evaluation entry points against independent APInt arithmetic at every width
+from 1 through 64 bits. Unmasked inputs, wrapping sums and products, both
+conditional branches,
 overshifts and remainder by zero preserve the normalized scratch-slot invariant.
+`NativeLiteralOverloadsKeepEveryWidthAndWordBoundary` checks literal identity,
+constant-only plans and unchanged step counts at every width from 1 through
+257 bits. Constant plans must not request variable values.
+`SymMBAWidePairs.SharedAllowancesPreserveDecisionWorkAndMemo` checks fresh and
+previously spent request budgets, local caps under unlimited requests, zero and
+short storage, exact completion boundaries and saturated unlimited accounting.
+Outputs, work, remaining storage and completed-reading memo admission agree.
+`Z3Solver.RepeatedProductsKeepAllFactorsAndCompleteInputModels` checks long
+factor runs around power-of-two boundaries at 1–257 bits, both full and scaled
+products. Independent complete-word multiplication and high-bit near misses
+check equality and retained input models.
 `SymMBA.DenseCoversKeepEveryCornerAndWholeWord` exhausts four-, six- and
 eight-input cover tables, including mixed literal polarities and an isolated
 negative corner. Independent bit-plane evaluation checks random complete words
@@ -2167,7 +2190,11 @@ parity. Independent APInt oracles cover 8–257-bit words; a separate 128-factor
 fixture retains variable corrections and has full-width Z3 proofs at
 8/16/32/64 bits. Short work/storage budgets check refusal without increasing
 production limits. The worker source test also executes both degree-128
-masked carry fixtures through the six CLI/worker routes at O0/O2.
+masked carry fixtures through the six CLI/worker routes at O0/O2. Odd partial
+blocks of degree 15/23/31 retain unpaired source words and low-bit disturbances.
+Tests exhaust all three six-bit inputs for a degree-15 block, check complete
+8–257-bit words and retain every factor under short work/storage allowances.
+A degree-23 machine-code fixture executes all six source routes at O0/O2.
 Quadratic carry-count tests retain both observed correction bits without
 dividing by a noninvertible word. They compare complete products with
 independent APInt arithmetic through 257 bits and Z3 proofs at 8/16/32/64 bits.
@@ -3911,7 +3938,9 @@ to the main window even when its previous tab group and disassembly are floating
 transient parenting for floating text, graph, pseudocode and IR views.
 `disassemblyMenuOffersTheLinesEdits` checks that the text and graph menus offer
 stack variables, the SP correction and the operand forms on an instruction,
-and array and alignment on a data item, while pseudocode offers none of them.
+and array and alignment on a data item. Pseudocode offers only its own
+function's stack variables and function edits, none of the disassembly's item
+definitions, and keeps that function after synchronization is turned off.
 `floatingCommandDialogsStayWithTheirView` checks search, calculator input and
 results, options and other command dialogs against their floating owner.
 `analysisBrowsersStayInteractive` covers ordinary xrefs, address and location
@@ -5835,6 +5864,37 @@ python3 scripts/build.py build-release --target NeverDX87MMXStateTests --paralle
 ctest --test-dir build-release -L '^NeverDX87MMXStateTests$' --output-on-failure
 ```
 
+`NeverDX86ThreeDNowContextTests` covers all 24 owned x64 packed operations,
+every MMX register pairing, ignored prefixes and REX order, address width,
+segments and stack-reference provenance. It rejects contradictory decoder
+detail and selectors before effects, checks feature preflight without state
+mutation, and proves that FEMMS payload invalidation survives subsequent
+unary and binary operations. Its emission test exports 960 ELF objects across
+LLVM, HighC and LLVMC, both pipeline settings and C O0/O2.
+
+```sh
+python3 scripts/build.py build-release --target NeverDX86ThreeDNowContextTests \
+  NeverDX87MMXStateTests NeverDX86LegacyAdmissionTests NeverDX87CapabilityTests \
+  NeverDX86X87ConvertStateTests --parallel 4
+NEVERD_ISA_REGRESSION_ARTIFACT_DIR=/tmp/neverd-3dnow-objects \
+  build-release/bin/NeverDX86ThreeDNowContextTests
+python3 scripts/verify_x86_3dnow_context.py \
+  --artifacts /tmp/neverd-3dnow-objects --keep /tmp/neverd-3dnow-guest
+```
+
+Use a fresh artifact directory. The guest compares original instruction bytes
+against every object across all TOP/rounding settings, three tag patterns and
+selected inputs, then compares exception vectors, error codes and retained
+state. It also tests absent CPU features and an independent FWAIT #MF control.
+GNU binutils, Clang and `qemu-system-x86_64` are required. QEMU 10.2.2 lacks
+3DNow pending-#MF delivery and reports noncanonical RBP references as #GP
+instead of #SS; the command above deliberately fails on that model. Add
+`--allow-missing-mf --allow-stack-gp` to record those two categories as
+**unqualified**, separately from successful fault comparisons. The flags do
+not accept mismatched original/translated observations. No physical hardware
+or complete fault continuation is certified by this harness. See the
+[owned 3DNow evidence](evidence/x86-3dnow-owned-2026-10-27.json).
+
 `NeverDX87StackManagementTests` checks typed FDECSTP/FFREEP decoding across every
 TOP and register selector, malformed-operand refusal, both cleared tags and
 unknown-payload counterexamples across ELF/COFF/Mach-O. Its Linux x86 native
@@ -7142,6 +7202,9 @@ cost, one-bit and wide literals, shared-tree saturation, budgeted selection,
 and exhaustive three-bit equivalence with sampling disabled. `SymMBASample.*`
 compares narrow and arbitrary-width verification against the AP evaluator,
 including all operators, deterministic assignments, and unused wide inputs.
+Contiguous input windows starting at zero or after unused wide variables must
+retain the same random stream and agree with the independent AP evaluator at
+1–257 bits. Sparse windows keep their existing compact lookup coverage.
 Candidate quality
 comparisons across scoring revisions must recount both outputs with the same
 metric; the SDK's version-specific size counters are diagnostic only.
@@ -14577,6 +14640,11 @@ including an unmatched suffix beyond the current transfer window and retry
 without consuming a matching prefix. Android's
 `OutgoingMismatchReportsStreamAndBufferOffsets` checks named sends, writes and
 variadic raw sends through the original C fixture on each available backend.
+`MismatchConnectionIdentitySurvivesAliasesAndFDReuse` checks the bound contract
+index after a declared failure, rejected admission, another connection, FD reuse
+and `dup3` replacement, including unchanged cursors after mismatches. Android's
+`MismatchKeepsConnectionIdentityAcrossFDReuse` exercises the same owner through
+named sends and variadic raw writes at O0/O2 with all relocation variants.
 
 The network fixtures also exercise TCP failure followed by connected UDP,
 IPv4/IPv6, named/raw/dynamic calls, FD reuse, packet truncation, peek, empty
@@ -14974,13 +15042,17 @@ services and ART loading are not covered.
 
 `NeverDBytePatchTests`: overlay, relocation refusal, PC-relative assembly, PE signature/checksum. The same suite checks patch JSON ownership, decoded duplicate keys, legacy number spellings, malformed fields, and row/byte/input limits. With SIMD JSON enabled, `NeverDPatchJSONFallbackTests` compiles the same reader without acceleration and runs those reader contracts too. `NeverDWorkerPatch`: preview, stale input, undo/redo, batch revert, read-only replica, reopen, exclusive export.
 
+`NeverDBytePatchTests` also compares fragmented and shuffled replay against independent byte/kind oracles, retains adjacent-segment boundaries, rejects a bad late row without changing existing image copies, and verifies immutable input-view bounds and snapshot lifetime.
+
 `NeverDWorkerNativePatch` repeats this against the real SDK. `NeverDWorkerSourceBytePatch` verifies source proof, isolated preview, frame symbols and native C replacement on Linux.
 
 `BytePatchCAPIHeaderC.c` compiles the frozen snapshot layout and signatures as C
 in `NeverDBytePatchTests`. The real SDK cases in
 `test_byte_patch_integration.py` check empty/unloaded snapshots, all byte values,
 high addresses, split runs, JSON parity, and ownership across edits, reloads and
-session destruction. The worker mock intentionally omits snapshot exports to
+session destruction. They also rewrite and truncate a large input after an edit,
+then check that exports retain the session's original bytes plus its overlay.
+The worker mock intentionally omits snapshot exports to
 exercise JSON fallback; run the native patch suite with both current and older
 SDKs when changing this optional transport.
 

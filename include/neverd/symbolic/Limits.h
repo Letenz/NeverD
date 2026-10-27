@@ -46,6 +46,10 @@ inline constexpr size_t kSymMBAMBARewriteCacheCapacity = 65536;
 // normally when a graph needs more entries; this is not an analysis limit.
 inline constexpr unsigned kSymExprTraversalInlineBuckets = 32;
 
+// lib/symbolic/expr/SymExpr.cpp
+/// Operand count at which block hashing replaces the short inline fold.
+inline constexpr unsigned kSymExprBlockHashMinOperands = 8;
+
 // include/neverd/symbolic/SymExpr.h
 // Repeated small measurements keep their plans and native scratch inline.
 // Larger plans grow normally; these capacities do not limit evaluation.

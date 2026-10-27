@@ -91,11 +91,31 @@ x87ContextAsm(X87ContextAsmPhase Phase, uint32_t Selector = 0,
         add(0x65);
       else if (Space != NdMemoryAddressSpace::Default)
         llvm::report_fatal_error("unsupported x87 context address space");
-      add(0x41); // The admitted original memory group addresses R10.
+      if (Selector & X87ContextStackReference) {
+        // Keep the compiler's RBP intact. RBP + (address - RBP) retains the
+        // original stack-reference fault class without changing the address.
+        if (Space != NdMemoryAddressSpace::Default)
+          llvm::report_fatal_error("invalid x87 stack-reference address");
+        Text += "movq %r10, %r11\n\tsubq %rbp, %r11\n\t";
+        add(0x42); // R11 index, RBP base, disp8=0.
+      } else {
+        add(0x41); // The admitted original memory group addresses R10.
+      }
     }
     add(Selector & 0xff);
+    if (Spec->ThreeDNow)
+      add(0x0f);
     if ((Selector & 0xff) != 0x9b)
-      add(((Selector >> 8) & 0xff) | ((Selector & X87ContextMemory) ? 2 : 0));
+      add(((Selector >> 8) & 0xff) |
+          ((Selector & X87ContextStackReference) ? 0x44
+           : (Selector & X87ContextMemory)       ? 2
+                                                 : 0));
+    if (Selector & X87ContextStackReference) {
+      add(0x1d);
+      add(0);
+    }
+    if (Spec->ThreeDNow)
+      add(x87ContextThreeDNowOpcode(Selector));
     Text += ".byte " + Bytes + "\n\t";
   }
   if (Spec->WritesFlags)

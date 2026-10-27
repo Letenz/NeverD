@@ -414,6 +414,12 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
             if not kind.endswith("neighbor"):
                 assert code.count("*") <= 3, text
+        elif kind.startswith("carry-product-partial-"):
+            # Partial blocks keep complete unpaired words. Their original
+            # degree-N product has two multiplications per factor; require
+            # less than half that chain, then execute its full-word oracle.
+            code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
+            assert code.count("*") < int(kind.rsplit("-", 1)[1]), text
         elif kind.startswith("carry-product-"):
             # Keep the proved bit selectors, including higher-bit shifts,
             # while eliminating the original long multiplication chain.
@@ -561,6 +567,7 @@ if __name__ == "__main__":
             ("multiple-residual-octic", *multiple_residual_elf(8)),
             ("multiple-residual-neighbor", *multiple_residual_elf(4, True)),
             ("carry-product-32", *carry_product_elf(32)),
+            ("carry-product-partial-23", *carry_product_elf(23, True, 6, 2)),
             ("carry-product-64", *carry_product_elf(64, False)),
             ("carry-cofactor-8", *carry_product_elf(8, True, 5, 2)),
             ("carry-cofactor-projection-24", *carry_product_elf(24, True, 5, 2)),
@@ -576,6 +583,7 @@ if __name__ == "__main__":
             ("carry-cofactor-zero-witness-mask-96", *carry_product_elf(96, True, 6, 3, complemented=True)),
             ("power-group-16", *residue_power_elf(16, 4)),
             ("power-group-64", *residue_power_elf(64, 6)),
+            ("power-group-perturbed-128", *residue_power_elf(128, 4, 1)),
             ("power-group-512", *residue_power_elf(512, 8)),
             ("power-group-513", *residue_power_elf(513, 8)),
             ("power-group-residual-512", *residue_power_elf(512, 8, 1, True)),

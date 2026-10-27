@@ -1257,6 +1257,14 @@ window used to route branch arrows. Revision and navigation fences still apply.
 
 Patch persistence reads typed, owning rows directly from a validated SIMD JSON tape when `NEVERD_ENABLE_SIMDJSON` is enabled. The LLVM reader remains available when acceleration is disabled or the input is outside the SIMD parser’s domain. Both readers share field admission and resource limits, including the existing last-duplicate-key and integer-only size rules; no borrowed parser strings escape. Overlay replay still validates every row against the immutable input.
 
+After full admission, an inventory with every byte changed and no mergeable
+neighbours keeps its owning canonical rows; other inventories use the existing
+complete normalization. `InputFile` captures owned file bytes so later writes or
+truncation cannot change the session's original patch input. Admission borrows
+bounded views of that immutable snapshot; callers needing independent mutable
+bytes still request an owning copy. Segment, relocation, overlap, original-byte
+and resource checks precede publication on both paths.
+
 `ProjectHistory` retains admitted commands as immutable shared values. Strict
 JSON encodings are computed when a write needs them and reused for byte-budget
 accounting and document assembly; rollback checkpoints do not copy command
@@ -3248,6 +3256,19 @@ only a missing complete identity reaches the allocation path. Native evaluation
 slots remain normalized to their declared widths, so operations that preserve
 that invariant do not mask their results again. External variable values and
 arithmetic that can introduce high bits still receive their width mask.
+Long operand sequences use the existing LLVM block hash for lookup instead of
+a serial combine per handle, retaining complete ordered-operand comparison.
+That external hash call stays outside the short lookup's stack frame.
+Native literal construction normalizes its inline value before interning.
+Low-word decision proofs capture the smaller of their local and remaining
+request allowances. Each operation admits and counts the same work locally;
+every exit commits that count, including refusals. The completed-reading memo
+receives the committed request budget before it admits its own work.
+Decision and carry caches combine their bounded input and edge fields before
+hashing, retaining complete-key equality and the same storage/work accounts.
+Native sample guards index contiguous variable-ID windows directly. Sparse
+windows retain compact maps, and both paths preserve the same referenced-input
+order and random stream. Numeric node-order comparisons stay inside the sort.
 General operators retain the shared APInt semantics in a separate call, keeping
 their operand construction and cleanup out of the native evaluator's hot frame.
 The compact two-word hash key uses one 64-bit bucket mix, without hashing its
@@ -3263,6 +3284,9 @@ outside the small-recipe synthesis path. Terms remain ordered by value after
 each merge round, so only zero-to-one neighbor flips need lookup; the reverse
 pair was already visited. Prepared Boolean recipes keep their reconstruction
 memo inline, with ordinary growth for optional larger recipes.
+Small implicant rounds also keep their temporary term and merge vectors inline;
+larger rounds grow normally. Their deduplication keys retain both complete
+value/care fields, and discovery order and work admission remain unchanged.
 The shared exact MBA layer also recombines weighted literal AND/OR/XOR/NOT
 views of one opaque word. It constructs per-bit coefficients and a constant,
 then independently checks the pointwise grammar, constant difference and every
@@ -3496,8 +3520,11 @@ precision needed for the group. The joint proof stops at the first possibly
 nonzero bit. Large products project their observed words before counting the
 input domain, so invisible high subtrees do not consume a second traversal.
 Neutral low-word constants bypass reconstruction of identity operations.
-Small products retain their cheap single-residual admission after affine
-synthesis, and unaffordable mandatory scans decline before consuming their work.
+Small products can group by parity alone after affine synthesis, retaining
+multiple independently valued residual words. A complete count must still
+prove the other branch zero; a majority by itself does not suffice. Large
+projected groups keep their stronger shared prefix for coalesced powers.
+Unaffordable mandatory scans decline before consuming their work.
 The complete group result may reuse a representative word only after all
 observed decision bits agree. Reconstruction restores both the selector and
 every retained factor. This avoids expanding an independent multiplication into
@@ -3517,7 +3544,11 @@ remove only proved trailing zeros and retain every normalized parity term;
 one-bit products keep an opaque identity because cross terms can survive.
 An odd pair shares a square of its lower word and one exact highest-bit
 correction. Collecting the squares permits recursion at one fewer bit. Every
-unpaired factor and every correction remains in the result. Degree-block
+unpaired factor and every correction remains in the result. At the outermost
+level of an odd-sized source block, unpaired full words can remain outside
+the paired square and its correction. The original full factor count still
+proves the other parity branch zero; recursive squares retain all their own
+factors. Even blocks and projected groups keep their joint reconstruction. Degree-block
 admission only orders this search; it never establishes a pair or oddness.
 Pairing indexes are constructed only for an admitted search and are confined
 to its active odd assumption, avoiding setup in ordinary low-word searches.
@@ -3542,8 +3573,13 @@ are request-local; storage refusals retry when a larger allowance is available.
 The deep walk keeps original opaque inputs and changed original products
 eligible. Their rewrites propagate through the canonical builder without
 repeated analysis of the emitted reading. Independent linear tails
-finish before walking a generated product reading. A concrete odd-input
+finish before walking a generated product reading. A concrete nonzero
 witness may reject further zero-proof attempts but never authorizes a rewrite.
+All-odd assignments retain their cheap parity path. If they fail, bounded
+native-width evaluations can count trailing zeros in even factors at complete
+input assignments. Their sum must be below the observed width. Evaluation
+reuses the ordinary word evaluator, keeps correlated inputs consistent, and
+shares the existing witness work and storage allowance.
 Native scalar affine coordinates retain their cheap complete-map path; the
 extra projected read is reserved for wrappers, nonlinear monomials and wide
 coefficients, avoiding duplicated searches on ordinary nonzero residuals.
@@ -7203,6 +7239,18 @@ does not introduce another stack representation or qualify runtime TOP changes.
 
 For Win64 x64 images, whose C ABI never passes an x87 value, `ir/X86/X87Context.h` owns encoding admission and `CFGBuilderX86Fpu` owns a function-local mutable context. It carries CW, SW, runtime TOP, abridged tags and all eight raw binary80 payloads. Entry and independent roots capture incoming state; ordinary edges publish before a root recaptures. Calls and extended-state save/restore export and refresh the context, including wrappers without local x87 instructions. Entry backedges keep their existing context. LLVM, HighC and LLVMC share this contract; HighC uses named helpers and fixed aligned storage. MMX bridges physical aliases; EMMS empties tags. The same selector contract admits FEMMS and marks its payload invalidation: concrete execution forgets every retained payload, while native context steps retain the original instruction. Context restore/step constraints declare both the MMX and x87 register banks. Concrete execution requires authenticated state and memory, refuses unknown effects, and admits implementation-dependent results only in explicit native reference mode. The static TOP/tag proofs described above remain the projection for x86-32 and for System V x64, whose long double parameters and st0 results stay typed values; `x87ContextOwnsStack` chooses the model per image and `BinaryImage::X87ContextOverride` selects either one explicitly. These x64 regressions do not certify every CPU, instruction, fault priority or source-level floating return ABI.
 
+The owned context also carries all 24 3DNow operations. `X86ThreeDNow.def`
+owns their suffix, source dependencies and enhanced-feature requirements;
+`X86LiftThreeDNow` authenticates the complete encoding before producing one
+context step. Its selector retains stack-reference provenance independently
+of FS/GS and uses the original-ModRM field for the suffix, since these
+instructions preserve FIP/FDP/FOP. LLVM and both C routes share the original
+instruction inside the context restore/step/save boundary. Concrete execution
+requires explicit native reference mode and CPUID support, retains unknown
+payload provenance after FEMMS, and establishes only the written destination.
+Typed/unowned and i386 projections remain explicit refusals; no duplicate
+scalar arithmetic model substitutes for the native operation.
+
 ## IR representations and routes
 
 `X86Virtualization.def` owns the implemented VMX/SVM operation inventory and
@@ -10488,7 +10536,9 @@ external solver dependency. It translates the expression DAG directly and
 caches nodes within a solver session. Permanent assertions and per-check
 assumptions remain separate. Expression synthesis selects its proof backend
 through the existing verifier boundary; inconclusive results never authorize a
-rewrite. See [bitvector proof backends](solver.md) for build and validation.
+rewrite. Repeated product factors share squared powers in the solver encoding;
+the existing scaled-product quotient restores the complete output word.
+See [bitvector proof backends](solver.md) for build and validation.
 
 Shared symbolic expression builders recover comparisons from bounded
 highest-bit Boolean networks. They check an exact modular subtraction relation
@@ -10942,6 +10992,18 @@ lifting decode routes consume that result, including REX2 forms. Illegal
 encodings fail decoding even when strict lifting is disabled. UD1 remains an
 explicit invalid-opcode intrinsic; its encoded operands do not imply an
 ordinary memory access.
+
+With text and detail disabled, Capstone's native iterator uses generated
+operand terminals that share the full decoder's bounded readers and legality
+checks. Its prefix classifier and terminal selection avoid repeated dispatch;
+unsupported operand shapes retain ordinary decoding. ARM, AArch64 and RISC-V
+also use generated descriptor flags to skip operand postprocessing only when
+the owning traversal would perform no writes. These optimizations reside in
+the Capstone `next` fork and are selected through the submodule revision.
+NeverD's existing architecture-specific metadata corrections and fallback
+decoders remain authoritative after the Capstone call. The native batch API
+is available in the fork; this `dev` integration uses the existing iterator
+call sites and does not enable the experimental iced adapter.
 
 `Decoder` and every architecture lifter start in strict mode. If Capstone can
 decode an instruction but the selected lifter has no implementation, the

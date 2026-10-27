@@ -147,7 +147,9 @@ SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
   assert(FitsU64 && "evalU64 requires every node to fit in 64 bits");
 
   auto mask = [](uint64_t V, uint32_t W) -> uint64_t {
-    return W >= 64 ? V : (V & ((uint64_t(1) << W) - 1));
+    // fitsU64 already establishes 1..64 bits. Shifting ones right also
+    // handles the full word without a shift by 64 or a per-step branch.
+    return V & (~uint64_t(0) >> (64 - W));
   };
 
   const uint32_t *Args = ArgSlots.data();

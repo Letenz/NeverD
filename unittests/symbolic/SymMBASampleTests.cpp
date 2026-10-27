@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <random>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -118,19 +119,22 @@ TEST(SymMBASample, VisitsZeroOnesOneThenTheFirstRandomPoint) {
 }
 
 TEST(SymMBASample, MatchesAPAcrossNarrowAndWideWidths) {
-  for (unsigned W : {1u, 8u, 32u, 64u, 65u, 128u, 257u}) {
-    SCOPED_TRACE(W);
-    SymContext Ctx;
-    SymRef Selector = Ctx.mkVar("selector", 64);
-    SymRef X = Ctx.mkVar("x", W), Y = Ctx.mkVar("y", W);
-    SymRef E = Ctx.mkXor(Ctx.mkMul(X, Y), Ctx.mkAdd(X, Y));
-    for (unsigned Sample : {0u, 1u, 2u, 3u, 6u})
-      expectAtSample(Ctx, E, Selector, Sample);
-    SymRef Other = Ctx.mkOr(X, Y);
-    for (unsigned Samples : {0u, 1u, 2u, 3u, 4u, 7u})
-      EXPECT_EQ(detail::agreeOnSamples(Ctx, E, Other, Samples),
-                referenceAgree(Ctx, E, Other, Samples));
-  }
+  for (unsigned Unused : {0u, 17u})
+    for (unsigned W : {1u, 8u, 32u, 64u, 65u, 128u, 257u}) {
+      SCOPED_TRACE(::testing::Message() << W << ":" << Unused);
+      SymContext Ctx;
+      for (unsigned I = 0; I < Unused; ++I)
+        Ctx.mkVar("unused_" + std::to_string(I), 257);
+      SymRef Selector = Ctx.mkVar("selector", 64);
+      SymRef X = Ctx.mkVar("x", W), Y = Ctx.mkVar("y", W);
+      SymRef E = Ctx.mkXor(Ctx.mkMul(X, Y), Ctx.mkAdd(X, Y));
+      for (unsigned Sample : {0u, 1u, 2u, 3u, 6u})
+        expectAtSample(Ctx, E, Selector, Sample);
+      SymRef Other = Ctx.mkOr(X, Y);
+      for (unsigned Samples : {0u, 1u, 2u, 3u, 4u, 7u})
+        EXPECT_EQ(detail::agreeOnSamples(Ctx, E, Other, Samples),
+                  referenceAgree(Ctx, E, Other, Samples));
+    }
 }
 
 TEST(SymMBASample, UnusedWideVariablesDoNotConsumeRandomWords) {

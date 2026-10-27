@@ -1532,7 +1532,8 @@ private slots:
   void disassemblyMenuOffersTheLinesEdits() {
     // An instruction of a function offers the function's stack variables,
     // the SP the instruction leaves and its operand's forms; a data item its
-    // array and alignment. A pseudocode window offers none of them.
+    // array and alignment. A pseudocode window offers only the stack
+    // variables, of the function it shows.
     QTemporaryDir directory;
     Workbench bench;
     LoadDialogAcceptor loads;
@@ -1605,25 +1606,79 @@ private slots:
     });
     QVERIFY(shown);
 
-    // Its function can differ from the disassembly's, which these edit.
+    // Pseudocode offers the stack variables of the function it shows, and
+    // none of the disassembly's instruction and item edits.
     assembly->navigate(function);
     QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(function));
     bench.action(ActionId::ViewPseudocode)->trigger();
     auto *view = bench.codeView(QStringLiteral("source"));
     QVERIFY(view);
-    QTRY_VERIFY(!view->text()->loading() && view->text()->lineCount());
-    view->text()->setFocus();
-    QTRY_VERIFY(view->text()->hasFocus());
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount());
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
     shown = false;
-    withCodeMenu(view->text(), [&](QMenu *menu) {
+    withCodeMenu(code, [&](QMenu *menu) {
       shown = true;
+      QVERIFY(offers(menu, ActionId::EditStackFrame));
+      QVERIFY(offers(menu, ActionId::EditDeleteFunction));
       for (const auto id :
-           {ActionId::EditStackFrame, ActionId::EditStackPointer,
-            ActionId::EditMakeArray, ActionId::EditMakeAlignment})
+           {ActionId::EditStackPointer, ActionId::EditMakeArray,
+            ActionId::EditMakeAlignment, ActionId::EditCreateFunction,
+            ActionId::EditDefineCode, ActionId::EditDefineData,
+            ActionId::EditDefineString, ActionId::EditUndefine})
         QVERIFY(!offers(menu, id));
       QVERIFY(!menu->findChild<QMenu *>(QStringLiteral("operandTypeMenu")));
+      auto *synchronize =
+          menu->findChild<QAction *>(QStringLiteral("codeSynchronize"));
+      QVERIFY(synchronize && synchronize->isChecked());
+      synchronize->trigger();
     });
     QVERIFY(shown);
+
+    // Apart from the disassembly, which moved to data outside any function,
+    // the function commands still take the one the pseudocode shows.
+    assembly->navigate(slot, false);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(slot));
+    QVERIFY(!assembly->currentFunction());
+    QCOMPARE(code->function(), std::optional<Address>(function));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    bool edited = false;
+    auto *editor = new QTimer(&bench.session);
+    connect(editor, &QTimer::timeout, editor, [&, editor] {
+      auto *dialog =
+          qobject_cast<FunctionEditDialog *>(QApplication::activeModalWidget());
+      if (!dialog || !dialog->isActiveWindow())
+        return;
+      editor->stop();
+      editor->deleteLater();
+      auto *start = dialog->findChild<QLineEdit *>(QStringLiteral("start"));
+      edited =
+          start && start->text().endsWith(QStringLiteral("FFFF800012340140"));
+      dialog->reject();
+    });
+    editor->start(10);
+    shown = false;
+    withCodeMenu(code, [&](QMenu *menu) {
+      shown = true;
+      QVERIFY(offers(menu, ActionId::EditStackFrame));
+      QVERIFY(offers(menu, ActionId::EditFunction));
+      bench.action(ActionId::EditFunction)->trigger();
+    });
+    QVERIFY(shown);
+    QTRY_VERIFY_WITH_TIMEOUT(edited, OpenTimeoutMs);
+    // A dialog closed in code reactivates no owner on the offscreen platform.
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    withCodeMenu(code, [](QMenu *menu) {
+      auto *synchronize =
+          menu->findChild<QAction *>(QStringLiteral("codeSynchronize"));
+      QVERIFY(synchronize && !synchronize->isChecked());
+      synchronize->trigger();
+    });
   }
 
   void floatingWindowsKeepMouseHistory() {
