@@ -15136,14 +15136,16 @@ with CPU emulation enabled after changing the shared memory contract.
 that early errors, unconsumed exact peers, UDP and nonblocking sockets cannot
 consume the failure tail. Aliases, exhausted counts and failed-description reuse
 remain explicit boundaries. `LinuxNetworkJSON` checks strict typed/wire input
-and the 4,096 combined TCP/UDP/failure budget. Android O0/O2 relocation variants
+and the independent stored-entry and counted-failure bounds, including
+`UINT32_MAX` and malformed larger counts. A 4,097-attempt x64/ARM64 loop checks
+exact exhaustion while reusing one descriptor. Android O0/O2 relocation variants
 exercise named, dynamic, variadic and raw ARM64 connect calls with independent
 errno and guarded-memory expectations. Run both Linux and Android network owners
 after changing connection admission. All transport tests are offline.
 
-`ProcessPublic.AndroidConnectionFailuresMatchSDKAndCLI` compares six complete
-SDK/CLI reports and guarded memory across O0/O2 callers, exhausted providers and
-failed-description reuse.
+`ProcessPublic.AndroidConnectionFailuresMatchSDKAndCLI` compares ten complete
+SDK/CLI reports and guarded memory across O0/O2 callers, large finite counts,
+exhausted providers and failed-description reuse.
 
 `ProcessPublic.AndroidApplicationValuesMatchSDKAndCLI` compares 84 complete
 SDK/CLI reports across O0/O2 JNI callers. Resolver identity, UTF-16 builders,
