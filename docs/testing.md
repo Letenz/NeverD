@@ -9707,6 +9707,8 @@ The exploration test consumes a retained memory target to discover a successor.
 Run `NeverDSymMemoryKnowledgeTests` with the two execution targets when changing
 this boundary, so the underlying rebind and overlap validator is also checked.
 
+`NeverDSymbolicCallEffectTests` also checks that providers receive pre-call conditions from both branch arms, earlier call effects and repeated invocations, and the complete disjunction after path merging. A contradictory effect stops subsequent operations and provider calls. These are solver-free exploration regressions, not validation of any external API contract.
+
 For optional independent bitvector oracles, configure `NEVERD_ENABLE_Z3=ON`
 and run `NeverDSolverTests`; see [solver validation](solver.md) for the
 cross-backend benchmark and replayable query export. Validate an OFF build too
