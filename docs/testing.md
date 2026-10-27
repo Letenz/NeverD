@@ -16143,3 +16143,16 @@ simplifies its obfuscated retained words, and stays exact under partial budgets.
 Run `NeverDSymMBAMaskRelationTests` and the broader `NeverDSymbolicTests`.
 
 The focused NeverDCOFFExceptionModelTests target runs exception model and decoder regressions, including unsorted duplicate directory starts, long/cyclic chains, terminal frame mismatches and addresses near the VA limit. Build it with scripts/build.py and pair its CTest label with NeverDCOFFExceptionV2Tests when changing x64 unwind directory processing.
+
+### Predicate cleanup and independent call effects
+
+`HighSourceExpressions.PredicateCleanupKeepsDistinctIndirectCallEffects`
+executes generated C at O0/O2 after HighIR conditional cleanup. A surrounding
+predicate call and an unused-result call before a nested conditional must
+retain their separate effects. Variants cover a shared display name, matching
+callee identities at different sites, missing sites, and changed targets or
+arguments at one site. Independent providers check call counts, arguments and
+both nested paths; a shared provider also verifies repeated actual invocations
+of one callee. Run `NeverDHighControlFlowTests`,
+`NeverDHighCStoreForwardingTests` and `NeverDWindowsEHSourceTests`. This is a
+HighIR structuring contract; it requires no external source interface.
