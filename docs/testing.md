@@ -906,7 +906,10 @@ APX atomic qualification uses `NeverDX86APXAtomicSemanticTests` and
 condition, flag and failure-commit checks, including explicit preservation of
 64-bit default-stack provenance and refusal of malformed address controls.
 The latter validates MedIR, native LLVM, owned assembly and both C routes;
-it exports 480 live/dead/repeated wrappers and 588 decoded pipeline cases when `NEVERD_APX_ATOMIC_EXPORT_DIR` is set.
+unknown targets must refuse through the shared native plan in both LLVM and
+HighC, while representation-neutral shape readers retain their unknown-target
+contract. It exports 480 live/dead/repeated wrappers and 588 decoded pipeline
+cases when `NEVERD_APX_ATOMIC_EXPORT_DIR` is set.
 `scripts/verify_x86_apx_atomic.py` takes those exports, the full fork's `llc`,
 NeverC and its independent `tests/verify-apx-atomic-completion.py` oracle.
 It checks production objects and LLVM/Clang/NeverC/GCC wrappers across supported
@@ -935,12 +938,41 @@ an otherwise parseable object, retaining the caller's diagnostic handler.
 the legacy RAO/VEX CMPccXADD inventory. Set `NEVERD_LEGACY_ATOMIC_EXPORT_DIR`
 and pass `--legacy` to `verify_x86_apx_atomic.py` for the x86-64 wrappers and
 588 decoded pipeline cases. Its i386 fixtures add 112 wrappers per format
-and 144 decoded pipelines. `scripts/verify_x86_legacy_atomic_i386.py` checks
+and 288 decoded pipelines, including CS/ES/SS.
+`scripts/verify_x86_legacy_atomic_i386.py` checks
 their production/LLVM objects and Clang C output at O0/O2, including 16-bit
 effective addressing, all explicit segment controls, aliased ordinary
 memory, repeated transactions, cdecl preservation and returned flags.
 Its Mach-O test loader retains literal-pool layout and validates local
 section-difference relocation pairs before controlled execution.
+
+`NeverDX86AtomicSegmentTests` covers all four i386 legacy RAO operations,
+addr16/addr32 wrapping, implicit SS, explicit segment overrides and all three
+decoder routes under strict/permissive lifting. Malformed control/mode/address-
+space combinations refuse. With otherwise known inputs and mapped memory,
+concrete CS/ES/SS access refuses before reading or storing. The shared native
+segment fixture compiles 360 LLVM/HighC/LLVMC objects across ELF/COFF/Mach-O
+and default/NoOpt pipelines, keeping raw segment offsets beside an ordinary DS
+object with the same numeric address. Absolute displacements and constants
+transported through EAX must both stay numeric; the compact and four-source
+segment fixtures retain matching register-transport cases. The constant EAX
+cases also read the ordinary DS object through that same register. Run
+`scripts/verify_x86_atomic_segments.py --exports DIR --keep CHECKS --neverc NEVERC` after setting
+`NEVERD_ISA_REGRESSION_ARTIFACT_DIR` to verify exported C operand transport
+with Clang ASan/UBSan and NeverC. These x64 recorder runs do not qualify an i386
+NeverC ABI or descriptor faults. Pair this target with the APX semantic/source,
+legacy source and compact/four-source segment targets.
+
+`NeverDHighCIntegerWidthTests` runs the integer projection suite independently.
+`SegmentOffsetsPreserveIntegerExtensions` sets a Linux x64 subprocess's GS base
+so a specified 16/32-bit signed/unsigned parameter, after zero/sign extension,
+must address one known volatile word. Constant operands, wrapping addition,
+low-byte extraction and narrowing casts retain the same value contract. Twenty
+generated ordinary GS loads execute at O0/O2, for 40 comparisons; this catches
+a stripped extension even when an i386 pointer cast would hide the error on a
+32-bit host. The two PIE executables use a static word with canonical-address
+headroom independently of stack ASLR. The hardware GS test skips explicitly on
+other platforms. The suite also retains the overlapping image-backing regression.
 
 The atomic semantic suite checks legacy/VEX raw-detail disagreement,
 address wrapping, every CMPccXADD condition and unknown-input refusal.

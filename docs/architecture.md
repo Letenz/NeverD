@@ -201,6 +201,29 @@ immutable-data address owners as ordinary memory operations. Selected or
 recurrent immutable bases must retain relocation; segment-relative offsets
 and live-image storage bypass this process-image rebasing.
 
+i386 legacy RAO retains CS/ES/SS offsets, including implicit SS for SP/BP,
+through a distinct final-byte control (`0x26`, `0x2e`, `0x36`). The shared atomic
+shape excludes other modes, widths, encoding families and duplicate FS/GS
+selection. `ir/intrinsics/X86/X86NativeMemory.h` owns the segment-offset role
+for atomics, compact and four-source memory; the MedIR adapter keeps these
+offsets scalar in both type-inference routes. LLVM uses the raw-offset
+materializer, and LLVM/HighC share native-prefix composition. HighC's
+`HighC/X86/HighCNativeMemory.cpp` routes their address operands through the same
+raw-address renderer used by segmented loads/stores. A numeric image alias
+carried through a register must stay an offset at that use, while a neighboring
+ordinary DS load still materializes its image object. The raw-address and
+intrinsic-operand renderers share view selection, retaining zero/sign extension
+and narrow arithmetic before the final pointer conversion.
+Constant address evaluation applies each integer view at its declared width;
+sign extension, narrowing casts, bounded byte extraction and arithmetic wrap
+cannot be erased while finding a numeric address.
+Representation-neutral shapes may omit the target, but LLVM and HighC require
+a valid native `x86APXAtomicPlan` before accessing its fields. An unknown mode
+cannot select a default x86 encoding at either output boundary.
+Native instructions own segment checks and faults. Concrete execution refuses
+these accesses without a descriptor environment before reading or changing
+ordinary image memory; arithmetic flags and stored-value roles are unchanged.
+
 `X86NativeFeatures` owns C compiler capability selection and function target
 attributes for AMX, SGX, bounded SGX/SMX state and REP comparison flags. Instruction renderers report their required feature
 sets; the function writer emits one combined attribute for the native APIs in
