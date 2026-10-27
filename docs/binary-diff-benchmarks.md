@@ -139,8 +139,12 @@ configuration. `--cpus` defaults to 2 and `--timeout` to 600 seconds per process
 The runner executes a retained copy of the Diaphora source tree, including its
 configuration, data and license notices. Both export receipts bind native IDA
 SHA-256 identities to database bytes; admission also verifies the databases'
-native MD5 and version fields. Matching must return success and preserve the
-export bytes. Its receipt binds the result to those ordered exports, and the
+native MD5 and version fields. Matching must return success, preserve the
+export bytes and finish without unhandled heuristic-thread exceptions. The
+adapter retains those exceptions and refuses to save a successful result even
+when Diaphora's main matching call returns success. Older receipts without this
+thread check require separate failure-log review. Its receipt binds the result
+to those ordered exports, and the
 result database's own configuration must agree. The `diaphora-native` evaluator
 rechecks this entire chain without requiring the original absolute database
 locations to remain live. The format version is recorded separately from the

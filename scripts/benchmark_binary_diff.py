@@ -201,6 +201,7 @@ def read_diaphora_native(path: Path, inputs: list[Path]) -> list[tuple[int, int]
     receipt = load(path)
     require(receipt["schema"] == "neverd.benchmark.diaphora-match.v1" and
             receipt["complete"] is True, "Diaphora matching did not complete")
+    require(receipt.get("worker_errors", []) == [], "Diaphora heuristic worker failed")
     require(receipt["input_sha256"] == [digest(source) for source in inputs],
             "Diaphora matching input direction differs")
     exports = []
