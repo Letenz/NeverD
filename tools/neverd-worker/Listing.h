@@ -1,11 +1,14 @@
 #pragma once
 
 #include "OperandFormat.h"
+#include "ProjectHistory.h"
 #include "Protocol.h"
 
 #include "neverd/sdk/NeverDCAPITypes.h"
 
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -38,6 +41,13 @@ public:
 
   /// Names, comments or function boundaries changed.
   void invalidate();
+  void configureCache(std::filesystem::path folder,
+                      std::function<Json()> identity, bool writable,
+                      AtomicWriter writer);
+  bool cachePending() const;
+  void flushCacheOne();
+  void flushCache();
+  Json cacheStats() const;
   void setStackFrames(const Json &rows, const std::string &imageHash);
   /// The neverd_strings_ex_json options strings are found with, as JSON
   /// text; empty for the engine's defaults.
@@ -138,6 +148,9 @@ public:
   std::uint64_t generation() const;
 
 private:
+  Json uncachedPage(const Json &payload);
+  Json uncachedOverview(const Json &payload);
+  const Json &uncachedFunctionRows();
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };

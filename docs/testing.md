@@ -171,9 +171,11 @@ wrapping counters, bypassed or repeated updates, additional entries, signed
 guards and overflowing displacements reject it. Exact-offset queries remain
 unknown for a changing recurrence.
 `NeverDMedPrologueSavesTests` checks that only
-disjoint CALL return-slot ranges are admitted, and that sparse stack definitions
-and nonmemory prefixes fit the existing analysis budget. Partial byte overwrites,
-loop backedges and exceptional prefixes retain their negative controls. Run both
+disjoint CALL return-slot ranges are admitted, and that sparse stack definitions,
+nonmemory prefixes and many distinct slots read across a long block chain fit
+the existing analysis budget; a slot that misses its rewrite names its load.
+Partial byte overwrites, loop backedges and exceptional prefixes retain their
+negative controls. Run both
 C route contract suites after changing this proof.
 
 `COFFExceptionIR.LLVMCMixedHandlersKeepUnwindOnlyCleanup` covers independent
@@ -4666,6 +4668,30 @@ recovery, lost storage, invalid options and output preservation. Build `neverd`,
 `neverd-worker` and `NeverDSourceStackFrameTests`, then run
 `ctest --test-dir build-release -R 'SourceStackFrame|Worker.*StackFrame' --output-on-failure`.
 
+### PE listing facts
+
+`NeverDWorkerPEListingFacts` uses a generated DLL to check the shared automatic
+SP/FP facts in the listing: noncanonical allocation, moved frame aliases and
+alias clobbers. It checks the DLL entry's three physical parameter locations,
+pure forwarders versus adjusted-argument wrappers, runtime-function and chain
+RVA field references, exclusive end boundaries, padding grouping, and user item
+precedence. Run it with `NeverDWorkerStackFrame`, `NeverDWorkerPEBrowse`,
+`NeverDWorkerNativeMakeCode`, `NeverDWorkerLocalTypes` and the discovery-ready
+tests after changing these shared SDK/listing boundaries.
+
+`NeverDMetadataVisitor` compares the native metadata visitor with paginated
+JSON on a generated DLL, including embedded chain rows, borrowed v1 records,
+early-stop cursors and invalid callback admission. It also checks that a
+bounded entry's direct forwarder can refer to an unlisted destination without
+registering that destination or resurrecting a deleted function identity.
+The PE listing fixture checks `complete_anchor_item` with a one-line budget:
+the first reply includes the actual selected instruction and its header.
+After changing viewport demand, run the GUI controller's
+`listingFirstContentPaintWaitsForCurrentRows`,
+`listingRefreshKeepsItsContextAndArrows`,
+`listingKeepsRowsWhenTheirGenerationIsPublished` and
+`initialNavigationOverviewDoesNotWaitForRefreshDebounce` cases.
+
 ## Source dialects and DWARF ingestion
 
 `IsNoReturnTarget.*` checks cached/live lookup parity for exact IAT precedence,
@@ -4813,6 +4839,14 @@ lists (each nesting must flatten back exactly), the PDB import against
 and Go renderers. The fixture's source says how to rebuild the
 `local_types.exe` and `local_types.pdb` pair with clang-cl and lld-link.
 `NeverDSessionCAPITests` reads the same fixture through the C API.
+
+The C parser's spelling-lifetime tests cover line-spliced macros, redefinition
+and removal, named packing stacks, header and calling-convention pragmas,
+concatenated and escaped literals, and single-function declarations. They
+check published names after overwriting the caller's input, plus exact error
+text and macro invocation positions. `NeverDTypeParseTests` runs the same
+parser cases without loader/call-model dependencies, for focused ASan/UBSan
+checks of this storage boundary; these are not additional distinct cases.
 
 `DWARFTypeImportGo.ReadsGosStructuresAndFuncValues` builds a real Go program
 with the selected `NEVERD_TEST_GO` compiler (or `go` on PATH). It checks both
@@ -7117,6 +7151,16 @@ Source-driven refinement still requires held-out CLI accuracy and performance qu
 these unit tests do not establish source identity for a matching body.
 
 `PEFunctionAddresses.*` checks stackless x64 PE leaves, ownership and instruction boundaries, rejected prefixes and narrower operands, callable exits, cancellation and identical results with 1/2/4/16 workers. Signature tests cover all 16 conditional rel32 forms in both directions, explicit entry scope and source relocation constraints. Python supplement tests require each single-site clause to distinguish every raw counterclaim, preserving alternatives and jointly necessary sites without duplicating existing claims.
+
+`SignatureCodeLayoutContext.*` checks complete nonsplittable source layouts,
+independent ordinary roots, unchanged name admission, shared zero-filled data,
+requested entries, input order, contradictions, operand/owner failures and
+transactional reapplication. `CodeLayoutEvidence.*` verifies native source
+coordinates and explicit refusal of COMDAT, mutable, unsupported, overlapping
+or conflicting source ownership. Cache tests validate the same structural
+contract after mapping. `python3 -m unittest scripts.tests.test_code_layout_selection`
+checks separate nominal counterclaims, exact deduplication, source coordinates
+and output preservation after native verification failure.
 
 `PatternGeneratorCOFF.*` checks aliases at one source address, equal bytes at
 different addresses, recursion through aliases, canonical indirect import
@@ -9655,6 +9699,13 @@ register result. `NeverDSymbolicIntegerIntrinsicTests` supplies the affected
 execution, scalar-state and store-preservation regressions. These targets test
 the generic effect mechanism; they do not certify an external function's ABI
 or operating-system behavior.
+
+Call memory postcondition coverage includes preserved inputs across regions,
+conditional results in both byte orders, fresh unknown epochs, pre-call memory
+targets, ordinary alias invalidation and atomic malformed-knowledge refusal.
+The exploration test consumes a retained memory target to discover a successor.
+Run `NeverDSymMemoryKnowledgeTests` with the two execution targets when changing
+this boundary, so the underlying rebind and overlap validator is also checked.
 
 For optional independent bitvector oracles, configure `NEVERD_ENABLE_Z3=ON`
 and run `NeverDSolverTests`; see [solver validation](solver.md) for the
@@ -15157,14 +15208,16 @@ with CPU emulation enabled after changing the shared memory contract.
 that early errors, unconsumed exact peers, UDP and nonblocking sockets cannot
 consume the failure tail. Aliases, exhausted counts and failed-description reuse
 remain explicit boundaries. `LinuxNetworkJSON` checks strict typed/wire input
-and the 4,096 combined TCP/UDP/failure budget. Android O0/O2 relocation variants
+and the independent stored-entry and counted-failure bounds, including
+`UINT32_MAX` and malformed larger counts. A 4,097-attempt x64/ARM64 loop checks
+exact exhaustion while reusing one descriptor. Android O0/O2 relocation variants
 exercise named, dynamic, variadic and raw ARM64 connect calls with independent
 errno and guarded-memory expectations. Run both Linux and Android network owners
 after changing connection admission. All transport tests are offline.
 
-`ProcessPublic.AndroidConnectionFailuresMatchSDKAndCLI` compares six complete
-SDK/CLI reports and guarded memory across O0/O2 callers, exhausted providers and
-failed-description reuse.
+`ProcessPublic.AndroidConnectionFailuresMatchSDKAndCLI` compares ten complete
+SDK/CLI reports and guarded memory across O0/O2 callers, large finite counts,
+exhausted providers and failed-description reuse.
 
 `ProcessPublic.AndroidApplicationValuesMatchSDKAndCLI` compares 84 complete
 SDK/CLI reports across O0/O2 JNI callers. Resolver identity, UTF-16 builders,

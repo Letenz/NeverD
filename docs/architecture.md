@@ -333,8 +333,16 @@ offset arithmetic can separate their CALL return slots from fixed frame loads
 without inventing an exact stack address. Identity copies join the same PHI
 component. Every component needs an outside origin; an unrelated unseeded cycle
 remains unknown. The return-slot reader
-canonicalizes nonmemory operation prefixes before sharing completed byte
-histories, and charges graph work only when that graph is traversed.
+splits the observed bytes wherever a store, a CALL slot or a load begins or
+ends, and moves every such interval backward together, one 64-interval word at
+a time, to a fixed point over event prefixes; its work grows with blocks and
+words rather than with each observed byte. A refusal names a load that the
+CALL write reaches. Graph work is charged only when that graph is traversed.
+The reader first lets every CALL without an exact slot write any byte; when
+the loads stay separated even then, it skips the costlier slot bounds
+(registration replay, offset ranges, SEH handler bounds and upper bounds),
+which can only narrow those writes. That attempt has its own allowance, so a
+refusal or exhaustion there leaves the bounded proof its whole budget.
 The omitted-callee reader also visits scalar direct calls carrying a proven
 private-frame address. Existing operation and extra-lift budgets still bound
 those bodies; an arity-only summary cannot stand in for their pointer effects.
@@ -2113,6 +2121,12 @@ record ABI does (`TypeLayout.h`):
   that the parent holds go back in place, a `_bitfield` comment lists its
   bitfields, and Go's unions, unaligned members and flexible arrays come
   back from their accessor methods.
+
+C/C++ tokens borrow ordinary spellings from the input. A parse-local arena
+holds spliced directive lines and decoded literals, shared by nested macro
+lexers. It outlives the parser, including tokens expanded before a macro is
+redefined or removed. Published types, prototypes and diagnostics own their
+strings; neither parsing entry point retains the input or arena.
 
 A library's record ABI (`RecordABIs.def`) says what its data model does not:
 whether bit-fields go as Microsoft's compilers or the Itanium ABI place them,
@@ -11081,6 +11095,16 @@ the LowIR return output. Unspecified bytes keep the configured preservation or
 havoc behavior. This provides no ABI or OS contract by itself; the provider
 must establish each result and the complete memory contract.
 
+`SymCallEffect::MemoryAfter` optionally supplies the complete available memory
+at return, using the existing `SymState::MemoryKnowledge` contract. It replaces
+the whole-memory policy before ordered explicit writes. Missing bytes start a
+fresh unknown epoch, while supplied facts can retain caller inputs or encode
+conditional results. Admission and overlap checks remain in `SymState`; an
+invalid snapshot leaves the execution state unchanged. The call target is
+captured from the pre-call state, including memory operands. Normal alias
+invalidation still applies to subsequent writes. This opt-in path stages a
+state copy for atomic admission; ordinary calls do not copy the state.
+
 `ByteMemoryForwardingPass` in `lib/pass/ir/simplify/common` reconstructs complete integer loads from the last writer of each byte in a fixed byte alloca, within one basic block. It accepts byte-multiple widths from 8 to 128 bits and exact in-object constant GEPs under the target byte order. Unknown calls, unknown writes and ordered memory clear the facts. The pipeline runs it between SROA passes after existing private-address recovery, preserving original stores. Instruction scans, address walks, tracked bytes, replacement uses and generated IR have finite limits. The default introduces no snapshots; explicit `AllowStoreSnapshots` freezes a value once at its store and shares that value with all fragments. This optional LLVM refinement does not certify native definedness or recover a function signature.
 
 Byte forwarding and backward overwrite analysis retain byte facts across normally returning intrinsics only when LLVM reports no memory access or other side effects, with no operand bundles or convergent contract. The calls and their results remain in place. This applies to both alloca and numeric memory; ordinary calls remain barriers even with `memory(none)`. It adds no alias separation, private-memory assumption or cross-block relation.
@@ -11136,11 +11160,12 @@ to fold into mode-bit checks. The inline and external definitions share one
 body and retain the existing mode policy. These optimizations reside in the
 Capstone `next` fork and are selected through the submodule revision.
 
-ARM, AArch64, RISC-V, LoongArch, SPARC, PowerPC and MIPS derive direct C
-branches from the same generated decoder tables. The lowering preserves
+ARM, AArch64, RISC-V, LoongArch, SPARC, PowerPC, MIPS and SystemZ derive
+direct C branches from the same generated decoder tables. The lowering preserves
 predicate order, operand callbacks, soft failures and incomplete-decode
 rollback. Encoded widths remain separate from helper input widths, including
-PowerPC prefixed instructions and NanoMIPS 48-bit words. MIPS register-list
+PowerPC prefixed instructions, NanoMIPS 48-bit words and SystemZ's shared
+64-bit helper input for its 16-, 32- and 48-bit encodings. MIPS register-list
 metadata maps expanded operands back to the list, base and displacement
 descriptors; signed MicroMIPS offsets are scaled without negative shifts.
 
@@ -12857,9 +12882,13 @@ without reporting a completed constructor. `getTime` converts the same boot
 clock to microseconds and needs no application snapshot. The modeled class is
 boot-owned and cannot be replaced by supplied Android DEX. This follows the
 [API 28 StatLogger contract](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/com/android/internal/util/StatLogger.java).
-Statistics updates, logging and dumps remain unsupported. ServiceManager's
-initializer reuses these operations; its separately supplied cache and Binder
-state are described below.
+`logDurationStat` updates the retained arrays through shared heap and clock
+operations, preserving Java wrapping arithmetic, signed duration comparisons,
+the strict next-tick comparison and partial effects before failures. Invalid
+event IDs stop before unmodeled diagnostic logging. Logging and dump methods
+remain unsupported. ServiceManager reuses initialization and duration updates;
+its separately supplied cache, Binder state and lookup replies are described
+below.
 
 `dalvik::Library` is the single implementation of the bounded UTF-16 String,
 Object, Class and Throwable value methods called by JNI and DEX. Heap owns
@@ -12936,12 +12965,19 @@ ordinary Java effects, including casts and null exceptions.
 `Binder.allowBlocking` updates the retained proxy's warning flag;
 `BinderProxy.queryLocalInterface` returns null, and an admitted
 ServiceManagerProxy retains its `mRemote` field. Cache misses preserve the
-getService timing read and manager/context acquisition order, then stop at
-unmodeled Binder transactions. JNI remains a handle/ABI adapter. Linux Binder
-continues to own native device/transaction state; this Java projection cannot
-translate its keys into those handles. Local/custom Binder behavior, native
-object translation, Parcel RPC, statistics/logging and add/list service calls
-remain unsupported. The volatile warning field is admitted by shared framework
+getService timing read and manager/context acquisition order. Explicit
+`lookup_results` match the operation, manager Binder key and Java String/null
+name; successful semantic replies retain Binder identity without populating the
+cache. Missing replies remain unsupported, and an explicit null reply alone
+establishes service absence. `getService` updates StatLogger duration arrays,
+selects core/app thresholds through the shared Linux UID service, accumulates
+Java int counters and reads the independent monotonic uptime clock.
+`checkService` omits these statistics updates. JNI remains a handle/ABI adapter.
+Linux Binder continues to own native device/transaction state; this Java
+projection cannot translate its keys into those handles. Local/custom Binder
+behavior, native object translation, Parcel RPC, RemoteException handling,
+EventLog output and add/list service calls remain unsupported. The volatile
+warning field is admitted by shared framework
 field identity; supplied DEX volatile fields retain their existing guard.
 Observed Java state reports cache identity/completeness, retained entries,
 manager/logger identities and proxy warning states without manufacturing

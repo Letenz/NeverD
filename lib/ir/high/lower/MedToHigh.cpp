@@ -1697,6 +1697,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   duplicateSmallReturnTails(Func.Body, /*PrintedSize=*/true,
                             dispatcherEntries());
   foldTempsInReturnTails(Func.Body);
+  foldDuplicateTerminalContinuations(Func);
   mergeJumpsIntoNextIfArms(Func);
   // Names merge last: every earlier pass may still move statements as if
   // each local had the definitions it had in SSA.
