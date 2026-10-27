@@ -795,6 +795,11 @@ StepResult SymExec::stepControl(const LowOp &Op,
 
   case NdOp::CALL:
   case NdOp::INDIR_CALL:
+    if (CallEffect)
+      for (const SymCallRegisterWrite &Write : CallEffect->Registers)
+        if (!State.canWriteRegister(Write.Offset, Write.Value))
+          throw std::invalid_argument(
+              "call summary contains invalid register write");
     // Stepping over a call rather than stopping at one: what it returns is an
     // unknown, and what it leaves in the registers it is allowed to overwrite
     // is another.  Both are named so execution can continue, but without a
@@ -819,6 +824,8 @@ StepResult SymExec::stepControl(const LowOp &Op,
         if (!State.store(Write.Address, Write.Value))
           ++MemoryHavocs;
       }
+      for (const SymCallRegisterWrite &Write : CallEffect->Registers)
+        State.write(SymSpace::Register, Write.Offset, Write.Value);
       if (widthOf(Op.Output) != 0) {
         SymRef Return = CallEffect->ReturnValue;
         if (!Return.isValid())

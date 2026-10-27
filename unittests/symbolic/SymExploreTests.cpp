@@ -1229,6 +1229,28 @@ TEST(SymExplore, ContradictoryConcreteIndirectTargetIsInfeasible) {
   EXPECT_TRUE(Path.BranchDecisions.back().Concrete);
 }
 
+TEST(SymExplore, ExplicitCallRegisterResultResolvesTheSuccessor) {
+  SymContext Ctx;
+  FunctionBuilder B;
+  B.block({op(NdOp::CALL, NdVar{}, {NdVar::cst(0x401500, 8)}),
+           op(NdOp::INDIR_BR, NdVar{}, {NdVar::reg(kRax, 8)})},
+          {1});
+  B.block({op(NdOp::RETURN, NdVar{}, {})}, {});
+  ExploreOptions Opts;
+  Opts.CallEffects = [](SymContext &CallCtx, SymState &, const LowOp &,
+                        const SymCallOccurrence &) {
+    SymCallEffect Effect;
+    Effect.Memory = SymCallMemoryEffect::Preserve;
+    Effect.Registers = {{kRax, CallCtx.mkConst(64, kBase + kBlockSize)}};
+    return std::optional<SymCallEffect>(std::move(Effect));
+  };
+  const auto Exploration = explorePathsDetailed(Ctx, B.function(), Opts);
+  ASSERT_EQ(Exploration.Paths.size(), 1u);
+  EXPECT_EQ(Exploration.Paths.front().Outcome, PathOutcome::Returned);
+  EXPECT_EQ(Exploration.Paths.front().Blocks, (std::vector<int>{0, 1}));
+  EXPECT_TRUE(Exploration.Complete);
+}
+
 TEST(SymExplore, OddInterworkingTargetFindsItsCanonicalThumbBlock) {
   SymContext Ctx;
   FunctionBuilder B;

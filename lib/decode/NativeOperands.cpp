@@ -123,10 +123,13 @@ std::optional<NativeImmediate> nativeImmediateAt(const NativeOperands &Operands,
   const auto Value = native_operands_detail::armImmediateText(*Operand);
   if (!Value)
     return std::nullopt;
+  // The operand spells the decoder's value itself or its sign extension; a
+  // value wider than the immediate is another number.
   for (const NativeImmediate &Immediate : Operands.Immediates) {
-    const uint64_t Mask =
-        Immediate.Bits >= 64 ? UINT64_MAX : (uint64_t(1) << Immediate.Bits) - 1;
-    if ((*Value & Mask) == Immediate.Value)
+    uint64_t Extended = Immediate.Value;
+    if (Immediate.Bits < 64 && (Immediate.Value >> (Immediate.Bits - 1)) & 1)
+      Extended |= UINT64_MAX << Immediate.Bits;
+    if (*Value == Immediate.Value || *Value == Extended)
       return Immediate;
   }
   return std::nullopt;

@@ -79,6 +79,46 @@ TEST(SymMBAObservedWindow, UnshiftedSingleBitMaskDropsOtherPackedFlags) {
   }
 }
 
+TEST(SymMBAObservedWindow, FinishesFlagWindowsExposedByArithmeticMeasurement) {
+  for (unsigned Width : {32u, 64u, 128u, 256u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto X = C.mkVar("reason", Width);
+    auto Selected = C.mkEq(X, C.mkOne(Width));
+    llvm::SmallVector<SymRef, 8> Lanes;
+    for (unsigned Bit : {0u, 2u, 4u, 6u, 7u, 11u}) {
+      auto Flag = Bit == 6 ? Selected : C.mkFreshVar(1, "other_flag_");
+      Lanes.push_back(C.mkMul(C.mkConst(llvm::APInt::getOneBitSet(Width, Bit)),
+                              C.mkZExt(Flag, Width)));
+    }
+    auto Word = C.mkOr(Lanes);
+    auto Root = C.mkEq(C.mkSub(C.mkOr(Word, C.mkConst(Width, 64)), Word),
+                       C.mkZero(Width));
+    auto Result = simplifyMBADeep(C, Root);
+    EXPECT_EQ(Result.Expr, Selected) << C.toString(Result.Expr);
+    EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+    neverd::solver::BitVectorSolver Proof(C);
+    EXPECT_EQ(Proof.check(C.mkNe(Root, Result.Expr)),
+              neverd::solver::SatResult::Unsat);
+    auto Independent = C.mkFreshVar(1, "independent_");
+    auto Combined = C.mkAnd(Root, Independent);
+    auto CombinedResult = simplifyMBADeep(C, Combined);
+    EXPECT_EQ(CombinedResult.Expr, C.mkAnd(Selected, Independent))
+        << C.toString(CombinedResult.Expr);
+    EXPECT_EQ(Proof.check(C.mkNe(Combined, CombinedResult.Expr)),
+              neverd::solver::SatResult::Unsat);
+    auto ComplementMask = C.mkConst(~llvm::APInt(Width, 64));
+    auto Complemented =
+        C.mkEq(C.mkNot(C.mkOr(ComplementMask, C.mkNot(Word))), C.mkZero(Width));
+    MBAOptions Options;
+    Options.MaxWork = 65536;
+    auto ComplementedResult = simplifyMBADeep(C, Complemented, Options);
+    EXPECT_EQ(ComplementedResult.Expr, C.mkNot(Selected))
+        << C.toString(ComplementedResult.Expr);
+    EXPECT_LE(ComplementedResult.Work, Options.MaxWork);
+  }
+}
+
 TEST(SymMBAObservedWindow, SingleBitObservationKeepsArithmeticCarry) {
   SymContext C;
   auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);

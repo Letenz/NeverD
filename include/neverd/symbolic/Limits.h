@@ -69,6 +69,11 @@ inline constexpr unsigned kSymExprLogicSubsetWork = 256;
 // lib/symbolic/expr/SymExprStruct.cpp
 inline constexpr size_t kSymExprStructMaximum = 4096;
 
+// Optional equality/range folds inspect bounded constant words and at most
+// this many extension pairs. Exhaustion retains the exact remaining predicate.
+inline constexpr unsigned kSymExprExtensionCompareMaxWords = 64;
+inline constexpr unsigned kSymExprExtensionEqualityMaxSteps = 32;
+
 // lib/symbolic/expr/SymExprStruct.cpp
 inline constexpr int kSymExprStructConstantBitSliceDepthLimit = 32;
 inline constexpr unsigned kSymExprStructSymContextConstantWindowRemaining = 256;
