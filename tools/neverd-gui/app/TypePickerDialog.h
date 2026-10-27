@@ -94,6 +94,9 @@ private:
   /// and the pointer's own with the instructions they are at.
   QJsonArray accesses_;
   QJsonObject target_;
+  /// Whether the listing writes the operand as the ARM family does
+  /// (`[x0, #_T.Size]`) rather than as x86 listings do.
+  bool armSyntax_ = false;
   bool answered_ = false;
   QString type_;
   qint64 delta_ = 0;

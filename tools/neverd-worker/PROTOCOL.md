@@ -483,7 +483,9 @@ of the function through the same pointer, or with `parameter` and
 `function` those the function makes through its parameter of that position
 (as `function_type` lists it), from the register it arrives in.  `text` matches type names and their
 typedefs as an editor's quick open does, `Type.member` and `.member` member
-paths too.  It returns the SDK's `{accesses,target?,candidates,total}`; an
+paths too.  It returns the SDK's `{accesses,target?,candidates,total}`, with
+`syntax:"arm"` when the listing writes operands as the ARM family does
+(`[x0, #_T.Size]` rather than `[rcx+_T.Size]`); an
 instruction that reaches no memory through a pointer is a
 `local_types_failed` error.  It is listed in `capabilities` with
 `operand_struct` when the engine has it.
