@@ -3633,6 +3633,12 @@ Products spanning the complete observed domain also normalize their factors
 once. Each operand needs only the bits still observable after the other
 factors' proved trailing zeros; the projection cache includes that precision.
 Neutral low-word constants bypass reconstruction of identity operations.
+For a whole partial block of XOR factors, narrow nonlinear products can use
+exact lower decision bits as pairing identities. Their two actual upper bits
+form the additive correction, including cross terms that cannot be discarded
+when fewer than four product bits remain. This search applies at the block's
+observed precision; affine factors, complete blocks, isolated subgroups and
+recursive lower precisions retain their existing structural path.
 Small products can group by parity alone after affine synthesis, retaining
 multiple independently valued residual words. A complete count must still
 prove the other branch zero; a majority by itself does not suffice. Large

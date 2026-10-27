@@ -2211,6 +2211,12 @@ constant-only plans and unchanged step counts at every width from 1 through
 previously spent request budgets, local caps under unlimited requests, zero and
 short storage, exact completion boundaries and saturated unlimited accounting.
 Outputs, work, remaining storage and completed-reading memo admission agree.
+The narrow nonlinear signature tests cover 72 degree-23/30 variants through
+257 bits, complemented inputs and neighboring parity changes. Native complete
+partial blocks must reduce their cost by at least half below 32,768 work units.
+An independent multiplication oracle exhausts all 262,144 relevant low-word
+assignments for one complemented product. Keep the existing 9,500-work complete
+block regression alongside these tests to protect its structural path.
 `Z3Solver.RepeatedProductsKeepAllFactorsAndCompleteInputModels` checks long
 factor runs around power-of-two boundaries at 1–257 bits, both full and scaled
 products. Independent complete-word multiplication and high-bit near misses

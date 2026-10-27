@@ -1288,6 +1288,7 @@ class LowWordDecisions {
     std::unordered_map<SignatureKey, uint32_t, SignatureHash> Ids;
     std::vector<const SignatureKey *> Keys;
     std::unordered_map<uint64_t, WideSignature> Words;
+    unsigned NarrowPrecision = 0;
   };
   // Ordinary low-word searches do not need this state. Construct it only
   // after pairing admission, and keep it within the active odd assumption.
@@ -1770,6 +1771,29 @@ class LowWordDecisions {
         std::sort(Children.begin(), Children.end());
         Children.insert(Children.begin(), {uint64_t(Op) + 1, Count});
         Save(internSignature(State, std::move(Children)), D);
+      } else if (Count == State.NarrowPrecision) {
+        // Fewer than four effective product bits can retain cross terms
+        // between the corrections. Compute these bits exactly instead of
+        // assuming linear corrections or hiding the whole product as an
+        // opaque identity. Equal lower decisions share a zero-extended
+        // representative; the two actual upper bits are its additive delta.
+        const auto &Value = word(R, IdentityOnly ? Count - 2 : Count);
+        if (Failed || !charge(Count, 2 * Count * sizeof(uint64_t)))
+          return {};
+        SignatureKey Identity{UINT64_MAX - 1, Count};
+        uint64_t Literal = 0;
+        bool Constant = true;
+        for (unsigned I = 0; I < Count - 2; ++I) {
+          Identity.push_back(Value[I]);
+          Constant &= Value[I] <= 1;
+          Literal |= uint64_t(Value[I] & 1) << I;
+        }
+        Bits D(2, 0);
+        if constexpr (!IdentityOnly)
+          D = {Value[Count - 2], Value[Count - 1]};
+        Save(Constant ? internSignature(State, {0, Count, Literal})
+                      : internSignature(State, std::move(Identity)),
+             D);
       } else
         Result = {internSignature(State, {UINT64_MAX, Count, R.index()}),
                   {0, 0}};
@@ -2257,6 +2281,7 @@ public:
                   Observed >= limits::kMinResidueDecisionPairingBits &&
                   (FullBlock || Nonconstant > WideProbeBlock);
     llvm::SmallVector<SymRef, 16> Nonconstants;
+    bool XorFactors = true;
     if (AllOdd) {
       if (!charge(Factors.size(), Factors.size() * sizeof(SymRef)))
         return Root;
@@ -2264,6 +2289,7 @@ public:
         if (Ctx.isConst(Factor))
           continue;
         Nonconstants.push_back(Factor);
+        XorFactors &= Ctx.op(Factor) == SymOp::Xor;
         // The common-parity scan already visited every factor before choosing
         // its odd branch. A standalone selector only proves its own value.
         if (!AssumptionCoversFactors && word(Factor, 1).front() != 1) {
@@ -2287,6 +2313,12 @@ public:
           Nonconstants.size() > WideProbeBlock &&
           charge(1, sizeof(WidePairingState))) {
         State.Wide = std::make_unique<WidePairingState>();
+        // Partial bitwise blocks may have equal narrow nonlinear residues
+        // that their syntax cannot expose. Affine, complete and isolated
+        // subgroup readings retain their existing search; recursive pairing
+        // keeps structural corrections at lower precisions.
+        State.Wide->NarrowPrecision =
+            !FullBlock && XorFactors && RetainedFactors.empty() ? Observed : 0;
         const auto A =
             FullBlock
                 ? wideSignature<true>(*State.Wide, Nonconstants.front(),
