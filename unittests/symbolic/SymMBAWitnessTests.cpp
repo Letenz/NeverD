@@ -152,4 +152,33 @@ TEST(SymMBAWitness, NearMissesWideInputsAndRefusalsKeepOriginalSemantics) {
       }
 }
 
+TEST(SymMBAWitness, EvenFactorsStillSupplyConcreteNonzeroWitnesses) {
+  for (unsigned Width : {8u, 16u, 32u, 64u})
+    for (unsigned Degree : {48u, 65u, 96u})
+      for (unsigned High : {2u, 3u}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Width << ':' << Degree << ':' << High);
+        SymContext Ctx;
+        const auto F = fixture(Ctx, Width, High, true, Degree);
+        MBAOptions Options;
+        Options.MaxWork = 65536;
+        Options.VerifySamples = 0;
+        const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+        ASSERT_LT(Result.Work, Options.MaxWork);
+        ASSERT_LT(Result.SizeAfter, Result.SizeBefore / 2);
+        EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+        SymEvalPlan Reduced(Ctx, Result.Expr);
+        for (unsigned X = 0; X < 256; ++X)
+          for (unsigned Y : {0u, 1u, 2u, 127u}) {
+            const std::array Values{
+                llvm::APInt(Width, X), llvm::APInt(Width, Y),
+                llvm::APInt(Width, X ^ Y), llvm::APInt(Width, 7 * X + Y)};
+            ASSERT_EQ(Reduced.eval(Values), F.oracle(Values));
+          }
+        const std::array Zero{llvm::APInt(Width, 0), llvm::APInt(Width, 0),
+                              llvm::APInt(Width, 0), llvm::APInt(Width, 0)};
+        EXPECT_FALSE(F.oracle(Zero).isZero());
+      }
+}
+
 } // namespace

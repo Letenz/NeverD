@@ -1694,7 +1694,8 @@ class LowWordDecisions {
   // all paired corrections add modulo 4, multiplied only by unpaired factors.
   // The product of representatives can be squared from N-1 observed bits.
   Bits widePairedProduct(PairingState &State, llvm::ArrayRef<SymRef> Factors,
-                         unsigned Count) {
+                         unsigned Count,
+                         llvm::SmallVectorImpl<SymRef> *Retained = nullptr) {
     if (Count < 4)
       return product(Factors, Count);
     if (!State.Wide) {
@@ -1741,6 +1742,12 @@ class LowWordDecisions {
     auto Result = calculate(SymOp::Mul, Inner, Inner);
     for (const auto &[Identity, Value] : Unpaired)
       Rest.push_back(Value.first);
+    if (Retained) {
+      if (!charge(Rest.size(), Rest.size() * sizeof(SymRef)))
+        return {};
+      Retained->append(Rest.begin(), Rest.end());
+      Rest.clear();
+    }
     auto Other = product(Rest, Count);
     if (Failed || Other.empty())
       return {};
@@ -1900,13 +1907,14 @@ public:
           }
           Common = Low;
         }
-      if (OddProductOnly && !Common && !Failed && Nonconstant > Observed &&
-          (Factors.size() > limits::kMaxResidueProductFactors ||
-           (Nonconstant - 1) % residueUnitPeriod(Observed) <= 1)) {
+      if (OddProductOnly && !Common && !Failed && Nonconstant > Observed) {
         // A dominant exact prefix supplies enough even factors to annihilate
         // the other branch. Keep every unmatched factor as a complete word;
         // bit-blasting their product can dwarf the proof of the group itself.
-        const unsigned Split = (Observed + 2) / 3;
+        // Small groups need only a shared parity, including multiple
+        // independent residuals. Large projected groups keep the stronger
+        // prefix that makes their coalesced power proof inexpensive.
+        const unsigned Split = ProjectFactors ? (Observed + 2) / 3 : 1;
         // Both complete scans are mandatory. Decline before starting them
         // when even their minimum work cannot fit, preserving the allowance
         // for simpler expressions elsewhere in the same region.
@@ -1962,27 +1970,20 @@ public:
             Entry.Matches = Low == Prefix;
           }
         } else {
-          // Small products already visited affine synthesis. Preserve its
-          // cheap one-residual admission instead of spending the last work
-          // allowance scanning a new multi-residual domain.
-          std::array<Bits, 2> Prefixes;
-          std::array<size_t, 2> Counts{};
+          size_t Votes = 0;
           for (auto Factor : Factors) {
             if (Ctx.isConst(Factor))
               continue;
             const auto &Low = word(Factor, Split);
-            if (Failed || !charge(1 + 2 * Split))
+            if (Failed || !charge(1 + Split))
               return Root;
-            const size_t Group = !Counts[0] || Low == Prefixes[0] ? 0 : 1;
-            if (Counts[Group] && Low != Prefixes[Group])
-              return Root;
-            if (!Counts[Group])
-              Prefixes[Group] = Low;
-            ++Counts[Group];
-            if (Counts[0] > 1 && Counts[1] > 1)
-              return Root;
+            if (!Votes)
+              Prefix = Low;
+            if (Prefix == Low)
+              ++Votes;
+            else
+              --Votes;
           }
-          Prefix = Prefixes[Counts[1] > Counts[0]];
         }
         if (Prefix.front() <= 1)
           return Root;
@@ -2109,7 +2110,7 @@ public:
         WideBlock / limits::kResidueDecisionPartialPairingDivisor;
     const bool FullBlock =
         Nonconstant >= PairingBlock && !(Nonconstant % PairingBlock);
-    bool AllOdd = RetainedFactors.empty() && Assumption &&
+    bool AllOdd = (RetainedFactors.empty() || !ProjectFactors) && Assumption &&
                   Observed >= limits::kMinResidueDecisionPairingBits &&
                   (FullBlock || Nonconstant > WideProbeBlock);
     llvm::SmallVector<SymRef, 16> Nonconstants;
@@ -2167,7 +2168,16 @@ public:
           Wide = A.Identity == Other.Identity;
         }
       }
-      Product = Wide        ? widePairedProduct(State, Nonconstants, Observed)
+      // An odd-sized source block necessarily leaves unpaired factors.
+      // Keep those full words outside the square proof. The original parity
+      // scan already proved the complete product zero on the other branch.
+      // Projected groups and even blocks retain their joint reconstruction.
+      auto *Unpaired = !ProjectFactors && RetainedFactors.empty() &&
+                               (Nonconstants.size() & 1)
+                           ? &RetainedFactors
+                           : nullptr;
+      Product = Wide
+                    ? widePairedProduct(State, Nonconstants, Observed, Unpaired)
                 : FullBlock ? pairedProduct(State, Nonconstants, Observed)
                             : product(Factors, Observed);
     } else {
