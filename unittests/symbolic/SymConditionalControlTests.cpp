@@ -47,6 +47,29 @@ TEST(SymConditionalControls, ConstantTagsRecoverThePredicate) {
   }
 }
 
+TEST(SymConditionalControls, PartialBudgetsMatchAnIndependentTruthTable) {
+  SymContext C;
+  auto P = C.mkVar("p", 1), Q = C.mkVar("q", 1);
+  auto X = C.mkVar("x", 4), Y = C.mkVar("y", 4);
+  auto Root =
+      C.mkIte(P, C.mkIte(P, C.mkIte(Q, X, Y), Y), C.mkIte(P, X, C.mkAdd(X, Y)));
+  for (unsigned Work : {0u, 1u, 3u, 16u, 64u, 10000u}) {
+    MBAOptions Options;
+    Options.MaxWork = Work;
+    auto Result = simplifyMBADeep(C, Root, Options);
+    EXPECT_LE(Result.Work, Work);
+    if (!Work)
+      EXPECT_EQ(Result.Expr, Root);
+    for (unsigned A = 0; A != 16; ++A)
+      for (unsigned B = 0; B != 16; ++B)
+        for (unsigned Guard = 0; Guard != 4; ++Guard) {
+          uint64_t Inputs[] = {Guard & 1u, Guard >> 1, A, B};
+          unsigned Want = (Guard & 1) ? ((Guard & 2) ? A : B) : ((A + B) & 15);
+          EXPECT_EQ(C.evalU64(Result.Expr, Inputs), Want);
+        }
+  }
+}
+
 TEST(SymConditionalControls, LiteralXorEqualityUsesTheDecodedConstant) {
   for (unsigned Width : {1u, 3u, 8u, 32u, 64u, 65u, 128u, 257u}) {
     SCOPED_TRACE(Width);
@@ -90,29 +113,6 @@ TEST(SymConditionalControls, MaskedEqualityIsNotAnInvertibleXor) {
       const auto Value = C.op(Word) == SymOp::And ? Input & 0x35 : Input | 0x35;
       EXPECT_EQ(C.evalU64(Result.Expr, {Input}), uint64_t(Value == 0x10));
     }
-  }
-}
-
-TEST(SymConditionalControls, PartialBudgetsMatchAnIndependentTruthTable) {
-  SymContext C;
-  auto P = C.mkVar("p", 1), Q = C.mkVar("q", 1);
-  auto X = C.mkVar("x", 4), Y = C.mkVar("y", 4);
-  auto Root =
-      C.mkIte(P, C.mkIte(P, C.mkIte(Q, X, Y), Y), C.mkIte(P, X, C.mkAdd(X, Y)));
-  for (unsigned Work : {0u, 1u, 3u, 16u, 64u, 10000u}) {
-    MBAOptions Options;
-    Options.MaxWork = Work;
-    auto Result = simplifyMBADeep(C, Root, Options);
-    EXPECT_LE(Result.Work, Work);
-    if (!Work)
-      EXPECT_EQ(Result.Expr, Root);
-    for (unsigned A = 0; A != 16; ++A)
-      for (unsigned B = 0; B != 16; ++B)
-        for (unsigned Guard = 0; Guard != 4; ++Guard) {
-          uint64_t Inputs[] = {Guard & 1u, Guard >> 1, A, B};
-          unsigned Want = (Guard & 1) ? ((Guard & 2) ? A : B) : ((A + B) & 15);
-          EXPECT_EQ(C.evalU64(Result.Expr, Inputs), Want);
-        }
   }
 }
 
