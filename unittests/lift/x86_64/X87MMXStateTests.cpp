@@ -132,6 +132,41 @@ TEST(X87MMXState, PendingExceptionsAndUnknownInputDoNotCommitAReset) {
     }
 }
 
+TEST(X87MMXState, FreshX87LoadsRebuildOnlyTheWrittenPayloadsAfterFemms) {
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Segment Data;
+  Data.VA = 0x3000;
+  Data.Flags = SegmentFlags::Readable;
+  // Independent binary80 encoding of one.
+  Data.Data = {0, 0, 0, 0, 0, 0, 0, 0x80, 0xff, 0x3f};
+  Data.Size = Data.FileSz = Data.Data.size();
+  Img.Segments.push_back(Data);
+  for (bool Strict : {false, true})
+    for (unsigned Top = 0; Top < 8; ++Top) {
+      NdOpEmulator E(Img);
+      E.setStrictMode(Strict);
+      ASSERT_TRUE(E.setX86LinearAddressBits(48));
+      ASSERT_TRUE(E.setX87Context(incoming(Top, 0xff)));
+      ASSERT_TRUE(E.step(resetStep(0x0e0f)));
+      EXPECT_FALSE(E.step(resetStep(0xe5d9))); // FXAM needs retained ST0 bits.
+      // The existing explicit portable load needs no physical FEMMS host.
+      E.setX87PortableMode(true);
+      auto Load = resetStep(0xdb | (0x28U << 8) | X87ContextMemory |
+                            (0x28U << X87ContextOriginalModRMShift));
+      Load.Inputs[3] = NdVar::cst(Data.VA, 8);
+      for (unsigned I = 0; I < 8; ++I) {
+        ASSERT_TRUE(E.step(Load)); // All eight original tags must be empty.
+        const unsigned Physical = (Top + 7 - I) & 7;
+        EXPECT_EQ(E.getRegisterBytes(x86reg::stReg(Physical)), Data.Data);
+        EXPECT_EQ(bool(E.getX87Context()), I == 7);
+      }
+      ASSERT_TRUE(E.getX87Context());
+      EXPECT_EQ((*E.getX87Context())[4], 0xff);
+      EXPECT_EQ((*E.getRegister(x86reg::FPU_SW) >> 11) & 7, Top);
+    }
+}
+
 TEST(X87MMXState, NativeEvaluatorChecksFeatureBeforeExecutingFemms) {
   auto State = incoming(0, 0xff);
   const auto Before = State;
