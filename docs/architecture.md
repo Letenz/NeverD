@@ -1147,9 +1147,17 @@ including equivalent formatting, merge-conflict and foreign-edit checks. A row
 can reuse admission only when both its values and JSON types match the validated
 row. Non-finite numbers, binary values and invalid UTF-8 are refused before
 publication so the snapshot and its serialized representation cannot diverge.
+After changed rows pass admission, an unchanged canonical address sequence
+retains the snapshot's ordering, uniqueness and ordered-table positions. A
+changed address or row count takes the full ordering and duplicate checks.
 
 History publication encodes the target state once and composes the history and
 recovery journal from serializer-produced JSON and retained committed text.
+It retains byte ranges for encoded tables and formats those ranges for sidecar
+files without traversing their objects again. The formatter consumes only
+serializer-produced compact JSON and preserves scalar spelling, string escapes
+and the existing file layout. Ordered tables still omit synthetic addresses;
+ordinary typed sidecar writes retain their direct serializer.
 Loading a snapshot retains validated history-file bytes and defers journal
 encoding until a save needs it. Before embedding a loaded document, publication
 parses and serializes it, so a top-level BOM cannot enter nested JSON. Merely
@@ -1704,6 +1712,14 @@ CFG views. Its stop state is separate from native body coverage; cancelled or
 timed-out deltas do not acquire unchanged rows or block annotations. The worker
 owns the advertised cooperative-operation list consumed by the GUI. Explicit
 refresh retries a stopped query; paging itself does not restart it.
+`lib/diff/FunctionDelta` owns the weighted native instruction alignment used by
+matching, measurements, pages and saved-evidence verification. Large ranges use
+Hirschberg decomposition of the same 4/3/2 recurrence as bounded dense leaves.
+Maximum-weight common ends and a multiset upper-bound check admit only optimal
+fast paths; no adapter supplies an alternate greedy alignment. Frontier storage
+is released before recursion, and shared cancellation/deadline checks discard
+partial delta rows. Matcher revisions identify changed measurements without
+weakening saved-evidence verification.
 `ComparisonSource` adapts the ordinary selected-function source page API to the
 comparison's exclusively owned input sessions. It reuses their loader, analysis
 settings, dialect admission, emitter cache and canonical instruction provenance.
@@ -2559,7 +2575,11 @@ data among the code, an index table, not a code address
 (`instructionRelocations`, `addFixedImageDisplacement`). The pointer-wide
 jump table beside it stays a code address.
 The jump-table resolver shares complete guest-address COPY/ZEXT tracing across
-ordinary, unscaled and two-level loads. Linked PE32 compact switches may name
+ordinary, unscaled and two-level loads. Resolver lane projection retains an
+existing exact address when a wider internal container supplies the complete
+guest pointer with no changed bits. Partial lanes, non-fitting values and
+scalar/fragment provenance do not receive address authority. Linked PE32
+compact switches may name
 both bases by absolute displacements. Their immutable index bytes still need
 a bounded selector, a complete relocated target run and disjoint decoded code.
 LLVM may omit the exact authenticated index read only when all its value uses
