@@ -55,6 +55,31 @@ bool needsCallSignatureRecovery(const CallArgumentConvention *Convention) {
                         Convention->StackArgumentSummary);
 }
 
+void copyCallSignatureFacts(const PipelineResult &Source,
+                            PipelineResult &Destination) {
+#define COPY_SIGNATURE_FACT(Field) Destination.Field = Source.Field
+  COPY_SIGNATURE_FACT(CallArgumentSources);
+  COPY_SIGNATURE_FACT(CallMayWriteGPRs);
+  COPY_SIGNATURE_FACT(CallExitConstants);
+  COPY_SIGNATURE_FACT(CallEntryReadGPRs);
+  COPY_SIGNATURE_FACT(CallUnreadGPRs);
+  COPY_SIGNATURE_FACT(CallEntryStackArgs);
+  COPY_SIGNATURE_FACT(CallEntryStackSlots);
+  COPY_SIGNATURE_FACT(CallEntryArgumentCounts);
+  COPY_SIGNATURE_FACT(CallEntryIntegerArguments);
+  COPY_SIGNATURE_FACT(CallEntryFloatingArguments);
+  COPY_SIGNATURE_FACT(CallEntryVariadicArguments);
+  COPY_SIGNATURE_FACT(OmittedCalleeArgumentCounts);
+  COPY_SIGNATURE_FACT(OmittedCalleeIntegerArguments);
+  COPY_SIGNATURE_FACT(OmittedCalleeFloatingArguments);
+  COPY_SIGNATURE_FACT(OmittedCalleeVariadicArguments);
+  COPY_SIGNATURE_FACT(OmittedCalleeStackArgs);
+  COPY_SIGNATURE_FACT(OmittedCalleeStackSlots);
+  COPY_SIGNATURE_FACT(CallPrototypeArguments);
+  COPY_SIGNATURE_FACT(CallUserPrototypes);
+#undef COPY_SIGNATURE_FACT
+}
+
 namespace {
 /// The entries callee lifts know: the function symbols of \p Img that are
 /// not boundary guesses.
@@ -628,7 +653,8 @@ private:
 
 std::vector<std::shared_ptr<const MedFunc>>
 omittedDirectCalleeSignatures(const BinaryImage &Img,
-                              const PipelineResult &Result) {
+                              const PipelineResult &Result,
+                              bool SourceDeclarations) {
   const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
   if (!needsCallSignatureRecovery(Convention) || Img.IsRelocatable)
     return {};
@@ -652,6 +678,25 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
   };
   for (const MedFunc &F : Result.MedFuncs)
     enqueueCallees(calleesToRead(F, Img, Result));
+  // A complete entry-read summary proves argument count, not pointer types.
+  // Source LLVM also needs the typed declarations of these direct callees.
+  // Share the existing read budget and memo; descendants still follow only
+  // the signature demands above, never this extra source-type demand.
+  if (SourceDeclarations &&
+      (Img.Arch == Arch::X64 || Img.Arch == Arch::AArch64))
+    for (const MedFunc &F : Result.MedFuncs)
+      for (const MedBlock &Block : F.Blocks)
+        for (const MedOp &Op : Block.Ops)
+          if (Op.Opcode == NdOp::CALL && Op.NumInputs &&
+              Op.Inputs[0].isConst() && !Op.SourceCallHint &&
+              !Result.CallPrototypeArguments.count(Op.Inputs[0].ConstVal) &&
+              !Result.CallUserPrototypes.count(Op.Inputs[0].ConstVal) &&
+              // scalarCalleeDeclaration cannot publish an exception-bearing
+              // body. Its indexed metadata already proves that rejection;
+              // do not lift it solely to rediscover the same fact. Ordinary
+              // signature demands above still read it when needed.
+              !Img.ExceptionMetadata.findFunction(Op.Inputs[0].ConstVal))
+            enqueue(Op.Inputs[0].ConstVal);
   std::vector<std::shared_ptr<const MedFunc>> Signatures;
   if (Pending.empty())
     return Signatures;
@@ -752,6 +797,43 @@ void boundRecoveredArguments(MedCallInfo &Call, RecoveredArgumentBound Bound) {
 void boundRecoveredArguments(MedCallInfo &Call, const MedFunc &Callee) {
   if (const auto Bound = argumentBoundOf(Callee))
     boundRecoveredArguments(Call, *Bound);
+}
+
+/// Keep the typed spelling of an unchanged, ordinary machine-word signature.
+/// This is not a native source ABI: pointer/integer views share the original
+/// carriers, and the declaration never compacts or introduces parameters.
+std::optional<MedFunc> scalarCalleeDeclaration(const BinaryImage &Image,
+                                               const MedFunc &Body,
+                                               size_t ParameterCount) {
+  if ((Image.Arch != Arch::X64 && Image.Arch != Arch::AArch64) ||
+      Body.SourceTypeHint || Body.SourceParametersBound || Body.IsVariadic ||
+      Body.Params.size() != ParameterCount ||
+      Body.TypedParams.size() != ParameterCount ||
+      !Body.IntegerArgumentRegisters.empty() || !Body.MultiReturn.empty() ||
+      Body.ReturnsNoValue || Body.ReturnsVectorRegister ||
+      Body.FPReturnViaX87 || Body.ConsumesX87Argument || Body.Name.empty() ||
+      Body.ExceptionMetadata || Body.RegistrationStates)
+    return std::nullopt;
+  const auto &Registers = getTargetRegInfo(Image.Arch);
+  const auto Word = [&](const TypeRef &Type) {
+    return Type && Type->Size == Registers.PointerSize &&
+           (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Ptr);
+  };
+  if (!Word(Body.ReturnType))
+    return std::nullopt;
+  for (size_t I = 0; I < ParameterCount; ++I)
+    if (Body.Params[I].Size != Registers.PointerSize ||
+        Registers.isFPArgReg(Body.Params[I].RegOff, Image.abiFormat()) ||
+        !Word(Body.TypedParams[I].Type))
+      return std::nullopt;
+  MedFunc Declaration;
+  Declaration.Entry = Body.Entry;
+  Declaration.Name = Body.Name;
+  Declaration.CC = Body.CC;
+  Declaration.Params = Body.Params;
+  Declaration.TypedParams = Body.TypedParams;
+  Declaration.ReturnType = Body.ReturnType;
+  return Declaration;
 }
 
 /// The integer register arguments a call to \p Func passes through: its
@@ -1304,7 +1386,9 @@ AnalysisCacheWarmup warmOmittedCallees(const BinaryImage &Img,
 }
 
 void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
-                          const std::map<va_t, std::string> &AllFuncNames) {
+                          const std::map<va_t, std::string> &AllFuncNames,
+                          bool SourceDeclarations) {
+  Result.OmittedCalleeDeclarations.clear();
   const CallArgumentConvention *Convention =
       callArgumentConvention(Img.Arch, Img.abiFormat());
   std::map<va_t, int> CalleeRegArity;
@@ -1328,10 +1412,13 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
   OmittedCalleeMemo *Memo = Result.CalleeSignatureMemo.get();
   if (Memo)
     Memo->adopt(Img, Result);
-  if (!Result.OmittedCallees || Result.OmittedCallees->Functions != Functions)
+  if (!Result.OmittedCallees || Result.OmittedCallees->Functions != Functions ||
+      Result.OmittedCallees->IncludesSourceDeclarations != SourceDeclarations)
     Result.OmittedCallees =
         std::make_shared<const OmittedCalleeBodies>(OmittedCalleeBodies{
-            Functions, omittedDirectCalleeSignatures(Img, Result)});
+            Functions,
+            omittedDirectCalleeSignatures(Img, Result, SourceDeclarations),
+            SourceDeclarations});
   // The passes before recovery read the kept bodies in place.
   const std::vector<std::shared_ptr<const MedFunc>> &OmittedCallees =
       Result.OmittedCallees->Bodies;
@@ -1597,6 +1684,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
     /// What bounds the run's calls to the body.
     size_t Parameters = 0;
     bool Bounds = false;
+    bool PreservesDeclaration = false;
   };
   std::vector<OmittedRecovery> Omitted(Recovered);
   for (size_t I = 0; I < Recovered; ++I) {
@@ -1625,6 +1713,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
         Callee.Parameters = Callee.Kept->Parameters;
         Callee.Bounds =
             !Callee.Kept->IsVariadic && !Callee.Kept->SourceParametersBound;
+        Callee.PreservesDeclaration = Callee.Kept->PreservesDeclaration;
         break;
       }
     if (Callee.Kept)
@@ -1638,6 +1727,15 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
     recover(Body, Callee.Holder ? &Keys : nullptr);
     Callee.Parameters = Body.Params.size();
     Callee.Bounds = !Body.IsVariadic && !Body.SourceParametersBound;
+    Callee.PreservesDeclaration =
+        Body.Params == KeptBody.Params && Body.CC == KeptBody.CC &&
+        Body.IntegerArgumentRegisters == KeptBody.IntegerArgumentRegisters &&
+        Body.ReturnType == KeptBody.ReturnType &&
+        Body.TypedParams.size() == KeptBody.TypedParams.size() &&
+        llvm::all_of(llvm::zip(Body.TypedParams, KeptBody.TypedParams),
+                     [](const auto &Pair) {
+                       return std::get<0>(Pair).Type == std::get<1>(Pair).Type;
+                     });
     if (!Callee.Holder)
       continue;
     OmittedCalleeMemo::Recovery Kept;
@@ -1648,6 +1746,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
     Kept.Parameters = Body.Params.size();
     Kept.IsVariadic = Body.IsVariadic;
     Kept.SourceParametersBound = Body.SourceParametersBound;
+    Kept.PreservesDeclaration = Callee.PreservesDeclaration;
     if (Regparm) {
       std::tie(Kept.RegisterArity, Kept.TotalArity) = secondPassArities(Body);
       Kept.IntegerArgumentRegisters = Body.IntegerArgumentRegisters;
@@ -1779,8 +1878,27 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
   // forwarder promotion, so incidental live registers do not become extra
   // arguments merely because output was restricted to its caller.
   std::map<va_t, RecoveredArgumentBound> SignatureBounds;
+  std::set<va_t> DirectTargets, DeclaredTargets;
+  for (const MedFunc &Function : Result.MedFuncs)
+    for (const MedCallInfo &Call : Function.CallInfos)
+      if (!Call.IsIndirect) {
+        DirectTargets.insert(Call.TargetAddr);
+        if (Call.SourceCallHint)
+          DeclaredTargets.insert(Call.TargetAddr);
+      }
   for (size_t I = 0; I < OmittedCallees.size(); ++I) {
     const MedFunc &F = *OmittedCallees[I];
+    // A memo hit retains the final arity. Only publish types when recovery
+    // kept the original complete carrier list; inserted forwarder operands
+    // or a changed order cannot borrow the conversion's old typed prefix.
+    if (SourceDeclarations && !Regparm && I < Recovered && Omitted[I].Bounds &&
+        Omitted[I].PreservesDeclaration && DirectTargets.count(F.Entry) &&
+        !DeclaredTargets.count(F.Entry) &&
+        !Result.CallPrototypeArguments.count(F.Entry) &&
+        !Result.CallUserPrototypes.count(F.Entry))
+      if (auto Declaration =
+              scalarCalleeDeclaration(Img, F, Omitted[I].Parameters))
+        Result.OmittedCalleeDeclarations.push_back(std::move(*Declaration));
     if (I < Recovered) {
       const OmittedRecovery &Callee = Omitted[I];
       if (Callee.Body) {

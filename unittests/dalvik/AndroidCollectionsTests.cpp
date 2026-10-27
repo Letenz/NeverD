@@ -57,6 +57,29 @@ TEST(AndroidHashMapTest, DefaultConstructorOwnsIndependentState) {
   EXPECT_EQ(result.value, 0u);
 }
 
+TEST(AndroidHashMapTest, PutAllCopiesOverlapsNullsAndSelfWithoutAliasing) {
+  MapState state;
+  const auto source = state.call("<init>"), target = state.call("<init>");
+  const auto key = state.heap->literal("key")->Identity;
+  const auto other = state.heap->literal("other")->Identity;
+  state.call("put", source, {key, source});
+  state.call("put", source, {0, 0});
+  state.call("put", target, {key, target});
+  state.call("put", target, {other, source});
+  state.call("putAll", target, {source});
+  state.call("putAll", target, {target});
+  EXPECT_EQ(state.call("size", target), 3u);
+  EXPECT_EQ(state.call("get", target, {key}), source);
+  EXPECT_EQ(state.call("containsKey", target, {0}), 1u);
+  state.call("clear", source);
+  EXPECT_EQ(state.call("get", target, {key}), source);
+  EXPECT_EQ(state.call("size", target), 3u);
+  const uint64_t args[] = {0};
+  auto result = state.runtime.library(mapMethod("putAll"), target, args, Admit);
+  EXPECT_EQ(result.stop, ExecutionStop::Thrown);
+  EXPECT_EQ(result.exception, "java/lang/NullPointerException");
+}
+
 TEST(AndroidPropertyTest, CatalogueRequiresExplicitRuntimeService) {
   Program program({}, Properties{});
   auto heap = std::make_shared<Heap>();

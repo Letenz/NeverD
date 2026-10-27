@@ -74,6 +74,76 @@ diagnostics, not a matching-only or peak-memory benchmark. Pin the surrounding
 product installations and dependencies separately for release qualification;
 the runner's hashes do not inventory every shared library or installed plugin.
 
+## Run Ghidra Auto Version Tracking
+
+[`scripts/benchmark_binary_diff_ghidra.py`](../scripts/benchmark_binary_diff_ghidra.py)
+creates a new local project for every case and imports both inputs under distinct
+names, including when their original basenames are identical:
+
+```bash
+python3 scripts/benchmark_binary_diff_ghidra.py \
+  --corpus benchmark-results/diff-corpus/manifest.json \
+  --ghidra /path/to/ghidra --java-home /path/to/jdk-21 \
+  --output-dir benchmark-results/diff-ghidra
+```
+
+The runner checks an input-bound completion receipt after each import. A native
+analysis timeout is rejected even when headless processing exits successfully.
+It then invokes Ghidra's Auto Version Tracking task, observes its completion
+status, saves the session and exports its associations. A partial session or a
+successful export alone cannot complete the pipeline. The task's status retains
+any markup-application warnings; scoring covers accepted function associations.
+The qualified profile matches the bundled Ghidra 12.1.3 headless script defaults.
+Its three overrides of task defaults are explicit in
+[`RunNeverDVersionTracking.java`](../tools/neverd-bench/RunNeverDVersionTracking.java).
+Other Ghidra releases need their own runtime/profile qualification.
+
+`--cpus` defaults to 2, `--analysis-timeout` to 300 seconds per input, and
+`--timeout` to 600 seconds per process. The retained project, copied input bytes,
+analysis/task receipts, scripts, selected runtime files and native SHA-256
+identities support inspection and independent re-evaluation. Installed Ghidra
+extensions, preferences and the surrounding JDK remain part of the separately
+pinned environment.
+
+## Run IDA and Diaphora
+
+[`scripts/benchmark_binary_diff_diaphora.py`](../scripts/benchmark_binary_diff_diaphora.py)
+starts fresh IDA databases and invokes the selected Diaphora exporter and matcher
+APIs with explicit completion checks:
+
+```bash
+python3 scripts/benchmark_binary_diff_diaphora.py \
+  --corpus benchmark-results/diff-corpus/manifest.json \
+  --ida /path/to/idat --diaphora /path/to/diaphora-source \
+  --python /path/to/venv/bin/python \
+  --python-path /path/to/venv/lib/python3.12/site-packages \
+  --output-dir benchmark-results/diff-diaphora
+```
+
+The default profile includes library/thunk functions, decompiler output and
+microcode. It requires an available licensed decompiler. Use `--no-decompiler
+--no-microcode` for an explicitly different assembly-only profile, or
+`--no-include-library-thunks` to exclude those functions. `--python-path` is
+repeatable; select dependency directories compatible with IDA's embedded Python.
+Inherited `DIAPHORA_*`, `PYTHONHOME` and `PYTHONPATH` settings do not silently
+change the selected run. Other Diaphora options come from its archived source
+configuration. `--cpus` defaults to 2 and `--timeout` to 600 seconds per process.
+
+The runner executes a retained copy of the Diaphora source tree, including its
+configuration, data and license notices. Both export receipts bind native IDA
+SHA-256 identities to database bytes; admission also verifies the databases'
+native MD5 and version fields. Matching must return success and preserve the
+export bytes. Its receipt binds the result to those ordered exports, and the
+result database's own configuration must agree. The `diaphora-native` evaluator
+rechecks this entire chain without requiring the original absolute database
+locations to remain live. The format version is recorded separately from the
+source hash; Diaphora tag 3.5.0 uses internal format version 3.4.
+
+Both runners use the same timeout/cancellation handling and exit-code meanings
+as the BinDiff runner. Existing results are preserved, incomplete runs are not
+scored, and completed mismatches are retained. These are Linux end-to-end
+diagnostics; they do not qualify shared-input fairness or competitive timing.
+
 ## Evaluate another retained result
 
 The evaluator accepts a versioned run receipt for one corpus case:
@@ -112,6 +182,7 @@ python3 scripts/benchmark_binary_diff.py evaluate \
 | --- | --- | --- |
 | `neverd` | `matches` in a complete `neverd.bindiff` schema 3 report | Native ordered SHA-256 plus receipt |
 | `bindiff` | SQLite `function` rows; orientation comes from `metadata.file1/file2` | Native SHA-1 or SHA-256 plus receipt SHA-256 |
+| `diaphora-native` | Completed match receipt referencing SQLite `best`/`partial` rows and both exports | Native IDA SHA-256, native export MD5, ordered result configuration and retained export/result hashes |
 | `diaphora` | SQLite `results` rows in `best` or `partial`; hex addresses | Receipt; retained export databases belong in its artifacts |
 | `ghidra-vt` | Accepted function associations exported by `ExportNeverDVTMatches.java` | Native ordered SHA-256 plus receipt |
 | `ghidra` | Accepted function associations in the `neverd.baseline.ghidra-vt-smoke.v1` JSON export | Receipt; retained import/VT invocation evidence belongs in its artifacts |
@@ -139,8 +210,9 @@ The script reads the existing association decisions and native program SHA-256
 identities, checks cancellation, and requires a new output file. Select
 `ghidra-vt` in its run receipt. It does not create a VT session or accept
 candidates. The legacy `ghidra` reader remains available for earlier receipts
-without native hashes. Automated Ghidra and Diaphora import, correlation and
-complete invocation orchestration remain separate work.
+without native hashes. The automated runners above add fresh import, correlation
+and completion checks; exporting an existing session does not establish those
+earlier stages retroactively.
 
 Use `end-to-end` when each product performs its own import and analysis. A
 `common-input` receipt describes a separately prepared, qualified shared-input
@@ -173,7 +245,8 @@ Run the independent metric and adapter regressions with:
 
 ```bash
 python3 -m unittest scripts.tests.test_benchmark_binary_diff \
-  scripts.tests.test_benchmark_binary_diff_bindiff -v
+  scripts.tests.test_benchmark_binary_diff_bindiff \
+  scripts.tests.test_benchmark_binary_diff_external -v
 ```
 
 Keep generated corpora and results in ignored benchmark directories. Expand

@@ -13,6 +13,24 @@
 #include <vector>
 
 namespace neverd::mobile::dalvik {
+struct AndroidServiceManagerState {
+  bool initialized = false;
+  uint32_t cache = 0, stat_logger = 0;
+  bool cache_known = false;
+  struct CacheEntry {
+    uint32_t name = 0, binder = 0;
+    bool operator==(const CacheEntry &) const = default;
+  };
+  std::vector<CacheEntry> entries;
+  std::optional<uint64_t> manager;
+  struct BinderProxy {
+    uint32_t key = 0, identity = 0;
+    std::optional<bool> warn_on_blocking;
+    bool operator==(const BinderProxy &) const = default;
+  };
+  std::vector<BinderProxy> binder_proxies;
+  bool operator==(const AndroidServiceManagerState &) const = default;
+};
 struct AndroidMessageState {
   uint32_t identity = 0;
   uint64_t target = 0, callback = 0, next = 0;
@@ -41,6 +59,7 @@ struct AndroidFrameworkState {
   std::optional<uint64_t> instrumentation;
   // Present only for a materialized queue with explicitly known initial state.
   std::optional<AndroidMessageQueueState> main_message_queue;
+  std::optional<AndroidServiceManagerState> service_manager;
   bool operator==(const AndroidFrameworkState &) const = default;
 };
 

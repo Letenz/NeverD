@@ -10,6 +10,7 @@ from unittest import mock
 
 from scripts import benchmark_binary_diff as bench
 from scripts import benchmark_binary_diff_bindiff as runner
+from scripts import benchmark_binary_diff_external as external
 
 
 class ExportAdmissionTests(unittest.TestCase):
@@ -56,14 +57,14 @@ class ProcessContractTests(unittest.TestCase):
 
     def test_process_failure_retains_exit_and_output(self):
         command = [sys.executable, "-c", "print('analysis failed'); raise SystemExit(7)"]
-        result = runner.stage(self.root, "export", command, dict(os.environ), 30)
+        result = external.stage(self.root, "export", command, dict(os.environ), 30)
         self.assertEqual(result["exit"], 7)
         self.assertIsNone(result["error"])
         self.assertIn("analysis failed", (self.root / "export.log").read_text())
         self.assertEqual(bench.load(self.root / "export.json"), result)
 
     def test_missing_tool_retains_failure_receipt(self):
-        result = runner.stage(self.root, "missing", [str(self.root / "missing-tool")], {}, 1)
+        result = external.stage(self.root, "missing", [str(self.root / "missing-tool")], {}, 1)
         self.assertIsNone(result["exit"])
         self.assertTrue(result["error"])
         self.assertEqual(bench.load(self.root / "missing.json"), result)
@@ -73,7 +74,7 @@ class ProcessContractTests(unittest.TestCase):
         for index, path in enumerate(tools):
             path.parent.mkdir()
             path.write_text("version " + str(index))
-        copies = runner.archive_tools(tools, self.root / "frozen tools")
+        copies = external.archive_tools(tools, self.root / "frozen tools")
         records = [bench.artifact(copy, self.root) for copy in copies]
         for path in tools:
             path.write_text("updated installation")
@@ -84,11 +85,11 @@ class ProcessContractTests(unittest.TestCase):
     def test_cancellation_retains_receipt_and_stops_the_pipeline(self):
         child = mock.Mock(pid=12345)
         child.wait.side_effect = [KeyboardInterrupt, -9]
-        with mock.patch.object(runner.subprocess, "Popen", return_value=child), \
-                mock.patch.object(runner.os, "killpg") as kill:
+        with mock.patch.object(external.subprocess, "Popen", return_value=child), \
+                mock.patch.object(external.os, "killpg") as kill:
             with self.assertRaises(KeyboardInterrupt):
-                runner.stage(self.root, "cancelled", ["tool"], {}, 1)
-        kill.assert_called_once_with(child.pid, runner.signal.SIGKILL)
+                external.stage(self.root, "cancelled", ["tool"], {}, 1)
+        kill.assert_called_once_with(child.pid, external.signal.SIGKILL)
         result = bench.load(self.root / "cancelled.json")
         self.assertIsNone(result["exit"])
         self.assertEqual(result["error"], "cancelled")
@@ -97,11 +98,11 @@ class ProcessContractTests(unittest.TestCase):
     def test_timeout_terminates_only_the_owned_process_group(self):
         child = mock.Mock(pid=12345)
         child.wait.side_effect = [subprocess.TimeoutExpired(["tool"], 1), -9]
-        with mock.patch.object(runner.subprocess, "Popen", return_value=child) as start, \
-                mock.patch.object(runner.os, "killpg") as kill:
-            result = runner.stage(self.root, "timeout", ["tool"], {}, 1)
+        with mock.patch.object(external.subprocess, "Popen", return_value=child) as start, \
+                mock.patch.object(external.os, "killpg") as kill:
+            result = external.stage(self.root, "timeout", ["tool"], {}, 1)
         self.assertTrue(start.call_args.kwargs["start_new_session"])
-        kill.assert_called_once_with(child.pid, runner.signal.SIGKILL)
+        kill.assert_called_once_with(child.pid, external.signal.SIGKILL)
         self.assertEqual(child.wait.call_count, 2)
         self.assertIsNone(result["exit"])
         self.assertEqual(result["error"], "timeout")

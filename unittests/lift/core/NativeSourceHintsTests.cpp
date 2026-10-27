@@ -39,6 +39,7 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <iterator>
 
 using namespace neverd;
 
@@ -5158,7 +5159,7 @@ TEST(NativeSourceHints,
         Ops[0].Inputs[0] = NdVar::reg(TRI.IntParamRegs[0], 8);
         break;
       case 13:
-        Ops[0].NumInputs = 7;
+        Ops[0].NumInputs = static_cast<uint8_t>(std::size(Ops[0].Inputs) + 1);
         break;
       case 14: {
         LowOp Escape;
@@ -9417,7 +9418,8 @@ TEST(NativeSourceHints, AuxiliaryParametersRequireCompleteNativeReadEvidence) {
       else if (Mutation == 2)
         ++Fixture.Low.Entry;
       else if (Mutation == 3)
-        Fixture.Low.Blocks[0].Ops[0].NumInputs = 7;
+        Fixture.Low.Blocks[0].Ops[0].NumInputs = static_cast<uint8_t>(
+            std::size(Fixture.Low.Blocks[0].Ops[0].Inputs) + 1);
       else {
         Fixture.Med.Params[1].Size = 4;
         Fixture.Med.TypedParams[1].Type = NdType::makeInt(4);
@@ -9565,7 +9567,7 @@ TEST(NativeSourceHints, ContextProofRejectsClobbersAndIncompleteNativeReads) {
       } else if (Mutation == 6) {
         Fixture.Low.Blocks.resize(16385);
       } else if (Mutation == 7) {
-        Ops[0].NumInputs = 7;
+        Ops[0].NumInputs = static_cast<uint8_t>(std::size(Ops[0].Inputs) + 1);
       } else {
         LowOp Write;
         Write.Opcode = NdOp::COPY;

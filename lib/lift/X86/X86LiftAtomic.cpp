@@ -13,6 +13,7 @@
 #include "X86LiftAPXValidation.h"
 #include "X86NativeMemory.h"
 
+#include "neverd/ir/intrinsics/X86/X86AtomicMemory.h"
 #include "neverd/lift/X86/X86Lifter.h"
 
 #include "llvm/Support/Debug.h"
@@ -311,7 +312,7 @@ std::optional<ApxAtomicEncoding> decodeApxAtomicEncoding(const cs_insn *Insn,
           ((~P0 & 0x20) >> 2) | ((P0 & 0x08) << 1),
           ((~P0 & 0x40) >> 3) | ((~P1 & 0x04) << 2), ModRM, Width, true))
     return std::nullopt;
-  if (!x86NativeDsAddressIsValid(Arch::X64, X86, X86.operands[0]))
+  if (!x86NativeSibAddressIsValid(Arch::X64, X86, X86.operands[0]))
     return std::nullopt;
   return Result;
 }
@@ -424,7 +425,7 @@ decodeLegacyAtomicEncoding(const cs_insn *Insn, const cs_x86 &X86, Arch A) {
   if (!validateAtomicMemory(Insn, X86, ModRMOffset, Segment, AddressWidth,
                             BaseExtension, IndexExtension, ModRM, Width,
                             Mode64) ||
-      !x86NativeDsAddressIsValid(A, X86, X86.operands[0]))
+      !x86NativeSibAddressIsValid(A, X86, X86.operands[0]))
     return std::nullopt;
   return Result;
 }
@@ -460,6 +461,8 @@ bool X86Lifter::liftAtomic(LiftState &S, const cs_insn *Insn,
     S.emitIntrinsic(Encoding->Id, {}, {Address, Source},
                     NdMemoryOrdering::Relaxed,
                     LiftState::memoryAddressSpace(Memory));
+    if (x86NativeAddressIsStack(TargetArch, X86, Memory))
+      S.Ops.back().addInput(NdVar::scalar(X86AtomicStackReference, 1));
     break;
   }
 
@@ -499,6 +502,8 @@ bool X86Lifter::liftAtomic(LiftState &S, const cs_insn *Insn,
         {Address, Add, Compare, NdVar::scalar(Encoding->Condition, 1)},
         NdMemoryOrdering::SequentiallyConsistent,
         LiftState::memoryAddressSpace(Memory));
+    if (x86NativeAddressIsStack(TargetArch, X86, Memory))
+      S.Ops.back().addInput(NdVar::scalar(X86AtomicStackReference, 1));
     NdVar Difference = S.makeTemp(Encoding->Width);
     S.emit(NdOp::INT_SUB, Difference, {Old, Compare});
     emitFlagsArith(S, Difference, Old, Compare, true);

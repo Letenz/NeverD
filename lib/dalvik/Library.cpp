@@ -328,6 +328,28 @@ static const LibraryMethod Methods[] = {
     {"java/util/Map", "remove", "(Ljava/lang/Object;)Ljava/lang/Object;",
      MapRemove},
     {"java/util/Map", "clear", "()V", MapClear},
+    {"com/android/internal/util/StatLogger", "<init>", "([Ljava/lang/String;)V",
+     Construct},
+    {"com/android/internal/util/StatLogger", "getTime", "()J", StatLoggerTime},
+    {"java/util/HashMap", "putAll", "(Ljava/util/Map;)V", MapPutAll},
+    {"java/util/Map", "putAll", "(Ljava/util/Map;)V", MapPutAll},
+    {"android/os/ServiceManager", "getService",
+     "(Ljava/lang/String;)Landroid/os/IBinder;", ServiceGet, true},
+    {"android/os/ServiceManager", "checkService",
+     "(Ljava/lang/String;)Landroid/os/IBinder;", ServiceCheck, true},
+    {"android/os/ServiceManager", "initServiceCache", "(Ljava/util/Map;)V",
+     ServiceInitCache, true},
+    {"android/os/Binder", "allowBlocking",
+     "(Landroid/os/IBinder;)Landroid/os/IBinder;", BinderAllowBlocking, true},
+    {"android/os/IBinder", "queryLocalInterface",
+     "(Ljava/lang/String;)Landroid/os/IInterface;", BinderQueryLocalInterface},
+    {"android/os/BinderProxy", "queryLocalInterface",
+     "(Ljava/lang/String;)Landroid/os/IInterface;", BinderQueryLocalInterface,
+     false, false, false},
+    {"android/os/IInterface", "asBinder", "()Landroid/os/IBinder;",
+     ServiceAsBinder},
+    {"android/os/IServiceManager", "asBinder", "()Landroid/os/IBinder;",
+     ServiceAsBinder},
 };
 
 struct LibraryStop {
@@ -449,9 +471,14 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
         M.Op == MessageQueueNext || M.Op == MessageCallback ||
         M.Op == MessageTarget || M.Op == UptimeMillis ||
         M.Op == ElapsedRealtime || M.Op == ElapsedRealtimeNanos ||
-        M.Op == PropertyInt ||
+        M.Op == PropertyInt || M.Op == StatLoggerTime || M.Op == ServiceGet ||
+        M.Op == ServiceCheck || M.Op == ServiceInitCache ||
+        M.Op == BinderAllowBlocking || M.Op == BinderQueryLocalInterface ||
+        M.Op == ServiceAsBinder ||
         (M.Op == Construct &&
-         std::string_view(M.Class) == "android/os/Handler")) {
+         (std::string_view(M.Class) == "android/os/Handler" ||
+          std::string_view(M.Class) ==
+              "com/android/internal/util/StatLogger"))) {
       if (!program || !framework)
         return {ExecutionStop::Unsupported,
                 0,
@@ -557,7 +584,35 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
         return {ExecutionStop::Unsupported,
                 0,
                 {},
-                "Java HashMap receiver has no constructed state"};
+                "Java HashMap contents are not supplied"};
+      if (M.Op == MapPutAll) {
+        const auto source = object(Values[0]);
+        if (!source)
+          return Throw("java/lang/NullPointerException");
+        if (source->ClassName != "java/util/HashMap" || !source->MapEntries)
+          return {ExecutionStop::Unsupported,
+                  0,
+                  {},
+                  "Java putAll requires known HashMap contents"};
+        // Snapshot before mutation so putAll(this) keeps stable traversal.
+        for (size_t i = 0; i < source->MapEntries->size(); ++i)
+          tick();
+        const auto copy = *source->MapEntries;
+        const auto *put =
+            libraryMethod({"Ljava/util/HashMap;",
+                           "put",
+                           {"Ljava/lang/Object;", "Ljava/lang/Object;"},
+                           "Ljava/lang/Object;"},
+                          false);
+        for (const auto &entry : copy) {
+          const uint64_t args[] = {entry.Key, entry.Value};
+          auto result = executeLibrary(heap, *put, receiver, args, admit, false,
+                                       program, framework);
+          if (result.stop != ExecutionStop::Returned)
+            return result;
+        }
+        return value(0);
+      }
       const auto &entries = *ObjectValue->MapEntries;
       if (M.Op == MapSize)
         return value(entries.size());
