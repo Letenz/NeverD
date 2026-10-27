@@ -58,6 +58,65 @@ std::optional<int> compareConstantWithZExtMaximum(const SymContext &Ctx,
   return Value.isMask(Narrow) ? 0 : -1;
 }
 
+// A product of unsigned narrow values can be computed before their carrier
+// extension. Powers of two inside an extension may move out only when the
+// inner multiplication cannot wrap. Keep the complete narrow product: a high
+// window can observe carries from every bit below it.
+SymRef narrowUnsignedProductSlice(SymContext &Ctx, SymRef Product, uint32_t Low,
+                                  uint32_t Width) {
+  if (Ctx.op(Product) != SymOp::Mul)
+    return {};
+  const auto Carrier = Ctx.width(Product);
+  uint32_t Shift = 0, Required = 0;
+  llvm::SmallVector<SymRef, 4> Sources;
+  for (SymRef Factor : Ctx.operands(Product)) {
+    if (Ctx.isConst(Factor)) {
+      const auto &Coefficient = Ctx.constValue(Factor);
+      if (!Coefficient.isPowerOf2())
+        return {};
+      const auto Amount = Coefficient.countr_zero();
+      if (Amount > Low - Shift)
+        return {};
+      Shift += Amount;
+      continue;
+    }
+    if (Ctx.op(Factor) != SymOp::ZExt)
+      return {};
+    auto Source = Ctx.operand(Factor, 0);
+    if (Ctx.op(Source) == SymOp::Mul && Ctx.operands(Source).size() == 2) {
+      const auto Coefficient = Ctx.operand(Source, 0);
+      const auto Extended = Ctx.operand(Source, 1);
+      if (Ctx.isConst(Coefficient) &&
+          Ctx.constValue(Coefficient).isPowerOf2() &&
+          Ctx.op(Extended) == SymOp::ZExt) {
+        const auto Amount = Ctx.constValue(Coefficient).countr_zero();
+        const auto Inner = Ctx.operand(Extended, 0);
+        if (Ctx.width(Inner) <= Ctx.width(Source) - Amount) {
+          if (Amount > Low - Shift)
+            return {};
+          Source = Inner;
+          Shift += Amount;
+        }
+      }
+    }
+    if (Ctx.width(Source) >= Carrier - Required)
+      return {};
+    Required += Ctx.width(Source);
+    Sources.push_back(Source);
+  }
+  if (Sources.empty())
+    return {};
+  const auto Begin = Low - Shift;
+  if (Begin >= Required)
+    return Ctx.mkZero(Width);
+  // No builder is called while the original operand arena is being read.
+  for (auto &Source : Sources)
+    Source = Ctx.mkZExt(Source, Required);
+  auto Narrow = Ctx.mkMul(Sources);
+  return Ctx.mkZExt(
+      Ctx.mkExtract(Narrow, Begin, std::min(Width, Required - Begin)), Width);
+}
+
 // Prove only a constant window, without constructing projected expressions.
 // Windows are at most one APInt word. Copying a source constant costs its
 // complete word count; repeated DAG visits (including depth-limited ones) and
@@ -317,6 +376,9 @@ SymRef SymContext::mkExtract(SymRef A, uint32_t Low, uint32_t Width) {
     }
     return Done.lookup(A.index());
   }
+
+  if (SymRef Narrow = narrowUnsignedProductSlice(*this, A, Low, Width))
+    return Narrow;
 
   // A slice of a concatenation is a slice of whichever parts it reaches.  This
   // is the companion to the merging mkConcat does, and the pair of them is

@@ -4713,7 +4713,13 @@ checks that an AArch64 enumerator names only a decoded immediate and keeps its
 `#` in `display_op_str`; `OperandEnumsNameWholeARMVectorImmediates` that a
 `vmov.i64` immediate keeps all 64 bits. `armOperandsCountAsTheWorkerDoes`
 checks that the listing's operand under the cursor is the worker's across
-braces and brackets.
+braces and brackets. `NeverDWorkerFormat` also counts SBF immediates in their
+operation's width, keeps a call target and a byte swap's width as they are,
+and formats EVM PUSH data in its own width up to 256 bits;
+`SBFIntegrationTest.OperandEnumsNameImmediatesInTheirWidth` and
+`EVMIntegrationTest.OperandEnumsNamePushDataOfAtMost64Bits` check the SDK's
+admission and `display_op_str`, and `NeverDWorkerDataPresentation` shows the
+formats, an SBF structure offset and its picker access in the listing.
 
 `NeverDWorkerImmediatesRegister` checks decoded immediate search and register
 queries through the real SDK/worker and, when available, CLI. It covers search
@@ -7452,6 +7458,19 @@ formula at `-O0` and `-O2`, preserving the high-bit remainder and toggle/cache
 isolation.
 
 ## Modular MBA simplification
+
+`SymExpr.ScaledUnsignedProductSlicesUseOnlyTheirRequiredWidth` and
+`ScaledProductWindowsCoverEveryBytePairAndWideCarriers` check non-low windows
+of unsigned products through 257-bit operands. Zero-extended factors use their
+complete narrow product, preserving carries below the selected window. An inner
+power-of-two coefficient moves outside its extension only when its original
+width cannot wrap. Exhaustive byte pairs and independent integer/APInt oracles
+cover the resulting slices and zero-filled upper windows.
+`ProductWindowsKeepCoefficientsCarriesAndMultipleFactors` and
+`ProductWindowKeepsInnerOverflowAndSignedHighBits` retain wrapping inner
+products, signed high bits, non-power-of-two coefficients, windows below the
+combined shift and multiple factors. These constructor rules need no solver,
+sample-specific assumptions or new pass.
 
 `SymExpr.ZeroExtendedUnsignedRemaindersUseTheirNarrowOperands` checks
 zero-extended unsigned remainder operands at equal and different widths through
