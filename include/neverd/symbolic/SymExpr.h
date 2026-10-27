@@ -468,6 +468,13 @@ private:
   /// Intern a node, returning an existing ref when an identical node exists.
   SymRef intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
                 uint64_t Aux);
+  /// Isolate the long-sequence hash call from the short lookup's hot frame.
+  SymRef internLongOperands(SymOp Op, uint32_t Width,
+                            llvm::ArrayRef<SymRef> Ops, uint64_t Aux,
+                            uint64_t Hash);
+  /// Both hashing paths share the same complete identity lookup.
+  SymRef internHashed(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
+                      uint64_t Aux, uint64_t Hash);
   /// Append only after the complete identity lookup failed. A null head means
   /// the hash has no table entry yet; existing heads retain collision chains.
   SymRef appendInterned(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,

@@ -522,4 +522,56 @@ TEST(SymMBAResiduePowers, NativeWidthsHaveIndependentSolverProofs) {
     }
 }
 
+TEST(SymMBAResiduePowers, ParityGroupsRetainMultipleIndependentWords) {
+  std::mt19937_64 Random(0x5041524954595245);
+  for (unsigned Width : {8u, 32u, 65u, 257u})
+    for (unsigned Count : {16u, 17u, 32u, 33u, 64u, 65u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Count);
+      SymContext Ctx;
+      const auto F = fixture(Ctx, Width, 4, Count, 1);
+      MBAOptions Options;
+      Options.MaxWork = 65536;
+      Options.VerifySamples = 0;
+      const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+      ASSERT_TRUE(Result.Changed);
+      EXPECT_LT(Result.Work, Options.MaxWork);
+      EXPECT_LT(Result.SizeAfter, Result.SizeBefore / 2);
+      SymEvalPlan Reduced(Ctx, Result.Expr);
+      for (unsigned Trial = 0; Trial < 256; ++Trial) {
+        std::array<llvm::APInt, 3> Values;
+        for (auto &Value : Values) {
+          Value = llvm::APInt(Width, 0);
+          for (unsigned Bit = 0; Bit < Width; Bit += 64)
+            Value |= llvm::APInt(Width, Random()).shl(Bit);
+        }
+        Values[0].clearLowBits(8);
+        Values[0] |= llvm::APInt(Width, Trial);
+        if (Trial < 4)
+          Values[2] = llvm::APInt(Width, Trial);
+        ASSERT_EQ(Reduced.eval(Values), F.oracle(Values));
+      }
+    }
+}
+
+TEST(SymMBAResiduePowers, ParityMajorityDoesNotReplaceTheZeroBranchProof) {
+  for (unsigned Count : {3u, 4u, 5u, 8u})
+    for (unsigned Perturb : {0u, 1u, 2u}) {
+      SCOPED_TRACE(::testing::Message() << Count << ':' << Perturb);
+      SymContext Ctx;
+      const auto F = fixture(Ctx, 8, 4, Count, Perturb);
+      detail::WorkBudget Budget(65536);
+      size_t Storage = 1 << 24;
+      const auto Result =
+          detail::foldResidueDecisions(Ctx, F.Input, Budget, Storage, true);
+      SymEvalPlan Reduced(Ctx, Result);
+      for (unsigned X = 0; X < 256; ++X)
+        for (unsigned Y = 0; Y < 16; ++Y)
+          for (unsigned Z : {0u, 1u, 2u, 255u}) {
+            const std::array Values{llvm::APInt(8, X), llvm::APInt(8, Y),
+                                    llvm::APInt(8, Z)};
+            ASSERT_EQ(Reduced.eval(Values), F.oracle(Values));
+          }
+    }
+}
+
 } // namespace

@@ -309,6 +309,9 @@ public:
   bool exhausted() const { return Exhausted; }
   size_t used() const { return Used; }
   bool unlimited() const { return Unlimited; }
+  size_t available() const {
+    return Unlimited ? std::numeric_limits<size_t>::max() : Remaining;
+  }
   bool canConsume(size_t Units) const {
     return Unlimited || Units <= Remaining;
   }
