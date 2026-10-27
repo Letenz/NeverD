@@ -204,6 +204,50 @@ int main(void) {
   }
 }
 
+TEST(LLVMCVoidAnalysis, NoValueContractsRetainMemoryEffects) {
+  for (bool PreserveTypes : {false, true}) {
+    SCOPED_TRACE(PreserveTypes);
+    llvm::LLVMContext Context;
+    llvm::Module Module("unused-return-memory-effects", Context);
+    auto *I64 = llvm::Type::getInt64Ty(Context);
+    auto *Pointer = llvm::PointerType::getUnqual(Context);
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(I64, {Pointer}, false),
+        llvm::GlobalValue::ExternalLinkage, "update", Module);
+    llvm::IRBuilder<> Builder(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Read = Builder.CreateLoad(I64, Function->getArg(0));
+    Read->setVolatile(true);
+    auto *Update =
+        Builder.CreateAtomicRMW(llvm::AtomicRMWInst::Add, Function->getArg(0),
+                                llvm::ConstantInt::get(I64, 1), llvm::Align(8),
+                                llvm::AtomicOrdering::SequentiallyConsistent);
+    Builder.CreateRet(Builder.CreateAdd(Read, Update));
+    neverd::llvm_value_provenance::markReturnsNoValue(*Function);
+    neverd::LLVMCAnalysisState State;
+    neverd::analyzeVoidDeadChain(State, *Function);
+    EXPECT_FALSE(State.DeadFrameStores.count(Read));
+    EXPECT_FALSE(State.DeadFrameStores.count(Update));
+
+    neverd::CEmitterOptions Options;
+    Options.PreserveLLVMFunctionTypes = PreserveTypes;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+    EXPECT_NE(Source.find("volatile"), std::string::npos) << Source;
+    for (const char *Level : {"-O0", "-O2"})
+      compileAndRun(Source + R"(
+int main(void) {
+  uint64_t count = 17;
+  update(&count);
+  update(&count);
+  return count != 19;
+}
+)",
+                    {Level});
+  }
+}
+
 TEST(LLVMCVoidAnalysis, FreezeMaterializesOneDefinedChoiceForEveryUseCount) {
   llvm::LLVMContext Context;
   llvm::Module Module("freeze-values", Context);
