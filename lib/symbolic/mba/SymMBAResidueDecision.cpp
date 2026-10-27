@@ -82,6 +82,7 @@ class LowWordDecisions {
   bool Failed = false;
   unsigned RootWidth = 0;
   bool PlainDecisionInputs = true;
+  bool BalanceCarryColumns = false;
   std::optional<std::pair<uint64_t, bool>> Assumption;
   std::optional<uint32_t> PriorityInput;
   // The low edge bit denotes complement. Negation never duplicates a graph;
@@ -358,36 +359,10 @@ class LowWordDecisions {
     return Result;
   }
 
-  LLVM_ATTRIBUTE_NOINLINE
-  std::pair<uint32_t, uint32_t> expandAdder(uint32_t A, uint32_t B, uint32_t C,
-                                            unsigned Depth, uint64_t Key,
-                                            uint32_t Complement) {
-    if (Depth >= limits::kMaxResidueDecisionDepth) {
-      Failed = true;
-      return {};
-    }
-    const auto DA = decision(A), DB = decision(B), DC = decision(C);
-    const auto V = std::min({DA.Variable, DB.Variable, DC.Variable});
-    const auto L =
-        fullAdder(DA.Variable == V ? DA.Low : A, DB.Variable == V ? DB.Low : B,
-                  DC.Variable == V ? DC.Low : C, Depth + 1);
-    const auto H = fullAdder(DA.Variable == V ? DA.High : A,
-                             DB.Variable == V ? DB.High : B,
-                             DC.Variable == V ? DC.High : C, Depth + 1);
-    const std::pair<uint32_t, uint32_t> R{node(V, L.first, H.first),
-                                          node(V, L.second, H.second)};
-    if (!charge(1, sizeof(Key) + sizeof(R) + 4 * sizeof(void *)) ||
-        !reserveEntry(Adders))
-      return {};
-    Adders.try_emplace(Key, R);
-    return {R.first ^ Complement, R.second ^ Complement};
-  }
-
   // Recurse over the common decision frontier once for both output bits.
   // The sum and majority are both self-dual: complementing all three inputs
   // complements both results. One normalized cache entry therefore shares
   // their traversal without retaining an intermediate two-input XOR graph.
-  // Cache hits never enter the recursive allocation frame.
   std::pair<uint32_t, uint32_t> fullAdder(uint32_t A, uint32_t B, uint32_t C,
                                           unsigned Depth = 0) {
     if (!charge())
@@ -419,30 +394,25 @@ class LowWordDecisions {
     const auto Key = carryKey(A, B, C);
     if (auto It = Adders.find(Key); It != Adders.end())
       return {It->second.first ^ Complement, It->second.second ^ Complement};
-    return expandAdder(A, B, C, Depth, Key, Complement);
-  }
-
-  LLVM_ATTRIBUTE_NOINLINE
-  uint32_t expandParity(uint32_t A, uint32_t B, uint32_t C, unsigned Depth,
-                        uint64_t Key, uint32_t Complement) {
     if (Depth >= limits::kMaxResidueDecisionDepth) {
       Failed = true;
-      return 0;
+      return {};
     }
     const auto DA = decision(A), DB = decision(B), DC = decision(C);
     const auto V = std::min({DA.Variable, DB.Variable, DC.Variable});
     const auto L =
-        parity(DA.Variable == V ? DA.Low : A, DB.Variable == V ? DB.Low : B,
-               DC.Variable == V ? DC.Low : C, Depth + 1);
-    const auto H =
-        parity(DA.Variable == V ? DA.High : A, DB.Variable == V ? DB.High : B,
-               DC.Variable == V ? DC.High : C, Depth + 1);
-    const auto R = node(V, L, H);
-    if (!charge(1, sizeof(Key) + sizeof(uint32_t) + 4 * sizeof(void *)) ||
-        !reserveEntry(Parities))
-      return 0;
-    Parities.try_emplace(Key, R);
-    return R ^ Complement;
+        fullAdder(DA.Variable == V ? DA.Low : A, DB.Variable == V ? DB.Low : B,
+                  DC.Variable == V ? DC.Low : C, Depth + 1);
+    const auto H = fullAdder(DA.Variable == V ? DA.High : A,
+                             DB.Variable == V ? DB.High : B,
+                             DC.Variable == V ? DC.High : C, Depth + 1);
+    const std::pair<uint32_t, uint32_t> R{node(V, L.first, H.first),
+                                          node(V, L.second, H.second)};
+    if (!charge(1, sizeof(Key) + sizeof(R) + 4 * sizeof(void *)) ||
+        !reserveEntry(Adders))
+      return {};
+    Adders.try_emplace(Key, R);
+    return {R.first ^ Complement, R.second ^ Complement};
   }
 
   // A final column needs only parity. Normalize each input complement into
@@ -471,7 +441,24 @@ class LowWordDecisions {
     const auto Key = carryKey(A, B, C);
     if (auto It = Parities.find(Key); It != Parities.end())
       return It->second ^ Complement;
-    return expandParity(A, B, C, Depth, Key, Complement);
+    if (Depth >= limits::kMaxResidueDecisionDepth) {
+      Failed = true;
+      return 0;
+    }
+    const auto DA = decision(A), DB = decision(B), DC = decision(C);
+    const auto V = std::min({DA.Variable, DB.Variable, DC.Variable});
+    const auto L =
+        parity(DA.Variable == V ? DA.Low : A, DB.Variable == V ? DB.Low : B,
+               DC.Variable == V ? DC.Low : C, Depth + 1);
+    const auto H =
+        parity(DA.Variable == V ? DA.High : A, DB.Variable == V ? DB.High : B,
+               DC.Variable == V ? DC.High : C, Depth + 1);
+    const auto R = node(V, L, H);
+    if (!charge(1, sizeof(Key) + sizeof(uint32_t) + 4 * sizeof(void *)) ||
+        !reserveEntry(Parities))
+      return 0;
+    Parities.try_emplace(Key, R);
+    return R ^ Complement;
   }
 
   Bits add(const Bits &A, const Bits &B) {
@@ -1024,16 +1011,44 @@ class LowWordDecisions {
         if ((Constants & 1) && !Insert(J, 1))
           break;
       while (Remaining.size() > 2 && !Failed) {
-        const auto A = Remaining.pop_back_val();
-        const auto B = Remaining.pop_back_val();
-        const auto C = Remaining.pop_back_val();
-        const auto [Sum, Carry] =
-            I + 1 < Count ? fullAdder(A, B, C)
-                          : std::make_pair(parity(A, B, C), uint32_t(0));
-        if (Sum)
-          Remaining.push_back(Sum);
-        if (I + 1 < Count && !Insert(I + 1, Carry))
-          break;
+        // Nonlinear factors keep the established streaming schedule: their
+        // mixed carries can grow under regrouping. Affine/bitwise factors
+        // use balanced columns to avoid long intermediate prefix graphs.
+        if (!BalanceCarryColumns) {
+          const auto A = Remaining.pop_back_val();
+          const auto B = Remaining.pop_back_val();
+          const auto C = Remaining.pop_back_val();
+          const auto [Sum, Carry] =
+              I + 1 < Count ? fullAdder(A, B, C)
+                            : std::make_pair(parity(A, B, C), uint32_t(0));
+          if (Failed)
+            return Bits(Count, 0);
+          if (Sum)
+            Remaining.push_back(Sum);
+          if (I + 1 < Count && !Insert(I + 1, Carry))
+            return Bits(Count, 0);
+          continue;
+        }
+        // Reduce independent triples before revisiting their sums. Reusing
+        // each new sum immediately builds a long prefix graph; balanced
+        // columns retain fewer intermediate carry/parity decisions.
+        size_t Next = 0, J = 0;
+        for (; J + 2 < Remaining.size(); J += 3) {
+          const auto A = Remaining[J], B = Remaining[J + 1],
+                     C = Remaining[J + 2];
+          const auto [Sum, Carry] =
+              I + 1 < Count ? fullAdder(A, B, C)
+                            : std::make_pair(parity(A, B, C), uint32_t(0));
+          if (Failed)
+            return Bits(Count, 0);
+          if (Sum)
+            Remaining[Next++] = Sum;
+          if (I + 1 < Count && !Insert(I + 1, Carry))
+            return Bits(Count, 0);
+        }
+        for (; J < Remaining.size(); ++J)
+          Remaining[Next++] = Remaining[J];
+        Remaining.resize(Next);
       }
       if (!Remaining.empty())
         Left[I] = Remaining[0];
@@ -1126,7 +1141,7 @@ class LowWordDecisions {
     if (!charge(NumVars, NumVars * sizeof(unsigned)))
       return {};
     Counts.resize(NumVars, 0);
-    if (P.size() > 2 * NumVars) {
+    if (P.size() > 4 * NumVars) {
       // Count all variable incidences together. Each bit position is
       // an independent counter; carry-save columns combine three masks
       // without a per-variable scan of every monomial.
@@ -2091,6 +2106,7 @@ public:
         return Root;
       Pending.append(Ctx.operands(R).begin(), Ctx.operands(R).end());
     }
+    BalanceCarryColumns = !HasNonlinearFactor;
     if (!NormalizeFactors)
       Factors.assign(Ctx.operands(Root).begin(), Ctx.operands(Root).end());
     Bits Product(Observed, 0);

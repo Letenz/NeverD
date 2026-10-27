@@ -3445,7 +3445,9 @@ products first, then multiplies their difference by the complete common product.
 It never cancels a common factor: modular zero divisors must retain their exact
 effect. An additive tail participates in the same modular equation. This path
 requires one large product on each side; multiple products retain their shared
-evaluation DAG. Original input assignments and wide intermediate operations
+evaluation DAG. A product whose changed factors outnumber its common factors
+also retains the complete DAG, preserving shared subexpressions between those
+changed factors. Original input assignments and wide intermediate operations
 remain unchanged, and common factors are evaluated only when needed.
 A literal plus a complemented atom uses the full-width affine identity
 `C + ~X = (C - 1) - X` without constructing polynomial tables. Its scalar work
@@ -3681,15 +3683,22 @@ the split makes all higher terms vanish modulo the observed word. The
 quadratic sum is computed with an extra bit before division by two. This does
 not assume that an even value has a modular inverse. Batched sums cancel exact
 complementary bits and combine multiplicities before carrying; full-adder
-carries share a direct majority decision. A proved parity input orders its
+carries share a direct majority decision. Affine/bitwise factor columns reduce
+independent triples in balanced rounds before consuming their sums, limiting
+transient prefix graphs. Nonlinear factors retain the established streaming
+schedule because regrouping can enlarge their mixed carries. Resource refusal
+abandons the incomplete column immediately.
+A proved parity input orders its
 low prefix before the remaining interleaved bits. Dense decision and carry
 caches prepay their bucket growth. Immutable word views avoid repeated copies
 and are discarded when the assumption changes; polynomial views remain valid
 throughout reconstruction.
-Decision identity hits and terminal Boolean operations return before entering
-the allocation and recursive expansion helpers. Cache misses alone need those
-larger stack frames. Lookup, depth admission, charging and insertion keep their
-original order, including failure paths.
+Decision identity hits and terminal two-input Boolean operations return before
+entering the allocation and recursive expansion helpers. Three-input carry and
+parity operations keep their cache lookup and recursive expansion in one
+function, avoiding another call frame on the frequent cache misses. Lookup,
+depth admission, charging and insertion keep their original order, including
+failure paths.
 Application keys place their operation tag in the unused high bit of the
 low edge word, so the integer hash distinguishes AND and XOR for identical
 operands. Full edge identity and the existing node bound remain authoritative.
@@ -3835,6 +3844,10 @@ operand order, arbitrary-width semantics or the solver's work charges.
 Native evaluation starts associative folds with their two guaranteed operands
 and reuses already truncated literals, avoiding empty reductions and repeated
 constant masking in the sampling loop.
+Immutable constant slots are initialized once and excluded from the repeated
+evaluation stream. Explicit output slots preserve the original DAG's operand
+order. The public node count still includes constants, retaining the solver's
+existing conservative work charges.
 Arbitrary-width plans read prior operand slots directly through the shared
 operator evaluator, avoiding temporary copies of wide integers at every step.
 They initialize immutable constant slots before any external input callback,
@@ -10993,6 +11006,11 @@ versions that counted n-ary nodes once and omitted all all-ones literals.
 Verification samples reuse the compiled evaluator's word-sized path when both
 plans and all context variables fit in 64 bits. Corner assignments and the
 random stream stay unchanged; wider inputs retain arbitrary-width evaluation.
+Minterm expansion reuses one sorted combination buffer across its Cartesian
+walk while preserving combination order and per-combination work charges.
+Textual coefficients that fit in 64 bits use one native integer parse; the
+constant builder still owns width truncation and zero extension, and larger
+literals retain arbitrary-precision parsing.
 Region candidates are independently proved over the completed abstraction,
 then instantiated with that abstraction's hidden-input mapping. The identity
 holds for arbitrary independent inputs, so restoring related sources cannot

@@ -1264,6 +1264,34 @@ TEST(SymExpr, WideConstantSlotsSurviveInterruptedInputLookup) {
   }
 }
 
+TEST(SymExpr, EvaluationPlansKeepInterleavedConstantSlots) {
+  for (unsigned Width : {8u, 16u, 64u, 65u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto X = Ctx.mkVar("x", Width);
+    const auto K = llvm::APInt::getOneBitSet(Width, Width - 1) | 7;
+    const llvm::APInt L(Width, 19), Three(Width, 3);
+    const auto Root =
+        Ctx.mkXor(Ctx.mkAdd(X, Ctx.mkConst(K)),
+                  Ctx.mkMul(Ctx.mkConst(Three), Ctx.mkXor(X, Ctx.mkConst(L))));
+    SymEvalPlan Plan(Ctx, Root);
+    EXPECT_EQ(Plan.numSteps(), Ctx.dagSize(Root));
+    for (const auto &Value : {llvm::APInt(Width, 0), llvm::APInt(Width, 5),
+                              llvm::APInt::getAllOnes(Width),
+                              llvm::APInt::getOneBitSet(Width, Width - 2)}) {
+      const auto Expected = (Value + K) ^ (Three * (Value ^ L));
+      EXPECT_EQ(Plan.evalWith([&](uint32_t) { return &Value; }), Expected);
+      if (Width <= 64)
+        EXPECT_EQ(
+            Plan.evalU64With([&](uint32_t) { return Value.getZExtValue(); }),
+            Expected.getZExtValue());
+    }
+    EXPECT_EQ(
+        Plan.evalWith([](uint32_t) -> const llvm::APInt * { return nullptr; }),
+        K ^ (Three * L));
+  }
+}
+
 TEST(SymExpr, EvaluationPlanKeepsSharedInputsAfterContextGrowth) {
   for (unsigned Width : {8u, 64u, 65u, 257u}) {
     SymContext Ctx;

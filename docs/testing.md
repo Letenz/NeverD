@@ -7553,6 +7553,16 @@ evaluation through 257 bits, including unused wide inputs and narrow outputs
 with wide division intermediates. `WideConstantSlotsSurviveInterruptedInputLookup`
 reuses one plan after its first input callback throws, then checks zero,
 all-ones and high-bit assignments against independent arithmetic.
+`EvaluationPlansKeepInterleavedConstantSlots` alternates native and wide
+evaluation over interleaved literal and input slots, checks missing inputs,
+and retains the original DAG node count used by budget consumers.
+`BalancedCarryColumnsFinishRotatedProducts` checks degree-64 products whose
+rotated construction order previously exhausted the shared work budget.
+`InterruptedCarryColumnsRetainCompleteValues` checks six short allowances
+against independent full-width arithmetic, including refusal during reduction.
+`LiteralWordBoundariesPreserveTruncationAndZeroExtension` checks decimal,
+hexadecimal and binary spellings around the native-word boundary across
+1–257-bit target widths, including leading zeros and wide-value fallback.
 Candidate quality
 comparisons across scoring revisions must recount both outputs with the same
 metric; the SDK's version-specific size counters are diagnostic only.

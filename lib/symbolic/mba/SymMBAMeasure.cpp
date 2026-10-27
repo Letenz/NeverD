@@ -392,6 +392,11 @@ agreeAfterFactoringProducts(const SymContext &Ctx, SymRef A, SymRef B,
   llvm::SmallVector<SymRef, 8> Common, LeftRest, RightRest;
   if (!splitCommonOperands(Ctx, A, B, Common, LeftRest, RightRest))
     return std::nullopt;
+  // A small intersection cannot justify splitting the larger changed DAGs
+  // into per-factor plans. Keep their internal sharing in the complete-plan
+  // path; factoring is useful when unchanged factors dominate the remainder.
+  if (Common.size() < LeftRest.size() + RightRest.size())
+    return std::nullopt;
 
   const uint32_t Width = Ctx.width(A);
   llvm::SmallVector<uint32_t, 16> Vars;

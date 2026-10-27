@@ -92,10 +92,16 @@ SymEvalPlan::SymEvalPlan(const SymContext &Ctx, SymRef Root)
   // evaluation loops never touch the hash map or the DAG.
   Steps.reserve(PostOrder.size());
   ArgSlots.reserve(OperandCount);
+  uint32_t NextSlot = 0;
   for (SymRef R : PostOrder) {
     const SymNode &N = Ctx.node(R);
+    const auto OutputSlot = NextSlot++;
     if (N.Width > 64)
       FitsU64 = false;
+    if (N.Op == SymOp::Const) {
+      ConstantSlots.emplace_back(OutputSlot, R);
+      continue;
+    }
     if (N.Op == SymOp::Var)
       Vars.push_back(static_cast<uint32_t>(N.Aux));
 
@@ -104,6 +110,7 @@ SymEvalPlan::SymEvalPlan(const SymContext &Ctx, SymRef Root)
     S.Width = N.Width;
     S.Aux = N.Aux;
     S.Node = R;
+    S.OutputSlot = OutputSlot;
     S.FirstArg = static_cast<uint32_t>(ArgSlots.size());
     S.NumArgs = N.NumOperands;
     for (SymRef C : Ctx.operands(R))
@@ -118,8 +125,11 @@ SymEvalPlan::SymEvalPlan(const SymContext &Ctx, SymRef Root)
   std::sort(Vars.begin(), Vars.end());
   Vars.erase(std::unique(Vars.begin(), Vars.end()), Vars.end());
 
-  if (FitsU64)
-    ScratchU64.resize(Steps.size());
+  if (FitsU64) {
+    ScratchU64.resize(PostOrder.size());
+    for (const auto &[Slot, Node] : ConstantSlots)
+      ScratchU64[Slot] = Ctx.node(Node).Aux;
+  }
 }
 
 uint64_t SymEvalPlan::evalU64(llvm::ArrayRef<uint64_t> VarVals) {
@@ -155,17 +165,15 @@ SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
   const uint32_t *Args = ArgSlots.data();
   uint64_t *S = ScratchU64.data();
 
-  for (size_t I = 0; I < Steps.size(); ++I) {
-    const Step &St = Steps[I];
+  for (const Step &St : Steps) {
+    const auto I = St.OutputSlot;
     const uint32_t *A = Args + St.FirstArg;
     uint32_t W = St.Width;
     uint64_t Res = 0;
 
     switch (St.Op) {
     case SymOp::Const:
-      // The constant builder already truncated this native-width literal.
-      S[I] = St.Aux;
-      continue;
+      llvm_unreachable("constants are initialized before evaluation");
     case SymOp::Var:
       Res = Lookup(static_cast<uint32_t>(St.Aux));
       break;
@@ -266,7 +274,7 @@ SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
     S[I] = mask(Res, W);
   }
 
-  return Steps.empty() ? 0 : ScratchU64[RootSlot];
+  return ScratchU64[RootSlot];
 }
 
 llvm::APInt SymEvalPlan::eval(llvm::ArrayRef<llvm::APInt> VarVals) {
@@ -390,19 +398,16 @@ llvm::APInt SymEvalPlan::evalWith(
   // Native-width measurements never use APInt scratch. Allocate it only
   // when this entry point is called, retaining it for subsequent evaluations.
   if (ScratchAP.empty()) {
-    ScratchAP.resize(Steps.size());
+    ScratchAP.resize(numSteps());
     // Complete immutable slots before invoking an external input lookup.
     // A lookup may throw; the same plan must remain usable on the next call.
-    for (size_t I = 0; I < Steps.size(); ++I)
-      if (Steps[I].Op == SymOp::Const)
-        ScratchAP[I] = Ctx.constValue(Steps[I].Node);
+    for (const auto &[Slot, Node] : ConstantSlots)
+      ScratchAP[Slot] = Ctx.constValue(Node);
   }
-  for (size_t I = 0; I < Steps.size(); ++I) {
-    const Step &St = Steps[I];
+  for (const Step &St : Steps) {
+    const auto I = St.OutputSlot;
     const uint32_t *A = ArgSlots.data() + St.FirstArg;
 
-    if (St.Op == SymOp::Const)
-      continue;
     if (St.Op == SymOp::Var) {
       const llvm::APInt *V = Lookup(static_cast<uint32_t>(St.Aux));
       ScratchAP[I] =
@@ -419,7 +424,7 @@ llvm::APInt SymEvalPlan::evalWith(
         [&](size_t K) -> const llvm::APInt & { return ScratchAP[A[K]]; });
   }
 
-  return Steps.empty() ? llvm::APInt(Ctx.width(Root), 0) : ScratchAP[RootSlot];
+  return ScratchAP[RootSlot];
 }
 
 llvm::APInt evalNodeAP(const SymContext &Ctx, SymRef R,
