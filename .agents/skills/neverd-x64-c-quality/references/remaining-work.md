@@ -85,6 +85,16 @@ HighC already did; this does not recover that stack or authorize native output.
 Bounded callee register summaries repair stack-probe frame proofs. Replaced-PC
 tail calls and closed recursive internal-call groups have separate checked
 return-slot proofs. Arbitrary changed-stack returns remain outside them.
+Own-interior call proofs keep the x64 stack pointer across ordinary calls, end a
+path at a direct tail call into a callee proved never to return, and treat a
+call inside another function's unwind record, reached through a jump into that
+body, as interior to that record. No-return screens skip returns that only a
+terminator or a known no-return call precedes and no branch targets; far and
+interrupt returns no longer count as returns to the caller. Entry-stack offset
+proofs follow long copy/displacement chains without a depth limit, and CALL
+return-slot observations accept an upper bound below a dynamic allocation in a
+loop. A live-frame jump through a dispatch thunk and a computed jump into an
+unrolled copy remain refused.
 
 x86 architectural returns now lift to a terminal, non-returning state-transfer
 intrinsic that names every cell the transfer reads. Far and interrupt returns
