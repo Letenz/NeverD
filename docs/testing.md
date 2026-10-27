@@ -13000,6 +13000,11 @@ measured separately; ordinary execution excludes setup and verification. The
 two-CPU workload includes the intervening public API calls and checks. These are
 checked-execution microbenchmarks, not full OS throughput or cross-ISA comparisons.
 Explicit HVF requires an ARM64 macOS host; Unicorn must be enabled for its comparison.
+The default contract is `checked`; `--contract checked-user` exercises EL0 with
+user-accessible code and RAM. The optional `--wide-loop` adds a 16 KiB arithmetic
+loop body plus loop control, checking the result and all 65,570 retired
+instructions. Its larger instruction working set complements the default small
+loops without changing their inventory.
 
 ```bash
 cmake --build build-cpu --target neverd-cpu-bench --parallel 4
@@ -13019,12 +13024,19 @@ python3 scripts/benchmark_cpu.py \
 ```
 
 The driver alternates process order, warms each workload, verifies the complete
-sample inventory, records binary hashes, labels, load and raw samples, and refuses
-to overwrite evidence. Both backends default to HVF; use `--baseline-backend unicorn`
+sample inventory and hashes every non-timing result field except the separately
+validated backend identity. A mismatch fails the comparison. It records binary
+hashes, labels, load, raw samples and whole-process wall time, plus child user and
+system CPU time where Python's `resource` module is available, and refuses to
+overwrite evidence. The driver accepts the same `--contract` and `--wide-loop`
+options; both executables must support the requested configuration. Both backends
+default to HVF; use `--baseline-backend unicorn`
 to compare the same candidate binary's software and native transports. Source labels
 are caller-supplied; retain compiler/configuration details alongside the results.
 Avoid running builds or other tests while measuring. Report spread and paired
 results; one host and these workloads do not establish a universal ranking.
+`python3 -m unittest scripts.tests.test_benchmark_cpu` checks requested contracts,
+optional workload inventories, instruction counts and non-timing comparisons.
 
 Native entry counting is a separate opt-in diagnostic. It adds instrumentation
 overhead, so discard its elapsed times. The count includes startup probes.

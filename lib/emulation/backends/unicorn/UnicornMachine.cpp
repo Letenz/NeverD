@@ -7,6 +7,7 @@
 #include "../../arch/x86_64/X64Exception.h"
 #include "../../arch/x86_64/X64Machine.h"
 #include "../../core/ExecutionDiagnostics.h"
+#include "../../core/ExecutionLimits.h"
 #include "../MachineFactories.h"
 #include "UnicornArchitecture.h"
 #include "UnicornMemory.h"
@@ -154,7 +155,8 @@ private:
     InstructionBytes Bytes{};
     bool Valid = false;
   };
-  std::array<Instruction, 2048> Instructions{};
+  std::array<Instruction, execution_limits::UnicornInstructionCacheEntries>
+      Instructions{};
   std::weak_ptr<AddressSpace> InstructionSpace;
   uint64_t InstructionGeneration = 0, InstructionTransport = 0;
   bool InstructionsActive = false;
