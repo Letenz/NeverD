@@ -15205,6 +15205,10 @@ alternating CPU/wall samples, frozen binary hashes and SDK-mapping checks. Its
 independent sidecar-derived oracle checks every returned field, total, offset,
 completion and file bytes/timestamps. Run the mock/native patch suites for empty
 inventories, page limits and invalid bounds, including an older JSON-only SDK.
+The `--include-ranges` option adds complete unpaged range responses to the same
+byte, payload, timestamp and memory oracles. Native SDK adapter tests also keep
+large row/range JSON strings alive across queries, edits and session destruction,
+checking exact compact bytes for high addresses, empty results and short tails.
 
 `tools/neverd-bench/patch-paired.py --worker-history` compares complete CLI
 commands and durable worker commit/undo/redo against two explicit binary

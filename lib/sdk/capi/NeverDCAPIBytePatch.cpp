@@ -235,8 +235,10 @@ const char *neverd_byte_patches_json(neverd_session_t Sess) {
     return nullptr;
   std::string Text;
   llvm::raw_string_ostream Stream(Text);
+  Stream.SetBuffered();
   llvm::json::OStream Output(Stream);
   patch::writePatchRows(Output, S->BytePatches);
+  Stream.flush();
   return dupStr(Text);
 }
 const neverd_byte_patch_snapshot_v1 *
@@ -264,12 +266,20 @@ const char *neverd_byte_patch_ranges_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S || !S->Loaded)
     return nullptr;
-  llvm::json::Array Ranges;
-  for (const auto &[Offset, Row] : S->BytePatches.rows())
-    Ranges.push_back(llvm::json::Object{
-        {"address", "0x" + llvm::utohexstr(Row.Address, true)},
-        {"size", Row.size()}});
-  return dupStr(jsonToString(std::move(Ranges)));
+  std::string Text;
+  llvm::raw_string_ostream Stream(Text);
+  Stream.SetBuffered();
+  llvm::json::OStream Output(Stream);
+  // Stream admitted ranges in the overlay's existing file-offset order.
+  Output.array([&] {
+    for (const auto &[Offset, Row] : S->BytePatches.rows())
+      Output.object([&] {
+        Output.attribute("address", "0x" + llvm::utohexstr(Row.Address, true));
+        Output.attribute("size", Row.size());
+      });
+  });
+  Stream.flush();
+  return dupStr(Text);
 }
 const char *neverd_byte_patch_context_json(neverd_session_t Sess,
                                            neverd_va_t Address) {

@@ -137,6 +137,68 @@ class BytePatchIntegrationTests(unittest.TestCase):
         self.assertEqual(session.byte_patches, expected)
         self.assertEqual(raw.read_bytes(), original)
 
+    def test_json_results_keep_complete_owned_text_across_queries_and_edits(self) -> None:
+        from neverd_plugin import Session
+
+        host = self._snapshot_host()
+        functions = ("neverd_byte_patches_json", "neverd_byte_patch_ranges_json")
+        base = 0xffff800012340000
+        count = 2049
+        original = b"\xcc" * (count * 2)
+        raw = self.root / "json-results.raw"
+        raw.write_bytes(original)
+        expected = [{"addr": hex(i * 2), "file_off": hex(i * 2),
+                     "va": hex(base + i * 2), "size": 1,
+                     "original": "cc", "current": "90", "kind": "bytes"}
+                    for i in range(count)]
+        ranges = [{"address": row["va"], "size": row["size"]} for row in expected]
+
+        def encode(value):
+            return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+        retained = []
+        with ExitStack() as sessions:
+            pointer = host.call("neverd_session_create")
+            self.assertTrue(pointer)
+            sessions.callback(host.call, "neverd_session_destroy", pointer)
+            for function in functions:
+                self.assertIsNone(host.owned_string(function, None))
+                self.assertIsNone(host.owned_string(function, pointer))
+            options = json.dumps({"loader": "binary", "processor": "x86_64",
+                                  "platform": "sysv", "base": base}).encode()
+            self.assertEqual(host.call("neverd_session_set_load_options", pointer, options), 0)
+            self.assertEqual(host.call("neverd_session_load", pointer, os.fsencode(raw)), 1)
+            session = Session(pointer, _host=host,
+                              _native=SimpleNamespace(session_address=lambda handle: handle))
+            for function in functions:
+                self.assertEqual(host.owned_string(function, pointer), "[]")
+            session.save_byte_patches()
+            sidecar = next(self.root.rglob("patches.json"))
+            saved = (json.dumps(expected, indent=2, sort_keys=True) + "\n").encode()
+            sidecar.write_bytes(saved)
+            session.load_byte_patches()
+            for function, values in zip(functions, (expected, ranges)):
+                text = encode(values).encode()
+                result = host.call(function, pointer)
+                self.assertTrue(result)
+                self.addCleanup(host.call, "neverd_free_string",
+                                ctypes.cast(ctypes.c_void_p(result), ctypes.c_char_p))
+                retained.append((result, text))
+                self.assertEqual(ctypes.string_at(result), text)
+            session.revert_byte_patch(base, len(original))
+            for function in functions:
+                self.assertEqual(host.owned_string(function, pointer), "[]")
+            session.apply_byte_patch(base + 1, data=b"\x92")
+            one = [{"addr": "0x1", "file_off": "0x1", "va": hex(base + 1),
+                    "size": 1, "original": "cc", "current": "92", "kind": "bytes"}]
+            self.assertEqual(host.owned_string(functions[0], pointer), encode(one))
+            self.assertEqual(host.owned_string(functions[1], pointer),
+                             encode([{"address": hex(base + 1), "size": 1}]))
+            self.assertEqual(sidecar.read_bytes(), saved)
+        for result, text in retained:
+            self.assertEqual(ctypes.string_at(result), text)
+        self.assertEqual(raw.read_bytes(), original)
+
     def test_large_patch_input_snapshot_survives_rewrite_and_truncation(self) -> None:
         from neverd_plugin import Session
 
