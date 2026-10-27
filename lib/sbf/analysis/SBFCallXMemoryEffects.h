@@ -29,6 +29,10 @@ RegisterState symbolicInputs();
 RegisterValue substituteOrigin(const RegisterValue &Origin,
                                const RegisterState &Entry,
                                const SBFProgram &Program);
+ProvenValueSet
+substituteOrigins(const ProvenValueSet &Origins,
+                  const std::array<ProvenValueSet, kRegisterCount> &Entry,
+                  const SBFProgram &Program);
 
 struct MemoryWrite {
   RegisterValue Address;
@@ -54,18 +58,19 @@ struct MemoryEffects {
 /// Full-width postconditions at absolute scratch addresses or relative to a
 /// function's entry registers. Symbolic keys are bases and signed
 /// displacements, never synthetic VM addresses. Distinct entry registers may
-/// alias; a write through either invalidates the other's cells. At a CFG join
-/// only identical postconditions survive.
+/// alias; a write through either invalidates the other's cells. CFG joins meet
+/// cell presence and join complete stored alternatives under the value limit.
 class MemoryPostconditions {
 public:
   void clear() { Values.clear(); }
   void store(const RegisterValue &Address, uint64_t Size,
-             const RegisterValue &Value);
-  RegisterValue read(const RegisterValue &Address) const;
+             const ProvenValueSet &Value);
+  ProvenValueSet read(const RegisterValue &Address) const;
   void meet(const MemoryPostconditions &Other);
   void invalidate(const MemoryEffects &Effects, const RegisterState &Entry,
                   const SBFProgram &Program);
-  void include(const MemoryPostconditions &Callee, const RegisterState &Entry,
+  void include(const MemoryPostconditions &Callee,
+               const std::array<ProvenValueSet, kRegisterCount> &Entry,
                const SBFProgram &Program);
   size_t apply(ScratchState &Scratch,
                const std::array<ProvenValueSet, kRegisterCount> &Entry,
@@ -76,7 +81,7 @@ public:
 
 private:
   void invalidate(const RegisterValue &Address, uint64_t Size);
-  std::map<std::tuple<RegisterValue::Kind, uint64_t, int64_t>, RegisterValue>
+  std::map<std::tuple<RegisterValue::Kind, uint64_t, int64_t>, ProvenValueSet>
       Values;
 };
 

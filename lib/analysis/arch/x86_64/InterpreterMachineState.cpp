@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <initializer_list>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <set>
@@ -524,7 +525,7 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
         };
         if (auto Error = Remap(Op.Output, false))
           return std::move(Error);
-        if (Op.NumInputs > 6)
+        if (Op.NumInputs > std::size(Op.Inputs))
           return invalid("machine source has an invalid operation arity");
         for (unsigned Input = 0; Input != Op.NumInputs; ++Input) {
           // Machine-state values name the original guest mapping, not a

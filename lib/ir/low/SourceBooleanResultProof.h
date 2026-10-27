@@ -189,7 +189,7 @@ struct Transfer {
         LiteralTemps.clear();
         Instruction = Op.Addr;
       }
-      if (Op.NumInputs > 6 || Op.Output.Size > 64 ||
+      if (Op.NumInputs > std::size(Op.Inputs) || Op.Output.Size > 64 ||
           (Op.Output.Size && (!validValue(Op.Output) || Op.Output.isConst())) ||
           Op.MemoryOrdering != NdMemoryOrdering::None ||
           Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)

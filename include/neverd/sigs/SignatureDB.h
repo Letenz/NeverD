@@ -317,6 +317,9 @@ private:
     uint64_t DataTarget;
   };
   void appendModuleMatches(uint64_t Address, size_t Module);
+  void applyCodeAddressPairs(const BinaryImage &Img,
+                             llvm::ArrayRef<uint64_t> Entries,
+                             llvm::ArrayRef<SignatureMatcher::Hit> Hits);
   void applyRuntimePointerContext(const BinaryImage &Img,
                                   llvm::ArrayRef<uint64_t> Entries);
   void applyVTableContext(const BinaryImage &Img,

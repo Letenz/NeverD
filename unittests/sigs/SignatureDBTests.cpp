@@ -1896,6 +1896,182 @@ struct AnchoredShortCaller {
 };
 } // namespace
 
+namespace {
+struct ShortCodePair {
+  neverd::BinaryImage Image = incomingCallerImage();
+  std::string Body = "488D05........48895108488901488BC1C3 00 0000 0012";
+  std::string Required = Body + " !refs :0000 factory ^0003 leaf\n";
+  std::string Source = Body + " !caller :0000 factory ^0003 leaf\n";
+  std::string Leaf = "48895120C3 00 0000 0005 !caller :0000 leaf\n";
+  std::vector<uint64_t> Entries = {0x1000, 0x1100};
+
+  ShortCodePair() {
+    Image.Format = neverd::BinaryFormat::COFF;
+    auto &Code = Image.Segments.front().Data;
+    const uint8_t Factory[] = {0x48, 0x8d, 0x05, 0xf9, 0,    0,
+                               0,    0x48, 0x89, 0x51, 0x08, 0x48,
+                               0x89, 0x01, 0x48, 0x8b, 0xc1, 0xc3};
+    const uint8_t Setter[] = {0x48, 0x89, 0x51, 0x20, 0xc3};
+    std::fill(Code.begin(), Code.end(), 0xcc);
+    std::copy(std::begin(Factory), std::end(Factory), Code.begin());
+    std::copy(std::begin(Setter), std::end(Setter), Code.begin() + 0x100);
+  }
+};
+} // namespace
+
+TEST(SignatureDBCodePairs, CompleteAddressPairSuppliesJointByteEvidence) {
+  for (bool Reverse : {false, true}) {
+    ShortCodePair Pair;
+    if (Reverse)
+      std::reverse(Pair.Entries.begin(), Pair.Entries.end());
+    SignatureDB DB;
+    ASSERT_FALSE(
+        DB.loadPatternText(Reverse ? Pair.Leaf + Pair.Source + Pair.Required
+                                   : Pair.Required + Pair.Source + Pair.Leaf,
+                           "pair"));
+    DB.apply(Pair.Image, Pair.Entries);
+    const auto Names = DB.buildCandidateNameMap();
+    ASSERT_EQ(Names.size(), 2u);
+    EXPECT_EQ(Names.at(0x1000), "factory");
+    EXPECT_EQ(Names.at(0x1100), "leaf");
+    EXPECT_TRUE(DB.buildNameMap().empty());
+    // Each application reads the live body; an earlier pair is not an anchor.
+    Pair.Image.Segments.front().Data[0x103] = 0x28;
+    DB.apply(Pair.Image, Pair.Entries);
+    EXPECT_TRUE(DB.buildCandidateNameMap().empty());
+  }
+}
+
+TEST(SignatureDBCodePairs, IncompleteOrWeakComponentsDoNotBootstrapNames) {
+  for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ShortCodePair Pair;
+    switch (Mutation) {
+    case 0:
+      Pair.Source.clear();
+      break;
+    case 1:
+      Pair.Required.clear();
+      break;
+    case 2:
+      Pair.Leaf.clear();
+      break;
+    case 3:
+      Pair.Entries.pop_back();
+      break;
+    case 4:
+      Pair.Entries.erase(Pair.Entries.begin());
+      break;
+    case 5:
+      Pair.Image.IsRelocatable = true;
+      break;
+    case 6:
+      Pair.Image.Format = neverd::BinaryFormat::ELF;
+      break;
+    case 7:
+      Pair.Source += Pair.Body + " !caller :0000 factory\n";
+      break;
+    case 8:
+      Pair.Source += Pair.Body + " !caller :0000 factory ^0003 other\n";
+      break;
+    case 9:
+      Pair.Source =
+          Pair.Body + " !caller :0000 factory ^0003 leaf ^000C other\n";
+      break;
+    case 10:
+      Pair.Source =
+          Pair.Body + " !caller :0000 factory :0000 alias ^0003 leaf\n";
+      break;
+    case 11:
+      Pair.Leaf = "48895120C3 00 0000 0005 !caller :0000 leaf ^0001 factory\n";
+      break;
+    case 12:
+      Pair.Leaf = "488951..C3 00 0000 0005 !caller :0000 leaf\n";
+      break;
+    case 13:
+      Pair.Image.Segments.front().Data[0x100] = 0xc3;
+      Pair.Leaf = "C3 00 0000 0001 !caller :0000 leaf\n";
+      break;
+    case 14:
+      Pair.Leaf += "48895120C3CC 00 0000 0006 !caller :0000 leaf\n";
+      break;
+    }
+    SignatureDB DB;
+    ASSERT_FALSE(
+        DB.loadPatternText(Pair.Required + Pair.Source + Pair.Leaf, "refuse"));
+    DB.apply(Pair.Image, Pair.Entries);
+    EXPECT_TRUE(DB.buildCandidateNameMap().empty());
+  }
+}
+
+TEST(SignatureDBCodePairs, CompetingPairsAndFrozenNamesRemainUnresolved) {
+  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ShortCodePair Pair;
+    std::string Extra;
+    if (Mutation == 0) {
+      Extra = Pair.Body + " !refs :0000 rival ^0003 twin\n" + Pair.Body +
+              " !caller :0000 rival ^0003 twin\n" +
+              "48895120C3 00 0000 0005 !caller :0000 twin\n";
+    } else if (Mutation == 1)
+      Extra = "488D05F900000048895108488901488BC1C3 00 0000 0012 :0000 "
+              "known_factory\n";
+    else
+      Extra =
+          "48895120C3CCCCCCCCCCCCCCCCCCCCCC 00 0000 0010 :0000 known_leaf\n";
+    SignatureDB DB;
+    ASSERT_FALSE(DB.loadPatternText(
+        Pair.Required + Pair.Source + Pair.Leaf + Extra, "rivals"));
+    DB.apply(Pair.Image, Pair.Entries);
+    const auto Names = DB.buildCandidateNameMap();
+    if (Mutation == 0)
+      EXPECT_TRUE(Names.empty());
+    else if (Mutation == 1) {
+      ASSERT_EQ(Names.size(), 1u);
+      EXPECT_EQ(Names.at(0x1000), "known_factory");
+    } else {
+      ASSERT_EQ(Names.size(), 1u);
+      EXPECT_EQ(Names.at(0x1100), "known_leaf");
+    }
+  }
+}
+
+TEST(SignatureDBCodePairs, WholeBodiesNeedSeparateExecutableOwners) {
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ShortCodePair Pair;
+    if (Mutation < 2) {
+      neverd::Section Data;
+      Data.VA = Mutation ? 0x1100 : 0x1009;
+      Data.Size = 1;
+      Data.Flags = neverd::SegmentFlags::Readable;
+      neverd::Section Text;
+      Text.VA = 0x1000;
+      Text.Size = 0x300;
+      Text.Flags =
+          neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+      Pair.Image.Sections = {Data, Text};
+    } else if (Mutation == 2) {
+      Pair.Image.ContinuationCodeStarts.insert(0x1100);
+    } else {
+      Pair.Body = "488D05........48895120C3909090909090 00 0000 0012";
+      Pair.Required = Pair.Body + " !refs :0000 factory ^0003 leaf\n";
+      Pair.Source = Pair.Body + " !caller :0000 factory ^0003 leaf\n";
+      auto &Code = Pair.Image.Segments.front().Data;
+      neverd::writeLE<int32_t>(Code.data() + 3, 0);
+      const uint8_t Inner[] = {0x48, 0x89, 0x51, 0x20, 0xc3, 0x90,
+                               0x90, 0x90, 0x90, 0x90, 0x90};
+      std::copy(std::begin(Inner), std::end(Inner), Code.begin() + 7);
+      Pair.Entries = {0x1000, 0x1007};
+    }
+    SignatureDB DB;
+    ASSERT_FALSE(
+        DB.loadPatternText(Pair.Required + Pair.Source + Pair.Leaf, "owners"));
+    DB.apply(Pair.Image, Pair.Entries);
+    EXPECT_TRUE(DB.buildCandidateNameMap().empty());
+  }
+}
+
 TEST(SignatureDBCallerContext, IndependentOrdinaryCalleeSupportsShortCaller) {
   for (bool RequiredRoot : {false, true}) {
     for (bool Reverse : {false, true}) {

@@ -137,7 +137,7 @@ inline bool aarch64AddressLoadMedShapeIsValid(const MedOp &Op) {
 
 inline bool aarch64WritebackMemoryMedShapeIsValid(const MedOp &Op) {
   if (Op.Opcode != NdOp::INTRINSIC || !Op.NumInputs ||
-      !Op.Inputs[0].isConst() ||
+      Op.NumInputs > Op.Inputs.size() || !Op.Inputs[0].isConst() ||
       Op.Inputs[0].Size != kAddressMemoryIdentifierBytes ||
       Op.Inputs[0].ConstVal >= static_cast<uint64_t>(Intrinsic::_Count) ||
       Op.NumInputs != aarch64WritebackMemoryOperandCount(
@@ -169,6 +169,16 @@ inline bool aarch64WritebackMemoryMedShapeIsValid(const MedOp &Op) {
     for (size_t J = 0; J != I; ++J)
       if (Op.IntrinsicOutputs[I] == Op.IntrinsicOutputs[J])
         return false;
+  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+  if (aarch64StructureOperation(Id))
+    return aarch64StructureShapeIsValid(
+        Id, Op.NumInputs - 1, Op.Output.Size,
+        [&](unsigned I) { return Op.Inputs[I + 1].Size; },
+        [&](unsigned I) -> std::optional<uint64_t> {
+          return Op.Inputs[I + 1].isConst()
+                     ? std::optional<uint64_t>(Op.Inputs[I + 1].ConstVal)
+                     : std::nullopt;
+        });
   const bool Store = isAArch64WritebackStoreIntrinsic(
       static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
   return aarch64WritebackMemoryShapeIsValid(

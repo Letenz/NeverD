@@ -12,6 +12,7 @@
 
 #include "../FuncDetectorDetail.h"
 
+#include "neverd/Limits.h"
 #include "neverd/ir/low/FuncDetector.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/libc/NoReturnLoadedTarget.h"
@@ -31,6 +32,112 @@
 
 namespace neverd {
 namespace func_detect_detail {
+
+std::map<va_t, va_t> checkedUnwindTailTargetsX64(const BinaryImage &Img,
+                                                 const std::set<va_t> &Entries,
+                                                 const Cancellation *Control) {
+  std::map<va_t, va_t> Targets;
+  if (Img.Arch != Arch::X64 || Img.Format != BinaryFormat::COFF ||
+      Img.IsRelocatable)
+    return Targets;
+
+  for (const ExceptionFunction &F : Img.ExceptionMetadata.Functions) {
+    checkCancellation(Control);
+    if (F.Kind != RuntimeFunctionKind::Primary ||
+        F.ParseStatus != ExceptionParseStatus::Complete ||
+        (F.Encoding != ExceptionEncoding::X64UnwindV1 &&
+         F.Encoding != ExceptionEncoding::X64UnwindV2) ||
+        F.UnwindFlags || F.FrameRegister || !F.FragmentRanges.empty() ||
+        !F.CodeRange.isValid() ||
+        (F.FunctionEntry && F.FunctionEntry != F.CodeRange.Begin) ||
+        F.UnwindOperations.size() != 1)
+      continue;
+    const auto &Allocation = F.UnwindOperations.front();
+    if ((Allocation.Kind != UnwindOperationKind::AllocateSmall &&
+         Allocation.Kind != UnwindOperationKind::AllocateLarge) ||
+        !Allocation.StackOffset || Allocation.CodeOffset != F.PrologueSize)
+      continue;
+
+    const Segment *Seg = Img.getSegmentFor(F.CodeRange.Begin);
+    const uint64_t Size = F.CodeRange.End - F.CodeRange.Begin;
+    if (!Seg || F.CodeRange.Begin < Seg->VA)
+      continue;
+    const uint64_t Offset = F.CodeRange.Begin - Seg->VA;
+    if (Offset >= Seg->Data.size() || Size > Seg->Data.size() - Offset)
+      continue;
+    const auto Bytes = llvm::ArrayRef(Seg->Data).slice(Offset, Size);
+    // Canonical SUB/ADD RSP, imm8 or imm32 around a terminal JMP rel32.
+    // Matching the complete frame first keeps the per-record check cheap.
+    const size_t FrameSize = F.PrologueSize;
+    if ((FrameSize != 4 && FrameSize != 7) ||
+        Bytes.size() < 2 * FrameSize + 5 || Bytes[0] != 0x48 ||
+        Bytes[1] != (FrameSize == 4 ? 0x83 : 0x81) || Bytes[2] != 0xec ||
+        Bytes[Bytes.size() - 5] != 0xe9)
+      continue;
+    const int64_t StackSize = FrameSize == 4
+                                  ? static_cast<int8_t>(Bytes[3])
+                                  : readLE<int32_t>(Bytes.data() + 3);
+    if (StackSize <= 0 || uint64_t(StackSize) != Allocation.StackOffset)
+      continue;
+    const size_t Restore = Bytes.size() - 5 - FrameSize;
+    if (Bytes[Restore] != 0x48 || Bytes[Restore + 1] != Bytes[1] ||
+        Bytes[Restore + 2] != 0xc4 ||
+        !std::equal(Bytes.begin() + 3, Bytes.begin() + FrameSize,
+                    Bytes.begin() + Restore + 3))
+      continue;
+
+    // Most frames return normally. Resolve ownership and entry membership
+    // only after the cheap terminal/frame bytes identify a possible adapter.
+    if (!Entries.count(F.CodeRange.Begin) ||
+        F.CodeRange.End > codeIntervalAround(Img, F.CodeRange.Begin).Hi)
+      continue;
+
+    size_t Pos = FrameSize;
+    for (int I = 0; Pos < Restore && I < limits::kMaxVerifyInsns; ++I) {
+      checkCancellation(Control);
+      // A direct ABI call returns with the same RSP and preserved registers.
+      // A known non-returning call cannot supply a reachable tail transfer.
+      if (Bytes[Pos] == 0xe8 && Restore - Pos >= 5) {
+        const va_t Callee =
+            F.CodeRange.Begin + Pos + 5 +
+            static_cast<va_t>(readLE<int32_t>(Bytes.data() + Pos + 1));
+        // Win64 requires 32 bytes of home space and a 16-byte-aligned call
+        // stack; the incoming return address occupies eight bytes.
+        if (StackSize < 32 || (StackSize + 8) % 16 || !Entries.count(Callee) ||
+            libc::isNoReturnTarget(Img, Callee))
+          break;
+        Pos += 5;
+        continue;
+      }
+      // Only register-direct MOV r32/r64,r32/r64 into a Win64 volatile GPR.
+      // Exact encodings exclude memory, SP/nonvolatile writes and prefixes
+      // that change the contract. All other instructions leave this unproved.
+      size_t Opcode = Pos;
+      uint8_t Rex = 0;
+      if ((Bytes[Opcode] & 0xf0) == 0x40)
+        Rex = Bytes[Opcode++];
+      if (Restore - Opcode < 2 ||
+          (Bytes[Opcode] != 0x89 && Bytes[Opcode] != 0x8b) ||
+          (Bytes[Opcode + 1] & 0xc0) != 0xc0)
+        break;
+      const uint8_t ModRM = Bytes[Opcode + 1];
+      const unsigned Dst = Bytes[Opcode] == 0x89
+                               ? (ModRM & 7) | ((Rex & 1) << 3)
+                               : ((ModRM >> 3) & 7) | ((Rex & 4) << 1);
+      if (Dst > 2 && (Dst < 8 || Dst > 11))
+        break;
+      Pos = Opcode + 2;
+    }
+    if (Pos != Restore)
+      continue;
+    const va_t Target =
+        F.CodeRange.End +
+        static_cast<va_t>(readLE<int32_t>(Bytes.data() + Bytes.size() - 4));
+    if (!F.CodeRange.contains(Target))
+      Targets.emplace(F.CodeRange.Begin, Target);
+  }
+  return Targets;
+}
 
 CodeInterval codeIntervalAround(const BinaryImage &Img, va_t Addr) {
   if (Img.Arch != Arch::X86 && Img.Arch != Arch::X64)

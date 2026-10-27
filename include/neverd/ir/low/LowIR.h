@@ -15,6 +15,7 @@
 #define NEVERD_IR_LOW_LOWIR_H
 
 #include "neverd/ir/NdOps.h"
+#include "neverd/ir/OperationLimits.h"
 #include "neverd/ir/RegistrationState.h"
 #include "neverd/ir/X86/X86FPState.h"
 #include "neverd/ir/X86/X86ShadowStack.h"
@@ -36,6 +37,7 @@
 #include <limits>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -222,7 +224,7 @@ struct LowOp {
   NdMemoryOrdering MemoryOrdering = NdMemoryOrdering::None;
   NdMemoryAddressSpace MemoryAddressSpace = NdMemoryAddressSpace::Default;
   NdVar Output = {};
-  NdVar Inputs[6] = {};
+  NdVar Inputs[kLowOperationInputs] = {};
   uint8_t NumInputs = 0;
   va_t Addr = 0;
   int Seq = 0;
@@ -236,8 +238,9 @@ struct LowOp {
   uint8_t X87ImportArguments = 0;
 
   void addInput(NdVar V) {
-    if (NumInputs < 6)
-      Inputs[NumInputs++] = V;
+    if (NumInputs >= std::size(Inputs))
+      throw std::length_error(kLowOperationInputOverflow);
+    Inputs[NumInputs++] = V;
   }
 
   bool operator==(const LowOp &Other) const = default;
@@ -297,7 +300,8 @@ inline X86FPStateShape x86FPStateLowShape(const LowOp &Op, Arch TargetArch) {
                           isX86FPConversionStateIntrinsic(
                               static_cast<Intrinsic>(Op.Inputs[0].Offset));
   bool Scalar = true;
-  for (unsigned Index = 1; Index < Op.NumInputs && Index < 6; ++Index)
+  for (unsigned Index = 1; Index < Op.NumInputs && Index < std::size(Op.Inputs);
+       ++Index)
     Scalar &= Op.Inputs[Index].isConst() || Op.Inputs[Index].isReg() ||
               Op.Inputs[Index].isTemp();
   return {

@@ -4100,6 +4100,11 @@ std::string LLVMCWriter::composedReprintText(const llvm::Value *V) {
       return {};
     }
     if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Cur)) {
+      // Statement emission materializes casts outside the inlinable set.
+      // Reprinting their operands would leave that assignment unread and
+      // bypass the same named boundary for every later use.
+      if (!Analysis.Inlinable.count(Cast))
+        return getName(Cast);
       const std::string Text = Rec(Cast->getOperand(0));
       if (Text.empty())
         return {};

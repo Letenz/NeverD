@@ -41,8 +41,11 @@ rather than requiring an intermediate call record to survive optimization.
 unsigned 1/2/4-byte reads through both C routes at O0/O2 with UBSan, for x64/ARM64
 PE/ELF and complete or selected-caller output. Callers write only the consumed
 bytes. The frame proof separately rejects reads wider than the declared input.
-`IncomingHomeSource.MixedWidthReadsShareOneCompleteInput` executes mixed prefix
-and complete-slot reads through both C routes at O0/O2 with UBSan. The native
+`ByProfile/IncomingHomeSourceMixedWidth.ReadsShareOneCompleteInput/*` executes
+mixed prefix and complete-slot reads through both C routes at O0/O2 with UBSan.
+Six architecture/format/carrier profiles retain every prefix width, signedness
+and complete/selected-caller combination under the original 120-second CTest
+limit. The native
 frame controls cover both read orders and reject narrow-only observations or
 a full-width observation belonging to a different slot.
 `IncomingHomeSource.CompleteStackBindingIgnoresOtherCallSetup` executes both C
@@ -2000,10 +2003,33 @@ Keep both the older corpus and `residue-power` as regression controls. The
 independent benchmark oracle evaluates a postorder expression walk so these
 deep products retain semantic checks within Python's default recursion limit.
 
+Dominant-prefix regressions add degree-511–514 products with disturbed factors
+and multiple residual multipliers. Complete-word APInt oracles cover 8–257 bits,
+both selector branches and residual zero/even values; exact and one-short work
+and storage allowances check bounded refusal. Independent full-width Z3 checks
+cover 8/16/32/64-bit words with four observed bits, while larger observed words
+retain the separate APInt and corpus checks. The CLI/GUI worker source matrix
+also executes degree-513 and disturbed degree-512 fixtures through all six source
+routes at O0/O2. `--family residue-subgroup --count 54` adds 216 degree-511–1026
+cases with off-period counts, two low disturbances, complemented inputs, nested
+high offsets and multiple residual factors. Keep all preceding families frozen
+as output-cost and performance controls; incomplete proofs remain refusals.
+Joint-residual tests distinguish odd and even offsets, while projected-domain
+tests move additional inputs across the first invisible bit. Both retain
+independent complete-word multiplication, including non-native word widths.
+
 Expression interning regressions retain deliberately colliding variable and
 literal identities, all-bit hash values, and references across table growth,
 context copies, assignment and moves. Full symbolic and source-route coverage
 checks the shared table underneath both CLI and GUI simplification.
+`SymExpr.NativeNormalizedResultsRetainWidthBoundaries` compares both native
+evaluation entry points against independent APInt arithmetic at 1/7/8/16/32/64
+bits. Unmasked inputs, wrapping sums and products, both conditional branches,
+overshifts and remainder by zero preserve the normalized scratch-slot invariant.
+`SymMBA.DenseCoversKeepEveryCornerAndWholeWord` exhausts four-, six- and
+eight-input cover tables, including mixed literal polarities and an isolated
+negative corner. Independent bit-plane evaluation checks random complete words
+through 257 bits; zero work must refuse without constructing a new node.
 Paired-product regressions cover degree-64–128 mixed carry frontiers with
 independent 8–257-bit arithmetic oracles. A separate 32-factor fixture retains
 an input-dependent highest-bit correction, exhausts its three relevant low
@@ -3373,6 +3399,16 @@ close an active job. SDK and real-worker comparison checks retain the discovery
 stop phase and incomplete coverage; stopped snapshots never authorize scalar
 validation. Run the image-boundary, session-discovery and comparison suites when
 changing these shared cancellation boundaries. No input instructions execute.
+`FunctionDiscoveryAlignment.RestoredUnwindAdaptersDiscoverLeafTailEntries`
+checks x64 PE leaf tail entry discovery from complete restored-frame adapters,
+including forward/backward targets, small/large frames, v1/v2 unwind records,
+worker counts and repeated publication. `UnprovedUnwindTailAdaptersStayUnsplit`
+and `UnwindTailRequiresAnExecutableCompleteBody` reject inconsistent or absent
+metadata, stack/nonvolatile writes, conditional control flow, no-return calls,
+missing home space, local/interior/continuation targets, non-executable ranges,
+truncation, relocatable input and targets with no callable exit. These run in
+`NeverDImageAnalysisBoundaryTests` and the aggregate lift suite.
+
 `FunctionDiscoveryAlignment.LongCalleesNeedReachableCallableExits` checks the
 64/65-instruction linear-prefix and 256/257-instruction reachable-probe boundaries
 on x86/x64/ARM/Thumb/AArch64 in ELF and Mach-O. A long unlabelled callee can gain
@@ -5954,6 +5990,11 @@ checks with `UseUnalignedPointers`. `HighCIntegerWidths.*`,
 `HighCPointerAddresses.*`, `HighCStoreForwarding.*`, `LLVMCValues.*`, and the
 frame-memory, atomic and segmented-memory suites cover the surrounding paths.
 
+`LLVMCValues.MultiUsePointerCastKeepsOneMaterializedValue` executes two stores
+through a shared integer-to-pointer conversion at O0/O2 with undefined-behavior
+traps and unused-but-set variables treated as errors. Composed expressions must
+read a materialized cast rather than duplicating its operand spelling.
+
 `HighX86CallSetup` compiles and executes recovered outgoing-stack arithmetic
 through straight-line and nested continuation uses, including 32-bit wraparound.
 It also requires unused argument stores and address chains to disappear.
@@ -6753,6 +6794,13 @@ ordinary callee plus a rooted incoming body or a confirmed required root,
 reversed entries and records, changed-buffer reuse, missing/weak/partial or
 ambiguous callees, incomplete source variants and absent roots. A nominal body
 settled by an earlier incoming round cannot masquerade as an independent anchor.
+`SignatureDBCodePairs.*` checks complete x64 code-address fingerprints across
+two short bodies: reversed input order, live-byte changes, missing required or
+unpruned source records, insufficient combined bytes, source/leaf alternatives,
+outgoing dependencies, conflicting joint identities and frozen names. Requested
+entry scope, relocatable/non-PE refusal, nested data owners, continuation entries
+and overlapping bodies remain independent gates. Existing caller-chain cycle and
+weak-parent tests must continue to pass.
 `SignatureMatcherIndex.CallerRecordsDoNotIncreaseByteScanWork`
 adds 4096 short records while retaining exactly one scheduled ordinary byte
 check; copied, rebuilt and moved indexes retain valid name lookups. Parser,
@@ -8074,7 +8122,7 @@ Packed-flags tests cover all scalar entry-flag combinations, privilege masks, bo
 
 `NeverDX86DecodeDetailTests` covers all three decode routes, both x64 address widths, signed displacement boundaries, mandatory prefixes, genuine i386 disp16, moffs, truncation and detail-free reuse. Exact relocation occurrences bind; wrong widths, offsets and values do not. Native independence and refinement tests additionally retain full frame writes, reject observed arbitrary flags and reject an altered shift candidate.
 
-`NeverDLowUndefinedDigestTests` checks independent SHA-256 vectors, every stored field, signed sequence bits, order, padding exclusion and unchanged inputs. Cases cover inline-buffer growth, the 199/200-operation boundary and larger streaming spans. `LowIRRefinement.StaleUnusedInputRefusesAcrossDigestStorageBoundaries` checks real stale-evidence rejection and rebinding across both paths. Keep `InputDigest.*` coverage in `NeverDDigestTests` and controlled loader cases in `NeverDNativeBufferTests`, and rebuild affected callers when changing the outlined owner. Report actual sanitizer, portable-path and host coverage; digest microbenchmarks alone do not certify native equivalence.
+`NeverDLowUndefinedDigestTests` checks independent SHA-256 vectors, every stored field, signed sequence bits, order, padding exclusion and unchanged inputs. Cases retain the independent v1 inline-buffer and 199/200-operation boundary vectors. Extended eight-slot identities use independent v2 vectors across the 160/161-operation boundary and larger streaming spans. Default extension slots preserve v1; stored extension bits and additional operands select v2, including unused slots. `LowIRRefinement.StaleUnusedInputRefusesAcrossDigestStorageBoundaries` checks real stale-evidence rejection and rebinding across both paths. Keep `InputDigest.*` coverage in `NeverDDigestTests` and controlled loader cases in `NeverDNativeBufferTests`, and rebuild affected callers when changing the outlined owner. Report actual sanitizer, portable-path and host coverage; digest microbenchmarks alone do not certify native equivalence.
 
 ```bash
 cmake --build build-release --target NeverDLowUndefinedDigestTests --parallel 4
@@ -15071,3 +15119,43 @@ the pointer was captured. These host checks do not execute ARM64 machine code.
 The self-comparison matrix also executes no-argument equality and subtraction-overflow cases. These require no incoming register value and must not acquire an unknown-state trap in either C route.
 
 The HFA import-slot tests compile strict C prototypes and execute complete arguments and results for header and local declarations. Both C routes cover float and double records, chained calls, and AArch64 execution.
+
+
+`AArch64StructureMemory.*` checks baseline AdvSIMD original-memory contracts.
+The independent LLVM MC 22.1.6 table contains 1,134 original/scratch pairs:
+318 multiple-structure, 720 lane and 96 replicate samples, with 378 cases in
+each indexing mode. It covers every legal arrangement and lane, wrapping vector
+lists, complete values/base/memory, malformed last operands and result tuples,
+preselection validation, SP provenance, image spans and discarded effects.
+The separate reserved table supplies 473 raw words that must fail even with
+valid decoded detail and permissive lifting.
+
+`AllBatches/AArch64StructureMemoryProjection.*` runs explicit and image-context
+integer bridges in 48-case batches (a final 30-case batch). Each compares both C
+projections at O0/O2 and actual LLVM objects with independent original-register
+instructions, including positive/negative/zero post-index deltas and aligned or
+unaligned bases. Every byte of memory and the complete vector results are
+compared. The compiler's 30-second and registered CTest's 120-second deadlines
+remain unchanged. Set `NEVERD_ARM64E_STRUCTURE_MEMORY_ARTIFACT_DIR` to retain each
+batch's `high.c`, `llvm.c`, `llvm.o` and `harness.c`; the batch-zero tests publish
+distinct explicit/image context roots for model consumption. All 58 registered
+core/projection cases must complete before model qualification. Native vector
+entry/return ABI, original SP/frame/call/unwind execution, fixed-image
+register post-index relocation and foreign exception/tag/overflow behavior are
+separate coverage boundaries.
+
+The [structure-memory qualification record](evidence/arm64e-structure-memory-2026-10-27.json)
+binds the exact 58-test report and all source/object inputs to 12 official Arm
+model profiles: two contexts, EL1/EL0 and three groups of unchanged batches.
+All 60 guest executions complete five routes and four effective control modes,
+with 90,720 sample calls and 272,160 delta comparisons. Actual compile commands
+retain strict warnings and the generated C's `-fno-strict-aliasing` contract.
+Native Apple execution and the separate ABI/stack/fault boundaries remain
+unqualified.
+
+The generic LowIR readers use the operation's stored input capacity, including
+source hints, Boolean return proofs, machine-state adapters and specialization
+or independence validation. `ExtendedOperandStorageRetainsUnsupportedEffectRefusal`
+in the specialization and independence suites distinguishes an unsupported
+eight-input effect from out-of-storage malformed input; neither may publish
+a replacement or proof. Opcode-specific arity checks remain in their owners.

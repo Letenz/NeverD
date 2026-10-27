@@ -16,11 +16,13 @@
 
 #include "llvm/Support/FormatVariadic.h"
 
+#include <algorithm>
 #include <array>
 #include <map>
 #include <set>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace neverd::sbf {
 namespace {
@@ -35,6 +37,8 @@ llvm::StringRef resultName(CallXContextResult Result) {
     return "target_outside_raw_text_slots";
   case CallXContextResult::LegacyRuntimeMayMutateArguments:
     return "registered_legacy_runtime_may_mutate_arguments";
+  case CallXContextResult::ProvenTargetSet:
+    return "proven_target_set";
   }
   llvm_unreachable("unhandled CALLX context result");
 }
@@ -65,6 +69,31 @@ llvm::json::Object valueJSON(const RegisterValue &Value) {
     Result["offset"] = Value.Offset;
   }
   return Result;
+}
+
+llvm::json::Object inputExpressionJSON(const CallXInputExpression &Expression) {
+  switch (Expression.Kind) {
+  case CallXInputExpressionKind::InputRegister:
+    return llvm::json::Object{{"kind", "entry_register"},
+                              {"register", Expression.Register},
+                              {"offset", Expression.Offset}};
+  case CallXInputExpressionKind::Constant:
+    return llvm::json::Object{{"kind", "constant"},
+                              {"value", valueJSON(Expression.Constant)}};
+  case CallXInputExpressionKind::Instruction:
+    return llvm::json::Object{
+        {"kind", "normalized_instruction"},
+        {"input", static_cast<int64_t>(*Expression.Input)},
+        {"instruction_slot", static_cast<int64_t>(Expression.InstructionSlot)}};
+  case CallXInputExpressionKind::InputAlternatives: {
+    llvm::json::Array Inputs;
+    for (size_t ID : Expression.Alternatives)
+      Inputs.push_back(static_cast<int64_t>(ID));
+    return llvm::json::Object{{"kind", "entry_input_alternatives"},
+                              {"inputs", std::move(Inputs)}};
+  }
+  }
+  llvm_unreachable("unknown input expression kind");
 }
 
 llvm::StringRef barrierName(CallXSummaryBarrier Barrier) {
@@ -99,6 +128,8 @@ llvm::StringRef generalizationName(CallXInputGeneralization Kind) {
     return "specialization_resource_budget";
   case CallXInputGeneralization::EquivalentGenericInputs:
     return "reused_equivalent_generic_leaf_inputs";
+  case CallXInputGeneralization::EquivalentSpecializedInputs:
+    return "reused_proven_equivalent_specialized_inputs";
   }
   llvm_unreachable("unknown input generalization");
 }
@@ -126,7 +157,7 @@ llvm::StringRef missingFactName(CallXMissingFactKind Kind) {
   case CallXMissingFactKind::SymbolicTarget:
     return "symbolic_target_without_literal_code_address";
   case CallXMissingFactKind::MultipleTargetValues:
-    return "bounded_target_values_require_multi_target_summary";
+    return "bounded_targets_include_symbolic_or_outside_raw_text_values";
   }
   llvm_unreachable("unhandled CALLX missing fact");
 }
@@ -139,10 +170,25 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
   std::set<size_t> ProvenSites;
   std::map<size_t, size_t> ContextCounts;
   std::map<size_t, std::set<size_t>> Targets;
+  std::map<size_t, std::set<std::vector<va_t>>> TargetSets;
+  std::map<size_t, std::set<std::pair<size_t, size_t>>> TargetInputExpressions;
   size_t ProvenContexts = 0;
+  size_t ProvenTargetSetContexts = 0;
+  size_t ProvenTargetSetCallerContexts = 0;
   size_t CallerContexts = 0;
   size_t ProvenCallerContexts = 0;
   std::set<size_t> BeyondEntrySites;
+  std::set<size_t> TargetSetSites;
+  std::set<size_t> BeyondEntryTargetSetSites;
+  // Set evidence already guarantees literal in-range addresses. Serialize the
+  // raw slot mapping without strengthening it to successful call execution.
+  const auto TargetJSON = [&](va_t Target) {
+    const size_t Slot = (Target - Program.Low.TextAddress) / kInstructionSize;
+    return llvm::json::Object{{"target_address", addressText(Target)},
+                              {"target_slot", static_cast<int64_t>(Slot)},
+                              {"target_is_continuation",
+                               Program.Low.Instructions[Slot].IsContinuation}};
+  };
   for (const CallXContextEvidence &Evidence : Report.Contexts) {
     ++ContextCounts[Evidence.CallXSlot];
     const auto Address = [&](size_t Slot) {
@@ -163,7 +209,30 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
         {"dynamic_fallback_required", true}};
     Row["evidence_scope"] = Evidence.EntryPrefixOnly
                                 ? "direct_caller_entry_prefix"
+                            : !Evidence.InputExpressionValues.empty()
+                                ? "instantiated_generic_summary_inputs"
                                 : "whole_function_summary";
+    if (Evidence.InputExpression)
+      Row["target_input_expression"] =
+          static_cast<int64_t>(*Evidence.InputExpression);
+    if (Evidence.InputExpression && !Evidence.EntryPrefixOnly)
+      TargetInputExpressions[Evidence.SummaryID].emplace(
+          Evidence.CallXSlot, *Evidence.InputExpression);
+    if (!Evidence.InputExpressionValues.empty()) {
+      llvm::json::Array Steps;
+      for (const auto &Step : Evidence.InputExpressionValues) {
+        llvm::json::Array Inputs, Values;
+        for (const auto &Value : Step.Inputs.values())
+          Inputs.push_back(valueJSON(Value));
+        for (const auto &Value : Step.Values.values())
+          Values.push_back(valueJSON(Value));
+        Steps.push_back(llvm::json::Object{
+            {"expression", static_cast<int64_t>(Step.Expression)},
+            {"inputs", std::move(Inputs)},
+            {"values", std::move(Values)}});
+      }
+      Row["input_expression_proof"] = std::move(Steps);
+    }
     if (!Evidence.EntryPrefixOnly)
       Row["summary_id"] = static_cast<int64_t>(Evidence.SummaryID);
     if (!Evidence.IsRootContext) {
@@ -193,6 +262,23 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
       if (Evidence.BeyondEntryBlock)
         BeyondEntrySites.insert(Evidence.CallXSlot);
     }
+    if (Evidence.Result == CallXContextResult::ProvenTargetSet) {
+      llvm::json::Array Candidates;
+      std::vector<va_t> Addresses;
+      for (const auto &Value : Evidence.TargetValueAlternatives.values()) {
+        Candidates.push_back(TargetJSON(Value.Value));
+        Addresses.push_back(Value.Value);
+      }
+      Row["target_set"] = std::move(Candidates);
+      std::sort(Addresses.begin(), Addresses.end());
+      TargetSets[Evidence.CallXSlot].insert(std::move(Addresses));
+      TargetSetSites.insert(Evidence.CallXSlot);
+      ++ProvenTargetSetContexts;
+      if (!Evidence.IsRootContext)
+        ++ProvenTargetSetCallerContexts;
+      if (Evidence.BeyondEntryBlock)
+        BeyondEntryTargetSetSites.insert(Evidence.CallXSlot);
+    }
     if (Evidence.Missing.Kind != CallXMissingFactKind::None) {
       llvm::json::Object Missing{
           {"reason", missingFactName(Evidence.Missing.Kind)}};
@@ -219,16 +305,25 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
     llvm::json::Array CandidateSlots;
     for (size_t Target : Targets[Slot])
       CandidateSlots.push_back(static_cast<int64_t>(Target));
+    llvm::json::Array CandidateSets;
+    for (const auto &Addresses : TargetSets[Slot]) {
+      llvm::json::Array Candidates;
+      for (va_t Address : Addresses)
+        Candidates.push_back(TargetJSON(Address));
+      CandidateSets.push_back(std::move(Candidates));
+    }
     Sites.push_back(llvm::json::Object{
         {"callx_slot", static_cast<int64_t>(Slot)},
         {"callx_address",
          addressText(Program.Low.TextAddress + Slot * kInstructionSize)},
         {"analyzed_contexts", static_cast<int64_t>(ContextCounts[Slot])},
-        {"coverage", ProvenSites.contains(Slot) ? "conditional_targets_only"
-                     : ContextCounts[Slot]
-                         ? "analyzed_contexts_unproven"
-                         : "not_reached_from_recognized_entries"},
+        {"coverage",
+         ProvenSites.contains(Slot)      ? "conditional_targets_only"
+         : TargetSetSites.contains(Slot) ? "conditional_target_sets_only"
+         : ContextCounts[Slot] ? "analyzed_contexts_unproven"
+                               : "not_reached_from_recognized_entries"},
         {"conditional_target_slots", std::move(CandidateSlots)},
+        {"conditional_target_sets", std::move(CandidateSets)},
         {"unknown_other_contexts", true},
         {"dynamic_fallback_required", true}});
   }
@@ -277,6 +372,14 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
       Expression["register"] = Summary.ReturnInputExpression->first;
       Expression["offset"] = Summary.ReturnInputExpression->second;
     }
+    llvm::json::Array ReturnInputs;
+    for (const auto &Alternative : Summary.ReturnInputAlternatives)
+      ReturnInputs.push_back(inputExpressionJSON(Alternative));
+    llvm::json::Array InputExpressions;
+    for (const auto &[Slot, ID] : TargetInputExpressions[Summary.ID])
+      InputExpressions.push_back(
+          llvm::json::Object{{"callx_slot", static_cast<int64_t>(Slot)},
+                             {"expression", static_cast<int64_t>(ID)}});
     Summaries.push_back(llvm::json::Object{
         {"summary_id", static_cast<int64_t>(Summary.ID)},
         {"entry_slot", static_cast<int64_t>(Summary.EntrySlot)},
@@ -293,10 +396,15 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
         {"input_value_alternatives", std::move(Alternatives)},
         {"input_register_dependency_mask", Summary.InputRegisterMask},
         {"may_read_input_memory", Summary.ReadsInputMemory},
+        {"conditional_reuse_input_register_mask",
+         Summary.ReuseInputRegisterMask},
+        {"conditional_reuse_reads_input_memory", Summary.ReuseReadsInputMemory},
+        {"target_input_expressions", std::move(InputExpressions)},
         {"may_return", Summary.MayReturn},
         {"return_value", valueJSON(Summary.ReturnValue)},
         {"return_value_alternatives", std::move(Returns)},
         {"return_input_expression", std::move(Expression)},
+        {"return_input_alternatives", std::move(ReturnInputs)},
         {"input_scratch_words",
          static_cast<int64_t>(Summary.InputScratchWords)},
         {"output_scratch_words",
@@ -321,10 +429,18 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
       Row["callee_summary_id"] = static_cast<int64_t>(*Edge.CalleeSummaryID);
     if (Edge.CalleeEntrySlot)
       Row["callee_entry_slot"] = static_cast<int64_t>(*Edge.CalleeEntrySlot);
+    if (Edge.CallXTargetAddress)
+      Row["callx_target_address"] = addressText(*Edge.CallXTargetAddress);
     Edges.push_back(std::move(Row));
   }
+  llvm::json::Array Expressions;
+  for (size_t ID = 0; ID < Report.InputExpressions.size(); ++ID) {
+    auto Row = inputExpressionJSON(Report.InputExpressions[ID]);
+    Row["expression"] = static_cast<int64_t>(ID);
+    Expressions.push_back(std::move(Row));
+  }
   return llvm::json::Object{
-      {"schema", 3},
+      {"schema", 5},
       {"scope", "context_keyed_whole_function_cfg_summaries"},
       {"caller_entry_assumption", "recognized_cfg_and_function_roots"},
       {"unknown_indirect_entries_are_not_closed", true},
@@ -344,6 +460,14 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
        static_cast<int64_t>(BeyondEntrySites.size())},
       {"callx_sites_with_proven_context",
        static_cast<int64_t>(ProvenSites.size())},
+      {"proven_target_set_contexts",
+       static_cast<int64_t>(ProvenTargetSetContexts)},
+      {"proven_target_set_caller_contexts",
+       static_cast<int64_t>(ProvenTargetSetCallerContexts)},
+      {"callx_sites_with_proven_target_set_context",
+       static_cast<int64_t>(TargetSetSites.size())},
+      {"callx_sites_beyond_entry_with_proven_target_set_context",
+       static_cast<int64_t>(BeyondEntryTargetSetSites.size())},
       {"caller_scratch_precision",
        "bounded_complete_value_sets_with_explicit_input_generalization"},
       {"specializations_per_entry",
@@ -357,10 +481,15 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
        static_cast<int64_t>(Report.GeneralizedPublishedSummaries)},
       {"equivalent_generic_leaf_reuses",
        static_cast<int64_t>(Report.EquivalentGenericReuses)},
+      {"equivalent_specialized_summary_reuses",
+       static_cast<int64_t>(Report.EquivalentSpecializedReuses)},
       {"skipped_non_callx_root_specializations",
        static_cast<int64_t>(Report.SkippedNonCallXRootSpecializations)},
       {"constant_branch_successors_skipped",
        static_cast<int64_t>(Report.SkippedConstantBranchSuccessors)},
+      {"instantiated_target_input_expressions",
+       static_cast<int64_t>(Report.InstantiatedTargetInputExpressions)},
+      {"target_input_expressions", std::move(Expressions)},
       {"projected_unused_register_facts",
        static_cast<int64_t>(Report.ProjectedRegisters)},
       {"projected_unread_scratch_snapshots",
