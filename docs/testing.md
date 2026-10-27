@@ -7389,6 +7389,14 @@ isolation.
 
 ## Modular MBA simplification
 
+`SymExpr.ZeroExtendedUnsignedRemaindersUseTheirNarrowOperands` checks
+zero-extended unsigned remainder operands at equal and different widths through
+257 bits. The remainder is computed at their common narrow width and then
+extended, including the total bitvector case `x % 0 = x`. Exhaustive byte pairs
+and independent APInt oracles cover zero divisors and wide carriers. Negative
+controls retain unknown numerator/divisor high bits and the original-width
+all-ones result of unsigned division by zero.
+
 `SymMBAMaskRelation.*OrMaskSubtraction*` and
 `SubtractsAnEntireKnownOrMaskWithoutBorrow` check the exact modular identity
 `(C | X) - C = X & ~C`, including absorption by an enclosing OR. The ordinary
