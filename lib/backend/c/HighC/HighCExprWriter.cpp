@@ -2099,29 +2099,15 @@ std::string HighCWriter::resolveCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
-  if (E.IntrinsicId == Intrinsic::X86FourSourceMemory) {
-    std::vector<std::string> Args;
-    for (const auto &V : E.Operands) {
-      if (!V)
-        throw std::invalid_argument(X86FourSourceMalformed);
-      Args.push_back(intrinsicOperandStr(*V));
-    }
-    return renderX86FourSourceExpression(Opts.TheArch, E, Args,
-                                         typeToC(E.Type));
-  }
-  if (isX86CompactMemory(E.IntrinsicId)) {
-    std::vector<std::string> Args;
-    for (const auto &V : E.Operands) {
-      if (!V)
-        throw std::invalid_argument(X86CompactMalformed);
-      Args.push_back(intrinsicOperandStr(*V));
-    }
-    return renderX86CompactExpression(Opts.TheArch, E, Args, typeToC(E.Type));
-  }
+  if (E.IntrinsicId == Intrinsic::X86FourSourceMemory)
+    return renderX86FourSourceExpression(
+        Opts.TheArch, E, x86NativeMemoryArguments(E), typeToC(E.Type));
+  if (isX86CompactMemory(E.IntrinsicId))
+    return renderX86CompactExpression(
+        Opts.TheArch, E, x86NativeMemoryArguments(E), typeToC(E.Type));
   if (isX86AtomicIntrinsic(E.IntrinsicId))
-    return renderX86APXAtomicExpression(
-        Opts.TheArch, E,
-        [this](const HighExpr &V) { return intrinsicOperandStr(V); });
+    return renderX86APXAtomicExpression(Opts.TheArch, E,
+                                        x86NativeMemoryArguments(E));
   if (isPortableX87Intrinsic(E.IntrinsicId))
     return renderPortableX87Call(E);
   if (x87ValueInfo(E.IntrinsicId) &&
@@ -3545,9 +3531,13 @@ bool HighCWriter::knownVoidCall(const HighExpr &E) const {
 }
 
 std::string HighCWriter::intrinsicOperandStr(const HighExpr &E) {
+  return exprStr(intrinsicOperandExpr(E));
+}
+
+const HighExpr &HighCWriter::intrinsicOperandExpr(const HighExpr &E) const {
   const HighExpr *P = peelIntegerViewOps(&E);
   if (!P)
-    return exprStr(E);
+    return E;
   // A view wider than its source extends it, with zeros or its sign.  The
   // source's text says so only where C's own conversion to the wide type
   // extends the same way: zeros for an unsigned source, its sign for a
@@ -3565,12 +3555,12 @@ std::string HighCWriter::intrinsicOperandStr(const HighExpr &E) {
     const bool SourceSigned =
         P->Type->Kind == NdTypeKind::Int && P->Type->IsSigned;
     if ((Zero && Sign) || (Zero && SourceSigned) || (Sign && !SourceSigned))
-      return exprStr(E);
+      return E;
   }
   if (P->Kind == ExprKind::Var || P->Kind == ExprKind::Phi ||
       P->Kind == ExprKind::Const || P->Kind == ExprKind::Load)
-    return exprStr(*P);
-  return exprStr(E);
+    return *P;
+  return E;
 }
 
 const HighExpr *HighCWriter::peelIntegerViewOps(const HighExpr *E) const {
@@ -3599,7 +3589,7 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
   if (ProjectImageBacking && ProjectFrameAliasesIntoStorage)
     if (const auto Disp = certifiedFrameStorageDisplacement(E))
       return frameRecordAddress(*Disp);
-  if (E.Kind == ExprKind::Const)
+  if (ProjectImageBacking && E.Kind == ExprKind::Const)
     if (auto Anchored = anchoredOwnerAddress(E))
       return *Anchored;
   if (auto VA = constAddress(E)) {
@@ -3608,7 +3598,8 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
     if (auto Backing = imageBackingAddress(*VA))
       return *Backing;
   }
-  const HighExpr *Inner = peelIntegerViewOps(&E);
+  const HighExpr *Inner =
+      ProjectImageBacking ? peelIntegerViewOps(&E) : &intrinsicOperandExpr(E);
   if (!Inner)
     Inner = &E;
   if (Inner->Kind == ExprKind::BinOp &&
@@ -3634,7 +3625,7 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
       // A displacement anchored before its owner's section is that object's
       // address less the distance, which the integer base adds to, whatever
       // object lies at the displacement itself.
-      if (!Minus)
+      if (ProjectImageBacking && !Minus)
         if (auto Anchored = anchoredOwnerAddress(*Off)) {
           constexpr int AddPrec = 9;
           std::string B = addrStr(*Base, AddPrec, ProjectImageBacking);

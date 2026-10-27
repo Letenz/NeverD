@@ -1306,6 +1306,58 @@ static std::optional<std::string> compileForTarget(const std::string &Source,
   return Errors ? (*Errors)->getBuffer().str() : std::string("failed");
 }
 
+TEST(HighCIntegerWidths, SegmentOffsetsPreserveIntegerExtensions) {
+#if defined(__x86_64__) && defined(__linux__)
+  std::vector<HighFunc> Functions;
+  std::string Checks = R"(
+    uintptr_t saved_gs;
+    volatile uint32_t word = 0x1234abcd;
+    if (syscall(SYS_arch_prctl, ARCH_GET_GS, &saved_gs)) return 2;
+)";
+  for (uint16_t Bytes : {2, 4})
+    for (bool Signed : {false, true})
+      for (bool SignExtend : {false, true}) {
+        const auto Type = NdType::makeInt(Bytes, Signed);
+        HighFunc F;
+        F.Name = "segment_" + std::to_string(Bytes) + "_" +
+                 std::to_string(Signed) + "_" + std::to_string(SignExtend);
+        F.Params = {{"arg0", Type}};
+        F.ReturnType = NdType::makeInt(4, false);
+        auto Offset = HighExpr::makeUnary(
+            SignExtend ? NdOp::INT_SEXT : NdOp::INT_ZEXT, parameter(0, Type));
+        Offset->Type = NdType::makeInt(8, false);
+        returnValue(F, HighExpr::makeLoad(Offset, F.ReturnType,
+                                          NdMemoryOrdering::None,
+                                          NdMemoryAddressSpace::X86GS));
+        const auto Bits = Bytes == 2 ? "0xf234" : "0xf2345678";
+        const auto Expected = !SignExtend  ? Bits
+                              : Bytes == 2 ? "0xfffffffffffff234"
+                                           : "0xfffffffff2345678";
+        Checks +=
+            "    if (syscall(SYS_arch_prctl, ARCH_SET_GS, (uintptr_t)&word - "
+            "UINT64_C(" +
+            std::string(Expected) + "))) return 3;\n";
+        appendCheck(Checks, F.Name, argument(Type, Bits), "0x1234abcd");
+        Functions.push_back(std::move(F));
+      }
+  Checks +=
+      "    if (syscall(SYS_arch_prctl, ARCH_SET_GS, saved_gs)) return 4;\n";
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit(Functions, OS, Options));
+  OS.flush();
+  Source += "\n#include <asm/prctl.h>\n#include <sys/syscall.h>\n"
+            "#include <unistd.h>\n";
+  for (const auto *Opt : {"-O0", "-O2"})
+    compileAndExecute(Source + executionHarness(Checks), false, true, Opt);
+#else
+  GTEST_SKIP() << "native GS-base execution requires Linux x86-64";
+#endif
+}
+
 TEST(HighCIntegerWidths, A32BitTargetSpellsA128BitIntegerAsBitInt) {
   // Four ARM32 registers moved as one 16-byte value: C has no __int128 on a
   // target with 32-bit pointers, but _BitInt(128) holds the same bits.

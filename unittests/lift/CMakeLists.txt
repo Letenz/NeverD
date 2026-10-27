@@ -795,6 +795,12 @@ add_neverd_unittest(NeverDX86APXAtomicSourceTests
   x86/X86APXAtomicSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 
+add_neverd_unittest(NeverDX86AtomicSegmentTests
+  x86/X86AtomicSegmentTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86AtomicSegmentTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
 add_neverd_unittest(NeverDX86LegacyEncodingSourceTests
   x86/X86APXAtomicSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
@@ -1956,6 +1962,12 @@ if(TARGET neverd)
 endif()
 
 # Keep C pointer and integer projection regressions independently runnable.
+add_neverd_unittest(NeverDHighCIntegerWidthTests
+  core/HighCIntegerWidthTests.cpp
+  LINK_COMPONENTS BackendC)
+target_compile_definitions(NeverDHighCIntegerWidthTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+
 add_neverd_unittest(NeverDCPointerProjectionTests
   core/HighCPointerAddressTests.cpp
   LINK_COMPONENTS Pipeline BackendC
