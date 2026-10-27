@@ -6,13 +6,15 @@
     "neverd_provenance_test": "eac3cc4c34e224c16453696992115ff121121a72",
     "neverd_base": "6145ff90abfae3b6ae4ce60ceb8f60b90d751660",
     "llvm": "cf2bde2743795897aef1f1f3712a9fd40a19252d",
-    "neverc": "b6739629fd373018a59d6b859b5ee919eabaeb15",
+    "neverc_builtin_qualification": "b6739629fd373018a59d6b859b5ee919eabaeb15",
+    "neverc": "880d1e96ff48f41c5069c6d8f9839eaa8f37d64a",
     "prior_native_sdk": "f963558944a686f2c6d2dfb8311011fb6749c530",
     "production_sdk": "neverd-llvm-v23.0.0-r6",
     "production_sdk_commit": "06788fb19109851e6a6b9f109a2b8027a606f0c6",
     "production_llvm_gitlink": "03270359c2ed8f6806533d3832a947bf883a6f69",
     "capstone_gitlink": "88f3e3966565fb9383cd4fbb20c051c9aa22f309",
-    "release_and_pins_changed": false
+    "release_and_pins_changed": false,
+    "neverd_integrated": "dabb241baa6cc18b0fd9988f541922a3c64d446e"
   },
   "semantic_reference": {
     "title": "AMD 3DNow! Technology Manual, FEMMS",
@@ -50,7 +52,28 @@
     "legacy_negative_routes": 324,
     "legacy_positive_routes": 6,
     "physical_femms_executed": false,
-    "native_host_feature_test": "Clean refusal without state/result mutation; host lacks CPUID 3DNow."
+    "native_host_feature_test": "Clean refusal without state/result mutation; host lacks CPUID 3DNow.",
+    "native_new_sdk": {
+      "file": "native-3dnow-sdk-tests.xml",
+      "sha256": "2d0c0f6a9217f7c35bf0754e9b0bae8d3e1f54814f1ece35311c938fefbdf1da",
+      "tests": 108,
+      "failed": 0,
+      "skipped": 0
+    },
+    "integrated_native": {
+      "file": "integrated-native-tests.xml",
+      "sha256": "8b6239f76587087f62299c637d17e7ba53c4eab9257e03bcdf273dc837a9f5a9",
+      "tests": 134,
+      "failed": 0,
+      "skipped": 0
+    },
+    "integrated_pinned": {
+      "file": "integrated-pinned-tests.xml",
+      "sha256": "428f531c97e39fe80bb8dd1068480f5e5da4ff2310ceb0953b541cc5f16239db",
+      "tests": 134,
+      "failed": 0,
+      "skipped": 0
+    }
   },
   "compiler_validation": {
     "llvm_lit": {
@@ -71,14 +94,39 @@
       "COFF",
       "Mach-O"
     ],
-    "neverc": {
+    "neverc_initial": {
       "file": "neverc-3dnow-tests.xml",
       "sha256": "b3b33912206c0731325570db5648bfe2011d7e5447b74b903d48ada8eccf6dca",
       "tests": 4,
       "failed": 0,
       "skipped": 0
     },
-    "new_neverc_frontend_compilations": 18,
+    "neverc_headers": {
+      "file": "neverc-3dnow-header-guards-tests.xml",
+      "sha256": "77b75258bb436cadf55ee946a292dddc352c9871b2b989085e3e07da6e9db844",
+      "tests": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    "builtin_and_header_frontend_compilations": 54,
+    "missing_target_feature_diagnostics": 12,
+    "standard_header_value_interfaces": 25,
+    "standard_header_reset_interfaces": 1,
+    "installed_x86_headers": {
+      "component": "x86-resource-headers",
+      "source_commit": "880d1e96ff48f41c5069c6d8f9839eaa8f37d64a",
+      "installed_header": "/mnt/data/neverd-x86-femms-owned/header-install/lib/neverc/3389/include/mm3dnow.h",
+      "header_sha256": "f5c61e71dead207a3c005ba187e6401ba580e5b6798e4289c24d8b4ff560d1bd",
+      "compile_profile": "x64 ELF O2, all 50 register/memory wrappers, installed x86 headers first",
+      "assembly_sha256": "c04f991982b3ba1e0b2686a0a9964ea58548a43a5eee7e5461d8c7526670b5ad"
+    },
+    "header_import": {
+      "upstream_revision": "3b5b5c1ec4a3095ab096dd780e84d7ab81f3d7ff",
+      "upstream_tag": "llvmorg-18.1.8",
+      "path": "clang/lib/Headers/mm3dnow.h",
+      "original_sha256": "78298363b72430c100430018ca0f04309325960ed9921cb720bc8bec01dfe8b7",
+      "license": "Apache-2.0 WITH LLVM-exception"
+    },
     "builtin_spellings": 25,
     "native_operations": 24,
     "legalization_counterexample": {
@@ -93,7 +141,7 @@
     "wrappers_per_object": 50,
     "input_pairs": 8,
     "rounding_controls": 4,
-    "comparisons": 16000,
+    "comparisons": 25600,
     "observation": "Packed result bits, x87 CW/SW/abridged tags, empty tags after final FEMMS and input canaries.",
     "routes": [
       {
@@ -265,6 +313,111 @@
             },
             {
               "file": "qemu-bridge-bitcode/O2.o",
+              "bytes": 3416,
+              "sha256": "6c98a6d82b2c20c3322e7db67256e38f848bb8c661892f4b44f7eaee945cc00b"
+            }
+          ]
+        }
+      },
+      {
+        "route": "NeverC x64 standard headers",
+        "qualification": [
+          {
+            "optimization": "-O0",
+            "mode": 64,
+            "value_comparisons": 1600,
+            "owned_context_comparisons": 0
+          },
+          {
+            "optimization": "-O2",
+            "mode": 64,
+            "value_comparisons": 1600,
+            "owned_context_comparisons": 0
+          }
+        ],
+        "report_sha256": "e3d92557b33248af455bfc5d2e1111779d126e4fa3d99c59713491327c01085f",
+        "objects": {
+          "files": 2,
+          "bytes": 12984,
+          "sha256": "b101327deb5ab2ece78cc0b6ba91201403938b26bb07946f4d5af50ccbe316c1",
+          "entries": [
+            {
+              "file": "qemu-headers-neverc/O0.o",
+              "bytes": 9496,
+              "sha256": "c5c481053c1fb96768d1782f6ed6c4e1e38b0ed99e244e4129a7553ab4ac5768"
+            },
+            {
+              "file": "qemu-headers-neverc/O2.o",
+              "bytes": 3488,
+              "sha256": "14c19240b854721519be23b71ff8f7cc286aa05ec7f00523eb9e2e64cbed7a3c"
+            }
+          ]
+        }
+      },
+      {
+        "route": "NeverC headers text IR to LLVM x64",
+        "qualification": [
+          {
+            "optimization": "-O0",
+            "mode": 64,
+            "value_comparisons": 1600,
+            "owned_context_comparisons": 0
+          },
+          {
+            "optimization": "-O2",
+            "mode": 64,
+            "value_comparisons": 1600,
+            "owned_context_comparisons": 0
+          }
+        ],
+        "report_sha256": "e3d92557b33248af455bfc5d2e1111779d126e4fa3d99c59713491327c01085f",
+        "objects": {
+          "files": 2,
+          "bytes": 12840,
+          "sha256": "68c7ee1fa9cc115414884cf4b07492e2313c586996ed21ae37d6208c81053c5a",
+          "entries": [
+            {
+              "file": "qemu-headers-text/O0.o",
+              "bytes": 9424,
+              "sha256": "b6808ac878fe4c28245c0fdbe68f242fb1a69147c55cefe79ed57825dd78679c"
+            },
+            {
+              "file": "qemu-headers-text/O2.o",
+              "bytes": 3416,
+              "sha256": "6c98a6d82b2c20c3322e7db67256e38f848bb8c661892f4b44f7eaee945cc00b"
+            }
+          ]
+        }
+      },
+      {
+        "route": "NeverC headers bitcode to LLVM x64",
+        "qualification": [
+          {
+            "optimization": "-O0",
+            "mode": 64,
+            "value_comparisons": 1600,
+            "owned_context_comparisons": 0
+          },
+          {
+            "optimization": "-O2",
+            "mode": 64,
+            "value_comparisons": 1600,
+            "owned_context_comparisons": 0
+          }
+        ],
+        "report_sha256": "e3d92557b33248af455bfc5d2e1111779d126e4fa3d99c59713491327c01085f",
+        "objects": {
+          "files": 2,
+          "bytes": 12840,
+          "sha256": "98f2ef6212151167a2c8bfc2c13dc6a387d40d4c23b047008cb568b77f8a2d59",
+          "entries": [
+            {
+              "file": "qemu-headers-bitcode/O0.o",
+              "bytes": 9424,
+              "sha256": "b6808ac878fe4c28245c0fdbe68f242fb1a69147c55cefe79ed57825dd78679c"
+            },
+            {
+              "file": "qemu-headers-bitcode/O2.o",
               "bytes": 3416,
               "sha256": "6c98a6d82b2c20c3322e7db67256e38f848bb8c661892f4b44f7eaee945cc00b"
             }

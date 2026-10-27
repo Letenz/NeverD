@@ -2386,7 +2386,9 @@ as overlapping physical registers.
 `NeverDX87MMXStateTests` checks all eight TOP values, three tag patterns,
 both strictness modes and both reset instructions, plus refusal, feature
 preflight and ten compiled output objects. The focused legacy, capability,
-x87 conversion/fault and reset suites pass 107 tests on each SDK (214 total).
+x87 conversion/fault and reset suites cover 108 distinct tests per SDK.
+After integrating `fc0dc696c9`, these suites plus the affected constant-branch
+suite pass 134/134 on each SDK (268 total).
 The native-evaluator feature test verifies clean refusal on this host, whose
 CPUID does not advertise 3DNow; it supplies no physical FEMMS result.
 
@@ -2413,14 +2415,20 @@ that failure and passes after the fix. The 48-function codegen regression
 covers i386/x64, O0/O2, default O2 IR optimization, and x64 ELF/COFF/Mach-O.
 It and the adjacent MMX/FEMMS tests pass 27 lit cases.
 
-[NeverC](https://github.com/NeverSight/NeverC/commit/b6739629fd373018a59d6b859b5ee919eabaeb15)
+[NeverC](https://github.com/NeverSight/NeverC/commit/880d1e96ff48f41c5069c6d8f9839eaa8f37d64a)
 already had 25 builtin spellings for these 24 operations, including the two
-PSWAPD vector types. New frontend tests verify all spellings through IR and
-both assembly dialects in three object formats. Its shared QEMU oracle checks
+PSWAPD vector types. It now also installs `<mm3dnow.h>` and exposes the standard
+25 `_m_*` value interfaces plus `_m_femms()` through `<x86intrin.h>`. The header
+retains the LLVM 18.1.8 source license and import revision. New frontend tests
+verify direct builtins and both header entry points through IR and both
+assembly dialects in three object formats: 54 positive compilations and 12
+missing-target-feature diagnostics. Its shared QEMU oracle checks
 50 register/memory wrappers against independently encoded original
-instructions, with eight input pairs and four x87 rounding controls. Five
-O0/O2 routes pass 16,000 value/state/canary comparisons: direct NeverC,
+instructions, with eight input pairs and four x87 rounding controls. Eight
+O0/O2 routes pass 25,600 value/state/canary comparisons: direct NeverC,
 full LLVM i386 and x64, NeverC text IR to LLVM, and NeverC bitcode to LLVM.
+The three NeverC routes additionally repeat the checks through the standard
+header interfaces, giving eight routes in total.
 The observed states include control, status and empty final tags; the oracle
 does not depend on substituting scalar floating-point arithmetic.
 
