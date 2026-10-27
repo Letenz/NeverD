@@ -13399,3 +13399,8 @@ Captured HFA call targets use the same checked source signature as record argume
 HighC represents an address-only function symbol without a known signature as a linker-labelled byte alias. The address supplies no guessed return type; typed callback arguments retain their declared function-pointer conversion and source navigation retains the original symbol and address. Source LLVM requests the existing bounded omitted-callee reader even when an arity summary is complete. It retains fixed x64/ARM64 machine-word integer/pointer declarations only when recovery leaves the carriers and types unchanged. Explicit source contracts keep precedence; bodies, exception contracts and native lifting permissions are not supplied. The memo distinguishes source-type reads and retains the same declaration decision on warm recovery.
 
 Known exception metadata rejects a source-only declaration before its body is read; ordinary signature reads remain unchanged.
+
+The shared MBA mask partition owner retains complementary XOR words after
+opposite modular offsets. It can reduce `M-(M&Q)` without borrowing and combine
+it with the matching `M|P` when `Q=~P`. Offset differences are ignored only
+below a proved mask window; no runtime input value is assumed.

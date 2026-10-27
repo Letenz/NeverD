@@ -868,6 +868,11 @@ SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
                     [&](SymRef R) { return Ctx.op(R) == SymOp::Not; }) ||
        llvm::any_of(Ctx.operands(B),
                     [&](SymRef R) { return Ctx.op(R) == SymOp::Not; }));
+  const bool MaskedDifferencePair =
+      BitwiseTypes && AOp != SymOp::Xor && Ctx.numOperands(A) == 2 &&
+      Ctx.numOperands(B) == 2 && llvm::any_of(Ctx.operands(A), [&](SymRef R) {
+        return Ctx.isConst(R) && llvm::is_contained(Ctx.operands(B), R);
+      });
   bool SharedPartition = false;
   const bool PartitionTypes = (AOp == SymOp::And && BOp == SymOp::And) ||
                               (AOp == SymOp::Or && BOp == SymOp::Or);
@@ -890,7 +895,8 @@ SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
       }
     }
   }
-  if (!isDirectComplement(Ctx, A, B) && !BitwisePair && !SharedPartition)
+  if (!isDirectComplement(Ctx, A, B) && !BitwisePair && !SharedPartition &&
+      !MaskedDifferencePair)
     return E;
 
   // The pair is a plausible complement. Bound the linear matcher and its
