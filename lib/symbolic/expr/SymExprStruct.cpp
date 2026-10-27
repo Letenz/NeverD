@@ -549,6 +549,22 @@ SymRef SymContext::mkEq(SymRef A, SymRef B) {
   }
   if (A == B)
     return mkTrue();
+  // A comparison of two constant tags selects the original condition (or
+  // its complement). Constants are interned at their exact width, so this
+  // needs only node identities, even for wide tags or a large condition DAG.
+  for (unsigned I = 0; I != 2; ++I) {
+    const auto Selected = I ? B : A, Literal = I ? A : B;
+    if (op(Selected) != SymOp::Ite || !isConst(Literal))
+      continue;
+    const auto T = operand(Selected, 1), E = operand(Selected, 2);
+    if (!isConst(T) || !isConst(E))
+      continue;
+    if (Literal == T)
+      return operand(Selected, 0);
+    if (Literal == E)
+      return mkNot(operand(Selected, 0));
+    return mkFalse();
+  }
   // Equality is commutative, so order the operands for canonicity.
   if (B < A)
     std::swap(A, B);
