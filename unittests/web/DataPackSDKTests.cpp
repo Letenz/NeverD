@@ -309,7 +309,7 @@ TEST_F(WebDataPackSDK, DecodedCacheLimitPreservesAlreadyPublishedBytes) {
 #ifdef NEVERD_WEB_TEST_CLI
 TEST_F(WebDataPackSDK, CLIUsesSharedConsumersWithAnUnusableExternalPATH) {
   const auto Capabilities = take(neverd_web_capabilities_json());
-  const auto *Analyses = Capabilities.getAsObject()->getArray("analyses");
+  const auto *Analyses = Capabilities.getAsObject()->getArray("analysis");
   ASSERT_NE(Analyses, nullptr);
   std::optional<bool> ArchiveAvailable;
   for (const auto &Analysis : *Analyses)
