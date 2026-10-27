@@ -60,6 +60,7 @@ class SPFaultEvidenceTests(unittest.TestCase):
             self.assertFalse(profile["fault_observations"]["stack_abi_qualified"])
             self.assertIn("-DSP_TEST_CASE_COUNT=" + str(count), profile["flags"])
             self.assertIn("-Werror", profile["flags"])
+            self.assertEqual(profile["flags"][-1], "-Wno-unused-parameter")
             self.assertEqual(profile["test_reports"], {"stack": name})
         for name in ("immediate", "register"):
             self.assertIn("control", verifier.CONFIG["profiles"][name]["test_reports"])

@@ -248,7 +248,8 @@
         "-Wall",
         "-Wextra",
         "-Werror",
-        "-fno-strict-aliasing"
+        "-fno-strict-aliasing",
+        "-Wno-unused-parameter"
       ],
       "test_reports": {
         "stack": "sp-writeback"
@@ -271,7 +272,8 @@
         "-Wall",
         "-Wextra",
         "-Werror",
-        "-fno-strict-aliasing"
+        "-fno-strict-aliasing",
+        "-Wno-unused-parameter"
       ],
       "test_reports": {
         "stack": "sp-vector-writeback"
@@ -294,7 +296,8 @@
         "-Wall",
         "-Wextra",
         "-Werror",
-        "-fno-strict-aliasing"
+        "-fno-strict-aliasing",
+        "-Wno-unused-parameter"
       ],
       "test_reports": {
         "stack": "sp-pair"
@@ -317,7 +320,8 @@
         "-Wall",
         "-Wextra",
         "-Werror",
-        "-fno-strict-aliasing"
+        "-fno-strict-aliasing",
+        "-Wno-unused-parameter"
       ],
       "test_reports": {
         "stack": "sp-neon"
@@ -340,7 +344,8 @@
         "-Wall",
         "-Wextra",
         "-Werror",
-        "-fno-strict-aliasing"
+        "-fno-strict-aliasing",
+        "-Wno-unused-parameter"
       ],
       "test_reports": {
         "stack": "sp-neon-tail"
