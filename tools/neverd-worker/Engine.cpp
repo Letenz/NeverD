@@ -446,16 +446,18 @@ void canonicalizeAddresses(Json &value) {
       const auto &key = it.key();
       if (key == "addresses" && it->is_array()) {
         for (auto &address : *it)
-          if (address.is_string())
-            address = hexAddress(parseAddress(address.get<std::string>()));
+          if (address.is_string()) {
+            auto &text = address.get_ref<std::string &>();
+            text = hexAddress(parseAddress(text));
+          }
       } else if ((key == "addr" || key == "va" || key == "address" ||
                   key == "start" || key == "end" || key == "entry" ||
                   key == "iat_addr" || key == "from" || key == "to" ||
                   unwind_query::isAddressField(key)) &&
                  it->is_string()) {
-        const auto &text = it->get_ref<const std::string &>();
+        auto &text = it->get_ref<std::string &>();
         if (text.starts_with("0x") || text.starts_with("0X"))
-          *it = hexAddress(parseAddress(text));
+          text = hexAddress(parseAddress(text));
       } else
         canonicalizeAddresses(*it);
     }

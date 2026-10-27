@@ -15213,6 +15213,8 @@ The `--include-ranges` option adds complete unpaged range responses to the same
 byte, payload, timestamp and memory oracles. Native SDK adapter tests also keep
 large row/range JSON strings alive across queries, edits and session destruction,
 checking exact compact bytes for high addresses, empty results and short tails.
+Mock and native worker checks assert complete range payloads, including totals,
+repeated queries, empty results and read-only replicas.
 
 `tools/neverd-bench/patch-paired.py --worker-history` compares complete CLI
 commands and durable worker commit/undo/redo against two explicit binary
