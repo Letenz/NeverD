@@ -3198,6 +3198,13 @@ uses authored raw bodies. The real Qt picker test uses 417 raw functions to
 cross the page boundary, then checks search, selection, address zero, displaced
 pairs, undo, cancellation and revision invalidation. These are UI and inventory
 contracts, not matching-quality or throughput measurements.
+The core override regressions exhaust equal and unequal ambiguity groups, mix
+removed and surviving groups across edits, and remove two groups in one edit.
+Every intermediate state must bind after serialization; consecutive undo/redo
+must reproduce its original ordering, memberships and coverage. Native SDK and
+worker cases consume the last candidates, check invalidated inventories, and
+reopen the edited report through the strict reader, including actual worker
+file save and restart.
 The CLI regression sends SIGINT during each input's actual hashing phase,
 requires exit 3 with empty result output, preserves an existing saved report,
 then runs an ordinary comparison again. Child SIGINT delivery is tested on

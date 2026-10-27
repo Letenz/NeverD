@@ -1427,6 +1427,86 @@ TEST_F(BinaryDiffSDK, AmbiguityInventoryPagesEveryRetainedCandidate) {
             render(Original));
 }
 
+TEST_F(BinaryDiffSDK,
+       ResolvingLastCandidatesKeepsInventoryAndReportsConsistent) {
+  for (const auto [PCount, SCount] :
+       {std::pair(3u, 4u), std::pair(4u, 3u), std::pair(4u, 4u)}) {
+    SCOPED_TRACE(PCount);
+    SCOPED_TRACE(SCount);
+    const auto Copies = [&](unsigned Count, uint64_t Base) {
+      constexpr unsigned Stride = 16;
+      std::vector<uint8_t> Bytes(Count * Stride, 0xcc);
+      for (unsigned I = 0; I < Count; ++I) {
+        const auto Code = body();
+        std::copy(Code.begin(), Code.end(), Bytes.begin() + I * Stride);
+      }
+      const auto S = input(Bytes, Base);
+      EXPECT_GE(neverd_session_discover_functions(S), Count);
+      return S;
+    };
+    const auto P = Copies(PCount, 0x1000);
+    const auto S = Copies(SCount, 0x8000);
+    const char *Options = R"({"discover":false,"use_names":false})";
+    const auto C = compare(P, S, Options), Reopened = compare(P, S, Options);
+    const auto Initial = parsed(neverd_comparison_export_json(C));
+    const auto *Groups = Initial.getAsObject()->getArray("ambiguities");
+    ASSERT_TRUE(Groups);
+    ASSERT_EQ(Groups->size(), 1u) << render(Initial);
+    const auto &Group = *Groups->front().getAsObject();
+    std::vector<std::string> Primary, Secondary;
+    for (const auto &Address : *Group.getArray("primary"))
+      Primary.push_back(Address.getAsString()->str());
+    for (const auto &Address : *Group.getArray("secondary"))
+      Secondary.push_back(Address.getAsString()->str());
+    const size_t Pairs = std::min(Primary.size(), Secondary.size());
+    ASSERT_GT(Pairs, 1u);
+    std::vector<std::string> States{take(neverd_comparison_export_json(C))};
+    for (size_t I = 0; I < Pairs; ++I) {
+      const auto Edit = render(llvm::json::Object{{"kind", "match"},
+                                                  {"primary", Primary[I]},
+                                                  {"secondary", Secondary[I]}});
+      ASSERT_EQ(neverd_comparison_override_json(C, Edit.c_str()), 1);
+      States.push_back(take(neverd_comparison_export_json(C)));
+      // Reopen every intermediate save in a separate comparison, preserving
+      // the original's undo/redo history for the complete editing sequence.
+      ASSERT_EQ(neverd_comparison_restore_json(Reopened, States.back().c_str()),
+                1)
+          << take(neverd_comparison_last_error(Reopened));
+      EXPECT_EQ(take(neverd_comparison_export_json(Reopened)), States.back());
+      const auto Summary = parsed(neverd_comparison_summary_json(C));
+      EXPECT_EQ(
+          Summary.getAsObject()->getObject("counts")->getInteger("ambiguities"),
+          I + 1 < Pairs ? 1 : 0);
+    }
+    for (const bool IsSecondary : {false, true}) {
+      const auto Side = IsSecondary ? "secondary" : "primary";
+      const auto Inventory =
+          render(llvm::json::Object{{"side", Side}, {"kind", "ambiguous"}});
+      auto Page =
+          parsed(neverd_comparison_functions_json(C, Inventory.c_str()));
+      EXPECT_EQ(Page.getAsObject()->getInteger("total"), 0);
+      const auto &Remaining = IsSecondary ? Primary : Secondary;
+      if (Remaining.size() > Pairs) {
+        const auto Query = render(llvm::json::Object{
+            {"side", Side}, {"ambiguous_with", Remaining.back()}});
+        Page = parsed(neverd_comparison_functions_json(C, Query.c_str()));
+        EXPECT_EQ(Page.getAsObject()->getInteger("total"), 0);
+        EXPECT_EQ(
+            Page.getAsObject()->getObject("ambiguity")->getBoolean("active"),
+            false);
+      }
+    }
+    for (size_t I = Pairs; I > 0; --I) {
+      ASSERT_EQ(neverd_comparison_undo(C), 1);
+      EXPECT_EQ(take(neverd_comparison_export_json(C)), States[I - 1]);
+    }
+    for (size_t I = 0; I < Pairs; ++I) {
+      ASSERT_EQ(neverd_comparison_redo(C), 1);
+      EXPECT_EQ(take(neverd_comparison_export_json(C)), States[I + 1]);
+    }
+  }
+}
+
 TEST_F(BinaryDiffSDK, ScalarValidationBindsNativeLiftsAndExplicitInputDomain) {
   const auto A = input({0x89, 0xf8, 0x83, 0xc0, 3, 0xc3});
   const auto B =

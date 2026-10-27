@@ -1328,6 +1328,11 @@ callee occurrences before admitting positional pairs, and retains exact
 similarity ties even at zero ambiguity margin. `Features` keeps unresolved calls
 as `NoIndex` positions while excluding them from graph edges and import sets.
 These are shared matching rules, independent of transport and UI.
+The same core owns ambiguity changes during manual correspondence edits. It
+removes groups exhausted on either side before rebuilding coverage and lookup
+indices. The override effect retains changed and removed groups at their
+original indices; undo merges them back in order without rematching functions.
+Persisted groups therefore always have candidates on both sides.
 The C API's `functions_json` inventory projects the same accepted mappings and
 retained ambiguity groups. `ambiguous_with` binds an opposite-side function to
 the full group's target-side inventory, with ordinary search/sort/paging; it

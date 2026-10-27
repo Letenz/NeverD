@@ -268,15 +268,18 @@ struct OverrideEffect {
   /// Matches it measured again because a function they call changed
   /// counterpart, as they were.
   std::vector<FunctionMatch> Remeasured;
-  /// Ambiguities it changed, by index, as they were.
+  /// Ambiguities it changed or removed, in increasing original index order,
+  /// as they were before the edit.
   std::vector<std::pair<uint32_t, Ambiguity>> Ambiguities;
 };
 
 /// Applies one more override to a finished comparison without comparing
 /// again: the pair forms or dissolves, the functions it frees become
 /// unmatched and leave any ambiguity, and the deltas it affects are
-/// measured again.  Returns an error, leaving \p Result unchanged, when
-/// the override names no function or contradicts the result (unpairing or
+/// measured again. Groups without candidates on both sides are removed;
+/// their remaining functions become unmatched. Returns an error, leaving
+/// \p Result unchanged, when the override names no function or contradicts
+/// the result (unpairing or
 /// confirming an absent pair).
 std::optional<std::string> applyOverride(ComparisonResult &Result,
                                          const Program &Primary,

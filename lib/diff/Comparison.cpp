@@ -1293,7 +1293,7 @@ std::optional<std::string> applyOverride(ComparisonResult &R,
       Kept.push_back(*E.Added);
     R.Matches = std::move(Kept);
     // Paired functions leave their ambiguities.
-    if (E.Added)
+    if (E.Added) {
       for (uint32_t I = 0; I < R.Ambiguities.size(); ++I) {
         Ambiguity &Amb = R.Ambiguities[I];
         const bool HasA = llvm::is_contained(Amb.Primary, *A);
@@ -1304,6 +1304,13 @@ std::optional<std::string> applyOverride(ComparisonResult &R,
         llvm::erase(Amb.Primary, *A);
         llvm::erase(Amb.Secondary, *B);
       }
+      // A remaining function without any opposite-side candidates is
+      // unmatched. Keep the original groups in the effect for undo, rather
+      // than retaining one-sided or empty groups in the live result.
+      llvm::erase_if(R.Ambiguities, [](const Ambiguity &Amb) {
+        return Amb.Primary.empty() || Amb.Secondary.empty();
+      });
+    }
     reindex(R, Primary.Functions.size(), Secondary.Functions.size());
     // The new pair, and every pair calling a function whose counterpart
     // changed, measure again.
@@ -1361,9 +1368,28 @@ void revertOverride(ComparisonResult &R, const Program &Primary,
     for (const FunctionMatch &M : E.Removed)
       Kept.push_back(M);
     R.Matches = std::move(Kept);
-    for (const auto &[Index, Before] : E.Ambiguities)
-      if (Index < R.Ambiguities.size())
-        R.Ambiguities[Index] = Before;
+    if (!E.Ambiguities.empty()) {
+      // Effects retain original indices in increasing order. Merge changed
+      // and removed groups back into the surviving sequence in linear time.
+      std::vector<Ambiguity> Restored;
+      Restored.reserve(R.Ambiguities.size() + E.Ambiguities.size());
+      size_t Current = 0;
+      for (const auto &[Index, Before] : E.Ambiguities) {
+        while (Restored.size() < Index)
+          Restored.push_back(std::move(R.Ambiguities[Current++]));
+        Restored.push_back(Before);
+        const bool Retained =
+            llvm::any_of(Before.Primary,
+                         [&](uint32_t A) { return A != E.Added->Primary; }) &&
+            llvm::any_of(Before.Secondary,
+                         [&](uint32_t B) { return B != E.Added->Secondary; });
+        if (Retained)
+          ++Current;
+      }
+      while (Current < R.Ambiguities.size())
+        Restored.push_back(std::move(R.Ambiguities[Current++]));
+      R.Ambiguities = std::move(Restored);
+    }
     reindex(R, Primary.Functions.size(), Secondary.Functions.size());
     for (const FunctionMatch &Before : E.Remeasured)
       if (const uint32_t I = R.PrimaryMatch[Before.Primary]; I != NoIndex)
