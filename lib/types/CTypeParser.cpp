@@ -1382,12 +1382,12 @@ private:
         Type = Words.Long ? Builtin::LongDouble : Builtin::Double;
       else if (Words.WChar)
         Type = Builtin::WChar;
-      else if (Words.Char)
+      // Microsoft's unqualified __int8 is char, whose type identity differs
+      // from signed char even when both have the same signed representation.
+      else if (Words.Char || Words.Int8)
         Type = U              ? Builtin::UChar
                : Words.Signed ? Builtin::SChar
                               : Builtin::Char;
-      else if (Words.Int8)
-        Type = U ? Builtin::UChar : Builtin::SChar;
       else if (Words.Int16 || Words.Short)
         Type = U ? Builtin::UShort : Builtin::Short;
       else if (Words.Int32)
