@@ -2846,6 +2846,71 @@ int main(void) {
   }
 }
 
+TEST(HighSourceExpressions, ComposedPredicateCallRunsOnce) {
+  // if (arg1) { t1 = arg0 + 1; t2 = call(t1); if (t2 == 0) return 1; }
+  // Composing the prefix spells the condition's call with arg0 + 1. The
+  // original assignment is the same execution and must not remain as well.
+  const auto T = NdType::makeInt(8, false);
+  HighFunc F;
+  F.Entry = 0x1000;
+  F.Name = "composed_predicate_call";
+  F.ReturnType = T;
+  F.Params = {{"arg0", T}, {"arg1", T}, {"arg2", T}};
+  auto Plus = temporary(10, T, Arch::X64);
+  auto Result = temporary(20, T, Arch::X64);
+  auto Call = HighExpr::makeCall("indirect", 0x2000, {Plus});
+  Call->Type = T;
+  Call->CallSiteAddr = 0x1010;
+  Call->IsIndirectCall = true;
+  Call->IndirectTarget = parameter(2, T, Arch::X64);
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Addr = 0x1020;
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, Result, HighExpr::makeConst(0, 8));
+  Inner.Body = {returning(HighExpr::makeConst(1, 8))};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Addr = F.Entry;
+  Outer.Cond =
+      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(1, T, Arch::X64),
+                          HighExpr::makeConst(0, 8));
+  auto Add = assign(Plus, HighExpr::makeBinop(NdOp::INT_ADD,
+                                              parameter(0, T, Arch::X64),
+                                              HighExpr::makeConst(1, 8)));
+  Add.Addr = 0x1008;
+  auto Effect = assign(Result, Call);
+  Effect.Addr = 0x1010;
+  Outer.Body = {Add, Effect, Inner};
+  F.Body = {Outer, returning(HighExpr::makeConst(0, 8))};
+  MedFunc Med;
+  Med.CC = CallingConv::Win64;
+  structureIfElse(F, 10, &Med);
+  std::string Text;
+  llvm::raw_string_ostream Out(Text);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options));
+  const std::string Emitted = Text;
+  Text += R"(
+static unsigned calls;
+static uint64_t probe(uint64_t value) { ++calls; return value == 5 ? 0 : 1; }
+int main(void) {
+  for (uint64_t value = 3; value != 7; ++value)
+    for (uint64_t guard = 0; guard != 2; ++guard) {
+      calls = 0;
+      uint64_t result = composed_predicate_call(value, guard,
+                                                (uintptr_t)&probe);
+      if (result != (guard && value + 1 == 5) || calls != guard)
+        return 1;
+    }
+  return 0;
+}
+)";
+  SCOPED_TRACE(Emitted);
+  compileAndRun(Text);
+}
+
 TEST(HighSourceExpressions, GuardAndCallShareTheComputedTarget) {
   MedFunc Med;
   Med.Entry = 0x1000;

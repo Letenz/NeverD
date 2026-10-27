@@ -16153,6 +16153,8 @@ retain their separate effects. Variants cover a shared display name, matching
 callee identities at different sites, missing sites, and changed targets or
 arguments at one site. Independent providers check call counts, arguments and
 both nested paths; a shared provider also verifies repeated actual invocations
-of one callee. Run `NeverDHighControlFlowTests`,
+of one callee. `ComposedPredicateCallRunsOnce` covers the opposite case: a
+prefix call whose operands the composed predicate spells through earlier prefix
+values is the same execution and must run once. Run `NeverDHighControlFlowTests`,
 `NeverDHighCStoreForwardingTests` and `NeverDWindowsEHSourceTests`. This is a
 HighIR structuring contract; it requires no external source interface.
