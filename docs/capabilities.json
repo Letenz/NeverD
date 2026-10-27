@@ -2398,6 +2398,17 @@
             "linux",
             "windows"
           ]
+        },
+        {
+          "runner": "python-unittest",
+          "target": "NeverDPythonSDKUnitTests",
+          "source": "pluginsdk/python/tests/test_byte_patch_integration.py",
+          "filter": "BytePatchIntegrationTests.test_range_snapshots_keep_file_order_with_reverse_virtual_addresses",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {
@@ -2406,7 +2417,9 @@
           "neverd_byte_patch_apply",
           "neverd_byte_patch_context_json",
           "neverd_byte_patch_preview",
+          "neverd_byte_patch_range_snapshot_free_v1",
           "neverd_byte_patch_ranges_json",
+          "neverd_byte_patch_ranges_snapshot_v1",
           "neverd_byte_patch_revert",
           "neverd_byte_patch_snapshot_free_v1",
           "neverd_byte_patch_source_preview_json",

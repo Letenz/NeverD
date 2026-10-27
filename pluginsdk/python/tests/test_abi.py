@@ -35,6 +35,24 @@ class ABIInventoryTests(unittest.TestCase):
                 self.assertEqual(getattr(abi.NeverDBytePatchRowV1, field).offset,
                                  offset)
 
+    def test_byte_patch_range_snapshot_preserves_native_pointer_and_layout(self) -> None:
+        from neverd_plugin import abi
+
+        acquire = abi.FUNCTION_SPECS["neverd_byte_patch_ranges_snapshot_v1"]
+        free = abi.FUNCTION_SPECS["neverd_byte_patch_range_snapshot_free_v1"]
+        pointer = ctypes.POINTER(abi.NeverDBytePatchRangeSnapshotV1)
+        self.assertIs(acquire.ownership, abi.Ownership.OWNED_OBJECT)
+        self.assertIs(acquire.restype, pointer)
+        self.assertEqual(free.argtypes, (pointer,))
+        self.assertIsNone(free.restype)
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            self.assertEqual(ctypes.sizeof(abi.NeverDBytePatchRangeV1), 16)
+            self.assertEqual(abi.NeverDBytePatchRangeV1.address.offset, 0)
+            self.assertEqual(abi.NeverDBytePatchRangeV1.size.offset, 8)
+            self.assertEqual(ctypes.sizeof(abi.NeverDBytePatchRangeSnapshotV1), 16)
+            self.assertEqual(abi.NeverDBytePatchRangeSnapshotV1.range_count.offset, 0)
+            self.assertEqual(abi.NeverDBytePatchRangeSnapshotV1.ranges.offset, 8)
+
     def test_execution_keeps_fixed_handles_layout_buffers_and_owned_reports(self) -> None:
         from neverd_plugin import abi
 

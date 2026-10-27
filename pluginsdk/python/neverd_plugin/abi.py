@@ -828,6 +828,17 @@ class NeverDBytePatchSnapshotV1(ctypes.Structure):
     ]
 
 
+class NeverDBytePatchRangeV1(ctypes.Structure):
+    _fields_ = [("address", VirtualAddress), ("size", ctypes.c_size_t)]
+
+
+class NeverDBytePatchRangeSnapshotV1(ctypes.Structure):
+    _fields_ = [
+        ("range_count", ctypes.c_size_t),
+        ("ranges", ctypes.POINTER(NeverDBytePatchRangeV1)),
+    ]
+
+
 class NeverDAssembleOptionsV1(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_size_t), ("pc", ctypes.c_uint64),
@@ -1000,6 +1011,7 @@ _C_TYPES: dict[str, object] = {
     "neverd_sanitize_result_v1 *": ctypes.POINTER(NeverDSanitizeResultV1),
     "const neverd_byte_patch_options_v1 *": ctypes.POINTER(NeverDBytePatchOptionsV1),
     "const neverd_byte_patch_snapshot_v1 *": ctypes.POINTER(NeverDBytePatchSnapshotV1),
+    "const neverd_byte_patch_range_snapshot_v1 *": ctypes.POINTER(NeverDBytePatchRangeSnapshotV1),
     "const neverd_assemble_options_v1 *": ctypes.POINTER(NeverDAssembleOptionsV1),
     "const neverd_source_patch_options_v1 *": ctypes.POINTER(
         NeverDSourcePatchOptionsV1
@@ -1803,6 +1815,10 @@ _declare("neverd_byte_patches_snapshot_v1", "const neverd_byte_patch_snapshot_v1
          ["neverd_session_t"], ownership=Ownership.OWNED_OBJECT)
 _declare("neverd_byte_patch_snapshot_free_v1", "void",
          ["const neverd_byte_patch_snapshot_v1 *"])
+_declare("neverd_byte_patch_ranges_snapshot_v1", "const neverd_byte_patch_range_snapshot_v1 *",
+         ["neverd_session_t"], ownership=Ownership.OWNED_OBJECT)
+_declare("neverd_byte_patch_range_snapshot_free_v1", "void",
+         ["const neverd_byte_patch_range_snapshot_v1 *"])
 _declare("neverd_byte_patch_ranges_json", "const char *", ["neverd_session_t"], ownership=Ownership.OWNED_STRING)
 _declare("neverd_byte_patch_context_json", "const char *", ["neverd_session_t", "neverd_va_t"], ownership=Ownership.OWNED_STRING)
 _declare("neverd_byte_patch_source_target_json", "const char *", ["neverd_session_t", "neverd_va_t", "const char *", "size_t", "int64_t"], ownership=Ownership.OWNED_STRING)

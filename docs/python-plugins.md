@@ -122,7 +122,11 @@ and raw byte payloads independently of the session. Release it in `finally`
 with the paired function from the same host. The `OWNED_OBJECT` ABI annotation
 distinguishes this lifetime from strings and borrowed buffers. The high-level
 `Session.byte_patches` property continues to return the existing JSON-compatible
-Python objects.
+Python objects. The metadata-only `neverd_byte_patch_ranges_snapshot_v1` has
+`OWNED_OBJECT` ownership and a paired
+`neverd_byte_patch_range_snapshot_free_v1` release. Its ctypes rows contain only
+address and size, with the same independent lifetime and file-offset ordering.
+`Session.byte_patch_ranges` keeps its existing JSON-compatible return values.
 
 ### Bounded symbolic path exploration
 
