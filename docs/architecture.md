@@ -9042,6 +9042,8 @@ complete installs, and every step still captures the complete output packet.
 
 Serial checked ARM64 steps reuse Unicorn's one-instruction translation only
 after comparing all four executable bytes with a bounded transport cache.
+`execution_limits::UnicornInstructionCacheEntries` owns its 4,096-entry retention
+bound, covering larger instruction working sets without changing admission.
 Host and guest writes through any alias are therefore visible without relying
 on mapping generations as code-write epochs. Address-space identity, mapping
 generation and transport relocation invalidate the recorded identities; errors,
