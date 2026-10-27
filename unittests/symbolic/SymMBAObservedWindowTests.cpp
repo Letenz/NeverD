@@ -119,6 +119,40 @@ TEST(SymMBAObservedWindow, FinishesFlagWindowsExposedByArithmeticMeasurement) {
   }
 }
 
+TEST(SymMBAObservedWindow, UnreducedWindowsKeepTheirComplementedWord) {
+  for (unsigned Width : {8u, 16u, 64u, 128u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto Y = C.mkVar("y", Width);
+    auto K = [&](int64_t Value) {
+      return C.mkConst(llvm::APInt(Width, Value, /*isSigned=*/true));
+    };
+    auto Low = C.mkConst(~llvm::APInt::getOneBitSet(Width, 7));
+    // A window of ~(K|y) drops no lane. Keep the complement, which the
+    // enclosing XOR folds into its literal instead of an extract per input.
+    auto Result = simplifyMBADeep(
+        C, C.mkXor(C.mkConst(Width, 8), C.mkNot(C.mkOr(Low, Y))));
+    EXPECT_EQ(Result.Expr,
+              C.mkXor(C.mkConst(~llvm::APInt(Width, 8)), C.mkOr(Low, Y)))
+        << C.toString(Result.Expr);
+    // A longer root window must not discard the shortened word beneath it.
+    auto Word = C.mkSub(K(-2), C.mkAdd(K(-91), C.mkXor(K(50), Y)));
+    EXPECT_EQ(simplifyWindow(C, C.mkNot(C.mkOr(K(-5), Word))),
+              C.mkNot(C.mkOr(K(-5), C.mkAdd(K(90), C.mkXor(K(-51), Y)))));
+  }
+  SymContext C;
+  auto Y = C.mkVar("y", 8);
+  auto Root = C.mkXor(C.mkConst(8, 8), C.mkNot(C.mkOr(C.mkConst(8, 0x7f), Y)));
+  for (unsigned Work : {0u, 1u, 8u, 64u, 512u, 65536u}) {
+    MBAOptions Options;
+    Options.MaxWork = Work;
+    auto Result = simplifyMBADeep(C, Root, Options);
+    EXPECT_LE(Result.Work, Work);
+    for (unsigned Input = 0; Input != 256; ++Input)
+      EXPECT_EQ(C.evalU64(Result.Expr, {Input}), (8 ^ ~(0x7fu | Input)) & 255);
+  }
+}
+
 TEST(SymMBAObservedWindow, SingleBitObservationKeepsArithmeticCarry) {
   SymContext C;
   auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);

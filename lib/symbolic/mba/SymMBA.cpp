@@ -213,9 +213,11 @@ SymRef foldObservedWindow(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
         auto Bit =
             projectBitWindow(Ctx, Source, Mask.logBase2(), 1, Budget, Storage);
         // ~(K|x) observes only ~K. Read that window directly rather than
-        // requiring a whole-word De Morgan rewrite before projection.
-        return Ctx.mkMul(Ctx.mkConst(Mask),
-                         Ctx.mkZExt(Ctx.mkNot(Bit), Ctx.width(Root)));
+        // requiring a whole-word De Morgan rewrite before projection. An
+        // unreduced window would only spell each input again as an extract.
+        auto Window = Ctx.mkMul(Ctx.mkConst(Mask),
+                                Ctx.mkZExt(Ctx.mkNot(Bit), Ctx.width(Root)));
+        return doesNotGrow(Ctx, Window, Root) ? Window : Root;
       }
     }
   }
@@ -252,7 +254,13 @@ SymRef foldObservedWindow(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
     auto Part = projectBitWindow(Ctx, Source, Bit, 1, Budget, Storage);
     if (Part == Ctx.mkExtract(Source, Bit, 1))
       return Root;
-    return Ctx.mkMul(Ctx.mkConst(Mask), Ctx.mkZExt(Part, Ctx.width(Root)));
+    auto Window =
+        Ctx.mkMul(Ctx.mkConst(Mask), Ctx.mkZExt(Part, Ctx.width(Root)));
+    // A flattened mask has no single source word. Its window is useful only
+    // when it drops lanes; otherwise it spells every input again as an extract.
+    if (Ctx.numOperands(Root) > 2 && !doesNotGrow(Ctx, Window, Root))
+      return Root;
+    return Window;
   }
   // A shifted low mask is also an explicit observed window. Keep ordinary
   // masked arithmetic in its original region: narrowing every internal mask
