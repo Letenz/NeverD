@@ -15167,7 +15167,7 @@ services and ART loading are not covered.
 
 `NeverDBytePatchTests`: overlay, relocation refusal, PC-relative assembly, PE signature/checksum. The same suite checks patch JSON ownership, decoded duplicate keys, legacy number spellings, malformed fields, and row/byte/input limits. With SIMD JSON enabled, `NeverDPatchJSONFallbackTests` compiles the same reader without acceleration and runs those reader contracts too. `NeverDWorkerPatch`: preview, stale input, undo/redo, batch revert, read-only replica, reopen, exclusive export.
 
-`NeverDBytePatchTests` also compares fragmented and shuffled replay against independent byte/kind oracles, retains adjacent-segment boundaries, rejects a bad late row without changing existing image copies, and verifies immutable input-view bounds and snapshot lifetime.
+`NeverDBytePatchTests` also compares fragmented and shuffled replay against independent byte/kind oracles, retains adjacent-segment boundaries, rejects a bad late row without changing existing image copies, and verifies immutable input-view bounds and snapshot lifetime. Reverse virtual-address mappings, including high unsigned addresses, cover both replay indexes, partial reverts and exact exported bytes.
 
 `NeverDWorkerNativePatch` repeats this against the real SDK. `NeverDWorkerSourceBytePatch` verifies source proof, isolated preview, frame symbols and native C replacement on Linux.
 
